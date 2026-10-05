@@ -1,0 +1,2125 @@
+<!doctype html>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tidewatch Concept</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap">
+<style>
+/* Layout: one long concept page; the hero is a live, clickable mockup of the app window (terminal top-left, graph bottom-left, diff right). Dark only, like Kelp and stdusk. */
+:root{
+  color-scheme:dark;
+  --bg:#111419; --win:#15181e; --panel:#1a1d24; --panel2:#1f232b; --term:#171a20;
+  --line:#262a33; --line2:#343b48;
+  --fg:#e3e1dc; --strong:#f3f1ec; --muted:#9aa1ad; --dim:#6f7682;
+  --kelp:#8fd16a; --teal:#2dd4bf; --orange:#fb923c; --violet:#c084fc; --blue:#60a5fa; --pink:#f472b6;
+  --amber:#fbbf24; --red:#f87171; --add:#8fd16a; --del:#f87171;
+  --addbg:rgba(143,209,106,.09); --delbg:rgba(248,113,113,.09);
+  --sans:"IBM Plex Sans",-apple-system,BlinkMacSystemFont,"Segoe UI",Helvetica,Arial,sans-serif;
+  --mono:"JetBrains Mono",ui-monospace,"SF Mono",Menlo,monospace;
+}
+*{box-sizing:border-box}
+html,body{background:var(--bg);color:var(--fg)}
+body{font-family:var(--sans);font-size:15px;line-height:1.6;-webkit-font-smoothing:antialiased}
+.page{max-width:1280px;margin:0 auto;padding-inline:24px;padding-block:40px 80px;display:flex;flex-direction:column;gap:72px}
+@media(max-width:520px){.page{padding-inline:16px}}
+h1,h2,h3{color:var(--strong);text-wrap:balance;margin:0;line-height:1.15}
+h1{font-size:clamp(34px,5vw,54px);letter-spacing:-.025em;font-weight:700}
+h2{font-size:26px;letter-spacing:-.015em;font-weight:600}
+h3{font-size:16px;font-weight:600}
+p{margin:0}
+.mono{font-family:var(--mono)}
+.eyebrow{font-family:var(--mono);font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:var(--kelp)}
+.lede{font-size:18px;color:var(--muted);max-width:68ch}
+.sec{display:flex;flex-direction:column;gap:22px}
+.sec-head{display:flex;flex-direction:column;gap:8px;max-width:72ch}
+.sec-head p{color:var(--muted)}
+button{font:inherit;color:inherit}
+:focus-visible{outline:2px solid var(--kelp);outline-offset:2px}
+
+.hero{display:flex;flex-direction:column;gap:18px}
+.hero-top{display:flex;flex-wrap:wrap;gap:12px;align-items:center}
+.pill{font-family:var(--mono);font-size:12px;color:var(--muted);border:1px solid var(--line2);border-radius:99px;padding:3px 11px}
+.pill b{color:var(--kelp);font-weight:500}
+.app-name{color:var(--kelp)}
+
+/* ---------- mockup window ---------- */
+.mock-scroll{overflow-x:auto;border-radius:14px}
+.win{min-width:1040px;height:820px;background:var(--win);border:1px solid var(--line2);border-radius:12px;display:grid;grid-template-rows:42px 1fr 26px;overflow:hidden;position:relative;font-size:13px;box-shadow:0 30px 80px -30px rgba(0,0,0,.7)}
+.titlebar{display:flex;align-items:stretch;gap:6px;padding:0 10px;background:#101318;border-bottom:1px solid var(--line)}
+.lights{display:flex;gap:7px;align-items:center;padding-right:8px}
+.lights i{width:12px;height:12px;border-radius:50%;background:#ff5f57}
+.lights i:nth-child(2){background:#febc2e}.lights i:nth-child(3){background:#28c840}
+.caret{width:8px;height:8px;border-right:1.5px solid var(--muted);border-bottom:1.5px solid var(--muted);transform:rotate(45deg) translateY(-2px)}
+.repo-chip{align-self:center;display:flex;align-items:center;gap:7px;height:26px;padding:0 9px;border:1px solid var(--line2);border-radius:7px;background:var(--panel);cursor:pointer;position:relative;font-family:var(--mono);font-size:12px;color:var(--fg);flex:none}
+.repo-chip:hover{background:var(--panel2)}
+.repo-chip.dim{opacity:.55}
+.repo-chip .gdot{width:8px;height:8px;border-radius:50%}
+.repo-chip .count{color:var(--dim)}
+.repo-chip .badge{position:absolute;top:-3px;right:-3px;width:9px;height:9px;border-radius:50%;background:var(--blue);box-shadow:0 0 0 2px #101318}
+.ovbtn{align-self:center;position:relative;width:28px;height:26px;display:grid;place-items:center;border-radius:7px;border:1px solid transparent;background:none;color:var(--muted);cursor:pointer;padding:0;flex:none}
+.ovbtn:hover{background:var(--panel2);color:var(--strong)}
+.ovbtn.on{background:var(--panel);border-color:var(--line2);color:var(--strong)}
+.ovbtn svg{width:14px;height:14px}
+.ovn{position:absolute;top:-4px;right:-5px;min-width:15px;height:15px;padding:0 4px;border-radius:99px;background:var(--amber);color:#10131a;font:700 9.5px/15px var(--mono);box-shadow:0 0 0 2px #101318}
+.tab{position:relative;display:flex;align-items:center;gap:6px;flex:0 1 200px;width:200px;min-width:60px;margin-top:6px;padding:0 10px;border-radius:6px 6px 0 0;font-family:var(--mono);font-size:12px;color:var(--dim);cursor:pointer}
+.tab:hover{background:rgba(255,255,255,.04)}
+.tab.on{background:var(--panel);color:var(--fg)}
+.tab .t{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:pre}
+.tab .pinic{width:11px;height:11px;flex:none}
+.tab .slot{width:18px;height:18px;display:grid;place-items:center;flex:none}
+.tab .slot .x{display:none;width:18px;height:18px;place-items:center;border:0;border-radius:4px;background:none;color:var(--dim);font-size:14px;line-height:1;padding:0;cursor:pointer}
+.tab:hover .slot .x{display:grid}
+.tab:hover .slot .badge{display:none}
+.tab .slot .x:hover{background:var(--line2);color:var(--strong)}
+.tab.needs .slot .badge{animation:pulse .9s ease-in-out infinite}
+.tab .ul{position:absolute;left:0;right:0;bottom:0;height:3px;background:var(--tc)}
+.tab .pg{position:absolute;left:0;right:0;top:0;height:2px;overflow:hidden}
+.tab .pg>span{display:block;height:100%}
+.tab .pg.pulse>span{animation:pulse .9s ease-in-out infinite}
+.tab .fail{position:absolute;left:1px;top:50%;width:2px;height:12px;margin-top:-6px;border-radius:1px;background:var(--red)}
+.mini{width:15px;height:15px;display:grid;gap:1.5px;padding:1px;flex:none}
+.mini.right{grid-template-columns:1fr 1fr}.mini.down{grid-template-rows:1fr 1fr}
+.mini i{background:currentColor;border-radius:1px}
+.clilogo{width:13px;height:13px;display:block}
+.clichip{width:14px;height:14px;border-radius:4px;color:#fff;font:700 9.5px/14px var(--sans);text-align:center;display:block}
+.tb-right{margin-left:auto;display:flex;align-items:center;color:var(--dim)}
+.gear{width:28px;height:26px;display:grid;place-items:center;border:0;background:none;color:var(--dim);border-radius:7px;cursor:pointer;padding:0}
+.gear:hover{background:var(--panel2);color:var(--strong)}
+.gear svg{width:15px;height:15px}
+.prof .clilogo,.prof .clichip{width:11px;height:11px;font-size:8px;line-height:11px;border-radius:3px}
+.tabs{display:flex;align-items:stretch;gap:2px;min-width:0;overflow:hidden}
+.st{width:9px;height:9px;border-radius:50%;flex:none}
+.st.working{background:var(--teal);box-shadow:0 0 0 3px rgba(45,212,191,.18);animation:pulse 1.6s ease-in-out infinite}
+.st.needs{background:var(--amber);box-shadow:0 0 0 3px rgba(251,191,36,.2);animation:pulse 0.9s ease-in-out infinite}
+.st.done{background:var(--kelp)}
+.st.setup{background:var(--blue)}
+.st.shell{background:transparent;border:1.5px solid var(--dim)}
+.st.failed{background:var(--red)}
+@keyframes pulse{50%{opacity:.45}}
+@keyframes slide{from{transform:translateX(-100%)}to{transform:translateX(250%)}}
+.ind{width:40%;animation:slide 1.4s linear infinite}
+.newtab{align-self:center;width:28px;height:28px;border-radius:7px;border:0;background:none;color:var(--muted);font-size:18px;cursor:pointer;margin-left:2px}
+.newtab:hover{background:var(--panel2);color:var(--strong)}
+
+.body{display:grid;grid-template-columns:minmax(0,1.15fr) minmax(0,1fr);grid-template-rows:minmax(0,44fr) minmax(0,56fr);min-height:0}
+.left{display:contents}
+.body .term{grid-column:1/3;grid-row:1;border-bottom:1px solid var(--line)}
+.body .graph{grid-column:1;grid-row:2;border-right:1px solid var(--line)}
+.body .diff{grid-column:2;grid-row:2}
+.win.hidebottom .body{grid-template-rows:minmax(0,1fr) 30px}
+.win.hidebottom .graph,.win.hidebottom .diff{display:none}
+.peek{display:none;grid-column:1/3;grid-row:2;align-items:center;gap:12px;padding:0 14px;font-size:12px;color:var(--dim);background:var(--panel);cursor:pointer;border:0;text-align:left;font-family:var(--sans)}
+.peek b{color:var(--muted);font-weight:500}
+.win.hidebottom .peek{display:flex}
+.pane-head{display:flex;align-items:center;gap:10px;height:34px;padding:0 12px;border-bottom:1px solid var(--line);background:var(--panel);font-size:12px;color:var(--muted);white-space:nowrap;min-width:0}
+.pane-head .ttl{color:var(--strong);font-weight:600}
+.pane-head .path{font-family:var(--mono);font-size:11px;color:var(--dim);overflow:hidden;text-overflow:ellipsis;min-width:0}
+.pane-head .sp{margin-left:auto}
+.prof{display:inline-flex;align-items:center;gap:5px;font-size:11px;font-weight:600;padding:1px 8px 1px 6px;border-radius:99px;border:1px solid}
+.prof i{width:6px;height:6px;border-radius:50%;background:currentColor}
+.stp{font-size:11px;font-weight:600;padding:1px 8px;border-radius:99px}
+.stp.working{color:var(--teal);background:rgba(45,212,191,.12)}
+.stp.needs{color:var(--amber);background:rgba(251,191,36,.13)}
+.stp.done{color:var(--kelp);background:rgba(143,209,106,.12)}
+.stp.setup{color:var(--blue);background:rgba(96,165,250,.13)}
+.stp.shell{color:var(--muted);background:var(--panel2)}
+
+.term{display:grid;grid-template-rows:34px 1fr;min-height:0;background:var(--term)}
+.term-panes{display:grid;min-height:0;grid-template-columns:minmax(0,1fr)}
+.term-panes.right{grid-template-columns:minmax(0,1fr) minmax(0,1fr)}
+.term-panes.down{grid-template-rows:minmax(0,1fr) minmax(0,1fr)}
+.tpane{display:grid;grid-template-rows:auto minmax(0,1fr) auto;min-height:0;min-width:0}
+.term-panes.right .tpane+.tpane{border-left:1px solid var(--line2)}
+.term-panes.down .tpane+.tpane{border-top:1px solid var(--line2)}
+.term-panes.right .tpane:not(.focus) .term-out,.term-panes.down .tpane:not(.focus) .term-out{opacity:.62}
+.tp-head{display:flex;align-items:center;gap:8px;padding:3px 8px 3px 14px;font-family:var(--mono);font-size:10.5px;color:var(--dim);border-bottom:1px dashed var(--line);white-space:nowrap;overflow:hidden}
+.tpane.focus .tp-head{color:var(--muted)}
+.tp-head .x2{margin-left:auto;border:0;background:none;color:var(--dim);cursor:pointer;font-size:13px;line-height:1;padding:0 4px;border-radius:4px}
+.tp-head .x2:hover{background:var(--line2);color:var(--strong)}
+.hbtn{width:24px;height:22px;border:1px solid transparent;border-radius:5px;background:none;color:var(--muted);display:grid;place-items:center;cursor:pointer;padding:0}
+.hbtn:hover{background:var(--panel2);border-color:var(--line2);color:var(--strong)}
+.hbtn.on{color:var(--kelp);border-color:rgba(143,209,106,.4)}
+.hbtn svg{width:14px;height:14px}
+.term-out{overflow:auto;padding:10px 14px 6px;font-family:var(--mono);font-size:12px;line-height:1.62;white-space:pre-wrap;word-break:break-word}
+.term-in{display:flex;align-items:center;gap:8px;padding:6px 14px 10px;font-family:var(--mono);font-size:12px}
+.term-in label{color:var(--kelp)}
+.term-in input{flex:1;min-width:0;background:none;border:0;outline:0;color:var(--strong);font:inherit;caret-color:var(--kelp)}
+.term-in input::placeholder{color:var(--dim)}
+.c-p{color:var(--pink)}.c-d{color:var(--dim)}.c-g{color:var(--kelp)}.c-y{color:var(--amber)}.c-r{color:var(--red)}.c-c{color:var(--teal)}.c-v{color:var(--violet)}.c-b{color:var(--blue)}.c-s{color:var(--strong)}.c-o{color:var(--orange)}
+.c-u{color:var(--strong);background:rgba(255,255,255,.04);display:block;padding:2px 8px;border-left:2px solid var(--line2);margin:2px 0}
+.key{cursor:pointer;color:var(--amber);border:1px solid rgba(251,191,36,.4);border-radius:4px;padding:0 5px;margin-right:4px}
+.key:hover{background:rgba(251,191,36,.15)}
+
+.graph{display:grid;grid-template-rows:34px 1fr;min-height:0}
+.gscroll{overflow:auto;position:relative}
+.ghead{display:grid;font-family:var(--mono);font-size:10px;letter-spacing:.08em;color:var(--dim);text-transform:uppercase;padding:6px 0;border-bottom:1px solid var(--line);position:sticky;top:0;background:var(--win);z-index:2}
+.grows{position:relative}
+.grow{display:grid;align-items:center;height:30px;cursor:pointer;position:relative}
+.grow:hover{background:rgba(255,255,255,.025)}
+.grow.focus{background:rgba(255,255,255,.035)}
+.grow.sel{background:rgba(143,209,106,.10)}
+.grow.sel::after{content:"";position:absolute;inset:0 auto 0 0;width:2px;background:var(--kelp)}
+.refs{display:flex;justify-content:flex-end;gap:4px;padding-right:8px;min-width:0;overflow:hidden}
+.ref{font-size:11px;padding:0 7px;height:20px;line-height:18px;border:1px solid;border-radius:5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:150px;background:var(--panel);display:inline-flex;align-items:center;gap:4px}
+.ref.agent{cursor:pointer}
+.ref svg{width:10px;height:10px;flex:none}
+.msg{padding-left:6px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--fg);min-width:0}
+.msg.wip{color:var(--muted);font-style:italic}
+.when{font-size:11px;color:var(--dim);padding:0 12px;white-space:nowrap;text-align:right}
+.gsvg{position:absolute;top:0;pointer-events:none}
+
+.diff{display:grid;grid-template-columns:minmax(0,1fr);grid-template-rows:auto auto auto 1fr;min-height:0;background:var(--win)}
+.dhead{padding:14px 16px 12px;border-bottom:1px solid var(--line);display:flex;flex-direction:column;gap:8px}
+.dmeta{display:flex;align-items:center;gap:10px;font-size:12px;color:var(--muted);flex-wrap:wrap}
+.dmeta .hash{font-family:var(--mono);color:var(--strong)}
+.dtitle{font-size:16px;font-weight:600;color:var(--strong);line-height:1.3}
+.who{display:flex;align-items:center;gap:8px;font-size:12px;color:var(--muted)}
+.av{width:22px;height:22px;border-radius:50%;display:grid;place-items:center;font-size:9px;font-weight:700;border:1.5px solid;background:var(--panel)}
+.live{font-size:11px;color:var(--teal);display:inline-flex;align-items:center;gap:5px}
+.files{display:flex;flex-direction:column;padding:6px 8px;border-bottom:1px solid var(--line);max-height:120px;overflow:auto}
+.file{display:flex;align-items:center;gap:8px;padding:3px 8px;border-radius:5px;font-family:var(--mono);font-size:11.5px;cursor:pointer;color:var(--muted)}
+.file:hover{background:rgba(255,255,255,.03)}
+.file.on{background:var(--panel2);color:var(--strong)}
+.file .s{width:12px;font-weight:700}
+.file .s.A{color:var(--add)}.file .s.M{color:var(--amber)}.file .s.D{color:var(--del)}
+.file .n{margin-left:auto;font-size:11px}
+.dbody{overflow:auto;font-family:var(--mono);font-size:11.5px;line-height:1.7;padding-bottom:12px}
+.dl{display:grid;grid-template-columns:38px 38px 1fr;cursor:pointer;white-space:pre;position:relative}
+.addc{position:absolute;left:3px;top:50%;margin-top:-8px;width:16px;height:16px;border:0;border-radius:4px;background:var(--blue);color:#0b1220;font:700 12px/16px var(--sans);padding:0;cursor:pointer;display:none;z-index:1}
+.dl:hover .addc,.sl .tx:hover .addc{display:block}
+.sl{display:grid;grid-template-columns:30px minmax(0,1fr) 30px minmax(0,1fr);white-space:pre}
+.sl .ln{color:var(--dim);text-align:right;padding-right:6px;font-size:10.5px;user-select:none}
+.sl .tx{position:relative;overflow:hidden;text-overflow:ellipsis;cursor:pointer;padding-left:4px}
+.sl .tx.a{background:var(--addbg);color:#c7ecb0}.sl .tx.d{background:var(--delbg);color:#f6b8b8}
+.sl .tx.empty{background:repeating-linear-gradient(135deg,transparent 0 4px,rgba(255,255,255,.03) 4px 8px);cursor:default}
+.sl.h{display:block;color:var(--blue);background:rgba(96,165,250,.06);padding-left:10px}
+.dbody mark{background:rgba(143,209,106,.3);color:inherit;border-radius:2px}
+.dbody .d mark{background:rgba(248,113,113,.32)}
+.flash{animation:flash 1.2s ease-out}
+@keyframes flash{from{box-shadow:inset 3px 0 0 var(--amber)}to{box-shadow:inset 3px 0 0 transparent}}
+.dtool{display:flex;flex-wrap:wrap;align-items:center;gap:6px;padding:6px 10px;border-bottom:1px solid var(--line);font-size:11.5px;color:var(--dim);white-space:nowrap}
+.dtool .sp{margin-left:auto}
+.tbtn{border:1px solid var(--line2);background:var(--panel);color:var(--muted);border-radius:6px;padding:1px 8px;font-size:11.5px;cursor:pointer}
+.tbtn:hover{color:var(--strong)}
+.tbtn.pri{background:var(--kelp);border-color:var(--kelp);color:#10131a;font-weight:600}
+.thread{margin:4px 12px 6px 46px;padding:8px 10px;border:1px solid var(--line2);border-radius:8px;background:var(--panel);font-family:var(--sans);font-size:12px;line-height:1.45;white-space:normal;display:flex;flex-direction:column;gap:7px}
+.thread .m{display:flex;flex-direction:column;gap:3px}
+.thread .m+.m{padding-top:7px;border-top:1px dashed var(--line)}
+.thread .nh{display:flex;align-items:center;gap:6px;font-size:11px;color:var(--dim)}
+.thread .nh b{color:var(--strong);font-weight:600}
+.thread .nh .clilogo,.thread .nh .clichip{width:12px;height:12px;font-size:8.5px;line-height:12px}
+.thread textarea{width:100%;min-height:46px;resize:vertical;background:var(--term);border:1px solid var(--line2);border-radius:6px;color:var(--strong);font:12px var(--sans);padding:6px 8px}
+.thread .act{display:flex;gap:6px;justify-content:flex-end}
+.th-act{display:flex;gap:14px;align-items:center}
+.lnk{border:0;background:none;color:var(--muted);padding:0;cursor:pointer;font-size:11.5px}
+.lnk:hover{color:var(--strong)}
+.lnk.send{color:var(--kelp)}
+.sent{margin-left:auto;color:var(--dim);font-size:11px}
+.thread.res{padding:0;border-style:dashed;background:none}
+.th-col{border:0;background:none;color:var(--dim);font-size:11.5px;padding:5px 10px;text-align:left;cursor:pointer;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;width:100%}
+.th-col:hover{color:var(--fg)}
+.dl:hover{filter:brightness(1.35)}
+.dl .ln{color:var(--dim);text-align:right;padding-right:8px;user-select:none;font-size:10.5px}
+.dl.a{background:var(--addbg)}.dl.a .tx{color:#c7ecb0}
+.dl.d{background:var(--delbg)}.dl.d .tx{color:#f6b8b8}
+.dl.h{color:var(--blue);background:rgba(96,165,250,.06);cursor:default}
+.dl.h .tx{padding-left:6px}
+.btn{border:1px solid var(--line2);background:var(--panel2);color:var(--fg);border-radius:6px;padding:4px 10px;font-size:12px;cursor:pointer}
+.btn:hover{border-color:var(--muted)}
+.btn.pri{background:var(--kelp);border-color:var(--kelp);color:#10131a;font-weight:600}
+.btn.pri:hover{background:#a4df83}
+.btn.warn{color:var(--red);border-color:rgba(248,113,113,.45)}
+
+.statusbar{display:flex;align-items:center;gap:16px;padding:0 12px;border-top:1px solid var(--line);background:#101318;font-size:11.5px;color:var(--dim);white-space:nowrap}
+.statusbar b{color:var(--muted);font-weight:500}
+.statusbar .sp{margin-left:auto}
+
+.overlay{position:absolute;inset:0;background:rgba(8,10,13,.6);display:grid;place-items:center;z-index:20}
+.modal{width:620px;max-height:calc(100% - 30px);overflow:auto;background:var(--panel);border:1px solid var(--line2);border-radius:12px;padding:18px;display:flex;flex-direction:column;gap:14px;box-shadow:0 30px 60px rgba(0,0,0,.5)}
+.modal h3{font-size:15px}
+.modal .lbl{font-size:11px;color:var(--dim);text-transform:uppercase;letter-spacing:.07em;font-family:var(--mono)}
+.profgrid{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.pcard{text-align:left;border:1px solid var(--line2);border-radius:9px;padding:9px 11px;background:var(--panel2);cursor:pointer;display:flex;flex-direction:column;gap:2px}
+.pcard.on{border-color:var(--kelp);background:rgba(143,209,106,.07)}
+.pcard .pn{display:flex;align-items:center;gap:6px;font-weight:600;color:var(--strong);font-size:13px}
+.pcard .pc{font-family:var(--mono);font-size:10.5px;color:var(--dim);margin-left:auto}
+.pcard .pd{font-size:11.5px;color:var(--muted);line-height:1.4}
+.field{display:flex;flex-direction:column;gap:5px}
+.field textarea,.field input,.field select{background:var(--term);border:1px solid var(--line2);border-radius:7px;color:var(--strong);font:13px var(--sans);padding:7px 9px}
+.field textarea{min-height:58px;resize:vertical}
+.row2{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.preview{font-family:var(--mono);font-size:11px;color:var(--muted);background:var(--term);border:1px dashed var(--line2);border-radius:7px;padding:8px 10px;line-height:1.6}
+.preview b{color:var(--kelp);font-weight:500}
+.mfoot{display:flex;justify-content:space-between;align-items:center;gap:8px}
+.mfoot .hint{font-size:11px;color:var(--dim)}
+
+.pop{position:absolute;z-index:15;background:var(--panel);border:1px solid var(--line2);border-radius:10px;padding:12px;width:320px;box-shadow:0 20px 40px rgba(0,0,0,.5);display:flex;flex-direction:column;gap:10px;font-size:12.5px}
+.pop p{color:var(--muted);line-height:1.45}
+.pop .acts{display:flex;flex-direction:column;gap:6px}
+.pop .acts .btn{text-align:left}
+.menu{position:absolute;z-index:15;background:var(--panel);border:1px solid var(--line2);border-radius:10px;padding:6px;width:260px;box-shadow:0 20px 40px rgba(0,0,0,.5)}
+.mi{display:flex;align-items:center;gap:8px;padding:7px 9px;border-radius:6px;cursor:pointer;font-size:12.5px}
+.mi:hover{background:var(--panel2)}
+.mi .dots{margin-left:auto;display:flex;gap:4px}
+.mi.dis{color:var(--dim);cursor:default}
+.mi.dis:hover{background:none}
+.toast{position:absolute;bottom:40px;left:50%;transform:translateX(-50%);background:var(--panel2);border:1px solid var(--line2);border-radius:9px;padding:8px 14px;font-size:12.5px;color:var(--strong);z-index:30;box-shadow:0 10px 30px rgba(0,0,0,.5);max-width:80%}
+.tabs-note{align-self:center;color:var(--dim);font-size:12px;padding-left:8px}
+.seg{display:flex;border:1px solid var(--line2);border-radius:6px;overflow:hidden}
+.seg button{border:0;background:none;color:var(--dim);font-size:11px;padding:2px 9px;cursor:pointer}
+.seg button.on{background:var(--panel2);color:var(--strong)}
+.mi.sep{height:1px;padding:0;margin:4px 2px;background:var(--line);cursor:default}
+.mi .fold{width:13px;height:11px;color:var(--muted)}
+.win.nogit .body{grid-template-columns:minmax(0,1fr);grid-template-rows:minmax(0,1fr)}
+.win.nogit .body .term{border-bottom:0}
+.win.nogit .peek{display:none}
+.win.nogit .graph,.win.nogit .diff{display:none}
+.overview{overflow:auto;padding:18px 20px;display:flex;flex-direction:column;gap:16px;min-height:0}
+.ov-head{display:flex;align-items:center;gap:14px;font-size:12px;color:var(--muted)}
+.ov-head h3{font-size:16px}
+.ov-head .sp{margin-left:auto}
+.ov-group{display:flex;flex-direction:column;border:1px solid var(--line);border-radius:10px;overflow:hidden;background:var(--panel)}
+.ov-gh{display:flex;align-items:center;gap:10px;padding:8px 12px;font-weight:600;color:var(--strong);font-size:12.5px}
+.ov-gh .path{font-family:var(--mono);font-size:11px;color:var(--dim);font-weight:400}
+.ov-gh .cnt{margin-left:auto;font-weight:400;font-size:11.5px;color:var(--dim)}
+.ov-gh .fold{width:14px;height:12px;color:var(--muted)}
+.ov-row{display:grid;grid-template-columns:12px 160px 104px minmax(0,1fr) 170px 150px 62px 84px;gap:12px;align-items:center;padding:8px 12px;cursor:pointer;border-top:1px solid var(--line)}
+.ov-row:hover{background:var(--panel2)}
+.ov-t{color:var(--strong);font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ov-repo{display:block;font-weight:400;font-size:11px;color:var(--dim)}
+.ov-last{font-family:var(--mono);font-size:11.5px;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ov-row.needs .ov-last{color:var(--amber)}
+.ov-b,.ov-ab,.ov-time{font-size:11px;color:var(--dim);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ov-empty{padding:9px 12px;font-size:12px;color:var(--dim);border-top:1px solid var(--line)}
+.lvl{font-size:11px;font-weight:600;padding:1px 8px;border-radius:99px;background:var(--panel2);color:var(--muted);white-space:nowrap}
+.lvl.yolo{background:rgba(248,113,113,.15);color:var(--red)}
+.wf{display:flex;align-items:center;gap:4px;min-width:0;flex:none}
+.wfn{font-size:11px;color:var(--dim);margin-right:3px}
+.stg{display:inline-flex;align-items:center;gap:5px;font-size:11px;padding:1px 8px 1px 6px;border-radius:99px;border:1px solid var(--line2);color:var(--dim)}
+.stg .clilogo,.stg .clichip{width:11px;height:11px;font-size:8px;line-height:11px;border-radius:3px}
+.stg.done{color:var(--kelp);border-color:rgba(143,209,106,.35)}
+.stg.running{color:var(--strong);border-color:var(--blue);box-shadow:0 0 0 2px rgba(96,165,250,.15)}
+.stg.needs{color:var(--amber);border-color:rgba(251,191,36,.55)}
+.stg.failed{color:var(--red);border-color:rgba(248,113,113,.45)}
+.stg .loop{font-family:var(--mono);font-size:10px;color:var(--muted)}
+.arr{color:var(--dim);font-size:11px}
+.wfnext{border:1px dashed var(--line2);background:none;color:var(--blue);font-size:11px;cursor:pointer;padding:0 7px;border-radius:99px;margin-left:4px}
+.wfnext:hover{border-color:var(--blue)}
+.wfcard{text-align:left;border:1px solid var(--line2);border-radius:9px;padding:9px 11px;background:var(--panel2);cursor:pointer;display:flex;flex-direction:column;gap:6px;color:var(--fg)}
+.wfcard.on{border-color:var(--kelp);background:rgba(143,209,106,.07)}
+.wfcard .pn{display:flex;align-items:center;gap:6px;font-weight:600;color:var(--strong);font-size:13px}
+.wfcard .pd{font-size:11.5px;color:var(--muted)}
+.chain{display:flex;flex-wrap:wrap;gap:4px;align-items:center}
+.wflist{display:flex;flex-direction:column;gap:8px}
+.ladder{display:flex;gap:4px}
+.ladder button{flex:1;border:1px solid var(--line2);background:var(--panel2);color:var(--muted);border-radius:6px;padding:4px 6px;font-size:11.5px;cursor:pointer;white-space:nowrap}
+.ladder button:hover{color:var(--strong)}
+.ladder button.on{border-color:var(--kelp);color:var(--strong);background:rgba(143,209,106,.08)}
+.ladder button.yolo{color:#f3a1a1}
+.ladder button.yolo.on{border-color:var(--red);color:var(--red);background:rgba(248,113,113,.1)}
+.ladder button:disabled{opacity:.35;cursor:not-allowed}
+.hint2{font-size:11.5px;color:var(--muted);line-height:1.5}
+.hint2 code{font-family:var(--mono);font-size:11px;color:var(--fg);background:var(--term);padding:0 4px;border-radius:4px}
+.warn{color:var(--red)}
+.ed{display:grid;grid-template-columns:230px minmax(0,1fr);gap:14px}
+@media(max-width:860px){.ed{grid-template-columns:1fr}}
+.elist{display:flex;flex-direction:column;gap:6px}
+.eitem{display:flex;align-items:center;gap:8px;text-align:left;border:1px solid var(--line);background:var(--panel);border-radius:9px;padding:8px 10px;cursor:pointer;color:var(--fg);font-size:13px}
+.eitem:hover{border-color:var(--line2)}
+.eitem.on{border-color:var(--kelp)}
+.eitem .lvl{margin-left:auto}
+.eform{border:1px solid var(--line);background:var(--panel);border-radius:12px;padding:16px;display:flex;flex-direction:column;gap:12px;min-width:0}
+.eform .row3{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}
+@media(max-width:700px){.eform .row3{grid-template-columns:1fr}}
+.eform input:not([type=checkbox]),.eform select,.eform textarea{background:var(--term);border:1px solid var(--line2);border-radius:7px;color:var(--strong);font:13px var(--sans);padding:6px 9px;width:100%}
+.eform input:disabled{opacity:.5}
+.eform textarea{font:12px/1.5 var(--mono);min-height:90px;resize:vertical}
+.eform h3{display:flex;align-items:center;gap:8px}
+.eform .lbl{font-size:11px;color:var(--dim);text-transform:uppercase;letter-spacing:.07em;font-family:var(--mono)}
+.eform .field{display:flex;flex-direction:column;gap:5px}
+.cmd{font-family:var(--mono);font-size:12px;background:var(--term);border:1px solid var(--line);border-radius:8px;padding:8px 10px;color:var(--kelp);overflow-x:auto;white-space:pre}
+.chk{display:flex;align-items:center;gap:8px;font-size:13px;color:var(--muted);cursor:pointer}
+.detect{display:flex;flex-wrap:wrap;gap:8px;font-size:12.5px;color:var(--muted);align-items:center}
+.dchip{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--line2);border-radius:99px;padding:3px 10px 3px 8px;font-family:var(--mono);font-size:11.5px;color:var(--fg)}
+.dchip.off{opacity:.55;border-style:dashed}
+.flow{display:flex;align-items:stretch;overflow-x:auto;padding-bottom:4px}
+.fcard{flex:0 0 205px;text-align:left;border:1px solid var(--line);background:var(--panel);border-radius:12px;padding:12px;display:flex;flex-direction:column;gap:6px;cursor:pointer;color:var(--fg);font-family:var(--sans)}
+.fcard:hover{border-color:var(--line2)}
+.fcard.on{border-color:var(--kelp);background:linear-gradient(180deg,rgba(143,209,106,.07),transparent 70%),var(--panel)}
+.fcard .fa{font-weight:600;color:var(--strong);font-size:14px;display:flex;align-items:center;gap:7px}
+.fcard .fm{font-size:12px;color:var(--muted)}
+.fcard .fg{font-size:11.5px;color:var(--dim)}
+.fcard .fl{font-size:11px;color:var(--amber)}
+.fcard .lvl{align-self:flex-start}
+.farrow{flex:0 0 26px;display:grid;place-items:center;color:var(--dim)}
+.seg.lg button{font-size:12.5px;padding:5px 14px}
+.tscroll{overflow-x:auto;border:1px solid var(--line);border-radius:12px;background:var(--panel)}
+.lt{border-collapse:collapse;width:100%;min-width:820px;font-size:12.5px}
+.lt th,.lt td{border-bottom:1px solid var(--line);padding:9px 12px;text-align:left;vertical-align:top}
+.lt tr:last-child td{border-bottom:0}
+.lt th{font-size:12px;color:var(--strong);font-weight:600}
+.lt th .hd{display:flex;align-items:center;gap:6px}
+.lt .src{display:block;font-weight:400;font-size:10.5px;color:var(--dim)}
+.lt td code{font-family:var(--mono);font-size:11.5px;color:var(--fg)}
+.lt td .nt{display:block;font-size:11px;color:var(--dim);margin-top:2px}
+.lt td b{color:var(--strong)}
+.lt tr.yolo td:first-child b{color:var(--red)}
+.lt td small{display:block;color:var(--dim);font-size:11px}
+.keys{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:6px 18px;font-size:13px;color:var(--muted)}
+.keys div{display:flex;justify-content:space-between;gap:10px;border-bottom:1px dashed var(--line);padding:4px 0}
+.tryit{display:flex;flex-wrap:wrap;gap:8px 18px;font-size:13px;color:var(--muted)}
+.tryit span::before{content:"→ ";color:var(--kelp)}
+
+/* ---------- names ---------- */
+.names{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:12px}
+.name{text-align:left;cursor:pointer;border:1px solid var(--line);background:var(--panel);border-radius:12px;padding:16px;display:flex;flex-direction:column;gap:8px;position:relative}
+.name:hover{border-color:var(--line2)}
+.name.on{border-color:var(--kelp);background:linear-gradient(180deg,rgba(143,209,106,.07),transparent 70%),var(--panel)}
+.name .nm{font-size:24px;font-weight:700;color:var(--strong);letter-spacing:-.02em}
+.name .cmd{font-family:var(--mono);font-size:12px;color:var(--kelp)}
+.name .why{font-size:13.5px;color:var(--muted);line-height:1.5}
+.name .tag{position:absolute;top:14px;right:14px;font-family:var(--mono);font-size:10px;letter-spacing:.06em;text-transform:uppercase;color:#10131a;background:var(--kelp);padding:2px 7px;border-radius:99px}
+.name .risk{font-size:12px;color:var(--dim)}
+
+/* ---------- lifecycle ---------- */
+.steps{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:12px;counter-reset:s}
+.step{border-top:2px solid var(--line2);padding-top:12px;display:flex;flex-direction:column;gap:6px}
+.step h3::before{counter-increment:s;content:counter(s) "  ";font-family:var(--mono);color:var(--kelp);font-weight:500}
+.step p{font-size:13.5px;color:var(--muted)}
+.step code{font-family:var(--mono);font-size:12px;color:var(--fg);background:var(--panel2);padding:1px 5px;border-radius:4px}
+
+/* ---------- profiles ---------- */
+pre.code{margin:0;background:var(--term);border:1px solid var(--line);border-radius:12px;padding:16px;font-family:var(--mono);font-size:12px;line-height:1.65;overflow-x:auto;color:var(--fg)}
+pre.code .k{color:var(--teal)}pre.code .s{color:var(--kelp)}pre.code .h{color:var(--violet)}pre.code .c{color:var(--dim)}
+
+/* ---------- functionality ---------- */
+.cols3{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}
+@media(max-width:900px){.cols3{grid-template-columns:1fr}}
+.col{border:1px solid var(--line);border-radius:12px;background:var(--panel);padding:16px;display:flex;flex-direction:column;gap:12px}
+.col-h{display:flex;align-items:center;gap:8px}
+.chip{font-family:var(--mono);font-size:10.5px;letter-spacing:.06em;text-transform:uppercase;padding:2px 8px;border-radius:99px;font-weight:500}
+.chip.v1{background:rgba(143,209,106,.15);color:var(--kelp)}
+.chip.nx{background:rgba(96,165,250,.15);color:var(--blue)}
+.chip.no{background:rgba(248,113,113,.13);color:var(--red)}
+.col ul{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:10px}
+.col li{font-size:13.5px;line-height:1.45;color:var(--muted)}
+.col li b{color:var(--strong);font-weight:600;display:block;font-size:13.5px}
+kbd{font-family:var(--mono);font-size:11px;border:1px solid var(--line2);border-bottom-width:2px;border-radius:4px;padding:0 4px;color:var(--fg);background:var(--panel2)}
+
+/* ---------- layouts ---------- */
+.layouts{display:grid;grid-template-columns:repeat(auto-fit,minmax(250px,1fr));gap:14px}
+.lay{border:1px solid var(--line);border-radius:12px;background:var(--panel);padding:14px;display:flex;flex-direction:column;gap:10px}
+.lay.on{border-color:var(--kelp)}
+.wire{height:150px;display:grid;gap:4px;padding:4px;background:var(--term);border-radius:8px;border:1px solid var(--line)}
+.wire div{border-radius:4px;display:grid;place-items:center;font-family:var(--mono);font-size:10px;color:var(--strong)}
+.w-t{background:rgba(45,212,191,.22)}.w-g{background:rgba(192,132,252,.22)}.w-d{background:rgba(251,146,60,.22)}.w-b{background:var(--panel2);color:var(--dim)!important}
+.lay p{font-size:13px;color:var(--muted)}
+.lay .lh{display:flex;align-items:center;gap:8px}
+
+.two{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:14px}
+.box{border:1px solid var(--line);border-radius:12px;background:var(--panel);padding:16px;display:flex;flex-direction:column;gap:10px}
+.box ul,.box ol{margin:0;padding-left:18px;display:flex;flex-direction:column;gap:8px;font-size:13.5px;color:var(--muted)}
+.box li b{color:var(--strong);font-weight:600}
+.src{font-family:var(--mono);font-size:11px;color:var(--dim)}
+@media (prefers-reduced-motion:reduce){*{animation:none!important}}
+</style>
+
+<div class="page">
+
+<header class="hero">
+  <div class="hero-top">
+    <span class="eyebrow">Hoboware · concept · Oct 2026</span>
+    <span class="pill">Kelp's graph <b>+</b> stdusk's terminal <b>+</b> agents in worktrees</span>
+  </div>
+  <h1><span class="app-name">Tidewatch</span>: one window to run AI agents, one repo at a time.</h1>
+  <p class="lede">Each repo gets its own window space. Each tab inside it is a fresh git worktree with an AI agent running in it. You watch the agent work in the terminal, see the history of that one worktree below it, and read the changes on the right. An Overview lists every agent in every repo. A tab can also run a whole workflow (work, review, refactor), each stage with its own agent, model and permissions. There are no fetch, pull or push buttons. The agent does that work, or you type it.</p>
+</header>
+
+<section class="sec" aria-label="Interactive mockup">
+  <div class="tryit">
+    <span>Click a tab to switch agents</span>
+    <span>Click a commit to see its diff</span>
+    <span>Double-click a commit to check it out</span>
+    <span>Press + to start an agent</span>
+    <span>Hover a diff line, click + to comment, then send it to the agent</span>
+    <span>Switch the diff to Split</span>
+    <span>Press "finish stage" on auth-refresh to walk its workflow</span>
+    <span>Turn on focus mode from the terminal header</span>
+    <span>Answer the tab with the amber bar with <kbd>y</kbd></span>
+    <span>Split the terminal from its header, or <kbd>⌘D</kbd></span>
+    <span>Flip the graph between This worktree and Whole repo</span>
+    <span>Open the Overview, top left</span>
+    <span>Pick Other in the repo menu for folders that are not git</span>
+  </div>
+  <div class="mock-scroll">
+    <div class="win" id="win">
+      <div class="titlebar">
+        <div class="lights"><i></i><i></i><i></i></div>
+        <button class="ovbtn" id="ovBtn" title="Overview (⌘0)" aria-label="Overview"></button>
+        <div class="repo-chip" id="repoChip" tabindex="0" role="button" aria-haspopup="menu"></div>
+        <div class="tabs" id="tabs"></div>
+        <button class="newtab" id="newTab" title="New agent (Cmd+T)" aria-label="New agent">+</button>
+        <div class="tb-right"><button class="gear" title="Settings (⌘,)" aria-label="Settings"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3"><circle cx="8" cy="8" r="2.2"/><path d="M8 1.5v1.8M8 12.7v1.8M1.5 8h1.8M12.7 8h1.8M3.4 3.4l1.3 1.3M11.3 11.3l1.3 1.3M3.4 12.6l1.3-1.3M11.3 4.7l1.3-1.3"/></svg></button></div>
+      </div>
+      <div class="body">
+        <div class="left">
+          <div class="term">
+            <div class="pane-head" id="termHead"></div>
+            <div class="term-panes" id="termPanes"></div>
+          </div>
+          <div class="graph">
+            <div class="pane-head" id="graphHead"></div>
+            <div class="gscroll" id="gscroll"></div>
+          </div>
+        </div>
+        <div class="diff" id="diff"></div>
+        <button class="peek" id="peek" data-act="focus-off"><b>Focus mode</b><span>History and diff are hidden while the agent works. They come back when it stops or needs you.</span><span style="margin-left:auto" class="mono">⌘. to leave</span></button>
+      </div>
+      <div class="overview" id="overview" hidden></div>
+      <div class="statusbar" id="status"></div>
+    </div>
+  </div>
+</section>
+
+<section class="sec" id="names">
+  <div class="sec-head">
+    <span class="eyebrow">Names</span>
+    <h2>Five names, one pick</h2>
+    <p>Tidewatch is the pick. The others stay here for comparison; click one and the mockup above uses it. I have not checked trademarks or Homebrew for clashes yet.</p>
+  </div>
+  <div class="names" id="nameList"></div>
+</section>
+
+<section class="sec">
+  <div class="sec-head">
+    <span class="eyebrow">How a tab works</span>
+    <h2>One tab = one worktree = one agent</h2>
+    <p>Tabs never mix repos. Opening a tab inside a repo always makes a new, separate worktree, so two agents can never edit the same files.</p>
+  </div>
+  <div class="steps">
+    <div class="step"><h3>Open a tab</h3><p>Press <kbd>⌘T</kbd> in a repo. Pick a workflow or a single profile, set the permission level, write the task, pick the base branch (default: <code>main</code>).</p></div>
+    <div class="step"><h3>Worktree is made</h3><p><code>git worktree add -b agent/&lt;name&gt;</code> in <code class="wt-root">~/.tidewatch/&lt;repo&gt;/</code>. The profile's setup step runs (for example <code>npm ci</code>).</p></div>
+    <div class="step"><h3>Agent starts</h3><p>The profile's CLI starts in the worktree with the task as its first prompt. The tab shows its logo and status.</p></div>
+    <div class="step"><h3>You watch</h3><p>Status on the tab: working, needs you, done, failed. A notification fires when an agent needs you and the window is hidden.</p></div>
+    <div class="step"><h3>You review</h3><p>Split the terminal to run the app or tests in the same worktree. Commits appear in the graph on the agent's lane. Uncommitted work shows as a live row on top. Comment on a line in the diff and send it to the agent.</p></div>
+    <div class="step"><h3>Close the tab</h3><p>Its terminals close and the worktree is removed. If the branch has work not on <code>main</code>, you choose: keep the branch or delete it.</p></div>
+  </div>
+</section>
+
+<section class="sec" id="profiles">
+  <div class="sec-head">
+    <span class="eyebrow">Profiles</span>
+    <h2>Pre-seeded profiles, with every permission level</h2>
+    <p>On first launch Tidewatch looks for agent CLIs on your PATH and creates these profiles for the ones it finds. Each profile picks an agent, a model and a permission level from Read only to YOLO. Tidewatch turns the level into that CLI's real flags. Edit one below and the mockup's new-agent dialog uses it.</p>
+  </div>
+  <div class="detect" id="detect"></div>
+  <div class="ed"><div class="elist" id="plist2"></div><div class="eform" id="pform"></div></div>
+  <h3>The five levels, per agent</h3>
+  <div class="tscroll" id="levelTable"></div>
+  <pre class="code" id="profToml"></pre>
+</section>
+
+<section class="sec" id="workflows">
+  <div class="sec-head">
+    <span class="eyebrow">Workflows</span>
+    <h2>Work, review, refactor as one pipeline</h2>
+    <p>A workflow is a list of stages. Each stage is a contract: what it does (the prompt), who does it (agent, model, permission level), and the gate it must pass before the next stage starts. All stages run in the same worktree, one after the other, in the tab's agent pane. A failed gate can send the work back to an earlier stage, a set number of times.</p>
+  </div>
+  <div class="seg lg" id="wfPick" role="group" aria-label="Workflow"></div>
+  <div class="flow" id="wfFlow"></div>
+  <div class="eform" id="wfForm"></div>
+  <div class="two">
+    <div class="box">
+      <h3>The stage contract</h3>
+      <ul>
+        <li><b>Inputs:</b> the prompt can use <span class="mono">{task}</span>, <span class="mono">{base}</span>, <span class="mono">{branch}</span>, <span class="mono">{prev}</span> (the last stage's summary) and <span class="mono">{findings}</span> (open review comments).</li>
+        <li><b>Outputs:</b> Work, Fix and Refactor leave commits. Review leaves findings (file, line, blocking or nit, text). Findings become threads in the diff, the same threads you write.</li>
+        <li><b>Gates:</b> tests pass (the repo's test command), a new test fails, no blocking findings, or you approve. Tidewatch checks the gate, not the agent.</li>
+        <li><b>On fail:</b> go back to a named stage with the findings, up to the loop limit. Then the tab stops and asks you.</li>
+        <li><b>Permissions:</b> each stage has its own level. Review stages default to Read only, so a reviewer cannot "fix" what it reviews.</li>
+      </ul>
+    </div>
+    <pre class="code" id="wfToml"></pre>
+  </div>
+</section>
+
+<section class="sec">
+  <div class="sec-head">
+    <span class="eyebrow">Functionality</span>
+    <h2>What is in, what comes next, what stays out</h2>
+    <p>The rule for v1: the UI shows and monitors. It only changes things where a click is clearly faster than asking an agent.</p>
+  </div>
+  <div class="cols3">
+    <div class="col">
+      <div class="col-h"><span class="chip v1">v1</span><h3>First release</h3></div>
+      <ul>
+        <li><b>Repo tabs, never mixed</b>A repo chip like stdusk. The tab bar shows only that repo's agents. <kbd>⌘⌃]</kbd> / <kbd>⌘⌃[</kbd> switches repo. A dot on the chip means an agent in another repo needs you.</li>
+        <li><b>Agent tab = new worktree</b>Made on open, removed on close. One pinned "main" tab per repo is a plain shell in the main checkout.</li>
+        <li><b>Pre-seeded profiles</b>Made on first launch from the agent CLIs found on your PATH (Claude Code, Codex, Gemini CLI, Copilot CLI). Builder, Builder YOLO, Fixer, Reviewer, Second opinion, Assistant and Shell.</li>
+        <li><b>Permission levels for every agent</b>Read only, Ask, Auto edit, Auto and YOLO, mapped to each CLI's own flags. Set per profile, per workflow stage, and per tab when you open it. YOLO only runs inside a worktree.</li>
+        <li><b>Workflows</b>Ship a feature (work, review, refactor, hand off), Fix a bug, Review a PR. Each stage has its own prompt, agent, model, permission level and gate. Editable, saved as TOML.</li>
+        <li><b>Focus mode</b>History and diff hide while the agent works and come back when it stops or needs you. Pairs with the quake drop-down. <kbd>⌘.</kbd></li>
+        <li><b>Tabs exactly like stdusk</b>Monospace "1  title", the agent's logo in the right slot (close button on hover), a colored underline per agent, a split-layout glyph, and status as the thin bar on the top edge: blue sliding while working, amber pulsing when it needs you, green when done, a red mark when it failed. macOS notification when hidden.</li>
+        <li><b>Split terminals in the same worktree</b><kbd>⌘D</kbd> splits right, <kbd>⌘⇧D</kbd> splits down. The new pane is a plain shell in the agent's worktree, on the same branch: run the dev server, tests or git commands while the agent works. The tab shows a small layout icon when split.</li>
+        <li><b>Terminal (stdusk engine)</b>Full terminal per tab: scrollback search, links, image paste, theme reports.</li>
+        <li><b>Graph of the active worktree</b>Only the history of the tab you are on: its commits, the main commits under them, and a live row for uncommitted work. The header says how far ahead or behind main it is. A Whole repo switch shows every worktree when you need it.</li>
+        <li><b>Overview</b>One screen with every agent in every repo, "needs you" first, with the last line each one printed. Click a row to jump to it. <kbd>⌘0</kbd>.</li>
+        <li><b>Other, for folders that are not git</b>Notes, Downloads, an ssh session. Terminal only, no graph or diff. Agents work in the folder itself, so the new-agent dialog warns when a second agent picks the same folder.</li>
+        <li><b>Kelp's diff for the selected commit</b>Unified or split, changed words highlighted, jump between changes with <kbd>⌥↑</kbd> / <kbd>⌥↓</kbd>. Updates live for uncommitted work.</li>
+        <li><b>Review comments that reach the agent</b>Kelp's threads (replies, resolve, copy as Markdown), plus Send to agent for one thread or all open ones. The agent's answer lands back in the thread.</li>
+        <li><b>Double-click to check out</b>In the main tab it checks out there. In an agent tab it is blocked while the agent works, so files never change under it. A branch owned by another agent jumps to that tab.</li>
+        <li><b>Session restore</b>Tabs, worktrees and agent sessions come back after a restart or upgrade.</li>
+      </ul>
+    </div>
+    <div class="col">
+      <div class="col-h"><span class="chip nx">Next</span><h3>After v1</h3></div>
+      <ul>
+        <li><b>Pull request status</b>A chip on the agent's label when it opened a PR: checks running, passed, failed, merged.</li>
+        <li><b>Auto clean-up</b>Offer to close tabs whose branch was merged.</li>
+        <li><b>A port per worktree</b>Set a free <span class="mono">PORT</span> in each worktree, so two dev servers in two tabs never clash.</li>
+        <li><b>Time and cost per agent</b>How long it ran, and tokens or cost when the CLI reports them.</li>
+      </ul>
+    </div>
+    <div class="col">
+      <div class="col-h"><span class="chip no">No buttons</span><h3>Left to the agent or the terminal</h3></div>
+      <ul>
+        <li><b>Fetch, pull, push</b>The agent runs them, or you type them. A background fetch may come later to keep the graph fresh.</li>
+        <li><b>Branch, merge, rebase, reset</b>No drag-and-drop like Kelp. Ask the agent.</li>
+        <li><b>Stage, commit, stash</b>No staging area. Agents commit as they go.</li>
+        <li><b>Combined tree of all repos</b>Never. One repo per view, always.</li>
+        <li><b>Branch sidebar</b>Left out. The graph labels are enough, and the space goes to the terminal.</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<section class="sec">
+  <div class="sec-head">
+    <span class="eyebrow">From Kelp</span>
+    <h2>The review tools come along</h2>
+    <p>Kelp's diff and review features carry over almost as they are. The one change: a comment can go straight to the agent, and the agent can answer in the thread.</p>
+  </div>
+  <div class="two">
+    <div class="box">
+      <h3>Kept</h3>
+      <ul>
+        <li><b>Review comments:</b> hover a line, click +, comment. Threads with replies and resolve. They follow their line when code above them changes, live in <span class="mono">.git/<span class="app-slug">tidewatch</span>/comments.json</span>, are never pushed, and copy as Markdown. New: Send to agent.</li>
+        <li><b>Diff views:</b> unified, split or the full file, with the changed words highlighted inside each line.</li>
+        <li><b>Jump between changes:</b> arrows in the diff bar, or <kbd>⌥↑</kbd> / <kbd>⌥↓</kbd>.</li>
+        <li><b>File history and blame:</b> every commit that touched a file, following renames. Blame per line, click to find the commit in the graph.</li>
+        <li><b>Previews:</b> images and SVGs before and after, Markdown rendered with its images.</li>
+        <li><b>Commit details:</b> message, author, parents, files as a list or a tree, signed-commit badges.</li>
+        <li><b>Graph polish:</b> rounded lanes, avatars, hover a commit to light its path to the tip.</li>
+      </ul>
+    </div>
+    <div class="box">
+      <h3>Left out (the agent or the terminal does it)</h3>
+      <ul>
+        <li>Staging, the commit box, amend, the Conventional Commit picker.</li>
+        <li>Branch, tag and remote actions, drag a label to merge or rebase.</li>
+        <li>Stashes, the branch sidebar, the git console.</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<section class="sec">
+  <div class="sec-head">
+    <span class="eyebrow">Layout</span>
+    <h2>Layout B, with focus mode</h2>
+    <p>You picked B: the terminal gets the full width, which leaves room for splits. Focus mode (C) is in v1 too and pairs with the quake drop-down.</p>
+  </div>
+  <div class="layouts">
+    <div class="lay">
+      <div class="lh"><h3>A · Diff column</h3><span class="chip no">not picked</span></div>
+      <div class="wire" style="grid-template-columns:1.3fr 1fr;grid-template-rows:1fr 1.1fr"><div class="w-t">terminal</div><div class="w-d" style="grid-row:1/3;grid-column:2">diff</div><div class="w-g">graph</div></div>
+      <p>The diff gets full height, so long changes read well. The terminal is narrower.</p>
+    </div>
+    <div class="lay on">
+      <div class="lh"><h3>B · Terminal full width</h3><span class="chip v1">picked · in mockup</span></div>
+      <div class="wire" style="grid-template-columns:1.3fr 1fr;grid-template-rows:1fr 1.1fr"><div class="w-t" style="grid-column:1/3">terminal</div><div class="w-g">graph</div><div class="w-d">diff</div></div>
+      <p>The terminal gets the whole top. Graph and diff share the bottom half.</p>
+    </div>
+    <div class="lay">
+      <div class="lh"><h3>C · Focus mode</h3><span class="chip v1">v1 · try it above</span></div>
+      <div class="wire" style="grid-template-columns:1fr 1fr;grid-template-rows:1fr 26px"><div class="w-t" style="grid-column:1/3">terminal</div><div class="w-b">graph ▲</div><div class="w-b">diff ▲</div></div>
+      <p>Terminal only while the agent works. Graph and diff slide up when it stops or needs you.</p>
+    </div>
+  </div>
+</section>
+
+<section class="sec" id="inherited">
+  <div class="sec-head">
+    <span class="eyebrow">Inherited</span>
+    <h2>Everything else works like stdusk and Kelp</h2>
+    <p>Tidewatch should feel like a sibling of the two apps from the first launch: same window behavior, same updates, same keys.</p>
+  </div>
+  <div class="two">
+    <div class="box">
+      <h3>From stdusk</h3>
+      <ul>
+        <li><b>Quake or window:</b> drops from the top edge on a global hotkey, hides on blur, follows the active Space and screen. Or a normal window.</li>
+        <li><b>Restart keeps your shells:</b> after an upgrade the old window hands live terminals and agents to the new one.</li>
+        <li><b>One instance:</b> <span class="mono"><span class="app-slug">tidewatch</span> ~/Git/repo</span> opens a tab in the running window.</li>
+        <li><b>Settings GUI:</b> fully keyboard-operable, color schemes with live preview, light and dark that follow the OS, settings sync to your own git repo.</li>
+        <li><b>Command palette, scrollback search, links, image paste, file drop, theme reports</b> to CLIs like Claude Code.</li>
+        <li><b>Notifications</b> when a long job finishes or an agent needs you while hidden, and the menu-bar item.</li>
+      </ul>
+    </div>
+    <div class="box">
+      <h3>From Kelp</h3>
+      <ul>
+        <li><b>Self-update</b> in the background when installed with Homebrew.</li>
+        <li><b>Session restore:</b> reopens last time's repos and tabs.</li>
+        <li><b>Speed rules:</b> 0% CPU when idle, only visible graph rows drawn, git never blocks the UI.</li>
+        <li><b>Avatars:</b> GitHub, then Gravatar, then initials.</li>
+        <li><b>Accessibility:</b> visible focus, full keyboard use, a contrast floor on every theme (from stdusk), reduced motion respected.</li>
+      </ul>
+    </div>
+    <div class="box">
+      <h3>Keys</h3>
+      <div class="keys">
+        <div><span>New agent</span><kbd>⌘T</kbd></div>
+        <div><span>Close tab</span><kbd>⌘W</kbd></div>
+        <div><span>Go to tab</span><kbd>⌘1-9</kbd></div>
+        <div><span>Next / previous tab</span><kbd>⌘⇧] [</kbd></div>
+        <div><span>Next / previous repo</span><kbd>⌘⌃] [</kbd></div>
+        <div><span>Overview</span><kbd>⌘0</kbd></div>
+        <div><span>Split right / down</span><kbd>⌘D ⌘⇧D</kbd></div>
+        <div><span>Focus mode</span><kbd>⌘.</kbd></div>
+        <div><span>Next / previous change</span><kbd>⌥↓ ↑</kbd></div>
+        <div><span>Command palette</span><kbd>⌘⇧P</kbd></div>
+        <div><span>Search scrollback</span><kbd>⌘F</kbd></div>
+        <div><span>Settings</span><kbd>⌘,</kbd></div>
+      </div>
+      <p class="src" style="font-family:var(--sans);font-size:12px">The quake hotkey needs its own default, not stdusk's <kbd>⌃`</kbd>, so both apps can run at once.</p>
+    </div>
+  </div>
+</section>
+
+<section class="sec">
+  <div class="sec-head">
+    <span class="eyebrow">Building it</span>
+    <h2>Mostly parts we already have</h2>
+  </div>
+  <div class="two">
+    <div class="box">
+      <h3>Reused</h3>
+      <ul>
+        <li><b>From Kelp:</b> <span class="mono">kelp-core</span> as a git dependency. Graph lanes, diff, status, worktree listing. Its speed rules carry over (only visible rows are drawn, 0% idle CPU).</li>
+        <li><b>From stdusk:</b> the terminal (alacritty grid, pty, OSC progress), split panes from <span class="mono">pane.rs</span>, AI CLI detection from <span class="mono">procwatch.rs</span>, repo grouping from <span class="mono">repo.rs</span>, session handoff on upgrade.</li>
+        <li><b>Same stack:</b> Rust, egui, gitoxide for reads, git CLI for writes.</li>
+      </ul>
+    </div>
+    <div class="box">
+      <h3>New</h3>
+      <ul>
+        <li><b>Worktree manager:</b> create on tab open, remove on close, find leftovers after a crash.</li>
+        <li><b>Profiles and workflows:</b> TOML files, first-launch detection of agent CLIs, the permission-level mapping per CLI, per-repo overrides.</li>
+        <li><b>Workflow runner:</b> starts each stage's CLI in the agent pane, checks gates (test command, findings, approval), loops back on failure.</li>
+        <li><b>Agent status:</b> uses the CLI's own hooks where they exist (Claude Code has Notification and Stop hooks). Falls back to OSC progress, title changes and quiet output time.</li>
+        <li><b>Comments to the agent:</b> pasted into its terminal as Markdown with bracketed paste. Proposed: the app also runs a small MCP server per agent with a reply tool, so the agent can answer inside the thread.</li>
+      </ul>
+    </div>
+    <div class="box">
+      <h3>Decided</h3>
+      <ul>
+        <li><b>Name:</b> Tidewatch.</li>
+        <li><b>Repo:</b> a new repo in Hoboware, <span class="mono">Hoboware/tidewatch</span>.</li>
+        <li><b>Worktrees:</b> <span class="mono">~/.tidewatch/&lt;repo&gt;/&lt;tab&gt;</span>, out of the code folders, no gitignore entry needed.</li>
+        <li><b>Layout:</b> B, terminal full width, with focus mode.</li>
+      </ul>
+      <h3>Still open</h3>
+      <ol>
+        <li><b>Sharing code:</b> <span class="mono">kelp-core</span> is already a crate, so Tidewatch can use it as a git dependency. stdusk is a single binary crate, so its terminal parts (pty, grid, splits, CLI detection) first need to move into a library crate inside the stdusk repo. The other option is to copy them over and let the two copies drift apart.</li>
+        <li><b>Main tab:</b> keep a pinned plain shell per repo, or agents only?</li>
+        <li><b>Workflows:</b> when a gate fails and the loop limit is hit, stop and ask (as in the mockup), or keep going and mark the tab failed?</li>
+        <li><b>Overview:</b> a button next to the repo chip (as in the mockup), or the screen you land on at launch?</li>
+        <li><b>Other:</b> allow agents there at all? There is no worktree to protect the files.</li>
+      </ol>
+    </div>
+  </div>
+</section>
+
+</div>
+
+<script>
+const NAMES = [
+  {nm:'Tidewatch', why:'Watching the tide come in. The app is mostly watching: agents work, you keep an eye on them. Sea themed like Kelp.', risk:'Long to type. A short tw alias on the command helps.', pick:true},
+  {nm:'Shoal', why:'A shoal is a group of fish swimming side by side, each on its own path, like agents each in their own worktree.', risk:'Common English word, so search results will be crowded.'},
+  {nm:'Gloam', why:'An old word for dusk. A direct nod to stdusk, and short to type.', risk:'Less clear what it means at first sight.'},
+  {nm:'Lagoon', why:'A lagoon is a body of water walled off from the sea. Each repo is walled off from the others.', risk:'Sounds more like a resort than a tool.'},
+  {nm:'Undertow', why:'The pull under the surface. The agents do the work below while you see the top.', risk:'Undertow is dangerous, which may read badly.'}
+];
+let appName = 'Tidewatch';
+try { const s = localStorage.getItem('concept-name-v2'); if (s && NAMES.some(n => n.nm === s)) appName = s; } catch (e) {}
+const slug = () => appName.toLowerCase();
+
+const LEVELS = [
+  {id:'plan', name:'Read only', desc:'Reads and plans. Cannot change files'},
+  {id:'ask', name:'Ask', desc:'Asks before every edit and command'},
+  {id:'edits', name:'Auto edit', desc:'Edits files freely, asks before commands'},
+  {id:'auto', name:'Auto', desc:'Runs on its own. The CLI\'s safety checks or sandbox still apply'},
+  {id:'yolo', name:'YOLO', desc:'No prompts and no checks at all'},
+];
+const LEVEL_NAME = (id) => (LEVELS.find(l => l.id === id) || {name:''}).name;
+const AGENTS = {
+  claude:{name:'Claude Code', bin:'claude', found:true, ver:'2.1.289', src:'from claude --help 2.1.289', models:['opus','sonnet','haiku'], effort:true,
+    levels:{plan:'--permission-mode plan', ask:'--permission-mode manual', edits:'--permission-mode acceptEdits', auto:'--permission-mode auto', yolo:'--dangerously-skip-permissions'}, notes:{}},
+  codex:{name:'Codex', bin:'codex', found:false, ver:'', src:'from Codex docs, not installed here', models:[], effort:false,
+    levels:{plan:'--sandbox read-only --ask-for-approval on-request', ask:'--ask-for-approval untrusted', edits:'--sandbox workspace-write --ask-for-approval on-request', auto:'--sandbox workspace-write --ask-for-approval never', yolo:'--dangerously-bypass-approvals-and-sandbox'},
+    notes:{ask:'value unverified until codex --help is checked', edits:'--full-auto is deprecated; this is its replacement', auto:'never asks, but stays in the sandbox', yolo:'alias: --yolo'}},
+  gemini:{name:'Gemini CLI', bin:'gemini', found:true, ver:'0.46.0', src:'from gemini --help 0.46.0', models:[], effort:false,
+    levels:{plan:'--approval-mode plan', ask:'--approval-mode default', edits:'--approval-mode auto_edit', auto:'--approval-mode yolo --sandbox', yolo:'--yolo'},
+    notes:{auto:'closest match: everything allowed, inside the sandbox'}},
+  copilot:{name:'Copilot CLI', bin:'copilot', found:true, ver:'1.0.91', src:'from copilot --help 1.0.91', models:['auto'], effort:false,
+    levels:{plan:'--mode plan', ask:'', edits:'--allow-tool write', auto:'--allow-all-tools', yolo:'--yolo'},
+    notes:{ask:'no flag, the CLI asks by default', edits:'valid tool kind, checked in the research', auto:'paths and URLs are still checked'}},
+  shell:{name:'Shell (no agent)', bin:'zsh', found:true, levels:null},
+};
+const PROFILES = {
+  builder:{name:'Builder', agent:'claude', model:'opus', effort:'high', level:'edits', color:'var(--teal)', desc:'Builds a feature end to end and commits as it goes.', setup:'npm ci', noPush:true, extra:''},
+  yolo:{name:'Builder YOLO', agent:'claude', model:'opus', effort:'high', level:'yolo', color:'var(--red)', desc:'Same as Builder with no prompts. Only in a worktree.', setup:'npm ci', noPush:true, extra:''},
+  fixer:{name:'Fixer', agent:'codex', model:'', effort:'', level:'auto', color:'var(--orange)', desc:'Hunts one bug. Failing test first, then the fix.', setup:'npm ci', noPush:true, extra:''},
+  reviewer:{name:'Reviewer', agent:'claude', model:'sonnet', effort:'', level:'plan', color:'var(--violet)', desc:'Reads a branch or PR and writes findings.', setup:'none', noPush:true, extra:''},
+  second:{name:'Second opinion', agent:'gemini', model:'', effort:'', level:'plan', color:'var(--blue)', desc:'A different model reviews the same diff.', setup:'none', noPush:true, extra:''},
+  copilot:{name:'Copilot', agent:'copilot', model:'auto', effort:'', level:'ask', color:'var(--muted)', desc:'GitHub Copilot CLI, asking before each step.', setup:'npm ci', noPush:true, extra:''},
+  assistant:{name:'Assistant', agent:'claude', model:'sonnet', effort:'', level:'edits', color:'var(--pink)', desc:'For folders that are not code: notes, files, documents.', setup:'none', noPush:true, extra:''},
+  shell:{name:'Shell', agent:'shell', level:null, color:'var(--blue)', desc:'A plain terminal in a fresh worktree. No agent.', setup:'none', noPush:false, extra:''},
+  home:{name:'Main checkout', agent:'shell', level:null, color:'var(--kelp)', desc:'', setup:'', noPush:false, extra:''},
+};
+function syncCli(p){ p.cli = AGENTS[p.agent].bin; }
+Object.values(PROFILES).forEach(syncCli);
+
+const GATES = [
+  {id:'tests', name:'Tests pass'},
+  {id:'test_fails', name:'A new test fails'},
+  {id:'test_passes', name:'The new test passes, the rest still pass'},
+  {id:'no_blocking', name:'No blocking findings'},
+  {id:'same_behavior', name:'Tests pass, behavior unchanged'},
+  {id:'approve', name:'You approve'},
+];
+const GATE_NAME = (id) => (GATES.find(g => g.id === id) || {name:id}).name;
+const ACTIONS = {
+  work:{name:'Work', gate:'tests', prompt:'{task}\n\nWork in small steps. Commit after each step that passes the tests. Do not push.'},
+  review:{name:'Review', gate:'no_blocking', prompt:'Review {base}..HEAD for bugs, edge cases and missing tests.\nReport each finding with file, line, blocking or nit, and a one-line fix.\nDo not edit files.'},
+  refactor:{name:'Refactor', gate:'same_behavior', prompt:'Simplify the code changed in {base}..HEAD: remove duplication, improve names.\nDo not change behavior. Keep the tests green. Commit when done.'},
+  reproduce:{name:'Reproduce', gate:'test_fails', prompt:'{task}\n\nWrite one test that fails because of this bug. Do not fix the bug yet.'},
+  fix:{name:'Fix', gate:'test_passes', prompt:'Make the failing test pass with the smallest change.\nDo not edit the test. Open findings:\n{findings}'},
+  handoff:{name:'Hand off', gate:'approve', prompt:'Write a PR title and description for {base}..HEAD.\nList what changed and how it was tested.'},
+};
+const WORKFLOWS = {
+  ship:{name:'Ship a feature', desc:'Build, get a second opinion, tidy up, hand off.', stages:[
+    {action:'work', agent:'claude', model:'opus', effort:'high', level:'edits'},
+    {action:'review', agent:'gemini', model:'', effort:'', level:'plan', onFail:0, loops:2},
+    {action:'refactor', agent:'claude', model:'sonnet', effort:'', level:'edits'},
+    {action:'handoff', agent:'claude', model:'haiku', effort:'', level:'plan', human:true},
+  ]},
+  fix:{name:'Fix a bug', desc:'Prove the bug with a test, fix it, check the fix.', stages:[
+    {action:'reproduce', agent:'codex', model:'', effort:'', level:'auto'},
+    {action:'fix', agent:'codex', model:'', effort:'', level:'auto'},
+    {action:'review', agent:'claude', model:'sonnet', effort:'', level:'plan', onFail:1, loops:2},
+  ]},
+  pr:{name:'Review a PR', desc:'Two models review, one writes the summary.', stages:[
+    {action:'review', agent:'claude', model:'sonnet', effort:'', level:'plan'},
+    {action:'review', agent:'gemini', model:'', effort:'', level:'plan'},
+    {action:'handoff', agent:'claude', model:'haiku', effort:'', level:'plan'},
+  ]},
+};
+const gateOf = (st) => st.gate || ACTIONS[st.action].gate;
+const promptOf = (st) => st.prompt != null ? st.prompt : ACTIONS[st.action].prompt;
+function cmdLine(agent, model, effort, level, extra){
+  const a = AGENTS[agent]; if (!a || !a.levels) return 'zsh';
+  return [a.bin, a.levels[level], model ? `--model ${model}` : '', effort && a.effort ? `--effort ${effort}` : '', extra || ''].filter(Boolean).join(' ');
+}
+const lvlPill = (level) => level ? `<span class="lvl ${level === 'yolo' ? 'yolo' : ''}">${LEVEL_NAME(level)}</span>` : '';
+function stageOf(t){ return t.wf ? WORKFLOWS[t.wf.id].stages[t.wf.stage] : null; }
+function tabAgent(t){ const st = stageOf(t); return st ? st.agent : PROFILES[t.profile].agent; }
+function tabCli(t){ return AGENTS[tabAgent(t)].bin; }
+function tabLevel(t){ const st = stageOf(t); return st ? st.level : (t.level || PROFILES[t.profile].level); }
+function tabRole(t){ const st = stageOf(t); return st ? `${WORKFLOWS[t.wf.id].name} · ${ACTIONS[st.action].name}` : PROFILES[t.profile].name; }
+const ANTHROPIC_PATH = 'M17.3041 3.541h-3.6718l6.696 16.918H24Zm-10.6082 0L0 20.459h3.7442l1.3693-3.5527h7.0052l1.3693 3.5528h3.7442L10.5363 3.5409Zm-.3712 10.2232 2.2914-5.9456 2.2914 5.9456Z';
+const COPILOT_PATH = 'M23.922 16.997C23.061 18.492 18.063 22.02 12 22.02 5.937 22.02.939 18.492.078 16.997A.641.641 0 0 1 0 16.741v-2.869a.883.883 0 0 1 .053-.22c.372-.935 1.347-2.292 2.605-2.656.167-.429.414-1.055.644-1.517a10.098 10.098 0 0 1-.052-1.086c0-1.331.282-2.499 1.132-3.368.397-.406.89-.717 1.474-.952C7.255 2.937 9.248 1.98 11.978 1.98c2.731 0 4.767.957 6.166 2.093.584.235 1.077.546 1.474.952.85.869 1.132 2.037 1.132 3.368 0 .368-.014.733-.052 1.086.23.462.477 1.088.644 1.517 1.258.364 2.233 1.721 2.605 2.656a.841.841 0 0 1 .053.22v2.869a.641.641 0 0 1-.078.256Zm-11.75-5.992h-.344a4.359 4.359 0 0 1-.355.508c-.77.947-1.918 1.492-3.508 1.492-1.725 0-2.989-.359-3.782-1.259a2.137 2.137 0 0 1-.085-.104L4 11.746v6.585c1.435.779 4.514 2.179 8 2.179 3.486 0 6.565-1.4 8-2.179v-6.585l-.098-.104s-.033.045-.085.104c-.793.9-2.057 1.259-3.782 1.259-1.59 0-2.738-.545-3.508-1.492a4.359 4.359 0 0 1-.355-.508Zm2.328 3.25c.549 0 1 .451 1 1v2c0 .549-.451 1-1 1-.549 0-1-.451-1-1v-2c0-.549.451-1 1-1Zm-5 0c.549 0 1 .451 1 1v2c0 .549-.451 1-1 1-.549 0-1-.451-1-1v-2c0-.549.451-1 1-1Zm3.313-6.185c.136 1.057.403 1.913.878 2.497.442.544 1.134.938 2.344.938 1.573 0 2.292-.337 2.657-.751.384-.435.558-1.15.558-2.361 0-1.14-.243-1.847-.705-2.319-.477-.488-1.319-.862-2.824-1.025-1.487-.161-2.192.138-2.533.529-.269.307-.437.808-.438 1.578v.021c0 .265.021.562.063.893Zm-1.626 0c.042-.331.063-.628.063-.894v-.02c-.001-.77-.169-1.271-.438-1.578-.341-.391-1.046-.69-2.533-.529-1.505.163-2.347.537-2.824 1.025-.462.472-.705 1.179-.705 2.319 0 1.211.175 1.926.558 2.361.365.414 1.084.751 2.657.751 1.21 0 1.902-.394 2.344-.938.475-.584.742-1.44.878-2.497Z';
+function cliMark(cli){
+  if (cli === 'claude') return `<svg class="clilogo" viewBox="0 0 24 24" fill="#D97757" role="img" aria-label="Claude"><path d="${ANTHROPIC_PATH}"/></svg>`;
+  if (cli === 'codex') return `<span class="clichip" style="background:#10A37F" role="img" aria-label="Codex">C</span>`;
+  if (cli === 'gemini') return `<svg class="clilogo" viewBox="0 0 24 24" fill="#4C8DF6" role="img" aria-label="Gemini"><path d="M11.04 19.32Q12 21.51 12 24q0-2.49.93-4.68.96-2.19 2.58-3.81t3.81-2.55Q21.51 12 24 12q-2.49 0-4.68-.93a12.3 12.3 0 0 1-3.81-2.58 12.3 12.3 0 0 1-2.58-3.81Q12 2.49 12 0q0 2.49-.96 4.68-.93 2.19-2.55 3.81a12.3 12.3 0 0 1-3.81 2.58Q2.49 12 0 12q2.49 0 4.68.96 2.19.93 3.81 2.55t2.55 3.81"/></svg>`;
+  if (cli === 'copilot') return `<svg class="clilogo" viewBox="0 0 24 24" fill="#a8a8a8" role="img" aria-label="Copilot"><path d="${COPILOT_PATH}"/></svg>`;
+  return '';
+}
+const GROUP_COLORS = {tidepool:'#56b6c2', harbor:'#c678dd', other:'var(--dim)'};
+const LANE_COLORS = ['var(--kelp)','var(--teal)','var(--orange)','var(--violet)','var(--blue)','var(--pink)','var(--amber)'];
+
+const T = (s) => s;
+const REPOS = {
+  tidepool: {
+    name:'tidepool', path:'~/Git/tidepool',
+    tabs:[
+      {id:'home', title:'main', profile:'home', status:'shell', branch:'main', path:'~/Git/tidepool', lane:0, pinned:true, head:'m1',
+       term:[
+        '<span class="c-p">~/Git/tidepool</span> <span class="c-d">(main)</span> $ git log --oneline -3',
+        '<span class="c-y">9e1c4a7</span> Polish the settings page',
+        '<span class="c-y">d124f95</span> Fix drag and drop on touch screens',
+        '<span class="c-y">c0b7e21</span> Merge branch \'feat/dark-mode\'',
+        '',
+        '<span class="c-p">~/Git/tidepool</span> <span class="c-d">(main)</span> $ git worktree list',
+        '~/Git/tidepool                       9e1c4a7 [main]',
+        '~/.{app}/tidepool/auth-refresh        2a91f0c [agent/auth-refresh]',
+        '~/.{app}/tidepool/flaky-tests         5f03d1b [agent/flaky-tests]',
+        '~/.{app}/tidepool/review-212          7bd2e90 (detached HEAD)',
+       ]},
+      {id:'auth', title:'auth-refresh', profile:'builder', status:'working', branch:'agent/auth-refresh', path:'~/.{app}/tidepool/auth-refresh', lane:1, head:'wip-auth', elapsed:242, wf:{id:'ship', stage:0, loop:0, states:['running','todo','todo','todo']},
+       split:{dir:'right', focus:0, term:[
+        '<span class="c-p">auth-refresh</span> $ npm run dev',
+        '<span class="c-g">VITE ready</span> in 412 ms',
+        '  Local: <span class="c-b">http://localhost:5174/</span>',
+        '<span class="c-d">hmr update /src/auth/session.ts</span>',
+        '<span class="c-d">hmr update /src/auth/refresh.ts</span>',
+       ]},
+       term:[
+        '<span class="c-d">Worktree ready · setup: npm ci (412 packages, 11s)</span>',
+        '<span class="c-u">Tokens expire after an hour and the app logs people out. Refresh them in the background before they expire. Add tests.</span>',
+        '<span class="c-c">●</span> Read <span class="c-s">src/auth/session.ts</span> <span class="c-d">(84 lines)</span>',
+        '<span class="c-c">●</span> Read <span class="c-s">src/api/client.ts</span> <span class="c-d">(132 lines)</span>',
+        '<span class="c-c">●</span> Plan: add a refresh call to the API client, store the expiry with the session, then schedule a refresh 5 minutes early.',
+        '<span class="c-c">●</span> Edit <span class="c-s">src/api/client.ts</span> <span class="c-g">+14</span>',
+        '<span class="c-c">●</span> Commit <span class="c-y">81c3d02</span> Add a client for the refresh endpoint',
+        '<span class="c-c">●</span> Edit <span class="c-s">src/auth/session.ts</span> <span class="c-g">+9</span> <span class="c-r">-2</span>',
+        '<span class="c-c">●</span> Run <span class="c-s">npm test -- auth</span>',
+        '  <span class="c-g">✓ 14 passed</span> <span class="c-d">(2.1s)</span>',
+        '<span class="c-c">●</span> Commit <span class="c-y">2a91f0c</span> Store token expiry with the session',
+        '<span class="c-c">●</span> Write <span class="c-s">src/auth/refresh.ts</span> <span class="c-g">+19</span>',
+        '<span class="c-c">●</span> Write <span class="c-s">tests/auth/refresh.test.ts</span> <span class="c-g">+28</span>',
+        '<span class="c-c spin">◐</span> <span class="c-c">Writing tests for the refresh timer</span> <span class="c-d elapsed"></span>',
+       ]},
+      {id:'flaky', title:'flaky-tests', profile:'fixer', status:'needs', branch:'agent/flaky-tests', path:'~/.{app}/tidepool/flaky-tests', lane:2, head:'wip-flaky', elapsed:381, wf:{id:'fix', stage:1, loop:0, states:['done','needs','todo']},
+       term:[
+        '<span class="c-d">Worktree ready · setup: npm ci (412 packages, 10s)</span>',
+        '<span class="c-u">The sync test fails about 1 in 5 runs on CI. Find out why and fix it.</span>',
+        '<span class="c-o">•</span> Ran <span class="c-s">npm test -- sync --repeat 20</span>  <span class="c-r">4 failed</span>, 16 passed',
+        '<span class="c-o">•</span> Added timing logs to the sync worker <span class="c-d">(commit 5f03d1b)</span>',
+        '<span class="c-o">•</span> Cause: the test reads the remote folder before the sync worker has finished.',
+        '<span class="c-o">•</span> Edited <span class="c-s">tests/sync.test.ts</span> <span class="c-g">+6</span> <span class="c-r">-2</span>, now waits for <span class="c-s">worker.idle()</span>',
+        '',
+        '<span class="c-y">? Allow running `npx playwright install`?</span> <span class="c-d">The end-to-end sync test needs a browser.</span>',
+        '  <span class="key" data-answer="y">y</span>yes  <span class="key" data-answer="n">n</span>no  <span class="key" data-answer="a">a</span>always in this repo',
+       ]},
+      {id:'review', title:'review #212', profile:'reviewer', status:'done', branch:'feat/export', path:'~/.{app}/tidepool/review-212', lane:3, head:'r1', elapsed:156, wf:{id:'pr', stage:2, loop:0, states:['done','done','done']},
+       term:[
+        '<span class="c-d">Worktree ready · detached at feat/export (7bd2e90) · read-only</span>',
+        '<span class="c-u">Review PR #212 (feat/export). Look for edge cases.</span>',
+        '<span class="c-v">●</span> Read <span class="c-s">src/export/csv.ts</span>, <span class="c-s">src/menu.ts</span>',
+        '<span class="c-v">●</span> Run <span class="c-s">npm test -- export</span>  <span class="c-g">✓ 6 passed</span>',
+        '<span class="c-v">●</span> Tried titles with commas, quotes and line breaks',
+        '',
+        '<span class="c-g">✓ Review ready:</span> 2 issues, 1 small note',
+        '  <span class="c-s">1.</span> Due dates are written in local time. The other date columns use UTC.',
+        '  <span class="c-s">2.</span> Commas in task titles are not quoted, so the columns shift.',
+        '  <span class="c-d">note:</span> the due date can reuse <span class="c-s">formatDate()</span>.',
+        '',
+        '<span class="c-d">Notes added to the diff. Waiting for a new task.</span>',
+       ]}
+    ],
+    rows:[
+      {id:'wip-auth', lane:1, wip:true, tab:'auth', msg:'Uncommitted · 2 new files', when:'now', parents:['a2']},
+      {id:'wip-flaky', lane:2, wip:true, tab:'flaky', msg:'Uncommitted · 1 file changed', when:'3m', parents:['f1']},
+      {id:'a2', lane:1, msg:'Store token expiry with the session', who:'builder', when:'2m', refs:[{n:'agent/auth-refresh', tab:'auth'}], parents:['a1'], hash:'2a91f0c'},
+      {id:'r1', lane:3, msg:'Include due dates in exports', who:'SW', when:'2h', refs:[{n:'feat/export'},{n:'review #212', tab:'review'}], parents:['r0'], hash:'7bd2e90'},
+      {id:'f1', lane:2, msg:'Log sync worker timing in tests', who:'fixer', when:'5m', refs:[{n:'agent/flaky-tests', tab:'flaky'}], parents:['m1'], hash:'5f03d1b'},
+      {id:'m1', lane:0, msg:'Polish the settings page', who:'TF', when:'1h', refs:[{n:'main', tab:'home', head:true},{n:'origin/main'}], parents:['m2'], hash:'9e1c4a7'},
+      {id:'a1', lane:1, msg:'Add a client for the refresh endpoint', who:'builder', when:'3m', parents:['m2'], hash:'81c3d02'},
+      {id:'r0', lane:3, msg:'Add CSV export', who:'SW', when:'yesterday', parents:['m3'], hash:'4a2be17'},
+      {id:'m2', lane:0, msg:'Fix drag and drop on touch screens', who:'EP', when:'yesterday', parents:['m3'], hash:'d124f95'},
+      {id:'m3', lane:0, msg:'Merge branch \'feat/dark-mode\'', who:'ML', when:'2 days', parents:['m4'], hash:'c0b7e21'},
+      {id:'m4', lane:0, msg:'Write the changelog for 0.3.0', who:'TF', when:'3 days', refs:[{n:'v0.3.0'}], parents:['m5'], hash:'b81f3c9'},
+      {id:'m5', lane:0, msg:'Follow the system appearance', who:'PR', when:'4 days', parents:['m6'], hash:'a05d6e2'},
+      {id:'m6', lane:0, msg:'Add dark theme tokens', who:'PR', when:'5 days', parents:['m7'], hash:'93ce0a4'},
+      {id:'m7', lane:0, msg:'Show shortcut hints in menus', who:'JO', when:'1 week', parents:[], hash:'8812fd0'},
+    ]
+  },
+  harbor: {
+    name:'harbor-api', path:'~/Git/harbor-api',
+    tabs:[
+      {id:'home', title:'main', profile:'home', status:'shell', branch:'main', path:'~/Git/harbor-api', lane:0, pinned:true, head:'hm1',
+       term:['<span class="c-p">~/Git/harbor-api</span> <span class="c-d">(main)</span> $ npm run dev','<span class="c-g">ready</span> on http://localhost:8787','<span class="c-d">GET /health 200 2ms</span>','<span class="c-d">GET /users/41 404 4ms</span>']},
+      {id:'rl', title:'rate-limit', profile:'builder', status:'working', branch:'agent/rate-limit', path:'~/.{app}/harbor-api/rate-limit', lane:1, head:'wip-rl', elapsed:95, wf:{id:'ship', stage:0, loop:0, states:['running','todo','todo','todo']},
+       term:[
+        '<span class="c-u">Add a per-API-key rate limit: 100 requests a minute, answer 429 after that.</span>',
+        '<span class="c-c">●</span> Read <span class="c-s">src/server.ts</span>, <span class="c-s">src/auth/apiKey.ts</span>',
+        '<span class="c-c">●</span> Commit <span class="c-y">e5a1c90</span> Add a Redis client',
+        '<span class="c-c">●</span> Commit <span class="c-y">f7d2b13</span> Count requests per API key',
+        '<span class="c-c">●</span> Write <span class="c-s">src/middleware/rateLimit.ts</span> <span class="c-g">+9</span>',
+        '<span class="c-c spin">◐</span> <span class="c-c">Running the load test</span> <span class="c-d elapsed"></span>',
+       ]},
+      {id:'docs', title:'openapi-docs', profile:'builder', status:'needs', branch:'agent/openapi-docs', path:'~/.{app}/harbor-api/openapi-docs', lane:2, head:'h_doc', elapsed:610,
+       term:[
+        '<span class="c-u">Generate OpenAPI docs from the route definitions.</span>',
+        '<span class="c-c">●</span> Commit <span class="c-y">0c9e4d2</span> Generate OpenAPI docs from routes',
+        '<span class="c-g">✓ Done.</span> 23 routes documented.',
+        '<span class="c-y">? Push agent/openapi-docs and open a pull request?</span>',
+        '  <span class="key" data-answer="y">y</span>yes  <span class="key" data-answer="n">n</span>no',
+       ]}
+    ],
+    rows:[
+      {id:'wip-rl', lane:1, wip:true, tab:'rl', msg:'Uncommitted · 1 new file', when:'now', parents:['h_rl2']},
+      {id:'h_rl2', lane:1, msg:'Count requests per API key', who:'builder', when:'1m', refs:[{n:'agent/rate-limit', tab:'rl'}], parents:['h_rl1'], hash:'f7d2b13'},
+      {id:'h_doc', lane:2, msg:'Generate OpenAPI docs from routes', who:'builder', when:'8m', refs:[{n:'agent/openapi-docs', tab:'docs'}], parents:['hm1'], hash:'0c9e4d2'},
+      {id:'hm1', lane:0, msg:'Return 404 for missing users', who:'RD', when:'40m', refs:[{n:'main', tab:'home', head:true},{n:'origin/main'}], parents:['h_rl1b'], hash:'71bb0e3'},
+      {id:'h_rl1', lane:1, msg:'Add a Redis client', who:'builder', when:'2m', parents:['h_rl1b'], hash:'e5a1c90'},
+      {id:'h_rl1b', lane:0, msg:'Bump dependencies', who:'SF', when:'3h', parents:['hm3'], hash:'2fe0a18'},
+      {id:'hm3', lane:0, msg:'Add a health check endpoint', who:'RD', when:'yesterday', parents:[], hash:'1c04b77'},
+    ]
+  }
+};
+
+REPOS.other = {
+  name:'Other', kind:'other', path:'folders that are not git repos',
+  tabs:[
+    {id:'notes', title:'notes', profile:'assistant', status:'working', branch:'', path:'~/notes', lane:5, head:null, elapsed:133,
+     term:[
+      '<span class="c-d">Not a git folder · no worktree · working directly in ~/notes</span>',
+      '<span class="c-u">Sort the inbox notes into the right folders and put the date in front of each title.</span>',
+      '<span class="c-c">●</span> Listed <span class="c-s">~/notes/inbox</span> <span class="c-d">(34 files)</span>',
+      '<span class="c-c">●</span> Moved 12 notes to <span class="c-s">projects/</span> and 9 to <span class="c-s">journal/</span>',
+      '<span class="c-c">●</span> Renamed <span class="c-s">call w plumber.md</span> to <span class="c-s">2026-09-28 Call with plumber.md</span>',
+      '<span class="c-c spin">◐</span> <span class="c-c">Sorting the last 13 notes</span> <span class="c-d elapsed"></span>',
+     ]},
+    {id:'dl', title:'Downloads', profile:'shell', status:'shell', prog:29, branch:'', path:'~/Downloads', lane:4, head:null,
+     term:[
+      '<span class="c-p">~/Downloads</span> $ ffmpeg -i talk.mov -c:v libx264 -crf 23 talk.mp4',
+      '<span class="c-d">Input #0, mov, from \'talk.mov\': Duration: 00:41:07.20</span>',
+      'frame=21480 fps=141 q=28.0 size=  128000kB time=00:11:56 speed=4.7x',
+     ]},
+    {id:'box', title:'ssh media-box', profile:'shell', status:'shell', branch:'', path:'~', lane:3, head:null,
+     term:[
+      '<span class="c-p">~</span> $ ssh media-box',
+      'Welcome to Ubuntu 24.04 LTS',
+      '<span class="c-g">me@media-box</span>:~$ df -h /srv',
+      'Filesystem  Size  Used Avail Use% Mounted on',
+      '/dev/sda1   3.6T  2.9T  700G  81% /srv',
+     ]},
+  ],
+  rows:[]
+};
+
+const DIFFS = {
+  'wip-auth': {files:[{p:'src/auth/refresh.ts', s:'A', a:19, d:0},{p:'tests/auth/refresh.test.ts', s:'A', a:28, d:0}], start:[0,1], lines:[
+    '@@ -0,0 +1,19 @@',
+    "+import { getSession, saveSession } from './session'",
+    "+import { refreshToken } from '../api/client'",
+    '+',
+    '+const EARLY_MS = 5 * 60 * 1000',
+    '+',
+    '+let timer: ReturnType<typeof setTimeout> | undefined',
+    '+',
+    '+export function scheduleRefresh() {',
+    '+  const session = getSession()',
+    '+  if (!session) return',
+    '+',
+    '+  clearTimeout(timer)',
+    '+  const wait = Math.max(0, session.expiresAt - Date.now() - EARLY_MS)',
+    '+  timer = setTimeout(async () => {',
+    '+    const next = await refreshToken(session.refreshToken)',
+    '+    saveSession(next)',
+    '+    scheduleRefresh()',
+    '+  }, wait)',
+    '+}']},
+  'a2': {files:[{p:'src/auth/session.ts', s:'M', a:9, d:2},{p:'src/auth/types.ts', s:'M', a:1, d:0}], start:[12,12], lines:[
+    '@@ -12,9 +12,16 @@ export type Session = {',
+    '   accessToken: string',
+    '   refreshToken: string',
+    '+  expiresAt: number',
+    ' }',
+    ' ',
+    ' export function saveSession(token: TokenResponse) {',
+    '-  storage.set(KEY, { accessToken: token.access_token, refreshToken: token.refresh_token })',
+    '-}',
+    '+  storage.set(KEY, {',
+    '+    accessToken: token.access_token,',
+    '+    refreshToken: token.refresh_token,',
+    '+    expiresAt: Date.now() + token.expires_in * 1000,',
+    '+  })',
+    '+}']},
+  'a1': {files:[{p:'src/api/client.ts', s:'M', a:14, d:0}], start:[88,88], lines:[
+    '@@ -88,6 +88,20 @@',
+    '   return res.json()',
+    ' }',
+    ' ',
+    '+export async function refreshToken(token: string): Promise<TokenResponse> {',
+    '+  const res = await fetch(`${BASE}/oauth/token`, {',
+    "+    method: 'POST',",
+    "+    headers: { 'Content-Type': 'application/json' },",
+    "+    body: JSON.stringify({ grant_type: 'refresh_token', refresh_token: token }),",
+    '+  })',
+    '+  if (!res.ok) throw new AuthError(res.status)',
+    '+  return res.json()',
+    '+}']},
+  'wip-flaky': {files:[{p:'tests/sync.test.ts', s:'M', a:6, d:2}], start:[31,31], lines:[
+    "@@ -31,8 +31,12 @@ test('syncs the folder', async () => {",
+    "   await writeTask(dir, 'Buy milk')",
+    '-  startSync(dir)',
+    "-  expect(await readRemote()).toContain('Buy milk')",
+    '+  const worker = startSync(dir)',
+    '+  await worker.idle()',
+    '+',
+    '+  const remote = await readRemote()',
+    "+  expect(remote).toContain('Buy milk')",
+    ' })']},
+  'f1': {files:[{p:'src/sync/worker.ts', s:'M', a:3, d:0}], start:[40,40], lines:[
+    '@@ -40,6 +40,9 @@ export function startSync(dir: string) {',
+    '   const queue = new Queue()',
+    '+  if (process.env.SYNC_DEBUG) {',
+    "+    queue.on('drain', () => console.log('[sync] idle after', queue.elapsed(), 'ms'))",
+    '+  }',
+    '   watch(dir, (file) => queue.push(file))',
+    '   return queue',
+    ' }']},
+  'r1': {files:[{p:'src/export/csv.ts', s:'M', a:2, d:1}], start:[3,3], lines:[
+    '@@ -3,11 +3,12 @@',
+    "-const HEADER = ['Title', 'Done', 'Created']",
+    "+const HEADER = ['Title', 'Done', 'Created', 'Due']",
+    ' ',
+    ' export function exportTasks(tasks: Task[]): string {',
+    '   const rows = tasks.map((t) => [',
+    '     t.title,',
+    "     t.done ? 'yes' : 'no',",
+    '     formatDate(t.createdAt),',
+    "+    t.dueAt ? new Date(t.dueAt).toLocaleDateString() : '',",
+    '   ])',
+    '   return [HEADER, ...rows]',
+    "     .map((r) => r.join(','))",
+    "     .join('\\n')",
+    ' }']},
+  'wip-rl': {files:[{p:'src/middleware/rateLimit.ts', s:'A', a:9, d:0}], start:[0,1], lines:[
+    '@@ -0,0 +1,9 @@',
+    '+export function rateLimit(limit = 100) {',
+    '+  return async (req, res, next) => {',
+    '+    const key = `rl:${req.apiKey}:${currentMinute()}`',
+    '+    const count = await redis.incr(key)',
+    '+    if (count === 1) await redis.expire(key, 60)',
+    "+    if (count > limit) return res.status(429).send('Too many requests')",
+    '+    next()',
+    '+  }',
+    '+}']},
+};
+
+const THREADS = {
+  'r1|0|9': {msgs:[{who:'review', text:'Due dates are written in local time here. The other date columns use UTC via formatDate().', when:'4m'}], resolved:false},
+  'r1|0|12': {msgs:[{who:'review', text:'Commas in titles are not quoted, so the columns shift. Wrap each field in quotes.', when:'4m'}], resolved:false},
+  'a2|0|12': {msgs:[{who:'you', text:'expires_in can be missing on old servers. Fall back to 3600.', when:'6m'},{who:'auth', text:'Good point. I will add the fallback in refresh.ts, with a test.', when:'5m'}], resolved:false},
+  'a1|0|10': {msgs:[{who:'you', text:'Should a 401 here log the user out?', when:'9m'},{who:'auth', text:'Yes. session.ts catches AuthError and clears the session. Added a test for it.', when:'8m'}], resolved:true},
+};
+
+const state = {
+  repo:'tidepool', view:'repo', scope:'this', focus:false, pe:'builder', we:'ship', ws:0,
+  tab:{tidepool:'auth', harbor:'rl', other:'notes'},
+  sel:{tidepool:'a2', harbor:'wip-rl', other:null},
+  file:0, compose:null, diffMode:'unified', jump:-1, menu:false, pop:null, modal:null, toast:null
+};
+const $ = (id) => document.getElementById(id);
+const esc = (s) => s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+const app = (s) => s.replaceAll('{app}', slug());
+const repo = () => REPOS[state.repo];
+const curTab = () => repo().tabs.find(t => t.id === state.tab[state.repo]) || repo().tabs[0];
+const laneColor = (l) => LANE_COLORS[l % LANE_COLORS.length];
+const fmtTime = (s) => { const m = Math.floor(s/60); return m + 'm ' + String(s%60).padStart(2,'0') + 's'; };
+const STATUS_LABEL = {working:'Working', needs:'Needs you', done:'Done', setup:'Setting up', shell:'Shell', failed:'Failed'};
+
+const GRID_ICON = '<svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.4"><rect x="1.5" y="1.5" width="4.5" height="4.5" rx="1"/><rect x="8" y="1.5" width="4.5" height="4.5" rx="1"/><rect x="1.5" y="8" width="4.5" height="4.5" rx="1"/><rect x="8" y="8" width="4.5" height="4.5" rx="1"/></svg>';
+const FOLDER_ICON = '<svg class="fold" viewBox="0 0 14 12" fill="none" stroke="currentColor" stroke-width="1.3"><path d="M1 2.5A1.5 1.5 0 0 1 2.5 1h3l1.5 1.5h4.5A1.5 1.5 0 0 1 13 4v5.5A1.5 1.5 0 0 1 11.5 11h-9A1.5 1.5 0 0 1 1 9.5z"/></svg>';
+function renderRepoChip(){
+  const r = repo(), ov = state.view === 'overview';
+  const others = Object.entries(REPOS).filter(([k]) => k !== state.repo).some(([,v]) => v.tabs.some(t => t.status === 'needs'));
+  const agents = r.tabs.filter(t => !t.pinned).length;
+  const needs = Object.values(REPOS).flatMap(x => x.tabs).filter(t => t.status === 'needs').length;
+  $('ovBtn').classList.toggle('on', ov);
+  $('ovBtn').innerHTML = `${GRID_ICON}${needs ? `<span class="ovn">${needs}</span>` : ''}`;
+  $('ovBtn').title = needs ? `Overview (⌘0) · ${needs} need you` : 'Overview (⌘0)';
+  $('repoChip').classList.toggle('dim', ov);
+  $('repoChip').innerHTML = `<span class="gdot" style="background:${GROUP_COLORS[state.repo] || 'var(--dim)'}"></span><span>${r.name}</span><span class="count">${agents}</span><span class="caret"></span>${others && !ov ? '<span class="badge" title="An agent in another repo needs you"></span>' : ''}`;
+}
+
+function renderTabs(){
+  const r = repo();
+  $('newTab').hidden = state.view === 'overview';
+  if (state.view === 'overview') {
+    const n = Object.values(REPOS).flatMap(x => x.tabs).filter(t => !t.pinned).length;
+    $('tabs').innerHTML = `<span class="tabs-note">All repos · ${n} tabs</span>`; return;
+  }
+  const pin = '<svg class="pinic" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.2"><path d="M4 1.5h4M5 1.5v3.2L3 7h6L7 4.7V1.5M6 7v3.5"/></svg>';
+  $('tabs').innerHTML = r.tabs.map((t, i) => {
+    const p = PROFILES[t.profile];
+    const on = t.id === curTab().id;
+    const colored = !t.pinned && t.profile !== 'shell';
+    let pg = '';
+    if (t.status === 'setup') pg = `<span class="pg"><span style="width:${t.progress||0}%;background:var(--kelp)"></span></span>`;
+    else if (t.status === 'working') pg = `<span class="pg"><span class="ind" style="background:var(--blue)"></span></span>`;
+    else if (t.status === 'needs') pg = `<span class="pg pulse"><span style="width:100%;background:var(--amber)"></span></span>`;
+    else if (t.status === 'done') pg = `<span class="pg"><span style="width:100%;background:var(--kelp)"></span></span>`;
+    else if (t.prog) pg = `<span class="pg"><span style="width:${t.prog}%;background:var(--kelp)"></span></span>`;
+    const mini = t.split ? `<span class="mini ${t.split.dir}" aria-label="Split"><i></i><i></i></span>` : '';
+    const badge = cliMark(tabCli(t));
+    return `<div class="tab ${on?'on':''} ${t.status}" data-tab="${t.id}" role="tab" tabindex="0" aria-selected="${on}" title="${esc(t.title)} · ${esc(tabRole(t))} · ${STATUS_LABEL[t.status]}" ${colored ? `style="--tc:${laneColor(t.lane)}"` : ''}>
+      ${mini}<span class="t">${i+1}  ${esc(t.title)}</span>${t.pinned ? pin : ''}
+      <span class="slot">${badge ? `<span class="badge">${badge}</span>` : ''}${t.pinned ? '' : `<button class="x" data-close="${t.id}" aria-label="Close ${esc(t.title)}">×</button>`}</span>
+      ${colored ? '<span class="ul"></span>' : ''}${pg}${t.status === 'failed' ? '<span class="fail"></span>' : ''}</div>`;
+  }).join('');
+}
+
+function renderTerm(){
+  const t = curTab(), p = PROFILES[t.profile];
+  const color = t.pinned ? 'var(--kelp)' : laneColor(t.lane);
+  const lvl = tabLevel(t);
+  const chip = t.wf ? '' : `<span class="prof" style="color:${color};border-color:${color}">${cliMark(tabCli(t)) || '<i></i>'}${t.pinned ? 'main checkout' : p.name}</span>`;
+  $('termHead').innerHTML = `${chip}
+    <span class="ttl">${esc(t.title)}</span>${stepperHtml(t)}
+    <span class="path">${esc(app(t.path))}</span>
+    <span class="sp"></span>
+    ${t.elapsed ? `<span class="mono" style="font-size:11px;color:var(--dim)" id="elapsedHead">${fmtTime(t.elapsed)}</span>` : ''}
+    ${repo().kind === 'other' ? '<span class="stp shell">not git · no worktree</span>' : ''}${lvlPill(lvl)}<span class="stp ${t.status}">${STATUS_LABEL[t.status]}</span>
+    <button class="hbtn ${state.focus?'on':''}" data-act="focus" title="Focus mode (⌘.)" aria-label="Focus mode" aria-pressed="${state.focus}"><svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.3"><path d="M1.5 4.5v-3h3M9.5 1.5h3v3M12.5 9.5v3h-3M4.5 12.5h-3v-3"/><circle cx="7" cy="7" r="1.6"/></svg></button>
+    <button class="hbtn ${t.split&&t.split.dir==='right'?'on':''}" data-act="split-right" title="Split right (⌘D)" aria-label="Split right"><svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.3"><rect x="1.5" y="2" width="11" height="10" rx="1.5"/><path d="M7 2v10"/></svg></button>
+    <button class="hbtn ${t.split&&t.split.dir==='down'?'on':''}" data-act="split-down" title="Split down (⌘⇧D)" aria-label="Split down"><svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.3"><rect x="1.5" y="2" width="11" height="10" rx="1.5"/><path d="M1.5 7h11"/></svg></button>`;
+  const split = t.split, isShell = t.pinned || t.profile === 'shell';
+  const focus = split ? split.focus : 0;
+  const base = app(t.path).split('/').pop();
+  const ph0 = isShell ? 'Type a command' : (t.status === 'needs' ? 'The agent is waiting for an answer (y / n)' : 'Type to the agent, Enter to send');
+  const label0 = isShell ? 'zsh' : t.wf ? `${tabCli(t)} · ${ACTIONS[stageOf(t).action].name.toLowerCase()} stage` : `${p.cli} · agent`;
+  const pane = (i, lines, label, shell, ph) => `<div class="tpane ${focus===i?'focus':''}" data-pane="${i}">
+    ${split ? `<div class="tp-head"><span>${label}</span>${i===1?`<button class="x2" data-act="unsplit" aria-label="Close this pane" title="Close pane">×</button>`:''}</div>` : '<div></div>'}
+    <div class="term-out">${lines.map(app).join('\n')}</div>
+    <div class="term-in"><label for="termIn${i}">${shell?'$':'&gt;'}</label><input id="termIn${i}" data-pane="${i}" autocomplete="off" placeholder="${ph}"></div></div>`;
+  const panes = $('termPanes');
+  panes.className = 'term-panes ' + (split ? split.dir : '');
+  panes.innerHTML = pane(0, t.term, label0, isShell, ph0)
+    + (split ? pane(1, split.term, `zsh · ${esc(base)} · ${esc(t.branch)}`, true, 'Same worktree. Try npm test or git status') : '');
+  panes.querySelectorAll('.term-out').forEach(o => o.scrollTop = o.scrollHeight);
+  updateElapsed();
+}
+
+function stepperHtml(t){
+  if (!t.wf) return '';
+  const wf = WORKFLOWS[t.wf.id];
+  const pills = wf.stages.map((st, i) => {
+    const stt = t.wf.states[i] || 'todo', a = ACTIONS[st.action];
+    const loop = i === t.wf.stage && t.wf.loop > 0 ? `<span class="loop">×${t.wf.loop + 1}</span>` : '';
+    const tip = `${a.name} · ${AGENTS[st.agent].name}${st.model ? ' ' + st.model : ''} · ${LEVEL_NAME(st.level)} · gate: ${GATE_NAME(gateOf(st))}`;
+    return `<span class="stg ${stt}" title="${esc(tip)}">${stt === 'done' ? '✓' : cliMark(AGENTS[st.agent].bin)}${a.name}${loop}</span>`;
+  }).join('<span class="arr">›</span>');
+  const canNext = t.wf.states[t.wf.stage] === 'running';
+  return `<span class="wf"><span class="wfn">${wf.name}</span>${pills}${canNext ? '<button class="wfnext" data-act="wf-next" title="Demo only: pretend the current stage passed its gate">finish stage ›</button>' : ''}</span>`;
+}
+function syncWf(t){
+  if (!t.wf) return;
+  const s = t.wf.states, i = t.wf.stage;
+  if (t.status === 'needs') s[i] = 'needs'; else if (t.status === 'working') s[i] = 'running'; else if (t.status === 'done') s[i] = 'done';
+}
+function stageDivider(st){ return `<span class="c-d">── ${ACTIONS[st.action].name} · ${esc(cmdLine(st.agent, st.model, st.effort, st.level, ''))} ──</span>`; }
+function advanceWorkflow(t){
+  const wf = WORKFLOWS[t.wf.id], S = t.wf, cur = wf.stages[S.stage];
+  stripSpinner(t);
+  const scripted = t.id === 'auth' && S.id === 'ship';
+  if (scripted && S.stage === 0 && S.loop === 0) {
+    const rv = wf.stages[1];
+    t.term.push('<span class="c-c">●</span> Commit <span class="c-y">b3e07a1</span> Schedule the token refresh before expiry', `<span class="c-g">Gate: ${GATE_NAME(gateOf(cur)).toLowerCase()} ✓</span>`,
+      '', stageDivider(rv), '<span class="c-b">✦</span> Reviewing 3 commits against main',
+      '<span class="c-r">✗ blocking</span> src/auth/refresh.ts:12 the timer keeps running after sign-out',
+      `<span class="c-y">Gate: no blocking findings ✗</span> Back to Work, loop 1 of ${rv.loops}`,
+      '', stageDivider(cur), '<span class="c-c spin">◐</span> <span class="c-c">Fixing the review finding</span> <span class="c-d elapsed"></span>');
+    THREADS['wip-auth|0|12'] = {msgs:[{who:'agent:gemini:Review stage', text:'Blocking: the timer keeps running after sign-out. Clear it in signOut().', when:'now'}], resolved:false, sent:t.title};
+    S.states = ['running','failed','todo','todo']; S.loop = 1;
+  } else if (scripted && S.stage === 0 && S.loop === 1) {
+    t.term.push('<span class="c-c">●</span> Commit <span class="c-y">c71f4d8</span> Clear the refresh timer on sign-out', '<span class="c-g">Gate: tests pass ✓</span>',
+      '', stageDivider(wf.stages[1]), '<span class="c-g">✓ No blocking findings</span> <span class="c-d">(1 nit left as a comment)</span>',
+      '', stageDivider(wf.stages[2]), '<span class="c-c spin">◐</span> <span class="c-c">Removing duplication in session.ts</span> <span class="c-d elapsed"></span>');
+    const th = THREADS['wip-auth|0|12']; if (th) { th.msgs.push({who:'auth', text:'Fixed in c71f4d8.', when:'now'}); th.resolved = true; }
+    S.states = ['done','done','running','todo']; S.stage = 2; S.loop = 0;
+  } else {
+    S.states[S.stage] = 'done';
+    t.term.push(`<span class="c-g">Gate: ${GATE_NAME(gateOf(cur)).toLowerCase()} ✓</span>`);
+    if (S.stage + 1 >= wf.stages.length) { t.status = 'done'; t.term.push('<span class="c-g">✓ Workflow finished.</span>'); }
+    else {
+      S.stage++;
+      const nx = wf.stages[S.stage];
+      t.term.push('', stageDivider(nx));
+      if (nx.human || gateOf(nx) === 'approve') {
+        t.status = 'needs';
+        t.term.push('<span class="c-c">●</span> PR title and description written.', '<span class="c-y">? Push the branch and open the pull request?</span>', '  <span class="key" data-answer="y">y</span>yes  <span class="key" data-answer="n">n</span>no');
+      } else {
+        t.status = 'working';
+        t.term.push(`<span class="c-c spin">◐</span> <span class="c-c">${esc(ACTIONS[nx.action].name)} in progress</span> <span class="c-d elapsed"></span>`);
+      }
+    }
+  }
+  renderAll();
+}
+
+function reach(rows, id){
+  const by = {}; rows.forEach(r => by[r.id] = r);
+  const seen = new Set(), stack = [id];
+  while (stack.length) { const x = stack.pop(); if (!x || seen.has(x) || !by[x]) continue; seen.add(x); stack.push(...by[x].parents); }
+  return seen;
+}
+function mainHeadId(r){ const row = r.rows.find(x => (x.refs||[]).some(f => f.n === 'main')); return row ? row.id : null; }
+function aheadBehind(r, t){
+  if (r.kind === 'other' || !t.head) return null;
+  const a = reach(r.rows, t.head), m = reach(r.rows, mainHeadId(r));
+  const ahead = [...a].filter(id => !m.has(id) && !r.rows.find(x => x.id === id).wip).length;
+  const behind = [...m].filter(id => !a.has(id)).length;
+  return {ahead, behind};
+}
+function abText(ab){
+  if (!ab) return 'not git';
+  if (!ab.ahead && !ab.behind) return 'same as main';
+  return [ab.ahead ? ab.ahead + ' ahead' : '', ab.behind ? ab.behind + ' behind' : ''].filter(Boolean).join(' · ') + ' main';
+}
+function visibleRows(){
+  const r = repo(), t = curTab();
+  if (state.scope === 'all') return r.rows;
+  const seen = reach(r.rows, t.head);
+  return r.rows.filter(x => seen.has(x.id));
+}
+
+const RH = 30, REFW = 170;
+const X = (l) => 14 + l*20, Y = (i) => i*RH + RH/2;
+
+function initials(row){
+  if (row.wip) return '';
+  if (PROFILES[row.who]) return PROFILES[row.who].cli === 'codex' ? 'CX' : 'CL';
+  return row.who;
+}
+
+function renderGraph(){
+  const r = repo(), t = curTab(), all = state.scope === 'all';
+  const rows = visibleRows();
+  const lanes = [...new Set(rows.map(x => x.lane))].sort((a,b) => a - b);
+  const vl = {}; lanes.forEach((l,i) => vl[l] = all ? l : i);
+  const idx = {}; rows.forEach((x,i) => idx[x.id] = i);
+  const gw = (Math.max(0, ...rows.map(x => vl[x.lane])) + 1) * 20 + 16;
+  const cols = `${REFW}px ${gw}px minmax(0,1fr) 84px`;
+  if (!(state.sel[state.repo] in idx)) state.sel[state.repo] = t.head in idx ? t.head : (rows[0] && rows[0].id);
+  const color = t.pinned ? 'var(--kelp)' : laneColor(t.lane);
+  $('graphHead').innerHTML = `<span class="ttl">History</span><span style="color:${color}">${esc(t.pinned ? 'main checkout' : t.title)}</span><span>${t.pinned ? '' : abText(aheadBehind(r, t))}</span><span class="sp"></span>
+    <div class="seg" role="group" aria-label="Graph scope"><button class="${all?'':'on'}" data-scope="this" aria-pressed="${!all}">This worktree</button><button class="${all?'on':''}" data-scope="all" aria-pressed="${all}">Whole repo</button></div>`;
+  let edges = '', nodes = '';
+  rows.forEach((row, i) => {
+    row.parents.forEach(pid => {
+      const j = idx[pid]; if (j === undefined) return;
+      const p = rows[j];
+      const dash = row.wip ? ' stroke-dasharray="3 3"' : '';
+      const x1 = X(vl[row.lane]), y1 = Y(i), x2 = X(vl[p.lane]), y2 = Y(j);
+      const d = x1 === x2 ? `M${x1} ${y1} L${x2} ${y2}` : `M${x1} ${y1} L${x1} ${y2-RH} C${x1} ${y2-RH*0.35} ${x2} ${y2-RH*0.6} ${x2} ${y2}`;
+      const op = !all || t.pinned || row.lane === t.lane ? 1 : .5;
+      edges += `<path d="${d}" stroke="${laneColor(row.lane)}" stroke-width="2" fill="none"${dash} opacity="${op}"/>`;
+    });
+  });
+  rows.forEach((row, i) => {
+    const c = laneColor(row.lane), x = X(vl[row.lane]), y = Y(i);
+    if (row.wip) {
+      nodes += `<circle cx="${x}" cy="${y}" r="6" fill="var(--win)" stroke="${c}" stroke-width="2" stroke-dasharray="2.5 2"/>`;
+    } else {
+      const shape = PROFILES[row.who]
+        ? `<rect x="${x-9}" y="${y-9}" width="18" height="18" rx="5" fill="var(--panel)" stroke="${c}" stroke-width="2"/>`
+        : `<circle cx="${x}" cy="${y}" r="9" fill="var(--panel)" stroke="${c}" stroke-width="2"/>`;
+      nodes += shape + `<text x="${x}" y="${y+2.8}" text-anchor="middle" font-size="7.5" font-weight="700" font-family="IBM Plex Sans, sans-serif" fill="${c}">${initials(row)}</text>`;
+    }
+  });
+  const h = rows.length * RH;
+  const rowsHtml = rows.map((row) => {
+    const focus = all && !t.pinned && row.lane === t.lane;
+    const sel = state.sel[state.repo] === row.id;
+    const refs = (row.refs||[]).map(f => {
+      const c = laneColor(row.lane);
+      const tabIcon = f.tab ? `<svg viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M1.5 2.5l2.5 2.5-2.5 2.5M5.5 8h3"/></svg>` : '';
+      return `<span class="ref ${f.tab?'agent':''}" ${f.tab?`data-jump="${f.tab}" title="Open the ${esc(f.n)} tab"`:''} style="border-color:${c};color:${f.head?'var(--strong)':c}">${f.head?'✓ ':''}${tabIcon}${esc(f.n)}</span>`;
+    }).join('');
+    const wipTab = row.wip ? r.tabs.find(x => x.id === row.tab) : null;
+    const msg = row.wip ? `<span style="color:${laneColor(row.lane)};font-style:normal">${esc(wipTab?wipTab.title:'')}</span> · ${esc(row.msg)}` : esc(row.msg);
+    return `<div class="grow ${focus?'focus':''} ${sel?'sel':''}" data-row="${row.id}" style="grid-template-columns:${cols}">
+      <div class="refs">${refs}</div><div></div><div class="msg ${row.wip?'wip':''}">${msg}</div><div class="when">${row.when}</div></div>`;
+  }).join('');
+  $('gscroll').innerHTML = `
+    <div class="ghead" style="grid-template-columns:${cols}"><span style="text-align:right;padding-right:10px">Branch</span><span>Graph</span><span style="padding-left:6px">Message</span><span style="text-align:right;padding-right:12px">When</span></div>
+    <div class="grows">${rowsHtml}<svg class="gsvg" style="left:${REFW}px" width="${gw}" height="${h}" viewBox="0 0 ${gw} ${h}">${edges}${nodes}</svg></div>`;
+}
+
+function findRow(id){ return repo().rows.find(r => r.id === id); }
+
+function genericDiff(row){
+  const name = row.msg.toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-|-$/g,'').slice(0,28);
+  return {files:[{p:`src/${name}.ts`, s:'M', a:4, d:2}], start:[20,20], lines:[
+    '@@ -20,7 +20,9 @@', '   // ' + row.msg, '-  const value = read()', '-  return value', '+  const value = read()', '+  if (!value) return null', '+  return normalize(value)', '+}', ' ']};
+}
+
+function renderDiff(){
+  const row = findRow(state.sel[state.repo]);
+  if (!row) { $('diff').innerHTML = ''; return; }
+  const r = repo();
+  const d = DIFFS[row.id] || genericDiff(row);
+  const owner = r.tabs.find(t => t.id === row.tab) || r.tabs.find(t => !t.pinned && t.lane === row.lane);
+  const c = laneColor(row.lane);
+  const fileIdx = Math.min(state.file, d.files.length - 1);
+  let who;
+  if (row.wip) who = `<span class="live"><span class="st working"></span>Live · ${esc(owner?owner.title:'')} is still editing</span>`;
+  else if (PROFILES[row.who]) { const p = PROFILES[row.who]; who = `<div class="who"><span class="av" style="border-color:${c};color:${c};border-radius:6px">${initials(row)}</span>${owner?esc(owner.title):'agent'} · ${p.name} profile (${p.cli}) · ${row.when} ago</div>`; }
+  else who = `<div class="who"><span class="av" style="border-color:${c};color:${c}">${row.who}</span>${row.who === 'SW' ? 'Sam Whitley' : 'A teammate'} · ${row.when} ago</div>`;
+  const totalA = d.files.reduce((s,f)=>s+f.a,0), totalD = d.files.reduce((s,f)=>s+f.d,0);
+  const branch = (row.refs && row.refs[0]) ? row.refs[0].n : (owner ? owner.branch : 'main');
+  let html = `<div class="dhead">
+      <div class="dmeta">${row.wip ? '<span class="hash">working tree</span>' : `<span>commit</span><span class="hash">${row.hash}</span>`}<span>·</span><span class="mono" style="color:${c}">${esc(branch)}</span><span style="margin-left:auto"><span style="color:var(--add)">+${totalA}</span> <span style="color:var(--del)">-${totalD}</span></span></div>
+      <div class="dtitle">${row.wip ? 'Uncommitted changes' : esc(row.msg)}</div>${who}</div>`;
+  html += `<div class="files">${d.files.map((f,i) => `<div class="file ${i===fileIdx?'on':''}" data-file="${i}"><span class="s ${f.s}">${f.s}</span><span>${esc(f.p)}</span><span class="n"><span style="color:var(--add)">+${f.a}</span> <span style="color:var(--del)">${f.d?'-'+f.d:''}</span></span></div>`).join('')}</div>`;
+  let lines = d.lines;
+  if (fileIdx > 0) lines = ['@@ -0,0 +1,6 @@', "+import { describe, it, expect, vi } from 'vitest'", "+import { scheduleRefresh } from '../../src/auth/refresh'", '+', "+describe('scheduleRefresh', () => {", "+  it('refreshes five minutes before expiry', () => {", '+    vi.useFakeTimers()'];
+  let o = fileIdx === 0 ? d.start[0] : 0, n = fileIdx === 0 ? d.start[1] : 1;
+  const nums = lines.map(ln => ln[0] === '@' ? {} : ln[0] === '+' ? {n:n++} : ln[0] === '-' ? {o:o++} : {o:o++, n:n++});
+  state.lastNums = nums;
+  state.lastChanges = lines.map((ln, i) => (ln[0] === '+' || ln[0] === '-') && !(i > 0 && (lines[i-1][0] === '+' || lines[i-1][0] === '-')) ? i : -1).filter(i => i >= 0);
+  const hl = wordHl(lines);
+  const path = d.files[fileIdx].p;
+  const tx = (i) => esc(lines[i][0]) + (hl[i] ?? esc(lines[i].slice(1)));
+  const addBtn = (i) => `<button class="addc" data-addc="${i}" title="Comment on this line" aria-label="Comment on this line">+</button>`;
+  const extras = (idxs) => idxs.map(i => threadHtml(row, `${row.id}|${fileIdx}|${i}`, path, nums[i].n || nums[i].o) + composeHtml(row, fileIdx, i)).join('');
+  let body = '';
+  if (state.diffMode === 'split') {
+    splitRows(lines).forEach(sr => {
+      if (sr.h !== undefined) { body += `<div class="sl h">${esc(sr.h)}</div>`; return; }
+      const side = (c, which) => c
+        ? `<span class="ln">${(which === 'l' ? nums[c.i].o : nums[c.i].n) || ''}</span><span class="tx ${c.t[0]==='-'?'d':c.t[0]==='+'?'a':''}" data-line="${c.i}">${tx(c.i)}${addBtn(c.i)}</span>`
+        : `<span class="ln"></span><span class="tx empty"></span>`;
+      body += `<div class="sl">${side(sr.l,'l')}${side(sr.r,'r')}</div>`;
+      body += extras([...new Set([sr.l && sr.l.i, sr.r && sr.r.i].filter(v => v != null))]);
+    });
+  } else {
+    lines.forEach((ln, i) => {
+      if (ln[0] === '@') { body += `<div class="dl h"><span class="ln"></span><span class="ln"></span><span class="tx">${esc(ln)}</span></div>`; return; }
+      const cls = ln[0] === '+' ? 'a' : ln[0] === '-' ? 'd' : '';
+      body += `<div class="dl ${cls}" data-line="${i}"><span class="ln">${nums[i].o || ''}</span><span class="ln">${nums[i].n || ''}</span><span class="tx">${tx(i)}</span>${addBtn(i)}</div>`;
+      body += extras([i]);
+    });
+  }
+  const keys = Object.keys(THREADS).filter(k => k.startsWith(row.id + '|'));
+  const open = keys.filter(k => !THREADS[k].resolved);
+  const target = agentTarget(row);
+  const mode = state.diffMode;
+  html += `<div class="dtool">
+    <div class="seg" role="group" aria-label="Diff view"><button class="${mode==='unified'?'on':''}" data-dmode="unified">Unified</button><button class="${mode==='split'?'on':''}" data-dmode="split">Split</button></div>
+    <button class="tbtn" data-jumpc="-1" title="Previous change (⌥↑)" aria-label="Previous change">↑</button><button class="tbtn" data-jumpc="1" title="Next change (⌥↓)" aria-label="Next change">↓</button>
+    <span class="sp"></span>
+    ${keys.length ? `<span>${open.length} open${keys.length - open.length ? ` · ${keys.length - open.length} resolved` : ''}</span>` : '<span>Hover a line, click + to comment</span>'}
+    ${open.length && target ? `<button class="tbtn pri" data-act="send-all">Send ${open.length} to ${esc(target.title)}</button>` : ''}
+    ${keys.length ? `<button class="tbtn" data-act="copy-md" title="Copy all comments as Markdown">Copy</button>` : ''}</div>`;
+  html += `<div class="dbody" id="dbody">${body}</div>`;
+  $('diff').innerHTML = html;
+  const ta = $('noteText') || $('replyText'); if (ta) ta.focus();
+}
+
+function wordHl(lines){
+  const out = {}; let i = 0;
+  while (i < lines.length) {
+    if (lines[i][0] !== '-') { i++; continue; }
+    const dels = [], adds = [];
+    while (i < lines.length && lines[i][0] === '-') dels.push(i++);
+    while (i < lines.length && lines[i][0] === '+') adds.push(i++);
+    for (let k = 0; k < Math.min(dels.length, adds.length); k++) {
+      const [x, y] = pairHl(lines[dels[k]].slice(1), lines[adds[k]].slice(1));
+      out[dels[k]] = x; out[adds[k]] = y;
+    }
+  }
+  return out;
+}
+function pairHl(a, b){
+  let p = 0; while (p < a.length && p < b.length && a[p] === b[p]) p++;
+  let q = 0; while (q < a.length - p && q < b.length - p && a[a.length-1-q] === b[b.length-1-q]) q++;
+  const wrap = (x) => esc(x.slice(0, p)) + (x.length - p - q > 0 ? `<mark>${esc(x.slice(p, x.length - q))}</mark>` : '') + esc(x.slice(x.length - q));
+  return [wrap(a), wrap(b)];
+}
+function splitRows(lines){
+  const out = []; let i = 0;
+  while (i < lines.length) {
+    const l = lines[i];
+    if (l[0] === '@') { out.push({h:l}); i++; continue; }
+    if (l[0] !== '-' && l[0] !== '+') { out.push({l:{t:l, i}, r:{t:l, i}}); i++; continue; }
+    const dels = [], adds = [];
+    while (i < lines.length && lines[i][0] === '-') { dels.push({t:lines[i], i}); i++; }
+    while (i < lines.length && lines[i][0] === '+') { adds.push({t:lines[i], i}); i++; }
+    for (let k = 0; k < Math.max(dels.length, adds.length); k++) out.push({l:dels[k] || null, r:adds[k] || null});
+  }
+  return out;
+}
+function allTabs(){ return Object.values(REPOS).flatMap(r => r.tabs); }
+function authorHtml(who){
+  if (who.startsWith('agent:')) { const [, ag, label] = who.split(':'); return `${cliMark(AGENTS[ag].bin)}<b>${esc(label)}</b><span>${AGENTS[ag].name}</span>`; }
+  if (who === 'you') return `<span class="av" style="width:16px;height:16px;font-size:7px;border-color:var(--kelp);color:var(--kelp)">ME</span><b>You</b>`;
+  const t = allTabs().find(x => x.id === who);
+  if (!t) return '<b>Agent</b>';
+  return `${cliMark(tabCli(t))}<b>${esc(t.title)}</b><span>${esc(tabRole(t))}</span>`;
+}
+function authorName(who){ if (who === 'you') return 'You'; if (who.startsWith('agent:')) return who.split(':')[2]; const t = allTabs().find(x => x.id === who); return t ? t.title : 'Agent'; }
+function threadHtml(row, key, path, ln){
+  const th = THREADS[key]; if (!th) return '';
+  th.path = th.path || path; th.ln = th.ln || ln;
+  if (th.resolved && !th.open) return `<div class="thread res"><button class="th-col" data-thopen="${key}">✓ Resolved · ${esc(th.msgs[0].text)}</button></div>`;
+  const target = agentTarget(row);
+  const msgs = th.msgs.map(m => `<div class="m"><div class="nh">${authorHtml(m.who)}<span>· ${m.when}${m.when === 'now' ? '' : ' ago'}</span></div><div>${esc(m.text)}</div></div>`).join('');
+  const reply = th.replying ? `<textarea id="replyText" placeholder="Reply"></textarea><div class="act"><button class="btn" data-thcancel="${key}">Cancel</button><button class="btn pri" data-thpost="${key}">Reply</button></div>` : '';
+  return `<div class="thread">${msgs}${reply}
+    <div class="th-act"><button class="lnk" data-threply="${key}">Reply</button><button class="lnk" data-thres="${key}">${th.resolved ? 'Reopen' : 'Resolve'}</button>
+    ${!th.resolved && target ? `<button class="lnk send" data-thsend="${key}">Send to ${esc(target.title)}</button>` : ''}${th.sent ? `<span class="sent">Sent to ${esc(th.sent)}</span>` : ''}</div></div>`;
+}
+function composeHtml(row, file, i){
+  const c = state.compose;
+  if (!c || c.row !== row.id || c.file !== file || c.line !== i) return '';
+  const target = agentTarget(row);
+  return `<div class="thread"><div class="nh"><b>New comment</b><span>${esc(c.path)}:${c.ln}</span></div>
+    <textarea id="noteText" placeholder="For example: use the shared formatDate() here"></textarea>
+    <div class="act"><button class="btn" data-act="note-cancel">Cancel</button><button class="btn" data-act="note-save">Comment</button>${target ? `<button class="btn pri" data-act="note-send">Comment and send to ${esc(target.title)}</button>` : ''}</div></div>`;
+}
+function agentTarget(row){
+  const r = repo(), cur = curTab();
+  const isAgent = (t) => !t.pinned && !['reviewer','shell'].includes(t.profile);
+  if (isAgent(cur)) return cur;
+  return r.tabs.find(t => t.id === row.tab && isAgent(t)) || r.tabs.find(t => t.lane === row.lane && isAgent(t)) || r.tabs.find(isAgent) || null;
+}
+function threadsMarkdown(keys){
+  const row = findRow(state.sel[state.repo]);
+  const title = row.wip ? 'uncommitted changes' : `${row.hash} ${row.msg}`;
+  return `## Review: ${title}\n\n` + keys.map(k => {
+    const th = THREADS[k];
+    return `- [${th.resolved ? 'x' : ' '}] \`${th.path}:${th.ln}\` ${th.msgs[0].text}` + th.msgs.slice(1).map(m => `\n  - ${authorName(m.who)}: ${m.text}`).join('');
+  }).join('\n');
+}
+function sendThreads(keys){
+  const row = findRow(state.sel[state.repo]); const target = agentTarget(row); if (!target || !keys.length) return;
+  const list = keys.map(k => { const th = THREADS[k]; return `- ${th.path}:${th.ln} ${th.msgs.map(m => m.text).join(' / ')}`; }).join('\n');
+  stripSpinner(target);
+  target.term.push(`<span class="c-u"><span class="c-d">${keys.length} review comment${keys.length === 1 ? '' : 's'} from the diff</span>\n${esc(list)}</span>`, `<span class="c-c spin">◐</span> <span class="c-c">Reading your review</span> <span class="c-d elapsed"></span>`);
+  if (['done','needs'].includes(target.status)) target.status = 'working';
+  keys.forEach(k => { THREADS[k].sent = target.title; });
+  renderAll();
+  toast(`Sent ${keys.length} comment${keys.length === 1 ? '' : 's'} to <b>${esc(target.title)}</b>. Its reply will show up in the thread.`);
+  setTimeout(() => {
+    keys.forEach(k => THREADS[k].msgs.push({who: target.id, text: 'On it. I will reply here when the fix is committed.', when: 'now'}));
+    if (state.view === 'repo') renderDiff();
+  }, 1600);
+}
+function jumpChange(dir){
+  const ch = state.lastChanges || []; if (!ch.length) return;
+  state.jump = ((state.jump + dir) % ch.length + ch.length) % ch.length;
+  const el = document.querySelector(`#dbody [data-line="${ch[state.jump]}"]`); if (!el) return;
+  el.scrollIntoView({block:'center', behavior: reduce ? 'auto' : 'smooth'});
+  el.classList.remove('flash'); void el.offsetWidth; el.classList.add('flash');
+}
+
+function renderStatus(){
+  const all = Object.values(REPOS).flatMap(x => x.tabs).filter(t => !t.pinned);
+  const allNeeds = all.filter(t => t.status === 'needs').length;
+  const tail = `<span class="sp"></span><span>${allNeeds} waiting across all repos</span><span><span class="app-name">${appName}</span> 0.1.0</span>`;
+  if (state.view === 'overview') {
+    $('status').innerHTML = `<span><b>${all.length}</b> tabs in ${Object.keys(REPOS).length} places</span><span>Click a row to open it</span>${tail}`; return;
+  }
+  const r = repo(), ag = r.tabs.filter(t => !t.pinned);
+  const c = (s) => ag.filter(t => t.status === s).length;
+  const extra = r.kind === 'other' ? '<span>not git folders · agents work in place</span>' : '<span>main checkout clean</span>';
+  $('status').innerHTML = `<span><b>${ag.length}</b> tabs</span><span style="color:var(--teal)">${c('working')} working</span><span style="color:var(--amber)">${c('needs')} need you</span><span style="color:var(--kelp)">${c('done')} done</span>${extra}${tail}`;
+}
+
+const ORDER = {needs:0, failed:1, working:2, setup:3, done:4, shell:5};
+function lastLine(t){
+  const lines = t.term.map(l => app(l).replace(/<[^>]+>/g,'').replace(/&lt;/g,'<').replace(/&gt;/g,'>').replace(/&amp;/g,'&').trim()).filter(Boolean);
+  if (t.status === 'needs') { const q = [...lines].reverse().find(l => l.startsWith('?')); if (q) return q; }
+  return lines[lines.length - 1] || '';
+}
+function renderOverview(){
+  const entries = Object.entries(REPOS);
+  const items = entries.flatMap(([k, r]) => r.tabs.filter(t => !t.pinned).map(t => ({k, r, t})));
+  const cnt = (s) => items.filter(x => x.t.status === s).length;
+  const row = ({k, r, t}, showRepo) => {
+    const p = PROFILES[t.profile], c = laneColor(t.lane);
+    return `<div class="ov-row ${t.status}" data-goto="${k}:${t.id}" tabindex="0" role="button">
+      <span class="st ${t.status}"></span>
+      <span class="ov-t">${esc(t.title)}<span class="ov-repo">${showRepo ? esc(r.name) + ' · ' : ''}<span style="${tabLevel(t)==='yolo'?'color:var(--red)':''}">${LEVEL_NAME(tabLevel(t)) || 'shell'}</span></span></span>
+      <span><span class="prof" style="color:${c};border-color:${c}">${cliMark(tabCli(t)) || '<i></i>'}${t.wf ? ACTIONS[stageOf(t).action].name : p.name}</span></span>
+      <span class="ov-last">${esc(lastLine(t))}</span>
+      <span class="ov-b mono">${esc(r.kind === 'other' ? app(t.path) : t.branch)}</span>
+      <span class="ov-ab">${abText(aheadBehind(r, t))}</span>
+      <span class="ov-time mono">${t.elapsed ? fmtTime(t.elapsed) : ''}</span>
+      <span><span class="stp ${t.status}">${STATUS_LABEL[t.status]}</span></span></div>`;
+  };
+  const needs = items.filter(x => x.t.status === 'needs');
+  let html = `<div class="ov-head"><h3>Overview</h3><span>${items.length} tabs in ${entries.length} places</span><span style="color:var(--teal)">${cnt('working')} working</span><span style="color:var(--amber)">${cnt('needs')} need you</span><span style="color:var(--kelp)">${cnt('done')} done</span><span class="sp mono" style="color:var(--dim)">⌘0</span></div>`;
+  if (needs.length) html += `<div class="ov-group"><div class="ov-gh"><span style="color:var(--amber)">Needs you</span><span class="cnt">${needs.length}</span></div>${needs.map(x => row(x, true)).join('')}</div>`;
+  entries.forEach(([k, r]) => {
+    const rest = items.filter(x => x.k === k && x.t.status !== 'needs').sort((a,b) => ORDER[a.t.status] - ORDER[b.t.status]);
+    const total = items.filter(x => x.k === k).length;
+    html += `<div class="ov-group"><div class="ov-gh">${r.kind === 'other' ? FOLDER_ICON : ''}<span>${esc(r.name)}</span><span class="path">${esc(r.path)}</span><span class="cnt">${total} tab${total===1?'':'s'}</span></div>
+      ${rest.length ? rest.map(x => row(x, false)).join('') : '<div class="ov-empty">Only tabs that need you, listed above.</div>'}</div>`;
+  });
+  $('overview').innerHTML = html;
+}
+
+function renderOverlays(){
+  document.querySelectorAll('#win .overlay,#win .pop,#win .menu,#win .toast').forEach(e => e.remove());
+  const win = $('win');
+  if (state.menu) {
+    const m = document.createElement('div'); m.className = 'menu'; m.setAttribute('role','menu');
+    const chip = $('repoChip'); m.style.left = chip.offsetLeft + 'px'; m.style.top = '40px';
+    const item = ([k,v]) => {
+      const dots = v.tabs.filter(t => !t.pinned).map(t => `<span class="st ${t.status}" style="animation:none"></span>`).join('');
+      const mark = k === state.repo && state.view === 'repo' ? '✓ ' : '&nbsp;&nbsp; ';
+      return `<div class="mi" data-repo="${k}" role="menuitem">${mark}${v.kind === 'other' ? FOLDER_ICON : ''}${v.name}<span class="dots">${dots}</span></div>`;
+    };
+    const list = Object.entries(REPOS);
+    m.innerHTML = list.filter(([,v]) => v.kind !== 'other').map(item).join('') + '<div class="mi sep"></div>'
+      + list.filter(([,v]) => v.kind === 'other').map(item).join('')
+      + `<div class="mi dis">Open a repo or folder… <span style="margin-left:auto" class="mono">⌘O</span></div>`;
+    win.appendChild(m);
+  }
+  if (state.pop) {
+    const t = repo().tabs.find(x => x.id === state.pop); const el = document.querySelector(`.tab[data-tab="${state.pop}"]`);
+    if (t && el) {
+      const p = document.createElement('div'); p.className = 'pop';
+      p.style.left = Math.min(el.offsetLeft + el.parentElement.offsetLeft, win.clientWidth - 340) + 'px'; p.style.top = '44px';
+      const commits = repo().rows.filter(r => !r.wip && r.lane === t.lane).length;
+      const wip = repo().rows.some(r => r.wip && r.tab === t.id);
+      const isOther = repo().kind === 'other';
+      const msg = isOther ? `This closes the terminal${t.split?'s':''}. Files in <b style="color:var(--strong)">${esc(t.path)}</b> stay as they are.${t.status==='working'?' The agent will be stopped.':''}`
+        : t.profile === 'reviewer'
+        ? `This is a read-only review worktree. Nothing will be lost.`
+        : `<b style="color:var(--strong)">${esc(t.branch)}</b> has ${commits} commit${commits===1?'':'s'} not on main${wip?' and uncommitted changes':''}. ${t.status==='working'?'The agent is still working and will be stopped.':''}${t.split?' Both terminals in this tab will close.':''}`;
+      p.innerHTML = `<h3 style="font-size:13.5px">Close ${esc(t.title)}?</h3><p>${msg}</p>
+        <div class="acts">${isOther ? `<button class="btn pri" data-act="close-both">Close tab</button>` : t.profile==='reviewer'
+          ? `<button class="btn pri" data-act="close-both">Close and remove worktree</button>`
+          : `<button class="btn pri" data-act="close-keep">Remove worktree, keep the branch</button><button class="btn warn" data-act="close-both">Remove worktree and delete the branch</button>`}
+        <button class="btn" data-act="close-cancel">Cancel</button></div>`;
+      win.appendChild(p);
+    }
+  }
+  if (state.modal) win.appendChild(buildModal());
+  if (state.toast) { const t = document.createElement('div'); t.className = 'toast'; t.innerHTML = state.toast; win.appendChild(t); }
+}
+
+function slugify(s){ return s.toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-|-$/g,'').split('-').slice(0,3).join('-') || 'task'; }
+
+function buildModal(){
+  const m = state.modal, r = repo(), isOther = r.kind === 'other';
+  const o = document.createElement('div'); o.className = 'overlay';
+  const prof = Object.entries(PROFILES).filter(([k]) => k !== 'home').map(([k,p]) =>
+    `<button class="pcard ${m.profile===k?'on':''}" data-prof="${k}"><span class="pn">${cliMark(p.cli) || `<span class="st" style="background:${p.color}"></span>`}${p.name}<span class="pc">${lvlPill(p.level)}</span></span><span class="pd">${p.desc}</span></button>`).join('');
+  const wfs = Object.entries(WORKFLOWS).map(([k, w]) =>
+    `<button class="wfcard ${m.wf===k?'on':''}" data-mwf="${k}"><span class="pn">${w.name}</span><span class="pd">${w.desc}</span>
+      <span class="chain">${w.stages.map(st => `<span class="stg">${cliMark(AGENTS[st.agent].bin)}${ACTIONS[st.action].name}</span>`).join('<span class="arr">›</span>')}</span></button>`).join('');
+  const branches = ['main', ...r.rows.flatMap(x => (x.refs||[]).map(f => f.n)).filter(n => n !== 'main' && !n.startsWith('origin') && !n.startsWith('v0') && !n.startsWith('review'))];
+  const p = PROFILES[m.profile], a = AGENTS[p.agent];
+  const ladder = a.levels ? `<div class="field"><span class="lbl">Permissions for this tab</span>
+      <div class="ladder" role="group">${LEVELS.map(l => `<button type="button" class="${l.id==='yolo'?'yolo':''} ${l.id===m.level?'on':''}" data-mlevel="${l.id}" ${isOther && l.id==='yolo' ? 'disabled title="YOLO needs a worktree"' : ''}>${l.name}</button>`).join('')}</div>
+      ${levelHint(p.agent, m.level, isOther)}</div>` : '';
+  o.innerHTML = `<div class="modal" role="dialog" aria-label="New agent">
+    <div style="display:flex;align-items:center;gap:10px"><h3>New tab in ${r.name}</h3><span style="margin-left:auto"></span>
+      <div class="seg" role="group" aria-label="Kind"><button class="${m.mode==='wf'?'on':''}" data-mmode="wf" ${isOther?'disabled title="Workflows need a git repo"':''}>Workflow</button><button class="${m.mode==='single'?'on':''}" data-mmode="single">Single agent</button></div></div>
+    ${m.mode === 'wf'
+      ? `<div class="field"><span class="lbl">Workflow</span><div class="wflist">${wfs}</div><span class="hint2">Each stage brings its own agent, model and permissions. Edit them under Workflows on this page.</span></div>`
+      : `<div class="field"><span class="lbl">Profile</span><div class="profgrid">${prof}</div></div>${ladder}`}
+    <div class="field"><label class="lbl" for="mTask">Task</label><textarea id="mTask">${esc(m.task)}</textarea></div>
+    <div class="row2">
+      <div class="field"><label class="lbl" for="mName">${isOther ? 'Tab name' : 'Tab and branch name'}</label><input id="mName" value="${esc(m.name)}"></div>
+      ${isOther
+        ? `<div class="field"><label class="lbl" for="mFolder">Folder</label><input id="mFolder" value="${esc(m.folder)}"></div>`
+        : `<div class="field"><label class="lbl" for="mBase">Start from</label><select id="mBase">${branches.map(b => `<option ${b===m.base?'selected':''}>${esc(b)}</option>`).join('')}</select></div>`}
+    </div>
+    <div class="preview" id="mPreview"></div>
+    <div class="mfoot"><span class="hint"><kbd>⌘↵</kbd> start · <kbd>esc</kbd> cancel</span><span style="display:flex;gap:8px"><button class="btn" data-act="modal-cancel">Cancel</button><button class="btn pri" data-act="modal-go">Start</button></span></div>
+  </div>`;
+  setTimeout(updatePreview, 0);
+  return o;
+}
+
+function levelHint(agent, level, isOther){
+  const a = AGENTS[agent]; if (!a.levels || !level) return '';
+  const L = LEVELS.find(l => l.id === level);
+  const flag = a.levels[level];
+  return `<div class="hint2">${L.desc}. Adds ${flag ? `<code>${esc(flag)}</code>` : 'no flag'}${a.notes && a.notes[level] ? ` (${esc(a.notes[level])})` : ''}.${level === 'yolo' ? `<br><span class="warn">Only inside a worktree. Tidewatch refuses YOLO in the main checkout and in Other.${isOther ? ' Not available here.' : ''}</span>` : ''}</div>`;
+}
+
+function updatePreview(){
+  const m = state.modal; if (!m || !$('mPreview')) return;
+  const r = repo(), p = PROFILES[m.profile];
+  const first = m.mode === 'wf' ? WORKFLOWS[m.wf].stages[0] : null;
+  const cmd = first ? cmdLine(first.agent, first.model, first.effort, first.level, '') : cmdLine(p.agent, p.model, p.effort, m.level, p.extra);
+  if (r.kind === 'other') {
+    const clash = r.tabs.find(t => t.path === m.folder && t.profile !== 'shell');
+    $('mPreview').innerHTML = `No worktree: runs directly in <b>${esc(m.folder)}</b><br>then: <b>${esc(cmd)}</b>`
+      + (clash && m.profile !== 'shell' ? `<br><span style="color:var(--amber)">The ${esc(clash.title)} tab already has an agent in this folder. They can overwrite each other's files.</span>` : '');
+    return;
+  }
+  const setup = first ? 'npm ci' : p.setup;
+  $('mPreview').innerHTML = `git worktree add -b <b>agent/${esc(m.name)}</b> ~/.${slug()}/${r.name}/${esc(m.name)} ${esc(m.base)}<br>setup: ${esc(setup)}<br>then: <b>${esc(cmd)}</b>${first ? ` <span style="color:var(--dim)">(stage 1 of ${WORKFLOWS[m.wf].stages.length})</span>` : ''}`;
+}
+
+function renderAll(){
+  document.querySelectorAll('.app-name').forEach(e => e.textContent = appName);
+  document.querySelectorAll('.app-slug').forEach(e => e.textContent = slug());
+  document.querySelectorAll('.wt-root').forEach(e => e.textContent = `~/.${slug()}/<repo>/`);
+  const ov = state.view === 'overview', other = repo().kind === 'other';
+  allTabs().forEach(syncWf);
+  $('win').classList.toggle('nogit', !ov && other);
+  $('win').classList.toggle('hidebottom', !ov && !other && state.focus && ['working','setup','shell'].includes(curTab().status));
+  document.querySelector('#win .body').hidden = ov;
+  $('overview').hidden = !ov;
+  renderRepoChip(); renderTabs();
+  if (ov) renderOverview();
+  else { renderTerm(); if (!other) { renderGraph(); renderDiff(); } }
+  renderStatus(); renderOverlays();
+}
+
+function selectTab(id){
+  state.tab[state.repo] = id; const t = curTab();
+  state.sel[state.repo] = t.head; state.file = 0; state.compose = null; state.pop = null;
+  renderAll();
+}
+let toastTimer;
+function toast(html){ state.toast = html; renderOverlays(); clearTimeout(toastTimer); toastTimer = setTimeout(() => { state.toast = null; renderOverlays(); }, 3200); }
+
+function checkout(rowId){
+  const row = findRow(rowId), r = repo(), cur = curTab(); if (!row) return;
+  if (row.id === cur.head || (row.wip && row.tab === cur.id)) { toast(`Already checked out in <b>${esc(cur.title)}</b>.`); return; }
+  const owner = (row.refs||[]).find(f => f.tab && f.tab !== 'home' && f.tab !== cur.id && f.n.startsWith('agent/'));
+  const wipOwner = row.wip ? r.tabs.find(t => t.id === row.tab) : null;
+  if (wipOwner || owner) {
+    const t = wipOwner || r.tabs.find(x => x.id === owner.tab);
+    selectTab(t.id);
+    toast(`<b>${esc(t.branch)}</b> is in use by the <b>${esc(t.title)}</b> tab. Switched to it.`);
+    return;
+  }
+  if (!cur.pinned) {
+    if (['working','needs','setup'].includes(cur.status)) {
+      toast(`<b>${esc(cur.title)}</b> is still working in this worktree. Checking out now would swap its files. Wait until it is done, or use the main tab.`);
+      return;
+    }
+    cur.head = row.id; cur.branch = row.hash + ' (detached)';
+    state.sel[state.repo] = row.id;
+    renderAll();
+    toast(`Checked out <b>${row.hash}</b> in the <b>${esc(cur.title)}</b> worktree.`);
+    return;
+  }
+  const home = cur;
+  const target = (row.refs||[]).find(f => !f.n.startsWith('origin') && !f.tab) || null;
+  const label = target ? target.n : row.hash;
+  r.rows.forEach(x => (x.refs||[]).forEach(f => { if (f.head) f.head = false; }));
+  if (target) target.head = true;
+  home.branch = label; home.head = row.id;
+  home.term.push('', `<span class="c-p">${r.path}</span> <span class="c-d">(main)</span> $ git checkout ${esc(label)}`, target ? `Switched to branch '${esc(label)}'` : `<span class="c-y">HEAD is now at ${row.hash}</span> ${esc(row.msg)}`);
+  renderAll();
+  toast(`Checked out <b>${esc(label)}</b> in the main tab of ${r.name}.`);
+}
+
+/* ---------- events ---------- */
+const win = $('win');
+win.addEventListener('click', (e) => {
+  const tp = e.target.closest('.tpane'); if (tp && !e.target.closest('[data-act],[data-answer]')) setPaneFocus(+tp.dataset.pane);
+  const x = e.target.closest('[data-close]');
+  if (x) { e.stopPropagation(); state.pop = state.pop === x.dataset.close ? null : x.dataset.close; state.menu = false; renderOverlays(); return; }
+  const tab = e.target.closest('.tab'); if (tab) { state.menu = false; selectTab(tab.dataset.tab); return; }
+  if (e.target.closest('#repoChip')) { state.menu = !state.menu; state.pop = null; renderOverlays(); return; }
+  const mi = e.target.closest('[data-repo]');
+  if (mi) { state.repo = mi.dataset.repo; state.view = 'repo'; state.menu = false; state.compose = null; state.file = 0; renderAll(); return; }
+  if (e.target.closest('#ovBtn')) { state.view = state.view === 'overview' ? 'repo' : 'overview'; state.menu = false; state.pop = null; renderAll(); return; }
+  const go = e.target.closest('[data-goto]');
+  if (go) { const [k, id] = go.dataset.goto.split(':'); state.view = 'repo'; state.repo = k; selectTab(id); return; }
+  const sc = e.target.closest('[data-scope]');
+  if (sc) { state.scope = sc.dataset.scope; renderGraph(); renderDiff(); return; }
+  const jump = e.target.closest('[data-jump]'); if (jump) { selectTab(jump.dataset.jump); return; }
+  const gr = e.target.closest('.grow');
+  if (gr) { state.sel[state.repo] = gr.dataset.row; state.file = 0; state.compose = null; renderGraph(); renderDiff(); return; }
+  const f = e.target.closest('[data-file]'); if (f) { state.file = +f.dataset.file; state.compose = null; renderDiff(); return; }
+  const th = e.target.closest('[data-thopen],[data-threply],[data-thcancel],[data-thpost],[data-thres],[data-thsend]');
+  if (th) { threadAct(th); return; }
+  const dm = e.target.closest('[data-dmode]'); if (dm) { state.diffMode = dm.dataset.dmode; renderDiff(); return; }
+  const jc = e.target.closest('[data-jumpc]'); if (jc) { jumpChange(+jc.dataset.jumpc); return; }
+  const dl = e.target.closest('#dbody [data-addc], #dbody [data-line]');
+  if (dl && !e.target.closest('.thread')) {
+    const i = +(dl.dataset.addc ?? dl.dataset.line), nums = state.lastNums[i] || {};
+    const row = findRow(state.sel[state.repo]), d = DIFFS[row.id] || genericDiff(row);
+    state.compose = {row: row.id, line: i, file: state.file, ln: nums.n || nums.o, path: d.files[Math.min(state.file, d.files.length - 1)].p};
+    renderDiff(); return;
+  }
+  const key = e.target.closest('[data-answer]'); if (key) { answer(key.dataset.answer); return; }
+  const prof = e.target.closest('[data-prof]');
+  if (prof) { readModal(); state.modal.profile = prof.dataset.prof; state.modal.level = PROFILES[prof.dataset.prof].level; if (repo().kind === 'other' && state.modal.level === 'yolo') state.modal.level = 'auto'; renderOverlays(); return; }
+  const mm = e.target.closest('[data-mmode]'); if (mm && !mm.disabled) { readModal(); state.modal.mode = mm.dataset.mmode; renderOverlays(); return; }
+  const mw = e.target.closest('[data-mwf]'); if (mw) { readModal(); state.modal.wf = mw.dataset.mwf; renderOverlays(); return; }
+  const ml = e.target.closest('[data-mlevel]'); if (ml && !ml.disabled) { readModal(); state.modal.level = ml.dataset.mlevel; renderOverlays(); return; }
+  const act = e.target.closest('[data-act]');
+  if (act) { handleAct(act.dataset.act); return; }
+  if (state.menu || state.pop) { state.menu = false; state.pop = null; renderOverlays(); }
+});
+win.addEventListener('dblclick', (e) => { const gr = e.target.closest('.grow'); if (gr) checkout(gr.dataset.row); });
+win.addEventListener('keydown', (e) => {
+  if (e.target.matches('.tab') && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); selectTab(e.target.dataset.tab); }
+  if (e.target.matches('.ov-row') && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); e.target.click(); }
+  if ((e.metaKey || e.ctrlKey) && e.key === '0') { e.preventDefault(); state.view = state.view === 'overview' ? 'repo' : 'overview'; renderAll(); }
+  if (e.target.id === 'repoChip' && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); state.menu = !state.menu; renderOverlays(); }
+  if (e.altKey && (e.key === 'ArrowUp' || e.key === 'ArrowDown') && !e.target.matches('input,textarea')) { e.preventDefault(); jumpChange(e.key === 'ArrowUp' ? -1 : 1); }
+  if ((e.metaKey || e.ctrlKey) && e.key === '.') { e.preventDefault(); state.focus = !state.focus; renderAll(); }
+  if (e.key === 'Escape') { state.modal = null; state.pop = null; state.menu = false; state.compose = null; renderOverlays(); renderDiff(); }
+  if (state.modal && e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { handleAct('modal-go'); }
+});
+win.addEventListener('input', (e) => {
+  if (!state.modal) return;
+  if (e.target.id === 'mTask') { state.modal.task = e.target.value; if (!state.modal.nameTouched) { state.modal.name = slugify(e.target.value); $('mName').value = state.modal.name; } }
+  if (e.target.id === 'mName') { state.modal.name = slugify(e.target.value) ; state.modal.nameTouched = true; }
+  if (e.target.id === 'mBase') state.modal.base = e.target.value;
+  if (e.target.id === 'mFolder') state.modal.folder = e.target.value.trim() || '~';
+  updatePreview();
+});
+win.addEventListener('change', (e) => { if (state.modal && e.target.id === 'mBase') { state.modal.base = e.target.value; updatePreview(); } });
+
+function threadAct(el){
+  const key = el.dataset.thopen || el.dataset.threply || el.dataset.thcancel || el.dataset.thpost || el.dataset.thres || el.dataset.thsend;
+  const th = THREADS[key]; if (!th) return;
+  if (el.dataset.thopen) th.open = true;
+  if (el.dataset.threply) th.replying = true;
+  if (el.dataset.thcancel) th.replying = false;
+  if (el.dataset.thpost) { const t = ($('replyText').value || '').trim(); if (t) th.msgs.push({who:'you', text:t, when:'now'}); th.replying = false; }
+  if (el.dataset.thres) { th.resolved = !th.resolved; th.open = false; th.replying = false; }
+  if (el.dataset.thsend) { sendThreads([key]); return; }
+  renderDiff();
+}
+
+function readModal(){
+  if (!state.modal) return;
+  const t = $('mTask'), n = $('mName'), b = $('mBase');
+  if (t) state.modal.task = t.value; if (n) state.modal.name = slugify(n.value); if (b) state.modal.base = b.value;
+  const f = $('mFolder'); if (f) state.modal.folder = f.value.trim() || '~';
+}
+
+function answer(a){
+  const t = curTab(); if (t.status !== 'needs') return;
+  const r = repo();
+  t.term = t.term.slice(0, -1);
+  t.term.push(`  <span class="c-s">${a === 'n' ? 'no' : a === 'a' ? 'always' : 'yes'}</span>`);
+  if (t.wf && gateOf(stageOf(t)) === 'approve') {
+    if (a === 'n') t.term.push('<span class="c-c">●</span> Okay. The branch stays local. The PR text is in <span class="c-s">.tidewatch/pr.md</span>.');
+    else t.term.push(`<span class="c-c">●</span> Run <span class="c-s">git push -u origin ${esc(t.branch)}</span>`, '<span class="c-c">●</span> Run <span class="c-s">gh pr create --fill</span>', '<span class="c-g">✓ Opened PR #213</span>', '<span class="c-g">✓ Workflow finished.</span>');
+    t.status = 'done'; renderAll(); return;
+  }
+  if (t.id === 'docs') {
+    if (a === 'n') { t.term.push('<span class="c-c">●</span> Okay. Branch kept local.'); t.status = 'done'; }
+    else { t.term.push('<span class="c-c">●</span> Run <span class="c-s">git push -u origin agent/openapi-docs</span>', '<span class="c-c">●</span> Run <span class="c-s">gh pr create --fill</span>', '<span class="c-g">✓ Opened PR #58</span>'); t.status = 'done'; }
+  } else if (a === 'n') {
+    t.term.push('<span class="c-o">•</span> Skipping the end-to-end test. Running the unit tests 20 times instead.', '<span class="c-o spin">◐</span> <span class="c-o">npm test -- sync --repeat 20</span> <span class="c-d elapsed"></span>'); t.status = 'working';
+  } else {
+    t.term.push('<span class="c-o">•</span> Ran <span class="c-s">npx playwright install chromium</span> <span class="c-d">(38s)</span>', '<span class="c-o spin">◐</span> <span class="c-o">Running the sync test 50 times</span> <span class="c-d elapsed"></span>'); t.status = 'working';
+  }
+  renderAll();
+}
+
+function sendInput(text, pane){
+  const t = curTab(); if (!text.trim()) return;
+  if (pane === 1 && t.split) {
+    const base = app(t.path).split('/').pop();
+    t.split.term.push(`<span class="c-p">${esc(base)}</span> $ ${esc(text)}`, ...shellReply(t, text));
+    renderTerm(); const inp = $('termIn1'); if (inp) inp.focus(); return;
+  }
+  if (t.status === 'needs' && /^[yna]$/i.test(text.trim())) { answer(text.trim().toLowerCase()); return; }
+  if (t.pinned || t.profile === 'shell') {
+    t.term.push(`<span class="c-p">${esc(app(t.path))}</span> $ ${esc(text)}`, `<span class="c-d">(demo: commands are not run here)</span>`);
+  } else {
+    stripSpinner(t);
+    t.term.push(`<span class="c-u">${esc(text)}</span>`, `<span class="c-c spin">◐</span> <span class="c-c">Working on it</span> <span class="c-d elapsed"></span>`);
+    if (t.status !== 'needs') t.status = 'working';
+  }
+  renderAll();
+}
+function stripSpinner(t){ t.term = t.term.filter(l => !l.includes('class="c-c spin"') && !l.includes('class="c-o spin"')); }
+
+win.addEventListener('keydown', (e) => {
+  if (e.target.matches('.term-in input') && e.key === 'Enter') { sendInput(e.target.value, +e.target.dataset.pane); e.target.value = ''; }
+  if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'd') { e.preventDefault(); handleAct(e.shiftKey ? 'split-down' : 'split-right'); }
+});
+win.addEventListener('focusin', (e) => { const tp = e.target.closest('.tpane'); if (tp) setPaneFocus(+tp.dataset.pane); });
+function setPaneFocus(i){
+  const t = curTab(); if (!t.split) return;
+  t.split.focus = i;
+  document.querySelectorAll('#termPanes .tpane').forEach(el => el.classList.toggle('focus', +el.dataset.pane === i));
+}
+function shellReply(t, cmd){
+  if (/npm (run )?dev/.test(cmd)) return ['<span class="c-g">VITE ready</span> in 398 ms', '  Local: <span class="c-b">http://localhost:5175/</span>'];
+  if (/test/.test(cmd)) return ['<span class="c-g">✓ 42 passed</span> <span class="c-d">(3.4s)</span>'];
+  if (/git status/.test(cmd)) return [`On branch ${esc(t.branch)}`, 'Changes not staged for commit:', '  <span class="c-r">modified:   src/auth/session.ts</span>', 'Untracked files:', '  <span class="c-r">src/auth/refresh.ts</span>'];
+  if (/git log/.test(cmd)) return ['<span class="c-y">2a91f0c</span> Store token expiry with the session', '<span class="c-y">81c3d02</span> Add a client for the refresh endpoint', '<span class="c-y">d124f95</span> Fix drag and drop on touch screens'];
+  return ['<span class="c-d">(demo: commands are not run here)</span>'];
+}
+
+function handleAct(a){
+  const r = repo();
+  if (a === 'wf-next') { advanceWorkflow(curTab()); return; }
+  if (a === 'focus') { state.focus = !state.focus; renderAll(); return; }
+  if (a === 'focus-off') { state.focus = false; renderAll(); return; }
+  if (a === 'split-right' || a === 'split-down') {
+    const t = curTab(), dir = a === 'split-right' ? 'right' : 'down';
+    if (!t.split) t.split = {dir, focus:1, term:[`<span class="c-d">New shell in ${esc(app(t.path))}</span>`, `<span class="c-d">Same worktree as the agent, branch ${esc(t.branch)}</span>`]};
+    else t.split.dir = dir;
+    t.split.focus = 1;
+    renderTabs(); renderTerm(); const inp = $('termIn1'); if (inp) inp.focus(); return;
+  }
+  if (a === 'unsplit') { curTab().split = null; renderTabs(); renderTerm(); return; }
+  if (a === 'note-cancel') { state.compose = null; renderDiff(); return; }
+  if (a === 'note-save' || a === 'note-send') {
+    const c = state.compose, text = ($('noteText').value || '').trim();
+    if (!text) { toast('Write a comment first.'); return; }
+    const key = `${c.row}|${c.file}|${c.line}`;
+    if (THREADS[key]) THREADS[key].msgs.push({who:'you', text, when:'now'});
+    else THREADS[key] = {msgs:[{who:'you', text, when:'now'}], resolved:false, path:c.path, ln:c.ln};
+    state.compose = null;
+    if (a === 'note-send') sendThreads([key]); else renderDiff();
+    return;
+  }
+  if (a === 'send-all') {
+    const row = findRow(state.sel[state.repo]);
+    sendThreads(Object.keys(THREADS).filter(k => k.startsWith(row.id + '|') && !THREADS[k].resolved)); return;
+  }
+  if (a === 'copy-md') {
+    const row = findRow(state.sel[state.repo]);
+    const keys = Object.keys(THREADS).filter(k => k.startsWith(row.id + '|'));
+    const md = threadsMarkdown(keys);
+    try {
+      navigator.clipboard.writeText(md).then(() => toast(`Copied ${keys.length} comment${keys.length === 1 ? '' : 's'} as Markdown.`), () => toast('This page is not allowed to copy. In the app it goes to the clipboard.'));
+    } catch (er) { toast('This page is not allowed to copy. In the app it goes to the clipboard.'); }
+    return;
+  }
+  if (a === 'close-cancel') { state.pop = null; renderOverlays(); return; }
+  if (a === 'close-keep' || a === 'close-both') {
+    const t = r.tabs.find(x => x.id === state.pop); state.pop = null;
+    r.rows = r.rows.filter(x => !(x.wip && x.tab === t.id));
+    r.rows.forEach(x => { if (x.refs) x.refs = x.refs.filter(f => f.tab !== t.id || (a === 'close-keep' && f.n.startsWith('agent/'))).map(f => f.tab === t.id ? {n:f.n} : f); });
+    if (a === 'close-both' && t.profile !== 'reviewer') r.rows = r.rows.filter(x => x.lane !== t.lane || x.lane === 0);
+    r.tabs = r.tabs.filter(x => x.id !== t.id);
+    if (state.tab[state.repo] === t.id) { state.tab[state.repo] = r.tabs[0].id; }
+    state.sel[state.repo] = curTab().head; state.compose = null;
+    renderAll();
+    if (r.kind === 'other') { toast(`Closed <b>${esc(t.title)}</b>.`); return; }
+    toast(a === 'close-keep' ? `Removed the worktree. <b>${esc(t.branch)}</b> is kept.` : `Removed the worktree${t.profile==='reviewer'?'':' and deleted <b>'+esc(t.branch)+'</b>'}.`);
+    return;
+  }
+  if (a === 'modal-cancel') { state.modal = null; renderOverlays(); return; }
+  if (a === 'modal-go') { readModal(); startAgent(); return; }
+}
+
+function openModal(){
+  const r = repo();
+  const TASKS = {tidepool:'Add a "Clear completed" button to the task list.', harbor:'Return a JSON error body for every 4xx response.', other:'Rename the scanned receipts by date and shop.'};
+  const prof0 = r.kind === 'other' ? 'assistant' : 'builder';
+  state.modal = {mode: r.kind === 'other' ? 'single' : 'wf', wf:'ship', profile: prof0, level: PROFILES[prof0].level, task: TASKS[state.repo] || '', name:'', base:'main', folder:'~/Documents/receipts', nameTouched:false};
+  state.modal.name = slugify(state.modal.task);
+  state.menu = false; state.pop = null; renderOverlays();
+  setTimeout(() => { const t = $('mTask'); if (t) t.focus(); }, 0);
+}
+$('newTab').addEventListener('click', (e) => { e.stopPropagation(); openModal(); });
+
+function startAgent(){
+  const m = state.modal, r = repo(), p = PROFILES[m.profile], isOther = r.kind === 'other';
+  let name = m.name || 'task'; let k = 2; while (r.tabs.some(t => t.title === name)) name = m.name + '-' + (k++);
+  const used = new Set(r.tabs.map(t => t.lane).concat(r.rows.map(x => x.lane)));
+  let lane = 1; while (used.has(lane)) lane++;
+  const id = 't' + Date.now();
+  const useWf = m.mode === 'wf' && !isOther;
+  const isAgent = useWf || m.profile !== 'shell';
+  const first = useWf ? WORKFLOWS[m.wf].stages[0] : null;
+  const cmd = first ? cmdLine(first.agent, first.model, first.effort, first.level, '') : cmdLine(p.agent, p.model, p.effort, m.level, p.extra);
+  let tab;
+  if (isOther) {
+    tab = {id, title:name, profile:m.profile, status:'setup', progress:60, branch:'', path:m.folder, lane, head:null, elapsed:0,
+      term:[`<span class="c-d">Not a git folder · no worktree · working directly in ${esc(m.folder)}</span>`]};
+  } else {
+    const baseRow = r.rows.find(x => (x.refs||[]).some(f => f.n === m.base)) || r.rows.find(x => !x.wip);
+    tab = {id, title:name, profile:m.profile, status:'setup', progress:0, branch:`agent/${name}`, path:`~/.{app}/${r.name}/${name}`, lane, head:'wip-'+id, elapsed:0,
+      term:[`<span class="c-d">$ git worktree add -b agent/${esc(name)} ~/.{app}/${r.name}/${esc(name)} ${esc(m.base)}</span>`, `Preparing worktree (new branch 'agent/${esc(name)}')`, `HEAD is now at ${baseRow.hash} ${esc(baseRow.msg)}`]};
+    r.rows.unshift({id:'wip-'+id, lane, wip:true, tab:id, msg:'No changes yet', when:'now', parents:[baseRow.id]});
+    if (p.setup !== 'none') tab.term.push(`<span class="c-d">setup: ${p.setup}</span>`);
+  }
+  tab.profile = useWf ? 'builder' : m.profile;
+  tab.level = useWf ? null : m.level;
+  if (useWf) tab.wf = {id:m.wf, stage:0, loop:0, states:WORKFLOWS[m.wf].stages.map(() => 'todo')};
+  r.tabs.push(tab);
+  state.modal = null; state.tab[state.repo] = id; state.sel[state.repo] = tab.head;
+  renderAll();
+  const repoKey = state.repo;
+  const timer = setInterval(() => {
+    tab.progress = Math.min(100, tab.progress + 9);
+    if (tab.progress >= 100) {
+      clearInterval(timer);
+      if (!isOther && p.setup !== 'none') tab.term.push(`<span class="c-d">added 412 packages in 9s</span>`);
+      if (isAgent) {
+        tab.term.push('', first ? stageDivider(first) : `<span class="c-d">$ ${esc(cmd)}</span>`, `<span class="c-u">${esc(m.task)}</span>`, `<span class="c-c">●</span> Looking around the folder…`, `<span class="c-c spin">◐</span> <span class="c-c">Thinking</span> <span class="c-d elapsed"></span>`);
+        tab.status = 'working';
+      } else {
+        tab.term.push('', `<span class="c-p">${esc(tab.path)}</span> $ `); tab.status = 'shell';
+      }
+    }
+    if (state.repo === repoKey && state.view === 'repo') { renderTabs(); if (curTab().id === id) renderTerm(); renderStatus(); }
+  }, 180);
+  const what = useWf ? WORKFLOWS[m.wf].name : p.name;
+  toast(isOther ? `Started ${what} in <b>${esc(m.folder)}</b>.` : `Made worktree <b>agent/${esc(name)}</b> and started ${what}.`);
+}
+
+/* ---------- ticking ---------- */
+const FR = ['◐','◓','◑','◒'];
+let frame = 0;
+const reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+function updateElapsed(){
+  const t = curTab();
+  document.querySelectorAll('#termPanes .elapsed').forEach(e => e.textContent = t.elapsed != null ? fmtTime(t.elapsed) : '');
+  const h = $('elapsedHead'); if (h && t.elapsed) h.textContent = fmtTime(t.elapsed);
+}
+setInterval(() => {
+  Object.values(REPOS).forEach(r => r.tabs.forEach(t => { if (t.status === 'working' || t.status === 'needs') t.elapsed = (t.elapsed||0) + 1; }));
+  updateElapsed();
+  if (state.view === 'overview' && !document.querySelector('#overview :focus')) renderOverview();
+}, 1000);
+if (!reduce) setInterval(() => { frame = (frame + 1) % 4; document.querySelectorAll('#termPanes .spin').forEach(e => e.textContent = FR[frame]); }, 140);
+
+/* ---------- names, profiles ---------- */
+function renderNames(){
+  $('nameList').innerHTML = NAMES.map(n => `<button class="name ${n.nm===appName?'on':''}" data-name="${n.nm}" aria-pressed="${n.nm===appName}">
+    ${n.pick ? '<span class="tag">Top pick</span>' : ''}
+    <span class="nm">${n.nm}</span><span class="cmd">$ ${n.nm.toLowerCase()} ~/Git/tidepool</span>
+    <span class="why">${n.why}</span><span class="risk">Risk: ${n.risk}</span></button>`).join('');
+}
+$('nameList').addEventListener('click', (e) => {
+  const b = e.target.closest('[data-name]'); if (!b) return;
+  appName = b.dataset.name; try { localStorage.setItem('concept-name-v2', appName); } catch (er) {}
+  renderNames(); renderProfiles(); renderWorkflows(); renderAll();
+});
+
+function fieldBox(label, inner){ return `<div class="field"><span class="lbl">${label}</span>${inner}</div>`; }
+function agentFieldsHtml(o, scope, allowShell){
+  const a = AGENTS[o.agent];
+  const agentSel = `<select data-f="agent" data-scope="${scope}" aria-label="Agent">${Object.entries(AGENTS).filter(([k]) => allowShell || k !== 'shell').map(([k, x]) => `<option value="${k}" ${k === o.agent ? 'selected' : ''}>${x.name}${x.found ? '' : ' (not installed)'}</option>`).join('')}</select>`;
+  if (!a.levels) return `<div class="row3">${fieldBox('Agent', agentSel)}</div>`;
+  const model = a.models.length
+    ? `<select data-f="model" data-scope="${scope}" aria-label="Model"><option value="">CLI default</option>${a.models.map(mm => `<option ${mm === o.model ? 'selected' : ''}>${mm}</option>`).join('')}</select>`
+    : `<input data-f="model" data-scope="${scope}" aria-label="Model" placeholder="CLI default" value="${esc(o.model || '')}">`;
+  const effort = a.effort
+    ? `<select data-f="effort" data-scope="${scope}" aria-label="Effort"><option value="">default</option>${['low','medium','high','xhigh','max'].map(x => `<option ${x === o.effort ? 'selected' : ''}>${x}</option>`).join('')}</select>`
+    : `<input disabled placeholder="Not offered by ${a.name}" aria-label="Effort">`;
+  const ladder = `<div class="ladder" role="group" aria-label="Permission level">${LEVELS.map(l => `<button type="button" class="${l.id === 'yolo' ? 'yolo' : ''} ${l.id === o.level ? 'on' : ''}" data-level="${l.id}" data-scope="${scope}">${l.name}</button>`).join('')}</div>`;
+  return `<div class="row3">${fieldBox('Agent', agentSel)}${fieldBox('Model', model)}${fieldBox('Effort', effort)}</div>${fieldBox('Permissions', ladder + levelHint(o.agent, o.level, false))}`;
+}
+function renderProfiles(){
+  $('detect').innerHTML = '<span>Found on this Mac:</span>' + Object.entries(AGENTS).filter(([k]) => k !== 'shell').map(([k, a]) =>
+    `<span class="dchip ${a.found ? '' : 'off'}">${cliMark(a.bin)}${a.bin} ${a.found ? a.ver : 'not found'}</span>`).join('') + '<span>Profiles for missing CLIs stay, greyed out, until you install them.</span>';
+  $('plist2').innerHTML = Object.entries(PROFILES).filter(([k]) => k !== 'home').map(([k, p]) =>
+    `<button class="eitem ${k === state.pe ? 'on' : ''}" data-pe="${k}" style="${AGENTS[p.agent].found ? '' : 'opacity:.6'}">${cliMark(p.cli) || `<span class="st" style="background:${p.color}"></span>`}<span>${esc(p.name)}</span>${lvlPill(p.level)}</button>`).join('');
+  const p = PROFILES[state.pe];
+  $('pform').innerHTML = `<h3>${cliMark(p.cli)}${esc(p.name)}</h3>
+    <div class="row2"><label class="field"><span class="lbl">Name</span><input data-f="name" data-scope="p" value="${esc(p.name)}"></label><label class="field"><span class="lbl">Description</span><input data-f="desc" data-scope="p" value="${esc(p.desc)}"></label></div>
+    ${agentFieldsHtml(p, 'p', true)}
+    <div class="row2"><label class="field"><span class="lbl">Setup after the worktree is made</span><input data-f="setup" data-scope="p" value="${esc(p.setup)}"></label><label class="field"><span class="lbl">Extra arguments</span><input data-f="extra" data-scope="p" placeholder="for example --add-dir ../shared" value="${esc(p.extra || '')}"></label></div>
+    <label class="chk"><input type="checkbox" data-f="noPush" data-scope="p" ${p.noPush ? 'checked' : ''}> Never push (a pre-push hook in the worktree refuses it)</label>
+    ${fieldBox('Command Tidewatch runs', `<div class="cmd" id="pcmd">${esc(cmdLine(p.agent, p.model, p.effort, p.level, p.extra))} "&lt;task&gt;"</div>`)}`;
+  renderLevelTable();
+  renderProfileToml();
+}
+function renderLevelTable(){
+  const ags = Object.entries(AGENTS).filter(([k]) => k !== 'shell');
+  $('levelTable').innerHTML = `<table class="lt"><thead><tr><th>Level</th>${ags.map(([, a]) => `<th><span class="hd">${cliMark(a.bin)}${a.name}</span><span class="src">${a.src}</span></th>`).join('')}</tr></thead><tbody>
+    ${LEVELS.map(l => `<tr class="${l.id}"><td><b>${l.name}</b><small>${l.desc}</small></td>${ags.map(([, a]) => `<td>${a.levels[l.id] ? `<code>${esc(a.levels[l.id])}</code>` : '<span style="color:var(--dim)">no flag</span>'}${a.notes[l.id] ? `<span class="nt">${esc(a.notes[l.id])}</span>` : ''}</td>`).join('')}</tr>`).join('')}
+  </tbody></table>`;
+}
+function renderProfileToml(){
+  const k = state.pe, p = PROFILES[k], a = AGENTS[p.agent];
+  const line = (key, val, cmt) => `<span class="k">${key.padEnd(11)}</span> = ${typeof val === 'boolean' ? `<span class="k">${val}</span>` : `<span class="s">"${esc(String(val))}"</span>`}${cmt ? `  <span class="c"># ${cmt}</span>` : ''}`;
+  const rows = [line('agent', p.agent)];
+  if (a.levels) {
+    if (p.model) rows.push(line('model', p.model));
+    if (p.effort) rows.push(line('effort', p.effort));
+    rows.push(line('permissions', p.level, 'plan | ask | edits | auto | yolo'));
+  }
+  rows.push(line('setup', p.setup), line('never_push', !!p.noPush));
+  if (p.extra) rows.push(line('extra_args', p.extra));
+  $('profToml').innerHTML = `<span class="c"># ~/.config/${slug()}/profiles.toml (made on first launch)</span>\n\n<span class="h">[profile.${k}]</span>\n${line('name', p.name)}\n${rows.join('\n')}`
+    + (a.levels ? `\n\n<span class="c"># built-in mapping for ${a.bin}, override it under [agent.${p.agent}.permissions]</span>\n<span class="h">[agent.${p.agent}.permissions]</span>\n${LEVELS.map(l => `<span class="k">${l.id.padEnd(5)}</span> = <span class="s">"${esc(a.levels[l.id])}"</span>`).join('\n')}` : '');
+}
+function renderWorkflows(){
+  $('wfPick').innerHTML = Object.entries(WORKFLOWS).map(([k, w]) => `<button class="${k === state.we ? 'on' : ''}" data-we="${k}">${w.name}</button>`).join('');
+  const wf = WORKFLOWS[state.we];
+  if (state.ws >= wf.stages.length) state.ws = 0;
+  $('wfFlow').innerHTML = wf.stages.map((st, i) => `<button class="fcard ${i === state.ws ? 'on' : ''}" data-ws="${i}">
+      <span class="fa">${cliMark(AGENTS[st.agent].bin)}${i + 1}. ${ACTIONS[st.action].name}</span>
+      <span class="fm">${AGENTS[st.agent].name}${st.model ? ' · ' + esc(st.model) : ''}${st.effort ? ' · ' + st.effort : ''}</span>
+      ${lvlPill(st.level)}
+      <span class="fg">Gate: ${GATE_NAME(gateOf(st))}</span>
+      ${st.onFail != null ? `<span class="fl">If it fails: back to ${st.onFail + 1}. ${ACTIONS[wf.stages[st.onFail].action].name}, at most ${st.loops || 1}×</span>` : ''}
+      ${st.human || gateOf(st) === 'approve' ? '<span class="fl" style="color:var(--blue)">Waits for you</span>' : ''}</button>`).join('<span class="farrow">→</span>');
+  const st = wf.stages[state.ws];
+  $('wfForm').innerHTML = `<h3>Stage ${state.ws + 1} of ${wf.stages.length} in ${wf.name}</h3>
+    <div class="row3">
+      <label class="field"><span class="lbl">Action</span><select data-f="action" data-scope="s">${Object.entries(ACTIONS).map(([k, x]) => `<option value="${k}" ${k === st.action ? 'selected' : ''}>${x.name}</option>`).join('')}</select></label>
+      <label class="field"><span class="lbl">Gate</span><select data-f="gate" data-scope="s">${GATES.map(g => `<option value="${g.id}" ${g.id === gateOf(st) ? 'selected' : ''}>${g.name}</option>`).join('')}</select></label>
+      <label class="field"><span class="lbl">If the gate fails</span><select data-f="onFail" data-scope="s"><option value="">Stop and ask</option>${wf.stages.slice(0, state.ws).map((x, i) => `<option value="${i}" ${st.onFail === i ? 'selected' : ''}>Back to ${i + 1}. ${ACTIONS[x.action].name}</option>`).join('')}</select></label>
+    </div>
+    ${agentFieldsHtml(st, 's', false)}
+    <label class="field"><span class="lbl">Prompt (the contract for this stage)</span><textarea data-f="prompt" data-scope="s">${esc(promptOf(st))}</textarea></label>
+    <div class="row2">
+      <label class="field"><span class="lbl">Loop limit</span><input type="number" min="1" max="5" data-f="loops" data-scope="s" value="${st.loops || 1}" ${st.onFail == null ? 'disabled' : ''}></label>
+      <label class="chk" style="align-self:end;padding-bottom:6px"><input type="checkbox" data-f="human" data-scope="s" ${st.human ? 'checked' : ''}> Wait for my approval before the next stage</label>
+    </div>
+    ${fieldBox('Command for this stage', `<div class="cmd" id="wfcmd">${esc(cmdLine(st.agent, st.model, st.effort, st.level, ''))} "&lt;stage prompt&gt;"</div>`)}`;
+  renderWorkflowToml();
+}
+function renderWorkflowToml(){
+  const k = state.we, wf = WORKFLOWS[k];
+  const q = (v) => `<span class="s">"${esc(String(v))}"</span>`;
+  const out = [`<span class="c"># ~/.config/${slug()}/workflows.toml</span>`, '', `<span class="h">[workflow.${k}]</span>`, `<span class="k">name</span> = ${q(wf.name)}`];
+  wf.stages.forEach((st) => {
+    out.push('', `<span class="h">[[workflow.${k}.stage]]</span>`, `<span class="k">action</span>      = ${q(st.action)}`, `<span class="k">agent</span>       = ${q(st.agent)}`);
+    if (st.model) out.push(`<span class="k">model</span>       = ${q(st.model)}`);
+    if (st.effort) out.push(`<span class="k">effort</span>      = ${q(st.effort)}`);
+    out.push(`<span class="k">permissions</span> = ${q(st.level)}`, `<span class="k">gate</span>        = ${q(gateOf(st))}`);
+    if (st.onFail != null) out.push(`<span class="k">on_fail</span>     = <span class="k">${st.onFail + 1}</span>  <span class="c"># stage number</span>`, `<span class="k">max_loops</span>   = <span class="k">${st.loops || 1}</span>`);
+    if (st.human) out.push(`<span class="k">approve</span>     = <span class="k">true</span>`);
+    if (st.prompt != null) out.push(`<span class="k">prompt</span>      = <span class="s">"""\n${esc(st.prompt)}\n"""</span>`);
+  });
+  out.push('', '<span class="c"># stages without a prompt use the action\'s default</span>');
+  $('wfToml').innerHTML = out.join('\n');
+}
+function editTarget(scope){ return scope === 'p' ? PROFILES[state.pe] : WORKFLOWS[state.we].stages[state.ws]; }
+function rerenderEditors(){ renderProfiles(); renderWorkflows(); renderAll(); }
+function onEdit(e){
+  const el = e.target;
+  if (!el.dataset || !el.dataset.f || !el.dataset.scope || el.closest('#win')) return;
+  const isText = el.tagName === 'TEXTAREA' || (el.tagName === 'INPUT' && el.type !== 'checkbox' && el.type !== 'number');
+  if (isText && e.type === 'change') return;
+  const o = editTarget(el.dataset.scope), f = el.dataset.f;
+  const v = el.type === 'checkbox' ? el.checked : el.type === 'number' ? Math.max(1, Math.min(5, +el.value || 1)) : el.value;
+  if (f === 'onFail') { o.onFail = v === '' ? null : +v; if (o.onFail != null && !o.loops) o.loops = 2; }
+  else o[f] = v;
+  if (f === 'agent') {
+    const a = AGENTS[v];
+    if (!a.levels) o.level = null; else if (!o.level) o.level = 'ask';
+    if (a.models.length && !a.models.includes(o.model)) o.model = '';
+    if (!a.effort) o.effort = '';
+    if (el.dataset.scope === 'p') syncCli(o);
+  }
+  if (f === 'action') { delete o.prompt; delete o.gate; }
+  if (isText) {
+    if (el.dataset.scope === 'p') { renderProfileToml(); const c = $('pcmd'); if (c) c.textContent = cmdLine(o.agent, o.model, o.effort, o.level, o.extra) + ' "<task>"'; $('plist2').querySelectorAll('.eitem.on span:not(.lvl):not(.st)').forEach(x => { if (f === 'name') x.textContent = v; }); }
+    else { renderWorkflowToml(); const c = $('wfcmd'); if (c) c.textContent = cmdLine(o.agent, o.model, o.effort, o.level, '') + ' "<stage prompt>"'; }
+    return;
+  }
+  rerenderEditors();
+}
+document.addEventListener('input', onEdit);
+document.addEventListener('change', onEdit);
+document.addEventListener('click', (e) => {
+  if (e.target.closest('#win')) return;
+  const lv = e.target.closest('[data-level][data-scope]');
+  if (lv) { editTarget(lv.dataset.scope).level = lv.dataset.level; rerenderEditors(); return; }
+  const pe = e.target.closest('[data-pe]'); if (pe) { state.pe = pe.dataset.pe; renderProfiles(); return; }
+  const we = e.target.closest('[data-we]'); if (we) { state.we = we.dataset.we; state.ws = 0; renderWorkflows(); return; }
+  const ws = e.target.closest('[data-ws]'); if (ws) { state.ws = +ws.dataset.ws; renderWorkflows(); return; }
+});
+
+renderNames(); renderProfiles(); renderWorkflows(); renderAll();
+</script>
