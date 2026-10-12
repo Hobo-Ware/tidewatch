@@ -1,4 +1,5 @@
-//! The git repository a window is opened for: root path and the folder name used as its label.
+//! What a window is opened for: a git repository (worktree tabs) or, when the folder is not one,
+//! the "Other" group (plain shell tabs in that folder).
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -7,6 +8,41 @@ use std::process::Command;
 pub(crate) struct Repo {
     pub(crate) root: PathBuf,
     pub(crate) label: String,
+}
+
+pub(crate) enum Workspace {
+    Repo(Repo),
+    Other { dir: PathBuf, label: String },
+}
+
+impl Workspace {
+    pub(crate) fn open(path: &Path) -> Self {
+        Repo::discover(path).map_or_else(
+            || {
+                let dir = if path.is_dir() { path } else { path.parent().unwrap_or(path) };
+                Self::Other { dir: dir.to_path_buf(), label: folder_label(dir) }
+            },
+            Self::Repo,
+        )
+    }
+
+    pub(crate) fn dir(&self) -> &Path {
+        match self {
+            Self::Repo(repo) => &repo.root,
+            Self::Other { dir, .. } => dir,
+        }
+    }
+
+    pub(crate) fn chip_label(&self) -> String {
+        match self {
+            Self::Repo(repo) => repo.label.clone(),
+            Self::Other { label, .. } => format!("Other: {label}"),
+        }
+    }
+}
+
+fn folder_label(dir: &Path) -> String {
+    dir.file_name().map_or_else(|| dir.display().to_string(), |n| n.to_string_lossy().into_owned())
 }
 
 impl Repo {
@@ -45,6 +81,36 @@ mod tests {
     #[test]
     fn empty_output_is_not_a_repo() {
         assert_eq!(Repo::from_toplevel("\n"), None);
+    }
+
+    #[test]
+    fn a_folder_outside_any_repo_opens_in_the_other_group() {
+        let dir = tempfile::tempdir().unwrap();
+        let workspace = Workspace::open(dir.path());
+        assert!(matches!(workspace, Workspace::Other { .. }));
+        assert_eq!(workspace.dir(), dir.path());
+        let name = dir.path().file_name().unwrap().to_string_lossy();
+        assert_eq!(workspace.chip_label(), format!("Other: {name}"));
+    }
+
+    #[test]
+    fn a_file_outside_any_repo_uses_its_parent_folder() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("notes.txt");
+        std::fs::write(&file, "x").unwrap();
+        assert_eq!(Workspace::open(&file).dir(), dir.path());
+    }
+
+    #[test]
+    fn a_git_folder_opens_as_a_repo_with_its_name_as_the_chip() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("web");
+        std::fs::create_dir(&root).unwrap();
+        let init = Command::new("git").arg("-C").arg(&root).args(["init", "-q"]).status().unwrap();
+        assert!(init.success());
+        let workspace = Workspace::open(&root);
+        assert!(matches!(workspace, Workspace::Repo(_)));
+        assert_eq!(workspace.chip_label(), "web");
     }
 
     #[test]
