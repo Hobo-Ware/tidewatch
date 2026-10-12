@@ -367,6 +367,31 @@ button{font:inherit;color:inherit}
 .lt td small{display:block;color:var(--dim);font-size:11px}
 .keys{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:6px 18px;font-size:13px;color:var(--muted)}
 .keys div{display:flex;justify-content:space-between;gap:10px;border-bottom:1px dashed var(--line);padding:4px 0}
+.rd{border:1px solid var(--line2);border-radius:12px;background:var(--term);display:flex;flex-direction:column;overflow:hidden;min-width:0}
+.rd-head{display:flex;align-items:center;gap:10px;padding:8px 12px;border-bottom:1px solid var(--line);background:var(--panel);font-size:12px;color:var(--dim)}
+.rd-seg{display:inline-flex;border:1px solid var(--line2);border-radius:6px;overflow:hidden}
+.rd-seg b,.rd-seg span{padding:2px 9px;font-weight:500}
+.rd-seg b{background:var(--panel2);color:var(--strong)}
+.rd-meta{margin-left:auto}
+.rd-body{padding:16px 18px;display:flex;flex-direction:column;gap:12px;font-size:14.5px;line-height:1.55}
+.rd-you{align-self:flex-end;max-width:85%;background:var(--panel2);border-radius:12px;padding:8px 12px;color:var(--strong)}
+.rd-tool{font-size:12.5px;color:var(--dim);font-family:var(--mono)}
+.rd-tool em{font-style:normal;color:var(--kelp)}
+.rd-md h4{margin:4px 0 6px;font-size:15px;color:var(--strong)}
+.rd-md ul{margin:0 0 6px;padding-left:20px}
+.rd-md li{margin:3px 0}
+.rd-md b{color:var(--strong)}
+.rd-md code,.rd-ask code,.rd-tool code{font-family:var(--mono);font-size:.88em;background:var(--panel2);padding:0 5px;border-radius:4px}
+.rd-check{list-style:none;padding-left:2px!important}
+.rd-check li::before{content:"☐ ";color:var(--dim)}
+.rd-check li.on::before{content:"☑ ";color:var(--kelp)}
+.rd-ask{border:1px solid rgba(251,191,36,.45);border-radius:10px;padding:10px 12px;display:flex;flex-direction:column;gap:4px;background:rgba(251,191,36,.06)}
+.rd-ask span{font-size:13px;color:var(--muted)}
+.rd-btns{display:flex;gap:6px;margin-top:6px}
+.rd-btns span{border:1px solid var(--line2);border-radius:6px;padding:2px 10px;font-size:12.5px;color:var(--fg)}
+.rd-btns span.pri{background:var(--kelp);border-color:var(--kelp);color:#10131a;font-weight:600}
+.rd-in{display:flex;justify-content:space-between;align-items:center;margin:0 12px 12px;padding:9px 12px;border:1px solid var(--line2);border-radius:10px;color:var(--dim);font-size:13.5px}
+
 .tryit{display:flex;flex-wrap:wrap;gap:8px 18px;font-size:13px;color:var(--muted)}
 .tryit span::before{content:"→ ";color:var(--kelp)}
 
@@ -477,6 +502,55 @@ kbd{font-family:var(--mono);font-size:11px;border:1px solid var(--line2);border-
       </div>
       <div class="overview" id="overview" hidden></div>
       <div class="statusbar" id="status"></div>
+    </div>
+  </div>
+</section>
+
+<section class="sec" id="reader">
+  <div class="sec-head">
+    <span class="eyebrow">Reader view</span>
+    <h2>Read the agent like a chat, keep the terminal underneath</h2>
+    <p>Agent tabs open in a Reader by default: the same session, drawn as formatted markdown with real fonts, headings, checklists and buttons. It is only a view. The agent still runs in its real terminal, the text comes from the agent's own session file, and anything you type or click is typed into that terminal. <kbd>⌘⇧T</kbd> flips to the raw terminal at any time; split panes stay plain terminals.</p>
+  </div>
+  <div class="two">
+    <div class="rd" aria-label="Reader view mockup">
+      <div class="rd-head"><span class="rd-seg"><b>Reader</b><span>Terminal</span></span><span class="rd-meta">auth-refresh · Claude Code · Auto edit</span></div>
+      <div class="rd-body">
+        <div class="rd-you">Tokens expire after an hour and the app logs people out. Refresh them in the background before they expire. Add tests.</div>
+        <div class="rd-tool"><span>▸</span> Read 2 files · Edited <code>src/api/client.ts</code> <em>+14</em> · Ran <code>npm test -- auth</code> <em>14 passed</em></div>
+        <div class="rd-md">
+          <h4>What changed</h4>
+          <ul>
+            <li><b>Refresh call:</b> <code>refreshToken()</code> in the API client.</li>
+            <li><b>Expiry stored</b> with the session, so the app knows when to refresh.</li>
+            <li><b>Timer</b> fires 5 minutes before expiry and reschedules itself.</li>
+          </ul>
+          <h4>Checklist</h4>
+          <ul class="rd-check">
+            <li class="on">Client for the refresh endpoint</li>
+            <li class="on">Expiry stored with the session</li>
+            <li>Tests for the refresh timer</li>
+          </ul>
+        </div>
+        <div class="rd-ask"><b>Allow running <code>npx playwright install</code>?</b><span>The end-to-end test needs a browser.</span>
+          <div class="rd-btns"><span class="pri">Yes</span><span>Always in this repo</span><span>No</span></div></div>
+      </div>
+      <div class="rd-in"><span>Reply to auth-refresh…</span><kbd>↵</kbd></div>
+    </div>
+    <div class="box">
+      <h3>How it stays a terminal</h3>
+      <ul>
+        <li><b>The agent's real interface runs in a pty.</b> Nothing is replaced or wrapped, so slash commands, menus and every CLI feature keep working.</li>
+        <li><b>The Reader tails the CLI's own session file:</b> Claude Code <span class="mono">~/.claude/projects/…/&lt;session&gt;.jsonl</span>, Copilot <span class="mono">~/.copilot/session-state/&lt;id&gt;/events.jsonl</span>, Codex rollout files (stdusk already reads them). Gemini's format is a spike.</li>
+        <li><b>Replies and buttons become keystrokes</b> into the pty (bracketed paste for text, the matching key for Yes / Always / No), timed by the status hooks.</li>
+        <li><b>Markdown is drawn with <span class="mono">egui_commonmark</span></b> (0.24 matches egui 0.35). Tool calls fold into one line you can open.</li>
+        <li><b>Copy gives plain text</b>, and the terminal is one key away when the Reader gets something wrong.</li>
+      </ul>
+      <h3>Other ways, not picked</h3>
+      <ul>
+        <li><b>Run agents in a structured protocol</b> (ACP or stream-json) instead of their terminal UI: exact events, but you lose the real terminal and CLI features, and three of four CLIs need third-party adapters.</li>
+        <li><b>Prettify the terminal grid</b> (nicer font, spacing, hide box drawing): no parsing, but it is still monospace and cannot show real markdown.</li>
+      </ul>
     </div>
   </div>
 </section>
