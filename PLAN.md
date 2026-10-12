@@ -222,7 +222,9 @@ Alternative: public from day one, like the siblings.
 
 DECIDED 2026-10-12: all four recommendations accepted, confirmed by the owner.
 
-**D12. How do agent tabs show the agent's output?** (added 2026-10-12, open)
+**D12. How do agent tabs show the agent's output?** (added 2026-10-12)
+
+DECIDED 2026-10-12: recommendation accepted, confirmed by the owner. Agent tabs open in the Reader view; split panes and the main tab stay raw; an agent without a working transcript reader falls back to the raw terminal.
 
 Recommendation: **a Reader view over the live terminal.** The agent's own terminal UI keeps running in the pty. Tidewatch tails the CLI's session file (Claude Code `~/.claude/projects/.../<session>.jsonl`, Copilot `~/.copilot/session-state/<id>/events.jsonl`, Codex rollout files) and draws it as markdown with `egui_commonmark` 0.24 (the egui 0.35 line). Replies and permission buttons are typed into the pty. `Cmd+Shift+T` flips to the raw terminal. Verified: Claude's transcript is written live while the session runs; Copilot keeps a per-session `events.jsonl`.
 
