@@ -3,15 +3,19 @@
 //! modules with unit tests. A folder that is not a git repo opens in the "Other" group.
 
 mod app;
+mod checkout;
 mod close_dialog;
 mod dev_screenshot;
 mod dev_worktree;
+mod fonts;
 mod jobs;
 mod layout;
+mod note_actions;
 mod pane;
 mod panels;
 mod repo;
 mod tabs;
+mod toast;
 mod worktree_jobs;
 
 use std::path::{Path, PathBuf};
