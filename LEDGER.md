@@ -10,6 +10,27 @@ A running log of what got done, newest first. The plan lives in [PLAN.md](PLAN.m
 
 ## 2026-10-12
 
+- **Phase 6, core half: launch an agent with the right flags, pushing blocked.** `tidewatch-core` now holds the
+  agent table (Claude, Codex experimental, Gemini, Copilot; five levels each, plus `[agent.<id>]` overrides and
+  custom agents in `profiles.toml`), `profiles.toml` load/save with first-launch seeding from the agents on PATH
+  (Builder = Auto edit, Reviewer = Read only, a YOLO builder per verified agent, never-push on except that YOLO
+  builder), `launch_command` and the default `house-style.md`. YOLO is refused unless the tab is a worktree tab.
+  The never-push guard is the D7 env setting appended after any existing `GIT_CONFIG_COUNT` entries plus a
+  `git-remote-tidewatch-no-push` helper on PATH. Verified live (claude 2.1.296, gemini 0.46.0, copilot 1.0.91,
+  throwaway repos, a local MCP and hook listener): hook payloads arrived with the bearer header for Claude and
+  Gemini, the `tidewatch` MCP tool was called without a prompt by all three, and the house style produced the
+  Done / Needs you / Next block in all three. Push guard against a real bare remote (git 2.55.0): plain,
+  `--no-verify`, explicit-URL, new-branch and `--force` pushes all exit 128 with the Tidewatch message, fetch
+  works, the remote kept its 1 ref, and a push from a normal shell still lands. Numbers: 139 tests passing
+  (45 app, 77 core unit, 1 push guard, 16 worktree round trip), up from 83. Findings: Claude `--permission-mode plan`
+  blocks the Tidewatch MCP tools ("Cannot call mcp__tidewatch__stage_done while in plan mode"), so a Read only
+  reviewer cannot call `stage_done` or `report_finding`; `--permission-mode dontAsk --allowedTools=mcp__tidewatch__*`
+  allowed reads and the MCP call and denied writes, an override candidate for Read only (Bash is unchecked).
+  Copilot still shows the folder-trust prompt with `--add-dir`, so the caller must answer it or pre-trust the
+  worktree. Codex hooks, MCP and `developer_instructions` are encoded from the binary's config keys, not run
+  (no `codex login`). Left for the UI half: new-tab dialog with command preview, settings editor, wiring
+  `launch_command` into tabs (writing the MCP file, the Gemini settings and `info/exclude` lines, the helper dir),
+  a PATH that includes Homebrew when the app starts from Finder, and the hook listener itself (Phase 7).
 - **Phase 4: Cmd+T makes a worktree tab, closing it removes the worktree.** In a git repo, Cmd+T or "+"
   runs `git worktree add --lock -b agent/<adjective-noun>` under `~/.tidewatch/<repo>-<hash>/<name>` on a
   background thread and starts the shell inside it. Closing asks "Keep branch" or "Delete branch"; a

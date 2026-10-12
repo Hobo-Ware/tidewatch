@@ -24,11 +24,17 @@ in the sibling repo, never in a local copy.
 
 ```
 crates/tidewatch-core/  worktrees, profiles, permission levels, workflows, agent status, no UI
-  src/paths.rs          ~/.tidewatch layout (D9), state dirs (pure)
+  src/paths.rs          ~/.tidewatch layout (D9), state dirs, ~/.config/tidewatch files (pure)
+  src/agents.rs         agent table: claude, codex, gemini, copilot, five permission levels to flags, version probe, [agent.<id>] overrides
+  src/profiles.rs       Profile, profiles.toml load/save (bad file -> defaults), first-launch seeding
+  src/launch.rs         launch_command: program, args, env; YOLO refusal, never-push guard (D7), hooks/MCP/house-style wiring per CLI
+  src/house_style.rs    default house-style.md (D13), ensure never overwrites, derived Copilot instructions file
+  src/fsutil.rs         atomic file write shared by the settings writers
   src/names.rs          adjective-noun names for new worktrees (pure)
   src/registry.rs       .state/worktrees.toml: the worktrees Tidewatch made, for repair
   src/worktree.rs       add (locked, agent/<name>), inspect, remove, list, repair, leftovers (shells out to git)
   tests/worktree_roundtrip.rs  real throwaway repos: add, lock, dirty refusal, delete branch, moved repo
+  tests/push_guard.rs   real bare remote: plain, --no-verify, explicit-url and forced pushes refused, fetch works
 crates/tidewatch/       the egui app
   src/main.rs           argument parsing, workspace discovery, eframe start
   src/app.rs            the eframe::App loop: chip, tab strip, terminal, placeholder panels, shortcuts, job results
