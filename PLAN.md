@@ -90,7 +90,7 @@ Other findings from the same report:
 
 **D1. How is stdusk split?**
 
-DECIDED 2026-10-12: recommendation accepted.
+DECIDED 2026-10-12: recommendation accepted, confirmed by the owner.
 
 Recommendation: **two library crates inside the stdusk repo**, which becomes a workspace with the app still at the root:
 
@@ -106,7 +106,7 @@ Alternatives:
 
 **D2. What happens to stdusk's global theme?**
 
-DECIDED 2026-10-12: recommendation accepted.
+DECIDED 2026-10-12: recommendation accepted, confirmed by the owner.
 
 Recommendation: **keep it a process-wide global inside `stdusk-egui`, set by the app at startup.** Each app is its own process, so two apps never share it. Tidewatch has one theme anyway. Fix the `colors -> settings` import by moving what `colors` needs from `settings` into `colors`.
 
@@ -114,7 +114,7 @@ Alternative: pass a `&Theme` into every widget. That is cleaner but touches abou
 
 **D3. How is Kelp's UI shared?**
 
-DECIDED 2026-10-12: recommendation accepted.
+DECIDED 2026-10-12: recommendation accepted, confirmed by the owner.
 
 Recommendation: **extract a `kelp-ui` crate in the Kelp repo**, with plain-data inputs and its own small `Action` enums:
 
@@ -127,17 +127,20 @@ Kelp's app maps those actions to its `Command`/`Op`. Staging actions stay in the
 
 Alternative: Tidewatch reimplements the painters on top of `kelp-core`. That is faster to start, but it is the duplication you ruled out.
 
-**D4. Where do review comments live?**
+**D4. What is a review comment?**
 
-DECIDED 2026-10-12: recommendation accepted.
+DECIDED 2026-10-12 by the owner (revised from "share Kelp's comments file"): comments are first of all notes to the tab's agent, and second PR comments.
 
-Recommendation: **share Kelp's file, `<git_common_dir>/kelp/comments.json`, through `kelp-core`'s review module, and add an advisory file lock (flock) around read-modify-write.** A comment made in Tidewatch then shows up in Kelp, and the reverse. Add an optional `author_kind` field (person or agent) so agent replies are marked.
+1. **Note to the agent (default).** A thread belongs to the agent tab (worktree and branch) and is stored in Tidewatch's state for that tab (`notes.json`), not in Kelp's file. You press Send (one thread, or all open ones), or turn on the per-tab "deliver when idle" switch, which sends queued notes in one message when the agent stops and waits. The agent's reply lands in the thread. Closing the tab keeps the notes as history.
+2. **PR comment.** When the branch has an open pull request (found through `gh`, as Kelp's `pulls` module does), its review comments are pulled into the diff as threads and can be sent to the agent the same way. Any note can be posted to the PR as a GitHub review comment, as you, after a confirm.
 
-Alternative: a separate `tidewatch/comments.json`. It avoids sharing, but the two apps disagree about the same diff.
+Reused from Kelp: the thread card, the composer, and `Anchor::locate`, which keeps a thread on its line. Kelp's own `comments.json` is not read or written, so Kelp needs no lock and no new field.
+
+Alternative (the original recommendation): share Kelp's `comments.json` with a file lock. It was dropped because local notes nobody else sees are not what the comments are for.
 
 **D5. How does Tidewatch learn an agent's status?**
 
-DECIDED 2026-10-12: recommendation accepted.
+DECIDED 2026-10-12: recommendation accepted, confirmed by the owner, with the hook spikes (Phase 0 steps 1 to 3) to run first.
 
 Recommendation: **use three layers, each a fallback for the one above it:**
 
@@ -266,6 +269,8 @@ tidewatch/
     status.rs                 AgentStatus enum + the three input layers (D5)
     hooks.rs                  127.0.0.1 listener, per-tab token, payload parsing
     guard.rs                  never-push env (D7), YOLO-only-in-worktree rule
+    notes.rs                  per-tab review threads, delivery queue (D4)
+    pr.rs                     open PR lookup, pull and post review comments through gh (D4)
     findings.rs               findings.json contract -> review threads (D4, D6)
   crates/tidewatch/src/
     main.rs                   eframe app loop (thin)
@@ -289,6 +294,7 @@ tidewatch/
 | `profiles.toml` | `[profile.<id>]` agent, model, effort, permissions, setup, never_push, extra_args |
 | `workflows.toml` | `[workflow.<id>]` name, `[[stage]]` action, agent, model, effort, permissions, gate, on_fail, max_loops, approve, prompt |
 | `.state/session.toml` | groups, tabs, worktree paths, agent session ids, workflow position (stdusk-core session types) |
+| `.state/<repo>/<tab>/notes.json` | the tab's review threads: anchor, comments, author (person or agent), sent, resolved, PR comment id when linked (D4) |
 | `.state/<repo>/<tab>/stage-<n>/` | `summary.md`, `findings.json` |
 
 `findings.json`: `[{ "file": str, "line": int, "blocking": bool, "text": str }]`.
@@ -383,7 +389,6 @@ Steps:
 1. Add `crates/kelp-ui`. Move `theme`, the avatar store, the job runner and small helpers (`paint_avatar`, `commit_tooltip`).
 2. Graph painter: plain-data input (rows, `Layout`, labels, selection, hover) and its own `GraphAction` enum. Summaries are passed in, not read from gix during paint. Kelp maps `GraphAction` to `Command`.
 3. Diff body and review threads: `DiffBody::ui(&FileDiff, &mut Review, mode, author) -> DiffAction`, without staging. Kelp keeps staging in its own wrapper.
-4. Review store: add flock around load-modify-save, plus an optional `author_kind` (D4).
 5. Parametrize `update.rs` with the repo and cask, so Tidewatch passes its own.
 6. Tag a release.
 
@@ -425,11 +430,11 @@ Steps:
 
 1. Graph pane scoped to the active worktree, with the Whole repo switch and ahead/behind against main.
 2. Diff pane: unified/split, word highlight, jump between changes, live working tree.
-3. Review threads through the shared store (D4).
+3. Review threads as notes for the tab's agent, stored in the tab state (D4).
 4. Double-click checkout rules (concept): blocked while an agent works, jump to the owner tab.
 
-Runnable: a screenshot of a repo with two agent worktrees, plus making a comment in Tidewatch and seeing it in Kelp on the same commit.
-Checkpoint 5 exit: the screenshot matches the concept layout and the comment shows in both apps.
+Runnable: a screenshot of a repo with two agent worktrees, plus making a note, quitting and reopening Tidewatch, and seeing the note on the same line.
+Checkpoint 5 exit: the screenshot matches the concept layout and notes survive a restart.
 
 ### Phase 6: profiles, permission levels and launching agents
 
@@ -464,9 +469,10 @@ Goal: review threads reach the agent and its answer comes back.
 
 Steps:
 
-1. "Send to agent" for one thread or all open ones: bracketed paste into the agent pane.
-2. Agent replies: read `findings.json` and `summary.md` (D6). Optional MCP reply tool for Claude and Copilot behind a setting.
-3. Reader view (D12): session-file tailers per CLI, markdown rendering, reply box and permission buttons that type into the pty, `Cmd+Shift+T` toggle. Phase 0 adds a spike for Gemini's session storage.
+1. "Send to agent" for one thread or all open ones (bracketed paste into the agent pane), and the per-tab "deliver when idle" switch (D4).
+2. PR link (D4): find the open PR with `gh`, pull its review comments in as threads, post a note to the PR after a confirm.
+3. Agent replies: read `findings.json` and `summary.md` (D6). Optional MCP reply tool for Claude and Copilot behind a setting.
+4. Reader view (D12): session-file tailers per CLI, markdown rendering, reply box and permission buttons that type into the pty, `Cmd+Shift+T` toggle. Phase 0 adds a spike for Gemini's session storage.
 
 Runnable: comment on a line, press Send, and see the paste in the agent pane and the reply in the thread.
 Checkpoint 8 exit: the round trip works for Claude; the file path works for all agents.
@@ -507,7 +513,7 @@ Checkpoint 10 exit: tagged release installed from the tap; restart keeps agents;
 | Agent CLI flags change between versions | `agents.rs` probes `--version` and logs it; flags have a test table; Codex stays experimental (D8) |
 | Hooks via `--settings` replace the user's hooks | Phase 0 step 1; if they replace, merge the user's hooks into the injected JSON |
 | Hook config files get committed by an agent | `info/exclude` entries plus a check before every gate |
-| Shared comments file written by both apps | flock (D4) |
+| Posting a note to a team PR by mistake | posting always asks first; notes stay local by default (D4) |
 | YOLO agent damages files outside its worktree | only allowed in worktrees; documented as a guard rail, not a sandbox |
 | Many agents slow the UI | hidden tabs do not paint; the status bus is event-driven; performance rules apply |
 
@@ -523,7 +529,16 @@ Checkpoint 10 exit: tagged release installed from the tap; restart keeps agents;
 
 ## Phase 0 findings
 
-(empty until Phase 0 runs)
+- **2026-10-12, step 1 (Claude Code 2.1.289 hooks), PASS.**
+  - Hooks passed with `--settings '<json>'` add to the project's `.claude/settings.json` hooks rather than replacing them: both Stop hooks ran.
+  - `type: "http"` hooks POST to a local listener. The Stop payload carries `session_id`, `cwd`, `transcript_path`, `last_assistant_message` and `permission_mode`.
+  - An http `SessionStart` hook did not fire in `-p` mode, so it needs a recheck in an interactive run, along with `Notification`.
+  - Test: `claude -p ... --model haiku --settings '<json>'` in a temp git repo with a 15-line Python listener.
+- **2026-10-12, step 2, Gemini part (Gemini CLI 0.46.0), PASS with a condition.**
+  - Hooks in a project `.gemini/settings.json` fire (`SessionStart`, `AfterAgent`). The AfterAgent payload carries `session_id`, `cwd`, `transcript_path`, `prompt` and `prompt_response`.
+  - **Condition:** Gemini refuses to run in an untrusted folder, and every worktree under `~/.tidewatch` is new. Tidewatch must set `GEMINI_CLI_TRUST_WORKSPACE=true` in a Gemini tab's environment.
+  - The file shows as untracked in `git status`, which confirms the `info/exclude` step in D5 is needed.
+- Codex part of step 2 and step 3 (Copilot signals): not run yet (Codex not installed).
 
 ## Deviations log
 
