@@ -12,6 +12,7 @@ pub mod names;
 pub mod notes;
 pub mod path_env;
 pub mod paths;
+pub mod prepare;
 pub mod profiles;
 pub mod prompt;
 mod registry;

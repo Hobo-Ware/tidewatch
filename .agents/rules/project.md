@@ -37,6 +37,8 @@ crates/tidewatch-core/  worktrees, profiles, permission levels, workflows, agent
   src/listener.rs       127.0.0.1:0 HTTP listener on std::net: per-tab bearer tokens, POST /hook/<agent>, POST /mcp, events over a channel
   src/mcp.rs            Tidewatch MCP tools (D6): stage_done, report_finding, list_notes, reply_to_note over JSON-RPC 2.0
   src/house_style.rs    default house-style.md (D13), ensure never overwrites, derived Copilot instructions file
+  src/path_env.rs       PATH with the standard install dirs in front, for Finder launches (pure)
+  src/prepare.rs        gets a tab ready to start: house style, guard helper, MCP and Gemini files, task flags, setup-then-agent shell line
   src/fsutil.rs         atomic file write shared by the settings writers
   src/names.rs          adjective-noun names for new worktrees (pure)
   src/registry.rs       .state/worktrees.toml: the worktrees Tidewatch made, for repair
