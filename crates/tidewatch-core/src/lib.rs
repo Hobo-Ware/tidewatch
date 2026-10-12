@@ -12,6 +12,8 @@ pub mod names;
 pub mod notes;
 pub mod paths;
 pub mod profiles;
+pub mod prompt;
 mod registry;
 pub mod status;
+pub mod workflows;
 pub mod worktree;

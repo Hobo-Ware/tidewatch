@@ -24,9 +24,11 @@ in the sibling repo, never in a local copy.
 
 ```
 crates/tidewatch-core/  worktrees, profiles, permission levels, workflows, agent status, no UI
-  src/paths.rs          ~/.tidewatch layout (D9), state dirs, per-tab notes file, ~/.config/tidewatch files (pure)
+  src/paths.rs          ~/.tidewatch layout (D9), state dirs, per-tab notes and stages files, ~/.config/tidewatch files (pure)
   src/agents.rs         agent table: claude, codex, gemini, copilot, five permission levels to flags, version probe, [agent.<id>] overrides
   src/profiles.rs       Profile, profiles.toml load/save (bad file -> defaults), first-launch seeding
+  src/workflows.rs      Workflow, Stage, Gate, Action; workflows.toml load/save/seed (bad file -> defaults), the built-in Ship a feature, Fix a bug, Review a PR
+  src/prompt.rs         stage prompt templates: {task} {base} {branch} {previous_summary} {findings} {test_output} (pure)
   src/launch.rs         launch_command: program, args, env; YOLO refusal, never-push guard (D7), hooks/MCP/house-style wiring per CLI
   src/status.rs         AgentStatus and the pure fold of hook events, terminal signals and process facts (D5); per-CLI hook payload parsing
   src/events.rs         TabEvent and TabMessage: what the listener sends the app, plus the Repaint callback type
