@@ -174,7 +174,7 @@ mod tests {
 
     #[test]
     fn warnings_name_changes_and_unmerged_commits() {
-        assert!(warnings(&clean()).is_empty());
+        assert_eq!(warnings(&clean()), Vec::<String>::new());
         let both = warnings(&Inspection { changed: 1, unmerged: 3 });
         assert_eq!(both.len(), 2);
         assert!(both[0].starts_with("1 file has uncommitted changes"));

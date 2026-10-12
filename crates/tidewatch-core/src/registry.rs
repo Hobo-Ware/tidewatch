@@ -75,7 +75,7 @@ mod tests {
     #[test]
     fn missing_file_is_an_empty_registry() {
         let home = tempfile::tempdir().unwrap();
-        assert!(load(&TidewatchPaths::new(home.path())).is_empty());
+        assert_eq!(load(&TidewatchPaths::new(home.path())), []);
     }
 
     #[test]
@@ -115,6 +115,6 @@ mod tests {
         let paths = TidewatchPaths::new(home.path());
         std::fs::create_dir_all(paths.state_dir()).unwrap();
         std::fs::write(file(&paths), "worktree = [[[").unwrap();
-        assert!(load(&paths).is_empty());
+        assert_eq!(load(&paths), []);
     }
 }

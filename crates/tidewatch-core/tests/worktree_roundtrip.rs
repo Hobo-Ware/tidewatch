@@ -132,7 +132,7 @@ fn a_repo_without_commits_cannot_get_a_worktree_and_stays_clean() {
 
     let err = worktree::add(&paths, &repo).unwrap_err();
     assert!(matches!(err, WorktreeError::Git(_)), "{err}");
-    assert!(worktree::leftovers(&paths, &[]).is_empty());
+    assert_eq!(worktree::leftovers(&paths, &[]), []);
     assert!(branches(&repo).iter().all(|b| !b.starts_with("agent/")));
 }
 
@@ -147,7 +147,7 @@ fn removing_a_clean_worktree_keeps_the_branch_and_the_folder_is_gone() {
     assert!(!f.paths.repo_dir(&f.repo).exists(), "the empty per-repo folder is cleaned up too");
     assert_only_main(&f.repo);
     assert!(branches(&f.repo).contains(&wt.branch));
-    assert!(worktree::leftovers(&f.paths, &[]).is_empty());
+    assert_eq!(worktree::leftovers(&f.paths, &[]), []);
 }
 
 #[test]
@@ -248,7 +248,7 @@ fn a_moved_repo_is_repaired_and_its_worktree_works_again() {
         worktree::remove(&f.paths, &repaired[0], BranchChoice::Delete, RemoveMode::Safe).unwrap();
     assert_eq!(outcome, BranchOutcome::Deleted);
     assert!(!wt.path.exists());
-    assert!(worktree::leftovers(&f.paths, &[]).is_empty());
+    assert_eq!(worktree::leftovers(&f.paths, &[]), []);
 }
 
 #[test]
@@ -258,7 +258,7 @@ fn repair_leaves_worktrees_of_other_repos_alone() {
     init_repo(&other);
     let wt = worktree::add(&f.paths, &f.repo).unwrap();
 
-    assert!(worktree::repair(&f.paths, &other).is_empty());
+    assert_eq!(worktree::repair(&f.paths, &other), []);
     git(&wt.path, &["status"]);
 }
 
