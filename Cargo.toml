@@ -8,6 +8,7 @@ edition = "2024"
 license = "MIT"
 
 [workspace.dependencies]
+tidewatch-core = { path = "crates/tidewatch-core" }
 stdusk-core = { git = "https://github.com/Hobo-Ware/stdusk", rev = "30d69b0a6320e4209d2f5fc69e65f8e14d915d85" }
 stdusk-egui = { git = "https://github.com/Hobo-Ware/stdusk", rev = "30d69b0a6320e4209d2f5fc69e65f8e14d915d85" }
 eframe = { version = "0.35.0", features = ["glow", "__screenshot"] }

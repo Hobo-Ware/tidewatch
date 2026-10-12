@@ -1,18 +1,25 @@
 //! Tidewatch - a window per git repo with stdusk terminal tabs on top and Kelp panels below.
 //! The `eframe::App` loop lives in `app.rs`; tabs, layout math and the repo probe are pure
-//! modules with unit tests.
+//! modules with unit tests. A folder that is not a git repo opens in the "Other" group.
 
 mod app;
+mod close_dialog;
 mod dev_screenshot;
+mod dev_worktree;
+mod jobs;
 mod layout;
+mod pane;
 mod panels;
 mod repo;
 mod tabs;
+mod worktree_jobs;
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use app::Tidewatch;
 use dev_screenshot::DevScreenshot;
+use repo::Workspace;
+use tidewatch_core::paths::TidewatchPaths;
 
 const WINDOW_SIZE: [f32; 2] = [1280.0, 800.0];
 
@@ -22,10 +29,8 @@ fn main() -> eframe::Result<()> {
         .map(PathBuf::from)
         .or_else(|| std::env::current_dir().ok())
         .unwrap_or_else(|| PathBuf::from("."));
-    let Some(repo) = repo::Repo::discover(&start) else {
-        eprintln!("tidewatch: {} is not inside a git repository", start.display());
-        std::process::exit(2);
-    };
+    let workspace = Workspace::open(&start);
+    let paths = std::env::var_os("HOME").map(|home| TidewatchPaths::new(Path::new(&home)));
     let screenshot = DevScreenshot::from_env();
     let options = eframe::NativeOptions {
         renderer: eframe::Renderer::Glow,
@@ -37,6 +42,6 @@ fn main() -> eframe::Result<()> {
     eframe::run_native(
         "Tidewatch",
         options,
-        Box::new(move |cc| Ok(Box::new(Tidewatch::new(cc, repo, screenshot)))),
+        Box::new(move |cc| Ok(Box::new(Tidewatch::new(cc, workspace, paths, screenshot)))),
     )
 }
