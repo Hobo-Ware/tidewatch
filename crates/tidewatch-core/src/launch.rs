@@ -464,7 +464,7 @@ mod tests {
             (
                 "claude",
                 [
-                    "--permission-mode plan",
+                    "--permission-mode dontAsk --allowedTools=Read,Grep,Glob",
                     "--permission-mode manual",
                     "--permission-mode acceptEdits",
                     "--permission-mode auto",
