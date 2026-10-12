@@ -28,6 +28,10 @@ crates/tidewatch-core/  worktrees, profiles, permission levels, workflows, agent
   src/agents.rs         agent table: claude, codex, gemini, copilot, five permission levels to flags, version probe, [agent.<id>] overrides
   src/profiles.rs       Profile, profiles.toml load/save (bad file -> defaults), first-launch seeding
   src/launch.rs         launch_command: program, args, env; YOLO refusal, never-push guard (D7), hooks/MCP/house-style wiring per CLI
+  src/status.rs         AgentStatus and the pure fold of hook events, terminal signals and process facts (D5); per-CLI hook payload parsing
+  src/events.rs         TabEvent and TabMessage: what the listener sends the app, plus the Repaint callback type
+  src/listener.rs       127.0.0.1:0 HTTP listener on std::net: per-tab bearer tokens, POST /hook/<agent>, POST /mcp, events over a channel
+  src/mcp.rs            Tidewatch MCP tools (D6): stage_done, report_finding, list_notes, reply_to_note over JSON-RPC 2.0
   src/house_style.rs    default house-style.md (D13), ensure never overwrites, derived Copilot instructions file
   src/fsutil.rs         atomic file write shared by the settings writers
   src/names.rs          adjective-noun names for new worktrees (pure)
@@ -36,6 +40,8 @@ crates/tidewatch-core/  worktrees, profiles, permission levels, workflows, agent
   src/notes.rs          per-tab review threads in .state/<repo-dir>/<tab>/notes.json: load, atomic save, background writer (D4)
   src/history.rs        branch-scoped graph, ahead/behind, commit and working-tree files and diffs, file watcher, via kelp-core
   tests/worktree_roundtrip.rs  real throwaway repos: add, lock, dirty refusal, delete branch, moved repo
+  tests/listener_http.rs  listener on a random port with a raw HTTP client: 401s, hooks, MCP, keep-alive, chunked, size caps
+  examples/live_check.rs  by hand: run a real claude, gemini or copilot headless through the listener and print the events
   tests/push_guard.rs   real bare remote: plain, --no-verify, explicit-url and forced pushes refused, fetch works
   tests/history_roundtrip.rs   real throwaway repos: worktree branch history, whole repo, ahead/behind, diffs, watcher
 crates/tidewatch/       the egui app
