@@ -569,7 +569,14 @@ Checkpoint 10 exit: tagged release installed from the tap, and the AppImage star
   - New mapping: Read only `--sandbox read-only --ask-for-approval never`; Ask `--sandbox read-only --ask-for-approval on-request`; Auto edit `--sandbox workspace-write --ask-for-approval on-request`; Auto `--sandbox workspace-write --approve-for-me`; YOLO `--dangerously-bypass-approvals-and-sandbox`.
   - `-c key=value` overrides any config value for one run, and `--dangerously-bypass-hook-trust` runs hooks without persisted trust. This is the per-session path for Codex hooks and MCP (D5, D6). No worktree file is needed.
   - The live hook and MCP test needs `codex login`, which only the owner can do.
-- Step 3 (Copilot signals): not run yet.
+- **2026-10-12, steps 3, 7, 8 and the Reader view checks (Copilot 1.0.91, Gemini 0.46.0, Claude 2.1.296), PASS.** Details in `docs/research/phase-0-spikes.md`.
+  - **Copilot signals:** no OSC 9;4 progress; the only title is OSC 0 ("GitHub Copilot", the prompt, then an AI-written title). Status for Copilot comes from hooks and `events.jsonl`, not terminal signals (D5 layer 2 does nothing for Copilot).
+  - **Copilot first launch** in a new folder blocks on a folder-trust prompt, so every new worktree hits it. Phase 6 must pre-trust the worktree or answer the prompt.
+  - **MCP per session (step 7), stdio and http with a bearer header:** Claude `--mcp-config` + `--allowedTools mcp__tw__ping`; Copilot `--additional-mcp-config @file` + `--allow-tool='tw(ping)'` (without it: "Permission denied"); Gemini project `settings.json` `mcpServers` with `trust: true` per server and `httpUrl` for http. Gemini without `trust` printed a made-up pong value: check the server's own log in tests, never the agent's text.
+  - **House style (step 8, D13):** Copilot reads only a `*.instructions.md` file with `applyTo: "**"` from `COPILOT_CUSTOM_INSTRUCTIONS_DIRS` (an `AGENTS.md` there is listed but ignored). Gemini `context.fileName` takes relative names only and replaces the `GEMINI.md` default, so set it to a list that keeps `GEMINI.md` and `AGENTS.md`, and reach a file outside the repo with `--include-directories` + `loadMemoryFromIncludeDirectories: true`. In both, the repo's own instructions were still followed.
+  - **Transcripts (D12):** Gemini `~/.gemini/tmp/<repo-name>/chats/session-*.jsonl` and Copilot `~/.copilot/session-state/<id>/events.jsonl` are appended live; both honour `--session-id`. Gemini's SessionStart hook payload carries `transcript_path`.
+  - **`egui_commonmark` 0.24.0 depends on egui 0.35** (0.25.0 needs egui 0.36).
+  - Codex live runs: still blocked on `codex login`.
 
 ## Deviations log
 
