@@ -1,0 +1,857 @@
+//! The local listener (PLAN.md, D5 and D6): one HTTP server on `127.0.0.1:0` that every agent tab
+//! reports to.
+//!
+//! - `POST /hook/<agent>` takes a hook payload and emits [`TabEvent::Hook`] when it carries a status.
+//! - `POST /mcp` is the Tidewatch MCP server ([`crate::mcp`]); `GET` and the other methods get 405.
+//! - Every request needs `Authorization: Bearer <token>`. Tokens are per tab: [`Listener::register_tab`]
+//!   makes one, [`Listener::unregister_tab`] revokes it. Anything else is 401, including unknown paths.
+//!
+//! The server is hand-rolled on `std::net` with `httparse` for the request head: HTTP/1.1 keep-alive,
+//! `Content-Length` and chunked bodies, `Expect: 100-continue`, head and body size caps, one thread per
+//! connection. That is about the size of the glue a crate would need, and it keeps the unmaintained
+//! `tiny_http` out. Events leave through an `mpsc` channel plus a repaint callback, so the UI never
+//! waits on a socket.
+
+use std::collections::HashMap;
+use std::fmt::Write as _;
+use std::fs::File;
+use std::io::{self, Read, Write};
+use std::net::{Shutdown, SocketAddr, TcpListener, TcpStream};
+use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
+use std::sync::mpsc::{Receiver, Sender, channel};
+use std::sync::{Arc, Mutex, PoisonError};
+use std::thread::JoinHandle;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
+
+use sha2::{Digest, Sha256};
+
+use crate::events::{Repaint, TabEvent, TabMessage};
+use crate::launch::HookListener;
+use crate::mcp::{McpReply, ToolCtx, handle_post};
+use crate::paths::TidewatchPaths;
+use crate::status::parse_hook;
+
+/// Where the listener binds: loopback only, a random free port (PLAN.md, Constants).
+pub const HOOK_BIND: &str = "127.0.0.1:0";
+const MAX_HEAD_BYTES: usize = 16 * 1024;
+const MAX_BODY_BYTES: usize = 2 * 1024 * 1024;
+const MAX_LINE_BYTES: usize = 1024;
+const MAX_CONNECTIONS: usize = 64;
+const IDLE_TIMEOUT: Duration = Duration::from_secs(75);
+const WRITE_TIMEOUT: Duration = Duration::from_secs(10);
+const TOKEN_BYTES: usize = 16;
+
+/// Who a token belongs to.
+#[derive(Clone, Debug)]
+pub struct TabRegistration {
+    /// The app's id for the tab; every [`TabMessage`] carries it.
+    pub tab_id: u64,
+    /// The agent id (`claude`, `gemini`, ...). Signs the agent's replies in the notes.
+    pub agent: String,
+    /// The repository the tab belongs to, and the tab's state name: together they pick `notes.json`.
+    pub repo: PathBuf,
+    pub tab: String,
+}
+
+struct Entry {
+    tab_id: u64,
+    agent: String,
+    notes_file: PathBuf,
+}
+
+struct Shared {
+    tabs: Mutex<HashMap<String, Arc<Entry>>>,
+    events: Sender<TabMessage>,
+    repaint: Repaint,
+    notes_lock: Mutex<()>,
+}
+
+impl Shared {
+    fn entry(&self, token: &str) -> Option<Arc<Entry>> {
+        self.tabs.lock().unwrap_or_else(PoisonError::into_inner).get(token).cloned()
+    }
+
+    fn emit(&self, tab_id: u64, event: TabEvent) {
+        let _ = self.events.send(TabMessage { tab_id, event });
+        (self.repaint)();
+    }
+}
+
+/// The running server. Dropping it stops accepting connections.
+pub struct Listener {
+    shared: Arc<Shared>,
+    paths: TidewatchPaths,
+    addr: SocketAddr,
+    stop: Arc<AtomicBool>,
+    accept: Option<JoinHandle<()>>,
+}
+
+impl Listener {
+    /// Binds `127.0.0.1:0` and starts serving on background threads. The returned receiver gets every
+    /// event; `repaint` is called after each one is queued. An `Err` means the bind failed: the app
+    /// falls back to the terminal and process layers of the status (PLAN.md, Failure model).
+    pub fn start(
+        paths: TidewatchPaths,
+        repaint: Repaint,
+    ) -> io::Result<(Self, Receiver<TabMessage>)> {
+        let listener = TcpListener::bind(HOOK_BIND)?;
+        let addr = listener.local_addr()?;
+        let (events, receiver) = channel();
+        let shared = Arc::new(Shared {
+            tabs: Mutex::new(HashMap::new()),
+            events,
+            repaint,
+            notes_lock: Mutex::new(()),
+        });
+        let stop = Arc::new(AtomicBool::new(false));
+        let accept = {
+            let (shared, stop) = (Arc::clone(&shared), Arc::clone(&stop));
+            std::thread::Builder::new()
+                .name("tidewatch-listener".into())
+                .spawn(move || accept_loop(&listener, &shared, &stop))?
+        };
+        Ok((Self { shared, paths, addr, stop, accept: Some(accept) }, receiver))
+    }
+
+    /// For example `http://127.0.0.1:51234`, no trailing slash.
+    #[must_use]
+    pub fn base_url(&self) -> String {
+        format!("http://{}", self.addr)
+    }
+
+    /// Makes a fresh token for the tab and returns what `launch_command` needs. Registering a tab
+    /// that already has a token revokes the old one.
+    pub fn register_tab(&self, registration: TabRegistration) -> HookListener {
+        let token = new_token();
+        let entry = Arc::new(Entry {
+            tab_id: registration.tab_id,
+            agent: registration.agent,
+            notes_file: self.paths.notes_file(&registration.repo, &registration.tab),
+        });
+        let mut tabs = self.shared.tabs.lock().unwrap_or_else(PoisonError::into_inner);
+        tabs.retain(|_, existing| existing.tab_id != entry.tab_id);
+        tabs.insert(token.clone(), entry);
+        HookListener { base_url: self.base_url(), token }
+    }
+
+    /// Revokes every token of the tab. Later requests with them get 401.
+    pub fn unregister_tab(&self, tab_id: u64) {
+        let mut tabs = self.shared.tabs.lock().unwrap_or_else(PoisonError::into_inner);
+        tabs.retain(|_, entry| entry.tab_id != tab_id);
+    }
+}
+
+impl Drop for Listener {
+    fn drop(&mut self) {
+        self.stop.store(true, Ordering::SeqCst);
+        let _ = TcpStream::connect(self.addr);
+        if let Some(accept) = self.accept.take() {
+            let _ = accept.join();
+        }
+    }
+}
+
+fn new_token() -> String {
+    static COUNTER: AtomicU64 = AtomicU64::new(0);
+    let mut bytes = [0u8; TOKEN_BYTES];
+    let from_os = File::open("/dev/urandom").and_then(|mut f| f.read_exact(&mut bytes)).is_ok();
+    if !from_os {
+        let nanos = SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_nanos());
+        let digest = Sha256::digest(format!(
+            "{nanos}-{}-{}",
+            std::process::id(),
+            COUNTER.fetch_add(1, Ordering::SeqCst)
+        ));
+        bytes.copy_from_slice(&digest[..TOKEN_BYTES]);
+    }
+    bytes.iter().fold(String::new(), |mut hex, b| {
+        let _ = write!(hex, "{b:02x}");
+        hex
+    })
+}
+
+struct ConnectionSlot(Arc<AtomicUsize>);
+
+impl Drop for ConnectionSlot {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, Ordering::SeqCst);
+    }
+}
+
+fn accept_loop(listener: &TcpListener, shared: &Arc<Shared>, stop: &AtomicBool) {
+    let active = Arc::new(AtomicUsize::new(0));
+    for stream in listener.incoming() {
+        if stop.load(Ordering::SeqCst) {
+            break;
+        }
+        let Ok(stream) = stream else {
+            std::thread::sleep(Duration::from_millis(50));
+            continue;
+        };
+        if active.fetch_add(1, Ordering::SeqCst) >= MAX_CONNECTIONS {
+            active.fetch_sub(1, Ordering::SeqCst);
+            continue;
+        }
+        let slot = ConnectionSlot(Arc::clone(&active));
+        let shared = Arc::clone(shared);
+        let spawned = std::thread::Builder::new().name("tidewatch-conn".into()).spawn(move || {
+            serve(&shared, stream);
+            drop(slot);
+        });
+        drop(spawned);
+    }
+}
+
+fn serve(shared: &Shared, stream: TcpStream) {
+    let _ = stream.set_read_timeout(Some(IDLE_TIMEOUT));
+    let _ = stream.set_write_timeout(Some(WRITE_TIMEOUT));
+    let _ = stream.set_nodelay(true);
+    let mut conn = Conn { stream, buf: Vec::new() };
+    loop {
+        match read_request(&mut conn, &|token| shared.entry(token).is_some()) {
+            Ok(request) => {
+                let response = route(shared, &request);
+                if write_response(&mut conn.stream, &response, request.keep_alive).is_err()
+                    || !request.keep_alive
+                {
+                    break;
+                }
+            }
+            Err(Fail::Reply(response)) => {
+                let _ = write_response(&mut conn.stream, &response, false);
+                break;
+            }
+            Err(Fail::Closed) => break,
+        }
+    }
+    let _ = conn.stream.shutdown(Shutdown::Both);
+}
+
+struct Request {
+    method: String,
+    path: String,
+    bearer: Option<String>,
+    body: Vec<u8>,
+    keep_alive: bool,
+}
+
+struct Response {
+    status: u16,
+    content_type: &'static str,
+    extra: Vec<(&'static str, &'static str)>,
+    body: String,
+}
+
+impl Response {
+    fn json(status: u16, body: String) -> Self {
+        Self { status, content_type: "application/json", extra: vec![], body }
+    }
+
+    fn empty(status: u16) -> Self {
+        Self { status, content_type: "text/plain", extra: vec![], body: String::new() }
+    }
+
+    fn error(status: u16, message: &str) -> Self {
+        Self::json(status, serde_json::json!({ "error": message }).to_string())
+    }
+
+    fn unauthorized() -> Self {
+        Self {
+            extra: vec![("WWW-Authenticate", "Bearer")],
+            ..Self::error(401, "missing or unknown bearer token")
+        }
+    }
+
+    fn method_not_allowed() -> Self {
+        Self { extra: vec![("Allow", "POST")], ..Self::error(405, "use POST") }
+    }
+}
+
+fn route(shared: &Shared, request: &Request) -> Response {
+    let Some(entry) = request.bearer.as_deref().and_then(|token| shared.entry(token)) else {
+        return Response::unauthorized();
+    };
+    let path = request.path.split('?').next().unwrap_or_default();
+    if path == "/mcp" {
+        return mcp_route(shared, &entry, request);
+    }
+    match path.strip_prefix("/hook/").filter(|agent| valid_agent_id(agent)) {
+        Some(agent) => hook_route(shared, &entry, agent, request),
+        None => Response::error(404, "not found"),
+    }
+}
+
+fn valid_agent_id(agent: &str) -> bool {
+    (1..=32).contains(&agent.len())
+        && agent.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+}
+
+fn hook_route(shared: &Shared, entry: &Entry, agent: &str, request: &Request) -> Response {
+    if request.method != "POST" {
+        return Response::method_not_allowed();
+    }
+    let Ok(payload) = serde_json::from_slice::<serde_json::Value>(&request.body) else {
+        return Response::error(400, "the body is not JSON");
+    };
+    if let Some(event) = parse_hook(agent, &payload) {
+        shared.emit(entry.tab_id, TabEvent::Hook(event));
+    }
+    Response::json(200, "{}".into())
+}
+
+fn mcp_route(shared: &Shared, entry: &Entry, request: &Request) -> Response {
+    if request.method != "POST" {
+        return Response::method_not_allowed();
+    }
+    let ctx = ToolCtx {
+        agent: &entry.agent,
+        notes_file: &entry.notes_file,
+        notes_lock: &shared.notes_lock,
+    };
+    match handle_post(&request.body, &ctx, &|event| shared.emit(entry.tab_id, event)) {
+        McpReply::Json(body) => Response::json(200, body),
+        McpReply::Accepted => Response::empty(202),
+    }
+}
+
+enum Fail {
+    Closed,
+    Reply(Response),
+}
+
+struct Conn {
+    stream: TcpStream,
+    buf: Vec<u8>,
+}
+
+impl Conn {
+    fn fill(&mut self) -> Result<(), Fail> {
+        let mut chunk = [0u8; 8192];
+        loop {
+            match self.stream.read(&mut chunk) {
+                Ok(0) => return Err(Fail::Closed),
+                Ok(n) => {
+                    self.buf.extend_from_slice(&chunk[..n]);
+                    return Ok(());
+                }
+                Err(e) if e.kind() == io::ErrorKind::Interrupted => {}
+                Err(_) => return Err(Fail::Closed),
+            }
+        }
+    }
+
+    fn take(&mut self, n: usize) -> Result<Vec<u8>, Fail> {
+        while self.buf.len() < n {
+            self.fill()?;
+        }
+        Ok(self.buf.drain(..n).collect())
+    }
+
+    fn take_line(&mut self) -> Result<String, Fail> {
+        loop {
+            if let Some(end) = self.buf.windows(2).position(|w| w == b"\r\n") {
+                let line: Vec<u8> = self.buf.drain(..end + 2).take(end).collect();
+                return Ok(String::from_utf8_lossy(&line).into_owned());
+            }
+            if self.buf.len() > MAX_LINE_BYTES {
+                return Err(bad_request("chunk line too long"));
+            }
+            self.fill()?;
+        }
+    }
+}
+
+fn bad_request(message: &str) -> Fail {
+    Fail::Reply(Response::error(400, message))
+}
+
+struct Head {
+    method: String,
+    path: String,
+    content_length: Option<usize>,
+    chunked: bool,
+    expect_continue: bool,
+    bearer: Option<String>,
+    keep_alive: bool,
+}
+
+fn parse_head(buf: &[u8]) -> Result<Option<(Head, usize)>, Fail> {
+    let mut headers = [httparse::EMPTY_HEADER; 64];
+    let mut parsed = httparse::Request::new(&mut headers);
+    let head_len = match parsed.parse(buf) {
+        Ok(httparse::Status::Complete(n)) => n,
+        Ok(httparse::Status::Partial) => return Ok(None),
+        Err(httparse::Error::TooManyHeaders) => {
+            return Err(Fail::Reply(Response::error(431, "too many headers")));
+        }
+        Err(_) => return Err(bad_request("malformed request")),
+    };
+    let (Some(method), Some(path)) = (parsed.method, parsed.path) else {
+        return Err(bad_request("malformed request"));
+    };
+    let mut head = Head {
+        method: method.to_owned(),
+        path: path.to_owned(),
+        content_length: None,
+        chunked: false,
+        expect_continue: false,
+        bearer: None,
+        keep_alive: parsed.version == Some(1),
+    };
+    for header in parsed.headers.iter() {
+        let value = String::from_utf8_lossy(header.value);
+        let value = value.trim();
+        match header.name.to_ascii_lowercase().as_str() {
+            "content-length" => {
+                let length: usize = value.parse().map_err(|_| bad_request("bad Content-Length"))?;
+                if head.content_length.is_some_and(|seen| seen != length) {
+                    return Err(bad_request("conflicting Content-Length"));
+                }
+                head.content_length = Some(length);
+            }
+            "transfer-encoding" => {
+                if !value.eq_ignore_ascii_case("chunked") {
+                    return Err(bad_request("unsupported Transfer-Encoding"));
+                }
+                head.chunked = true;
+            }
+            "expect" => head.expect_continue = value.eq_ignore_ascii_case("100-continue"),
+            "authorization" => head.bearer = bearer_token(value).map(str::to_owned),
+            "connection" => {
+                for token in value.split(',').map(str::trim) {
+                    if token.eq_ignore_ascii_case("close") {
+                        head.keep_alive = false;
+                    } else if token.eq_ignore_ascii_case("keep-alive") && parsed.version == Some(0)
+                    {
+                        head.keep_alive = true;
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    if head.chunked && head.content_length.is_some() {
+        return Err(bad_request("both Content-Length and chunked"));
+    }
+    Ok(Some((head, head_len)))
+}
+
+fn bearer_token(value: &str) -> Option<&str> {
+    let (scheme, token) = value.split_once(' ')?;
+    scheme.eq_ignore_ascii_case("bearer").then_some(token.trim()).filter(|t| !t.is_empty())
+}
+
+fn read_request(conn: &mut Conn, known_token: &dyn Fn(&str) -> bool) -> Result<Request, Fail> {
+    let (head, head_len) = loop {
+        if let Some(parsed) = parse_head(&conn.buf)? {
+            break parsed;
+        }
+        if conn.buf.len() > MAX_HEAD_BYTES {
+            return Err(Fail::Reply(Response::error(431, "request head too large")));
+        }
+        conn.fill()?;
+    };
+    conn.buf.drain(..head_len);
+    if !head.bearer.as_deref().is_some_and(known_token) {
+        return Err(Fail::Reply(Response::unauthorized()));
+    }
+    if head.expect_continue && conn.buf.is_empty() {
+        conn.stream.write_all(b"HTTP/1.1 100 Continue\r\n\r\n").map_err(|_| Fail::Closed)?;
+    }
+    let body = if head.chunked {
+        read_chunked(conn)?
+    } else {
+        let length = head.content_length.unwrap_or(0);
+        if length > MAX_BODY_BYTES {
+            return Err(too_large());
+        }
+        conn.take(length)?
+    };
+    Ok(Request {
+        method: head.method,
+        path: head.path,
+        bearer: head.bearer,
+        body,
+        keep_alive: head.keep_alive,
+    })
+}
+
+fn too_large() -> Fail {
+    Fail::Reply(Response::error(413, "request body too large"))
+}
+
+fn read_chunked(conn: &mut Conn) -> Result<Vec<u8>, Fail> {
+    let mut body = Vec::new();
+    loop {
+        let line = conn.take_line()?;
+        let size = line.split(';').next().unwrap_or_default().trim();
+        let size = usize::from_str_radix(size, 16).map_err(|_| bad_request("bad chunk size"))?;
+        if size == 0 {
+            while !conn.take_line()?.is_empty() {}
+            return Ok(body);
+        }
+        if body.len() + size > MAX_BODY_BYTES {
+            return Err(too_large());
+        }
+        body.extend(conn.take(size)?);
+        if conn.take(2)? != b"\r\n" {
+            return Err(bad_request("chunk not followed by CRLF"));
+        }
+    }
+}
+
+fn reason(status: u16) -> &'static str {
+    match status {
+        200 => "OK",
+        202 => "Accepted",
+        400 => "Bad Request",
+        401 => "Unauthorized",
+        404 => "Not Found",
+        405 => "Method Not Allowed",
+        413 => "Payload Too Large",
+        431 => "Request Header Fields Too Large",
+        _ => "Error",
+    }
+}
+
+fn write_response(stream: &mut TcpStream, response: &Response, keep_alive: bool) -> io::Result<()> {
+    let mut head = format!(
+        "HTTP/1.1 {} {}\r\nContent-Type: {}\r\nContent-Length: {}\r\nConnection: {}\r\n",
+        response.status,
+        reason(response.status),
+        response.content_type,
+        response.body.len(),
+        if keep_alive { "keep-alive" } else { "close" },
+    );
+    for (name, value) in &response.extra {
+        let _ = write!(head, "{name}: {value}\r\n");
+    }
+    head.push_str("\r\n");
+    head.push_str(&response.body);
+    stream.write_all(head.as_bytes())?;
+    stream.flush()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::notes::Notes;
+    use serde_json::{Value, json};
+    use std::path::Path;
+    use std::sync::atomic::AtomicUsize;
+
+    struct Fixture {
+        shared: Arc<Shared>,
+        receiver: Receiver<TabMessage>,
+        paths: TidewatchPaths,
+        repaints: Arc<AtomicUsize>,
+        _home: tempfile::TempDir,
+    }
+
+    fn fixture() -> Fixture {
+        let home = tempfile::tempdir().unwrap();
+        let (events, receiver) = channel();
+        let repaints = Arc::new(AtomicUsize::new(0));
+        let counter = Arc::clone(&repaints);
+        let shared = Arc::new(Shared {
+            tabs: Mutex::new(HashMap::new()),
+            events,
+            repaint: Box::new(move || {
+                counter.fetch_add(1, Ordering::SeqCst);
+            }),
+            notes_lock: Mutex::new(()),
+        });
+        Fixture { shared, receiver, paths: TidewatchPaths::new(home.path()), repaints, _home: home }
+    }
+
+    impl Fixture {
+        fn register(&self, tab_id: u64, tab: &str) -> String {
+            let token = new_token();
+            let entry = Arc::new(Entry {
+                tab_id,
+                agent: "claude".into(),
+                notes_file: self.paths.notes_file(Path::new("/work/web"), tab),
+            });
+            self.shared.tabs.lock().unwrap().insert(token.clone(), entry);
+            token
+        }
+
+        fn send(&self, method: &str, path: &str, token: Option<&str>, body: &str) -> Response {
+            let request = Request {
+                method: method.into(),
+                path: path.into(),
+                bearer: token.map(str::to_owned),
+                body: body.as_bytes().to_vec(),
+                keep_alive: true,
+            };
+            route(&self.shared, &request)
+        }
+
+        fn events(&self) -> Vec<TabMessage> {
+            self.receiver.try_iter().collect()
+        }
+    }
+
+    fn body_json(response: &Response) -> Value {
+        serde_json::from_str(&response.body).unwrap()
+    }
+
+    const STOP: &str =
+        r#"{"hook_event_name":"Stop","session_id":"s1","last_assistant_message":"done"}"#;
+    const INIT: &str = r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}"#;
+
+    #[test]
+    fn a_missing_or_unknown_token_is_401_on_every_route_and_method() {
+        let f = fixture();
+        let _valid = f.register(1, "a");
+        for token in [None, Some(""), Some("nope"), Some("0000")] {
+            for (method, path, body) in [
+                ("POST", "/hook/claude", STOP),
+                ("GET", "/hook/claude", ""),
+                ("POST", "/mcp", INIT),
+                ("GET", "/mcp", ""),
+                ("DELETE", "/mcp", ""),
+                ("POST", "/elsewhere", ""),
+                ("GET", "/", ""),
+            ] {
+                let response = f.send(method, path, token, body);
+                assert_eq!(response.status, 401, "{method} {path} token {token:?}");
+                assert_eq!(response.extra, [("WWW-Authenticate", "Bearer")]);
+            }
+        }
+        assert_eq!(f.events(), Vec::new());
+        assert_eq!(f.repaints.load(Ordering::SeqCst), 0);
+    }
+
+    #[test]
+    fn a_revoked_token_stops_working() {
+        let f = fixture();
+        let token = f.register(1, "a");
+        assert_eq!(f.send("POST", "/hook/claude", Some(&token), STOP).status, 200);
+        f.shared.tabs.lock().unwrap().clear();
+        assert_eq!(f.send("POST", "/hook/claude", Some(&token), STOP).status, 401);
+    }
+
+    #[test]
+    fn bearer_headers_are_parsed_leniently_but_not_loosely() {
+        for (value, want) in [
+            ("Bearer abc", Some("abc")),
+            ("bearer abc", Some("abc")),
+            ("BEARER   abc  ", Some("abc")),
+            ("Bearer", None),
+            ("Bearer ", None),
+            ("Basic abc", None),
+            ("abc", None),
+            ("", None),
+        ] {
+            assert_eq!(bearer_token(value), want, "{value:?}");
+        }
+    }
+
+    #[test]
+    fn a_hook_payload_becomes_an_event_for_the_tab_that_owns_the_token() {
+        let f = fixture();
+        let one = f.register(1, "a");
+        let two = f.register(2, "b");
+        let response = f.send("POST", "/hook/claude", Some(&two), STOP);
+        assert_eq!((response.status, response.body.as_str()), (200, "{}"));
+        assert_eq!(response.content_type, "application/json");
+        let events = f.events();
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].tab_id, 2);
+        let TabEvent::Hook(hook) = &events[0].event else {
+            panic!("not a hook event: {:?}", events[0])
+        };
+        assert_eq!(hook.message.as_deref(), Some("done"));
+        assert_eq!(hook.session_id.as_deref(), Some("s1"));
+        assert_eq!(f.repaints.load(Ordering::SeqCst), 1);
+        f.send("POST", "/hook/gemini", Some(&one), r#"{"hook_event_name":"BeforeAgent"}"#);
+        assert_eq!(f.events()[0].tab_id, 1);
+    }
+
+    #[test]
+    fn hook_payloads_without_a_status_are_acknowledged_and_dropped() {
+        let f = fixture();
+        let token = f.register(1, "a");
+        for body in [r#"{"hook_event_name":"PreToolUse"}"#, "{}", "[1]", "7", "null"] {
+            assert_eq!(f.send("POST", "/hook/claude", Some(&token), body).status, 200, "{body}");
+        }
+        assert_eq!(f.events(), Vec::new());
+    }
+
+    #[test]
+    fn hook_routing_errors() {
+        let f = fixture();
+        let token = f.register(1, "a");
+        let t = Some(token.as_str());
+        let cases = [
+            ("POST", "/hook/claude", "not json", 400),
+            ("POST", "/hook/claude", "", 400),
+            ("GET", "/hook/claude", "", 405),
+            ("PUT", "/hook/claude", STOP, 405),
+            ("POST", "/hook/", STOP, 404),
+            ("POST", "/hook", STOP, 404),
+            ("POST", "/hook/../mcp", STOP, 404),
+            ("POST", "/hook/a/b", STOP, 404),
+            ("POST", "/hook/has space", STOP, 404),
+            ("POST", "/hook/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", STOP, 404),
+            ("POST", "/nowhere", "", 404),
+            ("POST", "/mcp/", INIT, 404),
+        ];
+        for (method, path, body, want) in cases {
+            assert_eq!(f.send(method, path, t, body).status, want, "{method} {path}");
+        }
+        assert_eq!(f.send("POST", "/hook/claude?x=1", t, STOP).status, 200);
+        assert_eq!(f.events().len(), 1);
+    }
+
+    #[test]
+    fn mcp_get_is_405_with_allow_and_post_is_json() {
+        let f = fixture();
+        let token = f.register(1, "a");
+        for method in ["GET", "DELETE", "PUT"] {
+            let response = f.send(method, "/mcp", Some(&token), "");
+            assert_eq!(response.status, 405, "{method}");
+            assert_eq!(response.extra, [("Allow", "POST")]);
+        }
+        let init = f.send("POST", "/mcp", Some(&token), INIT);
+        assert_eq!(init.status, 200);
+        assert_eq!(body_json(&init)["result"]["serverInfo"]["name"], "tidewatch");
+        let note = f.send(
+            "POST",
+            "/mcp",
+            Some(&token),
+            r#"{"jsonrpc":"2.0","method":"notifications/initialized"}"#,
+        );
+        assert_eq!((note.status, note.body.as_str()), (202, ""));
+        let garbage = f.send("POST", "/mcp", Some(&token), "}{");
+        assert_eq!(garbage.status, 200);
+        assert_eq!(body_json(&garbage)["error"]["code"], -32700);
+    }
+
+    fn call(tool: &str, args: &Value) -> String {
+        json!({"jsonrpc": "2.0", "id": 7, "method": "tools/call",
+            "params": {"name": tool, "arguments": args}})
+        .to_string()
+    }
+
+    #[test]
+    fn tool_calls_are_attributed_to_the_token_s_tab() {
+        let f = fixture();
+        let one = f.register(1, "a");
+        let two = f.register(2, "b");
+        f.send("POST", "/mcp", Some(&one), &call("stage_done", &json!({"summary": "from one"})));
+        f.send(
+            "POST",
+            "/mcp",
+            Some(&two),
+            &call(
+                "report_finding",
+                &json!({"file": "x.rs", "line": 3, "blocking": false, "text": "t"}),
+            ),
+        );
+        let events: Vec<_> = f.events().into_iter().map(|m| (m.tab_id, m.event)).collect();
+        assert_eq!(
+            events,
+            [
+                (1, TabEvent::StageDone { summary: "from one".into() }),
+                (
+                    2,
+                    TabEvent::Finding {
+                        file: "x.rs".into(),
+                        line: 3,
+                        blocking: false,
+                        text: "t".into()
+                    }
+                ),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_tab_reads_and_answers_only_its_own_notes() {
+        use kelp_core::review::{Anchor, Comment, Side};
+        let f = fixture();
+        let one = f.register(1, "a");
+        let two = f.register(2, "b");
+        let seed = |tab: &str, body: &str| {
+            let file = f.paths.notes_file(Path::new("/work/web"), tab);
+            let mut notes = Notes::load(&file);
+            let anchor = Anchor {
+                side: Side::New,
+                line_hint: 1,
+                text: String::new(),
+                before: vec![],
+                after: vec![],
+            };
+            notes.add(
+                "f.rs",
+                None,
+                anchor,
+                Comment { author: "You".into(), time: 1, body: body.into() },
+            );
+            notes.save(&file).unwrap();
+        };
+        seed("a", "note for a");
+        seed("b", "note for b");
+        let listed = f.send("POST", "/mcp", Some(&one), &call("list_notes", &json!({})));
+        let text = body_json(&listed)["result"]["content"][0]["text"].as_str().unwrap().to_owned();
+        assert!(text.contains("note for a") && !text.contains("note for b"), "{text}");
+        let reply = f.send(
+            "POST",
+            "/mcp",
+            Some(&two),
+            &call("reply_to_note", &json!({"id": 1, "text": "ok"})),
+        );
+        assert_eq!(body_json(&reply)["result"]["isError"], false);
+        let a = Notes::load(&f.paths.notes_file(Path::new("/work/web"), "a"));
+        let b = Notes::load(&f.paths.notes_file(Path::new("/work/web"), "b"));
+        assert_eq!((a.threads[0].comments.len(), b.threads[0].comments.len()), (1, 2));
+        assert_eq!(
+            f.events(),
+            [TabMessage {
+                tab_id: 2,
+                event: TabEvent::NoteReply { note_id: 1, text: "ok".into() }
+            }]
+        );
+    }
+
+    #[test]
+    fn tokens_are_32_hex_characters_and_never_repeat() {
+        let tokens: std::collections::HashSet<String> = (0..200).map(|_| new_token()).collect();
+        assert_eq!(tokens.len(), 200);
+        for token in tokens {
+            assert_eq!(token.len(), TOKEN_BYTES * 2);
+            assert!(token.bytes().all(|b| b.is_ascii_hexdigit()), "{token}");
+        }
+    }
+
+    #[test]
+    fn heads_parse_into_method_path_length_and_connection_mode() {
+        let parse = |text: &str| parse_head(text.as_bytes()).ok().flatten();
+        let (head, len) = parse("POST /mcp HTTP/1.1\r\nHost: x\r\nContent-Length: 5\r\nAuthorization: Bearer t\r\n\r\nhello").unwrap();
+        assert_eq!(
+            (head.method.as_str(), head.path.as_str(), head.content_length),
+            ("POST", "/mcp", Some(5))
+        );
+        assert_eq!((head.bearer.as_deref(), head.keep_alive, len), (Some("t"), true, 75));
+        assert!(!parse("GET / HTTP/1.1\r\nConnection: close\r\n\r\n").unwrap().0.keep_alive);
+        assert!(!parse("GET / HTTP/1.0\r\n\r\n").unwrap().0.keep_alive);
+        assert!(parse("GET / HTTP/1.0\r\nConnection: Keep-Alive\r\n\r\n").unwrap().0.keep_alive);
+        assert!(parse("POST / HTTP/1.1\r\nTransfer-Encoding: Chunked\r\n\r\n").unwrap().0.chunked);
+        assert!(
+            parse("POST / HTTP/1.1\r\nExpect: 100-continue\r\n\r\n").unwrap().0.expect_continue
+        );
+        assert!(parse("GET / HTTP/1.1\r\nHost: x\r\n").is_none());
+        for bad in [
+            "GARBAGE\r\n\r\n",
+            "POST / HTTP/1.1\r\nContent-Length: abc\r\n\r\n",
+            "POST / HTTP/1.1\r\nContent-Length: 1\r\nContent-Length: 2\r\n\r\n",
+            "POST / HTTP/1.1\r\nContent-Length: 1\r\nTransfer-Encoding: chunked\r\n\r\n",
+            "POST / HTTP/1.1\r\nTransfer-Encoding: gzip\r\n\r\n",
+        ] {
+            assert!(matches!(parse_head(bad.as_bytes()), Err(Fail::Reply(_))), "{bad:?}");
+        }
+    }
+}

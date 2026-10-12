@@ -6,6 +6,7 @@ mod fsutil;
 pub mod history;
 pub mod house_style;
 pub mod launch;
+pub mod listener;
 pub mod mcp;
 pub mod names;
 pub mod notes;

@@ -4958,6 +4958,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "gix",
+ "httparse",
  "kelp-core",
  "serde",
  "serde_json",
