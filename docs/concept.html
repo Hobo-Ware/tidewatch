@@ -840,9 +840,9 @@ const LEVEL_NAME = (id) => (LEVELS.find(l => l.id === id) || {name:''}).name;
 const AGENTS = {
   claude:{name:'Claude Code', bin:'claude', found:true, ver:'2.1.289', src:'from claude --help 2.1.289', models:['opus','sonnet','haiku'], effort:true,
     levels:{plan:'--permission-mode plan', ask:'--permission-mode manual', edits:'--permission-mode acceptEdits', auto:'--permission-mode auto', yolo:'--dangerously-skip-permissions'}, notes:{}},
-  codex:{name:'Codex', bin:'codex', found:false, ver:'', src:'from Codex docs, not installed here', models:[], effort:false,
-    levels:{plan:'--sandbox read-only --ask-for-approval on-request', ask:'--ask-for-approval untrusted', edits:'--sandbox workspace-write --ask-for-approval on-request', auto:'--sandbox workspace-write --ask-for-approval never', yolo:'--dangerously-bypass-approvals-and-sandbox'},
-    notes:{ask:'value unverified until codex --help is checked', edits:'--full-auto is deprecated; this is its replacement', auto:'never asks, but stays in the sandbox', yolo:'alias: --yolo'}},
+  codex:{name:'Codex', bin:'codex', found:true, ver:'0.162.1', src:'from codex --help 0.162.1', models:[], effort:false,
+    levels:{plan:'--sandbox read-only --ask-for-approval never', ask:'--sandbox read-only --ask-for-approval on-request', edits:'--sandbox workspace-write --ask-for-approval on-request', auto:'--sandbox workspace-write --approve-for-me', yolo:'--dangerously-bypass-approvals-and-sandbox'},
+    notes:{plan:'read-only sandbox, never asks', ask:'read-only sandbox, asks before writing or escalating', edits:'writes inside the worktree, asks to go beyond it', auto:'an automatic reviewer approves requests'}},
   gemini:{name:'Gemini CLI', bin:'gemini', found:true, ver:'0.46.0', src:'from gemini --help 0.46.0', models:[], effort:false,
     levels:{plan:'--approval-mode plan', ask:'--approval-mode default', edits:'--approval-mode auto_edit', auto:'--approval-mode yolo --sandbox', yolo:'--yolo'},
     notes:{auto:'closest match: everything allowed, inside the sandbox'}},

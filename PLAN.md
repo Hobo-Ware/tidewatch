@@ -185,8 +185,8 @@ DECIDED 2026-10-12: recommendation accepted, confirmed by the owner. Everything 
 
 Recommendation: **ship Claude Code, Gemini CLI and Copilot CLI as verified agents, and Codex as "experimental"** until Phase 0 runs a real `codex --help` and a hook test.
 
-- Correct the concept's mapping now: Auto edit becomes `--sandbox workspace-write --ask-for-approval on-request`, not `--full-auto`.
-- Ask stays `untrusted` until verified.
+- Correct the concept's mapping now (done after the Codex check, see Phase 0 findings).
+- `untrusted` no longer exists in 0.162.1.
 
 Alternative: hold Codex out of v0 entirely.
 
@@ -538,7 +538,12 @@ Checkpoint 10 exit: tagged release installed from the tap; restart keeps agents;
 - **2026-10-12, step 4 (never push, git 2.55.0), PASS, mechanism changed.**
   - A refusing `pre-push` through env-injected `core.hooksPath` works and the forwarding wrapper still ran the repo's own `post-commit` hook. But `git push --no-verify` skipped it.
   - An env-injected `url.tidewatch-no-push://blocked/.pushInsteadOf` with an empty value blocked `git push`, `git push --no-verify` and a push to an explicit URL. Fetch kept working, and a push from a normal shell worked. D7 now uses this.
-- Codex part of step 2 and step 3 (Copilot signals): not run yet (Codex not installed).
+- **2026-10-12, step 2, Codex part (codex-cli 0.162.1 from `brew install --cask codex`), flags verified, live test blocked.**
+  - `--ask-for-approval` now takes only `on-request` and `never`. `--full-auto` and `--yolo` are gone from `--help`. A new `--approve-for-me` routes approvals to an automatic reviewer.
+  - New mapping: Read only `--sandbox read-only --ask-for-approval never`; Ask `--sandbox read-only --ask-for-approval on-request`; Auto edit `--sandbox workspace-write --ask-for-approval on-request`; Auto `--sandbox workspace-write --approve-for-me`; YOLO `--dangerously-bypass-approvals-and-sandbox`.
+  - `-c key=value` overrides any config value for one run, and `--dangerously-bypass-hook-trust` runs hooks without persisted trust. This is the per-session path for Codex hooks and MCP (D5, D6). No worktree file is needed.
+  - The live hook and MCP test needs `codex login`, which only the owner can do.
+- Step 3 (Copilot signals): not run yet.
 
 ## Deviations log
 
