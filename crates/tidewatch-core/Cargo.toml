@@ -5,6 +5,7 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
+kelp-core.workspace = true
 serde.workspace = true
 serde_json = "1.0.154"
 sha2.workspace = true
