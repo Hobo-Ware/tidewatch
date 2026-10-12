@@ -13,8 +13,10 @@ kelp-core = { git = "https://github.com/Hobo-Ware/kelp", rev = "d4be36aa7fc01efc
 kelp-ui = { git = "https://github.com/Hobo-Ware/kelp", rev = "d4be36aa7fc01efc7ddd8a33446bc3be986777b9" }
 stdusk-core = { git = "https://github.com/Hobo-Ware/stdusk", rev = "30d69b0a6320e4209d2f5fc69e65f8e14d915d85" }
 stdusk-egui = { git = "https://github.com/Hobo-Ware/stdusk", rev = "30d69b0a6320e4209d2f5fc69e65f8e14d915d85" }
+anyhow = "1.0.104"
 eframe = { version = "0.35.0", features = ["glow", "__screenshot"] }
 egui = "0.35.0"
+gix = { version = "0.88.0", default-features = false, features = ["sha1"] }
 image = { version = "0.25.10", default-features = false, features = ["png"] }
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.154"
