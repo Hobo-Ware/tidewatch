@@ -172,8 +172,11 @@ impl Tidewatch {
     fn run_dev_agent(&mut self, ctx: &egui::Context) {
         let Some(dev) = self.dev_agent.take() else { return };
         let mut state = self.dialog_state(dev.profile.as_deref());
-        if let Some(level) = dev.level {
-            state.set_level(level, &self.catalog);
+        if let Some(level) = dev.level
+            && !state.set_level(level, &self.catalog)
+        {
+            eprintln!("tidewatch: dev agent not started: {} is not open here", level.label());
+            return;
         }
         state.task = dev.task;
         state.task_edited();
