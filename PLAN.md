@@ -1,6 +1,6 @@
 # Tidewatch Plan
 
-**Status: DRAFT for review.** 2026-10-05. Branch `main`. Concept mockup: `docs/concept.html`.
+**Status: REVIEWED, decisions closed 2026-10-12** (the owner delegated the calls; every recommendation was accepted). Drafted 2026-10-05. Branch `main`. Concept mockup: `docs/concept.html`.
 Research: `docs/research/stdusk-recon.md`, `docs/research/kelp-recon.md`,
 `docs/research/agents-worktrees.md`. Work protocol: `.agents/rules/workflow.md`.
 
@@ -90,6 +90,8 @@ Other findings from the same report:
 
 **D1. How is stdusk split?**
 
+DECIDED 2026-10-12: recommendation accepted.
+
 Recommendation: **two library crates inside the stdusk repo**, which becomes a workspace with the app still at the root:
 
 - `stdusk-core` has no egui. It holds `PtyTerm`, the parsers, `shell`, `pane`, the agent cluster, the session types and the handoff wire protocol.
@@ -104,11 +106,15 @@ Alternatives:
 
 **D2. What happens to stdusk's global theme?**
 
+DECIDED 2026-10-12: recommendation accepted.
+
 Recommendation: **keep it a process-wide global inside `stdusk-egui`, set by the app at startup.** Each app is its own process, so two apps never share it. Tidewatch has one theme anyway. Fix the `colors -> settings` import by moving what `colors` needs from `settings` into `colors`.
 
 Alternative: pass a `&Theme` into every widget. That is cleaner but touches about 30 accessors and every widget call.
 
 **D3. How is Kelp's UI shared?**
+
+DECIDED 2026-10-12: recommendation accepted.
 
 Recommendation: **extract a `kelp-ui` crate in the Kelp repo**, with plain-data inputs and its own small `Action` enums:
 
@@ -123,11 +129,15 @@ Alternative: Tidewatch reimplements the painters on top of `kelp-core`. That is 
 
 **D4. Where do review comments live?**
 
+DECIDED 2026-10-12: recommendation accepted.
+
 Recommendation: **share Kelp's file, `<git_common_dir>/kelp/comments.json`, through `kelp-core`'s review module, and add an advisory file lock (flock) around read-modify-write.** A comment made in Tidewatch then shows up in Kelp, and the reverse. Add an optional `author_kind` field (person or agent) so agent replies are marked.
 
 Alternative: a separate `tidewatch/comments.json`. It avoids sharing, but the two apps disagree about the same diff.
 
 **D5. How does Tidewatch learn an agent's status?**
+
+DECIDED 2026-10-12: recommendation accepted.
 
 Recommendation: **use three layers, each a fallback for the one above it:**
 
@@ -144,6 +154,8 @@ Alternative: run agents headless and parse JSON. That is exact, but you lose the
 
 **D6. How does a workflow stage hand results to the next stage?**
 
+DECIDED 2026-10-12: recommendation accepted.
+
 Recommendation: **a file contract.**
 
 - Each stage gets the env var `TIDEWATCH_STAGE_DIR` (under `~/.tidewatch/.state/`), and its prompt tells it to write a `summary.md`, plus `findings.json` for review stages.
@@ -155,6 +167,8 @@ This works with all four CLIs today. An MCP "reply" tool (Claude `--mcp-config`,
 Alternative: MCP-first. Better UX, but it doesn't work for Gemini and Codex per session today.
 
 **D7. How is "never push" enforced?**
+
+DECIDED 2026-10-12: recommendation accepted.
 
 Recommendation: **inject config through the environment of the agent's terminal only.**
 
@@ -168,6 +182,8 @@ Alternative: `extensions.worktreeConfig` with a per-worktree `core.hooksPath`. P
 
 **D8. How much Codex support is in v0?**
 
+DECIDED 2026-10-12: recommendation accepted.
+
 Recommendation: **ship Claude Code, Gemini CLI and Copilot CLI as verified agents, and Codex as "experimental"** until Phase 0 runs a real `codex --help` and a hook test.
 
 - Correct the concept's mapping now: Auto edit becomes `--sandbox workspace-write --ask-for-approval on-request`, not `--full-auto`.
@@ -177,11 +193,15 @@ Alternative: hold Codex out of v0 entirely.
 
 **D9. Exact worktree path.**
 
+DECIDED 2026-10-12: recommendation accepted.
+
 Recommendation: **`~/.tidewatch/<repo-name>-<6 hex of the repo path hash>/<tab>`**, with Tidewatch state in `~/.tidewatch/.state/`. Two repos named `web` would otherwise collide in `~/.tidewatch/web/`. Store each worktree's repo path, and run `git worktree repair <paths>` on startup when the repo has moved.
 
 Alternative: plain `~/.tidewatch/<repo-name>/`, with a numeric suffix added on collision.
 
 **D10. Distribution and visibility.**
+
+DECIDED 2026-10-12: recommendation accepted.
 
 Recommendation: **keep the repo private until the first build you use daily (end of Phase 7). Then make it public** with the MIT license, a Homebrew cask `hobo-ware/tap/tidewatch`, and the same release workflow as Kelp (universal binary, ad-hoc signed until there is an Apple Developer account).
 
@@ -195,6 +215,8 @@ Alternative: public from day one, like the siblings.
 | A gate hits its loop limit | stop and ask |
 | Overview at launch | stay a button; launch restores last session |
 | Agents in Other | allowed, YOLO refused, same-folder warning |
+
+DECIDED 2026-10-12: all four recommendations accepted.
 
 ## 4. Architecture
 
@@ -495,7 +517,9 @@ Checkpoint 10 exit: tagged release installed from the tap; restart keeps agents;
 
 ## Deviations log
 
-(empty)
+- **2026-10-12, order:** the goal is a first running build, so the order is Phase 1 (stdusk crates), then Phase 3 (skeleton), then Phase 2 (kelp-ui). Phase 3 needs only the stdusk crates.
+- **2026-10-12, Phase 0:** only step 6 (dependency fit) runs before the first build. Steps 1 to 5 run before the phase that depends on them (5 before Phase 4, 4 before Phase 6, 1 to 3 before Phase 7).
+- **2026-10-12, dependencies:** until stdusk tags a release with the library crates, Tidewatch uses path dependencies to the Phase 1 worktree (`../stdusk/.claude/worktrees/phase-1-lib-crates/crates/...`). Switch to git tags when Phase 1 merges.
 
 ## Appendices
 
