@@ -1,32 +1,43 @@
-//! The `eframe::App`: tab strip on top, the active tab's terminal below it, then the two
-//! placeholder panels. Frame work collects `tabs::Action`s and applies them after drawing.
-//! Git work for worktree tabs runs on `jobs` threads; its results are applied at the top of the
-//! next frame.
+//! The `eframe::App`: tab strip on top, the active tab's terminal below it, then the History and
+//! Diff panes. Frame work collects `tabs::Action`s and applies them after drawing.
+//! Git work for worktree tabs and for the panes runs on `jobs` threads; its results are applied at
+//! the top of the next frame.
 
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
+use std::time::Duration;
 
 use egui::{CornerRadius, FontId, Frame, Key, Margin, Modifiers, RichText};
+use kelp_core::refs::RefLabel;
+use kelp_ui::avatars::AvatarStore;
+use kelp_ui::graph::{GraphAction, Selection};
+use kelp_ui::theme as kelp_theme;
 use stdusk_core::progress::Progress;
 use stdusk_core::terminal::{CmdState, PtyTerm, SpawnOpts};
-use stdusk_egui::fonts::build_fonts;
 use stdusk_egui::ui::{
-    CursorStyle, GridStyle, TAB_H, apply_theme, collect_input, draw_tab, icons, render_grid,
+    CursorStyle, GridStyle, TAB_H, apply_theme, collect_input, draw_tab, draw_toast, icons,
+    render_grid,
 };
 use stdusk_egui::widgets::{chip, icon_button};
 use stdusk_egui::{colors, repaint_handle};
+use tidewatch_core::notes::NotesWriter;
 use tidewatch_core::paths::TidewatchPaths;
 use tidewatch_core::worktree::{BranchOutcome, Inspection, Leftover, Worktree};
 
+use crate::checkout::{self, Plan};
 use crate::close_dialog::{self, Answer, Choice};
+use crate::dev_panes::{self, DevPanes};
 use crate::dev_screenshot::DevScreenshot;
 use crate::dev_worktree::DevWorktree;
 use crate::jobs::Jobs;
-use crate::layout;
 use crate::pane::{Body, CREATING_TITLE, ClosePolicy, Pane, finish_create};
-use crate::panels;
+use crate::pane_jobs;
 use crate::repo::Workspace;
+use crate::tab_view::{TabView, ViewSpec};
 use crate::tabs::{Action, Tabs};
+use crate::toast::Toast;
 use crate::worktree_jobs::{self, Done};
+use crate::{diff_pane, fonts, history_pane, layout, note_actions};
 
 const DEFAULT_THEME: &str = "one-half-dark";
 const FONT_SIZE: f32 = 13.0;
@@ -53,7 +64,13 @@ pub(crate) struct Tidewatch {
     closing: Option<Closing>,
     leftovers: Vec<Leftover>,
     dev: Option<DevWorktree>,
+    dev_panes: DevPanes,
     screenshot: Option<DevScreenshot>,
+    views: HashMap<u64, TabView>,
+    pane_jobs: Jobs<pane_jobs::Done>,
+    notes_writer: NotesWriter,
+    avatars: AvatarStore,
+    toast: Option<Toast>,
 }
 
 impl Tidewatch {
@@ -64,7 +81,7 @@ impl Tidewatch {
         screenshot: Option<DevScreenshot>,
     ) -> Self {
         colors::init(colors::by_name(DEFAULT_THEME));
-        cc.egui_ctx.set_fonts(build_fonts(None, None));
+        fonts::install(&cc.egui_ctx);
         apply_theme(&cc.egui_ctx);
         if screenshot.is_some() {
             cc.egui_ctx.all_styles_mut(|s| s.animation_time = 0.0);
@@ -76,9 +93,15 @@ impl Tidewatch {
             closing: None,
             leftovers: Vec::new(),
             dev: DevWorktree::from_env(),
+            dev_panes: DevPanes::from_env(),
             workspace,
             paths,
             screenshot,
+            views: HashMap::new(),
+            pane_jobs: Jobs::new(),
+            notes_writer: NotesWriter::new(),
+            avatars: AvatarStore::offline(cc.egui_ctx.clone()),
+            toast: None,
         };
         if let (Workspace::Repo(repo), Some(paths)) = (&app.workspace, &app.paths) {
             worktree_jobs::startup(&app.jobs, &cc.egui_ctx, paths.clone(), repo.root.clone());
@@ -180,6 +203,145 @@ impl Tidewatch {
         }
     }
 
+    /// Keeps one view per tab that has panes: only the visible tab's view is loaded and watched.
+    fn drive_views(&mut self) {
+        let open: HashSet<u64> = self.tabs.items().iter().map(|t| t.id).collect();
+        self.views.retain(|id, _| open.contains(id));
+        let active = &self.tabs.items()[self.tabs.active()];
+        let active_id = active.id;
+        for (id, view) in &mut self.views {
+            if *id != active_id && view.is_active() {
+                view.stop();
+            }
+        }
+        let Some(spec) = ViewSpec::of(&self.workspace, self.paths.as_ref(), active) else { return };
+        let dev_scope = self.dev_panes.scope;
+        let view = self.views.entry(active_id).or_insert_with(|| {
+            let mut view = spec.into_view();
+            if let Some(scope) = dev_scope {
+                view.set_scope(scope);
+            }
+            view
+        });
+        if !view.is_active() {
+            view.start();
+        }
+        view.poll();
+    }
+
+    fn apply_pane_done(&mut self, done: pane_jobs::Done, ctx: &egui::Context) {
+        let tab = done.tab();
+        if let pane_jobs::Done::Checkout { outcome, .. } = &done {
+            self.show_toast(checkout::message(outcome), ctx);
+            if let Some(view) = self.views.get_mut(&tab) {
+                view.reload_after_checkout();
+            }
+            return;
+        }
+        if let Some(view) = self.views.get_mut(&tab) {
+            view.apply(done);
+        }
+    }
+
+    fn show_toast(&mut self, text: impl Into<String>, ctx: &egui::Context) {
+        let now = ctx.input(|i| i.time);
+        self.toast = Some(Toast::new(text, now));
+        ctx.request_repaint();
+    }
+
+    fn double_clicked_ref(&mut self, label: &RefLabel, ctx: &egui::Context) {
+        let active_id = self.tabs.items()[self.tabs.active()].id;
+        let Some(view) = self.views.get(&active_id) else { return };
+        match checkout::plan(view.is_main, label) {
+            Plan::Ignore => {}
+            Plan::Refuse(reason) => self.show_toast(reason, ctx),
+            Plan::Switch(op) => {
+                pane_jobs::run_checkout(&self.pane_jobs, ctx, active_id, view.dir.clone(), op);
+            }
+        }
+    }
+
+    fn save_notes(&self, view_id: u64) {
+        let Some(view) = self.views.get(&view_id) else { return };
+        if let Some(file) = view.notes_file() {
+            self.notes_writer.save(file.clone(), view.notes.clone());
+        }
+    }
+
+    /// Applies the `TIDEWATCH_DEV_PICK` and `TIDEWATCH_DEV_NOTE` switches once the view can take
+    /// them. Returns whether a note was added.
+    fn apply_dev_panes(&mut self, view_id: u64, now: i64) -> bool {
+        let Some(view) = self.views.get_mut(&view_id) else { return false };
+        if let Some(row) = self.dev_panes.pick_row
+            && view.status_known()
+            && let Some(loaded) = &view.loaded
+        {
+            self.dev_panes.pick_row = None;
+            if row < loaded.history.len() {
+                view.select(Selection::Commit(row));
+            }
+        }
+        let Some(text) = &self.dev_panes.note else { return false };
+        if !view.notes_ready || view.is_loading_source() {
+            return false;
+        }
+        let Some(open) = &view.open else { return false };
+        let Some(action) = dev_panes::note_on_first_added_line(&open.diff, text, now) else {
+            return false;
+        };
+        let (path, commit) =
+            (open.diff.path.clone(), view.wanted_commit().map(|id| id.to_string()));
+        self.dev_panes.note = None;
+        note_actions::apply(&mut view.notes, &path, commit.as_deref(), vec![action])
+    }
+
+    fn workspace_has_panels(&self) -> bool {
+        matches!(self.workspace, Workspace::Repo(_))
+    }
+
+    fn show_panes(&mut self, ui: &mut egui::Ui, areas: &layout::Layout, ctx: &egui::Context) {
+        let active_id = self.tabs.items()[self.tabs.active()].id;
+        let Some(view) = self.views.get_mut(&active_id) else {
+            for rect in [areas.history, areas.diff] {
+                ui.painter().rect_filled(rect, 0.0, kelp_theme::bg());
+            }
+            return;
+        };
+        let graph_action = history_pane::show(ui, areas.history, view, &mut self.avatars);
+        let notes_changed = diff_pane::show(ui, areas.diff, view);
+        let mut clicked_ref = None;
+        match graph_action {
+            Some(GraphAction::Select(selection)) => {
+                view.select(selection);
+                ctx.request_repaint();
+            }
+            Some(GraphAction::ActivateRef(label)) => clicked_ref = Some(label),
+            Some(_) | None => {}
+        }
+        view.sync(&self.pane_jobs, ctx);
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |d| d.as_secs() as i64);
+        if notes_changed || self.apply_dev_panes(active_id, now) {
+            self.save_notes(active_id);
+            ctx.request_repaint();
+        }
+        if let Some(label) = clicked_ref {
+            self.double_clicked_ref(&label, ctx);
+        }
+    }
+
+    fn show_toast_pill(&mut self, ui: &egui::Ui) {
+        let Some(toast) = &self.toast else { return };
+        let now = ui.ctx().input(|i| i.time);
+        if toast.expired(now) {
+            self.toast = None;
+            return;
+        }
+        draw_toast(ui, toast.text(), toast.fade(now));
+        ui.ctx().request_repaint_after(Duration::from_secs_f64(toast.next_frame_in(now)));
+    }
+
     fn dispatch(&mut self, action: Action, ctx: &egui::Context) {
         match action {
             Action::New => self.new_tab(ctx),
@@ -268,6 +430,11 @@ impl eframe::App for Tidewatch {
         for done in self.jobs.drain() {
             self.apply_done(done, &ctx);
         }
+        for done in self.pane_jobs.drain() {
+            self.apply_pane_done(done, &ctx);
+        }
+        self.drive_views();
+        let typing_in_a_panel = ctx.text_edit_focused();
         let modal_open = self.closing.is_some();
         let mut actions = if modal_open { Vec::new() } else { shortcut_actions(&ctx) };
 
@@ -343,7 +510,12 @@ impl eframe::App for Tidewatch {
             });
 
         egui::CentralPanel::default().frame(Frame::new().fill(colors::bg())).show(ui, |ui| {
-            let areas = layout::split(ui.max_rect());
+            let area = ui.max_rect();
+            let panels = self.workspace_has_panels();
+            let mut areas = layout::split(area);
+            if !panels {
+                areas.terminal = layout::terminal_only(area);
+            }
             let font = egui::FontId::monospace(FONT_SIZE);
             let glyph = ui.painter().layout_no_wrap("M".to_owned(), font.clone(), colors::fg());
             let (cell_w, cell_h) = (glyph.size().x, glyph.size().y);
@@ -353,7 +525,7 @@ impl eframe::App for Tidewatch {
                 Body::Shell(term) => {
                     term.resize(cols, rows);
                     let typed = collect_input(ui, false, false, term.app_cursor());
-                    if !typed.is_empty() && !modal_open {
+                    if !typed.is_empty() && !modal_open && !typing_in_a_panel {
                         term.send(&typed);
                     }
                     let snap = term.grid_snapshot();
@@ -388,8 +560,10 @@ impl eframe::App for Tidewatch {
                 Body::Failed(message) => status_message(ui, areas.terminal, message, colors::red()),
             }
 
-            panels::placeholder(ui, areas.history, "History");
-            panels::placeholder(ui, areas.diff, "Diff");
+            if panels {
+                self.show_panes(ui, &areas, &ctx);
+            }
+            self.show_toast_pill(ui);
         });
 
         for action in actions {
