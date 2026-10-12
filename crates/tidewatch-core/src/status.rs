@@ -396,6 +396,43 @@ fn from_signals(inputs: &StatusInputs, now: f64) -> AgentStatus {
     }
 }
 
+/// The earliest instant after `now` at which [`resolve`] can answer differently with no new input,
+/// or `None` when the answer only changes on input (or never). The app sleeps until then, so a
+/// quiet agent costs no frames and the decay rules still fire on time.
+#[must_use]
+pub fn next_change(inputs: &StatusInputs, now: f64) -> Option<f64> {
+    if inputs.lifecycle != Lifecycle::Agent || !inputs.process.alive {
+        return None;
+    }
+    let (process, terminal) = (&inputs.process, &inputs.terminal);
+    let marks: Vec<f64> = match &inputs.hook {
+        Some(HookState { status: HookStatus::Working, at }) => {
+            if terminal.progress == ProgressSignal::Working {
+                Vec::new()
+            } else {
+                vec![process.last_output_at.unwrap_or(*at).max(*at) + STATUS_QUIET_SECS]
+            }
+        }
+        Some(HookState {
+            status: HookStatus::NeedsYou(Reason::Permission | Reason::Question),
+            at,
+        }) => {
+            let mut marks = vec![at + HOOK_SETTLE_SECS];
+            marks.extend(process.last_output_at.map(|t| t + ACTIVE_WINDOW_SECS));
+            marks
+        }
+        Some(_) => Vec::new(),
+        None if terminal.progress != ProgressSignal::Off => Vec::new(),
+        None => {
+            let mut marks =
+                vec![process.last_output_at.unwrap_or(process.started_at) + STATUS_QUIET_SECS];
+            marks.extend(terminal.title_changed_at.map(|t| t + ACTIVE_WINDOW_SECS));
+            marks
+        }
+    };
+    marks.into_iter().filter(|mark| *mark > now).min_by(f64::total_cmp)
+}
+
 /// Keeps one tab's [`StatusInputs`] current. Every method takes the time it happened.
 #[derive(Clone, Debug, PartialEq)]
 pub struct StatusTracker {
@@ -468,6 +505,12 @@ impl StatusTracker {
     #[must_use]
     pub fn status(&self, now: f64) -> AgentStatus {
         resolve(&self.inputs, now)
+    }
+
+    /// See [`next_change`].
+    #[must_use]
+    pub fn next_change_at(&self, now: f64) -> Option<f64> {
+        next_change(&self.inputs, now)
     }
 
     #[must_use]
@@ -1009,5 +1052,62 @@ mod tests {
         tracker.agent_started(10.0);
         assert_eq!(tracker.status(11.0), AgentStatus::Working);
         assert_eq!(StatusTracker::shell().status(1.0), AgentStatus::Shell);
+    }
+
+    fn quiet_until_next_change(tracker: &StatusTracker, now: f64) -> Option<f64> {
+        let next = tracker.next_change_at(now);
+        let end = next.unwrap_or(now + 120.0);
+        let first = tracker.status(now);
+        let mut t = now;
+        while t < end - 0.01 {
+            assert_eq!(tracker.status(t), first, "status moved at {t} before the deadline {end}");
+            t += 0.05;
+        }
+        next
+    }
+
+    #[test]
+    fn next_change_names_each_decay_and_nothing_else() {
+        let event = |kind| HookEvent::bare(kind);
+
+        let mut working = StatusTracker::agent(0.0);
+        working.on_hook(&event(HookKind::TurnStarted), 2.0);
+        working.on_output(3.0);
+        assert_eq!(quiet_until_next_change(&working, 4.0), Some(3.0 + STATUS_QUIET_SECS));
+        assert_eq!(working.status(3.0 + STATUS_QUIET_SECS), AgentStatus::NeedsYou(Reason::Quiet));
+
+        let mut busy = StatusTracker::agent(0.0);
+        busy.on_hook(&event(HookKind::TurnStarted), 2.0);
+        busy.on_terminal(TerminalSignal::Progress(ProgressSignal::Working), 2.0);
+        assert_eq!(quiet_until_next_change(&busy, 4.0), None);
+
+        let mut prompt = StatusTracker::agent(0.0);
+        prompt.on_hook(&event(HookKind::PermissionNeeded), 10.0);
+        assert_eq!(quiet_until_next_change(&prompt, 10.5), Some(10.0 + HOOK_SETTLE_SECS));
+        assert_eq!(quiet_until_next_change(&prompt, 13.0), None);
+        prompt.on_output(14.0);
+        assert_eq!(quiet_until_next_change(&prompt, 14.1), Some(14.0 + ACTIVE_WINDOW_SECS));
+
+        let mut done = StatusTracker::agent(0.0);
+        done.on_hook(&event(HookKind::TurnDone), 5.0);
+        assert_eq!(quiet_until_next_change(&done, 6.0), None);
+
+        let mut fresh = StatusTracker::agent(0.0);
+        assert_eq!(quiet_until_next_change(&fresh, 1.0), Some(STATUS_QUIET_SECS));
+        fresh.on_terminal(TerminalSignal::TitleChanged, 2.0);
+        assert_eq!(quiet_until_next_change(&fresh, 2.1), Some(2.0 + ACTIVE_WINDOW_SECS));
+
+        let mut progress = StatusTracker::agent(0.0);
+        progress.on_terminal(TerminalSignal::Progress(ProgressSignal::Working), 1.0);
+        assert_eq!(quiet_until_next_change(&progress, 2.0), None);
+    }
+
+    #[test]
+    fn next_change_is_none_for_shells_setup_and_dead_processes() {
+        assert_eq!(StatusTracker::shell().next_change_at(1.0), None);
+        assert_eq!(StatusTracker::setting_up(0.0).next_change_at(1.0), None);
+        let mut exited = StatusTracker::agent(0.0);
+        exited.on_exit(Some(0));
+        assert_eq!(exited.next_change_at(1.0), None);
     }
 }
