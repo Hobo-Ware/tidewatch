@@ -85,6 +85,7 @@ fn a_worktree_branch_shows_its_commits_and_the_main_commits_under_them() {
     assert_eq!(titles(&loaded), ["a2 second", "a1 first", "c2 app", "c1 init"]);
     assert_eq!(loaded.branch.as_deref(), Some("agent/brave-otter"));
     assert_eq!(loaded.head_row, Some(0));
+    assert_ne!(loaded.author, "");
 }
 
 #[test]

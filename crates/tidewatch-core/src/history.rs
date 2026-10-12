@@ -12,6 +12,7 @@ use kelp_core::commit::{self, FileChange, Summary};
 use kelp_core::diff::{self, FileDiff};
 use kelp_core::git_cli;
 use kelp_core::history::History;
+use kelp_core::review;
 use kelp_core::status::{self, WorkingStatus};
 use kelp_core::view::ViewFilter;
 use kelp_core::watch::{Change, Layout, Watcher};
@@ -78,6 +79,8 @@ pub struct Loaded {
     pub branch: Option<String>,
     /// `None` on the default branch itself, or when the repo has no default branch to compare to.
     pub base: Option<BaseCompare>,
+    /// The git `user.name`, the author of notes written in the diff.
+    pub author: String,
 }
 
 /// What a diff is taken from.
@@ -105,7 +108,8 @@ pub fn load(dir: &Path, scope: Scope) -> anyhow::Result<Loaded> {
     let history = History::load_filtered(&repo, &view_for(scope, branch.as_deref()))?;
     let head_row = repo.head_id().ok().and_then(|id| history.row(&id.detach()));
     let base = branch.as_deref().and_then(|branch| compare_to_default(dir, branch));
-    Ok(Loaded { history, summaries: Summaries { repo }, head_row, branch, base })
+    let author = review::author_name(&repo);
+    Ok(Loaded { history, summaries: Summaries { repo }, head_row, branch, base, author })
 }
 
 pub fn working_status(dir: &Path) -> anyhow::Result<WorkingStatus> {
