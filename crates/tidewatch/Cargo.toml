@@ -9,6 +9,7 @@ name = "tidewatch"
 path = "src/main.rs"
 
 [dependencies]
+anyhow.workspace = true
 eframe.workspace = true
 egui.workspace = true
 image.workspace = true
