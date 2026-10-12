@@ -24,6 +24,11 @@ pub(crate) fn split(area: Rect) -> Layout {
     }
 }
 
+/// The Other group has no graph or diff: the terminal takes the whole area.
+pub(crate) fn terminal_only(area: Rect) -> Rect {
+    area.shrink(TERMINAL_PAD)
+}
+
 pub(crate) fn grid_dims(rect: Rect, cell_w: f32, cell_h: f32) -> (usize, usize) {
     let cols = (rect.width() / cell_w).floor().max(1.0) as usize;
     let rows = (rect.height() / cell_h).floor().max(1.0) as usize;
@@ -79,6 +84,12 @@ mod tests {
         assert_eq!(l.diff.right(), 1000.0);
         assert_eq!(l.diff.left() - l.history.right(), GAP);
         assert!((l.history.width() - l.diff.width()).abs() <= 1.0);
+    }
+
+    #[test]
+    fn terminal_only_fills_the_area_minus_the_padding() {
+        let r = terminal_only(area());
+        assert_eq!(r, area().shrink(TERMINAL_PAD));
     }
 
     #[test]
