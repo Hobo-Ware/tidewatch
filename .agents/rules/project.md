@@ -24,7 +24,7 @@ in the sibling repo, never in a local copy.
 
 ```
 crates/tidewatch-core/  worktrees, profiles, permission levels, workflows, agent status, no UI
-  src/paths.rs          ~/.tidewatch layout (D9), state dirs, ~/.config/tidewatch files (pure)
+  src/paths.rs          ~/.tidewatch layout (D9), state dirs, per-tab notes file, ~/.config/tidewatch files (pure)
   src/agents.rs         agent table: claude, codex, gemini, copilot, five permission levels to flags, version probe, [agent.<id>] overrides
   src/profiles.rs       Profile, profiles.toml load/save (bad file -> defaults), first-launch seeding
   src/launch.rs         launch_command: program, args, env; YOLO refusal, never-push guard (D7), hooks/MCP/house-style wiring per CLI
@@ -33,21 +33,32 @@ crates/tidewatch-core/  worktrees, profiles, permission levels, workflows, agent
   src/names.rs          adjective-noun names for new worktrees (pure)
   src/registry.rs       .state/worktrees.toml: the worktrees Tidewatch made, for repair
   src/worktree.rs       add (locked, agent/<name>), inspect, remove, list, repair, leftovers (shells out to git)
+  src/notes.rs          per-tab review threads in .state/<repo-dir>/<tab>/notes.json: load, atomic save, background writer (D4)
+  src/history.rs        branch-scoped graph, ahead/behind, commit and working-tree files and diffs, file watcher, via kelp-core
   tests/worktree_roundtrip.rs  real throwaway repos: add, lock, dirty refusal, delete branch, moved repo
   tests/push_guard.rs   real bare remote: plain, --no-verify, explicit-url and forced pushes refused, fetch works
+  tests/history_roundtrip.rs   real throwaway repos: worktree branch history, whole repo, ahead/behind, diffs, watcher
 crates/tidewatch/       the egui app
   src/main.rs           argument parsing, workspace discovery, eframe start
-  src/app.rs            the eframe::App loop: chip, tab strip, terminal, placeholder panels, shortcuts, job results
+  src/app.rs            the eframe::App loop: chip, tab strip, terminal, History and Diff panes, toast, shortcuts, job results
   src/tabs.rs           tab list and its Action reducer (pure, generic over the pane)
   src/pane.rs           what a tab holds: shell, creating, removing, failed; close policy (pure, generic)
   src/jobs.rs           background thread runner: result channel plus a repaint
   src/worktree_jobs.rs  worktree create, inspect, remove and startup repair as jobs
   src/close_dialog.rs   keep/delete branch dialog: choices and wording (pure) plus the modal
   src/layout.rs         terminal/panel split, grid size, tab width, digit keys (pure)
-  src/panels.rs         History and Diff placeholder panels (Phase 5 replaces them)
+  src/tab_view.rs       per-tab pane state: loaded history, selection, open diff, notes, watcher; wants -> jobs -> answers (stale ones dropped)
+  src/pane_jobs.rs      history, status, files, diff, notes, watcher and checkout as jobs
+  src/history_pane.rs   History pane: header (branch, ahead/behind, This worktree / Whole repo), kelp-ui graph
+  src/diff_pane.rs      Diff pane: header, file list, toolbar, kelp-ui diff body with notes
+  src/note_actions.rs   kelp-ui DiffAction -> the tab's notes (pure)
+  src/checkout.rs       double-click checkout rule: main tab only, clean tree only (pure plan, git outcome)
+  src/toast.rs          one timed message, fade on egui's clock (pure)
+  src/fonts.rs          stdusk font set plus the semibold family kelp-ui draws with
   src/repo.rs           git root and label; Workspace = Repo or the Other group
   src/dev_screenshot.rs TIDEWATCH_SCREENSHOT harness
   src/dev_worktree.rs   TIDEWATCH_DEV_WORKTREE switch: open a worktree tab at startup for captures
+  src/dev_panes.rs      TIDEWATCH_DEV_SCOPE / _PICK / _NOTE switches: graph scope, selected row, a note for captures
 docs/                   concept mockup, research reports
 ```
 
@@ -67,6 +78,9 @@ TIDEWATCH_SCREENSHOT=/tmp/x.png cargo run -p tidewatch -- <repo>   # render, sav
 `TIDEWATCH_DEV_WORKTREE=open|ask|delete` opens one worktree tab at startup; `ask` also shows its close
 dialog, `delete` closes it with "Delete branch". Use a throwaway repo, and a temp `HOME` (with
 `ZDOTDIR` set to it) so worktrees land in a temp `~/.tidewatch`, never in the real home.
+`TIDEWATCH_DEV_SCOPE=whole` starts the graph on Whole repo, `TIDEWATCH_DEV_PICK=<row>` selects a graph row,
+`TIDEWATCH_DEV_NOTE=<text>` writes a note on the first added line of the first diff shown (saved like a real one).
+Notes live in `<home>/.tidewatch/.state/<repo-dir>/<tab>/notes.json`; the main tab's key is `main`.
 Keys: Cmd+T new tab (a worktree tab in a git repo, a plain shell in the Other group), Cmd+W close the
 active tab (not the pinned main tab; a worktree tab asks keep/delete branch first), Cmd+1..9 select.
 The sibling crates are git dependencies pinned by commit (`rev`), not by tag (PLAN.md,
