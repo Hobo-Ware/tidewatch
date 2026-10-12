@@ -233,6 +233,21 @@ Alternatives:
 - Run agents through a structured protocol (ACP or stream-json): exact events, but no real terminal, and three of four CLIs need third-party adapters.
 - Prettify the terminal grid only: no parsing, but still monospace and no real markdown.
 
+**D13. Steering the agent's output (house style).** (added 2026-10-12)
+
+DECIDED 2026-10-12: recommendation accepted, the owner delegated the choice.
+
+**One Tidewatch-owned markdown file, `~/.config/tidewatch/house-style.md`, added to every agent tab's session.** It asks for markdown answers (summary first, headings, lists, fenced code), `path:line` file references, a fixed **Done / Needs you / Next** end-of-turn block, and use of the Tidewatch MCP tools (`stage_done`, `reply_to_note`).
+
+- Created with defaults on first launch. Recreated if deleted, never overwritten once edited.
+- It only adds to the system prompt, never replaces it. The repo's `CLAUDE.md` / `AGENTS.md` still load and win on conflicts.
+- A profile or a repo's `.tidewatch.toml` can extend it or switch it off. Workflow stage prompts stack on top.
+- Kept in `~/.config/tidewatch/`, not `~/.tidewatch/`, so no CLI that walks up parent folders from a worktree finds it as a stray instructions file.
+- Per CLI (versions checked 2026-10-12): Claude 2.1.296 `--append-system-prompt-file` (verified live: a marker instruction was followed); Codex 0.162.1 `-c developer_instructions=...` (key found in the binary, not run live); Copilot 1.0.91 `COPILOT_CUSTOM_INSTRUCTIONS_DIRS`; Gemini 0.46.0 a context file named in the per-session `settings.json` (not checked; `GEMINI_SYSTEM_MD` is not used because it replaces the whole system prompt).
+- Never written into the CLIs' own global files (`~/.claude/CLAUDE.md` and the like): that would leak Tidewatch-only tools into sessions outside Tidewatch. A later opt-in "use the style everywhere" switch may add one import line there, style part only.
+
+Alternatives: write into each CLI's global instructions file on install (leaks, edits user files); an opt-in import line from day one.
+
 ## 4. Architecture
 
 ### Topology
@@ -364,6 +379,7 @@ Steps:
 5. **Worktree flows on git 2.55:** add, lock, a dirty remove (refused), unlock and remove, move the main repo then `repair <path>`, and checking out a branch already used by another worktree.
 6. **Dependency fit:** in a scratch crate, depend on `kelp-core` (path) and stdusk's current dependencies (alacritty_terminal 0.26, portable-pty 0.9, eframe 0.35). Run `cargo tree -d` to list duplicate or conflicting versions.
 7. **MCP per session:** attach a dummy Tidewatch MCP server (one `ping` tool, http transport) to each CLI the D6 way and confirm the agent can call it without a permission prompt. Run before Phase 6.
+8. **House-style injection (D13):** start each CLI with the D13 mechanism and a marker instruction ("end every answer with TIDEWATCH-OK"); confirm the marker appears and the repo's own instructions still load. Run before Phase 8.
 
 Runnable: each step's command above. Results go into "Phase 0 findings" below.
 Checkpoint 0 exit: every step has a recorded result. D5, D7 and D8 are confirmed or reopened with you.
@@ -478,6 +494,7 @@ Steps:
 3. PR link (D4): find the open PR with `gh`, pull its review comments in as threads, post a note to the PR after a confirm.
 4. Agent replies through the MCP server (D6): `list_notes`, `reply_to_note`; replies land in the thread.
 5. Reader view (D12): session-file tailers per CLI, markdown rendering, reply box and permission buttons that type into the pty, `Cmd+Shift+T` toggle. Phase 0 adds a spike for Gemini's session storage.
+6. House style (D13): write the default `house-style.md`, inject it per CLI, the per-profile switch, and draw the Done / Needs you / Next block as a card.
 
 Runnable: comment on a line, press Send, and see the paste in the agent pane and the reply in the thread.
 Checkpoint 8 exit: the round trip works for Claude; the file path works for all agents.
