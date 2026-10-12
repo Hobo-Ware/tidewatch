@@ -1,17 +1,17 @@
 //! Draws the new-tab dialog: profile list, permission ladder, task, live command preview. All
 //! decisions are in `new_tab`; Enter starts, Esc cancels.
 
-use egui::{Align, Align2, FontId, Id, Key, Layout, Modifiers, RichText, Sense, Stroke, Vec2};
+use egui::{Align, Id, Key, Layout, Modifiers, RichText, Stroke};
 use stdusk_egui::colors;
 use stdusk_egui::widgets::{action_button, chip, overlay_frame, text_field};
 use tidewatch_core::agents::Level;
 use tidewatch_core::paths::TidewatchPaths;
 
 use crate::catalog::{Availability, Catalog};
+use crate::list_row::{ROW_HEIGHT, Row, pick_row};
 use crate::new_tab::{Group, NewTab, Pick, Request, level_refusal};
 
 const DIALOG_WIDTH: f32 = 560.0;
-const ROW_HEIGHT: f32 = 30.0;
 const LIST_ROWS: f32 = 7.5;
 const SECTION_GAP: f32 = 6.0;
 
@@ -189,56 +189,6 @@ fn agent_detail(name: &str, availability: &Availability) -> (String, bool) {
         Availability::Found(None) => (name.to_owned(), true),
         Availability::Missing => (format!("{name}  not found on PATH"), false),
     }
-}
-
-struct Row {
-    name: String,
-    detail: String,
-    detail_color: egui::Color32,
-    tag: String,
-    dimmed: bool,
-}
-
-fn pick_row(ui: &mut egui::Ui, row: &Row, selected: bool) -> egui::Response {
-    let (rect, response) =
-        ui.allocate_exact_size(Vec2::new(ui.available_width(), ROW_HEIGHT), Sense::click());
-    let painter = ui.painter();
-    if selected {
-        painter.rect_filled(rect, 7.0, colors::selection());
-        painter.rect_stroke(
-            rect,
-            7.0,
-            Stroke::new(1.0, colors::accent()),
-            egui::StrokeKind::Inside,
-        );
-    } else if response.hovered() {
-        painter.rect_filled(rect, 7.0, colors::hover_elevated());
-    }
-    let name_color = if row.dimmed { colors::dim() } else { colors::fg() };
-    let name = painter.text(
-        rect.left_center() + Vec2::new(10.0, 0.0),
-        Align2::LEFT_CENTER,
-        &row.name,
-        FontId::proportional(14.0),
-        name_color,
-    );
-    painter.text(
-        egui::pos2(name.right() + 12.0, rect.center().y),
-        Align2::LEFT_CENTER,
-        &row.detail,
-        FontId::proportional(12.0),
-        row.detail_color,
-    );
-    if !row.tag.is_empty() {
-        painter.text(
-            rect.right_center() - Vec2::new(10.0, 0.0),
-            Align2::RIGHT_CENTER,
-            &row.tag,
-            FontId::proportional(12.0),
-            colors::dim(),
-        );
-    }
-    response.on_hover_cursor(egui::CursorIcon::PointingHand)
 }
 
 fn ladder(ui: &mut egui::Ui, state: &mut NewTab, catalog: &Catalog) {

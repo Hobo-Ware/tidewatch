@@ -16,6 +16,7 @@ image.workspace = true
 kelp-core.workspace = true
 kelp-ui.workspace = true
 stdusk-core.workspace = true
+shell-words.workspace = true
 stdusk-egui.workspace = true
 tidewatch-core.workspace = true
 
