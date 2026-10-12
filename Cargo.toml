@@ -17,6 +17,7 @@ eframe = { version = "0.35.0", features = ["glow", "__screenshot"] }
 egui = "0.35.0"
 image = { version = "0.25.10", default-features = false, features = ["png"] }
 serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.154"
 sha2 = "0.10.9"
 tempfile = "3.27.0"
 toml = "1.1.8"

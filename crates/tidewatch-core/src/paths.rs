@@ -6,6 +6,14 @@ use sha2::{Digest, Sha256};
 use std::path::{Path, PathBuf};
 
 const HASH_HEX_LEN: usize = 6;
+const NOTES_FILE: &str = "notes.json";
+
+fn repo_key(repo: &Path) -> String {
+    let name = repo.file_name().unwrap_or_default().to_string_lossy();
+    let digest = Sha256::digest(repo.as_os_str().as_encoded_bytes());
+    let hash = format!("{digest:x}");
+    format!("{name}-{}", &hash[..HASH_HEX_LEN])
+}
 
 #[derive(Clone, Debug)]
 pub struct TidewatchPaths {
@@ -60,10 +68,19 @@ impl TidewatchPaths {
     /// Keyed by the full repo path, so two repos with the same folder name never share a directory.
     #[must_use]
     pub fn repo_dir(&self, repo: &Path) -> PathBuf {
-        let name = repo.file_name().unwrap_or_default().to_string_lossy();
-        let digest = Sha256::digest(repo.as_os_str().as_encoded_bytes());
-        let hash = format!("{digest:x}");
-        self.root.join(format!("{name}-{}", &hash[..HASH_HEX_LEN]))
+        self.root.join(repo_key(repo))
+    }
+
+    /// Where a tab keeps its state: `.state/<repo-dir>/<tab>`. Survives the tab, so closing one
+    /// keeps its notes as history.
+    #[must_use]
+    pub fn tab_state_dir(&self, repo: &Path, tab: &str) -> PathBuf {
+        self.state_dir().join(repo_key(repo)).join(tab)
+    }
+
+    #[must_use]
+    pub fn notes_file(&self, repo: &Path, tab: &str) -> PathBuf {
+        self.tab_state_dir(repo, tab).join(NOTES_FILE)
     }
 
     #[must_use]
@@ -123,6 +140,20 @@ mod tests {
     fn guard_helper_dir_is_state() {
         let paths = paths();
         assert_eq!(paths.guard_bin_dir(), paths.state_dir().join("guard-bin"));
+    }
+
+    #[test]
+    fn notes_live_in_the_tab_state_dir_named_like_the_repo_dir() {
+        let paths = paths();
+        let repo = Path::new("/work/web");
+        let repo_dir_name = paths.repo_dir(repo).file_name().unwrap().to_owned();
+        let notes = paths.notes_file(repo, "brave-otter");
+        assert_eq!(
+            notes,
+            paths.state_dir().join(repo_dir_name).join("brave-otter").join("notes.json")
+        );
+        assert_ne!(notes, paths.notes_file(repo, "main"));
+        assert_ne!(notes, paths.notes_file(Path::new("/other/web"), "brave-otter"));
     }
 
     #[test]

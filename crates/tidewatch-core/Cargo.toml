@@ -7,7 +7,7 @@ license.workspace = true
 [dependencies]
 kelp-core.workspace = true
 serde.workspace = true
-serde_json = "1.0.154"
+serde_json.workspace = true
 sha2.workspace = true
 toml.workspace = true
 
