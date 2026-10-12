@@ -583,6 +583,7 @@ Checkpoint 10 exit: tagged release installed from the tap, and the AppImage star
   - **Transcripts (D12):** Gemini `~/.gemini/tmp/<repo-name>/chats/session-*.jsonl` and Copilot `~/.copilot/session-state/<id>/events.jsonl` are appended live; both honour `--session-id`. Gemini's SessionStart hook payload carries `transcript_path`.
   - **`egui_commonmark` 0.24.0 depends on egui 0.35** (0.25.0 needs egui 0.36).
   - Codex live runs: still blocked on `codex login`.
+- **2026-10-12, Phase 6 core, Claude Read only level changed.** `--permission-mode plan` blocks MCP tools, so a reviewer could not call `stage_done` or `report_finding` (D6). Read only is now `--permission-mode dontAsk --allowedTools=Read,Grep,Glob`; launch adds `--allowedTools=mcp__tidewatch__*` (repeated `--allowedTools` flags merge). Checked live with claude 2.1.296: reads work, a file write and a Bash command are denied without a prompt.
 
 ## Deviations log
 

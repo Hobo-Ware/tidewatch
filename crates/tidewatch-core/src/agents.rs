@@ -129,7 +129,7 @@ fn builtin_agents() -> Vec<Agent> {
             bin: "claude".into(),
             wiring: Wiring::Claude,
             levels: levels_from([
-                "--permission-mode plan",
+                "--permission-mode dontAsk --allowedTools=Read,Grep,Glob",
                 "--permission-mode manual",
                 "--permission-mode acceptEdits",
                 "--permission-mode auto",
@@ -463,7 +463,7 @@ mod tests {
             (
                 "claude",
                 [
-                    "--permission-mode plan",
+                    "--permission-mode dontAsk --allowedTools=Read,Grep,Glob",
                     "--permission-mode manual",
                     "--permission-mode acceptEdits",
                     "--permission-mode auto",
@@ -626,7 +626,10 @@ mod tests {
         ));
         let claude = table.get("claude").unwrap();
         assert_eq!(args(claude, Level::Edits), "--permission-mode acceptEdits --verbose");
-        assert_eq!(args(claude, Level::Plan), "--permission-mode plan");
+        assert_eq!(
+            args(claude, Level::Plan),
+            "--permission-mode dontAsk --allowedTools=Read,Grep,Glob"
+        );
     }
 
     #[test]
