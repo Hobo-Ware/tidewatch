@@ -81,6 +81,7 @@ pub(crate) struct NewTab {
     level: Level,
     pub(crate) task: String,
     pub(crate) focus_task: bool,
+    pub(crate) scroll_to_selected: bool,
     running_here: Vec<String>,
     preview: Preview,
     pub(crate) error: Option<String>,
@@ -113,6 +114,7 @@ impl NewTab {
             level: Level::Auto,
             task: String::new(),
             focus_task: true,
+            scroll_to_selected: true,
             running_here,
             preview: Preview::default(),
             error: None,
@@ -174,6 +176,7 @@ impl NewTab {
         self.error = None;
         self.dirty = true;
         self.focus_task = true;
+        self.scroll_to_selected = true;
         if let Some((profile, agent)) = self.selected_entry(catalog) {
             self.level = opening_level(self.group, agent, profile.level);
         }
