@@ -61,6 +61,9 @@ crates/tidewatch/       the egui app
   src/agent_jobs.rs     load or seed profiles.toml and probe each agent CLI as jobs
   src/new_tab.rs        new-tab dialog state: picks, permission ladder and YOLO gating, command preview, request (pure)
   src/new_tab_dialog.rs the dialog itself: profile list, ladder, task, preview; Enter starts, Esc cancels
+  src/list_row.rs       one selectable list row, shared by the dialog and the profile editor
+  src/profile_editor.rs profile editor state: drafts, text in and out of fields, validation, profiles to save (pure)
+  src/settings_view.rs  the profile editor view (replaces the terminal area; Cmd+, or the gear)
   src/close_dialog.rs   keep/delete branch dialog: choices and wording (pure) plus the modal
   src/layout.rs         terminal/panel split, grid size, tab width, digit keys (pure)
   src/tab_view.rs       per-tab pane state: loaded history, selection, open diff, notes, watcher; wants -> jobs -> answers (stale ones dropped)
@@ -75,6 +78,7 @@ crates/tidewatch/       the egui app
   src/dev_screenshot.rs TIDEWATCH_SCREENSHOT harness
   src/dev_worktree.rs   TIDEWATCH_DEV_WORKTREE switch: open a worktree tab at startup for captures
   src/dev_panes.rs      TIDEWATCH_DEV_SCOPE / _PICK / _NOTE switches: graph scope, selected row, a note for captures
+  src/dev_agent.rs      TIDEWATCH_DEV_AGENT / _DIALOG / _SETTINGS / _TASK / _LEVEL switches: start a profile, open the dialog or the editor
 docs/                   concept mockup, research reports
 ```
 
@@ -97,8 +101,15 @@ dialog, `delete` closes it with "Delete branch". Use a throwaway repo, and a tem
 `TIDEWATCH_DEV_SCOPE=whole` starts the graph on Whole repo, `TIDEWATCH_DEV_PICK=<row>` selects a graph row,
 `TIDEWATCH_DEV_NOTE=<text>` writes a note on the first added line of the first diff shown (saved like a real one).
 Notes live in `<home>/.tidewatch/.state/<repo-dir>/<tab>/notes.json`; the main tab's key is `main`.
-Keys: Cmd+T new tab (a worktree tab in a git repo, a plain shell in the Other group), Cmd+W close the
-active tab (not the pinned main tab; a worktree tab asks keep/delete branch first), Cmd+1..9 select.
+`TIDEWATCH_HOME=<dir>` keeps `.tidewatch` and `.config/tidewatch` in `<dir>` while `HOME` stays real, so agent
+CLIs keep their login. `TIDEWATCH_DEV_AGENT=<profile id>` starts that profile in a new tab at startup (task from
+`TIDEWATCH_DEV_TASK`, level from `TIDEWATCH_DEV_LEVEL`; a level the group refuses, such as YOLO in Other, is
+reported on stderr and nothing starts). `TIDEWATCH_DEV_DIALOG=<profile id>|1` opens the new-tab dialog and
+`TIDEWATCH_DEV_SETTINGS=1` the profile editor, for captures (use `TIDEWATCH_SCREENSHOT_WAIT=6`: profiles load and
+versions are probed in the background). Check an agent tab with `ps -o args= -p $(pgrep -n claude)`.
+Keys: Cmd+T new tab (the dialog: pick a profile or Shell, permission level, task; Enter starts, Esc cancels), Cmd+W
+close the active tab (not the pinned main tab; a worktree tab asks keep/delete branch first), Cmd+1..9 select,
+Cmd+, the profile editor.
 The sibling crates are git dependencies pinned by commit (`rev`), not by tag (PLAN.md,
 Deviations log). To pick up a sibling change, merge it there, then bump `rev`.
 
