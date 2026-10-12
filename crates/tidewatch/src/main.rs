@@ -7,6 +7,7 @@ mod app;
 mod catalog;
 mod checkout;
 mod close_dialog;
+mod dev_agent;
 mod dev_panes;
 mod dev_screenshot;
 mod dev_worktree;

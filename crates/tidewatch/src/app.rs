@@ -31,6 +31,7 @@ use crate::agent_jobs;
 use crate::catalog::Catalog;
 use crate::checkout::{self, Plan};
 use crate::close_dialog::{self, Answer, Choice};
+use crate::dev_agent::{DevAgent, Mode as DevMode};
 use crate::dev_panes::{self, DevPanes};
 use crate::dev_screenshot::DevScreenshot;
 use crate::dev_worktree::DevWorktree;
@@ -73,6 +74,7 @@ pub(crate) struct Tidewatch {
     closing: Option<Closing>,
     leftovers: Vec<Leftover>,
     dev: Option<DevWorktree>,
+    dev_agent: Option<DevAgent>,
     dev_panes: DevPanes,
     screenshot: Option<DevScreenshot>,
     views: HashMap<u64, TabView>,
@@ -107,6 +109,7 @@ impl Tidewatch {
             closing: None,
             leftovers: Vec::new(),
             dev: DevWorktree::from_env(),
+            dev_agent: DevAgent::from_env(),
             dev_panes: DevPanes::from_env(),
             workspace,
             paths,
@@ -152,20 +155,35 @@ impl Tidewatch {
             self.show_toast("Profiles are still loading", ctx);
             return;
         }
+        self.new_tab = Some(self.dialog_state(self.last_profile.clone().as_deref()));
+    }
+
+    fn dialog_state(&self, preselect: Option<&str>) -> NewTab {
         let (group, label, dir) = match &self.workspace {
             Workspace::Repo(repo) => (Group::Repo, repo.label.clone(), repo.root.clone()),
             Workspace::Other { dir, label } => {
                 (Group::Other, format!("Other: {label}"), dir.clone())
             }
         };
-        self.new_tab = Some(NewTab::open(
-            group,
-            label,
-            dir,
-            &self.catalog,
-            agent_tabs_in_folder(&self.tabs),
-            self.last_profile.as_deref(),
-        ));
+        NewTab::open(group, label, dir, &self.catalog, agent_tabs_in_folder(&self.tabs), preselect)
+    }
+
+    /// Runs the `TIDEWATCH_DEV_AGENT` / `TIDEWATCH_DEV_DIALOG` switch once the profiles are loaded.
+    fn run_dev_agent(&mut self, ctx: &egui::Context) {
+        let Some(dev) = self.dev_agent.take() else { return };
+        let mut state = self.dialog_state(dev.profile.as_deref());
+        if let Some(level) = dev.level {
+            state.set_level(level, &self.catalog);
+        }
+        state.task = dev.task;
+        state.task_edited();
+        match dev.mode {
+            DevMode::Dialog => self.new_tab = Some(state),
+            DevMode::Start => match state.request(&self.catalog) {
+                Ok(request) => self.open_tab(ctx, request),
+                Err(reason) => eprintln!("tidewatch: dev agent not started: {reason}"),
+            },
+        }
     }
 
     /// In a git repo a new tab is a fresh worktree; in the Other group it is a plain shell, or an
@@ -202,6 +220,7 @@ impl Tidewatch {
             agent_jobs::Done::Loaded(profiles) => {
                 let probes = self.catalog.set_profiles(profiles);
                 self.probe_agents(probes, ctx);
+                self.run_dev_agent(ctx);
             }
             agent_jobs::Done::Probed { agent, availability } => {
                 self.catalog.set_availability(&agent, availability);

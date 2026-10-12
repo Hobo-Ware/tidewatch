@@ -12,6 +12,7 @@ use crate::new_tab::{Group, NewTab, Pick, Request, level_refusal};
 
 const DIALOG_WIDTH: f32 = 560.0;
 const ROW_HEIGHT: f32 = 30.0;
+const LIST_ROWS: f32 = 7.5;
 const SECTION_GAP: f32 = 6.0;
 
 pub(crate) enum Outcome {
@@ -117,43 +118,54 @@ fn profile_list(
     catalog: &Catalog,
     outcome: &mut Option<Outcome>,
 ) {
-    ui.spacing_mut().item_spacing.y = 2.0;
     let mut clicked = None;
-    for (index, pick) in state.picks().to_vec().iter().enumerate() {
-        let row = match pick {
-            Pick::Profile(id) => {
-                let Some((_, profile, agent)) =
-                    catalog.entries().into_iter().find(|(x, _, _)| x == id)
-                else {
-                    continue;
+    let scroll_to_selected = std::mem::take(&mut state.scroll_to_selected);
+    egui::ScrollArea::vertical()
+        .max_height(ROW_HEIGHT * LIST_ROWS)
+        .auto_shrink([false, true])
+        .show(ui, |ui| {
+            ui.spacing_mut().item_spacing.y = 2.0;
+            for (index, pick) in state.picks().to_vec().iter().enumerate() {
+                let row = match pick {
+                    Pick::Profile(id) => {
+                        let Some((_, profile, agent)) =
+                            catalog.entries().into_iter().find(|(x, _, _)| x == id)
+                        else {
+                            continue;
+                        };
+                        let (detail, found) =
+                            agent_detail(&agent.name, &catalog.availability(&agent.id));
+                        Row {
+                            name: profile.name.clone(),
+                            detail,
+                            detail_color: if found { colors::dim() } else { colors::yellow() },
+                            tag: profile.level.label().to_owned(),
+                            dimmed: !found,
+                        }
+                    }
+                    Pick::Shell => Row {
+                        name: "Shell".to_owned(),
+                        detail: match state.group() {
+                            Group::Repo => "a plain terminal in the new worktree".to_owned(),
+                            Group::Other => "a plain terminal in this folder".to_owned(),
+                        },
+                        detail_color: colors::dim(),
+                        tag: String::new(),
+                        dimmed: false,
+                    },
                 };
-                let (detail, found) = agent_detail(&agent.name, &catalog.availability(&agent.id));
-                Row {
-                    name: profile.name.clone(),
-                    detail,
-                    detail_color: if found { colors::dim() } else { colors::yellow() },
-                    tag: profile.level.label().to_owned(),
-                    dimmed: !found,
+                let selected = index == state.selected();
+                let response = pick_row(ui, &row, selected);
+                if selected && scroll_to_selected {
+                    response.scroll_to_me(None);
+                }
+                if response.double_clicked() {
+                    clicked = Some((index, true));
+                } else if response.clicked() {
+                    clicked = Some((index, false));
                 }
             }
-            Pick::Shell => Row {
-                name: "Shell".to_owned(),
-                detail: match state.group() {
-                    Group::Repo => "a plain terminal in the new worktree".to_owned(),
-                    Group::Other => "a plain terminal in this folder".to_owned(),
-                },
-                detail_color: colors::dim(),
-                tag: String::new(),
-                dimmed: false,
-            },
-        };
-        let response = pick_row(ui, &row, index == state.selected());
-        if response.double_clicked() {
-            clicked = Some((index, true));
-        } else if response.clicked() {
-            clicked = Some((index, false));
-        }
-    }
+        });
     ui.spacing_mut().item_spacing.y = SECTION_GAP;
     if let Some((index, start_now)) = clicked {
         state.select(index, catalog);
