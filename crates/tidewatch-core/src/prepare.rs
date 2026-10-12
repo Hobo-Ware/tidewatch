@@ -120,20 +120,7 @@ pub fn prepare(input: &PrepareInput) -> Result<Prepared, PrepareError> {
         mcp_path.clone()
     });
 
-    let ctx = LaunchCtx {
-        worktree: input.dir.to_path_buf(),
-        worktree_tab: input.worktree_tab,
-        session_id: input.session_id.clone(),
-        hooks: input.listener.clone(),
-        mcp_config,
-        house_style,
-        copilot_instructions_dir,
-        guard_bin_dir,
-        env: input
-            .path_var
-            .map(|path| vec![("PATH".to_owned(), path.to_string_lossy().into_owned())])
-            .unwrap_or_default(),
-    };
+    let ctx = context(input, house_style, copilot_instructions_dir, guard_bin_dir, mcp_config);
     let mut launch = launch_command(input.agent, input.profile, &ctx)?;
 
     if wiring == Wiring::Gemini
@@ -147,6 +134,48 @@ pub fn prepare(input: &PrepareInput) -> Result<Prepared, PrepareError> {
     launch.args.extend(task_args(wiring, input.task));
     let env = merge_env(&ctx.env, &launch.env);
     Ok(Prepared { launch, env, setup: input.profile.setup.clone(), notes })
+}
+
+fn context(
+    input: &PrepareInput,
+    house_style: Option<PathBuf>,
+    copilot_instructions_dir: Option<PathBuf>,
+    guard_bin_dir: Option<PathBuf>,
+    mcp_config: Option<PathBuf>,
+) -> LaunchCtx {
+    LaunchCtx {
+        worktree: input.dir.to_path_buf(),
+        worktree_tab: input.worktree_tab,
+        session_id: input.session_id.clone(),
+        hooks: input.listener.clone(),
+        mcp_config,
+        house_style,
+        copilot_instructions_dir,
+        guard_bin_dir,
+        env: input
+            .path_var
+            .map(|path| vec![("PATH".to_owned(), path.to_string_lossy().into_owned())])
+            .unwrap_or_default(),
+    }
+}
+
+/// The command `prepare` would build, for the new-tab preview: the same flags, with the helper and
+/// house-style paths assumed to exist. Writes nothing. Codex reads the house style file when it exists.
+pub fn preview(input: &PrepareInput) -> Result<Launch, LaunchError> {
+    let paths = input.paths;
+    let wiring = input.agent.wiring;
+    let house_style = input.profile.house_style.then(|| paths.house_style_file());
+    let copilot_dir = (house_style.is_some() && wiring == Wiring::Copilot)
+        .then(|| paths.copilot_instructions_dir());
+    let guard = (input.worktree_tab && input.profile.never_push).then(|| paths.guard_bin_dir());
+    let mcp = input
+        .listener
+        .as_ref()
+        .map(|_| paths.tab_state_dir(input.repo, input.tab).join(MCP_CONFIG_FILE));
+    let ctx = context(input, house_style, copilot_dir, guard, mcp);
+    let mut launch = launch_command(input.agent, input.profile, &ctx)?;
+    launch.args.extend(task_args(wiring, input.task));
+    Ok(launch)
 }
 
 /// How each CLI takes its first prompt. Copilot and Gemini have a flag that starts interactive mode
@@ -389,6 +418,32 @@ mod tests {
             Some(dir.display().to_string().as_str())
         );
         assert_eq!(&prepared.launch.args[prepared.launch.args.len() - 2..], ["-i", "add tests"]);
+    }
+
+    #[test]
+    fn the_preview_shows_the_flags_the_real_launch_gets_for_every_agent() {
+        let fx = Fixture::new();
+        let table = AgentTable::builtin();
+        for id in ["claude", "codex", "gemini", "copilot"] {
+            let p = profile(id, Level::Edits);
+            let input = PrepareInput {
+                paths: &fx.paths,
+                agent: table.get(id).unwrap(),
+                profile: &p,
+                repo: Path::new("/work/web"),
+                tab: "brave-otter",
+                dir: &fx.dir,
+                worktree_tab: true,
+                task: "do it",
+                session_id: None,
+                path_var: None,
+                listener: None,
+            };
+            let real = prepare(&input).unwrap();
+            let shown = preview(&input).unwrap();
+            assert_eq!(shown.program, real.launch.program, "{id}");
+            assert_eq!(shown.args, real.launch.args, "{id}");
+        }
     }
 
     #[test]
