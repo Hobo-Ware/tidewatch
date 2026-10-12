@@ -569,6 +569,12 @@ Checkpoint 10 exit: tagged release installed from the tap, and the AppImage star
   - New mapping: Read only `--sandbox read-only --ask-for-approval never`; Ask `--sandbox read-only --ask-for-approval on-request`; Auto edit `--sandbox workspace-write --ask-for-approval on-request`; Auto `--sandbox workspace-write --approve-for-me`; YOLO `--dangerously-bypass-approvals-and-sandbox`.
   - `-c key=value` overrides any config value for one run, and `--dangerously-bypass-hook-trust` runs hooks without persisted trust. This is the per-session path for Codex hooks and MCP (D5, D6). No worktree file is needed.
   - The live hook and MCP test needs `codex login`, which only the owner can do.
+- **2026-10-12, Phase 4 worktree checks (git 2.55.0), PASS with traps.**
+  - `worktree add --lock --reason <r> -b <branch> <path>` locks atomically. `list --porcelain -z` shows `locked <reason>`.
+  - **Trap:** `add -b` into a non-empty existing directory fails but leaves the new branch behind. Tidewatch deletes a branch it created when `add` fails. An existing empty directory is accepted.
+  - `remove` refuses a locked worktree (unlock first) and refuses modified or untracked files without `--force`. Ignored files do not count.
+  - `branch -d` refuses an unmerged branch, so the delete choice uses `-D`. `rev-list --count <branch> --not --exclude=refs/heads/<branch> --all` counts commits that exist nowhere else.
+  - After the main repo moved, `worktree repair <paths>` run from the new location fixed `git status` in the linked worktree. It prints `.git file broken` while fixing and exits 0, so success is checked afterwards.
 - **2026-10-12, steps 3, 7, 8 and the Reader view checks (Copilot 1.0.91, Gemini 0.46.0, Claude 2.1.296), PASS.** Details in `docs/research/phase-0-spikes.md`.
   - **Copilot signals:** no OSC 9;4 progress; the only title is OSC 0 ("GitHub Copilot", the prompt, then an AI-written title). Status for Copilot comes from hooks and `events.jsonl`, not terminal signals (D5 layer 2 does nothing for Copilot).
   - **Copilot first launch** in a new folder blocks on a folder-trust prompt, so every new worktree hits it. Phase 6 must pre-trust the worktree or answer the prompt.
@@ -584,6 +590,7 @@ Checkpoint 10 exit: tagged release installed from the tap, and the AppImage star
 - **2026-10-12, Phase 0:** only step 6 (dependency fit) runs before the first build. Steps 1 to 5 run before the phase that depends on them (5 before Phase 4, 4 before Phase 6, 1 to 3 before Phase 7).
 - **2026-10-12, dependencies:** until stdusk tags a release with the library crates, Tidewatch uses path dependencies to the Phase 1 worktree (`../stdusk/.claude/worktrees/phase-1-lib-crates/crates/...`). Switch to git tags when Phase 1 merges.
 - **2026-10-12, pinning by commit, not tag:** stdusk's `stdusk-v*` tags start its app release workflow, so a library-only tag would ship an app release. Tidewatch pins the sibling crates by merge commit (`git = ..., rev = ...`) instead. stdusk PR #20 merged as `30d69b0a`; the path dependencies are gone.
+- **2026-10-12, Phase 4, worktree registry:** `.state/session.toml` (tab restore) does not exist yet, but `git worktree repair` needs the old repo path of every worktree Tidewatch made. Phase 4 adds a small `.state/worktrees.toml` (repo, path, branch per worktree). Session restore can fold it into `session.toml` later.
 
 ## Appendices
 
