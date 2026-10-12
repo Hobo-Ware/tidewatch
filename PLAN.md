@@ -192,7 +192,7 @@ Alternative: hold Codex out of v0 entirely.
 
 **D9. Exact worktree path.**
 
-DECIDED 2026-10-12: recommendation accepted.
+DECIDED 2026-10-12: recommendation accepted, confirmed by the owner.
 
 Recommendation: **`~/.tidewatch/<repo-name>-<6 hex of the repo path hash>/<tab>`**, with Tidewatch state in `~/.tidewatch/.state/`. Two repos named `web` would otherwise collide in `~/.tidewatch/web/`. Store each worktree's repo path, and run `git worktree repair <paths>` on startup when the repo has moved.
 
