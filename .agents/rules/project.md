@@ -24,6 +24,11 @@ in the sibling repo, never in a local copy.
 
 ```
 crates/tidewatch-core/  worktrees, profiles, permission levels, workflows, agent status, no UI
+  src/paths.rs          ~/.tidewatch layout (D9), state dirs (pure)
+  src/names.rs          adjective-noun names for new worktrees (pure)
+  src/registry.rs       .state/worktrees.toml: the worktrees Tidewatch made, for repair
+  src/worktree.rs       add (locked, agent/<name>), inspect, remove, list, repair, leftovers (shells out to git)
+  tests/worktree_roundtrip.rs  real throwaway repos: add, lock, dirty refusal, delete branch, moved repo
 crates/tidewatch/       the egui app
   src/main.rs           argument parsing, repo discovery, eframe start
   src/app.rs            the eframe::App loop: tab strip, terminal, placeholder panels, shortcuts
