@@ -10,4 +10,5 @@ pub mod notes;
 pub mod paths;
 pub mod profiles;
 mod registry;
+pub mod status;
 pub mod worktree;
