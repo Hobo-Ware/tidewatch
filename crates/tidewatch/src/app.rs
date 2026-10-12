@@ -3,7 +3,8 @@
 //! Git work for worktree tabs and for the panes runs on `jobs` threads; its results are applied at
 //! the top of the next frame.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
+use std::ffi::OsString;
 use std::path::Path;
 use std::time::Duration;
 
@@ -13,6 +14,7 @@ use kelp_ui::avatars::AvatarStore;
 use kelp_ui::graph::{GraphAction, Selection};
 use kelp_ui::theme as kelp_theme;
 use stdusk_core::progress::Progress;
+use stdusk_core::shell::ShellProfile;
 use stdusk_core::terminal::{CmdState, PtyTerm, SpawnOpts};
 use stdusk_egui::ui::{
     CursorStyle, GridStyle, TAB_H, apply_theme, collect_input, draw_tab, draw_toast, icons,
@@ -22,21 +24,28 @@ use stdusk_egui::widgets::{chip, icon_button};
 use stdusk_egui::{colors, repaint_handle};
 use tidewatch_core::notes::NotesWriter;
 use tidewatch_core::paths::TidewatchPaths;
+use tidewatch_core::prepare::Prepared;
 use tidewatch_core::worktree::{BranchOutcome, Inspection, Leftover, Worktree};
 
+use crate::agent_jobs;
+use crate::catalog::Catalog;
 use crate::checkout::{self, Plan};
 use crate::close_dialog::{self, Answer, Choice};
 use crate::dev_panes::{self, DevPanes};
 use crate::dev_screenshot::DevScreenshot;
 use crate::dev_worktree::DevWorktree;
 use crate::jobs::Jobs;
-use crate::pane::{Body, CREATING_TITLE, ClosePolicy, Pane, finish_create};
+use crate::new_tab::{Group, NewTab, Request};
+use crate::new_tab_dialog::{self, Outcome};
+use crate::pane::{
+    Body, CREATING_TITLE, ClosePolicy, Pane, STARTING_TITLE, agent_tabs_in_folder, finish_open,
+};
 use crate::pane_jobs;
 use crate::repo::Workspace;
 use crate::tab_view::{TabView, ViewSpec};
 use crate::tabs::{Action, Tabs};
 use crate::toast::Toast;
-use crate::worktree_jobs::{self, Done};
+use crate::worktree_jobs::{self, Done, OpenSpec, Target};
 use crate::{diff_pane, fonts, history_pane, layout, note_actions};
 
 const DEFAULT_THEME: &str = "one-half-dark";
@@ -71,6 +80,10 @@ pub(crate) struct Tidewatch {
     notes_writer: NotesWriter,
     avatars: AvatarStore,
     toast: Option<Toast>,
+    catalog: Catalog,
+    agent_jobs: Jobs<agent_jobs::Done>,
+    new_tab: Option<NewTab>,
+    last_profile: Option<String>,
 }
 
 impl Tidewatch {
@@ -78,6 +91,7 @@ impl Tidewatch {
         cc: &eframe::CreationContext<'_>,
         workspace: Workspace,
         paths: Option<TidewatchPaths>,
+        agent_path: OsString,
         screenshot: Option<DevScreenshot>,
     ) -> Self {
         colors::init(colors::by_name(DEFAULT_THEME));
@@ -102,25 +116,112 @@ impl Tidewatch {
             notes_writer: NotesWriter::new(),
             avatars: AvatarStore::offline(cc.egui_ctx.clone()),
             toast: None,
+            catalog: Catalog::new(agent_path),
+            agent_jobs: Jobs::new(),
+            new_tab: None,
+            last_profile: None,
         };
+        if let Some(paths) = &app.paths {
+            agent_jobs::load(
+                &app.agent_jobs,
+                &cc.egui_ctx,
+                paths.clone(),
+                app.catalog.path.clone(),
+            );
+        }
         if let (Workspace::Repo(repo), Some(paths)) = (&app.workspace, &app.paths) {
             worktree_jobs::startup(&app.jobs, &cc.egui_ctx, paths.clone(), repo.root.clone());
         }
         if app.dev.is_some() {
-            app.new_tab(&cc.egui_ctx);
+            app.open_tab(&cc.egui_ctx, Request::Shell);
         }
         app
     }
 
-    /// In a git repo a new tab is a fresh worktree; in the Other group it is a plain shell.
+    /// Opens the new-tab dialog. Without a home directory there are no profiles to pick from, so
+    /// the tab opens as a plain shell.
     fn new_tab(&mut self, ctx: &egui::Context) {
-        if let (Workspace::Repo(repo), Some(paths)) = (&self.workspace, &self.paths) {
-            let id = self.tabs.push(CREATING_TITLE.to_owned(), Pane::creating());
-            worktree_jobs::create(&self.jobs, ctx, paths.clone(), repo.root.clone(), id);
-        } else {
-            let dir = self.workspace.dir().to_path_buf();
-            self.tabs.apply(Action::New, || Pane::shell(spawn_shell(ctx, &dir)));
+        if self.new_tab.is_some() {
+            return;
         }
+        if self.paths.is_none() {
+            self.open_tab(ctx, Request::Shell);
+            return;
+        }
+        if !self.catalog.is_loaded() {
+            self.show_toast("Profiles are still loading", ctx);
+            return;
+        }
+        let (group, label, dir) = match &self.workspace {
+            Workspace::Repo(repo) => (Group::Repo, repo.label.clone(), repo.root.clone()),
+            Workspace::Other { dir, label } => {
+                (Group::Other, format!("Other: {label}"), dir.clone())
+            }
+        };
+        self.new_tab = Some(NewTab::open(
+            group,
+            label,
+            dir,
+            &self.catalog,
+            agent_tabs_in_folder(&self.tabs),
+            self.last_profile.as_deref(),
+        ));
+    }
+
+    /// In a git repo a new tab is a fresh worktree; in the Other group it is a plain shell, or an
+    /// agent in the folder itself. An agent tab is prepared on a job thread first.
+    fn open_tab(&mut self, ctx: &egui::Context, request: Request) {
+        let agent = match request {
+            Request::Shell => None,
+            Request::Agent(agent) => Some(agent),
+        };
+        match (&self.workspace, &self.paths) {
+            (Workspace::Repo(repo), Some(paths)) => {
+                let tab = self.tabs.push(CREATING_TITLE.to_owned(), Pane::creating());
+                let target = Target::Worktree { repo: repo.root.clone() };
+                let path_var = self.catalog.path.clone();
+                let spec = OpenSpec { paths: paths.clone(), target, agent, path_var, tab };
+                worktree_jobs::open(&self.jobs, ctx, spec);
+            }
+            (workspace, Some(paths)) if agent.is_some() => {
+                let tab = self.tabs.push(STARTING_TITLE.to_owned(), Pane::creating());
+                let target = Target::Folder { dir: workspace.dir().to_path_buf() };
+                let path_var = self.catalog.path.clone();
+                let spec = OpenSpec { paths: paths.clone(), target, agent, path_var, tab };
+                worktree_jobs::open(&self.jobs, ctx, spec);
+            }
+            _ => {
+                let dir = self.workspace.dir().to_path_buf();
+                self.tabs.apply(Action::New, || Pane::shell(spawn_shell(ctx, &dir)));
+            }
+        }
+    }
+
+    fn apply_agent_done(&mut self, done: agent_jobs::Done, ctx: &egui::Context) {
+        match done {
+            agent_jobs::Done::Loaded(profiles) => {
+                let probes = self.catalog.set_profiles(profiles);
+                self.probe_agents(probes, ctx);
+            }
+            agent_jobs::Done::Probed { agent, availability } => {
+                self.catalog.set_availability(&agent, availability);
+            }
+        }
+    }
+
+    fn probe_agents(&self, agents: Vec<(String, String)>, ctx: &egui::Context) {
+        for (agent, bin) in agents {
+            agent_jobs::probe(&self.agent_jobs, ctx, agent, bin, self.catalog.path.clone());
+        }
+    }
+
+    fn answer_new_tab(&mut self, outcome: Outcome, ctx: &egui::Context) {
+        self.new_tab = None;
+        let Outcome::Start(request) = outcome else { return };
+        if let Request::Agent(agent) = &request {
+            self.last_profile = Some(agent.profile_id.clone());
+        }
+        self.open_tab(ctx, request);
     }
 
     fn close_tab(&mut self, index: usize, ctx: &egui::Context) {
@@ -160,9 +261,16 @@ impl Tidewatch {
 
     fn apply_done(&mut self, done: Done, ctx: &egui::Context) {
         match done {
-            Done::Created { tab, result } => {
+            Done::Opened { tab, result } => {
                 let created = result.is_ok();
-                finish_create(&mut self.tabs, tab, result, |dir| spawn_shell(ctx, dir));
+                let notes =
+                    finish_open(&mut self.tabs, tab, result, |dir, prepared| match prepared {
+                        Some(prepared) => spawn_agent(ctx, dir, prepared),
+                        None => spawn_shell(ctx, dir),
+                    });
+                if let Some(note) = notes.first() {
+                    self.show_toast(format!("Started without part of the setup: {note}"), ctx);
+                }
                 if created
                     && self.dev.is_some_and(DevWorktree::closes_after_opening)
                     && let Some(index) = self.tabs.index_of(tab)
@@ -353,7 +461,24 @@ impl Tidewatch {
 }
 
 fn spawn_shell(ctx: &egui::Context, dir: &Path) -> PtyTerm {
-    let opts = SpawnOpts {
+    PtyTerm::spawn(INITIAL_COLS, INITIAL_ROWS, repaint_handle(ctx), &spawn_opts(dir, None))
+}
+
+/// The user's shell runs `prepared.script` as its command, so it reads the login profile like any
+/// tab and the agent ends up as the pty's process.
+fn spawn_agent(ctx: &egui::Context, dir: &Path, prepared: &Prepared) -> PtyTerm {
+    let shell = user_shell(std::env::var("SHELL").ok());
+    let profile = ShellProfile {
+        shell: Some(shell.clone()),
+        args: vec!["-c".to_owned(), prepared.script(&shell)],
+        cwd: None,
+        env: prepared.env.iter().cloned().collect::<BTreeMap<_, _>>(),
+    };
+    PtyTerm::spawn(INITIAL_COLS, INITIAL_ROWS, repaint_handle(ctx), &spawn_opts(dir, Some(profile)))
+}
+
+fn spawn_opts(dir: &Path, profile: Option<ShellProfile>) -> SpawnOpts {
+    SpawnOpts {
         detect_progress: true,
         shell_integration: true,
         autosuggestions: false,
@@ -361,10 +486,16 @@ fn spawn_shell(ctx: &egui::Context, dir: &Path) -> PtyTerm {
         word_separators: WORD_SEPARATORS.into(),
         bold_bright: true,
         cwd: Some(dir.to_string_lossy().into_owned()),
-        profile: None,
+        profile,
         agent_tracking: None,
-    };
-    PtyTerm::spawn(INITIAL_COLS, INITIAL_ROWS, repaint_handle(ctx), &opts)
+    }
+}
+
+/// `$SHELL`, or the platform's default login shell when it is unset or empty.
+fn user_shell(env: Option<String>) -> String {
+    env.filter(|shell| !shell.is_empty()).unwrap_or_else(|| {
+        if cfg!(target_os = "macos") { "/bin/zsh" } else { "/bin/bash" }.to_owned()
+    })
 }
 
 fn status_message(ui: &egui::Ui, rect: egui::Rect, text: &str, color: egui::Color32) {
@@ -376,6 +507,27 @@ fn status_message(ui: &egui::Ui, rect: egui::Rect, text: &str, color: egui::Colo
         (rect.width() * 0.8).max(1.0),
     );
     painter.galley(rect.center() - galley.size() / 2.0, galley, color);
+}
+
+fn exit_notice_text(profile_name: &str, code: i32) -> String {
+    format!("{profile_name} exited with code {code}. Cmd+W closes the tab.")
+}
+
+fn exit_notice(ui: &egui::Ui, rect: egui::Rect, text: &str) {
+    let painter = ui.painter_at(rect);
+    let galley = painter.layout_no_wrap(text.to_owned(), FontId::proportional(13.0), colors::fg());
+    let pill = egui::Rect::from_center_size(
+        egui::pos2(rect.center().x, rect.bottom() - 28.0),
+        galley.size() + egui::vec2(24.0, 14.0),
+    );
+    painter.rect_filled(pill, 8.0, colors::elevated());
+    painter.rect_stroke(
+        pill,
+        8.0,
+        egui::Stroke::new(1.0, colors::border()),
+        egui::StrokeKind::Inside,
+    );
+    painter.galley(pill.center() - galley.size() / 2.0, galley, colors::fg());
 }
 
 fn tab_signals(pane: &Pane<PtyTerm>) -> (Progress, CmdState) {
@@ -433,9 +585,12 @@ impl eframe::App for Tidewatch {
         for done in self.pane_jobs.drain() {
             self.apply_pane_done(done, &ctx);
         }
+        for done in self.agent_jobs.drain() {
+            self.apply_agent_done(done, &ctx);
+        }
         self.drive_views();
         let typing_in_a_panel = ctx.text_edit_focused();
-        let modal_open = self.closing.is_some();
+        let modal_open = self.closing.is_some() || self.new_tab.is_some();
         let mut actions = if modal_open { Vec::new() } else { shortcut_actions(&ctx) };
 
         egui::Panel::top("tabbar")
@@ -521,6 +676,11 @@ impl eframe::App for Tidewatch {
             let (cell_w, cell_h) = (glyph.size().x, glyph.size().y);
             let (cols, rows) = layout::grid_dims(areas.terminal, cell_w, cell_h);
 
+            let agent_name = self.tabs.items()[self.tabs.active()]
+                .pane
+                .agent
+                .as_ref()
+                .map(|agent| agent.profile_name.clone());
             match &mut self.tabs.active_pane_mut().body {
                 Body::Shell(term) => {
                     term.resize(cols, rows);
@@ -550,6 +710,9 @@ impl eframe::App for Tidewatch {
                         },
                         &[],
                     );
+                    if let (Some(name), Some(exit)) = (&agent_name, term.exited()) {
+                        exit_notice(ui, areas.terminal, &exit_notice_text(name, exit.code));
+                    }
                 }
                 Body::Creating => {
                     status_message(ui, areas.terminal, "Creating worktree...", colors::dim());
@@ -578,6 +741,12 @@ impl eframe::App for Tidewatch {
         if let Some(answer) = answer {
             self.answer_close(answer, &ctx);
         }
+        if let Some(state) = &mut self.new_tab
+            && let Some(outcome) =
+                new_tab_dialog::show(&ctx, state, &self.catalog, self.paths.as_ref())
+        {
+            self.answer_new_tab(outcome, &ctx);
+        }
         if let Some(shot) = &mut self.screenshot {
             shot.tick(&ctx);
         }
@@ -586,5 +755,27 @@ impl eframe::App for Tidewatch {
     fn clear_color(&self, _visuals: &egui::Visuals) -> [f32; 4] {
         let bg = colors::bg();
         egui::Rgba::from(bg).to_array()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_shell_comes_from_the_environment_or_the_platform_default() {
+        assert_eq!(user_shell(Some("/usr/bin/fish".into())), "/usr/bin/fish");
+        for unset in [None, Some(String::new())] {
+            let shell = user_shell(unset);
+            assert!(shell == "/bin/zsh" || shell == "/bin/bash", "{shell}");
+        }
+    }
+
+    #[test]
+    fn the_exit_notice_names_the_profile_and_the_code() {
+        assert_eq!(
+            exit_notice_text("Builder", 130),
+            "Builder exited with code 130. Cmd+W closes the tab."
+        );
     }
 }

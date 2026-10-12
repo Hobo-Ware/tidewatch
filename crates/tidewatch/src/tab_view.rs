@@ -550,7 +550,7 @@ mod tests {
     #[test]
     fn a_worktree_tab_reads_its_worktree_and_keeps_notes_under_its_name() {
         let paths = TidewatchPaths::new(std::path::Path::new("/home"));
-        let pane = Pane { body: Body::Shell(0), worktree: Some(worktree()) };
+        let pane = Pane { body: Body::Shell(0), worktree: Some(worktree()), agent: None };
         let spec = ViewSpec::of(&repo_workspace(), Some(&paths), &tab(false, pane)).unwrap();
         assert_eq!(spec.dir, worktree().path);
         assert_eq!((spec.name.as_str(), spec.is_main), ("brave-otter", false));
@@ -566,7 +566,8 @@ mod tests {
         assert_eq!(ViewSpec::of(&other, None, &tab(true, Pane::shell(0))), None);
         assert_eq!(ViewSpec::of(&repo_workspace(), None, &tab(false, Pane::creating())), None);
         assert_eq!(ViewSpec::of(&repo_workspace(), None, &tab(false, Pane::shell(0))), None);
-        let failed = Pane { body: Body::Failed("x".into()), worktree: Some(worktree()) };
+        let failed =
+            Pane { body: Body::Failed("x".into()), worktree: Some(worktree()), agent: None };
         assert_eq!(ViewSpec::of(&repo_workspace(), None, &tab(false, failed)), None);
     }
 
