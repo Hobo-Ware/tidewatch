@@ -4,7 +4,7 @@
 //! Flags were checked against the installed `--help` of claude 2.1.296, gemini 0.46.0, copilot 1.0.91 and
 //! codex 0.162.1 (see `docs/research/phase-0-spikes.md` and the PLAN.md Phase 0 findings). Repeatable flags
 //! that take a list (`--allow-tool`, `--mcp-config`, `--include-directories`) are written in the `--flag=value`
-//! form and a trailing task prompt must follow a literal `--`, otherwise the list swallows it.
+//! form and a trailing task prompt follows a literal `--`, otherwise the list swallows it (checked with claude).
 
 use std::collections::BTreeMap;
 use std::ffi::OsStr;
