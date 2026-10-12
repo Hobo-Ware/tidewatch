@@ -593,6 +593,9 @@ Checkpoint 10 exit: tagged release installed from the tap, and the AppImage star
 - **2026-10-12, pinning by commit, not tag:** stdusk's `stdusk-v*` tags start its app release workflow, so a library-only tag would ship an app release. Tidewatch pins the sibling crates by merge commit (`git = ..., rev = ...`) instead. stdusk PR #20 merged as `30d69b0a`; the path dependencies are gone.
 - **2026-10-12, Phase 4, worktree registry:** `.state/session.toml` (tab restore) does not exist yet, but `git worktree repair` needs the old repo path of every worktree Tidewatch made. Phase 4 adds a small `.state/worktrees.toml` (repo, path, branch per worktree). Session restore can fold it into `session.toml` later.
 
+- **2026-10-13, Phase 5, checkout rule:** step 4 is simpler than written. There is no agent detection yet, so a worktree tab never checks out (toast: "Checkout is disabled while an agent owns this worktree"), and the main tab checks out only a clean working tree. "Jump to the owner tab" waits for agent status (Phase 7).
+- **2026-10-13, Phase 5, kelp-ui integration:** Tidewatch uses its own job runner, not `kelp_ui::jobs`. It does not call `kelp_ui::theme::apply` or `fonts::install` (they replace stdusk's styles and fonts): it registers the `semibold` family itself, and triggers Kelp's font fallback swap once at startup so Kelp never replaces the font set later. The avatar store is offline (no network). Kelp's `view.json` and `comments.json` are never read.
+
 ## Appendices
 
 - `docs/research/stdusk-recon.md`: module map, coupling, handoff and agent restore details.
