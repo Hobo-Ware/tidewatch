@@ -15,5 +15,6 @@ pub mod profiles;
 pub mod prompt;
 mod registry;
 pub mod status;
+pub mod test_command;
 pub mod workflows;
 pub mod worktree;
