@@ -155,19 +155,18 @@ Every layer feeds one `AgentStatus` enum. Phase 0 checks the uncertain parts.
 
 Alternative: run agents headless and parse JSON. That is exact, but you lose the live TUI you watch and answer.
 
-**D6. How does a workflow stage hand results to the next stage?**
+**D6. How do workflow stages and notes talk to Tidewatch?**
 
-DECIDED 2026-10-12: recommendation accepted.
+DECIDED 2026-10-12 by the owner (revised from "a file contract, MCP later"): **a Tidewatch MCP server, MCP only, in v1.**
 
-Recommendation: **a file contract.**
+- The server is built into the app, on the same local listener as the hooks (D5), with a per-tab token so an agent reaches only its own tab.
+- Tools: `stage_done(summary)`, `report_finding(file, line, blocking, text)` (each finding becomes a note in the diff, D4), `list_notes()`, `reply_to_note(id, text)`.
+- Attached per session: Claude `--mcp-config`, Copilot `--additional-mcp-config`, Gemini `mcpServers` in the worktree's `.gemini/settings.json` (the file the hooks already use), Codex the worktree's `.codex/config.toml` (unverified, experimental per D8).
+- Tidewatch pre-allows only its own tools (Claude `--allowedTools mcp__tidewatch__*`, Copilot `--allow-tool 'tidewatch'`), so they never prompt.
+- Gates stay Tidewatch's job: the test command, no blocking findings, your approval.
+- Safety net, nothing extra to build: if a stage stops without `stage_done`, the tab shows the agent's last message (from the Stop hook payload, verified in Phase 0) and asks you to pass, retry or stop.
 
-- Each stage gets the env var `TIDEWATCH_STAGE_DIR` (under `~/.tidewatch/.state/`), and its prompt tells it to write a `summary.md`, plus `findings.json` for review stages.
-- Tidewatch reads the files when the stage's agent stops. Findings become review threads (D4).
-- Gates are checked by Tidewatch, not the agent: the repo's test command, findings with `blocking: true`, or your approval.
-
-This works with all four CLIs today. An MCP "reply" tool (Claude `--mcp-config`, Copilot `--additional-mcp-config`) comes later as a nicer channel.
-
-Alternative: MCP-first. Better UX, but it doesn't work for Gemini and Codex per session today.
+Alternatives: a file contract (works everywhere, but one-way, prompt-dependent, and a second channel to maintain); MCP plus a file fallback (two channels to build and test).
 
 **D7. How is "never push" enforced?**
 
@@ -250,7 +249,7 @@ Alternatives:
    git worktree   agent CLI in a pty (stdusk-core PtyTerm)
    ~/.tidewatch      |  hooks (http, token) ------------+
                      |  OSC / title / exit -> status bus
-                     +- writes TIDEWATCH_STAGE_DIR/{summary.md,findings.json}
+                     +- calls Tidewatch MCP tools (stage_done, report_finding, reply_to_note)
 ```
 
 ### File layout
@@ -271,7 +270,7 @@ tidewatch/
     guard.rs                  never-push env (D7), YOLO-only-in-worktree rule
     notes.rs                  per-tab review threads, delivery queue (D4)
     pr.rs                     open PR lookup, pull and post review comments through gh (D4)
-    findings.rs               findings.json contract -> review threads (D4, D6)
+    mcp.rs                    Tidewatch MCP server: stage_done, report_finding, list_notes, reply_to_note (D6)
   crates/tidewatch/src/
     main.rs                   eframe app loop (thin)
     app/                      state: groups, tabs, panes, focus mode
@@ -295,9 +294,9 @@ tidewatch/
 | `workflows.toml` | `[workflow.<id>]` name, `[[stage]]` action, agent, model, effort, permissions, gate, on_fail, max_loops, approve, prompt |
 | `.state/session.toml` | groups, tabs, worktree paths, agent session ids, workflow position (stdusk-core session types) |
 | `.state/<repo>/<tab>/notes.json` | the tab's review threads: anchor, comments, author (person or agent), sent, resolved, PR comment id when linked (D4) |
-| `.state/<repo>/<tab>/stage-<n>/` | `summary.md`, `findings.json` |
+| `.state/<repo>/<tab>/stages.json` | per stage: state, summary and findings received through MCP (D6) |
 
-`findings.json`: `[{ "file": str, "line": int, "blocking": bool, "text": str }]`.
+A finding (from `report_finding`): `{ "file": str, "line": int, "blocking": bool, "text": str }`.
 
 ### Core types (pseudo-signatures)
 
@@ -329,7 +328,7 @@ New tab -> worktree add + lock -> setup cmd -> agent spawn (env: hooks token, st
 | Repo moved | path missing on startup | `worktree repair`, else mark the tab "repo missing" |
 | Hook listener down | port bind fails | fall back to layers 2 and 3 (D5), log once |
 | Agent exits non-zero | process exit | status Failed with the exit code; a workflow stage fails its gate |
-| Findings file missing or invalid | review stage stops without a file | the gate fails with "no findings file"; the tab asks you |
+| Stage stops without `stage_done` | agent ends without calling the tool | the tab shows its last message (Stop hook) and asks: pass, retry or stop |
 | YOLO outside a worktree | main tab or Other | refused before spawn |
 
 ### Constants (tunable, named once)
@@ -360,6 +359,7 @@ Steps:
 4. **Never-push env:** `GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=core.hooksPath GIT_CONFIG_VALUE_0=/tmp/tw-hooks git push` with a refusing `pre-push`. Confirm the push is refused, and that the forwarding wrapper still runs a husky hook.
 5. **Worktree flows on git 2.55:** add, lock, a dirty remove (refused), unlock and remove, move the main repo then `repair <path>`, and checking out a branch already used by another worktree.
 6. **Dependency fit:** in a scratch crate, depend on `kelp-core` (path) and stdusk's current dependencies (alacritty_terminal 0.26, portable-pty 0.9, eframe 0.35). Run `cargo tree -d` to list duplicate or conflicting versions.
+7. **MCP per session:** attach a dummy Tidewatch MCP server (one `ping` tool, http transport) to each CLI the D6 way and confirm the agent can call it without a permission prompt. Run before Phase 6.
 
 Runnable: each step's command above. Results go into "Phase 0 findings" below.
 Checkpoint 0 exit: every step has a recorded result. D5, D7 and D8 are confirmed or reopened with you.
@@ -471,7 +471,7 @@ Steps:
 
 1. "Send to agent" for one thread or all open ones (bracketed paste into the agent pane), and the per-tab "deliver when idle" switch (D4).
 2. PR link (D4): find the open PR with `gh`, pull its review comments in as threads, post a note to the PR after a confirm.
-3. Agent replies: read `findings.json` and `summary.md` (D6). Optional MCP reply tool for Claude and Copilot behind a setting.
+3. Agent replies through the MCP server (D6): `list_notes`, `reply_to_note`; replies land in the thread.
 4. Reader view (D12): session-file tailers per CLI, markdown rendering, reply box and permission buttons that type into the pty, `Cmd+Shift+T` toggle. Phase 0 adds a spike for Gemini's session storage.
 
 Runnable: comment on a line, press Send, and see the paste in the agent pane and the reply in the thread.
@@ -484,7 +484,7 @@ Goal: Ship a feature runs from Work to Hand off, with gates and loops.
 Steps:
 
 1. `workflows.rs` runner state machine with unit tests for each gate and loop path.
-2. Stage launch in the same agent pane with a divider, `TIDEWATCH_STAGE_DIR`, and findings to threads.
+2. Stage launch in the same agent pane with a divider; `stage_done` and `report_finding` drive the gate and the notes (D6).
 3. Stepper in the terminal header, the workflow editor in settings, and the default workflows from the concept.
 
 Runnable: run Ship a feature on a toy repo with a planted bug the reviewer must catch. It loops once, then reaches Hand off and waits.
@@ -522,7 +522,6 @@ Checkpoint 10 exit: tagged release installed from the tap; restart keeps agents;
 - Pull request status chips on agent labels.
 - A free port per worktree for dev servers.
 - Time and cost per agent.
-- An MCP reply tool for Gemini and Codex.
 - Linux and Windows.
 - Signed and notarized builds (until there is an Apple Developer account).
 - Manual git actions (fetch, push, merge, stage) in the UI.
