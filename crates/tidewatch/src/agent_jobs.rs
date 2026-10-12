@@ -14,6 +14,7 @@ use crate::jobs::Jobs;
 pub(crate) enum Done {
     Loaded(Profiles),
     Probed { agent: String, availability: Availability },
+    Saved { result: Result<(), String>, profiles: Profiles },
 }
 
 pub(crate) fn load(jobs: &Jobs<Done>, ctx: &egui::Context, paths: TidewatchPaths, path: OsString) {
@@ -30,6 +31,18 @@ pub(crate) fn probe(
     jobs.spawn(ctx, move || {
         let availability = availability_of(&bin, &path);
         Done::Probed { agent, availability }
+    });
+}
+
+pub(crate) fn save(
+    jobs: &Jobs<Done>,
+    ctx: &egui::Context,
+    paths: TidewatchPaths,
+    profiles: Profiles,
+) {
+    jobs.spawn(ctx, move || {
+        let result = profiles.save(&paths.profiles_file()).map_err(|e| e.to_string());
+        Done::Saved { result, profiles }
     });
 }
 
@@ -92,5 +105,18 @@ mod tests {
         probe(&jobs, &ctx, "gone".into(), "no-such-cli".into(), bin.path().into());
         let Done::Probed { availability, .. } = next(&jobs) else { panic!("expected Probed") };
         assert_eq!(availability, Availability::Missing);
+    }
+
+    #[test]
+    fn saving_writes_profiles_toml_and_hands_the_profiles_back() {
+        let home = tempfile::tempdir().unwrap();
+        let paths = TidewatchPaths::new(home.path());
+        let profiles = Profiles::seeded(&["claude".to_owned()]);
+        let jobs = Jobs::new();
+        save(&jobs, &egui::Context::default(), paths.clone(), profiles.clone());
+        let Done::Saved { result, profiles: back } = next(&jobs) else { panic!("expected Saved") };
+        assert_eq!(result, Ok(()));
+        assert_eq!(back, profiles);
+        assert_eq!(Profiles::load(&paths.profiles_file()), profiles);
     }
 }
