@@ -6,7 +6,7 @@ Research: `docs/research/stdusk-recon.md`, `docs/research/kelp-recon.md`,
 
 ## 1. Summary
 
-Tidewatch is a native macOS app for running AI coding agents. It joins three things that
+Tidewatch is a native app for macOS and Linux for running AI coding agents. It joins three things that
 today live in two apps:
 
 | From | What Tidewatch takes |
@@ -200,7 +200,12 @@ Alternative: plain `~/.tidewatch/<repo-name>/`, with a numeric suffix added on c
 
 **D10. Distribution and visibility.**
 
-DECIDED 2026-10-12: recommendation accepted.
+DECIDED 2026-10-12 by the owner, revised to add Linux: private until Phase 7, then public on **macOS and Linux**.
+
+- Linux-ready from now: an Ubuntu CI job on every PR, macOS-only code behind small platform modules (shared crates included).
+- Linux release with the macOS one (Phase 10): a tarball and an AppImage.
+- Quake on Wayland: no global hotkey there, so users bind a desktop shortcut to `tidewatch --toggle`. X11 uses the global hotkey.
+- Linux needs its own update path (Kelp's updater assumes an app bundle), font fallbacks and an "open in editor" fallback.
 
 Recommendation: **keep the repo private until the first build you use daily (end of Phase 7). Then make it public** with the MIT license, a Homebrew cask `hobo-ware/tap/tidewatch`, and the same release workflow as Kelp (universal binary, ad-hoc signed until there is an Apple Developer account).
 
@@ -401,7 +406,7 @@ Steps:
 1. Set up the workspace `Cargo.toml` with git dependencies pinned to the Phase 1 and 2 tags, the crates `tidewatch-core` and `tidewatch`, and lints from stdusk.
 2. App loop using the stdusk-egui tab strip and terminal pane. Open with `tidewatch <repo>` or the current folder.
 3. `TIDEWATCH_SCREENSHOT` harness (Kelp's pattern).
-4. CI workflow (fmt, clippy, test on macos-14) and the Commands section in `project.md`.
+4. CI workflow (fmt, clippy, test on macos-14 and ubuntu-latest) and the Commands section in `project.md`.
 
 Runnable: `cargo run -p tidewatch -- ~/Git/Hoboware/kelp`, then `TIDEWATCH_SCREENSHOT=/tmp/tw.png cargo run -p tidewatch -- ~/Git/Hoboware/kelp`.
 Checkpoint 3 exit: the window opens with a working shell; the screenshot shows stdusk-identical tabs; CI is green.
@@ -498,9 +503,10 @@ Steps:
 2. Session restore with agent resume (stdusk-core), and restart handoff on upgrade.
 3. Settings GUI, the command palette, the full shortcut table.
 4. Self-update through the parametrized Kelp updater, the release workflow, the Homebrew cask, and the README/site.
+5. Linux: tarball and AppImage in the release workflow, a Linux update path, `tidewatch --toggle` for Wayland quake.
 
 Runnable: `brew install hobo-ware/tap/tidewatch`, then upgrade to a newer tag while two agents run. Both are still there after the restart.
-Checkpoint 10 exit: tagged release installed from the tap; restart keeps agents; shortcuts match the table.
+Checkpoint 10 exit: tagged release installed from the tap, and the AppImage starts on Ubuntu; restart keeps agents; shortcuts match the table.
 
 ## 6. Risks and mitigations
 
@@ -513,6 +519,7 @@ Checkpoint 10 exit: tagged release installed from the tap; restart keeps agents;
 | Hook config files get committed by an agent | `info/exclude` entries plus a check before every gate |
 | Posting a note to a team PR by mistake | posting always asks first; notes stay local by default (D4) |
 | YOLO agent damages files outside its worktree | only allowed in worktrees; documented as a guard rail, not a sandbox |
+| Shared crates drift back to macOS-only | Ubuntu CI job on every PR, in Tidewatch and in the shared crates' repos |
 | Many agents slow the UI | hidden tabs do not paint; the status bus is event-driven; performance rules apply |
 
 ## 7. Out of scope for v0
@@ -520,7 +527,7 @@ Checkpoint 10 exit: tagged release installed from the tap; restart keeps agents;
 - Pull request status chips on agent labels.
 - A free port per worktree for dev servers.
 - Time and cost per agent.
-- Linux and Windows.
+- Windows.
 - Signed and notarized builds (until there is an Apple Developer account).
 - Manual git actions (fetch, push, merge, stage) in the UI.
 

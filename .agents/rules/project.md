@@ -5,7 +5,7 @@ description: 'Tidewatch overview: what it is, sibling repos, planned layout, com
 
 # Tidewatch - project rules
 
-A native macOS app in Rust (egui/eframe 0.35) for running AI coding agents in git worktrees,
+A native app for macOS and Linux in Rust (egui/eframe 0.35) for running AI coding agents in git worktrees,
 one repo at a time. Each tab is a fresh worktree with an agent in it. It reuses Kelp (graph,
 diff, review) and stdusk (terminal engine, tabs, quake window) through library crates in
 those repos, as git dependencies. The plan and decisions live in `PLAN.md`; progress, with
