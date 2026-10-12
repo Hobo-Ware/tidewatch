@@ -47,19 +47,35 @@ impl<T> Tabs<T> {
         &mut self.items[self.active].pane
     }
 
+    /// Appends a tab, selects it and returns its id.
+    pub(crate) fn push(&mut self, title: String, pane: T) -> u64 {
+        let id = self.next_id;
+        self.next_id += 1;
+        self.items.push(Tab { id, title, pinned: false, pane });
+        self.active = self.items.len() - 1;
+        id
+    }
+
+    pub(crate) fn index_of(&self, id: u64) -> Option<usize> {
+        self.items.iter().position(|t| t.id == id)
+    }
+
+    pub(crate) fn get_mut(&mut self, id: u64) -> Option<&mut Tab<T>> {
+        self.items.iter_mut().find(|t| t.id == id)
+    }
+
+    pub(crate) fn remove_id(&mut self, id: u64) {
+        if let Some(i) = self.index_of(id) {
+            self.close(i);
+        }
+    }
+
     pub(crate) fn apply(&mut self, action: Action, spawn: impl FnOnce() -> T) {
         match action {
             Action::New => {
                 self.opened += 1;
-                let tab = Tab {
-                    id: self.next_id,
-                    title: format!("shell {}", self.opened),
-                    pinned: false,
-                    pane: spawn(),
-                };
-                self.next_id += 1;
-                self.items.push(tab);
-                self.active = self.items.len() - 1;
+                let title = format!("shell {}", self.opened);
+                self.push(title, spawn());
             }
             Action::CloseActive => self.close(self.active),
             Action::Close(i) => self.close(i),
@@ -113,6 +129,28 @@ mod tests {
         assert_eq!(panes(&tabs), [0, 1, 2]);
         assert_eq!(tabs.active(), 2);
         assert_eq!(tabs.items()[2].title, "shell 2");
+    }
+
+    #[test]
+    fn push_selects_the_new_tab_and_returns_its_id() {
+        let mut tabs = tabs_with(1);
+        let id = tabs.push("agent".into(), 7);
+        assert_eq!(tabs.active(), 2);
+        assert_eq!(tabs.index_of(id), Some(2));
+        assert_eq!(tabs.get_mut(id).unwrap().title, "agent");
+        assert_eq!(tabs.items()[2].pane, 7);
+    }
+
+    #[test]
+    fn remove_by_id_follows_the_tab_when_others_move() {
+        let mut tabs = tabs_with(1);
+        let id = tabs.push("agent".into(), 7);
+        tabs.apply(Action::Close(1), || unreachable!());
+        assert_eq!(tabs.index_of(id), Some(1));
+        tabs.remove_id(id);
+        assert_eq!(panes(&tabs), [0]);
+        tabs.remove_id(id);
+        assert_eq!(panes(&tabs), [0]);
     }
 
     #[test]
