@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/tidewatch-core"]
+members = ["crates/tidewatch-core", "crates/tidewatch"]
 
 [workspace.package]
 version = "0.1.0"
@@ -8,6 +8,11 @@ edition = "2024"
 license = "MIT"
 
 [workspace.dependencies]
+stdusk-core = { path = "../stdusk/.claude/worktrees/phase-1-lib-crates/crates/stdusk-core" }
+stdusk-egui = { path = "../stdusk/.claude/worktrees/phase-1-lib-crates/crates/stdusk-egui" }
+eframe = { version = "0.35.0", features = ["glow", "__screenshot"] }
+egui = "0.35.0"
+image = { version = "0.25.10", default-features = false, features = ["png"] }
 serde = { version = "1.0.229", features = ["derive"] }
 sha2 = "0.10.9"
 toml = "1.1.8"
