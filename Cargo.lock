@@ -4955,6 +4955,8 @@ dependencies = [
 name = "tidewatch-core"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
+ "gix",
  "kelp-core",
  "serde",
  "serde_json",
