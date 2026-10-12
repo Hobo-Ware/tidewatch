@@ -29,6 +29,7 @@ crates/tidewatch-core/  worktrees, profiles, permission levels, workflows, agent
   src/profiles.rs       Profile, profiles.toml load/save (bad file -> defaults), first-launch seeding
   src/workflows.rs      Workflow, Stage, Gate, Action; workflows.toml load/save/seed (bad file -> defaults), the built-in Ship a feature, Fix a bug, Review a PR
   src/test_command.rs   per-repo test command: <repo>/.tidewatch.toml `test`, else detected (cargo, npm/pnpm/yarn/bun, deno, go, pytest, rspec, mix, make); run_in
+  src/runner.rs         Runner: pure workflow state machine (RunEvent in, Command out), gates decided by Tidewatch, loops, safety net, stages.json save/load/resume
   src/prompt.rs         stage prompt templates: {task} {base} {branch} {previous_summary} {findings} {test_output} (pure)
   src/launch.rs         launch_command: program, args, env; YOLO refusal, never-push guard (D7), hooks/MCP/house-style wiring per CLI
   src/status.rs         AgentStatus and the pure fold of hook events, terminal signals and process facts (D5); per-CLI hook payload parsing
