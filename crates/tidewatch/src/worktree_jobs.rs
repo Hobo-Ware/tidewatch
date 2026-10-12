@@ -1,34 +1,83 @@
 //! The git work behind worktree tabs, run on `Jobs` threads. Each function starts one job and
 //! returns at once; its `Done` arrives later through `Jobs::drain`.
 
+use std::ffi::OsString;
 use std::path::PathBuf;
 
 use tidewatch_core::paths::TidewatchPaths;
+use tidewatch_core::prepare::{PrepareInput, prepare};
 use tidewatch_core::worktree::{
     self, BranchChoice, BranchOutcome, Inspection, Leftover, RemoveMode, Worktree,
 };
 
 use crate::jobs::Jobs;
-use crate::pane::Pane;
+use crate::new_tab::AgentRequest;
+use crate::pane::{OpenFailure, Opened, Pane, Started};
 
 pub(crate) enum Done {
-    Created { tab: u64, result: Result<Worktree, String> },
+    Opened { tab: u64, result: Result<Opened, OpenFailure> },
     Inspected { tab: u64, worktree: Worktree, inspection: Inspection },
     Removed { tab: u64, result: Result<BranchOutcome, String> },
     Startup { repaired: usize, leftovers: Vec<Leftover> },
 }
 
-pub(crate) fn create(
-    jobs: &Jobs<Done>,
-    ctx: &egui::Context,
-    paths: TidewatchPaths,
-    repo: PathBuf,
-    tab: u64,
-) {
-    jobs.spawn(ctx, move || Done::Created {
-        tab,
-        result: worktree::add(&paths, &repo).map_err(|e| e.to_string()),
+/// Where a new tab runs: a fresh worktree of the repo, or the folder itself in the Other group.
+pub(crate) enum Target {
+    Worktree { repo: PathBuf },
+    Folder { dir: PathBuf },
+}
+
+pub(crate) struct OpenSpec {
+    pub(crate) paths: TidewatchPaths,
+    pub(crate) target: Target,
+    /// `None` opens a plain shell.
+    pub(crate) agent: Option<Box<AgentRequest>>,
+    pub(crate) path_var: OsString,
+    pub(crate) tab: u64,
+}
+
+/// Makes the worktree (when asked) and gets the agent ready, off the UI thread.
+pub(crate) fn open(jobs: &Jobs<Done>, ctx: &egui::Context, spec: OpenSpec) {
+    jobs.spawn(ctx, move || Done::Opened { tab: spec.tab, result: run_open(&spec) });
+}
+
+fn run_open(spec: &OpenSpec) -> Result<Opened, OpenFailure> {
+    let (worktree, dir, repo) = match &spec.target {
+        Target::Worktree { repo } => {
+            let made = worktree::add(&spec.paths, repo)
+                .map_err(|e| OpenFailure::Nothing(e.to_string()))?;
+            (Some(made.clone()), made.path, repo.clone())
+        }
+        Target::Folder { dir } => (None, dir.clone(), dir.clone()),
+    };
+    let Some(request) = &spec.agent else { return Ok(Opened { worktree, dir, started: None }) };
+    let tab_key = worktree
+        .as_ref()
+        .map_or_else(|| format!("tab-{}", spec.tab), |made| made.name().to_owned());
+    let prepared = prepare(&PrepareInput {
+        paths: &spec.paths,
+        agent: &request.agent,
+        profile: &request.profile,
+        repo: &repo,
+        tab: &tab_key,
+        dir: &dir,
+        worktree_tab: worktree.is_some(),
+        task: &request.task,
+        session_id: None,
+        path_var: Some(&spec.path_var),
+        listener: None,
     });
+    match prepared {
+        Ok(prepared) => Ok(Opened {
+            worktree,
+            dir,
+            started: Some(Started { profile_name: request.profile.name.clone(), prepared }),
+        }),
+        Err(e) => Err(match worktree {
+            Some(worktree) => OpenFailure::Kept { worktree, message: e.to_string() },
+            None => OpenFailure::Nothing(e.to_string()),
+        }),
+    }
 }
 
 pub(crate) fn inspect(jobs: &Jobs<Done>, ctx: &egui::Context, tab: u64, worktree: Worktree) {
@@ -87,10 +136,12 @@ pub(crate) fn without_open<T>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::pane::{Body, ClosePolicy, finish_create};
+    use crate::pane::{Body, ClosePolicy, finish_open};
     use crate::tabs::Tabs;
     use std::process::Command;
     use std::time::{Duration, Instant};
+    use tidewatch_core::agents::Level;
+    use tidewatch_core::profiles::{Profile, Profiles};
 
     fn leftover(path: &str) -> Leftover {
         Leftover { path: PathBuf::from(path), branch: None }
@@ -120,6 +171,126 @@ mod tests {
         }
     }
 
+    fn spec(
+        paths: &TidewatchPaths,
+        repo: &std::path::Path,
+        tab: u64,
+        agent: Option<Box<AgentRequest>>,
+    ) -> OpenSpec {
+        OpenSpec {
+            paths: paths.clone(),
+            target: Target::Worktree { repo: repo.to_path_buf() },
+            agent,
+            path_var: OsString::from("/opt/homebrew/bin:/usr/bin:/bin"),
+            tab,
+        }
+    }
+
+    fn throwaway_repo(home: &std::path::Path) -> PathBuf {
+        let repo = home.join("web");
+        std::fs::create_dir_all(&repo).unwrap();
+        git(&repo, &["init", "-q", "-b", "main"]);
+        git(&repo, &["commit", "-q", "--allow-empty", "-m", "init"]);
+        repo
+    }
+
+    fn request(level: Level, task: &str) -> Box<AgentRequest> {
+        let profiles = Profiles::seeded(&["claude".to_owned()]);
+        let agent = profiles.agent_table().get("claude").unwrap().clone();
+        let profile = Profile { level, ..profiles.profile["builder"].clone() };
+        Box::new(AgentRequest { profile_id: "builder".into(), profile, agent, task: task.into() })
+    }
+
+    #[test]
+    fn an_agent_tab_gets_a_worktree_and_a_prepared_launch_with_the_guard() {
+        let dir = tempfile::tempdir().unwrap();
+        let home = dir.path().canonicalize().unwrap();
+        let repo = throwaway_repo(&home);
+        let paths = TidewatchPaths::new(&home);
+        let jobs = Jobs::new();
+        let plan = Some(request(Level::Edits, "write a haiku"));
+        open(&jobs, &egui::Context::default(), spec(&paths, &repo, 4, plan));
+        let Done::Opened { tab, result: Ok(opened) } = next(&jobs) else {
+            panic!("expected Opened")
+        };
+        assert_eq!(tab, 4);
+        let worktree = opened.worktree.expect("a worktree");
+        assert_eq!(opened.dir, worktree.path);
+        let started = opened.started.expect("an agent");
+        assert_eq!(started.profile_name, "Builder");
+        let line = started.prepared.launch.shell_line();
+        assert!(line.starts_with("claude --permission-mode acceptEdits"), "{line}");
+        assert!(line.ends_with("-- 'write a haiku'"), "{line}");
+        let env = &started.prepared.env;
+        assert!(env.iter().any(|(k, _)| k == "GIT_CONFIG_COUNT"));
+        let path = &env.iter().find(|(k, _)| k == "PATH").unwrap().1;
+        assert!(path.starts_with(&paths.guard_bin_dir().display().to_string()), "{path}");
+        assert!(paths.house_style_file().is_file());
+    }
+
+    #[test]
+    fn an_agent_in_a_plain_folder_gets_no_worktree_and_no_guard_and_never_yolo() {
+        let dir = tempfile::tempdir().unwrap();
+        let home = dir.path().canonicalize().unwrap();
+        let folder = home.join("notes");
+        std::fs::create_dir_all(&folder).unwrap();
+        let paths = TidewatchPaths::new(&home);
+        let jobs = Jobs::new();
+        let ctx = egui::Context::default();
+        let in_folder = |agent| OpenSpec {
+            target: Target::Folder { dir: folder.clone() },
+            ..spec(&paths, &folder, 5, Some(agent))
+        };
+
+        open(&jobs, &ctx, in_folder(request(Level::Auto, "")));
+        let Done::Opened { result: Ok(opened), .. } = next(&jobs) else {
+            panic!("expected Opened")
+        };
+        assert_eq!((opened.worktree, opened.dir.as_path()), (None, folder.as_path()));
+        let started = opened.started.unwrap();
+        assert!(!started.prepared.env.iter().any(|(k, _)| k == "GIT_CONFIG_COUNT"));
+        assert!(!started.prepared.launch.args.iter().any(|a| a == "--"), "no task, no separator");
+
+        open(&jobs, &ctx, in_folder(request(Level::Yolo, "")));
+        let Done::Opened { result: Err(OpenFailure::Nothing(message)), .. } = next(&jobs) else {
+            panic!("YOLO in Other must be refused")
+        };
+        assert!(message.starts_with("YOLO only runs"), "{message}");
+        assert_eq!(std::fs::read_dir(&folder).unwrap().count(), 0, "the folder stays untouched");
+    }
+
+    #[test]
+    fn a_launch_that_cannot_be_built_keeps_the_worktree_for_the_tab_to_remove() {
+        let dir = tempfile::tempdir().unwrap();
+        let home = dir.path().canonicalize().unwrap();
+        let repo = throwaway_repo(&home);
+        let paths = TidewatchPaths::new(&home);
+        let mut plan = request(Level::Edits, "");
+        plan.agent = Profiles {
+            agent: [(
+                "aider".to_owned(),
+                tidewatch_core::agents::AgentOverride {
+                    bin: Some("aider".into()),
+                    ..Default::default()
+                },
+            )]
+            .into(),
+            ..Profiles::default()
+        }
+        .agent_table()
+        .get("aider")
+        .unwrap()
+        .clone();
+        let jobs = Jobs::new();
+        open(&jobs, &egui::Context::default(), spec(&paths, &repo, 6, Some(plan)));
+        let Done::Opened { result: Err(OpenFailure::Kept { worktree, message }), .. } = next(&jobs)
+        else {
+            panic!("expected a kept worktree")
+        };
+        assert!(message.contains("no flags"), "{message}");
+        assert!(worktree.path.is_dir());
+    }
+
     #[test]
     fn leftovers_skip_folders_that_open_tabs_own() {
         let mut tabs: Tabs<Pane<u8>> = Tabs::new(Pane::shell(0));
@@ -128,7 +299,10 @@ mod tests {
             path: "/root/r-1/brave-otter".into(),
             branch: "agent/brave-otter".into(),
         };
-        tabs.push("brave-otter".into(), Pane { body: Body::Shell(1), worktree: Some(owned) });
+        tabs.push(
+            "brave-otter".into(),
+            Pane { body: Body::Shell(1), worktree: Some(owned), agent: None },
+        );
         let kept = without_open(
             vec![leftover("/root/r-1/brave-otter"), leftover("/root/r-1/calm-comet")],
             &tabs,
@@ -150,9 +324,9 @@ mod tests {
         let mut tabs: Tabs<Pane<u8>> = Tabs::new(Pane::shell(0));
 
         let id = tabs.push("new worktree".into(), Pane::creating());
-        create(&jobs, &ctx, paths.clone(), repo.clone(), id);
-        let Done::Created { tab, result } = next(&jobs) else { panic!("expected Created") };
-        finish_create(&mut tabs, tab, result, |_| 1);
+        open(&jobs, &ctx, spec(&paths, &repo, id, None));
+        let Done::Opened { tab, result } = next(&jobs) else { panic!("expected Opened") };
+        finish_open(&mut tabs, tab, result, |_, _| 1);
         let worktree = tabs.get_mut(id).unwrap().pane.worktree.clone().expect("worktree tab");
         assert!(worktree.path.is_dir());
         assert!(git(&repo, &["worktree", "list"]).contains(worktree.name()));
@@ -197,8 +371,9 @@ mod tests {
         let ctx = egui::Context::default();
         let jobs = Jobs::new();
 
-        create(&jobs, &ctx, paths.clone(), repo.clone(), 1);
-        let Done::Created { result: Ok(worktree), .. } = next(&jobs) else {
+        open(&jobs, &ctx, spec(&paths, &repo, 1, None));
+        let Done::Opened { result: Ok(Opened { worktree: Some(worktree), .. }), .. } = next(&jobs)
+        else {
             panic!("expected a created worktree")
         };
         std::fs::write(worktree.path.join("wip.txt"), "x").unwrap();

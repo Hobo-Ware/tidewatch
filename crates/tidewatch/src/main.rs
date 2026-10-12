@@ -2,7 +2,9 @@
 //! The `eframe::App` loop lives in `app.rs`; tabs, layout math and the repo probe are pure
 //! modules with unit tests. A folder that is not a git repo opens in the "Other" group.
 
+mod agent_jobs;
 mod app;
+mod catalog;
 mod checkout;
 mod close_dialog;
 mod dev_panes;
@@ -13,6 +15,8 @@ mod fonts;
 mod history_pane;
 mod jobs;
 mod layout;
+mod new_tab;
+mod new_tab_dialog;
 mod note_actions;
 mod pane;
 mod pane_jobs;
@@ -27,6 +31,7 @@ use std::path::{Path, PathBuf};
 use app::Tidewatch;
 use dev_screenshot::DevScreenshot;
 use repo::Workspace;
+use tidewatch_core::path_env;
 use tidewatch_core::paths::TidewatchPaths;
 
 const WINDOW_SIZE: [f32; 2] = [1280.0, 800.0];
@@ -38,7 +43,13 @@ fn main() -> eframe::Result<()> {
         .or_else(|| std::env::current_dir().ok())
         .unwrap_or_else(|| PathBuf::from("."));
     let workspace = Workspace::open(&start);
-    let paths = std::env::var_os("HOME").map(|home| TidewatchPaths::new(Path::new(&home)));
+    let home = std::env::var_os("HOME").map(PathBuf::from);
+    let data_home = std::env::var_os("TIDEWATCH_HOME").map(PathBuf::from).or_else(|| home.clone());
+    let paths = data_home.map(|home| TidewatchPaths::new(&home));
+    let agent_path = path_env::for_this_platform(
+        std::env::var_os("PATH").as_deref(),
+        home.as_deref().unwrap_or_else(|| Path::new(".")),
+    );
     let screenshot = DevScreenshot::from_env();
     let options = eframe::NativeOptions {
         renderer: eframe::Renderer::Glow,
@@ -50,6 +61,8 @@ fn main() -> eframe::Result<()> {
     eframe::run_native(
         "Tidewatch",
         options,
-        Box::new(move |cc| Ok(Box::new(Tidewatch::new(cc, workspace, paths, screenshot)))),
+        Box::new(move |cc| {
+            Ok(Box::new(Tidewatch::new(cc, workspace, paths, agent_path, screenshot)))
+        }),
     )
 }

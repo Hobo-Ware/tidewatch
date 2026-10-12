@@ -54,9 +54,13 @@ crates/tidewatch/       the egui app
   src/main.rs           argument parsing, workspace discovery, eframe start
   src/app.rs            the eframe::App loop: chip, tab strip, terminal, History and Diff panes, toast, shortcuts, job results
   src/tabs.rs           tab list and its Action reducer (pure, generic over the pane)
-  src/pane.rs           what a tab holds: shell, creating, removing, failed; close policy (pure, generic)
+  src/pane.rs           what a tab holds: shell or agent, creating, removing, failed; opening results, close policy (pure, generic)
   src/jobs.rs           background thread runner: result channel plus a repaint
-  src/worktree_jobs.rs  worktree create, inspect, remove and startup repair as jobs
+  src/worktree_jobs.rs  open a tab (worktree and prepared agent launch), inspect, remove and startup repair as jobs
+  src/catalog.rs        loaded profiles, the agent table built from them, which CLIs were found and their versions
+  src/agent_jobs.rs     load or seed profiles.toml and probe each agent CLI as jobs
+  src/new_tab.rs        new-tab dialog state: picks, permission ladder and YOLO gating, command preview, request (pure)
+  src/new_tab_dialog.rs the dialog itself: profile list, ladder, task, preview; Enter starts, Esc cancels
   src/close_dialog.rs   keep/delete branch dialog: choices and wording (pure) plus the modal
   src/layout.rs         terminal/panel split, grid size, tab width, digit keys (pure)
   src/tab_view.rs       per-tab pane state: loaded history, selection, open diff, notes, watcher; wants -> jobs -> answers (stale ones dropped)
