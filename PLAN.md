@@ -220,7 +220,7 @@ Alternative: public from day one, like the siblings.
 | Overview at launch | stay a button; launch restores last session |
 | Agents in Other | allowed, YOLO refused, same-folder warning |
 
-DECIDED 2026-10-12: all four recommendations accepted.
+DECIDED 2026-10-12: all four recommendations accepted, confirmed by the owner.
 
 **D12. How do agent tabs show the agent's output?** (added 2026-10-12, open)
 
