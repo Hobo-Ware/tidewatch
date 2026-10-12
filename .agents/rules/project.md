@@ -30,13 +30,18 @@ crates/tidewatch-core/  worktrees, profiles, permission levels, workflows, agent
   src/worktree.rs       add (locked, agent/<name>), inspect, remove, list, repair, leftovers (shells out to git)
   tests/worktree_roundtrip.rs  real throwaway repos: add, lock, dirty refusal, delete branch, moved repo
 crates/tidewatch/       the egui app
-  src/main.rs           argument parsing, repo discovery, eframe start
-  src/app.rs            the eframe::App loop: tab strip, terminal, placeholder panels, shortcuts
+  src/main.rs           argument parsing, workspace discovery, eframe start
+  src/app.rs            the eframe::App loop: chip, tab strip, terminal, placeholder panels, shortcuts, job results
   src/tabs.rs           tab list and its Action reducer (pure, generic over the pane)
+  src/pane.rs           what a tab holds: shell, creating, removing, failed; close policy (pure, generic)
+  src/jobs.rs           background thread runner: result channel plus a repaint
+  src/worktree_jobs.rs  worktree create, inspect, remove and startup repair as jobs
+  src/close_dialog.rs   keep/delete branch dialog: choices and wording (pure) plus the modal
   src/layout.rs         terminal/panel split, grid size, tab width, digit keys (pure)
   src/panels.rs         History and Diff placeholder panels (Phase 5 replaces them)
-  src/repo.rs           git root and label for the window
+  src/repo.rs           git root and label; Workspace = Repo or the Other group
   src/dev_screenshot.rs TIDEWATCH_SCREENSHOT harness
+  src/dev_worktree.rs   TIDEWATCH_DEV_WORKTREE switch: open a worktree tab at startup for captures
 docs/                   concept mockup, research reports
 ```
 
@@ -53,7 +58,11 @@ TIDEWATCH_SCREENSHOT=/tmp/x.png cargo run -p tidewatch -- <repo>   # render, sav
 ```
 
 `TIDEWATCH_SCREENSHOT_WAIT=<seconds>` waits longer before the capture (default 1.5s).
-Keys: Cmd+T new shell tab, Cmd+W close the active tab (not the pinned main tab), Cmd+1..9 select.
+`TIDEWATCH_DEV_WORKTREE=open|ask|delete` opens one worktree tab at startup; `ask` also shows its close
+dialog, `delete` closes it with "Delete branch". Use a throwaway repo, and a temp `HOME` (with
+`ZDOTDIR` set to it) so worktrees land in a temp `~/.tidewatch`, never in the real home.
+Keys: Cmd+T new tab (a worktree tab in a git repo, a plain shell in the Other group), Cmd+W close the
+active tab (not the pinned main tab; a worktree tab asks keep/delete branch first), Cmd+1..9 select.
 The sibling crates are git dependencies pinned by commit (`rev`), not by tag (PLAN.md,
 Deviations log). To pick up a sibling change, merge it there, then bump `rev`.
 
