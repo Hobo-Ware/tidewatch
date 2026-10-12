@@ -1,0 +1,34 @@
+[workspace]
+resolver = "3"
+members = ["crates/tidewatch-core"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+
+[workspace.dependencies]
+serde = { version = "1.0.229", features = ["derive"] }
+sha2 = "0.10.9"
+toml = "1.1.8"
+
+[workspace.lints.rust]
+unsafe_code = "deny" # justified local #[allow]s only: main's edition-2024 set_var + terminal's killpg FFI
+
+[workspace.lints.clippy]
+all = { level = "deny", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+# pedantic allow-list, justified per-lint for a GUI + parser crate:
+cast_possible_truncation = "allow" # deliberate: pct as u8, cols as u16 for PtySize
+cast_sign_loss = "allow"           # grid line i32 -> usize after .max(0)
+cast_precision_loss = "allow"      # u8 pct -> f32 for the progress bar
+cast_possible_wrap = "allow"       # usize offsets -> i32 for scroll deltas
+module_name_repetitions = "allow"  # OscScanner in osc, TabState in terminal read fine
+missing_errors_doc = "allow"       # no public library API to document
+missing_panics_doc = "allow"       # startup-invariant expects are documented inline
+doc_markdown = "allow"             # terminal jargon (OSC, ANSI, pty, cwd, Tabby) isn't code
+enum_glob_use = "allow"            # `use NamedColor::*` in a 16-arm match reads fine
+float_cmp = "allow"                # exact != 0.0 / defaults comparisons are intentional
+similar_names = "allow"            # bel/st, cw/ch, rows/cols are the domain vocabulary
+too_many_lines = "allow"           # the eframe render loop is legitimately long
+too_many_arguments = "allow"       # render_grid threads ui + rect + term + metrics per pane

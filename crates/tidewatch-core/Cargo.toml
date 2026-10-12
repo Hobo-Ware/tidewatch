@@ -1,0 +1,11 @@
+[package]
+name = "tidewatch-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+sha2.workspace = true
+
+[lints]
+workspace = true
