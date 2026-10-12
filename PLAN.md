@@ -168,19 +168,16 @@ DECIDED 2026-10-12 by the owner (revised from "a file contract, MCP later"): **a
 
 Alternatives: a file contract (works everywhere, but one-way, prompt-dependent, and a second channel to maintain); MCP plus a file fallback (two channels to build and test).
 
-**D7. How is "never push" enforced?**
+**D7. How is "never push" enforced, and how does work get delivered?**
 
-DECIDED 2026-10-12: recommendation accepted.
+DECIDED 2026-10-12 by the owner, mechanism changed after the Phase 0 check (step 4):
 
-Recommendation: **inject config through the environment of the agent's terminal only.**
+- **Guard:** the agent's terminal gets one git setting through the environment: `GIT_CONFIG_COUNT=1`, `GIT_CONFIG_KEY_0=url.tidewatch-no-push://blocked/.pushInsteadOf`, `GIT_CONFIG_VALUE_0=` (empty, so it matches every remote). Every push from that terminal is rewritten to a remote helper that does not exist, so it fails even with `--no-verify` or an explicit URL. Fetch and pull keep working. A tiny `git-remote-tidewatch-no-push` script on the agent's `PATH` turns the failure into a clear message ("this agent tab can't push; Tidewatch hands off when you approve"). Nothing is written to the repo, the repo's own hooks are untouched, and closing the tab undoes it. It is a guard rail: an agent that unsets the variable or passes `-c` can still push.
+- **Delivery:** Tidewatch pushes, never the agent. When work is ready (the Hand off stage, or a single-agent tab that stops with commits not on the remote), the tab shows the commits plus the PR title and text, and asks. On approval Tidewatch runs `git push -u` and `gh pr create` outside the agent's environment.
+- **By hand:** the pinned main tab and split panes are your terminals and have no guard.
+- **Default:** "Never push" is on for every profile except Builder YOLO.
 
-- `GIT_CONFIG_COUNT/KEY/VALUE` sets `core.hooksPath` to a Tidewatch hooks directory.
-- That directory's `pre-push` refuses the push. Every other hook forwards to the repo's own hooks directory, so husky and lefthook keep working.
-- Nothing changes in the repo, and closing the tab undoes it.
-
-This is a guard rail against accidents, not security (an agent can unset the env var). Phase 0 confirms git honors it.
-
-Alternative: `extensions.worktreeConfig` with a per-worktree `core.hooksPath`. Proven, but it is a repo-wide setting and breaks husky in that worktree.
+Alternatives: a forwarding `core.hooksPath` with a refusing `pre-push` (tested: works, but `--no-verify` skips it, and it reroutes every hook); a per-worktree git setting (repo-wide extension, breaks husky); always pushing by hand.
 
 **D8. How much Codex support is in v0?**
 
@@ -445,9 +442,9 @@ Steps:
 1. `agents.rs` table (D8 corrections), with a version probe through `--version` on PATH.
 2. `profiles.rs` with first-launch seeding, and the settings editor.
 3. New-tab dialog: single agent with the permission ladder, YOLO refused outside worktrees, and a command preview.
-4. Never-push env (D7) and the setup command.
+4. Never-push guard (D7: the `pushInsteadOf` env setting plus the `git-remote-tidewatch-no-push` message script) and the setup command.
 
-Runnable: open a Builder tab, then `ps -o args= -p $(pgrep -n claude)`. It must show `--permission-mode acceptEdits`. Try `git push` in that tab and see it refused.
+Runnable: open a Builder tab, then `ps -o args= -p $(pgrep -n claude)`. It must show `--permission-mode acceptEdits`. In that tab, `git push` and `git push --no-verify` are both refused with the Tidewatch message; in a split pane, `git push` works.
 Checkpoint 6 exit: the flags match the table for every verified agent, YOLO is refused on the main tab, and pushing is blocked.
 
 ### Phase 7: agent status, Overview, focus mode, notifications
@@ -469,10 +466,11 @@ Goal: review threads reach the agent and its answer comes back.
 
 Steps:
 
-1. "Send to agent" for one thread or all open ones (bracketed paste into the agent pane), and the per-tab "deliver when idle" switch (D4).
-2. PR link (D4): find the open PR with `gh`, pull its review comments in as threads, post a note to the PR after a confirm.
-3. Agent replies through the MCP server (D6): `list_notes`, `reply_to_note`; replies land in the thread.
-4. Reader view (D12): session-file tailers per CLI, markdown rendering, reply box and permission buttons that type into the pty, `Cmd+Shift+T` toggle. Phase 0 adds a spike for Gemini's session storage.
+1. Delivery (D7): the "push and open a PR?" card with commits, PR title and text; on approval Tidewatch runs `git push -u` and `gh pr create`.
+2. "Send to agent" for one thread or all open ones (bracketed paste into the agent pane), and the per-tab "deliver when idle" switch (D4).
+3. PR link (D4): find the open PR with `gh`, pull its review comments in as threads, post a note to the PR after a confirm.
+4. Agent replies through the MCP server (D6): `list_notes`, `reply_to_note`; replies land in the thread.
+5. Reader view (D12): session-file tailers per CLI, markdown rendering, reply box and permission buttons that type into the pty, `Cmd+Shift+T` toggle. Phase 0 adds a spike for Gemini's session storage.
 
 Runnable: comment on a line, press Send, and see the paste in the agent pane and the reply in the thread.
 Checkpoint 8 exit: the round trip works for Claude; the file path works for all agents.
@@ -537,6 +535,9 @@ Checkpoint 10 exit: tagged release installed from the tap; restart keeps agents;
   - Hooks in a project `.gemini/settings.json` fire (`SessionStart`, `AfterAgent`). The AfterAgent payload carries `session_id`, `cwd`, `transcript_path`, `prompt` and `prompt_response`.
   - **Condition:** Gemini refuses to run in an untrusted folder, and every worktree under `~/.tidewatch` is new. Tidewatch must set `GEMINI_CLI_TRUST_WORKSPACE=true` in a Gemini tab's environment.
   - The file shows as untracked in `git status`, which confirms the `info/exclude` step in D5 is needed.
+- **2026-10-12, step 4 (never push, git 2.55.0), PASS, mechanism changed.**
+  - A refusing `pre-push` through env-injected `core.hooksPath` works and the forwarding wrapper still ran the repo's own `post-commit` hook. But `git push --no-verify` skipped it.
+  - An env-injected `url.tidewatch-no-push://blocked/.pushInsteadOf` with an empty value blocked `git push`, `git push --no-verify` and a push to an explicit URL. Fetch kept working, and a push from a normal shell worked. D7 now uses this.
 - Codex part of step 2 and step 3 (Copilot signals): not run yet (Codex not installed).
 
 ## Deviations log
