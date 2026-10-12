@@ -3039,7 +3039,7 @@ dependencies = [
 [[package]]
 name = "kelp-core"
 version = "0.8.19"
-source = "git+https://github.com/Hobo-Ware/kelp?rev=d4be36aa7fc01efc7ddd8a33446bc3be986777b9#d4be36aa7fc01efc7ddd8a33446bc3be986777b9"
+source = "git+https://github.com/Hobo-Ware/kelp?rev=13c20ffe3413920d2d0ca1ea0999cd6276e36863#13c20ffe3413920d2d0ca1ea0999cd6276e36863"
 dependencies = [
  "anyhow",
  "gix",
@@ -3056,7 +3056,7 @@ dependencies = [
 [[package]]
 name = "kelp-ui"
 version = "0.8.19"
-source = "git+https://github.com/Hobo-Ware/kelp?rev=d4be36aa7fc01efc7ddd8a33446bc3be986777b9#d4be36aa7fc01efc7ddd8a33446bc3be986777b9"
+source = "git+https://github.com/Hobo-Ware/kelp?rev=13c20ffe3413920d2d0ca1ea0999cd6276e36863#13c20ffe3413920d2d0ca1ea0999cd6276e36863"
 dependencies = [
  "anyhow",
  "egui",
@@ -4775,7 +4775,7 @@ checksum = "a2eb9349b6444b326872e140eb1cf5e7c522154d69e7a0ffb0fb81c06b37543f"
 [[package]]
 name = "stdusk-core"
 version = "1.9.1"
-source = "git+https://github.com/Hobo-Ware/stdusk?rev=30d69b0a6320e4209d2f5fc69e65f8e14d915d85#30d69b0a6320e4209d2f5fc69e65f8e14d915d85"
+source = "git+https://github.com/Hobo-Ware/stdusk?rev=e4e51ca9e7fc4a4e4e8c63ee7304164384c219bf#e4e51ca9e7fc4a4e4e8c63ee7304164384c219bf"
 dependencies = [
  "alacritty_terminal",
  "base64 0.22.1",
@@ -4794,7 +4794,7 @@ dependencies = [
 [[package]]
 name = "stdusk-egui"
 version = "1.9.1"
-source = "git+https://github.com/Hobo-Ware/stdusk?rev=30d69b0a6320e4209d2f5fc69e65f8e14d915d85#30d69b0a6320e4209d2f5fc69e65f8e14d915d85"
+source = "git+https://github.com/Hobo-Ware/stdusk?rev=e4e51ca9e7fc4a4e4e8c63ee7304164384c219bf#e4e51ca9e7fc4a4e4e8c63ee7304164384c219bf"
 dependencies = [
  "egui",
  "font-kit",
