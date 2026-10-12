@@ -181,7 +181,7 @@ Alternatives: a forwarding `core.hooksPath` with a refusing `pre-push` (tested: 
 
 **D8. How much Codex support is in v0?**
 
-DECIDED 2026-10-12: recommendation accepted.
+DECIDED 2026-10-12: recommendation accepted, confirmed by the owner. Everything stays user-editable: profiles (settings editor or `profiles.toml`, including extra arguments), the flags behind each level per CLI (`[agent.<id>.permissions]`), per-repo overrides (`<repo>/.tidewatch.toml`), and **custom agents** (any CLI with a binary and five level flags; without hooks it gets status layers 2 and 3 only).
 
 Recommendation: **ship Claude Code, Gemini CLI and Copilot CLI as verified agents, and Codex as "experimental"** until Phase 0 runs a real `codex --help` and a hook test.
 
@@ -439,7 +439,7 @@ Goal: start a real agent with the right flags from the new-tab dialog.
 
 Steps:
 
-1. `agents.rs` table (D8 corrections), with a version probe through `--version` on PATH.
+1. `agents.rs` table (D8 corrections), with a version probe through `--version` on PATH. Built-in agents load first, then `[agent.<id>]` entries from `profiles.toml` override their flags or add custom agents.
 2. `profiles.rs` with first-launch seeding, and the settings editor.
 3. New-tab dialog: single agent with the permission ladder, YOLO refused outside worktrees, and a command preview.
 4. Never-push guard (D7: the `pushInsteadOf` env setting plus the `git-remote-tidewatch-no-push` message script) and the setup command.
