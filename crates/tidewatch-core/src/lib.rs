@@ -1,6 +1,7 @@
 //! Core logic for Tidewatch: worktree layout, profiles and agent status. No UI.
 
 pub mod agents;
+pub mod delivery;
 pub mod events;
 mod fsutil;
 pub mod history;
@@ -19,5 +20,6 @@ mod registry;
 pub mod runner;
 pub mod status;
 pub mod test_command;
+pub mod tools;
 pub mod workflows;
 pub mod worktree;
