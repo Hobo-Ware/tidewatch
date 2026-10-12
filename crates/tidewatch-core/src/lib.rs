@@ -5,5 +5,6 @@ mod fsutil;
 pub mod house_style;
 pub mod names;
 pub mod paths;
+pub mod profiles;
 mod registry;
 pub mod worktree;
