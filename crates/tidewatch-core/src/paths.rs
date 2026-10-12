@@ -7,6 +7,7 @@ use std::path::{Path, PathBuf};
 
 const HASH_HEX_LEN: usize = 6;
 
+#[derive(Clone, Debug)]
 pub struct TidewatchPaths {
     root: PathBuf,
 }

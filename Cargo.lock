@@ -3588,6 +3588,8 @@ dependencies = [
  "image",
  "stdusk-core",
  "stdusk-egui",
+ "tempfile",
+ "tidewatch-core",
 ]
 
 [[package]]
