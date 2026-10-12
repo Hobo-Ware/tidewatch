@@ -583,6 +583,11 @@ Checkpoint 10 exit: tagged release installed from the tap, and the AppImage star
   - **Transcripts (D12):** Gemini `~/.gemini/tmp/<repo-name>/chats/session-*.jsonl` and Copilot `~/.copilot/session-state/<id>/events.jsonl` are appended live; both honour `--session-id`. Gemini's SessionStart hook payload carries `transcript_path`.
   - **`egui_commonmark` 0.24.0 depends on egui 0.35** (0.25.0 needs egui 0.36).
   - Codex live runs: still blocked on `codex login`.
+- **2026-10-13, Phase 7 core, live checks (claude 2.1.296, gemini 0.46.0, copilot 1.0.91), PASS.** Through `launch_command` against the Tidewatch listener: Claude and Gemini hook events arrive on the tab's token, and `stage_done` reaches Tidewatch over MCP with no permission prompt on all three. Claude at Ask sends `PermissionRequest` and stays blocked.
+  - Claude's http `SessionStart` hook never fires, in `-p` or interactive runs: the first Claude status comes from `UserPromptSubmit` or the lower layers.
+  - No hook reports a permission being answered: a NeedsYou state decays back to Working when the terminal prints again.
+  - Copilot's `assistant.turn_end` fires after every model round, so Copilot's Done comes from its `events.jsonl` (final `assistant.message` / `session.task_complete`), not hooks.
+  - `reply_to_note` writes `notes.json` from the listener thread: the app must reload the tab's notes on `NoteReply` before its next save.
 - **2026-10-12, Phase 6 core, Claude Read only level changed.** `--permission-mode plan` blocks MCP tools, so a reviewer could not call `stage_done` or `report_finding` (D6). Read only is now `--permission-mode dontAsk --allowedTools=Read,Grep,Glob`; launch adds `--allowedTools=mcp__tidewatch__*` (repeated `--allowedTools` flags merge). Checked live with claude 2.1.296: reads work, a file write and a Bash command are denied without a prompt.
 
 ## Deviations log
