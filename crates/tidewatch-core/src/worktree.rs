@@ -482,13 +482,13 @@ mod tests {
             branch: "agent/gone".into(),
         };
         registry::record(&paths, &gone).unwrap();
-        assert!(repair(&paths, Path::new("/work/web")).is_empty());
-        assert!(registry::load(&paths).is_empty());
+        assert_eq!(repair(&paths, Path::new("/work/web")), []);
+        assert_eq!(registry::load(&paths), []);
     }
 
     #[test]
     fn parses_empty_list_output() {
-        assert!(parse_list("").is_empty());
+        assert_eq!(parse_list(""), []);
     }
 
     #[test]

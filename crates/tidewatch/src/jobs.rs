@@ -64,10 +64,10 @@ mod tests {
     #[test]
     fn drain_is_empty_until_work_finishes_and_then_empties_again() {
         let jobs: Jobs<u8> = Jobs::new();
-        assert!(jobs.drain().is_empty());
+        assert_eq!(jobs.drain(), Vec::<u8>::new());
         jobs.spawn(&egui::Context::default(), || 1);
         assert_eq!(wait_for(&jobs, 1), [1]);
-        assert!(jobs.drain().is_empty());
+        assert_eq!(jobs.drain(), Vec::<u8>::new());
     }
 
     #[test]
