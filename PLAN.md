@@ -1,6 +1,6 @@
 # Tidewatch Plan
 
-**Status: REVIEWED, decisions closed 2026-10-12** (the owner delegated the calls; every recommendation was accepted). Drafted 2026-10-05. Branch `main`. Concept mockup: `docs/concept.html`.
+**Status: REVIEWED, decisions closed 2026-10-12** (D1 to D13 confirmed by the owner one by one; D4, D6, D7 and D10 revised, D12 and D13 added). Drafted 2026-10-05. Branch `main`. Concept mockup: `docs/concept.html`.
 Research: `docs/research/stdusk-recon.md`, `docs/research/kelp-recon.md`,
 `docs/research/agents-worktrees.md`. Work protocol: `.agents/rules/workflow.md`.
 

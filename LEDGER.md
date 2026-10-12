@@ -4,11 +4,16 @@ A running log of what got done, newest first. The plan lives in [PLAN.md](PLAN.m
 
 ## Status
 
-- **Current milestone:** planning. `PLAN.md` decisions D1 to D11 under review; next is Phase 0 (verification spikes).
-- **Done:** concept and mockup (`docs/concept.html`), repo created.
+- **Current milestone:** first running build (Phase 3 skeleton, branch `phase-3-skeleton`, local). Decisions D1 to D13 confirmed by the owner.
+- **Done:** concept, plan, repo, stdusk library crates (stdusk branch `phase-1-lib-crates`, local), the Phase 3 app skeleton.
+- **Next:** merge and tag stdusk Phase 1, switch to git dependencies so CI can go green, then Phase 2 (`kelp-ui`). Owner: `codex login` for the Codex live checks.
 
 ## 2026-10-12
 
+- **Decisions confirmed one by one.** D1 to D13 reviewed with the owner. Changed on review: D4 (comments are notes to
+  the agent and PR comments), D6 (MCP only), D7 (`pushInsteadOf` guard, Tidewatch delivers the push and PR), D10
+  (Linux too, Ubuntu CI job added). Added: D12 (Reader view), D13 (house-style file). Verified live: Claude
+  `--append-system-prompt-file`; Codex 0.162.1 flags from `--help`.
 - **Phase 3: first running app.** `tidewatch [path]` opens a window for the git repo with a
   pinned main shell tab, Cmd+T / "+" for more shell tabs, stdusk's tab strip and terminal,
   and placeholder History and Diff panels (layout B, 45% / 55%). `TIDEWATCH_SCREENSHOT`
