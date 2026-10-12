@@ -573,7 +573,7 @@ Checkpoint 10 exit: tagged release installed from the tap, and the AppImage star
   - `worktree add --lock --reason <r> -b <branch> <path>` locks atomically. `list --porcelain -z` shows `locked <reason>`.
   - **Trap:** `add -b` into a non-empty existing directory fails but leaves the new branch behind. Tidewatch deletes a branch it created when `add` fails. An existing empty directory is accepted.
   - `remove` refuses a locked worktree (unlock first) and refuses modified or untracked files without `--force`. Ignored files do not count.
-  - `branch -d` refuses an unmerged branch, so the delete choice uses `-D`. `rev-list --count <branch> --not --exclude=refs/heads/<branch> --all` counts commits that exist nowhere else.
+  - `branch -d` refuses an unmerged branch, so the delete choice uses `-D`. `rev-list --count <branch> --not --exclude=<branch> --branches --remotes --tags` counts commits that exist nowhere else (`--all` would also count the worktree's own HEAD). On a repo with no commits `add -b` succeeds without creating the branch, so Tidewatch refuses first.
   - After the main repo moved, `worktree repair <paths>` run from the new location fixed `git status` in the linked worktree. It prints `.git file broken` while fixing and exits 0, so success is checked afterwards.
 - **2026-10-12, steps 3, 7, 8 and the Reader view checks (Copilot 1.0.91, Gemini 0.46.0, Claude 2.1.296), PASS.** Details in `docs/research/phase-0-spikes.md`.
   - **Copilot signals:** no OSC 9;4 progress; the only title is OSC 0 ("GitHub Copilot", the prompt, then an AI-written title). Status for Copilot comes from hooks and `events.jsonl`, not terminal signals (D5 layer 2 does nothing for Copilot).

@@ -2,3 +2,5 @@
 
 pub mod names;
 pub mod paths;
+mod registry;
+pub mod worktree;
