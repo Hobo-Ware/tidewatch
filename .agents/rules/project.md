@@ -49,8 +49,8 @@ TIDEWATCH_SCREENSHOT=/tmp/x.png cargo run -p tidewatch -- <repo>   # render, sav
 
 `TIDEWATCH_SCREENSHOT_WAIT=<seconds>` waits longer before the capture (default 1.5s).
 Keys: Cmd+T new shell tab, Cmd+W close the active tab (not the pinned main tab), Cmd+1..9 select.
-The stdusk crates are path dependencies on the Phase 1 worktree until it merges (PLAN.md,
-Deviations log).
+The sibling crates are git dependencies pinned by commit (`rev`), not by tag (PLAN.md,
+Deviations log). To pick up a sibling change, merge it there, then bump `rev`.
 
 Check the real exit code of a build (`cargo build 2>build.log; echo $?`), never a piped
 `tail`. Verify UI changes with the screenshot switch instead of asking for a manual check.

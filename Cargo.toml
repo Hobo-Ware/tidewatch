@@ -8,8 +8,8 @@ edition = "2024"
 license = "MIT"
 
 [workspace.dependencies]
-stdusk-core = { path = "../stdusk/.claude/worktrees/phase-1-lib-crates/crates/stdusk-core" }
-stdusk-egui = { path = "../stdusk/.claude/worktrees/phase-1-lib-crates/crates/stdusk-egui" }
+stdusk-core = { git = "https://github.com/Hobo-Ware/stdusk", rev = "30d69b0a6320e4209d2f5fc69e65f8e14d915d85" }
+stdusk-egui = { git = "https://github.com/Hobo-Ware/stdusk", rev = "30d69b0a6320e4209d2f5fc69e65f8e14d915d85" }
 eframe = { version = "0.35.0", features = ["glow", "__screenshot"] }
 egui = "0.35.0"
 image = { version = "0.25.10", default-features = false, features = ["png"] }

@@ -5,7 +5,7 @@ A running log of what got done, newest first. The plan lives in [PLAN.md](PLAN.m
 ## Status
 
 - **Current milestone:** first running build (Phase 3 skeleton, branch `phase-3-skeleton`, local). Decisions D1 to D13 confirmed by the owner.
-- **Done:** concept, plan, repo, stdusk library crates (stdusk branch `phase-1-lib-crates`, local), the Phase 3 app skeleton.
+- **Done:** concept, plan, repo, stdusk library crates (stdusk PR #20, merged), the Phase 3 app skeleton.
 - **Next:** merge and tag stdusk Phase 1, switch to git dependencies so CI can go green, then Phase 2 (`kelp-ui`). Owner: `codex login` for the Codex live checks.
 
 ## 2026-10-12
