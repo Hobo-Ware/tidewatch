@@ -34,6 +34,11 @@ impl Catalog {
         self.profiles.as_ref()
     }
 
+    /// `(id, display name)` of every agent, built-in and custom.
+    pub(crate) fn agent_names(&self) -> Vec<(String, String)> {
+        self.table.iter().map(|a| (a.id.clone(), a.name.clone())).collect()
+    }
+
     #[cfg(test)]
     pub(crate) fn table(&self) -> &AgentTable {
         &self.table

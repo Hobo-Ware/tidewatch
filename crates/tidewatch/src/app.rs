@@ -42,7 +42,9 @@ use crate::pane::{
     Body, CREATING_TITLE, ClosePolicy, Pane, STARTING_TITLE, agent_tabs_in_folder, finish_open,
 };
 use crate::pane_jobs;
+use crate::profile_editor::Editor;
 use crate::repo::Workspace;
+use crate::settings_view;
 use crate::tab_view::{TabView, ViewSpec};
 use crate::tabs::{Action, Tabs};
 use crate::toast::Toast;
@@ -85,6 +87,7 @@ pub(crate) struct Tidewatch {
     catalog: Catalog,
     agent_jobs: Jobs<agent_jobs::Done>,
     new_tab: Option<NewTab>,
+    settings: Option<Editor>,
     last_profile: Option<String>,
 }
 
@@ -122,6 +125,7 @@ impl Tidewatch {
             catalog: Catalog::new(agent_path),
             agent_jobs: Jobs::new(),
             new_tab: None,
+            settings: None,
             last_profile: None,
         };
         if let Some(paths) = &app.paths {
@@ -171,6 +175,10 @@ impl Tidewatch {
     /// Runs the `TIDEWATCH_DEV_AGENT` / `TIDEWATCH_DEV_DIALOG` switch once the profiles are loaded.
     fn run_dev_agent(&mut self, ctx: &egui::Context) {
         let Some(dev) = self.dev_agent.take() else { return };
+        if dev.mode == DevMode::Settings {
+            self.toggle_settings();
+            return;
+        }
         let mut state = self.dialog_state(dev.profile.as_deref());
         if let Some(level) = dev.level
             && !state.set_level(level, &self.catalog)
@@ -181,6 +189,7 @@ impl Tidewatch {
         state.task = dev.task;
         state.task_edited();
         match dev.mode {
+            DevMode::Settings => {}
             DevMode::Dialog => self.new_tab = Some(state),
             DevMode::Start => match state.request(&self.catalog) {
                 Ok(request) => self.open_tab(ctx, request),
@@ -228,12 +237,47 @@ impl Tidewatch {
             agent_jobs::Done::Probed { agent, availability } => {
                 self.catalog.set_availability(&agent, availability);
             }
+            agent_jobs::Done::Saved { result, profiles } => match result {
+                Ok(()) => {
+                    let probes = self.catalog.set_profiles(profiles.clone());
+                    self.probe_agents(probes, ctx);
+                    if let Some(editor) = &mut self.settings {
+                        editor.saved(profiles);
+                    }
+                    self.show_toast("Profiles saved", ctx);
+                }
+                Err(message) => {
+                    if let Some(editor) = &mut self.settings {
+                        editor.save_failed(format!("Could not save: {message}"));
+                    }
+                }
+            },
         }
     }
 
     fn probe_agents(&self, agents: Vec<(String, String)>, ctx: &egui::Context) {
         for (agent, bin) in agents {
             agent_jobs::probe(&self.agent_jobs, ctx, agent, bin, self.catalog.path.clone());
+        }
+    }
+
+    fn toggle_settings(&mut self) {
+        if self.settings.take().is_some() {
+            return;
+        }
+        if let Some(profiles) = self.catalog.profiles() {
+            self.settings = Some(Editor::new(profiles, self.catalog.agent_names()));
+        }
+    }
+
+    fn save_settings(&mut self, ctx: &egui::Context) {
+        let (Some(editor), Some(paths)) = (&mut self.settings, &self.paths) else { return };
+        match editor.build() {
+            Ok(profiles) => {
+                editor.saving = true;
+                agent_jobs::save(&self.agent_jobs, ctx, paths.clone(), profiles);
+            }
+            Err(message) => editor.error = Some(message),
         }
     }
 
@@ -473,6 +517,7 @@ impl Tidewatch {
     }
 
     fn dispatch(&mut self, action: Action, ctx: &egui::Context) {
+        self.settings = None;
         match action {
             Action::New => self.new_tab(ctx),
             Action::CloseActive => self.close_tab(self.tabs.active(), ctx),
@@ -612,8 +657,17 @@ impl eframe::App for Tidewatch {
         }
         self.drive_views();
         let typing_in_a_panel = ctx.text_edit_focused();
-        let modal_open = self.closing.is_some() || self.new_tab.is_some();
+        let modal_open =
+            self.closing.is_some() || self.new_tab.is_some() || self.settings.is_some();
+        if self.closing.is_none()
+            && self.new_tab.is_none()
+            && ctx.input_mut(|i| i.consume_key(Modifiers::COMMAND, Key::Comma))
+        {
+            self.toggle_settings();
+        }
         let mut actions = if modal_open { Vec::new() } else { shortcut_actions(&ctx) };
+        let mut toggle_settings = false;
+        let mut settings_action = None;
 
         egui::Panel::top("tabbar")
             .exact_size(TAB_H + f32::from(STRIP_TOP_MARGIN))
@@ -653,7 +707,7 @@ impl eframe::App for Tidewatch {
                     }
                     ui.add_space(8.0);
                     let width = layout::tab_width(
-                        ui.available_width() - stdusk_egui::widgets::ICON_BTN_W - 12.0,
+                        ui.available_width() - stdusk_egui::widgets::ICON_BTN_W * 2.0 - 18.0,
                         self.tabs.items().len(),
                         STRIP_GAP,
                     );
@@ -683,11 +737,22 @@ impl eframe::App for Tidewatch {
                     if icon_button(ui, icons::PLUS, "New tab (Cmd+T)").clicked() {
                         actions.push(Action::New);
                     }
+                    if icon_button(ui, icons::GEAR, "Profiles (Cmd+,)").clicked() {
+                        toggle_settings = true;
+                    }
                 });
             });
 
         egui::CentralPanel::default().frame(Frame::new().fill(colors::bg())).show(ui, |ui| {
             let area = ui.max_rect();
+            if let Some(editor) = &mut self.settings {
+                let file = self
+                    .paths
+                    .as_ref()
+                    .map_or_else(String::new, |p| p.profiles_file().display().to_string());
+                settings_action = settings_view::show(ui, area, editor, &file);
+                return;
+            }
             let panels = self.workspace_has_panels();
             let mut areas = layout::split(area);
             if !panels {
@@ -753,6 +818,14 @@ impl eframe::App for Tidewatch {
 
         for action in actions {
             self.dispatch(action, &ctx);
+        }
+        match settings_action {
+            Some(settings_view::Action::Close) => self.settings = None,
+            Some(settings_view::Action::Save) => self.save_settings(&ctx),
+            None => {}
+        }
+        if toggle_settings {
+            self.toggle_settings();
         }
         let answer = match &self.closing {
             Some(Closing::Asking { worktree, inspection, .. }) => {
