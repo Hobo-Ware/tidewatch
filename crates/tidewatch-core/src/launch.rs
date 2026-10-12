@@ -1,0 +1,877 @@
+//! Turns an agent, a profile and a tab's context into the program, arguments and environment to start.
+//!
+//! Pure: no process is started and nothing is written, except `ensure_no_push_helper` and the Codex
+//! house-style read. Each piece of per-CLI wiring (hooks, MCP, house style) is applied only when its
+//! `LaunchCtx` field is `Some`. The never-push guard (D7) and the YOLO rule (D11) live here.
+//!
+//! Wiring was checked against claude 2.1.296, gemini 0.46.0, copilot 1.0.91 and codex 0.162.1 (`--help`
+//! and `docs/research/phase-0-spikes.md`). Codex hooks and MCP are encoded from the binary's config keys
+//! and are not run live yet, hence `Launch::experimental`.
+
+use std::fmt;
+use std::path::{Path, PathBuf};
+
+use serde_json::{Value, json};
+
+use crate::agents::{Agent, Level, Wiring};
+use crate::profiles::Profile;
+
+/// Name of the MCP server Tidewatch attaches to every agent.
+pub const MCP_SERVER_NAME: &str = "tidewatch";
+pub const NO_PUSH_HELPER_NAME: &str = "git-remote-tidewatch-no-push";
+pub const NO_PUSH_MESSAGE: &str =
+    "Tidewatch: pushing is blocked in agent tabs; Tidewatch pushes for you after approval.";
+const NO_PUSH_URL_PREFIX: &str = "url.tidewatch-no-push://blocked/.pushInsteadOf";
+const CODEX_MCP_TOKEN_ENV: &str = "TIDEWATCH_MCP_TOKEN";
+const CLAUDE_HOOK_EVENTS: [&str; 6] = [
+    "SessionStart",
+    "UserPromptSubmit",
+    "Notification",
+    "PermissionRequest",
+    "Stop",
+    "StopFailure",
+];
+const GEMINI_HOOK_EVENTS: [&str; 5] =
+    ["SessionStart", "BeforeAgent", "Notification", "AfterAgent", "SessionEnd"];
+const CODEX_HOOK_EVENTS: [&str; 4] =
+    ["SessionStart", "UserPromptSubmit", "PermissionRequest", "Stop"];
+/// Where the generated Gemini settings go, relative to the worktree.
+pub const GEMINI_SETTINGS_PATH: &str = ".gemini/settings.json";
+
+/// The local Tidewatch listener an agent reports to: hooks at `/hook/<agent>`, MCP at `/mcp`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct HookListener {
+    /// For example `http://127.0.0.1:51234`, no trailing slash.
+    pub base_url: String,
+    /// Per-tab secret, sent as a bearer token.
+    pub token: String,
+}
+
+impl HookListener {
+    #[must_use]
+    pub fn hook_url(&self, agent_id: &str) -> String {
+        format!("{}/hook/{agent_id}", self.base_url)
+    }
+
+    #[must_use]
+    pub fn mcp_url(&self) -> String {
+        format!("{}/mcp", self.base_url)
+    }
+
+    fn bearer(&self) -> String {
+        format!("Bearer {}", self.token)
+    }
+}
+
+/// Everything about the tab a launch depends on.
+#[derive(Clone, Debug, Default)]
+pub struct LaunchCtx {
+    pub worktree: PathBuf,
+    /// True for an agent worktree tab. False for the main checkout, Other and split panes.
+    pub worktree_tab: bool,
+    pub session_id: Option<String>,
+    pub hooks: Option<HookListener>,
+    /// The MCP config file the caller wrote (Claude, Copilot). Setting it turns MCP on for every CLI;
+    /// Gemini and Codex also need `hooks` for the listener address.
+    pub mcp_config: Option<PathBuf>,
+    pub house_style: Option<PathBuf>,
+    /// Directory holding `tidewatch.instructions.md` (Copilot), see `house_style::sync_copilot_instructions`.
+    pub copilot_instructions_dir: Option<PathBuf>,
+    /// Directory holding the never-push helper, see `ensure_no_push_helper`.
+    pub guard_bin_dir: Option<PathBuf>,
+    /// The environment the agent would otherwise get. Read for `GIT_CONFIG_COUNT` and `PATH`.
+    pub env: Vec<(String, String)>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Launch {
+    pub program: String,
+    pub args: Vec<String>,
+    /// Variables to set on top of `LaunchCtx::env`.
+    pub env: Vec<(String, String)>,
+    /// The agent's flags were not verified with a live run (Codex, custom agents).
+    pub experimental: bool,
+}
+
+impl Launch {
+    /// The command as one shell line, for the preview and for typing it into a shell.
+    #[must_use]
+    pub fn shell_line(&self) -> String {
+        std::iter::once(self.program.as_str())
+            .chain(self.args.iter().map(String::as_str))
+            .map(shell_quote)
+            .collect::<Vec<_>>()
+            .join(" ")
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum LaunchError {
+    /// YOLO only runs inside an agent worktree, never in the main checkout or Other.
+    YoloOutsideWorktree,
+    /// A custom agent has no flags for this level.
+    LevelUnavailable { agent: String, level: Level },
+}
+
+impl fmt::Display for LaunchError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::YoloOutsideWorktree => {
+                write!(
+                    f,
+                    "YOLO only runs in an agent worktree tab, not in the main checkout or Other"
+                )
+            }
+            Self::LevelUnavailable { agent, level } => {
+                write!(f, "{agent} has no flags for the {} level", level.label())
+            }
+        }
+    }
+}
+
+impl std::error::Error for LaunchError {}
+
+/// Builds the command for `profile` running `agent` in the tab described by `ctx`.
+///
+/// Argument order: permission level, model, effort, session id, wiring, then the profile's extra
+/// arguments. Append a task prompt after a literal `--`: list-valued flags would swallow it otherwise.
+pub fn launch_command(
+    agent: &Agent,
+    profile: &Profile,
+    ctx: &LaunchCtx,
+) -> Result<Launch, LaunchError> {
+    if profile.level == Level::Yolo && !ctx.worktree_tab {
+        return Err(LaunchError::YoloOutsideWorktree);
+    }
+    let level_args = agent.level_args(profile.level).ok_or_else(|| {
+        LaunchError::LevelUnavailable { agent: agent.id.clone(), level: profile.level }
+    })?;
+
+    let mut args = level_args.to_vec();
+    if let (Some(flag), Some(model)) = (&agent.model_flag, non_empty(profile.model.as_deref())) {
+        args.extend([flag.clone(), model.to_owned()]);
+    }
+    if let (Some(effort), Some(value)) = (&agent.effort, non_empty(profile.effort.as_deref())) {
+        args.extend([effort.flag.clone(), format!("{}{value}", effort.value_prefix)]);
+    }
+    if let (Some(flag), Some(id)) = (&agent.session_id_flag, ctx.session_id.as_deref()) {
+        args.extend([flag.clone(), id.to_owned()]);
+    }
+
+    let mut env = Vec::new();
+    let house_style = profile.house_style.then_some(ctx.house_style.as_deref()).flatten();
+    match agent.wiring {
+        Wiring::Claude => claude_wiring(ctx, house_style, &mut args),
+        Wiring::Codex => codex_wiring(agent, ctx, house_style, &mut args, &mut env),
+        Wiring::Gemini => gemini_wiring(house_style, &mut args, &mut env),
+        Wiring::Copilot => copilot_wiring(ctx, house_style, &mut args, &mut env),
+        Wiring::Custom => {}
+    }
+    if profile.never_push && ctx.worktree_tab {
+        env.extend(guard_env(&ctx.env, ctx.guard_bin_dir.as_deref()));
+    }
+    args.extend(profile.extra_args.iter().cloned());
+
+    Ok(Launch { program: agent.bin.clone(), args, env, experimental: !agent.verified })
+}
+
+fn non_empty(value: Option<&str>) -> Option<&str> {
+    value.filter(|v| !v.is_empty())
+}
+
+fn claude_wiring(ctx: &LaunchCtx, house_style: Option<&Path>, args: &mut Vec<String>) {
+    if let Some(listener) = &ctx.hooks {
+        args.extend(["--settings".to_owned(), claude_hook_settings(listener)]);
+    }
+    if let Some(config) = &ctx.mcp_config {
+        args.push(format!("--mcp-config={}", config.display()));
+        args.push(format!("--allowedTools=mcp__{MCP_SERVER_NAME}__*"));
+    }
+    if let Some(file) = house_style {
+        args.extend(["--append-system-prompt-file".to_owned(), file.display().to_string()]);
+    }
+}
+
+fn gemini_wiring(
+    house_style: Option<&Path>,
+    args: &mut Vec<String>,
+    env: &mut Vec<(String, String)>,
+) {
+    env.push(("GEMINI_CLI_TRUST_WORKSPACE".into(), "true".into()));
+    if let Some(dir) = house_style.and_then(Path::parent) {
+        args.push(format!("--include-directories={}", dir.display()));
+    }
+}
+
+fn copilot_wiring(
+    ctx: &LaunchCtx,
+    house_style: Option<&Path>,
+    args: &mut Vec<String>,
+    env: &mut Vec<(String, String)>,
+) {
+    if let Some(config) = &ctx.mcp_config {
+        args.extend(["--additional-mcp-config".to_owned(), format!("@{}", config.display())]);
+        args.push(format!("--allow-tool={MCP_SERVER_NAME}"));
+    }
+    if let (Some(_), Some(dir)) = (house_style, &ctx.copilot_instructions_dir) {
+        env.push(("COPILOT_CUSTOM_INSTRUCTIONS_DIRS".into(), dir.display().to_string()));
+    }
+}
+
+fn codex_wiring(
+    agent: &Agent,
+    ctx: &LaunchCtx,
+    house_style: Option<&Path>,
+    args: &mut Vec<String>,
+    env: &mut Vec<(String, String)>,
+) {
+    if let Some(listener) = &ctx.hooks {
+        let command = curl_hook_command(&listener.hook_url(&agent.id), &listener.bearer());
+        for event in CODEX_HOOK_EVENTS {
+            let value = format!(
+                "hooks.{event}=[{{hooks=[{{type=\"command\",command={}}}]}}]",
+                toml_string(&command)
+            );
+            args.extend(["-c".to_owned(), value]);
+        }
+        args.push("--dangerously-bypass-hook-trust".to_owned());
+        if ctx.mcp_config.is_some() {
+            args.extend([
+                "-c".to_owned(),
+                format!("mcp_servers.{MCP_SERVER_NAME}.url={}", toml_string(&listener.mcp_url())),
+                "-c".to_owned(),
+                format!(
+                    "mcp_servers.{MCP_SERVER_NAME}.bearer_token_env_var={}",
+                    toml_string(CODEX_MCP_TOKEN_ENV)
+                ),
+            ]);
+            env.push((CODEX_MCP_TOKEN_ENV.into(), listener.token.clone()));
+        }
+    }
+    let text = house_style.and_then(|file| std::fs::read_to_string(file).ok());
+    if let Some(text) = text {
+        args.extend(["-c".to_owned(), format!("developer_instructions={}", toml_string(&text))]);
+    }
+}
+
+fn toml_string(text: &str) -> String {
+    toml::Value::String(text.to_owned()).to_string()
+}
+
+fn shell_quote(word: &str) -> String {
+    let plain = !word.is_empty()
+        && word.chars().all(|c| c.is_ascii_alphanumeric() || "_@%+=:,./-".contains(c));
+    if plain { word.to_owned() } else { format!("'{}'", word.replace('\'', "'\\''")) }
+}
+
+/// Posts the hook payload from stdin to the listener and never fails or prints, so a CLI that waits
+/// on its hook is never held up. Used for the CLIs whose hooks only run commands.
+fn curl_hook_command(url: &str, bearer: &str) -> String {
+    format!(
+        "curl -s -m 2 -X POST -H {} -H 'Content-Type: application/json' --data-binary @- {} >/dev/null 2>&1 || true",
+        shell_quote(&format!("Authorization: {bearer}")),
+        shell_quote(url)
+    )
+}
+
+/// The `--settings` JSON for Claude: http hooks for the events the status layer reads (D5).
+#[must_use]
+pub fn claude_hook_settings(listener: &HookListener) -> String {
+    let hook = json!({
+        "type": "http",
+        "url": listener.hook_url("claude"),
+        "headers": { "Authorization": listener.bearer() },
+    });
+    let hooks: serde_json::Map<String, Value> = CLAUDE_HOOK_EVENTS
+        .iter()
+        .map(|event| ((*event).to_owned(), json!([{ "hooks": [hook.clone()] }])))
+        .collect();
+    json!({ "hooks": hooks }).to_string()
+}
+
+/// The MCP config file content for the CLIs that read one (Claude, Copilot). `None` for the others.
+#[must_use]
+pub fn mcp_config_json(wiring: Wiring, listener: &HookListener) -> Option<String> {
+    let mut server = json!({
+        "type": "http",
+        "url": listener.mcp_url(),
+        "headers": { "Authorization": listener.bearer() },
+    });
+    match wiring {
+        Wiring::Claude => {}
+        Wiring::Copilot => server["tools"] = json!(["*"]),
+        Wiring::Codex | Wiring::Gemini | Wiring::Custom => return None,
+    }
+    Some(json!({ "mcpServers": { MCP_SERVER_NAME: server } }).to_string())
+}
+
+/// The project `.gemini/settings.json` for a Gemini tab: command hooks, the Tidewatch MCP server with
+/// `trust`, and a `context.fileName` list that keeps `GEMINI.md` and `AGENTS.md` next to the house
+/// style. `None` when the context asks for none of them.
+///
+/// The caller writes it into the worktree and adds `gemini_exclude_lines()` to the worktree's
+/// `info/exclude`. A repo that tracks its own `.gemini/settings.json` needs a merge instead.
+#[must_use]
+pub fn gemini_project_settings(profile: &Profile, ctx: &LaunchCtx) -> Option<String> {
+    let mut settings = serde_json::Map::new();
+    if let Some(listener) = &ctx.hooks {
+        let command = curl_hook_command(&listener.hook_url("gemini"), &listener.bearer());
+        let hook = json!({ "type": "command", "command": command });
+        let hooks: serde_json::Map<String, Value> = GEMINI_HOOK_EVENTS
+            .iter()
+            .map(|event| ((*event).to_owned(), json!([{ "hooks": [hook.clone()] }])))
+            .collect();
+        settings.insert("hooks".into(), Value::Object(hooks));
+        if ctx.mcp_config.is_some() {
+            settings.insert(
+                "mcpServers".into(),
+                json!({ MCP_SERVER_NAME: {
+                    "httpUrl": listener.mcp_url(),
+                    "headers": { "Authorization": listener.bearer() },
+                    "trust": true,
+                } }),
+            );
+        }
+    }
+    let house_name = ctx
+        .house_style
+        .as_deref()
+        .and_then(Path::file_name)
+        .map(|name| name.to_string_lossy().into_owned())
+        .filter(|_| profile.house_style);
+    if let Some(name) = house_name {
+        settings.insert(
+            "context".into(),
+            json!({
+                "fileName": ["GEMINI.md", "AGENTS.md", name],
+                "loadMemoryFromIncludeDirectories": true,
+            }),
+        );
+    }
+    (!settings.is_empty()).then(|| Value::Object(settings).to_string())
+}
+
+/// Lines for the worktree's `info/exclude` so the generated Gemini settings are never committed.
+#[must_use]
+pub fn gemini_exclude_lines() -> [&'static str; 1] {
+    ["/.gemini/settings.json"]
+}
+
+/// Environment that turns every `git push` in the tab into a failure with the Tidewatch message (D7).
+///
+/// Appends one `url.tidewatch-no-push://blocked/.pushInsteadOf` entry (empty value, so it matches every
+/// remote) after any `GIT_CONFIG_COUNT` entries already in `base_env`, and puts `guard_bin_dir` first on
+/// `PATH` so git finds the helper that prints the message. Without a helper the push still fails, with
+/// git's own "remote helper not found" error.
+#[must_use]
+pub fn guard_env(
+    base_env: &[(String, String)],
+    guard_bin_dir: Option<&Path>,
+) -> Vec<(String, String)> {
+    let var = |key: &str| base_env.iter().find(|(k, _)| k == key).map(|(_, v)| v.as_str());
+    let count = var("GIT_CONFIG_COUNT").and_then(|c| c.trim().parse::<usize>().ok()).unwrap_or(0);
+    let mut env = vec![
+        ("GIT_CONFIG_COUNT".to_owned(), (count + 1).to_string()),
+        (format!("GIT_CONFIG_KEY_{count}"), NO_PUSH_URL_PREFIX.to_owned()),
+        (format!("GIT_CONFIG_VALUE_{count}"), String::new()),
+    ];
+    if let Some(dir) = guard_bin_dir {
+        let mut dirs = vec![dir.to_path_buf()];
+        dirs.extend(var("PATH").iter().flat_map(|path| std::env::split_paths(path)));
+        if let Ok(path) = std::env::join_paths(dirs) {
+            env.push(("PATH".to_owned(), path.to_string_lossy().into_owned()));
+        }
+    }
+    env
+}
+
+/// Content of the `git-remote-tidewatch-no-push` helper: prints the message and fails.
+#[must_use]
+pub fn no_push_helper_script() -> String {
+    format!("#!/bin/sh\necho \"{NO_PUSH_MESSAGE}\" >&2\nexit 1\n")
+}
+
+/// Writes the helper into `dir` as an executable file. Rewrites it only when the content differs.
+pub fn ensure_no_push_helper(dir: &Path) -> std::io::Result<PathBuf> {
+    use std::os::unix::fs::PermissionsExt;
+    let file = dir.join(NO_PUSH_HELPER_NAME);
+    let script = no_push_helper_script();
+    let current = std::fs::read_to_string(&file).ok();
+    let executable = file.metadata().is_ok_and(|m| m.permissions().mode() & 0o111 != 0);
+    if current.as_deref() != Some(script.as_str()) || !executable {
+        crate::fsutil::write_atomic(&file, &script)?;
+        std::fs::set_permissions(&file, std::fs::Permissions::from_mode(0o755))?;
+    }
+    Ok(file)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::agents::AgentTable;
+
+    fn profile(agent: &str, level: Level) -> Profile {
+        Profile {
+            name: "p".into(),
+            agent: agent.into(),
+            model: None,
+            effort: None,
+            level,
+            setup: String::new(),
+            never_push: false,
+            extra_args: crate::agents::ArgList::default(),
+            house_style: true,
+        }
+    }
+
+    fn worktree_ctx() -> LaunchCtx {
+        LaunchCtx { worktree: "/wt".into(), worktree_tab: true, ..LaunchCtx::default() }
+    }
+
+    fn listener() -> HookListener {
+        HookListener { base_url: "http://127.0.0.1:5555".into(), token: "tok123".into() }
+    }
+
+    fn full_ctx() -> LaunchCtx {
+        LaunchCtx {
+            session_id: Some("11111111-2222-3333-4444-555555555555".into()),
+            hooks: Some(listener()),
+            mcp_config: Some("/state/tab/mcp.json".into()),
+            house_style: Some("/cfg/house-style.md".into()),
+            copilot_instructions_dir: Some("/cfg/copilot".into()),
+            guard_bin_dir: Some("/state/guard-bin".into()),
+            env: vec![("PATH".into(), "/usr/bin:/bin".into())],
+            ..worktree_ctx()
+        }
+    }
+
+    fn table() -> AgentTable {
+        AgentTable::builtin()
+    }
+
+    fn run(agent: &str, profile: &Profile, ctx: &LaunchCtx) -> Launch {
+        launch_command(table().get(agent).unwrap(), profile, ctx).unwrap()
+    }
+
+    fn env_of<'a>(launch: &'a Launch, key: &str) -> Option<&'a str> {
+        launch.env.iter().find(|(k, _)| k == key).map(|(_, v)| v.as_str())
+    }
+
+    #[test]
+    fn every_agent_and_level_launches_with_exactly_the_table_flags_cli_versions_2_1_296_0_162_1_0_46_0_1_0_91()
+     {
+        let cases: [(&str, [&str; 5]); 4] = [
+            (
+                "claude",
+                [
+                    "--permission-mode plan",
+                    "--permission-mode manual",
+                    "--permission-mode acceptEdits",
+                    "--permission-mode auto",
+                    "--dangerously-skip-permissions",
+                ],
+            ),
+            (
+                "codex",
+                [
+                    "--sandbox read-only --ask-for-approval never",
+                    "--sandbox read-only --ask-for-approval on-request",
+                    "--sandbox workspace-write --ask-for-approval on-request",
+                    "--sandbox workspace-write --approve-for-me",
+                    "--dangerously-bypass-approvals-and-sandbox",
+                ],
+            ),
+            (
+                "gemini",
+                [
+                    "--approval-mode plan",
+                    "--approval-mode default",
+                    "--approval-mode auto_edit",
+                    "--approval-mode yolo --sandbox",
+                    "--yolo",
+                ],
+            ),
+            ("copilot", ["--mode plan", "", "--allow-tool=write", "--allow-all-tools", "--yolo"]),
+        ];
+        for (agent, flags) in cases {
+            for (level, flags) in Level::ALL.into_iter().zip(flags) {
+                let launch = run(agent, &profile(agent, level), &worktree_ctx());
+                let want: Vec<&str> = flags.split_whitespace().collect();
+                assert_eq!(launch.program, agent, "{agent} {level:?}");
+                assert_eq!(launch.args, want, "{agent} {level:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn yolo_is_refused_outside_a_worktree_tab_for_every_agent() {
+        let ctx = LaunchCtx { worktree_tab: false, ..worktree_ctx() };
+        for agent in ["claude", "codex", "gemini", "copilot"] {
+            let result =
+                launch_command(table().get(agent).unwrap(), &profile(agent, Level::Yolo), &ctx);
+            assert_eq!(result, Err(LaunchError::YoloOutsideWorktree), "{agent}");
+            let non_yolo =
+                launch_command(table().get(agent).unwrap(), &profile(agent, Level::Auto), &ctx);
+            assert!(non_yolo.is_ok(), "{agent} auto outside a worktree");
+        }
+    }
+
+    #[test]
+    fn yolo_runs_in_a_worktree_tab() {
+        let launch = run("claude", &profile("claude", Level::Yolo), &worktree_ctx());
+        assert_eq!(launch.args, ["--dangerously-skip-permissions"]);
+    }
+
+    #[test]
+    fn a_custom_agent_without_a_level_cannot_launch_at_it() {
+        let overrides = toml::from_str::<crate::profiles::Profiles>(
+            "[agent.aider]\nbin = \"aider\"\n[agent.aider.permissions]\nplan = \"--chat-mode ask\"\n",
+        )
+        .unwrap();
+        let table = overrides.agent_table();
+        let aider = table.get("aider").unwrap();
+        let ok = launch_command(aider, &profile("aider", Level::Plan), &worktree_ctx()).unwrap();
+        assert_eq!(
+            (ok.args, ok.experimental),
+            (vec!["--chat-mode".to_owned(), "ask".to_owned()], true)
+        );
+        let err =
+            launch_command(aider, &profile("aider", Level::Edits), &worktree_ctx()).unwrap_err();
+        assert_eq!(
+            err,
+            LaunchError::LevelUnavailable { agent: "aider".into(), level: Level::Edits }
+        );
+        assert_eq!(err.to_string(), "aider has no flags for the Auto edit level");
+    }
+
+    #[test]
+    fn model_effort_session_and_extra_args_follow_the_level_in_order() {
+        let mut p = profile("claude", Level::Edits);
+        p.model = Some("opus".into());
+        p.effort = Some("high".into());
+        p.extra_args = vec!["--verbose".to_owned()].into();
+        let ctx = LaunchCtx { session_id: Some("sid".into()), ..worktree_ctx() };
+        assert_eq!(
+            run("claude", &p, &ctx).args,
+            [
+                "--permission-mode",
+                "acceptEdits",
+                "--model",
+                "opus",
+                "--effort",
+                "high",
+                "--session-id",
+                "sid",
+                "--verbose"
+            ]
+        );
+        let mut codex = profile("codex", Level::Plan);
+        codex.model = Some("gpt-x".into());
+        codex.effort = Some("low".into());
+        assert_eq!(
+            run("codex", &codex, &ctx).args,
+            [
+                "--sandbox",
+                "read-only",
+                "--ask-for-approval",
+                "never",
+                "--model",
+                "gpt-x",
+                "-c",
+                "model_reasoning_effort=low"
+            ]
+        );
+        let mut gemini = profile("gemini", Level::Plan);
+        gemini.effort = Some("high".into());
+        gemini.model = Some(String::new());
+        assert_eq!(
+            run("gemini", &gemini, &ctx).args,
+            ["--approval-mode", "plan", "--session-id", "sid"]
+        );
+    }
+
+    #[test]
+    fn no_context_fields_means_no_wiring_args() {
+        let mut ctx = worktree_ctx();
+        ctx.env.clear();
+        for (agent, extra_env) in [("claude", 0), ("codex", 0), ("gemini", 1), ("copilot", 0)] {
+            let launch = run(agent, &profile(agent, Level::Plan), &ctx);
+            let base = table().get(agent).unwrap().level_args(Level::Plan).unwrap().to_vec();
+            assert_eq!(launch.args, base, "{agent}");
+            assert_eq!(launch.env.len(), extra_env, "{agent}");
+        }
+    }
+
+    #[test]
+    fn claude_gets_hooks_mcp_and_house_style() {
+        let launch = run("claude", &profile("claude", Level::Edits), &full_ctx());
+        let args = &launch.args;
+        let settings_at = args.iter().position(|a| a == "--settings").unwrap();
+        let settings: Value = serde_json::from_str(&args[settings_at + 1]).unwrap();
+        assert_eq!(settings["hooks"]["Stop"][0]["hooks"][0]["type"], "http");
+        assert_eq!(
+            settings["hooks"]["Stop"][0]["hooks"][0]["url"],
+            "http://127.0.0.1:5555/hook/claude"
+        );
+        assert_eq!(
+            settings["hooks"]["Stop"][0]["hooks"][0]["headers"]["Authorization"],
+            "Bearer tok123"
+        );
+        for event in CLAUDE_HOOK_EVENTS {
+            assert!(settings["hooks"][event].is_array(), "{event}");
+        }
+        for want in
+            ["--mcp-config=/state/tab/mcp.json", "--allowedTools=mcp__tidewatch__*", "--session-id"]
+        {
+            assert!(args.iter().any(|a| a == want), "{want}");
+        }
+        let style_at = args.iter().position(|a| a == "--append-system-prompt-file").unwrap();
+        assert_eq!(args[style_at + 1], "/cfg/house-style.md");
+        assert_eq!(launch.env, Vec::<(String, String)>::new());
+        assert!(!launch.experimental);
+    }
+
+    #[test]
+    fn each_claude_piece_is_gated_on_its_own_field() {
+        let ctx = LaunchCtx { hooks: None, mcp_config: None, ..full_ctx() };
+        let args = run("claude", &profile("claude", Level::Plan), &ctx).args;
+        assert!(args.iter().any(|a| a == "--append-system-prompt-file"));
+        assert!(!args.iter().any(|a| a == "--settings" || a.starts_with("--mcp-config")));
+        let ctx = LaunchCtx { house_style: None, ..full_ctx() };
+        let args = run("claude", &profile("claude", Level::Plan), &ctx).args;
+        assert!(!args.iter().any(|a| a == "--append-system-prompt-file"));
+        assert!(args.iter().any(|a| a == "--settings"));
+    }
+
+    #[test]
+    fn a_profile_can_switch_the_house_style_off() {
+        let mut p = profile("claude", Level::Plan);
+        p.house_style = false;
+        let args = run("claude", &p, &full_ctx()).args;
+        assert!(!args.iter().any(|a| a == "--append-system-prompt-file"));
+    }
+
+    #[test]
+    fn copilot_gets_mcp_allow_and_instructions_dir() {
+        let launch = run("copilot", &profile("copilot", Level::Edits), &full_ctx());
+        let at = launch.args.iter().position(|a| a == "--additional-mcp-config").unwrap();
+        assert_eq!(launch.args[at + 1], "@/state/tab/mcp.json");
+        assert!(launch.args.contains(&"--allow-tool=tidewatch".to_owned()));
+        assert!(launch.args.contains(&"--allow-tool=write".to_owned()));
+        assert_eq!(env_of(&launch, "COPILOT_CUSTOM_INSTRUCTIONS_DIRS"), Some("/cfg/copilot"));
+        let no_dir = LaunchCtx { copilot_instructions_dir: None, ..full_ctx() };
+        let launch = run("copilot", &profile("copilot", Level::Plan), &no_dir);
+        assert_eq!(env_of(&launch, "COPILOT_CUSTOM_INSTRUCTIONS_DIRS"), None);
+    }
+
+    #[test]
+    fn gemini_trusts_the_workspace_and_includes_the_house_style_directory() {
+        let launch = run("gemini", &profile("gemini", Level::Plan), &full_ctx());
+        assert_eq!(env_of(&launch, "GEMINI_CLI_TRUST_WORKSPACE"), Some("true"));
+        assert!(launch.args.contains(&"--include-directories=/cfg".to_owned()));
+        let none = run("gemini", &profile("gemini", Level::Plan), &worktree_ctx());
+        assert_eq!(env_of(&none, "GEMINI_CLI_TRUST_WORKSPACE"), Some("true"));
+        assert!(!none.args.iter().any(|a| a.starts_with("--include-directories")));
+    }
+
+    #[test]
+    fn gemini_settings_carry_hooks_trusted_mcp_and_the_context_file_list() {
+        let json: Value = serde_json::from_str(
+            &gemini_project_settings(&profile("gemini", Level::Plan), &full_ctx()).unwrap(),
+        )
+        .unwrap();
+        for event in GEMINI_HOOK_EVENTS {
+            let hook = &json["hooks"][event][0]["hooks"][0];
+            assert_eq!(hook["type"], "command", "{event}");
+            let command = hook["command"].as_str().unwrap();
+            assert!(command.contains("http://127.0.0.1:5555/hook/gemini"), "{event}");
+            assert!(command.contains("Authorization: Bearer tok123"), "{event}");
+        }
+        assert_eq!(json["mcpServers"]["tidewatch"]["httpUrl"], "http://127.0.0.1:5555/mcp");
+        assert_eq!(json["mcpServers"]["tidewatch"]["trust"], true);
+        assert_eq!(json["mcpServers"]["tidewatch"]["headers"]["Authorization"], "Bearer tok123");
+        assert_eq!(
+            json["context"]["fileName"],
+            json!(["GEMINI.md", "AGENTS.md", "house-style.md"])
+        );
+        assert_eq!(json["context"]["loadMemoryFromIncludeDirectories"], true);
+    }
+
+    #[test]
+    fn gemini_settings_are_gated_and_empty_means_nothing_to_write() {
+        let bare = worktree_ctx();
+        assert_eq!(gemini_project_settings(&profile("gemini", Level::Plan), &bare), None);
+        let hooks_only = LaunchCtx { hooks: Some(listener()), ..worktree_ctx() };
+        let json: Value = serde_json::from_str(
+            &gemini_project_settings(&profile("gemini", Level::Plan), &hooks_only).unwrap(),
+        )
+        .unwrap();
+        assert!(json.get("mcpServers").is_none());
+        assert!(json.get("context").is_none());
+        let mut style_off_profile = profile("gemini", Level::Plan);
+        style_off_profile.house_style = false;
+        let style_off = gemini_project_settings(&style_off_profile, &full_ctx()).unwrap();
+        assert!(!style_off.contains("fileName"));
+        assert_eq!(gemini_exclude_lines(), ["/.gemini/settings.json"]);
+        assert_eq!(GEMINI_SETTINGS_PATH, ".gemini/settings.json");
+    }
+
+    #[test]
+    fn codex_is_experimental_and_gets_c_overrides() {
+        let dir = tempfile::tempdir().unwrap();
+        let style = dir.path().join("house-style.md");
+        std::fs::write(&style, "Say \"hi\"\nand \\ more").unwrap();
+        let ctx = LaunchCtx { house_style: Some(style), ..full_ctx() };
+        let launch = run("codex", &profile("codex", Level::Edits), &ctx);
+        assert!(launch.experimental);
+        assert!(launch.args.contains(&"--dangerously-bypass-hook-trust".to_owned()));
+        let overrides: Vec<&str> =
+            launch.args.windows(2).filter(|w| w[0] == "-c").map(|w| w[1].as_str()).collect();
+        assert_eq!(overrides.len(), CODEX_HOOK_EVENTS.len() + 3);
+        for event in CODEX_HOOK_EVENTS {
+            let hook =
+                overrides.iter().find(|o| o.starts_with(&format!("hooks.{event}="))).unwrap();
+            let value = hook.split_once('=').unwrap().1;
+            let parsed: toml::Value = toml::from_str(&format!("x = {value}")).unwrap();
+            let command = parsed["x"][0]["hooks"][0]["command"].as_str().unwrap();
+            assert!(command.contains("http://127.0.0.1:5555/hook/codex"), "{event}");
+            assert_eq!(parsed["x"][0]["hooks"][0]["type"].as_str(), Some("command"));
+        }
+        assert!(overrides.contains(&"mcp_servers.tidewatch.url=\"http://127.0.0.1:5555/mcp\""));
+        assert!(
+            overrides
+                .contains(&"mcp_servers.tidewatch.bearer_token_env_var=\"TIDEWATCH_MCP_TOKEN\"")
+        );
+        assert_eq!(env_of(&launch, "TIDEWATCH_MCP_TOKEN"), Some("tok123"));
+        let instructions =
+            overrides.iter().find(|o| o.starts_with("developer_instructions=")).unwrap();
+        let parsed: toml::Value = toml::from_str(instructions).unwrap();
+        assert_eq!(parsed["developer_instructions"].as_str(), Some("Say \"hi\"\nand \\ more"));
+    }
+
+    #[test]
+    fn codex_without_hooks_or_a_readable_house_style_gets_no_overrides() {
+        let ctx = LaunchCtx {
+            hooks: None,
+            house_style: Some("/nonexistent/style.md".into()),
+            ..full_ctx()
+        };
+        let launch = run("codex", &profile("codex", Level::Plan), &ctx);
+        assert!(!launch.args.contains(&"-c".to_owned()));
+        assert!(!launch.args.contains(&"--dangerously-bypass-hook-trust".to_owned()));
+        assert_eq!(env_of(&launch, "TIDEWATCH_MCP_TOKEN"), None);
+    }
+
+    #[test]
+    fn never_push_adds_the_git_config_env_and_helper_path_in_worktree_tabs_only() {
+        let mut guarded = profile("claude", Level::Plan);
+        guarded.never_push = true;
+        let launch = run("claude", &guarded, &full_ctx());
+        assert_eq!(env_of(&launch, "GIT_CONFIG_COUNT"), Some("1"));
+        assert_eq!(
+            env_of(&launch, "GIT_CONFIG_KEY_0"),
+            Some("url.tidewatch-no-push://blocked/.pushInsteadOf")
+        );
+        assert_eq!(env_of(&launch, "GIT_CONFIG_VALUE_0"), Some(""));
+        assert_eq!(env_of(&launch, "PATH"), Some("/state/guard-bin:/usr/bin:/bin"));
+
+        let main_tab = LaunchCtx { worktree_tab: false, ..full_ctx() };
+        assert_eq!(env_of(&run("claude", &guarded, &main_tab), "GIT_CONFIG_COUNT"), None);
+        let mut open = guarded.clone();
+        open.never_push = false;
+        assert_eq!(env_of(&run("claude", &open, &full_ctx()), "GIT_CONFIG_COUNT"), None);
+    }
+
+    #[test]
+    fn guard_env_appends_after_existing_git_config_entries() {
+        let base = vec![
+            ("GIT_CONFIG_COUNT".to_owned(), "2".to_owned()),
+            ("GIT_CONFIG_KEY_0".to_owned(), "user.name".to_owned()),
+            ("GIT_CONFIG_VALUE_0".to_owned(), "a".to_owned()),
+            ("GIT_CONFIG_KEY_1".to_owned(), "user.email".to_owned()),
+            ("GIT_CONFIG_VALUE_1".to_owned(), "b".to_owned()),
+        ];
+        let env = guard_env(&base, None);
+        assert_eq!(
+            env,
+            [
+                ("GIT_CONFIG_COUNT".to_owned(), "3".to_owned()),
+                ("GIT_CONFIG_KEY_2".to_owned(), NO_PUSH_URL_PREFIX.to_owned()),
+                ("GIT_CONFIG_VALUE_2".to_owned(), String::new()),
+            ]
+        );
+    }
+
+    #[test]
+    fn guard_env_treats_a_missing_or_garbage_count_as_zero() {
+        for base in [vec![], vec![("GIT_CONFIG_COUNT".to_owned(), "lots".to_owned())]] {
+            let env = guard_env(&base, None);
+            assert_eq!(env[0], ("GIT_CONFIG_COUNT".to_owned(), "1".to_owned()));
+            assert_eq!(env[1].0, "GIT_CONFIG_KEY_0");
+        }
+    }
+
+    #[test]
+    fn guard_env_puts_the_helper_dir_first_even_without_a_base_path() {
+        let env = guard_env(&[], Some(Path::new("/g")));
+        assert_eq!(env.last().unwrap(), &("PATH".to_owned(), "/g".to_owned()));
+    }
+
+    #[test]
+    fn helper_script_prints_the_message_and_fails() {
+        let script = no_push_helper_script();
+        assert!(script.starts_with("#!/bin/sh\n"));
+        assert!(script.contains(NO_PUSH_MESSAGE));
+        assert!(script.trim_end().ends_with("exit 1"));
+    }
+
+    #[test]
+    fn helper_is_written_executable_and_repaired_when_changed() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let file = ensure_no_push_helper(dir.path()).unwrap();
+        assert_eq!(file.file_name().unwrap(), NO_PUSH_HELPER_NAME);
+        assert_eq!(std::fs::read_to_string(&file).unwrap(), no_push_helper_script());
+        assert_eq!(file.metadata().unwrap().permissions().mode() & 0o777, 0o755);
+        std::fs::write(&file, "tampered").unwrap();
+        ensure_no_push_helper(dir.path()).unwrap();
+        assert_eq!(std::fs::read_to_string(&file).unwrap(), no_push_helper_script());
+    }
+
+    #[test]
+    fn mcp_config_files_per_cli() {
+        let claude: Value =
+            serde_json::from_str(&mcp_config_json(Wiring::Claude, &listener()).unwrap()).unwrap();
+        assert_eq!(claude["mcpServers"]["tidewatch"]["type"], "http");
+        assert_eq!(claude["mcpServers"]["tidewatch"]["url"], "http://127.0.0.1:5555/mcp");
+        assert_eq!(claude["mcpServers"]["tidewatch"]["headers"]["Authorization"], "Bearer tok123");
+        assert!(claude["mcpServers"]["tidewatch"].get("tools").is_none());
+        let copilot: Value =
+            serde_json::from_str(&mcp_config_json(Wiring::Copilot, &listener()).unwrap()).unwrap();
+        assert_eq!(copilot["mcpServers"]["tidewatch"]["tools"], json!(["*"]));
+        for wiring in [Wiring::Gemini, Wiring::Codex, Wiring::Custom] {
+            assert_eq!(mcp_config_json(wiring, &listener()), None);
+        }
+    }
+
+    #[test]
+    fn shell_line_quotes_what_a_shell_would_mangle() {
+        let launch = Launch {
+            program: "claude".into(),
+            args: [
+                "--allowedTools=mcp__tidewatch__*",
+                "--settings",
+                "{\"a\":\"it's\"}",
+                "--plain=/p/q",
+            ]
+            .map(String::from)
+            .to_vec(),
+            env: vec![],
+            experimental: false,
+        };
+        assert_eq!(
+            launch.shell_line(),
+            "claude '--allowedTools=mcp__tidewatch__*' --settings '{\"a\":\"it'\\''s\"}' --plain=/p/q"
+        );
+    }
+}

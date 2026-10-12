@@ -3,6 +3,7 @@
 pub mod agents;
 mod fsutil;
 pub mod house_style;
+pub mod launch;
 pub mod names;
 pub mod paths;
 pub mod profiles;
