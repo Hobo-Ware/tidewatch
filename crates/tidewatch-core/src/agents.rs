@@ -405,7 +405,23 @@ pub fn parse_version(output: &str) -> Option<String> {
 /// Runs `<bin> --version` and parses it. Blocks for up to five seconds: call it off the UI thread.
 #[must_use]
 pub fn probe_version(bin: &str) -> Option<String> {
-    let mut child = Command::new(bin)
+    probe_version_in(bin, None)
+}
+
+/// `probe_version` with `path_var` as the child's `PATH`, so a CLI that starts through `env node`
+/// finds its interpreter even when the app itself was started with a bare `PATH`. The name is looked
+/// up in `path_var` too.
+#[must_use]
+pub fn probe_version_in(bin: &str, path_var: Option<&OsStr>) -> Option<String> {
+    let program = path_var.map_or_else(
+        || PathBuf::from(bin),
+        |path| find_on_path(bin, Some(path)).unwrap_or_else(|| PathBuf::from(bin)),
+    );
+    let mut command = Command::new(program);
+    if let Some(path) = path_var {
+        command.env("PATH", path);
+    }
+    let mut child = command
         .arg("--version")
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
@@ -589,6 +605,19 @@ mod tests {
         make_executable(&script);
         assert_eq!(probe_version(script.to_str().unwrap()).as_deref(), Some("9.8.7"));
         assert_eq!(probe_version("/nonexistent/tidewatch-agent"), None);
+    }
+
+    #[test]
+    fn probe_in_a_given_path_finds_the_binary_and_hands_the_path_to_the_child() {
+        let dir = tempfile::tempdir().unwrap();
+        let script = dir.path().join("fake-agent");
+        let body = "#!/bin/sh\ncase \"$PATH\" in \"$FAKE_DIR\":*) echo \"fake 1.2.3\";; esac\n";
+        std::fs::write(&script, body.replace("$FAKE_DIR", dir.path().to_str().unwrap())).unwrap();
+        make_executable(&script);
+        let path =
+            std::env::join_paths([dir.path(), Path::new("/usr/bin"), Path::new("/bin")]).unwrap();
+        assert_eq!(probe_version_in("fake-agent", Some(&path)).as_deref(), Some("1.2.3"));
+        assert_eq!(probe_version_in("fake-agent", Some(OsStr::new("/usr/bin"))), None);
     }
 
     fn make_executable(path: &Path) {
