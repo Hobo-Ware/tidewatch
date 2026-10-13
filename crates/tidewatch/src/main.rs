@@ -50,6 +50,8 @@ mod notify;
 mod os;
 mod overview;
 mod overview_view;
+mod palette;
+mod palette_view;
 mod pane;
 mod pane_jobs;
 mod post_confirm;

@@ -155,6 +155,19 @@ fn the_nine_tab_chords_make_one_row() {
 }
 
 #[test]
+fn the_palette_lists_what_a_person_would_look_for() {
+    let listed: Vec<_> =
+        TABLE.iter().filter(|entry| entry.command.in_palette()).map(|entry| entry.id).collect();
+    assert_eq!(listed, ["new-tab", "close-tab", "overview", "focus", "reader", "settings"]);
+}
+
+#[test]
+fn the_palette_chord_is_cmd_shift_p_and_ctrl_shift_p() {
+    assert_eq!(Command::Palette.keys_on(Platform::Mac), "Cmd+Shift+P");
+    assert_eq!(Command::Palette.keys_on(Platform::Linux), "Ctrl+Shift+P");
+}
+
+#[test]
 fn every_command_knows_its_id() {
     for entry in &TABLE {
         assert_eq!(entry.command.id(), entry.id);
@@ -175,7 +188,8 @@ fn shortcuts_doc() {
 mod gate {
     use super::*;
 
-    const NONE: Gate = Gate { dialog: Dialog::None, settings: false, overview: false };
+    const NONE: Gate =
+        Gate { dialog: Dialog::None, settings: false, overview: false, palette: false };
 
     fn allowed(gate: Gate) -> Vec<Command> {
         TABLE.iter().map(|entry| entry.command).filter(|command| gate.allows(*command)).collect()
@@ -196,9 +210,10 @@ mod gate {
     }
 
     #[test]
-    fn settings_can_close_itself_and_nothing_else_opens_over_it() {
+    fn settings_can_close_itself_and_reach_the_palette() {
         let got = allowed(Gate { settings: true, ..NONE });
         assert!(got.contains(&Command::Settings));
+        assert!(got.contains(&Command::Palette));
         assert!(!got.contains(&Command::NewTab));
     }
 
@@ -206,5 +221,18 @@ mod gate {
     fn the_new_tab_dialog_and_the_close_dialog_take_only_their_own_keys() {
         let got = allowed(Gate { dialog: Dialog::TabChoice, ..NONE });
         assert_eq!(got, Vec::<Command>::new());
+    }
+
+    #[test]
+    fn an_open_palette_takes_nothing_but_its_own_chord() {
+        let open = Gate { palette: true, ..NONE };
+        assert_eq!(allowed(open), [Command::Palette]);
+        assert!(open.modal_open());
+    }
+
+    #[test]
+    fn a_dialog_keeps_the_palette_closed() {
+        let got = allowed(Gate { dialog: Dialog::Other, ..NONE });
+        assert!(!got.contains(&Command::Palette));
     }
 }

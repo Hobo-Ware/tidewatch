@@ -62,6 +62,7 @@ pub(crate) enum Command {
     Focus,
     Reader,
     Settings,
+    Palette,
     ApproveDelivery,
 }
 
@@ -75,6 +76,7 @@ impl Command {
             | Self::Focus
             | Self::Reader
             | Self::Settings
+            | Self::Palette
             | Self::ApproveDelivery => None,
         }
     }
@@ -83,12 +85,20 @@ impl Command {
         self != Self::ApproveDelivery
     }
 
+    pub(crate) fn in_palette(self) -> bool {
+        !matches!(self, Self::SelectTab(_) | Self::Palette | Self::ApproveDelivery)
+    }
+
     pub(crate) fn id(self) -> &'static str {
         entry_of(self).map_or("", |entry| entry.id)
     }
 
     pub(crate) fn keys(self) -> String {
-        entry_of(self).map_or_else(String::new, |entry| entry.chord(Platform::CURRENT).label())
+        self.keys_on(Platform::CURRENT)
+    }
+
+    pub(crate) fn keys_on(self, platform: Platform) -> String {
+        entry_of(self).map_or_else(String::new, |entry| entry.chord(platform).label())
     }
 }
 
@@ -197,7 +207,7 @@ const fn tab(id: &'static str, title: &'static str, index: usize, key: Key) -> E
     entry(id, title, Group::Tabs, Command::SelectTab(index), (cmd(key), alt(key)))
 }
 
-pub(crate) const TABLE: [Entry; 16] = [
+pub(crate) const TABLE: [Entry; 17] = [
     entry("new-tab", "New tab", Group::Tabs, Command::NewTab, (cmd(Key::T), ctrl(Key::T).shift())),
     entry(
         "close-tab",
@@ -236,6 +246,13 @@ pub(crate) const TABLE: [Entry; 16] = [
         Group::App,
         Command::Settings,
         (cmd(Key::Comma), ctrl(Key::Comma)),
+    ),
+    entry(
+        "palette",
+        "Command palette",
+        Group::App,
+        Command::Palette,
+        (cmd(Key::P).shift(), ctrl(Key::P).shift()),
     ),
     entry(
         "approve-delivery",
@@ -308,14 +325,18 @@ pub(crate) struct Gate {
     pub(crate) dialog: Dialog,
     pub(crate) settings: bool,
     pub(crate) overview: bool,
+    pub(crate) palette: bool,
 }
 
 impl Gate {
     pub(crate) fn modal_open(self) -> bool {
-        self.dialog != Dialog::None || self.settings
+        self.dialog != Dialog::None || self.settings || self.palette
     }
 
     pub(crate) fn allows(self, command: Command) -> bool {
+        if self.palette {
+            return command == Command::Palette;
+        }
         let modal = self.modal_open();
         match command {
             Command::Settings | Command::Overview | Command::Focus => {
@@ -323,6 +344,7 @@ impl Gate {
             }
             Command::Reader | Command::CloseTab => !modal && !self.overview,
             Command::NewTab | Command::SelectTab(_) => !modal,
+            Command::Palette => self.dialog == Dialog::None,
             Command::ApproveDelivery => false,
         }
     }

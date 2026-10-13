@@ -50,7 +50,8 @@ pub(crate) fn markdown() -> String {
          this file differs from the table. Rewrite it with \
          `TIDEWATCH_BLESS=1 cargo test -p tidewatch shortcuts_doc`.\n\n\
          On Linux a plain Ctrl chord would reach the shell, so Linux uses Ctrl+Shift or Alt where \
-         macOS uses Cmd. Enter, Esc and the arrow keys inside dialogs are fixed.\n",
+         macOS uses Cmd. Every command except the dialog keys is also in the command palette. \
+         Enter, Esc and the arrow keys inside dialogs and the palette are fixed.\n",
     );
     let mac = rows(Platform::Mac);
     let linux = rows(Platform::Linux);

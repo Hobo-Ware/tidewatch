@@ -20,6 +20,12 @@ impl Tidewatch {
     /// Opens the new-tab dialog. Without a home directory there are no profiles to pick from, so
     /// the tab opens as a plain shell.
     fn new_tab(&mut self, ctx: &egui::Context) {
+        let last = self.last_profile.clone();
+        self.new_tab_on(ctx, last.as_deref());
+    }
+
+    /// The same, with the dialog opened on `preselect`: a profile id or `workflow:<id>`.
+    pub(super) fn new_tab_on(&mut self, ctx: &egui::Context, preselect: Option<&str>) {
         if self.new_tab.is_some() {
             return;
         }
@@ -31,7 +37,7 @@ impl Tidewatch {
             self.show_toast("Profiles are still loading", ctx);
             return;
         }
-        self.new_tab = Some(self.dialog_state(self.last_profile.clone().as_deref()));
+        self.new_tab = Some(self.dialog_state(preselect));
     }
 
     pub(super) fn dialog_state(&self, preselect: Option<&str>) -> NewTab {

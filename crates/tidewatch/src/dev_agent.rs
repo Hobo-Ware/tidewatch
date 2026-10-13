@@ -6,6 +6,7 @@
 //!   `TIDEWATCH_DEV_DIALOG=workflow:<id>` opens the dialog on it.
 //! - `TIDEWATCH_DEV_RESUME=<worktree name>`: open the tab of a saved workflow run and carry on where it was.
 //! - `TIDEWATCH_DEV_SETTINGS=1`: open the settings; `workflows` opens the workflow editor page, `trust` the folder trust page.
+//! - `TIDEWATCH_DEV_PALETTE=<query>` (or `1`): open the command palette, filled with that query.
 //! - `TIDEWATCH_DEV_TRUST=yes|no|undo`: answer the folder trust question once the CLIs are known (see `trust_glue`).
 //! - `TIDEWATCH_DEV_TASK=<text>` and `TIDEWATCH_DEV_LEVEL=plan|ask|edits|auto|yolo`: the task and the
 //!   permission level to use with either.
@@ -20,6 +21,8 @@ pub(crate) enum Mode {
     Start,
     Dialog,
     Settings,
+    /// Open the command palette; the profile field holds the query.
+    Palette,
     /// Open the tab of a saved workflow run (the worktree's name) and carry on.
     Resume,
 }
@@ -41,6 +44,7 @@ struct Vars<'a> {
     resume: Option<&'a str>,
     dialog: Option<&'a str>,
     settings: Option<&'a str>,
+    palette: Option<&'a str>,
     task: Option<&'a str>,
     level: Option<&'a str>,
 }
@@ -53,9 +57,10 @@ impl DevAgent {
             var("TIDEWATCH_DEV_WORKFLOW"),
             var("TIDEWATCH_DEV_RESUME"),
         );
-        let (dialog, settings, task, level) = (
+        let (dialog, settings, palette, task, level) = (
             var("TIDEWATCH_DEV_DIALOG"),
             var("TIDEWATCH_DEV_SETTINGS"),
+            var("TIDEWATCH_DEV_PALETTE"),
             var("TIDEWATCH_DEV_TASK"),
             var("TIDEWATCH_DEV_LEVEL"),
         );
@@ -65,6 +70,7 @@ impl DevAgent {
             resume: resume.as_deref(),
             dialog: dialog.as_deref(),
             settings: settings.as_deref(),
+            palette: palette.as_deref(),
             task: task.as_deref(),
             level: level.as_deref(),
         })
@@ -80,14 +86,18 @@ impl DevAgent {
             set(vars.resume),
             set(vars.dialog),
             set(vars.settings),
+            set(vars.palette),
         ) {
             (Some(profile), ..) => (Mode::Start, Some(profile.to_owned())),
             (None, Some(workflow), ..) => (Mode::Start, Some(format!("workflow:{workflow}"))),
             (None, None, Some(name), ..) => (Mode::Resume, Some(name.to_owned())),
-            (None, None, None, Some("1"), _) => (Mode::Dialog, None),
-            (None, None, None, Some(profile), _) => (Mode::Dialog, Some(profile.to_owned())),
-            (None, None, None, None, Some(page)) => (Mode::Settings, Some(page.to_owned())),
-            (None, None, None, None, None) => return None,
+            (None, None, None, Some("1"), ..) => (Mode::Dialog, None),
+            (None, None, None, Some(profile), ..) => (Mode::Dialog, Some(profile.to_owned())),
+            (None, None, None, None, Some(page), _) => (Mode::Settings, Some(page.to_owned())),
+            (None, None, None, None, None, Some(query)) => {
+                (Mode::Palette, (query != "1").then(|| query.to_owned()))
+            }
+            (None, None, None, None, None, None) => return None,
         };
         Some(Self {
             mode,
@@ -174,6 +184,16 @@ mod tests {
     }
 
     #[test]
+    fn the_palette_switch_takes_a_query_or_one_for_an_empty_palette() {
+        let one = DevAgent::parse(Vars { palette: Some("1"), ..vars() }).unwrap();
+        assert_eq!((one.mode, one.profile), (Mode::Palette, None));
+        let query = DevAgent::parse(Vars { palette: Some("tab"), ..vars() }).unwrap();
+        assert_eq!((query.mode, query.profile.as_deref()), (Mode::Palette, Some("tab")));
+        let settings = DevAgent::parse(Vars { settings: Some("1"), palette: Some("1"), ..vars() });
+        assert_eq!(settings.unwrap().mode, Mode::Settings);
+    }
+
+    #[test]
     fn no_switch_or_empty_values_mean_no_dev_agent() {
         assert_eq!(DevAgent::parse(Vars { task: Some("task"), ..vars() }), None);
         let empty = Vars {
@@ -182,6 +202,7 @@ mod tests {
             resume: Some(""),
             dialog: Some(""),
             settings: Some(""),
+            palette: Some(""),
             ..vars()
         };
         assert_eq!(DevAgent::parse(empty), None);
