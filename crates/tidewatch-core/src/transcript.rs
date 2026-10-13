@@ -8,9 +8,10 @@
 //! - Gemini CLI 0.46.0: `~/.gemini/tmp/<slug>/chats/session-*-<id8>.jsonl`. A message id can repeat
 //!   with more fields (tool calls attached later); text and each tool call are emitted once.
 //! - Copilot CLI 1.0.91: `~/.copilot/session-state/<id>/events.jsonl`, one event per line.
-//! - Codex 0.162.1: `~/.codex/sessions/YYYY/MM/DD/rollout-<time>-<id>.jsonl`. UNVERIFIED: no
-//!   `codex login` here, so the parser follows the rollout item shapes from Codex's source and
-//!   stdusk's rollout scan, and is tested on a hand-written sample only.
+//! - Codex 0.162.1: `~/.codex/sessions/YYYY/MM/DD/rollout-<time>-<id>.jsonl`, checked on a real
+//!   interactive run (`codex_live.jsonl`). The model's tools arrive as `custom_tool_call` items
+//!   (a code string in `input`) with a list of text parts as `output`; `function_call` items are
+//!   still read, from a hand-written sample (`codex_function_call.jsonl`).
 //!
 //! A malformed line is skipped, never a panic. [`Tail::poll`] reads the file and blocks on disk: call
 //! it off the UI thread. The parsers are pure.
@@ -69,7 +70,6 @@ pub enum Source {
     Claude,
     Gemini,
     Copilot,
-    /// Unverified against a real Codex run.
     Codex,
 }
 
@@ -85,12 +85,6 @@ impl Source {
             "codex" => Some(Self::Codex),
             _ => None,
         }
-    }
-
-    /// Whether the format was checked against a real run of the CLI.
-    #[must_use]
-    pub const fn verified(self) -> bool {
-        !matches!(self, Self::Codex)
     }
 }
 
@@ -361,10 +355,9 @@ impl Parser {
                 let id = item["call_id"].as_str().unwrap_or_default();
                 let (name, summary) = self.recall(id);
                 let output = &item["output"];
-                let text =
-                    output.as_str().or_else(|| output["content"].as_str()).unwrap_or_default();
                 let error = output["success"].as_bool() == Some(false);
-                vec![tool_result(name, summary, Some(id), text, error, ts)]
+                let text = codex_output_text(output);
+                vec![tool_result(name, summary, Some(id), &text, error, ts)]
             }
             _ => Vec::new(),
         }
@@ -472,6 +465,14 @@ fn gemini_injected(text: &str) -> bool {
     text.starts_with("<session_context>") || text.starts_with("- **Workspace Directories:**")
 }
 
+fn codex_output_text(output: &Value) -> String {
+    match output {
+        Value::String(text) => text.clone(),
+        Value::Array(parts) => parts.iter().filter_map(|part| part["text"].as_str()).collect(),
+        other => other["content"].as_str().unwrap_or_default().to_owned(),
+    }
+}
+
 fn codex_injected(text: &str) -> bool {
     let text = text.trim_start();
     [
@@ -499,7 +500,7 @@ fn summary_of(args: &Value) -> String {
         "prompt",
         "name",
     ];
-    let text = KEYS.iter().find_map(|key| match &args[*key] {
+    let named = KEYS.iter().find_map(|key| match &args[*key] {
         Value::String(s) if !s.trim().is_empty() => Some(s.clone()),
         Value::Array(parts) => {
             let words: Vec<&str> = parts.iter().filter_map(Value::as_str).collect();
@@ -507,6 +508,7 @@ fn summary_of(args: &Value) -> String {
         }
         _ => None,
     });
+    let text = named.or_else(|| args.as_str().map(str::to_owned));
     let line = text.unwrap_or_default().split_whitespace().collect::<Vec<_>>().join(" ");
     match line.char_indices().nth(SUMMARY_MAX_CHARS) {
         Some((end, _)) => format!("{}...", &line[..end]),
@@ -644,7 +646,8 @@ mod tests {
     const CLAUDE: &str = include_str!("../tests/fixtures/claude.jsonl");
     const GEMINI: &str = include_str!("../tests/fixtures/gemini.jsonl");
     const COPILOT: &str = include_str!("../tests/fixtures/copilot.jsonl");
-    const CODEX: &str = include_str!("../tests/fixtures/codex.jsonl");
+    const CODEX_FUNCTION_CALL: &str = include_str!("../tests/fixtures/codex_function_call.jsonl");
+    const CODEX_LIVE: &str = include_str!("../tests/fixtures/codex_live.jsonl");
 
     type ToolShape = (String, String, ToolPhase);
     type Shaped = (Role, String, Option<ToolShape>);
@@ -738,7 +741,7 @@ mod tests {
 
     #[test]
     fn codex_sample_gives_prompt_tool_call_result_and_answer() {
-        let entries = parse_all(Source::Codex, CODEX);
+        let entries = parse_all(Source::Codex, CODEX_FUNCTION_CALL);
         assert_eq!(
             shape(&entries),
             [
@@ -752,8 +755,38 @@ mod tests {
                 (Role::Assistant, "hello".into(), None),
             ]
         );
-        assert!(!Source::Codex.verified());
-        assert!(Source::Claude.verified());
+    }
+
+    #[test]
+    fn codex_live_rollout_gives_prompts_code_tool_calls_and_answers() {
+        let entries = parse_all(Source::Codex, CODEX_LIVE);
+        let roles: Vec<Role> = entries.iter().map(|e| e.role).collect();
+        assert_eq!(
+            roles,
+            [
+                Role::User,
+                Role::Assistant,
+                Role::Tool,
+                Role::Tool,
+                Role::Tool,
+                Role::Tool,
+                Role::Assistant,
+                Role::User,
+                Role::Assistant,
+            ]
+        );
+        let shaped = shape(&entries);
+        let stage_done =
+            "const r = await tools.mcp__tidewatch__stage_done({summary:\"done\"}); text(r);";
+        assert_eq!(shaped[4].2, Some(call("exec", stage_done)));
+        assert_eq!(shaped[5].2, Some(result("exec", stage_done, false)));
+        assert_eq!(
+            shaped[5].1,
+            "Script completed\nWall time 0.0 seconds\nOutput:\n{\"content\":[{\"type\":\"text\",\"text\":\"Recorded. Tidewatch has your summary.\"}],\"isError\":false}"
+        );
+        assert!(shaped[3].1.contains("\nhi\n"));
+        assert_eq!(shaped[8].1, "kiwi");
+        assert!(entries.iter().all(|e| e.ts.is_some()));
     }
 
     #[test]
@@ -1013,7 +1046,8 @@ mod tests {
             (Source::Claude, CLAUDE),
             (Source::Gemini, GEMINI),
             (Source::Copilot, COPILOT),
-            (Source::Codex, CODEX),
+            (Source::Codex, CODEX_FUNCTION_CALL),
+            (Source::Codex, CODEX_LIVE),
         ];
         for (source, text) in cases {
             let whole = parse_all(source, text);
