@@ -848,10 +848,10 @@ mod tests {
     }
 
     #[test]
-    fn codex_is_flagged_experimental_in_the_preview() {
+    fn codex_is_not_flagged_experimental_in_the_preview() {
         let catalog = catalog_with(Profiles::seeded(&["codex".to_owned()]));
         let mut state = open(Group::Repo, &catalog, None);
         state.refresh_preview(&catalog, Some(&paths()));
-        assert_eq!(state.preview().warnings, ["Codex support is experimental."]);
+        assert_eq!(state.preview().warnings, Vec::<String>::new());
     }
 }

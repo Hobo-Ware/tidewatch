@@ -14,7 +14,7 @@ Status: in development. Nothing is released yet, so build from source to try it.
 
 ## What it does
 
-- **Worktree tabs, one agent each.** A new tab makes a worktree and starts Claude Code, Codex (experimental), Gemini CLI or Copilot CLI in it. Profiles set the agent, model and permission level, from read only up to a YOLO level that asks first. Agent tabs block `git push`; Tidewatch pushes for you on approval.
+- **Worktree tabs, one agent each.** A new tab makes a worktree and starts Claude Code, Codex, Gemini CLI or Copilot CLI in it. Profiles set the agent, model and permission level, from read only up to a YOLO level that asks first. Agent tabs block `git push`; Tidewatch pushes for you on approval.
 - **Reader view.** An agent tab shows the agent's answer as readable text on top of the live terminal. One shortcut flips to the raw terminal.
 - **Notes on diff lines.** Leave a note on a line of the diff, then send the notes to the agent as one message.
 - **Workflows.** Chain stages, each with its own agent profile: Ship a feature, Fix a bug and Review a PR come built in, and there is an editor for your own. Gates (tests pass, no blocking findings, your approval) can send the work back a stage before it hands off.

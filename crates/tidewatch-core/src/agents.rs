@@ -2,7 +2,9 @@
 //! user overrides from `profiles.toml`. Pure data plus a version probe; the UI calls the probe off-thread.
 //!
 //! Flags were checked against the installed `--help` of claude 2.1.296, gemini 0.46.0, copilot 1.0.91 and
-//! codex 0.162.1 (see `docs/research/phase-0-spikes.md` and the PLAN.md Phase 0 findings). Repeatable flags
+//! codex 0.162.1, and Claude's and Codex's also by running them (see `docs/research/phase-0-spikes.md`
+//! and the PLAN.md Phase 0 findings). `--help` does not catch flags that conflict; `codex <flags> completion bash`
+//! does, without a model call. Repeatable flags
 //! that take a list (`--allow-tool`, `--mcp-config`, `--include-directories`) are written in the `--flag=value`
 //! form and a trailing task prompt follows a literal `--`, otherwise the list swallows it (checked with claude).
 
@@ -87,7 +89,7 @@ pub struct Agent {
     pub effort: Option<EffortFlag>,
     pub session_id_flag: Option<String>,
     pub resume: Option<ResumeForm>,
-    /// False for Codex (flags verified from `--help`, no live run yet) and for custom agents.
+    /// False for custom agents: only the built-in CLIs were run live.
     pub verified: bool,
     /// The CLI version the built-in flags were checked against.
     pub checked_version: Option<&'static str>,
@@ -161,7 +163,7 @@ fn builtin_agents() -> Vec<Agent> {
             }),
             session_id_flag: None,
             resume: Some(ResumeForm::Subcommand("resume")),
-            verified: false,
+            verified: true,
             checked_version: Some("0.162.1"),
         },
         Agent {
@@ -517,12 +519,12 @@ mod tests {
     }
 
     #[test]
-    fn only_codex_is_unverified() {
+    fn every_built_in_agent_is_verified() {
         let table = AgentTable::builtin();
         let verified: Vec<_> = table.iter().map(|a| (a.id.as_str(), a.verified)).collect();
         assert_eq!(
             verified,
-            [("claude", true), ("codex", false), ("gemini", true), ("copilot", true)]
+            [("claude", true), ("codex", true), ("gemini", true), ("copilot", true)]
         );
     }
 
