@@ -42,6 +42,7 @@ crates/tidewatch-core/  worktrees, profiles, permission levels, workflows, agent
   src/fsutil.rs         atomic file write shared by the settings writers
   src/names.rs          adjective-noun names for new worktrees (pure)
   src/registry.rs       .state/worktrees.toml: the worktrees Tidewatch made, for repair
+  src/session.rs        .state/session.toml (D11): Session, SavedWindow, SavedTab (main, shell, agent); load (bad file -> empty), atomic save
   src/worktree.rs       add (locked, agent/<name>), inspect, remove, list, repair, leftovers (shells out to git)
   src/notes.rs          per-tab review threads in .state/<repo-dir>/<tab>/notes.json: load, atomic save, background writer, PR import links (D4)
   src/tools.rs          Tools (PATH for git and gh), GhError and the gh runner shared by delivery and pr

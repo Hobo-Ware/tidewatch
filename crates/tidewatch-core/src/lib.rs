@@ -20,6 +20,7 @@ pub mod prompt;
 mod registry;
 mod rfc3339;
 pub mod runner;
+pub mod session;
 pub mod status;
 pub mod test_command;
 pub mod tools;
