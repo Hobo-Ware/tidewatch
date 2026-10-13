@@ -1,0 +1,11 @@
+{"sessionId":"dcb4eb89-2468-423d-b8fa-0a11f6bc6e65","projectHash":"0000000000000000000000000000000000000000000000000000000000000000","startTime":"2026-10-12T23:04:25.176Z","lastUpdated":"2026-10-12T23:04:25.176Z","kind":"main"}
+{"$set":{"messages":[{"id":"d04923d38bb0f6017037e74183378ef4","timestamp":"2026-10-12T23:04:25.176Z","type":"user","content":[{"text":"<session_context>\nThis is the Gemini CLI. (redacted)"}]}],"lastUpdated":"2026-10-12T23:04:25.176Z"}}
+{"id":"f4aa681e-edc7-4e9d-969a-dbcc3958607d","timestamp":"2026-10-12T23:04:29.334Z","type":"user","content":[{"text":"Read the file notes.txt and reply with only its content."}]}
+{"$set":{"lastUpdated":"2026-10-12T23:04:29.334Z"}}
+{"id":"f5ef487c-2f10-42a2-908b-a3b031948228","timestamp":"2026-10-12T23:04:31.250Z","type":"gemini","content":"","thoughts":[{"subject":"Analyzing the Instructions","description":"(redacted)","timestamp":"2026-10-12T23:04:31.117Z"}],"model":"gemini-3.5-flash"}
+{"$set":{"lastUpdated":"2026-10-12T23:04:31.250Z"}}
+{"id":"f5ef487c-2f10-42a2-908b-a3b031948228","timestamp":"2026-10-12T23:04:31.250Z","type":"gemini","content":"","thoughts":[{"subject":"Analyzing the Instructions","description":"(redacted)","timestamp":"2026-10-12T23:04:31.117Z"}],"model":"gemini-3.5-flash","toolCalls":[{"id":"read_file__call_388341","name":"read_file","args":{"file_path":"notes.txt"},"result":[{"functionResponse":{"id":"read_file__call_388341","name":"read_file","response":{"output":"hello\n"}}}],"status":"success","timestamp":"2026-10-12T23:04:31.255Z","resultDisplay":"","description":"notes.txt","displayName":"ReadFile","renderOutputAsMarkdown":true}]}
+{"id":"0ce821e4-242f-4d63-a936-59118896bda9","timestamp":"2026-10-12T23:04:31.255Z","type":"user","content":[{"functionResponse":{"id":"read_file__call_388341","name":"read_file","response":{"output":"hello\n"}}}]}
+{"$set":{"lastUpdated":"2026-10-12T23:04:31.255Z"}}
+{"id":"77f1b257-d350-485e-879f-c12da821f541","timestamp":"2026-10-12T23:04:32.638Z","type":"gemini","content":"hello","thoughts":[],"model":"gemini-3.5-flash"}
+{"$set":{"lastUpdated":"2026-10-12T23:04:32.638Z"}}

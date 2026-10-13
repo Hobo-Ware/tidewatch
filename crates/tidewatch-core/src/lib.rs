@@ -23,5 +23,6 @@ pub mod runner;
 pub mod status;
 pub mod test_command;
 pub mod tools;
+pub mod transcript;
 pub mod workflows;
 pub mod worktree;
