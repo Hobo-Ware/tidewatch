@@ -687,6 +687,17 @@ fn start_stage_carries_the_resolved_profile_and_action() {
 }
 
 #[test]
+fn a_run_tells_the_profile_each_stage_launches_with_and_what_it_is_about() {
+    let ship = Workflows::defaults().workflow.remove("ship").unwrap();
+    let runner = Runner::new(&ship, &BTreeMap::new(), ctx(Some("npm test"))).unwrap();
+    let agents: Vec<_> = (0..4).map(|i| runner.profile(i).unwrap().agent.as_str()).collect();
+    assert_eq!(agents, ["claude", "gemini", "claude", "claude"]);
+    assert_eq!(runner.profile(4), None);
+    assert_eq!(runner.context().task, "add a retry");
+    assert_eq!(runner.context().test_command.as_deref(), Some("npm test"));
+}
+
+#[test]
 fn a_run_refuses_a_workflow_that_cannot_run() {
     let unknown = Stage {
         run: StageRun { profile: Some("ghost".into()), ..StageRun::default() },

@@ -303,6 +303,17 @@ impl Runner {
         self.stages.get(index).map(|planned| &planned.stage)
     }
 
+    /// The launch profile stage `index` runs with, as resolved when the run was planned.
+    #[must_use]
+    pub fn profile(&self, index: usize) -> Option<&Profile> {
+        self.stages.get(index).map(|planned| &planned.profile)
+    }
+
+    #[must_use]
+    pub fn context(&self) -> &RunContext {
+        &self.ctx
+    }
+
     /// The stage the run is on (the last one once it is over).
     #[must_use]
     pub fn position(&self) -> usize {
