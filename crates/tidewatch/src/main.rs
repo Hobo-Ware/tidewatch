@@ -57,6 +57,8 @@ mod tab_view;
 mod tabs;
 mod toast;
 mod workflow_ask;
+mod workflow_glue;
+mod workflow_jobs;
 mod workflow_run;
 mod worktree_jobs;
 
