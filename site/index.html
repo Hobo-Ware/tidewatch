@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Tidewatch - AI coding agents, one git worktree each</title>
-<meta name="description" content="Tidewatch is a desktop app for macOS and Linux that runs AI coding agents side by side, one git repo per window. Every tab is its own git worktree, so agents never touch each other's files. Not released yet: build from source.">
+<meta name="description" content="Tidewatch is a desktop app for macOS and Linux that runs AI coding agents side by side, one git repo per window. Every tab is its own git worktree, so agents never touch each other's files. Install with Homebrew on macOS, or the AppImage on Linux.">
 <link rel="canonical" href="https://tidewatch.hoboware.dev/">
 <meta name="theme-color" content="#10131a">
 <link rel="icon" type="image/png" href="favicon.png">
@@ -47,7 +47,7 @@
 
 <nav><div class="wrap">
   <a class="brand" href="#top"><img src="icon.svg" alt="" width="30" height="30">tidewatch</a>
-  <span class="badge">not released yet</span>
+  <span class="badge">v0.1.0</span>
   <div class="navlinks">
     <a href="#features">Features</a>
     <a href="#install">Install</a>
@@ -56,11 +56,11 @@
 </div></nav>
 
 <header class="hero" id="top"><div class="wrap">
-  <a class="pill" href="#install"><b>Status</b> In development. Build from source to try it.</a>
+  <a class="pill" href="https://github.com/Hobo-Ware/tidewatch/releases/latest"><b>New</b> v0.1.0, the first release, for macOS and Linux.</a>
   <h1>AI agents side by side,<br><span class="teal">one worktree each.</span></h1>
   <p class="lede">Tidewatch is a desktop app for macOS and Linux that runs AI coding agents in one window per git repo. Every tab is its own git worktree, a separate checkout on its own branch, so several agents can work on the same repo without touching each other's files. You watch them, read what they did, comment on their diffs and decide what ships.</p>
-  <div class="install"><span class="p">$</span><span class="txt">cargo run -p tidewatch -- &lt;repo&gt;</span><button class="copy" type="button" data-copy="cargo run -p tidewatch -- &lt;repo&gt;">Copy</button></div>
-  <div class="ctas"><a href="#install">Build from source</a><a href="https://github.com/Hobo-Ware/tidewatch">Source on GitHub</a></div>
+  <div class="install"><span class="p">$</span><span class="txt">brew install hobo-ware/tap/tidewatch</span><button class="copy" type="button" data-copy="brew install hobo-ware/tap/tidewatch">Copy</button></div>
+  <div class="ctas"><a href="#install">Install</a><a href="https://github.com/Hobo-Ware/tidewatch">Source on GitHub</a></div>
   <div class="window">
     <img src="shot-hero.png" width="2200" height="1375" alt="Tidewatch showing an agent's finished answer on top, with the worktree's history and the selected commit's diff below, and a note on a diff line">
   </div>
@@ -167,20 +167,19 @@
 
 <section id="install"><div class="wrap">
   <p class="eyebrow">Install</p>
-  <h2>Not released yet. Build it from source.</h2>
-  <p class="sub">There is no download and no Homebrew cask until the first release. The source builds on macOS and Linux.</p>
+  <h2>Install it with Homebrew, or grab a Linux build.</h2>
+  <p class="sub">macOS gets a universal app through the Homebrew cask. Linux gets a tarball and an AppImage from the GitHub Release.</p>
   <div class="steps">
-    <div class="step"><div class="num">01</div><h4>Get the source</h4><p>You need git and a Rust toolchain.</p><pre><span class="p">$</span> git clone https://github.com/Hobo-Ware/tidewatch
-<span class="p">$</span> cd tidewatch</pre></div>
-    <div class="step"><div class="num">02</div><h4>Open a repo</h4><p>Pass the git repo you want a window for.</p><pre><span class="p">$</span> cargo run -p tidewatch -- ~/code/my-repo</pre></div>
+    <div class="step"><div class="num">01</div><h4>Install</h4><p>On macOS, with Homebrew. On Linux, download the AppImage or tarball from the <a href="https://github.com/Hobo-Ware/tidewatch/releases/latest">latest release</a>.</p><pre><span class="p">$</span> brew install hobo-ware/tap/tidewatch</pre></div>
+    <div class="step"><div class="num">02</div><h4>Open a repo</h4><p>Pass the git repo you want a window for.</p><pre><span class="p">$</span> tidewatch ~/code/my-repo</pre></div>
     <div class="step"><div class="num">03</div><h4>Bring an agent</h4><p>Install at least one agent CLI: Claude Code, Codex, Gemini CLI or Copilot CLI. Tidewatch finds the ones on your PATH. Delivery needs <code>gh</code>.</p><pre><span class="p">$</span> claude --version</pre></div>
   </div>
-  <p class="note">Packaged builds come with the first release: a Homebrew cask for macOS, and a tarball and AppImage for Linux. <span class="mono">scripts/bundle-macos.sh</span> and <span class="mono">scripts/package-linux.sh</span> build them locally. Details are in the <a href="https://github.com/Hobo-Ware/tidewatch#readme">README</a>.</p>
+  <p class="note">Builds are not yet signed with an Apple Developer ID: the Homebrew cask clears the download flag, so the app opens without a warning. To build from source instead: <span class="mono">cargo run -p tidewatch -- &lt;repo&gt;</span>. Details are in the <a href="https://github.com/Hobo-Ware/tidewatch#readme">README</a>.</p>
 </div></section>
 
 <div class="closing"><div class="wrap">
   <h2>Run your agents <span class="teal">side by side.</span></h2>
-  <div class="install"><span class="p">$</span><span class="txt">cargo run -p tidewatch -- &lt;repo&gt;</span><button class="copy" type="button" data-copy="cargo run -p tidewatch -- &lt;repo&gt;">Copy</button></div>
+  <div class="install"><span class="p">$</span><span class="txt">brew install hobo-ware/tap/tidewatch</span><button class="copy" type="button" data-copy="brew install hobo-ware/tap/tidewatch">Copy</button></div>
 </div></div>
 
 <footer><div class="wrap">
