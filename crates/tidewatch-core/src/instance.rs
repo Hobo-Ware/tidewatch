@@ -372,13 +372,22 @@ mod tests {
         assert_eq!(next(&rx), Some(Command::Toggle), "the probe did not wedge the accept loop");
     }
 
+    /// A test thread that forks before the listener is dropped holds a copy of it until its exec.
+    fn leave_stale_socket(socket: &Path) {
+        drop(UnixListener::bind(socket).unwrap());
+        let deadline = std::time::Instant::now() + Duration::from_secs(2);
+        while send(socket, &Command::Toggle).is_ok() {
+            assert!(std::time::Instant::now() < deadline, "the dropped listener still answers");
+            std::thread::sleep(Duration::from_millis(10));
+        }
+    }
+
     #[test]
     fn a_stale_socket_file_is_taken_over() {
         let dir = tempfile::tempdir().unwrap();
         let socket = dir.path().join("stale.sock");
-        drop(UnixListener::bind(&socket).unwrap());
+        leave_stale_socket(&socket);
         assert!(socket.exists(), "the crash left the file behind");
-        assert!(send(&socket, &Command::Toggle).is_err());
 
         let (_guard, rx) = serve(primary(claim(&socket, Some(&Command::Toggle))));
         assert!(silent(&rx), "a stale socket gets no command");
@@ -415,7 +424,7 @@ mod tests {
         let (_ga, rx_a) = serve(primary(claim(&a, None)));
         let (_gb, rx_b) = serve(primary(claim(&b, None)));
         let (_go, rx_own) = serve(primary(claim(&own, None)));
-        drop(UnixListener::bind(&stale).unwrap());
+        leave_stale_socket(&stale);
         std::fs::write(dir.path().join("notes.txt"), "not a socket").unwrap();
 
         assert_eq!(toggle_all(dir.path(), Some(&own)), 2);
