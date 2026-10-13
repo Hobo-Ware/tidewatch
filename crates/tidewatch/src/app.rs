@@ -25,6 +25,7 @@ use stdusk_egui::{colors, repaint_handle};
 use tidewatch_core::notes::NotesWriter;
 use tidewatch_core::paths::TidewatchPaths;
 use tidewatch_core::prepare::Prepared;
+use tidewatch_core::tools::Tools;
 use tidewatch_core::worktree::{BranchOutcome, Inspection, Leftover, Worktree};
 
 use crate::agent_events::Hooks;
@@ -34,11 +35,15 @@ use crate::agent_run::{TermSnapshot, progress_fraction};
 use crate::catalog::Catalog;
 use crate::checkout::{self, Plan};
 use crate::close_dialog::{self, Answer, Choice};
+use crate::delivery_card::Delivery;
+use crate::delivery_view;
 use crate::dev_agent::{DevAgent, Mode as DevMode};
 use crate::dev_panes::{self, DevPanes};
 use crate::dev_screenshot::DevScreenshot;
 use crate::dev_view::{DevKeys, DevView};
 use crate::dev_worktree::DevWorktree;
+use crate::flow::Flow;
+use crate::flow_glue;
 use crate::jobs::Jobs;
 use crate::new_tab::{Group, NewTab, Request};
 use crate::new_tab_dialog::{self, Outcome};
@@ -100,6 +105,7 @@ pub(crate) struct Tidewatch {
     settings: Option<Editor>,
     last_profile: Option<String>,
     hooks: Hooks,
+    flow: Flow,
     notifier: Notifier,
     overview: bool,
     focus: bool,
@@ -123,6 +129,7 @@ impl Tidewatch {
         }
         let main = spawn_shell(&cc.egui_ctx, workspace.dir());
         let hooks = Hooks::start(paths.as_ref(), &cc.egui_ctx);
+        let flow = Flow::new(Tools::with_path(agent_path.clone()));
         let dev_view = DevView::from_env();
         let mut app = Self {
             tabs: Tabs::new(Pane::shell(main)),
@@ -146,6 +153,7 @@ impl Tidewatch {
             settings: None,
             last_profile: None,
             hooks,
+            flow,
             notifier: Notifier::desktop(),
             overview: dev_view.overview,
             focus: dev_view.focus,
@@ -348,6 +356,7 @@ impl Tidewatch {
     fn forget_tab(&mut self, id: u64) {
         self.hooks.close_tab(id);
         self.notifier.forget(id);
+        self.flow.forget(id);
     }
 
     fn answer_close(&mut self, answer: Answer, ctx: &egui::Context) {
@@ -534,8 +543,17 @@ impl Tidewatch {
             }
             return;
         };
+        let status = self.tabs.items()[self.tabs.active()]
+            .pane
+            .agent
+            .as_ref()
+            .map(|agent| agent.run.status().clone());
+        let extras = status.and_then(|status| self.flow.extras(active_id, &view.notes, &status));
         let graph_action = history_pane::show(ui, areas.history, view, &mut self.avatars);
-        let notes_changed = diff_pane::show(ui, areas.diff, view);
+        let now_unix = flow_glue::unix_now();
+        let pane = diff_pane::show(ui, areas.diff, view, extras.as_ref(), now_unix);
+        let notes_changed = pane.notes_changed;
+        let toasts = flow_glue::pane_actions(&mut self.flow, view, active_id, pane.actions, ctx);
         let mut clicked_ref = None;
         match graph_action {
             Some(GraphAction::Select(selection)) => {
@@ -546,6 +564,9 @@ impl Tidewatch {
             Some(_) | None => {}
         }
         view.sync(&self.pane_jobs, ctx);
+        for text in toasts {
+            self.show_toast(text, ctx);
+        }
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map_or(0, |d| d.as_secs() as i64);
@@ -628,6 +649,24 @@ impl Tidewatch {
         }
         self.send_dev_keys(now);
         schedule(ctx, polled.wake, now, minimized == Some(true));
+    }
+
+    /// Starts what the flow needs for each agent tab, applies what its jobs finished and presses the
+    /// Enter that follows a paste.
+    fn drive_flow(&mut self, ctx: &egui::Context, now: f64) {
+        let unix = flow_glue::unix_now();
+        let outs = self.flow.drain(ctx, now);
+        for text in flow_glue::apply_outs(outs, &mut self.tabs, &mut self.views) {
+            self.show_toast(text, ctx);
+        }
+        for tab in self.flow.due_enters(now) {
+            flow_glue::press_enter(&mut self.tabs, tab);
+        }
+        let active = self.tabs.items()[self.tabs.active()].id;
+        let facts = flow_glue::facts(&self.tabs, &self.views, active);
+        if let Some(at) = self.flow.tick(&facts, ctx, now, unix) {
+            ctx.request_repaint_after(Duration::from_secs_f64((at - now).max(0.0) + WAKE_SLACK_S));
+        }
     }
 
     fn send_dev_keys(&mut self, now: f64) {
@@ -819,10 +858,14 @@ impl eframe::App for Tidewatch {
         }
         let now = ctx.input(|i| i.time);
         self.drive_agents(&ctx, now);
+        self.drive_flow(&ctx, now);
         self.drive_views();
         let typing_in_a_panel = ctx.text_edit_focused();
-        let modal_open =
-            self.closing.is_some() || self.new_tab.is_some() || self.settings.is_some();
+        let active_id = self.tabs.items()[self.tabs.active()].id;
+        let modal_open = self.closing.is_some()
+            || self.new_tab.is_some()
+            || self.settings.is_some()
+            || self.flow.modal_open(active_id);
         if self.closing.is_none()
             && self.new_tab.is_none()
             && ctx.input_mut(|i| i.consume_key(Modifiers::COMMAND, Key::Comma))
@@ -966,6 +1009,13 @@ impl eframe::App for Tidewatch {
             if !panels {
                 areas.terminal = layout::terminal_only(area);
             }
+            let card = self.flow.tab(active_id).and_then(|state| {
+                state
+                    .delivery
+                    .card_commits()
+                    .map(|n| (n, matches!(state.delivery, Delivery::Building { .. })))
+            });
+            let band = card.map(|_| layout::band_below(&mut areas.terminal, delivery_view::BAND_H));
             let font = egui::FontId::monospace(FONT_SIZE);
             let glyph = ui.painter().layout_no_wrap("M".to_owned(), font.clone(), colors::fg());
             let (cell_w, cell_h) = (glyph.size().x, glyph.size().y);
@@ -1018,6 +1068,11 @@ impl eframe::App for Tidewatch {
                 Body::Failed(message) => status_message(ui, areas.terminal, message, colors::red()),
             }
 
+            if let (Some((commits, building)), Some(band)) = (card, band)
+                && delivery_view::show_card(ui, band, commits, building).is_some()
+            {
+                self.flow.open_card(active_id, &ctx);
+            }
             if panels {
                 self.show_panes(ui, &areas, &ctx);
             }
@@ -1047,6 +1102,7 @@ impl eframe::App for Tidewatch {
         if let Some(answer) = answer {
             self.answer_close(answer, &ctx);
         }
+        flow_glue::dialogs(&ctx, &mut self.flow, active_id);
         if let Some(state) = &mut self.new_tab
             && let Some(outcome) =
                 new_tab_dialog::show(&ctx, state, &self.catalog, self.paths.as_ref())

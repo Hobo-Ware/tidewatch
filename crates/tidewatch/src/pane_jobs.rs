@@ -131,7 +131,9 @@ pub(crate) fn load_diff(
     });
 }
 
-static FINDING_TURN: Mutex<()> = Mutex::new(());
+/// Jobs that read a tab's notes file, change it and write it back take this turn, so two of them (a
+/// finding, a send, a PR pull) never overwrite each other.
+pub(crate) static NOTES_TURN: Mutex<()> = Mutex::new(());
 
 /// Adds an agent's finding to the tab's notes file and answers with the notes as saved. Findings
 /// take turns, so two arriving together never overwrite each other. The file is read from `dir`
@@ -147,7 +149,7 @@ pub(crate) fn add_finding(
     now: i64,
 ) {
     jobs.spawn(ctx, move || {
-        let _turn = FINDING_TURN.lock().unwrap_or_else(PoisonError::into_inner);
+        let _turn = NOTES_TURN.lock().unwrap_or_else(PoisonError::into_inner);
         let mut notes = Notes::load(&file);
         let text = agent_events::stays_inside(&finding.file)
             .then(|| std::fs::read_to_string(dir.join(&finding.file)).ok())

@@ -168,6 +168,13 @@ impl Notes {
         self.pr_roots.get(&root).copied()
     }
 
+    /// GitHub's id of the first comment of the pull request thread that `thread` was imported from or
+    /// posted as.
+    #[must_use]
+    pub fn pr_root_of(&self, thread: u64) -> Option<u64> {
+        self.pr_roots.iter().find(|(_, local)| **local == thread).map(|(root, _)| *root)
+    }
+
     pub fn link_pr_thread(&mut self, root: u64, thread: u64) {
         self.pr_roots.insert(root, thread);
     }
@@ -418,6 +425,16 @@ mod tests {
         value.as_object_mut().unwrap().remove("sent");
         std::fs::write(&file, value.to_string()).unwrap();
         assert_eq!(Notes::load(&file).sent(id), None);
+    }
+
+    #[test]
+    fn a_linked_thread_knows_its_pull_request_root() {
+        let mut notes = sample();
+        let id = notes.threads[0].id;
+        assert_eq!(notes.pr_root_of(id), None);
+        notes.link_pr_thread(900, id);
+        assert_eq!(notes.pr_root_of(id), Some(900));
+        assert_eq!(notes.pr_thread(900), Some(id));
     }
 
     #[test]
