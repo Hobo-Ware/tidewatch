@@ -89,8 +89,15 @@ crates/tidewatch/       the egui app
   src/app/agents.rs     profile and probe results, listener messages to tabs, findings to notes, per-frame agent status and the next wake-up
   src/app/flow.rs       workflow runs, session restore and the delivery flow, driven once per frame
   src/app/settings.rs   opening and saving settings, window preferences, shell events (hotkey, menu bar, other launches), the settings page and its actions
+  src/app/palette.rs    the command palette in the app: open and toggle it, what it lists (tabs, profiles, workflows in a repo), run what it picked
   src/app/overlays.rs   the toast and its pill, and the dialogs drawn over the frame (close, leftovers, delivery, new tab, trust, notice)
   src/app/dev.rs        the TIDEWATCH_DEV_* drivers that need the whole app: start an agent, resume, press keys, leftovers dialog, pick and note
+  src/commands.rs       the one command table: id, title, group, the chord on macOS and on Linux, the Command it runs; consume (most specific chord first), press_event, Gate (which chord works over which screen); key handling, tooltips and hints read it
+  src/commands/rows.rs  the table as rows for the Shortcuts page, and (tests only) the markdown that docs/shortcuts.md must equal
+  src/commands/tests.rs distinct chords per platform, no shadowing, every Action with a chord is in the table, macOS chords as shipped, Linux never takes a bare Ctrl letter, the gate
+  src/palette.rs        the palette's data: items from the table plus tabs, profiles and workflows, Kelp's fuzzy matcher, filter, selection (pure)
+  src/palette_view.rs   draws the palette: search field, rows with matched letters and the chord, arrows, Enter, Esc
+  src/shortcuts_view.rs the Shortcuts page of Settings: the table for this platform as key caps
   src/tabs.rs           tab list and its Action reducer (pure, generic over the pane)
   src/pane.rs           what a tab holds: shell or agent (with its AgentRun and how it was launched), creating, removing, failed; opening results, close policy (pure, generic)
   src/jobs.rs           background thread runner: result channel plus a repaint
@@ -115,7 +122,7 @@ crates/tidewatch/       the egui app
   src/updates.rs        kelp-ui's `Updater` with Tidewatch's repo and cask, the two switches, the status line (pure), saving them; never disabled, so Linux gets the notify-only pill
   src/updates_view.rs   draws the Updates section of General: status, Check now, the pill, the switches (the install one only in install mode)
   src/window_view.rs    draws the Window section: switches, hotkey field with its problem or registration status
-  src/settings_view.rs  the settings view, Profiles, Workflows, Folder trust and General (restore switch, Window section) pages (replaces the terminal area; Cmd+, or the gear)
+  src/settings_view.rs  the settings view, Profiles, Workflows, Folder trust, General (restore switch, Window section) and Shortcuts pages (replaces the terminal area; Cmd+, or the gear)
   src/trust_glue.rs     D14 host: installed CLIs and their trust state, the consent state and its jobs, the grant handed to new tabs and worktree removal
   src/trust_view.rs     D14 wording per CLI (pure), the first-launch consent dialog and the Folder trust settings page
   src/workflow_editor.rs  workflow editor state: drafts per workflow and stage, problems found as you type, workflows to save (pure)
@@ -125,7 +132,7 @@ crates/tidewatch/       the egui app
   src/leftover_glue.rs  Host: the leftover list, the chip, the dialog and its jobs
   src/leftover_view.rs  the chip in the tab strip and the dialog (Clean up for the clean ones, Discard for a dirty one)
   src/close_dialog.rs   keep/delete branch dialog: choices and wording (pure) plus the modal
-  src/layout.rs         terminal/panel split, grid size, tab width, digit keys (pure)
+  src/layout.rs         terminal/panel split, grid size, tab width (pure)
   src/tab_view.rs       per-tab pane state: loaded history, selection, open diff, notes, watcher; wants -> jobs -> answers (stale ones dropped)
   src/pane_jobs.rs      history, status, files, diff, notes, watcher and checkout as jobs
   src/history_pane.rs   History pane: header (branch, ahead/behind, This worktree / Whole repo), kelp-ui graph
@@ -153,7 +160,7 @@ crates/tidewatch/       the egui app
   src/dev_worktree.rs   TIDEWATCH_DEV_WORKTREE switch: open a worktree tab at startup for captures
   src/dev_panes.rs      TIDEWATCH_DEV_SCOPE / _PICK / _NOTE switches: graph scope, selected row, a note for captures
   src/dev_view.rs       TIDEWATCH_DEV_OVERVIEW / _FOCUS / _STATUS_LOG / _KEYS switches: start on a view, log status changes, answer a prompt
-  src/dev_agent.rs      TIDEWATCH_DEV_AGENT / _WORKFLOW / _RESUME / _DIALOG / _SETTINGS / _TASK / _LEVEL switches: start a profile or workflow, resume a saved run (through the restore path), open the dialog or the editor
+  src/dev_agent.rs      TIDEWATCH_DEV_AGENT / _WORKFLOW / _RESUME / _DIALOG / _SETTINGS / _PALETTE / _TASK / _LEVEL switches: start a profile or workflow, resume a saved run (through the restore path), open the dialog, the editor or the palette
   src/dev_workflow.rs   TIDEWATCH_DEV_ASK / _OPEN_STAGE switches: answer a workflow run's question, open a stage under the stepper
   src/dev_flow.rs       TIDEWATCH_DEV_GH_DIR / _AUTO / _SEND / _DELIVER / _PR switches: a fake gh first on PATH, then do once what a click would
   src/flow.rs           Flow: one TabFlow per agent worktree tab (deliver-when-idle, delivery card, PR state), decide() turns frame facts into jobs, finished jobs come back as Out
@@ -180,7 +187,7 @@ crates/tidewatch/       the egui app
   src/stepper_view.rs   draws the header of a workflow tab: stepper, a clicked stage, the ask card, the stopped line
   src/workflow_jobs.rs  open (worktree, base, test command and timeout), launch a stage (fresh token, prepare, divider), run the tests as jobs
   src/workflow_glue.rs  Host: open a workflow or saved-run tab, carry out what a run asks, apply finished jobs, drop a replaced agent's messages (generic over the pty)
-docs/                   concept mockup, research reports
+docs/                   concept mockup, research reports, shortcuts.md (generated from the command table, checked by a test)
 packaging/              Info.plist, reference Homebrew cask (tidewatch.rb), .desktop file, release README
 scripts/                bundle-macos.sh (universal ad-hoc signed Tidewatch.app + zip), package-linux.sh (tarball + AppImage), make-icon.sh (icon from assets/icon.svg)
 assets/                 icon.svg (placeholder), Tidewatch.icns, icon-512.png, tray.svg and tray.png (the menu-bar template icon)
@@ -230,13 +237,13 @@ prints every hook and status change to stderr with a wall-clock time in ms; `TID
 `TIDEWATCH_DEV_KEYS_AFTER` seconds, default 8) types into the newest agent tab once, for Claude's folder-trust prompt.
 `TIDEWATCH_DEV_WORKFLOW=<id>` starts a workflow in a new tab (task from `TIDEWATCH_DEV_TASK`), `TIDEWATCH_DEV_DIALOG=workflow:<id>` opens the dialog on it,
 `TIDEWATCH_DEV_RESUME=<worktree name>` opens the tab of a saved run (`.state/<repo-dir>/<name>/stages.json`) and carries on, `TIDEWATCH_DEV_ASK=approve|retry|stop|reject:<reason>`
-answers the next question a run asks, `TIDEWATCH_DEV_OPEN_STAGE=<n>` opens stage n under the stepper, `TIDEWATCH_DEV_SETTINGS=workflows` opens the workflow editor, `TIDEWATCH_DEV_SETTINGS=trust` the Folder trust page, `TIDEWATCH_DEV_SETTINGS=general` the General page, `TIDEWATCH_FAKE_UPDATE=<version>` shows an update (pill and Settings line; the run makes no check and installs nothing; with a cask install a click on the pill would still run `brew upgrade`, so never click it), `TIDEWATCH_DEV_TRUST=yes|no|undo` answers the first-launch folder trust question once (a fresh `TIDEWATCH_HOME` otherwise shows the dialog; nothing is written until yes).
+answers the next question a run asks, `TIDEWATCH_DEV_OPEN_STAGE=<n>` opens stage n under the stepper, `TIDEWATCH_DEV_SETTINGS=workflows` opens the workflow editor, `TIDEWATCH_DEV_SETTINGS=trust` the Folder trust page, `TIDEWATCH_DEV_SETTINGS=general` the General page, `TIDEWATCH_DEV_SETTINGS=shortcuts` the Shortcuts page, `TIDEWATCH_DEV_PALETTE=<query>|1` opens the command palette filled with that query (use `TIDEWATCH_SCREENSHOT_WAIT=7`: profiles load in the background), `TIDEWATCH_DEV_STATUS_LOG=1` also prints each command a key ran, `TIDEWATCH_FAKE_UPDATE=<version>` shows an update (pill and Settings line; the run makes no check and installs nothing; with a cask install a click on the pill would still run `brew upgrade`, so never click it), `TIDEWATCH_DEV_TRUST=yes|no|undo` answers the first-launch folder trust question once (a fresh `TIDEWATCH_HOME` otherwise shows the dialog; nothing is written until yes).
 `TIDEWATCH_DEV_READER=raw` starts agent tabs on the raw terminal, `TIDEWATCH_DEV_READER_KEY=<s>` presses Cmd+Shift+T after that many
 seconds through the real key path, `TIDEWATCH_DEV_ANSWER=allow|deny` clicks a permission button once, `TIDEWATCH_DEV_REPLY=<text>`
 (`_REPLY_AFTER=<s>`) sends a reply from the Reader's box. Run Claude checks with `CLAUDE_CODE_FORCE_SESSION_PERSISTENCE=1` when the
 shell that starts Tidewatch is itself a Claude session: the child otherwise writes no transcript and the Reader falls back to the terminal.
 Session: every change is saved to `<home>/.tidewatch/.state/session.toml` and the next launch restores it (Settings, General, turns that off). To check it in the background: `TIDEWATCH_DEV_QUIT=<s>` closes the window through the close request (the quit-time save runs), `TIDEWATCH_DEV_SAVE_DEBOUNCE_MS=600000` leaves that quit-time write as the only one, `TIDEWATCH_DEV_SELECT=<n>` (`_SELECT_AFTER`) selects tab n, `TIDEWATCH_DEV_SHOT=<png>` (`_SHOT_AFTER`) saves a screenshot without quitting (the screenshot harness itself saves nothing), `TIDEWATCH_DEV_LEFTOVERS=open|clean` opens the leftover worktrees dialog or presses Clean up. Relaunch with the same `TIDEWATCH_HOME` and repo; `TIDEWATCH_DEV_REPLY` asks a resumed agent a question from the Reader.
-Keys: Cmd+T new tab (the dialog: pick a profile or Shell, permission level, task; Enter starts, Esc cancels), Cmd+W
+Keys (macOS; Linux uses Ctrl+Shift or Alt, the table is `commands.rs` and `docs/shortcuts.md`, and a change goes in the table first): Cmd+Shift+P the command palette, Cmd+T new tab (the dialog: pick a profile or Shell, permission level, task; Enter starts, Esc cancels), Cmd+W
 close the active tab (not the pinned main tab; a worktree tab asks keep/delete branch first), Cmd+1..9 select,
 Cmd+Shift+T flip the active agent tab between the Reader and the raw terminal, Cmd+, the profile editor, Cmd+0 the Overview (Esc or Cmd+0 closes it), Cmd+. focus mode (hides History and Diff).
 The sibling crates are git dependencies pinned by commit (`rev`), not by tag (PLAN.md,
