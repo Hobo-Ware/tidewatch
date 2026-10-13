@@ -37,5 +37,6 @@ pub mod transcript;
 pub mod transcript_locate;
 pub mod trust;
 pub mod trust_apply;
+pub mod update;
 pub mod workflows;
 pub mod worktree;

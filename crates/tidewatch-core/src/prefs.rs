@@ -1,6 +1,6 @@
 //! App-wide switches in `~/.config/tidewatch/settings.toml`: whether launch restores the last
-//! session (PLAN.md, D11, on by default) and the `[window]` table (quake mode, its hotkey, the
-//! menu-bar item).
+//! session (PLAN.md, D11, on by default), the `[window]` table (quake mode, its hotkey, the
+//! menu-bar item) and the `[updates]` table (check for releases, install them).
 //!
 //! A missing or bad file is the defaults, with a stderr note for a bad one: a settings file must
 //! never stop the app.
@@ -21,6 +21,16 @@ pub struct Prefs {
     pub restore_session: bool,
     #[serde(default)]
     pub window: WindowPrefs,
+    #[serde(default)]
+    pub updates: UpdatePrefs,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct UpdatePrefs {
+    #[serde(default = "on")]
+    pub check: bool,
+    #[serde(default = "on")]
+    pub install: bool,
 }
 
 /// How the window behaves: a quake drop-down summoned by a global hotkey, or a plain window.
@@ -47,7 +57,17 @@ fn default_hotkey() -> String {
 
 impl Default for Prefs {
     fn default() -> Self {
-        Self { restore_session: true, window: WindowPrefs::default() }
+        Self {
+            restore_session: true,
+            window: WindowPrefs::default(),
+            updates: UpdatePrefs::default(),
+        }
+    }
+}
+
+impl Default for UpdatePrefs {
+    fn default() -> Self {
+        Self { check: true, install: true }
     }
 }
 
@@ -181,5 +201,37 @@ mod tests {
         let prefs = Prefs::load(&paths);
         assert!(!prefs.restore_session);
         assert!(!prefs.window.quake, "the restore switch did not bring the window section back");
+    }
+
+    #[test]
+    fn updates_check_and_install_by_default() {
+        assert_eq!(Prefs::default().updates, UpdatePrefs { check: true, install: true });
+    }
+
+    #[test]
+    fn a_file_from_before_the_updates_table_gets_its_defaults() {
+        let (_home, paths) = paths();
+        std::fs::create_dir_all(paths.config_dir()).unwrap();
+        std::fs::write(paths.prefs_file(), "[window]\nquake = false\n").unwrap();
+        assert_eq!(Prefs::load(&paths).updates, UpdatePrefs::default());
+    }
+
+    #[test]
+    fn a_partial_updates_table_keeps_the_rest_of_the_defaults() {
+        let (_home, paths) = paths();
+        std::fs::create_dir_all(paths.config_dir()).unwrap();
+        std::fs::write(paths.prefs_file(), "[updates]\ninstall = false\n").unwrap();
+        assert_eq!(Prefs::load(&paths).updates, UpdatePrefs { check: true, install: false });
+    }
+
+    #[test]
+    fn the_updates_table_survives_a_save_and_load_and_leaves_the_rest_alone() {
+        let (_home, paths) = paths();
+        Prefs::update(&paths, |p| p.window.quake = false).unwrap();
+        Prefs::update(&paths, |p| p.updates.check = false).unwrap();
+        let prefs = Prefs::load(&paths);
+        assert_eq!(prefs.updates, UpdatePrefs { check: false, install: true });
+        assert!(!prefs.window.quake);
+        assert!(prefs.restore_session);
     }
 }
