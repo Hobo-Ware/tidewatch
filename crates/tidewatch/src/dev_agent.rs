@@ -5,7 +5,8 @@
 //! - `TIDEWATCH_DEV_WORKFLOW=<workflow id>`: start that workflow in a new tab (the task from `TIDEWATCH_DEV_TASK`).
 //!   `TIDEWATCH_DEV_DIALOG=workflow:<id>` opens the dialog on it.
 //! - `TIDEWATCH_DEV_RESUME=<worktree name>`: open the tab of a saved workflow run and carry on where it was.
-//! - `TIDEWATCH_DEV_SETTINGS=1`: open the settings; `workflows` opens the workflow editor page.
+//! - `TIDEWATCH_DEV_SETTINGS=1`: open the settings; `workflows` opens the workflow editor page, `trust` the folder trust page.
+//! - `TIDEWATCH_DEV_TRUST=yes|no|undo`: answer the folder trust question once the CLIs are known (see `trust_glue`).
 //! - `TIDEWATCH_DEV_TASK=<text>` and `TIDEWATCH_DEV_LEVEL=plan|ask|edits|auto|yolo`: the task and the
 //!   permission level to use with either.
 //!

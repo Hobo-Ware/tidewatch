@@ -1,6 +1,6 @@
-//! The settings view: two pages, the profile editor and the workflow editor, with Save and Close
-//! below. It replaces the terminal area while open, like a settings tab. A full settings screen
-//! is Phase 10; this covers `profiles.toml` and `workflows.toml`.
+//! The settings view: three pages, the profile editor, the workflow editor and folder trust (D14),
+//! with Save and Close below. It replaces the terminal area while open, like a settings tab. A full
+//! settings screen is Phase 10; this covers `profiles.toml`, `workflows.toml` and the trust consent.
 
 use egui::{Align, Layout, Rect, RichText, ScrollArea, UiBuilder, Vec2};
 use stdusk_egui::colors;
@@ -10,6 +10,7 @@ use tidewatch_core::agents::Level;
 use crate::list_row::{Row, pick_row};
 use crate::profile_editor::Editor;
 use crate::settings::{Section, Settings, Status};
+use crate::trust_view;
 use crate::workflow_editor_view;
 
 const MARGIN: f32 = 16.0;
@@ -19,12 +20,14 @@ const FIELD_WIDTH: f32 = 460.0;
 pub(crate) enum Action {
     Save,
     Close,
+    Trust(tidewatch_core::consent::Event),
 }
 
 /// The files the two pages edit, for the line under the tabs.
 pub(crate) struct Files {
     pub(crate) profiles: String,
     pub(crate) workflows: String,
+    pub(crate) trust: String,
 }
 
 pub(crate) fn show(
@@ -32,14 +35,16 @@ pub(crate) fn show(
     area: Rect,
     settings: &mut Settings,
     files: &Files,
+    trust: &trust_view::Page,
 ) -> Option<Action> {
-    let mut action = None;
     ui.scope_builder(UiBuilder::new().max_rect(area.shrink(MARGIN)), |ui| {
+        let mut action = None;
         ui.spacing_mut().item_spacing.y = 6.0;
         sections(ui, settings);
         let file = match settings.section {
             Section::Profiles => &files.profiles,
             Section::Workflows => &files.workflows,
+            Section::Trust => &files.trust,
         };
         ui.label(RichText::new(file).monospace().size(11.5).color(colors::dim()));
         ui.add_space(6.0);
@@ -50,11 +55,20 @@ pub(crate) fn show(
             Section::Workflows => {
                 workflow_editor_view::page(ui, &mut settings.workflows, body_height);
             }
+            Section::Trust => {
+                action = ScrollArea::vertical()
+                    .id_salt("trust_page")
+                    .max_height(body_height)
+                    .show(ui, |ui| trust_view::settings_page(ui, trust))
+                    .inner
+                    .map(Action::Trust);
+            }
         }
         ui.add_space(4.0);
-        action = footer(ui, &settings.status());
-    });
-    action
+        let footer_action = footer(ui, &settings.status(), settings.section != Section::Trust);
+        action.or(footer_action)
+    })
+    .inner
 }
 
 fn sections(ui: &mut egui::Ui, settings: &mut Settings) {
@@ -203,8 +217,7 @@ fn switch_row(ui: &mut egui::Ui, text: &str, on: &mut bool) -> bool {
     .inner
 }
 
-fn footer(ui: &mut egui::Ui, status: &Status) -> Option<Action> {
-    let mut action = None;
+fn status_line(ui: &mut egui::Ui, status: &Status) {
     if let Some(error) = status.error {
         ui.label(RichText::new(error).color(colors::red()));
     } else {
@@ -217,10 +230,19 @@ fn footer(ui: &mut egui::Ui, status: &Status) -> Option<Action> {
         };
         ui.label(RichText::new(text).size(12.0).color(colors::dim()));
     }
+}
+
+fn footer(ui: &mut egui::Ui, status: &Status, saves: bool) -> Option<Action> {
+    let mut action = None;
+    if saves {
+        status_line(ui, status);
+    }
     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
         ui.spacing_mut().item_spacing.x = 8.0;
         let can_save = status.dirty && !status.saving;
-        if ui.add_enabled_ui(can_save, |ui| action_button(ui, "Save", true)).inner.clicked() {
+        if saves
+            && ui.add_enabled_ui(can_save, |ui| action_button(ui, "Save", true)).inner.clicked()
+        {
             action = Some(Action::Save);
         }
         if action_button(ui, "Close", false).clicked() {
@@ -244,14 +266,28 @@ mod tests {
     }
 
     fn files() -> Files {
-        Files { profiles: "profiles.toml".into(), workflows: "workflows.toml".into() }
+        Files {
+            profiles: "profiles.toml".into(),
+            workflows: "workflows.toml".into(),
+            trust: "trust.toml".into(),
+        }
+    }
+
+    fn page() -> trust_view::Page<'static> {
+        trust_view::Page {
+            consent: tidewatch_core::consent::Consent::Undecided,
+            state: None,
+            root: "/home/u/.tidewatch",
+            added: 0,
+            busy: false,
+        }
     }
 
     #[test]
-    fn both_pages_render_headless_and_ask_for_nothing_until_clicked() {
+    fn all_pages_render_headless_and_ask_for_nothing_until_clicked() {
         let mut settings = settings();
         let ctx = egui::Context::default();
-        for section in [Section::Profiles, Section::Workflows] {
+        for section in [Section::Profiles, Section::Workflows, Section::Trust] {
             settings.section = section;
             for _ in 0..2 {
                 let raw = RawInput {
@@ -265,7 +301,7 @@ mod tests {
                 let mut action = None;
                 let _ = ctx.run_ui(raw, |ui| {
                     let area = ui.max_rect();
-                    action = show(ui, area, &mut settings, &files());
+                    action = show(ui, area, &mut settings, &files(), &page());
                 });
                 assert!(action.is_none());
             }
@@ -283,7 +319,7 @@ mod tests {
                 ..RawInput::default()
             };
             let mut action = None;
-            let _ = ctx.run_ui(raw, |ui| action = footer(ui, &status));
+            let _ = ctx.run_ui(raw, |ui| action = footer(ui, &status, true));
             action
         };
         assert!(shown(Status { error: None, saving: false, dirty: false }).is_none());

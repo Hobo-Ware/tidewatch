@@ -11,6 +11,7 @@ use crate::workflow_editor;
 pub(crate) enum Section {
     Profiles,
     Workflows,
+    Trust,
 }
 
 pub(crate) struct Settings {
@@ -36,10 +37,11 @@ impl Settings {
     }
 
     /// The tabs of the view, with a mark on the one that has unsaved edits.
-    pub(crate) fn sections(&self) -> [(Section, &'static str, bool); 2] {
+    pub(crate) fn sections(&self) -> [(Section, &'static str, bool); 3] {
         [
             (Section::Profiles, "Profiles", self.profiles.dirty),
             (Section::Workflows, "Workflows", self.workflows.dirty),
+            (Section::Trust, "Folder trust", false),
         ]
     }
 
@@ -56,6 +58,7 @@ impl Settings {
                 saving: self.workflows.saving,
                 dirty: self.workflows.dirty,
             },
+            Section::Trust => Status { error: None, saving: false, dirty: false },
         }
     }
 
@@ -90,7 +93,11 @@ mod tests {
         assert_eq!(settings.section, Section::Profiles);
         assert_eq!(
             settings.sections(),
-            [(Section::Profiles, "Profiles", false), (Section::Workflows, "Workflows", false)]
+            [
+                (Section::Profiles, "Profiles", false),
+                (Section::Workflows, "Workflows", false),
+                (Section::Trust, "Folder trust", false),
+            ]
         );
         assert!(!settings.status().dirty);
     }

@@ -103,6 +103,7 @@ impl Fixture {
             catalog: &self.catalog,
             listener: None,
             tools: Tools::with_path(std::env::var_os("PATH").unwrap_or_default()),
+            trust: None,
         };
         self.host.open(&self.ctx, &mut self.tabs, &env, &self.repo, existing, start, 0.0)
     }
@@ -113,6 +114,7 @@ impl Fixture {
             catalog: &self.catalog,
             listener: None,
             tools: Tools::with_path(std::env::var_os("PATH").unwrap_or_default()),
+            trust: None,
         };
         let agent = |_: &Path, _: &Prepared| {
             self.spawned.set(self.spawned.get() + 1);

@@ -160,6 +160,7 @@ fn a_stage_gets_a_fresh_token_with_its_generation_a_prompt_and_a_divider() {
         worktree: worktree.clone(),
         path_var: OsString::from("/usr/bin:/bin"),
         listener: Some(Arc::clone(&listener)),
+        trust: None,
     };
 
     launch_stage(&jobs, &ctx, spec(1));
@@ -221,6 +222,7 @@ fn a_stage_that_cannot_be_prepared_says_why() {
         worktree,
         path_var: OsString::from("/usr/bin"),
         listener: None,
+        trust: None,
     };
     let jobs = Jobs::new();
     launch_stage(&jobs, &egui::Context::default(), spec);
