@@ -1,11 +1,12 @@
 //! Live end-to-end check of the listener against a real agent CLI, run by hand:
 //!
-//! `cargo run -p tidewatch-core --example live_check -- <claude|gemini|copilot> <git repo> [prompt]`
+//! `cargo run -p tidewatch-core --example live_check -- <claude|gemini|copilot|codex> <git repo> [prompt]`
 //!
 //! Starts the listener, registers one tab, builds the launch with `launch_command` (hooks and MCP
 //! wired, never YOLO), runs the CLI headless with a 120 second limit and prints every event that
 //! arrives. `LIVE_LEVEL=plan|ask|edits|auto` picks the permission level (default edits, never YOLO).
-//! Use a throwaway repo: the agent may write files in it.
+//! Codex runs as `codex exec`, which has no `--ask-for-approval`, so that pair is dropped; point
+//! `CODEX_HOME` at a throwaway folder. Use a throwaway repo: the agent may write files in it.
 
 use std::io::Write as _;
 use std::path::{Path, PathBuf};
@@ -15,7 +16,9 @@ use std::time::{Duration, Instant};
 
 use tidewatch_core::agents::{AgentTable, ArgList, Level, Wiring};
 use tidewatch_core::events::TabEvent;
-use tidewatch_core::launch::{LaunchCtx, gemini_project_settings, launch_command, mcp_config_json};
+use tidewatch_core::launch::{
+    LaunchCtx, ensure_no_push_helper, gemini_project_settings, launch_command, mcp_config_json,
+};
 use tidewatch_core::listener::{Listener, TabRegistration};
 use tidewatch_core::paths::TidewatchPaths;
 use tidewatch_core::profiles::Profile;
@@ -26,7 +29,7 @@ const DEFAULT_PROMPT: &str = "call the tidewatch stage_done tool with summary he
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let [agent_id, repo, rest @ ..] = args.as_slice() else {
-        eprintln!("usage: live_check <claude|gemini|copilot> <git repo> [prompt]");
+        eprintln!("usage: live_check <claude|gemini|copilot|codex> <git repo> [prompt]");
         std::process::exit(2);
     };
     let prompt = rest.first().map_or(DEFAULT_PROMPT, String::as_str);
@@ -62,8 +65,12 @@ fn main() {
     if let Some(json) = &mcp_json {
         std::fs::write(&mcp_file, json).expect("write the MCP config");
     }
+    let guard_dir = home.path().join("guard");
+    std::fs::create_dir_all(&guard_dir).expect("create the guard dir");
+    ensure_no_push_helper(&guard_dir).expect("write the no-push helper");
     let ctx = LaunchCtx {
         worktree: repo.clone(),
+        guard_bin_dir: Some(guard_dir),
         worktree_tab: true,
         hooks: Some(hook.clone()),
         mcp_config: Some(mcp_file),
@@ -77,8 +84,13 @@ fn main() {
     }
 
     let launch = launch_command(agent, &profile, &ctx).expect("a launch");
-    let mut args = launch.args.clone();
-    args.extend(["-p".into(), prompt.into()]);
+    let mut args = if agent.wiring == Wiring::Codex {
+        codex_exec_args(&launch.args, prompt)
+    } else {
+        let mut args = launch.args.clone();
+        args.extend(["-p".into(), prompt.into()]);
+        args
+    };
     if agent.wiring == Wiring::Copilot {
         args.extend(["--no-auto-update".into(), "-s".into()]);
     }
@@ -125,6 +137,20 @@ fn main() {
     println!("RESULT hook events: {hooks}, stage_done hello: {stage_done}");
     let _ = std::io::stdout().flush();
     cleanup(&repo);
+}
+
+fn codex_exec_args(launch_args: &[String], prompt: &str) -> Vec<String> {
+    let mut args = vec!["exec".to_owned()];
+    let mut rest = launch_args.iter();
+    while let Some(arg) = rest.next() {
+        if arg == "--ask-for-approval" {
+            rest.next();
+        } else {
+            args.push(arg.clone());
+        }
+    }
+    args.extend(["--".to_owned(), prompt.to_owned()]);
+    args
 }
 
 fn level_from_env() -> Level {
