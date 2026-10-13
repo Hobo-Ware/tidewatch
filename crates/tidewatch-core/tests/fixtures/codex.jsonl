@@ -1,0 +1,9 @@
+{"timestamp":"2026-10-13T09:00:00.000Z","type":"session_meta","payload":{"id":"01a0f1e4-08db-7b90-874b-f9ed5a620212","cwd":"/work/demo","originator":"codex-tui","cli_version":"0.162.1","source":"cli","thread_source":"user"}}
+{"timestamp":"2026-10-13T09:00:00.100Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"<environment_context>\n  <cwd>/work/demo</cwd>\n</environment_context>"}]}}
+{"timestamp":"2026-10-13T09:00:01.000Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"Run cat notes.txt then reply with one word."}]}}
+{"timestamp":"2026-10-13T09:00:01.050Z","type":"event_msg","payload":{"type":"user_message","message":"Run cat notes.txt then reply with one word."}}
+{"timestamp":"2026-10-13T09:00:02.000Z","type":"response_item","payload":{"type":"reasoning","summary":[],"content":null}}
+{"timestamp":"2026-10-13T09:00:03.000Z","type":"response_item","payload":{"type":"function_call","name":"shell","arguments":"{\"command\":[\"bash\",\"-lc\",\"cat notes.txt\"],\"workdir\":\"/work/demo\"}","call_id":"call_1"}}
+{"timestamp":"2026-10-13T09:00:04.000Z","type":"response_item","payload":{"type":"function_call_output","call_id":"call_1","output":"{\"output\":\"hello\\n\",\"metadata\":{\"exit_code\":0}}"}}
+{"timestamp":"2026-10-13T09:00:05.000Z","type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"hello"}]}}
+{"timestamp":"2026-10-13T09:00:05.050Z","type":"event_msg","payload":{"type":"agent_message","message":"hello"}}
