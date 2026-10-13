@@ -1,0 +1,4 @@
+User-agent: *
+Allow: /
+
+Sitemap: https://tidewatch.hoboware.dev/sitemap.xml
