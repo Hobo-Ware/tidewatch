@@ -203,6 +203,13 @@ impl TabView {
         self.want.insert(Request::Notes);
     }
 
+    /// A job rewrote the notes file (sent marks, pulled PR comments, a post link) and answers with
+    /// what it saved.
+    pub(crate) fn set_notes(&mut self, notes: Notes) {
+        self.notes = notes;
+        self.notes_ready = true;
+    }
+
     pub(crate) fn is_active(&self) -> bool {
         self.active
     }

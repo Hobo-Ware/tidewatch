@@ -24,6 +24,14 @@ pub(crate) fn split(area: Rect) -> Layout {
     }
 }
 
+/// Takes a band of `height` off the bottom of the terminal area, for a card between the terminal and
+/// the panes, and returns it.
+pub(crate) fn band_below(terminal: &mut Rect, height: f32) -> Rect {
+    let band = Rect::from_min_max(pos2(terminal.left(), terminal.bottom() - height), terminal.max);
+    terminal.max.y -= height;
+    band
+}
+
 /// The Other group has no graph or diff: the terminal takes the whole area.
 pub(crate) fn terminal_only(area: Rect) -> Rect {
     area.shrink(TERMINAL_PAD)
@@ -90,6 +98,14 @@ mod tests {
     fn terminal_only_fills_the_area_minus_the_padding() {
         let r = terminal_only(area());
         assert_eq!(r, area().shrink(TERMINAL_PAD));
+    }
+
+    #[test]
+    fn a_band_comes_off_the_bottom_of_the_terminal() {
+        let mut terminal = Rect::from_min_max(pos2(10.0, 50.0), pos2(990.0, 400.0));
+        let band = band_below(&mut terminal, 40.0);
+        assert_eq!(terminal.bottom(), 360.0);
+        assert_eq!(band, Rect::from_min_max(pos2(10.0, 360.0), pos2(990.0, 400.0)));
     }
 
     #[test]

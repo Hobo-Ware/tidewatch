@@ -14,7 +14,9 @@ use stdusk_egui::ui::icons;
 use stdusk_egui::widgets::{chip, icon_button};
 use tidewatch_core::notes::Notes;
 
+use crate::flow::PaneExtras;
 use crate::note_actions;
+use crate::notes_strip::{self, StripAction};
 use crate::tab_view::TabView;
 
 const SIDE_PAD: f32 = 14.0;
@@ -53,10 +55,33 @@ pub(crate) fn notes_summary(notes: &Notes) -> String {
     }
 }
 
-/// Draws the pane and returns whether the notes changed and need saving.
-pub(crate) fn show(ui: &mut Ui, rect: Rect, view: &mut TabView) -> bool {
+/// What the user asked for in the pane beyond editing notes in the diff.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum PaneAction {
+    SendAll,
+    ToggleAuto,
+    PullPr,
+    OpenUrl(String),
+    Strip(StripAction),
+}
+
+#[derive(Default)]
+pub(crate) struct PaneOut {
+    pub(crate) notes_changed: bool,
+    pub(crate) actions: Vec<PaneAction>,
+}
+
+/// Draws the pane. `extras` is what an agent tab adds: the notes strip, the send buttons and the PR
+/// chip; a tab without an agent passes `None`. `now` is unix seconds.
+pub(crate) fn show(
+    ui: &mut Ui,
+    rect: Rect,
+    view: &mut TabView,
+    extras: Option<&PaneExtras>,
+    now: i64,
+) -> PaneOut {
     ui.painter().rect_filled(rect, 0.0, theme::bg());
-    let mut changed = false;
+    let mut out = PaneOut::default();
     ui.scope_builder(UiBuilder::new().id_salt("diff-pane").max_rect(rect), |ui| {
         ui.set_clip_rect(rect.intersect(ui.clip_rect()));
         ui.spacing_mut().item_spacing = vec2(0.0, 0.0);
@@ -66,16 +91,105 @@ pub(crate) fn show(ui: &mut Ui, rect: Rect, view: &mut TabView) -> bool {
         }
         let header = take_row(ui, rect, 0.0, HEADER_H);
         show_header(ui, header, view);
+        if let Some(extras) = extras {
+            header_actions(ui, header, extras, &mut out.actions);
+        }
         let top = HEADER_H;
         let files_h = FILE_ROW_H * (view.files.len() as f32).min(FILES_MAX_ROWS);
         let files = take_row(ui, rect, top, files_h);
         show_files(ui, files, view);
         let toolbar = take_row(ui, rect, top + files_h, TOOLBAR_H);
         show_toolbar(ui, toolbar, view);
-        let body = Rect::from_min_max(pos2(rect.left(), toolbar.bottom()), rect.max);
-        changed = show_body(ui, body, view);
+        if let Some(extras) = extras {
+            toolbar_pr(ui, toolbar, extras, &mut out.actions);
+        }
+        let strip_h = extras.map_or(0.0, |e| notes_strip::height(e.rows.len()));
+        if let Some(extras) = extras.filter(|_| strip_h > 0.0) {
+            let strip = take_row(ui, rect, top + files_h + TOOLBAR_H, strip_h);
+            let actions = notes_strip::show(ui, strip, &extras.rows, now);
+            out.actions.extend(actions.into_iter().map(PaneAction::Strip));
+        }
+        let body = Rect::from_min_max(pos2(rect.left(), toolbar.bottom() + strip_h), rect.max);
+        out.notes_changed = show_body(ui, body, view);
     });
-    changed
+    out
+}
+
+fn small_button(ui: &mut Ui, label: &str, selected: bool) -> egui::Response {
+    let text = RichText::new(label).size(11.5);
+    ui.add(egui::Button::new(text).selected(selected).corner_radius(5))
+}
+
+/// Send all open and the deliver-when-idle switch, on the header's last line.
+fn header_actions(ui: &mut Ui, header: Rect, extras: &PaneExtras, actions: &mut Vec<PaneAction>) {
+    let area = Rect::from_min_max(
+        pos2(header.left() + SIDE_PAD, header.top() + 40.0),
+        pos2(header.right() - SIDE_PAD, header.bottom() - 4.0),
+    );
+    ui.scope_builder(
+        UiBuilder::new()
+            .id_salt("diff-header-actions")
+            .max_rect(area)
+            .layout(Layout::right_to_left(Align::Center)),
+        |ui| {
+            ui.spacing_mut().item_spacing.x = 6.0;
+            let label = format!("Send all open ({})", extras.pending);
+            let ready = extras.send_all.is_ok() && extras.pending > 0;
+            let send = ui.add_enabled(
+                ready,
+                egui::Button::new(RichText::new(label).size(11.5)).corner_radius(5),
+            );
+            let send = match extras.send_all {
+                Err(reason) => send.on_disabled_hover_text(reason),
+                Ok(()) if extras.pending == 0 => send.on_disabled_hover_text("No unsent open notes"),
+                Ok(()) => send.on_hover_text("Paste every unsent open note into the agent's terminal"),
+            };
+            if send.clicked() {
+                actions.push(PaneAction::SendAll);
+            }
+            let switch = small_button(ui, "Deliver when idle", extras.auto).on_hover_text(
+                "Send queued notes by themselves when the agent is done (never while it works or waits on you)",
+            );
+            if switch.clicked() {
+                actions.push(PaneAction::ToggleAuto);
+            }
+        },
+    );
+}
+
+/// The PR chip and "Pull PR comments" on the toolbar's right.
+fn toolbar_pr(ui: &mut Ui, toolbar: Rect, extras: &PaneExtras, actions: &mut Vec<PaneAction>) {
+    let Some(chip) = &extras.chip else { return };
+    let area = toolbar.shrink2(vec2(SIDE_PAD - 4.0, 0.0));
+    ui.scope_builder(
+        UiBuilder::new()
+            .id_salt("diff-toolbar-pr")
+            .max_rect(area)
+            .layout(Layout::right_to_left(Align::Center)),
+        |ui| {
+            ui.spacing_mut().item_spacing.x = 6.0;
+            let pull = ui.add_enabled(
+                !extras.pulling,
+                egui::Button::new(
+                    RichText::new(if extras.pulling { "Pulling..." } else { "Pull PR comments" })
+                        .size(11.5),
+                )
+                .corner_radius(5),
+            );
+            if pull.on_hover_text("Import the pull request's review comments as notes").clicked() {
+                actions.push(PaneAction::PullPr);
+            }
+            let tag = ui
+                .add(
+                    egui::Button::new(RichText::new(&chip.text).size(11.5).color(theme::added()))
+                        .corner_radius(10),
+                )
+                .on_hover_text(format!("{} - click to open in the browser", chip.url));
+            if tag.clicked() {
+                actions.push(PaneAction::OpenUrl(chip.url.clone()));
+            }
+        },
+    );
 }
 
 fn take_row(ui: &Ui, rect: Rect, top: f32, height: f32) -> Rect {
