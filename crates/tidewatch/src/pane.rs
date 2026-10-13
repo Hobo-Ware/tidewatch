@@ -144,11 +144,11 @@ impl<T> Pane<T> {
     }
 }
 
-/// Titles of the tabs that run an agent straight in the shared folder (the Other group), for the
-/// same-folder warning. A worktree tab has a folder of its own.
+/// Titles of the tabs of the visible repo that run an agent straight in the shared folder (the
+/// Other group), for the same-folder warning. A worktree tab has a folder of its own.
 pub(crate) fn agent_tabs_in_folder<T>(tabs: &Tabs<Pane<T>>) -> Vec<String> {
-    tabs.items()
-        .iter()
+    tabs.in_group(tabs.active_group())
+        .map(|(_, tab)| tab)
         .filter(|tab| {
             tab.pane.agent.is_some()
                 && tab.pane.worktree.is_none()

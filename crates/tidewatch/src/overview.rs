@@ -1,6 +1,5 @@
 //! What the Overview lists: one row per agent tab, grouped by repo (or folder), with the tabs that
-//! need you pulled out on top. Built from plain data so it takes any number of places; today a
-//! window has one.
+//! need you pulled out on top. Built from plain data, one place per repo the window holds.
 
 use std::path::Path;
 
@@ -102,13 +101,19 @@ pub(crate) fn build(places: Vec<PlaceInput>) -> Overview {
     Overview { needs, places: grouped, counts }
 }
 
-/// The agent tabs of one window as a place. Plain shells and the pinned main tab are not agents.
-pub(crate) fn collect<T>(label: &str, dir: &Path, tabs: &Tabs<Pane<T>>, now: f64) -> PlaceInput {
+/// The agent tabs of one repo of the window (a tab group) as a place. Plain shells and the pinned
+/// main tab are not agents.
+pub(crate) fn collect<T>(
+    label: &str,
+    dir: &Path,
+    group: usize,
+    tabs: &Tabs<Pane<T>>,
+    now: f64,
+) -> PlaceInput {
     let folder = dir.file_name().map_or_else(String::new, |n| n.to_string_lossy().into_owned());
     let rows = tabs
-        .items()
-        .iter()
-        .filter_map(|tab| {
+        .in_group(group)
+        .filter_map(|(_, tab)| {
             let agent = tab.pane.agent.as_ref()?;
             let branch = tab
                 .pane
@@ -277,7 +282,7 @@ mod tests {
             "Reviewer".into(),
             Pane { body: Body::Shell(3), worktree: None, agent: agent("Reviewer") },
         );
-        let input = collect("web", Path::new("/work/web"), &tabs, 5.0);
+        let input = collect("web", Path::new("/work/web"), 0, &tabs, 5.0);
         assert_eq!(input.label, "web");
         assert_eq!(input.path, "/work/web");
         let branches: Vec<&str> = input.rows.iter().map(|r| r.branch.as_str()).collect();
@@ -285,6 +290,36 @@ mod tests {
         assert_eq!(titles(&input.rows), ["brave-otter", "Reviewer"]);
         assert_eq!(input.rows[0].elapsed, 5.0);
         assert_eq!(input.rows[0].status, AgentStatus::SettingUp);
+    }
+
+    #[test]
+    fn each_repo_of_the_window_is_a_place_with_its_own_agent_tabs() {
+        let agent = |name: &str| {
+            Some(AgentTab::new(name.into(), AgentRun::setting_up("claude".into(), 0.0)))
+        };
+        let mut tabs: Tabs<Pane<u32>> = Tabs::new(Pane::shell(0));
+        tabs.push(
+            "web-agent".into(),
+            Pane { body: Body::Shell(1), worktree: None, agent: agent("A") },
+        );
+        let api = tabs.add_group(Pane::shell(10));
+        tabs.push_in(
+            api,
+            "api-agent".into(),
+            Pane { body: Body::Shell(2), worktree: None, agent: agent("B") },
+        );
+        let places = vec![
+            collect("web", Path::new("/work/web"), 0, &tabs, 0.0),
+            collect("api", Path::new("/work/api"), api, &tabs, 0.0),
+        ];
+        let overview = build(places);
+        assert_eq!(overview.counts.setup, 2);
+        let per_place: Vec<(&str, Vec<&str>)> = overview
+            .places
+            .iter()
+            .map(|place| (place.label.as_str(), titles(&place.rows)))
+            .collect();
+        assert_eq!(per_place, [("web", vec!["web-agent"]), ("api", vec!["api-agent"])]);
     }
 
     #[test]
@@ -325,7 +360,7 @@ mod tests {
                 )),
             },
         );
-        let rows = collect("web", Path::new("/work/web"), &tabs, 5.0).rows;
+        let rows = collect("web", Path::new("/work/web"), 0, &tabs, 5.0).rows;
         assert_eq!(rows[0].workflow.as_deref(), Some("Ship a feature: Work 1/4"));
         assert_eq!(rows[1].workflow, None);
     }
