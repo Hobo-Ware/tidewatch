@@ -135,6 +135,28 @@ mod tests {
     }
 
     #[test]
+    fn the_restart_launch_beside_a_window_that_is_still_closing_ends_up_with_a_window() {
+        let dir = tempfile::tempdir().unwrap();
+        let socket = dir.path().join("a.sock");
+        let repo = Path::new("/work/web");
+        let (old, old_rx) = serve(primary(begin(Mode::HandOver, &socket, repo)));
+        old.set_closing(true);
+        let closed = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(250));
+            drop(old);
+        });
+
+        let new = begin(Mode::HandOver, &socket, repo);
+        closed.join().unwrap();
+
+        assert!(matches!(new, Start::Run(Some(_))), "the new copy opens its own window");
+        assert!(
+            old_rx.recv_timeout(Duration::from_millis(200)).is_err(),
+            "the old one acted on nothing"
+        );
+    }
+
+    #[test]
     fn a_background_run_beside_a_live_window_neither_exits_nor_disturbs_it() {
         let dir = tempfile::tempdir().unwrap();
         let socket = dir.path().join("a.sock");

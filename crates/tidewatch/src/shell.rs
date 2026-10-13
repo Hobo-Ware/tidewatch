@@ -44,7 +44,7 @@ pub(crate) struct Shell<O: Os> {
     label: String,
     quake: Quake,
     inbox: Receiver<Command>,
-    _guard: Option<Guard>,
+    guard: Option<Guard>,
     registered: Option<Chord>,
     attempted: Option<Chord>,
     problem: Option<String>,
@@ -70,13 +70,21 @@ impl<O: Os> Shell<O> {
             label,
             quake: Quake::new(),
             inbox,
-            _guard: guard,
+            guard,
             registered: None,
             attempted: None,
             problem: None,
             tray_built: false,
             dock: None,
             spaces: None,
+        }
+    }
+
+    /// Tells launches that this window is leaving, so they wait for its socket instead of handing
+    /// it a folder to open.
+    pub(crate) fn set_closing(&self, closing: bool) {
+        if let Some(guard) = &self.guard {
+            guard.set_closing(closing);
         }
     }
 
