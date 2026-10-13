@@ -212,7 +212,7 @@ impl Parser {
                 }
                 let text = gemini_user_text(&line["content"]);
                 entry(Role::User, Some(&text), ts)
-                    .filter(|e| !e.text.starts_with("<session_context>"))
+                    .filter(|e| !gemini_injected(&e.text))
                     .into_iter()
                     .collect()
             }
@@ -467,6 +467,11 @@ fn gemini_user_text(content: &Value) -> String {
     }
 }
 
+/// Gemini writes its own workspace summary as a user message; it is not something the user typed.
+fn gemini_injected(text: &str) -> bool {
+    text.starts_with("<session_context>") || text.starts_with("- **Workspace Directories:**")
+}
+
 fn codex_injected(text: &str) -> bool {
     let text = text.trim_start();
     [
@@ -683,6 +688,12 @@ mod tests {
             entries[1].tool.as_ref().and_then(|t| t.id.as_deref()),
             Some("toolu_01CJPLN1Vrsb8mQ2XYzmCoXm")
         );
+    }
+
+    #[test]
+    fn geminis_own_workspace_summary_is_not_a_user_turn() {
+        let line = r#"{"id":"u1","timestamp":"2026-10-12T23:04:25.176Z","type":"user","content":[{"text":"- **Workspace Directories:**\n  - /work"}]}"#;
+        assert_eq!(Parser::new(Source::Gemini).feed_line(line), Vec::new());
     }
 
     #[test]
