@@ -1,0 +1,202 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tidewatch - AI coding agents, one git worktree each</title>
+<meta name="description" content="Tidewatch is a desktop app for macOS and Linux that runs AI coding agents side by side, one git repo per window. Every tab is its own git worktree, so agents never touch each other's files. Not released yet: build from source.">
+<link rel="canonical" href="https://tidewatch.hoboware.dev/">
+<meta name="theme-color" content="#10131a">
+<link rel="icon" type="image/png" href="favicon.png">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<meta property="og:site_name" content="Tidewatch">
+<meta property="og:title" content="Tidewatch - AI coding agents, one git worktree each">
+<meta property="og:description" content="A desktop app for macOS and Linux that runs AI coding agents side by side. Every tab is its own git worktree.">
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://tidewatch.hoboware.dev/">
+<meta property="og:image" content="https://tidewatch.hoboware.dev/tidewatch-og.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="The Tidewatch mark next to the app window: an agent's answer, the worktree history and a diff">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Tidewatch - AI coding agents, one git worktree each">
+<meta name="twitter:description" content="A desktop app for macOS and Linux that runs AI coding agents side by side. Every tab is its own git worktree.">
+<meta name="twitter:image" content="https://tidewatch.hoboware.dev/tidewatch-og.png">
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "SoftwareApplication",
+  "name": "Tidewatch",
+  "description": "A desktop app that runs AI coding agents side by side, one git worktree each.",
+  "applicationCategory": "DeveloperApplication",
+  "operatingSystem": "macOS, Linux",
+  "url": "https://tidewatch.hoboware.dev/",
+  "image": "https://tidewatch.hoboware.dev/tidewatch-og.png",
+  "screenshot": "https://tidewatch.hoboware.dev/shot-hero.png",
+  "license": "https://opensource.org/licenses/MIT",
+  "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" },
+  "author": { "@type": "Organization", "name": "Hoboware", "url": "https://github.com/Hobo-Ware" }
+}
+</script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<nav><div class="wrap">
+  <a class="brand" href="#top"><img src="icon.svg" alt="" width="30" height="30">tidewatch</a>
+  <span class="badge">not released yet</span>
+  <div class="navlinks">
+    <a href="#features">Features</a>
+    <a href="#install">Install</a>
+    <a class="gh" href="https://github.com/Hobo-Ware/tidewatch">GitHub</a>
+  </div>
+</div></nav>
+
+<header class="hero" id="top"><div class="wrap">
+  <a class="pill" href="#install"><b>Status</b> In development. Build from source to try it.</a>
+  <h1>AI agents side by side,<br><span class="teal">one worktree each.</span></h1>
+  <p class="lede">Tidewatch is a desktop app for macOS and Linux that runs AI coding agents in one window per git repo. Every tab is its own git worktree, a separate checkout on its own branch, so several agents can work on the same repo without touching each other's files. You watch them, read what they did, comment on their diffs and decide what ships.</p>
+  <div class="install"><span class="p">$</span><span class="txt">cargo run -p tidewatch -- &lt;repo&gt;</span><button class="copy" type="button" data-copy="cargo run -p tidewatch -- &lt;repo&gt;">Copy</button></div>
+  <div class="ctas"><a href="#install">Build from source</a><a href="https://github.com/Hobo-Ware/tidewatch">Source on GitHub</a></div>
+  <div class="window">
+    <img src="shot-hero.png" width="2200" height="1375" alt="Tidewatch showing an agent's finished answer on top, with the worktree's history and the selected commit's diff below, and a note on a diff line">
+  </div>
+</div></header>
+
+<section id="features"><div class="wrap">
+  <p class="eyebrow">Features</p>
+  <h2>Run several agents without the mess.</h2>
+  <p class="sub">The terminal sits on top. Below it are the history of that worktree and the diff of the selected commit.</p>
+  <div class="grid">
+    <div class="card">
+      <svg viewBox="0 0 24 24" fill="none" stroke="#2dd4bf" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="5" r="2"/><circle cx="6" cy="19" r="2"/><circle cx="18" cy="7" r="2"/><path d="M6 7v10M18 9v2a6 6 0 0 1-6 6H6"/></svg>
+      <h3>Worktree tabs, one agent each</h3><p>A new tab makes a worktree and starts Claude Code, Codex, Gemini CLI or Copilot CLI in it. Profiles set the agent, model and permission level. Agent tabs block <code>git push</code>.</p>
+    </div>
+    <div class="card">
+      <svg viewBox="0 0 24 24" fill="none" stroke="#8fd16a" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5h16v11H9l-5 4z"/></svg>
+      <h3>Reader view</h3><p>An agent tab shows the agent's answer as readable text on top of the live terminal. One shortcut flips to the raw terminal.</p>
+    </div>
+    <div class="card">
+      <svg viewBox="0 0 24 24" fill="none" stroke="#fb923c" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/></svg>
+      <h3>Notes on diff lines</h3><p>Leave a note on a line of the diff, then send the notes to the agent as one message.</p>
+    </div>
+    <div class="card">
+      <svg viewBox="0 0 24 24" fill="none" stroke="#c084fc" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="5" cy="12" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="19" cy="12" r="2"/><path d="M7 12h3M14 12h3"/></svg>
+      <h3>Workflows</h3><p>Chain stages, each with its own agent profile. Ship a feature, Fix a bug and Review a PR come built in, and there is an editor for your own. Gates can send the work back a stage.</p>
+    </div>
+    <div class="card">
+      <svg viewBox="0 0 24 24" fill="none" stroke="#60a5fa" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12M7 10l5 5 5-5M5 21h14"/></svg>
+      <h3>Delivery</h3><p>When the work is ready, Tidewatch shows the commits and the pull request text. When you approve, it pushes and opens the pull request with <code>gh</code>.</p>
+    </div>
+    <div class="card">
+      <svg viewBox="0 0 24 24" fill="none" stroke="#f472b6" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="6.5" height="6.5" rx="1"/><rect x="13.5" y="4" width="6.5" height="6.5" rx="1"/><rect x="4" y="13.5" width="6.5" height="6.5" rx="1"/><rect x="13.5" y="13.5" width="6.5" height="6.5" rx="1"/></svg>
+      <h3>Overview and focus mode</h3><p>Overview lists every tab with its state: working, needs you, done or failed. Focus mode hides the history and diff so the terminal gets the whole window.</p>
+    </div>
+    <div class="card">
+      <svg viewBox="0 0 24 24" fill="none" stroke="#a6d189" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M20 11a8 8 0 0 0-14.3-4.9L4 8M4 4v4h4M4 13a8 8 0 0 0 14.3 4.9L20 16M20 20v-4h-4"/></svg>
+      <h3>Session restore</h3><p>Quitting saves your tabs. The next launch brings them back and resumes the agents where the CLI can.</p>
+    </div>
+    <div class="card">
+      <svg viewBox="0 0 24 24" fill="none" stroke="#facc15" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h6l2 2h10v11H3z"/><path d="M9 14l2 2 4-4"/></svg>
+      <h3>Folder trust, asked once</h3><p>On first launch Tidewatch asks before it marks its worktree folder as trusted in the agent CLIs' own config files. It changes nothing without a yes, and Settings can undo it.</p>
+    </div>
+    <div class="card">
+      <svg viewBox="0 0 24 24" fill="none" stroke="#9fd4e8" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 6h14M5 12h9M5 18h14"/></svg>
+      <h3>One house style</h3><p>One file, <code>~/.config/tidewatch/house-style.md</code>, tells every agent how to write its answers. Edit it freely: Tidewatch never overwrites it.</p>
+    </div>
+  </div>
+
+  <div class="row" id="overview">
+    <div class="text">
+      <h3>Every agent, one list.</h3>
+      <p>Overview shows each tab and what it is doing, with the tabs that need you on top. A badge on the button counts them, so you can look away until one does.</p>
+      <ul><li>Working, needs you, done or failed</li><li>The agent's Done, Needs you and Next lines on the row</li><li>Desktop notifications when an agent needs you</li></ul>
+    </div>
+    <div class="shot"><img src="shot-overview.png" width="2200" height="1375" loading="lazy" alt="Tidewatch's Overview listing one agent that needs permission, one that is working and one that is done"></div>
+  </div>
+
+  <div class="row flip">
+    <div class="text">
+      <h3>Read the answer, answer the question.</h3>
+      <p>The Reader turns the agent's session into text you can skim: what it said, which tools it ran, and a question when it needs permission. Flip to the raw terminal any time.</p>
+      <ul><li>Allow or deny a permission question from a button (Claude Code today)</li><li>Reply to the agent from a box under the answer</li><li>Tool calls fold into one line each</li></ul>
+    </div>
+    <div class="shot"><img src="shot-needs.png" width="2200" height="1375" loading="lazy" alt="An agent tab asking for permission to run the tests, with Allow and Deny buttons under the Reader"></div>
+  </div>
+
+  <div class="row">
+    <div class="text">
+      <h3>Pick the agent and how far it may go.</h3>
+      <p>A new tab asks for a profile and a permission level, from read only up to a YOLO level that asks first. The dialog shows the exact command before it runs.</p>
+      <ul><li>Claude Code, Codex, Gemini CLI and Copilot CLI</li><li>A fresh worktree and branch for every tab</li><li>Tidewatch pushes for you, on approval</li></ul>
+    </div>
+    <div class="shot"><img src="shot-dialog.png" width="2200" height="1375" loading="lazy" alt="The new tab dialog with a list of agent profiles, five permission levels and the command that will run"></div>
+  </div>
+
+  <div class="row flip">
+    <div class="text">
+      <h3>Chain agents into a workflow.</h3>
+      <p>Write the steps once: work, review, refactor. Each stage has its own agent, model and permissions, and a gate that Tidewatch checks before the next stage starts.</p>
+      <ul><li>Tests pass, no blocking findings, or your approval</li><li>A failed gate sends the work back a stage</li><li>Ship a feature, Fix a bug and Review a PR are built in</li></ul>
+    </div>
+    <div class="shot"><img src="shot-workflows.png" width="2200" height="1375" loading="lazy" alt="The workflow editor showing the Fix a bug workflow with its stages, agent, permissions and gate"></div>
+  </div>
+
+  <div class="row">
+    <div class="text">
+      <h3>Everything from the keyboard.</h3>
+      <p>The command palette lists every command, the other open tabs, each agent profile and each workflow. A drop-down window on a hotkey keeps Tidewatch one keystroke away.</p>
+      <ul><li><span class="mono">Cmd+Shift+P</span> on macOS, <span class="mono">Ctrl+Shift+P</span> on Linux</li><li>A menu-bar item on macOS</li><li>Update checks, notify-only unless installed with Homebrew</li></ul>
+    </div>
+    <div class="shot"><img src="shot-palette.png" width="2200" height="1375" loading="lazy" alt="The command palette open over an agent tab, listing commands and the other tabs with their shortcuts"></div>
+  </div>
+</div></section>
+
+<section id="family"><div class="wrap">
+  <p class="eyebrow">Built from</p>
+  <h2>Two apps it grew out of.</h2>
+  <p class="sub">Tidewatch is made by <a class="teal" href="https://github.com/Hobo-Ware">Hoboware</a> from the parts of Kelp and stdusk that it needs.</p>
+  <div class="family">
+    <a href="https://kelp.hoboware.dev"><b>Kelp</b><span>A fast, native git client. Tidewatch uses its commit graph, diff and review.</span><em>kelp.hoboware.dev</em></a>
+    <a href="https://stdusk.hoboware.dev"><b>stdusk</b><span>A quake-style terminal with a real tab bar. Tidewatch uses its terminal, tabs and drop-down window.</span><em>stdusk.hoboware.dev</em></a>
+  </div>
+</div></section>
+
+<section id="install"><div class="wrap">
+  <p class="eyebrow">Install</p>
+  <h2>Not released yet. Build it from source.</h2>
+  <p class="sub">There is no download and no Homebrew cask until the first release. The source builds on macOS and Linux.</p>
+  <div class="steps">
+    <div class="step"><div class="num">01</div><h4>Get the source</h4><p>You need git and a Rust toolchain.</p><pre><span class="p">$</span> git clone https://github.com/Hobo-Ware/tidewatch
+<span class="p">$</span> cd tidewatch</pre></div>
+    <div class="step"><div class="num">02</div><h4>Open a repo</h4><p>Pass the git repo you want a window for.</p><pre><span class="p">$</span> cargo run -p tidewatch -- ~/code/my-repo</pre></div>
+    <div class="step"><div class="num">03</div><h4>Bring an agent</h4><p>Install at least one agent CLI: Claude Code, Codex, Gemini CLI or Copilot CLI. Tidewatch finds the ones on your PATH. Delivery needs <code>gh</code>.</p><pre><span class="p">$</span> claude --version</pre></div>
+  </div>
+  <p class="note">Packaged builds come with the first release: a Homebrew cask for macOS, and a tarball and AppImage for Linux. <span class="mono">scripts/bundle-macos.sh</span> and <span class="mono">scripts/package-linux.sh</span> build them locally. Details are in the <a href="https://github.com/Hobo-Ware/tidewatch#readme">README</a>.</p>
+</div></section>
+
+<div class="closing"><div class="wrap">
+  <h2>Run your agents <span class="teal">side by side.</span></h2>
+  <div class="install"><span class="p">$</span><span class="txt">cargo run -p tidewatch -- &lt;repo&gt;</span><button class="copy" type="button" data-copy="cargo run -p tidewatch -- &lt;repo&gt;">Copy</button></div>
+</div></div>
+
+<footer><div class="wrap">
+  <span>Tidewatch is MIT licensed. Made by <a href="https://github.com/Hobo-Ware">Hoboware</a>.</span>
+  <span><a href="https://github.com/Hobo-Ware/tidewatch">GitHub</a> · <a href="https://github.com/Hobo-Ware/tidewatch#readme">README</a> · <a href="https://kelp.hoboware.dev">Kelp</a> · <a href="https://stdusk.hoboware.dev">stdusk</a></span>
+</div></footer>
+
+<script>
+document.querySelectorAll('[data-copy]').forEach(function (button) {
+  button.addEventListener('click', function () {
+    navigator.clipboard.writeText(button.dataset.copy).then(function () {
+      button.textContent = 'Copied';
+      setTimeout(function () { button.textContent = 'Copy'; }, 1600);
+    });
+  });
+});
+</script>
+</body>
+</html>
