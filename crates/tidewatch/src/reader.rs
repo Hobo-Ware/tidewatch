@@ -3,7 +3,9 @@
 //! user's choice and what the search found, so it is tested without a window.
 
 use std::path::{Path, PathBuf};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+use tidewatch_core::restore::codex_session_id;
 use tidewatch_core::transcript::{Entry, Source};
 use tidewatch_core::transcript_locate::Locator;
 
@@ -13,6 +15,15 @@ use crate::reader_rows::Rows;
 use crate::reader_view::ViewState;
 
 const POKE_GAP_S: f64 = 0.3;
+const ROLLOUT_START_SLACK: Duration = Duration::from_secs(5);
+
+fn unix_ms_now() -> i64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .ok()
+        .and_then(|since| i64::try_from(since.as_millis()).ok())
+        .unwrap_or_default()
+}
 
 /// Why a tab can never show the Reader.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -79,6 +90,8 @@ pub(crate) struct Reader {
     source: Option<Source>,
     session_id: Option<String>,
     cwd: PathBuf,
+    started_ms: i64,
+    file: Option<PathBuf>,
     chosen: bool,
     link: Link,
     feed: Option<Feed>,
@@ -103,6 +116,8 @@ impl Reader {
             source,
             session_id,
             cwd,
+            started_ms: unix_ms_now(),
+            file: None,
             chosen: true,
             link,
             feed: None,
@@ -120,12 +135,21 @@ impl Reader {
         self.source = Source::from_agent_id(agent_id);
         self.link = Self::first_link(self.source);
         self.session_id = session_id;
+        self.started_ms = unix_ms_now();
+        self.file = None;
         self.answered = false;
         self.rows.divider(divider);
     }
 
     pub(crate) fn source(&self) -> Option<Source> {
         self.source
+    }
+
+    pub(crate) fn codex_session_id(&self) -> Option<String> {
+        if self.source != Some(Source::Codex) {
+            return None;
+        }
+        self.file.as_deref().and_then(codex_session_id)
     }
 
     #[cfg(test)]
@@ -162,6 +186,11 @@ impl Reader {
         let mut locator = Locator::new(home, &self.cwd);
         locator.session_id.clone_from(&self.session_id);
         locator.copilot_home = std::env::var_os("COPILOT_HOME").map(PathBuf::from);
+        locator.codex_home = std::env::var_os("CODEX_HOME").map(PathBuf::from);
+        locator.started_after_ms = Some(
+            self.started_ms
+                .saturating_sub(i64::try_from(ROLLOUT_START_SLACK.as_millis()).unwrap_or_default()),
+        );
         self.feed = Some(Feed::start(source, locator, wake));
         self.link = Link::Searching;
     }
@@ -206,7 +235,10 @@ impl Reader {
         let changed = !messages.is_empty();
         for message in messages {
             match message {
-                Message::Found => self.link = Link::Found,
+                Message::Found(path) => {
+                    self.file = Some(path);
+                    self.link = Link::Found;
+                }
                 Message::Missing if self.link == Link::Searching => self.link = Link::Missing,
                 Message::Missing => {}
                 Message::Entries(entries) => self.add(entries),
@@ -266,6 +298,22 @@ mod tests {
         let custom = Reader::for_agent("aider", None, PathBuf::from("/w"));
         assert_eq!(custom.link(), Link::Unavailable(Unavailable::NoReader));
         assert!(codex.needs_start() && !custom.needs_start());
+    }
+
+    #[test]
+    fn only_a_codex_reader_names_the_session_from_its_rollout_file() {
+        let rollout =
+            "/s/2026/10/13/rollout-2026-10-13T19-57-41-01a13669-bce5-7242-a392-fd967b70ea72.jsonl";
+        let mut codex = Reader::for_agent("codex", None, PathBuf::from("/w"));
+        assert_eq!(codex.codex_session_id(), None);
+        codex.file = Some(PathBuf::from(rollout));
+        assert_eq!(
+            codex.codex_session_id().as_deref(),
+            Some("01a13669-bce5-7242-a392-fd967b70ea72")
+        );
+        let mut claude = Reader::for_agent("claude", None, PathBuf::from("/w"));
+        claude.file = Some(PathBuf::from(rollout));
+        assert_eq!(claude.codex_session_id(), None);
     }
 
     #[test]

@@ -38,7 +38,7 @@ pub(crate) fn tail_delay(empty_reads: u32) -> Duration {
 
 #[derive(Debug)]
 pub(crate) enum Message {
-    Found,
+    Found(PathBuf),
     Missing,
     Entries(Vec<Entry>),
 }
@@ -132,7 +132,7 @@ fn run(
                 delay = locate_delay(started.elapsed());
                 continue;
             };
-            if !send(Message::Found) {
+            if !send(Message::Found(path.clone())) {
                 return;
             }
             tail = Some(Tail::new(source, path));
@@ -220,7 +220,7 @@ mod tests {
         fs::write(dir.join("11111111-aaaa-bbbb-cccc-000000000001.jsonl"), claude_line("hello"))
             .unwrap();
         let seen = wait_for(&feed, |m| matches!(m, Message::Entries(_)));
-        assert!(seen.iter().any(|m| matches!(m, Message::Found)));
+        assert!(seen.iter().any(|m| matches!(m, Message::Found(_))));
         let texts: Vec<_> = seen
             .iter()
             .filter_map(|m| match m {

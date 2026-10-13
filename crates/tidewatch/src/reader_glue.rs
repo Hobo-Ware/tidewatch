@@ -44,6 +44,11 @@ pub(crate) fn drain(tabs: &mut Tabs<Pane<PtyTerm>>) {
     for tab in tabs.items_mut() {
         if let Some(agent) = tab.pane.agent.as_mut() {
             agent.reader.drain();
+            if let Some(launched) = agent.launched.as_mut()
+                && launched.session_id.is_none()
+            {
+                launched.session_id = agent.reader.codex_session_id();
+            }
         }
     }
 }
