@@ -11,6 +11,7 @@ use tidewatch_core::status::AgentStatus;
 use super::Tidewatch;
 use super::frame::FrameIntent;
 use super::terminal::TerminalGrid;
+use crate::commands::Command;
 use crate::delivery_card::Delivery;
 use crate::reader::Shown;
 use crate::tabs::Action;
@@ -38,8 +39,8 @@ impl Tidewatch {
 
     pub(super) fn toggle_focus(&mut self, ctx: &egui::Context) {
         self.focus = !self.focus;
-        let text = if self.focus { "Focus mode on (Cmd+.)" } else { "Focus mode off (Cmd+.)" };
-        self.show_toast(text, ctx);
+        let state = if self.focus { "on" } else { "off" };
+        self.show_toast(format!("Focus mode {state} ({})", Command::Focus.keys()), ctx);
     }
 
     pub(super) fn show_central_panel(

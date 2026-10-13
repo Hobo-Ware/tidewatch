@@ -7,6 +7,7 @@ use std::path::{Path, PathBuf};
 use tidewatch_core::transcript::{Entry, Source};
 use tidewatch_core::transcript_locate::Locator;
 
+use crate::commands::Command;
 use crate::reader_feed::{Feed, Message};
 use crate::reader_rows::Rows;
 use crate::reader_view::ViewState;
@@ -44,13 +45,19 @@ pub(crate) enum Note {
 }
 
 impl Note {
-    pub(crate) fn text(self) -> &'static str {
+    pub(crate) fn text(self) -> String {
         match self {
-            Self::Searching => "Looking for the transcript... showing the terminal",
-            Self::Missing => "No transcript found, showing the terminal",
-            Self::NoReader => "No transcript reader for this agent, showing the terminal",
-            Self::Unverified => "This agent's transcript is not verified yet, showing the terminal",
-            Self::ChosenRaw => "Raw terminal. Cmd+Shift+T for the Reader",
+            Self::Searching => "Looking for the transcript... showing the terminal".to_owned(),
+            Self::Missing => "No transcript found, showing the terminal".to_owned(),
+            Self::NoReader => {
+                "No transcript reader for this agent, showing the terminal".to_owned()
+            }
+            Self::Unverified => {
+                "This agent's transcript is not verified yet, showing the terminal".to_owned()
+            }
+            Self::ChosenRaw => {
+                format!("Raw terminal. {} for the Reader", Command::Reader.keys())
+            }
         }
     }
 }
@@ -147,7 +154,7 @@ impl Reader {
         self.chosen = wants;
     }
 
-    /// Cmd+Shift+T. Returns what the tab shows afterwards.
+    /// The Reader chord. Returns what the tab shows afterwards.
     pub(crate) fn toggle(&mut self) -> Shown {
         self.chosen = !self.chosen;
         self.shown()

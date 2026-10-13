@@ -1,0 +1,329 @@
+//! The command table: id, title, group, the key chord on macOS and on Linux, and what it runs.
+//! Key handling, the palette, the Shortcuts page and `docs/shortcuts.md` all read it.
+
+mod rows;
+
+#[cfg(test)]
+mod tests;
+
+use egui::{Key, Modifiers};
+
+#[cfg(test)]
+pub(crate) use rows::markdown;
+pub(crate) use rows::rows;
+
+use crate::tabs::Action;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Platform {
+    Mac,
+    Linux,
+}
+
+impl Platform {
+    pub(crate) const CURRENT: Self =
+        if cfg!(target_os = "macos") { Self::Mac } else { Self::Linux };
+
+    pub(crate) fn name(self) -> &'static str {
+        match self {
+            Self::Mac => "macOS",
+            Self::Linux => "Linux",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Group {
+    Tabs,
+    View,
+    App,
+    Dialogs,
+}
+
+impl Group {
+    pub(crate) const ALL: [Self; 4] = [Self::Tabs, Self::View, Self::App, Self::Dialogs];
+
+    pub(crate) fn title(self) -> &'static str {
+        match self {
+            Self::Tabs => "Tabs",
+            Self::View => "View",
+            Self::App => "App",
+            Self::Dialogs => "Dialogs",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Command {
+    NewTab,
+    CloseTab,
+    SelectTab(usize),
+    Overview,
+    Focus,
+    Reader,
+    Settings,
+    ApproveDelivery,
+}
+
+impl Command {
+    pub(crate) fn action(self) -> Option<Action> {
+        match self {
+            Self::NewTab => Some(Action::New),
+            Self::CloseTab => Some(Action::CloseActive),
+            Self::SelectTab(index) => Some(Action::Select(index)),
+            Self::Overview
+            | Self::Focus
+            | Self::Reader
+            | Self::Settings
+            | Self::ApproveDelivery => None,
+        }
+    }
+
+    fn global(self) -> bool {
+        self != Self::ApproveDelivery
+    }
+
+    pub(crate) fn id(self) -> &'static str {
+        entry_of(self).map_or("", |entry| entry.id)
+    }
+
+    pub(crate) fn keys(self) -> String {
+        entry_of(self).map_or_else(String::new, |entry| entry.chord(Platform::CURRENT).label())
+    }
+}
+
+const CMD: u8 = 1;
+const CTRL: u8 = 2;
+const ALT: u8 = 4;
+const SHIFT: u8 = 8;
+
+/// `CMD` is the Command key on macOS; `CTRL` is the physical Control key everywhere.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub(crate) struct Chord {
+    mods: u8,
+    key: Key,
+}
+
+const fn cmd(key: Key) -> Chord {
+    Chord { mods: CMD, key }
+}
+
+const fn ctrl(key: Key) -> Chord {
+    Chord { mods: CTRL, key }
+}
+
+const fn alt(key: Key) -> Chord {
+    Chord { mods: ALT, key }
+}
+
+impl Chord {
+    const fn shift(self) -> Self {
+        Self { mods: self.mods | SHIFT, ..self }
+    }
+
+    fn has(self, flag: u8) -> bool {
+        self.mods & flag != 0
+    }
+
+    pub(crate) fn modifiers(self) -> Modifiers {
+        let mut modifiers = Modifiers::NONE;
+        for (flag, egui_flag) in [
+            (CMD, Modifiers::COMMAND),
+            (CTRL, Modifiers::CTRL),
+            (ALT, Modifiers::ALT),
+            (SHIFT, Modifiers::SHIFT),
+        ] {
+            if self.has(flag) {
+                modifiers = modifiers.plus(egui_flag);
+            }
+        }
+        modifiers
+    }
+
+    /// The modifiers the OS reports while this chord is down on `platform`.
+    pub(crate) fn held(self, platform: Platform) -> Modifiers {
+        Modifiers {
+            alt: self.has(ALT),
+            ctrl: self.has(CTRL),
+            shift: self.has(SHIFT),
+            mac_cmd: platform == Platform::Mac && self.has(CMD),
+            command: self.has(CMD) || (platform == Platform::Linux && self.has(CTRL)),
+        }
+    }
+
+    pub(crate) fn label(self) -> String {
+        let names = [(CMD, "Cmd"), (CTRL, "Ctrl"), (ALT, "Alt"), (SHIFT, "Shift")];
+        let mut parts: Vec<&str> =
+            names.into_iter().filter(|(flag, _)| self.has(*flag)).map(|(_, name)| name).collect();
+        parts.push(self.key.symbol_or_name());
+        parts.join("+")
+    }
+
+    fn weight(self) -> usize {
+        self.mods.count_ones() as usize
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct Entry {
+    pub(crate) id: &'static str,
+    pub(crate) title: &'static str,
+    pub(crate) group: Group,
+    pub(crate) command: Command,
+    mac: Chord,
+    linux: Chord,
+}
+
+impl Entry {
+    pub(crate) fn chord(&self, platform: Platform) -> Chord {
+        match platform {
+            Platform::Mac => self.mac,
+            Platform::Linux => self.linux,
+        }
+    }
+}
+
+const fn entry(
+    id: &'static str,
+    title: &'static str,
+    group: Group,
+    command: Command,
+    (mac, linux): (Chord, Chord),
+) -> Entry {
+    Entry { id, title, group, command, mac, linux }
+}
+
+const fn tab(id: &'static str, title: &'static str, index: usize, key: Key) -> Entry {
+    entry(id, title, Group::Tabs, Command::SelectTab(index), (cmd(key), alt(key)))
+}
+
+pub(crate) const TABLE: [Entry; 16] = [
+    entry("new-tab", "New tab", Group::Tabs, Command::NewTab, (cmd(Key::T), ctrl(Key::T).shift())),
+    entry(
+        "close-tab",
+        "Close tab",
+        Group::Tabs,
+        Command::CloseTab,
+        (cmd(Key::W), ctrl(Key::W).shift()),
+    ),
+    tab("tab-1", "Switch to tab 1", 0, Key::Num1),
+    tab("tab-2", "Switch to tab 2", 1, Key::Num2),
+    tab("tab-3", "Switch to tab 3", 2, Key::Num3),
+    tab("tab-4", "Switch to tab 4", 3, Key::Num4),
+    tab("tab-5", "Switch to tab 5", 4, Key::Num5),
+    tab("tab-6", "Switch to tab 6", 5, Key::Num6),
+    tab("tab-7", "Switch to tab 7", 6, Key::Num7),
+    tab("tab-8", "Switch to tab 8", 7, Key::Num8),
+    tab("tab-9", "Switch to tab 9", 8, Key::Num9),
+    entry("overview", "Overview", Group::View, Command::Overview, (cmd(Key::Num0), alt(Key::Num0))),
+    entry(
+        "focus",
+        "Focus mode",
+        Group::View,
+        Command::Focus,
+        (cmd(Key::Period), ctrl(Key::Period)),
+    ),
+    entry(
+        "reader",
+        "Reader or raw terminal",
+        Group::View,
+        Command::Reader,
+        (cmd(Key::T).shift(), ctrl(Key::R).shift()),
+    ),
+    entry(
+        "settings",
+        "Settings",
+        Group::App,
+        Command::Settings,
+        (cmd(Key::Comma), ctrl(Key::Comma)),
+    ),
+    entry(
+        "approve-delivery",
+        "Push and open the pull request",
+        Group::Dialogs,
+        Command::ApproveDelivery,
+        (cmd(Key::Enter), ctrl(Key::Enter)),
+    ),
+];
+
+fn entry_of(command: Command) -> Option<&'static Entry> {
+    TABLE.iter().find(|entry| entry.command == command)
+}
+
+/// Reads the chords pressed this frame and consumes them. Most specific first, because egui
+/// matches a chord that asks for fewer Shift or Alt keys against a press that holds more: Cmd+T
+/// must not take a Cmd+Shift+T press.
+pub(crate) fn consume(
+    ctx: &egui::Context,
+    platform: Platform,
+    wanted: impl Fn(Command) -> bool,
+) -> Vec<Command> {
+    let mut ordered: Vec<&Entry> = TABLE.iter().filter(|entry| wanted(entry.command)).collect();
+    ordered.sort_by_key(|entry| std::cmp::Reverse(entry.chord(platform).weight()));
+    ctx.input_mut(|input| {
+        ordered
+            .into_iter()
+            .filter(|entry| {
+                let chord = entry.chord(platform);
+                input.consume_key(chord.modifiers(), chord.key)
+            })
+            .map(|entry| entry.command)
+            .collect()
+    })
+}
+
+/// The key event a person pressing `command`'s chord produces here, for dev drivers and tests.
+pub(crate) fn press_event(command: Command) -> Option<egui::Event> {
+    let chord = entry_of(command)?.chord(Platform::CURRENT);
+    Some(egui::Event::Key {
+        key: chord.key,
+        physical_key: Some(chord.key),
+        pressed: true,
+        repeat: false,
+        modifiers: chord.held(Platform::CURRENT),
+    })
+}
+
+pub(crate) fn pressed(ctx: &egui::Context) -> Vec<Command> {
+    consume(ctx, Platform::CURRENT, Command::global)
+}
+
+pub(crate) fn approve_delivery_pressed(ctx: &egui::Context) -> bool {
+    !consume(ctx, Platform::CURRENT, |command| command == Command::ApproveDelivery).is_empty()
+}
+
+/// The dialog over the window, if any. The new-tab and close dialogs are the ones that also
+/// refuse the Settings, Overview and Focus chords.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) enum Dialog {
+    #[default]
+    None,
+    TabChoice,
+    Other,
+}
+
+/// What is on screen, as far as a key is concerned.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct Gate {
+    pub(crate) dialog: Dialog,
+    pub(crate) settings: bool,
+    pub(crate) overview: bool,
+}
+
+impl Gate {
+    pub(crate) fn modal_open(self) -> bool {
+        self.dialog != Dialog::None || self.settings
+    }
+
+    pub(crate) fn allows(self, command: Command) -> bool {
+        let modal = self.modal_open();
+        match command {
+            Command::Settings | Command::Overview | Command::Focus => {
+                self.dialog != Dialog::TabChoice
+            }
+            Command::Reader | Command::CloseTab => !modal && !self.overview,
+            Command::NewTab | Command::SelectTab(_) => !modal,
+            Command::ApproveDelivery => false,
+        }
+    }
+}

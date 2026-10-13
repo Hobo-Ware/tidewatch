@@ -3,13 +3,12 @@
 //! approving pushes and opens the pull request, and the dialog then shows the URL or the typed
 //! failure with a plain fix. What each state looks like is in `delivery_card`.
 
-use egui::{
-    Align2, FontId, Id, Key, Modifiers, Rect, RichText, Stroke, StrokeKind, Ui, pos2, vec2,
-};
+use egui::{Align2, FontId, Id, Rect, RichText, Stroke, StrokeKind, Ui, pos2, vec2};
 use stdusk_egui::colors;
 use stdusk_egui::widgets::{action_button, overlay_frame, text_field};
 use tidewatch_core::delivery::DeliveryError;
 
+use crate::commands::{self, Command};
 use crate::delivery_card::{Delivery, Form, card_text, fix_hint};
 
 pub(crate) const BAND_H: f32 = 40.0;
@@ -104,7 +103,7 @@ pub(crate) fn show_dialog(ctx: &egui::Context, delivery: &mut Delivery) -> Optio
             _ => {}
         }
     });
-    if answer.is_none() && editing && approve_shortcut(ctx) {
+    if answer.is_none() && editing && commands::approve_delivery_pressed(ctx) {
         answer = Some(DialogAction::Approve);
     }
     if answer.is_none() && modal.should_close() {
@@ -116,10 +115,6 @@ pub(crate) fn show_dialog(ctx: &egui::Context, delivery: &mut Delivery) -> Optio
         };
     }
     answer
-}
-
-fn approve_shortcut(ctx: &egui::Context) -> bool {
-    ctx.input_mut(|i| i.consume_key(Modifiers::COMMAND, Key::Enter))
 }
 
 fn heading(ui: &mut Ui, text: &str) {
@@ -179,7 +174,7 @@ fn editing_body(ui: &mut Ui, form: &mut Form) -> Option<DialogAction> {
                 answer = Some(DialogAction::Approve);
             }
         });
-        dim(ui, "Cmd+Enter");
+        dim(ui, &Command::ApproveDelivery.keys());
     });
     answer
 }
@@ -209,6 +204,7 @@ fn failed_body(ui: &mut Ui, form: &Form, error: &DeliveryError) -> Option<Dialog
 mod tests {
     use super::*;
     use egui::{Event, RawInput};
+    use egui::{Key, Modifiers};
     use std::path::PathBuf;
     use tidewatch_core::delivery::{CommitLine, Delivered, DeliveryPlan};
 
@@ -266,7 +262,7 @@ mod tests {
         let mut d = editing();
         frame(&ctx, &mut d, vec![]);
         assert_eq!(
-            frame(&ctx, &mut d, vec![key(Key::Enter, Modifiers::COMMAND)]),
+            frame(&ctx, &mut d, vec![commands::press_event(Command::ApproveDelivery).unwrap()]),
             Some(DialogAction::Approve)
         );
     }

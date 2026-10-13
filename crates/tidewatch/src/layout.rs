@@ -1,6 +1,6 @@
 //! Pure geometry for the window: the terminal/panel split, grid dimensions and tab widths.
 
-use egui::{Key, Rect, pos2};
+use egui::{Rect, pos2};
 use stdusk_egui::ui::{TAB_FIXED_W, TAB_MIN_W};
 
 pub(crate) const TERMINAL_FRACTION: f32 = 0.45;
@@ -54,21 +54,6 @@ pub(crate) fn grid_dims(rect: Rect, cell_w: f32, cell_h: f32) -> (usize, usize) 
 pub(crate) fn tab_width(available: f32, count: usize, gap: f32) -> f32 {
     let count = count.max(1) as f32;
     ((available - gap * (count - 1.0)) / count).clamp(TAB_MIN_W, TAB_FIXED_W)
-}
-
-pub(crate) fn digit_index(key: Key) -> Option<usize> {
-    match key {
-        Key::Num1 => Some(0),
-        Key::Num2 => Some(1),
-        Key::Num3 => Some(2),
-        Key::Num4 => Some(3),
-        Key::Num5 => Some(4),
-        Key::Num6 => Some(5),
-        Key::Num7 => Some(6),
-        Key::Num8 => Some(7),
-        Key::Num9 => Some(8),
-        _ => None,
-    }
 }
 
 #[cfg(test)]
@@ -140,13 +125,5 @@ mod tests {
         assert_eq!(tab_width(10.0, 5, 4.0), TAB_MIN_W);
         let shared = tab_width(504.0, 5, 4.0);
         assert!((shared - 97.6).abs() < 0.01);
-    }
-
-    #[test]
-    fn digit_keys_map_to_zero_based_indexes() {
-        assert_eq!(digit_index(Key::Num1), Some(0));
-        assert_eq!(digit_index(Key::Num9), Some(8));
-        assert_eq!(digit_index(Key::Num0), None);
-        assert_eq!(digit_index(Key::A), None);
     }
 }

@@ -67,7 +67,7 @@ impl Tidewatch {
                 }
                 Err(message) => settings.workflows.error = Some(message),
             },
-            Section::Trust | Section::General => {}
+            Section::Trust | Section::General | Section::Shortcuts => {}
         }
     }
 
