@@ -1,0 +1,133 @@
+//! The History and Diff panes: one view per tab, finished pane jobs, notes and checkout.
+
+use std::collections::HashSet;
+
+use kelp_core::refs::RefLabel;
+use kelp_ui::graph::GraphAction;
+use kelp_ui::theme as kelp_theme;
+
+use super::Tidewatch;
+use crate::checkout::{self, Plan};
+use crate::repo::Workspace;
+use crate::tab_view::ViewSpec;
+use crate::{diff_pane, flow_glue, history_pane, layout, pane_jobs};
+
+impl Tidewatch {
+    /// Keeps one view per tab that has panes: only the visible tab's view is loaded and watched.
+    pub(super) fn drive_views(&mut self) {
+        let open: HashSet<u64> = self.tabs.items().iter().map(|t| t.id).collect();
+        self.views.retain(|id, _| open.contains(id));
+        if self.focus || self.overview {
+            for view in self.views.values_mut().filter(|view| view.is_active()) {
+                view.stop();
+            }
+            return;
+        }
+        let active = &self.tabs.items()[self.tabs.active()];
+        let active_id = active.id;
+        for (id, view) in &mut self.views {
+            if *id != active_id && view.is_active() {
+                view.stop();
+            }
+        }
+        let Some(spec) = ViewSpec::of(&self.workspace, self.paths.as_ref(), active) else { return };
+        let dev_scope = self.dev_panes.scope;
+        let view = self.views.entry(active_id).or_insert_with(|| {
+            let mut view = spec.into_view();
+            if let Some(scope) = dev_scope {
+                view.set_scope(scope);
+            }
+            view
+        });
+        if !view.is_active() {
+            view.start();
+        }
+        view.poll();
+    }
+
+    pub(super) fn apply_pane_done(&mut self, done: pane_jobs::Done, ctx: &egui::Context) {
+        let tab = done.tab();
+        if let pane_jobs::Done::Checkout { outcome, .. } = &done {
+            self.show_toast(checkout::message(outcome), ctx);
+            if let Some(view) = self.views.get_mut(&tab) {
+                view.reload_after_checkout();
+            }
+            return;
+        }
+        if let Some(view) = self.views.get_mut(&tab) {
+            view.apply(done);
+        }
+    }
+
+    fn double_clicked_ref(&mut self, label: &RefLabel, ctx: &egui::Context) {
+        let active_id = self.tabs.items()[self.tabs.active()].id;
+        let Some(view) = self.views.get(&active_id) else { return };
+        match checkout::plan(view.is_main, label) {
+            Plan::Ignore => {}
+            Plan::Refuse(reason) => self.show_toast(reason, ctx),
+            Plan::Switch(op) => {
+                pane_jobs::run_checkout(&self.pane_jobs, ctx, active_id, view.dir.clone(), op);
+            }
+        }
+    }
+
+    fn save_notes(&self, view_id: u64) {
+        let Some(view) = self.views.get(&view_id) else { return };
+        if let Some(file) = view.notes_file() {
+            self.notes_writer.save(file.clone(), view.notes.clone());
+        }
+    }
+
+    pub(super) fn workspace_has_panels(&self) -> bool {
+        matches!(self.workspace, Workspace::Repo(_))
+    }
+
+    pub(super) fn show_panes(
+        &mut self,
+        ui: &mut egui::Ui,
+        areas: &layout::Layout,
+        ctx: &egui::Context,
+    ) {
+        let active_id = self.tabs.items()[self.tabs.active()].id;
+        let Some(view) = self.views.get_mut(&active_id) else {
+            for rect in [areas.history, areas.diff] {
+                ui.painter().rect_filled(rect, 0.0, kelp_theme::bg());
+            }
+            return;
+        };
+        let status = self.tabs.items()[self.tabs.active()]
+            .pane
+            .agent
+            .as_ref()
+            .map(|agent| agent.run.status().clone());
+        let extras = status.and_then(|status| self.flow.extras(active_id, &view.notes, &status));
+        let graph_action = history_pane::show(ui, areas.history, view, &mut self.avatars);
+        let now_unix = flow_glue::unix_now();
+        let pane = diff_pane::show(ui, areas.diff, view, extras.as_ref(), now_unix);
+        let notes_changed = pane.notes_changed;
+        let toasts = flow_glue::pane_actions(&mut self.flow, view, active_id, pane.actions, ctx);
+        let mut clicked_ref = None;
+        match graph_action {
+            Some(GraphAction::Select(selection)) => {
+                view.select(selection);
+                ctx.request_repaint();
+            }
+            Some(GraphAction::ActivateRef(label)) => clicked_ref = Some(label),
+            Some(_) | None => {}
+        }
+        view.sync(&self.pane_jobs, ctx);
+        for text in toasts {
+            self.show_toast(text, ctx);
+        }
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |d| d.as_secs() as i64);
+        if notes_changed || self.apply_dev_panes(active_id, now) {
+            self.save_notes(active_id);
+            ctx.request_repaint();
+        }
+        if let Some(label) = clicked_ref {
+            self.double_clicked_ref(&label, ctx);
+        }
+    }
+}

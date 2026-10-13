@@ -79,7 +79,18 @@ crates/tidewatch/       the egui app
   src/main.rs           workspace discovery, the single-instance claim, the window shape from the Plan, eframe start; `--toggle` exits before any window
   src/cli.rs            `tidewatch [--no-restore] [--toggle] [path]` (pure)
   src/single_instance.rs  startup before any window: Mode from the run kind (screenshot and a background run in the real home take no part), hand the path to a running window and exit, `--toggle` to every live window with an exit code, workspace key
-  src/app.rs            the eframe::App loop: chip, tab strip, terminal, card bands, History and Diff panes, toast, shortcuts, job results
+  src/app.rs            the Tidewatch struct, `new` and the eframe::App loop, which only calls the frame steps below in order
+  src/app/frame.rs      the frame's steps: drain finished jobs, drive background work, read shortcuts into a FrameIntent, apply what the frame asked for, finish
+  src/app/strip.rs      the tab strip: chip, leftovers chip, update pill, Overview button, the tabs, new tab and settings buttons
+  src/app/central.rs    the central panel: Overview, settings page or the workspace (stepper, end card, delivery card, terminal, panes), view toggles
+  src/app/terminal.rs   the active tab's terminal area: shell grid and input, status messages, the exit notice, the Reader or its note
+  src/app/panes.rs      History and Diff panes: one view per tab, finished pane jobs, notes saving, double-click checkout
+  src/app/tabs.rs       new tab dialog state, opening and closing tabs, the close dialog's answer, finished worktree jobs, tab actions
+  src/app/agents.rs     profile and probe results, listener messages to tabs, findings to notes, per-frame agent status and the next wake-up
+  src/app/flow.rs       workflow runs, session restore and the delivery flow, driven once per frame
+  src/app/settings.rs   opening and saving settings, window preferences, shell events (hotkey, menu bar, other launches), the settings page and its actions
+  src/app/overlays.rs   the toast and its pill, and the dialogs drawn over the frame (close, leftovers, delivery, new tab, trust, notice)
+  src/app/dev.rs        the TIDEWATCH_DEV_* drivers that need the whole app: start an agent, resume, press keys, leftovers dialog, pick and note
   src/tabs.rs           tab list and its Action reducer (pure, generic over the pane)
   src/pane.rs           what a tab holds: shell or agent (with its AgentRun and how it was launched), creating, removing, failed; opening results, close policy (pure, generic)
   src/jobs.rs           background thread runner: result channel plus a repaint
