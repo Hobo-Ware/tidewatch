@@ -1,10 +1,15 @@
 //! Tab list and its reducer. Generic over the pane payload so the transitions are testable
 //! without a pty. The UI collects `Action`s during the frame and applies them afterwards.
+//!
+//! Every tab belongs to a group, one per repo (or folder) the window holds, each with its own
+//! pinned main tab. One list keeps tab ids unique across the window; the visible group is the one
+//! the active tab is in, so selecting a tab of another group switches to it.
 
 pub(crate) const MAIN_TITLE: &str = "main";
 
 pub(crate) struct Tab<T> {
     pub(crate) id: u64,
+    pub(crate) group: usize,
     pub(crate) title: String,
     pub(crate) pinned: bool,
     pub(crate) pane: T,
@@ -16,6 +21,11 @@ pub(crate) enum Action {
     CloseActive,
     Close(usize),
     Select(usize),
+    /// The n-th tab (from zero) of the visible group.
+    SelectNth(usize),
+    NextGroup,
+    PrevGroup,
+    ShowGroup(usize),
 }
 
 pub(crate) struct Tabs<T> {
@@ -23,15 +33,24 @@ pub(crate) struct Tabs<T> {
     active: usize,
     next_id: u64,
     opened: usize,
+    /// Per group, the id of the tab selected last in it: what shows when the group comes back.
+    recent: Vec<u64>,
 }
 
 impl<T> Tabs<T> {
     pub(crate) fn new(main_pane: T) -> Self {
         Self {
-            items: vec![Tab { id: 0, title: MAIN_TITLE.into(), pinned: true, pane: main_pane }],
+            items: vec![Tab {
+                id: 0,
+                group: 0,
+                title: MAIN_TITLE.into(),
+                pinned: true,
+                pane: main_pane,
+            }],
             active: 0,
             next_id: 1,
             opened: 0,
+            recent: vec![0],
         }
     }
 
@@ -51,13 +70,74 @@ impl<T> Tabs<T> {
         &mut self.items[self.active].pane
     }
 
-    /// Appends a tab, selects it and returns its id.
-    pub(crate) fn push(&mut self, title: String, pane: T) -> u64 {
+    /// The group on show.
+    pub(crate) fn active_group(&self) -> usize {
+        self.items[self.active].group
+    }
+
+    /// A new group with its own pinned main tab. The visible group stays as it is.
+    pub(crate) fn add_group(&mut self, main_pane: T) -> usize {
+        let group = self.recent.len();
+        let id = self.take_id();
+        self.items.push(Tab { id, group, title: MAIN_TITLE.into(), pinned: true, pane: main_pane });
+        self.recent.push(id);
+        group
+    }
+
+    /// The tabs of one group with their positions in the whole list, in order.
+    pub(crate) fn in_group(&self, group: usize) -> impl Iterator<Item = (usize, &Tab<T>)> {
+        self.items.iter().enumerate().filter(move |(_, tab)| tab.group == group)
+    }
+
+    pub(crate) fn group_of(&self, id: u64) -> Option<usize> {
+        self.items.iter().find(|tab| tab.id == id).map(|tab| tab.group)
+    }
+
+    pub(crate) fn main_id(&self, group: usize) -> Option<u64> {
+        self.in_group(group).find(|(_, tab)| tab.pinned).map(|(_, tab)| tab.id)
+    }
+
+    /// The position of the tab a group has selected: the active one for the visible group.
+    pub(crate) fn selected_in(&self, group: usize) -> usize {
+        if group == self.active_group() {
+            return self.active;
+        }
+        self.recent
+            .get(group)
+            .and_then(|id| self.index_of(*id))
+            .or_else(|| self.in_group(group).next().map(|(i, _)| i))
+            .unwrap_or(self.active)
+    }
+
+    fn take_id(&mut self) -> u64 {
         let id = self.next_id;
         self.next_id += 1;
-        self.items.push(Tab { id, title, pinned: false, pane });
-        self.active = self.items.len() - 1;
         id
+    }
+
+    /// Appends a tab to the visible group, selects it and returns its id.
+    pub(crate) fn push(&mut self, title: String, pane: T) -> u64 {
+        let id = self.push_in(self.active_group(), title, pane);
+        self.select_index(self.items.len() - 1);
+        id
+    }
+
+    /// Appends a tab to a group without selecting it, and returns its id.
+    pub(crate) fn push_in(&mut self, group: usize, title: String, pane: T) -> u64 {
+        let id = self.take_id();
+        self.items.push(Tab { id, group, title, pinned: false, pane });
+        id
+    }
+
+    /// Selects a tab. In a group that is not on show it only becomes what that group shows once it
+    /// is, so a restored tab never takes the window from the one in front.
+    pub(crate) fn select_id(&mut self, id: u64) {
+        let Some(index) = self.index_of(id) else { return };
+        if self.items[index].group == self.active_group() {
+            self.select_index(index);
+        } else {
+            self.recent[self.items[index].group] = id;
+        }
     }
 
     pub(crate) fn index_of(&self, id: u64) -> Option<usize> {
@@ -85,19 +165,57 @@ impl<T> Tabs<T> {
             Action::Close(i) => self.close(i),
             Action::Select(i) => {
                 if i < self.items.len() {
-                    self.active = i;
+                    self.select_index(i);
+                }
+            }
+            Action::SelectNth(n) => {
+                let found = self.in_group(self.active_group()).nth(n).map(|(i, _)| i);
+                if let Some(i) = found {
+                    self.select_index(i);
+                }
+            }
+            Action::NextGroup => self.show_group(self.active_group() + 1),
+            Action::PrevGroup => self.show_group(self.active_group() + self.recent.len() - 1),
+            Action::ShowGroup(group) => {
+                if group < self.recent.len() {
+                    self.show_group(group);
                 }
             }
         }
+    }
+
+    fn select_index(&mut self, index: usize) {
+        self.active = index;
+        self.recent[self.items[index].group] = self.items[index].id;
+    }
+
+    fn show_group(&mut self, group: usize) {
+        let group = group % self.recent.len();
+        self.select_index(self.selected_in(group));
+    }
+
+    /// The tab of a group at `from`, else the one before it. A group always has its main tab.
+    fn neighbor(&self, group: usize, from: usize) -> usize {
+        let after = self.items.iter().enumerate().skip(from).find(|(_, tab)| tab.group == group);
+        let before =
+            self.items[..from.min(self.items.len())].iter().rposition(|tab| tab.group == group);
+        after.map(|(i, _)| i).or(before).unwrap_or(0)
     }
 
     fn close(&mut self, i: usize) {
         if self.items.get(i).is_none_or(|t| t.pinned) {
             return;
         }
+        let (group, id) = (self.items[i].group, self.items[i].id);
+        let was_active = i == self.active;
         self.items.remove(i);
-        if i < self.active || self.active >= self.items.len() {
+        if i < self.active {
             self.active -= 1;
+        }
+        if was_active {
+            self.select_index(self.neighbor(group, i));
+        } else if self.recent[group] == id {
+            self.recent[group] = self.items[self.neighbor(group, i)].id;
         }
     }
 }
@@ -222,5 +340,134 @@ mod tests {
         let mut tabs = tabs_with(1);
         tabs.apply(Action::Close(7), || unreachable!());
         assert_eq!(panes(&tabs), [0, 1]);
+    }
+
+    fn two_groups() -> Tabs<u32> {
+        let mut tabs = tabs_with(1);
+        tabs.add_group(10);
+        tabs.push_in(1, "api work".into(), 11);
+        tabs
+    }
+
+    fn titles_in(tabs: &Tabs<u32>, group: usize) -> Vec<&str> {
+        tabs.in_group(group).map(|(_, tab)| tab.title.as_str()).collect()
+    }
+
+    #[test]
+    fn a_new_group_has_its_own_pinned_main_tab_and_leaves_the_visible_group_alone() {
+        let mut tabs = tabs_with(1);
+        let group = tabs.add_group(10);
+        assert_eq!(group, 1);
+        assert_eq!(tabs.active_group(), 0);
+        assert_eq!(tabs.active(), 1);
+        assert_eq!(tabs.main_id(0), Some(0));
+        let main = tabs.main_id(1).unwrap();
+        assert!(tabs.items()[tabs.index_of(main).unwrap()].pinned);
+        assert_eq!(titles_in(&tabs, 1), [MAIN_TITLE]);
+    }
+
+    #[test]
+    fn ids_stay_unique_across_groups() {
+        let mut tabs = two_groups();
+        tabs.apply(Action::New, || 12);
+        let mut ids: Vec<u64> = tabs.items().iter().map(|t| t.id).collect();
+        ids.sort_unstable();
+        ids.dedup();
+        assert_eq!(ids.len(), tabs.items().len());
+    }
+
+    #[test]
+    fn push_goes_to_the_visible_group_and_push_in_selects_nothing() {
+        let mut tabs = two_groups();
+        assert_eq!(tabs.active_group(), 0);
+        assert_eq!(tabs.active(), 1, "push_in did not move the selection");
+        tabs.push("here".into(), 5);
+        assert_eq!(titles_in(&tabs, 0), [MAIN_TITLE, "shell 1", "here"]);
+        assert_eq!(titles_in(&tabs, 1), [MAIN_TITLE, "api work"]);
+    }
+
+    #[test]
+    fn selecting_a_tab_of_another_group_shows_that_group() {
+        let mut tabs = two_groups();
+        let api = tabs.in_group(1).last().unwrap().0;
+        tabs.apply(Action::Select(api), || unreachable!());
+        assert_eq!(tabs.active_group(), 1);
+        assert_eq!(*tabs.active_pane_mut(), 11);
+    }
+
+    #[test]
+    fn select_nth_counts_inside_the_visible_group() {
+        let mut tabs = two_groups();
+        tabs.apply(Action::NextGroup, || unreachable!());
+        tabs.apply(Action::SelectNth(0), || unreachable!());
+        assert_eq!(*tabs.active_pane_mut(), 10);
+        tabs.apply(Action::SelectNth(1), || unreachable!());
+        assert_eq!(*tabs.active_pane_mut(), 11);
+        tabs.apply(Action::SelectNth(2), || unreachable!());
+        assert_eq!(*tabs.active_pane_mut(), 11, "out of range is ignored");
+    }
+
+    #[test]
+    fn next_and_previous_group_wrap_and_each_group_returns_to_the_tab_it_had() {
+        let mut tabs = two_groups();
+        tabs.apply(Action::NextGroup, || unreachable!());
+        assert_eq!(tabs.active_group(), 1);
+        assert_eq!(*tabs.active_pane_mut(), 10, "the group's main tab, nothing else was selected");
+        tabs.apply(Action::SelectNth(1), || unreachable!());
+        tabs.apply(Action::NextGroup, || unreachable!());
+        assert_eq!(tabs.active_group(), 0);
+        assert_eq!(*tabs.active_pane_mut(), 1, "the shell that was selected in the first group");
+        tabs.apply(Action::PrevGroup, || unreachable!());
+        assert_eq!((tabs.active_group(), *tabs.active_pane_mut()), (1, 11));
+    }
+
+    #[test]
+    fn show_group_picks_a_group_by_number_and_ignores_one_that_is_not_there() {
+        let mut tabs = two_groups();
+        tabs.apply(Action::ShowGroup(1), || unreachable!());
+        assert_eq!(tabs.active_group(), 1);
+        tabs.apply(Action::ShowGroup(5), || unreachable!());
+        assert_eq!(tabs.active_group(), 1);
+        tabs.apply(Action::ShowGroup(0), || unreachable!());
+        assert_eq!(tabs.active_group(), 0);
+    }
+
+    #[test]
+    fn one_group_has_nowhere_to_step_to() {
+        let mut tabs = tabs_with(2);
+        tabs.apply(Action::NextGroup, || unreachable!());
+        tabs.apply(Action::PrevGroup, || unreachable!());
+        assert_eq!(tabs.active(), 2);
+    }
+
+    #[test]
+    fn selecting_in_a_group_on_show_selects_and_in_another_only_remembers() {
+        let mut tabs = two_groups();
+        let api = tabs.in_group(1).last().unwrap().1.id;
+        tabs.select_id(api);
+        assert_eq!((tabs.active_group(), tabs.active()), (0, 1), "the window stays in front");
+        assert_eq!(tabs.selected_in(1), tabs.index_of(api).unwrap());
+        tabs.apply(Action::NextGroup, || unreachable!());
+        assert_eq!(*tabs.active_pane_mut(), 11);
+    }
+
+    #[test]
+    fn closing_the_active_tab_stays_inside_its_group() {
+        let mut tabs = two_groups();
+        tabs.apply(Action::NextGroup, || unreachable!());
+        tabs.apply(Action::SelectNth(1), || unreachable!());
+        tabs.apply(Action::CloseActive, || unreachable!());
+        assert_eq!((tabs.active_group(), *tabs.active_pane_mut()), (1, 10));
+        assert_eq!(titles_in(&tabs, 0), [MAIN_TITLE, "shell 1"]);
+    }
+
+    #[test]
+    fn closing_a_tab_in_a_group_out_of_sight_moves_what_that_group_remembers() {
+        let mut tabs = two_groups();
+        let api = tabs.in_group(1).last().unwrap().1.id;
+        tabs.select_id(api);
+        tabs.remove_id(api);
+        tabs.apply(Action::NextGroup, || unreachable!());
+        assert_eq!((tabs.active_group(), *tabs.active_pane_mut()), (1, 10));
     }
 }
