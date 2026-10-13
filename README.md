@@ -7,7 +7,22 @@ right. Built by [HoboWare](https://github.com/Hobo-Ware) from the parts of
 [Kelp](https://github.com/Hobo-Ware/kelp) (graph, diff, review) and
 [stdusk](https://github.com/Hobo-Ware/stdusk) (terminal, tabs, quake window).
 
-Status: planning. Nothing to install yet.
+Status: in development, private. The release is packaged but nothing is published yet.
+
+## Install
+
+- macOS (once public): `brew install hobo-ware/tap/tidewatch`
+- Linux (once public): the `.tar.gz` or the `.AppImage` from the GitHub Release
+
+## Build from source
+
+```sh
+cargo run -p tidewatch -- [path]      # run
+scripts/bundle-macos.sh               # universal Tidewatch.app in target/dist
+scripts/package-linux.sh              # x86_64 Linux tarball and AppImage in target/dist
+```
+
+Release steps: [packaging/README.md](packaging/README.md).
 
 - Concept and mockup: [docs/concept.html](docs/concept.html)
 - Plan: [PLAN.md](PLAN.md)
