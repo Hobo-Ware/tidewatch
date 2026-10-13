@@ -83,7 +83,7 @@ crates/tidewatch/       the egui app
   src/single_instance.rs  startup before any window: Mode from the run kind (screenshot and a background run in the real home take no part), hand the path to a running window and exit, `--toggle` to every live window with an exit code, workspace key
   src/app.rs            the Tidewatch struct, `new` and the eframe::App loop, which only calls the frame steps below in order
   src/app/frame.rs      the frame's steps: drain finished jobs, drive background work, read shortcuts into a FrameIntent, apply what the frame asked for, finish
-  src/app/strip.rs      the tab strip: repo chip (a menu of the window's repos when there are several, a dot when an agent in another one needs you), leftovers chip, update pill, Overview button, the tabs, new tab and settings buttons
+  src/app/strip.rs      the tab strip: repo chip (a menu: the window's repos when there are several, a dot when an agent in another one needs you, Open repo and Close repo), leftovers chip, update pill, Overview button, the tabs, new tab and settings buttons
   src/app/central.rs    the central panel: Overview, settings page or the workspace (stepper, end card, delivery card, terminal, panes), view toggles
   src/app/terminal.rs   the active tab's terminal area: shell grid and input, status messages, the exit notice, the Reader or its note
   src/app/panes.rs      History and Diff panes: one view per tab, finished pane jobs, notes saving, double-click checkout
@@ -92,12 +92,14 @@ crates/tidewatch/       the egui app
   src/app/flow.rs       workflow runs, session restore and the delivery flow, driven once per frame
   src/app/settings.rs   opening and saving settings, window preferences, shell events (hotkey, menu bar, other launches), the settings page and its actions
   src/app/palette.rs    the command palette in the app: open and toggle it, what it lists (tabs of the repo on show, other repos, profiles, workflows in a repo), run what it picked
+  src/app/repos.rs      the repo menu's items: the folder picker (rfd on a job thread, one at a time) and closing the repo on show tab by tab through the close path
   src/app/workspaces.rs the repos of the window: the one on show, the views the session file is written from, what the next launch reopens, adding a repo when a launch hands over its folder (git look-up on a job thread)
   src/app/overlays.rs   the toast and its pill, and the dialogs drawn over the frame (close, leftovers, delivery, new tab, trust, notice)
   src/app/dev.rs        the TIDEWATCH_DEV_* drivers that need the whole app: start an agent, resume, press keys, leftovers dialog, pick and note
   src/commands.rs       the one command table: id, title, group, the chord on macOS and on Linux, the Command it runs; consume (most specific chord first), press_event, Gate (which chord works over which screen); key handling, tooltips and hints read it
   src/commands/rows.rs  the table as rows for the Shortcuts page, and (tests only) the markdown that docs/shortcuts.md must equal
   src/commands/tests.rs distinct chords per platform, no shadowing, every Action with a chord is in the table, macOS chords as shipped, Linux never takes a bare Ctrl letter, the gate
+  src/repo_close.rs     the close-repo sequence: which tab next, wait for a removal, stop when a tab stays (pure)
   src/palette.rs        the palette's data: items from the table plus tabs, profiles and workflows, Kelp's fuzzy matcher, filter, selection (pure)
   src/palette_view.rs   draws the palette: search field, rows with matched letters and the chord, arrows, Enter, Esc
   src/shortcuts_view.rs the Shortcuts page of Settings: the table for this platform as key caps
@@ -151,7 +153,8 @@ crates/tidewatch/       the egui app
   src/restore_jobs.rs   startup job, one per repo of the window (repair a moved repo, plan the saved window, scan leftovers owned by no saved or open tab) and the reopen job (fresh token, prepare_resume, folder trust)
   src/restore_glue.rs   Host: carry each repo's plan out in its tab group in saved order (shell, shell plus note, resume agent, resume workflow), active tab and focus, the settled flag the saver waits for (generic over the pty)
   src/notice.rs         a message that stays until dismissed (what a restore could not bring back)
-  src/session_glue.rs   Saver: once per frame, fingerprint changed -> queue a save; never under the screenshot harness or while a restore is under way; flush on quit
+  src/tabs/groups.rs    taking a whole group out of the tab list (`remove_group`), the groups after it move down
+  src/session_glue.rs   Saver: once per frame, fingerprint changed -> queue a save (a closed repo's window rides with the next one); never under the screenshot harness or while a restore is under way; flush on quit
   src/hotkey.rs         the quake hotkey string (`Ctrl+Alt+Grave`, `F13`) to modifiers and a key, strict with a named Problem for each mistake (pure)
   src/shell_plan.rs     the background gate: Plan from the settings and Env (background, Wayland, tray support); background means no hotkey, no menu-bar item, no activation, a plain window (pure)
   src/quake.rs          the drop-down: pure show/hide state (monitor-size wait, hide on blur, 120 ms wake while hidden), geometry (half height, 2 point sliver, alpha 0), `present` turns it into viewport commands
