@@ -10,7 +10,7 @@ commit. Built by [HoboWare](https://github.com/Hobo-Ware) from the parts of
 [Kelp](https://github.com/Hobo-Ware/kelp) (graph, diff, review) and
 [stdusk](https://github.com/Hobo-Ware/stdusk) (terminal, tabs, quake window).
 
-Status: in development. Nothing is released yet, so build from source to try it.
+Status: in development. Nothing is released yet, so build from source to try it. Showcase page: [tidewatch.hoboware.dev](https://tidewatch.hoboware.dev).
 
 ## What it does
 
