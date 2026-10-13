@@ -24,7 +24,7 @@ in the sibling repo, never in a local copy.
 
 ```
 crates/tidewatch-core/  worktrees, profiles, permission levels, workflows, agent status, no UI
-  src/paths.rs          ~/.tidewatch layout (D9), state dirs, instance sockets, per-tab notes and stages files, ~/.config/tidewatch files (pure)
+  src/paths.rs          ~/.tidewatch layout (D9), state dirs, the one app socket, per-tab notes and stages files, ~/.config/tidewatch files (pure)
   src/agents.rs         agent table: claude, codex, gemini, copilot, five permission levels to flags, version probe, [agent.<id>] overrides
   src/profiles.rs       Profile, profiles.toml load/save (bad file -> defaults), first-launch seeding
   src/workflows.rs      Workflow, Stage, Gate, Action; workflows.toml load/save/seed (bad file -> defaults), the built-in Ship a feature, Fix a bug, Review a PR
@@ -46,8 +46,8 @@ crates/tidewatch-core/  worktrees, profiles, permission levels, workflows, agent
   src/trust_apply.rs    D14 disk half: each CLI's config file (CLAUDE_CONFIG_DIR, COPILOT_HOME, CODEX_HOME honored), inspect, trust the root, trust a worktree, revoke; atomic write, `.tidewatch-bak` backup, race check
   src/prefs.rs          ~/.config/tidewatch/settings.toml: the app-wide switches (restore the last session at launch, default on) the [window] table (quake on, hotkey Ctrl+Alt+Grave, menu-bar item on) and the [updates] table (check, install; both on); bad file -> defaults; `update` rewrites one part from a fresh read
   src/update.rs          self-update, the pure part: the repo and cask, `Mode::pick` (only a macOS cask install updates itself, the rest is notify-only), the fake release for `TIDEWATCH_FAKE_UPDATE`
-  src/instance.rs       one window per folder: a Unix socket per workspace under .state/instances, `open <path>` hand-off from a second launch, `toggle` to every live window, stale socket takeover, guard that unlinks on exit; every command is answered `ok` or `closing`, and a launch that hears `closing` waits (50 ms polls, 10 s) for the socket and takes it over
-  src/last_workspace.rs .state/last-workspace.toml (the folder of the window used last) and `pick`, the pure choice of the folder a launch opens: command line, a working folder in a repo, the remembered folder if it exists, the working folder
+  src/instance.rs       one window for the app: one Unix socket (`.state/instances/tidewatch.sock`), `open <path>` hand-off from a second launch (any folder: the window adds it as a repo or shows it), `toggle` to every live window, stale socket takeover, guard that unlinks on exit; every command is answered `ok` or `closing`, and a launch that hears `closing` waits (50 ms polls, 10 s) for the socket and takes it over
+  src/last_workspace.rs .state/last-workspace.toml (`dir`, the repo in front when the window was used last, and `also`, the other repos that had tabs open) and `pick`, the pure choice of the folders a launch opens: command line (alone), a working folder in a repo, the remembered folders that still exist, the working folder
   src/names.rs          adjective-noun names for new worktrees (pure)
   src/registry.rs       .state/worktrees.toml: the worktrees Tidewatch made, for repair
   src/restore.rs        D11 restore: pure plan (saved session + Disk -> one action per tab), repair_moved, resume_command, restore_workflow, codex_session_id
@@ -79,11 +79,11 @@ crates/tidewatch-core/  worktrees, profiles, permission levels, workflows, agent
 crates/tidewatch/       the egui app
   src/main.rs           workspace discovery, the single-instance claim, the window shape from the Plan, eframe start; `--toggle` exits before any window
   src/cli.rs            `tidewatch [--no-restore] [--toggle] [path]` (pure)
-  src/last_used.rs      writes the last-workspace file when the window gains focus and when it closes (not under a screenshot or background run)
+  src/last_used.rs      writes the last-workspace file (repos of the window) when the window gains focus and when it closes (not under a screenshot or background run)
   src/single_instance.rs  startup before any window: Mode from the run kind (screenshot and a background run in the real home take no part), hand the path to a running window and exit, `--toggle` to every live window with an exit code, workspace key
   src/app.rs            the Tidewatch struct, `new` and the eframe::App loop, which only calls the frame steps below in order
   src/app/frame.rs      the frame's steps: drain finished jobs, drive background work, read shortcuts into a FrameIntent, apply what the frame asked for, finish
-  src/app/strip.rs      the tab strip: chip, leftovers chip, update pill, Overview button, the tabs, new tab and settings buttons
+  src/app/strip.rs      the tab strip: repo chip (a menu of the window's repos when there are several, a dot when an agent in another one needs you), leftovers chip, update pill, Overview button, the tabs, new tab and settings buttons
   src/app/central.rs    the central panel: Overview, settings page or the workspace (stepper, end card, delivery card, terminal, panes), view toggles
   src/app/terminal.rs   the active tab's terminal area: shell grid and input, status messages, the exit notice, the Reader or its note
   src/app/panes.rs      History and Diff panes: one view per tab, finished pane jobs, notes saving, double-click checkout
@@ -91,7 +91,8 @@ crates/tidewatch/       the egui app
   src/app/agents.rs     profile and probe results, listener messages to tabs, findings to notes, per-frame agent status and the next wake-up
   src/app/flow.rs       workflow runs, session restore and the delivery flow, driven once per frame
   src/app/settings.rs   opening and saving settings, window preferences, shell events (hotkey, menu bar, other launches), the settings page and its actions
-  src/app/palette.rs    the command palette in the app: open and toggle it, what it lists (tabs, profiles, workflows in a repo), run what it picked
+  src/app/palette.rs    the command palette in the app: open and toggle it, what it lists (tabs of the repo on show, other repos, profiles, workflows in a repo), run what it picked
+  src/app/workspaces.rs the repos of the window: the one on show, the views the session file is written from, what the next launch reopens, adding a repo when a launch hands over its folder (git look-up on a job thread)
   src/app/overlays.rs   the toast and its pill, and the dialogs drawn over the frame (close, leftovers, delivery, new tab, trust, notice)
   src/app/dev.rs        the TIDEWATCH_DEV_* drivers that need the whole app: start an agent, resume, press keys, leftovers dialog, pick and note
   src/commands.rs       the one command table: id, title, group, the chord on macOS and on Linux, the Command it runs; consume (most specific chord first), press_event, Gate (which chord works over which screen); key handling, tooltips and hints read it
@@ -100,7 +101,7 @@ crates/tidewatch/       the egui app
   src/palette.rs        the palette's data: items from the table plus tabs, profiles and workflows, Kelp's fuzzy matcher, filter, selection (pure)
   src/palette_view.rs   draws the palette: search field, rows with matched letters and the chord, arrows, Enter, Esc
   src/shortcuts_view.rs the Shortcuts page of Settings: the table for this platform as key caps
-  src/tabs.rs           tab list and its Action reducer (pure, generic over the pane)
+  src/tabs.rs           tab list and its Action reducer (pure, generic over the pane); every tab is in a group, one per repo of the window, with its own pinned main tab, and the visible group is the one the active tab is in
   src/test_exec.rs      test only: a fixture script written through cp, so no forking test thread holds it open (Linux ETXTBSY)
   src/pane.rs           what a tab holds: shell or agent (with its AgentRun and how it was launched), creating, removing, failed; opening results, close policy (pure, generic)
   src/jobs.rs           background thread runner: result channel plus a repaint
@@ -145,10 +146,10 @@ crates/tidewatch/       the egui app
   src/toast.rs          one timed message, fade on egui's clock (pure)
   src/fonts.rs          stdusk font set with kelp-ui's faces and semibold family merged in (kelp_ui::fonts::extend), CJK fallback
   src/repo.rs           git root and label; Workspace = Repo or the Other group
-  src/session_save.rs   the open tabs as a SavedWindow (main, shell, agent with profile, level, session id, stages file; the active tab, focus mode) and a fingerprint of the same facts (pure, generic over the pane)
+  src/session_save.rs   the open tabs of one repo of the window (a tab group) as a SavedWindow (main, shell, agent with profile, level, session id, stages file; the active tab, focus mode) and a fingerprint of the same facts (pure, generic over the pane)
   src/session_writer.rs debounced writer thread for session.toml (Debounce is pure), synchronous flush for the quit path
-  src/restore_jobs.rs   startup job (repair a moved repo, plan the saved window, scan leftovers owned by no saved or open tab) and the reopen job (fresh token, prepare_resume, folder trust)
-  src/restore_glue.rs   Host: carry the plan out in saved order (shell, shell plus note, resume agent, resume workflow), active tab and focus, the settled flag the saver waits for (generic over the pty)
+  src/restore_jobs.rs   startup job, one per repo of the window (repair a moved repo, plan the saved window, scan leftovers owned by no saved or open tab) and the reopen job (fresh token, prepare_resume, folder trust)
+  src/restore_glue.rs   Host: carry each repo's plan out in its tab group in saved order (shell, shell plus note, resume agent, resume workflow), active tab and focus, the settled flag the saver waits for (generic over the pty)
   src/notice.rs         a message that stays until dismissed (what a restore could not bring back)
   src/session_glue.rs   Saver: once per frame, fingerprint changed -> queue a save; never under the screenshot harness or while a restore is under way; flush on quit
   src/hotkey.rs         the quake hotkey string (`Ctrl+Alt+Grave`, `F13`) to modifiers and a key, strict with a named Problem for each mistake (pure)
@@ -214,7 +215,7 @@ cargo run -p tidewatch -- --no-restore <repo>   # start with just the main tab; 
 tidewatch --toggle                     # show or hide every running window, exit 1 if none answers (the way in on Wayland)
 ```
 
-One window per folder: `tidewatch <path>` for a folder that already has a window hands the path over and exits (no second window); another folder starts its own process. A launch with no path and no git repo around it (Finder, or the `open -n` of the update Restart button, both start in `/`) opens the last-used folder; a window that is closing answers `closing` and the new launch waits for its socket, so a restart never hands its folder to a dying window. A foreground window takes focus, so the restart itself is only covered by tests; a background run from `/` with `last-workspace.toml` seeded in a throwaway `TIDEWATCH_HOME` shows the folder pick (read the window's `dir` in `session.toml`). The socket is `<home>/.tidewatch/.state/instances/<hash>.sock`, so a `TIDEWATCH_HOME` run never meets the real one, but a socket path must stay under about 100 bytes: use a short throwaway home such as `/tmp/x`, not one under macOS `$TMPDIR`. Quake is on by default (`Ctrl+Alt+Grave`, Settings, General, Window). **Never live-test quake show/hide, the hotkey or the menu-bar item from an agent run: they take focus. A background run (below) gets none of them by construction (`shell_plan::Plan`).** To see a background instance answer a launch without any window action: start it with `TIDEWATCH_DEV_STATUS_LOG=1`, then run `tidewatch --toggle` or `tidewatch <repo>` with the same `TIDEWATCH_HOME` and read its stderr (`shell toggle`, `shell open <repo>`).
+One window for the app: `tidewatch <path>` hands the path to the running window and exits (no second window); the window adds a folder it does not hold as a repo (its own tab group, main shell and saved tabs, chip menu or the next/previous repo chords to switch) and brings forward one it holds. A launch with no path reopens the repos of the last window (`dir`, `also`). To check it in the background: start a `TIDEWATCH_BACKGROUND=1` run with a short throwaway `TIDEWATCH_HOME` and `TIDEWATCH_DEV_QUIT`, wait for `.state/instances/tidewatch.sock`, run `tidewatch <other repo>` with the same home (it hands over and exits at once, so only do it once the socket exists), then read both repos in `session.toml`. A launch with no path and no git repo around it (Finder, or the `open -n` of the update Restart button, both start in `/`) opens the last-used folder; a window that is closing answers `closing` and the new launch waits for its socket, so a restart never hands its folder to a dying window. A foreground window takes focus, so the restart itself is only covered by tests; a background run from `/` with `last-workspace.toml` seeded in a throwaway `TIDEWATCH_HOME` shows the folder pick (read the window's `dir` in `session.toml`). The socket is `<home>/.tidewatch/.state/instances/tidewatch.sock`, so a `TIDEWATCH_HOME` run never meets the real one, but a socket path must stay under about 100 bytes: use a short throwaway home such as `/tmp/x`, not one under macOS `$TMPDIR`. Quake is on by default (`Ctrl+Alt+Grave`, Settings, General, Window). **Never live-test quake show/hide, the hotkey or the menu-bar item from an agent run: they take focus. A background run (below) gets none of them by construction (`shell_plan::Plan`).** To see a background instance answer a launch without any window action: start it with `TIDEWATCH_DEV_STATUS_LOG=1`, then run `tidewatch --toggle` or `tidewatch <repo>` with the same `TIDEWATCH_HOME` and read its stderr (`shell toggle`, `shell open <repo>`).
 Screenshot runs open in the background: no Dock icon, never take keyboard focus from the
 developer's active window. `TIDEWATCH_BACKGROUND=1` does the same for any other dev or live-check
 run. Agents must use one of the two for every window they open.
@@ -247,7 +248,7 @@ seconds through the real key path, `TIDEWATCH_DEV_ANSWER=allow|deny` clicks a pe
 shell that starts Tidewatch is itself a Claude session: the child otherwise writes no transcript and the Reader falls back to the terminal.
 Session: every change is saved to `<home>/.tidewatch/.state/session.toml` and the next launch restores it (Settings, General, turns that off). To check it in the background: `TIDEWATCH_DEV_QUIT=<s>` closes the window through the close request (the quit-time save runs), `TIDEWATCH_DEV_SAVE_DEBOUNCE_MS=600000` leaves that quit-time write as the only one, `TIDEWATCH_DEV_SELECT=<n>` (`_SELECT_AFTER`) selects tab n, `TIDEWATCH_DEV_SHOT=<png>` (`_SHOT_AFTER`) saves a screenshot without quitting (the screenshot harness itself saves nothing), `TIDEWATCH_DEV_LEFTOVERS=open|clean` opens the leftover worktrees dialog or presses Clean up. Relaunch with the same `TIDEWATCH_HOME` and repo; `TIDEWATCH_DEV_REPLY` asks a resumed agent a question from the Reader.
 Keys (macOS; Linux uses Ctrl+Shift or Alt, the table is `commands.rs` and `docs/shortcuts.md`, and a change goes in the table first): Cmd+Shift+P the command palette, Cmd+T new tab (the dialog: pick a profile or Shell, permission level, task; Enter starts, Esc cancels), Cmd+W
-close the active tab (not the pinned main tab; a worktree tab asks keep/delete branch first), Cmd+1..9 select,
+close the active tab (not the pinned main tab; a worktree tab asks keep/delete branch first), Cmd+1..9 select (in the repo on show), Cmd+Ctrl+] / [ next and previous repo,
 Cmd+Shift+T flip the active agent tab between the Reader and the raw terminal, Cmd+, the profile editor, Cmd+0 the Overview (Esc or Cmd+0 closes it), Cmd+. focus mode (hides History and Diff).
 The sibling crates are git dependencies pinned by commit (`rev`), not by tag (PLAN.md,
 Deviations log). To pick up a sibling change, merge it there, then bump `rev`.
