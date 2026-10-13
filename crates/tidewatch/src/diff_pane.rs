@@ -15,6 +15,7 @@ use stdusk_egui::ui::icons;
 use stdusk_egui::widgets::{chip, icon_button};
 use tidewatch_core::notes::Notes;
 
+use crate::commands::Platform;
 use crate::flow::PaneExtras;
 use crate::note_actions;
 use crate::notes_strip::{self, StripAction};
@@ -27,11 +28,24 @@ const TOOLBAR_H: f32 = 34.0;
 const HEADER_H: f32 = 64.0;
 const SHORT_ID: usize = 7;
 
-static TEXTS: DiffTexts = DiffTexts {
+static MAC_TEXTS: DiffTexts = DiffTexts {
     saved_hint: Cow::Borrowed("Notes go to this tab's agent when you send them"),
     reply_hint: Cow::Borrowed("Reply...  (Cmd Enter to save)"),
     comment_hint: Cow::Borrowed("Note for the agent...  (Cmd Enter to save)"),
 };
+
+static LINUX_TEXTS: DiffTexts = DiffTexts {
+    saved_hint: Cow::Borrowed("Notes go to this tab's agent when you send them"),
+    reply_hint: Cow::Borrowed("Reply...  (Ctrl Enter to save)"),
+    comment_hint: Cow::Borrowed("Note for the agent...  (Ctrl Enter to save)"),
+};
+
+fn texts(platform: Platform) -> &'static DiffTexts {
+    match platform {
+        Platform::Mac => &MAC_TEXTS,
+        Platform::Linux => &LINUX_TEXTS,
+    }
+}
 
 pub(crate) fn kind_letter(kind: ChangeKind) -> &'static str {
     match kind {
@@ -403,7 +417,7 @@ fn show_body(ui: &mut Ui, rect: Rect, view: &mut TabView) -> bool {
                 stacked: false,
                 hunk_buttons: &[],
                 line_select_hint: None,
-                texts: &TEXTS,
+                texts: texts(Platform::CURRENT),
             },
         );
     });
@@ -414,6 +428,13 @@ fn show_body(ui: &mut Ui, rect: Rect, view: &mut TabView) -> bool {
 mod tests {
     use super::*;
     use kelp_core::review::{Anchor, Comment, Side};
+
+    #[test]
+    fn the_save_hint_names_the_platforms_key() {
+        assert!(texts(Platform::Mac).comment_hint.contains("Cmd Enter"));
+        assert!(texts(Platform::Linux).comment_hint.contains("Ctrl Enter"));
+        assert!(texts(Platform::Linux).reply_hint.contains("Ctrl Enter"));
+    }
 
     fn notes_with(open: usize, resolved: usize) -> Notes {
         let mut notes = Notes::default();
