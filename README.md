@@ -10,7 +10,7 @@ commit. Built by [HoboWare](https://github.com/Hobo-Ware) from the parts of
 [Kelp](https://github.com/Hobo-Ware/kelp) (graph, diff, review) and
 [stdusk](https://github.com/Hobo-Ware/stdusk) (terminal, tabs, quake window).
 
-Status: in development, private. The release is packaged but not yet released, so there is nothing to download yet.
+Status: in development. Nothing is released yet, so build from source to try it.
 
 ## What it does
 
@@ -39,8 +39,8 @@ Tidewatch checks GitHub for a new release about once an hour and when its window
 
 ## Install
 
-- macOS (once public): `brew install hobo-ware/tap/tidewatch`
-- Linux (once public): the `.tar.gz` or the `.AppImage` from the GitHub Release
+- macOS (after the first release): `brew install hobo-ware/tap/tidewatch`
+- Linux (after the first release): the `.tar.gz` or the `.AppImage` from the GitHub Release
 
 ## Build from source
 
