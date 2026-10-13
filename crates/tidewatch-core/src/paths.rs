@@ -71,6 +71,12 @@ impl TidewatchPaths {
         self.root.join(".state")
     }
 
+    /// The tabs open at the last quit, restored at the next launch.
+    #[must_use]
+    pub fn session_file(&self) -> PathBuf {
+        self.state_dir().join("session.toml")
+    }
+
     /// Keyed by the full repo path, so two repos with the same folder name never share a directory.
     #[must_use]
     pub fn repo_dir(&self, repo: &Path) -> PathBuf {
@@ -179,6 +185,12 @@ mod tests {
         );
         assert!(paths.stages_file(repo, "brave-otter").ends_with("brave-otter/stages.json"));
         assert_ne!(paths.stages_file(repo, "main"), paths.stages_file(repo, "brave-otter"));
+    }
+
+    #[test]
+    fn session_file_sits_in_the_state_dir_next_to_the_worktree_registry() {
+        let paths = paths();
+        assert_eq!(paths.session_file(), paths.state_dir().join("session.toml"));
     }
 
     #[test]
