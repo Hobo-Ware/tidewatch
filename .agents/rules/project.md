@@ -98,8 +98,10 @@ crates/tidewatch/       the egui app
   src/new_tab_dialog.rs the dialog itself: profile list, ladder, task, preview; Enter starts, Esc cancels
   src/list_row.rs       one selectable list row, shared by the dialog and the profile editor
   src/profile_editor.rs profile editor state: drafts, text in and out of fields, validation, profiles to save (pure)
-  src/settings.rs       what the settings view holds: the profile and workflow editors and which page shows (pure)
-  src/settings_view.rs  the settings view, Profiles, Workflows, Folder trust and General (restore switch) pages (replaces the terminal area; Cmd+, or the gear)
+  src/settings.rs       what the settings view holds: the profile, workflow and window editors and which page shows (pure)
+  src/window_settings.rs  the Window section's state: quake and menu-bar switches apply at once, the hotkey text is checked as you type and applied on leaving the field when it parses (pure)
+  src/window_view.rs    draws the Window section: switches, hotkey field with its problem or registration status
+  src/settings_view.rs  the settings view, Profiles, Workflows, Folder trust and General (restore switch, Window section) pages (replaces the terminal area; Cmd+, or the gear)
   src/trust_glue.rs     D14 host: installed CLIs and their trust state, the consent state and its jobs, the grant handed to new tabs and worktree removal
   src/trust_view.rs     D14 wording per CLI (pure), the first-launch consent dialog and the Folder trust settings page
   src/workflow_editor.rs  workflow editor state: drafts per workflow and stage, problems found as you type, workflows to save (pure)
