@@ -75,8 +75,9 @@ crates/tidewatch-core/  worktrees, profiles, permission levels, workflows, agent
   tests/history_roundtrip.rs   real throwaway repos: worktree branch history, whole repo, ahead/behind, diffs, watcher
   tests/session_restore.rs     real repos + fake home: moved repo repaired then planned, removed worktree, missing session file
 crates/tidewatch/       the egui app
-  src/main.rs           workspace discovery, eframe start
-  src/cli.rs            `tidewatch [--no-restore] [path]` (pure)
+  src/main.rs           workspace discovery, the single-instance claim, the window shape from the Plan, eframe start; `--toggle` exits before any window
+  src/cli.rs            `tidewatch [--no-restore] [--toggle] [path]` (pure)
+  src/single_instance.rs  startup before any window: Mode from the run kind (screenshot and a background run in the real home take no part), hand the path to a running window and exit, `--toggle` to every live window with an exit code, workspace key
   src/app.rs            the eframe::App loop: chip, tab strip, terminal, card bands, History and Diff panes, toast, shortcuts, job results
   src/tabs.rs           tab list and its Action reducer (pure, generic over the pane)
   src/pane.rs           what a tab holds: shell or agent (with its AgentRun and how it was launched), creating, removing, failed; opening results, close policy (pure, generic)
