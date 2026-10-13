@@ -1,10 +1,10 @@
-//! One running Tidewatch window per folder, found through a Unix socket under the state dir.
+//! One running Tidewatch window, found through a Unix socket under the state dir.
 //!
-//! A window serves one workspace (a repo, or a folder in the Other group), so each folder gets its
-//! own socket. A second `tidewatch <path>` for the same folder connects to it, hands over the
-//! path and exits. `tidewatch --toggle` reaches every live window. A socket file nobody answers on
-//! (a crash) is removed and taken over. Lines on the wire: `open <path>` and `toggle`, each
-//! answered with one line, `ok` or `closing`.
+//! The window holds every repo (or folder in the Other group) opened in it. A second
+//! `tidewatch <path>` connects to the socket, hands over the path and exits, and the window opens
+//! that folder as one more repo, or shows it when it is already open. `tidewatch --toggle` reaches
+//! every live window. A socket file nobody answers on (a crash) is removed and taken over. Lines
+//! on the wire: `open <path>` and `toggle`, each answered with one line, `ok` or `closing`.
 
 use std::ffi::OsStr;
 use std::io::{BufRead, BufReader, ErrorKind, Read, Write};
@@ -25,7 +25,8 @@ const MAX_LINE: u64 = 8192;
 /// What a launch can ask of a running window.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Command {
-    /// Bring the window for this folder forward.
+    /// Open this folder in the window, as a repo of its own unless it is open already, and bring
+    /// the window forward.
     Open(PathBuf),
     /// Show the window if it is hidden, hide it if it is shown.
     Toggle,
@@ -121,7 +122,7 @@ impl Drop for Guard {
     }
 }
 
-/// The window that owns a folder's socket.
+/// The window that owns the socket.
 pub struct Primary {
     listener: UnixListener,
     guard: Guard,
@@ -158,11 +159,11 @@ fn read_command(stream: &UnixStream) -> Option<Command> {
     Command::parse(&line)
 }
 
-/// How the claim on a folder's socket went.
+/// How the claim on the socket went.
 pub enum Claim {
-    /// Nobody else has this folder: serve its socket.
+    /// No other window is running: serve the socket.
     Primary(Primary),
-    /// A window for this folder is already running (and got the command, when one was given).
+    /// A window is already running (and got the command, when one was given).
     Secondary,
     /// The socket could not be used. Run without single-instance rather than not at all.
     Unavailable(std::io::Error),
