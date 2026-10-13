@@ -9,6 +9,7 @@ mod dev;
 mod flow;
 mod frame;
 mod overlays;
+mod palette;
 mod panes;
 mod settings;
 mod strip;
@@ -50,6 +51,7 @@ use crate::leftover_glue;
 use crate::new_tab::{NewTab, Request};
 use crate::notify::Notifier;
 use crate::os::RealOs;
+use crate::palette::Palette;
 use crate::pane::Pane;
 use crate::pane_jobs;
 use crate::pty::spawn_shell;
@@ -99,6 +101,7 @@ pub(crate) struct Tidewatch {
     agent_jobs: Jobs<agent_jobs::Done>,
     new_tab: Option<NewTab>,
     settings: Option<Settings>,
+    palette: Option<Palette>,
     last_profile: Option<String>,
     hooks: Hooks,
     flow: Flow,
@@ -172,6 +175,7 @@ impl Tidewatch {
             agent_jobs: Jobs::new(),
             new_tab: None,
             settings: None,
+            palette: None,
             last_profile: None,
             hooks,
             flow,

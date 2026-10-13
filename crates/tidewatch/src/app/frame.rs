@@ -77,6 +77,7 @@ impl Tidewatch {
             }
         }
         if gate.dialog != Dialog::TabChoice
+            && !gate.palette
             && self.overview
             && ctx.input_mut(|i| i.consume_key(Modifiers::NONE, Key::Escape))
         {
@@ -102,7 +103,12 @@ impl Tidewatch {
         } else {
             Dialog::None
         };
-        Gate { dialog, settings: self.settings.is_some(), overview: self.overview }
+        Gate {
+            dialog,
+            settings: self.settings.is_some(),
+            overview: self.overview,
+            palette: self.palette.is_some(),
+        }
     }
 
     pub(super) fn run_command(&mut self, command: Command, ctx: &egui::Context) {
@@ -116,6 +122,7 @@ impl Tidewatch {
             Command::Focus => self.toggle_focus(ctx),
             Command::Reader => self.toggle_reader(ctx),
             Command::Settings => self.toggle_settings(),
+            Command::Palette => self.toggle_palette(),
             Command::ApproveDelivery => {}
         }
     }

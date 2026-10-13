@@ -62,7 +62,8 @@ pub(crate) fn page(ui: &mut egui::Ui, height: f32) {
             ui.add_space(8.0);
         }
         ui.label(
-            RichText::new("Enter, Esc and the arrow keys inside dialogs are fixed.")
+            RichText::new("Every command except the dialog keys is also in the command palette. Enter, Esc and \
+                 the arrow keys inside dialogs and the palette are fixed.")
                 .size(12.0)
                 .color(colors::dim()),
         );

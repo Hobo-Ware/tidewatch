@@ -29,6 +29,10 @@ impl Tidewatch {
             }
             return;
         }
+        if dev.mode == DevMode::Palette {
+            self.open_palette(dev.profile.as_deref().unwrap_or_default());
+            return;
+        }
         if dev.mode == DevMode::Resume {
             self.dev_resume(ctx, dev.profile.as_deref().unwrap_or_default());
             return;
@@ -43,7 +47,7 @@ impl Tidewatch {
         state.task = dev.task;
         state.task_edited();
         match dev.mode {
-            DevMode::Settings | DevMode::Resume => {}
+            DevMode::Settings | DevMode::Palette | DevMode::Resume => {}
             DevMode::Dialog => self.new_tab = Some(state),
             DevMode::Start => match state.request(&self.catalog) {
                 Ok(request) => self.open_tab(ctx, request),
