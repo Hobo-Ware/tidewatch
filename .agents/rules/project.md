@@ -45,10 +45,13 @@ crates/tidewatch-core/  worktrees, profiles, permission levels, workflows, agent
   src/restore.rs        D11 restore: pure plan (saved session + Disk -> one action per tab), repair_moved, resume_command, restore_workflow, codex_session_id
   src/session.rs        .state/session.toml (D11): Session, SavedWindow, SavedTab (main, shell, agent); load (bad file -> empty), atomic save
   src/worktree.rs       add (locked, agent/<name>), inspect, remove, list, repair, leftovers (shells out to git)
-  src/notes.rs          per-tab review threads in .state/<repo-dir>/<tab>/notes.json: load, atomic save, background writer, PR import links (D4)
+  src/notes.rs          per-tab review threads in .state/<repo-dir>/<tab>/notes.json: load, atomic save, background writer, PR import links, sent marks and note state (queued, sent, replied) (D4)
+  src/note_paste.rs     the text pasted into an agent to hand it notes: path:line, quoted line, text, id, closing reply_to_note ask; control characters stripped (pure)
+  src/end_block.rs      D13 parser: the Done / Needs you / Next block of an agent's last message (pure)
   src/tools.rs          Tools (PATH for git and gh), GhError and the gh runner shared by delivery and pr
   src/delivery.rs       D7 hand-off: DeliveryPlan (commits ahead of base, proposed PR text), deliver = git push -u then gh pr create
   src/pr.rs             D4 PR comments: find the open PR (gh pr view), pull review comments into notes threads (idempotent merge), post a note or reply
+  src/pr_lines.rs       which lines of a PR diff take a review comment: git diff base...head parsed into hunk ranges (parse is pure, load shells out)
   src/rfc3339.rs        RFC 3339 timestamp to unix millis (pure, crate-private)
   src/transcript.rs     D12 Reader model: Entry/Role/ToolCall, per-CLI transcript parsers (claude, gemini, copilot verified; codex unverified), incremental Tail
   src/transcript_locate.rs  where each CLI keeps a tab's session file: Locator by cwd and session id (claude folder encoding verified), gemini, copilot, codex (unverified)
@@ -59,13 +62,14 @@ crates/tidewatch-core/  worktrees, profiles, permission levels, workflows, agent
   tests/push_guard.rs   real bare remote: plain, --no-verify, explicit-url and forced pushes refused, fetch works
   tests/common/mod.rs   test helpers: throwaway repos with a bare remote, a fake gh that logs its calls (the real gh never runs)
   tests/delivery_roundtrip.rs  real bare remote + fake gh: plan, base detection, push, PR args, each typed failure
+  tests/pr_lines_git.rs real throwaway repo: the branch diff against the remote base says which lines take a comment
   tests/pr_gh.rs        fake gh: pr view, comments fetch and post argument shapes, GitHub-shaped JSON fixtures
   tests/fixtures/       redacted real transcripts (claude, gemini, copilot), hand-written codex, GitHub-shaped PR comments
   tests/history_roundtrip.rs   real throwaway repos: worktree branch history, whole repo, ahead/behind, diffs, watcher
   tests/session_restore.rs     real repos + fake home: moved repo repaired then planned, removed worktree, missing session file
 crates/tidewatch/       the egui app
   src/main.rs           argument parsing, workspace discovery, eframe start
-  src/app.rs            the eframe::App loop: chip, tab strip, terminal, History and Diff panes, toast, shortcuts, job results
+  src/app.rs            the eframe::App loop: chip, tab strip, terminal, card bands, History and Diff panes, toast, shortcuts, job results
   src/tabs.rs           tab list and its Action reducer (pure, generic over the pane)
   src/pane.rs           what a tab holds: shell or agent (with its AgentRun), creating, removing, failed; opening results, close policy (pure, generic)
   src/jobs.rs           background thread runner: result channel plus a repaint
@@ -89,7 +93,7 @@ crates/tidewatch/       the egui app
   src/tab_view.rs       per-tab pane state: loaded history, selection, open diff, notes, watcher; wants -> jobs -> answers (stale ones dropped)
   src/pane_jobs.rs      history, status, files, diff, notes, watcher and checkout as jobs
   src/history_pane.rs   History pane: header (branch, ahead/behind, This worktree / Whole repo), kelp-ui graph
-  src/diff_pane.rs      Diff pane: header, file list, toolbar, kelp-ui diff body with notes
+  src/diff_pane.rs      Diff pane: header (Send all open, Deliver when idle), file list, toolbar (PR chip, Pull PR comments), notes strip, kelp-ui diff body with notes
   src/note_actions.rs   kelp-ui DiffAction -> the tab's notes (pure)
   src/checkout.rs       double-click checkout rule: main tab only, clean tree only (pure plan, git outcome)
   src/toast.rs          one timed message, fade on egui's clock (pure)
@@ -100,6 +104,17 @@ crates/tidewatch/       the egui app
   src/dev_panes.rs      TIDEWATCH_DEV_SCOPE / _PICK / _NOTE switches: graph scope, selected row, a note for captures
   src/dev_view.rs       TIDEWATCH_DEV_OVERVIEW / _FOCUS / _STATUS_LOG / _KEYS switches: start on a view, log status changes, answer a prompt
   src/dev_agent.rs      TIDEWATCH_DEV_AGENT / _DIALOG / _SETTINGS / _TASK / _LEVEL switches: start a profile, open the dialog or the editor
+  src/dev_flow.rs       TIDEWATCH_DEV_GH_DIR / _AUTO / _SEND / _DELIVER / _PR switches: a fake gh first on PATH, then do once what a click would
+  src/flow.rs           Flow: one TabFlow per agent worktree tab (deliver-when-idle, delivery card, PR state), decide() turns frame facts into jobs, finished jobs come back as Out
+  src/flow_jobs.rs      send notes, probe/build/deliver a PR, find the PR, load its diff lines, pull its comments and post a note as jobs; notes-file jobs take NOTES_TURN
+  src/flow_glue.rs      seams between Flow and the app: tab facts, paste and Enter into a pty, the Diff pane's actions, the flow's dialogs, dev switch driver
+  src/note_send.rs      send gate (never paste into a waiting agent), AutoDelivery (deliver when idle, never while Working or NeedsYou), the Enter queue (pure)
+  src/notes_strip.rs    the open notes under the Diff toolbar: state (queued, sent <ago>, replied), Send, Post to PR, jump to file
+  src/delivery_card.rs  state of the push-and-open-PR card: probe, build, edit, deliver, fail with a plain fix, succeed (pure)
+  src/delivery_view.rs  the compact card above the panes and the editable dialog (Cmd+Enter approves, Esc cancels)
+  src/pr_state.rs       PR lookup state (focus and after a delivery, never per frame), the chip, whether a note may be posted (pure)
+  src/post_confirm.rs   the confirm dialog before a note goes to GitHub: PR number and repo, exact text, Enter posts, Esc cancels
+  src/end_block_view.rs the Done / Needs you / Next card on the tab (expandable) and its one-line form for the Overview
 docs/                   concept mockup, research reports
 ```
 
@@ -131,6 +146,10 @@ CLIs keep their login. `TIDEWATCH_DEV_AGENT=<profile id>` starts that profile in
 reported on stderr and nothing starts). `TIDEWATCH_DEV_DIALOG=<profile id>|1` opens the new-tab dialog and
 `TIDEWATCH_DEV_SETTINGS=1` the profile editor, for captures (use `TIDEWATCH_SCREENSHOT_WAIT=6`: profiles load and
 versions are probed in the background). Check an agent tab with `ps -o args= -p $(pgrep -n claude)`.
+`TIDEWATCH_DEV_GH_DIR=<dir>` puts `<dir>` first on the PATH `git` and `gh` run with, for a fake `gh` script (the real GitHub API must
+never be reached from a check). `TIDEWATCH_DEV_AUTO=1` turns Deliver when idle on, `TIDEWATCH_DEV_SEND=one|all` sends the first or every
+unsent note, `TIDEWATCH_DEV_DELIVER=open|approve` opens the delivery dialog (and presses Push and open PR), `TIDEWATCH_DEV_PR=pull|ask|post`
+pulls the PR's comments or opens (and confirms) the post dialog for the first note, each once, as soon as the active tab is ready.
 `TIDEWATCH_DEV_OVERVIEW=1` and `TIDEWATCH_DEV_FOCUS=1` start on the Overview or in focus mode; `TIDEWATCH_DEV_STATUS_LOG=1`
 prints every hook and status change to stderr with a wall-clock time in ms; `TIDEWATCH_DEV_KEYS='\e[B\r'` (after
 `TIDEWATCH_DEV_KEYS_AFTER` seconds, default 8) types into the newest agent tab once, for Claude's folder-trust prompt.
