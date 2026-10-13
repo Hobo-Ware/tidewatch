@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>CFBundleName</key><string>Tidewatch</string>
+  <key>CFBundleDisplayName</key><string>Tidewatch</string>
+  <key>CFBundleIdentifier</key><string>dev.hoboware.tidewatch</string>
+  <key>CFBundleExecutable</key><string>tidewatch</string>
+  <key>CFBundleIconFile</key><string>Tidewatch</string>
+  <key>CFBundlePackageType</key><string>APPL</string>
+  <key>CFBundleShortVersionString</key><string>__VERSION__</string>
+  <key>CFBundleVersion</key><string>__VERSION__</string>
+  <key>LSMinimumSystemVersion</key><string>12.0</string>
+  <key>LSApplicationCategoryType</key><string>public.app-category.developer-tools</string>
+  <key>NSHighResolutionCapable</key><true/>
+  <key>NSDesktopFolderUsageDescription</key><string>Tidewatch runs your shell and coding agents - commands they run may read or write files on your Desktop.</string>
+  <key>NSDocumentsFolderUsageDescription</key><string>Tidewatch runs your shell and coding agents - commands they run may read or write files in your Documents folder.</string>
+  <key>NSDownloadsFolderUsageDescription</key><string>Tidewatch runs your shell and coding agents - commands they run may read or write files in your Downloads folder.</string>
+</dict>
+</plist>
