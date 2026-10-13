@@ -1,6 +1,8 @@
 //! Round trips against real throwaway repos: every test builds its own repo and home folder in a
 //! temp dir and runs the actual `git` binary.
 
+mod common;
+
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -108,11 +110,9 @@ fn a_taken_folder_is_refused_without_leaving_a_branch() {
 #[cfg(unix)]
 #[test]
 fn a_failing_checkout_hook_rolls_the_whole_attempt_back() {
-    use std::os::unix::fs::PermissionsExt;
     let f = fixture();
     let hook = f.repo.join(".git/hooks/post-checkout");
-    fs::write(&hook, "#!/bin/sh\nexit 1\n").unwrap();
-    fs::set_permissions(&hook, fs::Permissions::from_mode(0o755)).unwrap();
+    common::write_executable_from_a_child(&hook, "#!/bin/sh\nexit 1\n");
 
     let err = worktree::add_named(&f.paths, &f.repo, "hooked").unwrap_err();
     assert!(matches!(err, WorktreeError::Git(_)), "{err}");

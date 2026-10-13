@@ -600,9 +600,10 @@ mod tests {
     fn probe_runs_the_binary_with_version() {
         let dir = tempfile::tempdir().unwrap();
         let script = dir.path().join("fake-agent");
-        std::fs::write(&script, "#!/bin/sh\n[ \"$1\" = --version ] && echo 'fake 9.8.7'\n")
-            .unwrap();
-        make_executable(&script);
+        write_executable_from_a_child(
+            &script,
+            "#!/bin/sh\n[ \"$1\" = --version ] && echo 'fake 9.8.7'\n",
+        );
         assert_eq!(probe_version(script.to_str().unwrap()).as_deref(), Some("9.8.7"));
         assert_eq!(probe_version("/nonexistent/tidewatch-agent"), None);
     }
@@ -612,8 +613,10 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let script = dir.path().join("fake-agent");
         let body = "#!/bin/sh\ncase \"$PATH\" in \"$FAKE_DIR\":*) echo \"fake 1.2.3\";; esac\n";
-        std::fs::write(&script, body.replace("$FAKE_DIR", dir.path().to_str().unwrap())).unwrap();
-        make_executable(&script);
+        write_executable_from_a_child(
+            &script,
+            &body.replace("$FAKE_DIR", dir.path().to_str().unwrap()),
+        );
         let path =
             std::env::join_paths([dir.path(), Path::new("/usr/bin"), Path::new("/bin")]).unwrap();
         assert_eq!(probe_version_in("fake-agent", Some(&path)).as_deref(), Some("1.2.3"));
@@ -623,6 +626,16 @@ mod tests {
     fn make_executable(path: &Path) {
         use std::os::unix::fs::PermissionsExt;
         std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+
+    /// Linux refuses to exec a file that any process holds open for writing (ETXTBSY), and a test
+    /// thread that forks while this process writes the file inherits that handle, so `cp` writes it.
+    fn write_executable_from_a_child(path: &Path, text: &str) {
+        let source = path.with_extension("src");
+        std::fs::write(&source, text).unwrap();
+        let copied = Command::new("cp").arg(&source).arg(path).status().unwrap();
+        assert!(copied.success(), "cp {} failed", path.display());
+        make_executable(path);
     }
 
     #[test]
