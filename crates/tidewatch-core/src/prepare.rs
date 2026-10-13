@@ -20,6 +20,8 @@ use crate::launch::{
 use crate::paths::TidewatchPaths;
 use crate::profiles::Profile;
 use crate::restore::{ResumeError, resume_command};
+use crate::trust::TrustCli;
+use crate::trust_apply::{Grant, Outcome};
 
 const MCP_CONFIG_FILE: &str = "mcp.json";
 const FALLBACK_NOTICE: &str =
@@ -40,6 +42,8 @@ pub struct PrepareInput<'a> {
     pub session_id: Option<String>,
     pub path_var: Option<&'a OsStr>,
     pub listener: Option<HookListener>,
+    /// With consent (D14): the folder-trust entry to add for this worktree before the agent starts.
+    pub trust: Option<&'a Grant>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -110,6 +114,13 @@ fn prepare_with(input: &PrepareInput, resume: Option<&str>) -> Result<Prepared, 
     let mut notes = Vec::new();
     let paths = input.paths;
     let wiring = input.agent.wiring;
+    if input.worktree_tab
+        && let (Some(grant), Some(cli)) = (input.trust, TrustCli::from_wiring(wiring))
+        && let Outcome::Failed(why) = grant.trust_worktree(cli, input.dir)
+    {
+        notes.push(format!("folder trust: {why}"));
+    }
+
     let mut soft = |what: &str, result: std::io::Result<PathBuf>| match result {
         Ok(path) => Some(path),
         Err(e) => {
@@ -310,6 +321,8 @@ mod tests {
     use super::*;
     use crate::agents::{AgentTable, ArgList, Level};
     use crate::launch::{NO_PUSH_MESSAGE, mcp_config_json};
+    use crate::trust::is_trusted;
+    use crate::trust_apply::ConfigFiles;
 
     fn profile(agent: &str, level: Level) -> Profile {
         Profile {
@@ -361,6 +374,7 @@ mod tests {
                 session_id: None,
                 path_var: Some(OsStr::new("/opt/homebrew/bin:/usr/bin:/bin")),
                 listener,
+                trust: None,
             })
         }
     }
@@ -481,6 +495,7 @@ mod tests {
                 session_id: None,
                 path_var: None,
                 listener: None,
+                trust: None,
             };
             let real = prepare(&input).unwrap();
             let shown = preview(&input).unwrap();
@@ -600,6 +615,63 @@ mod tests {
         assert!(!fx.dir.join(".gemini").exists());
     }
 
+    fn grant_in(fx: &Fixture, config_home: &Path) -> Grant {
+        Grant::new(&fx.paths, ConfigFiles::resolve(config_home, |_| None))
+    }
+
+    fn prepare_with_grant(
+        fx: &Fixture,
+        agent: &str,
+        worktree_tab: bool,
+        grant: &Grant,
+    ) -> Prepared {
+        let table = AgentTable::builtin();
+        let profile = profile(agent, Level::Edits);
+        let mut input = resume_input(fx, &table, agent, &profile, None);
+        input.worktree_tab = worktree_tab;
+        input.trust = Some(grant);
+        prepare(&input).unwrap()
+    }
+
+    #[test]
+    fn a_worktree_tab_with_consent_is_trusted_before_the_agent_starts() {
+        let fx = Fixture::new();
+        let config = tempfile::tempdir().unwrap();
+        let grant = grant_in(&fx, config.path());
+        let prepared = prepare_with_grant(&fx, "claude", true, &grant);
+        assert_eq!(prepared.notes, Vec::<String>::new());
+        let text = std::fs::read_to_string(config.path().join(".claude.json")).unwrap();
+        let folder = fx.dir.canonicalize().unwrap();
+        assert!(is_trusted(TrustCli::Claude, &text, &folder.to_string_lossy()).unwrap());
+    }
+
+    #[test]
+    fn no_trust_entry_for_gemini_a_shared_folder_or_a_tab_without_consent() {
+        let fx = Fixture::new();
+        let config = tempfile::tempdir().unwrap();
+        let grant = grant_in(&fx, config.path());
+        prepare_with_grant(&fx, "gemini", true, &grant);
+        prepare_with_grant(&fx, "claude", false, &grant);
+        fx.run("claude", &profile("claude", Level::Edits), true, "", None).unwrap();
+        let names: Vec<_> = std::fs::read_dir(config.path()).unwrap().collect();
+        assert_eq!(names.len(), 0, "nothing was written");
+    }
+
+    #[test]
+    fn a_config_file_that_cannot_be_edited_is_a_note_and_the_agent_still_starts() {
+        let fx = Fixture::new();
+        let config = tempfile::tempdir().unwrap();
+        std::fs::write(config.path().join(".claude.json"), "{ broken").unwrap();
+        let grant = grant_in(&fx, config.path());
+        let prepared = prepare_with_grant(&fx, "claude", true, &grant);
+        assert_eq!(prepared.notes.len(), 1);
+        assert!(prepared.notes[0].starts_with("folder trust: "), "{:?}", prepared.notes);
+        assert_eq!(
+            std::fs::read_to_string(config.path().join(".claude.json")).unwrap(),
+            "{ broken"
+        );
+    }
+
     const SESSION: &str = "0c2cbc96-1111-4222-8333-444455556666";
 
     fn resume_input<'a>(
@@ -621,6 +693,7 @@ mod tests {
             session_id: Some("99999999-8888-7777-6666-555555555555".into()),
             path_var: Some(OsStr::new("/opt/homebrew/bin:/usr/bin:/bin")),
             listener,
+            trust: None,
         }
     }
 
@@ -792,6 +865,7 @@ mod tests {
             session_id: None,
             path_var: Some(OsStr::new(&path)),
             listener: None,
+            trust: None,
         })
         .unwrap();
         for push in ["git push origin main", "git push --no-verify origin main"] {

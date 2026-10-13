@@ -38,10 +38,12 @@ crates/tidewatch-core/  worktrees, profiles, permission levels, workflows, agent
   src/mcp.rs            Tidewatch MCP tools (D6): stage_done, report_finding, list_notes, reply_to_note over JSON-RPC 2.0
   src/house_style.rs    default house-style.md (D13), ensure never overwrites, derived Copilot instructions file
   src/path_env.rs       PATH with the standard install dirs in front, for Finder launches (pure)
-  src/prepare.rs        gets a tab ready to start (or to resume): house style, guard helper, MCP and Gemini files, task flags, setup-then-agent shell line, banner_line (a stage divider printed before the agent)
+  src/prepare.rs        gets a tab ready to start (or to resume): house style, folder trust for the worktree (D14), guard helper, MCP and Gemini files, task flags, setup-then-agent shell line, banner_line (a stage divider printed before the agent)
   src/fsutil.rs         atomic file write shared by the settings writers
   src/jsonc_edit.rs     text-level edits of JSON with comments (scan, insert, remove, replace) that keep every untouched byte (crate-private, pure)
   src/trust.rs          D14 folder trust, pure: per-CLI config text in, text with the folder trusted (or not) out, idempotent, refuses unparsable files; TrustState per installed CLI
+  src/consent.rs        D14 consent state machine (Undecided, Granted, Declined; Yes, No, Apply, Undo -> effects) and trust.toml: the answer and the entries Tidewatch added
+  src/trust_apply.rs    D14 disk half: each CLI's config file (CLAUDE_CONFIG_DIR, COPILOT_HOME, CODEX_HOME honored), inspect, trust the root, trust a worktree, revoke; atomic write, `.tidewatch-bak` backup, race check
   src/names.rs          adjective-noun names for new worktrees (pure)
   src/registry.rs       .state/worktrees.toml: the worktrees Tidewatch made, for repair
   src/restore.rs        D11 restore: pure plan (saved session + Disk -> one action per tab), repair_moved, resume_command, restore_workflow, codex_session_id

@@ -49,6 +49,12 @@ impl TidewatchPaths {
         self.config_dir.join("workflows.toml")
     }
 
+    /// The answer to the D14 folder-trust question and the entries Tidewatch added to the CLIs' files.
+    #[must_use]
+    pub fn trust_file(&self) -> PathBuf {
+        self.config_dir.join("trust.toml")
+    }
+
     #[must_use]
     pub fn house_style_file(&self) -> PathBuf {
         self.config_dir.join("house-style.md")
@@ -122,6 +128,13 @@ mod tests {
             paths.repo_dir(Path::new("/work/web")),
             paths.repo_dir(Path::new("/personal/web")),
         );
+    }
+
+    #[test]
+    fn the_trust_record_sits_with_the_settings_not_in_the_worktree_root() {
+        let paths = paths();
+        assert_eq!(paths.trust_file(), Path::new("/Users/dev/.config/tidewatch/trust.toml"));
+        assert!(!paths.trust_file().starts_with(paths.root()));
     }
 
     #[test]
