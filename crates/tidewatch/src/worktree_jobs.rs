@@ -81,6 +81,7 @@ fn run_open(spec: &OpenSpec) -> Result<Opened, OpenFailure> {
         session_id: session_id.clone(),
         path_var: Some(&spec.path_var),
         listener: hooks,
+        trust: None,
     });
     if prepared.is_err()
         && let Some(listener) = &spec.listener

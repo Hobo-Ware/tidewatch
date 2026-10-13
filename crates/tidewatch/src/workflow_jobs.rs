@@ -114,6 +114,7 @@ fn run_stage(spec: &StageSpec) -> Result<Started, String> {
         session_id: session_id.clone(),
         path_var: Some(&spec.path_var),
         listener: hooks,
+        trust: None,
     })
     .map_err(|e| e.to_string())?;
     prepared.setup = format!("{}\n{}", banner_line(&launch.divider), prepared.setup);

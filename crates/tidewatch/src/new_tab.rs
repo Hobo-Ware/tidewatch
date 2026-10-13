@@ -369,6 +369,7 @@ fn build_preview(
         session_id: None,
         path_var: None,
         listener: None,
+        trust: None,
     };
     match preview_launch(&input) {
         Ok(launch) => {
