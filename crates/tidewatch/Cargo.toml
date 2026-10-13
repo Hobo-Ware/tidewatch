@@ -12,6 +12,7 @@ path = "src/main.rs"
 anyhow.workspace = true
 eframe.workspace = true
 egui.workspace = true
+egui_commonmark.workspace = true
 image.workspace = true
 kelp-core.workspace = true
 kelp-ui.workspace = true
