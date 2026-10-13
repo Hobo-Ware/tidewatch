@@ -1,4 +1,4 @@
-//! The tab strip: repo chip (a menu of the repos and Open repo), leftovers chip, update pill, overview button, the tabs and their buttons.
+//! The tab strip: repo chip (a menu of the repos, Open repo and Close repo), leftovers chip, update pill, overview button, the tabs and their buttons.
 
 use egui::{CornerRadius, Frame, Margin};
 use stdusk_core::progress::Progress;
@@ -92,8 +92,6 @@ impl Tidewatch {
             });
     }
 
-    /// The repo on show; a click opens the menu: the repos of the window when there are several,
-    /// then Open repo. A dot on the chip says an agent in another repo needs you.
     fn repo_chip(&self, ui: &mut egui::Ui, frame: &mut FrameIntent) {
         let group = self.tabs.active_group();
         let here = &self.workspaces[group];
@@ -132,6 +130,11 @@ impl Tidewatch {
             }
             if menu_item(ui, "Open repo...", "").clicked() {
                 frame.repo_command = Some(RepoCommand::Open);
+                ui.close();
+            }
+            let close = ui.add_enabled_ui(several, |ui| menu_item(ui, "Close repo", "")).inner;
+            if close.clicked() {
+                frame.repo_command = Some(RepoCommand::Close);
                 ui.close();
             }
         });

@@ -50,7 +50,7 @@ impl Tidewatch {
         &self.workspaces[self.tabs.group_of(tab).unwrap_or_else(|| self.tabs.active_group())]
     }
 
-    fn group_of_dir(&self, dir: &Path) -> Option<usize> {
+    pub(super) fn group_of_dir(&self, dir: &Path) -> Option<usize> {
         let key = workspace_key(dir);
         self.workspaces.iter().position(|workspace| workspace_key(workspace.dir()) == key)
     }

@@ -68,6 +68,7 @@ pub(crate) enum Target {
     Tab(usize),
     Repo(usize),
     OpenRepo,
+    CloseRepo,
     Profile(String),
     Workflow(String),
 }
@@ -131,12 +132,18 @@ pub(crate) fn items(sources: &Sources, platform: Platform) -> Vec<Item> {
                 target: Target::Repo(i),
             }
         });
-    let open_repo = Item {
-        label: "Open repo...".to_owned(),
+    let repo_menu = [
+        Some(("Open repo...", Target::OpenRepo)),
+        several.then_some(("Close repo", Target::CloseRepo)),
+    ]
+    .into_iter()
+    .flatten()
+    .map(|(label, target)| Item {
+        label: label.to_owned(),
         keys: String::new(),
         kind: "repo",
-        target: Target::OpenRepo,
-    };
+        target,
+    });
     let profiles = sources.profiles.iter().map(|(id, name)| Item {
         label: format!("New tab: {name}"),
         keys: String::new(),
@@ -149,7 +156,7 @@ pub(crate) fn items(sources: &Sources, platform: Platform) -> Vec<Item> {
         kind: "workflow",
         target: Target::Workflow(id.clone()),
     });
-    commands.chain(tabs).chain(repos).chain([open_repo]).chain(profiles).chain(workflows).collect()
+    commands.chain(tabs).chain(repos).chain(repo_menu).chain(profiles).chain(workflows).collect()
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -277,7 +284,7 @@ mod tests {
         let names: Vec<_> = all.iter().map(|item| item.label.as_str()).collect();
         assert!(names.contains(&"Next repo") && names.contains(&"Previous repo"));
         assert!(names.contains(&"Switch to repo: api"));
-        assert!(names.contains(&"Open repo..."));
+        assert!(names.contains(&"Open repo...") && names.contains(&"Close repo"));
         assert!(!names.contains(&"Switch to repo: web"), "that one is on show");
         let row = all.iter().find(|item| item.label == "Next repo").unwrap();
         assert_eq!(row.keys, "Cmd+Ctrl+]");

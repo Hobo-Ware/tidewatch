@@ -118,7 +118,7 @@ impl Tidewatch {
         self.open_tab(ctx, request);
     }
 
-    fn close_tab(&mut self, index: usize, ctx: &egui::Context) {
+    pub(super) fn close_tab(&mut self, index: usize, ctx: &egui::Context) {
         let Some(tab) = self.tabs.items().get(index) else { return };
         if tab.pinned {
             return;
@@ -139,7 +139,7 @@ impl Tidewatch {
         }
     }
 
-    fn forget_tab(&mut self, id: u64) {
+    pub(super) fn forget_tab(&mut self, id: u64) {
         self.hooks.close_tab(id);
         self.notifier.forget(id);
         self.flow.forget(id);
