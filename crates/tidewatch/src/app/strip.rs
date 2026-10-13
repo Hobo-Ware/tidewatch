@@ -1,14 +1,15 @@
-//! The tab strip: repo chip (a menu when the window holds several), leftovers chip, update pill, overview button, the tabs and their buttons.
+//! The tab strip: repo chip (a menu of the repos and Open repo), leftovers chip, update pill, overview button, the tabs and their buttons.
 
 use egui::{CornerRadius, Frame, Margin};
 use stdusk_core::progress::Progress;
 use stdusk_core::terminal::{CmdState, PtyTerm};
 use stdusk_egui::colors;
 use stdusk_egui::ui::{TAB_H, draw_tab, icons};
-use stdusk_egui::widgets::{chip, icon_button, style_menu};
+use stdusk_egui::widgets::{chip, icon_button, menu_item, style_menu};
 
 use super::Tidewatch;
 use super::frame::FrameIntent;
+use super::repos::RepoCommand;
 use crate::agent_frame;
 use crate::agent_run::progress_fraction;
 use crate::commands::Command;
@@ -51,7 +52,7 @@ impl Tidewatch {
                     ui.set_min_height(TAB_H);
                     ui.spacing_mut().item_spacing.x = STRIP_GAP;
                     ui.add_space(4.0);
-                    self.repo_chip(ui, &mut frame.actions);
+                    self.repo_chip(ui, frame);
                     self.leftovers.chip(ui);
                     self.updates.pill(ui);
                     ui.add_space(4.0);
@@ -91,41 +92,47 @@ impl Tidewatch {
             });
     }
 
-    /// The repo on show. With several in the window a click opens the list of them, and a dot on
-    /// the chip says an agent in another repo needs you.
-    fn repo_chip(&self, ui: &mut egui::Ui, actions: &mut Vec<Action>) {
+    /// The repo on show; a click opens the menu: the repos of the window when there are several,
+    /// then Open repo. A dot on the chip says an agent in another repo needs you.
+    fn repo_chip(&self, ui: &mut egui::Ui, frame: &mut FrameIntent) {
         let group = self.tabs.active_group();
         let here = &self.workspaces[group];
+        let several = self.workspaces.len() > 1;
         let resp = chip(ui, &here.chip_label(), true);
-        if self.workspaces.len() < 2 {
-            resp.on_hover_text(here.dir().display().to_string());
-            return;
+        let mut tip = here.dir().display().to_string();
+        if several {
+            if self.tabs.items().iter().any(|tab| tab.group != group && needs_you(&tab.pane)) {
+                let dot = resp.rect.right_top() + egui::vec2(-2.0, 2.0);
+                let painter = ui.painter();
+                painter.circle_filled(dot, 5.5, colors::titlebar());
+                painter.circle_filled(dot, 4.0, colors::accent());
+            }
+            tip = format!(
+                "{tip}\nSwitch repo ({} / {})",
+                Command::NextRepo.keys(),
+                Command::PrevRepo.keys()
+            );
         }
-        if self.tabs.items().iter().any(|tab| tab.group != group && needs_you(&tab.pane)) {
-            let dot = resp.rect.right_top() + egui::vec2(-2.0, 2.0);
-            let painter = ui.painter();
-            painter.circle_filled(dot, 5.5, colors::titlebar());
-            painter.circle_filled(dot, 4.0, colors::accent());
-        }
-        let tip = format!(
-            "{}\nSwitch repo ({} / {})",
-            here.dir().display(),
-            Command::NextRepo.keys(),
-            Command::PrevRepo.keys()
-        );
         let resp = resp.on_hover_text(tip);
         egui::Popup::menu(&resp).show(|ui| {
             style_menu(ui);
-            for (i, workspace) in self.workspaces.iter().enumerate() {
-                let tabs = self.tabs.in_group(i).filter(|(_, tab)| !tab.pinned).count();
-                let detail = egui::RichText::new(format!("{tabs} tabs")).color(colors::dim());
-                let row = egui::Button::selectable(i == group, workspace.chip_label())
-                    .shortcut_text(detail)
-                    .min_size(egui::vec2(ui.available_width(), 0.0));
-                if ui.add(row).on_hover_text(workspace.dir().display().to_string()).clicked() {
-                    actions.push(Action::ShowGroup(i));
-                    ui.close();
+            if several {
+                for (i, workspace) in self.workspaces.iter().enumerate() {
+                    let tabs = self.tabs.in_group(i).filter(|(_, tab)| !tab.pinned).count();
+                    let detail = egui::RichText::new(format!("{tabs} tabs")).color(colors::dim());
+                    let row = egui::Button::selectable(i == group, workspace.chip_label())
+                        .shortcut_text(detail)
+                        .min_size(egui::vec2(ui.available_width(), 0.0));
+                    if ui.add(row).on_hover_text(workspace.dir().display().to_string()).clicked() {
+                        frame.actions.push(Action::ShowGroup(i));
+                        ui.close();
+                    }
                 }
+                ui.separator();
+            }
+            if menu_item(ui, "Open repo...", "").clicked() {
+                frame.repo_command = Some(RepoCommand::Open);
+                ui.close();
             }
         });
     }

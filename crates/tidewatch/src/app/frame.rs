@@ -3,6 +3,7 @@
 use egui::{Key, Modifiers};
 
 use super::Tidewatch;
+use super::repos::RepoCommand;
 use crate::commands::{self, Command, Dialog, Gate};
 use crate::reader_glue;
 use crate::settings_view;
@@ -17,6 +18,7 @@ pub(super) struct FrameIntent {
     pub(super) active_id: u64,
     pub(super) keys: KeyRoute,
     pub(super) actions: Vec<Action>,
+    pub(super) repo_command: Option<RepoCommand>,
     pub(super) toggle_overview: bool,
     pub(super) toggle_settings: bool,
     pub(super) settings_action: Option<settings_view::Action>,
@@ -36,6 +38,7 @@ impl Tidewatch {
         for workspace in self.workspace_jobs.drain() {
             self.adopt_workspace(workspace, ctx);
         }
+        self.drain_picked(ctx);
         for event in self.shell.tick(ctx) {
             self.shell_event(&event, ctx);
         }
@@ -91,6 +94,7 @@ impl Tidewatch {
             active_id,
             keys: KeyRoute { modal_open: gate.modal_open(), typing_in_a_panel },
             actions,
+            repo_command: None,
             toggle_overview,
             toggle_settings: false,
             settings_action: None,
@@ -138,6 +142,9 @@ impl Tidewatch {
     pub(super) fn apply_frame_intent(&mut self, ctx: &egui::Context, intent: FrameIntent) {
         for action in intent.actions {
             self.dispatch(action, ctx);
+        }
+        if let Some(command) = intent.repo_command {
+            self.run_repo_command(command, ctx);
         }
         if intent.toggle_overview {
             self.toggle_overview();

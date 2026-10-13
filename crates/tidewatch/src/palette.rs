@@ -67,6 +67,7 @@ pub(crate) enum Target {
     Command(Command),
     Tab(usize),
     Repo(usize),
+    OpenRepo,
     Profile(String),
     Workflow(String),
 }
@@ -130,6 +131,12 @@ pub(crate) fn items(sources: &Sources, platform: Platform) -> Vec<Item> {
                 target: Target::Repo(i),
             }
         });
+    let open_repo = Item {
+        label: "Open repo...".to_owned(),
+        keys: String::new(),
+        kind: "repo",
+        target: Target::OpenRepo,
+    };
     let profiles = sources.profiles.iter().map(|(id, name)| Item {
         label: format!("New tab: {name}"),
         keys: String::new(),
@@ -142,7 +149,7 @@ pub(crate) fn items(sources: &Sources, platform: Platform) -> Vec<Item> {
         kind: "workflow",
         target: Target::Workflow(id.clone()),
     });
-    commands.chain(tabs).chain(repos).chain(profiles).chain(workflows).collect()
+    commands.chain(tabs).chain(repos).chain([open_repo]).chain(profiles).chain(workflows).collect()
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -256,6 +263,7 @@ mod tests {
                 "Settings",
                 "Switch to tab 2: calm-comet",
                 "Switch to tab 3: brave-otter",
+                "Open repo...",
                 "New tab: Builder",
                 "Workflow: Ship a feature",
             ]
@@ -269,11 +277,14 @@ mod tests {
         let names: Vec<_> = all.iter().map(|item| item.label.as_str()).collect();
         assert!(names.contains(&"Next repo") && names.contains(&"Previous repo"));
         assert!(names.contains(&"Switch to repo: api"));
+        assert!(names.contains(&"Open repo..."));
         assert!(!names.contains(&"Switch to repo: web"), "that one is on show");
         let row = all.iter().find(|item| item.label == "Next repo").unwrap();
         assert_eq!(row.keys, "Cmd+Ctrl+]");
         let one = items(&sources(), Platform::Mac);
-        assert!(!one.iter().any(|item| item.label.contains("repo")));
+        let kept: Vec<_> = one.iter().filter(|item| item.label.contains("repo")).collect();
+        assert_eq!(kept.len(), 1, "only Open repo is left in a window with one repo");
+        assert_eq!(kept[0].target, Target::OpenRepo);
     }
 
     #[test]

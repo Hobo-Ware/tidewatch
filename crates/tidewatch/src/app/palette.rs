@@ -1,6 +1,7 @@
 //! The command palette in the app: opening it, what it lists, and running what it picked.
 
 use super::Tidewatch;
+use super::repos::RepoCommand;
 use crate::commands::Platform;
 use crate::new_tab_workflow;
 use crate::palette::{self, Palette, Sources, Target};
@@ -60,6 +61,7 @@ impl Tidewatch {
             Target::Command(command) => self.run_command(command, ctx),
             Target::Tab(index) => self.dispatch(Action::SelectNth(index), ctx),
             Target::Repo(group) => self.dispatch(Action::ShowGroup(group), ctx),
+            Target::OpenRepo => self.run_repo_command(RepoCommand::Open, ctx),
             Target::Profile(id) => self.open_new_tab_dialog(ctx, Some(&id)),
             Target::Workflow(id) => self.open_new_tab_dialog(ctx, Some(&format!("workflow:{id}"))),
         }
