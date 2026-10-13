@@ -209,6 +209,13 @@ fn draw_row(ui: &mut Ui, row: &Row, cache: &mut CommonMarkCache) {
             CommonMarkViewer::new().show(ui, cache, &row.text);
         }
         Kind::Tool(tool) => draw_tool(ui, row.seq, tool),
+        Kind::Divider => {
+            ui.add_space(6.0);
+            ui.vertical_centered(|ui| {
+                ui.label(RichText::new(&row.text).monospace().size(12.0).color(colors::accent()));
+            });
+            ui.add_space(6.0);
+        }
         Kind::Notice => {
             Frame::new()
                 .fill(colors::red().gamma_multiply(0.18))
