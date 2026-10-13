@@ -18,6 +18,7 @@ pub mod prepare;
 pub mod profiles;
 pub mod prompt;
 mod registry;
+pub mod restore;
 mod rfc3339;
 pub mod runner;
 pub mod session;
