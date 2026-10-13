@@ -40,6 +40,7 @@ fn main() {
         agent: agent_id.clone(),
         repo: repo.clone(),
         tab: "live".into(),
+        generation: 0,
     });
     println!("listener {} token {}...", hook.base_url, &hook.token[..6]);
 

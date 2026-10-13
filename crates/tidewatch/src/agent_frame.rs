@@ -143,6 +143,7 @@ mod tests {
     fn hook(tab: u64, kind: HookKind, message: Option<&str>) -> TabMessage {
         TabMessage {
             tab_id: tab,
+            generation: 0,
             event: TabEvent::Hook(HookEvent {
                 kind,
                 session_id: None,
@@ -178,6 +179,7 @@ mod tests {
         let (mut tabs, id) = tabs_with_agent();
         let message = TabMessage {
             tab_id: id,
+            generation: 0,
             event: TabEvent::Finding {
                 file: "src/a.rs".into(),
                 line: 4,
@@ -208,11 +210,17 @@ mod tests {
     #[test]
     fn a_note_reply_asks_for_the_notes_to_be_read_again_and_stage_done_is_only_kept() {
         let (mut tabs, id) = tabs_with_agent();
-        let reply =
-            TabMessage { tab_id: id, event: TabEvent::NoteReply { note_id: 1, text: "ok".into() } };
+        let reply = TabMessage {
+            tab_id: id,
+            generation: 0,
+            event: TabEvent::NoteReply { note_id: 1, text: "ok".into() },
+        };
         assert_eq!(route(&mut tabs, reply, 1.0), Some(Follow::ReloadNotes { tab: id }));
-        let done =
-            TabMessage { tab_id: id, event: TabEvent::StageDone { summary: "tests added".into() } };
+        let done = TabMessage {
+            tab_id: id,
+            generation: 0,
+            event: TabEvent::StageDone { summary: "tests added".into() },
+        };
         assert_eq!(route(&mut tabs, done, 2.0), None);
         let agent = tabs.get_mut(id).unwrap().pane.agent.take().unwrap();
         assert_eq!(agent.run.report.stage_done.as_deref(), Some("tests added"));
@@ -328,6 +336,7 @@ mod tests {
                     agent: "claude".into(),
                     repo: home.path().join("web"),
                     tab: "brave-otter".into(),
+                    generation: 0,
                 })
                 .token;
             let (mut notifier, _) = recording_notifier();
@@ -357,6 +366,7 @@ mod tests {
                     agent: "claude".into(),
                     repo: home.path().join("web"),
                     tab: "brave-otter".into(),
+                    generation: 0,
                 })
                 .token;
             assert!(post(&hooks, "/hook/claude", "wrong", CLAUDE_PERMISSION).contains("401"));

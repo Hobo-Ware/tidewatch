@@ -52,10 +52,15 @@ pub struct TabRegistration {
     /// The repository the tab belongs to, and the tab's state name: together they pick `notes.json`.
     pub repo: PathBuf,
     pub tab: String,
+    /// Stamped on every message the token's holder sends. A tab that starts a new agent in place of
+    /// the old one registers again with a higher number, so the app can tell the old agent's late
+    /// messages apart. Tabs that never swap their agent use 0.
+    pub generation: u64,
 }
 
 struct Entry {
     tab_id: u64,
+    generation: u64,
     agent: String,
     notes_file: PathBuf,
 }
@@ -72,8 +77,12 @@ impl Shared {
         self.tabs.lock().unwrap_or_else(PoisonError::into_inner).get(token).cloned()
     }
 
-    fn emit(&self, tab_id: u64, event: TabEvent) {
-        let _ = self.events.send(TabMessage { tab_id, event });
+    fn emit(&self, entry: &Entry, event: TabEvent) {
+        let _ = self.events.send(TabMessage {
+            tab_id: entry.tab_id,
+            generation: entry.generation,
+            event,
+        });
         (self.repaint)();
     }
 }
@@ -126,6 +135,7 @@ impl Listener {
         let token = new_token();
         let entry = Arc::new(Entry {
             tab_id: registration.tab_id,
+            generation: registration.generation,
             agent: registration.agent,
             notes_file: self.paths.notes_file(&registration.repo, &registration.tab),
         });
@@ -295,7 +305,7 @@ fn hook_route(shared: &Shared, entry: &Entry, agent: &str, request: &Request) ->
         return Response::error(400, "the body is not JSON");
     };
     if let Some(event) = parse_hook(agent, &payload) {
-        shared.emit(entry.tab_id, TabEvent::Hook(event));
+        shared.emit(entry, TabEvent::Hook(event));
     }
     Response::json(200, "{}".into())
 }
@@ -309,7 +319,7 @@ fn mcp_route(shared: &Shared, entry: &Entry, request: &Request) -> Response {
         notes_file: &entry.notes_file,
         notes_lock: &shared.notes_lock,
     };
-    match handle_post(&request.body, &ctx, &|event| shared.emit(entry.tab_id, event)) {
+    match handle_post(&request.body, &ctx, &|event| shared.emit(entry, event)) {
         McpReply::Json(body) => Response::json(200, body),
         McpReply::Accepted => Response::empty(202),
     }
@@ -570,6 +580,7 @@ mod tests {
             let token = new_token();
             let entry = Arc::new(Entry {
                 tab_id,
+                generation: 0,
                 agent: "claude".into(),
                 notes_file: self.paths.notes_file(Path::new("/work/web"), tab),
             });
@@ -812,6 +823,7 @@ mod tests {
             f.events(),
             [TabMessage {
                 tab_id: 2,
+                generation: 0,
                 event: TabEvent::NoteReply { note_id: 1, text: "ok".into() }
             }]
         );

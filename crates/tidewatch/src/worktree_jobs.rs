@@ -65,6 +65,7 @@ fn run_open(spec: &OpenSpec) -> Result<Opened, OpenFailure> {
             agent: request.agent.id.clone(),
             repo: repo.clone(),
             tab: tab_key.clone(),
+            generation: 0,
         })
     });
     let session_id = request.agent.session_id_flag.is_some().then(session_id::new);

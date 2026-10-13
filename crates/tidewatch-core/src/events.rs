@@ -20,5 +20,7 @@ pub enum TabEvent {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TabMessage {
     pub tab_id: u64,
+    /// The generation the sender registered with (see `TabRegistration::generation`).
+    pub generation: u64,
     pub event: TabEvent,
 }
