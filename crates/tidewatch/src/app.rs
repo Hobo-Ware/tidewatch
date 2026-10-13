@@ -27,6 +27,7 @@ use tidewatch_core::paths::TidewatchPaths;
 use tidewatch_core::prepare::Prepared;
 use tidewatch_core::status::AgentStatus;
 use tidewatch_core::tools::Tools;
+use tidewatch_core::trust::TrustCli;
 use tidewatch_core::worktree::{BranchOutcome, Inspection, Leftover, Worktree};
 
 use crate::agent_events::Hooks;
@@ -69,6 +70,8 @@ use crate::stepper_view;
 use crate::tab_view::{TabView, ViewSpec};
 use crate::tabs::{Action, Tabs};
 use crate::toast::Toast;
+use crate::trust_glue::Trust;
+use crate::trust_view;
 use crate::workflow_glue::{self, Env, Spawners, Start};
 use crate::workflow_run::Exec;
 use crate::worktree_jobs::{self, Done, OpenSpec, Target};
@@ -126,6 +129,7 @@ pub(crate) struct Tidewatch {
     status_log: bool,
     dev_keys: Option<DevKeys>,
     dev_reader: DevReader,
+    trust: Trust,
 }
 
 impl Tidewatch {
@@ -135,6 +139,7 @@ impl Tidewatch {
         paths: Option<TidewatchPaths>,
         agent_path: OsString,
         screenshot: Option<DevScreenshot>,
+        cli_home: Option<&Path>,
     ) -> Self {
         colors::init(colors::by_name(DEFAULT_THEME));
         fonts::install(&cc.egui_ctx);
@@ -147,6 +152,7 @@ impl Tidewatch {
         let dev_flow = DevFlow::from_env();
         let flow = Flow::new(Tools::with_path(dev_flow.tool_path(agent_path.clone())));
         let dev_view = DevView::from_env();
+        let trust = Trust::new(paths.as_ref(), cli_home);
         let mut app = Self {
             tabs: Tabs::new(Pane::shell(main)),
             jobs: Jobs::new(),
@@ -180,6 +186,7 @@ impl Tidewatch {
             status_log: dev_view.status_log,
             dev_keys: dev_view.keys,
             dev_reader: DevReader::from_env(),
+            trust,
         };
         if let Some(paths) = &app.paths {
             agent_jobs::load(
@@ -230,10 +237,12 @@ impl Tidewatch {
         let Some(dev) = self.dev_agent.take() else { return };
         if dev.mode == DevMode::Settings {
             self.toggle_settings();
-            if dev.profile.as_deref() == Some("workflows")
-                && let Some(settings) = &mut self.settings
-            {
-                settings.section = Section::Workflows;
+            if let Some(settings) = &mut self.settings {
+                match dev.profile.as_deref() {
+                    Some("workflows") => settings.section = Section::Workflows,
+                    Some("trust") => settings.section = Section::Trust,
+                    _ => {}
+                }
             }
             return;
         }
@@ -279,21 +288,36 @@ impl Tidewatch {
             None => Pane::creating(),
         };
         let listener = self.hooks.listener();
+        let trust = self.trust.grant();
         match (&self.workspace, &self.paths) {
             (Workspace::Repo(repo), Some(paths)) => {
                 let tab = self.tabs.push(CREATING_TITLE.to_owned(), pane);
                 let target = Target::Worktree { repo: repo.root.clone() };
                 let path_var = self.catalog.path.clone();
-                let spec =
-                    OpenSpec { paths: paths.clone(), target, agent, path_var, tab, listener };
+                let spec = OpenSpec {
+                    paths: paths.clone(),
+                    target,
+                    agent,
+                    path_var,
+                    tab,
+                    listener,
+                    trust,
+                };
                 worktree_jobs::open(&self.jobs, ctx, spec);
             }
             (workspace, Some(paths)) if agent.is_some() => {
                 let tab = self.tabs.push(STARTING_TITLE.to_owned(), pane);
                 let target = Target::Folder { dir: workspace.dir().to_path_buf() };
                 let path_var = self.catalog.path.clone();
-                let spec =
-                    OpenSpec { paths: paths.clone(), target, agent, path_var, tab, listener };
+                let spec = OpenSpec {
+                    paths: paths.clone(),
+                    target,
+                    agent,
+                    path_var,
+                    tab,
+                    listener,
+                    trust,
+                };
                 worktree_jobs::open(&self.jobs, ctx, spec);
             }
             _ => {
@@ -315,6 +339,7 @@ impl Tidewatch {
             catalog: &self.catalog,
             listener: self.hooks.listener(),
             tools: self.flow.tools(),
+            trust: self.trust.grant(),
         };
         let now = ctx.input(|i| i.time);
         self.runs.open(ctx, &mut self.tabs, &env, &repo.root, existing, start, now);
@@ -347,6 +372,7 @@ impl Tidewatch {
             catalog: &self.catalog,
             listener: self.hooks.listener(),
             tools: self.flow.tools(),
+            trust: self.trust.grant(),
         };
         let agent = |dir: &Path, prepared: &Prepared| spawn_agent(ctx, dir, prepared);
         let shell = |dir: &Path| spawn_shell(ctx, dir);
@@ -363,6 +389,7 @@ impl Tidewatch {
                 self.catalog.set_workflows(workflows);
                 let probes = self.catalog.set_profiles(profiles);
                 self.probe_agents(probes, ctx);
+                self.refresh_trust(ctx);
                 self.run_dev_agent(ctx);
             }
             agent_jobs::Done::Probed { agent, availability } => {
@@ -400,6 +427,17 @@ impl Tidewatch {
         }
     }
 
+    fn refresh_trust(&self, ctx: &egui::Context) {
+        let bins = self
+            .catalog
+            .agent_names()
+            .iter()
+            .filter_map(|(id, _)| self.catalog.agent(id))
+            .filter_map(|a| TrustCli::from_wiring(a.wiring).map(|cli| (cli, a.bin.clone())))
+            .collect();
+        self.trust.refresh(ctx, bins, self.catalog.path.clone());
+    }
+
     fn probe_agents(&self, agents: Vec<(String, String)>, ctx: &egui::Context) {
         for (agent, bin) in agents {
             agent_jobs::probe(&self.agent_jobs, ctx, agent, bin, self.catalog.path.clone());
@@ -434,6 +472,7 @@ impl Tidewatch {
                 }
                 Err(message) => settings.workflows.error = Some(message),
             },
+            Section::Trust => {}
         }
     }
 
@@ -489,7 +528,10 @@ impl Tidewatch {
                 else {
                     return;
                 };
-                worktree_jobs::remove(&self.jobs, ctx, paths, tab, shell, worktree, branch, mode);
+                let trust = self.trust.grant();
+                worktree_jobs::remove(
+                    &self.jobs, ctx, paths, tab, shell, worktree, branch, mode, trust,
+                );
             }
         }
     }
@@ -988,6 +1030,9 @@ impl eframe::App for Tidewatch {
         for done in self.agent_jobs.drain() {
             self.apply_agent_done(done, &ctx);
         }
+        if let Some(text) = self.trust.drain(&ctx) {
+            self.show_toast(text, &ctx);
+        }
         let now = ctx.input(|i| i.time);
         self.dev_reader.press_toggle(&ctx, now);
         reader_glue::start(&mut self.tabs, &ctx, &self.dev_reader);
@@ -1000,6 +1045,7 @@ impl eframe::App for Tidewatch {
         let modal_open = self.closing.is_some()
             || self.new_tab.is_some()
             || self.settings.is_some()
+            || self.trust.dialog_open()
             || self.flow.modal_open(active_id);
         if self.closing.is_none()
             && self.new_tab.is_none()
@@ -1141,13 +1187,19 @@ impl eframe::App for Tidewatch {
             }
             if let Some(settings) = &mut self.settings {
                 let files = self.paths.as_ref().map_or_else(
-                    || Files { profiles: String::new(), workflows: String::new() },
+                    || Files {
+                        profiles: String::new(),
+                        workflows: String::new(),
+                        trust: String::new(),
+                    },
                     |p| Files {
                         profiles: p.profiles_file().display().to_string(),
                         workflows: p.workflows_file().display().to_string(),
+                        trust: p.trust_file().display().to_string(),
                     },
                 );
-                settings_action = settings_view::show(ui, area, settings, &files);
+                settings_action =
+                    settings_view::show(ui, area, settings, &files, &self.trust.page());
                 return;
             }
             let panels = self.workspace_has_panels() && !self.focus;
@@ -1287,6 +1339,7 @@ impl eframe::App for Tidewatch {
         match settings_action {
             Some(settings_view::Action::Close) => self.settings = None,
             Some(settings_view::Action::Save) => self.save_settings(&ctx),
+            Some(settings_view::Action::Trust(event)) => self.trust.send(event, &ctx),
             None => {}
         }
         if toggle_settings {
@@ -1307,6 +1360,11 @@ impl eframe::App for Tidewatch {
                 new_tab_dialog::show(&ctx, state, &self.catalog, self.paths.as_ref())
         {
             self.answer_new_tab(outcome, &ctx);
+        }
+        if self.trust.dialog_open()
+            && let Some(event) = trust_view::dialog(&ctx, &self.trust.page())
+        {
+            self.trust.send(event, &ctx);
         }
         if let Some(shot) = &mut self.screenshot {
             shot.tick(&ctx);

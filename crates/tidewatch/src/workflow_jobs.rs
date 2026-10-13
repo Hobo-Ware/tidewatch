@@ -16,6 +16,7 @@ use tidewatch_core::prepare::{PrepareInput, banner_line, prepare};
 use tidewatch_core::session_id;
 use tidewatch_core::test_command::{self, TestRun, run_in_timeout};
 use tidewatch_core::tools::Tools;
+use tidewatch_core::trust_apply::Grant;
 use tidewatch_core::worktree::{self, Worktree};
 
 use crate::jobs::Jobs;
@@ -75,6 +76,8 @@ pub(crate) struct StageSpec {
     pub(crate) path_var: OsString,
     /// Where the agent reports; `None` when the listener is down.
     pub(crate) listener: Option<Arc<Listener>>,
+    /// Set after the user agreed to folder trust (D14).
+    pub(crate) trust: Option<Grant>,
 }
 
 /// Registers the tab with the launch's generation (which revokes the previous stage's token) and
@@ -114,7 +117,7 @@ fn run_stage(spec: &StageSpec) -> Result<Started, String> {
         session_id: session_id.clone(),
         path_var: Some(&spec.path_var),
         listener: hooks,
-        trust: None,
+        trust: spec.trust.as_ref(),
     })
     .map_err(|e| e.to_string())?;
     prepared.setup = format!("{}\n{}", banner_line(&launch.divider), prepared.setup);

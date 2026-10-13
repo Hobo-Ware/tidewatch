@@ -16,6 +16,7 @@ use tidewatch_core::profiles::Profile;
 use tidewatch_core::restore::restore_workflow;
 use tidewatch_core::runner::{RunContext, RunEvent, Runner};
 use tidewatch_core::tools::Tools;
+use tidewatch_core::trust_apply::Grant;
 use tidewatch_core::workflows::Workflow;
 use tidewatch_core::worktree::Worktree;
 
@@ -35,6 +36,8 @@ pub(crate) struct Env<'a> {
     pub(crate) catalog: &'a Catalog,
     pub(crate) listener: Option<Arc<Listener>>,
     pub(crate) tools: Tools,
+    /// Set after the user agreed to folder trust (D14).
+    pub(crate) trust: Option<Grant>,
 }
 
 /// How a pty is made: an agent from a prepared launch, or a plain shell.
@@ -305,6 +308,7 @@ impl Host {
                             worktree,
                             path_var: env.catalog.path.clone(),
                             listener: env.listener.clone(),
+                            trust: env.trust.clone(),
                         },
                     );
                 }

@@ -60,6 +60,8 @@ mod stepper_view;
 mod tab_view;
 mod tabs;
 mod toast;
+mod trust_glue;
+mod trust_view;
 mod workflow_ask;
 mod workflow_editor;
 mod workflow_editor_view;
@@ -109,7 +111,14 @@ fn main() -> eframe::Result<()> {
         "Tidewatch",
         options,
         Box::new(move |cc| {
-            Ok(Box::new(Tidewatch::new(cc, workspace, paths, agent_path, screenshot)))
+            Ok(Box::new(Tidewatch::new(
+                cc,
+                workspace,
+                paths,
+                agent_path,
+                screenshot,
+                home.as_deref(),
+            )))
         }),
     )
 }

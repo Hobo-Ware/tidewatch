@@ -9,6 +9,7 @@ use tidewatch_core::listener::{Listener, TabRegistration};
 use tidewatch_core::paths::TidewatchPaths;
 use tidewatch_core::prepare::{PrepareInput, prepare};
 use tidewatch_core::session_id;
+use tidewatch_core::trust_apply::Grant;
 use tidewatch_core::worktree::{
     self, BranchChoice, BranchOutcome, Inspection, Leftover, RemoveMode, Worktree,
 };
@@ -39,6 +40,8 @@ pub(crate) struct OpenSpec {
     pub(crate) tab: u64,
     /// Where the agent reports; `None` when the listener is down.
     pub(crate) listener: Option<Arc<Listener>>,
+    /// Set after the user agreed to folder trust (D14).
+    pub(crate) trust: Option<Grant>,
 }
 
 /// Makes the worktree (when asked) and gets the agent ready, off the UI thread.
@@ -81,7 +84,7 @@ fn run_open(spec: &OpenSpec) -> Result<Opened, OpenFailure> {
         session_id: session_id.clone(),
         path_var: Some(&spec.path_var),
         listener: hooks,
-        trust: None,
+        trust: spec.trust.as_ref(),
     });
     if prepared.is_err()
         && let Some(listener) = &spec.listener
@@ -125,13 +128,17 @@ pub(crate) fn remove<T: Send + 'static>(
     worktree: Worktree,
     branch: BranchChoice,
     mode: RemoveMode,
+    trust: Option<Grant>,
 ) {
     jobs.spawn(ctx, move || {
         drop(shell);
-        Done::Removed {
-            tab,
-            result: worktree::remove(&paths, &worktree, branch, mode).map_err(|e| e.to_string()),
+        let result = worktree::remove(&paths, &worktree, branch, mode).map_err(|e| e.to_string());
+        if result.is_ok()
+            && let Some(grant) = &trust
+        {
+            let _ = grant.revoke(Some(&worktree.path));
         }
+        Done::Removed { tab, result }
     });
 }
 
@@ -211,6 +218,7 @@ mod tests {
             path_var: OsString::from("/opt/homebrew/bin:/usr/bin:/bin"),
             tab,
             listener: None,
+            trust: None,
         }
     }
 
@@ -254,6 +262,64 @@ mod tests {
         let path = &env.iter().find(|(k, _)| k == "PATH").unwrap().1;
         assert!(path.starts_with(&paths.guard_bin_dir().display().to_string()), "{path}");
         assert!(paths.house_style_file().is_file());
+    }
+
+    #[test]
+    fn with_consent_a_new_worktree_is_trusted_before_its_agent_and_untrusted_when_removed() {
+        use tidewatch_core::trust::{TrustCli, is_trusted};
+        use tidewatch_core::trust_apply::ConfigFiles;
+        let dir = tempfile::tempdir().unwrap();
+        let home = dir.path().canonicalize().unwrap();
+        let repo = throwaway_repo(&home);
+        let paths = TidewatchPaths::new(&home);
+        let claude_json = home.join(".claude.json");
+        std::fs::write(&claude_json, "{\n  \"numStartups\": 1\n}\n").unwrap();
+        let grant = Grant::new(&paths, ConfigFiles::resolve(&home, |_| None));
+        let jobs = Jobs::new();
+        let ctx = egui::Context::default();
+        let with_trust = OpenSpec {
+            trust: Some(grant.clone()),
+            ..spec(&paths, &repo, 6, Some(request(Level::Edits, "")))
+        };
+        open(&jobs, &ctx, with_trust);
+        let Done::Opened { result: Ok(opened), .. } = next(&jobs) else {
+            panic!("expected Opened")
+        };
+        let worktree = opened.worktree.expect("a worktree");
+        let folder = worktree.path.canonicalize().unwrap().to_string_lossy().into_owned();
+        let text = std::fs::read_to_string(&claude_json).unwrap();
+        assert!(is_trusted(TrustCli::Claude, &text, &folder).unwrap(), "{text}");
+
+        remove::<u8>(
+            &jobs,
+            &ctx,
+            paths.clone(),
+            6,
+            None,
+            worktree,
+            BranchChoice::Delete,
+            RemoveMode::Safe,
+            Some(grant),
+        );
+        let Done::Removed { result, .. } = next(&jobs) else { panic!("expected Removed") };
+        assert_eq!(result, Ok(BranchOutcome::Deleted));
+        assert_eq!(std::fs::read_to_string(&claude_json).unwrap(), "{\n  \"numStartups\": 1\n}\n");
+    }
+
+    #[test]
+    fn without_consent_no_cli_file_is_touched() {
+        let dir = tempfile::tempdir().unwrap();
+        let home = dir.path().canonicalize().unwrap();
+        let repo = throwaway_repo(&home);
+        let paths = TidewatchPaths::new(&home);
+        let jobs = Jobs::new();
+        open(
+            &jobs,
+            &egui::Context::default(),
+            spec(&paths, &repo, 7, Some(request(Level::Edits, ""))),
+        );
+        let Done::Opened { result: Ok(_), .. } = next(&jobs) else { panic!("expected Opened") };
+        assert!(!home.join(".claude.json").exists());
     }
 
     #[test]
@@ -375,6 +441,7 @@ mod tests {
             to_remove,
             BranchChoice::Delete,
             RemoveMode::Safe,
+            None,
         );
         let Done::Removed { tab, result } = next(&jobs) else { panic!("expected Removed") };
         assert_eq!(result, Ok(BranchOutcome::Deleted));
@@ -419,6 +486,7 @@ mod tests {
             worktree.clone(),
             BranchChoice::Keep,
             RemoveMode::Safe,
+            None,
         );
         let Done::Removed { result, .. } = next(&jobs) else { panic!("expected Removed") };
         assert_eq!(result, Err("1 file with uncommitted changes".to_owned()));
@@ -433,6 +501,7 @@ mod tests {
             worktree.clone(),
             BranchChoice::Keep,
             RemoveMode::Discard,
+            None,
         );
         let Done::Removed { result, .. } = next(&jobs) else { panic!("expected Removed") };
         assert_eq!(result, Ok(BranchOutcome::Kept));
