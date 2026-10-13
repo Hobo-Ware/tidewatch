@@ -182,10 +182,10 @@ fn without_restoring_the_saved_tabs_own_nothing_and_there_is_no_plan() {
 fn the_settings_switch_turns_restoring_off_the_same_way() {
     let f = fixture();
     save(&f, vec![window(&f.repo, vec![SavedTab::Main, shell_tab(&f.worktree)])]);
-    Prefs { restore_session: false }.save(&f.paths).unwrap();
+    Prefs { restore_session: false, ..Prefs::default() }.save(&f.paths).unwrap();
     let started = run(&spec(&f, false));
     assert!(started.plan.is_none());
-    assert_eq!(started.prefs, Prefs { restore_session: false });
+    assert!(!started.prefs.restore_session);
     assert_eq!(started.leftovers.len(), 1);
 }
 
