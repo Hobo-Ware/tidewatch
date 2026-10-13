@@ -277,6 +277,9 @@ fn leftovers_are_worktree_folders_without_an_open_tab() {
     want.sort();
     assert_eq!(paths, want);
     assert!(all.iter().all(|l| l.branch.is_some()), "branches come from the registry");
+    assert!(all.iter().all(|l| l.repo.as_deref() == Some(f.repo.as_path())));
+    let found = all.iter().find(|l| l.path == a.path).unwrap();
+    assert_eq!(found.worktree(), Some(a.clone()));
 
     let left = worktree::leftovers(&f.paths, std::slice::from_ref(&a.path));
     assert_eq!(left.len(), 1);
@@ -295,4 +298,5 @@ fn a_worktree_git_made_outside_tidewatch_is_a_leftover_without_a_branch() {
     assert_eq!(left.len(), 1);
     assert_eq!(left[0].path, by_hand);
     assert_eq!(left[0].branch, None);
+    assert_eq!(left[0].worktree(), None, "git cannot remove it without a recorded repository");
 }

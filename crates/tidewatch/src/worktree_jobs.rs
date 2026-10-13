@@ -178,7 +178,7 @@ mod tests {
     use tidewatch_core::profiles::{Profile, Profiles};
 
     fn leftover(path: &str) -> Leftover {
-        Leftover { path: PathBuf::from(path), branch: None }
+        Leftover { path: PathBuf::from(path), branch: None, repo: None }
     }
 
     fn git(dir: &std::path::Path, args: &[&str]) -> String {

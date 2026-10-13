@@ -55,6 +55,12 @@ impl TidewatchPaths {
         self.config_dir.join("trust.toml")
     }
 
+    /// The few app-wide switches, such as restoring the last session at launch.
+    #[must_use]
+    pub fn prefs_file(&self) -> PathBuf {
+        self.config_dir.join("settings.toml")
+    }
+
     #[must_use]
     pub fn house_style_file(&self) -> PathBuf {
         self.config_dir.join("house-style.md")
