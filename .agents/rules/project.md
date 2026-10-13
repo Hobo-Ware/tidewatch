@@ -136,6 +136,10 @@ crates/tidewatch/       the egui app
   src/workflow_jobs.rs  open (worktree, base, test command and timeout), launch a stage (fresh token, prepare, divider), run the tests as jobs
   src/workflow_glue.rs  Host: open a workflow or saved-run tab, carry out what a run asks, apply finished jobs, drop a replaced agent's messages (generic over the pty)
 docs/                   concept mockup, research reports
+packaging/              Info.plist, reference Homebrew cask (tidewatch.rb), .desktop file, release README
+scripts/                bundle-macos.sh (universal ad-hoc signed Tidewatch.app + zip), package-linux.sh (tarball + AppImage), make-icon.sh (icon from assets/icon.svg)
+assets/                 icon.svg (placeholder), Tidewatch.icns, icon-512.png
+.github/workflows/      ci.yml (fmt, clippy, test on macOS and Ubuntu), release.yml (v* tags: bundle, package, GitHub Release, tap behind PUBLISH_TAP)
 ```
 
 Update this block in the same commit that adds or moves a module.
@@ -147,6 +151,9 @@ cargo run -p tidewatch -- [path]       # open the git repo containing path (defa
 cargo test --workspace
 cargo clippy --workspace --all-targets -- -D warnings
 cargo fmt --all --check
+scripts/bundle-macos.sh                # universal Tidewatch.app and zip in target/dist, ad-hoc signed; never launch the result from a check
+scripts/package-linux.sh               # x86_64 Linux only: tarball and AppImage in target/dist
+scripts/make-icon.sh                   # rebuild the icon files from assets/icon.svg (inkscape, pngquant, oxipng)
 TIDEWATCH_SCREENSHOT=/tmp/x.png cargo run -p tidewatch -- <repo>   # render, save PNG, quit
 ```
 
@@ -199,8 +206,9 @@ Check the real exit code of a build (`cargo build 2>build.log; echo $?`), never 
 
 ## Showcase page and releases
 
-Once there is a public page and a Homebrew cask (later phases), the same upkeep as Kelp
-applies: a user-visible change updates `README.md` and the page in the same branch, removed
+Releases follow `packaging/README.md` (bump `Cargo.toml`, tag `v<version>`). The tap job stays off until the
+repository variable `PUBLISH_TAP` is `true`, which waits for the repo to go public. Once there is a public page
+and a Homebrew cask, the same upkeep as Kelp applies: a user-visible change updates `README.md` and the page in the same branch, removed
 behavior comes off, screenshots come from the screenshot switch on a demo repo (never a
 private or work repo) and are compressed (pngquant + oxipng, PSNR checked).
 
