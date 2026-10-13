@@ -2,13 +2,24 @@
 //!
 //! `<repo>/.tidewatch.toml` with `test = "..."` wins (an empty string switches the gates off for
 //! that repo); otherwise the first marker file found picks a conventional command.
+//! `test_timeout_secs = N` in the same file changes how long a run may take (default 10 minutes).
 
+use std::fmt::Write as _;
+use std::io::Read;
+use std::os::unix::process::CommandExt;
 use std::path::Path;
-use std::process::Command;
+use std::process::{Command, Stdio};
+use std::sync::mpsc;
+use std::time::{Duration, Instant};
 
 use serde::Deserialize;
 
 const REPO_CONFIG: &str = ".tidewatch.toml";
+
+/// How long a test run may take before it is stopped.
+pub const DEFAULT_TIMEOUT: Duration = Duration::from_secs(600);
+const POLL: Duration = Duration::from_millis(25);
+const PIPE_GRACE: Duration = Duration::from_secs(2);
 
 #[derive(Debug, PartialEq, Eq)]
 enum Configured {
@@ -20,6 +31,7 @@ enum Configured {
 #[derive(Deserialize)]
 struct RepoConfig {
     test: Option<String>,
+    test_timeout_secs: Option<u64>,
 }
 
 fn configured(repo: &Path) -> Configured {
@@ -27,9 +39,9 @@ fn configured(repo: &Path) -> Configured {
         return Configured::Absent;
     };
     match toml::from_str::<RepoConfig>(&text) {
-        Ok(RepoConfig { test: Some(test) }) if test.trim().is_empty() => Configured::Disabled,
-        Ok(RepoConfig { test: Some(test) }) => Configured::Command(test.trim().to_owned()),
-        Ok(RepoConfig { test: None }) => Configured::Absent,
+        Ok(RepoConfig { test: Some(test), .. }) if test.trim().is_empty() => Configured::Disabled,
+        Ok(RepoConfig { test: Some(test), .. }) => Configured::Command(test.trim().to_owned()),
+        Ok(RepoConfig { test: None, .. }) => Configured::Absent,
         Err(e) => {
             eprintln!("tidewatch: {REPO_CONFIG} is invalid ({e}); detecting the test command");
             Configured::Absent
@@ -45,6 +57,18 @@ pub fn test_command(repo: &Path) -> Option<String> {
         Configured::Disabled => None,
         Configured::Absent => detect(repo),
     }
+}
+
+/// How long a test run in `repo` may take: `test_timeout_secs` from `.tidewatch.toml` when it is a
+/// positive number, else [`DEFAULT_TIMEOUT`].
+#[must_use]
+pub fn timeout(repo: &Path) -> Duration {
+    std::fs::read_to_string(repo.join(REPO_CONFIG))
+        .ok()
+        .and_then(|text| toml::from_str::<RepoConfig>(&text).ok())
+        .and_then(|config| config.test_timeout_secs)
+        .filter(|secs| *secs > 0)
+        .map_or(DEFAULT_TIMEOUT, Duration::from_secs)
 }
 
 fn has(dir: &Path, name: &str) -> bool {
@@ -131,6 +155,86 @@ pub fn run_in(dir: &Path, command: &str) -> TestRun {
         }
         Err(e) => TestRun { exit_code: -1, output: format!("could not run `{command}`: {e}") },
     }
+}
+
+fn drain(mut pipe: impl Read + Send + 'static) -> mpsc::Receiver<String> {
+    let (sender, receiver) = mpsc::channel();
+    std::thread::spawn(move || {
+        let mut bytes = Vec::new();
+        let _ = pipe.read_to_end(&mut bytes);
+        let _ = sender.send(String::from_utf8_lossy(&bytes).into_owned());
+    });
+    receiver
+}
+
+fn kill_group(pid: u32) {
+    let _ = Command::new("kill")
+        .args(["-KILL", "--", &format!("-{pid}")])
+        .stderr(Stdio::null())
+        .status();
+}
+
+fn describe(duration: Duration) -> String {
+    let secs = duration.as_secs();
+    if secs >= 120 && secs.is_multiple_of(60) {
+        format!("{} min", secs / 60)
+    } else {
+        format!("{secs} s")
+    }
+}
+
+/// [`run_in`] that gives up after `timeout`: the command and everything it started are killed, and
+/// the run is a failure (exit code `-1`) whose output ends with a line saying so. Blocking: call it
+/// from a background job.
+#[must_use]
+pub fn run_in_timeout(dir: &Path, command: &str, timeout: Duration) -> TestRun {
+    let spawned = Command::new("sh")
+        .arg("-c")
+        .arg(command)
+        .current_dir(dir)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .process_group(0)
+        .spawn();
+    let mut child = match spawned {
+        Ok(child) => child,
+        Err(e) => {
+            return TestRun { exit_code: -1, output: format!("could not run `{command}`: {e}") };
+        }
+    };
+    let streams = (child.stdout.take().map(drain), child.stderr.take().map(drain));
+    let deadline = Instant::now() + timeout;
+    let mut timed_out = false;
+    let status = loop {
+        match child.try_wait() {
+            Ok(Some(status)) => break Some(status),
+            Ok(None) if Instant::now() >= deadline => {
+                timed_out = true;
+                kill_group(child.id());
+                let _ = child.kill();
+                break child.wait().ok();
+            }
+            Ok(None) => std::thread::sleep(POLL),
+            Err(_) => break None,
+        }
+    };
+    let mut output = String::new();
+    for stream in [streams.0, streams.1].into_iter().flatten() {
+        output.push_str(&stream.recv_timeout(PIPE_GRACE).unwrap_or_default());
+    }
+    if timed_out {
+        if !output.is_empty() && !output.ends_with('\n') {
+            output.push('\n');
+        }
+        let _ = writeln!(
+            output,
+            "[tidewatch: the test command ran longer than {} and was stopped]",
+            describe(timeout)
+        );
+        return TestRun { exit_code: -1, output };
+    }
+    TestRun { exit_code: status.and_then(|s| s.code()).unwrap_or(-1), output }
 }
 
 #[cfg(test)]
@@ -272,5 +376,57 @@ mod tests {
         let run = run_in(&dir.path().join("gone"), "true");
         assert_eq!(run.exit_code, -1);
         assert!(run.output.contains("could not run"), "{}", run.output);
+    }
+
+    #[test]
+    fn a_run_with_a_timeout_reports_like_run_in_when_it_finishes_in_time() {
+        let dir = tempfile::tempdir().unwrap();
+        let ok = run_in_timeout(dir.path(), "echo out; echo err 1>&2", Duration::from_secs(30));
+        assert_eq!((ok.exit_code, ok.output.as_str()), (0, "out\nerr\n"));
+        let failed = run_in_timeout(dir.path(), "echo boom; exit 3", Duration::from_secs(30));
+        assert_eq!((failed.exit_code, failed.output.as_str()), (3, "boom\n"));
+    }
+
+    #[test]
+    fn a_hung_command_and_its_children_are_killed_at_the_timeout() {
+        let dir = tempfile::tempdir().unwrap();
+        let started = Instant::now();
+        let run = run_in_timeout(
+            dir.path(),
+            "echo before; sleep 30 & sleep 30; echo after",
+            Duration::from_millis(300),
+        );
+        assert!(started.elapsed() < Duration::from_secs(10), "{:?}", started.elapsed());
+        assert_eq!(run.exit_code, -1);
+        assert!(run.output.starts_with("before\n"), "{}", run.output);
+        assert!(run.output.contains("longer than 0 s and was stopped"), "{}", run.output);
+        assert!(!run.output.contains("after\n"), "{}", run.output);
+    }
+
+    #[test]
+    fn the_timeout_is_ten_minutes_unless_the_repo_says_otherwise() {
+        let none = repo_with(&[]);
+        assert_eq!(timeout(none.path()), DEFAULT_TIMEOUT);
+        let set = repo_with(&[(".tidewatch.toml", "test_timeout_secs = 90\n")]);
+        assert_eq!(timeout(set.path()), Duration::from_secs(90));
+        for text in ["test_timeout_secs = 0\n", "test_timeout_secs = \"x\"\n", "[["] {
+            let bad = repo_with(&[(".tidewatch.toml", text)]);
+            assert_eq!(timeout(bad.path()), DEFAULT_TIMEOUT, "{text:?}");
+        }
+    }
+
+    #[test]
+    fn a_missing_directory_is_a_failed_run_with_a_timeout_too() {
+        let dir = tempfile::tempdir().unwrap();
+        let run = run_in_timeout(&dir.path().join("gone"), "true", Duration::from_secs(5));
+        assert_eq!(run.exit_code, -1);
+        assert!(run.output.contains("could not run"), "{}", run.output);
+    }
+
+    #[test]
+    fn timeouts_are_worded_in_seconds_or_whole_minutes() {
+        assert_eq!(describe(Duration::from_secs(90)), "90 s");
+        assert_eq!(describe(Duration::from_secs(600)), "10 min");
+        assert_eq!(describe(Duration::from_millis(300)), "0 s");
     }
 }
