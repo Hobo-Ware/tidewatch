@@ -479,7 +479,7 @@ mod tests {
                     "--sandbox read-only --ask-for-approval never",
                     "--sandbox read-only --ask-for-approval on-request",
                     "--sandbox workspace-write --ask-for-approval on-request",
-                    "--sandbox workspace-write --approve-for-me",
+                    "--approve-for-me",
                     "--dangerously-bypass-approvals-and-sandbox",
                 ],
             ),
