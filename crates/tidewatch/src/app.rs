@@ -3,7 +3,7 @@
 //! Git work for worktree tabs and for the panes runs on `jobs` threads; its results are applied at
 //! the top of the next frame.
 
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{HashMap, HashSet};
 use std::ffi::OsString;
 use std::path::Path;
 use std::time::Duration;
@@ -14,14 +14,13 @@ use kelp_ui::avatars::AvatarStore;
 use kelp_ui::graph::{GraphAction, Selection};
 use kelp_ui::theme as kelp_theme;
 use stdusk_core::progress::Progress;
-use stdusk_core::shell::ShellProfile;
-use stdusk_core::terminal::{CmdState, PtyTerm, SpawnOpts};
+use stdusk_core::terminal::{CmdState, PtyTerm};
+use stdusk_egui::colors;
 use stdusk_egui::ui::{
     CursorStyle, GridStyle, TAB_H, apply_theme, collect_input, draw_tab, draw_toast, icons,
     render_grid,
 };
 use stdusk_egui::widgets::{chip, icon_button};
-use stdusk_egui::{colors, repaint_handle};
 use tidewatch_core::notes::NotesWriter;
 use tidewatch_core::paths::TidewatchPaths;
 use tidewatch_core::prepare::Prepared;
@@ -61,6 +60,7 @@ use crate::pane::{
     Body, CREATING_TITLE, ClosePolicy, Pane, STARTING_TITLE, agent_tabs_in_folder, finish_open,
 };
 use crate::pane_jobs;
+use crate::pty::{spawn_agent, spawn_shell};
 use crate::reader::Shown;
 use crate::reader_glue;
 use crate::repo::Workspace;
@@ -82,10 +82,6 @@ use crate::{diff_pane, fonts, history_pane, layout, note_actions};
 
 const DEFAULT_THEME: &str = "one-half-dark";
 const FONT_SIZE: f32 = 13.0;
-const INITIAL_COLS: usize = 80;
-const INITIAL_ROWS: usize = 24;
-const SCROLLBACK_LINES: usize = 25_000;
-const WORD_SEPARATORS: &str = " ()[]{}'\"";
 const MIN_CONTRAST: f32 = 4.0;
 const STRIP_TOP_MARGIN: i8 = 6;
 const STRIP_SIDE_MARGIN: i8 = 8;
@@ -896,44 +892,6 @@ impl Tidewatch {
     }
 }
 
-fn spawn_shell(ctx: &egui::Context, dir: &Path) -> PtyTerm {
-    PtyTerm::spawn(INITIAL_COLS, INITIAL_ROWS, repaint_handle(ctx), &spawn_opts(dir, None))
-}
-
-/// The user's shell runs `prepared.script` as its command, so it reads the login profile like any
-/// tab and the agent ends up as the pty's process.
-fn spawn_agent(ctx: &egui::Context, dir: &Path, prepared: &Prepared) -> PtyTerm {
-    let shell = user_shell(std::env::var("SHELL").ok());
-    let profile = ShellProfile {
-        shell: Some(shell.clone()),
-        args: vec!["-c".to_owned(), prepared.script(&shell)],
-        cwd: None,
-        env: prepared.env.iter().cloned().collect::<BTreeMap<_, _>>(),
-    };
-    PtyTerm::spawn(INITIAL_COLS, INITIAL_ROWS, repaint_handle(ctx), &spawn_opts(dir, Some(profile)))
-}
-
-fn spawn_opts(dir: &Path, profile: Option<ShellProfile>) -> SpawnOpts {
-    SpawnOpts {
-        detect_progress: true,
-        shell_integration: true,
-        autosuggestions: false,
-        scrollback_lines: SCROLLBACK_LINES,
-        word_separators: WORD_SEPARATORS.into(),
-        bold_bright: true,
-        cwd: Some(dir.to_string_lossy().into_owned()),
-        profile,
-        agent_tracking: None,
-    }
-}
-
-/// `$SHELL`, or the platform's default login shell when it is unset or empty.
-fn user_shell(env: Option<String>) -> String {
-    env.filter(|shell| !shell.is_empty()).unwrap_or_else(|| {
-        if cfg!(target_os = "macos") { "/bin/zsh" } else { "/bin/bash" }.to_owned()
-    })
-}
-
 fn wall_ms() -> u128 {
     std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_millis())
 }
@@ -1395,15 +1353,6 @@ impl eframe::App for Tidewatch {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn the_shell_comes_from_the_environment_or_the_platform_default() {
-        assert_eq!(user_shell(Some("/usr/bin/fish".into())), "/usr/bin/fish");
-        for unset in [None, Some(String::new())] {
-            let shell = user_shell(unset);
-            assert!(shell == "/bin/zsh" || shell == "/bin/bash", "{shell}");
-        }
-    }
 
     #[test]
     fn the_exit_notice_names_the_profile_and_the_code() {

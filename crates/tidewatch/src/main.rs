@@ -45,6 +45,7 @@ mod pane_jobs;
 mod post_confirm;
 mod pr_state;
 mod profile_editor;
+mod pty;
 mod reader;
 mod reader_feed;
 mod reader_glue;
