@@ -25,6 +25,7 @@ pub mod restore;
 mod rfc3339;
 pub mod runner;
 pub mod session;
+pub mod session_id;
 pub mod status;
 pub mod test_command;
 pub mod tools;
