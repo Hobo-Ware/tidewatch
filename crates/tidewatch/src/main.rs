@@ -52,9 +52,12 @@ mod reader_view;
 mod repo;
 mod settings_view;
 mod status_view;
+mod stepper;
 mod tab_view;
 mod tabs;
 mod toast;
+mod workflow_ask;
+mod workflow_run;
 mod worktree_jobs;
 
 use std::path::{Path, PathBuf};
