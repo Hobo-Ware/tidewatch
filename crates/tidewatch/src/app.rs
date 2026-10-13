@@ -11,6 +11,7 @@ mod frame;
 mod overlays;
 mod palette;
 mod panes;
+mod repos;
 mod settings;
 mod strip;
 mod tabs;
@@ -33,6 +34,7 @@ use tidewatch_core::tools::Tools;
 use tidewatch_core::update::fake_release;
 use tidewatch_core::worktree::{Inspection, Worktree};
 
+use self::repos::Picker;
 use crate::agent_events::Hooks;
 use crate::agent_jobs;
 use crate::catalog::Catalog;
@@ -96,6 +98,7 @@ pub(crate) struct Tidewatch {
     views: HashMap<u64, TabView>,
     pane_jobs: Jobs<pane_jobs::Done>,
     workspace_jobs: Jobs<Workspace>,
+    picker: Picker,
     notes_writer: NotesWriter,
     avatars: AvatarStore,
     toast: Option<Toast>,
@@ -180,6 +183,7 @@ impl Tidewatch {
             views: HashMap::new(),
             pane_jobs: Jobs::new(),
             workspace_jobs: Jobs::new(),
+            picker: Picker::new(),
             notes_writer: NotesWriter::new(),
             avatars: AvatarStore::offline(cc.egui_ctx.clone()),
             toast: None,
