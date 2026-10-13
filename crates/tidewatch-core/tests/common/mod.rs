@@ -115,13 +115,7 @@ impl FakeGh {
             log = log.display(),
             cases = cases.concat()
         );
-        let gh = dir.path().join("gh");
-        std::fs::write(&gh, script).unwrap();
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt as _;
-            std::fs::set_permissions(&gh, std::fs::Permissions::from_mode(0o755)).unwrap();
-        }
+        write_executable_from_a_child(&dir.path().join("gh"), &script);
         Self { dir }
     }
 
@@ -161,4 +155,18 @@ pub fn path_with_only_git() -> (tempfile::TempDir, OsString) {
     std::os::unix::fs::symlink(real, dir.path().join("git")).unwrap();
     let path = dir.path().as_os_str().to_owned();
     (dir, path)
+}
+
+/// Linux refuses to exec a file that any process holds open for writing (ETXTBSY), and a test
+/// thread that forks while this process writes the file inherits that handle, so `cp` writes it.
+fn write_executable_from_a_child(path: &Path, text: &str) {
+    let source = path.with_extension("src");
+    std::fs::write(&source, text).unwrap();
+    let copied = Command::new("cp").arg(&source).arg(path).status().unwrap();
+    assert!(copied.success(), "cp {} failed", path.display());
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt as _;
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
 }
