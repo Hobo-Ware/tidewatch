@@ -8,7 +8,7 @@ use std::ffi::OsString;
 use std::path::Path;
 use std::time::Duration;
 
-use egui::{CornerRadius, FontId, Frame, Key, Margin, Modifiers, RichText};
+use egui::{CornerRadius, FontId, Frame, Key, Margin, Modifiers};
 use kelp_core::refs::RefLabel;
 use kelp_ui::avatars::AvatarStore;
 use kelp_ui::graph::{GraphAction, Selection};
@@ -28,7 +28,7 @@ use tidewatch_core::restore::{RealDisk, WindowPlan};
 use tidewatch_core::status::AgentStatus;
 use tidewatch_core::tools::Tools;
 use tidewatch_core::trust::TrustCli;
-use tidewatch_core::worktree::{BranchOutcome, Inspection, Leftover, Worktree};
+use tidewatch_core::worktree::{BranchOutcome, Inspection, Worktree};
 
 use crate::agent_events::Hooks;
 use crate::agent_frame::{self, Follow, Wake};
@@ -44,7 +44,7 @@ use crate::dev_flow::DevFlow;
 use crate::dev_panes::{self, DevPanes};
 use crate::dev_reader::DevReader;
 use crate::dev_screenshot::DevScreenshot;
-use crate::dev_session::DevSession;
+use crate::dev_session::{DevSession, LeftoverStep};
 use crate::dev_view::{DevKeys, DevView};
 use crate::dev_workflow::DevWorkflow;
 use crate::dev_worktree::DevWorktree;
@@ -52,6 +52,7 @@ use crate::end_block_view;
 use crate::flow::Flow;
 use crate::flow_glue;
 use crate::jobs::Jobs;
+use crate::leftover_glue;
 use crate::new_tab::{Group, NewTab, Request};
 use crate::new_tab_dialog::{self, Outcome};
 use crate::notice;
@@ -104,7 +105,7 @@ pub(crate) struct Tidewatch {
     tabs: Tabs<Pane<PtyTerm>>,
     jobs: Jobs<Done>,
     closing: Option<Closing>,
-    leftovers: Vec<Leftover>,
+    leftovers: leftover_glue::Host,
     dev: Option<DevWorktree>,
     dev_agent: Option<DevAgent>,
     dev_panes: DevPanes,
@@ -166,7 +167,7 @@ impl Tidewatch {
             tabs: Tabs::new(Pane::shell(main)),
             jobs: Jobs::new(),
             closing: None,
-            leftovers: Vec::new(),
+            leftovers: leftover_glue::Host::new(),
             dev: DevWorktree::from_env(),
             dev_agent: DevAgent::from_env(),
             dev_panes: DevPanes::from_env(),
@@ -356,6 +357,18 @@ impl Tidewatch {
         self.runs.open(ctx, &mut self.tabs, &env, &repo.root, existing, start, now);
     }
 
+    fn drive_dev_leftovers(&mut self, ctx: &egui::Context) {
+        let Some(step) = self.dev_session.leftovers(self.leftovers.count() > 0) else { return };
+        if !self.leftovers.is_open() {
+            self.leftovers.open(ctx);
+            self.dev_session.leftovers_opened();
+        } else if step == LeftoverStep::Clean
+            && self.leftovers.press_clean_up(ctx, self.paths.as_ref())
+        {
+            self.dev_session.leftovers_done();
+        }
+    }
+
     /// `TIDEWATCH_DEV_RESUME`: the restart path, for the one saved run in the named worktree.
     fn dev_resume(&mut self, ctx: &egui::Context, name: &str) {
         let (Workspace::Repo(repo), Some(paths)) = (&self.workspace, &self.paths) else { return };
@@ -387,7 +400,7 @@ impl Tidewatch {
         }
         self.notice = report.notice.or(self.notice.take());
         if let Some(leftovers) = report.leftovers {
-            self.leftovers = leftovers;
+            self.leftovers.set(leftovers);
         }
         if let Some(focus) = report.focus {
             self.focus = focus;
@@ -973,15 +986,6 @@ fn tab_signals(pane: &Pane<PtyTerm>) -> (Progress, CmdState) {
     }
 }
 
-fn leftover_tip(leftovers: &[Leftover]) -> String {
-    let mut lines = vec!["Worktrees from earlier runs with no open tab:".to_owned()];
-    lines.extend(leftovers.iter().map(|l| match &l.branch {
-        Some(branch) => format!("{}  ({branch})", l.path.display()),
-        None => l.path.display().to_string(),
-    }));
-    lines.join("\n")
-}
-
 fn shortcut_actions(ctx: &egui::Context) -> Vec<Action> {
     ctx.input_mut(|i| {
         let mut actions = Vec::new();
@@ -1024,7 +1028,8 @@ impl eframe::App for Tidewatch {
         for done in self.agent_jobs.drain() {
             self.apply_agent_done(done, &ctx);
         }
-        if let Some(text) = self.trust.drain(&ctx) {
+        let toasts = [self.trust.drain(&ctx), self.leftovers.tick()];
+        for text in toasts.into_iter().flatten() {
             self.show_toast(text, &ctx);
         }
         let now = ctx.input(|i| i.time);
@@ -1034,6 +1039,7 @@ impl eframe::App for Tidewatch {
         self.drive_agents(&ctx, now);
         self.drive_flow(&ctx, now);
         self.drive_restore(&ctx, now, None);
+        self.drive_dev_leftovers(&ctx);
         self.drive_views();
         let typing_in_a_panel = ctx.text_edit_focused();
         let active_id = self.tabs.items()[self.tabs.active()].id;
@@ -1041,6 +1047,7 @@ impl eframe::App for Tidewatch {
             || self.new_tab.is_some()
             || self.settings.is_some()
             || self.trust.dialog_open()
+            || self.leftovers.is_open()
             || self.flow.modal_open(active_id);
         if self.closing.is_none()
             && self.new_tab.is_none()
@@ -1102,17 +1109,7 @@ impl eframe::App for Tidewatch {
                     ui.add_space(4.0);
                     chip(ui, &self.workspace.chip_label(), true)
                         .on_hover_text(self.workspace.dir().display().to_string());
-                    if !self.leftovers.is_empty() {
-                        ui.add_space(4.0);
-                        ui.label(
-                            RichText::new(format!("{} leftover", self.leftovers.len()))
-                                .monospace()
-                                .size(12.0)
-                                .color(colors::dim()),
-                        )
-                        .on_hover_text(leftover_tip(&self.leftovers));
-                        ui.add_space(8.0);
-                    }
+                    self.leftovers.chip(ui);
                     ui.add_space(4.0);
                     if overview_view::button(ui, self.overview, needs_you).clicked() {
                         toggle_overview = true;
@@ -1360,6 +1357,7 @@ impl eframe::App for Tidewatch {
         if let Some(answer) = answer {
             self.answer_close(answer, &ctx);
         }
+        self.leftovers.show(&ctx, self.paths.as_ref(), self.trust.grant().as_ref());
         flow_glue::dialogs(&ctx, &mut self.flow, active_id);
         if let Some(state) = &mut self.new_tab
             && let Some(outcome) =
