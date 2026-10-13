@@ -16,6 +16,7 @@ pub(crate) enum Done {
     Loaded { profiles: Profiles, workflows: Workflows },
     Probed { agent: String, availability: Availability },
     Saved { result: Result<(), String>, profiles: Profiles },
+    WorkflowsSaved { result: Result<(), String>, workflows: Workflows },
 }
 
 pub(crate) fn load(jobs: &Jobs<Done>, ctx: &egui::Context, paths: TidewatchPaths, path: OsString) {
@@ -47,6 +48,18 @@ pub(crate) fn save(
     jobs.spawn(ctx, move || {
         let result = profiles.save(&paths.profiles_file()).map_err(|e| e.to_string());
         Done::Saved { result, profiles }
+    });
+}
+
+pub(crate) fn save_workflows(
+    jobs: &Jobs<Done>,
+    ctx: &egui::Context,
+    paths: TidewatchPaths,
+    workflows: Workflows,
+) {
+    jobs.spawn(ctx, move || {
+        let result = workflows.save(&paths.workflows_file()).map_err(|e| e.to_string());
+        Done::WorkflowsSaved { result, workflows }
     });
 }
 
@@ -125,5 +138,21 @@ mod tests {
         assert_eq!(result, Ok(()));
         assert_eq!(back, profiles);
         assert_eq!(Profiles::load(&paths.profiles_file()), profiles);
+    }
+
+    #[test]
+    fn saving_workflows_writes_workflows_toml_and_hands_them_back() {
+        let home = tempfile::tempdir().unwrap();
+        let paths = TidewatchPaths::new(home.path());
+        let mut workflows = Workflows::defaults();
+        workflows.workflow.remove("fix");
+        let jobs = Jobs::new();
+        save_workflows(&jobs, &egui::Context::default(), paths.clone(), workflows.clone());
+        let Done::WorkflowsSaved { result, workflows: back } = next(&jobs) else {
+            panic!("expected WorkflowsSaved")
+        };
+        assert_eq!(result, Ok(()));
+        assert_eq!(back, workflows);
+        assert_eq!(Workflows::load(&paths.workflows_file()), workflows);
     }
 }
