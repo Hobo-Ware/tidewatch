@@ -195,10 +195,11 @@ crates/tidewatch/       the egui app
   src/workflow_jobs.rs  open (worktree, base, test command and timeout), launch a stage (fresh token, prepare, divider), run the tests as jobs
   src/workflow_glue.rs  Host: open a workflow or saved-run tab, carry out what a run asks, apply finished jobs, drop a replaced agent's messages (generic over the pty)
 docs/                   concept mockup, research reports, shortcuts.md (generated from the command table, checked by a test)
+site/                   the GitHub Pages showcase (tidewatch.hoboware.dev): index.html, style.css, shot-*.png app screenshots, icon.svg, favicon, apple-touch icon, tidewatch-og.png, CNAME, robots.txt, sitemap.xml
 packaging/              Info.plist, reference Homebrew cask (tidewatch.rb), .desktop file, release README
 scripts/                bundle-macos.sh (universal ad-hoc signed Tidewatch.app + zip), package-linux.sh (tarball + AppImage), make-icon.sh (icon from assets/icon.svg)
 assets/                 icon.svg (the K mark: ripple prompt and wave, Night tide colors), Tidewatch.icns, icon-512.png, tray.svg and tray.png (the menu-bar template icon)
-.github/workflows/      ci.yml (fmt, clippy, test on macOS and Ubuntu), release.yml (v* tags: bundle, package, GitHub Release, tap behind PUBLISH_TAP)
+.github/workflows/      ci.yml (fmt, clippy, test on macOS and Ubuntu), release.yml (v* tags: bundle, package, GitHub Release, tap behind PUBLISH_TAP), pages.yml (site/** on main: deploy to GitHub Pages)
 ```
 
 Update this block in the same commit that adds or moves a module.
@@ -270,10 +271,20 @@ Check the real exit code of a build (`cargo build 2>build.log; echo $?`), never 
 ## Showcase page and releases
 
 Releases follow `packaging/README.md` (bump `Cargo.toml`, tag `v<version>`). The tap job stays off until the
-repository variable `PUBLISH_TAP` is `true`, which waits for the repo to go public. Once there is a public page
-and a Homebrew cask, the same upkeep as Kelp applies: a user-visible change updates `README.md` and the page in the same branch, removed
-behavior comes off, screenshots come from the screenshot switch on a demo repo (never a
-private or work repo) and are compressed (pngquant + oxipng, PSNR checked).
+repository variable `PUBLISH_TAP` is `true`, which waits for the repo to go public.
+
+The showcase page is `site/` (plain HTML and CSS, no build step), deployed by `pages.yml` to `tidewatch.hoboware.dev`
+whenever `site/**` changes on `main`. Same upkeep as Kelp: a user-visible change updates `README.md` and the page in the
+same branch, removed behavior comes off, and the page only describes merged features. The install section says
+"not released yet, build from source" until the first release; then it switches to the Homebrew cask and the Linux
+downloads. Screenshots come from the screenshot switch on a throwaway demo repo with neutral names (never a private
+or work repo, no real home path or user name in any pixel), at 2560x1600, resized to 2200x1375 and compressed
+(`pngquant --force --speed 1 --strip 64`, then `oxipng -o 6 --strip safe`, PSNR above 40 dB). A shell prompt shows
+user and host: use a throwaway `HOME`, `ZDOTDIR` with a neutral `PROMPT`, and `GIT_PAGER=cat`. Agent tabs without a
+real agent: a stand-in `claude` script first on `PATH` that posts the hook events to the listener from its
+`--settings` JSON and a hand-written transcript under the throwaway `HOME`'s `.claude/projects`, restored through a
+seeded `session.toml`. The og image is a 1200x630 page rendered in headless Chromium. Check the page headless only, at
+1280 and 390 wide, with no horizontal scroll.
 
 ## Commit standards
 
