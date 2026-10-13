@@ -10,6 +10,7 @@ pub mod launch;
 pub mod listener;
 pub mod mcp;
 pub mod names;
+pub mod note_paste;
 pub mod notes;
 pub mod path_env;
 pub mod paths;

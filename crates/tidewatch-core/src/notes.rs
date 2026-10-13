@@ -12,10 +12,34 @@ use std::thread::JoinHandle;
 use kelp_core::review::{Anchor, Comment, Thread};
 use serde::{Deserialize, Serialize};
 
+/// When a thread was sent to the agent, and how many comments it had then.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Sent {
+    /// Unix seconds.
+    pub at: i64,
+    pub comments: usize,
+}
+
+/// Where a thread stands with the agent.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum NoteState {
+    Resolved,
+    /// Not sent yet, or the user wrote again after it was sent.
+    Queued,
+    /// Unix seconds.
+    Sent(i64),
+    /// The agent answered a sent thread.
+    Replied,
+    /// The agent wrote the thread itself (`report_finding`); there is nothing to send.
+    FromAgent,
+}
+
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Notes {
     #[serde(default)]
     pub threads: Vec<Thread>,
+    #[serde(default)]
+    sent: BTreeMap<u64, Sent>,
     #[serde(default)]
     next_id: u64,
     #[serde(default)]
@@ -93,6 +117,48 @@ impl Notes {
 
     pub fn delete(&mut self, id: u64) {
         self.threads.retain(|t| t.id != id);
+        self.sent.remove(&id);
+    }
+
+    /// Records that the threads `ids` were sent to the agent at `at` (unix seconds). Unknown ids are
+    /// skipped.
+    pub fn mark_sent(&mut self, ids: &[u64], at: i64) {
+        for thread in self.threads.iter().filter(|t| ids.contains(&t.id)) {
+            self.sent.insert(thread.id, Sent { at, comments: thread.comments.len() });
+        }
+    }
+
+    #[must_use]
+    pub fn sent(&self, id: u64) -> Option<Sent> {
+        self.sent.get(&id).copied()
+    }
+
+    /// Where `thread` stands. `agent` is the id the agent signs its replies with.
+    #[must_use]
+    pub fn state(&self, thread: &Thread, agent: &str) -> NoteState {
+        if thread.resolved {
+            return NoteState::Resolved;
+        }
+        let by_agent = thread.comments.last().is_some_and(|c| c.author == agent);
+        let sent = self.sent(thread.id);
+        match (by_agent, sent) {
+            (true, Some(_)) => NoteState::Replied,
+            (true, None) => NoteState::FromAgent,
+            (false, Some(mark)) if thread.comments.len() <= mark.comments => {
+                NoteState::Sent(mark.at)
+            }
+            (false, _) => NoteState::Queued,
+        }
+    }
+
+    /// The open threads still to send, oldest first.
+    #[must_use]
+    pub fn pending(&self, agent: &str) -> Vec<u64> {
+        self.threads
+            .iter()
+            .filter(|t| self.state(t, agent) == NoteState::Queued)
+            .map(|t| t.id)
+            .collect()
     }
 
     /// The local thread made from the pull request thread whose first comment has GitHub id `root`.
@@ -292,6 +358,66 @@ mod tests {
         notes.delete(id);
         assert_eq!(notes.threads.len(), 1);
         assert_eq!(notes.threads[0].path, "src/b.rs");
+    }
+
+    fn thread_state(notes: &Notes, id: u64) -> NoteState {
+        let thread = notes.threads.iter().find(|t| t.id == id).unwrap();
+        notes.state(thread, "claude")
+    }
+
+    #[test]
+    fn a_new_note_is_queued_until_it_is_sent_and_a_later_comment_queues_it_again() {
+        let mut notes = Notes::default();
+        let id = notes.add("a.rs", None, anchor(1), comment("rename"));
+        assert_eq!(thread_state(&notes, id), NoteState::Queued);
+        assert_eq!(notes.pending("claude"), [id]);
+        notes.mark_sent(&[id], 1_790_000_100);
+        assert_eq!(thread_state(&notes, id), NoteState::Sent(1_790_000_100));
+        assert_eq!(notes.pending("claude"), Vec::<u64>::new());
+        notes.reply(id, comment("and add a test"));
+        assert_eq!(thread_state(&notes, id), NoteState::Queued);
+    }
+
+    #[test]
+    fn an_agent_reply_makes_a_sent_note_replied_and_an_agent_finding_is_not_pending() {
+        let mut notes = Notes::default();
+        let id = notes.add("a.rs", None, anchor(1), comment("rename"));
+        notes.mark_sent(&[id], 5);
+        let agent = Comment { author: "claude".into(), time: 6, body: "done".into() };
+        notes.reply(id, agent.clone());
+        assert_eq!(thread_state(&notes, id), NoteState::Replied);
+        let finding = notes.add("b.rs", None, anchor(2), agent);
+        assert_eq!(thread_state(&notes, finding), NoteState::FromAgent);
+        assert_eq!(notes.pending("claude"), Vec::<u64>::new());
+    }
+
+    #[test]
+    fn resolved_notes_are_not_pending_and_deleting_forgets_the_mark() {
+        let mut notes = Notes::default();
+        let id = notes.add("a.rs", None, anchor(1), comment("rename"));
+        notes.mark_sent(&[id], 5);
+        notes.set_resolved(id, true);
+        assert_eq!(thread_state(&notes, id), NoteState::Resolved);
+        notes.delete(id);
+        assert_eq!(notes.sent(id), None);
+        let mut other = Notes::default();
+        other.mark_sent(&[42], 1);
+        assert_eq!(other, Notes::default());
+    }
+
+    #[test]
+    fn sent_marks_survive_the_file_and_an_old_file_without_them_loads() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("notes.json");
+        let mut notes = sample();
+        let id = notes.threads[0].id;
+        notes.mark_sent(&[id], 77);
+        notes.save(&file).unwrap();
+        assert_eq!(Notes::load(&file).sent(id), Some(Sent { at: 77, comments: 2 }));
+        let mut value = serde_json::to_value(&notes).unwrap();
+        value.as_object_mut().unwrap().remove("sent");
+        std::fs::write(&file, value.to_string()).unwrap();
+        assert_eq!(Notes::load(&file).sent(id), None);
     }
 
     #[test]
