@@ -198,7 +198,7 @@ docs/                   concept mockup, research reports, shortcuts.md (generate
 site/                   the GitHub Pages showcase (tidewatch.hoboware.dev): index.html, style.css, shot-*.png app screenshots, icon.svg, favicon, apple-touch icon, tidewatch-og.png, CNAME, robots.txt, sitemap.xml
 packaging/              Info.plist, reference Homebrew cask (tidewatch.rb), .desktop file, release README
 scripts/                bundle-macos.sh (universal ad-hoc signed Tidewatch.app + zip), package-linux.sh (tarball + AppImage), make-icon.sh (icon from assets/icon.svg)
-assets/                 icon.svg (the K mark: ripple prompt and wave, Night tide colors), Tidewatch.icns, icon-512.png, tray.svg and tray.png (the menu-bar template icon)
+assets/                 icon.svg (the K mark: ripple prompt and wave, Night tide colors), AppIcon.icon (the same mark as Liquid Glass layers: sun, prompt, ripples, wave) compiled to Assets.car, Tidewatch.icns (older macOS), icon-512.png, tray.svg and tray.png (the menu-bar template icon)
 .github/workflows/      ci.yml (fmt, clippy, test on macOS and Ubuntu), release.yml (v* tags: bundle, package, GitHub Release, tap behind PUBLISH_TAP), pages.yml (site/** on main: deploy to GitHub Pages)
 ```
 
