@@ -1,10 +1,12 @@
 //! Where each CLI keeps the session file of a tab (PLAN.md, D12), found from what Tidewatch knows:
 //! the worktree folder and the session id it passed with `--session-id`.
 //!
-//! Checked against claude 2.1.296, gemini 0.46.0 and copilot 1.0.91 on 2026-10-13. Codex is
-//! UNVERIFIED (no `codex login` here, and Tidewatch cannot pass Codex a session id), so it is found
-//! by folder and start time. The lookups read directory listings and first lines: call them off the
-//! UI thread. A file may not exist yet when the agent has just started; ask again later.
+//! Checked against claude 2.1.296, gemini 0.46.0, copilot 1.0.91 and codex 0.162.1 on 2026-10-13.
+//! Tidewatch cannot pass Codex a session id, so its rollout is found by folder and start time (a
+//! hook's `transcript_path` wins when there is one; an id is matched against the file name). A
+//! Codex TUI writes its rollout at start, before any prompt, so a stale one in the same folder is
+//! told apart by its start time. The lookups read directory listings and first lines: call them off
+//! the UI thread. A file may not exist yet when the agent has just started; ask again later.
 
 use std::fs;
 use std::io::{BufRead as _, BufReader};
@@ -413,6 +415,28 @@ mod tests {
         locator.started_after_ms = rfc3339::unix_millis("2026-10-13T09:20:00Z");
         assert_eq!(locator.locate(Source::Codex), None);
         let _ = (other, sub);
+    }
+
+    #[test]
+    fn a_real_codex_rollout_is_found_by_folder_and_start_time_under_codex_home() {
+        let home = tempfile::tempdir().unwrap();
+        let codex_home = tempfile::tempdir().unwrap();
+        let name = "rollout-2026-10-13T19-57-41-01a13669-bce5-7242-a392-fd967b70ea72.jsonl";
+        let file = codex_home.path().join("sessions/2026/10/13").join(name);
+        touch(&file, include_str!("../tests/fixtures/codex_live.jsonl"));
+        let mut locator = Locator::new(home.path(), "/work/demo");
+        assert_eq!(locator.locate(Source::Codex), None);
+        locator.codex_home = Some(codex_home.path().to_path_buf());
+        assert_eq!(locator.locate(Source::Codex), Some(file.clone()));
+        locator.started_after_ms = rfc3339::unix_millis("2026-10-13T17:57:36Z");
+        assert_eq!(locator.locate(Source::Codex), Some(file));
+        locator.started_after_ms = rfc3339::unix_millis("2026-10-13T17:57:42Z");
+        assert_eq!(locator.locate(Source::Codex), None);
+        let other = Locator {
+            codex_home: locator.codex_home.clone(),
+            ..Locator::new(home.path(), "/work/other")
+        };
+        assert_eq!(other.locate(Source::Codex), None);
     }
 
     #[test]

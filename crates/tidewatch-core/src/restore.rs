@@ -13,7 +13,7 @@
 //! - A moved repo is repaired first with [`repair_moved`], which gives the window its new folder.
 //!
 //! Resume forms were checked against claude 2.1.296, gemini 0.46.0, copilot 1.0.96 and codex
-//! 0.162.1 (`--help`; Claude also live, see PLAN.md Phase 0 findings). Codex is unverified.
+//! 0.162.1 (`--help`; Claude and Codex also live, see PLAN.md Phase 0 findings).
 
 use std::collections::HashSet;
 use std::fmt;
@@ -431,8 +431,8 @@ pub fn restore_workflow(stages: &Path) -> Option<(Runner, Option<runner::Command
 }
 
 /// The session id Codex put in a rollout file name (`rollout-<timestamp>-<uuid>.jsonl`). Codex takes
-/// no id at launch, so the app reads it from the file `Locator` finds and saves it. UNVERIFIED
-/// against a real rollout (no `codex login` here).
+/// no id at launch, so the app reads it from the file `Locator` finds and saves it. Checked on
+/// codex 0.162.1: `codex resume <id>` with this id continued the same rollout file.
 #[must_use]
 pub fn codex_session_id(rollout: &Path) -> Option<String> {
     let stem = rollout.file_stem()?.to_str()?.strip_prefix("rollout-")?;
@@ -960,6 +960,11 @@ mod tests {
         assert_eq!(
             codex_session_id(Path::new(&format!("/s/2026/10/13/{name}"))),
             Some(ID_X.into())
+        );
+        let real = "rollout-2026-10-13T19-57-41-01a13669-bce5-7242-a392-fd967b70ea72.jsonl";
+        assert_eq!(
+            codex_session_id(Path::new(real)).as_deref(),
+            Some("01a13669-bce5-7242-a392-fd967b70ea72")
         );
         for bad in ["rollout-2026-10-13T12-00-00.jsonl", "other.jsonl", "rollout-short.jsonl"] {
             assert_eq!(codex_session_id(Path::new(bad)), None, "{bad}");
