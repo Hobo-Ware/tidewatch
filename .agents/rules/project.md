@@ -49,6 +49,7 @@ crates/tidewatch-core/  worktrees, profiles, permission levels, workflows, agent
   src/pr.rs             D4 PR comments: find the open PR (gh pr view), pull review comments into notes threads (idempotent merge), post a note or reply
   src/rfc3339.rs        RFC 3339 timestamp to unix millis (pure, crate-private)
   src/transcript.rs     D12 Reader model: Entry/Role/ToolCall, per-CLI transcript parsers (claude, gemini, copilot verified; codex unverified), incremental Tail
+  src/transcript_locate.rs  where each CLI keeps a tab's session file: Locator by cwd and session id (claude folder encoding verified), gemini, copilot, codex (unverified)
   src/history.rs        branch-scoped graph, ahead/behind, commit and working-tree files and diffs, file watcher, via kelp-core
   tests/worktree_roundtrip.rs  real throwaway repos: add, lock, dirty refusal, delete branch, moved repo
   tests/listener_http.rs  listener on a random port with a raw HTTP client: 401s, hooks, MCP, keep-alive, chunked, size caps
