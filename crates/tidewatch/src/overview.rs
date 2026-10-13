@@ -17,6 +17,8 @@ pub(crate) struct Row {
     pub(crate) title: String,
     pub(crate) place: String,
     pub(crate) profile: String,
+    /// Where a workflow tab is: `Ship a feature: Review 2/4`.
+    pub(crate) workflow: Option<String>,
     pub(crate) agent_id: String,
     pub(crate) branch: String,
     pub(crate) status: AgentStatus,
@@ -118,6 +120,7 @@ pub(crate) fn collect<T>(label: &str, dir: &Path, tabs: &Tabs<Pane<T>>, now: f64
                 title: tab.title.clone(),
                 place: label.to_owned(),
                 profile: agent.profile_name.clone(),
+                workflow: agent.workflow.as_ref().map(|run| run.position()),
                 agent_id: agent.run.agent_id.clone(),
                 branch,
                 status: agent.run.status().clone(),
@@ -154,6 +157,7 @@ mod tests {
     use super::*;
     use crate::agent_run::AgentRun;
     use crate::pane::{AgentTab, Body};
+    use crate::workflow_run::TabRun;
     use std::path::PathBuf;
     use tidewatch_core::status::Reason;
     use tidewatch_core::worktree::Worktree;
@@ -164,6 +168,7 @@ mod tests {
             title: title.into(),
             place: "web".into(),
             profile: "Builder".into(),
+            workflow: None,
             agent_id: "claude".into(),
             branch: format!("agent/{title}"),
             status,
@@ -280,5 +285,48 @@ mod tests {
         assert_eq!(titles(&input.rows), ["brave-otter", "Reviewer"]);
         assert_eq!(input.rows[0].elapsed, 5.0);
         assert_eq!(input.rows[0].status, AgentStatus::SettingUp);
+    }
+
+    #[test]
+    fn a_workflow_tab_shows_which_stage_the_run_is_at() {
+        use std::collections::BTreeMap;
+        use std::time::Duration;
+        use tidewatch_core::runner::{RunContext, Runner};
+        use tidewatch_core::workflows::Workflows;
+        let ship = Workflows::defaults().workflow.remove("ship").unwrap();
+        let ctx = RunContext {
+            task: "t".into(),
+            base: "main".into(),
+            branch: "b".into(),
+            test_command: None,
+        };
+        let mut run = TabRun::new(
+            Runner::new(&ship, &BTreeMap::new(), ctx).unwrap(),
+            None,
+            Duration::from_secs(60),
+        );
+        run.start();
+        let mut tab =
+            AgentTab::new("Ship a feature".into(), AgentRun::setting_up("claude".into(), 0.0));
+        tab.workflow = Some(Box::new(run));
+        let mut tabs: Tabs<Pane<u32>> = Tabs::new(Pane::shell(0));
+        tabs.push(
+            "brave-otter".into(),
+            Pane { body: Body::Shell(1), worktree: None, agent: Some(tab) },
+        );
+        tabs.push(
+            "plain".into(),
+            Pane {
+                body: Body::Shell(2),
+                worktree: None,
+                agent: Some(AgentTab::new(
+                    "Builder".into(),
+                    AgentRun::setting_up("claude".into(), 0.0),
+                )),
+            },
+        );
+        let rows = collect("web", Path::new("/work/web"), &tabs, 5.0).rows;
+        assert_eq!(rows[0].workflow.as_deref(), Some("Ship a feature: Work 1/4"));
+        assert_eq!(rows[1].workflow, None);
     }
 }

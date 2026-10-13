@@ -6,6 +6,7 @@ use std::ffi::OsString;
 
 use tidewatch_core::agents::{Agent, AgentTable};
 use tidewatch_core::profiles::{Profile, Profiles};
+use tidewatch_core::workflows::Workflows;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum Availability {
@@ -16,6 +17,7 @@ pub(crate) enum Availability {
 
 pub(crate) struct Catalog {
     profiles: Option<Profiles>,
+    workflows: Option<Workflows>,
     table: AgentTable,
     availability: HashMap<String, Availability>,
     pub(crate) path: OsString,
@@ -23,7 +25,13 @@ pub(crate) struct Catalog {
 
 impl Catalog {
     pub(crate) fn new(path: OsString) -> Self {
-        Self { profiles: None, table: AgentTable::builtin(), availability: HashMap::new(), path }
+        Self {
+            profiles: None,
+            workflows: None,
+            table: AgentTable::builtin(),
+            availability: HashMap::new(),
+            path,
+        }
     }
 
     pub(crate) fn is_loaded(&self) -> bool {
@@ -32,6 +40,14 @@ impl Catalog {
 
     pub(crate) fn profiles(&self) -> Option<&Profiles> {
         self.profiles.as_ref()
+    }
+
+    pub(crate) fn workflows(&self) -> Option<&Workflows> {
+        self.workflows.as_ref()
+    }
+
+    pub(crate) fn set_workflows(&mut self, workflows: Workflows) {
+        self.workflows = Some(workflows);
     }
 
     /// `(id, display name)` of every agent, built-in and custom.

@@ -64,9 +64,12 @@ use crate::reader_glue;
 use crate::repo::Workspace;
 use crate::settings_view;
 use crate::status_view;
+use crate::stepper_view;
 use crate::tab_view::{TabView, ViewSpec};
 use crate::tabs::{Action, Tabs};
 use crate::toast::Toast;
+use crate::workflow_glue::{self, Env, Spawners, Start};
+use crate::workflow_run::Exec;
 use crate::worktree_jobs::{self, Done, OpenSpec, Target};
 use crate::{diff_pane, fonts, history_pane, layout, note_actions};
 
@@ -112,6 +115,8 @@ pub(crate) struct Tidewatch {
     last_profile: Option<String>,
     hooks: Hooks,
     flow: Flow,
+    runs: workflow_glue::Host,
+    run_asks: Vec<(u64, Vec<Exec>)>,
     dev_flow: DevFlow,
     notifier: Notifier,
     overview: bool,
@@ -163,6 +168,8 @@ impl Tidewatch {
             last_profile: None,
             hooks,
             flow,
+            runs: workflow_glue::Host::new(),
+            run_asks: Vec::new(),
             dev_flow,
             notifier: Notifier::desktop(),
             overview: dev_view.overview,
@@ -222,6 +229,10 @@ impl Tidewatch {
             self.toggle_settings();
             return;
         }
+        if dev.mode == DevMode::Resume {
+            self.resume_workflow(ctx, dev.profile.as_deref().unwrap_or_default());
+            return;
+        }
         let mut state = self.dialog_state(dev.profile.as_deref());
         if let Some(level) = dev.level
             && !state.set_level(level, &self.catalog)
@@ -232,7 +243,7 @@ impl Tidewatch {
         state.task = dev.task;
         state.task_edited();
         match dev.mode {
-            DevMode::Settings => {}
+            DevMode::Settings | DevMode::Resume => {}
             DevMode::Dialog => self.new_tab = Some(state),
             DevMode::Start => match state.request(&self.catalog) {
                 Ok(request) => self.open_tab(ctx, request),
@@ -247,6 +258,10 @@ impl Tidewatch {
         let agent = match request {
             Request::Shell => None,
             Request::Agent(agent) => Some(agent),
+            Request::Workflow(request) => {
+                self.open_workflow(ctx, Start::New(request), None);
+                return;
+            }
         };
         let now = ctx.input(|i| i.time);
         let pane = match &agent {
@@ -280,9 +295,61 @@ impl Tidewatch {
         }
     }
 
+    /// A workflow needs a worktree, so only a repo can start one. The first stage starts when the
+    /// worktree is ready.
+    fn open_workflow(&mut self, ctx: &egui::Context, start: Start, existing: Option<Worktree>) {
+        let (Workspace::Repo(repo), Some(paths)) = (&self.workspace, &self.paths) else {
+            self.show_toast("A workflow needs a git repo", ctx);
+            return;
+        };
+        let env = Env {
+            paths,
+            catalog: &self.catalog,
+            listener: self.hooks.listener(),
+            tools: self.flow.tools(),
+        };
+        let now = ctx.input(|i| i.time);
+        self.runs.open(ctx, &mut self.tabs, &env, &repo.root, existing, start, now);
+    }
+
+    /// Opens the tab of a saved run in its worktree and carries on where it was.
+    fn resume_workflow(&mut self, ctx: &egui::Context, name: &str) {
+        let (Workspace::Repo(repo), Some(paths)) = (&self.workspace, &self.paths) else { return };
+        let worktree = Worktree {
+            repo: repo.root.clone(),
+            path: paths.worktree_dir(&repo.root, name),
+            branch: format!("agent/{name}"),
+        };
+        match workflow_glue::saved_run(paths, &worktree) {
+            Some(runner) => self.open_workflow(ctx, Start::Resume(runner), Some(worktree)),
+            None => eprintln!("tidewatch: no saved workflow run for {name}"),
+        }
+    }
+
+    /// Carries out what the workflow runs asked for (from messages, failed processes and clicks) and
+    /// applies what their jobs finished.
+    fn drive_workflows(&mut self, ctx: &egui::Context, now: f64, mut asked: Vec<(u64, Vec<Exec>)>) {
+        let Some(paths) = &self.paths else { return };
+        asked.append(&mut self.run_asks);
+        let env = Env {
+            paths,
+            catalog: &self.catalog,
+            listener: self.hooks.listener(),
+            tools: self.flow.tools(),
+        };
+        let agent = |dir: &Path, prepared: &Prepared| spawn_agent(ctx, dir, prepared);
+        let shell = |dir: &Path| spawn_shell(ctx, dir);
+        let spawn = Spawners { agent: &agent, shell: &shell };
+        let toasts = self.runs.tick(ctx, &mut self.tabs, &env, &spawn, asked, now);
+        for text in toasts {
+            self.show_toast(text, ctx);
+        }
+    }
+
     fn apply_agent_done(&mut self, done: agent_jobs::Done, ctx: &egui::Context) {
         match done {
-            agent_jobs::Done::Loaded(profiles) => {
+            agent_jobs::Done::Loaded { profiles, workflows } => {
+                self.catalog.set_workflows(workflows);
                 let probes = self.catalog.set_profiles(profiles);
                 self.probe_agents(probes, ctx);
                 self.run_dev_agent(ctx);
@@ -368,6 +435,7 @@ impl Tidewatch {
         self.hooks.close_tab(id);
         self.notifier.forget(id);
         self.flow.forget(id);
+        self.runs.forget(id);
     }
 
     fn answer_close(&mut self, answer: Answer, ctx: &egui::Context) {
@@ -631,18 +699,23 @@ impl Tidewatch {
     /// Takes what agents reported, feeds terminal signals into every agent tab's status and
     /// notifies for changes while the window is away.
     fn drive_agents(&mut self, ctx: &egui::Context, now: f64) {
+        let mut asked = Vec::new();
         for message in self.hooks.drain() {
             if self.status_log {
                 eprintln!(
-                    "tidewatch: hook tab={} {:?} at {}",
+                    "tidewatch: hook tab={} gen={} {:?} at {}",
                     message.tab_id,
+                    message.generation,
                     message.event,
                     wall_ms()
                 );
             }
+            let Some(execs) = workflow_glue::feed(&mut self.tabs, &message) else { continue };
+            let tab = message.tab_id;
             if let Some(follow) = agent_frame::route(&mut self.tabs, message, now) {
                 self.follow(follow, ctx);
             }
+            asked.push((tab, execs));
         }
         let (focused, minimized) = ctx.input(|i| (i.viewport().focused, i.viewport().minimized));
         let away = notify::window_is_away(focused, minimized);
@@ -658,6 +731,8 @@ impl Tidewatch {
                 );
             }
         }
+        asked.extend(workflow_glue::failures(&mut self.tabs, &polled.changes));
+        self.drive_workflows(ctx, now, asked);
         self.send_dev_keys(now);
         schedule(ctx, polled.wake, now, minimized == Some(true));
     }
@@ -1040,6 +1115,17 @@ impl eframe::App for Tidewatch {
             let mut areas = layout::split(area);
             if !panels {
                 areas.terminal = layout::terminal_only(area);
+            }
+            let header = self
+                .tabs
+                .active_pane_mut()
+                .agent
+                .as_mut()
+                .and_then(|agent| agent.workflow.as_mut())
+                .map(|run| stepper_view::show(ui, &mut areas.terminal, run));
+            if let Some(execs) = header.filter(|execs| !execs.is_empty()) {
+                self.run_asks.push((active_id, execs));
+                ctx.request_repaint();
             }
             let end = self.tabs.items()[self.tabs.active()].pane.agent.as_ref().and_then(|agent| {
                 let waiting =

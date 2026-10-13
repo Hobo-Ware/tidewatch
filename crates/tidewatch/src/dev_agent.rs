@@ -2,7 +2,10 @@
 //!
 //! - `TIDEWATCH_DEV_AGENT=<profile id>`: start that profile in a new tab, as Enter in the dialog would.
 //! - `TIDEWATCH_DEV_DIALOG=<profile id>` (or `1`): open the new-tab dialog, on that profile.
-//! - `TIDEWATCH_DEV_SETTINGS=1`: open the profile editor.
+//! - `TIDEWATCH_DEV_WORKFLOW=<workflow id>`: start that workflow in a new tab (the task from `TIDEWATCH_DEV_TASK`).
+//!   `TIDEWATCH_DEV_DIALOG=workflow:<id>` opens the dialog on it.
+//! - `TIDEWATCH_DEV_RESUME=<worktree name>`: open the tab of a saved workflow run and carry on where it was.
+//! - `TIDEWATCH_DEV_SETTINGS=1`: open the settings (profiles and workflows).
 //! - `TIDEWATCH_DEV_TASK=<text>` and `TIDEWATCH_DEV_LEVEL=plan|ask|edits|auto|yolo`: the task and the
 //!   permission level to use with either.
 //!
@@ -16,51 +19,80 @@ pub(crate) enum Mode {
     Start,
     Dialog,
     Settings,
+    /// Open the tab of a saved workflow run (the worktree's name) and carry on.
+    Resume,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct DevAgent {
     pub(crate) mode: Mode,
+    /// A profile id, `workflow:<id>` for a workflow, or the worktree name to resume.
     pub(crate) profile: Option<String>,
     pub(crate) task: String,
     pub(crate) level: Option<Level>,
 }
 
+/// The raw switch values.
+#[derive(Clone, Copy, Debug, Default)]
+struct Vars<'a> {
+    agent: Option<&'a str>,
+    workflow: Option<&'a str>,
+    resume: Option<&'a str>,
+    dialog: Option<&'a str>,
+    settings: Option<&'a str>,
+    task: Option<&'a str>,
+    level: Option<&'a str>,
+}
+
 impl DevAgent {
     pub(crate) fn from_env() -> Option<Self> {
         let var = |name: &str| std::env::var(name).ok();
-        Self::parse(
-            var("TIDEWATCH_DEV_AGENT").as_deref(),
-            var("TIDEWATCH_DEV_DIALOG").as_deref(),
-            var("TIDEWATCH_DEV_SETTINGS").as_deref(),
-            var("TIDEWATCH_DEV_TASK").as_deref(),
-            var("TIDEWATCH_DEV_LEVEL").as_deref(),
-        )
+        let (agent, workflow, resume) = (
+            var("TIDEWATCH_DEV_AGENT"),
+            var("TIDEWATCH_DEV_WORKFLOW"),
+            var("TIDEWATCH_DEV_RESUME"),
+        );
+        let (dialog, settings, task, level) = (
+            var("TIDEWATCH_DEV_DIALOG"),
+            var("TIDEWATCH_DEV_SETTINGS"),
+            var("TIDEWATCH_DEV_TASK"),
+            var("TIDEWATCH_DEV_LEVEL"),
+        );
+        Self::parse(Vars {
+            agent: agent.as_deref(),
+            workflow: workflow.as_deref(),
+            resume: resume.as_deref(),
+            dialog: dialog.as_deref(),
+            settings: settings.as_deref(),
+            task: task.as_deref(),
+            level: level.as_deref(),
+        })
     }
 
-    fn parse(
-        agent: Option<&str>,
-        dialog: Option<&str>,
-        settings: Option<&str>,
-        task: Option<&str>,
-        level: Option<&str>,
-    ) -> Option<Self> {
+    fn parse(vars: Vars) -> Option<Self> {
+        fn set(value: Option<&str>) -> Option<&str> {
+            value.filter(|v| !v.is_empty())
+        }
         let (mode, profile) = match (
-            agent.filter(|a| !a.is_empty()),
-            dialog.filter(|d| !d.is_empty()),
-            settings.filter(|s| !s.is_empty()),
+            set(vars.agent),
+            set(vars.workflow),
+            set(vars.resume),
+            set(vars.dialog),
+            set(vars.settings),
         ) {
-            (Some(profile), _, _) => (Mode::Start, Some(profile.to_owned())),
-            (None, Some("1"), _) => (Mode::Dialog, None),
-            (None, Some(profile), _) => (Mode::Dialog, Some(profile.to_owned())),
-            (None, None, Some(_)) => (Mode::Settings, None),
-            (None, None, None) => return None,
+            (Some(profile), ..) => (Mode::Start, Some(profile.to_owned())),
+            (None, Some(workflow), ..) => (Mode::Start, Some(format!("workflow:{workflow}"))),
+            (None, None, Some(name), ..) => (Mode::Resume, Some(name.to_owned())),
+            (None, None, None, Some("1"), _) => (Mode::Dialog, None),
+            (None, None, None, Some(profile), _) => (Mode::Dialog, Some(profile.to_owned())),
+            (None, None, None, None, Some(_)) => (Mode::Settings, None),
+            (None, None, None, None, None) => return None,
         };
         Some(Self {
             mode,
             profile,
-            task: task.unwrap_or_default().to_owned(),
-            level: level.and_then(parse_level),
+            task: vars.task.unwrap_or_default().to_owned(),
+            level: vars.level.and_then(parse_level),
         })
     }
 }
@@ -73,10 +105,20 @@ fn parse_level(name: &str) -> Option<Level> {
 mod tests {
     use super::*;
 
+    fn vars() -> Vars<'static> {
+        Vars::default()
+    }
+
     #[test]
     fn an_agent_switch_starts_the_profile_and_beats_the_dialog_switch() {
-        let dev =
-            DevAgent::parse(Some("builder"), Some("1"), None, Some("hi"), Some("auto")).unwrap();
+        let dev = DevAgent::parse(Vars {
+            agent: Some("builder"),
+            dialog: Some("1"),
+            task: Some("hi"),
+            level: Some("auto"),
+            ..vars()
+        })
+        .unwrap();
         assert_eq!(
             dev,
             DevAgent {
@@ -89,23 +131,57 @@ mod tests {
     }
 
     #[test]
-    fn the_dialog_switch_takes_a_profile_or_one_for_the_default() {
-        let one = DevAgent::parse(None, Some("1"), None, None, None).unwrap();
+    fn a_workflow_switch_starts_that_workflow_with_the_task() {
+        let dev = DevAgent::parse(Vars {
+            workflow: Some("ship"),
+            task: Some("add a retry"),
+            dialog: Some("1"),
+            ..vars()
+        })
+        .unwrap();
+        assert_eq!(
+            (dev.mode, dev.profile.as_deref(), dev.task.as_str()),
+            (Mode::Start, Some("workflow:ship"), "add a retry")
+        );
+        let agent =
+            DevAgent::parse(Vars { agent: Some("builder"), workflow: Some("ship"), ..vars() });
+        assert_eq!(agent.unwrap().profile.as_deref(), Some("builder"));
+    }
+
+    #[test]
+    fn a_resume_switch_names_the_worktree_of_the_saved_run() {
+        let dev = DevAgent::parse(Vars { resume: Some("brave-otter"), ..vars() }).unwrap();
+        assert_eq!((dev.mode, dev.profile.as_deref()), (Mode::Resume, Some("brave-otter")));
+    }
+
+    #[test]
+    fn the_dialog_switch_takes_a_profile_a_workflow_or_one_for_the_default() {
+        let one = DevAgent::parse(Vars { dialog: Some("1"), ..vars() }).unwrap();
         assert_eq!((one.mode, one.profile), (Mode::Dialog, None));
-        let named = DevAgent::parse(None, Some("reviewer"), None, None, None).unwrap();
+        let named = DevAgent::parse(Vars { dialog: Some("reviewer"), ..vars() }).unwrap();
         assert_eq!((named.mode, named.profile.as_deref()), (Mode::Dialog, Some("reviewer")));
+        let flow = DevAgent::parse(Vars { dialog: Some("workflow:fix"), ..vars() }).unwrap();
+        assert_eq!((flow.mode, flow.profile.as_deref()), (Mode::Dialog, Some("workflow:fix")));
     }
 
     #[test]
     fn the_settings_switch_opens_the_editor() {
-        let dev = DevAgent::parse(None, None, Some("1"), None, None).unwrap();
+        let dev = DevAgent::parse(Vars { settings: Some("1"), ..vars() }).unwrap();
         assert_eq!(dev.mode, Mode::Settings);
     }
 
     #[test]
     fn no_switch_or_empty_values_mean_no_dev_agent() {
-        assert_eq!(DevAgent::parse(None, None, None, Some("task"), None), None);
-        assert_eq!(DevAgent::parse(Some(""), Some(""), Some(""), None, None), None);
+        assert_eq!(DevAgent::parse(Vars { task: Some("task"), ..vars() }), None);
+        let empty = Vars {
+            agent: Some(""),
+            workflow: Some(""),
+            resume: Some(""),
+            dialog: Some(""),
+            settings: Some(""),
+            ..vars()
+        };
+        assert_eq!(DevAgent::parse(empty), None);
     }
 
     #[test]

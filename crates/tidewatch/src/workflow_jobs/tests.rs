@@ -55,7 +55,7 @@ fn open_spec(
         paths: paths.clone(),
         repo: repo.to_path_buf(),
         tab: 3,
-        tools: Tools::with_path(OsString::from(std::env::var_os("PATH").unwrap_or_default())),
+        tools: Tools::with_path(std::env::var_os("PATH").unwrap_or_default()),
         existing,
     }
 }

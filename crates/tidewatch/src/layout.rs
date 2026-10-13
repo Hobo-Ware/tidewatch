@@ -32,6 +32,14 @@ pub(crate) fn band_below(terminal: &mut Rect, height: f32) -> Rect {
     band
 }
 
+/// Takes a band of `height` off the top of the terminal area, for the stepper and its cards, and
+/// returns it.
+pub(crate) fn band_above(terminal: &mut Rect, height: f32) -> Rect {
+    let band = Rect::from_min_max(terminal.min, pos2(terminal.right(), terminal.top() + height));
+    terminal.min.y += height;
+    band
+}
+
 /// The Other group has no graph or diff: the terminal takes the whole area.
 pub(crate) fn terminal_only(area: Rect) -> Rect {
     area.shrink(TERMINAL_PAD)
@@ -106,6 +114,17 @@ mod tests {
         let band = band_below(&mut terminal, 40.0);
         assert_eq!(terminal.bottom(), 360.0);
         assert_eq!(band, Rect::from_min_max(pos2(10.0, 360.0), pos2(990.0, 400.0)));
+    }
+
+    #[test]
+    fn a_band_comes_off_the_top_of_the_terminal() {
+        let mut terminal = Rect::from_min_max(pos2(10.0, 50.0), pos2(990.0, 400.0));
+        let band = band_above(&mut terminal, 40.0);
+        assert_eq!(terminal.top(), 90.0);
+        assert_eq!(band, Rect::from_min_max(pos2(10.0, 50.0), pos2(990.0, 90.0)));
+        let second = band_above(&mut terminal, 10.0);
+        assert_eq!(second.top(), 90.0);
+        assert_eq!(terminal.top(), 100.0);
     }
 
     #[test]

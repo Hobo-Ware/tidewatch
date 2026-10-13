@@ -9,8 +9,11 @@ use tidewatch_core::launch::Launch;
 use tidewatch_core::paths::TidewatchPaths;
 use tidewatch_core::prepare::{PrepareInput, preview as preview_launch};
 use tidewatch_core::profiles::Profile;
+use tidewatch_core::workflows::Workflow;
 
-use crate::catalog::Catalog;
+use crate::catalog::{Availability, Catalog};
+use crate::new_tab_workflow;
+use crate::workflow_glue::WorkflowRequest;
 
 const LONG_ARG: usize = 72;
 const LONG_ARG_KEEP: usize = 60;
@@ -26,6 +29,8 @@ pub(crate) enum Group {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum Pick {
     Profile(String),
+    /// A workflow, by its key in `workflows.toml`.
+    Workflow(String),
     Shell,
 }
 
@@ -42,6 +47,7 @@ pub(crate) struct AgentRequest {
 pub(crate) enum Request {
     Shell,
     Agent(Box<AgentRequest>),
+    Workflow(Box<WorkflowRequest>),
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -85,6 +91,8 @@ pub(crate) struct NewTab {
     running_here: Vec<String>,
     preview: Preview,
     pub(crate) error: Option<String>,
+    /// The task field's id from the last frame: Enter belongs to the dialog while it has focus.
+    pub(crate) task_field: Option<egui::Id>,
     dirty: bool,
 }
 
@@ -101,9 +109,24 @@ impl NewTab {
     ) -> Self {
         let mut picks: Vec<Pick> =
             catalog.entries().iter().map(|(id, _, _)| Pick::Profile((*id).to_owned())).collect();
+        if group == Group::Repo
+            && let Some(workflows) = catalog.workflows()
+        {
+            picks.extend(
+                new_tab_workflow::ordered(workflows)
+                    .into_iter()
+                    .map(|workflow| Pick::Workflow(workflow.id.clone())),
+            );
+        }
         picks.push(Pick::Shell);
         let selected = preselect
-            .and_then(|id| picks.iter().position(|p| matches!(p, Pick::Profile(x) if x == id)))
+            .and_then(|id| {
+                picks.iter().position(|pick| match pick {
+                    Pick::Profile(x) => x == id,
+                    Pick::Workflow(x) => id.strip_prefix("workflow:") == Some(x),
+                    Pick::Shell => false,
+                })
+            })
             .unwrap_or(0);
         let mut state = Self {
             group,
@@ -118,6 +141,7 @@ impl NewTab {
             running_here,
             preview: Preview::default(),
             error: None,
+            task_field: None,
             dirty: true,
         };
         state.apply_selection(catalog);
@@ -154,6 +178,16 @@ impl NewTab {
     ) -> Option<(&'a Profile, &'a Agent)> {
         let Pick::Profile(id) = self.selected_pick() else { return None };
         catalog.entries().into_iter().find(|(x, _, _)| x == id).map(|(_, p, a)| (p, a))
+    }
+
+    pub(crate) fn selected_workflow<'a>(&self, catalog: &'a Catalog) -> Option<&'a Workflow> {
+        let Pick::Workflow(id) = self.selected_pick() else { return None };
+        catalog.workflows()?.workflow.get(id)
+    }
+
+    /// Whether the picked entry starts from a task: everything but a plain shell does.
+    pub(crate) fn takes_task(&self) -> bool {
+        !matches!(self.selected_pick(), Pick::Shell)
     }
 
     pub(crate) fn select(&mut self, index: usize, catalog: &Catalog) {
@@ -202,7 +236,11 @@ impl NewTab {
 
     /// What Enter does: the request, or the reason it cannot start.
     pub(crate) fn request(&self, catalog: &Catalog) -> Result<Request, String> {
-        let Pick::Profile(id) = self.selected_pick() else { return Ok(Request::Shell) };
+        let id = match self.selected_pick() {
+            Pick::Shell => return Ok(Request::Shell),
+            Pick::Workflow(id) => return self.workflow_request(id, catalog),
+            Pick::Profile(id) => id,
+        };
         let (profile, agent) = self
             .selected_entry(catalog)
             .ok_or_else(|| format!("profile {id} is no longer available"))?;
@@ -215,6 +253,16 @@ impl NewTab {
             agent: agent.clone(),
             task: self.task.trim().to_owned(),
         })))
+    }
+
+    fn workflow_request(&self, id: &str, catalog: &Catalog) -> Result<Request, String> {
+        let (Some(workflow), Some(profiles)) =
+            (self.selected_workflow(catalog), catalog.profiles())
+        else {
+            return Err(format!("workflow {id} is no longer available"));
+        };
+        new_tab_workflow::build(workflow, profiles, &self.task)
+            .map(|request| Request::Workflow(Box::new(request)))
     }
 
     pub(crate) fn preview(&self) -> &Preview {
@@ -231,6 +279,13 @@ impl NewTab {
             return false;
         }
         self.dirty = false;
+        if let (Some(workflow), Some(profiles)) =
+            (self.selected_workflow(catalog), catalog.profiles())
+        {
+            self.preview =
+                workflow_preview(self.group, &self.repo, workflow, profiles, catalog, paths);
+            return true;
+        }
         let chosen = self.selected_entry(catalog).map(|(profile, agent)| {
             (Profile { level: self.level, ..profile.clone() }, agent.clone())
         });
@@ -244,6 +299,23 @@ impl NewTab {
         );
         true
     }
+}
+
+fn workflow_preview(
+    group: Group,
+    repo: &Path,
+    workflow: &Workflow,
+    profiles: &tidewatch_core::profiles::Profiles,
+    catalog: &Catalog,
+    paths: Option<&TidewatchPaths>,
+) -> Preview {
+    let mut preview = build_preview(group, repo, None, "", paths, &[]);
+    preview.lines.pop();
+    preview.lines.extend(new_tab_workflow::preview_lines(workflow, profiles));
+    preview.warnings.extend(new_tab_workflow::missing_agents(workflow, profiles, |agent| {
+        catalog.availability(agent) != Availability::Missing
+    }));
+    preview
 }
 
 fn build_preview(
@@ -379,6 +451,7 @@ mod tests {
             .iter()
             .map(|p| match p {
                 Pick::Profile(id) => id.clone(),
+                Pick::Workflow(id) => format!("workflow:{id}"),
                 Pick::Shell => "shell".into(),
             })
             .collect()
@@ -401,6 +474,99 @@ mod tests {
         );
         assert_eq!(state.selected(), 0);
         assert_eq!(state.level(), Level::Edits);
+    }
+
+    fn workflow_catalog() -> Catalog {
+        let mut catalog = catalog();
+        catalog.set_workflows(tidewatch_core::workflows::Workflows::defaults());
+        catalog
+    }
+
+    #[test]
+    fn workflows_sit_between_the_profiles_and_shell_in_a_repo_only() {
+        let catalog = workflow_catalog();
+        let ids = pick_ids(&open(Group::Repo, &catalog, None));
+        assert_eq!(
+            ids,
+            [
+                "builder",
+                "builder-yolo",
+                "copilot-builder",
+                "copilot-builder-yolo",
+                "copilot-reviewer",
+                "reviewer",
+                "workflow:ship",
+                "workflow:fix",
+                "workflow:pr",
+                "shell"
+            ]
+        );
+        assert!(
+            pick_ids(&open(Group::Other, &catalog, None))
+                .iter()
+                .all(|id| !id.starts_with("workflow:"))
+        );
+    }
+
+    #[test]
+    fn a_picked_workflow_takes_a_task_but_no_level_and_builds_a_request() {
+        let catalog = workflow_catalog();
+        let mut state = open(Group::Repo, &catalog, None);
+        let ship = state.picks().iter().position(|p| *p == Pick::Workflow("ship".into())).unwrap();
+        state.select(ship, &catalog);
+        assert!(state.takes_task());
+        assert!(state.selected_entry(&catalog).is_none(), "no profile ladder");
+        assert_eq!(state.selected_workflow(&catalog).unwrap().name, "Ship a feature");
+        assert_eq!(
+            state.request(&catalog),
+            Err("A workflow needs a task to work from.".to_owned())
+        );
+        state.task = " add a retry ".into();
+        let Ok(Request::Workflow(request)) = state.request(&catalog) else {
+            panic!("a workflow request")
+        };
+        assert_eq!((request.task.as_str(), request.workflow.id.as_str()), ("add a retry", "ship"));
+        assert!(!state.set_level(Level::Auto, &catalog), "a workflow has no level to pick");
+    }
+
+    #[test]
+    fn shell_takes_no_task_and_a_profile_does() {
+        let catalog = workflow_catalog();
+        let mut state = open(Group::Repo, &catalog, None);
+        assert!(state.takes_task());
+        let last = state.picks().len() - 1;
+        state.select(last, &catalog);
+        assert!(!state.takes_task());
+    }
+
+    #[test]
+    fn a_workflow_that_vanished_since_the_dialog_opened_says_so() {
+        let mut catalog = workflow_catalog();
+        let mut state = open(Group::Repo, &catalog, None);
+        let ship = state.picks().iter().position(|p| *p == Pick::Workflow("ship".into())).unwrap();
+        state.select(ship, &catalog);
+        state.task = "x".into();
+        let mut workflows = tidewatch_core::workflows::Workflows::defaults();
+        workflows.workflow.remove("ship");
+        catalog.set_workflows(workflows);
+        assert_eq!(state.request(&catalog), Err("workflow ship is no longer available".to_owned()));
+    }
+
+    #[test]
+    fn the_preview_of_a_workflow_lists_its_stages_and_the_worktree() {
+        let catalog = workflow_catalog();
+        let mut state = open(Group::Repo, &catalog, None);
+        let ship = state.picks().iter().position(|p| *p == Pick::Workflow("ship".into())).unwrap();
+        state.select(ship, &catalog);
+        state.refresh_preview(&catalog, Some(&paths()));
+        let lines = &state.preview().lines;
+        assert!(
+            lines[0].starts_with("git worktree add --lock -b agent/<name> ~/.tidewatch/web-"),
+            "{lines:?}"
+        );
+        assert_eq!(lines.len(), 5);
+        assert_eq!(lines[1], "1. Work (claude opus, Auto edit) - tests pass");
+        assert!(lines[4].starts_with("4. Hand off (claude haiku, Read only)"), "{lines:?}");
     }
 
     #[test]
