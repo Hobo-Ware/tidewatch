@@ -3,17 +3,23 @@
 //! A window serves one workspace (a repo, or a folder in the Other group), so each folder gets its
 //! own socket. A second `tidewatch <path>` for the same folder connects to it, hands over the
 //! path and exits. `tidewatch --toggle` reaches every live window. A socket file nobody answers on
-//! (a crash) is removed and taken over. Lines on the wire: `open <path>` and `toggle`.
+//! (a crash) is removed and taken over. Lines on the wire: `open <path>` and `toggle`, each
+//! answered with one line, `ok` or `closing`.
 
 use std::ffi::OsStr;
 use std::io::{BufRead, BufReader, ErrorKind, Read, Write};
 use std::os::unix::ffi::OsStrExt;
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
-use std::time::Duration;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::{Duration, Instant};
 
 const SOCKET_EXT: &str = "sock";
 const READ_TIMEOUT: Duration = Duration::from_secs(1);
+const REPLY_TIMEOUT: Duration = Duration::from_secs(2);
+const CLOSING_POLL: Duration = Duration::from_millis(50);
+const CLOSING_PATIENCE: Duration = Duration::from_secs(10);
 const MAX_LINE: u64 = 8192;
 
 /// What a launch can ask of a running window.
@@ -58,6 +64,26 @@ impl Command {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Reply {
+    Accepted,
+    Closing,
+}
+
+impl Reply {
+    fn line(self) -> &'static [u8] {
+        match self {
+            Self::Accepted => b"ok\n",
+            Self::Closing => b"closing\n",
+        }
+    }
+
+    /// Anything but `closing` counts as accepted: a window of an older build says nothing at all.
+    fn parse(line: &[u8]) -> Self {
+        if line.trim_ascii() == b"closing" { Self::Closing } else { Self::Accepted }
+    }
+}
+
 /// What to do at startup, from whether the socket file exists and whether anything answered on it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Startup {
@@ -77,6 +103,16 @@ fn decide_startup(file_exists: bool, answered: bool) -> Startup {
 /// Removes the socket file when the window shuts down.
 pub struct Guard {
     path: PathBuf,
+    closing: Arc<AtomicBool>,
+}
+
+impl Guard {
+    /// From now on the window answers `closing` to launches and passes nothing on. Set it when the
+    /// window is about to close for good, and keep the guard until the session is saved: the
+    /// launches that hear it wait for the socket file to go.
+    pub fn set_closing(&self, closing: bool) {
+        self.closing.store(closing, Ordering::SeqCst);
+    }
 }
 
 impl Drop for Guard {
@@ -96,12 +132,17 @@ impl Primary {
     /// guard for as long as the window lives.
     pub fn serve(self, mut on: impl FnMut(Command) + Send + 'static) -> Guard {
         let Self { listener, guard } = self;
+        let closing = Arc::clone(&guard.closing);
         std::thread::spawn(move || {
             for stream in listener.incoming() {
                 let Ok(stream) = stream else { continue };
-                if let Some(command) = read_command(stream) {
+                let Some(command) = read_command(&stream) else { continue };
+                let reply =
+                    if closing.load(Ordering::SeqCst) { Reply::Closing } else { Reply::Accepted };
+                if reply == Reply::Accepted {
                     on(command);
                 }
+                let _ = (&stream).write_all(reply.line());
             }
         });
         guard
@@ -110,7 +151,7 @@ impl Primary {
 
 /// The timeout is best effort: macOS refuses to set it on a socket whose client already hung up,
 /// and such a client has nothing left to wait for.
-fn read_command(stream: UnixStream) -> Option<Command> {
+fn read_command(stream: &UnixStream) -> Option<Command> {
     let _ = stream.set_read_timeout(Some(READ_TIMEOUT));
     let mut line = Vec::new();
     BufReader::new(stream.take(MAX_LINE)).read_until(b'\n', &mut line).ok()?;
@@ -129,16 +170,34 @@ pub enum Claim {
 
 /// Claims `path`. A live window there means `Secondary`, after sending it `hand_over` when given.
 /// With none it is only probed, which the window ignores: a run that must not disturb anything
-/// passes `None`. A socket file nobody answers on is removed first.
+/// passes `None`. A socket file nobody answers on is removed first. A window that answers
+/// `closing` is waited for (up to ten seconds) and then replaced.
 #[must_use]
 pub fn claim(path: &Path, hand_over: Option<&Command>) -> Claim {
+    claim_within(path, hand_over, CLOSING_PATIENCE)
+}
+
+fn claim_within(path: &Path, hand_over: Option<&Command>, patience: Duration) -> Claim {
+    let deadline = Instant::now() + patience;
+    loop {
+        if let Some(claim) = attempt(path, hand_over) {
+            return claim;
+        }
+        if Instant::now() >= deadline {
+            let gone =
+                std::io::Error::new(ErrorKind::TimedOut, "the window did not finish closing");
+            return Claim::Unavailable(gone);
+        }
+        std::thread::sleep(CLOSING_POLL);
+    }
+}
+
+/// `None` when the window there is closing.
+fn attempt(path: &Path, hand_over: Option<&Command>) -> Option<Claim> {
     let stream = UnixStream::connect(path);
     match decide_startup(path.exists(), stream.is_ok()) {
         Startup::Secondary => {
-            if let (Ok(stream), Some(command)) = (stream, hand_over) {
-                let _ = write_command(stream, command);
-            }
-            Claim::Secondary
+            stream.ok().map_or(Some(Claim::Secondary), |stream| secondary(&stream, hand_over))
         }
         Startup::Primary => bind(path, hand_over),
         Startup::TakeOverStale => {
@@ -148,30 +207,34 @@ pub fn claim(path: &Path, hand_over: Option<&Command>) -> Claim {
     }
 }
 
-fn bind(path: &Path, hand_over: Option<&Command>) -> Claim {
-    if let Some(dir) = path.parent()
-        && let Err(e) = std::fs::create_dir_all(dir)
-    {
-        return Claim::Unavailable(e);
-    }
-    match UnixListener::bind(path) {
-        Ok(listener) => {
-            Claim::Primary(Primary { listener, guard: Guard { path: path.to_owned() } })
-        }
-        Err(first) if first.kind() == ErrorKind::AddrInUse => match UnixStream::connect(path) {
-            Ok(stream) => {
-                if let Some(command) = hand_over {
-                    let _ = write_command(stream, command);
-                }
-                Claim::Secondary
-            }
-            Err(e) => Claim::Unavailable(e),
-        },
-        Err(e) => Claim::Unavailable(e),
+fn secondary(stream: &UnixStream, hand_over: Option<&Command>) -> Option<Claim> {
+    let Some(command) = hand_over else { return Some(Claim::Secondary) };
+    match write_command(stream, command).map(|()| read_reply(stream)) {
+        Ok(Reply::Closing) => None,
+        _ => Some(Claim::Secondary),
     }
 }
 
-fn write_command(mut stream: UnixStream, command: &Command) -> std::io::Result<()> {
+fn bind(path: &Path, hand_over: Option<&Command>) -> Option<Claim> {
+    if let Some(dir) = path.parent()
+        && let Err(e) = std::fs::create_dir_all(dir)
+    {
+        return Some(Claim::Unavailable(e));
+    }
+    match UnixListener::bind(path) {
+        Ok(listener) => Some(Claim::Primary(Primary {
+            listener,
+            guard: Guard { path: path.to_owned(), closing: Arc::new(AtomicBool::new(false)) },
+        })),
+        Err(first) if first.kind() == ErrorKind::AddrInUse => match UnixStream::connect(path) {
+            Ok(stream) => secondary(&stream, hand_over),
+            Err(e) => Some(Claim::Unavailable(e)),
+        },
+        Err(e) => Some(Claim::Unavailable(e)),
+    }
+}
+
+fn write_command(mut stream: &UnixStream, command: &Command) -> std::io::Result<()> {
     let line = command
         .encode()
         .ok_or_else(|| std::io::Error::new(ErrorKind::InvalidInput, "path has a newline"))?;
@@ -179,9 +242,16 @@ fn write_command(mut stream: UnixStream, command: &Command) -> std::io::Result<(
     stream.flush()
 }
 
+fn read_reply(stream: &UnixStream) -> Reply {
+    let _ = stream.set_read_timeout(Some(REPLY_TIMEOUT));
+    let mut line = Vec::new();
+    let _ = BufReader::new(stream.take(MAX_LINE)).read_until(b'\n', &mut line);
+    Reply::parse(&line)
+}
+
 /// Sends `command` to the window listening on `path`.
 pub fn send(path: &Path, command: &Command) -> std::io::Result<()> {
-    write_command(UnixStream::connect(path)?, command)
+    write_command(&UnixStream::connect(path)?, command)
 }
 
 /// Sends a toggle to every live window under `dir`, except the one on `skip`. A socket file
@@ -386,5 +456,101 @@ mod tests {
         send(&socket, &Command::Toggle).unwrap();
         assert_eq!(next(&rx), Some(Command::Toggle));
         assert!(started.elapsed() < Duration::from_secs(2) + READ_TIMEOUT);
+    }
+
+    fn ask(socket: &Path, command: &Command) -> Vec<u8> {
+        let mut stream = UnixStream::connect(socket).unwrap();
+        stream.write_all(&command.encode().unwrap()).unwrap();
+        let mut reply = Vec::new();
+        BufReader::new(&mut stream).read_until(b'\n', &mut reply).unwrap();
+        reply
+    }
+
+    #[test]
+    fn replies_are_one_line_and_only_closing_means_closing() {
+        assert_eq!(Reply::parse(Reply::Accepted.line()), Reply::Accepted);
+        assert_eq!(Reply::parse(Reply::Closing.line()), Reply::Closing);
+        assert_eq!(Reply::parse(b"closing\r\n"), Reply::Closing);
+        for line in ["", "\n", "ok\n", "open\n", "closing soon\n"] {
+            assert_eq!(Reply::parse(line.as_bytes()), Reply::Accepted, "{line:?}");
+        }
+    }
+
+    #[test]
+    fn a_window_answers_ok_while_open_and_closing_once_it_is_closing_and_passes_nothing_on() {
+        let dir = tempfile::tempdir().unwrap();
+        let socket = dir.path().join("a.sock");
+        let (guard, rx) = serve(primary(claim(&socket, None)));
+        let open = Command::Open(PathBuf::from("/work/web"));
+
+        assert_eq!(ask(&socket, &open), b"ok\n");
+        assert_eq!(next(&rx), Some(open.clone()));
+
+        guard.set_closing(true);
+        assert_eq!(ask(&socket, &open), b"closing\n");
+        assert_eq!(ask(&socket, &Command::Toggle), b"closing\n");
+        assert!(silent(&rx), "a closing window acts on nothing");
+
+        guard.set_closing(false);
+        assert_eq!(ask(&socket, &open), b"ok\n");
+        assert_eq!(next(&rx), Some(open));
+    }
+
+    #[test]
+    fn a_launch_beside_a_closing_window_waits_for_the_socket_and_takes_it_over() {
+        let dir = tempfile::tempdir().unwrap();
+        let socket = dir.path().join("a.sock");
+        let (guard, rx) = serve(primary(claim(&socket, None)));
+        guard.set_closing(true);
+        let leaving = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(250));
+            drop(guard);
+        });
+
+        let started = Instant::now();
+        let handed = Command::Open(PathBuf::from("/work/web"));
+        let (_taken, taken_rx) =
+            serve(primary(claim_within(&socket, Some(&handed), Duration::from_secs(10))));
+        leaving.join().unwrap();
+
+        assert!(started.elapsed() >= Duration::from_millis(200), "it waited for the old window");
+        assert!(silent(&rx), "the closing window was told nothing it would act on");
+        assert!(silent(&taken_rx), "the new window opens its own folder, nothing was sent to it");
+    }
+
+    #[test]
+    fn a_launch_gives_up_on_a_window_that_never_finishes_closing() {
+        let dir = tempfile::tempdir().unwrap();
+        let socket = dir.path().join("a.sock");
+        let (guard, _rx) = serve(primary(claim(&socket, None)));
+        guard.set_closing(true);
+
+        let claimed = claim_within(&socket, Some(&Command::Toggle), Duration::from_millis(200));
+        assert!(matches!(claimed, Claim::Unavailable(e) if e.kind() == ErrorKind::TimedOut));
+    }
+
+    #[test]
+    fn a_probe_beside_a_closing_window_does_not_wait() {
+        let dir = tempfile::tempdir().unwrap();
+        let socket = dir.path().join("a.sock");
+        let (guard, _rx) = serve(primary(claim(&socket, None)));
+        guard.set_closing(true);
+        let started = Instant::now();
+        assert!(matches!(claim(&socket, None), Claim::Secondary));
+        assert!(started.elapsed() < Duration::from_secs(1));
+    }
+
+    #[test]
+    fn a_window_of_an_older_build_that_never_replies_counts_as_having_accepted() {
+        let dir = tempfile::tempdir().unwrap();
+        let socket = dir.path().join("a.sock");
+        let listener = UnixListener::bind(&socket).unwrap();
+        let old = std::thread::spawn(move || {
+            let (stream, _) = listener.accept().unwrap();
+            read_command(&stream)
+        });
+        let handed = Command::Open(PathBuf::from("/work/web"));
+        assert!(matches!(claim(&socket, Some(&handed)), Claim::Secondary));
+        assert_eq!(old.join().unwrap(), Some(handed));
     }
 }
