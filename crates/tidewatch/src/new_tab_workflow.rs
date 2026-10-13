@@ -22,11 +22,12 @@ pub(crate) fn ordered(workflows: &Workflows) -> Vec<&Workflow> {
     first.chain(rest).collect()
 }
 
+pub(crate) fn stage_count(count: usize) -> String {
+    if count == 1 { "1 stage".to_owned() } else { format!("{count} stages") }
+}
+
 pub(crate) fn tag(workflow: &Workflow) -> String {
-    match workflow.stages.len() {
-        1 => "1 stage".to_owned(),
-        count => format!("{count} stages"),
-    }
+    stage_count(workflow.stages.len())
 }
 
 fn resolved(workflow: &Workflow, profiles: &BTreeMap<String, Profile>) -> Vec<Option<Profile>> {

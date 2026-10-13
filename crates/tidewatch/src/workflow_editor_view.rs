@@ -68,7 +68,7 @@ fn list(ui: &mut egui::Ui, editor: &mut Editor, height: f32) {
                 detail: String::new(),
                 detail_color: colors::dim(),
                 tag: match problems {
-                    0 => format!("{} stages", draft.stages.len()),
+                    0 => crate::new_tab_workflow::stage_count(draft.stages.len()),
                     1 => "1 problem".to_owned(),
                     n => format!("{n} problems"),
                 },
