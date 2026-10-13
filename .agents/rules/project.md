@@ -124,6 +124,13 @@ crates/tidewatch/       the egui app
   src/restore_glue.rs   Host: carry the plan out in saved order (shell, shell plus note, resume agent, resume workflow), active tab and focus, the settled flag the saver waits for (generic over the pty)
   src/notice.rs         a message that stays until dismissed (what a restore could not bring back)
   src/session_glue.rs   Saver: once per frame, fingerprint changed -> queue a save; never under the screenshot harness or while a restore is under way; flush on quit
+  src/hotkey.rs         the quake hotkey string (`Ctrl+Alt+Grave`, `F13`) to modifiers and a key, strict with a named Problem for each mistake (pure)
+  src/shell_plan.rs     the background gate: Plan from the settings and Env (background, Wayland, tray support); background means no hotkey, no menu-bar item, no activation, a plain window (pure)
+  src/quake.rs          the drop-down: pure show/hide state (monitor-size wait, hide on blur, 120 ms wake while hidden), geometry (half height, 2 point sliver, alpha 0), `present` turns it into viewport commands
+  src/macos.rs          objc2 calls (activation policy, Spaces, window alpha, screen lookups) with no-op stubs off macOS
+  src/os.rs             the `Os` seam the shell talks through: RealOs (global-hotkey 0.8, tray, macos.rs) and a recorder for tests
+  src/tray.rs           the menu-bar item (macOS only): Show / Hide, Overview, Settings, Quit; clicks reach the UI through a handler that wakes it
+  src/shell.rs          Shell: per frame, other launches (open, toggle), hotkey presses, menu-bar clicks and live settings become viewport commands and OS calls, all through the Plan; hotkey status for settings
   src/dev_session.rs    TIDEWATCH_DEV_QUIT / _SELECT / _SELECT_AFTER / _SHOT / _SHOT_AFTER / _SAVE_DEBOUNCE_MS switches: close the window through the close request, select a tab, a screenshot that keeps running, a long debounce
   src/dev_screenshot.rs TIDEWATCH_SCREENSHOT harness
   src/dev_worktree.rs   TIDEWATCH_DEV_WORKTREE switch: open a worktree tab at startup for captures
@@ -159,7 +166,7 @@ crates/tidewatch/       the egui app
 docs/                   concept mockup, research reports
 packaging/              Info.plist, reference Homebrew cask (tidewatch.rb), .desktop file, release README
 scripts/                bundle-macos.sh (universal ad-hoc signed Tidewatch.app + zip), package-linux.sh (tarball + AppImage), make-icon.sh (icon from assets/icon.svg)
-assets/                 icon.svg (placeholder), Tidewatch.icns, icon-512.png
+assets/                 icon.svg (placeholder), Tidewatch.icns, icon-512.png, tray.svg and tray.png (the menu-bar template icon)
 .github/workflows/      ci.yml (fmt, clippy, test on macOS and Ubuntu), release.yml (v* tags: bundle, package, GitHub Release, tap behind PUBLISH_TAP)
 ```
 
@@ -174,7 +181,7 @@ cargo clippy --workspace --all-targets -- -D warnings
 cargo fmt --all --check
 scripts/bundle-macos.sh                # universal Tidewatch.app and zip in target/dist, ad-hoc signed; never launch the result from a check
 scripts/package-linux.sh               # x86_64 Linux only: tarball and AppImage in target/dist
-scripts/make-icon.sh                   # rebuild the icon files from assets/icon.svg (inkscape, pngquant, oxipng)
+scripts/make-icon.sh                   # rebuild the icon files from assets/icon.svg and assets/tray.svg (inkscape, pngquant, oxipng)
 TIDEWATCH_SCREENSHOT=/tmp/x.png cargo run -p tidewatch -- <repo>   # render, save PNG, quit (saves no session)
 cargo run -p tidewatch -- --no-restore <repo>   # start with just the main tab; the last session is not read
 ```
