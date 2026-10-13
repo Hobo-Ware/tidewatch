@@ -9,8 +9,12 @@ const TAB_SHORTCUTS: usize = 9;
 
 fn bound_to_a_chord(action: Action) -> bool {
     match action {
-        Action::New | Action::CloseActive | Action::Select(_) => true,
-        Action::Close(_) => false,
+        Action::New
+        | Action::CloseActive
+        | Action::SelectNth(_)
+        | Action::NextGroup
+        | Action::PrevGroup => true,
+        Action::Close(_) | Action::Select(_) | Action::ShowGroup(_) => false,
     }
 }
 
@@ -70,9 +74,11 @@ fn a_press_runs_exactly_its_own_command_even_when_a_shorter_chord_shares_the_key
 
 #[test]
 fn every_action_that_has_a_chord_is_in_the_table() {
-    let actions = [Action::New, Action::CloseActive, Action::Close(0)]
-        .into_iter()
-        .chain((0..TAB_SHORTCUTS).map(Action::Select));
+    let actions =
+        [Action::New, Action::CloseActive, Action::Close(0), Action::Select(0), Action::NextGroup]
+            .into_iter()
+            .chain([Action::PrevGroup])
+            .chain((0..TAB_SHORTCUTS).map(Action::SelectNth));
     for action in actions {
         let listed = TABLE.iter().any(|entry| entry.command.action() == Some(action));
         assert_eq!(listed, bound_to_a_chord(action), "{action:?}");
@@ -88,6 +94,8 @@ fn macos_chords_are_the_ones_the_app_shipped_with() {
         ("close-tab", "Cmd+W"),
         ("tab-1", "Cmd+1"),
         ("tab-9", "Cmd+9"),
+        ("next-repo", "Cmd+Ctrl+]"),
+        ("prev-repo", "Cmd+Ctrl+["),
         ("overview", "Cmd+0"),
         ("focus", "Cmd+."),
         ("reader", "Cmd+Shift+T"),
@@ -158,7 +166,19 @@ fn the_nine_tab_chords_make_one_row() {
 fn the_palette_lists_what_a_person_would_look_for() {
     let listed: Vec<_> =
         TABLE.iter().filter(|entry| entry.command.in_palette()).map(|entry| entry.id).collect();
-    assert_eq!(listed, ["new-tab", "close-tab", "overview", "focus", "reader", "settings"]);
+    assert_eq!(
+        listed,
+        [
+            "new-tab",
+            "close-tab",
+            "next-repo",
+            "prev-repo",
+            "overview",
+            "focus",
+            "reader",
+            "settings"
+        ]
+    );
 }
 
 #[test]

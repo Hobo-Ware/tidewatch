@@ -5,7 +5,6 @@ use egui::{Key, Modifiers};
 use super::Tidewatch;
 use crate::commands::{self, Command, Dialog, Gate};
 use crate::reader_glue;
-use crate::session_save::WindowView;
 use crate::settings_view;
 use crate::tabs::Action;
 
@@ -33,6 +32,9 @@ impl Tidewatch {
         }
         for done in self.agent_jobs.drain() {
             self.apply_agent_done(done, ctx);
+        }
+        for workspace in self.workspace_jobs.drain() {
+            self.adopt_workspace(workspace, ctx);
         }
         for event in self.shell.tick(ctx) {
             self.shell_event(&event, ctx);
@@ -70,9 +72,11 @@ impl Tidewatch {
             }
             match command {
                 Command::Overview => toggle_overview = true,
-                Command::NewTab | Command::CloseTab | Command::SelectTab(_) => {
-                    actions.extend(command.action());
-                }
+                Command::NewTab
+                | Command::CloseTab
+                | Command::SelectTab(_)
+                | Command::NextRepo
+                | Command::PrevRepo => actions.extend(command.action()),
                 _ => self.run_command(command, ctx),
             }
         }
@@ -113,7 +117,11 @@ impl Tidewatch {
 
     pub(super) fn run_command(&mut self, command: Command, ctx: &egui::Context) {
         match command {
-            Command::NewTab | Command::CloseTab | Command::SelectTab(_) => {
+            Command::NewTab
+            | Command::CloseTab
+            | Command::SelectTab(_)
+            | Command::NextRepo
+            | Command::PrevRepo => {
                 if let Some(action) = command.action() {
                     self.dispatch(action, ctx);
                 }
@@ -142,10 +150,13 @@ impl Tidewatch {
 
     pub(super) fn finish_frame(&mut self, ctx: &egui::Context, now: f64) {
         self.dev_session.tick(ctx, &mut self.tabs, now);
-        self.last_used.tick(ctx.input(|i| i.viewport().focused.unwrap_or(false)));
+        let focused = ctx.input(|i| i.viewport().focused.unwrap_or(false));
+        if self.last_used.gained_focus(focused) {
+            self.last_used.record(&super::workspaces::remembered(&self.workspaces, &self.tabs));
+        }
         self.saver.tick(
             self.restore.settled(),
-            &WindowView::of(&self.workspace, self.focus),
+            super::workspaces::window_views(&self.workspaces, self.focus),
             &self.tabs,
         );
         if let Some(shot) = &mut self.screenshot {

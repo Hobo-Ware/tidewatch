@@ -39,7 +39,8 @@ impl Tidewatch {
             }
             Event::Settings if self.settings.is_none() => self.toggle_settings(),
             Event::Quit => ctx.send_viewport_cmd(egui::ViewportCommand::Close),
-            Event::Settings | Event::Opened(_) | Event::Toggled => {}
+            Event::Opened(path) => self.open_workspace(path.clone(), ctx),
+            Event::Settings | Event::Toggled => {}
         }
     }
 

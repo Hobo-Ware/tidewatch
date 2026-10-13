@@ -30,7 +30,8 @@ impl Tidewatch {
                 view.stop();
             }
         }
-        let Some(spec) = ViewSpec::of(&self.workspace, self.paths.as_ref(), active) else { return };
+        let workspace = &self.workspaces[active.group];
+        let Some(spec) = ViewSpec::of(workspace, self.paths.as_ref(), active) else { return };
         let dev_scope = self.dev_panes.scope;
         let view = self.views.entry(active_id).or_insert_with(|| {
             let mut view = spec.into_view();
@@ -79,7 +80,7 @@ impl Tidewatch {
     }
 
     pub(super) fn workspace_has_panels(&self) -> bool {
-        matches!(self.workspace, Workspace::Repo(_))
+        matches!(self.workspace(), Workspace::Repo(_))
     }
 
     pub(super) fn show_panes(

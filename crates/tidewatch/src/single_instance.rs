@@ -1,9 +1,8 @@
-//! Startup, before any window exists: a second `tidewatch <path>` for a folder that already has a
-//! window hands over its path and exits, and `tidewatch --toggle` reaches the running windows.
+//! Startup, before any window exists: a second `tidewatch <path>` hands over its path to the
+//! running window and exits, and `tidewatch --toggle` reaches it too.
 //!
-//! One process serves one folder, so the claim is per folder. A different folder starts its own
-//! process and window: that is today's model, and moving several workspaces into one window is a
-//! larger change (PLAN.md, Deviations log).
+//! One process serves one window and the window holds every repo opened in it, so the claim is
+//! on one socket for the app, whatever folder a launch is for.
 
 use std::path::{Path, PathBuf};
 
@@ -14,7 +13,7 @@ use tidewatch_core::paths::TidewatchPaths;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Mode {
     Off,
-    /// Hand the path to a running window and exit; otherwise serve the folder's socket.
+    /// Hand the path to the running window and exit; otherwise serve the socket.
     HandOver,
     /// Serve the socket when it is free; when a window is already there, say nothing to it and run
     /// on without one. Background runs use this, so they never make a real window come forward.
@@ -43,7 +42,7 @@ pub(crate) fn mode(run: Run, has_socket: bool) -> Mode {
 pub(crate) enum Start {
     /// Carry on and open the window, serving the socket when there is one.
     Run(Option<Primary>),
-    /// A running window has the folder now; exit without opening one.
+    /// The running window has the folder now; exit without opening one.
     Exit,
 }
 
@@ -65,7 +64,7 @@ pub(crate) fn begin(mode: Mode, socket: &Path, dir: &Path) -> Start {
     }
 }
 
-/// The folder a launch is for, as the socket names it.
+/// The folder a launch is for, as the window compares it with the folders it has open.
 pub(crate) fn workspace_key(dir: &Path) -> PathBuf {
     std::fs::canonicalize(dir).unwrap_or_else(|_| dir.to_path_buf())
 }
@@ -124,7 +123,7 @@ mod tests {
     }
 
     #[test]
-    fn the_second_launch_for_a_folder_hands_over_its_path_and_exits_without_a_window() {
+    fn the_second_launch_hands_over_its_path_and_exits_without_a_window() {
         let dir = tempfile::tempdir().unwrap();
         let socket = dir.path().join("a.sock");
         let repo = Path::new("/work/My Repo");
@@ -132,6 +131,17 @@ mod tests {
 
         assert!(matches!(begin(Mode::HandOver, &socket, repo), Start::Exit));
         assert_eq!(rx.recv_timeout(Duration::from_secs(2)), Ok(Command::Open(repo.to_path_buf())));
+    }
+
+    #[test]
+    fn a_launch_for_another_repo_goes_to_the_one_window_too() {
+        let dir = tempfile::tempdir().unwrap();
+        let socket = dir.path().join("a.sock");
+        let (_guard, rx) = serve(primary(begin(Mode::HandOver, &socket, Path::new("/work/web"))));
+
+        let api = Path::new("/work/api");
+        assert!(matches!(begin(Mode::HandOver, &socket, api), Start::Exit));
+        assert_eq!(rx.recv_timeout(Duration::from_secs(2)), Ok(Command::Open(api.to_path_buf())));
     }
 
     #[test]
@@ -199,10 +209,9 @@ mod tests {
         let repo = Path::new("/work/web");
         let (real_paths, other_paths) =
             (TidewatchPaths::new(real.path()), TidewatchPaths::new(throwaway.path()));
-        let (_guard, rx) =
-            serve(primary(begin(Mode::HandOver, &real_paths.instance_socket(repo), repo)));
+        let (_guard, rx) = serve(primary(begin(Mode::HandOver, &real_paths.app_socket(), repo)));
 
-        let other = begin(Mode::HandOver, &other_paths.instance_socket(repo), repo);
+        let other = begin(Mode::HandOver, &other_paths.app_socket(), repo);
         let (_other_guard, other_rx) = serve(primary(other));
         assert_eq!(toggle_running(Some(&other_paths)), 0);
         assert_eq!(other_rx.recv_timeout(Duration::from_secs(2)), Ok(Command::Toggle));
@@ -219,8 +228,7 @@ mod tests {
         assert_eq!(toggle_running(Some(&paths)), 1);
         assert_eq!(toggle_running(None), 1);
         let repo = Path::new("/work/web");
-        let (_guard, rx) =
-            serve(primary(begin(Mode::HandOver, &paths.instance_socket(repo), repo)));
+        let (_guard, rx) = serve(primary(begin(Mode::HandOver, &paths.app_socket(), repo)));
         assert_eq!(toggle_running(Some(&paths)), 0);
         assert_eq!(rx.recv_timeout(Duration::from_secs(2)), Ok(Command::Toggle));
     }
@@ -238,8 +246,7 @@ mod tests {
 
     #[test]
     fn a_usual_home_leaves_room_in_a_unix_socket_path_but_a_deep_one_does_not() {
-        let socket =
-            |home: &str| TidewatchPaths::new(Path::new(home)).instance_socket(Path::new("/w"));
+        let socket = |home: &str| TidewatchPaths::new(Path::new(home)).app_socket();
         assert!(socket("/Users/a-rather-long-user-name").as_os_str().len() < 104);
         assert!(socket("/home/someone").as_os_str().len() < 104);
         let deep = socket(&format!("/var/folders/{}/T/.tmpAbCdEf", "x".repeat(40)));

@@ -58,6 +58,8 @@ pub(crate) enum Command {
     NewTab,
     CloseTab,
     SelectTab(usize),
+    NextRepo,
+    PrevRepo,
     Overview,
     Focus,
     Reader,
@@ -71,7 +73,9 @@ impl Command {
         match self {
             Self::NewTab => Some(Action::New),
             Self::CloseTab => Some(Action::CloseActive),
-            Self::SelectTab(index) => Some(Action::Select(index)),
+            Self::SelectTab(index) => Some(Action::SelectNth(index)),
+            Self::NextRepo => Some(Action::NextGroup),
+            Self::PrevRepo => Some(Action::PrevGroup),
             Self::Overview
             | Self::Focus
             | Self::Reader
@@ -83,6 +87,11 @@ impl Command {
 
     fn global(self) -> bool {
         self != Self::ApproveDelivery
+    }
+
+    /// A command that does nothing in a window with one repo, so the palette leaves it out there.
+    pub(crate) fn needs_several_repos(self) -> bool {
+        matches!(self, Self::NextRepo | Self::PrevRepo)
     }
 
     pub(crate) fn in_palette(self) -> bool {
@@ -124,6 +133,10 @@ const fn ctrl(key: Key) -> Chord {
 
 const fn alt(key: Key) -> Chord {
     Chord { mods: ALT, key }
+}
+
+const fn cmd_ctrl(key: Key) -> Chord {
+    Chord { mods: CMD | CTRL, key }
 }
 
 impl Chord {
@@ -207,7 +220,7 @@ const fn tab(id: &'static str, title: &'static str, index: usize, key: Key) -> E
     entry(id, title, Group::Tabs, Command::SelectTab(index), (cmd(key), alt(key)))
 }
 
-pub(crate) const TABLE: [Entry; 17] = [
+pub(crate) const TABLE: [Entry; 19] = [
     entry("new-tab", "New tab", Group::Tabs, Command::NewTab, (cmd(Key::T), ctrl(Key::T).shift())),
     entry(
         "close-tab",
@@ -225,6 +238,20 @@ pub(crate) const TABLE: [Entry; 17] = [
     tab("tab-7", "Switch to tab 7", 6, Key::Num7),
     tab("tab-8", "Switch to tab 8", 7, Key::Num8),
     tab("tab-9", "Switch to tab 9", 8, Key::Num9),
+    entry(
+        "next-repo",
+        "Next repo",
+        Group::Tabs,
+        Command::NextRepo,
+        (cmd_ctrl(Key::CloseBracket), alt(Key::CloseBracket)),
+    ),
+    entry(
+        "prev-repo",
+        "Previous repo",
+        Group::Tabs,
+        Command::PrevRepo,
+        (cmd_ctrl(Key::OpenBracket), alt(Key::OpenBracket)),
+    ),
     entry("overview", "Overview", Group::View, Command::Overview, (cmd(Key::Num0), alt(Key::Num0))),
     entry(
         "focus",
@@ -343,7 +370,9 @@ impl Gate {
                 self.dialog != Dialog::TabChoice
             }
             Command::Reader | Command::CloseTab => !modal && !self.overview,
-            Command::NewTab | Command::SelectTab(_) => !modal,
+            Command::NewTab | Command::SelectTab(_) | Command::NextRepo | Command::PrevRepo => {
+                !modal
+            }
             Command::Palette => self.dialog == Dialog::None,
             Command::ApproveDelivery => false,
         }

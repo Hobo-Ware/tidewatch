@@ -21,9 +21,15 @@ use crate::{
 
 impl Tidewatch {
     fn overview_data(&self, now: f64) -> overview::Overview {
-        let place =
-            overview::collect(&self.workspace.chip_label(), self.workspace.dir(), &self.tabs, now);
-        overview::build(vec![place])
+        let places = self
+            .workspaces
+            .iter()
+            .enumerate()
+            .map(|(group, workspace)| {
+                overview::collect(&workspace.chip_label(), workspace.dir(), group, &self.tabs, now)
+            })
+            .collect();
+        overview::build(places)
     }
 
     pub(super) fn toggle_overview(&mut self) {
