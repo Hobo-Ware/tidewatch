@@ -9,6 +9,10 @@ right. Built by [HoboWare](https://github.com/Hobo-Ware) from the parts of
 
 Status: in development, private. The release is packaged but nothing is published yet.
 
+## Quake window
+
+Tidewatch drops from the top of the screen on `Ctrl+Alt+Grave` (stdusk keeps `Ctrl+Grave`, so both can run) and hides when you click elsewhere. There is a menu-bar item with Show / Hide, Overview, Settings and Quit. Settings, General, Window turns the drop-down off for a plain window and changes the hotkey. `tidewatch <path>` for a repo that already has a window brings that window forward instead of opening another. `tidewatch --toggle` shows or hides the running windows: on Wayland, which has no global hotkeys, bind it to a desktop shortcut.
+
 ## Install
 
 - macOS (once public): `brew install hobo-ware/tap/tidewatch`

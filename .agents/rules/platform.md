@@ -7,7 +7,7 @@ applyTo: 'crates/tidewatch/src/**'
 
 # Platform (quake window, hotkey, macOS keys)
 
-> Ported from stdusk. Tidewatch's quake hotkey default must differ from stdusk's `Ctrl+Grave` so both apps can run at once (see `PLAN.md`).
+> Ported from stdusk. Tidewatch's quake hotkey default is `Ctrl+Alt+Grave`, so it can run beside stdusk's `Ctrl+Grave` (see `PLAN.md`). In Tidewatch the code is `quake.rs` (state, geometry), `shell.rs` (per-frame requests), `os.rs` (the OS seam), `shell_plan.rs` (the background gate) and `single_instance.rs`. **Any new OS-reaching call goes through `Os` and is allowed by `Plan`: a background run must stay silent.**
 
 The one area with no Tabby analog and heavy OS-specific gotchas. These are hard-won; don't
 rediscover them.
