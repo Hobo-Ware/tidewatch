@@ -2,6 +2,7 @@
 
 pub mod agents;
 pub mod delivery;
+pub mod end_block;
 pub mod events;
 mod fsutil;
 pub mod history;
@@ -15,6 +16,7 @@ pub mod notes;
 pub mod path_env;
 pub mod paths;
 pub mod pr;
+pub mod pr_lines;
 pub mod prepare;
 pub mod profiles;
 pub mod prompt;

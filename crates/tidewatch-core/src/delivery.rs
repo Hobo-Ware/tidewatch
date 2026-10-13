@@ -156,7 +156,7 @@ pub fn detect_base(tools: &Tools, dir: &Path) -> Option<String> {
 
 /// What to compare the branch against: the remote copy of the base when there is one, since the
 /// local base may be stale and the pull request is measured against the remote.
-fn compare_ref(tools: &Tools, dir: &Path, base: &str) -> String {
+pub(crate) fn compare_ref(tools: &Tools, dir: &Path, base: &str) -> String {
     let remote = format!("{REMOTE}/{base}");
     if git_succeeds(
         tools,
