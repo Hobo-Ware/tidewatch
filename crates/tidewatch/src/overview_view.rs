@@ -231,11 +231,8 @@ fn draw_row(ui: &mut egui::Ui, rect: Rect, row: &Row, in_needs_group: bool) -> b
         FontId::proportional(13.0),
         colors::fg(),
     );
-    let sub = if in_needs_group {
-        format!("{} - {}", row.place, row.profile)
-    } else {
-        row.profile.clone()
-    };
+    let what = row.workflow.as_deref().unwrap_or(&row.profile);
+    let sub = if in_needs_group { format!("{} - {what}", row.place) } else { what.to_owned() };
     painter.text(
         pos2(title_x, mid + 8.0),
         Align2::LEFT_CENTER,
@@ -324,6 +321,7 @@ mod tests {
             title: title.into(),
             place: "web".into(),
             profile: "Builder".into(),
+            workflow: None,
             agent_id: "claude".into(),
             branch: format!("agent/{title}"),
             status,

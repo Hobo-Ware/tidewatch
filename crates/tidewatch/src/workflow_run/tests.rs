@@ -78,11 +78,11 @@ fn the_divider_names_the_stage_agent_level_and_round() {
     let runner = Runner::new(&ship, &BTreeMap::new(), context(None)).unwrap();
     let review = runner.profile(1).unwrap().clone();
     assert_eq!(
-        divider(1, 4, Action::Review, &review, 1),
+        divider(1, Action::Review, &review, 1),
         "--- Stage 2: Review (gemini, Read only) ---"
     );
     assert_eq!(
-        divider(1, 4, Action::Review, &review, 2),
+        divider(1, Action::Review, &review, 2),
         "--- Stage 2: Review (gemini, Read only, round 2) ---"
     );
 }
@@ -162,7 +162,7 @@ fn rejecting_asks_for_the_reason_first_and_sends_the_work_back_with_it() {
     run.message(&done(4, "feat: retry"));
     assert_eq!(run.ask().unwrap().title, "Hand off 4/4 is waiting for your approval");
     assert_eq!(run.choose(Choice::Reject), Vec::new());
-    assert!(run.ui.rejecting);
+    assert!(run.ui.rejecting && run.ui.focus_field);
     assert_eq!(run.choose(Choice::Reject), Vec::new(), "no reason, no rejection");
     assert!(matches!(run.runner().phase(), Phase::Asking(AskReason::Approve)));
     run.ui.feedback = "mention the retry limit".into();
@@ -172,6 +172,40 @@ fn rejecting_asks_for_the_reason_first_and_sends_the_work_back_with_it() {
         run.stopped().as_deref(),
         Some("Stage 4 (Hand off) was rejected and has no earlier stage to go back to")
     );
+}
+
+#[test]
+fn clicking_a_stage_opens_its_summary_and_clicking_it_again_closes_it() {
+    let mut run = ship_run(Some("t"), None);
+    run.toggle_stage(1);
+    assert_eq!(run.ui.open_stage, Some(1));
+    run.toggle_stage(2);
+    assert_eq!(run.ui.open_stage, Some(2));
+    run.toggle_stage(2);
+    assert_eq!(run.ui.open_stage, None);
+}
+
+#[test]
+fn backing_out_of_a_rejection_clears_what_was_typed() {
+    let mut run = ship_run(Some("t"), None);
+    run.start();
+    run.ui.rejecting = true;
+    run.ui.feedback = "half a thought".into();
+    run.cancel_reject();
+    assert_eq!((run.ui.rejecting, run.ui.feedback.as_str()), (false, ""));
+}
+
+#[test]
+fn the_field_on_the_card_takes_the_keyboard_once_it_is_shown() {
+    let mut run = ship_run(None, None);
+    run.start();
+    run.message(&done(1, "built"));
+    assert!(run.ui.focus_field, "the test command field");
+    run.ui.focus_field = false;
+    let mut other = ship_run(Some("t"), None);
+    other.start();
+    other.message(&stop_hook(1, None));
+    assert!(!other.ui.focus_field);
 }
 
 #[test]
@@ -216,6 +250,10 @@ fn the_status_is_held_while_the_runner_has_the_next_move() {
     let mut run = ship_run(Some("t"), None);
     assert_eq!(run.hold(), None);
     run.start();
+    let starting = run.hold().unwrap();
+    assert_eq!(starting.status, AgentStatus::SettingUp);
+    assert_eq!(starting.detail.as_deref(), Some("Starting Work 1/4"));
+    run.launched();
     assert_eq!(run.hold(), None, "a working stage shows its agent's own status");
     run.message(&done(1, "built"));
     let testing = run.hold().unwrap();
@@ -291,7 +329,7 @@ impl Fake {
                     self.prompts.push(launch.prompt.clone());
                     self.dividers.push(launch.divider.clone());
                     run.launched();
-                    for message in self.script(&launch) {
+                    for message in Self::script(&launch) {
                         execs.extend(run.message(&message));
                     }
                 }
@@ -306,7 +344,7 @@ impl Fake {
         }
     }
 
-    fn script(&mut self, launch: &StageLaunch) -> Vec<TabMessage> {
+    fn script(launch: &StageLaunch) -> Vec<TabMessage> {
         let key = (launch.index, launch.attempt);
         let g = launch.generation;
         let late = launch.generation.saturating_sub(1);

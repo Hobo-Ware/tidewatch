@@ -7,18 +7,22 @@ use std::ffi::OsString;
 use tidewatch_core::agents::{find_on_path, probe_version_in};
 use tidewatch_core::paths::TidewatchPaths;
 use tidewatch_core::profiles::Profiles;
+use tidewatch_core::workflows::Workflows;
 
 use crate::catalog::Availability;
 use crate::jobs::Jobs;
 
 pub(crate) enum Done {
-    Loaded(Profiles),
+    Loaded { profiles: Profiles, workflows: Workflows },
     Probed { agent: String, availability: Availability },
     Saved { result: Result<(), String>, profiles: Profiles },
 }
 
 pub(crate) fn load(jobs: &Jobs<Done>, ctx: &egui::Context, paths: TidewatchPaths, path: OsString) {
-    jobs.spawn(ctx, move || Done::Loaded(Profiles::load_or_seed(&paths, Some(&path))));
+    jobs.spawn(ctx, move || Done::Loaded {
+        profiles: Profiles::load_or_seed(&paths, Some(&path)),
+        workflows: Workflows::load_or_seed(&paths, Some(&path)),
+    });
 }
 
 pub(crate) fn probe(
@@ -84,10 +88,13 @@ mod tests {
         let paths = TidewatchPaths::new(home.path());
         let jobs = Jobs::new();
         load(&jobs, &egui::Context::default(), paths.clone(), bin.path().into());
-        let Done::Loaded(profiles) = next(&jobs) else { panic!("expected Loaded") };
+        let Done::Loaded { profiles, workflows } = next(&jobs) else { panic!("expected Loaded") };
         let ids: Vec<&str> = profiles.profile.keys().map(String::as_str).collect();
         assert_eq!(ids, ["builder", "builder-yolo", "reviewer"]);
         assert!(paths.profiles_file().is_file());
+        let names: Vec<&str> = workflows.workflow.keys().map(String::as_str).collect();
+        assert_eq!(names, ["fix", "pr", "ship"]);
+        assert!(paths.workflows_file().is_file());
     }
 
     #[test]

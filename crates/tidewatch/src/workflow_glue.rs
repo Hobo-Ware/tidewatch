@@ -44,7 +44,7 @@ pub(crate) struct Spawners<'a, T> {
 }
 
 /// What the new-tab dialog hands over for a workflow.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct WorkflowRequest {
     pub(crate) workflow: Workflow,
     pub(crate) profiles: BTreeMap<String, Profile>,

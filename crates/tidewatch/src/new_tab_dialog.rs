@@ -10,6 +10,7 @@ use tidewatch_core::paths::TidewatchPaths;
 use crate::catalog::{Availability, Catalog};
 use crate::list_row::{ROW_HEIGHT, Row, pick_row};
 use crate::new_tab::{Group, NewTab, Pick, Request, level_refusal};
+use crate::new_tab_workflow;
 
 const DIALOG_WIDTH: f32 = 560.0;
 const LIST_ROWS: f32 = 7.5;
@@ -35,6 +36,9 @@ pub(crate) fn show(
     if up || down {
         state.step(down, catalog);
     }
+    let focused = ctx.memory(egui::Memory::focused);
+    let enter_is_ours = focused.is_none() || focused == state.task_field;
+    let enter = enter_is_ours && ctx.input_mut(|i| i.consume_key(Modifiers::NONE, Key::Enter));
     state.refresh_preview(catalog, paths);
 
     let mut outcome = None;
@@ -52,22 +56,35 @@ pub(crate) fn show(
         profile_list(ui, state, catalog, &mut outcome);
         if state.selected_entry(catalog).is_some() {
             ladder(ui, state, catalog);
+        }
+        if state.takes_task() {
             ui.add_space(2.0);
-            section_label(ui, "Task (optional)");
+            let (caption, hint) = if state.selected_workflow(catalog).is_some() {
+                ("Task", "What should the workflow build or fix?")
+            } else {
+                ("Task (optional)", "What should the agent do first?")
+            };
+            section_label(ui, caption);
             let focus = std::mem::take(&mut state.focus_task);
             let mut task = std::mem::take(&mut state.task);
-            let field = text_field(
-                ui,
-                &mut task,
-                "What should the agent do first?",
-                DIALOG_WIDTH,
-                colors::fg(),
-            );
+            let field = ui
+                .push_id("new-tab-task", |ui| {
+                    text_field(ui, &mut task, hint, DIALOG_WIDTH, colors::fg())
+                })
+                .inner;
             if field.changed() {
                 state.task_edited();
             }
             if focus {
                 field.request_focus();
+            }
+            if field.has_focus() {
+                let keep_arrows = egui::EventFilter {
+                    horizontal_arrows: true,
+                    vertical_arrows: true,
+                    ..egui::EventFilter::default()
+                };
+                ui.memory_mut(|m| m.set_focus_lock_filter(field.id, keep_arrows));
             }
             state.task = task;
             task_field = Some(field.id);
@@ -81,12 +98,8 @@ pub(crate) fn show(
         footer(ui, state, catalog, &mut outcome);
     });
 
-    let focused = ctx.memory(egui::Memory::focused);
-    let enter_is_ours = focused.is_none() || focused == task_field;
-    if outcome.is_none()
-        && enter_is_ours
-        && ctx.input_mut(|i| i.consume_key(Modifiers::NONE, Key::Enter))
-    {
+    state.task_field = task_field;
+    if outcome.is_none() && enter {
         outcome = start(state, catalog);
     }
     if outcome.is_none() && modal.should_close() {
@@ -141,6 +154,19 @@ fn profile_list(
                             detail_color: if found { colors::dim() } else { colors::yellow() },
                             tag: profile.level.label().to_owned(),
                             dimmed: !found,
+                        }
+                    }
+                    Pick::Workflow(id) => {
+                        let Some(workflow) = catalog.workflows().and_then(|w| w.workflow.get(id))
+                        else {
+                            continue;
+                        };
+                        Row {
+                            name: workflow.name.clone(),
+                            detail: workflow.description.clone(),
+                            detail_color: colors::dim(),
+                            tag: new_tab_workflow::tag(workflow),
+                            dimmed: false,
                         }
                     }
                     Pick::Shell => Row {
@@ -266,7 +292,7 @@ fn preview_block(ui: &mut egui::Ui, state: &NewTab, catalog: &Catalog) {
 fn footer(ui: &mut egui::Ui, state: &mut NewTab, catalog: &Catalog, outcome: &mut Option<Outcome>) {
     ui.add_space(4.0);
     ui.label(
-        RichText::new("Enter start  -  Esc cancel  -  Up/Down pick a profile")
+        RichText::new("Enter start  -  Esc cancel  -  Up/Down pick a profile or workflow")
             .size(12.0)
             .color(colors::dim()),
     );
@@ -308,8 +334,15 @@ mod tests {
 
     impl Harness {
         fn new(group: Group, preselect: Option<&str>) -> Self {
+            Self::with(group, preselect, false)
+        }
+
+        fn with(group: Group, preselect: Option<&str>, workflows: bool) -> Self {
             let mut catalog = Catalog::new(OsString::from("/usr/bin"));
             catalog.set_profiles(Profiles::seeded(&["claude".to_owned()]));
+            if workflows {
+                catalog.set_workflows(tidewatch_core::workflows::Workflows::defaults());
+            }
             let state = NewTab::open(
                 group,
                 "web".into(),
@@ -400,6 +433,31 @@ mod tests {
         let request = Harness::agent_request(harness.frame(vec![key(Key::Enter)]));
         assert_ne!(request.profile.level, Level::Yolo);
         assert_eq!(request.profile.level, Level::Auto);
+    }
+
+    #[test]
+    fn a_workflow_asks_for_a_task_and_starts_with_it() {
+        let mut harness = Harness::with(Group::Repo, None, true);
+        for _ in 0..3 {
+            harness.frame(vec![key(Key::ArrowDown)]);
+        }
+        assert!(harness.frame(vec![key(Key::Enter)]).is_none(), "no task, no start");
+        assert_eq!(harness.state.error.as_deref(), Some("A workflow needs a task to work from."));
+        assert!(harness.frame(vec![Event::Text("add a retry".into())]).is_none());
+        assert_eq!(harness.state.error, None, "typing clears the complaint");
+        let Some(Outcome::Start(Request::Workflow(request))) = harness.frame(vec![key(Key::Enter)])
+        else {
+            panic!("expected a workflow request")
+        };
+        assert_eq!(request.workflow.name, "Ship a feature");
+        assert_eq!(request.task, "add a retry");
+        assert_eq!(request.first_agent, "claude");
+    }
+
+    #[test]
+    fn no_workflow_is_offered_in_other() {
+        let harness = Harness::with(Group::Other, None, true);
+        assert!(harness.state.picks().iter().all(|pick| !matches!(pick, Pick::Workflow(_))));
     }
 
     #[test]

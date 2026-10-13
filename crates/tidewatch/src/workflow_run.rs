@@ -52,6 +52,8 @@ pub(crate) struct RunUi {
     pub(crate) feedback: String,
     pub(crate) rejecting: bool,
     pub(crate) test_command: String,
+    /// The field that was just shown takes the keyboard, once.
+    pub(crate) focus_field: bool,
 }
 
 pub(crate) struct TabRun {
@@ -78,13 +80,7 @@ fn stop_text(runner: &Runner, reason: StopReason) -> String {
 }
 
 /// `--- Stage 2: Review (gemini, Read only) ---`, with the round when the stage runs again.
-pub(crate) fn divider(
-    index: usize,
-    count: usize,
-    action: Action,
-    profile: &Profile,
-    attempt: u8,
-) -> String {
+pub(crate) fn divider(index: usize, action: Action, profile: &Profile, attempt: u8) -> String {
     let model = profile.model.as_deref().map(|model| format!(" {model}")).unwrap_or_default();
     let again = if attempt > 1 { format!(", round {attempt}") } else { String::new() };
     format!(
@@ -126,6 +122,7 @@ impl TabRun {
     }
 
     /// A launch was asked for and its agent is not running yet.
+    #[cfg(test)]
     pub(crate) fn launching(&self) -> bool {
         self.launching
     }
@@ -183,6 +180,7 @@ impl TabRun {
     pub(crate) fn choose(&mut self, choice: Choice) -> Vec<Exec> {
         if choice == Choice::Reject && !self.ui.rejecting {
             self.ui.rejecting = true;
+            self.ui.focus_field = true;
             return Vec::new();
         }
         if choice == Choice::Retry && !self.ui.test_command.trim().is_empty() {
@@ -192,6 +190,17 @@ impl TabRun {
             Some(event) => self.event(event),
             None => Vec::new(),
         }
+    }
+
+    /// Back out of writing a rejection.
+    pub(crate) fn cancel_reject(&mut self) {
+        self.ui.rejecting = false;
+        self.ui.feedback.clear();
+    }
+
+    /// A click on a stage in the stepper opens its summary, or closes it when it was open.
+    pub(crate) fn toggle_stage(&mut self, index: usize) {
+        self.ui.open_stage = (self.ui.open_stage != Some(index)).then_some(index);
     }
 
     fn save(&mut self) {
@@ -204,7 +213,7 @@ impl TabRun {
             Command::StartStage { index, attempt, action, profile, prompt } => {
                 self.generation += 1;
                 self.launching = true;
-                let divider = divider(index, self.runner.stage_count(), action, &profile, attempt);
+                let divider = divider(index, action, &profile, attempt);
                 vec![Exec::Launch(StageLaunch {
                     index,
                     attempt,
@@ -217,7 +226,15 @@ impl TabRun {
             Command::RunTests { command } => {
                 vec![Exec::RunTests { command, timeout: self.test_timeout }]
             }
-            Command::AskUser { .. } | Command::Finished | Command::Stopped { .. } => {
+            Command::AskUser { reason, .. } => {
+                self.ui = RunUi {
+                    open_stage: self.ui.open_stage,
+                    focus_field: reason == AskReason::NoTestCommand,
+                    ..RunUi::default()
+                };
+                Vec::new()
+            }
+            Command::Finished | Command::Stopped { .. } => {
                 self.ui = RunUi { open_stage: self.ui.open_stage, ..RunUi::default() };
                 Vec::new()
             }
@@ -264,7 +281,7 @@ impl TabRun {
     /// stage works and its own status is the truth.
     pub(crate) fn hold(&self) -> Option<Hold> {
         let hold = |status, detail: &str| Some(Hold { status, detail: Some(detail.to_owned()) });
-        if self.launching {
+        if self.launching && *self.runner.phase() == Phase::Working {
             let stage = stepper::position_label(&self.runner);
             return hold(AgentStatus::SettingUp, &format!("Starting {stage}"));
         }

@@ -26,6 +26,8 @@ pub(crate) struct TabFacts {
     pub(crate) id: u64,
     pub(crate) active: bool,
     pub(crate) status: AgentStatus,
+    /// The work is finished and can be delivered: the agent is done, or a workflow run ended.
+    pub(crate) deliverable: bool,
     pub(crate) agent_id: String,
     pub(crate) dir: PathBuf,
     pub(crate) branch: String,
@@ -66,7 +68,7 @@ pub(crate) struct TabFlow {
 pub(crate) fn decide(flow: &mut TabFlow, facts: &TabFacts, now: f64) -> Vec<Want> {
     let mut wants = Vec::new();
     flow.auto.observe(&facts.status);
-    let done = facts.status == AgentStatus::Done;
+    let done = facts.deliverable;
     if done && !flow.was_done && flow.pr.pr().is_none() {
         flow.delivery.probe_started();
         wants.push(Want::Probe);
@@ -118,6 +120,10 @@ impl Flow {
             tools,
             confirm: None,
         }
+    }
+
+    pub(crate) fn tools(&self) -> Tools {
+        self.tools.clone()
     }
 
     pub(crate) fn tab(&self, id: u64) -> Option<&TabFlow> {
@@ -496,6 +502,7 @@ mod tests {
         TabFacts {
             id: 7,
             active: false,
+            deliverable: status == AgentStatus::Done,
             status,
             agent_id: "claude".into(),
             dir: PathBuf::from("/w"),

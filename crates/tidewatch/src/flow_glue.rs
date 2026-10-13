@@ -18,6 +18,7 @@ use crate::pane::{Body, Pane};
 use crate::post_confirm::{self, Answer, Plan};
 use crate::tab_view::TabView;
 use crate::tabs::Tabs;
+use tidewatch_core::status::AgentStatus;
 
 pub(crate) fn unix_now() -> i64 {
     std::time::SystemTime::now()
@@ -40,17 +41,24 @@ pub(crate) fn facts<T>(
                 return None;
             }
             let agent_id = agent.run.agent_id.clone();
+            let (deliverable, stage_summary) = match &agent.workflow {
+                Some(run) => (run.finished(), run.last_summary().map(str::to_owned)),
+                None => {
+                    (*agent.run.status() == AgentStatus::Done, agent.run.report.stage_done.clone())
+                }
+            };
             let pending = views.get(&tab.id).map_or(0, |view| view.notes.pending(&agent_id).len());
             Some(TabFacts {
                 id: tab.id,
                 active: tab.id == active,
                 status: agent.run.status().clone(),
+                deliverable,
                 agent_id,
                 dir: worktree.path.clone(),
                 branch: worktree.branch.clone(),
                 notes_file: agent.run.notes_file.clone(),
                 pending,
-                stage_summary: agent.run.report.stage_done.clone(),
+                stage_summary,
             })
         })
         .collect()

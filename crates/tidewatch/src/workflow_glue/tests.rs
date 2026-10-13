@@ -76,7 +76,7 @@ impl Fixture {
         }
     }
 
-    fn request(&self, workflow: Workflow, task: &str) -> WorkflowRequest {
+    fn request(workflow: Workflow, task: &str) -> WorkflowRequest {
         let profiles = Profiles::seeded(&["claude".to_owned(), "gemini".to_owned()]).profile;
         let runner = Runner::new(
             &workflow,
@@ -93,8 +93,8 @@ impl Fixture {
         WorkflowRequest { workflow, profiles, task: task.into(), first_agent }
     }
 
-    fn ship(&self, task: &str) -> WorkflowRequest {
-        self.request(Workflows::defaults().workflow.remove("ship").unwrap(), task)
+    fn ship(task: &str) -> WorkflowRequest {
+        Self::request(Workflows::defaults().workflow.remove("ship").unwrap(), task)
     }
 
     fn open(&mut self, start: Start, existing: Option<Worktree>) -> u64 {
@@ -102,7 +102,7 @@ impl Fixture {
             paths: &self.paths,
             catalog: &self.catalog,
             listener: None,
-            tools: Tools::with_path(OsString::from(std::env::var_os("PATH").unwrap_or_default())),
+            tools: Tools::with_path(std::env::var_os("PATH").unwrap_or_default()),
         };
         self.host.open(&self.ctx, &mut self.tabs, &env, &self.repo, existing, start, 0.0)
     }
@@ -112,7 +112,7 @@ impl Fixture {
             paths: &self.paths,
             catalog: &self.catalog,
             listener: None,
-            tools: Tools::with_path(OsString::from(std::env::var_os("PATH").unwrap_or_default())),
+            tools: Tools::with_path(std::env::var_os("PATH").unwrap_or_default()),
         };
         let agent = |_: &Path, _: &Prepared| {
             self.spawned.set(self.spawned.get() + 1);
@@ -237,7 +237,7 @@ fn ship_a_feature_through_the_glue_loops_once_and_waits_at_hand_off() {
     let root = home.path().canonicalize().unwrap();
     let mut f = Fixture::new(&counting_tests(&root));
     f.root = root;
-    let request = f.ship("add a retry");
+    let request = Fixture::ship("add a retry");
     let tab = f.open(Start::New(Box::new(request)), None);
     assert_eq!(f.tabs.get_mut(tab).unwrap().title, CREATING_TITLE);
 
@@ -298,7 +298,7 @@ fn a_saved_run_comes_back_in_a_new_tab_and_carries_on() {
     let root = home.path().canonicalize().unwrap();
     let mut f = Fixture::new(&counting_tests(&root));
     f.root = root;
-    let request = f.ship("add a retry");
+    let request = Fixture::ship("add a retry");
     let tab = f.open(Start::New(Box::new(request)), None);
     f.until_asked(tab);
     let worktree = f.tabs.get_mut(tab).unwrap().pane.worktree.clone().unwrap();
@@ -335,7 +335,7 @@ fn a_stage_that_runs_again_after_a_restart_launches_its_agent() {
     let root = home.path().canonicalize().unwrap();
     let mut f = Fixture::new(&counting_tests(&root));
     f.root = root;
-    let request = f.ship("add a retry");
+    let request = Fixture::ship("add a retry");
     let tab = f.open(Start::New(Box::new(request)), None);
     let deadline = Instant::now() + Duration::from_secs(30);
     while f.run_exists(tab).is_none_or(|run| !run) {
@@ -412,7 +412,7 @@ fn a_stage_whose_agent_is_not_known_asks_instead_of_hanging() {
 fn a_repo_that_cannot_make_a_worktree_shows_the_error_in_the_tab() {
     let mut f = Fixture::new("true");
     f.repo = f.root.join("nowhere");
-    let request = f.ship("x");
+    let request = Fixture::ship("x");
     let tab = f.open(Start::New(Box::new(request)), None);
     let deadline = Instant::now() + Duration::from_secs(30);
     while matches!(f.tabs.get_mut(tab).unwrap().pane.body, Body::Creating) {
@@ -426,7 +426,7 @@ fn a_repo_that_cannot_make_a_worktree_shows_the_error_in_the_tab() {
 #[test]
 fn a_late_message_of_a_replaced_agent_is_dropped_before_the_tab_sees_it() {
     let mut f = Fixture::new("true");
-    let request = f.ship("x");
+    let request = Fixture::ship("x");
     let tab = f.open(Start::New(Box::new(request)), None);
     let deadline = Instant::now() + Duration::from_secs(30);
     while f.spawned.get() == 0 {
@@ -456,7 +456,7 @@ fn a_late_message_of_a_replaced_agent_is_dropped_before_the_tab_sees_it() {
 #[test]
 fn a_process_that_failed_fails_the_stage_unless_the_launch_is_still_on_its_way() {
     let mut f = Fixture::new("true");
-    let request = f.ship("x");
+    let request = Fixture::ship("x");
     let tab = f.open(Start::New(Box::new(request)), None);
     let deadline = Instant::now() + Duration::from_secs(30);
     while f.spawned.get() == 0 {
