@@ -37,11 +37,14 @@ use crate::close_dialog::{self, Answer, Choice};
 use crate::dev_agent::{DevAgent, Mode as DevMode};
 use crate::dev_panes::{self, DevPanes};
 use crate::dev_screenshot::DevScreenshot;
+use crate::dev_view::{DevKeys, DevView};
 use crate::dev_worktree::DevWorktree;
 use crate::jobs::Jobs;
 use crate::new_tab::{Group, NewTab, Request};
 use crate::new_tab_dialog::{self, Outcome};
 use crate::notify::{self, Notifier};
+use crate::overview;
+use crate::overview_view;
 use crate::pane::{
     Body, CREATING_TITLE, ClosePolicy, Pane, STARTING_TITLE, agent_tabs_in_folder, finish_open,
 };
@@ -98,6 +101,10 @@ pub(crate) struct Tidewatch {
     last_profile: Option<String>,
     hooks: Hooks,
     notifier: Notifier,
+    overview: bool,
+    focus: bool,
+    status_log: bool,
+    dev_keys: Option<DevKeys>,
 }
 
 impl Tidewatch {
@@ -116,6 +123,7 @@ impl Tidewatch {
         }
         let main = spawn_shell(&cc.egui_ctx, workspace.dir());
         let hooks = Hooks::start(paths.as_ref(), &cc.egui_ctx);
+        let dev_view = DevView::from_env();
         let mut app = Self {
             tabs: Tabs::new(Pane::shell(main)),
             jobs: Jobs::new(),
@@ -139,6 +147,10 @@ impl Tidewatch {
             last_profile: None,
             hooks,
             notifier: Notifier::desktop(),
+            overview: dev_view.overview,
+            focus: dev_view.focus,
+            status_log: dev_view.status_log,
+            dev_keys: dev_view.keys,
         };
         if let Some(paths) = &app.paths {
             agent_jobs::load(
@@ -416,6 +428,12 @@ impl Tidewatch {
     fn drive_views(&mut self) {
         let open: HashSet<u64> = self.tabs.items().iter().map(|t| t.id).collect();
         self.views.retain(|id, _| open.contains(id));
+        if self.focus || self.overview {
+            for view in self.views.values_mut().filter(|view| view.is_active()) {
+                view.stop();
+            }
+            return;
+        }
         let active = &self.tabs.items()[self.tabs.active()];
         let active_id = active.id;
         for (id, view) in &mut self.views {
@@ -582,6 +600,14 @@ impl Tidewatch {
     /// notifies for changes while the window is away.
     fn drive_agents(&mut self, ctx: &egui::Context, now: f64) {
         for message in self.hooks.drain() {
+            if self.status_log {
+                eprintln!(
+                    "tidewatch: hook tab={} {:?} at {}",
+                    message.tab_id,
+                    message.event,
+                    wall_ms()
+                );
+            }
             if let Some(follow) = agent_frame::route(&mut self.tabs, message, now) {
                 self.follow(follow, ctx);
             }
@@ -590,11 +616,55 @@ impl Tidewatch {
         let away = notify::window_is_away(focused, minimized);
         let polled =
             agent_frame::poll(&mut self.tabs, TermSnapshot::of, &mut self.notifier, away, now);
+        if self.status_log {
+            for (tab, change) in &polled.changes {
+                eprintln!(
+                    "tidewatch: status tab={tab} {:?} -> {:?} at {}",
+                    change.from,
+                    change.to,
+                    wall_ms()
+                );
+            }
+        }
+        self.send_dev_keys(now);
         schedule(ctx, polled.wake, now, minimized == Some(true));
+    }
+
+    fn send_dev_keys(&mut self, now: f64) {
+        let Some(keys) = self.dev_keys.as_ref().filter(|keys| now >= keys.after) else { return };
+        let target =
+            self.tabs.items_mut().iter_mut().rev().filter(|tab| tab.pane.agent.is_some()).find_map(
+                |tab| match &mut tab.pane.body {
+                    Body::Shell(term) => Some(term),
+                    _ => None,
+                },
+            );
+        if let Some(term) = target {
+            term.send(&keys.bytes);
+            self.dev_keys = None;
+        }
+    }
+
+    fn overview_data(&self, now: f64) -> overview::Overview {
+        let place =
+            overview::collect(&self.workspace.chip_label(), self.workspace.dir(), &self.tabs, now);
+        overview::build(vec![place])
+    }
+
+    fn toggle_overview(&mut self) {
+        self.overview = !self.overview;
+        self.settings = None;
+    }
+
+    fn toggle_focus(&mut self, ctx: &egui::Context) {
+        self.focus = !self.focus;
+        let text = if self.focus { "Focus mode on (Cmd+.)" } else { "Focus mode off (Cmd+.)" };
+        self.show_toast(text, ctx);
     }
 
     fn dispatch(&mut self, action: Action, ctx: &egui::Context) {
         self.settings = None;
+        self.overview = false;
         match action {
             Action::New => self.new_tab(ctx),
             Action::CloseActive => self.close_tab(self.tabs.active(), ctx),
@@ -640,6 +710,10 @@ fn user_shell(env: Option<String>) -> String {
     env.filter(|shell| !shell.is_empty()).unwrap_or_else(|| {
         if cfg!(target_os = "macos") { "/bin/zsh" } else { "/bin/bash" }.to_owned()
     })
+}
+
+fn wall_ms() -> u128 {
+    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_millis())
 }
 
 /// Asks for the next frame agent status needs: a short tick while a tab works (its bar moves), and
@@ -756,8 +830,25 @@ impl eframe::App for Tidewatch {
             self.toggle_settings();
         }
         let mut actions = if modal_open { Vec::new() } else { shortcut_actions(&ctx) };
+        if self.overview {
+            actions.retain(|action| *action != Action::CloseActive);
+        }
         let mut toggle_settings = false;
         let mut settings_action = None;
+        let mut toggle_overview = false;
+        if self.closing.is_none() && self.new_tab.is_none() {
+            toggle_overview = ctx.input_mut(|i| i.consume_key(Modifiers::COMMAND, Key::Num0));
+            if ctx.input_mut(|i| i.consume_key(Modifiers::COMMAND, Key::Period)) {
+                self.toggle_focus(&ctx);
+            }
+            if self.overview && ctx.input_mut(|i| i.consume_key(Modifiers::NONE, Key::Escape)) {
+                toggle_overview = true;
+            }
+        }
+        let needs_you = agent_frame::tones(&self.tabs)
+            .into_iter()
+            .filter(|tone| *tone == status_view::Tone::Needs)
+            .count();
 
         egui::Panel::top("tabbar")
             .exact_size(TAB_H + f32::from(STRIP_TOP_MARGIN))
@@ -795,9 +886,16 @@ impl eframe::App for Tidewatch {
                         .on_hover_text(leftover_tip(&self.leftovers));
                         ui.add_space(8.0);
                     }
+                    ui.add_space(4.0);
+                    if overview_view::button(ui, self.overview, needs_you).clicked() {
+                        toggle_overview = true;
+                    }
                     ui.add_space(8.0);
                     let width = layout::tab_width(
-                        ui.available_width() - stdusk_egui::widgets::ICON_BTN_W * 2.0 - 18.0,
+                        ui.available_width()
+                            - stdusk_egui::widgets::ICON_BTN_W * 2.0
+                            - overview_view::BUTTON_W
+                            - 22.0,
                         self.tabs.items().len(),
                         STRIP_GAP,
                     );
@@ -843,6 +941,18 @@ impl eframe::App for Tidewatch {
 
         egui::CentralPanel::default().frame(Frame::new().fill(colors::bg())).show(ui, |ui| {
             let area = ui.max_rect();
+            if self.overview && self.settings.is_none() {
+                let data = self.overview_data(now);
+                if overview::is_ticking(&data) {
+                    ctx.request_repaint_after(Duration::from_secs(1));
+                }
+                if let Some(tab) = overview_view::show(ui, area, &data)
+                    && let Some(index) = self.tabs.index_of(tab)
+                {
+                    actions.push(Action::Select(index));
+                }
+                return;
+            }
             if let Some(editor) = &mut self.settings {
                 let file = self
                     .paths
@@ -851,7 +961,7 @@ impl eframe::App for Tidewatch {
                 settings_action = settings_view::show(ui, area, editor, &file);
                 return;
             }
-            let panels = self.workspace_has_panels();
+            let panels = self.workspace_has_panels() && !self.focus;
             let mut areas = layout::split(area);
             if !panels {
                 areas.terminal = layout::terminal_only(area);
@@ -916,6 +1026,9 @@ impl eframe::App for Tidewatch {
 
         for action in actions {
             self.dispatch(action, &ctx);
+        }
+        if toggle_overview {
+            self.toggle_overview();
         }
         match settings_action {
             Some(settings_view::Action::Close) => self.settings = None,

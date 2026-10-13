@@ -1,0 +1,118 @@
+//! Dev-only switches for the screenshot and runnable checks, read once at startup.
+//!
+//! - `TIDEWATCH_DEV_OVERVIEW=1`: start on the Overview.
+//! - `TIDEWATCH_DEV_FOCUS=1`: start in focus mode.
+//! - `TIDEWATCH_DEV_STATUS_LOG=1`: print every hook and status change to stderr with a wall-clock
+//!   time in milliseconds, to measure how fast a tab reacts.
+//! - `TIDEWATCH_DEV_KEYS=<text>` after `TIDEWATCH_DEV_KEYS_AFTER=<seconds>` (default 8): type the text
+//!   into the newest agent tab once, to answer a prompt a check cannot avoid (`\r`, `\n`, `\e` and
+//!   `\\` are escapes; `\e[B\r` is Down then Enter).
+
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct DevKeys {
+    pub(crate) bytes: Vec<u8>,
+    pub(crate) after: f64,
+}
+
+#[derive(Clone, Debug, Default, PartialEq)]
+pub(crate) struct DevView {
+    pub(crate) overview: bool,
+    pub(crate) focus: bool,
+    pub(crate) status_log: bool,
+    pub(crate) keys: Option<DevKeys>,
+}
+
+const DEFAULT_KEYS_AFTER_SECS: f64 = 8.0;
+
+impl DevView {
+    pub(crate) fn from_env() -> Self {
+        let var = |name: &str| std::env::var(name).ok();
+        Self::parse(
+            var("TIDEWATCH_DEV_OVERVIEW").as_deref(),
+            var("TIDEWATCH_DEV_FOCUS").as_deref(),
+            var("TIDEWATCH_DEV_STATUS_LOG").as_deref(),
+            var("TIDEWATCH_DEV_KEYS").as_deref(),
+            var("TIDEWATCH_DEV_KEYS_AFTER").as_deref(),
+        )
+    }
+
+    fn parse(
+        overview: Option<&str>,
+        focus: Option<&str>,
+        status_log: Option<&str>,
+        keys: Option<&str>,
+        keys_after: Option<&str>,
+    ) -> Self {
+        let on = |value: Option<&str>| value.is_some_and(|v| !v.is_empty() && v != "0");
+        Self {
+            overview: on(overview),
+            focus: on(focus),
+            status_log: on(status_log),
+            keys: keys.filter(|k| !k.is_empty()).map(|k| DevKeys {
+                bytes: unescape(k),
+                after: keys_after.and_then(|s| s.parse().ok()).unwrap_or(DEFAULT_KEYS_AFTER_SECS),
+            }),
+        }
+    }
+}
+
+/// `\r`, `\n`, `\e` and `\\` as the bytes they name; anything else is kept as typed.
+fn unescape(text: &str) -> Vec<u8> {
+    let mut out = Vec::new();
+    let mut chars = text.chars();
+    while let Some(c) = chars.next() {
+        if c != '\\' {
+            let mut buf = [0; 4];
+            out.extend_from_slice(c.encode_utf8(&mut buf).as_bytes());
+            continue;
+        }
+        match chars.next() {
+            Some('r') => out.push(b'\r'),
+            Some('n') => out.push(b'\n'),
+            Some('e') => out.push(0x1b),
+            Some('\\') | None => out.push(b'\\'),
+            Some(other) => {
+                out.push(b'\\');
+                let mut buf = [0; 4];
+                out.extend_from_slice(other.encode_utf8(&mut buf).as_bytes());
+            }
+        }
+    }
+    out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_switch_is_on_for_any_value_but_empty_or_zero() {
+        let view = DevView::parse(Some("1"), None, Some("yes"), None, None);
+        assert_eq!(view, DevView { overview: true, focus: false, status_log: true, keys: None });
+        assert!(DevView::parse(None, Some("1"), None, None, None).focus);
+        assert_eq!(
+            DevView::parse(Some(""), Some("0"), Some("0"), Some(""), None),
+            DevView::default()
+        );
+        assert_eq!(DevView::parse(None, None, None, None, None), DevView::default());
+    }
+
+    #[test]
+    fn keys_wait_a_default_or_a_given_number_of_seconds() {
+        let default = DevView::parse(None, None, None, Some("1"), None).keys.unwrap();
+        assert_eq!(default, DevKeys { bytes: b"1".to_vec(), after: 8.0 });
+        let given = DevView::parse(None, None, None, Some("1"), Some("3.5")).keys.unwrap();
+        assert_eq!(given.after, 3.5);
+        let junk = DevView::parse(None, None, None, Some("1"), Some("soon")).keys.unwrap();
+        assert_eq!(junk.after, 8.0);
+    }
+
+    #[test]
+    fn escapes_become_the_bytes_they_name() {
+        assert_eq!(unescape("\\e[B\\r"), b"\x1b[B\r");
+        assert_eq!(unescape("a\\nb"), b"a\nb");
+        assert_eq!(unescape("back\\\\slash"), b"back\\slash");
+        assert_eq!(unescape("\\q and trailing \\"), b"\\q and trailing \\");
+        assert_eq!(unescape("caf\u{e9}"), "caf\u{e9}".as_bytes());
+    }
+}
