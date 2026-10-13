@@ -5,6 +5,7 @@
 
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::Sender;
+use std::sync::{Mutex, PoisonError};
 
 use kelp_core::commit::FileChange;
 use kelp_core::diff::FileDiff;
@@ -14,6 +15,8 @@ use kelp_core::watch::{Change, Watcher};
 use tidewatch_core::history::{self, Loaded, Scope, Source};
 use tidewatch_core::notes::Notes;
 
+use crate::agent_events;
+use crate::agent_run::Finding;
 use crate::checkout::{self, Outcome};
 use crate::jobs::Jobs;
 
@@ -125,6 +128,35 @@ pub(crate) fn load_diff(
         tab,
         ticket,
         result: history::file_diff(&dir, source, &path).map(Box::new).map_err(|e| format!("{e:#}")),
+    });
+}
+
+static FINDING_TURN: Mutex<()> = Mutex::new(());
+
+/// Adds an agent's finding to the tab's notes file and answers with the notes as saved. Findings
+/// take turns, so two arriving together never overwrite each other. The file is read from `dir`
+/// (the tab's folder) only to anchor the note to the line's text.
+pub(crate) fn add_finding(
+    jobs: &Jobs<Done>,
+    ctx: &egui::Context,
+    tab: u64,
+    file: PathBuf,
+    dir: PathBuf,
+    author: String,
+    finding: Finding,
+    now: i64,
+) {
+    jobs.spawn(ctx, move || {
+        let _turn = FINDING_TURN.lock().unwrap_or_else(PoisonError::into_inner);
+        let mut notes = Notes::load(&file);
+        let text = agent_events::stays_inside(&finding.file)
+            .then(|| std::fs::read_to_string(dir.join(&finding.file)).ok())
+            .flatten();
+        agent_events::add_finding(&mut notes, &finding, &author, text.as_deref(), now);
+        if let Err(e) = notes.save(&file) {
+            eprintln!("tidewatch: could not save the finding to {}: {e}", file.display());
+        }
+        Done::Notes { tab, notes: Box::new(notes) }
     });
 }
 

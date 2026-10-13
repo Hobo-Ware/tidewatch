@@ -39,6 +39,10 @@ impl<T> Tabs<T> {
         &self.items
     }
 
+    pub(crate) fn items_mut(&mut self) -> &mut [Tab<T>] {
+        &mut self.items
+    }
+
     pub(crate) fn active(&self) -> usize {
         self.active
     }

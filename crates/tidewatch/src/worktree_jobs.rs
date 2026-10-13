@@ -3,7 +3,9 @@
 
 use std::ffi::OsString;
 use std::path::PathBuf;
+use std::sync::Arc;
 
+use tidewatch_core::listener::{Listener, TabRegistration};
 use tidewatch_core::paths::TidewatchPaths;
 use tidewatch_core::prepare::{PrepareInput, prepare};
 use tidewatch_core::worktree::{
@@ -34,6 +36,8 @@ pub(crate) struct OpenSpec {
     pub(crate) agent: Option<Box<AgentRequest>>,
     pub(crate) path_var: OsString,
     pub(crate) tab: u64,
+    /// Where the agent reports; `None` when the listener is down.
+    pub(crate) listener: Option<Arc<Listener>>,
 }
 
 /// Makes the worktree (when asked) and gets the agent ready, off the UI thread.
@@ -54,6 +58,14 @@ fn run_open(spec: &OpenSpec) -> Result<Opened, OpenFailure> {
     let tab_key = worktree
         .as_ref()
         .map_or_else(|| format!("tab-{}", spec.tab), |made| made.name().to_owned());
+    let hooks = spec.listener.as_ref().map(|listener| {
+        listener.register_tab(TabRegistration {
+            tab_id: spec.tab,
+            agent: request.agent.id.clone(),
+            repo: repo.clone(),
+            tab: tab_key.clone(),
+        })
+    });
     let prepared = prepare(&PrepareInput {
         paths: &spec.paths,
         agent: &request.agent,
@@ -65,13 +77,23 @@ fn run_open(spec: &OpenSpec) -> Result<Opened, OpenFailure> {
         task: &request.task,
         session_id: None,
         path_var: Some(&spec.path_var),
-        listener: None,
+        listener: hooks,
     });
+    if prepared.is_err()
+        && let Some(listener) = &spec.listener
+    {
+        listener.unregister_tab(spec.tab);
+    }
     match prepared {
         Ok(prepared) => Ok(Opened {
             worktree,
             dir,
-            started: Some(Started { profile_name: request.profile.name.clone(), prepared }),
+            started: Some(Box::new(Started {
+                profile_name: request.profile.name.clone(),
+                agent_id: request.agent.id.clone(),
+                notes_file: Some(spec.paths.notes_file(&repo, &tab_key)),
+                prepared,
+            })),
         }),
         Err(e) => Err(match worktree {
             Some(worktree) => OpenFailure::Kept { worktree, message: e.to_string() },
@@ -183,6 +205,7 @@ mod tests {
             agent,
             path_var: OsString::from("/opt/homebrew/bin:/usr/bin:/bin"),
             tab,
+            listener: None,
         }
     }
 
@@ -326,7 +349,7 @@ mod tests {
         let id = tabs.push("new worktree".into(), Pane::creating());
         open(&jobs, &ctx, spec(&paths, &repo, id, None));
         let Done::Opened { tab, result } = next(&jobs) else { panic!("expected Opened") };
-        finish_open(&mut tabs, tab, result, |_, _| 1);
+        finish_open(&mut tabs, tab, result, 0.0, |_, _| 1);
         let worktree = tabs.get_mut(id).unwrap().pane.worktree.clone().expect("worktree tab");
         assert!(worktree.path.is_dir());
         assert!(git(&repo, &["worktree", "list"]).contains(worktree.name()));

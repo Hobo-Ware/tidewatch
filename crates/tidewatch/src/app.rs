@@ -27,7 +27,10 @@ use tidewatch_core::paths::TidewatchPaths;
 use tidewatch_core::prepare::Prepared;
 use tidewatch_core::worktree::{BranchOutcome, Inspection, Leftover, Worktree};
 
+use crate::agent_events::Hooks;
+use crate::agent_frame::{self, Follow, Wake};
 use crate::agent_jobs;
+use crate::agent_run::{TermSnapshot, progress_fraction};
 use crate::catalog::Catalog;
 use crate::checkout::{self, Plan};
 use crate::close_dialog::{self, Answer, Choice};
@@ -38,6 +41,7 @@ use crate::dev_worktree::DevWorktree;
 use crate::jobs::Jobs;
 use crate::new_tab::{Group, NewTab, Request};
 use crate::new_tab_dialog::{self, Outcome};
+use crate::notify::{self, Notifier};
 use crate::pane::{
     Body, CREATING_TITLE, ClosePolicy, Pane, STARTING_TITLE, agent_tabs_in_folder, finish_open,
 };
@@ -45,6 +49,7 @@ use crate::pane_jobs;
 use crate::profile_editor::Editor;
 use crate::repo::Workspace;
 use crate::settings_view;
+use crate::status_view;
 use crate::tab_view::{TabView, ViewSpec};
 use crate::tabs::{Action, Tabs};
 use crate::toast::Toast;
@@ -62,6 +67,8 @@ const STRIP_TOP_MARGIN: i8 = 6;
 const STRIP_SIDE_MARGIN: i8 = 8;
 const STRIP_GAP: f32 = 4.0;
 const STRIP_CORNER: u8 = 10;
+const ANIMATION_FRAME_MS: u64 = 40;
+const WAKE_SLACK_S: f64 = 0.02;
 
 enum Closing {
     Inspecting(u64),
@@ -89,6 +96,8 @@ pub(crate) struct Tidewatch {
     new_tab: Option<NewTab>,
     settings: Option<Editor>,
     last_profile: Option<String>,
+    hooks: Hooks,
+    notifier: Notifier,
 }
 
 impl Tidewatch {
@@ -106,6 +115,7 @@ impl Tidewatch {
             cc.egui_ctx.all_styles_mut(|s| s.animation_time = 0.0);
         }
         let main = spawn_shell(&cc.egui_ctx, workspace.dir());
+        let hooks = Hooks::start(paths.as_ref(), &cc.egui_ctx);
         let mut app = Self {
             tabs: Tabs::new(Pane::shell(main)),
             jobs: Jobs::new(),
@@ -127,6 +137,8 @@ impl Tidewatch {
             new_tab: None,
             settings: None,
             last_profile: None,
+            hooks,
+            notifier: Notifier::desktop(),
         };
         if let Some(paths) = &app.paths {
             agent_jobs::load(
@@ -205,19 +217,29 @@ impl Tidewatch {
             Request::Shell => None,
             Request::Agent(agent) => Some(agent),
         };
+        let now = ctx.input(|i| i.time);
+        let pane = match &agent {
+            Some(request) => {
+                Pane::creating_agent(request.profile.name.clone(), request.agent.id.clone(), now)
+            }
+            None => Pane::creating(),
+        };
+        let listener = self.hooks.listener();
         match (&self.workspace, &self.paths) {
             (Workspace::Repo(repo), Some(paths)) => {
-                let tab = self.tabs.push(CREATING_TITLE.to_owned(), Pane::creating());
+                let tab = self.tabs.push(CREATING_TITLE.to_owned(), pane);
                 let target = Target::Worktree { repo: repo.root.clone() };
                 let path_var = self.catalog.path.clone();
-                let spec = OpenSpec { paths: paths.clone(), target, agent, path_var, tab };
+                let spec =
+                    OpenSpec { paths: paths.clone(), target, agent, path_var, tab, listener };
                 worktree_jobs::open(&self.jobs, ctx, spec);
             }
             (workspace, Some(paths)) if agent.is_some() => {
-                let tab = self.tabs.push(STARTING_TITLE.to_owned(), Pane::creating());
+                let tab = self.tabs.push(STARTING_TITLE.to_owned(), pane);
                 let target = Target::Folder { dir: workspace.dir().to_path_buf() };
                 let path_var = self.catalog.path.clone();
-                let spec = OpenSpec { paths: paths.clone(), target, agent, path_var, tab };
+                let spec =
+                    OpenSpec { paths: paths.clone(), target, agent, path_var, tab, listener };
                 worktree_jobs::open(&self.jobs, ctx, spec);
             }
             _ => {
@@ -297,7 +319,10 @@ impl Tidewatch {
         }
         let id = tab.id;
         match tab.pane.close_policy() {
-            ClosePolicy::Now => self.tabs.apply(Action::Close(index), || unreachable!()),
+            ClosePolicy::Now => {
+                self.tabs.apply(Action::Close(index), || unreachable!());
+                self.forget_tab(id);
+            }
             ClosePolicy::Wait => {}
             ClosePolicy::Confirm(worktree) => {
                 if self.closing.is_none() {
@@ -308,11 +333,19 @@ impl Tidewatch {
         }
     }
 
+    fn forget_tab(&mut self, id: u64) {
+        self.hooks.close_tab(id);
+        self.notifier.forget(id);
+    }
+
     fn answer_close(&mut self, answer: Answer, ctx: &egui::Context) {
         let Some(Closing::Asking { tab, .. }) = self.closing.take() else { return };
         match answer {
             Answer::Cancel => {}
-            Answer::Pick(Choice::KeepWorktree) => self.tabs.remove_id(tab),
+            Answer::Pick(Choice::KeepWorktree) => {
+                self.tabs.remove_id(tab);
+                self.forget_tab(tab);
+            }
             Answer::Pick(Choice::Remove { branch, mode }) => {
                 let Some(paths) = self.paths.clone() else { return };
                 let Some((shell, worktree)) =
@@ -329,8 +362,9 @@ impl Tidewatch {
         match done {
             Done::Opened { tab, result } => {
                 let created = result.is_ok();
+                let now = ctx.input(|i| i.time);
                 let notes =
-                    finish_open(&mut self.tabs, tab, result, |dir, prepared| match prepared {
+                    finish_open(&mut self.tabs, tab, result, now, |dir, prepared| match prepared {
                         Some(prepared) => spawn_agent(ctx, dir, prepared),
                         None => spawn_shell(ctx, dir),
                     });
@@ -358,6 +392,7 @@ impl Tidewatch {
             Done::Removed { tab, result } => match result {
                 Ok(outcome) => {
                     self.tabs.remove_id(tab);
+                    self.forget_tab(tab);
                     if let BranchOutcome::DeleteFailed(message) = outcome {
                         eprintln!("tidewatch: worktree removed, branch kept: {message}");
                     }
@@ -516,6 +551,48 @@ impl Tidewatch {
         ui.ctx().request_repaint_after(Duration::from_secs_f64(toast.next_frame_in(now)));
     }
 
+    fn follow(&mut self, follow: Follow, ctx: &egui::Context) {
+        match follow {
+            Follow::Finding { tab, notes_file, dir, author, finding } => {
+                let dir = dir.unwrap_or_else(|| self.workspace.dir().to_path_buf());
+                let now = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map_or(0, |d| d.as_secs() as i64);
+                pane_jobs::add_finding(
+                    &self.pane_jobs,
+                    ctx,
+                    tab,
+                    notes_file,
+                    dir,
+                    author,
+                    finding,
+                    now,
+                );
+            }
+            Follow::ReloadNotes { tab } => {
+                if let Some(view) = self.views.get_mut(&tab) {
+                    view.reload_notes();
+                    ctx.request_repaint();
+                }
+            }
+        }
+    }
+
+    /// Takes what agents reported, feeds terminal signals into every agent tab's status and
+    /// notifies for changes while the window is away.
+    fn drive_agents(&mut self, ctx: &egui::Context, now: f64) {
+        for message in self.hooks.drain() {
+            if let Some(follow) = agent_frame::route(&mut self.tabs, message, now) {
+                self.follow(follow, ctx);
+            }
+        }
+        let (focused, minimized) = ctx.input(|i| (i.viewport().focused, i.viewport().minimized));
+        let away = notify::window_is_away(focused, minimized);
+        let polled =
+            agent_frame::poll(&mut self.tabs, TermSnapshot::of, &mut self.notifier, away, now);
+        schedule(ctx, polled.wake, now, minimized == Some(true));
+    }
+
     fn dispatch(&mut self, action: Action, ctx: &egui::Context) {
         self.settings = None;
         match action {
@@ -563,6 +640,17 @@ fn user_shell(env: Option<String>) -> String {
     env.filter(|shell| !shell.is_empty()).unwrap_or_else(|| {
         if cfg!(target_os = "macos") { "/bin/zsh" } else { "/bin/bash" }.to_owned()
     })
+}
+
+/// Asks for the next frame agent status needs: a short tick while a tab works (its bar moves), and
+/// one wake-up at the moment a status decays. A window that is minimized does not animate.
+fn schedule(ctx: &egui::Context, wake: Wake, now: f64, minimized: bool) {
+    if wake.animate && !minimized {
+        ctx.request_repaint_after(Duration::from_millis(ANIMATION_FRAME_MS));
+    }
+    if let Some(at) = wake.next_change {
+        ctx.request_repaint_after(Duration::from_secs_f64((at - now).max(0.0) + WAKE_SLACK_S));
+    }
 }
 
 fn status_message(ui: &egui::Ui, rect: egui::Rect, text: &str, color: egui::Color32) {
@@ -655,6 +743,8 @@ impl eframe::App for Tidewatch {
         for done in self.agent_jobs.drain() {
             self.apply_agent_done(done, &ctx);
         }
+        let now = ctx.input(|i| i.time);
+        self.drive_agents(&ctx, now);
         self.drive_views();
         let typing_in_a_panel = ctx.text_edit_focused();
         let modal_open =
@@ -712,7 +802,10 @@ impl eframe::App for Tidewatch {
                         STRIP_GAP,
                     );
                     for (i, tab) in self.tabs.items().iter().enumerate() {
-                        let (progress, cmd) = tab_signals(&tab.pane);
+                        let (pty_progress, cmd) = tab_signals(&tab.pane);
+                        let agent = tab.pane.agent.as_ref();
+                        let progress = if agent.is_some() { Progress::None } else { pty_progress };
+                        let cli = agent.and_then(|a| status_view::cli_of(&a.run.agent_id));
                         let (resp, close) = draw_tab(
                             ui,
                             Some(i + 1),
@@ -724,9 +817,14 @@ impl eframe::App for Tidewatch {
                             progress,
                             cmd,
                             &[],
-                            None,
+                            cli,
                             Some(width),
                         );
+                        if let Some(agent) = agent {
+                            let tone = status_view::tone(agent.run.status());
+                            let fraction = progress_fraction(pty_progress);
+                            status_view::paint_bar(ui, resp.rect, tone, now, fraction);
+                        }
                         if close {
                             actions.push(Action::Close(i));
                         } else if resp.clicked() {

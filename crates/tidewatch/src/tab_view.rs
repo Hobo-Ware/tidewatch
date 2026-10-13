@@ -196,6 +196,13 @@ impl TabView {
         self.notes_file.as_ref()
     }
 
+    /// The listener wrote this tab's notes file behind the app's copy (an agent replied): read it
+    /// again, so the next save does not overwrite the reply.
+    pub(crate) fn reload_notes(&mut self) {
+        self.notes_ready = false;
+        self.want.insert(Request::Notes);
+    }
+
     pub(crate) fn is_active(&self) -> bool {
         self.active
     }
