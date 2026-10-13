@@ -174,7 +174,8 @@ cargo fmt --all --check
 scripts/bundle-macos.sh                # universal Tidewatch.app and zip in target/dist, ad-hoc signed; never launch the result from a check
 scripts/package-linux.sh               # x86_64 Linux only: tarball and AppImage in target/dist
 scripts/make-icon.sh                   # rebuild the icon files from assets/icon.svg (inkscape, pngquant, oxipng)
-TIDEWATCH_SCREENSHOT=/tmp/x.png cargo run -p tidewatch -- <repo>   # render, save PNG, quit
+TIDEWATCH_SCREENSHOT=/tmp/x.png cargo run -p tidewatch -- <repo>   # render, save PNG, quit (saves no session)
+cargo run -p tidewatch -- --no-restore <repo>   # start with just the main tab; the last session is not read
 ```
 
 Screenshot runs open in the background: no Dock icon, never take keyboard focus from the
@@ -207,6 +208,7 @@ answers the next question a run asks, `TIDEWATCH_DEV_OPEN_STAGE=<n>` opens stage
 seconds through the real key path, `TIDEWATCH_DEV_ANSWER=allow|deny` clicks a permission button once, `TIDEWATCH_DEV_REPLY=<text>`
 (`_REPLY_AFTER=<s>`) sends a reply from the Reader's box. Run Claude checks with `CLAUDE_CODE_FORCE_SESSION_PERSISTENCE=1` when the
 shell that starts Tidewatch is itself a Claude session: the child otherwise writes no transcript and the Reader falls back to the terminal.
+Session: every change is saved to `<home>/.tidewatch/.state/session.toml` and the next launch restores it (Settings, General, turns that off). To check it in the background: `TIDEWATCH_DEV_QUIT=<s>` closes the window through the close request (the quit-time save runs), `TIDEWATCH_DEV_SAVE_DEBOUNCE_MS=600000` leaves that quit-time write as the only one, `TIDEWATCH_DEV_SELECT=<n>` (`_SELECT_AFTER`) selects tab n, `TIDEWATCH_DEV_SHOT=<png>` (`_SHOT_AFTER`) saves a screenshot without quitting (the screenshot harness itself saves nothing), `TIDEWATCH_DEV_LEFTOVERS=open|clean` opens the leftover worktrees dialog or presses Clean up. Relaunch with the same `TIDEWATCH_HOME` and repo; `TIDEWATCH_DEV_REPLY` asks a resumed agent a question from the Reader.
 Keys: Cmd+T new tab (the dialog: pick a profile or Shell, permission level, task; Enter starts, Esc cancels), Cmd+W
 close the active tab (not the pinned main tab; a worktree tab asks keep/delete branch first), Cmd+1..9 select,
 Cmd+Shift+T flip the active agent tab between the Reader and the raw terminal, Cmd+, the profile editor, Cmd+0 the Overview (Esc or Cmd+0 closes it), Cmd+. focus mode (hides History and Diff).
