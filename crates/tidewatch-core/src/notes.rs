@@ -4,6 +4,7 @@
 //! edits it as is; the file is Tidewatch's own and Kelp's `comments.json` is never touched.
 //! Loading and saving are blocking calls: [`NotesWriter`] keeps saves off the UI thread.
 
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{Receiver, Sender, channel};
 use std::thread::JoinHandle;
@@ -17,6 +18,10 @@ pub struct Notes {
     pub threads: Vec<Thread>,
     #[serde(default)]
     next_id: u64,
+    #[serde(default)]
+    pr_roots: BTreeMap<u64, u64>,
+    #[serde(default)]
+    pr_seen: BTreeSet<u64>,
 }
 
 impl Notes {
@@ -88,6 +93,27 @@ impl Notes {
 
     pub fn delete(&mut self, id: u64) {
         self.threads.retain(|t| t.id != id);
+    }
+
+    /// The local thread made from the pull request thread whose first comment has GitHub id `root`.
+    /// The id outlives a deleted thread, so deleting an imported thread keeps it deleted.
+    #[must_use]
+    pub fn pr_thread(&self, root: u64) -> Option<u64> {
+        self.pr_roots.get(&root).copied()
+    }
+
+    pub fn link_pr_thread(&mut self, root: u64, thread: u64) {
+        self.pr_roots.insert(root, thread);
+    }
+
+    /// Whether the pull request comment with GitHub id `comment` was already imported.
+    #[must_use]
+    pub fn pr_comment_seen(&self, comment: u64) -> bool {
+        self.pr_seen.contains(&comment)
+    }
+
+    pub fn mark_pr_comment_seen(&mut self, comment: u64) {
+        self.pr_seen.insert(comment);
     }
 
     #[must_use]

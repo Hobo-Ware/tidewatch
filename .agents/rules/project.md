@@ -43,9 +43,11 @@ crates/tidewatch-core/  worktrees, profiles, permission levels, workflows, agent
   src/names.rs          adjective-noun names for new worktrees (pure)
   src/registry.rs       .state/worktrees.toml: the worktrees Tidewatch made, for repair
   src/worktree.rs       add (locked, agent/<name>), inspect, remove, list, repair, leftovers (shells out to git)
-  src/notes.rs          per-tab review threads in .state/<repo-dir>/<tab>/notes.json: load, atomic save, background writer (D4)
+  src/notes.rs          per-tab review threads in .state/<repo-dir>/<tab>/notes.json: load, atomic save, background writer, PR import links (D4)
   src/tools.rs          Tools (PATH for git and gh), GhError and the gh runner shared by delivery and pr
   src/delivery.rs       D7 hand-off: DeliveryPlan (commits ahead of base, proposed PR text), deliver = git push -u then gh pr create
+  src/pr.rs             D4 PR comments: find the open PR (gh pr view), pull review comments into notes threads (idempotent merge), post a note or reply
+  src/rfc3339.rs        RFC 3339 timestamp to unix millis (pure, crate-private)
   src/history.rs        branch-scoped graph, ahead/behind, commit and working-tree files and diffs, file watcher, via kelp-core
   tests/worktree_roundtrip.rs  real throwaway repos: add, lock, dirty refusal, delete branch, moved repo
   tests/listener_http.rs  listener on a random port with a raw HTTP client: 401s, hooks, MCP, keep-alive, chunked, size caps
@@ -53,6 +55,7 @@ crates/tidewatch-core/  worktrees, profiles, permission levels, workflows, agent
   tests/push_guard.rs   real bare remote: plain, --no-verify, explicit-url and forced pushes refused, fetch works
   tests/common/mod.rs   test helpers: throwaway repos with a bare remote, a fake gh that logs its calls (the real gh never runs)
   tests/delivery_roundtrip.rs  real bare remote + fake gh: plan, base detection, push, PR args, each typed failure
+  tests/pr_gh.rs        fake gh: pr view, comments fetch and post argument shapes, GitHub-shaped JSON fixtures
   tests/history_roundtrip.rs   real throwaway repos: worktree branch history, whole repo, ahead/behind, diffs, watcher
 crates/tidewatch/       the egui app
   src/main.rs           argument parsing, workspace discovery, eframe start
