@@ -2,13 +2,14 @@
 //! with a file list above it and a toolbar for unified or split, jumping between changes and the
 //! notes count. Notes written in the body go through `note_actions` into the tab's notes.
 
+use std::borrow::Cow;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use egui::{
     Align, Color32, FontId, Layout, Rect, RichText, Sense, Stroke, Ui, UiBuilder, pos2, vec2,
 };
 use kelp_core::commit::{self, ChangeKind, FileChange};
-use kelp_ui::diff::{DiffInput, DiffLayout, DiffMode};
+use kelp_ui::diff::{DiffInput, DiffLayout, DiffMode, DiffTexts};
 use kelp_ui::theme;
 use stdusk_egui::ui::icons;
 use stdusk_egui::widgets::{chip, icon_button};
@@ -25,6 +26,12 @@ const FILES_MAX_ROWS: f32 = 4.0;
 const TOOLBAR_H: f32 = 34.0;
 const HEADER_H: f32 = 64.0;
 const SHORT_ID: usize = 7;
+
+static TEXTS: DiffTexts = DiffTexts {
+    saved_hint: Cow::Borrowed("Notes go to this tab's agent when you send them"),
+    reply_hint: Cow::Borrowed("Reply...  (Cmd Enter to save)"),
+    comment_hint: Cow::Borrowed("Note for the agent...  (Cmd Enter to save)"),
+};
 
 pub(crate) fn kind_letter(kind: ChangeKind) -> &'static str {
     match kind {
@@ -396,6 +403,7 @@ fn show_body(ui: &mut Ui, rect: Rect, view: &mut TabView) -> bool {
                 stacked: false,
                 hunk_buttons: &[],
                 line_select_hint: None,
+                texts: &TEXTS,
             },
         );
     });
