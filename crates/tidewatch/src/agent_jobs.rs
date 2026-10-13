@@ -73,7 +73,7 @@ fn availability_of(bin: &str, path: &OsString) -> Availability {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::os::unix::fs::PermissionsExt;
+    use crate::test_exec::write_executable_from_a_child;
     use std::time::{Duration, Instant};
 
     fn next(jobs: &Jobs<Done>) -> Done {
@@ -88,9 +88,10 @@ mod tests {
     }
 
     fn fake_cli(dir: &std::path::Path, name: &str, version: &str) {
-        let file = dir.join(name);
-        std::fs::write(&file, format!("#!/bin/sh\necho '{name} {version}'\n")).unwrap();
-        std::fs::set_permissions(&file, std::fs::Permissions::from_mode(0o755)).unwrap();
+        write_executable_from_a_child(
+            &dir.join(name),
+            &format!("#!/bin/sh\necho '{name} {version}'\n"),
+        );
     }
 
     #[test]
