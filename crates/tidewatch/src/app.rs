@@ -23,12 +23,13 @@ use stdusk_egui::ui::{
 use stdusk_egui::widgets::{chip, icon_button};
 use tidewatch_core::notes::NotesWriter;
 use tidewatch_core::paths::TidewatchPaths;
-use tidewatch_core::prefs::WindowPrefs;
+use tidewatch_core::prefs::{Prefs, WindowPrefs};
 use tidewatch_core::prepare::Prepared;
 use tidewatch_core::restore::{RealDisk, WindowPlan};
 use tidewatch_core::status::AgentStatus;
 use tidewatch_core::tools::Tools;
 use tidewatch_core::trust::TrustCli;
+use tidewatch_core::update::fake_release;
 use tidewatch_core::worktree::{BranchOutcome, Inspection, Worktree};
 
 use crate::agent_events::Hooks;
@@ -82,6 +83,7 @@ use crate::tabs::{Action, Tabs};
 use crate::toast::Toast;
 use crate::trust_glue::Trust;
 use crate::trust_view;
+use crate::updates::{self, Updates};
 use crate::window_view;
 use crate::workflow_glue::{self, Env, Spawners, Start};
 use crate::workflow_run::Exec;
@@ -141,6 +143,7 @@ pub(crate) struct Tidewatch {
     dev_session: DevSession,
     restore: restore_glue::Host,
     notice: Option<String>,
+    updates: Updates,
     shell: Shell<RealOs>,
 }
 
@@ -169,6 +172,12 @@ impl Tidewatch {
         let trust = Trust::new(paths.as_ref(), cli_home);
         let dev_session = DevSession::from_env();
         let saver = Saver::new(paths.as_ref(), screenshot.is_none(), dev_session.debounce());
+        let updates = Updates::new(
+            &cc.egui_ctx,
+            paths.as_ref().map(Prefs::load).unwrap_or_default().updates,
+            fake_release(std::env::var("TIDEWATCH_FAKE_UPDATE").ok().as_deref()),
+            screenshot.is_some(),
+        );
         let mut app = Self {
             tabs: Tabs::new(Pane::shell(main)),
             jobs: Jobs::new(),
@@ -207,6 +216,7 @@ impl Tidewatch {
             dev_session,
             restore: restore_glue::Host::new(no_restore, RealDisk::from_env()),
             notice: None,
+            updates,
             shell: shell::start(&cc.egui_ctx, shell),
         };
         if let Some(paths) = &app.paths {
@@ -1066,6 +1076,7 @@ impl eframe::App for Tidewatch {
         for event in self.shell.tick(&ctx) {
             self.shell_event(&event, &ctx);
         }
+        self.updates.tick();
         let toasts = [self.trust.drain(&ctx), self.leftovers.tick()];
         for text in toasts.into_iter().flatten() {
             self.show_toast(text, &ctx);
@@ -1148,6 +1159,7 @@ impl eframe::App for Tidewatch {
                     chip(ui, &self.workspace.chip_label(), true)
                         .on_hover_text(self.workspace.dir().display().to_string());
                     self.leftovers.chip(ui);
+                    self.updates.pill(ui);
                     ui.add_space(4.0);
                     if overview_view::button(ui, self.overview, needs_you).clicked() {
                         toggle_overview = true;
@@ -1238,8 +1250,15 @@ impl eframe::App for Tidewatch {
                         menu_bar_available: self.shell.tray_supported(),
                     },
                 };
-                settings_action =
-                    settings_view::show(ui, area, settings, &files, &self.trust.page(), &general);
+                settings_action = settings_view::show(
+                    ui,
+                    area,
+                    settings,
+                    &files,
+                    &self.trust.page(),
+                    &general,
+                    &mut self.updates,
+                );
                 return;
             }
             let panels = self.workspace_has_panels() && !self.focus;
@@ -1386,6 +1405,11 @@ impl eframe::App for Tidewatch {
                 }
             }
             Some(settings_view::Action::Window(prefs)) => self.set_window_prefs(prefs, &ctx),
+            Some(settings_view::Action::Updates(prefs)) => {
+                if let Some(paths) = &self.paths {
+                    updates::save(paths.clone(), prefs);
+                }
+            }
             None => {}
         }
         if toggle_settings {

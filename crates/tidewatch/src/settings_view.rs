@@ -12,6 +12,8 @@ use crate::list_row::{Row, pick_row};
 use crate::profile_editor::Editor;
 use crate::settings::{Section, Settings, Status};
 use crate::trust_view;
+use crate::updates::Updates;
+use crate::updates_view;
 use crate::window_settings;
 use crate::window_view;
 use crate::workflow_editor_view;
@@ -28,6 +30,8 @@ pub(crate) enum Action {
     Restore(bool),
     /// The Window section changed something: all of its settings. Applies at once too.
     Window(tidewatch_core::prefs::WindowPrefs),
+    /// An Updates switch moved: the whole table. Applies at once too.
+    Updates(tidewatch_core::prefs::UpdatePrefs),
 }
 
 /// The files the two pages edit, for the line under the tabs.
@@ -53,6 +57,7 @@ pub(crate) fn show(
     files: &Files,
     trust: &trust_view::Page,
     general: &General,
+    updates: &mut Updates,
 ) -> Option<Action> {
     ui.scope_builder(UiBuilder::new().max_rect(area.shrink(MARGIN)), |ui| {
         let mut action = None;
@@ -81,7 +86,9 @@ pub(crate) fn show(
                     .inner
                     .map(Action::Trust);
             }
-            Section::General => action = general_page(ui, general, &mut settings.window),
+            Section::General => {
+                action = general_page(ui, general, &mut settings.window, updates);
+            }
         }
         ui.add_space(4.0);
         let footer_action = footer(
@@ -235,6 +242,7 @@ fn general_page(
     ui: &mut egui::Ui,
     general: &General,
     window: &mut window_settings::Editor,
+    updates: &mut Updates,
 ) -> Option<Action> {
     ui.spacing_mut().item_spacing.y = 6.0;
     let mut on = general.restore;
@@ -255,7 +263,8 @@ fn general_page(
         );
     }
     let window = window_view::section(ui, window, &general.window).map(Action::Window);
-    changed.then_some(Action::Restore(on)).or(window)
+    let updates = updates_view::section(ui, updates).map(Action::Updates);
+    changed.then_some(Action::Restore(on)).or(window).or(updates)
 }
 
 fn switch_row(ui: &mut egui::Ui, text: &str, on: &mut bool) -> bool {
@@ -346,10 +355,15 @@ mod tests {
         }
     }
 
+    fn updates(ctx: &egui::Context) -> Updates {
+        Updates::new(ctx, tidewatch_core::prefs::UpdatePrefs::default(), None, true)
+    }
+
     fn run_general(
         ctx: &egui::Context,
         general: &General,
         window: &mut window_settings::Editor,
+        updates: &mut Updates,
         events: Vec<egui::Event>,
     ) -> Option<Action> {
         let raw = RawInput {
@@ -364,7 +378,7 @@ mod tests {
                 UiBuilder::new()
                     .max_rect(Rect::from_min_size(pos2(0.0, 0.0), Vec2::new(600.0, 400.0))),
                 |ui| {
-                    answer = general_page(ui, general, window);
+                    answer = general_page(ui, general, window, updates);
                 },
             );
         });
@@ -384,8 +398,9 @@ mod tests {
     fn clicking_the_restore_switch_reports_the_new_value_and_nothing_else_does() {
         let ctx = egui::Context::default();
         let mut window = window_settings::Editor::new(&WindowPrefs::default());
+        let mut updates = updates(&ctx);
         let mut run = |general: &General, events: Vec<egui::Event>| {
-            run_general(&ctx, general, &mut window, events)
+            run_general(&ctx, general, &mut window, &mut updates, events)
         };
         let at = pos2(19.0, 11.0);
         let on = general(true);
@@ -404,14 +419,21 @@ mod tests {
     fn the_window_section_sits_under_the_restore_switch_and_reports_its_own_change() {
         let ctx = egui::Context::default();
         let mut window = window_settings::Editor::new(&WindowPrefs::default());
+        let mut updates = updates(&ctx);
         let general = general(true);
-        run_general(&ctx, &general, &mut window, vec![]);
+        run_general(&ctx, &general, &mut window, &mut updates, vec![]);
         let mut found = None;
         for y in (60..140).step_by(4) {
             let at = pos2(27.0, y as f32);
-            run_general(&ctx, &general, &mut window, vec![egui::Event::PointerMoved(at)]);
-            run_general(&ctx, &general, &mut window, vec![click(at, true)]);
-            found = run_general(&ctx, &general, &mut window, vec![click(at, false)]);
+            run_general(
+                &ctx,
+                &general,
+                &mut window,
+                &mut updates,
+                vec![egui::Event::PointerMoved(at)],
+            );
+            run_general(&ctx, &general, &mut window, &mut updates, vec![click(at, true)]);
+            found = run_general(&ctx, &general, &mut window, &mut updates, vec![click(at, false)]);
             if found.is_some() {
                 break;
             }
@@ -424,6 +446,7 @@ mod tests {
     fn all_pages_render_headless_and_ask_for_nothing_until_clicked() {
         let mut settings = settings();
         let ctx = egui::Context::default();
+        let mut updates = updates(&ctx);
         for section in [Section::Profiles, Section::Workflows, Section::Trust, Section::General] {
             settings.section = section;
             for _ in 0..2 {
@@ -438,7 +461,15 @@ mod tests {
                 let mut action = None;
                 let _ = ctx.run_ui(raw, |ui| {
                     let area = ui.max_rect();
-                    action = show(ui, area, &mut settings, &files(), &page(), &general(true));
+                    action = show(
+                        ui,
+                        area,
+                        &mut settings,
+                        &files(),
+                        &page(),
+                        &general(true),
+                        &mut updates,
+                    );
                 });
                 assert!(action.is_none());
             }

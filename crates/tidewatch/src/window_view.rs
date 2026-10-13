@@ -17,11 +17,11 @@ pub(crate) struct View {
     pub(crate) menu_bar_available: bool,
 }
 
-fn note(ui: &mut egui::Ui, text: &str) {
+pub(crate) fn note(ui: &mut egui::Ui, text: &str) {
     ui.label(RichText::new(text).size(12.0).color(colors::dim()));
 }
 
-fn switch_row(ui: &mut egui::Ui, text: &str, on: bool) -> Option<bool> {
+pub(crate) fn switch_row(ui: &mut egui::Ui, text: &str, on: bool) -> Option<bool> {
     let mut value = on;
     ui.horizontal(|ui| {
         let changed = toggle_switch(ui, &mut value).changed();
