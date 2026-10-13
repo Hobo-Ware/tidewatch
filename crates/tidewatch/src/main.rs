@@ -63,13 +63,18 @@ fn main() -> eframe::Result<()> {
         home.as_deref().unwrap_or_else(|| Path::new(".")),
     );
     let screenshot = DevScreenshot::from_env();
-    let options = eframe::NativeOptions {
+    let background = screenshot.is_some() || std::env::var_os("TIDEWATCH_BACKGROUND").is_some();
+    let mut options = eframe::NativeOptions {
         renderer: eframe::Renderer::Glow,
         viewport: egui::ViewportBuilder::default()
             .with_title("Tidewatch")
-            .with_inner_size(WINDOW_SIZE),
+            .with_inner_size(WINDOW_SIZE)
+            .with_active(!background),
         ..Default::default()
     };
+    if background {
+        options.event_loop_builder = Some(Box::new(open_without_taking_focus));
+    }
     eframe::run_native(
         "Tidewatch",
         options,
@@ -77,4 +82,18 @@ fn main() -> eframe::Result<()> {
             Ok(Box::new(Tidewatch::new(cc, workspace, paths, agent_path, screenshot)))
         }),
     )
+}
+
+/// Dev and screenshot runs must not pull keyboard focus away from the terminal the developer is
+/// typing in: no Dock icon and no activation on launch.
+fn open_without_taking_focus(builder: &mut winit::event_loop::EventLoopBuilder<eframe::UserEvent>) {
+    #[cfg(target_os = "macos")]
+    {
+        use winit::platform::macos::{ActivationPolicy, EventLoopBuilderExtMacOS};
+        builder
+            .with_activation_policy(ActivationPolicy::Accessory)
+            .with_activate_ignoring_other_apps(false);
+    }
+    #[cfg(not(target_os = "macos"))]
+    let _ = builder;
 }

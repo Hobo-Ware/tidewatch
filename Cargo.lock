@@ -4951,6 +4951,7 @@ dependencies = [
  "stdusk-egui",
  "tempfile",
  "tidewatch-core",
+ "winit",
 ]
 
 [[package]]
