@@ -138,11 +138,16 @@ impl Harness {
     }
 
     fn register(&self, tab_id: u64, tab: &str) -> HookListener {
+        self.register_generation(tab_id, tab, 0)
+    }
+
+    fn register_generation(&self, tab_id: u64, tab: &str, generation: u64) -> HookListener {
         self.listener.register_tab(TabRegistration {
             tab_id,
             agent: "claude".into(),
             repo: PathBuf::from(REPO),
             tab: tab.into(),
+            generation,
         })
     }
 
@@ -284,12 +289,17 @@ fn mcp_over_http_runs_the_handshake_and_both_event_tools() {
 
     assert_eq!(
         h.next_event(),
-        TabMessage { tab_id: 3, event: TabEvent::StageDone { summary: "hello".into() } }
+        TabMessage {
+            tab_id: 3,
+            generation: 0,
+            event: TabEvent::StageDone { summary: "hello".into() }
+        }
     );
     assert_eq!(
         h.next_event(),
         TabMessage {
             tab_id: 3,
+            generation: 0,
             event: TabEvent::Finding {
                 file: "a.rs".into(),
                 line: 9,
@@ -346,6 +356,7 @@ fn notes_round_trip_over_http_through_the_temp_home() {
         h.next_event(),
         TabMessage {
             tab_id: 1,
+            generation: 0,
             event: TabEvent::NoteReply { note_id: id, text: "renamed".into() }
         }
     );
@@ -374,6 +385,36 @@ fn unregistering_a_tab_revokes_its_token_and_registering_again_rotates_it() {
     assert_eq!(status(&second.token), 200);
     h.listener.unregister_tab(1);
     assert_eq!(status(&second.token), 401);
+}
+
+#[test]
+fn messages_carry_the_generation_their_token_registered_with() {
+    let h = Harness::start();
+    let stage_one = h.register_generation(5, "a", 1);
+    let done = |token: &str, summary: &str| {
+        h.client().request(
+            "POST",
+            "/mcp",
+            Some(token),
+            &call(1, "stage_done", &json!({ "summary": summary })),
+        )
+    };
+    assert_eq!(done(&stage_one.token, "first").status, 200);
+    let stage_two = h.register_generation(5, "a", 2);
+    assert_eq!(done(&stage_one.token, "late").status, 401);
+    assert_eq!(done(&stage_two.token, "second").status, 200);
+    let seen: Vec<(u64, TabEvent)> = std::iter::repeat_with(|| h.next_event())
+        .take(2)
+        .map(|m| (m.generation, m.event))
+        .collect();
+    assert_eq!(
+        seen,
+        [
+            (1, TabEvent::StageDone { summary: "first".into() }),
+            (2, TabEvent::StageDone { summary: "second".into() }),
+        ]
+    );
+    h.no_more_events();
 }
 
 #[test]
