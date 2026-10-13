@@ -90,6 +90,12 @@ impl TidewatchPaths {
         self.state_dir().join("session.toml")
     }
 
+    /// The folder of the window used last, so a launch with no path can reopen it.
+    #[must_use]
+    pub fn last_workspace_file(&self) -> PathBuf {
+        self.state_dir().join("last-workspace.toml")
+    }
+
     /// One Unix socket per running window lives here (`instance`). Under the state dir, so a
     /// `TIDEWATCH_HOME` run never sees the real one.
     #[must_use]
@@ -227,6 +233,12 @@ mod tests {
     fn session_file_sits_in_the_state_dir_next_to_the_worktree_registry() {
         let paths = paths();
         assert_eq!(paths.session_file(), paths.state_dir().join("session.toml"));
+    }
+
+    #[test]
+    fn the_last_workspace_sits_in_the_state_dir_next_to_the_session() {
+        let paths = paths();
+        assert_eq!(paths.last_workspace_file(), paths.state_dir().join("last-workspace.toml"));
     }
 
     #[test]
