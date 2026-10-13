@@ -4,6 +4,7 @@
 
 use std::path::Path;
 
+use tidewatch_core::end_block::EndBlock;
 use tidewatch_core::status::AgentStatus;
 
 use crate::pane::Pane;
@@ -20,6 +21,7 @@ pub(crate) struct Row {
     pub(crate) branch: String,
     pub(crate) status: AgentStatus,
     pub(crate) detail: Option<String>,
+    pub(crate) end_block: Option<EndBlock>,
     pub(crate) elapsed: f64,
 }
 
@@ -120,6 +122,7 @@ pub(crate) fn collect<T>(label: &str, dir: &Path, tabs: &Tabs<Pane<T>>, now: f64
                 branch,
                 status: agent.run.status().clone(),
                 detail: agent.run.detail().map(str::to_owned),
+                end_block: agent.run.end_block().cloned(),
                 elapsed: agent.run.elapsed(now),
             })
         })
@@ -165,6 +168,7 @@ mod tests {
             branch: format!("agent/{title}"),
             status,
             detail: None,
+            end_block: None,
             elapsed: 0.0,
         }
     }

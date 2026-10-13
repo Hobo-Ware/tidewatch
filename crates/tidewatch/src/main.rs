@@ -18,6 +18,7 @@ mod dev_screenshot;
 mod dev_view;
 mod dev_worktree;
 mod diff_pane;
+mod end_block_view;
 mod flow;
 mod flow_glue;
 mod flow_jobs;

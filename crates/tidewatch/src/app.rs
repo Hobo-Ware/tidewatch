@@ -25,6 +25,7 @@ use stdusk_egui::{colors, repaint_handle};
 use tidewatch_core::notes::NotesWriter;
 use tidewatch_core::paths::TidewatchPaths;
 use tidewatch_core::prepare::Prepared;
+use tidewatch_core::status::AgentStatus;
 use tidewatch_core::tools::Tools;
 use tidewatch_core::worktree::{BranchOutcome, Inspection, Leftover, Worktree};
 
@@ -42,6 +43,7 @@ use crate::dev_panes::{self, DevPanes};
 use crate::dev_screenshot::DevScreenshot;
 use crate::dev_view::{DevKeys, DevView};
 use crate::dev_worktree::DevWorktree;
+use crate::end_block_view;
 use crate::flow::Flow;
 use crate::flow_glue;
 use crate::jobs::Jobs;
@@ -1009,6 +1011,18 @@ impl eframe::App for Tidewatch {
             if !panels {
                 areas.terminal = layout::terminal_only(area);
             }
+            let end = self.tabs.items()[self.tabs.active()].pane.agent.as_ref().and_then(|agent| {
+                let waiting =
+                    matches!(agent.run.status(), AgentStatus::Done | AgentStatus::NeedsYou(_));
+                agent
+                    .run
+                    .end_block()
+                    .filter(|_| waiting)
+                    .map(|block| (block.clone(), agent.run.end_open))
+            });
+            let end_band = end.as_ref().map(|(block, open)| {
+                layout::band_below(&mut areas.terminal, end_block_view::height(block, *open))
+            });
             let card = self.flow.tab(active_id).and_then(|state| {
                 state
                     .delivery
@@ -1068,6 +1082,12 @@ impl eframe::App for Tidewatch {
                 Body::Failed(message) => status_message(ui, areas.terminal, message, colors::red()),
             }
 
+            if let (Some((block, open)), Some(band)) = (&end, end_band)
+                && end_block_view::show_card(ui, band, block, *open)
+                && let Some(agent) = self.tabs.active_pane_mut().agent.as_mut()
+            {
+                agent.run.end_open = !agent.run.end_open;
+            }
             if let (Some((commits, building)), Some(band)) = (card, band)
                 && delivery_view::show_card(ui, band, commits, building).is_some()
             {

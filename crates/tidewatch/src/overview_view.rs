@@ -8,11 +8,13 @@ use egui::{
 use stdusk_egui::colors;
 use stdusk_egui::widgets::ICON_BTN_W;
 
+use crate::end_block_view;
 use crate::overview::{Counts, Overview, Row, fmt_elapsed};
 use crate::status_view::{self, Tone};
 
 const BUTTON_H: f32 = 30.0;
 const ROW_H: f32 = 42.0;
+const END_LINE_H: f32 = 24.0;
 const SIDE: f32 = 20.0;
 const GRID_ICON: &str = "\u{E464}";
 const BADGE_H: f32 = 15.0;
@@ -148,7 +150,7 @@ fn empty(ui: &mut egui::Ui) {
 fn group(ui: &mut egui::Ui, title: &str, path: &str, rows: &[Row], needs: bool) -> Option<u64> {
     let width = ui.available_width();
     let head_h = 30.0;
-    let height = head_h + ROW_H * rows.len() as f32;
+    let height = head_h + rows.iter().map(row_height).sum::<f32>();
     let (rect, _) = ui.allocate_exact_size(vec2(width, height), Sense::hover());
     let painter = ui.painter_at(rect);
     painter.rect_filled(rect, CornerRadius::same(10), colors::elevated());
@@ -187,14 +189,19 @@ fn group(ui: &mut egui::Ui, title: &str, path: &str, rows: &[Row], needs: bool) 
         colors::dim(),
     );
     let mut jump = None;
-    for (i, row) in rows.iter().enumerate() {
-        let top = rect.top() + head_h + ROW_H * i as f32;
-        let row_rect = Rect::from_min_size(pos2(rect.left(), top), vec2(width, ROW_H));
+    let mut top = rect.top() + head_h;
+    for row in rows {
+        let row_rect = Rect::from_min_size(pos2(rect.left(), top), vec2(width, row_height(row)));
         if draw_row(ui, row_rect, row, needs) {
             jump = Some(row.tab_id);
         }
+        top += row_height(row);
     }
     jump
+}
+
+fn row_height(row: &Row) -> f32 {
+    if row.end_block.is_some() { ROW_H + END_LINE_H } else { ROW_H }
 }
 
 fn draw_row(ui: &mut egui::Ui, rect: Rect, row: &Row, in_needs_group: bool) -> bool {
@@ -206,8 +213,15 @@ fn draw_row(ui: &mut egui::Ui, rect: Rect, row: &Row, in_needs_group: bool) -> b
     }
     let tone = status_view::tone(&row.status);
     let accent = status_view::color(tone).unwrap_or_else(colors::dim);
-    let mid = rect.center().y;
+    let mid = rect.top() + ROW_H / 2.0;
     painter.circle_filled(pos2(rect.left() + 18.0, mid), 4.5, accent);
+    if let Some(block) = &row.end_block {
+        let line = Rect::from_min_max(
+            pos2(rect.left() + 36.0, rect.top() + ROW_H - 4.0),
+            pos2(rect.right() - 12.0, rect.bottom() - 2.0),
+        );
+        end_block_view::paint_line(&painter, line, block);
+    }
 
     let title_x = rect.left() + 36.0;
     painter.text(
@@ -314,6 +328,7 @@ mod tests {
             branch: format!("agent/{title}"),
             status,
             detail: Some("Bash: touch hello.txt".into()),
+            end_block: None,
             elapsed: 242.0,
         }
     }
