@@ -67,6 +67,9 @@ pub(crate) fn route<T>(tabs: &mut Tabs<Pane<T>>, message: TabMessage, now: f64) 
         TabEvent::NoteReply { .. } => Some(Follow::ReloadNotes { tab: message.tab_id }),
         TabEvent::Hook(_) | TabEvent::StageDone { .. } => None,
     };
+    if let TabEvent::Hook(hook) = &message.event {
+        agent.reader.hook(hook.transcript_path.clone());
+    }
     agent.run.on_event(message.event, now);
     follow
 }
@@ -85,7 +88,11 @@ pub(crate) fn poll<T>(
     for tab in tabs.items_mut() {
         let Some(agent) = tab.pane.agent.as_mut() else { continue };
         if let Body::Shell(term) = &tab.pane.body {
-            agent.run.feed(snapshot(term), now);
+            let seen = snapshot(term);
+            if seen.activity {
+                agent.reader.poke(now);
+            }
+            agent.run.feed(seen, now);
         }
         if let Some(change) = agent.run.refresh(now) {
             notifier.offer(tab.id, &tab.title, &change, agent.run.detail(), away, now);
@@ -126,7 +133,7 @@ mod tests {
         let pane = Pane {
             body: Body::Shell(1),
             worktree: None,
-            agent: Some(AgentTab { profile_name: "Builder".into(), run }),
+            agent: Some(AgentTab::new("Builder".into(), run)),
         };
         let mut tabs = Tabs::new(Pane::shell(0));
         let id = tabs.push("brave-otter".into(), pane);

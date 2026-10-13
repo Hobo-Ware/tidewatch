@@ -260,10 +260,7 @@ mod tests {
             branch: "agent/brave-otter".into(),
         };
         let agent = |name: &str| {
-            Some(AgentTab {
-                profile_name: name.into(),
-                run: AgentRun::setting_up("claude".into(), 0.0),
-            })
+            Some(AgentTab::new(name.into(), AgentRun::setting_up("claude".into(), 0.0)))
         };
         let mut tabs: Tabs<Pane<u32>> = Tabs::new(Pane::shell(0));
         tabs.push(
