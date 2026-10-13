@@ -41,5 +41,5 @@ does not block the launch. Developer ID signing and notarization wait for an App
 
 ## Icon
 
-`assets/icon.svg` is the app icon (the K mark). `scripts/make-icon.sh` renders it into `assets/Tidewatch.icns` and
+`assets/icon.svg` is the app icon (the K mark); `assets/AppIcon.icon` is the same mark as Liquid Glass layers, which `make-icon.sh` compiles to `assets/Assets.car` with Xcode 26 `actool` (macOS 26 reads it through `CFBundleIconName`; older macOS falls back to the `.icns`). `scripts/make-icon.sh` renders it into `assets/Tidewatch.icns` and
 `assets/icon-512.png` (inkscape, pngquant, oxipng, iconutil). Rerun it after changing the SVG; CI uses the committed files.

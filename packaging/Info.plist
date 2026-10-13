@@ -7,6 +7,7 @@
   <key>CFBundleIdentifier</key><string>dev.hoboware.tidewatch</string>
   <key>CFBundleExecutable</key><string>tidewatch</string>
   <key>CFBundleIconFile</key><string>Tidewatch</string>
+  <key>CFBundleIconName</key><string>AppIcon</string>
   <key>CFBundlePackageType</key><string>APPL</string>
   <key>CFBundleShortVersionString</key><string>__VERSION__</string>
   <key>CFBundleVersion</key><string>__VERSION__</string>

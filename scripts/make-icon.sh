@@ -24,6 +24,18 @@ done
 iconutil -c icns "$work/Tidewatch.iconset" -o "$root/assets/Tidewatch.icns"
 echo "Wrote assets/Tidewatch.icns ($(du -h "$root/assets/Tidewatch.icns" | cut -f1))"
 
+xcode="${DEVELOPER_DIR:-/Applications/Xcode.app/Contents/Developer}"
+car="$root/assets/Assets.car"
+if DEVELOPER_DIR="$xcode" xcrun --find actool >/dev/null 2>&1; then
+  DEVELOPER_DIR="$xcode" xcrun actool "$root/assets/AppIcon.icon" \
+    --compile "$work" --platform macosx --minimum-deployment-target 12.0 \
+    --app-icon AppIcon --output-partial-info-plist "$work/partial.plist" >/dev/null
+  cp "$work/Assets.car" "$car"
+  echo "Wrote $car ($(du -h "$car" | cut -f1)) from AppIcon.icon"
+else
+  echo "Xcode 26 not found: kept the committed $car" >&2
+fi
+
 render 512 "$root/assets/icon-512.png"
 echo "Wrote assets/icon-512.png ($(du -h "$root/assets/icon-512.png" | cut -f1))"
 

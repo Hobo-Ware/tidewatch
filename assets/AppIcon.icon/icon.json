@@ -1,0 +1,38 @@
+{
+  "fill" : {
+    "solid" : "srgb:0.06275,0.07451,0.10196,1.00000"
+  },
+  "groups" : [
+    {
+      "layers" : [
+        { "image-name" : "sun.svg", "name" : "sun", "glass" : true }
+      ],
+      "shadow" : { "kind" : "neutral", "opacity" : 0.5 },
+      "translucency" : { "enabled" : true, "value" : 0.3 }
+    },
+    {
+      "layers" : [
+        { "image-name" : "prompt.svg", "name" : "prompt", "glass" : true }
+      ],
+      "shadow" : { "kind" : "neutral", "opacity" : 0.5 },
+      "translucency" : { "enabled" : true, "value" : 0.3 }
+    },
+    {
+      "layers" : [
+        { "image-name" : "ripples.svg", "name" : "ripples", "glass" : true }
+      ],
+      "shadow" : { "kind" : "neutral", "opacity" : 0.5 },
+      "translucency" : { "enabled" : true, "value" : 0.4 }
+    },
+    {
+      "layers" : [
+        { "image-name" : "wave.svg", "name" : "wave", "glass" : true }
+      ],
+      "shadow" : { "kind" : "neutral", "opacity" : 0.5 },
+      "translucency" : { "enabled" : true, "value" : 0.3 }
+    }
+  ],
+  "supported-platforms" : {
+    "squares" : "shared"
+  }
+}

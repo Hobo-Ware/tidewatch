@@ -28,6 +28,7 @@ lipo -create -output "$app/Contents/MacOS/tidewatch" \
   "$root/target/x86_64-apple-darwin/release/tidewatch"
 chmod +x "$app/Contents/MacOS/tidewatch"
 cp "$root/assets/Tidewatch.icns" "$app/Contents/Resources/Tidewatch.icns"
+cp "$root/assets/Assets.car" "$app/Contents/Resources/Assets.car"
 sed "s/__VERSION__/${version}/g" "$root/packaging/Info.plist" > "$app/Contents/Info.plist"
 plutil -lint "$app/Contents/Info.plist" >/dev/null
 
