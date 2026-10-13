@@ -70,7 +70,7 @@ impl Tidewatch {
 
     /// `TIDEWATCH_DEV_RESUME`: the restart path, for the one saved run in the named worktree.
     fn dev_resume(&mut self, ctx: &egui::Context, name: &str) {
-        let (Workspace::Repo(repo), Some(paths)) = (&self.workspace, &self.paths) else { return };
+        let (Workspace::Repo(repo), Some(paths)) = (self.workspace(), &self.paths) else { return };
         let plan = restore_glue::dev_resume_plan(paths, &repo.root, name);
         self.drive_restore(ctx, ctx.input(|i| i.time), Some(plan));
     }

@@ -11,6 +11,8 @@ On Linux a plain Ctrl chord would reach the shell, so Linux uses Ctrl+Shift or A
 | New tab | `Cmd+T` | `Ctrl+Shift+T` |
 | Close tab | `Cmd+W` | `Ctrl+Shift+W` |
 | Switch to tab 1 to 9 | `Cmd+1 to 9` | `Alt+1 to 9` |
+| Next repo | `Cmd+Ctrl+]` | `Alt+]` |
+| Previous repo | `Cmd+Ctrl+[` | `Alt+[` |
 
 ## View
 

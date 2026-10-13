@@ -15,6 +15,7 @@ mod settings;
 mod strip;
 mod tabs;
 mod terminal;
+mod workspaces;
 
 use std::collections::HashMap;
 use std::ffi::OsString;
@@ -59,7 +60,6 @@ use crate::pty::spawn_shell;
 use crate::repo::Workspace;
 use crate::restore_glue::{self};
 use crate::session_glue::Saver;
-use crate::session_save::WindowView;
 use crate::settings::Settings;
 use crate::shell::{self, Shell};
 use crate::tab_view::TabView;
@@ -83,7 +83,7 @@ enum Closing {
 }
 
 pub(crate) struct Tidewatch {
-    workspace: Workspace,
+    workspaces: Vec<Workspace>,
     paths: Option<TidewatchPaths>,
     tabs: Tabs<Pane<PtyTerm>>,
     jobs: Jobs<Done>,
@@ -95,6 +95,7 @@ pub(crate) struct Tidewatch {
     screenshot: Option<DevScreenshot>,
     views: HashMap<u64, TabView>,
     pane_jobs: Jobs<pane_jobs::Done>,
+    workspace_jobs: Jobs<Workspace>,
     notes_writer: NotesWriter,
     avatars: AvatarStore,
     toast: Option<Toast>,
@@ -129,7 +130,7 @@ pub(crate) struct Tidewatch {
 impl Tidewatch {
     pub(crate) fn new(
         cc: &eframe::CreationContext<'_>,
-        workspace: Workspace,
+        workspaces: Vec<Workspace>,
         paths: Option<TidewatchPaths>,
         agent_path: OsString,
         screenshot: Option<DevScreenshot>,
@@ -143,7 +144,13 @@ impl Tidewatch {
         if screenshot.is_some() {
             cc.egui_ctx.all_styles_mut(|s| s.animation_time = 0.0);
         }
-        let main = spawn_shell(&cc.egui_ctx, workspace.dir());
+        let mut shells = workspaces
+            .iter()
+            .map(|workspace| Pane::shell(spawn_shell(&cc.egui_ctx, workspace.dir())));
+        let mut tabs = Tabs::new(shells.next().expect("a window opens at least one workspace"));
+        for main in shells {
+            tabs.add_group(main);
+        }
         let hooks = Hooks::start(paths.as_ref(), &cc.egui_ctx);
         let dev_flow = DevFlow::from_env();
         let flow = Flow::new(Tools::with_path(dev_flow.tool_path(agent_path.clone())));
@@ -151,11 +158,8 @@ impl Tidewatch {
         let trust = Trust::new(paths.as_ref(), cli_home);
         let dev_session = DevSession::from_env();
         let saver = Saver::new(paths.as_ref(), screenshot.is_none(), dev_session.debounce());
-        let last_used = LastUsed::new(
-            paths.as_ref(),
-            workspace.dir(),
-            screenshot.is_none() && !shell.env.background,
-        );
+        let last_used =
+            LastUsed::new(paths.as_ref(), screenshot.is_none() && !shell.env.background);
         let updates = Updates::new(
             &cc.egui_ctx,
             paths.as_ref().map(Prefs::load).unwrap_or_default().updates,
@@ -163,18 +167,19 @@ impl Tidewatch {
             screenshot.is_some(),
         );
         let mut app = Self {
-            tabs: Tabs::new(Pane::shell(main)),
+            tabs,
             jobs: Jobs::new(),
             closing: None,
             leftovers: leftover_glue::Host::new(),
             dev: DevWorktree::from_env(),
             dev_agent: DevAgent::from_env(),
             dev_panes: DevPanes::from_env(),
-            workspace,
+            workspaces,
             paths,
             screenshot,
             views: HashMap::new(),
             pane_jobs: Jobs::new(),
+            workspace_jobs: Jobs::new(),
             notes_writer: NotesWriter::new(),
             avatars: AvatarStore::offline(cc.egui_ctx.clone()),
             toast: None,
@@ -205,6 +210,9 @@ impl Tidewatch {
             updates,
             shell: shell::start(&cc.egui_ctx, shell),
         };
+        for (group, workspace) in app.workspaces.iter().enumerate() {
+            app.restore.enqueue(group, workspace);
+        }
         if let Some(paths) = &app.paths {
             agent_jobs::load(
                 &app.agent_jobs,
@@ -245,10 +253,10 @@ impl eframe::App for Tidewatch {
 
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
         self.shell.set_closing(true);
-        self.last_used.record();
+        self.last_used.record(&workspaces::remembered(&self.workspaces, &self.tabs));
         self.saver.flush(
             self.restore.settled(),
-            &WindowView::of(&self.workspace, self.focus),
+            workspaces::window_views(&self.workspaces, self.focus),
             &self.tabs,
         );
     }

@@ -41,7 +41,7 @@ impl Tidewatch {
     }
 
     pub(super) fn dialog_state(&self, preselect: Option<&str>) -> NewTab {
-        let (group, label, dir) = match &self.workspace {
+        let (group, label, dir) = match self.workspace() {
             Workspace::Repo(repo) => (Group::Repo, repo.label.clone(), repo.root.clone()),
             Workspace::Other { dir, label } => {
                 (Group::Other, format!("Other: {label}"), dir.clone())
@@ -70,7 +70,8 @@ impl Tidewatch {
         };
         let listener = self.hooks.listener();
         let trust = self.trust.grant();
-        match (&self.workspace, &self.paths) {
+        let group = self.tabs.active_group();
+        match (&self.workspaces[group], &self.paths) {
             (Workspace::Repo(repo), Some(paths)) => {
                 let tab = self.tabs.push(CREATING_TITLE.to_owned(), pane);
                 let target = Target::Worktree { repo: repo.root.clone() };
@@ -102,7 +103,7 @@ impl Tidewatch {
                 worktree_jobs::open(&self.jobs, ctx, spec);
             }
             _ => {
-                let dir = self.workspace.dir().to_path_buf();
+                let dir = self.workspace().dir().to_path_buf();
                 self.tabs.apply(Action::New, || Pane::shell(spawn_shell(ctx, &dir)));
             }
         }
@@ -223,7 +224,11 @@ impl Tidewatch {
             Action::New => self.new_tab(ctx),
             Action::CloseActive => self.close_tab(self.tabs.active(), ctx),
             Action::Close(index) => self.close_tab(index, ctx),
-            Action::Select(_) => self.tabs.apply(action, || unreachable!()),
+            Action::Select(_)
+            | Action::SelectNth(_)
+            | Action::NextGroup
+            | Action::PrevGroup
+            | Action::ShowGroup(_) => self.tabs.apply(action, || unreachable!()),
         }
     }
 }

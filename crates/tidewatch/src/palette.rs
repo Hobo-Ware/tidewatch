@@ -1,4 +1,4 @@
-//! The command palette's data: the command table plus the open tabs, the profiles and the workflows,
+//! The command palette's data: the command table plus the open tabs and repos, the profiles and the workflows,
 //! a fuzzy filter over their labels, and the selection. The matcher follows Kelp's palette.
 //! `palette_view` draws it.
 
@@ -66,6 +66,7 @@ pub(crate) fn fuzzy(query: &str, text: &str) -> Option<Match> {
 pub(crate) enum Target {
     Command(Command),
     Tab(usize),
+    Repo(usize),
     Profile(String),
     Workflow(String),
 }
@@ -78,11 +79,14 @@ pub(crate) struct Item {
     pub(crate) target: Target,
 }
 
-/// What the app has open right now. Profile and workflow entries are `(id, name)`.
+/// What the app has open right now: the tabs of the repo on show (and which one is active), the
+/// repos of the window (and which one is on show). Profile and workflow entries are `(id, name)`.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(crate) struct Sources {
     pub(crate) tabs: Vec<String>,
     pub(crate) active: usize,
+    pub(crate) repos: Vec<String>,
+    pub(crate) repo: usize,
     pub(crate) profiles: Vec<(String, String)>,
     pub(crate) workflows: Vec<(String, String)>,
 }
@@ -97,12 +101,17 @@ fn group_kind(group: Group) -> &'static str {
 }
 
 pub(crate) fn items(sources: &Sources, platform: Platform) -> Vec<Item> {
-    let commands = TABLE.iter().filter(|entry| entry.command.in_palette()).map(|entry| Item {
-        label: entry.title.to_owned(),
-        keys: entry.chord(platform).label(),
-        kind: group_kind(entry.group),
-        target: Target::Command(entry.command),
-    });
+    let several = sources.repos.len() > 1;
+    let commands = TABLE
+        .iter()
+        .filter(|entry| entry.command.in_palette())
+        .filter(|entry| several || !entry.command.needs_several_repos())
+        .map(|entry| Item {
+            label: entry.title.to_owned(),
+            keys: entry.chord(platform).label(),
+            kind: group_kind(entry.group),
+            target: Target::Command(entry.command),
+        });
     let tabs =
         sources.tabs.iter().enumerate().filter(|(i, _)| *i != sources.active).map(|(i, title)| {
             Item {
@@ -110,6 +119,15 @@ pub(crate) fn items(sources: &Sources, platform: Platform) -> Vec<Item> {
                 keys: Command::SelectTab(i).keys_on(platform),
                 kind: "tab",
                 target: Target::Tab(i),
+            }
+        });
+    let repos =
+        sources.repos.iter().enumerate().filter(|(i, _)| *i != sources.repo).map(|(i, label)| {
+            Item {
+                label: format!("Switch to repo: {label}"),
+                keys: String::new(),
+                kind: "repo",
+                target: Target::Repo(i),
             }
         });
     let profiles = sources.profiles.iter().map(|(id, name)| Item {
@@ -124,7 +142,7 @@ pub(crate) fn items(sources: &Sources, platform: Platform) -> Vec<Item> {
         kind: "workflow",
         target: Target::Workflow(id.clone()),
     });
-    commands.chain(tabs).chain(profiles).chain(workflows).collect()
+    commands.chain(tabs).chain(repos).chain(profiles).chain(workflows).collect()
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -193,6 +211,8 @@ mod tests {
         Sources {
             tabs: vec!["main".into(), "calm-comet".into(), "brave-otter".into()],
             active: 0,
+            repos: vec!["web".into()],
+            repo: 0,
             profiles: vec![("builder".into(), "Builder".into())],
             workflows: vec![("ship".into(), "Ship a feature".into())],
         }
@@ -240,6 +260,20 @@ mod tests {
                 "Workflow: Ship a feature",
             ]
         );
+    }
+
+    #[test]
+    fn several_repos_add_the_repo_commands_and_a_row_for_each_other_repo() {
+        let two = Sources { repos: vec!["web".into(), "api".into()], ..sources() };
+        let all = items(&two, Platform::Mac);
+        let names: Vec<_> = all.iter().map(|item| item.label.as_str()).collect();
+        assert!(names.contains(&"Next repo") && names.contains(&"Previous repo"));
+        assert!(names.contains(&"Switch to repo: api"));
+        assert!(!names.contains(&"Switch to repo: web"), "that one is on show");
+        let row = all.iter().find(|item| item.label == "Next repo").unwrap();
+        assert_eq!(row.keys, "Cmd+Ctrl+]");
+        let one = items(&sources(), Platform::Mac);
+        assert!(!one.iter().any(|item| item.label.contains("repo")));
     }
 
     #[test]

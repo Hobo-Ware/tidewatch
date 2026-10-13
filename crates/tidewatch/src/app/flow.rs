@@ -24,7 +24,8 @@ impl Tidewatch {
         start: Start,
         existing: Option<Worktree>,
     ) {
-        let (Workspace::Repo(repo), Some(paths)) = (&self.workspace, &self.paths) else {
+        let group = self.tabs.active_group();
+        let (Workspace::Repo(repo), Some(paths)) = (&self.workspaces[group], &self.paths) else {
             self.show_toast("A workflow needs a git repo", ctx);
             return;
         };
@@ -36,7 +37,7 @@ impl Tidewatch {
             trust: self.trust.grant(),
         };
         let now = ctx.input(|i| i.time);
-        self.runs.open(ctx, &mut self.tabs, &env, &repo.root, existing, start, now);
+        self.runs.open(ctx, &mut self.tabs, group, &env, &repo.root, existing, start, now);
     }
 
     /// Carries out the restore: the plan of a dev switch, or whatever the startup and reopen jobs
@@ -60,7 +61,10 @@ impl Tidewatch {
         let spawn = Spawn { agent: &agent, shell: &shell };
         let runs = &mut self.runs;
         let report = match plan {
-            Some(plan) => self.restore.apply(&plan, ctx, &mut self.tabs, &env, &spawn, runs, now),
+            Some(plan) => {
+                let group = self.tabs.active_group();
+                self.restore.apply(&plan, group, ctx, &mut self.tabs, &env, &spawn, runs, now)
+            }
             None => self.restore.tick(ctx, &mut self.tabs, &env, &spawn, runs, now),
         };
         for text in report.toasts {
@@ -68,7 +72,7 @@ impl Tidewatch {
         }
         self.notice = report.notice.or(self.notice.take());
         if let Some(leftovers) = report.leftovers {
-            self.leftovers.set(leftovers);
+            self.leftovers.add(leftovers);
         }
         if let Some(focus) = report.focus {
             self.focus = focus;

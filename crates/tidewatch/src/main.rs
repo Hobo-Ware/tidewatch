@@ -124,14 +124,17 @@ fn main() -> eframe::Result<()> {
     if args.toggle {
         std::process::exit(single_instance::toggle_running(paths.as_ref()));
     }
-    let start = last_workspace::pick(
+    let prefs = paths.as_ref().map(Prefs::load).unwrap_or_default();
+    let opening = last_workspace::pick(
         args.path,
         std::env::current_dir().ok(),
         paths.as_ref().and_then(last_workspace::load),
         |dir| Repo::discover(dir).is_some(),
         Path::is_dir,
     );
-    let workspace = Workspace::open(&start);
+    let restoring = !args.no_restore && prefs.restore_session;
+    let workspaces = open_workspaces(&opening, restoring);
+    let workspace = &workspaces[0];
     let agent_path = path_env::for_this_platform(
         std::env::var_os("PATH").as_deref(),
         home.as_deref().unwrap_or_else(|| Path::new(".")),
@@ -139,11 +142,11 @@ fn main() -> eframe::Result<()> {
     let screenshot = DevScreenshot::from_env();
     let background = screenshot.is_some() || std::env::var_os("TIDEWATCH_BACKGROUND").is_some();
     let env = Env::detect(background);
-    let window_prefs = paths.as_ref().map(Prefs::load).unwrap_or_default().window;
+    let window_prefs = prefs.window;
     let plan = Plan::new(env, &window_prefs);
 
     let key = single_instance::workspace_key(workspace.dir());
-    let socket = paths.as_ref().map(|paths| paths.instance_socket(&key));
+    let socket = paths.as_ref().map(TidewatchPaths::app_socket);
     let run = match (screenshot.is_some(), background) {
         (true, _) => Run::Screenshot,
         (false, true) => Run::Background { isolated },
@@ -186,7 +189,7 @@ fn main() -> eframe::Result<()> {
         Box::new(move |cc| {
             Ok(Box::new(Tidewatch::new(
                 cc,
-                workspace,
+                workspaces,
                 paths,
                 agent_path,
                 screenshot,
@@ -196,6 +199,21 @@ fn main() -> eframe::Result<()> {
             )))
         }),
     )
+}
+
+/// The repo in front, then the others a launch brings back, each once however its folder is spelled.
+fn open_workspaces(opening: &last_workspace::Opening, restoring: bool) -> Vec<Workspace> {
+    let also = opening.also.iter().filter(|_| restoring);
+    let mut workspaces = vec![Workspace::open(&opening.dir)];
+    for dir in also {
+        let workspace = Workspace::open(dir);
+        let key = single_instance::workspace_key(workspace.dir());
+        let known = workspaces.iter().any(|w| single_instance::workspace_key(w.dir()) == key);
+        if !known {
+            workspaces.push(workspace);
+        }
+    }
+    workspaces
 }
 
 /// The quake window has no Dock icon: the menu-bar item and the hotkey are how it is reached.

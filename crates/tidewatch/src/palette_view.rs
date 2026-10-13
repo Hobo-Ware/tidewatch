@@ -177,6 +177,8 @@ mod tests {
             let sources = Sources {
                 tabs: vec!["main".into(), "calm-comet".into()],
                 active: 0,
+                repos: vec!["web".into()],
+                repo: 0,
                 profiles: vec![("builder".into(), "Builder".into())],
                 workflows: vec![("ship".into(), "Ship a feature".into())],
             };

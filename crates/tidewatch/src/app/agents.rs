@@ -21,7 +21,7 @@ impl Tidewatch {
                 self.probe_agents(probes, ctx);
                 self.refresh_trust(ctx);
                 if let Some(paths) = &self.paths {
-                    self.restore.begin(ctx, paths, &self.workspace, &self.catalog);
+                    self.restore.begin(ctx, paths, &self.catalog);
                 }
                 self.run_dev_agent(ctx);
             }
@@ -80,7 +80,7 @@ impl Tidewatch {
     fn follow(&mut self, follow: Follow, ctx: &egui::Context) {
         match follow {
             Follow::Finding { tab, notes_file, dir, author, finding } => {
-                let dir = dir.unwrap_or_else(|| self.workspace.dir().to_path_buf());
+                let dir = dir.unwrap_or_else(|| self.workspace_of_tab(tab).dir().to_path_buf());
                 let now = std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
                     .map_or(0, |d| d.as_secs() as i64);
