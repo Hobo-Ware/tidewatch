@@ -7,6 +7,7 @@ use std::path::PathBuf;
 
 use stdusk_core::progress::Progress;
 use stdusk_core::terminal::PtyTerm;
+use tidewatch_core::end_block::{self, EndBlock};
 use tidewatch_core::events::TabEvent;
 use tidewatch_core::status::{
     AgentStatus, HookKind, ProgressSignal, StatusTracker, TerminalSignal,
@@ -79,12 +80,15 @@ pub(crate) struct AgentRun {
     pub(crate) agent_id: String,
     pub(crate) notes_file: Option<PathBuf>,
     pub(crate) report: Report,
+    /// The end-block card on the tab is open.
+    pub(crate) end_open: bool,
     tracker: StatusTracker,
     status: AgentStatus,
     started_at: f64,
     finished_at: Option<f64>,
     title_seen: Option<String>,
     detail: Option<String>,
+    end_block: Option<EndBlock>,
     failed: Option<String>,
 }
 
@@ -95,12 +99,14 @@ impl AgentRun {
             agent_id,
             notes_file: None,
             report: Report::default(),
+            end_open: false,
             tracker: StatusTracker::setting_up(now),
             status: AgentStatus::SettingUp,
             started_at: now,
             finished_at: None,
             title_seen: None,
             detail: None,
+            end_block: None,
             failed: None,
         }
     }
@@ -127,6 +133,12 @@ impl AgentRun {
         self.detail.as_deref()
     }
 
+    /// The Done / Needs you / Next block of the agent's last message (D13), when it had one. Cleared
+    /// when the next turn starts.
+    pub(crate) fn end_block(&self) -> Option<&EndBlock> {
+        self.end_block.as_ref()
+    }
+
     #[cfg(test)]
     pub(crate) fn tracker(&self) -> &StatusTracker {
         &self.tracker
@@ -140,6 +152,13 @@ impl AgentRun {
     pub(crate) fn on_event(&mut self, event: TabEvent, now: f64) {
         match event {
             TabEvent::Hook(hook) => {
+                match (&hook.kind, &hook.message) {
+                    (HookKind::TurnStarted, _) => self.end_block = None,
+                    (HookKind::TurnDone, Some(message)) => {
+                        self.end_block = end_block::parse(message);
+                    }
+                    _ => {}
+                }
                 match (&hook.kind, &hook.message) {
                     (HookKind::TurnFailed(reason), _) => self.detail = Some(reason.clone()),
                     (HookKind::IdleWaiting, _) => {}
@@ -252,6 +271,29 @@ mod tests {
         run.on_event(hook(HookKind::TurnStarted, None), 600.0);
         run.refresh(600.0);
         assert_eq!(run.elapsed(610.0), 600.0);
+    }
+
+    #[test]
+    fn the_end_block_of_the_last_message_is_kept_until_the_next_turn_starts() {
+        let mut run = running(0.0);
+        run.on_event(hook(HookKind::TurnStarted, None), 1.0);
+        let message =
+            "Added it.\n\n**Done**\n- the helper\n\n**Needs you**\n- nothing\n\n**Next**\n- review";
+        run.on_event(hook(HookKind::TurnDone, Some(message)), 2.0);
+        let block = run.end_block().unwrap();
+        assert_eq!(block.done, ["the helper"]);
+        assert_eq!(block.next, ["review"]);
+        run.on_event(hook(HookKind::TurnStarted, None), 3.0);
+        assert_eq!(run.end_block(), None);
+    }
+
+    #[test]
+    fn a_stop_without_text_or_without_the_block_leaves_no_card() {
+        let mut run = running(0.0);
+        run.on_event(hook(HookKind::TurnDone, None), 1.0);
+        assert_eq!(run.end_block(), None);
+        run.on_event(hook(HookKind::TurnDone, Some("Just prose, no block.")), 2.0);
+        assert_eq!(run.end_block(), None);
     }
 
     #[test]
