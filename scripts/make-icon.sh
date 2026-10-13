@@ -1,0 +1,32 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+root="$(cd "$(dirname "$0")/.." && pwd)"
+svg="$root/assets/icon.svg"
+work="$(mktemp -d)"
+trap 'rm -rf "${work:?}"' EXIT
+
+render() {
+  local px="$1" png="$2"
+  inkscape "$svg" --export-type=png --export-width="$px" --export-filename="$png" >/dev/null 2>&1
+  pngquant --force --speed 1 --strip 64 --output "$png" "$png"
+  oxipng -q -o 6 --strip safe "$png"
+}
+
+mkdir -p "$work/Tidewatch.iconset"
+for size in 16 32 128 256 512; do
+  for scale in 1 2; do
+    name="icon_${size}x${size}"
+    [ "$scale" = 2 ] && name="${name}@2x"
+    render $((size * scale)) "$work/Tidewatch.iconset/${name}.png"
+  done
+done
+iconutil -c icns "$work/Tidewatch.iconset" -o "$root/assets/Tidewatch.icns"
+echo "Wrote assets/Tidewatch.icns ($(du -h "$root/assets/Tidewatch.icns" | cut -f1))"
+
+render 512 "$root/assets/icon-512.png"
+echo "Wrote assets/icon-512.png ($(du -h "$root/assets/icon-512.png" | cut -f1))"
+
+big="$work/orig.png"
+inkscape "$svg" --export-type=png --export-width=512 --export-filename="$big" >/dev/null 2>&1
+magick compare -metric PSNR "$big" "$root/assets/icon-512.png" null: 2>&1 | sed 's/^/PSNR (dB): /' || true
