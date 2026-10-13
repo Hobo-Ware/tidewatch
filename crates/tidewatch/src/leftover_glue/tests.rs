@@ -51,7 +51,7 @@ impl Fixture {
     }
 
     fn scan(&mut self) {
-        self.host.set(worktree::leftovers(&self.paths, &[]));
+        self.host.add(worktree::leftovers(&self.paths, &[]));
     }
 
     fn settle(&mut self) {

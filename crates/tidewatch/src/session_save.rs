@@ -17,17 +17,24 @@ use crate::pane::{AgentTab, Body, Pane};
 use crate::repo::Workspace;
 use crate::tabs::{Tab, Tabs};
 
-/// What the window itself says: the folder, which group it is, and focus mode.
+/// What one workspace of the window says: its tab group, its folder, whether that is the Other
+/// group, and focus mode.
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct WindowView<'a> {
+    pub(crate) group: usize,
     pub(crate) dir: &'a Path,
     pub(crate) other: bool,
     pub(crate) focus: bool,
 }
 
 impl<'a> WindowView<'a> {
-    pub(crate) fn of(workspace: &'a Workspace, focus: bool) -> Self {
-        Self { dir: workspace.dir(), other: matches!(workspace, Workspace::Other { .. }), focus }
+    pub(crate) fn of(group: usize, workspace: &'a Workspace, focus: bool) -> Self {
+        Self {
+            group,
+            dir: workspace.dir(),
+            other: matches!(workspace, Workspace::Other { .. }),
+            focus,
+        }
     }
 }
 
@@ -117,24 +124,27 @@ fn tab_ref<'a, T>(tab: &'a Tab<Pane<T>>, window_dir: &'a Path) -> Option<TabRef<
     }
 }
 
-/// The tabs to save, in order, each with whether it sits at or before the active tab.
-fn kept<'a, T>(tabs: &'a Tabs<Pane<T>>, dir: &'a Path) -> impl Iterator<Item = (bool, TabRef<'a>)> {
-    let active = tabs.active();
-    tabs.items()
-        .iter()
-        .enumerate()
-        .filter_map(move |(i, tab)| tab_ref(tab, dir).map(|tab| (i <= active, tab)))
+/// The tabs of the view's group to save, in order, each with whether it sits at or before the
+/// group's selected tab.
+fn kept<'a, T>(
+    tabs: &'a Tabs<Pane<T>>,
+    view: &WindowView<'a>,
+) -> impl Iterator<Item = (bool, TabRef<'a>)> {
+    let selected = tabs.selected_in(view.group);
+    let dir = view.dir;
+    tabs.in_group(view.group)
+        .filter_map(move |(i, tab)| tab_ref(tab, dir).map(|tab| (i <= selected, tab)))
 }
 
 fn active_index(before_or_at_active: usize) -> usize {
     before_or_at_active.saturating_sub(1)
 }
 
-/// The window to write. The active tab is the saved one at or just before the open active tab, so
-/// it still points somewhere when the active tab is one that is not saved.
+/// The window to write for one workspace. The active tab is the saved one at or just before the
+/// group's selected tab, so it still points somewhere when that tab is one that is not saved.
 pub(crate) fn saved_window<T>(view: &WindowView, tabs: &Tabs<Pane<T>>) -> SavedWindow {
     let mut active = 0;
-    let saved: Vec<SavedTab> = kept(tabs, view.dir)
+    let saved: Vec<SavedTab> = kept(tabs, view)
         .map(|(upto_active, tab)| {
             active += usize::from(upto_active);
             tab.into_saved()
@@ -156,7 +166,7 @@ pub(crate) fn signature<T>(view: &WindowView, tabs: &Tabs<Pane<T>>) -> u64 {
     view.other.hash(&mut hasher);
     view.focus.hash(&mut hasher);
     let mut active = 0;
-    for (upto_active, tab) in kept(tabs, view.dir) {
+    for (upto_active, tab) in kept(tabs, view) {
         active += usize::from(upto_active);
         tab.hash(&mut hasher);
     }
@@ -191,7 +201,7 @@ mod tests {
     const DIR: &str = "/work/web";
 
     fn view(focus: bool) -> WindowView<'static> {
-        WindowView { dir: Path::new(DIR), other: false, focus }
+        WindowView { group: 0, dir: Path::new(DIR), other: false, focus }
     }
 
     fn worktree(name: &str) -> Worktree {
@@ -244,9 +254,10 @@ mod tests {
         let repo =
             Workspace::Repo(crate::repo::Repo { root: PathBuf::from(DIR), label: "web".into() });
         let other = Workspace::Other { dir: PathBuf::from("/scratch"), label: "scratch".into() };
-        let (repo, other) = (WindowView::of(&repo, true), WindowView::of(&other, false));
+        let (repo, other) = (WindowView::of(0, &repo, true), WindowView::of(1, &other, false));
         assert_eq!((repo.dir, repo.other, repo.focus), (Path::new(DIR), false, true));
         assert_eq!((other.dir, other.other, other.focus), (Path::new("/scratch"), true, false));
+        assert_eq!((repo.group, other.group), (0, 1));
     }
 
     #[test]
@@ -350,7 +361,7 @@ mod tests {
         let mut tabs = tabs();
         tabs.push("shell".into(), pane(Body::Shell(1), None, None));
         tabs.push("Builder".into(), pane(Body::Shell(2), None, Some(agent(Some("abc")))));
-        let other = WindowView { dir: Path::new("/scratch"), other: true, focus: false };
+        let other = WindowView { group: 0, dir: Path::new("/scratch"), other: true, focus: false };
         let saved = saved_window(&other, &tabs);
         assert!(saved.other);
         assert_eq!(saved.tabs[1], SavedTab::Shell { dir: PathBuf::from("/scratch"), branch: None });
@@ -426,5 +437,35 @@ mod tests {
         tabs.push("b".into(), pane(Body::Shell(2), None, None));
         let saved = saved_window(&view(false), &tabs);
         assert_eq!(worktree_dirs(&saved), vec![worktree("a").path]);
+    }
+
+    #[test]
+    fn each_group_saves_its_own_tabs_and_its_own_active_tab() {
+        let mut tabs = tabs();
+        tabs.push("a".into(), pane(Body::Shell(1), Some(worktree("a")), None));
+        let api = tabs.add_group(Pane::shell(10));
+        let b = tabs.push_in(api, "b".into(), pane(Body::Shell(2), Some(worktree("b")), None));
+        tabs.push_in(api, "c".into(), pane(Body::Shell(3), Some(worktree("c")), None));
+        tabs.select_id(b);
+        let web = saved_window(&view(false), &tabs);
+        let other =
+            WindowView { group: api, dir: Path::new("/work/api"), other: false, focus: false };
+        let api = saved_window(&other, &tabs);
+        assert_eq!((web.tabs.len(), web.active), (2, 1));
+        assert_eq!((api.dir.as_path(), api.tabs.len(), api.active), (Path::new("/work/api"), 3, 1));
+        assert_eq!(api.tabs[0], SavedTab::Main);
+        assert_eq!(worktree_dirs(&api), vec![worktree("b").path, worktree("c").path]);
+    }
+
+    #[test]
+    fn a_tab_in_another_group_moves_only_that_groups_signature() {
+        let mut tabs = tabs();
+        let api = tabs.add_group(Pane::shell(10));
+        let other =
+            WindowView { group: api, dir: Path::new("/work/api"), other: false, focus: false };
+        let (web_before, api_before) = (signature(&view(false), &tabs), signature(&other, &tabs));
+        tabs.push_in(api, "b".into(), pane(Body::Shell(2), Some(worktree("b")), None));
+        assert_eq!(signature(&view(false), &tabs), web_before);
+        assert_ne!(signature(&other, &tabs), api_before);
     }
 }

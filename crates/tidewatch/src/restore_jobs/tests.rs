@@ -88,6 +88,7 @@ fn window(dir: &Path, tabs: Vec<SavedTab>) -> SavedWindow {
 fn spec(f: &Fixture, skip: bool) -> StartupSpec {
     StartupSpec {
         paths: f.paths.clone(),
+        group: 0,
         dir: f.repo.clone(),
         other: false,
         skip,
@@ -118,6 +119,7 @@ fn run(spec: &StartupSpec) -> Startup {
 fn clone_spec(spec: &StartupSpec) -> StartupSpec {
     StartupSpec {
         paths: spec.paths.clone(),
+        group: spec.group,
         dir: spec.dir.clone(),
         other: spec.other,
         skip: spec.skip,

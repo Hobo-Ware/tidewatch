@@ -110,7 +110,7 @@ impl Fixture {
             tools: Tools::with_path(std::env::var_os("PATH").unwrap_or_default()),
             trust: None,
         };
-        self.host.open(&self.ctx, &mut self.tabs, &env, &self.repo, existing, start, 0.0)
+        self.host.open(&self.ctx, &mut self.tabs, 0, &env, &self.repo, existing, start, 0.0)
     }
 
     fn tick(&mut self) {
