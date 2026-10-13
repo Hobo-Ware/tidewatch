@@ -108,6 +108,21 @@ pub struct Listed {
 pub struct Leftover {
     pub path: PathBuf,
     pub branch: Option<String>,
+    /// The repository it was made from, when the registry still has it.
+    pub repo: Option<PathBuf>,
+}
+
+impl Leftover {
+    /// The worktree to hand to [`inspect`] or [`remove`]. `None` when the registry has no record
+    /// of it, because git needs the repository to remove anything.
+    #[must_use]
+    pub fn worktree(&self) -> Option<Worktree> {
+        Some(Worktree {
+            repo: self.repo.clone()?,
+            path: self.path.clone(),
+            branch: self.branch.clone()?,
+        })
+    }
 }
 
 fn git(dir: &Path) -> Command {
@@ -398,9 +413,13 @@ pub fn leftovers(paths: &TidewatchPaths, open: &[PathBuf]) -> Vec<Leftover> {
         .filter(|dir| !is_hidden(dir))
         .flat_map(|repo_dir| subdirs(&repo_dir).collect::<Vec<_>>())
         .filter(|dir| dir.join(".git").is_file() && !open.contains(dir))
-        .map(|path| Leftover {
-            branch: stored.iter().find(|w| w.path == path).map(|w| w.branch.clone()),
-            path,
+        .map(|path| {
+            let recorded = stored.iter().find(|w| w.path == path);
+            Leftover {
+                branch: recorded.map(|w| w.branch.clone()),
+                repo: recorded.map(|w| w.repo.clone()),
+                path,
+            }
         })
         .collect();
     found.sort_by(|a, b| a.path.cmp(&b.path));

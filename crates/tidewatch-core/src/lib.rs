@@ -19,6 +19,7 @@ pub mod path_env;
 pub mod paths;
 pub mod pr;
 pub mod pr_lines;
+pub mod prefs;
 pub mod prepare;
 pub mod profiles;
 pub mod prompt;
