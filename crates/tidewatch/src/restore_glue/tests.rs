@@ -430,3 +430,25 @@ fn the_dev_resume_plan_is_one_workflow_tab_in_the_named_worktree() {
     );
     assert_eq!(plan.skipped, []);
 }
+
+#[test]
+fn turning_restoring_off_in_settings_is_written_to_the_settings_file() {
+    let mut f = Fixture::new(false);
+    assert!(f.host.restore_enabled());
+    f.host.set_restore_enabled(&f.paths, false);
+    assert!(!f.host.restore_enabled());
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while Prefs::load(&f.paths).restore_session {
+        assert!(Instant::now() < deadline, "the setting was never written");
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    f.host.set_restore_enabled(&f.paths, true);
+    assert!(f.host.restore_enabled());
+}
+
+#[test]
+fn the_flag_is_reported_apart_from_the_setting() {
+    let f = Fixture::new(true);
+    assert!(f.host.skipped_by_flag());
+    assert!(f.host.restore_enabled(), "the setting itself is still on");
+}

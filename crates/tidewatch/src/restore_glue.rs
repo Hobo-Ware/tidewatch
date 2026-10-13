@@ -71,6 +71,22 @@ impl Host {
         Self { jobs: Jobs::new(), phase: Phase::Waiting, skip, prefs: Prefs::default(), disk }
     }
 
+    /// Whether launch restores the last session, as the settings say.
+    pub(crate) fn restore_enabled(&self) -> bool {
+        self.prefs.restore_session
+    }
+
+    /// This run was started with `--no-restore`.
+    pub(crate) fn skipped_by_flag(&self) -> bool {
+        self.skip
+    }
+
+    /// Takes the new setting and writes it, off the UI thread.
+    pub(crate) fn set_restore_enabled(&mut self, paths: &TidewatchPaths, on: bool) {
+        self.prefs.restore_session = on;
+        restore_jobs::save_prefs(paths.clone(), self.prefs);
+    }
+
     /// True until the saved tabs are back (or there were none to bring back).
     pub(crate) fn settled(&self) -> bool {
         self.phase == Phase::Settled

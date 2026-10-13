@@ -1,6 +1,7 @@
-//! The settings view: three pages, the profile editor, the workflow editor and folder trust (D14),
-//! with Save and Close below. It replaces the terminal area while open, like a settings tab. A full
-//! settings screen is Phase 10; this covers `profiles.toml`, `workflows.toml` and the trust consent.
+//! The settings view: four pages, the profile editor, the workflow editor, folder trust (D14) and
+//! General, with Save and Close below. It replaces the terminal area while open, like a settings tab. A full
+//! settings screen is Phase 10; this covers `profiles.toml`, `workflows.toml`, the trust consent and
+//! `settings.toml`.
 
 use egui::{Align, Layout, Rect, RichText, ScrollArea, UiBuilder, Vec2};
 use stdusk_egui::colors;
@@ -21,6 +22,8 @@ pub(crate) enum Action {
     Save,
     Close,
     Trust(tidewatch_core::consent::Event),
+    /// The restore switch moved: the new value. It applies at once, so there is nothing to save.
+    Restore(bool),
 }
 
 /// The files the two pages edit, for the line under the tabs.
@@ -28,6 +31,14 @@ pub(crate) struct Files {
     pub(crate) profiles: String,
     pub(crate) workflows: String,
     pub(crate) trust: String,
+    pub(crate) general: String,
+}
+
+/// What the General page shows.
+pub(crate) struct General {
+    pub(crate) restore: bool,
+    /// This run was started with `--no-restore`, which wins over the switch.
+    pub(crate) skipped_by_flag: bool,
 }
 
 pub(crate) fn show(
@@ -36,6 +47,7 @@ pub(crate) fn show(
     settings: &mut Settings,
     files: &Files,
     trust: &trust_view::Page,
+    general: &General,
 ) -> Option<Action> {
     ui.scope_builder(UiBuilder::new().max_rect(area.shrink(MARGIN)), |ui| {
         let mut action = None;
@@ -45,6 +57,7 @@ pub(crate) fn show(
             Section::Profiles => &files.profiles,
             Section::Workflows => &files.workflows,
             Section::Trust => &files.trust,
+            Section::General => &files.general,
         };
         ui.label(RichText::new(file).monospace().size(11.5).color(colors::dim()));
         ui.add_space(6.0);
@@ -63,9 +76,14 @@ pub(crate) fn show(
                     .inner
                     .map(Action::Trust);
             }
+            Section::General => action = general_page(ui, general).map(Action::Restore),
         }
         ui.add_space(4.0);
-        let footer_action = footer(ui, &settings.status(), settings.section != Section::Trust);
+        let footer_action = footer(
+            ui,
+            &settings.status(),
+            !matches!(settings.section, Section::Trust | Section::General),
+        );
         action.or(footer_action)
     })
     .inner
@@ -208,6 +226,28 @@ fn form(ui: &mut egui::Ui, editor: &mut Editor, height: f32) {
     }
 }
 
+fn general_page(ui: &mut egui::Ui, general: &General) -> Option<bool> {
+    ui.spacing_mut().item_spacing.y = 6.0;
+    let mut on = general.restore;
+    let changed = switch_row(ui, "Restore the last session at launch", &mut on);
+    ui.label(
+        RichText::new(
+            "Tabs reopen where they were: shells in their worktrees, agents resumed in the same \
+             conversation. A tab that ran at YOLO is never resumed.",
+        )
+        .size(12.0)
+        .color(colors::dim()),
+    );
+    if general.skipped_by_flag {
+        ui.label(
+            RichText::new("This run was started with --no-restore, so nothing was restored.")
+                .size(12.0)
+                .color(colors::dim()),
+        );
+    }
+    changed.then_some(on)
+}
+
 fn switch_row(ui: &mut egui::Ui, text: &str, on: &mut bool) -> bool {
     ui.horizontal(|ui| {
         let changed = toggle_switch(ui, on).changed();
@@ -270,6 +310,7 @@ mod tests {
             profiles: "profiles.toml".into(),
             workflows: "workflows.toml".into(),
             trust: "trust.toml".into(),
+            general: "settings.toml".into(),
         }
     }
 
@@ -283,11 +324,53 @@ mod tests {
         }
     }
 
+    fn general(restore: bool) -> General {
+        General { restore, skipped_by_flag: false }
+    }
+
+    #[test]
+    fn clicking_the_restore_switch_reports_the_new_value_and_nothing_else_does() {
+        let ctx = egui::Context::default();
+        let run = |general: &General, events: Vec<egui::Event>| {
+            let raw = RawInput {
+                screen_rect: Some(Rect::from_min_size(pos2(0.0, 0.0), Vec2::new(600.0, 200.0))),
+                focused: true,
+                events,
+                ..RawInput::default()
+            };
+            let mut answer = None;
+            let _ = ctx.run_ui(raw, |ui| {
+                ui.scope_builder(
+                    UiBuilder::new()
+                        .max_rect(Rect::from_min_size(pos2(0.0, 0.0), Vec2::new(500.0, 100.0))),
+                    |ui| {
+                        answer = general_page(ui, general);
+                    },
+                );
+            });
+            answer
+        };
+        let at = pos2(19.0, 11.0);
+        let button = |pressed| egui::Event::PointerButton {
+            pos: at,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        };
+        let on = general(true);
+        assert_eq!(run(&on, vec![]), None);
+        assert_eq!(run(&on, vec![egui::Event::PointerMoved(at)]), None);
+        assert_eq!(run(&on, vec![button(true)]), None);
+        assert_eq!(run(&on, vec![button(false)]), Some(false));
+        assert_eq!(run(&general(false), vec![button(true)]), None);
+        assert_eq!(run(&general(false), vec![button(false)]), Some(true));
+    }
+
     #[test]
     fn all_pages_render_headless_and_ask_for_nothing_until_clicked() {
         let mut settings = settings();
         let ctx = egui::Context::default();
-        for section in [Section::Profiles, Section::Workflows, Section::Trust] {
+        for section in [Section::Profiles, Section::Workflows, Section::Trust, Section::General] {
             settings.section = section;
             for _ in 0..2 {
                 let raw = RawInput {
@@ -301,7 +384,7 @@ mod tests {
                 let mut action = None;
                 let _ = ctx.run_ui(raw, |ui| {
                     let area = ui.max_rect();
-                    action = show(ui, area, &mut settings, &files(), &page());
+                    action = show(ui, area, &mut settings, &files(), &page(), &general(true));
                 });
                 assert!(action.is_none());
             }
