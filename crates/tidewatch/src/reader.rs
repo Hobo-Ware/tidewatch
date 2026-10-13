@@ -19,8 +19,6 @@ const POKE_GAP_S: f64 = 0.3;
 pub(crate) enum Unavailable {
     /// A custom agent: there is no parser for its files.
     NoReader,
-    /// The parser exists but was not checked against a real run (Codex).
-    Unverified,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -40,7 +38,6 @@ pub(crate) enum Note {
     Searching,
     Missing,
     NoReader,
-    Unverified,
     ChosenRaw,
 }
 
@@ -51,9 +48,6 @@ impl Note {
             Self::Missing => "No transcript found, showing the terminal".to_owned(),
             Self::NoReader => {
                 "No transcript reader for this agent, showing the terminal".to_owned()
-            }
-            Self::Unverified => {
-                "This agent's transcript is not verified yet, showing the terminal".to_owned()
             }
             Self::ChosenRaw => {
                 format!("Raw terminal. {} for the Reader", Command::Reader.keys())
@@ -73,7 +67,6 @@ pub(crate) enum Shown {
 pub(crate) fn shown(wants_reader: bool, link: Link) -> Shown {
     match (link, wants_reader) {
         (Link::Unavailable(Unavailable::NoReader), _) => Shown::Terminal(Some(Note::NoReader)),
-        (Link::Unavailable(Unavailable::Unverified), _) => Shown::Terminal(Some(Note::Unverified)),
         (Link::Found, true) => Shown::Reader,
         (Link::Found, false) => Shown::Terminal(Some(Note::ChosenRaw)),
         (_, false) => Shown::Terminal(None),
@@ -99,7 +92,6 @@ impl Reader {
     fn first_link(source: Option<Source>) -> Link {
         match source {
             None => Link::Unavailable(Unavailable::NoReader),
-            Some(source) if !source.verified() => Link::Unavailable(Unavailable::Unverified),
             Some(_) => Link::Idle,
         }
     }
@@ -258,10 +250,6 @@ mod tests {
     fn an_unavailable_reader_always_shows_the_terminal_with_its_reason() {
         for wants in [true, false] {
             assert_eq!(
-                shown(wants, Link::Unavailable(Unavailable::Unverified)),
-                Shown::Terminal(Some(Note::Unverified))
-            );
-            assert_eq!(
                 shown(wants, Link::Unavailable(Unavailable::NoReader)),
                 Shown::Terminal(Some(Note::NoReader))
             );
@@ -269,15 +257,15 @@ mod tests {
     }
 
     #[test]
-    fn agents_start_in_the_reader_and_codex_and_custom_agents_cannot() {
+    fn agents_start_in_the_reader_and_custom_agents_cannot() {
         let claude = Reader::for_agent("claude", Some("id".into()), PathBuf::from("/w"));
         assert_eq!(claude.link(), Link::Idle);
         assert!(claude.wants_reader());
         let codex = Reader::for_agent("codex", None, PathBuf::from("/w"));
-        assert_eq!(codex.link(), Link::Unavailable(Unavailable::Unverified));
+        assert_eq!(codex.link(), Link::Idle);
         let custom = Reader::for_agent("aider", None, PathBuf::from("/w"));
         assert_eq!(custom.link(), Link::Unavailable(Unavailable::NoReader));
-        assert!(!codex.needs_start() && !custom.needs_start());
+        assert!(codex.needs_start() && !custom.needs_start());
     }
 
     #[test]
@@ -293,9 +281,9 @@ mod tests {
 
     #[test]
     fn toggling_a_tab_that_cannot_read_still_shows_the_terminal() {
-        let mut codex = Reader::for_agent("codex", None, PathBuf::from("/w"));
-        assert_eq!(codex.toggle(), Shown::Terminal(Some(Note::Unverified)));
-        assert_eq!(codex.toggle(), Shown::Terminal(Some(Note::Unverified)));
+        let mut custom = Reader::for_agent("aider", None, PathBuf::from("/w"));
+        assert_eq!(custom.toggle(), Shown::Terminal(Some(Note::NoReader)));
+        assert_eq!(custom.toggle(), Shown::Terminal(Some(Note::NoReader)));
     }
 
     #[test]
@@ -339,8 +327,8 @@ mod tests {
     #[test]
     fn a_relaunch_into_an_agent_without_a_reader_shows_the_terminal() {
         let mut reader = Reader::for_agent("claude", None, PathBuf::from("/w"));
-        reader.relaunch("codex", None, "--- Stage 3 ---".into());
-        assert_eq!(reader.link(), Link::Unavailable(Unavailable::Unverified));
+        reader.relaunch("aider", None, "--- Stage 3 ---".into());
+        assert_eq!(reader.link(), Link::Unavailable(Unavailable::NoReader));
         assert!(!reader.needs_start());
         reader.relaunch("claude", None, "--- Stage 4 ---".into());
         assert_eq!(reader.link(), Link::Idle);
