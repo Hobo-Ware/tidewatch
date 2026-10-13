@@ -34,6 +34,8 @@ pub const ACTIVE_WINDOW_SECS: f64 = 1.5;
 pub const BELL_SETTLE_SECS: f64 = 1.0;
 
 const MESSAGE_MAX_CHARS: usize = 400;
+/// A hook's last message is kept nearly whole: the Done / Needs you / Next block sits at its end.
+const TURN_MESSAGE_MAX_CHARS: usize = 20_000;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Reason {
@@ -108,7 +110,7 @@ pub fn parse_hook(agent: &str, payload: &Value) -> Option<HookEvent> {
 
 fn parse_named_event(object: &serde_json::Map<String, Value>) -> Option<HookEvent> {
     let name = object.get("hook_event_name")?.as_str()?;
-    let message = |key: &str| text(object.get(key)).map(|m| clip(&m));
+    let message = |key: &str| text(object.get(key)).map(|m| clip_to(&m, TURN_MESSAGE_MAX_CHARS));
     let (kind, message) = match name {
         "SessionStart" => (HookKind::SessionStart, None),
         "UserPromptSubmit" | "BeforeAgent" => (HookKind::TurnStarted, None),
@@ -202,10 +204,14 @@ fn text(value: Option<&Value>) -> Option<String> {
 }
 
 fn clip(message: &str) -> String {
-    if message.chars().count() <= MESSAGE_MAX_CHARS {
+    clip_to(message, MESSAGE_MAX_CHARS)
+}
+
+fn clip_to(message: &str, max: usize) -> String {
+    if message.chars().count() <= max {
         return message.to_owned();
     }
-    let mut clipped: String = message.chars().take(MESSAGE_MAX_CHARS).collect();
+    let mut clipped: String = message.chars().take(max).collect();
     clipped.push_str("...");
     clipped
 }
@@ -729,15 +735,26 @@ mod tests {
     }
 
     #[test]
+    fn a_turns_last_message_is_kept_whole_up_to_a_large_cap() {
+        let answer = format!("{}\n\nDone\n- a\n\nNeeds you\n- b\n\nNext\n- c", "x".repeat(2000));
+        let event = parse_hook(
+            "claude",
+            &json!({"hook_event_name": "Stop", "last_assistant_message": answer}),
+        )
+        .unwrap();
+        assert_eq!(event.message.as_deref(), Some(answer.as_str()));
+    }
+
+    #[test]
     fn long_messages_are_clipped() {
-        let long = "x".repeat(MESSAGE_MAX_CHARS * 2);
+        let long = "x".repeat(TURN_MESSAGE_MAX_CHARS * 2);
         let event = parse_hook(
             "claude",
             &json!({"hook_event_name": "Stop", "last_assistant_message": long}),
         )
         .unwrap();
         let message = event.message.unwrap();
-        assert_eq!(message.chars().count(), MESSAGE_MAX_CHARS + 3);
+        assert_eq!(message.chars().count(), TURN_MESSAGE_MAX_CHARS + 3);
         assert!(message.ends_with("..."));
     }
 
