@@ -1,0 +1,169 @@
+name: release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag to build (e.g. v0.2.0)'
+        required: true
+
+permissions:
+  contents: write
+
+env:
+  APPIMAGETOOL_VERSION: 1.9.1
+  APPIMAGETOOL_SHA256: ed4ce84f0d9caff66f50bcca6ff6f35aae54ce8135408b3fa33abfc3cb384eb0
+
+jobs:
+  meta:
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.v.outputs.tag }}
+      version: ${{ steps.v.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref }}
+
+      - name: Resolve version
+        id: v
+        env:
+          TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+        run: |
+          VERSION="${TAG#v}"
+          CARGO_VERSION=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
+          if [ "$VERSION" != "$CARGO_VERSION" ]; then
+            echo "Tag $TAG does not match Cargo.toml version $CARGO_VERSION" >&2
+            exit 1
+          fi
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+  macos:
+    needs: meta
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.meta.outputs.tag }}
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo test --workspace
+      - name: Bundle Tidewatch.app (universal, ad-hoc signed)
+        run: ./scripts/bundle-macos.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos
+          path: target/dist/tidewatch-${{ needs.meta.outputs.version }}-universal.app.zip
+          if-no-files-found: error
+
+  linux:
+    needs: meta
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.meta.outputs.tag }}
+      - run: sudo apt-get update && sudo apt-get install -y libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev libxkbcommon-dev libssl-dev libfontconfig1-dev libfreetype6-dev
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Install appimagetool
+        run: |
+          curl -fsSL -o "$RUNNER_TEMP/appimagetool" \
+            "https://github.com/AppImage/appimagetool/releases/download/${APPIMAGETOOL_VERSION}/appimagetool-x86_64.AppImage"
+          echo "${APPIMAGETOOL_SHA256}  $RUNNER_TEMP/appimagetool" | sha256sum --check
+          chmod +x "$RUNNER_TEMP/appimagetool"
+          echo "APPIMAGETOOL=$RUNNER_TEMP/appimagetool" >> "$GITHUB_ENV"
+      - name: Package tarball and AppImage
+        run: ./scripts/package-linux.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux
+          path: |
+            target/dist/tidewatch-${{ needs.meta.outputs.version }}-x86_64-linux.tar.gz
+            target/dist/Tidewatch-${{ needs.meta.outputs.version }}-x86_64.AppImage
+          if-no-files-found: error
+
+  release:
+    needs: [meta, macos, linux]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.meta.outputs.tag }}
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Checksums and cask
+        env:
+          VERSION: ${{ needs.meta.outputs.version }}
+        run: |
+          cd dist
+          sha256sum * > SHA256SUMS
+          cat SHA256SUMS
+          SHA=$(sha256sum "tidewatch-${VERSION}-universal.app.zip" | awk '{print $1}')
+          sed -e "s/^  version \".*\"/  version \"${VERSION}\"/" \
+              -e "s/^  sha256 \".*\"/  sha256 \"${SHA}\"/" \
+              ../packaging/tidewatch.rb > tidewatch.rb
+          cat tidewatch.rb
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.meta.outputs.tag }}
+          VERSION: ${{ needs.meta.outputs.version }}
+        run: |
+          gh release create "$TAG" dist/* \
+            --title "Tidewatch ${VERSION}" \
+            --generate-notes \
+            --verify-tag
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cask
+          path: dist/tidewatch.rb
+          if-no-files-found: error
+
+  tap:
+    needs: [meta, release]
+    if: vars.PUBLISH_TAP == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: cask
+          path: dist
+      - uses: actions/checkout@v4
+        with:
+          repository: Hobo-Ware/homebrew-tap
+          ssh-key: ${{ secrets.HOMEBREW_TAP_DEPLOY_KEY }}
+          path: tap
+      - name: Update Homebrew tap
+        env:
+          VERSION: ${{ needs.meta.outputs.version }}
+        run: |
+          CASK="tap/Casks/tidewatch.rb"
+          mkdir -p tap/Casks
+          CURRENT=$(sed -n 's/^  version "\(.*\)"$/\1/p' "$CASK" 2>/dev/null || true)
+          NEWEST=$(printf '%s\n%s\n' "$CURRENT" "$VERSION" | sort -V | tail -1)
+          if [ -n "$CURRENT" ] && [ "$NEWEST" != "$VERSION" ]; then
+            echo "Tap already ships $CURRENT (newer than $VERSION) - leaving it alone."
+            exit 0
+          fi
+          cp dist/tidewatch.rb "$CASK"
+          cd tap
+          git add Casks/tidewatch.rb
+          if git diff --cached --quiet; then
+            echo "Tap cask already matches this build."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "tidewatch ${VERSION}"
+          git push origin HEAD
