@@ -83,6 +83,8 @@ mod toast;
 mod tray;
 mod trust_glue;
 mod trust_view;
+mod updates;
+mod updates_view;
 mod window_settings;
 mod window_view;
 mod workflow_ask;
