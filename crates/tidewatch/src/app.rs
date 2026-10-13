@@ -44,6 +44,7 @@ use crate::dev_panes::{self, DevPanes};
 use crate::dev_reader::DevReader;
 use crate::dev_screenshot::DevScreenshot;
 use crate::dev_view::{DevKeys, DevView};
+use crate::dev_workflow::DevWorkflow;
 use crate::dev_worktree::DevWorktree;
 use crate::end_block_view;
 use crate::flow::Flow;
@@ -117,6 +118,7 @@ pub(crate) struct Tidewatch {
     flow: Flow,
     runs: workflow_glue::Host,
     run_asks: Vec<(u64, Vec<Exec>)>,
+    dev_workflow: DevWorkflow,
     dev_flow: DevFlow,
     notifier: Notifier,
     overview: bool,
@@ -170,6 +172,7 @@ impl Tidewatch {
             flow,
             runs: workflow_glue::Host::new(),
             run_asks: Vec::new(),
+            dev_workflow: DevWorkflow::from_env(),
             dev_flow,
             notifier: Notifier::desktop(),
             overview: dev_view.overview,
@@ -331,6 +334,9 @@ impl Tidewatch {
     fn drive_workflows(&mut self, ctx: &egui::Context, now: f64, mut asked: Vec<(u64, Vec<Exec>)>) {
         let Some(paths) = &self.paths else { return };
         asked.append(&mut self.run_asks);
+        if !self.dev_workflow.is_idle() {
+            asked.extend(self.dev_workflow.drive(&mut self.tabs));
+        }
         let env = Env {
             paths,
             catalog: &self.catalog,
