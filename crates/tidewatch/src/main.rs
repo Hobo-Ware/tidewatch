@@ -32,6 +32,7 @@ mod fonts;
 mod history_pane;
 mod hotkey;
 mod jobs;
+mod last_used;
 mod layout;
 mod leftover_glue;
 mod leftover_jobs;
@@ -103,10 +104,11 @@ use std::path::{Path, PathBuf};
 
 use app::Tidewatch;
 use dev_screenshot::DevScreenshot;
-use repo::Workspace;
+use repo::{Repo, Workspace};
 use shell::{Setup, WINDOW_SIZE};
 use shell_plan::{Env, Launch, Plan};
 use single_instance::{Run, Start};
+use tidewatch_core::last_workspace;
 use tidewatch_core::path_env;
 use tidewatch_core::paths::TidewatchPaths;
 use tidewatch_core::prefs::Prefs;
@@ -120,8 +122,13 @@ fn main() -> eframe::Result<()> {
     if args.toggle {
         std::process::exit(single_instance::toggle_running(paths.as_ref()));
     }
-    let start =
-        args.path.or_else(|| std::env::current_dir().ok()).unwrap_or_else(|| PathBuf::from("."));
+    let start = last_workspace::pick(
+        args.path,
+        std::env::current_dir().ok(),
+        paths.as_ref().and_then(last_workspace::load),
+        |dir| Repo::discover(dir).is_some(),
+        Path::is_dir,
+    );
     let workspace = Workspace::open(&start);
     let agent_path = path_env::for_this_platform(
         std::env::var_os("PATH").as_deref(),

@@ -142,6 +142,7 @@ impl Tidewatch {
 
     pub(super) fn finish_frame(&mut self, ctx: &egui::Context, now: f64) {
         self.dev_session.tick(ctx, &mut self.tabs, now);
+        self.last_used.tick(ctx.input(|i| i.viewport().focused.unwrap_or(false)));
         self.saver.tick(
             self.restore.settled(),
             &WindowView::of(&self.workspace, self.focus),

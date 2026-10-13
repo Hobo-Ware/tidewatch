@@ -47,6 +47,7 @@ use crate::dev_worktree::DevWorktree;
 use crate::flow::Flow;
 use crate::fonts;
 use crate::jobs::Jobs;
+use crate::last_used::LastUsed;
 use crate::leftover_glue;
 use crate::new_tab::{NewTab, Request};
 use crate::notify::Notifier;
@@ -117,6 +118,7 @@ pub(crate) struct Tidewatch {
     dev_reader: DevReader,
     trust: Trust,
     saver: Saver,
+    last_used: LastUsed,
     dev_session: DevSession,
     restore: restore_glue::Host,
     notice: Option<String>,
@@ -149,6 +151,11 @@ impl Tidewatch {
         let trust = Trust::new(paths.as_ref(), cli_home);
         let dev_session = DevSession::from_env();
         let saver = Saver::new(paths.as_ref(), screenshot.is_none(), dev_session.debounce());
+        let last_used = LastUsed::new(
+            paths.as_ref(),
+            workspace.dir(),
+            screenshot.is_none() && !shell.env.background,
+        );
         let updates = Updates::new(
             &cc.egui_ctx,
             paths.as_ref().map(Prefs::load).unwrap_or_default().updates,
@@ -191,6 +198,7 @@ impl Tidewatch {
             dev_reader: DevReader::from_env(),
             trust,
             saver,
+            last_used,
             dev_session,
             restore: restore_glue::Host::new(no_restore, RealDisk::from_env()),
             notice: None,
@@ -231,7 +239,13 @@ impl eframe::App for Tidewatch {
         self.finish_frame(&ctx, now);
     }
 
+    fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        self.shell.set_closing(ctx.input(|i| i.viewport().close_requested()));
+    }
+
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
+        self.shell.set_closing(true);
+        self.last_used.record();
         self.saver.flush(
             self.restore.settled(),
             &WindowView::of(&self.workspace, self.focus),
