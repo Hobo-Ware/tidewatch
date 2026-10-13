@@ -102,12 +102,13 @@ impl Host {
         self.pending.remove(&tab);
     }
 
-    /// Adds the tab for a workflow and starts making its worktree (or looking at the existing one).
-    /// The first stage starts when the job is back.
+    /// Adds the tab for a workflow to the tab group `group` and starts making its worktree (or
+    /// looking at the existing one). The first stage starts when the job is back.
     pub(crate) fn open<T>(
         &mut self,
         ctx: &egui::Context,
         tabs: &mut Tabs<Pane<T>>,
+        group: usize,
         env: &Env,
         repo: &Path,
         existing: Option<Worktree>,
@@ -121,7 +122,9 @@ impl Host {
                 runner.profile(runner.position()).map(|p| p.agent.clone()).unwrap_or_default(),
             ),
         };
-        let tab = tabs.push(CREATING_TITLE.to_owned(), Pane::creating_agent(name, agent, now));
+        let pane = Pane::creating_agent(name, agent, now);
+        let tab = tabs.push_in(group, CREATING_TITLE.to_owned(), pane);
+        tabs.select_id(tab);
         self.pending.insert(tab, start);
         let spec = OpenSpec {
             paths: env.paths.clone(),

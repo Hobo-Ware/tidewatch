@@ -1,5 +1,6 @@
 //! Keeps `session.toml` current: once per frame it asks whether anything worth saving changed
-//! (a fingerprint, no allocation) and, when it did, hands the window to the debounced writer. The
+//! (a fingerprint over every repo of the window, no allocation) and, when it did, hands the
+//! window to the debounced writer. The
 //! quit path flushes synchronously. Nothing is saved under the screenshot harness, and not while a
 //! restore is still putting the saved tabs back (a save then would overwrite them with a partial
 //! window).
@@ -7,6 +8,8 @@
 use tidewatch_core::paths::TidewatchPaths;
 
 use crate::pane::Pane;
+use std::hash::{DefaultHasher, Hash, Hasher};
+
 use crate::session_save::{WindowView, saved_window, signature};
 use crate::session_writer::{Debounce, Writer};
 use crate::tabs::Tabs;
@@ -25,26 +28,35 @@ impl Saver {
 
     /// Queues a save when the window changed since the last one. `settled` is false while a restore
     /// is under way. Returns whether a save was queued.
-    pub(crate) fn tick<T>(
+    pub(crate) fn tick<'a, T>(
         &mut self,
         settled: bool,
-        view: &WindowView,
+        views: impl Iterator<Item = WindowView<'a>> + Clone,
         tabs: &Tabs<Pane<T>>,
     ) -> bool {
         let Some(writer) = self.writer.as_ref().filter(|_| settled) else { return false };
-        let sig = signature(view, tabs);
+        let mut hasher = DefaultHasher::new();
+        for view in views.clone() {
+            signature(&view, tabs).hash(&mut hasher);
+        }
+        let sig = hasher.finish();
         if self.last == Some(sig) {
             return false;
         }
         self.last = Some(sig);
-        writer.save(saved_window(view, tabs));
+        writer.save(views.map(|view| saved_window(&view, tabs)).collect());
         true
     }
 
     /// Writes the window now and waits, for the quit path. Skipped like `tick`.
-    pub(crate) fn flush<T>(&mut self, settled: bool, view: &WindowView, tabs: &Tabs<Pane<T>>) {
+    pub(crate) fn flush<'a, T>(
+        &mut self,
+        settled: bool,
+        views: impl Iterator<Item = WindowView<'a>>,
+        tabs: &Tabs<Pane<T>>,
+    ) {
         if let Some(writer) = self.writer.as_ref().filter(|_| settled) {
-            writer.flush(saved_window(view, tabs));
+            writer.flush(views.map(|view| saved_window(&view, tabs)).collect());
         }
     }
 }
@@ -63,7 +75,11 @@ mod tests {
     const DIR: &str = "/work/web";
 
     fn view(focus: bool) -> WindowView<'static> {
-        WindowView { dir: Path::new(DIR), other: false, focus }
+        WindowView { group: 0, dir: Path::new(DIR), other: false, focus }
+    }
+
+    fn views(focus: bool) -> std::option::IntoIter<WindowView<'static>> {
+        Some(view(focus)).into_iter()
     }
 
     fn slow() -> Debounce {
@@ -88,14 +104,14 @@ mod tests {
         let paths = TidewatchPaths::new(home.path());
         let mut saver = Saver::new(Some(&paths), true, slow());
         let mut tabs = Tabs::new(Pane::shell(0));
-        assert!(saver.tick(true, &view(false), &tabs), "the first look always saves");
-        assert!(!saver.tick(true, &view(false), &tabs));
+        assert!(saver.tick(true, views(false), &tabs), "the first look always saves");
+        assert!(!saver.tick(true, views(false), &tabs));
         with_worktree_tab(&mut tabs);
-        assert!(saver.tick(true, &view(false), &tabs), "a new tab");
-        assert!(!saver.tick(true, &view(false), &tabs));
-        assert!(saver.tick(true, &view(true), &tabs), "focus mode");
+        assert!(saver.tick(true, views(false), &tabs), "a new tab");
+        assert!(!saver.tick(true, views(false), &tabs));
+        assert!(saver.tick(true, views(true), &tabs), "focus mode");
         tabs.apply(Action::Select(0), || unreachable!());
-        assert!(saver.tick(true, &view(true), &tabs), "the active tab");
+        assert!(saver.tick(true, views(true), &tabs), "the active tab");
     }
 
     #[test]
@@ -104,10 +120,10 @@ mod tests {
         let paths = TidewatchPaths::new(home.path());
         let mut saver = Saver::new(Some(&paths), true, slow());
         let tabs = Tabs::new(Pane::shell(0));
-        assert!(!saver.tick(false, &view(false), &tabs));
-        saver.flush(false, &view(false), &tabs);
+        assert!(!saver.tick(false, views(false), &tabs));
+        saver.flush(false, views(false), &tabs);
         assert_eq!(Session::load(&paths), Session::default());
-        assert!(saver.tick(true, &view(false), &tabs), "the first settled look saves");
+        assert!(saver.tick(true, views(false), &tabs), "the first settled look saves");
     }
 
     #[test]
@@ -116,10 +132,10 @@ mod tests {
         let paths = TidewatchPaths::new(home.path());
         let mut saver = Saver::new(Some(&paths), false, slow());
         let tabs = Tabs::new(Pane::shell(0));
-        assert!(!saver.tick(true, &view(false), &tabs));
-        saver.flush(true, &view(false), &tabs);
+        assert!(!saver.tick(true, views(false), &tabs));
+        saver.flush(true, views(false), &tabs);
         let mut without_paths = Saver::new(None, true, slow());
-        assert!(!without_paths.tick(true, &view(false), &tabs));
+        assert!(!without_paths.tick(true, views(false), &tabs));
         assert!(!paths.session_file().exists());
     }
 
@@ -131,12 +147,46 @@ mod tests {
         let mut tabs = Tabs::new(Pane::shell(0));
         with_worktree_tab(&mut tabs);
         let started = Instant::now();
-        saver.flush(true, &view(true), &tabs);
+        saver.flush(true, views(true), &tabs);
         assert!(started.elapsed() < Duration::from_secs(5));
         let session = Session::load(&paths);
         let window = session.window(Path::new(DIR)).expect("the window was written");
         assert!(window.focus_mode);
         assert_eq!(window.active, 1);
         assert!(matches!(window.tabs[..], [SavedTab::Main, SavedTab::Shell { .. }]));
+    }
+
+    #[test]
+    fn every_repo_of_the_window_is_watched_and_written() {
+        let home = tempfile::tempdir().unwrap();
+        let paths = TidewatchPaths::new(home.path());
+        let mut saver = Saver::new(Some(&paths), true, slow());
+        let mut tabs = Tabs::new(Pane::shell(0));
+        let api = tabs.add_group(Pane::shell(10));
+        let both = || {
+            [
+                view(false),
+                WindowView { group: api, dir: Path::new("/work/api"), other: false, focus: false },
+            ]
+            .into_iter()
+        };
+        assert!(saver.tick(true, both(), &tabs));
+        assert!(!saver.tick(true, both(), &tabs));
+        let worktree = Worktree {
+            repo: PathBuf::from("/work/api"),
+            path: PathBuf::from("/home/.tidewatch/api-abc123/calm-comet"),
+            branch: "agent/calm-comet".into(),
+        };
+        tabs.push_in(
+            api,
+            "calm-comet".into(),
+            Pane { body: Body::Shell(1), worktree: Some(worktree), agent: None },
+        );
+        assert!(saver.tick(true, both(), &tabs), "a tab in the repo out of sight");
+        saver.flush(true, both(), &tabs);
+        let session = Session::load(&paths);
+        assert_eq!(session.windows.len(), 2);
+        let saved = session.window(Path::new("/work/api")).expect("the second repo was written");
+        assert!(matches!(saved.tabs[..], [SavedTab::Main, SavedTab::Shell { .. }]));
     }
 }

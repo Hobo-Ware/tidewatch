@@ -12,6 +12,7 @@ use tidewatch_core::transcript_locate::claude_project_dir_name;
 use tidewatch_core::worktree;
 
 use super::*;
+use crate::tabs::Action;
 
 const SESSION_A: &str = "0c2cbc96-1111-4222-8333-444455556666";
 const SESSION_B: &str = "1d3dcd07-2222-4333-8444-555566667777";
@@ -26,6 +27,10 @@ fn git(dir: &Path, args: &[&str]) {
         .output()
         .unwrap();
     assert!(out.status.success(), "git {args:?}: {}", String::from_utf8_lossy(&out.stderr));
+}
+
+fn web(repo: &Path) -> Workspace {
+    Workspace::Repo(crate::repo::Repo { root: repo.to_path_buf(), label: "web".into() })
 }
 
 struct Fixture {
@@ -57,9 +62,11 @@ impl Fixture {
         std::fs::set_permissions(&claude, std::fs::Permissions::from_mode(0o755)).unwrap();
         let mut catalog = Catalog::new(OsString::from(bin));
         catalog.set_profiles(Profiles::seeded(&["claude".to_owned()]));
+        let mut host = Host::new(skip, RealDisk::new(&home));
+        host.enqueue(0, &web(&repo));
         Self {
             paths: TidewatchPaths::new(&home),
-            host: Host::new(skip, RealDisk::new(&home)),
+            host,
             runs: workflow_glue::Host::new(),
             tabs: Tabs::new(Pane::shell("main".to_owned())),
             ctx: egui::Context::default(),
@@ -115,12 +122,7 @@ impl Fixture {
     }
 
     fn begin(&mut self) {
-        self.host.begin(
-            &self.ctx,
-            &self.paths,
-            &Workspace::Repo(crate::repo::Repo { root: self.repo.clone(), label: "web".into() }),
-            &self.catalog,
-        );
+        self.host.begin(&self.ctx, &self.paths, &self.catalog);
     }
 
     fn until_settled(&mut self) {
@@ -366,7 +368,7 @@ fn a_workflow_tab_with_unreadable_state_reopens_as_a_shell_with_a_toast() {
     let agent = |_: &Path, _: &Prepared| "agent".to_owned();
     let shell = |_: &Path, note: Option<&str>| format!("shell|{}", note.unwrap_or("-"));
     let spawn = Spawn { agent: &agent, shell: &shell };
-    let report = f.host.apply(&plan, &f.ctx, &mut f.tabs, &env, &spawn, &mut f.runs, 0.0);
+    let report = f.host.apply(&plan, 0, &f.ctx, &mut f.tabs, &env, &spawn, &mut f.runs, 0.0);
     assert_eq!(report.toasts.len(), 1);
     assert!(f.shells()[1].starts_with("shell|The workflow was not resumed"), "{}", f.shells()[1]);
 }
@@ -451,4 +453,71 @@ fn the_flag_is_reported_apart_from_the_setting() {
     let f = Fixture::new(true);
     assert!(f.host.skipped_by_flag());
     assert!(f.host.restore_enabled(), "the setting itself is still on");
+}
+
+fn second_repo(f: &Fixture) -> PathBuf {
+    let repo = f.home.join("work").join("api");
+    std::fs::create_dir_all(&repo).unwrap();
+    git(&repo, &["init", "-q", "-b", "main"]);
+    git(&repo, &["commit", "-q", "--allow-empty", "-m", "init"]);
+    repo
+}
+
+fn saved_window(dir: &Path, focus_mode: bool, tabs: Vec<SavedTab>) -> SavedWindow {
+    SavedWindow { dir: dir.to_path_buf(), other: false, active: 1, focus_mode, tabs }
+}
+
+fn api(repo: &Path) -> Workspace {
+    Workspace::Repo(crate::repo::Repo { root: repo.to_path_buf(), label: "api".into() })
+}
+
+#[test]
+fn a_second_repo_comes_back_in_its_own_group_and_never_takes_the_window_from_the_first() {
+    let mut f = Fixture::new(false);
+    let calm = worktree::add(&f.paths, &f.repo).unwrap();
+    let api_repo = second_repo(&f);
+    let busy = worktree::add(&f.paths, &api_repo).unwrap();
+    Session {
+        windows: vec![
+            saved_window(&f.repo, true, vec![SavedTab::Main, shell(&calm)]),
+            saved_window(&api_repo, false, vec![SavedTab::Main, shell(&busy)]),
+        ],
+    }
+    .save(&f.paths)
+    .unwrap();
+    let group = f.tabs.add_group(Pane::shell("api main".to_owned()));
+    f.host.enqueue(group, &api(&api_repo));
+    f.begin();
+    f.until_settled();
+    let in_group = |f: &Fixture, group: usize| -> Vec<String> {
+        f.tabs.in_group(group).map(|(_, tab)| tab.title.clone()).collect()
+    };
+    assert_eq!(in_group(&f, 0), ["main", calm.name()]);
+    assert_eq!(in_group(&f, group), ["main", busy.name()]);
+    assert_eq!(f.tabs.active_group(), 0, "the first repo stays in front");
+    assert_eq!(f.tabs.items()[f.tabs.active()].title, calm.name());
+    assert_eq!(f.report.focus, Some(true), "the first repo's focus mode, not the second's");
+    assert_eq!(f.report.leftovers.as_ref().map(Vec::len), Some(0));
+    f.tabs.apply(Action::NextGroup, || unreachable!());
+    assert_eq!(f.tabs.items()[f.tabs.active()].title, busy.name(), "its saved active tab");
+}
+
+#[test]
+fn a_repo_added_later_makes_the_window_unsettled_until_its_tabs_are_back() {
+    let mut f = Fixture::new(false);
+    f.begin();
+    f.until_settled();
+    let api_repo = second_repo(&f);
+    let busy = worktree::add(&f.paths, &api_repo).unwrap();
+    Session { windows: vec![saved_window(&api_repo, true, vec![SavedTab::Main, shell(&busy)])] }
+        .save(&f.paths)
+        .unwrap();
+    let group = f.tabs.add_group(Pane::shell("api main".to_owned()));
+    f.host.enqueue(group, &api(&api_repo));
+    assert!(!f.host.settled(), "the saver must not overwrite the second repo's saved tabs");
+    f.begin();
+    f.until_settled();
+    assert_eq!(f.tabs.in_group(group).count(), 2);
+    assert_eq!(f.report.focus, None, "only the first repo sets the window's focus mode");
+    assert_eq!(f.tabs.active_group(), 0);
 }

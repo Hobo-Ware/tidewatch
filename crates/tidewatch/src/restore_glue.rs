@@ -1,5 +1,7 @@
-//! Session restore in the app (PLAN.md, D11): once the profiles are loaded, one job reads the
-//! saved session and plans every tab; this module then carries the plan out, in the saved order.
+//! Session restore in the app (PLAN.md, D11): once the profiles are loaded, one job per repo of
+//! the window reads the saved session and plans that repo's tabs; this module then carries each
+//! plan out into the repo's tab group, in the saved order. A repo opened later in the same window
+//! goes through the same job.
 //! A shell reopens in its folder at once, an agent is prepared on a job (a fresh token for the tab,
 //! the resume command, folder trust) and a workflow run goes back through the workflow host. A
 //! tab that cannot come back as it was reopens as a shell with the reason printed above it, or is
@@ -7,9 +9,9 @@
 //! plain data in tests.
 //!
 //! While the restore is under way the saver stays quiet: a save then would overwrite the saved
-//! tabs with a window that has only some of them. `settled` says when it is done.
+//! tabs with a window that has only some of them. `settled` says when every repo is done.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use tidewatch_core::agents::Level;
 use tidewatch_core::paths::TidewatchPaths;
@@ -21,10 +23,11 @@ use tidewatch_core::worktree::{BRANCH_PREFIX, Leftover, Worktree};
 
 use crate::catalog::Catalog;
 use crate::jobs::Jobs;
+use crate::leftover_glue::merge;
 use crate::pane::{Body, Pane, STARTING_TITLE, finish_open};
 use crate::repo::Workspace;
 use crate::restore_jobs::{self, Done, ReopenSpec, Reopened, Startup, StartupSpec};
-use crate::tabs::{Action, Tabs};
+use crate::tabs::Tabs;
 use crate::workflow_glue::{self, Env, Start};
 use crate::worktree_jobs::without_open;
 
@@ -40,9 +43,16 @@ enum Phase {
     /// The profiles are not loaded yet, so there is nothing to plan with.
     Waiting,
     Planning,
-    /// The plan was carried out; some tabs are still being made.
+    /// Every plan was carried out; some tabs are still being made.
     Settling,
     Settled,
+}
+
+/// A repo of the window whose saved tabs are still to be looked up.
+struct Seed {
+    group: usize,
+    dir: PathBuf,
+    other: bool,
 }
 
 /// What a frame's restore work asks the app to do.
@@ -60,6 +70,8 @@ pub(crate) struct Report {
 pub(crate) struct Host {
     jobs: Jobs<Done>,
     phase: Phase,
+    seeds: Vec<Seed>,
+    planning: usize,
     skip: bool,
     prefs: Prefs,
     disk: RealDisk,
@@ -68,7 +80,15 @@ pub(crate) struct Host {
 impl Host {
     /// `skip` is the `--no-restore` flag; `disk` is where the CLIs keep their session files.
     pub(crate) fn new(skip: bool, disk: RealDisk) -> Self {
-        Self { jobs: Jobs::new(), phase: Phase::Waiting, skip, prefs: Prefs::default(), disk }
+        Self {
+            jobs: Jobs::new(),
+            phase: Phase::Waiting,
+            seeds: Vec::new(),
+            planning: 0,
+            skip,
+            prefs: Prefs::default(),
+            disk,
+        }
     }
 
     /// Whether launch restores the last session, as the settings say.
@@ -92,29 +112,41 @@ impl Host {
         self.phase == Phase::Settled
     }
 
-    /// Starts the one startup job, the first time the profiles are known. Later calls do nothing.
-    pub(crate) fn begin(
-        &mut self,
-        ctx: &egui::Context,
-        paths: &TidewatchPaths,
-        workspace: &Workspace,
-        catalog: &Catalog,
-    ) {
-        let (Phase::Waiting, Some(profiles)) = (self.phase, catalog.profiles()) else { return };
+    /// Adds a repo of the window, in tab group `group`, to the ones whose saved tabs are to be
+    /// brought back. Nothing is looked up until `begin`. The window counts as unsettled again, so
+    /// the saver leaves the repo's saved tabs alone until they are back.
+    pub(crate) fn enqueue(&mut self, group: usize, workspace: &Workspace) {
+        self.seeds.push(Seed {
+            group,
+            dir: workspace.dir().to_path_buf(),
+            other: matches!(workspace, Workspace::Other { .. }),
+        });
+        if matches!(self.phase, Phase::Settling | Phase::Settled) {
+            self.phase = Phase::Waiting;
+        }
+    }
+
+    /// Starts one startup job for each repo waiting, once the profiles are known.
+    pub(crate) fn begin(&mut self, ctx: &egui::Context, paths: &TidewatchPaths, catalog: &Catalog) {
+        let Some(profiles) = catalog.profiles().filter(|_| !self.seeds.is_empty()) else { return };
         self.phase = Phase::Planning;
-        restore_jobs::startup(
-            &self.jobs,
-            ctx,
-            StartupSpec {
-                paths: paths.clone(),
-                dir: workspace.dir().to_path_buf(),
-                other: matches!(workspace, Workspace::Other { .. }),
-                skip: self.skip,
-                profiles: profiles.clone(),
-                path_var: catalog.path.clone(),
-                disk: self.disk.clone(),
-            },
-        );
+        for seed in self.seeds.drain(..) {
+            self.planning += 1;
+            restore_jobs::startup(
+                &self.jobs,
+                ctx,
+                StartupSpec {
+                    paths: paths.clone(),
+                    group: seed.group,
+                    dir: seed.dir,
+                    other: seed.other,
+                    skip: self.skip,
+                    profiles: profiles.clone(),
+                    path_var: catalog.path.clone(),
+                    disk: self.disk.clone(),
+                },
+            );
+        }
     }
 
     /// One pass per frame: applies what the jobs finished.
@@ -131,36 +163,47 @@ impl Host {
         for done in self.jobs.drain() {
             match done {
                 Done::Planned(startup) => {
-                    let Startup { repaired, leftovers, plan, prefs } = *startup;
+                    let Startup { group, repaired, leftovers, plan, prefs } = *startup;
+                    self.planning -= 1;
                     if repaired > 0 {
                         eprintln!(
                             "tidewatch: repaired {repaired} worktree(s) after the repo moved"
                         );
                     }
                     self.prefs = prefs;
-                    report.leftovers = Some(without_open(leftovers, tabs));
+                    merge(
+                        report.leftovers.get_or_insert_with(Vec::new),
+                        without_open(leftovers, tabs),
+                    );
                     if let Some(plan) = plan {
-                        let applied = self.apply(&plan, ctx, tabs, env, spawn, runs, now);
+                        let applied = self.apply(&plan, group, ctx, tabs, env, spawn, runs, now);
                         report.toasts.extend(applied.toasts);
-                        report.notice = applied.notice;
-                        report.focus = applied.focus;
+                        report.notice = join_notices(report.notice.take(), applied.notice);
+                        report.focus = report.focus.or(applied.focus);
                     }
-                    self.phase = Phase::Settling;
                 }
                 Done::Reopened(done) => reopened(*done, tabs, spawn, now, &mut report.toasts),
             }
         }
-        if self.phase == Phase::Settling && !tabs.items().iter().any(|t| making(&t.pane)) {
-            self.phase = Phase::Settled;
+        if self.planning == 0
+            && self.seeds.is_empty()
+            && matches!(self.phase, Phase::Planning | Phase::Settling)
+        {
+            let busy = tabs.items().iter().any(|t| making(&t.pane));
+            self.phase = if busy { Phase::Settling } else { Phase::Settled };
         }
         report
     }
 
-    /// Opens the planned tabs in their saved order, then selects the saved active tab and takes the
-    /// saved focus mode, unless the user already opened tabs of their own meanwhile.
+    /// Opens the planned tabs of a repo in their saved order, in its tab group, then selects the
+    /// saved active tab, unless the user already opened tabs of their own there meanwhile. A repo
+    /// that is not in front only remembers it, and a restored tab never takes the window from the
+    /// one the user is on. The saved focus mode is taken from the first repo, the one in front at
+    /// launch, and from no other.
     pub(crate) fn apply<T>(
         &self,
         plan: &WindowPlan,
+        group: usize,
         ctx: &egui::Context,
         tabs: &mut Tabs<Pane<T>>,
         env: &Env,
@@ -168,22 +211,20 @@ impl Host {
         runs: &mut workflow_glue::Host,
         now: f64,
     ) -> Report {
-        let untouched = tabs.items().len() == 1;
+        let untouched = tabs.in_group(group).count() == 1;
         let current = tabs.items()[tabs.active()].id;
         let mut report = Report::default();
         let ids: Vec<u64> = plan
             .tabs
             .iter()
             .map(|tab| {
-                let opened = Opening { plan, tab, ctx, env, now };
+                let opened = Opening { plan, group, tab, ctx, env, now };
                 self.open_one(&opened, tabs, spawn, runs, &mut report.toasts)
             })
             .collect();
-        let selected = if untouched { ids.get(plan.active).copied() } else { Some(current) };
-        if let Some(index) = selected.and_then(|id| tabs.index_of(id)) {
-            tabs.apply(Action::Select(index), || unreachable!());
-        }
-        if untouched {
+        let selected = if untouched { ids.get(plan.active).copied() } else { None };
+        tabs.select_id(selected.unwrap_or(current));
+        if untouched && group == 0 {
             report.focus = Some(plan.focus_mode);
         }
         report.notice = plan.toast();
@@ -198,22 +239,24 @@ impl Host {
         runs: &mut workflow_glue::Host,
         toasts: &mut Vec<String>,
     ) -> u64 {
-        let Opening { plan, tab, ctx, env, now } = *opening;
+        let Opening { plan, group, tab, ctx, env, now } = *opening;
         match &tab.action {
-            _ if matches!(tab.saved, SavedTab::Main) => tabs.items()[0].id,
-            TabAction::Shell => push_shell(tabs, spawn, plan, tab, None),
-            TabAction::ShellInstead(_) => push_shell(tabs, spawn, plan, tab, tab.note().as_deref()),
+            _ if matches!(tab.saved, SavedTab::Main) => tabs.main_id(group).unwrap_or_default(),
+            TabAction::Shell => push_shell(tabs, spawn, (plan, group), tab, None),
+            TabAction::ShellInstead(_) => {
+                push_shell(tabs, spawn, (plan, group), tab, tab.note().as_deref())
+            }
             TabAction::ResumeAgent { agent, profile, session_id } => {
                 let Some(agent) = env.catalog.agent(agent).cloned() else {
                     let note = format!("The agent was not resumed: `{agent}` is not configured.");
-                    return push_shell(tabs, spawn, plan, tab, Some(&note));
+                    return push_shell(tabs, spawn, (plan, group), tab, Some(&note));
                 };
                 let SavedTab::Agent(saved) = &tab.saved else {
-                    return push_shell(tabs, spawn, plan, tab, None);
+                    return push_shell(tabs, spawn, (plan, group), tab, None);
                 };
                 let title = tab.worktree.as_ref().map_or(STARTING_TITLE, |w| w.name()).to_owned();
                 let pane = Pane::creating_agent(profile.name.clone(), agent.id.clone(), now);
-                let id = tabs.push(title, pane);
+                let id = tabs.push_in(group, title, pane);
                 restore_jobs::reopen(
                     &self.jobs,
                     ctx,
@@ -241,6 +284,7 @@ impl Host {
                     return runs.open(
                         ctx,
                         tabs,
+                        group,
                         env,
                         &plan.dir,
                         Some(worktree),
@@ -250,7 +294,7 @@ impl Host {
                 }
                 let note = "The workflow was not resumed: its saved state is unreadable.";
                 toasts.push(note.to_owned());
-                push_shell(tabs, spawn, plan, tab, Some(note))
+                push_shell(tabs, spawn, (plan, group), tab, Some(note))
             }
         }
     }
@@ -259,10 +303,18 @@ impl Host {
 #[derive(Clone, Copy)]
 struct Opening<'a> {
     plan: &'a WindowPlan,
+    group: usize,
     tab: &'a TabPlan,
     ctx: &'a egui::Context,
     env: &'a Env<'a>,
     now: f64,
+}
+
+fn join_notices(first: Option<String>, second: Option<String>) -> Option<String> {
+    match (first, second) {
+        (Some(first), Some(second)) => Some(format!("{first}\n{second}")),
+        (first, second) => first.or(second),
+    }
 }
 
 fn making<T>(pane: &Pane<T>) -> bool {
@@ -272,13 +324,14 @@ fn making<T>(pane: &Pane<T>) -> bool {
 fn push_shell<T>(
     tabs: &mut Tabs<Pane<T>>,
     spawn: &Spawn<T>,
-    plan: &WindowPlan,
+    (plan, group): (&WindowPlan, usize),
     tab: &TabPlan,
     note: Option<&str>,
 ) -> u64 {
     let shell = (spawn.shell)(&tab.dir, note);
     let title = tab.saved.label(&plan.dir);
-    tabs.push(title, Pane { body: Body::Shell(shell), worktree: tab.worktree.clone(), agent: None })
+    let pane = Pane { body: Body::Shell(shell), worktree: tab.worktree.clone(), agent: None };
+    tabs.push_in(group, title, pane)
 }
 
 /// A reopened agent starts in its tab, or the tab becomes the plain shell the job asked for.

@@ -29,6 +29,8 @@ pub(crate) enum Done {
 
 pub(crate) struct StartupSpec {
     pub(crate) paths: TidewatchPaths,
+    /// The tab group of the repo in the window.
+    pub(crate) group: usize,
     /// The repo root, or the folder in the Other group.
     pub(crate) dir: PathBuf,
     pub(crate) other: bool,
@@ -40,6 +42,7 @@ pub(crate) struct StartupSpec {
 }
 
 pub(crate) struct Startup {
+    pub(crate) group: usize,
     pub(crate) repaired: usize,
     /// Worktree folders no open tab and no saved tab owns. Empty in the Other group.
     pub(crate) leftovers: Vec<Leftover>,
@@ -90,7 +93,7 @@ fn run_startup(spec: &StartupSpec) -> Startup {
         );
     }
     let leftovers = if spec.other { Vec::new() } else { worktree::leftovers(paths, &owned) };
-    Startup { repaired, leftovers, plan, prefs }
+    Startup { group: spec.group, repaired, leftovers, plan, prefs }
 }
 
 /// Writes the restore switch to the settings file off the UI thread, leaving the rest of the file

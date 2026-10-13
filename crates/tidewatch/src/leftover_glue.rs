@@ -11,6 +11,16 @@ use crate::leftover_jobs::{self, Done};
 use crate::leftover_view::{self, Answer};
 use crate::leftovers::Cleanup;
 
+/// `found` joined into `known` by path, sorted by path.
+pub(crate) fn merge(known: &mut Vec<Leftover>, found: Vec<Leftover>) {
+    for leftover in found {
+        if !known.iter().any(|k| k.path == leftover.path) {
+            known.push(leftover);
+        }
+    }
+    known.sort_by(|a, b| a.path.cmp(&b.path));
+}
+
 pub(crate) struct Host {
     leftovers: Vec<Leftover>,
     jobs: Jobs<Done>,
@@ -23,8 +33,10 @@ impl Host {
         Self { leftovers: Vec::new(), jobs: Jobs::new(), dialog: None, removed: 0 }
     }
 
-    pub(crate) fn set(&mut self, leftovers: Vec<Leftover>) {
-        self.leftovers = leftovers;
+    /// Adds what a startup scan found. Each repo of the window scans, and every scan sees the
+    /// whole tree, so the same worktree can arrive twice.
+    pub(crate) fn add(&mut self, found: Vec<Leftover>) {
+        merge(&mut self.leftovers, found);
     }
 
     pub(crate) fn count(&self) -> usize {

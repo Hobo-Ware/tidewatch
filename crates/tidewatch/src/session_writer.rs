@@ -47,8 +47,8 @@ impl Debounce {
 }
 
 enum Message {
-    Save(Box<SavedWindow>),
-    Flush(Box<SavedWindow>, Sender<()>),
+    Save(Vec<SavedWindow>),
+    Flush(Vec<SavedWindow>, Sender<()>),
 }
 
 pub(crate) struct Writer {
@@ -62,47 +62,47 @@ impl Writer {
         Self { sender }
     }
 
-    /// Queues the window; the write follows once the changes go quiet.
-    pub(crate) fn save(&self, window: SavedWindow) {
-        let _ = self.sender.send(Message::Save(Box::new(window)));
+    /// Queues the window's workspaces; the write follows once the changes go quiet.
+    pub(crate) fn save(&self, windows: Vec<SavedWindow>) {
+        let _ = self.sender.send(Message::Save(windows));
     }
 
-    /// Writes the window now and waits for the file, for a few seconds at most.
-    pub(crate) fn flush(&self, window: SavedWindow) {
+    /// Writes the workspaces now and waits for the file, for a few seconds at most.
+    pub(crate) fn flush(&self, windows: Vec<SavedWindow>) {
         let (ack, done) = channel();
-        if self.sender.send(Message::Flush(Box::new(window), ack)).is_ok() {
+        if self.sender.send(Message::Flush(windows, ack)).is_ok() {
             let _ = done.recv_timeout(FLUSH_WAIT);
         }
     }
 }
 
 fn run(paths: &TidewatchPaths, mut debounce: Debounce, receiver: &Receiver<Message>) {
-    let mut pending: Option<SavedWindow> = None;
+    let mut pending: Option<Vec<SavedWindow>> = None;
     loop {
         let next = match debounce.wait(Instant::now()) {
             Some(wait) => receiver.recv_timeout(wait),
             None => receiver.recv().map_err(|_| RecvTimeoutError::Disconnected),
         };
         match next {
-            Ok(Message::Save(window)) => {
-                pending = Some(*window);
+            Ok(Message::Save(windows)) => {
+                pending = Some(windows);
                 debounce.touch(Instant::now());
             }
-            Ok(Message::Flush(window, ack)) => {
-                write(paths, *window);
+            Ok(Message::Flush(windows, ack)) => {
+                write(paths, windows);
                 pending = None;
                 debounce.settle();
                 let _ = ack.send(());
             }
             Err(RecvTimeoutError::Timeout) => {
-                if let Some(window) = pending.take() {
-                    write(paths, window);
+                if let Some(windows) = pending.take() {
+                    write(paths, windows);
                 }
                 debounce.settle();
             }
             Err(RecvTimeoutError::Disconnected) => {
-                if let Some(window) = pending.take() {
-                    write(paths, window);
+                if let Some(windows) = pending.take() {
+                    write(paths, windows);
                 }
                 return;
             }
@@ -110,10 +110,12 @@ fn run(paths: &TidewatchPaths, mut debounce: Debounce, receiver: &Receiver<Messa
     }
 }
 
-/// Replaces this window's entry and leaves the other windows' alone.
-fn write(paths: &TidewatchPaths, window: SavedWindow) {
+/// Replaces the entry of each workspace and leaves the entries of repos that are not open alone.
+fn write(paths: &TidewatchPaths, windows: Vec<SavedWindow>) {
     let mut session = Session::load(paths);
-    session.replace_window(window);
+    for window in windows {
+        session.replace_window(window);
+    }
     if let Err(e) = session.save(paths) {
         eprintln!("tidewatch: cannot save the session: {e}");
     }
@@ -207,7 +209,7 @@ mod tests {
         let paths = TidewatchPaths::new(home.path());
         let writer = Writer::start(paths.clone(), Debounce::new(ms(30), ms(500)));
         for active in 0..5 {
-            writer.save(window("/work/web", active));
+            writer.save(vec![window("/work/web", active)]);
         }
         wait_for(&paths, &Session { windows: vec![window("/work/web", 4)] });
     }
@@ -217,7 +219,7 @@ mod tests {
         let home = tempfile::tempdir().unwrap();
         let paths = TidewatchPaths::new(home.path());
         let writer = Writer::start(paths.clone(), Debounce::new(ms(10_000), ms(20_000)));
-        writer.save(window("/work/web", 1));
+        writer.save(vec![window("/work/web", 1)]);
         std::thread::sleep(ms(100));
         assert_eq!(Session::load(&paths), Session::default());
     }
@@ -227,8 +229,8 @@ mod tests {
         let home = tempfile::tempdir().unwrap();
         let paths = TidewatchPaths::new(home.path());
         let writer = Writer::start(paths.clone(), Debounce::new(ms(10_000), ms(20_000)));
-        writer.save(window("/work/web", 1));
-        writer.flush(window("/work/web", 2));
+        writer.save(vec![window("/work/web", 1)]);
+        writer.flush(vec![window("/work/web", 2)]);
         assert_eq!(Session::load(&paths), Session { windows: vec![window("/work/web", 2)] });
     }
 
@@ -238,7 +240,7 @@ mod tests {
         let paths = TidewatchPaths::new(home.path());
         Session { windows: vec![window("/work/api", 0)] }.save(&paths).unwrap();
         let writer = Writer::start(paths.clone(), Debounce::new(ms(10_000), ms(20_000)));
-        writer.flush(window("/work/web", 3));
+        writer.flush(vec![window("/work/web", 3)]);
         let session = Session::load(&paths);
         assert_eq!(session.windows.len(), 2);
         assert_eq!(
@@ -252,11 +254,21 @@ mod tests {
     }
 
     #[test]
+    fn a_window_with_two_repos_writes_both_entries() {
+        let home = tempfile::tempdir().unwrap();
+        let paths = TidewatchPaths::new(home.path());
+        let writer = Writer::start(paths.clone(), Debounce::new(ms(10_000), ms(20_000)));
+        writer.flush(vec![window("/work/web", 1), window("/work/api", 2)]);
+        let session = Session::load(&paths);
+        assert_eq!(session.windows, vec![window("/work/web", 1), window("/work/api", 2)]);
+    }
+
+    #[test]
     fn dropping_the_writer_writes_what_was_pending() {
         let home = tempfile::tempdir().unwrap();
         let paths = TidewatchPaths::new(home.path());
         let writer = Writer::start(paths.clone(), Debounce::new(ms(10_000), ms(20_000)));
-        writer.save(window("/work/web", 1));
+        writer.save(vec![window("/work/web", 1)]);
         drop(writer);
         wait_for(&paths, &Session { windows: vec![window("/work/web", 1)] });
     }
