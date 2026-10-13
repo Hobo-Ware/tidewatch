@@ -44,7 +44,8 @@ crates/tidewatch-core/  worktrees, profiles, permission levels, workflows, agent
   src/trust.rs          D14 folder trust, pure: per-CLI config text in, text with the folder trusted (or not) out, idempotent, refuses unparsable files; TrustState per installed CLI
   src/consent.rs        D14 consent state machine (Undecided, Granted, Declined; Yes, No, Apply, Undo -> effects) and trust.toml: the answer and the entries Tidewatch added
   src/trust_apply.rs    D14 disk half: each CLI's config file (CLAUDE_CONFIG_DIR, COPILOT_HOME, CODEX_HOME honored), inspect, trust the root, trust a worktree, revoke; atomic write, `.tidewatch-bak` backup, race check
-  src/prefs.rs          ~/.config/tidewatch/settings.toml: the app-wide switches (restore the last session at launch, default on) and the [window] table (quake on, hotkey Ctrl+Alt+Grave, menu-bar item on); bad file -> defaults; `update` rewrites one part from a fresh read
+  src/prefs.rs          ~/.config/tidewatch/settings.toml: the app-wide switches (restore the last session at launch, default on) the [window] table (quake on, hotkey Ctrl+Alt+Grave, menu-bar item on) and the [updates] table (check, install; both on); bad file -> defaults; `update` rewrites one part from a fresh read
+  src/update.rs          self-update, the pure part: the repo and cask, `Mode::pick` (only a macOS cask install updates itself, the rest is notify-only), the fake release for `TIDEWATCH_FAKE_UPDATE`
   src/instance.rs       one window per folder: a Unix socket per workspace under .state/instances, `open <path>` hand-off from a second launch, `toggle` to every live window, stale socket takeover, guard that unlinks on exit
   src/names.rs          adjective-noun names for new worktrees (pure)
   src/registry.rs       .state/worktrees.toml: the worktrees Tidewatch made, for repair
@@ -100,6 +101,8 @@ crates/tidewatch/       the egui app
   src/profile_editor.rs profile editor state: drafts, text in and out of fields, validation, profiles to save (pure)
   src/settings.rs       what the settings view holds: the profile, workflow and window editors and which page shows (pure)
   src/window_settings.rs  the Window section's state: quake and menu-bar switches apply at once, the hotkey text is checked as you type and applied on leaving the field when it parses (pure)
+  src/updates.rs        kelp-ui's `Updater` with Tidewatch's repo and cask, the two switches, the status line (pure), saving them; never disabled, so Linux gets the notify-only pill
+  src/updates_view.rs   draws the Updates section of General: status, Check now, the pill, the switches (the install one only in install mode)
   src/window_view.rs    draws the Window section: switches, hotkey field with its problem or registration status
   src/settings_view.rs  the settings view, Profiles, Workflows, Folder trust and General (restore switch, Window section) pages (replaces the terminal area; Cmd+, or the gear)
   src/trust_glue.rs     D14 host: installed CLIs and their trust state, the consent state and its jobs, the grant handed to new tabs and worktree removal
@@ -216,7 +219,7 @@ prints every hook and status change to stderr with a wall-clock time in ms; `TID
 `TIDEWATCH_DEV_KEYS_AFTER` seconds, default 8) types into the newest agent tab once, for Claude's folder-trust prompt.
 `TIDEWATCH_DEV_WORKFLOW=<id>` starts a workflow in a new tab (task from `TIDEWATCH_DEV_TASK`), `TIDEWATCH_DEV_DIALOG=workflow:<id>` opens the dialog on it,
 `TIDEWATCH_DEV_RESUME=<worktree name>` opens the tab of a saved run (`.state/<repo-dir>/<name>/stages.json`) and carries on, `TIDEWATCH_DEV_ASK=approve|retry|stop|reject:<reason>`
-answers the next question a run asks, `TIDEWATCH_DEV_OPEN_STAGE=<n>` opens stage n under the stepper, `TIDEWATCH_DEV_SETTINGS=workflows` opens the workflow editor, `TIDEWATCH_DEV_SETTINGS=trust` the Folder trust page, `TIDEWATCH_DEV_SETTINGS=general` the General page, `TIDEWATCH_DEV_TRUST=yes|no|undo` answers the first-launch folder trust question once (a fresh `TIDEWATCH_HOME` otherwise shows the dialog; nothing is written until yes).
+answers the next question a run asks, `TIDEWATCH_DEV_OPEN_STAGE=<n>` opens stage n under the stepper, `TIDEWATCH_DEV_SETTINGS=workflows` opens the workflow editor, `TIDEWATCH_DEV_SETTINGS=trust` the Folder trust page, `TIDEWATCH_DEV_SETTINGS=general` the General page, `TIDEWATCH_FAKE_UPDATE=<version>` shows an update (pill and Settings line; the run makes no check and installs nothing; with a cask install a click on the pill would still run `brew upgrade`, so never click it), `TIDEWATCH_DEV_TRUST=yes|no|undo` answers the first-launch folder trust question once (a fresh `TIDEWATCH_HOME` otherwise shows the dialog; nothing is written until yes).
 `TIDEWATCH_DEV_READER=raw` starts agent tabs on the raw terminal, `TIDEWATCH_DEV_READER_KEY=<s>` presses Cmd+Shift+T after that many
 seconds through the real key path, `TIDEWATCH_DEV_ANSWER=allow|deny` clicks a permission button once, `TIDEWATCH_DEV_REPLY=<text>`
 (`_REPLY_AFTER=<s>`) sends a reply from the Reader's box. Run Claude checks with `CLAUDE_CODE_FORCE_SESSION_PERSISTENCE=1` when the
