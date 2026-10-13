@@ -84,6 +84,8 @@ mod stepper;
 mod stepper_view;
 mod tab_view;
 mod tabs;
+#[cfg(all(test, unix))]
+mod test_exec;
 mod toast;
 mod tray;
 mod trust_glue;

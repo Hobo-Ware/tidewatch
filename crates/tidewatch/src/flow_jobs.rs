@@ -332,10 +332,8 @@ mod tests {
 
     #[cfg(unix)]
     fn fake_gh(dir: &std::path::Path, body: &str) -> Tools {
-        use std::os::unix::fs::PermissionsExt as _;
-        let gh = dir.join("gh");
-        std::fs::write(&gh, format!("#!/bin/sh\n{body}\n")).unwrap();
-        std::fs::set_permissions(&gh, std::fs::Permissions::from_mode(0o755)).unwrap();
+        use crate::test_exec::write_executable_from_a_child;
+        write_executable_from_a_child(&dir.join("gh"), &format!("#!/bin/sh\n{body}\n"));
         let mut dirs = vec![dir.to_path_buf()];
         dirs.extend(std::env::split_paths(&std::env::var_os("PATH").unwrap_or_default()));
         Tools::with_path(std::env::join_paths(dirs).unwrap())

@@ -101,6 +101,7 @@ crates/tidewatch/       the egui app
   src/palette_view.rs   draws the palette: search field, rows with matched letters and the chord, arrows, Enter, Esc
   src/shortcuts_view.rs the Shortcuts page of Settings: the table for this platform as key caps
   src/tabs.rs           tab list and its Action reducer (pure, generic over the pane)
+  src/test_exec.rs      test only: a fixture script written through cp, so no forking test thread holds it open (Linux ETXTBSY)
   src/pane.rs           what a tab holds: shell or agent (with its AgentRun and how it was launched), creating, removing, failed; opening results, close policy (pure, generic)
   src/jobs.rs           background thread runner: result channel plus a repaint
   src/pty.rs            starts the ptys: a shell in a folder (optionally with a note printed first), the user's shell running an agent's script
