@@ -102,6 +102,10 @@ crates/tidewatch/       the egui app
   src/trust_view.rs     D14 wording per CLI (pure), the first-launch consent dialog and the Folder trust settings page
   src/workflow_editor.rs  workflow editor state: drafts per workflow and stage, problems found as you type, workflows to save (pure)
   src/workflow_editor_view.rs  the Workflows page: list, stage chips, the stage's fields, problems under them
+  src/leftovers.rs      the leftover worktrees dialog's rows, what each would lose, the removals Clean up and Discard stand for (pure)
+  src/leftover_jobs.rs  count what a leftover would lose, remove one (and its trust entries) as jobs
+  src/leftover_glue.rs  Host: the leftover list, the chip, the dialog and its jobs
+  src/leftover_view.rs  the chip in the tab strip and the dialog (Clean up for the clean ones, Discard for a dirty one)
   src/close_dialog.rs   keep/delete branch dialog: choices and wording (pure) plus the modal
   src/layout.rs         terminal/panel split, grid size, tab width, digit keys (pure)
   src/tab_view.rs       per-tab pane state: loaded history, selection, open diff, notes, watcher; wants -> jobs -> answers (stale ones dropped)

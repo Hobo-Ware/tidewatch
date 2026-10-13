@@ -7,6 +7,8 @@
 //! - `TIDEWATCH_DEV_SHOT=<png>` after `TIDEWATCH_DEV_SHOT_AFTER=<seconds>` (default 4): save a screenshot
 //!   of the window without closing it, so a run that saves its session can still be captured (the
 //!   `TIDEWATCH_SCREENSHOT` harness saves nothing).
+//! - `TIDEWATCH_DEV_LEFTOVERS=open|clean`: once the leftover worktrees are known, open their dialog;
+//!   `clean` also presses Clean up as soon as every worktree has been looked at.
 //! - `TIDEWATCH_DEV_SAVE_DEBOUNCE_MS=<ms>`: the save debounce. A long one leaves the quit-time
 //!   flush as the only write, which is how a check tells that it ran.
 
@@ -20,8 +22,15 @@ use crate::tabs::{Action, Tabs};
 
 const DEFAULT_SELECT_AFTER_SECS: f64 = 4.0;
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum LeftoverStep {
+    Open,
+    Clean,
+}
+
 #[derive(Clone, Debug, Default, PartialEq)]
 pub(crate) struct DevSession {
+    leftovers: Option<LeftoverStep>,
     quit_after: Option<f64>,
     select: Option<(usize, f64)>,
     shot: Option<(PathBuf, f64)>,
@@ -39,6 +48,7 @@ impl DevSession {
             var("TIDEWATCH_DEV_SHOT").as_deref(),
             var("TIDEWATCH_DEV_SHOT_AFTER").as_deref(),
             var("TIDEWATCH_DEV_SAVE_DEBOUNCE_MS").as_deref(),
+            var("TIDEWATCH_DEV_LEFTOVERS").as_deref(),
         )
     }
 
@@ -49,8 +59,14 @@ impl DevSession {
         shot: Option<&str>,
         shot_after: Option<&str>,
         debounce_ms: Option<&str>,
+        leftovers: Option<&str>,
     ) -> Self {
         Self {
+            leftovers: match leftovers {
+                Some("open") => Some(LeftoverStep::Open),
+                Some("clean") => Some(LeftoverStep::Clean),
+                _ => None,
+            },
             quit_after: quit.and_then(|s| s.parse().ok()),
             select: select
                 .and_then(|s| s.parse::<usize>().ok())
@@ -83,6 +99,23 @@ impl DevSession {
             self.asked_for_shot = true;
             ctx.send_viewport_cmd(egui::ViewportCommand::Screenshot(egui::UserData::default()));
         }
+    }
+
+    /// The leftover step to take now, once and only when there are leftovers to act on.
+    pub(crate) fn leftovers(&mut self, known: bool) -> Option<LeftoverStep> {
+        self.leftovers.filter(|_| known)
+    }
+
+    /// The dialog is open: only `clean` has more to do.
+    pub(crate) fn leftovers_opened(&mut self) {
+        if self.leftovers == Some(LeftoverStep::Open) {
+            self.leftovers = None;
+        }
+    }
+
+    /// Clean up was pressed.
+    pub(crate) fn leftovers_done(&mut self) {
+        self.leftovers = None;
     }
 
     pub(crate) fn debounce(&self) -> Debounce {
@@ -125,7 +158,10 @@ mod tests {
 
     #[test]
     fn nothing_set_means_nothing_happens_and_the_default_debounce() {
-        assert_eq!(DevSession::parse(None, None, None, None, None, None), DevSession::default());
+        assert_eq!(
+            DevSession::parse(None, None, None, None, None, None, None),
+            DevSession::default()
+        );
     }
 
     #[test]
@@ -137,6 +173,7 @@ mod tests {
             Some("/tmp/x.png"),
             Some("9"),
             Some("90000"),
+            Some("clean"),
         );
         assert_eq!(
             dev,
@@ -145,28 +182,37 @@ mod tests {
                 select: Some((1, 6.0)),
                 shot: Some((PathBuf::from("/tmp/x.png"), 9.0)),
                 asked_for_shot: false,
-                debounce_ms: Some(90_000)
+                debounce_ms: Some(90_000),
+                leftovers: Some(LeftoverStep::Clean),
             }
         );
-        let late = DevSession::parse(None, Some("3"), None, None, None, None);
+        let late = DevSession::parse(None, Some("3"), None, None, None, None, None);
         assert_eq!(late.select, Some((2, DEFAULT_SELECT_AFTER_SECS)));
     }
 
     #[test]
     fn junk_and_tab_zero_are_ignored() {
         assert_eq!(
-            DevSession::parse(Some("soon"), Some("0"), None, Some(""), None, Some("x")),
+            DevSession::parse(
+                Some("soon"),
+                Some("0"),
+                None,
+                Some(""),
+                None,
+                Some("x"),
+                Some("later")
+            ),
             DevSession::default()
         );
         assert_eq!(
-            DevSession::parse(None, Some("two"), None, None, None, None),
+            DevSession::parse(None, Some("two"), None, None, None, None, None),
             DevSession::default()
         );
     }
 
     #[test]
     fn the_select_happens_once_when_its_time_comes() {
-        let mut dev = DevSession::parse(None, Some("2"), Some("1"), None, None, None);
+        let mut dev = DevSession::parse(None, Some("2"), Some("1"), None, None, None, None);
         let mut tabs = Tabs::new(Pane::shell(0));
         tabs.push("a".into(), Pane::shell(1));
         let ctx = egui::Context::default();
