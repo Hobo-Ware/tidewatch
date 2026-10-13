@@ -84,7 +84,7 @@ impl Host {
     /// Takes the new setting and writes it, off the UI thread.
     pub(crate) fn set_restore_enabled(&mut self, paths: &TidewatchPaths, on: bool) {
         self.prefs.restore_session = on;
-        restore_jobs::save_prefs(paths.clone(), self.prefs);
+        restore_jobs::save_restore_switch(paths.clone(), on);
     }
 
     /// True until the saved tabs are back (or there were none to bring back).

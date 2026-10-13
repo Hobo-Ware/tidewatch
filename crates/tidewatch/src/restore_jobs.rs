@@ -93,10 +93,11 @@ fn run_startup(spec: &StartupSpec) -> Startup {
     Startup { repaired, leftovers, plan, prefs }
 }
 
-/// Writes the settings file off the UI thread; a failure goes to stderr.
-pub(crate) fn save_prefs(paths: TidewatchPaths, prefs: Prefs) {
+/// Writes the restore switch to the settings file off the UI thread, leaving the rest of the file
+/// as it is on disk; a failure goes to stderr.
+pub(crate) fn save_restore_switch(paths: TidewatchPaths, on: bool) {
     std::thread::spawn(move || {
-        if let Err(e) = prefs.save(&paths) {
+        if let Err(e) = Prefs::update(&paths, |prefs| prefs.restore_session = on) {
             eprintln!("tidewatch: cannot save settings.toml: {e}");
         }
     });
