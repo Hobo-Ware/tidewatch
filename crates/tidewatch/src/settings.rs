@@ -12,6 +12,7 @@ pub(crate) enum Section {
     Profiles,
     Workflows,
     Trust,
+    General,
 }
 
 pub(crate) struct Settings {
@@ -37,11 +38,12 @@ impl Settings {
     }
 
     /// The tabs of the view, with a mark on the one that has unsaved edits.
-    pub(crate) fn sections(&self) -> [(Section, &'static str, bool); 3] {
+    pub(crate) fn sections(&self) -> [(Section, &'static str, bool); 4] {
         [
             (Section::Profiles, "Profiles", self.profiles.dirty),
             (Section::Workflows, "Workflows", self.workflows.dirty),
             (Section::Trust, "Folder trust", false),
+            (Section::General, "General", false),
         ]
     }
 
@@ -58,7 +60,9 @@ impl Settings {
                 saving: self.workflows.saving,
                 dirty: self.workflows.dirty,
             },
-            Section::Trust => Status { error: None, saving: false, dirty: false },
+            Section::Trust | Section::General => {
+                Status { error: None, saving: false, dirty: false }
+            }
         }
     }
 
@@ -97,6 +101,7 @@ mod tests {
                 (Section::Profiles, "Profiles", false),
                 (Section::Workflows, "Workflows", false),
                 (Section::Trust, "Folder trust", false),
+                (Section::General, "General", false),
             ]
         );
         assert!(!settings.status().dirty);

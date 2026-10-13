@@ -97,7 +97,7 @@ crates/tidewatch/       the egui app
   src/list_row.rs       one selectable list row, shared by the dialog and the profile editor
   src/profile_editor.rs profile editor state: drafts, text in and out of fields, validation, profiles to save (pure)
   src/settings.rs       what the settings view holds: the profile and workflow editors and which page shows (pure)
-  src/settings_view.rs  the settings view, Profiles, Workflows and Folder trust pages (replaces the terminal area; Cmd+, or the gear)
+  src/settings_view.rs  the settings view, Profiles, Workflows, Folder trust and General (restore switch) pages (replaces the terminal area; Cmd+, or the gear)
   src/trust_glue.rs     D14 host: installed CLIs and their trust state, the consent state and its jobs, the grant handed to new tabs and worktree removal
   src/trust_view.rs     D14 wording per CLI (pure), the first-launch consent dialog and the Folder trust settings page
   src/workflow_editor.rs  workflow editor state: drafts per workflow and stage, problems found as you type, workflows to save (pure)
@@ -198,7 +198,7 @@ prints every hook and status change to stderr with a wall-clock time in ms; `TID
 `TIDEWATCH_DEV_KEYS_AFTER` seconds, default 8) types into the newest agent tab once, for Claude's folder-trust prompt.
 `TIDEWATCH_DEV_WORKFLOW=<id>` starts a workflow in a new tab (task from `TIDEWATCH_DEV_TASK`), `TIDEWATCH_DEV_DIALOG=workflow:<id>` opens the dialog on it,
 `TIDEWATCH_DEV_RESUME=<worktree name>` opens the tab of a saved run (`.state/<repo-dir>/<name>/stages.json`) and carries on, `TIDEWATCH_DEV_ASK=approve|retry|stop|reject:<reason>`
-answers the next question a run asks, `TIDEWATCH_DEV_OPEN_STAGE=<n>` opens stage n under the stepper, `TIDEWATCH_DEV_SETTINGS=workflows` opens the workflow editor, `TIDEWATCH_DEV_SETTINGS=trust` the Folder trust page, `TIDEWATCH_DEV_TRUST=yes|no|undo` answers the first-launch folder trust question once (a fresh `TIDEWATCH_HOME` otherwise shows the dialog; nothing is written until yes).
+answers the next question a run asks, `TIDEWATCH_DEV_OPEN_STAGE=<n>` opens stage n under the stepper, `TIDEWATCH_DEV_SETTINGS=workflows` opens the workflow editor, `TIDEWATCH_DEV_SETTINGS=trust` the Folder trust page, `TIDEWATCH_DEV_SETTINGS=general` the General page, `TIDEWATCH_DEV_TRUST=yes|no|undo` answers the first-launch folder trust question once (a fresh `TIDEWATCH_HOME` otherwise shows the dialog; nothing is written until yes).
 `TIDEWATCH_DEV_READER=raw` starts agent tabs on the raw terminal, `TIDEWATCH_DEV_READER_KEY=<s>` presses Cmd+Shift+T after that many
 seconds through the real key path, `TIDEWATCH_DEV_ANSWER=allow|deny` clicks a permission button once, `TIDEWATCH_DEV_REPLY=<text>`
 (`_REPLY_AFTER=<s>`) sends a reply from the Reader's box. Run Claude checks with `CLAUDE_CODE_FORCE_SESSION_PERSISTENCE=1` when the

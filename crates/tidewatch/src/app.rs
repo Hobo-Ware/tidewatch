@@ -70,7 +70,7 @@ use crate::restore_glue::{self, Spawn};
 use crate::session_glue::Saver;
 use crate::session_save::WindowView;
 use crate::settings::{Section, Settings};
-use crate::settings_view::{self, Files};
+use crate::settings_view::{self, Files, General};
 use crate::status_view;
 use crate::stepper_view;
 use crate::tab_view::{TabView, ViewSpec};
@@ -251,6 +251,7 @@ impl Tidewatch {
                 match dev.profile.as_deref() {
                     Some("workflows") => settings.section = Section::Workflows,
                     Some("trust") => settings.section = Section::Trust,
+                    Some("general") => settings.section = Section::General,
                     _ => {}
                 }
             }
@@ -509,7 +510,7 @@ impl Tidewatch {
                 }
                 Err(message) => settings.workflows.error = Some(message),
             },
-            Section::Trust => {}
+            Section::Trust | Section::General => {}
         }
     }
 
@@ -1185,15 +1186,21 @@ impl eframe::App for Tidewatch {
                         profiles: String::new(),
                         workflows: String::new(),
                         trust: String::new(),
+                        general: String::new(),
                     },
                     |p| Files {
                         profiles: p.profiles_file().display().to_string(),
                         workflows: p.workflows_file().display().to_string(),
                         trust: p.trust_file().display().to_string(),
+                        general: p.prefs_file().display().to_string(),
                     },
                 );
+                let general = General {
+                    restore: self.restore.restore_enabled(),
+                    skipped_by_flag: self.restore.skipped_by_flag(),
+                };
                 settings_action =
-                    settings_view::show(ui, area, settings, &files, &self.trust.page());
+                    settings_view::show(ui, area, settings, &files, &self.trust.page(), &general);
                 return;
             }
             let panels = self.workspace_has_panels() && !self.focus;
@@ -1334,6 +1341,11 @@ impl eframe::App for Tidewatch {
             Some(settings_view::Action::Close) => self.settings = None,
             Some(settings_view::Action::Save) => self.save_settings(&ctx),
             Some(settings_view::Action::Trust(event)) => self.trust.send(event, &ctx),
+            Some(settings_view::Action::Restore(on)) => {
+                if let Some(paths) = &self.paths {
+                    self.restore.set_restore_enabled(paths, on);
+                }
+            }
             None => {}
         }
         if toggle_settings {

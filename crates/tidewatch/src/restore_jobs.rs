@@ -93,6 +93,15 @@ fn run_startup(spec: &StartupSpec) -> Startup {
     Startup { repaired, leftovers, plan, prefs }
 }
 
+/// Writes the settings file off the UI thread; a failure goes to stderr.
+pub(crate) fn save_prefs(paths: TidewatchPaths, prefs: Prefs) {
+    std::thread::spawn(move || {
+        if let Err(e) = prefs.save(&paths) {
+            eprintln!("tidewatch: cannot save settings.toml: {e}");
+        }
+    });
+}
+
 pub(crate) struct ReopenSpec {
     pub(crate) paths: TidewatchPaths,
     pub(crate) tab: u64,
