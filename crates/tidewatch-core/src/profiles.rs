@@ -231,13 +231,16 @@ mod tests {
     }
 
     #[test]
-    fn codex_is_seeded_last_and_never_with_yolo() {
+    fn codex_is_seeded_last_like_any_verified_agent() {
         let seeded = Profiles::seeded(&found(&["codex", "gemini"]));
         assert_eq!(seeded.profile["builder"].agent, "gemini");
         let codex: Vec<_> = seeded.profile.keys().filter(|id| id.starts_with("codex-")).collect();
-        assert_eq!(codex, ["codex-builder", "codex-reviewer"]);
+        assert_eq!(codex, ["codex-builder", "codex-builder-yolo", "codex-reviewer"]);
         let only_codex = Profiles::seeded(&found(&["codex"]));
-        assert_eq!(only_codex.profile.keys().collect::<Vec<_>>(), ["builder", "reviewer"]);
+        assert_eq!(
+            only_codex.profile.keys().collect::<Vec<_>>(),
+            ["builder", "builder-yolo", "reviewer"]
+        );
     }
 
     #[test]

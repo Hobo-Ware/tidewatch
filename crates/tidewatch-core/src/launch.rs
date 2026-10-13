@@ -5,8 +5,10 @@
 //! `LaunchCtx` field is `Some`. The never-push guard (D7) and the YOLO rule (D11) live here.
 //!
 //! Wiring was checked against claude 2.1.296, gemini 0.46.0, copilot 1.0.91 and codex 0.162.1 (`--help`
-//! and `docs/research/phase-0-spikes.md`). Codex hooks and MCP are encoded from the binary's config keys
-//! and are not run live yet, hence `Launch::experimental`.
+//! and `docs/research/phase-0-spikes.md`). Codex's hooks, MCP server and never-push guard were run
+//! live: `-c` overrides carry the hooks and the MCP server, and the MCP server needs
+//! `default_tools_approval_mode="approve"`, otherwise Codex rejects its tools under approval `never`.
+//! `Launch::experimental` is left for custom agents.
 
 use std::fmt;
 use std::path::{Path, PathBuf};
@@ -719,13 +721,13 @@ mod tests {
     }
 
     #[test]
-    fn codex_is_experimental_and_gets_c_overrides() {
+    fn codex_gets_c_overrides_for_hooks_and_the_mcp_server() {
         let dir = tempfile::tempdir().unwrap();
         let style = dir.path().join("house-style.md");
         std::fs::write(&style, "Say \"hi\"\nand \\ more").unwrap();
         let ctx = LaunchCtx { house_style: Some(style), ..full_ctx() };
         let launch = run("codex", &profile("codex", Level::Edits), &ctx);
-        assert!(launch.experimental);
+        assert!(!launch.experimental);
         assert!(launch.args.contains(&"--dangerously-bypass-hook-trust".to_owned()));
         let overrides: Vec<&str> =
             launch.args.windows(2).filter(|w| w[0] == "-c").map(|w| w[1].as_str()).collect();
