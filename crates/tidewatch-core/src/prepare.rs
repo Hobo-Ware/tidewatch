@@ -19,6 +19,7 @@ use crate::launch::{
 };
 use crate::paths::TidewatchPaths;
 use crate::profiles::Profile;
+use crate::restore::{ResumeError, resume_command};
 
 const MCP_CONFIG_FILE: &str = "mcp.json";
 const FALLBACK_NOTICE: &str =
@@ -54,12 +55,14 @@ pub struct Prepared {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum PrepareError {
     Launch(LaunchError),
+    Resume(ResumeError),
 }
 
 impl fmt::Display for PrepareError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Launch(e) => e.fmt(f),
+            Self::Resume(e) => e.fmt(f),
         }
     }
 }
@@ -69,6 +72,12 @@ impl std::error::Error for PrepareError {}
 impl From<LaunchError> for PrepareError {
     fn from(e: LaunchError) -> Self {
         Self::Launch(e)
+    }
+}
+
+impl From<ResumeError> for PrepareError {
+    fn from(e: ResumeError) -> Self {
+        Self::Resume(e)
     }
 }
 
@@ -83,6 +92,18 @@ impl Prepared {
 }
 
 pub fn prepare(input: &PrepareInput) -> Result<Prepared, PrepareError> {
+    prepare_with(input, None)
+}
+
+/// [`prepare`] for a restored tab: the same files, environment and wiring, but the agent reopens
+/// `session_id` (see `restore::resume_command`) and no task is added. `input.session_id` and
+/// `input.task` are ignored. A Gemini tab's generated settings are rewritten, because they name
+/// the listener of the run that wrote them.
+pub fn prepare_resume(input: &PrepareInput, session_id: &str) -> Result<Prepared, PrepareError> {
+    prepare_with(input, Some(session_id))
+}
+
+fn prepare_with(input: &PrepareInput, resume: Option<&str>) -> Result<Prepared, PrepareError> {
     let bare = LaunchCtx { worktree_tab: input.worktree_tab, ..LaunchCtx::default() };
     launch_command(input.agent, input.profile, &bare)?;
 
@@ -121,17 +142,22 @@ pub fn prepare(input: &PrepareInput) -> Result<Prepared, PrepareError> {
     });
 
     let ctx = context(input, house_style, copilot_instructions_dir, guard_bin_dir, mcp_config);
-    let mut launch = launch_command(input.agent, input.profile, &ctx)?;
+    let mut launch = match resume {
+        Some(id) => resume_command(input.agent, input.profile, id, &ctx)?,
+        None => launch_command(input.agent, input.profile, &ctx)?,
+    };
 
     if wiring == Wiring::Gemini
         && input.worktree_tab
         && let Some(settings) = gemini_project_settings(input.profile, &ctx)
-        && let Some(note) = write_gemini_settings(input.dir, &settings)
+        && let Some(note) = write_gemini_settings(input.dir, &settings, resume.is_some())
     {
         notes.push(note);
     }
 
-    launch.args.extend(task_args(wiring, input.task));
+    if resume.is_none() {
+        launch.args.extend(task_args(wiring, input.task));
+    }
     let env = merge_env(&ctx.env, &launch.env);
     Ok(Prepared { launch, env, setup: input.profile.setup.clone(), notes })
 }
@@ -203,9 +229,10 @@ fn merge_env(base: &[(String, String)], over: &[(String, String)]) -> Vec<(Strin
     env
 }
 
-fn write_gemini_settings(dir: &Path, settings: &str) -> Option<String> {
+fn write_gemini_settings(dir: &Path, settings: &str, refresh_generated: bool) -> Option<String> {
     let file = dir.join(GEMINI_SETTINGS_PATH);
-    if file.exists() {
+    let ours = refresh_generated && !is_tracked(dir, GEMINI_SETTINGS_PATH);
+    if file.exists() && !ours {
         return Some(format!(
             "{GEMINI_SETTINGS_PATH} already exists in this repo; Gemini keeps its own settings"
         ));
@@ -214,6 +241,15 @@ fn write_gemini_settings(dir: &Path, settings: &str) -> Option<String> {
         return Some(format!("Gemini settings: {e}"));
     }
     exclude_from_git(dir, &gemini_exclude_lines()).err().map(|e| format!("git exclude: {e}"))
+}
+
+fn is_tracked(dir: &Path, file: &str) -> bool {
+    Command::new("git")
+        .arg("-C")
+        .arg(dir)
+        .args(["ls-files", "--error-unmatch", "--", file])
+        .output()
+        .is_ok_and(|out| out.status.success())
 }
 
 /// Adds `lines` to the repo's `info/exclude` unless they are there. For a linked worktree git keeps
@@ -555,6 +591,104 @@ mod tests {
         let fx = Fixture::new();
         fx.run("gemini", &profile("gemini", Level::Edits), false, "", None).unwrap();
         assert!(!fx.dir.join(".gemini").exists());
+    }
+
+    const SESSION: &str = "0c2cbc96-1111-4222-8333-444455556666";
+
+    fn resume_input<'a>(
+        fx: &'a Fixture,
+        table: &'a AgentTable,
+        agent: &str,
+        profile: &'a Profile,
+        listener: Option<HookListener>,
+    ) -> PrepareInput<'a> {
+        PrepareInput {
+            paths: &fx.paths,
+            agent: table.get(agent).unwrap(),
+            profile,
+            repo: Path::new("/work/web"),
+            tab: "brave-otter",
+            dir: &fx.dir,
+            worktree_tab: true,
+            task: "ignored task",
+            session_id: Some("99999999-8888-7777-6666-555555555555".into()),
+            path_var: Some(OsStr::new("/opt/homebrew/bin:/usr/bin:/bin")),
+            listener,
+        }
+    }
+
+    #[test]
+    fn a_resumed_tab_gets_the_same_wiring_as_a_fresh_one_and_neither_task_nor_new_session_id() {
+        let fx = Fixture::new();
+        let table = AgentTable::builtin();
+        let claude = profile("claude", Level::Edits);
+        let input = resume_input(&fx, &table, "claude", &claude, Some(listener()));
+        let fresh = prepare(&input).unwrap();
+        let resumed = prepare_resume(&input, SESSION).unwrap();
+        assert_eq!(resumed.env, fresh.env);
+        assert_eq!(resumed.launch.env, fresh.launch.env);
+        assert_eq!(&resumed.launch.args[..2], ["--resume", SESSION]);
+        assert!(!resumed.launch.args.iter().any(|a| a == "--session-id" || a == "ignored task"));
+        for flag in ["--settings", "--append-system-prompt-file", "--permission-mode"] {
+            assert!(resumed.launch.args.iter().any(|a| a == flag), "{flag}");
+        }
+        assert!(
+            resumed.launch.args.iter().any(|a| a.starts_with("--mcp-config=")),
+            "{:?}",
+            resumed.launch.args
+        );
+    }
+
+    #[test]
+    fn resuming_yolo_outside_the_rules_is_refused() {
+        let fx = Fixture::new();
+        let table = AgentTable::builtin();
+        let yolo = profile("claude", Level::Yolo);
+        let input = resume_input(&fx, &table, "claude", &yolo, None);
+        assert_eq!(prepare_resume(&input, SESSION), Err(PrepareError::Resume(ResumeError::Yolo)));
+    }
+
+    #[test]
+    fn a_resumed_gemini_tab_gets_its_generated_settings_rewritten_for_the_new_listener() {
+        let fx = Fixture::new();
+        let worktree = git_worktree(&fx);
+        let fx = Fixture { dir: worktree.clone(), ..fx };
+        let table = AgentTable::builtin();
+        let gemini = profile("gemini", Level::Edits);
+        prepare(&resume_input(&fx, &table, "gemini", &gemini, Some(listener()))).unwrap();
+        let newer =
+            HookListener { base_url: "http://127.0.0.1:6666".into(), token: "newtok".into() };
+        let resumed =
+            prepare_resume(&resume_input(&fx, &table, "gemini", &gemini, Some(newer)), SESSION)
+                .unwrap();
+        assert_eq!(resumed.notes, Vec::<String>::new());
+        let settings = std::fs::read_to_string(worktree.join(".gemini/settings.json")).unwrap();
+        assert!(settings.contains("6666") && settings.contains("newtok"), "{settings}");
+        assert!(!settings.contains("5555"), "{settings}");
+        assert_eq!(&resumed.launch.args[..2], ["--resume", "latest"]);
+    }
+
+    #[test]
+    fn a_resumed_gemini_tab_never_overwrites_a_settings_file_the_repo_tracks() {
+        let fx = Fixture::new();
+        let worktree = git_worktree(&fx);
+        let fx = Fixture { dir: worktree.clone(), ..fx };
+        std::fs::create_dir_all(worktree.join(".gemini")).unwrap();
+        std::fs::write(worktree.join(".gemini/settings.json"), "{\"theirs\":true}").unwrap();
+        git(&worktree, &["add", ".gemini/settings.json"]);
+        git(&worktree, &["commit", "-q", "-m", "settings"]);
+        let table = AgentTable::builtin();
+        let gemini = profile("gemini", Level::Edits);
+        let resumed = prepare_resume(
+            &resume_input(&fx, &table, "gemini", &gemini, Some(listener())),
+            SESSION,
+        )
+        .unwrap();
+        assert_eq!(
+            std::fs::read_to_string(worktree.join(".gemini/settings.json")).unwrap(),
+            "{\"theirs\":true}"
+        );
+        assert_eq!(resumed.notes.len(), 1);
     }
 
     #[test]
