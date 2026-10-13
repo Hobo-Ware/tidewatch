@@ -10,9 +10,10 @@
 //!   An entry covers every folder under it, worktrees included, so the Tidewatch root is enough.
 //! - Gemini 0.46.0: `~/.gemini/trustedFolders.json` would work too, but Tidewatch already sets
 //!   `GEMINI_CLI_TRUST_WORKSPACE=true` for its tabs, so no file is edited.
-//! - Codex 0.162.1: `[projects."<path>"] trust_level = "trusted"` in `~/.codex/config.toml`. Not
-//!   logged in on the machine that checked, so parent coverage is unverified and each worktree gets
-//!   its own entry.
+//! - Codex 0.162.1: `[projects."<path>"] trust_level = "trusted"` in `~/.codex/config.toml`. A
+//!   parent folder does not cover a worktree. Codex resolves a worktree to its main repository, so an
+//!   entry for that repository would, but it is the user's own folder, so each worktree gets its own
+//!   entry (it wins over the repository's, and an explicit `untrusted` on the worktree is honored).
 //!
 //! Every edit is a splice into the original text, so keys, order, indentation and comments the edit
 //! does not touch stay as they were. A file that does not parse is refused, never rewritten.

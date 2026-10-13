@@ -62,8 +62,8 @@ crates/tidewatch-core/  worktrees, profiles, permission levels, workflows, agent
   src/pr.rs             D4 PR comments: find the open PR (gh pr view), pull review comments into notes threads (idempotent merge), post a note or reply
   src/pr_lines.rs       which lines of a PR diff take a review comment: git diff base...head parsed into hunk ranges (parse is pure, load shells out)
   src/rfc3339.rs        RFC 3339 timestamp to unix millis (pure, crate-private)
-  src/transcript.rs     D12 Reader model: Entry/Role/ToolCall, per-CLI transcript parsers (claude, gemini, copilot verified; codex unverified), incremental Tail
-  src/transcript_locate.rs  where each CLI keeps a tab's session file: Locator by cwd and session id (claude folder encoding verified), gemini, copilot, codex (unverified)
+  src/transcript.rs     D12 Reader model: Entry/Role/ToolCall, per-CLI transcript parsers (claude, gemini, copilot, codex), incremental Tail
+  src/transcript_locate.rs  where each CLI keeps a tab's session file: Locator by cwd and session id (claude folder encoding verified), gemini, copilot, codex (by folder and start time)
   src/history.rs        branch-scoped graph, ahead/behind, commit and working-tree files and diffs, file watcher, via kelp-core
   tests/worktree_roundtrip.rs  real throwaway repos: add, lock, dirty refusal, delete branch, moved repo
   tests/listener_http.rs  listener on a random port with a raw HTTP client: 401s, hooks, MCP, keep-alive, chunked, size caps
@@ -73,7 +73,7 @@ crates/tidewatch-core/  worktrees, profiles, permission levels, workflows, agent
   tests/delivery_roundtrip.rs  real bare remote + fake gh: plan, base detection, push, PR args, each typed failure
   tests/pr_lines_git.rs real throwaway repo: the branch diff against the remote base says which lines take a comment
   tests/pr_gh.rs        fake gh: pr view, comments fetch and post argument shapes, GitHub-shaped JSON fixtures
-  tests/fixtures/       redacted real transcripts (claude, gemini, copilot), hand-written codex, GitHub-shaped PR comments
+  tests/fixtures/       redacted real transcripts (claude, gemini, copilot, codex), a hand-written codex function_call sample, GitHub-shaped PR comments
   tests/history_roundtrip.rs   real throwaway repos: worktree branch history, whole repo, ahead/behind, diffs, watcher
   tests/session_restore.rs     real repos + fake home: moved repo repaired then planned, removed worktree, missing session file
 crates/tidewatch/       the egui app
