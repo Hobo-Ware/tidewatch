@@ -97,7 +97,7 @@ crates/tidewatch/       the egui app
   src/note_actions.rs   kelp-ui DiffAction -> the tab's notes (pure)
   src/checkout.rs       double-click checkout rule: main tab only, clean tree only (pure plan, git outcome)
   src/toast.rs          one timed message, fade on egui's clock (pure)
-  src/fonts.rs          stdusk font set plus the semibold family kelp-ui draws with
+  src/fonts.rs          stdusk font set with kelp-ui's faces and semibold family merged in (kelp_ui::fonts::extend), CJK fallback
   src/repo.rs           git root and label; Workspace = Repo or the Other group
   src/dev_screenshot.rs TIDEWATCH_SCREENSHOT harness
   src/dev_worktree.rs   TIDEWATCH_DEV_WORKTREE switch: open a worktree tab at startup for captures
