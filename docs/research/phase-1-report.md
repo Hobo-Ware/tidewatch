@@ -1,6 +1,6 @@
 # Phase 1 report: stdusk workspace and library crates
 
-Worktree: `/Users/vladjerca/Git/Hoboware/stdusk/.claude/worktrees/phase-1-lib-crates`, branch `phase-1-lib-crates` (from main 1.9.1). Nothing pushed.
+Worktree: `~/Git/Hoboware/stdusk/.claude/worktrees/phase-1-lib-crates`, branch `phase-1-lib-crates` (from main 1.9.1). Nothing pushed.
 
 ## Gate
 
