@@ -13,6 +13,7 @@ mod close_dialog;
 mod delivery_card;
 mod delivery_view;
 mod dev_agent;
+mod dev_flow;
 mod dev_panes;
 mod dev_screenshot;
 mod dev_view;

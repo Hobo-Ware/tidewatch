@@ -9,6 +9,7 @@ use stdusk_core::terminal::PtyTerm;
 
 use crate::delivery_card::Delivery;
 use crate::delivery_view::{self, DialogAction};
+use crate::dev_flow::{DevFlow, Fact, Ready, SendMode, Step};
 use crate::diff_pane::PaneAction;
 use crate::flow::{Flow, Out, TabFacts};
 use crate::flow_jobs::Which;
@@ -161,6 +162,55 @@ pub(crate) fn dialogs(ctx: &Context, flow: &mut Flow, active: u64) {
             {
                 ctx.open_url(egui::OpenUrl::new_tab(done.url.clone()));
             }
+        }
+    }
+}
+
+/// Does what the `TIDEWATCH_DEV_*` flow switches ask, as soon as the active tab is ready for it.
+pub(crate) fn dev_drive(
+    dev: &mut DevFlow,
+    flow: &mut Flow,
+    view: Option<&TabView>,
+    tab: u64,
+    ctx: &Context,
+) {
+    let Some(state) = flow.tab(tab) else { return };
+    let checks = [
+        (Fact::Notes, view.is_some_and(|v| v.notes_ready && !v.notes.threads.is_empty())),
+        (Fact::Card, matches!(state.delivery, Delivery::Ready { .. })),
+        (Fact::Form, matches!(state.delivery, Delivery::Editing(_))),
+        (Fact::Pr, state.pr.pr().is_some()),
+        (Fact::Lines, state.pr.lines_known()),
+        (Fact::Confirm, flow.confirm.is_some()),
+    ];
+    let ready = Ready(checks.into_iter().filter(|(_, on)| *on).map(|(fact, _)| fact).collect());
+    let unix = unix_now();
+    for step in dev.steps(&ready) {
+        match step {
+            Step::EnableAuto => {
+                if flow.tab(tab).is_some_and(|t| !t.auto.enabled) {
+                    flow.toggle_auto(tab);
+                }
+            }
+            Step::Send(mode) => {
+                let which = match (mode, view.and_then(|v| v.notes.threads.first())) {
+                    (SendMode::One, Some(thread)) => Which::One(thread.id),
+                    _ => Which::AllPending,
+                };
+                if let Some(reason) = flow.send(tab, which, ctx, unix) {
+                    eprintln!("tidewatch: dev send refused: {reason}");
+                }
+            }
+            Step::OpenCard => flow.open_card(tab, ctx),
+            Step::ApproveCard => flow.approve_card(tab, ctx),
+            Step::Pull => flow.pull_comments(tab, ctx),
+            Step::AskPost => {
+                let plan = view.and_then(|v| {
+                    v.notes.threads.first().and_then(|thread| Plan::of(thread, &v.notes))
+                });
+                flow.ask_post(tab, plan);
+            }
+            Step::ApprovePost => flow.approve_post(ctx),
         }
     }
 }

@@ -39,6 +39,7 @@ use crate::close_dialog::{self, Answer, Choice};
 use crate::delivery_card::Delivery;
 use crate::delivery_view;
 use crate::dev_agent::{DevAgent, Mode as DevMode};
+use crate::dev_flow::DevFlow;
 use crate::dev_panes::{self, DevPanes};
 use crate::dev_screenshot::DevScreenshot;
 use crate::dev_view::{DevKeys, DevView};
@@ -108,6 +109,7 @@ pub(crate) struct Tidewatch {
     last_profile: Option<String>,
     hooks: Hooks,
     flow: Flow,
+    dev_flow: DevFlow,
     notifier: Notifier,
     overview: bool,
     focus: bool,
@@ -131,7 +133,8 @@ impl Tidewatch {
         }
         let main = spawn_shell(&cc.egui_ctx, workspace.dir());
         let hooks = Hooks::start(paths.as_ref(), &cc.egui_ctx);
-        let flow = Flow::new(Tools::with_path(agent_path.clone()));
+        let dev_flow = DevFlow::from_env();
+        let flow = Flow::new(Tools::with_path(dev_flow.tool_path(agent_path.clone())));
         let dev_view = DevView::from_env();
         let mut app = Self {
             tabs: Tabs::new(Pane::shell(main)),
@@ -156,6 +159,7 @@ impl Tidewatch {
             last_profile: None,
             hooks,
             flow,
+            dev_flow,
             notifier: Notifier::desktop(),
             overview: dev_view.overview,
             focus: dev_view.focus,
@@ -668,6 +672,10 @@ impl Tidewatch {
         let facts = flow_glue::facts(&self.tabs, &self.views, active);
         if let Some(at) = self.flow.tick(&facts, ctx, now, unix) {
             ctx.request_repaint_after(Duration::from_secs_f64((at - now).max(0.0) + WAKE_SLACK_S));
+        }
+        if !self.dev_flow.is_idle() {
+            let view = self.views.get(&active);
+            flow_glue::dev_drive(&mut self.dev_flow, &mut self.flow, view, active, ctx);
         }
     }
 
