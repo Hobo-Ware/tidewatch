@@ -264,6 +264,10 @@ impl TabRun {
     /// stage works and its own status is the truth.
     pub(crate) fn hold(&self) -> Option<Hold> {
         let hold = |status, detail: &str| Some(Hold { status, detail: Some(detail.to_owned()) });
+        if self.launching {
+            let stage = stepper::position_label(&self.runner);
+            return hold(AgentStatus::SettingUp, &format!("Starting {stage}"));
+        }
         match self.runner.phase() {
             Phase::Idle | Phase::Working => None,
             Phase::Testing => hold(AgentStatus::Working, "Running the tests"),

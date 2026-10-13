@@ -39,6 +39,10 @@ impl Catalog {
         self.table.iter().map(|a| (a.id.clone(), a.name.clone())).collect()
     }
 
+    pub(crate) fn agent(&self, id: &str) -> Option<&Agent> {
+        self.table.get(id)
+    }
+
     #[cfg(test)]
     pub(crate) fn table(&self) -> &AgentTable {
         &self.table
