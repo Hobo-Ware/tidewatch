@@ -197,7 +197,7 @@ crates/tidewatch/       the egui app
 docs/                   concept mockup, research reports, shortcuts.md (generated from the command table, checked by a test)
 packaging/              Info.plist, reference Homebrew cask (tidewatch.rb), .desktop file, release README
 scripts/                bundle-macos.sh (universal ad-hoc signed Tidewatch.app + zip), package-linux.sh (tarball + AppImage), make-icon.sh (icon from assets/icon.svg)
-assets/                 icon.svg (placeholder), Tidewatch.icns, icon-512.png, tray.svg and tray.png (the menu-bar template icon)
+assets/                 icon.svg (the K mark: ripple prompt and wave, Night tide colors), Tidewatch.icns, icon-512.png, tray.svg and tray.png (the menu-bar template icon)
 .github/workflows/      ci.yml (fmt, clippy, test on macOS and Ubuntu), release.yml (v* tags: bundle, package, GitHub Release, tap behind PUBLISH_TAP)
 ```
 
