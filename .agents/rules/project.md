@@ -115,6 +115,9 @@ cargo fmt --all --check
 TIDEWATCH_SCREENSHOT=/tmp/x.png cargo run -p tidewatch -- <repo>   # render, save PNG, quit
 ```
 
+Screenshot runs open in the background: no Dock icon, never take keyboard focus from the
+developer's active window. `TIDEWATCH_BACKGROUND=1` does the same for any other dev or live-check
+run. Agents must use one of the two for every window they open.
 `TIDEWATCH_SCREENSHOT_WAIT=<seconds>` waits longer before the capture (default 1.5s).
 `TIDEWATCH_DEV_WORKTREE=open|ask|delete` opens one worktree tab at startup; `ask` also shows its close
 dialog, `delete` closes it with "Delete branch". Use a throwaway repo, and a temp `HOME` (with

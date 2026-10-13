@@ -19,6 +19,7 @@ stdusk-core.workspace = true
 shell-words.workspace = true
 stdusk-egui.workspace = true
 tidewatch-core.workspace = true
+winit = "0.30.13"
 
 [dev-dependencies]
 tempfile.workspace = true
