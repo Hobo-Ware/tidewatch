@@ -24,7 +24,7 @@ in the sibling repo, never in a local copy.
 
 ```
 crates/tidewatch-core/  worktrees, profiles, permission levels, workflows, agent status, no UI
-  src/paths.rs          ~/.tidewatch layout (D9), state dirs, per-tab notes and stages files, ~/.config/tidewatch files (pure)
+  src/paths.rs          ~/.tidewatch layout (D9), state dirs, instance sockets, per-tab notes and stages files, ~/.config/tidewatch files (pure)
   src/agents.rs         agent table: claude, codex, gemini, copilot, five permission levels to flags, version probe, [agent.<id>] overrides
   src/profiles.rs       Profile, profiles.toml load/save (bad file -> defaults), first-launch seeding
   src/workflows.rs      Workflow, Stage, Gate, Action; workflows.toml load/save/seed (bad file -> defaults), the built-in Ship a feature, Fix a bug, Review a PR
@@ -44,7 +44,8 @@ crates/tidewatch-core/  worktrees, profiles, permission levels, workflows, agent
   src/trust.rs          D14 folder trust, pure: per-CLI config text in, text with the folder trusted (or not) out, idempotent, refuses unparsable files; TrustState per installed CLI
   src/consent.rs        D14 consent state machine (Undecided, Granted, Declined; Yes, No, Apply, Undo -> effects) and trust.toml: the answer and the entries Tidewatch added
   src/trust_apply.rs    D14 disk half: each CLI's config file (CLAUDE_CONFIG_DIR, COPILOT_HOME, CODEX_HOME honored), inspect, trust the root, trust a worktree, revoke; atomic write, `.tidewatch-bak` backup, race check
-  src/prefs.rs          ~/.config/tidewatch/settings.toml: the app-wide switches (restore the last session at launch, default on); bad file -> defaults
+  src/prefs.rs          ~/.config/tidewatch/settings.toml: the app-wide switches (restore the last session at launch, default on) and the [window] table (quake on, hotkey Ctrl+Alt+Grave, menu-bar item on); bad file -> defaults; `update` rewrites one part from a fresh read
+  src/instance.rs       one window per folder: a Unix socket per workspace under .state/instances, `open <path>` hand-off from a second launch, `toggle` to every live window, stale socket takeover, guard that unlinks on exit
   src/names.rs          adjective-noun names for new worktrees (pure)
   src/registry.rs       .state/worktrees.toml: the worktrees Tidewatch made, for repair
   src/restore.rs        D11 restore: pure plan (saved session + Disk -> one action per tab), repair_moved, resume_command, restore_workflow, codex_session_id
