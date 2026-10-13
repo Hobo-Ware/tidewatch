@@ -244,6 +244,8 @@ fn codex_wiring(
                     "mcp_servers.{MCP_SERVER_NAME}.bearer_token_env_var={}",
                     toml_string(CODEX_MCP_TOKEN_ENV)
                 ),
+                "-c".to_owned(),
+                format!("mcp_servers.{MCP_SERVER_NAME}.default_tools_approval_mode=\"approve\""),
             ]);
             env.push((CODEX_MCP_TOKEN_ENV.into(), listener.token.clone()));
         }
@@ -727,7 +729,7 @@ mod tests {
         assert!(launch.args.contains(&"--dangerously-bypass-hook-trust".to_owned()));
         let overrides: Vec<&str> =
             launch.args.windows(2).filter(|w| w[0] == "-c").map(|w| w[1].as_str()).collect();
-        assert_eq!(overrides.len(), CODEX_HOOK_EVENTS.len() + 3);
+        assert_eq!(overrides.len(), CODEX_HOOK_EVENTS.len() + 4);
         for event in CODEX_HOOK_EVENTS {
             let hook =
                 overrides.iter().find(|o| o.starts_with(&format!("hooks.{event}="))).unwrap();
@@ -741,6 +743,9 @@ mod tests {
         assert!(
             overrides
                 .contains(&"mcp_servers.tidewatch.bearer_token_env_var=\"TIDEWATCH_MCP_TOKEN\"")
+        );
+        assert!(
+            overrides.contains(&"mcp_servers.tidewatch.default_tools_approval_mode=\"approve\"")
         );
         assert_eq!(env_of(&launch, "TIDEWATCH_MCP_TOKEN"), Some("tok123"));
         let instructions =
