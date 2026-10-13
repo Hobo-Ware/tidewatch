@@ -5,6 +5,8 @@
 //! pinned main tab. One list keeps tab ids unique across the window; the visible group is the one
 //! the active tab is in, so selecting a tab of another group switches to it.
 
+mod groups;
+
 pub(crate) const MAIN_TITLE: &str = "main";
 
 pub(crate) struct Tab<T> {

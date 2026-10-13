@@ -68,6 +68,7 @@ mod reader_rows;
 mod reader_scroll;
 mod reader_view;
 mod repo;
+mod repo_close;
 mod restore_glue;
 mod restore_jobs;
 mod session_glue;

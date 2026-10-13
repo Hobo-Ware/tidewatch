@@ -6,6 +6,7 @@
 //! window).
 
 use tidewatch_core::paths::TidewatchPaths;
+use tidewatch_core::session::SavedWindow;
 
 use crate::pane::Pane;
 use std::hash::{DefaultHasher, Hash, Hasher};
@@ -17,13 +18,23 @@ use crate::tabs::Tabs;
 pub(crate) struct Saver {
     writer: Option<Writer>,
     last: Option<u64>,
+    retired: Vec<SavedWindow>,
 }
 
 impl Saver {
     /// Without `paths` or with `enabled` false the saver does nothing.
     pub(crate) fn new(paths: Option<&TidewatchPaths>, enabled: bool, debounce: Debounce) -> Self {
         let writer = paths.filter(|_| enabled).map(|paths| Writer::start(paths.clone(), debounce));
-        Self { writer, last: None }
+        Self { writer, last: None, retired: Vec::new() }
+    }
+
+    /// Writes a closed repo's last window with the next save, so what the repo had open is not
+    /// brought back when it is opened again.
+    pub(crate) fn retire(&mut self, window: SavedWindow) {
+        if self.writer.is_some() {
+            self.retired.push(window);
+            self.last = None;
+        }
     }
 
     /// Queues a save when the window changed since the last one. `settled` is false while a restore
@@ -44,7 +55,9 @@ impl Saver {
             return false;
         }
         self.last = Some(sig);
-        writer.save(views.map(|view| saved_window(&view, tabs)).collect());
+        writer.save(
+            views.map(|view| saved_window(&view, tabs)).chain(self.retired.drain(..)).collect(),
+        );
         true
     }
 
@@ -56,7 +69,9 @@ impl Saver {
         tabs: &Tabs<Pane<T>>,
     ) {
         if let Some(writer) = self.writer.as_ref().filter(|_| settled) {
-            writer.flush(views.map(|view| saved_window(&view, tabs)).collect());
+            writer.flush(
+                views.map(|view| saved_window(&view, tabs)).chain(self.retired.drain(..)).collect(),
+            );
         }
     }
 }
@@ -188,5 +203,38 @@ mod tests {
         assert_eq!(session.windows.len(), 2);
         let saved = session.window(Path::new("/work/api")).expect("the second repo was written");
         assert!(matches!(saved.tabs[..], [SavedTab::Main, SavedTab::Shell { .. }]));
+    }
+
+    #[test]
+    fn a_closed_repo_is_written_with_only_its_main_shell() {
+        let home = tempfile::tempdir().unwrap();
+        let paths = TidewatchPaths::new(home.path());
+        let mut saver = Saver::new(Some(&paths), true, slow());
+        let mut tabs = Tabs::new(Pane::shell(0));
+        let api = tabs.add_group(Pane::shell(10));
+        let api_view =
+            WindowView { group: api, dir: Path::new("/work/api"), other: false, focus: false };
+        let worktree = Worktree {
+            repo: PathBuf::from("/work/api"),
+            path: PathBuf::from("/home/.tidewatch/api-abc123/calm-comet"),
+            branch: "agent/calm-comet".into(),
+        };
+        let tab = tabs.push_in(
+            api,
+            "calm-comet".into(),
+            Pane { body: Body::Shell(1), worktree: Some(worktree), agent: None },
+        );
+        saver.flush(true, [view(false), api_view].into_iter(), &tabs);
+        let saved = Session::load(&paths);
+        let before = saved.window(Path::new("/work/api")).expect("both repos were written");
+        assert!(matches!(before.tabs[..], [SavedTab::Main, SavedTab::Shell { .. }]));
+        tabs.remove_id(tab);
+        saver.retire(saved_window(&api_view, &tabs));
+        assert_eq!(tabs.remove_group(api).len(), 1);
+        saver.flush(true, views(false), &tabs);
+        let session = Session::load(&paths);
+        let after =
+            session.window(Path::new("/work/api")).expect("the closed repo is still listed");
+        assert!(matches!(after.tabs[..], [SavedTab::Main]));
     }
 }

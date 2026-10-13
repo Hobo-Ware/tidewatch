@@ -60,6 +60,7 @@ use crate::pane::Pane;
 use crate::pane_jobs;
 use crate::pty::spawn_shell;
 use crate::repo::Workspace;
+use crate::repo_close::RepoClose;
 use crate::restore_glue::{self};
 use crate::session_glue::Saver;
 use crate::settings::Settings;
@@ -99,6 +100,7 @@ pub(crate) struct Tidewatch {
     pane_jobs: Jobs<pane_jobs::Done>,
     workspace_jobs: Jobs<Workspace>,
     picker: Picker,
+    repo_close: Option<RepoClose>,
     notes_writer: NotesWriter,
     avatars: AvatarStore,
     toast: Option<Toast>,
@@ -184,6 +186,7 @@ impl Tidewatch {
             pane_jobs: Jobs::new(),
             workspace_jobs: Jobs::new(),
             picker: Picker::new(),
+            repo_close: None,
             notes_writer: NotesWriter::new(),
             avatars: AvatarStore::offline(cc.egui_ctx.clone()),
             toast: None,

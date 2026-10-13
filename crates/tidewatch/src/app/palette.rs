@@ -62,6 +62,7 @@ impl Tidewatch {
             Target::Tab(index) => self.dispatch(Action::SelectNth(index), ctx),
             Target::Repo(group) => self.dispatch(Action::ShowGroup(group), ctx),
             Target::OpenRepo => self.run_repo_command(RepoCommand::Open, ctx),
+            Target::CloseRepo => self.run_repo_command(RepoCommand::Close, ctx),
             Target::Profile(id) => self.open_new_tab_dialog(ctx, Some(&id)),
             Target::Workflow(id) => self.open_new_tab_dialog(ctx, Some(&format!("workflow:{id}"))),
         }
