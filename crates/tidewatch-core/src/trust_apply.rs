@@ -10,7 +10,7 @@ use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, PoisonError};
 
-use crate::consent::{Added, Record};
+use crate::consent::{Added, Consent, Record};
 use crate::paths::TidewatchPaths;
 use crate::trust::{
     CliTrust, Coverage, Status, TrustCli, TrustError, TrustState, add_entry, assess, remove_entry,
@@ -123,6 +123,14 @@ impl Grant {
             })
             .collect();
         TrustState { clis }
+    }
+
+    /// Writes the answer into `trust.toml`, keeping the list of entries.
+    pub fn set_consent(&self, consent: Consent) -> std::io::Result<()> {
+        let _one = lock();
+        let mut record = Record::load(&self.record_file);
+        record.consent = consent;
+        record.save(&self.record_file)
     }
 
     /// Trusts the Tidewatch root in every installed CLI where one entry covers the worktrees.
@@ -573,6 +581,19 @@ mod tests {
         assert_eq!(state.clis.len(), 3, "Codex is not installed, so it is not listed");
         assert!(!rig.paths.root().exists());
         assert_eq!(read(rig.files.file(TrustCli::Claude).unwrap()), "nope");
+    }
+
+    #[test]
+    fn the_answer_is_saved_without_losing_the_entries() {
+        let rig = rig();
+        let dir = rig.paths.root().join("w");
+        std::fs::create_dir_all(&dir).unwrap();
+        let _ = rig.grant.trust_worktree(TrustCli::Codex, &dir);
+        rig.grant.set_consent(Consent::Granted).unwrap();
+        let record = rig.grant.record();
+        assert_eq!((record.consent, record.added.len()), (Consent::Granted, 1));
+        let _ = rig.grant.revoke(None);
+        assert_eq!(rig.grant.record().consent, Consent::Granted, "revoking keeps the answer");
     }
 
     #[test]

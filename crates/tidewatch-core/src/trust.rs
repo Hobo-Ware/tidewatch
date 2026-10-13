@@ -326,7 +326,9 @@ pub fn remove_entry(cli: TrustCli, text: &str, folder: &str) -> Result<Option<St
 
 fn claude_remove(text: &str, folder: &str) -> Result<Option<String>> {
     let Some(doc) = parse_json(text)? else { return Ok(None) };
-    let Some((_, projects)) = object_member(text, &doc, "projects")? else { return Ok(None) };
+    let Some((projects_at, projects)) = object_member(text, &doc, "projects")? else {
+        return Ok(None);
+    };
     let Some((index, entry)) = object_member(text, &projects, folder)? else { return Ok(None) };
     let Some(flag) = entry.members.iter().position(|m| m.key == CLAUDE_KEY) else {
         return Ok(None);
@@ -334,10 +336,12 @@ fn claude_remove(text: &str, folder: &str) -> Result<Option<String>> {
     if !flag_is_true(text, entry.members[flag].value)? {
         return Ok(None);
     }
-    if entry.members.len() == 1 {
+    if entry.members.len() > 1 {
+        Ok(Some(json::remove_member(text, &entry, flag)))
+    } else if projects.members.len() > 1 {
         Ok(Some(json::remove_member(text, &projects, index)))
     } else {
-        Ok(Some(json::remove_member(text, &entry, flag)))
+        Ok(Some(json::remove_member(text, &doc, projects_at)))
     }
 }
 
@@ -347,7 +351,12 @@ fn copilot_remove(text: &str, folder: &str) -> Result<Option<String>> {
     let found = array.elements.iter().position(|span| {
         json::string_at(text, *span).is_some_and(|entry| same_folder(&entry, folder))
     });
-    Ok(found.map(|index| json::remove_element(text, &array, index)))
+    let Some(index) = found else { return Ok(None) };
+    if array.elements.len() > 1 {
+        return Ok(Some(json::remove_element(text, &array, index)));
+    }
+    let list = doc.members.iter().position(|m| m.key == COPILOT_KEY).unwrap_or_default();
+    Ok(Some(json::remove_member(text, &doc, list)))
 }
 
 fn codex_remove(text: &str, folder: &str) -> Result<Option<String>> {
@@ -652,6 +661,16 @@ mod tests {
     }
 
     #[test]
+    fn undo_also_drops_the_key_it_had_to_create() {
+        let claude = "{\n  \"theme\": \"dark\"\n}\n";
+        let added = add(TrustCli::Claude, claude, WORKTREE);
+        assert_eq!(remove_entry(TrustCli::Claude, &added, WORKTREE).unwrap().unwrap(), claude);
+        let copilot = "// c\n{\n  \"firstLaunchAt\": \"x\"\n}\n";
+        let added = add(TrustCli::Copilot, copilot, ROOT);
+        assert_eq!(remove_entry(TrustCli::Copilot, &added, ROOT).unwrap().unwrap(), copilot);
+    }
+
+    #[test]
     fn undo_removes_only_our_codex_table() {
         let original = "model = \"gpt-5\"\n\n[projects.\"/x\"]\ntrust_level = \"trusted\"\n";
         let added = add(TrustCli::Codex, original, WORKTREE);
@@ -670,7 +689,7 @@ mod tests {
             assert!(is_trusted(cli, &added, odd).unwrap(), "{cli:?}");
             assert_eq!(
                 remove_entry(cli, &added, odd).unwrap().unwrap().trim(),
-                if cli == TrustCli::Claude { "{\n  \"projects\": {}\n}" } else { "" }
+                if cli == TrustCli::Claude { "{}" } else { "" }
             );
         }
     }
