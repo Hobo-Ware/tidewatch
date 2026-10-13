@@ -9,6 +9,7 @@ mod agent_run;
 mod app;
 mod catalog;
 mod checkout;
+mod cli;
 mod close_dialog;
 mod delivery_card;
 mod delivery_view;
@@ -37,6 +38,7 @@ mod new_tab_workflow;
 mod note_actions;
 mod note_send;
 mod notes_strip;
+mod notice;
 mod notify;
 mod overview;
 mod overview_view;
@@ -54,6 +56,8 @@ mod reader_rows;
 mod reader_scroll;
 mod reader_view;
 mod repo;
+mod restore_glue;
+mod restore_jobs;
 mod session_glue;
 mod session_save;
 mod session_writer;
@@ -86,11 +90,9 @@ use tidewatch_core::paths::TidewatchPaths;
 const WINDOW_SIZE: [f32; 2] = [1280.0, 800.0];
 
 fn main() -> eframe::Result<()> {
-    let start = std::env::args_os()
-        .nth(1)
-        .map(PathBuf::from)
-        .or_else(|| std::env::current_dir().ok())
-        .unwrap_or_else(|| PathBuf::from("."));
+    let args = cli::parse(std::env::args_os().skip(1));
+    let start =
+        args.path.or_else(|| std::env::current_dir().ok()).unwrap_or_else(|| PathBuf::from("."));
     let workspace = Workspace::open(&start);
     let home = std::env::var_os("HOME").map(PathBuf::from);
     let data_home = std::env::var_os("TIDEWATCH_HOME").map(PathBuf::from).or_else(|| home.clone());
@@ -123,6 +125,7 @@ fn main() -> eframe::Result<()> {
                 agent_path,
                 screenshot,
                 home.as_deref(),
+                args.no_restore,
             )))
         }),
     )

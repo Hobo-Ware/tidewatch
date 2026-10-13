@@ -14,6 +14,11 @@ use tidewatch_core::workflows::{Gate, Stage, StageRun, Workflows};
 use super::*;
 use crate::workflow_ask::Choice;
 
+fn saved_run(paths: &TidewatchPaths, worktree: &Worktree) -> Option<Box<Runner>> {
+    let file = paths.stages_file(&worktree.repo, worktree.name());
+    tidewatch_core::restore::restore_workflow(&file).map(|(runner, _)| Box::new(runner))
+}
+
 fn git(dir: &Path, args: &[&str]) {
     let out = Command::new("git")
         .arg("-C")

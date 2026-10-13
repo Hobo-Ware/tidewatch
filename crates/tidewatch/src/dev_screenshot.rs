@@ -10,6 +10,15 @@ const SETTLE_FRAMES: u32 = 3;
 const POLL: Duration = Duration::from_millis(50);
 const DEFAULT_WAIT: Duration = Duration::from_millis(1500);
 
+/// The PNG of a captured frame, written to `path`; a failure goes to stderr.
+pub(crate) fn save_png(path: &std::path::Path, image: &egui::ColorImage) {
+    let [w, h] = image.size;
+    let rgba: Vec<u8> = image.pixels.iter().flat_map(egui::Color32::to_array).collect();
+    if let Err(e) = image::save_buffer(path, &rgba, w as u32, h as u32, image::ColorType::Rgba8) {
+        eprintln!("tidewatch: screenshot failed: {e}");
+    }
+}
+
 pub(crate) struct DevScreenshot {
     path: PathBuf,
     frames: u32,
@@ -36,13 +45,7 @@ impl DevScreenshot {
             })
         });
         if let Some(image) = captured {
-            let [w, h] = image.size;
-            let rgba: Vec<u8> = image.pixels.iter().flat_map(egui::Color32::to_array).collect();
-            if let Err(e) =
-                image::save_buffer(&self.path, &rgba, w as u32, h as u32, image::ColorType::Rgba8)
-            {
-                eprintln!("tidewatch: screenshot failed: {e}");
-            }
+            save_png(&self.path, &image);
             ctx.send_viewport_cmd(ViewportCommand::Close);
             return;
         }

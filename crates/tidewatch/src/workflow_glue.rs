@@ -13,7 +13,6 @@ use tidewatch_core::listener::Listener;
 use tidewatch_core::paths::TidewatchPaths;
 use tidewatch_core::prepare::Prepared;
 use tidewatch_core::profiles::Profile;
-use tidewatch_core::restore::restore_workflow;
 use tidewatch_core::runner::{RunContext, RunEvent, Runner};
 use tidewatch_core::tools::Tools;
 use tidewatch_core::trust_apply::Grant;
@@ -65,12 +64,6 @@ pub(crate) enum Start {
 pub(crate) struct Host {
     jobs: Jobs<Done>,
     pending: HashMap<u64, Start>,
-}
-
-/// Loads the run a worktree tab saved, for a restart. `None` when there is no usable file.
-pub(crate) fn saved_run(paths: &TidewatchPaths, worktree: &Worktree) -> Option<Box<Runner>> {
-    let file = paths.stages_file(&worktree.repo, worktree.name());
-    restore_workflow(&file).map(|(runner, _)| Box::new(runner))
 }
 
 fn tab_run<T>(tabs: &mut Tabs<Pane<T>>, id: u64) -> Option<&mut TabRun> {

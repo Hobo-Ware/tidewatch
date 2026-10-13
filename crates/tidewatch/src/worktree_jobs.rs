@@ -22,7 +22,6 @@ pub(crate) enum Done {
     Opened { tab: u64, result: Result<Opened, OpenFailure> },
     Inspected { tab: u64, worktree: Worktree, inspection: Inspection },
     Removed { tab: u64, result: Result<BranchOutcome, String> },
-    Startup { repaired: usize, leftovers: Vec<Leftover> },
 }
 
 /// Where a new tab runs: a fresh worktree of the repo, or the folder itself in the Other group.
@@ -141,18 +140,6 @@ pub(crate) fn remove<T: Send + 'static>(
             let _ = grant.revoke(Some(&worktree.path));
         }
         Done::Removed { tab, result }
-    });
-}
-
-pub(crate) fn startup(
-    jobs: &Jobs<Done>,
-    ctx: &egui::Context,
-    paths: TidewatchPaths,
-    repo: PathBuf,
-) {
-    jobs.spawn(ctx, move || {
-        let repaired = worktree::repair(&paths, &repo).len();
-        Done::Startup { repaired, leftovers: worktree::leftovers(&paths, &[]) }
     });
 }
 

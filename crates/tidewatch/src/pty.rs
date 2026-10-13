@@ -7,7 +7,7 @@ use std::path::Path;
 use stdusk_core::shell::ShellProfile;
 use stdusk_core::terminal::{PtyTerm, SpawnOpts};
 use stdusk_egui::repaint_handle;
-use tidewatch_core::prepare::Prepared;
+use tidewatch_core::prepare::{Prepared, note_script};
 
 const INITIAL_COLS: usize = 80;
 const INITIAL_ROWS: usize = 24;
@@ -16,6 +16,23 @@ const WORD_SEPARATORS: &str = " ()[]{}'\"";
 
 pub(crate) fn spawn_shell(ctx: &egui::Context, dir: &Path) -> PtyTerm {
     PtyTerm::spawn(INITIAL_COLS, INITIAL_ROWS, repaint_handle(ctx), &spawn_opts(dir, None))
+}
+
+/// A plain shell that prints `note` first, for a restored tab whose agent could not be resumed.
+pub(crate) fn spawn_shell_noted(ctx: &egui::Context, dir: &Path, note: Option<&str>) -> PtyTerm {
+    let Some(note) = note else { return spawn_shell(ctx, dir) };
+    let shell = user_shell(std::env::var("SHELL").ok());
+    let profile = note_profile(&shell, note);
+    PtyTerm::spawn(INITIAL_COLS, INITIAL_ROWS, repaint_handle(ctx), &spawn_opts(dir, Some(profile)))
+}
+
+fn note_profile(shell: &str, note: &str) -> ShellProfile {
+    ShellProfile {
+        shell: Some(shell.to_owned()),
+        args: vec!["-c".to_owned(), note_script(note, shell)],
+        cwd: None,
+        env: BTreeMap::new(),
+    }
 }
 
 /// The user's shell runs `prepared.script` as its command, so it reads the login profile like any
@@ -55,6 +72,15 @@ fn user_shell(env: Option<String>) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_noted_shell_runs_the_note_script_in_the_users_shell() {
+        let profile = note_profile("/bin/zsh", "The agent was not resumed: it is gone.");
+        assert_eq!(profile.shell.as_deref(), Some("/bin/zsh"));
+        assert_eq!(profile.args[0], "-c");
+        assert!(profile.args[1].contains("The agent was not resumed: it is gone."));
+        assert!(profile.args[1].ends_with("; exec /bin/zsh -l -i"), "{}", profile.args[1]);
+    }
 
     #[test]
     fn the_shell_comes_from_the_environment_or_the_platform_default() {
