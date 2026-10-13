@@ -2,7 +2,10 @@
 //! The `eframe::App` loop lives in `app.rs`; tabs, layout math and the repo probe are pure
 //! modules with unit tests. A folder that is not a git repo opens in the "Other" group.
 
+mod agent_events;
+mod agent_frame;
 mod agent_jobs;
+mod agent_run;
 mod app;
 mod catalog;
 mod checkout;
@@ -20,11 +23,13 @@ mod list_row;
 mod new_tab;
 mod new_tab_dialog;
 mod note_actions;
+mod notify;
 mod pane;
 mod pane_jobs;
 mod profile_editor;
 mod repo;
 mod settings_view;
+mod status_view;
 mod tab_view;
 mod tabs;
 mod toast;

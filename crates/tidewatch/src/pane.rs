@@ -6,6 +6,7 @@ use std::path::{Path, PathBuf};
 use tidewatch_core::prepare::Prepared;
 use tidewatch_core::worktree::Worktree;
 
+use crate::agent_run::AgentRun;
 use crate::tabs::Tabs;
 
 pub(crate) const CREATING_TITLE: &str = "new worktree";
@@ -19,10 +20,10 @@ pub(crate) enum Body<T> {
     Failed(String),
 }
 
-/// The profile an agent tab was started from. Plain shells have none.
-#[derive(Clone, Debug, PartialEq, Eq)]
+/// The profile an agent tab was started from and what the agent is doing. Plain shells have none.
 pub(crate) struct AgentTab {
     pub(crate) profile_name: String,
+    pub(crate) run: AgentRun,
 }
 
 pub(crate) struct Pane<T> {
@@ -36,11 +37,13 @@ pub(crate) struct Pane<T> {
 pub(crate) struct Opened {
     pub(crate) worktree: Option<Worktree>,
     pub(crate) dir: PathBuf,
-    pub(crate) started: Option<Started>,
+    pub(crate) started: Option<Box<Started>>,
 }
 
 pub(crate) struct Started {
     pub(crate) profile_name: String,
+    pub(crate) agent_id: String,
+    pub(crate) notes_file: Option<PathBuf>,
     pub(crate) prepared: Prepared,
 }
 
@@ -67,6 +70,12 @@ impl<T> Pane<T> {
 
     pub(crate) fn creating() -> Self {
         Self { body: Body::Creating, worktree: None, agent: None }
+    }
+
+    /// A tab whose worktree is being made for an agent: its status is "setting up" from the start.
+    pub(crate) fn creating_agent(profile_name: String, agent_id: String, now: f64) -> Self {
+        let run = AgentRun::setting_up(agent_id, now);
+        Self { body: Body::Creating, worktree: None, agent: Some(AgentTab { profile_name, run }) }
     }
 
     pub(crate) fn close_policy(&self) -> ClosePolicy {
@@ -101,7 +110,11 @@ impl<T> Pane<T> {
 pub(crate) fn agent_tabs_in_folder<T>(tabs: &Tabs<Pane<T>>) -> Vec<String> {
     tabs.items()
         .iter()
-        .filter(|tab| tab.pane.agent.is_some() && tab.pane.worktree.is_none())
+        .filter(|tab| {
+            tab.pane.agent.is_some()
+                && tab.pane.worktree.is_none()
+                && matches!(tab.pane.body, Body::Shell(_))
+        })
         .map(|tab| tab.title.clone())
         .collect()
 }
@@ -113,6 +126,7 @@ pub(crate) fn finish_open<T>(
     tabs: &mut Tabs<Pane<T>>,
     id: u64,
     result: Result<Opened, OpenFailure>,
+    now: f64,
     spawn: impl FnOnce(&Path, Option<&Prepared>) -> T,
 ) -> Vec<String> {
     let Some(tab) = tabs.get_mut(id) else { return Vec::new() };
@@ -130,21 +144,36 @@ pub(crate) fn finish_open<T>(
             };
             title.clone_into(&mut tab.title);
             let shell = spawn(&opened.dir, opened.started.as_ref().map(|s| &s.prepared));
+            let previous = tab.pane.agent.take();
             tab.pane = Pane {
                 body: Body::Shell(shell),
                 worktree: opened.worktree,
-                agent: opened.started.map(|s| AgentTab { profile_name: s.profile_name }),
+                agent: opened.started.map(|started| {
+                    let mut run = previous.map_or_else(
+                        || AgentRun::setting_up(started.agent_id.clone(), now),
+                        |agent| agent.run,
+                    );
+                    run.started(started.notes_file, now);
+                    AgentTab { profile_name: started.profile_name, run }
+                }),
             };
             notes
         }
         Err(OpenFailure::Nothing(message)) => {
             FAILED_TITLE.clone_into(&mut tab.title);
+            if let Some(agent) = &mut tab.pane.agent {
+                agent.run.fail(message.clone());
+            }
             tab.pane.body = Body::Failed(message);
             Vec::new()
         }
         Err(OpenFailure::Kept { worktree, message }) => {
             worktree.name().clone_into(&mut tab.title);
-            tab.pane = Pane { body: Body::Failed(message), worktree: Some(worktree), agent: None };
+            let mut agent = tab.pane.agent.take();
+            if let Some(agent) = &mut agent {
+                agent.run.fail(message.clone());
+            }
+            tab.pane = Pane { body: Body::Failed(message), worktree: Some(worktree), agent };
             Vec::new()
         }
     }
@@ -154,6 +183,7 @@ pub(crate) fn finish_open<T>(
 mod tests {
     use super::*;
     use std::path::PathBuf;
+    use tidewatch_core::status::AgentStatus;
 
     fn shell_of(pane: &Pane<u32>) -> Option<u32> {
         match pane.body {
@@ -176,13 +206,15 @@ mod tests {
         (tabs, id)
     }
 
-    fn opened(started: Option<Started>) -> Opened {
+    fn opened(started: Option<Box<Started>>) -> Opened {
         Opened { worktree: Some(worktree()), dir: worktree().path, started }
     }
 
-    fn started(notes: &[&str]) -> Started {
-        Started {
+    fn started(notes: &[&str]) -> Box<Started> {
+        Box::new(Started {
             profile_name: "Builder".into(),
+            agent_id: "claude".into(),
+            notes_file: None,
             prepared: Prepared {
                 launch: tidewatch_core::launch::Launch {
                     program: "claude".into(),
@@ -194,14 +226,14 @@ mod tests {
                 setup: String::new(),
                 notes: notes.iter().map(|n| (*n).to_owned()).collect(),
             },
-        }
+        })
     }
 
     #[test]
     fn opened_worktree_starts_the_shell_inside_it_and_names_the_tab() {
         let (mut tabs, id) = tabs_with_creating();
         let mut seen = None;
-        let notes = finish_open(&mut tabs, id, Ok(opened(None)), |path, prepared| {
+        let notes = finish_open(&mut tabs, id, Ok(opened(None)), 0.0, |path, prepared| {
             seen = Some((path.to_path_buf(), prepared.is_some()));
             5
         });
@@ -211,23 +243,29 @@ mod tests {
         assert_eq!(tab.title, "brave-otter");
         assert_eq!(shell_of(&tab.pane), Some(5));
         assert_eq!(tab.pane.worktree, Some(worktree()));
-        assert_eq!(tab.pane.agent, None);
+        assert!(tab.pane.agent.is_none());
     }
 
     #[test]
     fn an_agent_tab_gets_what_to_start_remembers_its_profile_and_returns_the_notes() {
         let (mut tabs, id) = tabs_with_creating();
         let mut got_prepared = false;
-        let notes =
-            finish_open(&mut tabs, id, Ok(opened(Some(started(&["house style: x"])))), |_, p| {
+        let notes = finish_open(
+            &mut tabs,
+            id,
+            Ok(opened(Some(started(&["house style: x"])))),
+            0.0,
+            |_, p| {
                 got_prepared = p.is_some();
                 6
-            });
+            },
+        );
         assert!(got_prepared);
         assert_eq!(notes, ["house style: x"]);
         let tab = tabs.get_mut(id).unwrap();
         assert_eq!(tab.title, "brave-otter");
-        assert_eq!(tab.pane.agent, Some(AgentTab { profile_name: "Builder".into() }));
+        assert_eq!(tab.pane.agent.as_ref().map(|a| a.profile_name.as_str()), Some("Builder"));
+        assert_eq!(tab.pane.agent.as_ref().unwrap().run.status(), &AgentStatus::SettingUp);
         assert_eq!(tab.pane.close_policy(), ClosePolicy::Confirm(worktree()));
     }
 
@@ -236,7 +274,7 @@ mod tests {
         let (mut tabs, id) = tabs_with_creating();
         let in_other =
             Opened { worktree: None, dir: PathBuf::from("/notes"), started: Some(started(&[])) };
-        finish_open(&mut tabs, id, Ok(in_other), |_, _| 7);
+        finish_open(&mut tabs, id, Ok(in_other), 0.0, |_, _| 7);
         let tab = tabs.get_mut(id).unwrap();
         assert_eq!(tab.title, "Builder");
         assert_eq!(tab.pane.worktree, None);
@@ -250,6 +288,7 @@ mod tests {
             &mut tabs,
             id,
             Err(OpenFailure::Nothing("disk full".into())),
+            0.0,
             |_, _| unreachable!(),
         );
         let tab = tabs.get_mut(id).unwrap();
@@ -262,7 +301,7 @@ mod tests {
     fn an_agent_that_could_not_be_set_up_keeps_its_worktree_so_closing_can_remove_it() {
         let (mut tabs, id) = tabs_with_creating();
         let failure = OpenFailure::Kept { worktree: worktree(), message: "no flags".into() };
-        finish_open(&mut tabs, id, Err(failure), |_, _| unreachable!());
+        finish_open(&mut tabs, id, Err(failure), 0.0, |_, _| unreachable!());
         let tab = tabs.get_mut(id).unwrap();
         assert_eq!(tab.title, "brave-otter");
         assert!(matches!(&tab.pane.body, Body::Failed(m) if m == "no flags"));
@@ -272,16 +311,27 @@ mod tests {
     #[test]
     fn a_result_for_a_closed_tab_or_a_settled_tab_is_ignored() {
         let (mut tabs, id) = tabs_with_creating();
-        finish_open(&mut tabs, 99, Ok(opened(None)), |_, _| unreachable!());
-        finish_open(&mut tabs, id, Err(OpenFailure::Nothing("x".into())), |_, _| unreachable!());
-        finish_open(&mut tabs, id, Ok(opened(None)), |_, _| unreachable!());
+        finish_open(&mut tabs, 99, Ok(opened(None)), 0.0, |_, _| unreachable!());
+        finish_open(
+            &mut tabs,
+            id,
+            Err(OpenFailure::Nothing("x".into())),
+            0.0,
+            |_, _| unreachable!(),
+        );
+        finish_open(&mut tabs, id, Ok(opened(None)), 0.0, |_, _| unreachable!());
         assert!(matches!(tabs.get_mut(id).unwrap().pane.body, Body::Failed(_)));
     }
 
     #[test]
     fn only_agents_running_in_the_shared_folder_count_for_the_warning() {
         let mut tabs: Tabs<Pane<u32>> = Tabs::new(Pane::shell(0));
-        let agent = || Some(AgentTab { profile_name: "Builder".into() });
+        let agent = || {
+            Some(AgentTab {
+                profile_name: "Builder".into(),
+                run: AgentRun::setting_up("claude".into(), 0.0),
+            })
+        };
         tabs.push("a".into(), Pane { body: Body::Shell(1), worktree: None, agent: agent() });
         tabs.push("shell".into(), Pane::shell(2));
         tabs.push(
@@ -329,5 +379,60 @@ mod tests {
         pane.remove_failed("locked".into());
         assert!(matches!(&pane.body, Body::Failed(m) if m == "locked"));
         assert_eq!(pane.begin_remove(), Some((None, worktree())));
+    }
+
+    #[test]
+    fn a_tab_created_for_an_agent_is_setting_up_until_the_agent_starts() {
+        let pane = Pane::<u32>::creating_agent("Builder".into(), "claude".into(), 1.0);
+        let agent = pane.agent.as_ref().unwrap();
+        assert_eq!(agent.profile_name, "Builder");
+        assert_eq!(agent.run.status(), &AgentStatus::SettingUp);
+        assert!(matches!(pane.body, Body::Creating));
+    }
+
+    #[test]
+    fn an_opening_that_fails_marks_the_agent_failed() {
+        let mut tabs: Tabs<Pane<u32>> = Tabs::new(Pane::shell(0));
+        let id = tabs.push(
+            CREATING_TITLE.into(),
+            Pane::creating_agent("Builder".into(), "claude".into(), 0.0),
+        );
+        finish_open(
+            &mut tabs,
+            id,
+            Err(OpenFailure::Nothing("disk full".into())),
+            1.0,
+            |_, _| unreachable!(),
+        );
+        let run = &mut tabs.get_mut(id).unwrap().pane.agent.as_mut().unwrap().run;
+        assert_eq!(run.refresh(1.0).unwrap().to, AgentStatus::Failed("disk full".into()));
+    }
+
+    #[test]
+    fn an_agent_whose_setup_failed_keeps_its_worktree_and_shows_failed() {
+        let mut tabs: Tabs<Pane<u32>> = Tabs::new(Pane::shell(0));
+        let id = tabs.push(
+            CREATING_TITLE.into(),
+            Pane::creating_agent("Builder".into(), "claude".into(), 0.0),
+        );
+        let failure = OpenFailure::Kept { worktree: worktree(), message: "no flags".into() };
+        finish_open(&mut tabs, id, Err(failure), 1.0, |_, _| unreachable!());
+        let tab = tabs.get_mut(id).unwrap();
+        assert_eq!(tab.pane.close_policy(), ClosePolicy::Confirm(worktree()));
+        let run = &mut tab.pane.agent.as_mut().unwrap().run;
+        assert_eq!(run.refresh(1.0).unwrap().to, AgentStatus::Failed("no flags".into()));
+    }
+
+    #[test]
+    fn the_agent_starting_keeps_the_run_that_was_setting_up() {
+        let mut tabs: Tabs<Pane<u32>> = Tabs::new(Pane::shell(0));
+        let id = tabs.push(
+            CREATING_TITLE.into(),
+            Pane::creating_agent("Builder".into(), "claude".into(), 0.0),
+        );
+        finish_open(&mut tabs, id, Ok(opened(Some(started(&[])))), 5.0, |_, _| 9);
+        let run = &mut tabs.get_mut(id).unwrap().pane.agent.as_mut().unwrap().run;
+        assert_eq!(run.refresh(5.5).unwrap().to, AgentStatus::Working);
+        assert_eq!(run.elapsed(15.0), 10.0);
     }
 }
