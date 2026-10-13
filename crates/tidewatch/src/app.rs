@@ -59,11 +59,11 @@ use crate::pane::{
     Body, CREATING_TITLE, ClosePolicy, Pane, STARTING_TITLE, agent_tabs_in_folder, finish_open,
 };
 use crate::pane_jobs;
-use crate::profile_editor::Editor;
 use crate::reader::Shown;
 use crate::reader_glue;
 use crate::repo::Workspace;
-use crate::settings_view;
+use crate::settings::{Section, Settings};
+use crate::settings_view::{self, Files};
 use crate::status_view;
 use crate::stepper_view;
 use crate::tab_view::{TabView, ViewSpec};
@@ -112,7 +112,7 @@ pub(crate) struct Tidewatch {
     catalog: Catalog,
     agent_jobs: Jobs<agent_jobs::Done>,
     new_tab: Option<NewTab>,
-    settings: Option<Editor>,
+    settings: Option<Settings>,
     last_profile: Option<String>,
     hooks: Hooks,
     flow: Flow,
@@ -230,6 +230,11 @@ impl Tidewatch {
         let Some(dev) = self.dev_agent.take() else { return };
         if dev.mode == DevMode::Settings {
             self.toggle_settings();
+            if dev.profile.as_deref() == Some("workflows")
+                && let Some(settings) = &mut self.settings
+            {
+                settings.section = Section::Workflows;
+            }
             return;
         }
         if dev.mode == DevMode::Resume {
@@ -367,14 +372,28 @@ impl Tidewatch {
                 Ok(()) => {
                     let probes = self.catalog.set_profiles(profiles.clone());
                     self.probe_agents(probes, ctx);
-                    if let Some(editor) = &mut self.settings {
-                        editor.saved(profiles);
+                    if let Some(settings) = &mut self.settings {
+                        settings.profiles_saved(&profiles);
                     }
                     self.show_toast("Profiles saved", ctx);
                 }
                 Err(message) => {
-                    if let Some(editor) = &mut self.settings {
-                        editor.save_failed(format!("Could not save: {message}"));
+                    if let Some(settings) = &mut self.settings {
+                        settings.profiles.save_failed(format!("Could not save: {message}"));
+                    }
+                }
+            },
+            agent_jobs::Done::WorkflowsSaved { result, workflows } => match result {
+                Ok(()) => {
+                    self.catalog.set_workflows(workflows);
+                    if let Some(settings) = &mut self.settings {
+                        settings.workflows.saved();
+                    }
+                    self.show_toast("Workflows saved", ctx);
+                }
+                Err(message) => {
+                    if let Some(settings) = &mut self.settings {
+                        settings.workflows.save_failed(format!("Could not save: {message}"));
                     }
                 }
             },
@@ -391,19 +410,30 @@ impl Tidewatch {
         if self.settings.take().is_some() {
             return;
         }
-        if let Some(profiles) = self.catalog.profiles() {
-            self.settings = Some(Editor::new(profiles, self.catalog.agent_names()));
+        if let (Some(profiles), Some(workflows)) =
+            (self.catalog.profiles(), self.catalog.workflows())
+        {
+            self.settings = Some(Settings::new(profiles, workflows, self.catalog.agent_names()));
         }
     }
 
     fn save_settings(&mut self, ctx: &egui::Context) {
-        let (Some(editor), Some(paths)) = (&mut self.settings, &self.paths) else { return };
-        match editor.build() {
-            Ok(profiles) => {
-                editor.saving = true;
-                agent_jobs::save(&self.agent_jobs, ctx, paths.clone(), profiles);
-            }
-            Err(message) => editor.error = Some(message),
+        let (Some(settings), Some(paths)) = (&mut self.settings, &self.paths) else { return };
+        match settings.section {
+            Section::Profiles => match settings.profiles.build() {
+                Ok(profiles) => {
+                    settings.profiles.saving = true;
+                    agent_jobs::save(&self.agent_jobs, ctx, paths.clone(), profiles);
+                }
+                Err(message) => settings.profiles.error = Some(message),
+            },
+            Section::Workflows => match settings.workflows.build() {
+                Ok(workflows) => {
+                    settings.workflows.saving = true;
+                    agent_jobs::save_workflows(&self.agent_jobs, ctx, paths.clone(), workflows);
+                }
+                Err(message) => settings.workflows.error = Some(message),
+            },
         }
     }
 
@@ -1109,12 +1139,15 @@ impl eframe::App for Tidewatch {
                 }
                 return;
             }
-            if let Some(editor) = &mut self.settings {
-                let file = self
-                    .paths
-                    .as_ref()
-                    .map_or_else(String::new, |p| p.profiles_file().display().to_string());
-                settings_action = settings_view::show(ui, area, editor, &file);
+            if let Some(settings) = &mut self.settings {
+                let files = self.paths.as_ref().map_or_else(
+                    || Files { profiles: String::new(), workflows: String::new() },
+                    |p| Files {
+                        profiles: p.profiles_file().display().to_string(),
+                        workflows: p.workflows_file().display().to_string(),
+                    },
+                );
+                settings_action = settings_view::show(ui, area, settings, &files);
                 return;
             }
             let panels = self.workspace_has_panels() && !self.focus;

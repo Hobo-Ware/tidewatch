@@ -5,7 +5,7 @@
 //! - `TIDEWATCH_DEV_WORKFLOW=<workflow id>`: start that workflow in a new tab (the task from `TIDEWATCH_DEV_TASK`).
 //!   `TIDEWATCH_DEV_DIALOG=workflow:<id>` opens the dialog on it.
 //! - `TIDEWATCH_DEV_RESUME=<worktree name>`: open the tab of a saved workflow run and carry on where it was.
-//! - `TIDEWATCH_DEV_SETTINGS=1`: open the settings (profiles and workflows).
+//! - `TIDEWATCH_DEV_SETTINGS=1`: open the settings; `workflows` opens the workflow editor page.
 //! - `TIDEWATCH_DEV_TASK=<text>` and `TIDEWATCH_DEV_LEVEL=plan|ask|edits|auto|yolo`: the task and the
 //!   permission level to use with either.
 //!
@@ -85,7 +85,7 @@ impl DevAgent {
             (None, None, Some(name), ..) => (Mode::Resume, Some(name.to_owned())),
             (None, None, None, Some("1"), _) => (Mode::Dialog, None),
             (None, None, None, Some(profile), _) => (Mode::Dialog, Some(profile.to_owned())),
-            (None, None, None, None, Some(_)) => (Mode::Settings, None),
+            (None, None, None, None, Some(page)) => (Mode::Settings, Some(page.to_owned())),
             (None, None, None, None, None) => return None,
         };
         Some(Self {
@@ -168,6 +168,8 @@ mod tests {
     fn the_settings_switch_opens_the_editor() {
         let dev = DevAgent::parse(Vars { settings: Some("1"), ..vars() }).unwrap();
         assert_eq!(dev.mode, Mode::Settings);
+        let page = DevAgent::parse(Vars { settings: Some("workflows"), ..vars() }).unwrap();
+        assert_eq!((page.mode, page.profile.as_deref()), (Mode::Settings, Some("workflows")));
     }
 
     #[test]
