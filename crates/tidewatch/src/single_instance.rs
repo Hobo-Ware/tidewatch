@@ -180,7 +180,7 @@ mod tests {
     fn a_stale_socket_from_a_crash_is_taken_over_by_the_next_launch() {
         let dir = tempfile::tempdir().unwrap();
         let socket = dir.path().join("a.sock");
-        drop(std::os::unix::net::UnixListener::bind(&socket).unwrap());
+        crate::test_exec::leave_stale_socket(&socket);
         assert!(socket.exists());
         let (_guard, rx) = serve(primary(begin(Mode::HandOver, &socket, Path::new("/work/web"))));
         assert!(matches!(begin(Mode::HandOver, &socket, Path::new("/work/web")), Start::Exit));
