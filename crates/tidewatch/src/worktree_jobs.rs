@@ -8,6 +8,7 @@ use std::sync::Arc;
 use tidewatch_core::listener::{Listener, TabRegistration};
 use tidewatch_core::paths::TidewatchPaths;
 use tidewatch_core::prepare::{PrepareInput, prepare};
+use tidewatch_core::session_id;
 use tidewatch_core::worktree::{
     self, BranchChoice, BranchOutcome, Inspection, Leftover, RemoveMode, Worktree,
 };
@@ -66,6 +67,7 @@ fn run_open(spec: &OpenSpec) -> Result<Opened, OpenFailure> {
             tab: tab_key.clone(),
         })
     });
+    let session_id = request.agent.session_id_flag.is_some().then(session_id::new);
     let prepared = prepare(&PrepareInput {
         paths: &spec.paths,
         agent: &request.agent,
@@ -75,7 +77,7 @@ fn run_open(spec: &OpenSpec) -> Result<Opened, OpenFailure> {
         dir: &dir,
         worktree_tab: worktree.is_some(),
         task: &request.task,
-        session_id: None,
+        session_id: session_id.clone(),
         path_var: Some(&spec.path_var),
         listener: hooks,
     });
@@ -92,6 +94,7 @@ fn run_open(spec: &OpenSpec) -> Result<Opened, OpenFailure> {
                 profile_name: request.profile.name.clone(),
                 agent_id: request.agent.id.clone(),
                 notes_file: Some(spec.paths.notes_file(&repo, &tab_key)),
+                session_id,
                 prepared,
             })),
         }),

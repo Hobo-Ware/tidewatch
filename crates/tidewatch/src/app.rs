@@ -41,6 +41,7 @@ use crate::delivery_view;
 use crate::dev_agent::{DevAgent, Mode as DevMode};
 use crate::dev_flow::DevFlow;
 use crate::dev_panes::{self, DevPanes};
+use crate::dev_reader::DevReader;
 use crate::dev_screenshot::DevScreenshot;
 use crate::dev_view::{DevKeys, DevView};
 use crate::dev_worktree::DevWorktree;
@@ -58,6 +59,8 @@ use crate::pane::{
 };
 use crate::pane_jobs;
 use crate::profile_editor::Editor;
+use crate::reader::Shown;
+use crate::reader_glue;
 use crate::repo::Workspace;
 use crate::settings_view;
 use crate::status_view;
@@ -115,6 +118,7 @@ pub(crate) struct Tidewatch {
     focus: bool,
     status_log: bool,
     dev_keys: Option<DevKeys>,
+    dev_reader: DevReader,
 }
 
 impl Tidewatch {
@@ -165,6 +169,7 @@ impl Tidewatch {
             focus: dev_view.focus,
             status_log: dev_view.status_log,
             dev_keys: dev_view.keys,
+            dev_reader: DevReader::from_env(),
         };
         if let Some(paths) = &app.paths {
             agent_jobs::load(
@@ -705,6 +710,12 @@ impl Tidewatch {
         self.settings = None;
     }
 
+    fn toggle_reader(&mut self, ctx: &egui::Context) {
+        if let Some(shown) = reader_glue::toggle(self.tabs.active_pane_mut()) {
+            self.show_toast(reader_glue::toggle_text(shown), ctx);
+        }
+    }
+
     fn toggle_focus(&mut self, ctx: &egui::Context) {
         self.focus = !self.focus;
         let text = if self.focus { "Focus mode on (Cmd+.)" } else { "Focus mode off (Cmd+.)" };
@@ -867,6 +878,9 @@ impl eframe::App for Tidewatch {
             self.apply_agent_done(done, &ctx);
         }
         let now = ctx.input(|i| i.time);
+        self.dev_reader.press_toggle(&ctx, now);
+        reader_glue::start(&mut self.tabs, &ctx, &self.dev_reader);
+        reader_glue::drain(&mut self.tabs);
         self.drive_agents(&ctx, now);
         self.drive_flow(&ctx, now);
         self.drive_views();
@@ -881,6 +895,14 @@ impl eframe::App for Tidewatch {
             && ctx.input_mut(|i| i.consume_key(Modifiers::COMMAND, Key::Comma))
         {
             self.toggle_settings();
+        }
+        let reader_key = Modifiers::COMMAND.plus(Modifiers::SHIFT);
+        if !modal_open
+            && !self.overview
+            && self.settings.is_none()
+            && ctx.input_mut(|i| i.consume_key(reader_key, Key::T))
+        {
+            self.toggle_reader(&ctx);
         }
         let mut actions = if modal_open { Vec::new() } else { shortcut_actions(&ctx) };
         if self.overview {
@@ -1048,35 +1070,39 @@ impl eframe::App for Tidewatch {
                 .agent
                 .as_ref()
                 .map(|agent| agent.profile_name.clone());
+            let shown = reader_glue::shown(self.tabs.active_pane_mut());
+            let reader_on = shown == Some(Shown::Reader);
             match &mut self.tabs.active_pane_mut().body {
                 Body::Shell(term) => {
                     term.resize(cols, rows);
-                    let typed = collect_input(ui, false, false, term.app_cursor());
-                    if !typed.is_empty() && !modal_open && !typing_in_a_panel {
-                        term.send(&typed);
+                    if !reader_on {
+                        let typed = collect_input(ui, false, false, term.app_cursor());
+                        if !typed.is_empty() && !modal_open && !typing_in_a_panel {
+                            term.send(&typed);
+                        }
+                        let snap = term.grid_snapshot();
+                        render_grid(
+                            ui,
+                            &[],
+                            areas.terminal,
+                            term,
+                            &snap,
+                            cell_w,
+                            cell_h,
+                            &font,
+                            None,
+                            GridStyle {
+                                cursor: CursorStyle::Block,
+                                dimmed: false,
+                                link_active: false,
+                                blink: false,
+                                ligatures: false,
+                                min_contrast: MIN_CONTRAST,
+                                app_mouse: false,
+                            },
+                            &[],
+                        );
                     }
-                    let snap = term.grid_snapshot();
-                    render_grid(
-                        ui,
-                        &[],
-                        areas.terminal,
-                        term,
-                        &snap,
-                        cell_w,
-                        cell_h,
-                        &font,
-                        None,
-                        GridStyle {
-                            cursor: CursorStyle::Block,
-                            dimmed: false,
-                            link_active: false,
-                            blink: false,
-                            ligatures: false,
-                            min_contrast: MIN_CONTRAST,
-                            app_mouse: false,
-                        },
-                        &[],
-                    );
                     if let (Some(name), Some(exit)) = (&agent_name, term.exited()) {
                         exit_notice(ui, areas.terminal, &exit_notice_text(name, exit.code));
                     }
@@ -1088,6 +1114,26 @@ impl eframe::App for Tidewatch {
                     status_message(ui, areas.terminal, "Removing worktree...", colors::dim());
                 }
                 Body::Failed(message) => status_message(ui, areas.terminal, message, colors::red()),
+            }
+            match shown {
+                Some(Shown::Reader) => {
+                    let pane = self.tabs.active_pane_mut();
+                    let asked =
+                        reader_glue::draw(ui, areas.terminal, pane, &mut self.dev_reader, now);
+                    let toast = reader_glue::apply(
+                        asked,
+                        &mut self.tabs,
+                        active_id,
+                        &mut self.flow,
+                        &ctx,
+                        now,
+                    );
+                    if let Some(text) = toast {
+                        self.show_toast(text, &ctx);
+                    }
+                }
+                Some(Shown::Terminal(Some(note))) => reader_glue::note(ui, areas.terminal, note),
+                Some(Shown::Terminal(None)) | None => {}
             }
 
             if let (Some((block, open)), Some(band)) = (&end, end_band)

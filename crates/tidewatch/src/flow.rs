@@ -341,6 +341,11 @@ impl Flow {
         outs
     }
 
+    /// Presses Enter in the tab's terminal once the paste before it has landed.
+    pub(crate) fn queue_enter(&mut self, tab: u64, now: f64) {
+        self.enters.push(tab, now);
+    }
+
     pub(crate) fn due_enters(&mut self, now: f64) -> Vec<u64> {
         self.enters.take_due(now)
     }

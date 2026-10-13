@@ -43,6 +43,7 @@ crates/tidewatch-core/  worktrees, profiles, permission levels, workflows, agent
   src/names.rs          adjective-noun names for new worktrees (pure)
   src/registry.rs       .state/worktrees.toml: the worktrees Tidewatch made, for repair
   src/restore.rs        D11 restore: pure plan (saved session + Disk -> one action per tab), repair_moved, resume_command, restore_workflow, codex_session_id
+  src/session_id.rs     the random UUID passed to `--session-id` so the Reader finds a tab's transcript by name
   src/session.rs        .state/session.toml (D11): Session, SavedWindow, SavedTab (main, shell, agent); load (bad file -> empty), atomic save
   src/worktree.rs       add (locked, agent/<name>), inspect, remove, list, repair, leftovers (shells out to git)
   src/notes.rs          per-tab review threads in .state/<repo-dir>/<tab>/notes.json: load, atomic save, background writer, PR import links, sent marks and note state (queued, sent, replied) (D4)
@@ -114,6 +115,14 @@ crates/tidewatch/       the egui app
   src/delivery_view.rs  the compact card above the panes and the editable dialog (Cmd+Enter approves, Esc cancels)
   src/pr_state.rs       PR lookup state (focus and after a delivery, never per frame), the chip, whether a note may be posted (pure)
   src/post_confirm.rs   the confirm dialog before a note goes to GitHub: PR number and repo, exact text, Enter posts, Esc cancels
+  src/reader.rs         one agent tab's Reader: the view choice (Reader or raw terminal), feed state, rows; `shown()` decides what the tab draws and why (pure)
+  src/reader_rows.rs    transcript entries to view rows (a tool call and its result merge into one row), capped at 400 rows (pure)
+  src/reader_feed.rs    the thread that finds the transcript (retry schedule) and tails it; woken by pty output and hooks, backs off while quiet
+  src/reader_scroll.rs  autoscroll state (follow until the user scrolls up) and row height cache and estimate (pure)
+  src/reader_keys.rs    the permission answers verified per CLI and the bytes that give them (Claude: 1 and Esc)
+  src/reader_view.rs    draws the Reader: markdown rows, collapsed tool lines, permission strip, reply box, jump to latest
+  src/reader_glue.rs    seams: start feeds, drain, Cmd+Shift+T toggle, draw in the terminal area, type replies and answers into the pty
+  src/dev_reader.rs     TIDEWATCH_DEV_READER / _READER_KEY / _ANSWER / _REPLY switches
   src/end_block_view.rs the Done / Needs you / Next card on the tab (expandable) and its one-line form for the Overview
 docs/                   concept mockup, research reports
 ```
@@ -153,9 +162,13 @@ pulls the PR's comments or opens (and confirms) the post dialog for the first no
 `TIDEWATCH_DEV_OVERVIEW=1` and `TIDEWATCH_DEV_FOCUS=1` start on the Overview or in focus mode; `TIDEWATCH_DEV_STATUS_LOG=1`
 prints every hook and status change to stderr with a wall-clock time in ms; `TIDEWATCH_DEV_KEYS='\e[B\r'` (after
 `TIDEWATCH_DEV_KEYS_AFTER` seconds, default 8) types into the newest agent tab once, for Claude's folder-trust prompt.
+`TIDEWATCH_DEV_READER=raw` starts agent tabs on the raw terminal, `TIDEWATCH_DEV_READER_KEY=<s>` presses Cmd+Shift+T after that many
+seconds through the real key path, `TIDEWATCH_DEV_ANSWER=allow|deny` clicks a permission button once, `TIDEWATCH_DEV_REPLY=<text>`
+(`_REPLY_AFTER=<s>`) sends a reply from the Reader's box. Run Claude checks with `CLAUDE_CODE_FORCE_SESSION_PERSISTENCE=1` when the
+shell that starts Tidewatch is itself a Claude session: the child otherwise writes no transcript and the Reader falls back to the terminal.
 Keys: Cmd+T new tab (the dialog: pick a profile or Shell, permission level, task; Enter starts, Esc cancels), Cmd+W
 close the active tab (not the pinned main tab; a worktree tab asks keep/delete branch first), Cmd+1..9 select,
-Cmd+, the profile editor, Cmd+0 the Overview (Esc or Cmd+0 closes it), Cmd+. focus mode (hides History and Diff).
+Cmd+Shift+T flip the active agent tab between the Reader and the raw terminal, Cmd+, the profile editor, Cmd+0 the Overview (Esc or Cmd+0 closes it), Cmd+. focus mode (hides History and Diff).
 The sibling crates are git dependencies pinned by commit (`rev`), not by tag (PLAN.md,
 Deviations log). To pick up a sibling change, merge it there, then bump `rev`.
 

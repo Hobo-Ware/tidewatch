@@ -7,6 +7,7 @@ use tidewatch_core::prepare::Prepared;
 use tidewatch_core::worktree::Worktree;
 
 use crate::agent_run::AgentRun;
+use crate::reader::Reader;
 use crate::tabs::Tabs;
 
 pub(crate) const CREATING_TITLE: &str = "new worktree";
@@ -24,6 +25,14 @@ pub(crate) enum Body<T> {
 pub(crate) struct AgentTab {
     pub(crate) profile_name: String,
     pub(crate) run: AgentRun,
+    pub(crate) reader: Reader,
+}
+
+impl AgentTab {
+    pub(crate) fn new(profile_name: String, run: AgentRun) -> Self {
+        let reader = Reader::for_agent(&run.agent_id, None, PathBuf::new());
+        Self { profile_name, run, reader }
+    }
 }
 
 pub(crate) struct Pane<T> {
@@ -44,6 +53,8 @@ pub(crate) struct Started {
     pub(crate) profile_name: String,
     pub(crate) agent_id: String,
     pub(crate) notes_file: Option<PathBuf>,
+    /// The id given to the agent's `--session-id`, when its CLI takes one.
+    pub(crate) session_id: Option<String>,
     pub(crate) prepared: Prepared,
 }
 
@@ -75,7 +86,7 @@ impl<T> Pane<T> {
     /// A tab whose worktree is being made for an agent: its status is "setting up" from the start.
     pub(crate) fn creating_agent(profile_name: String, agent_id: String, now: f64) -> Self {
         let run = AgentRun::setting_up(agent_id, now);
-        Self { body: Body::Creating, worktree: None, agent: Some(AgentTab { profile_name, run }) }
+        Self { body: Body::Creating, worktree: None, agent: Some(AgentTab::new(profile_name, run)) }
     }
 
     pub(crate) fn close_policy(&self) -> ClosePolicy {
@@ -154,7 +165,12 @@ pub(crate) fn finish_open<T>(
                         |agent| agent.run,
                     );
                     run.started(started.notes_file, now);
-                    AgentTab { profile_name: started.profile_name, run }
+                    let reader = Reader::for_agent(
+                        &started.agent_id,
+                        started.session_id,
+                        opened.dir.clone(),
+                    );
+                    AgentTab { profile_name: started.profile_name, run, reader }
                 }),
             };
             notes
@@ -215,6 +231,7 @@ mod tests {
             profile_name: "Builder".into(),
             agent_id: "claude".into(),
             notes_file: None,
+            session_id: None,
             prepared: Prepared {
                 launch: tidewatch_core::launch::Launch {
                     program: "claude".into(),
@@ -326,12 +343,8 @@ mod tests {
     #[test]
     fn only_agents_running_in_the_shared_folder_count_for_the_warning() {
         let mut tabs: Tabs<Pane<u32>> = Tabs::new(Pane::shell(0));
-        let agent = || {
-            Some(AgentTab {
-                profile_name: "Builder".into(),
-                run: AgentRun::setting_up("claude".into(), 0.0),
-            })
-        };
+        let agent =
+            || Some(AgentTab::new("Builder".into(), AgentRun::setting_up("claude".into(), 0.0)));
         tabs.push("a".into(), Pane { body: Body::Shell(1), worktree: None, agent: agent() });
         tabs.push("shell".into(), Pane::shell(2));
         tabs.push(
