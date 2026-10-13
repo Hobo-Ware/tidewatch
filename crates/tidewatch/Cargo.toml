@@ -13,6 +13,7 @@ anyhow.workspace = true
 eframe.workspace = true
 egui.workspace = true
 egui_commonmark.workspace = true
+global-hotkey.workspace = true
 image.workspace = true
 kelp-core.workspace = true
 kelp-ui.workspace = true
@@ -21,6 +22,12 @@ shell-words.workspace = true
 stdusk-egui.workspace = true
 tidewatch-core.workspace = true
 winit = "0.30.13"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "0.6"
+objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "NSApplication", "NSEvent", "NSResponder", "NSRunningApplication", "NSScreen", "NSWindow"] }
+objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSGeometry"] }
+tray-icon = "0.24.1"
 
 [dev-dependencies]
 tempfile.workspace = true

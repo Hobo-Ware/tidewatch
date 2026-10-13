@@ -30,3 +30,12 @@ echo "Wrote assets/icon-512.png ($(du -h "$root/assets/icon-512.png" | cut -f1))
 big="$work/orig.png"
 inkscape "$svg" --export-type=png --export-width=512 --export-filename="$big" >/dev/null 2>&1
 magick compare -metric PSNR "$big" "$root/assets/icon-512.png" null: 2>&1 | sed 's/^/PSNR (dB): /' || true
+
+tray_svg="$root/assets/tray.svg"
+tray_big="$work/tray-orig.png"
+inkscape "$tray_svg" --export-type=png --export-width=44 --export-filename="$tray_big" >/dev/null 2>&1
+cp "$tray_big" "$root/assets/tray.png"
+pngquant --force --speed 1 --strip 64 --output "$root/assets/tray.png" "$root/assets/tray.png"
+oxipng -q -o 6 --strip safe "$root/assets/tray.png"
+echo "Wrote assets/tray.png ($(du -h "$root/assets/tray.png" | cut -f1))"
+magick compare -metric PSNR "$tray_big" "$root/assets/tray.png" null: 2>&1 | sed 's/^/PSNR (dB): /' || true
