@@ -159,7 +159,7 @@ pub fn path_with_only_git() -> (tempfile::TempDir, OsString) {
 
 /// Linux refuses to exec a file that any process holds open for writing (ETXTBSY), and a test
 /// thread that forks while this process writes the file inherits that handle, so `cp` writes it.
-fn write_executable_from_a_child(path: &Path, text: &str) {
+pub fn write_executable_from_a_child(path: &Path, text: &str) {
     let source = path.with_extension("src");
     std::fs::write(&source, text).unwrap();
     let copied = Command::new("cp").arg(&source).arg(path).status().unwrap();
