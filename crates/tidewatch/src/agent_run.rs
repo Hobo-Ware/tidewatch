@@ -90,6 +90,7 @@ pub(crate) struct AgentRun {
     detail: Option<String>,
     end_block: Option<EndBlock>,
     failed: Option<String>,
+    held: Option<AgentStatus>,
 }
 
 impl AgentRun {
@@ -108,6 +109,18 @@ impl AgentRun {
             detail: None,
             end_block: None,
             failed: None,
+            held: None,
+        }
+    }
+
+    /// A workflow run decides what this tab shows while it holds the next move (tests running, a
+    /// question for the user, the end of the run). `None` gives the status back to the agent.
+    pub(crate) fn hold(&mut self, status: Option<AgentStatus>, detail: Option<String>) {
+        if self.held != status {
+            self.held = status;
+            if detail.is_some() {
+                self.detail = detail;
+            }
         }
     }
 
@@ -197,9 +210,10 @@ impl AgentRun {
 
     /// Recomputes the status at `now` and reports a change.
     pub(crate) fn refresh(&mut self, now: f64) -> Option<Change> {
-        let next = match &self.failed {
-            Some(message) => AgentStatus::Failed(message.clone()),
-            None => self.tracker.status(now),
+        let next = match (&self.failed, &self.held) {
+            (Some(message), _) => AgentStatus::Failed(message.clone()),
+            (None, Some(held)) => held.clone(),
+            (None, None) => self.tracker.status(now),
         };
         if next == self.status {
             return None;
@@ -410,5 +424,31 @@ mod tests {
         run.refresh(65.0);
         assert_eq!(run.status(), &AgentStatus::Done);
         assert_eq!(run.detail(), Some("Created hello.txt"));
+    }
+
+    #[test]
+    fn a_held_status_wins_over_the_agents_until_it_is_given_back() {
+        let mut run = running(0.0);
+        run.refresh(1.0);
+        run.on_event(hook(HookKind::TurnStarted, None), 2.0);
+        run.refresh(2.0);
+        assert_eq!(run.status(), &AgentStatus::Working);
+        run.hold(Some(AgentStatus::NeedsYou(Reason::Input)), Some("Review 2/4: asks".into()));
+        let change = run.refresh(3.0).unwrap();
+        assert_eq!(change.to, AgentStatus::NeedsYou(Reason::Input));
+        assert_eq!(run.detail(), Some("Review 2/4: asks"));
+        run.on_event(hook(HookKind::TurnDone, Some("bye")), 4.0);
+        assert_eq!(run.refresh(4.0), None, "the agent finishing changes nothing while held");
+        run.hold(None, None);
+        assert_eq!(run.refresh(5.0).unwrap().to, AgentStatus::Done);
+    }
+
+    #[test]
+    fn holding_the_same_status_again_keeps_the_detail_the_agent_gave_since() {
+        let mut run = running(0.0);
+        run.hold(Some(AgentStatus::Working), Some("Running the tests".into()));
+        run.on_event(hook(HookKind::TurnDone, Some("agent words")), 1.0);
+        run.hold(Some(AgentStatus::Working), Some("Running the tests".into()));
+        assert_eq!(run.detail(), Some("agent words"));
     }
 }
