@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Tidewatch
+Comment=Run AI coding agents in git worktrees, one repo at a time
+Exec=tidewatch
+Icon=tidewatch
+Terminal=false
+Categories=Development;
+Keywords=agents;git;worktree;terminal;
