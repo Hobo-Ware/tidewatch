@@ -11,6 +11,7 @@ use super::Tidewatch;
 use super::frame::FrameIntent;
 use crate::agent_frame;
 use crate::agent_run::progress_fraction;
+use crate::commands::Command;
 use crate::pane::{Body, Pane};
 use crate::tabs::Action;
 use crate::{layout, overview_view, status_view};
@@ -69,10 +70,22 @@ impl Tidewatch {
                     );
                     self.draw_tabs(ui, width, now, &mut frame.actions);
                     ui.add_space(6.0);
-                    if icon_button(ui, icons::PLUS, "New tab (Cmd+T)").clicked() {
+                    if icon_button(
+                        ui,
+                        icons::PLUS,
+                        &format!("New tab ({})", Command::NewTab.keys()),
+                    )
+                    .clicked()
+                    {
                         frame.actions.push(Action::New);
                     }
-                    if icon_button(ui, icons::GEAR, "Profiles (Cmd+,)").clicked() {
+                    if icon_button(
+                        ui,
+                        icons::GEAR,
+                        &format!("Profiles ({})", Command::Settings.keys()),
+                    )
+                    .clicked()
+                    {
                         frame.toggle_settings = true;
                     }
                 });

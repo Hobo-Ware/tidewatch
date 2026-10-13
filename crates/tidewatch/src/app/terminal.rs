@@ -6,6 +6,7 @@ use stdusk_egui::ui::{CursorStyle, GridStyle, collect_input, render_grid};
 
 use super::frame::FrameIntent;
 use super::{FONT_SIZE, MIN_CONTRAST, Tidewatch};
+use crate::commands::Command;
 use crate::pane::Body;
 use crate::reader::Shown;
 use crate::{layout, reader_glue};
@@ -122,7 +123,7 @@ fn status_message(ui: &egui::Ui, rect: egui::Rect, text: &str, color: egui::Colo
 }
 
 fn exit_notice_text(profile_name: &str, code: i32) -> String {
-    format!("{profile_name} exited with code {code}. Cmd+W closes the tab.")
+    format!("{profile_name} exited with code {code}. {} closes the tab.", Command::CloseTab.keys())
 }
 
 fn exit_notice(ui: &egui::Ui, rect: egui::Rect, text: &str) {
@@ -150,7 +151,7 @@ mod tests {
     fn the_exit_notice_names_the_profile_and_the_code() {
         assert_eq!(
             exit_notice_text("Builder", 130),
-            "Builder exited with code 130. Cmd+W closes the tab."
+            format!("Builder exited with code 130. {} closes the tab.", Command::CloseTab.keys())
         );
     }
 }

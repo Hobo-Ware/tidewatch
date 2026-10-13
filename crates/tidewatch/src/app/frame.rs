@@ -3,7 +3,7 @@
 use egui::{Key, Modifiers};
 
 use super::Tidewatch;
-use crate::layout;
+use crate::commands::{self, Command, Dialog, Gate};
 use crate::reader_glue;
 use crate::session_save::WindowView;
 use crate::settings_view;
@@ -58,47 +58,65 @@ impl Tidewatch {
     pub(super) fn read_shortcuts(&mut self, ctx: &egui::Context) -> FrameIntent {
         let typing_in_a_panel = ctx.text_edit_focused();
         let active_id = self.tabs.items()[self.tabs.active()].id;
-        let modal_open = self.closing.is_some()
-            || self.new_tab.is_some()
-            || self.settings.is_some()
-            || self.trust.dialog_open()
-            || self.leftovers.is_open()
-            || self.flow.modal_open(active_id);
-        if self.closing.is_none()
-            && self.new_tab.is_none()
-            && ctx.input_mut(|i| i.consume_key(Modifiers::COMMAND, Key::Comma))
-        {
-            self.toggle_settings();
-        }
-        let reader_key = Modifiers::COMMAND.plus(Modifiers::SHIFT);
-        if !modal_open
-            && !self.overview
-            && self.settings.is_none()
-            && ctx.input_mut(|i| i.consume_key(reader_key, Key::T))
-        {
-            self.toggle_reader(ctx);
-        }
-        let mut actions = if modal_open { Vec::new() } else { shortcut_actions(ctx) };
-        if self.overview {
-            actions.retain(|action| *action != Action::CloseActive);
-        }
+        let gate = self.key_gate(active_id);
+        let mut actions = Vec::new();
         let mut toggle_overview = false;
-        if self.closing.is_none() && self.new_tab.is_none() {
-            toggle_overview = ctx.input_mut(|i| i.consume_key(Modifiers::COMMAND, Key::Num0));
-            if ctx.input_mut(|i| i.consume_key(Modifiers::COMMAND, Key::Period)) {
-                self.toggle_focus(ctx);
+        for command in commands::pressed(ctx) {
+            if !gate.allows(command) {
+                continue;
             }
-            if self.overview && ctx.input_mut(|i| i.consume_key(Modifiers::NONE, Key::Escape)) {
-                toggle_overview = true;
+            if self.status_log {
+                eprintln!("tidewatch: command {} at {}", command.id(), super::wall_ms());
             }
+            match command {
+                Command::Overview => toggle_overview = true,
+                Command::NewTab | Command::CloseTab | Command::SelectTab(_) => {
+                    actions.extend(command.action());
+                }
+                _ => self.run_command(command, ctx),
+            }
+        }
+        if gate.dialog != Dialog::TabChoice
+            && self.overview
+            && ctx.input_mut(|i| i.consume_key(Modifiers::NONE, Key::Escape))
+        {
+            toggle_overview = true;
         }
         FrameIntent {
             active_id,
-            keys: KeyRoute { modal_open, typing_in_a_panel },
+            keys: KeyRoute { modal_open: gate.modal_open(), typing_in_a_panel },
             actions,
             toggle_overview,
             toggle_settings: false,
             settings_action: None,
+        }
+    }
+
+    fn key_gate(&self, active_id: u64) -> Gate {
+        let other =
+            self.trust.dialog_open() || self.leftovers.is_open() || self.flow.modal_open(active_id);
+        let dialog = if self.closing.is_some() || self.new_tab.is_some() {
+            Dialog::TabChoice
+        } else if other {
+            Dialog::Other
+        } else {
+            Dialog::None
+        };
+        Gate { dialog, settings: self.settings.is_some(), overview: self.overview }
+    }
+
+    pub(super) fn run_command(&mut self, command: Command, ctx: &egui::Context) {
+        match command {
+            Command::NewTab | Command::CloseTab | Command::SelectTab(_) => {
+                if let Some(action) = command.action() {
+                    self.dispatch(action, ctx);
+                }
+            }
+            Command::Overview => self.toggle_overview(),
+            Command::Focus => self.toggle_focus(ctx),
+            Command::Reader => self.toggle_reader(ctx),
+            Command::Settings => self.toggle_settings(),
+            Command::ApproveDelivery => {}
         }
     }
 
@@ -126,34 +144,4 @@ impl Tidewatch {
             shot.tick(ctx);
         }
     }
-}
-
-fn shortcut_actions(ctx: &egui::Context) -> Vec<Action> {
-    ctx.input_mut(|i| {
-        let mut actions = Vec::new();
-        if i.consume_key(Modifiers::COMMAND, Key::T) {
-            actions.push(Action::New);
-        }
-        if i.consume_key(Modifiers::COMMAND, Key::W) {
-            actions.push(Action::CloseActive);
-        }
-        for key in [
-            Key::Num1,
-            Key::Num2,
-            Key::Num3,
-            Key::Num4,
-            Key::Num5,
-            Key::Num6,
-            Key::Num7,
-            Key::Num8,
-            Key::Num9,
-        ] {
-            if let Some(idx) = layout::digit_index(key)
-                && i.consume_key(Modifiers::COMMAND, key)
-            {
-                actions.push(Action::Select(idx));
-            }
-        }
-        actions
-    })
 }

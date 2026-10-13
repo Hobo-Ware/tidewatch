@@ -8,6 +8,7 @@ use egui::{
 use stdusk_egui::colors;
 use stdusk_egui::widgets::ICON_BTN_W;
 
+use crate::commands::Command;
 use crate::end_block_view;
 use crate::overview::{Counts, Overview, Row, fmt_elapsed};
 use crate::status_view::{self, Tone};
@@ -47,9 +48,10 @@ pub(crate) fn button(ui: &mut egui::Ui, active: bool, needs: usize) -> egui::Res
     if needs > 0 {
         paint_badge(ui, rect, needs);
     }
+    let keys = Command::Overview.keys();
     let tip = match needs {
-        0 => "Overview (Cmd+0)".to_owned(),
-        n => format!("Overview (Cmd+0) - {n} need you"),
+        0 => format!("Overview ({keys})"),
+        n => format!("Overview ({keys}) - {n} need you"),
     };
     resp.on_hover_text(tip).on_hover_cursor(egui::CursorIcon::PointingHand)
 }
@@ -117,7 +119,7 @@ fn header(ui: &mut egui::Ui, overview: &Overview) {
     painter.text(
         rect.right_center(),
         Align2::RIGHT_CENTER,
-        "Cmd+0",
+        Command::Overview.keys(),
         FontId::monospace(11.0),
         colors::dim(),
     );
@@ -143,7 +145,9 @@ fn summary(counts: Counts) -> Vec<(String, Tone)> {
 fn empty(ui: &mut egui::Ui) {
     ui.add_space(24.0);
     ui.label(
-        egui::RichText::new("No agents yet. Cmd+T starts one.").size(13.0).color(colors::dim()),
+        egui::RichText::new(format!("No agents yet. {} starts one.", Command::NewTab.keys()))
+            .size(13.0)
+            .color(colors::dim()),
     );
 }
 

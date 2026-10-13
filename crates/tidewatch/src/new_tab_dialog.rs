@@ -8,6 +8,7 @@ use tidewatch_core::agents::Level;
 use tidewatch_core::paths::TidewatchPaths;
 
 use crate::catalog::{Availability, Catalog};
+use crate::commands::Command;
 use crate::list_row::{ROW_HEIGHT, Row, pick_row};
 use crate::new_tab::{Group, NewTab, Pick, Request, level_refusal};
 use crate::new_tab_workflow;
@@ -201,9 +202,12 @@ fn profile_list(
     }
     if catalog.profiles().is_some_and(|p| p.profile.is_empty()) {
         ui.label(
-            RichText::new("No agent profiles yet. Add one in Settings (Cmd+,).")
-                .size(12.0)
-                .color(colors::dim()),
+            RichText::new(format!(
+                "No agent profiles yet. Add one in Settings ({}).",
+                Command::Settings.keys()
+            ))
+            .size(12.0)
+            .color(colors::dim()),
         );
     }
 }

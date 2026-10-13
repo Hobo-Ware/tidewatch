@@ -11,6 +11,7 @@ use tidewatch_core::agents::Level;
 use crate::list_row::{Row, pick_row};
 use crate::profile_editor::Editor;
 use crate::settings::{Section, Settings, Status};
+use crate::shortcuts_view;
 use crate::trust_view;
 use crate::updates::Updates;
 use crate::updates_view;
@@ -68,6 +69,7 @@ pub(crate) fn show(
             Section::Workflows => &files.workflows,
             Section::Trust => &files.trust,
             Section::General => &files.general,
+            Section::Shortcuts => "Built into the app, not a file",
         };
         ui.label(RichText::new(file).monospace().size(11.5).color(colors::dim()));
         ui.add_space(6.0);
@@ -89,12 +91,13 @@ pub(crate) fn show(
             Section::General => {
                 action = general_page(ui, general, &mut settings.window, updates);
             }
+            Section::Shortcuts => shortcuts_view::page(ui, body_height),
         }
         ui.add_space(4.0);
         let footer_action = footer(
             ui,
             &settings.status(),
-            !matches!(settings.section, Section::Trust | Section::General),
+            matches!(settings.section, Section::Profiles | Section::Workflows),
         );
         action.or(footer_action)
     })

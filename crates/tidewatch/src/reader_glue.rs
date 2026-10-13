@@ -9,6 +9,7 @@ use stdusk_core::terminal::PtyTerm;
 use stdusk_egui::colors;
 use tidewatch_core::status::{AgentStatus, Reason};
 
+use crate::commands::Command;
 use crate::dev_reader::DevReader;
 use crate::flow::Flow;
 use crate::note_send::ENTER_DELAY_SECS;
@@ -47,7 +48,7 @@ pub(crate) fn drain(tabs: &mut Tabs<Pane<PtyTerm>>) {
     }
 }
 
-/// Cmd+Shift+T on the active tab. `None` for a tab that is not an agent's.
+/// The Reader chord on the active tab. `None` for a tab that is not an agent's.
 pub(crate) fn toggle(pane: &mut Pane<PtyTerm>) -> Option<Shown> {
     pane.agent.as_mut().map(|agent| agent.reader.toggle())
 }
@@ -56,10 +57,11 @@ pub(crate) fn shown(pane: &Pane<PtyTerm>) -> Option<Shown> {
     pane.agent.as_ref().map(|agent| agent.reader.shown())
 }
 
-pub(crate) fn toggle_text(shown: Shown) -> &'static str {
+pub(crate) fn toggle_text(shown: Shown) -> String {
+    let keys = Command::Reader.keys();
     match shown {
-        Shown::Reader => "Reader view (Cmd+Shift+T for the raw terminal)",
-        Shown::Terminal(_) => "Raw terminal (Cmd+Shift+T for the Reader)",
+        Shown::Reader => format!("Reader view ({keys} for the raw terminal)"),
+        Shown::Terminal(_) => format!("Raw terminal ({keys} for the Reader)"),
     }
 }
 
@@ -91,11 +93,8 @@ pub(crate) fn draw(
 /// The small note over the terminal that says why it is shown instead of the Reader.
 pub(crate) fn note(ui: &mut Ui, area: Rect, note: Note) {
     let text = note.text();
-    let galley = ui.painter().layout_no_wrap(
-        text.to_owned(),
-        egui::FontId::proportional(12.0),
-        colors::dim(),
-    );
+    let galley =
+        ui.painter().layout_no_wrap(text.clone(), egui::FontId::proportional(12.0), colors::dim());
     let size = galley.size() + vec2(2.0 * NOTE_PAD, 0.0);
     let rect = Rect::from_min_size(
         pos2(area.right() - size.x - NOTE_PAD, area.top() + NOTE_PAD),

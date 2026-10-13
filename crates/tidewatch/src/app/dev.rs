@@ -23,6 +23,7 @@ impl Tidewatch {
                     Some("workflows") => settings.section = Section::Workflows,
                     Some("trust") => settings.section = Section::Trust,
                     Some("general") => settings.section = Section::General,
+                    Some("shortcuts") => settings.section = Section::Shortcuts,
                     _ => {}
                 }
             }
