@@ -74,12 +74,14 @@ crates/tidewatch-core/  worktrees, profiles, permission levels, workflows, agent
   tests/history_roundtrip.rs   real throwaway repos: worktree branch history, whole repo, ahead/behind, diffs, watcher
   tests/session_restore.rs     real repos + fake home: moved repo repaired then planned, removed worktree, missing session file
 crates/tidewatch/       the egui app
-  src/main.rs           argument parsing, workspace discovery, eframe start
+  src/main.rs           workspace discovery, eframe start
+  src/cli.rs            `tidewatch [--no-restore] [path]` (pure)
   src/app.rs            the eframe::App loop: chip, tab strip, terminal, card bands, History and Diff panes, toast, shortcuts, job results
   src/tabs.rs           tab list and its Action reducer (pure, generic over the pane)
   src/pane.rs           what a tab holds: shell or agent (with its AgentRun and how it was launched), creating, removing, failed; opening results, close policy (pure, generic)
   src/jobs.rs           background thread runner: result channel plus a repaint
-  src/worktree_jobs.rs  open a tab (worktree, listener registration, folder trust and prepared agent launch), inspect, remove (and revoke its trust entries) and startup repair as jobs
+  src/pty.rs            starts the ptys: a shell in a folder (optionally with a note printed first), the user's shell running an agent's script
+  src/worktree_jobs.rs  open a tab (worktree, listener registration, folder trust and prepared agent launch), inspect and remove (and revoke its trust entries) as jobs
   src/agent_run.rs      one agent tab's live state: StatusTracker, terminal snapshot in, status change out, last MCP report (pure)
   src/agent_events.rs   starts the Tidewatch listener once (bind failure: logged, status falls back to layers 2 and 3), drains it, findings -> notes
   src/agent_frame.rs    per-frame agent work: route listener messages to tabs, feed terminal signals, notify, say when the next frame is due (generic, pure)
@@ -113,13 +115,16 @@ crates/tidewatch/       the egui app
   src/repo.rs           git root and label; Workspace = Repo or the Other group
   src/session_save.rs   the open tabs as a SavedWindow (main, shell, agent with profile, level, session id, stages file; the active tab, focus mode) and a fingerprint of the same facts (pure, generic over the pane)
   src/session_writer.rs debounced writer thread for session.toml (Debounce is pure), synchronous flush for the quit path
+  src/restore_jobs.rs   startup job (repair a moved repo, plan the saved window, scan leftovers owned by no saved or open tab) and the reopen job (fresh token, prepare_resume, folder trust)
+  src/restore_glue.rs   Host: carry the plan out in saved order (shell, shell plus note, resume agent, resume workflow), active tab and focus, the settled flag the saver waits for (generic over the pty)
+  src/notice.rs         a message that stays until dismissed (what a restore could not bring back)
   src/session_glue.rs   Saver: once per frame, fingerprint changed -> queue a save; never under the screenshot harness or while a restore is under way; flush on quit
-  src/dev_session.rs    TIDEWATCH_DEV_QUIT / _SELECT / _SELECT_AFTER / _SAVE_DEBOUNCE_MS switches: close the window through the close request, select a tab, a long debounce
+  src/dev_session.rs    TIDEWATCH_DEV_QUIT / _SELECT / _SELECT_AFTER / _SHOT / _SHOT_AFTER / _SAVE_DEBOUNCE_MS switches: close the window through the close request, select a tab, a screenshot that keeps running, a long debounce
   src/dev_screenshot.rs TIDEWATCH_SCREENSHOT harness
   src/dev_worktree.rs   TIDEWATCH_DEV_WORKTREE switch: open a worktree tab at startup for captures
   src/dev_panes.rs      TIDEWATCH_DEV_SCOPE / _PICK / _NOTE switches: graph scope, selected row, a note for captures
   src/dev_view.rs       TIDEWATCH_DEV_OVERVIEW / _FOCUS / _STATUS_LOG / _KEYS switches: start on a view, log status changes, answer a prompt
-  src/dev_agent.rs      TIDEWATCH_DEV_AGENT / _WORKFLOW / _RESUME / _DIALOG / _SETTINGS / _TASK / _LEVEL switches: start a profile or workflow, resume a saved run, open the dialog or the editor
+  src/dev_agent.rs      TIDEWATCH_DEV_AGENT / _WORKFLOW / _RESUME / _DIALOG / _SETTINGS / _TASK / _LEVEL switches: start a profile or workflow, resume a saved run (through the restore path), open the dialog or the editor
   src/dev_workflow.rs   TIDEWATCH_DEV_ASK / _OPEN_STAGE switches: answer a workflow run's question, open a stage under the stepper
   src/dev_flow.rs       TIDEWATCH_DEV_GH_DIR / _AUTO / _SEND / _DELIVER / _PR switches: a fake gh first on PATH, then do once what a click would
   src/flow.rs           Flow: one TabFlow per agent worktree tab (deliver-when-idle, delivery card, PR state), decide() turns frame facts into jobs, finished jobs come back as Out

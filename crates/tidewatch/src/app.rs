@@ -24,6 +24,7 @@ use stdusk_egui::widgets::{chip, icon_button};
 use tidewatch_core::notes::NotesWriter;
 use tidewatch_core::paths::TidewatchPaths;
 use tidewatch_core::prepare::Prepared;
+use tidewatch_core::restore::{RealDisk, WindowPlan};
 use tidewatch_core::status::AgentStatus;
 use tidewatch_core::tools::Tools;
 use tidewatch_core::trust::TrustCli;
@@ -53,6 +54,7 @@ use crate::flow_glue;
 use crate::jobs::Jobs;
 use crate::new_tab::{Group, NewTab, Request};
 use crate::new_tab_dialog::{self, Outcome};
+use crate::notice;
 use crate::notify::{self, Notifier};
 use crate::overview;
 use crate::overview_view;
@@ -60,10 +62,11 @@ use crate::pane::{
     Body, CREATING_TITLE, ClosePolicy, Pane, STARTING_TITLE, agent_tabs_in_folder, finish_open,
 };
 use crate::pane_jobs;
-use crate::pty::{spawn_agent, spawn_shell};
+use crate::pty::{spawn_agent, spawn_shell, spawn_shell_noted};
 use crate::reader::Shown;
 use crate::reader_glue;
 use crate::repo::Workspace;
+use crate::restore_glue::{self, Spawn};
 use crate::session_glue::Saver;
 use crate::session_save::WindowView;
 use crate::settings::{Section, Settings};
@@ -131,6 +134,8 @@ pub(crate) struct Tidewatch {
     trust: Trust,
     saver: Saver,
     dev_session: DevSession,
+    restore: restore_glue::Host,
+    notice: Option<String>,
 }
 
 impl Tidewatch {
@@ -141,6 +146,7 @@ impl Tidewatch {
         agent_path: OsString,
         screenshot: Option<DevScreenshot>,
         cli_home: Option<&Path>,
+        no_restore: bool,
     ) -> Self {
         colors::init(colors::by_name(DEFAULT_THEME));
         fonts::install(&cc.egui_ctx);
@@ -192,6 +198,8 @@ impl Tidewatch {
             trust,
             saver,
             dev_session,
+            restore: restore_glue::Host::new(no_restore, RealDisk::from_env()),
+            notice: None,
         };
         if let Some(paths) = &app.paths {
             agent_jobs::load(
@@ -200,9 +208,6 @@ impl Tidewatch {
                 paths.clone(),
                 app.catalog.path.clone(),
             );
-        }
-        if let (Workspace::Repo(repo), Some(paths)) = (&app.workspace, &app.paths) {
-            worktree_jobs::startup(&app.jobs, &cc.egui_ctx, paths.clone(), repo.root.clone());
         }
         if app.dev.is_some() {
             app.open_tab(&cc.egui_ctx, Request::Shell);
@@ -252,7 +257,7 @@ impl Tidewatch {
             return;
         }
         if dev.mode == DevMode::Resume {
-            self.resume_workflow(ctx, dev.profile.as_deref().unwrap_or_default());
+            self.dev_resume(ctx, dev.profile.as_deref().unwrap_or_default());
             return;
         }
         let mut state = self.dialog_state(dev.profile.as_deref());
@@ -350,17 +355,41 @@ impl Tidewatch {
         self.runs.open(ctx, &mut self.tabs, &env, &repo.root, existing, start, now);
     }
 
-    /// Opens the tab of a saved run in its worktree and carries on where it was.
-    fn resume_workflow(&mut self, ctx: &egui::Context, name: &str) {
+    /// `TIDEWATCH_DEV_RESUME`: the restart path, for the one saved run in the named worktree.
+    fn dev_resume(&mut self, ctx: &egui::Context, name: &str) {
         let (Workspace::Repo(repo), Some(paths)) = (&self.workspace, &self.paths) else { return };
-        let worktree = Worktree {
-            repo: repo.root.clone(),
-            path: paths.worktree_dir(&repo.root, name),
-            branch: format!("agent/{name}"),
+        let plan = restore_glue::dev_resume_plan(paths, &repo.root, name);
+        self.drive_restore(ctx, ctx.input(|i| i.time), Some(plan));
+    }
+
+    /// Carries out the restore: the plan of a dev switch, or whatever the startup and reopen jobs
+    /// finished.
+    fn drive_restore(&mut self, ctx: &egui::Context, now: f64, plan: Option<WindowPlan>) {
+        let Some(paths) = &self.paths else { return };
+        let env = Env {
+            paths,
+            catalog: &self.catalog,
+            listener: self.hooks.listener(),
+            tools: self.flow.tools(),
+            trust: self.trust.grant(),
         };
-        match workflow_glue::saved_run(paths, &worktree) {
-            Some(runner) => self.open_workflow(ctx, Start::Resume(runner), Some(worktree)),
-            None => eprintln!("tidewatch: no saved workflow run for {name}"),
+        let agent = |dir: &Path, prepared: &Prepared| spawn_agent(ctx, dir, prepared);
+        let shell = |dir: &Path, note: Option<&str>| spawn_shell_noted(ctx, dir, note);
+        let spawn = Spawn { agent: &agent, shell: &shell };
+        let runs = &mut self.runs;
+        let report = match plan {
+            Some(plan) => self.restore.apply(&plan, ctx, &mut self.tabs, &env, &spawn, runs, now),
+            None => self.restore.tick(ctx, &mut self.tabs, &env, &spawn, runs, now),
+        };
+        for text in report.toasts {
+            self.show_toast(text, ctx);
+        }
+        self.notice = report.notice.or(self.notice.take());
+        if let Some(leftovers) = report.leftovers {
+            self.leftovers = leftovers;
+        }
+        if let Some(focus) = report.focus {
+            self.focus = focus;
         }
     }
 
@@ -395,6 +424,9 @@ impl Tidewatch {
                 let probes = self.catalog.set_profiles(profiles);
                 self.probe_agents(probes, ctx);
                 self.refresh_trust(ctx);
+                if let Some(paths) = &self.paths {
+                    self.restore.begin(ctx, paths, &self.workspace, &self.catalog);
+                }
                 self.run_dev_agent(ctx);
             }
             agent_jobs::Done::Probed { agent, availability } => {
@@ -586,12 +618,6 @@ impl Tidewatch {
                     }
                 }
             },
-            Done::Startup { repaired, leftovers } => {
-                if repaired > 0 {
-                    eprintln!("tidewatch: repaired {repaired} worktree(s) after the repo moved");
-                }
-                self.leftovers = worktree_jobs::without_open(leftovers, &self.tabs);
-            }
         }
     }
 
@@ -1006,6 +1032,7 @@ impl eframe::App for Tidewatch {
         reader_glue::drain(&mut self.tabs);
         self.drive_agents(&ctx, now);
         self.drive_flow(&ctx, now);
+        self.drive_restore(&ctx, now, None);
         self.drive_views();
         let typing_in_a_panel = ctx.text_edit_focused();
         let active_id = self.tabs.items()[self.tabs.active()].id;
@@ -1333,15 +1360,28 @@ impl eframe::App for Tidewatch {
         {
             self.trust.send(event, &ctx);
         }
+        if let Some(text) = &self.notice
+            && notice::show(&ctx, text)
+        {
+            self.notice = None;
+        }
         self.dev_session.tick(&ctx, &mut self.tabs, now);
-        self.saver.tick(true, &WindowView::of(&self.workspace, self.focus), &self.tabs);
+        self.saver.tick(
+            self.restore.settled(),
+            &WindowView::of(&self.workspace, self.focus),
+            &self.tabs,
+        );
         if let Some(shot) = &mut self.screenshot {
             shot.tick(&ctx);
         }
     }
 
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
-        self.saver.flush(true, &WindowView::of(&self.workspace, self.focus), &self.tabs);
+        self.saver.flush(
+            self.restore.settled(),
+            &WindowView::of(&self.workspace, self.focus),
+            &self.tabs,
+        );
     }
 
     fn clear_color(&self, _visuals: &egui::Visuals) -> [f32; 4] {

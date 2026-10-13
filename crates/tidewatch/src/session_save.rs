@@ -8,7 +8,7 @@
 
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use tidewatch_core::agents::Level;
 use tidewatch_core::session::{SavedAgentTab, SavedTab, SavedWindow};
@@ -164,11 +164,21 @@ pub(crate) fn signature<T>(view: &WindowView, tabs: &Tabs<Pane<T>>) -> u64 {
     hasher.finish()
 }
 
+/// The folders of every tab a window saved that lives in a worktree: what a leftover scan must not
+/// count as left over.
+pub(crate) fn worktree_dirs(window: &SavedWindow) -> Vec<PathBuf> {
+    window
+        .tabs
+        .iter()
+        .filter(|tab| tab.branch().is_some())
+        .map(|tab| tab.dir(&window.dir).to_path_buf())
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::collections::BTreeMap;
-    use std::path::PathBuf;
     use std::time::Duration;
     use tidewatch_core::runner::{RunContext, Runner};
     use tidewatch_core::workflows::Workflows;
@@ -407,5 +417,14 @@ mod tests {
         making.push("new worktree".into(), pane(Body::Creating, None, None));
         making.apply(crate::tabs::Action::Select(0), || unreachable!());
         assert_eq!(signature(&view(false), &one), signature(&view(false), &making));
+    }
+
+    #[test]
+    fn the_worktree_dirs_of_a_saved_window_are_those_of_its_worktree_tabs() {
+        let mut tabs = tabs();
+        tabs.push("a".into(), pane(Body::Shell(1), Some(worktree("a")), None));
+        tabs.push("b".into(), pane(Body::Shell(2), None, None));
+        let saved = saved_window(&view(false), &tabs);
+        assert_eq!(worktree_dirs(&saved), vec![worktree("a").path]);
     }
 }
