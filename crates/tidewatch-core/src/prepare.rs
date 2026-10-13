@@ -283,6 +283,13 @@ fn exclude_from_git(dir: &Path, lines: &[&str]) -> std::io::Result<()> {
     write_atomic(&file, &text)
 }
 
+/// A setup line that prints `text` on a line of its own, for a divider in the tab's terminal when a
+/// new stage's agent starts in it.
+#[must_use]
+pub fn banner_line(text: &str) -> String {
+    format!("printf '\\n%s\\n' {}", crate::launch::shell_quote(text))
+}
+
 /// See `Prepared::script`. Setup lines are chained with `&&`, so the first failure stops the rest.
 /// The agent is looked up before `exec`: zsh ends the whole script when `exec` cannot find its
 /// program, which would skip the shell fallback.
@@ -800,5 +807,28 @@ mod tests {
         }
         let refs = Command::new("git").arg("-C").arg(&remote).arg("for-each-ref").output().unwrap();
         assert_eq!(String::from_utf8_lossy(&refs.stdout), "");
+    }
+
+    #[test]
+    fn a_banner_line_prints_the_text_even_with_quotes_and_percent_signs() {
+        let text = "--- Stage 2: Review (gemini, Read only) --- it's 100%";
+        let out = Command::new("sh").arg("-c").arg(banner_line(text)).output().unwrap();
+        assert_eq!(String::from_utf8_lossy(&out.stdout), format!("\n{text}\n"));
+    }
+
+    #[test]
+    fn a_banner_runs_before_the_agent_in_the_script() {
+        let launch = Launch {
+            program: "agent".into(),
+            args: Vec::new(),
+            env: Vec::new(),
+            experimental: false,
+        };
+        let setup = format!("{}\nnpm ci", banner_line("--- Stage 1 ---"));
+        let script = shell_script(&setup, &launch, "/bin/zsh");
+        assert!(
+            script.starts_with("printf '\\n%s\\n' '--- Stage 1 ---' && npm ci && "),
+            "{script}"
+        );
     }
 }
