@@ -32,7 +32,7 @@ crates/tidewatch-core/  worktrees, profiles, permission levels, workflows, agent
   src/runner.rs         Runner: pure workflow state machine (RunEvent in, Command out), gates decided by Tidewatch, loops, safety net, stages.json save/load/resume
   src/prompt.rs         stage prompt templates: {task} {base} {branch} {previous_summary} {findings} {test_output} (pure)
   src/launch.rs         launch_command: program, args, env; YOLO refusal, never-push guard (D7), hooks/MCP/house-style wiring per CLI
-  src/status.rs         AgentStatus and the pure fold of hook events, terminal signals and process facts (D5); per-CLI hook payload parsing
+  src/status.rs         AgentStatus and the pure fold of hook events, terminal signals and process facts (D5); per-CLI hook payload parsing; next_change (when a decay fires)
   src/events.rs         TabEvent and TabMessage: what the listener sends the app, plus the Repaint callback type
   src/listener.rs       127.0.0.1:0 HTTP listener on std::net: per-tab bearer tokens, POST /hook/<agent>, POST /mcp, events over a channel
   src/mcp.rs            Tidewatch MCP tools (D6): stage_done, report_finding, list_notes, reply_to_note over JSON-RPC 2.0
@@ -64,9 +64,16 @@ crates/tidewatch/       the egui app
   src/main.rs           argument parsing, workspace discovery, eframe start
   src/app.rs            the eframe::App loop: chip, tab strip, terminal, History and Diff panes, toast, shortcuts, job results
   src/tabs.rs           tab list and its Action reducer (pure, generic over the pane)
-  src/pane.rs           what a tab holds: shell or agent, creating, removing, failed; opening results, close policy (pure, generic)
+  src/pane.rs           what a tab holds: shell or agent (with its AgentRun), creating, removing, failed; opening results, close policy (pure, generic)
   src/jobs.rs           background thread runner: result channel plus a repaint
-  src/worktree_jobs.rs  open a tab (worktree and prepared agent launch), inspect, remove and startup repair as jobs
+  src/worktree_jobs.rs  open a tab (worktree, listener registration and prepared agent launch), inspect, remove and startup repair as jobs
+  src/agent_run.rs      one agent tab's live state: StatusTracker, terminal snapshot in, status change out, last MCP report (pure)
+  src/agent_events.rs   starts the Tidewatch listener once (bind failure: logged, status falls back to layers 2 and 3), drains it, findings -> notes
+  src/agent_frame.rs    per-frame agent work: route listener messages to tabs, feed terminal signals, notify, say when the next frame is due (generic, pure)
+  src/status_view.rs    status -> tone, label, color; CLI logo mapping; the tab's top-edge status bar (animated only while working)
+  src/notify.rs         desktop notifications (osascript, notify-send) off the UI thread, per-tab per-kind rate limit, window-away rule
+  src/overview.rs       Overview rows and groups from the agent tabs (needs you first), elapsed format (pure)
+  src/overview_view.rs  the Overview screen (Cmd+0) and the tab strip's icon button with a needs-you badge
   src/catalog.rs        loaded profiles, the agent table built from them, which CLIs were found and their versions
   src/agent_jobs.rs     load or seed profiles.toml and probe each agent CLI as jobs
   src/new_tab.rs        new-tab dialog state: picks, permission ladder and YOLO gating, command preview, request (pure)
@@ -88,6 +95,7 @@ crates/tidewatch/       the egui app
   src/dev_screenshot.rs TIDEWATCH_SCREENSHOT harness
   src/dev_worktree.rs   TIDEWATCH_DEV_WORKTREE switch: open a worktree tab at startup for captures
   src/dev_panes.rs      TIDEWATCH_DEV_SCOPE / _PICK / _NOTE switches: graph scope, selected row, a note for captures
+  src/dev_view.rs       TIDEWATCH_DEV_OVERVIEW / _FOCUS / _STATUS_LOG / _KEYS switches: start on a view, log status changes, answer a prompt
   src/dev_agent.rs      TIDEWATCH_DEV_AGENT / _DIALOG / _SETTINGS / _TASK / _LEVEL switches: start a profile, open the dialog or the editor
 docs/                   concept mockup, research reports
 ```
@@ -117,9 +125,12 @@ CLIs keep their login. `TIDEWATCH_DEV_AGENT=<profile id>` starts that profile in
 reported on stderr and nothing starts). `TIDEWATCH_DEV_DIALOG=<profile id>|1` opens the new-tab dialog and
 `TIDEWATCH_DEV_SETTINGS=1` the profile editor, for captures (use `TIDEWATCH_SCREENSHOT_WAIT=6`: profiles load and
 versions are probed in the background). Check an agent tab with `ps -o args= -p $(pgrep -n claude)`.
+`TIDEWATCH_DEV_OVERVIEW=1` and `TIDEWATCH_DEV_FOCUS=1` start on the Overview or in focus mode; `TIDEWATCH_DEV_STATUS_LOG=1`
+prints every hook and status change to stderr with a wall-clock time in ms; `TIDEWATCH_DEV_KEYS='\e[B\r'` (after
+`TIDEWATCH_DEV_KEYS_AFTER` seconds, default 8) types into the newest agent tab once, for Claude's folder-trust prompt.
 Keys: Cmd+T new tab (the dialog: pick a profile or Shell, permission level, task; Enter starts, Esc cancels), Cmd+W
 close the active tab (not the pinned main tab; a worktree tab asks keep/delete branch first), Cmd+1..9 select,
-Cmd+, the profile editor.
+Cmd+, the profile editor, Cmd+0 the Overview (Esc or Cmd+0 closes it), Cmd+. focus mode (hides History and Diff).
 The sibling crates are git dependencies pinned by commit (`rev`), not by tag (PLAN.md,
 Deviations log). To pick up a sibling change, merge it there, then bump `rev`.
 
