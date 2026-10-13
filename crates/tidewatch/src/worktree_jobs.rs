@@ -97,6 +97,8 @@ fn run_open(spec: &OpenSpec) -> Result<Opened, OpenFailure> {
             dir,
             started: Some(Box::new(Started {
                 profile_name: request.profile.name.clone(),
+                profile_id: request.profile_id.clone(),
+                level: request.profile.level,
                 agent_id: request.agent.id.clone(),
                 notes_file: Some(spec.paths.notes_file(&repo, &tab_key)),
                 session_id,

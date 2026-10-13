@@ -7,7 +7,7 @@
 //! everything it sends. The number moves the moment the runner starts a stage, so what the previous
 //! stage's agent still says (its Stop hook right after `stage_done`, for one) is dropped.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use tidewatch_core::events::TabMessage;
@@ -111,6 +111,10 @@ impl TabRun {
 
     pub(crate) fn runner(&self) -> &Runner {
         &self.runner
+    }
+
+    pub(crate) fn stages_file(&self) -> Option<&Path> {
+        self.stages_file.as_deref()
     }
 
     pub(crate) fn generation(&self) -> u64 {

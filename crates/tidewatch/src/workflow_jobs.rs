@@ -123,6 +123,8 @@ fn run_stage(spec: &StageSpec) -> Result<Started, String> {
     prepared.setup = format!("{}\n{}", banner_line(&launch.divider), prepared.setup);
     Ok(Started {
         profile_name: launch.profile.name.clone(),
+        profile_id: launch.profile.name.clone(),
+        level: launch.profile.level,
         agent_id: spec.agent.id.clone(),
         notes_file: Some(spec.paths.notes_file(repo, &tab_key)),
         session_id,

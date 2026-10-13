@@ -44,6 +44,7 @@ use crate::dev_flow::DevFlow;
 use crate::dev_panes::{self, DevPanes};
 use crate::dev_reader::DevReader;
 use crate::dev_screenshot::DevScreenshot;
+use crate::dev_session::DevSession;
 use crate::dev_view::{DevKeys, DevView};
 use crate::dev_workflow::DevWorkflow;
 use crate::dev_worktree::DevWorktree;
@@ -63,6 +64,8 @@ use crate::pane_jobs;
 use crate::reader::Shown;
 use crate::reader_glue;
 use crate::repo::Workspace;
+use crate::session_glue::Saver;
+use crate::session_save::WindowView;
 use crate::settings::{Section, Settings};
 use crate::settings_view::{self, Files};
 use crate::status_view;
@@ -130,6 +133,8 @@ pub(crate) struct Tidewatch {
     dev_keys: Option<DevKeys>,
     dev_reader: DevReader,
     trust: Trust,
+    saver: Saver,
+    dev_session: DevSession,
 }
 
 impl Tidewatch {
@@ -153,6 +158,8 @@ impl Tidewatch {
         let flow = Flow::new(Tools::with_path(dev_flow.tool_path(agent_path.clone())));
         let dev_view = DevView::from_env();
         let trust = Trust::new(paths.as_ref(), cli_home);
+        let dev_session = DevSession::from_env();
+        let saver = Saver::new(paths.as_ref(), screenshot.is_none(), dev_session.debounce());
         let mut app = Self {
             tabs: Tabs::new(Pane::shell(main)),
             jobs: Jobs::new(),
@@ -187,6 +194,8 @@ impl Tidewatch {
             dev_keys: dev_view.keys,
             dev_reader: DevReader::from_env(),
             trust,
+            saver,
+            dev_session,
         };
         if let Some(paths) = &app.paths {
             agent_jobs::load(
@@ -1366,9 +1375,15 @@ impl eframe::App for Tidewatch {
         {
             self.trust.send(event, &ctx);
         }
+        self.dev_session.tick(&ctx, &mut self.tabs, now);
+        self.saver.tick(true, &WindowView::of(&self.workspace, self.focus), &self.tabs);
         if let Some(shot) = &mut self.screenshot {
             shot.tick(&ctx);
         }
+    }
+
+    fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
+        self.saver.flush(true, &WindowView::of(&self.workspace, self.focus), &self.tabs);
     }
 
     fn clear_color(&self, _visuals: &egui::Visuals) -> [f32; 4] {

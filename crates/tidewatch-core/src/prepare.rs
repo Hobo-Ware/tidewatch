@@ -301,6 +301,13 @@ pub fn banner_line(text: &str) -> String {
     format!("printf '\\n%s\\n' {}", crate::launch::shell_quote(text))
 }
 
+/// The line for a plain interactive `shell` that prints `note` first: what a restored tab runs when
+/// its agent could not be resumed.
+#[must_use]
+pub fn note_script(note: &str, shell: &str) -> String {
+    format!("{}; exec {} -l -i", banner_line(note), crate::launch::shell_quote(shell))
+}
+
 /// See `Prepared::script`. Setup lines are chained with `&&`, so the first failure stops the rest.
 /// The agent is looked up before `exec`: zsh ends the whole script when `exec` cannot find its
 /// program, which would skip the shell fallback.
@@ -888,6 +895,16 @@ mod tests {
         let text = "--- Stage 2: Review (gemini, Read only) --- it's 100%";
         let out = Command::new("sh").arg("-c").arg(banner_line(text)).output().unwrap();
         assert_eq!(String::from_utf8_lossy(&out.stdout), format!("\n{text}\n"));
+    }
+
+    #[test]
+    fn a_note_script_prints_the_note_and_then_runs_the_shell() {
+        let note = "The agent was not resumed: it's gone, 100% sure.";
+        let script = note_script(note, "/bin/sh");
+        assert!(script.ends_with("; exec /bin/sh -l -i"), "{script}");
+        let echo = script.replace("exec /bin/sh -l -i", "true");
+        let out = Command::new("sh").arg("-c").arg(echo).output().unwrap();
+        assert_eq!(String::from_utf8_lossy(&out.stdout), format!("\n{note}\n"));
     }
 
     #[test]

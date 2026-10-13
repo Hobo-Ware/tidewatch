@@ -3,6 +3,7 @@
 
 use std::path::{Path, PathBuf};
 
+use tidewatch_core::agents::Level;
 use tidewatch_core::prepare::Prepared;
 use tidewatch_core::worktree::Worktree;
 
@@ -22,11 +23,23 @@ pub(crate) enum Body<T> {
     Failed(String),
 }
 
+/// How an agent was started, which is what a restart needs to start it again.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct Launched {
+    /// The `profiles.toml` key, or the profile's name for a workflow stage.
+    pub(crate) profile_id: String,
+    pub(crate) level: Level,
+    /// The id given to the agent's `--session-id`, when its CLI takes one.
+    pub(crate) session_id: Option<String>,
+}
+
 /// The profile an agent tab was started from and what the agent is doing. Plain shells have none.
 pub(crate) struct AgentTab {
     pub(crate) profile_name: String,
     pub(crate) run: AgentRun,
     pub(crate) reader: Reader,
+    /// Set once the agent has started.
+    pub(crate) launched: Option<Launched>,
     /// The workflow this tab runs, when it was opened from one.
     pub(crate) workflow: Option<Box<TabRun>>,
 }
@@ -34,7 +47,7 @@ pub(crate) struct AgentTab {
 impl AgentTab {
     pub(crate) fn new(profile_name: String, run: AgentRun) -> Self {
         let reader = Reader::for_agent(&run.agent_id, None, PathBuf::new());
-        Self { profile_name, run, reader, workflow: None }
+        Self { profile_name, run, reader, launched: None, workflow: None }
     }
 }
 
@@ -54,11 +67,23 @@ pub(crate) struct Opened {
 
 pub(crate) struct Started {
     pub(crate) profile_name: String,
+    pub(crate) profile_id: String,
+    pub(crate) level: Level,
     pub(crate) agent_id: String,
     pub(crate) notes_file: Option<PathBuf>,
     /// The id given to the agent's `--session-id`, when its CLI takes one.
     pub(crate) session_id: Option<String>,
     pub(crate) prepared: Prepared,
+}
+
+impl Started {
+    fn launched(&self) -> Launched {
+        Launched {
+            profile_id: self.profile_id.clone(),
+            level: self.level,
+            session_id: self.session_id.clone(),
+        }
+    }
 }
 
 pub(crate) enum OpenFailure {
@@ -167,13 +192,20 @@ pub(crate) fn finish_open<T>(
                         || AgentRun::setting_up(started.agent_id.clone(), now),
                         |agent| agent.run,
                     );
-                    run.started(started.notes_file, now);
+                    run.started(started.notes_file.clone(), now);
+                    let launched = started.launched();
                     let reader = Reader::for_agent(
                         &started.agent_id,
                         started.session_id,
                         opened.dir.clone(),
                     );
-                    AgentTab { profile_name: started.profile_name, run, reader, workflow: None }
+                    AgentTab {
+                        profile_name: started.profile_name,
+                        run,
+                        reader,
+                        launched: Some(launched),
+                        workflow: None,
+                    }
                 }),
             };
             notes
@@ -217,6 +249,7 @@ pub(crate) fn relaunch_stage<T>(
     }
     let Some(agent) = tab.pane.agent.as_mut() else { return Vec::new() };
     tab.pane.body = Body::Shell(spawn(dir, &started.prepared));
+    agent.launched = Some(started.launched());
     agent.profile_name = started.profile_name;
     agent.run = AgentRun::setting_up(started.agent_id.clone(), now);
     agent.run.started(started.notes_file, now);
@@ -261,6 +294,8 @@ mod tests {
     fn started(notes: &[&str]) -> Box<Started> {
         Box::new(Started {
             profile_name: "Builder".into(),
+            profile_id: "builder".into(),
+            level: Level::Edits,
             agent_id: "claude".into(),
             notes_file: None,
             session_id: None,

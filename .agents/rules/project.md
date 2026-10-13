@@ -38,18 +38,19 @@ crates/tidewatch-core/  worktrees, profiles, permission levels, workflows, agent
   src/mcp.rs            Tidewatch MCP tools (D6): stage_done, report_finding, list_notes, reply_to_note over JSON-RPC 2.0
   src/house_style.rs    default house-style.md (D13), ensure never overwrites, derived Copilot instructions file
   src/path_env.rs       PATH with the standard install dirs in front, for Finder launches (pure)
-  src/prepare.rs        gets a tab ready to start (or to resume): house style, folder trust for the worktree (D14), guard helper, MCP and Gemini files, task flags, setup-then-agent shell line, banner_line (a stage divider printed before the agent)
+  src/prepare.rs        gets a tab ready to start (or to resume): house style, folder trust for the worktree (D14), guard helper, MCP and Gemini files, task flags, setup-then-agent shell line, banner_line (a stage divider printed before the agent), note_script (a plain shell that prints a note first)
   src/fsutil.rs         atomic file write shared by the settings writers
   src/jsonc_edit.rs     text-level edits of JSON with comments (scan, insert, remove, replace) that keep every untouched byte (crate-private, pure)
   src/trust.rs          D14 folder trust, pure: per-CLI config text in, text with the folder trusted (or not) out, idempotent, refuses unparsable files; TrustState per installed CLI
   src/consent.rs        D14 consent state machine (Undecided, Granted, Declined; Yes, No, Apply, Undo -> effects) and trust.toml: the answer and the entries Tidewatch added
   src/trust_apply.rs    D14 disk half: each CLI's config file (CLAUDE_CONFIG_DIR, COPILOT_HOME, CODEX_HOME honored), inspect, trust the root, trust a worktree, revoke; atomic write, `.tidewatch-bak` backup, race check
+  src/prefs.rs          ~/.config/tidewatch/settings.toml: the app-wide switches (restore the last session at launch, default on); bad file -> defaults
   src/names.rs          adjective-noun names for new worktrees (pure)
   src/registry.rs       .state/worktrees.toml: the worktrees Tidewatch made, for repair
   src/restore.rs        D11 restore: pure plan (saved session + Disk -> one action per tab), repair_moved, resume_command, restore_workflow, codex_session_id
   src/session_id.rs     the random UUID passed to `--session-id` so the Reader finds a tab's transcript by name
   src/session.rs        .state/session.toml (D11): Session, SavedWindow, SavedTab (main, shell, agent); load (bad file -> empty), atomic save
-  src/worktree.rs       add (locked, agent/<name>), inspect, remove, list, repair, leftovers (shells out to git)
+  src/worktree.rs       add (locked, agent/<name>), inspect, remove, list, repair, leftovers with their repository (shells out to git)
   src/notes.rs          per-tab review threads in .state/<repo-dir>/<tab>/notes.json: load, atomic save, background writer, PR import links, sent marks and note state (queued, sent, replied) (D4)
   src/note_paste.rs     the text pasted into an agent to hand it notes: path:line, quoted line, text, id, closing reply_to_note ask; control characters stripped (pure)
   src/end_block.rs      D13 parser: the Done / Needs you / Next block of an agent's last message (pure)
@@ -76,7 +77,7 @@ crates/tidewatch/       the egui app
   src/main.rs           argument parsing, workspace discovery, eframe start
   src/app.rs            the eframe::App loop: chip, tab strip, terminal, card bands, History and Diff panes, toast, shortcuts, job results
   src/tabs.rs           tab list and its Action reducer (pure, generic over the pane)
-  src/pane.rs           what a tab holds: shell or agent (with its AgentRun), creating, removing, failed; opening results, close policy (pure, generic)
+  src/pane.rs           what a tab holds: shell or agent (with its AgentRun and how it was launched), creating, removing, failed; opening results, close policy (pure, generic)
   src/jobs.rs           background thread runner: result channel plus a repaint
   src/worktree_jobs.rs  open a tab (worktree, listener registration, folder trust and prepared agent launch), inspect, remove (and revoke its trust entries) and startup repair as jobs
   src/agent_run.rs      one agent tab's live state: StatusTracker, terminal snapshot in, status change out, last MCP report (pure)
@@ -110,6 +111,10 @@ crates/tidewatch/       the egui app
   src/toast.rs          one timed message, fade on egui's clock (pure)
   src/fonts.rs          stdusk font set with kelp-ui's faces and semibold family merged in (kelp_ui::fonts::extend), CJK fallback
   src/repo.rs           git root and label; Workspace = Repo or the Other group
+  src/session_save.rs   the open tabs as a SavedWindow (main, shell, agent with profile, level, session id, stages file; the active tab, focus mode) and a fingerprint of the same facts (pure, generic over the pane)
+  src/session_writer.rs debounced writer thread for session.toml (Debounce is pure), synchronous flush for the quit path
+  src/session_glue.rs   Saver: once per frame, fingerprint changed -> queue a save; never under the screenshot harness or while a restore is under way; flush on quit
+  src/dev_session.rs    TIDEWATCH_DEV_QUIT / _SELECT / _SELECT_AFTER / _SAVE_DEBOUNCE_MS switches: close the window through the close request, select a tab, a long debounce
   src/dev_screenshot.rs TIDEWATCH_SCREENSHOT harness
   src/dev_worktree.rs   TIDEWATCH_DEV_WORKTREE switch: open a worktree tab at startup for captures
   src/dev_panes.rs      TIDEWATCH_DEV_SCOPE / _PICK / _NOTE switches: graph scope, selected row, a note for captures
