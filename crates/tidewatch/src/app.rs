@@ -57,6 +57,7 @@ use crate::new_tab::{Group, NewTab, Request};
 use crate::new_tab_dialog::{self, Outcome};
 use crate::notice;
 use crate::notify::{self, Notifier};
+use crate::os::RealOs;
 use crate::overview;
 use crate::overview_view;
 use crate::pane::{
@@ -72,6 +73,7 @@ use crate::session_glue::Saver;
 use crate::session_save::WindowView;
 use crate::settings::{Section, Settings};
 use crate::settings_view::{self, Files, General};
+use crate::shell::{self, Event, Shell};
 use crate::status_view;
 use crate::stepper_view;
 use crate::tab_view::{TabView, ViewSpec};
@@ -137,6 +139,7 @@ pub(crate) struct Tidewatch {
     dev_session: DevSession,
     restore: restore_glue::Host,
     notice: Option<String>,
+    shell: Shell<RealOs>,
 }
 
 impl Tidewatch {
@@ -148,6 +151,7 @@ impl Tidewatch {
         screenshot: Option<DevScreenshot>,
         cli_home: Option<&Path>,
         no_restore: bool,
+        shell: shell::Setup,
     ) -> Self {
         colors::init(colors::by_name(DEFAULT_THEME));
         fonts::install(&cc.egui_ctx);
@@ -201,6 +205,7 @@ impl Tidewatch {
             dev_session,
             restore: restore_glue::Host::new(no_restore, RealDisk::from_env()),
             notice: None,
+            shell: shell::start(&cc.egui_ctx, shell),
         };
         if let Some(paths) = &app.paths {
             agent_jobs::load(
@@ -503,6 +508,22 @@ impl Tidewatch {
             (self.catalog.profiles(), self.catalog.workflows())
         {
             self.settings = Some(Settings::new(profiles, workflows, self.catalog.agent_names()));
+        }
+    }
+
+    /// What another launch, the hotkey or the menu-bar item asked of the app itself.
+    fn shell_event(&mut self, event: &Event, ctx: &egui::Context) {
+        if self.status_log {
+            eprintln!("tidewatch: shell {} at {}", shell::describe(event), wall_ms());
+        }
+        match event {
+            Event::Overview => {
+                self.overview = true;
+                self.settings = None;
+            }
+            Event::Settings if self.settings.is_none() => self.toggle_settings(),
+            Event::Quit => ctx.send_viewport_cmd(egui::ViewportCommand::Close),
+            Event::Settings | Event::Opened(_) | Event::Toggled => {}
         }
     }
 
@@ -1027,6 +1048,9 @@ impl eframe::App for Tidewatch {
         }
         for done in self.agent_jobs.drain() {
             self.apply_agent_done(done, &ctx);
+        }
+        for event in self.shell.tick(&ctx) {
+            self.shell_event(&event, &ctx);
         }
         let toasts = [self.trust.drain(&ctx), self.leftovers.tick()];
         for text in toasts.into_iter().flatten() {
