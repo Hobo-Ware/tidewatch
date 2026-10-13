@@ -18,6 +18,7 @@ mod dev_panes;
 mod dev_reader;
 mod dev_screenshot;
 mod dev_view;
+mod dev_workflow;
 mod dev_worktree;
 mod diff_pane;
 mod end_block_view;
