@@ -89,13 +89,17 @@ pub(crate) struct Reader {
 }
 
 impl Reader {
-    pub(crate) fn for_agent(agent_id: &str, session_id: Option<String>, cwd: PathBuf) -> Self {
-        let source = Source::from_agent_id(agent_id);
-        let link = match source {
+    fn first_link(source: Option<Source>) -> Link {
+        match source {
             None => Link::Unavailable(Unavailable::NoReader),
             Some(source) if !source.verified() => Link::Unavailable(Unavailable::Unverified),
             Some(_) => Link::Idle,
-        };
+        }
+    }
+
+    pub(crate) fn for_agent(agent_id: &str, session_id: Option<String>, cwd: PathBuf) -> Self {
+        let source = Source::from_agent_id(agent_id);
+        let link = Self::first_link(source);
         Self {
             source,
             session_id,
@@ -108,6 +112,17 @@ impl Reader {
             rows: Rows::default(),
             view: ViewState::default(),
         }
+    }
+
+    /// A workflow stage's agent takes over the tab: the old feed stops, the rows stay with a divider
+    /// where the new stage begins, and the feed looks for the new agent's own transcript.
+    pub(crate) fn relaunch(&mut self, agent_id: &str, session_id: Option<String>, divider: String) {
+        self.feed = None;
+        self.source = Source::from_agent_id(agent_id);
+        self.link = Self::first_link(self.source);
+        self.session_id = session_id;
+        self.answered = false;
+        self.rows.divider(divider);
     }
 
     pub(crate) fn source(&self) -> Option<Source> {
@@ -292,5 +307,35 @@ mod tests {
         reader.poke(1.0);
         reader.hook(Some(PathBuf::from("/t.jsonl")));
         assert!(!reader.drain());
+    }
+
+    #[test]
+    fn a_relaunch_keeps_the_rows_marks_the_new_stage_and_looks_for_the_new_transcript() {
+        let mut reader = Reader::for_agent("claude", Some("first".into()), PathBuf::from("/w"));
+        reader.set_link(Link::Found);
+        reader.mark_answered();
+        reader.add(vec![Entry {
+            role: tidewatch_core::transcript::Role::Assistant,
+            text: "built it".into(),
+            tool: None,
+            ts: None,
+        }]);
+        reader.relaunch("gemini", Some("second".into()), "--- Stage 2: Review ---".into());
+        assert_eq!(reader.link(), Link::Idle);
+        assert!(reader.needs_start());
+        assert_eq!(reader.source(), Some(Source::Gemini));
+        assert!(!reader.prompt_answered());
+        let texts: Vec<_> = reader.rows.iter().map(|row| row.text.clone()).collect();
+        assert_eq!(texts, ["built it", "--- Stage 2: Review ---"]);
+    }
+
+    #[test]
+    fn a_relaunch_into_an_agent_without_a_reader_shows_the_terminal() {
+        let mut reader = Reader::for_agent("claude", None, PathBuf::from("/w"));
+        reader.relaunch("codex", None, "--- Stage 3 ---".into());
+        assert_eq!(reader.link(), Link::Unavailable(Unavailable::Unverified));
+        assert!(!reader.needs_start());
+        reader.relaunch("claude", None, "--- Stage 4 ---".into());
+        assert_eq!(reader.link(), Link::Idle);
     }
 }

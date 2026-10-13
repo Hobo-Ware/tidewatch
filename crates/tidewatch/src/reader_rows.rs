@@ -16,6 +16,8 @@ pub(crate) enum Kind {
     Tool(Tool),
     /// An error or notice the CLI wrote itself.
     Notice,
+    /// Where a workflow stage's agent took over: `--- Stage 2: Review (gemini, Read only) ---`.
+    Divider,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -64,6 +66,14 @@ impl Rows {
             }
             Role::Tool => self.tool(entry),
         }
+        while self.list.len() > MAX_ROWS {
+            self.list.pop_front();
+            self.dropped += 1;
+        }
+    }
+
+    pub(crate) fn divider(&mut self, text: String) {
+        self.add(Kind::Divider, text);
         while self.list.len() > MAX_ROWS {
             self.list.pop_front();
             self.dropped += 1;
@@ -280,5 +290,25 @@ mod tests {
             tool_label("mcp__tidewatch__stage_done", "all green"),
             "tidewatch:stage_done  all green"
         );
+    }
+
+    #[test]
+    fn a_divider_is_a_row_of_its_own_between_two_stages() {
+        let mut rows = Rows::default();
+        rows.push(text(Role::Assistant, "built it"));
+        rows.divider("--- Stage 2: Review (gemini, Read only) ---".into());
+        rows.push(text(Role::Assistant, "found a bug"));
+        let kinds: Vec<_> = rows.iter().map(|row| row.kind.clone()).collect();
+        assert_eq!(kinds, [Kind::Assistant, Kind::Divider, Kind::Assistant]);
+        assert_eq!(rows.iter().nth(1).unwrap().text, "--- Stage 2: Review (gemini, Read only) ---");
+    }
+
+    #[test]
+    fn dividers_count_toward_the_cap_like_any_row() {
+        let mut rows = Rows::default();
+        for n in 0..=MAX_ROWS {
+            rows.divider(format!("--- {n} ---"));
+        }
+        assert_eq!((rows.len(), rows.dropped()), (MAX_ROWS, 1));
     }
 }
