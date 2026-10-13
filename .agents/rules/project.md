@@ -62,6 +62,7 @@ crates/tidewatch-core/  worktrees, profiles, permission levels, workflows, agent
   tests/pr_gh.rs        fake gh: pr view, comments fetch and post argument shapes, GitHub-shaped JSON fixtures
   tests/fixtures/       redacted real transcripts (claude, gemini, copilot), hand-written codex, GitHub-shaped PR comments
   tests/history_roundtrip.rs   real throwaway repos: worktree branch history, whole repo, ahead/behind, diffs, watcher
+  tests/session_restore.rs     real repos + fake home: moved repo repaired then planned, removed worktree, missing session file
 crates/tidewatch/       the egui app
   src/main.rs           argument parsing, workspace discovery, eframe start
   src/app.rs            the eframe::App loop: chip, tab strip, terminal, History and Diff panes, toast, shortcuts, job results
