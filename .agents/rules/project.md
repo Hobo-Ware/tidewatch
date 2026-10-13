@@ -187,8 +187,10 @@ scripts/package-linux.sh               # x86_64 Linux only: tarball and AppImage
 scripts/make-icon.sh                   # rebuild the icon files from assets/icon.svg and assets/tray.svg (inkscape, pngquant, oxipng)
 TIDEWATCH_SCREENSHOT=/tmp/x.png cargo run -p tidewatch -- <repo>   # render, save PNG, quit (saves no session)
 cargo run -p tidewatch -- --no-restore <repo>   # start with just the main tab; the last session is not read
+tidewatch --toggle                     # show or hide every running window, exit 1 if none answers (the way in on Wayland)
 ```
 
+One window per folder: `tidewatch <path>` for a folder that already has a window hands the path over and exits (no second window); another folder starts its own process. The socket is `<home>/.tidewatch/.state/instances/<hash>.sock`, so a `TIDEWATCH_HOME` run never meets the real one, but a socket path must stay under about 100 bytes: use a short throwaway home such as `/tmp/x`, not one under macOS `$TMPDIR`. Quake is on by default (`Ctrl+Alt+Grave`, Settings, General, Window). **Never live-test quake show/hide, the hotkey or the menu-bar item from an agent run: they take focus. A background run (below) gets none of them by construction (`shell_plan::Plan`).** To see a background instance answer a launch without any window action: start it with `TIDEWATCH_DEV_STATUS_LOG=1`, then run `tidewatch --toggle` or `tidewatch <repo>` with the same `TIDEWATCH_HOME` and read its stderr (`shell toggle`, `shell open <repo>`).
 Screenshot runs open in the background: no Dock icon, never take keyboard focus from the
 developer's active window. `TIDEWATCH_BACKGROUND=1` does the same for any other dev or live-check
 run. Agents must use one of the two for every window they open.
