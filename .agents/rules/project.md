@@ -28,17 +28,17 @@ crates/tidewatch-core/  worktrees, profiles, permission levels, workflows, agent
   src/agents.rs         agent table: claude, codex, gemini, copilot, five permission levels to flags, version probe, [agent.<id>] overrides
   src/profiles.rs       Profile, profiles.toml load/save (bad file -> defaults), first-launch seeding
   src/workflows.rs      Workflow, Stage, Gate, Action; workflows.toml load/save/seed (bad file -> defaults), the built-in Ship a feature, Fix a bug, Review a PR
-  src/test_command.rs   per-repo test command: <repo>/.tidewatch.toml `test`, else detected (cargo, npm/pnpm/yarn/bun, deno, go, pytest, rspec, mix, make); run_in
+  src/test_command.rs   per-repo test command: <repo>/.tidewatch.toml `test` (and `test_timeout_secs`, default 10 min), else detected (cargo, npm/pnpm/yarn/bun, deno, go, pytest, rspec, mix, make); run_in, run_in_timeout (kills the process group)
   src/runner.rs         Runner: pure workflow state machine (RunEvent in, Command out), gates decided by Tidewatch, loops, safety net, stages.json save/load/resume
   src/prompt.rs         stage prompt templates: {task} {base} {branch} {previous_summary} {findings} {test_output} (pure)
   src/launch.rs         launch_command: program, args, env; YOLO refusal, never-push guard (D7), hooks/MCP/house-style wiring per CLI
   src/status.rs         AgentStatus and the pure fold of hook events, terminal signals and process facts (D5); per-CLI hook payload parsing; next_change (when a decay fires)
-  src/events.rs         TabEvent and TabMessage: what the listener sends the app, plus the Repaint callback type
+  src/events.rs         TabEvent and TabMessage (with the generation its token registered with): what the listener sends the app, plus the Repaint callback type
   src/listener.rs       127.0.0.1:0 HTTP listener on std::net: per-tab bearer tokens, POST /hook/<agent>, POST /mcp, events over a channel
   src/mcp.rs            Tidewatch MCP tools (D6): stage_done, report_finding, list_notes, reply_to_note over JSON-RPC 2.0
   src/house_style.rs    default house-style.md (D13), ensure never overwrites, derived Copilot instructions file
   src/path_env.rs       PATH with the standard install dirs in front, for Finder launches (pure)
-  src/prepare.rs        gets a tab ready to start (or to resume): house style, guard helper, MCP and Gemini files, task flags, setup-then-agent shell line
+  src/prepare.rs        gets a tab ready to start (or to resume): house style, guard helper, MCP and Gemini files, task flags, setup-then-agent shell line, banner_line (a stage divider printed before the agent)
   src/fsutil.rs         atomic file write shared by the settings writers
   src/names.rs          adjective-noun names for new worktrees (pure)
   src/registry.rs       .state/worktrees.toml: the worktrees Tidewatch made, for repair
@@ -80,15 +80,19 @@ crates/tidewatch/       the egui app
   src/agent_frame.rs    per-frame agent work: route listener messages to tabs, feed terminal signals, notify, say when the next frame is due (generic, pure)
   src/status_view.rs    status -> tone, label, color; CLI logo mapping; the tab's top-edge status bar (animated only while working)
   src/notify.rs         desktop notifications (osascript, notify-send) off the UI thread, per-tab per-kind rate limit, window-away rule
-  src/overview.rs       Overview rows and groups from the agent tabs (needs you first), elapsed format (pure)
+  src/overview.rs       Overview rows and groups from the agent tabs (needs you first), the workflow stage of a row, elapsed format (pure)
   src/overview_view.rs  the Overview screen (Cmd+0) and the tab strip's icon button with a needs-you badge
   src/catalog.rs        loaded profiles, the agent table built from them, which CLIs were found and their versions
   src/agent_jobs.rs     load or seed profiles.toml and probe each agent CLI as jobs
-  src/new_tab.rs        new-tab dialog state: picks, permission ladder and YOLO gating, command preview, request (pure)
+  src/new_tab.rs        new-tab dialog state: picks (profiles, workflows in a repo, shell), permission ladder and YOLO gating, command preview, request (pure)
+  src/new_tab_workflow.rs  the dialog's workflow side: list order, stage preview, missing agents, the request (pure)
   src/new_tab_dialog.rs the dialog itself: profile list, ladder, task, preview; Enter starts, Esc cancels
   src/list_row.rs       one selectable list row, shared by the dialog and the profile editor
   src/profile_editor.rs profile editor state: drafts, text in and out of fields, validation, profiles to save (pure)
-  src/settings_view.rs  the profile editor view (replaces the terminal area; Cmd+, or the gear)
+  src/settings.rs       what the settings view holds: the profile and workflow editors and which page shows (pure)
+  src/settings_view.rs  the settings view, Profiles and Workflows pages (replaces the terminal area; Cmd+, or the gear)
+  src/workflow_editor.rs  workflow editor state: drafts per workflow and stage, problems found as you type, workflows to save (pure)
+  src/workflow_editor_view.rs  the Workflows page: list, stage chips, the stage's fields, problems under them
   src/close_dialog.rs   keep/delete branch dialog: choices and wording (pure) plus the modal
   src/layout.rs         terminal/panel split, grid size, tab width, digit keys (pure)
   src/tab_view.rs       per-tab pane state: loaded history, selection, open diff, notes, watcher; wants -> jobs -> answers (stale ones dropped)
@@ -104,7 +108,8 @@ crates/tidewatch/       the egui app
   src/dev_worktree.rs   TIDEWATCH_DEV_WORKTREE switch: open a worktree tab at startup for captures
   src/dev_panes.rs      TIDEWATCH_DEV_SCOPE / _PICK / _NOTE switches: graph scope, selected row, a note for captures
   src/dev_view.rs       TIDEWATCH_DEV_OVERVIEW / _FOCUS / _STATUS_LOG / _KEYS switches: start on a view, log status changes, answer a prompt
-  src/dev_agent.rs      TIDEWATCH_DEV_AGENT / _DIALOG / _SETTINGS / _TASK / _LEVEL switches: start a profile, open the dialog or the editor
+  src/dev_agent.rs      TIDEWATCH_DEV_AGENT / _WORKFLOW / _RESUME / _DIALOG / _SETTINGS / _TASK / _LEVEL switches: start a profile or workflow, resume a saved run, open the dialog or the editor
+  src/dev_workflow.rs   TIDEWATCH_DEV_ASK / _OPEN_STAGE switches: answer a workflow run's question, open a stage under the stepper
   src/dev_flow.rs       TIDEWATCH_DEV_GH_DIR / _AUTO / _SEND / _DELIVER / _PR switches: a fake gh first on PATH, then do once what a click would
   src/flow.rs           Flow: one TabFlow per agent worktree tab (deliver-when-idle, delivery card, PR state), decide() turns frame facts into jobs, finished jobs come back as Out
   src/flow_jobs.rs      send notes, probe/build/deliver a PR, find the PR, load its diff lines, pull its comments and post a note as jobs; notes-file jobs take NOTES_TURN
@@ -116,7 +121,7 @@ crates/tidewatch/       the egui app
   src/pr_state.rs       PR lookup state (focus and after a delivery, never per frame), the chip, whether a note may be posted (pure)
   src/post_confirm.rs   the confirm dialog before a note goes to GitHub: PR number and repo, exact text, Enter posts, Esc cancels
   src/reader.rs         one agent tab's Reader: the view choice (Reader or raw terminal), feed state, rows; `shown()` decides what the tab draws and why (pure)
-  src/reader_rows.rs    transcript entries to view rows (a tool call and its result merge into one row), capped at 400 rows (pure)
+  src/reader_rows.rs    transcript entries to view rows (a tool call and its result merge into one row, a divider where a workflow stage starts), capped at 400 rows (pure)
   src/reader_feed.rs    the thread that finds the transcript (retry schedule) and tails it; woken by pty output and hooks, backs off while quiet
   src/reader_scroll.rs  autoscroll state (follow until the user scrolls up) and row height cache and estimate (pure)
   src/reader_keys.rs    the permission answers verified per CLI and the bytes that give them (Claude: 1 and Esc)
@@ -124,6 +129,12 @@ crates/tidewatch/       the egui app
   src/reader_glue.rs    seams: start feeds, drain, Cmd+Shift+T toggle, draw in the terminal area, type replies and answers into the pty
   src/dev_reader.rs     TIDEWATCH_DEV_READER / _READER_KEY / _ANSWER / _REPLY switches
   src/end_block_view.rs the Done / Needs you / Next card on the tab (expandable) and its one-line form for the Overview
+  src/workflow_run.rs   one workflow tab's run: the Runner, Exec (launch a stage, run the tests) out, events in, generation per launch, stages.json saved after every event, held status, ask (pure)
+  src/workflow_ask.rs   the question a run asks and its buttons per reason (Approve, Retry, Reject with feedback, Stop), button to event (pure)
+  src/stepper.rs        the stepper's data: a pill per stage with state and loop counter, the gate, a stage's summary and findings, the position label (pure)
+  src/stepper_view.rs   draws the header of a workflow tab: stepper, a clicked stage, the ask card, the stopped line
+  src/workflow_jobs.rs  open (worktree, base, test command and timeout), launch a stage (fresh token, prepare, divider), run the tests as jobs
+  src/workflow_glue.rs  Host: open a workflow or saved-run tab, carry out what a run asks, apply finished jobs, drop a replaced agent's messages (generic over the pty)
 docs/                   concept mockup, research reports
 ```
 
@@ -162,6 +173,9 @@ pulls the PR's comments or opens (and confirms) the post dialog for the first no
 `TIDEWATCH_DEV_OVERVIEW=1` and `TIDEWATCH_DEV_FOCUS=1` start on the Overview or in focus mode; `TIDEWATCH_DEV_STATUS_LOG=1`
 prints every hook and status change to stderr with a wall-clock time in ms; `TIDEWATCH_DEV_KEYS='\e[B\r'` (after
 `TIDEWATCH_DEV_KEYS_AFTER` seconds, default 8) types into the newest agent tab once, for Claude's folder-trust prompt.
+`TIDEWATCH_DEV_WORKFLOW=<id>` starts a workflow in a new tab (task from `TIDEWATCH_DEV_TASK`), `TIDEWATCH_DEV_DIALOG=workflow:<id>` opens the dialog on it,
+`TIDEWATCH_DEV_RESUME=<worktree name>` opens the tab of a saved run (`.state/<repo-dir>/<name>/stages.json`) and carries on, `TIDEWATCH_DEV_ASK=approve|retry|stop|reject:<reason>`
+answers the next question a run asks, `TIDEWATCH_DEV_OPEN_STAGE=<n>` opens stage n under the stepper, `TIDEWATCH_DEV_SETTINGS=workflows` opens the workflow editor.
 `TIDEWATCH_DEV_READER=raw` starts agent tabs on the raw terminal, `TIDEWATCH_DEV_READER_KEY=<s>` presses Cmd+Shift+T after that many
 seconds through the real key path, `TIDEWATCH_DEV_ANSWER=allow|deny` clicks a permission button once, `TIDEWATCH_DEV_REPLY=<text>`
 (`_REPLY_AFTER=<s>`) sends a reply from the Reader's box. Run Claude checks with `CLAUDE_CODE_FORCE_SESSION_PERSISTENCE=1` when the
