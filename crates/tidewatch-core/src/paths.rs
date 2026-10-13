@@ -6,6 +6,7 @@ use sha2::{Digest, Sha256};
 use std::path::{Path, PathBuf};
 
 const HASH_HEX_LEN: usize = 6;
+const SOCKET_HEX_LEN: usize = 12;
 const NOTES_FILE: &str = "notes.json";
 const STAGES_FILE: &str = "stages.json";
 
@@ -87,6 +88,22 @@ impl TidewatchPaths {
     #[must_use]
     pub fn session_file(&self) -> PathBuf {
         self.state_dir().join("session.toml")
+    }
+
+    /// One Unix socket per running window lives here (`instance`). Under the state dir, so a
+    /// `TIDEWATCH_HOME` run never sees the real one.
+    #[must_use]
+    pub fn instance_dir(&self) -> PathBuf {
+        self.state_dir().join("instances")
+    }
+
+    /// The socket of the window for `dir` (the repo root, or the folder in the Other group). Named
+    /// by a short hash only: a Unix socket path must stay under about 100 bytes.
+    #[must_use]
+    pub fn instance_socket(&self, dir: &Path) -> PathBuf {
+        let digest = Sha256::digest(dir.as_os_str().as_encoded_bytes());
+        let hash = format!("{digest:x}");
+        self.instance_dir().join(format!("{}.sock", &hash[..SOCKET_HEX_LEN]))
     }
 
     /// Keyed by the full repo path, so two repos with the same folder name never share a directory.
@@ -217,5 +234,26 @@ mod tests {
         let paths = paths();
         assert_eq!(paths.state_dir(), paths.root().join(".state"));
         assert!(paths.state_dir().starts_with(paths.root()));
+    }
+
+    #[test]
+    fn each_folder_has_its_own_short_socket_under_the_state_dir() {
+        let paths = paths();
+        let web = paths.instance_socket(Path::new("/work/web"));
+        assert_eq!(web.parent(), Some(paths.instance_dir().as_path()));
+        assert!(paths.instance_dir().starts_with(paths.state_dir()));
+        assert_eq!(web, paths.instance_socket(Path::new("/work/web")));
+        assert_ne!(web, paths.instance_socket(Path::new("/personal/web")));
+        assert!(web.extension().is_some_and(|ext| ext == "sock"));
+        let long = paths.instance_socket(Path::new(&"/very/long/folder/name/".repeat(20)));
+        assert_eq!(long.file_name().unwrap().len(), web.file_name().unwrap().len());
+    }
+
+    #[test]
+    fn another_home_has_other_sockets() {
+        let other = TidewatchPaths::new(Path::new("/tmp/throwaway"));
+        let dir = Path::new("/work/web");
+        assert_ne!(paths().instance_socket(dir), other.instance_socket(dir));
+        assert!(!other.instance_dir().starts_with(paths().state_dir()));
     }
 }

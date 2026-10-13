@@ -8,6 +8,7 @@ pub mod events;
 mod fsutil;
 pub mod history;
 pub mod house_style;
+pub mod instance;
 mod jsonc_edit;
 pub mod launch;
 pub mod listener;
