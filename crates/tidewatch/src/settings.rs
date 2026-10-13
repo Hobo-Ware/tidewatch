@@ -4,7 +4,10 @@
 use tidewatch_core::profiles::Profiles;
 use tidewatch_core::workflows::Workflows;
 
+use tidewatch_core::prefs::WindowPrefs;
+
 use crate::profile_editor;
+use crate::window_settings;
 use crate::workflow_editor;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -19,6 +22,7 @@ pub(crate) struct Settings {
     pub(crate) section: Section,
     pub(crate) profiles: profile_editor::Editor,
     pub(crate) workflows: workflow_editor::Editor,
+    pub(crate) window: window_settings::Editor,
 }
 
 impl Settings {
@@ -27,6 +31,7 @@ impl Settings {
         profiles: &Profiles,
         workflows: &Workflows,
         agents: Vec<(String, String)>,
+        window: &WindowPrefs,
     ) -> Self {
         let profile_names =
             profiles.profile.iter().map(|(id, p)| (id.clone(), p.name.clone())).collect();
@@ -34,6 +39,7 @@ impl Settings {
             section: Section::Profiles,
             workflows: workflow_editor::Editor::new(workflows, agents.clone(), profile_names),
             profiles: profile_editor::Editor::new(profiles, agents),
+            window: window_settings::Editor::new(window),
         }
     }
 
@@ -88,7 +94,7 @@ mod tests {
     fn settings() -> Settings {
         let profiles = Profiles::seeded(&["claude".to_owned()]);
         let agents = vec![("claude".to_owned(), "Claude Code".to_owned())];
-        Settings::new(&profiles, &Workflows::defaults(), agents)
+        Settings::new(&profiles, &Workflows::defaults(), agents, &WindowPrefs::default())
     }
 
     #[test]

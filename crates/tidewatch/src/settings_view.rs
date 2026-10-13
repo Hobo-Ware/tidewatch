@@ -1,5 +1,5 @@
 //! The settings view: four pages, the profile editor, the workflow editor, folder trust (D14) and
-//! General, with Save and Close below. It replaces the terminal area while open, like a settings tab. A full
+//! General (restore switch, Window section), with Save and Close below. It replaces the terminal area while open, like a settings tab. A full
 //! settings screen is Phase 10; this covers `profiles.toml`, `workflows.toml`, the trust consent and
 //! `settings.toml`.
 
@@ -12,6 +12,8 @@ use crate::list_row::{Row, pick_row};
 use crate::profile_editor::Editor;
 use crate::settings::{Section, Settings, Status};
 use crate::trust_view;
+use crate::window_settings;
+use crate::window_view;
 use crate::workflow_editor_view;
 
 const MARGIN: f32 = 16.0;
@@ -24,6 +26,8 @@ pub(crate) enum Action {
     Trust(tidewatch_core::consent::Event),
     /// The restore switch moved: the new value. It applies at once, so there is nothing to save.
     Restore(bool),
+    /// The Window section changed something: all of its settings. Applies at once too.
+    Window(tidewatch_core::prefs::WindowPrefs),
 }
 
 /// The files the two pages edit, for the line under the tabs.
@@ -39,6 +43,7 @@ pub(crate) struct General {
     pub(crate) restore: bool,
     /// This run was started with `--no-restore`, which wins over the switch.
     pub(crate) skipped_by_flag: bool,
+    pub(crate) window: window_view::View,
 }
 
 pub(crate) fn show(
@@ -76,7 +81,7 @@ pub(crate) fn show(
                     .inner
                     .map(Action::Trust);
             }
-            Section::General => action = general_page(ui, general).map(Action::Restore),
+            Section::General => action = general_page(ui, general, &mut settings.window),
         }
         ui.add_space(4.0);
         let footer_action = footer(
@@ -226,7 +231,11 @@ fn form(ui: &mut egui::Ui, editor: &mut Editor, height: f32) {
     }
 }
 
-fn general_page(ui: &mut egui::Ui, general: &General) -> Option<bool> {
+fn general_page(
+    ui: &mut egui::Ui,
+    general: &General,
+    window: &mut window_settings::Editor,
+) -> Option<Action> {
     ui.spacing_mut().item_spacing.y = 6.0;
     let mut on = general.restore;
     let changed = switch_row(ui, "Restore the last session at launch", &mut on);
@@ -245,7 +254,8 @@ fn general_page(ui: &mut egui::Ui, general: &General) -> Option<bool> {
                 .color(colors::dim()),
         );
     }
-    changed.then_some(on)
+    let window = window_view::section(ui, window, &general.window).map(Action::Window);
+    changed.then_some(Action::Restore(on)).or(window)
 }
 
 fn switch_row(ui: &mut egui::Ui, text: &str, on: &mut bool) -> bool {
@@ -296,13 +306,14 @@ fn footer(ui: &mut egui::Ui, status: &Status, saves: bool) -> Option<Action> {
 mod tests {
     use super::*;
     use egui::{RawInput, pos2};
+    use tidewatch_core::prefs::WindowPrefs;
     use tidewatch_core::profiles::Profiles;
     use tidewatch_core::workflows::Workflows;
 
     fn settings() -> Settings {
         let profiles = Profiles::seeded(&["claude".to_owned()]);
         let agents = vec![("claude".to_owned(), "Claude Code".to_owned())];
-        Settings::new(&profiles, &Workflows::defaults(), agents)
+        Settings::new(&profiles, &Workflows::defaults(), agents, &WindowPrefs::default())
     }
 
     fn files() -> Files {
@@ -325,45 +336,88 @@ mod tests {
     }
 
     fn general(restore: bool) -> General {
-        General { restore, skipped_by_flag: false }
+        General {
+            restore,
+            skipped_by_flag: false,
+            window: window_view::View {
+                status: crate::shell::HotkeyStatus::Registered,
+                menu_bar_available: true,
+            },
+        }
+    }
+
+    fn run_general(
+        ctx: &egui::Context,
+        general: &General,
+        window: &mut window_settings::Editor,
+        events: Vec<egui::Event>,
+    ) -> Option<Action> {
+        let raw = RawInput {
+            screen_rect: Some(Rect::from_min_size(pos2(0.0, 0.0), Vec2::new(700.0, 500.0))),
+            focused: true,
+            events,
+            ..RawInput::default()
+        };
+        let mut answer = None;
+        let _ = ctx.run_ui(raw, |ui| {
+            ui.scope_builder(
+                UiBuilder::new()
+                    .max_rect(Rect::from_min_size(pos2(0.0, 0.0), Vec2::new(600.0, 400.0))),
+                |ui| {
+                    answer = general_page(ui, general, window);
+                },
+            );
+        });
+        answer
+    }
+
+    fn click(at: egui::Pos2, pressed: bool) -> egui::Event {
+        egui::Event::PointerButton {
+            pos: at,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        }
     }
 
     #[test]
     fn clicking_the_restore_switch_reports_the_new_value_and_nothing_else_does() {
         let ctx = egui::Context::default();
-        let run = |general: &General, events: Vec<egui::Event>| {
-            let raw = RawInput {
-                screen_rect: Some(Rect::from_min_size(pos2(0.0, 0.0), Vec2::new(600.0, 200.0))),
-                focused: true,
-                events,
-                ..RawInput::default()
-            };
-            let mut answer = None;
-            let _ = ctx.run_ui(raw, |ui| {
-                ui.scope_builder(
-                    UiBuilder::new()
-                        .max_rect(Rect::from_min_size(pos2(0.0, 0.0), Vec2::new(500.0, 100.0))),
-                    |ui| {
-                        answer = general_page(ui, general);
-                    },
-                );
-            });
-            answer
+        let mut window = window_settings::Editor::new(&WindowPrefs::default());
+        let mut run = |general: &General, events: Vec<egui::Event>| {
+            run_general(&ctx, general, &mut window, events)
         };
         let at = pos2(19.0, 11.0);
-        let button = |pressed| egui::Event::PointerButton {
-            pos: at,
-            button: egui::PointerButton::Primary,
-            pressed,
-            modifiers: egui::Modifiers::NONE,
-        };
         let on = general(true);
-        assert_eq!(run(&on, vec![]), None);
-        assert_eq!(run(&on, vec![egui::Event::PointerMoved(at)]), None);
-        assert_eq!(run(&on, vec![button(true)]), None);
-        assert_eq!(run(&on, vec![button(false)]), Some(false));
-        assert_eq!(run(&general(false), vec![button(true)]), None);
-        assert_eq!(run(&general(false), vec![button(false)]), Some(true));
+        assert!(run(&on, vec![]).is_none());
+        assert!(run(&on, vec![egui::Event::PointerMoved(at)]).is_none());
+        assert!(run(&on, vec![click(at, true)]).is_none());
+        assert!(matches!(run(&on, vec![click(at, false)]), Some(Action::Restore(false))));
+        assert!(run(&general(false), vec![click(at, true)]).is_none());
+        assert!(matches!(
+            run(&general(false), vec![click(at, false)]),
+            Some(Action::Restore(true))
+        ));
+    }
+
+    #[test]
+    fn the_window_section_sits_under_the_restore_switch_and_reports_its_own_change() {
+        let ctx = egui::Context::default();
+        let mut window = window_settings::Editor::new(&WindowPrefs::default());
+        let general = general(true);
+        run_general(&ctx, &general, &mut window, vec![]);
+        let mut found = None;
+        for y in (60..140).step_by(4) {
+            let at = pos2(27.0, y as f32);
+            run_general(&ctx, &general, &mut window, vec![egui::Event::PointerMoved(at)]);
+            run_general(&ctx, &general, &mut window, vec![click(at, true)]);
+            found = run_general(&ctx, &general, &mut window, vec![click(at, false)]);
+            if found.is_some() {
+                break;
+            }
+        }
+        let Some(Action::Window(prefs)) = found else { panic!("no Window action from the page") };
+        assert_eq!(prefs, WindowPrefs { quake: false, ..WindowPrefs::default() });
     }
 
     #[test]

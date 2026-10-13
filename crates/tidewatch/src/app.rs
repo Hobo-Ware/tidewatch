@@ -23,6 +23,7 @@ use stdusk_egui::ui::{
 use stdusk_egui::widgets::{chip, icon_button};
 use tidewatch_core::notes::NotesWriter;
 use tidewatch_core::paths::TidewatchPaths;
+use tidewatch_core::prefs::WindowPrefs;
 use tidewatch_core::prepare::Prepared;
 use tidewatch_core::restore::{RealDisk, WindowPlan};
 use tidewatch_core::status::AgentStatus;
@@ -81,6 +82,7 @@ use crate::tabs::{Action, Tabs};
 use crate::toast::Toast;
 use crate::trust_glue::Trust;
 use crate::trust_view;
+use crate::window_view;
 use crate::workflow_glue::{self, Env, Spawners, Start};
 use crate::workflow_run::Exec;
 use crate::worktree_jobs::{self, Done, OpenSpec, Target};
@@ -507,7 +509,12 @@ impl Tidewatch {
         if let (Some(profiles), Some(workflows)) =
             (self.catalog.profiles(), self.catalog.workflows())
         {
-            self.settings = Some(Settings::new(profiles, workflows, self.catalog.agent_names()));
+            self.settings = Some(Settings::new(
+                profiles,
+                workflows,
+                self.catalog.agent_names(),
+                self.shell.prefs(),
+            ));
         }
     }
 
@@ -525,6 +532,13 @@ impl Tidewatch {
             Event::Quit => ctx.send_viewport_cmd(egui::ViewportCommand::Close),
             Event::Settings | Event::Opened(_) | Event::Toggled => {}
         }
+    }
+
+    fn set_window_prefs(&mut self, prefs: WindowPrefs, ctx: &egui::Context) {
+        if let Some(paths) = &self.paths {
+            shell::save(paths.clone(), prefs.clone());
+        }
+        self.shell.apply_prefs(ctx, prefs);
     }
 
     fn save_settings(&mut self, ctx: &egui::Context) {
@@ -1219,6 +1233,10 @@ impl eframe::App for Tidewatch {
                 let general = General {
                     restore: self.restore.restore_enabled(),
                     skipped_by_flag: self.restore.skipped_by_flag(),
+                    window: window_view::View {
+                        status: self.shell.hotkey_status(),
+                        menu_bar_available: self.shell.tray_supported(),
+                    },
                 };
                 settings_action =
                     settings_view::show(ui, area, settings, &files, &self.trust.page(), &general);
@@ -1367,6 +1385,7 @@ impl eframe::App for Tidewatch {
                     self.restore.set_restore_enabled(paths, on);
                 }
             }
+            Some(settings_view::Action::Window(prefs)) => self.set_window_prefs(prefs, &ctx),
             None => {}
         }
         if toggle_settings {

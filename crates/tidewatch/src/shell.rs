@@ -84,6 +84,11 @@ impl<O: Os> Shell<O> {
         &self.prefs
     }
 
+    /// Whether this system can show a menu-bar item at all.
+    pub(crate) fn tray_supported(&self) -> bool {
+        self.env.tray_supported
+    }
+
     pub(crate) fn hotkey_status(&self) -> HotkeyStatus {
         match &self.plan.hotkey {
             Hotkey::Off => HotkeyStatus::Off,
@@ -261,6 +266,15 @@ impl<O: Os> Shell<O> {
             self.tray_built = false;
         }
     }
+}
+
+/// Writes the window settings off the UI thread; a failure goes to stderr.
+pub(crate) fn save(paths: tidewatch_core::paths::TidewatchPaths, prefs: WindowPrefs) {
+    std::thread::spawn(move || {
+        if let Err(e) = tidewatch_core::prefs::Prefs::update(&paths, |p| p.window = prefs) {
+            eprintln!("tidewatch: cannot save settings.toml: {e}");
+        }
+    });
 }
 
 /// Everything `main` settled before the window existed.
