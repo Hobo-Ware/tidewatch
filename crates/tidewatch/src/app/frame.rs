@@ -51,6 +51,9 @@ impl Tidewatch {
             self.shell_event(&event, ctx);
         }
         self.updates.tick();
+        if self.updates.take_restart() {
+            self.restart_to_update(ctx);
+        }
         let toasts = [self.trust.drain(ctx), self.leftovers.tick()];
         for text in toasts.into_iter().flatten() {
             self.show_toast(text, ctx);
@@ -184,6 +187,9 @@ impl Tidewatch {
 
     pub(super) fn finish_frame(&mut self, ctx: &egui::Context, now: f64) {
         self.dev_session.tick(ctx, &mut self.tabs, now);
+        if self.dev_session.restart_due(now) {
+            self.restart_to_update(ctx);
+        }
         let focused = ctx.input(|i| i.viewport().focused.unwrap_or(false));
         if self.last_used.gained_focus(focused) && self.welcome.is_none() {
             self.last_used.record(&super::workspaces::remembered(&self.workspaces, &self.tabs));
