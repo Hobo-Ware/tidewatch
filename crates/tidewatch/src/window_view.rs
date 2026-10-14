@@ -4,7 +4,7 @@
 use egui::{
     Align, CornerRadius, Event, Layout, RichText, Sense, Stroke, StrokeKind, Ui, UiBuilder, vec2,
 };
-use tidewatch_core::prefs::WindowPrefs;
+use tidewatch_core::prefs::{Panels, WindowPrefs};
 
 use crate::hotkey;
 use crate::settings_ui::{
@@ -49,8 +49,34 @@ pub(crate) fn section(ui: &mut Ui, editor: &mut Editor, view: &View) -> Option<W
         {
             applied = Some(editor.set_menu_bar(on));
         }
+        if let Some(panels) = panels_row(ui, editor.panels()) {
+            applied = Some(editor.set_panels(panels));
+        }
         applied
     })
+}
+
+fn panels_row(ui: &mut Ui, current: Panels) -> Option<Panels> {
+    let options = [(Panels::Side, "Side by side"), (Panels::Below, "Below")];
+    let width = options.iter().map(|(_, label)| settings_ui::choice_width(ui, label)).sum::<f32>()
+        + CAP_GAP * (options.len() - 1) as f32;
+    settings_ui::row(
+        ui,
+        "Panels",
+        "History beside the terminal, or History and the diff under it.",
+        Control::new(width, 36.0),
+        |ui| {
+            ui.spacing_mut().item_spacing.x = CAP_GAP;
+            let mut picked = None;
+            for (panels, label) in options.into_iter().rev() {
+                if settings_ui::choice(ui, label, panels == current).clicked() && panels != current
+                {
+                    picked = Some(panels);
+                }
+            }
+            picked
+        },
+    )
 }
 
 fn hotkey_row(ui: &mut Ui, editor: &mut Editor, status: &HotkeyStatus) -> Option<WindowPrefs> {

@@ -95,7 +95,7 @@ mod tests {
     const X11: Env = Env { background: false, wayland: false, tray_supported: true };
 
     fn prefs(quake: bool, hotkey: &str, menu_bar: bool) -> WindowPrefs {
-        WindowPrefs { quake, hotkey: hotkey.to_owned(), menu_bar }
+        WindowPrefs { quake, hotkey: hotkey.to_owned(), menu_bar, ..WindowPrefs::default() }
     }
 
     #[test]

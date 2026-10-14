@@ -159,3 +159,28 @@ fn a_click_elsewhere_stops_recording_and_a_key_press_without_recording_does_noth
     assert!(!page.editor.recording);
     assert_eq!(page.editor.hotkey, "Ctrl+Alt+Grave");
 }
+
+#[test]
+fn the_panels_choice_applies_at_once_and_keeps_the_rest() {
+    let mut page = registered();
+    page.section(vec![], true);
+    let mut applied = None;
+    'scan: for y in (20..300).step_by(8) {
+        for x in (400..690).step_by(8) {
+            let at = pos2(x as f32, y as f32);
+            page.section(vec![Event::PointerMoved(at)], true);
+            page.section(vec![button(at, true)], true);
+            let answer = page.section(vec![button(at, false)], true);
+            if answer.as_ref().is_some_and(|prefs| prefs.panels == Panels::Below) {
+                applied = answer;
+                break 'scan;
+            }
+            if answer.is_some() {
+                page = registered();
+            }
+        }
+    }
+    let applied = applied.expect("a click on Below applies it");
+    assert_eq!(applied, WindowPrefs { panels: Panels::Below, ..WindowPrefs::default() });
+    assert_eq!(page.editor.panels(), Panels::Below);
+}

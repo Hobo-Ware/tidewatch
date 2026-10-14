@@ -2,7 +2,7 @@
 //! switches apply at once; the hotkey is recorded from a key press, checked at once and applied
 //! when it parses. Pure state; `window_view` draws it.
 
-use tidewatch_core::prefs::WindowPrefs;
+use tidewatch_core::prefs::{Panels, WindowPrefs};
 
 use crate::hotkey::{self, Problem};
 
@@ -25,6 +25,10 @@ impl Editor {
         self.saved.menu_bar
     }
 
+    pub(crate) fn panels(&self) -> Panels {
+        self.saved.panels
+    }
+
     /// What is wrong with the text in the field, if anything.
     pub(crate) fn problem(&self) -> Option<Problem> {
         hotkey::parse(&self.hotkey).err()
@@ -37,6 +41,11 @@ impl Editor {
 
     pub(crate) fn set_menu_bar(&mut self, on: bool) -> WindowPrefs {
         self.saved.menu_bar = on;
+        self.saved.clone()
+    }
+
+    pub(crate) fn set_panels(&mut self, panels: Panels) -> WindowPrefs {
+        self.saved.panels = panels;
         self.saved.clone()
     }
 
@@ -88,6 +97,15 @@ mod tests {
         let both = editor.set_menu_bar(false);
         assert_eq!(both, WindowPrefs { quake: false, menu_bar: false, ..WindowPrefs::default() });
         assert!(!editor.quake() && !editor.menu_bar());
+    }
+
+    #[test]
+    fn the_panels_choice_returns_the_whole_window_settings_with_only_itself_changed() {
+        let mut editor = editor();
+        assert_eq!(editor.panels(), Panels::Side);
+        let below = editor.set_panels(Panels::Below);
+        assert_eq!(below, WindowPrefs { panels: Panels::Below, ..WindowPrefs::default() });
+        assert_eq!(editor.panels(), Panels::Below);
     }
 
     #[test]

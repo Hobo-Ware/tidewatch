@@ -1,6 +1,6 @@
 //! App-wide switches in `~/.config/tidewatch/settings.toml`: whether launch restores the last
 //! session (PLAN.md, D11, on by default), the `[window]` table (quake mode, its hotkey, the
-//! menu-bar item) and the `[updates]` table (check for releases, install them).
+//! menu-bar item, the panel layout) and the `[updates]` table (check for releases, install them).
 //!
 //! A missing or bad file is the defaults, with a stderr note for a bad one: a settings file must
 //! never stop the app.
@@ -45,6 +45,18 @@ pub struct WindowPrefs {
     /// A menu-bar item with Show/Hide, Overview, Settings and Quit (macOS).
     #[serde(default = "on")]
     pub menu_bar: bool,
+    /// Where History and the diff sit around the terminal.
+    #[serde(default)]
+    pub panels: Panels,
+}
+
+/// The tab layout: History beside the terminal, or the History and Diff panes under it.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Panels {
+    #[default]
+    Side,
+    Below,
 }
 
 fn on() -> bool {
@@ -73,7 +85,7 @@ impl Default for UpdatePrefs {
 
 impl Default for WindowPrefs {
     fn default() -> Self {
-        Self { quake: true, hotkey: default_hotkey(), menu_bar: true }
+        Self { quake: true, hotkey: default_hotkey(), menu_bar: true, panels: Panels::Side }
     }
 }
 
@@ -182,13 +194,45 @@ mod tests {
         std::fs::create_dir_all(paths.config_dir()).unwrap();
         std::fs::write(paths.prefs_file(), "[window]\nquake = false\nhotkey = \"F13\"\n").unwrap();
         let window = Prefs::load(&paths).window;
-        assert_eq!(window, WindowPrefs { quake: false, hotkey: "F13".to_owned(), menu_bar: true });
+        assert_eq!(
+            window,
+            WindowPrefs {
+                quake: false,
+                hotkey: "F13".to_owned(),
+                menu_bar: true,
+                panels: Panels::Side
+            }
+        );
+    }
+
+    #[test]
+    fn panels_default_to_side_by_side_and_read_below_from_the_file() {
+        let (_home, paths) = paths();
+        assert_eq!(Prefs::default().window.panels, Panels::Side);
+        std::fs::create_dir_all(paths.config_dir()).unwrap();
+        std::fs::write(paths.prefs_file(), "[window]\npanels = \"below\"\n").unwrap();
+        let window = Prefs::load(&paths).window;
+        assert_eq!(window.panels, Panels::Below);
+        assert!(window.quake);
+    }
+
+    #[test]
+    fn an_unknown_panels_value_makes_the_whole_file_fall_back_to_the_defaults() {
+        let (_home, paths) = paths();
+        std::fs::create_dir_all(paths.config_dir()).unwrap();
+        std::fs::write(paths.prefs_file(), "[window]\npanels = \"left\"\n").unwrap();
+        assert_eq!(Prefs::load(&paths), Prefs::default());
     }
 
     #[test]
     fn the_window_section_survives_a_save_and_load() {
         let (_home, paths) = paths();
-        let window = WindowPrefs { quake: false, hotkey: "Cmd+F12".to_owned(), menu_bar: false };
+        let window = WindowPrefs {
+            quake: false,
+            hotkey: "Cmd+F12".to_owned(),
+            menu_bar: false,
+            panels: Panels::Below,
+        };
         Prefs { window: window.clone(), ..Prefs::default() }.save(&paths).unwrap();
         assert_eq!(Prefs::load(&paths).window, window);
     }
