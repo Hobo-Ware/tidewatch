@@ -38,7 +38,7 @@ use self::repos::Picker;
 use crate::agent_events::Hooks;
 use crate::agent_jobs;
 use crate::catalog::Catalog;
-use crate::dev_agent::DevAgent;
+use crate::dev_agent::{DevAgent, DevDraft};
 use crate::dev_flow::DevFlow;
 use crate::dev_panes::DevPanes;
 use crate::dev_reader::DevReader;
@@ -95,6 +95,7 @@ pub(crate) struct Tidewatch {
     leftovers: leftover_glue::Host,
     dev: Option<DevWorktree>,
     dev_agent: Option<DevAgent>,
+    dev_draft: Option<DevDraft>,
     dev_panes: DevPanes,
     screenshot: Option<DevScreenshot>,
     views: HashMap<u64, TabView>,
@@ -180,6 +181,7 @@ impl Tidewatch {
             leftovers: leftover_glue::Host::new(),
             dev: DevWorktree::from_env(),
             dev_agent: DevAgent::from_env(),
+            dev_draft: None,
             dev_panes: DevPanes::from_env(),
             workspaces,
             paths,

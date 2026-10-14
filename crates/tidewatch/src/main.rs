@@ -106,6 +106,7 @@ mod workflow_editor_view;
 mod workflow_glue;
 mod workflow_jobs;
 mod workflow_run;
+mod workflow_start_view;
 mod worktree_jobs;
 
 use std::path::{Path, PathBuf};

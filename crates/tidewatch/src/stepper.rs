@@ -63,7 +63,7 @@ fn now_text(runner: &Runner, timeout: Duration) -> String {
     let count = runner.stage_count();
     let number = runner.position() + 1;
     match runner.phase() {
-        Phase::Idle => "Starting".to_owned(),
+        Phase::Idle => "Waiting for a task".to_owned(),
         Phase::Working => format!("Stage {number} of {count} is working"),
         Phase::Testing => format!("Running the tests (stops after {})", minutes(timeout)),
         Phase::Asking(_) => "Waiting for you".to_owned(),
@@ -197,7 +197,7 @@ mod tests {
         let labels: Vec<_> = model.pills.iter().map(|p| p.label).collect();
         assert_eq!(labels, ["Work", "Review", "Refactor", "Hand off"]);
         assert_eq!(states(&model), [StageState::Todo; 4]);
-        assert_eq!(model.now, "Starting");
+        assert_eq!(model.now, "Waiting for a task");
         assert_eq!(model.loop_text, None);
     }
 

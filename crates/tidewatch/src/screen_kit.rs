@@ -38,6 +38,11 @@ pub(crate) fn badge_letter(agent_id: &str) -> String {
     }
 }
 
+pub(crate) fn cli_short_name(agent_id: &str) -> String {
+    let mut chars = agent_id.chars();
+    chars.next().map_or_else(String::new, |first| first.to_uppercase().chain(chars).collect())
+}
+
 pub(crate) fn paint_cli_badge(painter: &Painter, rect: Rect, agent_id: &str) {
     let (fill, ink) = badge_colors(agent_id);
     painter.rect_filled(rect, CornerRadius::same((rect.width() * 0.28) as u8), fill);

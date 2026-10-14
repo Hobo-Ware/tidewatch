@@ -14,7 +14,17 @@ pub(crate) struct Layout {
 }
 
 pub(crate) fn split(area: Rect) -> Layout {
-    let split_y = area.top() + (area.height() * TERMINAL_FRACTION).round();
+    split_at(area, (area.height() * TERMINAL_FRACTION).round())
+}
+
+/// The same split with the panels a fixed `panels_h` tall: a tab with nothing to show in them yet
+/// gives its room to the terminal area.
+pub(crate) fn split_panels(area: Rect, panels_h: f32) -> Layout {
+    split_at(area, (area.height() - panels_h - GAP).max(0.0).round())
+}
+
+fn split_at(area: Rect, terminal_h: f32) -> Layout {
+    let split_y = area.top() + terminal_h;
     let bottom = Rect::from_min_max(pos2(area.left(), split_y + GAP), area.max);
     let mid = bottom.left() + ((bottom.width() - GAP) / 2.0).floor();
     Layout {
@@ -71,6 +81,15 @@ mod tests {
         assert_eq!(outer.left(), 0.0);
         assert_eq!(outer.right(), 1000.0);
         assert_eq!(outer.height(), 360.0);
+    }
+
+    #[test]
+    fn a_fixed_panel_height_gives_the_rest_to_the_terminal() {
+        let l = split_panels(area(), 200.0);
+        let outer = l.terminal.expand(TERMINAL_PAD);
+        assert_eq!(outer.height(), 799.0 - 200.0);
+        assert_eq!(l.history.height(), 200.0);
+        assert_eq!(l.diff.bottom(), area().bottom());
     }
 
     #[test]
