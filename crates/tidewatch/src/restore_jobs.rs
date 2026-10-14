@@ -14,6 +14,7 @@ use tidewatch_core::prefs::Prefs;
 use tidewatch_core::prepare::{PrepareInput, prepare_resume};
 use tidewatch_core::profiles::{Profile, Profiles};
 use tidewatch_core::restore::{self, RealDisk, RestoreEnv, WindowPlan, plan_window};
+use tidewatch_core::resume_mode::Why;
 use tidewatch_core::session::Session;
 use tidewatch_core::trust_apply::Grant;
 use tidewatch_core::worktree::{self, Leftover, Worktree};
@@ -36,6 +37,7 @@ pub(crate) struct StartupSpec {
     pub(crate) other: bool,
     /// `--no-restore`: read nothing back, whatever the settings say.
     pub(crate) skip: bool,
+    pub(crate) app_crashed: bool,
     pub(crate) profiles: Profiles,
     pub(crate) path_var: OsString,
     pub(crate) disk: RealDisk,
@@ -77,8 +79,13 @@ fn run_startup(spec: &StartupSpec) -> Startup {
         .map(|window| {
             let agents = spec.profiles.agent_table();
             let installed = agents.found_on_path(Some(&spec.path_var));
-            let env =
-                RestoreEnv { agents: &agents, profiles: &spec.profiles, installed: &installed };
+            let env = RestoreEnv {
+                agents: &agents,
+                profiles: &spec.profiles,
+                installed: &installed,
+                resume: prefs.resume_agents,
+                app_crashed: spec.app_crashed,
+            };
             plan_window(window, &env, &spec.disk)
         });
     let mut owned: Vec<PathBuf> = session
@@ -119,6 +126,8 @@ pub(crate) struct ReopenSpec {
     /// The profile at the level the tab ran at.
     pub(crate) profile: Profile,
     pub(crate) session_id: String,
+    /// Set when the resume command is typed and waits for Enter instead of running.
+    pub(crate) typed: Option<Why>,
     pub(crate) path_var: OsString,
     /// Where the agent reports; `None` when the listener is down.
     pub(crate) listener: Option<Arc<Listener>>,
@@ -131,6 +140,7 @@ pub(crate) struct Reopened {
     pub(crate) result: Result<Opened, OpenFailure>,
     /// Printed above the plain shell that stands in when the agent could not be prepared.
     pub(crate) note: Option<String>,
+    pub(crate) typed: Option<Why>,
 }
 
 pub(crate) fn reopen(jobs: &Jobs<Done>, ctx: &egui::Context, spec: ReopenSpec) {
@@ -193,6 +203,7 @@ fn run_reopen(spec: &ReopenSpec) -> Reopened {
         tab: spec.tab,
         result: Ok(Opened { worktree: spec.worktree.clone(), dir: spec.dir.clone(), started }),
         note,
+        typed: spec.typed,
     }
 }
 

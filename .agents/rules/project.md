@@ -50,9 +50,11 @@ crates/tidewatch-core/  worktrees, profiles, permission levels, workflows, agent
   src/last_workspace.rs .state/last-workspace.toml (`dir`, the repo in front when the window was used last, and `also`, the other repos that had tabs open) and `pick`, the pure choice of the folders a launch opens: command line (alone), a working folder in a repo, the remembered folders that still exist, the working folder
   src/names.rs          adjective-noun names for new worktrees (pure)
   src/registry.rs       .state/worktrees.toml: the worktrees Tidewatch made, for repair
-  src/restore.rs        D11 restore: pure plan (saved session + Disk -> one action per tab), repair_moved, resume_command, restore_workflow, codex_session_id
+  src/restore.rs        D11 restore: pure plan (saved session + Disk -> one action per tab, each resumed agent run or typed), repair_moved, resume_command, restore_workflow, codex_session_id
+  src/resume_mode.rs    what a saved agent tab does at launch: `decide` (resume_agents x how it ended x YOLO -> run, type only with a reason, or a shell), the notes for a typed tab, `exit_is_abnormal` (pure, table-tested)
+  src/run_marker.rs     `.state/running`: written when a run starts, removed by its clean quit, so a launch that finds it knows the last run crashed or was killed
   src/session_id.rs     the random UUID passed to `--session-id` so the Reader finds a tab's transcript by name
-  src/session.rs        .state/session.toml (D11): Session, SavedWindow, SavedTab (main, shell, agent); load (bad file -> empty), atomic save
+  src/session.rs        .state/session.toml (D11): Session, SavedWindow, SavedTab (main, shell, agent, with `crashed` when the agent ended abnormally); load (bad file -> empty), atomic save
   src/worktree.rs       add (locked, agent/<name>), inspect, remove, list, repair, leftovers with their repository (shells out to git)
   src/notes.rs          per-tab review threads in .state/<repo-dir>/<tab>/notes.json: load, atomic save, background writer, PR import links, sent marks and note state (queued, sent, replied) (D4)
   src/note_paste.rs     the text pasted into an agent to hand it notes: path:line, quoted line, text, id, closing reply_to_note ask; control characters stripped (pure)
@@ -107,7 +109,7 @@ crates/tidewatch/       the egui app
   src/test_exec.rs      test only: a fixture script written through cp, so no forking test thread holds it open (Linux ETXTBSY)
   src/pane.rs           what a tab holds: shell or agent (with its AgentRun and how it was launched), creating, removing, failed; opening results, close policy (pure, generic)
   src/jobs.rs           background thread runner: result channel plus a repaint
-  src/pty.rs            starts the ptys: a shell in a folder (optionally with a note printed first), the user's shell running an agent's script
+  src/pty.rs            starts the ptys: a shell in a folder (optionally with a note printed first), the user's shell running an agent's script, a shell with the agent's command typed at its first prompt and not run
   src/worktree_jobs.rs  open a tab (worktree, listener registration, folder trust and prepared agent launch), inspect and remove (and revoke its trust entries) as jobs
   src/agent_run.rs      one agent tab's live state: StatusTracker, terminal snapshot in, status change out, last MCP report (pure)
   src/agent_events.rs   starts the Tidewatch listener once (bind failure: logged, status falls back to layers 2 and 3), drains it, findings -> notes
@@ -164,7 +166,7 @@ crates/tidewatch/       the egui app
   src/session_save.rs   the open tabs of one repo of the window (a tab group) as a SavedWindow (main, shell, agent with profile, level, session id, stages file; the active tab, focus mode) and a fingerprint of the same facts (pure, generic over the pane)
   src/session_writer.rs debounced writer thread for session.toml (Debounce is pure), synchronous flush for the quit path
   src/restore_jobs.rs   startup job, one per repo of the window (repair a moved repo, plan the saved window, scan leftovers owned by no saved or open tab) and the reopen job (fresh token, prepare_resume, folder trust)
-  src/restore_glue.rs   Host: carry each repo's plan out in its tab group in saved order (shell, shell plus note, resume agent, resume workflow), active tab and focus, the settled flag the saver waits for (generic over the pty)
+  src/restore_glue.rs   Host: carry each repo's plan out in its tab group in saved order (shell, shell plus note, resume agent or type its command, resume workflow), active tab and focus, the settled flag the saver waits for (generic over the pty)
   src/notice.rs         a message that stays until dismissed (what a restore could not bring back)
   src/tabs/groups.rs    taking a whole group out of the tab list (`remove_group`), the groups after it move down
   src/session_glue.rs   Saver: once per frame, fingerprint changed -> queue a save (a closed repo's window rides with the next one); never under the screenshot harness or while a restore is under way; flush on quit

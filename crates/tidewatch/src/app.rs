@@ -30,6 +30,7 @@ use tidewatch_core::notes::NotesWriter;
 use tidewatch_core::paths::TidewatchPaths;
 use tidewatch_core::prefs::Prefs;
 use tidewatch_core::restore::RealDisk;
+use tidewatch_core::run_marker;
 use tidewatch_core::tools::Tools;
 use tidewatch_core::update::fake_release;
 use tidewatch_core::worktree::{Inspection, Worktree};
@@ -174,6 +175,8 @@ impl Tidewatch {
         let trust = Trust::new(paths.as_ref(), cli_home);
         let dev_session = DevSession::from_env();
         let saver = Saver::new(paths.as_ref(), screenshot.is_none(), dev_session.debounce());
+        let app_crashed =
+            paths.as_ref().filter(|_| screenshot.is_none()).is_some_and(run_marker::begin);
         let last_used =
             LastUsed::new(paths.as_ref(), screenshot.is_none() && !shell.env.background);
         let updates = Updates::new(
@@ -227,7 +230,7 @@ impl Tidewatch {
             saver,
             last_used,
             dev_session,
-            restore: restore_glue::Host::new(no_restore, RealDisk::from_env()),
+            restore: restore_glue::Host::new(no_restore, app_crashed, RealDisk::from_env()),
             notice: None,
             updates,
             shell: shell::start(&cc.egui_ctx, shell),
@@ -284,6 +287,9 @@ impl eframe::App for Tidewatch {
             workspaces::window_views(&self.workspaces, self.focus),
             &self.tabs,
         );
+        if let Some(paths) = self.paths.as_ref().filter(|_| self.screenshot.is_none()) {
+            run_marker::end(paths);
+        }
     }
 
     fn clear_color(&self, _visuals: &egui::Visuals) -> [f32; 4] {

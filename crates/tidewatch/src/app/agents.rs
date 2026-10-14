@@ -2,6 +2,7 @@
 
 use std::time::Duration;
 
+use stdusk_core::terminal::PtyTerm;
 use tidewatch_core::trust::TrustCli;
 
 use super::{ANIMATION_FRAME_MS, Tidewatch, WAKE_SLACK_S, wall_ms};
@@ -9,7 +10,9 @@ use crate::agent_frame::{self, Follow, Wake};
 use crate::agent_jobs;
 use crate::agent_run::TermSnapshot;
 use crate::notify;
+use crate::pane::{Body, Pane};
 use crate::pane_jobs;
+use crate::tabs::Tabs;
 use crate::workflow_glue;
 
 impl Tidewatch {
@@ -142,7 +145,26 @@ impl Tidewatch {
         asked.extend(workflow_glue::failures(&mut self.tabs, &polled.changes));
         self.drive_workflows(ctx, now, asked);
         self.send_dev_keys(now);
+        release_typed_commands(ctx, &mut self.tabs, now);
         schedule(ctx, polled.wake, now, minimized == Some(true));
+    }
+}
+
+/// How long after a resumed tab starts the timer for a shell that marks no prompt may still fire:
+/// the wait stdusk gives it, and a second.
+const TYPED_FALLBACK_WINDOW_S: f64 = 6.0;
+
+/// A shell that marks its prompts gets the typed resume command at the first one. One that does
+/// not (fish) gets it from a timer that only runs when asked, so ask for a while after the start.
+fn release_typed_commands(ctx: &egui::Context, tabs: &mut Tabs<Pane<PtyTerm>>, now: f64) {
+    for tab in tabs.items_mut() {
+        let Pane { body: Body::Shell(term), agent: Some(agent), .. } = &mut tab.pane else {
+            continue;
+        };
+        if agent.resume_note.is_some() && agent.run.elapsed(now) < TYPED_FALLBACK_WINDOW_S {
+            term.release_pending_after_wait();
+            ctx.request_repaint_after(Duration::from_secs(1));
+        }
     }
 }
 

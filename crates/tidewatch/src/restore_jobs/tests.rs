@@ -6,7 +6,9 @@ use std::process::Command;
 use std::time::{Duration, Instant};
 
 use tidewatch_core::agents::Level;
+use tidewatch_core::prefs::ResumeAgents;
 use tidewatch_core::restore::{Reason, TabAction};
+use tidewatch_core::resume_mode::{Resume, Why};
 use tidewatch_core::session::{SavedAgentTab, SavedTab, SavedWindow};
 use tidewatch_core::transcript_locate::claude_project_dir_name;
 use tidewatch_core::worktree::{BranchChoice, RemoveMode};
@@ -70,6 +72,7 @@ fn agent_tab(worktree: &Worktree, level: Level) -> SavedTab {
         level,
         session_id: Some(SESSION_ID.into()),
         stages: None,
+        crashed: false,
     })
 }
 
@@ -92,6 +95,7 @@ fn spec(f: &Fixture, skip: bool) -> StartupSpec {
         dir: f.repo.clone(),
         other: false,
         skip,
+        app_crashed: false,
         profiles: profiles(),
         path_var: f.path_var.clone(),
         disk: RealDisk::new(&f.home),
@@ -123,6 +127,7 @@ fn clone_spec(spec: &StartupSpec) -> StartupSpec {
         dir: spec.dir.clone(),
         other: spec.other,
         skip: spec.skip,
+        app_crashed: spec.app_crashed,
         profiles: spec.profiles.clone(),
         path_var: spec.path_var.clone(),
         disk: spec.disk.clone(),
@@ -144,6 +149,30 @@ fn the_saved_window_is_planned_against_the_disk_and_its_worktrees_are_not_leftov
     assert!(plan.focus_mode);
     assert_eq!(started.leftovers, []);
     assert_eq!(started.prefs, Prefs::default());
+}
+
+#[test]
+fn the_resume_setting_and_a_crashed_last_run_decide_how_a_saved_agent_comes_back() {
+    let cases = [
+        (ResumeAgents::Auto, false, Ok(Resume::Run)),
+        (ResumeAgents::Auto, true, Ok(Resume::TypeOnly(Why::AppCrashed))),
+        (ResumeAgents::Prefill, false, Ok(Resume::TypeOnly(Why::Chosen))),
+        (ResumeAgents::Off, false, Err(Reason::ResumeOff)),
+    ];
+    for (mode, app_crashed, want) in cases {
+        let f = fixture();
+        save(&f, vec![window(&f.repo, vec![SavedTab::Main, agent_tab(&f.worktree, Level::Edits)])]);
+        Prefs { resume_agents: mode, ..Prefs::default() }.save(&f.paths).unwrap();
+        let mut s = spec(&f, false);
+        s.app_crashed = app_crashed;
+        let plan = run(&s).plan.expect("a plan");
+        let got = match &plan.tabs[1].action {
+            TabAction::ResumeAgent { how, .. } => Ok(*how),
+            TabAction::ShellInstead(reason) => Err(reason.clone()),
+            other => panic!("{other:?}"),
+        };
+        assert_eq!(got, want, "{mode:?} {app_crashed}");
+    }
 }
 
 #[test]
@@ -260,6 +289,7 @@ fn reopen_spec(f: &Fixture, level: Level, listener: Option<Arc<Listener>>) -> Re
         profile_id: "builder".into(),
         profile: Profile { level, ..profiles.profile["builder"].clone() },
         session_id: SESSION_ID.into(),
+        typed: None,
         path_var: OsString::from("/usr/bin:/bin"),
         listener,
         trust: None,
@@ -373,4 +403,18 @@ fn an_agent_in_a_plain_folder_resumes_without_a_worktree_and_without_the_guard()
     let started = opened.started.expect("an agent");
     assert!(!started.prepared.env.iter().any(|(k, _)| k == "GIT_CONFIG_COUNT"));
     assert!(started.prepared.launch.shell_line().starts_with("claude --resume "));
+}
+
+#[test]
+fn a_reopened_agent_remembers_whether_its_command_is_typed_or_run() {
+    let f = fixture();
+    for typed in [None, Some(Why::AppCrashed)] {
+        let mut spec = reopen_spec(&f, Level::Edits, None);
+        spec.typed = typed;
+        let done = reopened(spec);
+        assert_eq!(done.typed, typed);
+        let Ok(opened) = done.result else { panic!("opened") };
+        let started = opened.started.expect("the agent was prepared");
+        assert!(started.prepared.launch.shell_line().contains(SESSION_ID));
+    }
 }

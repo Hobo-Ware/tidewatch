@@ -9,7 +9,7 @@ use tidewatch_core::worktree::Worktree;
 
 use super::{Tidewatch, WAKE_SLACK_S};
 use crate::flow_glue;
-use crate::pty::{spawn_agent, spawn_shell, spawn_shell_noted};
+use crate::pty::{spawn_agent, spawn_shell, spawn_shell_noted, spawn_typed};
 use crate::repo::Workspace;
 use crate::restore_glue::Spawn;
 use crate::workflow_glue::{Env, Spawners, Start};
@@ -57,8 +57,9 @@ impl Tidewatch {
             trust: self.trust.grant(),
         };
         let agent = |dir: &Path, prepared: &Prepared| spawn_agent(ctx, dir, prepared);
+        let typed = |dir: &Path, prepared: &Prepared| spawn_typed(ctx, dir, prepared);
         let shell = |dir: &Path, note: Option<&str>| spawn_shell_noted(ctx, dir, note);
-        let spawn = Spawn { agent: &agent, shell: &shell };
+        let spawn = Spawn { agent: &agent, typed: &typed, shell: &shell };
         let runs = &mut self.runs;
         let report = match plan {
             Some(plan) => {

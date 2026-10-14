@@ -54,6 +54,7 @@ struct AgentRef<'a> {
     level: Level,
     session_id: Option<&'a str>,
     stages: Option<&'a Path>,
+    crashed: bool,
 }
 
 impl TabRef<'_> {
@@ -71,6 +72,7 @@ impl TabRef<'_> {
                 level: a.level,
                 session_id: a.session_id.map(str::to_owned),
                 stages: a.stages.map(Path::to_path_buf),
+                crashed: a.crashed,
             }),
         }
     }
@@ -100,6 +102,7 @@ fn agent_ref<'a>(
         level,
         session_id,
         stages: run.and_then(|run| run.stages_file()),
+        crashed: agent.run.exited_abnormally(),
     }))
 }
 
@@ -194,7 +197,7 @@ mod tests {
     use tidewatch_core::workflows::Workflows;
     use tidewatch_core::worktree::Worktree;
 
-    use crate::agent_run::AgentRun;
+    use crate::agent_run::{AgentRun, TermSnapshot};
     use crate::pane::Launched;
     use crate::workflow_run::TabRun;
 
@@ -306,6 +309,7 @@ mod tests {
                     level: Level::Edits,
                     session_id: Some("0c2cbc96-1111-4222-8333-444455556666".into()),
                     stages: None,
+                    crashed: false,
                 }),
             ]
         );
@@ -384,6 +388,46 @@ mod tests {
         );
         assert_eq!(agent.session_id, None);
         assert_ne!(agent.profile, "");
+    }
+
+    fn tab_with_exit(code: Option<i32>) -> AgentTab {
+        let mut tab = agent(Some("0c2cbc96-1111-4222-8333-444455556666"));
+        tab.run.started(None, 0.0);
+        tab.run.feed(TermSnapshot { exit_code: code, ..Default::default() }, 1.0);
+        tab
+    }
+
+    #[test]
+    fn an_agent_that_ended_abnormally_is_saved_as_crashed_and_one_that_quit_is_not() {
+        let saved_crashed = |code| {
+            let mut tabs = tabs();
+            tabs.push(
+                "a".into(),
+                pane(Body::Shell(1), Some(worktree("a")), Some(tab_with_exit(code))),
+            );
+            let SavedTab::Agent(agent) = saved_window(&view(false), &tabs).tabs.remove(1) else {
+                panic!("an agent tab")
+            };
+            agent.crashed
+        };
+        let cases = [(None, false), (Some(0), false), (Some(130), false), (Some(1), true)];
+        for (code, want) in cases {
+            assert_eq!(saved_crashed(code), want, "exit {code:?}");
+        }
+    }
+
+    #[test]
+    fn an_agent_dying_abnormally_is_a_change_worth_saving() {
+        let with = |code| {
+            let mut tabs = tabs();
+            tabs.push(
+                "a".into(),
+                pane(Body::Shell(1), Some(worktree("a")), Some(tab_with_exit(code))),
+            );
+            signature(&view(false), &tabs)
+        };
+        assert_ne!(with(None), with(Some(137)));
+        assert_eq!(with(None), with(Some(0)), "a plain quit changes nothing that is saved");
     }
 
     #[test]

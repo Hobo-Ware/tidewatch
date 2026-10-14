@@ -2,13 +2,13 @@
 
 use egui::FontId;
 use stdusk_egui::colors;
-use stdusk_egui::ui::{CursorStyle, GridStyle, collect_input, render_grid};
+use stdusk_egui::ui::{CursorStyle, GridStyle, collect_input, draw_pane_notice, render_grid};
 
 use super::frame::FrameIntent;
 use super::{FONT_SIZE, MIN_CONTRAST, Tidewatch};
 use crate::brand;
 use crate::commands::Command;
-use crate::pane::Body;
+use crate::pane::{Body, Pane};
 use crate::reader::Shown;
 use crate::{layout, reader_glue};
 
@@ -41,7 +41,8 @@ impl Tidewatch {
         frame: &FrameIntent,
     ) {
         let area = grid.rect;
-        match &mut self.tabs.active_pane_mut().body {
+        let Pane { body, agent, .. } = self.tabs.active_pane_mut();
+        match body {
             Body::Shell(term) => {
                 term.resize(grid.cols, grid.rows);
                 if !reader_on {
@@ -49,6 +50,9 @@ impl Tidewatch {
                     if !typed.is_empty() && !frame.keys.modal_open && !frame.keys.typing_in_a_panel
                     {
                         term.send(&typed);
+                        if let Some(agent) = agent {
+                            agent.resume_note = None;
+                        }
                     }
                     let snap = term.grid_snapshot();
                     render_grid(
@@ -75,6 +79,8 @@ impl Tidewatch {
                 }
                 if let (Some(name), Some(exit)) = (agent_name, term.exited()) {
                     exit_notice(ui, area, &exit_notice_text(name, exit.code));
+                } else if let Some(note) = agent.as_ref().and_then(|agent| agent.resume_note) {
+                    draw_pane_notice(ui, area, note);
                 }
             }
             Body::Creating => {

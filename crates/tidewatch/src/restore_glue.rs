@@ -18,6 +18,7 @@ use tidewatch_core::paths::TidewatchPaths;
 use tidewatch_core::prefs::Prefs;
 use tidewatch_core::prepare::Prepared;
 use tidewatch_core::restore::{RealDisk, TabAction, TabPlan, WindowPlan, restore_workflow};
+use tidewatch_core::resume_mode::{Resume, Why};
 use tidewatch_core::session::{SavedAgentTab, SavedTab};
 use tidewatch_core::worktree::{BRANCH_PREFIX, Leftover, Worktree};
 
@@ -31,10 +32,11 @@ use crate::tabs::Tabs;
 use crate::workflow_glue::{self, Env, Start};
 use crate::worktree_jobs::without_open;
 
-/// How a pty is made: an agent from a prepared launch, or a plain shell with an optional note
-/// printed above it.
+/// How a pty is made: an agent from a prepared launch, a shell with that launch typed at its
+/// prompt, or a plain shell with an optional note printed above it.
 pub(crate) struct Spawn<'a, T> {
     pub(crate) agent: &'a dyn Fn(&Path, &Prepared) -> T,
+    pub(crate) typed: &'a dyn Fn(&Path, &Prepared) -> T,
     pub(crate) shell: &'a dyn Fn(&Path, Option<&str>) -> T,
 }
 
@@ -73,19 +75,22 @@ pub(crate) struct Host {
     seeds: Vec<Seed>,
     planning: usize,
     skip: bool,
+    app_crashed: bool,
     prefs: Prefs,
     disk: RealDisk,
 }
 
 impl Host {
-    /// `skip` is the `--no-restore` flag; `disk` is where the CLIs keep their session files.
-    pub(crate) fn new(skip: bool, disk: RealDisk) -> Self {
+    /// `skip` is the `--no-restore` flag; `disk` is where the CLIs keep their session files;
+    /// `app_crashed` says the run before this one never quit cleanly.
+    pub(crate) fn new(skip: bool, app_crashed: bool, disk: RealDisk) -> Self {
         Self {
             jobs: Jobs::new(),
             phase: Phase::Waiting,
             seeds: Vec::new(),
             planning: 0,
             skip,
+            app_crashed,
             prefs: Prefs::default(),
             disk,
         }
@@ -141,6 +146,7 @@ impl Host {
                     dir: seed.dir,
                     other: seed.other,
                     skip: self.skip,
+                    app_crashed: self.app_crashed,
                     profiles: profiles.clone(),
                     path_var: catalog.path.clone(),
                     disk: self.disk.clone(),
@@ -246,7 +252,7 @@ impl Host {
             TabAction::ShellInstead(_) => {
                 push_shell(tabs, spawn, (plan, group), tab, tab.note().as_deref())
             }
-            TabAction::ResumeAgent { agent, profile, session_id } => {
+            TabAction::ResumeAgent { agent, profile, session_id, how } => {
                 let Some(agent) = env.catalog.agent(agent).cloned() else {
                     let note = format!("The agent was not resumed: `{agent}` is not configured.");
                     return push_shell(tabs, spawn, (plan, group), tab, Some(&note));
@@ -270,6 +276,10 @@ impl Host {
                         profile_id: saved.profile.clone(),
                         profile: (**profile).clone(),
                         session_id: session_id.clone(),
+                        typed: match how {
+                            Resume::Run => None,
+                            Resume::TypeOnly(why) => Some(*why),
+                        },
                         path_var: env.catalog.path.clone(),
                         listener: env.listener.clone(),
                         trust: env.trust.clone(),
@@ -342,11 +352,15 @@ fn reopened<T>(
     now: f64,
     toasts: &mut Vec<String>,
 ) {
-    let Reopened { tab, result, note } = done;
-    let notes = finish_open(tabs, tab, result, now, |dir, prepared| match prepared {
-        Some(prepared) => (spawn.agent)(dir, prepared),
-        None => (spawn.shell)(dir, note.as_deref()),
+    let Reopened { tab, result, note, typed } = done;
+    let notes = finish_open(tabs, tab, result, now, |dir, prepared| match (prepared, typed) {
+        (Some(prepared), Some(_)) => (spawn.typed)(dir, prepared),
+        (Some(prepared), None) => (spawn.agent)(dir, prepared),
+        (None, _) => (spawn.shell)(dir, note.as_deref()),
     });
+    if let Some(agent) = tabs.get_mut(tab).and_then(|tab| tab.pane.agent.as_mut()) {
+        agent.resume_note = typed.map(Why::note);
+    }
     if let Some(note) = notes.first() {
         toasts.push(format!("Started without part of the setup: {note}"));
     }
@@ -369,6 +383,7 @@ pub(crate) fn dev_resume_plan(paths: &TidewatchPaths, repo: &Path, name: &str) -
         level: Level::Plan,
         session_id: None,
         stages: Some(stages.clone()),
+        crashed: false,
     });
     WindowPlan {
         dir: repo.to_path_buf(),

@@ -65,6 +65,10 @@ pub struct SavedAgentTab {
     /// The tab's workflow run (`stages.json`), when one is attached.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub stages: Option<PathBuf>,
+    /// The agent process ended abnormally while the app kept running (see
+    /// `resume_mode::exit_is_abnormal`). The next launch types its resume command and leaves Enter.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub crashed: bool,
 }
 
 impl SavedTab {
@@ -158,6 +162,7 @@ mod tests {
             level: Level::Edits,
             session_id: Some("0c2cbc96-1111-4222-8333-444455556666".into()),
             stages: Some(PathBuf::from("/root/.state/web-ab12cd/brave-otter/stages.json")),
+            crashed: false,
         })
     }
 
@@ -182,6 +187,7 @@ mod tests {
                     level: Level::Plan,
                     session_id: None,
                     stages: None,
+                    crashed: false,
                 }),
             ],
         }

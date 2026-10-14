@@ -9,6 +9,7 @@ use stdusk_core::progress::Progress;
 use stdusk_core::terminal::PtyTerm;
 use tidewatch_core::end_block::{self, EndBlock};
 use tidewatch_core::events::TabEvent;
+use tidewatch_core::resume_mode::exit_is_abnormal;
 use tidewatch_core::status::{
     AgentStatus, HookKind, ProgressSignal, StatusTracker, TerminalSignal,
 };
@@ -91,6 +92,7 @@ pub(crate) struct AgentRun {
     end_block: Option<EndBlock>,
     failed: Option<String>,
     held: Option<AgentStatus>,
+    exited_abnormally: bool,
 }
 
 impl AgentRun {
@@ -110,6 +112,7 @@ impl AgentRun {
             end_block: None,
             failed: None,
             held: None,
+            exited_abnormally: false,
         }
     }
 
@@ -134,6 +137,10 @@ impl AgentRun {
     /// The tab never got an agent: it shows this error as its status.
     pub(crate) fn fail(&mut self, message: String) {
         self.failed = Some(message);
+    }
+
+    pub(crate) fn exited_abnormally(&self) -> bool {
+        self.exited_abnormally
     }
 
     pub(crate) fn status(&self) -> &AgentStatus {
@@ -205,6 +212,7 @@ impl AgentRun {
             && self.tracker.inputs().process.alive
         {
             self.tracker.on_exit(Some(code));
+            self.exited_abnormally = exit_is_abnormal(code);
         }
     }
 
@@ -336,6 +344,23 @@ mod tests {
         run.feed(TermSnapshot { bell: true, activity: true, ..Default::default() }, 3.0);
         run.feed(TermSnapshot::default(), 3.1);
         assert_eq!(run.refresh(3.2).unwrap().to, AgentStatus::NeedsYou(Reason::Attention));
+    }
+
+    #[test]
+    fn only_an_exit_that_is_not_a_plain_quit_marks_the_run_as_ended_abnormally() {
+        for (code, want) in [(0, false), (130, false), (143, false), (1, true), (137, true)] {
+            let mut run = running(0.0);
+            assert!(!run.exited_abnormally());
+            run.feed(TermSnapshot { exit_code: Some(code), ..Default::default() }, 4.0);
+            assert_eq!(run.exited_abnormally(), want, "exit {code}");
+        }
+    }
+
+    #[test]
+    fn a_run_that_is_still_going_has_not_ended_abnormally() {
+        let mut run = running(0.0);
+        run.feed(TermSnapshot::default(), 4.0);
+        assert!(!run.exited_abnormally());
     }
 
     #[test]
