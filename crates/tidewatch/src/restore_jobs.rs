@@ -10,7 +10,7 @@ use std::sync::Arc;
 use tidewatch_core::agents::Agent;
 use tidewatch_core::listener::{Listener, TabRegistration};
 use tidewatch_core::paths::TidewatchPaths;
-use tidewatch_core::prefs::Prefs;
+use tidewatch_core::prefs::{Prefs, ResumeAgents};
 use tidewatch_core::prepare::{PrepareInput, prepare_resume};
 use tidewatch_core::profiles::{Profile, Profiles};
 use tidewatch_core::restore::{self, RealDisk, RestoreEnv, WindowPlan, plan_window};
@@ -108,6 +108,14 @@ fn run_startup(spec: &StartupSpec) -> Startup {
 pub(crate) fn save_restore_switch(paths: TidewatchPaths, on: bool) {
     std::thread::spawn(move || {
         if let Err(e) = Prefs::update(&paths, |prefs| prefs.restore_session = on) {
+            eprintln!("tidewatch: cannot save settings.toml: {e}");
+        }
+    });
+}
+
+pub(crate) fn save_resume_agents(paths: TidewatchPaths, mode: ResumeAgents) {
+    std::thread::spawn(move || {
+        if let Err(e) = Prefs::update(&paths, |prefs| prefs.resume_agents = mode) {
             eprintln!("tidewatch: cannot save settings.toml: {e}");
         }
     });

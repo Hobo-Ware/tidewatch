@@ -136,7 +136,7 @@ crates/tidewatch/       the egui app
   src/brand.rs          the Night tide palette every view reads (ground, surfaces, text, teal, green, orange, red, the status inks that differ in lightness), the terminal theme (One Half Dark on the brand ground, ANSI palette untouched), the chrome colors handed to stdusk's `colors::set_chrome` (teal accent, red, green) and the teal egui visuals; no view hard-codes a color or reads `colors::accent()`
   src/settings_ui.rs    the shared pieces of every Settings page (re-exports `brand`): page header, section and card, rows with a control, switch, buttons, key caps
   src/settings_icons.rs the six sidebar icons drawn with the painter
-  src/general_view.rs   the General page: Startup, Window and Updates cards
+  src/general_view.rs   the General page: Startup (restore, the resume mode control, open at login), Window and Updates cards
   src/login_item.rs     the Open at login row of Startup: reads the real status when the page shows and at most once a second after, never stores it; a click says what was asked, the app registers (macOS only; the row is hidden elsewhere)
   src/house_style_view.rs  the House style page: the file's path, Open in editor, Reset to default (two clicks)
   src/profiles_view.rs  the Agents and profiles page: profiles grouped by agent (version found or not installed), the editor card with pills, level cards, an Advanced disclosure and the save bar

@@ -107,6 +107,7 @@ impl Tidewatch {
             .unwrap_or_default();
         let general = General {
             restore: self.restore.restore_enabled(),
+            resume: self.restore.resume_agents(),
             skipped_by_flag: self.restore.skipped_by_flag(),
             login_offered: crate::macos::LOGIN_ITEM_OFFERED,
             window: window_view::View {
@@ -178,6 +179,11 @@ impl Tidewatch {
             Some(settings_view::Action::Restore(on)) => {
                 if let Some(paths) = &self.paths {
                     self.restore.set_restore_enabled(paths, on);
+                }
+            }
+            Some(settings_view::Action::ResumeAgents(mode)) => {
+                if let Some(paths) = &self.paths {
+                    self.restore.set_resume_agents(paths, mode);
                 }
             }
             Some(settings_view::Action::Window(prefs)) => self.set_window_prefs(prefs, ctx),
