@@ -12,6 +12,7 @@ use super::frame::FrameIntent;
 use super::repos::RepoCommand;
 use crate::agent_frame;
 use crate::agent_run::progress_fraction;
+use crate::brand;
 use crate::commands::Command;
 use crate::pane::{Body, Pane};
 use crate::tabs::Action;
@@ -125,7 +126,7 @@ impl Tidewatch {
                 let dot = resp.rect.right_top() + egui::vec2(-2.0, 2.0);
                 let painter = ui.painter();
                 painter.circle_filled(dot, 5.5, colors::titlebar());
-                painter.circle_filled(dot, 4.0, colors::accent());
+                painter.circle_filled(dot, 4.0, brand::NEEDS);
             }
             tip = format!(
                 "{tip}\nSwitch repo ({} / {})",

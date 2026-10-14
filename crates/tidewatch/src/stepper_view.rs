@@ -11,6 +11,7 @@ use stdusk_egui::colors;
 use stdusk_egui::widgets::{action_button, text_field};
 use tidewatch_core::runner::StageState;
 
+use crate::brand;
 use crate::layout::band_above;
 use crate::stepper::{self, Detail, Model, Pill};
 use crate::workflow_ask::{Ask, Choice};
@@ -34,10 +35,10 @@ const STOPPED_H: f32 = 30.0;
 pub(crate) fn state_color(state: StageState) -> Color32 {
     match state {
         StageState::Todo => colors::dim(),
-        StageState::Running => colors::accent(),
-        StageState::NeedsYou => colors::yellow(),
-        StageState::Done => colors::green(),
-        StageState::Failed => colors::red(),
+        StageState::Running => brand::WORKING,
+        StageState::NeedsYou => brand::NEEDS,
+        StageState::Done => brand::DONE,
+        StageState::Failed => brand::FAILED,
     }
 }
 
@@ -196,7 +197,7 @@ fn stepper_band(ui: &mut Ui, rect: Rect, run: &TabRun) -> Option<usize> {
             Align2::RIGHT_TOP,
             error,
             FontId::proportional(12.0),
-            colors::red(),
+            brand::RED,
         );
     }
     ui.painter().line_segment(
@@ -230,7 +231,7 @@ fn detail_band(ui: &mut Ui, rect: Rect, detail: &Detail) {
         child.label(RichText::new("Findings").size(12.0).color(colors::dim()));
         for finding in &detail.findings {
             let (mark, color) =
-                if finding.blocking { ("blocking", colors::red()) } else { ("nit", colors::dim()) };
+                if finding.blocking { ("blocking", brand::RED) } else { ("nit", colors::dim()) };
             child.horizontal_wrapped(|ui| {
                 ui.label(RichText::new(mark).monospace().size(11.5).color(color));
                 ui.label(RichText::new(&finding.text).size(12.5).color(colors::fg()));
@@ -250,7 +251,7 @@ enum Pressed {
 }
 
 fn ask_card(ui: &mut Ui, rect: Rect, ask: &Ask, state: &mut RunUi) -> Option<Pressed> {
-    let accent = colors::yellow();
+    let accent = brand::ORANGE;
     ui.painter().rect_filled(rect, 0.0, accent.gamma_multiply(0.10));
     ui.painter().rect_filled(Rect::from_min_size(rect.min, vec2(3.0, rect.height())), 0.0, accent);
     ui.painter().line_segment(
@@ -320,18 +321,18 @@ fn ask_card(ui: &mut Ui, rect: Rect, ask: &Ask, state: &mut RunUi) -> Option<Pre
 }
 
 fn stopped_band(ui: &mut Ui, rect: Rect, text: &str) {
-    ui.painter().rect_filled(rect, 0.0, colors::red().gamma_multiply(0.12));
+    ui.painter().rect_filled(rect, 0.0, brand::RED.gamma_multiply(0.12));
     ui.painter().rect_filled(
         Rect::from_min_size(rect.min, vec2(3.0, rect.height())),
         0.0,
-        colors::red(),
+        brand::RED,
     );
     ui.painter().text(
         pos2(rect.left() + CARD_PAD + 3.0, rect.center().y),
         Align2::LEFT_CENTER,
         text,
         FontId::proportional(13.0),
-        colors::red(),
+        brand::RED,
     );
 }
 

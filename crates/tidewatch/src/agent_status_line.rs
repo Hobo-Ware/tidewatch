@@ -3,6 +3,7 @@
 use egui::{Color32, CornerRadius, Rect, Sense, Stroke, StrokeKind, Ui, pos2, vec2};
 use stdusk_egui::colors;
 
+use crate::brand;
 use crate::pane::{FirstPrompt, Pane};
 use crate::reader::Shown;
 use crate::screen_kit::{body, mono};
@@ -63,7 +64,7 @@ pub(crate) fn line_of<T>(
 
 fn dot_color(line: &Line) -> Color32 {
     if line.ready {
-        return colors::accent();
+        return brand::TEAL;
     }
     status_view::color(line.tone).unwrap_or_else(colors::dim)
 }
