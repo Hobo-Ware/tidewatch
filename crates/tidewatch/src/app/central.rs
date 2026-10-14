@@ -4,6 +4,7 @@ use std::time::Duration;
 
 use egui::Frame;
 use stdusk_egui::colors;
+use tidewatch_core::prefs::Panels;
 
 use tidewatch_core::end_block::EndBlock;
 use tidewatch_core::status::AgentStatus;
@@ -16,6 +17,7 @@ use crate::commands::Command;
 use crate::delivery_card::Delivery;
 use crate::pane::FirstPrompt;
 use crate::reader::Shown;
+use crate::tab_view::TabView;
 use crate::tabs::Action;
 use crate::workflow_run::TabRun;
 use crate::{
@@ -46,6 +48,37 @@ impl Tidewatch {
     pub(super) fn toggle_reader(&mut self, ctx: &egui::Context) {
         if let Some(shown) = reader_glue::toggle(self.tabs.active_pane_mut()) {
             self.show_toast(reader_glue::toggle_text(shown), ctx);
+        }
+    }
+
+    pub(super) fn side_layout(&self) -> bool {
+        self.shell.prefs().panels == Panels::Side
+    }
+
+    pub(super) fn panes_showing(&self) -> bool {
+        self.workspace_has_panels() && !self.focus && !self.awaiting_workflow_task()
+    }
+
+    /// Whether the active tab draws a file's diff where its terminal would be.
+    pub(super) fn file_view_showing(&self, active_id: u64) -> bool {
+        self.side_layout()
+            && self.panes_showing()
+            && self.views.get(&active_id).is_some_and(TabView::file_open)
+    }
+
+    pub(super) fn with_active_view(&mut self, change: impl FnOnce(&mut TabView)) {
+        let active_id = self.tabs.items()[self.tabs.active()].id;
+        if let Some(view) = self.views.get_mut(&active_id) {
+            change(view);
+        }
+    }
+
+    pub(super) fn toggle_file_view(&mut self, ctx: &egui::Context) {
+        let active_id = self.tabs.items()[self.tabs.active()].id;
+        let shown = self.side_layout()
+            && self.views.get_mut(&active_id).is_some_and(TabView::toggle_file_view);
+        if !shown {
+            self.show_toast("Open a file from the History tree first", ctx);
         }
     }
 
@@ -120,14 +153,25 @@ impl Tidewatch {
     ) {
         let active_id = frame.active_id;
         let awaiting_task = self.awaiting_workflow_task();
-        let panels = self.workspace_has_panels() && !self.focus && !awaiting_task;
-        let mut areas = if self.awaiting_first_prompt() {
+        let panels = self.panes_showing();
+        let side = self.side_layout();
+        if side && panels {
+            self.drag_divider(ui, area);
+        }
+        let mut areas = if side {
+            layout::split_side(area, self.side_fraction)
+        } else if self.awaiting_first_prompt() {
             layout::split_panels(area, EMPTY_PANELS_H)
         } else {
             layout::split(area)
         };
         if !panels {
             areas.terminal = layout::terminal_only(area);
+        }
+        if self.file_view_showing(active_id) {
+            self.show_panes(ui, &areas, ctx);
+            self.show_toast_pill(ui);
+            return;
         }
         self.show_stepper(ui, &mut areas.terminal, ctx);
         if awaiting_task {
@@ -173,6 +217,17 @@ impl Tidewatch {
             self.show_panes(ui, &areas, ctx);
         }
         self.show_toast_pill(ui);
+    }
+
+    fn drag_divider(&mut self, ui: &mut egui::Ui, area: egui::Rect) {
+        let grab = layout::divider_grab(area, self.side_fraction);
+        let response = ui.interact(grab, egui::Id::new("side-divider"), egui::Sense::drag());
+        if response.hovered() || response.dragged() {
+            ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeHorizontal);
+        }
+        if let Some(pointer) = response.interact_pointer_pos().filter(|_| response.dragged()) {
+            self.side_fraction = layout::fraction_at(area, pointer.x);
+        }
     }
 
     fn awaiting_first_prompt(&self) -> bool {

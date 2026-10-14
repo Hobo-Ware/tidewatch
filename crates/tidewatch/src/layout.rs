@@ -4,13 +4,39 @@ use egui::{Rect, pos2};
 use stdusk_egui::ui::{TAB_FIXED_W, TAB_MIN_W};
 
 pub(crate) const TERMINAL_FRACTION: f32 = 0.45;
+pub(crate) const SIDE_FRACTION: f32 = 0.58;
+pub(crate) const SIDE_RANGE: std::ops::RangeInclusive<f32> = 0.3..=0.75;
+const DIVIDER_GRAB: f32 = 8.0;
 pub(crate) const GAP: f32 = 1.0;
 pub(crate) const TERMINAL_PAD: f32 = 10.0;
 
+/// In the side layout `diff` is the whole left column, the place a file's diff takes over from
+/// the terminal.
 pub(crate) struct Layout {
     pub(crate) terminal: Rect,
     pub(crate) history: Rect,
     pub(crate) diff: Rect,
+}
+
+pub(crate) fn split_side(area: Rect, fraction: f32) -> Layout {
+    let left_w = (area.width() * fraction.clamp(*SIDE_RANGE.start(), *SIDE_RANGE.end())).round();
+    let left = Rect::from_min_max(area.min, pos2(area.left() + left_w, area.bottom()));
+    let history = Rect::from_min_max(pos2(left.right() + GAP, area.top()), area.max);
+    Layout { terminal: left.shrink(TERMINAL_PAD), history, diff: left }
+}
+
+/// The strip a pointer can grab to move the divider of the side layout.
+pub(crate) fn divider_grab(area: Rect, fraction: f32) -> Rect {
+    let x = split_side(area, fraction).diff.right();
+    Rect::from_min_max(
+        pos2(x - DIVIDER_GRAB / 2.0, area.top()),
+        pos2(x + DIVIDER_GRAB / 2.0, area.bottom()),
+    )
+}
+
+/// The share of `area` the left column takes when its divider is at `x`.
+pub(crate) fn fraction_at(area: Rect, x: f32) -> f32 {
+    ((x - area.left()) / area.width().max(1.0)).clamp(*SIDE_RANGE.start(), *SIDE_RANGE.end())
 }
 
 pub(crate) fn split(area: Rect) -> Layout {
@@ -104,6 +130,31 @@ mod tests {
         assert_eq!(l.diff.right(), 1000.0);
         assert_eq!(l.diff.left() - l.history.right(), GAP);
         assert!((l.history.width() - l.diff.width()).abs() <= 1.0);
+    }
+
+    #[test]
+    fn the_side_layout_gives_the_left_share_to_the_terminal_and_the_rest_to_history() {
+        let l = split_side(area(), SIDE_FRACTION);
+        assert_eq!(l.diff, Rect::from_min_max(pos2(0.0, 40.0), pos2(580.0, 840.0)));
+        assert_eq!(l.terminal, l.diff.shrink(TERMINAL_PAD));
+        assert_eq!(l.history, Rect::from_min_max(pos2(581.0, 40.0), pos2(1000.0, 840.0)));
+    }
+
+    #[test]
+    fn the_divider_stays_inside_its_range() {
+        let wide = split_side(area(), 0.99);
+        assert_eq!(wide.diff.width(), 750.0);
+        let narrow = split_side(area(), 0.0);
+        assert_eq!(narrow.diff.width(), 300.0);
+        assert_eq!(fraction_at(area(), 5000.0), 0.75);
+        assert_eq!(fraction_at(area(), 500.0), 0.5);
+    }
+
+    #[test]
+    fn the_grab_strip_sits_on_the_divider() {
+        let grab = divider_grab(area(), SIDE_FRACTION);
+        assert_eq!(grab.center().x, 580.0);
+        assert_eq!(grab.height(), 800.0);
     }
 
     #[test]

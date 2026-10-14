@@ -22,12 +22,12 @@ use crate::note_actions;
 use crate::notes_strip::{self, StripAction};
 use crate::tab_view::TabView;
 
-const SIDE_PAD: f32 = 14.0;
+pub(crate) const SIDE_PAD: f32 = 14.0;
 const FILE_ROW_H: f32 = 22.0;
 const FILES_MAX_ROWS: f32 = 4.0;
-const TOOLBAR_H: f32 = 34.0;
+pub(crate) const TOOLBAR_H: f32 = 34.0;
 const HEADER_H: f32 = 64.0;
-const SHORT_ID: usize = 7;
+pub(crate) const SHORT_ID: usize = 7;
 
 static MAC_TEXTS: DiffTexts = DiffTexts {
     saved_hint: Cow::Borrowed("Notes go to this tab's agent when you send them"),
@@ -57,7 +57,7 @@ pub(crate) fn kind_letter(kind: ChangeKind) -> &'static str {
     }
 }
 
-fn kind_color(kind: ChangeKind) -> Color32 {
+pub(crate) fn kind_color(kind: ChangeKind) -> Color32 {
     match kind {
         ChangeKind::Added => theme::added(),
         ChangeKind::Modified => theme::modified(),
@@ -89,6 +89,7 @@ pub(crate) enum PaneAction {
 
 #[derive(Default)]
 pub(crate) struct PaneOut {
+    pub(crate) back: bool,
     pub(crate) notes_changed: bool,
     pub(crate) actions: Vec<PaneAction>,
 }
@@ -121,7 +122,7 @@ pub(crate) fn show(
         let files = take_row(ui, rect, top, files_h);
         show_files(ui, files, view);
         let toolbar = take_row(ui, rect, top + files_h, TOOLBAR_H);
-        show_toolbar(ui, toolbar, view);
+        show_toolbar(ui, toolbar, view, true);
         if let Some(extras) = extras {
             toolbar_pr(ui, toolbar, extras, &mut out.actions);
         }
@@ -137,7 +138,7 @@ pub(crate) fn show(
     out
 }
 
-fn small_button(ui: &mut Ui, label: &str, selected: bool) -> egui::Response {
+pub(crate) fn small_button(ui: &mut Ui, label: &str, selected: bool) -> egui::Response {
     let text = RichText::new(label).size(11.5);
     ui.add(egui::Button::new(text).selected(selected).corner_radius(5))
 }
@@ -148,6 +149,15 @@ fn header_actions(ui: &mut Ui, header: Rect, extras: &PaneExtras, actions: &mut 
         pos2(header.left() + SIDE_PAD, header.top() + 40.0),
         pos2(header.right() - SIDE_PAD, header.bottom() - 4.0),
     );
+    send_controls(ui, area, extras, actions);
+}
+
+pub(crate) fn send_controls(
+    ui: &mut Ui,
+    area: Rect,
+    extras: &PaneExtras,
+    actions: &mut Vec<PaneAction>,
+) {
     ui.scope_builder(
         UiBuilder::new()
             .id_salt("diff-header-actions")
@@ -180,7 +190,12 @@ fn header_actions(ui: &mut Ui, header: Rect, extras: &PaneExtras, actions: &mut 
 }
 
 /// The PR chip and "Pull PR comments" on the toolbar's right.
-fn toolbar_pr(ui: &mut Ui, toolbar: Rect, extras: &PaneExtras, actions: &mut Vec<PaneAction>) {
+pub(crate) fn toolbar_pr(
+    ui: &mut Ui,
+    toolbar: Rect,
+    extras: &PaneExtras,
+    actions: &mut Vec<PaneAction>,
+) {
     let Some(chip) = &extras.chip else { return };
     let area = toolbar.shrink2(vec2(SIDE_PAD - 4.0, 0.0));
     ui.scope_builder(
@@ -214,13 +229,13 @@ fn toolbar_pr(ui: &mut Ui, toolbar: Rect, extras: &PaneExtras, actions: &mut Vec
     );
 }
 
-fn take_row(ui: &Ui, rect: Rect, top: f32, height: f32) -> Rect {
+pub(crate) fn take_row(ui: &Ui, rect: Rect, top: f32, height: f32) -> Rect {
     let row = Rect::from_min_size(pos2(rect.left(), rect.top() + top), vec2(rect.width(), height));
     ui.painter().hline(rect.x_range(), row.bottom(), Stroke::new(1.0, theme::border()));
     row
 }
 
-fn message(ui: &mut Ui, rect: Rect, error: Option<&str>, idle: &str) {
+pub(crate) fn message(ui: &mut Ui, rect: Rect, error: Option<&str>, idle: &str) {
     let (text, color) = match error {
         Some(error) => (error, theme::deleted()),
         None => (idle, theme::text_faint()),
@@ -354,7 +369,7 @@ fn file_row(ui: &mut Ui, change: &FileChange, selected: bool) -> bool {
     response.clicked()
 }
 
-fn show_toolbar(ui: &mut Ui, rect: Rect, view: &mut TabView) {
+pub(crate) fn show_toolbar(ui: &mut Ui, rect: Rect, view: &mut TabView, layout_chips: bool) {
     let summary = notes_summary(&view.notes);
     ui.scope_builder(
         UiBuilder::new()
@@ -363,12 +378,8 @@ fn show_toolbar(ui: &mut Ui, rect: Rect, view: &mut TabView) {
             .layout(Layout::left_to_right(Align::Center)),
         |ui| {
             ui.spacing_mut().item_spacing.x = 6.0;
-            let unified = view.layout == DiffLayout::Unified;
-            if chip(ui, "Unified", unified).clicked() {
-                set_layout(view, DiffLayout::Unified);
-            }
-            if chip(ui, "Split", !unified).clicked() {
-                set_layout(view, DiffLayout::Split);
+            if layout_chips {
+                layout_switch(ui, view, false);
             }
             if let Some(open) = &mut view.open {
                 if icon_button(ui, icons::CARET_UP, "Previous change (Alt+Up)").clicked() {
@@ -379,9 +390,26 @@ fn show_toolbar(ui: &mut Ui, rect: Rect, view: &mut TabView) {
                 }
             }
             ui.add_space(8.0);
-            ui.label(RichText::new(summary).size(12.0).color(theme::text_faint()));
+            ui.add(
+                egui::Label::new(RichText::new(summary).size(12.0).color(theme::text_faint()))
+                    .truncate(),
+            );
         },
     );
+}
+
+/// `right_to_left` for a row laid out from the right edge, where the first chip added sits last.
+pub(crate) fn layout_switch(ui: &mut Ui, view: &mut TabView, right_to_left: bool) {
+    let unified = view.layout == DiffLayout::Unified;
+    let mut chips = [("Unified", DiffLayout::Unified), ("Split", DiffLayout::Split)];
+    if right_to_left {
+        chips.reverse();
+    }
+    for (label, layout) in chips {
+        if chip(ui, label, unified == (layout == DiffLayout::Unified)).clicked() {
+            set_layout(view, layout);
+        }
+    }
 }
 
 fn set_layout(view: &mut TabView, layout: DiffLayout) {
@@ -391,7 +419,7 @@ fn set_layout(view: &mut TabView, layout: DiffLayout) {
     }
 }
 
-fn show_body(ui: &mut Ui, rect: Rect, view: &mut TabView) -> bool {
+pub(crate) fn show_body(ui: &mut Ui, rect: Rect, view: &mut TabView) -> bool {
     let wanted_commit = view.wanted_commit().map(|id| id.to_string());
     let Some(loaded) = &view.loaded else { return false };
     if view.is_loading_source() {
