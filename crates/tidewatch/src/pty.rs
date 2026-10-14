@@ -2,9 +2,11 @@
 //! script that starts an agent.
 
 use std::collections::BTreeMap;
+use std::os::fd::OwnedFd;
 use std::path::Path;
 
 use stdusk_core::agent_pane::{AgentSetup, PROMPT_FALLBACK};
+use stdusk_core::handoff::{PaneMeta, adopt_pane};
 use stdusk_core::shell::ShellProfile;
 use stdusk_core::terminal::{PtyTerm, SpawnOpts};
 use stdusk_egui::repaint_handle;
@@ -17,6 +19,21 @@ const WORD_SEPARATORS: &str = " ()[]{}'\"";
 
 pub(crate) fn spawn_shell(ctx: &egui::Context, dir: &Path) -> PtyTerm {
     PtyTerm::spawn(INITIAL_COLS, INITIAL_ROWS, repaint_handle(ctx), &spawn_opts(dir, None))
+}
+
+/// A terminal another window sent over, still running what it ran. Its own folder, which the
+/// shell cannot report until its next prompt, stands in for `dir`.
+pub(crate) fn adopt(
+    ctx: &egui::Context,
+    meta: &PaneMeta,
+    fd: OwnedFd,
+    dir: &Path,
+) -> std::io::Result<PtyTerm> {
+    let mut opts = spawn_opts(dir, None);
+    if let Some(cwd) = &meta.cwd {
+        opts.cwd = Some(cwd.clone());
+    }
+    adopt_pane(repaint_handle(ctx), meta, fd, &opts)
 }
 
 /// A plain shell that prints `note` first, for a restored tab whose agent could not be resumed.

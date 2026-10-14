@@ -4,14 +4,17 @@
 use std::path::{Component, Path};
 use std::sync::Arc;
 use std::sync::mpsc::Receiver;
+use std::time::Duration;
 
 use kelp_core::review::{Anchor, Comment, Side};
 use tidewatch_core::events::TabMessage;
-use tidewatch_core::listener::Listener;
+use tidewatch_core::listener::{Credential, Listener};
 use tidewatch_core::notes::Notes;
 use tidewatch_core::paths::TidewatchPaths;
 
 use crate::agent_run::Finding;
+
+pub(crate) const PORT_PATIENCE: Duration = Duration::from_secs(5);
 
 /// The listener and the channel it reports on. Both are absent when the listener could not start
 /// (or there is no home folder): status then comes from the terminal and process layers alone.
@@ -40,6 +43,45 @@ impl Hooks {
                 );
                 Self::off()
             }
+        }
+    }
+
+    /// Starts the listener on `port`, the one the agents a replaced window left running report to.
+    /// The old window may still be leaving, so the port is waited for; when it stays busy the
+    /// listener starts on any port, and `false` says the old agents' tokens cannot be honoured.
+    pub(crate) fn start_on_port(
+        paths: Option<&TidewatchPaths>,
+        ctx: &egui::Context,
+        port: u16,
+        patience: Duration,
+    ) -> (Self, bool) {
+        let Some(paths) = paths else { return (Self::off(), false) };
+        let wake = ctx.clone();
+        let repaint = Box::new(move || wake.request_repaint());
+        match Listener::start_on_port(port, paths.clone(), repaint, patience) {
+            Ok((listener, inbox)) => {
+                (Self { listener: Some(Arc::new(listener)), inbox: Some(inbox) }, true)
+            }
+            Err(e) => {
+                eprintln!("tidewatch: the hook port {port} stayed busy ({e}); starting on another");
+                (Self::start(Some(paths), ctx), false)
+            }
+        }
+    }
+
+    pub(crate) fn port(&self) -> Option<u16> {
+        self.listener.as_ref().map(|listener| listener.port())
+    }
+
+    /// What the tab's agent reports with.
+    pub(crate) fn credential_of(&self, tab: u64) -> Option<Credential> {
+        self.listener.as_ref()?.credential_of(tab)
+    }
+
+    /// Honours a credential of the window this one replaces, for the tab its agent now sits in.
+    pub(crate) fn adopt(&self, tab: u64, credential: &Credential) {
+        if let Some(listener) = &self.listener {
+            listener.adopt_tab(tab, credential);
         }
     }
 
@@ -168,5 +210,57 @@ mod tests {
         assert!(hooks.listener().is_none());
         assert_eq!(hooks.drain(), Vec::new());
         hooks.close_tab(3);
+    }
+
+    fn paths() -> (tempfile::TempDir, TidewatchPaths) {
+        let home = tempfile::tempdir().unwrap();
+        let paths = TidewatchPaths::new(home.path());
+        (home, paths)
+    }
+
+    #[test]
+    fn a_new_window_serves_the_old_port_and_honours_the_old_agents_credential() {
+        let (_home, paths) = paths();
+        let ctx = egui::Context::default();
+        let old = Hooks::start(Some(&paths), &ctx);
+        let port = old.port().unwrap();
+        let registered =
+            old.listener().unwrap().register_tab(tidewatch_core::listener::TabRegistration {
+                tab_id: 4,
+                agent: "claude".into(),
+                repo: "/work/web".into(),
+                tab: "otter".into(),
+                generation: 2,
+            });
+        let credential = old.credential_of(4).unwrap();
+        assert_eq!(credential.token, registered.token);
+        drop(old);
+
+        let (new, kept) = Hooks::start_on_port(Some(&paths), &ctx, port, Duration::from_secs(5));
+        assert!(kept);
+        assert_eq!(new.port(), Some(port));
+        new.adopt(9, &credential);
+        assert_eq!(new.credential_of(9), Some(credential));
+        assert_eq!(new.credential_of(4), None, "the old tab id means nothing here");
+    }
+
+    #[test]
+    fn a_port_that_stays_busy_starts_elsewhere_and_says_the_tokens_cannot_be_kept() {
+        let (_home, paths) = paths();
+        let ctx = egui::Context::default();
+        let holder = Hooks::start(Some(&paths), &ctx);
+        let port = holder.port().unwrap();
+        let (other, kept) = Hooks::start_on_port(Some(&paths), &ctx, port, Duration::ZERO);
+        assert!(!kept);
+        assert_ne!(other.port(), Some(port));
+        assert!(other.port().is_some(), "agents still report to a listener of some port");
+    }
+
+    #[test]
+    fn without_a_home_no_port_is_kept_and_nothing_listens() {
+        let (hooks, kept) =
+            Hooks::start_on_port(None, &egui::Context::default(), 5000, Duration::ZERO);
+        assert!(!kept);
+        assert_eq!(hooks.port(), None);
     }
 }

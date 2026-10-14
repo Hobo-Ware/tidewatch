@@ -120,6 +120,18 @@ impl TabRun {
         self
     }
 
+    /// A run taken over from another process continues at the stage generation its agent holds.
+    pub(crate) fn with_generation(mut self, generation: u64) -> Self {
+        self.generation = generation;
+        self
+    }
+
+    /// A stage is on its way or its tests are running: work in this process that no other can
+    /// finish.
+    pub(crate) fn busy(&self) -> bool {
+        self.launching || *self.runner.phase() == Phase::Testing
+    }
+
     pub(crate) fn blurb(&self) -> &str {
         &self.blurb
     }
