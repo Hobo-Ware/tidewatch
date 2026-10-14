@@ -44,7 +44,7 @@ crates/tidewatch-core/  worktrees, profiles, permission levels, workflows, agent
   src/trust.rs          D14 folder trust, pure: per-CLI config text in, text with the folder trusted (or not) out, idempotent, refuses unparsable files; TrustState per installed CLI
   src/consent.rs        D14 consent state machine (Undecided, Granted, Declined; Yes, No, Apply, Undo -> effects) and trust.toml: the answer and the entries Tidewatch added
   src/trust_apply.rs    D14 disk half: each CLI's config file (CLAUDE_CONFIG_DIR, COPILOT_HOME, CODEX_HOME honored), inspect, trust the root, trust a worktree, revoke; atomic write, `.tidewatch-bak` backup, race check
-  src/prefs.rs          ~/.config/tidewatch/settings.toml: the app-wide switches (restore the last session at launch, default on) the [window] table (quake on, hotkey Ctrl+Alt+Grave, menu-bar item on) and the [updates] table (check, install; both on); bad file -> defaults; `update` rewrites one part from a fresh read
+  src/prefs.rs          ~/.config/tidewatch/settings.toml: the app-wide switches (restore the last session at launch, default on) the [window] table (quake on, hotkey Ctrl+Alt+Grave, menu-bar item on, panels side by side or below) and the [updates] table (check, install; both on); bad file -> defaults; `update` rewrites one part from a fresh read
   src/update.rs          self-update, the pure part: the repo and cask, `Mode::pick` (only a macOS cask install updates itself, the rest is notify-only), the fake release for `TIDEWATCH_FAKE_UPDATE`
   src/instance.rs       one window for the app: one Unix socket (`.state/instances/tidewatch.sock`), `open <path>` hand-off from a second launch (any folder: the window adds it as a repo or shows it), `toggle` to every live window, stale socket takeover, guard that unlinks on exit; every command is answered `ok` or `closing`, and a launch that hears `closing` waits (50 ms polls, 10 s) for the socket and takes it over
   src/last_workspace.rs .state/last-workspace.toml (`dir`, the repo in front when the window was used last, and `also`, the other repos that had tabs open) and `pick`, the pure choice of the folders a launch opens: command line (alone), a working folder in a repo, the remembered folders that still exist, the working folder
@@ -126,7 +126,7 @@ crates/tidewatch/       the egui app
   src/repo_base.rs      the branch a new worktree starts from (what the repo has checked out), looked up on a job thread
   src/profile_editor.rs profile editor state: drafts grouped by agent, text in and out of fields, validation, profiles to save, revert (pure)
   src/settings.rs       what the settings view holds: the profile, workflow and window editors and which page shows (pure)
-  src/window_settings.rs  the Window section's state: quake and menu-bar switches apply at once, the hotkey is recorded from a key press (`recording`), checked at once and applied when it parses (pure)
+  src/window_settings.rs  the Window section's state: quake and menu-bar switches and the Panels choice apply at once, the hotkey is recorded from a key press (`recording`), checked at once and applied when it parses (pure)
   src/updates.rs        kelp-ui's `Updater` with Tidewatch's repo and cask, the two switches, the status line (pure), saving them; never disabled, so Linux gets the notify-only pill
   src/updates_view.rs   draws the Updates section of General: status, Check now, the pill, the switches (the install one only in install mode)
   src/window_view.rs    draws the Window section: switches and the hotkey key-cap recorder (click, press keys; Esc cancels) with its problem or registration status
@@ -147,11 +147,14 @@ crates/tidewatch/       the egui app
   src/leftover_glue.rs  Host: the leftover list, the chip, the dialog and its jobs
   src/leftover_view.rs  the chip in the tab strip and the dialog (Clean up for the clean ones, Discard for a dirty one)
   src/close_dialog.rs   keep/delete branch dialog: choices and wording (pure) plus the modal
-  src/layout.rs         terminal/panel split, grid size, tab width (pure)
-  src/tab_view.rs       per-tab pane state: loaded history, selection, open diff, notes, watcher; wants -> jobs -> answers (stale ones dropped)
+  src/layout.rs         terminal/panel split (side by side: terminal left ~58% with a draggable divider, History right at full height; below: terminal over History and Diff), the left column that a file's diff takes over, grid size, tab width (pure)
+  src/tab_view.rs       per-tab pane state: loaded history, selection, open diff, notes, watcher, the opened commit (one at a time), the file view and the last opened file, line counts per file; wants -> jobs -> answers (stale ones dropped)
   src/pane_jobs.rs      history, status, files, diff, notes, watcher and checkout as jobs
-  src/history_pane.rs   History pane: header (branch, ahead/behind, This worktree / Whole repo), kelp-ui graph
-  src/diff_pane.rs      Diff pane: header (Send all open, Deliver when idle), file list, toolbar (PR chip, Pull PR comments), notes strip, kelp-ui diff body with notes
+  src/history_pane.rs   History pane: header (branch, ahead/behind, This worktree / Whole repo), kelp-ui graph, and in the side layout the open commit's card over the rows below its row (the selected row's place is read from the graph's scroll state) and a hint footer
+  src/commit_files.rs   the open commit's files as a card under its row in the tree: kind letter, path, +/- counts, a meta line; laid over the graph because kelp-ui's graph cannot grow a row (pure sums and sizes, drawing)
+  src/file_view.rs      the side layout's file view in the terminal's place: Terminal chip (profile and state, goes back), path, `in <sha>`, Unified/Split, toolbar with Send all and Deliver when idle, PR row, notes strip, kelp-ui diff body
+  src/file_nav.rs       the previous or next file or tree row from the keyboard (pure index steps)
+  src/diff_pane.rs      Diff pane (the Below layout; its pieces also serve the file view): header (Send all open, Deliver when idle), file list, toolbar (PR chip, Pull PR comments), notes strip, kelp-ui diff body with notes
   src/note_actions.rs   kelp-ui DiffAction -> the tab's notes (pure)
   src/checkout.rs       double-click checkout rule: main tab only, clean tree only (pure plan, git outcome)
   src/toast.rs          one timed message, fade on egui's clock (pure)
@@ -174,7 +177,7 @@ crates/tidewatch/       the egui app
   src/dev_session.rs    TIDEWATCH_DEV_QUIT / _SELECT / _SELECT_AFTER / _SHOT / _SHOT_AFTER / _SAVE_DEBOUNCE_MS switches: close the window through the close request, select a tab, a screenshot that keeps running, a long debounce
   src/dev_screenshot.rs TIDEWATCH_SCREENSHOT harness
   src/dev_worktree.rs   TIDEWATCH_DEV_WORKTREE switch: open a worktree tab at startup for captures
-  src/dev_panes.rs      TIDEWATCH_DEV_SCOPE / _PICK / _NOTE switches: graph scope, selected row, a note for captures
+  src/dev_panes.rs      TIDEWATCH_DEV_SCOPE / _PICK / _OPEN / _PRESS / _NOTE switches: graph scope, selected row, open a commit or a file, press table commands, a note for captures
   src/dev_view.rs       TIDEWATCH_DEV_OVERVIEW / _FOCUS / _STATUS_LOG / _KEYS switches: start on a view, log status changes, answer a prompt
   src/dev_agent.rs      TIDEWATCH_DEV_AGENT / _WORKFLOW / _RESUME / _DIALOG / _SETTINGS / _PALETTE / _TASK / _START / _LEVEL switches: open an agent or workflow tab, resume a saved run (through the restore path), open the dialog on a screen, the editor or the palette
   src/dev_workflow.rs   TIDEWATCH_DEV_ASK / _OPEN_STAGE switches: answer a workflow run's question, open a stage under the stepper
@@ -242,7 +245,7 @@ run. Agents must use one of the two for every window they open.
 dialog, `delete` closes it with "Delete branch". Use a throwaway repo, and a temp `HOME` (with
 `ZDOTDIR` set to it) so worktrees land in a temp `~/.tidewatch`, never in the real home.
 `TIDEWATCH_DEV_SCOPE=whole` starts the graph on Whole repo, `TIDEWATCH_DEV_PICK=<row>` selects a graph row,
-`TIDEWATCH_DEV_NOTE=<text>` writes a note on the first added line of the first diff shown (saved like a real one).
+`TIDEWATCH_DEV_OPEN=commit|file|file:<n>` opens the selected row's files in the tree (and file n, 0 first, in the file view), `TIDEWATCH_DEV_PRESS=<command id>@<seconds>,...` presses those table commands (`file-view`, `back-to-terminal`, `next-file`, `prev-commit`...) through the real key path, `TIDEWATCH_DEV_NOTE=<text>` writes a note on the first added line of the first diff shown (saved like a real one).
 Notes live in `<home>/.tidewatch/.state/<repo-dir>/<tab>/notes.json`; the main tab's key is `main`.
 `TIDEWATCH_HOME=<dir>` keeps `.tidewatch` and `.config/tidewatch` in `<dir>` while `HOME` stays real, so agent
 CLIs keep their login. `TIDEWATCH_DEV_AGENT=<profile id>` opens that profile in a new tab at startup, ready for its first
@@ -269,7 +272,7 @@ shell that starts Tidewatch is itself a Claude session: the child otherwise writ
 Session: every change is saved to `<home>/.tidewatch/.state/session.toml` and the next launch restores it (Settings, General, turns that off). To check it in the background: `TIDEWATCH_DEV_QUIT=<s>` closes the window through the close request (the quit-time save runs), `TIDEWATCH_DEV_SAVE_DEBOUNCE_MS=600000` leaves that quit-time write as the only one, `TIDEWATCH_DEV_SELECT=<n>` (`_SELECT_AFTER`) selects tab n, `TIDEWATCH_DEV_SHOT=<png>` (`_SHOT_AFTER`) saves a screenshot without quitting (the screenshot harness itself saves nothing), `TIDEWATCH_DEV_LEFTOVERS=open|clean` opens the leftover worktrees dialog or presses Clean up. Relaunch with the same `TIDEWATCH_HOME` and repo; `TIDEWATCH_DEV_REPLY` asks a resumed agent a question from the Reader.
 Keys (macOS; Linux uses Ctrl+Shift or Alt, the table is `commands.rs` and `docs/shortcuts.md`, and a change goes in the table first): Cmd+Shift+P the command palette, Cmd+T new tab (the dialog: Agent, Workflow or Plain shell with A, W or S; the agent list picks a profile and, with Left and Right, its permission level; Enter opens the tab, Esc goes back or closes; the task is typed in the tab, not the dialog), Cmd+O open a repo, Cmd+W
 close the active tab (not the pinned main tab; a worktree tab asks keep/delete branch first), Cmd+1..9 select (in the repo on show), Cmd+Ctrl+] / [ next and previous repo,
-Cmd+Shift+T flip the active agent tab between the Reader and the raw terminal, Cmd+, the profile editor, Cmd+0 the Overview (Esc or Cmd+0 closes it), Cmd+. focus mode (hides History and Diff).
+Cmd+Shift+T flip the active agent tab between the Reader and the raw terminal, Cmd+, the profile editor, Cmd+0 the Overview (Esc or Cmd+0 closes it), Cmd+. focus mode (hides History and Diff). Panels (Settings, General, Window; `[window] panels` in settings.toml, `side` by default or `below`): side by side puts History on the right at full height, a click on a commit opens its files under its row and a click on a file shows its diff (notes, Unified/Split, Send, Post to PR) in the terminal's place under a Terminal chip, with the agent still running; Below keeps the old terminal over History and Diff. File view keys (only while the file's diff has the keyboard and no note is being typed, so the terminal and text fields keep Esc, arrows and brackets): Esc back to the terminal, Cmd+J (Linux Ctrl+Shift+J) flips between the terminal and the last opened file, Up and Down the previous or next file of the open commit, [ and ] the previous or next row of the tree.
 The sibling crates are git dependencies pinned by commit (`rev`), not by tag (PLAN.md,
 Deviations log). To pick up a sibling change, merge it there, then bump `rev`.
 
