@@ -1,7 +1,7 @@
 //! Settings shell: every page renders, the sidebar switches pages, Esc closes, General reports changes.
 
 use egui::{Event, PointerButton, Pos2, RawInput, Vec2};
-use tidewatch_core::prefs::WindowPrefs;
+use tidewatch_core::prefs::{ResumeAgents, WindowPrefs};
 use tidewatch_core::profiles::Profiles;
 use tidewatch_core::workflows::Workflows;
 
@@ -36,9 +36,10 @@ fn trust_page() -> trust_view::Page<'static> {
     }
 }
 
-fn general(restore: bool, login_offered: bool) -> General {
+fn general(restore: bool, resume: ResumeAgents, login_offered: bool) -> General {
     General {
         restore,
+        resume,
         skipped_by_flag: false,
         login_offered,
         window: window_view::View {
@@ -85,6 +86,7 @@ struct Harness {
     settings: Settings,
     updates: Updates,
     restore: bool,
+    resume: ResumeAgents,
     login_offered: bool,
     esc_closes: bool,
 }
@@ -96,7 +98,15 @@ impl Harness {
         let mut settings = settings();
         settings.section = section;
         let updates = updates(&ctx);
-        Self { ctx, settings, updates, restore: true, login_offered: false, esc_closes: true }
+        Self {
+            ctx,
+            settings,
+            updates,
+            restore: true,
+            resume: ResumeAgents::Auto,
+            login_offered: false,
+            esc_closes: true,
+        }
     }
 
     fn frame(&mut self, events: Vec<Event>) -> Option<Action> {
@@ -105,7 +115,7 @@ impl Harness {
         let probes =
             Probes::from([("claude".to_owned(), Availability::Found(Some("2.1.0".into())))]);
         let (files, trust, general) =
-            (files(), trust_page(), general(self.restore, self.login_offered));
+            (files(), trust_page(), general(self.restore, self.resume, self.login_offered));
         let host = Host {
             files: &files,
             trust: &trust,
@@ -203,12 +213,58 @@ fn the_restore_switch_is_the_first_switch_on_general_and_reports_the_new_value()
     assert!(matches!(action, Some(Action::Restore(true))));
 }
 
+fn every_action_on_general(harness: &mut Harness) -> Vec<Action> {
+    harness.frame(vec![]);
+    let mut found = Vec::new();
+    for y in (150..480).step_by(10) {
+        for x in (760..1240).step_by(20) {
+            found.extend(harness.click(pos2(x as f32, y as f32)));
+        }
+    }
+    found
+}
+
 #[test]
-fn the_window_section_sits_under_the_restore_row_and_reports_its_own_change() {
+fn the_window_section_sits_under_the_startup_card_and_reports_its_own_change() {
     let mut harness = Harness::new(Section::General);
-    let action = harness.click_scan(1100..1240, 240..330);
-    let Some(Action::Window(prefs)) = action else { panic!("no Window action from the page") };
-    assert_eq!(prefs, WindowPrefs { quake: false, ..WindowPrefs::default() });
+    let found = every_action_on_general(&mut harness);
+    let quake_off = WindowPrefs { quake: false, ..WindowPrefs::default() };
+    assert!(
+        found.iter().any(|action| matches!(action, Action::Window(prefs) if *prefs == quake_off)),
+        "no Window action turned the drop-down off"
+    );
+}
+
+#[test]
+fn the_resume_control_sits_under_the_restore_row_and_offers_the_other_two_modes() {
+    let mut harness = Harness::new(Section::General);
+    let found = every_action_on_general(&mut harness);
+    let modes: Vec<ResumeAgents> = found
+        .iter()
+        .filter_map(|action| match action {
+            Action::ResumeAgents(mode) => Some(*mode),
+            _ => None,
+        })
+        .collect();
+    assert!(modes.contains(&ResumeAgents::Prefill) && modes.contains(&ResumeAgents::Off));
+    assert!(!modes.contains(&ResumeAgents::Auto), "the mode already set reports nothing");
+    harness.resume = ResumeAgents::Off;
+    let modes: Vec<ResumeAgents> = every_action_on_general(&mut harness)
+        .into_iter()
+        .filter_map(|action| match action {
+            Action::ResumeAgents(mode) => Some(mode),
+            _ => None,
+        })
+        .collect();
+    assert!(modes.contains(&ResumeAgents::Auto) && !modes.contains(&ResumeAgents::Off));
+}
+
+#[test]
+fn the_resume_control_does_nothing_while_restoring_is_off() {
+    let mut harness = Harness::new(Section::General);
+    harness.restore = false;
+    let found = every_action_on_general(&mut harness);
+    assert!(!found.iter().any(|action| matches!(action, Action::ResumeAgents(_))));
 }
 
 #[test]

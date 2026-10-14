@@ -15,7 +15,7 @@ use std::path::{Path, PathBuf};
 
 use tidewatch_core::agents::Level;
 use tidewatch_core::paths::TidewatchPaths;
-use tidewatch_core::prefs::Prefs;
+use tidewatch_core::prefs::{Prefs, ResumeAgents};
 use tidewatch_core::prepare::Prepared;
 use tidewatch_core::restore::{RealDisk, TabAction, TabPlan, WindowPlan, restore_workflow};
 use tidewatch_core::resume_mode::{Resume, Why};
@@ -99,6 +99,16 @@ impl Host {
     /// Whether launch restores the last session, as the settings say.
     pub(crate) fn restore_enabled(&self) -> bool {
         self.prefs.restore_session
+    }
+
+    pub(crate) fn resume_agents(&self) -> ResumeAgents {
+        self.prefs.resume_agents
+    }
+
+    /// Takes the new mode and writes it, off the UI thread. It applies to the next restore.
+    pub(crate) fn set_resume_agents(&mut self, paths: &TidewatchPaths, mode: ResumeAgents) {
+        self.prefs.resume_agents = mode;
+        restore_jobs::save_resume_agents(paths.clone(), mode);
     }
 
     /// This run was started with `--no-restore`.

@@ -32,6 +32,7 @@ pub(crate) enum Action {
     Trust(tidewatch_core::consent::Event),
     /// The restore switch moved: the new value. It applies at once, so there is nothing to save.
     Restore(bool),
+    ResumeAgents(tidewatch_core::prefs::ResumeAgents),
     /// The Window section changed something: all of its settings. Applies at once too.
     Window(tidewatch_core::prefs::WindowPrefs),
     /// An Updates switch moved: the whole table. Applies at once too.

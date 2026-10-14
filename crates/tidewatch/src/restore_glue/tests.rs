@@ -457,6 +457,20 @@ fn turning_restoring_off_in_settings_is_written_to_the_settings_file() {
 }
 
 #[test]
+fn choosing_a_resume_mode_in_settings_is_written_to_the_settings_file_and_keeps_the_rest() {
+    let mut f = Fixture::new(false);
+    assert_eq!(f.host.resume_agents(), ResumeAgents::Auto);
+    f.host.set_resume_agents(&f.paths, ResumeAgents::Prefill);
+    assert_eq!(f.host.resume_agents(), ResumeAgents::Prefill);
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while Prefs::load(&f.paths).resume_agents != ResumeAgents::Prefill {
+        assert!(Instant::now() < deadline, "the setting was never written");
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    assert!(Prefs::load(&f.paths).restore_session);
+}
+
+#[test]
 fn the_flag_is_reported_apart_from_the_setting() {
     let f = Fixture::new(true);
     assert!(f.host.skipped_by_flag());
