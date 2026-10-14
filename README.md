@@ -5,8 +5,9 @@ Every tab is its own git worktree (a separate checkout on its own branch) with a
 it, so several agents can work on the same repo without touching each other's files. You watch them,
 read what they did, comment on their diffs and decide what ships.
 
-The terminal sits on top. Below it are the history of that worktree and the diff of the selected
-commit. Built by [HoboWare](https://github.com/Hobo-Ware) from the parts of
+The terminal is on the left and the history of that worktree on the right. Click a commit to open its
+files in the tree, then a file to see its diff where the terminal was; the agent keeps running, and
+Esc or the Terminal chip takes you back. Built by [HoboWare](https://github.com/Hobo-Ware) from the parts of
 [Kelp](https://github.com/Hobo-Ware/kelp) (graph, diff, review) and
 [stdusk](https://github.com/Hobo-Ware/stdusk) (terminal, tabs, quake window).
 
@@ -19,7 +20,7 @@ Status: v0.1.0, the first release. Showcase page: [tidewatch.hoboware.dev](https
 - **Notes on diff lines.** Leave a note on a line of the diff, then send the notes to the agent as one message.
 - **Workflows.** Chain stages, each with its own agent profile: Ship a feature, Fix a bug and Review a PR come built in, and there is an editor for your own. Gates (tests pass, no blocking findings, your approval) can send the work back a stage before it hands off.
 - **Delivery.** When the work is ready, Tidewatch shows the commits and the PR text. When you approve, it pushes and opens the pull request with `gh`.
-- **Overview and focus mode.** Overview lists every tab with its state: working, needs you, done or failed. Focus mode hides the history and diff so the terminal gets the whole window.
+- **Overview and focus mode.** Overview lists every tab with its state: working, needs you, done or failed. Focus mode hides the history so the terminal gets the whole window.
 - **Session restore.** Quitting saves your tabs. The next launch brings them back and resumes the agents where the CLI can. `--no-restore` or a setting turns it off.
 - **Folder trust.** On first launch Tidewatch asks once before it marks its worktree folder as trusted in the agent CLIs' own config files, so they stop asking in every new worktree. It changes nothing without a yes, and Settings can undo it.
 - **House style.** One file, `~/.config/tidewatch/house-style.md`, tells every agent how to write its answers (summary first, file references, a Done / Needs you / Next block). Edit it freely: Tidewatch never overwrites it. Settings, House style opens it in your editor and can put the default text back.
@@ -27,7 +28,7 @@ Status: v0.1.0, the first release. Showcase page: [tidewatch.hoboware.dev](https
 
 ## Quake window
 
-Tidewatch drops from the top of the screen on `Ctrl+Alt+Grave` (stdusk keeps `Ctrl+Grave`, so both can run) and hides when you click elsewhere. There is a menu-bar item with Show / Hide, Overview, Settings and Quit. Settings, General, Window turns the drop-down off for a plain window and records a new hotkey: click the key caps and press the keys. `tidewatch <path>` for a repo that already has a window brings that window forward instead of opening another. `tidewatch --toggle` shows or hides the running windows: on Wayland, which has no global hotkeys, bind it to a desktop shortcut.
+Tidewatch drops from the top of the screen on `Ctrl+Alt+Grave` (stdusk keeps `Ctrl+Grave`, so both can run) and hides when you click elsewhere. There is a menu-bar item with Show / Hide, Overview, Settings and Quit. Settings, General, Window turns the drop-down off for a plain window, records a new hotkey (click the key caps and press the keys) and moves the panels: History beside the terminal (the default) or History and the diff below it (`panels = "below"` in `[window]`). `tidewatch <path>` for a repo that already has a window brings that window forward instead of opening another. `tidewatch --toggle` shows or hides the running windows: on Wayland, which has no global hotkeys, bind it to a desktop shortcut.
 
 ## Keyboard
 
