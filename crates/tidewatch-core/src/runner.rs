@@ -356,6 +356,13 @@ impl Runner {
         self.ctx.test_command = command;
     }
 
+    /// Sets the task of a run that has not started yet. Ignored once it has.
+    pub fn set_task(&mut self, task: &str) {
+        if self.phase == Phase::Idle {
+            task.trim().clone_into(&mut self.ctx.task);
+        }
+    }
+
     /// Starts stage 1. `None` when the run already started.
     pub fn start(&mut self) -> Option<Command> {
         (self.phase == Phase::Idle).then(|| self.begin_stage(0))
