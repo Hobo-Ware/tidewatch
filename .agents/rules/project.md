@@ -135,6 +135,7 @@ crates/tidewatch/       the egui app
   src/settings_ui.rs    the shared pieces of every Settings page (re-exports `brand`): page header, section and card, rows with a control, switch, buttons, key caps
   src/settings_icons.rs the six sidebar icons drawn with the painter
   src/general_view.rs   the General page: Startup, Window and Updates cards
+  src/login_item.rs     the Open at login row of Startup: reads the real status when the page shows and at most once a second after, never stores it; a click says what was asked, the app registers (macOS only; the row is hidden elsewhere)
   src/house_style_view.rs  the House style page: the file's path, Open in editor, Reset to default (two clicks)
   src/profiles_view.rs  the Agents and profiles page: profiles grouped by agent (version found or not installed), the editor card with pills, level cards, an Advanced disclosure and the save bar
   src/settings_ui/editor.rs  the pieces of a page that edits a list: list rows, editor card and header, option cards, save bar (Save, Revert)
@@ -170,7 +171,7 @@ crates/tidewatch/       the egui app
   src/hotkey.rs         the quake hotkey string (`Ctrl+Alt+Grave`, `F13`) to modifiers and a key, strict with a named Problem for each mistake (pure); `spell` turns a pressed key into that string and `cap_labels` the text into key caps (pure)
   src/shell_plan.rs     the background gate: Plan from the settings and Env (background, Wayland, tray support); background means no hotkey, no menu-bar item, no activation, a plain window (pure)
   src/quake.rs          the drop-down: pure show/hide state (monitor-size wait, hide on blur, 120 ms wake while hidden), geometry (half height, 2 point sliver, alpha 0), `present` turns it into viewport commands
-  src/macos.rs          objc2 calls (activation policy, Spaces, window alpha, screen lookups) with no-op stubs off macOS
+  src/macos.rs          objc2 calls (activation policy, Spaces, window alpha, screen lookups, the SMAppService login item: status mapped from the raw value, register, unregister, open System Settings) with no-op stubs off macOS
   src/os.rs             the `Os` seam the shell talks through: RealOs (global-hotkey 0.8, tray, macos.rs) and a recorder for tests
   src/tray.rs           the menu-bar item (macOS only): Show / Hide, Overview, Settings, Quit; clicks reach the UI through a handler that wakes it
   src/shell.rs          Shell: per frame, other launches (open, toggle), hotkey presses, menu-bar clicks and live settings become viewport commands and OS calls, all through the Plan; hotkey status for settings

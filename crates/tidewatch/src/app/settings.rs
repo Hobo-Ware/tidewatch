@@ -6,6 +6,8 @@ use tidewatch_core::prefs::WindowPrefs;
 use super::{Tidewatch, wall_ms};
 use crate::agent_jobs;
 use crate::general_view::General;
+use crate::login_item;
+use crate::macos;
 use crate::profiles_view::Probes;
 use crate::settings::{Section, Settings};
 use crate::settings_view::{self, Files, Host};
@@ -106,6 +108,7 @@ impl Tidewatch {
         let general = General {
             restore: self.restore.restore_enabled(),
             skipped_by_flag: self.restore.skipped_by_flag(),
+            login_offered: crate::macos::LOGIN_ITEM_OFFERED,
             window: window_view::View {
                 status: self.shell.hotkey_status(),
                 menu_bar_available: self.shell.tray_supported(),
@@ -121,9 +124,29 @@ impl Tidewatch {
             })
             .collect();
         let trust = self.trust.page();
-        let host =
-            Host { files: &files, trust: &trust, general: &general, probes: &probes, esc_closes };
+        let host = Host {
+            files: &files,
+            trust: &trust,
+            general: &general,
+            probes: &probes,
+            read_login: crate::macos::login_item_status,
+            esc_closes,
+        };
         settings_view::show(ui, area, settings, &host, &mut self.updates)
+    }
+
+    fn apply_login_click(&mut self, click: login_item::Click, ctx: &egui::Context) {
+        match click {
+            login_item::Click::Set(on) => {
+                if let Err(why) = macos::set_login_item(on) {
+                    self.show_toast(format!("Open at login failed: {why}"), ctx);
+                }
+            }
+            login_item::Click::Approve => macos::open_login_items_settings(),
+        }
+        if let Some(settings) = &mut self.settings {
+            settings.login.read_again();
+        }
     }
 
     fn open_house_style(&mut self, ctx: &egui::Context) {
@@ -163,6 +186,7 @@ impl Tidewatch {
                     updates::save(paths.clone(), prefs);
                 }
             }
+            Some(settings_view::Action::LoginItem(click)) => self.apply_login_click(click, ctx),
             Some(settings_view::Action::OpenHouseStyle) => self.open_house_style(ctx),
             Some(settings_view::Action::ResetHouseStyle) => self.reset_house_style(ctx),
             None => {}

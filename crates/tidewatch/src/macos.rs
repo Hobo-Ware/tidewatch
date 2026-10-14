@@ -65,6 +65,92 @@ pub(crate) fn app_is_active() -> bool {
     false
 }
 
+/// Where the "Open at login" item stands. `login_item_status` is the only source of truth: the
+/// user can also change the item in System Settings, so Tidewatch stores nothing.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum LoginItem {
+    Off,
+    On,
+    NeedsApproval,
+    NotFound,
+    Unavailable,
+}
+
+/// Maps `SMAppServiceStatus` (0 not registered, 1 enabled, 2 requires approval, 3 not found).
+/// Not found is recoverable by registering; any other value is unavailable.
+pub(crate) fn login_item_from_raw(raw: isize) -> LoginItem {
+    match raw {
+        0 => LoginItem::Off,
+        1 => LoginItem::On,
+        2 => LoginItem::NeedsApproval,
+        3 => LoginItem::NotFound,
+        _ => LoginItem::Unavailable,
+    }
+}
+
+pub(crate) const LOGIN_ITEM_OFFERED: bool = cfg!(target_os = "macos");
+
+pub(crate) fn login_item_status() -> LoginItem {
+    login_item_raw().map_or(LoginItem::Unavailable, login_item_from_raw)
+}
+
+/// Whether `exe` sits in an `.app` bundle, the only thing macOS can register as a login item.
+#[cfg(any(target_os = "macos", test))]
+fn in_app_bundle(exe: &std::path::Path) -> bool {
+    exe.ancestors().nth(3).and_then(std::path::Path::extension).is_some_and(|ext| ext == "app")
+}
+
+/// `SMAppService` arrived in macOS 13 and objc2's class cache assumes the class exists, so every
+/// entry point asks the runtime first. Outside an `.app` bundle there is nothing to register.
+#[cfg(target_os = "macos")]
+fn login_item_available() -> bool {
+    std::env::current_exe().is_ok_and(|exe| in_app_bundle(&exe))
+        && objc2::runtime::AnyClass::get(c"SMAppService").is_some()
+}
+
+/// The ObjC methods are `unsafe fn` only because every generated binding is: this one takes no
+/// pointers and has no preconditions.
+#[cfg(target_os = "macos")]
+#[allow(unsafe_code)]
+fn login_item_raw() -> Option<isize> {
+    use objc2_service_management::SMAppService;
+    login_item_available().then(|| unsafe { SMAppService::mainAppService().status().0 })
+}
+#[cfg(not(target_os = "macos"))]
+fn login_item_raw() -> Option<isize> {
+    None
+}
+
+/// Registers (`true`) or unregisters the app as a login item. The error is the OS text, for a toast.
+#[cfg(target_os = "macos")]
+#[allow(unsafe_code)]
+pub(crate) fn set_login_item(enabled: bool) -> Result<(), String> {
+    use objc2_service_management::SMAppService;
+    if !login_item_available() {
+        return Err("Open at login needs the installed app".to_owned());
+    }
+    let result = unsafe {
+        let service = SMAppService::mainAppService();
+        if enabled { service.registerAndReturnError() } else { service.unregisterAndReturnError() }
+    };
+    result.map_err(|e| e.localizedDescription().to_string())
+}
+#[cfg(not(target_os = "macos"))]
+pub(crate) fn set_login_item(_enabled: bool) -> Result<(), String> {
+    Err("Open at login needs macOS".to_owned())
+}
+
+/// Opens System Settings > General > Login Items, where the user approves a pending item.
+#[cfg(target_os = "macos")]
+#[allow(unsafe_code)]
+pub(crate) fn open_login_items_settings() {
+    if login_item_available() {
+        unsafe { objc2_service_management::SMAppService::openSystemSettingsLoginItems() };
+    }
+}
+#[cfg(not(target_os = "macos"))]
+pub(crate) fn open_login_items_settings() {}
+
 #[cfg(target_os = "macos")]
 fn screen_frames(mtm: objc2::MainThreadMarker) -> Vec<Rect> {
     let screens = objc2_app_kit::NSScreen::screens(mtm);
@@ -166,5 +252,36 @@ mod tests {
         assert_eq!(cocoa_to_top_left(left, 900.0).min, pos2(-1920.0, -180.0));
         let above = rect(0.0, 900.0, 1440.0, 900.0);
         assert_eq!(cocoa_to_top_left(above, 900.0).min, pos2(0.0, -900.0));
+    }
+
+    #[test]
+    fn login_item_status_maps_every_service_management_value() {
+        let cases = [
+            (0, LoginItem::Off),
+            (1, LoginItem::On),
+            (2, LoginItem::NeedsApproval),
+            (3, LoginItem::NotFound),
+            (4, LoginItem::Unavailable),
+            (99, LoginItem::Unavailable),
+            (-1, LoginItem::Unavailable),
+        ];
+        for (raw, want) in cases {
+            assert_eq!(login_item_from_raw(raw), want, "raw {raw}");
+        }
+    }
+
+    #[test]
+    fn only_an_app_bundle_can_be_a_login_item() {
+        let cases = [
+            ("/Applications/Tidewatch.app/Contents/MacOS/tidewatch", true),
+            ("/Users/me/Applications/Tidewatch.app/Contents/MacOS/tidewatch", true),
+            ("/work/tidewatch/target/debug/tidewatch", false),
+            ("/usr/local/bin/tidewatch", false),
+            ("tidewatch", false),
+            ("/Applications/Tidewatch.app/tidewatch", false),
+        ];
+        for (exe, want) in cases {
+            assert_eq!(in_app_bundle(std::path::Path::new(exe)), want, "exe {exe}");
+        }
     }
 }

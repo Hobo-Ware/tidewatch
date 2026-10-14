@@ -9,6 +9,8 @@ use egui::{
 
 use crate::general_view::{self, General};
 use crate::house_style_view;
+use crate::login_item;
+use crate::macos::LoginItem;
 use crate::profiles_view::{self, Probes};
 use crate::settings::{Section, Settings};
 use crate::settings_icons;
@@ -34,6 +36,7 @@ pub(crate) enum Action {
     Window(tidewatch_core::prefs::WindowPrefs),
     /// An Updates switch moved: the whole table. Applies at once too.
     Updates(tidewatch_core::prefs::UpdatePrefs),
+    LoginItem(login_item::Click),
     OpenHouseStyle,
     ResetHouseStyle,
 }
@@ -52,6 +55,7 @@ pub(crate) struct Host<'a> {
     pub(crate) trust: &'a trust_view::Page<'a>,
     pub(crate) general: &'a General,
     pub(crate) probes: &'a Probes,
+    pub(crate) read_login: fn() -> LoginItem,
     /// Esc closes the settings: false while a dialog over them owns the key.
     pub(crate) esc_closes: bool,
 }
@@ -94,7 +98,15 @@ fn page(
             workflow_editor_view::page(ui, main, &mut settings.workflows, &host.files.workflows)
         }
         Section::General => scrolling(ui, main, section, |ui| {
-            general_view::page(ui, host.general, &mut settings.window, updates, &host.files.general)
+            general_view::page(
+                ui,
+                host.general,
+                &mut settings.window,
+                updates,
+                &mut settings.login,
+                host.read_login,
+                &host.files.general,
+            )
         }),
         Section::Trust => scrolling(ui, main, section, |ui| {
             trust_view::settings_page(ui, host.trust, &host.files.trust).map(Action::Trust)
