@@ -1,4 +1,4 @@
-use egui::{RawInput, Rect, pos2, vec2};
+use egui::{RawInput, pos2, vec2};
 use tidewatch_core::workflows::Workflows;
 
 use super::*;
@@ -13,14 +13,17 @@ fn editor() -> Editor {
 }
 
 fn render(editor: &mut Editor, frames: usize) {
-    let ctx = egui::Context::default();
+    let ctx = crate::fonts::test_context();
     for _ in 0..frames {
         let raw = RawInput {
             screen_rect: Some(Rect::from_min_size(pos2(0.0, 0.0), vec2(1100.0, 800.0))),
             focused: true,
             ..RawInput::default()
         };
-        let _ = ctx.run_ui(raw, |ui| page(ui, editor, 700.0));
+        let _ = ctx.run_ui(raw, |ui| {
+            let area = ui.max_rect();
+            page(ui, area, editor, "workflows.toml");
+        });
     }
 }
 

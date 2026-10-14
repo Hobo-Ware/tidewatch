@@ -91,7 +91,7 @@ fn page(
             profiles_view::page(ui, main, &mut settings.profiles, host.probes, &host.files.profiles)
         }
         Section::Workflows => {
-            workflow_editor_view::page_in(ui, main, &mut settings.workflows, &host.files.workflows)
+            workflow_editor_view::page(ui, main, &mut settings.workflows, &host.files.workflows)
         }
         Section::General => scrolling(ui, main, section, |ui| {
             general_view::page(ui, host.general, &mut settings.window, updates, &host.files.general)

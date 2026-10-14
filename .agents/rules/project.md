@@ -140,7 +140,7 @@ crates/tidewatch/       the egui app
   src/trust_glue.rs     D14 host: installed CLIs and their trust state, the consent state and its jobs, the grant handed to new tabs and worktree removal
   src/trust_view.rs     D14 wording per CLI (pure), the first-launch consent dialog and the Folder trust settings page
   src/workflow_editor.rs  workflow editor state: drafts per workflow and stage, problems found as you type, workflows to save (pure)
-  src/workflow_editor_view.rs  the Workflows page: list, stage chips, the stage's fields, problems under them
+  src/workflow_editor_view.rs  the Workflows page: the list of workflows, the editor card with stage pills, the stage's fields, problems under them and the save bar
   src/leftovers.rs      the leftover worktrees dialog's rows, what each would lose, the removals Clean up and Discard stand for (pure)
   src/leftover_jobs.rs  count what a leftover would lose, remove one (and its trust entries) as jobs
   src/leftover_glue.rs  Host: the leftover list, the chip, the dialog and its jobs
