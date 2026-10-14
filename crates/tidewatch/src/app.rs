@@ -52,6 +52,7 @@ use crate::flow::Flow;
 use crate::fonts;
 use crate::jobs::Jobs;
 use crate::last_used::LastUsed;
+use crate::layout;
 use crate::leftover_glue;
 use crate::new_tab::{NewTab, Request};
 use crate::notify::Notifier;
@@ -124,6 +125,7 @@ pub(crate) struct Tidewatch {
     notifier: Notifier,
     overview: bool,
     focus: bool,
+    side_fraction: f32,
     status_log: bool,
     dev_keys: Option<DevKeys>,
     dev_reader: DevReader,
@@ -217,6 +219,7 @@ impl Tidewatch {
             notifier: Notifier::desktop(),
             overview: dev_view.overview,
             focus: dev_view.focus,
+            side_fraction: layout::SIDE_FRACTION,
             status_log: dev_view.status_log,
             dev_keys: dev_view.keys,
             dev_reader: DevReader::from_env(),

@@ -8,6 +8,8 @@ use kelp_ui::theme as kelp_theme;
 
 use super::Tidewatch;
 use crate::checkout::{self, Plan};
+use crate::diff_pane::PaneOut;
+use crate::file_view::{self, TerminalChip};
 use crate::repo::Workspace;
 use crate::tab_view::ViewSpec;
 use crate::{diff_pane, flow_glue, history_pane, layout, pane_jobs};
@@ -33,6 +35,7 @@ impl Tidewatch {
         let workspace = &self.workspaces[active.group];
         let Some(spec) = ViewSpec::of(workspace, self.paths.as_ref(), active) else { return };
         let dev_scope = self.dev_panes.scope;
+        let side = self.side_layout();
         let view = self.views.entry(active_id).or_insert_with(|| {
             let mut view = spec.into_view();
             if let Some(scope) = dev_scope {
@@ -43,6 +46,7 @@ impl Tidewatch {
         if !view.is_active() {
             view.start();
         }
+        view.set_counted(side);
         view.poll();
     }
 
@@ -90,27 +94,41 @@ impl Tidewatch {
         ctx: &egui::Context,
     ) {
         let active_id = self.tabs.items()[self.tabs.active()].id;
+        let side = self.side_layout();
         let Some(view) = self.views.get_mut(&active_id) else {
-            for rect in [areas.history, areas.diff] {
+            let empty = if side { vec![areas.history] } else { vec![areas.history, areas.diff] };
+            for rect in empty {
                 ui.painter().rect_filled(rect, 0.0, kelp_theme::bg());
             }
             return;
         };
-        let status = self.tabs.items()[self.tabs.active()]
-            .pane
-            .agent
+        let agent = self.tabs.items()[self.tabs.active()].pane.agent.as_ref();
+        let status = agent.map(|agent| agent.run.status().clone());
+        let chip = TerminalChip { profile: agent.map(|a| a.profile_name.clone()), status };
+        let extras = chip
+            .status
             .as_ref()
-            .map(|agent| agent.run.status().clone());
-        let extras = status.and_then(|status| self.flow.extras(active_id, &view.notes, &status));
-        let graph_action = history_pane::show(ui, areas.history, view, &mut self.avatars);
+            .and_then(|status| self.flow.extras(active_id, &view.notes, status));
+        let graph_action = history_pane::show(ui, areas.history, view, &mut self.avatars, side);
         let now_unix = flow_glue::unix_now();
-        let pane = diff_pane::show(ui, areas.diff, view, extras.as_ref(), now_unix);
+        let pane = match (side, view.file_open()) {
+            (false, _) => diff_pane::show(ui, areas.diff, view, extras.as_ref(), now_unix),
+            (true, true) => file_view::show(ui, areas.diff, view, extras.as_ref(), &chip, now_unix),
+            (true, false) => PaneOut::default(),
+        };
+        if pane.back {
+            view.back_to_terminal();
+        }
         let notes_changed = pane.notes_changed;
         let toasts = flow_glue::pane_actions(&mut self.flow, view, active_id, pane.actions, ctx);
         let mut clicked_ref = None;
         match graph_action {
             Some(GraphAction::Select(selection)) => {
-                view.select(selection);
+                if side {
+                    view.click_row(selection);
+                } else {
+                    view.select(selection);
+                }
                 ctx.request_repaint();
             }
             Some(GraphAction::ActivateRef(label)) => clicked_ref = Some(label),

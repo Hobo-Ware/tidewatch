@@ -3,18 +3,22 @@
 
 use std::collections::HashMap;
 
-use egui::{Align, Layout, Rect, RichText, Ui, UiBuilder, pos2};
+use egui::{Align, Layout, Rect, RichText, Ui, UiBuilder, pos2, vec2};
 use kelp_core::history::History;
 use kelp_ui::avatars::AvatarStore;
-use kelp_ui::graph::{GraphAction, GraphColumns, GraphInput, MenuFor, Preview, Selection, Wip};
+use kelp_ui::graph::{
+    GraphAction, GraphColumns, GraphInput, MenuFor, Preview, ROW_H, Selection, Wip,
+};
 use kelp_ui::{graph::Marks, theme};
 use stdusk_egui::widgets::{chip, menu_item, style_menu};
 use tidewatch_core::history::{BaseCompare, Scope};
 
 use crate::brand;
+use crate::commit_files::{self, Geometry};
 use crate::tab_view::TabView;
 
 pub(crate) const HEADER_H: f32 = 34.0;
+const FOOTER_H: f32 = 32.0;
 const SIDE_PAD: f32 = 14.0;
 const MAIN_TITLE: &str = "main checkout";
 
@@ -22,22 +26,76 @@ pub(crate) fn scope_labels(is_main: bool) -> [&'static str; 2] {
     if is_main { ["This branch", "Whole repo"] } else { ["This worktree", "Whole repo"] }
 }
 
+/// `side` is the layout where a click on a commit opens its files under the row and a file's
+/// diff takes the terminal's place; the footer then says how to get around.
 pub(crate) fn show(
     ui: &mut Ui,
     rect: Rect,
     view: &mut TabView,
     avatars: &mut AvatarStore,
+    side: bool,
 ) -> Option<GraphAction> {
     ui.painter().rect_filled(rect, 0.0, theme::bg());
     let header = Rect::from_min_max(rect.min, pos2(rect.right(), rect.top() + HEADER_H));
-    let body = Rect::from_min_max(pos2(rect.left(), header.bottom()), rect.max);
+    let footer_h = if side { FOOTER_H } else { 0.0 };
+    let body =
+        Rect::from_min_max(pos2(rect.left(), header.bottom()), rect.max - vec2(0.0, footer_h));
     show_header(ui, header, view);
     let mut action = None;
+    let mut geometry = None;
     ui.scope_builder(UiBuilder::new().id_salt("history-graph").max_rect(body), |ui| {
         ui.set_clip_rect(body.intersect(ui.clip_rect()));
         action = show_graph(ui, view, avatars);
+        if side && view.expanded() {
+            geometry = row_geometry(ui, view);
+        }
     });
+    if side {
+        if let Some(geometry) = geometry {
+            commit_files::show(ui, view, geometry, body);
+        }
+        let footer = Rect::from_min_max(pos2(rect.left(), body.bottom()), rect.max);
+        show_footer(ui, footer, view.file_open());
+    }
     action
+}
+
+fn show_footer(ui: &mut Ui, rect: Rect, file_open: bool) {
+    ui.painter().hline(rect.x_range(), rect.top(), egui::Stroke::new(1.0, theme::border()));
+    let text = if file_open {
+        "Click the Terminal chip to go back · the agent keeps running"
+    } else {
+        "Click a commit to open its files · click a file for its diff"
+    };
+    ui.painter().text(
+        pos2(rect.left() + SIDE_PAD, rect.center().y),
+        egui::Align2::LEFT_CENTER,
+        text,
+        egui::FontId::proportional(12.0),
+        theme::text_faint(),
+    );
+}
+
+/// Where the selected row is on screen. The graph keeps its scroll offset in egui's memory and
+/// draws from the row that offset starts in, so the row's place follows from both.
+fn row_geometry(ui: &Ui, view: &TabView) -> Option<Geometry> {
+    let display = match view.selection()? {
+        Selection::Wip => 0,
+        Selection::Commit(row) => row + usize::from(!view.changes().is_empty()),
+    };
+    let scroll_id = ui.make_persistent_id(egui::IdSalt::new("scroll_area"));
+    let offset = egui::scroll_area::State::load(ui.ctx(), scroll_id)?.offset.y;
+    let rows = ui.ctx().read_response(view.graph.focus_id?)?.rect;
+    let first = (offset / ROW_H).floor();
+    let viewport_top = rows.top() + offset - first * ROW_H;
+    Some(Geometry {
+        row_top: rows.top() + (display as f32 - first) * ROW_H,
+        row_h: ROW_H,
+        viewport: Rect::from_min_max(
+            pos2(rows.left(), viewport_top),
+            pos2(rows.right(), ui.max_rect().bottom()),
+        ),
+    })
 }
 
 fn show_header(ui: &mut Ui, rect: Rect, view: &mut TabView) {
