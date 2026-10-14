@@ -1,10 +1,9 @@
 //! Shared drawing pieces: headings, key caps, CLI badges, section labels.
 
+use crate::brand::{self, ORANGE};
 use egui::{Align2, Color32, CornerRadius, FontId, Painter, Rect, Sense, Stroke, Ui, Vec2};
 use kelp_ui::theme::semibold;
 use stdusk_egui::colors;
-
-pub(crate) const ORANGE: Color32 = Color32::from_rgb(0xfb, 0x92, 0x3c);
 
 pub(crate) fn heading(size: f32) -> FontId {
     FontId::new(size, semibold())
@@ -72,7 +71,7 @@ pub(crate) fn section_label(ui: &mut Ui, text: &str, color: Color32) {
 }
 
 pub(crate) fn card_stroke(active: bool) -> Stroke {
-    if active { Stroke::new(2.0, colors::accent()) } else { Stroke::new(1.0, colors::border()) }
+    if active { Stroke::new(2.0, brand::TEAL) } else { Stroke::new(1.0, colors::border()) }
 }
 
 pub(crate) fn clickable(
