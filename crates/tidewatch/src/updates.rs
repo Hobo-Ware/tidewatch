@@ -8,7 +8,7 @@ use tidewatch_core::update::{self, APP_NAME, Mode};
 
 pub(crate) const NOTIFY_ONLY_HINT: &str =
     "This copy has no installer: Tidewatch tells you when a release is out and opens its page.";
-pub(crate) const INSTALL_HINT: &str = "Uses brew upgrade. Restart when it's done.";
+pub(crate) const INSTALL_HINT: &str = "With Homebrew. The new version starts when you restart.";
 
 pub(crate) struct Updates {
     updater: Updater,
@@ -66,6 +66,10 @@ impl Updates {
         status_line(&self.updater.status, self.updater.current())
     }
 
+    pub(crate) fn short_status(&self) -> String {
+        short_status(&self.updater.status)
+    }
+
     /// The new settings, which are the whole table with only this switch changed.
     pub(crate) fn set_check(&mut self, on: bool) -> UpdatePrefs {
         self.prefs.check = on;
@@ -100,6 +104,18 @@ fn status_line(status: &Status, current: &str) -> String {
             format!("{APP_NAME} {} is installed. Restart to use it.", release.version)
         }
         Status::Failed(reason) => format!("Update check failed: {reason}"),
+    }
+}
+
+fn short_status(status: &Status) -> String {
+    match status {
+        Status::Idle => "Not checked yet".to_owned(),
+        Status::Checking => "Checking...".to_owned(),
+        Status::UpToDate => "Up to date".to_owned(),
+        Status::Available(release) => format!("{} available", release.version),
+        Status::Installing(_) => "Installing...".to_owned(),
+        Status::Ready(_) => "Restart to update".to_owned(),
+        Status::Failed(_) => "Update check failed".to_owned(),
     }
 }
 
@@ -192,6 +208,22 @@ mod tests {
         ];
         for (status, want) in cases {
             assert_eq!(status_line(&status, "0.1.0"), want);
+        }
+    }
+
+    #[test]
+    fn the_sidebar_status_is_short_for_every_state() {
+        let cases = [
+            (Status::Idle, "Not checked yet"),
+            (Status::Checking, "Checking..."),
+            (Status::UpToDate, "Up to date"),
+            (Status::Available(release("0.2.0")), "0.2.0 available"),
+            (Status::Installing(release("0.2.0")), "Installing..."),
+            (Status::Ready(release("0.2.0")), "Restart to update"),
+            (Status::Failed("offline".to_owned()), "Update check failed"),
+        ];
+        for (status, want) in cases {
+            assert_eq!(short_status(&status), want);
         }
     }
 

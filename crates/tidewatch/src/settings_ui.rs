@@ -1,0 +1,260 @@
+//! The pieces every Settings page is built from: palette, cards and rows, switch, buttons, inputs.
+
+use egui::{
+    Align, Color32, CornerRadius, CursorIcon, FontId, Frame, Layout, Margin, Rect, Response,
+    RichText, Sense, Stroke, Ui, UiBuilder, Vec2, vec2,
+};
+use kelp_ui::theme::semibold;
+
+pub(crate) const GROUND: Color32 = Color32::from_rgb(0x10, 0x13, 0x1a);
+pub(crate) const SIDEBAR: Color32 = Color32::from_rgb(0x0d, 0x10, 0x16);
+pub(crate) const SIDEBAR_LINE: Color32 = Color32::from_rgb(0x1f, 0x24, 0x30);
+pub(crate) const CARD: Color32 = Color32::from_rgb(0x16, 0x1b, 0x24);
+pub(crate) const CARD_LINE: Color32 = Color32::from_rgb(0x22, 0x29, 0x37);
+pub(crate) const FIELD_LINE: Color32 = Color32::from_rgb(0x2f, 0x37, 0x47);
+pub(crate) const BUTTON: Color32 = Color32::from_rgb(0x1d, 0x22, 0x30);
+pub(crate) const KEY_EDGE: Color32 = Color32::from_rgb(0x0b, 0x0e, 0x13);
+pub(crate) const TEXT: Color32 = Color32::from_rgb(0xe6, 0xe8, 0xec);
+pub(crate) const SOFT: Color32 = Color32::from_rgb(0xa7, 0xb0, 0xbf);
+pub(crate) const MUTED: Color32 = Color32::from_rgb(0x8b, 0x93, 0xa3);
+pub(crate) const FAINT: Color32 = Color32::from_rgb(0x6b, 0x73, 0x83);
+pub(crate) const TEAL: Color32 = Color32::from_rgb(0x2d, 0xd4, 0xbf);
+pub(crate) const TEAL_TEXT: Color32 = Color32::from_rgb(0x5e, 0xea, 0xd4);
+pub(crate) const TEAL_NAV: Color32 = Color32::from_rgb(0x16, 0x25, 0x2b);
+pub(crate) const ORANGE: Color32 = Color32::from_rgb(0xfb, 0x92, 0x3c);
+pub(crate) const RED: Color32 = Color32::from_rgb(0xfb, 0x71, 0x85);
+
+const SECTION_GAP: f32 = 22.0;
+const ROW_GAP: f32 = 16.0;
+const SWITCH_SIZE: Vec2 = vec2(40.0, 22.0);
+const BUTTON_HEIGHT: f32 = 34.0;
+
+pub(crate) fn heading(text: impl Into<String>, size: f32) -> RichText {
+    RichText::new(text).family(semibold()).size(size).color(TEXT)
+}
+
+pub(crate) fn font_semibold(size: f32) -> FontId {
+    FontId::new(size, semibold())
+}
+
+pub(crate) fn note(ui: &mut Ui, text: &str, color: Color32) {
+    ui.label(RichText::new(text).size(12.0).color(color));
+}
+
+/// The title and the line under it. The response is the title's, for a tooltip.
+pub(crate) fn page_header(ui: &mut Ui, title: &str, subtitle: &str) -> Response {
+    ui.spacing_mut().item_spacing.y = 4.0;
+    let response = ui.label(heading(title, 26.0));
+    ui.label(RichText::new(subtitle).size(13.0).color(FAINT));
+    response
+}
+
+pub(crate) fn footer_note(ui: &mut Ui, text: &str) {
+    ui.add_space(SECTION_GAP);
+    ui.label(RichText::new(text).monospace().size(11.5).color(FAINT));
+}
+
+pub(crate) fn section<R>(ui: &mut Ui, title: &str, add: impl FnOnce(&mut Ui) -> R) -> R {
+    ui.add_space(SECTION_GAP);
+    ui.label(RichText::new(title.to_uppercase()).size(12.0).color(FAINT));
+    ui.add_space(8.0);
+    card(ui, add)
+}
+
+pub(crate) fn card<R>(ui: &mut Ui, add: impl FnOnce(&mut Ui) -> R) -> R {
+    Frame::new()
+        .fill(CARD)
+        .stroke(Stroke::new(1.0, CARD_LINE))
+        .corner_radius(14)
+        .show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            ui.spacing_mut().item_spacing = Vec2::ZERO;
+            add(ui)
+        })
+        .inner
+}
+
+fn divider(ui: &Ui) {
+    if ui.min_rect().height() > 0.5 {
+        let rect = ui.available_rect_before_wrap();
+        ui.painter().hline(rect.x_range(), rect.top(), Stroke::new(1.0, CARD_LINE));
+    }
+}
+
+/// What the control of a row needs, so the text beside it wraps in time and stays centered.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct Control {
+    pub(crate) width: f32,
+    pub(crate) height: f32,
+}
+
+impl Control {
+    pub(crate) const NONE: Self = Self { width: 0.0, height: 0.0 };
+    pub(crate) const SWITCH: Self = Self { width: SWITCH_SIZE.x, height: SWITCH_SIZE.y };
+
+    pub(crate) const fn new(width: f32, height: f32) -> Self {
+        Self { width, height }
+    }
+
+    pub(crate) fn button(ui: &Ui, label: &str) -> Self {
+        Self { width: button_width(ui, label), height: BUTTON_HEIGHT }
+    }
+}
+
+pub(crate) fn row<R>(
+    ui: &mut Ui,
+    title: &str,
+    desc: &str,
+    control: Control,
+    add_control: impl FnOnce(&mut Ui) -> R,
+) -> R {
+    row_with(
+        ui,
+        control,
+        |ui| {
+            ui.spacing_mut().item_spacing.y = 3.0;
+            ui.label(RichText::new(title).size(15.0).color(TEXT));
+            if !desc.is_empty() {
+                ui.label(RichText::new(desc).size(13.0).color(MUTED));
+            }
+        },
+        add_control,
+    )
+}
+
+pub(crate) fn row_with<R>(
+    ui: &mut Ui,
+    control: Control,
+    left: impl Fn(&mut Ui),
+    add_control: impl FnOnce(&mut Ui) -> R,
+) -> R {
+    padded_row(ui, 16, control, left, add_control)
+}
+
+/// `row_with` with its own vertical padding, for dense lists such as the shortcuts. The text is
+/// laid out once unseen to learn its height, then drawn centered against the control.
+pub(crate) fn padded_row<R>(
+    ui: &mut Ui,
+    padding: i8,
+    control: Control,
+    left: impl Fn(&mut Ui),
+    add_control: impl FnOnce(&mut Ui) -> R,
+) -> R {
+    divider(ui);
+    Frame::new()
+        .inner_margin(Margin::symmetric(18, padding))
+        .show(ui, |ui| {
+            let full = ui.available_rect_before_wrap();
+            let text_width = (full.width() - control.width - ROW_GAP).max(120.0);
+            let text = Rect::from_min_size(full.min, vec2(text_width, full.height()));
+            let column = |builder: UiBuilder| builder.layout(Layout::top_down(Align::Min));
+            let mut probe = ui.new_child(column(UiBuilder::new().max_rect(text).invisible()));
+            left(&mut probe);
+            let left_height = probe.min_rect().height();
+            let height = left_height.max(control.height);
+            let shifted = text.translate(vec2(0.0, (height - left_height) / 2.0));
+            let mut left_ui = ui.new_child(column(UiBuilder::new().max_rect(shifted)));
+            left(&mut left_ui);
+            let right = Rect::from_min_size(full.min, vec2(full.width(), height));
+            let mut right_ui = ui.new_child(
+                UiBuilder::new().max_rect(right).layout(Layout::right_to_left(Align::Center)),
+            );
+            let result = add_control(&mut right_ui);
+            ui.allocate_rect(right, Sense::hover());
+            result
+        })
+        .inner
+}
+
+pub(crate) fn switch_row(ui: &mut Ui, title: &str, desc: &str, on: bool) -> Option<bool> {
+    let mut value = on;
+    let changed = row(ui, title, desc, Control::SWITCH, |ui| switch(ui, &mut value).changed());
+    changed.then_some(value)
+}
+
+pub(crate) fn switch(ui: &mut Ui, on: &mut bool) -> Response {
+    let (rect, mut response) = ui.allocate_exact_size(SWITCH_SIZE, Sense::click());
+    if response.clicked() {
+        *on = !*on;
+        response.mark_changed();
+    }
+    response.widget_info(|| {
+        egui::WidgetInfo::selected(egui::WidgetType::Checkbox, ui.is_enabled(), *on, "")
+    });
+    let t = ui.ctx().animate_bool(response.id, *on);
+    let off = Color32::from_rgb(0x2a, 0x31, 0x40);
+    let track = lerp_color(off, TEAL, t);
+    let knob = lerp_color(MUTED, KEY_EDGE, t);
+    let painter = ui.painter();
+    painter.rect_filled(rect, CornerRadius::same(11), track);
+    let travel = rect.width() - 6.0 - 16.0;
+    let center = egui::pos2(rect.left() + 3.0 + 8.0 + travel * t, rect.center().y);
+    painter.circle_filled(center, 8.0, knob);
+    kelp_ui::widgets::focus_ring(ui, &response, 11.0);
+    response.on_hover_cursor(CursorIcon::PointingHand)
+}
+
+pub(crate) fn lerp_color(from: Color32, to: Color32, t: f32) -> Color32 {
+    let mix = |a: u8, b: u8| (f32::from(a) + (f32::from(b) - f32::from(a)) * t) as u8;
+    Color32::from_rgb(mix(from.r(), to.r()), mix(from.g(), to.g()), mix(from.b(), to.b()))
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Tone {
+    Quiet,
+    Primary,
+}
+
+fn button_text_width(ui: &Ui, label: &str) -> f32 {
+    ui.painter().layout_no_wrap(label.to_owned(), FontId::proportional(14.0), TEXT).size().x
+}
+
+pub(crate) fn button_width(ui: &Ui, label: &str) -> f32 {
+    button_text_width(ui, label) + 28.0
+}
+
+pub(crate) fn button(ui: &mut Ui, label: &str, tone: Tone) -> Response {
+    let enabled = ui.is_enabled();
+    let (text_color, font) = match tone {
+        Tone::Primary => (KEY_EDGE, font_semibold(14.0)),
+        Tone::Quiet => (TEXT, FontId::proportional(14.0)),
+    };
+    let galley = ui.painter().layout_no_wrap(label.to_owned(), font, text_color);
+    let (rect, response) = ui.allocate_exact_size(galley.size() + vec2(28.0, 16.0), Sense::click());
+    let (fill, text_color) = match (tone, enabled, response.hovered()) {
+        (Tone::Primary, true, true) => (lerp_color(TEAL, Color32::WHITE, 0.15), text_color),
+        (Tone::Primary, true, false) => (TEAL, text_color),
+        (Tone::Primary, false, _) => {
+            (lerp_color(CARD, TEAL, 0.35), lerp_color(CARD, KEY_EDGE, 0.6))
+        }
+        (Tone::Quiet, true, true) => (lerp_color(BUTTON, Color32::WHITE, 0.08), text_color),
+        (Tone::Quiet, true, false) => (BUTTON, text_color),
+        (Tone::Quiet, false, _) => (BUTTON, FAINT),
+    };
+    let painter = ui.painter();
+    painter.rect_filled(rect, CornerRadius::same(9), fill);
+    painter.galley(rect.center() - galley.size() / 2.0, galley, text_color);
+    kelp_ui::widgets::focus_ring(ui, &response, 9.0);
+    response.on_hover_cursor(CursorIcon::PointingHand)
+}
+
+pub(crate) fn key_cap_width(ui: &Ui, text: &str, size: f32) -> f32 {
+    let galley = ui.painter().layout_no_wrap(text.to_owned(), FontId::monospace(size), TEXT);
+    (galley.size().x + 16.0).max(26.0)
+}
+
+pub(crate) fn key_cap(ui: &mut Ui, text: &str, size: f32) -> Response {
+    let galley = ui.painter().layout_no_wrap(text.to_owned(), FontId::monospace(size), TEXT);
+    let width = (galley.size().x + 16.0).max(26.0);
+    let (rect, response) =
+        ui.allocate_exact_size(vec2(width, galley.size().y + 8.0 + 2.0), Sense::hover());
+    let painter = ui.painter();
+    painter.rect_filled(rect, CornerRadius::same(6), KEY_EDGE);
+    let face = Rect::from_min_max(rect.min, rect.max - vec2(0.0, 2.0));
+    painter.rect_filled(face, CornerRadius::same(6), BUTTON);
+    painter.galley(face.center() - galley.size() / 2.0, galley, TEXT);
+    response
+}
+
+#[cfg(test)]
+mod tests;

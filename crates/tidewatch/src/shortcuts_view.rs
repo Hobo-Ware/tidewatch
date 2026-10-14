@@ -1,12 +1,11 @@
 //! The Shortcuts page of Settings: the command table for this platform, grouped, each chord as key caps.
 
-use egui::{Align, CornerRadius, FontId, Layout, RichText, ScrollArea, Sense, Stroke, vec2};
-use stdusk_egui::colors;
+use egui::{RichText, Ui};
 
 use crate::commands::{self, Group, Platform};
+use crate::settings_ui::{Control, FAINT, TEXT, key_cap, note, padded_row, page_header, section};
 
 const KEYS_WIDTH: f32 = 230.0;
-const ROW_HEIGHT: f32 = 24.0;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum Cap<'a> {
@@ -25,69 +24,53 @@ fn caps(keys: &str) -> Vec<Cap<'_>> {
     caps
 }
 
-pub(crate) fn page(ui: &mut egui::Ui, height: f32) {
+pub(crate) fn page(ui: &mut Ui) {
     let rows = commands::rows(Platform::CURRENT);
-    ScrollArea::vertical().id_salt("shortcuts_page").max_height(height).show(ui, |ui| {
-        ui.spacing_mut().item_spacing.y = 6.0;
-        ui.label(
-            RichText::new(format!("Keys on {}", Platform::CURRENT.name()))
-                .size(12.0)
-                .color(colors::dim()),
-        );
-        ui.add_space(4.0);
-        for group in Group::ALL {
-            ui.label(RichText::new(group.title().to_uppercase()).size(11.0).color(colors::dim()));
+    page_header(ui, "Shortcuts", &format!("Keys on {}", Platform::CURRENT.name()));
+    for group in Group::ALL {
+        section(ui, group.title(), |ui| {
             for row in rows.iter().filter(|row| row.group == group) {
-                ui.horizontal(|ui| {
-                    ui.allocate_ui_with_layout(
-                        vec2(KEYS_WIDTH, ROW_HEIGHT),
-                        Layout::left_to_right(Align::Center),
-                        |ui| {
-                            ui.spacing_mut().item_spacing.x = 4.0;
-                            for cap in caps(&row.keys) {
-                                match cap {
-                                    Cap::Key(text) => key_cap(ui, text),
-                                    Cap::To => {
-                                        ui.label(
-                                            RichText::new("to").size(11.5).color(colors::dim()),
-                                        );
-                                    }
-                                }
-                            }
-                        },
-                    );
-                    ui.label(RichText::new(&row.title).color(colors::fg()));
-                });
+                shortcut_row(ui, &row.title, &row.keys);
             }
-            ui.add_space(8.0);
-        }
-        ui.label(
-            RichText::new("Every command except the dialog keys is also in the command palette. Enter, Esc and \
-                 the arrow keys inside dialogs and the palette are fixed.")
-                .size(12.0)
-                .color(colors::dim()),
-        );
-    });
+        });
+    }
+    ui.add_space(22.0);
+    note(
+        ui,
+        "Every command except the dialog keys is also in the command palette. Enter, Esc and the \
+         arrow keys inside dialogs and the palette are fixed.",
+        FAINT,
+    );
 }
 
-fn key_cap(ui: &mut egui::Ui, text: &str) {
-    let galley =
-        ui.painter().layout_no_wrap(text.to_owned(), FontId::monospace(11.5), colors::fg());
-    let (rect, _) = ui.allocate_exact_size(galley.size() + vec2(12.0, 6.0), Sense::hover());
-    ui.painter().rect_filled(rect, CornerRadius::same(5), colors::bg());
-    ui.painter().rect_stroke(
-        rect,
-        CornerRadius::same(5),
-        Stroke::new(1.0, colors::border()),
-        egui::StrokeKind::Inside,
+fn shortcut_row(ui: &mut Ui, title: &str, keys: &str) {
+    padded_row(
+        ui,
+        10,
+        Control::new(KEYS_WIDTH, 26.0),
+        |ui| {
+            ui.label(RichText::new(title).size(14.0).color(TEXT));
+        },
+        |ui| {
+            ui.spacing_mut().item_spacing.x = 4.0;
+            for cap in caps(keys).into_iter().rev() {
+                match cap {
+                    Cap::Key(text) => {
+                        key_cap(ui, text, 12.0);
+                    }
+                    Cap::To => {
+                        ui.label(RichText::new("to").size(11.5).color(FAINT));
+                    }
+                }
+            }
+        },
     );
-    ui.painter().galley(rect.center() - galley.size() / 2.0, galley, colors::fg());
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use egui::{RawInput, Rect, pos2};
+    use egui::{RawInput, Rect, pos2, vec2};
 
     #[test]
     fn a_chord_is_one_cap_per_key() {
@@ -102,7 +85,7 @@ mod tests {
 
     #[test]
     fn the_page_draws_every_row_inside_its_height() {
-        let ctx = egui::Context::default();
+        let ctx = crate::fonts::test_context();
         let raw = || RawInput {
             screen_rect: Some(Rect::from_min_size(pos2(0.0, 0.0), vec2(900.0, 700.0))),
             ..RawInput::default()
@@ -110,14 +93,10 @@ mod tests {
         let mut used = Rect::NOTHING;
         for _ in 0..2 {
             let _ = ctx.run_ui(raw(), |ui| {
-                used = ui
-                    .scope(|ui| {
-                        page(ui, 600.0);
-                    })
-                    .response
-                    .rect;
+                used = ui.scope(page).response.rect;
             });
         }
-        assert!(used.height() > 200.0 && used.height() <= 600.0, "{used:?}");
+        assert!(used.height() > 600.0, "{used:?}");
+        assert!(used.width() <= 900.0, "{used:?}");
     }
 }

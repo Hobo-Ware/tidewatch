@@ -1,5 +1,5 @@
-//! What the settings view holds: the profile editor and the workflow editor, and which of the two
-//! is showing. Pure state; `settings_view` draws it and the app saves what `Save` builds.
+//! What the settings view holds: the profile, workflow and window editors and which page shows.
+//! Pure state; `settings_view` draws it and the app saves what `Save` builds.
 
 use tidewatch_core::profiles::Profiles;
 use tidewatch_core::workflows::Workflows;
@@ -12,11 +12,12 @@ use crate::workflow_editor;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Section {
+    General,
     Profiles,
     Workflows,
     Trust,
-    General,
     Shortcuts,
+    HouseStyle,
 }
 
 pub(crate) struct Settings {
@@ -44,34 +45,15 @@ impl Settings {
         }
     }
 
-    /// The tabs of the view, with a mark on the one that has unsaved edits.
-    pub(crate) fn sections(&self) -> [(Section, &'static str, bool); 5] {
+    pub(crate) fn sections(&self) -> [(Section, &'static str, bool); 6] {
         [
-            (Section::Profiles, "Profiles", self.profiles.dirty),
+            (Section::General, "General", false),
+            (Section::Profiles, "Agents and profiles", self.profiles.dirty),
             (Section::Workflows, "Workflows", self.workflows.dirty),
             (Section::Trust, "Folder trust", false),
-            (Section::General, "General", false),
             (Section::Shortcuts, "Shortcuts", false),
+            (Section::HouseStyle, "House style", false),
         ]
-    }
-
-    /// What the footer says about the section that shows.
-    pub(crate) fn status(&self) -> Status<'_> {
-        match self.section {
-            Section::Profiles => Status {
-                error: self.profiles.error.as_deref(),
-                saving: self.profiles.saving,
-                dirty: self.profiles.dirty,
-            },
-            Section::Workflows => Status {
-                error: self.workflows.error.as_deref(),
-                saving: self.workflows.saving,
-                dirty: self.workflows.dirty,
-            },
-            Section::Trust | Section::General | Section::Shortcuts => {
-                Status { error: None, saving: false, dirty: false }
-            }
-        }
     }
 
     /// The names of the profiles, for a workflow stage that runs one. Called after profiles were saved.
@@ -81,12 +63,6 @@ impl Settings {
             profiles.profile.iter().map(|(id, p)| (id.clone(), p.name.clone())).collect(),
         );
     }
-}
-
-pub(crate) struct Status<'a> {
-    pub(crate) error: Option<&'a str>,
-    pub(crate) saving: bool,
-    pub(crate) dirty: bool,
 }
 
 #[cfg(test)]
@@ -106,26 +82,27 @@ mod tests {
         assert_eq!(
             settings.sections(),
             [
-                (Section::Profiles, "Profiles", false),
+                (Section::General, "General", false),
+                (Section::Profiles, "Agents and profiles", false),
                 (Section::Workflows, "Workflows", false),
                 (Section::Trust, "Folder trust", false),
-                (Section::General, "General", false),
                 (Section::Shortcuts, "Shortcuts", false),
+                (Section::HouseStyle, "House style", false),
             ]
         );
-        assert!(!settings.status().dirty);
+        assert!(!settings.profiles.dirty && !settings.workflows.dirty);
     }
 
     #[test]
-    fn the_footer_follows_the_section_that_shows() {
+    fn an_item_is_marked_only_while_its_own_page_has_unsaved_edits() {
         let mut settings = settings();
         settings.workflows.touched();
-        assert!(!settings.status().dirty, "the profiles are untouched");
-        settings.section = Section::Workflows;
-        assert!(settings.status().dirty);
-        settings.workflows.save_failed("disk full".into());
-        assert_eq!(settings.status().error, Some("disk full"));
-        assert!(settings.sections()[1].2, "the tab says it has unsaved edits");
+        let marks: Vec<bool> = settings.sections().iter().map(|item| item.2).collect();
+        assert_eq!(marks, [false, false, true, false, false, false]);
+        settings.workflows.saved();
+        settings.profiles.touched();
+        let marks: Vec<bool> = settings.sections().iter().map(|item| item.2).collect();
+        assert_eq!(marks, [false, true, false, false, false, false]);
     }
 
     #[test]

@@ -1,0 +1,189 @@
+//! Settings shell: every page renders, the sidebar switches pages, Esc closes, General reports changes.
+
+use egui::{Event, Key, Modifiers, PointerButton, Pos2, RawInput, Vec2};
+use tidewatch_core::prefs::WindowPrefs;
+use tidewatch_core::profiles::Profiles;
+use tidewatch_core::workflows::Workflows;
+
+use super::*;
+use crate::window_view;
+
+fn settings() -> Settings {
+    let profiles = Profiles::seeded(&["claude".to_owned()]);
+    let agents = vec![("claude".to_owned(), "Claude Code".to_owned())];
+    Settings::new(&profiles, &Workflows::defaults(), agents, &WindowPrefs::default())
+}
+
+fn files() -> Files {
+    Files {
+        profiles: "profiles.toml".into(),
+        workflows: "workflows.toml".into(),
+        trust: "trust.toml".into(),
+        general: "settings.toml".into(),
+        house_style: "house-style.md".into(),
+    }
+}
+
+fn trust_page() -> trust_view::Page<'static> {
+    trust_view::Page {
+        consent: tidewatch_core::consent::Consent::Undecided,
+        state: None,
+        root: "/home/u/.tidewatch",
+        added: 0,
+        busy: false,
+    }
+}
+
+fn general(restore: bool) -> General {
+    General {
+        restore,
+        skipped_by_flag: false,
+        window: window_view::View {
+            status: crate::shell::HotkeyStatus::Registered,
+            menu_bar_available: true,
+        },
+    }
+}
+
+fn updates(ctx: &egui::Context) -> Updates {
+    Updates::new(ctx, tidewatch_core::prefs::UpdatePrefs::default(), None, true)
+}
+
+fn input(events: Vec<Event>) -> RawInput {
+    RawInput {
+        screen_rect: Some(Rect::from_min_size(pos2(0.0, 0.0), Vec2::new(1280.0, 800.0))),
+        focused: true,
+        events,
+        ..RawInput::default()
+    }
+}
+
+fn press(at: Pos2, pressed: bool) -> Event {
+    Event::PointerButton {
+        pos: at,
+        button: PointerButton::Primary,
+        pressed,
+        modifiers: Modifiers::NONE,
+    }
+}
+
+fn escape() -> Event {
+    Event::Key {
+        key: Key::Escape,
+        physical_key: Some(Key::Escape),
+        pressed: true,
+        repeat: false,
+        modifiers: Modifiers::NONE,
+    }
+}
+
+struct Harness {
+    ctx: egui::Context,
+    settings: Settings,
+    updates: Updates,
+    restore: bool,
+    esc_closes: bool,
+}
+
+impl Harness {
+    fn new(section: Section) -> Self {
+        let ctx = egui::Context::default();
+        ctx.set_fonts(crate::fonts::definitions());
+        let mut settings = settings();
+        settings.section = section;
+        let updates = updates(&ctx);
+        Self { ctx, settings, updates, restore: true, esc_closes: true }
+    }
+
+    fn frame(&mut self, events: Vec<Event>) -> Option<Action> {
+        let mut answer = None;
+        let (settings, updates) = (&mut self.settings, &mut self.updates);
+        let (files, trust, general) = (files(), trust_page(), general(self.restore));
+        let host =
+            Host { files: &files, trust: &trust, general: &general, esc_closes: self.esc_closes };
+        let _ = self.ctx.run_ui(input(events), |ui| {
+            let area = ui.max_rect();
+            answer = show(ui, area, settings, &host, updates);
+        });
+        answer
+    }
+
+    fn click(&mut self, at: Pos2) -> Option<Action> {
+        self.frame(vec![Event::PointerMoved(at)]);
+        self.frame(vec![press(at, true)]);
+        self.frame(vec![press(at, false)])
+    }
+
+    fn click_scan(&mut self, xs: std::ops::Range<i32>, ys: std::ops::Range<i32>) -> Option<Action> {
+        self.frame(vec![]);
+        for y in ys.step_by(6) {
+            for x in xs.clone().step_by(6) {
+                if let Some(action) = self.click(pos2(x as f32, y as f32)) {
+                    return Some(action);
+                }
+            }
+        }
+        None
+    }
+}
+
+#[test]
+fn every_page_renders_headless_and_asks_for_nothing_until_clicked() {
+    for (section, _, _) in settings().sections() {
+        let mut harness = Harness::new(section);
+        for _ in 0..3 {
+            assert!(harness.frame(vec![]).is_none(), "{section:?}");
+        }
+        assert!(!harness.settings.profiles.dirty && !harness.settings.workflows.dirty);
+    }
+}
+
+#[test]
+fn a_click_on_a_sidebar_item_opens_its_page_in_sidebar_order() {
+    let sections: Vec<Section> = settings().sections().iter().map(|(s, _, _)| *s).collect();
+    assert_eq!(sections.len(), 6);
+    let mut harness = Harness::new(Section::General);
+    harness.frame(vec![]);
+    for (index, want) in sections.iter().enumerate() {
+        let at = pos2(100.0, 60.0 + index as f32 * 40.0 + 19.0);
+        assert!(harness.click(at).is_none());
+        assert_eq!(harness.settings.section, *want, "item {index}");
+    }
+}
+
+#[test]
+fn escape_closes_the_settings_unless_something_else_owns_the_key() {
+    let mut harness = Harness::new(Section::General);
+    harness.frame(vec![]);
+    assert!(matches!(harness.frame(vec![escape()]), Some(Action::Close)));
+    harness.esc_closes = false;
+    assert!(harness.frame(vec![escape()]).is_none());
+}
+
+#[test]
+fn the_restore_switch_is_the_first_switch_on_general_and_reports_the_new_value() {
+    let mut harness = Harness::new(Section::General);
+    let action = harness.click_scan(1100..1240, 150..230);
+    assert!(matches!(action, Some(Action::Restore(false))), "{}", action.is_some());
+    harness.restore = false;
+    let action = harness.click_scan(1100..1240, 150..230);
+    assert!(matches!(action, Some(Action::Restore(true))));
+}
+
+#[test]
+fn the_window_section_sits_under_the_restore_row_and_reports_its_own_change() {
+    let mut harness = Harness::new(Section::General);
+    let action = harness.click_scan(1100..1240, 240..330);
+    let Some(Action::Window(prefs)) = action else { panic!("no Window action from the page") };
+    assert_eq!(prefs, WindowPrefs { quake: false, ..WindowPrefs::default() });
+}
+
+#[test]
+fn the_sidebar_shows_the_version_and_marks_a_page_with_unsaved_edits() {
+    let mut harness = Harness::new(Section::General);
+    harness.settings.profiles.touched();
+    for _ in 0..2 {
+        assert!(harness.frame(vec![]).is_none());
+    }
+    assert!(harness.settings.sections()[1].2);
+}

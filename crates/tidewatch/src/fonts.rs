@@ -17,6 +17,13 @@ pub(crate) fn install(ctx: &egui::Context) {
 }
 
 #[cfg(test)]
+pub(crate) fn test_context() -> egui::Context {
+    let ctx = egui::Context::default();
+    ctx.set_fonts(definitions());
+    ctx
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use egui::FontFamily;

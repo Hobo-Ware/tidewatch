@@ -1,46 +1,69 @@
 //! Draws the Updates section of General: what the updater says, Check now with the update pill
 //! beside it, and the switches. It returns the new update settings when a switch was clicked.
 
-use egui::RichText;
-use stdusk_egui::colors;
-use stdusk_egui::widgets::action_button;
+use egui::{Align, Layout, RichText, Ui};
 use tidewatch_core::prefs::UpdatePrefs;
 use tidewatch_core::update::Mode;
 
+use crate::settings_ui::{self, Control, MUTED, TEXT, Tone, button, row_with, switch_row};
 use crate::updates::{INSTALL_HINT, NOTIFY_ONLY_HINT, Updates};
-use crate::window_view::{note, switch_row};
 
-pub(crate) fn section(ui: &mut egui::Ui, updates: &mut Updates) -> Option<UpdatePrefs> {
+const PILL_ROOM: f32 = 150.0;
+
+pub(crate) fn section(ui: &mut Ui, updates: &mut Updates) -> Option<UpdatePrefs> {
     let mode = updates.mode();
     section_in(ui, updates, mode)
 }
 
-fn section_in(ui: &mut egui::Ui, updates: &mut Updates, mode: Mode) -> Option<UpdatePrefs> {
+fn section_in(ui: &mut Ui, updates: &mut Updates, mode: Mode) -> Option<UpdatePrefs> {
     let mut applied = None;
-    ui.add_space(10.0);
-    ui.label(RichText::new("Updates").strong().color(colors::fg()));
-    note(ui, &updates.status_line());
-    ui.horizontal(|ui| {
-        if action_button(ui, "Check now", false).clicked() {
-            updates.check_now();
+    settings_ui::section(ui, "Updates", |ui| {
+        status_row(ui, updates, mode);
+        if let Some(on) = switch_row(
+            ui,
+            "Check for updates automatically",
+            "In the background. Check now works either way.",
+            updates.prefs().check,
+        ) {
+            applied = Some(updates.set_check(on));
         }
-        updates.pill(ui);
+        if mode == Mode::Install
+            && let Some(on) = switch_row(
+                ui,
+                "Install updates in the background",
+                INSTALL_HINT,
+                updates.prefs().install,
+            )
+        {
+            applied = Some(updates.set_install(on));
+        }
     });
-    if let Some(on) = switch_row(ui, "Check for updates automatically", updates.prefs().check) {
-        applied = Some(updates.set_check(on));
-    }
-    match mode {
-        Mode::Install => {
-            if let Some(on) =
-                switch_row(ui, "Install updates in the background", updates.prefs().install)
-            {
-                applied = Some(updates.set_install(on));
-            }
-            note(ui, INSTALL_HINT);
-        }
-        Mode::NotifyOnly => note(ui, NOTIFY_ONLY_HINT),
-    }
     applied
+}
+
+fn status_row(ui: &mut Ui, updates: &mut Updates, mode: Mode) {
+    let line = updates.status_line();
+    let check = Control::button(ui, "Check now");
+    row_with(
+        ui,
+        Control::new(check.width + PILL_ROOM, check.height),
+        |ui| {
+            ui.spacing_mut().item_spacing.y = 3.0;
+            ui.label(RichText::new(&line).size(15.0).color(TEXT));
+            if mode == Mode::NotifyOnly {
+                ui.label(RichText::new(NOTIFY_ONLY_HINT).size(13.0).color(MUTED));
+            }
+        },
+        |ui| {
+            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                ui.spacing_mut().item_spacing.x = 10.0;
+                if button(ui, "Check now", Tone::Quiet).clicked() {
+                    updates.check_now();
+                }
+                updates.pill(ui);
+            });
+        },
+    );
 }
 
 #[cfg(test)]
@@ -58,7 +81,7 @@ mod tests {
         }
     }
 
-    fn button(at: Pos2, pressed: bool) -> Event {
+    fn click(at: Pos2, pressed: bool) -> Event {
         Event::PointerButton {
             pos: at,
             button: PointerButton::Primary,
@@ -67,23 +90,23 @@ mod tests {
         }
     }
 
-    fn run(ctx: &egui::Context, updates: &mut Updates, events: Vec<Event>) -> Option<UpdatePrefs> {
-        run_in(ctx, updates, Mode::NotifyOnly, events)
-    }
-
     fn run_in(
         ctx: &egui::Context,
         updates: &mut Updates,
         mode: Mode,
         events: Vec<Event>,
-    ) -> Option<UpdatePrefs> {
+    ) -> (Option<UpdatePrefs>, Rect) {
         let mut answer = None;
+        let mut used = Rect::NOTHING;
         let _ = ctx.run_ui(input(events), |ui| {
-            ui.scope_builder(UiBuilder::new().max_rect(ui.max_rect().shrink(8.0)), |ui| {
-                answer = section_in(ui, updates, mode);
-            });
+            used = ui
+                .scope_builder(UiBuilder::new().max_rect(ui.max_rect().shrink(8.0)), |ui| {
+                    answer = section_in(ui, updates, mode);
+                })
+                .response
+                .rect;
         });
-        answer
+        (answer, used)
     }
 
     fn fake() -> Release {
@@ -95,11 +118,11 @@ mod tests {
     {
         for mode in [Mode::Install, Mode::NotifyOnly] {
             for fake in [None, Some(fake())] {
-                let ctx = egui::Context::default();
+                let ctx = crate::fonts::test_context();
                 ctx.set_fonts(crate::fonts::definitions());
                 let mut updates = Updates::new(&ctx, UpdatePrefs::default(), fake, true);
                 for _ in 0..2 {
-                    assert_eq!(run_in(&ctx, &mut updates, mode, vec![]), None);
+                    assert_eq!(run_in(&ctx, &mut updates, mode, vec![]).0, None);
                 }
             }
         }
@@ -107,21 +130,34 @@ mod tests {
 
     #[test]
     fn the_check_switch_applies_at_once_and_leaves_install_alone() {
-        let ctx = egui::Context::default();
+        let ctx = crate::fonts::test_context();
         let mut updates = Updates::new(&ctx, UpdatePrefs::default(), None, true);
-        run(&ctx, &mut updates, vec![]);
-        let mut applied = None;
-        for y in (40..120).step_by(4) {
-            let at = pos2(27.0, y as f32);
-            run(&ctx, &mut updates, vec![Event::PointerMoved(at)]);
-            run(&ctx, &mut updates, vec![button(at, true)]);
-            applied = run(&ctx, &mut updates, vec![button(at, false)]);
-            if applied.is_some() {
-                break;
-            }
-        }
-        let applied = applied.expect("the first switch is the check one");
+        let (_, used) = run_in(&ctx, &mut updates, Mode::NotifyOnly, vec![]);
+        let at = pos2(used.right() - 40.0, used.bottom() - 36.0);
+        let mut run = |events| run_in(&ctx, &mut updates, Mode::NotifyOnly, events).0;
+        run(vec![Event::PointerMoved(at)]);
+        run(vec![click(at, true)]);
+        let applied = run(vec![click(at, false)]).expect("the last switch is the check one");
         assert_eq!(applied, UpdatePrefs { check: false, install: true });
         assert!(!updates.prefs().check);
+    }
+
+    #[test]
+    fn the_install_switch_only_exists_in_install_mode() {
+        let ctx = crate::fonts::test_context();
+        let mut updates = Updates::new(&ctx, UpdatePrefs::default(), None, true);
+        let height = |mode, updates: &mut Updates| run_in(&ctx, updates, mode, vec![]).1.height();
+        let install = height(Mode::Install, &mut updates);
+        let notify = height(Mode::NotifyOnly, &mut updates);
+        assert!(install > 0.0 && notify > 0.0);
+        let at = {
+            let (_, used) = run_in(&ctx, &mut updates, Mode::Install, vec![]);
+            pos2(used.right() - 40.0, used.bottom() - 36.0)
+        };
+        let mut run = |events| run_in(&ctx, &mut updates, Mode::Install, events).0;
+        run(vec![Event::PointerMoved(at)]);
+        run(vec![click(at, true)]);
+        let applied = run(vec![click(at, false)]).expect("the last switch is the install one");
+        assert_eq!(applied, UpdatePrefs { check: true, install: false });
     }
 }

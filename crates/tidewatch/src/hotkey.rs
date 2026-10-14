@@ -165,6 +165,86 @@ impl Chord {
     }
 }
 
+fn key_name(key: egui::Key) -> Option<String> {
+    use egui::Key;
+    let named = match key {
+        Key::Escape => return None,
+        Key::Backtick => "Grave",
+        Key::Equals | Key::Plus => "Equal",
+        Key::OpenBracket => "BracketLeft",
+        Key::CloseBracket => "BracketRight",
+        Key::Minus => "Minus",
+        Key::Comma => "Comma",
+        Key::Period => "Period",
+        Key::Slash => "Slash",
+        Key::Backslash => "Backslash",
+        Key::Semicolon => "Semicolon",
+        Key::Quote => "Quote",
+        Key::Space => "Space",
+        Key::Enter => "Enter",
+        Key::Tab => "Tab",
+        Key::Backspace => "Backspace",
+        Key::Delete => "Delete",
+        Key::Insert => "Insert",
+        Key::Home => "Home",
+        Key::End => "End",
+        Key::PageUp => "PageUp",
+        Key::PageDown => "PageDown",
+        Key::ArrowUp => "ArrowUp",
+        Key::ArrowDown => "ArrowDown",
+        Key::ArrowLeft => "ArrowLeft",
+        Key::ArrowRight => "ArrowRight",
+        other => {
+            let name = other.name();
+            let plain = name.len() == 1 && name.as_bytes()[0].is_ascii_alphanumeric();
+            let function = name.starts_with('F') && name[1..].parse::<u8>().is_ok();
+            return (plain || function).then(|| name.to_owned());
+        }
+    };
+    Some(named.to_owned())
+}
+
+/// The text a pressed key stands for, in the spelling `parse` takes (`Ctrl+Alt+Grave`). `None` for
+/// Escape, which cancels, and for keys that have no name here.
+pub(crate) fn spell(modifiers: egui::Modifiers, key: egui::Key) -> Option<String> {
+    let main = key_name(key)?;
+    let held = [
+        (modifiers.ctrl, "Ctrl"),
+        (modifiers.alt, "Alt"),
+        (modifiers.shift, "Shift"),
+        (modifiers.mac_cmd, "Cmd"),
+    ];
+    let mut parts: Vec<&str> = held.iter().filter(|(on, _)| *on).map(|(_, name)| *name).collect();
+    parts.push(&main);
+    Some(parts.join("+"))
+}
+
+/// What each key of a hotkey text shows on its cap: `Grave` as a backtick, the rest as typed.
+pub(crate) fn cap_labels(text: &str) -> Vec<String> {
+    text.split('+')
+        .map(str::trim)
+        .filter(|part| !part.is_empty())
+        .map(|part| {
+            let symbol = match part.to_ascii_lowercase().as_str() {
+                "grave" | "backquote" => "`",
+                "escape" => "Esc",
+                "minus" => "-",
+                "equal" => "=",
+                "comma" => ",",
+                "period" => ".",
+                "slash" => "/",
+                "backslash" => "\\",
+                "semicolon" => ";",
+                "quote" => "'",
+                "bracketleft" => "[",
+                "bracketright" => "]",
+                _ => return part.to_owned(),
+            };
+            symbol.to_owned()
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -259,5 +339,36 @@ mod tests {
     fn tidewatch_and_stdusk_do_not_share_a_default() {
         let tidewatch = parse(tidewatch_core::prefs::QUAKE_HOTKEY_DEFAULT).unwrap();
         assert_ne!(tidewatch, parse("Ctrl+Grave").unwrap());
+    }
+
+    #[test]
+    fn a_pressed_chord_is_spelled_the_way_parse_reads_it() {
+        let mods = egui::Modifiers { ctrl: true, alt: true, ..egui::Modifiers::NONE };
+        assert_eq!(spell(mods, egui::Key::Backtick).as_deref(), Some("Ctrl+Alt+Grave"));
+        let mods = egui::Modifiers { mac_cmd: true, shift: true, ..egui::Modifiers::NONE };
+        assert_eq!(spell(mods, egui::Key::T).as_deref(), Some("Shift+Cmd+T"));
+        assert_eq!(spell(egui::Modifiers::NONE, egui::Key::F13).as_deref(), Some("F13"));
+        assert_eq!(spell(egui::Modifiers::NONE, egui::Key::Escape), None);
+    }
+
+    #[test]
+    fn every_key_that_can_be_spelled_parses_back_to_a_key() {
+        let mods = egui::Modifiers { ctrl: true, ..egui::Modifiers::NONE };
+        let mut spelled = 0;
+        for key in egui::Key::ALL {
+            let Some(text) = spell(mods, *key) else { continue };
+            spelled += 1;
+            assert!(parse(&text).is_ok(), "{key:?} became {text}");
+        }
+        assert!(spelled > 60, "{spelled}");
+    }
+
+    #[test]
+    fn caps_show_symbols_where_the_name_is_long() {
+        assert_eq!(cap_labels("Ctrl+Alt+Grave"), ["Ctrl", "Alt", "`"]);
+        assert_eq!(cap_labels("Cmd + Shift + bracketleft"), ["Cmd", "Shift", "["]);
+        assert_eq!(cap_labels("F13"), ["F13"]);
+        assert_eq!(cap_labels("Ctrl+"), ["Ctrl"]);
+        assert_eq!(cap_labels(""), Vec::<String>::new());
     }
 }

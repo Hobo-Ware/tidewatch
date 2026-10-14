@@ -42,6 +42,22 @@ fn multiline_field(ui: &mut egui::Ui, text: &mut String, hint: &str) -> bool {
     .inner
 }
 
+pub(crate) fn page_in(
+    ui: &mut egui::Ui,
+    area: Rect,
+    editor: &mut Editor,
+    _file: &str,
+) -> Option<crate::settings_view::Action> {
+    ui.scope_builder(UiBuilder::new().max_rect(area.shrink(16.0)), |ui| {
+        ui.spacing_mut().item_spacing.y = 6.0;
+        let body_height = (ui.available_height() - 44.0).max(120.0);
+        page(ui, editor, body_height);
+        ui.add_space(4.0);
+        crate::profiles_view::footer(ui, editor.error.as_deref(), editor.saving, editor.dirty)
+    })
+    .inner
+}
+
 pub(crate) fn page(ui: &mut egui::Ui, editor: &mut Editor, height: f32) {
     let top = ui.cursor().min;
     let left = Rect::from_min_size(top, Vec2::new(LIST_WIDTH, height));
