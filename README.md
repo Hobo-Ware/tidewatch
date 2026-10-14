@@ -22,12 +22,12 @@ Status: v0.1.0, the first release. Showcase page: [tidewatch.hoboware.dev](https
 - **Overview and focus mode.** Overview lists every tab with its state: working, needs you, done or failed. Focus mode hides the history and diff so the terminal gets the whole window.
 - **Session restore.** Quitting saves your tabs. The next launch brings them back and resumes the agents where the CLI can. `--no-restore` or a setting turns it off.
 - **Folder trust.** On first launch Tidewatch asks once before it marks its worktree folder as trusted in the agent CLIs' own config files, so they stop asking in every new worktree. It changes nothing without a yes, and Settings can undo it.
-- **House style.** One file, `~/.config/tidewatch/house-style.md`, tells every agent how to write its answers (summary first, file references, a Done / Needs you / Next block). Edit it freely: Tidewatch never overwrites it.
+- **House style.** One file, `~/.config/tidewatch/house-style.md`, tells every agent how to write its answers (summary first, file references, a Done / Needs you / Next block). Edit it freely: Tidewatch never overwrites it. Settings, House style opens it in your editor and can put the default text back.
 - **Quake window, palette, updates.** A drop-down window on a hotkey, a command palette, and update checks; see below.
 
 ## Quake window
 
-Tidewatch drops from the top of the screen on `Ctrl+Alt+Grave` (stdusk keeps `Ctrl+Grave`, so both can run) and hides when you click elsewhere. There is a menu-bar item with Show / Hide, Overview, Settings and Quit. Settings, General, Window turns the drop-down off for a plain window and changes the hotkey. `tidewatch <path>` for a repo that already has a window brings that window forward instead of opening another. `tidewatch --toggle` shows or hides the running windows: on Wayland, which has no global hotkeys, bind it to a desktop shortcut.
+Tidewatch drops from the top of the screen on `Ctrl+Alt+Grave` (stdusk keeps `Ctrl+Grave`, so both can run) and hides when you click elsewhere. There is a menu-bar item with Show / Hide, Overview, Settings and Quit. Settings, General, Window turns the drop-down off for a plain window and records a new hotkey: click the key caps and press the keys. `tidewatch <path>` for a repo that already has a window brings that window forward instead of opening another. `tidewatch --toggle` shows or hides the running windows: on Wayland, which has no global hotkeys, bind it to a desktop shortcut.
 
 ## Keyboard
 
