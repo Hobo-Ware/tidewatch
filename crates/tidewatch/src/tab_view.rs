@@ -20,9 +20,10 @@ use tidewatch_core::notes::Notes;
 
 use tidewatch_core::paths::TidewatchPaths;
 
+use crate::file_nav;
 use crate::jobs::Jobs;
 use crate::pane::{Body, Pane};
-use crate::pane_jobs::{self, Done};
+use crate::pane_jobs::{self, Done, LineCounts};
 use crate::repo::Workspace;
 use crate::tabs::{MAIN_TITLE, Tab};
 
@@ -97,6 +98,26 @@ impl ViewSpec {
     }
 }
 
+/// What takes the left column of the side layout.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Left {
+    Terminal,
+    File,
+}
+
+/// Whether the selected row shows its files under it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Tree {
+    Closed,
+    Open,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Counting {
+    Off,
+    On,
+}
+
 pub(crate) struct OpenDiff {
     pub(crate) diff: FileDiff,
     pub(crate) body: DiffBody,
@@ -140,7 +161,13 @@ pub(crate) struct TabView {
     source_requested: Option<Source>,
     pub(crate) shown_source: Option<Source>,
     pub(crate) files: Vec<FileChange>,
+    pub(crate) counts: Vec<Option<LineCounts>>,
     pub(crate) file: Option<String>,
+    tree: Tree,
+    left: Left,
+    opened: Option<String>,
+    room_for: Option<Selection>,
+    counting: Counting,
     pub(crate) open: Option<OpenDiff>,
     pub(crate) layout: DiffLayout,
     pub(crate) summary: Option<(ObjectId, Summary)>,
@@ -177,7 +204,13 @@ impl TabView {
             source_requested: None,
             shown_source: None,
             files: Vec::new(),
+            counts: Vec::new(),
             file: None,
+            tree: Tree::Closed,
+            left: Left::Terminal,
+            opened: None,
+            room_for: None,
+            counting: Counting::Off,
             open: None,
             layout: DiffLayout::default(),
             summary: None,
@@ -252,6 +285,92 @@ impl TabView {
     pub(crate) fn select_file(&mut self, path: &str) {
         self.file = Some(path.to_owned());
         self.want_file = Some(path.to_owned());
+    }
+
+    /// A click on a row of the tree: it opens its files, or closes them when they were open.
+    pub(crate) fn click_row(&mut self, selection: Selection) {
+        if self.expanded() && self.selection() == Some(selection) {
+            self.tree = Tree::Closed;
+            return;
+        }
+        self.select(selection);
+        self.expand();
+        self.room_for = Some(selection);
+    }
+
+    pub(crate) fn expanded(&self) -> bool {
+        self.tree == Tree::Open
+    }
+
+    pub(crate) fn expand(&mut self) {
+        self.tree = Tree::Open;
+    }
+
+    /// Once per opening: whether the card should scroll its row up to make room.
+    pub(crate) fn take_needs_room(&mut self) -> bool {
+        self.room_for.take().is_some()
+    }
+
+    /// A click on a file of the open commit: its diff takes the terminal's place.
+    pub(crate) fn open_file(&mut self, path: &str) {
+        self.select_file(path);
+        self.left = Left::File;
+        self.opened = Some(path.to_owned());
+    }
+
+    pub(crate) fn file_open(&self) -> bool {
+        self.left == Left::File
+    }
+
+    pub(crate) fn back_to_terminal(&mut self) {
+        self.left = Left::Terminal;
+    }
+
+    /// Flips between the terminal and the last file opened. Returns false when there is no file to
+    /// go to yet.
+    pub(crate) fn toggle_file_view(&mut self) -> bool {
+        if self.file_open() {
+            self.back_to_terminal();
+            return true;
+        }
+        let can = self.opened.is_some() && self.file.is_some();
+        if can {
+            self.left = Left::File;
+        }
+        can
+    }
+
+    pub(crate) fn step_file(&mut self, delta: isize) {
+        if let Some(path) =
+            file_nav::step_file(&self.files, self.file.as_deref(), delta).map(str::to_owned)
+        {
+            self.open_file(&path);
+        }
+    }
+
+    /// The previous or next row of the tree, opened, with the file view staying where it is.
+    pub(crate) fn step_commit(&mut self, delta: isize) {
+        let Some(loaded) = &self.loaded else { return };
+        let next = file_nav::step_row(
+            self.selection(),
+            !self.changes().is_empty(),
+            loaded.history.len(),
+            delta,
+        );
+        if let Some(selection) = next {
+            self.select(selection);
+            self.expand();
+            self.graph.scroll_to = Some(selection);
+        }
+    }
+
+    /// Whether the file jobs also count each file's lines, which only the side layout shows.
+    pub(crate) fn set_counted(&mut self, on: bool) {
+        let counting = if on { Counting::On } else { Counting::Off };
+        if counting == Counting::On && self.counting == Counting::Off {
+            self.want.insert(Request::Files);
+        }
+        self.counting = counting;
     }
 
     pub(crate) fn reload_after_checkout(&mut self) {
@@ -362,6 +481,7 @@ impl TabView {
                     self.dir.clone(),
                     source,
                     self.file.clone(),
+                    self.counting == Counting::On,
                 ),
                 None => self.clear_diff(),
             }
@@ -377,6 +497,7 @@ impl TabView {
 
     fn clear_diff(&mut self) {
         self.files.clear();
+        self.counts.clear();
         self.open = None;
         self.shown_source = None;
     }
@@ -449,8 +570,9 @@ impl TabView {
         self.tickets.diff += 1;
         match result {
             Ok(files) => {
-                let pane_jobs::Files { list, shown } = *files;
+                let pane_jobs::Files { list, shown, counts } = *files;
                 self.files = list;
+                self.counts = counts;
                 self.shown_source = Some(source);
                 self.error = None;
                 match shown {
@@ -833,6 +955,97 @@ mod tests {
             result: Ok(Box::new(tidewatch_core::history::load(&repo, Scope::Current).unwrap())),
         });
         assert!(view.loaded.is_none());
+    }
+
+    fn started_view(repo: &std::path::Path, notes: PathBuf, jobs: &Jobs<Done>) -> TabView {
+        let ctx = egui::Context::default();
+        let mut view = view_for(repo, notes);
+        view.set_counted(true);
+        view.start();
+        pump(&mut view, jobs, &ctx, |v| v.open.is_some() && !v.is_loading_source());
+        view
+    }
+
+    #[test]
+    fn a_click_on_a_row_opens_its_files_and_a_second_click_closes_them() {
+        let (_dir, repo) = repo();
+        let jobs = Jobs::new();
+        let mut view = started_view(&repo, repo.join("notes.json"), &jobs);
+        assert!(!view.expanded());
+        view.click_row(Selection::Commit(0));
+        assert!(view.expanded());
+        view.click_row(Selection::Commit(0));
+        assert!(!view.expanded());
+        view.click_row(Selection::Commit(0));
+        view.click_row(Selection::Commit(1));
+        assert!(view.expanded(), "another row opens in place of the first");
+        assert_eq!(view.selection(), Some(Selection::Commit(1)));
+    }
+
+    #[test]
+    fn the_file_jobs_count_each_files_lines_once_counting_is_on() {
+        let (_dir, repo) = repo();
+        let jobs = Jobs::new();
+        let view = started_view(&repo, repo.join("notes.json"), &jobs);
+        let mut got: Vec<_> = view
+            .files
+            .iter()
+            .zip(&view.counts)
+            .map(|(file, counts)| (file.path.as_str(), *counts))
+            .collect();
+        got.sort_unstable();
+        assert_eq!(got, [("a.txt", Some((1, 0))), ("b.txt", Some((1, 0)))]);
+    }
+
+    #[test]
+    fn the_toggle_needs_a_file_that_was_opened_and_goes_back_and_forth() {
+        let (_dir, repo) = repo();
+        let jobs = Jobs::new();
+        let mut view = started_view(&repo, repo.join("notes.json"), &jobs);
+        assert!(!view.toggle_file_view(), "the auto-loaded first diff is not an opened file");
+        assert!(!view.file_open());
+        view.open_file("b.txt");
+        assert!(view.file_open());
+        view.back_to_terminal();
+        assert!(!view.file_open());
+        assert!(view.toggle_file_view());
+        assert!(view.file_open());
+        assert!(view.toggle_file_view());
+        assert!(!view.file_open());
+    }
+
+    #[test]
+    fn stepping_files_opens_the_neighbour_and_stops_at_the_ends() {
+        let (_dir, repo) = repo();
+        let jobs = Jobs::new();
+        let ctx = egui::Context::default();
+        let mut view = started_view(&repo, repo.join("notes.json"), &jobs);
+        let first = view.files[0].path.clone();
+        let second = view.files[1].path.clone();
+        view.select_file(&first);
+        view.step_file(1);
+        assert_eq!(view.file.as_deref(), Some(second.as_str()));
+        assert!(view.file_open());
+        view.step_file(1);
+        assert_eq!(view.file.as_deref(), Some(second.as_str()));
+        view.step_file(-1);
+        assert_eq!(view.file.as_deref(), Some(first.as_str()));
+        pump(&mut view, &jobs, &ctx, |v| v.open.as_ref().is_some_and(|o| o.diff.path == first));
+    }
+
+    #[test]
+    fn stepping_commits_moves_the_selection_opens_it_and_leaves_the_file_view_alone() {
+        let (_dir, repo) = repo();
+        let jobs = Jobs::new();
+        let mut view = started_view(&repo, repo.join("notes.json"), &jobs);
+        view.open_file("a.txt");
+        view.step_commit(1);
+        assert_eq!(view.selection(), Some(Selection::Commit(1)));
+        assert!(view.expanded() && view.file_open());
+        view.step_commit(1);
+        assert_eq!(view.selection(), Some(Selection::Commit(1)), "the oldest commit is the end");
+        view.step_commit(-1);
+        assert_eq!(view.selection(), Some(Selection::Commit(0)));
     }
 
     #[test]

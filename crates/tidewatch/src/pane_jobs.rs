@@ -48,7 +48,14 @@ impl Done {
 pub(crate) struct Files {
     pub(crate) list: Vec<FileChange>,
     pub(crate) shown: Option<(String, Result<FileDiff, String>)>,
+    pub(crate) counts: Vec<Option<LineCounts>>,
 }
+
+/// Lines a file added and removed, the `+3 -1` of the tree's file rows.
+pub(crate) type LineCounts = (usize, usize);
+
+/// Files past this many get no counts: a commit this wide is read through its list, not its sums.
+pub(crate) const COUNTED_FILES: usize = 60;
 
 pub(crate) fn load_history(
     jobs: &Jobs<Done>,
@@ -90,22 +97,35 @@ pub(crate) fn load_files(
     dir: PathBuf,
     source: Source,
     prefer: Option<String>,
+    counted: bool,
 ) {
     jobs.spawn(ctx, move || Done::Files {
         tab,
         ticket,
         source,
-        result: files(&dir, source, prefer.as_deref()).map(Box::new).map_err(|e| format!("{e:#}")),
+        result: files(&dir, source, prefer.as_deref(), counted)
+            .map(Box::new)
+            .map_err(|e| format!("{e:#}")),
     });
 }
 
-fn files(dir: &Path, source: Source, prefer: Option<&str>) -> anyhow::Result<Files> {
+fn files(dir: &Path, source: Source, prefer: Option<&str>, counted: bool) -> anyhow::Result<Files> {
     let list = history::changed_files(dir, source)?;
     let shown = pick_file(&list, prefer).map(|path| {
         let diff = history::file_diff(dir, source, path).map_err(|e| format!("{e:#}"));
         (path.to_owned(), diff)
     });
-    Ok(Files { list, shown })
+    let counts = list
+        .iter()
+        .take(if counted { COUNTED_FILES } else { 0 })
+        .map(|change| match &shown {
+            Some((path, Ok(diff))) if *path == change.path => Some((diff.added, diff.removed)),
+            _ => history::file_diff(dir, source, &change.path)
+                .ok()
+                .map(|diff| (diff.added, diff.removed)),
+        })
+        .collect();
+    Ok(Files { list, shown, counts })
 }
 
 pub(crate) fn pick_file<'a>(list: &'a [FileChange], prefer: Option<&str>) -> Option<&'a str> {
