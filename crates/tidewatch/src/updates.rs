@@ -17,8 +17,8 @@ pub(crate) struct Updates {
 }
 
 impl Updates {
-    /// `fake` is `TIDEWATCH_FAKE_UPDATE`; `screenshot` is a screenshot run. Either one keeps the
-    /// updater off the network and off the installer.
+    /// `fake` is `TIDEWATCH_FAKE_UPDATE`; `screenshot` is a screenshot run. Either one, and every test
+    /// build, keeps the updater off the network and off the installer, Check now included.
     pub(crate) fn new(
         ctx: &egui::Context,
         prefs: UpdatePrefs,
@@ -31,7 +31,7 @@ impl Updates {
             version: env!("CARGO_PKG_VERSION").to_owned(),
         };
         let mut updater = Updater::new(ctx.clone(), config);
-        let quiet = screenshot || fake.is_some();
+        let quiet = offline(screenshot, fake.is_some(), cfg!(test));
         if let Some(release) = fake {
             updater.status = Status::Available(release);
         }
@@ -49,7 +49,9 @@ impl Updates {
     }
 
     pub(crate) fn check_now(&mut self) {
-        self.updater.check_now();
+        if !self.quiet {
+            self.updater.check_now();
+        }
     }
 
     pub(crate) fn mode(&self) -> Mode {
@@ -74,6 +76,10 @@ impl Updates {
         self.prefs.install = on;
         self.prefs.clone()
     }
+}
+
+fn offline(screenshot: bool, fake: bool, test_build: bool) -> bool {
+    screenshot || fake || test_build
 }
 
 /// Whether the background check runs, and whether it may install what it finds.
@@ -157,7 +163,8 @@ mod tests {
         fake.tick();
         assert_eq!(fake.updater.status, Status::Available(release("9.9.9")));
         assert!(updates(None, true).quiet);
-        assert!(!updates(None, false).quiet);
+        assert!(!offline(false, false, false));
+        assert!(offline(false, false, true));
     }
 
     #[test]
@@ -202,5 +209,12 @@ mod tests {
         let prefs = Prefs::load(&paths);
         assert_eq!(prefs.updates, wanted);
         assert!(!prefs.restore_session);
+    }
+
+    #[test]
+    fn check_now_stays_off_the_network_in_a_quiet_run() {
+        let mut updates = updates(None, true);
+        updates.check_now();
+        assert_eq!(updates.updater.status, Status::Idle);
     }
 }
