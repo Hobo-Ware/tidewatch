@@ -44,8 +44,7 @@ impl Tidewatch {
         self.leftovers.show(ctx, self.paths.as_ref(), self.trust.grant().as_ref());
         flow_glue::dialogs(ctx, &mut self.flow, active_id);
         if let Some(state) = &mut self.new_tab
-            && let Some(outcome) =
-                new_tab_dialog::show(ctx, state, &self.catalog, self.paths.as_ref())
+            && let Some(outcome) = new_tab_dialog::show(ctx, state, &self.catalog)
         {
             self.answer_new_tab(outcome, ctx);
         }

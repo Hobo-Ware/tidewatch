@@ -91,7 +91,7 @@ impl DevAgent {
             (Some(profile), ..) => (Mode::Start, Some(profile.to_owned())),
             (None, Some(workflow), ..) => (Mode::Start, Some(format!("workflow:{workflow}"))),
             (None, None, Some(name), ..) => (Mode::Resume, Some(name.to_owned())),
-            (None, None, None, Some("1"), ..) => (Mode::Dialog, None),
+            (None, None, None, Some("1" | "choose"), ..) => (Mode::Dialog, None),
             (None, None, None, Some(profile), ..) => (Mode::Dialog, Some(profile.to_owned())),
             (None, None, None, None, Some(page), _) => (Mode::Settings, Some(page.to_owned())),
             (None, None, None, None, None, Some(query)) => {

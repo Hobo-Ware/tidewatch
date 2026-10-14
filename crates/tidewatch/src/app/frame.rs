@@ -39,6 +39,12 @@ impl Tidewatch {
             self.adopt_workspace(workspace, ctx);
         }
         self.drain_picked(ctx);
+        if self.bases.drain()
+            && let Some(state) = &mut self.new_tab
+        {
+            let base = self.bases.get(state.repo()).map(str::to_owned);
+            state.set_base(base);
+        }
         for event in self.shell.tick(ctx) {
             self.shell_event(&event, ctx);
         }

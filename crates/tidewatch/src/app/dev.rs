@@ -6,6 +6,7 @@ use super::Tidewatch;
 use crate::dev_agent::Mode as DevMode;
 use crate::dev_panes;
 use crate::dev_session::LeftoverStep;
+use crate::new_tab::Kind;
 use crate::note_actions;
 use crate::pane::Body;
 use crate::repo::Workspace;
@@ -37,18 +38,29 @@ impl Tidewatch {
             self.dev_resume(ctx, dev.profile.as_deref().unwrap_or_default());
             return;
         }
-        let mut state = self.dialog_state(dev.profile.as_deref());
+        let mut state = self.dialog_state(None);
+        match dev.profile.as_deref() {
+            None => {}
+            Some("agent") => {
+                state.choose(Kind::Agent, &self.catalog);
+            }
+            Some("workflow") => {
+                state.choose(Kind::Workflow, &self.catalog);
+            }
+            Some(preselect) => state.jump(preselect, &self.catalog),
+        }
         if let Some(level) = dev.level
             && !state.set_level(level, &self.catalog)
         {
             eprintln!("tidewatch: dev agent not started: {} is not open here", level.label());
             return;
         }
-        state.task = dev.task;
-        state.task_edited();
         match dev.mode {
             DevMode::Settings | DevMode::Palette | DevMode::Resume => {}
-            DevMode::Dialog => self.new_tab = Some(state),
+            DevMode::Dialog => {
+                self.bases.refresh(ctx, state.repo());
+                self.new_tab = Some(state);
+            }
             DevMode::Start => match state.request(&self.catalog) {
                 Ok(request) => self.open_tab(ctx, request),
                 Err(reason) => eprintln!("tidewatch: dev agent not started: {reason}"),
