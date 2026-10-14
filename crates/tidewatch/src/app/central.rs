@@ -10,6 +10,7 @@ use tidewatch_core::status::AgentStatus;
 
 use super::Tidewatch;
 use super::frame::FrameIntent;
+use super::repos::RepoCommand;
 use super::terminal::TerminalGrid;
 use crate::commands::Command;
 use crate::delivery_card::Delivery;
@@ -19,7 +20,7 @@ use crate::tabs::Action;
 use crate::workflow_run::TabRun;
 use crate::{
     agent_status_line, delivery_view, end_block_view, layout, overview, overview_view, reader_glue,
-    stepper_view, workflow_start_view,
+    stepper_view, welcome_view, workflow_start_view,
 };
 
 const EMPTY_PANELS_H: f32 = 200.0;
@@ -63,7 +64,7 @@ impl Tidewatch {
     ) {
         egui::CentralPanel::default().frame(Frame::new().fill(colors::bg())).show(ui, |ui| {
             let area = ui.max_rect();
-            if self.overview && self.settings.is_none() {
+            if self.overview && self.settings.is_none() && self.welcome.is_none() {
                 self.show_overview(ui, area, ctx, now, frame);
                 return;
             }
@@ -71,8 +72,23 @@ impl Tidewatch {
                 frame.settings_action = self.show_settings_page(ui, area);
                 return;
             }
+            if self.welcome.is_some() {
+                self.show_welcome(ui, area, frame);
+                return;
+            }
             self.show_workspace(ui, area, ctx, now, frame);
         });
+    }
+
+    fn show_welcome(&mut self, ui: &mut egui::Ui, area: egui::Rect, frame: &mut FrameIntent) {
+        let home = self.paths.as_ref().and_then(|paths| paths.root().parent());
+        let recent = self.welcome.as_deref().unwrap_or_default();
+        match welcome_view::show(ui, area, recent, home, &Command::OpenRepo.keys()) {
+            Some(welcome_view::Action::Open) => frame.repo_command = Some(RepoCommand::Open),
+            Some(welcome_view::Action::Recent(dir)) => frame.open_dir = Some(dir),
+            None => {}
+        }
+        self.show_toast_pill(ui);
     }
 
     fn show_overview(

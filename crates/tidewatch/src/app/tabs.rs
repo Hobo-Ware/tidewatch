@@ -27,6 +27,10 @@ impl Tidewatch {
         if self.new_tab.is_some() {
             return;
         }
+        if self.welcome.is_some() {
+            self.run_repo_command(super::repos::RepoCommand::Open, ctx);
+            return;
+        }
         if self.paths.is_none() {
             self.open_tab(ctx, Request::Shell);
             return;
@@ -228,6 +232,9 @@ impl Tidewatch {
         self.settings = None;
         self.overview = false;
         match action {
+            Action::New if self.welcome.is_some() => {
+                self.run_repo_command(super::repos::RepoCommand::Open, ctx);
+            }
             Action::New => self.new_tab(ctx),
             Action::CloseActive => self.close_tab(self.tabs.active(), ctx),
             Action::Close(index) => self.close_tab(index, ctx),

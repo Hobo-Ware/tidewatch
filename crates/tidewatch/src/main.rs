@@ -98,6 +98,8 @@ mod trust_glue;
 mod trust_view;
 mod updates;
 mod updates_view;
+mod welcome;
+mod welcome_view;
 mod window_settings;
 mod window_view;
 mod workflow_ask;
@@ -132,6 +134,7 @@ fn main() -> eframe::Result<()> {
         std::process::exit(single_instance::toggle_running(paths.as_ref()));
     }
     let prefs = paths.as_ref().map(Prefs::load).unwrap_or_default();
+    let has_path_arg = args.path.is_some();
     let opening = last_workspace::pick(
         args.path,
         std::env::current_dir().ok(),
@@ -139,6 +142,7 @@ fn main() -> eframe::Result<()> {
         |dir| Repo::discover(dir).is_some(),
         Path::is_dir,
     );
+    let welcome = last_workspace::is_blank_launch(has_path_arg, &opening);
     let restoring = !args.no_restore && prefs.restore_session;
     let workspaces = open_workspaces(&opening, restoring);
     let workspace = &workspaces[0];
@@ -202,6 +206,7 @@ fn main() -> eframe::Result<()> {
                 screenshot,
                 home.as_deref(),
                 args.no_restore,
+                welcome,
                 setup,
             )))
         }),

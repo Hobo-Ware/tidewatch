@@ -71,6 +71,7 @@ use crate::tabs::Tabs;
 use crate::toast::Toast;
 use crate::trust_glue::Trust;
 use crate::updates::Updates;
+use crate::welcome::{Recent, recent_repos};
 use crate::workflow_glue::{self};
 use crate::workflow_run::Exec;
 use crate::worktree_jobs::Done;
@@ -112,6 +113,7 @@ pub(crate) struct Tidewatch {
     settings: Option<Settings>,
     palette: Option<Palette>,
     last_profile: Option<String>,
+    welcome: Option<Vec<Recent>>,
     bases: Bases,
     hooks: Hooks,
     flow: Flow,
@@ -144,6 +146,7 @@ impl Tidewatch {
         screenshot: Option<DevScreenshot>,
         cli_home: Option<&Path>,
         no_restore: bool,
+        welcome: bool,
         shell: shell::Setup,
     ) -> Self {
         colors::init(colors::by_name(DEFAULT_THEME));
@@ -159,6 +162,7 @@ impl Tidewatch {
         for main in shells {
             tabs.add_group(main);
         }
+        let recent = welcome.then(|| recent_repos(paths.as_ref()));
         let hooks = Hooks::start(paths.as_ref(), &cc.egui_ctx);
         let dev_flow = DevFlow::from_env();
         let flow = Flow::new(Tools::with_path(dev_flow.tool_path(agent_path.clone())));
@@ -200,6 +204,7 @@ impl Tidewatch {
             settings: None,
             palette: None,
             last_profile: None,
+            welcome: recent,
             bases: Bases::new(),
             hooks,
             flow,
@@ -222,7 +227,7 @@ impl Tidewatch {
             updates,
             shell: shell::start(&cc.egui_ctx, shell),
         };
-        for (group, workspace) in app.workspaces.iter().enumerate() {
+        for (group, workspace) in app.workspaces.iter().enumerate().filter(|_| !welcome) {
             app.restore.enqueue(group, workspace);
             app.bases.refresh(&cc.egui_ctx, workspace.dir());
         }
@@ -266,7 +271,9 @@ impl eframe::App for Tidewatch {
 
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
         self.shell.set_closing(true);
-        self.last_used.record(&workspaces::remembered(&self.workspaces, &self.tabs));
+        if self.welcome.is_none() {
+            self.last_used.record(&workspaces::remembered(&self.workspaces, &self.tabs));
+        }
         self.saver.flush(
             self.restore.settled(),
             workspaces::window_views(&self.workspaces, self.focus),

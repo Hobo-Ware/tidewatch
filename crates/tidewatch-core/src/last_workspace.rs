@@ -53,6 +53,14 @@ pub fn pick(
     Opening::only(cwd.unwrap_or_else(|| PathBuf::from(".")))
 }
 
+/// Whether a launch has nothing to open: no path on the command line, nothing remembered to bring
+/// back, and the working folder is the root, which is where the Finder starts an app. The window then
+/// asks for a repo instead of opening a shell in `/`.
+#[must_use]
+pub fn is_blank_launch(has_path_arg: bool, opening: &Opening) -> bool {
+    !has_path_arg && opening.also.is_empty() && opening.dir == Path::new("/")
+}
+
 /// A missing or unreadable file is no folder: a bad state file must never stop the app.
 #[must_use]
 pub fn load(paths: &TidewatchPaths) -> Option<Remembered> {
@@ -122,6 +130,16 @@ mod tests {
     fn nothing_remembered_keeps_todays_behavior() {
         assert_eq!(pick_with(None, Some("/"), None, false, true), PathBuf::from("/"));
         assert_eq!(pick_with(None, None, None, false, true), PathBuf::from("."));
+    }
+
+    #[test]
+    fn only_a_launch_from_the_root_with_nothing_to_bring_back_is_blank() {
+        let opening = |dir: &str| Opening::only(PathBuf::from(dir));
+        assert!(is_blank_launch(false, &opening("/")));
+        assert!(!is_blank_launch(true, &opening("/")), "a path was asked for");
+        assert!(!is_blank_launch(false, &opening("/work/notes")), "a folder is a place to work");
+        let also = Opening { dir: PathBuf::from("/"), also: vec![PathBuf::from("/work/web")] };
+        assert!(!is_blank_launch(false, &also));
     }
 
     #[test]
