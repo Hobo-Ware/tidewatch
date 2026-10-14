@@ -36,7 +36,7 @@ Tidewatch drops from the top of the screen on `Ctrl+Alt+Grave` (stdusk keeps `Ct
 
 ## Updates
 
-Tidewatch checks GitHub for a new release about once an hour and when its window comes back into focus. On macOS, installed from the Homebrew cask, it runs `brew upgrade --cask` in the background and the pill in the top bar asks for a restart. Everywhere else (Linux, a macOS copy that was not installed with Homebrew) it only says "Tidewatch X is out" and the pill opens the release page. Settings, General, Updates has Check now and the two switches (`[updates]` in `settings.toml`: `check`, `install`). A check that fails on its own is silent; Check now shows why. After an install, Restart opens the folder you used last, and the tabs and agents come back through session restore.
+Tidewatch checks GitHub for a new release about once an hour and when its window comes back into focus. On macOS, installed from the Homebrew cask, it runs `brew upgrade --cask` in the background and the pill in the top bar asks for a restart. Everywhere else (Linux, a macOS copy that was not installed with Homebrew) it only says "Tidewatch X is out" and the pill opens the release page. Settings, General, Updates has Check now and the two switches (`[updates]` in `settings.toml`: `check`, `install`). A check that fails on its own is silent; Check now shows why. After an install, Restart starts the new version and hands it every terminal: shells and agents keep running where they were (no resume), and the new window picks up the same tabs and repos. If the hand-over cannot complete, the old window stays open and says why; session restore still covers a quit or a crash.
 
 ## Install
 
