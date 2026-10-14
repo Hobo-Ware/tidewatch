@@ -3,6 +3,7 @@
 
 use std::path::{Path, PathBuf};
 
+use serde::{Deserialize, Serialize};
 use tidewatch_core::agents::Level;
 use tidewatch_core::prepare::Prepared;
 use tidewatch_core::worktree::Worktree;
@@ -24,7 +25,7 @@ pub(crate) enum Body<T> {
 }
 
 /// How an agent was started, which is what a restart needs to start it again.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct Launched {
     /// The `profiles.toml` key, or the profile's name for a workflow stage.
     pub(crate) profile_id: String,
@@ -35,7 +36,7 @@ pub(crate) struct Launched {
 
 /// Whether an agent tab still waits for its first message, which is typed in the tab, not in the
 /// new-tab dialog.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) enum FirstPrompt {
     /// The agent was given its task at launch, or the tab was resumed.
     #[default]

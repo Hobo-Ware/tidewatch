@@ -19,6 +19,7 @@ kelp-core.workspace = true
 kelp-ui.workspace = true
 rfd = "0.17.2"
 stdusk-core.workspace = true
+serde.workspace = true
 shell-words.workspace = true
 stdusk-egui.workspace = true
 tidewatch-core.workspace = true

@@ -5572,6 +5572,7 @@ dependencies = [
  "objc2-foundation 0.3.2",
  "objc2-service-management",
  "rfd",
+ "serde",
  "shell-words",
  "stdusk-core",
  "stdusk-egui",
