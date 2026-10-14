@@ -480,3 +480,27 @@ fn a_process_that_failed_fails_the_stage_unless_the_launch_is_still_on_its_way()
     let other = Change { from: AgentStatus::Working, to: AgentStatus::Done };
     assert_eq!(failures(&mut f.tabs, &[(tab, other)]), Vec::new());
 }
+
+#[test]
+fn a_workflow_opened_with_no_task_waits_in_its_tab_and_starts_only_on_start_run() {
+    let mut f = Fixture::new("true");
+    let tab = f.open(Start::New(Box::new(Fixture::ship(""))), None);
+    let deadline = Instant::now() + Duration::from_secs(30);
+    while f.run_exists(tab) != Some(true) {
+        f.tick();
+        assert!(Instant::now() < deadline, "the tab never got its run");
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    f.tick();
+    assert!(f.run(tab).awaiting_task());
+    assert_eq!((f.spawned.get(), f.shells.get()), (0, 1), "a shell in the worktree, no agent");
+    let worktree = f.tabs.get_mut(tab).unwrap().pane.worktree.clone().unwrap();
+    let saved = saved_run(&f.paths, &worktree).expect("the waiting run is saved");
+    assert_eq!(*saved.phase(), Phase::Idle);
+
+    let execs = f.run(tab).start_with("add a retry");
+    f.asked.push((tab, execs));
+    f.until_asked(tab);
+    assert!(!f.run(tab).awaiting_task());
+    assert!(f.spawned.get() >= 1, "stage 1 launched its agent");
+}

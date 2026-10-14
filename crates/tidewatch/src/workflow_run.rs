@@ -54,6 +54,8 @@ pub(crate) struct RunUi {
     pub(crate) test_command: String,
     /// The field that was just shown takes the keyboard, once.
     pub(crate) focus_field: bool,
+    pub(crate) task: String,
+    pub(crate) focus_task: bool,
 }
 
 pub(crate) struct TabRun {
@@ -64,6 +66,7 @@ pub(crate) struct TabRun {
     launching: bool,
     pub(crate) ui: RunUi,
     pub(crate) save_error: Option<String>,
+    blurb: String,
 }
 
 fn stop_text(runner: &Runner, reason: StopReason) -> String {
@@ -98,15 +101,47 @@ impl TabRun {
         stages_file: Option<PathBuf>,
         test_timeout: Duration,
     ) -> Self {
+        let waiting = *runner.phase() == Phase::Idle && runner.context().task.trim().is_empty();
+        let ui = RunUi { focus_task: waiting, ..RunUi::default() };
         Self {
             runner,
             stages_file,
             test_timeout,
             generation: 0,
             launching: false,
-            ui: RunUi::default(),
+            ui,
             save_error: None,
+            blurb: String::new(),
         }
+    }
+
+    pub(crate) fn with_blurb(mut self, blurb: String) -> Self {
+        self.blurb = blurb;
+        self
+    }
+
+    pub(crate) fn blurb(&self) -> &str {
+        &self.blurb
+    }
+
+    pub(crate) fn awaiting_task(&self) -> bool {
+        *self.runner.phase() == Phase::Idle && self.runner.context().task.trim().is_empty()
+    }
+
+    /// Saves the run as it is, so a tab that is closed before it starts comes back asking for its task.
+    pub(crate) fn persist(&mut self) {
+        self.save();
+    }
+
+    /// Start run: the task goes to the runner and stage 1 starts. Nothing happens for a blank task or
+    /// a run that already started.
+    pub(crate) fn start_with(&mut self, task: &str) -> Vec<Exec> {
+        if !self.awaiting_task() || task.trim().is_empty() {
+            return Vec::new();
+        }
+        self.runner.set_task(task);
+        self.ui.task.clear();
+        self.start()
     }
 
     pub(crate) fn runner(&self) -> &Runner {
@@ -290,6 +325,7 @@ impl TabRun {
             return hold(AgentStatus::SettingUp, &format!("Starting {stage}"));
         }
         match self.runner.phase() {
+            Phase::Idle if self.awaiting_task() => hold(AgentStatus::Shell, "Waiting for a task"),
             Phase::Idle | Phase::Working => None,
             Phase::Testing => hold(AgentStatus::Working, "Running the tests"),
             Phase::Asking(reason) => Some(Hold {

@@ -13,12 +13,16 @@ use super::frame::FrameIntent;
 use super::terminal::TerminalGrid;
 use crate::commands::Command;
 use crate::delivery_card::Delivery;
+use crate::pane::FirstPrompt;
 use crate::reader::Shown;
 use crate::tabs::Action;
+use crate::workflow_run::TabRun;
 use crate::{
     agent_status_line, delivery_view, end_block_view, layout, overview, overview_view, reader_glue,
-    stepper_view,
+    stepper_view, workflow_start_view,
 };
+
+const EMPTY_PANELS_H: f32 = 200.0;
 
 impl Tidewatch {
     fn overview_data(&self, now: f64) -> overview::Overview {
@@ -99,12 +103,22 @@ impl Tidewatch {
         frame: &FrameIntent,
     ) {
         let active_id = frame.active_id;
-        let panels = self.workspace_has_panels() && !self.focus;
-        let mut areas = layout::split(area);
+        let awaiting_task = self.awaiting_workflow_task();
+        let panels = self.workspace_has_panels() && !self.focus && !awaiting_task;
+        let mut areas = if self.awaiting_first_prompt() {
+            layout::split_panels(area, EMPTY_PANELS_H)
+        } else {
+            layout::split(area)
+        };
         if !panels {
             areas.terminal = layout::terminal_only(area);
         }
         self.show_stepper(ui, &mut areas.terminal, ctx);
+        if awaiting_task {
+            self.show_workflow_start(ui, areas.terminal, ctx);
+            self.show_toast_pill(ui);
+            return;
+        }
         self.show_status_line(ui, &mut areas.terminal);
         let end = self.waiting_end_block();
         let end_band = end.as_ref().map(|(block, open)| {
@@ -143,6 +157,40 @@ impl Tidewatch {
             self.show_panes(ui, &areas, ctx);
         }
         self.show_toast_pill(ui);
+    }
+
+    fn awaiting_first_prompt(&self) -> bool {
+        let pane = &self.tabs.items()[self.tabs.active()].pane;
+        pane.agent.as_ref().is_some_and(|agent| agent.first_prompt == FirstPrompt::Awaiting)
+    }
+
+    fn awaiting_workflow_task(&self) -> bool {
+        let pane = &self.tabs.items()[self.tabs.active()].pane;
+        pane.agent
+            .as_ref()
+            .and_then(|agent| agent.workflow.as_deref())
+            .is_some_and(TabRun::awaiting_task)
+    }
+
+    fn show_workflow_start(&mut self, ui: &mut egui::Ui, area: egui::Rect, ctx: &egui::Context) {
+        let active_id = self.tabs.items()[self.tabs.active()].id;
+        let Some(run) = self
+            .tabs
+            .active_pane_mut()
+            .agent
+            .as_mut()
+            .and_then(|agent| agent.workflow.as_deref_mut())
+        else {
+            return;
+        };
+        let area = area.expand(layout::TERMINAL_PAD);
+        if let Some(task) = workflow_start_view::show(ui, area, run) {
+            let execs = run.start_with(&task);
+            if !execs.is_empty() {
+                self.run_asks.push((active_id, execs));
+                ctx.request_repaint();
+            }
+        }
     }
 
     fn show_status_line(&mut self, ui: &mut egui::Ui, terminal: &mut egui::Rect) {

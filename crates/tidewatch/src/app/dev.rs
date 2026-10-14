@@ -3,15 +3,16 @@
 use kelp_ui::graph::Selection;
 
 use super::Tidewatch;
-use crate::dev_agent::Mode as DevMode;
+use crate::dev_agent::{DevDraft, Mode as DevMode};
 use crate::dev_panes;
 use crate::dev_session::LeftoverStep;
 use crate::new_tab::Kind;
 use crate::note_actions;
-use crate::pane::Body;
+use crate::pane::{Body, FirstPrompt};
 use crate::repo::Workspace;
 use crate::restore_glue;
 use crate::settings::Section;
+use crate::{reader_glue, reader_view};
 
 impl Tidewatch {
     /// Runs the `TIDEWATCH_DEV_AGENT` / `TIDEWATCH_DEV_DIALOG` switch once the profiles are loaded.
@@ -62,9 +63,48 @@ impl Tidewatch {
                 self.new_tab = Some(state);
             }
             DevMode::Start => match state.request(&self.catalog) {
-                Ok(request) => self.open_tab(ctx, request),
+                Ok(request) => {
+                    self.open_tab(ctx, request);
+                    if !dev.task.is_empty() {
+                        self.dev_draft = Some(DevDraft { text: dev.task, start: dev.start });
+                    }
+                }
                 Err(reason) => eprintln!("tidewatch: dev agent not started: {reason}"),
             },
+        }
+    }
+
+    pub(super) fn drive_dev_draft(&mut self, ctx: &egui::Context, now: f64) {
+        let Some(draft) = self.dev_draft.take() else { return };
+        let waiting = self.tabs.items().iter().rev().find_map(|tab| {
+            let agent = tab.pane.agent.as_ref()?;
+            match agent.workflow.as_deref() {
+                Some(run) => run.awaiting_task().then_some((tab.id, true)),
+                None => (agent.first_prompt == FirstPrompt::Awaiting
+                    && matches!(tab.pane.body, Body::Shell(_)))
+                .then_some((tab.id, false)),
+            }
+        });
+        let Some((id, is_run)) = waiting else {
+            self.dev_draft = Some(draft);
+            return;
+        };
+        let Some(agent) = self.tabs.get_mut(id).and_then(|tab| tab.pane.agent.as_mut()) else {
+            return;
+        };
+        if let Some(run) = agent.workflow.as_deref_mut().filter(|_| is_run) {
+            draft.text.clone_into(&mut run.ui.task);
+            if draft.start {
+                let execs = run.start_with(&draft.text);
+                self.run_asks.push((id, execs));
+            }
+        } else {
+            draft.text.clone_into(&mut agent.reader.view.reply);
+            if draft.start {
+                agent.reader.view.reply.clear();
+                let asked = vec![reader_view::Action::Reply(draft.text)];
+                reader_glue::apply(asked, &mut self.tabs, id, &mut self.flow, ctx, now);
+            }
         }
     }
 

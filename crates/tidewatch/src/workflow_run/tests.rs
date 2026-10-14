@@ -452,3 +452,46 @@ fn a_one_stage_run_finishes_without_launching_again() {
     assert!(run.finished());
     assert_eq!(run.hold().unwrap().status, AgentStatus::Done);
 }
+
+fn pending_run(file: Option<PathBuf>) -> TabRun {
+    let ship = Workflows::defaults().workflow.remove("ship").unwrap();
+    let ctx = RunContext { task: String::new(), ..context(None) };
+    let runner = Runner::new(&ship, &BTreeMap::new(), ctx).unwrap();
+    TabRun::new(runner, file, LIMIT)
+}
+
+#[test]
+fn a_run_with_no_task_waits_for_one_and_says_so_in_its_status() {
+    let run = pending_run(None);
+    assert!(run.awaiting_task());
+    assert!(run.ui.focus_task, "the task box takes the keyboard when it first shows");
+    let hold = run.hold().unwrap();
+    assert_eq!(hold.status, AgentStatus::Shell);
+    assert_eq!(hold.detail.as_deref(), Some("Waiting for a task"));
+}
+
+#[test]
+fn start_run_needs_a_task_and_launches_the_first_stage_with_it_once() {
+    let mut run = pending_run(None);
+    assert_eq!(run.start_with("  \n"), Vec::new());
+    assert!(run.awaiting_task());
+    let execs = run.start_with("  add a retry\n");
+    let launch = only_launch(&execs);
+    assert_eq!(launch.index, 0);
+    assert!(launch.prompt.starts_with("add a retry\n\n"), "{}", launch.prompt);
+    assert!(!run.awaiting_task());
+    assert_eq!(run.start_with("another"), Vec::new(), "a run starts once");
+}
+
+#[test]
+fn a_saved_run_that_never_started_comes_back_waiting_for_its_task() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("stages.json");
+    let mut run = pending_run(Some(file.clone()));
+    run.persist();
+    let loaded = Runner::load(&file).unwrap();
+    let mut back = TabRun::new(loaded, Some(file), LIMIT);
+    assert!(back.awaiting_task());
+    assert_eq!(back.resume(), Vec::new());
+    assert_eq!(only_launch(&back.start_with("x")).index, 0);
+}

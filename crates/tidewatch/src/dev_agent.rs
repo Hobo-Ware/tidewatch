@@ -1,15 +1,16 @@
 //! Dev-only switches for the screenshot and runnable checks, read once at startup.
 //!
 //! - `TIDEWATCH_DEV_AGENT=<profile id>`: start that profile in a new tab, as Enter in the dialog would.
-//! - `TIDEWATCH_DEV_DIALOG=<profile id>` (or `1`): open the new-tab dialog, on that profile.
-//! - `TIDEWATCH_DEV_WORKFLOW=<workflow id>`: start that workflow in a new tab (the task from `TIDEWATCH_DEV_TASK`).
-//!   `TIDEWATCH_DEV_DIALOG=workflow:<id>` opens the dialog on it.
+//! - `TIDEWATCH_DEV_DIALOG=choose|agent|workflow|<profile id>|workflow:<id>` (or `1` for the first screen): open the
+//!   new-tab dialog on that screen, or on that profile or workflow.
+//! - `TIDEWATCH_DEV_WORKFLOW=<workflow id>`: open a tab for that workflow, which then asks for its task.
 //! - `TIDEWATCH_DEV_RESUME=<worktree name>`: open the tab of a saved workflow run and carry on where it was.
 //! - `TIDEWATCH_DEV_SETTINGS=1`: open the settings; `workflows` opens the workflow editor page, `trust` the folder trust page.
 //! - `TIDEWATCH_DEV_PALETTE=<query>` (or `1`): open the command palette, filled with that query.
 //! - `TIDEWATCH_DEV_TRUST=yes|no|undo`: answer the folder trust question once the CLIs are known (see `trust_glue`).
-//! - `TIDEWATCH_DEV_TASK=<text>` and `TIDEWATCH_DEV_LEVEL=plan|ask|edits|auto|yolo`: the task and the
-//!   permission level to use with either.
+//! - `TIDEWATCH_DEV_TASK=<text>`: typed into the new tab's composer (an agent) or task box (a workflow); with
+//!   `TIDEWATCH_DEV_START=1` it is also sent, or the run started, once the tab is ready.
+//! - `TIDEWATCH_DEV_LEVEL=plan|ask|edits|auto|yolo`: the permission level to use with either.
 //!
 //! Use a throwaway repo and a `TIDEWATCH_HOME` outside the real home so nothing lands in the real
 //! `~/.tidewatch` or `~/.config/tidewatch`.
@@ -34,6 +35,13 @@ pub(crate) struct DevAgent {
     pub(crate) profile: Option<String>,
     pub(crate) task: String,
     pub(crate) level: Option<Level>,
+    pub(crate) start: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct DevDraft {
+    pub(crate) text: String,
+    pub(crate) start: bool,
 }
 
 /// The raw switch values.
@@ -47,6 +55,7 @@ struct Vars<'a> {
     palette: Option<&'a str>,
     task: Option<&'a str>,
     level: Option<&'a str>,
+    start: Option<&'a str>,
 }
 
 impl DevAgent {
@@ -57,12 +66,13 @@ impl DevAgent {
             var("TIDEWATCH_DEV_WORKFLOW"),
             var("TIDEWATCH_DEV_RESUME"),
         );
-        let (dialog, settings, palette, task, level) = (
+        let (dialog, settings, palette, task, level, start) = (
             var("TIDEWATCH_DEV_DIALOG"),
             var("TIDEWATCH_DEV_SETTINGS"),
             var("TIDEWATCH_DEV_PALETTE"),
             var("TIDEWATCH_DEV_TASK"),
             var("TIDEWATCH_DEV_LEVEL"),
+            var("TIDEWATCH_DEV_START"),
         );
         Self::parse(Vars {
             agent: agent.as_deref(),
@@ -73,6 +83,7 @@ impl DevAgent {
             palette: palette.as_deref(),
             task: task.as_deref(),
             level: level.as_deref(),
+            start: start.as_deref(),
         })
     }
 
@@ -104,6 +115,7 @@ impl DevAgent {
             profile,
             task: vars.task.unwrap_or_default().to_owned(),
             level: vars.level.and_then(parse_level),
+            start: vars.start == Some("1"),
         })
     }
 }
@@ -127,6 +139,7 @@ mod tests {
             dialog: Some("1"),
             task: Some("hi"),
             level: Some("auto"),
+            start: Some("1"),
             ..vars()
         })
         .unwrap();
@@ -136,7 +149,8 @@ mod tests {
                 mode: Mode::Start,
                 profile: Some("builder".into()),
                 task: "hi".into(),
-                level: Some(Level::Auto)
+                level: Some(Level::Auto),
+                start: true
             }
         );
     }
@@ -157,6 +171,15 @@ mod tests {
         let agent =
             DevAgent::parse(Vars { agent: Some("builder"), workflow: Some("ship"), ..vars() });
         assert_eq!(agent.unwrap().profile.as_deref(), Some("builder"));
+    }
+
+    #[test]
+    fn the_dialog_switch_also_names_the_screens() {
+        let choose = DevAgent::parse(Vars { dialog: Some("choose"), ..vars() }).unwrap();
+        assert_eq!((choose.mode, choose.profile), (Mode::Dialog, None));
+        let agent = DevAgent::parse(Vars { dialog: Some("agent"), ..vars() }).unwrap();
+        assert_eq!((agent.mode, agent.profile.as_deref()), (Mode::Dialog, Some("agent")));
+        assert!(!agent.start);
     }
 
     #[test]

@@ -61,6 +61,7 @@ impl Tidewatch {
         reader_glue::drain(&mut self.tabs);
         self.drive_agents(ctx, now);
         self.drive_flow(ctx, now);
+        self.drive_dev_draft(ctx, now);
         self.drive_restore(ctx, now, None);
         self.drive_repo_close(ctx);
         self.drive_dev_leftovers(ctx);

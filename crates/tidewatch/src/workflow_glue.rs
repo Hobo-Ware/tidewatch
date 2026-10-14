@@ -234,8 +234,8 @@ impl Host {
             }
         };
         let worktree = opening.worktree;
-        let (runner, resuming) = match start {
-            Start::Resume(runner) => (*runner, true),
+        let (runner, resuming, blurb) = match start {
+            Start::Resume(runner) => (*runner, true, String::new()),
             Start::New(request) => {
                 let context = RunContext {
                     task: request.task.clone(),
@@ -244,7 +244,7 @@ impl Host {
                     test_command: opening.test_command,
                 };
                 match Runner::new(&request.workflow, &request.profiles, context) {
-                    Ok(runner) => (runner, false),
+                    Ok(runner) => (runner, false, request.workflow.description.clone()),
                     Err(problems) => {
                         fail_tab(&mut found.pane, problems.join("; "));
                         worktree.name().clone_into(&mut found.title);
@@ -255,8 +255,16 @@ impl Host {
             }
         };
         let stages_file = env.paths.stages_file(&worktree.repo, worktree.name());
-        let mut run = TabRun::new(runner, Some(stages_file), opening.test_timeout);
-        let execs = if resuming { run.resume() } else { run.start() };
+        let mut run =
+            TabRun::new(runner, Some(stages_file), opening.test_timeout).with_blurb(blurb);
+        let execs = if resuming {
+            run.resume()
+        } else if run.awaiting_task() {
+            run.persist();
+            Vec::new()
+        } else {
+            run.start()
+        };
         worktree.name().clone_into(&mut found.title);
         let Some(agent) = found.pane.agent.as_mut() else { return };
         agent.reader = Reader::for_agent(&agent.run.agent_id, None, worktree.path.clone());
