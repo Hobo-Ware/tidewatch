@@ -33,6 +33,19 @@ pub(crate) struct Launched {
     pub(crate) session_id: Option<String>,
 }
 
+/// Whether an agent tab still waits for its first message, which is typed in the tab, not in the
+/// new-tab dialog.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) enum FirstPrompt {
+    /// The agent was given its task at launch, or the tab was resumed.
+    #[default]
+    NotNeeded,
+    /// Started with no task: the tab shows its empty state and the composer.
+    Awaiting,
+    /// The first message went to the agent and its transcript has not shown up yet.
+    Sent,
+}
+
 /// The profile an agent tab was started from and what the agent is doing. Plain shells have none.
 pub(crate) struct AgentTab {
     pub(crate) profile_name: String,
@@ -42,12 +55,20 @@ pub(crate) struct AgentTab {
     pub(crate) launched: Option<Launched>,
     /// The workflow this tab runs, when it was opened from one.
     pub(crate) workflow: Option<Box<TabRun>>,
+    pub(crate) first_prompt: FirstPrompt,
 }
 
 impl AgentTab {
     pub(crate) fn new(profile_name: String, run: AgentRun) -> Self {
         let reader = Reader::for_agent(&run.agent_id, None, PathBuf::new());
-        Self { profile_name, run, reader, launched: None, workflow: None }
+        Self {
+            profile_name,
+            run,
+            reader,
+            launched: None,
+            workflow: None,
+            first_prompt: FirstPrompt::NotNeeded,
+        }
     }
 }
 
@@ -73,6 +94,7 @@ pub(crate) struct Started {
     pub(crate) notes_file: Option<PathBuf>,
     /// The id given to the agent's `--session-id`, when its CLI takes one.
     pub(crate) session_id: Option<String>,
+    pub(crate) awaiting_prompt: bool,
     pub(crate) prepared: Prepared,
 }
 
@@ -205,6 +227,11 @@ pub(crate) fn finish_open<T>(
                         reader,
                         launched: Some(launched),
                         workflow: None,
+                        first_prompt: if started.awaiting_prompt {
+                            FirstPrompt::Awaiting
+                        } else {
+                            FirstPrompt::NotNeeded
+                        },
                     }
                 }),
             };
@@ -299,6 +326,7 @@ mod tests {
             agent_id: "claude".into(),
             notes_file: None,
             session_id: None,
+            awaiting_prompt: false,
             prepared: Prepared {
                 launch: tidewatch_core::launch::Launch {
                     program: "claude".into(),
@@ -486,6 +514,18 @@ mod tests {
         );
         let run = &mut tabs.get_mut(id).unwrap().pane.agent.as_mut().unwrap().run;
         assert_eq!(run.refresh(1.0).unwrap().to, AgentStatus::Failed("disk full".into()));
+    }
+
+    #[test]
+    fn an_agent_opened_with_no_task_waits_for_its_first_message_and_one_with_a_task_does_not() {
+        for (awaiting, want) in [(true, FirstPrompt::Awaiting), (false, FirstPrompt::NotNeeded)] {
+            let (mut tabs, id) = tabs_with_creating();
+            let mut agent = started(&[]);
+            agent.awaiting_prompt = awaiting;
+            finish_open(&mut tabs, id, Ok(opened(Some(agent))), 0.0, |_, _| 1);
+            let tab = tabs.get_mut(id).unwrap();
+            assert_eq!(tab.pane.agent.as_ref().unwrap().first_prompt, want);
+        }
     }
 
     #[test]

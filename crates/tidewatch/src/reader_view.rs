@@ -12,6 +12,7 @@ use stdusk_egui::colors;
 use stdusk_egui::widgets::{action_button, chip, text_field};
 use tidewatch_core::transcript::Source;
 
+use crate::agent_ready::{self, COMPOSER_H, Ready};
 use crate::reader_keys::{self, Answer};
 use crate::reader_rows::{Kind, Row, Rows, Tool};
 use crate::reader_scroll::{Autoscroll, Heights};
@@ -64,9 +65,11 @@ pub(crate) enum Prompt {
 
 /// What the Reader needs to know about the tab beyond its rows.
 #[derive(Clone, Copy, Debug)]
-pub(crate) struct Facts {
+pub(crate) struct Facts<'a> {
     pub(crate) source: Option<Source>,
     pub(crate) prompt: Option<Prompt>,
+    /// Set while the tab waits for its first message: the empty state and the composer show.
+    pub(crate) ready: Option<Ready<'a>>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -83,17 +86,28 @@ pub(crate) fn show(
     rect: Rect,
     rows: &Rows,
     state: &mut ViewState,
-    facts: Facts,
+    facts: Facts<'_>,
 ) -> Vec<Action> {
     let mut actions = Vec::new();
     ui.painter().rect_filled(rect, 0.0, colors::bg());
     let strip_h = if facts.prompt.is_some() { STRIP_H } else { 0.0 };
-    let input = Rect::from_min_max(pos2(rect.left(), rect.bottom() - INPUT_H), rect.max);
+    let composing = facts.ready.filter(|_| rows.len() == 0 && facts.prompt.is_none());
+    let input_h = if composing.is_some() { COMPOSER_H } else { INPUT_H };
+    let input = Rect::from_min_max(pos2(rect.left(), rect.bottom() - input_h), rect.max);
     let strip = Rect::from_min_max(
         pos2(rect.left(), input.top() - strip_h),
         pos2(rect.right(), input.top()),
     );
     let body = Rect::from_min_max(rect.min, pos2(rect.right(), strip.top()));
+    if let Some(ready) = composing {
+        agent_ready::empty_state(ui, body, ready);
+        if let Some(text) =
+            agent_ready::composer(ui, input, &mut state.reply, &mut state.focus_reply, ready)
+        {
+            actions.push(Action::Reply(text));
+        }
+        return actions;
+    }
     transcript(ui, body, rows, state);
     if let Some(prompt) = facts.prompt {
         actions.extend(prompt_strip(ui, strip, prompt, facts.source));
@@ -433,7 +447,7 @@ mod tests {
             };
             let out = ctx.run_ui(raw, |ui| {
                 let rect = ui.max_rect();
-                show(ui, rect, rows, &mut state, Facts { source: None, prompt: None });
+                show(ui, rect, rows, &mut state, Facts { source: None, prompt: None, ready: None });
             });
             delays.extend(out.viewport_output.values().map(|v| v.repaint_delay));
         }
@@ -477,8 +491,11 @@ mod tests {
         for _ in 0..2 {
             let _ = ctx.run_ui(raw.clone(), |ui| {
                 let rect = ui.max_rect();
-                let facts =
-                    Facts { source: Some(Source::Claude), prompt: Some(Prompt::Permission) };
+                let facts = Facts {
+                    source: Some(Source::Claude),
+                    prompt: Some(Prompt::Permission),
+                    ready: None,
+                };
                 let actions = show(ui, rect, &rows, &mut state, facts);
                 assert_eq!(actions, Vec::<Action>::new());
             });

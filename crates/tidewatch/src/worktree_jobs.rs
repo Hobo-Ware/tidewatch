@@ -101,6 +101,7 @@ fn run_open(spec: &OpenSpec) -> Result<Opened, OpenFailure> {
                 agent_id: request.agent.id.clone(),
                 notes_file: Some(spec.paths.notes_file(&repo, &tab_key)),
                 session_id,
+                awaiting_prompt: request.task.trim().is_empty(),
                 prepared,
             })),
         }),

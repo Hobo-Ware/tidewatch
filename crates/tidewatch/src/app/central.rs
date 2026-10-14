@@ -16,7 +16,8 @@ use crate::delivery_card::Delivery;
 use crate::reader::Shown;
 use crate::tabs::Action;
 use crate::{
-    delivery_view, end_block_view, layout, overview, overview_view, reader_glue, stepper_view,
+    agent_status_line, delivery_view, end_block_view, layout, overview, overview_view, reader_glue,
+    stepper_view,
 };
 
 impl Tidewatch {
@@ -104,6 +105,7 @@ impl Tidewatch {
             areas.terminal = layout::terminal_only(area);
         }
         self.show_stepper(ui, &mut areas.terminal, ctx);
+        self.show_status_line(ui, &mut areas.terminal);
         let end = self.waiting_end_block();
         let end_band = end.as_ref().map(|(block, open)| {
             layout::band_below(&mut areas.terminal, end_block_view::height(block, *open))
@@ -141,6 +143,33 @@ impl Tidewatch {
             self.show_panes(ui, &areas, ctx);
         }
         self.show_toast_pill(ui);
+    }
+
+    fn show_status_line(&mut self, ui: &mut egui::Ui, terminal: &mut egui::Rect) {
+        let pane = self.tabs.active_pane_mut();
+        let Some(shown) = reader_glue::shown(pane) else { return };
+        let (cli_name, available) = pane.agent.as_ref().map_or_else(Default::default, |agent| {
+            (
+                self.catalog.agent(&agent.run.agent_id).map(|a| a.name.clone()).unwrap_or_default(),
+                agent.reader.available(),
+            )
+        });
+        let base = self.bases.get(self.workspace().dir());
+        let pane = &self.tabs.items()[self.tabs.active()].pane;
+        let Some(line) = agent_status_line::line_of(pane, shown, available, &cli_name, base) else {
+            return;
+        };
+        let top = terminal.top() - layout::TERMINAL_PAD;
+        let rect = egui::Rect::from_min_size(
+            egui::pos2(terminal.left() - layout::TERMINAL_PAD, top),
+            egui::vec2(terminal.width() + 2.0 * layout::TERMINAL_PAD, agent_status_line::HEIGHT),
+        );
+        layout::band_above(terminal, agent_status_line::HEIGHT);
+        if let Some(choice) = agent_status_line::show(ui, rect, &line)
+            && let Some(agent) = self.tabs.active_pane_mut().agent.as_mut()
+        {
+            agent.reader.set_wants_reader(choice == agent_status_line::Choice::Reader);
+        }
     }
 
     fn show_stepper(&mut self, ui: &mut egui::Ui, terminal: &mut egui::Rect, ctx: &egui::Context) {
