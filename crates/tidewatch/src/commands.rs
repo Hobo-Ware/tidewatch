@@ -416,6 +416,10 @@ fn pressed_with_modifiers(input: &egui::InputState, key: Key) -> bool {
     })
 }
 
+pub(crate) fn command_of(id: &str) -> Option<Command> {
+    TABLE.iter().find(|entry| entry.id == id).map(|entry| entry.command)
+}
+
 /// The key event a person pressing `command`'s chord produces here, for dev drivers and tests.
 pub(crate) fn press_event(command: Command) -> Option<egui::Event> {
     let chord = entry_of(command)?.chord(Platform::CURRENT);
