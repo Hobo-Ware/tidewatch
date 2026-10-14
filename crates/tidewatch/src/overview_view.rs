@@ -8,6 +8,7 @@ use egui::{
 use stdusk_egui::colors;
 use stdusk_egui::widgets::ICON_BTN_W;
 
+use crate::brand;
 use crate::commands::Command;
 use crate::end_block_view;
 use crate::overview::{Counts, Overview, Row, fmt_elapsed};
@@ -32,7 +33,7 @@ pub(crate) fn button(ui: &mut egui::Ui, active: bool, needs: usize) -> egui::Res
         ui.painter().rect_filled(rect, 6.0, colors::hover());
     }
     let ink = if active {
-        colors::accent()
+        brand::TEAL
     } else if hovered {
         colors::fg()
     } else {

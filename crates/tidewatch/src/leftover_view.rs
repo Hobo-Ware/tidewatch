@@ -8,6 +8,7 @@ use stdusk_egui::colors;
 use stdusk_egui::widgets::{action_button, overlay_frame};
 use tidewatch_core::worktree::Leftover;
 
+use crate::brand;
 use crate::leftovers::{Cleanup, Row, RowState, status_text};
 
 const DIALOG_WIDTH: f32 = 560.0;
@@ -62,7 +63,7 @@ fn row_ui(ui: &mut egui::Ui, row: &Row, answer: &mut Option<Answer>) {
         ui.spacing_mut().item_spacing.x = 8.0;
         let loss = matches!(&row.state, RowState::Ready(i) if i.changed > 0)
             || matches!(row.state, RowState::Failed(_));
-        let color = if loss { colors::red() } else { colors::dim() };
+        let color = if loss { brand::RED } else { colors::dim() };
         ui.label(RichText::new(status_text(&row.state)).size(12.0).color(color));
         if matches!(&row.state, RowState::Ready(i) if i.changed > 0)
             && action_button(ui, "Discard", false).clicked()

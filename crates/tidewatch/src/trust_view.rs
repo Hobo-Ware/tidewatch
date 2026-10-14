@@ -7,6 +7,7 @@ use stdusk_egui::widgets::{action_button, overlay_frame};
 use tidewatch_core::consent::{Consent, Event};
 use tidewatch_core::trust::{CliTrust, Status, TrustCli, TrustState};
 
+use crate::brand;
 use crate::settings_ui::{
     self, Control, FAINT, MUTED, SOFT, TEXT, button, button_width, footer_note, note, page_header,
     row_with, section,
@@ -93,8 +94,8 @@ pub(crate) fn consent_text(consent: Consent) -> &'static str {
 fn tone_color(tone: Tone) -> Color32 {
     match tone {
         Tone::Change => colors::fg(),
-        Tone::Fine => colors::green(),
-        Tone::Warn => colors::yellow(),
+        Tone::Fine => brand::GREEN,
+        Tone::Warn => brand::ORANGE,
     }
 }
 

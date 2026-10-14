@@ -2,6 +2,7 @@
 //! request and the repository, shows the exact text, and posts only on Post (or Enter). Esc and Cancel
 //! post nothing.
 
+use crate::brand;
 use egui::{Id, Key, Modifiers, RichText};
 use kelp_core::review::{Side, Thread};
 use stdusk_egui::colors;
@@ -95,7 +96,7 @@ pub(crate) fn show(ctx: &egui::Context, confirm: &PostConfirm) -> Option<Answer>
                 ui.label(RichText::new("Posting...").color(colors::dim()));
             }
             Phase::Failed(message) => {
-                ui.label(RichText::new(message).color(colors::red()));
+                ui.label(RichText::new(message).color(brand::RED));
             }
         }
         ui.add_space(4.0);

@@ -10,6 +10,7 @@ use tidewatch_core::agents::{Agent, Level};
 use tidewatch_core::profiles::Profile;
 use tidewatch_core::workflows::Workflow;
 
+use crate::brand;
 use crate::catalog::{Availability, Catalog};
 use crate::commands::Command;
 use crate::new_tab::{NewTab, level_hint, level_refusal};
@@ -164,8 +165,7 @@ fn group_title(ui: &mut Ui, name: &str, availability: &Availability) {
         Availability::Missing => format!("{name}  not found on PATH"),
     };
     ui.add_space(8.0);
-    let color =
-        if *availability == Availability::Missing { colors::yellow() } else { colors::dim() };
+    let color = if *availability == Availability::Missing { brand::ORANGE } else { colors::dim() };
     ui.horizontal(|ui| {
         ui.add_space(4.0);
         section_label(ui, &title, color);
@@ -200,7 +200,7 @@ fn agent_row(
             row,
             12.0,
             colors::selection(),
-            Stroke::new(1.0, colors::accent()),
+            Stroke::new(1.0, brand::TEAL),
             StrokeKind::Inside,
         );
     } else if response.hovered() {
@@ -238,7 +238,7 @@ fn chip_pill(ui: &Ui, right_center: egui::Pos2, text: &str, active: bool) {
     let size = galley.size() + vec2(20.0, 8.0);
     let rect = Rect::from_min_size(right_center - vec2(size.x, size.y / 2.0), size);
     let (fill, ink) = if active {
-        (colors::accent().gamma_multiply(0.28), colors::accent())
+        (brand::TEAL.gamma_multiply(0.28), brand::TEAL_TEXT)
     } else {
         (colors::hover_elevated(), colors::dim())
     };
@@ -280,7 +280,7 @@ fn level_chip(ui: &mut Ui, level: Level, selected: bool, enabled: bool) -> egui:
     let danger = level == Level::Yolo;
     let ink = match (selected, danger, enabled) {
         (true, _, _) => colors::bg(),
-        (false, true, true) => colors::red(),
+        (false, true, true) => brand::RED,
         (false, _, true) => colors::fg().gamma_multiply(0.8),
         (false, _, false) => colors::dim().gamma_multiply(0.6),
     };
@@ -288,7 +288,7 @@ fn level_chip(ui: &mut Ui, level: Level, selected: bool, enabled: bool) -> egui:
     let (rect, response) = ui.allocate_exact_size(galley.size() + vec2(24.0, 12.0), Sense::click());
     let painter = ui.painter();
     if selected {
-        painter.rect_filled(rect, 8.0, if danger { colors::red() } else { colors::accent() });
+        painter.rect_filled(rect, 8.0, if danger { brand::RED } else { brand::TEAL });
     } else {
         let edge = if response.hovered() && enabled { colors::dim() } else { colors::border() };
         painter.rect(rect, 8.0, colors::elevated(), Stroke::new(1.0, edge), StrokeKind::Inside);
@@ -306,7 +306,7 @@ fn workflow_row(ui: &mut Ui, workflow: &Workflow, selected: bool) -> egui::Respo
             rect,
             12.0,
             colors::selection(),
-            Stroke::new(1.0, colors::accent()),
+            Stroke::new(1.0, brand::TEAL),
             StrokeKind::Inside,
         );
     } else if response.hovered() {
@@ -352,10 +352,10 @@ fn footer(
 ) {
     ui.add_space(8.0);
     for warning in state.warnings(catalog) {
-        ui.label(egui::RichText::new(warning).size(12.0).color(colors::yellow()));
+        ui.label(egui::RichText::new(warning).size(12.0).color(brand::ORANGE));
     }
     if let Some(error) = &state.error {
-        ui.label(egui::RichText::new(error).size(13.0).color(colors::red()));
+        ui.label(egui::RichText::new(error).size(13.0).color(brand::RED));
     }
     ui.add_space(14.0);
     ui.separator();

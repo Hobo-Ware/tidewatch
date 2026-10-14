@@ -8,6 +8,7 @@ use kelp_core::commit::{calendar_time, relative_time};
 use kelp_ui::theme;
 use tidewatch_core::notes::{NoteState, Notes};
 
+use crate::brand;
 use crate::note_send::{Gate, gate_reason};
 use crate::pr_state::{PostAbility, PrState};
 
@@ -140,7 +141,7 @@ fn draw_row(ui: &mut Ui, row: &NoteRow, now: i64, actions: &mut Vec<StripAction>
         if row.line > 0 { format!("{}:{}", row.path, row.line) } else { row.path.clone() };
     let place_id = ui.id().with(("note-place", row.id));
     let place_resp = ui.interact(place, place_id, Sense::click());
-    let color = if place_resp.hovered() { theme::text_strong() } else { theme::accent() };
+    let color = if place_resp.hovered() { theme::text_strong() } else { brand::TEAL_TEXT };
     painter.with_clip_rect(place).text(
         pos2(place.left(), rect.center().y),
         Align2::LEFT_CENTER,
@@ -167,7 +168,7 @@ fn draw_row(ui: &mut Ui, row: &NoteRow, now: i64, actions: &mut Vec<StripAction>
     let label = state_label(row.state, now);
     let tone = match row.state {
         NoteState::Queued => theme::modified(),
-        NoteState::Sent(_) => theme::accent(),
+        NoteState::Sent(_) => brand::TEAL_TEXT,
         NoteState::Replied => theme::added(),
         NoteState::Resolved | NoteState::FromAgent => theme::text_faint(),
     };

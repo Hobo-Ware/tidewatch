@@ -15,6 +15,7 @@ use stdusk_egui::ui::icons;
 use stdusk_egui::widgets::{chip, icon_button};
 use tidewatch_core::notes::Notes;
 
+use crate::brand;
 use crate::commands::Platform;
 use crate::flow::PaneExtras;
 use crate::note_actions;
@@ -250,7 +251,7 @@ fn show_header(ui: &mut Ui, rect: Rect, view: &TabView) {
         egui::Align2::LEFT_TOP,
         format!("· {branch}"),
         FontId::monospace(11.5),
-        theme::accent(),
+        brand::TEAL_TEXT,
     );
     if let Some(open) = &view.open {
         let stats = format!("+{}  -{}", open.diff.added, open.diff.removed);

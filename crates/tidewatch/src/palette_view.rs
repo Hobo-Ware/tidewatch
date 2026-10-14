@@ -9,6 +9,7 @@ use egui::{
 use stdusk_egui::colors;
 use stdusk_egui::widgets::{overlay_frame, text_field};
 
+use crate::brand;
 use crate::palette::{Hit, Item, Palette, Target, filter};
 
 const WIDTH: f32 = 560.0;
@@ -123,14 +124,14 @@ fn paint_row(ui: &egui::Ui, rect: Rect, item: &Item, positions: &[usize], select
         painter.rect_stroke(
             rect,
             CornerRadius::same(7),
-            Stroke::new(1.0, colors::accent()),
+            Stroke::new(1.0, brand::TEAL),
             StrokeKind::Inside,
         );
     }
     let ink = colors::fg();
     let mut job = LayoutJob::default();
     for (i, c) in item.label.chars().enumerate() {
-        let color = if positions.contains(&i) { colors::accent() } else { ink };
+        let color = if positions.contains(&i) { brand::TEAL_TEXT } else { ink };
         job.append(&c.to_string(), 0.0, TextFormat::simple(FontId::proportional(14.0), color));
     }
     job.append(item.kind, 12.0, TextFormat::simple(FontId::proportional(11.0), colors::dim()));
