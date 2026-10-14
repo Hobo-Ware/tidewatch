@@ -53,9 +53,37 @@ pub(crate) fn page_in(
         let body_height = (ui.available_height() - 44.0).max(120.0);
         page(ui, editor, body_height);
         ui.add_space(4.0);
-        crate::profiles_view::footer(ui, editor.error.as_deref(), editor.saving, editor.dirty)
+        footer(ui, editor.error.as_deref(), editor.saving, editor.dirty)
     })
     .inner
+}
+
+fn footer(
+    ui: &mut egui::Ui,
+    error: Option<&str>,
+    saving: bool,
+    dirty: bool,
+) -> Option<crate::settings_view::Action> {
+    let mut action = None;
+    if let Some(error) = error {
+        ui.label(RichText::new(error).color(colors::red()));
+    } else {
+        let text = if saving {
+            "Saving..."
+        } else if dirty {
+            "Unsaved changes. Saving rewrites the file; comments in it are not kept."
+        } else {
+            "Saved"
+        };
+        ui.label(RichText::new(text).size(12.0).color(colors::dim()));
+    }
+    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+        let can_save = dirty && !saving;
+        if ui.add_enabled_ui(can_save, |ui| action_button(ui, "Save", true)).inner.clicked() {
+            action = Some(crate::settings_view::Action::Save);
+        }
+    });
+    action
 }
 
 pub(crate) fn page(ui: &mut egui::Ui, editor: &mut Editor, height: f32) {

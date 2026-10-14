@@ -9,7 +9,7 @@ use egui::{
 
 use crate::general_view::{self, General};
 use crate::house_style_view;
-use crate::profiles_view;
+use crate::profiles_view::{self, Probes};
 use crate::settings::{Section, Settings};
 use crate::settings_icons;
 use crate::settings_ui::{
@@ -51,6 +51,7 @@ pub(crate) struct Host<'a> {
     pub(crate) files: &'a Files,
     pub(crate) trust: &'a trust_view::Page<'a>,
     pub(crate) general: &'a General,
+    pub(crate) probes: &'a Probes,
     /// Esc closes the settings: false while a dialog over them owns the key.
     pub(crate) esc_closes: bool,
 }
@@ -87,7 +88,7 @@ fn page(
     let section = settings.section;
     match section {
         Section::Profiles => {
-            profiles_view::page(ui, main, &mut settings.profiles, &host.files.profiles)
+            profiles_view::page(ui, main, &mut settings.profiles, host.probes, &host.files.profiles)
         }
         Section::Workflows => {
             workflow_editor_view::page_in(ui, main, &mut settings.workflows, &host.files.workflows)

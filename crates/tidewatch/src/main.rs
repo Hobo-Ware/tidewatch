@@ -42,7 +42,6 @@ mod leftover_glue;
 mod leftover_jobs;
 mod leftover_view;
 mod leftovers;
-mod list_row;
 mod macos;
 mod new_tab;
 mod new_tab_dialog;

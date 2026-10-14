@@ -6,6 +6,7 @@ use tidewatch_core::prefs::WindowPrefs;
 use super::{Tidewatch, wall_ms};
 use crate::agent_jobs;
 use crate::general_view::General;
+use crate::profiles_view::Probes;
 use crate::settings::{Section, Settings};
 use crate::settings_view::{self, Files, Host};
 use crate::shell::{self, Event};
@@ -110,8 +111,18 @@ impl Tidewatch {
                 menu_bar_available: self.shell.tray_supported(),
             },
         };
+        let probes: Probes = self
+            .catalog
+            .agent_names()
+            .into_iter()
+            .map(|(id, _)| {
+                let availability = self.catalog.availability(&id);
+                (id, availability)
+            })
+            .collect();
         let trust = self.trust.page();
-        let host = Host { files: &files, trust: &trust, general: &general, esc_closes };
+        let host =
+            Host { files: &files, trust: &trust, general: &general, probes: &probes, esc_closes };
         settings_view::show(ui, area, settings, &host, &mut self.updates)
     }
 
