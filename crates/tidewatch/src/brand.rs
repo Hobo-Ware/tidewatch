@@ -1,7 +1,7 @@
 //! The Night tide palette: the one set of colors every Tidewatch view reads, and how it is put on egui.
 
 use egui::{Color32, Stroke};
-use stdusk_egui::colors::{self, Theme};
+use stdusk_egui::colors::{self, Chrome, Theme};
 
 pub(crate) const GROUND: Color32 = Color32::from_rgb(0x10, 0x13, 0x1a);
 pub(crate) const SIDEBAR: Color32 = Color32::from_rgb(0x0d, 0x10, 0x16);
@@ -34,18 +34,16 @@ pub(crate) const NEEDS: Color32 = ORANGE;
 pub(crate) const DONE: Color32 = Color32::from_rgb(0xb2, 0xe6, 0x8a);
 pub(crate) const FAILED: Color32 = Color32::from_rgb(0xef, 0x44, 0x44);
 
-/// The terminal theme the chrome is derived from. stdusk reads its accent from ANSI blue, so blue
-/// here is teal and bright blue stays blue for programs that want one.
 pub(crate) fn theme() -> Theme {
     let mut theme = colors::one_half_dark();
     theme.bg = GROUND;
     theme.fg = TEXT;
     theme.cursor = TEAL;
-    theme.ansi[0] = GROUND;
-    theme.ansi[1] = RED;
-    theme.ansi[2] = GREEN;
-    theme.ansi[4] = TEAL;
     theme
+}
+
+pub(crate) fn chrome() -> Chrome {
+    Chrome { accent: Some(TEAL), red: Some(RED), green: Some(GREEN), yellow: None }
 }
 
 /// Teal selection, links and active widgets on top of what stdusk derived from the theme.
@@ -91,7 +89,8 @@ mod tests {
     #[test]
     fn the_theme_makes_stdusk_read_teal_for_its_accent() {
         let theme = theme();
-        assert_eq!((theme.bg, theme.ansi[4]), (GROUND, TEAL));
+        assert_eq!((theme.bg, theme.ansi), (GROUND, colors::one_half_dark().ansi));
+        assert_eq!(chrome().accent, Some(TEAL));
     }
 
     #[test]
