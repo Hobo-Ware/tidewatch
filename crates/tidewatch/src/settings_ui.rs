@@ -51,7 +51,6 @@ pub(crate) fn note(ui: &mut Ui, text: &str, color: Color32) {
     ui.label(RichText::new(text).size(12.0).color(color));
 }
 
-/// The title and the line under it. The response is the title's, for a tooltip.
 pub(crate) fn page_header(ui: &mut Ui, title: &str, subtitle: &str) -> Response {
     ui.spacing_mut().item_spacing.y = 4.0;
     let response = ui.label(heading(title, 26.0));
@@ -304,6 +303,34 @@ pub(crate) fn text_input(ui: &mut Ui, value: &mut String, hint: &str) -> Respons
                 .text_color(TEXT)
                 .hint_text(RichText::new(hint).color(FAINT)),
         )
+    })
+    .inner
+}
+
+pub(crate) fn text_area(ui: &mut Ui, value: &mut String, hint: &str, rows: usize) -> bool {
+    ui.scope(|ui| {
+        let visuals = ui.visuals_mut();
+        visuals.extreme_bg_color = GROUND;
+        visuals.selection.stroke = Stroke::new(1.0, TEAL);
+        visuals.widgets.inactive.bg_stroke = Stroke::new(1.0, FIELD_LINE);
+        visuals.widgets.hovered.bg_stroke = Stroke::new(1.0, FAINT);
+        for widget in [
+            &mut visuals.widgets.inactive,
+            &mut visuals.widgets.hovered,
+            &mut visuals.widgets.active,
+        ] {
+            widget.corner_radius = CornerRadius::same(9);
+        }
+        ui.style_mut().override_font_id = Some(FontId::monospace(12.5));
+        ui.add(
+            egui::TextEdit::multiline(value)
+                .desired_width(ui.available_width())
+                .desired_rows(rows)
+                .margin(Margin::symmetric(12, 10))
+                .text_color(TEXT)
+                .hint_text(RichText::new(hint).color(FAINT)),
+        )
+        .changed()
     })
     .inner
 }
