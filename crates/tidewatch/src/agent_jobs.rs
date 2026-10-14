@@ -104,7 +104,7 @@ mod tests {
         load(&jobs, &egui::Context::default(), paths.clone(), bin.path().into());
         let Done::Loaded { profiles, workflows } = next(&jobs) else { panic!("expected Loaded") };
         let ids: Vec<&str> = profiles.profile.keys().map(String::as_str).collect();
-        assert_eq!(ids, ["builder", "builder-yolo", "reviewer"]);
+        assert_eq!(ids, ["builder", "reviewer"]);
         assert!(paths.profiles_file().is_file());
         let names: Vec<&str> = workflows.workflow.keys().map(String::as_str).collect();
         assert_eq!(names, ["fix", "pr", "ship"]);

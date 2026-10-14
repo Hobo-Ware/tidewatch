@@ -174,10 +174,7 @@ mod tests {
         profiles.profile.get_mut("reviewer").unwrap().agent = "nope".into();
         catalog.set_profiles(profiles);
         let ids: Vec<&str> = catalog.entries().iter().map(|(id, _, _)| *id).collect();
-        assert_eq!(
-            ids,
-            ["builder", "builder-yolo", "gemini-builder", "gemini-builder-yolo", "gemini-reviewer"]
-        );
+        assert_eq!(ids, ["builder", "gemini-builder", "gemini-reviewer"]);
         let (_, builder, agent) = catalog.entries()[0];
         assert_eq!((builder.level, agent.id.as_str()), (Level::Edits, "claude"));
     }

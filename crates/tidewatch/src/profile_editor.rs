@@ -230,7 +230,7 @@ mod tests {
         let profiles = Profiles::seeded(&["claude".to_owned()]);
         let editor = Editor::new(&profiles, agents());
         let ids: Vec<&str> = editor.drafts.iter().map(|d| d.id.as_str()).collect();
-        assert_eq!(ids, ["builder", "builder-yolo", "reviewer"]);
+        assert_eq!(ids, ["builder", "reviewer"]);
         assert_eq!(editor.build().unwrap(), profiles);
     }
 
@@ -291,11 +291,10 @@ mod tests {
     #[test]
     fn removing_keeps_the_selection_in_range() {
         let mut editor = editor();
-        editor.select(2);
+        editor.select(1);
         editor.remove_selected();
-        assert_eq!(editor.selected, 1);
-        assert_eq!(editor.drafts.len(), 2);
-        editor.remove_selected();
+        assert_eq!(editor.selected, 0);
+        assert_eq!(editor.drafts.len(), 1);
         editor.remove_selected();
         editor.remove_selected();
         assert_eq!((editor.drafts.len(), editor.selected), (0, 0));
@@ -330,16 +329,16 @@ mod tests {
     #[test]
     fn revert_puts_back_the_saved_profiles_and_keeps_the_selection_in_range() {
         let mut editor = editor();
-        editor.select(2);
-        editor.drafts[2].name = "Changed".into();
+        editor.select(1);
+        editor.drafts[1].name = "Changed".into();
         editor.remove_selected();
         editor.add();
         assert!(editor.dirty);
         editor.revert();
         let ids: Vec<&str> = editor.drafts.iter().map(|d| d.id.as_str()).collect();
-        assert_eq!(ids, ["builder", "builder-yolo", "reviewer"]);
-        assert_eq!(editor.drafts[2].name, "Reviewer");
-        assert_eq!((editor.dirty, editor.error.clone(), editor.selected), (false, None, 2));
+        assert_eq!(ids, ["builder", "reviewer"]);
+        assert_eq!(editor.drafts[1].name, "Reviewer");
+        assert_eq!((editor.dirty, editor.error.clone(), editor.selected), (false, None, 1));
         editor.error = Some("x".into());
         editor.revert();
         assert_eq!(editor.error, None);
@@ -351,21 +350,17 @@ mod tests {
         let groups = editor.groups();
         assert_eq!(groups.len(), 1);
         assert_eq!((groups[0].agent.as_str(), groups[0].name.as_str()), ("claude", "Claude Code"));
-        assert_eq!(groups[0].drafts, [0, 1, 2]);
+        assert_eq!(groups[0].drafts, [0, 1]);
         editor.add();
-        editor.drafts[3].agent = "gemini".into();
+        editor.drafts[2].agent = "gemini".into();
         editor.add();
-        editor.drafts[4].agent = "ghost".into();
+        editor.drafts[3].agent = "ghost".into();
         let groups = editor.groups();
         let names: Vec<(&str, bool, &[usize])> =
             groups.iter().map(|g| (g.agent.as_str(), g.known, g.drafts.as_slice())).collect();
         assert_eq!(
             names,
-            [
-                ("claude", true, &[0, 1, 2][..]),
-                ("gemini", true, &[3][..]),
-                ("ghost", false, &[4][..])
-            ]
+            [("claude", true, &[0, 1][..]), ("gemini", true, &[2][..]), ("ghost", false, &[3][..])]
         );
         assert_eq!(groups[2].name, "ghost (unknown)");
     }

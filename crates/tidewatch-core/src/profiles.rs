@@ -92,11 +92,18 @@ impl Profiles {
 
     /// First launch: when `profiles.toml` does not exist, seed profiles for the agents found on
     /// `path_var` and write the file. Afterwards it only loads, so the user's edits are never reseeded.
+    /// Loading also drops the YOLO profiles earlier versions seeded, when untouched, and rewrites the file.
     #[must_use]
     pub fn load_or_seed(paths: &TidewatchPaths, path_var: Option<&OsStr>) -> Self {
         let file = paths.profiles_file();
         if file.exists() {
-            return Self::load(&file);
+            let mut profiles = Self::load(&file);
+            if !profiles.drop_seeded_yolo().is_empty()
+                && let Err(e) = profiles.save(&file)
+            {
+                eprintln!("tidewatch: cannot write {} ({e})", file.display());
+            }
+            return profiles;
         }
         let found = AgentTable::builtin().found_on_path(path_var);
         let seeded = Self::seeded(&found);
@@ -106,8 +113,8 @@ impl Profiles {
         seeded
     }
 
-    /// Builder (Auto edit), Reviewer (Read only) and, for verified agents, a YOLO builder, for each
-    /// agent in `found`. The best default agent gets the plain names; the rest are prefixed.
+    /// Builder (Auto edit) and Reviewer (Read only) for each agent in `found`. The best default agent
+    /// gets the plain names; the rest are prefixed.
     #[must_use]
     pub fn seeded(found: &[String]) -> Self {
         let table = AgentTable::builtin();
@@ -119,39 +126,30 @@ impl Profiles {
 
         let mut profile = BTreeMap::new();
         for (position, agent) in ordered.into_iter().enumerate() {
-            let (id_prefix, name_prefix) = if position == 0 {
-                (String::new(), String::new())
-            } else {
-                (format!("{}-", agent.id), format!("{} ", agent.name))
-            };
-            let seed = |suffix: &str, label: &str, level, never_push| {
-                let mut seeded = Profile {
-                    name: format!("{name_prefix}{label}"),
-                    agent: agent.id.clone(),
-                    model: None,
-                    effort: None,
-                    level,
-                    setup: String::new(),
-                    never_push,
-                    extra_args: ArgList::default(),
-                    house_style: true,
-                };
-                if agent.id == "claude" {
-                    seeded.model =
-                        Some(if level == Level::Plan { "sonnet" } else { "opus" }.into());
-                    seeded.effort = (level != Level::Plan).then(|| "high".to_owned());
-                }
-                (format!("{id_prefix}{suffix}"), seeded)
-            };
             profile.extend([
-                seed("builder", "Builder", Level::Edits, true),
-                seed("reviewer", "Reviewer", Level::Plan, true),
+                seed_profile(agent, position == 0, "builder", "Builder", Level::Edits, true),
+                seed_profile(agent, position == 0, "reviewer", "Reviewer", Level::Plan, true),
             ]);
-            if agent.verified {
-                profile.extend([seed("builder-yolo", "Builder YOLO", Level::Yolo, false)]);
-            }
         }
         Self { profile, agent: BTreeMap::new() }
+    }
+
+    /// Removes the `*-builder-yolo` profiles that earlier versions seeded, but only the ones still
+    /// exactly as seeded. An edited one or one the user made stays. Returns the removed ids.
+    pub fn drop_seeded_yolo(&mut self) -> Vec<String> {
+        let seeds = legacy_yolo_seeds();
+        let removed: Vec<String> = self
+            .profile
+            .iter()
+            .filter(|(id, profile)| {
+                seeds.iter().any(|(seed_id, seed)| seed_id == *id && seed == *profile)
+            })
+            .map(|(id, _)| id.clone())
+            .collect();
+        for id in &removed {
+            self.profile.remove(id);
+        }
+        removed
     }
 
     /// Built-in agents with this file's `[agent.<id>]` changes applied, plus its custom agents.
@@ -159,6 +157,51 @@ impl Profiles {
     pub fn agent_table(&self) -> AgentTable {
         AgentTable::with_overrides(&self.agent)
     }
+}
+
+fn seed_profile(
+    agent: &Agent,
+    plain: bool,
+    suffix: &str,
+    label: &str,
+    level: Level,
+    never_push: bool,
+) -> (String, Profile) {
+    let (id_prefix, name_prefix) = if plain {
+        (String::new(), String::new())
+    } else {
+        (format!("{}-", agent.id), format!("{} ", agent.name))
+    };
+    let mut seeded = Profile {
+        name: format!("{name_prefix}{label}"),
+        agent: agent.id.clone(),
+        model: None,
+        effort: None,
+        level,
+        setup: String::new(),
+        never_push,
+        extra_args: ArgList::default(),
+        house_style: true,
+    };
+    if agent.id == "claude" {
+        seeded.model = Some(if level == Level::Plan { "sonnet" } else { "opus" }.into());
+        seeded.effort = (level != Level::Plan).then(|| "high".to_owned());
+    }
+    (format!("{id_prefix}{suffix}"), seeded)
+}
+
+fn legacy_yolo_seeds() -> Vec<(String, Profile)> {
+    let table = AgentTable::builtin();
+    SEED_ORDER
+        .iter()
+        .filter_map(|id| table.get(id))
+        .filter(|agent| agent.verified)
+        .flat_map(|agent| {
+            [true, false].map(|plain| {
+                seed_profile(agent, plain, "builder-yolo", "Builder YOLO", Level::Yolo, false)
+            })
+        })
+        .collect()
 }
 
 #[cfg(test)]
@@ -178,18 +221,17 @@ mod tests {
     }
 
     #[test]
-    fn seeding_one_verified_agent_gives_builder_reviewer_and_an_unguarded_yolo_builder() {
+    fn seeding_one_agent_gives_builder_and_reviewer_only() {
         let seeded = Profiles::seeded(&found(&["claude"]));
         assert_eq!(
             summary(&seeded),
             [
                 ("builder".to_owned(), "claude".to_owned(), Level::Edits, true),
-                ("builder-yolo".to_owned(), "claude".to_owned(), Level::Yolo, false),
                 ("reviewer".to_owned(), "claude".to_owned(), Level::Plan, true),
             ]
         );
         let names: Vec<_> = seeded.profile.values().map(|p| p.name.as_str()).collect();
-        assert_eq!(names, ["Builder", "Builder YOLO", "Reviewer"]);
+        assert_eq!(names, ["Builder", "Reviewer"]);
     }
 
     #[test]
@@ -216,12 +258,9 @@ mod tests {
             ids,
             [
                 "builder",
-                "builder-yolo",
                 "copilot-builder",
-                "copilot-builder-yolo",
                 "copilot-reviewer",
                 "gemini-builder",
-                "gemini-builder-yolo",
                 "gemini-reviewer",
                 "reviewer",
             ]
@@ -235,12 +274,9 @@ mod tests {
         let seeded = Profiles::seeded(&found(&["codex", "gemini"]));
         assert_eq!(seeded.profile["builder"].agent, "gemini");
         let codex: Vec<_> = seeded.profile.keys().filter(|id| id.starts_with("codex-")).collect();
-        assert_eq!(codex, ["codex-builder", "codex-builder-yolo", "codex-reviewer"]);
+        assert_eq!(codex, ["codex-builder", "codex-reviewer"]);
         let only_codex = Profiles::seeded(&found(&["codex"]));
-        assert_eq!(
-            only_codex.profile.keys().collect::<Vec<_>>(),
-            ["builder", "builder-yolo", "reviewer"]
-        );
+        assert_eq!(only_codex.profile.keys().collect::<Vec<_>>(), ["builder", "reviewer"]);
     }
 
     #[test]
@@ -249,11 +285,129 @@ mod tests {
     }
 
     #[test]
-    fn every_seeded_yolo_profile_is_the_only_unguarded_one() {
+    fn nothing_seeded_is_at_yolo() {
         let seeded = Profiles::seeded(&found(&["claude", "codex", "gemini", "copilot"]));
-        for (id, profile) in &seeded.profile {
-            assert_eq!(profile.never_push, profile.level != Level::Yolo, "{id}");
+        assert!(seeded.profile.values().all(|p| p.level != Level::Yolo && p.never_push));
+    }
+
+    fn with_legacy_yolo(ids: &[&str]) -> Profiles {
+        let mut profiles = Profiles::seeded(&found(&["claude", "gemini", "codex"]));
+        let seeds = legacy_yolo_seeds();
+        for id in ids {
+            let (_, seed) = seeds.iter().find(|(seed_id, _)| seed_id == id).unwrap();
+            profiles.profile.insert((*id).to_owned(), seed.clone());
         }
+        profiles
+    }
+
+    #[test]
+    fn an_untouched_seeded_yolo_profile_is_removed_and_the_rest_stays() {
+        let mut profiles =
+            with_legacy_yolo(&["builder-yolo", "gemini-builder-yolo", "codex-builder-yolo"]);
+        let expected = Profiles::seeded(&found(&["claude", "gemini", "codex"]));
+        let mut removed = profiles.drop_seeded_yolo();
+        removed.sort();
+        assert_eq!(removed, ["builder-yolo", "codex-builder-yolo", "gemini-builder-yolo"]);
+        assert_eq!(profiles, expected);
+    }
+
+    #[test]
+    fn the_legacy_seed_matches_what_older_versions_wrote() {
+        let text = "[profile.builder-yolo]\nname = \"Builder YOLO\"\nagent = \"claude\"\nmodel = \"opus\"\n\
+                    effort = \"high\"\npermissions = \"yolo\"\nsetup = \"\"\nnever_push = false\n\
+                    house_style = true\n\
+                    [profile.copilot-builder-yolo]\nname = \"Copilot CLI Builder YOLO\"\nagent = \"copilot\"\n\
+                    permissions = \"yolo\"\nnever_push = false\n";
+        let mut parsed = Profiles::parse(text).unwrap();
+        assert_eq!(parsed.drop_seeded_yolo(), ["builder-yolo", "copilot-builder-yolo"]);
+        assert_eq!(parsed, Profiles::default());
+    }
+
+    #[test]
+    fn an_edited_seeded_yolo_profile_stays() {
+        let edits: [fn(&mut Profile); 8] = [
+            |p| p.name = "Builder YOLO (mine)".into(),
+            |p| p.agent = "gemini".into(),
+            |p| p.model = Some("sonnet".into()),
+            |p| p.effort = None,
+            |p| p.setup = "npm ci".into(),
+            |p| p.never_push = true,
+            |p| p.extra_args = ArgList(vec!["--verbose".into()]),
+            |p| p.house_style = false,
+        ];
+        for edit in edits {
+            let mut profiles = with_legacy_yolo(&["builder-yolo"]);
+            edit(profiles.profile.get_mut("builder-yolo").unwrap());
+            let before = profiles.clone();
+            assert_eq!(profiles.drop_seeded_yolo(), Vec::<String>::new());
+            assert_eq!(profiles, before);
+        }
+        let mut leveled = with_legacy_yolo(&["builder-yolo"]);
+        leveled.profile.get_mut("builder-yolo").unwrap().level = Level::Auto;
+        assert_eq!(leveled.drop_seeded_yolo(), Vec::<String>::new());
+    }
+
+    #[test]
+    fn a_users_own_yolo_profile_stays() {
+        let mut profiles = with_legacy_yolo(&[]);
+        let mut mine = with_legacy_yolo(&["builder-yolo"]).profile["builder-yolo"].clone();
+        mine.name = "Night shift".into();
+        profiles.profile.insert("night-shift".into(), mine.clone());
+        mine.name = "Builder YOLO".into();
+        profiles.profile.insert("my-builder-yolo".into(), mine);
+        profiles.profile.insert(
+            "aider-builder-yolo".into(),
+            Profile {
+                name: "Aider Builder YOLO".into(),
+                agent: "aider".into(),
+                model: None,
+                effort: None,
+                level: Level::Yolo,
+                setup: String::new(),
+                never_push: false,
+                extra_args: ArgList::default(),
+                house_style: true,
+            },
+        );
+        let before = profiles.clone();
+        assert_eq!(profiles.drop_seeded_yolo(), Vec::<String>::new());
+        assert_eq!(profiles, before);
+    }
+
+    #[test]
+    fn loading_cleans_the_file_once_and_keeps_every_other_entry() {
+        let home = tempfile::tempdir().unwrap();
+        let paths = TidewatchPaths::new(home.path());
+        let mut old = with_legacy_yolo(&["builder-yolo", "gemini-builder-yolo"]);
+        old.profile.get_mut("reviewer").unwrap().setup = "make".into();
+        old.agent = toml::from_str::<Profiles>("[agent.aider]\nbin = \"aider\"\n").unwrap().agent;
+        old.save(&paths.profiles_file()).unwrap();
+        let (_bin_dir, path) = path_with(&["claude"]);
+
+        let loaded = Profiles::load_or_seed(&paths, Some(&path));
+        let mut expected = old.clone();
+        expected.profile.remove("builder-yolo");
+        expected.profile.remove("gemini-builder-yolo");
+        assert_eq!(loaded, expected);
+        assert_eq!(Profiles::load(&paths.profiles_file()), expected);
+        let cleaned = std::fs::read_to_string(paths.profiles_file()).unwrap();
+        assert!(!cleaned.contains("yolo"), "{cleaned}");
+
+        assert_eq!(Profiles::load_or_seed(&paths, Some(&path)), expected);
+        assert_eq!(std::fs::read_to_string(paths.profiles_file()).unwrap(), cleaned);
+    }
+
+    #[test]
+    fn a_file_with_nothing_to_remove_is_not_rewritten() {
+        let home = tempfile::tempdir().unwrap();
+        let paths = TidewatchPaths::new(home.path());
+        std::fs::create_dir_all(paths.config_dir()).unwrap();
+        let text = "# mine\n[profile.builder]\nagent = \"claude\"\npermissions = \"edits\"\n";
+        std::fs::write(paths.profiles_file(), text).unwrap();
+        let (_bin_dir, path) = path_with(&["claude"]);
+        let loaded = Profiles::load_or_seed(&paths, Some(&path));
+        assert_eq!(loaded.profile.len(), 1);
+        assert_eq!(std::fs::read_to_string(paths.profiles_file()).unwrap(), text);
     }
 
     #[test]
@@ -334,11 +488,11 @@ mod tests {
         let (_bin_dir, path) = path_with(&["claude", "copilot"]);
 
         let first = Profiles::load_or_seed(&paths, Some(&path));
-        assert_eq!(first.profile.keys().filter(|id| id.starts_with("copilot-")).count(), 3);
+        assert_eq!(first.profile.keys().filter(|id| id.starts_with("copilot-")).count(), 2);
         assert!(paths.profiles_file().exists());
 
         let mut edited = first.clone();
-        edited.profile.remove("builder-yolo");
+        edited.profile.remove("reviewer");
         edited.save(&paths.profiles_file()).unwrap();
         let (_other_dir, other_path) = path_with(&["claude", "gemini", "codex"]);
         assert_eq!(Profiles::load_or_seed(&paths, Some(&other_path)), edited);
