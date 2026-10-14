@@ -6,7 +6,7 @@ use std::path::PathBuf;
 use std::sync::mpsc::{Receiver, channel};
 
 use egui::{Context, ViewportCommand};
-use tidewatch_core::instance::{self, Command, Guard, Primary};
+use tidewatch_core::instance::{self, Claim, Command, Guard, Primary};
 use tidewatch_core::prefs::WindowPrefs;
 
 use crate::hotkey::Chord;
@@ -293,6 +293,29 @@ pub(crate) struct Setup {
     pub(crate) primary: Option<Primary>,
     pub(crate) instance_dir: Option<PathBuf>,
     pub(crate) own_socket: Option<PathBuf>,
+    /// The app socket of the window this one takes over from. It is claimed only once that window
+    /// has handed its terminals over and is on its way out.
+    pub(crate) replacing: Option<PathBuf>,
+}
+
+impl Setup {
+    /// Claims the socket of the window being replaced, once it stops answering. Nothing is sent to
+    /// it, so it never gets a folder it is about to lose.
+    pub(crate) fn claim_from_old_window(&mut self) {
+        let Some(socket) = self.replacing.take() else { return };
+        match instance::claim_replacing(&socket) {
+            Claim::Primary(primary) => {
+                self.primary = Some(primary);
+                self.own_socket = Some(socket);
+            }
+            Claim::Secondary => eprintln!("tidewatch: another window answers on the app socket"),
+            Claim::Unavailable(reason) => {
+                eprintln!(
+                    "tidewatch: no single-instance socket ({reason}); opening a window anyway"
+                );
+            }
+        }
+    }
 }
 
 pub(crate) fn start(ctx: &Context, setup: Setup) -> Shell<RealOs> {

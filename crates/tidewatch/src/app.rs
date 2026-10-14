@@ -12,6 +12,7 @@ mod overlays;
 mod palette;
 mod panes;
 mod repos;
+mod restart;
 mod settings;
 mod strip;
 mod tabs;
@@ -36,7 +37,7 @@ use tidewatch_core::update::fake_release;
 use tidewatch_core::worktree::{Inspection, Worktree};
 
 use self::repos::Picker;
-use crate::agent_events::Hooks;
+use crate::agent_events::{self, Hooks};
 use crate::agent_jobs;
 use crate::brand;
 use crate::catalog::Catalog;
@@ -51,6 +52,7 @@ use crate::dev_workflow::DevWorkflow;
 use crate::dev_worktree::DevWorktree;
 use crate::flow::Flow;
 use crate::fonts;
+use crate::handoff;
 use crate::jobs::Jobs;
 use crate::last_used::LastUsed;
 use crate::layout;
@@ -150,7 +152,8 @@ impl Tidewatch {
         cli_home: Option<&Path>,
         no_restore: bool,
         welcome: bool,
-        shell: shell::Setup,
+        mut shell: shell::Setup,
+        incoming: Option<handoff::Incoming>,
     ) -> Self {
         colors::init(brand::theme());
         colors::set_chrome(brand::chrome());
@@ -160,15 +163,27 @@ impl Tidewatch {
         if screenshot.is_some() {
             cc.egui_ctx.all_styles_mut(|s| s.animation_time = 0.0);
         }
-        let mut shells = workspaces
-            .iter()
-            .map(|workspace| Pane::shell(spawn_shell(&cc.egui_ctx, workspace.dir())));
-        let mut tabs = Tabs::new(shells.next().expect("a window opens at least one workspace"));
-        for main in shells {
-            tabs.add_group(main);
-        }
+        let adopted = incoming.map(|incoming| take_over(&cc.egui_ctx, incoming, &mut shell));
+        let hooks_port = adopted.as_ref().and_then(|adopted| adopted.hook_port);
+        let (tabs, credentials, notes, focus) = match adopted {
+            Some(adopted) => (adopted.tabs, adopted.credentials, adopted.notes, adopted.focus),
+            None => (fresh_tabs(&cc.egui_ctx, &workspaces), Vec::new(), Vec::new(), false),
+        };
         let recent = welcome.then(|| recent_repos(paths.as_ref()));
-        let hooks = Hooks::start(paths.as_ref(), &cc.egui_ctx);
+        let (hooks, hooks_kept) = match hooks_port {
+            Some(port) => Hooks::start_on_port(
+                paths.as_ref(),
+                &cc.egui_ctx,
+                port,
+                agent_events::PORT_PATIENCE,
+            ),
+            None => (Hooks::start(paths.as_ref(), &cc.egui_ctx), false),
+        };
+        let kept_agents = credentials.len();
+        for (tab, credential) in credentials.iter().filter(|_| hooks_kept) {
+            hooks.adopt(*tab, credential);
+        }
+        let restored = hooks_port.is_some();
         let dev_flow = DevFlow::from_env();
         let flow = Flow::new(Tools::with_path(dev_flow.tool_path(agent_path.clone())));
         let dev_view = DevView::from_env();
@@ -221,7 +236,7 @@ impl Tidewatch {
             dev_flow,
             notifier: Notifier::desktop(),
             overview: dev_view.overview,
-            focus: dev_view.focus,
+            focus: dev_view.focus || focus,
             side_fraction: layout::SIDE_FRACTION,
             status_log: dev_view.status_log,
             dev_keys: dev_view.keys,
@@ -231,13 +246,18 @@ impl Tidewatch {
             last_used,
             dev_session,
             restore: restore_glue::Host::new(no_restore, app_crashed, RealDisk::from_env()),
-            notice: None,
+            notice: handoff::notice(&notes, kept_agents, hooks_kept),
             updates,
             shell: shell::start(&cc.egui_ctx, shell),
         };
         for (group, workspace) in app.workspaces.iter().enumerate().filter(|_| !welcome) {
-            app.restore.enqueue(group, workspace);
+            if !restored {
+                app.restore.enqueue(group, workspace);
+            }
             app.bases.refresh(&cc.egui_ctx, workspace.dir());
+        }
+        if restored {
+            app.restore.mark_settled();
         }
         if let Some(paths) = &app.paths {
             agent_jobs::load(
@@ -252,6 +272,48 @@ impl Tidewatch {
         }
         app
     }
+}
+
+struct Adopted {
+    tabs: Tabs<Pane<PtyTerm>>,
+    credentials: Vec<(u64, tidewatch_core::listener::Credential)>,
+    notes: Vec<String>,
+    focus: bool,
+    hook_port: Option<u16>,
+}
+
+fn fresh_tabs(ctx: &egui::Context, workspaces: &[Workspace]) -> Tabs<Pane<PtyTerm>> {
+    let mut shells =
+        workspaces.iter().map(|workspace| Pane::shell(spawn_shell(ctx, workspace.dir())));
+    let mut tabs = Tabs::new(shells.next().expect("a window opens at least one workspace"));
+    for main in shells {
+        tabs.add_group(main);
+    }
+    tabs
+}
+
+/// Builds the old window's tabs around the terminals it sent and confirms, so it lets go; then
+/// claims the instance socket the old window leaves. A layout that does not line up is refused
+/// before anything is confirmed, so the old window keeps everything and this process only ends.
+fn take_over(
+    ctx: &egui::Context,
+    mut incoming: handoff::Incoming,
+    shell: &mut shell::Setup,
+) -> Adopted {
+    let rebuilt = match handoff::adopt(ctx, &mut incoming, 0.0) {
+        Ok(rebuilt) => rebuilt,
+        Err(reason) => {
+            eprintln!("tidewatch: the handed-over window is not usable ({reason}); leaving it be");
+            std::process::exit(1);
+        }
+    };
+    let handoff::Rebuilt { mut tabs, credentials, notes } = rebuilt;
+    if let Err(e) = handoff::confirm(&incoming, &mut tabs) {
+        eprintln!("tidewatch: could not confirm the handover ({e})");
+    }
+    shell.claim_from_old_window();
+    let handover = incoming.session();
+    Adopted { tabs, credentials, notes, focus: handover.focus, hook_port: handover.hook_port }
 }
 
 fn wall_ms() -> u128 {

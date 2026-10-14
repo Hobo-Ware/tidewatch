@@ -96,6 +96,12 @@ impl Host {
         }
     }
 
+    /// The tabs came from a window that was running them, not from the saved session: there is
+    /// nothing to bring back, and the saver may write at once.
+    pub(crate) fn mark_settled(&mut self) {
+        self.phase = Phase::Settled;
+    }
+
     /// Whether launch restores the last session, as the settings say.
     pub(crate) fn restore_enabled(&self) -> bool {
         self.prefs.restore_session

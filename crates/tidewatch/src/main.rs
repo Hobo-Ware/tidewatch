@@ -36,6 +36,7 @@ mod flow_glue;
 mod flow_jobs;
 mod fonts;
 mod general_view;
+mod handoff;
 mod history_pane;
 mod hotkey;
 mod house_style_view;
@@ -120,6 +121,7 @@ mod workflow_run;
 mod workflow_start_view;
 mod worktree_jobs;
 
+use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
 
 use app::Tidewatch;
@@ -143,6 +145,21 @@ fn main() -> eframe::Result<()> {
         std::process::exit(single_instance::toggle_running(paths.as_ref()));
     }
     let prefs = paths.as_ref().map(Prefs::load).unwrap_or_default();
+    let socket = paths.as_ref().map(TidewatchPaths::app_socket);
+    let received = args.handoff.as_deref().map(handoff::Incoming::receive);
+    let boot = handoff::boot(received, || {
+        socket.as_deref().is_some_and(|socket| UnixStream::connect(socket).is_ok())
+    });
+    if matches!(boot, handoff::Boot::GiveWay) {
+        eprintln!(
+            "tidewatch: the handover failed and the old window is still running; leaving it be"
+        );
+        return Ok(());
+    }
+    let incoming = match boot {
+        handoff::Boot::Adopt(incoming) => Some(incoming),
+        handoff::Boot::Normal | handoff::Boot::GiveWay => None,
+    };
     let has_path_arg = args.path.is_some();
     let opening = last_workspace::pick(
         args.path,
@@ -151,9 +168,15 @@ fn main() -> eframe::Result<()> {
         |dir| Repo::discover(dir).is_some(),
         Path::is_dir,
     );
-    let welcome = last_workspace::is_blank_launch(has_path_arg, &opening);
+    let welcome = incoming.as_ref().map_or_else(
+        || last_workspace::is_blank_launch(has_path_arg, &opening),
+        |incoming| incoming.session().welcome,
+    );
     let restoring = !args.no_restore && prefs.restore_session;
-    let workspaces = open_workspaces(&opening, restoring);
+    let workspaces = incoming.as_ref().map_or_else(
+        || open_workspaces(&opening, restoring),
+        |incoming| incoming.session().groups.iter().map(|g| Workspace::open(&g.dir)).collect(),
+    );
     let workspace = &workspaces[0];
     let agent_path = path_env::for_this_platform(
         std::env::var_os("PATH").as_deref(),
@@ -166,14 +189,18 @@ fn main() -> eframe::Result<()> {
     let plan = Plan::new(env, &window_prefs);
 
     let key = single_instance::workspace_key(workspace.dir());
-    let socket = paths.as_ref().map(TidewatchPaths::app_socket);
     let run = match (screenshot.is_some(), background) {
         (true, _) => Run::Screenshot,
         (false, true) => Run::Background { isolated },
         (false, false) => Run::Foreground,
     };
     let mode = single_instance::mode(run, socket.is_some());
-    let primary = match socket.as_deref().map(|socket| single_instance::begin(mode, socket, &key)) {
+    let replacing = incoming.is_some() && mode != single_instance::Mode::Off;
+    let primary = match socket
+        .as_deref()
+        .filter(|_| !replacing)
+        .map(|socket| single_instance::begin(mode, socket, &key))
+    {
         Some(Start::Exit) => return Ok(()),
         Some(Start::Run(primary)) => primary,
         None => None,
@@ -182,9 +209,10 @@ fn main() -> eframe::Result<()> {
         env,
         prefs: window_prefs,
         label: workspace.chip_label(),
-        own_socket: primary.as_ref().and(socket),
+        own_socket: primary.as_ref().and(socket.clone()),
         instance_dir: paths.as_ref().map(TidewatchPaths::instance_dir),
         primary,
+        replacing: socket.filter(|_| replacing),
     };
 
     let mut viewport = egui::ViewportBuilder::default()
@@ -217,6 +245,7 @@ fn main() -> eframe::Result<()> {
                 args.no_restore,
                 welcome,
                 setup,
+                incoming,
             )))
         }),
     )
