@@ -1,6 +1,8 @@
 //! Self-update: Kelp's shared updater pointed at Tidewatch's repo and cask.
 
+use egui::RichText;
 use kelp_core::update::Release;
+use kelp_ui::theme;
 use kelp_ui::update::{Status, UpdateConfig, Updater};
 use tidewatch_core::paths::TidewatchPaths;
 use tidewatch_core::prefs::{Prefs, UpdatePrefs};
@@ -14,6 +16,7 @@ pub(crate) struct Updates {
     updater: Updater,
     prefs: UpdatePrefs,
     quiet: bool,
+    restart: bool,
 }
 
 impl Updates {
@@ -35,7 +38,7 @@ impl Updates {
         if let Some(release) = fake {
             updater.status = Status::Available(release);
         }
-        Self { updater, prefs, quiet }
+        Self { updater, prefs, quiet, restart: false }
     }
 
     /// Once per frame: collects a finished check and starts the next one when it is due.
@@ -44,8 +47,23 @@ impl Updates {
         self.updater.tick(check, install);
     }
 
+    /// The update pill. Once the update is installed its button is drawn here, not by the updater,
+    /// because the updater's Restart cannot hand the terminals over; a click is taken with
+    /// [`Self::take_restart`].
     pub(crate) fn pill(&mut self, ui: &mut egui::Ui) {
-        self.updater.pill(ui);
+        match &self.updater.status {
+            Status::Ready(release) if self.updater.is_active() => {
+                if restart_pill(ui, &release.version).clicked() {
+                    self.restart = true;
+                }
+            }
+            _ => self.updater.pill(ui),
+        }
+    }
+
+    /// Whether Restart was clicked since the last call.
+    pub(crate) fn take_restart(&mut self) -> bool {
+        std::mem::take(&mut self.restart)
     }
 
     pub(crate) fn check_now(&mut self) {
@@ -80,6 +98,20 @@ impl Updates {
         self.prefs.install = on;
         self.prefs.clone()
     }
+}
+
+/// Looks like the pill the updater draws in its other states, so the label changes and nothing else
+/// does.
+fn restart_pill(ui: &mut egui::Ui, version: &str) -> egui::Response {
+    let label = RichText::new(restart_label(version))
+        .size(12.0)
+        .family(theme::semibold())
+        .color(theme::on_accent());
+    ui.add(egui::Button::new(label).fill(theme::accent()).corner_radius(12))
+}
+
+fn restart_label(version: &str) -> String {
+    format!("Restart to update to {version}")
 }
 
 fn offline(screenshot: bool, fake: bool, test_build: bool) -> bool {
@@ -248,5 +280,68 @@ mod tests {
         let mut updates = updates(None, true);
         updates.check_now();
         assert_eq!(updates.updater.status, Status::Idle);
+    }
+
+    fn pill_frame(
+        ctx: &egui::Context,
+        updates: &mut Updates,
+        events: Vec<egui::Event>,
+    ) -> egui::Rect {
+        let mut used = egui::Rect::NOTHING;
+        let input = egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(
+                egui::pos2(0.0, 0.0),
+                egui::vec2(700.0, 200.0),
+            )),
+            focused: true,
+            events,
+            ..egui::RawInput::default()
+        };
+        let _ = ctx.run_ui(input, |ui| {
+            used = ui.scope(|ui| updates.pill(ui)).response.rect;
+        });
+        used
+    }
+
+    fn click_pill(ctx: &egui::Context, updates: &mut Updates) {
+        let at = pill_frame(ctx, updates, vec![]).center();
+        let button = |pressed| egui::Event::PointerButton {
+            pos: at,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        };
+        pill_frame(ctx, updates, vec![egui::Event::PointerMoved(at)]);
+        pill_frame(ctx, updates, vec![button(true)]);
+        pill_frame(ctx, updates, vec![button(false)]);
+    }
+
+    #[test]
+    fn clicking_restart_on_an_installed_update_asks_this_app_to_restart_once() {
+        let ctx = crate::fonts::test_context();
+        let mut updates = updates(Some(release("9.9.9")), false);
+        updates.updater.status = Status::Ready(release("9.9.9"));
+        assert!(!updates.take_restart());
+        click_pill(&ctx, &mut updates);
+        assert!(updates.take_restart());
+        assert!(!updates.take_restart(), "one click, one restart");
+    }
+
+    #[test]
+    fn the_pill_of_an_update_that_is_not_installed_yet_does_not_ask_for_a_restart() {
+        let ctx = crate::fonts::test_context();
+        let mut updates = updates(Some(release("9.9.9")), false);
+        click_pill(&ctx, &mut updates);
+        assert!(!updates.take_restart());
+    }
+
+    #[test]
+    fn the_restart_pill_says_which_version_it_restarts_into() {
+        assert_eq!(restart_label("0.2.0"), "Restart to update to 0.2.0");
+        let ctx = crate::fonts::test_context();
+        let mut updates = updates(None, false);
+        assert_eq!(pill_frame(&ctx, &mut updates, vec![]).width(), 0.0, "nothing to show yet");
+        updates.updater.status = Status::Ready(release("0.2.0"));
+        assert!(pill_frame(&ctx, &mut updates, vec![]).width() > 0.0);
     }
 }

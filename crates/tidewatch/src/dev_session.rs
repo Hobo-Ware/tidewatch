@@ -2,6 +2,8 @@
 //!
 //! - `TIDEWATCH_DEV_QUIT=<seconds>`: close the window after that long, through the same close
 //!   request a click on the window's close button makes, so the quit-time save runs.
+//! - `TIDEWATCH_DEV_RESTART=<seconds>`: restart to update after that long, the way the update pill's
+//!   Restart does: the terminals move to a new window. The new window does not inherit the switch.
 //! - `TIDEWATCH_DEV_SELECT=<n>`: select tab `n` (from 1, like Cmd+n) once, after
 //!   `TIDEWATCH_DEV_SELECT_AFTER` seconds (default 4).
 //! - `TIDEWATCH_DEV_SHOT=<png>` after `TIDEWATCH_DEV_SHOT_AFTER=<seconds>` (default 4): save a screenshot
@@ -32,6 +34,7 @@ pub(crate) enum LeftoverStep {
 pub(crate) struct DevSession {
     leftovers: Option<LeftoverStep>,
     quit_after: Option<f64>,
+    restart_after: Option<f64>,
     select: Option<(usize, f64)>,
     shot: Option<(PathBuf, f64)>,
     asked_for_shot: bool,
@@ -43,6 +46,7 @@ impl DevSession {
         let var = |name: &str| std::env::var(name).ok();
         Self::parse(
             var("TIDEWATCH_DEV_QUIT").as_deref(),
+            var("TIDEWATCH_DEV_RESTART").as_deref(),
             var("TIDEWATCH_DEV_SELECT").as_deref(),
             var("TIDEWATCH_DEV_SELECT_AFTER").as_deref(),
             var("TIDEWATCH_DEV_SHOT").as_deref(),
@@ -54,6 +58,7 @@ impl DevSession {
 
     fn parse(
         quit: Option<&str>,
+        restart: Option<&str>,
         select: Option<&str>,
         select_after: Option<&str>,
         shot: Option<&str>,
@@ -68,6 +73,7 @@ impl DevSession {
                 _ => None,
             },
             quit_after: quit.and_then(|s| s.parse().ok()),
+            restart_after: restart.and_then(|s| s.parse().ok()),
             select: select
                 .and_then(|s| s.parse::<usize>().ok())
                 .and_then(|n| n.checked_sub(1))
@@ -118,6 +124,15 @@ impl DevSession {
         self.leftovers = None;
     }
 
+    /// True once, when the restart's time has come.
+    pub(crate) fn restart_due(&mut self, now: f64) -> bool {
+        let due = self.restart_after.is_some_and(|after| now >= after);
+        if due {
+            self.restart_after = None;
+        }
+        due
+    }
+
     pub(crate) fn debounce(&self) -> Debounce {
         match self.debounce_ms {
             Some(ms) => Debounce::new(Duration::from_millis(ms), Duration::from_millis(ms)),
@@ -142,10 +157,15 @@ impl DevSession {
         }
         self.shot_tick(ctx, now);
         let pending_shot = self.shot.as_ref().filter(|_| !self.asked_for_shot).map(|(_, at)| *at);
-        let next = [self.select.map(|(_, after)| after), self.quit_after, pending_shot]
-            .into_iter()
-            .flatten()
-            .reduce(f64::min);
+        let next = [
+            self.select.map(|(_, after)| after),
+            self.quit_after,
+            self.restart_after,
+            pending_shot,
+        ]
+        .into_iter()
+        .flatten()
+        .reduce(f64::min);
         if let Some(at) = next {
             ctx.request_repaint_after(Duration::from_secs_f64((at - now).max(0.0) + 0.02));
         }
@@ -159,7 +179,7 @@ mod tests {
     #[test]
     fn nothing_set_means_nothing_happens_and_the_default_debounce() {
         assert_eq!(
-            DevSession::parse(None, None, None, None, None, None, None),
+            DevSession::parse(None, None, None, None, None, None, None, None),
             DevSession::default()
         );
     }
@@ -168,6 +188,7 @@ mod tests {
     fn the_switches_parse_and_a_tab_number_counts_from_one() {
         let dev = DevSession::parse(
             Some("12.5"),
+            Some("7"),
             Some("2"),
             Some("6"),
             Some("/tmp/x.png"),
@@ -179,6 +200,7 @@ mod tests {
             dev,
             DevSession {
                 quit_after: Some(12.5),
+                restart_after: Some(7.0),
                 select: Some((1, 6.0)),
                 shot: Some((PathBuf::from("/tmp/x.png"), 9.0)),
                 asked_for_shot: false,
@@ -186,7 +208,7 @@ mod tests {
                 leftovers: Some(LeftoverStep::Clean),
             }
         );
-        let late = DevSession::parse(None, Some("3"), None, None, None, None, None);
+        let late = DevSession::parse(None, None, Some("3"), None, None, None, None, None);
         assert_eq!(late.select, Some((2, DEFAULT_SELECT_AFTER_SECS)));
     }
 
@@ -195,6 +217,7 @@ mod tests {
         assert_eq!(
             DevSession::parse(
                 Some("soon"),
+                Some("never"),
                 Some("0"),
                 None,
                 Some(""),
@@ -205,14 +228,14 @@ mod tests {
             DevSession::default()
         );
         assert_eq!(
-            DevSession::parse(None, Some("two"), None, None, None, None, None),
+            DevSession::parse(None, None, Some("two"), None, None, None, None, None),
             DevSession::default()
         );
     }
 
     #[test]
     fn the_select_happens_once_when_its_time_comes() {
-        let mut dev = DevSession::parse(None, Some("2"), Some("1"), None, None, None, None);
+        let mut dev = DevSession::parse(None, None, Some("2"), Some("1"), None, None, None, None);
         let mut tabs = Tabs::new(Pane::shell(0));
         tabs.push("a".into(), Pane::shell(1));
         let ctx = egui::Context::default();
@@ -224,5 +247,14 @@ mod tests {
         tabs.apply(Action::Select(0), || unreachable!());
         dev.tick(&ctx, &mut tabs, 2.0);
         assert_eq!(tabs.active(), 0, "it does not select again");
+    }
+
+    #[test]
+    fn the_restart_is_due_once_when_its_time_comes() {
+        let mut dev = DevSession::parse(None, Some("3"), None, None, None, None, None, None);
+        assert!(!dev.restart_due(2.9));
+        assert!(dev.restart_due(3.0));
+        assert!(!dev.restart_due(9.0), "it does not restart again");
+        assert!(!DevSession::default().restart_due(100.0));
     }
 }
