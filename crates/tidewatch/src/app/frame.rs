@@ -4,9 +4,10 @@ use egui::{Key, Modifiers};
 
 use super::Tidewatch;
 use super::repos::RepoCommand;
-use crate::commands::{self, Command, Dialog, Gate};
+use crate::commands::{self, Command, Dialog, Focus, Gate};
 use crate::reader_glue;
 use crate::settings_view;
+use crate::tab_view::TabView;
 use crate::tabs::Action;
 
 pub(super) struct KeyRoute {
@@ -72,10 +73,10 @@ impl Tidewatch {
     pub(super) fn read_shortcuts(&mut self, ctx: &egui::Context) -> FrameIntent {
         let typing_in_a_panel = ctx.text_edit_focused();
         let active_id = self.tabs.items()[self.tabs.active()].id;
-        let gate = self.key_gate(active_id);
+        let gate = self.key_gate(active_id, typing_in_a_panel);
         let mut actions = Vec::new();
         let mut toggle_overview = false;
-        for command in commands::pressed(ctx) {
+        for command in commands::pressed(ctx, gate) {
             if !gate.allows(command) {
                 continue;
             }
@@ -111,7 +112,7 @@ impl Tidewatch {
         }
     }
 
-    fn key_gate(&self, active_id: u64) -> Gate {
+    fn key_gate(&self, active_id: u64, typing: bool) -> Gate {
         let other =
             self.trust.dialog_open() || self.leftovers.is_open() || self.flow.modal_open(active_id);
         let dialog = if self.closing.is_some() || self.new_tab.is_some() {
@@ -126,6 +127,11 @@ impl Tidewatch {
             settings: self.settings.is_some(),
             overview: self.overview,
             palette: self.palette.is_some(),
+            focus: if self.file_view_showing(active_id) && !typing {
+                Focus::FileView
+            } else {
+                Focus::Terminal
+            },
         }
     }
 
@@ -143,6 +149,12 @@ impl Tidewatch {
             Command::Overview => self.toggle_overview(),
             Command::Focus => self.toggle_focus(ctx),
             Command::Reader => self.toggle_reader(ctx),
+            Command::FileView => self.toggle_file_view(ctx),
+            Command::BackToTerminal => self.with_active_view(TabView::back_to_terminal),
+            Command::PrevFile => self.with_active_view(|view| view.step_file(-1)),
+            Command::NextFile => self.with_active_view(|view| view.step_file(1)),
+            Command::PrevCommit => self.with_active_view(|view| view.step_commit(-1)),
+            Command::NextCommit => self.with_active_view(|view| view.step_commit(1)),
             Command::Settings => self.toggle_settings(),
             Command::OpenRepo => self.run_repo_command(RepoCommand::Open, ctx),
             Command::Palette => self.toggle_palette(),

@@ -14,6 +14,7 @@ use stdusk_egui::widgets::{chip, menu_item, style_menu};
 use tidewatch_core::history::{BaseCompare, Scope};
 
 use crate::brand;
+use crate::commands::Command;
 use crate::commit_files::{self, Geometry};
 use crate::tab_view::TabView;
 
@@ -63,9 +64,12 @@ pub(crate) fn show(
 fn show_footer(ui: &mut Ui, rect: Rect, file_open: bool) {
     ui.painter().hline(rect.x_range(), rect.top(), egui::Stroke::new(1.0, theme::border()));
     let text = if file_open {
-        "Click the Terminal chip to go back · the agent keeps running"
+        format!(
+            "{} or the Terminal chip goes back · the agent keeps running",
+            Command::BackToTerminal.keys()
+        )
     } else {
-        "Click a commit to open its files · click a file for its diff"
+        "Click a commit to open its files · click a file for its diff".to_owned()
     };
     ui.painter().text(
         pos2(rect.left() + SIDE_PAD, rect.center().y),

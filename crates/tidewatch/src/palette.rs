@@ -262,6 +262,7 @@ mod tests {
                 "Overview",
                 "Focus mode",
                 "Reader or raw terminal",
+                "Terminal or last file",
                 "Settings",
                 "Switch to tab 2: calm-comet",
                 "Switch to tab 3: brave-otter",
@@ -295,10 +296,10 @@ mod tests {
         let linux = items(&sources(), Platform::Linux);
         assert_eq!(mac[0].keys, "Cmd+T");
         assert_eq!(linux[0].keys, "Ctrl+Shift+T");
-        assert_eq!(mac[6].keys, "Cmd+2");
-        assert_eq!(linux[6].keys, "Alt+2");
-        assert_eq!((mac[8].label.as_str(), mac[8].keys.as_str()), ("Open repo...", "Cmd+O"));
-        assert_eq!(linux[8].keys, "Ctrl+Shift+O");
+        assert_eq!(mac[7].keys, "Cmd+2");
+        assert_eq!(linux[7].keys, "Alt+2");
+        assert_eq!((mac[9].label.as_str(), mac[9].keys.as_str()), ("Open repo...", "Cmd+O"));
+        assert_eq!(linux[9].keys, "Ctrl+Shift+O");
     }
 
     #[test]
