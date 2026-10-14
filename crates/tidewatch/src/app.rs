@@ -37,6 +37,7 @@ use tidewatch_core::worktree::{Inspection, Worktree};
 use self::repos::Picker;
 use crate::agent_events::Hooks;
 use crate::agent_jobs;
+use crate::brand;
 use crate::catalog::Catalog;
 use crate::dev_agent::{DevAgent, DevDraft};
 use crate::dev_flow::DevFlow;
@@ -76,7 +77,6 @@ use crate::workflow_glue::{self};
 use crate::workflow_run::Exec;
 use crate::worktree_jobs::Done;
 
-const DEFAULT_THEME: &str = "one-half-dark";
 const FONT_SIZE: f32 = 13.0;
 const MIN_CONTRAST: f32 = 4.0;
 const ANIMATION_FRAME_MS: u64 = 40;
@@ -149,9 +149,10 @@ impl Tidewatch {
         welcome: bool,
         shell: shell::Setup,
     ) -> Self {
-        colors::init(colors::by_name(DEFAULT_THEME));
+        colors::init(brand::theme());
         fonts::install(&cc.egui_ctx);
         apply_theme(&cc.egui_ctx);
+        brand::tint_visuals(&cc.egui_ctx);
         if screenshot.is_some() {
             cc.egui_ctx.all_styles_mut(|s| s.animation_time = 0.0);
         }

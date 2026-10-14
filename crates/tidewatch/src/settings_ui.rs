@@ -8,27 +8,7 @@ use kelp_ui::theme::semibold;
 
 pub(crate) mod editor;
 
-pub(crate) const GROUND: Color32 = Color32::from_rgb(0x10, 0x13, 0x1a);
-pub(crate) const SIDEBAR: Color32 = Color32::from_rgb(0x0d, 0x10, 0x16);
-pub(crate) const SIDEBAR_LINE: Color32 = Color32::from_rgb(0x1f, 0x24, 0x30);
-pub(crate) const CARD: Color32 = Color32::from_rgb(0x16, 0x1b, 0x24);
-pub(crate) const CARD_LINE: Color32 = Color32::from_rgb(0x22, 0x29, 0x37);
-pub(crate) const BAR: Color32 = Color32::from_rgb(0x12, 0x16, 0x1e);
-pub(crate) const FIELD_LINE: Color32 = Color32::from_rgb(0x2f, 0x37, 0x47);
-pub(crate) const BUTTON: Color32 = Color32::from_rgb(0x1d, 0x22, 0x30);
-pub(crate) const KEY_EDGE: Color32 = Color32::from_rgb(0x0b, 0x0e, 0x13);
-pub(crate) const TEXT: Color32 = Color32::from_rgb(0xe6, 0xe8, 0xec);
-pub(crate) const SOFT: Color32 = Color32::from_rgb(0xa7, 0xb0, 0xbf);
-pub(crate) const MUTED: Color32 = Color32::from_rgb(0x8b, 0x93, 0xa3);
-pub(crate) const FAINT: Color32 = Color32::from_rgb(0x6b, 0x73, 0x83);
-pub(crate) const TEAL: Color32 = Color32::from_rgb(0x2d, 0xd4, 0xbf);
-pub(crate) const TEAL_TEXT: Color32 = Color32::from_rgb(0x5e, 0xea, 0xd4);
-pub(crate) const TEAL_FILL: Color32 = Color32::from_rgb(0x10, 0x20, 0x2a);
-pub(crate) const TEAL_NAV: Color32 = Color32::from_rgb(0x16, 0x25, 0x2b);
-pub(crate) const ORANGE: Color32 = Color32::from_rgb(0xfb, 0x92, 0x3c);
-pub(crate) const RED: Color32 = Color32::from_rgb(0xfb, 0x71, 0x85);
-pub(crate) const RED_LINE: Color32 = Color32::from_rgb(0x3a, 0x25, 0x30);
-pub(crate) const RED_FILL: Color32 = Color32::from_rgb(0x24, 0x17, 0x1e);
+pub(crate) use crate::brand::*;
 
 const SECTION_GAP: f32 = 22.0;
 const ROW_GAP: f32 = 16.0;
