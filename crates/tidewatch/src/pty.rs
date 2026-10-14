@@ -4,6 +4,7 @@
 use std::collections::BTreeMap;
 use std::path::Path;
 
+use stdusk_core::agent_pane::{AgentSetup, PROMPT_FALLBACK};
 use stdusk_core::shell::ShellProfile;
 use stdusk_core::terminal::{PtyTerm, SpawnOpts};
 use stdusk_egui::repaint_handle;
@@ -48,6 +49,28 @@ pub(crate) fn spawn_agent(ctx: &egui::Context, dir: &Path, prepared: &Prepared) 
     PtyTerm::spawn(INITIAL_COLS, INITIAL_ROWS, repaint_handle(ctx), &spawn_opts(dir, Some(profile)))
 }
 
+/// A plain interactive shell, with the agent's environment, that has the agent's command typed at
+/// its first prompt and waits for the user to press Enter. A shell that marks no prompt gets the
+/// fallback timer, which `PtyTerm::release_pending_after_wait` runs.
+pub(crate) fn spawn_typed(ctx: &egui::Context, dir: &Path, prepared: &Prepared) -> PtyTerm {
+    let profile = ShellProfile {
+        shell: Some(user_shell(std::env::var("SHELL").ok())),
+        args: Vec::new(),
+        cwd: None,
+        env: prepared.env.iter().cloned().collect::<BTreeMap<_, _>>(),
+    };
+    let mut opts = spawn_opts(dir, Some(profile));
+    opts.agent_tracking = Some(AgentSetup {
+        pending_input: Some(typed_line(prepared)),
+        fallback_delay: PROMPT_FALLBACK,
+    });
+    PtyTerm::spawn(INITIAL_COLS, INITIAL_ROWS, repaint_handle(ctx), &opts)
+}
+
+fn typed_line(prepared: &Prepared) -> Vec<u8> {
+    prepared.launch.shell_line().into_bytes()
+}
+
 fn spawn_opts(dir: &Path, profile: Option<ShellProfile>) -> SpawnOpts {
     SpawnOpts {
         detect_progress: true,
@@ -80,6 +103,30 @@ mod tests {
         assert_eq!(profile.args[0], "-c");
         assert!(profile.args[1].contains("The agent was not resumed: it is gone."));
         assert!(profile.args[1].ends_with("; exec /bin/zsh -l -i"), "{}", profile.args[1]);
+    }
+
+    #[test]
+    fn the_typed_line_is_the_agents_whole_command_and_never_ends_in_enter() {
+        use tidewatch_core::launch::Launch;
+        let prepared = Prepared {
+            launch: Launch {
+                program: "claude".into(),
+                args: vec![
+                    "--resume".into(),
+                    "abc".into(),
+                    "--settings".into(),
+                    "{\"a\": 1}".into(),
+                ],
+                env: Vec::new(),
+                experimental: false,
+            },
+            env: Vec::new(),
+            setup: String::new(),
+            notes: Vec::new(),
+        };
+        let line = String::from_utf8(typed_line(&prepared)).unwrap();
+        assert_eq!(line, "claude --resume abc --settings '{\"a\": 1}'");
+        assert!(!line.contains(['\r', '\n']));
     }
 
     #[test]

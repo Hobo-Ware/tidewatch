@@ -9,6 +9,7 @@ use std::process::Command;
 use tempfile::TempDir;
 use tidewatch_core::agents::{AgentTable, ArgList, Level};
 use tidewatch_core::paths::TidewatchPaths;
+use tidewatch_core::prefs::ResumeAgents;
 use tidewatch_core::profiles::{Profile, Profiles};
 use tidewatch_core::restore::{
     self, RealDisk, Reason, RestoreEnv, TabAction, plan_window, repair_moved,
@@ -73,6 +74,7 @@ fn session_for(dir: &Path, worktree: &Worktree) -> Session {
                     level: Level::Edits,
                     session_id: Some(SESSION_ID.into()),
                     stages: None,
+                    crashed: false,
                 }),
             ],
         }],
@@ -97,7 +99,13 @@ fn plan(f: &Fixture, window: &SavedWindow) -> restore::WindowPlan {
         agent: BTreeMap::new(),
     };
     let installed = ["claude".to_owned()];
-    let env = RestoreEnv { agents: &table, profiles: &profiles, installed: &installed };
+    let env = RestoreEnv {
+        agents: &table,
+        profiles: &profiles,
+        installed: &installed,
+        resume: ResumeAgents::Auto,
+        app_crashed: false,
+    };
     plan_window(window, &env, &RealDisk::new(&f.home))
 }
 

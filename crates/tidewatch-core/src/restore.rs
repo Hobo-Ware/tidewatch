@@ -6,6 +6,9 @@
 //!
 //! - A tab whose repo, folder or worktree is gone is skipped: nothing is left to open it in.
 //! - A YOLO tab is never resumed: it reopens as a plain shell with a note, so the user restarts it.
+//! - `resume_agents` and how the agent last ended pick between running the resume command, typing
+//!   it for the user to run, and a plain shell (`resume_mode::decide`). Workflow tabs go through
+//!   the runner instead and are not affected.
 //! - An agent tab resumes only when its agent is installed, its profile still runs that agent, it
 //!   has a session id, the CLI's session file exists, and no earlier tab claimed the same session.
 //!   Anything else reopens as a plain shell in the worktree, with the reason as a note.
@@ -22,7 +25,9 @@ use std::path::{Path, PathBuf};
 use crate::agents::{Agent, AgentTable, Level, ResumeForm};
 use crate::launch::{Launch, LaunchCtx, LaunchError, launch_command};
 use crate::paths::TidewatchPaths;
+use crate::prefs::ResumeAgents;
 use crate::profiles::{Profile, Profiles};
+use crate::resume_mode::{Ended, Resume, decide};
 use crate::runner::{self, Runner};
 use crate::session::{SavedAgentTab, SavedTab, SavedWindow, Session};
 use crate::tools::Tools;
@@ -38,6 +43,7 @@ pub enum Reason {
     WorktreeGone,
     WorktreeBroken,
     Yolo,
+    ResumeOff,
     AgentUnknown(String),
     AgentMissing(String),
     ProfileGone(String),
@@ -58,6 +64,7 @@ impl Reason {
             Self::WorktreeGone => "worktree folder gone".into(),
             Self::WorktreeBroken => "worktree no longer belongs to its repository".into(),
             Self::Yolo => "YOLO tabs are never resumed automatically".into(),
+            Self::ResumeOff => "resuming agents is turned off in Settings".into(),
             Self::AgentUnknown(id) => format!("agent `{id}` is not configured"),
             Self::AgentMissing(id) => format!("`{id}` is not installed"),
             Self::ProfileGone(name) => format!("profile `{name}` no longer exists"),
@@ -148,6 +155,8 @@ pub struct RestoreEnv<'a> {
     pub profiles: &'a Profiles,
     /// Ids of the agents whose binary was found (`AgentTable::found_on_path`).
     pub installed: &'a [String],
+    pub resume: ResumeAgents,
+    pub app_crashed: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -156,8 +165,9 @@ pub enum TabAction {
     Shell,
     /// An agent tab that could not resume: reopen a plain shell in its folder, with the reason as a note.
     ShellInstead(Reason),
-    /// Start the agent with `resume_command`. `profile` carries the level the tab ran at.
-    ResumeAgent { agent: String, profile: Box<Profile>, session_id: String },
+    /// Start the agent with `resume_command`, or type it and leave Enter to the user (`how`).
+    /// `profile` carries the level the tab ran at.
+    ResumeAgent { agent: String, profile: Box<Profile>, session_id: String, how: Resume },
     /// `restore_workflow(stages)` gives the runner and the command it was waiting on.
     ResumeWorkflow { stages: PathBuf },
 }
@@ -173,10 +183,14 @@ pub struct TabPlan {
 }
 
 impl TabPlan {
-    /// What to print above a plain shell that stands in for an agent.
+    /// What to print for a tab that did not simply come back: above the plain shell that stands in
+    /// for its agent, or on a tab whose resume command is typed and waits for Enter.
     #[must_use]
     pub fn note(&self) -> Option<String> {
         match &self.action {
+            TabAction::ResumeAgent { how: Resume::TypeOnly(why), .. } => {
+                Some(why.note().to_owned())
+            }
             TabAction::ShellInstead(Reason::Yolo) => Some(
                 "This tab ran at YOLO, so Tidewatch did not restart its agent. Start it again yourself."
                     .to_owned(),
@@ -218,6 +232,7 @@ impl WindowPlan {
             .tabs
             .iter()
             .filter_map(|tab| match &tab.action {
+                TabAction::ShellInstead(Reason::ResumeOff) => None,
                 TabAction::ShellInstead(reason) => {
                     Some(format!("{} ({})", tab.saved.label(&self.dir), reason.text()))
                 }
@@ -364,6 +379,7 @@ fn agent_resume(
             Err(Reason::WorkflowUnreadable)
         };
     }
+    let how = decide(env.resume, Ended::of(env.app_crashed, tab.crashed), tab.level)?;
     let agent =
         env.agents.get(&tab.agent).ok_or_else(|| Reason::AgentUnknown(tab.agent.clone()))?;
     if !env.installed.contains(&tab.agent) {
@@ -397,6 +413,7 @@ fn agent_resume(
         agent: tab.agent.clone(),
         profile: Box::new(Profile { level: tab.level, ..profile.clone() }),
         session_id: id.to_owned(),
+        how,
     })
 }
 
@@ -507,6 +524,7 @@ mod tests {
     use super::*;
     use crate::agents::{AgentOverride, ArgList};
     use crate::launch::HookListener;
+    use crate::resume_mode::Why;
 
     const ID_C: &str = "0c2cbc96-1111-4222-8333-444455556666";
     const ID_G: &str = "1c2cbc96-1111-4222-8333-444455556666";
@@ -607,6 +625,7 @@ mod tests {
             level,
             session_id: id.map(str::to_owned),
             stages: None,
+            crashed: false,
         })
     }
 
@@ -615,9 +634,20 @@ mod tests {
     }
 
     fn plan_with(window: &SavedWindow, installed: &[String], disk: &FakeDisk) -> WindowPlan {
+        plan_as(window, installed, disk, ResumeAgents::Auto, false)
+    }
+
+    fn plan_as(
+        window: &SavedWindow,
+        installed: &[String],
+        disk: &FakeDisk,
+        resume: ResumeAgents,
+        app_crashed: bool,
+    ) -> WindowPlan {
         let table = table();
         let profiles = profiles();
-        let env = RestoreEnv { agents: &table, profiles: &profiles, installed };
+        let env =
+            RestoreEnv { agents: &table, profiles: &profiles, installed, resume, app_crashed };
         plan_window(window, &env, disk)
     }
 
@@ -636,6 +666,7 @@ mod tests {
             agent: agent.into(),
             profile: Box::new(Profile { level, ..profiles().profile[key].clone() }),
             session_id: id.into(),
+            how: Resume::Run,
         }
     }
 
@@ -796,6 +827,7 @@ mod tests {
             level: Level::Yolo,
             session_id: Some(ID_C.into()),
             stages: Some(PathBuf::from("/state/stages.json")),
+            crashed: false,
         };
         let mut disk = disk_for_all();
         disk.workflows.push("/state/stages.json".into());
@@ -820,6 +852,7 @@ mod tests {
             level: Level::Auto,
             session_id: None,
             stages: Some(PathBuf::from("/state/stages.json")),
+            crashed: false,
         });
         let mut disk = disk_for_all();
         let unreadable = plan_with(&window(vec![tab.clone()]), &everything_installed(), &disk);
@@ -910,6 +943,7 @@ mod tests {
                 level: Level::Edits,
                 session_id: Some(id.into()),
                 stages: None,
+                crashed: false,
             })
         };
         let other = SavedWindow {
@@ -939,10 +973,122 @@ mod tests {
         let table = table();
         let profiles = profiles();
         let installed = everything_installed();
-        let env = RestoreEnv { agents: &table, profiles: &profiles, installed: &installed };
+        let env = RestoreEnv {
+            agents: &table,
+            profiles: &profiles,
+            installed: &installed,
+            resume: ResumeAgents::Auto,
+            app_crashed: false,
+        };
         let all = plan(&Session { windows: vec![one, two] }, &env, &disk);
         assert_eq!(all.windows[0].tabs[0].action, resume("claude", Level::Edits, ID_C));
         assert_eq!(all.windows[1].tabs[0].action, TabAction::ShellInstead(Reason::Duplicate));
+    }
+
+    fn how_each_agent_tab_comes_back(plan: &WindowPlan) -> Vec<Option<Resume>> {
+        plan.tabs
+            .iter()
+            .filter_map(|tab| match &tab.action {
+                TabAction::ResumeAgent { how, .. } => Some(Some(*how)),
+                TabAction::ShellInstead(_) => Some(None),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn the_mode_and_a_crash_pick_run_type_or_shell_for_every_resumable_tab() {
+        let window = window(all_four_tabs());
+        let disk = disk_for_all();
+        let installed = everything_installed();
+        let cases = [
+            (ResumeAgents::Auto, false, Some(Resume::Run)),
+            (ResumeAgents::Auto, true, Some(Resume::TypeOnly(Why::AppCrashed))),
+            (ResumeAgents::Prefill, false, Some(Resume::TypeOnly(Why::Chosen))),
+            (ResumeAgents::Prefill, true, Some(Resume::TypeOnly(Why::AppCrashed))),
+            (ResumeAgents::Off, false, None),
+            (ResumeAgents::Off, true, None),
+        ];
+        for (mode, crashed, want) in cases {
+            let plan = plan_as(&window, &installed, &disk, mode, crashed);
+            assert_eq!(how_each_agent_tab_comes_back(&plan), vec![want; 4], "{mode:?} {crashed}");
+        }
+    }
+
+    #[test]
+    fn a_tab_that_crashed_on_its_own_is_typed_and_its_neighbours_are_not() {
+        let mut crashed = agent_tab("b-gemini", "gemini", "gem", Level::Edits, Some(ID_G));
+        if let SavedTab::Agent(tab) = &mut crashed {
+            tab.crashed = true;
+        }
+        let window = window(vec![
+            SavedTab::Main,
+            agent_tab("a-claude", "claude", "builder", Level::Edits, Some(ID_C)),
+            crashed,
+        ]);
+        let plan = plan_with(&window, &everything_installed(), &disk_for_all());
+        assert_eq!(
+            how_each_agent_tab_comes_back(&plan),
+            [Some(Resume::Run), Some(Resume::TypeOnly(Why::AgentCrashed))]
+        );
+    }
+
+    #[test]
+    fn yolo_stays_a_shell_in_every_mode_after_a_crash_too() {
+        let window =
+            window(vec![agent_tab("a-claude", "claude", "builder", Level::Yolo, Some(ID_C))]);
+        for mode in [ResumeAgents::Auto, ResumeAgents::Prefill, ResumeAgents::Off] {
+            for crashed in [false, true] {
+                let plan =
+                    plan_as(&window, &everything_installed(), &disk_for_all(), mode, crashed);
+                assert_eq!(
+                    actions(&plan),
+                    vec![TabAction::ShellInstead(Reason::Yolo)],
+                    "{mode:?} {crashed}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn a_typed_tab_carries_the_reason_as_its_note_and_off_says_nothing_in_the_toast() {
+        let window =
+            window(vec![agent_tab("a-claude", "claude", "builder", Level::Edits, Some(ID_C))]);
+        let installed = everything_installed();
+        let disk = disk_for_all();
+        let typed = plan_as(&window, &installed, &disk, ResumeAgents::Prefill, false);
+        assert_eq!(typed.tabs[0].note().as_deref(), Some(Why::Chosen.note()));
+        assert_eq!(typed.toast(), None, "the tab says it itself");
+        let off = plan_as(&window, &installed, &disk, ResumeAgents::Off, true);
+        assert_eq!(
+            off.tabs[0].note().unwrap(),
+            "The agent was not resumed: resuming agents is turned off in Settings."
+        );
+        assert_eq!(off.toast(), None, "a choice the user made is no news");
+        let auto = plan_with(&window, &installed, &disk);
+        assert_eq!(auto.tabs[0].note(), None);
+    }
+
+    #[test]
+    fn a_workflow_tab_is_resumed_by_its_runner_whatever_the_mode() {
+        let tab = SavedAgentTab {
+            dir: PathBuf::from(wt("a-claude")),
+            branch: Some("agent/a-claude".into()),
+            agent: "claude".into(),
+            profile: "builder".into(),
+            level: Level::Edits,
+            session_id: None,
+            stages: Some(PathBuf::from("/state/stages.json")),
+            crashed: true,
+        };
+        let window = window(vec![SavedTab::Agent(tab)]);
+        let mut disk = disk_for_all();
+        disk.workflows.push("/state/stages.json".into());
+        let plan = plan_as(&window, &everything_installed(), &disk, ResumeAgents::Off, true);
+        assert_eq!(
+            actions(&plan),
+            vec![TabAction::ResumeWorkflow { stages: PathBuf::from("/state/stages.json") }]
+        );
     }
 
     #[test]

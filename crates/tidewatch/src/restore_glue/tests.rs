@@ -5,6 +5,7 @@ use std::process::Command;
 use std::time::{Duration, Instant};
 
 use tidewatch_core::agents::Level;
+use tidewatch_core::prefs::ResumeAgents;
 use tidewatch_core::profiles::Profiles;
 use tidewatch_core::session::{SavedAgentTab, SavedWindow, Session};
 use tidewatch_core::tools::Tools;
@@ -62,7 +63,7 @@ impl Fixture {
         std::fs::set_permissions(&claude, std::fs::Permissions::from_mode(0o755)).unwrap();
         let mut catalog = Catalog::new(OsString::from(bin));
         catalog.set_profiles(Profiles::seeded(&["claude".to_owned()]));
-        let mut host = Host::new(skip, RealDisk::new(&home));
+        let mut host = Host::new(skip, false, RealDisk::new(&home));
         host.enqueue(0, &web(&repo));
         Self {
             paths: TidewatchPaths::new(&home),
@@ -111,7 +112,10 @@ impl Fixture {
         let shell = |dir: &Path, note: Option<&str>| {
             format!("shell@{}|{}", dir.display(), note.unwrap_or("-"))
         };
-        let spawn = Spawn { agent: &agent, shell: &shell };
+        let typed = |dir: &Path, prepared: &Prepared| {
+            format!("typed@{}: {}", dir.display(), prepared.launch.shell_line())
+        };
+        let spawn = Spawn { agent: &agent, typed: &typed, shell: &shell };
         let report = self.host.tick(&self.ctx, &mut self.tabs, &env, &spawn, &mut self.runs, 1.0);
         self.toasts.extend(report.toasts.clone());
         if report.leftovers.is_some() {
@@ -161,6 +165,7 @@ fn agent(worktree: &Worktree, session: &str, level: Level) -> SavedTab {
         level,
         session_id: Some(session.into()),
         stages: None,
+        crashed: false,
     })
 }
 
@@ -351,6 +356,7 @@ fn a_workflow_tab_with_unreadable_state_reopens_as_a_shell_with_a_toast() {
                 level: Level::Edits,
                 session_id: None,
                 stages: Some(f.home.join("missing-stages.json")),
+                crashed: false,
             }),
             dir: wt.path.clone(),
             worktree: Some(wt.clone()),
@@ -366,8 +372,9 @@ fn a_workflow_tab_with_unreadable_state_reopens_as_a_shell_with_a_toast() {
         trust: None,
     };
     let agent = |_: &Path, _: &Prepared| "agent".to_owned();
+    let typed = |_: &Path, _: &Prepared| "typed".to_owned();
     let shell = |_: &Path, note: Option<&str>| format!("shell|{}", note.unwrap_or("-"));
-    let spawn = Spawn { agent: &agent, shell: &shell };
+    let spawn = Spawn { agent: &agent, typed: &typed, shell: &shell };
     let report = f.host.apply(&plan, 0, &f.ctx, &mut f.tabs, &env, &spawn, &mut f.runs, 0.0);
     assert_eq!(report.toasts.len(), 1);
     assert!(f.shells()[1].starts_with("shell|The workflow was not resumed"), "{}", f.shells()[1]);
@@ -400,6 +407,7 @@ fn a_saved_workflow_run_goes_back_through_the_workflow_host_in_its_place() {
         level: Level::Edits,
         session_id: None,
         stages: Some(stages),
+        crashed: false,
     });
     f.save(2, false, vec![SavedTab::Main, shell(&first), workflow_tab]);
     f.begin();
@@ -520,4 +528,88 @@ fn a_repo_added_later_makes_the_window_unsettled_until_its_tabs_are_back() {
     assert_eq!(f.tabs.in_group(group).count(), 2);
     assert_eq!(f.report.focus, None, "only the first repo sets the window's focus mode");
     assert_eq!(f.tabs.active_group(), 0);
+}
+
+fn crashed_agent(worktree: &Worktree, session: &str, level: Level, crashed: bool) -> SavedTab {
+    let SavedTab::Agent(tab) = agent(worktree, session, level) else { unreachable!() };
+    SavedTab::Agent(SavedAgentTab { crashed, ..tab })
+}
+
+struct ReopenedPane {
+    pane: String,
+    note: Option<&'static str>,
+    started: bool,
+    notice: Option<String>,
+}
+
+fn reopen_one(
+    mode: ResumeAgents,
+    level: Level,
+    app_crashed: bool,
+    agent_crashed: bool,
+) -> (ReopenedPane, Worktree) {
+    let mut f = Fixture::new(false);
+    Prefs { resume_agents: mode, ..Prefs::default() }.save(&f.paths).unwrap();
+    f.host.app_crashed = app_crashed;
+    let brave = f.worktree_with_transcript(SESSION_A);
+    f.save(1, false, vec![SavedTab::Main, crashed_agent(&brave, SESSION_A, level, agent_crashed)]);
+    f.begin();
+    f.until_settled();
+    let tab = &f.tabs.items()[1].pane;
+    let reopened = ReopenedPane {
+        pane: f.shells()[1].clone(),
+        note: tab.agent.as_ref().and_then(|agent| agent.resume_note),
+        started: tab.agent.is_some(),
+        notice: f.report.notice.clone(),
+    };
+    (reopened, brave)
+}
+
+#[test]
+fn a_resumed_agent_runs_or_waits_typed_for_enter_by_setting_and_how_it_ended() {
+    use ResumeAgents::{Auto, Prefill};
+    let cases = [
+        (Auto, false, false, None),
+        (Auto, true, false, Some(Why::AppCrashed)),
+        (Auto, false, true, Some(Why::AgentCrashed)),
+        (Auto, true, true, Some(Why::AppCrashed)),
+        (Prefill, false, false, Some(Why::Chosen)),
+        (Prefill, true, false, Some(Why::AppCrashed)),
+        (Prefill, false, true, Some(Why::AgentCrashed)),
+    ];
+    for (mode, app, agent, typed) in cases {
+        let (got, brave) = reopen_one(mode, Level::Edits, app, agent);
+        let label = format!("{mode:?} app {app} agent {agent}");
+        let prefix = if typed.is_some() { "typed@" } else { "agent@" };
+        assert!(got.pane.starts_with(prefix), "{label}: {}", got.pane);
+        assert!(got.pane.contains(&format!("claude --resume {SESSION_A}")), "{label}");
+        assert!(got.pane.contains(&brave.path.display().to_string()), "{label}");
+        assert_eq!(got.note, typed.map(Why::note), "{label}");
+        assert!(got.started, "{label}: it stays an agent tab, so the next save keeps its session");
+        assert_eq!(got.notice, None, "{label}");
+    }
+}
+
+#[test]
+fn off_reopens_a_plain_shell_with_the_reason_and_says_nothing_else() {
+    for (app, agent) in [(false, false), (true, false), (false, true)] {
+        let (got, _) = reopen_one(ResumeAgents::Off, Level::Edits, app, agent);
+        assert!(got.pane.starts_with("shell@"), "{}", got.pane);
+        assert!(got.pane.contains("resuming agents is turned off in Settings"), "{}", got.pane);
+        assert!(!got.started);
+        assert_eq!(got.notice, None, "a choice the user made is no news");
+    }
+}
+
+#[test]
+fn yolo_is_a_plain_shell_in_every_mode_even_after_a_crash() {
+    for mode in [ResumeAgents::Auto, ResumeAgents::Prefill, ResumeAgents::Off] {
+        for (app, agent) in [(false, false), (true, false), (false, true)] {
+            let (got, _) = reopen_one(mode, Level::Yolo, app, agent);
+            let label = format!("{mode:?} app {app} agent {agent}");
+            assert!(got.pane.starts_with("shell@"), "{label}: {}", got.pane);
+            assert!(got.pane.contains("ran at YOLO"), "{label}: {}", got.pane);
+            assert!(!got.started, "{label}");
+        }
+    }
 }

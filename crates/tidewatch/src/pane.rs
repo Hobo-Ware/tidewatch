@@ -56,6 +56,8 @@ pub(crate) struct AgentTab {
     /// The workflow this tab runs, when it was opened from one.
     pub(crate) workflow: Option<Box<TabRun>>,
     pub(crate) first_prompt: FirstPrompt,
+    /// Why this tab's resume command waits typed at the prompt; shown until the user types.
+    pub(crate) resume_note: Option<&'static str>,
 }
 
 impl AgentTab {
@@ -68,6 +70,7 @@ impl AgentTab {
             launched: None,
             workflow: None,
             first_prompt: FirstPrompt::NotNeeded,
+            resume_note: None,
         }
     }
 }
@@ -232,6 +235,7 @@ pub(crate) fn finish_open<T>(
                         } else {
                             FirstPrompt::NotNeeded
                         },
+                        resume_note: None,
                     }
                 }),
             };

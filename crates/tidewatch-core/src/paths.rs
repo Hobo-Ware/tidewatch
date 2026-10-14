@@ -89,6 +89,12 @@ impl TidewatchPaths {
         self.state_dir().join("session.toml")
     }
 
+    /// Exists while a run is live and until its clean quit: what a crashed run leaves behind.
+    #[must_use]
+    pub fn run_marker_file(&self) -> PathBuf {
+        self.state_dir().join("running")
+    }
+
     /// The folder of the window used last, so a launch with no path can reopen it.
     #[must_use]
     pub fn last_workspace_file(&self) -> PathBuf {
@@ -230,6 +236,12 @@ mod tests {
     fn session_file_sits_in_the_state_dir_next_to_the_worktree_registry() {
         let paths = paths();
         assert_eq!(paths.session_file(), paths.state_dir().join("session.toml"));
+    }
+
+    #[test]
+    fn the_run_marker_sits_in_the_state_dir_next_to_the_session() {
+        let paths = paths();
+        assert_eq!(paths.run_marker_file(), paths.state_dir().join("running"));
     }
 
     #[test]
