@@ -2,9 +2,9 @@
 //! thin bar along a tab's top edge. Working is the only tone that animates, so a tab that waits for
 //! you or is done costs no frames.
 
+use crate::brand;
 use egui::{Color32, Id, LayerId, Order, Rect, Stroke, pos2, vec2};
 use stdusk_core::procwatch::Cli;
-use stdusk_egui::colors;
 use tidewatch_core::status::{AgentStatus, Reason};
 
 const BAR_HEIGHT: f32 = 2.0;
@@ -68,11 +68,11 @@ pub(crate) fn describe(status: &AgentStatus) -> String {
 /// `None` for a plain shell: it has no status to color.
 pub(crate) fn color(tone: Tone) -> Option<Color32> {
     match tone {
-        Tone::Setup => Some(colors::accent().gamma_multiply(0.6)),
-        Tone::Working => Some(colors::accent()),
-        Tone::Needs => Some(colors::yellow()),
-        Tone::Done => Some(colors::green()),
-        Tone::Failed => Some(colors::red()),
+        Tone::Setup => Some(brand::WORKING.gamma_multiply(0.6)),
+        Tone::Working => Some(brand::WORKING),
+        Tone::Needs => Some(brand::NEEDS),
+        Tone::Done => Some(brand::DONE),
+        Tone::Failed => Some(brand::FAILED),
         Tone::Shell => None,
     }
 }
@@ -180,10 +180,10 @@ mod tests {
 
     #[test]
     fn colors_follow_the_traffic_light_and_a_shell_has_none() {
-        assert_eq!(color(Tone::Needs), Some(colors::yellow()));
-        assert_eq!(color(Tone::Done), Some(colors::green()));
-        assert_eq!(color(Tone::Failed), Some(colors::red()));
-        assert_eq!(color(Tone::Working), Some(colors::accent()));
+        assert_eq!(color(Tone::Needs), Some(brand::NEEDS));
+        assert_eq!(color(Tone::Done), Some(brand::DONE));
+        assert_eq!(color(Tone::Failed), Some(brand::FAILED));
+        assert_eq!(color(Tone::Working), Some(brand::WORKING));
         assert_eq!(color(Tone::Shell), None);
         let lit = [Tone::Setup, Tone::Working, Tone::Needs, Tone::Done, Tone::Failed];
         for (i, a) in lit.iter().enumerate() {

@@ -2,6 +2,7 @@
 //! opens into three columns, and the same three segments as one line in an Overview row. What the
 //! segments say is plain data; the painters only draw it.
 
+use crate::brand;
 use egui::{Align2, Color32, FontId, Painter, Rect, Sense, Stroke, StrokeKind, Ui, pos2, vec2};
 use stdusk_egui::colors;
 use tidewatch_core::end_block::EndBlock;
@@ -57,10 +58,10 @@ pub(crate) fn segments(block: &EndBlock) -> [Segment; 3] {
 
 fn tone(segment: &Segment) -> Color32 {
     match segment.section {
-        Section::Done => colors::green(),
+        Section::Done => brand::DONE,
         Section::NeedsYou if segment.items.is_empty() => colors::dim(),
-        Section::NeedsYou => colors::yellow(),
-        Section::Next => colors::accent(),
+        Section::NeedsYou => brand::NEEDS,
+        Section::Next => brand::TEAL_TEXT,
     }
 }
 
