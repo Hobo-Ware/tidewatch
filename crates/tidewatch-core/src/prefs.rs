@@ -1,5 +1,6 @@
 //! App-wide switches in `~/.config/tidewatch/settings.toml`: whether launch restores the last
-//! session (PLAN.md, D11, on by default), the `[window]` table (quake mode, its hotkey, the
+//! session (PLAN.md, D11, on by default) and how it brings agents back (`resume_agents`), the
+//! `[window]` table (quake mode, its hotkey, the
 //! menu-bar item, the panel layout) and the `[updates]` table (check for releases, install them).
 //!
 //! A missing or bad file is the defaults, with a stderr note for a bad one: a settings file must
@@ -20,9 +21,22 @@ pub struct Prefs {
     #[serde(default = "on")]
     pub restore_session: bool,
     #[serde(default)]
+    pub resume_agents: ResumeAgents,
+    #[serde(default)]
     pub window: WindowPrefs,
     #[serde(default)]
     pub updates: UpdatePrefs,
+}
+
+/// What a restored agent tab does: `auto` runs its resume command, `prefill` types it and leaves
+/// Enter to the user, `off` reopens a plain shell. Only used while `restore_session` is on.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ResumeAgents {
+    #[default]
+    Auto,
+    Prefill,
+    Off,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -71,6 +85,7 @@ impl Default for Prefs {
     fn default() -> Self {
         Self {
             restore_session: true,
+            resume_agents: ResumeAgents::default(),
             window: WindowPrefs::default(),
             updates: UpdatePrefs::default(),
         }
@@ -168,6 +183,49 @@ mod tests {
             std::fs::read_to_string(paths.prefs_file()).unwrap(),
             "restore_session = \"maybe\""
         );
+    }
+
+    #[test]
+    fn resume_agents_defaults_to_auto_and_reads_every_mode_from_the_file() {
+        let (_home, paths) = paths();
+        assert_eq!(Prefs::default().resume_agents, ResumeAgents::Auto);
+        std::fs::create_dir_all(paths.config_dir()).unwrap();
+        for (text, want) in [
+            ("auto", ResumeAgents::Auto),
+            ("prefill", ResumeAgents::Prefill),
+            ("off", ResumeAgents::Off),
+        ] {
+            std::fs::write(paths.prefs_file(), format!("resume_agents = \"{text}\"\n")).unwrap();
+            let prefs = Prefs::load(&paths);
+            assert_eq!(prefs.resume_agents, want, "{text}");
+            assert!(prefs.restore_session, "{text}");
+        }
+    }
+
+    #[test]
+    fn a_file_from_before_resume_agents_resumes_automatically() {
+        let (_home, paths) = paths();
+        std::fs::create_dir_all(paths.config_dir()).unwrap();
+        std::fs::write(paths.prefs_file(), "restore_session = false\n").unwrap();
+        assert_eq!(Prefs::load(&paths).resume_agents, ResumeAgents::Auto);
+    }
+
+    #[test]
+    fn an_unknown_resume_mode_makes_the_whole_file_fall_back_to_the_defaults() {
+        let (_home, paths) = paths();
+        std::fs::create_dir_all(paths.config_dir()).unwrap();
+        std::fs::write(paths.prefs_file(), "resume_agents = \"sometimes\"\n").unwrap();
+        assert_eq!(Prefs::load(&paths), Prefs::default());
+    }
+
+    #[test]
+    fn the_resume_mode_survives_a_save_and_an_update_of_another_part() {
+        let (_home, paths) = paths();
+        Prefs::update(&paths, |p| p.resume_agents = ResumeAgents::Prefill).unwrap();
+        Prefs::update(&paths, |p| p.window.quake = false).unwrap();
+        let prefs = Prefs::load(&paths);
+        assert_eq!(prefs.resume_agents, ResumeAgents::Prefill);
+        assert!(!prefs.window.quake);
     }
 
     #[test]
