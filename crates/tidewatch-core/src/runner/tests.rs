@@ -1126,3 +1126,15 @@ fn a_real_test_command_drives_the_gate_through_run_in() {
     let end = runner.handle(RunEvent::TestResult { exit_code: run.exit_code, output: run.output });
     assert_eq!(end, Some(Command::Finished));
 }
+
+#[test]
+fn a_task_set_before_the_start_reaches_the_first_prompt_and_later_ones_are_ignored() {
+    let work = Stage { prompt: Some("Do: {task}".into()), ..stage(Action::Work, Gate::Approve) };
+    let mut runner = runner(vec![work], None);
+    runner.set_task("  add a retry\n");
+    assert_eq!(runner.context().task, "add a retry");
+    let first = runner.start().unwrap();
+    assert_eq!(prompt_of(&first), "Do: add a retry");
+    runner.set_task("something else");
+    assert_eq!(runner.context().task, "add a retry");
+}
