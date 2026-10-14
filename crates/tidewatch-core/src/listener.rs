@@ -22,8 +22,9 @@ use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::mpsc::{Receiver, Sender, channel};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::thread::JoinHandle;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
+use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 use crate::events::{Repaint, TabEvent, TabMessage};
@@ -41,6 +42,7 @@ const MAX_CONNECTIONS: usize = 64;
 const IDLE_TIMEOUT: Duration = Duration::from_secs(75);
 const WRITE_TIMEOUT: Duration = Duration::from_secs(10);
 const TOKEN_BYTES: usize = 16;
+const PORT_RETRY: Duration = Duration::from_millis(50);
 
 /// Who a token belongs to.
 #[derive(Clone, Debug)]
@@ -56,6 +58,17 @@ pub struct TabRegistration {
     /// the old one registers again with a higher number, so the app can tell the old agent's late
     /// messages apart. Tabs that never swap their agent use 0.
     pub generation: u64,
+}
+
+/// What a running agent holds that another process must honour for the agent to keep reporting:
+/// the token its launch baked in, and what the token stands for. A restart that keeps the agent
+/// running carries it to the new process, which adopts it under the tab's new id.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Credential {
+    pub token: String,
+    pub generation: u64,
+    pub agent: String,
+    pub notes_file: PathBuf,
 }
 
 struct Entry {
@@ -104,7 +117,40 @@ impl Listener {
         paths: TidewatchPaths,
         repaint: Repaint,
     ) -> io::Result<(Self, Receiver<TabMessage>)> {
-        let listener = TcpListener::bind(HOOK_BIND)?;
+        Self::start_on(TcpListener::bind(HOOK_BIND)?, paths, repaint)
+    }
+
+    /// Binds the loopback port an earlier process served, which is the one a running agent's launch
+    /// has in its hook and MCP addresses. The earlier process may still be shutting down, so a
+    /// busy port is tried again until `patience` runs out.
+    pub fn start_on_port(
+        port: u16,
+        paths: TidewatchPaths,
+        repaint: Repaint,
+        patience: Duration,
+    ) -> io::Result<(Self, Receiver<TabMessage>)> {
+        let deadline = Instant::now() + patience;
+        let listener = loop {
+            match TcpListener::bind(("127.0.0.1", port)) {
+                Ok(listener) => break listener,
+                Err(e) if Instant::now() >= deadline => return Err(e),
+                Err(_) => std::thread::sleep(PORT_RETRY),
+            }
+        };
+        Self::start_on(listener, paths, repaint)
+    }
+
+    /// The port the listener serves.
+    #[must_use]
+    pub fn port(&self) -> u16 {
+        self.addr.port()
+    }
+
+    fn start_on(
+        listener: TcpListener,
+        paths: TidewatchPaths,
+        repaint: Repaint,
+    ) -> io::Result<(Self, Receiver<TabMessage>)> {
         let addr = listener.local_addr()?;
         let (events, receiver) = channel();
         let shared = Arc::new(Shared {
@@ -143,6 +189,32 @@ impl Listener {
         tabs.retain(|_, existing| existing.tab_id != entry.tab_id);
         tabs.insert(token.clone(), entry);
         HookListener { base_url: self.base_url(), token }
+    }
+
+    /// The credential the tab's agent reports with, for a process that takes the agent over.
+    #[must_use]
+    pub fn credential_of(&self, tab_id: u64) -> Option<Credential> {
+        let tabs = self.shared.tabs.lock().unwrap_or_else(PoisonError::into_inner);
+        tabs.iter().find(|(_, entry)| entry.tab_id == tab_id).map(|(token, entry)| Credential {
+            token: token.clone(),
+            generation: entry.generation,
+            agent: entry.agent.clone(),
+            notes_file: entry.notes_file.clone(),
+        })
+    }
+
+    /// Honours another process's credential for `tab_id`, so the agent that holds the token keeps
+    /// reporting to this tab. Like [`Self::register_tab`], it revokes the tab's earlier tokens.
+    pub fn adopt_tab(&self, tab_id: u64, credential: &Credential) {
+        let entry = Arc::new(Entry {
+            tab_id,
+            generation: credential.generation,
+            agent: credential.agent.clone(),
+            notes_file: credential.notes_file.clone(),
+        });
+        let mut tabs = self.shared.tabs.lock().unwrap_or_else(PoisonError::into_inner);
+        tabs.retain(|_, existing| existing.tab_id != tab_id);
+        tabs.insert(credential.token.clone(), entry);
     }
 
     /// Revokes every token of the tab. Later requests with them get 401.

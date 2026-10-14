@@ -602,3 +602,48 @@ fn dropping_the_listener_stops_it_from_accepting() {
     drop(h);
     assert!(TcpStream::connect_timeout(&addr, Duration::from_millis(500)).is_err());
 }
+
+#[test]
+fn a_new_process_serves_the_old_port_and_honours_the_old_tokens_under_new_tab_ids() {
+    let old = Harness::start();
+    let hook = old.register_generation(3, "a", 4);
+    let credential = old.listener.credential_of(3).unwrap();
+    assert_eq!(credential.token, hook.token);
+    assert_eq!((credential.generation, credential.agent.as_str()), (4, "claude"));
+    assert_eq!(credential.notes_file, old.notes_file("a"));
+    let port = old.listener.port();
+
+    let busy = Listener::start_on_port(port, old.paths.clone(), Box::new(|| {}), Duration::ZERO);
+    assert!(busy.is_err(), "the old process still holds the port");
+
+    let paths = old.paths.clone();
+    drop(old.listener);
+    let (listener, events) =
+        Listener::start_on_port(port, paths, Box::new(|| {}), Duration::from_secs(5)).unwrap();
+    listener.adopt_tab(11, &credential);
+    let mut client = Client::connect(format!("127.0.0.1:{port}").parse().unwrap());
+    let reply = client.request("POST", "/hook/claude", Some(&hook.token), STOP_HOOK);
+    assert_eq!(reply.status, 200);
+    let message = events.recv_timeout(Duration::from_secs(5)).unwrap();
+    assert_eq!((message.tab_id, message.generation), (11, 4));
+    assert_eq!(listener.credential_of(11), Some(credential));
+}
+
+#[test]
+fn adopting_a_credential_replaces_the_tabs_earlier_token() {
+    let h = Harness::start();
+    let first = h.register(1, "a");
+    let credential = tidewatch_core::listener::Credential {
+        token: "feedface".into(),
+        generation: 0,
+        agent: "claude".into(),
+        notes_file: h.notes_file("a"),
+    };
+    h.listener.adopt_tab(1, &credential);
+    let status = |token: &str| h.client().request("POST", "/hook/claude", Some(token), "{}").status;
+    assert_eq!(status(&first.token), 401);
+    assert_eq!(status("feedface"), 200);
+}
+
+const STOP_HOOK: &str =
+    r#"{"hook_event_name":"Stop","session_id":"s1","last_assistant_message":"x"}"#;
