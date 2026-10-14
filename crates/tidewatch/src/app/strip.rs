@@ -52,6 +52,10 @@ impl Tidewatch {
                     ui.set_min_height(TAB_H);
                     ui.spacing_mut().item_spacing.x = STRIP_GAP;
                     ui.add_space(4.0);
+                    if self.welcome.is_some() {
+                        Self::welcome_strip(ui, frame);
+                        return;
+                    }
                     self.repo_chip(ui, frame);
                     self.leftovers.chip(ui);
                     self.updates.pill(ui);
@@ -90,6 +94,24 @@ impl Tidewatch {
                     }
                 });
             });
+    }
+
+    fn welcome_strip(ui: &mut egui::Ui, frame: &mut FrameIntent) {
+        let resp = chip(ui, "No repo", false);
+        egui::Popup::menu(&resp).show(|ui| {
+            style_menu(ui);
+            if menu_item(ui, "Open repo...", &Command::OpenRepo.keys()).clicked() {
+                frame.repo_command = Some(RepoCommand::Open);
+                ui.close();
+            }
+        });
+        let gap = (ui.available_width() - stdusk_egui::widgets::ICON_BTN_W).max(0.0);
+        ui.add_space(gap);
+        if icon_button(ui, icons::GEAR, &format!("Profiles ({})", Command::Settings.keys()))
+            .clicked()
+        {
+            frame.toggle_settings = true;
+        }
     }
 
     fn repo_chip(&self, ui: &mut egui::Ui, frame: &mut FrameIntent) {

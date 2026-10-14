@@ -198,6 +198,8 @@ crates/tidewatch/       the egui app
   src/stepper.rs        the stepper's data: a pill per stage with state and loop counter, the gate, a stage's summary and findings, the position label (pure)
   src/stepper_view.rs   draws the header of a workflow tab: stepper, a clicked stage, the ask card, the stopped line
   src/workflow_start_view.rs  the card a workflow tab shows until its run starts: description, task box, a card per stage, Start run (Cmd+Enter)
+  src/welcome.rs        the welcome screen's Recent list: the last window's repos, then the session's, each once, with its open tabs (pure)
+  src/welcome_view.rs   draws the welcome screen of a window with no repo: the K mark, Open repo (Cmd+O), Recent, the command line hint
   src/workflow_jobs.rs  open (worktree, base, test command and timeout), launch a stage (fresh token, prepare, divider), run the tests as jobs
   src/workflow_glue.rs  Host: open a workflow or saved-run tab, carry out what a run asks, apply finished jobs, drop a replaced agent's messages (generic over the pty)
 docs/                   concept mockup, research reports, shortcuts.md (generated from the command table, checked by a test)

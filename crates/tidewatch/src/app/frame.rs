@@ -19,6 +19,7 @@ pub(super) struct FrameIntent {
     pub(super) keys: KeyRoute,
     pub(super) actions: Vec<Action>,
     pub(super) repo_command: Option<RepoCommand>,
+    pub(super) open_dir: Option<std::path::PathBuf>,
     pub(super) toggle_overview: bool,
     pub(super) toggle_settings: bool,
     pub(super) settings_action: Option<settings_view::Action>,
@@ -103,6 +104,7 @@ impl Tidewatch {
             keys: KeyRoute { modal_open: gate.modal_open(), typing_in_a_panel },
             actions,
             repo_command: None,
+            open_dir: None,
             toggle_overview,
             toggle_settings: false,
             settings_action: None,
@@ -155,6 +157,9 @@ impl Tidewatch {
         if let Some(command) = intent.repo_command {
             self.run_repo_command(command, ctx);
         }
+        if let Some(dir) = intent.open_dir {
+            self.open_workspace(dir, ctx);
+        }
         if intent.toggle_overview {
             self.toggle_overview();
         }
@@ -167,7 +172,7 @@ impl Tidewatch {
     pub(super) fn finish_frame(&mut self, ctx: &egui::Context, now: f64) {
         self.dev_session.tick(ctx, &mut self.tabs, now);
         let focused = ctx.input(|i| i.viewport().focused.unwrap_or(false));
-        if self.last_used.gained_focus(focused) {
+        if self.last_used.gained_focus(focused) && self.welcome.is_none() {
             self.last_used.record(&super::workspaces::remembered(&self.workspaces, &self.tabs));
         }
         self.saver.tick(

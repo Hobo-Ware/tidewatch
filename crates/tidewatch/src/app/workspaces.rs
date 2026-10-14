@@ -72,8 +72,16 @@ impl Tidewatch {
             self.dispatch(Action::ShowGroup(group), ctx);
             return;
         }
-        let group = self.tabs.add_group(Pane::shell(spawn_shell(ctx, workspace.dir())));
+        let mut group = self.tabs.add_group(Pane::shell(spawn_shell(ctx, workspace.dir())));
+        if self.welcome.take().is_some() {
+            for id in self.tabs.remove_group(0) {
+                self.forget_tab(id);
+            }
+            self.workspaces.remove(0);
+            group -= 1;
+        }
         self.restore.enqueue(group, &workspace);
+        self.bases.refresh(ctx, workspace.dir());
         self.workspaces.push(workspace);
         if let Some(paths) = &self.paths {
             self.restore.begin(ctx, paths, &self.catalog);
