@@ -7,6 +7,7 @@ use tidewatch_core::workflows::Workflows;
 
 use super::*;
 use crate::catalog::Availability;
+use crate::macos::LoginItem;
 use crate::window_view;
 
 fn settings() -> Settings {
@@ -35,10 +36,11 @@ fn trust_page() -> trust_view::Page<'static> {
     }
 }
 
-fn general(restore: bool) -> General {
+fn general(restore: bool, login_offered: bool) -> General {
     General {
         restore,
         skipped_by_flag: false,
+        login_offered,
         window: window_view::View {
             status: crate::shell::HotkeyStatus::Registered,
             menu_bar_available: true,
@@ -83,6 +85,7 @@ struct Harness {
     settings: Settings,
     updates: Updates,
     restore: bool,
+    login_offered: bool,
     esc_closes: bool,
 }
 
@@ -93,7 +96,7 @@ impl Harness {
         let mut settings = settings();
         settings.section = section;
         let updates = updates(&ctx);
-        Self { ctx, settings, updates, restore: true, esc_closes: true }
+        Self { ctx, settings, updates, restore: true, login_offered: false, esc_closes: true }
     }
 
     fn frame(&mut self, events: Vec<Event>) -> Option<Action> {
@@ -101,12 +104,14 @@ impl Harness {
         let (settings, updates) = (&mut self.settings, &mut self.updates);
         let probes =
             Probes::from([("claude".to_owned(), Availability::Found(Some("2.1.0".into())))]);
-        let (files, trust, general) = (files(), trust_page(), general(self.restore));
+        let (files, trust, general) =
+            (files(), trust_page(), general(self.restore, self.login_offered));
         let host = Host {
             files: &files,
             trust: &trust,
             general: &general,
             probes: &probes,
+            read_login: || LoginItem::Off,
             esc_closes: self.esc_closes,
         };
         let _ = self.ctx.run_ui(input(events), |ui| {
@@ -214,4 +219,31 @@ fn the_sidebar_shows_the_version_and_marks_a_page_with_unsaved_edits() {
         assert!(harness.frame(vec![]).is_none());
     }
     assert!(harness.settings.sections()[1].2);
+}
+
+fn login_actions(offered: bool) -> Vec<login_item::Click> {
+    let mut harness = Harness::new(Section::General);
+    harness.login_offered = offered;
+    harness.frame(vec![]);
+    let mut found = Vec::new();
+    for y in (150..420).step_by(6) {
+        for x in (1100..1240).step_by(12) {
+            if let Some(Action::LoginItem(click)) = harness.click(pos2(x as f32, y as f32)) {
+                found.push(click);
+            }
+        }
+    }
+    found
+}
+
+#[test]
+fn open_at_login_sits_in_the_startup_card_and_asks_the_app_to_register() {
+    let found = login_actions(true);
+    assert_ne!(found.len(), 0);
+    assert!(found.iter().all(|click| *click == login_item::Click::Set(true)), "{found:?}");
+}
+
+#[test]
+fn a_platform_without_a_login_item_shows_no_row_for_it() {
+    assert_eq!(login_actions(false), Vec::new());
 }
