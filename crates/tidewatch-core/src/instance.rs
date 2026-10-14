@@ -193,6 +193,41 @@ fn claim_within(path: &Path, hand_over: Option<&Command>, patience: Duration) ->
     }
 }
 
+/// Claims `path` for a window that takes over from the one serving it, which is leaving once it has
+/// handed everything over. Nothing is sent to that window, so it never receives a folder it is about
+/// to lose; this waits (up to ten seconds) until it no longer answers, then serves the socket.
+#[must_use]
+pub fn claim_replacing(path: &Path) -> Claim {
+    claim_replacing_within(path, CLOSING_PATIENCE)
+}
+
+fn claim_replacing_within(path: &Path, patience: Duration) -> Claim {
+    let deadline = Instant::now() + patience;
+    loop {
+        let answered = UnixStream::connect(path).is_ok();
+        match decide_startup(path.exists(), answered) {
+            Startup::Secondary => {}
+            Startup::Primary => {
+                if let Some(claim) = bind(path, None) {
+                    return claim;
+                }
+            }
+            Startup::TakeOverStale => {
+                let _ = std::fs::remove_file(path);
+                if let Some(claim) = bind(path, None) {
+                    return claim;
+                }
+            }
+        }
+        if Instant::now() >= deadline {
+            let stayed =
+                std::io::Error::new(ErrorKind::TimedOut, "the window did not stop answering");
+            return Claim::Unavailable(stayed);
+        }
+        std::thread::sleep(CLOSING_POLL);
+    }
+}
+
 /// `None` when the window there is closing.
 fn attempt(path: &Path, hand_over: Option<&Command>) -> Option<Claim> {
     let stream = UnixStream::connect(path);
@@ -537,6 +572,49 @@ mod tests {
 
         let claimed = claim_within(&socket, Some(&Command::Toggle), Duration::from_millis(200));
         assert!(matches!(claimed, Claim::Unavailable(e) if e.kind() == ErrorKind::TimedOut));
+    }
+
+    #[test]
+    fn a_successor_waits_for_the_old_window_to_go_and_sends_it_nothing_even_when_it_is_not_closing()
+    {
+        let dir = tempfile::tempdir().unwrap();
+        let socket = dir.path().join("a.sock");
+        let (guard, rx) = serve(primary(claim(&socket, None)));
+        let leaving = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(250));
+            drop(guard);
+        });
+
+        let started = Instant::now();
+        let (_taken, taken_rx) =
+            serve(primary(claim_replacing_within(&socket, Duration::from_secs(10))));
+        leaving.join().unwrap();
+
+        assert!(started.elapsed() >= Duration::from_millis(200), "it waited for the old window");
+        assert!(silent(&rx), "the old window was sent nothing");
+        assert!(silent(&taken_rx));
+    }
+
+    #[test]
+    fn a_successor_gives_up_on_a_window_that_never_goes() {
+        let dir = tempfile::tempdir().unwrap();
+        let socket = dir.path().join("a.sock");
+        let (_guard, rx) = serve(primary(claim(&socket, None)));
+        let claimed = claim_replacing_within(&socket, Duration::from_millis(200));
+        assert!(matches!(claimed, Claim::Unavailable(e) if e.kind() == ErrorKind::TimedOut));
+        assert!(silent(&rx));
+    }
+
+    #[test]
+    fn a_successor_takes_a_free_path_and_a_stale_socket_at_once() {
+        let dir = tempfile::tempdir().unwrap();
+        let free = dir.path().join("free.sock");
+        assert!(matches!(claim_replacing_within(&free, Duration::ZERO), Claim::Primary(_)));
+
+        let stale = dir.path().join("stale.sock");
+        leave_stale_socket(&stale);
+        assert!(stale.exists());
+        assert!(matches!(claim_replacing_within(&stale, Duration::ZERO), Claim::Primary(_)));
     }
 
     #[test]
