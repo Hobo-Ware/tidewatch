@@ -133,17 +133,12 @@ pub(crate) fn items(sources: &Sources, platform: Platform) -> Vec<Item> {
             }
         });
     let repo_menu = [
-        Some(("Open repo...", Target::OpenRepo)),
-        several.then_some(("Close repo", Target::CloseRepo)),
+        Some(("Open repo...", Target::OpenRepo, Command::OpenRepo.keys_on(platform))),
+        several.then_some(("Close repo", Target::CloseRepo, String::new())),
     ]
     .into_iter()
     .flatten()
-    .map(|(label, target)| Item {
-        label: label.to_owned(),
-        keys: String::new(),
-        kind: "repo",
-        target,
-    });
+    .map(|(label, target, keys)| Item { label: label.to_owned(), keys, kind: "repo", target });
     let profiles = sources.profiles.iter().map(|(id, name)| Item {
         label: format!("New tab: {name}"),
         keys: String::new(),
@@ -302,7 +297,8 @@ mod tests {
         assert_eq!(linux[0].keys, "Ctrl+Shift+T");
         assert_eq!(mac[6].keys, "Cmd+2");
         assert_eq!(linux[6].keys, "Alt+2");
-        assert_eq!(mac[8].keys, "");
+        assert_eq!((mac[8].label.as_str(), mac[8].keys.as_str()), ("Open repo...", "Cmd+O"));
+        assert_eq!(linux[8].keys, "Ctrl+Shift+O");
     }
 
     #[test]

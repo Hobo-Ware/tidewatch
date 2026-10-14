@@ -27,6 +27,7 @@ On Linux a plain Ctrl chord would reach the shell, so Linux uses Ctrl+Shift or A
 | Command | macOS | Linux |
 | --- | --- | --- |
 | Settings | `Cmd+,` | `Ctrl+,` |
+| Open repo | `Cmd+O` | `Ctrl+Shift+O` |
 | Command palette | `Cmd+Shift+P` | `Ctrl+Shift+P` |
 
 ## Dialogs
