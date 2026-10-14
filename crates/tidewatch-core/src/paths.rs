@@ -115,6 +115,14 @@ impl TidewatchPaths {
         self.instance_dir().join("tidewatch.sock")
     }
 
+    /// Where a window hands its terminals to the copy that replaces it. Beside the instance folder,
+    /// not in it, so a toggle sent to every socket there never reaches it. The process id keeps two
+    /// overlapping restarts apart.
+    #[must_use]
+    pub fn handoff_socket(&self, pid: u32) -> PathBuf {
+        self.state_dir().join(format!("handoff-{pid}.sock"))
+    }
+
     /// Keyed by the full repo path, so two repos with the same folder name never share a directory.
     #[must_use]
     pub fn repo_dir(&self, repo: &Path) -> PathBuf {
@@ -167,6 +175,16 @@ mod tests {
         let paths = paths();
         assert_eq!(paths.trust_file(), Path::new("/Users/dev/.config/tidewatch/trust.toml"));
         assert!(!paths.trust_file().starts_with(paths.root()));
+    }
+
+    #[test]
+    fn the_handoff_socket_is_per_process_and_outside_the_instance_folder() {
+        let paths = paths();
+        let socket = paths.handoff_socket(4242);
+        assert_eq!(socket, Path::new("/Users/dev/.tidewatch/.state/handoff-4242.sock"));
+        assert!(!socket.starts_with(paths.instance_dir()));
+        assert_ne!(socket, paths.handoff_socket(4243));
+        assert!(socket.as_os_str().len() < 104);
     }
 
     #[test]
