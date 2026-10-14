@@ -131,7 +131,8 @@ crates/tidewatch/       the egui app
   src/updates_view.rs   draws the Updates section of General: status, Check now, the pill, the switches (the install one only in install mode)
   src/window_view.rs    draws the Window section: switches and the hotkey key-cap recorder (click, press keys; Esc cancels) with its problem or registration status
   src/settings_view.rs  the settings view: a sidebar of six pages and the page that shows (replaces the terminal area; Cmd+, or the gear; Esc closes); files shown only in a footer line or a tooltip
-  src/settings_ui.rs    the shared pieces of every Settings page: palette, page header, section and card, rows with a control, switch, buttons, key caps
+  src/brand.rs          the Night tide palette every view reads (ground, surfaces, text, teal, green, orange, red, the status inks that differ in lightness), the terminal theme (One Half Dark on the brand ground, ANSI palette untouched), the chrome colors handed to stdusk's `colors::set_chrome` (teal accent, red, green) and the teal egui visuals; no view hard-codes a color or reads `colors::accent()`
+  src/settings_ui.rs    the shared pieces of every Settings page (re-exports `brand`): page header, section and card, rows with a control, switch, buttons, key caps
   src/settings_icons.rs the six sidebar icons drawn with the painter
   src/general_view.rs   the General page: Startup, Window and Updates cards
   src/house_style_view.rs  the House style page: the file's path, Open in editor, Reset to default (two clicks)
@@ -282,6 +283,10 @@ Check the real exit code of a build (`cargo build 2>build.log; echo $?`), never 
 - Never block the UI thread on git, the network, disk-heavy work or a child process.
 - The graph draws only visible rows; per-row work is O(visible lanes).
 - Many agents at once is the normal case: a hidden tab costs no paint time.
+
+## Colors
+
+Colors come from `brand.rs`: accent fills and strokes are `brand::TEAL`, accent text on dark is `brand::TEAL_TEXT`, statuses are `brand::WORKING`, `NEEDS`, `DONE` and `FAILED` (a test keeps them apart in lightness, so color-blind readers tell them apart), errors `brand::RED`, warnings `brand::ORANGE`. Never use `colors::accent()`, `colors::yellow()` or Kelp's `theme::accent()` in Tidewatch code: stdusk's accent is the terminal's ANSI blue and Kelp's is green. Kelp's own widgets (graph lanes and selection, diff hunk header and notes, the focus ring) keep Kelp's colors until `kelp-ui` can take an accent; do not copy them.
 
 ## Showcase page and releases
 
