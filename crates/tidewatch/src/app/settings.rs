@@ -1,11 +1,13 @@
 //! Settings: the page, saving profiles and workflows, window preferences and shell events.
 
+use tidewatch_core::house_style;
 use tidewatch_core::prefs::WindowPrefs;
 
 use super::{Tidewatch, wall_ms};
 use crate::agent_jobs;
+use crate::general_view::General;
 use crate::settings::{Section, Settings};
-use crate::settings_view::{self, Files, General};
+use crate::settings_view::{self, Files, Host};
 use crate::shell::{self, Event};
 use crate::updates;
 use crate::window_view;
@@ -68,8 +70,18 @@ impl Tidewatch {
                 }
                 Err(message) => settings.workflows.error = Some(message),
             },
-            Section::Trust | Section::General | Section::Shortcuts => {}
+            Section::Trust | Section::General | Section::Shortcuts | Section::HouseStyle => {}
         }
+    }
+
+    fn settings_owns_escape(&self) -> bool {
+        let active_id = self.tabs.items()[self.tabs.active()].id;
+        !self.trust.dialog_open()
+            && !self.leftovers.is_open()
+            && !self.flow.modal_open(active_id)
+            && self.palette.is_none()
+            && self.new_tab.is_none()
+            && self.closing.is_none()
     }
 
     pub(super) fn show_settings_page(
@@ -77,21 +89,19 @@ impl Tidewatch {
         ui: &mut egui::Ui,
         area: egui::Rect,
     ) -> Option<settings_view::Action> {
+        let esc_closes = self.settings_owns_escape();
         let settings = self.settings.as_mut()?;
-        let files = self.paths.as_ref().map_or_else(
-            || Files {
-                profiles: String::new(),
-                workflows: String::new(),
-                trust: String::new(),
-                general: String::new(),
-            },
-            |p| Files {
+        let files = self
+            .paths
+            .as_ref()
+            .map(|p| Files {
                 profiles: p.profiles_file().display().to_string(),
                 workflows: p.workflows_file().display().to_string(),
                 trust: p.trust_file().display().to_string(),
                 general: p.prefs_file().display().to_string(),
-            },
-        );
+                house_style: p.house_style_file().display().to_string(),
+            })
+            .unwrap_or_default();
         let general = General {
             restore: self.restore.restore_enabled(),
             skipped_by_flag: self.restore.skipped_by_flag(),
@@ -100,15 +110,26 @@ impl Tidewatch {
                 menu_bar_available: self.shell.tray_supported(),
             },
         };
-        settings_view::show(
-            ui,
-            area,
-            settings,
-            &files,
-            &self.trust.page(),
-            &general,
-            &mut self.updates,
-        )
+        let trust = self.trust.page();
+        let host = Host { files: &files, trust: &trust, general: &general, esc_closes };
+        settings_view::show(ui, area, settings, &host, &mut self.updates)
+    }
+
+    fn open_house_style(&mut self, ctx: &egui::Context) {
+        let Some(paths) = &self.paths else { return };
+        match house_style::ensure(paths) {
+            Ok(file) => open_in_editor(file),
+            Err(e) => self.show_toast(format!("Could not create the house style: {e}"), ctx),
+        }
+    }
+
+    fn reset_house_style(&mut self, ctx: &egui::Context) {
+        let Some(paths) = &self.paths else { return };
+        let text = match house_style::reset(paths) {
+            Ok(_) => "House style reset to the default".to_owned(),
+            Err(e) => format!("Could not reset the house style: {e}"),
+        };
+        self.show_toast(text, ctx);
     }
 
     pub(super) fn apply_settings_action(
@@ -131,7 +152,18 @@ impl Tidewatch {
                     updates::save(paths.clone(), prefs);
                 }
             }
+            Some(settings_view::Action::OpenHouseStyle) => self.open_house_style(ctx),
+            Some(settings_view::Action::ResetHouseStyle) => self.reset_house_style(ctx),
             None => {}
         }
     }
+}
+
+fn open_in_editor(file: std::path::PathBuf) {
+    let opener = if cfg!(target_os = "macos") { "open" } else { "xdg-open" };
+    std::thread::spawn(move || {
+        if let Err(e) = std::process::Command::new(opener).arg(&file).status() {
+            eprintln!("tidewatch: cannot open {}: {e}", file.display());
+        }
+    });
 }

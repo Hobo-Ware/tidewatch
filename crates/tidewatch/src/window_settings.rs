@@ -1,6 +1,6 @@
 //! The Window section of General: quake on or off, the hotkey and the menu-bar item. The two
-//! switches apply at once; the hotkey text is checked as you type and applied when you leave the
-//! field, and only when it parses. Pure state; `window_view` draws it.
+//! switches apply at once; the hotkey is recorded from a key press, checked at once and applied
+//! when it parses. Pure state; `window_view` draws it.
 
 use tidewatch_core::prefs::WindowPrefs;
 
@@ -9,11 +9,12 @@ use crate::hotkey::{self, Problem};
 pub(crate) struct Editor {
     saved: WindowPrefs,
     pub(crate) hotkey: String,
+    pub(crate) recording: bool,
 }
 
 impl Editor {
     pub(crate) fn new(prefs: &WindowPrefs) -> Self {
-        Self { saved: prefs.clone(), hotkey: prefs.hotkey.clone() }
+        Self { saved: prefs.clone(), hotkey: prefs.hotkey.clone(), recording: false }
     }
 
     pub(crate) fn quake(&self) -> bool {
@@ -39,6 +40,12 @@ impl Editor {
         self.saved.clone()
     }
 
+    pub(crate) fn record(&mut self, chord: String) -> Option<WindowPrefs> {
+        self.recording = false;
+        self.hotkey = chord;
+        self.leave_hotkey()
+    }
+
     /// The field was left: a hotkey that parses and differs from the saved one is applied, one that
     /// does not stays in the field with its problem showing.
     pub(crate) fn leave_hotkey(&mut self) -> Option<WindowPrefs> {
@@ -51,8 +58,8 @@ impl Editor {
         Some(self.saved.clone())
     }
 
-    /// Escape: the field goes back to the hotkey in use.
     pub(crate) fn revert_hotkey(&mut self) {
+        self.recording = false;
         self.hotkey.clone_from(&self.saved.hotkey);
     }
 }
@@ -120,5 +127,29 @@ mod tests {
         let mut editor = editor();
         editor.hotkey = "Ctrl+Banana".to_owned();
         assert_eq!(editor.set_quake(false).hotkey, "Ctrl+Alt+Grave");
+    }
+
+    #[test]
+    fn a_recorded_chord_is_applied_at_once_when_it_parses() {
+        let mut editor = editor();
+        editor.recording = true;
+        let applied = editor.record("Cmd+Shift+T".to_owned()).unwrap();
+        assert_eq!(applied.hotkey, "Cmd+Shift+T");
+        assert!(!editor.recording);
+        editor.recording = true;
+        assert_eq!(editor.record("Cmd+Shift+T".to_owned()), None, "the same chord changes nothing");
+    }
+
+    #[test]
+    fn a_recorded_chord_that_does_not_parse_shows_its_problem_until_reverted() {
+        let mut editor = editor();
+        editor.recording = true;
+        assert_eq!(editor.record("T".to_owned()), None);
+        assert_eq!(editor.hotkey, "T");
+        assert_eq!(editor.problem(), Some(Problem::NeedsModifier));
+        editor.recording = true;
+        editor.revert_hotkey();
+        assert!(!editor.recording);
+        assert_eq!(editor.hotkey, "Ctrl+Alt+Grave");
     }
 }

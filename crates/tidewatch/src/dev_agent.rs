@@ -5,7 +5,7 @@
 //!   new-tab dialog on that screen, or on that profile or workflow.
 //! - `TIDEWATCH_DEV_WORKFLOW=<workflow id>`: open a tab for that workflow, which then asks for its task.
 //! - `TIDEWATCH_DEV_RESUME=<worktree name>`: open the tab of a saved workflow run and carry on where it was.
-//! - `TIDEWATCH_DEV_SETTINGS=1`: open the settings; `workflows` opens the workflow editor page, `trust` the folder trust page.
+//! - `TIDEWATCH_DEV_SETTINGS=1`: open the settings; `general`, `workflows`, `trust`, `shortcuts` or `house` open that page, `dirty` the profiles with an unsaved edit.
 //! - `TIDEWATCH_DEV_PALETTE=<query>` (or `1`): open the command palette, filled with that query.
 //! - `TIDEWATCH_DEV_TRUST=yes|no|undo`: answer the folder trust question once the CLIs are known (see `trust_glue`).
 //! - `TIDEWATCH_DEV_TASK=<text>`: typed into the new tab's composer (an agent) or task box (a workflow); with

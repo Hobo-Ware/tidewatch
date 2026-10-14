@@ -127,11 +127,16 @@ crates/tidewatch/       the egui app
   src/list_row.rs       one selectable list row, shared by the dialog and the profile editor
   src/profile_editor.rs profile editor state: drafts, text in and out of fields, validation, profiles to save (pure)
   src/settings.rs       what the settings view holds: the profile, workflow and window editors and which page shows (pure)
-  src/window_settings.rs  the Window section's state: quake and menu-bar switches apply at once, the hotkey text is checked as you type and applied on leaving the field when it parses (pure)
+  src/window_settings.rs  the Window section's state: quake and menu-bar switches apply at once, the hotkey is recorded from a key press (`recording`), checked at once and applied when it parses (pure)
   src/updates.rs        kelp-ui's `Updater` with Tidewatch's repo and cask, the two switches, the status line (pure), saving them; never disabled, so Linux gets the notify-only pill
   src/updates_view.rs   draws the Updates section of General: status, Check now, the pill, the switches (the install one only in install mode)
-  src/window_view.rs    draws the Window section: switches, hotkey field with its problem or registration status
-  src/settings_view.rs  the settings view, Profiles, Workflows, Folder trust, General (restore switch, Window section) and Shortcuts pages (replaces the terminal area; Cmd+, or the gear)
+  src/window_view.rs    draws the Window section: switches and the hotkey key-cap recorder (click, press keys; Esc cancels) with its problem or registration status
+  src/settings_view.rs  the settings view: a sidebar of six pages and the page that shows (replaces the terminal area; Cmd+, or the gear; Esc closes); files shown only in a footer line or a tooltip
+  src/settings_ui.rs    the shared pieces of every Settings page: palette, page header, section and card, rows with a control, switch, buttons, key caps
+  src/settings_icons.rs the six sidebar icons drawn with the painter
+  src/general_view.rs   the General page: Startup, Window and Updates cards
+  src/house_style_view.rs  the House style page: the file's path, Open in editor, Reset to default (two clicks)
+  src/profiles_view.rs  the Agents and profiles page
   src/trust_glue.rs     D14 host: installed CLIs and their trust state, the consent state and its jobs, the grant handed to new tabs and worktree removal
   src/trust_view.rs     D14 wording per CLI (pure), the first-launch consent dialog and the Folder trust settings page
   src/workflow_editor.rs  workflow editor state: drafts per workflow and stage, problems found as you type, workflows to save (pure)
@@ -158,7 +163,7 @@ crates/tidewatch/       the egui app
   src/notice.rs         a message that stays until dismissed (what a restore could not bring back)
   src/tabs/groups.rs    taking a whole group out of the tab list (`remove_group`), the groups after it move down
   src/session_glue.rs   Saver: once per frame, fingerprint changed -> queue a save (a closed repo's window rides with the next one); never under the screenshot harness or while a restore is under way; flush on quit
-  src/hotkey.rs         the quake hotkey string (`Ctrl+Alt+Grave`, `F13`) to modifiers and a key, strict with a named Problem for each mistake (pure)
+  src/hotkey.rs         the quake hotkey string (`Ctrl+Alt+Grave`, `F13`) to modifiers and a key, strict with a named Problem for each mistake (pure); `spell` turns a pressed key into that string and `cap_labels` the text into key caps (pure)
   src/shell_plan.rs     the background gate: Plan from the settings and Env (background, Wayland, tray support); background means no hotkey, no menu-bar item, no activation, a plain window (pure)
   src/quake.rs          the drop-down: pure show/hide state (monitor-size wait, hide on blur, 120 ms wake while hidden), geometry (half height, 2 point sliver, alpha 0), `present` turns it into viewport commands
   src/macos.rs          objc2 calls (activation policy, Spaces, window alpha, screen lookups) with no-op stubs off macOS
@@ -255,7 +260,7 @@ prints every hook and status change to stderr with a wall-clock time in ms; `TID
 `TIDEWATCH_DEV_KEYS_AFTER` seconds, default 8) types into the newest agent tab once, for Claude's folder-trust prompt.
 `TIDEWATCH_DEV_WORKFLOW=<id>` opens a workflow tab that waits for its task (add `TIDEWATCH_DEV_TASK` and `TIDEWATCH_DEV_START=1` to run it),
 `TIDEWATCH_DEV_RESUME=<worktree name>` opens the tab of a saved run (`.state/<repo-dir>/<name>/stages.json`) and carries on, `TIDEWATCH_DEV_ASK=approve|retry|stop|reject:<reason>`
-answers the next question a run asks, `TIDEWATCH_DEV_OPEN_STAGE=<n>` opens stage n under the stepper, `TIDEWATCH_DEV_SETTINGS=workflows` opens the workflow editor, `TIDEWATCH_DEV_SETTINGS=trust` the Folder trust page, `TIDEWATCH_DEV_SETTINGS=general` the General page, `TIDEWATCH_DEV_SETTINGS=shortcuts` the Shortcuts page, `TIDEWATCH_DEV_PALETTE=<query>|1` opens the command palette filled with that query (use `TIDEWATCH_SCREENSHOT_WAIT=7`: profiles load in the background), `TIDEWATCH_DEV_STATUS_LOG=1` also prints each command a key ran, `TIDEWATCH_FAKE_UPDATE=<version>` shows an update (pill and Settings line; the run makes no check and installs nothing; with a cask install a click on the pill would still run `brew upgrade`, so never click it), `TIDEWATCH_DEV_TRUST=yes|no|undo` answers the first-launch folder trust question once (a fresh `TIDEWATCH_HOME` otherwise shows the dialog; nothing is written until yes).
+answers the next question a run asks, `TIDEWATCH_DEV_OPEN_STAGE=<n>` opens stage n under the stepper, `TIDEWATCH_DEV_SETTINGS=workflows` opens the workflow editor, `TIDEWATCH_DEV_SETTINGS=trust` the Folder trust page, `TIDEWATCH_DEV_SETTINGS=general` the General page, `TIDEWATCH_DEV_SETTINGS=shortcuts` the Shortcuts page, `TIDEWATCH_DEV_SETTINGS=house` the House style page, `TIDEWATCH_DEV_PALETTE=<query>|1` opens the command palette filled with that query (use `TIDEWATCH_SCREENSHOT_WAIT=7`: profiles load in the background), `TIDEWATCH_DEV_STATUS_LOG=1` also prints each command a key ran, `TIDEWATCH_FAKE_UPDATE=<version>` shows an update (pill and Settings line; the run makes no check and installs nothing; with a cask install a click on the pill would still run `brew upgrade`, so never click it), `TIDEWATCH_DEV_TRUST=yes|no|undo` answers the first-launch folder trust question once (a fresh `TIDEWATCH_HOME` otherwise shows the dialog; nothing is written until yes).
 `TIDEWATCH_DEV_READER=raw` starts agent tabs on the raw terminal, `TIDEWATCH_DEV_READER_KEY=<s>` presses Cmd+Shift+T after that many
 seconds through the real key path, `TIDEWATCH_DEV_ANSWER=allow|deny` clicks a permission button once, `TIDEWATCH_DEV_REPLY=<text>`
 (`_REPLY_AFTER=<s>`) sends a reply from the Reader's box. Run Claude checks with `CLAUDE_CODE_FORCE_SESSION_PERSISTENCE=1` when the

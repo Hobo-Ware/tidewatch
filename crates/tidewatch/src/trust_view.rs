@@ -1,13 +1,19 @@
 //! D14 folder trust on screen: the wording per CLI (pure), the first-launch consent dialog and the
 //! settings page. Both name every file that would change and the line it gets.
 
-use egui::{Color32, Id, Key, Modifiers, RichText};
+use egui::{Align, Color32, Id, Key, Layout, Modifiers, RichText};
 use stdusk_egui::colors;
 use stdusk_egui::widgets::{action_button, overlay_frame};
 use tidewatch_core::consent::{Consent, Event};
 use tidewatch_core::trust::{CliTrust, Status, TrustCli, TrustState};
 
+use crate::settings_ui::{
+    self, Control, FAINT, MUTED, SOFT, TEXT, button, button_width, footer_note, note, page_header,
+    row_with, section,
+};
+
 const DIALOG_WIDTH: f32 = 560.0;
+const CONTROL_GAP: f32 = 8.0;
 const NEW_WORKTREE: &str = "<each new worktree>";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -155,50 +161,88 @@ pub(crate) fn dialog(ctx: &egui::Context, page: &Page) -> Option<Event> {
     answer
 }
 
-/// The settings page: where each CLI stands, and the button that applies or undoes consent.
-pub(crate) fn settings_page(ui: &mut egui::Ui, page: &Page) -> Option<Event> {
+/// The settings page: where each CLI stands, and the buttons that apply or undo consent.
+pub(crate) fn settings_page(ui: &mut egui::Ui, page: &Page, file: &str) -> Option<Event> {
     let mut event = None;
-    ui.spacing_mut().item_spacing.y = 6.0;
-    ui.label(
-        RichText::new(format!("Tidewatch folder: {}", page.root))
-            .monospace()
-            .size(11.5)
-            .color(colors::dim()),
-    );
-    ui.label(RichText::new(consent_text(page.consent)).color(colors::fg()));
-    match page.state {
+    page_header(ui, "Folder trust", consent_text(page.consent));
+    section(ui, "Tidewatch folder", |ui| {
+        let width = button_width(ui, "Trust the Tidewatch folder")
+            .max(button_width(ui, "Undo") + button_width(ui, "Apply again") + CONTROL_GAP);
+        row_with(
+            ui,
+            Control::new(width, 34.0),
+            |ui| {
+                ui.spacing_mut().item_spacing.y = 3.0;
+                ui.label(RichText::new("Skip the trust prompts").size(15.0).color(TEXT));
+                note(
+                    ui,
+                    "Answer \"do you trust this folder?\" once for the folders Tidewatch creates.",
+                    MUTED,
+                );
+                ui.label(RichText::new(page.root).monospace().size(11.5).color(FAINT));
+                if page.added > 0 {
+                    note(ui, &format!("{} entries added by Tidewatch", page.added), MUTED);
+                }
+            },
+            |ui| {
+                ui.add_enabled_ui(!page.busy, |ui| {
+                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                        ui.spacing_mut().item_spacing.x = CONTROL_GAP;
+                        if page.consent == Consent::Granted {
+                            if button(ui, "Apply again", settings_ui::Tone::Quiet).clicked() {
+                                event = Some(Event::Apply);
+                            }
+                            if button(ui, "Undo", settings_ui::Tone::Quiet).clicked() {
+                                event = Some(Event::Undo);
+                            }
+                        } else if button(
+                            ui,
+                            "Trust the Tidewatch folder",
+                            settings_ui::Tone::Primary,
+                        )
+                        .clicked()
+                        {
+                            event = Some(Event::Apply);
+                        }
+                    });
+                });
+            },
+        );
+    });
+    section(ui, "Agent CLIs", |ui| match page.state {
         None => {
-            ui.label(RichText::new("Looking at the CLIs...").color(colors::dim()));
+            settings_ui::row(ui, "Looking at the CLIs...", "", Control::NONE, |_| {});
         }
         Some(state) if state.clis.is_empty() => {
-            ui.label(RichText::new("No agent CLI found on PATH.").color(colors::dim()));
+            settings_ui::row(ui, "No agent CLI found on PATH.", "", Control::NONE, |_| {});
         }
-        Some(state) => draw_rows(ui, &rows(state, page.root)),
-    }
-    ui.add_space(8.0);
-    ui.horizontal(|ui| {
-        ui.spacing_mut().item_spacing.x = 8.0;
-        ui.add_enabled_ui(!page.busy, |ui| {
-            if page.consent == Consent::Granted {
-                if action_button(ui, "Undo", false).clicked() {
-                    event = Some(Event::Undo);
-                }
-                if action_button(ui, "Apply again", false).clicked() {
-                    event = Some(Event::Apply);
-                }
-            } else if action_button(ui, "Trust the Tidewatch folder", true).clicked() {
-                event = Some(Event::Apply);
+        Some(state) => {
+            for cli in rows(state, page.root) {
+                cli_row(ui, &cli);
             }
-        });
-        if page.added > 0 {
-            ui.label(
-                RichText::new(format!("{} entries added by Tidewatch", page.added))
-                    .size(12.0)
-                    .color(colors::dim()),
-            );
         }
     });
+    footer_note(ui, file);
     event
+}
+
+fn cli_row(ui: &mut egui::Ui, cli: &Row) {
+    row_with(
+        ui,
+        Control::NONE,
+        |ui| {
+            ui.spacing_mut().item_spacing.y = 3.0;
+            ui.label(RichText::new(cli.name).size(15.0).color(tone_color(cli.tone)));
+            note(ui, &cli.note, MUTED);
+            if let Some(file) = &cli.file {
+                ui.label(RichText::new(file).monospace().size(11.5).color(FAINT));
+            }
+            if let Some(line) = &cli.line {
+                ui.label(RichText::new(format!("adds  {line}")).monospace().size(11.5).color(SOFT));
+            }
+        },
+        |_| {},
+    );
 }
 
 #[cfg(test)]
@@ -290,13 +334,13 @@ mod tests {
             added: 0,
             busy: false,
         };
-        let ctx = egui::Context::default();
+        let ctx = crate::fonts::test_context();
         for _ in 0..2 {
             let mut answer = None;
             let mut event = None;
             frame(&ctx, Vec::new(), |ui| {
                 answer = dialog(ui.ctx(), &page);
-                event = settings_page(ui, &page);
+                event = settings_page(ui, &page, "trust.toml");
             });
             assert_eq!((answer, event), (None, None));
         }
@@ -312,7 +356,7 @@ mod tests {
             added: 0,
             busy: false,
         };
-        let ctx = egui::Context::default();
+        let ctx = crate::fonts::test_context();
         let esc = egui::Event::Key {
             key: Key::Escape,
             physical_key: Some(Key::Escape),
