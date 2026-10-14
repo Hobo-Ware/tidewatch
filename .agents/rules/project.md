@@ -36,7 +36,7 @@ crates/tidewatch-core/  worktrees, profiles, permission levels, workflows, agent
   src/events.rs         TabEvent and TabMessage (with the generation its token registered with): what the listener sends the app, plus the Repaint callback type
   src/listener.rs       127.0.0.1:0 HTTP listener on std::net: per-tab bearer tokens, POST /hook/<agent>, POST /mcp, events over a channel
   src/mcp.rs            Tidewatch MCP tools (D6): stage_done, report_finding, list_notes, reply_to_note over JSON-RPC 2.0
-  src/house_style.rs    default house-style.md (D13), ensure never overwrites, derived Copilot instructions file
+  src/house_style.rs    default house-style.md (D13), ensure never overwrites, reset puts the default text back, derived Copilot instructions file
   src/path_env.rs       PATH with the standard install dirs in front, for Finder launches (pure)
   src/prepare.rs        gets a tab ready to start (or to resume): house style, folder trust for the worktree (D14), guard helper, MCP and Gemini files, task flags, setup-then-agent shell line, banner_line (a stage divider printed before the agent), note_script (a plain shell that prints a note first)
   src/fsutil.rs         atomic file write shared by the settings writers

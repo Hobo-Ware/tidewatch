@@ -43,6 +43,14 @@ When the `tidewatch` MCP tools are available:
 - Call `reply_to_note` to answer a review note (`list_notes` shows them) instead of answering it only in chat.
 ";
 
+/// Writes the default text over `house-style.md`, edits included. Returns its path.
+pub fn reset(paths: &TidewatchPaths) -> std::io::Result<PathBuf> {
+    let file = paths.house_style_file();
+    std::fs::create_dir_all(paths.config_dir())?;
+    write_atomic(&file, DEFAULT_HOUSE_STYLE)?;
+    Ok(file)
+}
+
 const COPILOT_FILE_NAME: &str = "tidewatch.instructions.md";
 
 /// Creates `house-style.md` with the default text when it is missing. An existing file, edited or
@@ -114,6 +122,16 @@ mod tests {
         std::fs::write(paths.house_style_file(), "my own style\n").unwrap();
         ensure(&paths).unwrap();
         assert_eq!(std::fs::read_to_string(paths.house_style_file()).unwrap(), "my own style\n");
+    }
+
+    #[test]
+    fn reset_puts_the_default_text_back_over_edits_and_creates_a_missing_file() {
+        let (_home, paths) = paths();
+        assert_eq!(reset(&paths).unwrap(), paths.house_style_file());
+        assert_eq!(std::fs::read_to_string(paths.house_style_file()).unwrap(), DEFAULT_HOUSE_STYLE);
+        std::fs::write(paths.house_style_file(), "my own style\n").unwrap();
+        reset(&paths).unwrap();
+        assert_eq!(std::fs::read_to_string(paths.house_style_file()).unwrap(), DEFAULT_HOUSE_STYLE);
     }
 
     #[test]
