@@ -100,6 +100,7 @@ fn macos_chords_are_the_ones_the_app_shipped_with() {
         ("focus", "Cmd+."),
         ("reader", "Cmd+Shift+T"),
         ("settings", "Cmd+,"),
+        ("open-repo", "Cmd+O"),
         ("approve-delivery", "Cmd+Enter"),
     ];
     for (id, keys) in shipped {

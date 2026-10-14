@@ -64,6 +64,7 @@ pub(crate) enum Command {
     Focus,
     Reader,
     Settings,
+    OpenRepo,
     Palette,
     ApproveDelivery,
 }
@@ -80,6 +81,7 @@ impl Command {
             | Self::Focus
             | Self::Reader
             | Self::Settings
+            | Self::OpenRepo
             | Self::Palette
             | Self::ApproveDelivery => None,
         }
@@ -95,7 +97,7 @@ impl Command {
     }
 
     pub(crate) fn in_palette(self) -> bool {
-        !matches!(self, Self::SelectTab(_) | Self::Palette | Self::ApproveDelivery)
+        !matches!(self, Self::SelectTab(_) | Self::OpenRepo | Self::Palette | Self::ApproveDelivery)
     }
 
     pub(crate) fn id(self) -> &'static str {
@@ -220,7 +222,7 @@ const fn tab(id: &'static str, title: &'static str, index: usize, key: Key) -> E
     entry(id, title, Group::Tabs, Command::SelectTab(index), (cmd(key), alt(key)))
 }
 
-pub(crate) const TABLE: [Entry; 19] = [
+pub(crate) const TABLE: [Entry; 20] = [
     entry("new-tab", "New tab", Group::Tabs, Command::NewTab, (cmd(Key::T), ctrl(Key::T).shift())),
     entry(
         "close-tab",
@@ -273,6 +275,13 @@ pub(crate) const TABLE: [Entry; 19] = [
         Group::App,
         Command::Settings,
         (cmd(Key::Comma), ctrl(Key::Comma)),
+    ),
+    entry(
+        "open-repo",
+        "Open repo",
+        Group::App,
+        Command::OpenRepo,
+        (cmd(Key::O), ctrl(Key::O).shift()),
     ),
     entry(
         "palette",
@@ -370,9 +379,11 @@ impl Gate {
                 self.dialog != Dialog::TabChoice
             }
             Command::Reader | Command::CloseTab => !modal && !self.overview,
-            Command::NewTab | Command::SelectTab(_) | Command::NextRepo | Command::PrevRepo => {
-                !modal
-            }
+            Command::NewTab
+            | Command::SelectTab(_)
+            | Command::NextRepo
+            | Command::PrevRepo
+            | Command::OpenRepo => !modal,
             Command::Palette => self.dialog == Dialog::None,
             Command::ApproveDelivery => false,
         }
