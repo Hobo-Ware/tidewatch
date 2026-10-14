@@ -5,7 +5,9 @@
 mod agent_events;
 mod agent_frame;
 mod agent_jobs;
+mod agent_ready;
 mod agent_run;
+mod agent_status_line;
 mod app;
 mod catalog;
 mod checkout;

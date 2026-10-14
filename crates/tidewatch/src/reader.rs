@@ -86,6 +86,16 @@ pub(crate) fn shown(wants_reader: bool, link: Link) -> Shown {
     }
 }
 
+/// The view of an agent tab that has not had its first message yet: there is no transcript to find
+/// until it does, so the Reader (its empty state and composer) shows whenever the user wants it,
+/// unless the transcript was searched for in vain or cannot be read at all.
+pub(crate) fn shown_before_first_message(wants_reader: bool, link: Link) -> Shown {
+    match link {
+        Link::Idle | Link::Searching | Link::Found if wants_reader => Shown::Reader,
+        _ => shown(wants_reader, link),
+    }
+}
+
 pub(crate) struct Reader {
     source: Option<Source>,
     session_id: Option<String>,
@@ -159,6 +169,14 @@ impl Reader {
 
     pub(crate) fn shown(&self) -> Shown {
         shown(self.chosen, self.link)
+    }
+
+    pub(crate) fn shown_before_first_message(&self) -> Shown {
+        shown_before_first_message(self.chosen, self.link)
+    }
+
+    pub(crate) fn available(&self) -> bool {
+        !matches!(self.link, Link::Unavailable(_))
     }
 
     #[cfg(test)]
@@ -276,6 +294,22 @@ mod tests {
         assert_eq!(shown(true, Link::Searching), Shown::Terminal(Some(Note::Searching)));
         assert_eq!(shown(true, Link::Missing), Shown::Terminal(Some(Note::Missing)));
         assert_eq!(shown(false, Link::Searching), Shown::Terminal(None));
+    }
+
+    #[test]
+    fn before_the_first_message_the_reader_shows_while_the_transcript_is_still_to_come() {
+        for link in [Link::Idle, Link::Searching, Link::Found] {
+            assert_eq!(shown_before_first_message(true, link), Shown::Reader, "{link:?}");
+        }
+        assert_eq!(shown_before_first_message(false, Link::Idle), Shown::Terminal(None));
+        assert_eq!(
+            shown_before_first_message(true, Link::Missing),
+            Shown::Terminal(Some(Note::Missing))
+        );
+        assert_eq!(
+            shown_before_first_message(true, Link::Unavailable(Unavailable::NoReader)),
+            Shown::Terminal(Some(Note::NoReader))
+        );
     }
 
     #[test]

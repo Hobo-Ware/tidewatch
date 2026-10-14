@@ -188,6 +188,8 @@ crates/tidewatch/       the egui app
   src/reader_scroll.rs  autoscroll state (follow until the user scrolls up) and row height cache and estimate (pure)
   src/reader_keys.rs    the permission answers verified per CLI and the bytes that give them (Claude: 1 and Esc)
   src/reader_view.rs    draws the Reader: markdown rows, collapsed tool lines, permission strip, reply box, jump to latest
+  src/agent_ready.rs    an agent tab before its first message: the "<Profile> is ready" empty state and the composer (Enter sends, Shift+Enter new line)
+  src/agent_status_line.rs  the line over an agent tab: Ready or its status, profile, CLI, level, branch from base, the Reader or Terminal choice (pure line, drawn)
   src/reader_glue.rs    seams: start feeds, drain, Cmd+Shift+T toggle, draw in the terminal area, type replies and answers into the pty
   src/dev_reader.rs     TIDEWATCH_DEV_READER / _READER_KEY / _ANSWER / _REPLY switches
   src/end_block_view.rs the Done / Needs you / Next card on the tab (expandable) and its one-line form for the Overview

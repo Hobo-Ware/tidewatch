@@ -128,6 +128,7 @@ fn run_stage(spec: &StageSpec) -> Result<Started, String> {
         agent_id: spec.agent.id.clone(),
         notes_file: Some(spec.paths.notes_file(repo, &tab_key)),
         session_id,
+        awaiting_prompt: false,
         prepared,
     })
 }

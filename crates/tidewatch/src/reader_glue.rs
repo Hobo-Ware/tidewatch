@@ -9,11 +9,12 @@ use stdusk_core::terminal::PtyTerm;
 use stdusk_egui::colors;
 use tidewatch_core::status::{AgentStatus, Reason};
 
+use crate::agent_ready::Ready;
 use crate::commands::Command;
 use crate::dev_reader::DevReader;
 use crate::flow::Flow;
 use crate::note_send::ENTER_DELAY_SECS;
-use crate::pane::{Body, Pane};
+use crate::pane::{Body, FirstPrompt, Pane};
 use crate::reader::{Note, Shown};
 use crate::reader_keys;
 use crate::reader_view::{self, Action, Facts, Prompt};
@@ -44,6 +45,9 @@ pub(crate) fn drain(tabs: &mut Tabs<Pane<PtyTerm>>) {
     for tab in tabs.items_mut() {
         if let Some(agent) = tab.pane.agent.as_mut() {
             agent.reader.drain();
+            if agent.first_prompt != FirstPrompt::NotNeeded && agent.reader.rows.len() > 0 {
+                agent.first_prompt = FirstPrompt::NotNeeded;
+            }
             if let Some(launched) = agent.launched.as_mut()
                 && launched.session_id.is_none()
             {
@@ -59,7 +63,10 @@ pub(crate) fn toggle(pane: &mut Pane<PtyTerm>) -> Option<Shown> {
 }
 
 pub(crate) fn shown(pane: &Pane<PtyTerm>) -> Option<Shown> {
-    pane.agent.as_ref().map(|agent| agent.reader.shown())
+    pane.agent.as_ref().map(|agent| match agent.first_prompt {
+        FirstPrompt::NotNeeded => agent.reader.shown(),
+        FirstPrompt::Awaiting | FirstPrompt::Sent => agent.reader.shown_before_first_message(),
+    })
 }
 
 pub(crate) fn toggle_text(shown: Shown) -> String {
@@ -88,7 +95,9 @@ pub(crate) fn draw(
 ) -> Vec<Action> {
     let Some(agent) = pane.agent.as_mut() else { return Vec::new() };
     let prompt = prompt_of(agent.run.status()).filter(|_| !agent.reader.prompt_answered());
-    let facts = Facts { source: agent.reader.source(), prompt };
+    let ready = (agent.first_prompt == FirstPrompt::Awaiting)
+        .then_some(Ready { profile: &agent.profile_name, agent_id: &agent.run.agent_id });
+    let facts = Facts { source: agent.reader.source(), prompt, ready };
     let reader = &mut agent.reader;
     let mut actions = reader_view::show(ui, area, &reader.rows, &mut reader.view, facts);
     actions.extend(dev.actions(now, facts.prompt));
@@ -130,6 +139,11 @@ pub(crate) fn apply(
         let source = found.pane.agent.as_ref().and_then(|agent| agent.reader.source());
         match action {
             Action::Reply(text) => {
+                if let Some(agent) = found.pane.agent.as_mut()
+                    && agent.first_prompt == FirstPrompt::Awaiting
+                {
+                    agent.first_prompt = FirstPrompt::Sent;
+                }
                 if let Body::Shell(term) = &mut found.pane.body {
                     term.paste(&text);
                     flow.queue_enter(tab, now);
