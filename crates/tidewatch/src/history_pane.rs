@@ -11,6 +11,7 @@ use kelp_ui::{graph::Marks, theme};
 use stdusk_egui::widgets::{chip, menu_item, style_menu};
 use tidewatch_core::history::{BaseCompare, Scope};
 
+use crate::brand;
 use crate::tab_view::TabView;
 
 pub(crate) const HEADER_H: f32 = 34.0;
@@ -57,7 +58,7 @@ fn show_header(ui: &mut Ui, rect: Rect, view: &mut TabView) {
                     .family(theme::semibold())
                     .color(theme::text_faint()),
             );
-            ui.label(RichText::new(title).size(12.5).color(theme::accent()));
+            ui.label(RichText::new(title).size(12.5).color(brand::TEAL_TEXT));
             if let Some(compare) = compare {
                 ui.label(RichText::new(compare).size(12.0).color(theme::text_muted()));
             }

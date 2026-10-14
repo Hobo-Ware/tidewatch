@@ -8,6 +8,7 @@ use stdusk_egui::colors;
 use stdusk_egui::widgets::action_button;
 use tidewatch_core::runner::Runner;
 
+use crate::brand;
 use crate::commands::Command;
 use crate::screen_kit::{body, cli_short_name, heading};
 use crate::workflow_run::TabRun;
@@ -91,13 +92,13 @@ pub(crate) fn show(ui: &mut Ui, area: Rect, run: &mut TabRun) -> Option<String> 
 fn task_box(ui: &mut Ui, run: &mut TabRun, id: Id) {
     Frame::new()
         .fill(colors::elevated())
-        .stroke(egui::Stroke::new(2.0, colors::accent()))
+        .stroke(egui::Stroke::new(2.0, brand::TEAL))
         .corner_radius(14)
         .inner_margin(Margin::symmetric(16, 14))
         .show(ui, |ui| {
             ui.set_width(ui.available_width());
             ui.spacing_mut().item_spacing.y = 10.0;
-            ui.label(RichText::new("TASK").size(12.0).color(colors::accent()));
+            ui.label(RichText::new("TASK").size(12.0).color(brand::TEAL_TEXT));
             let field = ui.add(
                 TextEdit::multiline(&mut run.ui.task)
                     .id(id)

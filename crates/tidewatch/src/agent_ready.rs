@@ -7,6 +7,7 @@ use egui::{
 use stdusk_egui::colors;
 use stdusk_egui::widgets::action_button;
 
+use crate::brand;
 use crate::commands::Command;
 use crate::screen_kit::{body, heading, paint_cli_badge};
 
@@ -72,7 +73,7 @@ pub(crate) fn composer(
     let mut clicked = false;
     Frame::new()
         .fill(colors::bg())
-        .stroke(egui::Stroke::new(2.0, colors::accent()))
+        .stroke(egui::Stroke::new(2.0, brand::TEAL))
         .corner_radius(14)
         .inner_margin(Margin::symmetric(16, 12))
         .show(&mut child, |ui| {
@@ -81,7 +82,7 @@ pub(crate) fn composer(
             ui.label(
                 RichText::new(label(ready.profile).to_uppercase())
                     .size(12.0)
-                    .color(colors::accent()),
+                    .color(brand::TEAL_TEXT),
             );
             let field = ui.add(
                 TextEdit::multiline(text)

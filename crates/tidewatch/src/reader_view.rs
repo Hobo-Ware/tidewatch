@@ -13,6 +13,7 @@ use stdusk_egui::widgets::{action_button, chip, text_field};
 use tidewatch_core::transcript::Source;
 
 use crate::agent_ready::{self, COMPOSER_H, Ready};
+use crate::brand;
 use crate::reader_keys::{self, Answer};
 use crate::reader_rows::{Kind, Row, Rows, Tool};
 use crate::reader_scroll::{Autoscroll, Heights};
@@ -226,18 +227,18 @@ fn draw_row(ui: &mut Ui, row: &Row, cache: &mut CommonMarkCache) {
         Kind::Divider => {
             ui.add_space(6.0);
             ui.vertical_centered(|ui| {
-                ui.label(RichText::new(&row.text).monospace().size(12.0).color(colors::accent()));
+                ui.label(RichText::new(&row.text).monospace().size(12.0).color(brand::TEAL_TEXT));
             });
             ui.add_space(6.0);
         }
         Kind::Notice => {
             Frame::new()
-                .fill(colors::red().gamma_multiply(0.18))
+                .fill(brand::RED.gamma_multiply(0.18))
                 .corner_radius(CornerRadius::same(BUBBLE_CORNER))
                 .inner_margin(Margin::symmetric(12, 8))
                 .show(ui, |ui| {
                     ui.set_width(ui.available_width());
-                    ui.label(RichText::new(&row.text).color(colors::red()));
+                    ui.label(RichText::new(&row.text).color(brand::RED));
                 });
         }
     }
@@ -256,7 +257,7 @@ fn draw_tool(ui: &mut Ui, seq: u64, tool: &Tool) {
         }
         let shown = output_preview(&tool.output);
         ui.label(RichText::new(shown).monospace().size(12.0).color(if tool.error {
-            colors::red()
+            brand::RED
         } else {
             colors::dim()
         }));
@@ -266,9 +267,9 @@ fn draw_tool(ui: &mut Ui, seq: u64, tool: &Tool) {
 /// The mark and color of a tool row: running, done or failed.
 pub(crate) fn tool_mark(tool: &Tool) -> (&'static str, Color32) {
     match (tool.done, tool.error) {
-        (_, true) => ("x", colors::red()),
+        (_, true) => ("x", brand::RED),
         (true, false) => ("+", colors::dim()),
-        (false, false) => ("...", colors::accent()),
+        (false, false) => ("...", brand::TEAL_TEXT),
     }
 }
 

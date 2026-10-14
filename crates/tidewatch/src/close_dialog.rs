@@ -1,6 +1,7 @@
 //! The confirm dialog shown when a worktree tab closes: keep or delete the branch, and what to do
 //! with uncommitted changes. The choices and wording are pure; `show` only draws them.
 
+use crate::brand;
 use egui::{Id, Key, Modifiers, RichText};
 use stdusk_egui::colors;
 use stdusk_egui::widgets::{action_button, overlay_frame};
@@ -93,7 +94,7 @@ pub(crate) fn show(
                     .color(colors::dim()),
             );
             for line in warnings(inspection) {
-                ui.label(RichText::new(line).color(colors::red()));
+                ui.label(RichText::new(line).color(brand::RED));
             }
             ui.add_space(4.0);
             ui.horizontal(|ui| {

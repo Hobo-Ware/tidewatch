@@ -8,6 +8,7 @@ use stdusk_egui::colors;
 use stdusk_egui::widgets::{action_button, overlay_frame, text_field};
 use tidewatch_core::delivery::DeliveryError;
 
+use crate::brand;
 use crate::commands::{self, Command};
 use crate::delivery_card::{Delivery, Form, card_text, fix_hint};
 
@@ -40,7 +41,7 @@ pub(crate) fn show_card(
     let card = rect.shrink2(vec2(10.0, 4.0));
     ui.painter().rect_filled(card, 8.0, colors::elevated());
     ui.painter().rect_stroke(card, 8.0, Stroke::new(1.0, colors::border()), StrokeKind::Inside);
-    let accent = colors::green();
+    let accent = brand::GREEN;
     ui.painter().circle_filled(pos2(card.left() + 16.0, card.center().y), 4.5, accent);
     ui.painter().text(
         pos2(card.left() + 32.0, card.center().y),
@@ -183,7 +184,7 @@ fn failed_body(ui: &mut Ui, form: &Form, error: &DeliveryError) -> Option<Dialog
     let mut answer = None;
     heading(ui, "The pull request was not opened");
     dim(ui, &format!("{} -> {}", form.plan.branch, form.plan.base));
-    ui.label(RichText::new(error.to_string()).color(colors::red()));
+    ui.label(RichText::new(error.to_string()).color(brand::RED));
     if let Some(hint) = fix_hint(error) {
         ui.label(RichText::new(hint).color(colors::fg()));
     }

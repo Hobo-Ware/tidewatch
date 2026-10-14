@@ -6,6 +6,7 @@ use stdusk_egui::ui::{CursorStyle, GridStyle, collect_input, render_grid};
 
 use super::frame::FrameIntent;
 use super::{FONT_SIZE, MIN_CONTRAST, Tidewatch};
+use crate::brand;
 use crate::commands::Command;
 use crate::pane::Body;
 use crate::reader::Shown;
@@ -82,7 +83,7 @@ impl Tidewatch {
             Body::Removing => {
                 status_message(ui, area, "Removing worktree...", colors::dim());
             }
-            Body::Failed(message) => status_message(ui, area, message, colors::red()),
+            Body::Failed(message) => status_message(ui, area, message, brand::RED),
         }
     }
 
