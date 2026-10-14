@@ -4,7 +4,7 @@ use kelp_ui::graph::Selection;
 
 use super::Tidewatch;
 use crate::dev_agent::{DevDraft, Mode as DevMode};
-use crate::dev_panes;
+use crate::dev_panes::{self, DevOpen};
 use crate::dev_session::LeftoverStep;
 use crate::new_tab::Kind;
 use crate::note_actions;
@@ -141,6 +141,23 @@ impl Tidewatch {
             if row < loaded.history.len() {
                 view.select(Selection::Commit(row));
             }
+        }
+        if let Some(open) = self.dev_panes.open
+            && view.status_known()
+            && view.loaded.is_some()
+            && !view.is_loading_source()
+            && view.selection().is_some()
+        {
+            match open {
+                DevOpen::Commit => view.expand(),
+                DevOpen::File(n) => {
+                    if let Some(path) = view.files.get(n).map(|file| file.path.clone()) {
+                        view.expand();
+                        view.open_file(&path);
+                    }
+                }
+            }
+            self.dev_panes.open = None;
         }
         let Some(text) = &self.dev_panes.note else { return false };
         if !view.notes_ready || view.is_loading_source() {

@@ -2,6 +2,8 @@
 //!
 //! - `TIDEWATCH_DEV_SCOPE=whole`: start the graph on Whole repo.
 //! - `TIDEWATCH_DEV_PICK=<row>`: select that graph row (0 is the newest commit) once history loads.
+//! - `TIDEWATCH_DEV_OPEN=commit|file|file:<n>`: open the selected row's files in the tree, or also
+//!   open file `n` (0 is the first) in the file view, once the files have loaded.
 //! - `TIDEWATCH_DEV_NOTE=<text>`: write a note on the first added line of the first diff shown, once
 //!   per run, through the same notes store the diff widget uses.
 
@@ -10,10 +12,25 @@ use kelp_core::review::{Anchor, Comment, Side};
 use kelp_ui::diff::DiffAction;
 use tidewatch_core::history::Scope;
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum DevOpen {
+    Commit,
+    File(usize),
+}
+
 pub(crate) struct DevPanes {
     pub(crate) scope: Option<Scope>,
     pub(crate) pick_row: Option<usize>,
+    pub(crate) open: Option<DevOpen>,
     pub(crate) note: Option<String>,
+}
+
+fn parse_open(text: &str) -> Option<DevOpen> {
+    match text {
+        "commit" => Some(DevOpen::Commit),
+        "file" => Some(DevOpen::File(0)),
+        other => other.strip_prefix("file:")?.parse().ok().map(DevOpen::File),
+    }
 }
 
 impl DevPanes {
@@ -21,14 +38,21 @@ impl DevPanes {
         Self::parse(
             std::env::var("TIDEWATCH_DEV_SCOPE").ok().as_deref(),
             std::env::var("TIDEWATCH_DEV_PICK").ok().as_deref(),
+            std::env::var("TIDEWATCH_DEV_OPEN").ok().as_deref(),
             std::env::var("TIDEWATCH_DEV_NOTE").ok(),
         )
     }
 
-    fn parse(scope: Option<&str>, pick: Option<&str>, note: Option<String>) -> Self {
+    fn parse(
+        scope: Option<&str>,
+        pick: Option<&str>,
+        open: Option<&str>,
+        note: Option<String>,
+    ) -> Self {
         Self {
             scope: (scope == Some("whole")).then_some(Scope::Whole),
             pick_row: pick.and_then(|row| row.parse().ok()),
+            open: open.and_then(parse_open),
             note: note.filter(|text| !text.is_empty()),
         }
     }
@@ -62,7 +86,7 @@ mod tests {
 
     #[test]
     fn parses_scope_pick_and_note() {
-        let dev = DevPanes::parse(Some("whole"), Some("2"), Some("use the helper".into()));
+        let dev = DevPanes::parse(Some("whole"), Some("2"), None, Some("use the helper".into()));
         assert_eq!(dev.scope, Some(Scope::Whole));
         assert_eq!(dev.pick_row, Some(2));
         assert_eq!(dev.note.as_deref(), Some("use the helper"));
@@ -70,10 +94,18 @@ mod tests {
 
     #[test]
     fn anything_else_leaves_the_defaults() {
-        let dev = DevPanes::parse(Some("current"), Some("two"), Some(String::new()));
-        assert_eq!((dev.scope, dev.pick_row, dev.note), (None, None, None));
-        let dev = DevPanes::parse(None, None, None);
-        assert_eq!((dev.scope, dev.pick_row, dev.note), (None, None, None));
+        let dev = DevPanes::parse(Some("current"), Some("two"), Some("later"), Some(String::new()));
+        assert_eq!((dev.scope, dev.pick_row, dev.open, dev.note), (None, None, None, None));
+        let dev = DevPanes::parse(None, None, None, None);
+        assert_eq!((dev.scope, dev.pick_row, dev.open, dev.note), (None, None, None, None));
+    }
+
+    #[test]
+    fn open_reads_a_commit_or_a_file_by_position() {
+        assert_eq!(parse_open("commit"), Some(DevOpen::Commit));
+        assert_eq!(parse_open("file"), Some(DevOpen::File(0)));
+        assert_eq!(parse_open("file:2"), Some(DevOpen::File(2)));
+        assert_eq!(parse_open("file:x"), None);
     }
 
     #[test]
