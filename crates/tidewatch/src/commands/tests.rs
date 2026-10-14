@@ -177,6 +177,7 @@ fn the_palette_lists_what_a_person_would_look_for() {
             "overview",
             "focus",
             "reader",
+            "file-view",
             "settings"
         ]
     );
@@ -186,6 +187,23 @@ fn the_palette_lists_what_a_person_would_look_for() {
 fn the_palette_chord_is_cmd_shift_p_and_ctrl_shift_p() {
     assert_eq!(Command::Palette.keys_on(Platform::Mac), "Cmd+Shift+P");
     assert_eq!(Command::Palette.keys_on(Platform::Linux), "Ctrl+Shift+P");
+}
+
+#[test]
+fn the_file_view_chords() {
+    let table = [
+        ("file-view", "Cmd+J", "Ctrl+Shift+J"),
+        ("back-to-terminal", "Esc", "Esc"),
+        ("prev-file", "Up", "Up"),
+        ("next-file", "Down", "Down"),
+        ("prev-commit", "[", "["),
+        ("next-commit", "]", "]"),
+    ];
+    for (id, mac, linux) in table {
+        let entry = TABLE.iter().find(|entry| entry.id == id).unwrap();
+        assert_eq!(entry.chord(Platform::Mac).label(), mac, "{id}");
+        assert_eq!(entry.chord(Platform::Linux).label(), linux, "{id}");
+    }
 }
 
 #[test]
@@ -209,17 +227,118 @@ fn shortcuts_doc() {
 mod gate {
     use super::*;
 
-    const NONE: Gate =
-        Gate { dialog: Dialog::None, settings: false, overview: false, palette: false };
+    const NONE: Gate = Gate {
+        dialog: Dialog::None,
+        settings: false,
+        overview: false,
+        palette: false,
+        focus: Focus::Terminal,
+    };
+
+    const FILE_VIEW: Gate = Gate { focus: Focus::FileView, ..NONE };
+
+    const FILE_VIEW_KEYS: [Command; 5] = [
+        Command::BackToTerminal,
+        Command::PrevFile,
+        Command::NextFile,
+        Command::PrevCommit,
+        Command::NextCommit,
+    ];
 
     fn allowed(gate: Gate) -> Vec<Command> {
         TABLE.iter().map(|entry| entry.command).filter(|command| gate.allows(*command)).collect()
     }
 
     #[test]
-    fn an_open_workspace_takes_every_global_chord() {
-        let all: Vec<_> = TABLE.iter().map(|e| e.command).filter(|c| c.global()).collect();
+    fn an_open_workspace_takes_every_global_chord_but_the_file_view_keys() {
+        let all: Vec<_> = TABLE
+            .iter()
+            .map(|e| e.command)
+            .filter(|c| c.global() && !c.in_file_view_only())
+            .collect();
         assert_eq!(allowed(NONE), all);
+        assert!(allowed(NONE).contains(&Command::FileView));
+    }
+
+    #[test]
+    fn the_file_view_adds_its_keys_and_keeps_the_rest() {
+        let got = allowed(FILE_VIEW);
+        for command in FILE_VIEW_KEYS {
+            assert!(got.contains(&command), "{command:?}");
+        }
+        assert!(got.contains(&Command::FileView));
+        assert!(got.contains(&Command::NewTab));
+    }
+
+    #[test]
+    fn no_overlay_lets_the_file_view_keys_through() {
+        let overlays = [
+            Gate { settings: true, ..FILE_VIEW },
+            Gate { palette: true, ..FILE_VIEW },
+            Gate { overview: true, ..FILE_VIEW },
+            Gate { dialog: Dialog::Other, ..FILE_VIEW },
+            Gate { dialog: Dialog::TabChoice, ..FILE_VIEW },
+        ];
+        for gate in overlays {
+            for command in FILE_VIEW_KEYS {
+                assert!(!gate.allows(command), "{gate:?} {command:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn the_toggle_follows_the_reader_toggle_over_dialogs_and_the_overview() {
+        assert!(!Gate { settings: true, ..NONE }.allows(Command::FileView));
+        assert!(!Gate { overview: true, ..NONE }.allows(Command::FileView));
+        assert!(!Gate { dialog: Dialog::Other, ..NONE }.allows(Command::FileView));
+    }
+
+    #[test]
+    fn the_file_view_keys_stay_with_the_terminal_and_text_fields_until_the_file_view_has_focus() {
+        for platform in PLATFORMS {
+            for command in FILE_VIEW_KEYS {
+                let entry = TABLE.iter().find(|entry| entry.command == command).unwrap();
+                let events = press(platform, entry.chord(platform));
+                assert_eq!(
+                    pressed_with(platform, events.clone(), wanted(NONE)),
+                    Vec::<Command>::new(),
+                    "{platform:?} {command:?} was taken from the terminal"
+                );
+                assert_eq!(pressed_with(platform, events, wanted(FILE_VIEW)), [command]);
+            }
+        }
+    }
+
+    #[test]
+    fn a_modified_arrow_or_bracket_is_not_a_file_view_key() {
+        let held = [
+            egui::Modifiers::ALT,
+            egui::Modifiers::SHIFT,
+            egui::Modifiers::CTRL,
+            egui::Modifiers::COMMAND,
+        ];
+        for key in [Key::ArrowUp, Key::ArrowDown, Key::OpenBracket, Key::CloseBracket, Key::Escape]
+        {
+            for modifiers in held {
+                let events = vec![Event::Key {
+                    key,
+                    physical_key: Some(key),
+                    pressed: true,
+                    repeat: false,
+                    modifiers,
+                }];
+                let got = pressed_with(Platform::Mac, events, |c| FILE_VIEW_KEYS.contains(&c));
+                assert_eq!(got, Vec::<Command>::new(), "{key:?} with {modifiers:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn the_file_view_keys_are_not_in_the_palette_but_the_toggle_is() {
+        for command in FILE_VIEW_KEYS {
+            assert!(!command.in_palette(), "{command:?}");
+        }
+        assert!(Command::FileView.in_palette());
     }
 
     #[test]

@@ -63,6 +63,12 @@ pub(crate) enum Command {
     Overview,
     Focus,
     Reader,
+    FileView,
+    BackToTerminal,
+    PrevFile,
+    NextFile,
+    PrevCommit,
+    NextCommit,
     Settings,
     OpenRepo,
     Palette,
@@ -80,6 +86,12 @@ impl Command {
             Self::Overview
             | Self::Focus
             | Self::Reader
+            | Self::FileView
+            | Self::BackToTerminal
+            | Self::PrevFile
+            | Self::NextFile
+            | Self::PrevCommit
+            | Self::NextCommit
             | Self::Settings
             | Self::OpenRepo
             | Self::Palette
@@ -91,6 +103,19 @@ impl Command {
         self != Self::ApproveDelivery
     }
 
+    /// A bare key the terminal and the text fields also want: it is only read, and so only taken
+    /// from them, while the file view has the keyboard.
+    fn in_file_view_only(self) -> bool {
+        matches!(
+            self,
+            Self::BackToTerminal
+                | Self::PrevFile
+                | Self::NextFile
+                | Self::PrevCommit
+                | Self::NextCommit
+        )
+    }
+
     /// A command that does nothing in a window with one repo, so the palette leaves it out there.
     pub(crate) fn needs_several_repos(self) -> bool {
         matches!(self, Self::NextRepo | Self::PrevRepo)
@@ -98,6 +123,7 @@ impl Command {
 
     pub(crate) fn in_palette(self) -> bool {
         !matches!(self, Self::SelectTab(_) | Self::OpenRepo | Self::Palette | Self::ApproveDelivery)
+            && !self.in_file_view_only()
     }
 
     pub(crate) fn id(self) -> &'static str {
@@ -131,6 +157,10 @@ const fn cmd(key: Key) -> Chord {
 
 const fn ctrl(key: Key) -> Chord {
     Chord { mods: CTRL, key }
+}
+
+const fn plain(key: Key) -> Chord {
+    Chord { mods: 0, key }
 }
 
 const fn alt(key: Key) -> Chord {
@@ -180,12 +210,21 @@ impl Chord {
         let names = [(CMD, "Cmd"), (CTRL, "Ctrl"), (ALT, "Alt"), (SHIFT, "Shift")];
         let mut parts: Vec<&str> =
             names.into_iter().filter(|(flag, _)| self.has(*flag)).map(|(_, name)| name).collect();
-        parts.push(self.key.symbol_or_name());
+        parts.push(key_name(self.key));
         parts.join("+")
     }
 
     fn weight(self) -> usize {
         self.mods.count_ones() as usize
+    }
+}
+
+fn key_name(key: Key) -> &'static str {
+    match key {
+        Key::Escape => "Esc",
+        Key::ArrowUp => "Up",
+        Key::ArrowDown => "Down",
+        other => other.symbol_or_name(),
     }
 }
 
@@ -222,7 +261,7 @@ const fn tab(id: &'static str, title: &'static str, index: usize, key: Key) -> E
     entry(id, title, Group::Tabs, Command::SelectTab(index), (cmd(key), alt(key)))
 }
 
-pub(crate) const TABLE: [Entry; 20] = [
+pub(crate) const TABLE: [Entry; 26] = [
     entry("new-tab", "New tab", Group::Tabs, Command::NewTab, (cmd(Key::T), ctrl(Key::T).shift())),
     entry(
         "close-tab",
@@ -268,6 +307,48 @@ pub(crate) const TABLE: [Entry; 20] = [
         Group::View,
         Command::Reader,
         (cmd(Key::T).shift(), ctrl(Key::R).shift()),
+    ),
+    entry(
+        "file-view",
+        "Terminal or last file",
+        Group::View,
+        Command::FileView,
+        (cmd(Key::J), ctrl(Key::J).shift()),
+    ),
+    entry(
+        "back-to-terminal",
+        "Back to the terminal",
+        Group::View,
+        Command::BackToTerminal,
+        (plain(Key::Escape), plain(Key::Escape)),
+    ),
+    entry(
+        "prev-file",
+        "Previous file",
+        Group::View,
+        Command::PrevFile,
+        (plain(Key::ArrowUp), plain(Key::ArrowUp)),
+    ),
+    entry(
+        "next-file",
+        "Next file",
+        Group::View,
+        Command::NextFile,
+        (plain(Key::ArrowDown), plain(Key::ArrowDown)),
+    ),
+    entry(
+        "prev-commit",
+        "Previous commit",
+        Group::View,
+        Command::PrevCommit,
+        (plain(Key::OpenBracket), plain(Key::OpenBracket)),
+    ),
+    entry(
+        "next-commit",
+        "Next commit",
+        Group::View,
+        Command::NextCommit,
+        (plain(Key::CloseBracket), plain(Key::CloseBracket)),
     ),
     entry(
         "settings",
@@ -318,10 +399,20 @@ pub(crate) fn consume(
             .into_iter()
             .filter(|entry| {
                 let chord = entry.chord(platform);
-                input.consume_key(chord.modifiers(), chord.key)
+                (chord.mods != 0 || !pressed_with_modifiers(input, chord.key))
+                    && input.consume_key(chord.modifiers(), chord.key)
             })
             .map(|entry| entry.command)
             .collect()
+    })
+}
+
+/// egui reads a bare key chord as satisfied by the same key with Alt or Shift held, which would
+/// take Alt+Down from the diff and Shift+[ from a text field.
+fn pressed_with_modifiers(input: &egui::InputState, key: Key) -> bool {
+    input.events.iter().any(|event| {
+        matches!(event, egui::Event::Key { key: pressed, pressed: true, modifiers, .. }
+            if *pressed == key && modifiers.any())
     })
 }
 
@@ -337,8 +428,12 @@ pub(crate) fn press_event(command: Command) -> Option<egui::Event> {
     })
 }
 
-pub(crate) fn pressed(ctx: &egui::Context) -> Vec<Command> {
-    consume(ctx, Platform::CURRENT, Command::global)
+fn wanted(gate: Gate) -> impl Fn(Command) -> bool {
+    move |command| command.global() && (!command.in_file_view_only() || gate.allows(command))
+}
+
+pub(crate) fn pressed(ctx: &egui::Context, gate: Gate) -> Vec<Command> {
+    consume(ctx, Platform::CURRENT, wanted(gate))
 }
 
 pub(crate) fn approve_delivery_pressed(ctx: &egui::Context) -> bool {
@@ -362,6 +457,16 @@ pub(crate) struct Gate {
     pub(crate) settings: bool,
     pub(crate) overview: bool,
     pub(crate) palette: bool,
+    pub(crate) focus: Focus,
+}
+
+/// Who gets the bare keys: the terminal and the text fields, or the file view, which is the
+/// active tab showing a file's diff in place of its terminal with no text field focused.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) enum Focus {
+    #[default]
+    Terminal,
+    FileView,
 }
 
 impl Gate {
@@ -378,7 +483,12 @@ impl Gate {
             Command::Settings | Command::Overview | Command::Focus => {
                 self.dialog != Dialog::TabChoice
             }
-            Command::Reader | Command::CloseTab => !modal && !self.overview,
+            Command::Reader | Command::CloseTab | Command::FileView => !modal && !self.overview,
+            Command::BackToTerminal
+            | Command::PrevFile
+            | Command::NextFile
+            | Command::PrevCommit
+            | Command::NextCommit => self.focus == Focus::FileView && !modal && !self.overview,
             Command::NewTab
             | Command::SelectTab(_)
             | Command::NextRepo
