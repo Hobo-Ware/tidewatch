@@ -772,6 +772,21 @@ mod tests {
     }
 
     #[test]
+    fn a_tab_of_a_removed_yolo_profile_reopens_as_a_shell_whatever_level_it_ran_at() {
+        for level in [Level::Yolo, Level::Auto] {
+            let tabs = vec![agent_tab("a-claude", "claude", "builder-yolo", level, Some(ID_C))];
+            let plan = plan_with(&window(tabs), &everything_installed(), &disk_for_all());
+            let reason = if level == Level::Yolo {
+                Reason::Yolo
+            } else {
+                Reason::ProfileGone("builder-yolo".into())
+            };
+            assert_eq!(plan.tabs[0].action, TabAction::ShellInstead(reason), "{level:?}");
+            assert!(plan.tabs[0].note().is_some());
+        }
+    }
+
+    #[test]
     fn a_yolo_workflow_tab_is_not_resumed_either() {
         let mut tab = SavedAgentTab {
             dir: PathBuf::from(wt("a-claude")),

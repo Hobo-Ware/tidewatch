@@ -113,6 +113,6 @@ mod tests {
         settings.profiles_saved(&profiles);
         let names: Vec<&str> =
             settings.workflows.profiles().iter().map(|(id, _)| id.as_str()).collect();
-        assert_eq!(names, ["builder", "builder-yolo"]);
+        assert_eq!(names, ["builder"]);
     }
 }

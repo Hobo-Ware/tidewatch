@@ -68,8 +68,8 @@ fn the_agent_step_groups_profiles_by_cli_in_table_order() {
     let groups = state.agent_groups(&catalog);
     let names: Vec<&str> = groups.iter().map(|(agent, _)| agent.as_str()).collect();
     assert_eq!(names, ["claude", "copilot"]);
-    assert_eq!(groups[0].1, ["builder", "builder-yolo", "reviewer"]);
-    assert_eq!(groups[1].1, ["copilot-builder", "copilot-builder-yolo", "copilot-reviewer"]);
+    assert_eq!(groups[0].1, ["builder", "reviewer"]);
+    assert_eq!(groups[1].1, ["copilot-builder", "copilot-reviewer"]);
     assert_eq!(state.selected_id(&catalog).as_deref(), Some("builder"));
     assert_eq!(state.level(), Level::Edits);
 }
@@ -90,7 +90,7 @@ fn the_filter_narrows_by_name_cli_model_or_level_and_resets_the_pick() {
     let mut state = in_agent_step(Group::Repo, &catalog, None);
     state.step_selection(true, &catalog);
     state.set_filter("copilot", &catalog);
-    assert_eq!(state.visible(&catalog).len(), 3);
+    assert_eq!(state.visible(&catalog).len(), 2);
     assert_eq!(state.selected(), 0);
     state.set_filter("read only", &catalog);
     assert_eq!(state.visible(&catalog), ["reviewer", "copilot-reviewer"]);
@@ -101,12 +101,12 @@ fn the_filter_narrows_by_name_cli_model_or_level_and_resets_the_pick() {
         "each word is not matched on its own"
     );
     state.set_filter("opus", &catalog);
-    assert_eq!(state.visible(&catalog), ["builder", "builder-yolo"]);
+    assert_eq!(state.visible(&catalog), ["builder"]);
     state.set_filter("nothing like this", &catalog);
     assert_eq!(state.visible(&catalog), Vec::<String>::new());
     assert!(state.request(&catalog).is_err());
     state.set_filter("", &catalog);
-    assert_eq!(state.visible(&catalog).len(), 6);
+    assert_eq!(state.visible(&catalog).len(), 4);
 }
 
 #[test]
@@ -128,8 +128,8 @@ fn picking_a_profile_takes_its_level_and_clears_the_error() {
     state.error = Some("old".into());
     state.select_id("reviewer", &catalog);
     assert_eq!((state.level(), state.error.clone()), (Level::Plan, None));
-    state.select_id("builder-yolo", &catalog);
-    assert_eq!(state.level(), Level::Yolo);
+    state.select_id("builder", &catalog);
+    assert_eq!(state.level(), Level::Edits);
 }
 
 #[test]
@@ -163,8 +163,10 @@ fn yolo_is_open_in_a_repo_worktree_and_refused_in_other_with_a_reason() {
 
 #[test]
 fn in_other_a_yolo_profile_opens_on_auto_and_the_arrows_never_reach_yolo() {
-    let catalog = catalog();
-    let mut state = in_agent_step(Group::Other, &catalog, Some("builder-yolo"));
+    let mut profiles = Profiles::seeded(&["claude".to_owned()]);
+    profiles.profile.get_mut("builder").unwrap().level = Level::Yolo;
+    let catalog = catalog_with(profiles);
+    let mut state = in_agent_step(Group::Other, &catalog, Some("builder"));
     assert_eq!(state.level(), Level::Auto);
     assert!(!state.set_level(Level::Yolo, &catalog));
     assert!(!state.step_level(true, &catalog));
