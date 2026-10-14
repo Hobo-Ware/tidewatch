@@ -150,6 +150,7 @@ impl Tidewatch {
         shell: shell::Setup,
     ) -> Self {
         colors::init(brand::theme());
+        colors::set_chrome(brand::chrome());
         fonts::install(&cc.egui_ctx);
         apply_theme(&cc.egui_ctx);
         brand::tint_visuals(&cc.egui_ctx);
