@@ -237,6 +237,11 @@ pub(crate) fn button(ui: &mut Ui, label: &str, tone: Tone) -> Response {
     response.on_hover_cursor(CursorIcon::PointingHand)
 }
 
+pub(crate) fn choice_width(ui: &Ui, label: &str) -> f32 {
+    let font = font_semibold(13.0);
+    ui.painter().layout_no_wrap(label.to_owned(), font, SOFT).size().x + 28.0
+}
+
 pub(crate) fn choice(ui: &mut Ui, label: &str, selected: bool) -> Response {
     let (text_color, font) =
         if selected { (KEY_EDGE, font_semibold(13.0)) } else { (SOFT, FontId::proportional(13.0)) };
