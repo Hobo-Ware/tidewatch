@@ -2,8 +2,9 @@
 
 use std::cell::Cell;
 
-use egui::{Event, Modifiers, PointerButton, Pos2, RawInput, Rect, Vec2, pos2};
+use egui::{Event, Modifiers, PointerButton, Pos2, RawInput, pos2};
 
+use super::editor::{Bar, BarAction, option_card_height, save_bar};
 use super::*;
 
 fn raw(events: Vec<Event>) -> RawInput {
@@ -126,6 +127,110 @@ fn a_button_clicks_only_when_enabled() {
         warm(&ctx, frame);
         click(&ctx, rect.get().center(), frame);
         assert_eq!(clicked.get(), enabled);
+    }
+}
+
+#[test]
+fn a_choice_reports_the_click_and_a_disclosure_opens_and_closes() {
+    let ctx = crate::fonts::test_context();
+    let rect = Cell::new(Rect::NOTHING);
+    let clicked = Cell::new(false);
+    let frame = |ui: &mut Ui| {
+        let response = choice(ui, "High", false);
+        rect.set(response.rect);
+        clicked.set(clicked.get() || response.clicked());
+    };
+    warm(&ctx, frame);
+    click(&ctx, rect.get().center(), frame);
+    assert!(clicked.get());
+
+    let ctx = crate::fonts::test_context();
+    let open = Cell::new(false);
+    let header = Cell::new(Rect::NOTHING);
+    let frame = |ui: &mut Ui| {
+        header.set(ui.available_rect_before_wrap());
+        let shown = disclosure(ui, "more", "Advanced", |ui| {
+            ui.label("inside");
+        });
+        open.set(shown.is_some());
+    };
+    warm(&ctx, frame);
+    assert!(!open.get());
+    let at = header.get().min + vec2(30.0, 10.0);
+    click(&ctx, at, frame);
+    assert!(open.get(), "a click opens it");
+    click(&ctx, at, frame);
+    assert!(!open.get(), "and another closes it");
+}
+
+#[test]
+fn option_cards_grow_with_their_text_and_report_clicks() {
+    let ctx = crate::fonts::test_context();
+    let _ = ctx.run_ui(raw(vec![]), |ui| {
+        let short = option_card_height(ui, 120.0, "edits");
+        let long = option_card_height(ui, 120.0, "no limits, worktree only, anywhere at all");
+        assert!(long > short, "{short} {long}");
+    });
+    let rect = Cell::new(Rect::NOTHING);
+    let clicked = Cell::new(false);
+    let frame = |ui: &mut Ui| {
+        let response = super::editor::option_card(
+            ui,
+            vec2(120.0, 60.0),
+            "Auto",
+            "edits and runs",
+            false,
+            false,
+        );
+        rect.set(response.rect);
+        clicked.set(clicked.get() || response.clicked());
+    };
+    warm(&ctx, frame);
+    click(&ctx, rect.get().center(), frame);
+    assert!(clicked.get());
+}
+
+#[test]
+fn the_save_bar_offers_save_when_dirty_revert_when_asked_and_neither_while_saving() {
+    let found = |bar: Bar| {
+        let ctx = crate::fonts::test_context();
+        let actions = std::cell::RefCell::new(Vec::new());
+        for x in (600..900).step_by(8) {
+            let at = pos2(x as f32, 29.0);
+            let frame = |ui: &mut Ui| {
+                if let Some(action) = save_bar(ui, &bar) {
+                    actions.borrow_mut().push(action);
+                }
+            };
+            warm(&ctx, frame);
+            click(&ctx, at, frame);
+        }
+        let mut actions = actions.into_inner();
+        actions.sort_by_key(|action| *action as u8);
+        actions.dedup();
+        actions
+    };
+    let dirty = Bar { dirty: true, can_revert: true, ..Bar::default() };
+    assert_eq!(found(dirty), [BarAction::Save, BarAction::Revert]);
+    assert_eq!(found(Bar { can_revert: false, ..dirty }), [BarAction::Save]);
+    assert_eq!(found(Bar { saving: true, ..dirty }), Vec::<BarAction>::new());
+    assert_eq!(
+        found(Bar { dirty: false, error: Some("disk full"), ..dirty }),
+        [BarAction::Revert],
+        "a failed save with nothing left to save can still be reverted"
+    );
+}
+
+#[test]
+fn the_save_bar_shows_for_unsaved_edits_a_save_in_flight_or_an_error() {
+    let cases = [
+        (Bar::default(), false),
+        (Bar { dirty: true, ..Bar::default() }, true),
+        (Bar { saving: true, ..Bar::default() }, true),
+        (Bar { error: Some("x"), ..Bar::default() }, true),
+    ];
+    for (bar, shows) in cases {
+        assert_eq!(bar.shows(), shows, "{bar:?}");
     }
 }
 

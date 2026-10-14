@@ -1,16 +1,19 @@
 //! The pieces every Settings page is built from: palette, cards and rows, switch, buttons, inputs.
 
 use egui::{
-    Align, Color32, CornerRadius, CursorIcon, FontId, Frame, Layout, Margin, Rect, Response,
-    RichText, Sense, Stroke, Ui, UiBuilder, Vec2, vec2,
+    Align, Align2, Color32, CornerRadius, CursorIcon, FontId, Frame, Layout, Margin, Rect,
+    Response, RichText, Sense, Stroke, StrokeKind, Ui, UiBuilder, Vec2, vec2,
 };
 use kelp_ui::theme::semibold;
+
+pub(crate) mod editor;
 
 pub(crate) const GROUND: Color32 = Color32::from_rgb(0x10, 0x13, 0x1a);
 pub(crate) const SIDEBAR: Color32 = Color32::from_rgb(0x0d, 0x10, 0x16);
 pub(crate) const SIDEBAR_LINE: Color32 = Color32::from_rgb(0x1f, 0x24, 0x30);
 pub(crate) const CARD: Color32 = Color32::from_rgb(0x16, 0x1b, 0x24);
 pub(crate) const CARD_LINE: Color32 = Color32::from_rgb(0x22, 0x29, 0x37);
+pub(crate) const BAR: Color32 = Color32::from_rgb(0x12, 0x16, 0x1e);
 pub(crate) const FIELD_LINE: Color32 = Color32::from_rgb(0x2f, 0x37, 0x47);
 pub(crate) const BUTTON: Color32 = Color32::from_rgb(0x1d, 0x22, 0x30);
 pub(crate) const KEY_EDGE: Color32 = Color32::from_rgb(0x0b, 0x0e, 0x13);
@@ -20,9 +23,12 @@ pub(crate) const MUTED: Color32 = Color32::from_rgb(0x8b, 0x93, 0xa3);
 pub(crate) const FAINT: Color32 = Color32::from_rgb(0x6b, 0x73, 0x83);
 pub(crate) const TEAL: Color32 = Color32::from_rgb(0x2d, 0xd4, 0xbf);
 pub(crate) const TEAL_TEXT: Color32 = Color32::from_rgb(0x5e, 0xea, 0xd4);
+pub(crate) const TEAL_FILL: Color32 = Color32::from_rgb(0x10, 0x20, 0x2a);
 pub(crate) const TEAL_NAV: Color32 = Color32::from_rgb(0x16, 0x25, 0x2b);
 pub(crate) const ORANGE: Color32 = Color32::from_rgb(0xfb, 0x92, 0x3c);
 pub(crate) const RED: Color32 = Color32::from_rgb(0xfb, 0x71, 0x85);
+pub(crate) const RED_LINE: Color32 = Color32::from_rgb(0x3a, 0x25, 0x30);
+pub(crate) const RED_FILL: Color32 = Color32::from_rgb(0x24, 0x17, 0x1e);
 
 const SECTION_GAP: f32 = 22.0;
 const ROW_GAP: f32 = 16.0;
@@ -35,6 +41,10 @@ pub(crate) fn heading(text: impl Into<String>, size: f32) -> RichText {
 
 pub(crate) fn font_semibold(size: f32) -> FontId {
     FontId::new(size, semibold())
+}
+
+pub(crate) fn caption(ui: &mut Ui, text: &str) {
+    ui.label(RichText::new(text).size(13.0).color(MUTED));
 }
 
 pub(crate) fn note(ui: &mut Ui, text: &str, color: Color32) {
@@ -172,6 +182,16 @@ pub(crate) fn switch_row(ui: &mut Ui, title: &str, desc: &str, on: bool) -> Opti
     changed.then_some(value)
 }
 
+pub(crate) fn switch_line(ui: &mut Ui, label: &str, on: &mut bool) -> bool {
+    ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing.x = 10.0;
+        let changed = switch(ui, on).changed();
+        ui.label(RichText::new(label).size(14.0).color(TEXT));
+        changed
+    })
+    .inner
+}
+
 pub(crate) fn switch(ui: &mut Ui, on: &mut bool) -> Response {
     let (rect, mut response) = ui.allocate_exact_size(SWITCH_SIZE, Sense::click());
     if response.clicked() {
@@ -238,6 +258,62 @@ pub(crate) fn button(ui: &mut Ui, label: &str, tone: Tone) -> Response {
     response.on_hover_cursor(CursorIcon::PointingHand)
 }
 
+pub(crate) fn choice(ui: &mut Ui, label: &str, selected: bool) -> Response {
+    let (text_color, font) =
+        if selected { (KEY_EDGE, font_semibold(13.0)) } else { (SOFT, FontId::proportional(13.0)) };
+    let galley = ui.painter().layout_no_wrap(label.to_owned(), font, text_color);
+    let (rect, response) = ui.allocate_exact_size(galley.size() + vec2(28.0, 14.0), Sense::click());
+    let painter = ui.painter();
+    if selected {
+        painter.rect_filled(rect, CornerRadius::same(8), TEAL);
+    } else {
+        let fill =
+            if response.hovered() { lerp_color(GROUND, Color32::WHITE, 0.04) } else { GROUND };
+        painter.rect_filled(rect, CornerRadius::same(8), fill);
+        painter.rect_stroke(
+            rect,
+            CornerRadius::same(8),
+            Stroke::new(1.0, FIELD_LINE),
+            StrokeKind::Inside,
+        );
+    }
+    painter.galley(rect.center() - galley.size() / 2.0, galley, text_color);
+    kelp_ui::widgets::focus_ring(ui, &response, 8.0);
+    response.on_hover_cursor(CursorIcon::PointingHand)
+}
+
+pub(crate) fn text_input(ui: &mut Ui, value: &mut String, hint: &str) -> Response {
+    ui.scope(|ui| {
+        let visuals = ui.visuals_mut();
+        visuals.extreme_bg_color = GROUND;
+        visuals.selection.stroke = Stroke::new(1.0, TEAL);
+        visuals.widgets.inactive.bg_stroke = Stroke::new(1.0, FIELD_LINE);
+        visuals.widgets.hovered.bg_stroke = Stroke::new(1.0, FAINT);
+        for widget in [
+            &mut visuals.widgets.inactive,
+            &mut visuals.widgets.hovered,
+            &mut visuals.widgets.active,
+        ] {
+            widget.corner_radius = CornerRadius::same(9);
+        }
+        ui.style_mut().override_font_id = Some(FontId::proportional(14.0));
+        ui.add(
+            egui::TextEdit::singleline(value)
+                .desired_width(ui.available_width())
+                .margin(Margin::symmetric(12, 10))
+                .text_color(TEXT)
+                .hint_text(RichText::new(hint).color(FAINT)),
+        )
+    })
+    .inner
+}
+
+pub(crate) fn field(ui: &mut Ui, label: &str, value: &mut String, hint: &str) -> bool {
+    ui.spacing_mut().item_spacing.y = 6.0;
+    caption(ui, label);
+    text_input(ui, value, hint).changed()
+}
+
 pub(crate) fn key_cap_width(ui: &Ui, text: &str, size: f32) -> f32 {
     let galley = ui.painter().layout_no_wrap(text.to_owned(), FontId::monospace(size), TEXT);
     (galley.size().x + 16.0).max(26.0)
@@ -254,6 +330,49 @@ pub(crate) fn key_cap(ui: &mut Ui, text: &str, size: f32) -> Response {
     painter.rect_filled(face, CornerRadius::same(6), BUTTON);
     painter.galley(face.center() - galley.size() / 2.0, galley, TEXT);
     response
+}
+
+pub(crate) fn disclosure<R>(
+    ui: &mut Ui,
+    id: &str,
+    label: &str,
+    add: impl FnOnce(&mut Ui) -> R,
+) -> Option<R> {
+    let id = ui.make_persistent_id(("disclosure", id));
+    let mut open = ui.data(|data| data.get_temp::<bool>(id)).unwrap_or(false);
+    let galley = ui.painter().layout_no_wrap(label.to_owned(), FontId::proportional(14.0), SOFT);
+    let (rect, response) =
+        ui.allocate_exact_size(vec2(galley.size().x + 22.0, galley.size().y + 8.0), Sense::click());
+    if response.clicked() {
+        open = !open;
+        ui.data_mut(|data| data.insert_temp(id, open));
+    }
+    let color = if response.hovered() { TEXT } else { SOFT };
+    let c = egui::pos2(rect.left() + 6.0, rect.center().y);
+    let stroke = Stroke::new(1.6, color);
+    let points = if open {
+        [c + vec2(-3.5, -2.0), c + vec2(0.0, 2.0), c + vec2(3.5, -2.0)]
+    } else {
+        [c + vec2(-2.0, -3.5), c + vec2(2.0, 0.0), c + vec2(-2.0, 3.5)]
+    };
+    ui.painter().line_segment([points[0], points[1]], stroke);
+    ui.painter().line_segment([points[1], points[2]], stroke);
+    ui.painter().galley(
+        egui::pos2(rect.left() + 22.0, rect.center().y - galley.size().y / 2.0),
+        galley,
+        color,
+    );
+    kelp_ui::widgets::focus_ring(ui, &response, 6.0);
+    response.on_hover_cursor(CursorIcon::PointingHand);
+    open.then(|| add(ui))
+}
+
+pub(crate) fn badge(ui: &mut Ui, letter: &str, tint: (Color32, Color32), size: f32) {
+    let (rect, _) = ui.allocate_exact_size(vec2(size, size), Sense::hover());
+    let radius = if size > 30.0 { 10 } else { 7 };
+    let font = if size > 30.0 { font_semibold(18.0) } else { font_semibold(13.0) };
+    ui.painter().rect_filled(rect, CornerRadius::same(radius), tint.0);
+    ui.painter().text(rect.center(), Align2::CENTER_CENTER, letter, font, tint.1);
 }
 
 #[cfg(test)]

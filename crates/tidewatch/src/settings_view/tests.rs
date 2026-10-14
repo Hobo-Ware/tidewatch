@@ -1,11 +1,12 @@
 //! Settings shell: every page renders, the sidebar switches pages, Esc closes, General reports changes.
 
-use egui::{Event, Key, Modifiers, PointerButton, Pos2, RawInput, Vec2};
+use egui::{Event, PointerButton, Pos2, RawInput, Vec2};
 use tidewatch_core::prefs::WindowPrefs;
 use tidewatch_core::profiles::Profiles;
 use tidewatch_core::workflows::Workflows;
 
 use super::*;
+use crate::catalog::Availability;
 use crate::window_view;
 
 fn settings() -> Settings {
@@ -98,9 +99,16 @@ impl Harness {
     fn frame(&mut self, events: Vec<Event>) -> Option<Action> {
         let mut answer = None;
         let (settings, updates) = (&mut self.settings, &mut self.updates);
+        let probes =
+            Probes::from([("claude".to_owned(), Availability::Found(Some("2.1.0".into())))]);
         let (files, trust, general) = (files(), trust_page(), general(self.restore));
-        let host =
-            Host { files: &files, trust: &trust, general: &general, esc_closes: self.esc_closes };
+        let host = Host {
+            files: &files,
+            trust: &trust,
+            general: &general,
+            probes: &probes,
+            esc_closes: self.esc_closes,
+        };
         let _ = self.ctx.run_ui(input(events), |ui| {
             let area = ui.max_rect();
             answer = show(ui, area, settings, &host, updates);
@@ -158,6 +166,26 @@ fn escape_closes_the_settings_unless_something_else_owns_the_key() {
     assert!(matches!(harness.frame(vec![escape()]), Some(Action::Close)));
     harness.esc_closes = false;
     assert!(harness.frame(vec![escape()]).is_none());
+}
+
+#[test]
+fn escape_while_a_text_field_is_focused_only_leaves_the_field() {
+    let mut harness = Harness::new(Section::Profiles);
+    harness.frame(vec![]);
+    let mut found = None;
+    'scan: for y in (150..260).step_by(6) {
+        for x in (620..900).step_by(12) {
+            harness.click(pos2(x as f32, y as f32));
+            if harness.ctx.text_edit_focused() {
+                found = Some(());
+                break 'scan;
+            }
+        }
+    }
+    assert!(found.is_some(), "a click in the Name or Model field focuses it");
+    assert!(harness.frame(vec![escape()]).is_none(), "the first Escape is the field's");
+    assert!(!harness.ctx.text_edit_focused());
+    assert!(matches!(harness.frame(vec![escape()]), Some(Action::Close)), "the second closes");
 }
 
 #[test]

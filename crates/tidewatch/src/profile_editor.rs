@@ -61,6 +61,14 @@ impl Draft {
     }
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct Group {
+    pub(crate) agent: String,
+    pub(crate) name: String,
+    pub(crate) known: bool,
+    pub(crate) drafts: Vec<usize>,
+}
+
 pub(crate) struct Editor {
     base: Profiles,
     pub(crate) drafts: Vec<Draft>,
@@ -88,6 +96,32 @@ impl Editor {
 
     pub(crate) fn agents(&self) -> &[(String, String)] {
         &self.agents
+    }
+
+    pub(crate) fn groups(&self) -> Vec<Group> {
+        let mut groups: Vec<Group> = self
+            .agents
+            .iter()
+            .map(|(id, name)| Group {
+                agent: id.clone(),
+                name: name.clone(),
+                known: true,
+                drafts: Vec::new(),
+            })
+            .collect();
+        for (index, draft) in self.drafts.iter().enumerate() {
+            match groups.iter_mut().find(|group| group.agent == draft.agent) {
+                Some(group) => group.drafts.push(index),
+                None => groups.push(Group {
+                    agent: draft.agent.clone(),
+                    name: format!("{} (unknown)", draft.agent),
+                    known: false,
+                    drafts: vec![index],
+                }),
+            }
+        }
+        groups.retain(|group| !group.drafts.is_empty());
+        groups
     }
 
     pub(crate) fn selected_draft(&mut self) -> Option<&mut Draft> {
@@ -161,6 +195,13 @@ impl Editor {
     pub(crate) fn saved(&mut self, profiles: Profiles) {
         self.base = profiles;
         self.saving = false;
+        self.dirty = false;
+        self.error = None;
+    }
+
+    pub(crate) fn revert(&mut self) {
+        self.drafts = self.base.profile.iter().map(|(id, p)| Draft::from_profile(id, p)).collect();
+        self.selected = self.selected.min(self.drafts.len().saturating_sub(1));
         self.dirty = false;
         self.error = None;
     }
@@ -284,5 +325,48 @@ mod tests {
         );
         editor.saved(Profiles::default());
         assert_eq!((editor.dirty, editor.error.clone()), (false, None));
+    }
+
+    #[test]
+    fn revert_puts_back_the_saved_profiles_and_keeps_the_selection_in_range() {
+        let mut editor = editor();
+        editor.select(2);
+        editor.drafts[2].name = "Changed".into();
+        editor.remove_selected();
+        editor.add();
+        assert!(editor.dirty);
+        editor.revert();
+        let ids: Vec<&str> = editor.drafts.iter().map(|d| d.id.as_str()).collect();
+        assert_eq!(ids, ["builder", "builder-yolo", "reviewer"]);
+        assert_eq!(editor.drafts[2].name, "Reviewer");
+        assert_eq!((editor.dirty, editor.error.clone(), editor.selected), (false, None, 2));
+        editor.error = Some("x".into());
+        editor.revert();
+        assert_eq!(editor.error, None);
+    }
+
+    #[test]
+    fn groups_follow_the_agent_table_and_leave_out_agents_without_profiles() {
+        let mut editor = editor();
+        let groups = editor.groups();
+        assert_eq!(groups.len(), 1);
+        assert_eq!((groups[0].agent.as_str(), groups[0].name.as_str()), ("claude", "Claude Code"));
+        assert_eq!(groups[0].drafts, [0, 1, 2]);
+        editor.add();
+        editor.drafts[3].agent = "gemini".into();
+        editor.add();
+        editor.drafts[4].agent = "ghost".into();
+        let groups = editor.groups();
+        let names: Vec<(&str, bool, &[usize])> =
+            groups.iter().map(|g| (g.agent.as_str(), g.known, g.drafts.as_slice())).collect();
+        assert_eq!(
+            names,
+            [
+                ("claude", true, &[0, 1, 2][..]),
+                ("gemini", true, &[3][..]),
+                ("ghost", false, &[4][..])
+            ]
+        );
+        assert_eq!(groups[2].name, "ghost (unknown)");
     }
 }
