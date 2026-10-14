@@ -60,6 +60,7 @@ use crate::pane::Pane;
 use crate::pane_jobs;
 use crate::pty::spawn_shell;
 use crate::repo::Workspace;
+use crate::repo_base::Bases;
 use crate::repo_close::RepoClose;
 use crate::restore_glue::{self};
 use crate::session_glue::Saver;
@@ -110,6 +111,7 @@ pub(crate) struct Tidewatch {
     settings: Option<Settings>,
     palette: Option<Palette>,
     last_profile: Option<String>,
+    bases: Bases,
     hooks: Hooks,
     flow: Flow,
     runs: workflow_glue::Host,
@@ -196,6 +198,7 @@ impl Tidewatch {
             settings: None,
             palette: None,
             last_profile: None,
+            bases: Bases::new(),
             hooks,
             flow,
             runs: workflow_glue::Host::new(),
@@ -219,6 +222,7 @@ impl Tidewatch {
         };
         for (group, workspace) in app.workspaces.iter().enumerate() {
             app.restore.enqueue(group, workspace);
+            app.bases.refresh(&cc.egui_ctx, workspace.dir());
         }
         if let Some(paths) = &app.paths {
             agent_jobs::load(

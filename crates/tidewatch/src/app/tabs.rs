@@ -20,11 +20,9 @@ impl Tidewatch {
     /// Opens the new-tab dialog. Without a home directory there are no profiles to pick from, so
     /// the tab opens as a plain shell.
     fn new_tab(&mut self, ctx: &egui::Context) {
-        let last = self.last_profile.clone();
-        self.new_tab_on(ctx, last.as_deref());
+        self.new_tab_on(ctx, None);
     }
 
-    /// The same, with the dialog opened on `preselect`: a profile id or `workflow:<id>`.
     pub(super) fn new_tab_on(&mut self, ctx: &egui::Context, preselect: Option<&str>) {
         if self.new_tab.is_some() {
             return;
@@ -37,7 +35,9 @@ impl Tidewatch {
             self.show_toast("Profiles are still loading", ctx);
             return;
         }
-        self.new_tab = Some(self.dialog_state(preselect));
+        let state = self.dialog_state(preselect);
+        self.bases.refresh(ctx, state.repo());
+        self.new_tab = Some(state);
     }
 
     pub(super) fn dialog_state(&self, preselect: Option<&str>) -> NewTab {
@@ -47,7 +47,14 @@ impl Tidewatch {
                 (Group::Other, format!("Other: {label}"), dir.clone())
             }
         };
-        NewTab::open(group, label, dir, &self.catalog, agent_tabs_in_folder(&self.tabs), preselect)
+        let base = self.bases.get(&dir).map(str::to_owned);
+        let running = agent_tabs_in_folder(&self.tabs);
+        let mut state = NewTab::open(group, label, dir, running, self.last_profile.as_deref());
+        state.set_base(base);
+        if let Some(preselect) = preselect {
+            state.jump(preselect, &self.catalog);
+        }
+        state
     }
 
     /// In a git repo a new tab is a fresh worktree; in the Other group it is a plain shell, or an

@@ -118,9 +118,12 @@ crates/tidewatch/       the egui app
   src/overview_view.rs  the Overview screen (Cmd+0) and the tab strip's icon button with a needs-you badge
   src/catalog.rs        loaded profiles, the agent table built from them, which CLIs were found and their versions
   src/agent_jobs.rs     load or seed profiles.toml and probe each agent CLI as jobs
-  src/new_tab.rs        new-tab dialog state: picks (profiles, workflows in a repo, shell), permission ladder and YOLO gating, command preview, request (pure)
-  src/new_tab_workflow.rs  the dialog's workflow side: list order, stage preview, missing agents, the request (pure)
-  src/new_tab_dialog.rs the dialog itself: profile list, ladder, task, preview; Enter starts, Esc cancels
+  src/new_tab.rs        new-tab dialog state: the steps (what to start, agent, workflow), the filter, the permission level and YOLO gating, the request each step turns into, the warnings (pure)
+  src/new_tab_workflow.rs  the dialog's workflow side: list order, missing agents, the request (no task: the tab asks for it) (pure)
+  src/new_tab_dialog.rs the dialog's frame and first screen: the Agent and Workflow cards and the plain shell; A, W, S, arrows, Enter, Esc
+  src/new_tab_pick.rs   the agent picker (profiles grouped by CLI, the picked one open with its five levels) and the workflow picker
+  src/screen_kit.rs     headings, key caps and CLI badges shared by the dialog, the agent tab's empty state, the workflow start card and the welcome screen
+  src/repo_base.rs      the branch a new worktree starts from (what the repo has checked out), looked up on a job thread
   src/list_row.rs       one selectable list row, shared by the dialog and the profile editor
   src/profile_editor.rs profile editor state: drafts, text in and out of fields, validation, profiles to save (pure)
   src/settings.rs       what the settings view holds: the profile, workflow and window editors and which page shows (pure)
