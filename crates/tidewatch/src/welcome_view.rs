@@ -5,7 +5,8 @@ use std::path::{Path, PathBuf};
 use egui::{Align2, Color32, CornerRadius, Pos2, Rect, Shape, Stroke, StrokeKind, Ui, pos2, vec2};
 use stdusk_egui::colors;
 
-use crate::screen_kit::{ORANGE, body, clickable, heading, mono};
+use crate::brand;
+use crate::screen_kit::{body, clickable, heading, mono};
 use crate::welcome::{Recent, shown_path};
 
 const COLUMN_W: f32 = 560.0;
@@ -26,17 +27,17 @@ pub(crate) fn paint_mark(ui: &Ui, rect: Rect) {
     painter.rect(
         rect,
         CornerRadius::same((185.0 * scale) as u8),
-        colors::bg(),
-        Stroke::new(1.0, colors::border()),
+        brand::GROUND,
+        Stroke::new(1.0, brand::ICON_EDGE),
         StrokeKind::Inside,
     );
     let width = 44.7 * zoom;
-    let teal = colors::accent();
+    let teal = brand::TEAL;
     let chevron = |dx: f32, color: Color32| {
         let points = vec![at(282.1 + dx, 409.8), at(384.3 + dx, 486.5), at(282.1 + dx, 563.1)];
         painter.add(Shape::line(points, Stroke::new(width, color)));
     };
-    chevron(0.0, colors::fg());
+    chevron(0.0, brand::TEXT);
     chevron(102.2, teal.gamma_multiply(0.6));
     chevron(204.4, teal.gamma_multiply(0.28));
     let curve = |from: (f32, f32), c1: (f32, f32), c2: (f32, f32), to: (f32, f32)| -> Vec<Pos2> {
@@ -56,7 +57,7 @@ pub(crate) fn paint_mark(ui: &Ui, rect: Rect) {
         curve((601.4, 639.7), (652.5, 684.4), (690.8, 684.4), (741.9, 639.7)).into_iter().skip(1),
     );
     painter.add(Shape::line(wave, Stroke::new(width, teal)));
-    painter.circle_filled(at(690.8, 384.3), 44.7 * zoom, ORANGE);
+    painter.circle_filled(at(690.8, 384.3), 44.7 * zoom, brand::ORANGE);
 }
 
 pub(crate) fn show(
@@ -159,8 +160,7 @@ fn open_button(ui: &mut Ui, top_center: Pos2, shortcut: &str) -> egui::Response 
     let size = vec2(22.0 + label.size().x + 10.0 + keys.size().x + 22.0, 46.0);
     let rect = Rect::from_min_size(top_center - vec2(size.x / 2.0, 0.0), size);
     let response = clickable(ui, rect, "open-repo");
-    let fill =
-        if response.hovered() { colors::accent().gamma_multiply(0.9) } else { colors::accent() };
+    let fill = if response.hovered() { brand::TEAL.gamma_multiply(0.9) } else { brand::TEAL };
     let painter = ui.painter();
     painter.rect_filled(rect, 12.0, fill);
     painter.galley(

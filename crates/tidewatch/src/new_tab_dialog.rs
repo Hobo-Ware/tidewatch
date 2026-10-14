@@ -6,10 +6,11 @@ use egui::{
 };
 use stdusk_egui::colors;
 
+use crate::brand;
 use crate::catalog::Catalog;
 use crate::new_tab::{Group, Kind, NewTab, Request, Step};
 use crate::new_tab_pick;
-use crate::screen_kit::{ORANGE, body, card_stroke, clickable, heading, mono, paint_key_cap};
+use crate::screen_kit::{body, card_stroke, clickable, heading, mono, paint_key_cap};
 
 pub(super) const DIALOG_W: f32 = 720.0;
 const SIDE_PAD: i8 = 28;
@@ -144,7 +145,7 @@ fn heading_block(ui: &mut Ui, state: &NewTab) {
         ui.spacing_mut().item_spacing.x = 0.0;
         let dim = colors::dim();
         ui.label(egui::RichText::new("in ").size(14.0).color(dim));
-        ui.label(egui::RichText::new(state.label()).size(14.0).color(colors::accent()));
+        ui.label(egui::RichText::new(state.label()).size(14.0).color(brand::TEAL_TEXT));
         match state.group() {
             Group::Repo => {
                 ui.label(egui::RichText::new(", on a fresh worktree from ").size(14.0).color(dim));
@@ -170,8 +171,7 @@ fn card(ui: &Ui, rect: Rect, kind: Kind, state: &NewTab, lit: bool) {
     let fade = if on { 1.0 } else { 0.4 };
     let inner = rect.shrink(22.0);
     let icon = Rect::from_min_size(inner.min, Vec2::splat(ICON_BOX));
-    let icon_fill =
-        if lit { colors::accent().gamma_multiply(0.3) } else { colors::hover_elevated() };
+    let icon_fill = if lit { brand::TEAL.gamma_multiply(0.3) } else { colors::hover_elevated() };
     painter.rect_filled(icon, 12.0, icon_fill.gamma_multiply(fade));
     match kind {
         Kind::Agent => paint_agent_icon(ui, icon, fade),
@@ -215,14 +215,14 @@ fn paint_agent_icon(ui: &Ui, box_: Rect, fade: f32) {
             c + vec2(-2.0 + t * 14.0, 7.0 + (t * std::f32::consts::TAU).sin() * 2.2)
         })
         .collect();
-    ui.painter().add(Shape::line(wave, Stroke::new(2.4, colors::accent().gamma_multiply(fade))));
+    ui.painter().add(Shape::line(wave, Stroke::new(2.4, brand::TEAL.gamma_multiply(fade))));
 }
 
 fn paint_flow_icon(ui: &Ui, box_: Rect, fade: f32) {
     let c = box_.center();
     let ink = colors::fg().gamma_multiply(fade);
     let stroke = Stroke::new(1.8, ink);
-    for (dx, color) in [(-9.0, ink), (0.0, ink), (9.0, ORANGE.gamma_multiply(fade))] {
+    for (dx, color) in [(-9.0, ink), (0.0, ink), (9.0, brand::ORANGE.gamma_multiply(fade))] {
         ui.painter().circle_stroke(c + vec2(dx, 0.0), 3.4, Stroke::new(1.8, color));
     }
     for dx in [-4.5, 4.5] {
