@@ -487,11 +487,21 @@ pub(crate) fn adopt(
 /// Tells the old window it may let go, and only then takes the terminals' shells as this window's
 /// to stop. Everything must be live before this: nothing can be undone after it.
 pub(crate) fn confirm(incoming: &Incoming, tabs: &mut Tabs<Pane<PtyTerm>>) -> std::io::Result<()> {
+    let terms = tabs.items_mut().iter_mut().filter_map(|tab| match &mut tab.pane.body {
+        Body::Shell(term) => Some(term),
+        _ => None,
+    });
+    confirm_terms(incoming, terms)
+}
+
+/// [`confirm`] for terminals that are not in tabs yet, over any layout that was received.
+pub(crate) fn confirm_terms<'a, S: Layout>(
+    incoming: &stdusk_core::handoff::Incoming<S>,
+    terms: impl IntoIterator<Item = &'a mut PtyTerm>,
+) -> std::io::Result<()> {
     incoming.ack()?;
-    for tab in tabs.items_mut() {
-        if let Body::Shell(term) = &mut tab.pane.body {
-            term.arm_teardown();
-        }
+    for term in terms {
+        term.arm_teardown();
     }
     Ok(())
 }
