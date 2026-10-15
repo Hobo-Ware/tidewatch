@@ -1,12 +1,12 @@
 //! Self-update: Kelp's shared updater pointed at Tidewatch's repo and cask.
 
-use egui::RichText;
 use kelp_core::update::Release;
-use kelp_ui::theme;
 use kelp_ui::update::{Status, UpdateConfig, Updater};
 use tidewatch_core::paths::TidewatchPaths;
 use tidewatch_core::prefs::{Prefs, UpdatePrefs};
 use tidewatch_core::update::{self, APP_NAME, Mode};
+
+use crate::update_chip;
 
 pub(crate) const NOTIFY_ONLY_HINT: &str =
     "This copy has no installer: Tidewatch tells you when a release is out and opens its page.";
@@ -47,18 +47,35 @@ impl Updates {
         self.updater.tick(check, install);
     }
 
-    /// The update pill. Once the update is installed its button is drawn here, not by the updater,
-    /// because the updater's Restart cannot hand the terminals over; a click is taken with
-    /// [`Self::take_restart`].
+    /// The update chip. Once the update is installed a click on it only sets a flag, because the
+    /// updater's own Restart cannot hand the terminals over; it is taken with [`Self::take_restart`].
     pub(crate) fn pill(&mut self, ui: &mut egui::Ui) {
-        match &self.updater.status {
-            Status::Ready(release) if self.updater.is_active() => {
-                if restart_pill(ui, &release.version).clicked() {
-                    self.restart = true;
-                }
-            }
-            _ => self.updater.pill(ui),
+        let Some(spec) = self.chip() else { return };
+        if !update_chip::show(ui, &spec).clicked() {
+            return;
         }
+        match (spec.click, &self.updater.status) {
+            (update_chip::Click::Restart, _) => self.restart = true,
+            (update_chip::Click::Install, Status::Available(release)) => {
+                self.updater.install(release.clone());
+            }
+            (update_chip::Click::Open, Status::Available(release)) => {
+                ui.ctx().open_url(egui::OpenUrl::new_tab(&release.url));
+            }
+            _ => {}
+        }
+    }
+
+    /// How wide the chip is, 0 when there is none.
+    pub(crate) fn pill_width(&self, ui: &egui::Ui) -> f32 {
+        self.chip().map_or(0.0, |spec| update_chip::width(ui, &spec))
+    }
+
+    fn chip(&self) -> Option<update_chip::Spec> {
+        if !self.updater.is_active() {
+            return None;
+        }
+        update_chip::spec(&self.updater.status, self.updater.brew_install())
     }
 
     /// Whether Restart was clicked since the last call.
@@ -98,20 +115,6 @@ impl Updates {
         self.prefs.install = on;
         self.prefs.clone()
     }
-}
-
-/// Looks like the pill the updater draws in its other states, so the label changes and nothing else
-/// does.
-fn restart_pill(ui: &mut egui::Ui, version: &str) -> egui::Response {
-    let label = RichText::new(restart_label(version))
-        .size(12.0)
-        .family(theme::semibold())
-        .color(theme::on_accent());
-    ui.add(egui::Button::new(label).fill(theme::accent()).corner_radius(12))
-}
-
-fn restart_label(version: &str) -> String {
-    format!("Restart to update to {version}")
 }
 
 fn offline(screenshot: bool, fake: bool, test_build: bool) -> bool {
@@ -336,8 +339,7 @@ mod tests {
     }
 
     #[test]
-    fn the_restart_pill_says_which_version_it_restarts_into() {
-        assert_eq!(restart_label("0.2.0"), "Restart to update to 0.2.0");
+    fn the_chip_shows_once_there_is_an_update_to_tell_about() {
         let ctx = crate::fonts::test_context();
         let mut updates = updates(None, false);
         assert_eq!(pill_frame(&ctx, &mut updates, vec![]).width(), 0.0, "nothing to show yet");
