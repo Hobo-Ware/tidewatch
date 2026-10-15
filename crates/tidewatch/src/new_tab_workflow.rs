@@ -4,19 +4,17 @@ use std::collections::BTreeMap;
 
 use tidewatch_core::profiles::{Profile, Profiles};
 use tidewatch_core::runner::{RunContext, Runner};
-use tidewatch_core::workflows::{Workflow, Workflows};
+use tidewatch_core::workflows::{BUILT_IN_IDS, Workflow, Workflows};
 
 use crate::workflow_glue::WorkflowRequest;
 
-/// The built-in workflows come first in the order the concept shows them, then the user's own.
-const BUILT_IN_ORDER: [&str; 3] = ["ship", "fix", "pr"];
-
+/// The built-in workflows first, in the order of `BUILT_IN_IDS`, then the user's own.
 pub(crate) fn ordered(workflows: &Workflows) -> Vec<&Workflow> {
-    let first = BUILT_IN_ORDER.iter().filter_map(|id| workflows.workflow.get(*id));
+    let first = BUILT_IN_IDS.iter().filter_map(|id| workflows.workflow.get(*id));
     let rest = workflows
         .workflow
         .iter()
-        .filter_map(|(id, workflow)| (!BUILT_IN_ORDER.contains(&id.as_str())).then_some(workflow));
+        .filter_map(|(id, workflow)| (!BUILT_IN_IDS.contains(&id.as_str())).then_some(workflow));
     first.chain(rest).collect()
 }
 
@@ -97,13 +95,16 @@ mod tests {
     #[test]
     fn the_built_in_workflows_come_in_the_concepts_order_then_the_users_own() {
         let mut workflows = defaults();
-        assert_eq!(ids(&workflows), ["ship", "fix", "pr"]);
+        assert_eq!(ids(&workflows), BUILT_IN_IDS);
         let mut own = workflows.workflow["pr"].clone();
         own.id = "audit".into();
         workflows.workflow.insert("audit".into(), own);
-        assert_eq!(ids(&workflows), ["ship", "fix", "pr", "audit"]);
+        let mut with_own = BUILT_IN_IDS.to_vec();
+        with_own.push("audit");
+        assert_eq!(ids(&workflows), with_own);
         workflows.workflow.remove("fix");
-        assert_eq!(ids(&workflows), ["ship", "pr", "audit"]);
+        with_own.remove(1);
+        assert_eq!(ids(&workflows), with_own);
     }
 
     #[test]

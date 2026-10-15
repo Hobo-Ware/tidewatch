@@ -17,6 +17,7 @@ use std::path::Path;
 use serde::{Deserialize, Serialize, Serializer};
 
 use crate::agents::{AgentTable, ArgList, Level};
+use crate::builtin_workflows;
 use crate::fsutil::write_atomic;
 use crate::paths::TidewatchPaths;
 use crate::profiles::Profile;
@@ -381,11 +382,27 @@ pub struct Workflows {
     pub workflow: BTreeMap<String, Workflow>,
 }
 
+/// The ids of every built-in workflow, in the order the new-tab dialog lists them.
+pub const BUILT_IN_IDS: [&str; 9] = [
+    "ship",
+    "fix",
+    "pr",
+    builtin_workflows::ROOT_CAUSE,
+    builtin_workflows::FINISH,
+    builtin_workflows::UI_PROOF,
+    builtin_workflows::PORT,
+    builtin_workflows::RELEASE,
+    builtin_workflows::REFACTOR,
+];
+
+/// The built-ins that every `workflows.toml` on disk already had when later ones were added.
+pub const ORIGINAL_IDS: [&str; 3] = ["ship", "fix", "pr"];
+
 /// Agents ordered by how good a stand-in they make when a default workflow names one that is not
 /// installed.
 const FALLBACK_ORDER: [&str; 4] = ["claude", "gemini", "copilot", "codex"];
 
-fn default_stage(
+pub(crate) fn default_stage(
     action: Action,
     agent: &str,
     model: Option<&str>,
@@ -417,7 +434,8 @@ impl Workflows {
         Ok(parsed)
     }
 
-    /// Ship a feature, Fix a bug and Review a PR, as the concept defines them.
+    /// Ship a feature, Fix a bug and Review a PR, as the concept defines them, then the six habit
+    /// workflows of `builtin_workflows`.
     #[must_use]
     pub fn defaults() -> Self {
         let ship = Workflow {
@@ -460,7 +478,12 @@ impl Workflows {
                 default_stage(Action::Handoff, "claude", Some("haiku"), None, Level::Plan),
             ],
         };
-        Self { workflow: [ship, fix, pr].into_iter().map(|w| (w.id.clone(), w)).collect() }
+        let workflow = [ship, fix, pr]
+            .into_iter()
+            .chain(builtin_workflows::all())
+            .map(|w| (w.id.clone(), w))
+            .collect();
+        Self { workflow }
     }
 
     /// The defaults for a machine that has only some of the agents: a stage whose agent is missing
@@ -555,10 +578,11 @@ mod tests {
     }
 
     #[test]
-    fn default_workflows_are_the_concepts_three() {
+    fn the_concepts_three_keep_their_shape() {
         let defaults = Workflows::defaults();
-        let names: Vec<_> = defaults.workflow.values().map(|w| w.name.as_str()).collect();
-        assert_eq!(names, ["Fix a bug", "Review a PR", "Ship a feature"]);
+        let names: Vec<_> =
+            ["ship", "fix", "pr"].iter().map(|id| defaults.workflow[*id].name.as_str()).collect();
+        assert_eq!(names, ["Ship a feature", "Fix a bug", "Review a PR"]);
         assert_eq!(
             shape(&defaults.workflow["ship"]),
             [
@@ -629,7 +653,9 @@ mod tests {
 
     #[test]
     fn the_file_counts_on_fail_from_one_and_hides_defaults() {
-        let text = toml::to_string(&Workflows::defaults()).unwrap();
+        let mut original = Workflows::defaults();
+        original.workflow.retain(|id, _| ORIGINAL_IDS.contains(&id.as_str()));
+        let text = toml::to_string(&original).unwrap();
         for expected in [
             "[workflow.ship]",
             "[[workflow.ship.stage]]",

@@ -2,7 +2,7 @@ use std::ffi::OsString;
 
 use tidewatch_core::agents::{AgentOverride, ArgList, LevelOverrides};
 use tidewatch_core::profiles::Profiles;
-use tidewatch_core::workflows::Workflows;
+use tidewatch_core::workflows::{BUILT_IN_IDS, Workflows};
 
 use super::*;
 
@@ -194,7 +194,7 @@ fn every_level_has_a_hint() {
 fn the_workflow_step_lists_workflows_in_order_and_builds_a_request_with_no_task() {
     let catalog = workflow_catalog();
     let mut state = in_workflow_step(&catalog);
-    assert_eq!(state.visible(&catalog), ["ship", "fix", "pr"]);
+    assert_eq!(state.visible(&catalog), BUILT_IN_IDS);
     assert_eq!(state.selected_workflow(&catalog).unwrap().name, "Ship a feature");
     assert!(state.selected_entry(&catalog).is_none(), "no profile ladder");
     assert!(!state.set_level(Level::Auto, &catalog), "a workflow has no level to pick");
