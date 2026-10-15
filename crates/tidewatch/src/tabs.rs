@@ -18,6 +18,12 @@ pub(crate) struct Tab<T> {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Step {
+    Left,
+    Right,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Action {
     New,
     CloseActive,
@@ -28,6 +34,9 @@ pub(crate) enum Action {
     NextGroup,
     PrevGroup,
     ShowGroup(usize),
+    /// Swaps a tab with its neighbour in the same group, never past the pinned main tab.
+    Move(usize, Step),
+    MoveActive(Step),
 }
 
 pub(crate) struct Tabs<T> {
@@ -183,6 +192,29 @@ impl<T> Tabs<T> {
                     self.show_group(group);
                 }
             }
+            Action::Move(i, step) => self.move_tab(i, step),
+            Action::MoveActive(step) => self.move_tab(self.active, step),
+        }
+    }
+
+    fn move_tab(&mut self, i: usize, step: Step) {
+        let Some(tab) = self.items.get(i) else { return };
+        let group = tab.group;
+        let neighbor = match step {
+            Step::Left => self.items[..i].iter().rposition(|t| t.group == group),
+            Step::Right => {
+                self.items[i + 1..].iter().position(|t| t.group == group).map(|n| n + i + 1)
+            }
+        };
+        let Some(j) = neighbor else { return };
+        if self.items[i].pinned || self.items[j].pinned {
+            return;
+        }
+        self.items.swap(i, j);
+        if self.active == i {
+            self.active = j;
+        } else if self.active == j {
+            self.active = i;
         }
     }
 
@@ -471,5 +503,93 @@ mod tests {
         tabs.remove_id(api);
         tabs.apply(Action::NextGroup, || unreachable!());
         assert_eq!((tabs.active_group(), *tabs.active_pane_mut()), (1, 10));
+    }
+
+    fn ids_in(tabs: &Tabs<u32>, group: usize) -> Vec<u32> {
+        tabs.in_group(group).map(|(_, tab)| tab.pane).collect()
+    }
+
+    #[test]
+    fn move_swaps_a_tab_with_its_neighbour_and_the_active_tab_follows_its_tab() {
+        let table = [
+            (1, Step::Right, 3, [0, 2, 1, 3], 3),
+            (2, Step::Left, 3, [0, 2, 1, 3], 3),
+            (1, Step::Right, 1, [0, 2, 1, 3], 2),
+            (3, Step::Left, 1, [0, 1, 3, 2], 1),
+            (1, Step::Right, 2, [0, 2, 1, 3], 1),
+        ];
+        for (from, step, active, order, now) in table {
+            let mut tabs = tabs_with(3);
+            tabs.apply(Action::Select(active), || unreachable!());
+            let pane = tabs.items()[active].pane;
+            tabs.apply(Action::Move(from, step), || unreachable!());
+            assert_eq!(panes(&tabs), order, "{from} {step:?} with {active} active");
+            assert_eq!(tabs.active(), now, "{from} {step:?} with {active} active");
+            assert_eq!(*tabs.active_pane_mut(), pane, "the active tab stays the same tab");
+        }
+    }
+
+    #[test]
+    fn move_refuses_the_ends_the_pinned_tab_and_a_tab_that_is_not_there() {
+        for (from, step) in [
+            (3, Step::Right),
+            (1, Step::Left),
+            (0, Step::Right),
+            (0, Step::Left),
+            (9, Step::Left),
+            (9, Step::Right),
+        ] {
+            let mut tabs = tabs_with(3);
+            tabs.apply(Action::Select(2), || unreachable!());
+            tabs.apply(Action::Move(from, step), || unreachable!());
+            assert_eq!(panes(&tabs), [0, 1, 2, 3], "{from} {step:?}");
+            assert_eq!(tabs.active(), 2, "{from} {step:?}");
+        }
+    }
+
+    #[test]
+    fn move_active_moves_the_selected_tab() {
+        let mut tabs = tabs_with(3);
+        tabs.apply(Action::MoveActive(Step::Left), || unreachable!());
+        assert_eq!((panes(&tabs), tabs.active()), (vec![0, 1, 3, 2], 2));
+        tabs.apply(Action::MoveActive(Step::Left), || unreachable!());
+        tabs.apply(Action::MoveActive(Step::Left), || unreachable!());
+        assert_eq!((panes(&tabs), tabs.active()), (vec![0, 3, 1, 2], 1), "stops at the main tab");
+        tabs.apply(Action::SelectNth(0), || unreachable!());
+        tabs.apply(Action::MoveActive(Step::Right), || unreachable!());
+        assert_eq!(panes(&tabs), [0, 3, 1, 2], "the pinned tab stays put");
+    }
+
+    #[test]
+    fn move_stays_in_the_group_and_leaves_the_others_where_they_are() {
+        let mut tabs = tabs_with(1);
+        tabs.add_group(10);
+        tabs.push_in(0, "late".into(), 2);
+        tabs.push_in(1, "api work".into(), 11);
+        tabs.push_in(0, "later".into(), 3);
+        assert_eq!(panes(&tabs), [0, 1, 10, 2, 11, 3]);
+        let first = tabs.index_of(tabs.in_group(0).nth(1).unwrap().1.id).unwrap();
+        tabs.apply(Action::Move(first, Step::Right), || unreachable!());
+        assert_eq!(ids_in(&tabs, 0), [0, 2, 1, 3]);
+        assert_eq!(ids_in(&tabs, 1), [10, 11]);
+        assert_eq!(panes(&tabs), [0, 2, 10, 1, 11, 3]);
+        let last = tabs.items().len() - 1;
+        tabs.apply(Action::Move(last, Step::Right), || unreachable!());
+        let api = tabs.index_of(tabs.in_group(1).last().unwrap().1.id).unwrap();
+        tabs.apply(Action::Move(api, Step::Left), || unreachable!());
+        assert_eq!(ids_in(&tabs, 1), [10, 11], "the pinned tab of that group is not passed");
+        assert_eq!(ids_in(&tabs, 0), [0, 2, 1, 3]);
+    }
+
+    #[test]
+    fn a_group_out_of_sight_keeps_the_tab_it_remembers_when_its_tabs_move() {
+        let mut tabs = two_groups();
+        let extra = tabs.push_in(1, "more".into(), 12);
+        tabs.select_id(extra);
+        let index = tabs.index_of(extra).unwrap();
+        tabs.apply(Action::Move(index, Step::Left), || unreachable!());
+        assert_eq!(tabs.active_group(), 0);
+        assert_eq!(tabs.items()[tabs.selected_in(1)].id, extra);
+        assert_eq!(ids_in(&tabs, 1), [10, 12, 11]);
     }
 }

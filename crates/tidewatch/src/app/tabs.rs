@@ -229,6 +229,10 @@ impl Tidewatch {
     }
 
     pub(super) fn dispatch(&mut self, action: Action, ctx: &egui::Context) {
+        if matches!(action, Action::Move(..) | Action::MoveActive(_)) {
+            self.tabs.apply(action, || unreachable!());
+            return;
+        }
         self.settings = None;
         self.overview = false;
         match action {
@@ -239,6 +243,8 @@ impl Tidewatch {
             Action::CloseActive => self.close_tab(self.tabs.active(), ctx),
             Action::Close(index) => self.close_tab(index, ctx),
             Action::Select(_)
+            | Action::Move(..)
+            | Action::MoveActive(_)
             | Action::SelectNth(_)
             | Action::NextGroup
             | Action::PrevGroup

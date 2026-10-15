@@ -12,7 +12,7 @@ use egui::{Key, Modifiers};
 pub(crate) use rows::markdown;
 pub(crate) use rows::rows;
 
-use crate::tabs::Action;
+use crate::tabs::{Action, Step};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Platform {
@@ -58,6 +58,8 @@ pub(crate) enum Command {
     NewTab,
     CloseTab,
     SelectTab(usize),
+    MoveTabLeft,
+    MoveTabRight,
     NextRepo,
     PrevRepo,
     Overview,
@@ -82,6 +84,8 @@ impl Command {
             Self::NewTab => Some(Action::New),
             Self::CloseTab => Some(Action::CloseActive),
             Self::SelectTab(index) => Some(Action::SelectNth(index)),
+            Self::MoveTabLeft => Some(Action::MoveActive(Step::Left)),
+            Self::MoveTabRight => Some(Action::MoveActive(Step::Right)),
             Self::NextRepo => Some(Action::NextGroup),
             Self::PrevRepo => Some(Action::PrevGroup),
             Self::Overview
@@ -116,6 +120,12 @@ impl Command {
                 | Self::PrevCommit
                 | Self::NextCommit
         )
+    }
+
+    /// A chord a text field also reads (Cmd+Shift+Left selects to the line start): it is only
+    /// taken from the field, and so only read, while no text field is focused.
+    fn yields_to_text_fields(self) -> bool {
+        matches!(self, Self::MoveTabLeft | Self::MoveTabRight)
     }
 
     /// A command that does nothing in a window with one repo, so the palette leaves it out there.
@@ -228,6 +238,8 @@ fn key_name(key: Key) -> &'static str {
         Key::Escape => "Esc",
         Key::ArrowUp => "Up",
         Key::ArrowDown => "Down",
+        Key::ArrowLeft => "Left",
+        Key::ArrowRight => "Right",
         other => other.symbol_or_name(),
     }
 }
@@ -270,7 +282,7 @@ const fn tab(id: &'static str, title: &'static str, index: usize, key: Key) -> E
     entry(id, title, Group::Tabs, Command::SelectTab(index), (cmd(key), alt(key)))
 }
 
-pub(crate) const TABLE: [Entry; 27] = [
+pub(crate) const TABLE: [Entry; 29] = [
     entry("new-tab", "New tab", Group::Tabs, Command::NewTab, (cmd(Key::T), ctrl(Key::T).shift())),
     entry(
         "close-tab",
@@ -288,6 +300,20 @@ pub(crate) const TABLE: [Entry; 27] = [
     tab("tab-7", "Switch to tab 7", 6, Key::Num7),
     tab("tab-8", "Switch to tab 8", 7, Key::Num8),
     tab("tab-9", "Switch to tab 9", 8, Key::Num9),
+    entry(
+        "move-tab-left",
+        "Move tab left",
+        Group::Tabs,
+        Command::MoveTabLeft,
+        (cmd(Key::ArrowLeft).shift(), ctrl(Key::PageUp).shift()),
+    ),
+    entry(
+        "move-tab-right",
+        "Move tab right",
+        Group::Tabs,
+        Command::MoveTabRight,
+        (cmd(Key::ArrowRight).shift(), ctrl(Key::PageDown).shift()),
+    ),
     entry(
         "next-repo",
         "Next repo",
@@ -451,7 +477,11 @@ pub(crate) fn press_event(command: Command) -> Option<egui::Event> {
 }
 
 fn wanted(gate: Gate) -> impl Fn(Command) -> bool {
-    move |command| command.global() && (!command.in_file_view_only() || gate.allows(command))
+    move |command| {
+        command.global()
+            && !((command.in_file_view_only() || command.yields_to_text_fields())
+                && !gate.allows(command))
+    }
 }
 
 pub(crate) fn pressed(ctx: &egui::Context, gate: Gate) -> Vec<Command> {
@@ -482,13 +512,15 @@ pub(crate) struct Gate {
     pub(crate) focus: Focus,
 }
 
-/// Who gets the bare keys: the terminal and the text fields, or the file view, which is the
-/// active tab showing a file's diff in place of its terminal with no text field focused.
+/// Who gets the bare keys: the terminal, or the file view, which is the active tab showing a
+/// file's diff in place of its terminal with no text field focused. A focused text field takes
+/// the keys it reads from either.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) enum Focus {
     #[default]
     Terminal,
     FileView,
+    TextField,
 }
 
 impl Gate {
@@ -511,6 +543,9 @@ impl Gate {
             | Command::NextFile
             | Command::PrevCommit
             | Command::NextCommit => self.focus == Focus::FileView && !modal && !self.overview,
+            Command::MoveTabLeft | Command::MoveTabRight => {
+                !modal && !self.overview && self.focus != Focus::TextField
+            }
             Command::NewTab
             | Command::SelectTab(_)
             | Command::NextRepo
