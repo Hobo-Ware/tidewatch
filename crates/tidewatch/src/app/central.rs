@@ -273,17 +273,11 @@ impl Tidewatch {
                 agent.reader.available(),
             )
         });
-        let base = self.bases.get(self.workspace().dir());
         let pane = &self.tabs.items()[self.tabs.active()].pane;
-        let Some(line) = agent_status_line::line_of(pane, shown, available, &cli_name, base) else {
+        let Some(line) = agent_status_line::line_of(pane, shown, available, &cli_name) else {
             return;
         };
-        let top = terminal.top() - layout::TERMINAL_PAD;
-        let rect = egui::Rect::from_min_size(
-            egui::pos2(terminal.left() - layout::TERMINAL_PAD, top),
-            egui::vec2(terminal.width() + 2.0 * layout::TERMINAL_PAD, agent_status_line::HEIGHT),
-        );
-        layout::band_above(terminal, agent_status_line::HEIGHT);
+        let rect = layout::band_above(terminal, agent_status_line::HEIGHT);
         if let Some(choice) = agent_status_line::show(ui, rect, &line)
             && let Some(agent) = self.tabs.active_pane_mut().agent.as_mut()
         {
