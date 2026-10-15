@@ -98,6 +98,7 @@ mod shell;
 mod shell_plan;
 mod shortcuts_view;
 mod single_instance;
+mod status_bar;
 mod status_view;
 mod stepper;
 mod stepper_view;

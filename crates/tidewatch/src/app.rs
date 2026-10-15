@@ -4,6 +4,7 @@
 //! the top of the next frame.
 
 mod agents;
+mod bar;
 mod central;
 mod dev;
 mod flow;
@@ -328,6 +329,7 @@ impl eframe::App for Tidewatch {
         self.drive_background_work(&ctx, now);
         let mut intent = self.read_shortcuts(&ctx);
         self.show_tab_strip(ui, now, &mut intent);
+        self.show_status_bar(ui, intent.active_id);
         self.show_central_panel(ui, &ctx, now, &mut intent);
         let active_id = intent.active_id;
         self.apply_frame_intent(&ctx, intent);
