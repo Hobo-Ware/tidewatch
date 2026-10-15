@@ -65,7 +65,9 @@ impl Tidewatch {
 
     pub(super) fn drive_background_work(&mut self, ctx: &egui::Context, now: f64) {
         self.dev_reader.press_toggle(ctx, now);
-        self.dev_panes.press(ctx, now);
+        if let Some(command) = self.dev_panes.press(ctx, now) {
+            self.run_command(command, ctx);
+        }
         reader_glue::start(&mut self.tabs, ctx, &self.dev_reader);
         reader_glue::drain(&mut self.tabs);
         self.drive_agents(ctx, now);

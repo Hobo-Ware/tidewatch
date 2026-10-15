@@ -6,6 +6,8 @@
 //! - `TIDEWATCH_DEV_WORKFLOW=<workflow id>`: open a tab for that workflow, which then asks for its task.
 //! - `TIDEWATCH_DEV_RESUME=<worktree name>`: open the tab of a saved workflow run and carry on where it was.
 //! - `TIDEWATCH_DEV_SETTINGS=1`: open the settings; `general`, `workflows`, `trust`, `shortcuts` or `house` open that page, `dirty` the profiles with an unsaved edit.
+//! - `TIDEWATCH_DEV_PROPOSE=<toml file>`: open that workflow (a `workflows.toml` table or one bare workflow) as a
+//!   proposal from a stand-in tab, the way an agent's answer opens: Settings, Workflows with an unsaved draft.
 //! - `TIDEWATCH_DEV_PALETTE=<query>` (or `1`): open the command palette, filled with that query.
 //! - `TIDEWATCH_DEV_TRUST=yes|no|undo`: answer the folder trust question once the CLIs are known (see `trust_glue`).
 //! - `TIDEWATCH_DEV_TASK=<text>`: typed into the new tab's composer (an agent) or task box (a workflow); with
@@ -26,6 +28,8 @@ pub(crate) enum Mode {
     Palette,
     /// Open the tab of a saved workflow run (the worktree's name) and carry on.
     Resume,
+    /// Open the workflow in the toml file (the profile field) as a proposal in the editor.
+    Propose,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -53,6 +57,7 @@ struct Vars<'a> {
     dialog: Option<&'a str>,
     settings: Option<&'a str>,
     palette: Option<&'a str>,
+    propose: Option<&'a str>,
     task: Option<&'a str>,
     level: Option<&'a str>,
     start: Option<&'a str>,
@@ -66,10 +71,11 @@ impl DevAgent {
             var("TIDEWATCH_DEV_WORKFLOW"),
             var("TIDEWATCH_DEV_RESUME"),
         );
-        let (dialog, settings, palette, task, level, start) = (
+        let (dialog, settings, palette, propose, task, level, start) = (
             var("TIDEWATCH_DEV_DIALOG"),
             var("TIDEWATCH_DEV_SETTINGS"),
             var("TIDEWATCH_DEV_PALETTE"),
+            var("TIDEWATCH_DEV_PROPOSE"),
             var("TIDEWATCH_DEV_TASK"),
             var("TIDEWATCH_DEV_LEVEL"),
             var("TIDEWATCH_DEV_START"),
@@ -81,6 +87,7 @@ impl DevAgent {
             dialog: dialog.as_deref(),
             settings: settings.as_deref(),
             palette: palette.as_deref(),
+            propose: propose.as_deref(),
             task: task.as_deref(),
             level: level.as_deref(),
             start: start.as_deref(),
@@ -90,6 +97,15 @@ impl DevAgent {
     fn parse(vars: Vars) -> Option<Self> {
         fn set(value: Option<&str>) -> Option<&str> {
             value.filter(|v| !v.is_empty())
+        }
+        if let Some(file) = set(vars.propose) {
+            return Some(Self {
+                mode: Mode::Propose,
+                profile: Some(file.to_owned()),
+                task: String::new(),
+                level: None,
+                start: false,
+            });
         }
         let (mode, profile) = match (
             set(vars.agent),
@@ -180,6 +196,18 @@ mod tests {
         let agent = DevAgent::parse(Vars { dialog: Some("agent"), ..vars() }).unwrap();
         assert_eq!((agent.mode, agent.profile.as_deref()), (Mode::Dialog, Some("agent")));
         assert!(!agent.start);
+    }
+
+    #[test]
+    fn a_propose_switch_names_the_toml_file_and_beats_the_settings_switch() {
+        let dev = DevAgent::parse(Vars {
+            propose: Some("/tmp/x/mine.toml"),
+            settings: Some("workflows"),
+            ..vars()
+        })
+        .unwrap();
+        assert_eq!((dev.mode, dev.profile.as_deref()), (Mode::Propose, Some("/tmp/x/mine.toml")));
+        assert_eq!(DevAgent::parse(Vars { propose: Some(""), ..vars() }), None);
     }
 
     #[test]

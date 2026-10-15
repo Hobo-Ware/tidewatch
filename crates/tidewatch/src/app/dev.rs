@@ -33,6 +33,10 @@ impl Tidewatch {
             }
             return;
         }
+        if dev.mode == DevMode::Propose {
+            self.dev_propose(ctx, dev.profile.as_deref().unwrap_or_default());
+            return;
+        }
         if dev.mode == DevMode::Palette {
             self.open_palette(dev.profile.as_deref().unwrap_or_default());
             return;
@@ -59,7 +63,7 @@ impl Tidewatch {
             return;
         }
         match dev.mode {
-            DevMode::Settings | DevMode::Palette | DevMode::Resume => {}
+            DevMode::Settings | DevMode::Palette | DevMode::Resume | DevMode::Propose => {}
             DevMode::Dialog => {
                 self.bases.refresh(ctx, state.repo());
                 self.new_tab = Some(state);
@@ -119,6 +123,18 @@ impl Tidewatch {
             && self.leftovers.press_clean_up(ctx, self.paths.as_ref())
         {
             self.dev_session.leftovers_done();
+        }
+    }
+
+    /// `TIDEWATCH_DEV_PROPOSE`: the proposal path for the workflow in `file`, from a stand-in tab.
+    fn dev_propose(&mut self, ctx: &egui::Context, file: &str) {
+        let text = match std::fs::read_to_string(file) {
+            Ok(text) => text,
+            Err(e) => return eprintln!("tidewatch: dev propose: cannot read {file}: {e}"),
+        };
+        match crate::build_workflow::workflow_from_toml(&text, "claude") {
+            Ok(workflow) => self.open_proposal("a stand-in agent", &workflow, ctx),
+            Err(problem) => eprintln!("tidewatch: dev propose: {problem}"),
         }
     }
 
