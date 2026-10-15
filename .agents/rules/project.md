@@ -120,7 +120,7 @@ crates/tidewatch/       the egui app
   src/status_view.rs    status -> tone, label, color; CLI logo mapping; the tab's top-edge status bar (animated only while working)
   src/notify.rs         desktop notifications (osascript, notify-send) off the UI thread, per-tab per-kind rate limit, window-away rule
   src/overview.rs       Overview rows and groups from the agent tabs (needs you first), the workflow stage of a row, elapsed format (pure)
-  src/overview_view.rs  the Overview screen (Cmd+0) and the tab strip's icon button with a needs-you badge
+  src/overview_view.rs  the Overview screen (Cmd+0) with the sleeping mascot when no agent runs, and the tab strip's icon button with a needs-you badge
   src/catalog.rs        loaded profiles, the agent table built from them, which CLIs were found and their versions
   src/agent_jobs.rs     load or seed profiles.toml and probe each agent CLI as jobs
   src/new_tab.rs        new-tab dialog state: the steps (what to start, agent, workflow), the filter, the permission level and YOLO gating, the request each step turns into, the warnings (pure)
@@ -170,6 +170,8 @@ crates/tidewatch/       the egui app
   src/session_writer.rs debounced writer thread for session.toml (Debounce is pure), synchronous flush for the quit path
   src/restore_jobs.rs   startup job, one per repo of the window (repair a moved repo, plan the saved window, scan leftovers owned by no saved or open tab) and the reopen job (fresh token, prepare_resume, folder trust)
   src/restore_glue.rs   Host: carry each repo's plan out in its tab group in saved order (shell, shell plus note, resume agent or type its command, resume workflow), active tab and focus, the settled flag the saver waits for (generic over the pty)
+  src/mascot.rs         the mascot (a shoggoth in a porcelain smiley mask): `Pose` Peek (welcome), Asleep (empty Overview), Caught (typed resume note); art in `assets/mascot/` (`mascot-<pose>-base.svg`, `eye-<kind>.svg`, `mascot.json` with each pose's viewBox and eye boxes) bundled with `include_bytes!`, rasterized with resvg once per pixel height (cached in egui's context memory per pose, rebuilt only when the size or pixels_per_point changes), drawn as the base then each real eye; never redraw or edit the art
+  src/mascot_motion.rs  the mascot's motion as pure functions of time (bob 7 units over 3.2 s, asleep breathes instead, each eye blinks every 4 to 7 s and darts 2 to 3 units on its own schedule, the mask never moves against the body) and the repaint gate `should_animate(on_screen, focused, visible)` with `next_repaint` (33 ms, `None` when still)
   src/notice.rs         a message that stays until dismissed (what a restore could not bring back)
   src/tabs/groups.rs    taking a whole group out of the tab list (`remove_group`), the groups after it move down
   src/session_glue.rs   Saver: once per frame, fingerprint changed -> queue a save (a closed repo's window rides with the next one); never under the screenshot harness or while a restore is under way; flush on quit
@@ -214,7 +216,7 @@ crates/tidewatch/       the egui app
   src/stepper_view.rs   draws the header of a workflow tab: stepper, a clicked stage, the ask card, the stopped line
   src/workflow_start_view.rs  the card a workflow tab shows until its run starts: description, task box, a card per stage, Start run (Cmd+Enter)
   src/welcome.rs        the welcome screen's Recent list: the last window's repos, then the session's, each once, with its open tabs (pure)
-  src/welcome_view.rs   draws the welcome screen of a window with no repo: the K mark, Open repo (Cmd+O), Recent, the command line hint
+  src/welcome_view.rs   draws the welcome screen of a window with no repo: the peeking mascot, Open repo (Cmd+O), Recent, the command line hint
   src/workflow_jobs.rs  open (worktree, base, test command and timeout), launch a stage (fresh token, prepare, divider), run the tests as jobs
   src/workflow_glue.rs  Host: open a workflow or saved-run tab, carry out what a run asks, apply finished jobs, drop a replaced agent's messages (generic over the pty)
 docs/                   concept mockup, research reports, shortcuts.md (generated from the command table, checked by a test)
@@ -288,7 +290,7 @@ Check the real exit code of a build (`cargo build 2>build.log; echo $?`), never 
 ## Performance rules
 
 - Idle CPU stays at 0%: repaint only on input, pty output or finished background work.
-  Animations run only while something is happening.
+  Animations run only while something is happening. The mascot animates only while it is drawn in a focused, visible window and asks for a repaint every 33 ms only then (`mascot_motion::should_animate`); otherwise it shows its still frame and asks for nothing.
 - Never block the UI thread on git, the network, disk-heavy work or a child process.
 - The graph draws only visible rows; per-row work is O(visible lanes).
 - Many agents at once is the normal case: a hidden tab costs no paint time.
