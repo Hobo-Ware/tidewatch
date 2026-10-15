@@ -40,6 +40,9 @@ impl Tidewatch {
         for workspace in self.workspace_jobs.drain() {
             self.adopt_workspace(workspace, ctx);
         }
+        for done in self.stdusk_jobs.drain() {
+            self.apply_stdusk_done(done, ctx);
+        }
         self.drain_picked(ctx);
         if self.bases.drain()
             && let Some(state) = &mut self.new_tab
