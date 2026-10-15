@@ -27,7 +27,9 @@ crates/tidewatch-core/  worktrees, profiles, permission levels, workflows, agent
   src/paths.rs          ~/.tidewatch layout (D9), state dirs, the one app socket, the handoff socket of a restart (`.state/handoff-<pid>.sock`, outside `instances/` so a toggle never reaches it), per-tab notes and stages files, ~/.config/tidewatch files (pure)
   src/agents.rs         agent table: claude, codex, gemini, copilot, five permission levels to flags, version probe, [agent.<id>] overrides
   src/profiles.rs       Profile, profiles.toml load/save (bad file -> defaults), first-launch seeding
-  src/workflows.rs      Workflow, Stage, Gate, Action; workflows.toml load/save/seed (bad file -> defaults), the built-in Ship a feature, Fix a bug, Review a PR
+  src/workflows.rs      Workflow, Stage, Gate, Action; workflows.toml load/save/seed (bad file -> defaults), `BUILT_IN_IDS` (the dialog's order), the original built-ins Ship a feature, Fix a bug, Review a PR
+  src/builtin_workflows.rs  the six habit built-ins: Hunt a root cause, Finish with proof, Change the UI with proof, Port to a platform, Prepare a release, Refactor safely (stage prompts, gates, loops; none pushes or tags, each ends at an Approve gate)
+  src/workflow_upgrade.rs  an existing workflows.toml gains the built-ins it was never offered, once: appended after the user's text, ids recorded in `workflows.offered` next to it so a deleted one stays deleted and an edited or same-named one is left alone; the original three always count as offered
   src/test_command.rs   per-repo test command: <repo>/.tidewatch.toml `test` (and `test_timeout_secs`, default 10 min), else detected (cargo, npm/pnpm/yarn/bun, deno, go, pytest, rspec, mix, make); run_in, run_in_timeout (kills the process group)
   src/runner.rs         Runner: pure workflow state machine (RunEvent in, Command out), gates decided by Tidewatch, loops, safety net, stages.json save/load/resume
   src/prompt.rs         stage prompt templates: {task} {base} {branch} {previous_summary} {findings} {test_output} (pure)
