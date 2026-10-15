@@ -8,9 +8,13 @@ use super::frame::FrameIntent;
 use super::{FONT_SIZE, MIN_CONTRAST, Tidewatch};
 use crate::brand;
 use crate::commands::Command;
+use crate::mascot::{self, Pose};
 use crate::pane::{Body, Pane};
 use crate::reader::Shown;
 use crate::{layout, reader_glue};
+
+const CAUGHT_H: f32 = 72.0;
+const CAUGHT_GAP: f32 = 6.0;
 
 pub(super) struct TerminalGrid {
     rect: egui::Rect,
@@ -80,7 +84,8 @@ impl Tidewatch {
                 if let (Some(name), Some(exit)) = (agent_name, term.exited()) {
                     exit_notice(ui, area, &exit_notice_text(name, exit.code));
                 } else if let Some(note) = agent.as_ref().and_then(|agent| agent.resume_note) {
-                    draw_pane_notice(ui, area, note);
+                    let pill = draw_pane_notice(ui, area, note);
+                    caught_above(ui, area, pill);
                 }
             }
             Body::Creating => {
@@ -116,6 +121,19 @@ impl Tidewatch {
             Some(Shown::Terminal(None)) | None => {}
         }
     }
+}
+
+fn caught_above(ui: &egui::Ui, area: egui::Rect, pill: egui::Rect) {
+    let room = egui::Rect::from_min_max(area.min, egui::pos2(area.max.x, pill.top() - CAUGHT_GAP));
+    if room.height() < CAUGHT_H * 2.0 {
+        return;
+    }
+    let size = egui::vec2(mascot::width_at(Pose::Caught, CAUGHT_H), CAUGHT_H);
+    let at = egui::Rect::from_center_size(
+        egui::pos2(pill.center().x, room.bottom() - size.y / 2.0),
+        size,
+    );
+    mascot::show(ui, at, Pose::Caught);
 }
 
 fn status_message(ui: &egui::Ui, rect: egui::Rect, text: &str, color: egui::Color32) {
