@@ -88,7 +88,7 @@ crates/tidewatch/       the egui app
   src/single_instance.rs  startup before any window: Mode from the run kind (screenshot and a background run in the real home take no part), hand the path to a running window and exit, `--toggle` to every live window with an exit code, workspace key
   src/app.rs            the Tidewatch struct, `new` and the eframe::App loop, which only calls the frame steps below in order
   src/app/frame.rs      the frame's steps: drain finished jobs, drive background work, read shortcuts into a FrameIntent, apply what the frame asked for, finish
-  src/app/strip.rs      the tab strip: repo chip (a menu: the window's repos when there are several, a dot when an agent in another one needs you, Open repo and Close repo), leftovers chip, update pill, Overview button, the tabs, new tab and settings buttons
+  src/app/strip.rs      the tab strip: repo chip (a menu: the window's repos when there are several, a dot when an agent in another one needs you, Open repo and Close repo), leftovers chip, Overview button, the tabs, new tab button, and at the right end the update chip and the settings button
   src/app/central.rs    the central panel: Overview, settings page or the workspace (stepper, end card, delivery card, terminal, panes), view toggles
   src/app/terminal.rs   the active tab's terminal area: shell grid and input, status messages, the exit notice, the Reader or its note
   src/app/panes.rs      History and Diff panes: one view per tab, finished pane jobs, notes saving, double-click checkout
@@ -137,6 +137,9 @@ crates/tidewatch/       the egui app
   src/window_view.rs    draws the Window section: switches and the hotkey key-cap recorder (click, press keys; Esc cancels) with its problem or registration status
   src/settings_view.rs  the settings view: a sidebar of six pages and the page that shows (replaces the terminal area; Cmd+, or the gear; Esc closes); files shown only in a footer line or a tooltip
   src/brand.rs          the Night tide palette every view reads (ground, surfaces, text, teal, green, orange, red, the status inks that differ in lightness), the terminal theme (One Half Dark on the brand ground, ANSI palette untouched), the chrome colors handed to stdusk's `colors::set_chrome` (teal accent, red, green) and the teal egui visuals; no view hard-codes a color or reads `colors::accent()`
+  src/segmented.rs      the segmented control of the window chrome (one bordered container, the active segment teal-tinted): drawn by the History card header and the agent status line (pure geometry, drawn)
+  src/status_bar.rs     the 30 px bar along the bottom of the window (hidden on the welcome screen): agents working and needing you, the agent tab's `branch from base`, 3 or 4 key hints per screen read from the command table (pure counts and hint choice, drawn); `app/bar.rs` gathers its input
+  src/update_chip.rs    the update chip: dark fill, 1 px border, teal dot, `<version> available` with Update (or View when notify-only), `Installing <version>`, `<version> ready` with Restart (pure spec, drawn); never Kelp's green
   src/settings_ui.rs    the shared pieces of every Settings page (re-exports `brand`): page header, section and card, rows with a control, switch, buttons, key caps
   src/settings_icons.rs the six sidebar icons drawn with the painter
   src/general_view.rs   the General page: Startup (restore, the resume mode control, open at login), Window and Updates cards
@@ -153,10 +156,10 @@ crates/tidewatch/       the egui app
   src/leftover_glue.rs  Host: the leftover list, the chip, the dialog and its jobs
   src/leftover_view.rs  the chip in the tab strip and the dialog (Clean up for the clean ones, Discard for a dirty one)
   src/close_dialog.rs   keep/delete branch dialog: choices and wording (pure) plus the modal
-  src/layout.rs         terminal/panel split (side by side: terminal left ~58% with a draggable divider, History right at full height; below: terminal over History and Diff), the left column that a file's diff takes over, grid size, tab width (pure)
+  src/layout.rs         terminal/panel split (side by side: terminal left ~58% with a draggable divider, History a card on the right with a 10 px margin; `CHROME_H` 48 is the card header and the agent status line; below: terminal over History and Diff), the left column that a file's diff takes over, grid size, tab width (pure)
   src/tab_view.rs       per-tab pane state: loaded history, selection, open diff, notes, watcher, the opened commit (one at a time), the file view and the last opened file, line counts per file; wants -> jobs -> answers (stale ones dropped)
   src/pane_jobs.rs      history, status, files, diff, notes, watcher and checkout as jobs
-  src/history_pane.rs   History pane: header (branch, ahead/behind, This worktree / Whole repo), kelp-ui graph, and in the side layout the open commit's card over the rows below its row (the selected row's place is read from the graph's scroll state) and a hint footer
+  src/history_pane.rs   History pane: side by side a raised card (12 px corners, 1 px border) with a 48 px header (branch in mono, `N ahead of <base>` and `N behind` pills, one This branch / Whole repo segmented control), kelp-ui graph and the open commit's card over the rows below its row (the selected row's place is read from the graph's scroll state); Below keeps the flat pane with the HISTORY caption and This worktree / Whole repo chips
   src/commit_files.rs   the open commit's files as a card under its row in the tree: kind letter, path, +/- counts, a meta line; laid over the graph because kelp-ui's graph cannot grow a row (pure sums and sizes, drawing)
   src/file_view.rs      the side layout's file view in the terminal's place: Terminal chip (profile and state, goes back), path, `in <sha>`, Unified/Split, toolbar with Send all and Deliver when idle, PR row, notes strip, kelp-ui diff body
   src/file_nav.rs       the previous or next file or tree row from the keyboard (pure index steps)
@@ -206,7 +209,7 @@ crates/tidewatch/       the egui app
   src/reader_keys.rs    the permission answers verified per CLI and the bytes that give them (Claude: 1 and Esc)
   src/reader_view.rs    draws the Reader: markdown rows, collapsed tool lines, permission strip, reply box, jump to latest
   src/agent_ready.rs    an agent tab before its first message: the "<Profile> is ready" empty state and the composer (Enter sends, Shift+Enter new line)
-  src/agent_status_line.rs  the line over an agent tab: Ready or its status, profile, CLI, level, branch from base, the Reader or Terminal choice (pure line, drawn)
+  src/agent_status_line.rs  the line over an agent tab, `CHROME_H` tall: Ready or its status, profile, CLI, level, and the Reader | Terminal segmented control (pure line, drawn)
   src/reader_glue.rs    seams: start feeds, drain, Cmd+Shift+T toggle, draw in the terminal area, type replies and answers into the pty
   src/dev_reader.rs     TIDEWATCH_DEV_READER / _READER_KEY / _ANSWER / _REPLY switches
   src/end_block_view.rs the Done / Needs you / Next card on the tab (expandable) and its one-line form for the Overview
