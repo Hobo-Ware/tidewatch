@@ -49,6 +49,8 @@ mod leftover_view;
 mod leftovers;
 mod login_item;
 mod macos;
+mod mascot;
+mod mascot_motion;
 mod new_tab;
 mod new_tab_dialog;
 mod new_tab_pick;
