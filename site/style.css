@@ -109,3 +109,4 @@ footer a:hover{color:var(--strong)}
 .lost .ctas{margin-top:26px}
 .lost .ctas a:first-child{color:#10131a;background:var(--teal);font-weight:600;border-radius:7px;padding:9px 16px}
 .lost .ctas a:first-child:hover{background:#5eead4;color:#10131a}
+.closing .peek{width:200px;height:auto;margin:-60px auto 18px}
