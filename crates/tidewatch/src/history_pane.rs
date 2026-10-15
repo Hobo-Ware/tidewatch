@@ -10,14 +10,14 @@ use egui::{
 use kelp_core::history::History;
 use kelp_ui::avatars::AvatarStore;
 use kelp_ui::graph::{
-    GraphAction, GraphColumns, GraphInput, MenuFor, Preview, ROW_H, Selection, Wip,
+    GraphAction, GraphColumns, GraphInput, GraphStyle, MenuFor, Preview, Selection, Wip,
 };
 use kelp_ui::{graph::Marks, theme};
 use stdusk_egui::widgets::{chip, menu_item, style_menu};
 use tidewatch_core::history::{BaseCompare, Scope};
 
 use crate::brand;
-use crate::commit_files::{self, Geometry};
+use crate::commit_files::{self, Spot};
 use crate::screen_kit::{body, mono};
 use crate::tab_view::TabView;
 use crate::{layout, segmented};
@@ -60,17 +60,13 @@ pub(crate) fn show(
         Rect::from_min_max(pos2(rect.left(), header.bottom()), rect.max)
     };
     let mut action = None;
-    let mut geometry = None;
     ui.scope_builder(UiBuilder::new().id_salt("history-graph").max_rect(body), |ui| {
         ui.set_clip_rect(body.intersect(ui.clip_rect()));
-        action = show_graph(ui, view, avatars);
-        if side && view.expanded() {
-            geometry = row_geometry(ui, view);
+        action = show_graph(ui, view, avatars, side);
+        if side && let Some(spot) = card_spot(view) {
+            commit_files::show(ui, view, spot);
         }
     });
-    if side && let Some(geometry) = geometry {
-        commit_files::show(ui, view, geometry, body);
-    }
     action
 }
 
@@ -161,25 +157,31 @@ fn show_card_header(ui: &mut Ui, rect: Rect, view: &mut TabView) {
     }
 }
 
-/// Where the selected row is on screen. The graph keeps its scroll offset in egui's memory and
-/// draws from the row that offset starts in, so the row's place follows from both.
-fn row_geometry(ui: &Ui, view: &TabView) -> Option<Geometry> {
-    let display = match view.selection()? {
-        Selection::Wip => 0,
-        Selection::Commit(row) => row + usize::from(!view.changes().is_empty()),
-    };
-    let scroll_id = ui.make_persistent_id(egui::IdSalt::new("scroll_area"));
-    let offset = egui::scroll_area::State::load(ui.ctx(), scroll_id)?.offset.y;
-    let rows = ui.ctx().read_response(view.graph.focus_id?)?.rect;
-    let first = (offset / ROW_H).floor();
-    let viewport_top = rows.top() + offset - first * ROW_H;
-    Some(Geometry {
-        row_top: rows.top() + (display as f32 - first) * ROW_H,
-        row_h: ROW_H,
-        viewport: Rect::from_min_max(
-            pos2(rows.left(), viewport_top),
-            pos2(rows.right(), ui.max_rect().bottom()),
-        ),
+fn side_style() -> GraphStyle {
+    GraphStyle::embedded(brand::TEAL)
+}
+
+/// The row the open commit's card hangs under and the gap it asks the graph for, `None` when no
+/// commit is open.
+fn card_gap(view: &TabView, style: &GraphStyle, available: f32) -> Option<(usize, f32)> {
+    if !view.expanded() {
+        return None;
+    }
+    let Some(Selection::Commit(row)) = view.selection() else { return None };
+    let files = if view.is_loading_source() { 0 } else { view.files.len() };
+    Some((row, commit_files::gap_height(files, available - style.row_h)))
+}
+
+/// Where the graph put the gap of the open commit in the frame it just drew.
+fn card_spot(view: &TabView) -> Option<Spot> {
+    let style = side_style();
+    let loaded = view.loaded.as_ref()?;
+    let pinned_wip = !view.changes().is_empty() && loaded.head_row.is_some_and(|row| row > 0);
+    Some(Spot {
+        gap: view.graph.expanded_rect?,
+        row_h: style.row_h,
+        inset: commit_files::message_inset(&style, loaded.history.layout.lane_count(), pinned_wip),
+        viewport: view.graph.viewport_rect,
     })
 }
 
@@ -226,8 +228,18 @@ fn show_header(ui: &mut Ui, rect: Rect, view: &mut TabView) {
     );
 }
 
-fn show_graph(ui: &mut Ui, view: &mut TabView, avatars: &mut AvatarStore) -> Option<GraphAction> {
+fn show_graph(
+    ui: &mut Ui,
+    view: &mut TabView,
+    avatars: &mut AvatarStore,
+    side: bool,
+) -> Option<GraphAction> {
     let selected = view.selection();
+    let style = if side { side_style() } else { GraphStyle::default() };
+    let expanded = if side { card_gap(view, &style, ui.available_height()) } else { None };
+    if view.loaded.is_some() && (expanded.is_none() || !view.is_loading_source()) {
+        view.graph.scroll_to = view.take_room().or(view.graph.scroll_to);
+    }
     let Some(loaded) = &view.loaded else {
         message(ui, view.error.as_deref(), "Loading history...");
         return None;
@@ -255,6 +267,8 @@ fn show_graph(ui: &mut Ui, view: &mut TabView, avatars: &mut AvatarStore) -> Opt
         picking: false,
         filter_active: false,
         checks: &checks,
+        style,
+        expanded,
     };
     view.graph.ui(ui, input, avatars, |ui, target| context_menu(ui, &target, history))
 }
