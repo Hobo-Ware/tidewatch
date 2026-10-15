@@ -31,8 +31,8 @@ nav .wrap{display:flex;align-items:center;gap:22px;height:62px}
 
 .hero{padding:84px 0 0;text-align:center}
 .hero .wrap{position:relative}
-.mascot{width:150px;height:auto;margin:0 auto 6px}
-@media(min-width:1180px){.mascot{position:absolute;top:44px;right:0;width:210px;margin:0}}
+.hero .mascot{width:150px;height:auto;margin:0 auto 6px}
+@media(min-width:1180px){.hero .mascot{position:absolute;top:44px;right:0;width:210px;margin:0}}
 .pill{display:inline-flex;align-items:center;gap:10px;font-size:13px;color:var(--muted);border:1px solid var(--line2);background:rgba(26,29,36,.7);border-radius:99px;padding:5px 14px 5px 5px;margin-bottom:26px}
 .pill b{font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:#10131a;background:var(--orange);padding:3px 9px;border-radius:99px}
 h1,h2,h3,h4{font-family:var(--display)}
@@ -101,3 +101,11 @@ h2{margin-top:10px;font-size:clamp(28px,4vw,42px);line-height:1.12;letter-spacin
 footer{border-top:1px solid var(--line);padding:28px 0;font-size:13px;color:var(--dim)}
 footer .wrap{display:flex;flex-wrap:wrap;gap:18px;justify-content:space-between}
 footer a:hover{color:var(--strong)}
+
+.lost{padding:0 0 96px;text-align:center}
+.lost .mascot{width:min(340px,72vw);margin:-30px calc((100% - 100vw)/2) 10px auto}
+.lost h1{margin-top:10px;font-size:clamp(34px,5vw,54px)}
+.lost .lede{margin-top:14px}
+.lost .ctas{margin-top:26px}
+.lost .ctas a:first-child{color:#10131a;background:var(--teal);font-weight:600;border-radius:7px;padding:9px 16px}
+.lost .ctas a:first-child:hover{background:#5eead4;color:#10131a}
