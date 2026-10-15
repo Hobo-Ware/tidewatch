@@ -4,15 +4,14 @@ A running log of what got done, newest first. The plan lives in [PLAN.md](PLAN.m
 
 ## Status
 
-- **Current milestone:** v0.1.3: an update restart keeps every shell and agent running (stdusk's live handover), Open at login, and resume agents as auto, prefill or off with crash prefill.
-- **Done:** Phases 0 to 10; v0.1.0 to v0.1.3 released (Homebrew cask, Linux tarball and AppImage); the K mark identity; the showcase page.
-- **Also on `login-resume` (not merged):** Open at login and the agent resume modes, see 2026-10-15.
-- **Also on `mascot-app` (not merged):** the animated mascot on the welcome screen, the empty Overview and the typed-resume note, see 2026-10-15.
+- **Current milestone:** v0.1.4: the mascot, a shoggoth in a smiley mask, on the welcome screen, the empty Overview, the typed-resume note and the showcase site (404 page and og image too).
+- **Done:** Phases 0 to 10; v0.1.0 to v0.1.4 released (Homebrew cask, Linux tarball and AppImage); the K mark identity; the showcase page.
 - **Also:** Restart to update keeps every shell and agent running (live handoff, 2026-10-15).
 - **Next:** a kelp-ui accent setting so the graph and diff widgets go teal; commit messages that truncate early in the narrow tree; the divider position saved between runs; the site hero screenshot; the owner's live checks; Linux desktop runs.
 
 ## 2026-10-15
 
+- **v0.1.4.** Ships the mascot in the app (#46) and on the site (#45).
 - **Mascot on the site (#45).** The approved shoggoth in a smiley mask: the hero pose beside the headline (stacked above it on phones), a `404.html` with the lost pose ("This page wandered off.", root-absolute asset paths because Pages serves it at any path), the peek pose over the terminal above the closing install, and a new og image with the hero mascot where the dimmed screenshot was. Animated SVGs (pure CSS, honor reduced motion) in `site/mascot/`: hero 12134 B, lost 11172 B, peek 12431 B. og 47015 B to 42017 B (PSNR 43.8 dB).
   Checked headless (Chromium, iframe at 1280x800 and 390x844): no horizontal scroll, every image loads, the 404 served from a local server with no failed request. **Not verified:** the deployed 404, the og image in a real link preview, a real phone. The og still shows `cargo run` (the page's install is Homebrew now).
 - **Animated mascot in the app (#46).** The approved shoggoth in a porcelain smiley mask, from the layered export (base, one SVG per eye kind, `mascot.json`), bundled under `crates/tidewatch/assets/mascot/` and rasterized with resvg (already in the tree through stdusk-egui) once per pixel height. Placements: `peek` replaces the app mark on the welcome screen, `asleep` on the empty Overview ("Nothing running. Start an agent with Cmd+T.", the chord read from `commands.rs`), `caught` above the typed-resume note on a tab whose resume command waits for Enter. `busy` for the restart is skipped: the hand-over runs on the UI thread and the pill has no restarting state, so no frame is painted while it runs; the busy art is not bundled. Motion follows the prototype (bob 7 units over 3.2 s, blink to 0.08 for 0.15 s every 4 to 7 s per eye, darts of 2 to 3 units, asleep breathes) and runs only while the mascot is on screen in a focused, visible window, at one repaint per 33 ms; otherwise a still frame and no repaint request.
