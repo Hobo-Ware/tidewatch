@@ -15,7 +15,7 @@ use crate::agent_run::progress_fraction;
 use crate::brand;
 use crate::commands::Command;
 use crate::pane::{Body, Pane};
-use crate::tabs::Action;
+use crate::tabs::{Action, Step, Tabs};
 use crate::{layout, overview_view, status_view};
 
 const STRIP_TOP_MARGIN: i8 = 6;
@@ -170,36 +170,93 @@ impl Tidewatch {
     }
 
     fn draw_tabs(&self, ui: &mut egui::Ui, width: f32, now: f64, actions: &mut Vec<Action>) {
-        for (position, (i, tab)) in self.tabs.in_group(self.tabs.active_group()).enumerate() {
-            let (pty_progress, cmd) = tab_signals(&tab.pane);
-            let agent = tab.pane.agent.as_ref();
-            let progress = if agent.is_some() { Progress::None } else { pty_progress };
-            let cli = agent.and_then(|a| status_view::cli_of(&a.run.agent_id));
-            let (resp, close) = draw_tab(
-                ui,
-                Some(position + 1),
-                tab.id,
-                &tab.title,
-                i == self.tabs.active(),
-                tab.pinned,
-                None,
-                progress,
-                cmd,
-                &[],
-                cli,
-                Some(width),
-            );
-            if let Some(agent) = agent {
-                let tone = status_view::tone(agent.run.status());
-                let fraction = progress_fraction(pty_progress);
-                status_view::paint_bar(ui, resp.rect, tone, now, fraction);
-            }
-            if close {
-                actions.push(Action::Close(i));
-            } else if resp.clicked() {
-                actions.push(Action::Select(i));
-            }
+        tab_row(ui, &self.tabs, width, now, actions, tab_signals);
+    }
+}
+
+/// A drawn tab: its place in the whole list and where it sits on screen.
+struct Slot {
+    index: usize,
+    rect: egui::Rect,
+    pinned: bool,
+}
+
+/// Draws the visible group's tabs and reports clicks, closes and drag-reorders as actions. Returns
+/// the tabs' rects in order.
+fn tab_row<T>(
+    ui: &mut egui::Ui,
+    tabs: &Tabs<Pane<T>>,
+    width: f32,
+    now: f64,
+    actions: &mut Vec<Action>,
+    signals: impl Fn(&Pane<T>) -> (Progress, CmdState),
+) -> Vec<egui::Rect> {
+    let mut slots = Vec::new();
+    let mut drag = None;
+    for (position, (i, tab)) in tabs.in_group(tabs.active_group()).enumerate() {
+        let (pty_progress, cmd) = signals(&tab.pane);
+        let agent = tab.pane.agent.as_ref();
+        let progress = if agent.is_some() { Progress::None } else { pty_progress };
+        let cli = agent.and_then(|a| status_view::cli_of(&a.run.agent_id));
+        let (resp, close) = draw_tab(
+            ui,
+            Some(position + 1),
+            tab.id,
+            &tab.title,
+            i == tabs.active(),
+            tab.pinned,
+            None,
+            progress,
+            cmd,
+            &[],
+            cli,
+            Some(width),
+        );
+        if let Some(agent) = agent {
+            let tone = status_view::tone(agent.run.status());
+            let fraction = progress_fraction(pty_progress);
+            status_view::paint_bar(ui, resp.rect, tone, now, fraction);
         }
+        if close {
+            actions.push(Action::Close(i));
+        } else if resp.clicked() {
+            actions.push(Action::Select(i));
+        }
+        if !tab.pinned
+            && resp.dragged()
+            && ui.input(|input| input.pointer.is_decidedly_dragging())
+            && let Some(pointer) = resp.interact_pointer_pos()
+        {
+            drag = Some((position, pointer.x));
+        }
+        slots.push(Slot { index: i, rect: resp.rect, pinned: tab.pinned });
+    }
+    if let Some((from, x)) = drag {
+        ui.output_mut(|output| output.cursor_icon = egui::CursorIcon::Grabbing);
+        let overlay = ui.ctx().layer_painter(egui::LayerId::new(
+            egui::Order::Middle,
+            egui::Id::new("tab_drag_overlay"),
+        ));
+        let corners = CornerRadius { nw: 6, ne: 6, sw: 0, se: 0 };
+        overlay.rect_filled(slots[from].rect, corners, colors::selection());
+        if let Some(step) = drag_step(&slots, from, x) {
+            actions.push(Action::Move(slots[from].index, step));
+        }
+    }
+    slots.iter().map(|slot| slot.rect).collect()
+}
+
+/// The swap a drag asks for: the pointer past the middle of the next tab on either side. Asked
+/// again every frame, so a long drag moves the tab one place at a time.
+fn drag_step(slots: &[Slot], from: usize, pointer_x: f32) -> Option<Step> {
+    let after = slots.get(from + 1).filter(|slot| !slot.pinned);
+    let before = from.checked_sub(1).and_then(|n| slots.get(n)).filter(|slot| !slot.pinned);
+    if after.is_some_and(|slot| pointer_x > slot.rect.center().x) {
+        Some(Step::Right)
+    } else if before.is_some_and(|slot| pointer_x < slot.rect.center().x) {
+        Some(Step::Left)
+    } else {
+        None
     }
 }
 
@@ -215,3 +272,6 @@ fn tab_signals(pane: &Pane<PtyTerm>) -> (Progress, CmdState) {
         _ => (Progress::default(), CmdState::default()),
     }
 }
+
+#[cfg(test)]
+mod tests;
