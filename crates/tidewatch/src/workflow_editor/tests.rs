@@ -266,3 +266,69 @@ fn a_workflow_file_that_cannot_run_still_opens_in_the_editor_with_its_problems()
     assert_eq!(editor.problems(0), ["stage 1 (Work) needs a profile or an agent"]);
     assert_eq!(editor.drafts[0].stages[0].max_loops, "2");
 }
+
+fn proposal(name: &str) -> Workflow {
+    let text = format!(
+        "name = \"{name}\"\ndescription = \"d\"\n[[stage]]\naction = \"work\"\nprompt = \"{{task}}\"\nagent = \"claude\"\n[[stage]]\naction = \"review\"\non_fail = 1\nagent = \"claude\"\n"
+    );
+    tidewatch_core::propose::parse_toml(&text).unwrap()
+}
+
+#[test]
+fn a_proposal_is_a_new_selected_unsaved_draft_marked_with_its_tab() {
+    let mut editor = editor();
+    let before = editor.drafts.len();
+    let name = editor.propose(&proposal("Change with a check"), "calm-comet");
+    assert_eq!(name, "Change with a check");
+    assert_eq!(editor.drafts.len(), before + 1);
+    assert_eq!(editor.selected, before);
+    assert!(editor.dirty);
+    let draft = &editor.drafts[before];
+    assert_eq!(draft.id, "change-with-a-check");
+    assert_eq!(draft.from.as_deref(), Some("calm-comet"));
+    assert_eq!(draft.stages[1].on_fail, Some(0));
+    assert_eq!(editor.problems(before), Vec::<String>::new());
+    assert!(editor.drafts[..before].iter().all(|d| d.from.is_none()));
+    let built = editor.build().unwrap();
+    assert_eq!(built.workflow["change-with-a-check"].stages.len(), 2);
+}
+
+#[test]
+fn a_proposal_whose_name_is_taken_gets_the_next_number_and_its_own_key() {
+    let mut editor = editor();
+    assert_eq!(editor.propose(&proposal("Fix a bug"), "a"), "Fix a bug (2)");
+    assert_eq!(editor.propose(&proposal("Fix a bug"), "b"), "Fix a bug (3)");
+    let ids: Vec<_> = editor.drafts.iter().map(|d| d.id.as_str()).collect();
+    assert!(ids.contains(&"fix-a-bug-2") && ids.contains(&"fix-a-bug-3"), "{ids:?}");
+    let unique: std::collections::HashSet<_> = ids.iter().collect();
+    assert_eq!(unique.len(), ids.len());
+    assert_eq!(editor.drafts.last().unwrap().name, "Fix a bug (3)");
+}
+
+#[test]
+fn revert_discards_the_proposal_and_every_other_unsaved_edit() {
+    let mut editor = editor();
+    let before = editor.drafts.len();
+    let saved = editor.build().unwrap();
+    editor.drafts[0].name = "Renamed".into();
+    editor.propose(&proposal("Mine"), "calm-comet");
+    editor.revert();
+    assert_eq!(editor.drafts.len(), before);
+    assert_ne!(editor.drafts[0].name, "Renamed");
+    assert_eq!((editor.dirty, editor.error.clone(), editor.stage), (false, None, 0));
+    assert!(editor.selected < editor.drafts.len());
+    assert_eq!(editor.build().unwrap(), saved);
+}
+
+#[test]
+fn saving_makes_the_proposal_a_workflow_like_any_other() {
+    let mut editor = editor();
+    editor.propose(&proposal("Mine"), "calm-comet");
+    editor.saving = true;
+    editor.saved();
+    assert!(editor.drafts.iter().all(|d| d.from.is_none()));
+    editor.add_workflow();
+    editor.revert();
+    assert!(editor.drafts.iter().any(|d| d.name == "Mine"), "saved, so a revert keeps it");
+    assert!(editor.drafts.iter().all(|d| d.name != "New workflow"));
+}

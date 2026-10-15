@@ -8,11 +8,10 @@
 use std::collections::BTreeMap;
 
 use tidewatch_core::agents::Level;
+use tidewatch_core::propose::{self, MAX_LOOPS_LIMIT};
 use tidewatch_core::workflows::{
     Action, DEFAULT_MAX_LOOPS, Gate, Stage, StageRun, Workflow, Workflows,
 };
-
-const MAX_LOOPS_LIMIT: u8 = 9;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct StageDraft {
@@ -99,12 +98,27 @@ pub(crate) struct WorkflowDraft {
     pub(crate) name: String,
     pub(crate) description: String,
     pub(crate) stages: Vec<StageDraft>,
+    /// The tab whose agent proposed this workflow, until it is saved or reverted.
+    pub(crate) from: Option<String>,
+}
+
+impl WorkflowDraft {
+    fn of(id: &str, workflow: &Workflow) -> Self {
+        Self {
+            id: id.to_owned(),
+            name: workflow.name.clone(),
+            description: workflow.description.clone(),
+            stages: workflow.stages.iter().map(StageDraft::from_stage).collect(),
+            from: None,
+        }
+    }
 }
 
 pub(crate) struct Editor {
     pub(crate) drafts: Vec<WorkflowDraft>,
     pub(crate) selected: usize,
     pub(crate) stage: usize,
+    baseline: Workflows,
     agents: Vec<(String, String)>,
     profiles: Vec<(String, String)>,
     problems: Vec<Vec<String>>,
@@ -120,20 +134,11 @@ impl Editor {
         agents: Vec<(String, String)>,
         profiles: Vec<(String, String)>,
     ) -> Self {
-        let drafts = workflows
-            .workflow
-            .iter()
-            .map(|(id, workflow)| WorkflowDraft {
-                id: id.clone(),
-                name: workflow.name.clone(),
-                description: workflow.description.clone(),
-                stages: workflow.stages.iter().map(StageDraft::from_stage).collect(),
-            })
-            .collect();
         let mut editor = Self {
-            drafts,
+            drafts: Self::drafts_of(workflows),
             selected: 0,
             stage: 0,
+            baseline: workflows.clone(),
             agents,
             profiles,
             problems: Vec::new(),
@@ -143,6 +148,10 @@ impl Editor {
         };
         editor.check();
         editor
+    }
+
+    fn drafts_of(workflows: &Workflows) -> Vec<WorkflowDraft> {
+        workflows.workflow.iter().map(|(id, workflow)| WorkflowDraft::of(id, workflow)).collect()
     }
 
     pub(crate) fn agents(&self) -> &[(String, String)] {
@@ -211,11 +220,40 @@ impl Editor {
             name: "New workflow".to_owned(),
             description: String::new(),
             stages: vec![StageDraft::new(Action::Work, &agent)],
+            from: None,
         });
         self.selected = self.drafts.len() - 1;
         self.stage = 0;
         self.touched();
         id
+    }
+
+    /// Adds an agent's proposal as a new unsaved draft marked as coming from `from`, selects it and
+    /// returns the name it got: the proposal's, or with a number when the name is taken.
+    pub(crate) fn propose(&mut self, workflow: &Workflow, from: &str) -> String {
+        let name = propose::unique_name(
+            workflow.name.trim(),
+            self.drafts.iter().map(|draft| draft.name.trim()),
+        );
+        let id = self.unused_id(&propose::id_stem(&name));
+        let mut draft = WorkflowDraft::of(&id, workflow);
+        draft.name.clone_from(&name);
+        draft.from = Some(from.to_owned());
+        self.drafts.push(draft);
+        self.selected = self.drafts.len() - 1;
+        self.stage = 0;
+        self.touched();
+        name
+    }
+
+    /// Throws every unsaved edit away, a proposed draft with them.
+    pub(crate) fn revert(&mut self) {
+        self.drafts = Self::drafts_of(&self.baseline);
+        self.selected = self.selected.min(self.drafts.len().saturating_sub(1));
+        self.stage = 0;
+        self.dirty = false;
+        self.error = None;
+        self.check();
     }
 
     pub(crate) fn remove_workflow(&mut self) {
@@ -335,6 +373,12 @@ impl Editor {
 
     /// Saved: the written workflows are the baseline.
     pub(crate) fn saved(&mut self) {
+        if let Ok(written) = self.build() {
+            self.baseline = written;
+        }
+        for draft in &mut self.drafts {
+            draft.from = None;
+        }
         self.saving = false;
         self.dirty = false;
         self.error = None;
