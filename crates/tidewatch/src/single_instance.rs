@@ -1,5 +1,6 @@
 //! Startup, before any window exists: a second `tidewatch <path>` hands over its path to the
-//! running window and exits, and `tidewatch --toggle` reaches it too.
+//! running window and exits, so does the `--from-stdusk` launch with its socket, and
+//! `tidewatch --toggle` reaches it too.
 //!
 //! One process serves one window and the window holds every repo opened in it, so the claim is
 //! on one socket for the app, whatever folder a launch is for.
@@ -46,11 +47,11 @@ pub(crate) enum Start {
     Exit,
 }
 
-pub(crate) fn begin(mode: Mode, socket: &Path, dir: &Path) -> Start {
-    let hand_over = Command::Open(dir.to_path_buf());
+/// `hand_over` is what a running window is told, and what makes this launch exit.
+pub(crate) fn begin(mode: Mode, socket: &Path, hand_over: &Command) -> Start {
     let claim = match mode {
         Mode::Off => return Start::Run(None),
-        Mode::HandOver => instance::claim(socket, Some(&hand_over)),
+        Mode::HandOver => instance::claim(socket, Some(hand_over)),
         Mode::Quiet => instance::claim(socket, None),
     };
     match (claim, mode) {
@@ -84,6 +85,10 @@ mod tests {
     use super::*;
     use std::sync::mpsc::{Receiver, channel};
     use std::time::Duration;
+
+    fn begin_dir(mode: Mode, socket: &Path, dir: &Path) -> Start {
+        begin(mode, socket, &Command::Open(dir.to_path_buf()))
+    }
 
     fn short_home() -> tempfile::TempDir {
         tempfile::Builder::new().prefix("tw").tempdir_in("/tmp").unwrap()
@@ -127,20 +132,62 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let socket = dir.path().join("a.sock");
         let repo = Path::new("/work/My Repo");
-        let (_guard, rx) = serve(primary(begin(Mode::HandOver, &socket, repo)));
+        let (_guard, rx) = serve(primary(begin_dir(Mode::HandOver, &socket, repo)));
 
-        assert!(matches!(begin(Mode::HandOver, &socket, repo), Start::Exit));
+        assert!(matches!(begin_dir(Mode::HandOver, &socket, repo), Start::Exit));
         assert_eq!(rx.recv_timeout(Duration::from_secs(2)), Ok(Command::Open(repo.to_path_buf())));
+    }
+
+    #[test]
+    fn a_stdusk_launch_hands_over_its_socket_and_exits_without_a_window() {
+        let dir = tempfile::tempdir().unwrap();
+        let socket = dir.path().join("a.sock");
+        let (_guard, rx) =
+            serve(primary(begin_dir(Mode::HandOver, &socket, Path::new("/work/web"))));
+
+        let adopt = Command::AdoptStdusk(PathBuf::from("/tmp/stdusk-3.sock"));
+        assert!(matches!(begin(Mode::HandOver, &socket, &adopt), Start::Exit));
+        assert_eq!(rx.recv_timeout(Duration::from_secs(2)), Ok(adopt));
+    }
+
+    #[test]
+    fn a_stdusk_launch_beside_a_window_that_is_still_closing_ends_up_with_the_window() {
+        let dir = tempfile::tempdir().unwrap();
+        let socket = dir.path().join("a.sock");
+        let (old, old_rx) =
+            serve(primary(begin_dir(Mode::HandOver, &socket, Path::new("/work/web"))));
+        old.set_closing(true);
+        let closed = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(250));
+            drop(old);
+        });
+
+        let adopt = Command::AdoptStdusk(PathBuf::from("/tmp/stdusk-3.sock"));
+        let new = begin(Mode::HandOver, &socket, &adopt);
+        closed.join().unwrap();
+
+        assert!(matches!(new, Start::Run(Some(_))), "this launch becomes the window that receives");
+        assert!(old_rx.recv_timeout(Duration::from_millis(200)).is_err());
+    }
+
+    #[test]
+    fn a_stdusk_launch_with_no_window_running_serves_the_socket_itself() {
+        let dir = tempfile::tempdir().unwrap();
+        let socket = dir.path().join("a.sock");
+        let adopt = Command::AdoptStdusk(PathBuf::from("/tmp/stdusk-3.sock"));
+        let (_guard, rx) = serve(primary(begin(Mode::HandOver, &socket, &adopt)));
+        assert!(rx.recv_timeout(Duration::from_millis(200)).is_err(), "nothing to forward");
     }
 
     #[test]
     fn a_launch_for_another_repo_goes_to_the_one_window_too() {
         let dir = tempfile::tempdir().unwrap();
         let socket = dir.path().join("a.sock");
-        let (_guard, rx) = serve(primary(begin(Mode::HandOver, &socket, Path::new("/work/web"))));
+        let (_guard, rx) =
+            serve(primary(begin_dir(Mode::HandOver, &socket, Path::new("/work/web"))));
 
         let api = Path::new("/work/api");
-        assert!(matches!(begin(Mode::HandOver, &socket, api), Start::Exit));
+        assert!(matches!(begin_dir(Mode::HandOver, &socket, api), Start::Exit));
         assert_eq!(rx.recv_timeout(Duration::from_secs(2)), Ok(Command::Open(api.to_path_buf())));
     }
 
@@ -149,14 +196,14 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let socket = dir.path().join("a.sock");
         let repo = Path::new("/work/web");
-        let (old, old_rx) = serve(primary(begin(Mode::HandOver, &socket, repo)));
+        let (old, old_rx) = serve(primary(begin_dir(Mode::HandOver, &socket, repo)));
         old.set_closing(true);
         let closed = std::thread::spawn(move || {
             std::thread::sleep(Duration::from_millis(250));
             drop(old);
         });
 
-        let new = begin(Mode::HandOver, &socket, repo);
+        let new = begin_dir(Mode::HandOver, &socket, repo);
         closed.join().unwrap();
 
         assert!(matches!(new, Start::Run(Some(_))), "the new copy opens its own window");
@@ -170,9 +217,13 @@ mod tests {
     fn a_background_run_beside_a_live_window_neither_exits_nor_disturbs_it() {
         let dir = tempfile::tempdir().unwrap();
         let socket = dir.path().join("a.sock");
-        let (_guard, rx) = serve(primary(begin(Mode::HandOver, &socket, Path::new("/work/web"))));
+        let (_guard, rx) =
+            serve(primary(begin_dir(Mode::HandOver, &socket, Path::new("/work/web"))));
 
-        assert!(matches!(begin(Mode::Quiet, &socket, Path::new("/work/web")), Start::Run(None)));
+        assert!(matches!(
+            begin_dir(Mode::Quiet, &socket, Path::new("/work/web")),
+            Start::Run(None)
+        ));
         assert!(rx.recv_timeout(Duration::from_millis(200)).is_err(), "nothing was sent");
     }
 
@@ -182,8 +233,9 @@ mod tests {
         let socket = dir.path().join("a.sock");
         crate::test_exec::leave_stale_socket(&socket);
         assert!(socket.exists());
-        let (_guard, rx) = serve(primary(begin(Mode::HandOver, &socket, Path::new("/work/web"))));
-        assert!(matches!(begin(Mode::HandOver, &socket, Path::new("/work/web")), Start::Exit));
+        let (_guard, rx) =
+            serve(primary(begin_dir(Mode::HandOver, &socket, Path::new("/work/web"))));
+        assert!(matches!(begin_dir(Mode::HandOver, &socket, Path::new("/work/web")), Start::Exit));
         assert!(rx.recv_timeout(Duration::from_secs(2)).is_ok());
     }
 
@@ -191,7 +243,7 @@ mod tests {
     fn off_never_touches_the_socket() {
         let dir = tempfile::tempdir().unwrap();
         let socket = dir.path().join("sub").join("a.sock");
-        assert!(matches!(begin(Mode::Off, &socket, Path::new("/work/web")), Start::Run(None)));
+        assert!(matches!(begin_dir(Mode::Off, &socket, Path::new("/work/web")), Start::Run(None)));
         assert!(!socket.parent().unwrap().exists());
     }
 
@@ -199,7 +251,7 @@ mod tests {
     fn a_socket_that_cannot_be_made_runs_without_one() {
         let dir = tempfile::tempdir().unwrap();
         let socket = dir.path().join("x".repeat(200)).join("a.sock");
-        assert!(matches!(begin(Mode::HandOver, &socket, Path::new("/w")), Start::Run(None)));
+        assert!(matches!(begin_dir(Mode::HandOver, &socket, Path::new("/w")), Start::Run(None)));
     }
 
     #[test]
@@ -209,9 +261,10 @@ mod tests {
         let repo = Path::new("/work/web");
         let (real_paths, other_paths) =
             (TidewatchPaths::new(real.path()), TidewatchPaths::new(throwaway.path()));
-        let (_guard, rx) = serve(primary(begin(Mode::HandOver, &real_paths.app_socket(), repo)));
+        let (_guard, rx) =
+            serve(primary(begin_dir(Mode::HandOver, &real_paths.app_socket(), repo)));
 
-        let other = begin(Mode::HandOver, &other_paths.app_socket(), repo);
+        let other = begin_dir(Mode::HandOver, &other_paths.app_socket(), repo);
         let (_other_guard, other_rx) = serve(primary(other));
         assert_eq!(toggle_running(Some(&other_paths)), 0);
         assert_eq!(other_rx.recv_timeout(Duration::from_secs(2)), Ok(Command::Toggle));
@@ -228,7 +281,7 @@ mod tests {
         assert_eq!(toggle_running(Some(&paths)), 1);
         assert_eq!(toggle_running(None), 1);
         let repo = Path::new("/work/web");
-        let (_guard, rx) = serve(primary(begin(Mode::HandOver, &paths.app_socket(), repo)));
+        let (_guard, rx) = serve(primary(begin_dir(Mode::HandOver, &paths.app_socket(), repo)));
         assert_eq!(toggle_running(Some(&paths)), 0);
         assert_eq!(rx.recv_timeout(Duration::from_secs(2)), Ok(Command::Toggle));
     }
