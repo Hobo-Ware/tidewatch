@@ -11,6 +11,7 @@ use stdusk_egui::widgets::ICON_BTN_W;
 use crate::brand;
 use crate::commands::Command;
 use crate::end_block_view;
+use crate::mascot::{self, Pose};
 use crate::overview::{Counts, Overview, Row, fmt_elapsed};
 use crate::status_view::{self, Tone};
 
@@ -20,6 +21,7 @@ const END_LINE_H: f32 = 24.0;
 const SIDE: f32 = 20.0;
 const GRID_ICON: &str = "\u{E464}";
 const BADGE_H: f32 = 15.0;
+const MASCOT_H: f32 = 120.0;
 
 pub(crate) const BUTTON_W: f32 = ICON_BTN_W;
 
@@ -145,11 +147,20 @@ fn summary(counts: Counts) -> Vec<(String, Tone)> {
 
 fn empty(ui: &mut egui::Ui) {
     ui.add_space(24.0);
-    ui.label(
-        egui::RichText::new(format!("No agents yet. {} starts one.", Command::NewTab.keys()))
+    ui.vertical_centered(|ui| {
+        let size = vec2(mascot::width_at(Pose::Asleep, MASCOT_H), MASCOT_H);
+        let (area, _) = ui.allocate_exact_size(size, Sense::hover());
+        mascot::show(ui, area, Pose::Asleep);
+        ui.add_space(10.0);
+        ui.label(
+            egui::RichText::new(format!(
+                "Nothing running. Start an agent with {}.",
+                Command::NewTab.keys()
+            ))
             .size(13.0)
             .color(colors::dim()),
-    );
+        );
+    });
 }
 
 fn group(ui: &mut egui::Ui, title: &str, path: &str, rows: &[Row], needs: bool) -> Option<u64> {
