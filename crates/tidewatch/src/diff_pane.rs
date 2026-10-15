@@ -133,7 +133,7 @@ pub(crate) fn show(
             out.actions.extend(actions.into_iter().map(PaneAction::Strip));
         }
         let body = Rect::from_min_max(pos2(rect.left(), toolbar.bottom() + strip_h), rect.max);
-        out.notes_changed = show_body(ui, body, view);
+        out.notes_changed = show_body(ui, body, view, DiffStyle::default());
     });
     out
 }
@@ -412,7 +412,7 @@ pub(crate) fn set_layout(view: &mut TabView, layout: DiffLayout) {
     }
 }
 
-pub(crate) fn show_body(ui: &mut Ui, rect: Rect, view: &mut TabView) -> bool {
+pub(crate) fn show_body(ui: &mut Ui, rect: Rect, view: &mut TabView, style: DiffStyle) -> bool {
     let wanted_commit = view.wanted_commit().map(|id| id.to_string());
     let Some(loaded) = &view.loaded else { return false };
     if view.is_loading_source() {
@@ -440,7 +440,7 @@ pub(crate) fn show_body(ui: &mut Ui, rect: Rect, view: &mut TabView) -> bool {
                 hunk_buttons: &[],
                 line_select_hint: None,
                 texts: texts(Platform::CURRENT),
-                style: DiffStyle::default(),
+                style,
             },
         );
     });

@@ -11,7 +11,7 @@ use egui::{
     StrokeKind, Ui, pos2, vec2,
 };
 use kelp_core::commit::FileChange;
-use kelp_ui::diff::DiffLayout;
+use kelp_ui::diff::{DiffLayout, DiffStyle};
 use tidewatch_core::status::AgentStatus;
 
 use crate::brand;
@@ -136,7 +136,7 @@ pub(crate) fn show(
         if view.loaded.is_none() {
             message(ui, area, view.error.as_deref(), "Loading history...");
         } else {
-            out.notes_changed = show_body(ui, area, view);
+            out.notes_changed = show_body(ui, area, view, DiffStyle::embedded(brand::TEAL));
         }
         round_bottom(ui, card);
     });
