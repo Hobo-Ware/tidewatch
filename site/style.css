@@ -30,6 +30,9 @@ nav .wrap{display:flex;align-items:center;gap:22px;height:62px}
 @media(max-width:380px){.badge{display:none}}
 
 .hero{padding:84px 0 0;text-align:center}
+.hero .wrap{position:relative}
+.mascot{width:150px;height:auto;margin:0 auto 6px}
+@media(min-width:1180px){.mascot{position:absolute;top:44px;right:0;width:210px;margin:0}}
 .pill{display:inline-flex;align-items:center;gap:10px;font-size:13px;color:var(--muted);border:1px solid var(--line2);background:rgba(26,29,36,.7);border-radius:99px;padding:5px 14px 5px 5px;margin-bottom:26px}
 .pill b{font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:#10131a;background:var(--orange);padding:3px 9px;border-radius:99px}
 h1,h2,h3,h4{font-family:var(--display)}
