@@ -3,6 +3,7 @@ use std::collections::HashSet;
 use egui::{Event, RawInput, Rect, pos2, vec2};
 
 use super::*;
+use crate::tabs::Step;
 
 const PLATFORMS: [Platform; 2] = [Platform::Mac, Platform::Linux];
 const TAB_SHORTCUTS: usize = 9;
@@ -13,8 +14,9 @@ fn bound_to_a_chord(action: Action) -> bool {
         | Action::CloseActive
         | Action::SelectNth(_)
         | Action::NextGroup
-        | Action::PrevGroup => true,
-        Action::Close(_) | Action::Select(_) | Action::ShowGroup(_) => false,
+        | Action::PrevGroup
+        | Action::MoveActive(_) => true,
+        Action::Close(_) | Action::Select(_) | Action::ShowGroup(_) | Action::Move(..) => false,
     }
 }
 
@@ -102,7 +104,8 @@ fn every_action_that_has_a_chord_is_in_the_table() {
     let actions =
         [Action::New, Action::CloseActive, Action::Close(0), Action::Select(0), Action::NextGroup]
             .into_iter()
-            .chain([Action::PrevGroup])
+            .chain([Action::PrevGroup, Action::Move(1, Step::Left)])
+            .chain([Action::MoveActive(Step::Left), Action::MoveActive(Step::Right)])
             .chain((0..TAB_SHORTCUTS).map(Action::SelectNth));
     for action in actions {
         let listed = TABLE.iter().any(|entry| entry.command.action() == Some(action));
@@ -197,6 +200,8 @@ fn the_palette_lists_what_a_person_would_look_for() {
         [
             "new-tab",
             "close-tab",
+            "move-tab-left",
+            "move-tab-right",
             "next-repo",
             "prev-repo",
             "overview",
@@ -213,6 +218,21 @@ fn the_palette_lists_what_a_person_would_look_for() {
 fn the_palette_chord_is_cmd_shift_p_and_ctrl_shift_p() {
     assert_eq!(Command::Palette.keys_on(Platform::Mac), "Cmd+Shift+P");
     assert_eq!(Command::Palette.keys_on(Platform::Linux), "Ctrl+Shift+P");
+}
+
+#[test]
+fn the_move_tab_chords() {
+    let table = [
+        ("move-tab-left", "Cmd+Shift+Left", "Ctrl+Shift+PageUp"),
+        ("move-tab-right", "Cmd+Shift+Right", "Ctrl+Shift+PageDown"),
+    ];
+    for (id, mac, linux) in table {
+        let entry = TABLE.iter().find(|entry| entry.id == id).unwrap();
+        assert_eq!(entry.chord(Platform::Mac).unwrap().label(), mac, "{id}");
+        assert_eq!(entry.chord(Platform::Linux).unwrap().label(), linux, "{id}");
+    }
+    assert_eq!(Command::MoveTabLeft.action(), Some(Action::MoveActive(Step::Left)));
+    assert_eq!(Command::MoveTabRight.action(), Some(Action::MoveActive(Step::Right)));
 }
 
 #[test]
@@ -284,6 +304,44 @@ mod gate {
             .collect();
         assert_eq!(allowed(NONE), all);
         assert!(allowed(NONE).contains(&Command::FileView));
+    }
+
+    #[test]
+    fn moving_a_tab_waits_for_a_text_field_and_every_overlay() {
+        let moves = [Command::MoveTabLeft, Command::MoveTabRight];
+        let typing = Gate { focus: Focus::TextField, ..NONE };
+        let blocked = [
+            typing,
+            Gate { overview: true, ..NONE },
+            Gate { settings: true, ..NONE },
+            Gate { palette: true, ..NONE },
+            Gate { dialog: Dialog::TabChoice, ..NONE },
+            Gate { dialog: Dialog::Other, ..NONE },
+        ];
+        for command in moves {
+            assert!(NONE.allows(command), "{command:?}");
+            assert!(FILE_VIEW.allows(command), "{command:?}");
+            for gate in blocked {
+                assert!(!gate.allows(command), "{command:?} in {gate:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn a_move_chord_is_left_for_the_text_field_that_has_the_keyboard() {
+        let typing = Gate { focus: Focus::TextField, ..NONE };
+        for platform in PLATFORMS {
+            for command in [Command::MoveTabLeft, Command::MoveTabRight] {
+                let entry = TABLE.iter().find(|entry| entry.command == command).unwrap();
+                let events = press(platform, entry.chord(platform).unwrap());
+                assert_eq!(
+                    pressed_with(platform, events.clone(), wanted(typing)),
+                    Vec::<Command>::new(),
+                    "{platform:?} {command:?} was taken from a text field"
+                );
+                assert_eq!(pressed_with(platform, events, wanted(NONE)), [command]);
+            }
+        }
     }
 
     #[test]

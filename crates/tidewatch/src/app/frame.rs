@@ -97,6 +97,8 @@ impl Tidewatch {
                 Command::NewTab
                 | Command::CloseTab
                 | Command::SelectTab(_)
+                | Command::MoveTabLeft
+                | Command::MoveTabRight
                 | Command::NextRepo
                 | Command::PrevRepo => actions.extend(command.action()),
                 _ => self.run_command(command, ctx),
@@ -136,7 +138,9 @@ impl Tidewatch {
             settings: self.settings.is_some(),
             overview: self.overview,
             palette: self.palette.is_some(),
-            focus: if self.file_view_showing(active_id) && !typing {
+            focus: if typing {
+                Focus::TextField
+            } else if self.file_view_showing(active_id) {
                 Focus::FileView
             } else {
                 Focus::Terminal
@@ -149,6 +153,8 @@ impl Tidewatch {
             Command::NewTab
             | Command::CloseTab
             | Command::SelectTab(_)
+            | Command::MoveTabLeft
+            | Command::MoveTabRight
             | Command::NextRepo
             | Command::PrevRepo => {
                 if let Some(action) = command.action() {
