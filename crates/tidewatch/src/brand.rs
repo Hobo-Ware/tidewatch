@@ -12,7 +12,6 @@ pub(crate) const BAR: Color32 = Color32::from_rgb(0x12, 0x16, 0x1e);
 pub(crate) const FIELD_LINE: Color32 = Color32::from_rgb(0x2f, 0x37, 0x47);
 pub(crate) const BUTTON: Color32 = Color32::from_rgb(0x1d, 0x22, 0x30);
 pub(crate) const KEY_EDGE: Color32 = Color32::from_rgb(0x0b, 0x0e, 0x13);
-pub(crate) const ICON_EDGE: Color32 = Color32::from_rgb(0x2a, 0x2f, 0x38);
 pub(crate) const TEXT: Color32 = Color32::from_rgb(0xe6, 0xe8, 0xec);
 pub(crate) const SOFT: Color32 = Color32::from_rgb(0xa7, 0xb0, 0xbf);
 pub(crate) const MUTED: Color32 = Color32::from_rgb(0x8b, 0x93, 0xa3);
