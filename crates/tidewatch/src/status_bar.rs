@@ -55,6 +55,16 @@ pub(crate) struct Workspace {
     pub(crate) reader: Option<bool>,
 }
 
+const NOTE_HINT: &str = "Hover a line and press + to leave a note";
+
+/// What to say about notes while a file's diff is on screen.
+pub(crate) fn note_hint(screen: Screen) -> Option<&'static str> {
+    match screen {
+        Screen::Workspace(Workspace { focus: false, file_open: true, .. }) => Some(NOTE_HINT),
+        Screen::Workspace(_) | Screen::Settings | Screen::Overview => None,
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct Hint {
     pub(crate) keys: String,
@@ -125,6 +135,7 @@ pub(crate) fn hints(screen: Screen, platform: Platform) -> Vec<Hint> {
 pub(crate) struct Bar {
     pub(crate) counts: Counts,
     pub(crate) place: Option<String>,
+    pub(crate) note_hint: Option<&'static str>,
     pub(crate) hints: Vec<Hint>,
 }
 
@@ -146,7 +157,10 @@ pub(crate) fn show(ui: &mut Ui, rect: Rect, bar: &Bar) {
         x += put(pos2(x, y), Align2::LEFT_CENTER, &label, body(FONT), brand::MUTED) + GAP;
     }
     if let Some(place) = &bar.place {
-        put(pos2(x, y), Align2::LEFT_CENTER, place, body(FONT), brand::MUTED);
+        x += put(pos2(x, y), Align2::LEFT_CENTER, place, body(FONT), brand::MUTED) + GAP;
+    }
+    if let Some(hint) = bar.note_hint {
+        put(pos2(x, y), Align2::LEFT_CENTER, hint, body(FONT), brand::MUTED);
     }
     let mut right = rect.right() - PAD;
     for hint in bar.hints.iter().rev() {
@@ -224,6 +238,16 @@ mod tests {
         for (screen, expected) in cases {
             assert_eq!(labels(screen), expected, "{screen:?}");
         }
+    }
+
+    #[test]
+    fn the_note_hint_shows_with_a_file_open_and_nowhere_else() {
+        let hint = Some("Hover a line and press + to leave a note");
+        assert_eq!(note_hint(workspace(false, true, true, Some(true))), hint);
+        assert_eq!(note_hint(workspace(false, true, false, Some(true))), None);
+        assert_eq!(note_hint(workspace(true, true, true, None)), None);
+        assert_eq!(note_hint(Screen::Overview), None);
+        assert_eq!(note_hint(Screen::Settings), None);
     }
 
     #[test]

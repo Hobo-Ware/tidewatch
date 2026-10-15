@@ -41,6 +41,11 @@ impl Tidewatch {
             });
             (Screen::Workspace(workspace), place)
         };
-        Bar { counts, place, hints: status_bar::hints(screen, Platform::CURRENT) }
+        Bar {
+            counts,
+            place,
+            note_hint: status_bar::note_hint(screen),
+            hints: status_bar::hints(screen, Platform::CURRENT),
+        }
     }
 }
