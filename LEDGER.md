@@ -4,10 +4,14 @@ A running log of what got done, newest first. The plan lives in [PLAN.md](PLAN.m
 
 ## Status
 
-- **Current milestone:** v0.1.4: the mascot, a shoggoth in a smiley mask, on the welcome screen, the empty Overview, the typed-resume note and the showcase site (404 page and og image too).
-- **Done:** Phases 0 to 10; v0.1.0 to v0.1.4 released (Homebrew cask, Linux tarball and AppImage); the K mark identity; the showcase page.
+- **Current milestone:** v0.1.5: History as a card with clean list rows and the open commit inside the list, a window status bar, a quiet update chip, moving live tabs from stdusk (1.10.0), and YOLO tabs that resume with their flags.
+- **Done:** Phases 0 to 10; v0.1.0 to v0.1.5 released (Homebrew cask, Linux tarball and AppImage); the K mark identity; the showcase page.
 - **Also:** Restart to update keeps every shell and agent running (live handoff, 2026-10-15). The receiving side of stdusk's "Move tabs to Tidewatch" is built (branch `from-stdusk`, not pushed).
 - **Next:** the diff widgets go teal (the graph already does on the side layout); commit messages that truncate early in the narrow tree; the divider position saved between runs; the site hero screenshot; the owner's live checks; Linux desktop runs.
+
+## 2026-10-16
+
+- **v0.1.5.** Ships the History card and status bar (#48), moving tabs from stdusk (#49, needs stdusk 1.10.0), the clean list rows (#50), YOLO resume with flags (#51) and the retaken site screenshots (#52).
 
 ## 2026-10-15
 
