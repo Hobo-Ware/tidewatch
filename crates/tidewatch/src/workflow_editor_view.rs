@@ -42,6 +42,7 @@ fn list(ui: &mut Ui, rect: Rect, editor: &mut Editor) {
         .map(|(index, draft)| {
             let problems = editor.problems(index).len();
             let tag = match problems {
+                0 if draft.from.is_some() => "Draft".to_owned(),
                 0 => crate::new_tab_workflow::stage_count(draft.stages.len()),
                 1 => "1 problem".to_owned(),
                 n => format!("{n} problems"),
@@ -102,7 +103,7 @@ fn editor_card(ui: &mut Ui, rect: Rect, editor: &mut Editor, file: &str) -> Opti
         dirty: editor.dirty,
         saving: editor.saving,
         error: error.as_deref(),
-        can_revert: false,
+        can_revert: true,
         file,
     };
     let parts = split_card(ui, rect, bar.shows());
@@ -129,8 +130,10 @@ fn editor_card(ui: &mut Ui, rect: Rect, editor: &mut Editor, file: &str) -> Opti
     let mut action = None;
     if bar.shows() {
         let mut bar_ui = ui.new_child(UiBuilder::new().max_rect(parts.bar));
-        if save_bar(&mut bar_ui, &bar) == Some(BarAction::Save) {
-            action = Some(PageAction::Save);
+        match save_bar(&mut bar_ui, &bar) {
+            Some(BarAction::Save) => action = Some(PageAction::Save),
+            Some(BarAction::Revert) => editor.revert(),
+            None => {}
         }
     }
     match stage_action {
@@ -171,6 +174,16 @@ impl Form<'_> {
     ) -> (bool, Option<StageAction>) {
         let mut changed = false;
         let mut action = None;
+        if let Some(from) = &draft.from {
+            note(
+                ui,
+                &format!(
+                    "Proposed by {from}. Nothing is written until you press Save; Revert discards it."
+                ),
+                TEAL_TEXT,
+            );
+            ui.add_space(10.0);
+        }
         ui.spacing_mut().item_spacing.x = 20.0;
         ui.columns(2, |columns| {
             changed |= field(&mut columns[0], "Name", &mut draft.name, "Ship a feature");

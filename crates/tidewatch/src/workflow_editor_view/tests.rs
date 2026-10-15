@@ -55,3 +55,16 @@ fn a_workflow_with_problems_and_an_empty_list_still_render() {
     }
     render(&mut editor, 2);
 }
+
+#[test]
+fn a_proposed_draft_renders_with_its_note_and_a_revert_that_discards_it() {
+    let mut editor = editor();
+    let text = "name = \"Mine\"\n[[stage]]\naction = \"work\"\nagent = \"claude\"\n";
+    let workflow = tidewatch_core::propose::parse_toml(text).unwrap();
+    editor.propose(&workflow, "calm-comet");
+    render(&mut editor, 2);
+    assert!(editor.dirty);
+    editor.revert();
+    render(&mut editor, 2);
+    assert!(editor.drafts.iter().all(|d| d.from.is_none()));
+}
