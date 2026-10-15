@@ -42,5 +42,6 @@ pub mod transcript_locate;
 pub mod trust;
 pub mod trust_apply;
 pub mod update;
+mod workflow_upgrade;
 pub mod workflows;
 pub mod worktree;

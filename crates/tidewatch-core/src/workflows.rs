@@ -22,6 +22,7 @@ use crate::fsutil::write_atomic;
 use crate::paths::TidewatchPaths;
 use crate::profiles::Profile;
 use crate::prompt;
+use crate::workflow_upgrade;
 
 /// How many times a failed gate may send the work back before the tab stops and asks.
 pub const DEFAULT_MAX_LOOPS: u8 = 2;
@@ -541,16 +542,20 @@ impl Workflows {
     }
 
     /// First launch: when `workflows.toml` does not exist, seed it from the agents found on
-    /// `path_var` and write the file. Afterwards it only loads, so the user's edits are never reseeded.
+    /// `path_var` and write the file. Afterwards it only loads, so the user's edits are never
+    /// reseeded; the one exception is a built-in the file has never been offered, which is
+    /// appended once (see `workflow_upgrade`).
     #[must_use]
     pub fn load_or_seed(paths: &TidewatchPaths, path_var: Option<&OsStr>) -> Self {
         let file = paths.workflows_file();
         if file.exists() {
+            workflow_upgrade::add_new_built_ins(paths, path_var);
             return Self::load(&file);
         }
         let seeded = Self::seeded(&AgentTable::builtin().found_on_path(path_var));
-        if let Err(e) = seeded.save(&file) {
-            eprintln!("tidewatch: cannot write {} ({e})", file.display());
+        match seeded.save(&file) {
+            Ok(()) => workflow_upgrade::record_all_offered(paths),
+            Err(e) => eprintln!("tidewatch: cannot write {} ({e})", file.display()),
         }
         seeded
     }

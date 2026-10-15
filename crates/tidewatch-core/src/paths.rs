@@ -49,6 +49,12 @@ impl TidewatchPaths {
         self.config_dir.join("workflows.toml")
     }
 
+    /// The built-in workflow ids already offered to this `workflows.toml`, one per line.
+    #[must_use]
+    pub fn workflows_offered_file(&self) -> PathBuf {
+        self.config_dir.join("workflows.offered")
+    }
+
     /// The answer to the D14 folder-trust question and the entries Tidewatch added to the CLIs' files.
     #[must_use]
     pub fn trust_file(&self) -> PathBuf {
