@@ -1,33 +1,49 @@
-//! The files of the open commit, drawn as a card under its row in the History tree: kind letter,
-//! path and line counts. Kelp's graph cannot grow a row, so the card is laid over the rows below
-//! the selected one and follows it as the graph scrolls.
+//! The files of the open commit, drawn as a card around its row in the History list: the gap
+//! kelp-ui opens under the row holds a meta line and one line per file.
+
+use egui::text::LayoutJob;
+use std::f32::consts::FRAC_PI_2;
 
 use egui::{
-    Align2, CornerRadius, FontId, Id, Rect, ScrollArea, Sense, Stroke, StrokeKind, Ui, UiBuilder,
-    pos2, vec2,
+    Align2, Color32, CornerRadius, FontId, Id, Mesh, Pos2, Rect, ScrollArea, Sense, Stroke,
+    StrokeKind, TextFormat, Ui, UiBuilder, pos2, vec2,
 };
 use kelp_core::commit::FileChange;
+use kelp_ui::graph::GraphStyle;
 use kelp_ui::theme;
 
 use crate::brand;
 use crate::diff_pane::{kind_color, kind_letter};
 use crate::pane_jobs::LineCounts;
+use crate::screen_kit::{body, mono};
 use crate::tab_view::TabView;
 
-const FILE_ROW_H: f32 = 28.0;
+const FILE_ROW_H: f32 = 30.0;
 const META_H: f32 = 24.0;
-const PAD_BOTTOM: f32 = 8.0;
-const INSET: f32 = 6.0;
-const TEXT_X: f32 = 30.0;
+const PAD_BOTTOM: f32 = 10.0;
+const MARGIN_BELOW: f32 = 4.0;
 const MIN_SHOWN: f32 = 160.0;
-const ROOM_MARGIN: f32 = 6.0;
+const RADIUS: u8 = 9;
+const SIDE_PAD: f32 = 12.0;
+const ROW_PAD: f32 = 8.0;
+const LETTER_W: f32 = 22.0;
+const ADD_W: f32 = 36.0;
+const DEL_W: f32 = 28.0;
+const COUNT_GAP: f32 = 10.0;
+const FILL_ALPHA: u8 = 0x1a;
+const BORDER_STRENGTH: f32 = 0.35;
 const SHORT_ID: usize = 7;
+const MAX_LANES: u16 = 14;
+const SELECTION_RADIUS: f32 = 7.0;
+const CORNER_STEPS: u32 = 6;
 
-/// Where the selected row is on screen and the strip of the pane the graph's rows scroll in.
+/// Where the card goes: the gap under the open row, the row's height, the x its text starts at and
+/// the part of the graph that is on screen.
 #[derive(Clone, Copy, Debug)]
-pub(crate) struct Geometry {
-    pub(crate) row_top: f32,
+pub(crate) struct Spot {
+    pub(crate) gap: Rect,
     pub(crate) row_h: f32,
+    pub(crate) inset: f32,
     pub(crate) viewport: Rect,
 }
 
@@ -42,104 +58,153 @@ pub(crate) fn totals(counts: &[Option<LineCounts>], files: usize) -> Option<Line
     })
 }
 
-pub(crate) fn meta_text(
-    what: &str,
-    author: Option<&str>,
-    files: usize,
-    sums: Option<LineCounts>,
-) -> String {
-    let mut parts = vec![what.to_owned()];
-    parts.extend(author.map(str::to_owned));
-    parts.push(format!("{files} {}", if files == 1 { "file" } else { "files" }));
-    if let Some((added, removed)) = sums {
-        parts.push(format!("+{added} -{removed}"));
-    }
+/// What follows the short id in the meta line: the author and how many files.
+pub(crate) fn meta_tail(author: Option<&str>, files: usize) -> String {
+    let mut parts = Vec::with_capacity(2);
+    parts.extend(author);
+    let count = if files == 1 { "file" } else { "files" };
+    let files = format!("{files} {count}");
+    parts.push(&files);
     parts.join(" · ")
 }
 
-pub(crate) fn band_height(rows: usize) -> f32 {
-    META_H + rows.max(1) as f32 * FILE_ROW_H + PAD_BOTTOM
+/// The height of the gap under the open row for `files` files, with `room` left in the pane below
+/// the row: a long list scrolls inside, but never gets smaller than a few rows.
+pub(crate) fn gap_height(files: usize, room: f32) -> f32 {
+    let wanted = META_H + files.max(1) as f32 * FILE_ROW_H + PAD_BOTTOM + MARGIN_BELOW;
+    wanted.min(room.max(MIN_SHOWN))
 }
 
-/// The height the card takes when `wanted` is its natural height and `room` what is left below the
-/// row: a long list scrolls inside, but never gets smaller than a few rows.
-pub(crate) fn fit(wanted: f32, room: f32) -> f32 {
-    if wanted <= room { wanted } else { room.max(wanted.min(MIN_SHOWN)) }
+/// Where a row's text starts, counted from the graph's left edge: after the last lane and the gutter
+/// the uncommitted changes' lane takes.
+pub(crate) fn message_inset(style: &GraphStyle, lanes: u16, pinned_wip: bool) -> f32 {
+    let lane_w = style.lane_w.max(style.row_h / 2.0);
+    let gutter = if pinned_wip { lane_w } else { 0.0 };
+    let lanes = lanes.clamp(1, MAX_LANES);
+    style.graph_lead + style.graph_tail + f32::from(lanes - 1) * lane_w + gutter
 }
 
-fn short_id(view: &TabView) -> String {
-    view.summary.as_ref().map_or_else(
-        || "Uncommitted".to_owned(),
-        |(id, _)| id.to_hex_with_len(SHORT_ID).to_string(),
-    )
+fn short_id(view: &TabView) -> Option<String> {
+    let (id, _) = view.summary.as_ref()?;
+    Some(id.to_hex_with_len(SHORT_ID).to_string())
 }
 
-pub(crate) fn show(ui: &mut Ui, view: &mut TabView, geo: Geometry, body: Rect) {
-    let band_top = geo.row_top + geo.row_h;
-    if band_top > geo.viewport.bottom() || geo.row_top + geo.row_h < geo.viewport.top() {
+fn meta_job(view: &TabView, files: usize) -> LayoutJob {
+    let mut job = LayoutJob::default();
+    let plain = |font: FontId, color| TextFormat { font_id: font, color, ..TextFormat::default() };
+    if let Some(id) = short_id(view) {
+        job.append(&id, 0.0, plain(mono(11.5), brand::SOFT));
+    }
+    let author = view.summary.as_ref().map(|(_, summary)| summary.author.as_str());
+    let tail = format!(" · {}", meta_tail(author, files));
+    job.append(&tail, 0.0, plain(body(12.0), theme::text_muted()));
+    if let Some((added, removed)) = totals(&view.counts, files) {
+        job.append(" · ", 0.0, plain(body(12.0), theme::text_muted()));
+        job.append(&format!("+{added}"), 0.0, plain(body(12.0), brand::GREEN));
+        job.append(&format!(" -{removed}"), 0.0, plain(body(12.0), brand::RED));
+    }
+    job
+}
+
+/// Paints the card for the open commit over its row and the gap under it, clipped to the part of
+/// the graph on screen.
+pub(crate) fn show(ui: &mut Ui, view: &mut TabView, spot: Spot) {
+    let Spot { gap, row_h, inset, viewport } = spot;
+    let loading = view.is_loading_source();
+    let files = if loading { 0 } else { view.files.len() };
+    let card = Rect::from_min_max(
+        pos2(gap.left(), gap.top() - row_h),
+        pos2(gap.right(), gap.bottom() - MARGIN_BELOW),
+    );
+    let below = Rect::from_min_max(pos2(card.left(), gap.top()), card.max);
+    let clip = viewport.intersect(ui.clip_rect());
+    let painter = ui.painter().with_clip_rect(clip);
+    let fill = theme::with_alpha(brand::TEAL, FILL_ALPHA);
+    painter.rect_filled(below, CornerRadius { nw: 0, ne: 0, sw: RADIUS, se: RADIUS }, fill);
+    for left_side in [true, false] {
+        painter.add(row_corner(
+            pos2(if left_side { below.left() } else { below.right() }, gap.top()),
+            left_side,
+            fill,
+        ));
+    }
+    painter.rect_stroke(
+        card,
+        RADIUS,
+        Stroke::new(1.0, brand::TEAL.gamma_multiply(BORDER_STRENGTH)),
+        StrokeKind::Inside,
+    );
+    ui.interact(below, Id::new("commit-files-card"), Sense::click_and_drag());
+
+    let text_x = card.left() + inset;
+    let meta_y = gap.top() + META_H / 2.0;
+    if loading {
+        painter.text(
+            pos2(text_x, meta_y),
+            Align2::LEFT_CENTER,
+            "Loading files...",
+            body(12.0),
+            theme::text_muted(),
+        );
         return;
     }
-    let loading = view.is_loading_source();
-    let rows = if loading { 0 } else { view.files.len() };
-    let room = geo.viewport.bottom() - band_top - ROOM_MARGIN;
-    let wanted = band_height(rows);
-    if view.take_needs_room() && wanted.min(MIN_SHOWN) > room {
-        view.graph.scroll_to = view.selection();
-        ui.ctx().request_repaint();
-    }
-    let band = Rect::from_min_size(
-        pos2(body.left() + INSET, band_top),
-        vec2(body.width() - 2.0 * INSET, fit(wanted, room)),
-    );
-    let card = Rect::from_min_max(pos2(band.left(), geo.row_top), band.max);
-    let clip = geo.viewport.intersect(ui.clip_rect());
-    let painter = ui.painter().with_clip_rect(clip);
-    painter.rect_filled(band, CornerRadius { nw: 0, ne: 0, sw: 10, se: 10 }, brand::TEAL_FILL);
-    painter.rect_stroke(card, 10, Stroke::new(1.0, brand::TEAL), StrokeKind::Inside);
-    ui.interact(band, Id::new("commit-files-band"), Sense::click_and_drag());
-
-    let author = view.summary.as_ref().map(|(_, summary)| summary.author.as_str());
-    let sums = totals(&view.counts, view.files.len());
-    let meta = meta_text(&short_id(view), author, view.files.len(), sums);
-    painter.text(
-        pos2(band.left() + TEXT_X, band.top() + META_H / 2.0),
-        Align2::LEFT_CENTER,
-        if loading { "Loading files...".to_owned() } else { meta },
-        FontId::monospace(11.5),
-        theme::text_muted(),
-    );
-    if rows == 0 {
-        if !loading {
-            painter.text(
-                pos2(band.left() + TEXT_X, band.top() + META_H + FILE_ROW_H / 2.0),
-                Align2::LEFT_CENTER,
-                "Nothing changed here",
-                FontId::proportional(12.5),
-                theme::text_faint(),
-            );
-        }
+    let galley = painter.layout_job(meta_job(view, files));
+    painter.galley(pos2(text_x, meta_y - galley.size().y / 2.0), galley, theme::text_muted());
+    if files == 0 {
+        painter.text(
+            pos2(text_x + ROW_PAD, gap.top() + META_H + FILE_ROW_H / 2.0),
+            Align2::LEFT_CENTER,
+            "Nothing changed here",
+            body(13.0),
+            theme::text_faint(),
+        );
         return;
     }
     let list = Rect::from_min_max(
-        pos2(band.left() + INSET, band.top() + META_H),
-        pos2(band.right() - INSET, band.bottom() - PAD_BOTTOM),
+        pos2(text_x, gap.top() + META_H),
+        pos2(card.right() - SIDE_PAD, card.bottom() - PAD_BOTTOM),
     );
     let mut child = ui.new_child(UiBuilder::new().id_salt("commit-files-list").max_rect(list));
     child.set_clip_rect(list.intersect(clip));
+    child.spacing_mut().item_spacing.y = 0.0;
     let mut picked = None;
-    ScrollArea::vertical().auto_shrink(false).show(&mut child, |ui| {
-        ui.spacing_mut().item_spacing.y = 0.0;
-        for (index, change) in view.files.iter().enumerate() {
-            let current = view.file.as_deref() == Some(change.path.as_str());
-            let counts = view.counts.get(index).copied().flatten();
-            if file_row(ui, change, counts, current) {
-                picked = Some(change.path.clone());
+    ScrollArea::vertical().auto_shrink(false).show_rows(
+        &mut child,
+        FILE_ROW_H,
+        files,
+        |ui, rows| {
+            for index in rows {
+                let change = &view.files[index];
+                let current = view.file.as_deref() == Some(change.path.as_str());
+                let counts = view.counts.get(index).copied().flatten();
+                if file_row(ui, change, counts, current) {
+                    picked = Some(change.path.clone());
+                }
             }
-        }
-    });
+        },
+    );
     if let Some(path) = picked {
         view.open_file(&path);
     }
+}
+
+/// What the graph's rounded selection leaves bare at a bottom corner of the open row, filled so the
+/// row and the gap read as one card.
+fn row_corner(corner: Pos2, left_side: bool, fill: Color32) -> Mesh {
+    let sign = if left_side { 1.0 } else { -1.0 };
+    let center = pos2(corner.x + sign * SELECTION_RADIUS, corner.y - SELECTION_RADIUS);
+    let mut mesh = Mesh::default();
+    mesh.colored_vertex(corner, fill);
+    for step in 0..=CORNER_STEPS {
+        let angle = FRAC_PI_2 * step as f32 / CORNER_STEPS as f32;
+        let at =
+            center + vec2(-sign * SELECTION_RADIUS * angle.sin(), SELECTION_RADIUS * angle.cos());
+        mesh.colored_vertex(at, fill);
+    }
+    for step in 0..CORNER_STEPS {
+        mesh.add_triangle(0, step + 1, step + 2);
+    }
+    mesh
 }
 
 fn file_row(ui: &mut Ui, change: &FileChange, counts: Option<LineCounts>, current: bool) -> bool {
@@ -147,49 +212,60 @@ fn file_row(ui: &mut Ui, change: &FileChange, counts: Option<LineCounts>, curren
         ui.allocate_exact_size(vec2(ui.available_width(), FILE_ROW_H), Sense::click());
     let painter = ui.painter_at(rect);
     if current {
-        painter.rect_filled(rect, 8, brand::TEAL.gamma_multiply(0.16));
-        let bar = Rect::from_min_max(rect.left_top(), pos2(rect.left() + 3.0, rect.bottom()));
-        painter.rect_filled(bar.shrink2(vec2(0.0, 5.0)), 2, brand::TEAL);
+        painter.rect_filled(rect, 6, theme::overlay(0x0d));
     } else if response.hovered() {
-        painter.rect_filled(rect, 8, theme::overlay(0x08));
+        painter.rect_filled(rect, 6, theme::overlay(0x08));
     }
+    let center_y = rect.center().y;
     painter.text(
-        pos2(rect.left() + 8.0, rect.center().y),
+        pos2(rect.left() + ROW_PAD, center_y),
         Align2::LEFT_CENTER,
         kind_letter(change.kind),
-        FontId::monospace(12.0),
+        mono(11.5),
         kind_color(change.kind),
     );
-    let mut right = rect.right() - 10.0;
+    let mut right = rect.right() - ROW_PAD;
     if let Some((added, removed)) = counts {
-        for (text, color, show) in [
-            (format!("-{removed}"), brand::RED, removed > 0),
-            (format!("+{added}"), brand::GREEN, added > 0),
-        ] {
-            if !show {
-                continue;
-            }
-            let galley = painter.layout_no_wrap(text, FontId::proportional(12.0), color);
-            let width = galley.size().x;
-            painter.galley(
-                pos2(right - width, rect.center().y - galley.size().y / 2.0),
-                galley,
-                color,
-            );
-            right -= width + 8.0;
-        }
+        painter.text(
+            pos2(right, center_y),
+            Align2::RIGHT_CENTER,
+            format!("-{removed}"),
+            mono(12.0),
+            brand::RED,
+        );
+        right -= DEL_W + COUNT_GAP;
+        painter.text(
+            pos2(right, center_y),
+            Align2::RIGHT_CENTER,
+            format!("+{added}"),
+            mono(12.0),
+            brand::GREEN,
+        );
+        right -= ADD_W;
     }
-    let color = if current { theme::text_strong() } else { brand::SOFT };
-    let font = FontId::monospace(12.5);
-    let room = right - 8.0 - (rect.left() + TEXT_X);
-    painter.text(
-        pos2(rect.left() + TEXT_X, rect.center().y),
-        Align2::LEFT_CENTER,
-        tail_fit(ui, &change.path, &font, room),
-        font,
-        color,
-    );
+    let left = rect.left() + ROW_PAD + LETTER_W;
+    let ink = if current { theme::text_strong() } else { brand::TEXT };
+    paint_path(ui, &painter, &change.path, (left, right - COUNT_GAP, center_y), ink);
     response.on_hover_text(&change.path).clicked()
+}
+
+fn paint_path(ui: &Ui, painter: &egui::Painter, path: &str, spot: (f32, f32, f32), ink: Color32) {
+    let (left, right, y) = spot;
+    let font = body(13.0);
+    let (dir, name) =
+        path.rsplit_once('/').map_or(("", path), |(dir, name)| (&path[..=dir.len()], name));
+    let room = (right - left).max(0.0);
+    let name_galley = painter.layout_no_wrap(name.to_owned(), font.clone(), ink);
+    if name_galley.size().x >= room {
+        let text = tail_fit(ui, name, &font, room);
+        painter.text(pos2(left, y), Align2::LEFT_CENTER, text, font, ink);
+        return;
+    }
+    let dir_text = tail_fit(ui, dir, &font, room - name_galley.size().x);
+    let dir_galley = painter.layout_no_wrap(dir_text, font, theme::text_faint());
+    let name_x = left + dir_galley.size().x;
+    painter.galley(pos2(left, y - dir_galley.size().y / 2.0), dir_galley, theme::text_faint());
+    painter.galley(pos2(name_x, y - name_galley.size().y / 2.0), name_galley, ink);
 }
 
 /// `path` cut from the front with an ellipsis until it fits `room`, so the file name stays.
@@ -197,7 +273,7 @@ pub(crate) fn tail_fit(ui: &Ui, path: &str, font: &FontId, room: f32) -> String 
     let width = |text: &str| {
         ui.painter().layout_no_wrap(text.to_owned(), font.clone(), brand::TEXT).size().x
     };
-    if width(path) <= room {
+    if path.is_empty() || width(path) <= room {
         return path.to_owned();
     }
     let chars: Vec<char> = path.chars().collect();
@@ -220,21 +296,29 @@ mod tests {
     }
 
     #[test]
-    fn the_meta_line_names_the_commit_author_files_and_lines() {
-        assert_eq!(
-            meta_text("8f100f4", Some("Builder"), 2, Some((6, 1))),
-            "8f100f4 · Builder · 2 files · +6 -1"
-        );
-        assert_eq!(meta_text("Uncommitted", None, 1, None), "Uncommitted · 1 file");
+    fn the_meta_line_names_the_author_and_how_many_files() {
+        assert_eq!(meta_tail(Some("Builder"), 2), "Builder · 2 files");
+        assert_eq!(meta_tail(None, 1), "1 file");
     }
 
     #[test]
-    fn the_card_scrolls_inside_when_the_room_is_short_but_keeps_a_few_rows() {
-        assert_eq!(fit(100.0, 300.0), 100.0);
-        assert_eq!(fit(400.0, 300.0), 300.0);
-        assert_eq!(fit(400.0, 50.0), MIN_SHOWN);
-        assert_eq!(fit(100.0, 50.0), 100.0);
-        assert_eq!(band_height(0), band_height(1));
-        assert_eq!(band_height(2), META_H + 2.0 * FILE_ROW_H + PAD_BOTTOM);
+    fn the_gap_grows_with_the_files_up_to_the_room_but_keeps_a_few_rows() {
+        let one = META_H + FILE_ROW_H + PAD_BOTTOM + MARGIN_BELOW;
+        assert_eq!(gap_height(1, 1000.0), one);
+        assert_eq!(gap_height(0, 1000.0), one, "an empty list still has its message row");
+        assert_eq!(gap_height(3, 1000.0), one + 2.0 * FILE_ROW_H);
+        assert_eq!(gap_height(100, 500.0), 500.0);
+        assert_eq!(gap_height(100, 50.0), MIN_SHOWN);
+        assert_eq!(gap_height(1, 50.0), one);
+    }
+
+    #[test]
+    fn the_text_starts_after_the_lanes_and_the_gutter_of_the_uncommitted_lane() {
+        let style = GraphStyle::embedded(brand::TEAL);
+        assert_eq!(message_inset(&style, 0, false), 34.0);
+        assert_eq!(message_inset(&style, 1, false), 34.0);
+        assert_eq!(message_inset(&style, 3, false), 34.0 + 2.0 * 18.0);
+        assert_eq!(message_inset(&style, 1, true), 34.0 + 18.0);
+        assert_eq!(message_inset(&style, 200, false), message_inset(&style, MAX_LANES, false));
     }
 }

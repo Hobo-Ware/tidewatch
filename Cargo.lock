@@ -246,7 +246,7 @@ dependencies = [
  "objc2-foundation 0.3.2",
  "parking_lot",
  "percent-encoding",
- "windows-sys 0.60.2",
+ "windows-sys 0.59.0",
  "x11rb",
 ]
 
@@ -1077,7 +1077,7 @@ dependencies = [
  "libc",
  "option-ext",
  "redox_users",
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -1437,7 +1437,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -2234,7 +2234,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1c48eccd894bd15555b0346470e63491ded94aefe76b3fcb1052084b5a393238"
 dependencies = [
  "bstr",
- "hashbrown 0.15.5",
+ "hashbrown 0.17.1",
 ]
 
 [[package]]
@@ -3414,8 +3414,8 @@ dependencies = [
 
 [[package]]
 name = "kelp-core"
-version = "0.8.19"
-source = "git+https://github.com/Hobo-Ware/kelp?rev=8486b5ff217549a692c5a25d794612269a49a645#8486b5ff217549a692c5a25d794612269a49a645"
+version = "0.8.21"
+source = "git+https://github.com/Hobo-Ware/kelp?rev=31200ee5e40dff0e8c847e4427f03f735adbeb99#31200ee5e40dff0e8c847e4427f03f735adbeb99"
 dependencies = [
  "anyhow",
  "gix",
@@ -3431,8 +3431,8 @@ dependencies = [
 
 [[package]]
 name = "kelp-ui"
-version = "0.8.19"
-source = "git+https://github.com/Hobo-Ware/kelp?rev=8486b5ff217549a692c5a25d794612269a49a645#8486b5ff217549a692c5a25d794612269a49a645"
+version = "0.8.21"
+source = "git+https://github.com/Hobo-Ware/kelp?rev=31200ee5e40dff0e8c847e4427f03f735adbeb99#31200ee5e40dff0e8c847e4427f03f735adbeb99"
 dependencies = [
  "anyhow",
  "egui",
@@ -4938,7 +4938,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys 0.12.1",
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -5503,7 +5503,7 @@ dependencies = [
  "getrandom 0.4.3",
  "once_cell",
  "rustix 1.1.5",
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -6514,7 +6514,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]

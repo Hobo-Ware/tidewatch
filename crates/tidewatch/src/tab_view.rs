@@ -287,15 +287,24 @@ impl TabView {
         self.want_file = Some(path.to_owned());
     }
 
-    /// A click on a row of the tree: it opens its files, or closes them when they were open.
+    /// A click on a row of the tree: it opens its files, or closes them when they were open. The
+    /// uncommitted changes have no room under their row, so a click there opens their first file.
     pub(crate) fn click_row(&mut self, selection: Selection) {
         if self.expanded() && self.selection() == Some(selection) {
             self.tree = Tree::Closed;
             return;
         }
         self.select(selection);
+        if selection == Selection::Wip {
+            self.tree = Tree::Closed;
+            if !self.is_loading_source()
+                && let Some(path) = self.files.first().map(|file| file.path.clone())
+            {
+                self.open_file(&path);
+            }
+            return;
+        }
         self.expand();
-        self.room_for = Some(selection);
     }
 
     pub(crate) fn expanded(&self) -> bool {
@@ -304,11 +313,12 @@ impl TabView {
 
     pub(crate) fn expand(&mut self) {
         self.tree = Tree::Open;
+        self.room_for = self.selection();
     }
 
-    /// Once per opening: whether the card should scroll its row up to make room.
-    pub(crate) fn take_needs_room(&mut self) -> bool {
-        self.room_for.take().is_some()
+    /// Once per opening: the row the graph should scroll into view with its card.
+    pub(crate) fn take_room(&mut self) -> Option<Selection> {
+        self.room_for.take()
     }
 
     /// A click on a file of the open commit: its diff takes the terminal's place.
@@ -360,7 +370,6 @@ impl TabView {
         if let Some(selection) = next {
             self.select(selection);
             self.expand();
-            self.graph.scroll_to = Some(selection);
         }
     }
 
@@ -980,6 +989,32 @@ mod tests {
         view.click_row(Selection::Commit(1));
         assert!(view.expanded(), "another row opens in place of the first");
         assert_eq!(view.selection(), Some(Selection::Commit(1)));
+    }
+
+    #[test]
+    fn opening_a_row_asks_for_its_room_once() {
+        let (_dir, repo) = repo();
+        let jobs = Jobs::new();
+        let mut view = started_view(&repo, repo.join("notes.json"), &jobs);
+        assert_eq!(view.take_room(), None);
+        view.click_row(Selection::Commit(1));
+        assert_eq!(view.take_room(), Some(Selection::Commit(1)));
+        assert_eq!(view.take_room(), None);
+        view.step_commit(-1);
+        assert_eq!(view.take_room(), Some(Selection::Commit(0)));
+    }
+
+    #[test]
+    fn the_uncommitted_row_has_no_room_for_a_card_so_a_click_opens_its_first_file() {
+        let (_dir, repo) = repo();
+        std::fs::write(repo.join("c.txt"), "fresh\n").unwrap();
+        let jobs = Jobs::new();
+        let mut view = started_view(&repo, repo.join("notes.json"), &jobs);
+        view.click_row(Selection::Wip);
+        assert!(!view.expanded());
+        assert_eq!(view.take_room(), None);
+        assert_eq!(view.file.as_deref(), Some("c.txt"));
+        assert!(view.file_open());
     }
 
     #[test]
