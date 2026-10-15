@@ -86,6 +86,7 @@ mod repo_close;
 mod restore_glue;
 mod restore_jobs;
 mod screen_kit;
+mod segmented;
 mod session_glue;
 mod session_save;
 mod session_writer;

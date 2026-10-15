@@ -9,9 +9,14 @@ pub(crate) const SIDE_RANGE: std::ops::RangeInclusive<f32> = 0.3..=0.75;
 const DIVIDER_GRAB: f32 = 8.0;
 pub(crate) const GAP: f32 = 1.0;
 pub(crate) const TERMINAL_PAD: f32 = 10.0;
+pub(crate) const CARD_MARGIN: f32 = 10.0;
+/// The height of the History card's header and of the status line above an agent tab, so both tops
+/// line up.
+pub(crate) const CHROME_H: f32 = 48.0;
 
 /// In the side layout `diff` is the whole left column, the place a file's diff takes over from
-/// the terminal.
+/// the terminal, and `history` is the card on the right: a margin from the terminal's padding, the
+/// window edge, the strip above and the bar below.
 pub(crate) struct Layout {
     pub(crate) terminal: Rect,
     pub(crate) history: Rect,
@@ -21,7 +26,10 @@ pub(crate) struct Layout {
 pub(crate) fn split_side(area: Rect, fraction: f32) -> Layout {
     let left_w = (area.width() * fraction.clamp(*SIDE_RANGE.start(), *SIDE_RANGE.end())).round();
     let left = Rect::from_min_max(area.min, pos2(area.left() + left_w, area.bottom()));
-    let history = Rect::from_min_max(pos2(left.right() + GAP, area.top()), area.max);
+    let history = Rect::from_min_max(
+        pos2(left.right(), area.top() + CARD_MARGIN),
+        pos2(area.right() - CARD_MARGIN, area.bottom() - CARD_MARGIN),
+    );
     Layout { terminal: left.shrink(TERMINAL_PAD), history, diff: left }
 }
 
@@ -137,7 +145,8 @@ mod tests {
         let l = split_side(area(), SIDE_FRACTION);
         assert_eq!(l.diff, Rect::from_min_max(pos2(0.0, 40.0), pos2(580.0, 840.0)));
         assert_eq!(l.terminal, l.diff.shrink(TERMINAL_PAD));
-        assert_eq!(l.history, Rect::from_min_max(pos2(581.0, 40.0), pos2(1000.0, 840.0)));
+        assert_eq!(l.history, Rect::from_min_max(pos2(580.0, 50.0), pos2(990.0, 830.0)));
+        assert_eq!(l.history.left() - l.terminal.right(), CARD_MARGIN);
     }
 
     #[test]

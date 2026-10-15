@@ -96,9 +96,12 @@ impl Tidewatch {
         let active_id = self.tabs.items()[self.tabs.active()].id;
         let side = self.side_layout();
         let Some(view) = self.views.get_mut(&active_id) else {
-            let empty = if side { vec![areas.history] } else { vec![areas.history, areas.diff] };
-            for rect in empty {
-                ui.painter().rect_filled(rect, 0.0, kelp_theme::bg());
+            if side {
+                history_pane::paint_card(ui, areas.history);
+            } else {
+                for rect in [areas.history, areas.diff] {
+                    ui.painter().rect_filled(rect, 0.0, kelp_theme::bg());
+                }
             }
             return;
         };
