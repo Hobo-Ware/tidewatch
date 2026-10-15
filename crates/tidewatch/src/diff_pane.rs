@@ -9,7 +9,7 @@ use egui::{
     Align, Color32, FontId, Layout, Rect, RichText, Sense, Stroke, Ui, UiBuilder, pos2, vec2,
 };
 use kelp_core::commit::{self, ChangeKind, FileChange};
-use kelp_ui::diff::{DiffInput, DiffLayout, DiffMode, DiffTexts};
+use kelp_ui::diff::{DiffInput, DiffLayout, DiffMode, DiffStyle, DiffTexts};
 use kelp_ui::theme;
 use stdusk_egui::ui::icons;
 use stdusk_egui::widgets::{chip, icon_button};
@@ -440,6 +440,7 @@ pub(crate) fn show_body(ui: &mut Ui, rect: Rect, view: &mut TabView) -> bool {
                 hunk_buttons: &[],
                 line_select_hint: None,
                 texts: texts(Platform::CURRENT),
+                style: DiffStyle::default(),
             },
         );
     });
