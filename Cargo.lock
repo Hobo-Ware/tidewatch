@@ -2234,7 +2234,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1c48eccd894bd15555b0346470e63491ded94aefe76b3fcb1052084b5a393238"
 dependencies = [
  "bstr",
- "hashbrown 0.17.1",
+ "hashbrown 0.15.5",
 ]
 
 [[package]]
@@ -5365,7 +5365,7 @@ checksum = "a2eb9349b6444b326872e140eb1cf5e7c522154d69e7a0ffb0fb81c06b37543f"
 [[package]]
 name = "stdusk-core"
 version = "1.9.1"
-source = "git+https://github.com/Hobo-Ware/stdusk?rev=641ceee53a408b5079082cef23d02b26fd7593e6#641ceee53a408b5079082cef23d02b26fd7593e6"
+source = "git+https://github.com/Hobo-Ware/stdusk?rev=c907c8cb42f6996c3319125f9ffa2fd84069c562#c907c8cb42f6996c3319125f9ffa2fd84069c562"
 dependencies = [
  "alacritty_terminal",
  "base64 0.22.1",
@@ -5384,7 +5384,7 @@ dependencies = [
 [[package]]
 name = "stdusk-egui"
 version = "1.9.1"
-source = "git+https://github.com/Hobo-Ware/stdusk?rev=641ceee53a408b5079082cef23d02b26fd7593e6#641ceee53a408b5079082cef23d02b26fd7593e6"
+source = "git+https://github.com/Hobo-Ware/stdusk?rev=c907c8cb42f6996c3319125f9ffa2fd84069c562#c907c8cb42f6996c3319125f9ffa2fd84069c562"
 dependencies = [
  "egui",
  "font-kit",
