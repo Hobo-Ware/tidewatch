@@ -1,4 +1,4 @@
-//! The tab strip: repo chip (a menu of the repos, Open repo and Close repo), leftovers chip, update pill, overview button, the tabs and their buttons.
+//! The tab strip: repo chip (a menu of the repos, Open repo and Close repo), leftovers chip, overview button, the tabs, new tab button, and at the right end the update chip and the settings button.
 
 use egui::{CornerRadius, Frame, Margin};
 use stdusk_core::progress::Progress;
@@ -59,17 +59,19 @@ impl Tidewatch {
                     }
                     self.repo_chip(ui, frame);
                     self.leftovers.chip(ui);
-                    self.updates.pill(ui);
                     ui.add_space(4.0);
                     if overview_view::button(ui, self.overview, needs_you).clicked() {
                         frame.toggle_overview = true;
                     }
                     ui.add_space(8.0);
+                    let pill_width = self.updates.pill_width(ui);
+                    let tail = if pill_width > 0.0 { pill_width + STRIP_GAP } else { 0.0 };
                     let width = layout::tab_width(
                         ui.available_width()
                             - stdusk_egui::widgets::ICON_BTN_W * 2.0
                             - overview_view::BUTTON_W
-                            - 22.0,
+                            - 22.0
+                            - tail,
                         self.tabs.in_group(self.tabs.active_group()).count(),
                         STRIP_GAP,
                     );
@@ -84,6 +86,10 @@ impl Tidewatch {
                     {
                         frame.actions.push(Action::New);
                     }
+                    ui.add_space(
+                        (ui.available_width() - stdusk_egui::widgets::ICON_BTN_W - tail).max(0.0),
+                    );
+                    self.updates.pill(ui);
                     if icon_button(
                         ui,
                         icons::GEAR,

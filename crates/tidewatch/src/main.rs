@@ -109,6 +109,7 @@ mod toast;
 mod tray;
 mod trust_glue;
 mod trust_view;
+mod update_chip;
 mod updates;
 mod updates_view;
 mod welcome;
