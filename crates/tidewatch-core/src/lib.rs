@@ -1,6 +1,7 @@
 //! Core logic for Tidewatch: worktree layout, profiles and agent status. No UI.
 
 pub mod agents;
+mod builtin_workflows;
 pub mod consent;
 pub mod delivery;
 pub mod end_block;

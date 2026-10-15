@@ -1,4 +1,5 @@
 use super::*;
+use tidewatch_core::workflows::ORIGINAL_IDS;
 
 fn agents() -> Vec<(String, String)> {
     ["claude", "codex", "gemini", "copilot"].map(|id| (id.to_owned(), id.to_owned())).to_vec()
@@ -8,8 +9,14 @@ fn profiles() -> Vec<(String, String)> {
     vec![("reviewer".into(), "Reviewer".into()), ("builder".into(), "Builder".into())]
 }
 
+fn original() -> Workflows {
+    let mut workflows = Workflows::defaults();
+    workflows.workflow.retain(|id, _| ORIGINAL_IDS.contains(&id.as_str()));
+    workflows
+}
+
 fn editor() -> Editor {
-    Editor::new(&Workflows::defaults(), agents(), profiles())
+    Editor::new(&original(), agents(), profiles())
 }
 
 fn ship_index(editor: &Editor) -> usize {
@@ -25,7 +32,7 @@ fn open_ship() -> Editor {
 
 #[test]
 fn drafts_follow_the_file_and_round_trip_to_the_same_workflows() {
-    let workflows = Workflows::defaults();
+    let workflows = original();
     let editor = Editor::new(&workflows, agents(), profiles());
     let ids: Vec<&str> = editor.drafts.iter().map(|d| d.id.as_str()).collect();
     assert_eq!(ids, ["fix", "pr", "ship"]);

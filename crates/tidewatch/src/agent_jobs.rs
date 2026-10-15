@@ -75,6 +75,7 @@ mod tests {
     use super::*;
     use crate::test_exec::write_executable_from_a_child;
     use std::time::{Duration, Instant};
+    use tidewatch_core::workflows::BUILT_IN_IDS;
 
     fn next(jobs: &Jobs<Done>) -> Done {
         let deadline = Instant::now() + Duration::from_secs(20);
@@ -107,7 +108,9 @@ mod tests {
         assert_eq!(ids, ["builder", "reviewer"]);
         assert!(paths.profiles_file().is_file());
         let names: Vec<&str> = workflows.workflow.keys().map(String::as_str).collect();
-        assert_eq!(names, ["fix", "pr", "ship"]);
+        let mut built_in = BUILT_IN_IDS.to_vec();
+        built_in.sort_unstable();
+        assert_eq!(names, built_in);
         assert!(paths.workflows_file().is_file());
     }
 
