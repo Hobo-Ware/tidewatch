@@ -15,6 +15,9 @@ enum Cap<'a> {
 
 fn caps(keys: &str) -> Vec<Cap<'_>> {
     let mut caps = Vec::new();
+    if keys.is_empty() {
+        return caps;
+    }
     for (index, span) in keys.split(" to ").enumerate() {
         if index > 0 {
             caps.push(Cap::To);
@@ -53,6 +56,9 @@ fn shortcut_row(ui: &mut Ui, title: &str, keys: &str) {
         },
         |ui| {
             ui.spacing_mut().item_spacing.x = 4.0;
+            if keys.is_empty() {
+                ui.label(RichText::new("palette only").size(12.0).color(FAINT));
+            }
             for cap in caps(keys).into_iter().rev() {
                 match cap {
                     Cap::Key(text) => {
@@ -76,6 +82,11 @@ mod tests {
     fn a_chord_is_one_cap_per_key() {
         assert_eq!(caps("Cmd+Shift+P"), [Cap::Key("Cmd"), Cap::Key("Shift"), Cap::Key("P")]);
         assert_eq!(caps("Ctrl+,"), [Cap::Key("Ctrl"), Cap::Key(",")]);
+    }
+
+    #[test]
+    fn a_command_with_no_chord_has_no_caps() {
+        assert_eq!(caps(""), Vec::<Cap>::new());
     }
 
     #[test]

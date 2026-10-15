@@ -10,6 +10,7 @@ mod agent_run;
 mod agent_status_line;
 mod app;
 mod brand;
+mod build_workflow;
 mod catalog;
 mod checkout;
 mod cli;

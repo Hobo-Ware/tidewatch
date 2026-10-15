@@ -43,6 +43,7 @@ impl Tidewatch {
             repo: group,
             profiles,
             workflows,
+            build_workflow_blocked: self.build_workflow_blocked(),
         }
     }
 

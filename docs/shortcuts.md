@@ -35,6 +35,7 @@ On Linux a plain Ctrl chord would reach the shell, so Linux uses Ctrl+Shift or A
 | Settings | `Cmd+,` | `Ctrl+,` |
 | Open repo | `Cmd+O` | `Ctrl+Shift+O` |
 | Command palette | `Cmd+Shift+P` | `Ctrl+Shift+P` |
+| Build workflow from this session | palette only | palette only |
 
 ## Dialogs
 

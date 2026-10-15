@@ -73,6 +73,7 @@ pub(crate) enum Command {
     OpenRepo,
     Palette,
     ApproveDelivery,
+    BuildWorkflow,
 }
 
 impl Command {
@@ -95,12 +96,13 @@ impl Command {
             | Self::Settings
             | Self::OpenRepo
             | Self::Palette
-            | Self::ApproveDelivery => None,
+            | Self::ApproveDelivery
+            | Self::BuildWorkflow => None,
         }
     }
 
     fn global(self) -> bool {
-        self != Self::ApproveDelivery
+        !matches!(self, Self::ApproveDelivery | Self::BuildWorkflow)
     }
 
     /// A bare key the terminal and the text fields also want: it is only read, and so only taken
@@ -135,7 +137,9 @@ impl Command {
     }
 
     pub(crate) fn keys_on(self, platform: Platform) -> String {
-        entry_of(self).map_or_else(String::new, |entry| entry.chord(platform).label())
+        entry_of(self)
+            .and_then(|entry| entry.chord(platform))
+            .map_or_else(String::new, Chord::label)
     }
 }
 
@@ -234,12 +238,13 @@ pub(crate) struct Entry {
     pub(crate) title: &'static str,
     pub(crate) group: Group,
     pub(crate) command: Command,
-    mac: Chord,
-    linux: Chord,
+    mac: Option<Chord>,
+    linux: Option<Chord>,
 }
 
 impl Entry {
-    pub(crate) fn chord(&self, platform: Platform) -> Chord {
+    /// `None` for a command that is only in the palette.
+    pub(crate) fn chord(&self, platform: Platform) -> Option<Chord> {
         match platform {
             Platform::Mac => self.mac,
             Platform::Linux => self.linux,
@@ -254,14 +259,18 @@ const fn entry(
     command: Command,
     (mac, linux): (Chord, Chord),
 ) -> Entry {
-    Entry { id, title, group, command, mac, linux }
+    Entry { id, title, group, command, mac: Some(mac), linux: Some(linux) }
+}
+
+const fn unbound(id: &'static str, title: &'static str, group: Group, command: Command) -> Entry {
+    Entry { id, title, group, command, mac: None, linux: None }
 }
 
 const fn tab(id: &'static str, title: &'static str, index: usize, key: Key) -> Entry {
     entry(id, title, Group::Tabs, Command::SelectTab(index), (cmd(key), alt(key)))
 }
 
-pub(crate) const TABLE: [Entry; 26] = [
+pub(crate) const TABLE: [Entry; 27] = [
     entry("new-tab", "New tab", Group::Tabs, Command::NewTab, (cmd(Key::T), ctrl(Key::T).shift())),
     entry(
         "close-tab",
@@ -378,6 +387,12 @@ pub(crate) const TABLE: [Entry; 26] = [
         Command::ApproveDelivery,
         (cmd(Key::Enter), ctrl(Key::Enter)),
     ),
+    unbound(
+        "build-workflow",
+        "Build workflow from this session",
+        Group::App,
+        Command::BuildWorkflow,
+    ),
 ];
 
 fn entry_of(command: Command) -> Option<&'static Entry> {
@@ -392,17 +407,20 @@ pub(crate) fn consume(
     platform: Platform,
     wanted: impl Fn(Command) -> bool,
 ) -> Vec<Command> {
-    let mut ordered: Vec<&Entry> = TABLE.iter().filter(|entry| wanted(entry.command)).collect();
-    ordered.sort_by_key(|entry| std::cmp::Reverse(entry.chord(platform).weight()));
+    let mut ordered: Vec<(&Entry, Chord)> = TABLE
+        .iter()
+        .filter(|entry| wanted(entry.command))
+        .filter_map(|entry| Some((entry, entry.chord(platform)?)))
+        .collect();
+    ordered.sort_by_key(|(_, chord)| std::cmp::Reverse(chord.weight()));
     ctx.input_mut(|input| {
         ordered
             .into_iter()
-            .filter(|entry| {
-                let chord = entry.chord(platform);
+            .filter(|(_, chord)| {
                 (chord.mods != 0 || !pressed_with_modifiers(input, chord.key))
                     && input.consume_key(chord.modifiers(), chord.key)
             })
-            .map(|entry| entry.command)
+            .map(|(entry, _)| entry.command)
             .collect()
     })
 }
@@ -422,7 +440,7 @@ pub(crate) fn command_of(id: &str) -> Option<Command> {
 
 /// The key event a person pressing `command`'s chord produces here, for dev drivers and tests.
 pub(crate) fn press_event(command: Command) -> Option<egui::Event> {
-    let chord = entry_of(command)?.chord(Platform::CURRENT);
+    let chord = entry_of(command)?.chord(Platform::CURRENT)?;
     Some(egui::Event::Key {
         key: chord.key,
         physical_key: Some(chord.key),
@@ -499,7 +517,7 @@ impl Gate {
             | Command::PrevRepo
             | Command::OpenRepo => !modal,
             Command::Palette => self.dialog == Dialog::None,
-            Command::ApproveDelivery => false,
+            Command::ApproveDelivery | Command::BuildWorkflow => false,
         }
     }
 }

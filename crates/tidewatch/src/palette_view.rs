@@ -35,7 +35,10 @@ pub(crate) fn show(ctx: &egui::Context, palette: &mut Palette, items: &[Item]) -
     if down || up {
         palette.step(down, hits.len());
     }
-    let mut picked = (enter && !hits.is_empty()).then(|| palette.selected(hits.len()));
+    let runnable = |row: usize| items[hits[row].item].disabled.is_none();
+    let mut picked = (enter && !hits.is_empty())
+        .then(|| palette.selected(hits.len()))
+        .filter(|row| runnable(*row));
     let mut moved = down || up;
 
     let modal = egui::Modal::new(Id::new("command_palette"))
@@ -64,7 +67,7 @@ pub(crate) fn show(ctx: &egui::Context, palette: &mut Palette, items: &[Item]) -
                 nothing_matches(ui);
             } else {
                 let clicked = list(ui, palette, items, &hits, &mut moved);
-                picked = picked.or(clicked);
+                picked = picked.or(clicked.filter(|row| runnable(*row)));
             }
             ui.label(
                 egui::RichText::new("Up / Down move   Enter runs   Esc closes")
@@ -111,7 +114,11 @@ fn list(
             if row == selected && std::mem::take(moved) {
                 ui.scroll_to_rect(rect, None);
             }
-            paint_row(ui, rect, &items[hit.item], &hit.positions, row == selected);
+            let item = &items[hit.item];
+            if let Some(reason) = item.disabled {
+                response.on_hover_text(reason);
+            }
+            paint_row(ui, rect, item, &hit.positions, row == selected);
         }
     });
     clicked
@@ -128,23 +135,30 @@ fn paint_row(ui: &egui::Ui, rect: Rect, item: &Item, positions: &[usize], select
             StrokeKind::Inside,
         );
     }
-    let ink = colors::fg();
+    let ink = if item.disabled.is_some() { colors::dim() } else { colors::fg() };
     let mut job = LayoutJob::default();
     for (i, c) in item.label.chars().enumerate() {
-        let color = if positions.contains(&i) { brand::TEAL_TEXT } else { ink };
+        let color =
+            if positions.contains(&i) && item.disabled.is_none() { brand::TEAL_TEXT } else { ink };
         job.append(&c.to_string(), 0.0, TextFormat::simple(FontId::proportional(14.0), color));
     }
     job.append(item.kind, 12.0, TextFormat::simple(FontId::proportional(11.0), colors::dim()));
-    let keys_width = item.keys.chars().count() as f32 * 7.0 + 24.0;
+    let side = item.disabled.unwrap_or(&item.keys);
+    let keys_width = side.chars().count() as f32 * 7.0 + 24.0;
     job.wrap = TextWrapping::truncate_at_width((rect.width() - 20.0 - keys_width).max(40.0));
     let galley = painter.layout_job(job);
     painter.galley(pos2(rect.left() + 10.0, rect.center().y - galley.size().y / 2.0), galley, ink);
-    if !item.keys.is_empty() {
+    if !side.is_empty() {
+        let font = if item.disabled.is_some() {
+            FontId::proportional(11.5)
+        } else {
+            FontId::monospace(11.5)
+        };
         painter.text(
             pos2(rect.right() - 10.0, rect.center().y),
             Align2::RIGHT_CENTER,
-            &item.keys,
-            FontId::monospace(11.5),
+            side,
+            font,
             colors::dim(),
         );
     }
@@ -175,6 +189,10 @@ mod tests {
 
     impl Harness {
         fn new(query: &str) -> Self {
+            Self::with(query, None)
+        }
+
+        fn with(query: &str, build_workflow_blocked: Option<&'static str>) -> Self {
             let sources = Sources {
                 tabs: vec!["main".into(), "calm-comet".into()],
                 active: 0,
@@ -182,6 +200,7 @@ mod tests {
                 repo: 0,
                 profiles: vec![("builder".into(), "Builder".into())],
                 workflows: vec![("ship".into(), "Ship a feature".into())],
+                build_workflow_blocked,
             };
             let mut harness = Self {
                 ctx: egui::Context::default(),
@@ -247,6 +266,19 @@ mod tests {
         assert_eq!(
             harness.frame(vec![key(Key::Enter)]),
             Some(Outcome::Run(Target::Workflow("ship".into())))
+        );
+    }
+
+    #[test]
+    fn enter_on_a_disabled_row_runs_nothing_and_a_ready_one_runs() {
+        let blocked = Some("agent is working");
+        let mut harness = Harness::with("build workflow", blocked);
+        assert_eq!(harness.frame(vec![key(Key::Enter)]), None);
+        assert_eq!(harness.frame(Vec::new()), None, "the palette stays open");
+        let mut ready = Harness::with("build workflow", None);
+        assert_eq!(
+            ready.frame(vec![key(Key::Enter)]),
+            Some(Outcome::Run(Target::Command(Command::BuildWorkflow)))
         );
     }
 

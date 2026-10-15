@@ -233,6 +233,20 @@ mod tests {
     }
 
     #[test]
+    fn a_proposed_workflow_is_handed_to_the_app_with_the_tab_it_came_from() {
+        let (mut tabs, id) = tabs_with_agent();
+        let text = "name = \"Mine\"\n[[stage]]\naction = \"work\"\nagent = \"claude\"\n";
+        let workflow = tidewatch_core::propose::parse_toml(text).unwrap();
+        let message = TabMessage {
+            tab_id: id,
+            generation: 0,
+            event: TabEvent::Proposal { workflow: workflow.clone() },
+        };
+        let follow = route(&mut tabs, message, 1.0);
+        assert_eq!(follow, Some(Follow::Proposal { tab: id, workflow: Box::new(workflow) }));
+    }
+
+    #[test]
     fn a_change_notifies_only_while_the_window_is_away() {
         let quiet = |_: &u32| TermSnapshot::default();
         let (mut tabs, id) = tabs_with_agent();
