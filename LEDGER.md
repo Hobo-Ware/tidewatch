@@ -4,13 +4,14 @@ A running log of what got done, newest first. The plan lives in [PLAN.md](PLAN.m
 
 ## Status
 
-- **Current milestone:** v0.1.5: History as a card with clean list rows and the open commit inside the list, a window status bar, a quiet update chip, moving live tabs from stdusk (1.10.0), and YOLO tabs that resume with their flags.
-- **Done:** Phases 0 to 10; v0.1.0 to v0.1.5 released (Homebrew cask, Linux tarball and AppImage); the K mark identity; the showcase page.
+- **Current milestone:** v0.1.6: six more built-in workflows from proven habits (nine in all) and Build workflow from this session.
+- **Done:** Phases 0 to 10; v0.1.0 to v0.1.6 released (Homebrew cask, Linux tarball and AppImage); the K mark identity; the showcase page.
 - **Also:** six habit workflows are built in, and Build workflow from this session (palette; the agent proposes a workflow that opens as an unsaved draft), 2026-10-16. Restart to update keeps every shell and agent running (live handoff, 2026-10-15). The receiving side of stdusk's "Move tabs to Tidewatch" is built (#49).
 - **Next:** the diff widgets go teal (the graph already does on the side layout); commit messages that truncate early in the narrow tree; the divider position saved between runs; the site hero screenshot; the owner's live checks; Linux desktop runs.
 
 ## 2026-10-16
 
+- **v0.1.6.** Ships the six built-in habit workflows (#54) and Build workflow from this session (#55).
 - **v0.1.5.** Ships the History card and status bar (#48), moving tabs from stdusk (#49, needs stdusk 1.10.0), the clean list rows (#50), YOLO resume with flags (#51) and the retaken site screenshots (#52).
 - **Six house workflows built in.** The owner: "analyze my local memories, workflows, activity and skills and use those to build predefined workflows for tidewatch." Hunt a root cause (4 stages: prove the cause with a failing test, approve it, fix, review), Finish with proof (3: run the checks, audit every ask against the real state, a verified / not verified report), Change the UI with proof (5: baseline renders with a noise floor, change, re-render and explain every difference, review, hand off), Port to a platform (5: parity audit you approve, port behind platform gates, review for drift on the original, same-behavior gate, hand off), Prepare a release (4: version, lockfile and notes, review, artifact checks, a checklist that never tags) and Refactor safely (4: pin behavior with tests, refactor, review for drift, hand off). They live in `builtin_workflows.rs`, are written in tool-neutral words, and none pushes or tags: the last stage of each is a Handoff at an Approve gate.
   Decision: an existing `workflows.toml` gains the new built-ins once, appended after the user's own text (never rewritten), with the ids recorded in `workflows.offered` beside it. A built-in the user deleted stays deleted, an edited or same-named workflow is left alone, the original three count as offered so a file that dropped one never gets it back, and a file that does not parse is untouched and not marked. The dialog lists built-ins in `BUILT_IN_IDS` order, the editor stays alphabetical by id.
