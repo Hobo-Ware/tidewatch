@@ -4,7 +4,8 @@
 //! `tidewatch <path>` connects to the socket, hands over the path and exits, and the window opens
 //! that folder as one more repo, or shows it when it is already open. `tidewatch --toggle` reaches
 //! every live window. A socket file nobody answers on (a crash) is removed and taken over. Lines
-//! on the wire: `open <path>` and `toggle`, each answered with one line, `ok` or `closing`.
+//! on the wire: `open <path>`, `adopt-stdusk <socket>` and `toggle`, each answered with one line,
+//! `ok` or `closing`.
 
 use std::ffi::OsStr;
 use std::io::{BufRead, BufReader, ErrorKind, Read, Write};
@@ -21,6 +22,8 @@ const REPLY_TIMEOUT: Duration = Duration::from_secs(2);
 const CLOSING_POLL: Duration = Duration::from_millis(50);
 const CLOSING_PATIENCE: Duration = Duration::from_secs(10);
 const MAX_LINE: u64 = 8192;
+const OPEN: &[u8] = b"open";
+const ADOPT_STDUSK: &[u8] = b"adopt-stdusk";
 
 /// What a launch can ask of a running window.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -28,6 +31,8 @@ pub enum Command {
     /// Open this folder in the window, as a repo of its own unless it is open already, and bring
     /// the window forward.
     Open(PathBuf),
+    /// Take the live terminals stdusk is handing over on this socket, as shell tabs.
+    AdoptStdusk(PathBuf),
     /// Show the window if it is hidden, hide it if it is shown.
     Toggle,
 }
@@ -36,18 +41,18 @@ impl Command {
     /// The line sent over the socket, newline included. `None` for a path that has a newline in it.
     #[must_use]
     pub fn encode(&self) -> Option<Vec<u8>> {
-        let mut line = match self {
-            Self::Open(path) => {
-                let bytes = path.as_os_str().as_bytes();
-                if bytes.contains(&b'\n') {
-                    return None;
-                }
-                let mut line = b"open ".to_vec();
-                line.extend_from_slice(bytes);
-                line
-            }
-            Self::Toggle => b"toggle".to_vec(),
+        let (verb, path) = match self {
+            Self::Open(path) => (OPEN, path),
+            Self::AdoptStdusk(socket) => (ADOPT_STDUSK, socket),
+            Self::Toggle => return Some(b"toggle\n".to_vec()),
         };
+        let bytes = path.as_os_str().as_bytes();
+        if bytes.contains(&b'\n') {
+            return None;
+        }
+        let mut line = verb.to_vec();
+        line.push(b' ');
+        line.extend_from_slice(bytes);
         line.push(b'\n');
         Some(line)
     }
@@ -60,8 +65,11 @@ impl Command {
         if line.trim_ascii() == b"toggle" {
             return Some(Self::Toggle);
         }
-        let path = line.strip_prefix(b"open ")?;
-        (!path.is_empty()).then(|| Self::Open(PathBuf::from(OsStr::from_bytes(path))))
+        let path_after = |verb: &[u8]| {
+            let rest = line.strip_prefix(verb)?.strip_prefix(b" ")?;
+            (!rest.is_empty()).then(|| PathBuf::from(OsStr::from_bytes(rest)))
+        };
+        path_after(OPEN).map(Self::Open).or_else(|| path_after(ADOPT_STDUSK).map(Self::AdoptStdusk))
     }
 }
 
@@ -350,16 +358,32 @@ mod tests {
             assert_eq!(Command::parse(&line), Some(command), "{path}");
         }
         assert_eq!(Command::parse(&Command::Toggle.encode().unwrap()), Some(Command::Toggle));
+        let adopt = Command::AdoptStdusk(PathBuf::from("/tmp/My Dir/stdusk-7.sock"));
+        assert_eq!(adopt.encode().unwrap(), b"adopt-stdusk /tmp/My Dir/stdusk-7.sock\n");
+        assert_eq!(Command::parse(&adopt.encode().unwrap()), Some(adopt));
     }
 
     #[test]
     fn a_path_with_a_newline_cannot_be_sent() {
         assert_eq!(Command::Open(PathBuf::from("/work/we\nb")).encode(), None);
+        assert_eq!(Command::AdoptStdusk(PathBuf::from("/s\n.sock")).encode(), None);
     }
 
     #[test]
     fn blank_unknown_and_pathless_lines_are_ignored() {
-        for line in ["", "\n", "quit\n", "open\n", "open \n", "opens /x\n", "new-tab\n"] {
+        let lines = [
+            "",
+            "\n",
+            "quit\n",
+            "open\n",
+            "open \n",
+            "opens /x\n",
+            "new-tab\n",
+            "adopt-stdusk\n",
+            "adopt-stdusk \n",
+            "adopt-stdusks /x\n",
+        ];
+        for line in lines {
             assert_eq!(Command::parse(line.as_bytes()), None, "{line:?}");
         }
     }
@@ -539,6 +563,21 @@ mod tests {
         guard.set_closing(false);
         assert_eq!(ask(&socket, &open), b"ok\n");
         assert_eq!(next(&rx), Some(open));
+    }
+
+    #[test]
+    fn the_stdusk_handover_is_answered_like_the_other_commands() {
+        let dir = tempfile::tempdir().unwrap();
+        let socket = dir.path().join("a.sock");
+        let (guard, rx) = serve(primary(claim(&socket, None)));
+        let adopt = Command::AdoptStdusk(PathBuf::from("/tmp/stdusk-1.sock"));
+
+        assert_eq!(ask(&socket, &adopt), b"ok\n");
+        assert_eq!(next(&rx), Some(adopt.clone()));
+
+        guard.set_closing(true);
+        assert_eq!(ask(&socket, &adopt), b"closing\n");
+        assert!(silent(&rx), "a closing window takes nothing from stdusk");
     }
 
     #[test]

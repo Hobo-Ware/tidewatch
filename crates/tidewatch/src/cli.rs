@@ -1,7 +1,8 @@
 //! The command line: `tidewatch [--no-restore] [path]` and `tidewatch --toggle`. The path is the
 //! first argument that is not a flag; with none, the current folder. `--handoff <socket>` is how a
 //! window that is restarting launches its replacement: the replacement takes the window's terminals
-//! over that socket.
+//! over that socket. `--from-stdusk <socket>` is how stdusk launches Tidewatch to take its live
+//! panes as shell tabs.
 
 use std::ffi::OsString;
 use std::path::PathBuf;
@@ -9,6 +10,7 @@ use std::path::PathBuf;
 const NO_RESTORE: &str = "--no-restore";
 const TOGGLE: &str = "--toggle";
 const HANDOFF: &str = "--handoff";
+const FROM_STDUSK: &str = "--from-stdusk";
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(crate) struct Args {
@@ -20,6 +22,8 @@ pub(crate) struct Args {
     pub(crate) toggle: bool,
     /// The socket of the window this one replaces.
     pub(crate) handoff: Option<PathBuf>,
+    /// The socket of the stdusk window that hands its panes over.
+    pub(crate) from_stdusk: Option<PathBuf>,
 }
 
 /// Everything after the program name.
@@ -29,6 +33,8 @@ pub(crate) fn parse(args: impl IntoIterator<Item = OsString>) -> Args {
     while let Some(arg) = args.next() {
         if arg == HANDOFF {
             parsed.handoff = args.next().map(PathBuf::from);
+        } else if arg == FROM_STDUSK {
+            parsed.from_stdusk = args.next().map(PathBuf::from);
         } else if arg == NO_RESTORE {
             parsed.no_restore = true;
         } else if arg == TOGGLE {
@@ -87,5 +93,17 @@ mod tests {
         assert_eq!(with_path.handoff, Some(PathBuf::from("/s.sock")));
         assert!(with_path.no_restore);
         assert_eq!(args(&["--handoff"]).handoff, None);
+    }
+
+    #[test]
+    fn from_stdusk_takes_the_next_argument_as_the_socket_and_never_as_the_path() {
+        let got = args(&["--from-stdusk", "/tmp/stdusk-4.sock"]);
+        assert_eq!(got.from_stdusk, Some(PathBuf::from("/tmp/stdusk-4.sock")));
+        assert_eq!((got.path, got.handoff), (None, None));
+        let with_path = args(&["/work/web", "--from-stdusk", "/s.sock", "--no-restore"]);
+        assert_eq!(with_path.path, Some(PathBuf::from("/work/web")));
+        assert_eq!(with_path.from_stdusk, Some(PathBuf::from("/s.sock")));
+        assert!(with_path.no_restore);
+        assert_eq!(args(&["--from-stdusk"]).from_stdusk, None);
     }
 }
