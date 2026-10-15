@@ -727,12 +727,34 @@ mod tests {
     }
 
     #[test]
-    fn resuming_yolo_outside_the_rules_is_refused() {
+    fn resuming_yolo_outside_a_worktree_is_refused_like_a_fresh_launch() {
         let fx = Fixture::new();
         let table = AgentTable::builtin();
         let yolo = profile("claude", Level::Yolo);
-        let input = resume_input(&fx, &table, "claude", &yolo, None);
-        assert_eq!(prepare_resume(&input, SESSION), Err(PrepareError::Resume(ResumeError::Yolo)));
+        let input = PrepareInput {
+            worktree_tab: false,
+            ..resume_input(&fx, &table, "claude", &yolo, None)
+        };
+        assert_eq!(
+            prepare_resume(&input, SESSION),
+            Err(PrepareError::Launch(LaunchError::YoloOutsideWorktree))
+        );
+    }
+
+    #[test]
+    fn resuming_yolo_in_a_worktree_keeps_its_yolo_flags_guard_and_wiring() {
+        let fx = Fixture::new();
+        let table = AgentTable::builtin();
+        let yolo = profile("claude", Level::Yolo);
+        let input = resume_input(&fx, &table, "claude", &yolo, Some(listener()));
+        let fresh = prepare(&input).unwrap();
+        let resumed = prepare_resume(&input, SESSION).unwrap();
+        let yolo_args = table.get("claude").unwrap().level_args(Level::Yolo).unwrap();
+        assert_eq!(&resumed.launch.args[..2], ["--resume", SESSION]);
+        assert_eq!(resumed.launch.args[2..2 + yolo_args.len()], *yolo_args);
+        assert_eq!(resumed.env, fresh.env);
+        assert_eq!(resumed.launch.env, fresh.launch.env);
+        assert!(resumed.launch.args.iter().any(|a| a.starts_with("--mcp-config=")));
     }
 
     #[test]

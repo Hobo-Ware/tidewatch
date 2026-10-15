@@ -381,12 +381,31 @@ fn without_consent_a_resume_touches_no_cli_file() {
 fn an_agent_that_cannot_be_prepared_comes_back_as_a_shell_with_the_reason() {
     let f = fixture();
     let (listener, _inbox) = Listener::start(f.paths.clone(), Box::new(|| {})).unwrap();
-    let done = reopened(reopen_spec(&f, Level::Yolo, Some(Arc::new(listener))));
+    let folder = f.home.join("notes");
+    std::fs::create_dir_all(&folder).unwrap();
+    let mut spec = reopen_spec(&f, Level::Yolo, Some(Arc::new(listener)));
+    spec.worktree = None;
+    spec.dir = folder.clone();
+    spec.repo = folder;
+    let done = reopened(spec);
     let note = done.note.expect("a note");
-    assert!(note.starts_with("The agent was not resumed: "), "{note}");
-    let opened = done.result.ok().expect("the worktree still opens");
+    assert!(note.starts_with("The agent was not resumed: YOLO only runs in"), "{note}");
+    let opened = done.result.ok().expect("the folder still opens");
     assert!(opened.started.is_none());
-    assert_eq!(opened.worktree.as_ref(), Some(&f.worktree));
+    assert_eq!(opened.worktree, None);
+}
+
+#[test]
+fn a_yolo_agent_in_a_worktree_is_prepared_with_its_yolo_flags_and_typed() {
+    let f = fixture();
+    let mut spec = reopen_spec(&f, Level::Yolo, None);
+    spec.typed = Some(Why::Yolo);
+    let done = reopened(spec);
+    assert_eq!(done.typed, Some(Why::Yolo));
+    assert_eq!(done.note, None);
+    let started = done.result.ok().and_then(|o| o.started).expect("the agent was prepared");
+    assert_eq!(started.level, Level::Yolo);
+    assert!(started.prepared.launch.shell_line().contains("--dangerously-skip-permissions"));
 }
 
 #[test]
