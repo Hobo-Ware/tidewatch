@@ -49,12 +49,12 @@ fn the_open_button_is_in_the_middle_and_a_recent_row_opens_its_repo() {
     frame(&ctx, &repos(), vec![]);
     frame(&ctx, &repos(), vec![]);
     let total =
-        MARK_BOX + 26.0 + 90.0 + 26.0 + 48.0 + 26.0 + 22.0 + 2.0 * (ROW_H + 4.0) + 26.0 + 20.0;
+        MASCOT_H + 26.0 + 90.0 + 26.0 + 48.0 + 26.0 + 22.0 + 2.0 * (ROW_H + 4.0) + 26.0 + 20.0;
     let top = 350.0 - total / 2.0;
-    let button_y = top + MARK_BOX + 26.0 + 90.0 + 26.0 + 23.0;
+    let button_y = top + MASCOT_H + 26.0 + 90.0 + 26.0 + 23.0;
     let first = frame(&ctx, &repos(), click(pos2(500.0, button_y)));
     assert!(matches!(first, Some(Action::Open)), "the button was not where the layout says");
-    let row_y = top + MARK_BOX + 26.0 + 90.0 + 26.0 + 48.0 + 26.0 + 22.0 + ROW_H / 2.0;
+    let row_y = top + MASCOT_H + 26.0 + 90.0 + 26.0 + 48.0 + 26.0 + 22.0 + ROW_H / 2.0;
     let second = frame(&ctx, &repos(), click(pos2(500.0, row_y)));
     assert!(matches!(second, Some(Action::Recent(dir)) if dir == Path::new("/code/web")));
 }

@@ -2,62 +2,21 @@
 
 use std::path::{Path, PathBuf};
 
-use egui::{Align2, Color32, CornerRadius, Pos2, Rect, Shape, Stroke, StrokeKind, Ui, pos2, vec2};
+use egui::{Align2, Pos2, Rect, Ui, Vec2, pos2, vec2};
 use stdusk_egui::colors;
 
 use crate::brand;
+use crate::mascot::{self, Pose};
 use crate::screen_kit::{body, clickable, heading, mono};
 use crate::welcome::{Recent, shown_path};
 
 const COLUMN_W: f32 = 560.0;
-const MARK_BOX: f32 = 88.0;
+const MASCOT_H: f32 = 132.0;
 const ROW_H: f32 = 46.0;
-const ARTWORK_ZOOM: f32 = 1.45;
 
 pub(crate) enum Action {
     Open,
     Recent(PathBuf),
-}
-
-pub(crate) fn paint_mark(ui: &Ui, rect: Rect) {
-    let scale = rect.width() / 824.0;
-    let zoom = scale * ARTWORK_ZOOM;
-    let at = |x: f32, y: f32| rect.center() + vec2((x - 512.0) * zoom, (y - 530.0) * zoom);
-    let painter = ui.painter();
-    painter.rect(
-        rect,
-        CornerRadius::same((185.0 * scale) as u8),
-        brand::GROUND,
-        Stroke::new(1.0, brand::ICON_EDGE),
-        StrokeKind::Inside,
-    );
-    let width = 44.7 * zoom;
-    let teal = brand::TEAL;
-    let chevron = |dx: f32, color: Color32| {
-        let points = vec![at(282.1 + dx, 409.8), at(384.3 + dx, 486.5), at(282.1 + dx, 563.1)];
-        painter.add(Shape::line(points, Stroke::new(width, color)));
-    };
-    chevron(0.0, brand::TEXT);
-    chevron(102.2, teal.gamma_multiply(0.6));
-    chevron(204.4, teal.gamma_multiply(0.28));
-    let curve = |from: (f32, f32), c1: (f32, f32), c2: (f32, f32), to: (f32, f32)| -> Vec<Pos2> {
-        (0..=14)
-            .map(|i| {
-                let t = i as f32 / 14.0;
-                let u = 1.0 - t;
-                let mix = |a: f32, b: f32, c: f32, d: f32| {
-                    u * u * u * a + 3.0 * u * u * t * b + 3.0 * u * t * t * c + t * t * t * d
-                };
-                at(mix(from.0, c1.0, c2.0, to.0), mix(from.1, c1.1, c2.1, to.1))
-            })
-            .collect()
-    };
-    let mut wave = curve((448.1, 639.7), (499.2, 595.0), (550.3, 595.0), (601.4, 639.7));
-    wave.extend(
-        curve((601.4, 639.7), (652.5, 684.4), (690.8, 684.4), (741.9, 639.7)).into_iter().skip(1),
-    );
-    painter.add(Shape::line(wave, Stroke::new(width, teal)));
-    painter.circle_filled(at(690.8, 384.3), 44.7 * zoom, brand::ORANGE);
 }
 
 pub(crate) fn show(
@@ -71,12 +30,13 @@ pub(crate) fn show(
     let width = COLUMN_W.min(area.width() - 40.0);
     let rows = recent.len() as f32;
     let list_h = if recent.is_empty() { 0.0 } else { 26.0 + 22.0 + rows * (ROW_H + 4.0) };
-    let total = MARK_BOX + 26.0 + 90.0 + 26.0 + 48.0 + list_h + 26.0 + 20.0;
+    let total = MASCOT_H + 26.0 + 90.0 + 26.0 + 48.0 + list_h + 26.0 + 20.0;
     let cx = area.center().x;
     let mut y = (area.center().y - total / 2.0).max(area.top() + 16.0);
     let mut action = None;
-    paint_mark(ui, Rect::from_center_size(pos2(cx, y + MARK_BOX / 2.0), vec2(MARK_BOX, MARK_BOX)));
-    y += MARK_BOX + 26.0;
+    let mascot = Vec2::new(mascot::width_at(Pose::Peek, MASCOT_H), MASCOT_H);
+    mascot::show(ui, Rect::from_center_size(pos2(cx, y + MASCOT_H / 2.0), mascot), Pose::Peek);
+    y += MASCOT_H + 26.0;
     let painter = ui.painter().clone();
     let title = painter.text(
         pos2(cx, y),
