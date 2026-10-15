@@ -3,7 +3,7 @@
 //!
 //! [`handle_post`] takes the raw request body of an authenticated `/mcp` POST and returns the reply.
 //! It speaks `initialize`, `ping`, `tools/list` and `tools/call` and swallows notifications. The
-//! tools are `stage_done`, `report_finding`, `list_notes` and `reply_to_note`. Calls that matter to the
+//! tools are `stage_done`, `report_finding`, `list_notes`, `reply_to_note` and `propose_workflow`. Calls that matter to the
 //! app become [`TabEvent`]s through `emit`; the note tools read and write the tab's `notes.json`
 //! through `notes.rs`.
 //!
@@ -23,6 +23,7 @@ use serde_json::{Map, Value, json};
 use crate::events::TabEvent;
 use crate::launch::MCP_SERVER_NAME;
 use crate::notes::Notes;
+use crate::propose;
 
 /// The protocol revision Tidewatch answers with when the client asks for one it does not know.
 pub const PROTOCOL_VERSION: &str = "2025-06-18";
@@ -148,7 +149,7 @@ fn initialize_result(params: Option<&Value>) -> Value {
     })
 }
 
-/// The four tools with their JSON Schemas, as `tools/list` returns them.
+/// The five tools with their JSON Schemas, as `tools/list` returns them.
 #[must_use]
 pub fn tool_definitions() -> Value {
     json!([
@@ -203,6 +204,7 @@ pub fn tool_definitions() -> Value {
                 "additionalProperties": false,
             },
         },
+        propose::tool_definition(),
     ])
 }
 
@@ -224,6 +226,10 @@ fn call_tool(
         Some(Value::Object(args)) => args,
         Some(_) => return Err(RpcError::params("arguments must be an object")),
     };
+    if name == propose::TOOL_NAME {
+        let (text, is_error) = propose_workflow(args, ctx, emit);
+        return Ok(tool_result(&text, is_error));
+    }
     let text = match name {
         "stage_done" => stage_done(args, emit)?,
         "report_finding" => report_finding(args, emit)?,
@@ -231,7 +237,43 @@ fn call_tool(
         "reply_to_note" => reply_to_note(args, ctx, emit)?,
         other => return Err(RpcError::params(format!("unknown tool: {other}"))),
     };
-    Ok(json!({ "content": [{ "type": "text", "text": text }], "isError": false }))
+    Ok(tool_result(&text, false))
+}
+
+fn tool_result(text: &str, is_error: bool) -> Value {
+    json!({ "content": [{ "type": "text", "text": text }], "isError": is_error })
+}
+
+/// A workflow that fails the rules is a tool error with the problems listed, not a protocol error,
+/// so the agent reads what to fix and calls again.
+fn propose_workflow(
+    args: &Map<String, Value>,
+    ctx: &ToolCtx<'_>,
+    emit: &dyn Fn(TabEvent),
+) -> (String, bool) {
+    let checked = propose::parse_args(args).and_then(|mut workflow| {
+        propose::with_agent(&mut workflow, ctx.agent);
+        let found = propose::problems(&workflow);
+        if found.is_empty() { Ok(workflow) } else { Err(found) }
+    });
+    match checked {
+        Ok(workflow) => {
+            emit(TabEvent::Proposal { workflow });
+            (
+                "Opened in Tidewatch for review. The user decides whether to save it; there is nothing more to do."
+                    .to_owned(),
+                false,
+            )
+        }
+        Err(found) => (
+            format!(
+                "The workflow was not opened. Fix these and call {} again:\n- {}",
+                propose::TOOL_NAME,
+                found.join("\n- ")
+            ),
+            true,
+        ),
+    }
 }
 
 fn stage_done(args: &Map<String, Value>, emit: &dyn Fn(TabEvent)) -> Result<String, RpcError> {
@@ -434,12 +476,15 @@ mod tests {
     }
 
     #[test]
-    fn tools_list_has_four_tools_with_object_schemas_and_required_fields() {
+    fn tools_list_has_five_tools_with_object_schemas_and_required_fields() {
         let reply =
             Harness::new().json(&json!({"jsonrpc": "2.0", "id": 2, "method": "tools/list"}));
         let tools = reply["result"]["tools"].as_array().unwrap();
         let names: Vec<&str> = tools.iter().map(|t| t["name"].as_str().unwrap()).collect();
-        assert_eq!(names, ["stage_done", "report_finding", "list_notes", "reply_to_note"]);
+        assert_eq!(
+            names,
+            ["stage_done", "report_finding", "list_notes", "reply_to_note", "propose_workflow"]
+        );
         let required: Vec<Vec<&str>> = tools
             .iter()
             .map(|t| {
@@ -451,12 +496,79 @@ mod tests {
             .collect();
         assert_eq!(
             required,
-            [vec!["summary"], vec!["file", "line", "blocking", "text"], vec![], vec!["id", "text"]]
+            [
+                vec!["summary"],
+                vec!["file", "line", "blocking", "text"],
+                vec![],
+                vec!["id", "text"],
+                vec!["name", "stages"],
+            ]
         );
         for tool in tools {
             assert_eq!(tool["inputSchema"]["type"], "object", "{}", tool["name"]);
             assert!(tool["description"].as_str().unwrap().len() > 20, "{}", tool["name"]);
         }
+    }
+
+    fn proposal() -> Value {
+        json!({
+            "name": "Change with a check",
+            "description": "Do it, then prove it.",
+            "stages": [
+                { "action": "work", "prompt": "{task}" },
+                { "action": "review", "prompt": "Review {base}..HEAD.", "on_fail": 1 },
+            ],
+        })
+    }
+
+    #[test]
+    fn propose_workflow_opens_a_valid_workflow_for_review_on_the_callers_agent() {
+        let h = Harness::new();
+        let reply = h.call("propose_workflow", &proposal());
+        assert_eq!(reply["result"]["isError"], false);
+        let text = reply["result"]["content"][0]["text"].as_str().unwrap();
+        assert!(text.starts_with("Opened in Tidewatch for review."), "{text}");
+        let events = h.events.borrow();
+        let [TabEvent::Proposal { workflow }] = events.as_slice() else {
+            panic!("expected one proposal, got {events:?}");
+        };
+        assert_eq!(workflow.name, "Change with a check");
+        assert_eq!(workflow.stages[1].on_fail, Some(0));
+        assert!(workflow.stages.iter().all(|s| s.run.agent.as_deref() == Some("claude")));
+    }
+
+    #[test]
+    fn propose_workflow_answers_the_problems_as_a_tool_error_and_opens_nothing() {
+        let h = Harness::new();
+        let mut bad = proposal();
+        bad["stages"][1]["on_fail"] = json!(2);
+        bad["stages"][0]["permissions"] = json!("yolo");
+        bad["name"] = json!("");
+        let reply = h.call("propose_workflow", &bad);
+        assert!(reply.get("error").is_none(), "a rule failure is not a protocol error: {reply}");
+        assert_eq!(reply["result"]["isError"], true);
+        let text = reply["result"]["content"][0]["text"].as_str().unwrap();
+        assert!(
+            text.starts_with(
+                "The workflow was not opened. Fix these and call propose_workflow again:\n- "
+            ),
+            "{text}"
+        );
+        assert!(text.contains("name must be a non-empty string"), "{text}");
+        assert!(
+            text.contains("stage 1: permissions must be one of: plan, ask, edits, auto"),
+            "{text}"
+        );
+        assert_eq!(*h.events.borrow(), Vec::<TabEvent>::new());
+        let stage_two =
+            json!({ "name": "n", "stages": [{ "action": "work", "prompt": "p", "on_fail": 1 }] });
+        let reply = h.call("propose_workflow", &stage_two);
+        let text = reply["result"]["content"][0]["text"].as_str().unwrap();
+        assert!(
+            text.contains("stage 1 (Work): on_fail must name an earlier stage, not stage 1"),
+            "{text}"
+        );
+        assert_eq!(*h.events.borrow(), Vec::<TabEvent>::new());
     }
 
     #[test]

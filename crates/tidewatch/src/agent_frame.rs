@@ -6,6 +6,7 @@
 use std::path::PathBuf;
 
 use tidewatch_core::events::{TabEvent, TabMessage};
+use tidewatch_core::workflows::Workflow;
 
 use crate::agent_run::{Change, Finding, TermSnapshot};
 use crate::notify::Notifier;
@@ -43,6 +44,8 @@ pub(crate) enum Follow {
     },
     /// The listener wrote the tab's notes file: read it again.
     ReloadNotes { tab: u64 },
+    /// The agent proposed a workflow built from its session; it opens as a draft in Settings.
+    Proposal { tab: u64, workflow: Box<Workflow> },
 }
 
 /// Hands one listener message to its tab. A message for a closed tab is dropped.
@@ -65,6 +68,9 @@ pub(crate) fn route<T>(tabs: &mut Tabs<Pane<T>>, message: TabMessage, now: f64) 
             })
         }
         TabEvent::NoteReply { .. } => Some(Follow::ReloadNotes { tab: message.tab_id }),
+        TabEvent::Proposal { workflow } => {
+            Some(Follow::Proposal { tab: message.tab_id, workflow: Box::new(workflow.clone()) })
+        }
         TabEvent::Hook(_) | TabEvent::StageDone { .. } => None,
     };
     if let TabEvent::Hook(hook) = &message.event {

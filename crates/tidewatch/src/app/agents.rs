@@ -104,6 +104,7 @@ impl Tidewatch {
                     ctx.request_repaint();
                 }
             }
+            Follow::Proposal { .. } => {}
         }
     }
 

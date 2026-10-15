@@ -26,6 +26,7 @@ pub mod prefs;
 pub mod prepare;
 pub mod profiles;
 pub mod prompt;
+pub mod propose;
 mod registry;
 pub mod restore;
 pub mod resume_mode;

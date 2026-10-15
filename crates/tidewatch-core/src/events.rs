@@ -1,6 +1,7 @@
 //! What the listener tells the app: one [`TabMessage`] per hook payload or MCP tool call.
 
 use crate::status::HookEvent;
+use crate::workflows::Workflow;
 
 /// Asks the UI for a redraw from a background thread. The app passes `ctx.request_repaint`.
 pub type Repaint = Box<dyn Fn() + Send + Sync>;
@@ -15,6 +16,9 @@ pub enum TabEvent {
     Finding { file: String, line: u32, blocking: bool, text: String },
     /// The agent called `reply_to_note` and the reply is already saved in the tab's `notes.json`.
     NoteReply { note_id: u64, text: String },
+    /// The agent called `propose_workflow` with a workflow that passed the editor's rules. The app
+    /// opens it as an unsaved draft in Settings, Workflows.
+    Proposal { workflow: Workflow },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
