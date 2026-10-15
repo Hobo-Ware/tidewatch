@@ -21,6 +21,8 @@ pub(crate) const WINDOW_SIZE: [f32; 2] = [1280.0, 800.0];
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum Event {
     Opened(PathBuf),
+    /// stdusk is handing its live panes over on this socket.
+    AdoptStdusk(PathBuf),
     Toggled,
     Overview,
     Settings,
@@ -147,6 +149,10 @@ impl<O: Os> Shell<O> {
             match command {
                 Command::Open(path) => {
                     events.push(Event::Opened(path));
+                    self.surface(ctx);
+                }
+                Command::AdoptStdusk(socket) => {
+                    events.push(Event::AdoptStdusk(socket));
                     self.surface(ctx);
                 }
                 Command::Toggle => {
@@ -349,6 +355,7 @@ pub(crate) fn start(ctx: &Context, setup: Setup) -> Shell<RealOs> {
 pub(crate) fn describe(event: &Event) -> String {
     match event {
         Event::Opened(path) => format!("open {}", path.display()),
+        Event::AdoptStdusk(socket) => format!("adopt-stdusk {}", socket.display()),
         Event::Toggled => "toggle".to_owned(),
         Event::Overview => "overview".to_owned(),
         Event::Settings => "settings".to_owned(),

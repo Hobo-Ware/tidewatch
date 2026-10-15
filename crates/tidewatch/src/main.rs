@@ -35,6 +35,7 @@ mod flow;
 mod flow_glue;
 mod flow_jobs;
 mod fonts;
+mod from_stdusk;
 mod general_view;
 mod handoff;
 mod history_pane;
@@ -135,6 +136,7 @@ use repo::{Repo, Workspace};
 use shell::{Setup, WINDOW_SIZE};
 use shell_plan::{Env, Launch, Plan};
 use single_instance::{Run, Start};
+use tidewatch_core::instance::Command;
 use tidewatch_core::last_workspace;
 use tidewatch_core::path_env;
 use tidewatch_core::paths::TidewatchPaths;
@@ -201,10 +203,12 @@ fn main() -> eframe::Result<()> {
     };
     let mode = single_instance::mode(run, socket.is_some());
     let replacing = incoming.is_some() && mode != single_instance::Mode::Off;
+    let hand_over =
+        args.from_stdusk.clone().map_or_else(|| Command::Open(key.clone()), Command::AdoptStdusk);
     let primary = match socket
         .as_deref()
         .filter(|_| !replacing)
-        .map(|socket| single_instance::begin(mode, socket, &key))
+        .map(|socket| single_instance::begin(mode, socket, &hand_over))
     {
         Some(Start::Exit) => return Ok(()),
         Some(Start::Run(primary)) => primary,
@@ -251,6 +255,7 @@ fn main() -> eframe::Result<()> {
                 welcome,
                 setup,
                 incoming,
+                args.from_stdusk,
             )))
         }),
     )

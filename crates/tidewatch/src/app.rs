@@ -15,6 +15,7 @@ mod panes;
 mod repos;
 mod restart;
 mod settings;
+mod stdusk;
 mod strip;
 mod tabs;
 mod terminal;
@@ -22,7 +23,7 @@ mod workspaces;
 
 use std::collections::HashMap;
 use std::ffi::OsString;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use kelp_ui::avatars::AvatarStore;
 use stdusk_core::terminal::PtyTerm;
@@ -107,6 +108,7 @@ pub(crate) struct Tidewatch {
     views: HashMap<u64, TabView>,
     pane_jobs: Jobs<pane_jobs::Done>,
     workspace_jobs: Jobs<Workspace>,
+    stdusk_jobs: Jobs<stdusk::Done>,
     picker: Picker,
     repo_close: Option<RepoClose>,
     notes_writer: NotesWriter,
@@ -155,6 +157,7 @@ impl Tidewatch {
         welcome: bool,
         mut shell: shell::Setup,
         incoming: Option<handoff::Incoming>,
+        from_stdusk: Option<PathBuf>,
     ) -> Self {
         colors::init(brand::theme());
         colors::set_chrome(brand::chrome());
@@ -216,6 +219,7 @@ impl Tidewatch {
             views: HashMap::new(),
             pane_jobs: Jobs::new(),
             workspace_jobs: Jobs::new(),
+            stdusk_jobs: Jobs::new(),
             picker: Picker::new(),
             repo_close: None,
             notes_writer: NotesWriter::new(),
@@ -270,6 +274,9 @@ impl Tidewatch {
         }
         if app.dev.is_some() {
             app.open_tab(&cc.egui_ctx, Request::Shell);
+        }
+        if let Some(socket) = from_stdusk {
+            app.adopt_from_stdusk(socket, &cc.egui_ctx);
         }
         app
     }

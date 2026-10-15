@@ -72,6 +72,13 @@ impl Tidewatch {
             self.dispatch(Action::ShowGroup(group), ctx);
             return;
         }
+        let group = self.add_workspace(workspace, ctx);
+        self.dispatch(Action::ShowGroup(group), ctx);
+    }
+
+    /// Adds a repo as a group of the window, replacing the welcome screen when that is what shows,
+    /// and returns its position. What is in front stays.
+    pub(super) fn add_workspace(&mut self, workspace: Workspace, ctx: &egui::Context) -> usize {
         let mut group = self.tabs.add_group(Pane::shell(spawn_shell(ctx, workspace.dir())));
         if self.welcome.take().is_some() {
             for id in self.tabs.remove_group(0) {
@@ -86,7 +93,7 @@ impl Tidewatch {
         if let Some(paths) = &self.paths {
             self.restore.begin(ctx, paths, &self.catalog);
         }
-        self.dispatch(Action::ShowGroup(group), ctx);
+        group
     }
 }
 
