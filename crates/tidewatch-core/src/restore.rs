@@ -5,10 +5,10 @@
 //! that answers what exists now. [`RealDisk`] is the real answer; tests use a fake. The rules:
 //!
 //! - A tab whose repo, folder or worktree is gone is skipped: nothing is left to open it in.
-//! - A YOLO tab is never resumed: it reopens as a plain shell with a note, so the user restarts it.
 //! - `resume_agents` and how the agent last ended pick between running the resume command, typing
-//!   it for the user to run, and a plain shell (`resume_mode::decide`). Workflow tabs go through
-//!   the runner instead and are not affected.
+//!   it for the user to run, and a plain shell (`resume_mode::decide`). A YOLO tab is always typed,
+//!   never run on its own. Workflow tabs go through the runner instead; a YOLO workflow run is
+//!   not resumed and reopens as a plain shell with a note.
 //! - An agent tab resumes only when its agent is installed, its profile still runs that agent, it
 //!   has a session id, the CLI's session file exists, and no earlier tab claimed the same session.
 //!   Anything else reopens as a plain shell in the worktree, with the reason as a note.
@@ -63,7 +63,7 @@ impl Reason {
             Self::FolderMissing => "folder missing".into(),
             Self::WorktreeGone => "worktree folder gone".into(),
             Self::WorktreeBroken => "worktree no longer belongs to its repository".into(),
-            Self::Yolo => "YOLO tabs are never resumed automatically".into(),
+            Self::Yolo => "YOLO workflow runs are never resumed automatically".into(),
             Self::ResumeOff => "resuming agents is turned off in Settings".into(),
             Self::AgentUnknown(id) => format!("agent `{id}` is not configured"),
             Self::AgentMissing(id) => format!("`{id}` is not installed"),
@@ -369,10 +369,10 @@ fn agent_resume(
     disk: &dyn Disk,
     claims: &mut Claims,
 ) -> Result<TabAction, Reason> {
-    if tab.level == Level::Yolo {
-        return Err(Reason::Yolo);
-    }
     if let Some(stages) = &tab.stages {
+        if tab.level == Level::Yolo {
+            return Err(Reason::Yolo);
+        }
         return if disk.workflow_runnable(stages) {
             Ok(TabAction::ResumeWorkflow { stages: stages.clone() })
         } else {
@@ -471,8 +471,6 @@ pub enum ResumeError {
     NotResumable {
         agent: String,
     },
-    /// YOLO is never resumed: the user starts it again.
-    Yolo,
 }
 
 impl fmt::Display for ResumeError {
@@ -480,7 +478,6 @@ impl fmt::Display for ResumeError {
         match self {
             Self::Launch(e) => e.fmt(f),
             Self::NotResumable { agent } => write!(f, "{agent} cannot resume a session"),
-            Self::Yolo => f.write_str("YOLO sessions are never resumed automatically"),
         }
     }
 }
@@ -498,16 +495,14 @@ impl From<LaunchError> for ResumeError {
 /// arguments in front. `ctx.session_id` is dropped (a CLI given both a new id and a session to
 /// resume would start another session). Run it in `ctx.worktree`, the folder the session began in:
 /// Claude keeps its session files per folder. Gemini resumes the latest session of the folder,
-/// whatever `session_id` is.
+/// whatever `session_id` is. A YOLO profile resumes with its YOLO flags, and is refused outside an
+/// agent worktree tab like a fresh launch.
 pub fn resume_command(
     agent: &Agent,
     profile: &Profile,
     session_id: &str,
     ctx: &LaunchCtx,
 ) -> Result<Launch, ResumeError> {
-    if profile.level == Level::Yolo {
-        return Err(ResumeError::Yolo);
-    }
     let resume = agent
         .resume_args(session_id)
         .ok_or_else(|| ResumeError::NotResumable { agent: agent.id.clone() })?;
@@ -584,6 +579,11 @@ mod tests {
     impl FakeDisk {
         fn with_dirs(dirs: &[&str]) -> Self {
             Self { dirs: dirs.iter().map(|d| (*d).to_owned()).collect(), ..Self::default() }
+        }
+
+        fn with_dirs_added(mut self, dirs: &[&str]) -> Self {
+            self.dirs.extend(dirs.iter().map(|d| (*d).to_owned()));
+            self
         }
 
         fn transcript(mut self, agent: &str, id: &str) -> Self {
@@ -795,11 +795,61 @@ mod tests {
     }
 
     #[test]
-    fn a_yolo_tab_is_never_resumed_even_with_everything_in_place() {
+    fn a_yolo_tab_is_typed_at_the_level_it_ran_at_and_never_run_on_its_own() {
         let tabs = vec![agent_tab("a-claude", "claude", "builder", Level::Yolo, Some(ID_C))];
         let plan = plan_with(&window(tabs), &everything_installed(), &disk_for_all());
-        assert_eq!(plan.tabs[0].action, TabAction::ShellInstead(Reason::Yolo));
-        assert!(plan.tabs[0].note().unwrap().contains("Start it again yourself"));
+        let TabAction::ResumeAgent { profile, how, .. } = &plan.tabs[0].action else {
+            panic!("{:?}", plan.tabs[0].action)
+        };
+        assert_eq!(profile.level, Level::Yolo);
+        assert_eq!(*how, Resume::TypeOnly(Why::Yolo));
+        assert_eq!(plan.tabs[0].note().as_deref(), Some(Why::Yolo.note()));
+    }
+
+    #[test]
+    fn a_yolo_tab_keeps_every_other_check_of_a_resume() {
+        let yolo =
+            |profile: &str| agent_tab("a-claude", "claude", profile, Level::Yolo, Some(ID_C));
+        let cases = [
+            (yolo("builder"), everything_installed(), disk_for_all(), None),
+            (
+                yolo("builder"),
+                vec!["gemini".to_owned()],
+                disk_for_all(),
+                Some(Reason::AgentMissing("claude".into())),
+            ),
+            (
+                yolo("gem"),
+                everything_installed(),
+                disk_for_all(),
+                Some(Reason::ProfileChanged { profile: "gem".into(), agent: "claude".into() }),
+            ),
+            (
+                yolo("builder"),
+                everything_installed(),
+                FakeDisk::with_dirs(&[REPO, &wt("a-claude")]),
+                Some(Reason::TranscriptMissing),
+            ),
+        ];
+        for (tab, installed, disk, want) in cases {
+            let plan = plan_with(&window(vec![tab]), &installed, &disk);
+            match want {
+                Some(reason) => assert_eq!(plan.tabs[0].action, TabAction::ShellInstead(reason)),
+                None => assert!(matches!(plan.tabs[0].action, TabAction::ResumeAgent { .. })),
+            }
+        }
+    }
+
+    #[test]
+    fn two_yolo_tabs_of_one_session_resume_once() {
+        let tabs = vec![
+            agent_tab("a-claude", "claude", "builder", Level::Yolo, Some(ID_C)),
+            agent_tab("b-claude", "claude", "builder", Level::Yolo, Some(ID_C)),
+        ];
+        let disk = disk_for_all().with_dirs_added(&[&wt("b-claude")]);
+        let plan = plan_with(&window(tabs), &everything_installed(), &disk);
+        assert!(matches!(plan.tabs[0].action, TabAction::ResumeAgent { .. }));
+        assert_eq!(plan.tabs[1].action, TabAction::ShellInstead(Reason::Duplicate));
     }
 
     #[test]
@@ -807,12 +857,11 @@ mod tests {
         for level in [Level::Yolo, Level::Auto] {
             let tabs = vec![agent_tab("a-claude", "claude", "builder-yolo", level, Some(ID_C))];
             let plan = plan_with(&window(tabs), &everything_installed(), &disk_for_all());
-            let reason = if level == Level::Yolo {
-                Reason::Yolo
-            } else {
-                Reason::ProfileGone("builder-yolo".into())
-            };
-            assert_eq!(plan.tabs[0].action, TabAction::ShellInstead(reason), "{level:?}");
+            assert_eq!(
+                plan.tabs[0].action,
+                TabAction::ShellInstead(Reason::ProfileGone("builder-yolo".into())),
+                "{level:?}"
+            );
             assert!(plan.tabs[0].note().is_some());
         }
     }
@@ -1034,18 +1083,25 @@ mod tests {
     }
 
     #[test]
-    fn yolo_stays_a_shell_in_every_mode_after_a_crash_too() {
+    fn yolo_is_typed_in_every_mode_but_off_after_a_crash_too() {
         let window =
             window(vec![agent_tab("a-claude", "claude", "builder", Level::Yolo, Some(ID_C))]);
         for mode in [ResumeAgents::Auto, ResumeAgents::Prefill, ResumeAgents::Off] {
             for crashed in [false, true] {
                 let plan =
                     plan_as(&window, &everything_installed(), &disk_for_all(), mode, crashed);
+                let want = match mode {
+                    ResumeAgents::Off => Err(Reason::ResumeOff),
+                    _ => Ok(Resume::TypeOnly(Why::Yolo)),
+                };
                 assert_eq!(
-                    actions(&plan),
-                    vec![TabAction::ShellInstead(Reason::Yolo)],
+                    how_each_agent_tab_comes_back(&plan),
+                    vec![want.clone().ok()],
                     "{mode:?} {crashed}"
                 );
+                if let Err(reason) = want {
+                    assert_eq!(actions(&plan), vec![TabAction::ShellInstead(reason)]);
+                }
             }
         }
     }
@@ -1186,6 +1242,36 @@ mod tests {
     }
 
     #[test]
+    fn every_agent_resumes_a_yolo_tab_with_the_yolo_args_of_a_fresh_launch_and_its_resume_form() {
+        let table = AgentTable::builtin();
+        let cases: [(&str, &[&str]); 4] = [
+            ("claude", &["--resume", ID_C]),
+            ("gemini", &["--resume", "latest"]),
+            ("copilot", &[&format!("--resume={ID_C}")]),
+            ("codex", &["resume", ID_C]),
+        ];
+        for (id, front) in cases {
+            let agent = table.get(id).unwrap();
+            let yolo = profile(id, Level::Yolo);
+            let ctx = launch_ctx();
+            let fresh = launch_command(agent, &yolo, &ctx).unwrap();
+            let resumed = resume_command(agent, &yolo, ID_C, &ctx).unwrap();
+            let level_args = agent.level_args(Level::Yolo).unwrap();
+            assert!(!level_args.is_empty(), "{id}");
+            let fresh_args = match &agent.session_id_flag {
+                Some(flag) => without_session_id(&fresh.args, flag),
+                None => fresh.args.clone(),
+            };
+            let want: Vec<String> =
+                front.iter().map(|s| (*s).to_owned()).chain(fresh_args).collect();
+            assert_eq!(resumed.args, want, "{id}");
+            assert_eq!(resumed.args[front.len()..front.len() + level_args.len()], *level_args);
+            assert_eq!(resumed.program, fresh.program, "{id}");
+            assert_eq!(resumed.env, fresh.env, "{id}");
+        }
+    }
+
+    #[test]
     fn resume_keeps_the_never_push_guard_hooks_and_mcp_wiring_of_a_fresh_launch() {
         let table = AgentTable::builtin();
         let profile = profile("claude", Level::Edits);
@@ -1201,12 +1287,14 @@ mod tests {
     }
 
     #[test]
-    fn resume_refuses_yolo_and_agents_without_a_resume_form() {
+    fn resume_refuses_yolo_outside_a_worktree_and_agents_without_a_resume_form() {
         let table = table();
         let claude = table.get("claude").unwrap();
+        let yolo = profile("claude", Level::Yolo);
+        let outside_yolo = LaunchCtx { worktree_tab: false, ..launch_ctx() };
         assert_eq!(
-            resume_command(claude, &profile("claude", Level::Yolo), ID_C, &launch_ctx()),
-            Err(ResumeError::Yolo)
+            resume_command(claude, &yolo, ID_C, &outside_yolo),
+            Err(ResumeError::Launch(LaunchError::YoloOutsideWorktree))
         );
         let custom = table.get("mine").unwrap();
         assert_eq!(

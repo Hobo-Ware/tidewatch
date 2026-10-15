@@ -260,20 +260,20 @@ fn agent_tabs_keep_their_saved_order_whichever_job_finishes_first() {
 #[test]
 fn a_tab_whose_agent_cannot_resume_is_a_shell_with_the_reason_and_a_gone_worktree_is_left_out() {
     let mut f = Fixture::new(false);
-    let yolo = f.worktree_with_transcript(SESSION_A);
+    let lost = worktree::add(&f.paths, &f.repo).unwrap();
     let gone = worktree::add(&f.paths, &f.repo).unwrap();
     worktree::remove(&f.paths, &gone, worktree::BranchChoice::Delete, worktree::RemoveMode::Safe)
         .unwrap();
-    f.save(1, false, vec![SavedTab::Main, agent(&yolo, SESSION_A, Level::Yolo), shell(&gone)]);
+    f.save(1, false, vec![SavedTab::Main, agent(&lost, SESSION_A, Level::Edits), shell(&gone)]);
     f.begin();
     f.until_settled();
     assert_eq!(f.tabs.items().len(), 2, "the gone worktree has no tab");
-    assert!(f.shells()[1].contains("ran at YOLO"), "{}", f.shells()[1]);
+    assert!(f.shells()[1].contains("its session file is gone"), "{}", f.shells()[1]);
     assert!(f.shells()[1].starts_with("shell@"), "a plain shell, no agent: {}", f.shells()[1]);
     assert!(f.tabs.items()[1].pane.agent.is_none());
     let notice = f.report.notice.clone().expect("the plan says what did not come back as it was");
     assert!(notice.contains(gone.name()) && notice.contains("worktree folder gone"), "{notice}");
-    assert!(notice.contains(yolo.name()), "{notice}");
+    assert!(notice.contains(lost.name()), "{notice}");
 }
 
 #[test]
@@ -616,14 +616,27 @@ fn off_reopens_a_plain_shell_with_the_reason_and_says_nothing_else() {
 }
 
 #[test]
-fn yolo_is_a_plain_shell_in_every_mode_even_after_a_crash() {
-    for mode in [ResumeAgents::Auto, ResumeAgents::Prefill, ResumeAgents::Off] {
+fn yolo_is_typed_with_its_yolo_flags_in_every_mode_but_off_even_after_a_crash() {
+    for mode in [ResumeAgents::Auto, ResumeAgents::Prefill] {
         for (app, agent) in [(false, false), (true, false), (false, true)] {
-            let (got, _) = reopen_one(mode, Level::Yolo, app, agent);
+            let (got, brave) = reopen_one(mode, Level::Yolo, app, agent);
             let label = format!("{mode:?} app {app} agent {agent}");
-            assert!(got.pane.starts_with("shell@"), "{label}: {}", got.pane);
-            assert!(got.pane.contains("ran at YOLO"), "{label}: {}", got.pane);
-            assert!(!got.started, "{label}");
+            assert!(got.pane.starts_with("typed@"), "{label}: {}", got.pane);
+            assert!(got.pane.contains(&format!("claude --resume {SESSION_A}")), "{label}");
+            assert!(got.pane.contains("--dangerously-skip-permissions"), "{label}: {}", got.pane);
+            assert!(got.pane.contains(&brave.path.display().to_string()), "{label}");
+            assert_eq!(got.note, Some(Why::Yolo.note()), "{label}");
+            assert!(got.started, "{label}");
         }
+    }
+}
+
+#[test]
+fn yolo_with_resuming_off_is_a_plain_shell_like_every_agent() {
+    for (app, agent) in [(false, false), (true, false), (false, true)] {
+        let (got, _) = reopen_one(ResumeAgents::Off, Level::Yolo, app, agent);
+        assert!(got.pane.starts_with("shell@"), "{}", got.pane);
+        assert!(got.pane.contains("resuming agents is turned off in Settings"), "{}", got.pane);
+        assert!(!got.started);
     }
 }

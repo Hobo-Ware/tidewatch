@@ -27,6 +27,7 @@ pub enum Why {
     Chosen,
     AppCrashed,
     AgentCrashed,
+    Yolo,
 }
 
 impl Why {
@@ -42,6 +43,9 @@ impl Why {
             Self::AgentCrashed => {
                 "The agent stopped unexpectedly last time, so it was not restarted. Press Enter to resume it."
             }
+            Self::Yolo => {
+                "YOLO tabs wait for you. Press Enter to resume with the same permissions."
+            }
         }
     }
 }
@@ -52,14 +56,12 @@ pub enum Resume {
     TypeOnly(Why),
 }
 
-/// How to bring an agent tab back, or the reason it comes back as a plain shell. YOLO is never
-/// resumed, in any mode.
+/// How to bring an agent tab back, or the reason it comes back as a plain shell. A YOLO tab is
+/// never run on its own, in any mode and however it ended: its command is typed and waits for Enter.
 pub fn decide(mode: ResumeAgents, ended: Ended, level: Level) -> Result<Resume, Reason> {
-    if level == Level::Yolo {
-        return Err(Reason::Yolo);
-    }
     match (mode, ended) {
         (ResumeAgents::Off, _) => Err(Reason::ResumeOff),
+        _ if level == Level::Yolo => Ok(Resume::TypeOnly(Why::Yolo)),
         (_, Ended::AppCrashed) => Ok(Resume::TypeOnly(Why::AppCrashed)),
         (_, Ended::AgentCrashed) => Ok(Resume::TypeOnly(Why::AgentCrashed)),
         (ResumeAgents::Prefill, Ended::Clean) => Ok(Resume::TypeOnly(Why::Chosen)),
@@ -103,14 +105,34 @@ mod tests {
     }
 
     #[test]
-    fn yolo_is_never_resumed_whatever_the_mode_or_how_it_ended() {
+    fn yolo_is_typed_and_waits_for_enter_unless_resuming_is_off() {
+        use ResumeAgents::{Auto, Off, Prefill};
+        let typed = Ok(Resume::TypeOnly(Why::Yolo));
+        let off = Err(Reason::ResumeOff);
+        let cases = [
+            (Auto, Ended::Clean, typed.clone()),
+            (Auto, Ended::AppCrashed, typed.clone()),
+            (Auto, Ended::AgentCrashed, typed.clone()),
+            (Prefill, Ended::Clean, typed.clone()),
+            (Prefill, Ended::AppCrashed, typed.clone()),
+            (Prefill, Ended::AgentCrashed, typed),
+            (Off, Ended::Clean, off.clone()),
+            (Off, Ended::AppCrashed, off.clone()),
+            (Off, Ended::AgentCrashed, off),
+        ];
+        for (mode, ended, want) in cases {
+            assert_eq!(decide(mode, ended, Level::Yolo), want, "{mode:?} {ended:?}");
+        }
+    }
+
+    #[test]
+    fn every_level_but_yolo_decides_alike() {
         for mode in MODES {
             for ended in ENDS {
-                assert_eq!(
-                    decide(mode, ended, Level::Yolo),
-                    Err(Reason::Yolo),
-                    "{mode:?} {ended:?}"
-                );
+                let edits = decide(mode, ended, Level::Edits);
+                for level in LEVELS.into_iter().filter(|level| *level != Level::Yolo) {
+                    assert_eq!(decide(mode, ended, level), edits, "{mode:?} {ended:?} {level:?}");
+                }
             }
         }
     }
@@ -118,7 +140,7 @@ mod tests {
     #[test]
     fn a_crash_is_never_run_at_any_level() {
         for mode in [ResumeAgents::Auto, ResumeAgents::Prefill] {
-            for level in LEVELS.into_iter().filter(|level| *level != Level::Yolo) {
+            for level in LEVELS {
                 for ended in [Ended::AppCrashed, Ended::AgentCrashed] {
                     assert_ne!(decide(mode, ended, level), Ok(Resume::Run), "{mode:?} {level:?}");
                 }
@@ -141,10 +163,10 @@ mod tests {
 
     #[test]
     fn each_reason_has_its_own_note_that_ends_on_what_to_press() {
-        let notes = [Why::Chosen, Why::AppCrashed, Why::AgentCrashed].map(Why::note);
-        assert_ne!(notes[0], notes[1]);
-        assert_ne!(notes[1], notes[2]);
-        assert_ne!(notes[0], notes[2]);
+        let notes = [Why::Chosen, Why::AppCrashed, Why::AgentCrashed, Why::Yolo].map(Why::note);
+        for (i, note) in notes.iter().enumerate() {
+            assert!(!notes[..i].contains(note), "{note}");
+        }
         for note in notes {
             assert!(note.contains("Press Enter"), "{note}");
             assert!(!note.contains(['\u{2013}', '\u{2014}']), "{note}");
