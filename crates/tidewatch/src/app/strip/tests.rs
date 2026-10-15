@@ -1,0 +1,178 @@
+use egui::{Event, PointerButton, RawInput, Rect, pos2, vec2};
+
+use super::*;
+
+const SHELLS: u32 = 3;
+
+fn tabs() -> Tabs<Pane<u32>> {
+    let mut tabs = Tabs::new(Pane::shell(0));
+    for n in 1..=SHELLS {
+        tabs.apply(Action::New, || Pane::shell(n));
+    }
+    tabs
+}
+
+fn order(tabs: &Tabs<Pane<u32>>) -> Vec<u32> {
+    tabs.items()
+        .iter()
+        .map(|tab| match tab.pane.body {
+            Body::Shell(n) => n,
+            _ => unreachable!("only shells here"),
+        })
+        .collect()
+}
+
+struct Strip {
+    ctx: egui::Context,
+    tabs: Tabs<Pane<u32>>,
+    time: f64,
+    rects: Vec<Rect>,
+    seen: Vec<Action>,
+}
+
+impl Strip {
+    fn new() -> Self {
+        let mut strip = Self {
+            ctx: egui::Context::default(),
+            tabs: tabs(),
+            time: 0.0,
+            rects: Vec::new(),
+            seen: Vec::new(),
+        };
+        strip.frame(Vec::new());
+        strip
+    }
+
+    fn frame(&mut self, events: Vec<Event>) {
+        self.time += 0.05;
+        let raw = RawInput {
+            screen_rect: Some(Rect::from_min_size(pos2(0.0, 0.0), vec2(800.0, 200.0))),
+            events,
+            time: Some(self.time),
+            focused: true,
+            ..Default::default()
+        };
+        let mut actions = Vec::new();
+        let mut rects = Vec::new();
+        let _ = self.ctx.run_ui(raw, |ui| {
+            egui::Panel::top("tabbar").exact_size(TAB_H + 6.0).show(ui, |ui| {
+                ui.horizontal(|ui| {
+                    rects = tab_row(ui, &self.tabs, 120.0, 0.0, &mut actions, |_| {
+                        (Progress::default(), CmdState::default())
+                    });
+                });
+            });
+        });
+        self.rects = rects;
+        for action in actions {
+            self.tabs.apply(action, || unreachable!());
+            self.seen.push(action);
+        }
+    }
+
+    fn center(&self, position: usize) -> egui::Pos2 {
+        self.rects[position].center()
+    }
+
+    fn pointer(&mut self, to: egui::Pos2) {
+        self.frame(vec![Event::PointerMoved(to)]);
+    }
+
+    fn button(&mut self, at: egui::Pos2, pressed: bool) {
+        self.frame(vec![Event::PointerButton {
+            pos: at,
+            button: PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::default(),
+        }]);
+    }
+
+    fn drag(&mut self, from: egui::Pos2, to: egui::Pos2) {
+        self.pointer(from);
+        self.button(from, true);
+        for step in 1..=8 {
+            self.pointer(from + (to - from) * (step as f32 / 8.0));
+        }
+        self.button(to, false);
+        self.frame(Vec::new());
+    }
+
+    fn moves(&self) -> Vec<Action> {
+        self.seen.iter().copied().filter(|a| matches!(a, Action::Move(..))).collect()
+    }
+}
+
+#[test]
+fn dragging_a_tab_past_its_neighbours_middle_moves_it_once_and_it_keeps_the_selection() {
+    let mut strip = Strip::new();
+    assert_eq!(order(&strip.tabs), [0, 1, 2, 3]);
+    let (from, past) = (strip.center(2), strip.center(3) + vec2(10.0, 0.0));
+    strip.drag(from, past);
+    assert_eq!(strip.moves(), [Action::Move(2, Step::Right)]);
+    assert_eq!(order(&strip.tabs), [0, 1, 3, 2]);
+    assert_eq!(strip.tabs.active(), 2, "the index follows the tab it swapped with");
+    assert_eq!(
+        order(&strip.tabs)[strip.tabs.active()],
+        3,
+        "the selected tab is still the one that was"
+    );
+}
+
+#[test]
+fn a_long_drag_walks_the_tab_across_every_tab_it_passes() {
+    let mut strip = Strip::new();
+    let (from, far) = (strip.center(3), strip.center(1) - vec2(10.0, 0.0));
+    strip.drag(from, far);
+    assert_eq!(order(&strip.tabs), [0, 3, 1, 2]);
+    assert_eq!(strip.moves().len(), 2);
+}
+
+#[test]
+fn a_plain_or_sloppy_click_selects_and_never_reorders() {
+    let mut strip = Strip::new();
+    let at = strip.center(1);
+    strip.pointer(at);
+    strip.button(at, true);
+    strip.button(at, false);
+    strip.frame(Vec::new());
+    assert_eq!(strip.seen, [Action::Select(1)]);
+    assert_eq!(order(&strip.tabs), [0, 1, 2, 3]);
+
+    let mut sloppy = Strip::new();
+    let at = sloppy.center(2);
+    sloppy.pointer(at);
+    sloppy.button(at, true);
+    sloppy.pointer(at + vec2(3.0, 1.0));
+    sloppy.pointer(at + vec2(-3.0, 0.0));
+    sloppy.button(at, false);
+    sloppy.frame(Vec::new());
+    assert_eq!(sloppy.moves(), Vec::<Action>::new());
+    assert_eq!(order(&sloppy.tabs), [0, 1, 2, 3]);
+}
+
+#[test]
+fn nothing_moves_the_pinned_tab_or_goes_past_it() {
+    let mut strip = Strip::new();
+    let (from, over_main) = (strip.center(1), strip.center(0) - vec2(10.0, 0.0));
+    strip.drag(from, over_main);
+    assert_eq!(strip.moves(), Vec::<Action>::new());
+    assert_eq!(order(&strip.tabs), [0, 1, 2, 3]);
+
+    let mut strip = Strip::new();
+    let (main, over) = (strip.center(0), strip.center(2));
+    strip.drag(main, over);
+    assert_eq!(strip.moves(), Vec::<Action>::new());
+    assert_eq!(order(&strip.tabs), [0, 1, 2, 3]);
+}
+
+#[test]
+fn only_the_tabs_of_the_group_on_show_are_drawn_and_moved() {
+    let mut strip = Strip::new();
+    strip.tabs.add_group(Pane::shell(10));
+    strip.tabs.push_in(1, "api".into(), Pane::shell(11));
+    strip.frame(Vec::new());
+    assert_eq!(strip.rects.len(), 4);
+    let (from, past) = (strip.center(1), strip.center(2) + vec2(10.0, 0.0));
+    strip.drag(from, past);
+    assert_eq!(order(&strip.tabs), [0, 2, 1, 3, 10, 11]);
+}
