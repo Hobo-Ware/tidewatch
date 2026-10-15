@@ -31,6 +31,9 @@ const ADD_W: f32 = 36.0;
 const DEL_W: f32 = 28.0;
 const COUNT_GAP: f32 = 10.0;
 const FILL_ALPHA: u8 = 0x1a;
+const SHOWN_ALPHA: u8 = 0x1f;
+const SHOWN_BAR_W: f32 = 2.0;
+const SHOWN_BAR_INSET: f32 = 6.0;
 const BORDER_STRENGTH: f32 = 0.35;
 const SHORT_ID: usize = 7;
 const MAX_LANES: u16 = 14;
@@ -176,8 +179,9 @@ pub(crate) fn show(ui: &mut Ui, view: &mut TabView, spot: Spot) {
             for index in rows {
                 let change = &view.files[index];
                 let current = view.file.as_deref() == Some(change.path.as_str());
+                let mark = Mark::of(current, view.file_open());
                 let counts = view.counts.get(index).copied().flatten();
-                if file_row(ui, change, counts, current) {
+                if file_row(ui, change, counts, mark) {
                     picked = Some(change.path.clone());
                 }
             }
@@ -207,11 +211,37 @@ fn row_corner(corner: Pos2, left_side: bool, fill: Color32) -> Mesh {
     mesh
 }
 
-fn file_row(ui: &mut Ui, change: &FileChange, counts: Option<LineCounts>, current: bool) -> bool {
+/// How a file row stands against the file the view has selected.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Mark {
+    None,
+    Selected,
+    /// The selected file is the one the file view shows.
+    Shown,
+}
+
+impl Mark {
+    fn of(current: bool, file_view: bool) -> Self {
+        match (current, file_view) {
+            (false, _) => Self::None,
+            (true, false) => Self::Selected,
+            (true, true) => Self::Shown,
+        }
+    }
+}
+
+fn file_row(ui: &mut Ui, change: &FileChange, counts: Option<LineCounts>, mark: Mark) -> bool {
     let (rect, response) =
         ui.allocate_exact_size(vec2(ui.available_width(), FILE_ROW_H), Sense::click());
     let painter = ui.painter_at(rect);
-    if current {
+    if mark == Mark::Shown {
+        painter.rect_filled(rect, 6, theme::with_alpha(brand::TEAL, SHOWN_ALPHA));
+        let bar = Rect::from_min_max(
+            pos2(rect.left(), rect.top() + SHOWN_BAR_INSET),
+            pos2(rect.left() + SHOWN_BAR_W, rect.bottom() - SHOWN_BAR_INSET),
+        );
+        painter.rect_filled(bar, 1, brand::TEAL);
+    } else if mark == Mark::Selected {
         painter.rect_filled(rect, 6, theme::overlay(0x0d));
     } else if response.hovered() {
         painter.rect_filled(rect, 6, theme::overlay(0x08));
@@ -244,7 +274,7 @@ fn file_row(ui: &mut Ui, change: &FileChange, counts: Option<LineCounts>, curren
         right -= ADD_W;
     }
     let left = rect.left() + ROW_PAD + LETTER_W;
-    let ink = if current { theme::text_strong() } else { brand::TEXT };
+    let ink = if mark == Mark::None { brand::TEXT } else { theme::text_strong() };
     paint_path(ui, &painter, &change.path, (left, right - COUNT_GAP, center_y), ink);
     response.on_hover_text(&change.path).clicked()
 }
@@ -252,8 +282,7 @@ fn file_row(ui: &mut Ui, change: &FileChange, counts: Option<LineCounts>, curren
 fn paint_path(ui: &Ui, painter: &egui::Painter, path: &str, spot: (f32, f32, f32), ink: Color32) {
     let (left, right, y) = spot;
     let font = body(13.0);
-    let (dir, name) =
-        path.rsplit_once('/').map_or(("", path), |(dir, name)| (&path[..=dir.len()], name));
+    let (dir, name) = split_dir(path);
     let room = (right - left).max(0.0);
     let name_galley = painter.layout_no_wrap(name.to_owned(), font.clone(), ink);
     if name_galley.size().x >= room {
@@ -266,6 +295,11 @@ fn paint_path(ui: &Ui, painter: &egui::Painter, path: &str, spot: (f32, f32, f32
     let name_x = left + dir_galley.size().x;
     painter.galley(pos2(left, y - dir_galley.size().y / 2.0), dir_galley, theme::text_faint());
     painter.galley(pos2(name_x, y - name_galley.size().y / 2.0), name_galley, ink);
+}
+
+/// The folder with its trailing slash, then the file name.
+pub(crate) fn split_dir(path: &str) -> (&str, &str) {
+    path.rsplit_once('/').map_or(("", path), |(dir, name)| (&path[..=dir.len()], name))
 }
 
 /// `path` cut from the front with an ellipsis until it fits `room`, so the file name stays.
@@ -293,6 +327,21 @@ mod tests {
         assert_eq!(totals(&[Some((3, 1)), None], 2), None);
         assert_eq!(totals(&[Some((3, 1))], 2), None);
         assert_eq!(totals(&[], 0), Some((0, 0)));
+    }
+
+    #[test]
+    fn a_path_splits_into_its_folder_with_the_slash_and_the_file_name() {
+        assert_eq!(split_dir("src/models/Image.ts"), ("src/models/", "Image.ts"));
+        assert_eq!(split_dir("deno.json"), ("", "deno.json"));
+        assert_eq!(split_dir("…ls/Image.ts"), ("…ls/", "Image.ts"));
+    }
+
+    #[test]
+    fn only_the_selected_file_of_an_open_file_view_is_marked_as_shown() {
+        assert_eq!(Mark::of(true, true), Mark::Shown);
+        assert_eq!(Mark::of(true, false), Mark::Selected);
+        assert_eq!(Mark::of(false, true), Mark::None);
+        assert_eq!(Mark::of(false, false), Mark::None);
     }
 
     #[test]
