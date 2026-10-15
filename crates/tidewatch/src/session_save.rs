@@ -466,6 +466,25 @@ mod tests {
     }
 
     #[test]
+    fn moving_a_tab_changes_the_saved_order_the_active_index_and_the_signature() {
+        let mut tabs = tabs();
+        tabs.push("a".into(), pane(Body::Shell(1), Some(worktree("a")), None));
+        tabs.push("b".into(), pane(Body::Shell(2), Some(worktree("b")), None));
+        let before = saved_window(&view(false), &tabs);
+        let before_signature = signature(&view(false), &tabs);
+        tabs.apply(crate::tabs::Action::MoveActive(crate::tabs::Step::Left), || unreachable!());
+        let after = saved_window(&view(false), &tabs);
+        let mut swapped = before.tabs.clone();
+        swapped.swap(1, 2);
+        assert_eq!(after.tabs, swapped);
+        assert_eq!(after.active, 1, "the active tab is still b");
+        assert_ne!(before_signature, signature(&view(false), &tabs));
+        tabs.apply(crate::tabs::Action::MoveActive(crate::tabs::Step::Right), || unreachable!());
+        assert_eq!(saved_window(&view(false), &tabs), before);
+        assert_eq!(signature(&view(false), &tabs), before_signature);
+    }
+
+    #[test]
     fn a_tab_that_is_still_being_made_does_not_move_the_signature() {
         let one = tabs();
         let mut making = tabs();
