@@ -122,7 +122,7 @@ pub(crate) fn show(
         let files = take_row(ui, rect, top, files_h);
         show_files(ui, files, view);
         let toolbar = take_row(ui, rect, top + files_h, TOOLBAR_H);
-        show_toolbar(ui, toolbar, view, true);
+        show_toolbar(ui, toolbar, view);
         if let Some(extras) = extras {
             toolbar_pr(ui, toolbar, extras, &mut out.actions);
         }
@@ -369,7 +369,7 @@ fn file_row(ui: &mut Ui, change: &FileChange, selected: bool) -> bool {
     response.clicked()
 }
 
-pub(crate) fn show_toolbar(ui: &mut Ui, rect: Rect, view: &mut TabView, layout_chips: bool) {
+fn show_toolbar(ui: &mut Ui, rect: Rect, view: &mut TabView) {
     let summary = notes_summary(&view.notes);
     ui.scope_builder(
         UiBuilder::new()
@@ -378,9 +378,7 @@ pub(crate) fn show_toolbar(ui: &mut Ui, rect: Rect, view: &mut TabView, layout_c
             .layout(Layout::left_to_right(Align::Center)),
         |ui| {
             ui.spacing_mut().item_spacing.x = 6.0;
-            if layout_chips {
-                layout_switch(ui, view, false);
-            }
+            layout_switch(ui, view);
             if let Some(open) = &mut view.open {
                 if icon_button(ui, icons::CARET_UP, "Previous change (Alt+Up)").clicked() {
                     open.body.jump_to_change(false);
@@ -398,21 +396,16 @@ pub(crate) fn show_toolbar(ui: &mut Ui, rect: Rect, view: &mut TabView, layout_c
     );
 }
 
-/// `right_to_left` for a row laid out from the right edge, where the first chip added sits last.
-pub(crate) fn layout_switch(ui: &mut Ui, view: &mut TabView, right_to_left: bool) {
+fn layout_switch(ui: &mut Ui, view: &mut TabView) {
     let unified = view.layout == DiffLayout::Unified;
-    let mut chips = [("Unified", DiffLayout::Unified), ("Split", DiffLayout::Split)];
-    if right_to_left {
-        chips.reverse();
-    }
-    for (label, layout) in chips {
+    for (label, layout) in [("Unified", DiffLayout::Unified), ("Split", DiffLayout::Split)] {
         if chip(ui, label, unified == (layout == DiffLayout::Unified)).clicked() {
             set_layout(view, layout);
         }
     }
 }
 
-fn set_layout(view: &mut TabView, layout: DiffLayout) {
+pub(crate) fn set_layout(view: &mut TabView, layout: DiffLayout) {
     view.layout = layout;
     if let Some(open) = &mut view.open {
         open.body.set_layout(layout);
