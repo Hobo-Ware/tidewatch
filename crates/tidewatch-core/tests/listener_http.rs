@@ -270,7 +270,7 @@ fn mcp_over_http_runs_the_handshake_and_both_event_tools() {
     assert_eq!((note.status, note.body.as_str()), (202, ""));
 
     let list = client.request("POST", "/mcp", token, &rpc(2, "tools/list", &json!({})));
-    assert_eq!(list.json()["result"]["tools"].as_array().unwrap().len(), 4);
+    assert_eq!(list.json()["result"]["tools"].as_array().unwrap().len(), 5);
 
     let done =
         client.request("POST", "/mcp", token, &call(3, "stage_done", &json!({"summary": "hello"})));
@@ -317,6 +317,52 @@ fn mcp_over_http_runs_the_handshake_and_both_event_tools() {
     assert_eq!(bad.json()["error"]["code"], -32700);
     let unknown = client.request("POST", "/mcp", token, &call(5, "nope", &json!({})));
     assert_eq!(unknown.json()["error"]["code"], -32602);
+    h.no_more_events();
+}
+
+#[test]
+fn a_proposed_workflow_reaches_the_app_as_one_event_and_a_bad_one_comes_back_as_text() {
+    use tidewatch_core::workflows::{Action, Gate};
+    let h = Harness::start();
+    let hook = h.register(8, "tab-w");
+    let token = Some(hook.token.as_str());
+    let mut client = h.client();
+    let good = json!({
+        "name": "Change with a check",
+        "description": "Do it, then prove it.",
+        "stages": [
+            { "action": "work", "prompt": "{task}" },
+            { "action": "review", "prompt": "Review {base}..HEAD.", "on_fail": 1, "max_loops": 3 },
+        ],
+    });
+    let reply = client.request("POST", "/mcp", token, &call(1, "propose_workflow", &good));
+    assert_eq!(reply.status, 200);
+    assert_eq!(reply.json()["result"]["isError"], false);
+    assert!(
+        reply.json()["result"]["content"][0]["text"]
+            .as_str()
+            .unwrap()
+            .starts_with("Opened in Tidewatch")
+    );
+    let message = h.next_event();
+    assert_eq!((message.tab_id, message.generation), (8, 0));
+    let TabEvent::Proposal { workflow } = message.event else { panic!("not a proposal") };
+    assert_eq!(workflow.name, "Change with a check");
+    let shape: Vec<_> =
+        workflow.stages.iter().map(|s| (s.action, s.gate, s.on_fail, s.max_loops)).collect();
+    assert_eq!(
+        shape,
+        [(Action::Work, Gate::Tests, None, 2), (Action::Review, Gate::NoBlocking, Some(0), 3)]
+    );
+    assert!(workflow.stages.iter().all(|s| s.run.agent.as_deref() == Some("claude")));
+
+    let bad =
+        json!({ "name": "x", "stages": [{ "action": "work", "prompt": "{nope}", "on_fail": 2 }] });
+    let reply = client.request("POST", "/mcp", token, &call(2, "propose_workflow", &bad));
+    assert_eq!(reply.json()["result"]["isError"], true);
+    let text = reply.json()["result"]["content"][0]["text"].as_str().unwrap().to_owned();
+    assert!(text.contains("on_fail must name an earlier stage, not stage 2"), "{text}");
+    assert!(text.contains("unknown placeholder {nope}"), "{text}");
     h.no_more_events();
 }
 
