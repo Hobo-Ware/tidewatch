@@ -5,7 +5,8 @@
 //! - `TIDEWATCH_DEV_OPEN=commit|file|file:<n>`: open the selected row's files in the tree, or also
 //!   open file `n` (0 is the first) in the file view, once the files have loaded.
 //! - `TIDEWATCH_DEV_PRESS=<command id>@<seconds>,...`: press the chord of those table commands
-//!   (`file-view`, `back-to-terminal`, `next-file`...) through the real key path after that long.
+//!   (`file-view`, `back-to-terminal`, `next-file`...) through the real key path after that long. A command
+//!   with no chord (`build-workflow`) runs directly.
 //! - `TIDEWATCH_DEV_NOTE=<text>`: write a note on the first added line of the first diff shown, once
 //!   per run, through the same notes store the diff widget uses.
 
@@ -79,15 +80,19 @@ impl DevPanes {
 }
 
 impl DevPanes {
-    pub(crate) fn press(&mut self, ctx: &egui::Context, now: f64) {
-        if self.presses.first().is_none_or(|(after, _)| now < *after) {
-            return;
+    /// Presses the next command that is due. A command with no chord (`build-workflow`) cannot be
+    /// pressed, so it comes back for the app to run.
+    pub(crate) fn press(&mut self, ctx: &egui::Context, now: f64) -> Option<Command> {
+        let (after, _) = self.presses.first()?;
+        if now < *after {
+            ctx.request_repaint_after(std::time::Duration::from_secs_f64(*after - now));
+            return None;
         }
         let (_, command) = self.presses.remove(0);
-        if let Some(event) = commands::press_event(command) {
-            ctx.input_mut(|input| input.events.push(event));
-            ctx.request_repaint();
-        }
+        let Some(event) = commands::press_event(command) else { return Some(command) };
+        ctx.input_mut(|input| input.events.push(event));
+        ctx.request_repaint();
+        None
     }
 }
 
@@ -144,6 +149,16 @@ mod tests {
     fn presses_read_command_ids_with_their_delay_in_order() {
         let got = parse_presses("back-to-terminal@5,file-view@2.5,nope@1,next-file@x");
         assert_eq!(got, [(2.5, Command::FileView), (5.0, Command::BackToTerminal)]);
+    }
+
+    #[test]
+    fn a_press_with_no_chord_comes_back_to_be_run_and_one_with_a_chord_is_pushed_as_a_key() {
+        let ctx = egui::Context::default();
+        let mut dev = DevPanes::parse(None, None, None, Some("build-workflow@1,file-view@2"), None);
+        assert_eq!(dev.press(&ctx, 0.5), None, "not due yet");
+        assert_eq!(dev.press(&ctx, 1.0), Some(Command::BuildWorkflow));
+        assert_eq!(dev.press(&ctx, 2.0), None, "a chord goes in as a key event");
+        assert_eq!(dev.presses, []);
     }
 
     #[test]
