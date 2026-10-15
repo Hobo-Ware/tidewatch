@@ -31,6 +31,12 @@ pub(crate) enum Choice {
     Terminal,
 }
 
+/// A tab that waits for its first message with its agent up, or still printing its banner.
+pub(crate) fn is_ready(first_prompt: FirstPrompt, tone: Tone) -> bool {
+    first_prompt == FirstPrompt::Awaiting
+        && matches!(tone, Tone::Working | Tone::Done | Tone::Shell)
+}
+
 /// The line of an agent tab that is not a workflow's (its stepper says more). `None` for the rest.
 pub(crate) fn line_of<T>(
     pane: &Pane<T>,
@@ -40,8 +46,7 @@ pub(crate) fn line_of<T>(
 ) -> Option<Line> {
     let agent = pane.agent.as_ref().filter(|agent| agent.workflow.is_none())?;
     let tone = status_view::tone(agent.run.status());
-    let ready = agent.first_prompt == FirstPrompt::Awaiting
-        && matches!(tone, Tone::Working | Tone::Done | Tone::Shell);
+    let ready = is_ready(agent.first_prompt, tone);
     let level = agent.launched.as_ref().map(|launched| launched.level.label());
     let who = [Some(agent.profile_name.as_str()), Some(cli_name), level]
         .into_iter()

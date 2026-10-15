@@ -20,18 +20,18 @@ pub(crate) fn rows(platform: Platform) -> Vec<Row> {
             let chord = entry.chord(platform);
             match entry.command {
                 Command::SelectTab(0) => {
-                    let last = last_tab?.chord(platform);
+                    let last = last_tab?.chord(platform)?;
                     Some(Row {
                         group: entry.group,
                         title: "Switch to tab 1 to 9".to_owned(),
-                        keys: range(chord, last),
+                        keys: range(chord?, last),
                     })
                 }
                 Command::SelectTab(_) => None,
                 _ => Some(Row {
                     group: entry.group,
                     title: entry.title.to_owned(),
-                    keys: chord.label(),
+                    keys: chord.map_or_else(String::new, Chord::label),
                 }),
             }
         })
@@ -40,6 +40,11 @@ pub(crate) fn rows(platform: Platform) -> Vec<Row> {
 
 fn range(first: Chord, last: Chord) -> String {
     format!("{} to {}", first.label(), last.key.symbol_or_name())
+}
+
+#[cfg(test)]
+fn cell(keys: &str) -> String {
+    if keys.is_empty() { "palette only".to_owned() } else { format!("`{keys}`") }
 }
 
 #[cfg(test)]
@@ -66,7 +71,7 @@ pub(crate) fn markdown() -> String {
             Platform::Linux.name(),
         );
         for (m, l) in mac.iter().zip(&linux).filter(|(m, _)| m.group == group) {
-            let _ = writeln!(out, "| {} | `{}` | `{}` |", m.title, m.keys, l.keys);
+            let _ = writeln!(out, "| {} | {} | {} |", m.title, cell(&m.keys), cell(&l.keys));
         }
     }
     out

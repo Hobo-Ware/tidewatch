@@ -55,19 +55,44 @@ fn no_two_commands_share_an_id_or_a_title() {
 #[test]
 fn every_command_has_its_own_chord_on_each_platform() {
     for platform in PLATFORMS {
-        let chords: HashSet<_> = TABLE.iter().map(|entry| entry.chord(platform)).collect();
-        assert_eq!(chords.len(), TABLE.len(), "{platform:?}");
-        let labels: HashSet<_> = TABLE.iter().map(|entry| entry.chord(platform).label()).collect();
-        assert_eq!(labels.len(), TABLE.len(), "{platform:?}");
+        let bound: Vec<_> = TABLE.iter().filter_map(|entry| entry.chord(platform)).collect();
+        let chords: HashSet<_> = bound.iter().collect();
+        assert_eq!(chords.len(), bound.len(), "{platform:?}");
+        let labels: HashSet<_> = bound.iter().map(|chord| chord.label()).collect();
+        assert_eq!(labels.len(), bound.len(), "{platform:?}");
+        let unbound: Vec<_> =
+            TABLE.iter().filter(|entry| entry.chord(platform).is_none()).map(|e| e.id).collect();
+        assert_eq!(unbound, ["build-workflow"], "{platform:?}");
     }
+}
+
+#[test]
+fn build_workflow_is_a_palette_only_command() {
+    let entry = TABLE.iter().find(|entry| entry.command == Command::BuildWorkflow).unwrap();
+    assert_eq!(entry.title, "Build workflow from this session");
+    assert_eq!(entry.group, Group::App);
+    assert_eq!(Command::BuildWorkflow.keys_on(Platform::Mac), "");
+    assert_eq!(Command::BuildWorkflow.keys_on(Platform::Linux), "");
+    assert_eq!(Command::BuildWorkflow.id(), "build-workflow");
+    assert!(Command::BuildWorkflow.in_palette());
+    assert_eq!(command_of("build-workflow"), Some(Command::BuildWorkflow));
+    assert_eq!(press_event(Command::BuildWorkflow), None);
+    for platform in PLATFORMS {
+        let row = rows(platform).into_iter().find(|row| row.title == entry.title).unwrap();
+        assert_eq!(row.keys, "");
+    }
+    assert!(
+        markdown().contains("| Build workflow from this session | palette only | palette only |")
+    );
 }
 
 #[test]
 fn a_press_runs_exactly_its_own_command_even_when_a_shorter_chord_shares_the_key() {
     for platform in PLATFORMS {
         for entry in &TABLE {
-            let got = pressed_with(platform, press(platform, entry.chord(platform)), |_| true);
-            assert_eq!(got, [entry.command], "{platform:?} {}", entry.chord(platform).label());
+            let Some(chord) = entry.chord(platform) else { continue };
+            let got = pressed_with(platform, press(platform, chord), |_| true);
+            assert_eq!(got, [entry.command], "{platform:?} {}", chord.label());
         }
     }
 }
@@ -105,7 +130,7 @@ fn macos_chords_are_the_ones_the_app_shipped_with() {
     ];
     for (id, keys) in shipped {
         let entry = TABLE.iter().find(|entry| entry.id == id).unwrap();
-        assert_eq!(entry.chord(Platform::Mac).label(), keys, "{id}");
+        assert_eq!(entry.chord(Platform::Mac).unwrap().label(), keys, "{id}");
     }
 }
 
@@ -113,7 +138,7 @@ fn macos_chords_are_the_ones_the_app_shipped_with() {
 fn linux_never_binds_a_plain_ctrl_letter_or_digit_the_shell_needs() {
     let no_control_code = [Key::Comma, Key::Period, Key::Enter];
     for entry in &TABLE {
-        let chord = entry.chord(Platform::Linux);
+        let Some(chord) = entry.chord(Platform::Linux) else { continue };
         assert!(!chord.has(CMD), "{}: Cmd does not exist on Linux", entry.id);
         if chord.mods == CTRL {
             assert!(no_control_code.contains(&chord.key), "{}: {}", entry.id, chord.label());
@@ -134,7 +159,7 @@ fn a_real_ctrl_press_on_macos_is_not_a_command_chord() {
 fn a_filtered_command_leaves_its_press_for_whoever_reads_it_next() {
     let enter = TABLE.iter().find(|entry| entry.command == Command::ApproveDelivery).unwrap();
     for platform in PLATFORMS {
-        let events = press(platform, enter.chord(platform));
+        let events = press(platform, enter.chord(platform).unwrap());
         assert_eq!(pressed_with(platform, events.clone(), Command::global), Vec::<Command>::new());
         let only = |command| command == Command::ApproveDelivery;
         assert_eq!(pressed_with(platform, events, only), [Command::ApproveDelivery]);
@@ -144,9 +169,9 @@ fn a_filtered_command_leaves_its_press_for_whoever_reads_it_next() {
 #[test]
 fn labels_follow_the_platform() {
     let reader = TABLE.iter().find(|entry| entry.command == Command::Reader).unwrap();
-    assert_eq!(reader.chord(Platform::Mac).label(), "Cmd+Shift+T");
-    assert_eq!(reader.chord(Platform::Linux).label(), "Ctrl+Shift+R");
-    assert_eq!(Command::Reader.keys(), reader.chord(Platform::CURRENT).label());
+    assert_eq!(reader.chord(Platform::Mac).unwrap().label(), "Cmd+Shift+T");
+    assert_eq!(reader.chord(Platform::Linux).unwrap().label(), "Ctrl+Shift+R");
+    assert_eq!(Command::Reader.keys(), reader.chord(Platform::CURRENT).unwrap().label());
 }
 
 #[test]
@@ -178,7 +203,8 @@ fn the_palette_lists_what_a_person_would_look_for() {
             "focus",
             "reader",
             "file-view",
-            "settings"
+            "settings",
+            "build-workflow"
         ]
     );
 }
@@ -201,8 +227,8 @@ fn the_file_view_chords() {
     ];
     for (id, mac, linux) in table {
         let entry = TABLE.iter().find(|entry| entry.id == id).unwrap();
-        assert_eq!(entry.chord(Platform::Mac).label(), mac, "{id}");
-        assert_eq!(entry.chord(Platform::Linux).label(), linux, "{id}");
+        assert_eq!(entry.chord(Platform::Mac).unwrap().label(), mac, "{id}");
+        assert_eq!(entry.chord(Platform::Linux).unwrap().label(), linux, "{id}");
     }
 }
 
@@ -298,7 +324,7 @@ mod gate {
         for platform in PLATFORMS {
             for command in FILE_VIEW_KEYS {
                 let entry = TABLE.iter().find(|entry| entry.command == command).unwrap();
-                let events = press(platform, entry.chord(platform));
+                let events = press(platform, entry.chord(platform).unwrap());
                 assert_eq!(
                     pressed_with(platform, events.clone(), wanted(NONE)),
                     Vec::<Command>::new(),

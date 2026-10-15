@@ -2,7 +2,7 @@
 //! a fuzzy filter over their labels, and the selection. The matcher follows Kelp's palette.
 //! `palette_view` draws it.
 
-use crate::commands::{Command, Group, Platform, TABLE};
+use crate::commands::{Chord, Command, Group, Platform, TABLE};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct Match {
@@ -79,6 +79,8 @@ pub(crate) struct Item {
     pub(crate) keys: String,
     pub(crate) kind: &'static str,
     pub(crate) target: Target,
+    /// Why the row cannot run now. It is shown in the row and as its tooltip, and Enter skips it.
+    pub(crate) disabled: Option<&'static str>,
 }
 
 /// What the app has open right now: the tabs of the repo on show (and which one is active), the
@@ -91,6 +93,14 @@ pub(crate) struct Sources {
     pub(crate) repo: usize,
     pub(crate) profiles: Vec<(String, String)>,
     pub(crate) workflows: Vec<(String, String)>,
+    /// Why Build workflow from this session cannot run on the active tab; `None` when it can.
+    pub(crate) build_workflow_blocked: Option<&'static str>,
+}
+
+impl Sources {
+    fn blocked(&self, command: Command) -> Option<&'static str> {
+        (command == Command::BuildWorkflow).then_some(self.build_workflow_blocked).flatten()
+    }
 }
 
 fn group_kind(group: Group) -> &'static str {
@@ -110,9 +120,10 @@ pub(crate) fn items(sources: &Sources, platform: Platform) -> Vec<Item> {
         .filter(|entry| several || !entry.command.needs_several_repos())
         .map(|entry| Item {
             label: entry.title.to_owned(),
-            keys: entry.chord(platform).label(),
+            keys: entry.chord(platform).map_or_else(String::new, Chord::label),
             kind: group_kind(entry.group),
             target: Target::Command(entry.command),
+            disabled: sources.blocked(entry.command),
         });
     let tabs =
         sources.tabs.iter().enumerate().filter(|(i, _)| *i != sources.active).map(|(i, title)| {
@@ -121,6 +132,7 @@ pub(crate) fn items(sources: &Sources, platform: Platform) -> Vec<Item> {
                 keys: Command::SelectTab(i).keys_on(platform),
                 kind: "tab",
                 target: Target::Tab(i),
+                disabled: None,
             }
         });
     let repos =
@@ -130,6 +142,7 @@ pub(crate) fn items(sources: &Sources, platform: Platform) -> Vec<Item> {
                 keys: String::new(),
                 kind: "repo",
                 target: Target::Repo(i),
+                disabled: None,
             }
         });
     let repo_menu = [
@@ -138,18 +151,26 @@ pub(crate) fn items(sources: &Sources, platform: Platform) -> Vec<Item> {
     ]
     .into_iter()
     .flatten()
-    .map(|(label, target, keys)| Item { label: label.to_owned(), keys, kind: "repo", target });
+    .map(|(label, target, keys)| Item {
+        label: label.to_owned(),
+        keys,
+        kind: "repo",
+        target,
+        disabled: None,
+    });
     let profiles = sources.profiles.iter().map(|(id, name)| Item {
         label: format!("New tab: {name}"),
         keys: String::new(),
         kind: "profile",
         target: Target::Profile(id.clone()),
+        disabled: None,
     });
     let workflows = sources.workflows.iter().map(|(id, name)| Item {
         label: format!("Workflow: {name}"),
         keys: String::new(),
         kind: "workflow",
         target: Target::Workflow(id.clone()),
+        disabled: None,
     });
     commands.chain(tabs).chain(repos).chain(repo_menu).chain(profiles).chain(workflows).collect()
 }
@@ -224,6 +245,7 @@ mod tests {
             repo: 0,
             profiles: vec![("builder".into(), "Builder".into())],
             workflows: vec![("ship".into(), "Ship a feature".into())],
+            build_workflow_blocked: None,
         }
     }
 
@@ -264,6 +286,7 @@ mod tests {
                 "Reader or raw terminal",
                 "Terminal or last file",
                 "Settings",
+                "Build workflow from this session",
                 "Switch to tab 2: calm-comet",
                 "Switch to tab 3: brave-otter",
                 "Open repo...",
@@ -296,10 +319,30 @@ mod tests {
         let linux = items(&sources(), Platform::Linux);
         assert_eq!(mac[0].keys, "Cmd+T");
         assert_eq!(linux[0].keys, "Ctrl+Shift+T");
-        assert_eq!(mac[7].keys, "Cmd+2");
-        assert_eq!(linux[7].keys, "Alt+2");
-        assert_eq!((mac[9].label.as_str(), mac[9].keys.as_str()), ("Open repo...", "Cmd+O"));
-        assert_eq!(linux[9].keys, "Ctrl+Shift+O");
+        assert_eq!(mac[8].keys, "Cmd+2");
+        assert_eq!(linux[8].keys, "Alt+2");
+        assert_eq!((mac[10].label.as_str(), mac[10].keys.as_str()), ("Open repo...", "Cmd+O"));
+        assert_eq!(linux[10].keys, "Ctrl+Shift+O");
+    }
+
+    #[test]
+    fn build_workflow_is_a_row_without_a_chord_that_carries_the_reason_it_cannot_run() {
+        let row = |sources: &Sources| {
+            items(sources, Platform::Mac)
+                .into_iter()
+                .find(|item| item.target == Target::Command(Command::BuildWorkflow))
+                .unwrap()
+        };
+        let ready = row(&sources());
+        assert_eq!(
+            (ready.label.as_str(), ready.keys.as_str()),
+            ("Build workflow from this session", "")
+        );
+        assert_eq!(ready.disabled, None);
+        let blocked = Sources { build_workflow_blocked: Some("agent is working"), ..sources() };
+        assert_eq!(row(&blocked).disabled, Some("agent is working"));
+        let others = items(&blocked, Platform::Mac).iter().filter(|i| i.disabled.is_some()).count();
+        assert_eq!(others, 1, "only that row is ever disabled");
     }
 
     #[test]

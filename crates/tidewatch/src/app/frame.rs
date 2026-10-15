@@ -165,6 +165,7 @@ impl Tidewatch {
             Command::Settings => self.toggle_settings(),
             Command::OpenRepo => self.run_repo_command(RepoCommand::Open, ctx),
             Command::Palette => self.toggle_palette(),
+            Command::BuildWorkflow => self.run_build_workflow(ctx),
             Command::ApproveDelivery => {}
         }
     }

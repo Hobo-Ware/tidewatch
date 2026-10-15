@@ -5,6 +5,7 @@
 
 mod agents;
 mod bar;
+mod build_workflow;
 mod central;
 mod dev;
 mod flow;
@@ -42,6 +43,7 @@ use self::repos::Picker;
 use crate::agent_events::{self, Hooks};
 use crate::agent_jobs;
 use crate::brand;
+use crate::build_workflow::Asked;
 use crate::catalog::Catalog;
 use crate::dev_agent::{DevAgent, DevDraft};
 use crate::dev_flow::DevFlow;
@@ -126,6 +128,7 @@ pub(crate) struct Tidewatch {
     flow: Flow,
     runs: workflow_glue::Host,
     run_asks: Vec<(u64, Vec<Exec>)>,
+    build_asks: Vec<Asked>,
     dev_workflow: DevWorkflow,
     dev_flow: DevFlow,
     notifier: Notifier,
@@ -237,6 +240,7 @@ impl Tidewatch {
             flow,
             runs: workflow_glue::Host::new(),
             run_asks: Vec::new(),
+            build_asks: Vec::new(),
             dev_workflow: DevWorkflow::from_env(),
             dev_flow,
             notifier: Notifier::desktop(),

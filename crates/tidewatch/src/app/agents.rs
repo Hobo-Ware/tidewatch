@@ -104,7 +104,7 @@ impl Tidewatch {
                     ctx.request_repaint();
                 }
             }
-            Follow::Proposal { .. } => {}
+            Follow::Proposal { tab, workflow } => self.proposal_arrived(tab, &workflow, ctx),
         }
     }
 
@@ -144,6 +144,7 @@ impl Tidewatch {
             }
         }
         asked.extend(workflow_glue::failures(&mut self.tabs, &polled.changes));
+        self.drive_build_workflow(ctx, now);
         self.drive_workflows(ctx, now, asked);
         self.send_dev_keys(now);
         release_typed_commands(ctx, &mut self.tabs, now);
