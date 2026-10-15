@@ -218,7 +218,7 @@ crates/tidewatch/       the egui app
   src/workflow_jobs.rs  open (worktree, base, test command and timeout), launch a stage (fresh token, prepare, divider), run the tests as jobs
   src/workflow_glue.rs  Host: open a workflow or saved-run tab, carry out what a run asks, apply finished jobs, drop a replaced agent's messages (generic over the pty)
 docs/                   concept mockup, research reports, shortcuts.md (generated from the command table, checked by a test)
-site/                   the GitHub Pages showcase (tidewatch.hoboware.dev): index.html, style.css, shot-*.png app screenshots, icon.svg, favicon, apple-touch icon, tidewatch-og.png, CNAME, robots.txt, sitemap.xml
+site/                   the GitHub Pages showcase (tidewatch.hoboware.dev): index.html, 404.html, style.css, mascot/ (the animated mascot SVGs), shot-*.png app screenshots, icon.svg, favicon, apple-touch icon, tidewatch-og.png, CNAME, robots.txt, sitemap.xml
 packaging/              Info.plist, reference Homebrew cask (tidewatch.rb), .desktop file, release README
 scripts/                bundle-macos.sh (universal ad-hoc signed Tidewatch.app + zip), package-linux.sh (tarball + AppImage), make-icon.sh (icon from assets/icon.svg)
 assets/                 icon.svg (the K mark: ripple prompt and wave, Night tide colors), AppIcon.icon (the same mark as Liquid Glass layers: sun, prompt, ripples, wave) compiled to Assets.car, Tidewatch.icns (older macOS), icon-512.png, tray.svg and tray.png (the menu-bar template icon)
