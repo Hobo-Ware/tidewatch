@@ -1,0 +1,255 @@
+//! The status bar along the bottom of the window: how many agents work and need you, where this
+//! agent tab stands, and the keys that matter on the screen. The logic is pure; `show` only draws.
+
+use egui::{Align2, Color32, FontId, Pos2, Rect, Ui, pos2};
+
+use crate::brand;
+use crate::commands::{Command, Platform};
+use crate::screen_kit::{body, mono};
+use crate::status_view::Tone;
+
+pub(crate) const HEIGHT: f32 = 30.0;
+const PAD: f32 = 16.0;
+const GAP: f32 = 18.0;
+const DOT: f32 = 7.0;
+const FONT: f32 = 12.0;
+const MOST_HINTS: usize = 4;
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct Counts {
+    pub(crate) working: usize,
+    pub(crate) needs: usize,
+}
+
+/// Agents working and agents that need you, from the tones of every agent tab of the window.
+pub(crate) fn counts(tones: &[Tone]) -> Counts {
+    tones.iter().fold(Counts::default(), |mut counts, tone| {
+        match tone {
+            Tone::Working => counts.working += 1,
+            Tone::Needs => counts.needs += 1,
+            Tone::Setup | Tone::Done | Tone::Failed | Tone::Shell => {}
+        }
+        counts
+    })
+}
+
+/// `agent/sunny-reef from main`, or just the branch when no base is known.
+pub(crate) fn place(branch: &str, base: Option<&str>) -> String {
+    base.map_or_else(|| branch.to_owned(), |base| format!("{branch} from {base}"))
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Screen {
+    Settings,
+    Overview,
+    Workspace(Workspace),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct Workspace {
+    pub(crate) focus: bool,
+    /// The tab has History beside it: the side layout with panes showing.
+    pub(crate) history: bool,
+    pub(crate) file_open: bool,
+    /// `Some(true)` while an agent tab shows its Reader, `Some(false)` its raw terminal.
+    pub(crate) reader: Option<bool>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct Hint {
+    pub(crate) keys: String,
+    pub(crate) label: &'static str,
+}
+
+fn commands(screen: Screen) -> Vec<(Command, &'static str)> {
+    match screen {
+        Screen::Settings => vec![
+            (Command::Settings, "close settings"),
+            (Command::Overview, "overview"),
+            (Command::Palette, "commands"),
+        ],
+        Screen::Overview => vec![
+            (Command::Overview, "close overview"),
+            (Command::NewTab, "new tab"),
+            (Command::Settings, "settings"),
+            (Command::Palette, "commands"),
+        ],
+        Screen::Workspace(view) => workspace_commands(view),
+    }
+}
+
+fn workspace_commands(view: Workspace) -> Vec<(Command, &'static str)> {
+    let reader = view.reader.map(|on| (Command::Reader, if on { "terminal" } else { "reader" }));
+    if view.focus {
+        return [
+            Some((Command::Focus, "leave focus")),
+            reader,
+            Some((Command::Overview, "overview")),
+            Some((Command::Palette, "commands")),
+        ]
+        .into_iter()
+        .flatten()
+        .collect();
+    }
+    if view.file_open {
+        return vec![
+            (Command::BackToTerminal, "terminal"),
+            (Command::NextFile, "next file"),
+            (Command::Overview, "overview"),
+            (Command::Focus, "focus"),
+        ];
+    }
+    [
+        reader,
+        view.history.then_some((Command::FileView, "last file")),
+        Some((Command::Overview, "overview")),
+        Some((Command::Focus, "focus")),
+        Some((Command::NewTab, "new tab")),
+        Some((Command::Palette, "commands")),
+    ]
+    .into_iter()
+    .flatten()
+    .collect()
+}
+
+/// The key hints of a screen, with the chords of `platform` read from the command table.
+pub(crate) fn hints(screen: Screen, platform: Platform) -> Vec<Hint> {
+    commands(screen)
+        .into_iter()
+        .take(MOST_HINTS)
+        .map(|(command, label)| Hint { keys: command.keys_on(platform), label })
+        .collect()
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct Bar {
+    pub(crate) counts: Counts,
+    pub(crate) place: Option<String>,
+    pub(crate) hints: Vec<Hint>,
+}
+
+pub(crate) fn show(ui: &mut Ui, rect: Rect, bar: &Bar) {
+    let painter = ui.painter();
+    let y = rect.center().y;
+    let put = |at: Pos2, anchor: Align2, text: &str, font: FontId, color: Color32| {
+        painter.text(at, anchor, text, font, color).width()
+    };
+    let mut x = rect.left() + PAD;
+    let dots = [
+        (bar.counts.working, brand::WORKING, "working"),
+        (bar.counts.needs, brand::NEEDS, "needs you"),
+    ];
+    for (count, color, word) in dots.into_iter().filter(|(count, ..)| *count > 0) {
+        painter.circle_filled(pos2(x + DOT / 2.0, y), DOT / 2.0, color);
+        x += DOT + 6.0;
+        let label = format!("{count} {word}");
+        x += put(pos2(x, y), Align2::LEFT_CENTER, &label, body(FONT), brand::MUTED) + GAP;
+    }
+    if let Some(place) = &bar.place {
+        put(pos2(x, y), Align2::LEFT_CENTER, place, body(FONT), brand::MUTED);
+    }
+    let mut right = rect.right() - PAD;
+    for hint in bar.hints.iter().rev() {
+        right -= put(pos2(right, y), Align2::RIGHT_CENTER, hint.label, body(FONT), brand::MUTED);
+        right -= 6.0;
+        right -= put(pos2(right, y), Align2::RIGHT_CENTER, &hint.keys, mono(FONT), brand::SOFT);
+        right -= GAP;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn workspace(focus: bool, history: bool, file_open: bool, reader: Option<bool>) -> Screen {
+        Screen::Workspace(Workspace { focus, history, file_open, reader })
+    }
+
+    fn labels(screen: Screen) -> Vec<&'static str> {
+        hints(screen, Platform::Mac).into_iter().map(|hint| hint.label).collect()
+    }
+
+    #[test]
+    fn only_working_and_needs_you_are_counted() {
+        let cases = [
+            (vec![], Counts { working: 0, needs: 0 }),
+            (vec![Tone::Shell, Tone::Done, Tone::Failed, Tone::Setup], Counts::default()),
+            (
+                vec![Tone::Working, Tone::Working, Tone::Needs, Tone::Done],
+                Counts { working: 2, needs: 1 },
+            ),
+        ];
+        for (tones, expected) in cases {
+            assert_eq!(counts(&tones), expected, "{tones:?}");
+        }
+    }
+
+    #[test]
+    fn the_place_names_the_branch_and_where_it_forked_from() {
+        assert_eq!(place("agent/sunny-reef", Some("main")), "agent/sunny-reef from main");
+        assert_eq!(place("agent/sunny-reef", None), "agent/sunny-reef");
+    }
+
+    #[test]
+    fn each_screen_shows_only_the_hints_that_still_apply() {
+        let cases = [
+            (Screen::Settings, vec!["close settings", "overview", "commands"]),
+            (Screen::Overview, vec!["close overview", "new tab", "settings", "commands"]),
+            (
+                workspace(false, true, false, Some(true)),
+                vec!["terminal", "last file", "overview", "focus"],
+            ),
+            (
+                workspace(false, true, false, Some(false)),
+                vec!["reader", "last file", "overview", "focus"],
+            ),
+            (
+                workspace(false, true, false, None),
+                vec!["last file", "overview", "focus", "new tab"],
+            ),
+            (
+                workspace(false, false, false, None),
+                vec!["overview", "focus", "new tab", "commands"],
+            ),
+            (
+                workspace(false, true, true, Some(true)),
+                vec!["terminal", "next file", "overview", "focus"],
+            ),
+            (
+                workspace(true, false, false, Some(true)),
+                vec!["leave focus", "terminal", "overview", "commands"],
+            ),
+            (workspace(true, false, false, None), vec!["leave focus", "overview", "commands"]),
+        ];
+        for (screen, expected) in cases {
+            assert_eq!(labels(screen), expected, "{screen:?}");
+        }
+    }
+
+    #[test]
+    fn the_chords_come_from_the_command_table_of_the_platform() {
+        let screen = workspace(false, true, false, Some(true));
+        let keys = |platform| -> Vec<String> {
+            hints(screen, platform).into_iter().map(|hint| hint.keys).collect()
+        };
+        assert_eq!(keys(Platform::Mac), ["Cmd+Shift+T", "Cmd+J", "Cmd+0", "Cmd+."]);
+        assert_eq!(keys(Platform::Linux), ["Ctrl+Shift+R", "Ctrl+Shift+J", "Alt+0", "Ctrl+."]);
+    }
+
+    #[test]
+    fn no_screen_has_more_than_four_hints_or_fewer_than_three() {
+        let screens = [
+            Screen::Settings,
+            Screen::Overview,
+            workspace(false, true, false, Some(true)),
+            workspace(false, false, false, None),
+            workspace(false, true, true, None),
+            workspace(true, true, false, Some(false)),
+            workspace(true, false, false, None),
+        ];
+        for screen in screens {
+            let count = hints(screen, Platform::CURRENT).len();
+            assert!((3..=4).contains(&count), "{screen:?}: {count}");
+        }
+    }
+}
