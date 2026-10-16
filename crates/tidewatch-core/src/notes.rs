@@ -43,6 +43,15 @@ pub fn line_label(anchor: &Anchor) -> String {
     }
 }
 
+impl NoteState {
+    /// Whether the thread still needs something from the user or the agent: a draft to send, or a
+    /// sent thread the agent has not answered. Resolved, answered and agent-written threads do not.
+    #[must_use]
+    pub fn is_waiting(self) -> bool {
+        matches!(self, Self::Queued | Self::Sent(_))
+    }
+}
+
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Notes {
     #[serde(default)]
@@ -168,6 +177,11 @@ impl Notes {
             .filter(|t| self.state(t, agent) == NoteState::Queued)
             .map(|t| t.id)
             .collect()
+    }
+
+    /// The threads that still wait on someone (see [`NoteState::is_waiting`]), oldest first.
+    pub fn waiting<'a>(&'a self, agent: &'a str) -> impl Iterator<Item = &'a Thread> + 'a {
+        self.threads.iter().filter(move |t| self.state(t, agent).is_waiting())
     }
 
     /// The local thread made from the pull request thread whose first comment has GitHub id `root`.
@@ -300,6 +314,53 @@ mod tests {
         std::fs::write(&file, old).unwrap();
         let loaded = Notes::load(&file);
         assert_eq!((loaded.threads[0].anchor.span, loaded.threads[0].anchor.block.len()), (0, 0));
+    }
+
+    #[test]
+    fn the_states_that_wait_are_the_draft_and_the_sent() {
+        let cases = [
+            (NoteState::Queued, true),
+            (NoteState::Sent(1), true),
+            (NoteState::Replied, false),
+            (NoteState::Resolved, false),
+            (NoteState::FromAgent, false),
+        ];
+        for (state, want) in cases {
+            assert_eq!(state.is_waiting(), want, "{state:?}");
+        }
+    }
+
+    #[test]
+    fn only_a_draft_or_an_unanswered_sent_thread_is_waiting() {
+        let mut notes = Notes::default();
+        let draft = notes.add("a.rs", None, anchor(1), comment("draft"));
+        let sent = notes.add("a.rs", None, anchor(2), comment("sent"));
+        let replied = notes.add("a.rs", None, anchor(3), comment("replied"));
+        let resolved = notes.add("a.rs", None, anchor(4), comment("resolved"));
+        let again = notes.add("a.rs", None, anchor(5), comment("written again after sending"));
+        let finding = notes.add(
+            "a.rs",
+            None,
+            anchor(6),
+            Comment { author: "claude".into(), ..comment("found") },
+        );
+        notes.mark_sent(&[sent, replied, resolved, again], 10);
+        notes.reply(replied, Comment { author: "claude".into(), ..comment("done") });
+        notes.set_resolved(resolved, true);
+        notes.reply(again, comment("one more thing"));
+        let cases = [
+            (draft, true),
+            (sent, true),
+            (replied, false),
+            (resolved, false),
+            (again, true),
+            (finding, false),
+        ];
+        let waiting: Vec<u64> = notes.waiting("claude").map(|t| t.id).collect();
+        for (id, want) in cases {
+            assert_eq!(waiting.contains(&id), want, "thread {id}");
+        }
+        assert_eq!(waiting.len(), 3);
     }
 
     fn comment(body: &str) -> Comment {

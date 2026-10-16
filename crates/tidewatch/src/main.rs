@@ -133,6 +133,7 @@ mod trust_view;
 mod update_chip;
 mod updates;
 mod updates_view;
+mod waiting_notes;
 mod welcome;
 mod welcome_view;
 mod window_settings;

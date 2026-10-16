@@ -5,17 +5,19 @@ use egui::text::LayoutJob;
 use std::f32::consts::FRAC_PI_2;
 
 use egui::{
-    Align2, Color32, CornerRadius, FontId, Id, Mesh, Pos2, Rect, ScrollArea, Sense, Stroke,
-    StrokeKind, TextFormat, Ui, UiBuilder, pos2, vec2,
+    Align2, Color32, CornerRadius, FontId, Id, Mesh, Painter, Pos2, Rect, ScrollArea, Sense,
+    Stroke, StrokeKind, TextFormat, Ui, UiBuilder, pos2, vec2,
 };
 use kelp_core::commit::FileChange;
 use kelp_ui::graph::GraphStyle;
+use kelp_ui::icons::{self, Icon};
 
 use crate::brand;
 use crate::diff_pane::{kind_color, kind_letter};
 use crate::pane_jobs::LineCounts;
 use crate::screen_kit::{body, mono, selection_row};
 use crate::tab_view::TabView;
+use crate::waiting_notes::Waiting;
 
 const FILE_ROW_H: f32 = 30.0;
 const META_H: f32 = 24.0;
@@ -38,6 +40,9 @@ const SHORT_ID: usize = 7;
 const MAX_LANES: u16 = 14;
 const SELECTION_RADIUS: f32 = 7.0;
 const CORNER_STEPS: u32 = 6;
+const NOTES_ICON: f32 = 12.0;
+const NOTES_ICON_GAP: f32 = 3.0;
+const NOTES_MOST: usize = 99;
 
 /// Where the card goes: the gap under the open row, the row's height, the x its text starts at and
 /// the part of the graph that is on screen.
@@ -110,7 +115,7 @@ fn meta_job(view: &TabView, files: usize) -> LayoutJob {
 
 /// Paints the card for the open commit over its row and the gap under it, clipped to the part of
 /// the graph on screen.
-pub(crate) fn show(ui: &mut Ui, view: &mut TabView, spot: Spot) {
+pub(crate) fn show(ui: &mut Ui, view: &mut TabView, spot: Spot, waiting: &Waiting) {
     let Spot { gap, row_h, inset, viewport } = spot;
     let loading = view.is_loading_source();
     let files = if loading { 0 } else { view.files.len() };
@@ -174,6 +179,7 @@ pub(crate) fn show(ui: &mut Ui, view: &mut TabView, spot: Spot) {
     let mut child = ui.new_child(UiBuilder::new().id_salt("commit-files-list").max_rect(list));
     child.set_clip_rect(list.intersect(clip));
     child.spacing_mut().item_spacing.y = 0.0;
+    let commit = view.wanted_commit();
     let mut picked = None;
     ScrollArea::vertical().auto_shrink(false).show_rows(
         &mut child,
@@ -185,7 +191,8 @@ pub(crate) fn show(ui: &mut Ui, view: &mut TabView, spot: Spot) {
                 let current = view.file.as_deref() == Some(change.path.as_str());
                 let mark = Mark::of(current, view.file_open());
                 let counts = view.counts.get(index).copied().flatten();
-                if file_row(ui, change, counts, mark) {
+                let notes = waiting.file(commit, &change.path);
+                if file_row(ui, change, counts, notes, mark) {
                     picked = Some(change.path.clone());
                 }
             }
@@ -234,7 +241,13 @@ impl Mark {
     }
 }
 
-fn file_row(ui: &mut Ui, change: &FileChange, counts: Option<LineCounts>, mark: Mark) -> bool {
+fn file_row(
+    ui: &mut Ui,
+    change: &FileChange,
+    counts: Option<LineCounts>,
+    notes: usize,
+    mark: Mark,
+) -> bool {
     let (slot, response) =
         ui.allocate_exact_size(vec2(ui.available_width(), FILE_ROW_H), Sense::click());
     let painter = ui.painter_at(slot);
@@ -273,10 +286,34 @@ fn file_row(ui: &mut Ui, change: &FileChange, counts: Option<LineCounts>, mark: 
         );
         right -= ADD_W;
     }
+    if notes > 0 {
+        right -= paint_notes_badge(&painter, right, center_y, notes) + COUNT_GAP;
+    }
     let left = rect.left() + ROW_PAD + LETTER_W;
     let ink = brand::TEXT;
     paint_path(ui, &painter, &change.path, (left, right - COUNT_GAP, center_y), ink);
     response.on_hover_text(&change.path).clicked()
+}
+
+fn notes_label(count: usize) -> String {
+    if count > NOTES_MOST { format!("{NOTES_MOST}+") } else { count.to_string() }
+}
+
+/// A speech bubble and `count` (`99+` past 99) in teal with the badge's right edge at `right`.
+/// Returns the badge's width.
+fn paint_notes_badge(painter: &Painter, right: f32, mid: f32, count: usize) -> f32 {
+    let galley = painter.layout_no_wrap(notes_label(count), body(11.5), brand::TEAL);
+    let width = NOTES_ICON + NOTES_ICON_GAP + galley.size().x;
+    let left = right - width;
+    let spot =
+        Rect::from_center_size(pos2(left + NOTES_ICON / 2.0, mid), vec2(NOTES_ICON, NOTES_ICON));
+    icons::paint(painter, spot, Icon::Comment, brand::TEAL);
+    painter.galley(
+        pos2(left + NOTES_ICON + NOTES_ICON_GAP, mid - galley.size().y / 2.0),
+        galley,
+        brand::TEAL,
+    );
+    width
 }
 
 pub(crate) fn paint_path(
@@ -326,6 +363,29 @@ pub(crate) fn tail_fit(ui: &Ui, path: &str, font: &FontId, room: f32) -> String 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_file_with_many_notes_shows_99_plus() {
+        let cases = [(1, "1"), (12, "12"), (99, "99"), (100, "99+"), (5000, "99+")];
+        for (count, want) in cases {
+            assert_eq!(notes_label(count), want, "{count}");
+        }
+    }
+
+    #[test]
+    fn the_badge_is_a_bubble_and_the_count_and_widens_with_it() {
+        let ctx = egui::Context::default();
+        crate::fonts::install(&ctx);
+        let mut widths = Vec::new();
+        let _ = ctx.run_ui(egui::RawInput::default(), |ui| {
+            for count in [1, 10, 100] {
+                widths.push(paint_notes_badge(ui.painter(), 200.0, 10.0, count));
+            }
+        });
+        assert!(widths[0] > NOTES_ICON + NOTES_ICON_GAP);
+        assert!(widths[1] > widths[0]);
+        assert!(widths[2] > widths[1]);
+    }
 
     #[test]
     fn totals_need_every_file_counted() {

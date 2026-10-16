@@ -112,7 +112,9 @@ impl Tidewatch {
             .status
             .as_ref()
             .and_then(|status| self.flow.extras(active_id, &view.notes, status));
-        let graph_action = history_pane::show(ui, areas.history, view, &mut self.avatars, side);
+        let agent_id = agent.map_or("", |agent| agent.run.agent_id.as_str());
+        let graph_action =
+            history_pane::show(ui, areas.history, view, &mut self.avatars, side, agent_id);
         let now_unix = flow_glue::unix_now();
         let pane = match (side, view.file_open()) {
             (false, _) => diff_pane::show(ui, areas.diff, view, extras.as_ref(), now_unix),

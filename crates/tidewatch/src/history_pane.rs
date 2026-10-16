@@ -20,6 +20,7 @@ use crate::brand;
 use crate::commit_files::{self, Spot};
 use crate::screen_kit::{body, mono};
 use crate::tab_view::TabView;
+use crate::waiting_notes::Waiting;
 use crate::{layout, segmented};
 
 const CARD_PAD: f32 = 18.0;
@@ -32,25 +33,28 @@ const CORNER_STEPS: u32 = 8;
 pub(crate) const SCOPES: [&str; 2] = ["This branch", "Whole repo"];
 
 /// The pane is a card in both layouts. `side` is the layout where a click on a commit opens its
-/// files under the row and a file's diff takes the terminal's place.
+/// files under the row and a file's diff takes the terminal's place. `agent` is the id the tab's
+/// agent signs replies with, `""` without one.
 pub(crate) fn show(
     ui: &mut Ui,
     rect: Rect,
     view: &mut TabView,
     avatars: &mut AvatarStore,
     side: bool,
+    agent: &str,
 ) -> Option<GraphAction> {
     paint_card(ui, rect);
     let header = Rect::from_min_max(rect.min, pos2(rect.right(), rect.top() + layout::CHROME_H));
     show_card_header(ui, header, view);
     let body = Rect::from_min_max(pos2(rect.left(), header.bottom()), rect.max)
         .shrink2(vec2(BODY_PAD_X, BODY_PAD_Y));
+    let waiting = Waiting::of(&view.notes, agent);
     let mut action = None;
     ui.scope_builder(UiBuilder::new().id_salt("history-graph").max_rect(body), |ui| {
         ui.set_clip_rect(body.intersect(ui.clip_rect()));
-        action = show_graph(ui, view, avatars, side);
+        action = show_graph(ui, view, avatars, side, &waiting);
         if side && let Some(spot) = card_spot(view) {
-            commit_files::show(ui, view, spot);
+            commit_files::show(ui, view, spot, &waiting);
         }
     });
     action
@@ -204,6 +208,7 @@ fn show_graph(
     view: &mut TabView,
     avatars: &mut AvatarStore,
     side: bool,
+    waiting: &Waiting,
 ) -> Option<GraphAction> {
     let selected = view.selection();
     let style = side_style();
@@ -221,7 +226,7 @@ fn show_graph(
     let wip = (!changes.is_empty()).then(|| Wip {
         head_row: loaded.head_row.unwrap_or(0),
         changes,
-        notes: None,
+        notes: waiting.uncommitted(),
     });
     let mut summary = |row: usize| summaries.get(history.id(row));
     let checks = HashMap::new();
@@ -241,7 +246,7 @@ fn show_graph(
         picking: false,
         filter_active: false,
         checks: &checks,
-        notes: &HashMap::new(),
+        notes: waiting.commits(),
         style,
         expanded,
     };
