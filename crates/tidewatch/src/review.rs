@@ -251,7 +251,15 @@ mod tests {
     use kelp_core::review::{Anchor, Comment, Side};
 
     fn anchor(line: u32) -> Anchor {
-        Anchor { side: Side::New, line_hint: line, text: "x".into(), before: vec![], after: vec![] }
+        Anchor {
+            side: Side::New,
+            line_hint: line,
+            text: "x".into(),
+            before: vec![],
+            after: vec![],
+            span: 0,
+            block: vec![],
+        }
     }
 
     fn comment(author: &str, body: &str) -> Comment {

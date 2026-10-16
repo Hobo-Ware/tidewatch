@@ -71,11 +71,13 @@ pub struct Posted {
 }
 
 /// A note to post as a new review comment. `line` is a line of `path` in the pull request's diff
-/// at its head commit, on `side`; GitHub refuses any other line.
+/// at its head commit, on `side`; GitHub refuses any other line. `start_line` makes it a multi-line
+/// comment: GitHub's `line` is then the LAST line of the range and `start_line` the first.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct NewNote {
     pub path: String,
     pub line: u32,
+    pub start_line: Option<u32>,
     pub side: Side,
     pub body: String,
 }
@@ -137,8 +139,13 @@ pub fn post_note(
     let line = format!("line={}", note.line);
     let commit = format!("commit_id={}", pr.head_sha);
     let side = format!("side={}", side_name(note.side));
-    let args =
-        ["api", &endpoint, "-f", &body, "-f", &path, "-F", &line, "-f", &commit, "-f", &side];
+    let mut args =
+        vec!["api", &endpoint, "-f", &body, "-f", &path, "-F", &line, "-f", &commit, "-f", &side];
+    let start_line = note.start_line.map(|first| format!("start_line={first}"));
+    let start_side = format!("start_side={}", side_name(note.side));
+    if let Some(start_line) = &start_line {
+        args.extend(["-F", start_line, "-f", &start_side]);
+    }
     parse_posted(&run_gh(tools, dir, &args)?)
 }
 
@@ -186,6 +193,8 @@ struct Raw {
     path: String,
     line: Option<u32>,
     original_line: Option<u32>,
+    start_line: Option<u32>,
+    original_start_line: Option<u32>,
     side: Side,
     commit: String,
     original_commit: String,
@@ -206,6 +215,8 @@ fn raw_comment(value: &Value) -> Option<Raw> {
         path: value["path"].as_str()?.to_owned(),
         line: number("line"),
         original_line: number("original_line"),
+        start_line: number("start_line"),
+        original_start_line: number("original_start_line"),
         side: if value["side"].as_str() == Some("LEFT") { Side::Old } else { Side::New },
         commit: text("commit_id"),
         original_commit: text("original_commit_id"),
@@ -276,7 +287,12 @@ fn thread_from_root(raw: &Raw, first: PrComment) -> PrThread {
         (Some(line), false) => Placement::Line(line),
         (None, false) => Placement::Outdated(raw.original_line),
     };
-    let line_hint = raw.line.or(raw.original_line).unwrap_or(1);
+    let (last, begin) = match raw.line {
+        Some(line) => (Some(line), raw.start_line),
+        None => (raw.original_line, raw.original_start_line),
+    };
+    let last = last.unwrap_or(1);
+    let span = begin.map_or(0, |begin| last.saturating_sub(begin));
     let commit = match placement {
         Placement::Outdated(_) if !raw.original_commit.is_empty() => raw.original_commit.clone(),
         _ => raw.commit.clone(),
@@ -288,14 +304,16 @@ fn thread_from_root(raw: &Raw, first: PrComment) -> PrThread {
         side: raw.side,
         commit,
         url: raw.url.clone(),
-        anchor: anchor_from_hunk(&raw.hunk, raw.side, line_hint),
+        anchor: anchor_from_hunk(&raw.hunk, raw.side, last, span),
         comments: vec![first],
     }
 }
 
-/// The last line of a review comment's diff hunk is the line it is on, so it and the lines above it
-/// make an anchor that `Anchor::locate` can find again after the code moved.
-fn anchor_from_hunk(hunk: &str, side: Side, line_hint: u32) -> Anchor {
+/// The last line of a review comment's diff hunk is the last line it covers, so it and the lines
+/// above it make an anchor that `Anchor::locate` can find again after the code moved. `last_line` is
+/// GitHub's `line` and `span` the lines before it that a multi-line comment covers (`line` minus
+/// `start_line`).
+fn anchor_from_hunk(hunk: &str, side: Side, last_line: u32, span: u32) -> Anchor {
     let kept: Vec<&str> = hunk
         .lines()
         .skip_while(|line| line.starts_with("@@"))
@@ -306,22 +324,29 @@ fn anchor_from_hunk(hunk: &str, side: Side, line_hint: u32) -> Anchor {
             on_this_side.then_some(text)
         })
         .collect();
-    let Some((last, above)) = kept.split_last() else {
+    let owned = |lines: &[&str]| lines.iter().map(|line| (*line).to_owned()).collect();
+    if kept.is_empty() {
         return Anchor {
             side,
-            line_hint,
+            line_hint: last_line,
             text: String::new(),
             before: Vec::new(),
             after: Vec::new(),
+            span: 0,
+            block: Vec::new(),
         };
-    };
+    }
+    let span = (span as usize).min(kept.len() - 1);
+    let (above, covered) = kept.split_at(kept.len() - 1 - span);
     let start = above.len().saturating_sub(CONTEXT_LINES);
     Anchor {
         side,
-        line_hint,
-        text: (*last).to_owned(),
-        before: above[start..].iter().map(|line| (*line).to_owned()).collect(),
+        line_hint: last_line.saturating_sub(span as u32),
+        text: covered[0].to_owned(),
+        before: owned(&above[start..]),
         after: Vec::new(),
+        span: span as u32,
+        block: owned(&covered[1..]),
     }
 }
 
@@ -403,6 +428,49 @@ mod tests {
         assert_eq!(first.anchor.text, "    let d = 4;");
         assert_eq!(first.anchor.before, ["    let b = 3;", "    let c = expiry();"]);
         assert_eq!(first.anchor.after, Vec::<String>::new());
+    }
+
+    fn comment_json(line: &str, start: &str, original_line: &str, original_start: &str) -> String {
+        format!(
+            r#"[{{"id":5,"path":"a.rs","commit_id":"c","user":{{"login":"u"}},"body":"b",
+            "created_at":"2026-10-12T10:00:00Z","side":"RIGHT","subject_type":"line",
+            "diff_hunk":"@@ -1,2 +1,6 @@\n a\n+b\n+c\n+d\n+e",
+            "line":{line},"start_line":{start},"original_line":{original_line},
+            "original_start_line":{original_start}}}]"#
+        )
+    }
+
+    #[test]
+    fn a_multi_line_comment_becomes_a_block_note_from_start_line_to_line() {
+        let cases = [
+            ("5", "3", "5", "3", 3, 2, "c", &["d", "e"][..], Placement::Line(5)),
+            ("5", "null", "5", "null", 5, 0, "e", &[][..], Placement::Line(5)),
+            ("5", "5", "5", "5", 5, 0, "e", &[][..], Placement::Line(5)),
+            ("5", "1", "5", "1", 1, 4, "a", &["b", "c", "d", "e"][..], Placement::Line(5)),
+            ("5", "-9", "5", "-9", 5, 0, "e", &[][..], Placement::Line(5)),
+            ("null", "null", "5", "4", 4, 1, "d", &["e"][..], Placement::Outdated(Some(5))),
+        ];
+        for (line, start, original, original_start, hint, span, text, block, placement) in cases {
+            let json = comment_json(line, start, original, original_start);
+            let thread = &parse_threads(&json).unwrap()[0];
+            let want_block: Vec<String> = block.iter().map(|l| (*l).to_owned()).collect();
+            let got = (
+                thread.anchor.line_hint,
+                thread.anchor.span,
+                thread.anchor.text.as_str(),
+                &thread.anchor.block,
+                thread.placement,
+            );
+            assert_eq!(got, (hint, span, text, &want_block, placement), "{line} {start}");
+        }
+    }
+
+    #[test]
+    fn a_range_longer_than_its_hunk_covers_only_what_the_hunk_shows() {
+        let json = comment_json("5", "1", "5", "1").replace("\\n+c\\n+d\\n+e", "\\n+e");
+        let anchor = &parse_threads(&json).unwrap()[0].anchor;
+        assert_eq!((anchor.line_hint, anchor.span, anchor.text.as_str()), (3, 2, "a"));
+        assert_eq!(anchor.block, ["b", "e"]);
     }
 
     #[test]

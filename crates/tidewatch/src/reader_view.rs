@@ -1059,6 +1059,8 @@ mod tests {
             text: "x".into(),
             before: vec![],
             after: vec![],
+            span: 0,
+            block: vec![],
         };
         notes.add("a.rs", None, anchor, Comment { author: "v".into(), time: 1, body: "n".into() });
         let draft = crate::review::Draft::of(&notes, "claude", "v");
@@ -1127,6 +1129,8 @@ mod tests {
             text: "x".into(),
             before: vec![],
             after: vec![],
+            span: 0,
+            block: vec![],
         };
         let id = notes.add(
             "src/a.rs",

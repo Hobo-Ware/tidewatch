@@ -374,8 +374,15 @@ fn notes_round_trip_over_http_through_the_temp_home() {
     let hook = h.register(1, "tab-a");
     let file = h.notes_file("tab-a");
     let mut notes = Notes::default();
-    let anchor =
-        Anchor { side: Side::New, line_hint: 4, text: "x".into(), before: vec![], after: vec![] };
+    let anchor = Anchor {
+        side: Side::New,
+        line_hint: 4,
+        text: "x".into(),
+        before: vec![],
+        after: vec![],
+        span: 0,
+        block: vec![],
+    };
     let id = notes.add(
         "src/a.rs",
         None,

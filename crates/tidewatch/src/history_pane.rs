@@ -218,8 +218,11 @@ fn show_graph(
     let history = &loaded.history;
     let summaries = &loaded.summaries;
     let changes = view.wip.as_deref().unwrap_or_default();
-    let wip =
-        (!changes.is_empty()).then(|| Wip { head_row: loaded.head_row.unwrap_or(0), changes });
+    let wip = (!changes.is_empty()).then(|| Wip {
+        head_row: loaded.head_row.unwrap_or(0),
+        changes,
+        notes: None,
+    });
     let mut summary = |row: usize| summaries.get(history.id(row));
     let checks = HashMap::new();
     let input = GraphInput {
@@ -238,6 +241,7 @@ fn show_graph(
         picking: false,
         filter_active: false,
         checks: &checks,
+        notes: &HashMap::new(),
         style,
         expanded,
     };

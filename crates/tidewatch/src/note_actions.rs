@@ -39,6 +39,8 @@ mod tests {
             text: "let x = 1;".into(),
             before: vec![],
             after: vec![],
+            span: 0,
+            block: vec![],
         }
     }
 

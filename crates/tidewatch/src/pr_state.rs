@@ -158,6 +158,8 @@ mod tests {
                 text: String::new(),
                 before: vec![],
                 after: vec![],
+                span: 0,
+                block: vec![],
             },
             resolved: false,
             comments: vec![Comment { author: "You".into(), time: 0, body: "x".into() }],

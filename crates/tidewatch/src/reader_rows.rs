@@ -376,6 +376,8 @@ mod tests {
             text: "x".into(),
             before: vec![],
             after: vec![],
+            span: 0,
+            block: vec![],
         };
         let comment =
             kelp_core::review::Comment { author: "You".into(), time: 1, body: "rename".into() };

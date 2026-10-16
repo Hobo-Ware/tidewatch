@@ -391,6 +391,8 @@ fn thread(path: &str, placement: Placement, author: &str, time: i64, text: &str)
             text: String::new(),
             before: vec![],
             after: vec![],
+            span: 0,
+            block: vec![],
         },
         comments: vec![PrComment {
             id: 1,

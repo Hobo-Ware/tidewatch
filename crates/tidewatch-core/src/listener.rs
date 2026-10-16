@@ -914,6 +914,8 @@ mod tests {
                 text: String::new(),
                 before: vec![],
                 after: vec![],
+                span: 0,
+                block: vec![],
             };
             notes.add(
                 "f.rs",

@@ -34,6 +34,15 @@ pub enum NoteState {
     FromAgent,
 }
 
+/// `12` for one line, `12-15` for a block of lines.
+#[must_use]
+pub fn line_label(anchor: &Anchor) -> String {
+    match anchor.span {
+        0 => anchor.line_hint.to_string(),
+        _ => format!("{}-{}", anchor.line_hint, anchor.last_line_hint()),
+    }
+}
+
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Notes {
     #[serde(default)]
@@ -261,7 +270,36 @@ mod tests {
             text: format!("line {line}"),
             before: vec!["above".into()],
             after: vec!["below".into()],
+            span: 0,
+            block: vec![],
         }
+    }
+
+    #[test]
+    fn the_line_label_is_a_line_or_a_range() {
+        let mut block = anchor(12);
+        let cases = [(0, "12"), (1, "12-13"), (5, "12-17")];
+        for (span, want) in cases {
+            block.span = span;
+            assert_eq!(line_label(&block), want, "span {span}");
+        }
+    }
+
+    #[test]
+    fn a_block_note_survives_a_save_and_a_note_from_before_blocks_loads_as_one_line() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("notes.json");
+        let mut block = anchor(5);
+        block.span = 2;
+        block.block = vec!["line 6".into(), "line 7".into()];
+        let mut notes = Notes::default();
+        notes.add("a.rs", None, block.clone(), comment("block"));
+        notes.save(&file).unwrap();
+        assert_eq!(Notes::load(&file).threads[0].anchor, block);
+        let old = r#"{"threads":[{"id":1,"path":"a.rs","commit":null,"anchor":{"side":"New","line_hint":3,"text":"x","before":[],"after":[]},"resolved":false,"comments":[]}]}"#;
+        std::fs::write(&file, old).unwrap();
+        let loaded = Notes::load(&file);
+        assert_eq!((loaded.threads[0].anchor.span, loaded.threads[0].anchor.block.len()), (0, 0));
     }
 
     fn comment(body: &str) -> Comment {

@@ -120,6 +120,7 @@ fn post_note_sends_body_path_line_commit_and_side() {
     let note = NewNote {
         path: "src/auth.rs".into(),
         line: 12,
+        start_line: None,
         side: Side::New,
         body: "Use the helper.\n\n- and add a test".into(),
     };
@@ -150,9 +151,50 @@ fn a_note_on_the_old_side_is_posted_as_left() {
     let answer = r#"{"id":1,"html_url":"u"}"#;
     let gh = FakeGh::new(&[reply("api repos", 0, answer, "")]);
     let tools = Tools::with_path(gh.path());
-    let note = NewNote { path: "a.rs".into(), line: 3, side: Side::Old, body: "b".into() };
+    let note = NewNote {
+        path: "a.rs".into(),
+        line: 3,
+        start_line: None,
+        side: Side::Old,
+        body: "b".into(),
+    };
     post_note(&tools, dir().path(), &pull(), &note).unwrap();
     assert_eq!(gh.calls()[0].last().map(String::as_str), Some("side=LEFT"));
+}
+
+#[test]
+fn a_block_note_is_posted_with_its_first_line_as_start_line_and_its_last_as_line() {
+    let answer = r#"{"id":1,"html_url":"u"}"#;
+    for (side, name) in [(Side::New, "RIGHT"), (Side::Old, "LEFT")] {
+        let gh = FakeGh::new(&[reply("api repos", 0, answer, "")]);
+        let tools = Tools::with_path(gh.path());
+        let note =
+            NewNote { path: "a.rs".into(), line: 15, start_line: Some(12), side, body: "b".into() };
+        post_note(&tools, dir().path(), &pull(), &note).unwrap();
+        let call = &gh.calls()[0];
+        let at = |flag: &str| call.iter().position(|a| a == flag).unwrap();
+        assert!(call.contains(&"line=15".to_owned()), "{call:?}");
+        assert!(call.contains(&"start_line=12".to_owned()), "{call:?}");
+        assert!(call.contains(&format!("side={name}")), "{call:?}");
+        assert!(call.contains(&format!("start_side={name}")), "{call:?}");
+        assert_eq!(call[at("start_line=12") - 1], "-F");
+        assert_eq!(call[at(&format!("start_side={name}")) - 1], "-f");
+    }
+}
+
+#[test]
+fn a_one_line_note_sends_no_start_line_or_start_side() {
+    let gh = FakeGh::new(&[reply("api repos", 0, r#"{"id":1,"html_url":"u"}"#, "")]);
+    let tools = Tools::with_path(gh.path());
+    let note = NewNote {
+        path: "a.rs".into(),
+        line: 3,
+        start_line: None,
+        side: Side::New,
+        body: "b".into(),
+    };
+    post_note(&tools, dir().path(), &pull(), &note).unwrap();
+    assert!(gh.calls()[0].iter().all(|arg| !arg.starts_with("start_")));
 }
 
 #[test]
@@ -160,7 +202,13 @@ fn a_line_outside_the_diff_comes_back_as_ghs_message() {
     let body = r#"{"message":"Unprocessable Entity","errors":["pull_request_review_thread.line must be part of the diff"]}"#;
     let gh = FakeGh::new(&[reply("api repos", 1, body, "gh: Unprocessable Entity (HTTP 422)\n")]);
     let tools = Tools::with_path(gh.path());
-    let note = NewNote { path: "a.rs".into(), line: 999, side: Side::New, body: "b".into() };
+    let note = NewNote {
+        path: "a.rs".into(),
+        line: 999,
+        start_line: None,
+        side: Side::New,
+        body: "b".into(),
+    };
     assert_eq!(
         post_note(&tools, dir().path(), &pull(), &note),
         Err(GhError::Failed("gh: Unprocessable Entity (HTTP 422)".into()))
