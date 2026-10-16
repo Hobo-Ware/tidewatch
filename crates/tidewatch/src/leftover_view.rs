@@ -3,14 +3,16 @@
 
 use std::path::PathBuf;
 
-use egui::{Id, RichText, ScrollArea};
-use stdusk_egui::colors;
-use stdusk_egui::widgets::{action_button, overlay_frame};
+use egui::{
+    Align, Color32, CornerRadius, Frame, Id, Layout, Margin, RichText, ScrollArea, Sense, Stroke,
+    vec2,
+};
 use tidewatch_core::worktree::Leftover;
 
 use crate::brand;
 use crate::leftovers::{Cleanup, Row, RowState, status_text};
-use crate::screen_kit::quiet_button;
+use crate::notice::key_hint;
+use crate::screen_kit::{body, danger_button, dialog_frame, primary_button, quiet_button};
 
 const DIALOG_WIDTH: f32 = 560.0;
 const LIST_HEIGHT: f32 = 280.0;
@@ -47,66 +49,103 @@ fn name_of(row: &Row) -> String {
     )
 }
 
+fn pill_of(state: &RowState) -> (&'static str, Color32) {
+    match state {
+        RowState::Inspecting => ("looking", brand::MUTED),
+        RowState::Removing => ("removing", brand::MUTED),
+        RowState::Unrecorded => ("unrecorded", brand::ORANGE),
+        RowState::Failed(_) => ("failed", brand::RED),
+        RowState::Ready(i) if i.changed > 0 => ("dirty", brand::ORANGE),
+        RowState::Ready(_) => ("clean", brand::GREEN),
+    }
+}
+
+fn pill(ui: &mut egui::Ui, text: &str, ink: Color32) {
+    let galley = ui.painter().layout_no_wrap(text.to_owned(), body(11.5), ink);
+    let (rect, _) = ui.allocate_exact_size(galley.size() + vec2(16.0, 6.0), Sense::hover());
+    ui.painter().rect_filled(rect, CornerRadius::same(255), ink.gamma_multiply(0.14));
+    ui.painter().galley(rect.center() - galley.size() / 2.0, galley, ink);
+}
+
 fn row_ui(ui: &mut egui::Ui, row: &Row, answer: &mut Option<Answer>) {
-    ui.horizontal(|ui| {
-        ui.spacing_mut().item_spacing.x = 8.0;
-        ui.label(RichText::new(name_of(row)).monospace().color(colors::fg()));
-        if let Some(branch) = &row.leftover.branch {
-            ui.label(RichText::new(branch).size(12.0).color(colors::dim()));
-        }
-    });
-    ui.horizontal(|ui| {
-        ui.spacing_mut().item_spacing.x = 8.0;
-        let loss = matches!(&row.state, RowState::Ready(i) if i.changed > 0)
-            || matches!(row.state, RowState::Failed(_));
-        let color = if loss { brand::RED } else { colors::dim() };
-        ui.label(RichText::new(status_text(&row.state)).size(12.0).color(color));
-        if matches!(&row.state, RowState::Ready(i) if i.changed > 0)
-            && action_button(ui, "Discard", false).clicked()
-        {
-            *answer = Some(Answer::Discard(row.leftover.path.clone()));
-        }
-    });
-    ui.add_space(4.0);
+    Frame::new()
+        .fill(brand::ITEM)
+        .stroke(Stroke::new(1.0, brand::ITEM_LINE))
+        .corner_radius(8)
+        .inner_margin(Margin::symmetric(12, 9))
+        .show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            ui.spacing_mut().item_spacing.y = 4.0;
+            ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = 8.0;
+                ui.label(RichText::new(name_of(row)).monospace().color(brand::TEXT));
+                if let Some(branch) = &row.leftover.branch {
+                    ui.label(RichText::new(branch).size(12.0).color(brand::MUTED));
+                }
+                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                    let (text, ink) = pill_of(&row.state);
+                    pill(ui, text, ink);
+                    if matches!(&row.state, RowState::Ready(i) if i.changed > 0)
+                        && danger_button(ui, "Discard").clicked()
+                    {
+                        *answer = Some(Answer::Discard(row.leftover.path.clone()));
+                    }
+                });
+            });
+            let loss = matches!(&row.state, RowState::Ready(i) if i.changed > 0)
+                || matches!(row.state, RowState::Failed(_));
+            let color = if loss { brand::RED } else { brand::MUTED };
+            if !matches!(&row.state, RowState::Ready(i) if i.changed == 0 && i.unmerged == 0) {
+                ui.label(RichText::new(status_text(&row.state)).size(12.0).color(color));
+            }
+        });
+    ui.add_space(6.0);
 }
 
 pub(crate) fn dialog(ctx: &egui::Context, cleanup: &Cleanup) -> Option<Answer> {
     let mut answer = None;
-    let modal = egui::Modal::new(Id::new("leftover_worktrees")).frame(overlay_frame()).show(ctx, |ui| {
-        ui.set_width(DIALOG_WIDTH);
-        ui.spacing_mut().item_spacing.y = 6.0;
-        ui.label(RichText::new("Leftover worktrees").strong().size(15.0).color(colors::fg()));
-        ui.label(
-            RichText::new(
-                "No tab owns these. Clean up removes the clean ones and keeps any branch that holds \
-                 commits found nowhere else. One with uncommitted changes needs its own Discard.",
-            )
-            .color(colors::dim()),
-        );
-        ScrollArea::vertical().max_height(LIST_HEIGHT).show(ui, |ui| {
-            for row in &cleanup.rows {
-                row_ui(ui, row, &mut answer);
-            }
-            if cleanup.rows.is_empty() {
-                ui.label(RichText::new("Nothing left over.").color(colors::dim()));
-            }
-        });
-        ui.add_space(4.0);
-        ui.horizontal(|ui| {
-            ui.spacing_mut().item_spacing.x = 8.0;
-            if action_button(ui, "Close", false).clicked() {
-                answer = Some(Answer::Close);
-            }
-            let n = cleanup.clean_count();
-            let label = if n == 0 { "Clean up".to_owned() } else { format!("Clean up ({n})") };
-            let ready = n > 0 && !cleanup.busy();
-            ui.add_enabled_ui(ready, |ui| {
-                if action_button(ui, &label, true).clicked() {
-                    answer = Some(Answer::CleanUp);
+    let modal = dialog_frame(
+        ctx,
+        Id::new("leftover_worktrees"),
+        "Leftover worktrees",
+        DIALOG_WIDTH,
+        |ui| {
+            ui.spacing_mut().item_spacing.y = 6.0;
+            ui.label(
+                RichText::new(
+                    "No tab owns these. Clean up removes the clean ones and keeps any branch that \
+                     holds commits found nowhere else. One with uncommitted changes needs its own \
+                     Discard.",
+                )
+                .color(brand::MUTED),
+            );
+            ui.add_space(4.0);
+            ScrollArea::vertical().max_height(LIST_HEIGHT).show(ui, |ui| {
+                for row in &cleanup.rows {
+                    row_ui(ui, row, &mut answer);
+                }
+                if cleanup.rows.is_empty() {
+                    ui.label(RichText::new("Nothing left over.").color(brand::MUTED));
                 }
             });
-        });
-    });
+            ui.add_space(4.0);
+            ui.horizontal(|ui| {
+                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                    ui.spacing_mut().item_spacing.x = 8.0;
+                    let n = cleanup.clean_count();
+                    let label =
+                        if n == 0 { "Clean up".to_owned() } else { format!("Clean up ({n})") };
+                    if primary_button(ui, &label, n > 0 && !cleanup.busy()).clicked() {
+                        answer = Some(Answer::CleanUp);
+                    }
+                    if quiet_button(ui, "Close", true).clicked() {
+                        answer = Some(Answer::Close);
+                    }
+                });
+            });
+            key_hint(ui, "Esc closes");
+        },
+    );
     if answer.is_none() && modal.should_close() {
         answer = Some(Answer::Close);
     }
