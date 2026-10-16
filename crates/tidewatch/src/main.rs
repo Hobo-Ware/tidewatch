@@ -146,6 +146,14 @@ use tidewatch_core::path_env;
 use tidewatch_core::paths::TidewatchPaths;
 use tidewatch_core::prefs::Prefs;
 
+/// The Wayland app id and X11 class: the installed `tidewatch.desktop`, whose icon the desktop shows
+/// for the window. eframe would use the app name, `Tidewatch`, which matches no desktop entry.
+const APP_ID: &str = "tidewatch";
+
+/// The window icon where the window manager reads it from the window (X11). macOS takes the
+/// bundle's icon, which a runtime icon would replace.
+const LINUX_ICON: &[u8] = include_bytes!("../../../assets/icon-512.png");
+
 fn main() -> eframe::Result<()> {
     let args = cli::parse(std::env::args_os().skip(1));
     let home = std::env::var_os("HOME").map(PathBuf::from);
@@ -230,8 +238,14 @@ fn main() -> eframe::Result<()> {
 
     let mut viewport = egui::ViewportBuilder::default()
         .with_title("Tidewatch")
+        .with_app_id(APP_ID)
         .with_inner_size(WINDOW_SIZE)
         .with_active(plan.activates);
+    if cfg!(target_os = "linux")
+        && let Ok(icon) = eframe::icon_data::from_png_bytes(LINUX_ICON)
+    {
+        viewport = viewport.with_icon(icon);
+    }
     if plan.quake {
         viewport = viewport.with_decorations(false).with_resizable(false).with_position([0.0, 0.0]);
     }
@@ -303,4 +317,23 @@ fn open_without_taking_focus(builder: &mut winit::event_loop::EventLoopBuilder<e
     }
     #[cfg(not(target_os = "macos"))]
     let _ = builder;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_app_id_names_the_shipped_desktop_entry_and_its_window_class() {
+        let packaging = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../packaging");
+        let entry = std::fs::read_to_string(packaging.join(format!("{APP_ID}.desktop"))).unwrap();
+        assert!(entry.lines().any(|line| line == format!("StartupWMClass={APP_ID}")), "{entry}");
+        assert!(entry.lines().any(|line| line == format!("Icon={APP_ID}")), "{entry}");
+    }
+
+    #[test]
+    fn the_linux_window_icon_decodes() {
+        let icon = eframe::icon_data::from_png_bytes(LINUX_ICON).unwrap();
+        assert_eq!((icon.width, icon.height), (512, 512));
+    }
 }

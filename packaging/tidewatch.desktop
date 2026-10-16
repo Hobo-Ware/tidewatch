@@ -4,6 +4,7 @@ Name=Tidewatch
 Comment=Run AI coding agents in git worktrees, one repo at a time
 Exec=tidewatch
 Icon=tidewatch
+StartupWMClass=tidewatch
 Terminal=false
 Categories=Development;
 Keywords=agents;git;worktree;terminal;
