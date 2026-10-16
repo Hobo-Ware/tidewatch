@@ -56,7 +56,6 @@ use crate::dev_view::{DevKeys, DevView};
 use crate::dev_workflow::DevWorkflow;
 use crate::dev_worktree::DevWorktree;
 use crate::flow::Flow;
-use crate::fonts;
 use crate::handoff;
 use crate::jobs::Jobs;
 use crate::last_used::LastUsed;
@@ -78,6 +77,7 @@ use crate::settings::Settings;
 use crate::shell::{self, Shell};
 use crate::tab_view::TabView;
 use crate::tabs::Tabs;
+use crate::terminal_font;
 use crate::toast::Toast;
 use crate::trust_glue::Trust;
 use crate::updates::Updates;
@@ -98,6 +98,7 @@ enum Closing {
 
 pub(crate) struct Tidewatch {
     workspaces: Vec<Workspace>,
+    terminal_font: terminal_font::Host,
     paths: Option<TidewatchPaths>,
     tabs: Tabs<Pane<PtyTerm>>,
     jobs: Jobs<Done>,
@@ -165,7 +166,8 @@ impl Tidewatch {
     ) -> Self {
         colors::init(brand::theme());
         colors::set_chrome(brand::chrome());
-        fonts::install(&cc.egui_ctx);
+        let prefs = paths.as_ref().map(Prefs::load).unwrap_or_default();
+        let terminal_font = terminal_font::Host::start(&cc.egui_ctx, prefs.terminal.font);
         apply_theme(&cc.egui_ctx);
         brand::tint_visuals(&cc.egui_ctx);
         if screenshot.is_some() {
@@ -204,11 +206,12 @@ impl Tidewatch {
             LastUsed::new(paths.as_ref(), screenshot.is_none() && !shell.env.background);
         let updates = Updates::new(
             &cc.egui_ctx,
-            paths.as_ref().map(Prefs::load).unwrap_or_default().updates,
+            prefs.updates,
             fake_release(std::env::var("TIDEWATCH_FAKE_UPDATE").ok().as_deref()),
             screenshot.is_some(),
         );
         let mut app = Self {
+            terminal_font,
             tabs,
             jobs: Jobs::new(),
             closing: None,

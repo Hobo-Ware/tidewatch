@@ -6,6 +6,7 @@ use tidewatch_core::workflows::Workflows;
 
 use tidewatch_core::prefs::WindowPrefs;
 
+use crate::font_view;
 use crate::login_item;
 use crate::profile_editor;
 use crate::window_settings;
@@ -26,6 +27,7 @@ pub(crate) struct Settings {
     pub(crate) profiles: profile_editor::Editor,
     pub(crate) workflows: workflow_editor::Editor,
     pub(crate) window: window_settings::Editor,
+    pub(crate) font: font_view::Picker,
     pub(crate) login: login_item::Row,
 }
 
@@ -44,6 +46,7 @@ impl Settings {
             workflows: workflow_editor::Editor::new(workflows, agents.clone(), profile_names),
             profiles: profile_editor::Editor::new(profiles, agents),
             window: window_settings::Editor::new(window),
+            font: font_view::Picker::default(),
             login: login_item::Row::default(),
         }
     }

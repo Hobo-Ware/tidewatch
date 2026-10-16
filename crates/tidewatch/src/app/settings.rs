@@ -5,6 +5,7 @@ use tidewatch_core::prefs::WindowPrefs;
 
 use super::{Tidewatch, wall_ms};
 use crate::agent_jobs;
+use crate::font_view;
 use crate::general_view::General;
 use crate::login_item;
 use crate::macos;
@@ -115,6 +116,11 @@ impl Tidewatch {
                 status: self.shell.hotkey_status(),
                 menu_bar_available: self.shell.tray_supported(),
             },
+            terminal: font_view::View {
+                choice: self.terminal_font.choice().clone(),
+                status: self.terminal_font.status(),
+                families: stdusk_egui::fonts::installed_families(),
+            },
         };
         let probes: Probes = self
             .catalog
@@ -192,6 +198,9 @@ impl Tidewatch {
                 if let Some(paths) = &self.paths {
                     updates::save(paths.clone(), prefs);
                 }
+            }
+            Some(settings_view::Action::TerminalFont(choice)) => {
+                self.terminal_font.choose(ctx, self.paths.as_ref(), choice);
             }
             Some(settings_view::Action::LoginItem(click)) => self.apply_login_click(click, ctx),
             Some(settings_view::Action::OpenHouseStyle) => self.open_house_style(ctx),

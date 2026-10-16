@@ -35,6 +35,7 @@ mod file_view;
 mod flow;
 mod flow_glue;
 mod flow_jobs;
+mod font_view;
 mod fonts;
 mod from_stdusk;
 mod general_view;
@@ -109,6 +110,7 @@ mod stepper;
 mod stepper_view;
 mod tab_view;
 mod tabs;
+mod terminal_font;
 #[cfg(all(test, unix))]
 mod test_exec;
 mod toast;

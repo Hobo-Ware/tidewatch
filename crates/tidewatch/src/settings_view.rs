@@ -38,6 +38,8 @@ pub(crate) enum Action {
     Window(tidewatch_core::prefs::WindowPrefs),
     /// An Updates switch moved: the whole table. Applies at once too.
     Updates(tidewatch_core::prefs::UpdatePrefs),
+    /// A font was picked for the terminal. Applies at once too.
+    TerminalFont(tidewatch_core::prefs::FontChoice),
     LoginItem(login_item::Click),
     OpenHouseStyle,
     ResetHouseStyle,
@@ -104,6 +106,7 @@ fn page(
                 ui,
                 host.general,
                 &mut settings.window,
+                &mut settings.font,
                 updates,
                 &mut settings.login,
                 host.read_login,

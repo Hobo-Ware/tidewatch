@@ -46,6 +46,11 @@ fn general(restore: bool, resume: ResumeAgents, login_offered: bool) -> General 
             status: crate::shell::HotkeyStatus::Registered,
             menu_bar_available: true,
         },
+        terminal: crate::font_view::View {
+            choice: tidewatch_core::prefs::FontChoice::BuiltIn,
+            status: None,
+            families: &[],
+        },
     }
 }
 
