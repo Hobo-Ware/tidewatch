@@ -3,16 +3,14 @@
 
 use std::path::PathBuf;
 
-use egui::{
-    Align, Color32, CornerRadius, Frame, Id, Layout, Margin, RichText, ScrollArea, Sense, Stroke,
-    vec2,
-};
+use egui::{Align, Color32, Frame, Id, Layout, Margin, RichText, ScrollArea, Stroke};
 use tidewatch_core::worktree::Leftover;
 
 use crate::brand;
 use crate::leftovers::{Cleanup, Row, RowState, status_text};
 use crate::notice::key_hint;
-use crate::screen_kit::{body, danger_button, dialog_frame, primary_button, quiet_button};
+use crate::screen_kit::{danger_button, dialog_frame, primary_button, quiet_button};
+use crate::settings_ui::pill;
 
 const DIALOG_WIDTH: f32 = 560.0;
 const LIST_HEIGHT: f32 = 280.0;
@@ -58,13 +56,6 @@ fn pill_of(state: &RowState) -> (&'static str, Color32) {
         RowState::Ready(i) if i.changed > 0 => ("dirty", brand::ORANGE),
         RowState::Ready(_) => ("clean", brand::GREEN),
     }
-}
-
-fn pill(ui: &mut egui::Ui, text: &str, ink: Color32) {
-    let galley = ui.painter().layout_no_wrap(text.to_owned(), body(11.5), ink);
-    let (rect, _) = ui.allocate_exact_size(galley.size() + vec2(16.0, 6.0), Sense::hover());
-    ui.painter().rect_filled(rect, CornerRadius::same(255), ink.gamma_multiply(0.14));
-    ui.painter().galley(rect.center() - galley.size() / 2.0, galley, ink);
 }
 
 fn row_ui(ui: &mut egui::Ui, row: &Row, answer: &mut Option<Answer>) {
@@ -192,7 +183,7 @@ mod tests {
         cleanup.inspected(&leftover("a").path, Inspection { changed: 0, unmerged: 0 });
         cleanup.inspected(&leftover("b").path, Inspection { changed: 2, unmerged: 3 });
         cleanup.removed(&leftover("c").path, Err("locked".into()));
-        let ctx = egui::Context::default();
+        let ctx = crate::fonts::test_context();
         for _ in 0..2 {
             let mut answer = None;
             frame(&ctx, |ui| answer = dialog(ui.ctx(), &cleanup));

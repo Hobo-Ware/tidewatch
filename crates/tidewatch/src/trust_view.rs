@@ -1,16 +1,16 @@
 //! D14 folder trust on screen: the wording per CLI (pure), the first-launch consent dialog and the
 //! settings page. Both name every file that would change and the line it gets.
 
-use egui::{Align, Color32, Id, Key, Layout, Modifiers, RichText};
-use stdusk_egui::colors;
-use stdusk_egui::widgets::{action_button, overlay_frame};
+use egui::{Align, Color32, Frame, Id, Key, Layout, Margin, Modifiers, RichText, Stroke};
 use tidewatch_core::consent::{Consent, Event};
 use tidewatch_core::trust::{CliTrust, Status, TrustCli, TrustState};
 
 use crate::brand;
+use crate::notice::key_hint;
+use crate::screen_kit::{dialog_frame, primary_button, quiet_button};
 use crate::settings_ui::{
     self, Control, FAINT, MUTED, SOFT, TEXT, button, button_width, footer_note, note, page_header,
-    row_with, section,
+    pill, row_with, section,
 };
 
 const DIALOG_WIDTH: f32 = 560.0;
@@ -91,27 +91,45 @@ pub(crate) fn consent_text(consent: Consent) -> &'static str {
     }
 }
 
-fn tone_color(tone: Tone) -> Color32 {
+fn pill_of(tone: Tone) -> (&'static str, Color32) {
     match tone {
-        Tone::Change => colors::fg(),
-        Tone::Fine => brand::GREEN,
-        Tone::Warn => brand::ORANGE,
+        Tone::Change => ("edits file", brand::TEAL_TEXT),
+        Tone::Fine => ("no file change", brand::GREEN),
+        Tone::Warn => ("cannot edit", brand::ORANGE),
     }
 }
 
 fn draw_rows(ui: &mut egui::Ui, rows: &[Row]) {
     for row in rows {
-        ui.add_space(4.0);
-        ui.label(RichText::new(row.name).strong().color(tone_color(row.tone)));
-        if let Some(file) = &row.file {
-            ui.label(RichText::new(file).monospace().size(11.5).color(colors::dim()));
-        }
-        if let Some(line) = &row.line {
-            ui.label(
-                RichText::new(format!("adds  {line}")).monospace().size(11.5).color(colors::fg()),
-            );
-        }
-        ui.label(RichText::new(&row.note).size(12.0).color(colors::dim()));
+        Frame::new()
+            .fill(brand::ITEM)
+            .stroke(Stroke::new(1.0, brand::ITEM_LINE))
+            .corner_radius(8)
+            .inner_margin(Margin::symmetric(12, 10))
+            .show(ui, |ui| {
+                ui.set_width(ui.available_width());
+                ui.spacing_mut().item_spacing.y = 4.0;
+                ui.horizontal(|ui| {
+                    ui.label(RichText::new(row.name).strong().color(brand::TEXT));
+                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                        let (text, ink) = pill_of(row.tone);
+                        pill(ui, text, ink);
+                    });
+                });
+                if let Some(file) = &row.file {
+                    ui.label(RichText::new(file).monospace().size(11.5).color(brand::MUTED));
+                }
+                if let Some(line) = &row.line {
+                    ui.label(
+                        RichText::new(format!("adds  {line}"))
+                            .monospace()
+                            .size(11.5)
+                            .color(brand::SOFT),
+                    );
+                }
+                ui.label(RichText::new(&row.note).size(12.0).color(brand::MUTED));
+            });
+        ui.add_space(6.0);
     }
 }
 
@@ -119,40 +137,48 @@ fn draw_rows(ui: &mut egui::Ui, rows: &[Row]) {
 pub(crate) fn dialog(ctx: &egui::Context, page: &Page) -> Option<Event> {
     let mut answer = None;
     let rows = page.state.map(|s| rows(s, page.root)).unwrap_or_default();
-    let modal = egui::Modal::new(Id::new("folder_trust")).frame(overlay_frame()).show(ctx, |ui| {
-        ui.set_width(DIALOG_WIDTH);
-        ui.spacing_mut().item_spacing.y = 6.0;
-        ui.label(RichText::new("Skip the folder trust prompts?").strong().size(15.0).color(colors::fg()));
-        ui.label(
-            RichText::new(format!(
-                "Every new worktree makes some agents ask \"do you trust this folder?\". Tidewatch \
-                 can answer once for the folders it creates under {}. It edits these files only if \
-                 you say yes:",
-                page.root
-            ))
-            .color(colors::dim()),
-        );
-        draw_rows(ui, &rows);
-        ui.add_space(4.0);
-        ui.label(
-            RichText::new(
-                "Each file gets a copy named <file>.tidewatch-bak before its first change. Settings, \
-                 Folder trust, undoes it. No keeps today's behavior: the prompt appears in each new worktree.",
-            )
-            .size(12.0)
-            .color(colors::dim()),
-        );
-        ui.add_space(4.0);
-        ui.horizontal(|ui| {
-            ui.spacing_mut().item_spacing.x = 8.0;
-            if action_button(ui, "No, keep asking me", false).clicked() {
-                answer = Some(Event::No);
-            }
-            if action_button(ui, "Yes, trust the Tidewatch folder", true).clicked() {
-                answer = Some(Event::Yes);
-            }
-        });
-    });
+    let modal = dialog_frame(
+        ctx,
+        Id::new("folder_trust"),
+        "Skip the folder trust prompts?",
+        DIALOG_WIDTH,
+        |ui| {
+            ui.spacing_mut().item_spacing.y = 6.0;
+            ui.label(
+                RichText::new(format!(
+                    "Every new worktree makes some agents ask \"do you trust this folder?\". \
+                     Tidewatch can answer once for the folders it creates under {}. It edits \
+                     these files only if you say yes:",
+                    page.root
+                ))
+                .color(brand::MUTED),
+            );
+            ui.add_space(4.0);
+            draw_rows(ui, &rows);
+            ui.label(
+                RichText::new(
+                    "Each file gets a copy named <file>.tidewatch-bak before its first change. \
+                     Settings, Folder trust, undoes it. No keeps today's behavior: the prompt \
+                     appears in each new worktree.",
+                )
+                .size(12.0)
+                .color(brand::MUTED),
+            );
+            ui.add_space(6.0);
+            ui.horizontal(|ui| {
+                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                    ui.spacing_mut().item_spacing.x = 8.0;
+                    if primary_button(ui, "Yes, trust the Tidewatch folder", true).clicked() {
+                        answer = Some(Event::Yes);
+                    }
+                    if quiet_button(ui, "No, keep asking me", true).clicked() {
+                        answer = Some(Event::No);
+                    }
+                });
+            });
+            key_hint(ui, "Esc counts as No");
+        },
+    );
     if answer.is_none() && ctx.input_mut(|i| i.consume_key(Modifiers::NONE, Key::Escape)) {
         answer = Some(Event::No);
     }
@@ -233,7 +259,12 @@ fn cli_row(ui: &mut egui::Ui, cli: &Row) {
         Control::NONE,
         |ui| {
             ui.spacing_mut().item_spacing.y = 3.0;
-            ui.label(RichText::new(cli.name).size(15.0).color(tone_color(cli.tone)));
+            ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = 8.0;
+                ui.label(RichText::new(cli.name).size(15.0).color(TEXT));
+                let (text, ink) = pill_of(cli.tone);
+                pill(ui, text, ink);
+            });
             note(ui, &cli.note, MUTED);
             if let Some(file) = &cli.file {
                 ui.label(RichText::new(file).monospace().size(11.5).color(FAINT));
