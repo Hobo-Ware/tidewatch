@@ -277,13 +277,15 @@ fn show_header(
     }
     let mut right = switch.left - GAP;
     right = file_arrows(ui, right, center_y, view);
+    let floor = back.rect.right() + GAP + MIN_PATH_W + GAP + counts_width(ui, view);
     if let Some(text) = position_text(&view.files, view.file.as_deref()) {
         let galley = ui.painter().layout_no_wrap(text, body(FONT), brand::MUTED);
         let at = pos2(right - 8.0 - galley.size().x, center_y - galley.size().y / 2.0);
-        right = at.x - GAP;
-        ui.painter().galley(at, galley, brand::MUTED);
+        if at.x - GAP >= floor {
+            right = at.x - GAP;
+            ui.painter().galley(at, galley, brand::MUTED);
+        }
     }
-    let floor = back.rect.right() + GAP + MIN_PATH_W + GAP + counts_width(ui, view);
     if let Some(extras) = extras {
         right = note_buttons(ui, right, floor, center_y, extras, actions);
     }
@@ -384,14 +386,23 @@ pub(crate) fn note_buttons(
 /// The room the path takes and whether `in <sha>` follows, for the `room` between the back button and
 /// the right-hand buttons: the path is cut only once its counts no longer fit beside it, and the
 /// origin is the first thing to go.
-fn plan_left(path_w: f32, counts_w: f32, origin_w: f32, room: f32) -> (f32, bool) {
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum After {
+    CountsAndOrigin,
+    Counts,
+    Nothing,
+}
+
+fn plan_left(path_w: f32, counts_w: f32, origin_w: f32, room: f32) -> (f32, After) {
     let with_counts = path_w + GAP + counts_w;
     if with_counts + GAP + origin_w <= room {
-        (path_w, true)
+        (path_w, After::CountsAndOrigin)
     } else if with_counts <= room {
-        (path_w, false)
+        (path_w, After::Counts)
+    } else if MIN_SHOWN_PATH_W + GAP + counts_w <= room {
+        (room - GAP - counts_w, After::Counts)
     } else {
-        ((room - GAP - counts_w).max(MIN_SHOWN_PATH_W), false)
+        (room.max(0.0), After::Nothing)
     }
 }
 
@@ -429,15 +440,17 @@ fn left_group(ui: &Ui, left: f32, limit: f32, center_y: f32, view: &TabView) {
     let origin_w = lead.size().x + sha.as_ref().map_or(0.0, |g| g.size().x);
     let font = mono(14.0);
     let path_w = text_width(ui, path, &font);
-    let (path_room, with_origin) =
-        plan_left(path_w, counts_width(ui, view), origin_w, limit - left);
+    let (path_room, after) = plan_left(path_w, counts_width(ui, view), origin_w, limit - left);
     let shown = tail_fit(ui, path, &font, path_room);
     let (dir, name) = split_dir(&shown);
     let mut x = put(left, lay(dir, font.clone(), brand::MUTED));
     x = put(x, lay(name, font, brand::TEXT)) + GAP;
+    if after == After::Nothing {
+        return;
+    }
     x = put(x, lay(&plus, body(12.0), brand::GREEN)) + COUNT_GAP;
     x = put(x, lay(&minus, body(12.0), brand::RED)) + GAP;
-    if with_origin {
+    if after == After::CountsAndOrigin {
         x = put(x, lead);
         if let Some(sha) = sha {
             put(x, sha);
@@ -511,12 +524,19 @@ mod tests {
 
     #[test]
     fn the_origin_goes_first_then_the_path_is_cut_beside_its_counts() {
-        assert_eq!(plan_left(100.0, 40.0, 80.0, 1000.0), (100.0, true));
-        assert_eq!(plan_left(100.0, 40.0, 80.0, 240.0), (100.0, true));
-        assert_eq!(plan_left(100.0, 40.0, 80.0, 239.0), (100.0, false));
-        assert_eq!(plan_left(100.0, 40.0, 80.0, 150.0), (100.0, false));
-        assert_eq!(plan_left(100.0, 40.0, 80.0, 149.0), (99.0, false));
-        assert_eq!(plan_left(100.0, 40.0, 80.0, 10.0), (MIN_SHOWN_PATH_W, false));
+        let cases = [
+            (1000.0, (100.0, After::CountsAndOrigin)),
+            (240.0, (100.0, After::CountsAndOrigin)),
+            (239.0, (100.0, After::Counts)),
+            (150.0, (100.0, After::Counts)),
+            (149.0, (99.0, After::Counts)),
+            (90.0, (40.0, After::Counts)),
+            (89.0, (89.0, After::Nothing)),
+            (10.0, (10.0, After::Nothing)),
+        ];
+        for (room, want) in cases {
+            assert_eq!(plan_left(100.0, 40.0, 80.0, room), want, "room {room}");
+        }
     }
 
     #[test]
