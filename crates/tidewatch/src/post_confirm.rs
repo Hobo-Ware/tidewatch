@@ -3,10 +3,11 @@
 //! post nothing.
 
 use crate::brand;
-use egui::{Id, Key, Modifiers, RichText};
+use crate::reader_view::item_frame;
+use crate::screen_kit::{body, dialog_frame, mono, primary_button, quiet_button};
+use egui::epaint::text::{LayoutJob, TextFormat};
+use egui::{Align, Id, Key, Layout, Margin, Modifiers, RichText};
 use kelp_core::review::{Side, Thread};
-use stdusk_egui::colors;
-use stdusk_egui::widgets::{action_button, overlay_frame};
 use tidewatch_core::notes::Notes;
 use tidewatch_core::pr::PullRequest;
 
@@ -72,28 +73,52 @@ pub(crate) fn heading(confirm: &PostConfirm) -> String {
 }
 
 pub(crate) fn detail(plan: &Plan) -> String {
-    match &plan.kind {
-        Kind::New { path, line, .. } => format!("A new review comment on {path}:{line}, as you."),
-        Kind::Reply { .. } => "A reply in this thread, as you.".to_owned(),
+    match (&plan.kind, location(plan)) {
+        (Kind::New { .. }, Some(place)) => format!("A new review comment on {place}, as you."),
+        _ => "A reply in this thread, as you.".to_owned(),
     }
+}
+
+/// The `path:line` a new comment lands on; a reply has none.
+pub(crate) fn location(plan: &Plan) -> Option<String> {
+    match &plan.kind {
+        Kind::New { path, line, .. } => Some(format!("{path}:{line}")),
+        Kind::Reply { .. } => None,
+    }
+}
+
+/// The detail line with the place in mono.
+fn detail_job(plan: &Plan) -> LayoutJob {
+    let text = detail(plan);
+    let mut job = LayoutJob::default();
+    let prose = |ink| TextFormat::simple(body(12.5), ink);
+    match location(plan)
+        .and_then(|place| text.split_once(&place).map(|(a, b)| (a.to_owned(), place, b.to_owned())))
+    {
+        Some((before, place, after)) => {
+            job.append(&before, 0.0, prose(brand::MUTED));
+            job.append(&place, 0.0, TextFormat::simple(mono(12.0), brand::SOFT));
+            job.append(&after, 0.0, prose(brand::MUTED));
+        }
+        None => job.append(&text, 0.0, prose(brand::MUTED)),
+    }
+    job
 }
 
 pub(crate) fn show(ctx: &egui::Context, confirm: &PostConfirm) -> Option<Answer> {
     let mut answer = None;
     let asking = confirm.phase == Phase::Asking;
-    let modal = egui::Modal::new(Id::new("post_to_pr")).frame(overlay_frame()).show(ctx, |ui| {
-        ui.set_width(DIALOG_WIDTH);
+    let modal = dialog_frame(ctx, Id::new("post_to_pr"), &heading(confirm), DIALOG_WIDTH, |ui| {
         ui.spacing_mut().item_spacing.y = 8.0;
-        ui.label(RichText::new(heading(confirm)).strong().size(15.0).color(colors::fg()));
-        ui.label(RichText::new(detail(&confirm.plan)).color(colors::dim()));
-        egui::Frame::new().fill(colors::bg()).corner_radius(6).inner_margin(8).show(ui, |ui| {
+        ui.label(detail_job(&confirm.plan));
+        item_frame().inner_margin(Margin::symmetric(12, 10)).show(ui, |ui| {
             ui.set_width(ui.available_width());
-            ui.label(RichText::new(&confirm.plan.body).monospace().size(12.0).color(colors::fg()));
+            ui.label(RichText::new(&confirm.plan.body).size(13.0).color(brand::TEXT));
         });
         match &confirm.phase {
             Phase::Asking => {}
             Phase::Posting => {
-                ui.label(RichText::new("Posting...").color(colors::dim()));
+                ui.label(RichText::new("Posting...").color(brand::MUTED));
             }
             Phase::Failed(message) => {
                 ui.label(RichText::new(message).color(brand::RED));
@@ -101,14 +126,22 @@ pub(crate) fn show(ctx: &egui::Context, confirm: &PostConfirm) -> Option<Answer>
         }
         ui.add_space(4.0);
         ui.horizontal(|ui| {
-            ui.spacing_mut().item_spacing.x = 8.0;
-            let cancel = if matches!(confirm.phase, Phase::Failed(_)) { "Close" } else { "Cancel" };
-            if action_button(ui, cancel, false).clicked() {
-                answer = Some(Answer::Cancel);
+            if asking {
+                ui.label(
+                    RichText::new("Enter posts  -  Esc cancels").size(12.0).color(brand::MUTED),
+                );
             }
-            if asking && action_button(ui, "Post to PR", true).clicked() {
-                answer = Some(Answer::Post);
-            }
+            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                ui.spacing_mut().item_spacing.x = 8.0;
+                if asking && primary_button(ui, "Post to PR", true).clicked() {
+                    answer = Some(Answer::Post);
+                }
+                let cancel =
+                    if matches!(confirm.phase, Phase::Failed(_)) { "Close" } else { "Cancel" };
+                if quiet_button(ui, cancel, true).clicked() {
+                    answer = Some(Answer::Cancel);
+                }
+            });
         });
     });
     if answer.is_none() && asking && ctx.input_mut(|i| i.consume_key(Modifiers::NONE, Key::Enter)) {
@@ -160,6 +193,12 @@ mod tests {
         }
     }
 
+    fn context() -> egui::Context {
+        let ctx = egui::Context::default();
+        crate::fonts::install(&ctx);
+        ctx
+    }
+
     fn frame(ctx: &egui::Context, data: &PostConfirm, events: Vec<Event>) -> Option<Answer> {
         let raw = RawInput {
             screen_rect: Some(Rect::from_min_size(pos2(0.0, 0.0), vec2(900.0, 600.0))),
@@ -209,12 +248,22 @@ mod tests {
     }
 
     #[test]
+    fn only_a_new_comment_has_a_place_to_show_in_mono() {
+        let new = Plan {
+            kind: Kind::New { path: "src/session.rs".into(), line: 1, side: Side::New },
+            ..confirm(Phase::Asking).plan
+        };
+        assert_eq!(location(&new).as_deref(), Some("src/session.rs:1"));
+        assert_eq!(location(&confirm(Phase::Asking).plan), None);
+    }
+
+    #[test]
     fn enter_posts_and_escape_cancels_and_a_quiet_frame_does_nothing() {
         let data = confirm(Phase::Asking);
-        let ctx = egui::Context::default();
+        let ctx = context();
         assert_eq!(frame(&ctx, &data, vec![]), None);
         assert_eq!(frame(&ctx, &data, vec![key(Key::Enter)]), Some(Answer::Post));
-        let ctx = egui::Context::default();
+        let ctx = context();
         frame(&ctx, &data, vec![]);
         assert_eq!(frame(&ctx, &data, vec![key(Key::Escape)]), Some(Answer::Cancel));
     }
@@ -223,7 +272,7 @@ mod tests {
     fn enter_does_not_post_again_while_posting_or_after_a_failure() {
         for phase in [Phase::Posting, Phase::Failed("HTTP 422".into())] {
             let data = confirm(phase);
-            let ctx = egui::Context::default();
+            let ctx = context();
             frame(&ctx, &data, vec![]);
             assert_eq!(frame(&ctx, &data, vec![key(Key::Enter)]), None);
         }
