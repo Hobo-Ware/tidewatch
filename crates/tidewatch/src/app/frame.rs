@@ -44,6 +44,7 @@ impl Tidewatch {
         for done in self.stdusk_jobs.drain() {
             self.apply_stdusk_done(done, ctx);
         }
+        self.terminal_font.drain(ctx);
         self.drain_picked(ctx);
         self.drain_link_jobs(ctx);
         self.bases.drain();

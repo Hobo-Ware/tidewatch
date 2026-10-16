@@ -56,6 +56,11 @@ fn general(restore: bool, resume: ResumeAgents, login_offered: bool) -> General 
         guards_repo: None,
         profiles: Vec::new(),
         default_branch: None,
+        terminal: crate::font_view::View {
+            choice: tidewatch_core::prefs::FontChoice::BuiltIn,
+            status: None,
+            families: &[],
+        },
     }
 }
 

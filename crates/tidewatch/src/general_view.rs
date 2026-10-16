@@ -1,4 +1,5 @@
-//! The General page: the Startup card (restore, open at login), the Window section and the Updates section.
+//! The General page: the Startup card (restore, open at login), the Window, Terminal and Updates
+//! sections.
 
 use egui::Ui;
 use tidewatch_core::guards::GuardPrefs;
@@ -6,6 +7,7 @@ use tidewatch_core::prefs::{
     DoneCheckPrefs, GithubPrefs, KeepAwakePrefs, NewTabPrefs, ParkAfter, ResumeAgents, TabsPrefs,
 };
 
+use crate::font_view;
 use crate::github_view;
 use crate::guards_view;
 use crate::login_item;
@@ -35,12 +37,14 @@ pub(crate) struct General {
     pub(crate) profiles: Vec<ProfileOption>,
     /// The active repo's remote default branch, for the Start from label.
     pub(crate) default_branch: Option<String>,
+    pub(crate) terminal: font_view::View,
 }
 
 pub(crate) fn page(
     ui: &mut Ui,
     general: &General,
     window: &mut window_settings::Editor,
+    font: &mut font_view::Picker,
     updates: &mut Updates,
     login: &mut login_item::Row,
     read_login: impl FnOnce() -> LoginItem,
@@ -73,6 +77,7 @@ pub(crate) fn page(
         }
     });
     let window = window_view::section(ui, window, &general.window).map(Action::Window);
+    let terminal = font_view::section(ui, font, &general.terminal).map(Action::TerminalFont);
     let new_tab = new_tab_prefs_view::card(
         ui,
         &general.new_tab,
@@ -93,6 +98,7 @@ pub(crate) fn page(
         .or(resume.map(Action::ResumeAgents))
         .or(open_at_login.map(Action::LoginItem))
         .or(window)
+        .or(terminal)
         .or(new_tab)
         .or(tabs)
         .or(done_check)

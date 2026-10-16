@@ -251,7 +251,7 @@ impl Tidewatch {
                 .map(|n| (n, matches!(state.delivery, Delivery::Building { .. })))
         });
         let band = card.map(|_| layout::band_below(&mut areas.terminal, delivery_view::BAND_H));
-        let grid = TerminalGrid::measure(ui, areas.terminal);
+        let grid = TerminalGrid::measure(ui, areas.terminal, self.terminal_font.in_use());
 
         let agent_name = self.tabs.items()[self.tabs.active()]
             .pane
