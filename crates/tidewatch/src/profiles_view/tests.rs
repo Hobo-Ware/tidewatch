@@ -157,7 +157,7 @@ fn the_save_bar_saves_and_reverts_only_once_there_are_edits() {
     harness.editor.touched();
     harness.frame(vec![]);
     let mut saves = None;
-    for x in (940..1010).step_by(6) {
+    for x in (952..1010).step_by(6) {
         saves = saves.or(harness.click(pos2(x as f32, 698.0)));
     }
     assert!(matches!(saves, Some(Action::Save)));

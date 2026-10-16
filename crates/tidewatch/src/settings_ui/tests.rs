@@ -131,18 +131,20 @@ fn a_button_clicks_only_when_enabled() {
 }
 
 #[test]
-fn a_choice_reports_the_click_and_a_disclosure_opens_and_closes() {
+fn a_pick_reports_the_clicked_option_and_a_disclosure_opens_and_closes() {
     let ctx = crate::fonts::test_context();
     let rect = Cell::new(Rect::NOTHING);
-    let clicked = Cell::new(false);
+    let picked = Cell::new(None);
     let frame = |ui: &mut Ui| {
-        let response = choice(ui, "High", false);
-        rect.set(response.rect);
-        clicked.set(clicked.get() || response.clicked());
+        let start = ui.cursor().min;
+        let index = pick(ui, "level", &["Low", "High"], Some(0));
+        rect.set(Rect::from_min_max(start, ui.min_rect().max));
+        picked.set(picked.get().or(index));
     };
     warm(&ctx, frame);
-    click(&ctx, rect.get().center(), frame);
-    assert!(clicked.get());
+    let r = rect.get();
+    click(&ctx, egui::pos2(r.min.x + r.width() * 0.75, r.center().y), frame);
+    assert_eq!(picked.get(), Some(1));
 
     let ctx = crate::fonts::test_context();
     let open = Cell::new(false);

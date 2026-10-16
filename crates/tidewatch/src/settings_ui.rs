@@ -1,10 +1,14 @@
 //! The pieces every Settings page is built from: palette, cards and rows, switch, buttons, inputs.
 
+use egui::scroll_area::ScrollAreaOutput;
 use egui::{
-    Align, Align2, Color32, CornerRadius, CursorIcon, FontId, Frame, Layout, Margin, Rect,
-    Response, RichText, Sense, Stroke, StrokeKind, Ui, UiBuilder, Vec2, vec2,
+    Align, Align2, Color32, CornerRadius, CursorIcon, FontId, Frame, Layout, Margin, Mesh, Painter,
+    Rect, Response, RichText, Sense, Stroke, Ui, UiBuilder, Vec2, epaint::Vertex, pos2, vec2,
 };
 use kelp_ui::theme::semibold;
+
+use crate::screen_kit::{danger_button, primary_button, quiet_button};
+use crate::segmented;
 
 pub(crate) mod editor;
 
@@ -13,7 +17,10 @@ pub(crate) use crate::brand::*;
 const SECTION_GAP: f32 = 22.0;
 const ROW_GAP: f32 = 16.0;
 const SWITCH_SIZE: Vec2 = vec2(40.0, 22.0);
-const BUTTON_HEIGHT: f32 = 34.0;
+const BUTTON_HEIGHT: f32 = 22.0;
+const BUTTON_PAD: f32 = 10.0;
+const INLINE_MAX: usize = 5;
+pub(crate) const HEADER_H: f32 = 48.0;
 
 pub(crate) fn heading(text: impl Into<String>, size: f32) -> RichText {
     RichText::new(text).family(semibold()).size(size).color(TEXT)
@@ -32,9 +39,19 @@ pub(crate) fn note(ui: &mut Ui, text: &str, color: Color32) {
 }
 
 pub(crate) fn page_header(ui: &mut Ui, title: &str, subtitle: &str) -> Response {
-    ui.spacing_mut().item_spacing.y = 4.0;
-    let response = ui.label(heading(title, 26.0));
-    ui.label(RichText::new(subtitle).size(13.0).color(FAINT));
+    let (rect, response) =
+        ui.allocate_exact_size(vec2(ui.available_width(), HEADER_H), Sense::hover());
+    let painter = ui.painter_at(rect);
+    let title =
+        painter.text(rect.left_center(), Align2::LEFT_CENTER, title, font_semibold(18.0), TEXT);
+    painter.text(
+        pos2(title.right() + 14.0, rect.center().y + 1.0),
+        Align2::LEFT_CENTER,
+        subtitle,
+        FontId::proportional(13.0),
+        MUTED,
+    );
+    ui.painter().hline(ui.clip_rect().x_range(), rect.bottom(), Stroke::new(1.0, CARD_LINE));
     response
 }
 
@@ -54,7 +71,7 @@ pub(crate) fn card<R>(ui: &mut Ui, add: impl FnOnce(&mut Ui) -> R) -> R {
     Frame::new()
         .fill(CARD)
         .stroke(Stroke::new(1.0, CARD_LINE))
-        .corner_radius(14)
+        .corner_radius(12)
         .show(ui, |ui| {
             ui.set_width(ui.available_width());
             ui.spacing_mut().item_spacing = Vec2::ZERO;
@@ -181,8 +198,7 @@ pub(crate) fn switch(ui: &mut Ui, on: &mut bool) -> Response {
         egui::WidgetInfo::selected(egui::WidgetType::Checkbox, ui.is_enabled(), *on, "")
     });
     let t = ui.ctx().animate_bool(response.id, *on);
-    let off = Color32::from_rgb(0x2a, 0x31, 0x40);
-    let track = lerp_color(off, TEAL, t);
+    let track = lerp_color(FIELD_LINE, TEAL, t);
     let knob = lerp_color(MUTED, KEY_EDGE, t);
     let painter = ui.painter();
     painter.rect_filled(rect, CornerRadius::same(11), track);
@@ -202,39 +218,21 @@ pub(crate) fn lerp_color(from: Color32, to: Color32, t: f32) -> Color32 {
 pub(crate) enum Tone {
     Quiet,
     Primary,
-}
-
-fn button_text_width(ui: &Ui, label: &str) -> f32 {
-    ui.painter().layout_no_wrap(label.to_owned(), FontId::proportional(14.0), TEXT).size().x
+    Danger,
 }
 
 pub(crate) fn button_width(ui: &Ui, label: &str) -> f32 {
-    button_text_width(ui, label) + 28.0
+    let galley = ui.painter().layout_no_wrap(label.to_owned(), FontId::proportional(12.5), SOFT);
+    galley.size().x + 2.0 * BUTTON_PAD
 }
 
 pub(crate) fn button(ui: &mut Ui, label: &str, tone: Tone) -> Response {
     let enabled = ui.is_enabled();
-    let (text_color, font) = match tone {
-        Tone::Primary => (KEY_EDGE, font_semibold(14.0)),
-        Tone::Quiet => (TEXT, FontId::proportional(14.0)),
-    };
-    let galley = ui.painter().layout_no_wrap(label.to_owned(), font, text_color);
-    let (rect, response) = ui.allocate_exact_size(galley.size() + vec2(28.0, 16.0), Sense::click());
-    let (fill, text_color) = match (tone, enabled, response.hovered()) {
-        (Tone::Primary, true, true) => (lerp_color(TEAL, Color32::WHITE, 0.15), text_color),
-        (Tone::Primary, true, false) => (TEAL, text_color),
-        (Tone::Primary, false, _) => {
-            (lerp_color(CARD, TEAL, 0.35), lerp_color(CARD, KEY_EDGE, 0.6))
-        }
-        (Tone::Quiet, true, true) => (lerp_color(BUTTON, Color32::WHITE, 0.08), text_color),
-        (Tone::Quiet, true, false) => (BUTTON, text_color),
-        (Tone::Quiet, false, _) => (BUTTON, FAINT),
-    };
-    let painter = ui.painter();
-    painter.rect_filled(rect, CornerRadius::same(9), fill);
-    painter.galley(rect.center() - galley.size() / 2.0, galley, text_color);
-    kelp_ui::widgets::focus_ring(ui, &response, 9.0);
-    response.on_hover_cursor(CursorIcon::PointingHand)
+    match tone {
+        Tone::Primary => primary_button(ui, label, enabled),
+        Tone::Quiet => quiet_button(ui, label, enabled),
+        Tone::Danger => danger_button(ui, label),
+    }
 }
 
 pub(crate) fn choice_width(ui: &Ui, label: &str) -> f32 {
@@ -242,28 +240,72 @@ pub(crate) fn choice_width(ui: &Ui, label: &str) -> f32 {
     ui.painter().layout_no_wrap(label.to_owned(), font, SOFT).size().x + 28.0
 }
 
-pub(crate) fn choice(ui: &mut Ui, label: &str, selected: bool) -> Response {
-    let (text_color, font) =
-        if selected { (KEY_EDGE, font_semibold(13.0)) } else { (SOFT, FontId::proportional(13.0)) };
-    let galley = ui.painter().layout_no_wrap(label.to_owned(), font, text_color);
-    let (rect, response) = ui.allocate_exact_size(galley.size() + vec2(28.0, 14.0), Sense::click());
-    let painter = ui.painter();
-    if selected {
-        painter.rect_filled(rect, CornerRadius::same(8), TEAL);
+pub(crate) fn inline_width(ui: &Ui, labels: &[&str]) -> f32 {
+    labels.iter().map(|label| choice_width(ui, label)).sum::<f32>()
+}
+
+/// Whether `labels` fit one segmented control in the row the next widget lands in.
+pub(crate) fn fits_inline(ui: &Ui, labels: &[&str]) -> bool {
+    labels.len() <= INLINE_MAX && inline_width(ui, labels) <= ui.available_width()
+}
+
+/// The either/or control: a segmented control, or wrapping chips when there are too many options.
+/// `active` is `None` when the current value is none of `labels`. Returns the option clicked.
+pub(crate) fn pick(ui: &mut Ui, id: &str, labels: &[&str], active: Option<usize>) -> Option<usize> {
+    let id = ui.id().with(("pick", id));
+    let active = active.unwrap_or(usize::MAX);
+    if fits_inline(ui, labels) {
+        segmented::inline(ui, id, labels, active)
     } else {
-        let fill =
-            if response.hovered() { lerp_color(GROUND, Color32::WHITE, 0.04) } else { GROUND };
-        painter.rect_filled(rect, CornerRadius::same(8), fill);
-        painter.rect_stroke(
-            rect,
-            CornerRadius::same(8),
-            Stroke::new(1.0, FIELD_LINE),
-            StrokeKind::Inside,
+        segmented::wrap_chips(ui, id, labels, active)
+    }
+}
+
+/// A small rounded label in `ink`, for a state such as clean or dirty.
+pub(crate) fn pill(ui: &mut Ui, text: &str, ink: Color32) {
+    let galley = ui.painter().layout_no_wrap(text.to_owned(), FontId::proportional(11.5), ink);
+    let (rect, _) = ui.allocate_exact_size(galley.size() + vec2(16.0, 6.0), Sense::hover());
+    ui.painter().rect_filled(rect, CornerRadius::same(255), ink.gamma_multiply(0.14));
+    ui.painter().galley(rect.center() - galley.size() / 2.0, galley, ink);
+}
+
+const FADE_H: f32 = 28.0;
+
+/// Fades the edges of a scroll area that has more content beyond them into `ground`.
+pub(crate) fn fade_edges<R>(ui: &Ui, list: &ScrollAreaOutput<R>, ground: Color32) {
+    let view = list.inner_rect;
+    let below = list.content_size.y - list.state.offset.y - view.height() > 1.0;
+    if below {
+        fade(
+            ui.painter(),
+            Rect::from_min_max(pos2(view.left(), view.bottom() - FADE_H), view.max),
+            ground,
+            true,
         );
     }
-    painter.galley(rect.center() - galley.size() / 2.0, galley, text_color);
-    kelp_ui::widgets::focus_ring(ui, &response, 8.0);
-    response.on_hover_cursor(CursorIcon::PointingHand)
+    if list.state.offset.y > 1.0 {
+        fade(
+            ui.painter(),
+            Rect::from_min_max(view.min, pos2(view.right(), view.top() + FADE_H)),
+            ground,
+            false,
+        );
+    }
+}
+
+fn fade(painter: &Painter, rect: Rect, ground: Color32, to_bottom: bool) {
+    let clear = Color32::TRANSPARENT;
+    let (top, bottom) = if to_bottom { (clear, ground) } else { (ground, clear) };
+    let vertex = |pos, color| Vertex { pos, uv: egui::epaint::WHITE_UV, color };
+    let mut mesh = Mesh::default();
+    mesh.vertices = vec![
+        vertex(rect.left_top(), top),
+        vertex(rect.right_top(), top),
+        vertex(rect.right_bottom(), bottom),
+        vertex(rect.left_bottom(), bottom),
+    ];
+    mesh.indices = vec![0, 1, 2, 0, 2, 3];
+    painter.add(mesh);
 }
 
 pub(crate) fn text_input(ui: &mut Ui, value: &mut String, hint: &str) -> Response {

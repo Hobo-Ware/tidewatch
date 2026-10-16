@@ -6,10 +6,10 @@ use egui::{
 };
 
 use super::{
-    BAR, CARD, CARD_LINE, FIELD_LINE, GROUND, MUTED, ORANGE, RED, RED_FILL, RED_LINE, SOFT, TEAL,
-    TEAL_FILL, TEAL_TEXT, TEXT, Tone, badge, button, button_width, font_semibold, heading,
-    lerp_color,
+    BAR, CARD, CARD_LINE, HEADER_H, ITEM, ITEM_LINE, MUTED, ORANGE, RED, RED_FILL, RED_LINE, SOFT,
+    TEAL, TEAL_TEXT, TEXT, Tone, badge, button, button_width, font_semibold, heading, lerp_color,
 };
+use crate::screen_kit::selection_row;
 
 const CARD_PAD: f32 = 10.0;
 
@@ -33,10 +33,10 @@ pub(crate) fn option_card(
     danger: bool,
 ) -> Response {
     let (title_color, line, fill) = match (selected, danger) {
-        (true, false) => (TEAL_TEXT, TEAL, TEAL_FILL),
+        (true, false) => (TEAL_TEXT, TEAL, ITEM),
         (true, true) => (RED, RED, RED_FILL),
-        (false, false) => (TEXT, FIELD_LINE, GROUND),
-        (false, true) => (RED, RED_LINE, GROUND),
+        (false, false) => (TEXT, ITEM_LINE, ITEM),
+        (false, true) => (RED, RED_LINE, ITEM),
     };
     let title_galley = ui.painter().layout_no_wrap(
         title.to_owned(),
@@ -53,13 +53,23 @@ pub(crate) fn option_card(
     let fill =
         if response.hovered() && !selected { lerp_color(fill, Color32::WHITE, 0.04) } else { fill };
     let painter = ui.painter();
-    painter.rect_filled(rect, CornerRadius::same(10), fill);
-    painter.rect_stroke(rect, CornerRadius::same(10), Stroke::new(1.0, line), StrokeKind::Inside);
+    if selected && !danger {
+        painter.rect_filled(rect, CornerRadius::same(8), ITEM);
+        selection_row(painter, rect, true, false);
+    } else {
+        painter.rect_filled(rect, CornerRadius::same(8), fill);
+        painter.rect_stroke(
+            rect,
+            CornerRadius::same(8),
+            Stroke::new(1.0, line),
+            StrokeKind::Inside,
+        );
+    }
     let title_pos = rect.min + vec2(CARD_PAD, CARD_PAD);
     let detail_pos = title_pos + vec2(0.0, title_galley.size().y + 3.0);
     painter.galley(title_pos, title_galley, title_color);
     painter.galley(detail_pos, detail_galley, MUTED);
-    kelp_ui::widgets::focus_ring(ui, &response, 10.0);
+    kelp_ui::widgets::focus_ring(ui, &response, 8.0);
     response.on_hover_cursor(CursorIcon::PointingHand)
 }
 
@@ -89,7 +99,7 @@ pub(crate) const BAR_HEIGHT: f32 = 58.0;
 pub(crate) fn save_bar(ui: &mut Ui, bar: &Bar) -> Option<BarAction> {
     let rect = ui.available_rect_before_wrap();
     let rect = Rect::from_min_size(rect.min, vec2(rect.width(), BAR_HEIGHT));
-    let corner = CornerRadius { nw: 0, ne: 0, sw: 13, se: 13 };
+    let corner = CornerRadius { nw: 0, ne: 0, sw: CARD_RADIUS - 1, se: CARD_RADIUS - 1 };
     ui.painter().rect_filled(rect, corner, BAR);
     ui.painter().hline(rect.x_range(), rect.top(), Stroke::new(1.0, CARD_LINE));
     let mut action = None;
@@ -148,21 +158,16 @@ pub(crate) fn list_item(ui: &mut Ui, item: &Item) -> Response {
         let (rect, response) =
             ui.allocate_exact_size(vec2(ui.available_width(), 48.0), Sense::click());
         let painter = ui.painter();
-        if item.selected {
-            painter.rect_filled(rect, CornerRadius::same(10), TEAL_FILL);
-            painter.rect_stroke(
+        if !item.selected {
+            painter.rect(
                 rect,
-                CornerRadius::same(10),
-                Stroke::new(1.0, TEAL),
+                CornerRadius::same(8),
+                ITEM,
+                Stroke::new(1.0, ITEM_LINE),
                 StrokeKind::Inside,
             );
-        } else if response.hovered() {
-            painter.rect_filled(
-                rect,
-                CornerRadius::same(10),
-                Color32::from_rgba_unmultiplied(255, 255, 255, 8),
-            );
         }
+        selection_row(painter, rect, item.selected, response.hovered());
         let mut name_x = rect.left() + 12.0;
         if let Some((letter, tint)) = item.badge {
             let badge =
@@ -191,13 +196,14 @@ pub(crate) fn list_item(ui: &mut Ui, item: &Item) -> Response {
             FontId::proportional(12.0),
             item.tag_color,
         );
-        kelp_ui::widgets::focus_ring(ui, &response, 10.0);
+        kelp_ui::widgets::focus_ring(ui, &response, 8.0);
         response.on_hover_cursor(CursorIcon::PointingHand)
     })
     .inner
 }
 
 const CARD_HEADER: f32 = 76.0;
+const CARD_RADIUS: u8 = 12;
 
 pub(crate) struct CardRects {
     pub(crate) header: Rect,
@@ -207,10 +213,10 @@ pub(crate) struct CardRects {
 
 pub(crate) fn split_card(ui: &Ui, rect: Rect, bar: bool) -> CardRects {
     let painter = ui.painter();
-    painter.rect_filled(rect, CornerRadius::same(14), CARD);
+    painter.rect_filled(rect, CornerRadius::same(CARD_RADIUS), CARD);
     painter.rect_stroke(
         rect,
-        CornerRadius::same(14),
+        CornerRadius::same(CARD_RADIUS),
         Stroke::new(1.0, CARD_LINE),
         StrokeKind::Inside,
     );
@@ -250,21 +256,24 @@ pub(crate) fn card_header(
     let width = button_width(ui, "Delete");
     let at = Rect::from_center_size(
         pos2(header.right() - 20.0 - width / 2.0, header.center().y),
-        vec2(width, 34.0),
+        vec2(width, BUTTON_H),
     );
     let mut right = ui.new_child(UiBuilder::new().max_rect(at));
-    button(&mut right, "Delete", Tone::Quiet).clicked()
+    button(&mut right, "Delete", Tone::Danger).clicked()
 }
 
 const LIST_WIDTH: f32 = 300.0;
+const PAGE_PAD: f32 = 40.0;
+const BUTTON_H: f32 = 22.0;
 const COLUMN_GAP: f32 = 20.0;
 
 pub(crate) fn page_area(area: Rect) -> Rect {
-    Rect::from_min_max(area.min + vec2(32.0, 28.0), area.max - vec2(32.0, 24.0))
+    Rect::from_min_max(area.min + vec2(PAGE_PAD, 0.0), area.max - vec2(PAGE_PAD, 24.0))
 }
 
-/// The page title with its button at the right. Returns where the header ends and whether the
-/// button was clicked. The title carries the file the page edits as a tooltip.
+/// The page title with its button at the right, in a 48 px header over a full-width divider.
+/// Returns where the header ends and whether the button was clicked. The title carries the file
+/// the page edits as a tooltip.
 pub(crate) fn page_top(
     ui: &mut Ui,
     inner: Rect,
@@ -273,14 +282,35 @@ pub(crate) fn page_top(
     file: &str,
     action: &str,
 ) -> (f32, bool) {
+    let bar = Rect::from_min_size(inner.min, vec2(inner.width(), HEADER_H));
+    let painter = ui.painter();
+    let title_rect =
+        painter.text(bar.left_center(), Align2::LEFT_CENTER, title, font_semibold(18.0), TEXT);
     let width = button_width(ui, action);
-    let mut left =
-        ui.new_child(UiBuilder::new().max_rect(inner).layout(Layout::top_down(Align::Min)));
-    super::page_header(&mut left, title, subtitle).on_hover_text(file);
-    let bottom = left.min_rect().bottom();
-    let at = Rect::from_min_size(pos2(inner.right() - width, bottom - 34.0), vec2(width, 34.0));
+    let room = bar.right() - width - 14.0 - (title_rect.right() + 14.0);
+    let subtitle_area = Rect::from_min_size(
+        pos2(title_rect.right() + 14.0, bar.top()),
+        vec2(room.max(0.0), HEADER_H),
+    );
+    ui.painter_at(subtitle_area).text(
+        subtitle_area.left_center() + vec2(0.0, 1.0),
+        Align2::LEFT_CENTER,
+        subtitle,
+        FontId::proportional(13.0),
+        MUTED,
+    );
+    ui.interact(title_rect, ui.id().with("page_top_title"), Sense::hover()).on_hover_text(file);
+    ui.painter().hline(
+        (inner.left() - PAGE_PAD)..=(inner.right() + PAGE_PAD),
+        bar.bottom(),
+        Stroke::new(1.0, CARD_LINE),
+    );
+    let at = Rect::from_center_size(
+        pos2(bar.right() - width / 2.0, bar.center().y),
+        vec2(width, BUTTON_H),
+    );
     let mut right = ui.new_child(UiBuilder::new().max_rect(at));
-    (bottom, button(&mut right, action, Tone::Quiet).clicked())
+    (bar.bottom(), button(&mut right, action, Tone::Quiet).clicked())
 }
 
 pub(crate) fn columns(inner: Rect, header_bottom: f32) -> (Rect, Rect) {

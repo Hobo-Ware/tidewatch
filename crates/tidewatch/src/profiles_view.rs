@@ -4,19 +4,20 @@ use std::collections::HashMap;
 
 use egui::{
     Align, Align2, Color32, CornerRadius, FontId, Layout, Margin, Rect, ScrollArea, Sense, Ui,
-    UiBuilder, vec2,
+    UiBuilder, pos2, vec2,
 };
 use tidewatch_core::agents::Level;
 
 use crate::catalog::Availability;
 use crate::profile_editor::{Draft, Editor, Group};
+use crate::screen_kit::{badge_colors, badge_letter};
 use crate::settings_ui::editor::{
     Bar, BarAction, Item, card_header, columns, list_item, option_card, option_card_height,
     page_area, page_top, save_bar, split_card,
 };
 use crate::settings_ui::{
-    CARD, FAINT, MUTED, ORANGE, RED, TEAL_TEXT, caption, choice, disclosure, field, note,
-    switch_line,
+    CARD, FAINT, GREEN, MUTED, ORANGE, RED, SOFT, TEAL_TEXT, caption, disclosure, fade_edges,
+    field, note, pick, switch_line,
 };
 use crate::settings_view::Action;
 
@@ -42,26 +43,14 @@ pub(crate) fn level_note(level: Level) -> &'static str {
 }
 
 fn tint(agent: &str) -> (String, (Color32, Color32)) {
-    let pair = |bg: [u8; 3], fg: [u8; 3]| {
-        (Color32::from_rgb(bg[0], bg[1], bg[2]), Color32::from_rgb(fg[0], fg[1], fg[2]))
-    };
-    match agent {
-        "claude" => ("C".to_owned(), pair([0x3b, 0x24, 0x18], [0xfb, 0x92, 0x3c])),
-        "codex" => ("X".to_owned(), pair([0x1e, 0x2a, 0x22], [0x8f, 0xd1, 0x6a])),
-        "gemini" => ("G".to_owned(), pair([0x1d, 0x24, 0x40], [0x93, 0xc5, 0xfd])),
-        "copilot" => ("P".to_owned(), pair([0x2a, 0x21, 0x40], [0xc0, 0x84, 0xfc])),
-        other => {
-            let letter =
-                other.chars().next().map_or_else(String::new, |c| c.to_uppercase().to_string());
-            (letter, pair([0x22, 0x29, 0x37], [0xa7, 0xb0, 0xbf]))
-        }
-    }
+    let letter = if agent.is_empty() { String::new() } else { badge_letter(agent) };
+    (letter, badge_colors(agent))
 }
 
 fn probe_label(availability: Option<&Availability>) -> (String, Color32) {
     match availability {
-        Some(Availability::Found(Some(version))) => (format!("{version} found"), TEAL_TEXT),
-        Some(Availability::Found(None)) => ("found".to_owned(), TEAL_TEXT),
+        Some(Availability::Found(Some(version))) => (format!("{version} found"), SOFT),
+        Some(Availability::Found(None)) => ("found".to_owned(), SOFT),
         Some(Availability::Missing) => ("not installed".to_owned(), ORANGE),
         Some(Availability::Probing) | None => ("checking...".to_owned(), FAINT),
     }
@@ -168,13 +157,18 @@ fn group_header(ui: &mut Ui, group: &Group, availability: Option<&Availability>)
     } else {
         ("not in the agent table".to_owned(), ORANGE)
     };
-    painter.text(
+    let right = painter.text(
         rect.right_center() + vec2(-4.0, 2.0),
         Align2::RIGHT_CENTER,
         text,
         FontId::proportional(12.0),
         color,
     );
+    let dot = match availability {
+        Some(Availability::Found(_)) if group.known => GREEN,
+        _ => color,
+    };
+    painter.circle_filled(pos2(right.left() - 8.0, rect.center().y + 2.0), 3.0, dot);
 }
 
 fn editor_card(ui: &mut Ui, rect: Rect, editor: &mut Editor, file: &str) -> Option<Action> {
@@ -214,14 +208,16 @@ fn editor_card(ui: &mut Ui, rect: Rect, editor: &mut Editor, file: &str) -> Opti
     let mut changed = false;
     let mut body =
         ui.new_child(UiBuilder::new().max_rect(parts.body).layout(Layout::top_down(Align::Min)));
-    ScrollArea::vertical().id_salt("profile_form").auto_shrink(false).show(&mut body, |ui| {
-        egui::Frame::new().inner_margin(Margin::symmetric(20, 18)).show(ui, |ui| {
-            ui.set_width(ui.available_width());
-            if let Some(draft) = editor.selected_draft() {
-                changed = form(ui, draft, &agents);
-            }
+    let form_scroll =
+        ScrollArea::vertical().id_salt("profile_form").auto_shrink(false).show(&mut body, |ui| {
+            egui::Frame::new().inner_margin(Margin::symmetric(20, 18)).show(ui, |ui| {
+                ui.set_width(ui.available_width());
+                if let Some(draft) = editor.selected_draft() {
+                    changed = form(ui, draft, &agents);
+                }
+            });
         });
-    });
+    fade_edges(&body, &form_scroll, CARD);
     let mut action = None;
     if bar.shows() {
         let mut bar_ui = ui.new_child(UiBuilder::new().max_rect(parts.bar));
@@ -252,26 +248,23 @@ fn form(ui: &mut Ui, draft: &mut Draft, agents: &[(String, String)]) -> bool {
     ui.add_space(12.0);
     caption(ui, "Agent");
     ui.add_space(2.0);
-    ui.horizontal_wrapped(|ui| {
-        for (id, name) in agents {
-            if choice(ui, name, draft.agent == *id).clicked() {
-                draft.agent.clone_from(id);
-                changed = true;
-            }
-        }
-    });
+    let names: Vec<&str> = agents.iter().map(|(_, name)| name.as_str()).collect();
+    let active = agents.iter().position(|(id, _)| *id == draft.agent);
+    if let Some(index) = pick(ui, "agent", &names, active) {
+        draft.agent.clone_from(&agents[index].0);
+        changed = true;
+    }
     ui.add_space(12.0);
     caption(ui, "Effort");
     ui.add_space(2.0);
-    ui.horizontal_wrapped(|ui| {
-        let current = draft.effort.trim().to_owned();
-        for (value, label) in effort_choices(&draft.effort) {
-            if choice(ui, &label, current == value).clicked() {
-                draft.effort = value;
-                changed = true;
-            }
-        }
-    });
+    let efforts = effort_choices(&draft.effort);
+    let labels: Vec<&str> = efforts.iter().map(|(_, label)| label.as_str()).collect();
+    let current = draft.effort.trim();
+    let active = efforts.iter().position(|(value, _)| value == current);
+    if let Some(index) = pick(ui, "effort", &labels, active) {
+        draft.effort.clone_from(&efforts[index].0);
+        changed = true;
+    }
     ui.add_space(12.0);
     caption(ui, "Permission level");
     ui.add_space(2.0);

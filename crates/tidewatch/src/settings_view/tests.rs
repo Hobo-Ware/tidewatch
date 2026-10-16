@@ -206,17 +206,17 @@ fn escape_while_a_text_field_is_focused_only_leaves_the_field() {
 #[test]
 fn the_restore_switch_is_the_first_switch_on_general_and_reports_the_new_value() {
     let mut harness = Harness::new(Section::General);
-    let action = harness.click_scan(1100..1240, 150..230);
+    let action = harness.click_scan(1100..1240, 90..150);
     assert!(matches!(action, Some(Action::Restore(false))), "{}", action.is_some());
     harness.restore = false;
-    let action = harness.click_scan(1100..1240, 150..230);
+    let action = harness.click_scan(1100..1240, 90..150);
     assert!(matches!(action, Some(Action::Restore(true))));
 }
 
 fn every_action_on_general(harness: &mut Harness) -> Vec<Action> {
     harness.frame(vec![]);
     let mut found = Vec::new();
-    for y in (150..480).step_by(10) {
+    for y in (100..480).step_by(10) {
         for x in (760..1240).step_by(20) {
             found.extend(harness.click(pos2(x as f32, y as f32)));
         }
