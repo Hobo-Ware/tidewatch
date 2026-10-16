@@ -3,19 +3,23 @@
 //! approving pushes and opens the pull request, and the dialog then shows the URL or the typed
 //! failure with a plain fix. What each state looks like is in `delivery_card`.
 
-use egui::{Align2, FontId, Id, Rect, RichText, Stroke, StrokeKind, Ui, pos2, vec2};
-use stdusk_egui::colors;
-use stdusk_egui::widgets::{action_button, overlay_frame, text_field};
+use egui::epaint::text::{LayoutJob, TextFormat};
+use egui::{
+    Align, Align2, Id, Layout, Rect, RichText, ScrollArea, TextEdit, Ui, UiBuilder, pos2, vec2,
+};
 use tidewatch_core::delivery::DeliveryError;
 
 use crate::brand;
 use crate::commands::{self, Command};
 use crate::delivery_card::{Delivery, Form, card_text, fix_hint};
+use crate::reader_view::{INSET, field_frame, item_frame, paint_item};
+use crate::screen_kit::{body, dialog_frame, mono, primary_button, quiet_button};
 
 pub(crate) const BAND_H: f32 = 40.0;
 const DIALOG_WIDTH: f32 = 560.0;
 const COMMITS_MAX_H: f32 = 110.0;
-const BODY_ROWS: usize = 9;
+const BODY_ROWS: usize = 6;
+const BODY_MAX_H: f32 = 220.0;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum CardAction {
@@ -38,72 +42,74 @@ pub(crate) fn show_card(
     commits: usize,
     building: bool,
 ) -> Option<CardAction> {
-    let card = rect.shrink2(vec2(10.0, 4.0));
-    ui.painter().rect_filled(card, 8.0, colors::elevated());
-    ui.painter().rect_stroke(card, 8.0, Stroke::new(1.0, colors::border()), StrokeKind::Inside);
-    let accent = brand::GREEN;
-    ui.painter().circle_filled(pos2(card.left() + 16.0, card.center().y), 4.5, accent);
+    let card = rect.shrink2(vec2(INSET, 4.0));
+    paint_item(ui.painter(), card, false);
+    ui.painter().circle_filled(pos2(card.left() + 16.0, card.center().y), 4.5, brand::GREEN);
     ui.painter().text(
         pos2(card.left() + 32.0, card.center().y),
         Align2::LEFT_CENTER,
         card_text(commits),
-        FontId::proportional(13.0),
-        colors::fg(),
+        body(13.0),
+        brand::TEXT,
     );
-    let button_rect = card.shrink2(vec2(12.0, 4.0));
+    let button_rect = card.shrink2(vec2(10.0, 0.0));
     let label = if building { "Reading commits..." } else { "Push and open PR" };
     let mut action = None;
     ui.scope_builder(
-        egui::UiBuilder::new()
-            .max_rect(button_rect)
-            .layout(egui::Layout::right_to_left(egui::Align::Center)),
+        UiBuilder::new().max_rect(button_rect).layout(Layout::right_to_left(Align::Center)),
         |ui| {
-            ui.add_enabled_ui(!building, |ui| {
-                if action_button(ui, label, true).clicked() {
-                    action = Some(CardAction::Open);
-                }
-            });
+            if primary_button(ui, label, !building).clicked() {
+                action = Some(CardAction::Open);
+            }
         },
     );
     action
 }
 
+fn dialog_title(delivery: &Delivery) -> &'static str {
+    match delivery {
+        Delivery::Editing(_) => "Push and open a pull request",
+        Delivery::Delivering(_) => "Pushing and opening the pull request...",
+        Delivery::Failed { .. } => "The pull request was not opened",
+        Delivery::Delivered(done) if done.created => "Pull request opened",
+        Delivery::Delivered(_) => "Pull request updated",
+        _ => "",
+    }
+}
+
 /// The dialog for every state past the compact card. `None` while nothing was asked.
 pub(crate) fn show_dialog(ctx: &egui::Context, delivery: &mut Delivery) -> Option<DialogAction> {
-    let mut answer = None;
     let editing = matches!(delivery, Delivery::Editing(_));
-    let modal = egui::Modal::new(Id::new("delivery")).frame(overlay_frame()).show(ctx, |ui| {
-        ui.set_width(DIALOG_WIDTH);
+    let title = dialog_title(delivery);
+    let modal = dialog_frame(ctx, Id::new("delivery"), title, DIALOG_WIDTH, |ui| {
         ui.spacing_mut().item_spacing.y = 8.0;
         match delivery {
-            Delivery::Editing(form) => answer = editing_body(ui, form),
+            Delivery::Editing(form) => editing_body(ui, form),
             Delivery::Delivering(form) => {
-                heading(ui, "Pushing and opening the pull request...");
-                dim(ui, &format!("{} -> {}", form.plan.branch, form.plan.base));
+                branch_line(ui, form, None);
+                None
             }
-            Delivery::Failed { form, error } => answer = failed_body(ui, form, error),
+            Delivery::Failed { form, error } => failed_body(ui, form, error),
             Delivery::Delivered(done) => {
-                heading(
-                    ui,
-                    if done.created { "Pull request opened" } else { "Pull request updated" },
-                );
+                let mut answer = None;
                 if ui.link(&done.url).clicked() {
                     answer = Some(DialogAction::OpenUrl);
                 }
                 ui.add_space(4.0);
-                ui.horizontal(|ui| {
-                    ui.spacing_mut().item_spacing.x = 8.0;
-                    if action_button(ui, "Close", false).clicked() {
-                        answer = Some(DialogAction::Close);
-                    }
-                    if action_button(ui, "Open in browser", true).clicked() {
+                footer(ui, "", |ui| {
+                    if primary_button(ui, "Open in browser", true).clicked() {
                         answer = Some(DialogAction::OpenUrl);
                     }
+                    if quiet_button(ui, "Close", true).clicked() {
+                        answer = Some(DialogAction::Close);
+                    }
                 });
+                answer
             }
-            _ => {}
+            _ => None,
         }
     });
+    let mut answer = modal.inner;
     if answer.is_none() && editing && commands::approve_delivery_pressed(ctx) {
         answer = Some(DialogAction::Approve);
     }
@@ -118,84 +124,110 @@ pub(crate) fn show_dialog(ctx: &egui::Context, delivery: &mut Delivery) -> Optio
     answer
 }
 
-fn heading(ui: &mut Ui, text: &str) {
-    ui.label(RichText::new(text).strong().size(15.0).color(colors::fg()));
+fn label(ui: &mut Ui, text: &str) {
+    ui.label(RichText::new(text).size(12.0).color(brand::MUTED));
 }
 
-fn dim(ui: &mut Ui, text: &str) {
-    ui.label(RichText::new(text).color(colors::dim()));
+/// The branch and its base in mono around an arrow, then `extra` in the body font.
+fn branch_line(ui: &mut Ui, form: &Form, extra: Option<String>) {
+    let mut job = LayoutJob::default();
+    let code = |ink| TextFormat::simple(mono(12.0), ink);
+    job.append(&form.plan.branch, 0.0, code(brand::SOFT));
+    job.append("->", 6.0, TextFormat::simple(body(12.0), brand::MUTED));
+    job.append(&form.plan.base, 6.0, code(brand::SOFT));
+    if let Some(extra) = extra {
+        job.append(&extra, 12.0, TextFormat::simple(body(12.0), brand::MUTED));
+    }
+    ui.label(job);
+}
+
+/// The hint on the left, the buttons right to left from the edge; `add` draws them.
+fn footer(ui: &mut Ui, hint: &str, add: impl FnOnce(&mut Ui)) {
+    ui.horizontal(|ui| {
+        ui.label(RichText::new(hint).size(12.0).color(brand::MUTED));
+        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+            ui.spacing_mut().item_spacing.x = 8.0;
+            add(ui);
+        });
+    });
 }
 
 fn editing_body(ui: &mut Ui, form: &mut Form) -> Option<DialogAction> {
     let mut answer = None;
-    heading(ui, "Push and open a pull request");
     let count = form.plan.commits.len();
-    dim(
-        ui,
-        &format!(
-            "{} -> {}  -  {} {}",
-            form.plan.branch,
-            form.plan.base,
-            count,
-            if count == 1 { "commit" } else { "commits" }
-        ),
-    );
-    egui::ScrollArea::vertical().max_height(COMMITS_MAX_H).id_salt("delivery-commits").show(
-        ui,
-        |ui| {
-            for commit in &form.plan.commits {
-                ui.label(
-                    RichText::new(format!("{}  {}", commit.sha, commit.subject))
-                        .monospace()
-                        .size(12.0)
-                        .color(colors::fg()),
-                );
-            }
-        },
-    );
+    let noun = if count == 1 { "commit" } else { "commits" };
+    branch_line(ui, form, Some(format!("{count} {noun}")));
+    item_frame().inner_margin(egui::Margin::symmetric(10, 6)).show(ui, |ui| {
+        ui.set_width(ui.available_width());
+        ScrollArea::vertical().max_height(COMMITS_MAX_H).id_salt("delivery-commits").show(
+            ui,
+            |ui| {
+                ui.spacing_mut().item_spacing.y = 3.0;
+                for commit in &form.plan.commits {
+                    let mut job = LayoutJob::default();
+                    job.append(&commit.sha, 0.0, TextFormat::simple(mono(11.5), brand::FAINT));
+                    job.append(&commit.subject, 10.0, TextFormat::simple(body(12.5), brand::TEXT));
+                    ui.add(egui::Label::new(job).truncate());
+                }
+            },
+        );
+    });
     ui.add_space(2.0);
-    dim(ui, "Title");
-    let width = ui.available_width();
-    text_field(ui, &mut form.title, "Pull request title", width, colors::fg());
-    dim(ui, "Text");
-    ui.add(
-        egui::TextEdit::multiline(&mut form.body)
-            .desired_rows(BODY_ROWS)
-            .desired_width(f32::INFINITY)
-            .font(egui::FontId::monospace(12.0)),
-    );
+    label(ui, "Title");
+    field_frame(ui, |ui| {
+        ui.add(
+            TextEdit::singleline(&mut form.title)
+                .frame(egui::Frame::NONE)
+                .hint_text("Pull request title")
+                .desired_width(f32::INFINITY)
+                .font(body(14.0))
+                .text_color(brand::TEXT),
+        )
+    });
+    label(ui, "Text");
+    field_frame(ui, |ui| {
+        ScrollArea::vertical()
+            .max_height(BODY_MAX_H)
+            .id_salt("delivery-body")
+            .show(ui, |ui| {
+                ui.add(
+                    TextEdit::multiline(&mut form.body)
+                        .frame(egui::Frame::NONE)
+                        .desired_rows(BODY_ROWS)
+                        .desired_width(f32::INFINITY)
+                        .font(mono(12.0))
+                        .text_color(brand::TEXT),
+                )
+            })
+            .inner
+    });
     ui.add_space(4.0);
-    ui.horizontal(|ui| {
-        ui.spacing_mut().item_spacing.x = 8.0;
-        if action_button(ui, "Cancel", false).clicked() {
+    let hint = format!("{} pushes and opens it", Command::ApproveDelivery.keys());
+    footer(ui, &hint, |ui| {
+        if primary_button(ui, "Push and open PR", !form.title.trim().is_empty()).clicked() {
+            answer = Some(DialogAction::Approve);
+        }
+        if quiet_button(ui, "Cancel", true).clicked() {
             answer = Some(DialogAction::Cancel);
         }
-        ui.add_enabled_ui(!form.title.trim().is_empty(), |ui| {
-            if action_button(ui, "Push and open PR", true).clicked() {
-                answer = Some(DialogAction::Approve);
-            }
-        });
-        dim(ui, &Command::ApproveDelivery.keys());
     });
     answer
 }
 
 fn failed_body(ui: &mut Ui, form: &Form, error: &DeliveryError) -> Option<DialogAction> {
     let mut answer = None;
-    heading(ui, "The pull request was not opened");
-    dim(ui, &format!("{} -> {}", form.plan.branch, form.plan.base));
+    branch_line(ui, form, None);
     ui.label(RichText::new(error.to_string()).color(brand::RED));
     if let Some(hint) = fix_hint(error) {
-        ui.label(RichText::new(hint).color(colors::fg()));
+        ui.label(RichText::new(hint).color(brand::TEXT));
     }
     ui.add_space(4.0);
-    ui.horizontal(|ui| {
-        ui.spacing_mut().item_spacing.x = 8.0;
-        if action_button(ui, "Close", false).clicked() {
-            answer = Some(DialogAction::Close);
-        }
-        if action_button(ui, "Back to the text", true).clicked() {
+    footer(ui, "", |ui| {
+        if primary_button(ui, "Back to the text", true).clicked() {
             answer = Some(DialogAction::Back);
+        }
+        if quiet_button(ui, "Close", true).clicked() {
+            answer = Some(DialogAction::Close);
         }
     });
     answer
@@ -228,6 +260,12 @@ mod tests {
         Delivery::Editing(Form { title: "Add x".into(), body: "text".into(), plan: plan() })
     }
 
+    fn context() -> egui::Context {
+        let ctx = egui::Context::default();
+        crate::fonts::install(&ctx);
+        ctx
+    }
+
     fn frame(
         ctx: &egui::Context,
         delivery: &mut Delivery,
@@ -252,14 +290,14 @@ mod tests {
 
     #[test]
     fn escape_cancels_the_form_and_cmd_enter_approves_it() {
-        let ctx = egui::Context::default();
+        let ctx = context();
         let mut d = editing();
         assert_eq!(frame(&ctx, &mut d, vec![]), None);
         assert_eq!(
             frame(&ctx, &mut d, vec![key(Key::Escape, Modifiers::NONE)]),
             Some(DialogAction::Cancel)
         );
-        let ctx = egui::Context::default();
+        let ctx = context();
         let mut d = editing();
         frame(&ctx, &mut d, vec![]);
         assert_eq!(
@@ -270,7 +308,7 @@ mod tests {
 
     #[test]
     fn a_plain_enter_in_the_form_does_not_approve() {
-        let ctx = egui::Context::default();
+        let ctx = context();
         let mut d = editing();
         frame(&ctx, &mut d, vec![]);
         assert_eq!(frame(&ctx, &mut d, vec![key(Key::Enter, Modifiers::NONE)]), None);
@@ -282,7 +320,7 @@ mod tests {
             form: Form { title: "t".into(), body: String::new(), plan: plan() },
             error: DeliveryError::GhMissing,
         };
-        let ctx = egui::Context::default();
+        let ctx = context();
         frame(&ctx, &mut failed, vec![]);
         assert_eq!(
             frame(&ctx, &mut failed, vec![key(Key::Escape, Modifiers::NONE)]),
@@ -292,7 +330,7 @@ mod tests {
             url: "https://github.com/o/r/pull/1".into(),
             created: true,
         });
-        let ctx = egui::Context::default();
+        let ctx = context();
         frame(&ctx, &mut done, vec![]);
         assert_eq!(
             frame(&ctx, &mut done, vec![key(Key::Escape, Modifiers::NONE)]),
@@ -304,7 +342,7 @@ mod tests {
     fn a_delivery_in_flight_cannot_be_dismissed() {
         let mut d =
             Delivery::Delivering(Form { title: "t".into(), body: String::new(), plan: plan() });
-        let ctx = egui::Context::default();
+        let ctx = context();
         frame(&ctx, &mut d, vec![]);
         assert_eq!(frame(&ctx, &mut d, vec![key(Key::Escape, Modifiers::NONE)]), None);
     }
