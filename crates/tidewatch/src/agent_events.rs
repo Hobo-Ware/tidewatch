@@ -119,7 +119,15 @@ pub(crate) fn finding_anchor(file_text: Option<&str>, line: u32) -> Anchor {
             return Anchor::at(&lines, index, Side::New);
         }
     }
-    Anchor { side: Side::New, line_hint: line, text: String::new(), before: vec![], after: vec![] }
+    Anchor {
+        side: Side::New,
+        line_hint: line,
+        text: String::new(),
+        before: vec![],
+        after: vec![],
+        span: 0,
+        block: vec![],
+    }
 }
 
 pub(crate) fn finding_body(finding: &Finding) -> String {

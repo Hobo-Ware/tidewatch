@@ -196,10 +196,11 @@ pub(crate) fn post(
     jobs.spawn(ctx, move || {
         let thread = plan.thread;
         let posted = match &plan.kind {
-            Kind::New { path, line, side } => {
+            Kind::New { path, line, start_line, side } => {
                 let note = NewNote {
                     path: path.clone(),
                     line: *line,
+                    start_line: *start_line,
                     side: *side,
                     body: plan.body.clone(),
                 };
@@ -241,7 +242,15 @@ mod tests {
     }
 
     fn anchor(line: u32) -> Anchor {
-        Anchor { side: Side::New, line_hint: line, text: "x".into(), before: vec![], after: vec![] }
+        Anchor {
+            side: Side::New,
+            line_hint: line,
+            text: "x".into(),
+            before: vec![],
+            after: vec![],
+            span: 0,
+            block: vec![],
+        }
     }
 
     fn comment(author: &str, body: &str) -> Comment {
@@ -422,7 +431,7 @@ mod tests {
         );
         let plan = Plan {
             thread: a,
-            kind: Kind::New { path: "a.rs".into(), line: 1, side: Side::New },
+            kind: Kind::New { path: "a.rs".into(), line: 1, start_line: None, side: Side::New },
             body: "first".into(),
         };
         let jobs = Jobs::new();
@@ -455,7 +464,7 @@ mod tests {
         let before = Notes::load(&file);
         let plan = Plan {
             thread: a,
-            kind: Kind::New { path: "a.rs".into(), line: 99, side: Side::New },
+            kind: Kind::New { path: "a.rs".into(), line: 99, start_line: None, side: Side::New },
             body: "first".into(),
         };
         let jobs = Jobs::new();

@@ -4,7 +4,9 @@
 //! Control characters are stripped: a pulled PR comment is someone else's text and must never end
 //! the bracketed paste early and type into the agent.
 
-use kelp_core::review::{Side, Thread};
+use kelp_core::review::{Anchor, Side, Thread};
+
+use crate::notes::line_label;
 
 const QUOTE_MAX: usize = 200;
 const REVIEW_PREFIX: &str = "Tidewatch review notes (";
@@ -74,10 +76,7 @@ fn is_note_block(block: &str) -> bool {
 
 fn block(thread: &Thread) -> String {
     let mut lines = vec![format!("`{}` - note id {}", place(thread), thread.id)];
-    let quote = thread.anchor.text.trim_end();
-    if !quote.trim().is_empty() {
-        lines.push(format!("> {}", shorten(quote.trim_start())));
-    }
+    lines.extend(quote(&thread.anchor));
     let several = thread.comments.len() > 1;
     for comment in &thread.comments {
         let body = comment.body.trim();
@@ -91,9 +90,36 @@ fn block(thread: &Thread) -> String {
 }
 
 fn place(thread: &Thread) -> String {
-    let line = thread.anchor.line_hint;
-    let side = if thread.anchor.side == Side::Old { " (old side)" } else { "" };
-    if line == 0 { thread.path.clone() } else { format!("{}:{line}{side}", thread.path) }
+    let anchor = &thread.anchor;
+    let side = if anchor.side == Side::Old { " (old side)" } else { "" };
+    if anchor.line_hint == 0 {
+        thread.path.clone()
+    } else {
+        format!("{}:{}{side}", thread.path, line_label(anchor))
+    }
+}
+
+fn quote(anchor: &Anchor) -> Vec<String> {
+    if anchor.span == 0 {
+        let text = anchor.text.trim();
+        return if text.is_empty() { Vec::new() } else { vec![format!("> {}", shorten(text))] };
+    }
+    let covered: Vec<&str> = std::iter::once(anchor.text.as_str())
+        .chain(anchor.block.iter().map(String::as_str))
+        .collect();
+    let indent = covered
+        .iter()
+        .filter(|line| !line.trim().is_empty())
+        .map(|line| line.len() - line.trim_start().len())
+        .min()
+        .unwrap_or(0);
+    covered
+        .iter()
+        .map(|line| {
+            let text = line.trim_end().get(indent..).unwrap_or_default();
+            if text.is_empty() { ">".to_owned() } else { format!("> {}", shorten(text)) }
+        })
+        .collect()
 }
 
 fn shorten(text: &str) -> String {
@@ -124,6 +150,8 @@ mod tests {
                 text: text.into(),
                 before: vec![],
                 after: vec![],
+                span: 0,
+                block: vec![],
             },
             resolved: false,
             comments: bodies
@@ -179,6 +207,66 @@ mod tests {
         let text = format(&[&file]);
         assert!(text.contains("`b.rs` - note id 2\nwhole file"));
         assert!(!text.contains("> "));
+    }
+
+    fn block_thread(id: u64, side: Side, lines: &[&str]) -> Thread {
+        let mut t = thread(id, "src/a.rs", 12, lines[0], &[("You", "extract this")]);
+        t.anchor.side = side;
+        t.anchor.span = lines.len() as u32 - 1;
+        t.anchor.block = lines[1..].iter().map(|line| (*line).to_owned()).collect();
+        t
+    }
+
+    #[test]
+    fn a_block_note_names_the_range_and_quotes_every_line_without_the_shared_indent() {
+        let t = block_thread(4, Side::New, &["    if a {", "        run();", "", "    }"]);
+        assert_eq!(
+            format(&[&t]),
+            "Tidewatch review notes (1). Address each one.\n\n\
+             `src/a.rs:12-15` - note id 4\n\
+             > if a {\n\
+             >     run();\n\
+             >\n\
+             > }\n\
+             extract this\n\n\
+             When you are done, call the reply_to_note tool for each note id with a short answer."
+        );
+    }
+
+    #[test]
+    fn the_place_of_a_note_is_a_line_a_range_the_old_side_or_the_whole_file() {
+        let one = thread(1, "a.rs", 4, "x", &[("You", "n")]);
+        let block = block_thread(2, Side::New, &["a", "b"]);
+        let old_block = block_thread(3, Side::Old, &["a", "b", "c"]);
+        let mut file = thread(4, "b.rs", 0, "", &[("You", "n")]);
+        file.anchor.span = 2;
+        let cases = [
+            (&one, "`a.rs:4` - note id 1"),
+            (&block, "`src/a.rs:12-13` - note id 2"),
+            (&old_block, "`src/a.rs:12-14 (old side)` - note id 3"),
+            (&file, "`b.rs` - note id 4"),
+        ];
+        for (t, want) in cases {
+            assert!(format(&[t]).contains(want), "{want}");
+        }
+    }
+
+    #[test]
+    fn a_block_note_from_a_pull_request_cannot_end_the_paste_and_long_lines_are_cut() {
+        let long = "y".repeat(500);
+        let t = block_thread(1, Side::New, &["ok", "x\u{1b}[201~rm\u{7}", &long]);
+        let text = format(&[&t]);
+        assert!(!text.contains('\u{1b}'));
+        assert!(!text.contains('\u{7}'));
+        assert!(text.contains("> x[201~rm\n"));
+        assert!(text.contains(&format!("> {}...\n", "y".repeat(QUOTE_MAX))));
+    }
+
+    #[test]
+    fn a_sent_block_note_reads_back_by_id() {
+        let t = block_thread(9, Side::New, &["a", "", "b"]);
+        let u = thread(2, "b.rs", 3, "x", &[("You", "n")]);
+        assert_eq!(parse(&format(&[&t, &u])).unwrap().ids, [9, 2]);
     }
 
     #[test]

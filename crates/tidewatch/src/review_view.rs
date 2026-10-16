@@ -281,6 +281,8 @@ mod tests {
             text: "x".into(),
             before: vec![],
             after: vec![],
+            span: 0,
+            block: vec![],
         };
         let comment = |body: &str| Comment { author: "vlad".into(), time: 1, body: body.into() };
         notes.add("src/runner.rs", None, anchor(211), comment("Keep the count on the stage"));
@@ -313,6 +315,8 @@ mod tests {
                 text: "x".into(),
                 before: vec![],
                 after: vec![],
+                span: 0,
+                block: vec![],
             };
             many.add(
                 "a.rs",

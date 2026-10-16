@@ -15,8 +15,9 @@ const DIALOG_WIDTH: f32 = 480.0;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum Kind {
-    /// A new review comment on a line of the pull request's diff.
-    New { path: String, line: u32, side: Side },
+    /// A new review comment on a line of the pull request's diff. `line` is the last line of a block
+    /// and `start_line` its first, as in GitHub's API.
+    New { path: String, line: u32, start_line: Option<u32>, side: Side },
     /// A reply in the thread whose first comment has this GitHub id.
     Reply { root: u64 },
 }
@@ -39,7 +40,8 @@ impl Plan {
         let body = thread.comments.first()?.body.trim().to_owned();
         let kind = Kind::New {
             path: thread.path.clone(),
-            line: thread.anchor.line_hint,
+            line: thread.anchor.last_line_hint(),
+            start_line: (thread.anchor.span > 0).then_some(thread.anchor.line_hint),
             side: thread.anchor.side,
         };
         Some(Self { thread: thread.id, kind, body })
@@ -79,10 +81,13 @@ pub(crate) fn detail(plan: &Plan) -> String {
     }
 }
 
-/// The `path:line` a new comment lands on; a reply has none.
+/// The `path:line` (`path:a-b` for a block) a new comment lands on; a reply has none.
 pub(crate) fn location(plan: &Plan) -> Option<String> {
     match &plan.kind {
-        Kind::New { path, line, .. } => Some(format!("{path}:{line}")),
+        Kind::New { path, line, start_line: None, .. } => Some(format!("{path}:{line}")),
+        Kind::New { path, line, start_line: Some(first), .. } => {
+            Some(format!("{path}:{first}-{line}"))
+        }
         Kind::Reply { .. } => None,
     }
 }
@@ -170,6 +175,8 @@ mod tests {
                 text: "x".into(),
                 before: vec![],
                 after: vec![],
+                span: 0,
+                block: vec![],
             },
             resolved: false,
             comments: comments
@@ -229,7 +236,10 @@ mod tests {
         let thread = note(1, &["first", "second"]);
         let plan = Plan::of(&thread, &notes).unwrap();
         assert_eq!(plan.body, "first");
-        assert_eq!(plan.kind, Kind::New { path: "src/a.rs".into(), line: 12, side: Side::New });
+        assert_eq!(
+            plan.kind,
+            Kind::New { path: "src/a.rs".into(), line: 12, start_line: None, side: Side::New }
+        );
         notes.link_pr_thread(900, 1);
         let plan = Plan::of(&thread, &notes).unwrap();
         assert_eq!((plan.body.as_str(), plan.kind), ("second", Kind::Reply { root: 900 }));
@@ -241,16 +251,33 @@ mod tests {
         assert_eq!(heading(&confirm(Phase::Asking)), "Post to PR #12 in Hobo-Ware/demo?");
         assert!(detail(&confirm(Phase::Asking).plan).contains("reply"));
         let new = Plan {
-            kind: Kind::New { path: "a.rs".into(), line: 3, side: Side::New },
+            kind: Kind::New { path: "a.rs".into(), line: 3, start_line: None, side: Side::New },
             ..confirm(Phase::Asking).plan
         };
         assert_eq!(detail(&new), "A new review comment on a.rs:3, as you.");
     }
 
     #[test]
+    fn a_block_note_posts_from_its_first_line_to_its_last() {
+        let mut thread = note(1, &["rename these"]);
+        thread.anchor.span = 3;
+        let plan = Plan::of(&thread, &Notes::default()).unwrap();
+        let want =
+            Kind::New { path: "src/a.rs".into(), line: 15, start_line: Some(12), side: Side::New };
+        assert_eq!(plan.kind, want);
+        assert_eq!(location(&plan).as_deref(), Some("src/a.rs:12-15"));
+        assert_eq!(detail(&plan), "A new review comment on src/a.rs:12-15, as you.");
+    }
+
+    #[test]
     fn only_a_new_comment_has_a_place_to_show_in_mono() {
         let new = Plan {
-            kind: Kind::New { path: "src/session.rs".into(), line: 1, side: Side::New },
+            kind: Kind::New {
+                path: "src/session.rs".into(),
+                line: 1,
+                start_line: None,
+                side: Side::New,
+            },
             ..confirm(Phase::Asking).plan
         };
         assert_eq!(location(&new).as_deref(), Some("src/session.rs:1"));

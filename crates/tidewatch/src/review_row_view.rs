@@ -176,6 +176,8 @@ mod tests {
             text: "x".into(),
             before: vec![],
             after: vec![],
+            span: 0,
+            block: vec![],
         };
         let ids: Vec<u64> = [
             ("runner.rs", 211, "Keep the count"),
@@ -314,6 +316,8 @@ mod tests {
                 text: "x".into(),
                 before: vec![],
                 after: vec![],
+                span: 0,
+                block: vec![],
             };
             bench.ids = vec![fresh.add("a.rs", None, anchor, comment("vlad", "x"))];
             fresh.mark_sent(&bench.ids, 1);

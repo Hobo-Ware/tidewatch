@@ -379,6 +379,8 @@ mod tests {
                 text: String::new(),
                 before: vec![],
                 after: vec![],
+                span: 0,
+                block: vec![],
             };
             let comment = Comment { author: "You".into(), time: 0, body: "x".into() };
             let id = notes.add("a.rs", None, anchor, comment);

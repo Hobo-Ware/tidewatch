@@ -186,6 +186,8 @@ impl Tidewatch {
                     text: String::new(),
                     before: Vec::new(),
                     after: Vec::new(),
+                    span: 0,
+                    block: vec![],
                 };
                 let comment = Comment { author: author.clone(), time: now, body: note.text };
                 view.notes.add(&note.path, None, anchor, comment);
