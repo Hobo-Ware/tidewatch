@@ -137,25 +137,25 @@ fn button(ui: &mut Ui, label: &str, enabled: bool, look: ButtonLook) -> Response
 }
 
 /// A bordered button with no fill: the default for every action that is not the one main action.
-#[cfg_attr(not(test), expect(dead_code, reason = "adopted by the UI pass commits that follow"))]
+#[cfg_attr(not(test), allow(dead_code, reason = "adopted by the UI pass commits that follow"))]
 pub(crate) fn quiet_button(ui: &mut Ui, label: &str, enabled: bool) -> Response {
     button(ui, label, enabled, ButtonLook::Quiet)
 }
 
 /// A quiet button in red for an action that destroys something.
-#[cfg_attr(not(test), expect(dead_code, reason = "adopted by the UI pass commits that follow"))]
+#[cfg_attr(not(test), allow(dead_code, reason = "adopted by the UI pass commits that follow"))]
 pub(crate) fn danger_button(ui: &mut Ui, label: &str) -> Response {
     button(ui, label, true, ButtonLook::Danger)
 }
 
 /// The one filled button of a view or dialog.
-#[cfg_attr(not(test), expect(dead_code, reason = "adopted by the UI pass commits that follow"))]
+#[cfg_attr(not(test), allow(dead_code, reason = "adopted by the UI pass commits that follow"))]
 pub(crate) fn primary_button(ui: &mut Ui, label: &str, enabled: bool) -> Response {
     button(ui, label, enabled, ButtonLook::Primary)
 }
 
 /// A modal dialog: a card with a 48 px header (title, divider) over a padded body of `width`.
-#[expect(dead_code, reason = "adopted by the UI pass commits that follow")]
+#[allow(dead_code, reason = "adopted by the UI pass commits that follow")]
 pub(crate) fn dialog_frame<R>(
     ctx: &Context,
     id: Id,
@@ -192,7 +192,7 @@ pub(crate) fn dialog_frame<R>(
 }
 
 /// Paints a selectable row: a teal tint with a short teal bar on the left when selected, a fainter tint when hovered.
-#[expect(dead_code, reason = "adopted by the UI pass commits that follow")]
+#[allow(dead_code, reason = "adopted by the UI pass commits that follow")]
 pub(crate) fn selection_row(painter: &Painter, rect: Rect, selected: bool, hovered: bool) {
     let radius = CornerRadius::same(ROW_RADIUS);
     if selected {

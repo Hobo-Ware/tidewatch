@@ -101,7 +101,7 @@ pub(crate) fn show(
 }
 
 /// The same control flowing in the current row; returns the segment clicked that is not the active one.
-#[expect(dead_code, reason = "adopted by the UI pass commits that follow")]
+#[allow(dead_code, reason = "adopted by the UI pass commits that follow")]
 pub(crate) fn inline(ui: &mut Ui, id: Id, labels: &[&str], active: usize) -> Option<usize> {
     inline_toned(ui, id, labels, &[], active)
 }
@@ -137,7 +137,7 @@ fn flow(widths: &[f32], avail: f32) -> (Vec<Rect>, f32) {
 }
 
 /// Chips that wrap onto more rows, for a choice with more options than a segmented control holds.
-#[expect(dead_code, reason = "adopted by the UI pass commits that follow")]
+#[allow(dead_code, reason = "adopted by the UI pass commits that follow")]
 pub(crate) fn wrap_chips(ui: &mut Ui, id: Id, labels: &[&str], active: usize) -> Option<usize> {
     let widths: Vec<f32> =
         text_widths(ui, labels).into_iter().map(|w| w + 2.0 * SEGMENT_PAD).collect();
