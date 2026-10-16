@@ -186,6 +186,7 @@ mod updates_view;
 mod waiting_notes;
 mod welcome;
 mod welcome_view;
+mod window_chrome;
 mod window_settings;
 mod window_view;
 mod workflow_ask;
@@ -310,14 +311,15 @@ fn main() -> eframe::Result<()> {
         .with_title("Tidewatch")
         .with_app_id(APP_ID)
         .with_inner_size(dev_view::window_size(WINDOW_SIZE))
-        .with_active(plan.activates);
+        .with_active(plan.activates)
+        .with_decorations(plan.chrome.decorations());
     if cfg!(target_os = "linux")
         && let Ok(icon) = eframe::icon_data::from_png_bytes(LINUX_ICON)
     {
         viewport = viewport.with_icon(icon);
     }
     if plan.quake {
-        viewport = viewport.with_decorations(false).with_resizable(false).with_position([0.0, 0.0]);
+        viewport = viewport.with_resizable(false).with_position([0.0, 0.0]);
     }
     let mut options =
         eframe::NativeOptions { renderer: eframe::Renderer::Glow, viewport, ..Default::default() };
