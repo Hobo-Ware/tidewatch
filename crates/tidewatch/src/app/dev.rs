@@ -1,5 +1,6 @@
 //! The `TIDEWATCH_DEV_*` hooks: start an agent, resume a run, press keys, drive the leftovers dialog and the panes.
 
+use kelp_core::review::{Anchor, Comment, Side};
 use kelp_ui::graph::Selection;
 
 use super::Tidewatch;
@@ -174,6 +175,22 @@ impl Tidewatch {
                 }
             }
             self.dev_panes.open = None;
+        }
+        if !self.dev_panes.notes.is_empty() && view.notes_ready {
+            let author = view.loaded.as_ref().map_or("You", |loaded| loaded.author.as_str());
+            let author = author.to_owned();
+            for note in std::mem::take(&mut self.dev_panes.notes) {
+                let anchor = Anchor {
+                    side: Side::New,
+                    line_hint: note.line,
+                    text: String::new(),
+                    before: Vec::new(),
+                    after: Vec::new(),
+                };
+                let comment = Comment { author: author.clone(), time: now, body: note.text };
+                view.notes.add(&note.path, None, anchor, comment);
+            }
+            return true;
         }
         let Some(text) = &self.dev_panes.note else { return false };
         if !view.notes_ready || view.is_loading_source() {

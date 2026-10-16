@@ -203,7 +203,7 @@ pub(crate) fn dev_drive(
             Step::Send(mode) => {
                 let which = match (mode, view.and_then(|v| v.notes.threads.first())) {
                     (SendMode::One, Some(thread)) => Which::One(thread.id),
-                    _ => Which::Review(String::new()),
+                    _ => Which::Review(dev.message.clone()),
                 };
                 if let Some(reason) = flow.send(tab, which, ctx, unix) {
                     eprintln!("tidewatch: dev send refused: {reason}");

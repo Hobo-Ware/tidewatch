@@ -86,11 +86,17 @@ impl Tidewatch {
                 }
                 ReviewAction::CancelHeld => self.flow.release_review(active_id),
                 ReviewAction::Discard(ids) => {
-                    self.edit_notes(active_id, |notes| ids.iter().for_each(|id| notes.delete(*id)));
+                    self.edit_notes(active_id, |notes| {
+                        for id in &ids {
+                            notes.delete(*id);
+                        }
+                    });
                 }
                 ReviewAction::ResolveAnswered(ids) => {
                     self.edit_notes(active_id, |notes| {
-                        ids.iter().for_each(|id| notes.set_resolved(*id, true));
+                        for id in &ids {
+                            notes.set_resolved(*id, true);
+                        }
                     });
                 }
                 ReviewAction::OpenFile(path) => {

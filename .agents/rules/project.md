@@ -199,7 +199,7 @@ crates/tidewatch/       the egui app
   src/dev_session.rs    TIDEWATCH_DEV_QUIT / _RESTART / _SELECT / _SELECT_AFTER / _SHOT / _SHOT_AFTER / _SAVE_DEBOUNCE_MS switches: close the window through the close request, select a tab, a screenshot that keeps running, a long debounce
   src/dev_screenshot.rs TIDEWATCH_SCREENSHOT harness
   src/dev_worktree.rs   TIDEWATCH_DEV_WORKTREE switch: open a worktree tab at startup for captures
-  src/dev_panes.rs      TIDEWATCH_DEV_SCOPE / _PICK / _OPEN / _PRESS / _NOTE switches: graph scope, selected row, open a commit or a file, press table commands, a note for captures
+  src/dev_panes.rs      TIDEWATCH_DEV_SCOPE / _PICK / _OPEN / _PRESS / _NOTE / _NOTES switches: graph scope, selected row, open a commit or a file, press table commands, a note for captures, several notes (`path:line:text|...`) for a review across files
   src/dev_view.rs       TIDEWATCH_DEV_OVERVIEW / _FOCUS / _STATUS_LOG / _KEYS switches: start on a view, log status changes, answer a prompt
   src/dev_agent.rs      TIDEWATCH_DEV_AGENT / _WORKFLOW / _RESUME / _DIALOG / _SETTINGS / _PALETTE / _PROPOSE / _TASK / _START / _LEVEL switches: open an agent or workflow tab, resume a saved run (through the restore path), open the dialog on a screen, the editor, the palette or a proposed workflow
   src/dev_workflow.rs   TIDEWATCH_DEV_ASK / _OPEN_STAGE switches: answer a workflow run's question, open a stage under the stepper
@@ -268,7 +268,7 @@ run. Agents must use one of the two for every window they open.
 dialog, `delete` closes it with "Delete branch". Use a throwaway repo, and a temp `HOME` (with
 `ZDOTDIR` set to it) so worktrees land in a temp `~/.tidewatch`, never in the real home.
 `TIDEWATCH_DEV_SCOPE=whole` starts the graph on Whole repo, `TIDEWATCH_DEV_PICK=<row>` selects a graph row,
-`TIDEWATCH_DEV_OPEN=commit|file|file:<n>` opens the selected row's files in the tree (and file n, 0 first, in the file view), `TIDEWATCH_DEV_PRESS=<command id>@<seconds>,...` presses those table commands (`file-view`, `back-to-terminal`, `next-file`, `prev-commit`...) through the real key path (`build-workflow` has no chord, so it runs directly), `TIDEWATCH_DEV_NOTE=<text>` writes a note on the first added line of the first diff shown (saved like a real one).
+`TIDEWATCH_DEV_OPEN=commit|file|file:<n>` opens the selected row's files in the tree (and file n, 0 first, in the file view), `TIDEWATCH_DEV_PRESS=<command id>@<seconds>,...` presses those table commands (`file-view`, `back-to-terminal`, `next-file`, `prev-commit`...) through the real key path (`build-workflow` has no chord, so it runs directly), `TIDEWATCH_DEV_NOTE=<text>` writes a note on the first added line of the first diff shown (saved like a real one), `TIDEWATCH_DEV_NOTES=<path>:<line>:<text>|...` adds notes to the draft review once the tab's notes have loaded.
 Notes live in `<home>/.tidewatch/.state/<repo-dir>/<tab>/notes.json`; the main tab's key is `main`.
 `TIDEWATCH_HOME=<dir>` keeps `.tidewatch` and `.config/tidewatch` in `<dir>` while `HOME` stays real, so agent
 CLIs keep their login. `TIDEWATCH_DEV_AGENT=<profile id>` opens that profile in a new tab at startup, ready for its first
@@ -280,7 +280,7 @@ opens the new-tab dialog on its first screen, the agent list, the workflow list 
 versions are probed in the background). Check an agent tab with `ps -o args= -p $(pgrep -n claude)`.
 `TIDEWATCH_DEV_GH_DIR=<dir>` puts `<dir>` first on the PATH `git` and `gh` run with, for a fake `gh` script (the real GitHub API must
 never be reached from a check). `TIDEWATCH_DEV_AUTO=1` holds the review until the agent is idle, `TIDEWATCH_DEV_SEND=one|all` sends the first note or the whole
-review, `TIDEWATCH_DEV_DELIVER=open|approve` opens the delivery dialog (and presses Push and open PR), `TIDEWATCH_DEV_PR=pull|ask|post`
+review (`TIDEWATCH_DEV_SEND_MESSAGE=<text>` is its message), `TIDEWATCH_DEV_DELIVER=open|approve` opens the delivery dialog (and presses Push and open PR), `TIDEWATCH_DEV_PR=pull|ask|post`
 pulls the PR's comments or opens (and confirms) the post dialog for the first note, each once, as soon as the active tab is ready.
 `TIDEWATCH_DEV_OVERVIEW=1` and `TIDEWATCH_DEV_FOCUS=1` start on the Overview or in focus mode; `TIDEWATCH_DEV_STATUS_LOG=1`
 prints every hook and status change to stderr with a wall-clock time in ms; `TIDEWATCH_DEV_KEYS='\e[B\r'` (after
