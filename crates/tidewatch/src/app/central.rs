@@ -229,12 +229,12 @@ impl Tidewatch {
         }
     }
 
-    fn awaiting_first_prompt(&self) -> bool {
+    pub(super) fn awaiting_first_prompt(&self) -> bool {
         let pane = &self.tabs.items()[self.tabs.active()].pane;
         pane.agent.as_ref().is_some_and(|agent| agent.first_prompt == FirstPrompt::Awaiting)
     }
 
-    fn awaiting_workflow_task(&self) -> bool {
+    pub(super) fn awaiting_workflow_task(&self) -> bool {
         let pane = &self.tabs.items()[self.tabs.active()].pane;
         pane.agent
             .as_ref()

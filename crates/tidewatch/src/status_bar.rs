@@ -40,6 +40,7 @@ pub(crate) fn place(branch: &str, base: Option<&str>) -> String {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Screen {
+    Welcome,
     Settings,
     Overview,
     Workspace(Workspace),
@@ -53,6 +54,14 @@ pub(crate) struct Workspace {
     pub(crate) file_open: bool,
     /// `Some(true)` while an agent tab shows its Reader, `Some(false)` its raw terminal.
     pub(crate) reader: Option<bool>,
+    pub(crate) input: Option<Input>,
+}
+
+/// A text box that owns the keyboard in the tab: where its own keys are worth a hint.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Input {
+    Prompt,
+    Task,
 }
 
 const NOTE_HINT: &str = "Hover a line and press + to leave a note";
@@ -61,7 +70,7 @@ const NOTE_HINT: &str = "Hover a line and press + to leave a note";
 pub(crate) fn note_hint(screen: Screen) -> Option<&'static str> {
     match screen {
         Screen::Workspace(Workspace { focus: false, file_open: true, .. }) => Some(NOTE_HINT),
-        Screen::Workspace(_) | Screen::Settings | Screen::Overview => None,
+        Screen::Workspace(_) | Screen::Welcome | Screen::Settings | Screen::Overview => None,
     }
 }
 
@@ -71,31 +80,58 @@ pub(crate) struct Hint {
     pub(crate) label: &'static str,
 }
 
-fn commands(screen: Screen) -> Vec<(Command, &'static str)> {
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Keys {
+    Command(Command),
+    Text(&'static str),
+    CommandEnter,
+}
+
+impl Keys {
+    fn text(self, platform: Platform) -> String {
+        match self {
+            Self::Command(command) => command.keys_on(platform),
+            Self::Text(text) => text.to_owned(),
+            Self::CommandEnter => match platform {
+                Platform::Mac => "Cmd+Enter".to_owned(),
+                Platform::Linux => "Ctrl+Enter".to_owned(),
+            },
+        }
+    }
+}
+
+fn of(command: Command, label: &'static str) -> (Keys, &'static str) {
+    (Keys::Command(command), label)
+}
+
+fn commands(screen: Screen) -> Vec<(Keys, &'static str)> {
     match screen {
+        Screen::Welcome => {
+            vec![of(Command::OpenRepo, "open repo"), of(Command::Settings, "settings")]
+        }
         Screen::Settings => vec![
-            (Command::Settings, "close settings"),
-            (Command::Overview, "overview"),
-            (Command::Palette, "commands"),
+            of(Command::Settings, "close settings"),
+            of(Command::Overview, "overview"),
+            of(Command::Palette, "commands"),
         ],
         Screen::Overview => vec![
-            (Command::Overview, "close overview"),
-            (Command::NewTab, "new tab"),
-            (Command::Settings, "settings"),
-            (Command::Palette, "commands"),
+            of(Command::Overview, "close overview"),
+            of(Command::NewTab, "new tab"),
+            of(Command::Settings, "settings"),
+            of(Command::Palette, "commands"),
         ],
         Screen::Workspace(view) => workspace_commands(view),
     }
 }
 
-fn workspace_commands(view: Workspace) -> Vec<(Command, &'static str)> {
-    let reader = view.reader.map(|on| (Command::Reader, if on { "terminal" } else { "reader" }));
+fn workspace_commands(view: Workspace) -> Vec<(Keys, &'static str)> {
+    let reader = view.reader.map(|on| of(Command::Reader, if on { "terminal" } else { "reader" }));
     if view.focus {
         return [
-            Some((Command::Focus, "leave focus")),
+            Some(of(Command::Focus, "leave focus")),
             reader,
-            Some((Command::Overview, "overview")),
-            Some((Command::Palette, "commands")),
+            Some(of(Command::Overview, "overview")),
+            Some(of(Command::Palette, "commands")),
         ]
         .into_iter()
         .flatten()
@@ -103,19 +139,37 @@ fn workspace_commands(view: Workspace) -> Vec<(Command, &'static str)> {
     }
     if view.file_open {
         return vec![
-            (Command::BackToTerminal, "terminal"),
-            (Command::NextFile, "next file"),
-            (Command::Overview, "overview"),
-            (Command::Focus, "focus"),
+            of(Command::BackToTerminal, "terminal"),
+            of(Command::NextFile, "next file"),
+            of(Command::Overview, "overview"),
+            of(Command::Focus, "focus"),
         ];
+    }
+    match view.input {
+        Some(Input::Prompt) => {
+            return vec![
+                (Keys::Text("Enter"), "send"),
+                (Keys::Text("Shift+Enter"), "new line"),
+                of(Command::Reader, "terminal"),
+                of(Command::Overview, "overview"),
+            ];
+        }
+        Some(Input::Task) => {
+            return vec![
+                (Keys::CommandEnter, "start"),
+                of(Command::Settings, "settings"),
+                of(Command::Overview, "overview"),
+            ];
+        }
+        None => {}
     }
     [
         reader,
-        view.history.then_some((Command::FileView, "last file")),
-        Some((Command::Overview, "overview")),
-        Some((Command::Focus, "focus")),
-        Some((Command::NewTab, "new tab")),
-        Some((Command::Palette, "commands")),
+        view.history.then_some(of(Command::FileView, "last file")),
+        Some(of(Command::Overview, "overview")),
+        Some(of(Command::Focus, "focus")),
+        Some(of(Command::NewTab, "new tab")),
+        Some(of(Command::Palette, "commands")),
     ]
     .into_iter()
     .flatten()
@@ -127,7 +181,7 @@ pub(crate) fn hints(screen: Screen, platform: Platform) -> Vec<Hint> {
     commands(screen)
         .into_iter()
         .take(MOST_HINTS)
-        .map(|(command, label)| Hint { keys: command.keys_on(platform), label })
+        .map(|(keys, label)| Hint { keys: keys.text(platform), label })
         .collect()
 }
 
@@ -176,7 +230,7 @@ mod tests {
     use super::*;
 
     fn workspace(focus: bool, history: bool, file_open: bool, reader: Option<bool>) -> Screen {
-        Screen::Workspace(Workspace { focus, history, file_open, reader })
+        Screen::Workspace(Workspace { focus, history, file_open, reader, input: None })
     }
 
     fn labels(screen: Screen) -> Vec<&'static str> {
@@ -207,6 +261,7 @@ mod tests {
     #[test]
     fn each_screen_shows_only_the_hints_that_still_apply() {
         let cases = [
+            (Screen::Welcome, vec!["open repo", "settings"]),
             (Screen::Settings, vec!["close settings", "overview", "commands"]),
             (Screen::Overview, vec!["close overview", "new tab", "settings", "commands"]),
             (
@@ -240,6 +295,28 @@ mod tests {
         }
     }
 
+    fn typing(input: Input) -> Screen {
+        Screen::Workspace(Workspace {
+            focus: false,
+            history: false,
+            file_open: false,
+            reader: Some(true),
+            input: Some(input),
+        })
+    }
+
+    #[test]
+    fn a_text_box_that_owns_the_keyboard_shows_its_own_keys() {
+        let keys = |screen, platform| -> Vec<String> {
+            hints(screen, platform).into_iter().map(|hint| hint.keys).collect()
+        };
+        assert_eq!(labels(typing(Input::Prompt)), ["send", "new line", "terminal", "overview"]);
+        assert_eq!(keys(typing(Input::Prompt), Platform::Mac)[..2], ["Enter", "Shift+Enter"]);
+        assert_eq!(labels(typing(Input::Task)), ["start", "settings", "overview"]);
+        assert_eq!(keys(typing(Input::Task), Platform::Mac)[0], "Cmd+Enter");
+        assert_eq!(keys(typing(Input::Task), Platform::Linux)[0], "Ctrl+Enter");
+    }
+
     #[test]
     fn the_note_hint_shows_with_a_file_open_and_nowhere_else() {
         let hint = Some("Hover a line and press + to leave a note");
@@ -247,6 +324,7 @@ mod tests {
         assert_eq!(note_hint(workspace(false, true, false, Some(true))), None);
         assert_eq!(note_hint(workspace(true, true, true, None)), None);
         assert_eq!(note_hint(Screen::Overview), None);
+        assert_eq!(note_hint(Screen::Welcome), None);
         assert_eq!(note_hint(Screen::Settings), None);
     }
 
@@ -261,8 +339,11 @@ mod tests {
     }
 
     #[test]
-    fn no_screen_has_more_than_four_hints_or_fewer_than_three() {
+    fn no_screen_has_more_than_four_hints_or_fewer_than_two() {
         let screens = [
+            Screen::Welcome,
+            typing(Input::Prompt),
+            typing(Input::Task),
             Screen::Settings,
             Screen::Overview,
             workspace(false, true, false, Some(true)),
@@ -273,7 +354,7 @@ mod tests {
         ];
         for screen in screens {
             let count = hints(screen, Platform::CURRENT).len();
-            assert!((3..=4).contains(&count), "{screen:?}: {count}");
+            assert!((2..=4).contains(&count), "{screen:?}: {count}");
         }
     }
 }
