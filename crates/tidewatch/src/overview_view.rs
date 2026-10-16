@@ -391,7 +391,7 @@ mod tests {
 
     #[test]
     fn clicking_a_row_asks_for_its_tab_and_nothing_else_does() {
-        let ctx = egui::Context::default();
+        let ctx = crate::fonts::test_context();
         let data = overview(vec![
             row(4, "needs-you", AgentStatus::NeedsYou(Reason::Permission)),
             row(9, "busy", AgentStatus::Working),
@@ -411,7 +411,7 @@ mod tests {
 
     #[test]
     fn an_empty_overview_has_nothing_to_click() {
-        let ctx = egui::Context::default();
+        let ctx = crate::fonts::test_context();
         let data = Overview {
             needs: vec![],
             places: vec![Place { label: "web".into(), path: "/work/web".into(), rows: vec![] }],

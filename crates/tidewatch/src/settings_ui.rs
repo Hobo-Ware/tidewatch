@@ -297,14 +297,16 @@ fn fade(painter: &Painter, rect: Rect, ground: Color32, to_bottom: bool) {
     let clear = Color32::TRANSPARENT;
     let (top, bottom) = if to_bottom { (clear, ground) } else { (ground, clear) };
     let vertex = |pos, color| Vertex { pos, uv: egui::epaint::WHITE_UV, color };
-    let mut mesh = Mesh::default();
-    mesh.vertices = vec![
-        vertex(rect.left_top(), top),
-        vertex(rect.right_top(), top),
-        vertex(rect.right_bottom(), bottom),
-        vertex(rect.left_bottom(), bottom),
-    ];
-    mesh.indices = vec![0, 1, 2, 0, 2, 3];
+    let mesh = Mesh {
+        vertices: vec![
+            vertex(rect.left_top(), top),
+            vertex(rect.right_top(), top),
+            vertex(rect.right_bottom(), bottom),
+            vertex(rect.left_bottom(), bottom),
+        ],
+        indices: vec![0, 1, 2, 0, 2, 3],
+        ..Mesh::default()
+    };
     painter.add(mesh);
 }
 

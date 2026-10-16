@@ -238,11 +238,8 @@ fn chip_pill(ui: &Ui, right_center: egui::Pos2, text: &str, active: bool) {
     let galley = painter.layout_no_wrap(text.to_owned(), body(12.0), brand::TEXT);
     let size = galley.size() + vec2(20.0, 8.0);
     let rect = Rect::from_min_size(right_center - vec2(size.x, size.y / 2.0), size);
-    let (fill, ink) = if active {
-        (brand::TEAL.gamma_multiply(0.18), brand::TEAL_TEXT)
-    } else {
-        (brand::SEGMENT, brand::MUTED)
-    };
+    let (fill, ink) =
+        if active { (brand::TEAL_FILL, brand::TEAL_TEXT) } else { (brand::SEGMENT, brand::MUTED) };
     painter.rect_filled(rect, CornerRadius::same(255), fill);
     painter.galley(rect.center() - galley.size() / 2.0, galley, ink);
 }
