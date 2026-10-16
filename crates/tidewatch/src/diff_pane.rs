@@ -5,28 +5,39 @@
 use std::borrow::Cow;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use egui::text::LayoutJob;
 use egui::{
-    Align, Color32, FontId, Layout, Rect, RichText, Sense, Stroke, Ui, UiBuilder, pos2, vec2,
+    Align2, Color32, FontId, Id, Rect, Sense, Stroke, TextFormat, Ui, UiBuilder, pos2, vec2,
 };
 use kelp_core::commit::{self, ChangeKind, FileChange};
 use kelp_ui::diff::{DiffInput, DiffLayout, DiffMode, DiffStyle, DiffTexts};
-use kelp_ui::theme;
-use stdusk_egui::ui::icons;
-use stdusk_egui::widgets::{chip, icon_button};
 use tidewatch_core::notes::Notes;
 
 use crate::brand;
 use crate::commands::Platform;
+use crate::commit_files::paint_path;
+use crate::file_view::{ARROW_W, BUTTON_H, GAP, arrow, note_buttons};
 use crate::flow::PaneExtras;
+use crate::history_pane;
+use crate::layout::CHROME_H;
 use crate::note_actions;
 use crate::notes_strip::{self, StripAction};
+use crate::screen_kit::{body, heading, mono, selection_row};
+use crate::segmented;
 use crate::tab_view::TabView;
 
-pub(crate) const SIDE_PAD: f32 = 14.0;
-const FILE_ROW_H: f32 = 22.0;
+const SIDE_PAD: f32 = 14.0;
+const PAD_RIGHT: f32 = 10.0;
+const FILE_ROW_H: f32 = 28.0;
 const FILES_MAX_ROWS: f32 = 4.0;
-pub(crate) const TOOLBAR_H: f32 = 34.0;
-const HEADER_H: f32 = 64.0;
+const FILES_PAD: f32 = 8.0;
+const ROW_GAP: f32 = 2.0;
+const ROW_PAD: f32 = 10.0;
+const LETTER_W: f32 = 22.0;
+const CAPTION_H: f32 = 28.0;
+const MIN_TITLE_W: f32 = 120.0;
+const TITLE_GAP: f32 = 2.0;
+const LAYOUTS: [&str; 2] = ["Unified", "Split"];
 pub(crate) const SHORT_ID: usize = 7;
 
 static MAC_TEXTS: DiffTexts = DiffTexts {
@@ -59,10 +70,10 @@ pub(crate) fn kind_letter(kind: ChangeKind) -> &'static str {
 
 pub(crate) fn kind_color(kind: ChangeKind) -> Color32 {
     match kind {
-        ChangeKind::Added => theme::added(),
-        ChangeKind::Modified => theme::modified(),
-        ChangeKind::Deleted => theme::deleted(),
-        ChangeKind::Renamed => theme::hunk_text(),
+        ChangeKind::Added => brand::GREEN,
+        ChangeKind::Modified => brand::ORANGE,
+        ChangeKind::Deleted => brand::RED,
+        ChangeKind::Renamed => brand::TEAL_TEXT,
     }
 }
 
@@ -94,8 +105,9 @@ pub(crate) struct PaneOut {
     pub(crate) actions: Vec<PaneAction>,
 }
 
-/// Draws the pane. `extras` is what an agent tab adds: the notes strip, the send buttons and the PR
-/// chip; a tab without an agent passes `None`. `now` is unix seconds.
+/// Draws the pane as a card: a 48 px header with the commit and the note buttons, the files, a line
+/// for the notes, the strip and the diff. `extras` is what an agent tab adds: the notes strip, the
+/// send buttons and the PR chip; a tab without an agent passes `None`. `now` is unix seconds.
 pub(crate) fn show(
     ui: &mut Ui,
     rect: Rect,
@@ -103,7 +115,7 @@ pub(crate) fn show(
     extras: Option<&PaneExtras>,
     now: i64,
 ) -> PaneOut {
-    ui.painter().rect_filled(rect, 0.0, theme::bg());
+    history_pane::paint_card(ui, rect);
     let mut out = PaneOut::default();
     ui.scope_builder(UiBuilder::new().id_salt("diff-pane").max_rect(rect), |ui| {
         ui.set_clip_rect(rect.intersect(ui.clip_rect()));
@@ -112,133 +124,121 @@ pub(crate) fn show(
             message(ui, rect, view.error.as_deref(), "Loading history...");
             return;
         }
-        let header = take_row(ui, rect, 0.0, HEADER_H);
-        show_header(ui, header, view);
-        if let Some(extras) = extras {
-            header_actions(ui, header, extras, &mut out.actions);
-        }
-        let top = HEADER_H;
+        let inner = rect.shrink2(vec2(1.0, 0.0));
+        let header = Rect::from_min_size(rect.min, vec2(rect.width(), CHROME_H));
+        ui.painter().hline(inner.x_range(), header.bottom(), Stroke::new(1.0, brand::CARD_LINE));
+        show_header(ui, header, view, extras, &mut out.actions);
+        let mut top = header.bottom();
         let files_h = FILE_ROW_H * (view.files.len() as f32).min(FILES_MAX_ROWS);
-        let files = take_row(ui, rect, top, files_h);
+        let files = Rect::from_min_size(pos2(inner.left(), top), vec2(inner.width(), files_h));
         show_files(ui, files, view);
-        let toolbar = take_row(ui, rect, top + files_h, TOOLBAR_H);
-        show_toolbar(ui, toolbar, view);
-        if let Some(extras) = extras {
-            toolbar_pr(ui, toolbar, extras, &mut out.actions);
-        }
+        top += files_h;
+        let caption = Rect::from_min_size(pos2(inner.left(), top), vec2(inner.width(), CAPTION_H));
+        show_caption(ui, caption, view);
+        top += CAPTION_H;
         let strip_h = extras.map_or(0.0, |e| notes_strip::height(e.rows.len()));
         if let Some(extras) = extras.filter(|_| strip_h > 0.0) {
-            let strip = take_row(ui, rect, top + files_h + TOOLBAR_H, strip_h);
+            let strip = Rect::from_min_size(pos2(inner.left(), top), vec2(inner.width(), strip_h));
             let actions = notes_strip::show(ui, strip, &extras.rows, now);
             out.actions.extend(actions.into_iter().map(PaneAction::Strip));
+            top += strip_h;
         }
-        let body = Rect::from_min_max(pos2(rect.left(), toolbar.bottom() + strip_h), rect.max);
-        out.notes_changed = show_body(ui, body, view, DiffStyle::default());
+        ui.painter().hline(inner.x_range(), top, Stroke::new(1.0, brand::CARD_LINE));
+        let body = Rect::from_min_max(pos2(inner.left(), top + 1.0), rect.max - vec2(1.0, 1.0));
+        out.notes_changed = show_body(ui, body, view, DiffStyle::embedded(brand::TEAL));
+        history_pane::round_bottom(ui, rect);
     });
     out
 }
 
-pub(crate) fn small_button(ui: &mut Ui, label: &str, selected: bool) -> egui::Response {
-    let text = RichText::new(label).size(11.5);
-    ui.add(egui::Button::new(text).selected(selected).corner_radius(5))
-}
-
-/// Send all open and the deliver-when-idle switch, on the header's last line.
-fn header_actions(ui: &mut Ui, header: Rect, extras: &PaneExtras, actions: &mut Vec<PaneAction>) {
-    let area = Rect::from_min_max(
-        pos2(header.left() + SIDE_PAD, header.top() + 40.0),
-        pos2(header.right() - SIDE_PAD, header.bottom() - 4.0),
-    );
-    send_controls(ui, area, extras, actions);
-}
-
-pub(crate) fn send_controls(
+fn show_header(
     ui: &mut Ui,
-    area: Rect,
-    extras: &PaneExtras,
+    rect: Rect,
+    view: &mut TabView,
+    extras: Option<&PaneExtras>,
     actions: &mut Vec<PaneAction>,
 ) {
-    ui.scope_builder(
-        UiBuilder::new()
-            .id_salt("diff-header-actions")
-            .max_rect(area)
-            .layout(Layout::right_to_left(Align::Center)),
-        |ui| {
-            ui.spacing_mut().item_spacing.x = 6.0;
-            let label = format!("Send all open ({})", extras.pending);
-            let ready = extras.send_all.is_ok() && extras.pending > 0;
-            let send = ui.add_enabled(
-                ready,
-                egui::Button::new(RichText::new(label).size(11.5)).corner_radius(5),
-            );
-            let send = match extras.send_all {
-                Err(reason) => send.on_disabled_hover_text(reason),
-                Ok(()) if extras.pending == 0 => send.on_disabled_hover_text("No unsent open notes"),
-                Ok(()) => send.on_hover_text("Paste every unsent open note into the agent's terminal"),
-            };
-            if send.clicked() {
-                actions.push(PaneAction::SendAll);
-            }
-            let switch = small_button(ui, "Deliver when idle", extras.auto).on_hover_text(
-                "Send queued notes by themselves when the agent is done (never while it works or waits on you)",
-            );
-            if switch.clicked() {
-                actions.push(PaneAction::ToggleAuto);
-            }
-        },
+    let center_y = rect.center().y;
+    let active = usize::from(view.layout == DiffLayout::Split);
+    let switch = segmented::show(
+        ui,
+        Id::new("diff-pane-layout"),
+        rect.right() - PAD_RIGHT,
+        center_y,
+        &LAYOUTS,
+        active,
     );
+    if let Some(index) = switch.clicked {
+        set_layout(view, if index == 0 { DiffLayout::Unified } else { DiffLayout::Split });
+    }
+    let mut right = switch.left - GAP;
+    if view.open.is_some() {
+        right = change_arrows(ui, right, center_y, view);
+    }
+    let floor = rect.left() + SIDE_PAD + MIN_TITLE_W + GAP;
+    if let Some(extras) = extras {
+        right = note_buttons(ui, right, floor, center_y, extras, actions);
+    }
+    show_title(ui, Rect::from_min_max(rect.min, pos2(right - GAP, rect.bottom())), view);
 }
 
-/// The PR chip and "Pull PR comments" on the toolbar's right.
-pub(crate) fn toolbar_pr(
-    ui: &mut Ui,
-    toolbar: Rect,
-    extras: &PaneExtras,
-    actions: &mut Vec<PaneAction>,
-) {
-    let Some(chip) = &extras.chip else { return };
-    let area = toolbar.shrink2(vec2(SIDE_PAD - 4.0, 0.0));
-    ui.scope_builder(
-        UiBuilder::new()
-            .id_salt("diff-toolbar-pr")
-            .max_rect(area)
-            .layout(Layout::right_to_left(Align::Center)),
-        |ui| {
-            ui.spacing_mut().item_spacing.x = 6.0;
-            let pull = ui.add_enabled(
-                !extras.pulling,
-                egui::Button::new(
-                    RichText::new(if extras.pulling { "Pulling..." } else { "Pull PR comments" })
-                        .size(11.5),
-                )
-                .corner_radius(5),
-            );
-            if pull.on_hover_text("Import the pull request's review comments as notes").clicked() {
-                actions.push(PaneAction::PullPr);
-            }
-            let tag = ui
-                .add(
-                    egui::Button::new(RichText::new(&chip.text).size(11.5).color(theme::added()))
-                        .corner_radius(10),
-                )
-                .on_hover_text(format!("{} - click to open in the browser", chip.url));
-            if tag.clicked() {
-                actions.push(PaneAction::OpenUrl(chip.url.clone()));
-            }
-        },
-    );
+fn change_arrows(ui: &mut Ui, right: f32, center_y: f32, view: &mut TabView) -> f32 {
+    let top = center_y - BUTTON_H / 2.0;
+    let next = Rect::from_min_size(pos2(right - ARROW_W, top), vec2(ARROW_W, BUTTON_H));
+    let prev = next.translate(vec2(-ARROW_W - 2.0, 0.0));
+    if let Some(open) = &mut view.open {
+        if arrow(ui, Id::new("diff-pane-prev"), prev, true, true, "Previous change (Alt+Up)") {
+            open.body.jump_to_change(false);
+        }
+        if arrow(ui, Id::new("diff-pane-next"), next, false, true, "Next change (Alt+Down)") {
+            open.body.jump_to_change(true);
+        }
+    }
+    prev.left() - GAP
 }
 
-pub(crate) fn take_row(ui: &Ui, rect: Rect, top: f32, height: f32) -> Rect {
-    let row = Rect::from_min_size(pos2(rect.left(), rect.top() + top), vec2(rect.width(), height));
-    ui.painter().hline(rect.x_range(), row.bottom(), Stroke::new(1.0, theme::border()));
-    row
+/// The commit's title over its id, author and counts, cut with an ellipsis where `area` ends.
+fn show_title(ui: &Ui, area: Rect, view: &TabView) {
+    let HeaderText { what, title, who } = header_text(view);
+    let width = (area.width() - SIDE_PAD).max(0.0);
+    let painter = ui.painter().with_clip_rect(area);
+    let one_line = |mut job: LayoutJob| {
+        job.wrap.max_width = width;
+        job.wrap.max_rows = 1;
+        job.wrap.break_anywhere = true;
+        painter.layout_job(job)
+    };
+    let plain = |font: FontId, color| TextFormat { font_id: font, color, ..TextFormat::default() };
+    let heading_job = LayoutJob::simple_singleline(title, heading(14.0), brand::TEXT);
+    let mut meta = LayoutJob::default();
+    meta.append(&what, 0.0, plain(mono(11.5), brand::SOFT));
+    meta.append(&format!(" · {who}"), 0.0, plain(body(12.0), brand::MUTED));
+    if let Some(open) = &view.open {
+        meta.append(&format!("  +{}", open.diff.added), 0.0, plain(body(12.0), brand::GREEN));
+        meta.append(&format!(" -{}", open.diff.removed), 0.0, plain(body(12.0), brand::RED));
+    }
+    let (title, meta) = (one_line(heading_job), one_line(meta));
+    let block = title.size().y + TITLE_GAP + meta.size().y;
+    let top = area.center().y - block / 2.0;
+    let x = area.left() + SIDE_PAD;
+    painter.galley(pos2(x, top), title.clone(), brand::TEXT);
+    painter.galley(pos2(x, top + title.size().y + TITLE_GAP), meta, brand::MUTED);
+}
+
+fn show_caption(ui: &Ui, rect: Rect, view: &TabView) {
+    ui.painter().text(
+        pos2(rect.left() + SIDE_PAD, rect.center().y),
+        Align2::LEFT_CENTER,
+        notes_summary(&view.notes),
+        body(12.0),
+        brand::FAINT,
+    );
 }
 
 pub(crate) fn message(ui: &mut Ui, rect: Rect, error: Option<&str>, idle: &str) {
     let (text, color) = match error {
-        Some(error) => (error, theme::deleted()),
-        None => (idle, theme::text_faint()),
+        Some(error) => (error, brand::RED),
+        None => (idle, brand::FAINT),
     };
     ui.painter().text(
         rect.center(),
@@ -246,51 +246,6 @@ pub(crate) fn message(ui: &mut Ui, rect: Rect, error: Option<&str>, idle: &str) 
         text,
         FontId::proportional(12.5),
         color,
-    );
-}
-
-fn show_header(ui: &mut Ui, rect: Rect, view: &TabView) {
-    let painter = ui.painter_at(rect);
-    let x = rect.left() + SIDE_PAD;
-    let branch = view.loaded.as_ref().and_then(|l| l.branch.as_deref()).unwrap_or("detached HEAD");
-    let HeaderText { what, title, who } = header_text(view);
-    let meta = painter.text(
-        pos2(x, rect.top() + 8.0),
-        egui::Align2::LEFT_TOP,
-        &what,
-        FontId::monospace(11.5),
-        theme::text_strong(),
-    );
-    painter.text(
-        pos2(meta.right() + 8.0, rect.top() + 8.0),
-        egui::Align2::LEFT_TOP,
-        format!("· {branch}"),
-        FontId::monospace(11.5),
-        brand::TEAL_TEXT,
-    );
-    if let Some(open) = &view.open {
-        let stats = format!("+{}  -{}", open.diff.added, open.diff.removed);
-        painter.text(
-            pos2(rect.right() - SIDE_PAD, rect.top() + 8.0),
-            egui::Align2::RIGHT_TOP,
-            stats,
-            FontId::monospace(11.5),
-            theme::text_muted(),
-        );
-    }
-    painter.text(
-        pos2(x, rect.top() + 24.0),
-        egui::Align2::LEFT_TOP,
-        title,
-        FontId::new(15.0, theme::semibold()),
-        theme::text_strong(),
-    );
-    painter.text(
-        pos2(x, rect.top() + 45.0),
-        egui::Align2::LEFT_TOP,
-        who,
-        FontId::proportional(12.0),
-        theme::text_muted(),
     );
 }
 
@@ -343,66 +298,22 @@ fn show_files(ui: &mut Ui, rect: Rect, view: &mut TabView) {
 }
 
 fn file_row(ui: &mut Ui, change: &FileChange, selected: bool) -> bool {
-    let (rect, response) =
+    let (slot, response) =
         ui.allocate_exact_size(vec2(ui.available_width(), FILE_ROW_H), Sense::click());
-    let painter = ui.painter_at(rect);
-    if selected {
-        painter.rect_filled(rect, 0.0, theme::selected_row());
-    } else if response.hovered() {
-        painter.rect_filled(rect, 0.0, theme::menu_hover());
-    }
+    let row = slot.shrink2(vec2(FILES_PAD, ROW_GAP));
+    let painter = ui.painter_at(slot);
+    selection_row(&painter, row, selected, response.hovered());
     painter.text(
-        pos2(rect.left() + SIDE_PAD, rect.center().y),
-        egui::Align2::LEFT_CENTER,
+        pos2(row.left() + ROW_PAD, row.center().y),
+        Align2::LEFT_CENTER,
         kind_letter(change.kind),
-        FontId::monospace(11.5),
+        mono(11.5),
         kind_color(change.kind),
     );
-    let color = if selected { theme::text_strong() } else { theme::text_body() };
-    painter.text(
-        pos2(rect.left() + SIDE_PAD + 20.0, rect.center().y),
-        egui::Align2::LEFT_CENTER,
-        &change.path,
-        FontId::monospace(11.5),
-        color,
-    );
+    let ink = if selected { brand::TEXT } else { brand::SOFT };
+    let left = row.left() + ROW_PAD + LETTER_W;
+    paint_path(ui, &painter, &change.path, (left, row.right() - ROW_PAD, row.center().y), ink);
     response.clicked()
-}
-
-fn show_toolbar(ui: &mut Ui, rect: Rect, view: &mut TabView) {
-    let summary = notes_summary(&view.notes);
-    ui.scope_builder(
-        UiBuilder::new()
-            .id_salt("diff-toolbar")
-            .max_rect(rect.shrink2(vec2(SIDE_PAD - 4.0, 0.0)))
-            .layout(Layout::left_to_right(Align::Center)),
-        |ui| {
-            ui.spacing_mut().item_spacing.x = 6.0;
-            layout_switch(ui, view);
-            if let Some(open) = &mut view.open {
-                if icon_button(ui, icons::CARET_UP, "Previous change (Alt+Up)").clicked() {
-                    open.body.jump_to_change(false);
-                }
-                if icon_button(ui, icons::CARET_DOWN, "Next change (Alt+Down)").clicked() {
-                    open.body.jump_to_change(true);
-                }
-            }
-            ui.add_space(8.0);
-            ui.add(
-                egui::Label::new(RichText::new(summary).size(12.0).color(theme::text_faint()))
-                    .truncate(),
-            );
-        },
-    );
-}
-
-fn layout_switch(ui: &mut Ui, view: &mut TabView) {
-    let unified = view.layout == DiffLayout::Unified;
-    for (label, layout) in [("Unified", DiffLayout::Unified), ("Split", DiffLayout::Split)] {
-        if chip(ui, label, unified == (layout == DiffLayout::Unified)).clicked() {
-            set_layout(view, layout);
-        }
-    }
 }
 
 pub(crate) fn set_layout(view: &mut TabView, layout: DiffLayout) {

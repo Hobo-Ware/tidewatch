@@ -94,7 +94,7 @@ impl ViewSpec {
     }
 
     pub(crate) fn into_view(self) -> TabView {
-        TabView::new(self.id, self.dir, self.name, self.is_main, self.notes_file)
+        TabView::new(self.id, self.dir, self.is_main, self.notes_file)
     }
 }
 
@@ -149,7 +149,6 @@ enum Watching {
 pub(crate) struct TabView {
     id: u64,
     pub(crate) dir: PathBuf,
-    pub(crate) name: String,
     pub(crate) is_main: bool,
     notes_file: Option<PathBuf>,
     active: bool,
@@ -182,17 +181,10 @@ pub(crate) struct TabView {
 }
 
 impl TabView {
-    pub(crate) fn new(
-        id: u64,
-        dir: PathBuf,
-        name: String,
-        is_main: bool,
-        notes_file: Option<PathBuf>,
-    ) -> Self {
+    pub(crate) fn new(id: u64, dir: PathBuf, is_main: bool, notes_file: Option<PathBuf>) -> Self {
         Self {
             id,
             dir,
-            name,
             is_main,
             notes_file,
             active: false,
@@ -793,7 +785,7 @@ mod tests {
     }
 
     fn view_for(repo: &std::path::Path, notes: PathBuf) -> TabView {
-        TabView::new(7, repo.to_path_buf(), "main".into(), true, Some(notes))
+        TabView::new(7, repo.to_path_buf(), true, Some(notes))
     }
 
     fn pump(

@@ -60,11 +60,15 @@ pub(crate) fn split_panels(area: Rect, panels_h: f32) -> Layout {
 fn split_at(area: Rect, terminal_h: f32) -> Layout {
     let split_y = area.top() + terminal_h;
     let bottom = Rect::from_min_max(pos2(area.left(), split_y + GAP), area.max);
-    let mid = bottom.left() + ((bottom.width() - GAP) / 2.0).floor();
+    let cards = Rect::from_min_max(
+        pos2(bottom.left() + CARD_MARGIN, bottom.top()),
+        pos2(bottom.right() - CARD_MARGIN, bottom.bottom() - CARD_MARGIN),
+    );
+    let mid = cards.center().x.round();
     Layout {
         terminal: Rect::from_min_max(area.min, pos2(area.right(), split_y)).shrink(TERMINAL_PAD),
-        history: Rect::from_min_max(bottom.min, pos2(mid, bottom.bottom())),
-        diff: Rect::from_min_max(pos2(mid + GAP, bottom.top()), bottom.max),
+        history: Rect::from_min_max(cards.min, pos2(mid - CARD_MARGIN / 2.0, cards.bottom())),
+        diff: Rect::from_min_max(pos2(mid + CARD_MARGIN / 2.0, cards.top()), cards.max),
     }
 }
 
@@ -122,21 +126,21 @@ mod tests {
         let l = split_panels(area(), 200.0);
         let outer = l.terminal.expand(TERMINAL_PAD);
         assert_eq!(outer.height(), 799.0 - 200.0);
-        assert_eq!(l.history.height(), 200.0);
-        assert_eq!(l.diff.bottom(), area().bottom());
+        assert_eq!(l.history.height(), 200.0 - CARD_MARGIN);
+        assert_eq!(l.diff.bottom(), area().bottom() - CARD_MARGIN);
     }
 
     #[test]
-    fn bottom_panels_share_the_rest_without_overlap() {
+    fn bottom_cards_share_the_rest_with_a_card_margin_between_them() {
         let l = split(area());
         let outer = l.terminal.expand(TERMINAL_PAD);
         assert_eq!(l.history.top(), outer.bottom() + GAP);
         assert_eq!(l.diff.top(), l.history.top());
-        assert_eq!(l.history.bottom(), 840.0);
-        assert_eq!(l.diff.bottom(), 840.0);
-        assert_eq!(l.history.left(), 0.0);
-        assert_eq!(l.diff.right(), 1000.0);
-        assert_eq!(l.diff.left() - l.history.right(), GAP);
+        assert_eq!(l.history.bottom(), 840.0 - CARD_MARGIN);
+        assert_eq!(l.diff.bottom(), 840.0 - CARD_MARGIN);
+        assert_eq!(l.history.left(), CARD_MARGIN);
+        assert_eq!(l.diff.right(), 1000.0 - CARD_MARGIN);
+        assert_eq!(l.diff.left() - l.history.right(), CARD_MARGIN);
         assert!((l.history.width() - l.diff.width()).abs() <= 1.0);
     }
 
