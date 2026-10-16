@@ -40,6 +40,8 @@ Tidewatch checks GitHub for a new release about once an hour and when its window
 
 Moving tabs from stdusk: its "Move tabs to Tidewatch" hands its live panes over, and each becomes a shell tab here, in the group of the git repo it was in, still running.
 
+Agent sessions running in other terminals: the Overview lists Claude Code, Codex, Gemini and Copilot sessions it finds (Running elsewhere). A process cannot be pulled out of another terminal, so Move here ends it once it is idle and resumes the same conversation in a tab with the same flags; one in stdusk moves live through stdusk's own button. Also in the palette: Move sessions to Tidewatch.
+
 ## Install
 
 - macOS: `brew install hobo-ware/tap/tidewatch`
