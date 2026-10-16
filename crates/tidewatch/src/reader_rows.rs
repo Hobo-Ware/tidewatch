@@ -201,6 +201,7 @@ mod tests {
                 summary: summary.into(),
                 id: Some(id.into()),
                 phase: ToolPhase::Call,
+                ask: None,
             }),
             ts: None,
         }
@@ -215,6 +216,7 @@ mod tests {
                 summary: summary.into(),
                 id: Some(id.into()),
                 phase: ToolPhase::Result { error },
+                ask: None,
             }),
             ts: None,
         }
