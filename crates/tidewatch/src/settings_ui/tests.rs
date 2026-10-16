@@ -251,3 +251,15 @@ fn key_caps_keep_a_minimum_width_so_single_keys_look_alike() {
         assert!(one >= 26.0 && word > one, "{one} {word}");
     });
 }
+
+#[test]
+fn up_to_five_short_options_share_one_segmented_control_and_more_wrap_as_chips() {
+    let ctx = crate::fonts::test_context();
+    let _ = ctx.run_ui(raw(vec![]), |ui| {
+        assert!(fits_inline(ui, &["Low", "High"]));
+        assert!(fits_inline(ui, &["A", "B", "C", "D", "E"]));
+        assert!(!fits_inline(ui, &["A", "B", "C", "D", "E", "F"]));
+        let wide = ["A label wide enough to overflow a row"; 5];
+        assert!(!fits_inline(ui, &wide));
+    });
+}
