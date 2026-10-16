@@ -120,6 +120,7 @@ mod updates;
 mod updates_view;
 mod welcome;
 mod welcome_view;
+mod window_chrome;
 mod window_settings;
 mod window_view;
 mod workflow_ask;
@@ -231,9 +232,10 @@ fn main() -> eframe::Result<()> {
     let mut viewport = egui::ViewportBuilder::default()
         .with_title("Tidewatch")
         .with_inner_size(WINDOW_SIZE)
-        .with_active(plan.activates);
+        .with_active(plan.activates)
+        .with_decorations(plan.chrome.decorations());
     if plan.quake {
-        viewport = viewport.with_decorations(false).with_resizable(false).with_position([0.0, 0.0]);
+        viewport = viewport.with_resizable(false).with_position([0.0, 0.0]);
     }
     let mut options =
         eframe::NativeOptions { renderer: eframe::Renderer::Glow, viewport, ..Default::default() };
