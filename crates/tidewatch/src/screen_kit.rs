@@ -190,6 +190,17 @@ pub(crate) fn dialog_frame<R>(
     })
 }
 
+/// The fill and border of a small floating card: a notice, a pill, a message over a pane.
+pub(crate) fn paint_pill_card(painter: &Painter, rect: Rect) {
+    painter.rect(
+        rect,
+        CornerRadius::same(ROW_RADIUS),
+        brand::ITEM,
+        Stroke::new(1.0, brand::ITEM_LINE),
+        StrokeKind::Inside,
+    );
+}
+
 /// Paints a selectable row: a teal tint with a short teal bar on the left when selected, a fainter tint when hovered.
 #[allow(dead_code, reason = "adopted by the UI pass commits that follow")]
 pub(crate) fn selection_row(painter: &Painter, rect: Rect, selected: bool, hovered: bool) {

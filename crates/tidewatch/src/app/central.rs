@@ -3,7 +3,6 @@
 use std::time::Duration;
 
 use egui::Frame;
-use stdusk_egui::colors;
 use tidewatch_core::prefs::Panels;
 
 use tidewatch_core::end_block::EndBlock;
@@ -21,8 +20,8 @@ use crate::tab_view::TabView;
 use crate::tabs::Action;
 use crate::workflow_run::TabRun;
 use crate::{
-    agent_status_line, delivery_view, end_block_view, layout, overview, overview_view, reader_glue,
-    stepper_view, welcome_view, workflow_start_view,
+    agent_status_line, brand, delivery_view, end_block_view, layout, overview, overview_view,
+    reader_glue, stepper_view, welcome_view, workflow_start_view,
 };
 
 const EMPTY_PANELS_H: f32 = 200.0;
@@ -95,7 +94,7 @@ impl Tidewatch {
         now: f64,
         frame: &mut FrameIntent,
     ) {
-        egui::CentralPanel::default().frame(Frame::new().fill(colors::bg())).show(ui, |ui| {
+        egui::CentralPanel::default().frame(Frame::new().fill(brand::GROUND)).show(ui, |ui| {
             let area = ui.max_rect();
             if self.overview && self.settings.is_none() && self.welcome.is_none() {
                 self.show_overview(ui, area, ctx, now, frame);
