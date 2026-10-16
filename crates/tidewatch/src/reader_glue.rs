@@ -18,6 +18,7 @@ use crate::pane::{Body, FirstPrompt, Pane};
 use crate::reader::{Note, Shown};
 use crate::reader_keys;
 use crate::reader_view::{self, Action, Facts, Prompt};
+use crate::review::ReviewFacts;
 use crate::tabs::Tabs;
 
 const NOTE_H: f32 = 24.0;
@@ -92,13 +93,14 @@ pub(crate) fn draw(
     pane: &mut Pane<PtyTerm>,
     dev: &mut DevReader,
     now: f64,
+    review: Option<ReviewFacts<'_>>,
 ) -> Vec<Action> {
     let Some(agent) = pane.agent.as_mut() else { return Vec::new() };
     let prompt = prompt_of(agent.run.status()).filter(|_| !agent.reader.prompt_answered());
     let ready = (agent.first_prompt == FirstPrompt::Awaiting)
         .then_some(Ready { profile: &agent.profile_name, agent_id: &agent.run.agent_id });
     let root = pane.worktree.as_ref().map(|worktree| worktree.path.as_path());
-    let facts = Facts { source: agent.reader.source(), prompt, ready, root };
+    let facts = Facts { source: agent.reader.source(), prompt, ready, root, review };
     let reader = &mut agent.reader;
     let mut actions = reader_view::show(ui, area, &reader.rows, &mut reader.view, facts);
     actions.extend(dev.actions(now, facts.prompt));
@@ -165,6 +167,7 @@ pub(crate) fn apply(
                     agent.reader.set_wants_reader(false);
                 }
             }
+            Action::Review(_) => {}
         }
     }
     toast

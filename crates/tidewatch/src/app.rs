@@ -15,6 +15,7 @@ mod palette;
 mod panes;
 mod repos;
 mod restart;
+mod review;
 mod settings;
 mod stdusk;
 mod strip;

@@ -199,7 +199,7 @@ impl Tidewatch {
             .map(|agent| agent.profile_name.clone());
         let shown = reader_glue::shown(self.tabs.active_pane_mut());
         self.show_terminal(ui, &grid, agent_name.as_deref(), shown == Some(Shown::Reader), frame);
-        self.show_reader(ui, areas.terminal, shown, ctx, now, active_id);
+        self.show_reader(ui, areas.terminal, shown, ctx, now, active_id, !frame.keys.modal_open);
 
         if let (Some((block, open)), Some(band)) = (&end, end_band)
             && end_block_view::show_card(ui, band, block, *open)
