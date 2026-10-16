@@ -4,9 +4,13 @@
 //! - `TIDEWATCH_DEV_FOCUS=1`: start in focus mode.
 //! - `TIDEWATCH_DEV_STATUS_LOG=1`: print every hook and status change to stderr with a wall-clock
 //!   time in milliseconds, to measure how fast a tab reacts.
+//! - `TIDEWATCH_DEV_SIDE=<fraction>`: start with the left column that wide (0.3 to 0.75 of the
+//!   window), to look at the file view when it is narrow.
 //! - `TIDEWATCH_DEV_KEYS=<text>` after `TIDEWATCH_DEV_KEYS_AFTER=<seconds>` (default 8): type the text
 //!   into the newest agent tab once, to answer a prompt a check cannot avoid (`\r`, `\n`, `\e` and
 //!   `\\` are escapes; `\e[B\r` is Down then Enter).
+
+use crate::layout;
 
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct DevKeys {
@@ -20,6 +24,7 @@ pub(crate) struct DevView {
     pub(crate) focus: bool,
     pub(crate) status_log: bool,
     pub(crate) keys: Option<DevKeys>,
+    pub(crate) side: Option<f32>,
 }
 
 const DEFAULT_KEYS_AFTER_SECS: f64 = 8.0;
@@ -34,6 +39,14 @@ impl DevView {
             var("TIDEWATCH_DEV_KEYS").as_deref(),
             var("TIDEWATCH_DEV_KEYS_AFTER").as_deref(),
         )
+        .with_side(var("TIDEWATCH_DEV_SIDE").as_deref())
+    }
+
+    fn with_side(self, side: Option<&str>) -> Self {
+        let side = side
+            .and_then(|fraction| fraction.parse::<f32>().ok())
+            .filter(|fraction| layout::SIDE_RANGE.contains(fraction));
+        Self { side, ..self }
     }
 
     fn parse(
@@ -52,6 +65,7 @@ impl DevView {
                 bytes: unescape(k),
                 after: keys_after.and_then(|s| s.parse().ok()).unwrap_or(DEFAULT_KEYS_AFTER_SECS),
             }),
+            side: None,
         }
     }
 }
@@ -88,13 +102,31 @@ mod tests {
     #[test]
     fn a_switch_is_on_for_any_value_but_empty_or_zero() {
         let view = DevView::parse(Some("1"), None, Some("yes"), None, None);
-        assert_eq!(view, DevView { overview: true, focus: false, status_log: true, keys: None });
+        assert_eq!(
+            view,
+            DevView { overview: true, focus: false, status_log: true, keys: None, side: None }
+        );
         assert!(DevView::parse(None, Some("1"), None, None, None).focus);
         assert_eq!(
             DevView::parse(Some(""), Some("0"), Some("0"), Some(""), None),
             DevView::default()
         );
         assert_eq!(DevView::parse(None, None, None, None, None), DevView::default());
+    }
+
+    #[test]
+    fn the_side_fraction_must_be_one_the_divider_could_reach() {
+        let cases = [
+            (Some("0.3"), Some(0.3)),
+            (Some("0.5"), Some(0.5)),
+            (Some("0.2"), None),
+            (Some("0.9"), None),
+            (Some("wide"), None),
+            (None, None),
+        ];
+        for (text, want) in cases {
+            assert_eq!(DevView::default().with_side(text).side, want, "{text:?}");
+        }
     }
 
     #[test]
