@@ -11,7 +11,7 @@ use tidewatch_core::end_block::{self, EndBlock};
 use tidewatch_core::events::TabEvent;
 use tidewatch_core::resume_mode::exit_is_abnormal;
 use tidewatch_core::status::{
-    AgentStatus, HookKind, ProgressSignal, StatusTracker, TerminalSignal,
+    AgentStatus, HookKind, ProgressSignal, Reason, StatusTracker, TerminalSignal,
 };
 
 /// A finding the agent reported with `report_finding`.
@@ -92,6 +92,8 @@ pub(crate) struct AgentRun {
     end_block: Option<EndBlock>,
     failed: Option<String>,
     held: Option<AgentStatus>,
+    /// The first question of an `ask_user` call the user has not answered: the agent is blocked on it.
+    asking: Option<String>,
     exited_abnormally: bool,
 }
 
@@ -112,8 +114,18 @@ impl AgentRun {
             end_block: None,
             failed: None,
             held: None,
+            asking: None,
             exited_abnormally: false,
         }
+    }
+
+    /// An `ask_user` call waits for the user (`Some(its first question)`) or does not any more.
+    /// While it waits, a working agent shows as needing the user.
+    pub(crate) fn set_asking(&mut self, question: Option<String>) {
+        if question.is_some() {
+            self.detail.clone_from(&question);
+        }
+        self.asking = question;
     }
 
     /// A workflow run decides what this tab shows while it holds the next move (tests running, a
@@ -221,7 +233,12 @@ impl AgentRun {
         let next = match (&self.failed, &self.held) {
             (Some(message), _) => AgentStatus::Failed(message.clone()),
             (None, Some(held)) => held.clone(),
-            (None, None) => self.tracker.status(now),
+            (None, None) => match self.tracker.status(now) {
+                AgentStatus::Working if self.asking.is_some() => {
+                    AgentStatus::NeedsYou(Reason::Question)
+                }
+                tracked => tracked,
+            },
         };
         if next == self.status {
             return None;
@@ -394,6 +411,19 @@ mod tests {
         run.fail("disk full".into());
         assert_eq!(run.refresh(1.0).unwrap().to, AgentStatus::Failed("disk full".into()));
         assert_eq!(run.refresh(2.0), None);
+    }
+
+    #[test]
+    fn a_working_agent_blocked_on_a_question_shows_as_needing_the_user() {
+        let mut run = running(0.0);
+        run.on_event(hook(HookKind::TurnStarted, None), 1.0);
+        run.refresh(1.0);
+        assert_eq!(run.status(), &AgentStatus::Working);
+        run.set_asking(Some("Where should it live?".into()));
+        assert_eq!(run.refresh(1.5).unwrap().to, AgentStatus::NeedsYou(Reason::Question));
+        assert_eq!(run.detail(), Some("Where should it live?"));
+        run.set_asking(None);
+        assert_eq!(run.refresh(2.0).unwrap().to, AgentStatus::Working);
     }
 
     #[test]

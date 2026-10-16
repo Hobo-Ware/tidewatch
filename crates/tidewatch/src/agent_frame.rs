@@ -71,7 +71,12 @@ pub(crate) fn route<T>(tabs: &mut Tabs<Pane<T>>, message: TabMessage, now: f64) 
         TabEvent::Proposal { workflow } => {
             Some(Follow::Proposal { tab: message.tab_id, workflow: Box::new(workflow.clone()) })
         }
-        TabEvent::Hook(_) | TabEvent::StageDone { .. } | TabEvent::Ask { .. } => None,
+        TabEvent::Ask { questions, reply } => {
+            agent.run.set_asking(questions.first().map(|question| question.text.clone()));
+            agent.reader.ask_arrived(questions.clone(), reply.clone());
+            None
+        }
+        TabEvent::Hook(_) | TabEvent::StageDone { .. } => None,
     };
     if let TabEvent::Hook(hook) = &message.event {
         agent.reader.hook(hook.transcript_path.clone());
@@ -178,6 +183,37 @@ mod tests {
         assert_eq!(tones(&tabs), [Tone::Needs]);
         assert_eq!(route(&mut tabs, hook(99, HookKind::TurnDone, None), 4.0), None);
         assert_eq!(route(&mut tabs, hook(0, HookKind::TurnDone, None), 4.0), None);
+    }
+
+    #[test]
+    fn an_ask_user_call_waits_in_the_reader_and_a_working_agent_shows_as_needing_you() {
+        let quiet = |_: &u32| TermSnapshot::default();
+        let (mut tabs, id) = tabs_with_agent();
+        let (mut notifier, _) = recording_notifier();
+        route(&mut tabs, hook(id, HookKind::TurnStarted, None), 1.0);
+        poll(&mut tabs, quiet, &mut notifier, false, 1.0);
+        assert_eq!(tones(&tabs), [Tone::Working]);
+        let (sender, _receiver) = std::sync::mpsc::channel();
+        let question = tidewatch_core::question::Question {
+            text: "Where?".into(),
+            header: None,
+            select: tidewatch_core::question::Select::Single,
+            options: vec![],
+        };
+        let message = TabMessage {
+            tab_id: id,
+            generation: 0,
+            event: TabEvent::Ask {
+                questions: vec![question],
+                reply: tidewatch_core::question::AskReply::new(sender),
+            },
+        };
+        assert_eq!(route(&mut tabs, message, 2.0), None);
+        poll(&mut tabs, quiet, &mut notifier, false, 2.0);
+        assert_eq!(tones(&tabs), [Tone::Needs]);
+        let agent = tabs.get_mut(id).unwrap().pane.agent.as_ref().unwrap();
+        assert!(agent.reader.rows.pending_question().is_some());
+        assert_eq!(agent.run.detail(), Some("Where?"));
     }
 
     #[test]

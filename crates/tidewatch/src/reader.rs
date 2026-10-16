@@ -2,9 +2,11 @@
 //! transcript, and the rows read so far. The decision of what is shown is a pure function of the
 //! user's choice and what the search found, so it is tested without a window.
 
+use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+use tidewatch_core::question::{AskReply, Question};
 use tidewatch_core::restore::codex_session_id;
 use tidewatch_core::transcript::{Entry, Source};
 use tidewatch_core::transcript_locate::Locator;
@@ -96,6 +98,45 @@ pub(crate) fn shown_before_first_message(wants_reader: bool, link: Link) -> Show
     }
 }
 
+/// One thing typed into the agent's terminal.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum Step {
+    /// Raw key bytes, one press.
+    Keys(Vec<u8>),
+    /// Text pasted into the input.
+    Paste(String),
+}
+
+/// What a tab types for the user over time. Each step waits its `gap` after the one before, because
+/// an agent's input takes presses sent in one write as a single paste.
+#[derive(Debug, Default)]
+struct Typing {
+    queue: VecDeque<(f64, Step)>,
+    due: f64,
+}
+
+impl Typing {
+    fn queue(&mut self, steps: Vec<(f64, Step)>, now: f64) {
+        if self.queue.is_empty() {
+            self.due = now + steps.first().map_or(0.0, |(gap, _)| *gap);
+        }
+        self.queue.extend(steps);
+    }
+
+    fn take_due(&mut self, now: f64) -> Option<Step> {
+        if self.queue.is_empty() || now < self.due {
+            return None;
+        }
+        let (_, step) = self.queue.pop_front()?;
+        self.due = now + self.queue.front().map_or(0.0, |(gap, _)| *gap);
+        Some(step)
+    }
+
+    fn next_due(&self) -> Option<f64> {
+        (!self.queue.is_empty()).then_some(self.due)
+    }
+}
+
 pub(crate) struct Reader {
     source: Option<Source>,
     session_id: Option<String>,
@@ -107,6 +148,7 @@ pub(crate) struct Reader {
     feed: Option<Feed>,
     last_poke: f64,
     answered: bool,
+    typing: Typing,
     pub(crate) rows: Rows,
     pub(crate) view: ViewState,
 }
@@ -133,6 +175,7 @@ impl Reader {
             feed: None,
             last_poke: f64::NEG_INFINITY,
             answered: false,
+            typing: Typing::default(),
             rows: Rows::default(),
             view: ViewState::default(),
         }
@@ -233,6 +276,26 @@ impl Reader {
 
     pub(crate) fn prompt_answered(&self) -> bool {
         self.answered
+    }
+
+    /// The agent called `ask_user`: its questions wait in the Reader for an answer.
+    pub(crate) fn ask_arrived(&mut self, questions: Vec<Question>, reply: AskReply) {
+        self.rows.push_ask(questions, reply);
+    }
+
+    /// Types `steps` into the agent one after the other, starting at `now`.
+    pub(crate) fn type_steps(&mut self, steps: Vec<(f64, Step)>, now: f64) {
+        self.typing.queue(steps, now);
+    }
+
+    /// The next step to type, when its time has come.
+    pub(crate) fn take_due_step(&mut self, now: f64) -> Option<Step> {
+        self.typing.take_due(now)
+    }
+
+    /// When the next queued step is due, if any.
+    pub(crate) fn next_step_due(&self) -> Option<f64> {
+        self.typing.next_due()
     }
 
     /// A hook always pokes, and may tell where the file is.
@@ -348,6 +411,38 @@ mod tests {
         let mut claude = Reader::for_agent("claude", None, PathBuf::from("/w"));
         claude.file = Some(PathBuf::from(rollout));
         assert_eq!(claude.codex_session_id(), None);
+    }
+
+    #[test]
+    fn typed_steps_go_out_one_gap_apart_in_order() {
+        let mut typing = Typing::default();
+        typing.queue(
+            vec![
+                (0.0, Step::Keys(b"2".to_vec())),
+                (0.3, Step::Keys(b"1".to_vec())),
+                (0.8, Step::Paste("hi".into())),
+            ],
+            10.0,
+        );
+        assert_eq!(typing.next_due(), Some(10.0));
+        assert_eq!(typing.take_due(9.9), None);
+        assert_eq!(typing.take_due(10.0), Some(Step::Keys(b"2".to_vec())));
+        assert_eq!(typing.next_due(), Some(10.3));
+        assert_eq!(typing.take_due(10.2), None);
+        assert_eq!(typing.take_due(10.5), Some(Step::Keys(b"1".to_vec())));
+        assert_eq!(typing.take_due(11.0), None);
+        assert_eq!(typing.take_due(11.3), Some(Step::Paste("hi".into())));
+        assert_eq!((typing.take_due(99.0), typing.next_due()), (None, None));
+    }
+
+    #[test]
+    fn steps_queued_while_others_wait_follow_them() {
+        let mut typing = Typing::default();
+        typing.queue(vec![(0.0, Step::Keys(b"a".to_vec()))], 1.0);
+        typing.queue(vec![(0.3, Step::Keys(b"b".to_vec()))], 5.0);
+        assert_eq!(typing.take_due(1.0), Some(Step::Keys(b"a".to_vec())));
+        assert_eq!(typing.take_due(1.2), None);
+        assert_eq!(typing.take_due(1.3), Some(Step::Keys(b"b".to_vec())));
     }
 
     #[test]
