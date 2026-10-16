@@ -1,0 +1,69 @@
+{
+ "author": {
+  "is_bot": false,
+  "login": "octo-author"
+ },
+ "baseRefName": "main",
+ "closedAt": "2026-10-16T12:41:27Z",
+ "comments": [],
+ "commits": [
+  {
+   "messageHeadline": "fix: keep the mask in place",
+   "oid": "53bb2f5caa4f79640d9422fdad5180c7237df2c2"
+  }
+ ],
+ "createdAt": "2026-10-16T12:38:26Z",
+ "headRefName": "fix/mascot-mask-offset",
+ "headRefOid": "53bb2f5caa4f79640d9422fdad5180c7237df2c2",
+ "mergeStateStatus": "UNKNOWN",
+ "mergeable": "UNKNOWN",
+ "mergedAt": "2026-10-16T12:41:27Z",
+ "number": 64,
+ "reviewDecision": "",
+ "reviews": [],
+ "state": "MERGED",
+ "statusCheckRollup": [
+  {
+   "__typename": "CheckRun",
+   "completedAt": "2026-10-16T12:41:07Z",
+   "conclusion": "SUCCESS",
+   "detailsUrl": "https://github.com/acme/web/actions/runs/38901944237/job/116976070154",
+   "name": "check (macos-14)",
+   "startedAt": "2026-10-16T12:38:38Z",
+   "status": "COMPLETED",
+   "workflowName": "CI"
+  },
+  {
+   "__typename": "CheckRun",
+   "completedAt": "2026-10-16T12:40:42Z",
+   "conclusion": "SUCCESS",
+   "detailsUrl": "https://github.com/acme/web/actions/runs/38901937990/job/116976047388",
+   "name": "check (macos-14)",
+   "startedAt": "2026-10-16T12:38:32Z",
+   "status": "COMPLETED",
+   "workflowName": "CI"
+  },
+  {
+   "__typename": "CheckRun",
+   "completedAt": "2026-10-16T12:40:16Z",
+   "conclusion": "SUCCESS",
+   "detailsUrl": "https://github.com/acme/web/actions/runs/38901944237/job/116976070516",
+   "name": "check (ubuntu-latest)",
+   "startedAt": "2026-10-16T12:38:31Z",
+   "status": "COMPLETED",
+   "workflowName": "CI"
+  },
+  {
+   "__typename": "CheckRun",
+   "completedAt": "2026-10-16T12:40:32Z",
+   "conclusion": "SUCCESS",
+   "detailsUrl": "https://github.com/acme/web/actions/runs/38901937990/job/116976047011",
+   "name": "check (ubuntu-latest)",
+   "startedAt": "2026-10-16T12:38:28Z",
+   "status": "COMPLETED",
+   "workflowName": "CI"
+  }
+ ],
+ "title": "Keep the mascot mask in place",
+ "url": "https://github.com/acme/web/pull/64"
+}

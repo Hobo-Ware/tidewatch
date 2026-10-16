@@ -8,6 +8,7 @@ use std::path::{Path, PathBuf};
 const HASH_HEX_LEN: usize = 6;
 const NOTES_FILE: &str = "notes.json";
 const STAGES_FILE: &str = "stages.json";
+const PR_CARDS_FILE: &str = "pr_cards.json";
 
 fn repo_key(repo: &Path) -> String {
     let name = repo.file_name().unwrap_or_default().to_string_lossy();
@@ -147,6 +148,12 @@ impl TidewatchPaths {
         self.tab_state_dir(repo, tab).join(NOTES_FILE)
     }
 
+    /// A tab's pull request cards: the GitHub events shown in its Reader, and what was already seen.
+    #[must_use]
+    pub fn pr_cards_file(&self, repo: &Path, tab: &str) -> PathBuf {
+        self.tab_state_dir(repo, tab).join(PR_CARDS_FILE)
+    }
+
     /// A tab's workflow run: stage states, summaries and findings, enough to resume after a restart.
     #[must_use]
     pub fn stages_file(&self, repo: &Path, tab: &str) -> PathBuf {
@@ -254,6 +261,18 @@ mod tests {
         );
         assert!(paths.stages_file(repo, "brave-otter").ends_with("brave-otter/stages.json"));
         assert_ne!(paths.stages_file(repo, "main"), paths.stages_file(repo, "brave-otter"));
+    }
+
+    #[test]
+    fn pull_request_cards_sit_next_to_the_notes_of_their_tab() {
+        let paths = paths();
+        let repo = Path::new("/work/web");
+        assert_eq!(
+            paths.pr_cards_file(repo, "brave-otter").parent(),
+            paths.notes_file(repo, "brave-otter").parent()
+        );
+        assert!(paths.pr_cards_file(repo, "brave-otter").ends_with("brave-otter/pr_cards.json"));
+        assert_ne!(paths.pr_cards_file(repo, "main"), paths.pr_cards_file(repo, "brave-otter"));
     }
 
     #[test]
