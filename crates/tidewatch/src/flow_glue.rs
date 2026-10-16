@@ -109,8 +109,10 @@ pub(crate) fn pane_actions(
     let mut toasts = Vec::new();
     for action in actions {
         match action {
-            PaneAction::SendAll => toasts.extend(flow.send(tab, Which::AllPending, ctx, unix)),
-            PaneAction::ToggleAuto => flow.toggle_auto(tab),
+            PaneAction::SendReview => {
+                toasts.extend(flow.send(tab, Which::Review(String::new()), ctx, unix));
+            }
+            PaneAction::OpenReview => view.back_to_terminal(),
             PaneAction::PullPr => flow.pull_comments(tab, ctx),
             PaneAction::OpenUrl(url) => ctx.open_url(egui::OpenUrl::new_tab(url)),
             PaneAction::Strip(StripAction::Send(id)) => {
@@ -196,14 +198,12 @@ pub(crate) fn dev_drive(
     for step in dev.steps(&ready) {
         match step {
             Step::EnableAuto => {
-                if flow.tab(tab).is_some_and(|t| !t.auto.enabled) {
-                    flow.toggle_auto(tab);
-                }
+                flow.hold_review(tab, String::new());
             }
             Step::Send(mode) => {
                 let which = match (mode, view.and_then(|v| v.notes.threads.first())) {
                     (SendMode::One, Some(thread)) => Which::One(thread.id),
-                    _ => Which::AllPending,
+                    _ => Which::Review(String::new()),
                 };
                 if let Some(reason) = flow.send(tab, which, ctx, unix) {
                     eprintln!("tidewatch: dev send refused: {reason}");

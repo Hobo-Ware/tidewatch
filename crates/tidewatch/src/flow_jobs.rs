@@ -18,10 +18,11 @@ use crate::jobs::Jobs;
 use crate::pane_jobs::NOTES_TURN;
 use crate::post_confirm::{Kind, Plan};
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum Which {
     One(u64),
-    AllPending,
+    /// Every note of the draft review, with the user's message for the agent (blank for none).
+    Review(String),
 }
 
 pub(crate) struct SentOut {
@@ -57,15 +58,16 @@ pub(crate) fn send_notes(
     jobs.spawn(ctx, move || {
         let _turn = NOTES_TURN.lock().unwrap_or_else(PoisonError::into_inner);
         let mut notes = Notes::load(&file);
-        let ids = match which {
-            Which::One(id) => {
-                notes.threads.iter().filter(|t| t.id == id && !t.resolved).map(|t| t.id).collect()
-            }
-            Which::AllPending => notes.pending(&agent),
+        let (ids, message) = match &which {
+            Which::One(id) => (
+                notes.threads.iter().filter(|t| t.id == *id && !t.resolved).map(|t| t.id).collect(),
+                "",
+            ),
+            Which::Review(message) => (notes.pending(&agent), message.as_str()),
         };
         let threads: Vec<_> =
             ids.iter().filter_map(|id| notes.threads.iter().find(|t| t.id == *id)).collect();
-        let text = (!threads.is_empty()).then(|| note_paste::format(&threads));
+        let text = (!threads.is_empty()).then(|| note_paste::format_review(&threads, message));
         if text.is_some() {
             notes.mark_sent(&ids, now);
             if let Err(e) = notes.save(&file) {
@@ -266,7 +268,7 @@ mod tests {
     }
 
     #[test]
-    fn sending_all_pending_pastes_the_open_notes_marks_them_sent_and_saves_the_file() {
+    fn sending_the_review_pastes_the_open_notes_marks_them_sent_and_saves_the_file() {
         let (_dir, file, [a, b, done]) = file_with_notes();
         let jobs = Jobs::new();
         send_notes(
@@ -275,7 +277,7 @@ mod tests {
             1,
             false,
             file.clone(),
-            Which::AllPending,
+            Which::Review(String::new()),
             "claude".into(),
             500,
         );
@@ -291,13 +293,46 @@ mod tests {
     }
 
     #[test]
+    fn the_message_of_the_review_opens_the_paste_and_a_single_note_carries_none() {
+        let (_dir, file, [a, ..]) = file_with_notes();
+        let jobs = Jobs::new();
+        let ctx = egui::Context::default();
+        let review = Which::Review("Start with the first".into());
+        send_notes(&jobs, &ctx, 1, false, file.clone(), review, "claude".into(), 1);
+        let text = sent(wait(&jobs)).text.unwrap();
+        assert!(text.contains("Message with the review: Start with the first"));
+        send_notes(&jobs, &ctx, 1, false, file, Which::One(a), "claude".into(), 2);
+        let one = sent(wait(&jobs)).text.unwrap();
+        assert!(!one.contains("Message with the review"));
+        assert!(one.starts_with("Tidewatch review notes (1)."));
+    }
+
+    #[test]
     fn a_second_send_has_nothing_new_and_one_note_can_be_sent_again_by_hand() {
         let (_dir, file, [a, ..]) = file_with_notes();
         let jobs = Jobs::new();
         let ctx = egui::Context::default();
-        send_notes(&jobs, &ctx, 1, false, file.clone(), Which::AllPending, "claude".into(), 1);
+        send_notes(
+            &jobs,
+            &ctx,
+            1,
+            false,
+            file.clone(),
+            Which::Review(String::new()),
+            "claude".into(),
+            1,
+        );
         sent(wait(&jobs));
-        send_notes(&jobs, &ctx, 1, true, file.clone(), Which::AllPending, "claude".into(), 2);
+        send_notes(
+            &jobs,
+            &ctx,
+            1,
+            true,
+            file.clone(),
+            Which::Review(String::new()),
+            "claude".into(),
+            2,
+        );
         let again = sent(wait(&jobs));
         assert_eq!((again.text, again.count), (None, 0));
         send_notes(&jobs, &ctx, 1, false, file.clone(), Which::One(a), "claude".into(), 3);
@@ -319,7 +354,7 @@ mod tests {
             1,
             false,
             file.clone(),
-            Which::AllPending,
+            Which::Review(String::new()),
             "claude".into(),
             9,
         );

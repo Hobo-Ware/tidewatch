@@ -41,15 +41,15 @@ const LAYOUTS: [&str; 2] = ["Unified", "Split"];
 pub(crate) const SHORT_ID: usize = 7;
 
 static MAC_TEXTS: DiffTexts = DiffTexts {
-    saved_hint: Cow::Borrowed("Notes go to this tab's agent when you send them"),
+    saved_hint: Cow::Borrowed("Draft: this note joins your review, sent to the agent in one go"),
     reply_hint: Cow::Borrowed("Reply...  (Cmd Enter to save)"),
-    comment_hint: Cow::Borrowed("Note for the agent...  (Cmd Enter to save)"),
+    comment_hint: Cow::Borrowed("Note for your review...  (Cmd Enter to save)"),
 };
 
 static LINUX_TEXTS: DiffTexts = DiffTexts {
-    saved_hint: Cow::Borrowed("Notes go to this tab's agent when you send them"),
+    saved_hint: Cow::Borrowed("Draft: this note joins your review, sent to the agent in one go"),
     reply_hint: Cow::Borrowed("Reply...  (Ctrl Enter to save)"),
-    comment_hint: Cow::Borrowed("Note for the agent...  (Ctrl Enter to save)"),
+    comment_hint: Cow::Borrowed("Note for your review...  (Ctrl Enter to save)"),
 };
 
 fn texts(platform: Platform) -> &'static DiffTexts {
@@ -91,8 +91,8 @@ pub(crate) fn notes_summary(notes: &Notes) -> String {
 /// What the user asked for in the pane beyond editing notes in the diff.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum PaneAction {
-    SendAll,
-    ToggleAuto,
+    SendReview,
+    OpenReview,
     PullPr,
     OpenUrl(String),
     Strip(StripAction),

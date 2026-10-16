@@ -1,6 +1,5 @@
-//! The rules for handing notes to an agent (PLAN.md, D4), as plain data: whether a send may go out
-//! now, the per-tab "deliver when idle" switch, and the short pause between a paste and its Enter.
-//! Nothing here touches a terminal or a thread, so every rule is a unit test.
+//! The rules for handing a review to an agent (PLAN.md, D4): send now, hold until idle or refuse,
+//! the hold itself, and the pause between a paste and its Enter (pure).
 
 use tidewatch_core::status::AgentStatus;
 
@@ -30,17 +29,39 @@ pub(crate) fn gate(status: Option<&AgentStatus>) -> Gate {
     }
 }
 
+const NO_AGENT: &str = "There is no running agent in this tab";
+
 /// Why a send is unavailable, for a tooltip or a toast. `None` when it may go.
 pub(crate) fn gate_reason(gate: Gate) -> Option<&'static str> {
     match gate {
         Gate::Ready => None,
         Gate::WaitingOnYou => Some("The agent is waiting on you. Answer it first"),
-        Gate::NoAgent => Some("There is no running agent in this tab"),
+        Gate::NoAgent => Some(NO_AGENT),
     }
 }
 
-/// The per-tab "deliver when idle" switch. Queued notes go out once the agent is Done, never while
-/// it works or waits on you, and never twice for one idle moment.
+/// Where a review goes: a review is never pasted into a Working or NeedsYou agent, which would take
+/// the paste as an answer or queue it behind its own turn.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ReviewGate {
+    Now,
+    WhenIdle,
+    Refused(&'static str),
+}
+
+pub(crate) fn review_gate(status: Option<&AgentStatus>) -> ReviewGate {
+    match status {
+        Some(AgentStatus::Done) => ReviewGate::Now,
+        Some(AgentStatus::Working | AgentStatus::NeedsYou(_)) => ReviewGate::WhenIdle,
+        Some(AgentStatus::SettingUp | AgentStatus::Failed(_) | AgentStatus::Shell) | None => {
+            ReviewGate::Refused(NO_AGENT)
+        }
+    }
+}
+
+/// The per-tab hold on a review the user sent while the agent was busy (`enabled`). It goes out
+/// once the agent is Done, never while it works or waits on you, and never twice for one idle
+/// moment.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub(crate) struct AutoDelivery {
     pub(crate) enabled: bool,
@@ -140,6 +161,23 @@ mod tests {
         }
         assert_eq!(gate_reason(Gate::Ready), None);
         assert!(gate_reason(Gate::WaitingOnYou).is_some());
+    }
+
+    #[test]
+    fn a_review_goes_to_an_idle_agent_waits_for_a_busy_one_and_is_refused_without_one() {
+        let cases = [
+            (Some(AgentStatus::Done), ReviewGate::Now),
+            (Some(AgentStatus::Working), ReviewGate::WhenIdle),
+            (Some(AgentStatus::NeedsYou(Reason::Permission)), ReviewGate::WhenIdle),
+            (Some(AgentStatus::NeedsYou(Reason::Question)), ReviewGate::WhenIdle),
+            (Some(AgentStatus::SettingUp), ReviewGate::Refused(NO_AGENT)),
+            (Some(AgentStatus::Failed("x".into())), ReviewGate::Refused(NO_AGENT)),
+            (Some(AgentStatus::Shell), ReviewGate::Refused(NO_AGENT)),
+            (None, ReviewGate::Refused(NO_AGENT)),
+        ];
+        for (status, want) in cases {
+            assert_eq!(review_gate(status.as_ref()), want, "{status:?}");
+        }
     }
 
     #[test]

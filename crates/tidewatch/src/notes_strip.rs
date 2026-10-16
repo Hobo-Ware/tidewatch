@@ -1,7 +1,7 @@
 //! The notes strip under the Diff pane's toolbar: one row per open note of the tab, in every file,
-//! with where it stands (queued, sent, replied) and the buttons Kelp's thread card has no room for:
-//! Send to the agent and Post to PR. A click on the place jumps to that file. The row model is plain
-//! data; `show` only draws it.
+//! with where it stands (draft, sent, replied) and the buttons Kelp's thread card has no room for:
+//! a menu with Send this note now, and Post to PR. A click on the place jumps to that file. The row
+//! model is plain data; `show` only draws it.
 
 use egui::text::LayoutJob;
 use egui::{
@@ -9,6 +9,7 @@ use egui::{
     TextFormat, Ui, UiBuilder, pos2, vec2,
 };
 use kelp_core::commit::{calendar_time, relative_time};
+use stdusk_egui::widgets::{menu_item, style_menu};
 use tidewatch_core::notes::{NoteState, Notes};
 
 use crate::brand;
@@ -33,6 +34,7 @@ const SNIPPET_FONT: f32 = 12.0;
 const MIN_SNIPPET_W: f32 = 20.0;
 const PILL_FONT: f32 = 11.5;
 const PILL_PAD: f32 = 8.0;
+const MENU_W: f32 = 220.0;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct NoteRow {
@@ -87,7 +89,7 @@ fn snippet(body: &str) -> String {
 pub(crate) fn state_label(state: NoteState, now: i64) -> String {
     match state {
         NoteState::Resolved => "resolved".to_owned(),
-        NoteState::Queued => "queued".to_owned(),
+        NoteState::Queued => "draft".to_owned(),
         NoteState::Sent(at) => format!("sent {}", relative_time(at, now)),
         NoteState::Replied => "replied".to_owned(),
         NoteState::FromAgent => "from agent".to_owned(),
@@ -100,7 +102,7 @@ fn state_tip(state: NoteState) -> Option<String> {
         NoteState::Replied => {
             Some("The agent answered this note: the reply is in the thread".into())
         }
-        NoteState::Queued => Some("Not sent to the agent yet".into()),
+        NoteState::Queued => Some("Part of your draft review: not sent to the agent yet".into()),
         NoteState::FromAgent => Some("The agent wrote this note itself".into()),
         NoteState::Resolved => None,
     }
@@ -108,8 +110,8 @@ fn state_tip(state: NoteState) -> Option<String> {
 
 fn send_label(state: NoteState) -> &'static str {
     match state {
-        NoteState::Sent(_) | NoteState::Replied => "Resend",
-        _ => "Send",
+        NoteState::Sent(_) | NoteState::Replied => "Send this note again",
+        _ => "Send this note now",
     }
 }
 
@@ -219,14 +221,19 @@ fn draw_card(ui: &mut Ui, row: &NoteRow, now: i64, actions: &mut Vec<StripAction
     if post.clicked() {
         actions.push(StripAction::PostToPr(row.id));
     }
-    let send = quiet_button(&mut buttons, send_label(row.state), row.send.is_ok());
-    let send = match row.send {
-        Err(reason) => send.on_disabled_hover_text(reason),
-        Ok(()) => send.on_hover_text("Paste this note into the agent's terminal"),
-    };
-    if send.clicked() {
-        actions.push(StripAction::Send(row.id));
-    }
+    let more = quiet_button(&mut buttons, "...", true).on_hover_text("More for this note");
+    egui::Popup::menu(&more).show(|ui| {
+        ui.set_max_width(MENU_W);
+        style_menu(ui);
+        let send = ui.add_enabled_ui(row.send.is_ok(), |ui| {
+            menu_item(ui, send_label(row.state), "")
+                .on_disabled_hover_text(row.send.err().unwrap_or(""))
+        });
+        if send.inner.clicked() {
+            actions.push(StripAction::Send(row.id));
+            ui.close();
+        }
+    });
     let pill = state_pill(&mut buttons, &state_label(row.state, now), state_tone(row.state));
     if let Some(tip) = state_tip(row.state) {
         pill.on_hover_text(tip);
@@ -313,13 +320,13 @@ mod tests {
 
     #[test]
     fn state_words_say_sent_with_how_long_ago() {
-        assert_eq!(state_label(NoteState::Queued, 0), "queued");
+        assert_eq!(state_label(NoteState::Queued, 0), "draft");
         assert_eq!(state_label(NoteState::Sent(100), 100), "sent just now");
         assert_eq!(state_label(NoteState::Sent(100), 100 + 180), "sent 3 min ago");
         assert_eq!(state_label(NoteState::Replied, 0), "replied");
         assert_eq!(state_label(NoteState::FromAgent, 0), "from agent");
-        assert_eq!(send_label(NoteState::Queued), "Send");
-        assert_eq!(send_label(NoteState::Sent(1)), "Resend");
+        assert_eq!(send_label(NoteState::Queued), "Send this note now");
+        assert_eq!(send_label(NoteState::Sent(1)), "Send this note again");
     }
 
     #[test]
@@ -364,17 +371,24 @@ mod tests {
         assert_eq!(state_tone(NoteState::FromAgent), brand::MUTED);
     }
 
-    fn click_strip(rows: &[NoteRow], at: egui::Pos2) -> Vec<StripAction> {
+    fn click_strip(rows: &[NoteRow], clicks: &[egui::Pos2]) -> Vec<StripAction> {
         let ctx = egui::Context::default();
         let mut actions = Vec::new();
-        let button = |pressed| egui::Event::PointerButton {
+        let button = |at, pressed| egui::Event::PointerButton {
             pos: at,
             button: egui::PointerButton::Primary,
             pressed,
             modifiers: egui::Modifiers::NONE,
         };
-        let steps =
-            [vec![], vec![egui::Event::PointerMoved(at)], vec![button(true)], vec![button(false)]];
+        let mut steps = vec![vec![]];
+        for at in clicks {
+            steps.extend([
+                vec![egui::Event::PointerMoved(*at)],
+                vec![button(*at, true)],
+                vec![button(*at, false)],
+                vec![],
+            ]);
+        }
         for events in steps {
             let raw = egui::RawInput {
                 screen_rect: Some(Rect::from_min_size(pos2(0.0, 0.0), vec2(800.0, 300.0))),
@@ -390,13 +404,28 @@ mod tests {
         actions
     }
 
+    fn collect(into: &mut Vec<StripAction>, found: Vec<StripAction>) {
+        for action in found {
+            if !into.contains(&action) {
+                into.push(action);
+            }
+        }
+    }
+
     fn actions_along(rows: &[NoteRow], y: f32) -> Vec<StripAction> {
         let mut seen = Vec::new();
-        for x in (0..800).step_by(12) {
-            for action in click_strip(rows, pos2(x as f32, y)) {
-                if !seen.contains(&action) {
-                    seen.push(action);
-                }
+        for x in (0..800).step_by(24) {
+            collect(&mut seen, click_strip(rows, &[pos2(x as f32, y)]));
+        }
+        seen
+    }
+
+    fn actions_through_the_menu(rows: &[NoteRow], y: f32) -> Vec<StripAction> {
+        let mut seen = Vec::new();
+        for x in (650..720).step_by(6) {
+            for below in [36, 48, 60] {
+                let clicks = [pos2(x as f32, y), pos2(x as f32, y + below as f32)];
+                collect(&mut seen, click_strip(rows, &clicks));
             }
         }
         seen
@@ -407,17 +436,17 @@ mod tests {
     }
 
     #[test]
-    fn the_buttons_and_the_place_ask_for_their_note_and_a_disabled_send_asks_for_nothing() {
+    fn the_place_asks_to_jump_and_the_menu_asks_to_send_that_note_only_while_the_gate_is_open() {
         let open = rows(&sample(), "claude", Gate::Ready, &PrState::default());
-        assert_eq!(
-            actions_along(&open, card_y(0)),
-            [StripAction::Jump("src/a.rs".into()), StripAction::Send(open[0].id)]
-        );
-        assert_eq!(
-            actions_along(&open, card_y(1)),
-            [StripAction::Jump("src/b.rs".into()), StripAction::Send(open[1].id)]
-        );
+        for (index, path) in [(0, "src/a.rs"), (1, "src/b.rs")] {
+            assert_eq!(actions_along(&open, card_y(index)), [StripAction::Jump(path.into())]);
+            let found = actions_through_the_menu(&open, card_y(index));
+            assert!(found.contains(&StripAction::Send(open[index].id)), "{found:?}");
+            let other = open[1 - index].id;
+            assert!(!found.contains(&StripAction::Send(other)), "{found:?}");
+        }
         let blocked = rows(&sample(), "claude", Gate::WaitingOnYou, &PrState::default());
-        assert_eq!(actions_along(&blocked, card_y(0)), [StripAction::Jump("src/a.rs".into())]);
+        let found = actions_through_the_menu(&blocked, card_y(0));
+        assert!(found.iter().all(|action| matches!(action, StripAction::Jump(_))), "{found:?}");
     }
 }
