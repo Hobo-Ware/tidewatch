@@ -137,7 +137,6 @@ fn button(ui: &mut Ui, label: &str, enabled: bool, look: ButtonLook) -> Response
 }
 
 /// A bordered button with no fill: the default for every action that is not the one main action.
-#[cfg_attr(not(test), allow(dead_code, reason = "adopted by the UI pass commits that follow"))]
 pub(crate) fn quiet_button(ui: &mut Ui, label: &str, enabled: bool) -> Response {
     button(ui, label, enabled, ButtonLook::Quiet)
 }
