@@ -78,14 +78,6 @@ pub(crate) fn paint_key_cap(painter: &Painter, anchor: egui::Pos2, text: &str, f
     painter.galley(rect.center() - galley.size() / 2.0, galley, brand::MUTED);
 }
 
-pub(crate) fn section_label(ui: &mut Ui, text: &str, color: Color32) {
-    ui.label(egui::RichText::new(text.to_uppercase()).size(11.5).color(color));
-}
-
-pub(crate) fn card_stroke(active: bool) -> Stroke {
-    if active { Stroke::new(2.0, brand::TEAL) } else { Stroke::new(1.0, brand::CARD_LINE) }
-}
-
 pub(crate) fn clickable(
     ui: &mut Ui,
     rect: Rect,
@@ -142,19 +134,16 @@ pub(crate) fn quiet_button(ui: &mut Ui, label: &str, enabled: bool) -> Response 
 }
 
 /// A quiet button in red for an action that destroys something.
-#[cfg_attr(not(test), allow(dead_code, reason = "adopted by the UI pass commits that follow"))]
 pub(crate) fn danger_button(ui: &mut Ui, label: &str) -> Response {
     button(ui, label, true, ButtonLook::Danger)
 }
 
 /// The one filled button of a view or dialog.
-#[cfg_attr(not(test), allow(dead_code, reason = "adopted by the UI pass commits that follow"))]
 pub(crate) fn primary_button(ui: &mut Ui, label: &str, enabled: bool) -> Response {
     button(ui, label, enabled, ButtonLook::Primary)
 }
 
 /// A modal dialog: a card with a 48 px header (title, divider) over a padded body of `width`.
-#[allow(dead_code, reason = "adopted by the UI pass commits that follow")]
 pub(crate) fn dialog_frame<R>(
     ctx: &Context,
     id: Id,
@@ -202,7 +191,6 @@ pub(crate) fn paint_pill_card(painter: &Painter, rect: Rect) {
 }
 
 /// Paints a selectable row: a teal tint with a short teal bar on the left when selected, a fainter tint when hovered.
-#[allow(dead_code, reason = "adopted by the UI pass commits that follow")]
 pub(crate) fn selection_row(painter: &Painter, rect: Rect, selected: bool, hovered: bool) {
     let radius = CornerRadius::same(ROW_RADIUS);
     if selected {
