@@ -3,16 +3,18 @@
 
 use egui::text::{LayoutJob, TextFormat, TextWrapping};
 use egui::{
-    Align2, CornerRadius, FontId, Id, Key, Modifiers, Rect, ScrollArea, Sense, Stroke, StrokeKind,
+    Align2, Color32, FontId, Frame, Id, Key, Margin, Modifiers, Rect, ScrollArea, Sense, Stroke,
     pos2, vec2,
 };
-use stdusk_egui::colors;
-use stdusk_egui::widgets::{overlay_frame, text_field};
 
 use crate::brand;
+use crate::notice::key_hint;
 use crate::palette::{Hit, Item, Palette, Target, filter};
+use crate::screen_kit::selection_row;
+use crate::settings_ui::text_input;
 
 const WIDTH: f32 = 560.0;
+const PAD: i8 = 12;
 const ROW_HEIGHT: f32 = 30.0;
 const LIST_HEIGHT: f32 = ROW_HEIGHT * 9.0;
 const TOP_GAP: f32 = 88.0;
@@ -47,33 +49,41 @@ pub(crate) fn show(ctx: &egui::Context, palette: &mut Palette, items: &[Item]) -
                 .anchor(Align2::CENTER_TOP, vec2(0.0, TOP_GAP))
                 .order(egui::Order::Foreground),
         )
-        .frame(overlay_frame())
+        .frame(
+            Frame::new()
+                .fill(brand::CARD)
+                .stroke(Stroke::new(1.0, brand::FIELD_LINE))
+                .corner_radius(12)
+                .shadow(egui::Shadow {
+                    offset: [0, 4],
+                    blur: 16,
+                    spread: 0,
+                    color: Color32::from_black_alpha(100),
+                })
+                .inner_margin(Margin::same(PAD)),
+        )
         .show(ctx, |ui| {
             ui.set_width(WIDTH);
             ui.spacing_mut().item_spacing.y = 6.0;
             let before = palette.query.clone();
-            let field = ui
-                .scope(|ui| {
-                    text_field(ui, &mut palette.query, "Type a command", WIDTH, colors::fg())
-                })
-                .inner;
+            let field = text_input(ui, &mut palette.query, "Type a command");
             if std::mem::take(&mut palette.focus) {
                 field.request_focus();
             }
             if palette.query != before {
                 palette.typed();
             }
+            ui.add_space(4.0);
+            let divider = field.rect.x_range().expand(f32::from(PAD));
+            ui.painter().hline(divider, ui.cursor().top(), Stroke::new(1.0, brand::CARD_LINE));
+            ui.add_space(4.0);
             if hits.is_empty() {
                 nothing_matches(ui);
             } else {
                 let clicked = list(ui, palette, items, &hits, &mut moved);
                 picked = picked.or(clicked.filter(|row| runnable(*row)));
             }
-            ui.label(
-                egui::RichText::new("Up / Down move   Enter runs   Esc closes")
-                    .size(11.0)
-                    .color(colors::dim()),
-            );
+            key_hint(ui, "Up and Down move  -  Enter runs  -  Esc closes");
         });
     if let Some(row) = picked {
         return Some(Outcome::Run(items[hits[row].item].target.clone()));
@@ -88,7 +98,7 @@ fn nothing_matches(ui: &mut egui::Ui) {
         Align2::CENTER_CENTER,
         "Nothing matches",
         FontId::proportional(13.0),
-        colors::dim(),
+        brand::MUTED,
     );
 }
 
@@ -126,23 +136,15 @@ fn list(
 
 fn paint_row(ui: &egui::Ui, rect: Rect, item: &Item, positions: &[usize], selected: bool) {
     let painter = ui.painter_at(rect);
-    if selected {
-        painter.rect_filled(rect, CornerRadius::same(7), colors::selection());
-        painter.rect_stroke(
-            rect,
-            CornerRadius::same(7),
-            Stroke::new(1.0, brand::TEAL),
-            StrokeKind::Inside,
-        );
-    }
-    let ink = if item.disabled.is_some() { colors::dim() } else { colors::fg() };
+    selection_row(&painter, rect, selected, false);
+    let ink = if item.disabled.is_some() { brand::MUTED } else { brand::TEXT };
     let mut job = LayoutJob::default();
     for (i, c) in item.label.chars().enumerate() {
         let color =
             if positions.contains(&i) && item.disabled.is_none() { brand::TEAL_TEXT } else { ink };
         job.append(&c.to_string(), 0.0, TextFormat::simple(FontId::proportional(14.0), color));
     }
-    job.append(item.kind, 12.0, TextFormat::simple(FontId::proportional(11.0), colors::dim()));
+    job.append(item.kind, 12.0, TextFormat::simple(FontId::proportional(11.0), brand::MUTED));
     let side = item.disabled.unwrap_or(&item.keys);
     let keys_width = side.chars().count() as f32 * 7.0 + 24.0;
     job.wrap = TextWrapping::truncate_at_width((rect.width() - 20.0 - keys_width).max(40.0));
@@ -159,7 +161,7 @@ fn paint_row(ui: &egui::Ui, rect: Rect, item: &Item, positions: &[usize], select
             Align2::RIGHT_CENTER,
             side,
             font,
-            colors::dim(),
+            brand::MUTED,
         );
     }
 }
