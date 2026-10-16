@@ -6,10 +6,10 @@ use std::time::Duration;
 
 use egui::{Context, Rect, RichText, Ui, UiBuilder, pos2, vec2};
 use stdusk_core::terminal::PtyTerm;
-use stdusk_egui::colors;
 use tidewatch_core::status::{AgentStatus, Reason};
 
 use crate::agent_ready::Ready;
+use crate::brand;
 use crate::commands::Command;
 use crate::dev_reader::DevReader;
 use crate::flow::Flow;
@@ -97,7 +97,8 @@ pub(crate) fn draw(
     let prompt = prompt_of(agent.run.status()).filter(|_| !agent.reader.prompt_answered());
     let ready = (agent.first_prompt == FirstPrompt::Awaiting)
         .then_some(Ready { profile: &agent.profile_name, agent_id: &agent.run.agent_id });
-    let facts = Facts { source: agent.reader.source(), prompt, ready };
+    let root = pane.worktree.as_ref().map(|worktree| worktree.path.as_path());
+    let facts = Facts { source: agent.reader.source(), prompt, ready, root };
     let reader = &mut agent.reader;
     let mut actions = reader_view::show(ui, area, &reader.rows, &mut reader.view, facts);
     actions.extend(dev.actions(now, facts.prompt));
@@ -108,20 +109,16 @@ pub(crate) fn draw(
 pub(crate) fn note(ui: &mut Ui, area: Rect, note: Note) {
     let text = note.text();
     let galley =
-        ui.painter().layout_no_wrap(text.clone(), egui::FontId::proportional(12.0), colors::dim());
+        ui.painter().layout_no_wrap(text.clone(), egui::FontId::proportional(12.0), brand::MUTED);
     let size = galley.size() + vec2(2.0 * NOTE_PAD, 0.0);
     let rect = Rect::from_min_size(
         pos2(area.right() - size.x - NOTE_PAD, area.top() + NOTE_PAD),
         vec2(size.x, NOTE_H),
     );
     let mut child = ui.new_child(UiBuilder::new().max_rect(rect));
-    egui::Frame::new()
-        .fill(colors::elevated())
-        .corner_radius(egui::CornerRadius::same(6))
-        .inner_margin(egui::Margin::symmetric(8, 4))
-        .show(&mut child, |ui| {
-            ui.label(RichText::new(text).size(12.0).color(colors::dim()));
-        });
+    reader_view::item_frame().inner_margin(egui::Margin::symmetric(8, 4)).show(&mut child, |ui| {
+        ui.label(RichText::new(text).size(12.0).color(brand::MUTED));
+    });
 }
 
 /// Does what the Reader asked for in the tab `tab`. Returns a toast when nothing could be done.
