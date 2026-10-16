@@ -60,7 +60,7 @@ crates/tidewatch-core/  worktrees, profiles, permission levels, workflows, agent
   src/session.rs        .state/session.toml (D11): Session, SavedWindow, SavedTab (main, shell, agent, with `crashed` when the agent ended abnormally); load (bad file -> empty), atomic save
   src/worktree.rs       add (locked, agent/<name>), inspect, remove, list, repair, leftovers with their repository (shells out to git)
   src/notes.rs          per-tab review threads in .state/<repo-dir>/<tab>/notes.json: load, atomic save, background writer, PR import links, sent marks and note state (queued, sent, replied) (D4)
-  src/note_paste.rs     the text pasted into an agent to hand it notes: path:line, quoted line, text, id, closing reply_to_note ask; control characters stripped (pure)
+  src/note_paste.rs     the text pasted into an agent to hand it a review: an optional message, then per note path:line, quoted line, text, id, and a closing reply_to_note ask; control characters stripped; `parse` reads a sent paste back (ids, message) so the Reader can show a card instead (pure)
   src/end_block.rs      D13 parser: the Done / Needs you / Next block of an agent's last message (pure)
   src/tools.rs          Tools (PATH for git and gh), GhError and the gh runner shared by delivery and pr
   src/delivery.rs       D7 hand-off: DeliveryPlan (commits ahead of base, proposed PR text), deliver = git push -u then gh pr create
