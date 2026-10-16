@@ -1,16 +1,14 @@
 //! The card a workflow tab shows until Start run, where its task is typed; nothing runs before it.
 
 use egui::{
-    Align, Frame, Id, Key, Layout, Margin, Modifiers, Rect, RichText, TextEdit, Ui, UiBuilder,
-    pos2, vec2,
+    Align, Frame, Id, Key, Layout, Modifiers, Rect, RichText, TextEdit, Ui, UiBuilder, pos2, vec2,
 };
-use stdusk_egui::colors;
-use stdusk_egui::widgets::action_button;
 use tidewatch_core::runner::Runner;
 
 use crate::brand;
 use crate::commands::Command;
-use crate::screen_kit::{body, cli_short_name, heading};
+use crate::reader_view::{field_frame, paint_item};
+use crate::screen_kit::{body, cli_short_name, heading, primary_button};
 use crate::workflow_run::TabRun;
 
 const COLUMN_W: f32 = 760.0;
@@ -50,7 +48,7 @@ pub(crate) fn blurb(run: &TabRun) -> String {
 }
 
 pub(crate) fn show(ui: &mut Ui, area: Rect, run: &mut TabRun) -> Option<String> {
-    ui.painter().rect_filled(area, 0.0, colors::bg());
+    ui.painter().rect_filled(area, 0.0, brand::GROUND);
     let width = COLUMN_W.min(area.width() - 40.0);
     let column = Rect::from_min_size(
         pos2(area.center().x - width / 2.0, area.top() + 24.0),
@@ -60,10 +58,10 @@ pub(crate) fn show(ui: &mut Ui, area: Rect, run: &mut TabRun) -> Option<String> 
     child.spacing_mut().item_spacing.y = 0.0;
     child.add_space(((area.height() - 400.0) / 2.0 - 24.0).max(0.0));
     child.label(
-        RichText::new("What should this workflow ship?").font(heading(26.0)).color(colors::fg()),
+        RichText::new("What should this workflow ship?").font(heading(26.0)).color(brand::TEXT),
     );
     child.add_space(6.0);
-    child.add(egui::Label::new(RichText::new(blurb(run)).size(14.0).color(colors::dim())).wrap());
+    child.add(egui::Label::new(RichText::new(blurb(run)).size(14.0).color(brand::MUTED)).wrap());
     child.add_space(18.0);
     let id = Id::new("workflow-task");
     let focused = child.memory(|m| m.has_focus(id));
@@ -79,39 +77,33 @@ pub(crate) fn show(ui: &mut Ui, area: Rect, run: &mut TabRun) -> Option<String> 
             "{} starts  -  edit stages in Settings, Workflows",
             Command::ApproveDelivery.keys()
         );
-        ui.label(RichText::new(hint).size(13.0).color(colors::dim()));
+        ui.label(RichText::new(hint).size(12.0).color(brand::MUTED));
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
             let ready = !run.ui.task.trim().is_empty();
-            let pressed = ui.add_enabled_ui(ready, |ui| action_button(ui, "Start run", true)).inner;
-            start |= pressed.clicked();
+            start |= primary_button(ui, "Start run", ready).clicked();
         });
     });
     (start && !run.ui.task.trim().is_empty()).then(|| run.ui.task.clone())
 }
 
 fn task_box(ui: &mut Ui, run: &mut TabRun, id: Id) {
-    Frame::new()
-        .fill(colors::elevated())
-        .stroke(egui::Stroke::new(2.0, brand::TEAL))
-        .corner_radius(14)
-        .inner_margin(Margin::symmetric(16, 14))
-        .show(ui, |ui| {
-            ui.set_width(ui.available_width());
-            ui.spacing_mut().item_spacing.y = 10.0;
-            ui.label(RichText::new("TASK").size(12.0).color(brand::TEAL_TEXT));
-            let field = ui.add(
-                TextEdit::multiline(&mut run.ui.task)
-                    .id(id)
-                    .frame(Frame::NONE)
-                    .desired_rows(3)
-                    .desired_width(f32::INFINITY)
-                    .hint_text("Describe the change, in a sentence or two")
-                    .font(egui::FontId::proportional(16.0)),
-            );
-            if std::mem::take(&mut run.ui.focus_task) {
-                field.request_focus();
-            }
-        });
+    ui.label(RichText::new("Task").size(12.5).color(brand::MUTED));
+    ui.add_space(6.0);
+    let field = field_frame(ui, |ui| {
+        ui.add(
+            TextEdit::multiline(&mut run.ui.task)
+                .id(id)
+                .frame(Frame::NONE)
+                .desired_rows(3)
+                .desired_width(f32::INFINITY)
+                .hint_text("Describe the change, in a sentence or two")
+                .font(egui::FontId::proportional(16.0))
+                .text_color(brand::TEXT),
+        )
+    });
+    if std::mem::take(&mut run.ui.focus_task) {
+        field.request_focus();
+    }
 }
 
 fn stage_cards(ui: &mut Ui, cards: &[Card]) {
@@ -125,20 +117,20 @@ fn stage_cards(ui: &mut Ui, cards: &[Card]) {
                 vec2(card_w, CARD_H),
             );
             let painter = ui.painter();
-            painter.rect_filled(at, 10.0, colors::hover_elevated());
+            paint_item(painter, at, false);
             painter.text(
                 at.left_top() + vec2(12.0, 11.0),
                 egui::Align2::LEFT_TOP,
                 card.title,
                 heading(13.0),
-                colors::fg(),
+                brand::TEXT,
             );
             painter.text(
                 at.left_top() + vec2(12.0, 31.0),
                 egui::Align2::LEFT_TOP,
                 &card.who,
                 body(12.0),
-                colors::dim(),
+                brand::MUTED,
             );
             ui.interact(at, ui.id().with(("stage-card", i, card.title)), egui::Sense::hover())
                 .on_hover_text(&card.tip);
