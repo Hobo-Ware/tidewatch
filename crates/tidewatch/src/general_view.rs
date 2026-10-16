@@ -1,8 +1,10 @@
-//! The General page: the Startup card (restore, open at login), the Window section and the Updates section.
+//! The General page: the Startup card (restore, open at login), the Window, Terminal and Updates
+//! sections.
 
 use egui::Ui;
 use tidewatch_core::prefs::ResumeAgents;
 
+use crate::font_view;
 use crate::login_item;
 use crate::macos::LoginItem;
 use crate::settings_ui::{self, Control, footer_note, page_header, section, switch_row};
@@ -18,12 +20,14 @@ pub(crate) struct General {
     pub(crate) skipped_by_flag: bool,
     pub(crate) login_offered: bool,
     pub(crate) window: window_view::View,
+    pub(crate) terminal: font_view::View,
 }
 
 pub(crate) fn page(
     ui: &mut Ui,
     general: &General,
     window: &mut window_settings::Editor,
+    font: &mut font_view::Picker,
     updates: &mut Updates,
     login: &mut login_item::Row,
     read_login: impl FnOnce() -> LoginItem,
@@ -56,6 +60,7 @@ pub(crate) fn page(
         }
     });
     let window = window_view::section(ui, window, &general.window).map(Action::Window);
+    let terminal = font_view::section(ui, font, &general.terminal).map(Action::TerminalFont);
     let updates = updates_view::section(ui, updates).map(Action::Updates);
     footer_note(ui, file);
     restore
@@ -63,6 +68,7 @@ pub(crate) fn page(
         .or(resume.map(Action::ResumeAgents))
         .or(open_at_login.map(Action::LoginItem))
         .or(window)
+        .or(terminal)
         .or(updates)
 }
 
