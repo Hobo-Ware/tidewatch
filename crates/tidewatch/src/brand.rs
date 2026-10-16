@@ -8,6 +8,10 @@ pub(crate) const SIDEBAR: Color32 = Color32::from_rgb(0x0d, 0x10, 0x16);
 pub(crate) const SIDEBAR_LINE: Color32 = Color32::from_rgb(0x1f, 0x24, 0x30);
 pub(crate) const CARD: Color32 = Color32::from_rgb(0x16, 0x1b, 0x24);
 pub(crate) const CARD_LINE: Color32 = Color32::from_rgb(0x22, 0x29, 0x37);
+#[expect(dead_code, reason = "adopted by the UI pass commits that follow")]
+pub(crate) const ITEM: Color32 = Color32::from_rgb(0x1a, 0x20, 0x29);
+#[expect(dead_code, reason = "adopted by the UI pass commits that follow")]
+pub(crate) const ITEM_LINE: Color32 = Color32::from_rgb(0x26, 0x2e, 0x3b);
 pub(crate) const BAR: Color32 = Color32::from_rgb(0x12, 0x16, 0x1e);
 pub(crate) const FIELD_LINE: Color32 = Color32::from_rgb(0x2f, 0x37, 0x47);
 pub(crate) const SEGMENT: Color32 = Color32::from_rgb(0x0f, 0x12, 0x19);
@@ -28,6 +32,14 @@ pub(crate) const ORANGE: Color32 = Color32::from_rgb(0xfb, 0x92, 0x3c);
 pub(crate) const RED: Color32 = Color32::from_rgb(0xf8, 0x71, 0x71);
 pub(crate) const RED_LINE: Color32 = Color32::from_rgb(0x3a, 0x25, 0x30);
 pub(crate) const RED_FILL: Color32 = Color32::from_rgb(0x24, 0x17, 0x1e);
+
+/// Each CLI's badge, as its fill and its letter's ink: the one place a hue outside the palette lives.
+pub(crate) const CLAUDE_BADGE: (Color32, Color32) = (Color32::from_rgb(0x3b, 0x24, 0x18), ORANGE);
+pub(crate) const CODEX_BADGE: (Color32, Color32) = (Color32::from_rgb(0x1e, 0x2a, 0x22), GREEN);
+pub(crate) const GEMINI_BADGE: (Color32, Color32) =
+    (Color32::from_rgb(0x1c, 0x27, 0x40), Color32::from_rgb(0x7a, 0xa2, 0xf7));
+pub(crate) const COPILOT_BADGE: (Color32, Color32) =
+    (Color32::from_rgb(0x2a, 0x23, 0x33), Color32::from_rgb(0xc4, 0xb5, 0xfd));
 
 /// Agent status inks. They differ in lightness as well as hue, darkest to lightest failed, needs
 /// you, working, done, so a color-blind reader still tells them apart.

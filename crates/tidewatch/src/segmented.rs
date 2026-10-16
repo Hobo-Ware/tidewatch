@@ -1,6 +1,6 @@
 //! The segmented control of the window chrome: one bordered container, the active segment filled with a teal tint.
 
-use egui::{Align2, CornerRadius, Id, Rect, Sense, Stroke, StrokeKind, Ui, pos2, vec2};
+use egui::{Align2, Color32, CornerRadius, Id, Rect, Sense, Stroke, StrokeKind, Ui, pos2, vec2};
 
 use crate::brand;
 use crate::screen_kit::body;
@@ -10,6 +10,8 @@ const EDGE: f32 = 3.0;
 const GAP: f32 = 2.0;
 const SEGMENT_PAD: f32 = 10.0;
 const FONT: f32 = 12.5;
+const CHIP_GAP: f32 = 6.0;
+const GAP_ROWS: f32 = 6.0;
 
 /// The container and then each segment, for text widths `text` and the control's right edge.
 fn rects(right: f32, center_y: f32, text: &[f32]) -> (Rect, Vec<Rect>) {
@@ -37,21 +39,15 @@ pub(crate) struct Output {
     pub(crate) left: f32,
 }
 
-/// Draws the control with its right edge at `right`, centered on `center_y`.
-pub(crate) fn show(
+fn paint_segments(
     ui: &mut Ui,
     id: Id,
-    right: f32,
-    center_y: f32,
+    container: Rect,
+    segments: Vec<Rect>,
     labels: &[&str],
+    tones: &[Option<Color32>],
     active: usize,
-) -> Output {
-    let galleys: Vec<_> = labels
-        .iter()
-        .map(|label| ui.painter().layout_no_wrap((*label).to_owned(), body(FONT), brand::SOFT))
-        .collect();
-    let text: Vec<f32> = galleys.iter().map(|g| g.size().x).collect();
-    let (container, segments) = rects(right, center_y, &text);
+) -> Option<usize> {
     let painter = ui.painter().clone();
     painter.rect(
         container,
@@ -67,6 +63,98 @@ pub(crate) fn show(
         if on {
             painter.rect_filled(rect, 5.0, brand::SEGMENT_ON);
         }
+        let tone = tones.get(index).copied().flatten();
+        let ink = match (on, response.hovered()) {
+            (true, _) => tone.unwrap_or(brand::TEAL_TEXT),
+            (false, true) => brand::TEXT,
+            (false, false) => tone.unwrap_or(brand::SOFT),
+        };
+        painter.text(rect.center(), Align2::CENTER_CENTER, *label, body(FONT), ink);
+        if response.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() && !on {
+            clicked = Some(index);
+        }
+    }
+    clicked
+}
+
+fn text_widths(ui: &Ui, labels: &[&str]) -> Vec<f32> {
+    labels
+        .iter()
+        .map(|label| {
+            ui.painter().layout_no_wrap((*label).to_owned(), body(FONT), brand::SOFT).size().x
+        })
+        .collect()
+}
+
+/// Draws the control with its right edge at `right`, centered on `center_y`.
+pub(crate) fn show(
+    ui: &mut Ui,
+    id: Id,
+    right: f32,
+    center_y: f32,
+    labels: &[&str],
+    active: usize,
+) -> Output {
+    let (container, segments) = rects(right, center_y, &text_widths(ui, labels));
+    let clicked = paint_segments(ui, id, container, segments, labels, &[], active);
+    Output { clicked, left: container.left() }
+}
+
+/// The same control flowing in the current row; returns the segment clicked that is not the active one.
+#[expect(dead_code, reason = "adopted by the UI pass commits that follow")]
+pub(crate) fn inline(ui: &mut Ui, id: Id, labels: &[&str], active: usize) -> Option<usize> {
+    inline_toned(ui, id, labels, &[], active)
+}
+
+/// `inline` with an ink of its own for some segments, such as red for a dangerous choice.
+pub(crate) fn inline_toned(
+    ui: &mut Ui,
+    id: Id,
+    labels: &[&str],
+    tones: &[Option<Color32>],
+    active: usize,
+) -> Option<usize> {
+    let text = text_widths(ui, labels);
+    let width = rects(0.0, 0.0, &text).0.width();
+    let (slot, _) = ui.allocate_exact_size(vec2(width, HEIGHT), Sense::hover());
+    let (container, segments) = rects(slot.right(), slot.center().y, &text);
+    paint_segments(ui, id, container, segments, labels, tones, active)
+}
+
+/// Where each chip of widths `widths` goes in rows of at most `avail`, and the height the rows take.
+fn flow(widths: &[f32], avail: f32) -> (Vec<Rect>, f32) {
+    let (mut x, mut y) = (0.0, 0.0);
+    let mut placed = Vec::with_capacity(widths.len());
+    for width in widths {
+        if x > 0.0 && x + width > avail {
+            x = 0.0;
+            y += HEIGHT + GAP_ROWS;
+        }
+        placed.push(Rect::from_min_size(pos2(x, y), vec2(*width, HEIGHT)));
+        x += width + CHIP_GAP;
+    }
+    (placed, if widths.is_empty() { 0.0 } else { y + HEIGHT })
+}
+
+/// Chips that wrap onto more rows, for a choice with more options than a segmented control holds.
+#[expect(dead_code, reason = "adopted by the UI pass commits that follow")]
+pub(crate) fn wrap_chips(ui: &mut Ui, id: Id, labels: &[&str], active: usize) -> Option<usize> {
+    let widths: Vec<f32> =
+        text_widths(ui, labels).into_iter().map(|w| w + 2.0 * SEGMENT_PAD).collect();
+    let (placed, height) = flow(&widths, ui.available_width());
+    let (area, _) = ui.allocate_exact_size(vec2(ui.available_width(), height), Sense::hover());
+    let painter = ui.painter().clone();
+    let mut clicked = None;
+    for (index, (offset, label)) in placed.into_iter().zip(labels).enumerate() {
+        let rect = offset.translate(area.min.to_vec2());
+        let response = ui.interact(rect, id.with(index), Sense::click());
+        let on = index == active;
+        let (fill, line) = if on {
+            (brand::SEGMENT_ON, brand::SEGMENT_LINE)
+        } else {
+            (brand::SEGMENT, brand::SEGMENT_LINE)
+        };
+        painter.rect(rect, CornerRadius::same(7), fill, Stroke::new(1.0, line), StrokeKind::Inside);
         let ink = match (on, response.hovered()) {
             (true, _) => brand::TEAL_TEXT,
             (false, true) => brand::TEXT,
@@ -77,7 +165,7 @@ pub(crate) fn show(
             clicked = Some(index);
         }
     }
-    Output { clicked, left: container.left() }
+    clicked
 }
 
 #[cfg(test)]
@@ -102,5 +190,21 @@ mod tests {
         let (container, segments) = rects(100.0, 0.0, &[30.0]);
         assert_eq!(container.width(), 30.0 + 2.0 * SEGMENT_PAD + 2.0 * EDGE);
         assert_eq!(segments.len(), 1);
+    }
+
+    #[test]
+    fn chips_wrap_to_a_new_row_when_the_next_one_does_not_fit() {
+        let (placed, height) = flow(&[50.0, 50.0, 50.0], 120.0);
+        assert_eq!(placed[1].left(), 50.0 + CHIP_GAP);
+        assert_eq!((placed[2].left(), placed[2].top()), (0.0, HEIGHT + GAP_ROWS));
+        assert_eq!(height, 2.0 * HEIGHT + GAP_ROWS);
+    }
+
+    #[test]
+    fn a_chip_wider_than_the_row_still_gets_a_row_of_its_own() {
+        let (placed, height) = flow(&[200.0, 30.0], 100.0);
+        assert_eq!((placed[0].left(), placed[1].left()), (0.0, 0.0));
+        assert_eq!(height, 2.0 * HEIGHT + GAP_ROWS);
+        assert_eq!(flow(&[], 100.0).1, 0.0);
     }
 }
