@@ -174,6 +174,7 @@ crates/tidewatch/       the egui app
   src/diff_pane.rs      Diff pane (the Below layout, a card like the file view; its notes, PR and body pieces also serve the file view): 48 px header (commit title over id, author and counts, the Unified / Split control, change arrows, the file view's note buttons), file list as `selection_row`s, a notes caption, the notes strip, kelp-ui diff body in `DiffStyle::embedded` with notes
   src/note_actions.rs   kelp-ui DiffAction -> the tab's notes (pure)
   src/review_view.rs    the "Your review" card directly above an agent tab's chat box (the Reader's reply box and the composer): title, `N notes · M files`, Discard (two clicks), the draft's notes by file with `:line` (a pulled PR comment shows its reviewer), an optional message, the primary `Send review to <Profile>` (Cmd+Enter, Ctrl+Enter on Linux), the busy hint (it goes the moment the agent is idle) and Take it back for a held review; `ReviewAction` is what it and the sent review's card ask for (drawn)
+  src/review_row_view.rs  a sent review in the Reader's timeline: one card in the user bubble's look (`You`, `Review · N notes`, `K of N answered`, each note as a small block with its `path:line`, the user's text, the agent's indented reply and answered / working on it / waiting / resolved, Open in the file view, Resolve answered); the pasted block is recognised by its first line in `reader_rows` and never drawn (drawn)
   src/app/review.rs     the window's side of the review: the active agent tab's `Parts` for the Reader, the status bar chip text, opening the review (leave the file view, show the Reader) and carrying out each `ReviewAction`
   src/checkout.rs       double-click checkout rule: main tab only, clean tree only (pure plan, git outcome)
   src/toast.rs          one timed message, fade on egui's clock (pure)
@@ -214,7 +215,7 @@ crates/tidewatch/       the egui app
   src/pr_state.rs       PR lookup state (focus and after a delivery, never per frame), the chip, whether a note may be posted (pure)
   src/post_confirm.rs   the confirm dialog before a note goes to GitHub: PR number and repo, exact text, Enter posts, Esc cancels
   src/reader.rs         one agent tab's Reader: the view choice (Reader or raw terminal), feed state, rows; `shown()` decides what the tab draws and why (pure)
-  src/reader_rows.rs    transcript entries to view rows (a tool call and its result merge into one row, a divider where a workflow stage starts), capped at 400 rows (pure)
+  src/reader_rows.rs    transcript entries to view rows (a tool call and its result merge into one row, a divider where a workflow stage starts, a user message that is the paste of a review becomes a review row with its note ids and message), capped at 400 rows (pure)
   src/reader_feed.rs    the thread that finds the transcript (retry schedule) and tails it; woken by pty output and hooks, backs off while quiet
   src/reader_scroll.rs  autoscroll state (follow until the user scrolls up) and row height cache and estimate (pure)
   src/reader_keys.rs    the permission answers verified per CLI and the bytes that give them (Claude: 1 and Esc)

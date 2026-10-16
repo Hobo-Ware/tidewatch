@@ -88,6 +88,7 @@ mod repo_close;
 mod restore_glue;
 mod restore_jobs;
 mod review;
+mod review_row_view;
 mod review_view;
 mod screen_kit;
 mod segmented;
