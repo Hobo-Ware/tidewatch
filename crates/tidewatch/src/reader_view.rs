@@ -16,6 +16,7 @@ use egui::{
 };
 use egui_commonmark::{CommonMarkCache, CommonMarkViewer};
 use stdusk_egui::widgets::chip;
+use tidewatch_core::question::Reply;
 use tidewatch_core::transcript::Source;
 
 use crate::agent_ready::{self, COMPOSER_H, Ready};
@@ -23,8 +24,11 @@ use crate::brand;
 use crate::pr_card_model::CardAction;
 use crate::pr_cards_view::{self, Data as PrData, Heights as PrHeights};
 use crate::pr_timeline::{self, Place};
+use crate::question_card::{Card, Effect};
+use crate::question_view::{self, ChipClick, Live, PermissionClick};
+use crate::quick_reply::{self, Quick};
 use crate::reader_keys::{self, Answer};
-use crate::reader_rows::{Kind, Row, Rows, Tool};
+use crate::reader_rows::{Kind, Origin, Row, Rows, Tool};
 use crate::reader_scroll::{Autoscroll, Heights};
 use crate::review::ReviewFacts;
 use crate::review_row_view;
@@ -56,6 +60,9 @@ pub(crate) struct ViewState {
     content_h: f32,
     seen_rows: u64,
     stick_pending: bool,
+    live: Option<Live>,
+    quick: Option<(u64, Vec<Quick>)>,
+    quick_used: Option<u64>,
 }
 
 impl Default for ViewState {
@@ -71,8 +78,24 @@ impl Default for ViewState {
             content_h: 0.0,
             seen_rows: 0,
             stick_pending: true,
+            live: None,
+            quick: None,
+            quick_used: None,
         }
     }
+}
+
+impl ViewState {
+    pub(crate) fn live_mut(&mut self) -> Option<&mut Live> {
+        self.live.as_mut()
+    }
+}
+
+/// Whether the agent is in the middle of a turn, so a menu may be open, or has finished it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Turn {
+    Running,
+    Finished,
 }
 
 /// What the agent is stuck on, when it waits for something typed into a menu rather than a reply.
@@ -97,6 +120,9 @@ pub(crate) struct Facts<'a> {
     pub(crate) review: Option<ReviewFacts<'a>>,
     /// The tab's pull request cards, drawn between the rows by time.
     pub(crate) pr: Option<PrData<'a>>,
+    /// The profile's name, for "<Profile> asks".
+    pub(crate) profile: &'a str,
+    pub(crate) turn: Turn,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -109,6 +135,8 @@ pub(crate) enum Action {
     Review(ReviewAction),
     /// A click on a pull request card.
     Pr(CardAction),
+    /// The user answered, or skipped, the questions in row `seq`.
+    Ask(u64, Reply),
 }
 
 /// The look of an inline item: a card on the window ground.
@@ -164,6 +192,70 @@ pub(crate) fn field_frame(ui: &mut Ui, add: impl FnOnce(&mut Ui) -> Response) ->
     response
 }
 
+/// The live card to show, if any: the oldest question waiting for an answer. Claude's own menu
+/// counts only while the agent is mid-turn; a held `ask_user` call keeps its card at any time, so a
+/// late answer can still be typed.
+fn live_row(rows: &Rows, turn: Turn) -> Option<&Row> {
+    rows.pending_question().filter(|row| match &row.kind {
+        Kind::Question(q) => matches!(q.origin, Origin::Tidewatch(_)) || turn == Turn::Running,
+        _ => false,
+    })
+}
+
+/// Keeps `state.live` on the question being shown: a new card for a new question, none when there
+/// is nothing to answer (the reply box then asks for the keyboard).
+fn sync_live(state: &mut ViewState, shown: Option<&Row>) {
+    let seq = shown.map(|row| row.seq);
+    if state.live.as_ref().map(|live| live.seq) == seq {
+        return;
+    }
+    let had = state.live.is_some();
+    state.live = shown.and_then(|row| match &row.kind {
+        Kind::Question(q) => Some(Live::new(row.seq, Card::new(q.questions.clone()))),
+        _ => None,
+    });
+    if had && state.live.is_none() {
+        state.focus_reply = true;
+    }
+}
+
+/// The quick replies for the newest row when it is the agent's finished message.
+fn quick_for<'a>(rows: &Rows, state: &'a mut ViewState, facts: &Facts<'_>) -> &'a [Quick] {
+    let last = rows.iter().last();
+    let wanted = last.filter(|row| row.kind == Kind::Assistant).filter(|row| {
+        facts.turn == Turn::Finished && facts.prompt.is_none() && state.quick_used != Some(row.seq)
+    });
+    let Some(row) = wanted else {
+        state.quick = None;
+        return &[];
+    };
+    if state.quick.as_ref().map(|(seq, _)| *seq) != Some(row.seq) {
+        state.quick = Some((row.seq, quick_reply::from_message(&row.text)));
+    }
+    state.quick.as_ref().map_or(&[][..], |(_, quick)| quick.as_slice())
+}
+
+/// The tool call waiting for permission as (tool, what it does), when the newest row is one.
+fn permission_tool(rows: &Rows, root: Option<&Path>) -> Option<(String, String)> {
+    let tool = rows.waiting_tool()?;
+    let line = split_label(&tool.label, root);
+    Some((line.name.to_owned(), format!("{}{}", line.dir, line.leaf)))
+}
+
+fn dock_height(facts: &Facts<'_>, rows: &Rows, live: Option<&Live>) -> f32 {
+    match (facts.prompt, live) {
+        (_, Some(live)) => live.height(),
+        (Some(Prompt::Permission), None) => {
+            let command =
+                permission_tool(rows, facts.root).is_some_and(|(_, command)| !command.is_empty());
+            question_view::PERMISSION_H
+                + if command { question_view::PERMISSION_COMMAND_H } else { 0.0 }
+        }
+        (Some(Prompt::Question), None) => STRIP_H,
+        (None, None) => 0.0,
+    }
+}
+
 pub(crate) fn show(
     ui: &mut Ui,
     rect: Rect,
@@ -173,23 +265,26 @@ pub(crate) fn show(
 ) -> Vec<Action> {
     let mut actions = Vec::new();
     ui.painter().rect_filled(rect, 0.0, brand::GROUND);
-    let strip_h = if facts.prompt.is_some() { STRIP_H } else { 0.0 };
+    let shown = live_row(rows, facts.turn);
+    sync_live(state, shown);
+    let live_seq = state.live.as_ref().map(|live| live.seq);
     let composing = facts.ready.filter(|_| rows.len() == 0 && facts.prompt.is_none());
     let input_h = if composing.is_some() { COMPOSER_H } else { INPUT_H };
     let input = Rect::from_min_max(pos2(rect.left(), rect.bottom() - input_h), rect.max);
+    let dock_h = dock_height(&facts, rows, state.live.as_ref());
     let review_h = facts
         .review
         .as_ref()
-        .map_or(0.0, |review| review_view::height(review.draft, rect.height() - input_h - strip_h));
-    let review_band = Rect::from_min_max(
-        pos2(rect.left(), input.top() - review_h),
+        .map_or(0.0, |review| review_view::height(review.draft, rect.height() - input_h - dock_h));
+    let strip = Rect::from_min_max(
+        pos2(rect.left(), input.top() - dock_h),
         pos2(rect.right(), input.top()),
     );
-    let strip = Rect::from_min_max(
-        pos2(rect.left(), review_band.top() - strip_h),
-        pos2(rect.right(), review_band.top()),
+    let review_band = Rect::from_min_max(
+        pos2(rect.left(), strip.top() - review_h),
+        pos2(rect.right(), strip.top()),
     );
-    let body = Rect::from_min_max(rect.min, pos2(rect.right(), strip.top()));
+    let body = Rect::from_min_max(rect.min, pos2(rect.right(), review_band.top()));
     if let Some(review) = facts.review.as_ref().filter(|_| review_h > 0.0) {
         let asked = review_view::show(ui, review_band, &mut state.review, review);
         actions.extend(asked.into_iter().map(Action::Review));
@@ -203,19 +298,51 @@ pub(crate) fn show(
         }
         return actions;
     }
-    transcript(ui, body, rows, state, (facts.root, facts.pr), facts.review.as_ref(), &mut actions);
-    if let Some(prompt) = facts.prompt {
-        actions.extend(prompt_strip(ui, strip, prompt, facts.source));
+    let quick = quick_for(rows, state, &facts).to_vec();
+    let chips = transcript(
+        ui,
+        body,
+        rows,
+        state,
+        (facts.root, facts.pr),
+        facts.review.as_ref(),
+        (live_seq, &quick, facts.profile),
+        &mut actions,
+    );
+    match chips {
+        Some(ChipClick::Send(text)) => {
+            state.quick_used = rows.newest_seq();
+            actions.push(Action::Reply(text));
+        }
+        Some(ChipClick::Reply) => state.focus_reply = true,
+        None => {}
+    }
+    let mut reply_enabled = facts.prompt.is_none();
+    if let Some(live) = state.live.as_mut() {
+        let tidewatch = shown.is_some_and(|row| {
+            matches!(&row.kind, Kind::Question(q) if matches!(q.origin, Origin::Tidewatch(_)))
+        });
+        reply_enabled = tidewatch;
+        let grab = state.reply.trim().is_empty();
+        let dock = Rect::from_min_max(rect.min, pos2(rect.right(), input.top()));
+        match question_view::live_card(ui, dock, live, facts.profile, grab) {
+            Effect::Send(given) => actions.push(Action::Ask(live.seq, Reply::Answered(given))),
+            Effect::Skip => actions.push(Action::Ask(live.seq, Reply::Skipped)),
+            Effect::Nothing | Effect::TypeOther => {}
+        }
+    } else if let Some(prompt) = facts.prompt {
+        actions.extend(prompt_strip(ui, strip, prompt, facts.source, rows, facts.root));
     }
     let mut input_ui = ui.new_child(UiBuilder::new().max_rect(input.shrink2(vec2(INSET, 8.0))));
-    let enabled = facts.prompt.is_none();
-    if let Some(text) = reply_box(&mut input_ui, &mut state.reply, &mut state.focus_reply, enabled)
+    if let Some(text) =
+        reply_box(&mut input_ui, &mut state.reply, &mut state.focus_reply, reply_enabled)
     {
         actions.push(Action::Reply(text));
     }
     actions
 }
 
+#[allow(clippy::too_many_arguments)]
 fn transcript(
     ui: &mut Ui,
     body: Rect,
@@ -223,8 +350,10 @@ fn transcript(
     state: &mut ViewState,
     (root, pr): (Option<&Path>, Option<PrData<'_>>),
     review: Option<&ReviewFacts<'_>>,
+    (live_seq, quick, profile): (Option<u64>, &[Quick], &str),
     actions: &mut Vec<Action>,
-) {
+) -> Option<ChipClick> {
+    let mut chip_click = None;
     if rows.len() == 0 {
         ui.painter().text(
             body.center(),
@@ -233,7 +362,7 @@ fn transcript(
             FontId::proportional(14.0),
             brand::MUTED,
         );
-        return;
+        return None;
     }
     let pointer = ui.input(|i| i.pointer.interact_pos());
     let scrolled_up =
@@ -288,7 +417,8 @@ fn transcript(
                             ui.add_space(INSET);
                             ui.vertical(|ui| {
                                 ui.set_width(width);
-                                let asked = draw_row(ui, row, cache, root, review);
+                                let asked =
+                                    draw_row(ui, row, cache, root, review, live_seq, profile);
                                 actions.extend(asked.into_iter().map(Action::Review));
                             })
                         });
@@ -323,6 +453,12 @@ fn transcript(
                 });
                 actions.extend(tail.inner.inner.map(Action::Pr));
             }
+            if !quick.is_empty() {
+                ui.horizontal(|ui| {
+                    ui.add_space(INSET);
+                    ui.vertical(|ui| chip_click = question_view::quick_chips(ui, quick));
+                });
+            }
             ui.add_space(12.0);
             if scroll_down {
                 ui.scroll_to_cursor_animation(Some(Align::BOTTOM), ScrollAnimation::none());
@@ -348,6 +484,7 @@ fn transcript(
             ui.ctx().request_repaint();
         }
     }
+    chip_click
 }
 
 fn draw_row(
@@ -356,9 +493,16 @@ fn draw_row(
     cache: &mut CommonMarkCache,
     root: Option<&Path>,
     review: Option<&ReviewFacts<'_>>,
+    live_seq: Option<u64>,
+    profile: &str,
 ) -> Vec<ReviewAction> {
     match &row.kind {
         Kind::Review(ids) => return review_row_view::show(ui, ids, &row.text, review),
+        Kind::Question(question) => {
+            if live_seq != Some(row.seq) {
+                question_view::summary(ui, question, profile);
+            }
+        }
         Kind::User => {
             item_frame().inner_margin(Margin::symmetric(12, 8)).show(ui, |ui| {
                 ui.set_width(ui.available_width());
@@ -541,8 +685,28 @@ pub(crate) fn output_preview(output: &str) -> String {
     format!("{text}\n... {hidden} more lines")
 }
 
-fn prompt_strip(ui: &mut Ui, strip: Rect, prompt: Prompt, source: Option<Source>) -> Vec<Action> {
+fn prompt_strip(
+    ui: &mut Ui,
+    strip: Rect,
+    prompt: Prompt,
+    source: Option<Source>,
+    rows: &Rows,
+    root: Option<&Path>,
+) -> Vec<Action> {
     let mut actions = Vec::new();
+    if prompt == Prompt::Permission {
+        let answers: Vec<Answer> =
+            reader_keys::answers(source).iter().map(|(answer, _)| *answer).collect();
+        let tool = permission_tool(rows, root);
+        let tool = tool.as_ref().map(|(name, command)| (name.as_str(), command.as_str()));
+        let strip = strip.shrink2(vec2(0.0, 4.0));
+        match question_view::permission_card(ui, strip, tool, &answers) {
+            Some(PermissionClick::Answer(answer)) => actions.push(Action::Answer(answer)),
+            Some(PermissionClick::SwitchToTerminal) => actions.push(Action::SwitchToTerminal),
+            None => {}
+        }
+        return actions;
+    }
     let card = strip.shrink2(vec2(INSET, 4.0));
     paint_item(ui.painter(), card, false);
     paint_bar(ui.painter(), card, brand::ORANGE);
@@ -808,6 +972,8 @@ mod tests {
                         root: None,
                         review: None,
                         pr: None,
+                        profile: "Builder",
+                        turn: Turn::Finished,
                     },
                 );
             });
@@ -860,6 +1026,8 @@ mod tests {
                     root: None,
                     review: None,
                     pr: None,
+                    profile: "Builder",
+                    turn: Turn::Running,
                 };
                 let actions = show(ui, rect, &rows, &mut state, facts);
                 assert_eq!(actions, Vec::<Action>::new());
@@ -930,6 +1098,8 @@ mod tests {
                         root: None,
                         review: Some(review),
                         pr: None,
+                        profile: "Builder",
+                        turn: Turn::Finished,
                     };
                     let rect = ui.max_rect();
                     actions = show(ui, rect, rows, &mut state, facts);
@@ -996,6 +1166,8 @@ mod tests {
                     root: None,
                     review: Some(review),
                     pr: None,
+                    profile: "Builder",
+                    turn: Turn::Finished,
                 };
                 let rect = ui.max_rect();
                 show(ui, rect, &rows, &mut state, facts);
@@ -1006,5 +1178,136 @@ mod tests {
         assert!(shapes.contains("rename it"));
         assert!(!shapes.contains("Tidewatch review notes"));
         assert_eq!(state.heights.measured_count(), 1);
+    }
+
+    fn facts<'a>(prompt: Option<Prompt>, turn: Turn) -> Facts<'a> {
+        Facts {
+            source: Some(Source::Claude),
+            prompt,
+            ready: None,
+            root: None,
+            review: None,
+            pr: None,
+            profile: "Builder",
+            turn,
+        }
+    }
+
+    fn draw(rows: &Rows, state: &mut ViewState, facts: Facts<'_>) -> Vec<Action> {
+        let ctx = crate::fonts::test_context();
+        let raw = RawInput {
+            screen_rect: Some(Rect::from_min_size(pos2(0.0, 0.0), vec2(800.0, 700.0))),
+            focused: true,
+            ..RawInput::default()
+        };
+        let mut actions = Vec::new();
+        for _ in 0..3 {
+            let _ = ctx.run_ui(raw.clone(), |ui| {
+                let rect = ui.max_rect();
+                actions = show(ui, rect, rows, state, facts);
+            });
+        }
+        actions
+    }
+
+    fn question_entry(
+        phase: tidewatch_core::transcript::ToolPhase,
+    ) -> tidewatch_core::transcript::Entry {
+        use tidewatch_core::question::{Question, QuestionOption, Select};
+        use tidewatch_core::transcript::{AskPart, Entry, ToolCall};
+        Entry {
+            role: tidewatch_core::transcript::Role::Tool,
+            text: String::new(),
+            tool: Some(ToolCall {
+                name: "AskUserQuestion".into(),
+                summary: String::new(),
+                id: Some("q1".into()),
+                phase,
+                ask: Some(AskPart::Asked(vec![Question {
+                    text: "Where?".into(),
+                    header: None,
+                    select: Select::Single,
+                    options: vec![
+                        QuestionOption { label: "Stage".into(), description: None },
+                        QuestionOption { label: "Run".into(), description: None },
+                    ],
+                }])),
+            }),
+            ts: None,
+        }
+    }
+
+    #[test]
+    fn a_waiting_claude_question_shows_a_live_card_only_while_the_agent_is_mid_turn() {
+        use tidewatch_core::transcript::ToolPhase;
+        let mut rows = Rows::default();
+        rows.push(question_entry(ToolPhase::Call));
+        let mut state = ViewState::default();
+        draw(&rows, &mut state, facts(Some(Prompt::Question), Turn::Running));
+        assert_eq!(state.live.as_ref().map(|live| live.seq), Some(0));
+        let mut finished = ViewState::default();
+        draw(&rows, &mut finished, facts(None, Turn::Finished));
+        assert!(finished.live.is_none(), "a finished agent has no menu open");
+    }
+
+    #[test]
+    fn the_card_goes_away_when_the_question_is_answered_and_the_reply_box_asks_for_the_keyboard() {
+        use crate::reader_rows::Asked;
+        let mut rows = Rows::default();
+        rows.push(question_entry(tidewatch_core::transcript::ToolPhase::Call));
+        let mut state = ViewState::default();
+        draw(&rows, &mut state, facts(None, Turn::Running));
+        state.focus_reply = false;
+        rows.set_asked(0, Asked::Declined);
+        draw(&rows, &mut state, facts(None, Turn::Running));
+        assert!(state.live.is_none());
+    }
+
+    #[test]
+    fn a_finished_message_that_ends_with_a_yes_or_no_question_gets_quick_replies_once() {
+        use tidewatch_core::transcript::{Entry, Role};
+        let mut rows = Rows::default();
+        rows.push(Entry {
+            role: Role::Assistant,
+            text: "Tests pass. Should I also update the README?".into(),
+            tool: None,
+            ts: None,
+        });
+        let mut state = ViewState::default();
+        draw(&rows, &mut state, facts(None, Turn::Finished));
+        let labels: Vec<&str> =
+            state.quick.as_ref().unwrap().1.iter().map(|q| q.label.as_str()).collect();
+        assert_eq!(labels, ["Yes", "No"]);
+        let mut working = ViewState::default();
+        draw(&rows, &mut working, facts(None, Turn::Running));
+        assert!(working.quick.is_none(), "no chips while the agent works");
+        state.quick_used = rows.newest_seq();
+        draw(&rows, &mut state, facts(None, Turn::Finished));
+        assert!(state.quick.is_none(), "a used chip row does not come back");
+    }
+
+    #[test]
+    fn a_permission_prompt_draws_its_card_and_hides_nothing_else() {
+        use tidewatch_core::transcript::{Entry, Role, ToolPhase};
+        let mut rows = Rows::default();
+        rows.push(Entry {
+            role: Role::Tool,
+            text: String::new(),
+            tool: Some(tidewatch_core::transcript::ToolCall {
+                name: "Bash".into(),
+                summary: "cargo test".into(),
+                id: Some("b1".into()),
+                phase: ToolPhase::Call,
+                ask: None,
+            }),
+            ts: None,
+        });
+        assert_eq!(
+            permission_tool(&rows, None),
+            Some(("Bash".to_owned(), "cargo test".to_owned()))
+        );
+        let mut state = ViewState::default();
+        let actions = draw(&rows, &mut state, facts(Some(Prompt::Permission), Turn::Running));
+        assert_eq!(actions, Vec::<Action>::new());
     }
 }

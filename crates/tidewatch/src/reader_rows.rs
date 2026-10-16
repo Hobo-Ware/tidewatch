@@ -5,7 +5,8 @@
 use std::collections::{HashMap, VecDeque};
 
 use tidewatch_core::note_paste;
-use tidewatch_core::transcript::{Entry, Role, ToolPhase};
+use tidewatch_core::question::{AskReply, Question};
+use tidewatch_core::transcript::{AskPart, Entry, Role, ToolPhase};
 
 pub(crate) const MAX_ROWS: usize = 400;
 const MCP_PREFIX: &str = "mcp__";
@@ -22,6 +23,34 @@ pub(crate) enum Kind {
     Review(Vec<u64>),
     /// Where a workflow stage's agent took over: `--- Stage 2: Review (gemini, Read only) ---`.
     Divider,
+    /// Questions the agent asked, live until answered.
+    Question(QuestionRow),
+}
+
+/// How the questions reached the Reader, and so how an answer goes back.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum Origin {
+    /// Claude Code's own question tool: the answer is typed into its menu.
+    Claude,
+    /// Tidewatch's `ask_user` tool: the answer goes to the held call.
+    Tidewatch(AskReply),
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum Asked {
+    Pending,
+    /// The answer was given and the agent has not confirmed it yet.
+    Sent(Vec<(String, String)>),
+    Answered(Vec<(String, String)>),
+    /// The user skipped the questions, or the agent's tool reported a refusal.
+    Declined,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct QuestionRow {
+    pub(crate) questions: Vec<Question>,
+    pub(crate) asked: Asked,
+    pub(crate) origin: Origin,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -86,6 +115,59 @@ impl Rows {
         }
     }
 
+    /// Questions from an `ask_user` call: a row that waits for the user.
+    pub(crate) fn push_ask(&mut self, questions: Vec<Question>, reply: AskReply) {
+        let row =
+            QuestionRow { questions, asked: Asked::Pending, origin: Origin::Tidewatch(reply) };
+        self.add(Kind::Question(row), String::new());
+        self.trim();
+    }
+
+    #[cfg(test)]
+    pub(crate) fn push_question_row(&mut self, row: QuestionRow) -> u64 {
+        self.add(Kind::Question(row), String::new())
+    }
+
+    /// The oldest question still waiting for an answer that can be given from the Reader. A Claude
+    /// menu counts only while it is the newest row: anything after it means the menu is gone.
+    pub(crate) fn pending_question(&self) -> Option<&Row> {
+        let newest = self.newest_seq();
+        self.list.iter().find(|row| match &row.kind {
+            Kind::Question(q) => {
+                q.asked == Asked::Pending
+                    && (matches!(q.origin, Origin::Tidewatch(_)) || Some(row.seq) == newest)
+            }
+            _ => false,
+        })
+    }
+
+    pub(crate) fn question_of(&self, seq: u64) -> Option<&QuestionRow> {
+        self.list.iter().find_map(|row| match &row.kind {
+            Kind::Question(question) if row.seq == seq => Some(question),
+            _ => None,
+        })
+    }
+
+    /// Records what happened to the question in row `seq`; false when the row is gone.
+    pub(crate) fn set_asked(&mut self, seq: u64, asked: Asked) -> bool {
+        match self.row_mut(seq).map(|row| &mut row.kind) {
+            Some(Kind::Question(q)) => {
+                q.asked = asked;
+                true
+            }
+            _ => false,
+        }
+    }
+
+    /// The tool call waiting for the user's permission: the newest row, when it is a tool with no
+    /// result yet.
+    pub(crate) fn waiting_tool(&self) -> Option<&Tool> {
+        match self.list.back().map(|row| &row.kind) {
+            Some(Kind::Tool(tool)) if !tool.done => Some(tool),
+            _ => None,
+        }
+    }
+
     pub(crate) fn divider(&mut self, text: String) {
         self.stamp = None;
         self.add(Kind::Divider, text);
@@ -118,6 +200,13 @@ impl Rows {
         self.dropped
     }
 
+    fn trim(&mut self) {
+        while self.list.len() > MAX_ROWS {
+            self.list.pop_front();
+            self.dropped += 1;
+        }
+    }
+
     fn add(&mut self, kind: Kind, text: String) -> u64 {
         let seq = self.next_seq;
         self.next_seq += 1;
@@ -131,6 +220,10 @@ impl Rows {
             self.add(Kind::Notice, entry.text);
             return;
         };
+        if let Some(part) = call.ask.clone() {
+            self.ask(call.id.as_ref(), part, entry.text);
+            return;
+        }
         let label = tool_label(&call.name, &call.summary);
         match call.phase {
             ToolPhase::Call => {
@@ -160,6 +253,37 @@ impl Rows {
                 }
             }
         }
+    }
+
+    /// A question tool's call becomes a row that waits; its result settles that row.
+    fn ask(&mut self, id: Option<&String>, part: AskPart, text: String) {
+        let id = id.cloned().filter(|id| !id.is_empty());
+        match part {
+            AskPart::Asked(questions) => {
+                let row = QuestionRow { questions, asked: Asked::Pending, origin: Origin::Claude };
+                let seq = self.add(Kind::Question(row), String::new());
+                if let Some(id) = id {
+                    self.calls.insert(id, seq);
+                }
+            }
+            AskPart::Answered(pairs) => {
+                let pairs = if pairs.is_empty() { vec![(String::new(), text)] } else { pairs };
+                let seq = id.and_then(|id| self.calls.remove(&id));
+                self.settle_ask(seq, Asked::Answered(pairs));
+            }
+            AskPart::Declined => {
+                let seq = id.and_then(|id| self.calls.remove(&id));
+                self.settle_ask(seq, Asked::Declined);
+            }
+        }
+    }
+
+    fn settle_ask(&mut self, seq: Option<u64>, asked: Asked) {
+        if seq.is_some_and(|seq| self.set_asked(seq, asked.clone())) {
+            return;
+        }
+        let row = QuestionRow { questions: Vec::new(), asked, origin: Origin::Claude };
+        self.add(Kind::Question(row), String::new());
     }
 
     fn row_mut(&mut self, seq: u64) -> Option<&mut Row> {
@@ -344,6 +468,102 @@ mod tests {
             tool_label("mcp__tidewatch__stage_done", "all green"),
             "tidewatch:stage_done  all green"
         );
+    }
+
+    fn ask_entry(id: &str, phase: ToolPhase, part: AskPart) -> Entry {
+        Entry {
+            role: Role::Tool,
+            text: "raw result".into(),
+            tool: Some(ToolCall {
+                name: "AskUserQuestion".into(),
+                summary: String::new(),
+                id: Some(id.into()),
+                phase,
+                ask: Some(part),
+            }),
+            ts: None,
+        }
+    }
+
+    fn one_question() -> Vec<Question> {
+        use tidewatch_core::question::{QuestionOption, Select};
+        vec![Question {
+            text: "Where?".into(),
+            header: None,
+            select: Select::Single,
+            options: vec![QuestionOption { label: "A".into(), description: None }],
+        }]
+    }
+
+    fn asked_of(rows: &Rows, index: usize) -> Asked {
+        match &rows.iter().nth(index).unwrap().kind {
+            Kind::Question(q) => q.asked.clone(),
+            other => panic!("not a question row: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_claude_question_waits_as_a_row_until_its_result_settles_it() {
+        let mut rows = Rows::default();
+        rows.push(ask_entry("q1", ToolPhase::Call, AskPart::Asked(one_question())));
+        assert_eq!(asked_of(&rows, 0), Asked::Pending);
+        assert_eq!(rows.pending_question().map(|row| row.seq), Some(0));
+        let pairs = vec![("Where?".to_owned(), "A".to_owned())];
+        rows.push(ask_entry(
+            "q1",
+            ToolPhase::Result { error: false },
+            AskPart::Answered(pairs.clone()),
+        ));
+        assert_eq!(rows.len(), 1);
+        assert_eq!(asked_of(&rows, 0), Asked::Answered(pairs));
+        assert!(rows.pending_question().is_none());
+    }
+
+    #[test]
+    fn a_refused_claude_question_is_declined_and_a_result_without_its_call_still_shows() {
+        let mut rows = Rows::default();
+        rows.push(ask_entry("q1", ToolPhase::Call, AskPart::Asked(one_question())));
+        rows.push(ask_entry("q1", ToolPhase::Result { error: true }, AskPart::Declined));
+        assert_eq!(asked_of(&rows, 0), Asked::Declined);
+        rows.push(ask_entry("gone", ToolPhase::Result { error: false }, AskPart::Answered(vec![])));
+        assert_eq!(rows.len(), 2);
+        assert_eq!(
+            asked_of(&rows, 1),
+            Asked::Answered(vec![(String::new(), "raw result".to_owned())])
+        );
+    }
+
+    #[test]
+    fn a_claude_menu_counts_as_open_only_while_it_is_the_newest_row() {
+        let mut rows = Rows::default();
+        rows.push(ask_entry("q1", ToolPhase::Call, AskPart::Asked(one_question())));
+        assert!(rows.pending_question().is_some());
+        rows.push(text(Role::Assistant, "carrying on"));
+        assert!(rows.pending_question().is_none());
+    }
+
+    #[test]
+    fn an_ask_user_question_stays_open_whatever_follows_and_the_oldest_comes_first() {
+        let (first, _keep_one) = std::sync::mpsc::channel();
+        let (second, _keep_two) = std::sync::mpsc::channel();
+        let mut rows = Rows::default();
+        rows.push_ask(one_question(), AskReply::new(first));
+        rows.push_ask(one_question(), AskReply::new(second));
+        rows.push(text(Role::Assistant, "waiting"));
+        assert_eq!(rows.pending_question().map(|row| row.seq), Some(0));
+        assert!(rows.set_asked(0, Asked::Declined));
+        assert_eq!(rows.pending_question().map(|row| row.seq), Some(1));
+        assert!(!rows.set_asked(99, Asked::Declined));
+    }
+
+    #[test]
+    fn the_tool_waiting_for_permission_is_the_newest_row_without_a_result() {
+        let mut rows = Rows::default();
+        assert!(rows.waiting_tool().is_none());
+        rows.push(call("t1", "Bash", "ls"));
+        assert_eq!(rows.waiting_tool().map(|tool| tool.label.as_str()), Some("Bash  ls"));
+        rows.push(result("t1", "Bash", "ls", "a", false));
+        assert!(rows.waiting_tool().is_none());
     }
 
     #[test]
