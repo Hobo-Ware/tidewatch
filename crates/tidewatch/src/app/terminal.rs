@@ -4,7 +4,7 @@ use egui::FontId;
 use stdusk_egui::ui::{CursorStyle, GridStyle, collect_input, render_grid};
 
 use super::frame::FrameIntent;
-use super::{FONT_SIZE, MIN_CONTRAST, Tidewatch};
+use super::{FONT_SIZE, MIN_CONTRAST, Tidewatch, wall_ms};
 use crate::brand;
 use crate::commands::Command;
 use crate::mascot::{self, Pose};
@@ -115,9 +115,17 @@ impl Tidewatch {
                 let notes = self.views.get(&active_id).map(|view| &view.notes);
                 let review =
                     parts.as_ref().zip(notes).map(|(parts, notes)| parts.facts(notes, keys_free));
+                let profile =
+                    self.tabs.active_pane_mut().agent.as_ref().map(|a| a.profile_name.clone());
+                let data = self.pr.data(
+                    active_id,
+                    profile.as_deref().unwrap_or_default(),
+                    wall_ms() as i64,
+                );
                 let pane = self.tabs.active_pane_mut();
-                let asked =
-                    reader_glue::draw(ui, terminal, pane, &mut self.dev_reader, now, review);
+                let mut asked =
+                    reader_glue::draw(ui, terminal, pane, &mut self.dev_reader, now, review, data);
+                let clicks = reader_glue::take_pr_clicks(&mut asked);
                 let (reviews, asked): (Vec<_>, Vec<_>) =
                     asked.into_iter().partition(|action| matches!(action, Action::Review(_)));
                 let toast =
@@ -133,6 +141,7 @@ impl Tidewatch {
                     })
                     .collect();
                 self.apply_review(reviews, active_id, ctx);
+                self.apply_pr_actions(active_id, clicks, ctx, now);
             }
             Some(Shown::Terminal(Some(note))) => reader_glue::note(ui, terminal, note),
             Some(Shown::Terminal(None)) | None => {}

@@ -154,6 +154,7 @@ impl Tidewatch {
         self.hooks.close_tab(id);
         self.notifier.forget(id);
         self.flow.forget(id);
+        self.pr.forget(id);
         self.runs.forget(id);
     }
 

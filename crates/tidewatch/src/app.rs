@@ -13,6 +13,7 @@ mod frame;
 mod overlays;
 mod palette;
 mod panes;
+mod pr;
 mod repos;
 mod restart;
 mod review;
@@ -68,6 +69,7 @@ use crate::os::RealOs;
 use crate::palette::Palette;
 use crate::pane::Pane;
 use crate::pane_jobs;
+use crate::pr_glue;
 use crate::pty::spawn_shell;
 use crate::repo::Workspace;
 use crate::repo_base::Bases;
@@ -127,6 +129,7 @@ pub(crate) struct Tidewatch {
     bases: Bases,
     hooks: Hooks,
     flow: Flow,
+    pr: pr_glue::Host,
     runs: workflow_glue::Host,
     run_asks: Vec<(u64, Vec<Exec>)>,
     build_asks: Vec<Asked>,
@@ -194,6 +197,11 @@ impl Tidewatch {
         let restored = hooks_port.is_some();
         let dev_flow = DevFlow::from_env();
         let flow = Flow::new(Tools::with_path(dev_flow.tool_path(agent_path.clone())));
+        let pr = pr_glue::Host::new(
+            flow.tools(),
+            paths.as_ref().map(Prefs::load).unwrap_or_default().github,
+            pr_glue::Dev::from_env(),
+        );
         let dev_view = DevView::from_env();
         let trust = Trust::new(paths.as_ref(), cli_home);
         let dev_session = DevSession::from_env();
@@ -239,6 +247,7 @@ impl Tidewatch {
             bases: Bases::new(),
             hooks,
             flow,
+            pr,
             runs: workflow_glue::Host::new(),
             run_asks: Vec::new(),
             build_asks: Vec::new(),

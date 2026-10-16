@@ -88,12 +88,18 @@ fn clip(text: &str, max: usize) -> String {
 
 pub(crate) struct Notifier {
     limiter: RateLimiter,
+    /// The same gap for what a pull request did, kept apart from status changes.
+    pr_limiter: RateLimiter,
     send: Box<dyn Fn(Notification) + Send + Sync>,
 }
 
 impl Notifier {
     pub(crate) fn new(send: impl Fn(Notification) + Send + Sync + 'static) -> Self {
-        Self { limiter: RateLimiter::new(MIN_GAP_SECS), send: Box::new(send) }
+        Self {
+            limiter: RateLimiter::new(MIN_GAP_SECS),
+            pr_limiter: RateLimiter::new(MIN_GAP_SECS),
+            send: Box::new(send),
+        }
     }
 
     pub(crate) fn desktop() -> Self {
@@ -124,8 +130,26 @@ impl Notifier {
         true
     }
 
+    /// Sends a notification about a pull request under the same rules: only while the window is
+    /// `away`, at most once per `MIN_GAP_SECS` for each tab and `tone`. Returns whether it was sent.
+    pub(crate) fn offer_pr(
+        &mut self,
+        tab: u64,
+        tone: Tone,
+        notification: Notification,
+        away: bool,
+        now: f64,
+    ) -> bool {
+        if !away || !self.pr_limiter.allow(tab, tone, now) {
+            return false;
+        }
+        (self.send)(notification);
+        true
+    }
+
     pub(crate) fn forget(&mut self, tab: u64) {
         self.limiter.forget(tab);
+        self.pr_limiter.forget(tab);
     }
 }
 
@@ -295,6 +319,29 @@ mod tests {
         assert!(!notifier.offer(1, "t", &working, None, true, 4.0));
         assert!(notifier.offer(2, "u", &needs(), None, true, 5.0));
         assert_eq!(sent.lock().unwrap().len(), 3);
+    }
+
+    #[test]
+    fn a_pull_request_notification_follows_the_same_rules_with_a_limit_of_its_own() {
+        let sent = Arc::new(Mutex::new(Vec::new()));
+        let sink = Arc::clone(&sent);
+        let mut notifier = Notifier::new(move |n| sink.lock().unwrap().push(n.title));
+        let pr = |title: &str| Notification { title: title.into(), body: "b".into() };
+
+        assert!(!notifier.offer_pr(1, Tone::Failed, pr("away only"), false, 0.0));
+        assert!(notifier.offer_pr(1, Tone::Failed, pr("checks failed"), true, 1.0));
+        assert!(!notifier.offer_pr(1, Tone::Failed, pr("again"), true, 2.0));
+        assert!(notifier.offer_pr(1, Tone::Needs, pr("a comment"), true, 3.0));
+        assert!(
+            notifier.offer(1, "t", &needs(), None, true, 4.0),
+            "status changes keep their own gap"
+        );
+        notifier.forget(1);
+        assert!(notifier.offer_pr(1, Tone::Failed, pr("after the tab closed"), true, 5.0));
+        assert_eq!(
+            *sent.lock().unwrap(),
+            ["checks failed", "a comment", "Tidewatch", "after the tab closed"]
+        );
     }
 
     #[test]

@@ -27,6 +27,7 @@ pub(crate) const TEAL_FILL: Color32 = Color32::from_rgb(0x10, 0x20, 0x2a);
 pub(crate) const TEAL_NAV: Color32 = Color32::from_rgb(0x16, 0x25, 0x2b);
 pub(crate) const GREEN: Color32 = Color32::from_rgb(0x8f, 0xd1, 0x6a);
 pub(crate) const ORANGE: Color32 = Color32::from_rgb(0xfb, 0x92, 0x3c);
+pub(crate) const AMBER: Color32 = Color32::from_rgb(0xfb, 0xbf, 0x24);
 pub(crate) const RED: Color32 = Color32::from_rgb(0xf8, 0x71, 0x71);
 pub(crate) const RED_LINE: Color32 = Color32::from_rgb(0x3a, 0x25, 0x30);
 pub(crate) const RED_FILL: Color32 = Color32::from_rgb(0x24, 0x17, 0x1e);

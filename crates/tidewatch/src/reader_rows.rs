@@ -45,6 +45,9 @@ pub(crate) struct Row {
 #[derive(Debug, Default)]
 pub(crate) struct Rows {
     list: VecDeque<Row>,
+    /// Unix milliseconds of the transcript line each row came from, in step with `list`.
+    stamps: VecDeque<Option<i64>>,
+    stamp: Option<i64>,
     next_seq: u64,
     calls: HashMap<String, u64>,
     dropped: usize,
@@ -58,6 +61,7 @@ impl Rows {
     }
 
     pub(crate) fn push(&mut self, entry: Entry) {
+        self.stamp = entry.ts;
         match entry.role {
             Role::User => match note_paste::parse(&entry.text) {
                 Some(review) => {
@@ -77,20 +81,28 @@ impl Rows {
         }
         while self.list.len() > MAX_ROWS {
             self.list.pop_front();
+            self.stamps.pop_front();
             self.dropped += 1;
         }
     }
 
     pub(crate) fn divider(&mut self, text: String) {
+        self.stamp = None;
         self.add(Kind::Divider, text);
         while self.list.len() > MAX_ROWS {
             self.list.pop_front();
+            self.stamps.pop_front();
             self.dropped += 1;
         }
     }
 
     pub(crate) fn iter(&self) -> impl Iterator<Item = &Row> {
         self.list.iter()
+    }
+
+    /// Each row with the time its transcript line was written, when it said.
+    pub(crate) fn stamped(&self) -> impl Iterator<Item = (&Row, Option<i64>)> {
+        self.list.iter().zip(self.stamps.iter().copied())
     }
 
     pub(crate) fn newest_seq(&self) -> Option<u64> {
@@ -110,6 +122,7 @@ impl Rows {
         let seq = self.next_seq;
         self.next_seq += 1;
         self.list.push_back(Row { seq, kind, text });
+        self.stamps.push_back(self.stamp);
         seq
     }
 
@@ -340,6 +353,33 @@ mod tests {
         let kinds: Vec<_> = rows.iter().map(|row| row.kind.clone()).collect();
         assert_eq!(kinds, [Kind::Assistant, Kind::Divider, Kind::Assistant]);
         assert_eq!(rows.iter().nth(1).unwrap().text, "--- Stage 2: Review (gemini, Read only) ---");
+    }
+
+    #[test]
+    fn a_row_remembers_when_its_line_was_written_and_a_divider_does_not() {
+        let mut rows = Rows::default();
+        let entry = |role, ts| Entry { role, text: "x".into(), tool: None, ts };
+        rows.push(entry(Role::User, Some(1_000)));
+        rows.push(entry(Role::Assistant, None));
+        rows.divider("--- Stage 2 ---".into());
+        let stamps: Vec<_> = rows.stamped().map(|(_, at)| at).collect();
+        assert_eq!(stamps, [Some(1_000), None, None]);
+    }
+
+    #[test]
+    fn the_times_are_dropped_with_their_rows() {
+        let mut rows = Rows::default();
+        for n in 0..MAX_ROWS + 3 {
+            rows.push(Entry {
+                role: Role::Assistant,
+                text: n.to_string(),
+                tool: None,
+                ts: Some(n as i64),
+            });
+        }
+        let (row, at) = rows.stamped().next().unwrap();
+        assert_eq!((row.text.as_str(), at), ("3", Some(3)));
+        assert_eq!(rows.stamped().count(), MAX_ROWS);
     }
 
     #[test]

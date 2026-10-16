@@ -4,7 +4,10 @@
 use egui::{Align2, Color32, CornerRadius, FontId, Id, Pos2, Rect, Sense, Ui, pos2, vec2};
 
 use crate::brand;
+use tidewatch_core::pr_status::Tone as PrTone;
+
 use crate::commands::{Command, Platform};
+use crate::pr_strip::tone_ink;
 use crate::screen_kit::{body, mono};
 use crate::status_view::Tone;
 
@@ -195,6 +198,8 @@ pub(crate) struct Bar {
     pub(crate) review: Option<String>,
     pub(crate) note_hint: Option<&'static str>,
     pub(crate) hints: Vec<Hint>,
+    /// The active tab's pull request: `PR #42 checks running`, with the tone of its dot.
+    pub(crate) pr: Option<(PrTone, String)>,
 }
 
 /// Draws the bar. Returns whether the review chip was clicked.
@@ -215,6 +220,12 @@ pub(crate) fn show(ui: &mut Ui, rect: Rect, bar: &Bar) -> bool {
         x += DOT + 6.0;
         let label = format!("{count} {word}");
         x += put(pos2(x, y), Align2::LEFT_CENTER, &label, body(FONT), brand::MUTED) + GAP;
+    }
+    if let Some((tone, text)) = &bar.pr {
+        let ink = tone_ink(*tone);
+        painter.circle_filled(pos2(x + DOT / 2.0, y), DOT / 2.0, ink);
+        x += DOT + 6.0;
+        x += put(pos2(x, y), Align2::LEFT_CENTER, text, body(FONT), brand::MUTED) + GAP;
     }
     if let Some(place) = &bar.place {
         x += put(pos2(x, y), Align2::LEFT_CENTER, place, body(FONT), brand::MUTED) + GAP;
