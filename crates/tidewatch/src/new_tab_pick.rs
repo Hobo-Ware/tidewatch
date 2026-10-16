@@ -1,11 +1,9 @@
 //! Draws the new-tab dialog's agent and workflow lists.
 
 use egui::{
-    Align, Align2, CornerRadius, Layout, Rect, Sense, Shape, Stroke, StrokeKind, Ui, UiBuilder,
-    pos2, vec2,
+    Align, Color32, CornerRadius, Layout, Mesh, Painter, Rect, RichText, Sense, Stroke, StrokeKind,
+    Ui, UiBuilder, epaint::Vertex, pos2, vec2,
 };
-use stdusk_egui::colors;
-use stdusk_egui::widgets::{action_button, text_field};
 use tidewatch_core::agents::{Agent, Level};
 use tidewatch_core::profiles::Profile;
 use tidewatch_core::workflows::Workflow;
@@ -14,14 +12,23 @@ use crate::brand;
 use crate::catalog::{Availability, Catalog};
 use crate::commands::Command;
 use crate::new_tab::{NewTab, level_hint, level_refusal};
-use crate::new_tab_dialog::{DIALOG_W, Outcome, start};
+use crate::new_tab_dialog::Outcome;
+use crate::new_tab_dialog::start;
 use crate::new_tab_workflow;
-use crate::screen_kit::{body, clickable, heading, paint_cli_badge, section_label};
+use crate::notice::key_hint;
+use crate::screen_kit::{
+    body, clickable, heading, paint_cli_badge, primary_button, quiet_button, selection_row,
+};
+use crate::segmented;
+use crate::settings_ui::text_input;
 
 const ROW_H: f32 = 58.0;
-const OPEN_EXTRA: f32 = 78.0;
+const OPEN_EXTRA: f32 = 84.0;
 const LIST_MAX_H: f32 = 470.0;
+const LIST_MIN_H: f32 = 160.0;
+const WINDOW_MARGIN: f32 = 320.0;
 const BADGE: f32 = 30.0;
+const FADE_H: f32 = 28.0;
 
 pub(crate) fn agent(
     ui: &mut Ui,
@@ -29,39 +36,46 @@ pub(crate) fn agent(
     catalog: &Catalog,
     outcome: &mut Option<Outcome>,
 ) {
-    header(ui, state, catalog, "Start an agent", outcome);
-    ui.add_space(16.0);
+    filter_field(ui, state, catalog);
+    ui.add_space(8.0);
     let groups = state.agent_groups(catalog);
     let mut clicked = None;
     let scroll_to = std::mem::take(&mut state.scroll_to_selected);
-    egui::ScrollArea::vertical().max_height(LIST_MAX_H).auto_shrink([false, true]).show(ui, |ui| {
-        let mut index = 0;
-        for (agent_id, ids) in &groups {
-            let Some(agent) = catalog.agent(agent_id) else { continue };
-            group_title(ui, &agent.name, &catalog.availability(agent_id));
-            for id in ids {
-                let Some((profile, agent)) =
-                    catalog.entries().into_iter().find(|(x, _, _)| x == id).map(|(_, p, a)| (p, a))
-                else {
-                    continue;
-                };
-                let selected = index == state.selected();
-                let response = agent_row(ui, state, catalog, profile, agent, selected);
-                if selected && scroll_to {
-                    response.scroll_to_me(None);
+    let list = egui::ScrollArea::vertical()
+        .max_height(list_height(ui))
+        .auto_shrink([false, true])
+        .show(ui, |ui| {
+            let mut index = 0;
+            for (agent_id, ids) in &groups {
+                let Some(agent) = catalog.agent(agent_id) else { continue };
+                group_title(ui, &agent.name, &catalog.availability(agent_id));
+                for id in ids {
+                    let Some((profile, agent)) = catalog
+                        .entries()
+                        .into_iter()
+                        .find(|(x, _, _)| x == id)
+                        .map(|(_, p, a)| (p, a))
+                    else {
+                        continue;
+                    };
+                    let selected = index == state.selected();
+                    let response = agent_row(ui, state, catalog, profile, agent, selected);
+                    if selected && scroll_to {
+                        response.scroll_to_me(None);
+                    }
+                    if response.double_clicked() {
+                        clicked = Some((index, true));
+                    } else if response.clicked() {
+                        clicked = Some((index, false));
+                    }
+                    index += 1;
                 }
-                if response.double_clicked() {
-                    clicked = Some((index, true));
-                } else if response.clicked() {
-                    clicked = Some((index, false));
-                }
-                index += 1;
             }
-        }
-        if groups.is_empty() {
-            empty_list(ui, state, catalog, "profile");
-        }
-    });
+            if groups.is_empty() {
+                empty_list(ui, state, catalog, "profile");
+            }
+        });
+    fade_edges(ui, &list);
     if let Some((index, now)) = clicked {
         state.select(index, catalog);
         if now {
@@ -73,7 +87,7 @@ pub(crate) fn agent(
         state,
         catalog,
         outcome,
-        "Up / Down picks  -  Left / Right changes the level  -  Enter opens the tab",
+        "Up and Down pick  -  Left and Right change the level  -  Enter opens the tab  -  Esc goes back",
     );
 }
 
@@ -83,32 +97,36 @@ pub(crate) fn workflow(
     catalog: &Catalog,
     outcome: &mut Option<Outcome>,
 ) {
-    header(ui, state, catalog, "Start a workflow", outcome);
-    ui.add_space(16.0);
+    filter_field(ui, state, catalog);
+    ui.add_space(8.0);
     let ids = state.workflow_ids(catalog);
     let mut clicked = None;
     let scroll_to = std::mem::take(&mut state.scroll_to_selected);
-    egui::ScrollArea::vertical().max_height(LIST_MAX_H).auto_shrink([false, true]).show(ui, |ui| {
-        ui.spacing_mut().item_spacing.y = 4.0;
-        for (index, id) in ids.iter().enumerate() {
-            let Some(workflow) = catalog.workflows().and_then(|w| w.workflow.get(id)) else {
-                continue;
-            };
-            let selected = index == state.selected();
-            let response = workflow_row(ui, workflow, selected);
-            if selected && scroll_to {
-                response.scroll_to_me(None);
+    let list = egui::ScrollArea::vertical()
+        .max_height(list_height(ui))
+        .auto_shrink([false, true])
+        .show(ui, |ui| {
+            ui.spacing_mut().item_spacing.y = 4.0;
+            for (index, id) in ids.iter().enumerate() {
+                let Some(workflow) = catalog.workflows().and_then(|w| w.workflow.get(id)) else {
+                    continue;
+                };
+                let selected = index == state.selected();
+                let response = workflow_row(ui, workflow, selected);
+                if selected && scroll_to {
+                    response.scroll_to_me(None);
+                }
+                if response.double_clicked() {
+                    clicked = Some((index, true));
+                } else if response.clicked() {
+                    clicked = Some((index, false));
+                }
             }
-            if response.double_clicked() {
-                clicked = Some((index, true));
-            } else if response.clicked() {
-                clicked = Some((index, false));
+            if ids.is_empty() {
+                empty_list(ui, state, catalog, "workflow");
             }
-        }
-        if ids.is_empty() {
-            empty_list(ui, state, catalog, "workflow");
-        }
-    });
+        });
+    fade_edges(ui, &list);
     if let Some((index, now)) = clicked {
         state.select(index, catalog);
         if now {
@@ -120,41 +138,57 @@ pub(crate) fn workflow(
         state,
         catalog,
         outcome,
-        "Up / Down picks  -  Enter opens the tab, you set the task there",
+        "Up and Down pick  -  Enter opens the tab, you set the task there  -  Esc goes back",
     );
 }
 
-fn header(
-    ui: &mut Ui,
-    state: &mut NewTab,
-    catalog: &Catalog,
-    title: &str,
-    outcome: &mut Option<Outcome>,
-) {
-    ui.horizontal(|ui| {
-        ui.spacing_mut().item_spacing.x = 12.0;
-        let (rect, _) = ui.allocate_exact_size(vec2(32.0, 32.0), Sense::hover());
-        let back = clickable(ui, rect, "back").on_hover_text("Back (Esc)");
-        let fill = if back.hovered() { colors::hover() } else { colors::hover_elevated() };
-        ui.painter().rect_filled(rect, 8.0, fill);
-        let c = rect.center();
-        let chevron = vec![c + vec2(3.0, -6.0), c + vec2(-3.0, 0.0), c + vec2(3.0, 6.0)];
-        ui.painter().add(Shape::line(chevron, Stroke::new(1.8, colors::fg())));
-        if back.clicked() && !state.back() {
-            *outcome = Some(Outcome::Cancel);
-        }
-        ui.label(egui::RichText::new(title).font(heading(22.0)).color(colors::fg()));
-        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-            let mut text = state.filter().to_owned();
-            let field = text_field(ui, &mut text, "Filter", 220.0, colors::fg());
-            if !field.has_focus() {
-                field.request_focus();
-            }
-            if field.changed() {
-                state.set_filter(&text, catalog);
-            }
-        });
-    });
+fn list_height(ui: &Ui) -> f32 {
+    LIST_MAX_H.min((ui.ctx().content_rect().height() - WINDOW_MARGIN).max(LIST_MIN_H))
+}
+
+fn filter_field(ui: &mut Ui, state: &mut NewTab, catalog: &Catalog) {
+    let mut text = state.filter().to_owned();
+    let field = text_input(ui, &mut text, "Filter");
+    if !field.has_focus() {
+        field.request_focus();
+    }
+    if field.changed() {
+        state.set_filter(&text, catalog);
+    }
+}
+
+fn fade_edges(ui: &Ui, list: &egui::scroll_area::ScrollAreaOutput<()>) {
+    let view = list.inner_rect;
+    let below = list.content_size.y - list.state.offset.y - view.height() > 1.0;
+    if below {
+        fade(
+            ui.painter(),
+            Rect::from_min_max(pos2(view.left(), view.bottom() - FADE_H), view.max),
+            true,
+        );
+    }
+    if list.state.offset.y > 1.0 {
+        fade(
+            ui.painter(),
+            Rect::from_min_max(view.min, pos2(view.right(), view.top() + FADE_H)),
+            false,
+        );
+    }
+}
+
+fn fade(painter: &Painter, rect: Rect, to_bottom: bool) {
+    let clear = Color32::TRANSPARENT;
+    let (top, bottom) = if to_bottom { (clear, brand::CARD) } else { (brand::CARD, clear) };
+    let vertex = |pos, color| Vertex { pos, uv: egui::epaint::WHITE_UV, color };
+    let mut mesh = Mesh::default();
+    mesh.vertices = vec![
+        vertex(rect.left_top(), top),
+        vertex(rect.right_top(), top),
+        vertex(rect.right_bottom(), bottom),
+        vertex(rect.left_bottom(), bottom),
+    ];
+    mesh.indices = vec![0, 1, 2, 0, 2, 3];
+    painter.add(mesh);
 }
 
 fn group_title(ui: &mut Ui, name: &str, availability: &Availability) {
@@ -165,10 +199,10 @@ fn group_title(ui: &mut Ui, name: &str, availability: &Availability) {
         Availability::Missing => format!("{name}  not found on PATH"),
     };
     ui.add_space(8.0);
-    let color = if *availability == Availability::Missing { brand::ORANGE } else { colors::dim() };
+    let color = if *availability == Availability::Missing { brand::ORANGE } else { brand::MUTED };
     ui.horizontal(|ui| {
         ui.add_space(4.0);
-        section_label(ui, &title, color);
+        ui.label(RichText::new(title).font(heading(12.5)).color(color));
     });
     ui.add_space(4.0);
 }
@@ -179,6 +213,19 @@ fn subline(profile: &Profile) -> String {
         Some(effort) => format!("{model} \u{b7} {effort} effort"),
         None => model.to_owned(),
     }
+}
+
+pub(crate) fn paint_card(painter: &Painter, rect: Rect, selected: bool, hovered: bool) {
+    if !selected {
+        painter.rect(
+            rect,
+            CornerRadius::same(8),
+            brand::ITEM,
+            Stroke::new(1.0, brand::ITEM_LINE),
+            StrokeKind::Inside,
+        );
+    }
+    selection_row(painter, rect, selected, hovered);
 }
 
 fn agent_row(
@@ -195,31 +242,21 @@ fn agent_row(
     let row = Rect::from_min_size(rect.min, vec2(rect.width(), height));
     let response = clickable(ui, row, ("agent-row", &profile.name, &agent.id));
     let painter = ui.painter();
-    if selected {
-        painter.rect(
-            row,
-            12.0,
-            colors::selection(),
-            Stroke::new(1.0, brand::TEAL),
-            StrokeKind::Inside,
-        );
-    } else if response.hovered() {
-        painter.rect_filled(row, 12.0, colors::hover_elevated());
-    }
+    paint_card(painter, row, selected, response.hovered());
     let badge = Rect::from_min_size(pos2(row.left() + 16.0, row.top() + 14.0), vec2(BADGE, BADGE));
     paint_cli_badge(painter, badge, &agent.id);
     let text_x = badge.right() + 12.0;
     painter.text(
         pos2(text_x, row.top() + 16.0),
-        Align2::LEFT_TOP,
+        egui::Align2::LEFT_TOP,
         &profile.name,
         body(16.0),
-        colors::fg(),
+        brand::TEXT,
     );
-    let quiet = if selected { colors::fg().gamma_multiply(0.62) } else { colors::dim() };
+    let quiet = if selected { brand::SOFT } else { brand::MUTED };
     painter.text(
         pos2(text_x, row.top() + 36.0),
-        Align2::LEFT_TOP,
+        egui::Align2::LEFT_TOP,
         subline(profile),
         body(13.0),
         quiet,
@@ -234,13 +271,13 @@ fn agent_row(
 
 fn chip_pill(ui: &Ui, right_center: egui::Pos2, text: &str, active: bool) {
     let painter = ui.painter();
-    let galley = painter.layout_no_wrap(text.to_owned(), body(12.0), colors::fg());
+    let galley = painter.layout_no_wrap(text.to_owned(), body(12.0), brand::TEXT);
     let size = galley.size() + vec2(20.0, 8.0);
     let rect = Rect::from_min_size(right_center - vec2(size.x, size.y / 2.0), size);
     let (fill, ink) = if active {
-        (brand::TEAL.gamma_multiply(0.28), brand::TEAL_TEXT)
+        (brand::TEAL.gamma_multiply(0.18), brand::TEAL_TEXT)
     } else {
-        (colors::hover_elevated(), colors::dim())
+        (brand::SEGMENT, brand::MUTED)
     };
     painter.rect_filled(rect, CornerRadius::same(255), fill);
     painter.galley(rect.center() - galley.size() / 2.0, galley, ink);
@@ -250,81 +287,52 @@ fn ladder(ui: &mut Ui, state: &mut NewTab, catalog: &Catalog, agent: &Agent, row
     let area =
         Rect::from_min_max(pos2(left, row.top() + ROW_H), pos2(row.right() - 16.0, row.bottom()));
     let mut child = ui.new_child(UiBuilder::new().max_rect(area));
-    child.spacing_mut().item_spacing = vec2(6.0, 8.0);
-    let mut picked = None;
-    child.horizontal(|ui| {
-        for level in Level::ALL {
-            let refusal = level_refusal(state.group(), agent, level);
-            let response = level_chip(ui, level, level == state.level(), refusal.is_none());
-            let tip = refusal.clone().unwrap_or_else(|| {
-                let flags = agent.level_args(level).map(|args| args.join(" ")).unwrap_or_default();
-                if flags.is_empty() { "Adds no flag.".to_owned() } else { format!("Adds {flags}") }
-            });
-            let response = response.on_hover_text(tip);
-            if refusal.is_none() && response.clicked() {
-                picked = Some(level);
-            }
-        }
-    });
-    child.label(
-        egui::RichText::new(level_hint(state.level()))
-            .size(13.0)
-            .color(colors::fg().gamma_multiply(0.62)),
+    child.spacing_mut().item_spacing = vec2(6.0, 6.0);
+    let refusals = Level::ALL.map(|level| level_refusal(state.group(), agent, level));
+    let labels = Level::ALL.map(Level::label);
+    let tones = Level::ALL.map(|level| (level == Level::Yolo).then_some(brand::RED));
+    let active = Level::ALL.iter().position(|level| *level == state.level()).unwrap_or(0);
+    let picked = segmented::inline_toned(
+        &mut child,
+        egui::Id::new("new_tab_level"),
+        &labels,
+        &tones,
+        active,
     );
-    if let Some(level) = picked {
-        state.set_level(level, catalog);
+    child.label(RichText::new(level_hint(state.level())).size(13.0).color(brand::SOFT));
+    let note = refusals.iter().flatten().next().cloned().or_else(|| {
+        let flags = agent.level_args(state.level()).map(|args| args.join(" "))?;
+        (!flags.is_empty()).then(|| format!("Adds {flags}"))
+    });
+    if let Some(note) = note {
+        child.label(RichText::new(note).size(12.0).color(brand::MUTED));
     }
-}
-
-fn level_chip(ui: &mut Ui, level: Level, selected: bool, enabled: bool) -> egui::Response {
-    let danger = level == Level::Yolo;
-    let ink = match (selected, danger, enabled) {
-        (true, _, _) => colors::bg(),
-        (false, true, true) => brand::RED,
-        (false, _, true) => colors::fg().gamma_multiply(0.8),
-        (false, _, false) => colors::dim().gamma_multiply(0.6),
-    };
-    let galley = ui.painter().layout_no_wrap(level.label().to_owned(), body(13.0), ink);
-    let (rect, response) = ui.allocate_exact_size(galley.size() + vec2(24.0, 12.0), Sense::click());
-    let painter = ui.painter();
-    if selected {
-        painter.rect_filled(rect, 8.0, if danger { brand::RED } else { brand::TEAL });
-    } else {
-        let edge = if response.hovered() && enabled { colors::dim() } else { colors::border() };
-        painter.rect(rect, 8.0, colors::elevated(), Stroke::new(1.0, edge), StrokeKind::Inside);
+    if let Some(index) = picked
+        && refusals[index].is_none()
+    {
+        state.set_level(Level::ALL[index], catalog);
     }
-    painter.galley(rect.center() - galley.size() / 2.0, galley, ink);
-    response.on_hover_cursor(egui::CursorIcon::PointingHand)
 }
 
 fn workflow_row(ui: &mut Ui, workflow: &Workflow, selected: bool) -> egui::Response {
     let (rect, _) = ui.allocate_exact_size(vec2(ui.available_width(), ROW_H), Sense::hover());
     let response = clickable(ui, rect, ("workflow-row", &workflow.id));
     let painter = ui.painter();
-    if selected {
-        painter.rect(
-            rect,
-            12.0,
-            colors::selection(),
-            Stroke::new(1.0, brand::TEAL),
-            StrokeKind::Inside,
-        );
-    } else if response.hovered() {
-        painter.rect_filled(rect, 12.0, colors::hover_elevated());
-    }
+    paint_card(painter, rect, selected, response.hovered());
     painter.text(
         pos2(rect.left() + 16.0, rect.top() + 14.0),
-        Align2::LEFT_TOP,
+        egui::Align2::LEFT_TOP,
         &workflow.name,
         body(16.0),
-        colors::fg(),
+        brand::TEXT,
     );
+    let description = if selected { brand::SOFT } else { brand::MUTED };
     painter.text(
         pos2(rect.left() + 16.0, rect.top() + 35.0),
-        Align2::LEFT_TOP,
+        egui::Align2::LEFT_TOP,
         &workflow.description,
         body(13.0),
-        colors::dim(),
+        description,
     );
     let tag = new_tab_workflow::tag(workflow);
     chip_pill(ui, pos2(rect.right() - 16.0, rect.center().y), &tag, selected);
@@ -340,7 +348,7 @@ fn empty_list(ui: &mut Ui, state: &NewTab, catalog: &Catalog, noun: &str) {
         format!("No {noun} matches \"{}\".", state.filter())
     };
     ui.add_space(8.0);
-    ui.label(egui::RichText::new(text).size(14.0).color(colors::dim()));
+    ui.label(RichText::new(text).size(14.0).color(brand::MUTED));
 }
 
 fn footer(
@@ -352,34 +360,22 @@ fn footer(
 ) {
     ui.add_space(8.0);
     for warning in state.warnings(catalog) {
-        ui.label(egui::RichText::new(warning).size(12.0).color(brand::ORANGE));
+        ui.label(RichText::new(warning).size(12.0).color(brand::ORANGE));
     }
     if let Some(error) = &state.error {
-        ui.label(egui::RichText::new(error).size(13.0).color(brand::RED));
+        ui.label(RichText::new(error).size(13.0).color(brand::RED));
     }
-    ui.add_space(14.0);
-    ui.separator();
-    ui.add_space(14.0);
+    ui.add_space(10.0);
     ui.horizontal(|ui| {
-        let width = DIALOG_W - 56.0 - 190.0;
-        ui.allocate_ui_with_layout(
-            vec2(width.min(ui.available_width() - 190.0), 20.0),
-            Layout::left_to_right(Align::Center),
-            |ui| {
-                ui.add(
-                    egui::Label::new(egui::RichText::new(hint).size(13.0).color(colors::dim()))
-                        .truncate(),
-                );
-            },
-        );
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-            ui.spacing_mut().item_spacing.x = 10.0;
-            if action_button(ui, "Open tab", true).clicked() {
+            ui.spacing_mut().item_spacing.x = 8.0;
+            if primary_button(ui, "Open tab", true).clicked() {
                 *outcome = start(state, catalog);
             }
-            if action_button(ui, "Back", false).clicked() && !state.back() {
+            if quiet_button(ui, "Back", true).clicked() && !state.back() {
                 *outcome = Some(Outcome::Cancel);
             }
         });
     });
+    key_hint(ui, hint);
 }
