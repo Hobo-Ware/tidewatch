@@ -1,27 +1,75 @@
-//! The text Tidewatch pastes into an agent's terminal to hand it review notes (PLAN.md, D4).
+//! The text Tidewatch pastes into an agent's terminal to hand it review notes (PLAN.md, D4), and
+//! [`parse`], which reads it back from a transcript.
 //!
-//! One compact markdown block per note: `path:line`, the quoted code line, the note text and the note
-//! id, then a closing line that asks for `reply_to_note`. Control characters are stripped, so a note
-//! (a pulled PR comment is someone else's text) can never end the bracketed paste early and type
-//! into the agent.
+//! Control characters are stripped: a pulled PR comment is someone else's text and must never end
+//! the bracketed paste early and type into the agent.
 
 use kelp_core::review::{Side, Thread};
 
 const QUOTE_MAX: usize = 200;
+const REVIEW_PREFIX: &str = "Tidewatch review notes (";
+const MESSAGE_LEAD: &str = "Message with the review: ";
+const NOTE_ID_MARK: &str = "` - note id ";
 
 /// The paste text for `threads`, in the order given. Empty input gives an empty string.
 #[must_use]
 pub fn format(threads: &[&Thread]) -> String {
+    format_review(threads, "")
+}
+
+/// [`format`] with `message` after the header; a blank message adds nothing.
+#[must_use]
+pub fn format_review(threads: &[&Thread], message: &str) -> String {
     if threads.is_empty() {
         return String::new();
     }
-    let mut blocks = vec![format!("Tidewatch review notes ({}). Address each one.", threads.len())];
+    let mut blocks = vec![format!("{REVIEW_PREFIX}{}). Address each one.", threads.len())];
+    let message = message.trim();
+    if !message.is_empty() {
+        blocks.push(format!("{MESSAGE_LEAD}{message}"));
+    }
     blocks.extend(threads.iter().map(|thread| block(thread)));
     blocks.push(
         "When you are done, call the reply_to_note tool for each note id with a short answer."
             .to_owned(),
     );
     clean(&blocks.join("\n\n"))
+}
+
+/// A review read back from the text of a sent paste.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Parsed {
+    /// The ids of the notes in it, in the order they were sent.
+    pub ids: Vec<u64>,
+    pub message: String,
+}
+
+/// `None` unless `text` is the paste of a review: the Reader hides those in favour of a card.
+#[must_use]
+pub fn parse(text: &str) -> Option<Parsed> {
+    if !text.trim_start().starts_with(REVIEW_PREFIX) {
+        return None;
+    }
+    let blocks: Vec<&str> = text.trim_start().split("\n\n").collect();
+    let ids = blocks
+        .iter()
+        .flat_map(|block| block.lines())
+        .filter(|line| line.starts_with('`'))
+        .filter_map(|line| line.rsplit_once(NOTE_ID_MARK)?.1.trim().parse().ok())
+        .collect();
+    let message = blocks
+        .iter()
+        .skip(1)
+        .copied()
+        .take_while(|block| !is_note_block(block))
+        .collect::<Vec<_>>()
+        .join("\n\n");
+    let message = message.strip_prefix(MESSAGE_LEAD).unwrap_or_default().trim().to_owned();
+    Some(Parsed { ids, message })
+}
+
+fn is_note_block(block: &str) -> bool {
+    block.lines().next().is_some_and(|line| line.starts_with('`') && line.contains(NOTE_ID_MARK))
 }
 
 fn block(thread: &Thread) -> String {
@@ -151,5 +199,54 @@ mod tests {
         assert!(!text.contains('\u{7}'));
         assert!(!text.contains('\r'));
         assert!(text.contains("ok[201~rm -rf /\nnext\tcol"));
+    }
+
+    #[test]
+    fn a_message_opens_the_review_and_a_blank_one_adds_nothing() {
+        let t = thread(3, "a.rs", 2, "x", &[("You", "rename")]);
+        let with = format_review(&[&t], "  Start with the auth ones.  ");
+        assert!(with.starts_with(
+            "Tidewatch review notes (1). Address each one.\n\n\
+             Message with the review: Start with the auth ones.\n\n`a.rs:2` - note id 3"
+        ));
+        assert_eq!(format_review(&[&t], "  \n "), format(&[&t]));
+        assert_eq!(format_review(&[], "hello"), "");
+    }
+
+    #[test]
+    fn a_message_cannot_smuggle_control_characters_either() {
+        let t = thread(1, "a.rs", 1, "x", &[("You", "n")]);
+        let text = format_review(&[&t], "ok\u{1b}[201~ next\u{7}");
+        assert!(!text.contains('\u{1b}'));
+        assert!(text.contains("Message with the review: ok[201~ next"));
+    }
+
+    #[test]
+    fn a_sent_review_reads_back_with_its_ids_in_order_and_its_message() {
+        let a =
+            thread(7, "a.rs", 2, "x", &[("You", "first"), ("claude", "done"), ("You", "again")]);
+        let b = thread(2, "src/b.rs", 0, "", &[("You", "second\n\nwith a gap")]);
+        let table = [
+            ("", format(&[&a, &b])),
+            ("Look at b first", format_review(&[&a, &b], "Look at b first")),
+            ("one\n\ntwo", format_review(&[&a, &b], "one\n\ntwo")),
+        ];
+        for (message, text) in table {
+            let parsed = parse(&text).unwrap();
+            assert_eq!(parsed.ids, [7, 2], "{message:?}");
+            assert_eq!(parsed.message, message);
+        }
+    }
+
+    #[test]
+    fn only_the_paste_of_a_review_reads_back() {
+        let t = thread(1, "a.rs", 1, "x", &[("You", "n")]);
+        let pasted = format(&[&t]);
+        assert!(parse(&format!("\n  {pasted}")).is_some());
+        for text in
+            ["", "fix the tests", "Tidewatch review notes", "please see Tidewatch review notes ("]
+        {
+            assert_eq!(parse(text), None, "{text:?}");
+        }
     }
 }
