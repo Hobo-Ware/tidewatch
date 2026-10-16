@@ -266,7 +266,7 @@ impl Tidewatch {
             notifier: Notifier::desktop(),
             overview: dev_view.overview,
             focus: dev_view.focus || focus,
-            side_fraction: layout::SIDE_FRACTION,
+            side_fraction: dev_view.side.unwrap_or(layout::SIDE_FRACTION),
             status_log: dev_view.status_log,
             dev_keys: dev_view.keys,
             dev_reader: DevReader::from_env(),
