@@ -13,12 +13,14 @@ use crate::commands::Command;
 use crate::end_block_view;
 use crate::mascot::{self, Pose};
 use crate::overview::{Counts, Overview, Row, fmt_elapsed};
+use crate::screen_kit::{heading, selection_row};
 use crate::status_view::{self, Tone};
 
 const BUTTON_H: f32 = 30.0;
 const ROW_H: f32 = 42.0;
 const END_LINE_H: f32 = 24.0;
 const SIDE: f32 = 20.0;
+const HEADER_H: f32 = 48.0;
 const GRID_ICON: &str = "\u{E464}";
 const BADGE_H: f32 = 15.0;
 const MASCOT_H: f32 = 120.0;
@@ -76,12 +78,15 @@ fn paint_badge(ui: &egui::Ui, button: Rect, count: usize) {
 
 /// Draws the Overview in `area` and returns the tab the user clicked.
 pub(crate) fn show(ui: &mut egui::Ui, area: Rect, overview: &Overview) -> Option<u64> {
-    ui.painter().rect_filled(area, 0.0, colors::bg());
+    ui.painter().rect_filled(area, 0.0, brand::GROUND);
+    header(ui, area, overview);
     let mut jump = None;
-    let mut content = ui.new_child(egui::UiBuilder::new().max_rect(area.shrink2(vec2(SIDE, 14.0))));
+    let body = Rect::from_min_max(
+        pos2(area.left() + SIDE, area.top() + HEADER_H + 14.0),
+        pos2(area.right() - SIDE, area.bottom() - 14.0),
+    );
+    let mut content = ui.new_child(egui::UiBuilder::new().max_rect(body));
     ScrollArea::vertical().auto_shrink([false, false]).show(&mut content, |ui| {
-        header(ui, overview);
-        ui.add_space(12.0);
         if overview.counts.total() == 0 {
             empty(ui);
             return;
@@ -101,31 +106,25 @@ pub(crate) fn show(ui: &mut egui::Ui, area: Rect, overview: &Overview) -> Option
     jump
 }
 
-fn header(ui: &mut egui::Ui, overview: &Overview) {
-    let (rect, _) = ui.allocate_exact_size(vec2(ui.available_width(), 24.0), Sense::hover());
+fn header(ui: &egui::Ui, area: Rect, overview: &Overview) {
+    let rect = Rect::from_min_size(area.min, vec2(area.width(), HEADER_H));
     let painter = ui.painter_at(rect);
-    painter.text(
-        rect.left_center(),
+    let title = painter.text(
+        pos2(rect.left() + SIDE, rect.center().y),
         Align2::LEFT_CENTER,
         "Overview",
-        FontId::proportional(16.0),
-        colors::fg(),
+        heading(18.0),
+        brand::TEXT,
     );
-    let mut x = rect.left() + 100.0;
+    let mut x = title.right() + 18.0;
     for (text, tone) in summary(overview.counts) {
-        let color = status_view::color(tone).unwrap_or_else(colors::dim);
-        let galley = painter.layout_no_wrap(text, FontId::proportional(12.0), color);
+        let color = status_view::color(tone).unwrap_or(brand::MUTED);
+        let galley = painter.layout_no_wrap(text, FontId::proportional(13.0), color);
         let width = galley.size().x;
-        painter.galley(pos2(x, rect.center().y - galley.size().y / 2.0), galley, color);
-        x += width + 14.0;
+        painter.galley(pos2(x, rect.center().y - galley.size().y / 2.0 + 1.0), galley, color);
+        x += width + 16.0;
     }
-    painter.text(
-        rect.right_center(),
-        Align2::RIGHT_CENTER,
-        Command::Overview.keys(),
-        FontId::monospace(11.0),
-        colors::dim(),
-    );
+    painter.hline(rect.x_range(), rect.bottom(), Stroke::new(1.0, brand::CARD_LINE));
 }
 
 fn summary(counts: Counts) -> Vec<(String, Tone)> {
@@ -158,51 +157,48 @@ fn empty(ui: &mut egui::Ui) {
                 Command::NewTab.keys()
             ))
             .size(13.0)
-            .color(colors::dim()),
+            .color(brand::MUTED),
         );
     });
 }
 
 fn group(ui: &mut egui::Ui, title: &str, path: &str, rows: &[Row], needs: bool) -> Option<u64> {
     let width = ui.available_width();
-    let head_h = 30.0;
+    let head_h = 34.0;
     let height = head_h + rows.iter().map(row_height).sum::<f32>();
     let (rect, _) = ui.allocate_exact_size(vec2(width, height), Sense::hover());
     let painter = ui.painter_at(rect);
-    painter.rect_filled(rect, CornerRadius::same(10), colors::elevated());
-    painter.rect_stroke(
+    painter.rect(
         rect,
-        CornerRadius::same(10),
-        Stroke::new(1.0, colors::border()),
+        CornerRadius::same(12),
+        brand::CARD,
+        Stroke::new(1.0, brand::CARD_LINE),
         StrokeKind::Inside,
     );
-    let title_color = if needs {
-        status_view::color(Tone::Needs).unwrap_or_else(colors::fg)
-    } else {
-        colors::fg()
-    };
-    let galley = painter.layout_no_wrap(title.to_owned(), FontId::proportional(12.5), title_color);
+    let title_color =
+        if needs { status_view::color(Tone::Needs).unwrap_or(brand::TEXT) } else { brand::TEXT };
+    let galley = painter.layout_no_wrap(title.to_owned(), heading(13.0), title_color);
     let title_w = galley.size().x;
     painter.galley(
-        pos2(rect.left() + 12.0, rect.top() + head_h / 2.0 - galley.size().y / 2.0),
+        pos2(rect.left() + 16.0, rect.top() + head_h / 2.0 - galley.size().y / 2.0),
         galley,
         title_color,
     );
     if !path.is_empty() {
         painter.text(
-            pos2(rect.left() + 12.0 + title_w + 10.0, rect.top() + head_h / 2.0),
+            pos2(rect.left() + 16.0 + title_w + 10.0, rect.top() + head_h / 2.0),
             Align2::LEFT_CENTER,
             path,
             FontId::monospace(11.0),
-            colors::dim(),
+            brand::MUTED,
         );
     }
     painter.text(
-        pos2(rect.right() - 12.0, rect.top() + head_h / 2.0),
+        pos2(rect.right() - 16.0, rect.top() + head_h / 2.0),
         Align2::RIGHT_CENTER,
         format!("{} tab{}", rows.len(), if rows.len() == 1 { "" } else { "s" }),
         FontId::proportional(11.5),
-        colors::dim(),
+        brand::MUTED,
     );
     let mut jump = None;
     let mut top = rect.top() + head_h;
@@ -223,29 +219,34 @@ fn row_height(row: &Row) -> f32 {
 fn draw_row(ui: &mut egui::Ui, rect: Rect, row: &Row, in_needs_group: bool) -> bool {
     let resp = ui.interact(rect, ui.id().with(("overview_row", row.tab_id)), Sense::click());
     let painter = ui.painter_at(rect);
-    painter.line_segment([rect.left_top(), rect.right_top()], Stroke::new(1.0, colors::border()));
-    if resp.hovered() {
-        painter.rect_filled(rect.shrink2(vec2(1.0, 0.0)), 0.0, colors::hover_elevated());
-    }
+    painter.hline(
+        (rect.left() + 12.0)..=(rect.right() - 12.0),
+        rect.top(),
+        Stroke::new(1.0, brand::CARD_LINE),
+    );
+    selection_row(&painter, rect.shrink2(vec2(6.0, 2.0)), false, resp.hovered());
     let tone = status_view::tone(&row.status);
-    let accent = status_view::color(tone).unwrap_or_else(colors::dim);
+    let accent = status_view::color(tone).unwrap_or(brand::MUTED);
     let mid = rect.top() + ROW_H / 2.0;
-    painter.circle_filled(pos2(rect.left() + 18.0, mid), 4.5, accent);
+    let bar = Rect::from_min_max(
+        pos2(rect.left() + 8.0, rect.top() + 9.0),
+        pos2(rect.left() + 10.0, rect.top() + ROW_H - 9.0),
+    );
+    painter.rect_filled(bar, CornerRadius::same(1), accent);
+    let title_x = rect.left() + 24.0;
     if let Some(block) = &row.end_block {
         let line = Rect::from_min_max(
-            pos2(rect.left() + 36.0, rect.top() + ROW_H - 4.0),
-            pos2(rect.right() - 12.0, rect.bottom() - 2.0),
+            pos2(title_x, rect.top() + ROW_H - 4.0),
+            pos2(rect.right() - 16.0, rect.bottom() - 2.0),
         );
         end_block_view::paint_line(&painter, line, block);
     }
-
-    let title_x = rect.left() + 36.0;
     painter.text(
         pos2(title_x, mid - 8.0),
         Align2::LEFT_CENTER,
         &row.title,
         FontId::proportional(13.0),
-        colors::fg(),
+        brand::TEXT,
     );
     let what = row.workflow.as_deref().unwrap_or(&row.profile);
     let sub = if in_needs_group { format!("{} - {what}", row.place) } else { what.to_owned() };
@@ -254,10 +255,10 @@ fn draw_row(ui: &mut egui::Ui, rect: Rect, row: &Row, in_needs_group: bool) -> b
         Align2::LEFT_CENTER,
         sub,
         FontId::proportional(11.0),
-        colors::dim(),
+        brand::MUTED,
     );
 
-    let right = rect.right() - 12.0;
+    let right = rect.right() - 16.0;
     let pill_w = 84.0;
     let pill = Rect::from_center_size(pos2(right - pill_w / 2.0, mid), vec2(pill_w, 20.0));
     painter.rect_filled(pill, 10.0, accent.gamma_multiply(0.16));
@@ -274,7 +275,7 @@ fn draw_row(ui: &mut egui::Ui, rect: Rect, row: &Row, in_needs_group: bool) -> b
         Align2::RIGHT_CENTER,
         fmt_elapsed(row.elapsed),
         FontId::monospace(11.0),
-        colors::dim(),
+        brand::MUTED,
     );
     let branch_right = time_right - 70.0;
     let branch_w = 190.0_f32.min((rect.width() * 0.22).max(80.0));
@@ -284,7 +285,7 @@ fn draw_row(ui: &mut egui::Ui, rect: Rect, row: &Row, in_needs_group: bool) -> b
         branch_w,
         &row.branch,
         FontId::monospace(11.0),
-        colors::dim(),
+        brand::MUTED,
     );
     let detail_left = title_x + 200.0;
     let detail_w = (branch_right - branch_w - 16.0 - detail_left).max(0.0);
@@ -292,13 +293,13 @@ fn draw_row(ui: &mut egui::Ui, rect: Rect, row: &Row, in_needs_group: bool) -> b
         && let Some(detail) =
             row.detail.as_deref().and_then(|d| d.lines().find(|l| !l.trim().is_empty()))
     {
-        let color = if tone == Tone::Needs { accent } else { colors::dim() };
+        let color = if tone == Tone::Needs { brand::SOFT } else { brand::MUTED };
         clipped(
             &painter,
             pos2(detail_left, mid),
             detail_w,
             detail.trim(),
-            FontId::monospace(11.5),
+            FontId::proportional(12.0),
             color,
         );
     }
