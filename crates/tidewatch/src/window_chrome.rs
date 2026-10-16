@@ -228,8 +228,8 @@ pub(crate) fn title_bar(ui: &Ui, rect: Rect, desktop: &Desktop) {
     }
 }
 
-/// The desktop's window buttons after a short divider. Each looks like the strip's icon buttons;
-/// close turns red under the pointer.
+/// The desktop's window buttons after a short divider. Each looks like the strip's icon buttons,
+/// fainter while the window is in the background; close turns red under the pointer.
 pub(crate) fn controls(ui: &mut Ui, desktop: &Desktop) {
     let width = desktop.controls_width();
     if width == 0.0 {
@@ -240,6 +240,7 @@ pub(crate) fn controls(ui: &mut Ui, desktop: &Desktop) {
     let x = rect.left() + DIVIDER_W / 2.0;
     let half = DIVIDER_H / 2.0;
     painter.vline(x, rect.center().y - half..=rect.center().y + half, (1.0, brand::SIDEBAR_LINE));
+    let idle = if ui.ctx().input(|i| i.focused) { brand::MUTED } else { brand::FAINT };
     for (i, button) in desktop.row(maximized(ui.ctx())).enumerate() {
         let min = pos2(rect.left() + DIVIDER_W + BUTTON_W * i as f32, rect.top());
         let slot = Rect::from_min_size(min, vec2(BUTTON_W, BUTTON_H));
@@ -248,7 +249,7 @@ pub(crate) fn controls(ui: &mut Ui, desktop: &Desktop) {
         let (fill, ink) = match (button, hovered) {
             (Button::Close, true) => (brand::RED_FILL, brand::RED),
             (_, true) => (brand::BUTTON, brand::TEXT),
-            (_, false) => (egui::Color32::TRANSPARENT, brand::MUTED),
+            (_, false) => (egui::Color32::TRANSPARENT, idle),
         };
         painter.rect_filled(slot, 6.0, fill);
         paint_glyph(painter, slot.center(), button, ink);
