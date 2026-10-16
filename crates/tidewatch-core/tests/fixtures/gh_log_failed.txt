@@ -1,0 +1,45 @@
+check (ubuntu-latest)	UNKNOWN STEP	2026-10-14T23:23:55.9213718Z env:
+check (ubuntu-latest)	UNKNOWN STEP	2026-10-14T23:23:55.9213937Z   CARGO_HOME: /home/runner/.cargo
+check (ubuntu-latest)	UNKNOWN STEP	2026-10-14T23:23:55.9214224Z   CARGO_INCREMENTAL: 0
+check (ubuntu-latest)	UNKNOWN STEP	2026-10-14T23:23:55.9214456Z   CARGO_TERM_COLOR: always
+check (ubuntu-latest)	UNKNOWN STEP	2026-10-14T23:23:55.9214841Z   CACHE_ON_FAILURE: false
+check (ubuntu-latest)	UNKNOWN STEP	2026-10-14T23:23:55.9215071Z ##[endgroup]
+check (ubuntu-latest)	UNKNOWN STEP	2026-10-14T23:23:56.4728372Z ^[[1m^[[92m    Updating^[[0m crates.io index
+check (ubuntu-latest)	UNKNOWN STEP	2026-10-14T23:23:56.5719522Z ^[[1m^[[92m    Updating^[[0m git repository `https://github.com/Hobo-Ware/stdusk`
+check (ubuntu-latest)	UNKNOWN STEP	2026-10-14T23:23:59.9575401Z ^[[1m^[[92m    Checking^[[0m tidewatch-core v0.1.2 (/home/runner/work/tidewatch/tidewatch/crates/tidewatch-core)
+check (ubuntu-latest)	UNKNOWN STEP	2026-10-14T23:23:59.9642199Z ^[[1m^[[92m   Compiling^[[0m stdusk-core v1.9.1 (https://github.com/Hobo-Ware/stdusk?rev=641ceee53a408b5079082cef23d02b26fd7593e6#641ceee5)
+check (ubuntu-latest)	UNKNOWN STEP	2026-10-14T23:24:07.0146633Z ^[[1m^[[92m    Checking^[[0m stdusk-egui v1.9.1 (https://github.com/Hobo-Ware/stdusk?rev=641ceee53a408b5079082cef23d02b26fd7593e6#641ceee5)
+check (ubuntu-latest)	UNKNOWN STEP	2026-10-14T23:24:07.2239095Z ^[[1m^[[92m    Checking^[[0m tidewatch v0.1.2 (/home/runner/work/tidewatch/tidewatch/crates/tidewatch)
+check (ubuntu-latest)	UNKNOWN STEP	2026-10-14T23:24:11.3103684Z ^[[1m^[[91merror^[[0m^[[1m: used `assert!` to check that a value is empty^[[0m
+check (ubuntu-latest)	UNKNOWN STEP	2026-10-14T23:24:11.3104986Z    ^[[1m^[[94m--> ^[[0mcrates/tidewatch/src/handoff/tests.rs:364:5
+check (ubuntu-latest)	UNKNOWN STEP	2026-10-14T23:24:11.3105725Z     ^[[1m^[[94m|^[[0m
+check (ubuntu-latest)	UNKNOWN STEP	2026-10-14T23:24:11.3106397Z ^[[1m^[[94m364^[[0m ^[[1m^[[94m|^[[0m     assert!(rebuilt.notes.is_empty());
+check (ubuntu-latest)	UNKNOWN STEP	2026-10-14T23:24:11.3107292Z     ^[[1m^[[94m|^[[0m     ^[[1m^[[91m^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^[[0m
+check (ubuntu-latest)	UNKNOWN STEP	2026-10-14T23:24:11.3107950Z     ^[[1m^[[94m|^[[0m
+check (ubuntu-latest)	UNKNOWN STEP	2026-10-14T23:24:11.3109146Z     ^[[1m^[[94m= ^[[0m^[[1mhelp^[[0m: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.99.0/index.html#assert_is_empty
+check (ubuntu-latest)	UNKNOWN STEP	2026-10-14T23:24:11.3117956Z     ^[[1m^[[94m= ^[[0m^[[1mnote^[[0m: `-D clippy::assert-is-empty` implied by `-D warnings`
+check (ubuntu-latest)	UNKNOWN STEP	2026-10-14T23:24:11.3119308Z     ^[[1m^[[94m= ^[[0m^[[1mhelp^[[0m: to override `-D warnings` add `#[allow(clippy::assert_is_empty)]`
+check (ubuntu-latest)	UNKNOWN STEP	2026-10-14T23:24:11.3120338Z ^[[1m^[[96mhelp^[[0m: use `assert_eq!` to show the value on failure
+check (ubuntu-latest)	UNKNOWN STEP	2026-10-14T23:24:11.3121012Z     ^[[1m^[[94m|^[[0m
+check (ubuntu-latest)	UNKNOWN STEP	2026-10-14T23:24:11.3121697Z ^[[1m^[[94m364^[[0m ^[[91m- ^[[0m    assert!(^[[91mrebuilt.notes.is_empty()^[[0m);
+check (ubuntu-latest)	UNKNOWN STEP	2026-10-14T23:24:11.3122986Z ^[[1m^[[94m364^[[0m ^[[92m+ ^[[0m    assert^[[92m_eq^[[0m!(^[[92mrebuilt.notes, [] as [std::string::String; 0]^[[0m);
+check (ubuntu-latest)	UNKNOWN STEP	2026-10-14T23:24:11.3123856Z     ^[[1m^[[94m|^[[0m
+check (ubuntu-latest)	UNKNOWN STEP	2026-10-14T23:24:11.3124090Z 
+check (ubuntu-latest)	UNKNOWN STEP	2026-10-14T23:24:12.0296977Z ^[[1m^[[91merror^[[0m: could not compile `tidewatch` (bin "tidewatch" test) due to 1 previous error
+check (ubuntu-latest)	UNKNOWN STEP	2026-10-14T23:24:12.0685964Z ##[error]Process completed with exit code 101.
+check (ubuntu-latest)	UNKNOWN STEP	2026-10-14T23:24:12.0825973Z Post job cleanup.
+check (ubuntu-latest)	UNKNOWN STEP	2026-10-14T23:24:12.1735577Z [command]/usr/bin/git version
+check (ubuntu-latest)	UNKNOWN STEP	2026-10-14T23:24:12.1785099Z git version 2.55.0
+check (ubuntu-latest)	UNKNOWN STEP	2026-10-14T23:24:12.1832262Z Temporarily overriding HOME='/home/runner/work/_temp/e1e60937-a45d-4625-b81b-4e886e690477' before making global git config changes
+check (ubuntu-latest)	UNKNOWN STEP	2026-10-14T23:24:12.1833338Z Adding repository directory to the temporary git global config as a safe directory
+check (ubuntu-latest)	UNKNOWN STEP	2026-10-14T23:24:12.1839194Z [command]/usr/bin/git config --global --add safe.directory /home/runner/work/tidewatch/tidewatch
+check (ubuntu-latest)	UNKNOWN STEP	2026-10-14T23:24:12.1886394Z [command]/usr/bin/git config --local --name-only --get-regexp core\.sshCommand
+check (ubuntu-latest)	UNKNOWN STEP	2026-10-14T23:24:12.1924821Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :"
+check (ubuntu-latest)	UNKNOWN STEP	2026-10-14T23:24:12.2184214Z [command]/usr/bin/git config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+check (ubuntu-latest)	UNKNOWN STEP	2026-10-14T23:24:12.2224129Z http.https://github.com/.extraheader
+check (ubuntu-latest)	UNKNOWN STEP	2026-10-14T23:24:12.2238612Z [command]/usr/bin/git config --local --unset-all http.https://github.com/.extraheader
+check (ubuntu-latest)	UNKNOWN STEP	2026-10-14T23:24:12.2282530Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :"
+check (ubuntu-latest)	UNKNOWN STEP	2026-10-14T23:24:12.2560911Z [command]/usr/bin/git config --local --name-only --get-regexp ^includeIf\.gitdir:
+check (ubuntu-latest)	UNKNOWN STEP	2026-10-14T23:24:12.2607035Z [command]/usr/bin/git submodule foreach --recursive git config --local --show-origin --name-only --get-regexp remote.origin.url
+check (ubuntu-latest)	UNKNOWN STEP	2026-10-14T23:24:12.3021741Z Cleaning up orphan processes
+check (ubuntu-latest)	UNKNOWN STEP	2026-10-14T23:24:12.3350983Z ##[warning]Node.js 20 is deprecated. The following actions target Node.js 20 but are being forced to run on Node.js 24: actions/checkout@v4. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/
