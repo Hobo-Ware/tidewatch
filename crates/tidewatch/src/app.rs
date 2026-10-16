@@ -148,6 +148,7 @@ pub(crate) struct Tidewatch {
     notice: Option<String>,
     updates: Updates,
     shell: Shell<RealOs>,
+    desktop: window_chrome::Desktop,
 }
 
 impl Tidewatch {
@@ -259,6 +260,7 @@ impl Tidewatch {
             restore: restore_glue::Host::new(no_restore, app_crashed, RealDisk::from_env()),
             notice: handoff::notice(&notes, kept_agents, hooks_kept),
             updates,
+            desktop: shell.desktop.clone(),
             shell: shell::start(&cc.egui_ctx, shell),
         };
         for (group, workspace) in app.workspaces.iter().enumerate().filter(|_| !welcome) {

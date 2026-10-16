@@ -14,7 +14,7 @@ use crate::os::{Os, RealOs};
 use crate::quake::{self, Frame, Op, Quake};
 use crate::shell_plan::{Env, Hotkey, Plan};
 use crate::tray::Click;
-use crate::window_chrome::Chrome;
+use crate::window_chrome::{Chrome, Desktop};
 
 pub(crate) const WINDOW_SIZE: [f32; 2] = [1280.0, 800.0];
 
@@ -307,6 +307,8 @@ pub(crate) struct Setup {
     /// The app socket of the window this one takes over from. It is claimed only once that window
     /// has handed its terminals over and is on its way out.
     pub(crate) replacing: Option<PathBuf>,
+    /// The desktop's title bar settings, for the frame Tidewatch draws itself.
+    pub(crate) desktop: Desktop,
 }
 
 impl Setup {

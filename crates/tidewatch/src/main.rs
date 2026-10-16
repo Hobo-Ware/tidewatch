@@ -146,6 +146,7 @@ use tidewatch_core::last_workspace;
 use tidewatch_core::path_env;
 use tidewatch_core::paths::TidewatchPaths;
 use tidewatch_core::prefs::Prefs;
+use window_chrome::Desktop;
 
 fn main() -> eframe::Result<()> {
     let args = cli::parse(std::env::args_os().skip(1));
@@ -227,6 +228,7 @@ fn main() -> eframe::Result<()> {
         instance_dir: paths.as_ref().map(TidewatchPaths::instance_dir),
         primary,
         replacing: socket.filter(|_| replacing),
+        desktop: if env.own_frame { Desktop::read() } else { Desktop::default() },
     };
 
     let mut viewport = egui::ViewportBuilder::default()
