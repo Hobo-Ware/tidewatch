@@ -1,5 +1,5 @@
 <svg xmlns="http://www.w3.org/2000/svg" class="mo" viewBox="0 0 400 440" role="img" aria-label="Tidewatch mascot: Site hero"><style>
-svg.mo *{transform-box:fill-box}
+.mo :is(.blink,.dart,.bob,.breathe,.rise,.cursor,.bub,.peekeye,.peekopen,.tab,.slip,.sweat,.rock,.reach){transform-box:fill-box}
 .mo .blink{transform-origin:center;animation:blink 5.5s infinite}
 .mo .dart{animation:dart 4.6s ease-in-out infinite}
 .mo .bob{animation:bob 3.2s ease-in-out infinite}
