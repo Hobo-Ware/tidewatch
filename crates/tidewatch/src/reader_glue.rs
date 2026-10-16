@@ -15,6 +15,8 @@ use crate::dev_reader::DevReader;
 use crate::flow::Flow;
 use crate::note_send::ENTER_DELAY_SECS;
 use crate::pane::{Body, FirstPrompt, Pane};
+use crate::pr_card_model::CardAction;
+use crate::pr_cards_view::Data as PrData;
 use crate::reader::{Note, Shown};
 use crate::reader_keys;
 use crate::reader_view::{self, Action, Facts, Prompt};
@@ -94,17 +96,31 @@ pub(crate) fn draw(
     dev: &mut DevReader,
     now: f64,
     review: Option<ReviewFacts<'_>>,
+    pr: Option<PrData<'_>>,
 ) -> Vec<Action> {
     let Some(agent) = pane.agent.as_mut() else { return Vec::new() };
     let prompt = prompt_of(agent.run.status()).filter(|_| !agent.reader.prompt_answered());
     let ready = (agent.first_prompt == FirstPrompt::Awaiting)
         .then_some(Ready { profile: &agent.profile_name, agent_id: &agent.run.agent_id });
     let root = pane.worktree.as_ref().map(|worktree| worktree.path.as_path());
-    let facts = Facts { source: agent.reader.source(), prompt, ready, root, review };
+    let facts = Facts { source: agent.reader.source(), prompt, ready, root, review, pr };
     let reader = &mut agent.reader;
     let mut actions = reader_view::show(ui, area, &reader.rows, &mut reader.view, facts);
     actions.extend(dev.actions(now, facts.prompt));
     actions
+}
+
+/// Takes the clicks on pull request cards out of the Reader's actions; the app handles them.
+pub(crate) fn take_pr_clicks(actions: &mut Vec<Action>) -> Vec<CardAction> {
+    let mut clicks = Vec::new();
+    actions.retain(|action| match action {
+        Action::Pr(click) => {
+            clicks.push(click.clone());
+            false
+        }
+        _ => true,
+    });
+    clicks
 }
 
 /// The small note over the terminal that says why it is shown instead of the Reader.
@@ -167,7 +183,7 @@ pub(crate) fn apply(
                     agent.reader.set_wants_reader(false);
                 }
             }
-            Action::Review(_) => {}
+            Action::Review(_) | Action::Pr(_) => {}
         }
     }
     toast

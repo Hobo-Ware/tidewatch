@@ -36,7 +36,9 @@ impl Tidewatch {
                 overview::collect(&workspace.chip_label(), workspace.dir(), group, &self.tabs, now)
             })
             .collect();
-        overview::build(places)
+        let mut overview = overview::build(places);
+        self.add_pr_pills(&mut overview);
+        overview
     }
 
     pub(super) fn toggle_overview(&mut self) {
@@ -179,6 +181,7 @@ impl Tidewatch {
             return;
         }
         self.show_status_line(ui, &mut areas.terminal);
+        self.show_pr_strip(ui, &mut areas.terminal, ctx, active_id);
         let end = self.waiting_end_block();
         let end_band = end.as_ref().map(|(block, open)| {
             layout::band_below(&mut areas.terminal, end_block_view::height(block, *open))

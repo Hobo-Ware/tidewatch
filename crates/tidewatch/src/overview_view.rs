@@ -13,6 +13,7 @@ use crate::commands::Command;
 use crate::end_block_view;
 use crate::mascot::{self, Pose};
 use crate::overview::{Counts, Overview, Row, fmt_elapsed};
+use crate::pr_strip::tone_ink;
 use crate::screen_kit::{heading, selection_row};
 use crate::status_view::{self, Tone};
 
@@ -287,7 +288,18 @@ fn draw_row(ui: &mut egui::Ui, rect: Rect, row: &Row, in_needs_group: bool) -> b
         FontId::monospace(11.0),
         brand::MUTED,
     );
-    let detail_left = title_x + 200.0;
+    let mut detail_left = title_x + 200.0;
+    if let Some((tone, text)) = &row.pr {
+        let ink = tone_ink(*tone);
+        let galley = painter.layout_no_wrap(text.clone(), FontId::proportional(11.0), ink);
+        let pill =
+            Rect::from_min_size(pos2(detail_left, mid - 10.0), vec2(galley.size().x + 20.0, 20.0));
+        if pill.right() < branch_right - branch_w - 16.0 {
+            painter.rect_filled(pill, 10.0, ink.gamma_multiply(0.14));
+            painter.galley(pill.center() - galley.size() / 2.0, galley, ink);
+            detail_left = pill.right() + 12.0;
+        }
+    }
     let detail_w = (branch_right - branch_w - 16.0 - detail_left).max(0.0);
     if detail_w > 20.0
         && let Some(detail) =
@@ -345,6 +357,7 @@ mod tests {
             detail: Some("Bash: touch hello.txt".into()),
             end_block: None,
             elapsed: 242.0,
+            pr: None,
         }
     }
 

@@ -115,6 +115,7 @@ impl Tidewatch {
                 status: self.shell.hotkey_status(),
                 menu_bar_available: self.shell.tray_supported(),
             },
+            github: self.pr.default_prefs(),
         };
         let probes: Probes = self
             .catalog
@@ -193,6 +194,7 @@ impl Tidewatch {
                     updates::save(paths.clone(), prefs);
                 }
             }
+            Some(settings_view::Action::Github(prefs)) => self.set_github_default(prefs),
             Some(settings_view::Action::LoginItem(click)) => self.apply_login_click(click, ctx),
             Some(settings_view::Action::OpenHouseStyle) => self.open_house_style(ctx),
             Some(settings_view::Action::ResetHouseStyle) => self.reset_house_style(ctx),

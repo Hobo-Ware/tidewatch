@@ -24,6 +24,8 @@ pub(crate) struct Row {
     pub(crate) detail: Option<String>,
     pub(crate) end_block: Option<EndBlock>,
     pub(crate) elapsed: f64,
+    /// The tab's pull request: `#42 checks failed`, with its tone.
+    pub(crate) pr: Option<(tidewatch_core::pr_status::Tone, String)>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -132,6 +134,7 @@ pub(crate) fn collect<T>(
                 detail: agent.run.detail().map(str::to_owned),
                 end_block: agent.run.end_block().cloned(),
                 elapsed: agent.run.elapsed(now),
+                pr: None,
             })
         })
         .collect();
@@ -180,6 +183,7 @@ mod tests {
             detail: None,
             end_block: None,
             elapsed: 0.0,
+            pr: None,
         }
     }
 

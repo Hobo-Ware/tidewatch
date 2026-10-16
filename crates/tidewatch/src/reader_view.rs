@@ -20,6 +20,9 @@ use tidewatch_core::transcript::Source;
 
 use crate::agent_ready::{self, COMPOSER_H, Ready};
 use crate::brand;
+use crate::pr_card_model::CardAction;
+use crate::pr_cards_view::{self, Data as PrData, Heights as PrHeights};
+use crate::pr_timeline::{self, Place};
 use crate::reader_keys::{self, Answer};
 use crate::reader_rows::{Kind, Row, Rows, Tool};
 use crate::reader_scroll::{Autoscroll, Heights};
@@ -45,6 +48,7 @@ const OUTPUT_MAX_LINES: usize = 40;
 pub(crate) struct ViewState {
     pub(crate) scroll: Autoscroll,
     pub(crate) heights: Heights,
+    pr_heights: PrHeights,
     cache: CommonMarkCache,
     pub(crate) reply: String,
     review: review_view::CardState,
@@ -59,6 +63,7 @@ impl Default for ViewState {
         Self {
             scroll: Autoscroll::default(),
             heights: Heights::default(),
+            pr_heights: PrHeights::default(),
             cache: CommonMarkCache::default(),
             reply: String::new(),
             review: review_view::CardState::default(),
@@ -90,6 +95,8 @@ pub(crate) struct Facts<'a> {
     pub(crate) root: Option<&'a Path>,
     /// The tab's review: its draft above the chat box and the sent ones in the transcript.
     pub(crate) review: Option<ReviewFacts<'a>>,
+    /// The tab's pull request cards, drawn between the rows by time.
+    pub(crate) pr: Option<PrData<'a>>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -100,6 +107,8 @@ pub(crate) enum Action {
     Answer(Answer),
     SwitchToTerminal,
     Review(ReviewAction),
+    /// A click on a pull request card.
+    Pr(CardAction),
 }
 
 /// The look of an inline item: a card on the window ground.
@@ -194,7 +203,7 @@ pub(crate) fn show(
         }
         return actions;
     }
-    actions.extend(transcript(ui, body, rows, state, facts.root, facts.review.as_ref()));
+    transcript(ui, body, rows, state, (facts.root, facts.pr), facts.review.as_ref(), &mut actions);
     if let Some(prompt) = facts.prompt {
         actions.extend(prompt_strip(ui, strip, prompt, facts.source));
     }
@@ -212,10 +221,10 @@ fn transcript(
     body: Rect,
     rows: &Rows,
     state: &mut ViewState,
-    root: Option<&Path>,
+    (root, pr): (Option<&Path>, Option<PrData<'_>>),
     review: Option<&ReviewFacts<'_>>,
-) -> Vec<Action> {
-    let mut actions = Vec::new();
+    actions: &mut Vec<Action>,
+) {
     if rows.len() == 0 {
         ui.painter().text(
             body.center(),
@@ -224,7 +233,7 @@ fn transcript(
             FontId::proportional(14.0),
             brand::MUTED,
         );
-        return actions;
+        return;
     }
     let pointer = ui.input(|i| i.pointer.interact_pos());
     let scrolled_up =
@@ -236,6 +245,7 @@ fn transcript(
     }
     let width = body.width() - 2.0 * INSET;
     state.heights.for_width(width);
+    state.pr_heights.for_width(width);
     let newest = rows.newest_seq().map_or(0, |seq| seq + 1);
     if newest != state.seen_rows {
         state.seen_rows = newest;
@@ -243,7 +253,7 @@ fn transcript(
     }
     let follow = state.scroll.following();
     let scroll_down = follow && std::mem::take(&mut state.stick_pending);
-    let ViewState { heights, cache, .. } = state;
+    let ViewState { heights, cache, pr_heights, .. } = state;
     let mut body_ui = ui.new_child(UiBuilder::new().max_rect(body));
     let out = ScrollArea::vertical().id_salt("reader-scroll").auto_shrink([false, false]).show(
         &mut body_ui,
@@ -257,22 +267,61 @@ fn transcript(
                 });
             }
             let clip = ui.clip_rect();
-            for row in rows.iter() {
+            let list: Vec<&Row> = rows.iter().collect();
+            let cards = pr.map_or(&[][..], |pr| pr.cards());
+            for place in pr_timeline::places(rows, cards) {
                 let top = ui.next_widget_position().y;
-                let height = heights.height(row);
+                let (key, height) = match place {
+                    Place::Row(index) => (None, heights.height(list[index])),
+                    Place::Card(index) => {
+                        (Some(cards[index].id), pr_heights.height(cards[index].id))
+                    }
+                };
                 if top + height < clip.top() - OVERSCAN || top > clip.bottom() + OVERSCAN {
                     ui.allocate_space(vec2(width, height));
                     continue;
                 }
-                let drawn = ui.horizontal(|ui| {
+                match (place, pr) {
+                    (Place::Row(index), _) => {
+                        let row = list[index];
+                        let drawn = ui.horizontal(|ui| {
+                            ui.add_space(INSET);
+                            ui.vertical(|ui| {
+                                ui.set_width(width);
+                                let asked = draw_row(ui, row, cache, root, review);
+                                actions.extend(asked.into_iter().map(Action::Review));
+                            })
+                        });
+                        heights.record(row.seq, drawn.response.rect.height());
+                    }
+                    (Place::Card(index), Some(pr)) => {
+                        let drawn = ui.horizontal(|ui| {
+                            ui.add_space(INSET);
+                            ui.vertical(|ui| {
+                                ui.set_width(width);
+                                ui.add_space(6.0);
+                                let clicked = pr_cards_view::card(ui, &pr, index);
+                                ui.add_space(6.0);
+                                clicked
+                            })
+                        });
+                        if let Some(id) = key {
+                            pr_heights.record(id, drawn.response.rect.height());
+                        }
+                        actions.extend(drawn.inner.inner.map(Action::Pr));
+                    }
+                    (Place::Card(_), None) => {}
+                }
+            }
+            if let Some(pr) = pr {
+                let tail = ui.horizontal(|ui| {
                     ui.add_space(INSET);
                     ui.vertical(|ui| {
                         ui.set_width(width);
-                        let asked = draw_row(ui, row, cache, root, review);
-                        actions.extend(asked.into_iter().map(Action::Review));
+                        pr_cards_view::tail(ui, &pr)
                     })
                 });
-                heights.record(row.seq, drawn.response.rect.height());
+                actions.extend(tail.inner.inner.map(Action::Pr));
             }
             ui.add_space(12.0);
             if scroll_down {
@@ -299,7 +348,6 @@ fn transcript(
             ui.ctx().request_repaint();
         }
     }
-    actions
 }
 
 fn draw_row(
@@ -753,7 +801,14 @@ mod tests {
                     rect,
                     rows,
                     &mut state,
-                    Facts { source: None, prompt: None, ready: None, root: None, review: None },
+                    Facts {
+                        source: None,
+                        prompt: None,
+                        ready: None,
+                        root: None,
+                        review: None,
+                        pr: None,
+                    },
                 );
             });
             delays.extend(out.viewport_output.values().map(|v| v.repaint_delay));
@@ -804,6 +859,7 @@ mod tests {
                     ready: None,
                     root: None,
                     review: None,
+                    pr: None,
                 };
                 let actions = show(ui, rect, &rows, &mut state, facts);
                 assert_eq!(actions, Vec::<Action>::new());
@@ -873,6 +929,7 @@ mod tests {
                         ready,
                         root: None,
                         review: Some(review),
+                        pr: None,
                     };
                     let rect = ui.max_rect();
                     actions = show(ui, rect, rows, &mut state, facts);
@@ -938,6 +995,7 @@ mod tests {
                     ready: None,
                     root: None,
                     review: Some(review),
+                    pr: None,
                 };
                 let rect = ui.max_rect();
                 show(ui, rect, &rows, &mut state, facts);

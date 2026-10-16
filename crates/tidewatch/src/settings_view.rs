@@ -38,6 +38,8 @@ pub(crate) enum Action {
     Window(tidewatch_core::prefs::WindowPrefs),
     /// An Updates switch moved: the whole table. Applies at once too.
     Updates(tidewatch_core::prefs::UpdatePrefs),
+    /// The GitHub card changed something: all of its choices. Applies at once too.
+    Github(tidewatch_core::prefs::GithubPrefs),
     LoginItem(login_item::Click),
     OpenHouseStyle,
     ResetHouseStyle,
