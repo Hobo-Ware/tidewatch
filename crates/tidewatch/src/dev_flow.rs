@@ -4,8 +4,9 @@
 //!
 //! - `TIDEWATCH_DEV_GH_DIR=<dir>`: look `git` and `gh` up in `<dir>` first, so a fake `gh` script is
 //!   the one that runs and the real GitHub API is never reached.
-//! - `TIDEWATCH_DEV_AUTO=1`: turn "Deliver when idle" on for the newest agent tab.
-//! - `TIDEWATCH_DEV_SEND=one|all`: send the first note, or every unsent one, to the agent.
+//! - `TIDEWATCH_DEV_AUTO=1`: hold the newest agent tab's review until the agent is idle, once its
+//!   notes are loaded; it goes out the moment the agent is Done.
+//! - `TIDEWATCH_DEV_SEND=one|all`: send the first note, or the whole review, to the agent.
 //! - `TIDEWATCH_DEV_DELIVER=open|approve`: open the delivery card's dialog, and with `approve` also
 //!   press Push and open PR.
 //! - `TIDEWATCH_DEV_PR=pull|ask|post`: pull the PR's comments; open the post confirm for the first
@@ -131,7 +132,7 @@ impl DevFlow {
     /// The steps to take now, each at most once and in the order a user would.
     pub(crate) fn steps(&mut self, ready: &Ready) -> Vec<Step> {
         let mut steps = Vec::new();
-        if self.auto {
+        if self.auto && ready.has(Fact::Notes) {
             self.auto = false;
             steps.push(Step::EnableAuto);
         }
@@ -257,9 +258,10 @@ mod tests {
     }
 
     #[test]
-    fn auto_is_switched_on_once() {
+    fn auto_holds_the_review_once_the_notes_are_loaded_and_only_once() {
         let mut flow = DevFlow::parse(None, Some("1"), None, None, None);
-        assert_eq!(flow.steps(&Ready::default()), [Step::EnableAuto]);
         assert_eq!(flow.steps(&Ready::default()), []);
+        assert_eq!(flow.steps(&r(&[Fact::Notes])), [Step::EnableAuto]);
+        assert_eq!(flow.steps(&r(&[Fact::Notes])), []);
     }
 }

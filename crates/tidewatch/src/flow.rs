@@ -15,7 +15,7 @@ use tidewatch_core::tools::Tools;
 use crate::delivery_card::Delivery;
 use crate::flow_jobs::{self, Done, Which};
 use crate::jobs::Jobs;
-use crate::note_send::{AutoDelivery, EnterQueue, Gate, gate, gate_reason};
+use crate::note_send::{AutoDelivery, EnterQueue, ReviewGate, gate, gate_reason, review_gate};
 use crate::notes_strip::{self, NoteRow};
 use crate::post_confirm::{Phase, Plan, PostConfirm};
 use crate::pr_state::{Chip, PrState, Why, repo_of};
@@ -54,7 +54,9 @@ pub(crate) enum Want {
 
 #[derive(Default)]
 pub(crate) struct TabFlow {
+    /// Enabled while a review the user sent waits for the agent to be idle.
     pub(crate) auto: AutoDelivery,
+    held_message: String,
     pub(crate) delivery: Delivery,
     pub(crate) pr: PrState,
     target: Option<TabFacts>,
@@ -86,6 +88,9 @@ pub(crate) fn decide(flow: &mut TabFlow, facts: &TabFacts, now: f64) -> Vec<Want
         flow.lines_loading = true;
         wants.push(Want::LoadPrLines);
     }
+    if facts.pending == 0 {
+        flow.auto.enabled = false;
+    }
     if facts.notes_file.is_some() && flow.auto.should_send(&facts.status, facts.pending, now) {
         flow.auto.begin();
         wants.push(Want::AutoSend);
@@ -104,9 +109,10 @@ pub(crate) struct Flow {
 /// What the Diff pane draws for the active tab beyond the diff itself.
 pub(crate) struct PaneExtras {
     pub(crate) rows: Vec<NoteRow>,
+    /// The notes in the draft review.
     pub(crate) pending: usize,
-    pub(crate) auto: bool,
-    pub(crate) send_all: Result<(), &'static str>,
+    pub(crate) held: bool,
+    pub(crate) send_review: Result<(), &'static str>,
     pub(crate) chip: Option<Chip>,
     pub(crate) pulling: bool,
 }
@@ -199,13 +205,14 @@ impl Flow {
             }
             Want::AutoSend => {
                 if let Some(file) = facts.notes_file.clone() {
+                    let message = self.tabs.get(&tab).map(|t| t.held_message.clone());
                     flow_jobs::send_notes(
                         &self.jobs,
                         ctx,
                         tab,
                         true,
                         file,
-                        Which::AllPending,
+                        Which::Review(message.unwrap_or_default()),
                         facts.agent_id.clone(),
                         unix,
                     );
@@ -214,8 +221,8 @@ impl Flow {
         }
     }
 
-    /// The Send buttons. `which` is one note or every pending one. Returns a toast when the send
-    /// cannot go.
+    /// Sends one note now, or the whole draft review: at once to an idle agent, held until it is
+    /// idle when it is busy. Returns a toast when the send cannot go.
     pub(crate) fn send(
         &mut self,
         tab: u64,
@@ -223,9 +230,18 @@ impl Flow {
         ctx: &egui::Context,
         unix: i64,
     ) -> Option<String> {
-        let state = self.tabs.get(&tab)?;
+        let state = self.tabs.get_mut(&tab)?;
         let facts = state.target.clone()?;
-        if let Some(reason) = gate_reason(gate(Some(&facts.status))) {
+        if let Which::Review(message) = &which {
+            match review_gate(Some(&facts.status)) {
+                ReviewGate::Refused(reason) => return Some(reason.to_owned()),
+                ReviewGate::WhenIdle => {
+                    self.hold_review(tab, message.clone());
+                    return None;
+                }
+                ReviewGate::Now => {}
+            }
+        } else if let Some(reason) = gate_reason(gate(Some(&facts.status))) {
             return Some(reason.to_owned());
         }
         let file = facts.notes_file.clone()?;
@@ -233,9 +249,24 @@ impl Flow {
         None
     }
 
-    pub(crate) fn toggle_auto(&mut self, tab: u64) {
+    /// Holds the tab's review until the agent is idle, then sends it with `message`.
+    pub(crate) fn hold_review(&mut self, tab: u64, message: String) {
         if let Some(state) = self.tabs.get_mut(&tab) {
-            state.auto.enabled = !state.auto.enabled;
+            state.auto.enabled = true;
+            state.held_message = message;
+        }
+    }
+
+    /// Whether the tab's review waits for the agent to be idle.
+    pub(crate) fn review_held(&self, tab: u64) -> bool {
+        self.tabs.get(&tab).is_some_and(|state| state.auto.enabled)
+    }
+
+    /// The user took the held review back: nothing is sent when the agent is idle.
+    pub(crate) fn release_review(&mut self, tab: u64) {
+        if let Some(state) = self.tabs.get_mut(&tab) {
+            state.auto.enabled = false;
+            state.held_message.clear();
         }
     }
 
@@ -325,14 +356,17 @@ impl Flow {
     ) -> Option<PaneExtras> {
         let state = self.tabs.get(&tab)?;
         let agent = state.target.as_ref()?.agent_id.as_str();
-        let gate: Gate = gate(Some(status));
-        let rows = notes_strip::rows(notes, agent, gate, &state.pr);
+        let rows = notes_strip::rows(notes, agent, gate(Some(status)), &state.pr);
         let pending = notes.pending(agent).len();
+        let send_review = match review_gate(Some(status)) {
+            ReviewGate::Refused(reason) => Err(reason),
+            ReviewGate::Now | ReviewGate::WhenIdle => Ok(()),
+        };
         Some(PaneExtras {
             rows,
             pending,
-            auto: state.auto.enabled,
-            send_all: gate_reason(gate).map_or(Ok(()), Err),
+            held: state.auto.enabled,
+            send_review,
             chip: state.pr.chip(),
             pulling: state.pr.pulling,
         })
@@ -448,6 +482,8 @@ impl Flow {
                 let sent = out.text.is_some();
                 if auto {
                     state.auto.finished(sent, now);
+                    state.auto.enabled = false;
+                    state.held_message.clear();
                 } else if sent {
                     state.auto.sent_by_hand(now);
                 }
@@ -465,6 +501,8 @@ impl Flow {
             Err(message) => {
                 if auto {
                     state.auto.finished(false, now);
+                    state.auto.enabled = false;
+                    state.held_message.clear();
                 }
                 outs.push(Out::Toast(format!("Could not send notes: {message}")));
             }
@@ -475,7 +513,7 @@ impl Flow {
 pub(crate) fn sent_text(count: usize, auto: bool) -> String {
     let noun = if count == 1 { "note" } else { "notes" };
     if auto {
-        format!("Agent is idle: sent {count} queued {noun}")
+        format!("Agent is idle: sent your review ({count} {noun})")
     } else {
         format!("Sent {count} {noun} to the agent")
     }
@@ -487,7 +525,7 @@ pub(crate) fn pulled_text(report: MergeReport) -> String {
         (threads, comments) => {
             let t = if threads == 1 { "thread" } else { "threads" };
             let c = if comments == 1 { "comment" } else { "comments" };
-            format!("Pulled {comments} PR {c} ({threads} new {t})")
+            format!("Pulled {comments} PR {c} ({threads} new {t}) into your review")
         }
     }
 }
@@ -627,14 +665,80 @@ mod tests {
         assert!(!decide(&mut off, &f, 0.0).contains(&Want::AutoSend));
     }
 
+    fn flow_of(status: AgentStatus) -> Flow {
+        let mut flow = Flow::new(Tools::default());
+        flow.tabs.insert(7, TabFlow { target: Some(facts(status)), ..TabFlow::default() });
+        flow
+    }
+
+    fn send_review(flow: &mut Flow, message: &str) -> Option<String> {
+        flow.send(7, Which::Review(message.into()), &egui::Context::default(), 1)
+    }
+
+    #[test]
+    fn a_review_sent_to_a_busy_agent_is_held_with_its_message_and_not_pasted() {
+        for status in [
+            AgentStatus::Working,
+            AgentStatus::NeedsYou(Reason::Permission),
+            AgentStatus::NeedsYou(Reason::Quiet),
+        ] {
+            let mut flow = flow_of(status.clone());
+            assert_eq!(send_review(&mut flow, "start with a.rs"), None, "{status:?}");
+            assert!(flow.review_held(7), "{status:?}");
+            assert_eq!(flow.tabs[&7].held_message, "start with a.rs");
+        }
+    }
+
+    #[test]
+    fn a_review_for_no_agent_is_refused_and_a_held_one_can_be_taken_back() {
+        let mut flow = flow_of(AgentStatus::Shell);
+        assert_eq!(
+            send_review(&mut flow, "x").as_deref(),
+            Some("There is no running agent in this tab")
+        );
+        assert!(!flow.review_held(7));
+        let mut busy = flow_of(AgentStatus::Working);
+        send_review(&mut busy, "x");
+        busy.release_review(7);
+        assert!(!busy.review_held(7));
+        assert_eq!(busy.tabs[&7].held_message, "");
+    }
+
+    #[test]
+    fn a_held_review_goes_when_the_agent_is_done_and_is_dropped_when_no_note_is_left() {
+        let mut flow = flow_of(AgentStatus::Working);
+        send_review(&mut flow, "x");
+        let state = flow.tabs.get_mut(&7).unwrap();
+        let mut f = facts(AgentStatus::Working);
+        f.pending = 2;
+        assert!(!decide(state, &f, 0.0).contains(&Want::AutoSend));
+        f.status = AgentStatus::Done;
+        assert!(decide(state, &f, 1.0).contains(&Want::AutoSend));
+        let mut emptied = flow_of(AgentStatus::Working);
+        send_review(&mut emptied, "x");
+        let state = emptied.tabs.get_mut(&7).unwrap();
+        f.pending = 0;
+        decide(state, &f, 2.0);
+        assert!(!state.auto.enabled);
+    }
+
+    #[test]
+    fn a_single_note_still_goes_to_a_working_agent_and_never_to_one_waiting_on_you() {
+        let ctx = egui::Context::default();
+        let mut waiting = flow_of(AgentStatus::NeedsYou(Reason::Permission));
+        assert!(waiting.send(7, Which::One(3), &ctx, 1).is_some());
+        let mut shell = flow_of(AgentStatus::Shell);
+        assert!(shell.send(7, Which::One(3), &ctx, 1).is_some());
+    }
+
     #[test]
     fn the_toasts_count_notes_and_comments() {
         assert_eq!(sent_text(1, false), "Sent 1 note to the agent");
-        assert_eq!(sent_text(3, true), "Agent is idle: sent 3 queued notes");
+        assert_eq!(sent_text(3, true), "Agent is idle: sent your review (3 notes)");
         assert_eq!(pulled_text(MergeReport::default()), "No new PR comments");
         assert_eq!(
             pulled_text(MergeReport { new_threads: 2, new_comments: 3 }),
-            "Pulled 3 PR comments (2 new threads)"
+            "Pulled 3 PR comments (2 new threads) into your review"
         );
     }
 }

@@ -21,7 +21,7 @@ use crate::history_pane;
 use crate::layout::{CARD_MARGIN, CHROME_H};
 use crate::screen_kit::{body, mono};
 use crate::tab_view::TabView;
-use crate::{file_nav, notes_strip, segmented};
+use crate::{file_nav, notes_strip, review, segmented};
 
 pub(crate) const BUTTON_H: f32 = 26.0;
 const BUTTON_RADIUS: u8 = 7;
@@ -307,32 +307,35 @@ fn file_arrows(ui: &mut Ui, right: f32, center_y: f32, view: &mut TabView) -> f3
     prev.left()
 }
 
-/// The note buttons in priority order: Send all open when something is waiting, Deliver when idle,
-/// the PR chip and Pull PR comments.
+/// The note buttons in priority order: Send review and the Review chip when notes are waiting, the
+/// PR chip and Pull PR comments.
 fn note_pills(extras: &PaneExtras) -> Vec<Pill> {
     let mut pills = Vec::with_capacity(4);
     if extras.pending > 0 {
-        let (enabled, tip) = match extras.send_all {
-            Ok(()) => (true, "Paste every unsent open note into the agent's terminal"),
+        let (enabled, tip) = match extras.send_review {
+            Ok(()) if extras.held => {
+                (true, "The review is held and goes the moment the agent is idle")
+            }
+            Ok(()) => (true, "Send your review to the agent, now or the moment it is idle"),
             Err(reason) => (false, reason),
         };
         pills.push(Pill {
-            action: PaneAction::SendAll,
-            label: format!("Send all ({})", extras.pending),
+            action: PaneAction::SendReview,
+            label: format!("Send review ({})", extras.pending),
             look: Look::Primary,
             ink: None,
             enabled,
             tip: tip.to_owned(),
         });
+        pills.push(Pill {
+            action: PaneAction::OpenReview,
+            label: review::chip_text(extras.pending),
+            look: Look::On,
+            ink: None,
+            enabled: true,
+            tip: "Open your review above the agent's chat box".to_owned(),
+        });
     }
-    pills.push(Pill {
-        action: PaneAction::ToggleAuto,
-        label: "Deliver when idle".to_owned(),
-        look: if extras.auto { Look::On } else { Look::Plain },
-        ink: None,
-        enabled: true,
-        tip: "Send queued notes by themselves when the agent is done (never while it works or waits on you)".to_owned(),
-    });
     if let Some(chip) = &extras.chip {
         pills.push(Pill {
             action: PaneAction::OpenUrl(chip.url.clone()),
