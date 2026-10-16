@@ -3,15 +3,20 @@
 //! segments say is plain data; the painters only draw it.
 
 use crate::brand;
-use egui::{Align2, Color32, FontId, Painter, Rect, Sense, Stroke, StrokeKind, Ui, pos2, vec2};
-use stdusk_egui::colors;
+use crate::reader_view::{INSET, paint_item};
+use crate::screen_kit::{body, mono};
+use egui::epaint::text::{LayoutJob, TextFormat, TextWrapping};
+use egui::{Align2, Color32, CornerRadius, Painter, Rect, Sense, Ui, pos2, vec2};
 use tidewatch_core::end_block::EndBlock;
 
 pub(crate) const BAND_H: f32 = 40.0;
 const LINE_H: f32 = 18.0;
-const HEAD_H: f32 = 30.0;
+const HEAD_H: f32 = 34.0;
 const MAX_ITEMS: usize = 6;
 const SEGMENT_GAP: f32 = 18.0;
+const PILL_H: f32 = 17.0;
+const PILL_PAD: f32 = 8.0;
+const CARD_PAD: f32 = 12.0;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Section {
@@ -59,7 +64,7 @@ pub(crate) fn segments(block: &EndBlock) -> [Segment; 3] {
 fn tone(segment: &Segment) -> Color32 {
     match segment.section {
         Section::Done => brand::DONE,
-        Section::NeedsYou if segment.items.is_empty() => colors::dim(),
+        Section::NeedsYou if segment.items.is_empty() => brand::MUTED,
         Section::NeedsYou => brand::NEEDS,
         Section::Next => brand::TEAL_TEXT,
     }
@@ -77,60 +82,73 @@ pub(crate) fn height(block: &EndBlock, expanded: bool) -> f32 {
 
 /// Draws the card in `rect` and returns true when it was clicked (open or close it).
 pub(crate) fn show_card(ui: &mut Ui, rect: Rect, block: &EndBlock, expanded: bool) -> bool {
-    let card = rect.shrink2(vec2(10.0, 4.0));
+    let card = rect.shrink2(vec2(INSET, 4.0));
     let response = ui.interact(card, ui.id().with("end-block"), Sense::click());
-    let fill = if response.hovered() { colors::hover_elevated() } else { colors::elevated() };
-    ui.painter().rect_filled(card, 8.0, fill);
-    ui.painter().rect_stroke(card, 8.0, Stroke::new(1.0, colors::border()), StrokeKind::Inside);
+    paint_item(ui.painter(), card, response.hovered());
     let painter = ui.painter_at(card);
     let parts = segments(block);
     if expanded {
-        let column_w = (card.width() - 24.0) / 3.0;
+        let column_w = (card.width() - 2.0 * CARD_PAD) / 3.0;
         for (i, segment) in parts.iter().enumerate() {
-            let x = card.left() + 12.0 + column_w * i as f32;
+            let x = card.left() + CARD_PAD + column_w * i as f32;
             let column =
                 Rect::from_min_size(pos2(x, card.top()), vec2(column_w - 8.0, card.height()));
             paint_column(&painter, column, segment);
         }
     } else {
-        paint_line(&painter, card.shrink2(vec2(12.0, 0.0)), block);
+        paint_line(&painter, card.shrink2(vec2(CARD_PAD, 0.0)), block);
     }
     let tip = if expanded { "Click to collapse" } else { "Click to expand the agent's summary" };
     response.on_hover_cursor(egui::CursorIcon::PointingHand).on_hover_text(tip).clicked()
 }
 
-fn paint_column(painter: &Painter, column: Rect, segment: &Segment) {
+/// Draws a segment's label as a tinted pill at `x`, centered on `y`; returns its right edge.
+fn paint_pill(painter: &Painter, x: f32, y: f32, segment: &Segment) -> f32 {
     let ink = tone(segment);
-    painter.text(
-        pos2(column.left(), column.top() + HEAD_H / 2.0 + 2.0),
-        Align2::LEFT_CENTER,
-        segment.label,
-        FontId::proportional(12.5),
-        ink,
+    let galley = painter.layout_no_wrap(segment.label.to_owned(), body(11.5), ink);
+    let rect = Rect::from_min_size(
+        pos2(x, y - PILL_H / 2.0),
+        vec2(galley.size().x + 2.0 * PILL_PAD, PILL_H),
     );
-    let clip = painter.with_clip_rect(column.intersect(painter.clip_rect()));
+    painter.rect_filled(rect, CornerRadius::same(5), ink.gamma_multiply(0.14));
+    painter.galley(rect.center() - galley.size() / 2.0, galley, ink);
+    rect.right()
+}
+
+/// The text of a summary item with its code spans in mono, cut with an ellipsis at `max_w`.
+fn paint_text(painter: &Painter, at: egui::Pos2, text: &str, size: f32, ink: Color32, max_w: f32) {
+    let mut job = LayoutJob::default();
+    for (span, code) in spans(text) {
+        let (font, ink) = if code { (mono(size - 0.5), brand::SOFT) } else { (body(size), ink) };
+        job.append(&span, 0.0, TextFormat::simple(font, ink));
+    }
+    job.wrap = TextWrapping::truncate_at_width(max_w.max(1.0));
+    let galley = painter.layout_job(job);
+    painter.galley(pos2(at.x, at.y - galley.size().y / 2.0), galley, ink);
+}
+
+/// Splits `text` at its backticks into spans, each flagged as code; the markers and bold go.
+pub(crate) fn spans(text: &str) -> Vec<(String, bool)> {
+    let text = text.replace("**", "");
+    text.split('`')
+        .enumerate()
+        .filter(|(_, span)| !span.is_empty())
+        .map(|(i, span)| (span.to_owned(), i % 2 == 1))
+        .collect()
+}
+
+fn paint_column(painter: &Painter, column: Rect, segment: &Segment) {
+    paint_pill(painter, column.left(), column.top() + HEAD_H / 2.0 + 1.0, segment);
     let shown =
         if segment.items.is_empty() { vec![segment.text.clone()] } else { segment.items.clone() };
     for (i, item) in shown.iter().take(MAX_ITEMS).enumerate() {
         let y = column.top() + HEAD_H + LINE_H * i as f32 + LINE_H / 2.0;
-        clip.text(
-            pos2(column.left(), y),
-            Align2::LEFT_CENTER,
-            item,
-            FontId::proportional(12.0),
-            colors::fg(),
-        );
+        paint_text(painter, pos2(column.left(), y), item, 12.0, brand::TEXT, column.width());
     }
     if shown.len() > MAX_ITEMS {
         let y = column.top() + HEAD_H + LINE_H * MAX_ITEMS as f32 + LINE_H / 2.0;
         let more = format!("+{} more", shown.len() - MAX_ITEMS);
-        clip.text(
-            pos2(column.left(), y),
-            Align2::LEFT_CENTER,
-            more,
-            FontId::proportional(11.5),
-            colors::dim(),
-        );
+        painter.text(pos2(column.left(), y), Align2::LEFT_CENTER, more, body(11.5), brand::MUTED);
     }
 }
 
@@ -140,21 +158,15 @@ pub(crate) fn paint_line(painter: &Painter, rect: Rect, block: &EndBlock) {
     let share = (rect.width() - SEGMENT_GAP * 2.0) / 3.0;
     for (i, segment) in parts.iter().enumerate() {
         let x = rect.left() + (share + SEGMENT_GAP) * i as f32;
-        let slot = Rect::from_min_size(pos2(x, rect.top()), vec2(share, rect.height()));
-        let clip = painter.with_clip_rect(slot.intersect(painter.clip_rect()));
-        let label = clip.text(
-            pos2(x, rect.center().y),
-            Align2::LEFT_CENTER,
-            segment.label,
-            FontId::proportional(12.0),
-            tone(segment),
-        );
-        clip.text(
-            pos2(label.right() + 6.0, rect.center().y),
-            Align2::LEFT_CENTER,
+        let right = paint_pill(painter, x, rect.center().y, segment);
+        let room = x + share - right - 6.0;
+        paint_text(
+            painter,
+            pos2(right + 6.0, rect.center().y),
             &segment.text,
-            FontId::proportional(12.0),
-            colors::fg(),
+            12.0,
+            brand::TEXT,
+            room,
         );
     }
 }
@@ -213,6 +225,22 @@ mod tests {
         let ctx = egui::Context::default();
         let _ = ctx.run_ui(egui::RawInput::default(), |_| {});
         assert!(!click(&ctx, &b, pos2(400.0, 20.0)));
+    }
+
+    #[test]
+    fn code_spans_keep_their_text_and_lose_their_markers() {
+        assert_eq!(
+            spans("added `expiry()` in `src/auth.rs:12`"),
+            [
+                ("added ".to_owned(), false),
+                ("expiry()".to_owned(), true),
+                (" in ".to_owned(), false),
+                ("src/auth.rs:12".to_owned(), true),
+            ]
+        );
+        assert_eq!(spans("**Done** it"), [("Done it".to_owned(), false)]);
+        assert_eq!(spans("`only`"), [("only".to_owned(), true)]);
+        assert_eq!(spans(""), Vec::<(String, bool)>::new());
     }
 
     #[test]
