@@ -100,6 +100,21 @@ impl SendState {
     }
 }
 
+/// What the Reader needs to know about the tab's review.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct ReviewFacts<'a> {
+    pub(crate) draft: &'a Draft,
+    pub(crate) send: SendState,
+    pub(crate) notes: &'a Notes,
+    /// The id the agent signs its replies with.
+    pub(crate) agent_id: &'a str,
+    /// What the agent is called to the user.
+    pub(crate) profile: &'a str,
+    pub(crate) working: bool,
+    /// No dialog is over the window, so the card may take Cmd+Enter.
+    pub(crate) keys_free: bool,
+}
+
 /// The chip in the file view's header and the status bar: `Review: 3 notes`.
 pub(crate) fn chip_text(count: usize) -> String {
     format!("Review: {}", plural(count, "note"))

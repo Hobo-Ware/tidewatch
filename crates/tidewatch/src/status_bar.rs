@@ -1,7 +1,7 @@
 //! The status bar along the bottom of the window: how many agents work and need you, where this
 //! agent tab stands, and the keys that matter on the screen. The logic is pure; `show` only draws.
 
-use egui::{Align2, Color32, FontId, Pos2, Rect, Ui, pos2};
+use egui::{Align2, Color32, CornerRadius, FontId, Id, Pos2, Rect, Sense, Ui, pos2, vec2};
 
 use crate::brand;
 use crate::commands::{Command, Platform};
@@ -14,6 +14,8 @@ const GAP: f32 = 18.0;
 const DOT: f32 = 7.0;
 const FONT: f32 = 12.0;
 const MOST_HINTS: usize = 4;
+const CHIP_H: f32 = 20.0;
+const CHIP_PAD: f32 = 9.0;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) struct Counts {
@@ -189,11 +191,15 @@ pub(crate) fn hints(screen: Screen, platform: Platform) -> Vec<Hint> {
 pub(crate) struct Bar {
     pub(crate) counts: Counts,
     pub(crate) place: Option<String>,
+    /// `Review: 3 notes` while the tab has a draft review.
+    pub(crate) review: Option<String>,
     pub(crate) note_hint: Option<&'static str>,
     pub(crate) hints: Vec<Hint>,
 }
 
-pub(crate) fn show(ui: &mut Ui, rect: Rect, bar: &Bar) {
+/// Draws the bar. Returns whether the review chip was clicked.
+pub(crate) fn show(ui: &mut Ui, rect: Rect, bar: &Bar) -> bool {
+    let mut open_review = false;
     let painter = ui.painter();
     let y = rect.center().y;
     let put = |at: Pos2, anchor: Align2, text: &str, font: FontId, color: Color32| {
@@ -213,6 +219,22 @@ pub(crate) fn show(ui: &mut Ui, rect: Rect, bar: &Bar) {
     if let Some(place) = &bar.place {
         x += put(pos2(x, y), Align2::LEFT_CENTER, place, body(FONT), brand::MUTED) + GAP;
     }
+    if let Some(review) = &bar.review {
+        let galley = ui.painter().layout_no_wrap(review.clone(), body(FONT), brand::TEAL_TEXT);
+        let chip = Rect::from_min_size(
+            pos2(x, y - CHIP_H / 2.0),
+            vec2(galley.size().x + 2.0 * CHIP_PAD, CHIP_H),
+        );
+        let response = ui.interact(chip, Id::new("status-bar-review"), Sense::click());
+        let fill = brand::TEAL.gamma_multiply(if response.hovered() { 0.2 } else { 0.1 });
+        ui.painter().rect_filled(chip, CornerRadius::same(255), fill);
+        ui.painter().galley(chip.center() - galley.size() / 2.0, galley, brand::TEAL_TEXT);
+        open_review = response
+            .on_hover_cursor(egui::CursorIcon::PointingHand)
+            .on_hover_text("Open your review above the agent's chat box")
+            .clicked();
+        x += chip.width() + GAP;
+    }
     if let Some(hint) = bar.note_hint {
         put(pos2(x, y), Align2::LEFT_CENTER, hint, body(FONT), brand::MUTED);
     }
@@ -223,6 +245,7 @@ pub(crate) fn show(ui: &mut Ui, rect: Rect, bar: &Bar) {
         right -= put(pos2(right, y), Align2::RIGHT_CENTER, &hint.keys, mono(FONT), brand::SOFT);
         right -= GAP;
     }
+    open_review
 }
 
 #[cfg(test)]

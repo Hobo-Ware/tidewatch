@@ -8,7 +8,7 @@ use kelp_ui::theme as kelp_theme;
 
 use super::Tidewatch;
 use crate::checkout::{self, Plan};
-use crate::diff_pane::PaneOut;
+use crate::diff_pane::{PaneAction, PaneOut};
 use crate::file_view::{self, TerminalChip};
 use crate::repo::Workspace;
 use crate::tab_view::ViewSpec;
@@ -76,7 +76,7 @@ impl Tidewatch {
         }
     }
 
-    fn save_notes(&self, view_id: u64) {
+    pub(super) fn save_notes(&self, view_id: u64) {
         let Some(view) = self.views.get(&view_id) else { return };
         if let Some(file) = view.notes_file() {
             self.notes_writer.save(file.clone(), view.notes.clone());
@@ -123,6 +123,7 @@ impl Tidewatch {
             view.back_to_terminal();
         }
         let notes_changed = pane.notes_changed;
+        let open_review = pane.actions.contains(&PaneAction::OpenReview);
         let toasts = flow_glue::pane_actions(&mut self.flow, view, active_id, pane.actions, ctx);
         let mut clicked_ref = None;
         match graph_action {
@@ -140,6 +141,9 @@ impl Tidewatch {
         view.sync(&self.pane_jobs, ctx);
         for text in toasts {
             self.show_toast(text, ctx);
+        }
+        if open_review {
+            self.open_review();
         }
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)

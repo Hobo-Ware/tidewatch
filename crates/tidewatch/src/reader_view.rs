@@ -23,6 +23,8 @@ use crate::brand;
 use crate::reader_keys::{self, Answer};
 use crate::reader_rows::{Kind, Row, Rows, Tool};
 use crate::reader_scroll::{Autoscroll, Heights};
+use crate::review::ReviewFacts;
+use crate::review_view::{self, ReviewAction};
 use crate::screen_kit::{body, mono, primary_button, quiet_button};
 
 /// The side inset every inline item of the left column keeps.
@@ -44,6 +46,7 @@ pub(crate) struct ViewState {
     pub(crate) heights: Heights,
     cache: CommonMarkCache,
     pub(crate) reply: String,
+    review: review_view::CardState,
     focus_reply: bool,
     content_h: f32,
     seen_rows: u64,
@@ -57,6 +60,7 @@ impl Default for ViewState {
             heights: Heights::default(),
             cache: CommonMarkCache::default(),
             reply: String::new(),
+            review: review_view::CardState::default(),
             focus_reply: true,
             content_h: 0.0,
             seen_rows: 0,
@@ -83,6 +87,8 @@ pub(crate) struct Facts<'a> {
     pub(crate) ready: Option<Ready<'a>>,
     /// The folder the agent works in: tool lines show paths relative to it.
     pub(crate) root: Option<&'a Path>,
+    /// The tab's review: its draft above the chat box and the sent ones in the transcript.
+    pub(crate) review: Option<ReviewFacts<'a>>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -92,6 +98,7 @@ pub(crate) enum Action {
     /// Type the keys of this answer into the agent's prompt.
     Answer(Answer),
     SwitchToTerminal,
+    Review(ReviewAction),
 }
 
 /// The look of an inline item: a card on the window ground.
@@ -160,11 +167,23 @@ pub(crate) fn show(
     let composing = facts.ready.filter(|_| rows.len() == 0 && facts.prompt.is_none());
     let input_h = if composing.is_some() { COMPOSER_H } else { INPUT_H };
     let input = Rect::from_min_max(pos2(rect.left(), rect.bottom() - input_h), rect.max);
-    let strip = Rect::from_min_max(
-        pos2(rect.left(), input.top() - strip_h),
+    let review_h = facts
+        .review
+        .as_ref()
+        .map_or(0.0, |review| review_view::height(review.draft, rect.height() - input_h - strip_h));
+    let review_band = Rect::from_min_max(
+        pos2(rect.left(), input.top() - review_h),
         pos2(rect.right(), input.top()),
     );
+    let strip = Rect::from_min_max(
+        pos2(rect.left(), review_band.top() - strip_h),
+        pos2(rect.right(), review_band.top()),
+    );
     let body = Rect::from_min_max(rect.min, pos2(rect.right(), strip.top()));
+    if let Some(review) = facts.review.as_ref().filter(|_| review_h > 0.0) {
+        let asked = review_view::show(ui, review_band, &mut state.review, review);
+        actions.extend(asked.into_iter().map(Action::Review));
+    }
     if let Some(ready) = composing {
         agent_ready::empty_state(ui, body, ready);
         if let Some(text) =
@@ -715,7 +734,7 @@ mod tests {
                     rect,
                     rows,
                     &mut state,
-                    Facts { source: None, prompt: None, ready: None, root: None },
+                    Facts { source: None, prompt: None, ready: None, root: None, review: None },
                 );
             });
             delays.extend(out.viewport_output.values().map(|v| v.repaint_delay));
@@ -765,11 +784,87 @@ mod tests {
                     prompt: Some(Prompt::Permission),
                     ready: None,
                     root: None,
+                    review: None,
                 };
                 let actions = show(ui, rect, &rows, &mut state, facts);
                 assert_eq!(actions, Vec::<Action>::new());
             });
         }
         assert_eq!(state.heights.measured_count(), 3);
+    }
+
+    fn cmd_enter() -> egui::Event {
+        egui::Event::Key {
+            key: Key::Enter,
+            physical_key: Some(Key::Enter),
+            pressed: true,
+            repeat: false,
+            modifiers: egui::Modifiers::COMMAND,
+        }
+    }
+
+    #[test]
+    fn the_review_card_sits_above_the_reply_box_and_the_composer_and_command_enter_sends_it() {
+        use kelp_core::review::{Anchor, Comment, Side};
+        use tidewatch_core::notes::Notes;
+        use tidewatch_core::transcript::{Entry, Role};
+
+        let mut notes = Notes::default();
+        let anchor = Anchor {
+            side: Side::New,
+            line_hint: 4,
+            text: "x".into(),
+            before: vec![],
+            after: vec![],
+        };
+        notes.add("a.rs", None, anchor, Comment { author: "v".into(), time: 1, body: "n".into() });
+        let draft = crate::review::Draft::of(&notes, "claude", "v");
+        let mut populated = Rows::default();
+        populated.push(Entry { role: Role::User, text: "hi".into(), tool: None, ts: None });
+        let cases = [
+            (&populated, None),
+            (&Rows::default(), Some(Ready { profile: "Builder", agent_id: "claude" })),
+        ];
+        for (rows, ready) in cases {
+            let ctx = egui::Context::default();
+            crate::fonts::install(&ctx);
+            let mut state = ViewState::default();
+            state.review.message = "go".into();
+            let mut run = |events: Vec<egui::Event>| {
+                let raw = RawInput {
+                    screen_rect: Some(Rect::from_min_size(pos2(0.0, 0.0), vec2(800.0, 600.0))),
+                    events,
+                    focused: true,
+                    ..RawInput::default()
+                };
+                let mut actions = Vec::new();
+                let _ = ctx.run_ui(raw, |ui| {
+                    let review = ReviewFacts {
+                        draft: &draft,
+                        send: crate::review::SendState::Ready,
+                        notes: &notes,
+                        agent_id: "claude",
+                        profile: "Builder",
+                        working: false,
+                        keys_free: true,
+                    };
+                    let facts = Facts {
+                        source: None,
+                        prompt: None,
+                        ready,
+                        root: None,
+                        review: Some(review),
+                    };
+                    let rect = ui.max_rect();
+                    actions = show(ui, rect, rows, &mut state, facts);
+                });
+                actions
+            };
+            run(vec![]);
+            run(vec![]);
+            let sent = run(vec![cmd_enter()]);
+            assert_eq!(sent, vec![Action::Review(ReviewAction::Send("go".into()))]);
+            assert_eq!(run(vec![]), vec![]);
+        }
     }
 }

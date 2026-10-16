@@ -10,6 +10,7 @@ use crate::commands::Command;
 use crate::mascot::{self, Pose};
 use crate::pane::{Body, Pane};
 use crate::reader::Shown;
+use crate::reader_view::Action;
 use crate::screen_kit::paint_pill_card;
 use crate::{layout, reader_glue};
 
@@ -106,16 +107,32 @@ impl Tidewatch {
         ctx: &egui::Context,
         now: f64,
         active_id: u64,
+        keys_free: bool,
     ) {
         match shown {
             Some(Shown::Reader) => {
+                let parts = self.review_parts(active_id);
+                let notes = self.views.get(&active_id).map(|view| &view.notes);
+                let review =
+                    parts.as_ref().zip(notes).map(|(parts, notes)| parts.facts(notes, keys_free));
                 let pane = self.tabs.active_pane_mut();
-                let asked = reader_glue::draw(ui, terminal, pane, &mut self.dev_reader, now);
+                let asked =
+                    reader_glue::draw(ui, terminal, pane, &mut self.dev_reader, now, review);
+                let (reviews, asked): (Vec<_>, Vec<_>) =
+                    asked.into_iter().partition(|action| matches!(action, Action::Review(_)));
                 let toast =
                     reader_glue::apply(asked, &mut self.tabs, active_id, &mut self.flow, ctx, now);
                 if let Some(text) = toast {
                     self.show_toast(text, ctx);
                 }
+                let reviews = reviews
+                    .into_iter()
+                    .filter_map(|action| match action {
+                        Action::Review(review) => Some(review),
+                        _ => None,
+                    })
+                    .collect();
+                self.apply_review(reviews, active_id, ctx);
             }
             Some(Shown::Terminal(Some(note))) => reader_glue::note(ui, terminal, note),
             Some(Shown::Terminal(None)) | None => {}
