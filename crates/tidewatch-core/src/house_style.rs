@@ -41,6 +41,10 @@ When the `tidewatch` MCP tools are available:
 
 - Call `stage_done` with a short summary when the task or stage you were given is finished.
 - Call `reply_to_note` to answer a review note (`list_notes` shows them) instead of answering it only in chat.
+
+## Questions
+
+When you need the user to choose between options, ask a multiple-choice question instead of describing the options in prose. Use your own question tool if you have one (for example `AskUserQuestion`), otherwise call the `ask_user` tool of the `tidewatch` MCP server. Put the option you recommend first and end its label with (Recommended).
 ";
 
 /// Writes the default text over `house-style.md`, edits included. Returns its path.
@@ -102,6 +106,8 @@ mod tests {
             "**Next**",
             "stage_done",
             "reply_to_note",
+            "ask_user",
+            "AskUserQuestion",
         ] {
             assert!(DEFAULT_HOUSE_STYLE.contains(needle), "missing {needle}");
         }

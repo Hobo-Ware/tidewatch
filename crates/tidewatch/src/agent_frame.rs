@@ -71,7 +71,7 @@ pub(crate) fn route<T>(tabs: &mut Tabs<Pane<T>>, message: TabMessage, now: f64) 
         TabEvent::Proposal { workflow } => {
             Some(Follow::Proposal { tab: message.tab_id, workflow: Box::new(workflow.clone()) })
         }
-        TabEvent::Hook(_) | TabEvent::StageDone { .. } => None,
+        TabEvent::Hook(_) | TabEvent::StageDone { .. } | TabEvent::Ask { .. } => None,
     };
     if let TabEvent::Hook(hook) = &message.event {
         agent.reader.hook(hook.transcript_path.clone());

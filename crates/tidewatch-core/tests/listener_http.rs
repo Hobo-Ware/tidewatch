@@ -270,7 +270,7 @@ fn mcp_over_http_runs_the_handshake_and_both_event_tools() {
     assert_eq!((note.status, note.body.as_str()), (202, ""));
 
     let list = client.request("POST", "/mcp", token, &rpc(2, "tools/list", &json!({})));
-    assert_eq!(list.json()["result"]["tools"].as_array().unwrap().len(), 5);
+    assert_eq!(list.json()["result"]["tools"].as_array().unwrap().len(), 6);
 
     let done =
         client.request("POST", "/mcp", token, &call(3, "stage_done", &json!({"summary": "hello"})));
@@ -693,3 +693,91 @@ fn adopting_a_credential_replaces_the_tabs_earlier_token() {
 
 const STOP_HOOK: &str =
     r#"{"hook_event_name":"Stop","session_id":"s1","last_assistant_message":"x"}"#;
+
+fn ask_args() -> Value {
+    json!({"questions": [
+        {"question": "Where should the retry count live?", "options": [
+            {"label": "On the stage (Recommended)"}, {"label": "On the run"}]},
+        {"question": "Which tests should retry?", "multi_select": true, "options": [
+            {"label": "Unit"}, {"label": "Integration"}]},
+    ]})
+}
+
+fn ask_in_background(
+    h: &Harness,
+    token: &str,
+    id: u64,
+) -> std::thread::JoinHandle<(Client, Reply)> {
+    let (addr, token) = (h.addr(), token.to_owned());
+    std::thread::spawn(move || {
+        let mut client = Client::connect(addr);
+        let reply =
+            client.request("POST", "/mcp", Some(&token), &call(id, "ask_user", &ask_args()));
+        (client, reply)
+    })
+}
+
+#[test]
+fn a_held_ask_user_call_answers_when_the_user_does_and_the_connection_lives_on() {
+    use tidewatch_core::question::{Given, Reply as Answer};
+    let h = Harness::start();
+    let hook = h.register(11, "tab-ask");
+    let waiting = ask_in_background(&h, &hook.token, 1);
+    let message = h.next_event();
+    assert_eq!(message.tab_id, 11);
+    let TabEvent::Ask { questions, reply } = message.event else { panic!("not an ask") };
+    assert_eq!(questions.len(), 2);
+    std::thread::sleep(Duration::from_millis(700));
+    assert!(!waiting.is_finished(), "the call is held until the user answers");
+    let given = vec![
+        Given { picked: vec![0], other: None },
+        Given { picked: vec![1], other: Some("doc tests".into()) },
+    ];
+    assert!(reply.send(Answer::Answered(given)));
+    let (mut client, answered) = waiting.join().unwrap();
+    assert_eq!(answered.status, 200);
+    assert_eq!(
+        answered.json()["result"]["content"][0]["text"],
+        "Q: Where should the retry count live?\nA: On the stage\n\nQ: Which tests should retry?\nA: Integration, doc tests"
+    );
+    let ping = client.request("POST", "/mcp", Some(&hook.token), &rpc(2, "ping", &json!({})));
+    assert_eq!(ping.status, 200);
+}
+
+#[test]
+fn an_ask_user_call_nobody_answers_ends_at_the_timeout_and_the_card_can_still_send_a_late_answer() {
+    use tidewatch_core::question::Reply as Answer;
+    let h = Harness::start();
+    h.listener.set_ask_timeout(Duration::from_millis(600));
+    let hook = h.register(12, "tab-late");
+    let waiting = ask_in_background(&h, &hook.token, 1);
+    let TabEvent::Ask { reply, questions } = h.next_event().event else { panic!("not an ask") };
+    let (_, timed_out) = waiting.join().unwrap();
+    assert_eq!(timed_out.status, 200);
+    assert_eq!(timed_out.json()["result"]["isError"], false);
+    assert_eq!(
+        timed_out.json()["result"]["content"][0]["text"],
+        tidewatch_core::question::TIMED_OUT_TEXT
+    );
+    assert!(!reply.send(Answer::Skipped), "the call is over, so the app types the answer instead");
+    assert_eq!(questions.len(), 2);
+}
+
+#[test]
+fn an_ask_user_call_whose_client_hung_up_stops_waiting() {
+    use tidewatch_core::question::Reply as Answer;
+    let h = Harness::start();
+    let hook = h.register(13, "tab-gone");
+    let mut client = h.client();
+    let body = call(1, "ask_user", &ask_args());
+    let request = format!(
+        "POST /mcp HTTP/1.1\r\nHost: 127.0.0.1\r\nAuthorization: Bearer {}\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{body}",
+        hook.token,
+        body.len()
+    );
+    client.send_raw(request.as_bytes());
+    let TabEvent::Ask { reply, .. } = h.next_event().event else { panic!("not an ask") };
+    drop(client);
+    std::thread::sleep(Duration::from_millis(1500));
+    assert!(!reply.send(Answer::Skipped), "the listener never noticed the hang-up");
+}

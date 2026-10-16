@@ -16,6 +16,7 @@ use std::path::{Path, PathBuf};
 use serde_json::{Value, json};
 
 use crate::agents::{Agent, Level, Wiring};
+use crate::listener::ASK_TIMEOUT;
 use crate::profiles::Profile;
 
 /// Name of the MCP server Tidewatch attaches to every agent.
@@ -25,6 +26,9 @@ pub const NO_PUSH_MESSAGE: &str =
     "Tidewatch: pushing is blocked in agent tabs; Tidewatch pushes for you after approval.";
 const NO_PUSH_URL_PREFIX: &str = "url.tidewatch-no-push://blocked/.pushInsteadOf";
 const CODEX_MCP_TOKEN_ENV: &str = "TIDEWATCH_MCP_TOKEN";
+/// How long a CLI waits for one Tidewatch tool call: the longest `ask_user` hold and five minutes
+/// more, so the CLI never gives up first. Codex defaults to 60 s and Gemini to 600 s.
+const MCP_TOOL_TIMEOUT_SECS: u64 = ASK_TIMEOUT.as_secs() + 5 * 60;
 const CLAUDE_HOOK_EVENTS: [&str; 6] = [
     "SessionStart",
     "UserPromptSubmit",
@@ -248,6 +252,8 @@ fn codex_wiring(
                 ),
                 "-c".to_owned(),
                 format!("mcp_servers.{MCP_SERVER_NAME}.default_tools_approval_mode=\"approve\""),
+                "-c".to_owned(),
+                format!("mcp_servers.{MCP_SERVER_NAME}.tool_timeout_sec={MCP_TOOL_TIMEOUT_SECS}"),
             ]);
             env.push((CODEX_MCP_TOKEN_ENV.into(), listener.token.clone()));
         }
@@ -333,6 +339,7 @@ pub fn gemini_project_settings(profile: &Profile, ctx: &LaunchCtx) -> Option<Str
                     "httpUrl": listener.mcp_url(),
                     "headers": { "Authorization": listener.bearer() },
                     "trust": true,
+                    "timeout": MCP_TOOL_TIMEOUT_SECS * 1000,
                 } }),
             );
         }
@@ -693,6 +700,7 @@ mod tests {
         }
         assert_eq!(json["mcpServers"]["tidewatch"]["httpUrl"], "http://127.0.0.1:5555/mcp");
         assert_eq!(json["mcpServers"]["tidewatch"]["trust"], true);
+        assert_eq!(json["mcpServers"]["tidewatch"]["timeout"], 2_100_000);
         assert_eq!(json["mcpServers"]["tidewatch"]["headers"]["Authorization"], "Bearer tok123");
         assert_eq!(
             json["context"]["fileName"],
@@ -731,7 +739,7 @@ mod tests {
         assert!(launch.args.contains(&"--dangerously-bypass-hook-trust".to_owned()));
         let overrides: Vec<&str> =
             launch.args.windows(2).filter(|w| w[0] == "-c").map(|w| w[1].as_str()).collect();
-        assert_eq!(overrides.len(), CODEX_HOOK_EVENTS.len() + 4);
+        assert_eq!(overrides.len(), CODEX_HOOK_EVENTS.len() + 5);
         for event in CODEX_HOOK_EVENTS {
             let hook =
                 overrides.iter().find(|o| o.starts_with(&format!("hooks.{event}="))).unwrap();
@@ -749,6 +757,7 @@ mod tests {
         assert!(
             overrides.contains(&"mcp_servers.tidewatch.default_tools_approval_mode=\"approve\"")
         );
+        assert!(overrides.contains(&"mcp_servers.tidewatch.tool_timeout_sec=2100"));
         assert_eq!(env_of(&launch, "TIDEWATCH_MCP_TOKEN"), Some("tok123"));
         let instructions =
             overrides.iter().find(|o| o.starts_with("developer_instructions=")).unwrap();

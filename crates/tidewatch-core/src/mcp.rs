@@ -3,9 +3,11 @@
 //!
 //! [`handle_post`] takes the raw request body of an authenticated `/mcp` POST and returns the reply.
 //! It speaks `initialize`, `ping`, `tools/list` and `tools/call` and swallows notifications. The
-//! tools are `stage_done`, `report_finding`, `list_notes`, `reply_to_note` and `propose_workflow`. Calls that matter to the
-//! app become [`TabEvent`]s through `emit`; the note tools read and write the tab's `notes.json`
-//! through `notes.rs`.
+//! tools are `stage_done`, `report_finding`, `list_notes`, `reply_to_note`, `propose_workflow` and
+//! `ask_user`. Calls that matter to the app become [`TabEvent`]s through `emit`; the note tools read
+//! and write the tab's `notes.json` through `notes.rs`. `ask_user` holds its reply until the user
+//! answers (or [`AskWait::timeout`] runs out, or the client hangs up): the listener serves each
+//! connection on its own thread, so a held call blocks nothing else.
 //!
 //! Errors follow JSON-RPC: unparseable body -32700, not a request -32600, unknown method -32601,
 //! unknown tool or bad arguments -32602, a failed save -32603. Nothing here panics on input.
@@ -14,8 +16,9 @@
 //! with -32601), gemini 0.46.0 and copilot 1.0.91.
 
 use std::path::Path;
+use std::sync::mpsc::{RecvTimeoutError, channel};
 use std::sync::{Mutex, PoisonError};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use kelp_core::review::Comment;
 use serde_json::{Map, Value, json};
@@ -24,6 +27,7 @@ use crate::events::TabEvent;
 use crate::launch::MCP_SERVER_NAME;
 use crate::notes::Notes;
 use crate::propose;
+use crate::question::{self, AskReply, Reply};
 
 /// The protocol revision Tidewatch answers with when the client asks for one it does not know.
 pub const PROTOCOL_VERSION: &str = "2025-06-18";
@@ -37,6 +41,16 @@ const METHOD_NOT_FOUND: i64 = -32601;
 const INVALID_PARAMS: i64 = -32602;
 const INTERNAL_ERROR: i64 = -32603;
 
+/// How long a held `ask_user` call waits, and how it learns its client is gone.
+pub struct AskWait<'a> {
+    /// How long the user has to answer before the agent is told to use its judgment.
+    pub timeout: Duration,
+    /// How often the wait looks at `alive`.
+    pub poll: Duration,
+    /// Whether the client that made the call still waits for its reply.
+    pub alive: &'a dyn Fn() -> bool,
+}
+
 /// What one tab's tools act on.
 pub struct ToolCtx<'a> {
     /// The agent id (`claude`, `gemini`, ...). It signs replies in the notes.
@@ -44,6 +58,7 @@ pub struct ToolCtx<'a> {
     pub notes_file: &'a Path,
     /// Serializes read-modify-write of `notes_file` between concurrent calls.
     pub notes_lock: &'a Mutex<()>,
+    pub ask: AskWait<'a>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -149,7 +164,7 @@ fn initialize_result(params: Option<&Value>) -> Value {
     })
 }
 
-/// The five tools with their JSON Schemas, as `tools/list` returns them.
+/// The six tools with their JSON Schemas, as `tools/list` returns them.
 #[must_use]
 pub fn tool_definitions() -> Value {
     json!([
@@ -205,6 +220,7 @@ pub fn tool_definitions() -> Value {
             },
         },
         propose::tool_definition(),
+        question::tool_definition(),
     ])
 }
 
@@ -228,6 +244,10 @@ fn call_tool(
     };
     if name == propose::TOOL_NAME {
         let (text, is_error) = propose_workflow(args, ctx, emit);
+        return Ok(tool_result(&text, is_error));
+    }
+    if name == question::TOOL_NAME {
+        let (text, is_error) = ask_user(args, &ctx.ask, emit);
         return Ok(tool_result(&text, is_error));
     }
     let text = match name {
@@ -274,6 +294,44 @@ fn propose_workflow(
             true,
         ),
     }
+}
+
+/// Shows the questions in the tab and holds the call until they are answered. Questions that fail
+/// the rules are a tool error with the problems listed, so the agent fixes them and asks again.
+fn ask_user(
+    args: &Map<String, Value>,
+    wait: &AskWait<'_>,
+    emit: &dyn Fn(TabEvent),
+) -> (String, bool) {
+    let questions = match question::from_tool_args(args) {
+        Ok(questions) => questions,
+        Err(found) => {
+            return (
+                format!(
+                    "The questions were not shown. Fix these and call {} again:\n- {}",
+                    question::TOOL_NAME,
+                    found.join("\n- ")
+                ),
+                true,
+            );
+        }
+    };
+    let (sender, receiver) = channel();
+    emit(TabEvent::Ask { questions: questions.clone(), reply: AskReply::new(sender) });
+    let started = Instant::now();
+    let text = loop {
+        match receiver.recv_timeout(wait.poll) {
+            Ok(Reply::Answered(given)) => break question::answer_text(&questions, &given),
+            Ok(Reply::Skipped) => break question::SKIPPED_TEXT.to_owned(),
+            Err(RecvTimeoutError::Disconnected) => break question::CLOSED_TEXT.to_owned(),
+            Err(RecvTimeoutError::Timeout) => {
+                if started.elapsed() >= wait.timeout || !(wait.alive)() {
+                    break question::TIMED_OUT_TEXT.to_owned();
+                }
+            }
+        }
+    };
+    (text, false)
 }
 
 fn stage_done(args: &Map<String, Value>, emit: &dyn Fn(TabEvent)) -> Result<String, RpcError> {
@@ -374,6 +432,10 @@ mod tests {
     use kelp_core::review::{Anchor, Side};
     use std::cell::RefCell;
 
+    fn test_wait(alive: &dyn Fn() -> bool) -> AskWait<'_> {
+        AskWait { timeout: Duration::from_millis(400), poll: Duration::from_millis(10), alive }
+    }
+
     struct Harness {
         dir: tempfile::TempDir,
         lock: Mutex<()>,
@@ -395,7 +457,13 @@ mod tests {
 
         fn post(&self, body: &str) -> McpReply {
             let notes_file = self.notes_file();
-            let ctx = ToolCtx { agent: "claude", notes_file: &notes_file, notes_lock: &self.lock };
+            let alive = || true;
+            let ctx = ToolCtx {
+                agent: "claude",
+                notes_file: &notes_file,
+                notes_lock: &self.lock,
+                ask: test_wait(&alive),
+            };
             handle_post(body.as_bytes(), &ctx, &|event| self.events.borrow_mut().push(event))
         }
 
@@ -476,14 +544,21 @@ mod tests {
     }
 
     #[test]
-    fn tools_list_has_five_tools_with_object_schemas_and_required_fields() {
+    fn tools_list_has_six_tools_with_object_schemas_and_required_fields() {
         let reply =
             Harness::new().json(&json!({"jsonrpc": "2.0", "id": 2, "method": "tools/list"}));
         let tools = reply["result"]["tools"].as_array().unwrap();
         let names: Vec<&str> = tools.iter().map(|t| t["name"].as_str().unwrap()).collect();
         assert_eq!(
             names,
-            ["stage_done", "report_finding", "list_notes", "reply_to_note", "propose_workflow"]
+            [
+                "stage_done",
+                "report_finding",
+                "list_notes",
+                "reply_to_note",
+                "propose_workflow",
+                "ask_user"
+            ]
         );
         let required: Vec<Vec<&str>> = tools
             .iter()
@@ -502,6 +577,7 @@ mod tests {
                 vec![],
                 vec!["id", "text"],
                 vec!["name", "stages"],
+                vec!["questions"],
             ]
         );
         for tool in tools {
@@ -569,6 +645,132 @@ mod tests {
             "{text}"
         );
         assert_eq!(*h.events.borrow(), Vec::<TabEvent>::new());
+    }
+
+    fn questions_args() -> Value {
+        json!({"questions": [
+            {"question": "Where should the retry count live?", "header": "Retry",
+             "options": [{"label": "On the stage (Recommended)"}, {"label": "On the run"}]},
+            {"question": "Which tests should retry?", "multi_select": true,
+             "options": [{"label": "Unit"}, {"label": "Integration"}, {"label": "Lints"}]},
+        ]})
+    }
+
+    /// Calls `ask_user` and lets `respond` use the reply channel the moment the question is shown.
+    fn ask_with(
+        args: &Value,
+        alive: &dyn Fn() -> bool,
+        respond: impl Fn(&AskReply),
+    ) -> (Value, Vec<TabEvent>) {
+        let h = Harness::new();
+        let notes_file = h.notes_file();
+        let ctx = ToolCtx {
+            agent: "codex",
+            notes_file: &notes_file,
+            notes_lock: &h.lock,
+            ask: test_wait(alive),
+        };
+        let shown = RefCell::new(Vec::new());
+        let body = json!({"jsonrpc": "2.0", "id": 1, "method": "tools/call",
+            "params": {"name": "ask_user", "arguments": args}});
+        let reply = handle_post(body.to_string().as_bytes(), &ctx, &|event| {
+            if let TabEvent::Ask { reply, .. } = &event {
+                respond(reply);
+            }
+            shown.borrow_mut().push(event);
+        });
+        let McpReply::Json(text) = reply else { panic!("no reply") };
+        (serde_json::from_str(&text).unwrap(), shown.into_inner())
+    }
+
+    fn result_text(reply: &Value) -> &str {
+        reply["result"]["content"][0]["text"].as_str().unwrap()
+    }
+
+    #[test]
+    fn ask_user_shows_the_questions_and_returns_the_answers_as_text() {
+        let given = vec![
+            question::Given { picked: vec![0], other: None },
+            question::Given { picked: vec![0, 2], other: Some("doc tests".into()) },
+        ];
+        let (reply, shown) = ask_with(&questions_args(), &|| true, |held| {
+            assert!(held.send(Reply::Answered(given.clone())));
+        });
+        assert_eq!(reply["result"]["isError"], false);
+        assert_eq!(
+            result_text(&reply),
+            "Q: Where should the retry count live?\nA: On the stage\n\nQ: Which tests should retry?\nA: Unit, Lints, doc tests"
+        );
+        let [TabEvent::Ask { questions, .. }] = shown.as_slice() else { panic!("{shown:?}") };
+        assert_eq!(questions.len(), 2);
+        assert_eq!(questions[0].header.as_deref(), Some("Retry"));
+        assert_eq!(questions[1].select, question::Select::Multi);
+    }
+
+    #[test]
+    fn ask_user_tells_the_agent_when_the_user_skipped() {
+        let (reply, _) = ask_with(&questions_args(), &|| true, |held| {
+            assert!(held.send(Reply::Skipped));
+        });
+        assert_eq!(reply["result"]["isError"], false);
+        assert_eq!(result_text(&reply), question::SKIPPED_TEXT);
+    }
+
+    #[test]
+    fn ask_user_gives_up_after_the_timeout_and_the_late_answer_has_nowhere_to_go() {
+        let kept: RefCell<Option<AskReply>> = RefCell::new(None);
+        let started = Instant::now();
+        let (reply, _) = ask_with(&questions_args(), &|| true, |held| {
+            *kept.borrow_mut() = Some(held.clone());
+        });
+        assert!(started.elapsed() >= Duration::from_millis(400));
+        assert_eq!(reply["result"]["isError"], false);
+        assert_eq!(result_text(&reply), question::TIMED_OUT_TEXT);
+        assert!(!kept.borrow().as_ref().unwrap().send(Reply::Skipped));
+    }
+
+    #[test]
+    fn ask_user_stops_waiting_when_the_client_hangs_up() {
+        let started = Instant::now();
+        let (reply, _) = ask_with(&questions_args(), &|| false, |_| {});
+        assert!(started.elapsed() < Duration::from_millis(300));
+        assert_eq!(result_text(&reply), question::TIMED_OUT_TEXT);
+    }
+
+    #[test]
+    fn ask_user_says_so_when_the_question_is_dropped_unanswered() {
+        let h = Harness::new();
+        let notes_file = h.notes_file();
+        let alive = || true;
+        let ctx = ToolCtx {
+            agent: "codex",
+            notes_file: &notes_file,
+            notes_lock: &h.lock,
+            ask: test_wait(&alive),
+        };
+        let body = json!({"jsonrpc": "2.0", "id": 1, "method": "tools/call",
+            "params": {"name": "ask_user", "arguments": questions_args()}});
+        let McpReply::Json(text) = handle_post(body.to_string().as_bytes(), &ctx, &|_| {}) else {
+            panic!("no reply")
+        };
+        let reply: Value = serde_json::from_str(&text).unwrap();
+        assert_eq!(result_text(&reply), question::CLOSED_TEXT);
+    }
+
+    #[test]
+    fn ask_user_answers_bad_questions_as_a_tool_error_and_shows_nothing() {
+        let bad = json!({"questions": [{"question": "Q?", "options": [{"label": "only"}]}]});
+        let (reply, shown) = ask_with(&bad, &|| true, |_| panic!("nothing should be shown"));
+        assert_eq!(reply["result"]["isError"], true);
+        let text = result_text(&reply);
+        assert!(
+            text.starts_with(
+                "The questions were not shown. Fix these and call ask_user again:\n- "
+            ),
+            "{text}"
+        );
+        assert!(text.contains("question 1: give 2 to 6 options, not 1"), "{text}");
+        assert_eq!(shown, Vec::<TabEvent>::new());
     }
 
     #[test]
@@ -767,7 +969,12 @@ mod tests {
         }
         let raw = handle_post(
             b"\xff\xfe\x00",
-            &ToolCtx { agent: "a", notes_file: Path::new("/none"), notes_lock: &h.lock },
+            &ToolCtx {
+                agent: "a",
+                notes_file: Path::new("/none"),
+                notes_lock: &h.lock,
+                ask: test_wait(&|| true),
+            },
             &|_| {},
         );
         assert!(matches!(raw, McpReply::Json(_)));
@@ -801,7 +1008,13 @@ mod tests {
             for n in 0..8 {
                 let (lock, notes_file) = (&h.lock, &notes_file);
                 scope.spawn(move || {
-                    let ctx = ToolCtx { agent: "claude", notes_file, notes_lock: lock };
+                    let alive = || true;
+                    let ctx = ToolCtx {
+                        agent: "claude",
+                        notes_file,
+                        notes_lock: lock,
+                        ask: test_wait(&alive),
+                    };
                     let body = json!({"jsonrpc": "2.0", "id": 1, "method": "tools/call",
                         "params": {"name": "reply_to_note", "arguments": {"id": id, "text": format!("reply {n}")}}});
                     handle_post(body.to_string().as_bytes(), &ctx, &|_| {});

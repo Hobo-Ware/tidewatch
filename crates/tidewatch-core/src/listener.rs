@@ -29,7 +29,7 @@ use sha2::{Digest, Sha256};
 
 use crate::events::{Repaint, TabEvent, TabMessage};
 use crate::launch::HookListener;
-use crate::mcp::{McpReply, ToolCtx, handle_post};
+use crate::mcp::{AskWait, McpReply, ToolCtx, handle_post};
 use crate::paths::TidewatchPaths;
 use crate::status::parse_hook;
 
@@ -43,6 +43,9 @@ const IDLE_TIMEOUT: Duration = Duration::from_secs(75);
 const WRITE_TIMEOUT: Duration = Duration::from_secs(10);
 const TOKEN_BYTES: usize = 16;
 const PORT_RETRY: Duration = Duration::from_millis(50);
+/// How long a held `ask_user` call waits for the user before the agent is told to use its judgment.
+pub const ASK_TIMEOUT: Duration = Duration::from_mins(30);
+const ASK_POLL: Duration = Duration::from_millis(500);
 
 /// Who a token belongs to.
 #[derive(Clone, Debug)]
@@ -83,6 +86,7 @@ struct Shared {
     events: Sender<TabMessage>,
     repaint: Repaint,
     notes_lock: Mutex<()>,
+    ask_timeout_ms: AtomicU64,
 }
 
 impl Shared {
@@ -140,6 +144,12 @@ impl Listener {
         Self::start_on(listener, paths, repaint)
     }
 
+    /// How long a held `ask_user` call waits from now on (30 minutes unless changed).
+    pub fn set_ask_timeout(&self, timeout: Duration) {
+        let millis = u64::try_from(timeout.as_millis()).unwrap_or(u64::MAX);
+        self.shared.ask_timeout_ms.store(millis, Ordering::SeqCst);
+    }
+
     /// The port the listener serves.
     #[must_use]
     pub fn port(&self) -> u16 {
@@ -158,6 +168,9 @@ impl Listener {
             events,
             repaint,
             notes_lock: Mutex::new(()),
+            ask_timeout_ms: AtomicU64::new(
+                u64::try_from(ASK_TIMEOUT.as_millis()).unwrap_or(u64::MAX),
+            ),
         });
         let stop = Arc::new(AtomicBool::new(false));
         let accept = {
@@ -293,7 +306,7 @@ fn serve(shared: &Shared, stream: TcpStream) {
     loop {
         match read_request(&mut conn, &|token| shared.entry(token).is_some()) {
             Ok(request) => {
-                let response = route(shared, &request);
+                let response = route(shared, &request, &conn.stream);
                 if write_response(&mut conn.stream, &response, request.keep_alive).is_err()
                     || !request.keep_alive
                 {
@@ -350,13 +363,13 @@ impl Response {
     }
 }
 
-fn route(shared: &Shared, request: &Request) -> Response {
+fn route(shared: &Shared, request: &Request, stream: &TcpStream) -> Response {
     let Some(entry) = request.bearer.as_deref().and_then(|token| shared.entry(token)) else {
         return Response::unauthorized();
     };
     let path = request.path.split('?').next().unwrap_or_default();
     if path == "/mcp" {
-        return mcp_route(shared, &entry, request);
+        return mcp_route(shared, &entry, request, stream);
     }
     match path.strip_prefix("/hook/").filter(|agent| valid_agent_id(agent)) {
         Some(agent) => hook_route(shared, &entry, agent, request),
@@ -382,14 +395,35 @@ fn hook_route(shared: &Shared, entry: &Entry, agent: &str, request: &Request) ->
     Response::json(200, "{}".into())
 }
 
-fn mcp_route(shared: &Shared, entry: &Entry, request: &Request) -> Response {
+/// Whether the client of `stream` still waits for its reply: false once it has closed the
+/// connection. A held `ask_user` call asks while it waits, because nothing reads the socket then.
+fn client_waits(stream: &TcpStream) -> bool {
+    if stream.set_nonblocking(true).is_err() {
+        return true;
+    }
+    let mut byte = [0u8; 1];
+    let waits = match stream.peek(&mut byte) {
+        Ok(read) => read > 0,
+        Err(e) => matches!(e.kind(), io::ErrorKind::WouldBlock | io::ErrorKind::Interrupted),
+    };
+    let _ = stream.set_nonblocking(false);
+    waits
+}
+
+fn mcp_route(shared: &Shared, entry: &Entry, request: &Request, stream: &TcpStream) -> Response {
     if request.method != "POST" {
         return Response::method_not_allowed();
     }
+    let alive = || client_waits(stream);
     let ctx = ToolCtx {
         agent: &entry.agent,
         notes_file: &entry.notes_file,
         notes_lock: &shared.notes_lock,
+        ask: AskWait {
+            timeout: Duration::from_millis(shared.ask_timeout_ms.load(Ordering::SeqCst)),
+            poll: ASK_POLL,
+            alive: &alive,
+        },
     };
     match handle_post(&request.body, &ctx, &|event| shared.emit(entry, event)) {
         McpReply::Json(body) => Response::json(200, body),
@@ -628,6 +662,8 @@ mod tests {
         receiver: Receiver<TabMessage>,
         paths: TidewatchPaths,
         repaints: Arc<AtomicUsize>,
+        peer: TcpStream,
+        _server: TcpListener,
         _home: tempfile::TempDir,
     }
 
@@ -643,8 +679,19 @@ mod tests {
                 counter.fetch_add(1, Ordering::SeqCst);
             }),
             notes_lock: Mutex::new(()),
+            ask_timeout_ms: AtomicU64::new(1000),
         });
-        Fixture { shared, receiver, paths: TidewatchPaths::new(home.path()), repaints, _home: home }
+        let server = TcpListener::bind(HOOK_BIND).unwrap();
+        let peer = TcpStream::connect(server.local_addr().unwrap()).unwrap();
+        Fixture {
+            shared,
+            receiver,
+            paths: TidewatchPaths::new(home.path()),
+            repaints,
+            peer,
+            _server: server,
+            _home: home,
+        }
     }
 
     impl Fixture {
@@ -668,7 +715,7 @@ mod tests {
                 body: body.as_bytes().to_vec(),
                 keep_alive: true,
             };
-            route(&self.shared, &request)
+            route(&self.shared, &request, &self.peer)
         }
 
         fn events(&self) -> Vec<TabMessage> {
