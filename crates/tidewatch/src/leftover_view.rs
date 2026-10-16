@@ -3,13 +3,14 @@
 
 use std::path::PathBuf;
 
-use egui::{Id, RichText, ScrollArea, Sense};
+use egui::{Id, RichText, ScrollArea};
 use stdusk_egui::colors;
 use stdusk_egui::widgets::{action_button, overlay_frame};
 use tidewatch_core::worktree::Leftover;
 
 use crate::brand;
 use crate::leftovers::{Cleanup, Row, RowState, status_text};
+use crate::screen_kit::quiet_button;
 
 const DIALOG_WIDTH: f32 = 560.0;
 const LIST_HEIGHT: f32 = 280.0;
@@ -34,13 +35,8 @@ pub(crate) fn tip(leftovers: &[Leftover]) -> String {
 
 /// "N leftover" in the tab strip. True when clicked.
 pub(crate) fn chip(ui: &mut egui::Ui, leftovers: &[Leftover]) -> bool {
-    let text = RichText::new(format!("{} leftover", leftovers.len()))
-        .monospace()
-        .size(12.0)
-        .color(colors::dim());
-    ui.add(egui::Label::new(text).sense(Sense::click()))
+    quiet_button(ui, &format!("{} leftover", leftovers.len()), true)
         .on_hover_text(tip(leftovers))
-        .on_hover_cursor(egui::CursorIcon::PointingHand)
         .clicked()
 }
 
