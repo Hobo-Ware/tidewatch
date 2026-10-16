@@ -67,7 +67,7 @@ fn edge_zones(window: Rect) -> [(ResizeDirection, Rect); 12] {
 
 /// A window button the desktop can ask for.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum Kind {
+pub(crate) enum ButtonKind {
     Minimize,
     Maximize,
     Close,
@@ -86,14 +86,14 @@ pub(crate) enum DoubleClick {
 /// when they cannot be read: minimize, maximize and close, and a double click maximizes.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct Desktop {
-    buttons: Vec<Kind>,
+    buttons: Vec<ButtonKind>,
     double_click: DoubleClick,
 }
 
 impl Default for Desktop {
     fn default() -> Self {
         Self {
-            buttons: vec![Kind::Minimize, Kind::Maximize, Kind::Close],
+            buttons: vec![ButtonKind::Minimize, ButtonKind::Maximize, ButtonKind::Close],
             double_click: DoubleClick::ToggleMaximize,
         }
     }
@@ -127,9 +127,9 @@ impl Desktop {
             let mut buttons = Vec::new();
             for name in layout.split([':', ',']).map(str::trim) {
                 let kind = match name {
-                    "minimize" => Kind::Minimize,
-                    "maximize" => Kind::Maximize,
-                    "close" => Kind::Close,
+                    "minimize" => ButtonKind::Minimize,
+                    "maximize" => ButtonKind::Maximize,
+                    "close" => ButtonKind::Close,
                     _ => continue,
                 };
                 if !buttons.contains(&kind) {
@@ -151,12 +151,12 @@ impl Desktop {
         if self.buttons.is_empty() { 0.0 } else { DIVIDER_W + BUTTON_W * self.buttons.len() as f32 }
     }
 
-    fn row(&self, maximized: bool) -> impl Iterator<Item = Button> + '_ {
+    fn drawn_buttons(&self, maximized: bool) -> impl Iterator<Item = Button> + '_ {
         self.buttons.iter().map(move |kind| match kind {
-            Kind::Minimize => Button::Minimize,
-            Kind::Maximize if maximized => Button::Restore,
-            Kind::Maximize => Button::Maximize,
-            Kind::Close => Button::Close,
+            ButtonKind::Minimize => Button::Minimize,
+            ButtonKind::Maximize if maximized => Button::Restore,
+            ButtonKind::Maximize => Button::Maximize,
+            ButtonKind::Close => Button::Close,
         })
     }
 }
@@ -241,7 +241,7 @@ pub(crate) fn controls(ui: &mut Ui, desktop: &Desktop) {
     let half = DIVIDER_H / 2.0;
     painter.vline(x, rect.center().y - half..=rect.center().y + half, (1.0, brand::SIDEBAR_LINE));
     let idle = if ui.ctx().input(|i| i.focused) { brand::MUTED } else { brand::FAINT };
-    for (i, button) in desktop.row(maximized(ui.ctx())).enumerate() {
+    for (i, button) in desktop.drawn_buttons(maximized(ui.ctx())).enumerate() {
         let min = pos2(rect.left() + DIVIDER_W + BUTTON_W * i as f32, rect.top());
         let slot = Rect::from_min_size(min, vec2(BUTTON_W, BUTTON_H));
         let resp = ui.interact(slot, Id::new(("window_button", i)), Sense::click());
@@ -403,15 +403,15 @@ mod tests {
     #[test]
     fn maximize_turns_into_restore_on_a_maximized_window() {
         let desktop = Desktop::default();
-        let row = |maximized| desktop.row(maximized).collect::<Vec<_>>();
+        let row = |maximized| desktop.drawn_buttons(maximized).collect::<Vec<_>>();
         assert_eq!(row(false), [Button::Minimize, Button::Maximize, Button::Close]);
         assert_eq!(row(true), [Button::Minimize, Button::Restore, Button::Close]);
     }
 
     #[test]
     fn gnomes_button_layout_picks_the_buttons_and_their_order() {
-        use Kind::{Close, Maximize, Minimize};
-        let cases: [(Option<&str>, Vec<Kind>); 7] = [
+        use ButtonKind::{Close, Maximize, Minimize};
+        let cases: [(Option<&str>, Vec<ButtonKind>); 7] = [
             (Some("'appmenu:close'\n"), vec![Close]),
             (Some("'appmenu:minimize,maximize,close'"), vec![Minimize, Maximize, Close]),
             (Some("'close,minimize,maximize:'"), vec![Close, Minimize, Maximize]),
