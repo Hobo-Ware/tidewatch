@@ -3,7 +3,8 @@
 //! `[window]` table (quake mode, its hotkey, the
 //! menu-bar item, the panel layout), the `[updates]` table (check for releases, install them) and
 //! the `[github]` table (what a new tab does when its pull request changes) and the `[new_tab]`
-//! table (what the new-tab form opens with) and the `[tabs]` table (when a quiet tab is parked).
+//! table (what the new-tab form opens with), the `[tabs]` table (when a quiet tab is parked) and
+//! the `[terminal]` table (the terminal's font).
 //!
 //! A missing or bad file is the defaults, with a stderr note for a bad one: a settings file must
 //! never stop the app.
@@ -44,6 +45,8 @@ pub struct Prefs {
     pub done_check: DoneCheckPrefs,
     #[serde(default)]
     pub keep_awake: KeepAwakePrefs,
+    #[serde(default)]
+    pub terminal: TerminalPrefs,
 }
 
 /// Whether the computer is kept from idle-sleeping while an agent works.
@@ -214,6 +217,40 @@ impl Default for GithubPrefs {
     }
 }
 
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TerminalPrefs {
+    #[serde(default)]
+    pub font: FontChoice,
+}
+
+/// The terminal's font: an empty string is the bundled face, anything else names an installed
+/// family (stdusk's `appearance.font` works the same way).
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(from = "String", into = "String")]
+pub enum FontChoice {
+    #[default]
+    BuiltIn,
+    Family(String),
+}
+
+impl From<String> for FontChoice {
+    fn from(text: String) -> Self {
+        match text.trim() {
+            "" => Self::BuiltIn,
+            family => Self::Family(family.to_owned()),
+        }
+    }
+}
+
+impl From<FontChoice> for String {
+    fn from(choice: FontChoice) -> Self {
+        match choice {
+            FontChoice::BuiltIn => Self::new(),
+            FontChoice::Family(family) => family,
+        }
+    }
+}
+
 /// What a restored agent tab does: `auto` runs its resume command, `prefill` types it and leaves
 /// Enter to the user, `off` reopens a plain shell. Only used while `restore_session` is on.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -280,6 +317,7 @@ impl Default for Prefs {
             guards: GuardPrefs::default(),
             done_check: DoneCheckPrefs::default(),
             keep_awake: KeepAwakePrefs::default(),
+            terminal: TerminalPrefs::default(),
         }
     }
 }
@@ -341,6 +379,35 @@ mod tests {
         let home = tempfile::tempdir().unwrap();
         let paths = TidewatchPaths::new(home.path());
         (home, paths)
+    }
+
+    #[test]
+    fn the_terminal_font_is_built_in_when_empty_and_a_family_otherwise() {
+        let (_home, paths) = paths();
+        assert_eq!(Prefs::default().terminal.font, FontChoice::BuiltIn);
+        std::fs::create_dir_all(paths.config_dir()).unwrap();
+        for (text, want) in [
+            ("", FontChoice::BuiltIn),
+            ("  ", FontChoice::BuiltIn),
+            ("  MesloLGS NF ", FontChoice::Family("MesloLGS NF".to_owned())),
+        ] {
+            std::fs::write(paths.prefs_file(), format!("[terminal]\nfont = \"{text}\"\n")).unwrap();
+            assert_eq!(Prefs::load(&paths).terminal.font, want, "{text:?}");
+        }
+        let family = FontChoice::Family("JetBrains Mono".to_owned());
+        Prefs::update(&paths, |p| p.terminal.font = family.clone()).unwrap();
+        let text = std::fs::read_to_string(paths.prefs_file()).unwrap();
+        assert!(text.contains("[terminal]\nfont = \"JetBrains Mono\""), "{text}");
+        Prefs::update(&paths, |p| p.window.quake = false).unwrap();
+        assert_eq!(Prefs::load(&paths).terminal.font, family);
+    }
+
+    #[test]
+    fn a_file_from_before_the_terminal_table_keeps_the_built_in_font() {
+        let (_home, paths) = paths();
+        std::fs::create_dir_all(paths.config_dir()).unwrap();
+        std::fs::write(paths.prefs_file(), "[window]\nquake = false\n").unwrap();
+        assert_eq!(Prefs::load(&paths).terminal.font, FontChoice::BuiltIn);
     }
 
     #[test]

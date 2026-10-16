@@ -50,6 +50,7 @@ mod fix_dialog;
 mod flow;
 mod flow_glue;
 mod flow_jobs;
+mod font_view;
 mod fonts;
 mod from_stdusk;
 mod general_view;
@@ -171,6 +172,7 @@ mod tabs;
 mod takeover;
 mod takeover_jobs;
 mod takeover_view;
+mod terminal_font;
 #[cfg(all(test, unix))]
 mod test_exec;
 mod timeline;

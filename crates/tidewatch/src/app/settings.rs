@@ -8,6 +8,7 @@ use tidewatch_core::setup_recipe::{Recipe, Store};
 
 use super::{Tidewatch, wall_ms};
 use crate::agent_jobs;
+use crate::font_view;
 use crate::general_view::General;
 use crate::guards_view;
 use crate::login_item;
@@ -226,6 +227,11 @@ impl Tidewatch {
                     agent_id: agent.id.clone(),
                 })
                 .collect(),
+            terminal: font_view::View {
+                choice: self.terminal_font.choice().clone(),
+                status: self.terminal_font.status(),
+                families: crate::terminal_font::families(),
+            },
         };
         let probes: Probes = self
             .catalog
@@ -319,6 +325,9 @@ impl Tidewatch {
             Some(settings_view::Action::KeepAwake(on)) => self.set_keep_awake(on),
             Some(settings_view::Action::Github(prefs)) => self.set_github_default(prefs),
             Some(settings_view::Action::Guards(change)) => self.set_guards(&change),
+            Some(settings_view::Action::TerminalFont(choice)) => {
+                self.terminal_font.choose(ctx, self.paths.as_ref(), choice);
+            }
             Some(settings_view::Action::LoginItem(click)) => self.apply_login_click(click, ctx),
             Some(settings_view::Action::OpenHouseStyle) => self.open_house_style(ctx),
             Some(settings_view::Action::ResetHouseStyle) => self.reset_house_style(ctx),

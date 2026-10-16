@@ -1,19 +1,44 @@
-//! The font set: stdusk's fonts with Kelp's bundled faces and `semibold` family merged in.
+//! The font set: stdusk's fonts with Kelp's bundled faces and `semibold` family merged in, and the
+//! terminal's own family (`terminal_font::FAMILY`).
 
 use egui::FontDefinitions;
+use stdusk_egui::fonts::ResolvedFont;
+
+use crate::terminal_font;
 
 const FALLBACK_PROBE: &str = "\u{65e5}";
 
+#[cfg(test)]
+/// The bundled set without the system CJK fallback, for tests that must not read system fonts.
 pub(crate) fn definitions() -> FontDefinitions {
-    let mut fonts = stdusk_egui::fonts::build_fonts(None, None);
+    base(None, None)
+}
+
+fn base(regular: Option<ResolvedFont>, bold: Option<ResolvedFont>) -> FontDefinitions {
+    let has_user_font = regular.is_some();
+    let mut fonts = stdusk_egui::fonts::build_fonts(regular, bold);
+    let picked = has_user_font
+        .then(|| fonts.families.get(&egui::FontFamily::Monospace)?.first().cloned())
+        .flatten();
     kelp_ui::fonts::extend(&mut fonts);
+    terminal_font::split(&mut fonts, picked.as_deref());
     fonts
 }
 
-pub(crate) fn install(ctx: &egui::Context) {
-    let mut fonts = definitions();
+/// The whole set the app runs with: `regular` (and its `bold` face) as the terminal's font, the
+/// system fallback for scripts the bundled faces miss.
+pub(crate) fn assemble(
+    regular: Option<ResolvedFont>,
+    bold: Option<ResolvedFont>,
+) -> FontDefinitions {
+    let mut fonts = base(regular, bold);
     kelp_ui::fonts::extend_fallback(&mut fonts, FALLBACK_PROBE);
-    ctx.set_fonts(fonts);
+    fonts
+}
+
+#[cfg(test)]
+pub(crate) fn install(ctx: &egui::Context) {
+    ctx.set_fonts(assemble(None, None));
 }
 
 #[cfg(test)]

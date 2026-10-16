@@ -13,6 +13,7 @@ use crate::paste;
 use crate::reader::Shown;
 use crate::reader_view::Action;
 use crate::screen_kit::paint_pill_card;
+use crate::terminal_font::InUse;
 use crate::{layout, reader_glue};
 
 const CAUGHT_H: f32 = 72.0;
@@ -25,15 +26,16 @@ pub(super) struct TerminalGrid {
     cell_w: f32,
     cell_h: f32,
     font: FontId,
+    bold: Option<FontId>,
 }
 
 impl TerminalGrid {
-    pub(super) fn measure(ui: &egui::Ui, rect: egui::Rect) -> Self {
-        let font = FontId::monospace(FONT_SIZE);
+    pub(super) fn measure(ui: &egui::Ui, rect: egui::Rect, in_use: &InUse) -> Self {
+        let (font, bold) = in_use.font_ids(FONT_SIZE);
         let glyph = ui.painter().layout_no_wrap("M".to_owned(), font.clone(), brand::TEXT);
         let (cell_w, cell_h) = (glyph.size().x, glyph.size().y);
         let (cols, rows) = layout::grid_dims(rect, cell_w, cell_h);
-        Self { rect, cols, rows, cell_w, cell_h, font }
+        Self { rect, cols, rows, cell_w, cell_h, font, bold }
     }
 }
 
@@ -77,7 +79,7 @@ impl Tidewatch {
                         grid.cell_w,
                         grid.cell_h,
                         &grid.font,
-                        None,
+                        grid.bold.as_ref(),
                         GridStyle {
                             cursor: CursorStyle::Block,
                             dimmed: false,

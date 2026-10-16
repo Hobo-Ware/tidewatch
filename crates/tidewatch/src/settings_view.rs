@@ -49,6 +49,8 @@ pub(crate) enum Action {
     Github(tidewatch_core::prefs::GithubPrefs),
     /// A Guards switch or the private repo list changed. Applies at once too.
     Guards(crate::guards_view::Change),
+    /// A font was picked for the terminal. Applies at once too.
+    TerminalFont(tidewatch_core::prefs::FontChoice),
     LoginItem(login_item::Click),
     OpenHouseStyle,
     ResetHouseStyle,
@@ -121,6 +123,7 @@ fn page(
                 ui,
                 host.general,
                 &mut settings.window,
+                &mut settings.font,
                 updates,
                 &mut settings.login,
                 host.read_login,
