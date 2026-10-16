@@ -1,9 +1,9 @@
 //! The tab strip: repo chip (a menu of the repos, Open repo and Close repo), leftovers chip, overview button, the tabs, new tab button, and at the right end the update chip and the settings button.
 
-use egui::{CornerRadius, Frame, Margin};
+use egui::layers::ShapeIdx;
+use egui::{CornerRadius, Frame, Margin, Shape, vec2};
 use stdusk_core::progress::Progress;
 use stdusk_core::terminal::{CmdState, PtyTerm};
-use stdusk_egui::colors;
 use stdusk_egui::ui::{TAB_H, draw_tab, icons};
 use stdusk_egui::widgets::{chip, icon_button, menu_item, style_menu};
 
@@ -22,6 +22,10 @@ const STRIP_TOP_MARGIN: i8 = 6;
 const STRIP_SIDE_MARGIN: i8 = 8;
 const STRIP_GAP: f32 = 4.0;
 const STRIP_CORNER: u8 = 10;
+const TAB_RADIUS: u8 = 8;
+const TAB_INSET_Y: f32 = 3.0;
+const TAB_BAR_W: f32 = 2.0;
+const TAB_BAR_INSET: f32 = 8.0;
 
 impl Tidewatch {
     pub(super) fn show_tab_strip(&mut self, ui: &mut egui::Ui, now: f64, frame: &mut FrameIntent) {
@@ -34,7 +38,7 @@ impl Tidewatch {
             .exact_size(TAB_H + f32::from(STRIP_TOP_MARGIN))
             .frame(
                 Frame::new()
-                    .fill(colors::titlebar())
+                    .fill(brand::SIDEBAR)
                     .corner_radius(CornerRadius {
                         nw: STRIP_CORNER,
                         ne: STRIP_CORNER,
@@ -131,7 +135,7 @@ impl Tidewatch {
             if self.tabs.items().iter().any(|tab| tab.group != group && needs_you(&tab.pane)) {
                 let dot = resp.rect.right_top() + egui::vec2(-2.0, 2.0);
                 let painter = ui.painter();
-                painter.circle_filled(dot, 5.5, colors::titlebar());
+                painter.circle_filled(dot, 5.5, brand::SIDEBAR);
                 painter.circle_filled(dot, 4.0, brand::NEEDS);
             }
             tip = format!(
@@ -146,7 +150,7 @@ impl Tidewatch {
             if several {
                 for (i, workspace) in self.workspaces.iter().enumerate() {
                     let tabs = self.tabs.in_group(i).filter(|(_, tab)| !tab.pinned).count();
-                    let detail = egui::RichText::new(format!("{tabs} tabs")).color(colors::dim());
+                    let detail = egui::RichText::new(format!("{tabs} tabs")).color(brand::MUTED);
                     let row = egui::Button::selectable(i == group, workspace.chip_label())
                         .shortcut_text(detail)
                         .min_size(egui::vec2(ui.available_width(), 0.0));
@@ -198,6 +202,8 @@ fn tab_row<T>(
         let agent = tab.pane.agent.as_ref();
         let progress = if agent.is_some() { Progress::None } else { pty_progress };
         let cli = agent.and_then(|a| status_view::cli_of(&a.run.agent_id));
+        let painter = ui.painter().clone();
+        let under = painter.add(Shape::Noop);
         let (resp, close) = draw_tab(
             ui,
             Some(position + 1),
@@ -212,6 +218,7 @@ fn tab_row<T>(
             cli,
             Some(width),
         );
+        nav_look(&painter, under, resp.rect, i == tabs.active(), resp.hovered());
         if let Some(agent) = agent {
             let tone = status_view::tone(agent.run.status());
             let fraction = progress_fraction(pty_progress);
@@ -237,13 +244,54 @@ fn tab_row<T>(
             egui::Order::Middle,
             egui::Id::new("tab_drag_overlay"),
         ));
-        let corners = CornerRadius { nw: 6, ne: 6, sw: 0, se: 0 };
-        overlay.rect_filled(slots[from].rect, corners, colors::selection());
+        overlay.rect_filled(
+            slots[from].rect.shrink2(vec2(0.0, TAB_INSET_Y)),
+            CornerRadius::same(TAB_RADIUS),
+            brand::TEAL.gamma_multiply(0.35),
+        );
         if let Some(step) = drag_step(&slots, from, x) {
             actions.push(Action::Move(slots[from].index, step));
         }
     }
     slots.iter().map(|slot| slot.rect).collect()
+}
+
+/// Gives a tab the nav look: a teal tint, rounded, with a short bar on the left when active, a
+/// fainter tint when hovered. `draw_tab` fills the active tab with its own grey and has no
+/// styling, so that fill, the shape right after `under`, is swapped for the tint in place.
+fn nav_look(
+    painter: &egui::Painter,
+    under: ShapeIdx,
+    tab: egui::Rect,
+    active: bool,
+    hovered: bool,
+) {
+    let rect = tab.shrink2(vec2(0.0, TAB_INSET_Y));
+    let radius = CornerRadius::same(TAB_RADIUS);
+    if active {
+        let fill = ShapeIdx(under.0 + 1);
+        if is_fill_of(painter, fill, tab) {
+            painter.set(fill, Shape::rect_filled(rect, radius, brand::TEAL_NAV));
+        } else {
+            painter.rect_filled(rect, radius, brand::TEAL_NAV);
+        }
+        let bar = egui::Rect::from_min_max(
+            egui::pos2(rect.left(), rect.top() + TAB_BAR_INSET),
+            egui::pos2(rect.left() + TAB_BAR_W, rect.bottom() - TAB_BAR_INSET),
+        );
+        painter.rect_filled(bar, CornerRadius::same(1), brand::TEAL);
+    } else if hovered {
+        painter.set(under, Shape::rect_filled(rect, radius, brand::TEAL_NAV.gamma_multiply(0.6)));
+    }
+}
+
+fn is_fill_of(painter: &egui::Painter, idx: ShapeIdx, tab: egui::Rect) -> bool {
+    painter.ctx().graphics(|graphics| {
+        graphics
+            .get(painter.layer_id())
+            .and_then(|list| list.all_entries().nth(idx.0))
+            .is_some_and(|clipped| matches!(&clipped.shape, Shape::Rect(rect) if rect.rect == tab))
+    })
 }
 
 /// The swap a drag asks for: the pointer past the middle of the next tab on either side. Asked

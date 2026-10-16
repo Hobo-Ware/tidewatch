@@ -1,4 +1,4 @@
-use egui::{Event, PointerButton, RawInput, Rect, pos2, vec2};
+use egui::{Event, PointerButton, RawInput, Rect, Shape, pos2, vec2};
 
 use super::*;
 
@@ -175,4 +175,55 @@ fn only_the_tabs_of_the_group_on_show_are_drawn_and_moved() {
     let (from, past) = (strip.center(1), strip.center(2) + vec2(10.0, 0.0));
     strip.drag(from, past);
     assert_eq!(order(&strip.tabs), [0, 2, 1, 3, 10, 11]);
+}
+
+fn filled_by(
+    look: impl FnOnce(&egui::Painter, ShapeIdx, Rect),
+    tab: Rect,
+) -> Vec<Option<egui::Color32>> {
+    let ctx = egui::Context::default();
+    let raw = RawInput {
+        screen_rect: Some(Rect::from_min_size(pos2(0.0, 0.0), vec2(400.0, 100.0))),
+        ..RawInput::default()
+    };
+    let mut fills = Vec::new();
+    let mut look = Some(look);
+    let _ = ctx.run_ui(raw, |ui| {
+        let painter = ui.painter().clone();
+        let under = painter.add(Shape::Noop);
+        painter.rect_filled(tab, 6.0, egui::Color32::GRAY);
+        if let Some(look) = look.take() {
+            look(&painter, under, tab);
+        }
+        fills = ctx.graphics(|graphics| {
+            graphics
+                .get(painter.layer_id())
+                .map(|list| {
+                    list.all_entries()
+                        .map(|clipped| match &clipped.shape {
+                            Shape::Rect(rect) => Some(rect.fill),
+                            _ => None,
+                        })
+                        .collect()
+                })
+                .unwrap_or_default()
+        });
+    });
+    fills
+}
+
+#[test]
+fn the_active_tab_swaps_the_fill_draw_tab_painted_for_the_nav_tint_and_adds_a_bar() {
+    let tab = Rect::from_min_size(pos2(10.0, 0.0), vec2(120.0, 34.0));
+    let fills = filled_by(|painter, under, tab| nav_look(painter, under, tab, true, false), tab);
+    assert_eq!(fills, [None, Some(brand::TEAL_NAV), Some(brand::TEAL)]);
+}
+
+#[test]
+fn a_hovered_inactive_tab_gets_a_fainter_tint_under_its_text_and_a_plain_one_nothing() {
+    let tab = Rect::from_min_size(pos2(10.0, 0.0), vec2(120.0, 34.0));
+    let hovered = filled_by(|painter, under, tab| nav_look(painter, under, tab, false, true), tab);
+    assert_eq!(hovered[0], Some(brand::TEAL_NAV.gamma_multiply(0.6)));
+    let plain = filled_by(|painter, under, tab| nav_look(painter, under, tab, false, false), tab);
+    assert_eq!(plain[0], None);
 }
