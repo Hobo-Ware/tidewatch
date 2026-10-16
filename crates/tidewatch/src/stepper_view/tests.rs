@@ -10,6 +10,12 @@ use super::*;
 use crate::workflow_ask::ask_of;
 use tidewatch_core::runner::AskReason;
 
+fn context() -> egui::Context {
+    let ctx = egui::Context::default();
+    crate::fonts::install(&ctx);
+    ctx
+}
+
 fn run() -> TabRun {
     let ship = Workflows::defaults().workflow.remove("ship").unwrap();
     let ctx = RunContext {
@@ -120,7 +126,7 @@ fn a_clicked_stage_opens_taller_with_findings() {
 
 #[test]
 fn the_header_takes_its_band_off_the_top_of_the_terminal() {
-    let ctx = egui::Context::default();
+    let ctx = context();
     let mut run = run();
     run.start();
     let (execs, area) = frame(&ctx, &mut run, Vec::new());
@@ -134,7 +140,7 @@ fn the_header_takes_its_band_off_the_top_of_the_terminal() {
 
 #[test]
 fn clicking_a_pill_opens_the_stage_and_clicking_it_again_closes_it() {
-    let ctx = egui::Context::default();
+    let ctx = context();
     let mut run = run();
     run.start();
     frame(&ctx, &mut run, Vec::new());
@@ -161,7 +167,7 @@ fn clicking_a_pill_opens_the_stage_and_clicking_it_again_closes_it() {
 
 #[test]
 fn every_state_of_a_run_renders_without_asking_for_anything() {
-    let ctx = egui::Context::default();
+    let ctx = context();
     let mut states: Vec<TabRun> = Vec::new();
     let mut working = run();
     working.start();
@@ -204,4 +210,15 @@ fn every_state_of_a_run_renders_without_asking_for_anything() {
             assert!(area.height() > 0.0);
         }
     }
+}
+
+#[test]
+fn an_agents_markdown_reads_as_plain_lines() {
+    assert_eq!(plain_line("**Done**"), "Done");
+    assert_eq!(
+        plain_line("- added `expiry()` in `src/auth.rs:12`"),
+        "\u{b7} added expiry() in src/auth.rs:12"
+    );
+    assert_eq!(plain_line("## Needs you"), "Needs you");
+    assert_eq!(plain_line("plain text"), "plain text");
 }
