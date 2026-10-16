@@ -1,7 +1,8 @@
 //! App-wide switches in `~/.config/tidewatch/settings.toml`: whether launch restores the last
 //! session (PLAN.md, D11, on by default) and how it brings agents back (`resume_agents`), the
 //! `[window]` table (quake mode, its hotkey, the
-//! menu-bar item, the panel layout) and the `[updates]` table (check for releases, install them).
+//! menu-bar item, the panel layout), the `[updates]` table (check for releases, install them) and
+//! the `[github]` table (what a new tab does when its pull request changes).
 //!
 //! A missing or bad file is the defaults, with a stderr note for a bad one: a settings file must
 //! never stop the app.
@@ -26,6 +27,37 @@ pub struct Prefs {
     pub window: WindowPrefs,
     #[serde(default)]
     pub updates: UpdatePrefs,
+    #[serde(default)]
+    pub github: GithubPrefs,
+}
+
+/// What a tab does when GitHub reports something about its pull request: `ask` shows a card with
+/// one button, `auto` sends the same message itself when the agent is idle, `off` stops looking.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum PrMode {
+    #[default]
+    Ask,
+    Auto,
+    Off,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GithubPrefs {
+    #[serde(default)]
+    pub mode: PrMode,
+    #[serde(default = "on")]
+    pub failed_checks: bool,
+    #[serde(default = "on")]
+    pub reviews: bool,
+    #[serde(default = "on")]
+    pub conflicts: bool,
+}
+
+impl Default for GithubPrefs {
+    fn default() -> Self {
+        Self { mode: PrMode::Ask, failed_checks: true, reviews: true, conflicts: true }
+    }
 }
 
 /// What a restored agent tab does: `auto` runs its resume command, `prefill` types it and leaves
@@ -88,6 +120,7 @@ impl Default for Prefs {
             resume_agents: ResumeAgents::default(),
             window: WindowPrefs::default(),
             updates: UpdatePrefs::default(),
+            github: GithubPrefs::default(),
         }
     }
 }
@@ -303,6 +336,61 @@ mod tests {
         let prefs = Prefs::load(&paths);
         assert!(!prefs.restore_session);
         assert!(!prefs.window.quake, "the restore switch did not bring the window section back");
+    }
+
+    #[test]
+    fn github_asks_first_with_every_trigger_on_by_default() {
+        let github = Prefs::default().github;
+        assert_eq!(
+            github,
+            GithubPrefs { mode: PrMode::Ask, failed_checks: true, reviews: true, conflicts: true }
+        );
+    }
+
+    #[test]
+    fn a_file_from_before_the_github_table_gets_its_defaults() {
+        let (_home, paths) = paths();
+        std::fs::create_dir_all(paths.config_dir()).unwrap();
+        std::fs::write(paths.prefs_file(), "[window]\nquake = false\n").unwrap();
+        assert_eq!(Prefs::load(&paths).github, GithubPrefs::default());
+    }
+
+    #[test]
+    fn every_github_mode_reads_from_the_file_and_a_partial_table_keeps_the_rest() {
+        let (_home, paths) = paths();
+        std::fs::create_dir_all(paths.config_dir()).unwrap();
+        for (text, want) in [("ask", PrMode::Ask), ("auto", PrMode::Auto), ("off", PrMode::Off)] {
+            std::fs::write(
+                paths.prefs_file(),
+                format!("[github]\nmode = \"{text}\"\nreviews = false\n"),
+            )
+            .unwrap();
+            assert_eq!(
+                Prefs::load(&paths).github,
+                GithubPrefs { mode: want, failed_checks: true, reviews: false, conflicts: true },
+                "{text}"
+            );
+        }
+    }
+
+    #[test]
+    fn an_unknown_github_mode_makes_the_whole_file_fall_back_to_the_defaults() {
+        let (_home, paths) = paths();
+        std::fs::create_dir_all(paths.config_dir()).unwrap();
+        std::fs::write(paths.prefs_file(), "[github]\nmode = \"sometimes\"\n").unwrap();
+        assert_eq!(Prefs::load(&paths), Prefs::default());
+    }
+
+    #[test]
+    fn the_github_table_survives_an_update_of_another_part() {
+        let (_home, paths) = paths();
+        let github =
+            GithubPrefs { mode: PrMode::Auto, failed_checks: false, ..GithubPrefs::default() };
+        Prefs::update(&paths, |p| p.github = github).unwrap();
+        Prefs::update(&paths, |p| p.window.quake = false).unwrap();
+        let prefs = Prefs::load(&paths);
+        assert_eq!(prefs.github, github);
+        assert!(!prefs.window.quake);
     }
 
     #[test]
