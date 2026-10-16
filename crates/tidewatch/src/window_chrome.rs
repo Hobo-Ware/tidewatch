@@ -65,7 +65,103 @@ fn edge_zones(window: Rect) -> [(ResizeDirection, Rect); 12] {
     ]
 }
 
-/// The window buttons at the right end of the strip, left to right.
+/// A window button the desktop can ask for.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Kind {
+    Minimize,
+    Maximize,
+    Close,
+}
+
+/// What a double click on the title bar does.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum DoubleClick {
+    ToggleMaximize,
+    Minimize,
+    Nothing,
+}
+
+/// The desktop's title bar settings, so the drawn bar behaves like every other window's: GNOME's
+/// `button-layout` (Fedora shows only Close) and `action-double-click-titlebar`. Anywhere else, or
+/// when they cannot be read: minimize, maximize and close, and a double click maximizes.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct Desktop {
+    buttons: Vec<Kind>,
+    double_click: DoubleClick,
+}
+
+impl Default for Desktop {
+    fn default() -> Self {
+        Self {
+            buttons: vec![Kind::Minimize, Kind::Maximize, Kind::Close],
+            double_click: DoubleClick::ToggleMaximize,
+        }
+    }
+}
+
+impl Desktop {
+    /// Reads GNOME's settings once, before the window opens. Without `gsettings` (or off Linux)
+    /// the defaults stand.
+    pub(crate) fn read() -> Self {
+        let get = |key: &str| {
+            let output = std::process::Command::new("gsettings")
+                .args(["get", "org.gnome.desktop.wm.preferences", key])
+                .output()
+                .ok()
+                .filter(|output| output.status.success())?;
+            String::from_utf8(output.stdout).ok()
+        };
+        Self::from_settings(
+            get("button-layout").as_deref(),
+            get("action-double-click-titlebar").as_deref(),
+        )
+    }
+
+    /// `layout` is GNOME's `left:right` list (`'appmenu:minimize,maximize,close'`); the buttons
+    /// it names keep their order and all sit at the strip's right end. Names it does not know
+    /// (`appmenu`, `spacer`) are skipped, a layout with none of the three shows none.
+    fn from_settings(layout: Option<&str>, double_click: Option<&str>) -> Self {
+        let defaults = Self::default();
+        let unquote = |value: &str| value.trim().trim_matches('\'').to_owned();
+        let buttons = layout.map(unquote).map_or(defaults.buttons, |layout| {
+            let mut buttons = Vec::new();
+            for name in layout.split([':', ',']).map(str::trim) {
+                let kind = match name {
+                    "minimize" => Kind::Minimize,
+                    "maximize" => Kind::Maximize,
+                    "close" => Kind::Close,
+                    _ => continue,
+                };
+                if !buttons.contains(&kind) {
+                    buttons.push(kind);
+                }
+            }
+            buttons
+        });
+        let double_click = match double_click.map(unquote).as_deref() {
+            Some("minimize") => DoubleClick::Minimize,
+            Some("none" | "lower" | "menu") => DoubleClick::Nothing,
+            _ => DoubleClick::ToggleMaximize,
+        };
+        Self { buttons, double_click }
+    }
+
+    /// The room the window buttons take at the strip's right end, with the divider before them.
+    pub(crate) fn controls_width(&self) -> f32 {
+        if self.buttons.is_empty() { 0.0 } else { DIVIDER_W + BUTTON_W * self.buttons.len() as f32 }
+    }
+
+    fn row(&self, maximized: bool) -> impl Iterator<Item = Button> + '_ {
+        self.buttons.iter().map(move |kind| match kind {
+            Kind::Minimize => Button::Minimize,
+            Kind::Maximize if maximized => Button::Restore,
+            Kind::Maximize => Button::Maximize,
+            Kind::Close => Button::Close,
+        })
+    }
+}
+
+/// A window button as drawn: maximize turns into restore while the window is maximized.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Button {
     Minimize,
@@ -75,11 +171,6 @@ enum Button {
 }
 
 impl Button {
-    fn row(maximized: bool) -> [Self; 3] {
-        let middle = if maximized { Self::Restore } else { Self::Maximize };
-        [Self::Minimize, middle, Self::Close]
-    }
-
     fn command(self) -> ViewportCommand {
         match self {
             Self::Minimize => ViewportCommand::Minimized(true),
@@ -114,33 +205,42 @@ const DIVIDER_W: f32 = 13.0;
 const DIVIDER_H: f32 = 16.0;
 const GLYPH: f32 = 10.0;
 const GLYPH_STROKE: f32 = 1.3;
-/// The width of the window buttons with the divider before them.
-pub(crate) const CONTROLS_W: f32 = DIVIDER_W + 3.0 * BUTTON_W;
 
 fn maximized(ctx: &Context) -> bool {
     ctx.input(|i| i.viewport().maximized.unwrap_or(false))
 }
 
-/// The strip's empty space as the title bar: a drag moves the window, a double click maximizes or
-/// restores it. Called before the strip's widgets, so they sit on top and keep their clicks.
-pub(crate) fn title_bar(ui: &Ui, rect: Rect) {
+/// The strip's empty space as the title bar: a drag moves the window, a double click does what the
+/// desktop says. Called before the strip's widgets, so they sit on top and keep their clicks.
+pub(crate) fn title_bar(ui: &Ui, rect: Rect, desktop: &Desktop) {
     let bar = ui.interact(rect, Id::new("window_title_bar"), Sense::click_and_drag());
     if bar.double_clicked() {
-        ui.ctx().send_viewport_cmd(ViewportCommand::Maximized(!maximized(ui.ctx())));
+        let command = match desktop.double_click {
+            DoubleClick::ToggleMaximize => Some(ViewportCommand::Maximized(!maximized(ui.ctx()))),
+            DoubleClick::Minimize => Some(ViewportCommand::Minimized(true)),
+            DoubleClick::Nothing => None,
+        };
+        if let Some(command) = command {
+            ui.ctx().send_viewport_cmd(command);
+        }
     } else if bar.drag_started_by(PointerButton::Primary) {
         ui.ctx().send_viewport_cmd(ViewportCommand::StartDrag);
     }
 }
 
-/// Minimize, maximize or restore, and close, after a short divider. Each looks like the strip's
-/// icon buttons; close turns red under the pointer.
-pub(crate) fn controls(ui: &mut Ui) {
-    let (rect, _) = ui.allocate_exact_size(vec2(CONTROLS_W, BUTTON_H), Sense::hover());
+/// The desktop's window buttons after a short divider. Each looks like the strip's icon buttons;
+/// close turns red under the pointer.
+pub(crate) fn controls(ui: &mut Ui, desktop: &Desktop) {
+    let width = desktop.controls_width();
+    if width == 0.0 {
+        return;
+    }
+    let (rect, _) = ui.allocate_exact_size(vec2(width, BUTTON_H), Sense::hover());
     let painter = ui.painter();
     let x = rect.left() + DIVIDER_W / 2.0;
     let half = DIVIDER_H / 2.0;
     painter.vline(x, rect.center().y - half..=rect.center().y + half, (1.0, brand::SIDEBAR_LINE));
-    for (i, button) in Button::row(maximized(ui.ctx())).into_iter().enumerate() {
+    for (i, button) in desktop.row(maximized(ui.ctx())).enumerate() {
         let min = pos2(rect.left() + DIVIDER_W + BUTTON_W * i as f32, rect.top());
         let slot = Rect::from_min_size(min, vec2(BUTTON_W, BUTTON_H));
         let resp = ui.interact(slot, Id::new(("window_button", i)), Sense::click());
@@ -300,9 +400,54 @@ mod tests {
     }
 
     #[test]
-    fn the_middle_button_maximizes_a_window_and_restores_a_maximized_one() {
-        assert_eq!(Button::row(false), [Button::Minimize, Button::Maximize, Button::Close]);
-        assert_eq!(Button::row(true), [Button::Minimize, Button::Restore, Button::Close]);
+    fn maximize_turns_into_restore_on_a_maximized_window() {
+        let desktop = Desktop::default();
+        let row = |maximized| desktop.row(maximized).collect::<Vec<_>>();
+        assert_eq!(row(false), [Button::Minimize, Button::Maximize, Button::Close]);
+        assert_eq!(row(true), [Button::Minimize, Button::Restore, Button::Close]);
+    }
+
+    #[test]
+    fn gnomes_button_layout_picks_the_buttons_and_their_order() {
+        use Kind::{Close, Maximize, Minimize};
+        let cases: [(Option<&str>, Vec<Kind>); 7] = [
+            (Some("'appmenu:close'\n"), vec![Close]),
+            (Some("'appmenu:minimize,maximize,close'"), vec![Minimize, Maximize, Close]),
+            (Some("'close,minimize,maximize:'"), vec![Close, Minimize, Maximize]),
+            (Some("'appmenu:spacer,close,close'"), vec![Close]),
+            (Some("'appmenu:'"), vec![]),
+            (Some("''"), vec![]),
+            (None, vec![Minimize, Maximize, Close]),
+        ];
+        for (layout, want) in cases {
+            assert_eq!(Desktop::from_settings(layout, None).buttons, want, "{layout:?}");
+        }
+    }
+
+    #[test]
+    fn gnomes_double_click_action_is_followed() {
+        let cases = [
+            (Some("'toggle-maximize'\n"), DoubleClick::ToggleMaximize),
+            (Some("'minimize'"), DoubleClick::Minimize),
+            (Some("'none'"), DoubleClick::Nothing),
+            (Some("'menu'"), DoubleClick::Nothing),
+            (Some("'something-new'"), DoubleClick::ToggleMaximize),
+            (None, DoubleClick::ToggleMaximize),
+        ];
+        for (action, want) in cases {
+            assert_eq!(Desktop::from_settings(None, action).double_click, want, "{action:?}");
+        }
+    }
+
+    #[test]
+    fn no_buttons_take_no_room() {
+        assert_eq!(Desktop::from_settings(Some("'appmenu:'"), None).controls_width(), 0.0);
+        let close = Desktop::from_settings(Some("'appmenu:close'"), None).controls_width();
+        assert_eq!(close, DIVIDER_W + BUTTON_W);
+    }
+
+    #[test]
+    fn the_buttons_minimize_maximize_restore_and_close() {
         let cases = [
             (Button::Minimize, ViewportCommand::Minimized(true)),
             (Button::Maximize, ViewportCommand::Maximized(true)),
@@ -318,11 +463,16 @@ mod tests {
         ctx: Context,
         time: f64,
         tab_clicks: usize,
+        desktop: Desktop,
     }
 
     impl Strip {
         fn new() -> Self {
-            let mut strip = Self { ctx: Context::default(), time: 0.0, tab_clicks: 0 };
+            Self::with(Desktop::default())
+        }
+
+        fn with(desktop: Desktop) -> Self {
+            let mut strip = Self { ctx: Context::default(), time: 0.0, tab_clicks: 0, desktop };
             strip.frame(vec![]);
             strip.frame(vec![]);
             strip
@@ -344,14 +494,15 @@ mod tests {
                 egui::Panel::top("tabbar").exact_size(40.0).frame(egui::Frame::NONE).show(
                     ui,
                     |ui| {
-                        title_bar(ui, ui.max_rect());
+                        title_bar(ui, ui.max_rect(), &self.desktop);
                         ui.horizontal(|ui| {
                             ui.set_min_height(BUTTON_H);
                             clicked = ui
                                 .add_sized(vec2(120.0, BUTTON_H), egui::Button::new("main"))
                                 .clicked();
-                            ui.add_space((ui.available_width() - CONTROLS_W).max(0.0));
-                            controls(ui);
+                            let width = self.desktop.controls_width();
+                            ui.add_space((ui.available_width() - width).max(0.0));
+                            controls(ui, &self.desktop);
                         });
                     },
                 );
@@ -429,6 +580,26 @@ mod tests {
         let mut commands = strip.click(pos2(400.0, 20.0));
         commands.extend(strip.click(pos2(400.0, 20.0)));
         assert_eq!(commands, vec![ViewportCommand::Maximized(true)]);
+    }
+
+    #[test]
+    fn a_double_click_does_what_the_desktop_says() {
+        let mut strip = Strip::with(Desktop::from_settings(None, Some("'minimize'")));
+        let mut commands = strip.click(pos2(400.0, 20.0));
+        commands.extend(strip.click(pos2(400.0, 20.0)));
+        assert_eq!(commands, vec![ViewportCommand::Minimized(true)]);
+        let mut strip = Strip::with(Desktop::from_settings(None, Some("'none'")));
+        let mut commands = strip.click(pos2(400.0, 20.0));
+        commands.extend(strip.click(pos2(400.0, 20.0)));
+        assert_eq!(commands, vec![]);
+    }
+
+    #[test]
+    fn a_close_only_layout_draws_close_alone() {
+        let strip = Strip::with(Desktop::from_settings(Some("'appmenu:close'"), None));
+        let close = strip.ctx.read_response(Id::new(("window_button", 0)));
+        assert!(close.is_some_and(|resp| resp.rect.right() == WINDOW.right()));
+        assert!(strip.ctx.read_response(Id::new(("window_button", 1))).is_none());
     }
 
     #[test]

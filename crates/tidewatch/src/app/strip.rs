@@ -70,7 +70,10 @@ impl Tidewatch {
 
         let chrome = self.shell.chrome();
         let drawn = chrome == Chrome::Drawn;
-        let controls = if drawn { window_chrome::CONTROLS_W + STRIP_GAP } else { 0.0 };
+        let controls = match self.desktop.controls_width() {
+            width if drawn && width > 0.0 => width + STRIP_GAP,
+            _ => 0.0,
+        };
         let corner = if drawn { 0 } else { STRIP_CORNER };
         let margin = Margin {
             left: STRIP_SIDE_MARGIN,
@@ -88,7 +91,7 @@ impl Tidewatch {
             )
             .show(ui, |ui| {
                 if drawn {
-                    window_chrome::title_bar(ui, ui.max_rect() + margin);
+                    window_chrome::title_bar(ui, ui.max_rect() + margin, &self.desktop);
                 }
                 ui.horizontal(|ui| {
                     ui.set_min_height(TAB_H);
@@ -97,7 +100,7 @@ impl Tidewatch {
                     if self.welcome.is_some() {
                         Self::welcome_strip(ui, frame, controls);
                         if drawn {
-                            window_chrome::controls(ui);
+                            window_chrome::controls(ui, &self.desktop);
                         }
                         return;
                     }
@@ -171,7 +174,7 @@ impl Tidewatch {
                         frame.toggle_settings = true;
                     }
                     if drawn {
-                        window_chrome::controls(ui);
+                        window_chrome::controls(ui, &self.desktop);
                     }
                 });
             });
