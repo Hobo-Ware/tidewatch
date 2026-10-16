@@ -22,12 +22,14 @@ use std::path::{Path, PathBuf};
 
 use serde_json::Value;
 
+use crate::question::{self, Question};
 use crate::rfc3339;
 
 const SUMMARY_MAX_CHARS: usize = 120;
 const TOOL_RESULT_MAX_CHARS: usize = 4000;
 const HEAD_BYTES: usize = 64;
 const PARTIAL_MAX_BYTES: usize = 16 << 20;
+const CLAUDE_ASK_TOOL: &str = "AskUserQuestion";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Role {
@@ -45,6 +47,17 @@ pub enum ToolPhase {
     Result { error: bool },
 }
 
+/// What a question tool's call or result carries, beyond the one-line summary.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum AskPart {
+    /// The call: the questions asked.
+    Asked(Vec<Question>),
+    /// The result: each question with the answer the user gave.
+    Answered(Vec<(String, String)>),
+    /// The result: the user refused to answer.
+    Declined,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ToolCall {
     pub name: String,
@@ -53,6 +66,8 @@ pub struct ToolCall {
     /// Pairs a result with its call, when the CLI gives ids.
     pub id: Option<String>,
     pub phase: ToolPhase,
+    /// Set for Claude Code's `AskUserQuestion` call and its result.
+    pub ask: Option<AskPart>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -150,14 +165,13 @@ impl Parser {
                             let id = block["tool_use_id"].as_str().unwrap_or_default();
                             let error = block["is_error"].as_bool() == Some(true);
                             let (name, summary) = self.recall(id);
-                            entries.push(tool_result(
-                                name,
-                                summary,
-                                Some(id),
-                                &result_text(&block["content"]),
-                                error,
-                                ts,
-                            ));
+                            let text = result_text(&block["content"]);
+                            let asked = name == CLAUDE_ASK_TOOL;
+                            let mut result = tool_result(name, summary, Some(id), &text, error, ts);
+                            if asked {
+                                set_ask(&mut result, claude_ask_result(line, &text, error));
+                            }
+                            entries.push(result);
                         }
                         _ => {}
                     }
@@ -183,7 +197,14 @@ impl Parser {
                             let name = block["name"].as_str().unwrap_or("tool");
                             let summary = summary_of(&block["input"]);
                             self.remember(id, name, &summary);
-                            entries.push(tool_call(name, summary, Some(id), ts));
+                            let mut call = tool_call(name, summary, Some(id), ts);
+                            if name == CLAUDE_ASK_TOOL
+                                && let Some(questions) =
+                                    question::from_claude_input(&block["input"])
+                            {
+                                set_ask(&mut call, AskPart::Asked(questions));
+                            }
+                            entries.push(call);
                         }
                         _ => {}
                     }
@@ -393,6 +414,7 @@ fn tool_call(name: &str, summary: String, id: Option<&str>, ts: Option<i64>) -> 
             summary,
             id: id.map(str::to_owned),
             phase: ToolPhase::Call,
+            ask: None,
         }),
         ts,
     }
@@ -414,8 +436,23 @@ fn tool_result(
             summary,
             id: id.map(str::to_owned),
             phase: ToolPhase::Result { error },
+            ask: None,
         }),
         ts,
+    }
+}
+
+fn set_ask(entry: &mut Entry, part: AskPart) {
+    if let Some(call) = entry.tool.as_mut() {
+        call.ask = Some(part);
+    }
+}
+
+fn claude_ask_result(line: &Value, text: &str, error: bool) -> AskPart {
+    if error {
+        AskPart::Declined
+    } else {
+        AskPart::Answered(question::claude_answers(&line["toolUseResult"], text))
     }
 }
 
@@ -648,6 +685,7 @@ mod tests {
     const COPILOT: &str = include_str!("../tests/fixtures/copilot.jsonl");
     const CODEX_FUNCTION_CALL: &str = include_str!("../tests/fixtures/codex_function_call.jsonl");
     const CODEX_LIVE: &str = include_str!("../tests/fixtures/codex_live.jsonl");
+    const CLAUDE_ASK: &str = include_str!("../tests/fixtures/claude_ask_user_question.jsonl");
 
     type ToolShape = (String, String, ToolPhase);
     type Shaped = (Role, String, Option<ToolShape>);
@@ -691,6 +729,63 @@ mod tests {
             entries[1].tool.as_ref().and_then(|t| t.id.as_deref()),
             Some("toolu_01CJPLN1Vrsb8mQ2XYzmCoXm")
         );
+    }
+
+    fn asks(entries: &[Entry]) -> Vec<(ToolPhase, Option<AskPart>)> {
+        entries
+            .iter()
+            .filter_map(|e| e.tool.as_ref())
+            .filter(|t| t.name == "AskUserQuestion")
+            .map(|t| (t.phase, t.ask.clone()))
+            .collect()
+    }
+
+    #[test]
+    fn claude_question_calls_carry_their_questions_and_results_their_answers() {
+        let entries = parse_all(Source::Claude, CLAUDE_ASK);
+        let asked = asks(&entries);
+        assert_eq!(asked.len(), 7);
+        let Some(AskPart::Asked(first)) = &asked[0].1 else { panic!("{:?}", asked[0]) };
+        assert_eq!(first.len(), 2);
+        assert_eq!(first[0].text, "Which color?");
+        assert_eq!(first[0].options[0].shown(), "Red");
+        assert!(first[0].options[0].recommended());
+        assert_eq!(first[1].select, question::Select::Multi);
+        assert_eq!(asked[0].0, ToolPhase::Call);
+        assert_eq!(
+            asked[1],
+            (
+                ToolPhase::Result { error: false },
+                Some(AskPart::Answered(vec![
+                    ("Which color?".into(), "Green".into()),
+                    ("Which toppings?".into(), "Salt, Sugar".into()),
+                ]))
+            )
+        );
+        assert_eq!(
+            asked[3].1,
+            Some(AskPart::Answered(vec![("Which mode?".into(), "turbo mode".into())]))
+        );
+        assert_eq!(asked[5], (ToolPhase::Result { error: true }, Some(AskPart::Declined)));
+    }
+
+    #[test]
+    fn a_claude_question_without_a_result_yet_is_a_call_with_no_result() {
+        let entries = parse_all(Source::Claude, CLAUDE_ASK);
+        let last = entries.last().and_then(|e| e.tool.as_ref()).unwrap();
+        assert_eq!(last.phase, ToolPhase::Call);
+        assert_eq!(last.id.as_deref(), Some("toolu_ask4"));
+        assert!(matches!(&last.ask, Some(AskPart::Asked(q)) if q[0].text == "Which season?"));
+    }
+
+    #[test]
+    fn other_tools_and_unreadable_question_calls_carry_no_question() {
+        let entries = parse_all(Source::Claude, CLAUDE);
+        assert!(entries.iter().filter_map(|e| e.tool.as_ref()).all(|t| t.ask.is_none()));
+        let broken = r#"{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","id":"t1","name":"AskUserQuestion","input":{"questions":[]}}]}}"#;
+        let entries = Parser::new(Source::Claude).feed_line(broken);
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].tool.as_ref().unwrap().ask, None);
     }
 
     #[test]
