@@ -21,6 +21,7 @@ mod settings;
 mod stdusk;
 mod strip;
 mod tabs;
+mod takeover;
 mod terminal;
 mod workspaces;
 
@@ -53,6 +54,7 @@ use crate::dev_panes::DevPanes;
 use crate::dev_reader::DevReader;
 use crate::dev_screenshot::DevScreenshot;
 use crate::dev_session::DevSession;
+use crate::dev_takeover::DevTakeover;
 use crate::dev_view::{DevKeys, DevView};
 use crate::dev_workflow::DevWorkflow;
 use crate::dev_worktree::DevWorktree;
@@ -80,6 +82,8 @@ use crate::settings::Settings;
 use crate::shell::{self, Shell};
 use crate::tab_view::TabView;
 use crate::tabs::Tabs;
+use crate::takeover::Takeover;
+use crate::takeover_jobs;
 use crate::toast::Toast;
 use crate::trust_glue::Trust;
 use crate::updates::Updates;
@@ -114,6 +118,9 @@ pub(crate) struct Tidewatch {
     pane_jobs: Jobs<pane_jobs::Done>,
     workspace_jobs: Jobs<Workspace>,
     stdusk_jobs: Jobs<stdusk::Done>,
+    takeover: Takeover,
+    takeover_jobs: Jobs<takeover_jobs::Done>,
+    dev_takeover: Option<DevTakeover>,
     picker: Picker,
     repo_close: Option<RepoClose>,
     notes_writer: NotesWriter,
@@ -232,6 +239,9 @@ impl Tidewatch {
             pane_jobs: Jobs::new(),
             workspace_jobs: Jobs::new(),
             stdusk_jobs: Jobs::new(),
+            takeover: Takeover::default(),
+            takeover_jobs: Jobs::new(),
+            dev_takeover: DevTakeover::from_env(),
             picker: Picker::new(),
             repo_close: None,
             notes_writer: NotesWriter::new(),

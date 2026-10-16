@@ -75,6 +75,7 @@ impl Tidewatch {
         self.drive_pr(ctx, now);
         self.drive_dev_draft(ctx, now);
         self.drive_restore(ctx, now, None);
+        self.drive_takeover(ctx, now);
         self.drive_repo_close(ctx);
         self.drive_dev_leftovers(ctx);
         self.drive_views();
@@ -127,13 +128,14 @@ impl Tidewatch {
     fn key_gate(&self, active_id: u64, typing: bool) -> Gate {
         let other =
             self.trust.dialog_open() || self.leftovers.is_open() || self.flow.modal_open(active_id);
-        let dialog = if self.closing.is_some() || self.new_tab.is_some() {
-            Dialog::TabChoice
-        } else if other {
-            Dialog::Other
-        } else {
-            Dialog::None
-        };
+        let dialog =
+            if self.closing.is_some() || self.new_tab.is_some() || self.takeover.dialog_open() {
+                Dialog::TabChoice
+            } else if other {
+                Dialog::Other
+            } else {
+                Dialog::None
+            };
         Gate {
             dialog,
             settings: self.settings.is_some(),
@@ -175,6 +177,7 @@ impl Tidewatch {
             Command::OpenRepo => self.run_repo_command(RepoCommand::Open, ctx),
             Command::Palette => self.toggle_palette(),
             Command::BuildWorkflow => self.run_build_workflow(ctx),
+            Command::MoveSessions => self.run_move_sessions(ctx),
             Command::ApproveDelivery => {}
         }
     }

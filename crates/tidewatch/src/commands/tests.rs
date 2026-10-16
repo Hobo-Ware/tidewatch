@@ -64,7 +64,7 @@ fn every_command_has_its_own_chord_on_each_platform() {
         assert_eq!(labels.len(), bound.len(), "{platform:?}");
         let unbound: Vec<_> =
             TABLE.iter().filter(|entry| entry.chord(platform).is_none()).map(|e| e.id).collect();
-        assert_eq!(unbound, ["build-workflow"], "{platform:?}");
+        assert_eq!(unbound, ["build-workflow", "move-sessions"], "{platform:?}");
     }
 }
 
@@ -209,7 +209,8 @@ fn the_palette_lists_what_a_person_would_look_for() {
             "reader",
             "file-view",
             "settings",
-            "build-workflow"
+            "build-workflow",
+            "move-sessions"
         ]
     );
 }

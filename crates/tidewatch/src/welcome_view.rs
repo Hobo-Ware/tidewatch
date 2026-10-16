@@ -2,20 +2,29 @@
 
 use std::path::{Path, PathBuf};
 
-use egui::{Align2, CornerRadius, Pos2, Rect, Stroke, StrokeKind, Ui, Vec2, pos2, vec2};
+use egui::{
+    Align, Align2, CornerRadius, Layout, Pos2, Rect, Stroke, StrokeKind, Ui, UiBuilder, Vec2, pos2,
+    vec2,
+};
 
 use crate::brand;
 use crate::mascot::{self, Pose};
-use crate::screen_kit::{body, clickable, heading, mono, selection_row};
+use crate::screen_kit::{
+    body, clickable, heading, mono, paint_pill_card, quiet_button, selection_row,
+};
 use crate::welcome::{Recent, shown_path};
 
 const COLUMN_W: f32 = 560.0;
 const MASCOT_H: f32 = 132.0;
 const ROW_H: f32 = 46.0;
+const SESSIONS_H: f32 = 44.0;
+const SESSIONS_GAP: f32 = 18.0;
 
 pub(crate) enum Action {
     Open,
     Recent(PathBuf),
+    /// Review the agent sessions found in other terminals.
+    MoveSessions,
 }
 
 pub(crate) fn show(
@@ -24,12 +33,14 @@ pub(crate) fn show(
     recent: &[Recent],
     home: Option<&Path>,
     shortcut: &str,
+    elsewhere: Option<(usize, usize)>,
 ) -> Option<Action> {
     ui.painter().rect_filled(area, 0.0, brand::GROUND);
     let width = COLUMN_W.min(area.width() - 40.0);
     let rows = recent.len() as f32;
     let list_h = if recent.is_empty() { 0.0 } else { 26.0 + 22.0 + rows * (ROW_H + 4.0) };
-    let total = MASCOT_H + 26.0 + 90.0 + 26.0 + 48.0 + list_h + 26.0 + 20.0;
+    let sessions_h = elsewhere.map_or(0.0, |_| SESSIONS_H + SESSIONS_GAP);
+    let total = MASCOT_H + 26.0 + 90.0 + 26.0 + 48.0 + sessions_h + list_h + 26.0 + 20.0;
     let cx = area.center().x;
     let mut y = (area.center().y - total / 2.0).max(area.top() + 16.0);
     let mut action = None;
@@ -60,6 +71,13 @@ pub(crate) fn show(
         action = Some(Action::Open);
     }
     y += 48.0 + 26.0;
+    if let Some((running, idle)) = elsewhere {
+        let line = Rect::from_min_size(pos2(cx - width / 2.0, y), vec2(width, SESSIONS_H));
+        if sessions_line(ui, line, running, idle) {
+            action = Some(Action::MoveSessions);
+        }
+        y += SESSIONS_H + SESSIONS_GAP;
+    }
     if !recent.is_empty() {
         painter.text(
             pos2(cx - width / 2.0 + 12.0, y),
@@ -117,6 +135,27 @@ pub(crate) fn show(
         brand::MUTED,
     );
     action
+}
+
+/// The line that says agent sessions run in other terminals, with the button that reviews them.
+fn sessions_line(ui: &mut Ui, rect: Rect, running: usize, idle: usize) -> bool {
+    paint_pill_card(ui.painter(), rect);
+    let noun = if running == 1 { "agent session runs" } else { "agent sessions run" };
+    ui.painter().text(
+        rect.left_center() + vec2(14.0, 0.0),
+        Align2::LEFT_CENTER,
+        format!("{running} {noun} in other terminals"),
+        body(13.0),
+        brand::SOFT,
+    );
+    let mut inner = ui.new_child(
+        UiBuilder::new()
+            .id_salt("welcome_sessions")
+            .max_rect(rect.shrink2(vec2(12.0, 0.0)))
+            .layout(Layout::right_to_left(Align::Center)),
+    );
+    let label = if idle > 0 { "Move idle ones here" } else { "None are idle" };
+    quiet_button(&mut inner, label, idle > 0).clicked()
 }
 
 fn open_button(ui: &mut Ui, top_center: Pos2) -> egui::Response {

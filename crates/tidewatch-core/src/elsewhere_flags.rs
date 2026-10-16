@@ -5,25 +5,19 @@
 use crate::agents::{Agent, Level};
 use crate::elsewhere::Cli;
 
-/// What the command line says about how the session runs.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Flags {
-    /// `None` when no permission flag was found: the CLI's own default.
     pub level: Option<Level>,
     pub model: Option<String>,
     pub effort: Option<String>,
-    /// Everything else, in order, ready to append to a launch.
     pub extra: Vec<String>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Parsed {
     pub flags: Flags,
-    /// The first word that is not a flag or a flag's value.
     pub subcommand: Option<String>,
-    /// A one-shot run (`-p`, a subcommand such as `exec` or `mcp`), not a conversation.
     pub non_interactive: bool,
-    /// The session id the command line names.
     pub resume_id: Option<String>,
 }
 
@@ -287,7 +281,6 @@ fn aliases(cli: Cli) -> &'static [(&'static str, Level)] {
     }
 }
 
-/// The words of `argv` after the program (`claude`, or `node /path/to/gemini`).
 fn after_program(agent: &Agent, argv: &[String]) -> Vec<String> {
     let at = argv.iter().take(3).position(|word| basename(word) == agent.bin).map_or(1, |i| i + 1);
     argv.iter().skip(at).cloned().collect()
@@ -300,7 +293,6 @@ pub(crate) fn basename(word: &str) -> &str {
 type Item = Vec<String>;
 type Match = (Level, usize, Vec<(usize, usize)>);
 
-/// A level's flags as items: a flag with the words that follow it up to the next flag.
 fn items(tokens: &[String]) -> Vec<Item> {
     let mut items: Vec<Item> = Vec::new();
     for token in tokens {
@@ -312,7 +304,6 @@ fn items(tokens: &[String]) -> Vec<Item> {
     items
 }
 
-/// How many words of `args` the item takes at `at`, when it is there.
 fn item_len(args: &[String], at: usize, item: &Item) -> Option<usize> {
     let flag = item.first()?;
     if args[at] == *flag && item.len() == 1 {
@@ -386,7 +377,6 @@ fn effort_value(agent: &Agent, value: &str) -> Option<String> {
     Some(rest.trim_matches('"').to_owned())
 }
 
-/// The model, effort, level and carried flags of one running command line.
 #[must_use]
 pub fn parse_command_line(cli: Cli, agent: &Agent, argv: &[String]) -> Parsed {
     let names = names(cli);

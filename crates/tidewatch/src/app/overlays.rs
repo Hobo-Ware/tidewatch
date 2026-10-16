@@ -72,6 +72,7 @@ impl Tidewatch {
             self.answer_close(answer, ctx);
         }
         self.show_palette(ctx);
+        self.show_takeover_dialog(ctx);
         self.leftovers.show(ctx, self.paths.as_ref(), self.trust.grant().as_ref());
         flow_glue::dialogs(ctx, &mut self.flow, active_id);
         if let Some(state) = &mut self.new_tab
