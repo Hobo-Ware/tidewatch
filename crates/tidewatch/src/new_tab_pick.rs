@@ -1,8 +1,8 @@
 //! Draws the new-tab dialog's agent and workflow lists.
 
 use egui::{
-    Align, Color32, CornerRadius, Layout, Mesh, Painter, Rect, RichText, Sense, Stroke, StrokeKind,
-    Ui, UiBuilder, epaint::Vertex, pos2, vec2,
+    Align, CornerRadius, Layout, Painter, Rect, RichText, Sense, Stroke, StrokeKind, Ui, UiBuilder,
+    pos2, vec2,
 };
 use tidewatch_core::agents::{Agent, Level};
 use tidewatch_core::profiles::Profile;
@@ -20,7 +20,7 @@ use crate::screen_kit::{
     body, clickable, heading, paint_cli_badge, primary_button, quiet_button, selection_row,
 };
 use crate::segmented;
-use crate::settings_ui::text_input;
+use crate::settings_ui::{fade_edges, text_input};
 
 const ROW_H: f32 = 58.0;
 const OPEN_EXTRA: f32 = 84.0;
@@ -28,8 +28,6 @@ const LIST_MAX_H: f32 = 470.0;
 const LIST_MIN_H: f32 = 160.0;
 const WINDOW_MARGIN: f32 = 320.0;
 const BADGE: f32 = 30.0;
-const FADE_H: f32 = 28.0;
-
 pub(crate) fn agent(
     ui: &mut Ui,
     state: &mut NewTab,
@@ -75,7 +73,7 @@ pub(crate) fn agent(
                 empty_list(ui, state, catalog, "profile");
             }
         });
-    fade_edges(ui, &list);
+    fade_edges(ui, &list, brand::CARD);
     if let Some((index, now)) = clicked {
         state.select(index, catalog);
         if now {
@@ -126,7 +124,7 @@ pub(crate) fn workflow(
                 empty_list(ui, state, catalog, "workflow");
             }
         });
-    fade_edges(ui, &list);
+    fade_edges(ui, &list, brand::CARD);
     if let Some((index, now)) = clicked {
         state.select(index, catalog);
         if now {
@@ -155,40 +153,6 @@ fn filter_field(ui: &mut Ui, state: &mut NewTab, catalog: &Catalog) {
     if field.changed() {
         state.set_filter(&text, catalog);
     }
-}
-
-fn fade_edges(ui: &Ui, list: &egui::scroll_area::ScrollAreaOutput<()>) {
-    let view = list.inner_rect;
-    let below = list.content_size.y - list.state.offset.y - view.height() > 1.0;
-    if below {
-        fade(
-            ui.painter(),
-            Rect::from_min_max(pos2(view.left(), view.bottom() - FADE_H), view.max),
-            true,
-        );
-    }
-    if list.state.offset.y > 1.0 {
-        fade(
-            ui.painter(),
-            Rect::from_min_max(view.min, pos2(view.right(), view.top() + FADE_H)),
-            false,
-        );
-    }
-}
-
-fn fade(painter: &Painter, rect: Rect, to_bottom: bool) {
-    let clear = Color32::TRANSPARENT;
-    let (top, bottom) = if to_bottom { (clear, brand::CARD) } else { (brand::CARD, clear) };
-    let vertex = |pos, color| Vertex { pos, uv: egui::epaint::WHITE_UV, color };
-    let mut mesh = Mesh::default();
-    mesh.vertices = vec![
-        vertex(rect.left_top(), top),
-        vertex(rect.right_top(), top),
-        vertex(rect.right_bottom(), bottom),
-        vertex(rect.left_bottom(), bottom),
-    ];
-    mesh.indices = vec![0, 1, 2, 0, 2, 3];
-    painter.add(mesh);
 }
 
 fn group_title(ui: &mut Ui, name: &str, availability: &Availability) {

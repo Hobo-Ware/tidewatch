@@ -12,10 +12,11 @@ use crate::house_style_view;
 use crate::login_item;
 use crate::macos::LoginItem;
 use crate::profiles_view::{self, Probes};
+use crate::screen_kit::selection_row;
 use crate::settings::{Section, Settings};
 use crate::settings_icons;
 use crate::settings_ui::{
-    FAINT, GROUND, ORANGE, SIDEBAR, SIDEBAR_LINE, SOFT, TEAL_NAV, TEAL_TEXT, TEXT, font_semibold,
+    FAINT, GROUND, HEADER_H, ORANGE, SIDEBAR, SIDEBAR_LINE, SOFT, TEAL_TEXT, TEXT, font_semibold,
 };
 use crate::shortcuts_view;
 use crate::trust_view;
@@ -135,7 +136,7 @@ fn scrolling(
         .auto_shrink(false)
         .show(&mut child, |ui| {
             Frame::new()
-                .inner_margin(Margin { left: 40, right: 40, top: 28, bottom: 28 })
+                .inner_margin(Margin { left: 40, right: 40, top: 0, bottom: 28 })
                 .show(ui, |ui| {
                     ui.set_width(ui.available_width().min(CONTENT_MAX));
                     ui.spacing_mut().item_spacing.y = 0.0;
@@ -150,15 +151,23 @@ fn sidebar(ui: &mut Ui, rect: Rect, settings: &mut Settings, updates: &Updates) 
     let painter = ui.painter();
     painter.rect_filled(rect, CornerRadius::ZERO, SIDEBAR);
     painter.vline(rect.right() - 0.5, rect.y_range(), Stroke::new(1.0, SIDEBAR_LINE));
+    painter.hline(rect.x_range(), rect.top() + HEADER_H, Stroke::new(1.0, SIDEBAR_LINE));
+    painter.text(
+        rect.left_top() + vec2(24.0, HEADER_H / 2.0),
+        Align2::LEFT_CENTER,
+        "Settings",
+        font_semibold(20.0),
+        TEXT,
+    );
     let mut inner = ui.new_child(
         UiBuilder::new()
-            .max_rect(rect.shrink2(vec2(14.0, 22.0)))
+            .max_rect(Rect::from_min_max(
+                pos2(rect.left() + 14.0, rect.top() + HEADER_H + 14.0),
+                rect.max - vec2(14.0, 22.0),
+            ))
             .layout(Layout::top_down(Align::Min)),
     );
     inner.spacing_mut().item_spacing.y = 2.0;
-    let (title, _) = inner.allocate_exact_size(vec2(inner.available_width(), 36.0), Sense::hover());
-    let galley = inner.painter().layout_no_wrap("Settings".to_owned(), font_semibold(20.0), TEXT);
-    inner.painter().galley(title.min + vec2(10.0, 0.0), galley, TEXT);
     for (section, label, unsaved) in settings.sections() {
         if item(&mut inner, section, label, settings.section == section, unsaved).clicked() {
             settings.section = section;
@@ -193,15 +202,7 @@ fn item(
     let (rect, response) =
         ui.allocate_exact_size(vec2(ui.available_width(), ITEM_HEIGHT), Sense::click());
     let painter = ui.painter();
-    if selected {
-        painter.rect_filled(rect, CornerRadius::same(8), TEAL_NAV);
-    } else if response.hovered() {
-        painter.rect_filled(
-            rect,
-            CornerRadius::same(8),
-            egui::Color32::from_rgba_unmultiplied(255, 255, 255, 8),
-        );
-    }
+    selection_row(painter, rect, selected, response.hovered());
     let (text, icon) = if selected { (TEXT, TEAL_TEXT) } else { (SOFT, SOFT) };
     let icon_rect =
         Rect::from_center_size(pos2(rect.left() + 18.0, rect.center().y), vec2(16.0, 16.0));

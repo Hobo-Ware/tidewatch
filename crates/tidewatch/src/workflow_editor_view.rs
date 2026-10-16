@@ -9,7 +9,8 @@ use crate::settings_ui::editor::{
     split_card,
 };
 use crate::settings_ui::{
-    CARD, MUTED, RED, TEAL_TEXT, Tone, button, caption, choice, field, note, switch_line, text_area,
+    CARD, MUTED, RED, TEAL_TEXT, Tone, button, caption, fade_edges, field, fits_inline, note, pick,
+    switch_line, text_area,
 };
 use crate::settings_view::Action as PageAction;
 use crate::workflow_editor::{Editor, StageDraft};
@@ -117,16 +118,22 @@ fn editor_card(ui: &mut Ui, rect: Rect, editor: &mut Editor, file: &str) -> Opti
     let problems: Vec<String> = editor.problems(selected_index).to_vec();
     let agents = editor.agents().to_vec();
     let profiles = editor.profiles().to_vec();
-    ScrollArea::vertical().id_salt("workflow_form").auto_shrink(false).show(&mut body, |ui| {
-        egui::Frame::new().inner_margin(Margin::symmetric(20, 18)).show(ui, |ui| {
-            ui.set_width(ui.available_width());
-            if let Some(draft) = editor.drafts.get_mut(selected_index) {
-                let form =
-                    Form { stage_index, problems: &problems, agents: &agents, profiles: &profiles };
-                (changed, stage_action) = form.show(ui, draft);
-            }
+    let form_scroll =
+        ScrollArea::vertical().id_salt("workflow_form").auto_shrink(false).show(&mut body, |ui| {
+            egui::Frame::new().inner_margin(Margin::symmetric(20, 18)).show(ui, |ui| {
+                ui.set_width(ui.available_width());
+                if let Some(draft) = editor.drafts.get_mut(selected_index) {
+                    let form = Form {
+                        stage_index,
+                        problems: &problems,
+                        agents: &agents,
+                        profiles: &profiles,
+                    };
+                    (changed, stage_action) = form.show(ui, draft);
+                }
+            });
         });
-    });
+    fade_edges(&body, &form_scroll, CARD);
     let mut action = None;
     if bar.shows() {
         let mut bar_ui = ui.new_child(UiBuilder::new().max_rect(parts.bar));
@@ -198,17 +205,28 @@ impl Form<'_> {
         ui.add_space(12.0);
         caption(ui, "Stages, run one after the other");
         ui.add_space(2.0);
-        ui.horizontal_wrapped(|ui| {
-            for (index, stage) in draft.stages.iter().enumerate() {
-                let label = format!("{}. {}", index + 1, stage.action.label());
-                if choice(ui, &label, index == self.stage_index).clicked() {
-                    action = Some(StageAction::Select(index));
-                }
+        let stage_labels: Vec<String> = draft
+            .stages
+            .iter()
+            .enumerate()
+            .map(|(index, stage)| format!("{}. {}", index + 1, stage.action.label()))
+            .collect();
+        let labels: Vec<&str> = stage_labels.iter().map(String::as_str).collect();
+        let beside = fits_inline(ui, &labels);
+        ui.horizontal(|ui| {
+            if let Some(index) = pick(ui, "stages", &labels, Some(self.stage_index)) {
+                action = Some(StageAction::Select(index));
             }
-            if button(ui, "Add stage", Tone::Quiet).clicked() {
+            if beside && button(ui, "Add stage", Tone::Quiet).clicked() {
                 action = Some(StageAction::Add);
             }
         });
+        if !beside {
+            ui.add_space(2.0);
+            if button(ui, "Add stage", Tone::Quiet).clicked() {
+                action = Some(StageAction::Add);
+            }
+        }
         let count = draft.stages.len();
         if self.stage_index < count {
             let earlier: Vec<String> = draft.stages[..self.stage_index]
@@ -227,7 +245,7 @@ impl Form<'_> {
                 if self.stage_index + 1 < count && button(ui, "Move later", Tone::Quiet).clicked() {
                     action = Some(StageAction::Move(true));
                 }
-                if button(ui, "Remove stage", Tone::Quiet).clicked() {
+                if button(ui, "Remove stage", Tone::Danger).clicked() {
                     action = Some(StageAction::Remove);
                 }
             });
@@ -246,39 +264,38 @@ impl Form<'_> {
         let mut changed = false;
         ui.add_space(12.0);
         caption(ui, "Action");
-        ui.horizontal_wrapped(|ui| {
-            for action in Action::ALL {
-                if choice(ui, action.label(), stage.action == action).clicked() {
-                    stage.action = action;
-                    stage.gate = action.default_gate();
-                    changed = true;
-                }
-            }
-        });
+        let labels = Action::ALL.map(Action::label);
+        let active = Action::ALL.iter().position(|action| *action == stage.action);
+        if let Some(index) = pick(ui, "action", &labels, active) {
+            stage.action = Action::ALL[index];
+            stage.gate = stage.action.default_gate();
+            changed = true;
+        }
         ui.add_space(12.0);
         caption(ui, "Agent");
-        ui.horizontal_wrapped(|ui| {
-            for (id, name) in self.agents {
-                if choice(ui, name, stage.agent == *id).clicked() {
-                    stage.agent.clone_from(id);
-                    changed = true;
-                }
-            }
-        });
+        let names: Vec<&str> = self.agents.iter().map(|(_, name)| name.as_str()).collect();
+        let active = self.agents.iter().position(|(id, _)| *id == stage.agent);
+        if let Some(index) = pick(ui, "stage_agent", &names, active) {
+            stage.agent.clone_from(&self.agents[index].0);
+            changed = true;
+        }
         ui.add_space(12.0);
         caption(ui, "Profile (its model, level and setup apply; the fields below override them)");
-        ui.horizontal_wrapped(|ui| {
-            if choice(ui, "None", stage.profile.is_empty()).clicked() {
-                stage.profile.clear();
-                changed = true;
+        let names: Vec<&str> = std::iter::once("None")
+            .chain(self.profiles.iter().map(|(_, name)| name.as_str()))
+            .collect();
+        let active = if stage.profile.is_empty() {
+            Some(0)
+        } else {
+            self.profiles.iter().position(|(id, _)| *id == stage.profile).map(|at| at + 1)
+        };
+        if let Some(index) = pick(ui, "profile", &names, active) {
+            match index.checked_sub(1) {
+                None => stage.profile.clear(),
+                Some(at) => stage.profile.clone_from(&self.profiles[at].0),
             }
-            for (id, name) in self.profiles {
-                if choice(ui, name, stage.profile == *id).clicked() {
-                    stage.profile.clone_from(id);
-                    changed = true;
-                }
-            }
-        });
+            changed = true;
+        }
         ui.add_space(12.0);
         ui.spacing_mut().item_spacing.x = 20.0;
         ui.columns(2, |columns| {
@@ -298,18 +315,15 @@ impl Form<'_> {
         ui.spacing_mut().item_spacing = egui::vec2(6.0, 6.0);
         ui.add_space(12.0);
         caption(ui, "Permissions");
-        ui.horizontal_wrapped(|ui| {
-            if choice(ui, "Default", stage.level.is_none()).clicked() {
-                stage.level = None;
-                changed = true;
-            }
-            for level in Level::ALL {
-                if choice(ui, level.label(), stage.level == Some(level)).clicked() {
-                    stage.level = Some(level);
-                    changed = true;
-                }
-            }
-        });
+        let labels: Vec<&str> =
+            std::iter::once("Default").chain(Level::ALL.map(Level::label)).collect();
+        let active = stage
+            .level
+            .map_or(Some(0), |level| Level::ALL.iter().position(|l| *l == level).map(|at| at + 1));
+        if let Some(index) = pick(ui, "permissions", &labels, active) {
+            stage.level = index.checked_sub(1).map(|at| Level::ALL[at]);
+            changed = true;
+        }
         if stage.level == Some(Level::Yolo) {
             note(
                 ui,
@@ -319,28 +333,21 @@ impl Form<'_> {
         }
         ui.add_space(12.0);
         caption(ui, "Gate: what Tidewatch checks before the next stage");
-        ui.horizontal_wrapped(|ui| {
-            for gate in Gate::ALL {
-                if choice(ui, gate.label(), stage.gate == gate).clicked() {
-                    stage.gate = gate;
-                    changed = true;
-                }
-            }
-        });
+        let labels = Gate::ALL.map(Gate::label);
+        let active = Gate::ALL.iter().position(|gate| *gate == stage.gate);
+        if let Some(index) = pick(ui, "gate", &labels, active) {
+            stage.gate = Gate::ALL[index];
+            changed = true;
+        }
         ui.add_space(12.0);
         caption(ui, "If the gate fails");
-        ui.horizontal_wrapped(|ui| {
-            if choice(ui, "Stop and ask", stage.on_fail.is_none()).clicked() {
-                stage.on_fail = None;
-                changed = true;
-            }
-            for (index, label) in earlier.iter().enumerate() {
-                if choice(ui, label, stage.on_fail == Some(index)).clicked() {
-                    stage.on_fail = Some(index);
-                    changed = true;
-                }
-            }
-        });
+        let labels: Vec<&str> =
+            std::iter::once("Stop and ask").chain(earlier.iter().map(String::as_str)).collect();
+        let active = stage.on_fail.map_or(Some(0), |at| Some(at + 1));
+        if let Some(index) = pick(ui, "on_fail", &labels, active) {
+            stage.on_fail = index.checked_sub(1);
+            changed = true;
+        }
         if stage.on_fail.is_some() {
             ui.add_space(12.0);
             changed |=

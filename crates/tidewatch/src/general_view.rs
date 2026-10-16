@@ -66,32 +66,22 @@ pub(crate) fn page(
         .or(updates)
 }
 
-const CHOICE_GAP: f32 = 6.0;
-
 fn resume_row(ui: &mut Ui, current: ResumeAgents, enabled: bool) -> Option<ResumeAgents> {
     let options = [
         (ResumeAgents::Auto, "Resume"),
         (ResumeAgents::Prefill, "Type only"),
         (ResumeAgents::Off, "Off"),
     ];
-    let width = options.iter().map(|(_, label)| settings_ui::choice_width(ui, label)).sum::<f32>()
-        + CHOICE_GAP * (options.len() - 1) as f32;
+    let labels = options.map(|(_, label)| label);
+    let active = options.iter().position(|(mode, _)| *mode == current);
     settings_ui::row(
         ui,
         "Resume agents",
         "Resume runs the agent's command. Type only leaves Enter to you. After a crash it is always typed.",
-        Control::new(width, 36.0),
+        Control::new(settings_ui::inline_width(ui, &labels), 28.0),
         |ui| {
             ui.add_enabled_ui(enabled, |ui| {
-                ui.spacing_mut().item_spacing.x = CHOICE_GAP;
-                let mut picked = None;
-                for (mode, label) in options.into_iter().rev() {
-                    if settings_ui::choice(ui, label, mode == current).clicked() && mode != current
-                    {
-                        picked = Some(mode);
-                    }
-                }
-                picked
+                settings_ui::pick(ui, "resume", &labels, active).map(|index| options[index].0)
             })
             .inner
         },

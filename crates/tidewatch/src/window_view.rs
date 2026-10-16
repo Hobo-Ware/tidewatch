@@ -58,23 +58,17 @@ pub(crate) fn section(ui: &mut Ui, editor: &mut Editor, view: &View) -> Option<W
 
 fn panels_row(ui: &mut Ui, current: Panels) -> Option<Panels> {
     let options = [(Panels::Side, "Side by side"), (Panels::Below, "Below")];
-    let width = options.iter().map(|(_, label)| settings_ui::choice_width(ui, label)).sum::<f32>()
-        + CAP_GAP * (options.len() - 1) as f32;
+    let labels = options.map(|(_, label)| label);
+    let active = options.iter().position(|(panels, _)| *panels == current);
     settings_ui::row(
         ui,
         "Panels",
         "History beside the terminal, or History and the diff under it.",
-        Control::new(width, 36.0),
+        Control::new(settings_ui::inline_width(ui, &labels), 28.0),
         |ui| {
-            ui.spacing_mut().item_spacing.x = CAP_GAP;
-            let mut picked = None;
-            for (panels, label) in options.into_iter().rev() {
-                if settings_ui::choice(ui, label, panels == current).clicked() && panels != current
-                {
-                    picked = Some(panels);
-                }
-            }
-            picked
+            settings_ui::pick(ui, "panels", &labels, active)
+                .map(|index| options[index].0)
+                .filter(|panels| *panels != current)
         },
     )
 }
