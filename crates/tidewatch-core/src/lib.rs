@@ -4,6 +4,8 @@ pub mod agents;
 mod builtin_workflows;
 pub mod consent;
 pub mod delivery;
+pub mod elsewhere;
+pub mod elsewhere_flags;
 pub mod end_block;
 pub mod events;
 mod fsutil;
