@@ -2,12 +2,12 @@
 //! with uncommitted changes. The choices and wording are pure; `show` only draws them.
 
 use crate::brand;
+use crate::notice::key_hint;
+use crate::screen_kit::{danger_button, dialog_frame, primary_button, quiet_button};
 use egui::{Id, Key, Modifiers, RichText};
-use stdusk_egui::colors;
-use stdusk_egui::widgets::{action_button, overlay_frame};
 use tidewatch_core::worktree::{BranchChoice, Inspection, RemoveMode, Worktree};
 
-const DIALOG_WIDTH: f32 = 440.0;
+const DIALOG_WIDTH: f32 = 540.0;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Choice {
@@ -85,30 +85,43 @@ pub(crate) fn show(
 ) -> Option<Answer> {
     let mut answer = None;
     let modal =
-        egui::Modal::new(Id::new("close_worktree")).frame(overlay_frame()).show(ctx, |ui| {
-            ui.set_width(DIALOG_WIDTH);
+        dialog_frame(ctx, Id::new("close_worktree"), &heading(worktree), DIALOG_WIDTH, |ui| {
             ui.spacing_mut().item_spacing.y = 8.0;
-            ui.label(RichText::new(heading(worktree)).strong().size(15.0).color(colors::fg()));
             ui.label(
                 RichText::new("This removes the worktree folder. The branch can stay or go.")
-                    .color(colors::dim()),
+                    .color(brand::MUTED),
             );
             for line in warnings(inspection) {
                 ui.label(RichText::new(line).color(brand::RED));
             }
-            ui.add_space(4.0);
+            ui.add_space(6.0);
             ui.horizontal(|ui| {
                 ui.spacing_mut().item_spacing.x = 8.0;
-                if action_button(ui, "Cancel", false).clicked() {
+                if quiet_button(ui, "Cancel", true).clicked() {
                     answer = Some(Answer::Cancel);
                 }
                 for (i, choice) in choices(inspection).into_iter().enumerate() {
-                    let primary = i == 0 && inspection.changed == 0;
-                    if action_button(ui, label(choice), primary).clicked() {
+                    let text = label(choice);
+                    let response = match choice {
+                        Choice::Remove { branch: BranchChoice::Delete, .. } => {
+                            danger_button(ui, text)
+                        }
+                        _ if i == 0 && inspection.changed == 0 => primary_button(ui, text, true),
+                        _ => quiet_button(ui, text, true),
+                    };
+                    if response.clicked() {
                         answer = Some(Answer::Pick(choice));
                     }
                 }
             });
+            key_hint(
+                ui,
+                if enter_choice(inspection).is_some() {
+                    "Enter keeps the branch  -  Esc cancels"
+                } else {
+                    "Esc cancels  -  nothing is discarded until you pick it"
+                },
+            );
         });
     if answer.is_none()
         && let Some(choice) = enter_choice(inspection)
