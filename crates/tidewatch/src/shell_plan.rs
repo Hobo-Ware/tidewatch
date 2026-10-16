@@ -7,13 +7,17 @@
 use tidewatch_core::prefs::WindowPrefs;
 
 use crate::hotkey::{self, Chord, Problem};
+use crate::window_chrome::Chrome;
 
 /// Where and how this process runs.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[allow(clippy::struct_excessive_bools)] // independent facts about where we run, not a mode
 pub(crate) struct Env {
     pub(crate) background: bool,
     pub(crate) wayland: bool,
     pub(crate) tray_supported: bool,
+    /// The system's title bar would clash with the window, so Tidewatch draws its own (Linux).
+    pub(crate) own_frame: bool,
 }
 
 impl Env {
@@ -22,6 +26,7 @@ impl Env {
             background,
             wayland: wayland_from(|name| std::env::var(name).ok()),
             tray_supported: cfg!(target_os = "macos"),
+            own_frame: cfg!(target_os = "linux"),
         }
     }
 }
@@ -53,6 +58,7 @@ pub(crate) enum Launch {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct Plan {
     pub(crate) quake: bool,
+    pub(crate) chrome: Chrome,
     pub(crate) hotkey: Hotkey,
     pub(crate) tray: bool,
     pub(crate) activates: bool,
@@ -64,6 +70,7 @@ impl Plan {
         if env.background {
             return Self {
                 quake: false,
+                chrome: Chrome::pick(env.own_frame, false),
                 hotkey: Hotkey::Off,
                 tray: false,
                 activates: false,
@@ -79,6 +86,7 @@ impl Plan {
         };
         Self {
             quake: prefs.quake,
+            chrome: Chrome::pick(env.own_frame, prefs.quake),
             hotkey,
             tray: prefs.menu_bar && env.tray_supported,
             activates: true,
@@ -92,7 +100,9 @@ mod tests {
     use super::*;
     use global_hotkey::hotkey::{Code, Modifiers};
 
-    const X11: Env = Env { background: false, wayland: false, tray_supported: true };
+    const X11: Env =
+        Env { background: false, wayland: false, tray_supported: true, own_frame: false };
+    const LINUX: Env = Env { tray_supported: false, own_frame: true, ..X11 };
 
     fn prefs(quake: bool, hotkey: &str, menu_bar: bool) -> WindowPrefs {
         WindowPrefs { quake, hotkey: hotkey.to_owned(), menu_bar, ..WindowPrefs::default() }
@@ -106,6 +116,7 @@ mod tests {
             plan,
             Plan {
                 quake: false,
+                chrome: Chrome::Native,
                 hotkey: Hotkey::Off,
                 tray: false,
                 activates: false,
@@ -121,7 +132,8 @@ mod tests {
                 for hotkey in ["Ctrl+Alt+Grave", "nonsense", ""] {
                     for wayland in [true, false] {
                         for tray_supported in [true, false] {
-                            let env = Env { background: true, wayland, tray_supported };
+                            let env =
+                                Env { background: true, wayland, tray_supported, own_frame: false };
                             let plan = Plan::new(env, &prefs(quake, hotkey, menu_bar));
                             assert!(
                                 !plan.quake && !plan.tray && !plan.activates,
@@ -172,6 +184,17 @@ mod tests {
         let plan = Plan::new(X11, &prefs(true, "Ctrl+Banana", true));
         assert_eq!(plan.hotkey, Hotkey::Invalid(Problem::UnknownKey("Banana".into())));
         assert!(plan.quake);
+    }
+
+    #[test]
+    fn linux_draws_its_own_frame_around_a_plain_window_and_a_background_one() {
+        let plain = prefs(false, "Ctrl+Alt+Grave", false);
+        assert_eq!(Plan::new(LINUX, &plain).chrome, Chrome::Drawn);
+        assert_eq!(Plan::new(Env { wayland: true, ..LINUX }, &plain).chrome, Chrome::Drawn);
+        let background = Env { background: true, ..LINUX };
+        assert_eq!(Plan::new(background, &WindowPrefs::default()).chrome, Chrome::Drawn);
+        assert_eq!(Plan::new(LINUX, &WindowPrefs::default()).chrome, Chrome::Borderless);
+        assert_eq!(Plan::new(X11, &plain).chrome, Chrome::Native);
     }
 
     #[test]
