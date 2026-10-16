@@ -110,7 +110,7 @@ impl RunEvent {
                 HookKind::TurnFailed(reason) => Some(Self::AgentFailed { reason: reason.clone() }),
                 _ => None,
             },
-            TabEvent::NoteReply { .. } | TabEvent::Proposal { .. } => None,
+            TabEvent::NoteReply { .. } | TabEvent::Proposal { .. } | TabEvent::Ask { .. } => None,
         }
     }
 }

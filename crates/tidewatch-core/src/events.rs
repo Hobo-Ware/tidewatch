@@ -1,5 +1,6 @@
 //! What the listener tells the app: one [`TabMessage`] per hook payload or MCP tool call.
 
+use crate::question::{AskReply, Question};
 use crate::status::HookEvent;
 use crate::workflows::Workflow;
 
@@ -19,6 +20,8 @@ pub enum TabEvent {
     /// The agent called `propose_workflow` with a workflow that passed the editor's rules. The app
     /// opens it as an unsaved draft in Settings, Workflows.
     Proposal { workflow: Workflow },
+    /// The agent called `ask_user` and its call is held until `reply` is used.
+    Ask { questions: Vec<Question>, reply: AskReply },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
