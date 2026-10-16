@@ -113,8 +113,11 @@ impl PrState {
             return PostAbility::Yes;
         }
         let Some(lines) = &self.lines else { return PostAbility::Yes };
-        let line = thread.anchor.line_hint;
-        if line > 0 && !lines.contains(&thread.path, thread.anchor.side, line) {
+        let (first, last) = (thread.anchor.line_hint, thread.anchor.last_line_hint());
+        let outside = [first, last]
+            .into_iter()
+            .find(|line| *line > 0 && !lines.contains(&thread.path, thread.anchor.side, *line));
+        if let Some(line) = outside {
             let side = if thread.anchor.side == Side::Old { "old " } else { "" };
             return PostAbility::No(format!(
                 "{side}line {line} of {} is not in the pull request's diff. GitHub only takes comments on changed lines and the lines around them",
@@ -233,6 +236,25 @@ mod tests {
             state.post_ability(&thread("src/other.rs", 1, Side::New), false),
             PostAbility::No(_)
         ));
+    }
+
+    #[test]
+    fn a_block_note_needs_both_its_first_and_its_last_line_in_the_diff() {
+        let state = open_with_lines();
+        let block = |line, span| {
+            let mut t = thread("src/a.rs", line, Side::New);
+            t.anchor.span = span;
+            t
+        };
+        assert_eq!(state.post_ability(&block(1, 2), false), PostAbility::Yes);
+        let PostAbility::No(reason) = state.post_ability(&block(2, 9), false) else {
+            panic!("line 11 is outside the diff");
+        };
+        assert!(reason.contains("line 11 of src/a.rs"), "{reason}");
+        let PostAbility::No(reason) = state.post_ability(&block(30, 1), false) else {
+            panic!("line 30 is outside the diff");
+        };
+        assert!(reason.contains("line 30 of src/a.rs"), "{reason}");
     }
 
     #[test]

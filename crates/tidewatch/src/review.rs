@@ -3,7 +3,7 @@
 //! pasted block in the transcript and shown with where each of its notes stands. Everything is
 //! derived from the notes file, so nothing here is stored.
 
-use tidewatch_core::notes::{NoteState, Notes};
+use tidewatch_core::notes::{NoteState, Notes, line_suffix};
 
 use crate::note_send::ReviewGate;
 
@@ -24,7 +24,8 @@ pub(crate) struct FileNotes {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct DraftNote {
     pub(crate) id: u64,
-    pub(crate) line: u32,
+    /// `:12`, `:12-15` or empty for a note on the whole file.
+    pub(crate) lines: String,
     pub(crate) text: String,
     /// The pull request reviewer who wrote it, when it was pulled in rather than written here.
     pub(crate) reviewer: Option<String>,
@@ -47,7 +48,7 @@ impl Draft {
                 .map(str::to_owned);
             let note = DraftNote {
                 id,
-                line: thread.anchor.line_hint,
+                lines: line_suffix(&thread.anchor),
                 text: cut(thread.comments.last().map_or("", |comment| comment.body.as_str())),
                 reviewer,
             };
@@ -163,7 +164,7 @@ impl Standing {
 pub(crate) struct SentNote {
     pub(crate) id: u64,
     pub(crate) path: String,
-    pub(crate) line: u32,
+    pub(crate) lines: String,
     pub(crate) text: String,
     pub(crate) reply: Option<String>,
     pub(crate) standing: Standing,
@@ -206,7 +207,7 @@ impl SentReview {
                 SentNote {
                     id: thread.id,
                     path: thread.path.clone(),
-                    line: thread.anchor.line_hint,
+                    lines: line_suffix(&thread.anchor),
                     text: cut(asked.map_or("", |comment| comment.body.as_str())),
                     reply,
                     standing,
@@ -285,11 +286,31 @@ mod tests {
         let shape: Vec<_> = draft
             .files
             .iter()
-            .map(|file| (file.path.as_str(), file.notes.iter().map(|n| n.line).collect::<Vec<_>>()))
+            .map(|file| {
+                (
+                    file.path.as_str(),
+                    file.notes.iter().map(|n| n.lines.as_str()).collect::<Vec<_>>(),
+                )
+            })
             .collect();
-        assert_eq!(shape, [("src/a.rs", vec![3, 20]), ("src/b.rs", vec![9])]);
+        assert_eq!(shape, [("src/a.rs", vec![":3", ":20"]), ("src/b.rs", vec![":9"])]);
         assert_eq!((draft.count(), draft.ids().len()), (3, 3));
         assert_eq!(draft.summary(), "3 notes \u{b7} 2 files");
+    }
+
+    #[test]
+    fn a_block_note_shows_its_range_in_the_draft_and_in_the_sent_review() {
+        let mut notes = Notes::default();
+        let mut block = anchor(12);
+        block.span = 3;
+        let id = notes.add("src/a.rs", None, block, comment("vlad", "extract"));
+        notes.add("src/b.rs", None, anchor(0), comment("vlad", "whole file"));
+        let draft = Draft::of(&notes, "claude", "vlad");
+        let lines: Vec<&str> = draft.files.iter().map(|f| f.notes[0].lines.as_str()).collect();
+        assert_eq!(lines, [":12-15", ""]);
+        notes.mark_sent(&[id], 5);
+        let sent = SentReview::of(&[id], &notes, "claude", false);
+        assert_eq!(sent.notes[0].lines, ":12-15");
     }
 
     #[test]

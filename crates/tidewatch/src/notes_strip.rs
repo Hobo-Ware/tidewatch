@@ -10,7 +10,7 @@ use egui::{
 };
 use kelp_core::commit::{calendar_time, relative_time};
 use stdusk_egui::widgets::{menu_item, style_menu};
-use tidewatch_core::notes::{NoteState, Notes};
+use tidewatch_core::notes::{NoteState, Notes, line_suffix};
 
 use crate::brand;
 use crate::commit_files::{split_dir, tail_fit};
@@ -40,7 +40,7 @@ const MENU_W: f32 = 220.0;
 pub(crate) struct NoteRow {
     pub(crate) id: u64,
     pub(crate) path: String,
-    pub(crate) line: u32,
+    pub(crate) lines: String,
     pub(crate) snippet: String,
     pub(crate) state: NoteState,
     pub(crate) send: Result<(), &'static str>,
@@ -66,7 +66,7 @@ pub(crate) fn rows(notes: &Notes, agent: &str, gate: Gate, pr: &PrState) -> Vec<
             NoteRow {
                 id: thread.id,
                 path: thread.path.clone(),
-                line: thread.anchor.line_hint,
+                lines: line_suffix(&thread.anchor),
                 snippet: snippet(thread.comments.last().map_or("", |c| c.body.as_str())),
                 state: notes.state(thread, agent),
                 send: gate_reason(gate).map_or(Ok(()), Err),
@@ -139,9 +139,9 @@ pub(crate) fn show(ui: &mut Ui, rect: Rect, rows: &[NoteRow], now: i64) -> Vec<S
 }
 
 /// The folder, the file name and the `:line` of a note's place, each painted in its own ink.
-fn place_parts(path: &str, line: u32) -> (&str, &str, String) {
+fn place_parts<'a>(path: &'a str, lines: &'a str) -> (&'a str, &'a str, &'a str) {
     let (dir, name) = split_dir(path);
-    (dir, name, if line > 0 { format!(":{line}") } else { String::new() })
+    (dir, name, lines)
 }
 
 fn state_tone(state: NoteState) -> Color32 {
@@ -245,12 +245,12 @@ fn draw_card(ui: &mut Ui, row: &NoteRow, now: i64, actions: &mut Vec<StripAction
 
 fn draw_text(ui: &mut Ui, row: &NoteRow, area: Rect, actions: &mut Vec<StripAction>) {
     let painter = ui.painter().with_clip_rect(area);
-    let (dir, name, line) = place_parts(&row.path, row.line);
+    let (dir, name, line) = place_parts(&row.path, &row.lines);
     let font = mono(PLACE_FONT);
     let place_room = (area.width() * PLACE_SHARE).max(MIN_PLACE_W).min(area.width());
     let tail = text_width(&painter, &format!("{name}{line}"), &font);
     let dir = tail_fit(ui, dir, &font, (place_room - tail).max(0.0));
-    let parts = (dir.as_str(), name, line.as_str());
+    let parts = (dir.as_str(), name, line);
     let galley = painter.layout_job(place_job(parts, false));
     let place = Rect::from_min_size(
         pos2(area.left(), area.center().y - galley.size().y / 2.0),
@@ -306,8 +306,8 @@ mod tests {
     #[test]
     fn rows_list_open_notes_with_their_state_and_the_first_line_of_the_newest_comment() {
         let rows = rows(&sample(), "claude", Gate::Ready, &PrState::default());
-        let places: Vec<_> = rows.iter().map(|r| (r.path.as_str(), r.line)).collect();
-        assert_eq!(places, [("src/a.rs", 3), ("src/b.rs", 9)]);
+        let places: Vec<_> = rows.iter().map(|r| (r.path.as_str(), r.lines.as_str())).collect();
+        assert_eq!(places, [("src/a.rs", ":3"), ("src/b.rs", ":9")]);
         assert_eq!(rows[0].snippet, "use formatDate");
         assert_eq!(rows[0].state, NoteState::Queued);
         assert_eq!(rows[1].state, NoteState::Sent(100));
@@ -367,8 +367,9 @@ mod tests {
 
     #[test]
     fn the_place_splits_into_folder_file_and_line() {
-        assert_eq!(place_parts("src/a/b.rs", 7), ("src/a/", "b.rs", ":7".to_owned()));
-        assert_eq!(place_parts("README.md", 0), ("", "README.md", String::new()));
+        assert_eq!(place_parts("src/a/b.rs", ":7"), ("src/a/", "b.rs", ":7"));
+        assert_eq!(place_parts("src/a/b.rs", ":7-9"), ("src/a/", "b.rs", ":7-9"));
+        assert_eq!(place_parts("README.md", ""), ("", "README.md", ""));
     }
 
     #[test]
