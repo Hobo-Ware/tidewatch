@@ -4,6 +4,7 @@
 
 use std::collections::{HashMap, VecDeque};
 
+use tidewatch_core::note_paste;
 use tidewatch_core::transcript::{Entry, Role, ToolPhase};
 
 pub(crate) const MAX_ROWS: usize = 400;
@@ -16,6 +17,9 @@ pub(crate) enum Kind {
     Tool(Tool),
     /// An error or notice the CLI wrote itself.
     Notice,
+    /// A review sent to the agent, as the ids of its notes; the row's text is the user's message.
+    /// The pasted block itself is not kept.
+    Review(Vec<u64>),
     /// Where a workflow stage's agent took over: `--- Stage 2: Review (gemini, Read only) ---`.
     Divider,
 }
@@ -55,9 +59,14 @@ impl Rows {
 
     pub(crate) fn push(&mut self, entry: Entry) {
         match entry.role {
-            Role::User => {
-                self.add(Kind::User, entry.text);
-            }
+            Role::User => match note_paste::parse(&entry.text) {
+                Some(review) => {
+                    self.add(Kind::Review(review.ids), review.message);
+                }
+                None => {
+                    self.add(Kind::User, entry.text);
+                }
+            },
             Role::Assistant => {
                 self.add(Kind::Assistant, entry.text);
             }
@@ -216,6 +225,36 @@ mod tests {
         let kinds: Vec<_> = rows.iter().map(|row| row.kind.clone()).collect();
         assert_eq!(kinds, [Kind::User, Kind::Assistant, Kind::Notice]);
         assert_eq!(rows.iter().nth(1).unwrap().text, "# Done");
+    }
+
+    #[test]
+    fn a_pasted_review_becomes_one_review_row_without_its_raw_text() {
+        use tidewatch_core::notes::Notes;
+        let mut notes = Notes::default();
+        let anchor = kelp_core::review::Anchor {
+            side: kelp_core::review::Side::New,
+            line_hint: 3,
+            text: "x".into(),
+            before: vec![],
+            after: vec![],
+        };
+        let comment =
+            kelp_core::review::Comment { author: "You".into(), time: 1, body: "rename".into() };
+        let a = notes.add("a.rs", None, anchor.clone(), comment.clone());
+        let b = notes.add("b.rs", None, anchor, comment);
+        let threads: Vec<_> = notes.threads.iter().collect();
+        let pasted = note_paste::format_review(&threads, "Start with b");
+        let mut rows = Rows::default();
+        rows.push_all(vec![
+            text(Role::User, "fix it"),
+            text(Role::User, &pasted),
+            text(Role::Assistant, "on it"),
+        ]);
+        let kinds: Vec<_> = rows.iter().map(|row| row.kind.clone()).collect();
+        assert_eq!(kinds, [Kind::User, Kind::Review(vec![a, b]), Kind::Assistant]);
+        let review = rows.iter().nth(1).unwrap();
+        assert_eq!(review.text, "Start with b");
+        assert!(rows.iter().all(|row| !row.text.contains("Tidewatch review notes")));
     }
 
     #[test]

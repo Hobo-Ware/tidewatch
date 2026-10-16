@@ -171,6 +171,9 @@ pub(crate) struct SentNote {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct SentReview {
+    /// How many notes the review was sent with.
+    pub(crate) sent: usize,
+    /// The ones still there to show.
     pub(crate) notes: Vec<SentNote>,
 }
 
@@ -210,7 +213,7 @@ impl SentReview {
                 }
             })
             .collect();
-        Self { notes }
+        Self { sent: ids.len(), notes }
     }
 
     pub(crate) fn answered(&self) -> usize {
@@ -219,7 +222,7 @@ impl SentReview {
 
     /// `Review · 3 notes`.
     pub(crate) fn tag(&self) -> String {
-        format!("Review \u{b7} {}", plural(self.notes.len(), "note"))
+        format!("Review \u{b7} {}", plural(self.sent, "note"))
     }
 
     /// `2 of 3 answered`.
@@ -401,7 +404,7 @@ mod tests {
         let review = SentReview::of(&ids, &notes, "claude", false);
         assert_eq!(review.notes.len(), 1);
         assert_eq!(review.first_open().map(|n| n.id), Some(ids[1]));
-        assert_eq!(review.tag(), "Review \u{b7} 1 note");
+        assert_eq!(review.tag(), "Review \u{b7} 2 notes");
         let both = SentReview::of(&[ids[0], 77], &notes, "claude", false);
         assert_eq!((both.notes.len(), both.first_open()), (0, None));
         assert_eq!(both.progress(), "0 of 0 answered");

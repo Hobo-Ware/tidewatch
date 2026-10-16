@@ -24,6 +24,7 @@ use crate::reader_keys::{self, Answer};
 use crate::reader_rows::{Kind, Row, Rows, Tool};
 use crate::reader_scroll::{Autoscroll, Heights};
 use crate::review::ReviewFacts;
+use crate::review_row_view;
 use crate::review_view::{self, ReviewAction};
 use crate::screen_kit::{body, mono, primary_button, quiet_button};
 
@@ -193,7 +194,7 @@ pub(crate) fn show(
         }
         return actions;
     }
-    transcript(ui, body, rows, state, facts.root);
+    actions.extend(transcript(ui, body, rows, state, facts.root, facts.review.as_ref()));
     if let Some(prompt) = facts.prompt {
         actions.extend(prompt_strip(ui, strip, prompt, facts.source));
     }
@@ -206,7 +207,15 @@ pub(crate) fn show(
     actions
 }
 
-fn transcript(ui: &mut Ui, body: Rect, rows: &Rows, state: &mut ViewState, root: Option<&Path>) {
+fn transcript(
+    ui: &mut Ui,
+    body: Rect,
+    rows: &Rows,
+    state: &mut ViewState,
+    root: Option<&Path>,
+    review: Option<&ReviewFacts<'_>>,
+) -> Vec<Action> {
+    let mut actions = Vec::new();
     if rows.len() == 0 {
         ui.painter().text(
             body.center(),
@@ -215,7 +224,7 @@ fn transcript(ui: &mut Ui, body: Rect, rows: &Rows, state: &mut ViewState, root:
             FontId::proportional(14.0),
             brand::MUTED,
         );
-        return;
+        return actions;
     }
     let pointer = ui.input(|i| i.pointer.interact_pos());
     let scrolled_up =
@@ -259,7 +268,8 @@ fn transcript(ui: &mut Ui, body: Rect, rows: &Rows, state: &mut ViewState, root:
                     ui.add_space(INSET);
                     ui.vertical(|ui| {
                         ui.set_width(width);
-                        draw_row(ui, row, cache, root);
+                        let asked = draw_row(ui, row, cache, root, review);
+                        actions.extend(asked.into_iter().map(Action::Review));
                     })
                 });
                 heights.record(row.seq, drawn.response.rect.height());
@@ -289,10 +299,18 @@ fn transcript(ui: &mut Ui, body: Rect, rows: &Rows, state: &mut ViewState, root:
             ui.ctx().request_repaint();
         }
     }
+    actions
 }
 
-fn draw_row(ui: &mut Ui, row: &Row, cache: &mut CommonMarkCache, root: Option<&Path>) {
+fn draw_row(
+    ui: &mut Ui,
+    row: &Row,
+    cache: &mut CommonMarkCache,
+    root: Option<&Path>,
+    review: Option<&ReviewFacts<'_>>,
+) -> Vec<ReviewAction> {
     match &row.kind {
+        Kind::Review(ids) => return review_row_view::show(ui, ids, &row.text, review),
         Kind::User => {
             item_frame().inner_margin(Margin::symmetric(12, 8)).show(ui, |ui| {
                 ui.set_width(ui.available_width());
@@ -320,6 +338,7 @@ fn draw_row(ui: &mut Ui, row: &Row, cache: &mut CommonMarkCache, root: Option<&P
                 });
         }
     }
+    Vec::new()
 }
 
 fn draw_divider(ui: &mut Ui, text: &str) {
@@ -866,5 +885,68 @@ mod tests {
             assert_eq!(sent, vec![Action::Review(ReviewAction::Send("go".into()))]);
             assert_eq!(run(vec![]), vec![]);
         }
+    }
+
+    #[test]
+    fn a_pasted_review_is_drawn_as_a_card_and_its_raw_text_never_reaches_the_screen() {
+        use kelp_core::review::{Anchor, Comment, Side};
+        use tidewatch_core::notes::Notes;
+        use tidewatch_core::transcript::{Entry, Role};
+
+        let mut notes = Notes::default();
+        let anchor = Anchor {
+            side: Side::New,
+            line_hint: 4,
+            text: "x".into(),
+            before: vec![],
+            after: vec![],
+        };
+        let id = notes.add(
+            "src/a.rs",
+            None,
+            anchor,
+            Comment { author: "v".into(), time: 1, body: "rename it".into() },
+        );
+        notes.mark_sent(&[id], 5);
+        let pasted = tidewatch_core::note_paste::format_review(&[&notes.threads[0]], "Start here");
+        let mut rows = Rows::default();
+        rows.push(Entry { role: Role::User, text: pasted, tool: None, ts: None });
+        let draft = crate::review::Draft::default();
+        let ctx = egui::Context::default();
+        crate::fonts::install(&ctx);
+        let mut state = ViewState::default();
+        let mut shapes = String::new();
+        for _ in 0..2 {
+            let raw = RawInput {
+                screen_rect: Some(Rect::from_min_size(pos2(0.0, 0.0), vec2(800.0, 500.0))),
+                focused: true,
+                ..RawInput::default()
+            };
+            let out = ctx.run_ui(raw, |ui| {
+                let review = ReviewFacts {
+                    draft: &draft,
+                    send: crate::review::SendState::Ready,
+                    notes: &notes,
+                    agent_id: "claude",
+                    profile: "Builder",
+                    working: false,
+                    keys_free: true,
+                };
+                let facts = Facts {
+                    source: None,
+                    prompt: None,
+                    ready: None,
+                    root: None,
+                    review: Some(review),
+                };
+                let rect = ui.max_rect();
+                show(ui, rect, &rows, &mut state, facts);
+            });
+            shapes = format!("{:?}", out.shapes);
+        }
+        assert!(shapes.contains("Review"));
+        assert!(shapes.contains("rename it"));
+        assert!(!shapes.contains("Tidewatch review notes"));
+        assert_eq!(state.heights.measured_count(), 1);
     }
 }

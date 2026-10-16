@@ -9,6 +9,8 @@ const AT_BOTTOM_PX: f32 = 8.0;
 const LINE_H: f32 = 20.0;
 const ROW_PAD: f32 = 14.0;
 const TOOL_ROW_H: f32 = 26.0;
+const REVIEW_BASE_H: f32 = 90.0;
+const REVIEW_NOTE_H: f32 = 70.0;
 const CHAR_W: f32 = 7.0;
 const MIN_COLUMNS: usize = 20;
 const WIDTH_STEP: f32 = 1.0;
@@ -89,6 +91,9 @@ pub(crate) fn estimate(row: &Row, width: f32) -> f32 {
     if matches!(row.kind, Kind::Tool(_)) {
         return TOOL_ROW_H;
     }
+    if let Kind::Review(ids) = &row.kind {
+        return REVIEW_BASE_H + ids.len() as f32 * REVIEW_NOTE_H;
+    }
     let columns = ((width / CHAR_W) as usize).max(MIN_COLUMNS);
     let lines: usize =
         row.text.lines().map(|line| line.chars().count().div_ceil(columns).max(1)).sum();
@@ -152,6 +157,15 @@ mod tests {
         let short = estimate(&row(1, "one"), 800.0);
         let long = estimate(&row(2, "a\nb\nc"), 800.0);
         assert_eq!(long - short, 2.0 * LINE_H);
+    }
+
+    #[test]
+    fn a_review_row_is_guessed_by_its_notes_not_by_its_message() {
+        let review =
+            |ids: Vec<u64>| Row { seq: 1, kind: Kind::Review(ids), text: "a\nb\nc".into() };
+        let two = estimate(&review(vec![1, 2]), 800.0);
+        let four = estimate(&review(vec![1, 2, 3, 4]), 800.0);
+        assert_eq!(four - two, 2.0 * REVIEW_NOTE_H);
     }
 
     #[test]
