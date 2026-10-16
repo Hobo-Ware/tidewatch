@@ -25,6 +25,7 @@ const FIELD_H: f32 = 36.0;
 const HINT_H: f32 = 18.0;
 const GAP: f32 = 8.0;
 const LINE_W: f32 = 46.0;
+const LINE_GAP: f32 = 8.0;
 const MIN_ROOM: f32 = 150.0;
 const BOTTOM_GAP: f32 = 6.0;
 const FONT: f32 = 13.0;
@@ -215,11 +216,10 @@ fn file_line(ui: &mut Ui, path: &str) {
 fn note_line(ui: &mut Ui, note: &DraftNote) {
     let (rect, _) = ui.allocate_exact_size(vec2(ui.available_width(), ROW_H), Sense::hover());
     let painter = ui.painter();
-    let line = if note.line > 0 { format!(":{}", note.line) } else { String::new() };
     let at = |x: f32, height: f32| pos2(x, rect.center().y - height / 2.0);
-    let place = painter.layout_no_wrap(line, mono(SMALL), brand::FAINT);
+    let place = painter.layout_no_wrap(note.lines.clone(), mono(SMALL), brand::FAINT);
+    let mut x = rect.left() + LINE_W.max(place.size().x + LINE_GAP);
     painter.galley(at(rect.left(), place.size().y), place, brand::FAINT);
-    let mut x = rect.left() + LINE_W;
     if let Some(reviewer) = &note.reviewer {
         let name = painter.layout_no_wrap(reviewer.clone(), body(SMALL), brand::TEAL_TEXT);
         let width = name.size().x;

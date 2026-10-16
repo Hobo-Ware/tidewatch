@@ -52,6 +52,15 @@ impl NoteState {
     }
 }
 
+/// `:12`, `:12-15` for a block, or nothing for a note on the whole file (line 0).
+#[must_use]
+pub fn line_suffix(anchor: &Anchor) -> String {
+    match anchor.line_hint {
+        0 => String::new(),
+        _ => format!(":{}", line_label(anchor)),
+    }
+}
+
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Notes {
     #[serde(default)]
@@ -297,6 +306,17 @@ mod tests {
             block.span = span;
             assert_eq!(line_label(&block), want, "span {span}");
         }
+    }
+
+    #[test]
+    fn the_line_suffix_is_empty_for_a_whole_file_note() {
+        let mut block = anchor(12);
+        block.span = 3;
+        let mut file = anchor(0);
+        file.span = 3;
+        assert_eq!(line_suffix(&anchor(7)), ":7");
+        assert_eq!(line_suffix(&block), ":12-15");
+        assert_eq!(line_suffix(&file), "");
     }
 
     #[test]

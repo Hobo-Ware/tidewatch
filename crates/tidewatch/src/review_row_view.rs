@@ -28,9 +28,10 @@ fn ink(standing: Standing) -> Color32 {
     }
 }
 
-/// The place of a note: `src/runner.rs:211`, or the bare path for a note on the whole file.
+/// The place of a note: `src/runner.rs:211`, `src/runner.rs:211-214` for a block, or the bare path
+/// for a note on the whole file.
 pub(crate) fn place(note: &SentNote) -> String {
-    if note.line > 0 { format!("{}:{}", note.path, note.line) } else { note.path.clone() }
+    format!("{}{}", note.path, note.lines)
 }
 
 /// Draws the card of the review whose notes are `ids`; `message` is what the user wrote with it.
@@ -193,17 +194,18 @@ mod tests {
     }
 
     #[test]
-    fn the_place_is_the_path_with_the_line_when_there_is_one() {
-        let note = |line| SentNote {
+    fn the_place_is_the_path_with_the_line_or_the_range_when_there_is_one() {
+        let note = |lines: &str| SentNote {
             id: 1,
             path: "src/a.rs".into(),
-            line,
+            lines: lines.into(),
             text: String::new(),
             reply: None,
             standing: Standing::Waiting,
         };
-        assert_eq!(place(&note(12)), "src/a.rs:12");
-        assert_eq!(place(&note(0)), "src/a.rs");
+        assert_eq!(place(&note(":12")), "src/a.rs:12");
+        assert_eq!(place(&note(":12-15")), "src/a.rs:12-15");
+        assert_eq!(place(&note("")), "src/a.rs");
     }
 
     #[test]
