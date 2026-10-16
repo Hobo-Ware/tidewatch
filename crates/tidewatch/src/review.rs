@@ -287,7 +287,7 @@ mod tests {
     #[test]
     fn no_open_notes_is_no_draft() {
         let draft = Draft::of(&Notes::default(), "claude", "vlad");
-        assert!(draft.is_empty());
+        assert_eq!(draft, Draft::default());
         assert_eq!(draft.count(), 0);
         assert_eq!(draft.summary(), "0 notes \u{b7} 0 files");
     }
@@ -297,7 +297,7 @@ mod tests {
         let mut notes = Notes::default();
         let id = written(&mut notes, "a.rs", 1, "rename");
         notes.mark_sent(&[id], 5);
-        assert!(Draft::of(&notes, "claude", "vlad").is_empty());
+        assert_eq!(Draft::of(&notes, "claude", "vlad"), Draft::default());
         notes.reply(id, comment("vlad", "and add a test"));
         let draft = Draft::of(&notes, "claude", "vlad");
         assert_eq!(draft.files[0].notes[0].text, "and add a test");

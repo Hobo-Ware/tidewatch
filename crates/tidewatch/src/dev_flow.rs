@@ -6,7 +6,8 @@
 //!   the one that runs and the real GitHub API is never reached.
 //! - `TIDEWATCH_DEV_AUTO=1`: hold the newest agent tab's review until the agent is idle, once its
 //!   notes are loaded; it goes out the moment the agent is Done.
-//! - `TIDEWATCH_DEV_SEND=one|all`: send the first note, or the whole review, to the agent.
+//! - `TIDEWATCH_DEV_SEND=one|all`: send the first note, or the whole review, to the agent;
+//!   `TIDEWATCH_DEV_SEND_MESSAGE=<text>` is the message the review goes with.
 //! - `TIDEWATCH_DEV_DELIVER=open|approve`: open the delivery card's dialog, and with `approve` also
 //!   press Push and open PR.
 //! - `TIDEWATCH_DEV_PR=pull|ask|post`: pull the PR's comments; open the post confirm for the first
@@ -37,6 +38,7 @@ pub(crate) enum PrMode {
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(crate) struct DevFlow {
     pub(crate) gh_dir: Option<PathBuf>,
+    pub(crate) message: String,
     auto: bool,
     send: Option<SendMode>,
     deliver: Option<DeliverMode>,
@@ -78,13 +80,17 @@ pub(crate) enum Step {
 impl DevFlow {
     pub(crate) fn from_env() -> Self {
         let var = |name: &str| std::env::var(name).ok();
-        Self::parse(
-            var("TIDEWATCH_DEV_GH_DIR").as_deref(),
-            var("TIDEWATCH_DEV_AUTO").as_deref(),
-            var("TIDEWATCH_DEV_SEND").as_deref(),
-            var("TIDEWATCH_DEV_DELIVER").as_deref(),
-            var("TIDEWATCH_DEV_PR").as_deref(),
-        )
+        let message = var("TIDEWATCH_DEV_SEND_MESSAGE").unwrap_or_default();
+        Self {
+            message,
+            ..Self::parse(
+                var("TIDEWATCH_DEV_GH_DIR").as_deref(),
+                var("TIDEWATCH_DEV_AUTO").as_deref(),
+                var("TIDEWATCH_DEV_SEND").as_deref(),
+                var("TIDEWATCH_DEV_DELIVER").as_deref(),
+                var("TIDEWATCH_DEV_PR").as_deref(),
+            )
+        }
     }
 
     fn parse(

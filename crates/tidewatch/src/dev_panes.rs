@@ -9,6 +9,8 @@
 //!   with no chord (`build-workflow`) runs directly.
 //! - `TIDEWATCH_DEV_NOTE=<text>`: write a note on the first added line of the first diff shown, once
 //!   per run, through the same notes store the diff widget uses.
+//! - `TIDEWATCH_DEV_NOTES=<path>:<line>:<text>|...`: add those notes to the draft review once the
+//!   tab's notes have loaded, so a capture shows a review across several files.
 
 use kelp_core::diff::{Body, FileDiff, LineKind};
 use kelp_core::review::{Anchor, Comment, Side};
@@ -29,6 +31,25 @@ pub(crate) struct DevPanes {
     pub(crate) open: Option<DevOpen>,
     pub(crate) presses: Vec<(f64, Command)>,
     pub(crate) note: Option<String>,
+    pub(crate) notes: Vec<DevNote>,
+}
+
+/// A note for the draft review: `src/a.rs:12:rename this`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct DevNote {
+    pub(crate) path: String,
+    pub(crate) line: u32,
+    pub(crate) text: String,
+}
+
+fn parse_notes(text: &str) -> Vec<DevNote> {
+    text.split('|')
+        .filter_map(|part| {
+            let mut fields = part.splitn(3, ':');
+            let (path, line, text) = (fields.next()?, fields.next()?, fields.next()?);
+            Some(DevNote { path: path.to_owned(), line: line.parse().ok()?, text: text.to_owned() })
+        })
+        .collect()
 }
 
 fn parse_presses(text: &str) -> Vec<(f64, Command)> {
@@ -60,6 +81,11 @@ impl DevPanes {
             std::env::var("TIDEWATCH_DEV_PRESS").ok().as_deref(),
             std::env::var("TIDEWATCH_DEV_NOTE").ok(),
         )
+        .with_notes(std::env::var("TIDEWATCH_DEV_NOTES").ok().as_deref())
+    }
+
+    fn with_notes(self, notes: Option<&str>) -> Self {
+        Self { notes: notes.map(parse_notes).unwrap_or_default(), ..self }
     }
 
     fn parse(
@@ -75,6 +101,7 @@ impl DevPanes {
             open: open.and_then(parse_open),
             presses: press.map(parse_presses).unwrap_or_default(),
             note: note.filter(|text| !text.is_empty()),
+            notes: Vec::new(),
         }
     }
 }
@@ -121,6 +148,18 @@ pub(crate) fn note_on_first_added_line(
 mod tests {
     use super::*;
     use kelp_core::diff;
+
+    #[test]
+    fn review_notes_split_into_path_line_and_text_and_junk_is_skipped() {
+        assert_eq!(
+            parse_notes("src/a.rs:12:rename: this|b.rs:3:log it|nonsense|c.rs:x:bad line"),
+            [
+                DevNote { path: "src/a.rs".into(), line: 12, text: "rename: this".into() },
+                DevNote { path: "b.rs".into(), line: 3, text: "log it".into() },
+            ]
+        );
+        assert_eq!(parse_notes(""), []);
+    }
 
     #[test]
     fn parses_scope_pick_and_note() {
