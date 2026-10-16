@@ -37,10 +37,8 @@ impl Tidewatch {
 
         let chrome = self.shell.chrome();
         let drawn = chrome == Chrome::Drawn;
-        let controls = match self.desktop.controls_width() {
-            width if drawn && width > 0.0 => width + STRIP_GAP,
-            _ => 0.0,
-        };
+        let buttons_width = self.desktop.controls_width();
+        let controls = if drawn && buttons_width > 0.0 { buttons_width + STRIP_GAP } else { 0.0 };
         let corner = if drawn { 0 } else { STRIP_CORNER };
         let margin = Margin {
             left: STRIP_SIDE_MARGIN,

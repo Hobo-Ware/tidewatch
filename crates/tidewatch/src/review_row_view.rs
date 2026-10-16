@@ -158,25 +158,13 @@ fn buttons(ui: &mut Ui, review: &SentReview, actions: &mut Vec<ReviewAction>) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use egui::{Event, PointerButton, RawInput};
-    use kelp_core::review::{Anchor, Comment, Side};
-    use tidewatch_core::notes::Notes;
-
+    use crate::review::fixtures::{self, anchor, comment};
     use crate::review::{Draft, SendState};
-
-    fn comment(author: &str, body: &str) -> Comment {
-        Comment { author: author.into(), time: 1, body: body.into() }
-    }
+    use egui::{Event, RawInput};
+    use tidewatch_core::notes::Notes;
 
     fn sent_notes() -> (Notes, Vec<u64>) {
         let mut notes = Notes::default();
-        let anchor = |line| Anchor {
-            side: Side::New,
-            line_hint: line,
-            text: "x".into(),
-            before: vec![],
-            after: vec![],
-        };
         let ids: Vec<u64> = [
             ("runner.rs", 211, "Keep the count"),
             ("runner.rs", 240, "Log the retry"),
@@ -242,15 +230,7 @@ mod tests {
             let draft = Draft::default();
             let mut out = (Vec::new(), 0.0);
             let _ = self.ctx.run_ui(raw, |ui| {
-                let facts = ReviewFacts {
-                    draft: &draft,
-                    send: SendState::Ready,
-                    notes,
-                    agent_id: "claude",
-                    profile: "Builder",
-                    working,
-                    keys_free: true,
-                };
+                let facts = fixtures::facts(&draft, SendState::Ready, notes, working);
                 let before = ui.next_widget_position().y;
                 out.0 = show(ui, ids, "Start with runner.rs", Some(&facts));
                 out.1 = ui.next_widget_position().y - before;
@@ -259,15 +239,10 @@ mod tests {
         }
 
         fn click(&mut self, at: egui::Pos2) -> Vec<ReviewAction> {
-            let button = |pressed| Event::PointerButton {
-                pos: at,
-                button: PointerButton::Primary,
-                pressed,
-                modifiers: egui::Modifiers::NONE,
-            };
-            self.frame(vec![Event::PointerMoved(at)]);
-            self.frame(vec![button(true)]);
-            self.frame(vec![button(false)]).0
+            let [moved, pressed, released] = fixtures::click(at);
+            self.frame(moved);
+            self.frame(pressed);
+            self.frame(released).0
         }
 
         fn click_down(&mut self, wanted: &ReviewAction) -> bool {
@@ -308,14 +283,7 @@ mod tests {
         let mut bench = Bench::new(false);
         bench.notes = {
             let mut fresh = Notes::default();
-            let anchor = Anchor {
-                side: Side::New,
-                line_hint: 1,
-                text: "x".into(),
-                before: vec![],
-                after: vec![],
-            };
-            bench.ids = vec![fresh.add("a.rs", None, anchor, comment("vlad", "x"))];
+            bench.ids = vec![fresh.add("a.rs", None, anchor(1), comment("vlad", "x"))];
             fresh.mark_sent(&bench.ids, 1);
             fresh
         };

@@ -65,6 +65,18 @@ pub(crate) struct TabFlow {
     lines_loading: bool,
 }
 
+impl TabFlow {
+    fn hold(&mut self, message: String) {
+        self.auto.enabled = true;
+        self.held_message = message;
+    }
+
+    fn release(&mut self) {
+        self.auto.enabled = false;
+        self.held_message.clear();
+    }
+}
+
 /// What to start for one tab this frame. Marks the state of everything it asks for as started, so
 /// calling it again before the answers arrive asks for nothing twice.
 pub(crate) fn decide(flow: &mut TabFlow, facts: &TabFacts, now: f64) -> Vec<Want> {
@@ -89,7 +101,7 @@ pub(crate) fn decide(flow: &mut TabFlow, facts: &TabFacts, now: f64) -> Vec<Want
         wants.push(Want::LoadPrLines);
     }
     if facts.pending == 0 {
-        flow.auto.enabled = false;
+        flow.release();
     }
     if facts.notes_file.is_some() && flow.auto.should_send(&facts.status, facts.pending, now) {
         flow.auto.begin();
@@ -205,14 +217,15 @@ impl Flow {
             }
             Want::AutoSend => {
                 if let Some(file) = facts.notes_file.clone() {
-                    let message = self.tabs.get(&tab).map(|t| t.held_message.clone());
+                    let message =
+                        self.tabs.get(&tab).map(|t| t.held_message.clone()).unwrap_or_default();
                     flow_jobs::send_notes(
                         &self.jobs,
                         ctx,
                         tab,
                         true,
                         file,
-                        Which::Review(message.unwrap_or_default()),
+                        Which::Review(message),
                         facts.agent_id.clone(),
                         unix,
                     );
@@ -236,7 +249,7 @@ impl Flow {
             match review_gate(Some(&facts.status)) {
                 ReviewGate::Refused(reason) => return Some(reason.to_owned()),
                 ReviewGate::WhenIdle => {
-                    self.hold_review(tab, message.clone());
+                    state.hold(message.clone());
                     return None;
                 }
                 ReviewGate::Now => {}
@@ -252,8 +265,7 @@ impl Flow {
     /// Holds the tab's review until the agent is idle, then sends it with `message`.
     pub(crate) fn hold_review(&mut self, tab: u64, message: String) {
         if let Some(state) = self.tabs.get_mut(&tab) {
-            state.auto.enabled = true;
-            state.held_message = message;
+            state.hold(message);
         }
     }
 
@@ -265,8 +277,7 @@ impl Flow {
     /// The user took the held review back: nothing is sent when the agent is idle.
     pub(crate) fn release_review(&mut self, tab: u64) {
         if let Some(state) = self.tabs.get_mut(&tab) {
-            state.auto.enabled = false;
-            state.held_message.clear();
+            state.release();
         }
     }
 
@@ -482,8 +493,7 @@ impl Flow {
                 let sent = out.text.is_some();
                 if auto {
                     state.auto.finished(sent, now);
-                    state.auto.enabled = false;
-                    state.held_message.clear();
+                    state.release();
                 } else if sent {
                     state.auto.sent_by_hand(now);
                 }
@@ -501,8 +511,7 @@ impl Flow {
             Err(message) => {
                 if auto {
                     state.auto.finished(false, now);
-                    state.auto.enabled = false;
-                    state.held_message.clear();
+                    state.release();
                 }
                 outs.push(Out::Toast(format!("Could not send notes: {message}")));
             }

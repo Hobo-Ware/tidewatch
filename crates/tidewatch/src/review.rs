@@ -90,6 +90,11 @@ pub(crate) enum SendState {
 }
 
 impl SendState {
+    /// Whether the Send button works: now, or by holding the review until the agent is idle.
+    pub(crate) fn can_send(self) -> bool {
+        matches!(self, Self::Ready | Self::WhenIdle)
+    }
+
     pub(crate) fn of(gate: ReviewGate, held: bool) -> Self {
         match (gate, held) {
             (ReviewGate::Refused(reason), _) => Self::Refused(reason),
@@ -245,18 +250,57 @@ impl SentReview {
     }
 }
 
+/// What the tests of the review's drawing and its Reader rows build the same way.
 #[cfg(test)]
-mod tests {
-    use super::*;
+pub(crate) mod fixtures {
+    use egui::{Event, Modifiers, PointerButton, Pos2};
     use kelp_core::review::{Anchor, Comment, Side};
 
-    fn anchor(line: u32) -> Anchor {
+    use super::{Draft, Notes, ReviewFacts, SendState};
+
+    pub(crate) fn anchor(line: u32) -> Anchor {
         Anchor { side: Side::New, line_hint: line, text: "x".into(), before: vec![], after: vec![] }
     }
 
-    fn comment(author: &str, body: &str) -> Comment {
+    pub(crate) fn comment(author: &str, body: &str) -> Comment {
         Comment { author: author.into(), time: 1, body: body.into() }
     }
+
+    /// The facts of the `claude` agent tab called Builder, with the card free to take its keys.
+    pub(crate) fn facts<'a>(
+        draft: &'a Draft,
+        send: SendState,
+        notes: &'a Notes,
+        working: bool,
+    ) -> ReviewFacts<'a> {
+        ReviewFacts {
+            draft,
+            send,
+            notes,
+            agent_id: "claude",
+            profile: "Builder",
+            working,
+            keys_free: true,
+        }
+    }
+
+    /// The pointer moving onto `at`, then the primary button pressed and released there: one frame
+    /// each, because egui decides click against drag across frames.
+    pub(crate) fn click(at: Pos2) -> [Vec<Event>; 3] {
+        let button = |pressed| Event::PointerButton {
+            pos: at,
+            button: PointerButton::Primary,
+            pressed,
+            modifiers: Modifiers::NONE,
+        };
+        [vec![Event::PointerMoved(at)], vec![button(true)], vec![button(false)]]
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::fixtures::{anchor, comment};
+    use super::*;
 
     fn written(notes: &mut Notes, path: &str, line: u32, body: &str) -> u64 {
         notes.add(path, None, anchor(line), comment("vlad", body))

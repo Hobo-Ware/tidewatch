@@ -229,19 +229,11 @@ mod tests {
 
     #[test]
     fn a_pasted_review_becomes_one_review_row_without_its_raw_text() {
+        use crate::review::fixtures::{anchor, comment};
         use tidewatch_core::notes::Notes;
         let mut notes = Notes::default();
-        let anchor = kelp_core::review::Anchor {
-            side: kelp_core::review::Side::New,
-            line_hint: 3,
-            text: "x".into(),
-            before: vec![],
-            after: vec![],
-        };
-        let comment =
-            kelp_core::review::Comment { author: "You".into(), time: 1, body: "rename".into() };
-        let a = notes.add("a.rs", None, anchor.clone(), comment.clone());
-        let b = notes.add("b.rs", None, anchor, comment);
+        let a = notes.add("a.rs", None, anchor(3), comment("You", "rename"));
+        let b = notes.add("b.rs", None, anchor(3), comment("You", "rename"));
         let threads: Vec<_> = notes.threads.iter().collect();
         let pasted = note_paste::format_review(&threads, "Start with b");
         let mut rows = Rows::default();

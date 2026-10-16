@@ -47,10 +47,11 @@ pub struct Parsed {
 /// `None` unless `text` is the paste of a review: the Reader hides those in favour of a card.
 #[must_use]
 pub fn parse(text: &str) -> Option<Parsed> {
-    if !text.trim_start().starts_with(REVIEW_PREFIX) {
+    let text = text.trim_start();
+    if !text.starts_with(REVIEW_PREFIX) {
         return None;
     }
-    let blocks: Vec<&str> = text.trim_start().split("\n\n").collect();
+    let blocks: Vec<&str> = text.split("\n\n").collect();
     let ids = blocks
         .iter()
         .flat_map(|block| block.lines())
