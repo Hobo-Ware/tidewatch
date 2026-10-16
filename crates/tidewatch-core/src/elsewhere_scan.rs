@@ -28,15 +28,11 @@ const CODEX_RECENT_FILES: usize = 30;
 const COPILOT_RECENT_DIRS: usize = 40;
 const POLL: Duration = Duration::from_millis(100);
 
-/// What a scan needs to know about the machine.
 pub trait System {
-    /// `ps -axo pid,ppid,lstart,args`, run with `TZ=UTC`.
     fn ps(&self) -> Option<String>;
     fn cwd_of(&self, pid: u32) -> Option<PathBuf>;
     fn git_root(&self, dir: &Path) -> Option<PathBuf>;
-    /// Sends SIGTERM to this pid. True when the signal was delivered.
     fn terminate(&self, pid: u32) -> bool;
-    /// The start time `ps` prints for `pid`, `None` once it is gone or a zombie.
     fn alive(&self, pid: u32) -> Option<String>;
 }
 
@@ -104,17 +100,14 @@ impl System for RealSystem {
     }
 }
 
-/// The folder in `lsof -Fn` output: `p<pid>`, `fcwd`, `n<path>`.
 #[cfg(any(target_os = "macos", test))]
 fn parse_lsof_cwd(output: &str) -> Option<PathBuf> {
     output.lines().find_map(|line| line.strip_prefix('n')).map(PathBuf::from)
 }
 
-/// Where the CLIs keep their files, and which process Tidewatch itself is.
 #[derive(Clone, Debug)]
 pub struct ScanEnv {
     pub home: PathBuf,
-    /// `$CLAUDE_CONFIG_DIR`, else `~/.claude`.
     pub claude_dir: PathBuf,
     pub codex_home: Option<PathBuf>,
     pub copilot_home: Option<PathBuf>,
@@ -170,7 +163,6 @@ fn modified_ms(path: &Path) -> Option<i64> {
     fs::metadata(path).and_then(|meta| meta.modified()).ok().map(unix_ms)
 }
 
-/// The `<digits>.json` files of Claude's registry, parsed. Nothing else in the folder is opened.
 fn registry_entries(claude_dir: &Path) -> Vec<RegistryEntry> {
     let Ok(dir) = fs::read_dir(claude_dir.join("sessions")) else { return Vec::new() };
     dir.flatten()
@@ -185,8 +177,6 @@ fn registry_entries(claude_dir: &Path) -> Vec<RegistryEntry> {
         .collect()
 }
 
-/// Every interactive session running outside this window. One `ps`, a few small files, and one
-/// `lsof` per Codex, Gemini or Copilot process.
 #[must_use]
 pub fn scan_running(system: &dyn System, env: &ScanEnv, agents: &AgentTable) -> Option<Scan> {
     let table = ProcessTable::new(parse_ps(&system.ps()?));
@@ -472,14 +462,12 @@ fn copilot_recent(env: &ScanEnv, folder: &Path) -> Vec<Recent> {
         .collect()
 }
 
-/// A session to end, as the card last showed it.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct EndRequest {
     pub cli: Cli,
     pub pid: u32,
     pub proc_start: String,
     pub session_id: Option<String>,
-    /// The person agreed to end a session whose status is unknown (Codex, Gemini, Copilot).
     pub allow_quiet: bool,
 }
 

@@ -117,7 +117,7 @@ crates/tidewatch/       the egui app
   src/app/workspaces.rs the repos of the window: the one on show, the views the session file is written from, what the next launch reopens, adding a repo when a launch hands over its folder (git look-up on a job thread; `add_workspace` is the part tabs from stdusk reuse)
   src/app/overlays.rs   the toast and its pill, and the dialogs drawn over the frame (close, leftovers, delivery, new tab, trust, notice)
   src/app/dev.rs        the TIDEWATCH_DEV_* drivers that need the whole app: start an agent, resume, press keys, leftovers dialog, pick and note
-  src/commands.rs       the one command table: id, title, group, the chord on macOS and on Linux (none for a palette-only command such as build-workflow), the Command it runs; consume (most specific chord first), press_event, Gate (which chord works over which screen); key handling, tooltips and hints read it
+  src/commands.rs       the one command table: id, title, group, the chord on macOS and on Linux (none for a palette-only command such as build-workflow or move-sessions), the Command it runs; consume (most specific chord first), press_event, Gate (which chord works over which screen); key handling, tooltips and hints read it
   src/commands/rows.rs  the table as rows for the Shortcuts page, and (tests only) the markdown that docs/shortcuts.md must equal
   src/commands/tests.rs distinct chords per platform, no shadowing, every Action with a chord is in the table, macOS chords as shipped, Linux never takes a bare Ctrl letter, the gate
   src/repo_close.rs     the close-repo sequence: which tab next, wait for a removal, stop when a tab stays (pure)
@@ -138,7 +138,7 @@ crates/tidewatch/       the egui app
   src/status_view.rs    status -> tone, label, color; CLI logo mapping; the tab's top-edge status bar (animated only while working)
   src/notify.rs         desktop notifications (osascript, notify-send) off the UI thread, per-tab per-kind rate limit, window-away rule
   src/overview.rs       Overview rows and groups from the agent tabs (needs you first), the workflow stage of a row, elapsed format (pure)
-  src/overview_view.rs  the Overview screen (Cmd+0) with the sleeping mascot when no agent runs, and the tab strip's icon button with a needs-you badge
+  src/overview_view.rs  the Overview screen (Cmd+0) with the sleeping mascot when no agent runs (`above` draws the Running elsewhere card first), and the tab strip's icon button with a needs-you badge
   src/catalog.rs        loaded profiles, the agent table built from them, which CLIs were found and their versions
   src/agent_jobs.rs     load or seed profiles.toml and probe each agent CLI as jobs
   src/new_tab.rs        new-tab dialog state: the steps (what to start, agent, workflow), the filter, the permission level and YOLO gating, the request each step turns into, the warnings (pure)
@@ -252,8 +252,13 @@ crates/tidewatch/       the egui app
   src/stepper.rs        the stepper's data: a pill per stage with state and loop counter, the gate, a stage's summary and findings, the position label (pure)
   src/stepper_view.rs   draws the header of a workflow tab: stepper, a clicked stage, the ask card, the stopped line
   src/workflow_start_view.rs  the card a workflow tab shows until its run starts: description, task box, a card per stage, Start run (Cmd+Enter)
+  src/takeover.rs       take-over, the state and rules (pure): `Takeover` (the last scan, one scan at a time every 5 s while the Overview or welcome screen shows or a watch waits, the confirm, the watches and moves in flight), what each row offers (`Offer`: Move here, Move live in stdusk, Move when idle, Resume here, or blocked with a reason), "Move all idle here" (idle, outside stdusk, not YOLO), `resolve_profile` (the session's own level, model, effort and flags on the first profile of its CLI), `preview_command`, `window_plan` (the one-tab plan the restore path opens), `dialog_view` (YOLO cannot move without a worktree; the worktree box only for Claude in a repo)
+  src/takeover_jobs.rs  take-over on `Jobs` threads: the scan (running, recent per repo of the window, git root per folder, cached) and one move (worktree first when asked, then `end_session`, then the repo of the folder; a refusal takes the new worktree back)
+  src/takeover_view.rs  draws the Running elsewhere card (header with "Move all idle here", a row per session: CLI badge, name, folder, host, level and status pills, the button) and the confirm dialog (three numbered lines, the command, the worktree switch, Cancel and Move; Enter moves unless blocked, Esc cancels)
+  src/app/takeover.rs   the window's side: drive the scan and the finished jobs once per frame (no scan while the quake window is hidden), start moves, place the landed tab in the group of its repo through `restore.apply`, the palette command (the Overview at the card, or the batch dialog from the welcome screen), the hint for a session in stdusk
+  src/dev_takeover.rs   TIDEWATCH_DEV_TAKEOVER=<pid>, `move:<pid>`, `confirm:<pid>` (stops at the dialog), a trailing `:worktree` ticks the worktree switch
   src/welcome.rs        the welcome screen's Recent list: the last window's repos, then the session's, each once, with its open tabs (pure)
-  src/welcome_view.rs   draws the welcome screen of a window with no repo: the peeking mascot, Open repo (Cmd+O), Recent, the command line hint
+  src/welcome_view.rs   draws the welcome screen of a window with no repo: the peeking mascot, Open repo (Cmd+O), a line with a button when agent sessions run in other terminals, Recent, the command line hint
   src/workflow_jobs.rs  open (worktree, base, test command and timeout), launch a stage (fresh token, prepare, divider), run the tests as jobs
   src/workflow_glue.rs  Host: open a workflow or saved-run tab, carry out what a run asks, apply finished jobs, drop a replaced agent's messages (generic over the pty)
 docs/                   concept mockup, research reports, shortcuts.md (generated from the command table, checked by a test)

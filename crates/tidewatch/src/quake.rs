@@ -65,6 +65,10 @@ impl Quake {
         Self { visible: true, was_focused: false, sized: false }
     }
 
+    pub(crate) fn hidden(&self) -> bool {
+        !self.visible
+    }
+
     pub(crate) fn toggle(&mut self) -> Op {
         self.visible = !self.visible;
         if self.visible {

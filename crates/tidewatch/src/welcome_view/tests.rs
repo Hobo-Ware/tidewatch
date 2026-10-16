@@ -3,6 +3,15 @@ use egui::{Event, PointerButton, RawInput, Rect, pos2, vec2};
 use super::*;
 
 fn frame(ctx: &egui::Context, recent: &[Recent], events: Vec<Event>) -> Option<Action> {
+    frame_with(ctx, recent, events, None)
+}
+
+fn frame_with(
+    ctx: &egui::Context,
+    recent: &[Recent],
+    events: Vec<Event>,
+    elsewhere: Option<(usize, usize)>,
+) -> Option<Action> {
     let raw = RawInput {
         screen_rect: Some(Rect::from_min_size(pos2(0.0, 0.0), vec2(1000.0, 700.0))),
         events,
@@ -12,7 +21,7 @@ fn frame(ctx: &egui::Context, recent: &[Recent], events: Vec<Event>) -> Option<A
     let mut action = None;
     let _ = ctx.run_ui(raw, |ui| {
         let area = ui.max_rect();
-        action = show(ui, area, recent, None, "Cmd+O");
+        action = show(ui, area, recent, None, "Cmd+O", elsewhere);
     });
     action
 }
@@ -65,4 +74,50 @@ fn with_nothing_recent_the_list_is_left_out_and_the_screen_still_draws() {
     crate::fonts::install(&ctx);
     assert!(frame(&ctx, &[], vec![]).is_none());
     assert!(frame(&ctx, &[], vec![]).is_none());
+}
+
+#[test]
+fn sessions_found_elsewhere_get_a_line_under_the_open_button_with_its_own_button() {
+    let ctx = egui::Context::default();
+    crate::fonts::install(&ctx);
+    let found = Some((3, 2));
+    frame_with(&ctx, &repos(), vec![], found);
+    frame_with(&ctx, &repos(), vec![], found);
+    let total = MASCOT_H
+        + 26.0
+        + 90.0
+        + 26.0
+        + 48.0
+        + SESSIONS_H
+        + SESSIONS_GAP
+        + 26.0
+        + 22.0
+        + 2.0 * (ROW_H + 4.0)
+        + 26.0
+        + 20.0;
+    let top = 350.0 - total / 2.0;
+    let line_y = top + MASCOT_H + 26.0 + 90.0 + 26.0 + 48.0 + 26.0 + SESSIONS_H / 2.0;
+    let x = 1000.0 / 2.0 + 560.0 / 2.0 - 60.0;
+    let hit = (-14..=14).step_by(2).any(|dy| {
+        let got = frame_with(&ctx, &repos(), click(pos2(x, line_y + dy as f32)), found);
+        matches!(got, Some(Action::MoveSessions))
+    });
+    assert!(hit, "the line's button was not near where the layout says");
+}
+
+#[test]
+fn the_line_button_is_off_when_no_found_session_is_idle() {
+    let ctx = egui::Context::default();
+    crate::fonts::install(&ctx);
+    let found = Some((1, 0));
+    frame_with(&ctx, &[], vec![], found);
+    frame_with(&ctx, &[], vec![], found);
+    let total = MASCOT_H + 26.0 + 90.0 + 26.0 + 48.0 + SESSIONS_H + SESSIONS_GAP + 26.0 + 20.0;
+    let top = 350.0 - total / 2.0;
+    let line_y = top + MASCOT_H + 26.0 + 90.0 + 26.0 + 48.0 + 26.0 + SESSIONS_H / 2.0;
+    let x = 1000.0 / 2.0 + 560.0 / 2.0 - 60.0;
+    let any = (-14..=14)
+        .step_by(2)
+        .any(|dy| frame_with(&ctx, &[], click(pos2(x, line_y + dy as f32)), found).is_some());
+    assert!(!any);
 }

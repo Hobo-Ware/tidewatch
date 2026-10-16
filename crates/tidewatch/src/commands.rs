@@ -76,6 +76,7 @@ pub(crate) enum Command {
     Palette,
     ApproveDelivery,
     BuildWorkflow,
+    MoveSessions,
 }
 
 impl Command {
@@ -101,12 +102,13 @@ impl Command {
             | Self::OpenRepo
             | Self::Palette
             | Self::ApproveDelivery
-            | Self::BuildWorkflow => None,
+            | Self::BuildWorkflow
+            | Self::MoveSessions => None,
         }
     }
 
     fn global(self) -> bool {
-        !matches!(self, Self::ApproveDelivery | Self::BuildWorkflow)
+        !matches!(self, Self::ApproveDelivery | Self::BuildWorkflow | Self::MoveSessions)
     }
 
     /// A bare key the terminal and the text fields also want: it is only read, and so only taken
@@ -282,7 +284,7 @@ const fn tab(id: &'static str, title: &'static str, index: usize, key: Key) -> E
     entry(id, title, Group::Tabs, Command::SelectTab(index), (cmd(key), alt(key)))
 }
 
-pub(crate) const TABLE: [Entry; 29] = [
+pub(crate) const TABLE: [Entry; 30] = [
     entry("new-tab", "New tab", Group::Tabs, Command::NewTab, (cmd(Key::T), ctrl(Key::T).shift())),
     entry(
         "close-tab",
@@ -419,6 +421,7 @@ pub(crate) const TABLE: [Entry; 29] = [
         Group::App,
         Command::BuildWorkflow,
     ),
+    unbound("move-sessions", "Move sessions to Tidewatch", Group::App, Command::MoveSessions),
 ];
 
 fn entry_of(command: Command) -> Option<&'static Entry> {
@@ -552,7 +555,7 @@ impl Gate {
             | Command::PrevRepo
             | Command::OpenRepo => !modal,
             Command::Palette => self.dialog == Dialog::None,
-            Command::ApproveDelivery | Command::BuildWorkflow => false,
+            Command::ApproveDelivery | Command::BuildWorkflow | Command::MoveSessions => false,
         }
     }
 }

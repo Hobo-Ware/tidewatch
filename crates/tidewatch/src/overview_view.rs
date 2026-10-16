@@ -77,8 +77,14 @@ fn paint_badge(ui: &egui::Ui, button: Rect, count: usize) {
     ui.painter().galley(badge.center() - galley.size() / 2.0, galley, colors::bg());
 }
 
-/// Draws the Overview in `area` and returns the tab the user clicked.
-pub(crate) fn show(ui: &mut egui::Ui, area: Rect, overview: &Overview) -> Option<u64> {
+/// Draws the Overview in `area` and returns the tab the user clicked. `above` draws first, inside
+/// the scrolling list.
+pub(crate) fn show(
+    ui: &mut egui::Ui,
+    area: Rect,
+    overview: &Overview,
+    above: impl FnOnce(&mut egui::Ui),
+) -> Option<u64> {
     ui.painter().rect_filled(area, 0.0, brand::GROUND);
     header(ui, area, overview);
     let mut jump = None;
@@ -88,6 +94,7 @@ pub(crate) fn show(ui: &mut egui::Ui, area: Rect, overview: &Overview) -> Option
     );
     let mut content = ui.new_child(egui::UiBuilder::new().max_rect(body));
     ScrollArea::vertical().auto_shrink([false, false]).show(&mut content, |ui| {
+        above(ui);
         if overview.counts.total() == 0 {
             empty(ui);
             return;
@@ -384,7 +391,7 @@ mod tests {
         let mut jump = None;
         let _ = ctx.run_ui(raw, |ui| {
             let area = ui.max_rect();
-            jump = show(ui, area, data);
+            jump = show(ui, area, data, |_| {});
         });
         jump
     }

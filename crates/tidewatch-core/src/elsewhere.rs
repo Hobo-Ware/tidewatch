@@ -26,7 +26,6 @@ pub enum Cli {
 impl Cli {
     pub const ALL: [Cli; 4] = [Cli::Claude, Cli::Codex, Cli::Gemini, Cli::Copilot];
 
-    /// The id of the agent table.
     #[must_use]
     pub fn id(self) -> &'static str {
         match self {
@@ -53,12 +52,10 @@ impl Cli {
     }
 }
 
-/// One line of `ps -axo pid,ppid,lstart,args`.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ProcessRow {
     pub pid: u32,
     pub ppid: u32,
-    /// `lstart` with its spaces squeezed to one, as [`normalize_start`] makes `procStart`.
     pub started: String,
     pub argv: Vec<String>,
 }
@@ -76,7 +73,6 @@ pub fn normalize_start(text: &str) -> String {
     text.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
-/// The rows of `ps -axo pid,ppid,lstart,args`. The header and any line that is not a row are skipped.
 #[must_use]
 pub fn parse_ps(output: &str) -> Vec<ProcessRow> {
     output.lines().filter_map(parse_ps_line).collect()
@@ -120,7 +116,6 @@ impl ProcessTable {
         self.rows.iter()
     }
 
-    /// The parents of `pid`, nearest first, as far as the table knows them.
     #[must_use]
     pub fn ancestors(&self, pid: u32) -> Vec<&ProcessRow> {
         let mut chain = Vec::new();
@@ -143,7 +138,6 @@ impl ProcessTable {
     }
 }
 
-/// The app a session runs in, from the parent chain.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Host {
     Stdusk,
@@ -199,7 +193,6 @@ fn host_of_row(row: &ProcessRow) -> Option<Host> {
     }
 }
 
-/// The nearest known host above `pid`, else [`Host::Other`].
 #[must_use]
 pub fn host_of(table: &ProcessTable, pid: u32) -> Host {
     table.ancestors(pid).into_iter().find_map(host_of_row).unwrap_or(Host::Other)
@@ -220,7 +213,6 @@ pub fn is_ours(table: &ProcessTable, row: &ProcessRow, own_pid: u32) -> bool {
 pub enum Activity {
     Idle,
     Working,
-    /// Nothing says whether a turn is under way.
     Quiet,
 }
 
@@ -301,11 +293,9 @@ pub struct Running {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Presence {
     Running(Running),
-    /// A recent session whose process is gone.
     NotRunning,
 }
 
-/// What a row of the take-over card stands for, stable across scans.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum Key {
     Process { pid: u32, proc_start: String },
@@ -317,7 +307,6 @@ pub struct Session {
     pub cli: Cli,
     pub session_id: Option<String>,
     pub cwd: PathBuf,
-    /// The name Claude gives it, when it has one.
     pub name: Option<String>,
     pub flags: Flags,
     pub presence: Presence,
@@ -345,7 +334,6 @@ impl Session {
         }
     }
 
-    /// Claude's name for it, else `codex · 14 min ago` (or `gemini · ended 2h ago`).
     #[must_use]
     pub fn display_name(&self, now_ms: i64) -> String {
         if let Some(name) = &self.name {
@@ -361,7 +349,6 @@ impl Session {
     }
 }
 
-/// `just now`, `14 min ago`, `2h ago`, `3d ago`.
 #[must_use]
 pub fn age_text(elapsed_ms: i64) -> String {
     let minutes = elapsed_ms.max(0) / 60_000;
@@ -373,7 +360,6 @@ pub fn age_text(elapsed_ms: i64) -> String {
     }
 }
 
-/// Unix ms of an `lstart` text in UTC (`Fri Oct 16 13:23:31 2026`).
 #[must_use]
 pub fn parse_lstart_ms(text: &str) -> Option<i64> {
     let words: Vec<&str> = text.split_whitespace().collect();
@@ -436,8 +422,6 @@ pub fn claude_sessions(
     sessions
 }
 
-/// A Codex, Gemini or Copilot process that looks like a conversation, before its folder and session
-/// file are looked up.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Candidate {
     pub cli: Cli,
@@ -445,14 +429,12 @@ pub struct Candidate {
     pub proc_start: String,
     pub host: Host,
     pub flags: Flags,
-    /// The session id its command line names (`codex resume <id>`, `--resume=<id>`).
     pub resume_id: Option<String>,
     pub started_ms: Option<i64>,
 }
 
 const RUNTIMES: [&str; 4] = ["node", "nodejs", "bun", "deno"];
 
-/// Which of Codex, Gemini and Copilot a command line starts, directly or through a JavaScript runtime.
 #[must_use]
 pub fn program_cli(argv: &[String]) -> Option<Cli> {
     let first = basename(argv.first()?);

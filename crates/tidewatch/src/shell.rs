@@ -94,6 +94,11 @@ impl<O: Os> Shell<O> {
         &self.prefs
     }
 
+    /// The quake window is parked out of sight: nothing on screen needs fresh data.
+    pub(crate) fn window_hidden(&self) -> bool {
+        self.plan.quake && self.quake.hidden()
+    }
+
     /// Whether this system can show a menu-bar item at all.
     pub(crate) fn tray_supported(&self) -> bool {
         self.env.tray_supported

@@ -21,7 +21,7 @@ use crate::tabs::Action;
 use crate::workflow_run::TabRun;
 use crate::{
     agent_status_line, brand, delivery_view, end_block_view, layout, overview, overview_view,
-    reader_glue, stepper_view, welcome_view, workflow_start_view,
+    reader_glue, stepper_view, takeover_view, welcome_view, workflow_start_view,
 };
 
 const EMPTY_PANELS_H: f32 = 200.0;
@@ -107,19 +107,27 @@ impl Tidewatch {
                 return;
             }
             if self.welcome.is_some() {
-                self.show_welcome(ui, area, frame);
+                self.show_welcome(ui, ctx, area, frame);
                 return;
             }
             self.show_workspace(ui, area, ctx, now, frame);
         });
     }
 
-    fn show_welcome(&mut self, ui: &mut egui::Ui, area: egui::Rect, frame: &mut FrameIntent) {
+    fn show_welcome(
+        &mut self,
+        ui: &mut egui::Ui,
+        ctx: &egui::Context,
+        area: egui::Rect,
+        frame: &mut FrameIntent,
+    ) {
         let home = self.paths.as_ref().and_then(|paths| paths.root().parent());
         let recent = self.welcome.as_deref().unwrap_or_default();
-        match welcome_view::show(ui, area, recent, home, &Command::OpenRepo.keys()) {
+        let elsewhere = self.takeover_welcome_line();
+        match welcome_view::show(ui, area, recent, home, &Command::OpenRepo.keys(), elsewhere) {
             Some(welcome_view::Action::Open) => frame.repo_command = Some(RepoCommand::Open),
             Some(welcome_view::Action::Recent(dir)) => frame.open_dir = Some(dir),
+            Some(welcome_view::Action::MoveSessions) => self.open_batch(ctx),
             None => {}
         }
         self.show_toast_pill(ui);
@@ -137,7 +145,19 @@ impl Tidewatch {
         if overview::is_ticking(&data) {
             ctx.request_repaint_after(Duration::from_secs(1));
         }
-        if let Some(tab) = overview_view::show(ui, area, &data)
+        let card = self.takeover_card();
+        let reveal = self.takeover.take_reveal();
+        let mut clicked = None;
+        let jump = overview_view::show(ui, area, &data, |ui| {
+            if let Some(card) = &card {
+                clicked = takeover_view::card(ui, card, reveal);
+                ui.add_space(12.0);
+            }
+        });
+        if let Some(action) = clicked {
+            self.takeover_click(action, ctx);
+        }
+        if let Some(tab) = jump
             && let Some(index) = self.tabs.index_of(tab)
         {
             frame.actions.push(Action::Select(index));

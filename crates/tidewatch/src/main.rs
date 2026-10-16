@@ -25,6 +25,7 @@ mod dev_panes;
 mod dev_reader;
 mod dev_screenshot;
 mod dev_session;
+mod dev_takeover;
 mod dev_view;
 mod dev_workflow;
 mod dev_worktree;
@@ -120,6 +121,9 @@ mod stepper;
 mod stepper_view;
 mod tab_view;
 mod tabs;
+mod takeover;
+mod takeover_jobs;
+mod takeover_view;
 #[cfg(all(test, unix))]
 mod test_exec;
 mod toast;
