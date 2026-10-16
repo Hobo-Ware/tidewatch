@@ -2,17 +2,15 @@
 
 use egui::{
     Align, Align2, Frame, Id, Key, KeyboardShortcut, Layout, Margin, Modifiers, Rect, RichText,
-    TextEdit, Ui, UiBuilder, pos2, vec2,
+    Stroke, TextEdit, Ui, UiBuilder, pos2, vec2,
 };
-use stdusk_egui::colors;
-use stdusk_egui::widgets::action_button;
 
 use crate::brand;
 use crate::commands::Command;
-use crate::screen_kit::{body, heading, paint_cli_badge};
+use crate::reader_view::INSET;
+use crate::screen_kit::{body, heading, paint_cli_badge, primary_button};
 
 pub(crate) const COMPOSER_H: f32 = 164.0;
-const SIDE_PAD: f32 = 20.0;
 const BADGE: f32 = 52.0;
 
 #[derive(Clone, Copy, Debug)]
@@ -35,18 +33,18 @@ pub(crate) fn empty_state(ui: &Ui, area: Rect, ready: Ready) {
         Align2::CENTER_TOP,
         format!("{} is ready", ready.profile),
         heading(24.0),
-        colors::fg(),
+        brand::TEXT,
     );
     let galley = painter.layout(
         "A fresh worktree on its own branch. Nothing runs until you say what to do.".to_owned(),
         body(14.0),
-        colors::dim(),
+        brand::MUTED,
         (area.width() - 48.0).min(520.0),
     );
     painter.galley(
         pos2(area.center().x - galley.size().x / 2.0, title.bottom() + 10.0),
         galley,
-        colors::dim(),
+        brand::MUTED,
     );
 }
 
@@ -65,48 +63,45 @@ pub(crate) fn composer(
     focus: &mut bool,
     ready: Ready,
 ) -> Option<String> {
-    let outer = rect.shrink2(vec2(SIDE_PAD, 0.0)).with_max_y(rect.bottom() - 18.0);
+    let outer = rect.shrink2(vec2(INSET, 0.0)).with_max_y(rect.bottom() - 18.0);
     let mut child = ui.new_child(UiBuilder::new().max_rect(outer));
     let id = Id::new("agent-composer");
     let was_focused = child.memory(|m| m.has_focus(id));
     let enter = was_focused && child.input(|i| i.events.iter().any(plain_enter));
     let mut clicked = false;
-    Frame::new()
-        .fill(colors::bg())
-        .stroke(egui::Stroke::new(2.0, brand::TEAL))
-        .corner_radius(14)
+    let mut prepared = Frame::new()
+        .fill(brand::ITEM)
+        .corner_radius(12)
         .inner_margin(Margin::symmetric(16, 12))
-        .show(&mut child, |ui| {
-            ui.set_width(ui.available_width());
-            ui.spacing_mut().item_spacing.y = 8.0;
-            ui.label(
-                RichText::new(label(ready.profile).to_uppercase())
-                    .size(12.0)
-                    .color(brand::TEAL_TEXT),
-            );
-            let field = ui.add(
-                TextEdit::multiline(text)
-                    .id(id)
-                    .frame(egui::Frame::NONE)
-                    .desired_rows(2)
-                    .desired_width(f32::INFINITY)
-                    .font(egui::FontId::proportional(16.0))
-                    .return_key(KeyboardShortcut::new(Modifiers::SHIFT, Key::Enter)),
-            );
-            if std::mem::take(focus) {
-                field.request_focus();
-            }
-            ui.horizontal(|ui| {
-                let hint = format!(
-                    "Enter sends  -  Shift+Enter new line  -  {} terminal",
-                    Command::Reader.keys()
-                );
-                ui.label(RichText::new(hint).size(13.0).color(colors::dim()));
-                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                    clicked = action_button(ui, "Send", true).clicked();
-                });
-            });
+        .begin(&mut child);
+    let ui = &mut prepared.content_ui;
+    ui.set_width(ui.available_width());
+    ui.spacing_mut().item_spacing.y = 8.0;
+    ui.label(RichText::new(label(ready.profile)).size(12.5).color(brand::MUTED));
+    let field = ui.add(
+        TextEdit::multiline(text)
+            .id(id)
+            .frame(egui::Frame::NONE)
+            .desired_rows(2)
+            .desired_width(f32::INFINITY)
+            .font(egui::FontId::proportional(16.0))
+            .text_color(brand::TEXT)
+            .return_key(KeyboardShortcut::new(Modifiers::SHIFT, Key::Enter)),
+    );
+    if std::mem::take(focus) {
+        field.request_focus();
+    }
+    ui.horizontal(|ui| {
+        let hint =
+            format!("Enter sends  -  Shift+Enter new line  -  {} terminal", Command::Reader.keys());
+        ui.label(RichText::new(hint).size(12.0).color(brand::MUTED));
+        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+            clicked = primary_button(ui, "Send", !text.trim().is_empty()).clicked();
         });
+    });
+    let line = if field.has_focus() { brand::TEAL } else { brand::FIELD_LINE };
+    prepared.frame.stroke = Stroke::new(1.0, line);
+    prepared.end(&mut child);
     ((enter || clicked) && !text.trim().is_empty()).then(|| {
         *focus = true;
         std::mem::take(text)
