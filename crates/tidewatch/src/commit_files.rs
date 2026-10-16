@@ -10,12 +10,11 @@ use egui::{
 };
 use kelp_core::commit::FileChange;
 use kelp_ui::graph::GraphStyle;
-use kelp_ui::theme;
 
 use crate::brand;
 use crate::diff_pane::{kind_color, kind_letter};
 use crate::pane_jobs::LineCounts;
-use crate::screen_kit::{body, mono};
+use crate::screen_kit::{body, mono, selection_row};
 use crate::tab_view::TabView;
 
 const FILE_ROW_H: f32 = 30.0;
@@ -31,9 +30,9 @@ const ADD_W: f32 = 36.0;
 const DEL_W: f32 = 28.0;
 const COUNT_GAP: f32 = 10.0;
 const FILL_ALPHA: u8 = 0x1a;
-const SHOWN_ALPHA: u8 = 0x1f;
 const SHOWN_BAR_W: f32 = 2.0;
-const SHOWN_BAR_INSET: f32 = 6.0;
+const OPEN_BAR_INSET: f32 = 8.0;
+const ROW_GAP: f32 = 2.0;
 const BORDER_STRENGTH: f32 = 0.35;
 const SHORT_ID: usize = 7;
 const MAX_LANES: u16 = 14;
@@ -100,9 +99,9 @@ fn meta_job(view: &TabView, files: usize) -> LayoutJob {
     }
     let author = view.summary.as_ref().map(|(_, summary)| summary.author.as_str());
     let tail = format!(" · {}", meta_tail(author, files));
-    job.append(&tail, 0.0, plain(body(12.0), theme::text_muted()));
+    job.append(&tail, 0.0, plain(body(12.0), brand::MUTED));
     if let Some((added, removed)) = totals(&view.counts, files) {
-        job.append(" · ", 0.0, plain(body(12.0), theme::text_muted()));
+        job.append(" · ", 0.0, plain(body(12.0), brand::MUTED));
         job.append(&format!("+{added}"), 0.0, plain(body(12.0), brand::GREEN));
         job.append(&format!(" -{removed}"), 0.0, plain(body(12.0), brand::RED));
     }
@@ -122,7 +121,7 @@ pub(crate) fn show(ui: &mut Ui, view: &mut TabView, spot: Spot) {
     let below = Rect::from_min_max(pos2(card.left(), gap.top()), card.max);
     let clip = viewport.intersect(ui.clip_rect());
     let painter = ui.painter().with_clip_rect(clip);
-    let fill = theme::with_alpha(brand::TEAL, FILL_ALPHA);
+    let fill = brand::TEAL.gamma_multiply_u8(FILL_ALPHA);
     painter.rect_filled(below, CornerRadius { nw: 0, ne: 0, sw: RADIUS, se: RADIUS }, fill);
     for left_side in [true, false] {
         painter.add(row_corner(
@@ -137,6 +136,11 @@ pub(crate) fn show(ui: &mut Ui, view: &mut TabView, spot: Spot) {
         Stroke::new(1.0, brand::TEAL.gamma_multiply(BORDER_STRENGTH)),
         StrokeKind::Inside,
     );
+    let bar = Rect::from_min_max(
+        pos2(card.left(), gap.top() - row_h + OPEN_BAR_INSET),
+        pos2(card.left() + SHOWN_BAR_W, gap.top() - OPEN_BAR_INSET),
+    );
+    painter.rect_filled(bar, 1, brand::TEAL);
     ui.interact(below, Id::new("commit-files-card"), Sense::click_and_drag());
 
     let text_x = card.left() + inset;
@@ -147,19 +151,19 @@ pub(crate) fn show(ui: &mut Ui, view: &mut TabView, spot: Spot) {
             Align2::LEFT_CENTER,
             "Loading files...",
             body(12.0),
-            theme::text_muted(),
+            brand::MUTED,
         );
         return;
     }
     let galley = painter.layout_job(meta_job(view, files));
-    painter.galley(pos2(text_x, meta_y - galley.size().y / 2.0), galley, theme::text_muted());
+    painter.galley(pos2(text_x, meta_y - galley.size().y / 2.0), galley, brand::MUTED);
     if files == 0 {
         painter.text(
             pos2(text_x + ROW_PAD, gap.top() + META_H + FILE_ROW_H / 2.0),
             Align2::LEFT_CENTER,
             "Nothing changed here",
             body(13.0),
-            theme::text_faint(),
+            brand::FAINT,
         );
         return;
     }
@@ -231,20 +235,16 @@ impl Mark {
 }
 
 fn file_row(ui: &mut Ui, change: &FileChange, counts: Option<LineCounts>, mark: Mark) -> bool {
-    let (rect, response) =
+    let (slot, response) =
         ui.allocate_exact_size(vec2(ui.available_width(), FILE_ROW_H), Sense::click());
-    let painter = ui.painter_at(rect);
+    let painter = ui.painter_at(slot);
+    let rect = slot.shrink2(vec2(0.0, ROW_GAP / 2.0));
     if mark == Mark::Shown {
-        painter.rect_filled(rect, 6, theme::with_alpha(brand::TEAL, SHOWN_ALPHA));
-        let bar = Rect::from_min_max(
-            pos2(rect.left(), rect.top() + SHOWN_BAR_INSET),
-            pos2(rect.left() + SHOWN_BAR_W, rect.bottom() - SHOWN_BAR_INSET),
-        );
-        painter.rect_filled(bar, 1, brand::TEAL);
-    } else if mark == Mark::Selected {
-        painter.rect_filled(rect, 6, theme::overlay(0x0d));
-    } else if response.hovered() {
-        painter.rect_filled(rect, 6, theme::overlay(0x08));
+        selection_row(&painter, rect, true, false);
+    } else {
+        let fill = if response.hovered() { brand::BUTTON } else { brand::ITEM };
+        let line = if mark == Mark::Selected { brand::FIELD_LINE } else { brand::ITEM_LINE };
+        painter.rect(rect, 8, fill, Stroke::new(1.0, line), StrokeKind::Inside);
     }
     let center_y = rect.center().y;
     painter.text(
@@ -274,12 +274,18 @@ fn file_row(ui: &mut Ui, change: &FileChange, counts: Option<LineCounts>, mark: 
         right -= ADD_W;
     }
     let left = rect.left() + ROW_PAD + LETTER_W;
-    let ink = if mark == Mark::None { brand::TEXT } else { theme::text_strong() };
+    let ink = brand::TEXT;
     paint_path(ui, &painter, &change.path, (left, right - COUNT_GAP, center_y), ink);
     response.on_hover_text(&change.path).clicked()
 }
 
-fn paint_path(ui: &Ui, painter: &egui::Painter, path: &str, spot: (f32, f32, f32), ink: Color32) {
+pub(crate) fn paint_path(
+    ui: &Ui,
+    painter: &egui::Painter,
+    path: &str,
+    spot: (f32, f32, f32),
+    ink: Color32,
+) {
     let (left, right, y) = spot;
     let font = body(13.0);
     let (dir, name) = split_dir(path);
@@ -291,9 +297,9 @@ fn paint_path(ui: &Ui, painter: &egui::Painter, path: &str, spot: (f32, f32, f32
         return;
     }
     let dir_text = tail_fit(ui, dir, &font, room - name_galley.size().x);
-    let dir_galley = painter.layout_no_wrap(dir_text, font, theme::text_faint());
+    let dir_galley = painter.layout_no_wrap(dir_text, font, brand::FAINT);
     let name_x = left + dir_galley.size().x;
-    painter.galley(pos2(left, y - dir_galley.size().y / 2.0), dir_galley, theme::text_faint());
+    painter.galley(pos2(left, y - dir_galley.size().y / 2.0), dir_galley, brand::FAINT);
     painter.galley(pos2(name_x, y - name_galley.size().y / 2.0), name_galley, ink);
 }
 
