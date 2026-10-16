@@ -3,22 +3,36 @@
 //! Send to the agent and Post to PR. A click on the place jumps to that file. The row model is plain
 //! data; `show` only draws it.
 
-use egui::{Align2, FontId, Rect, RichText, Sense, Stroke, Ui, UiBuilder, pos2, vec2};
+use egui::text::LayoutJob;
+use egui::{
+    Align, Align2, Color32, CornerRadius, FontId, Layout, Rect, Sense, Stroke, StrokeKind,
+    TextFormat, Ui, UiBuilder, pos2, vec2,
+};
 use kelp_core::commit::{calendar_time, relative_time};
-use kelp_ui::theme;
 use tidewatch_core::notes::{NoteState, Notes};
 
 use crate::brand;
+use crate::commit_files::{split_dir, tail_fit};
 use crate::note_send::{Gate, gate_reason};
 use crate::pr_state::{PostAbility, PrState};
+use crate::screen_kit::{body, mono, quiet_button};
 
-pub(crate) const ROW_H: f32 = 26.0;
 pub(crate) const MAX_ROWS: usize = 3;
-const SIDE_PAD: f32 = 14.0;
+const CARD_H: f32 = 36.0;
+const GAP: f32 = 6.0;
+const INSET: f32 = 10.0;
+const CARD_PAD: f32 = 10.0;
+const RADIUS: u8 = 8;
+const BUTTON_GAP: f32 = 6.0;
+const TEXT_GAP: f32 = 10.0;
 const SNIPPET_MAX: usize = 90;
-const STATE_W: f32 = 104.0;
-const SEND_W: f32 = 58.0;
-const POST_W: f32 = 82.0;
+const PLACE_FONT: f32 = 11.5;
+const PLACE_SHARE: f32 = 0.42;
+const MIN_PLACE_W: f32 = 40.0;
+const SNIPPET_FONT: f32 = 12.0;
+const MIN_SNIPPET_W: f32 = 20.0;
+const PILL_FONT: f32 = 11.5;
+const PILL_PAD: f32 = 8.0;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct NoteRow {
@@ -101,7 +115,10 @@ fn send_label(state: NoteState) -> &'static str {
 
 /// How tall the strip is for `count` open notes: none takes no room.
 pub(crate) fn height(count: usize) -> f32 {
-    ROW_H * count.min(MAX_ROWS) as f32
+    if count == 0 {
+        return 0.0;
+    }
+    GAP + count.min(MAX_ROWS) as f32 * (CARD_H + GAP)
 }
 
 pub(crate) fn show(ui: &mut Ui, rect: Rect, rows: &[NoteRow], now: i64) -> Vec<StripAction> {
@@ -109,102 +126,90 @@ pub(crate) fn show(ui: &mut Ui, rect: Rect, rows: &[NoteRow], now: i64) -> Vec<S
     ui.scope_builder(UiBuilder::new().id_salt("notes-strip").max_rect(rect), |ui| {
         ui.set_clip_rect(rect.intersect(ui.clip_rect()));
         egui::ScrollArea::vertical().auto_shrink(false).show(ui, |ui| {
-            ui.spacing_mut().item_spacing = vec2(0.0, 0.0);
+            ui.spacing_mut().item_spacing = vec2(0.0, GAP);
+            ui.add_space(GAP);
             for row in rows {
-                draw_row(ui, row, now, &mut actions);
+                draw_card(ui, row, now, &mut actions);
             }
         });
     });
     actions
 }
 
-fn draw_row(ui: &mut Ui, row: &NoteRow, now: i64, actions: &mut Vec<StripAction>) {
-    let (rect, _) = ui.allocate_exact_size(vec2(ui.available_width(), ROW_H), Sense::hover());
-    let painter = ui.painter_at(rect);
-    painter.hline(rect.x_range(), rect.bottom(), Stroke::new(1.0, theme::border()));
-    let right = rect.right() - SIDE_PAD;
-    let post_rect =
-        Rect::from_min_size(pos2(right - POST_W, rect.top() + 2.0), vec2(POST_W, ROW_H - 4.0));
-    let send_rect = Rect::from_min_size(
-        pos2(post_rect.left() - 6.0 - SEND_W, rect.top() + 2.0),
-        vec2(SEND_W, ROW_H - 4.0),
-    );
-    let state_rect = Rect::from_min_size(
-        pos2(send_rect.left() - 8.0 - STATE_W, rect.top()),
-        vec2(STATE_W, ROW_H),
-    );
-    let left = rect.left() + SIDE_PAD;
-    let room = (state_rect.left() - 8.0 - left).max(0.0);
-    let place_w = (room * 0.42).max(40.0).min(room);
-    let place = Rect::from_min_size(pos2(left, rect.top()), vec2(place_w, ROW_H));
-    let place_text =
-        if row.line > 0 { format!("{}:{}", row.path, row.line) } else { row.path.clone() };
-    let place_id = ui.id().with(("note-place", row.id));
-    let place_resp = ui.interact(place, place_id, Sense::click());
-    let color = if place_resp.hovered() { theme::text_strong() } else { brand::TEAL_TEXT };
-    painter.with_clip_rect(place).text(
-        pos2(place.left(), rect.center().y),
-        Align2::LEFT_CENTER,
-        &place_text,
-        FontId::monospace(11.5),
-        color,
-    );
-    if place_resp.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
-        actions.push(StripAction::Jump(row.path.clone()));
-    }
-    let snippet_rect = Rect::from_min_max(
-        pos2(place.right() + 8.0, rect.top()),
-        pos2(state_rect.left() - 8.0, rect.bottom()),
-    );
-    if snippet_rect.width() > 20.0 {
-        painter.with_clip_rect(snippet_rect).text(
-            pos2(snippet_rect.left(), rect.center().y),
-            Align2::LEFT_CENTER,
-            &row.snippet,
-            FontId::proportional(12.0),
-            theme::text_muted(),
-        );
-    }
-    let label = state_label(row.state, now);
-    let tone = match row.state {
-        NoteState::Queued => theme::modified(),
+/// The folder, the file name and the `:line` of a note's place, each painted in its own ink.
+fn place_parts(path: &str, line: u32) -> (&str, &str, String) {
+    let (dir, name) = split_dir(path);
+    (dir, name, if line > 0 { format!(":{line}") } else { String::new() })
+}
+
+fn state_tone(state: NoteState) -> Color32 {
+    match state {
+        NoteState::Queued => brand::ORANGE,
         NoteState::Sent(_) => brand::TEAL_TEXT,
-        NoteState::Replied => theme::added(),
-        NoteState::Resolved | NoteState::FromAgent => theme::text_faint(),
-    };
-    let state_resp = ui.interact(state_rect, ui.id().with(("note-state", row.id)), Sense::hover());
-    painter.with_clip_rect(state_rect).text(
-        pos2(state_rect.right(), rect.center().y),
-        Align2::RIGHT_CENTER,
-        label,
-        FontId::proportional(11.5),
-        tone,
+        NoteState::Replied => brand::GREEN,
+        NoteState::Resolved | NoteState::FromAgent => brand::MUTED,
+    }
+}
+
+/// `text` cut at the end with an ellipsis until `measure` says it fits `room`.
+fn ellipsize_to(measure: impl Fn(&str) -> f32, text: &str, room: f32) -> String {
+    if measure(text) <= room {
+        return text.to_owned();
+    }
+    let chars: Vec<char> = text.chars().collect();
+    (0..chars.len())
+        .rev()
+        .map(|keep| format!("{}...", chars[..keep].iter().collect::<String>().trim_end()))
+        .find(|cut| measure(cut) <= room)
+        .unwrap_or_default()
+}
+
+fn text_width(painter: &egui::Painter, text: &str, font: &FontId) -> f32 {
+    painter.layout_no_wrap(text.to_owned(), font.clone(), brand::TEXT).size().x
+}
+
+fn place_job(parts: (&str, &str, &str), hot: bool) -> LayoutJob {
+    let (dir, name, line) = parts;
+    let format = |color| TextFormat { font_id: mono(PLACE_FONT), color, ..TextFormat::default() };
+    let (dim, strong) =
+        if hot { (brand::TEAL_TEXT, brand::TEAL_TEXT) } else { (brand::FAINT, brand::TEXT) };
+    let mut job = LayoutJob::default();
+    job.append(dir, 0.0, format(dim));
+    job.append(name, 0.0, format(strong));
+    job.append(line, 0.0, format(dim));
+    job
+}
+
+fn state_pill(ui: &mut Ui, label: &str, tone: Color32) -> egui::Response {
+    let galley = ui.painter().layout_no_wrap(label.to_owned(), body(PILL_FONT), tone);
+    let (rect, response) =
+        ui.allocate_exact_size(galley.size() + vec2(2.0 * PILL_PAD, 4.0), Sense::hover());
+    let painter = ui.painter();
+    painter.rect_filled(rect, CornerRadius::same(255), tone.gamma_multiply(0.12));
+    painter.galley(rect.center() - galley.size() / 2.0, galley, tone);
+    response
+}
+
+fn draw_card(ui: &mut Ui, row: &NoteRow, now: i64, actions: &mut Vec<StripAction>) {
+    let (slot, _) = ui.allocate_exact_size(vec2(ui.available_width(), CARD_H), Sense::hover());
+    let card = slot.shrink2(vec2(INSET, 0.0));
+    ui.painter().rect(
+        card,
+        CornerRadius::same(RADIUS),
+        brand::ITEM,
+        Stroke::new(1.0, brand::ITEM_LINE),
+        StrokeKind::Inside,
     );
-    if let Some(tip) = state_tip(row.state) {
-        state_resp.on_hover_text(tip);
-    }
-    let send_label = send_label(row.state);
-    let send = ui.put(send_rect, |ui: &mut Ui| {
-        ui.add_enabled(
-            row.send.is_ok(),
-            egui::Button::new(RichText::new(send_label).size(11.5)).corner_radius(5),
-        )
-    });
-    let send = match row.send {
-        Err(reason) => send.on_disabled_hover_text(reason),
-        Ok(()) => send.on_hover_text("Paste this note into the agent's terminal"),
-    };
-    if send.clicked() {
-        actions.push(StripAction::Send(row.id));
-    }
+    let inner = card.shrink2(vec2(CARD_PAD, 0.0));
+    let mut buttons = ui.new_child(
+        UiBuilder::new()
+            .id_salt(("note-card", row.id))
+            .max_rect(inner)
+            .layout(Layout::right_to_left(Align::Center)),
+    );
+    buttons.spacing_mut().item_spacing.x = BUTTON_GAP;
     let post_label = if row.on_pr { "Reply on PR" } else { "Post to PR" };
-    let post_ok = row.post == PostAbility::Yes;
-    let post = ui.put(post_rect, |ui: &mut Ui| {
-        ui.add_enabled(
-            post_ok,
-            egui::Button::new(RichText::new(post_label).size(11.5)).corner_radius(5),
-        )
-    });
+    let post = quiet_button(&mut buttons, post_label, row.post == PostAbility::Yes);
     let post = match &row.post {
         PostAbility::No(reason) => post.on_disabled_hover_text(reason.as_str()),
         PostAbility::Yes => {
@@ -213,6 +218,50 @@ fn draw_row(ui: &mut Ui, row: &NoteRow, now: i64, actions: &mut Vec<StripAction>
     };
     if post.clicked() {
         actions.push(StripAction::PostToPr(row.id));
+    }
+    let send = quiet_button(&mut buttons, send_label(row.state), row.send.is_ok());
+    let send = match row.send {
+        Err(reason) => send.on_disabled_hover_text(reason),
+        Ok(()) => send.on_hover_text("Paste this note into the agent's terminal"),
+    };
+    if send.clicked() {
+        actions.push(StripAction::Send(row.id));
+    }
+    let pill = state_pill(&mut buttons, &state_label(row.state, now), state_tone(row.state));
+    if let Some(tip) = state_tip(row.state) {
+        pill.on_hover_text(tip);
+    }
+    let room =
+        (buttons.available_rect_before_wrap().right() - inner.left() - 2.0 * BUTTON_GAP).max(0.0);
+    draw_text(ui, row, Rect::from_min_size(inner.min, vec2(room, inner.height())), actions);
+}
+
+fn draw_text(ui: &mut Ui, row: &NoteRow, area: Rect, actions: &mut Vec<StripAction>) {
+    let painter = ui.painter().with_clip_rect(area);
+    let (dir, name, line) = place_parts(&row.path, row.line);
+    let font = mono(PLACE_FONT);
+    let place_room = (area.width() * PLACE_SHARE).max(MIN_PLACE_W).min(area.width());
+    let tail = text_width(&painter, &format!("{name}{line}"), &font);
+    let dir = tail_fit(ui, dir, &font, (place_room - tail).max(0.0));
+    let parts = (dir.as_str(), name, line.as_str());
+    let galley = painter.layout_job(place_job(parts, false));
+    let place = Rect::from_min_size(
+        pos2(area.left(), area.center().y - galley.size().y / 2.0),
+        galley.size().min(vec2(area.width(), f32::INFINITY)),
+    );
+    let response = ui.interact(place, ui.id().with(("note-place", row.id)), Sense::click());
+    let galley =
+        if response.hovered() { painter.layout_job(place_job(parts, true)) } else { galley };
+    painter.galley(place.min, galley, brand::TEXT);
+    if response.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
+        actions.push(StripAction::Jump(row.path.clone()));
+    }
+    let left = place.right() + TEXT_GAP;
+    let room = area.right() - left;
+    if room > MIN_SNIPPET_W {
+        let font = body(SNIPPET_FONT);
+        let text = ellipsize_to(|text| text_width(&painter, text, &font), &row.snippet, room);
+        painter.text(pos2(left, area.center().y), Align2::LEFT_CENTER, text, font, brand::SOFT);
     }
 }
 
@@ -274,10 +323,11 @@ mod tests {
     }
 
     #[test]
-    fn the_strip_takes_room_for_up_to_three_rows() {
+    fn the_strip_takes_room_for_up_to_three_cards_with_a_gap_around_each() {
         assert_eq!(height(0), 0.0);
-        assert_eq!(height(2), ROW_H * 2.0);
-        assert_eq!(height(9), ROW_H * MAX_ROWS as f32);
+        assert_eq!(height(1), GAP + CARD_H + GAP);
+        assert_eq!(height(2), GAP + 2.0 * (CARD_H + GAP));
+        assert_eq!(height(9), height(MAX_ROWS));
     }
 
     #[test]
@@ -287,6 +337,31 @@ mod tests {
         assert!(cut.ends_with("..."));
         assert_eq!(cut.chars().count(), SNIPPET_MAX + 3);
         assert_eq!(snippet(""), "");
+    }
+
+    #[test]
+    fn a_snippet_that_does_not_fit_is_cut_at_a_word_end_with_an_ellipsis() {
+        let width = |text: &str| text.chars().count() as f32;
+        assert_eq!(ellipsize_to(width, "short", 10.0), "short");
+        assert_eq!(
+            ellipsize_to(width, "Looks off by one on the boundary", 16.0),
+            "Looks off by..."
+        );
+        assert_eq!(ellipsize_to(width, "anything", 2.0), "");
+    }
+
+    #[test]
+    fn the_place_splits_into_folder_file_and_line() {
+        assert_eq!(place_parts("src/a/b.rs", 7), ("src/a/", "b.rs", ":7".to_owned()));
+        assert_eq!(place_parts("README.md", 0), ("", "README.md", String::new()));
+    }
+
+    #[test]
+    fn each_state_has_its_own_ink() {
+        assert_eq!(state_tone(NoteState::Queued), brand::ORANGE);
+        assert_eq!(state_tone(NoteState::Sent(1)), brand::TEAL_TEXT);
+        assert_eq!(state_tone(NoteState::Replied), brand::GREEN);
+        assert_eq!(state_tone(NoteState::FromAgent), brand::MUTED);
     }
 
     fn click_strip(rows: &[NoteRow], at: egui::Pos2) -> Vec<StripAction> {
@@ -302,7 +377,7 @@ mod tests {
             [vec![], vec![egui::Event::PointerMoved(at)], vec![button(true)], vec![button(false)]];
         for events in steps {
             let raw = egui::RawInput {
-                screen_rect: Some(Rect::from_min_size(pos2(0.0, 0.0), vec2(800.0, 200.0))),
+                screen_rect: Some(Rect::from_min_size(pos2(0.0, 0.0), vec2(800.0, 300.0))),
                 events,
                 focused: true,
                 ..egui::RawInput::default()
@@ -315,17 +390,34 @@ mod tests {
         actions
     }
 
+    fn actions_along(rows: &[NoteRow], y: f32) -> Vec<StripAction> {
+        let mut seen = Vec::new();
+        for x in (0..800).step_by(12) {
+            for action in click_strip(rows, pos2(x as f32, y)) {
+                if !seen.contains(&action) {
+                    seen.push(action);
+                }
+            }
+        }
+        seen
+    }
+
+    fn card_y(index: usize) -> f32 {
+        GAP + index as f32 * (CARD_H + GAP) + CARD_H / 2.0
+    }
+
     #[test]
     fn the_buttons_and_the_place_ask_for_their_note_and_a_disabled_send_asks_for_nothing() {
         let open = rows(&sample(), "claude", Gate::Ready, &PrState::default());
-        let send_x = 800.0 - SIDE_PAD - POST_W - 6.0 - SEND_W / 2.0;
-        assert_eq!(click_strip(&open, pos2(send_x, ROW_H / 2.0)), [StripAction::Send(open[0].id)]);
-        assert_eq!(click_strip(&open, pos2(send_x, ROW_H * 1.5)), [StripAction::Send(open[1].id)]);
         assert_eq!(
-            click_strip(&open, pos2(SIDE_PAD + 20.0, ROW_H / 2.0)),
-            [StripAction::Jump("src/a.rs".into())]
+            actions_along(&open, card_y(0)),
+            [StripAction::Jump("src/a.rs".into()), StripAction::Send(open[0].id)]
+        );
+        assert_eq!(
+            actions_along(&open, card_y(1)),
+            [StripAction::Jump("src/b.rs".into()), StripAction::Send(open[1].id)]
         );
         let blocked = rows(&sample(), "claude", Gate::WaitingOnYou, &PrState::default());
-        assert_eq!(click_strip(&blocked, pos2(send_x, ROW_H / 2.0)), []);
+        assert_eq!(actions_along(&blocked, card_y(0)), [StripAction::Jump("src/a.rs".into())]);
     }
 }
