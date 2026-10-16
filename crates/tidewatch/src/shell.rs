@@ -14,6 +14,7 @@ use crate::os::{Os, RealOs};
 use crate::quake::{self, Frame, Op, Quake};
 use crate::shell_plan::{Env, Hotkey, Plan};
 use crate::tray::Click;
+use crate::window_chrome::{Chrome, Desktop};
 
 pub(crate) const WINDOW_SIZE: [f32; 2] = [1280.0, 800.0];
 
@@ -94,6 +95,10 @@ impl<O: Os> Shell<O> {
         &self.prefs
     }
 
+    pub(crate) fn chrome(&self) -> Chrome {
+        self.plan.chrome
+    }
+
     /// Whether this system can show a menu-bar item at all.
     pub(crate) fn tray_supported(&self) -> bool {
         self.env.tray_supported
@@ -125,7 +130,7 @@ impl<O: Os> Shell<O> {
 
     fn switch_mode(&mut self, ctx: &Context) {
         let quake = self.plan.quake;
-        ctx.send_viewport_cmd(ViewportCommand::Decorations(!quake));
+        ctx.send_viewport_cmd(ViewportCommand::Decorations(self.plan.chrome.decorations()));
         ctx.send_viewport_cmd(ViewportCommand::Resizable(!quake));
         self.quake.restart();
         if quake {
@@ -302,6 +307,8 @@ pub(crate) struct Setup {
     /// The app socket of the window this one takes over from. It is claimed only once that window
     /// has handed its terminals over and is on its way out.
     pub(crate) replacing: Option<PathBuf>,
+    /// The desktop's title bar settings, for the frame Tidewatch draws itself.
+    pub(crate) desktop: Desktop,
 }
 
 impl Setup {
@@ -371,8 +378,9 @@ mod tests {
     use egui::{RawInput, ViewportId, ViewportInfo, vec2};
     use std::sync::mpsc::Sender;
 
-    const X11: Env = Env { background: false, wayland: false, tray_supported: true };
-    const BACKGROUND: Env = Env { background: true, wayland: false, tray_supported: true };
+    const X11: Env =
+        Env { background: false, wayland: false, tray_supported: true, own_frame: false };
+    const BACKGROUND: Env = Env { background: true, ..X11 };
 
     struct Rig {
         shell: Shell<Recorder>,
@@ -641,6 +649,18 @@ mod tests {
         assert!(commands.contains(&ViewportCommand::Decorations(false)));
         assert!(commands.contains(&ViewportCommand::Resizable(false)));
         assert!(rig.shell.os.calls.contains(&Call::DockIcon(false)));
+    }
+
+    #[test]
+    fn leaving_quake_on_linux_keeps_the_system_frame_off_for_the_drawn_one() {
+        let linux = Env { tray_supported: false, own_frame: true, ..X11 };
+        let mut rig = rig(linux, WindowPrefs::default());
+        rig.settle();
+        rig.shell.apply_prefs(&rig.ctx, prefs(false, "Ctrl+Alt+Grave", false));
+        let (_, commands) = rig.quiet_frame();
+        assert!(commands.contains(&ViewportCommand::Decorations(false)));
+        assert!(commands.contains(&ViewportCommand::Resizable(true)));
+        assert_eq!(rig.shell.chrome(), Chrome::Drawn);
     }
 
     #[test]

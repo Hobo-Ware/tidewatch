@@ -118,20 +118,18 @@ impl Tidewatch {
                 let pane = self.tabs.active_pane_mut();
                 let asked =
                     reader_glue::draw(ui, terminal, pane, &mut self.dev_reader, now, review);
-                let (reviews, asked): (Vec<_>, Vec<_>) =
-                    asked.into_iter().partition(|action| matches!(action, Action::Review(_)));
+                let (mut reviews, mut reader) = (Vec::new(), Vec::new());
+                for action in asked {
+                    match action {
+                        Action::Review(review) => reviews.push(review),
+                        other => reader.push(other),
+                    }
+                }
                 let toast =
-                    reader_glue::apply(asked, &mut self.tabs, active_id, &mut self.flow, ctx, now);
+                    reader_glue::apply(reader, &mut self.tabs, active_id, &mut self.flow, ctx, now);
                 if let Some(text) = toast {
                     self.show_toast(text, ctx);
                 }
-                let reviews = reviews
-                    .into_iter()
-                    .filter_map(|action| match action {
-                        Action::Review(review) => Some(review),
-                        _ => None,
-                    })
-                    .collect();
                 self.apply_review(reviews, active_id, ctx);
             }
             Some(Shown::Terminal(Some(note))) => reader_glue::note(ui, terminal, note),

@@ -5,7 +5,7 @@
 
 use egui::text::LayoutJob;
 use egui::{
-    Align, Id, Key, KeyboardShortcut, Layout, Modifiers, Rect, RichText, ScrollArea, Sense,
+    Align, Id, Key, KeyboardShortcut, Layout, Modifiers, Pos2, Rect, RichText, ScrollArea, Sense,
     TextEdit, TextFormat, Ui, UiBuilder, pos2, vec2,
 };
 
@@ -24,6 +24,7 @@ const LIST_MAX_H: f32 = 124.0;
 const FIELD_H: f32 = 36.0;
 const HINT_H: f32 = 18.0;
 const GAP: f32 = 8.0;
+const HINT_GAP: f32 = 4.0;
 const LINE_W: f32 = 46.0;
 const MIN_ROOM: f32 = 150.0;
 const BOTTOM_GAP: f32 = 6.0;
@@ -58,7 +59,8 @@ pub(crate) fn height(draft: &Draft, room: f32) -> f32 {
     if draft.is_empty() {
         return 0.0;
     }
-    let natural = 2.0 * PAD_Y + HEAD_H + GAP + list_height(draft) + GAP + FIELD_H + 4.0 + HINT_H;
+    let natural =
+        2.0 * PAD_Y + HEAD_H + GAP + list_height(draft) + GAP + FIELD_H + HINT_GAP + HINT_H;
     let shown = natural.min(room);
     if shown < MIN_ROOM.min(natural) { 0.0 } else { shown + BOTTOM_GAP }
 }
@@ -128,15 +130,14 @@ pub(crate) fn show(
     notes_list(ui, list, facts.draft);
 
     let field = section(y, FIELD_H);
-    y += FIELD_H + 4.0;
-    let held = matches!(facts.send, SendState::Held);
-    let asked = field_row(ui, field, state, facts, held);
+    y += FIELD_H + HINT_GAP;
+    let asked = field_row(ui, field, state, facts);
     let hint_rect = section(y, HINT_H);
 
-    let sendable = matches!(facts.send, SendState::Ready | SendState::WhenIdle);
+    let sendable = facts.send.can_send();
     let shortcut = KeyboardShortcut::new(Modifiers::COMMAND, Key::Enter);
     let keyed = facts.keys_free && sendable && ui.input_mut(|i| i.consume_shortcut(&shortcut));
-    if held && asked {
+    if facts.send == SendState::Held && asked {
         actions.push(ReviewAction::CancelHeld);
     } else if sendable && (asked || keyed) {
         actions.push(ReviewAction::Send(std::mem::take(&mut state.message)));
@@ -145,11 +146,7 @@ pub(crate) fn show(
         if matches!(facts.send, SendState::Refused(_)) { brand::ORANGE } else { brand::FAINT };
     let parts = hint(facts.send, facts.profile, key_name(Platform::CURRENT));
     let galley = ui.painter().layout_job(hint_job(&parts, ink));
-    ui.painter().galley(
-        pos2(hint_rect.left(), hint_rect.center().y - galley.size().y / 2.0),
-        galley,
-        ink,
-    );
+    ui.painter().galley(centered_at(hint_rect, hint_rect.left(), galley.size().y), galley, ink);
     actions
 }
 
@@ -163,11 +160,15 @@ fn header(ui: &mut Ui, rect: Rect, draft: &Draft, actions: &mut Vec<ReviewAction
     let painter = ui.painter();
     let title = painter.layout_no_wrap("Your review".to_owned(), heading(14.0), brand::TEXT);
     let summary = painter.layout_no_wrap(draft.summary(), body(FONT - 0.5), brand::FAINT);
-    let title_at = pos2(left.left(), left.center().y - title.size().y / 2.0);
-    let summary_at =
-        pos2(title_at.x + title.size().x + 10.0, left.center().y - summary.size().y / 2.0);
+    let title_at = centered_at(left, left.left(), title.size().y);
+    let summary_at = centered_at(left, title_at.x + title.size().x + 10.0, summary.size().y);
     painter.galley(title_at, title, brand::TEXT);
     painter.galley(summary_at, summary, brand::FAINT);
+}
+
+/// Where text `height` tall starts to sit at `x`, centered on the row `rect`.
+fn centered_at(rect: Rect, x: f32, height: f32) -> Pos2 {
+    pos2(x, rect.center().y - height / 2.0)
 }
 
 /// The Discard button: the first click arms it, the second discards, a click elsewhere disarms.
@@ -205,39 +206,29 @@ fn notes_list(ui: &mut Ui, rect: Rect, draft: &Draft) {
 fn file_line(ui: &mut Ui, path: &str) {
     let (rect, _) = ui.allocate_exact_size(vec2(ui.available_width(), FILE_H), Sense::hover());
     let galley = ellipsized(ui.painter(), path, mono(SMALL), brand::MUTED, rect.width());
-    ui.painter().galley(
-        pos2(rect.left(), rect.center().y - galley.size().y / 2.0),
-        galley,
-        brand::MUTED,
-    );
+    ui.painter().galley(centered_at(rect, rect.left(), galley.size().y), galley, brand::MUTED);
 }
 
 fn note_line(ui: &mut Ui, note: &DraftNote) {
     let (rect, _) = ui.allocate_exact_size(vec2(ui.available_width(), ROW_H), Sense::hover());
     let painter = ui.painter();
     let line = if note.line > 0 { format!(":{}", note.line) } else { String::new() };
-    let at = |x: f32, height: f32| pos2(x, rect.center().y - height / 2.0);
     let place = painter.layout_no_wrap(line, mono(SMALL), brand::FAINT);
-    painter.galley(at(rect.left(), place.size().y), place, brand::FAINT);
+    painter.galley(centered_at(rect, rect.left(), place.size().y), place, brand::FAINT);
     let mut x = rect.left() + LINE_W;
     if let Some(reviewer) = &note.reviewer {
         let name = painter.layout_no_wrap(reviewer.clone(), body(SMALL), brand::TEAL_TEXT);
         let width = name.size().x;
-        painter.galley(at(x, name.size().y), name, brand::TEAL_TEXT);
+        painter.galley(centered_at(rect, x, name.size().y), name, brand::TEAL_TEXT);
         x += width + 8.0;
     }
     let text = ellipsized(painter, &note.text, body(FONT), brand::SOFT, rect.right() - x);
-    painter.galley(at(x, text.size().y), text, brand::SOFT);
+    painter.galley(centered_at(rect, x, text.size().y), text, brand::SOFT);
 }
 
 /// The message field with the send button. Returns whether the button was clicked.
-fn field_row(
-    ui: &mut Ui,
-    rect: Rect,
-    state: &mut CardState,
-    facts: &ReviewFacts<'_>,
-    held: bool,
-) -> bool {
+fn field_row(ui: &mut Ui, rect: Rect, state: &mut CardState, facts: &ReviewFacts<'_>) -> bool {
+    let held = facts.send == SendState::Held;
     let mut child = ui.new_child(UiBuilder::new().max_rect(rect));
     let mut clicked = false;
     field_frame(&mut child, |ui| {
@@ -245,8 +236,7 @@ fn field_row(
             clicked = if held {
                 quiet_button(ui, "Take it back", true).clicked()
             } else {
-                let enabled = matches!(facts.send, SendState::Ready | SendState::WhenIdle);
-                primary_button(ui, &send_label(facts.profile), enabled).clicked()
+                primary_button(ui, &send_label(facts.profile), facts.send.can_send()).clicked()
             };
             ui.add(
                 TextEdit::singleline(&mut state.message)
@@ -269,23 +259,16 @@ fn field_row(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use egui::{Event, PointerButton, RawInput};
-    use kelp_core::review::{Anchor, Comment, Side};
+    use crate::review::fixtures::{self, anchor, comment};
+    use egui::{Event, RawInput};
     use tidewatch_core::notes::Notes;
 
     fn notes() -> Notes {
         let mut notes = Notes::default();
-        let anchor = |line| Anchor {
-            side: Side::New,
-            line_hint: line,
-            text: "x".into(),
-            before: vec![],
-            after: vec![],
-        };
-        let comment = |body: &str| Comment { author: "vlad".into(), time: 1, body: body.into() };
-        notes.add("src/runner.rs", None, anchor(211), comment("Keep the count on the stage"));
-        notes.add("src/runner.rs", None, anchor(240), comment("This branch never logs"));
-        notes.add("src/runner/tests.rs", None, anchor(88), comment("Add the passing case"));
+        let by_vlad = |body| comment("vlad", body);
+        notes.add("src/runner.rs", None, anchor(211), by_vlad("Keep the count on the stage"));
+        notes.add("src/runner.rs", None, anchor(240), by_vlad("This branch never logs"));
+        notes.add("src/runner/tests.rs", None, anchor(88), by_vlad("Add the passing case"));
         notes
     }
 
@@ -307,19 +290,7 @@ mod tests {
     fn a_long_review_scrolls_inside_instead_of_growing() {
         let mut many = Notes::default();
         for n in 0..40 {
-            let anchor = Anchor {
-                side: Side::New,
-                line_hint: n,
-                text: "x".into(),
-                before: vec![],
-                after: vec![],
-            };
-            many.add(
-                "a.rs",
-                None,
-                anchor,
-                Comment { author: "v".into(), time: 1, body: "n".into() },
-            );
+            many.add("a.rs", None, anchor(n), comment("v", "n"));
         }
         let long = Draft::of(&many, "claude", "v");
         assert_eq!(list_height(&long), LIST_MAX_H);
@@ -372,31 +343,18 @@ mod tests {
             let send = self.send;
             let state = &mut self.state;
             let _ = self.ctx.run_ui(raw, |ui| {
-                let facts = ReviewFacts {
-                    draft: &draft,
-                    send,
-                    notes: &notes,
-                    agent_id: "claude",
-                    profile: "Builder",
-                    working: false,
-                    keys_free: true,
-                };
+                let facts = fixtures::facts(&draft, send, &notes, false);
                 let rect = Rect::from_min_size(pos2(0.0, 20.0), vec2(700.0, height(&draft, 380.0)));
                 actions = show(ui, rect, state, &facts);
             });
             actions
         }
 
-        fn click(&mut self, at: egui::Pos2) -> Vec<ReviewAction> {
-            let button = |pressed| Event::PointerButton {
-                pos: at,
-                button: PointerButton::Primary,
-                pressed,
-                modifiers: Modifiers::NONE,
-            };
-            self.frame(vec![Event::PointerMoved(at)]);
-            self.frame(vec![button(true)]);
-            let actions = self.frame(vec![button(false)]);
+        fn click(&mut self, at: Pos2) -> Vec<ReviewAction> {
+            let [moved, pressed, released] = fixtures::click(at);
+            self.frame(moved);
+            self.frame(pressed);
+            let actions = self.frame(released);
             self.frame(vec![]);
             actions
         }
@@ -410,7 +368,7 @@ mod tests {
             let total = height(&self.draft, 380.0);
             let card_top = 20.0;
             let header_y = card_top + PAD_Y + HEAD_H / 2.0;
-            let field_y = card_top + total - BOTTOM_GAP - PAD_Y - HINT_H - 4.0 - FIELD_H / 2.0;
+            let field_y = card_top + total - BOTTOM_GAP - PAD_Y - HINT_H - HINT_GAP - FIELD_H / 2.0;
             (header_y, field_y)
         }
     }

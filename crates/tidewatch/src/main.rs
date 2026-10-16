@@ -120,6 +120,7 @@ mod updates;
 mod updates_view;
 mod welcome;
 mod welcome_view;
+mod window_chrome;
 mod window_settings;
 mod window_view;
 mod workflow_ask;
@@ -145,6 +146,7 @@ use tidewatch_core::last_workspace;
 use tidewatch_core::path_env;
 use tidewatch_core::paths::TidewatchPaths;
 use tidewatch_core::prefs::Prefs;
+use window_chrome::Desktop;
 
 fn main() -> eframe::Result<()> {
     let args = cli::parse(std::env::args_os().skip(1));
@@ -226,14 +228,16 @@ fn main() -> eframe::Result<()> {
         instance_dir: paths.as_ref().map(TidewatchPaths::instance_dir),
         primary,
         replacing: socket.filter(|_| replacing),
+        desktop: if env.own_frame { Desktop::read() } else { Desktop::default() },
     };
 
     let mut viewport = egui::ViewportBuilder::default()
         .with_title("Tidewatch")
         .with_inner_size(WINDOW_SIZE)
-        .with_active(plan.activates);
+        .with_active(plan.activates)
+        .with_decorations(plan.chrome.decorations());
     if plan.quake {
-        viewport = viewport.with_decorations(false).with_resizable(false).with_position([0.0, 0.0]);
+        viewport = viewport.with_resizable(false).with_position([0.0, 0.0]);
     }
     let mut options =
         eframe::NativeOptions { renderer: eframe::Renderer::Glow, viewport, ..Default::default() };

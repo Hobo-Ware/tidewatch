@@ -82,6 +82,7 @@ use crate::toast::Toast;
 use crate::trust_glue::Trust;
 use crate::updates::Updates;
 use crate::welcome::{Recent, recent_repos};
+use crate::window_chrome;
 use crate::workflow_glue::{self};
 use crate::workflow_run::Exec;
 use crate::worktree_jobs::Done;
@@ -147,6 +148,7 @@ pub(crate) struct Tidewatch {
     notice: Option<String>,
     updates: Updates,
     shell: Shell<RealOs>,
+    desktop: window_chrome::Desktop,
 }
 
 impl Tidewatch {
@@ -258,6 +260,7 @@ impl Tidewatch {
             restore: restore_glue::Host::new(no_restore, app_crashed, RealDisk::from_env()),
             notice: handoff::notice(&notes, kept_agents, hooks_kept),
             updates,
+            desktop: shell.desktop.clone(),
             shell: shell::start(&cc.egui_ctx, shell),
         };
         for (group, workspace) in app.workspaces.iter().enumerate().filter(|_| !welcome) {
@@ -346,6 +349,9 @@ impl eframe::App for Tidewatch {
         let active_id = intent.active_id;
         self.apply_frame_intent(&ctx, intent);
         self.show_dialogs(&ctx, active_id);
+        if self.shell.chrome() == window_chrome::Chrome::Drawn {
+            window_chrome::edges(&ctx);
+        }
         self.finish_frame(&ctx, now);
     }
 

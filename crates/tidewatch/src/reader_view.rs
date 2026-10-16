@@ -588,6 +588,8 @@ pub(crate) fn reply_box(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::review::SendState;
+    use crate::review::fixtures;
     use egui::{Event, Modifiers, RawInput};
 
     fn frame(
@@ -824,19 +826,12 @@ mod tests {
 
     #[test]
     fn the_review_card_sits_above_the_reply_box_and_the_composer_and_command_enter_sends_it() {
-        use kelp_core::review::{Anchor, Comment, Side};
+        use crate::review::fixtures::{anchor, comment};
         use tidewatch_core::notes::Notes;
         use tidewatch_core::transcript::{Entry, Role};
 
         let mut notes = Notes::default();
-        let anchor = Anchor {
-            side: Side::New,
-            line_hint: 4,
-            text: "x".into(),
-            before: vec![],
-            after: vec![],
-        };
-        notes.add("a.rs", None, anchor, Comment { author: "v".into(), time: 1, body: "n".into() });
+        notes.add("a.rs", None, anchor(4), comment("v", "n"));
         let draft = crate::review::Draft::of(&notes, "claude", "v");
         let mut populated = Rows::default();
         populated.push(Entry { role: Role::User, text: "hi".into(), tool: None, ts: None });
@@ -858,15 +853,7 @@ mod tests {
                 };
                 let mut actions = Vec::new();
                 let _ = ctx.run_ui(raw, |ui| {
-                    let review = ReviewFacts {
-                        draft: &draft,
-                        send: crate::review::SendState::Ready,
-                        notes: &notes,
-                        agent_id: "claude",
-                        profile: "Builder",
-                        working: false,
-                        keys_free: true,
-                    };
+                    let review = fixtures::facts(&draft, SendState::Ready, &notes, false);
                     let facts = Facts {
                         source: None,
                         prompt: None,
@@ -889,24 +876,12 @@ mod tests {
 
     #[test]
     fn a_pasted_review_is_drawn_as_a_card_and_its_raw_text_never_reaches_the_screen() {
-        use kelp_core::review::{Anchor, Comment, Side};
+        use crate::review::fixtures::{anchor, comment};
         use tidewatch_core::notes::Notes;
         use tidewatch_core::transcript::{Entry, Role};
 
         let mut notes = Notes::default();
-        let anchor = Anchor {
-            side: Side::New,
-            line_hint: 4,
-            text: "x".into(),
-            before: vec![],
-            after: vec![],
-        };
-        let id = notes.add(
-            "src/a.rs",
-            None,
-            anchor,
-            Comment { author: "v".into(), time: 1, body: "rename it".into() },
-        );
+        let id = notes.add("src/a.rs", None, anchor(4), comment("v", "rename it"));
         notes.mark_sent(&[id], 5);
         let pasted = tidewatch_core::note_paste::format_review(&[&notes.threads[0]], "Start here");
         let mut rows = Rows::default();
@@ -923,15 +898,7 @@ mod tests {
                 ..RawInput::default()
             };
             let out = ctx.run_ui(raw, |ui| {
-                let review = ReviewFacts {
-                    draft: &draft,
-                    send: crate::review::SendState::Ready,
-                    notes: &notes,
-                    agent_id: "claude",
-                    profile: "Builder",
-                    working: false,
-                    keys_free: true,
-                };
+                let review = fixtures::facts(&draft, SendState::Ready, &notes, false);
                 let facts = Facts {
                     source: None,
                     prompt: None,

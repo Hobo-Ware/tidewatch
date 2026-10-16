@@ -1,13 +1,14 @@
 //! The window's side of the review: what the Reader gets to draw of it, and carrying out what the
 //! review card, the chips and the sent review's card ask for.
 
+use tidewatch_core::notes::Notes;
 use tidewatch_core::status::AgentStatus;
 
 use super::Tidewatch;
 use crate::flow_glue::unix_now;
 use crate::flow_jobs::Which;
 use crate::note_send::review_gate;
-use crate::review::{Draft, ReviewFacts, SendState};
+use crate::review::{self, Draft, ReviewFacts, SendState};
 use crate::review_view::ReviewAction;
 
 /// The owned half of [`ReviewFacts`]: what a frame works out about the active agent tab before it
@@ -21,11 +22,7 @@ pub(super) struct Parts {
 }
 
 impl Parts {
-    pub(super) fn facts<'a>(
-        &'a self,
-        notes: &'a tidewatch_core::notes::Notes,
-        keys_free: bool,
-    ) -> ReviewFacts<'a> {
+    pub(super) fn facts<'a>(&'a self, notes: &'a Notes, keys_free: bool) -> ReviewFacts<'a> {
         ReviewFacts {
             draft: &self.draft,
             send: self.send,
@@ -58,7 +55,7 @@ impl Tidewatch {
     /// `Review: 3 notes` for the status bar, while the active tab has a draft review.
     pub(super) fn review_chip(&self, active_id: u64) -> Option<String> {
         let count = self.review_parts(active_id)?.draft.count();
-        (count > 0).then(|| crate::review::chip_text(count))
+        (count > 0).then(|| review::chip_text(count))
     }
 
     /// Brings the review into view: leaves the file view and shows the agent tab's Reader.
@@ -109,7 +106,7 @@ impl Tidewatch {
         ctx.request_repaint();
     }
 
-    fn edit_notes(&mut self, tab: u64, change: impl FnOnce(&mut tidewatch_core::notes::Notes)) {
+    fn edit_notes(&mut self, tab: u64, change: impl FnOnce(&mut Notes)) {
         if let Some(view) = self.views.get_mut(&tab) {
             change(&mut view.notes);
         }

@@ -40,14 +40,16 @@ const TITLE_GAP: f32 = 2.0;
 const LAYOUTS: [&str; 2] = ["Unified", "Split"];
 pub(crate) const SHORT_ID: usize = 7;
 
+const SAVED_HINT: &str = "Draft: this note joins your review, sent to the agent in one go";
+
 static MAC_TEXTS: DiffTexts = DiffTexts {
-    saved_hint: Cow::Borrowed("Draft: this note joins your review, sent to the agent in one go"),
+    saved_hint: Cow::Borrowed(SAVED_HINT),
     reply_hint: Cow::Borrowed("Reply...  (Cmd Enter to save)"),
     comment_hint: Cow::Borrowed("Note for your review...  (Cmd Enter to save)"),
 };
 
 static LINUX_TEXTS: DiffTexts = DiffTexts {
-    saved_hint: Cow::Borrowed("Draft: this note joins your review, sent to the agent in one go"),
+    saved_hint: Cow::Borrowed(SAVED_HINT),
     reply_hint: Cow::Borrowed("Reply...  (Ctrl Enter to save)"),
     comment_hint: Cow::Borrowed("Note for your review...  (Ctrl Enter to save)"),
 };

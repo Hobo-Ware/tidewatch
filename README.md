@@ -28,7 +28,7 @@ Status: v0.1.0, the first release. Showcase page: [tidewatch.hoboware.dev](https
 
 ## Quake window
 
-Tidewatch drops from the top of the screen on `Ctrl+Alt+Grave` (stdusk keeps `Ctrl+Grave`, so both can run) and hides when you click elsewhere. There is a menu-bar item with Show / Hide, Overview, Settings and Quit. Settings, General, Window turns the drop-down off for a plain window, records a new hotkey (click the key caps and press the keys) and moves the panels: History beside the terminal (the default) or History and the diff below it (`panels = "below"` in `[window]`). `tidewatch <path>` for a repo that already has a window brings that window forward instead of opening another. `tidewatch --toggle` shows or hides the running windows: on Wayland, which has no global hotkeys, bind it to a desktop shortcut.
+Tidewatch drops from the top of the screen on `Ctrl+Alt+Grave` (stdusk keeps `Ctrl+Grave`, so both can run) and hides when you click elsewhere. There is a menu-bar item with Show / Hide, Overview, Settings and Quit. Settings, General, Window turns the drop-down off for a plain window, records a new hotkey (click the key caps and press the keys) and moves the panels: History beside the terminal (the default) or History and the diff below it (`panels = "below"` in `[window]`). `tidewatch <path>` for a repo that already has a window brings that window forward instead of opening another. `tidewatch --toggle` shows or hides the running windows: on Wayland, which has no global hotkeys, bind it to a desktop shortcut. On Linux the plain window draws its own frame: the tab strip is the title bar (drag it to move the window, double-click it to maximize), the window buttons follow your GNOME button layout, and the edges resize.
 
 ## Keyboard
 

@@ -16,6 +16,7 @@ use crate::brand;
 use crate::commands::Command;
 use crate::pane::{Body, Pane};
 use crate::tabs::{Action, Step, Tabs};
+use crate::window_chrome::{self, Chrome};
 use crate::{layout, overview_view, status_view};
 
 const STRIP_TOP_MARGIN: i8 = 6;
@@ -34,31 +35,38 @@ impl Tidewatch {
             .filter(|tone| *tone == status_view::Tone::Needs)
             .count();
 
+        let chrome = self.shell.chrome();
+        let drawn = chrome == Chrome::Drawn;
+        let buttons_width = self.desktop.controls_width();
+        let controls = if drawn && buttons_width > 0.0 { buttons_width + STRIP_GAP } else { 0.0 };
+        let corner = if drawn { 0 } else { STRIP_CORNER };
+        let margin = Margin {
+            left: STRIP_SIDE_MARGIN,
+            right: STRIP_SIDE_MARGIN,
+            top: STRIP_TOP_MARGIN,
+            bottom: 0,
+        };
         egui::Panel::top("tabbar")
             .exact_size(TAB_H + f32::from(STRIP_TOP_MARGIN))
             .frame(
                 Frame::new()
                     .fill(brand::SIDEBAR)
-                    .corner_radius(CornerRadius {
-                        nw: STRIP_CORNER,
-                        ne: STRIP_CORNER,
-                        sw: 0,
-                        se: 0,
-                    })
-                    .inner_margin(Margin {
-                        left: STRIP_SIDE_MARGIN,
-                        right: STRIP_SIDE_MARGIN,
-                        top: STRIP_TOP_MARGIN,
-                        bottom: 0,
-                    }),
+                    .corner_radius(CornerRadius { nw: corner, ne: corner, sw: 0, se: 0 })
+                    .inner_margin(margin),
             )
             .show(ui, |ui| {
+                if drawn {
+                    window_chrome::title_bar(ui, ui.max_rect() + margin, &self.desktop);
+                }
                 ui.horizontal(|ui| {
                     ui.set_min_height(TAB_H);
                     ui.spacing_mut().item_spacing.x = STRIP_GAP;
                     ui.add_space(4.0);
                     if self.welcome.is_some() {
-                        Self::welcome_strip(ui, frame);
+                        Self::welcome_strip(ui, frame, controls);
+                        if drawn {
+                            window_chrome::controls(ui, &self.desktop);
+                        }
                         return;
                     }
                     self.repo_chip(ui, frame);
@@ -75,7 +83,8 @@ impl Tidewatch {
                             - stdusk_egui::widgets::ICON_BTN_W * 2.0
                             - overview_view::BUTTON_W
                             - 22.0
-                            - tail,
+                            - tail
+                            - controls,
                         self.tabs.in_group(self.tabs.active_group()).count(),
                         STRIP_GAP,
                     );
@@ -91,7 +100,8 @@ impl Tidewatch {
                         frame.actions.push(Action::New);
                     }
                     ui.add_space(
-                        (ui.available_width() - stdusk_egui::widgets::ICON_BTN_W - tail).max(0.0),
+                        (ui.available_width() - stdusk_egui::widgets::ICON_BTN_W - tail - controls)
+                            .max(0.0),
                     );
                     self.updates.pill(ui);
                     if icon_button(
@@ -103,11 +113,14 @@ impl Tidewatch {
                     {
                         frame.toggle_settings = true;
                     }
+                    if drawn {
+                        window_chrome::controls(ui, &self.desktop);
+                    }
                 });
             });
     }
 
-    fn welcome_strip(ui: &mut egui::Ui, frame: &mut FrameIntent) {
+    fn welcome_strip(ui: &mut egui::Ui, frame: &mut FrameIntent, controls: f32) {
         let resp = chip(ui, "No repo", false);
         egui::Popup::menu(&resp).show(|ui| {
             style_menu(ui);
@@ -116,7 +129,7 @@ impl Tidewatch {
                 ui.close();
             }
         });
-        let gap = (ui.available_width() - stdusk_egui::widgets::ICON_BTN_W).max(0.0);
+        let gap = (ui.available_width() - stdusk_egui::widgets::ICON_BTN_W - controls).max(0.0);
         ui.add_space(gap);
         if icon_button(ui, icons::GEAR, &format!("Profiles ({})", Command::Settings.keys()))
             .clicked()
