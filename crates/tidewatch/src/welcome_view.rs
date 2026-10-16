@@ -2,12 +2,11 @@
 
 use std::path::{Path, PathBuf};
 
-use egui::{Align2, Pos2, Rect, Ui, Vec2, pos2, vec2};
-use stdusk_egui::colors;
+use egui::{Align2, CornerRadius, Pos2, Rect, Stroke, StrokeKind, Ui, Vec2, pos2, vec2};
 
 use crate::brand;
 use crate::mascot::{self, Pose};
-use crate::screen_kit::{body, clickable, heading, mono};
+use crate::screen_kit::{body, clickable, heading, mono, selection_row};
 use crate::welcome::{Recent, shown_path};
 
 const COLUMN_W: f32 = 560.0;
@@ -26,7 +25,7 @@ pub(crate) fn show(
     home: Option<&Path>,
     shortcut: &str,
 ) -> Option<Action> {
-    ui.painter().rect_filled(area, 0.0, colors::bg());
+    ui.painter().rect_filled(area, 0.0, brand::GROUND);
     let width = COLUMN_W.min(area.width() - 40.0);
     let rows = recent.len() as f32;
     let list_h = if recent.is_empty() { 0.0 } else { 26.0 + 22.0 + rows * (ROW_H + 4.0) };
@@ -43,20 +42,20 @@ pub(crate) fn show(
         Align2::CENTER_TOP,
         "Open a repo to start",
         heading(30.0),
-        colors::fg(),
+        brand::TEXT,
     );
     let text = painter.layout(
         "Every tab is a worktree of the repo you open, with an agent or a workflow in it."
             .to_owned(),
         body(15.0),
-        colors::dim(),
+        brand::MUTED,
         width,
     );
     let text_pos = pos2(cx - text.size().x / 2.0, title.bottom() + 10.0);
     let text_bottom = text_pos.y + text.size().y;
-    painter.galley(text_pos, text, colors::dim());
+    painter.galley(text_pos, text, brand::MUTED);
     y = text_bottom + 26.0;
-    let button = open_button(ui, pos2(cx, y), shortcut);
+    let button = open_button(ui, pos2(cx, y));
     if button.clicked() {
         action = Some(Action::Open);
     }
@@ -67,37 +66,40 @@ pub(crate) fn show(
             Align2::LEFT_TOP,
             "RECENT",
             body(11.5),
-            colors::dim(),
+            brand::MUTED,
         );
         y += 22.0;
         for (index, repo) in recent.iter().enumerate() {
             let row = Rect::from_min_size(pos2(cx - width / 2.0, y), vec2(width, ROW_H));
             let response = clickable(ui, row, ("recent", index));
-            let lit = index == 0 || response.hovered();
-            if lit {
-                let fill = if response.hovered() { colors::hover() } else { colors::elevated() };
-                painter.rect_filled(row, 10.0, fill);
-            }
+            painter.rect(
+                row,
+                CornerRadius::same(8),
+                brand::ITEM,
+                Stroke::new(1.0, brand::ITEM_LINE),
+                StrokeKind::Inside,
+            );
+            selection_row(&painter, row, false, response.hovered());
             let name = painter.text(
                 row.left_center() + vec2(12.0, 0.0),
                 Align2::LEFT_CENTER,
                 &repo.name,
                 heading(15.0),
-                colors::fg(),
+                brand::TEXT,
             );
             painter.text(
                 pos2(name.right() + 12.0, row.center().y),
                 Align2::LEFT_CENTER,
                 shown_path(&repo.dir, home),
                 mono(12.5),
-                colors::dim(),
+                brand::MUTED,
             );
             painter.text(
                 row.right_center() - vec2(12.0, 0.0),
                 Align2::RIGHT_CENTER,
                 repo.tabs_text(),
                 body(12.0),
-                colors::dim(),
+                brand::MUTED,
             );
             if response.clicked() {
                 action = Some(Action::Recent(repo.dir.clone()));
@@ -107,47 +109,38 @@ pub(crate) fn show(
         y += 26.0 - 4.0;
     }
     hint(ui, pos2(cx, y));
+    ui.painter().text(
+        pos2(cx, area.bottom() - 24.0),
+        Align2::CENTER_BOTTOM,
+        format!("{shortcut} opens a repo"),
+        body(12.0),
+        brand::MUTED,
+    );
     action
 }
 
-fn open_button(ui: &mut Ui, top_center: Pos2, shortcut: &str) -> egui::Response {
-    let label = ui.painter().layout_no_wrap("Open repo...".to_owned(), heading(15.0), colors::bg());
-    let keys = ui.painter().layout_no_wrap(
-        shortcut.to_owned(),
-        mono(12.0),
-        colors::bg().gamma_multiply(0.7),
-    );
-    let size = vec2(22.0 + label.size().x + 10.0 + keys.size().x + 22.0, 46.0);
+fn open_button(ui: &mut Ui, top_center: Pos2) -> egui::Response {
+    let label =
+        ui.painter().layout_no_wrap("Open repo...".to_owned(), heading(15.0), brand::KEY_EDGE);
+    let size = vec2(label.size().x + 44.0, 46.0);
     let rect = Rect::from_min_size(top_center - vec2(size.x / 2.0, 0.0), size);
     let response = clickable(ui, rect, "open-repo");
-    let fill = if response.hovered() { brand::TEAL.gamma_multiply(0.9) } else { brand::TEAL };
+    let fill = if response.hovered() { brand::TEAL_TEXT } else { brand::TEAL };
     let painter = ui.painter();
     painter.rect_filled(rect, 12.0, fill);
-    painter.galley(
-        pos2(rect.left() + 22.0, rect.center().y - label.size().y / 2.0),
-        label.clone(),
-        colors::bg(),
-    );
-    painter.galley(
-        pos2(rect.left() + 22.0 + label.size().x + 10.0, rect.center().y - keys.size().y / 2.0),
-        keys,
-        colors::bg(),
-    );
+    painter.galley(rect.center() - label.size() / 2.0, label, brand::KEY_EDGE);
     response
 }
 
 fn hint(ui: &Ui, top_center: Pos2) {
     let painter = ui.painter();
-    let lead = painter.layout_no_wrap("or from a terminal: ".to_owned(), body(13.0), colors::dim());
-    let command = painter.layout_no_wrap(
-        "tidewatch ~/code/my-repo".to_owned(),
-        mono(12.5),
-        colors::fg().gamma_multiply(0.75),
-    );
+    let lead = painter.layout_no_wrap("or from a terminal: ".to_owned(), body(13.0), brand::MUTED);
+    let command =
+        painter.layout_no_wrap("tidewatch ~/code/my-repo".to_owned(), mono(12.5), brand::SOFT);
     let x = top_center.x - f32::midpoint(lead.size().x, command.size().x);
     let command_x = x + lead.size().x;
-    painter.galley(pos2(x, top_center.y), lead, colors::dim());
-    painter.galley(pos2(command_x, top_center.y), command, colors::dim());
+    painter.galley(pos2(x, top_center.y), lead, brand::MUTED);
+    painter.galley(pos2(command_x, top_center.y), command, brand::MUTED);
 }
 
 #[cfg(test)]
