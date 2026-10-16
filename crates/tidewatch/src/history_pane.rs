@@ -3,17 +3,17 @@
 
 use std::collections::HashMap;
 
+use std::f32::consts::FRAC_PI_2;
+
 use egui::text::LayoutJob;
-use egui::{
-    Align, CornerRadius, Layout, Rect, RichText, Stroke, StrokeKind, Ui, UiBuilder, pos2, vec2,
-};
+use egui::{CornerRadius, Mesh, Rect, RichText, Stroke, StrokeKind, Ui, UiBuilder, pos2, vec2};
 use kelp_core::history::History;
 use kelp_ui::avatars::AvatarStore;
+use kelp_ui::graph::Marks;
 use kelp_ui::graph::{
     GraphAction, GraphColumns, GraphInput, GraphStyle, MenuFor, Preview, Selection, Wip,
 };
-use kelp_ui::{graph::Marks, theme};
-use stdusk_egui::widgets::{chip, menu_item, style_menu};
+use stdusk_egui::widgets::{menu_item, style_menu};
 use tidewatch_core::history::{BaseCompare, Scope};
 
 use crate::brand;
@@ -22,23 +22,17 @@ use crate::screen_kit::{body, mono};
 use crate::tab_view::TabView;
 use crate::{layout, segmented};
 
-const HEADER_H: f32 = 34.0;
-const SIDE_PAD: f32 = 14.0;
-const MAIN_TITLE: &str = "main checkout";
 const CARD_PAD: f32 = 18.0;
 pub(crate) const CARD_RADIUS: u8 = 12;
 const BODY_PAD_X: f32 = 8.0;
 const BODY_PAD_Y: f32 = 6.0;
 const PILL_GAP: f32 = 10.0;
-
-pub(crate) fn scope_labels(is_main: bool) -> [&'static str; 2] {
-    if is_main { ["This branch", "Whole repo"] } else { ["This worktree", "Whole repo"] }
-}
+const CORNER_STEPS: u32 = 8;
 
 pub(crate) const SCOPES: [&str; 2] = ["This branch", "Whole repo"];
 
-/// `side` is the layout where the pane is a card, a click on a commit opens its files under the
-/// row and a file's diff takes the terminal's place.
+/// The pane is a card in both layouts. `side` is the layout where a click on a commit opens its
+/// files under the row and a file's diff takes the terminal's place.
 pub(crate) fn show(
     ui: &mut Ui,
     rect: Rect,
@@ -46,19 +40,11 @@ pub(crate) fn show(
     avatars: &mut AvatarStore,
     side: bool,
 ) -> Option<GraphAction> {
-    let body = if side {
-        paint_card(ui, rect);
-        let header =
-            Rect::from_min_max(rect.min, pos2(rect.right(), rect.top() + layout::CHROME_H));
-        show_card_header(ui, header, view);
-        Rect::from_min_max(pos2(rect.left(), header.bottom()), rect.max)
-            .shrink2(vec2(BODY_PAD_X, BODY_PAD_Y))
-    } else {
-        ui.painter().rect_filled(rect, 0.0, theme::bg());
-        let header = Rect::from_min_max(rect.min, pos2(rect.right(), rect.top() + HEADER_H));
-        show_header(ui, header, view);
-        Rect::from_min_max(pos2(rect.left(), header.bottom()), rect.max)
-    };
+    paint_card(ui, rect);
+    let header = Rect::from_min_max(rect.min, pos2(rect.right(), rect.top() + layout::CHROME_H));
+    show_card_header(ui, header, view);
+    let body = Rect::from_min_max(pos2(rect.left(), header.bottom()), rect.max)
+        .shrink2(vec2(BODY_PAD_X, BODY_PAD_Y));
     let mut action = None;
     ui.scope_builder(UiBuilder::new().id_salt("history-graph").max_rect(body), |ui| {
         ui.set_clip_rect(body.intersect(ui.clip_rect()));
@@ -76,6 +62,34 @@ pub(crate) fn paint_card(ui: &Ui, rect: Rect) {
         rect,
         CornerRadius::same(CARD_RADIUS),
         brand::CARD,
+        Stroke::new(1.0, brand::CARD_LINE),
+        StrokeKind::Inside,
+    );
+}
+
+/// Gives the card's bottom corners back to the ground where the square diff body overlapped them.
+pub(crate) fn round_bottom(ui: &Ui, card: Rect) {
+    let radius = f32::from(CARD_RADIUS);
+    let painter = ui.painter();
+    for left_side in [true, false] {
+        let sign = if left_side { 1.0 } else { -1.0 };
+        let corner = pos2(if left_side { card.left() } else { card.right() }, card.bottom());
+        let center = pos2(corner.x + sign * radius, corner.y - radius);
+        let mut mesh = Mesh::default();
+        mesh.colored_vertex(corner, brand::GROUND);
+        for step in 0..=CORNER_STEPS {
+            let angle = FRAC_PI_2 * step as f32 / CORNER_STEPS as f32;
+            let at = center + vec2(-sign * radius * angle.cos(), radius * angle.sin());
+            mesh.colored_vertex(at, brand::GROUND);
+        }
+        for step in 0..CORNER_STEPS {
+            mesh.add_triangle(0, step + 1, step + 2);
+        }
+        painter.add(mesh);
+    }
+    painter.rect_stroke(
+        card,
+        CornerRadius::same(CARD_RADIUS),
         Stroke::new(1.0, brand::CARD_LINE),
         StrokeKind::Inside,
     );
@@ -185,49 +199,6 @@ fn card_spot(view: &TabView) -> Option<Spot> {
     })
 }
 
-fn show_header(ui: &mut Ui, rect: Rect, view: &mut TabView) {
-    ui.painter().hline(rect.x_range(), rect.bottom(), egui::Stroke::new(1.0, theme::border()));
-    let title = if view.is_main { MAIN_TITLE } else { view.name.as_str() };
-    let compare = view.loaded.as_ref().and_then(|l| l.base.as_ref()).map(BaseCompare::describe);
-    let left = Rect::from_min_max(rect.min + egui::vec2(SIDE_PAD, 0.0), rect.max);
-    ui.scope_builder(
-        UiBuilder::new()
-            .id_salt("history-title")
-            .max_rect(left)
-            .layout(Layout::left_to_right(Align::Center)),
-        |ui| {
-            ui.spacing_mut().item_spacing.x = 10.0;
-            ui.label(
-                RichText::new("HISTORY")
-                    .size(11.0)
-                    .family(theme::semibold())
-                    .color(theme::text_faint()),
-            );
-            ui.label(RichText::new(title).size(12.5).color(brand::TEAL_TEXT));
-            if let Some(compare) = compare {
-                ui.label(RichText::new(compare).size(12.0).color(theme::text_muted()));
-            }
-        },
-    );
-    let right = Rect::from_min_max(rect.min, rect.max - egui::vec2(SIDE_PAD - 4.0, 0.0));
-    ui.scope_builder(
-        UiBuilder::new()
-            .id_salt("history-scope")
-            .max_rect(right)
-            .layout(Layout::right_to_left(Align::Center)),
-        |ui| {
-            let [current, whole] = scope_labels(view.is_main);
-            let showing_whole = view.scope == Scope::Whole;
-            if chip(ui, whole, showing_whole).clicked() {
-                view.set_scope(Scope::Whole);
-            }
-            if chip(ui, current, !showing_whole).clicked() {
-                view.set_scope(Scope::Current);
-            }
-        },
-    );
-}
-
 fn show_graph(
     ui: &mut Ui,
     view: &mut TabView,
@@ -235,7 +206,7 @@ fn show_graph(
     side: bool,
 ) -> Option<GraphAction> {
     let selected = view.selection();
-    let style = if side { side_style() } else { GraphStyle::default() };
+    let style = side_style();
     let expanded = if side { card_gap(view, &style, ui.available_height()) } else { None };
     if view.loaded.is_some() && (expanded.is_none() || !view.is_loading_source()) {
         view.graph.scroll_to = view.take_room().or(view.graph.scroll_to);
@@ -276,8 +247,8 @@ fn show_graph(
 fn message(ui: &mut Ui, error: Option<&str>, idle: &str) {
     ui.add_space(40.0);
     ui.vertical_centered(|ui| match error {
-        Some(error) => ui.label(RichText::new(error).size(12.5).color(theme::deleted())),
-        None => ui.label(RichText::new(idle).size(12.5).color(theme::text_faint())),
+        Some(error) => ui.label(RichText::new(error).size(12.5).color(brand::RED)),
+        None => ui.label(RichText::new(idle).size(12.5).color(brand::FAINT)),
     });
 }
 
@@ -302,12 +273,6 @@ fn copy_item(ui: &mut Ui, label: &str, text: String) {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn the_scope_switch_names_the_main_checkout_a_branch_and_agents_a_worktree() {
-        assert_eq!(scope_labels(true), ["This branch", "Whole repo"]);
-        assert_eq!(scope_labels(false), ["This worktree", "Whole repo"]);
-    }
 
     fn compare(ahead: usize, behind: usize) -> BaseCompare {
         BaseCompare { base: "main".into(), ahead, behind }

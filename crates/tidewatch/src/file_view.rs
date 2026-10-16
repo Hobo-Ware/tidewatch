@@ -3,12 +3,11 @@
 //! on the right the note buttons, the place among the commit's files with the arrows, and Unified or
 //! Split. The notes strip sits above the diff body.
 
-use std::f32::consts::FRAC_PI_2;
 use std::sync::Arc;
 
 use egui::{
-    Align2, Color32, CornerRadius, FontId, Galley, Id, Mesh, Rect, Response, Sense, Stroke,
-    StrokeKind, Ui, pos2, vec2,
+    Align2, Color32, CornerRadius, FontId, Galley, Id, Rect, Response, Sense, Stroke, StrokeKind,
+    Ui, pos2, vec2,
 };
 use kelp_core::commit::FileChange;
 use kelp_ui::diff::{DiffLayout, DiffStyle};
@@ -18,25 +17,24 @@ use crate::brand;
 use crate::commit_files::{split_dir, tail_fit};
 use crate::diff_pane::{PaneAction, PaneOut, SHORT_ID, message, set_layout, show_body};
 use crate::flow::PaneExtras;
-use crate::history_pane::{self, CARD_RADIUS};
+use crate::history_pane;
 use crate::layout::{CARD_MARGIN, CHROME_H};
 use crate::screen_kit::{body, mono};
 use crate::tab_view::TabView;
 use crate::{file_nav, notes_strip, segmented};
 
-const BUTTON_H: f32 = 26.0;
+pub(crate) const BUTTON_H: f32 = 26.0;
 const BUTTON_RADIUS: u8 = 7;
-const ARROW_W: f32 = 26.0;
+pub(crate) const ARROW_W: f32 = 26.0;
 const ARROW_RADIUS: u8 = 6;
 const PAD_LEFT: f32 = 8.0;
 const PAD_RIGHT: f32 = 10.0;
-const GAP: f32 = 10.0;
+pub(crate) const GAP: f32 = 10.0;
 const COUNT_GAP: f32 = 4.0;
 const PILL_PAD: f32 = 10.0;
 const MIN_PATH_W: f32 = 100.0;
 const MIN_SHOWN_PATH_W: f32 = 40.0;
 const FONT: f32 = 12.5;
-const CORNER_STEPS: u32 = 8;
 const LAYOUTS: [&str; 2] = ["Unified", "Split"];
 
 /// What the Terminal chip says about the agent behind the terminal: its profile and state.
@@ -138,37 +136,9 @@ pub(crate) fn show(
         } else {
             out.notes_changed = show_body(ui, area, view, DiffStyle::embedded(brand::TEAL));
         }
-        round_bottom(ui, card);
+        history_pane::round_bottom(ui, card);
     });
     out
-}
-
-/// Gives the card's bottom corners back to the ground where the square diff body overlapped them.
-fn round_bottom(ui: &Ui, card: Rect) {
-    let radius = f32::from(CARD_RADIUS);
-    let painter = ui.painter();
-    for left_side in [true, false] {
-        let sign = if left_side { 1.0 } else { -1.0 };
-        let corner = pos2(if left_side { card.left() } else { card.right() }, card.bottom());
-        let center = pos2(corner.x + sign * radius, corner.y - radius);
-        let mut mesh = Mesh::default();
-        mesh.colored_vertex(corner, brand::GROUND);
-        for step in 0..=CORNER_STEPS {
-            let angle = FRAC_PI_2 * step as f32 / CORNER_STEPS as f32;
-            let at = center + vec2(-sign * radius * angle.cos(), radius * angle.sin());
-            mesh.colored_vertex(at, brand::GROUND);
-        }
-        for step in 0..CORNER_STEPS {
-            mesh.add_triangle(0, step + 1, step + 2);
-        }
-        painter.add(mesh);
-    }
-    painter.rect_stroke(
-        card,
-        CornerRadius::same(CARD_RADIUS),
-        Stroke::new(1.0, brand::CARD_LINE),
-        StrokeKind::Inside,
-    );
 }
 
 fn text_width(ui: &Ui, text: &str, font: &FontId) -> f32 {
@@ -231,7 +201,7 @@ fn pill(ui: &mut Ui, id: Id, right: f32, center_y: f32, pill: &Pill) -> (Respons
     (response.on_hover_text(&pill.tip), rect.left())
 }
 
-fn arrow(ui: &mut Ui, id: Id, rect: Rect, up: bool, enabled: bool, tip: &str) -> bool {
+pub(crate) fn arrow(ui: &mut Ui, id: Id, rect: Rect, up: bool, enabled: bool, tip: &str) -> bool {
     let sense = if enabled { Sense::click() } else { Sense::hover() };
     let response = ui.interact(rect, id, sense);
     let hot = enabled && response.hovered();
@@ -386,7 +356,7 @@ fn note_pills(extras: &PaneExtras) -> Vec<Pill> {
 
 /// Draws as many note buttons as fit between `floor` and `right`, right to left. Returns the left
 /// edge of the free room.
-fn note_buttons(
+pub(crate) fn note_buttons(
     ui: &mut Ui,
     right: f32,
     floor: f32,
