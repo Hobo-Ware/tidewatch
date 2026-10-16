@@ -180,26 +180,39 @@ impl Tidewatch {
             let author = view.loaded.as_ref().map_or("You", |loaded| loaded.author.as_str());
             let author = author.to_owned();
             for note in std::mem::take(&mut self.dev_panes.notes) {
+                let commit = note.row.and_then(|row| {
+                    let loaded = view.loaded.as_ref()?;
+                    (row < loaded.history.len()).then(|| loaded.history.id(row).to_string())
+                });
                 let anchor = Anchor {
                     side: Side::New,
                     line_hint: note.line,
                     text: String::new(),
                     before: Vec::new(),
                     after: Vec::new(),
-                    span: 0,
-                    block: vec![],
+                    span: note.span,
+                    block: vec![String::new(); note.span as usize],
                 };
                 let comment = Comment { author: author.clone(), time: now, body: note.text };
-                view.notes.add(&note.path, None, anchor, comment);
+                view.notes.add(&note.path, commit, anchor, comment);
             }
             return true;
+        }
+        if let Some((first, last)) = self.dev_panes.composer
+            && !view.is_loading_source()
+            && let Some(open) = &mut view.open
+        {
+            open.body.open_composer(Side::New, first, last);
+            self.dev_panes.composer = None;
         }
         let Some(text) = &self.dev_panes.note else { return false };
         if !view.notes_ready || view.is_loading_source() {
             return false;
         }
         let Some(open) = &view.open else { return false };
-        let Some(action) = dev_panes::note_on_first_added_line(&open.diff, text, now) else {
+        let Some(action) =
+            dev_panes::note_on_first_added_line(&open.diff, text, self.dev_panes.note_span, now)
+        else {
             return false;
         };
         let (path, commit) =
