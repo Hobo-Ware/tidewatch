@@ -11,6 +11,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use crate::agents::{Agent, Wiring};
+use crate::checklist;
 use crate::fsutil::write_atomic;
 use crate::house_style;
 use crate::launch::{
@@ -133,10 +134,15 @@ fn prepare_with(input: &PrepareInput, resume: Option<&str>) -> Result<Prepared, 
         .profile
         .house_style
         .then(|| soft("house style", house_style::ensure(paths)))
-        .flatten();
-    let copilot_instructions_dir = (house_style.is_some() && wiring == Wiring::Copilot)
-        .then(|| soft("Copilot instructions", house_style::sync_copilot_instructions(paths)))
-        .flatten();
+        .flatten()
+        .map(|shared| soft("progress ledger", write_agent_style(input, &shared)).unwrap_or(shared));
+    let copilot_instructions_dir =
+        house_style.as_ref().filter(|_| wiring == Wiring::Copilot).and_then(|file| {
+            let dir = paths.tab_copilot_instructions_dir(input.repo, input.tab);
+            let synced = std::fs::read_to_string(file)
+                .and_then(|text| house_style::sync_copilot_instructions(&dir, &text));
+            soft("Copilot instructions", synced)
+        });
     let guard_bin_dir = (input.worktree_tab && input.profile.never_push)
         .then(|| {
             let dir = paths.guard_bin_dir();
@@ -196,14 +202,29 @@ fn context(
     }
 }
 
+/// The house style this agent reads: the user's file with the ledger format and the repo's
+/// checklist appended, in the tab's state folder. The user's file is not changed.
+fn write_agent_style(input: &PrepareInput, shared: &Path) -> std::io::Result<PathBuf> {
+    let paths = input.paths;
+    let _ = checklist::ensure(paths);
+    let text = house_style::compose(
+        &std::fs::read_to_string(shared)?,
+        &checklist::for_repo(paths, input.repo),
+    );
+    let file = paths.tab_house_style_file(input.repo, input.tab);
+    write_atomic(&file, &text)?;
+    Ok(file)
+}
+
 /// The command `prepare` would build, for the new-tab preview: the same flags, with the helper and
 /// house-style paths assumed to exist. Writes nothing. Codex reads the house style file when it exists.
 pub fn preview(input: &PrepareInput) -> Result<Launch, LaunchError> {
     let paths = input.paths;
     let wiring = input.agent.wiring;
-    let house_style = input.profile.house_style.then(|| paths.house_style_file());
+    let house_style =
+        input.profile.house_style.then(|| paths.tab_house_style_file(input.repo, input.tab));
     let copilot_dir = (house_style.is_some() && wiring == Wiring::Copilot)
-        .then(|| paths.copilot_instructions_dir());
+        .then(|| paths.tab_copilot_instructions_dir(input.repo, input.tab));
     let guard = (input.worktree_tab && input.profile.never_push).then(|| paths.guard_bin_dir());
     let mcp = input
         .listener
@@ -399,8 +420,9 @@ mod tests {
         let fx = Fixture::new();
         let prepared =
             fx.run("claude", &profile("claude", Level::Edits), true, "fix the bug", None).unwrap();
-        let house = fx.paths.house_style_file();
-        assert!(house.is_file(), "house-style.md is created on first launch");
+        assert!(fx.paths.house_style_file().is_file(), "house-style.md is created on first launch");
+        let house = fx.paths.tab_house_style_file(Path::new("/work/web"), "brave-otter");
+        assert!(house.is_file());
         let args = &prepared.launch.args;
         assert_eq!(&args[..2], ["--permission-mode", "acceptEdits"]);
         let flag = args.iter().position(|a| a == "--append-system-prompt-file").unwrap();
@@ -475,13 +497,105 @@ mod tests {
         let fx = Fixture::new();
         let prepared =
             fx.run("copilot", &profile("copilot", Level::Edits), true, "add tests", None).unwrap();
-        let dir = fx.paths.copilot_instructions_dir();
+        let dir = fx.paths.tab_copilot_instructions_dir(Path::new("/work/web"), "brave-otter");
         assert!(dir.join("tidewatch.instructions.md").is_file());
         assert_eq!(
             env_of(&prepared, "COPILOT_CUSTOM_INSTRUCTIONS_DIRS"),
             Some(dir.display().to_string().as_str())
         );
         assert_eq!(&prepared.launch.args[prepared.launch.args.len() - 2..], ["-i", "add tests"]);
+    }
+
+    fn agent_style(fx: &Fixture) -> String {
+        std::fs::read_to_string(
+            fx.paths.tab_house_style_file(Path::new("/work/web"), "brave-otter"),
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn the_agent_is_given_the_house_style_with_the_ledger_format_and_the_default_checklist() {
+        let fx = Fixture::new();
+        fx.run("claude", &profile("claude", Level::Edits), true, "", None).unwrap();
+        let text = agent_style(&fx);
+        assert!(text.starts_with(house_style::DEFAULT_HOUSE_STYLE.trim_end()));
+        assert!(text.contains("## Progress ledger format"));
+        assert!(text.contains("### 10. Close out"));
+        assert!(fx.paths.checklist_file().is_file(), "checklist.md is installed on first launch");
+    }
+
+    #[test]
+    fn an_edited_house_style_and_checklist_are_used_and_never_overwritten() {
+        let fx = Fixture::new();
+        std::fs::create_dir_all(fx.paths.config_dir()).unwrap();
+        std::fs::write(fx.paths.house_style_file(), "my own style\n").unwrap();
+        std::fs::write(fx.paths.checklist_file(), "### 1. Mine\n- [ ] my item\n").unwrap();
+        fx.run("claude", &profile("claude", Level::Edits), true, "", None).unwrap();
+        let text = agent_style(&fx);
+        assert!(text.starts_with("my own style\n\n## Progress ledger format"), "{text}");
+        assert!(text.contains("### 1. Mine\n- [ ] my item\n"));
+        assert!(!text.contains("Close out"));
+        assert_eq!(std::fs::read_to_string(fx.paths.house_style_file()).unwrap(), "my own style\n");
+        assert_eq!(
+            std::fs::read_to_string(fx.paths.checklist_file()).unwrap(),
+            "### 1. Mine\n- [ ] my item\n"
+        );
+    }
+
+    #[test]
+    fn a_repos_checklist_file_replaces_the_template_for_its_tabs() {
+        let fx = Fixture::new();
+        let repo = tempfile::tempdir().unwrap();
+        std::fs::write(repo.path().join(".tidewatch.toml"), "checklist = \"steps.md\"\n").unwrap();
+        std::fs::write(repo.path().join("steps.md"), "### 1. Repo way\n- [ ] repo item\n").unwrap();
+        let table = AgentTable::builtin();
+        let p = profile("claude", Level::Edits);
+        prepare(&PrepareInput {
+            paths: &fx.paths,
+            agent: table.get("claude").unwrap(),
+            profile: &p,
+            repo: repo.path(),
+            tab: "brave-otter",
+            dir: &fx.dir,
+            worktree_tab: true,
+            task: "",
+            session_id: None,
+            path_var: None,
+            listener: None,
+            trust: None,
+        })
+        .unwrap();
+        let text =
+            std::fs::read_to_string(fx.paths.tab_house_style_file(repo.path(), "brave-otter"))
+                .unwrap();
+        assert!(text.contains("### 1. Repo way\n- [ ] repo item\n"));
+        assert!(!text.contains("Close out"));
+    }
+
+    #[test]
+    fn every_cli_is_pointed_at_the_text_with_the_ledger_format() {
+        let fx = Fixture::new();
+        let tab_dir = fx.paths.tab_state_dir(Path::new("/work/web"), "brave-otter");
+        let claude = fx.run("claude", &profile("claude", Level::Edits), true, "", None).unwrap();
+        let flag = claude.launch.args.iter().position(|a| a == "--append-system-prompt-file");
+        let file = std::path::PathBuf::from(&claude.launch.args[flag.unwrap() + 1]);
+        assert!(std::fs::read_to_string(file).unwrap().contains("update_progress"));
+
+        let codex = fx.run("codex", &profile("codex", Level::Edits), true, "", None).unwrap();
+        let instructions =
+            codex.launch.args.iter().find(|a| a.starts_with("developer_instructions="));
+        assert!(instructions.is_some_and(|text| text.contains("update_progress")));
+
+        let gemini = fx.run("gemini", &profile("gemini", Level::Edits), true, "", None).unwrap();
+        let include = format!("--include-directories={}", tab_dir.display());
+        assert!(gemini.launch.args.contains(&include), "{:?}", gemini.launch.args);
+        assert!(agent_style(&fx).contains("update_progress"));
+
+        fx.run("copilot", &profile("copilot", Level::Edits), true, "", None).unwrap();
+        let copilot = tab_dir.join("copilot").join("tidewatch.instructions.md");
+        let text = std::fs::read_to_string(copilot).unwrap();
+        assert!(text.starts_with("---\napplyTo: \"**\"\n---\n"));
+        assert!(text.contains("update_progress"));
     }
 
     #[test]
