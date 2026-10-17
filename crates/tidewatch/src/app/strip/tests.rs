@@ -57,9 +57,14 @@ impl Strip {
         let _ = self.ctx.run_ui(raw, |ui| {
             egui::Panel::top("tabbar").exact_size(TAB_H + 6.0).show(ui, |ui| {
                 ui.horizontal(|ui| {
-                    rects = tab_row(ui, &self.tabs, 120.0, 0.0, &mut actions, |_| {
-                        (Progress::default(), CmdState::default())
-                    });
+                    rects = tab_row(
+                        ui,
+                        &self.tabs,
+                        120.0,
+                        0.0,
+                        &mut actions,
+                        (|_: &Pane<u32>| (Progress::default(), CmdState::default()), |_| None),
+                    );
                 });
             });
         });
@@ -226,4 +231,92 @@ fn a_hovered_inactive_tab_gets_a_fainter_tint_under_its_text_and_a_plain_one_not
     assert_eq!(hovered[0], Some(brand::TEAL_NAV.gamma_multiply(0.6)));
     let plain = filled_by(|painter, under, tab| nav_look(painter, under, tab, false, false), tab);
     assert_eq!(plain[0], None);
+}
+
+#[test]
+fn the_room_for_a_title_leaves_the_ring_and_the_trailing_slot_free() {
+    let cases = [(200.0, 7.2, 2, 15), (120.0, 7.2, 2, 4), (60.0, 7.2, 2, 1), (200.0, 7.2, 12, 14)];
+    for (width, char_w, number, want) in cases {
+        assert_eq!(title_budget(width, char_w, number), want, "{width} {number}");
+    }
+}
+
+fn collect_text(shape: &Shape, out: &mut Vec<(String, Rect)>) {
+    match shape {
+        Shape::Text(text) => out
+            .push((text.galley.text().to_owned(), text.galley.rect.translate(text.pos.to_vec2()))),
+        Shape::Vec(shapes) => shapes.iter().for_each(|shape| collect_text(shape, out)),
+        _ => {}
+    }
+}
+
+fn agent_strip(title: &str, width: f32, with_ring: bool) -> (Vec<Rect>, Vec<(String, Rect)>) {
+    use crate::agent_run::AgentRun;
+    use crate::pane::AgentTab;
+    let ctx = crate::fonts::test_context();
+    let mut pane = Pane::shell(1_u32);
+    pane.agent = Some(AgentTab::new("Builder".into(), AgentRun::setting_up("claude".into(), 0.0)));
+    let mut tabs = Tabs::new(Pane::shell(0));
+    tabs.push_in(0, title.into(), pane);
+    let ledger = tidewatch_core::progress::Ledger::parse(
+        "# Goal\nx\n\n## Status\nstate: blocked\n\n## Checklist\n### 1. A\n- [x] a\n- [!] b\n",
+    );
+    let mut rects = Vec::new();
+    let mut texts = Vec::new();
+    for _ in 0..2 {
+        let raw = RawInput {
+            screen_rect: Some(Rect::from_min_size(pos2(0.0, 0.0), vec2(800.0, 200.0))),
+            focused: true,
+            ..RawInput::default()
+        };
+        let mut actions = Vec::new();
+        let output = ctx.run_ui(raw, |ui| {
+            egui::Panel::top("tabbar").exact_size(TAB_H + 6.0).show(ui, |ui| {
+                ui.horizontal(|ui| {
+                    rects = tab_row(
+                        ui,
+                        &tabs,
+                        width,
+                        0.0,
+                        &mut actions,
+                        (
+                            |_: &Pane<u32>| (Progress::default(), CmdState::default()),
+                            |_| with_ring.then(|| tab_ring(&ledger)),
+                        ),
+                    );
+                });
+            });
+        });
+        texts.clear();
+        for clipped in &output.shapes {
+            collect_text(&clipped.shape, &mut texts);
+        }
+    }
+    (rects, texts)
+}
+
+#[test]
+fn a_tab_with_a_ledger_cuts_its_title_before_the_ring() {
+    for width in [100.0, 120.0, 200.0] {
+        let (rects, texts) = agent_strip("a-very-long-worktree-name-indeed", width, true);
+        let tab = rects[1];
+        let title = texts.iter().find(|(text, _)| text.starts_with("2  ")).unwrap();
+        assert!(
+            title.1.right() <= ring_rect(tab).left(),
+            "{:?} reaches the ring at {width}",
+            title.1
+        );
+        assert!(title.0.ends_with('\u{2026}'), "{}", title.0);
+    }
+}
+
+#[test]
+fn a_tab_without_a_ledger_keeps_the_whole_title_room() {
+    let (rects, with) = agent_strip("a-very-long-worktree-name-indeed", 200.0, true);
+    let (_, without) = agent_strip("a-very-long-worktree-name-indeed", 200.0, false);
+    let width = |texts: &[(String, Rect)]| {
+        texts.iter().find(|(text, _)| text.starts_with("2  ")).unwrap().1.width()
+    };
+    assert!(width(&without) > width(&with));
+    assert_eq!(rects[1].width(), 200.0);
 }

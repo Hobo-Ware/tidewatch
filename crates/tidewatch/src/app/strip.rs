@@ -4,7 +4,7 @@ use egui::layers::ShapeIdx;
 use egui::{CornerRadius, Frame, Margin, Shape, pos2, vec2};
 use stdusk_core::progress::Progress;
 use stdusk_core::terminal::{CmdState, PtyTerm};
-use stdusk_egui::ui::{TAB_H, TAB_PAD_X, TAB_SLOT_W, draw_tab, icons};
+use stdusk_egui::ui::{TAB_H, TAB_PAD_X, TAB_SLOT_W, draw_tab, ellipsize, icons};
 use stdusk_egui::widgets::{chip, icon_button, menu_item, style_menu};
 
 use super::Tidewatch;
@@ -15,6 +15,8 @@ use crate::agent_run::progress_fraction;
 use crate::brand;
 use crate::commands::Command;
 use crate::pane::{Body, Pane};
+use crate::progress_model::{TabRing, tab_ring};
+use crate::progress_ring;
 use crate::tabs::{Action, Step, Tabs};
 use crate::{layout, overview_view, status_view};
 
@@ -26,6 +28,8 @@ const TAB_RADIUS: u8 = 8;
 const TAB_INSET_Y: f32 = 3.0;
 const TAB_BAR_W: f32 = 2.0;
 const TAB_BAR_INSET: f32 = 8.0;
+const RING_SIZE: f32 = 16.0;
+const RING_GAP: f32 = 6.0;
 
 impl Tidewatch {
     pub(super) fn show_tab_strip(&mut self, ui: &mut egui::Ui, now: f64, frame: &mut FrameIntent) {
@@ -174,7 +178,8 @@ impl Tidewatch {
     }
 
     fn draw_tabs(&self, ui: &mut egui::Ui, width: f32, now: f64, actions: &mut Vec<Action>) {
-        tab_row(ui, &self.tabs, width, now, actions, tab_signals);
+        let rings = |id| self.progress.ledger(id).map(|known| tab_ring(&known.ledger));
+        tab_row(ui, &self.tabs, width, now, actions, (tab_signals, rings));
     }
 }
 
@@ -193,7 +198,7 @@ fn tab_row<T>(
     width: f32,
     now: f64,
     actions: &mut Vec<Action>,
-    signals: impl Fn(&Pane<T>) -> (Progress, CmdState),
+    (signals, rings): (impl Fn(&Pane<T>) -> (Progress, CmdState), impl Fn(u64) -> Option<TabRing>),
 ) -> Vec<egui::Rect> {
     let mut slots = Vec::new();
     let mut drag = None;
@@ -205,11 +210,17 @@ fn tab_row<T>(
         let painter = ui.painter().clone();
         let under = painter.add(Shape::Noop);
         let draft = matches!(tab.pane.body, Body::Draft(_));
+        let ring = agent.and_then(|_| rings(tab.id));
+        let title = match (&ring, draft) {
+            (_, true) => String::new(),
+            (Some(_), false) => ring_title(ui, &tab.title, position + 1, width),
+            (None, false) => tab.title.clone(),
+        };
         let (resp, close) = draw_tab(
             ui,
             Some(position + 1),
             tab.id,
-            if draft { "" } else { &tab.title },
+            &title,
             i == tabs.active(),
             tab.pinned,
             None,
@@ -222,6 +233,9 @@ fn tab_row<T>(
         nav_look(&painter, under, resp.rect, i == tabs.active(), resp.hovered());
         if draft {
             paint_draft_title(&painter, resp.rect, position + 1, &tab.title);
+        }
+        if let Some(ring) = &ring {
+            paint_ring(ui, resp.rect, ring, tab.id);
         }
         if let Some(agent) = agent {
             let tone = status_view::tone(agent.run.status());
@@ -258,6 +272,45 @@ fn tab_row<T>(
         }
     }
     slots.iter().map(|slot| slot.rect).collect()
+}
+
+/// How many characters of a tab's title fit in a tab `width` wide that also holds a ring: the
+/// tab's padding, the trailing slot and the ring come off, then the number before the title.
+pub(crate) fn title_budget(width: f32, char_w: f32, number: usize) -> usize {
+    let taken = 2.0 * TAB_PAD_X + TAB_SLOT_W + RING_GAP + RING_SIZE + RING_GAP;
+    let prefix = number.to_string().len() + 2;
+    (((width - taken) / char_w).floor() as usize).saturating_sub(prefix).max(1)
+}
+
+fn ring_title(ui: &egui::Ui, title: &str, number: usize, width: f32) -> String {
+    let char_w = ui
+        .painter()
+        .layout_no_wrap("0".to_owned(), egui::FontId::monospace(12.0), brand::SOFT)
+        .size()
+        .x;
+    ellipsize(title, title_budget(width, char_w, number)).0
+}
+
+fn ring_rect(tab: egui::Rect) -> egui::Rect {
+    let right = tab.right() - TAB_PAD_X - TAB_SLOT_W - RING_GAP;
+    egui::Rect::from_center_size(
+        pos2(right - RING_SIZE / 2.0, tab.center().y),
+        vec2(RING_SIZE, RING_SIZE),
+    )
+}
+
+fn paint_ring(ui: &mut egui::Ui, tab: egui::Rect, ring: &TabRing, id: u64) {
+    let rect = ring_rect(tab);
+    progress_ring::paint(
+        ui.painter(),
+        rect.center(),
+        RING_SIZE,
+        ring.ring.fraction,
+        progress_ring::tone_color(ring.ring.tone),
+        brand::ITEM_LINE,
+    );
+    ui.interact(rect.expand(3.0), ui.id().with(("tab-ring", id)), egui::Sense::hover())
+        .on_hover_text(&ring.tip);
 }
 
 /// The label of a draft tab, in italics after the tab's number: `draw_tab` has no italic title, so
