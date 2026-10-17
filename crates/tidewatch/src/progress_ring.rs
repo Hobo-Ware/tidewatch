@@ -76,6 +76,12 @@ pub(crate) fn paint_spinner(painter: &Painter, center: Pos2, size: f32, time: f6
     painter.add(Shape::line(points, Stroke::new(stroke, color)));
 }
 
+/// A solid dot with a soft halo, the mark of what is going on right now.
+pub(crate) fn paint_dot(painter: &Painter, center: Pos2, size: f32, color: Color32) {
+    painter.circle_filled(center, size / 2.0 + 4.0, color.gamma_multiply(0.18));
+    painter.circle_filled(center, size / 2.0, color);
+}
+
 /// The glyph of a checklist mark, painted in a box of `size` around `center`: a tick, the turning
 /// dot, a dash, `!` or an empty circle.
 pub(crate) fn paint_mark(painter: &Painter, center: Pos2, size: f32, mark: Mark, time: f64) {

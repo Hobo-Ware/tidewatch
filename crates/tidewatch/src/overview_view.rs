@@ -11,6 +11,7 @@ use stdusk_egui::ui::ellipsize;
 use stdusk_egui::widgets::ICON_BTN_W;
 
 use crate::brand;
+use crate::coming_up_view;
 use crate::commands::Command;
 use crate::mascot::{self, Pose};
 use crate::overview::{Counts, Overview, Row, card_view, fmt_elapsed};
@@ -21,6 +22,7 @@ use crate::progress_view::flow;
 use crate::reader_view::ellipsized;
 use crate::screen_kit::{Size, button_width, heading, quiet_button};
 use crate::status_view::{self, Tone};
+use crate::timeline::Block;
 
 const BUTTON_H: f32 = 30.0;
 const SIDE: f32 = 20.0;
@@ -98,6 +100,7 @@ fn paint_badge(ui: &egui::Ui, button: Rect, count: usize) {
 /// What the Overview shows below the agents.
 #[derive(Default)]
 pub(crate) struct Sections<'a> {
+    pub(crate) coming_up: &'a [Block],
     pub(crate) checklist: Option<&'a Checklist>,
 }
 
@@ -105,6 +108,8 @@ pub(crate) struct Sections<'a> {
 pub(crate) struct Out {
     /// The tab whose card was clicked.
     pub(crate) jump: Option<u64>,
+    /// The row of the Coming up card, or of its button, that was clicked.
+    pub(crate) coming_up: Option<usize>,
     /// Edit on the checklist row.
     pub(crate) edit_checklist: bool,
 }
@@ -140,6 +145,10 @@ pub(crate) fn show(
                 continue;
             }
             out.jump = out.jump.or(group(ui, &place.label, &place.path, &place.rows, false));
+            ui.add_space(SECTION_GAP);
+        }
+        if !sections.coming_up.is_empty() {
+            out.coming_up = coming_up_view::show(ui, sections.coming_up);
             ui.add_space(SECTION_GAP);
         }
         if let Some(checklist) = sections.checklist {
@@ -546,7 +555,7 @@ mod tests {
     fn texts(
         ctx: &egui::Context,
         data: &Overview,
-        list: &Checklist,
+        sections: &Sections<'_>,
         width: f32,
     ) -> Vec<(String, Rect)> {
         let raw = RawInput {
@@ -557,8 +566,7 @@ mod tests {
         let mut found = Vec::new();
         let output = ctx.run_ui(raw, |ui| {
             let area = ui.max_rect();
-            let sections = Sections { checklist: Some(list) };
-            show(ui, area, data, &sections, |_| {});
+            show(ui, area, data, sections, |_| {});
         });
         for clipped in &output.shapes {
             walk(&clipped.shape, &mut found);
@@ -580,9 +588,9 @@ mod tests {
         let data = overview(vec![row(9, "busy", AgentStatus::Working)]);
         let list =
             chips(&["Understand and decide", "Build", "A phase with a very long title indeed"]);
-        let sections = Sections { checklist: Some(&list) };
+        let sections = Sections { checklist: Some(&list), ..Sections::default() };
         frame_with(&ctx, &data, &sections, vec![]);
-        let found = texts(&ctx, &data, &list, 1000.0);
+        let found = texts(&ctx, &data, &sections, 1000.0);
         let names: Vec<&str> = found.iter().map(|(text, _)| text.as_str()).collect();
         for want in
             ["Checklist", "Task to done \u{b7} default", "Understand and decide", "Build", "Edit"]
@@ -622,7 +630,8 @@ mod tests {
         let data = overview(vec![with_ledger, row(9, "busy", AgentStatus::Working)]);
         let list = chips(&["One", "Two", "Three"]);
         for width in [360.0, 700.0, 1000.0, 1440.0] {
-            let found = texts(&ctx, &data, &list, width);
+            let sections = Sections { checklist: Some(&list), ..Sections::default() };
+            let found = texts(&ctx, &data, &sections, width);
             for (index, (a, a_rect)) in found.iter().enumerate() {
                 for (b, b_rect) in &found[index + 1..] {
                     assert!(
@@ -632,5 +641,47 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn coming_up_sits_between_the_agents_and_the_checklist_and_hides_when_empty() {
+        use crate::timeline::{Button, Card, Label, Look};
+        let ctx = crate::fonts::test_context();
+        let data = overview(vec![row(9, "busy", AgentStatus::Working)]);
+        let list = chips(&["One"]);
+        let block = Block {
+            label: Label::Later,
+            cards: vec![Card {
+                row: 3,
+                title: "Install the bot".into(),
+                tab: "heron".into(),
+                steps: vec![],
+                look: Look::You,
+                button: Some(Button::Decide),
+                tip: String::new(),
+            }],
+        };
+        let blocks = [block];
+        let sections = Sections { coming_up: &blocks, checklist: Some(&list) };
+        frame_with(&ctx, &data, &sections, vec![]);
+        let found = texts(&ctx, &data, &sections, 1000.0);
+        let y =
+            |text: &str| found.iter().find(|(drawn, _)| drawn == text).map(|(_, rect)| rect.top());
+        let (agents, coming, checklist) = (y("busy"), y("Coming up"), y("Checklist"));
+        assert!(agents < coming && coming < checklist, "{agents:?} {coming:?} {checklist:?}");
+        let at = found.iter().find(|(text, _)| text == "Decide").unwrap().1.center();
+        let button = |pressed| Event::PointerButton {
+            pos: at,
+            button: PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        };
+        frame_with(&ctx, &data, &sections, vec![Event::PointerMoved(at)]);
+        frame_with(&ctx, &data, &sections, vec![button(true)]);
+        let out = frame_with(&ctx, &data, &sections, vec![button(false)]);
+        assert_eq!((out.coming_up, out.jump), (Some(3), None));
+        let empty = Sections { coming_up: &[], checklist: Some(&list) };
+        let found = texts(&ctx, &data, &empty, 1000.0);
+        assert!(!found.iter().any(|(text, _)| text == "Coming up"));
     }
 }

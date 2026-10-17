@@ -5,13 +5,14 @@ use tidewatch_core::progress::Ledger;
 
 use super::settings::open_in_editor;
 use super::{Tidewatch, wall_ms};
-use crate::coming_up::coming_up;
+use crate::coming_up::{Row, coming_up};
 use crate::overview::Overview;
 use crate::overview_checklist::Source;
 use crate::pane::Body;
 use crate::progress_glue::today;
 use crate::progress_model::look;
 use crate::progress_state::Facts;
+use tidewatch_core::progress::Mark;
 
 impl Tidewatch {
     pub(super) fn drive_progress(&mut self, ctx: &egui::Context) {
@@ -44,6 +45,14 @@ impl Tidewatch {
         self.progress.tick(&facts, ctx);
         let open: std::collections::HashSet<u64> = facts.iter().map(|facts| facts.id).collect();
         self.progress_ui.forget_except(|id| open.contains(&id));
+    }
+
+    /// The marks of the steps of a scheduled item, when its tab is open and its ledger lists them.
+    pub(super) fn steps_of(&self, row: &Row) -> Vec<Mark> {
+        self.open_tab_of(&row.repo, &row.tab)
+            .and_then(|id| self.progress.ledger(id))
+            .and_then(|known| known.ledger.scheduled.iter().find(|item| item.what == row.what))
+            .map_or_else(Vec::new, |item| item.steps.iter().map(|step| step.mark).collect())
     }
 
     pub(super) fn add_looks(&self, overview: &mut Overview) {

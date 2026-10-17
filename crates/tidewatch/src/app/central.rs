@@ -12,16 +12,18 @@ use super::Tidewatch;
 use super::frame::FrameIntent;
 use super::repos::RepoCommand;
 use super::terminal::TerminalGrid;
+use crate::coming_up::coming_up;
 use crate::commands::Command;
 use crate::delivery_card::Delivery;
 use crate::pane::FirstPrompt;
+use crate::progress_glue::today;
 use crate::reader::Shown;
 use crate::tab_view::TabView;
 use crate::tabs::Action;
 use crate::workflow_run::TabRun;
 use crate::{
     agent_status_line, brand, delivery_view, end_block_view, layout, overview, overview_view,
-    reader_glue, stepper_view, takeover_view, welcome_view, workflow_start_view,
+    reader_glue, stepper_view, takeover_view, timeline, welcome_view, workflow_start_view,
 };
 
 const EMPTY_PANELS_H: f32 = 200.0;
@@ -150,7 +152,13 @@ impl Tidewatch {
         let reveal = self.takeover.take_reveal();
         let mut clicked = None;
         let repo = self.workspace().dir().to_path_buf();
-        let sections = overview_view::Sections { checklist: self.checklist.of(&repo) };
+        let rows = coming_up(today(), self.progress.index());
+        let steps: Vec<_> = rows.iter().map(|row| self.steps_of(row)).collect();
+        let items: Vec<_> =
+            rows.iter().zip(steps).map(|(row, steps)| timeline::Item { row, steps }).collect();
+        let blocks = timeline::blocks(&items);
+        let sections =
+            overview_view::Sections { coming_up: &blocks, checklist: self.checklist.of(&repo) };
         let out = overview_view::show(ui, area, &data, &sections, |ui| {
             if let Some(card) = &card {
                 clicked = takeover_view::card(ui, card, reveal);
@@ -159,6 +167,9 @@ impl Tidewatch {
         });
         if out.edit_checklist {
             self.edit_checklist(ctx);
+        }
+        if let Some(row) = out.coming_up.and_then(|index| rows.get(index)) {
+            self.open_scheduled(row, ctx);
         }
         let jump = out.jump;
         if let Some(action) = clicked {

@@ -9,7 +9,6 @@ use tidewatch_core::progress::Ledger;
 use tidewatch_core::schedule::{Entry, Index, Owner, Presence};
 
 /// A tab's ledger and when it last changed.
-#[allow(dead_code)]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct TabLedger {
     pub(crate) ledger: Ledger,
