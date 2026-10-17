@@ -1,13 +1,15 @@
 //! The house-style file (D13): one Tidewatch-owned markdown file added to every agent session.
 //!
-//! `ensure` creates it with the default text and never touches it again, so edits survive. Copilot
-//! only reads `*.instructions.md` files with `applyTo` front matter, so a derived copy is rendered for it.
+//! `ensure` creates it with the default text and never touches it again, so edits survive. Each agent
+//! gets that text with the progress ledger format (`compose`) appended. Copilot only reads
+//! `*.instructions.md` files with `applyTo` front matter, so a derived copy is rendered for it.
 
 use std::io::Write;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use crate::fsutil::write_atomic;
 use crate::paths::TidewatchPaths;
+use crate::progress_prompt;
 
 pub const DEFAULT_HOUSE_STYLE: &str = "\
 # Tidewatch house style
@@ -41,6 +43,10 @@ When the `tidewatch` MCP tools are available:
 
 - Call `stage_done` with a short summary when the task or stage you were given is finished.
 - Call `reply_to_note` to answer a review note (`list_notes` shows them) instead of answering it only in chat.
+
+## Progress ledger
+
+Keep a progress ledger for the task with the `update_progress` tool of the `tidewatch` MCP server: write it before any other work, update it at every milestone, and call `get_progress` first after a context reset.
 
 ## Questions
 
@@ -76,14 +82,18 @@ pub fn copilot_instructions_md(house_style: &str) -> String {
     format!("---\napplyTo: \"**\"\n---\n\n{house_style}")
 }
 
-/// Rewrites the derived Copilot copy from the current `house-style.md` and returns its directory,
-/// the value for `COPILOT_CUSTOM_INSTRUCTIONS_DIRS`. Safe to call on every launch.
-pub fn sync_copilot_instructions(paths: &TidewatchPaths) -> std::io::Result<PathBuf> {
-    let source = ensure(paths)?;
-    let body = std::fs::read_to_string(source)?;
-    let dir = paths.copilot_instructions_dir();
-    write_atomic(&dir.join(COPILOT_FILE_NAME), &copilot_instructions_md(&body))?;
-    Ok(dir)
+/// The house style an agent is given: `house_style` as the user keeps it, then the ledger format
+/// with `checklist` filled in. The user's file is never changed.
+#[must_use]
+pub fn compose(house_style: &str, checklist: &str) -> String {
+    format!("{}\n\n{}", house_style.trim_end(), progress_prompt::section(checklist))
+}
+
+/// Rewrites the derived Copilot copy of `house_style` in `dir` and returns `dir`, the value for
+/// `COPILOT_CUSTOM_INSTRUCTIONS_DIRS`. Safe to call on every launch.
+pub fn sync_copilot_instructions(dir: &Path, house_style: &str) -> std::io::Result<PathBuf> {
+    write_atomic(&dir.join(COPILOT_FILE_NAME), &copilot_instructions_md(house_style))?;
+    Ok(dir.to_path_buf())
 }
 
 #[cfg(test)]
@@ -108,6 +118,8 @@ mod tests {
             "reply_to_note",
             "ask_user",
             "AskUserQuestion",
+            "update_progress",
+            "get_progress",
         ] {
             assert!(DEFAULT_HOUSE_STYLE.contains(needle), "missing {needle}");
         }
@@ -159,13 +171,24 @@ mod tests {
     }
 
     #[test]
-    fn copilot_copy_has_apply_to_front_matter_and_follows_edits() {
-        let (_home, paths) = paths();
-        ensure(&paths).unwrap();
-        std::fs::write(paths.house_style_file(), "be brief\n").unwrap();
-        let dir = sync_copilot_instructions(&paths).unwrap();
-        assert_eq!(dir, paths.copilot_instructions_dir());
-        let text = std::fs::read_to_string(dir.join("tidewatch.instructions.md")).unwrap();
+    fn copilot_copy_has_apply_to_front_matter_and_holds_the_text_it_is_given() {
+        let dir = tempfile::tempdir().unwrap();
+        let written = sync_copilot_instructions(dir.path(), "be brief\n").unwrap();
+        assert_eq!(written, dir.path());
+        let text = std::fs::read_to_string(dir.path().join("tidewatch.instructions.md")).unwrap();
         assert_eq!(text, "---\napplyTo: \"**\"\n---\n\nbe brief\n");
+    }
+
+    #[test]
+    fn compose_appends_the_ledger_format_after_whatever_the_user_wrote() {
+        let checklist = "### 1. Mine\n- [ ] only this\n";
+        for mine in ["be brief\n", "be brief", "be brief\n\n\n", ""] {
+            let text = compose(mine, checklist);
+            assert!(text.starts_with(mine.trim_end()), "{mine:?}");
+            assert!(text.contains("## Progress ledger format\n"), "{mine:?}");
+            assert!(text.contains("## Checklist\n### 1. Mine\n- [ ] only this\n\n## Decisions"));
+            assert!(text.ends_with('\n'));
+        }
+        assert!(compose(DEFAULT_HOUSE_STYLE, checklist).contains("`get_progress` first"));
     }
 }

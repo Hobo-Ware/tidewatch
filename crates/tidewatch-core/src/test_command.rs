@@ -3,11 +3,12 @@
 //! `<repo>/.tidewatch.toml` with `test = "..."` wins (an empty string switches the gates off for
 //! that repo); otherwise the first marker file found picks a conventional command.
 //! `test_timeout_secs = N` in the same file changes how long a run may take (default 10 minutes).
+//! `checklist = "<path>"` points at the repo's own checklist template for the progress ledger.
 
 use std::fmt::Write as _;
 use std::io::Read;
 use std::os::unix::process::CommandExt;
-use std::path::Path;
+use std::path::{Component, Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
@@ -32,6 +33,7 @@ enum Configured {
 struct RepoConfig {
     test: Option<String>,
     test_timeout_secs: Option<u64>,
+    checklist: Option<String>,
 }
 
 fn configured(repo: &Path) -> Configured {
@@ -69,6 +71,19 @@ pub fn timeout(repo: &Path) -> Duration {
         .and_then(|config| config.test_timeout_secs)
         .filter(|secs| *secs > 0)
         .map_or(DEFAULT_TIMEOUT, Duration::from_secs)
+}
+
+/// The checklist template file `.tidewatch.toml` names, inside `repo`. A path that is absolute or
+/// climbs out of the repo is ignored.
+#[must_use]
+pub fn checklist_path(repo: &Path) -> Option<PathBuf> {
+    let text = std::fs::read_to_string(repo.join(REPO_CONFIG)).ok()?;
+    let relative = PathBuf::from(toml::from_str::<RepoConfig>(&text).ok()?.checklist?.trim());
+    let inside = !relative.as_os_str().is_empty()
+        && relative
+            .components()
+            .all(|part| matches!(part, Component::Normal(_) | Component::CurDir));
+    inside.then(|| repo.join(relative))
 }
 
 fn has(dir: &Path, name: &str) -> bool {
@@ -413,6 +428,32 @@ mod tests {
             let bad = repo_with(&[(".tidewatch.toml", text)]);
             assert_eq!(timeout(bad.path()), DEFAULT_TIMEOUT, "{text:?}");
         }
+    }
+
+    #[test]
+    fn the_checklist_is_a_path_inside_the_repo() {
+        let cases = [
+            ("checklist = \"docs/checklist.md\"\n", Some("docs/checklist.md")),
+            ("checklist = \" docs/checklist.md \"\n", Some("docs/checklist.md")),
+            ("test = \"make check\"\nchecklist = \"c.md\"\n", Some("c.md")),
+            ("checklist = \"./c.md\"\n", Some("./c.md")),
+            ("checklist = \"/etc/passwd\"\n", None),
+            ("checklist = \"../c.md\"\n", None),
+            ("checklist = \"a/../../c.md\"\n", None),
+            ("checklist = \"\"\n", None),
+            ("checklist = 3\n", None),
+            ("test = \"x\"\n", None),
+            ("[[", None),
+        ];
+        for (text, want) in cases {
+            let repo = repo_with(&[(".tidewatch.toml", text)]);
+            assert_eq!(
+                checklist_path(repo.path()),
+                want.map(|path| repo.path().join(path)),
+                "{text:?}"
+            );
+        }
+        assert_eq!(checklist_path(repo_with(&[]).path()), None);
     }
 
     #[test]

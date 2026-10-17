@@ -9,6 +9,8 @@ const HASH_HEX_LEN: usize = 6;
 const NOTES_FILE: &str = "notes.json";
 const STAGES_FILE: &str = "stages.json";
 const PR_CARDS_FILE: &str = "pr_cards.json";
+const PROGRESS_FILE: &str = "progress.md";
+const HOUSE_STYLE_FILE: &str = "house-style.md";
 
 fn repo_key(repo: &Path) -> String {
     let name = repo.file_name().unwrap_or_default().to_string_lossy();
@@ -70,13 +72,13 @@ impl TidewatchPaths {
 
     #[must_use]
     pub fn house_style_file(&self) -> PathBuf {
-        self.config_dir.join("house-style.md")
+        self.config_dir.join(HOUSE_STYLE_FILE)
     }
 
-    /// Derived copy of the house style in the shape Copilot reads (`*.instructions.md`).
+    /// The checklist template every agent's progress ledger starts from.
     #[must_use]
-    pub fn copilot_instructions_dir(&self) -> PathBuf {
-        self.config_dir.join("copilot")
+    pub fn checklist_file(&self) -> PathBuf {
+        self.config_dir.join("checklist.md")
     }
 
     /// Holds the `git-remote-tidewatch-no-push` helper that agent tabs get on their `PATH`.
@@ -88,6 +90,12 @@ impl TidewatchPaths {
     #[must_use]
     pub fn state_dir(&self) -> PathBuf {
         self.root.join(".state")
+    }
+
+    /// The scheduled items of every tab's ledger, for the Coming up list across tabs.
+    #[must_use]
+    pub fn schedule_file(&self) -> PathBuf {
+        self.state_dir().join("schedule.toml")
     }
 
     /// The tabs open at the last quit, restored at the next launch.
@@ -152,6 +160,25 @@ impl TidewatchPaths {
     #[must_use]
     pub fn pr_cards_file(&self, repo: &Path, tab: &str) -> PathBuf {
         self.tab_state_dir(repo, tab).join(PR_CARDS_FILE)
+    }
+
+    /// A tab's progress ledger, as the agent last sent it.
+    #[must_use]
+    pub fn progress_file(&self, repo: &Path, tab: &str) -> PathBuf {
+        self.tab_state_dir(repo, tab).join(PROGRESS_FILE)
+    }
+
+    /// What one agent is given as its house style: the house-style file and the ledger format with
+    /// the repo's checklist filled in.
+    #[must_use]
+    pub fn tab_house_style_file(&self, repo: &Path, tab: &str) -> PathBuf {
+        self.tab_state_dir(repo, tab).join(HOUSE_STYLE_FILE)
+    }
+
+    /// The copy of [`Self::tab_house_style_file`] in the shape Copilot reads (`*.instructions.md`).
+    #[must_use]
+    pub fn tab_copilot_instructions_dir(&self, repo: &Path, tab: &str) -> PathBuf {
+        self.tab_state_dir(repo, tab).join("copilot")
     }
 
     /// A tab's workflow run: stage states, summaries and findings, enough to resume after a restart.
@@ -226,7 +253,6 @@ mod tests {
         assert_eq!(paths.config_dir(), config);
         assert_eq!(paths.profiles_file(), config.join("profiles.toml"));
         assert_eq!(paths.house_style_file(), config.join("house-style.md"));
-        assert_eq!(paths.copilot_instructions_dir(), config.join("copilot"));
         assert!(!paths.config_dir().starts_with(paths.root()));
     }
 
@@ -273,6 +299,29 @@ mod tests {
         );
         assert!(paths.pr_cards_file(repo, "brave-otter").ends_with("brave-otter/pr_cards.json"));
         assert_ne!(paths.pr_cards_file(repo, "main"), paths.pr_cards_file(repo, "brave-otter"));
+    }
+
+    #[test]
+    fn the_ledger_and_the_agent_house_style_sit_with_the_notes_of_their_tab() {
+        let paths = paths();
+        let repo = Path::new("/work/web");
+        let notes = paths.notes_file(repo, "brave-otter");
+        assert_eq!(paths.progress_file(repo, "brave-otter").parent(), notes.parent());
+        assert!(paths.progress_file(repo, "brave-otter").ends_with("brave-otter/progress.md"));
+        assert_eq!(paths.tab_house_style_file(repo, "brave-otter").parent(), notes.parent());
+        assert!(
+            paths
+                .tab_copilot_instructions_dir(repo, "brave-otter")
+                .starts_with(notes.parent().unwrap())
+        );
+        assert_ne!(paths.progress_file(repo, "main"), paths.progress_file(repo, "brave-otter"));
+    }
+
+    #[test]
+    fn the_checklist_template_is_a_setting_and_the_schedule_index_is_state() {
+        let paths = paths();
+        assert_eq!(paths.checklist_file(), paths.config_dir().join("checklist.md"));
+        assert_eq!(paths.schedule_file(), paths.state_dir().join("schedule.toml"));
     }
 
     #[test]
