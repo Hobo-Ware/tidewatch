@@ -105,6 +105,7 @@ impl Tidewatch {
                 }
             }
             Follow::Proposal { tab, workflow } => self.proposal_arrived(tab, &workflow, ctx),
+            Follow::Progress { tab, ledger } => self.progress_arrived(tab, *ledger, ctx),
         }
     }
 

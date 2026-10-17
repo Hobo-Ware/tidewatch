@@ -6,6 +6,7 @@
 use std::path::PathBuf;
 
 use tidewatch_core::events::{TabEvent, TabMessage};
+use tidewatch_core::progress::Ledger;
 use tidewatch_core::workflows::Workflow;
 
 use crate::agent_run::{Change, Finding, TermSnapshot};
@@ -46,6 +47,8 @@ pub(crate) enum Follow {
     ReloadNotes { tab: u64 },
     /// The agent proposed a workflow built from its session; it opens as a draft in Settings.
     Proposal { tab: u64, workflow: Box<Workflow> },
+    /// The agent sent its progress ledger; it is already saved in the tab's state folder.
+    Progress { tab: u64, ledger: Box<Ledger> },
 }
 
 /// Hands one listener message to its tab. A message for a closed tab is dropped.
@@ -71,12 +74,15 @@ pub(crate) fn route<T>(tabs: &mut Tabs<Pane<T>>, message: TabMessage, now: f64) 
         TabEvent::Proposal { workflow } => {
             Some(Follow::Proposal { tab: message.tab_id, workflow: Box::new(workflow.clone()) })
         }
+        TabEvent::Progress { ledger } => {
+            Some(Follow::Progress { tab: message.tab_id, ledger: ledger.clone() })
+        }
         TabEvent::Ask { questions, reply } => {
             agent.run.set_asking(questions.first().map(|question| question.text.clone()));
             agent.reader.ask_arrived(questions.clone(), reply.clone());
             None
         }
-        TabEvent::Hook(_) | TabEvent::StageDone { .. } | TabEvent::Progress { .. } => None,
+        TabEvent::Hook(_) | TabEvent::StageDone { .. } => None,
     };
     if let TabEvent::Hook(hook) = &message.event {
         agent.reader.hook(hook.transcript_path.clone());
@@ -247,6 +253,27 @@ mod tests {
         );
         let agent = tabs.get_mut(id).unwrap().pane.agent.take().unwrap();
         assert_eq!(agent.run.report.finding.unwrap().file, "src/a.rs");
+    }
+
+    #[test]
+    fn a_ledger_the_agent_sends_asks_for_it_to_be_kept_for_that_tab() {
+        let (mut tabs, id) = tabs_with_agent();
+        let ledger = Ledger::parse("# Goal\nShip it\n");
+        let message = TabMessage {
+            tab_id: id,
+            generation: 0,
+            event: TabEvent::Progress { ledger: Box::new(ledger.clone()) },
+        };
+        assert_eq!(
+            route(&mut tabs, message, 1.0),
+            Some(Follow::Progress { tab: id, ledger: Box::new(ledger) })
+        );
+        let gone = TabMessage {
+            tab_id: 99,
+            generation: 0,
+            event: TabEvent::Progress { ledger: Box::default() },
+        };
+        assert_eq!(route(&mut tabs, gone, 1.0), None);
     }
 
     #[test]
