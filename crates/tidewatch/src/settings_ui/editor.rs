@@ -9,7 +9,7 @@ use super::{
     BAR, CARD, CARD_LINE, HEADER_H, ITEM, ITEM_LINE, MUTED, ORANGE, RED, RED_FILL, RED_LINE, SOFT,
     TEAL, TEAL_TEXT, TEXT, Tone, badge, button, button_width, font_semibold, heading, lerp_color,
 };
-use crate::screen_kit::selection_row;
+use crate::screen_kit::{Size, selection_row};
 
 const CARD_PAD: f32 = 10.0;
 
@@ -120,7 +120,9 @@ pub(crate) fn save_bar(ui: &mut Ui, bar: &Bar) -> Option<BarAction> {
     inner.with_layout(Layout::right_to_left(Align::Center), |ui| {
         ui.spacing_mut().item_spacing.x = 10.0;
         let can_save = bar.dirty && !bar.saving;
-        let save = ui.add_enabled_ui(can_save, |ui| button(ui, "Save", Tone::Primary)).inner;
+        let save = ui
+            .add_enabled_ui(can_save, |ui| button(ui, "Save", Tone::Primary, Size::Regular))
+            .inner;
         let save = save.on_hover_text(format!(
             "Writes {}. Comments in the file are not kept.",
             if bar.file.is_empty() { "the file" } else { bar.file }
@@ -130,7 +132,7 @@ pub(crate) fn save_bar(ui: &mut Ui, bar: &Bar) -> Option<BarAction> {
         }
         if bar.can_revert
             && ui
-                .add_enabled_ui(!bar.saving, |ui| button(ui, "Revert", Tone::Quiet))
+                .add_enabled_ui(!bar.saving, |ui| button(ui, "Revert", Tone::Quiet, Size::Regular))
                 .inner
                 .clicked()
         {
@@ -253,18 +255,17 @@ pub(crate) fn card_header(
         ui.label(heading(name, 20.0));
         ui.label(RichText::new(line).size(13.0).color(MUTED));
     });
-    let width = button_width(ui, "Delete");
+    let width = button_width(ui, "Delete", Size::Compact);
     let at = Rect::from_center_size(
         pos2(header.right() - 20.0 - width / 2.0, header.center().y),
-        vec2(width, BUTTON_H),
+        vec2(width, Size::Compact.height()),
     );
     let mut right = ui.new_child(UiBuilder::new().max_rect(at));
-    button(&mut right, "Delete", Tone::Danger).clicked()
+    button(&mut right, "Delete", Tone::Danger, Size::Compact).clicked()
 }
 
 const LIST_WIDTH: f32 = 300.0;
 const PAGE_PAD: f32 = 40.0;
-const BUTTON_H: f32 = 22.0;
 const COLUMN_GAP: f32 = 20.0;
 
 pub(crate) fn page_area(area: Rect) -> Rect {
@@ -286,7 +287,7 @@ pub(crate) fn page_top(
     let painter = ui.painter();
     let title_rect =
         painter.text(bar.left_center(), Align2::LEFT_CENTER, title, font_semibold(18.0), TEXT);
-    let width = button_width(ui, action);
+    let width = button_width(ui, action, Size::Compact);
     let room = bar.right() - width - 14.0 - (title_rect.right() + 14.0);
     let subtitle_area = Rect::from_min_size(
         pos2(title_rect.right() + 14.0, bar.top()),
@@ -307,10 +308,10 @@ pub(crate) fn page_top(
     );
     let at = Rect::from_center_size(
         pos2(bar.right() - width / 2.0, bar.center().y),
-        vec2(width, BUTTON_H),
+        vec2(width, Size::Compact.height()),
     );
     let mut right = ui.new_child(UiBuilder::new().max_rect(at));
-    (bar.bottom(), button(&mut right, action, Tone::Quiet).clicked())
+    (bar.bottom(), button(&mut right, action, Tone::Quiet, Size::Compact).clicked())
 }
 
 pub(crate) fn columns(inner: Rect, header_bottom: f32) -> (Rect, Rect) {

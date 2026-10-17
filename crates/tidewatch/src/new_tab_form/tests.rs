@@ -282,9 +282,9 @@ fn the_workflow_form_draws_its_stages_and_waits_for_a_task() {
 fn the_start_label_names_the_profile_or_the_run() {
     let mut harness = Harness::new(Group::Repo);
     let agent = start_label(&harness.state, &harness.catalog);
-    assert!(agent.starts_with("Start Builder  "), "{agent}");
+    assert_eq!(agent, "Start Builder");
     harness.state.choose(Kind::Workflow);
-    assert!(start_label(&harness.state, &harness.catalog).starts_with("Start run  "));
+    assert_eq!(start_label(&harness.state, &harness.catalog), "Start run");
 }
 
 #[test]

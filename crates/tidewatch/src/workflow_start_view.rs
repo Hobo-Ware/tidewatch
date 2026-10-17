@@ -8,7 +8,7 @@ use tidewatch_core::runner::Runner;
 use crate::brand;
 use crate::commands::Command;
 use crate::reader_view::{field_frame, paint_item};
-use crate::screen_kit::{body, cli_short_name, heading, primary_button};
+use crate::screen_kit::{Size, body, cli_short_name, heading, primary_button};
 use crate::workflow_run::TabRun;
 
 const COLUMN_W: f32 = 760.0;
@@ -80,7 +80,7 @@ pub(crate) fn show(ui: &mut Ui, area: Rect, run: &mut TabRun) -> Option<String> 
         ui.label(RichText::new(hint).size(12.0).color(brand::MUTED));
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
             let ready = !run.ui.task.trim().is_empty();
-            start |= primary_button(ui, "Start run", ready).clicked();
+            start |= primary_button(ui, "Start run", ready, Size::Regular).clicked();
         });
     });
     (start && !run.ui.task.trim().is_empty()).then(|| run.ui.task.clone())

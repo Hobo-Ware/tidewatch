@@ -5,6 +5,7 @@ use egui::{Align, Layout, RichText, Ui};
 use tidewatch_core::prefs::UpdatePrefs;
 use tidewatch_core::update::Mode;
 
+use crate::screen_kit::Size;
 use crate::settings_ui::{self, Control, MUTED, TEXT, Tone, button, row_with, switch_row};
 use crate::updates::{INSTALL_HINT, NOTIFY_ONLY_HINT, Updates};
 
@@ -43,7 +44,7 @@ fn section_in(ui: &mut Ui, updates: &mut Updates, mode: Mode) -> Option<UpdatePr
 
 fn status_row(ui: &mut Ui, updates: &mut Updates, mode: Mode) {
     let line = updates.status_line();
-    let check = Control::button(ui, "Check now");
+    let check = Control::button(ui, "Check now", Size::Compact);
     row_with(
         ui,
         Control::new(check.width + PILL_ROOM, check.height),
@@ -57,7 +58,7 @@ fn status_row(ui: &mut Ui, updates: &mut Updates, mode: Mode) {
         |ui| {
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                 ui.spacing_mut().item_spacing.x = 10.0;
-                if button(ui, "Check now", Tone::Quiet).clicked() {
+                if button(ui, "Check now", Tone::Quiet, Size::Compact).clicked() {
                     updates.check_now();
                 }
                 updates.pill(ui);

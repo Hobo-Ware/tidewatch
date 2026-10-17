@@ -13,7 +13,7 @@ use crate::brand;
 use crate::commands::{self, Command};
 use crate::delivery_card::{Delivery, Form, card_text, fix_hint};
 use crate::reader_view::{INSET, field_frame, item_frame, paint_item};
-use crate::screen_kit::{body, dialog_frame, mono, primary_button, quiet_button};
+use crate::screen_kit::{Size, body, dialog_frame, footer_row, mono, primary_button, quiet_button};
 
 pub(crate) const BAND_H: f32 = 40.0;
 const DIALOG_WIDTH: f32 = 560.0;
@@ -58,7 +58,7 @@ pub(crate) fn show_card(
     ui.scope_builder(
         UiBuilder::new().max_rect(button_rect).layout(Layout::right_to_left(Align::Center)),
         |ui| {
-            if primary_button(ui, label, !building).clicked() {
+            if primary_button(ui, label, !building, Size::Compact).clicked() {
                 action = Some(CardAction::Open);
             }
         },
@@ -96,11 +96,11 @@ pub(crate) fn show_dialog(ctx: &egui::Context, delivery: &mut Delivery) -> Optio
                     answer = Some(DialogAction::OpenUrl);
                 }
                 ui.add_space(4.0);
-                footer(ui, "", |ui| {
-                    if primary_button(ui, "Open in browser", true).clicked() {
+                footer_row(ui, "", |ui| {
+                    if primary_button(ui, "Open in browser", true, Size::Regular).clicked() {
                         answer = Some(DialogAction::OpenUrl);
                     }
-                    if quiet_button(ui, "Close", true).clicked() {
+                    if quiet_button(ui, "Close", true, Size::Regular).clicked() {
                         answer = Some(DialogAction::Close);
                     }
                 });
@@ -139,17 +139,6 @@ fn branch_line(ui: &mut Ui, form: &Form, extra: Option<String>) {
         job.append(&extra, 12.0, TextFormat::simple(body(12.0), brand::MUTED));
     }
     ui.label(job);
-}
-
-/// The hint on the left, the buttons right to left from the edge; `add` draws them.
-fn footer(ui: &mut Ui, hint: &str, add: impl FnOnce(&mut Ui)) {
-    ui.horizontal(|ui| {
-        ui.label(RichText::new(hint).size(12.0).color(brand::MUTED));
-        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-            ui.spacing_mut().item_spacing.x = 8.0;
-            add(ui);
-        });
-    });
 }
 
 fn editing_body(ui: &mut Ui, form: &mut Form) -> Option<DialogAction> {
@@ -203,11 +192,13 @@ fn editing_body(ui: &mut Ui, form: &mut Form) -> Option<DialogAction> {
     });
     ui.add_space(4.0);
     let hint = format!("{} pushes and opens it", Command::ApproveDelivery.keys());
-    footer(ui, &hint, |ui| {
-        if primary_button(ui, "Push and open PR", !form.title.trim().is_empty()).clicked() {
+    footer_row(ui, &hint, |ui| {
+        if primary_button(ui, "Push and open PR", !form.title.trim().is_empty(), Size::Regular)
+            .clicked()
+        {
             answer = Some(DialogAction::Approve);
         }
-        if quiet_button(ui, "Cancel", true).clicked() {
+        if quiet_button(ui, "Cancel", true, Size::Regular).clicked() {
             answer = Some(DialogAction::Cancel);
         }
     });
@@ -222,11 +213,11 @@ fn failed_body(ui: &mut Ui, form: &Form, error: &DeliveryError) -> Option<Dialog
         ui.label(RichText::new(hint).color(brand::TEXT));
     }
     ui.add_space(4.0);
-    footer(ui, "", |ui| {
-        if primary_button(ui, "Back to the text", true).clicked() {
+    footer_row(ui, "", |ui| {
+        if primary_button(ui, "Back to the text", true, Size::Regular).clicked() {
             answer = Some(DialogAction::Back);
         }
-        if quiet_button(ui, "Close", true).clicked() {
+        if quiet_button(ui, "Close", true, Size::Regular).clicked() {
             answer = Some(DialogAction::Close);
         }
     });

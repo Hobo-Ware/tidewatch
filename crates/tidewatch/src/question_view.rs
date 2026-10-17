@@ -19,7 +19,7 @@ use crate::quick_reply::Quick;
 use crate::reader_keys::Answer;
 use crate::reader_rows::{Asked, QuestionRow};
 use crate::reader_view::{INSET, ellipsized};
-use crate::screen_kit::{body, mono, primary_button, quiet_button};
+use crate::screen_kit::{Size, body, mono, primary_button, quiet_button};
 
 const CARD_RADIUS: u8 = 12;
 const CARD_PAD_X: i8 = 16;
@@ -513,17 +513,17 @@ fn footer(ui: &mut Ui, live: &mut Live, profile: &str) -> Effect {
         } else {
             ("Next", live.card.answered())
         };
-        if primary_button(ui, label, ready).clicked() {
+        if primary_button(ui, label, ready, Size::Compact).clicked() {
             if last {
                 effect = live.card.send();
             } else {
                 live.card.next();
             }
         }
-        if live.card.step() > 0 && quiet_button(ui, "Back", true).clicked() {
+        if live.card.step() > 0 && quiet_button(ui, "Back", true, Size::Compact).clicked() {
             live.card.back();
         }
-        if quiet_button(ui, &format!("Skip, let {profile} pick"), true).clicked() {
+        if quiet_button(ui, &format!("Skip, let {profile} pick"), true, Size::Compact).clicked() {
             effect = Effect::Skip;
         }
         let galley = ui.painter().layout_job(hint_job(live));
@@ -796,8 +796,8 @@ pub(crate) fn permission_card(
             ui.spacing_mut().item_spacing.x = 8.0;
             for answer in answers {
                 let response = match answer {
-                    Answer::Allow => primary_button(ui, "Allow once", true),
-                    Answer::Deny => crate::screen_kit::danger_button(ui, "Deny"),
+                    Answer::Allow => primary_button(ui, "Allow once", true, Size::Compact),
+                    Answer::Deny => crate::screen_kit::danger_button(ui, "Deny", Size::Compact),
                 };
                 if response.clicked() {
                     clicked = Some(PermissionClick::Answer(*answer));
@@ -805,7 +805,7 @@ pub(crate) fn permission_card(
             }
             let label =
                 if answers.is_empty() { "Answer it in the terminal" } else { "Switch to terminal" };
-            if quiet_button(ui, label, true).clicked() {
+            if quiet_button(ui, label, true, Size::Compact).clicked() {
                 clicked = Some(PermissionClick::SwitchToTerminal);
             }
         });

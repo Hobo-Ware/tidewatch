@@ -1,16 +1,22 @@
 //! Shared drawing pieces: headings, key caps, CLI badges, section labels.
 
 use crate::brand;
+use crate::commands::Platform;
 use egui::{
-    Align2, Color32, Context, CornerRadius, FontId, Id, Margin, Modal, ModalResponse, Painter,
-    Rect, Response, Sense, Shadow, Stroke, StrokeKind, Ui, vec2,
+    Align, Align2, Color32, Context, CornerRadius, FontId, Id, Layout, Margin, Modal,
+    ModalResponse, Painter, Rect, Response, RichText, Sense, Shadow, Stroke, StrokeKind, Ui, pos2,
+    vec2,
 };
 use kelp_ui::theme::semibold;
 
-pub(crate) const BUTTON_H: f32 = 22.0;
-const BUTTON_PAD: f32 = 10.0;
-const BUTTON_RADIUS: u8 = 6;
-const BUTTON_FONT: f32 = 12.5;
+const BUTTON_RADIUS: u8 = 8;
+const DISABLED_INK: f32 = 0.4;
+const CAP_FONT: f32 = 11.5;
+const CAP_PAD: f32 = 6.0;
+const CAP_MIN_W: f32 = 22.0;
+const CAP_GAP: f32 = 8.0;
+const CAP_RADIUS: u8 = 5;
+const FOOTER_GAP: f32 = 8.0;
 pub(crate) const DIALOG_HEADER_H: f32 = 48.0;
 const DIALOG_PAD: i8 = 16;
 const ROW_RADIUS: u8 = 8;
@@ -75,60 +81,262 @@ pub(crate) fn clickable(
         .on_hover_cursor(egui::CursorIcon::PointingHand)
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum ButtonLook {
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Size {
+    Regular,
+    Compact,
+}
+
+impl Size {
+    pub(crate) const fn height(self) -> f32 {
+        match self {
+            Self::Regular => 32.0,
+            Self::Compact => 26.0,
+        }
+    }
+
+    const fn pad(self) -> f32 {
+        match self {
+            Self::Regular => 14.0,
+            Self::Compact => 12.0,
+        }
+    }
+
+    const fn font(self) -> f32 {
+        match self {
+            Self::Regular => 13.5,
+            Self::Compact => 13.0,
+        }
+    }
+
+    const fn cap_h(self) -> f32 {
+        match self {
+            Self::Regular => 20.0,
+            Self::Compact => 18.0,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Look {
     Quiet,
     Danger,
     Primary,
 }
 
-fn button(ui: &mut Ui, label: &str, enabled: bool, look: ButtonLook) -> Response {
-    let galley = ui.painter().layout_no_wrap(label.to_owned(), body(BUTTON_FONT), brand::SOFT);
-    let size = vec2(galley.size().x + 2.0 * BUTTON_PAD, BUTTON_H);
-    let (rect, response) =
-        ui.allocate_exact_size(size, if enabled { Sense::click() } else { Sense::hover() });
-    let hot = enabled && response.hovered();
-    let (fill, line, ink) = match (look, enabled) {
-        (ButtonLook::Primary, true) => {
-            let fill = if hot { brand::TEAL_TEXT } else { brand::TEAL };
-            (fill, fill, brand::KEY_EDGE)
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum State {
+    Rest,
+    Hover,
+    Pressed,
+    Disabled,
+}
+
+impl State {
+    fn pick(enabled: bool, pressed: bool, hovered: bool) -> Self {
+        match (enabled, pressed, hovered) {
+            (false, _, _) => Self::Disabled,
+            (true, true, _) => Self::Pressed,
+            (true, false, true) => Self::Hover,
+            (true, false, false) => Self::Rest,
         }
-        (ButtonLook::Primary, false) => (brand::BUTTON, brand::SEGMENT_LINE, brand::FAINT),
-        (_, false) => (Color32::TRANSPARENT, brand::SEGMENT_LINE, brand::FAINT),
-        (ButtonLook::Danger, true) => {
-            (if hot { brand::RED_FILL } else { Color32::TRANSPARENT }, brand::RED_LINE, brand::RED)
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct Paint {
+    fill: Color32,
+    line: Color32,
+    ink: Color32,
+    cap: Color32,
+}
+
+fn teal_dark(amount: f32) -> Color32 {
+    brand::TEAL.lerp_to_gamma(brand::KEY_EDGE, amount)
+}
+
+fn paint_of(look: Look, state: State) -> Paint {
+    let clear = Color32::TRANSPARENT;
+    let dim = |color: Color32| color.gamma_multiply(DISABLED_INK);
+    match (look, state) {
+        (Look::Primary, State::Rest) => Paint {
+            fill: brand::TEAL,
+            line: brand::TEAL,
+            ink: brand::KEY_EDGE,
+            cap: teal_dark(0.3),
+        },
+        (Look::Primary, State::Hover) => Paint {
+            fill: brand::TEAL_TEXT,
+            line: brand::TEAL_TEXT,
+            ink: brand::KEY_EDGE,
+            cap: teal_dark(0.3),
+        },
+        (Look::Primary, State::Pressed) => Paint {
+            fill: teal_dark(0.15),
+            line: teal_dark(0.15),
+            ink: brand::KEY_EDGE,
+            cap: teal_dark(0.4),
+        },
+        (Look::Primary, State::Disabled) => Paint {
+            fill: brand::BUTTON,
+            line: brand::SEGMENT_LINE,
+            ink: dim(brand::TEXT),
+            cap: brand::SEGMENT,
+        },
+        (Look::Quiet, State::Rest) => {
+            Paint { fill: clear, line: brand::FIELD_LINE, ink: brand::TEXT, cap: brand::BUTTON }
         }
-        (ButtonLook::Quiet, true) => {
-            let line = if hot { brand::TEAL.gamma_multiply(0.5) } else { brand::FIELD_LINE };
-            (Color32::TRANSPARENT, line, if hot { brand::TEXT } else { brand::SOFT })
+        (Look::Quiet, State::Hover) => {
+            Paint { fill: brand::BUTTON, line: brand::FAINT, ink: brand::TEXT, cap: brand::SEGMENT }
         }
-    };
+        (Look::Quiet, State::Pressed) => {
+            Paint { fill: brand::SEGMENT, line: brand::FAINT, ink: brand::TEXT, cap: brand::BUTTON }
+        }
+        (Look::Quiet, State::Disabled) => Paint {
+            fill: clear,
+            line: brand::SEGMENT_LINE,
+            ink: dim(brand::TEXT),
+            cap: brand::BUTTON,
+        },
+        (Look::Danger, State::Rest) => {
+            Paint { fill: clear, line: brand::RED_LINE, ink: brand::RED, cap: brand::RED_FILL }
+        }
+        (Look::Danger, State::Hover) => Paint {
+            fill: brand::RED_FILL,
+            line: brand::RED.gamma_multiply(0.5),
+            ink: brand::RED,
+            cap: brand::RED_FILL,
+        },
+        (Look::Danger, State::Pressed) => {
+            Paint { fill: brand::RED_FILL, line: brand::RED, ink: brand::RED, cap: brand::RED_FILL }
+        }
+        (Look::Danger, State::Disabled) => Paint {
+            fill: clear,
+            line: brand::SEGMENT_LINE,
+            ink: dim(brand::RED),
+            cap: brand::RED_FILL,
+        },
+    }
+}
+
+fn cap_width(text_w: f32) -> f32 {
+    (text_w + 2.0 * CAP_PAD).max(CAP_MIN_W)
+}
+
+/// The width of a button whose label is `label_w` wide, with a key cap of `key_w` text when it has one.
+fn width_of(size: Size, label_w: f32, key_w: Option<f32>) -> f32 {
+    let cap = key_w.map_or(0.0, |w| CAP_GAP + cap_width(w));
+    2.0 * size.pad() + label_w + cap
+}
+
+fn text_width(ui: &Ui, text: &str, font: FontId) -> f32 {
+    ui.painter().layout_no_wrap(text.to_owned(), font, brand::SOFT).size().x
+}
+
+pub(crate) fn button_width(ui: &Ui, label: &str, size: Size) -> f32 {
+    width_of(size, text_width(ui, label, body(size.font())), None)
+}
+
+struct Spec<'a> {
+    label: &'a str,
+    key: Option<&'a str>,
+    enabled: bool,
+    size: Size,
+    look: Look,
+}
+
+fn button(ui: &mut Ui, spec: &Spec) -> Response {
+    let Spec { label, key, enabled, size, look } = *spec;
+    let label_w = text_width(ui, label, body(size.font()));
+    let key_w = key.map(|key| text_width(ui, key, mono(CAP_FONT)));
+    let width = width_of(size, label_w, key_w);
+    let (rect, response) = ui.allocate_exact_size(
+        vec2(width, size.height()),
+        if enabled { Sense::click() } else { Sense::hover() },
+    );
+    let paint = paint_of(
+        look,
+        State::pick(enabled, response.is_pointer_button_down_on(), response.hovered()),
+    );
     let painter = ui.painter();
     painter.rect(
         rect,
         CornerRadius::same(BUTTON_RADIUS),
-        fill,
-        Stroke::new(1.0, line),
+        paint.fill,
+        Stroke::new(1.0, paint.line),
         StrokeKind::Inside,
     );
-    painter.text(rect.center(), Align2::CENTER_CENTER, label, body(BUTTON_FONT), ink);
+    let mid = rect.center().y;
+    painter.text(
+        pos2(rect.left() + size.pad(), mid),
+        Align2::LEFT_CENTER,
+        label,
+        body(size.font()),
+        paint.ink,
+    );
+    if let (Some(key), Some(key_w)) = (key, key_w) {
+        let cap = Rect::from_min_size(
+            pos2(rect.right() - size.pad() - cap_width(key_w), mid - size.cap_h() / 2.0),
+            vec2(cap_width(key_w), size.cap_h()),
+        );
+        painter.rect_filled(cap, CornerRadius::same(CAP_RADIUS), paint.cap);
+        painter.text(cap.center(), Align2::CENTER_CENTER, key, mono(CAP_FONT), paint.ink);
+    }
     kelp_ui::widgets::focus_ring(ui, &response, f32::from(BUTTON_RADIUS));
     if enabled { response.on_hover_cursor(egui::CursorIcon::PointingHand) } else { response }
 }
 
+fn plain(ui: &mut Ui, label: &str, enabled: bool, size: Size, look: Look) -> Response {
+    button(ui, &Spec { label, key: None, enabled, size, look })
+}
+
 /// A bordered button with no fill: the default for every action that is not the one main action.
-pub(crate) fn quiet_button(ui: &mut Ui, label: &str, enabled: bool) -> Response {
-    button(ui, label, enabled, ButtonLook::Quiet)
+pub(crate) fn quiet_button(ui: &mut Ui, label: &str, enabled: bool, size: Size) -> Response {
+    plain(ui, label, enabled, size, Look::Quiet)
 }
 
 /// A quiet button in red for an action that destroys something.
-pub(crate) fn danger_button(ui: &mut Ui, label: &str) -> Response {
-    button(ui, label, true, ButtonLook::Danger)
+pub(crate) fn danger_button(ui: &mut Ui, label: &str, size: Size) -> Response {
+    plain(ui, label, true, size, Look::Danger)
 }
 
 /// The one filled button of a view or dialog.
-pub(crate) fn primary_button(ui: &mut Ui, label: &str, enabled: bool) -> Response {
-    button(ui, label, enabled, ButtonLook::Primary)
+pub(crate) fn primary_button(ui: &mut Ui, label: &str, enabled: bool, size: Size) -> Response {
+    plain(ui, label, enabled, size, Look::Primary)
+}
+
+/// `primary_button` with the shortcut that does the same drawn as a key cap at its right.
+pub(crate) fn primary_button_keyed(
+    ui: &mut Ui,
+    label: &str,
+    key: &str,
+    enabled: bool,
+    size: Size,
+) -> Response {
+    button(ui, &Spec { label, key: Some(key), enabled, size, look: Look::Primary })
+}
+
+/// A dialog or form footer: `hint` muted at the left, the buttons `add` draws right-aligned (the
+/// rightmost first) with 8 px between them, all on one centered row `Size::Regular` tall.
+pub(crate) fn footer_row(ui: &mut Ui, hint: &str, add: impl FnOnce(&mut Ui)) {
+    ui.horizontal(|ui| {
+        ui.set_min_height(Size::Regular.height());
+        if !hint.is_empty() {
+            ui.label(RichText::new(hint).size(12.0).color(brand::MUTED));
+        }
+        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+            ui.spacing_mut().item_spacing.x = FOOTER_GAP;
+            add(ui);
+        });
+    });
+}
+
+/// The shortcut that confirms a form or a dialog, as the text of a key cap.
+pub(crate) fn confirm_key() -> &'static str {
+    match Platform::CURRENT {
+        Platform::Mac => "\u{2318}\u{21b5}",
+        Platform::Linux => "Ctrl \u{21b5}",
+    }
 }
 
 /// A modal dialog: a card with a 48 px header (title, divider) over a padded body of `width`.
@@ -206,25 +414,110 @@ mod tests {
     }
 
     #[test]
-    fn buttons_are_one_height_and_grow_with_their_label() {
+    fn a_button_is_as_tall_as_its_size_whatever_its_look_and_label() {
         let mut sizes = Vec::new();
         run(|ui| {
             sizes.clear();
-            for label in ["Ok", "A much longer label"] {
-                sizes.push(quiet_button(ui, label, true).rect.size());
+            for size in [Size::Regular, Size::Compact] {
+                for label in ["Ok", "A much longer label"] {
+                    sizes.push((size, quiet_button(ui, label, true, size).rect.size()));
+                }
+                sizes.push((size, primary_button(ui, "Go", false, size).rect.size()));
+                sizes.push((size, danger_button(ui, "Delete", size).rect.size()));
+                sizes.push((
+                    size,
+                    primary_button_keyed(ui, "Start", "\u{2318}\u{21b5}", true, size).rect.size(),
+                ));
             }
-            sizes.push(primary_button(ui, "Go", false).rect.size());
-            sizes.push(danger_button(ui, "Delete").rect.size());
         });
-        assert!(sizes.iter().all(|size| size.y == BUTTON_H));
-        assert!(sizes[1].x > sizes[0].x);
+        for (size, rect) in &sizes {
+            assert_eq!(rect.y, size.height(), "{size:?}");
+        }
+        assert!(sizes[1].1.x > sizes[0].1.x);
+    }
+
+    #[test]
+    fn the_two_sizes_are_32_and_26_tall() {
+        assert_eq!(Size::Regular.height(), 32.0);
+        assert_eq!(Size::Compact.height(), 26.0);
+    }
+
+    #[test]
+    fn padding_grows_a_button_and_a_key_cap_adds_its_width_and_a_gap() {
+        let cases = [
+            (Size::Regular, 40.0, None, 68.0),
+            (Size::Compact, 40.0, None, 64.0),
+            (Size::Regular, 40.0, Some(8.0), 68.0 + CAP_GAP + 22.0),
+            (Size::Compact, 40.0, Some(30.0), 64.0 + CAP_GAP + 30.0 + 2.0 * CAP_PAD),
+        ];
+        for (size, label, key, want) in cases {
+            assert_eq!(width_of(size, label, key), want, "{size:?} {key:?}");
+        }
+    }
+
+    #[test]
+    fn a_disabled_button_never_looks_hovered_or_pressed() {
+        for (pressed, hovered) in [(false, false), (false, true), (true, true)] {
+            assert_eq!(State::pick(false, pressed, hovered), State::Disabled);
+        }
+        let cases = [
+            (false, false, State::Rest),
+            (false, true, State::Hover),
+            (true, true, State::Pressed),
+            (true, false, State::Pressed),
+        ];
+        for (pressed, hovered, want) in cases {
+            assert_eq!(State::pick(true, pressed, hovered), want, "{pressed} {hovered}");
+        }
+    }
+
+    #[test]
+    fn each_look_has_the_colors_it_promises() {
+        let quiet = paint_of(Look::Quiet, State::Rest);
+        assert_eq!(
+            (quiet.fill, quiet.line, quiet.ink),
+            (Color32::TRANSPARENT, brand::FIELD_LINE, brand::TEXT)
+        );
+        let primary = paint_of(Look::Primary, State::Rest);
+        assert_eq!((primary.fill, primary.ink), (brand::TEAL, brand::KEY_EDGE));
+        assert_ne!(primary.cap, primary.fill);
+        let danger = paint_of(Look::Danger, State::Rest);
+        assert_eq!((danger.ink, danger.line), (brand::RED, brand::RED_LINE));
+        assert_eq!(paint_of(Look::Danger, State::Hover).fill, brand::RED_FILL);
+        for look in [Look::Quiet, Look::Primary, Look::Danger] {
+            assert_ne!(paint_of(look, State::Rest), paint_of(look, State::Hover), "{look:?} hover");
+            assert_ne!(
+                paint_of(look, State::Hover),
+                paint_of(look, State::Pressed),
+                "{look:?} pressed"
+            );
+            let off = paint_of(look, State::Disabled);
+            assert!(off.ink.a() < 120, "{look:?} disabled ink is 40%: {}", off.ink.a());
+        }
     }
 
     #[test]
     fn a_disabled_button_is_never_clicked() {
         let mut clicked = false;
-        run(|ui| clicked |= quiet_button(ui, "Send", false).clicked());
+        run(|ui| clicked |= quiet_button(ui, "Send", false, Size::Regular).clicked());
         assert!(!clicked);
+    }
+
+    #[test]
+    fn a_footer_right_aligns_its_buttons_8_px_apart_on_one_baseline() {
+        let mut rects = Vec::new();
+        let mut footer = Rect::NOTHING;
+        run(|ui| {
+            rects.clear();
+            footer = ui.max_rect();
+            footer_row(ui, "Esc cancels", |ui| {
+                rects.push(primary_button(ui, "Go", true, Size::Regular).rect);
+                rects.push(quiet_button(ui, "Cancel", true, Size::Regular).rect);
+            });
+        });
+        assert_eq!(rects[0].center().y, rects[1].center().y);
+        assert_eq!(rects[1].right() + 8.0, rects[0].left());
+        assert_eq!(rects[0].right(), footer.right());
     }
 
     #[test]

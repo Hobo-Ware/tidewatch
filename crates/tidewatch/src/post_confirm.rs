@@ -4,9 +4,9 @@
 
 use crate::brand;
 use crate::reader_view::item_frame;
-use crate::screen_kit::{body, dialog_frame, mono, primary_button, quiet_button};
+use crate::screen_kit::{Size, body, dialog_frame, footer_row, mono, primary_button, quiet_button};
 use egui::epaint::text::{LayoutJob, TextFormat};
-use egui::{Align, Id, Key, Layout, Margin, Modifiers, RichText};
+use egui::{Id, Key, Margin, Modifiers, RichText};
 use kelp_core::review::{Side, Thread};
 use tidewatch_core::notes::Notes;
 use tidewatch_core::pr::PullRequest;
@@ -130,23 +130,15 @@ pub(crate) fn show(ctx: &egui::Context, confirm: &PostConfirm) -> Option<Answer>
             }
         }
         ui.add_space(4.0);
-        ui.horizontal(|ui| {
-            if asking {
-                ui.label(
-                    RichText::new("Enter posts  -  Esc cancels").size(12.0).color(brand::MUTED),
-                );
+        let hint = if asking { "Enter posts  -  Esc cancels" } else { "" };
+        footer_row(ui, hint, |ui| {
+            if asking && primary_button(ui, "Post to PR", true, Size::Regular).clicked() {
+                answer = Some(Answer::Post);
             }
-            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                ui.spacing_mut().item_spacing.x = 8.0;
-                if asking && primary_button(ui, "Post to PR", true).clicked() {
-                    answer = Some(Answer::Post);
-                }
-                let cancel =
-                    if matches!(confirm.phase, Phase::Failed(_)) { "Close" } else { "Cancel" };
-                if quiet_button(ui, cancel, true).clicked() {
-                    answer = Some(Answer::Cancel);
-                }
-            });
+            let cancel = if matches!(confirm.phase, Phase::Failed(_)) { "Close" } else { "Cancel" };
+            if quiet_button(ui, cancel, true, Size::Regular).clicked() {
+                answer = Some(Answer::Cancel);
+            }
         });
     });
     if answer.is_none() && asking && ctx.input_mut(|i| i.consume_key(Modifiers::NONE, Key::Enter)) {

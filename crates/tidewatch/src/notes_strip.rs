@@ -16,7 +16,7 @@ use crate::brand;
 use crate::commit_files::{split_dir, tail_fit};
 use crate::note_send::{Gate, gate_reason};
 use crate::pr_state::{PostAbility, PrState};
-use crate::screen_kit::{body, mono, quiet_button};
+use crate::screen_kit::{Size, body, mono, quiet_button};
 
 pub(crate) const MAX_ROWS: usize = 3;
 const CARD_H: f32 = 36.0;
@@ -211,7 +211,7 @@ fn draw_card(ui: &mut Ui, row: &NoteRow, now: i64, actions: &mut Vec<StripAction
     );
     buttons.spacing_mut().item_spacing.x = BUTTON_GAP;
     let post_label = if row.on_pr { "Reply on PR" } else { "Post to PR" };
-    let post = quiet_button(&mut buttons, post_label, row.post == PostAbility::Yes);
+    let post = quiet_button(&mut buttons, post_label, row.post == PostAbility::Yes, Size::Compact);
     let post = match &row.post {
         PostAbility::No(reason) => post.on_disabled_hover_text(reason.as_str()),
         PostAbility::Yes => {
@@ -221,7 +221,8 @@ fn draw_card(ui: &mut Ui, row: &NoteRow, now: i64, actions: &mut Vec<StripAction
     if post.clicked() {
         actions.push(StripAction::PostToPr(row.id));
     }
-    let more = quiet_button(&mut buttons, "...", true).on_hover_text("More for this note");
+    let more =
+        quiet_button(&mut buttons, "...", true, Size::Compact).on_hover_text("More for this note");
     egui::Popup::menu(&more).show(|ui| {
         ui.set_max_width(MENU_W);
         style_menu(ui);

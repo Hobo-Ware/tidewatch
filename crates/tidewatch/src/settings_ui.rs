@@ -7,7 +7,7 @@ use egui::{
 };
 use kelp_ui::theme::semibold;
 
-use crate::screen_kit::{danger_button, primary_button, quiet_button};
+use crate::screen_kit::{self, Size, danger_button, primary_button, quiet_button};
 use crate::segmented;
 
 pub(crate) mod editor;
@@ -17,8 +17,6 @@ pub(crate) use crate::brand::*;
 const SECTION_GAP: f32 = 22.0;
 const ROW_GAP: f32 = 16.0;
 const SWITCH_SIZE: Vec2 = vec2(40.0, 22.0);
-const BUTTON_HEIGHT: f32 = 22.0;
-const BUTTON_PAD: f32 = 10.0;
 const INLINE_MAX: usize = 5;
 pub(crate) const HEADER_H: f32 = 48.0;
 
@@ -102,8 +100,8 @@ impl Control {
         Self { width, height }
     }
 
-    pub(crate) fn button(ui: &Ui, label: &str) -> Self {
-        Self { width: button_width(ui, label), height: BUTTON_HEIGHT }
+    pub(crate) fn button(ui: &Ui, label: &str, size: Size) -> Self {
+        Self { width: button_width(ui, label, size), height: size.height() }
     }
 }
 
@@ -221,17 +219,16 @@ pub(crate) enum Tone {
     Danger,
 }
 
-pub(crate) fn button_width(ui: &Ui, label: &str) -> f32 {
-    let galley = ui.painter().layout_no_wrap(label.to_owned(), FontId::proportional(12.5), SOFT);
-    galley.size().x + 2.0 * BUTTON_PAD
+pub(crate) fn button_width(ui: &Ui, label: &str, size: Size) -> f32 {
+    screen_kit::button_width(ui, label, size)
 }
 
-pub(crate) fn button(ui: &mut Ui, label: &str, tone: Tone) -> Response {
+pub(crate) fn button(ui: &mut Ui, label: &str, tone: Tone, size: Size) -> Response {
     let enabled = ui.is_enabled();
     match tone {
-        Tone::Primary => primary_button(ui, label, enabled),
-        Tone::Quiet => quiet_button(ui, label, enabled),
-        Tone::Danger => danger_button(ui, label),
+        Tone::Primary => primary_button(ui, label, enabled, size),
+        Tone::Quiet => quiet_button(ui, label, enabled, size),
+        Tone::Danger => danger_button(ui, label, size),
     }
 }
 

@@ -13,7 +13,7 @@ use crate::brand;
 use crate::commands::Platform;
 use crate::reader_view::{INSET, ellipsized, field_frame, paint_item};
 use crate::review::{Draft, DraftNote, ReviewFacts, SendState};
-use crate::screen_kit::{body, danger_button, heading, mono, primary_button, quiet_button};
+use crate::screen_kit::{Size, body, danger_button, heading, mono, primary_button, quiet_button};
 
 const PAD_X: f32 = 14.0;
 const PAD_Y: f32 = 10.0;
@@ -176,9 +176,10 @@ fn discard(ui: &mut Ui) -> bool {
     let id = Id::new("review-discard");
     let armed = ui.data(|data| data.get_temp::<bool>(id)).unwrap_or(false);
     let response = if armed {
-        danger_button(ui, "Click again to discard")
+        danger_button(ui, "Click again to discard", Size::Compact)
     } else {
-        quiet_button(ui, "Discard", true).on_hover_text("Delete the notes of this review")
+        quiet_button(ui, "Discard", true, Size::Compact)
+            .on_hover_text("Delete the notes of this review")
     };
     let clicked = response.clicked();
     let next = if clicked { !armed } else { armed && !response.clicked_elsewhere() };
@@ -243,10 +244,10 @@ fn field_row(
     field_frame(&mut child, |ui| {
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
             clicked = if held {
-                quiet_button(ui, "Take it back", true).clicked()
+                quiet_button(ui, "Take it back", true, Size::Regular).clicked()
             } else {
                 let enabled = matches!(facts.send, SendState::Ready | SendState::WhenIdle);
-                primary_button(ui, &send_label(facts.profile), enabled).clicked()
+                primary_button(ui, &send_label(facts.profile), enabled, Size::Regular).clicked()
             };
             ui.add(
                 TextEdit::singleline(&mut state.message)

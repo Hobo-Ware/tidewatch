@@ -2,6 +2,7 @@
 
 use egui::{Align, Layout, RichText, Ui};
 
+use crate::screen_kit::Size;
 use crate::settings_ui::{
     Control, FAINT, MUTED, TEXT, Tone, button, caption, page_header, row_with, section,
 };
@@ -15,7 +16,7 @@ pub(crate) fn page(ui: &mut Ui, file: &str) -> Option<Action> {
     section(ui, "Your file", |ui| {
         row_with(
             ui,
-            Control::button(ui, "Open in editor"),
+            Control::button(ui, "Open in editor", Size::Compact),
             |ui| {
                 ui.spacing_mut().item_spacing.y = 3.0;
                 ui.label(RichText::new("house-style.md").size(15.0).color(TEXT));
@@ -23,7 +24,7 @@ pub(crate) fn page(ui: &mut Ui, file: &str) -> Option<Action> {
             },
             |ui| {
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                    if button(ui, "Open in editor", Tone::Quiet).clicked() {
+                    if button(ui, "Open in editor", Tone::Quiet, Size::Compact).clicked() {
                         action = Some(Action::OpenHouseStyle);
                     }
                 });
@@ -40,7 +41,7 @@ pub(crate) fn page(ui: &mut Ui, file: &str) -> Option<Action> {
     section(ui, "Default text", |ui| {
         row_with(
             ui,
-            Control::button(ui, ARMED),
+            Control::button(ui, ARMED, Size::Compact),
             |ui| {
                 ui.spacing_mut().item_spacing.y = 3.0;
                 ui.label(RichText::new("Tidewatch's own text").size(15.0).color(TEXT));
@@ -67,7 +68,8 @@ pub(crate) fn page(ui: &mut Ui, file: &str) -> Option<Action> {
 fn reset_button(ui: &mut Ui) -> bool {
     let id = ui.make_persistent_id("house_style_reset");
     let armed = ui.data(|data| data.get_temp::<bool>(id)).unwrap_or(false);
-    let response = button(ui, if armed { ARMED } else { "Reset to default" }, Tone::Danger);
+    let response =
+        button(ui, if armed { ARMED } else { "Reset to default" }, Tone::Danger, Size::Compact);
     let clicked = response.clicked();
     let disarm = armed && (clicked || response.clicked_elsewhere());
     if clicked && !armed {

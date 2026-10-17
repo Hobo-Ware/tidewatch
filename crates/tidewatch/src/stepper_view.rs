@@ -12,7 +12,7 @@ use tidewatch_core::runner::StageState;
 use crate::brand;
 use crate::layout::band_above;
 use crate::reader_view::{INSET, ellipsized, field_frame, paint_bar, paint_item};
-use crate::screen_kit::{body, heading, primary_button, quiet_button};
+use crate::screen_kit::{Size, body, heading, primary_button, quiet_button};
 use crate::stepper::{self, Detail, Model, Pill};
 use crate::workflow_ask::{Ask, Choice};
 use crate::workflow_run::{Exec, RunUi, TabRun};
@@ -324,15 +324,15 @@ fn ask_card(ui: &mut Ui, rect: Rect, ask: &Ask, state: &mut RunUi) -> Option<Pre
                 && button.choice == Choice::Reject
                 && state.feedback.trim().is_empty());
             let response = if primary {
-                primary_button(ui, label, enabled)
+                primary_button(ui, label, enabled, Size::Compact)
             } else {
-                quiet_button(ui, label, enabled)
+                quiet_button(ui, label, enabled, Size::Compact)
             };
             if response.on_hover_text(button.hint).clicked() {
                 pressed = Some(Pressed::Choice(button.choice));
             }
         }
-        if state.rejecting && quiet_button(ui, "Cancel", true).clicked() {
+        if state.rejecting && quiet_button(ui, "Cancel", true, Size::Compact).clicked() {
             pressed = Some(Pressed::CancelReject);
         }
     });

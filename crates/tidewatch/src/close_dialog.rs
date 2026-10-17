@@ -3,7 +3,9 @@
 
 use crate::brand;
 use crate::notice::key_hint;
-use crate::screen_kit::{danger_button, dialog_frame, primary_button, quiet_button};
+use crate::screen_kit::{
+    Size, danger_button, dialog_frame, footer_row, primary_button, quiet_button,
+};
 use egui::{Id, Key, Modifiers, RichText};
 use tidewatch_core::worktree::{BranchChoice, Inspection, RemoveMode, Worktree};
 
@@ -95,23 +97,24 @@ pub(crate) fn show(
                 ui.label(RichText::new(line).color(brand::RED));
             }
             ui.add_space(6.0);
-            ui.horizontal(|ui| {
-                ui.spacing_mut().item_spacing.x = 8.0;
-                if quiet_button(ui, "Cancel", true).clicked() {
-                    answer = Some(Answer::Cancel);
-                }
-                for (i, choice) in choices(inspection).into_iter().enumerate() {
+            footer_row(ui, "", |ui| {
+                for (i, choice) in choices(inspection).into_iter().enumerate().rev() {
                     let text = label(choice);
                     let response = match choice {
                         Choice::Remove { branch: BranchChoice::Delete, .. } => {
-                            danger_button(ui, text)
+                            danger_button(ui, text, Size::Regular)
                         }
-                        _ if i == 0 && inspection.changed == 0 => primary_button(ui, text, true),
-                        _ => quiet_button(ui, text, true),
+                        _ if i == 0 && inspection.changed == 0 => {
+                            primary_button(ui, text, true, Size::Regular)
+                        }
+                        _ => quiet_button(ui, text, true, Size::Regular),
                     };
                     if response.clicked() {
                         answer = Some(Answer::Pick(choice));
                     }
+                }
+                if quiet_button(ui, "Cancel", true, Size::Regular).clicked() {
+                    answer = Some(Answer::Cancel);
                 }
             });
             key_hint(

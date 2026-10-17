@@ -8,7 +8,7 @@ use crate::brand;
 use crate::new_tab::{Kind, NameCheck, NewTab};
 use crate::reader_view::{ellipsized, field_frame_on};
 use crate::repo_base::RepoFacts;
-use crate::screen_kit::{body, mono, quiet_button};
+use crate::screen_kit::{Size, body, mono, quiet_button};
 
 pub(crate) const LABEL_H: f32 = 14.0;
 pub(crate) const LABEL_GAP: f32 = 6.0;
@@ -46,7 +46,8 @@ fn problem_line(ui: &mut Ui, name: &str, check: &NameCheck) -> bool {
             NameCheck::Taken { suggestion } => {
                 let text = format!("{PREFIX}{name} is taken.");
                 ui.label(RichText::new(text).size(12.0).color(brand::RED));
-                accept = quiet_button(ui, &format!("Use {suggestion}"), true).clicked();
+                accept =
+                    quiet_button(ui, &format!("Use {suggestion}"), true, Size::Compact).clicked();
             }
         }
     });

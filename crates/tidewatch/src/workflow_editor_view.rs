@@ -4,6 +4,7 @@ use egui::{Align, Align2, CornerRadius, FontId, Layout, Margin, Rect, ScrollArea
 use tidewatch_core::agents::Level;
 use tidewatch_core::workflows::{Action, Gate};
 
+use crate::screen_kit::Size;
 use crate::settings_ui::editor::{
     Bar, BarAction, Item, card_header, columns, list_item, page_area, page_top, save_bar,
     split_card,
@@ -217,13 +218,13 @@ impl Form<'_> {
             if let Some(index) = pick(ui, "stages", &labels, Some(self.stage_index)) {
                 action = Some(StageAction::Select(index));
             }
-            if beside && button(ui, "Add stage", Tone::Quiet).clicked() {
+            if beside && button(ui, "Add stage", Tone::Quiet, Size::Compact).clicked() {
                 action = Some(StageAction::Add);
             }
         });
         if !beside {
             ui.add_space(2.0);
-            if button(ui, "Add stage", Tone::Quiet).clicked() {
+            if button(ui, "Add stage", Tone::Quiet, Size::Compact).clicked() {
                 action = Some(StageAction::Add);
             }
         }
@@ -239,13 +240,17 @@ impl Form<'_> {
             changed |= self.stage_form(ui, &mut draft.stages[self.stage_index], &earlier);
             ui.add_space(12.0);
             ui.horizontal(|ui| {
-                if self.stage_index > 0 && button(ui, "Move earlier", Tone::Quiet).clicked() {
+                if self.stage_index > 0
+                    && button(ui, "Move earlier", Tone::Quiet, Size::Compact).clicked()
+                {
                     action = Some(StageAction::Move(false));
                 }
-                if self.stage_index + 1 < count && button(ui, "Move later", Tone::Quiet).clicked() {
+                if self.stage_index + 1 < count
+                    && button(ui, "Move later", Tone::Quiet, Size::Compact).clicked()
+                {
                     action = Some(StageAction::Move(true));
                 }
-                if button(ui, "Remove stage", Tone::Danger).clicked() {
+                if button(ui, "Remove stage", Tone::Danger, Size::Compact).clicked() {
                     action = Some(StageAction::Remove);
                 }
             });
