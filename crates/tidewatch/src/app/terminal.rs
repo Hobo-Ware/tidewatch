@@ -89,6 +89,7 @@ impl Tidewatch {
                     caught_above(ui, area, pill);
                 }
             }
+            Body::Draft(_) => {}
             Body::Creating => {
                 status_message(ui, area, "Creating worktree...", brand::MUTED);
             }

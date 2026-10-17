@@ -495,7 +495,7 @@ pub(crate) fn approve_delivery_pressed(ctx: &egui::Context) -> bool {
     !consume(ctx, Platform::CURRENT, |command| command == Command::ApproveDelivery).is_empty()
 }
 
-/// The dialog over the window, if any. The new-tab and close dialogs are the ones that also
+/// The dialog over the window, if any. The close and take-over dialogs are the ones that also
 /// refuse the Settings, Overview and Focus chords.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) enum Dialog {

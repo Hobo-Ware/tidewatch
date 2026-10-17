@@ -77,7 +77,8 @@ impl ViewSpec {
         tab: &Tab<Pane<T>>,
     ) -> Option<Self> {
         let Workspace::Repo(repo) = workspace else { return None };
-        if !matches!(tab.pane.body, Body::Shell(_)) {
+        let draft = matches!(tab.pane.body, Body::Draft(_));
+        if !draft && !matches!(tab.pane.body, Body::Shell(_)) {
             return None;
         }
         let (dir, repo_root, name, is_main) = match &tab.pane.worktree {
@@ -87,9 +88,10 @@ impl ViewSpec {
             None if tab.pinned => {
                 (repo.root.clone(), repo.root.clone(), MAIN_TITLE.to_owned(), true)
             }
+            None if draft => (repo.root.clone(), repo.root.clone(), tab.title.clone(), false),
             None => return None,
         };
-        let notes_file = paths.map(|paths| paths.notes_file(&repo_root, &name));
+        let notes_file = paths.filter(|_| !draft).map(|paths| paths.notes_file(&repo_root, &name));
         Some(Self { id: tab.id, dir, name, is_main, notes_file })
     }
 
@@ -706,6 +708,23 @@ mod tests {
         let failed =
             Pane { body: Body::Failed("x".into()), worktree: Some(worktree()), agent: None };
         assert_eq!(ViewSpec::of(&repo_workspace(), None, &tab(false, failed)), None);
+    }
+
+    #[test]
+    fn a_draft_reads_the_repo_root_for_its_history_and_keeps_no_notes() {
+        let paths = TidewatchPaths::new(std::path::Path::new("/home"));
+        let form = crate::new_tab::NewTab::open(
+            crate::new_tab::Group::Repo,
+            "web".into(),
+            "/work/web".into(),
+            Vec::new(),
+            None,
+            1,
+        );
+        let spec =
+            ViewSpec::of(&repo_workspace(), Some(&paths), &tab(false, Pane::draft(form))).unwrap();
+        assert_eq!(spec.dir, std::path::Path::new("/work/web"));
+        assert_eq!((spec.is_main, spec.notes_file), (false, None));
     }
 
     #[test]

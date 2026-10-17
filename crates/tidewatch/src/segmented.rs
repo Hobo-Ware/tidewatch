@@ -3,7 +3,7 @@
 use egui::{Align2, Color32, CornerRadius, Id, Rect, Sense, Stroke, StrokeKind, Ui, pos2, vec2};
 
 use crate::brand;
-use crate::screen_kit::body;
+use crate::screen_kit::{body, mono};
 
 pub(crate) const HEIGHT: f32 = 28.0;
 const EDGE: f32 = 3.0;
@@ -12,6 +12,8 @@ const SEGMENT_PAD: f32 = 10.0;
 const FONT: f32 = 12.5;
 const CHIP_GAP: f32 = 6.0;
 const GAP_ROWS: f32 = 6.0;
+const KEY_GAP: f32 = 8.0;
+const KEY_FONT: f32 = 11.0;
 
 /// The container and then each segment, for text widths `text` and the control's right edge.
 fn rects(right: f32, center_y: f32, text: &[f32]) -> (Rect, Vec<Rect>) {
@@ -39,15 +41,21 @@ pub(crate) struct Output {
     pub(crate) left: f32,
 }
 
+/// What each segment says: its label, optionally a key cap after it, optionally an ink of its own.
+struct Look<'a> {
+    labels: &'a [&'a str],
+    keys: &'a [&'a str],
+    tones: &'a [Option<Color32>],
+}
+
 fn paint_segments(
     ui: &mut Ui,
     id: Id,
-    container: Rect,
-    segments: Vec<Rect>,
-    labels: &[&str],
-    tones: &[Option<Color32>],
+    (container, segments): (Rect, Vec<Rect>),
+    look: &Look,
     active: usize,
 ) -> Option<usize> {
+    let Look { labels, keys, tones } = *look;
     let painter = ui.painter().clone();
     painter.rect(
         container,
@@ -69,7 +77,17 @@ fn paint_segments(
             (false, true) => brand::TEXT,
             (false, false) => tone.unwrap_or(brand::SOFT),
         };
-        painter.text(rect.center(), Align2::CENTER_CENTER, *label, body(FONT), ink);
+        match keys.get(index) {
+            Some(key) => {
+                let at = pos2(rect.left() + SEGMENT_PAD, rect.center().y);
+                painter.text(at, Align2::LEFT_CENTER, *label, body(FONT), ink);
+                let at = pos2(rect.right() - SEGMENT_PAD, rect.center().y);
+                painter.text(at, Align2::RIGHT_CENTER, *key, mono(KEY_FONT), brand::FAINT);
+            }
+            None => {
+                painter.text(rect.center(), Align2::CENTER_CENTER, *label, body(FONT), ink);
+            }
+        }
         if response.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() && !on {
             clicked = Some(index);
         }
@@ -95,9 +113,36 @@ pub(crate) fn show(
     labels: &[&str],
     active: usize,
 ) -> Output {
-    let (container, segments) = rects(right, center_y, &text_widths(ui, labels));
-    let clicked = paint_segments(ui, id, container, segments, labels, &[], active);
-    Output { clicked, left: container.left() }
+    let placed = rects(right, center_y, &text_widths(ui, labels));
+    let left = placed.0.left();
+    let clicked = paint_segments(ui, id, placed, &Look { labels, keys: &[], tones: &[] }, active);
+    Output { clicked, left }
+}
+
+/// `show` with a dim key cap after each label (`Agent  A`), for a choice a key also picks.
+pub(crate) fn show_keyed(
+    ui: &mut Ui,
+    id: Id,
+    right: f32,
+    center_y: f32,
+    choices: &[(&str, &str)],
+    active: usize,
+) -> Output {
+    let labels: Vec<&str> = choices.iter().map(|(label, _)| *label).collect();
+    let keys: Vec<&str> = choices.iter().map(|(_, key)| *key).collect();
+    let widths: Vec<f32> = text_widths(ui, &labels)
+        .into_iter()
+        .zip(&keys)
+        .map(|(label, key)| {
+            let cap = ui.painter().layout_no_wrap((*key).to_owned(), mono(KEY_FONT), brand::FAINT);
+            label + KEY_GAP + cap.size().x
+        })
+        .collect();
+    let placed = rects(right, center_y, &widths);
+    let left = placed.0.left();
+    let clicked =
+        paint_segments(ui, id, placed, &Look { labels: &labels, keys: &keys, tones: &[] }, active);
+    Output { clicked, left }
 }
 
 /// The same control flowing in the current row; returns the segment clicked that is not the active one.
@@ -116,8 +161,8 @@ pub(crate) fn inline_toned(
     let text = text_widths(ui, labels);
     let width = rects(0.0, 0.0, &text).0.width();
     let (slot, _) = ui.allocate_exact_size(vec2(width, HEIGHT), Sense::hover());
-    let (container, segments) = rects(slot.right(), slot.center().y, &text);
-    paint_segments(ui, id, container, segments, labels, tones, active)
+    let placed = rects(slot.right(), slot.center().y, &text);
+    paint_segments(ui, id, placed, &Look { labels, keys: &[], tones }, active)
 }
 
 /// Where each chip of widths `widths` goes in rows of at most `avail`, and the height the rows take.

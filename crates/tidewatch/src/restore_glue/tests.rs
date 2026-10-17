@@ -146,6 +146,7 @@ impl Fixture {
                 Body::Shell(s) => s.clone(),
                 Body::Creating => "creating".into(),
                 Body::Removing => "removing".into(),
+                Body::Draft(_) => "draft".into(),
                 Body::Failed(m) => format!("failed: {m}"),
             })
             .collect()

@@ -1,12 +1,14 @@
-//! Opening, closing and answering tabs: the new-tab dialog, worktree jobs and the close flow.
+//! Opening, closing and answering tabs: the new-tab draft, worktree jobs and the close flow.
 
+use std::hash::{BuildHasher, Hasher, RandomState};
+
+use stdusk_core::terminal::PtyTerm;
 use tidewatch_core::worktree::BranchOutcome;
 
 use super::{Closing, Tidewatch};
 use crate::close_dialog::{self, Answer, Choice};
 use crate::dev_worktree::DevWorktree;
 use crate::new_tab::{Group, NewTab, Request};
-use crate::new_tab_dialog::Outcome;
 use crate::pane::{
     CREATING_TITLE, ClosePolicy, Pane, STARTING_TITLE, agent_tabs_in_folder, finish_open,
 };
@@ -16,17 +18,18 @@ use crate::tabs::Action;
 use crate::workflow_glue::Start;
 use crate::worktree_jobs::{self, Done, OpenSpec, Target};
 
+fn random_seed() -> u64 {
+    RandomState::new().build_hasher().finish()
+}
+
 impl Tidewatch {
-    /// Opens the new-tab dialog. Without a home directory there are no profiles to pick from, so
-    /// the tab opens as a plain shell.
+    /// Opens a draft tab: the new-tab form, with nothing made until Start. Without a home
+    /// directory there are no profiles to pick from, so the tab opens as a plain shell.
     fn new_tab(&mut self, ctx: &egui::Context) {
         self.new_tab_on(ctx, None);
     }
 
     pub(super) fn new_tab_on(&mut self, ctx: &egui::Context, preselect: Option<&str>) {
-        if self.new_tab.is_some() {
-            return;
-        }
         if self.welcome.is_some() {
             self.run_repo_command(super::repos::RepoCommand::Open, ctx);
             return;
@@ -35,40 +38,68 @@ impl Tidewatch {
             self.open_tab(ctx, Request::Shell);
             return;
         }
-        if !self.catalog.is_loaded() {
-            self.show_toast("Profiles are still loading", ctx);
-            return;
-        }
-        let state = self.dialog_state(preselect);
-        self.bases.refresh(ctx, state.repo());
-        self.new_tab = Some(state);
+        let state = self.draft_state(preselect);
+        self.open_draft(ctx, state);
     }
 
-    pub(super) fn dialog_state(&self, preselect: Option<&str>) -> NewTab {
+    pub(super) fn open_draft(&mut self, ctx: &egui::Context, state: NewTab) -> u64 {
+        self.bases.refresh(ctx, state.repo(), self.paths.as_ref());
+        let title = state.title().to_owned();
+        self.tabs.push(title, Pane::draft(state))
+    }
+
+    pub(super) fn draft_state(&self, preselect: Option<&str>) -> NewTab {
         let (group, label, dir) = match self.workspace() {
             Workspace::Repo(repo) => (Group::Repo, repo.label.clone(), repo.root.clone()),
             Workspace::Other { dir, label } => {
                 (Group::Other, format!("Other: {label}"), dir.clone())
             }
         };
-        let base = self.bases.get(&dir).map(str::to_owned);
         let running = agent_tabs_in_folder(&self.tabs);
-        let mut state = NewTab::open(group, label, dir, running, self.last_profile.as_deref());
-        state.set_base(base);
+        let last = self.last_profile.as_deref();
+        let mut state = NewTab::open(group, label, dir, running, last, random_seed());
+        state.settle(&self.catalog);
         if let Some(preselect) = preselect {
             state.jump(preselect, &self.catalog);
         }
         state
     }
 
-    /// In a git repo a new tab is a fresh worktree; in the Other group it is a plain shell, or an
-    /// agent in the folder itself. An agent tab is prepared on a job thread first.
+    /// Turns the tab `tab` into what the draft asked for.
+    pub(super) fn start_draft(&mut self, ctx: &egui::Context, tab: u64, request: Request) {
+        if let Request::Agent(agent) = &request {
+            self.last_profile = Some(agent.profile_id.clone());
+        }
+        self.open_tab_in(ctx, request, Some(tab));
+    }
+
     pub(super) fn open_tab(&mut self, ctx: &egui::Context, request: Request) {
+        self.open_tab_in(ctx, request, None);
+    }
+
+    /// The tab a new tab's pane goes into: the draft that asked for it, else one at the end.
+    fn claim_tab(&mut self, into: Option<u64>, title: &str, pane: Pane<PtyTerm>) -> u64 {
+        match into.and_then(|id| self.tabs.get_mut(id)) {
+            Some(found) => {
+                title.clone_into(&mut found.title);
+                found.pane = pane;
+                let id = found.id;
+                self.tabs.select_id(id);
+                id
+            }
+            None => self.tabs.push(title.to_owned(), pane),
+        }
+    }
+
+    /// In a git repo a new tab is a fresh worktree; in the Other group it is a plain shell, or an
+    /// agent in the folder itself. An agent tab is prepared on a job thread first. `into` is the
+    /// draft tab the new tab takes the place of.
+    fn open_tab_in(&mut self, ctx: &egui::Context, request: Request, into: Option<u64>) {
         let agent = match request {
             Request::Shell => None,
             Request::Agent(agent) => Some(agent),
             Request::Workflow(request) => {
-                self.open_workflow(ctx, Start::New(request), None);
+                self.open_workflow(ctx, Start::New(request), None, into);
                 return;
             }
         };
@@ -82,51 +113,34 @@ impl Tidewatch {
         let listener = self.hooks.listener();
         let trust = self.trust.grant();
         let group = self.tabs.active_group();
+        let placement = agent.as_ref().map(|agent| agent.placement.clone()).unwrap_or_default();
         match (&self.workspaces[group], &self.paths) {
             (Workspace::Repo(repo), Some(paths)) => {
-                let tab = self.tabs.push(CREATING_TITLE.to_owned(), pane);
-                let target = Target::Worktree { repo: repo.root.clone() };
+                let (repo, paths) = (repo.root.clone(), paths.clone());
+                let tab = self.claim_tab(into, CREATING_TITLE, pane);
+                let target = Target::Worktree { repo, placement };
                 let path_var = self.catalog.path.clone();
-                let spec = OpenSpec {
-                    paths: paths.clone(),
-                    target,
-                    agent,
-                    path_var,
-                    tab,
-                    listener,
-                    trust,
-                };
+                let spec = OpenSpec { paths, target, agent, path_var, tab, listener, trust };
                 worktree_jobs::open(&self.jobs, ctx, spec);
             }
             (workspace, Some(paths)) if agent.is_some() => {
-                let tab = self.tabs.push(STARTING_TITLE.to_owned(), pane);
-                let target = Target::Folder { dir: workspace.dir().to_path_buf() };
+                let dir = workspace.dir().to_path_buf();
+                let paths = paths.clone();
+                let tab = self.claim_tab(into, STARTING_TITLE, pane);
+                let target = Target::Folder { dir };
                 let path_var = self.catalog.path.clone();
-                let spec = OpenSpec {
-                    paths: paths.clone(),
-                    target,
-                    agent,
-                    path_var,
-                    tab,
-                    listener,
-                    trust,
-                };
+                let spec = OpenSpec { paths, target, agent, path_var, tab, listener, trust };
                 worktree_jobs::open(&self.jobs, ctx, spec);
             }
             _ => {
                 let dir = self.workspace().dir().to_path_buf();
+                if let Some(draft) = into {
+                    self.tabs.remove_id(draft);
+                    self.forget_tab(draft);
+                }
                 self.tabs.apply(Action::New, || Pane::shell(spawn_shell(ctx, &dir)));
             }
         }
-    }
-
-    pub(super) fn answer_new_tab(&mut self, outcome: Outcome, ctx: &egui::Context) {
-        self.new_tab = None;
-        let Outcome::Start(request) = outcome else { return };
-        if let Request::Agent(agent) = &request {
-            self.last_profile = Some(agent.profile_id.clone());
-        }
-        self.open_tab(ctx, request);
     }
 
     pub(super) fn close_tab(&mut self, index: usize, ctx: &egui::Context) {

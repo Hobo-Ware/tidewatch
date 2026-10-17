@@ -88,7 +88,7 @@ impl Tidewatch {
             group -= 1;
         }
         self.restore.enqueue(group, &workspace);
-        self.bases.refresh(ctx, workspace.dir());
+        self.bases.refresh(ctx, workspace.dir(), self.paths.as_ref());
         self.workspaces.push(workspace);
         if let Some(paths) = &self.paths {
             self.restore.begin(ctx, paths, &self.catalog);

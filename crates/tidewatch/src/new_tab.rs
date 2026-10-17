@@ -1,13 +1,17 @@
-//! New-tab dialog state and rules, without drawing (YOLO only in a worktree tab, D11).
+//! The new-tab form's state and rules, without drawing: the kind, the picks, the level (YOLO only
+//! in a worktree tab, D11), the worktree name and start branch, and the request Start turns into.
 
 use std::path::PathBuf;
 
 use tidewatch_core::agents::{Agent, Level};
+use tidewatch_core::branch_name::{self, Problem};
+use tidewatch_core::names;
 use tidewatch_core::profiles::Profile;
 use tidewatch_core::workflows::Workflow;
 
 use crate::catalog::{Availability, Catalog};
 use crate::new_tab_workflow;
+use crate::repo_base::RepoFacts;
 use crate::workflow_glue::WorkflowRequest;
 
 const COPILOT_TRUST_HINT: &str = "Copilot asks to trust a new worktree on its first start. Trust ~/.tidewatch once to skip that.";
@@ -25,11 +29,23 @@ pub(crate) enum Kind {
     Shell,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum Step {
-    Choose,
-    Agent,
-    Workflow,
+impl Kind {
+    pub(crate) fn title(self) -> &'static str {
+        match self {
+            Self::Agent => "New agent",
+            Self::Workflow => "New workflow",
+            Self::Shell => "New shell",
+        }
+    }
+}
+
+/// Where a new tab's worktree is cut. The default is the plain way: a name from `names`, off the
+/// current commit.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(crate) struct Placement {
+    pub(crate) name: Option<String>,
+    /// The branch the worktree starts from; `None` starts from HEAD.
+    pub(crate) base: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -37,8 +53,9 @@ pub(crate) struct AgentRequest {
     pub(crate) profile_id: String,
     pub(crate) profile: Profile,
     pub(crate) agent: Agent,
-    /// The first message, sent from the tab and never from the dialog: empty for a tab the dialog opens.
+    /// Given to the agent at launch as its first prompt (`prepare::task_args`); empty starts it idle.
     pub(crate) task: String,
+    pub(crate) placement: Placement,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -84,19 +101,57 @@ fn matches_filter(filter: &str, texts: &[&str]) -> bool {
     needle.is_empty() || texts.iter().any(|text| text.to_lowercase().contains(&needle))
 }
 
+/// Whether the worktree name still follows the message, or the user has typed one.
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum Name {
+    Follows,
+    Typed(String),
+}
+
+/// The branch the worktree starts from: what the repo has checked out, or the user's pick.
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum Base {
+    Default,
+    Picked(String),
+}
+
+/// What is wrong with the worktree name, if anything.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum NameCheck {
+    Fine,
+    Invalid(Problem),
+    Taken { suggestion: String },
+}
+
+impl NameCheck {
+    pub(crate) fn is_fine(&self) -> bool {
+        *self == Self::Fine
+    }
+}
+
+fn is_taken(facts: Option<&RepoFacts>, name: &str) -> bool {
+    facts.is_some_and(|facts| facts.taken.contains(name))
+}
+
 pub(crate) struct NewTab {
     group: Group,
     label: String,
     repo: PathBuf,
-    base: Option<String>,
-    step: Step,
-    highlight: Kind,
-    from_chooser: bool,
+    kind: Kind,
     last_profile: Option<String>,
     filter: String,
-    selected: usize,
+    agent_pick: usize,
+    workflow_pick: usize,
     level: Level,
     running_here: Vec<String>,
+    message: String,
+    task: String,
+    name: Name,
+    base: Base,
+    seed: u64,
+    settled: bool,
+    /// The message box takes the keyboard once, when the form opens.
+    pub(crate) focus_message: bool,
     pub(crate) scroll_to_selected: bool,
     pub(crate) error: Option<String>,
 }
@@ -108,20 +163,26 @@ impl NewTab {
         repo: PathBuf,
         running_here: Vec<String>,
         last_profile: Option<&str>,
+        seed: u64,
     ) -> Self {
         Self {
             group,
             label,
             repo,
-            base: None,
-            step: Step::Choose,
-            highlight: Kind::Agent,
-            from_chooser: true,
+            kind: Kind::Agent,
             last_profile: last_profile.map(str::to_owned),
             filter: String::new(),
-            selected: 0,
+            agent_pick: 0,
+            workflow_pick: 0,
             level: Level::Auto,
             running_here,
+            message: String::new(),
+            task: String::new(),
+            name: Name::Follows,
+            base: Base::Default,
+            seed,
+            settled: false,
+            focus_message: true,
             scroll_to_selected: true,
             error: None,
         }
@@ -139,16 +200,12 @@ impl NewTab {
         &self.repo
     }
 
-    pub(crate) fn base(&self) -> Option<&str> {
-        self.base.as_deref()
+    pub(crate) fn kind(&self) -> Kind {
+        self.kind
     }
 
-    pub(crate) fn set_base(&mut self, base: Option<String>) {
-        self.base = base;
-    }
-
-    pub(crate) fn step(&self) -> Step {
-        self.step
+    pub(crate) fn title(&self) -> &'static str {
+        self.kind.title()
     }
 
     pub(crate) fn filter(&self) -> &str {
@@ -159,93 +216,99 @@ impl NewTab {
         self.level
     }
 
-    pub(crate) fn selected(&self) -> usize {
-        self.selected
-    }
-
-    pub(crate) fn highlight(&self) -> Kind {
-        self.highlight
-    }
-
-    /// Left and Right on the first screen: the next card that is on offer, staying put at the ends.
-    pub(crate) fn move_highlight(&mut self, forward: bool) {
-        let order = [Kind::Agent, Kind::Workflow, Kind::Shell];
-        let at = order.iter().position(|kind| *kind == self.highlight).unwrap_or_default();
-        let next: Vec<Kind> = if forward {
-            order[at + 1..].to_vec()
-        } else {
-            order[..at].iter().rev().copied().collect()
-        };
-        if let Some(kind) = next.into_iter().find(|kind| self.offers(*kind)) {
-            self.highlight = kind;
+    /// The text the worktree name follows: the first message of an agent, the task of a workflow.
+    pub(crate) fn text(&self) -> &str {
+        match self.kind {
+            Kind::Workflow => &self.task,
+            Kind::Agent | Kind::Shell => &self.message,
         }
     }
 
-    /// Whether the first screen offers `kind` here: a workflow needs a worktree to run in.
+    pub(crate) fn set_text(&mut self, text: &str) {
+        let slot = match self.kind {
+            Kind::Workflow => &mut self.task,
+            Kind::Agent | Kind::Shell => &mut self.message,
+        };
+        text.clone_into(slot);
+        self.error = None;
+    }
+
+    pub(crate) fn selected(&self) -> usize {
+        match self.kind {
+            Kind::Workflow => self.workflow_pick,
+            Kind::Agent | Kind::Shell => self.agent_pick,
+        }
+    }
+
+    /// Whether the form offers `kind` here: a workflow needs a worktree to run in.
     pub(crate) fn offers(&self, kind: Kind) -> bool {
         kind != Kind::Workflow || self.group == Group::Repo
     }
 
-    pub(crate) fn jump(&mut self, preselect: &str, catalog: &Catalog) {
-        self.from_chooser = false;
-        match preselect.strip_prefix("workflow:") {
-            Some(id) if self.offers(Kind::Workflow) => {
-                self.enter(Step::Workflow, catalog);
-                self.select_id(id, catalog);
-            }
-            Some(_) => {}
-            None => {
-                self.enter(Step::Agent, catalog);
-                self.select_id(preselect, catalog);
-            }
-        }
+    /// Whether the form has a worktree to name and a branch to start from.
+    pub(crate) fn makes_a_worktree(&self) -> bool {
+        self.group == Group::Repo
     }
 
-    pub(crate) fn choose(&mut self, kind: Kind, catalog: &Catalog) -> Option<Request> {
-        if !self.offers(kind) {
-            return None;
+    /// Settles the form on the catalog the first time it is known: the last used profile, with its
+    /// level.
+    pub(crate) fn settle(&mut self, catalog: &Catalog) {
+        if self.settled || !catalog.is_loaded() {
+            return;
         }
-        match kind {
-            Kind::Shell => return Some(Request::Shell),
-            Kind::Agent => self.enter(Step::Agent, catalog),
-            Kind::Workflow => self.enter(Step::Workflow, catalog),
-        }
-        self.from_chooser = true;
-        None
-    }
-
-    fn enter(&mut self, step: Step, catalog: &Catalog) {
-        self.step = step;
-        self.filter.clear();
-        self.selected = 0;
-        self.error = None;
-        if step == Step::Agent
-            && let Some(last) = self.last_profile.clone()
-        {
+        self.settled = true;
+        if let Some(last) = self.last_profile.clone() {
             self.select_id(&last, catalog);
         }
         self.apply_selection(catalog);
     }
 
-    /// One step back to the first screen. `false` when there is none to go back to.
-    pub(crate) fn back(&mut self) -> bool {
-        if self.step == Step::Choose || !self.from_chooser {
-            return false;
+    pub(crate) fn jump(&mut self, preselect: &str, catalog: &Catalog) {
+        match preselect.strip_prefix("workflow:") {
+            Some(id) if self.offers(Kind::Workflow) => {
+                self.enter(Kind::Workflow);
+                self.select_id(id, catalog);
+            }
+            Some(_) => {}
+            None => {
+                self.enter(Kind::Agent);
+                self.select_id(preselect, catalog);
+            }
         }
-        self.step = Step::Choose;
-        self.filter.clear();
+    }
+
+    /// Shell is a request at once; Agent and Workflow switch the form.
+    pub(crate) fn choose(&mut self, kind: Kind) -> Option<Request> {
+        if !self.offers(kind) {
+            return None;
+        }
+        match kind {
+            Kind::Shell => return Some(Request::Shell),
+            Kind::Agent | Kind::Workflow => {
+                if kind != self.kind {
+                    self.enter(kind);
+                }
+            }
+        }
+        None
+    }
+
+    fn enter(&mut self, kind: Kind) {
+        self.kind = kind;
+        self.focus_message &= kind == Kind::Agent;
         self.error = None;
-        true
+        self.scroll_to_selected = true;
     }
 
     pub(crate) fn set_filter(&mut self, text: &str, catalog: &Catalog) {
         if self.filter != text {
             text.clone_into(&mut self.filter);
-            self.selected = 0;
+            self.agent_pick = 0;
             self.apply_selection(catalog);
         }
     }
 
+    /// The profiles that match the filter, grouped by CLI in the table's order.
     pub(crate) fn agent_groups(&self, catalog: &Catalog) -> Vec<(String, Vec<String>)> {
         let entries = catalog.entries();
         catalog
@@ -273,36 +336,33 @@ impl NewTab {
             .collect()
     }
 
-    pub(crate) fn workflow_ids(&self, catalog: &Catalog) -> Vec<String> {
+    fn workflow_ids(catalog: &Catalog) -> Vec<String> {
         let Some(workflows) = catalog.workflows() else { return Vec::new() };
         new_tab_workflow::ordered(workflows)
             .into_iter()
-            .filter(|workflow| {
-                matches_filter(&self.filter, &[&workflow.name, &workflow.description])
-            })
             .map(|workflow| workflow.id.clone())
             .collect()
     }
 
+    /// The ids of the cards the form shows, in order: what the number keys pick from.
     pub(crate) fn visible(&self, catalog: &Catalog) -> Vec<String> {
-        match self.step {
-            Step::Choose => Vec::new(),
-            Step::Agent => {
+        match self.kind {
+            Kind::Agent | Kind::Shell => {
                 self.agent_groups(catalog).into_iter().flat_map(|(_, ids)| ids).collect()
             }
-            Step::Workflow => self.workflow_ids(catalog),
+            Kind::Workflow => Self::workflow_ids(catalog),
         }
     }
 
     pub(crate) fn selected_id(&self, catalog: &Catalog) -> Option<String> {
-        self.visible(catalog).into_iter().nth(self.selected)
+        self.visible(catalog).into_iter().nth(self.selected())
     }
 
     pub(crate) fn selected_entry<'a>(
         &self,
         catalog: &'a Catalog,
     ) -> Option<(&'a Profile, &'a Agent)> {
-        if self.step != Step::Agent {
+        if self.kind != Kind::Agent {
             return None;
         }
         let id = self.selected_id(catalog)?;
@@ -310,7 +370,7 @@ impl NewTab {
     }
 
     pub(crate) fn selected_workflow<'a>(&self, catalog: &'a Catalog) -> Option<&'a Workflow> {
-        if self.step != Step::Workflow {
+        if self.kind != Kind::Workflow {
             return None;
         }
         let id = self.selected_id(catalog)?;
@@ -324,22 +384,15 @@ impl NewTab {
     }
 
     pub(crate) fn select(&mut self, index: usize, catalog: &Catalog) {
-        if index < self.visible(catalog).len() && index != self.selected {
-            self.selected = index;
+        if index < self.visible(catalog).len() && index != self.selected() {
+            match self.kind {
+                Kind::Workflow => self.workflow_pick = index,
+                Kind::Agent | Kind::Shell => self.agent_pick = index,
+            }
             self.apply_selection(catalog);
         } else {
             self.scroll_to_selected = true;
         }
-    }
-
-    pub(crate) fn step_selection(&mut self, down: bool, catalog: &Catalog) {
-        let count = self.visible(catalog).len();
-        let next = if down {
-            (self.selected + 1).min(count.saturating_sub(1))
-        } else {
-            self.selected.saturating_sub(1)
-        };
-        self.select(next, catalog);
     }
 
     fn apply_selection(&mut self, catalog: &Catalog) {
@@ -375,16 +428,116 @@ impl NewTab {
         next.is_some_and(|level| self.set_level(level, catalog))
     }
 
-    /// What Enter does: the request, or the reason it cannot start.
-    pub(crate) fn request(&self, catalog: &Catalog) -> Result<Request, String> {
-        match self.step {
-            Step::Choose => Err("Pick Agent, Workflow or Plain shell first.".to_owned()),
-            Step::Agent => self.agent_request(catalog),
-            Step::Workflow => self.workflow_request(catalog),
+    /// The name shown in the field: what the user typed, else a slug of the text, else an
+    /// adjective-noun nobody has.
+    pub(crate) fn name(&self, facts: Option<&RepoFacts>) -> String {
+        match &self.name {
+            Name::Typed(name) => name.clone(),
+            Name::Follows => {
+                let slug = branch_name::slug(self.text());
+                if slug.is_empty() {
+                    names::pick(self.seed, |name| is_taken(facts, name))
+                } else {
+                    slug
+                }
+            }
         }
     }
 
-    fn agent_request(&self, catalog: &Catalog) -> Result<Request, String> {
+    /// Whether the name is a slug of the text right now, which the field says.
+    pub(crate) fn name_follows_text(&self) -> bool {
+        self.name == Name::Follows && !branch_name::slug(self.text()).is_empty()
+    }
+
+    pub(crate) fn type_name(&mut self, name: &str) {
+        self.name = Name::Typed(name.to_owned());
+        self.error = None;
+    }
+
+    pub(crate) fn name_check(&self, facts: Option<&RepoFacts>) -> NameCheck {
+        if !self.makes_a_worktree() {
+            return NameCheck::Fine;
+        }
+        let name = self.name(facts);
+        if let Err(problem) = branch_name::check(&name) {
+            return NameCheck::Invalid(problem);
+        }
+        if is_taken(facts, &name) {
+            let suggestion = branch_name::next_free(&name, |name| is_taken(facts, name));
+            return NameCheck::Taken { suggestion };
+        }
+        NameCheck::Fine
+    }
+
+    /// The branch the worktree starts from, `None` for HEAD.
+    pub(crate) fn base(&self, facts: Option<&RepoFacts>) -> Option<String> {
+        match &self.base {
+            Base::Picked(branch) => Some(branch.clone()),
+            Base::Default => facts.and_then(|facts| facts.checked_out.clone()),
+        }
+    }
+
+    pub(crate) fn pick_base(&mut self, branch: &str) {
+        self.base = if branch == HEAD { Base::Default } else { Base::Picked(branch.to_owned()) };
+    }
+
+    /// Every branch the field offers: the checked-out one first, or HEAD when none is.
+    pub(crate) fn base_options(facts: Option<&RepoFacts>) -> Vec<String> {
+        let Some(facts) = facts else { return Vec::new() };
+        let first = facts.checked_out.clone().unwrap_or_else(|| HEAD.to_owned());
+        let rest = facts.branches.iter().filter(|branch| **branch != first).cloned();
+        std::iter::once(first.clone()).chain(rest).collect()
+    }
+
+    /// What Start does: the request, or the reason it cannot start.
+    pub(crate) fn start_request(
+        &self,
+        catalog: &Catalog,
+        facts: Option<&RepoFacts>,
+    ) -> Result<Request, String> {
+        if self.kind == Kind::Workflow && self.task.trim().is_empty() {
+            return Err("Say what the run should deliver.".to_owned());
+        }
+        match self.name_check(facts) {
+            NameCheck::Fine => {}
+            NameCheck::Invalid(problem) => return Err(problem.message()),
+            NameCheck::Taken { suggestion } => {
+                return Err(format!("{} is taken. Try {suggestion}.", self.name(facts)));
+            }
+        }
+        self.request(catalog, facts)
+    }
+
+    /// The request for the picked profile or workflow, whatever the fields say about the name and
+    /// the task.
+    pub(crate) fn request(
+        &self,
+        catalog: &Catalog,
+        facts: Option<&RepoFacts>,
+    ) -> Result<Request, String> {
+        match self.kind {
+            Kind::Shell => Ok(Request::Shell),
+            Kind::Agent => self.agent_request(catalog, facts),
+            Kind::Workflow => self.workflow_request(catalog, facts),
+        }
+    }
+
+    fn placement(&self, facts: Option<&RepoFacts>) -> Placement {
+        if self.makes_a_worktree() {
+            Placement { name: Some(self.name(facts)), base: self.base(facts) }
+        } else {
+            Placement::default()
+        }
+    }
+
+    fn agent_request(
+        &self,
+        catalog: &Catalog,
+        facts: Option<&RepoFacts>,
+    ) -> Result<Request, String> {
+        if !catalog.is_loaded() {
+            return Err("Profiles are still loading.".to_owned());
+        }
         let Some(id) = self.selected_id(catalog) else {
             return Err("No profile to start. Add one in Settings.".to_owned());
         };
@@ -398,11 +551,19 @@ impl NewTab {
             profile_id: id,
             profile: Profile { level: self.level, ..profile.clone() },
             agent: agent.clone(),
-            task: String::new(),
+            task: self.message.trim().to_owned(),
+            placement: self.placement(facts),
         })))
     }
 
-    fn workflow_request(&self, catalog: &Catalog) -> Result<Request, String> {
+    fn workflow_request(
+        &self,
+        catalog: &Catalog,
+        facts: Option<&RepoFacts>,
+    ) -> Result<Request, String> {
+        if !catalog.is_loaded() {
+            return Err("Workflows are still loading.".to_owned());
+        }
         let Some(id) = self.selected_id(catalog) else {
             return Err("No workflow to start. Add one in Settings.".to_owned());
         };
@@ -411,7 +572,10 @@ impl NewTab {
         else {
             return Err(format!("workflow {id} is no longer available"));
         };
-        new_tab_workflow::build(workflow, profiles).map(|r| Request::Workflow(Box::new(r)))
+        let mut request = new_tab_workflow::build(workflow, profiles)?;
+        self.task.trim().clone_into(&mut request.task);
+        request.placement = self.placement(facts);
+        Ok(Request::Workflow(Box::new(request)))
     }
 
     pub(crate) fn warnings(&self, catalog: &Catalog) -> Vec<String> {
@@ -442,6 +606,8 @@ impl NewTab {
         warnings
     }
 }
+
+const HEAD: &str = "HEAD";
 
 pub(crate) fn same_folder_warning(names: &[String]) -> String {
     match names {

@@ -1,8 +1,8 @@
 //! Dev-only switches for the screenshot and runnable checks, read once at startup.
 //!
 //! - `TIDEWATCH_DEV_AGENT=<profile id>`: start that profile in a new tab, as Enter in the dialog would.
-//! - `TIDEWATCH_DEV_DIALOG=choose|agent|workflow|<profile id>|workflow:<id>` (or `1` for the first screen): open the
-//!   new-tab dialog on that screen, or on that profile or workflow.
+//! - `TIDEWATCH_DEV_DIALOG=choose|agent|workflow|<profile id>|workflow:<id>` (or `1`): open the new-tab form on that kind, profile or workflow (with `TIDEWATCH_DEV_START=1`, then press Start).
+//! - `TIDEWATCH_DEV_FORM_MESSAGE=<text>`: typed into the form's first message or task box.
 //! - `TIDEWATCH_DEV_WORKFLOW=<workflow id>`: open a tab for that workflow, which then asks for its task.
 //! - `TIDEWATCH_DEV_RESUME=<worktree name>`: open the tab of a saved workflow run and carry on where it was.
 //! - `TIDEWATCH_DEV_SETTINGS=1`: open the settings; `general`, `workflows`, `trust`, `shortcuts` or `house` open that page, `dirty` the profiles with an unsaved edit.
@@ -38,6 +38,7 @@ pub(crate) struct DevAgent {
     /// A profile id, `workflow:<id>` for a workflow, or the worktree name to resume.
     pub(crate) profile: Option<String>,
     pub(crate) task: String,
+    pub(crate) message: String,
     pub(crate) level: Option<Level>,
     pub(crate) start: bool,
 }
@@ -59,6 +60,7 @@ struct Vars<'a> {
     palette: Option<&'a str>,
     propose: Option<&'a str>,
     task: Option<&'a str>,
+    form_message: Option<&'a str>,
     level: Option<&'a str>,
     start: Option<&'a str>,
 }
@@ -71,12 +73,13 @@ impl DevAgent {
             var("TIDEWATCH_DEV_WORKFLOW"),
             var("TIDEWATCH_DEV_RESUME"),
         );
-        let (dialog, settings, palette, propose, task, level, start) = (
+        let (dialog, settings, palette, propose, task, form_message, level, start) = (
             var("TIDEWATCH_DEV_DIALOG"),
             var("TIDEWATCH_DEV_SETTINGS"),
             var("TIDEWATCH_DEV_PALETTE"),
             var("TIDEWATCH_DEV_PROPOSE"),
             var("TIDEWATCH_DEV_TASK"),
+            var("TIDEWATCH_DEV_FORM_MESSAGE"),
             var("TIDEWATCH_DEV_LEVEL"),
             var("TIDEWATCH_DEV_START"),
         );
@@ -89,6 +92,7 @@ impl DevAgent {
             palette: palette.as_deref(),
             propose: propose.as_deref(),
             task: task.as_deref(),
+            form_message: form_message.as_deref(),
             level: level.as_deref(),
             start: start.as_deref(),
         })
@@ -103,6 +107,7 @@ impl DevAgent {
                 mode: Mode::Propose,
                 profile: Some(file.to_owned()),
                 task: String::new(),
+                message: String::new(),
                 level: None,
                 start: false,
             });
@@ -130,6 +135,7 @@ impl DevAgent {
             mode,
             profile,
             task: vars.task.unwrap_or_default().to_owned(),
+            message: vars.form_message.unwrap_or_default().to_owned(),
             level: vars.level.and_then(parse_level),
             start: vars.start == Some("1"),
         })
@@ -165,6 +171,7 @@ mod tests {
                 mode: Mode::Start,
                 profile: Some("builder".into()),
                 task: "hi".into(),
+                message: String::new(),
                 level: Some(Level::Auto),
                 start: true
             }
@@ -196,6 +203,22 @@ mod tests {
         let agent = DevAgent::parse(Vars { dialog: Some("agent"), ..vars() }).unwrap();
         assert_eq!((agent.mode, agent.profile.as_deref()), (Mode::Dialog, Some("agent")));
         assert!(!agent.start);
+    }
+
+    #[test]
+    fn the_form_message_switch_fills_the_form_and_start_presses_its_button() {
+        let dev = DevAgent::parse(Vars {
+            dialog: Some("workflow"),
+            form_message: Some("add saved searches"),
+            start: Some("1"),
+            ..vars()
+        })
+        .unwrap();
+        assert_eq!(
+            (dev.mode, dev.message.as_str(), dev.start),
+            (Mode::Dialog, "add saved searches", true)
+        );
+        assert_eq!(DevAgent::parse(Vars { form_message: Some("x"), ..vars() }), None);
     }
 
     #[test]

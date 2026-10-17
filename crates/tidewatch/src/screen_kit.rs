@@ -3,7 +3,7 @@
 use crate::brand;
 use egui::{
     Align2, Color32, Context, CornerRadius, FontId, Id, Margin, Modal, ModalResponse, Painter,
-    Rect, Response, Sense, Shadow, Stroke, StrokeKind, Ui, Vec2, vec2,
+    Rect, Response, Sense, Shadow, Stroke, StrokeKind, Ui, vec2,
 };
 use kelp_ui::theme::semibold;
 
@@ -64,18 +64,6 @@ pub(crate) fn paint_cli_badge(painter: &Painter, rect: Rect, agent_id: &str) {
         heading(rect.width() * 0.48),
         ink,
     );
-}
-
-pub(crate) fn paint_key_cap(painter: &Painter, anchor: egui::Pos2, text: &str, from_left: bool) {
-    let galley = painter.layout_no_wrap(text.to_owned(), mono(12.0), brand::MUTED);
-    let size = galley.size() + Vec2::new(16.0, 8.0);
-    let rect = if from_left {
-        Rect::from_min_size(anchor - Vec2::new(0.0, size.y / 2.0), size)
-    } else {
-        Rect::from_min_size(anchor - Vec2::new(size.x, size.y / 2.0), size)
-    };
-    painter.rect_filled(rect, 6.0, brand::BUTTON);
-    painter.galley(rect.center() - galley.size() / 2.0, galley, brand::MUTED);
 }
 
 pub(crate) fn clickable(

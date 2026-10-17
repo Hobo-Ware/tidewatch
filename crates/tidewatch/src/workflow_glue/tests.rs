@@ -95,7 +95,13 @@ impl Fixture {
         )
         .unwrap();
         let first_agent = runner.profile(0).unwrap().agent.clone();
-        WorkflowRequest { workflow, profiles, task: task.into(), first_agent }
+        WorkflowRequest {
+            workflow,
+            profiles,
+            task: task.into(),
+            first_agent,
+            placement: Placement::default(),
+        }
     }
 
     fn ship(task: &str) -> WorkflowRequest {
@@ -110,7 +116,7 @@ impl Fixture {
             tools: Tools::with_path(std::env::var_os("PATH").unwrap_or_default()),
             trust: None,
         };
-        self.host.open(&self.ctx, &mut self.tabs, 0, &env, &self.repo, existing, start, 0.0)
+        self.host.open(&self.ctx, &mut self.tabs, 0, &env, &self.repo, existing, None, start, 0.0)
     }
 
     fn tick(&mut self) {
@@ -399,6 +405,7 @@ fn a_stage_whose_agent_is_not_known_asks_instead_of_hanging() {
         profiles: BTreeMap::new(),
         task: "x".into(),
         first_agent: "ghost".into(),
+        placement: Placement::default(),
     };
     let tab = f.open(Start::New(Box::new(request)), None);
     let deadline = Instant::now() + Duration::from_secs(30);

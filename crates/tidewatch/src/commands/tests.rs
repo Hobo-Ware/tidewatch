@@ -443,7 +443,7 @@ mod gate {
     }
 
     #[test]
-    fn the_new_tab_dialog_and_the_close_dialog_take_only_their_own_keys() {
+    fn the_close_dialog_and_the_take_over_dialog_take_only_their_own_keys() {
         let got = allowed(Gate { dialog: Dialog::TabChoice, ..NONE });
         assert_eq!(got, Vec::<Command>::new());
     }

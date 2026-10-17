@@ -57,6 +57,7 @@ fn open_spec(
         tab: 3,
         tools: Tools::with_path(std::env::var_os("PATH").unwrap_or_default()),
         existing,
+        placement: Placement::default(),
     }
 }
 

@@ -9,7 +9,6 @@ use crate::brand;
 use crate::close_dialog;
 use crate::flow_glue;
 use crate::layout;
-use crate::new_tab_dialog;
 use crate::notice;
 use crate::screen_kit::body;
 use crate::toast::Toast;
@@ -75,11 +74,6 @@ impl Tidewatch {
         self.show_takeover_dialog(ctx);
         self.leftovers.show(ctx, self.paths.as_ref(), self.trust.grant().as_ref());
         flow_glue::dialogs(ctx, &mut self.flow, active_id);
-        if let Some(state) = &mut self.new_tab
-            && let Some(outcome) = new_tab_dialog::show(ctx, state, &self.catalog)
-        {
-            self.answer_new_tab(outcome, ctx);
-        }
         if self.trust.dialog_open()
             && let Some(event) = trust_view::dialog(ctx, &self.trust.page())
         {

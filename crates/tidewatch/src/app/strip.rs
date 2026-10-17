@@ -1,10 +1,10 @@
 //! The tab strip: repo chip (a menu of the repos, Open repo and Close repo), leftovers chip, overview button, the tabs, new tab button, and at the right end the update chip and the settings button.
 
 use egui::layers::ShapeIdx;
-use egui::{CornerRadius, Frame, Margin, Shape, vec2};
+use egui::{CornerRadius, Frame, Margin, Shape, pos2, vec2};
 use stdusk_core::progress::Progress;
 use stdusk_core::terminal::{CmdState, PtyTerm};
-use stdusk_egui::ui::{TAB_H, draw_tab, icons};
+use stdusk_egui::ui::{TAB_H, TAB_PAD_X, TAB_SLOT_W, draw_tab, icons};
 use stdusk_egui::widgets::{chip, icon_button, menu_item, style_menu};
 
 use super::Tidewatch;
@@ -204,11 +204,12 @@ fn tab_row<T>(
         let cli = agent.and_then(|a| status_view::cli_of(&a.run.agent_id));
         let painter = ui.painter().clone();
         let under = painter.add(Shape::Noop);
+        let draft = matches!(tab.pane.body, Body::Draft(_));
         let (resp, close) = draw_tab(
             ui,
             Some(position + 1),
             tab.id,
-            &tab.title,
+            if draft { "" } else { &tab.title },
             i == tabs.active(),
             tab.pinned,
             None,
@@ -219,6 +220,9 @@ fn tab_row<T>(
             Some(width),
         );
         nav_look(&painter, under, resp.rect, i == tabs.active(), resp.hovered());
+        if draft {
+            paint_draft_title(&painter, resp.rect, position + 1, &tab.title);
+        }
         if let Some(agent) = agent {
             let tone = status_view::tone(agent.run.status());
             let fraction = progress_fraction(pty_progress);
@@ -254,6 +258,25 @@ fn tab_row<T>(
         }
     }
     slots.iter().map(|slot| slot.rect).collect()
+}
+
+/// The label of a draft tab, in italics after the tab's number: `draw_tab` has no italic title, so
+/// it is given none and this one is laid over the same place.
+fn paint_draft_title(painter: &egui::Painter, tab: egui::Rect, number: usize, title: &str) {
+    let digits = painter.layout_no_wrap("0".to_owned(), egui::FontId::monospace(12.0), brand::SOFT);
+    let prefix = (number.to_string().len() + 2) as f32 * digits.size().x;
+    let x = tab.left() + TAB_PAD_X + prefix;
+    let mut job = egui::text::LayoutJob::simple_singleline(
+        title.to_owned(),
+        egui::FontId::proportional(13.0),
+        brand::SOFT,
+    );
+    job.sections[0].format.italics = true;
+    job.wrap = egui::text::TextWrapping::truncate_at_width(
+        (tab.right() - x - TAB_PAD_X - TAB_SLOT_W - 6.0).max(1.0),
+    );
+    let galley = painter.layout_job(job);
+    painter.galley(pos2(x, tab.center().y - galley.size().y / 2.0), galley, brand::SOFT);
 }
 
 /// Gives a tab the nav look: a teal tint, rounded, with a short bar on the left when active, a

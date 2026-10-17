@@ -198,7 +198,7 @@ impl Form<'_> {
                 &mut columns[1],
                 "What it is for",
                 &mut draft.description,
-                "shown in the new-tab dialog",
+                "shown in the new-tab form",
             );
         });
         ui.spacing_mut().item_spacing = egui::vec2(6.0, 6.0);

@@ -8,6 +8,7 @@ mod bar;
 mod build_workflow;
 mod central;
 mod dev;
+mod draft;
 mod flow;
 mod frame;
 mod overlays;
@@ -65,7 +66,7 @@ use crate::jobs::Jobs;
 use crate::last_used::LastUsed;
 use crate::layout;
 use crate::leftover_glue;
-use crate::new_tab::{NewTab, Request};
+use crate::new_tab::Request;
 use crate::notify::Notifier;
 use crate::os::RealOs;
 use crate::palette::Palette;
@@ -128,7 +129,6 @@ pub(crate) struct Tidewatch {
     toast: Option<Toast>,
     catalog: Catalog,
     agent_jobs: Jobs<agent_jobs::Done>,
-    new_tab: Option<NewTab>,
     settings: Option<Settings>,
     palette: Option<Palette>,
     last_profile: Option<String>,
@@ -249,7 +249,6 @@ impl Tidewatch {
             toast: None,
             catalog: Catalog::new(agent_path),
             agent_jobs: Jobs::new(),
-            new_tab: None,
             settings: None,
             palette: None,
             last_profile: None,
@@ -283,7 +282,7 @@ impl Tidewatch {
             if !restored {
                 app.restore.enqueue(group, workspace);
             }
-            app.bases.refresh(&cc.egui_ctx, workspace.dir());
+            app.bases.refresh(&cc.egui_ctx, workspace.dir(), app.paths.as_ref());
         }
         if restored {
             app.restore.mark_settled();

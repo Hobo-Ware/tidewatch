@@ -179,16 +179,36 @@ pub(crate) fn ellipsized(
 
 /// A text input in the field look: ITEM fill, 1 px line, teal while it has the keyboard.
 pub(crate) fn field_frame(ui: &mut Ui, add: impl FnOnce(&mut Ui) -> Response) -> Response {
+    field_frame_on(ui, brand::ITEM, false, add)
+}
+
+/// `field_frame` on another fill and, with `ring`, a faint teal ring around it while it has the
+/// keyboard.
+pub(crate) fn field_frame_on(
+    ui: &mut Ui,
+    fill: Color32,
+    ring: bool,
+    add: impl FnOnce(&mut Ui) -> Response,
+) -> Response {
     let mut prepared = Frame::new()
-        .fill(brand::ITEM)
+        .fill(fill)
         .corner_radius(CornerRadius::same(CARD_RADIUS))
         .inner_margin(Margin::symmetric(10, 5))
         .begin(ui);
     prepared.content_ui.set_width(prepared.content_ui.available_width());
     let response = add(&mut prepared.content_ui);
-    let line = if response.has_focus() { brand::TEAL } else { brand::FIELD_LINE };
+    let focused = response.has_focus();
+    let line = if focused { brand::TEAL } else { brand::FIELD_LINE };
     prepared.frame.stroke = Stroke::new(1.0, line);
-    prepared.end(ui);
+    let frame = prepared.end(ui);
+    if ring && focused {
+        ui.painter().rect_stroke(
+            frame.rect.expand(1.5),
+            CornerRadius::same(CARD_RADIUS + 1),
+            Stroke::new(3.0, brand::TEAL.gamma_multiply(0.10)),
+            StrokeKind::Middle,
+        );
+    }
     response
 }
 

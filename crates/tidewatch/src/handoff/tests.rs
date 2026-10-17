@@ -217,6 +217,23 @@ fn a_window_with_a_tab_in_transition_or_a_stage_starting_cannot_hand_over() {
 }
 
 #[test]
+fn a_draft_neither_blocks_a_handover_nor_travels_with_it() {
+    let mut w = window();
+    let before = plan(&w.tabs, &facts(&w.workspaces, None), &no_credentials);
+    let form = crate::new_tab::NewTab::open(
+        crate::new_tab::Group::Repo,
+        "web".into(),
+        std::path::PathBuf::from("/work/web"),
+        Vec::new(),
+        None,
+        1,
+    );
+    w.tabs.push_in(0, "New agent".into(), Pane::draft(form));
+    assert_eq!(blocker(&w.tabs), None);
+    assert_eq!(plan(&w.tabs, &facts(&w.workspaces, None), &no_credentials), before);
+}
+
+#[test]
 fn a_failed_tab_alone_does_not_block() {
     let mut w = window();
     w.tabs.push_in(
