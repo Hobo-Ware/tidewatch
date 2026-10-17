@@ -62,7 +62,7 @@ fn fixture() -> Fixture {
 }
 
 fn agent(f: &Fixture, name: &str) -> Worktree {
-    worktree::add_named(&f.paths, &f.repo, name).unwrap()
+    worktree::add_named(&f.paths, &f.repo, name, None).unwrap()
 }
 
 #[test]
