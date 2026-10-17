@@ -70,6 +70,7 @@ mod notice;
 mod notify;
 mod os;
 mod overview;
+mod overview_checklist;
 mod overview_view;
 mod palette;
 mod palette_view;

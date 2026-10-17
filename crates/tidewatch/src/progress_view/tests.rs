@@ -138,13 +138,13 @@ fn phase_bars_wrap_into_rows_that_keep_a_readable_label() {
 
 #[test]
 fn tags_flow_into_rows_and_a_row_break_never_leaves_the_edge() {
-    let (places, height) = flow(&[80.0, 90.0, 70.0], 300.0);
+    let (places, height) = flow(&[80.0, 90.0, 70.0], 300.0, TAG_H, TAG_GAP);
     assert_eq!(places, [(0.0, 0.0), (88.0, 0.0), (186.0, 0.0)]);
     assert_eq!(height, TAG_H);
-    let (places, height) = flow(&[120.0, 120.0, 120.0], 260.0);
+    let (places, height) = flow(&[120.0, 120.0, 120.0], 260.0, TAG_H, TAG_GAP);
     assert_eq!(places, [(0.0, 0.0), (128.0, 0.0), (0.0, TAG_H + TAG_GAP)]);
     assert_eq!(height, 2.0 * TAG_H + TAG_GAP);
-    assert_eq!(flow(&[], 100.0), (Vec::new(), 0.0));
+    assert_eq!(flow(&[], 100.0, TAG_H, TAG_GAP), (Vec::new(), 0.0));
 }
 
 #[test]

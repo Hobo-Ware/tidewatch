@@ -38,6 +38,7 @@ impl Tidewatch {
             .collect();
         let mut overview = overview::build(places);
         self.add_pr_pills(&mut overview);
+        self.add_looks(&mut overview);
         overview
     }
 
@@ -148,12 +149,18 @@ impl Tidewatch {
         let card = self.takeover_card();
         let reveal = self.takeover.take_reveal();
         let mut clicked = None;
-        let jump = overview_view::show(ui, area, &data, |ui| {
+        let repo = self.workspace().dir().to_path_buf();
+        let sections = overview_view::Sections { checklist: self.checklist.of(&repo) };
+        let out = overview_view::show(ui, area, &data, &sections, |ui| {
             if let Some(card) = &card {
                 clicked = takeover_view::card(ui, card, reveal);
                 ui.add_space(12.0);
             }
         });
+        if out.edit_checklist {
+            self.edit_checklist(ctx);
+        }
+        let jump = out.jump;
         if let Some(action) = clicked {
             self.takeover_click(action, ctx);
         }

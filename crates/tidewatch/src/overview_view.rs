@@ -3,24 +3,42 @@
 //! strip that opens it, with a badge counting the tabs that need you.
 
 use egui::{
-    Align2, Color32, CornerRadius, FontId, Rect, ScrollArea, Sense, Stroke, StrokeKind, pos2, vec2,
+    Align2, Color32, CornerRadius, FontId, Rect, ScrollArea, Sense, Shadow, Stroke, StrokeKind,
+    pos2, vec2,
 };
 use stdusk_egui::colors;
+use stdusk_egui::ui::ellipsize;
 use stdusk_egui::widgets::ICON_BTN_W;
 
 use crate::brand;
 use crate::commands::Command;
-use crate::end_block_view;
 use crate::mascot::{self, Pose};
-use crate::overview::{Counts, Overview, Row, fmt_elapsed};
+use crate::overview::{Counts, Overview, Row, card_view, fmt_elapsed};
+use crate::overview_checklist::{Checklist, Chip};
 use crate::pr_strip::tone_ink;
-use crate::screen_kit::{heading, selection_row};
+use crate::progress_ring;
+use crate::progress_view::flow;
+use crate::reader_view::ellipsized;
+use crate::screen_kit::{Size, button_width, heading, quiet_button};
 use crate::status_view::{self, Tone};
 
 const BUTTON_H: f32 = 30.0;
-const ROW_H: f32 = 42.0;
-const END_LINE_H: f32 = 24.0;
 const SIDE: f32 = 20.0;
+const SECTION_GAP: f32 = 22.0;
+const CARD_MIN_W: f32 = 300.0;
+const MAX_COLUMNS: usize = 4;
+const CARD_GAP: f32 = 14.0;
+const CARD_H: f32 = 166.0;
+const CARD_PAD: f32 = 20.0;
+const CARD_RADIUS: u8 = 14;
+const CARD_SHADOW: f32 = 36.0;
+const RING: f32 = 52.0;
+const TAG_H: f32 = 22.0;
+const GROUP_HEAD_H: f32 = 34.0;
+const CHIP_H: f32 = 30.0;
+const CHIP_GAP: f32 = 8.0;
+const CHIP_PAD: f32 = 13.0;
+const CHIP_CHARS: usize = 24;
 const HEADER_H: f32 = 48.0;
 const GRID_ICON: &str = "\u{E464}";
 const BADGE_H: f32 = 15.0;
@@ -77,17 +95,32 @@ fn paint_badge(ui: &egui::Ui, button: Rect, count: usize) {
     ui.painter().galley(badge.center() - galley.size() / 2.0, galley, colors::bg());
 }
 
-/// Draws the Overview in `area` and returns the tab the user clicked. `above` draws first, inside
-/// the scrolling list.
+/// What the Overview shows below the agents.
+#[derive(Default)]
+pub(crate) struct Sections<'a> {
+    pub(crate) checklist: Option<&'a Checklist>,
+}
+
+#[derive(Debug, Default, PartialEq, Eq)]
+pub(crate) struct Out {
+    /// The tab whose card was clicked.
+    pub(crate) jump: Option<u64>,
+    /// Edit on the checklist row.
+    pub(crate) edit_checklist: bool,
+}
+
+/// Draws the Overview in `area` and returns what the user clicked. `above` draws first, inside the
+/// scrolling list.
 pub(crate) fn show(
     ui: &mut egui::Ui,
     area: Rect,
     overview: &Overview,
+    sections: &Sections<'_>,
     above: impl FnOnce(&mut egui::Ui),
-) -> Option<u64> {
+) -> Out {
     ui.painter().rect_filled(area, 0.0, brand::GROUND);
     header(ui, area, overview);
-    let mut jump = None;
+    let mut out = Out::default();
     let body = Rect::from_min_max(
         pos2(area.left() + SIDE, area.top() + HEADER_H + 14.0),
         pos2(area.right() - SIDE, area.bottom() - 14.0),
@@ -97,21 +130,24 @@ pub(crate) fn show(
         above(ui);
         if overview.counts.total() == 0 {
             empty(ui);
-            return;
         }
         if !overview.needs.is_empty() {
-            jump = jump.or(group(ui, "Needs you", "", &overview.needs, true));
-            ui.add_space(12.0);
+            out.jump = out.jump.or(group(ui, "Needs you", "", &overview.needs, true));
+            ui.add_space(SECTION_GAP);
         }
         for place in &overview.places {
             if place.rows.is_empty() {
                 continue;
             }
-            jump = jump.or(group(ui, &place.label, &place.path, &place.rows, false));
-            ui.add_space(12.0);
+            out.jump = out.jump.or(group(ui, &place.label, &place.path, &place.rows, false));
+            ui.add_space(SECTION_GAP);
         }
+        if let Some(checklist) = sections.checklist {
+            out.edit_checklist = checklist_row(ui, checklist);
+        }
+        ui.add_space(SECTION_GAP);
     });
-    jump
+    out
 }
 
 fn header(ui: &egui::Ui, area: Rect, overview: &Overview) {
@@ -170,31 +206,27 @@ fn empty(ui: &mut egui::Ui) {
     });
 }
 
+fn columns(width: f32) -> usize {
+    (((width + CARD_GAP) / (CARD_MIN_W + CARD_GAP)).floor() as usize).clamp(1, MAX_COLUMNS)
+}
+
 fn group(ui: &mut egui::Ui, title: &str, path: &str, rows: &[Row], needs: bool) -> Option<u64> {
     let width = ui.available_width();
-    let head_h = 34.0;
-    let height = head_h + rows.iter().map(row_height).sum::<f32>();
+    let columns = columns(width);
+    let card_w = (width - CARD_GAP * (columns - 1) as f32) / columns as f32;
+    let lines = rows.len().div_ceil(columns);
+    let height = GROUP_HEAD_H + lines as f32 * CARD_H + lines.saturating_sub(1) as f32 * CARD_GAP;
     let (rect, _) = ui.allocate_exact_size(vec2(width, height), Sense::hover());
     let painter = ui.painter_at(rect);
-    painter.rect(
-        rect,
-        CornerRadius::same(12),
-        brand::CARD,
-        Stroke::new(1.0, brand::CARD_LINE),
-        StrokeKind::Inside,
-    );
     let title_color =
         if needs { status_view::color(Tone::Needs).unwrap_or(brand::TEXT) } else { brand::TEXT };
     let galley = painter.layout_no_wrap(title.to_owned(), heading(13.0), title_color);
     let title_w = galley.size().x;
-    painter.galley(
-        pos2(rect.left() + 16.0, rect.top() + head_h / 2.0 - galley.size().y / 2.0),
-        galley,
-        title_color,
-    );
+    let mid = rect.top() + (GROUP_HEAD_H - 10.0) / 2.0;
+    painter.galley(pos2(rect.left(), mid - galley.size().y / 2.0), galley, title_color);
     if !path.is_empty() {
         painter.text(
-            pos2(rect.left() + 16.0 + title_w + 10.0, rect.top() + head_h / 2.0),
+            pos2(rect.left() + title_w + 10.0, mid),
             Align2::LEFT_CENTER,
             path,
             FontId::monospace(11.0),
@@ -202,146 +234,172 @@ fn group(ui: &mut egui::Ui, title: &str, path: &str, rows: &[Row], needs: bool) 
         );
     }
     painter.text(
-        pos2(rect.right() - 16.0, rect.top() + head_h / 2.0),
+        pos2(rect.right(), mid),
         Align2::RIGHT_CENTER,
         format!("{} tab{}", rows.len(), if rows.len() == 1 { "" } else { "s" }),
         FontId::proportional(11.5),
         brand::MUTED,
     );
     let mut jump = None;
-    let mut top = rect.top() + head_h;
-    for row in rows {
-        let row_rect = Rect::from_min_size(pos2(rect.left(), top), vec2(width, row_height(row)));
-        if draw_row(ui, row_rect, row, needs) {
+    for (index, row) in rows.iter().enumerate() {
+        let (line, column) = (index / columns, index % columns);
+        let at = pos2(
+            rect.left() + column as f32 * (card_w + CARD_GAP),
+            rect.top() + GROUP_HEAD_H + line as f32 * (CARD_H + CARD_GAP),
+        );
+        if card(ui, Rect::from_min_size(at, vec2(card_w, CARD_H)), row, needs) {
             jump = Some(row.tab_id);
         }
-        top += row_height(row);
     }
     jump
 }
 
-fn row_height(row: &Row) -> f32 {
-    if row.end_block.is_some() { ROW_H + END_LINE_H } else { ROW_H }
-}
-
-fn draw_row(ui: &mut egui::Ui, rect: Rect, row: &Row, in_needs_group: bool) -> bool {
-    let resp = ui.interact(rect, ui.id().with(("overview_row", row.tab_id)), Sense::click());
-    let painter = ui.painter_at(rect);
-    painter.hline(
-        (rect.left() + 12.0)..=(rect.right() - 12.0),
-        rect.top(),
-        Stroke::new(1.0, brand::CARD_LINE),
+fn card(ui: &mut egui::Ui, rect: Rect, row: &Row, in_needs_group: bool) -> bool {
+    let resp = ui.interact(rect, ui.id().with(("overview_card", row.tab_id)), Sense::click());
+    let view = card_view(row);
+    let painter = ui.painter_at(rect.expand(CARD_SHADOW));
+    painter.add(
+        Shadow { offset: [0, 8], blur: 24, spread: 0, color: Color32::from_black_alpha(64) }
+            .as_shape(rect, CornerRadius::same(CARD_RADIUS)),
     );
-    selection_row(&painter, rect.shrink2(vec2(6.0, 2.0)), false, resp.hovered());
-    let tone = status_view::tone(&row.status);
-    let accent = status_view::color(tone).unwrap_or(brand::MUTED);
-    let mid = rect.top() + ROW_H / 2.0;
-    let bar = Rect::from_min_max(
-        pos2(rect.left() + 8.0, rect.top() + 9.0),
-        pos2(rect.left() + 10.0, rect.top() + ROW_H - 9.0),
+    let line = if resp.hovered() { brand::FIELD_LINE } else { brand::CARD_LINE };
+    painter.rect(
+        rect,
+        CornerRadius::same(CARD_RADIUS),
+        brand::CARD,
+        Stroke::new(1.0, line),
+        StrokeKind::Inside,
     );
-    painter.rect_filled(bar, CornerRadius::same(1), accent);
-    let title_x = rect.left() + 24.0;
-    if let Some(block) = &row.end_block {
-        let line = Rect::from_min_max(
-            pos2(title_x, rect.top() + ROW_H - 4.0),
-            pos2(rect.right() - 16.0, rect.bottom() - 2.0),
-        );
-        end_block_view::paint_line(&painter, line, block);
-    }
-    painter.text(
-        pos2(title_x, mid - 8.0),
-        Align2::LEFT_CENTER,
-        &row.title,
-        FontId::proportional(13.0),
-        brand::TEXT,
-    );
+    let inner = rect.shrink(CARD_PAD);
+    let ring_center = pos2(inner.left() + RING / 2.0, inner.top() + RING / 2.0);
+    progress_ring::paint(&painter, ring_center, RING, view.fraction, view.ring, brand::CARD_LINE);
+    let text_x = inner.left() + RING + 14.0;
+    let room = (inner.right() - text_x).max(1.0);
     let what = row.workflow.as_deref().unwrap_or(&row.profile);
-    let sub = if in_needs_group { format!("{} - {what}", row.place) } else { what.to_owned() };
-    painter.text(
-        pos2(title_x, mid + 8.0),
-        Align2::LEFT_CENTER,
-        sub,
-        FontId::proportional(11.0),
-        brand::MUTED,
-    );
-
-    let right = rect.right() - 16.0;
-    let pill_w = 84.0;
-    let pill = Rect::from_center_size(pos2(right - pill_w / 2.0, mid), vec2(pill_w, 20.0));
-    painter.rect_filled(pill, 10.0, accent.gamma_multiply(0.16));
-    painter.text(
-        pill.center(),
-        Align2::CENTER_CENTER,
-        status_view::label(tone),
-        FontId::proportional(11.0),
-        accent,
-    );
-    let time_right = pill.left() - 14.0;
-    painter.text(
-        pos2(time_right, mid),
-        Align2::RIGHT_CENTER,
-        fmt_elapsed(row.elapsed),
-        FontId::monospace(11.0),
-        brand::MUTED,
-    );
-    let branch_right = time_right - 70.0;
-    let branch_w = 190.0_f32.min((rect.width() * 0.22).max(80.0));
-    clipped(
-        &painter,
-        pos2(branch_right - branch_w, mid),
-        branch_w,
-        &row.branch,
-        FontId::monospace(11.0),
-        brand::MUTED,
-    );
-    let mut detail_left = title_x + 200.0;
+    let sub = if in_needs_group { format!("{} \u{b7} {what}", row.place) } else { what.to_owned() };
+    let name = ellipsized(&painter, &row.title, heading(15.0), brand::TEXT, room);
+    let sub = ellipsized(&painter, &sub, FontId::proportional(12.5), brand::MUTED, room);
+    let block = name.size().y + 2.0 + sub.size().y;
+    let top = ring_center.y - block / 2.0;
+    let sub_top = top + name.size().y + 2.0;
+    painter.galley(pos2(text_x, top), name, brand::TEXT);
+    painter.galley(pos2(text_x, sub_top), sub, brand::MUTED);
+    let line_top = inner.top() + RING + 16.0;
+    let said =
+        ellipsized(&painter, &view.line, FontId::proportional(13.5), brand::SOFT, inner.width());
+    painter.galley(pos2(inner.left(), line_top), said, brand::SOFT);
+    let tag_mid = inner.bottom() - TAG_H / 2.0;
+    let tag_right = paint_pill(&painter, inner.left(), tag_mid, &view.tag, view.tag_ink);
+    let clock =
+        painter.layout_no_wrap(fmt_elapsed(row.elapsed), FontId::monospace(11.0), brand::MUTED);
+    let clock_left = inner.right() - clock.size().x;
     if let Some((tone, text)) = &row.pr {
         let ink = tone_ink(*tone);
-        let galley = painter.layout_no_wrap(text.clone(), FontId::proportional(11.0), ink);
-        let pill =
-            Rect::from_min_size(pos2(detail_left, mid - 10.0), vec2(galley.size().x + 20.0, 20.0));
-        if pill.right() < branch_right - branch_w - 16.0 {
-            painter.rect_filled(pill, 10.0, ink.gamma_multiply(0.14));
-            painter.galley(pill.center() - galley.size() / 2.0, galley, ink);
-            detail_left = pill.right() + 12.0;
+        let width =
+            painter.layout_no_wrap(text.clone(), FontId::proportional(11.5), ink).size().x + 20.0;
+        if tag_right + 8.0 + width < clock_left - 8.0 {
+            paint_pill(&painter, tag_right + 8.0, tag_mid, text, ink);
         }
     }
-    let detail_w = (branch_right - branch_w - 16.0 - detail_left).max(0.0);
-    if detail_w > 20.0
-        && let Some(detail) =
-            row.detail.as_deref().and_then(|d| d.lines().find(|l| !l.trim().is_empty()))
-    {
-        let color = if tone == Tone::Needs { brand::SOFT } else { brand::MUTED };
-        clipped(
-            &painter,
-            pos2(detail_left, mid),
-            detail_w,
-            detail.trim(),
-            FontId::proportional(12.0),
-            color,
-        );
-    }
+    painter.galley(pos2(clock_left, tag_mid - clock.size().y / 2.0), clock, brand::MUTED);
     let tip = status_view::describe(&row.status);
     resp.on_hover_cursor(egui::CursorIcon::PointingHand).on_hover_text(tip).clicked()
 }
 
-fn clipped(
-    painter: &egui::Painter,
-    left_center: egui::Pos2,
-    width: f32,
-    text: &str,
-    font: FontId,
-    color: Color32,
-) {
-    let clip = Rect::from_min_size(pos2(left_center.x, left_center.y - 12.0), vec2(width, 24.0));
-    painter.with_clip_rect(clip.intersect(painter.clip_rect())).text(
-        left_center,
+/// A tinted pill whose left edge is at `left`, centered on `mid`. Returns its right edge.
+fn paint_pill(painter: &egui::Painter, left: f32, mid: f32, text: &str, ink: Color32) -> f32 {
+    let galley = painter.layout_no_wrap(text.to_owned(), FontId::proportional(11.5), ink);
+    let size = vec2(galley.size().x + 20.0, TAG_H);
+    let pill = Rect::from_min_size(pos2(left, mid - TAG_H / 2.0), size);
+    painter.rect_filled(pill, CornerRadius::same(255), ink.gamma_multiply(0.12));
+    painter.galley(pill.center() - galley.size() / 2.0, galley, ink);
+    pill.right()
+}
+
+fn chip_title(chip: &Chip) -> String {
+    let (short, _) = ellipsize(&chip.title, CHIP_CHARS);
+    short
+}
+
+fn checklist_row(ui: &mut egui::Ui, checklist: &Checklist) -> bool {
+    let width = ui.available_width();
+    let (head, _) = ui.allocate_exact_size(vec2(width, 26.0), Sense::hover());
+    let painter = ui.painter_at(head);
+    let title = painter.text(
+        head.left_center(),
         Align2::LEFT_CENTER,
-        text,
-        font,
-        color,
+        "Checklist",
+        heading(16.0),
+        brand::TEXT,
     );
+    painter.text(
+        pos2(title.right() + 14.0, head.center().y + 1.0),
+        Align2::LEFT_CENTER,
+        checklist.source.caption(),
+        FontId::proportional(13.0),
+        brand::MUTED,
+    );
+    ui.add_space(10.0);
+    let font = FontId::proportional(13.0);
+    let labels: Vec<(String, String)> = checklist
+        .chips
+        .iter()
+        .map(|chip| (chip.number.map_or_else(String::new, |n| n.to_string()), chip_title(chip)))
+        .collect();
+    let measure = ui.painter().clone();
+    let number_w = |text: &str| {
+        if text.is_empty() {
+            0.0
+        } else {
+            measure.layout_no_wrap(text.to_owned(), font.clone(), brand::FAINT).size().x + 6.0
+        }
+    };
+    let mut widths: Vec<f32> = labels
+        .iter()
+        .map(|(number, title)| {
+            let text = measure.layout_no_wrap(title.clone(), font.clone(), brand::TEXT);
+            (number_w(number) + text.size().x + 2.0 * CHIP_PAD).min(width)
+        })
+        .collect();
+    let edit_w = button_width(ui, "Edit", Size::Compact);
+    widths.push(edit_w);
+    let (places, height) = flow(&widths, width, CHIP_H, CHIP_GAP);
+    let (rect, _) = ui.allocate_exact_size(vec2(width, height), Sense::hover());
+    let painter = ui.painter_at(rect);
+    for (index, (number, title)) in labels.iter().enumerate() {
+        let (x, y) = places[index];
+        let chip = Rect::from_min_size(rect.min + vec2(x, y), vec2(widths[index], CHIP_H));
+        painter.rect_filled(chip, CornerRadius::same(255), brand::CARD);
+        let mut left = chip.left() + CHIP_PAD;
+        if !number.is_empty() {
+            let galley = painter.layout_no_wrap(number.clone(), font.clone(), brand::FAINT);
+            painter.galley(
+                pos2(left, chip.center().y - galley.size().y / 2.0),
+                galley,
+                brand::FAINT,
+            );
+            left += number_w(number);
+        }
+        let galley = painter.layout_no_wrap(title.clone(), font.clone(), brand::TEXT);
+        painter.galley(pos2(left, chip.center().y - galley.size().y / 2.0), galley, brand::TEXT);
+        let full = &checklist.chips[index].title;
+        if full != title {
+            ui.interact(chip, ui.id().with(("checklist-chip", index)), Sense::hover())
+                .on_hover_text(full);
+        }
+    }
+    let (x, y) = places[labels.len()];
+    let edit = Rect::from_min_size(
+        rect.min + vec2(x, y + (CHIP_H - Size::Compact.height()) / 2.0),
+        vec2(edit_w, Size::Compact.height()),
+    );
+    let mut clicked = false;
+    ui.scope_builder(egui::UiBuilder::new().max_rect(edit), |ui| {
+        let response = quiet_button(ui, "Edit", true, Size::Compact);
+        clicked = response.clicked();
+        response.on_hover_text(checklist.file.display().to_string());
+    });
+    clicked
 }
 
 #[cfg(test)]
@@ -365,6 +423,7 @@ mod tests {
             end_block: None,
             elapsed: 242.0,
             pr: None,
+            look: None,
         }
     }
 
@@ -382,18 +441,27 @@ mod tests {
     }
 
     fn frame(ctx: &egui::Context, data: &Overview, events: Vec<Event>) -> Option<u64> {
+        frame_with(ctx, data, &Sections::default(), events).jump
+    }
+
+    fn frame_with(
+        ctx: &egui::Context,
+        data: &Overview,
+        sections: &Sections<'_>,
+        events: Vec<Event>,
+    ) -> Out {
         let raw = RawInput {
             screen_rect: Some(Rect::from_min_size(pos2(0.0, 0.0), vec2(1000.0, 600.0))),
             events,
             focused: true,
             ..RawInput::default()
         };
-        let mut jump = None;
+        let mut out = Out::default();
         let _ = ctx.run_ui(raw, |ui| {
             let area = ui.max_rect();
-            jump = show(ui, area, data, |_| {});
+            out = show(ui, area, data, sections, |_| {});
         });
-        jump
+        out
     }
 
     fn click_at(ctx: &egui::Context, data: &Overview, y: f32) -> Option<u64> {
@@ -450,5 +518,119 @@ mod tests {
         assert_eq!(texts, ["3 agents", "2 working", "1 need you"]);
         let one = summary(Counts { done: 1, ..Counts::default() });
         assert_eq!(one[0].0, "1 agent");
+    }
+
+    fn chips(titles: &[&str]) -> Checklist {
+        Checklist {
+            chips: titles
+                .iter()
+                .enumerate()
+                .map(|(i, title)| Chip { number: Some(i as u32 + 1), title: (*title).into() })
+                .collect(),
+            source: crate::overview_checklist::Source::Default,
+            file: "/cfg/checklist.md".into(),
+        }
+    }
+
+    fn walk(shape: &egui::Shape, found: &mut Vec<(String, Rect)>) {
+        match shape {
+            egui::Shape::Text(text) if !text.galley.text().trim().is_empty() => found.push((
+                text.galley.text().to_owned(),
+                text.galley.rect.translate(text.pos.to_vec2()),
+            )),
+            egui::Shape::Vec(shapes) => shapes.iter().for_each(|shape| walk(shape, found)),
+            _ => {}
+        }
+    }
+
+    fn texts(
+        ctx: &egui::Context,
+        data: &Overview,
+        list: &Checklist,
+        width: f32,
+    ) -> Vec<(String, Rect)> {
+        let raw = RawInput {
+            screen_rect: Some(Rect::from_min_size(pos2(0.0, 0.0), vec2(width, 900.0))),
+            focused: true,
+            ..RawInput::default()
+        };
+        let mut found = Vec::new();
+        let output = ctx.run_ui(raw, |ui| {
+            let area = ui.max_rect();
+            let sections = Sections { checklist: Some(list) };
+            show(ui, area, data, &sections, |_| {});
+        });
+        for clipped in &output.shapes {
+            walk(&clipped.shape, &mut found);
+        }
+        found
+    }
+
+    #[test]
+    fn cards_flow_into_columns_by_width_up_to_four() {
+        let cases = [(250.0, 1), (300.0, 1), (614.0, 2), (928.0, 3), (1242.0, 4), (2000.0, 4)];
+        for (width, want) in cases {
+            assert_eq!(columns(width), want, "{width}");
+        }
+    }
+
+    #[test]
+    fn the_checklist_row_names_each_phase_and_edit_asks_to_open_the_file() {
+        let ctx = crate::fonts::test_context();
+        let data = overview(vec![row(9, "busy", AgentStatus::Working)]);
+        let list =
+            chips(&["Understand and decide", "Build", "A phase with a very long title indeed"]);
+        let sections = Sections { checklist: Some(&list) };
+        frame_with(&ctx, &data, &sections, vec![]);
+        let found = texts(&ctx, &data, &list, 1000.0);
+        let names: Vec<&str> = found.iter().map(|(text, _)| text.as_str()).collect();
+        for want in
+            ["Checklist", "Task to done \u{b7} default", "Understand and decide", "Build", "Edit"]
+        {
+            assert!(names.contains(&want), "{want} in {names:?}");
+        }
+        assert!(
+            names
+                .iter()
+                .any(|text| text.starts_with("A phase with a very") && text.ends_with('\u{2026}'))
+        );
+        let edit = found.iter().find(|(text, _)| text == "Edit").unwrap().1.center();
+        let button = |pressed| Event::PointerButton {
+            pos: edit,
+            button: PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        };
+        frame_with(&ctx, &data, &sections, vec![Event::PointerMoved(edit)]);
+        frame_with(&ctx, &data, &sections, vec![button(true)]);
+        let out = frame_with(&ctx, &data, &sections, vec![button(false)]);
+        assert!(out.edit_checklist);
+        assert_eq!(out.jump, None);
+    }
+
+    #[test]
+    fn no_card_text_overlaps_at_any_window_width() {
+        let ctx = crate::fonts::test_context();
+        let mut with_ledger =
+            row(4, "needs-you-with-a-long-name-here", AgentStatus::NeedsYou(Reason::Permission));
+        with_ledger.look = Some(crate::progress_model::look(
+            &tidewatch_core::progress::Ledger::parse(
+                "# Goal\nx\n\n## Status\nphase: 2 Build\nstate: working\nnote: a rather long note about what is happening right now in the build\n\n## Checklist\n### 2. Build\n- [~] a\n\n## Needs you\n- Pick\n",
+            ),
+        ));
+        with_ledger.pr = Some((tidewatch_core::pr_status::Tone::Bad, "#42 checks failed".into()));
+        let data = overview(vec![with_ledger, row(9, "busy", AgentStatus::Working)]);
+        let list = chips(&["One", "Two", "Three"]);
+        for width in [360.0, 700.0, 1000.0, 1440.0] {
+            let found = texts(&ctx, &data, &list, width);
+            for (index, (a, a_rect)) in found.iter().enumerate() {
+                for (b, b_rect) in &found[index + 1..] {
+                    assert!(
+                        !a_rect.shrink(0.5).intersects(b_rect.shrink(0.5)),
+                        "{a:?} {a_rect:?} overlaps {b:?} {b_rect:?} at {width}"
+                    );
+                }
+            }
+        }
     }
 }

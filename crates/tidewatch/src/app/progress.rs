@@ -3,10 +3,14 @@
 
 use tidewatch_core::progress::Ledger;
 
+use super::settings::open_in_editor;
 use super::{Tidewatch, wall_ms};
 use crate::coming_up::coming_up;
+use crate::overview::Overview;
+use crate::overview_checklist::Source;
 use crate::pane::Body;
 use crate::progress_glue::today;
+use crate::progress_model::look;
 use crate::progress_state::Facts;
 
 impl Tidewatch {
@@ -40,6 +44,32 @@ impl Tidewatch {
         self.progress.tick(&facts, ctx);
         let open: std::collections::HashSet<u64> = facts.iter().map(|facts| facts.id).collect();
         self.progress_ui.forget_except(|id| open.contains(&id));
+    }
+
+    pub(super) fn add_looks(&self, overview: &mut Overview) {
+        let places = overview.places.iter_mut().flat_map(|place| place.rows.iter_mut());
+        for row in overview.needs.iter_mut().chain(places) {
+            row.look = self.progress.ledger(row.tab_id).map(|known| look(&known.ledger));
+        }
+    }
+
+    pub(super) fn drive_checklist(&mut self, ctx: &egui::Context, now: f64) {
+        let shown = self.overview && self.settings.is_none() && self.welcome.is_none();
+        let repo = self.workspace().dir().to_path_buf();
+        self.checklist.tick(self.paths.as_ref(), &repo, shown, now, ctx);
+    }
+
+    pub(super) fn edit_checklist(&mut self, ctx: &egui::Context) {
+        let repo = self.workspace().dir().to_path_buf();
+        let (Some(paths), Some(list)) = (&self.paths, self.checklist.of(&repo)) else { return };
+        let file = match list.source {
+            Source::Repo => Ok(list.file.clone()),
+            Source::Default | Source::Yours => tidewatch_core::checklist::ensure(paths),
+        };
+        match file {
+            Ok(file) => open_in_editor(file),
+            Err(e) => self.show_toast(format!("Could not create the checklist: {e}"), ctx),
+        }
     }
 
     /// The Answer button: the Reader in front, its reply box asking for the keyboard.

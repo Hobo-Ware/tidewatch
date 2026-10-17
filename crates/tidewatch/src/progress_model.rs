@@ -247,6 +247,74 @@ pub(crate) fn tab_ring(ledger: &Ledger) -> TabRing {
     TabRing { ring: ring(ledger), tip: tab_tip(ledger) }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum CardTag {
+    Question,
+    Blocked,
+    Done,
+    Waiting,
+    Working,
+}
+
+impl CardTag {
+    /// The tag's words: `1 question`, `2 questions`, `Working`.
+    pub(crate) fn label(self, questions: usize) -> String {
+        match self {
+            Self::Question => {
+                format!("{questions} question{}", if questions == 1 { "" } else { "s" })
+            }
+            Self::Blocked => "Blocked".to_owned(),
+            Self::Done => "Done".to_owned(),
+            Self::Waiting => "Waiting".to_owned(),
+            Self::Working => "Working".to_owned(),
+        }
+    }
+}
+
+pub(crate) fn card_tag(ledger: &Ledger) -> CardTag {
+    if ledger.has_question() {
+        return CardTag::Question;
+    }
+    match tone(ledger) {
+        Tone::Blocked => CardTag::Blocked,
+        Tone::Done => CardTag::Done,
+        Tone::Waiting => CardTag::Waiting,
+        Tone::Working => CardTag::Working,
+    }
+}
+
+/// The Overview card's one line: the status note, with the phase before it while work goes on.
+pub(crate) fn card_line(ledger: &Ledger) -> String {
+    let note = ledger.status.note.trim();
+    if tone(ledger) == Tone::Done {
+        return note.to_owned();
+    }
+    let phase = phase_name(ledger);
+    match (phase.is_empty(), note.is_empty()) {
+        (false, false) => format!("{phase} \u{b7} {note}"),
+        (false, true) => phase,
+        (true, _) => note.to_owned(),
+    }
+}
+
+/// What an Overview card says about a ledger.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct Look {
+    pub(crate) ring: Ring,
+    pub(crate) line: String,
+    pub(crate) tag: CardTag,
+    pub(crate) questions: usize,
+}
+
+pub(crate) fn look(ledger: &Ledger) -> Look {
+    Look {
+        ring: ring(ledger),
+        line: card_line(ledger),
+        tag: card_tag(ledger),
+        questions: questions(ledger).len(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -408,5 +476,49 @@ mod tests {
         assert_eq!(tab_tip(&ledger("# Goal\nx\n")), "Progress");
         let only_count = "# Goal\nx\n\n## Checklist\n- [x] a\n- [ ] b\n";
         assert!(tab_tip(&ledger(only_count)).ends_with("1/2 done"));
+    }
+
+    #[test]
+    fn a_card_says_question_before_anything_else() {
+        let cases = [
+            ("state: done\n\n## Needs you\n- Decide", CardTag::Question),
+            ("state: blocked", CardTag::Blocked),
+            ("state: done", CardTag::Done),
+            ("state: waiting", CardTag::Waiting),
+            ("state: working", CardTag::Working),
+        ];
+        for (rest, want) in cases {
+            let text = format!("# Goal\nx\n\n## Status\n{rest}\n");
+            assert_eq!(card_tag(&ledger(&text)), want, "{rest}");
+        }
+        assert_eq!(CardTag::Question.label(1), "1 question");
+        assert_eq!(CardTag::Question.label(3), "3 questions");
+        assert_eq!(CardTag::Working.label(0), "Working");
+    }
+
+    #[test]
+    fn a_cards_line_is_the_note_after_the_phase_and_only_the_note_when_done() {
+        let working = ledger(
+            "# Goal\nx\n\n## Status\nphase: 2 Build\nstate: working\nnote: writing the validator\n\n## Checklist\n### 1. Understand\n- [x] a\n### 2. Build\n- [~] b\n",
+        );
+        assert_eq!(card_line(&working), "Build \u{b7} writing the validator");
+        let done = ledger(
+            "# Goal\nx\n\n## Status\nphase: 4\nstate: done\nnote: Committed ec84557\n\n## Checklist\n### 4. Close out\n- [x] a\n",
+        );
+        assert_eq!(card_line(&done), "Committed ec84557");
+        let no_note = ledger(
+            "# Goal\nx\n\n## Status\nphase: 2\nstate: working\n\n## Checklist\n### 1. A\n- [x] a\n### 2. Build\n- [~] b\n",
+        );
+        assert_eq!(card_line(&no_note), "Build");
+        assert_eq!(card_line(&ledger("# Goal\nx\n\n## Status\nnote: only this\n")), "only this");
+    }
+
+    #[test]
+    fn a_look_gathers_the_ring_the_line_the_tag_and_the_question_count() {
+        let text = "# Goal\nx\n\n## Status\nphase: 1\nstate: done\nnote: Committed\n\n## Checklist\n### 1. A\n- [x] a\n\n## Needs you\n- One\n- Two\n";
+        let look = look(&ledger(text));
+        assert_eq!(look.tag, CardTag::Question);
+        assert_eq!((look.questions, look.line.as_str()), (2, "Committed"));
+        assert_eq!((look.ring.tone, look.ring.fraction), (Tone::Done, 1.0));
     }
 }
