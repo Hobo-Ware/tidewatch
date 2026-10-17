@@ -5,6 +5,7 @@ use egui::{Frame, Panel};
 use super::Tidewatch;
 use crate::brand;
 use crate::commands::Platform;
+use crate::pane::Body;
 use crate::reader::Shown;
 use crate::status_bar::{self, Bar, Input, Screen, Workspace};
 use crate::{agent_frame, reader_glue};
@@ -23,7 +24,9 @@ impl Tidewatch {
     }
 
     fn input_in_tab(&self) -> Option<Input> {
-        if self.awaiting_workflow_task() {
+        if self.active_is_draft() {
+            Some(Input::Form)
+        } else if self.awaiting_workflow_task() {
             Some(Input::Task)
         } else if self.awaiting_first_prompt() {
             Some(Input::Prompt)
@@ -51,10 +54,13 @@ impl Tidewatch {
                 input: self.input_in_tab(),
             };
             review = self.review_chip(active_id);
-            let place = pane.agent.as_ref().and(pane.worktree.as_ref()).map(|worktree| {
-                let base = self.bases.get(self.workspace().dir());
-                status_bar::place(&worktree.branch, base)
-            });
+            let place = match &pane.body {
+                Body::Draft(form) => Some(status_bar::draft_place(form.kind())),
+                _ => pane.agent.as_ref().and(pane.worktree.as_ref()).map(|worktree| {
+                    let base = self.bases.get(self.workspace().dir());
+                    status_bar::place(&worktree.branch, base)
+                }),
+            };
             (Screen::Workspace(workspace), place)
         };
         Bar {

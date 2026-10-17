@@ -46,14 +46,14 @@ impl Tidewatch {
             self.dev_resume(ctx, dev.profile.as_deref().unwrap_or_default());
             return;
         }
-        let mut state = self.dialog_state(None);
+        let mut state = self.draft_state(None);
         match dev.profile.as_deref() {
             None => {}
             Some("agent") => {
-                state.choose(Kind::Agent, &self.catalog);
+                state.choose(Kind::Agent);
             }
             Some("workflow") => {
-                state.choose(Kind::Workflow, &self.catalog);
+                state.choose(Kind::Workflow);
             }
             Some(preselect) => state.jump(preselect, &self.catalog),
         }
@@ -63,13 +63,22 @@ impl Tidewatch {
             eprintln!("tidewatch: dev agent not started: {} is not open here", level.label());
             return;
         }
+        if !dev.message.is_empty() {
+            state.set_text(&dev.message);
+        }
         match dev.mode {
             DevMode::Settings | DevMode::Palette | DevMode::Resume | DevMode::Propose => {}
             DevMode::Dialog => {
-                self.bases.refresh(ctx, state.repo());
-                self.new_tab = Some(state);
+                let request = state.start_request(&self.catalog, self.bases.facts(state.repo()));
+                let tab = self.open_draft(ctx, state);
+                if dev.start {
+                    match request {
+                        Ok(request) => self.start_draft(ctx, tab, request),
+                        Err(reason) => eprintln!("tidewatch: dev form not started: {reason}"),
+                    }
+                }
             }
-            DevMode::Start => match state.request(&self.catalog) {
+            DevMode::Start => match state.request(&self.catalog, self.bases.facts(state.repo())) {
                 Ok(request) => {
                     self.open_tab(ctx, request);
                     if !dev.task.is_empty() {

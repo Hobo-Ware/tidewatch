@@ -15,7 +15,7 @@ use tidewatch_core::worktree::{
 };
 
 use crate::jobs::Jobs;
-use crate::new_tab::AgentRequest;
+use crate::new_tab::{AgentRequest, Placement};
 use crate::pane::{OpenFailure, Opened, Pane, Started};
 
 pub(crate) enum Done {
@@ -26,7 +26,7 @@ pub(crate) enum Done {
 
 /// Where a new tab runs: a fresh worktree of the repo, or the folder itself in the Other group.
 pub(crate) enum Target {
-    Worktree { repo: PathBuf },
+    Worktree { repo: PathBuf, placement: Placement },
     Folder { dir: PathBuf },
 }
 
@@ -50,9 +50,14 @@ pub(crate) fn open(jobs: &Jobs<Done>, ctx: &egui::Context, spec: OpenSpec) {
 
 fn run_open(spec: &OpenSpec) -> Result<Opened, OpenFailure> {
     let (worktree, dir, repo) = match &spec.target {
-        Target::Worktree { repo } => {
-            let made = worktree::add(&spec.paths, repo)
-                .map_err(|e| OpenFailure::Nothing(e.to_string()))?;
+        Target::Worktree { repo, placement } => {
+            let made = match &placement.name {
+                Some(name) => {
+                    worktree::add_free(&spec.paths, repo, name, placement.base.as_deref())
+                }
+                None => worktree::add(&spec.paths, repo),
+            }
+            .map_err(|e| OpenFailure::Nothing(e.to_string()))?;
             (Some(made.clone()), made.path, repo.clone())
         }
         Target::Folder { dir } => (None, dir.clone(), dir.clone()),
@@ -203,7 +208,7 @@ mod tests {
     ) -> OpenSpec {
         OpenSpec {
             paths: paths.clone(),
-            target: Target::Worktree { repo: repo.to_path_buf() },
+            target: Target::Worktree { repo: repo.to_path_buf(), placement: Placement::default() },
             agent,
             path_var: OsString::from("/opt/homebrew/bin:/usr/bin:/bin"),
             tab,
@@ -224,7 +229,13 @@ mod tests {
         let profiles = Profiles::seeded(&["claude".to_owned()]);
         let agent = profiles.agent_table().get("claude").unwrap().clone();
         let profile = Profile { level, ..profiles.profile["builder"].clone() };
-        Box::new(AgentRequest { profile_id: "builder".into(), profile, agent, task: task.into() })
+        Box::new(AgentRequest {
+            profile_id: "builder".into(),
+            profile,
+            agent,
+            task: task.into(),
+            placement: Placement::default(),
+        })
     }
 
     #[test]
@@ -496,5 +507,31 @@ mod tests {
         let Done::Removed { result, .. } = next(&jobs) else { panic!("expected Removed") };
         assert_eq!(result, Ok(BranchOutcome::Kept));
         assert!(!worktree.path.exists());
+    }
+
+    #[test]
+    fn a_placement_names_the_worktree_and_the_branch_it_starts_from() {
+        let dir = tempfile::tempdir().unwrap();
+        let home = dir.path().canonicalize().unwrap();
+        let repo = throwaway_repo(&home);
+        git(&repo, &["checkout", "-q", "-b", "release"]);
+        git(&repo, &["commit", "-q", "--allow-empty", "-m", "on release"]);
+        git(&repo, &["checkout", "-q", "main"]);
+        let paths = TidewatchPaths::new(&home);
+        let jobs = Jobs::new();
+        let mut placed = spec(&paths, &repo, 1, None);
+        placed.target = Target::Worktree {
+            repo: repo.clone(),
+            placement: Placement { name: Some("retry-gates".into()), base: Some("release".into()) },
+        };
+        open(&jobs, &egui::Context::default(), placed);
+        let Done::Opened { result: Ok(opened), .. } = next(&jobs) else {
+            panic!("expected Opened")
+        };
+        let worktree = opened.worktree.expect("a worktree");
+        assert_eq!(worktree.name(), "retry-gates");
+        assert_eq!(worktree.branch, "agent/retry-gates");
+        let log = git(&worktree.path, &["log", "--format=%s", "-1"]);
+        assert_eq!(log.trim(), "on release");
     }
 }

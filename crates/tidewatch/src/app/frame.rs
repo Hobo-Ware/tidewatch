@@ -44,12 +44,7 @@ impl Tidewatch {
             self.apply_stdusk_done(done, ctx);
         }
         self.drain_picked(ctx);
-        if self.bases.drain()
-            && let Some(state) = &mut self.new_tab
-        {
-            let base = self.bases.get(state.repo()).map(str::to_owned);
-            state.set_base(base);
-        }
+        self.bases.drain();
         for event in self.shell.tick(ctx) {
             self.shell_event(&event, ctx);
         }
@@ -128,14 +123,13 @@ impl Tidewatch {
     fn key_gate(&self, active_id: u64, typing: bool) -> Gate {
         let other =
             self.trust.dialog_open() || self.leftovers.is_open() || self.flow.modal_open(active_id);
-        let dialog =
-            if self.closing.is_some() || self.new_tab.is_some() || self.takeover.dialog_open() {
-                Dialog::TabChoice
-            } else if other {
-                Dialog::Other
-            } else {
-                Dialog::None
-            };
+        let dialog = if self.closing.is_some() || self.takeover.dialog_open() {
+            Dialog::TabChoice
+        } else if other {
+            Dialog::Other
+        } else {
+            Dialog::None
+        };
         Gate {
             dialog,
             settings: self.settings.is_some(),

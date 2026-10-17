@@ -22,6 +22,7 @@ use tidewatch_core::worktree::Worktree;
 use crate::agent_run::Change;
 use crate::catalog::Catalog;
 use crate::jobs::Jobs;
+use crate::new_tab::Placement;
 use crate::pane::{Body, CREATING_TITLE, Pane, relaunch_stage};
 use crate::reader::Reader;
 use crate::tabs::Tabs;
@@ -53,6 +54,7 @@ pub(crate) struct WorkflowRequest {
     pub(crate) task: String,
     /// The agent of the first stage, for the tab's logo while the worktree is made.
     pub(crate) first_agent: String,
+    pub(crate) placement: Placement,
 }
 
 pub(crate) enum Start {
@@ -112,6 +114,7 @@ impl Host {
         env: &Env,
         repo: &Path,
         existing: Option<Worktree>,
+        into: Option<u64>,
         start: Start,
         now: f64,
     ) -> u64 {
@@ -122,8 +125,19 @@ impl Host {
                 runner.profile(runner.position()).map(|p| p.agent.clone()).unwrap_or_default(),
             ),
         };
+        let placement = match &start {
+            Start::New(request) => request.placement.clone(),
+            Start::Resume(_) => Placement::default(),
+        };
         let pane = Pane::creating_agent(name, agent, now);
-        let tab = tabs.push_in(group, CREATING_TITLE.to_owned(), pane);
+        let tab = match into.and_then(|id| tabs.get_mut(id)) {
+            Some(found) => {
+                CREATING_TITLE.clone_into(&mut found.title);
+                found.pane = pane;
+                found.id
+            }
+            None => tabs.push_in(group, CREATING_TITLE.to_owned(), pane),
+        };
         tabs.select_id(tab);
         self.pending.insert(tab, start);
         let spec = OpenSpec {
@@ -132,6 +146,7 @@ impl Host {
             tab,
             tools: env.tools.clone(),
             existing,
+            placement,
         };
         workflow_jobs::open(&self.jobs, ctx, spec);
         tab

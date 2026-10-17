@@ -1,4 +1,4 @@
-//! The workflow side of the new-tab dialog as plain data: order, missing agents, the request.
+//! The workflow side of the new-tab form as plain data: order, stage chips and cards, missing agents, the request.
 
 use std::collections::BTreeMap;
 
@@ -6,6 +6,8 @@ use tidewatch_core::profiles::{Profile, Profiles};
 use tidewatch_core::runner::{RunContext, Runner};
 use tidewatch_core::workflows::{BUILT_IN_IDS, Workflow, Workflows};
 
+use crate::new_tab::Placement;
+use crate::screen_kit::cli_short_name;
 use crate::workflow_glue::WorkflowRequest;
 
 /// The built-in workflows first, in the order of `BUILT_IN_IDS`, then the user's own.
@@ -22,8 +24,45 @@ pub(crate) fn stage_count(count: usize) -> String {
     if count == 1 { "1 stage".to_owned() } else { format!("{count} stages") }
 }
 
-pub(crate) fn tag(workflow: &Workflow) -> String {
-    stage_count(workflow.stages.len())
+/// The stage names of a workflow, in order: the chips of its card.
+pub(crate) fn chips(workflow: &Workflow) -> Vec<&'static str> {
+    workflow.stages.iter().map(|stage| stage.action.label()).collect()
+}
+
+/// One stage of the picked workflow: its place, name and who runs it (the gate when nobody can).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct StageCard {
+    pub(crate) number: usize,
+    pub(crate) title: &'static str,
+    pub(crate) detail: String,
+    pub(crate) gate: &'static str,
+}
+
+pub(crate) fn stage_cards(workflow: &Workflow, profiles: &Profiles) -> Vec<StageCard> {
+    workflow
+        .stages
+        .iter()
+        .zip(resolved(workflow, &profiles.profile))
+        .enumerate()
+        .map(|(index, (stage, profile))| {
+            let detail = profile.map_or_else(
+                || stage.gate.label().to_owned(),
+                |profile| {
+                    let who = match stage.run.profile {
+                        Some(_) => profile.name,
+                        None => cli_short_name(&profile.agent),
+                    };
+                    format!("{who} \u{b7} {}", profile.level.label())
+                },
+            );
+            StageCard {
+                number: index + 1,
+                title: stage.action.label(),
+                detail,
+                gate: stage.gate.label(),
+            }
+        })
+        .collect()
 }
 
 fn resolved(workflow: &Workflow, profiles: &BTreeMap<String, Profile>) -> Vec<Option<Profile>> {
@@ -54,8 +93,8 @@ pub(crate) fn missing_agents(
         .collect()
 }
 
-/// The request Enter turns into, or why the workflow cannot run. It carries no task: the tab asks
-/// for it.
+/// The request for `workflow`, or why it cannot run. It carries no task and the default placement:
+/// the form fills them in.
 pub(crate) fn build(workflow: &Workflow, profiles: &Profiles) -> Result<WorkflowRequest, String> {
     let trial = RunContext {
         task: String::new(),
@@ -72,13 +111,13 @@ pub(crate) fn build(workflow: &Workflow, profiles: &Profiles) -> Result<Workflow
         profiles: profiles.profile.clone(),
         task: String::new(),
         first_agent,
+        placement: Placement::default(),
     })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tidewatch_core::workflows::{Action, Stage};
 
     fn profiles() -> Profiles {
         Profiles::seeded(&["claude".to_owned(), "gemini".to_owned()])
@@ -108,11 +147,40 @@ mod tests {
     }
 
     #[test]
-    fn the_tag_counts_the_stages() {
+    fn the_stage_count_is_singular_for_one() {
+        assert_eq!(stage_count(1), "1 stage");
+        assert_eq!(stage_count(4), "4 stages");
+    }
+
+    #[test]
+    fn the_chips_are_the_stage_names_in_order() {
         let workflows = defaults();
-        assert_eq!(tag(&workflows.workflow["ship"]), "4 stages");
-        let one = Workflow { stages: vec![Stage::new(Action::Work)], ..Workflow::default() };
-        assert_eq!(tag(&one), "1 stage");
+        assert_eq!(chips(&workflows.workflow["ship"]), ["Work", "Review", "Refactor", "Hand off"]);
+        assert_eq!(chips(&workflows.workflow["fix"]), ["Reproduce", "Fix", "Review"]);
+        assert_eq!(chips(&Workflow::default()), Vec::<&str>::new());
+    }
+
+    #[test]
+    fn a_stage_card_names_who_runs_it_and_falls_back_to_the_gate() {
+        let workflows = defaults();
+        let cards = stage_cards(&workflows.workflow["ship"], &profiles());
+        let line = |card: &StageCard| format!("{} {} - {}", card.number, card.title, card.detail);
+        assert_eq!(
+            cards.iter().map(line).collect::<Vec<_>>(),
+            [
+                "1 Work - Claude \u{b7} Auto edit",
+                "2 Review - Gemini \u{b7} Read only",
+                "3 Refactor - Claude \u{b7} Auto edit",
+                "4 Hand off - Claude \u{b7} Read only",
+            ]
+        );
+        assert_eq!(cards[0].gate, "Tests pass");
+        let mut own = workflows.workflow["ship"].clone();
+        own.stages[0].run.profile = Some("builder".into());
+        own.stages[1].run.agent = None;
+        let cards = stage_cards(&own, &profiles());
+        assert_eq!(cards[0].detail, "Builder \u{b7} Auto edit");
+        assert_eq!(cards[1].detail, cards[1].gate);
     }
 
     #[test]
@@ -129,10 +197,11 @@ mod tests {
     }
 
     #[test]
-    fn the_request_carries_the_profiles_and_the_first_agent_but_no_task() {
+    fn the_request_carries_the_profiles_and_the_first_agent_but_no_task_and_a_plain_placement() {
         let workflows = defaults();
         let request = build(&workflows.workflow["ship"], &profiles()).unwrap();
         assert_eq!(request.task, "");
+        assert_eq!(request.placement, Placement::default());
         assert_eq!(request.first_agent, "claude");
         assert_eq!(request.workflow, workflows.workflow["ship"]);
         assert_eq!(request.profiles, profiles().profile);

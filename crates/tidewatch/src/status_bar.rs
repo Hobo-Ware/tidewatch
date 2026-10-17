@@ -7,6 +7,7 @@ use crate::brand;
 use tidewatch_core::pr_status::Tone as PrTone;
 
 use crate::commands::{Command, Platform};
+use crate::new_tab::Kind;
 use crate::pr_strip::tone_ink;
 use crate::screen_kit::{body, mono};
 use crate::status_view::Tone;
@@ -43,6 +44,15 @@ pub(crate) fn place(branch: &str, base: Option<&str>) -> String {
     base.map_or_else(|| branch.to_owned(), |base| format!("{branch} from {base}"))
 }
 
+/// What the bar says on the left of a new-tab form.
+pub(crate) fn draft_place(kind: Kind) -> String {
+    let start = match kind {
+        Kind::Workflow => "Start run",
+        Kind::Agent | Kind::Shell => "Start",
+    };
+    format!("New tab \u{b7} nothing starts until you press {start}")
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Screen {
     Welcome,
@@ -67,6 +77,8 @@ pub(crate) struct Workspace {
 pub(crate) enum Input {
     Prompt,
     Task,
+    /// The new-tab form: nothing starts before Start.
+    Form,
 }
 
 const NOTE_HINT: &str = "Hover a line and press + to leave a note";
@@ -165,6 +177,9 @@ fn workspace_commands(view: Workspace) -> Vec<(Keys, &'static str)> {
                 of(Command::Settings, "settings"),
                 of(Command::Overview, "overview"),
             ];
+        }
+        Some(Input::Form) => {
+            return vec![(Keys::CommandEnter, "start"), (Keys::Text("Esc"), "close tab")];
         }
         None => {}
     }
@@ -269,6 +284,28 @@ mod tests {
 
     fn labels(screen: Screen) -> Vec<&'static str> {
         hints(screen, Platform::Mac).into_iter().map(|hint| hint.label).collect()
+    }
+
+    #[test]
+    fn a_new_tab_form_hints_start_and_close_and_says_nothing_starts_yet() {
+        let form = Screen::Workspace(Workspace {
+            focus: false,
+            history: true,
+            file_open: false,
+            reader: None,
+            input: Some(Input::Form),
+        });
+        assert_eq!(labels(form), ["start", "close tab"]);
+        let caps = |platform| -> Vec<String> {
+            hints(form, platform).into_iter().map(|hint| hint.keys).collect()
+        };
+        assert_eq!(caps(Platform::Mac), ["Cmd+Enter", "Esc"]);
+        assert_eq!(caps(Platform::Linux), ["Ctrl+Enter", "Esc"]);
+        assert_eq!(draft_place(Kind::Agent), "New tab \u{b7} nothing starts until you press Start");
+        assert_eq!(
+            draft_place(Kind::Workflow),
+            "New tab \u{b7} nothing starts until you press Start run"
+        );
     }
 
     #[test]

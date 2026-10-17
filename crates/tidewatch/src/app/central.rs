@@ -181,7 +181,7 @@ impl Tidewatch {
         }
         let mut areas = if side {
             layout::split_side(area, self.side_fraction)
-        } else if self.awaiting_first_prompt() {
+        } else if self.awaiting_first_prompt() || self.active_is_draft() {
             layout::split_panels(area, EMPTY_PANELS_H)
         } else {
             layout::split(area)
@@ -191,6 +191,14 @@ impl Tidewatch {
         }
         if self.file_view_showing(active_id) {
             self.show_panes(ui, &areas, ctx);
+            self.show_toast_pill(ui);
+            return;
+        }
+        if self.active_is_draft() {
+            self.show_draft(ui, areas.terminal, ctx, frame);
+            if panels {
+                self.show_panes(ui, &areas, ctx);
+            }
             self.show_toast_pill(ui);
             return;
         }

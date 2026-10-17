@@ -20,6 +20,7 @@ use tidewatch_core::trust_apply::Grant;
 use tidewatch_core::worktree::{self, Worktree};
 
 use crate::jobs::Jobs;
+use crate::new_tab::Placement;
 use crate::pane::Started;
 use crate::workflow_run::StageLaunch;
 
@@ -46,6 +47,8 @@ pub(crate) struct OpenSpec {
     pub(crate) tools: Tools,
     /// A worktree that already exists (a run that is resumed). `None` makes a new one.
     pub(crate) existing: Option<Worktree>,
+    /// The name and start branch of a new worktree.
+    pub(crate) placement: Placement,
 }
 
 /// Makes the worktree when there is none, then looks up the base branch, the repo's test command and
@@ -57,7 +60,13 @@ pub(crate) fn open(jobs: &Jobs<Done>, ctx: &egui::Context, spec: OpenSpec) {
 fn run_open(spec: &OpenSpec) -> Result<Opening, String> {
     let worktree = match &spec.existing {
         Some(worktree) => worktree.clone(),
-        None => worktree::add(&spec.paths, &spec.repo).map_err(|e| e.to_string())?,
+        None => match &spec.placement.name {
+            Some(name) => {
+                worktree::add_free(&spec.paths, &spec.repo, name, spec.placement.base.as_deref())
+            }
+            None => worktree::add(&spec.paths, &spec.repo),
+        }
+        .map_err(|e| e.to_string())?,
     };
     Ok(Opening {
         base: detect_base(&spec.tools, &worktree.path).unwrap_or_else(|| FALLBACK_BASE.to_owned()),

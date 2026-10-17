@@ -9,6 +9,7 @@ use tidewatch_core::prepare::Prepared;
 use tidewatch_core::worktree::Worktree;
 
 use crate::agent_run::AgentRun;
+use crate::new_tab::NewTab;
 use crate::reader::Reader;
 use crate::tabs::Tabs;
 use crate::workflow_run::TabRun;
@@ -19,6 +20,8 @@ pub(crate) const FAILED_TITLE: &str = "failed";
 
 pub(crate) enum Body<T> {
     Shell(T),
+    /// A new tab that is still the form: nothing exists yet, and nothing of it is saved.
+    Draft(Box<NewTab>),
     Creating,
     Removing,
     Failed(String),
@@ -133,6 +136,10 @@ impl<T> Pane<T> {
         Self { body: Body::Shell(shell), worktree: None, agent: None }
     }
 
+    pub(crate) fn draft(form: NewTab) -> Self {
+        Self { body: Body::Draft(Box::new(form)), worktree: None, agent: None }
+    }
+
     pub(crate) fn creating() -> Self {
         Self { body: Body::Creating, worktree: None, agent: None }
     }
@@ -158,7 +165,7 @@ impl<T> Pane<T> {
         match std::mem::replace(&mut self.body, Body::Removing) {
             Body::Shell(shell) => Some((Some(shell), worktree)),
             Body::Failed(_) => Some((None, worktree)),
-            other @ (Body::Creating | Body::Removing) => {
+            other @ (Body::Creating | Body::Removing | Body::Draft(_)) => {
                 self.body = other;
                 None
             }
@@ -483,6 +490,31 @@ mod tests {
         let mut pane = Pane::shell(3);
         assert_eq!(pane.begin_remove(), None);
         assert_eq!(shell_of(&pane), Some(3));
+    }
+
+    fn draft() -> Pane<u32> {
+        let form = crate::new_tab::NewTab::open(
+            crate::new_tab::Group::Repo,
+            "web".into(),
+            PathBuf::from("/work/web"),
+            Vec::new(),
+            None,
+            1,
+        );
+        Pane::draft(form)
+    }
+
+    #[test]
+    fn a_draft_closes_at_once_and_has_nothing_to_remove_or_to_finish_opening() {
+        let mut pane = draft();
+        assert_eq!(pane.close_policy(), ClosePolicy::Now);
+        assert_eq!(pane.begin_remove(), None);
+        assert!(matches!(pane.body, Body::Draft(_)));
+        let mut tabs: Tabs<Pane<u32>> = Tabs::new(Pane::shell(0));
+        let id = tabs.push("New agent".into(), draft());
+        let result = Err(OpenFailure::Nothing("late job".into()));
+        assert_eq!(finish_open(&mut tabs, id, result, 0.0, |_, _| 1), Vec::<String>::new());
+        assert!(matches!(tabs.get_mut(id).unwrap().pane.body, Body::Draft(_)));
     }
 
     #[test]

@@ -23,6 +23,7 @@ impl Tidewatch {
         ctx: &egui::Context,
         start: Start,
         existing: Option<Worktree>,
+        into: Option<u64>,
     ) {
         let group = self.tabs.active_group();
         let (Workspace::Repo(repo), Some(paths)) = (&self.workspaces[group], &self.paths) else {
@@ -37,7 +38,7 @@ impl Tidewatch {
             trust: self.trust.grant(),
         };
         let now = ctx.input(|i| i.time);
-        self.runs.open(ctx, &mut self.tabs, group, &env, &repo.root, existing, start, now);
+        self.runs.open(ctx, &mut self.tabs, group, &env, &repo.root, existing, into, start, now);
     }
 
     /// Carries out the restore: the plan of a dev switch, or whatever the startup and reopen jobs

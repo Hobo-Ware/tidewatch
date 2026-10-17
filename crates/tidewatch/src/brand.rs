@@ -23,7 +23,6 @@ pub(crate) const MUTED: Color32 = Color32::from_rgb(0x8b, 0x93, 0xa3);
 pub(crate) const FAINT: Color32 = Color32::from_rgb(0x6b, 0x73, 0x83);
 pub(crate) const TEAL: Color32 = Color32::from_rgb(0x2d, 0xd4, 0xbf);
 pub(crate) const TEAL_TEXT: Color32 = Color32::from_rgb(0x5e, 0xea, 0xd4);
-pub(crate) const TEAL_FILL: Color32 = Color32::from_rgb(0x10, 0x20, 0x2a);
 pub(crate) const TEAL_NAV: Color32 = Color32::from_rgb(0x16, 0x25, 0x2b);
 pub(crate) const GREEN: Color32 = Color32::from_rgb(0x8f, 0xd1, 0x6a);
 pub(crate) const ORANGE: Color32 = Color32::from_rgb(0xfb, 0x92, 0x3c);

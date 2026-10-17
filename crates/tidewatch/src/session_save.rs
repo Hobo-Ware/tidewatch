@@ -116,7 +116,7 @@ fn tab_ref<'a, T>(tab: &'a Tab<Pane<T>>, window_dir: &'a Path) -> Option<TabRef<
         None => (window_dir, None),
     };
     match &pane.body {
-        Body::Creating | Body::Removing => None,
+        Body::Creating | Body::Removing | Body::Draft(_) => None,
         Body::Failed(_) => pane.worktree.as_ref().map(|_| TabRef::Shell { dir, branch }),
         Body::Shell(_) => Some(
             pane.agent
@@ -482,6 +482,34 @@ mod tests {
         tabs.apply(crate::tabs::Action::MoveActive(crate::tabs::Step::Right), || unreachable!());
         assert_eq!(saved_window(&view(false), &tabs), before);
         assert_eq!(signature(&view(false), &tabs), before_signature);
+    }
+
+    fn draft() -> Pane<u32> {
+        let form = crate::new_tab::NewTab::open(
+            crate::new_tab::Group::Repo,
+            "web".into(),
+            PathBuf::from("/work/web"),
+            Vec::new(),
+            None,
+            1,
+        );
+        Pane::draft(form)
+    }
+
+    #[test]
+    fn a_draft_is_never_saved_and_the_active_index_falls_back_past_it() {
+        let mut tabs = tabs();
+        tabs.push("a".into(), pane(Body::Shell(1), Some(worktree("a")), None));
+        tabs.push("New agent".into(), draft());
+        let saved = saved_window(&view(false), &tabs);
+        assert_eq!(saved.tabs.len(), 2);
+        assert_eq!(saved.active, 1, "the draft is active, so the last saved tab before it is");
+        assert_eq!(signature(&view(false), &tabs), {
+            let mut without = self::tabs();
+            without.push("a".into(), pane(Body::Shell(1), Some(worktree("a")), None));
+            without.apply(crate::tabs::Action::Select(1), || unreachable!());
+            signature(&view(false), &without)
+        });
     }
 
     #[test]

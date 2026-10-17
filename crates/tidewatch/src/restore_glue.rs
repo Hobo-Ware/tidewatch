@@ -314,6 +314,7 @@ impl Host {
                         env,
                         &plan.dir,
                         Some(worktree),
+                        None,
                         Start::Resume(Box::new(runner)),
                         now,
                     );

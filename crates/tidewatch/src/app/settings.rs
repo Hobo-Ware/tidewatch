@@ -84,7 +84,6 @@ impl Tidewatch {
             && !self.leftovers.is_open()
             && !self.flow.modal_open(active_id)
             && self.palette.is_none()
-            && self.new_tab.is_none()
             && self.closing.is_none()
     }
 

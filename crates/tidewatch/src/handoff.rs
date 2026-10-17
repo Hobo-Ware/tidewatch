@@ -157,7 +157,7 @@ fn keeps<T>(tab: &Tab<Pane<T>>) -> bool {
     match &tab.pane.body {
         Body::Shell(_) => true,
         Body::Failed(_) => tab.pane.worktree.is_some(),
-        Body::Creating | Body::Removing => false,
+        Body::Creating | Body::Removing | Body::Draft(_) => false,
     }
 }
 
