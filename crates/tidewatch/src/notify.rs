@@ -52,6 +52,14 @@ pub(crate) fn window_is_away(focused: Option<bool>, minimized: Option<bool>) -> 
     focused == Some(false) || minimized == Some(true)
 }
 
+/// What to tell the user about an item that is due: `Due today` over the item and its tab.
+pub(crate) fn for_due(what: &str, tab: &str) -> Notification {
+    Notification {
+        title: "Due today".to_owned(),
+        body: format!("{}\n{tab}", clip(what, DETAIL_CHARS)),
+    }
+}
+
 /// What to tell the user about a status change, if it is worth a notification: a tab that now needs
 /// you, finished or failed.
 pub(crate) fn for_change(
@@ -141,6 +149,16 @@ impl Notifier {
         now: f64,
     ) -> bool {
         if !away || !self.pr_limiter.allow(tab, tone, now) {
+            return false;
+        }
+        (self.send)(notification);
+        true
+    }
+
+    /// Sends the notification of an item that is due, only while the window is `away`. Once per
+    /// item per day is the caller's rule (`due::Told`). Returns whether it was sent.
+    pub(crate) fn offer_due(&mut self, notification: Notification, away: bool) -> bool {
+        if !away {
             return false;
         }
         (self.send)(notification);
@@ -342,6 +360,22 @@ mod tests {
             *sent.lock().unwrap(),
             ["checks failed", "a comment", "Tidewatch", "after the tab closed"]
         );
+    }
+
+    #[test]
+    fn a_due_item_is_told_only_to_an_away_window_and_names_its_tab() {
+        let sent = Arc::new(Mutex::new(Vec::new()));
+        let sink = Arc::clone(&sent);
+        let mut notifier = Notifier::new(move |n| sink.lock().unwrap().push(n));
+        let note = for_due("Switch off the old webhook", "webhook-switch");
+        assert_eq!(note.title, "Due today");
+        assert_eq!(note.body, "Switch off the old webhook\nwebhook-switch");
+        assert!(!notifier.offer_due(note.clone(), false));
+        assert_eq!(sent.lock().unwrap().len(), 0);
+        assert!(notifier.offer_due(note.clone(), true));
+        assert_eq!(*sent.lock().unwrap(), [note]);
+        let long = for_due(&"x".repeat(300), "t");
+        assert!(long.body.lines().next().unwrap().chars().count() <= DETAIL_CHARS);
     }
 
     #[test]

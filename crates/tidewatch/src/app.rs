@@ -61,6 +61,7 @@ use crate::dev_takeover::DevTakeover;
 use crate::dev_view::{DevKeys, DevView};
 use crate::dev_workflow::DevWorkflow;
 use crate::dev_worktree::DevWorktree;
+use crate::due;
 use crate::flow::Flow;
 use crate::fonts;
 use crate::handoff;
@@ -145,6 +146,9 @@ pub(crate) struct Tidewatch {
     progress: progress_glue::Host,
     progress_ui: progress_view::Memory,
     checklist: overview_checklist::Host,
+    snoozes: due::Snoozes,
+    dev_open_scheduled: Option<String>,
+    told: due::Told,
     runs: workflow_glue::Host,
     run_asks: Vec<(u64, Vec<Exec>)>,
     build_asks: Vec<Asked>,
@@ -272,6 +276,11 @@ impl Tidewatch {
             progress,
             progress_ui: progress_view::Memory::default(),
             checklist: overview_checklist::Host::new(),
+            snoozes: due::Snoozes::default(),
+            dev_open_scheduled: std::env::var("TIDEWATCH_DEV_OPEN_SCHEDULED")
+                .ok()
+                .filter(|name| !name.is_empty()),
+            told: due::Told::default(),
             runs: workflow_glue::Host::new(),
             run_asks: Vec::new(),
             build_asks: Vec::new(),
