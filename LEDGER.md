@@ -4,10 +4,14 @@ A running log of what got done, newest first. The plan lives in [PLAN.md](PLAN.m
 
 ## Status
 
-- **Current milestone:** v0.1.8: a full UI pass (notes as cards, one dialog frame, Settings headers and segmented choices, the Reader and workflow surfaces on small cards).
-- **Done:** Phases 0 to 10; v0.1.0 to v0.1.8 released (Homebrew cask, Linux tarball and AppImage); the K mark identity; the showcase page.
+- **Current milestone:** v0.1.9: GitHub events as cards in the agent chat, agent questions as controls, notes sent as one review with block comments and waiting badges in History, and moving sessions from other terminals into Tidewatch.
+- **Done:** Phases 0 to 10; v0.1.0 to v0.1.9 released (Homebrew cask, Linux tarball and AppImage); the K mark identity; the showcase page.
 - **Also:** six habit workflows are built in, and Build workflow from this session (palette; the agent proposes a workflow that opens as an unsaved draft), 2026-10-16. Restart to update keeps every shell and agent running (live handoff, 2026-10-15). The receiving side of stdusk's "Move tabs to Tidewatch" is built (#49).
 - **Next:** the diff widgets go teal (the graph already does on the side layout); commit messages that truncate early in the narrow tree; the divider position saved between runs; the site hero screenshot; the owner's live checks; Linux desktop runs.
+
+## 2026-10-17
+
+- **v0.1.9.** Ships notes as one review (#65), GitHub PR cards (#67), agent questions as controls (#70), taking over sessions running elsewhere (#71), and block notes with waiting badges in History (#72, Kelp #21 and #22).
 
 ## 2026-10-16
 
