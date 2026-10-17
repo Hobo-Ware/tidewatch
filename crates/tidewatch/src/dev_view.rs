@@ -6,6 +6,8 @@
 //!   time in milliseconds, to measure how fast a tab reacts.
 //! - `TIDEWATCH_DEV_SIDE=<fraction>`: start with the left column that wide (0.3 to 0.75 of the
 //!   window), to look at the file view when it is narrow.
+//! - `TIDEWATCH_DEV_WINDOW=<w>x<h>`: open the window that size (in points, 600 to 4000 each), to
+//!   look at a view in a shorter or wider window.
 //! - `TIDEWATCH_DEV_KEYS=<text>` after `TIDEWATCH_DEV_KEYS_AFTER=<seconds>` (default 8): type the text
 //!   into the newest agent tab once, to answer a prompt a check cannot avoid (`\r`, `\n`, `\e` and
 //!   `\\` are escapes; `\e[B\r` is Down then Enter).
@@ -28,6 +30,19 @@ pub(crate) struct DevView {
 }
 
 const DEFAULT_KEYS_AFTER_SECS: f64 = 8.0;
+const WINDOW_EDGE: std::ops::RangeInclusive<f32> = 600.0..=4000.0;
+
+/// The size the window opens at: `TIDEWATCH_DEV_WINDOW` when it holds `<w>x<h>`, else `default`.
+pub(crate) fn window_size(default: [f32; 2]) -> [f32; 2] {
+    let value = std::env::var("TIDEWATCH_DEV_WINDOW").ok();
+    value.as_deref().and_then(parse_window).unwrap_or(default)
+}
+
+fn parse_window(text: &str) -> Option<[f32; 2]> {
+    let (width, height) = text.split_once('x')?;
+    let size = [width.parse::<f32>().ok()?, height.parse::<f32>().ok()?];
+    size.iter().all(|edge| WINDOW_EDGE.contains(edge)).then_some(size)
+}
 
 impl DevView {
     pub(crate) fn from_env() -> Self {
@@ -112,6 +127,22 @@ mod tests {
             DevView::default()
         );
         assert_eq!(DevView::parse(None, None, None, None, None), DevView::default());
+    }
+
+    #[test]
+    fn the_window_switch_takes_two_sane_edges() {
+        let cases = [
+            ("1280x720", Some([1280.0, 720.0])),
+            ("1600x760", Some([1600.0, 760.0])),
+            ("1280", None),
+            ("axb", None),
+            ("100x100", None),
+            ("9000x800", None),
+            ("", None),
+        ];
+        for (text, want) in cases {
+            assert_eq!(parse_window(text), want, "{text}");
+        }
     }
 
     #[test]

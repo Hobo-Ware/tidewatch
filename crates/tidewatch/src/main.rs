@@ -256,7 +256,7 @@ fn main() -> eframe::Result<()> {
     let mut viewport = egui::ViewportBuilder::default()
         .with_title("Tidewatch")
         .with_app_id(APP_ID)
-        .with_inner_size(WINDOW_SIZE)
+        .with_inner_size(dev_view::window_size(WINDOW_SIZE))
         .with_active(plan.activates);
     if cfg!(target_os = "linux")
         && let Ok(icon) = eframe::icon_data::from_png_bytes(LINUX_ICON)
