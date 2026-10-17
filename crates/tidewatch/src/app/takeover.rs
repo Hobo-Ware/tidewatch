@@ -148,7 +148,7 @@ impl Tidewatch {
         self.show_toast(moved_text(&spec.session, now_ms()), ctx);
     }
 
-    fn apply_taken_plan(
+    pub(super) fn apply_taken_plan(
         &mut self,
         plan: &tidewatch_core::restore::WindowPlan,
         group: usize,

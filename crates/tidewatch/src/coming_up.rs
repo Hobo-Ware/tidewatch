@@ -34,7 +34,6 @@ impl Group {
     }
 }
 
-#[allow(dead_code)]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct Row {
     pub(crate) group: Group,

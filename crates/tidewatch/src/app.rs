@@ -16,6 +16,7 @@ mod palette;
 mod panes;
 mod pr;
 mod progress;
+mod reopen;
 mod repos;
 mod restart;
 mod review;
