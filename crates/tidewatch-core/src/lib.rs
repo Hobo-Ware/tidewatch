@@ -3,6 +3,7 @@
 pub mod agents;
 pub mod branch_name;
 mod builtin_workflows;
+pub mod civil_date;
 pub mod consent;
 pub mod delivery;
 pub mod elsewhere;
@@ -34,6 +35,7 @@ pub mod pr_status;
 pub mod prefs;
 pub mod prepare;
 pub mod profiles;
+pub mod progress;
 pub mod prompt;
 pub mod propose;
 pub mod question;
