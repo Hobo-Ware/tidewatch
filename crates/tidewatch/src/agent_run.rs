@@ -203,7 +203,10 @@ impl AgentRun {
             TabEvent::Finding { file, line, blocking, text } => {
                 self.report.finding = Some(Finding { file, line, blocking, text });
             }
-            TabEvent::NoteReply { .. } | TabEvent::Proposal { .. } | TabEvent::Ask { .. } => {}
+            TabEvent::NoteReply { .. }
+            | TabEvent::Proposal { .. }
+            | TabEvent::Progress { .. }
+            | TabEvent::Ask { .. } => {}
         }
     }
 

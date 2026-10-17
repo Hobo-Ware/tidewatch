@@ -270,7 +270,7 @@ fn mcp_over_http_runs_the_handshake_and_both_event_tools() {
     assert_eq!((note.status, note.body.as_str()), (202, ""));
 
     let list = client.request("POST", "/mcp", token, &rpc(2, "tools/list", &json!({})));
-    assert_eq!(list.json()["result"]["tools"].as_array().unwrap().len(), 6);
+    assert_eq!(list.json()["result"]["tools"].as_array().unwrap().len(), 8);
 
     let done =
         client.request("POST", "/mcp", token, &call(3, "stage_done", &json!({"summary": "hello"})));
@@ -364,6 +364,46 @@ fn a_proposed_workflow_reaches_the_app_as_one_event_and_a_bad_one_comes_back_as_
     assert!(text.contains("on_fail must name an earlier stage, not stage 2"), "{text}");
     assert!(text.contains("unknown placeholder {nope}"), "{text}");
     h.no_more_events();
+}
+
+#[test]
+fn a_ledger_is_saved_in_the_tab_folder_reaches_the_app_and_is_read_back_by_a_new_process() {
+    let h = Harness::start();
+    let hook = h.register(5, "tab-p");
+    let token = Some(hook.token.as_str());
+    let mut client = h.client();
+    let ledger = "# Goal\nAdd search\n\n## Status\nphase: 1\nstate: working\n\n## Checklist\n### 1. Plan\n- [~] read\n- [ ] decide\n";
+    let reply = client.request(
+        "POST",
+        "/mcp",
+        token,
+        &call(1, "update_progress", &json!({ "ledger": ledger })),
+    );
+    assert_eq!(reply.status, 200);
+    assert_eq!(reply.json()["result"]["content"][0]["text"], "saved: phase 1 Plan, 0/2 done");
+    let message = h.next_event();
+    assert_eq!((message.tab_id, message.generation), (5, 0));
+    let TabEvent::Progress { ledger: sent } = message.event else { panic!("not a ledger") };
+    assert_eq!(sent.goal, "Add search");
+    assert_eq!(sent.counts().total, 2);
+    let file = h.paths.progress_file(Path::new(REPO), "tab-p");
+    assert_eq!(std::fs::read_to_string(&file).unwrap(), ledger);
+
+    let credential = h.listener.credential_of(5).unwrap();
+    let port = h.listener.port();
+    let paths = h.paths.clone();
+    drop(h.listener);
+    let (listener, _events) =
+        Listener::start_on_port(port, paths, Box::new(|| {}), Duration::from_secs(5)).unwrap();
+    listener.adopt_tab(9, &credential);
+    let mut client = Client::connect(format!("127.0.0.1:{port}").parse().unwrap());
+    let read = client.request(
+        "POST",
+        "/mcp",
+        Some(&credential.token),
+        &call(2, "get_progress", &json!({})),
+    );
+    assert_eq!(read.json()["result"]["content"][0]["text"], ledger);
 }
 
 #[test]

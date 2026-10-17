@@ -12,6 +12,12 @@ const PR_CARDS_FILE: &str = "pr_cards.json";
 const PROGRESS_FILE: &str = "progress.md";
 const HOUSE_STYLE_FILE: &str = "house-style.md";
 
+/// The ledger file that sits next to a tab's `notes.json`.
+#[must_use]
+pub fn progress_file_beside(notes_file: &Path) -> PathBuf {
+    notes_file.with_file_name(PROGRESS_FILE)
+}
+
 fn repo_key(repo: &Path) -> String {
     let name = repo.file_name().unwrap_or_default().to_string_lossy();
     let digest = Sha256::digest(repo.as_os_str().as_encoded_bytes());
@@ -315,6 +321,7 @@ mod tests {
                 .starts_with(notes.parent().unwrap())
         );
         assert_ne!(paths.progress_file(repo, "main"), paths.progress_file(repo, "brave-otter"));
+        assert_eq!(progress_file_beside(&notes), paths.progress_file(repo, "brave-otter"));
     }
 
     #[test]

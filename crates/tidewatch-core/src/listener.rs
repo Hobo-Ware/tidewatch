@@ -30,7 +30,7 @@ use sha2::{Digest, Sha256};
 use crate::events::{Repaint, TabEvent, TabMessage};
 use crate::launch::HookListener;
 use crate::mcp::{AskWait, McpReply, ToolCtx, handle_post};
-use crate::paths::TidewatchPaths;
+use crate::paths::{TidewatchPaths, progress_file_beside};
 use crate::status::parse_hook;
 
 /// Where the listener binds: loopback only, a random free port (PLAN.md, Constants).
@@ -415,10 +415,12 @@ fn mcp_route(shared: &Shared, entry: &Entry, request: &Request, stream: &TcpStre
         return Response::method_not_allowed();
     }
     let alive = || client_waits(stream);
+    let progress_file = progress_file_beside(&entry.notes_file);
     let ctx = ToolCtx {
         agent: &entry.agent,
         notes_file: &entry.notes_file,
         notes_lock: &shared.notes_lock,
+        progress_file: &progress_file,
         ask: AskWait {
             timeout: Duration::from_millis(shared.ask_timeout_ms.load(Ordering::SeqCst)),
             poll: ASK_POLL,
@@ -948,6 +950,29 @@ mod tests {
                 event: TabEvent::NoteReply { note_id: 1, text: "ok".into() }
             }]
         );
+    }
+
+    #[test]
+    fn each_tab_keeps_its_own_ledger() {
+        let f = fixture();
+        let one = f.register(1, "a");
+        let two = f.register(2, "b");
+        let post = |token: &String, tool: &str, args: Value| {
+            body_json(&f.send("POST", "/mcp", Some(token), &call(tool, &args)))
+        };
+        let saved = post(&one, "update_progress", json!({"ledger": "# Goal\nFor a\n"}));
+        assert_eq!(saved["result"]["content"][0]["text"], "saved");
+        post(&two, "update_progress", json!({"ledger": "# Goal\nFor b\n"}));
+        let file = f.paths.progress_file(Path::new("/work/web"), "a");
+        assert_eq!(std::fs::read_to_string(file).unwrap(), "# Goal\nFor a\n");
+        let read = post(&one, "get_progress", json!({}));
+        assert_eq!(read["result"]["content"][0]["text"], "# Goal\nFor a\n");
+        let events = f.events();
+        assert_eq!(events.len(), 2);
+        assert!(
+            matches!(&events[0].event, TabEvent::Progress { ledger } if ledger.goal == "For a")
+        );
+        assert_eq!(events[1].tab_id, 2);
     }
 
     #[test]
