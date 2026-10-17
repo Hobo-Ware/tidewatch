@@ -213,6 +213,40 @@ pub(crate) fn updated(now_ms: i64, then_ms: Option<i64>) -> Option<String> {
     then_ms.map(|then| format!("updated {}", ago(now_ms, then)))
 }
 
+fn phase_name(ledger: &Ledger) -> String {
+    ledger.current_phase().map_or_else(
+        || {
+            let said = ledger.status.phase.trim();
+            said.strip_prefix("phase").map_or(said, str::trim).to_owned()
+        },
+        phase_label,
+    )
+}
+
+/// The tab ring's tooltip: the phase and how many items are done.
+pub(crate) fn tab_tip(ledger: &Ledger) -> String {
+    let counts = ledger.counts();
+    let phase = phase_name(ledger);
+    let done = (counts.total > 0).then(|| format!("{}/{} done", counts.done, counts.total));
+    match (phase.is_empty(), done) {
+        (false, Some(done)) => format!("{phase} - {done}"),
+        (false, None) => phase,
+        (true, Some(done)) => done,
+        (true, None) => ledger.status.state.map_or("Progress", |state| state.word()).to_owned(),
+    }
+}
+
+/// What a tab in the strip shows of its ledger: the ring and the tooltip.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct TabRing {
+    pub(crate) ring: Ring,
+    pub(crate) tip: String,
+}
+
+pub(crate) fn tab_ring(ledger: &Ledger) -> TabRing {
+    TabRing { ring: ring(ledger), tip: tab_tip(ledger) }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -364,5 +398,15 @@ mod tests {
         }
         assert_eq!(updated(5_000, None), None);
         assert_eq!(updated(5_000, Some(0)).as_deref(), Some("updated just now"));
+    }
+
+    #[test]
+    fn the_tab_tip_names_the_phase_and_the_count() {
+        assert_eq!(tab_tip(&ledger(MIDDLE)), "Build - 3/6 done");
+        assert_eq!(tab_tip(&ledger("# Goal\nx\n\n## Status\nphase: 2 (wiring)\n")), "2 (wiring)");
+        assert_eq!(tab_tip(&ledger("# Goal\nx\n\n## Status\nstate: working\n")), "working");
+        assert_eq!(tab_tip(&ledger("# Goal\nx\n")), "Progress");
+        let only_count = "# Goal\nx\n\n## Checklist\n- [x] a\n- [ ] b\n";
+        assert!(tab_tip(&ledger(only_count)).ends_with("1/2 done"));
     }
 }
