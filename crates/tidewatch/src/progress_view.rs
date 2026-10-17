@@ -421,20 +421,20 @@ fn link(ui: &mut Ui, text: &str) -> bool {
     response.on_hover_cursor(egui::CursorIcon::PointingHand).clicked()
 }
 
-/// Where each tag pill sits when they flow in rows of `width`: the top left of each, and the
-/// height of everything.
-pub(crate) fn flow(widths: &[f32], width: f32) -> (Vec<(f32, f32)>, f32) {
+/// Where pills of `row_h` tall, `gap` apart, sit when they flow in rows of `width`: the top left
+/// of each, and the height of everything.
+pub(crate) fn flow(widths: &[f32], width: f32, row_h: f32, gap: f32) -> (Vec<(f32, f32)>, f32) {
     let mut at = Vec::with_capacity(widths.len());
     let (mut x, mut y) = (0.0_f32, 0.0_f32);
     for pill in widths {
         if x > 0.0 && x + pill > width {
             x = 0.0;
-            y += TAG_H + TAG_GAP;
+            y += row_h + gap;
         }
         at.push((x, y));
-        x += pill + TAG_GAP;
+        x += pill + gap;
     }
-    (at, if widths.is_empty() { 0.0 } else { y + TAG_H })
+    (at, if widths.is_empty() { 0.0 } else { y + row_h })
 }
 
 fn tags(ui: &mut Ui, width: f32, ledger: &Ledger, state: &mut TabState) {
@@ -453,7 +453,7 @@ fn tags(ui: &mut Ui, width: f32, ledger: &Ledger, state: &mut TabState) {
             (text.size().x + 22.0 + icon_w(*tag)).min(width)
         })
         .collect();
-    let (places, height) = flow(&widths, width);
+    let (places, height) = flow(&widths, width, TAG_H, TAG_GAP);
     let (rect, _) = ui.allocate_exact_size(vec2(width, height), Sense::hover());
     for (index, ((tag, _), label)) in shown.iter().zip(&labels).enumerate() {
         let (x, y) = places[index];

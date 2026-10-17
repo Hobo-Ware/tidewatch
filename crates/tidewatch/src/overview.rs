@@ -3,11 +3,15 @@
 
 use std::path::Path;
 
+use egui::Color32;
+
 use tidewatch_core::end_block::EndBlock;
 use tidewatch_core::status::AgentStatus;
 
 use crate::pane::Pane;
-use crate::status_view::{Tone, tone};
+use crate::progress_model::{CardTag, Look};
+use crate::progress_ring::tone_color;
+use crate::status_view::{Tone, color, label, tone};
 use crate::tabs::Tabs;
 
 #[derive(Clone, Debug, PartialEq)]
@@ -26,6 +30,8 @@ pub(crate) struct Row {
     pub(crate) elapsed: f64,
     /// The tab's pull request: `#42 checks failed`, with its tone.
     pub(crate) pr: Option<(tidewatch_core::pr_status::Tone, String)>,
+    /// What the tab's ledger says, when it has one.
+    pub(crate) look: Option<Look>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -135,10 +141,58 @@ pub(crate) fn collect<T>(
                 end_block: agent.run.end_block().cloned(),
                 elapsed: agent.run.elapsed(now),
                 pr: None,
+                look: None,
             })
         })
         .collect();
     PlaceInput { label: label.to_owned(), path: dir.display().to_string(), rows }
+}
+
+/// What one Overview card draws, from the ledger when the tab has one and from its status when not.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct CardView {
+    pub(crate) fraction: f32,
+    pub(crate) ring: Color32,
+    pub(crate) line: String,
+    pub(crate) tag: String,
+    pub(crate) tag_ink: Color32,
+}
+
+fn first_line(text: &str) -> String {
+    text.lines()
+        .find(|line| !line.trim().is_empty())
+        .map_or_else(String::new, |line| line.trim().to_owned())
+}
+
+pub(crate) fn card_view(row: &Row) -> CardView {
+    if let Some(look) = &row.look {
+        let tag_ink = match look.tag {
+            CardTag::Question => crate::brand::NEEDS,
+            _ => tone_color(look.ring.tone),
+        };
+        return CardView {
+            fraction: look.ring.fraction,
+            ring: tone_color(look.ring.tone),
+            line: look.line.clone(),
+            tag: look.tag.label(look.questions),
+            tag_ink,
+        };
+    }
+    let status_tone = tone(&row.status);
+    let ink = color(status_tone).unwrap_or(crate::brand::MUTED);
+    CardView {
+        fraction: if status_tone == Tone::Done { 1.0 } else { 0.0 },
+        ring: ink,
+        line: row
+            .end_block
+            .as_ref()
+            .and_then(|block| block.done.first())
+            .map(|done| first_line(done))
+            .or_else(|| row.detail.as_deref().map(first_line))
+            .unwrap_or_default(),
+        tag: label(status_tone).to_owned(),
+        tag_ink: ink,
+    }
 }
 
 /// `42s`, `4m 02s`, `1h 03m`.
@@ -184,6 +238,7 @@ mod tests {
             end_block: None,
             elapsed: 0.0,
             pr: None,
+            look: None,
         }
     }
 
@@ -367,5 +422,38 @@ mod tests {
         let rows = collect("web", Path::new("/work/web"), 0, &tabs, 5.0).rows;
         assert_eq!(rows[0].workflow.as_deref(), Some("Ship a feature: Work 1/4"));
         assert_eq!(rows[1].workflow, None);
+    }
+
+    #[test]
+    fn a_card_reads_its_ledger_and_falls_back_to_the_status() {
+        use crate::progress_model::look;
+        use tidewatch_core::progress::Ledger;
+        let ledger = Ledger::parse(
+            "# Goal\nx\n\n## Status\nphase: 2 Build\nstate: working\nnote: writing the validator\n\n## Checklist\n### 1. A\n- [x] a\n### 2. Build\n- [~] b\n",
+        );
+        let mut with = row(1, "a", AgentStatus::Working);
+        with.look = Some(look(&ledger));
+        let view = card_view(&with);
+        assert_eq!(view.line, "Build \u{b7} writing the validator");
+        assert_eq!((view.tag.as_str(), view.fraction), ("Working", 0.5));
+        assert_eq!(view.ring, crate::brand::WORKING);
+
+        let mut question = Ledger::parse("# Goal\nx\n\n## Needs you\n- Pick\n");
+        question.status.state = Some(tidewatch_core::progress::State::Done);
+        with.look = Some(look(&question));
+        let view = card_view(&with);
+        assert_eq!((view.tag.as_str(), view.tag_ink), ("1 question", crate::brand::NEEDS));
+
+        let mut bare = row(2, "b", AgentStatus::NeedsYou(Reason::Permission));
+        bare.detail = Some("\nBash: touch hello.txt\nmore".into());
+        let view = card_view(&bare);
+        assert_eq!(view.line, "Bash: touch hello.txt");
+        assert_eq!((view.tag.as_str(), view.fraction), ("Needs you", 0.0));
+        assert_eq!(card_view(&row(3, "c", AgentStatus::Done)).fraction, 1.0);
+        let mut done = row(5, "d", AgentStatus::Done);
+        done.detail = Some("ignored".into());
+        done.end_block =
+            Some(EndBlock { done: vec!["Committed ec84557".into()], ..EndBlock::default() });
+        assert_eq!(card_view(&done).line, "Committed ec84557");
     }
 }

@@ -202,7 +202,7 @@ impl Tidewatch {
     }
 }
 
-fn open_in_editor(file: std::path::PathBuf) {
+pub(super) fn open_in_editor(file: std::path::PathBuf) {
     let opener = if cfg!(target_os = "macos") { "open" } else { "xdg-open" };
     std::thread::spawn(move || {
         if let Err(e) = std::process::Command::new(opener).arg(&file).status() {

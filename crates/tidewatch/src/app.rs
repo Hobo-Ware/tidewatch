@@ -70,6 +70,7 @@ use crate::leftover_glue;
 use crate::new_tab::Request;
 use crate::notify::Notifier;
 use crate::os::RealOs;
+use crate::overview_checklist;
 use crate::palette::Palette;
 use crate::pane::Pane;
 use crate::pane_jobs;
@@ -142,6 +143,7 @@ pub(crate) struct Tidewatch {
     pr: pr_glue::Host,
     progress: progress_glue::Host,
     progress_ui: progress_view::Memory,
+    checklist: overview_checklist::Host,
     runs: workflow_glue::Host,
     run_asks: Vec<(u64, Vec<Exec>)>,
     build_asks: Vec<Asked>,
@@ -268,6 +270,7 @@ impl Tidewatch {
             pr,
             progress,
             progress_ui: progress_view::Memory::default(),
+            checklist: overview_checklist::Host::new(),
             runs: workflow_glue::Host::new(),
             run_asks: Vec::new(),
             build_asks: Vec::new(),
