@@ -32,6 +32,8 @@ mod dev_view;
 mod dev_workflow;
 mod dev_worktree;
 mod diff_pane;
+mod due;
+mod due_view;
 mod end_block_view;
 mod file_nav;
 mod file_view;

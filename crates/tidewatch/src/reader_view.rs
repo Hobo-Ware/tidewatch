@@ -21,6 +21,7 @@ use tidewatch_core::transcript::Source;
 
 use crate::agent_ready::{self, COMPOSER_H, Ready};
 use crate::brand;
+use crate::due_view::{self, Facts as DueFacts};
 use crate::pr_card_model::CardAction;
 use crate::pr_cards_view::{self, Data as PrData, Heights as PrHeights};
 use crate::pr_timeline::{self, Place};
@@ -125,6 +126,8 @@ pub(crate) struct Facts<'a> {
     pub(crate) review: Option<ReviewFacts<'a>>,
     /// The tab's pull request cards, drawn between the rows by time.
     pub(crate) pr: Option<PrData<'a>>,
+    /// An item due today in this tab, offered above the reply box.
+    pub(crate) due: Option<DueFacts<'a>>,
     /// The profile's name, for "<Profile> asks".
     pub(crate) profile: &'a str,
     pub(crate) turn: Turn,
@@ -142,6 +145,8 @@ pub(crate) enum Action {
     Pr(CardAction),
     /// The user answered, or skipped, the questions in row `seq`.
     Ask(u64, Reply),
+    /// A click on the Due today card.
+    Due(due_view::Action),
 }
 
 /// The look of an inline item: a card on the window ground.
@@ -309,7 +314,17 @@ pub(crate) fn show(
         pos2(rect.left(), strip.top() - review_h),
         pos2(rect.right(), strip.top()),
     );
-    let body = Rect::from_min_max(rect.min, pos2(rect.right(), review_band.top()));
+    let due_h = facts
+        .due
+        .map_or(0.0, |due| due_view::height(due.due, rect.height() - input_h - dock_h - review_h));
+    let due_band = Rect::from_min_max(
+        pos2(rect.left(), review_band.top() - due_h),
+        pos2(rect.right(), review_band.top()),
+    );
+    let body = Rect::from_min_max(rect.min, pos2(rect.right(), due_band.top()));
+    if let Some(due) = facts.due.filter(|_| due_h > 0.0) {
+        actions.extend(due_view::show(ui, due_band, due).map(Action::Due));
+    }
     if let Some(review) = facts.review.as_ref().filter(|_| review_h > 0.0) {
         let asked = review_view::show(ui, review_band, &mut state.review, review);
         actions.extend(asked.into_iter().map(Action::Review));
@@ -998,6 +1013,7 @@ mod tests {
                         root: None,
                         review: None,
                         pr: None,
+                        due: None,
                         profile: "Builder",
                         turn: Turn::Finished,
                     },
@@ -1052,6 +1068,7 @@ mod tests {
                     root: None,
                     review: None,
                     pr: None,
+                    due: None,
                     profile: "Builder",
                     turn: Turn::Running,
                 };
@@ -1126,6 +1143,7 @@ mod tests {
                         root: None,
                         review: Some(review),
                         pr: None,
+                        due: None,
                         profile: "Builder",
                         turn: Turn::Finished,
                     };
@@ -1140,6 +1158,71 @@ mod tests {
             assert_eq!(sent, vec![Action::Review(ReviewAction::Send("go".into()))]);
             assert_eq!(run(vec![]), vec![]);
         }
+    }
+
+    #[test]
+    fn the_due_card_sits_above_the_reply_box_and_its_buttons_reach_the_caller() {
+        use crate::due::Due;
+        use tidewatch_core::progress::Mark;
+        use tidewatch_core::transcript::{Entry, Role};
+
+        fn texts(shape: &egui::Shape, out: &mut Vec<(String, Rect)>) {
+            match shape {
+                egui::Shape::Text(text) => out.push((
+                    text.galley.text().to_owned(),
+                    text.galley.rect.translate(text.pos.to_vec2()),
+                )),
+                egui::Shape::Vec(shapes) => shapes.iter().for_each(|shape| texts(shape, out)),
+                _ => {}
+            }
+        }
+
+        let due = Due {
+            what: "Switch off the old webhook".into(),
+            days: 0,
+            steps: vec![(Mark::Todo, "Merge the switch".into())],
+        };
+        let mut rows = Rows::default();
+        rows.push(Entry { role: Role::User, text: "hi".into(), tool: None, ts: None });
+        let ctx = crate::fonts::test_context();
+        let mut state = ViewState::default();
+        let mut run = |events: Vec<egui::Event>| {
+            let raw = RawInput {
+                screen_rect: Some(Rect::from_min_size(pos2(0.0, 0.0), vec2(800.0, 700.0))),
+                events,
+                focused: true,
+                ..RawInput::default()
+            };
+            let mut actions = Vec::new();
+            let output = ctx.run_ui(raw, |ui| {
+                let rect = ui.max_rect();
+                let mut facts = facts(None, Turn::Finished);
+                facts.due =
+                    Some(DueFacts { due: &due, more: 0, profile: "Builder", blocked: None });
+                actions = show(ui, rect, &rows, &mut state, facts);
+            });
+            let mut found = Vec::new();
+            output.shapes.iter().for_each(|clipped| texts(&clipped.shape, &mut found));
+            (actions, found)
+        };
+        run(vec![]);
+        let (_, found) = run(vec![]);
+        let at = |text: &str| found.iter().find(|(drawn, _)| drawn == text).unwrap().1.center();
+        assert!(at("Ask Builder to start").y < at("Reply to the agent").y);
+        let ask = at("Ask Builder to start");
+        let button = |pressed| egui::Event::PointerButton {
+            pos: ask,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        };
+        run(vec![egui::Event::PointerMoved(ask)]);
+        run(vec![button(true)]);
+        let (actions, _) = run(vec![button(false)]);
+        let [Action::Due(crate::due_view::Action::Ask(text))] = actions.as_slice() else {
+            panic!("{actions:?}")
+        };
+        assert!(text.starts_with("Due today: Switch off the old webhook."));
     }
 
     #[test]
@@ -1196,6 +1279,7 @@ mod tests {
                     root: None,
                     review: Some(review),
                     pr: None,
+                    due: None,
                     profile: "Builder",
                     turn: Turn::Finished,
                 };
@@ -1218,6 +1302,7 @@ mod tests {
             root: None,
             review: None,
             pr: None,
+            due: None,
             profile: "Builder",
             turn,
         }

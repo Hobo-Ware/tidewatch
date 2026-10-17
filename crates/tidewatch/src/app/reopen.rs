@@ -7,7 +7,8 @@ use tidewatch_core::prefs::ResumeAgents;
 use tidewatch_core::restore::{RealDisk, RestoreEnv, WindowPlan, plan_window};
 
 use super::Tidewatch;
-use crate::coming_up::Row;
+use crate::coming_up::{Row, coming_up};
+use crate::progress_glue::today;
 use crate::reopen::{Target, saved_window};
 use crate::tab_view::TabView;
 use crate::tabs::Action;
@@ -36,6 +37,20 @@ impl Tidewatch {
         }
         if let Some(view) = self.views.get_mut(&id) {
             TabView::back_to_terminal(view);
+        }
+    }
+
+    /// `TIDEWATCH_DEV_OPEN_SCHEDULED=<tab>`: once the profiles are loaded and the restore is done,
+    /// does once what a click on a Coming up card of that tab does.
+    pub(super) fn drive_dev_scheduled(&mut self, ctx: &egui::Context) {
+        let Some(name) = self.dev_open_scheduled.clone() else { return };
+        if self.catalog.profiles().is_none() || !self.restore.settled() {
+            return;
+        }
+        let rows = coming_up(today(), self.progress.index());
+        if let Some(row) = rows.iter().find(|row| row.tab == name) {
+            self.dev_open_scheduled = None;
+            self.open_scheduled(row, ctx);
         }
     }
 

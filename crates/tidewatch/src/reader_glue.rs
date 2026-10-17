@@ -13,6 +13,8 @@ use crate::agent_ready::Ready;
 use crate::brand;
 use crate::commands::Command;
 use crate::dev_reader::DevReader;
+use crate::due::{Due, ask_blocked};
+use crate::due_view::{self, Facts as DueFacts};
 use crate::flow::Flow;
 use crate::note_send::ENTER_DELAY_SECS;
 use crate::pane::{Body, FirstPrompt, Pane};
@@ -116,7 +118,7 @@ pub(crate) fn draw(
     dev: &mut DevReader,
     now: f64,
     review: Option<ReviewFacts<'_>>,
-    pr: Option<PrData<'_>>,
+    (pr, due): (Option<PrData<'_>>, Option<(&Due, usize)>),
 ) -> Vec<Action> {
     let Some(agent) = pane.agent.as_mut() else { return Vec::new() };
     let prompt = prompt_of(agent.run.status()).filter(|_| !agent.reader.prompt_answered());
@@ -127,6 +129,12 @@ pub(crate) fn draw(
         AgentStatus::Working | AgentStatus::NeedsYou(_) => Turn::Running,
         _ => Turn::Finished,
     };
+    let due = due.map(|(due, more)| DueFacts {
+        due,
+        more,
+        profile: &agent.profile_name,
+        blocked: ask_blocked(Some(agent.run.status())),
+    });
     let facts = Facts {
         source: agent.reader.source(),
         prompt,
@@ -134,6 +142,7 @@ pub(crate) fn draw(
         root,
         review,
         pr,
+        due,
         profile: &agent.profile_name,
         turn,
     };
@@ -149,6 +158,19 @@ pub(crate) fn take_pr_clicks(actions: &mut Vec<Action>) -> Vec<CardAction> {
     let mut clicks = Vec::new();
     actions.retain(|action| match action {
         Action::Pr(click) => {
+            clicks.push(click.clone());
+            false
+        }
+        _ => true,
+    });
+    clicks
+}
+
+/// Takes the clicks on the Due today card out of the Reader's actions; the app handles them.
+pub(crate) fn take_due_clicks(actions: &mut Vec<Action>) -> Vec<due_view::Action> {
+    let mut clicks = Vec::new();
+    actions.retain(|action| match action {
+        Action::Due(click) => {
             clicks.push(click.clone());
             false
         }
@@ -217,7 +239,7 @@ pub(crate) fn apply(
                     agent.reader.set_wants_reader(false);
                 }
             }
-            Action::Review(_) | Action::Pr(_) => {}
+            Action::Review(_) | Action::Pr(_) | Action::Due(_) => {}
             Action::Ask(seq, reply) => answer_question(&mut found.pane, seq, reply, now),
         }
     }
