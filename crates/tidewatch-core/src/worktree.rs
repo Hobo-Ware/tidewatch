@@ -4,6 +4,7 @@
 //! thread, never the UI thread. Behavior was checked against git 2.55.0 (see `PLAN.md`, Phase 0
 //! findings).
 
+use std::collections::HashSet;
 use std::fmt;
 use std::hash::{BuildHasher, Hasher, RandomState};
 use std::path::{Path, PathBuf};
@@ -172,22 +173,62 @@ fn random_seed() -> u64 {
     RandomState::new().build_hasher().finish()
 }
 
+#[must_use]
+pub fn local_branches(repo: &Path) -> Vec<String> {
+    let mut command = git(repo);
+    command.args(["for-each-ref", "--format=%(refname:short)", "refs/heads"]);
+    run(command).map(|out| out.lines().map(str::to_owned).collect()).unwrap_or_default()
+}
+
+#[must_use]
+pub fn taken_names(paths: &TidewatchPaths, repo: &Path) -> HashSet<String> {
+    let branches = local_branches(repo);
+    let on_branches =
+        branches.iter().filter_map(|branch| branch.strip_prefix(BRANCH_PREFIX)).map(str::to_owned);
+    let folders = std::fs::read_dir(paths.repo_dir(repo))
+        .into_iter()
+        .flatten()
+        .filter_map(|entry| entry.ok()?.file_name().into_string().ok());
+    on_branches.chain(folders).collect()
+}
+
 /// Adds a worktree on a new `agent/<name>` branch off the repo's current commit, locked so no
 /// other tool prunes or removes it. Picks a name that collides with no branch and no folder.
 /// Nothing half-made is left behind when git fails.
 pub fn add(paths: &TidewatchPaths, repo: &Path) -> Result<Worktree, WorktreeError> {
-    let taken = |name: &str| {
-        paths.worktree_dir(repo, name).symlink_metadata().is_ok()
-            || branch_exists(repo, &format!("{BRANCH_PREFIX}{name}"))
-    };
-    add_named(paths, repo, &names::pick(random_seed(), taken))
+    let taken = |name: &str| is_taken(paths, repo, name);
+    add_named(paths, repo, &names::pick(random_seed(), taken), None)
 }
 
-/// [`add`] with the name chosen by the caller.
+/// [`add_named`] with `wanted`, or `wanted-2`, `wanted-3`... when a branch or folder took it since
+/// the name was checked.
+pub fn add_free(
+    paths: &TidewatchPaths,
+    repo: &Path,
+    wanted: &str,
+    base: Option<&str>,
+) -> Result<Worktree, WorktreeError> {
+    let taken = |name: &str| is_taken(paths, repo, name);
+    let name = if taken(wanted) {
+        crate::branch_name::next_free(wanted, taken)
+    } else {
+        wanted.to_owned()
+    };
+    add_named(paths, repo, &name, base)
+}
+
+fn is_taken(paths: &TidewatchPaths, repo: &Path, name: &str) -> bool {
+    paths.worktree_dir(repo, name).symlink_metadata().is_ok()
+        || branch_exists(repo, &format!("{BRANCH_PREFIX}{name}"))
+}
+
+/// [`add`] with the name chosen by the caller; `base` is the branch or commit the new branch starts
+/// from, the current one when `None`.
 pub fn add_named(
     paths: &TidewatchPaths,
     repo: &Path,
     name: &str,
+    base: Option<&str>,
 ) -> Result<Worktree, WorktreeError> {
     let worktree = Worktree {
         repo: repo.to_path_buf(),
@@ -206,6 +247,7 @@ pub fn add_named(
     command
         .args(["worktree", "add", "--lock", "--reason", LOCK_REASON, "-b", &worktree.branch])
         .arg(&worktree.path);
+    command.args(base);
     if let Err(error) = run(command) {
         roll_back(&worktree, branch_existed, path_existed);
         return Err(error);

@@ -88,11 +88,23 @@ fn two_adds_get_two_names() {
 fn a_taken_branch_name_is_refused_and_leaves_nothing() {
     let f = fixture();
     git(&f.repo, &["branch", "agent/dup"]);
-    let err = worktree::add_named(&f.paths, &f.repo, "dup").unwrap_err();
+    let err = worktree::add_named(&f.paths, &f.repo, "dup", None).unwrap_err();
     assert!(matches!(&err, WorktreeError::Git(m) if m.contains("already exists")), "{err}");
     assert!(!f.paths.worktree_dir(&f.repo, "dup").exists());
     assert_only_main(&f.repo);
     assert_eq!(branches(&f.repo), ["agent/dup", "main"]);
+}
+
+#[test]
+fn a_name_taken_since_it_was_checked_moves_on_to_the_next_free_one() {
+    let f = fixture();
+    git(&f.repo, &["branch", "agent/dup"]);
+    git(&f.repo, &["branch", "agent/dup-2"]);
+    let made = worktree::add_free(&f.paths, &f.repo, "dup", None).unwrap();
+    assert_eq!(made.branch, "agent/dup-3");
+    assert!(f.paths.worktree_dir(&f.repo, "dup-3").is_dir());
+    let free = worktree::add_free(&f.paths, &f.repo, "fresh", None).unwrap();
+    assert_eq!(free.branch, "agent/fresh");
 }
 
 #[test]
@@ -101,7 +113,7 @@ fn a_taken_folder_is_refused_without_leaving_a_branch() {
     let taken = f.paths.worktree_dir(&f.repo, "busy");
     fs::create_dir_all(&taken).unwrap();
     fs::write(taken.join("keep.txt"), "mine").unwrap();
-    let err = worktree::add_named(&f.paths, &f.repo, "busy").unwrap_err();
+    let err = worktree::add_named(&f.paths, &f.repo, "busy", None).unwrap_err();
     assert_eq!(err, WorktreeError::PathTaken(taken.clone()));
     assert_eq!(branches(&f.repo), ["main"]);
     assert!(taken.join("keep.txt").is_file());
@@ -114,7 +126,7 @@ fn a_failing_checkout_hook_rolls_the_whole_attempt_back() {
     let hook = f.repo.join(".git/hooks/post-checkout");
     common::write_executable_from_a_child(&hook, "#!/bin/sh\nexit 1\n");
 
-    let err = worktree::add_named(&f.paths, &f.repo, "hooked").unwrap_err();
+    let err = worktree::add_named(&f.paths, &f.repo, "hooked", None).unwrap_err();
     assert!(matches!(err, WorktreeError::Git(_)), "{err}");
     assert!(!f.paths.worktree_dir(&f.repo, "hooked").exists());
     assert_eq!(branches(&f.repo), ["main"]);
@@ -299,4 +311,56 @@ fn a_worktree_git_made_outside_tidewatch_is_a_leftover_without_a_branch() {
     assert_eq!(left[0].path, by_hand);
     assert_eq!(left[0].branch, None);
     assert_eq!(left[0].worktree(), None, "git cannot remove it without a recorded repository");
+}
+
+#[test]
+fn a_worktree_can_start_from_another_branch() {
+    let f = fixture();
+    git(&f.repo, &["checkout", "-q", "-b", "release"]);
+    fs::write(f.repo.join("RELEASE.md"), "notes\n").unwrap();
+    git(&f.repo, &["add", "."]);
+    git(&f.repo, &["commit", "-q", "-m", "release notes"]);
+    git(&f.repo, &["checkout", "-q", "main"]);
+
+    let from_release =
+        worktree::add_named(&f.paths, &f.repo, "from-release", Some("release")).unwrap();
+    assert!(from_release.path.join("RELEASE.md").is_file());
+    let from_head = worktree::add_named(&f.paths, &f.repo, "from-head", None).unwrap();
+    assert!(!from_head.path.join("RELEASE.md").exists());
+}
+
+#[test]
+fn a_base_that_does_not_exist_is_refused_and_leaves_nothing() {
+    let f = fixture();
+    let err =
+        worktree::add_named(&f.paths, &f.repo, "nowhere", Some("no-such-branch")).unwrap_err();
+    assert!(matches!(err, WorktreeError::Git(_)), "{err}");
+    assert!(!f.paths.worktree_dir(&f.repo, "nowhere").exists());
+    assert_eq!(branches(&f.repo), ["main"]);
+    assert_only_main(&f.repo);
+}
+
+#[test]
+fn local_branches_lists_every_branch_and_a_plain_folder_none() {
+    let f = fixture();
+    git(&f.repo, &["branch", "feat/x"]);
+    let mut listed = worktree::local_branches(&f.repo);
+    listed.sort();
+    assert_eq!(listed, ["feat/x", "main"]);
+    assert_eq!(worktree::local_branches(&f.home), Vec::<String>::new());
+}
+
+#[test]
+fn taken_names_are_the_agent_branches_and_the_folders_add_would_skip() {
+    let f = fixture();
+    assert_eq!(worktree::taken_names(&f.paths, &f.repo), std::collections::HashSet::new());
+    git(&f.repo, &["branch", "agent/only-a-branch"]);
+    git(&f.repo, &["branch", "feat/not-ours"]);
+    fs::create_dir_all(f.paths.worktree_dir(&f.repo, "only-a-folder")).unwrap();
+    let made = worktree::add_named(&f.paths, &f.repo, "made", None).unwrap();
+    let taken = worktree::taken_names(&f.paths, &f.repo);
+    let mut names: Vec<&str> = taken.iter().map(String::as_str).collect();
+    names.sort_unstable();
+    assert_eq!(names, ["made", "only-a-branch", "only-a-folder"]);
+    assert_eq!(made.name(), "made");
 }
