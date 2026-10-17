@@ -18,6 +18,7 @@ use tidewatch_core::history::{BaseCompare, Scope};
 
 use crate::brand;
 use crate::commit_files::{self, Spot};
+use crate::progress_view::{self, Side, TabState};
 use crate::screen_kit::{body, mono};
 use crate::tab_view::TabView;
 use crate::waiting_notes::Waiting;
@@ -28,26 +29,53 @@ pub(crate) const CARD_RADIUS: u8 = 12;
 const BODY_PAD_X: f32 = 8.0;
 const BODY_PAD_Y: f32 = 6.0;
 const PILL_GAP: f32 = 10.0;
+const SWITCH_GAP: f32 = 8.0;
 const CORNER_STEPS: u32 = 8;
 
 pub(crate) const SCOPES: [&str; 2] = ["This branch", "Whole repo"];
 
+/// A tab's ledger for the card: the panel's input and the tab's memory of its two choices.
+pub(crate) struct Progress<'a> {
+    pub(crate) input: progress_view::Input<'a>,
+    pub(crate) state: &'a mut TabState,
+}
+
+#[derive(Default)]
+pub(crate) struct Out {
+    pub(crate) graph: Option<GraphAction>,
+    pub(crate) progress: Option<progress_view::Action>,
+}
+
 /// The pane is a card in both layouts. `side` is the layout where a click on a commit opens its
 /// files under the row and a file's diff takes the terminal's place. `agent` is the id the tab's
-/// agent signs replies with, `""` without one.
+/// agent signs replies with, `""` without one. With `progress` the header offers Progress |
+/// History and the card shows the side the tab chose.
 pub(crate) fn show(
     ui: &mut Ui,
     rect: Rect,
     view: &mut TabView,
     avatars: &mut AvatarStore,
     side: bool,
-    agent: &str,
-) -> Option<GraphAction> {
+    (agent, progress): (&str, Option<Progress<'_>>),
+) -> Out {
     paint_card(ui, rect);
     let header = Rect::from_min_max(rect.min, pos2(rect.right(), rect.top() + layout::CHROME_H));
-    show_card_header(ui, header, view);
+    let (input, mut state) = match progress {
+        Some(Progress { input, state }) => (Some(input), Some(state)),
+        None => (None, None),
+    };
+    let shown = state.as_deref().map(|state| progress_view::side_shown(state.chosen, true));
+    if let Some(chose) = show_card_header(ui, header, view, shown)
+        && let Some(state) = state.as_deref_mut()
+    {
+        state.chosen = Some(chose);
+    }
     let body = Rect::from_min_max(pos2(rect.left(), header.bottom()), rect.max)
         .shrink2(vec2(BODY_PAD_X, BODY_PAD_Y));
+    if let (Some(Side::Progress), Some(input), Some(state)) = (shown, input.as_ref(), state) {
+        let panel = Rect::from_min_max(pos2(rect.left(), header.bottom() + 1.0), rect.max);
+        return Out { graph: None, progress: progress_view::show(ui, panel, input, state) };
+    }
     let waiting = Waiting::of(&view.notes, agent);
     let mut action = None;
     ui.scope_builder(UiBuilder::new().id_salt("history-graph").max_rect(body), |ui| {
@@ -57,7 +85,7 @@ pub(crate) fn show(
             commit_files::show(ui, view, spot, &waiting);
         }
     });
-    action
+    Out { graph: action, progress: None }
 }
 
 /// The raised surface of the side layout.
@@ -134,14 +162,32 @@ fn branch_title(branch: Option<&str>) -> &str {
     branch.unwrap_or("detached HEAD")
 }
 
-fn show_card_header(ui: &mut Ui, rect: Rect, view: &mut TabView) {
+/// Draws the header. Returns the side the user picked on the Progress | History control, which
+/// shows (`shown`) only on a tab with a ledger.
+fn show_card_header(
+    ui: &mut Ui,
+    rect: Rect,
+    view: &mut TabView,
+    shown: Option<Side>,
+) -> Option<Side> {
     let painter = ui.painter().clone();
     painter.hline(rect.x_range(), rect.bottom(), Stroke::new(1.0, brand::CARD_LINE));
     let center_y = rect.center().y;
+    let mut right = rect.right() - 10.0;
+    let mut chose = None;
+    if let Some(side) = shown {
+        let id = ui.id().with("history-side");
+        let control = segmented::show(ui, id, right, center_y, &progress_view::SIDES, side.index());
+        chose = control.clicked.map(Side::at);
+        right = control.left - SWITCH_GAP;
+    }
+    if shown == Some(Side::Progress) {
+        return chose;
+    }
     let showing_whole = view.scope == Scope::Whole;
     let id = ui.id().with("history-scope");
     let active = usize::from(showing_whole);
-    let switch = segmented::show(ui, id, rect.right() - 10.0, center_y, &SCOPES, active);
+    let switch = segmented::show(ui, id, right, center_y, &SCOPES, active);
     if let Some(index) = switch.clicked {
         view.set_scope(if index == 1 { Scope::Whole } else { Scope::Current });
     }
@@ -173,6 +219,7 @@ fn show_card_header(ui: &mut Ui, rect: Rect, view: &mut TabView) {
         painter.galley(pill_rect.center() - galley.size() / 2.0, galley, ink);
         x = pill_rect.right() + 8.0;
     }
+    chose
 }
 
 fn side_style() -> GraphStyle {
@@ -309,5 +356,136 @@ mod tests {
     fn a_detached_head_has_no_branch_name_to_show() {
         assert_eq!(branch_title(Some("agent/sunny-reef")), "agent/sunny-reef");
         assert_eq!(branch_title(None), "detached HEAD");
+    }
+
+    use egui::{Event, Modifiers, PointerButton, Pos2, RawInput, Shape};
+    use tidewatch_core::progress::Ledger;
+
+    use crate::progress_state::TabLedger;
+
+    const LEDGER: &str = "# Goal\nShip it\n\n## Status\nstate: working\n\n## Checklist\n### 1. Build\n- [~] Write it\n\n## Needs you\n- Pick one\n";
+
+    struct Card {
+        ctx: egui::Context,
+        view: TabView,
+        avatars: AvatarStore,
+        ledger: TabLedger,
+        state: TabState,
+        with_ledger: bool,
+        texts: Vec<(String, egui::Rect)>,
+        out: Out,
+    }
+
+    fn collect(shape: &Shape, out: &mut Vec<(String, egui::Rect)>) {
+        match shape {
+            Shape::Text(text) => out.push((
+                text.galley.text().to_owned(),
+                text.galley.rect.translate(text.pos.to_vec2()),
+            )),
+            Shape::Vec(shapes) => shapes.iter().for_each(|shape| collect(shape, out)),
+            _ => {}
+        }
+    }
+
+    impl Card {
+        fn new(with_ledger: bool) -> Self {
+            let ctx = crate::fonts::test_context();
+            let mut card = Self {
+                avatars: AvatarStore::offline(ctx.clone()),
+                ctx,
+                view: TabView::new(1, "/work/web".into(), false, None),
+                ledger: TabLedger { ledger: Ledger::parse(LEDGER), updated_ms: None },
+                state: TabState::default(),
+                with_ledger,
+                texts: Vec::new(),
+                out: Out::default(),
+            };
+            card.frame(Vec::new());
+            card.frame(Vec::new());
+            card
+        }
+
+        fn frame(&mut self, events: Vec<Event>) {
+            let raw = RawInput {
+                screen_rect: Some(Rect::from_min_size(pos2(0.0, 0.0), vec2(420.0, 600.0))),
+                events,
+                focused: true,
+                ..RawInput::default()
+            };
+            let (view, avatars, ledger, state) =
+                (&mut self.view, &mut self.avatars, &self.ledger, &mut self.state);
+            let with_ledger = self.with_ledger;
+            let mut out = Out::default();
+            let output = self.ctx.run_ui(raw, |ui| {
+                let progress = with_ledger.then_some(Progress {
+                    input: progress_view::Input { ledger, now_ms: 0, time: 0.0, animate: false },
+                    state: &mut *state,
+                });
+                let rect = Rect::from_min_size(pos2(0.0, 0.0), vec2(420.0, 600.0));
+                out = show(ui, rect, view, avatars, true, ("", progress));
+            });
+            self.out = out;
+            self.texts.clear();
+            for clipped in &output.shapes {
+                collect(&clipped.shape, &mut self.texts);
+            }
+        }
+
+        fn at(&self, text: &str) -> Option<Pos2> {
+            self.texts.iter().find(|(drawn, _)| drawn == text).map(|(_, rect)| rect.center())
+        }
+
+        fn click(&mut self, at: Pos2) {
+            let button = |pressed| Event::PointerButton {
+                pos: at,
+                button: PointerButton::Primary,
+                pressed,
+                modifiers: Modifiers::NONE,
+            };
+            self.frame(vec![Event::PointerMoved(at)]);
+            self.frame(vec![button(true)]);
+            self.frame(vec![button(false)]);
+            self.frame(Vec::new());
+        }
+    }
+
+    #[test]
+    fn a_tab_with_a_ledger_opens_on_progress_and_the_switch_flips_to_history_and_back() {
+        let mut card = Card::new(true);
+        assert!(card.at("Progress").is_some() && card.at("History").is_some());
+        assert!(card.at("This branch").is_none(), "Progress hides the scope switch");
+        assert!(card.at("Answer").is_some());
+        let history = card.at("History").unwrap();
+        card.click(history);
+        assert_eq!(card.state.chosen, Some(Side::History));
+        assert!(card.at("This branch").is_some(), "History brings its own header back");
+        assert!(card.at("Answer").is_none());
+        let progress = card.at("Progress").unwrap();
+        card.click(progress);
+        assert_eq!(card.state.chosen, Some(Side::Progress));
+        assert!(card.at("Answer").is_some());
+    }
+
+    #[test]
+    fn a_tab_without_a_ledger_has_history_and_no_switch() {
+        let card = Card::new(false);
+        assert!(card.at("Progress").is_none());
+        assert!(card.at("This branch").is_some());
+    }
+
+    #[test]
+    fn answer_in_the_card_reaches_the_caller() {
+        let mut card = Card::new(true);
+        let answer = card.at("Answer").unwrap();
+        let button = |pressed| Event::PointerButton {
+            pos: answer,
+            button: PointerButton::Primary,
+            pressed,
+            modifiers: Modifiers::NONE,
+        };
+        card.frame(vec![Event::PointerMoved(answer)]);
+        card.frame(vec![button(true)]);
+        card.frame(vec![button(false)]);
+        assert_eq!(card.out.progress, Some(progress_view::Action::Answer));
     }
 }

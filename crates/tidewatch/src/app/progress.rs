@@ -38,6 +38,17 @@ impl Tidewatch {
             })
             .collect();
         self.progress.tick(&facts, ctx);
+        let open: std::collections::HashSet<u64> = facts.iter().map(|facts| facts.id).collect();
+        self.progress_ui.forget_except(|id| open.contains(&id));
+    }
+
+    /// The Answer button: the Reader in front, its reply box asking for the keyboard.
+    pub(super) fn open_reply_box(&mut self) {
+        if let Some(agent) = self.tabs.active_pane_mut().agent.as_mut() {
+            agent.reader.set_wants_reader(true);
+            agent.reader.view.request_reply_focus();
+        }
+        self.with_active_view(crate::tab_view::TabView::back_to_terminal);
     }
 
     pub(super) fn progress_arrived(&mut self, tab: u64, ledger: Ledger, ctx: &egui::Context) {
