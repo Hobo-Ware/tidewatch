@@ -12,7 +12,7 @@ use crate::brand;
 use crate::reader_view::item_frame;
 use crate::review::{ReviewFacts, SentNote, SentReview, Standing};
 use crate::review_view::ReviewAction;
-use crate::screen_kit::{body, mono, quiet_button};
+use crate::screen_kit::{Size, body, mono, quiet_button};
 
 const RADIUS: CornerRadius = CornerRadius { nw: 12, ne: 12, se: 4, sw: 12 };
 const NOTE_RADIUS: u8 = 8;
@@ -144,12 +144,12 @@ fn buttons(ui: &mut Ui, review: &SentReview, actions: &mut Vec<ReviewAction>) {
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 8.0;
         if let Some(note) = review.first_open()
-            && quiet_button(ui, "Open in the file view", true).clicked()
+            && quiet_button(ui, "Open in the file view", true, Size::Compact).clicked()
         {
             actions.push(ReviewAction::OpenFile(note.path.clone()));
         }
         let resolvable = review.resolvable();
-        let button = quiet_button(ui, "Resolve answered", !resolvable.is_empty());
+        let button = quiet_button(ui, "Resolve answered", !resolvable.is_empty(), Size::Compact);
         if button.clicked() {
             actions.push(ReviewAction::ResolveAnswered(resolvable));
         }

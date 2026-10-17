@@ -3,6 +3,7 @@
 use egui::Ui;
 
 use crate::macos::LoginItem;
+use crate::screen_kit::Size;
 use crate::settings_ui::{self, Control, Tone};
 
 const REFRESH_SECONDS: f64 = 1.0;
@@ -79,16 +80,19 @@ pub(crate) fn show(
     let look = look(row.refresh(now, read));
     ui.ctx().request_repaint_after(std::time::Duration::from_secs_f64(REFRESH_SECONDS));
     let approve_label = "Approve in System Settings";
-    let approve_width =
-        if look.approve { settings_ui::button_width(ui, approve_label) + CONTROL_GAP } else { 0.0 };
+    let approve_width = if look.approve {
+        settings_ui::button_width(ui, approve_label, Size::Compact) + CONTROL_GAP
+    } else {
+        0.0
+    };
     let control = Control::new(Control::SWITCH.width + approve_width, CONTROL_HEIGHT);
     settings_ui::row(ui, "Open at login", look.text, control, |ui| {
         let mut on = look.on;
         let switched =
             ui.add_enabled_ui(look.enabled, |ui| settings_ui::switch(ui, &mut on).changed()).inner;
         ui.spacing_mut().item_spacing.x = CONTROL_GAP;
-        let approved =
-            look.approve && settings_ui::button(ui, approve_label, Tone::Quiet).clicked();
+        let approved = look.approve
+            && settings_ui::button(ui, approve_label, Tone::Quiet, Size::Compact).clicked();
         if approved { Some(Click::Approve) } else { switched.then_some(Click::Set(on)) }
     })
 }

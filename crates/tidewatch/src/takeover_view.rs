@@ -12,7 +12,8 @@ use crate::brand;
 use crate::notice::key_hint;
 use crate::reader_view::ellipsized;
 use crate::screen_kit::{
-    body, dialog_frame, heading, mono, paint_cli_badge, primary_button, quiet_button,
+    Size, body, dialog_frame, footer_row, heading, mono, paint_cli_badge, primary_button,
+    quiet_button,
 };
 use crate::settings_ui::{pill, switch_line};
 use crate::takeover::{CardAction, DialogView, Offer, Row, Status};
@@ -22,8 +23,6 @@ const ROW_H: f32 = 46.0;
 const SIDE: f32 = 16.0;
 const BADGE: f32 = 26.0;
 const DIALOG_W: f32 = 560.0;
-const BUTTON_PAD: f32 = 20.0;
-const BUTTON_GAP: f32 = 8.0;
 
 pub(crate) struct Card {
     pub(crate) summary: String,
@@ -91,7 +90,7 @@ fn header(ui: &mut Ui, rect: Rect, data: &Card) -> Option<CardAction> {
     } else {
         "No idle session can be moved"
     };
-    primary_button(&mut inner, "Move all idle here", data.can_move_all)
+    primary_button(&mut inner, "Move all idle here", data.can_move_all, Size::Compact)
         .on_hover_text(tip)
         .clicked()
         .then_some(CardAction::MoveAllIdle)
@@ -140,7 +139,7 @@ fn draw_row(ui: &mut Ui, rect: Rect, row: &Row) -> Option<CardAction> {
 
 fn offer_button(ui: &mut Ui, row: &Row) -> Option<SessionKey> {
     let enabled = !matches!(row.offer, Offer::Moving | Offer::Blocked(_));
-    let response = quiet_button(ui, row.offer.label(), enabled);
+    let response = quiet_button(ui, row.offer.label(), enabled, Size::Compact);
     let response = match &row.offer {
         Offer::Blocked(reason) => response.on_hover_text(reason.as_str()),
         Offer::Moving => response.on_hover_text("Ending it and opening the tab"),
@@ -162,10 +161,6 @@ fn offer_button(ui: &mut Ui, row: &Row) -> Option<SessionKey> {
 pub(crate) enum DialogOutcome {
     Cancel,
     Accept,
-}
-
-fn button_width(ui: &Ui, text: &str) -> f32 {
-    ui.painter().layout_no_wrap(text.to_owned(), body(12.5), brand::SOFT).size().x + BUTTON_PAD
 }
 
 pub(crate) fn dialog(
@@ -250,15 +245,12 @@ fn commands(ui: &mut Ui, view: &DialogView) {
 
 fn buttons(ui: &mut Ui, view: &DialogView) -> Option<DialogOutcome> {
     let mut outcome = None;
-    ui.horizontal(|ui| {
-        ui.spacing_mut().item_spacing.x = BUTTON_GAP;
-        let used = button_width(ui, "Cancel") + BUTTON_GAP + button_width(ui, &view.confirm);
-        ui.add_space((ui.available_width() - used).max(0.0));
-        if quiet_button(ui, "Cancel", true).clicked() {
-            outcome = Some(DialogOutcome::Cancel);
-        }
-        if primary_button(ui, &view.confirm, view.blocked.is_none()).clicked() {
+    footer_row(ui, "", |ui| {
+        if primary_button(ui, &view.confirm, view.blocked.is_none(), Size::Regular).clicked() {
             outcome = Some(DialogOutcome::Accept);
+        }
+        if quiet_button(ui, "Cancel", true, Size::Regular).clicked() {
+            outcome = Some(DialogOutcome::Cancel);
         }
     });
     outcome

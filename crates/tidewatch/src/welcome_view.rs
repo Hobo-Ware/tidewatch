@@ -10,7 +10,7 @@ use egui::{
 use crate::brand;
 use crate::mascot::{self, Pose};
 use crate::screen_kit::{
-    body, clickable, heading, mono, paint_pill_card, quiet_button, selection_row,
+    Size, body, clickable, heading, mono, paint_pill_card, quiet_button, selection_row,
 };
 use crate::welcome::{Recent, shown_path};
 
@@ -155,7 +155,7 @@ fn sessions_line(ui: &mut Ui, rect: Rect, running: usize, idle: usize) -> bool {
             .layout(Layout::right_to_left(Align::Center)),
     );
     let label = if idle > 0 { "Move idle ones here" } else { "None are idle" };
-    quiet_button(&mut inner, label, idle > 0).clicked()
+    quiet_button(&mut inner, label, idle > 0, Size::Compact).clicked()
 }
 
 fn open_button(ui: &mut Ui, top_center: Pos2) -> egui::Response {

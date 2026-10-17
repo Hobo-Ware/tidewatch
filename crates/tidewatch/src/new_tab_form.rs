@@ -9,7 +9,6 @@ use tidewatch_core::agents::Level;
 
 use crate::brand;
 use crate::catalog::Catalog;
-use crate::commands::Platform;
 use crate::new_tab::{Kind, NameCheck, NewTab, Request, level_hint, level_refusal};
 use crate::new_tab_cards::{self, Cards};
 use crate::new_tab_fields::{
@@ -18,7 +17,7 @@ use crate::new_tab_fields::{
 use crate::new_tab_workflow;
 use crate::reader_view::field_frame_on;
 use crate::repo_base::RepoFacts;
-use crate::screen_kit::{body, heading, mono, primary_button};
+use crate::screen_kit::{Size, body, confirm_key, heading, mono, primary_button_keyed};
 use crate::segmented;
 
 const SIDE_PAD: f32 = 26.0;
@@ -153,17 +152,12 @@ fn footer_hint(state: &NewTab) -> LayoutJob {
 }
 
 fn start_label(state: &NewTab, catalog: &Catalog) -> String {
-    let keys = match Platform::CURRENT {
-        Platform::Mac => "\u{2318}\u{21b5}",
-        Platform::Linux => "Ctrl+Enter",
-    };
-    let what = match state.kind() {
+    match state.kind() {
         Kind::Workflow => "Start run".to_owned(),
         Kind::Agent | Kind::Shell => state
             .selected_entry(catalog)
             .map_or_else(|| "Start".to_owned(), |(profile, _)| format!("Start {}", profile.name)),
-    };
-    format!("{what}  {keys}")
+    }
 }
 
 /// Everything the layout needs to know before it draws, to share the height out.
@@ -502,7 +496,8 @@ fn footer_row(
     let mut child =
         ui.new_child(UiBuilder::new().max_rect(rect).layout(Layout::right_to_left(Align::Center)));
     let label = start_label(state, catalog);
-    let button = primary_button(&mut child, &label, blocked.is_none());
+    let button =
+        primary_button_keyed(&mut child, &label, confirm_key(), blocked.is_none(), Size::Regular);
     let button = match &blocked {
         Some(reason) => button.on_hover_text(reason),
         None => button,

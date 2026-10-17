@@ -33,7 +33,7 @@ use crate::reader_scroll::{Autoscroll, Heights};
 use crate::review::ReviewFacts;
 use crate::review_row_view;
 use crate::review_view::{self, ReviewAction};
-use crate::screen_kit::{body, mono, primary_button, quiet_button};
+use crate::screen_kit::{Size, body, mono, primary_button, quiet_button};
 
 /// The side inset every inline item of the left column keeps.
 pub(crate) const INSET: f32 = 14.0;
@@ -740,14 +740,14 @@ fn prompt_strip(
         Prompt::Permission => reader_keys::answers(source),
         Prompt::Question => &[],
     };
-    if quiet_button(&mut buttons, "Switch to terminal", true).clicked() {
+    if quiet_button(&mut buttons, "Switch to terminal", true, Size::Compact).clicked() {
         actions.push(Action::SwitchToTerminal);
     }
     for (answer, _) in answers.iter().rev() {
         let clicked = if *answer == Answer::Allow {
-            primary_button(&mut buttons, answer.label(), true)
+            primary_button(&mut buttons, answer.label(), true, Size::Compact)
         } else {
-            quiet_button(&mut buttons, answer.label(), true)
+            quiet_button(&mut buttons, answer.label(), true, Size::Compact)
         }
         .clicked();
         if clicked {
@@ -792,7 +792,8 @@ pub(crate) fn reply_box(
         let mut clicked = false;
         let field = field_frame(ui, |ui| {
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                clicked = quiet_button(ui, "Send", !text.trim().is_empty()).clicked();
+                clicked =
+                    quiet_button(ui, "Send", !text.trim().is_empty(), Size::Regular).clicked();
                 ui.add(
                     TextEdit::singleline(text)
                         .frame(Frame::NONE)

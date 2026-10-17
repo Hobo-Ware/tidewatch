@@ -7,7 +7,7 @@ use tidewatch_core::trust::{CliTrust, Status, TrustCli, TrustState};
 
 use crate::brand;
 use crate::notice::key_hint;
-use crate::screen_kit::{dialog_frame, primary_button, quiet_button};
+use crate::screen_kit::{Size, dialog_frame, footer_row, primary_button, quiet_button};
 use crate::settings_ui::{
     self, Control, FAINT, MUTED, SOFT, TEXT, button, button_width, footer_note, note, page_header,
     pill, row_with, section,
@@ -165,16 +165,15 @@ pub(crate) fn dialog(ctx: &egui::Context, page: &Page) -> Option<Event> {
                 .color(brand::MUTED),
             );
             ui.add_space(6.0);
-            ui.horizontal(|ui| {
-                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                    ui.spacing_mut().item_spacing.x = 8.0;
-                    if primary_button(ui, "Yes, trust the Tidewatch folder", true).clicked() {
-                        answer = Some(Event::Yes);
-                    }
-                    if quiet_button(ui, "No, keep asking me", true).clicked() {
-                        answer = Some(Event::No);
-                    }
-                });
+            footer_row(ui, "", |ui| {
+                if primary_button(ui, "Yes, trust the Tidewatch folder", true, Size::Regular)
+                    .clicked()
+                {
+                    answer = Some(Event::Yes);
+                }
+                if quiet_button(ui, "No, keep asking me", true, Size::Regular).clicked() {
+                    answer = Some(Event::No);
+                }
             });
             key_hint(ui, "Esc counts as No");
         },
@@ -193,8 +192,11 @@ pub(crate) fn settings_page(ui: &mut egui::Ui, page: &Page, file: &str) -> Optio
     let mut event = None;
     page_header(ui, "Folder trust", consent_text(page.consent));
     section(ui, "Tidewatch folder", |ui| {
-        let width = button_width(ui, "Trust the Tidewatch folder")
-            .max(button_width(ui, "Undo") + button_width(ui, "Apply again") + CONTROL_GAP);
+        let width = button_width(ui, "Trust the Tidewatch folder", Size::Compact).max(
+            button_width(ui, "Undo", Size::Compact)
+                + button_width(ui, "Apply again", Size::Compact)
+                + CONTROL_GAP,
+        );
         row_with(
             ui,
             Control::new(width, 34.0),
@@ -216,16 +218,20 @@ pub(crate) fn settings_page(ui: &mut egui::Ui, page: &Page, file: &str) -> Optio
                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                         ui.spacing_mut().item_spacing.x = CONTROL_GAP;
                         if page.consent == Consent::Granted {
-                            if button(ui, "Apply again", settings_ui::Tone::Quiet).clicked() {
+                            if button(ui, "Apply again", settings_ui::Tone::Quiet, Size::Compact)
+                                .clicked()
+                            {
                                 event = Some(Event::Apply);
                             }
-                            if button(ui, "Undo", settings_ui::Tone::Quiet).clicked() {
+                            if button(ui, "Undo", settings_ui::Tone::Quiet, Size::Compact).clicked()
+                            {
                                 event = Some(Event::Undo);
                             }
                         } else if button(
                             ui,
                             "Trust the Tidewatch folder",
                             settings_ui::Tone::Primary,
+                            Size::Compact,
                         )
                         .clicked()
                         {

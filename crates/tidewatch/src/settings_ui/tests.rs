@@ -120,7 +120,9 @@ fn a_button_clicks_only_when_enabled() {
         let rect = Cell::new(Rect::NOTHING);
         let clicked = Cell::new(false);
         let frame = |ui: &mut Ui| {
-            let response = ui.add_enabled_ui(enabled, |ui| button(ui, "Save", Tone::Primary)).inner;
+            let response = ui
+                .add_enabled_ui(enabled, |ui| button(ui, "Save", Tone::Primary, Size::Regular))
+                .inner;
             rect.set(response.rect);
             clicked.set(clicked.get() || response.clicked());
         };

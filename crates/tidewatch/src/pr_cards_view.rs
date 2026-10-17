@@ -16,7 +16,7 @@ use crate::pr_card_model::{
 };
 use crate::pr_watch::Watch;
 use crate::reader_view::{ellipsized, item_frame};
-use crate::screen_kit::{body, heading, mono, primary_button, quiet_button};
+use crate::screen_kit::{Size, body, heading, mono, primary_button, quiet_button};
 
 const MAX_CARD_W: f32 = 760.0;
 const MAX_BUBBLE_W: f32 = 560.0;
@@ -306,9 +306,9 @@ fn button_row(ui: &mut Ui, buttons: &[Button], note: Option<&str>) -> Option<Car
         ui.spacing_mut().item_spacing.x = 8.0;
         for button in buttons {
             let response = if button.primary {
-                primary_button(ui, &button.label, true)
+                primary_button(ui, &button.label, true, Size::Compact)
             } else {
-                quiet_button(ui, &button.label, true)
+                quiet_button(ui, &button.label, true, Size::Compact)
             };
             if response.clicked() {
                 clicked = Some(button.action.clone());
@@ -368,7 +368,7 @@ fn waiting_row(ui: &mut Ui, text: &str, buttons: &[Button; 2]) -> Option<CardAct
     );
     right.spacing_mut().item_spacing.x = 6.0;
     for button in buttons.iter().rev() {
-        if quiet_button(&mut right, &button.label, true).clicked() {
+        if quiet_button(&mut right, &button.label, true, Size::Compact).clicked() {
             clicked = Some(button.action.clone());
         }
     }

@@ -9,7 +9,9 @@ use tidewatch_core::worktree::Leftover;
 use crate::brand;
 use crate::leftovers::{Cleanup, Row, RowState, status_text};
 use crate::notice::key_hint;
-use crate::screen_kit::{danger_button, dialog_frame, primary_button, quiet_button};
+use crate::screen_kit::{
+    Size, danger_button, dialog_frame, footer_row, primary_button, quiet_button,
+};
 use crate::settings_ui::pill;
 
 const DIALOG_WIDTH: f32 = 560.0;
@@ -35,7 +37,7 @@ pub(crate) fn tip(leftovers: &[Leftover]) -> String {
 
 /// "N leftover" in the tab strip. True when clicked.
 pub(crate) fn chip(ui: &mut egui::Ui, leftovers: &[Leftover]) -> bool {
-    quiet_button(ui, &format!("{} leftover", leftovers.len()), true)
+    quiet_button(ui, &format!("{} leftover", leftovers.len()), true, Size::Compact)
         .on_hover_text(tip(leftovers))
         .clicked()
 }
@@ -77,7 +79,7 @@ fn row_ui(ui: &mut egui::Ui, row: &Row, answer: &mut Option<Answer>) {
                     let (text, ink) = pill_of(&row.state);
                     pill(ui, text, ink);
                     if matches!(&row.state, RowState::Ready(i) if i.changed > 0)
-                        && danger_button(ui, "Discard").clicked()
+                        && danger_button(ui, "Discard", Size::Compact).clicked()
                     {
                         *answer = Some(Answer::Discard(row.leftover.path.clone()));
                     }
@@ -120,19 +122,15 @@ pub(crate) fn dialog(ctx: &egui::Context, cleanup: &Cleanup) -> Option<Answer> {
                 }
             });
             ui.add_space(4.0);
-            ui.horizontal(|ui| {
-                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                    ui.spacing_mut().item_spacing.x = 8.0;
-                    let n = cleanup.clean_count();
-                    let label =
-                        if n == 0 { "Clean up".to_owned() } else { format!("Clean up ({n})") };
-                    if primary_button(ui, &label, n > 0 && !cleanup.busy()).clicked() {
-                        answer = Some(Answer::CleanUp);
-                    }
-                    if quiet_button(ui, "Close", true).clicked() {
-                        answer = Some(Answer::Close);
-                    }
-                });
+            footer_row(ui, "", |ui| {
+                let n = cleanup.clean_count();
+                let label = if n == 0 { "Clean up".to_owned() } else { format!("Clean up ({n})") };
+                if primary_button(ui, &label, n > 0 && !cleanup.busy(), Size::Regular).clicked() {
+                    answer = Some(Answer::CleanUp);
+                }
+                if quiet_button(ui, "Close", true, Size::Regular).clicked() {
+                    answer = Some(Answer::Close);
+                }
             });
             key_hint(ui, "Esc closes");
         },

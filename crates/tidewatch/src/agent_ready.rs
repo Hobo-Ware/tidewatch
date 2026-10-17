@@ -8,7 +8,7 @@ use egui::{
 use crate::brand;
 use crate::commands::Command;
 use crate::reader_view::INSET;
-use crate::screen_kit::{body, heading, paint_cli_badge, primary_button};
+use crate::screen_kit::{Size, body, heading, paint_cli_badge, primary_button};
 
 pub(crate) const COMPOSER_H: f32 = 164.0;
 const BADGE: f32 = 52.0;
@@ -96,7 +96,7 @@ pub(crate) fn composer(
             format!("Enter sends  -  Shift+Enter new line  -  {} terminal", Command::Reader.keys());
         ui.label(RichText::new(hint).size(12.0).color(brand::MUTED));
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-            clicked = primary_button(ui, "Send", !text.trim().is_empty()).clicked();
+            clicked = primary_button(ui, "Send", !text.trim().is_empty(), Size::Regular).clicked();
         });
     });
     let line = if field.has_focus() { brand::TEAL } else { brand::FIELD_LINE };

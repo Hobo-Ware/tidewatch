@@ -4,7 +4,7 @@
 use egui::{Margin, Order, Rect, RichText, Stroke, pos2, vec2};
 
 use crate::brand;
-use crate::screen_kit::quiet_button;
+use crate::screen_kit::{Size, quiet_button};
 
 const MAX_WIDTH: f32 = 560.0;
 const BOTTOM_GAP: f32 = 64.0;
@@ -44,7 +44,7 @@ fn draw(ctx: &egui::Context, text: &str, column: Rect) -> (bool, Rect) {
                     ui.horizontal_top(|ui| {
                         ui.spacing_mut().item_spacing.x = 12.0;
                         ui.add(egui::Label::new(RichText::new(text).color(brand::TEXT)).wrap());
-                        dismissed = quiet_button(ui, "Dismiss", true).clicked();
+                        dismissed = quiet_button(ui, "Dismiss", true, Size::Compact).clicked();
                     });
                 });
             let rect = card.response.rect;
