@@ -68,6 +68,7 @@ impl Tidewatch {
         self.drive_agents(ctx, now);
         self.drive_flow(ctx, now);
         self.drive_pr(ctx, now);
+        self.drive_progress(ctx);
         self.drive_dev_draft(ctx, now);
         self.drive_restore(ctx, now, None);
         self.drive_takeover(ctx, now);
