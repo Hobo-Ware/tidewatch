@@ -1,14 +1,14 @@
 //! The empty state and composer of an agent tab before its first message.
 
 use egui::{
-    Align, Align2, Frame, Id, Key, KeyboardShortcut, Layout, Margin, Modifiers, Rect, RichText,
-    Stroke, TextEdit, Ui, UiBuilder, pos2, vec2,
+    Align2, Frame, Id, Key, KeyboardShortcut, Margin, Modifiers, Rect, RichText, Stroke, TextEdit,
+    Ui, UiBuilder, pos2, vec2,
 };
 
 use crate::brand;
 use crate::commands::Command;
 use crate::reader_view::INSET;
-use crate::screen_kit::{Size, body, heading, paint_cli_badge, primary_button};
+use crate::screen_kit::{Size, body, footer_row, heading, paint_cli_badge, primary_button};
 
 pub(crate) const COMPOSER_H: f32 = 164.0;
 const BADGE: f32 = 52.0;
@@ -91,13 +91,10 @@ pub(crate) fn composer(
     if std::mem::take(focus) {
         field.request_focus();
     }
-    ui.horizontal(|ui| {
-        let hint =
-            format!("Enter sends  -  Shift+Enter new line  -  {} terminal", Command::Reader.keys());
-        ui.label(RichText::new(hint).size(12.0).color(brand::MUTED));
-        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-            clicked = primary_button(ui, "Send", !text.trim().is_empty(), Size::Regular).clicked();
-        });
+    let hint =
+        format!("Enter sends  -  Shift+Enter new line  -  {} terminal", Command::Reader.keys());
+    footer_row(ui, &hint, |ui| {
+        clicked = primary_button(ui, "Send", !text.trim().is_empty(), Size::Regular).clicked();
     });
     let line = if field.has_focus() { brand::TEAL } else { brand::FIELD_LINE };
     prepared.frame.stroke = Stroke::new(1.0, line);

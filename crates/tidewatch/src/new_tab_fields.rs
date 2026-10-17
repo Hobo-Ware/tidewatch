@@ -1,29 +1,39 @@
 //! The new-tab form's fields: the worktree name, the branch it starts from, and the message box.
 
 use egui::{
-    Align2, Id, Margin, Popup, Pos2, RichText, ScrollArea, Sense, Stroke, TextEdit, Ui, pos2, vec2,
+    Align2, Id, Margin, Popup, Pos2, Rect, RichText, ScrollArea, Sense, Stroke, TextEdit, Ui, pos2,
+    vec2,
 };
 
 use crate::brand;
 use crate::new_tab::{Kind, NameCheck, NewTab};
+use crate::new_tab_layout::{FIELD_H, LABEL_GAP, LABEL_H, PROBLEM_H};
 use crate::reader_view::{ellipsized, field_frame_on};
 use crate::repo_base::RepoFacts;
 use crate::screen_kit::{Size, body, mono, quiet_button};
 
-pub(crate) const LABEL_H: f32 = 14.0;
-pub(crate) const LABEL_GAP: f32 = 6.0;
-pub(crate) const FIELD_H: f32 = 32.0;
-pub(crate) const PROBLEM_H: f32 = 24.0;
 const PREFIX: &str = "agent/";
+const NOTE_GAP: f32 = 12.0;
 const TEXT_ID: &str = "new-tab-text";
 const BRANCHES_MAX_H: f32 = 260.0;
+
+fn text_width(ui: &Ui, text: &str, size: f32) -> f32 {
+    ui.painter().layout_no_wrap(text.to_owned(), body(size), brand::MUTED).size().x
+}
 
 pub(crate) fn text_id() -> Id {
     Id::new(TEXT_ID)
 }
 
 pub(crate) fn section_label(ui: &mut Ui, text: &str) {
-    ui.label(RichText::new(text.to_uppercase()).size(11.5).color(brand::MUTED));
+    let (rect, _) = ui.allocate_exact_size(vec2(ui.available_width(), LABEL_H), Sense::hover());
+    let galley =
+        ellipsized(ui.painter(), &text.to_uppercase(), body(11.5), brand::MUTED, rect.width());
+    ui.painter().galley(
+        rect.left_center() - vec2(0.0, galley.size().y / 2.0),
+        galley,
+        brand::MUTED,
+    );
 }
 
 /// What the name field did this frame.
@@ -62,15 +72,19 @@ pub(crate) fn name_field(ui: &mut Ui, state: &NewTab, facts: Option<&RepoFacts>)
         Kind::Agent | Kind::Shell => "follows the message",
     });
     if let Some(note) = follows {
-        let at = pos2(ui.max_rect().right(), top + LABEL_H / 2.0);
-        ui.painter().text(at, Align2::RIGHT_CENTER, note, body(11.5), brand::FAINT);
+        let label_w = text_width(ui, "WORKTREE NAME", 11.5);
+        let room = ui.max_rect().width() - label_w;
+        if text_width(ui, note, 11.5) + NOTE_GAP <= room {
+            let at = pos2(ui.max_rect().right(), top + LABEL_H / 2.0);
+            ui.painter().text(at, Align2::RIGHT_CENTER, note, body(11.5), brand::FAINT);
+        }
     }
     ui.add_space(LABEL_GAP);
     let mut text = state.name(facts);
     let shown = text.clone();
     let response = field_frame_on(ui, brand::SEGMENT, true, |ui| {
         ui.horizontal(|ui| {
-            ui.set_min_height(FIELD_H - 10.0);
+            ui.set_min_height(FIELD_H - 12.0);
             ui.spacing_mut().item_spacing.x = 6.0;
             ui.label(RichText::new(PREFIX).font(mono(13.0)).color(brand::FAINT));
             ui.add(
@@ -125,7 +139,7 @@ pub(crate) fn base_field(ui: &mut Ui, state: &NewTab, facts: Option<&RepoFacts>)
     ui.add_space(LABEL_GAP);
     let current = state.base(facts).unwrap_or_else(|| "HEAD".to_owned());
     let response = field_frame_on(ui, brand::SEGMENT, true, |ui| {
-        let size = vec2(ui.available_width(), FIELD_H - 10.0);
+        let size = vec2(ui.available_width(), FIELD_H - 12.0);
         let (rect, response) = ui.allocate_exact_size(size, Sense::click());
         paint_branch_icon(ui, pos2(rect.left() + 7.0, rect.center().y));
         let room = rect.width() - 36.0;
@@ -157,12 +171,18 @@ fn mono_text(text: &str) -> RichText {
     RichText::new(text).font(mono(13.0))
 }
 
-/// The box a first message or a task is typed into, `height` tall. Returns the text when it
-/// changed.
-pub(crate) fn text_box(ui: &mut Ui, state: &mut NewTab, height: f32, hint: &str) -> Option<String> {
+/// The box a first message or a task is typed into, `height` tall: where it went and the text when
+/// it changed.
+pub(crate) fn text_box(
+    ui: &mut Ui,
+    state: &mut NewTab,
+    height: f32,
+    hint: &str,
+) -> (Rect, Option<String>) {
     let mut text = state.text().to_owned();
     let inner = (height - 12.0).max(40.0);
     let width = ui.available_width();
+    let top = ui.cursor().top();
     let response = field_frame_on(ui, brand::SEGMENT, true, |ui| {
         ui.set_min_height(inner);
         ScrollArea::vertical()
@@ -187,5 +207,9 @@ pub(crate) fn text_box(ui: &mut Ui, state: &mut NewTab, height: f32, hint: &str)
     if std::mem::take(&mut state.focus_message) {
         response.request_focus();
     }
-    (text != state.text()).then_some(text)
+    let rect = Rect::from_min_max(
+        pos2(ui.min_rect().left(), top),
+        pos2(ui.max_rect().right(), ui.min_rect().bottom()),
+    );
+    (rect, (text != state.text()).then_some(text))
 }

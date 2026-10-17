@@ -237,6 +237,11 @@ pub(crate) fn button_width(ui: &Ui, label: &str, size: Size) -> f32 {
     width_of(size, text_width(ui, label, body(size.font())), None)
 }
 
+pub(crate) fn keyed_button_width(ui: &Ui, label: &str, key: &str, size: Size) -> f32 {
+    let key_w = text_width(ui, key, mono(CAP_FONT));
+    width_of(size, text_width(ui, label, body(size.font())), Some(key_w))
+}
+
 struct Spec<'a> {
     label: &'a str,
     key: Option<&'a str>,

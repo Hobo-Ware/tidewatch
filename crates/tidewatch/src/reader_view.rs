@@ -793,7 +793,7 @@ pub(crate) fn reply_box(
         let field = field_frame(ui, |ui| {
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                 clicked =
-                    quiet_button(ui, "Send", !text.trim().is_empty(), Size::Regular).clicked();
+                    quiet_button(ui, "Send", !text.trim().is_empty(), Size::Compact).clicked();
                 ui.add(
                     TextEdit::singleline(text)
                         .frame(Frame::NONE)

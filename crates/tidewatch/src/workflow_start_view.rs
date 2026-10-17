@@ -1,14 +1,12 @@
 //! The card a workflow tab shows until Start run, where its task is typed; nothing runs before it.
 
-use egui::{
-    Align, Frame, Id, Key, Layout, Modifiers, Rect, RichText, TextEdit, Ui, UiBuilder, pos2, vec2,
-};
+use egui::{Frame, Id, Key, Modifiers, Rect, RichText, TextEdit, Ui, UiBuilder, pos2, vec2};
 use tidewatch_core::runner::Runner;
 
 use crate::brand;
 use crate::commands::Command;
 use crate::reader_view::{field_frame, paint_item};
-use crate::screen_kit::{Size, body, cli_short_name, heading, primary_button};
+use crate::screen_kit::{Size, body, cli_short_name, footer_row, heading, primary_button};
 use crate::workflow_run::TabRun;
 
 const COLUMN_W: f32 = 760.0;
@@ -72,16 +70,13 @@ pub(crate) fn show(ui: &mut Ui, area: Rect, run: &mut TabRun) -> Option<String> 
     stage_cards(&mut child, &cards(run.runner()));
     child.add_space(18.0);
     let mut start = command_enter;
-    child.horizontal(|ui| {
-        let hint = format!(
-            "{} starts  -  edit stages in Settings, Workflows",
-            Command::ApproveDelivery.keys()
-        );
-        ui.label(RichText::new(hint).size(12.0).color(brand::MUTED));
-        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-            let ready = !run.ui.task.trim().is_empty();
-            start |= primary_button(ui, "Start run", ready, Size::Regular).clicked();
-        });
+    let hint = format!(
+        "{} starts  -  edit stages in Settings, Workflows",
+        Command::ApproveDelivery.keys()
+    );
+    footer_row(&mut child, &hint, |ui| {
+        let ready = !run.ui.task.trim().is_empty();
+        start |= primary_button(ui, "Start run", ready, Size::Regular).clicked();
     });
     (start && !run.ui.task.trim().is_empty()).then(|| run.ui.task.clone())
 }

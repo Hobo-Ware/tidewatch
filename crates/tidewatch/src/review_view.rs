@@ -21,7 +21,7 @@ const HEAD_H: f32 = 24.0;
 const FILE_H: f32 = 22.0;
 const ROW_H: f32 = 20.0;
 const LIST_MAX_H: f32 = 124.0;
-const FIELD_H: f32 = 36.0;
+const FIELD_H: f32 = 40.0;
 const HINT_H: f32 = 18.0;
 const GAP: f32 = 8.0;
 const LINE_W: f32 = 46.0;
@@ -244,10 +244,10 @@ fn field_row(
     field_frame(&mut child, |ui| {
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
             clicked = if held {
-                quiet_button(ui, "Take it back", true, Size::Regular).clicked()
+                quiet_button(ui, "Take it back", true, Size::Compact).clicked()
             } else {
                 let enabled = matches!(facts.send, SendState::Ready | SendState::WhenIdle);
-                primary_button(ui, &send_label(facts.profile), enabled, Size::Regular).clicked()
+                primary_button(ui, &send_label(facts.profile), enabled, Size::Compact).clicked()
             };
             ui.add(
                 TextEdit::singleline(&mut state.message)

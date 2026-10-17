@@ -9,16 +9,14 @@ use tidewatch_core::workflows::Workflows;
 use super::*;
 use crate::new_tab::Group;
 
-fn area() -> Rect {
-    Rect::from_min_size(pos2(0.0, 0.0), vec2(900.0, 800.0))
-}
-
 struct Harness {
     ctx: egui::Context,
     state: NewTab,
     catalog: Catalog,
     facts: Option<RepoFacts>,
     keys_free: bool,
+    area: Rect,
+    clock: f64,
 }
 
 fn key_with(key: Key, modifiers: Modifiers) -> Event {
@@ -31,14 +29,25 @@ fn key(k: Key) -> Event {
 
 impl Harness {
     fn new(group: Group) -> Self {
+        Self::sized(group, 900.0, 800.0)
+    }
+
+    fn sized(group: Group, width: f32, height: f32) -> Self {
         let mut catalog = Catalog::new(OsString::from("/usr/bin"));
-        catalog.set_profiles(Profiles::seeded(&["claude".to_owned(), "codex".to_owned()]));
+        catalog.set_profiles(Profiles::seeded(&[
+            "claude".to_owned(),
+            "codex".to_owned(),
+            "gemini".to_owned(),
+            "copilot".to_owned(),
+        ]));
         catalog.set_workflows(Workflows::defaults());
         let state =
             NewTab::open(group, "web".into(), PathBuf::from("/work/web"), Vec::new(), None, 3);
         let ctx = egui::Context::default();
         crate::fonts::install(&ctx);
-        let mut harness = Self { ctx, state, catalog, facts: None, keys_free: true };
+        let area = Rect::from_min_size(pos2(0.0, 0.0), vec2(width, height));
+        let mut harness =
+            Self { ctx, state, catalog, facts: None, keys_free: true, area, clock: 0.0 };
         harness.frame(Vec::new());
         harness.frame(Vec::new());
         harness
@@ -47,23 +56,32 @@ impl Harness {
     /// A form whose message box has given the keyboard up with one Esc, as a user does before
     /// pressing a letter that means something.
     fn unfocused(group: Group) -> Self {
-        let mut harness = Self::new(group);
+        Self::unfocused_sized(group, 900.0, 800.0)
+    }
+
+    fn unfocused_sized(group: Group, width: f32, height: f32) -> Self {
+        let mut harness = Self::sized(group, width, height);
         assert_eq!(harness.press(Key::Escape), None);
         harness
     }
 
     fn frame(&mut self, events: Vec<Event>) -> Option<Out> {
+        self.clock += 0.1;
         let raw = RawInput {
-            screen_rect: Some(Rect::from_min_size(pos2(0.0, 0.0), vec2(1000.0, 800.0))),
+            screen_rect: Some(Rect::from_min_size(
+                pos2(0.0, 0.0),
+                self.area.size() + vec2(100.0, 0.0),
+            )),
             events,
             focused: true,
+            time: Some(self.clock),
             ..RawInput::default()
         };
         let mut out = None;
         let _ = self.ctx.run_ui(raw, |ui| {
             out = show(
                 ui,
-                area(),
+                self.area,
                 &mut self.state,
                 &self.catalog,
                 self.facts.as_ref(),
@@ -96,6 +114,32 @@ impl Harness {
     fn typing(&self) -> bool {
         self.ctx.text_edit_focused()
     }
+
+    fn placed(&self) -> Placed {
+        self.ctx.data(|data| data.get_temp(placed_id())).expect("the form has drawn")
+    }
+
+    fn row_center(&self, index: usize) -> egui::Pos2 {
+        let entries = new_tab_lane::entries(&self.state, &self.catalog);
+        let (slots, _) = layout::lane_slots(&new_tab_lane::slots(&entries));
+        let at = entries
+            .iter()
+            .position(|entry| matches!(entry, new_tab_lane::Entry::Row(row) if row.index == index))
+            .expect("a row");
+        let list = layout::lane_parts(self.placed().lane.unwrap()).1;
+        let (top, height) = slots[at];
+        pos2(list.left() + 40.0, list.top() + top + height / 2.0)
+    }
+
+    fn click_row(&mut self, index: usize) -> Option<Out> {
+        let at = self.row_center(index);
+        self.click(at)
+    }
+
+    fn click_start(&mut self) -> Option<Out> {
+        let at = self.placed().start.expect("the footer").center();
+        self.click(at)
+    }
 }
 
 fn started(out: Option<Out>) -> Request {
@@ -104,19 +148,6 @@ fn started(out: Option<Out>) -> Request {
         Some(Out::Close) => panic!("closed"),
         None => panic!("nothing started"),
     }
-}
-
-fn card_center(index: usize, count: usize) -> egui::Pos2 {
-    let origin = pos2(SIDE_PAD, TOP_PAD + HEADER_H + GAP + SECTION_ROW_H + 8.0);
-    let width = (area().width() - 2.0 * SIDE_PAD).min(COLUMN_MAX_W);
-    new_tab_cards::grid(origin, width, 2, count, new_tab_cards::AGENT_H)[index].center()
-}
-
-fn start_button() -> egui::Pos2 {
-    pos2(
-        SIDE_PAD + COLUMN_MAX_W.min(area().width() - 2.0 * SIDE_PAD) - 30.0,
-        area().bottom() - FOOTER_PAD - FOOTER_H / 2.0,
-    )
 }
 
 #[test]
@@ -196,10 +227,9 @@ fn left_and_right_change_the_level_in_an_agent_form_only() {
 }
 
 #[test]
-fn clicking_a_card_picks_it() {
+fn clicking_a_lane_row_picks_it() {
     let mut harness = Harness::new(Group::Repo);
-    let count = harness.state.visible(&harness.catalog).len();
-    assert_eq!(harness.click(card_center(3, count)), None);
+    assert_eq!(harness.click_row(3), None);
     assert_eq!(harness.state.selected(), 3);
     assert_eq!(harness.state.selected_id(&harness.catalog).as_deref(), Some("codex-reviewer"));
 }
@@ -218,14 +248,14 @@ fn cmd_enter_starts_from_the_message_box_with_the_message_and_a_name_from_it() {
 #[test]
 fn the_start_button_starts_too_and_a_blocked_one_does_nothing() {
     let mut harness = Harness::new(Group::Repo);
-    assert!(matches!(started(harness.click(start_button())), Request::Agent(_)));
+    assert!(matches!(started(harness.click_start()), Request::Agent(_)));
     harness.facts = Some(RepoFacts {
         checked_out: Some("main".into()),
         branches: vec!["main".into()],
         taken: HashSet::new(),
     });
     harness.state.type_name("has space");
-    assert_eq!(harness.click(start_button()), None);
+    assert_eq!(harness.click_start(), None);
 }
 
 #[test]
@@ -273,9 +303,9 @@ fn the_workflow_form_draws_its_stages_and_waits_for_a_task() {
     harness.press(Key::Num2);
     harness.frame(Vec::new());
     assert_eq!(harness.state.selected_workflow(&harness.catalog).unwrap().id, "fix");
-    assert_eq!(harness.click(start_button()), None, "Start run is off while the task is empty");
+    assert_eq!(harness.click_start(), None, "Start run is off while the task is empty");
     harness.state.set_text("the login form loses focus");
-    assert!(matches!(started(harness.click(start_button())), Request::Workflow(_)));
+    assert!(matches!(started(harness.click_start()), Request::Workflow(_)));
 }
 
 #[test]
@@ -293,4 +323,137 @@ fn the_form_draws_with_no_profiles_loaded() {
     harness.catalog = Catalog::new(OsString::from("/usr/bin"));
     harness.frame(Vec::new());
     assert_eq!(harness.press(Key::W), None);
+}
+
+fn parts(placed: &Placed) -> Vec<(&'static str, Rect)> {
+    [
+        ("lane", placed.lane),
+        ("permission", placed.permission),
+        ("name", placed.name),
+        ("base", placed.base),
+        ("message", placed.message),
+        ("hints", placed.hints),
+        ("start", placed.start),
+    ]
+    .into_iter()
+    .filter_map(|(name, rect)| rect.map(|rect| (name, rect)))
+    .collect()
+}
+
+fn nothing_meets(harness: &Harness, what: &str) {
+    let parts = parts(&harness.placed());
+    for (index, (a_name, a)) in parts.iter().enumerate() {
+        assert!(harness.area.contains_rect(*a), "{what}: {a_name} {a:?} leaves the form");
+        for (b_name, b) in &parts[index + 1..] {
+            assert!(!a.intersects(*b), "{what}: {a_name} {a:?} meets {b_name} {b:?}");
+        }
+    }
+}
+
+fn dup_facts() -> RepoFacts {
+    RepoFacts {
+        checked_out: Some("main".into()),
+        branches: vec!["main".into()],
+        taken: ["dup".to_owned()].into_iter().collect(),
+    }
+}
+
+#[test]
+fn no_part_of_the_form_meets_another_in_a_short_or_a_narrow_window() {
+    let sizes = [(980.0, 560.0), (742.0, 642.0), (835.0, 822.0), (638.0, 562.0), (900.0, 800.0)];
+    for (width, height) in sizes {
+        for group in [Group::Repo, Group::Other] {
+            let mut harness = Harness::sized(group, width, height);
+            nothing_meets(&harness, &format!("{width}x{height} {group:?}"));
+            harness.press(Key::W);
+            harness.frame(Vec::new());
+            nothing_meets(&harness, &format!("{width}x{height} {group:?} workflow"));
+        }
+    }
+}
+
+#[test]
+fn nothing_meets_with_a_taken_name_a_warning_and_a_typed_message() {
+    for (width, height) in [(980.0, 560.0), (638.0, 562.0)] {
+        let mut harness = Harness::sized(Group::Repo, width, height);
+        harness.facts = Some(dup_facts());
+        harness.state.select(6, &harness.catalog);
+        harness.state.type_name("dup");
+        harness
+            .type_text("A first message that is long enough to matter for the hint under the box");
+        harness.frame(Vec::new());
+        assert_ne!(harness.state.warnings(&harness.catalog), Vec::<String>::new());
+        nothing_meets(&harness, &format!("{width}x{height} with problems"));
+    }
+}
+
+#[test]
+fn the_lane_is_as_tall_as_the_form_and_the_footer_sits_at_the_bottom_of_the_pane() {
+    let harness = Harness::sized(Group::Repo, 980.0, 560.0);
+    let placed = harness.placed();
+    let lane = placed.lane.unwrap();
+    assert_eq!(lane.bottom(), harness.area.bottom());
+    assert!(lane.height() > 400.0, "{lane:?}");
+    let start = placed.start.unwrap();
+    assert_eq!(start.height(), 32.0);
+    assert_eq!(start.right(), harness.area.right() - layout::SIDE_PAD);
+    assert_eq!(start.bottom(), harness.area.bottom() - 14.0);
+}
+
+#[test]
+fn a_pane_too_short_for_the_message_scrolls_and_the_footer_stays_pinned() {
+    let tall = Harness::sized(Group::Repo, 980.0, 560.0).placed().start.unwrap();
+    let short = Harness::sized(Group::Repo, 980.0, 330.0);
+    let start = short.placed().start.unwrap();
+    assert_eq!(start.bottom(), short.area.bottom() - 14.0);
+    assert_eq!(start.size(), tall.size());
+    assert!(start.top() > short.placed().message.unwrap().top());
+}
+
+#[test]
+fn up_and_down_move_the_pick_and_stop_at_the_ends() {
+    let mut harness = Harness::unfocused(Group::Repo);
+    harness.press(Key::ArrowUp);
+    assert_eq!(harness.state.selected(), 0);
+    harness.press(Key::ArrowDown);
+    harness.press(Key::ArrowDown);
+    assert_eq!(harness.state.selected(), 2);
+    assert_eq!(harness.state.selected_id(&harness.catalog).as_deref(), Some("codex-builder"));
+    harness.press(Key::ArrowUp);
+    assert_eq!(harness.state.selected(), 1);
+    for _ in 0..12 {
+        harness.press(Key::ArrowDown);
+    }
+    assert_eq!(harness.state.selected(), harness.state.visible(&harness.catalog).len() - 1);
+    harness.press(Key::W);
+    harness.press(Key::ArrowDown);
+    assert_eq!(harness.state.selected(), 1);
+}
+
+#[test]
+fn up_and_down_are_left_to_a_focused_text_field() {
+    let mut harness = Harness::new(Group::Repo);
+    harness.press(Key::ArrowDown);
+    assert_eq!(harness.state.selected(), 0);
+}
+
+#[test]
+fn the_picked_row_stays_in_view_when_the_keys_move_it() {
+    let mut harness = Harness::unfocused_sized(Group::Repo, 980.0, 420.0);
+    let last = harness.state.visible(&harness.catalog).len() - 1;
+    for _ in 0..last {
+        harness.press(Key::ArrowDown);
+        harness.frame(Vec::new());
+    }
+    harness.frame(Vec::new());
+    let lane = harness.placed().lane.unwrap();
+    let row = harness.placed().selected_row.unwrap();
+    assert!(row.top() >= lane.top() && row.bottom() <= lane.bottom() + 0.5, "{row:?} in {lane:?}");
+    for _ in 0..last {
+        harness.press(Key::ArrowUp);
+        harness.frame(Vec::new());
+    }
+    harness.frame(Vec::new());
+    let row = harness.placed().selected_row.unwrap();
+    assert!(row.top() >= lane.top() && row.bottom() <= lane.bottom() + 0.5, "{row:?} in {lane:?}");
 }
