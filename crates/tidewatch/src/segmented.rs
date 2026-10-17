@@ -182,8 +182,44 @@ fn flow(widths: &[f32], avail: f32) -> (Vec<Rect>, f32) {
 
 /// Chips that wrap onto more rows, for a choice with more options than a segmented control holds.
 pub(crate) fn wrap_chips(ui: &mut Ui, id: Id, labels: &[&str], active: usize) -> Option<usize> {
-    let widths: Vec<f32> =
-        text_widths(ui, labels).into_iter().map(|w| w + 2.0 * SEGMENT_PAD).collect();
+    chips(ui, id, labels, &[], active)
+}
+
+fn chip_widths(ui: &Ui, labels: &[&str]) -> Vec<f32> {
+    text_widths(ui, labels).into_iter().map(|w| w + 2.0 * SEGMENT_PAD).collect()
+}
+
+fn fits_inline(ui: &Ui, labels: &[&str], avail: f32) -> bool {
+    rects(0.0, 0.0, &text_widths(ui, labels)).0.width() <= avail
+}
+
+pub(crate) fn inline_or_chips_height(ui: &Ui, labels: &[&str], avail: f32) -> f32 {
+    if fits_inline(ui, labels, avail) { HEIGHT } else { flow(&chip_widths(ui, labels), avail).1 }
+}
+
+/// The segmented control when it fits the row, else chips that wrap; `tones` give a segment its own ink.
+pub(crate) fn inline_or_chips(
+    ui: &mut Ui,
+    id: Id,
+    labels: &[&str],
+    tones: &[Option<Color32>],
+    active: usize,
+) -> Option<usize> {
+    if fits_inline(ui, labels, ui.available_width()) {
+        inline_toned(ui, id, labels, tones, active)
+    } else {
+        chips(ui, id, labels, tones, active)
+    }
+}
+
+fn chips(
+    ui: &mut Ui,
+    id: Id,
+    labels: &[&str],
+    tones: &[Option<Color32>],
+    active: usize,
+) -> Option<usize> {
+    let widths = chip_widths(ui, labels);
     let (placed, height) = flow(&widths, ui.available_width());
     let (area, _) = ui.allocate_exact_size(vec2(ui.available_width(), height), Sense::hover());
     let painter = ui.painter().clone();
@@ -198,10 +234,11 @@ pub(crate) fn wrap_chips(ui: &mut Ui, id: Id, labels: &[&str], active: usize) ->
             (brand::SEGMENT, brand::SEGMENT_LINE)
         };
         painter.rect(rect, CornerRadius::same(7), fill, Stroke::new(1.0, line), StrokeKind::Inside);
+        let tone = tones.get(index).copied().flatten();
         let ink = match (on, response.hovered()) {
-            (true, _) => brand::TEAL_TEXT,
+            (true, _) => tone.unwrap_or(brand::TEAL_TEXT),
             (false, true) => brand::TEXT,
-            (false, false) => brand::SOFT,
+            (false, false) => tone.unwrap_or(brand::SOFT),
         };
         painter.text(rect.center(), Align2::CENTER_CENTER, *label, body(FONT), ink);
         if response.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() && !on {

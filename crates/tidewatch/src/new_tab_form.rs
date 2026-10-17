@@ -1,43 +1,36 @@
 //! Draws the new-tab form in the left column of a draft tab and reads its keys.
 
-use egui::epaint::text::{LayoutJob, TextFormat};
+use std::sync::Arc;
+
+use egui::epaint::text::{LayoutJob, TextFormat, TextWrapping};
 use egui::{
-    Align, Align2, Color32, Id, Key, Layout, Modifiers, Rect, RichText, Sense, TextEdit, Ui,
-    UiBuilder, pos2, vec2,
+    Align, Align2, Color32, Galley, Id, Key, Layout, Modifiers, Rect, ScrollArea, Sense, Stroke,
+    Ui, UiBuilder, pos2, vec2,
 };
 use tidewatch_core::agents::Level;
 
 use crate::brand;
 use crate::catalog::Catalog;
 use crate::new_tab::{Kind, NameCheck, NewTab, Request, level_hint, level_refusal};
-use crate::new_tab_cards::{self, Cards};
-use crate::new_tab_fields::{
-    self, FIELD_H, LABEL_GAP, LABEL_H, NameEdit, PROBLEM_H, section_label, text_box,
-};
-use crate::new_tab_workflow;
-use crate::reader_view::field_frame_on;
+use crate::new_tab_cards;
+use crate::new_tab_fields::{self, NameEdit, section_label, text_box};
+use crate::new_tab_lane;
+use crate::new_tab_layout::{self as layout, Above, LABEL_GAP, LABEL_H, SECTION_GAP};
+use crate::new_tab_workflow::{self, StageCard};
 use crate::repo_base::RepoFacts;
-use crate::screen_kit::{Size, body, confirm_key, heading, mono, primary_button_keyed};
+use crate::screen_kit::{
+    Size, body, confirm_key, heading, keyed_button_width, mono, primary_button_keyed,
+};
 use crate::segmented;
 
-const SIDE_PAD: f32 = 26.0;
-const TOP_PAD: f32 = 8.0;
-const COLUMN_MAX_W: f32 = 880.0;
-const GAP: f32 = 18.0;
-const HEADER_H: f32 = 46.0;
-const SECTION_ROW_H: f32 = 28.0;
-const FILTER_W: f32 = 200.0;
-const CONTROL_ROW_H: f32 = segmented::HEIGHT;
-const WARNING_H: f32 = 17.0;
-const NOTE_H: f32 = 18.0;
-const HINT_H: f32 = 22.0;
-const FOOTER_H: f32 = 32.0;
-const FOOTER_PAD: f32 = 14.0;
-const MIN_GRID_H: f32 = 56.0;
-const MESSAGE_H: (f32, f32) = (120.0, 210.0);
-const TASK_H: (f32, f32) = (90.0, 160.0);
-const COLUMN_GAP: f32 = 12.0;
 const TYPING: &str = "new-tab-typing";
+const PLACED: &str = "new-tab-placed";
+const CAPTION_GAP: f32 = 8.0;
+const DESCRIPTION_GAP: f32 = 6.0;
+const NOTE_GAP: f32 = 4.0;
+const HINT_GAP: f32 = 6.0;
+const WARNING_GAP: f32 = 2.0;
+const FOOTER_HINT_GAP: f32 = 14.0;
 
 #[derive(Debug, PartialEq)]
 pub(crate) enum Out {
@@ -45,14 +38,30 @@ pub(crate) enum Out {
     Close,
 }
 
+/// Where the form put its main parts in the last frame, for a headless test to read.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub(crate) struct Placed {
+    pub(crate) lane: Option<Rect>,
+    pub(crate) permission: Option<Rect>,
+    pub(crate) name: Option<Rect>,
+    pub(crate) base: Option<Rect>,
+    pub(crate) message: Option<Rect>,
+    pub(crate) selected_row: Option<Rect>,
+    pub(crate) hints: Option<Rect>,
+    pub(crate) start: Option<Rect>,
+}
+
 fn typing_id() -> Id {
     Id::new(TYPING)
+}
+
+pub(crate) fn placed_id() -> Id {
+    Id::new(PLACED)
 }
 
 fn pressed(ctx: &egui::Context, key: Key) -> bool {
     ctx.input_mut(|input| input.consume_key(Modifiers::NONE, key))
 }
-
 const NUMBERS: [Key; 9] = [
     Key::Num1,
     Key::Num2,
@@ -75,8 +84,8 @@ fn start(state: &mut NewTab, catalog: &Catalog, facts: Option<&RepoFacts>) -> Op
     }
 }
 
-/// The keys of the form. Cmd+Enter starts from anywhere in it; the bare keys (A, W, S, 1-9, Left,
-/// Right, Esc) are only read while no text field has the keyboard. Esc is also left alone for the
+/// The keys of the form. Cmd+Enter starts from anywhere in it; the bare keys (A, W, S, 1-9, Up, Down,
+/// Left, Right, Esc) are only read while no text field has the keyboard. Esc is also left alone for the
 /// frame in which it took the keyboard from a text field.
 fn keys(
     ctx: &egui::Context,
@@ -102,6 +111,15 @@ fn keys(
             state.select(index, catalog);
         }
     }
+    let popup_open = egui::Popup::is_any_open(ctx);
+    if !popup_open {
+        if pressed(ctx, Key::ArrowUp) {
+            state.select(state.selected().saturating_sub(1), catalog);
+        }
+        if pressed(ctx, Key::ArrowDown) {
+            state.select(state.selected() + 1, catalog);
+        }
+    }
     if state.kind() == Kind::Agent {
         if pressed(ctx, Key::ArrowLeft) {
             state.step_level(false, catalog);
@@ -110,16 +128,7 @@ fn keys(
             state.step_level(true, catalog);
         }
     }
-    let popup_open = egui::Popup::is_any_open(ctx);
     (!typed_before && !popup_open && pressed(ctx, Key::Escape)).then_some(Out::Close)
-}
-
-fn column_rect(area: Rect) -> Rect {
-    let width = (area.width() - 2.0 * SIDE_PAD).clamp(0.0, COLUMN_MAX_W);
-    Rect::from_min_size(
-        pos2(area.left() + SIDE_PAD, area.top() + TOP_PAD),
-        vec2(width, (area.height() - TOP_PAD).max(0.0)),
-    )
 }
 
 fn hint_job(parts: &[(&str, bool)]) -> LayoutJob {
@@ -132,22 +141,40 @@ fn hint_job(parts: &[(&str, bool)]) -> LayoutJob {
     job
 }
 
-fn footer_hint(state: &NewTab) -> LayoutJob {
-    match state.kind() {
-        Kind::Workflow => hint_job(&[
-            ("1-9", true),
-            (" workflow \u{b7} ", false),
-            ("Esc", true),
-            (" closes the tab", false),
-        ]),
-        Kind::Agent | Kind::Shell => hint_job(&[
-            ("1-9", true),
-            (" agent \u{b7} ", false),
-            ("Left Right", true),
-            (" level \u{b7} ", false),
-            ("Esc", true),
-            (" closes the tab", false),
-        ]),
+type Hint = &'static [(&'static str, bool)];
+
+/// The key hints of the footer, longest first: the first that fits beside Start is shown.
+fn footer_hints(kind: Kind) -> [Hint; 3] {
+    match kind {
+        Kind::Workflow => [
+            &[
+                ("1-9 Up Down", true),
+                (" workflow \u{b7} ", false),
+                ("Esc", true),
+                (" closes the tab", false),
+            ],
+            &[("1-9", true), (" workflow \u{b7} ", false), ("Esc", true), (" closes", false)],
+            &[("Esc", true), (" closes", false)],
+        ],
+        Kind::Agent | Kind::Shell => [
+            &[
+                ("1-9 Up Down", true),
+                (" agent \u{b7} ", false),
+                ("Left Right", true),
+                (" level \u{b7} ", false),
+                ("Esc", true),
+                (" closes the tab", false),
+            ],
+            &[
+                ("1-9", true),
+                (" agent \u{b7} ", false),
+                ("Left Right", true),
+                (" level \u{b7} ", false),
+                ("Esc", true),
+                (" closes", false),
+            ],
+            &[("Esc", true), (" closes", false)],
+        ],
     }
 }
 
@@ -160,41 +187,87 @@ fn start_label(state: &NewTab, catalog: &Catalog) -> String {
     }
 }
 
-/// Everything the layout needs to know before it draws, to share the height out.
-struct Plan {
-    cards_natural: f32,
-    stages_h: f32,
-    note: bool,
-    warnings: usize,
-    problem: bool,
+fn wrapped(ui: &Ui, text: &str, size: f32, color: Color32, width: f32) -> Arc<Galley> {
+    ui.painter().layout(text.to_owned(), body(size), color, width.max(1.0))
 }
 
-impl Plan {
-    fn after_cards(&self, kind: Kind, text_min: f32) -> f32 {
-        let permission = match kind {
-            Kind::Workflow => 0.0,
-            Kind::Agent | Kind::Shell => {
-                GAP + LABEL_H + 8.0 + CONTROL_ROW_H + if self.note { NOTE_H } else { 0.0 }
-            }
+fn message_hint(state: &NewTab) -> &'static str {
+    match (state.makes_a_worktree(), state.kind()) {
+        (true, Kind::Workflow) => "The worktree name follows your task until you edit it.",
+        (true, _) => {
+            "The worktree name follows your message until you edit it. Leave the message empty to start the agent idle."
+        }
+        (false, _) => "Leave the message empty to start the agent idle.",
+    }
+}
+
+fn refusal_note(state: &NewTab, catalog: &Catalog) -> Option<String> {
+    let (_, agent) = state.selected_entry(catalog)?;
+    Level::ALL.iter().find_map(|level| level_refusal(state.group(), agent, *level))
+}
+
+/// What the pane shows this frame, gathered once so that measuring and drawing agree.
+struct Content<'a> {
+    kind: Kind,
+    stages: Vec<StageCard>,
+    stage_name: String,
+    warnings: Vec<String>,
+    refusal: Option<String>,
+    problem: bool,
+    has_permission: bool,
+    state: &'a NewTab,
+}
+
+impl<'a> Content<'a> {
+    fn gather(state: &'a NewTab, catalog: &Catalog, facts: Option<&RepoFacts>) -> Self {
+        let stages = match (state.selected_workflow(catalog), catalog.profiles()) {
+            (Some(workflow), Some(profiles)) => new_tab_workflow::stage_cards(workflow, profiles),
+            _ => Vec::new(),
         };
-        let stages = if kind == Kind::Workflow { GAP + LABEL_H + 8.0 + self.stages_h } else { 0.0 };
-        let warnings = if self.warnings > 0 { 8.0 + self.warnings as f32 * WARNING_H } else { 0.0 };
-        let fields =
-            GAP + LABEL_H + LABEL_GAP + FIELD_H + if self.problem { PROBLEM_H + 2.0 } else { 0.0 };
-        let text = GAP
-            + LABEL_H
-            + LABEL_GAP
-            + text_min
-            + if kind == Kind::Workflow { 0.0 } else { HINT_H };
-        permission + stages + warnings + fields + text + GAP + FOOTER_H + FOOTER_PAD
+        let stage_name = state.selected_workflow(catalog).map_or(String::new(), |w| w.name.clone());
+        Self {
+            kind: state.kind(),
+            stages,
+            stage_name,
+            warnings: state.warnings(catalog),
+            refusal: refusal_note(state, catalog),
+            problem: !state.name_check(facts).is_fine(),
+            has_permission: state.kind() != Kind::Workflow
+                && state.selected_entry(catalog).is_some(),
+            state,
+        }
     }
 
-    /// The height the cards get: all they need, else what is left, never less than a row and a bit.
-    fn grid_h(&self, kind: Kind, column_h: f32) -> f32 {
-        let text_min = if kind == Kind::Workflow { TASK_H.0 } else { MESSAGE_H.0 };
-        let above = HEADER_H + GAP + SECTION_ROW_H + 8.0;
-        let room = column_h - above - self.after_cards(kind, text_min);
-        self.cards_natural.min(room.max(MIN_GRID_H))
+    fn above(&self, ui: &Ui, width: f32) -> Above {
+        let mut above = Above::default();
+        if self.has_permission {
+            let control =
+                segmented::inline_or_chips_height(ui, &Level::ALL.map(Level::label), width);
+            let description = wrapped(ui, level_hint(self.state.level()), 13.0, brand::SOFT, width);
+            let note = self.refusal.as_deref().map_or(0.0, |note| {
+                NOTE_GAP + wrapped(ui, note, 12.0, brand::MUTED, width).size().y
+            });
+            above.permission =
+                LABEL_H + CAPTION_GAP + control + DESCRIPTION_GAP + description.size().y + note;
+        }
+        if self.kind == Kind::Workflow && !self.stages.is_empty() {
+            let columns = layout::stage_columns(width);
+            above.stages =
+                LABEL_H + CAPTION_GAP + new_tab_cards::stages_height(columns, self.stages.len());
+        }
+        above.warnings = self
+            .warnings
+            .iter()
+            .map(|warning| wrapped(ui, warning, 12.0, brand::ORANGE, width).size().y + WARNING_GAP)
+            .sum();
+        if self.state.makes_a_worktree() {
+            above.fields = layout::fields_height(width, self.problem);
+        }
+        above
+    }
+
+    fn hint_height(&self, ui: &Ui, width: f32) -> f32 {
+        HINT_GAP + wrapped(ui, message_hint(self.state), 12.0, brand::FAINT, width).size().y
     }
 }
 
@@ -209,124 +282,38 @@ pub(crate) fn show(
     state.settle(catalog);
     let ctx = ui.ctx().clone();
     let mut out = if keys_free { keys(&ctx, state, catalog, facts) } else { None };
-    let column = column_rect(area);
-    let footer = Rect::from_min_max(
-        pos2(column.left(), column.bottom() - FOOTER_PAD - FOOTER_H),
-        pos2(column.right(), column.bottom() - FOOTER_PAD),
-    );
-    let mut child = ui.new_child(UiBuilder::new().max_rect(column));
-    child.spacing_mut().item_spacing = vec2(8.0, 0.0);
-    out = out.or(header(&mut child, state));
-    child.add_space(GAP);
-    let kind = state.kind();
-    let ids = state.visible(catalog);
-    let check = state.name_check(facts);
-    let stages = match (state.selected_workflow(catalog), catalog.profiles()) {
-        (Some(workflow), Some(profiles)) => new_tab_workflow::stage_cards(workflow, profiles),
-        _ => Vec::new(),
-    };
-    let warnings = state.warnings(catalog);
-    let refusal = refusal_note(state, catalog);
-    let plan = Plan {
-        cards_natural: match kind {
-            Kind::Workflow => new_tab_cards::workflows_height(ids.len()),
-            Kind::Agent | Kind::Shell => new_tab_cards::agents_height(ids.len()),
-        },
-        stages_h: new_tab_cards::stages_height(stages.len()),
-        note: refusal.is_some(),
-        warnings: warnings.len(),
-        problem: !check.is_fine(),
-    };
-    let grid_h = plan.grid_h(kind, column.height());
-    let scroll = std::mem::take(&mut state.scroll_to_selected);
-    let cards = Cards {
-        ids: &ids,
-        selected: state.selected(),
-        scroll_to_selected: scroll,
-        max_height: grid_h,
-    };
-    let picked = match kind {
-        Kind::Workflow => {
-            section_row(&mut child, "Workflow", None);
-            if ids.is_empty() {
-                empty(&mut child, state, catalog, "workflow");
-                None
-            } else {
-                new_tab_cards::workflows(&mut child, catalog, &cards)
-            }
-        }
-        Kind::Agent | Kind::Shell => {
-            let filter = section_row(&mut child, "Agent", Some(state.filter()));
-            if let Some(text) = filter {
-                state.set_filter(&text, catalog);
-            }
-            if ids.is_empty() {
-                empty(&mut child, state, catalog, "profile");
-                None
-            } else {
-                new_tab_cards::agents(&mut child, catalog, &cards)
-            }
-        }
-    };
-    if let Some(index) = picked {
-        state.select(index, catalog);
-    }
-    if kind == Kind::Workflow {
-        child.add_space(GAP);
-        let name = state.selected_workflow(catalog).map_or(String::new(), |w| w.name.clone());
-        section_label(&mut child, &format!("Stages of {name}"));
-        child.add_space(8.0);
-        new_tab_cards::stages(&mut child, &stages);
-    } else {
-        permission(&mut child, state, catalog, refusal.as_deref());
-    }
-    if !warnings.is_empty() {
-        child.add_space(8.0);
-    }
-    for warning in &warnings {
-        child.label(RichText::new(warning).size(12.0).color(brand::ORANGE));
-    }
-    child.add_space(GAP);
-    fields(&mut child, state, facts);
-    child.add_space(GAP);
-    let (title, hint, bounds) = match kind {
-        Kind::Workflow => ("Task", "What should this run deliver?", TASK_H),
-        Kind::Agent | Kind::Shell => {
-            ("First message", "Optional. Leave it empty to start the agent idle.", MESSAGE_H)
-        }
-    };
-    section_label(&mut child, title);
-    child.add_space(LABEL_GAP);
-    let trailing = if kind == Kind::Workflow { 0.0 } else { HINT_H };
-    let room = footer.top() - child.cursor().top() - GAP - trailing;
-    if let Some(text) = text_box(&mut child, state, room.clamp(bounds.0, bounds.1), hint) {
-        state.set_text(&text);
-    }
-    if kind != Kind::Workflow {
-        child.add_space(6.0);
-        child.label(RichText::new(message_hint(state)).size(12.0).color(brand::FAINT));
-    }
-    out = out.or(footer_row(ui, footer, state, catalog, facts));
+    let columns = layout::columns(layout::form_rect(area));
+    let mut header_ui = ui.new_child(UiBuilder::new().max_rect(columns.header));
+    out = out.or(header(&mut header_ui, state));
+    let selected_row = lane(ui, columns.lane, state, catalog);
+    let mut placed = Placed { lane: Some(columns.lane), selected_row, ..Placed::default() };
+    out = out.or(pane(ui, columns.pane, state, catalog, facts, &mut placed));
     let typing = ctx.text_edit_focused();
-    ctx.data_mut(|data| data.insert_temp(typing_id(), typing));
+    ctx.data_mut(|data| {
+        data.insert_temp(typing_id(), typing);
+        data.insert_temp(placed_id(), placed);
+    });
     out
 }
 
-fn message_hint(state: &NewTab) -> &'static str {
-    if state.makes_a_worktree() {
-        "The worktree name follows your message until you edit it. Leave the message empty to start the agent idle."
-    } else {
-        "Leave the message empty to start the agent idle."
+fn lane(ui: &mut Ui, rect: Rect, state: &mut NewTab, catalog: &Catalog) -> Option<Rect> {
+    let entries = new_tab_lane::entries(state, catalog);
+    let noun = if state.kind() == Kind::Workflow { "workflow" } else { "profile" };
+    let empty = new_tab_cards::empty_text(state.filter(), catalog.is_loaded(), noun);
+    let scroll = std::mem::take(&mut state.scroll_to_selected);
+    let out = new_tab_lane::show(ui, rect, state, &entries, &empty, scroll);
+    if let Some(text) = out.filter {
+        state.set_filter(&text, catalog);
     }
-}
-
-fn empty(ui: &mut Ui, state: &NewTab, catalog: &Catalog, noun: &str) {
-    let text = new_tab_cards::empty_text(state.filter(), catalog.is_loaded(), noun);
-    new_tab_cards::empty(ui, &text);
+    if let Some(index) = out.picked {
+        state.select(index, catalog);
+    }
+    out.selected
 }
 
 fn header(ui: &mut Ui, state: &mut NewTab) -> Option<Out> {
-    let (rect, _) = ui.allocate_exact_size(vec2(ui.available_width(), HEADER_H), Sense::hover());
+    let (rect, _) =
+        ui.allocate_exact_size(vec2(ui.available_width(), layout::HEADER_H), Sense::hover());
     let painter = ui.painter();
     painter.text(rect.left_top(), Align2::LEFT_TOP, "New tab", heading(20.0), brand::TEXT);
     let mut job = LayoutJob::default();
@@ -362,94 +349,143 @@ fn header(ui: &mut Ui, state: &mut NewTab) -> Option<Out> {
     state.choose(kind).map(Out::Start)
 }
 
-/// The label of a section, and for the agent list the filter on its right. Returns the filter's new
-/// text when it changed.
-fn section_row(ui: &mut Ui, title: &str, filter: Option<&str>) -> Option<String> {
-    let (row, _) =
-        ui.allocate_exact_size(vec2(ui.available_width(), SECTION_ROW_H), Sense::hover());
-    ui.painter().text(
-        row.left_center(),
-        Align2::LEFT_CENTER,
-        title.to_uppercase(),
-        body(11.5),
-        brand::MUTED,
+fn pane(
+    ui: &mut Ui,
+    rect: Rect,
+    state: &mut NewTab,
+    catalog: &Catalog,
+    facts: Option<&RepoFacts>,
+    placed: &mut Placed,
+) -> Option<Out> {
+    let content = Content::gather(state, catalog, facts);
+    let plan =
+        layout::pane(rect, |width| (content.above(ui, width), content.hint_height(ui, width)));
+    let stages = content.stages.clone();
+    let stage_name = content.stage_name.clone();
+    let warnings = content.warnings.clone();
+    let refusal = content.refusal.clone();
+    let has_permission = content.has_permission;
+    let kind = content.kind;
+    let mut body_ui = ui.new_child(UiBuilder::new().max_rect(plan.body));
+    ScrollArea::vertical().id_salt("new-tab-pane").auto_shrink([false, false]).show(
+        &mut body_ui,
+        |ui| {
+            ui.set_width(plan.content_w);
+            ui.spacing_mut().item_spacing = vec2(8.0, 0.0);
+            let width = plan.content_w;
+            if kind == Kind::Workflow && !stages.is_empty() {
+                section_label(ui, &format!("Stages of {stage_name}"));
+                ui.add_space(CAPTION_GAP);
+                new_tab_cards::stages(ui, &stages, layout::stage_columns(width));
+                ui.add_space(SECTION_GAP);
+            }
+            if has_permission {
+                placed.permission = permission(ui, state, catalog, refusal.as_deref());
+                ui.add_space(SECTION_GAP);
+            }
+            if !warnings.is_empty() {
+                for warning in &warnings {
+                    let galley = wrapped(ui, warning, 12.0, brand::ORANGE, width);
+                    let (rect, _) = ui.allocate_exact_size(
+                        vec2(width, galley.size().y + WARNING_GAP),
+                        Sense::hover(),
+                    );
+                    ui.painter().galley(rect.min, galley, brand::ORANGE);
+                }
+                ui.add_space(SECTION_GAP);
+            }
+            if let Some((name, base)) = fields(ui, state, facts) {
+                placed.name = Some(name);
+                placed.base = Some(base);
+                ui.add_space(SECTION_GAP);
+            }
+            placed.message = Some(message(ui, state, plan.message_h));
+        },
     );
-    ui.add_space(8.0);
-    let current = filter?;
-    let mut text = current.to_owned();
-    let box_ = Rect::from_min_size(
-        pos2(row.right() - FILTER_W, row.top() - 2.0),
-        vec2(FILTER_W, SECTION_ROW_H + 2.0),
-    );
-    let mut child = ui.new_child(UiBuilder::new().max_rect(box_));
-    field_frame_on(&mut child, brand::SEGMENT, false, |ui| {
-        ui.add(
-            TextEdit::singleline(&mut text)
-                .id(Id::new("new-tab-filter"))
-                .frame(egui::Frame::NONE)
-                .margin(egui::Margin::ZERO)
-                .font(body(12.5))
-                .text_color(brand::TEXT)
-                .hint_text(RichText::new("Filter").color(brand::FAINT))
-                .desired_width(ui.available_width()),
-        )
-    });
-    (text != current).then_some(text)
+    if plan.scrolls {
+        ui.painter().hline(
+            rect.x_range(),
+            plan.footer.top() - 6.0,
+            Stroke::new(1.0, brand::ITEM_LINE),
+        );
+    }
+    footer(ui, plan.footer, state, catalog, facts, placed)
 }
 
-fn refusal_note(state: &NewTab, catalog: &Catalog) -> Option<String> {
+fn message(ui: &mut Ui, state: &mut NewTab, height: f32) -> Rect {
+    let (title, hint) = match state.kind() {
+        Kind::Workflow => ("Task", "What should this run deliver?"),
+        Kind::Agent | Kind::Shell => {
+            ("First message", "Optional. Leave it empty to start the agent idle.")
+        }
+    };
+    section_label(ui, title);
+    ui.add_space(LABEL_GAP);
+    let (rect, text) = text_box(ui, state, height, hint);
+    if let Some(text) = text {
+        state.set_text(&text);
+    }
+    ui.add_space(HINT_GAP);
+    let width = ui.available_width();
+    let galley = wrapped(ui, message_hint(state), 12.0, brand::FAINT, width);
+    let (hint_rect, _) = ui.allocate_exact_size(vec2(width, galley.size().y), Sense::hover());
+    ui.painter().galley(hint_rect.min, galley, brand::FAINT);
+    rect
+}
+
+fn permission(
+    ui: &mut Ui,
+    state: &mut NewTab,
+    catalog: &Catalog,
+    note: Option<&str>,
+) -> Option<Rect> {
     let (_, agent) = state.selected_entry(catalog)?;
-    Level::ALL.iter().find_map(|level| level_refusal(state.group(), agent, *level))
-}
-
-fn permission(ui: &mut Ui, state: &mut NewTab, catalog: &Catalog, note: Option<&str>) {
-    let Some((_, agent)) = state.selected_entry(catalog) else { return };
-    ui.add_space(GAP);
+    let width = ui.available_width();
     section_label(ui, "Permission");
-    ui.add_space(8.0);
+    ui.add_space(CAPTION_GAP);
     let labels = Level::ALL.map(Level::label);
     let tones = Level::ALL.map(|level| (level == Level::Yolo).then_some(brand::RED));
     let active = Level::ALL.iter().position(|level| *level == state.level()).unwrap_or(0);
     let refusals = Level::ALL.map(|level| level_refusal(state.group(), agent, level));
-    let mut picked = None;
-    ui.horizontal(|ui| {
-        ui.set_min_height(CONTROL_ROW_H);
-        ui.spacing_mut().item_spacing.x = 14.0;
-        picked = segmented::inline_toned(ui, Id::new("new_tab_level"), &labels, &tones, active);
-        let text = RichText::new(level_hint(state.level())).size(13.0).color(brand::SOFT);
-        let hint = ui.add(egui::Label::new(text).truncate());
-        let flags = agent.level_args(state.level()).map(|args| args.join(" ")).unwrap_or_default();
-        let tip = if flags.is_empty() {
-            level_hint(state.level()).to_owned()
-        } else {
-            format!("{}\nAdds {flags}", level_hint(state.level()))
-        };
-        hint.on_hover_text(tip);
-    });
+    let top = ui.cursor().top();
+    let picked = segmented::inline_or_chips(ui, Id::new("new_tab_level"), &labels, &tones, active);
+    let control = Rect::from_min_max(
+        pos2(ui.min_rect().left(), top),
+        pos2(ui.min_rect().left() + width, ui.cursor().top()),
+    );
+    ui.add_space(DESCRIPTION_GAP);
+    let text = level_hint(state.level());
+    let galley = wrapped(ui, text, 13.0, brand::SOFT, width);
+    let (rect, response) = ui.allocate_exact_size(vec2(width, galley.size().y), Sense::hover());
+    ui.painter().galley(rect.min, galley, brand::SOFT);
+    let flags = agent.level_args(state.level()).map(|args| args.join(" ")).unwrap_or_default();
+    let tip = if flags.is_empty() { text.to_owned() } else { format!("{text}\nAdds {flags}") };
+    response.on_hover_text(tip);
     if let Some(note) = note {
-        ui.add_space(4.0);
-        ui.label(RichText::new(note).size(12.0).color(brand::MUTED));
+        ui.add_space(NOTE_GAP);
+        let galley = wrapped(ui, note, 12.0, brand::MUTED, width);
+        let (rect, _) = ui.allocate_exact_size(vec2(width, galley.size().y), Sense::hover());
+        ui.painter().galley(rect.min, galley, brand::MUTED);
     }
     if let Some(index) = picked
         && refusals[index].is_none()
     {
         state.set_level(Level::ALL[index], catalog);
     }
+    Some(control)
 }
 
-/// The worktree name and the branch it starts from, side by side.
-fn fields(ui: &mut Ui, state: &mut NewTab, facts: Option<&RepoFacts>) {
+fn fields(ui: &mut Ui, state: &mut NewTab, facts: Option<&RepoFacts>) -> Option<(Rect, Rect)> {
     if !state.makes_a_worktree() {
-        return;
+        return None;
     }
+    let problem = !state.name_check(facts).is_fine();
     let width = ui.available_width();
-    let each = (width - COLUMN_GAP) / 2.0;
-    let top = ui.cursor().top();
-    let origin = ui.cursor().left();
-    let left_rect = Rect::from_min_size(pos2(origin, top), vec2(each, 120.0));
-    let right_rect = Rect::from_min_size(pos2(origin + each + COLUMN_GAP, top), vec2(each, 120.0));
-    let mut left = ui.new_child(UiBuilder::new().max_rect(left_rect));
-    let mut right = ui.new_child(UiBuilder::new().max_rect(right_rect));
+    let area =
+        Rect::from_min_size(ui.cursor().min, vec2(width, layout::fields_height(width, problem)));
+    let (name_rect, base_rect) = layout::field_rects(area, problem);
+    let mut left = ui.new_child(UiBuilder::new().max_rect(name_rect));
+    let mut right = ui.new_child(UiBuilder::new().max_rect(base_rect));
     left.spacing_mut().item_spacing = vec2(8.0, 0.0);
     right.spacing_mut().item_spacing = vec2(8.0, 0.0);
     let edit = new_tab_fields::name_field(&mut left, state, facts);
@@ -466,38 +502,45 @@ fn fields(ui: &mut Ui, state: &mut NewTab, facts: Option<&RepoFacts>) {
     if let Some(branch) = base {
         state.pick_base(&branch);
     }
-    let height = left.min_rect().height().max(right.min_rect().height());
-    ui.allocate_space(vec2(width, height));
+    ui.allocate_rect(area, Sense::hover());
+    Some((name_rect, base_rect))
 }
 
-fn footer_row(
+fn footer(
     ui: &mut Ui,
     rect: Rect,
     state: &mut NewTab,
     catalog: &Catalog,
     facts: Option<&RepoFacts>,
+    placed: &mut Placed,
 ) -> Option<Out> {
-    let galley = ui.painter().layout_job(footer_hint(state));
-    ui.painter().galley(
-        pos2(rect.left(), rect.center().y - galley.size().y / 2.0),
-        galley,
-        brand::FAINT,
-    );
-    if let Some(error) = state.error.clone() {
-        ui.painter().text(
-            pos2(rect.left(), rect.top() - 6.0),
-            Align2::LEFT_BOTTOM,
-            error,
-            body(12.5),
-            brand::RED,
-        );
-    }
     let blocked = state.start_request(catalog, facts).err();
+    let label = start_label(state, catalog);
+    let key = confirm_key();
+    let button_w = keyed_button_width(ui, &label, key, Size::Regular);
+    let room = (rect.width() - button_w - FOOTER_HINT_GAP).max(0.0);
+    placed.hints = Some(Rect::from_min_size(rect.min, vec2(room, rect.height())));
+    let painter = ui.painter();
+    if let Some(error) = &state.error {
+        let galley = crate::reader_view::ellipsized(painter, error, body(12.5), brand::RED, room);
+        let at = pos2(rect.left(), rect.center().y - galley.size().y / 2.0);
+        painter.galley(at, galley, brand::RED);
+    } else {
+        let hints = footer_hints(state.kind());
+        let mut job = hints
+            .iter()
+            .map(|parts| hint_job(parts))
+            .find(|job| painter.layout_job(job.clone()).size().x <= room)
+            .unwrap_or_else(|| hint_job(hints[2]));
+        job.wrap = TextWrapping::truncate_at_width(room.max(1.0));
+        let galley = painter.layout_job(job);
+        let at = pos2(rect.left(), rect.center().y - galley.size().y / 2.0);
+        painter.galley(at, galley, brand::FAINT);
+    }
     let mut child =
         ui.new_child(UiBuilder::new().max_rect(rect).layout(Layout::right_to_left(Align::Center)));
-    let label = start_label(state, catalog);
-    let button =
-        primary_button_keyed(&mut child, &label, confirm_key(), blocked.is_none(), Size::Regular);
+    let button = primary_button_keyed(&mut child, &label, key, blocked.is_none(), Size::Regular);
+    placed.start = Some(button.rect);
     let button = match &blocked {
         Some(reason) => button.on_hover_text(reason),
         None => button,

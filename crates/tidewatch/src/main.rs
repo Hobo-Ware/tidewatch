@@ -59,6 +59,8 @@ mod new_tab;
 mod new_tab_cards;
 mod new_tab_fields;
 mod new_tab_form;
+mod new_tab_lane;
+mod new_tab_layout;
 mod new_tab_workflow;
 mod note_actions;
 mod note_send;
