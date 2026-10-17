@@ -89,6 +89,11 @@ impl ViewState {
     pub(crate) fn live_mut(&mut self) -> Option<&mut Live> {
         self.live.as_mut()
     }
+
+    /// The reply box takes the keyboard the next time it is drawn.
+    pub(crate) fn request_reply_focus(&mut self) {
+        self.focus_reply = true;
+    }
 }
 
 /// Whether the agent is in the middle of a turn, so a menu may be open, or has finished it.
@@ -1309,6 +1314,13 @@ mod tests {
         state.quick_used = rows.newest_seq();
         draw(&rows, &mut state, facts(None, Turn::Finished));
         assert!(state.quick.is_none(), "a used chip row does not come back");
+    }
+
+    #[test]
+    fn asking_for_the_reply_box_makes_it_take_the_keyboard() {
+        let mut state = ViewState { focus_reply: false, ..ViewState::default() };
+        state.request_reply_focus();
+        assert!(state.focus_reply);
     }
 
     #[test]

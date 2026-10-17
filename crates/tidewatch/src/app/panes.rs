@@ -6,13 +6,13 @@ use kelp_core::refs::RefLabel;
 use kelp_ui::graph::GraphAction;
 use kelp_ui::theme as kelp_theme;
 
-use super::Tidewatch;
+use super::{Tidewatch, wall_ms};
 use crate::checkout::{self, Plan};
 use crate::diff_pane::{PaneAction, PaneOut};
 use crate::file_view::{self, TerminalChip};
 use crate::repo::Workspace;
 use crate::tab_view::ViewSpec;
-use crate::{diff_pane, flow_glue, history_pane, layout, pane_jobs};
+use crate::{diff_pane, flow_glue, history_pane, layout, pane_jobs, progress_view};
 
 impl Tidewatch {
     /// Keeps one view per tab that has panes: only the visible tab's view is loaded and watched.
@@ -113,8 +113,26 @@ impl Tidewatch {
             .as_ref()
             .and_then(|status| self.flow.extras(active_id, &view.notes, status));
         let agent_id = agent.map_or("", |agent| agent.run.agent_id.as_str());
-        let graph_action =
-            history_pane::show(ui, areas.history, view, &mut self.avatars, side, agent_id);
+        let progress = agent.and_then(|_| {
+            let known = self.progress.ledger(active_id)?;
+            let input = progress_view::Input {
+                ledger: known,
+                now_ms: wall_ms() as i64,
+                time: ctx.input(|i| i.time),
+                animate: ctx.input(|i| i.viewport().focused.unwrap_or(true)),
+            };
+            Some(history_pane::Progress { input, state: self.progress_ui.tab(active_id) })
+        });
+        let shown = history_pane::show(
+            ui,
+            areas.history,
+            view,
+            &mut self.avatars,
+            side,
+            (agent_id, progress),
+        );
+        let graph_action = shown.graph;
+        let answer = shown.progress == Some(progress_view::Action::Answer);
         let now_unix = flow_glue::unix_now();
         let pane = match (side, view.file_open()) {
             (false, _) => diff_pane::show(ui, areas.diff, view, extras.as_ref(), now_unix),
@@ -146,6 +164,9 @@ impl Tidewatch {
         }
         if open_review {
             self.open_review();
+        }
+        if answer {
+            self.open_reply_box();
         }
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
