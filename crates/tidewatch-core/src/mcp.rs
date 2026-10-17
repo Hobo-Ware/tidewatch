@@ -3,8 +3,8 @@
 //!
 //! [`handle_post`] takes the raw request body of an authenticated `/mcp` POST and returns the reply.
 //! It speaks `initialize`, `ping`, `tools/list` and `tools/call` and swallows notifications. The
-//! tools are `stage_done`, `report_finding`, `list_notes`, `reply_to_note`, `propose_workflow` and
-//! `ask_user`. Calls that matter to the app become [`TabEvent`]s through `emit`; the note tools read
+//! tools are `stage_done`, `report_finding`, `list_notes`, `reply_to_note`, `propose_workflow`,
+//! `ask_user`, `update_progress` and `get_progress`. Calls that matter to the app become [`TabEvent`]s through `emit`; the note tools read
 //! and write the tab's `notes.json` through `notes.rs`. `ask_user` holds its reply until the user
 //! answers (or [`AskWait::timeout`] runs out, or the client hangs up): the listener serves each
 //! connection on its own thread, so a held call blocks nothing else.
@@ -26,6 +26,7 @@ use serde_json::{Map, Value, json};
 use crate::events::TabEvent;
 use crate::launch::MCP_SERVER_NAME;
 use crate::notes::Notes;
+use crate::progress_mcp;
 use crate::propose;
 use crate::question::{self, AskReply, Reply};
 
@@ -58,6 +59,8 @@ pub struct ToolCtx<'a> {
     pub notes_file: &'a Path,
     /// Serializes read-modify-write of `notes_file` between concurrent calls.
     pub notes_lock: &'a Mutex<()>,
+    /// The tab's `progress.md`, where `update_progress` saves the ledger.
+    pub progress_file: &'a Path,
     pub ask: AskWait<'a>,
 }
 
@@ -164,9 +167,10 @@ fn initialize_result(params: Option<&Value>) -> Value {
     })
 }
 
-/// The six tools with their JSON Schemas, as `tools/list` returns them.
+/// The eight tools with their JSON Schemas, as `tools/list` returns them.
 #[must_use]
 pub fn tool_definitions() -> Value {
+    let [update_progress, get_progress] = progress_mcp::tool_definitions();
     json!([
         {
             "name": "stage_done",
@@ -221,6 +225,8 @@ pub fn tool_definitions() -> Value {
         },
         propose::tool_definition(),
         question::tool_definition(),
+        update_progress,
+        get_progress,
     ])
 }
 
@@ -244,6 +250,14 @@ fn call_tool(
     };
     if name == propose::TOOL_NAME {
         let (text, is_error) = propose_workflow(args, ctx, emit);
+        return Ok(tool_result(&text, is_error));
+    }
+    if name == progress_mcp::UPDATE_TOOL {
+        let (text, is_error) = progress_mcp::update(args, ctx.progress_file, emit);
+        return Ok(tool_result(&text, is_error));
+    }
+    if name == progress_mcp::GET_TOOL {
+        let (text, is_error) = progress_mcp::get(ctx.progress_file);
         return Ok(tool_result(&text, is_error));
     }
     if name == question::TOOL_NAME {
@@ -429,6 +443,7 @@ fn unix_now() -> i64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::progress::{self, Ledger};
     use kelp_core::review::{Anchor, Side};
     use std::cell::RefCell;
 
@@ -455,13 +470,19 @@ mod tests {
             self.dir.path().join("repo-abc123").join("tab").join("notes.json")
         }
 
+        fn progress_file(&self) -> std::path::PathBuf {
+            self.dir.path().join("repo-abc123").join("tab").join("progress.md")
+        }
+
         fn post(&self, body: &str) -> McpReply {
             let notes_file = self.notes_file();
             let alive = || true;
+            let progress_file = self.progress_file();
             let ctx = ToolCtx {
                 agent: "claude",
                 notes_file: &notes_file,
                 notes_lock: &self.lock,
+                progress_file: &progress_file,
                 ask: test_wait(&alive),
             };
             handle_post(body.as_bytes(), &ctx, &|event| self.events.borrow_mut().push(event))
@@ -546,7 +567,7 @@ mod tests {
     }
 
     #[test]
-    fn tools_list_has_six_tools_with_object_schemas_and_required_fields() {
+    fn tools_list_has_eight_tools_with_object_schemas_and_required_fields() {
         let reply =
             Harness::new().json(&json!({"jsonrpc": "2.0", "id": 2, "method": "tools/list"}));
         let tools = reply["result"]["tools"].as_array().unwrap();
@@ -559,7 +580,9 @@ mod tests {
                 "list_notes",
                 "reply_to_note",
                 "propose_workflow",
-                "ask_user"
+                "ask_user",
+                "update_progress",
+                "get_progress"
             ]
         );
         let required: Vec<Vec<&str>> = tools
@@ -580,6 +603,8 @@ mod tests {
                 vec!["id", "text"],
                 vec!["name", "stages"],
                 vec!["questions"],
+                vec!["ledger"],
+                vec![],
             ]
         );
         for tool in tools {
@@ -613,6 +638,90 @@ mod tests {
         assert_eq!(workflow.name, "Change with a check");
         assert_eq!(workflow.stages[1].on_fail, Some(0));
         assert!(workflow.stages.iter().all(|s| s.run.agent.as_deref() == Some("claude")));
+    }
+
+    const LEDGER: &str = "# Goal\nAdd search\n\n## Status\nphase: 2\nstate: working\nnote: wiring\n\n## Checklist\n### 1. Plan\n- [x] a\n### 2. Build\n- [x] b\n- [~] c\n- [ ] d\n\n## Scheduled\n- [ ] you -- Pick a name\n";
+
+    fn text_of(reply: &Value) -> &str {
+        reply["result"]["content"][0]["text"].as_str().unwrap()
+    }
+
+    #[test]
+    fn update_progress_saves_the_ledger_shows_it_and_answers_in_one_line() {
+        let h = Harness::new();
+        let reply = h.call("update_progress", &json!({ "ledger": LEDGER }));
+        assert_eq!(reply["result"]["isError"], false, "{reply}");
+        assert_eq!(text_of(&reply), "saved: phase 2 Build, 2/4 done, 1 scheduled");
+        let saved = std::fs::read_to_string(h.progress_file()).unwrap();
+        assert_eq!(saved, Ledger::parse(LEDGER).to_markdown());
+        assert_eq!(
+            *h.events.borrow(),
+            [TabEvent::Progress { ledger: Box::new(Ledger::parse(LEDGER)) }]
+        );
+    }
+
+    #[test]
+    fn get_progress_gives_back_the_saved_text_and_says_so_when_there_is_none() {
+        let h = Harness::new();
+        let reply = h.call("get_progress", &json!({}));
+        assert_eq!(reply["result"]["isError"], false);
+        assert!(text_of(&reply).starts_with("No ledger has been saved"), "{reply}");
+        h.call("update_progress", &json!({ "ledger": LEDGER }));
+        let reply = h.call("get_progress", &json!({}));
+        assert_eq!(text_of(&reply), Ledger::parse(LEDGER).to_markdown());
+    }
+
+    #[test]
+    fn update_progress_rejects_only_what_the_agent_can_fix_and_saves_nothing() {
+        let h = Harness::new();
+        let big = format!("# Goal\nx\n\n## Notes\n{}", "y".repeat(progress::MAX_LEDGER_BYTES));
+        let cases = [
+            (json!({ "ledger": "## Status\nphase: 1\n" }), "The ledger has no goal"),
+            (json!({ "ledger": "" }), "The ledger has no goal"),
+            (json!({ "ledger": "# Goal\n   \n" }), "The ledger has no goal"),
+            (json!({}), "ledger must be a string"),
+            (json!({ "ledger": 5 }), "ledger must be a string"),
+            (json!({ "ledger": big }), "over the 32 KB limit"),
+            (json!({ "ledger": "# Goal\nx", "extra": 1 }), "unknown argument \"extra\""),
+        ];
+        for (args, want) in cases {
+            let reply = h.call("update_progress", &args);
+            assert!(
+                reply.get("error").is_none(),
+                "a rule failure is not a protocol error: {reply}"
+            );
+            assert_eq!(reply["result"]["isError"], true, "{args}");
+            let text = text_of(&reply);
+            assert!(
+                text.starts_with(
+                    "The ledger was not saved. Fix these and call update_progress again:\n- "
+                ),
+                "{text}"
+            );
+            assert!(text.contains(want), "{want}: {text}");
+        }
+        assert!(!h.progress_file().exists());
+        assert_eq!(*h.events.borrow(), Vec::<TabEvent>::new());
+    }
+
+    #[test]
+    fn update_progress_takes_any_ledger_with_a_goal_and_keeps_the_last_save() {
+        let h = Harness::new();
+        let cases = [
+            ("# Goal\nonly a goal", "saved"),
+            ("```markdown\n# Goal\nin a fence\n\n## Next\n- go\n```", "saved"),
+            (
+                "# Goal\nodd\n\n## Weird\n!!! text\n\n## Scheduled\n- [ ] 2026-13-45 -- unreadable when\n",
+                "saved: 1 scheduled",
+            ),
+        ];
+        for (ledger, want) in cases {
+            let reply = h.call("update_progress", &json!({ "ledger": ledger }));
+            assert_eq!(text_of(&reply), want, "{ledger:?}");
+        }
+        let reply = h.call("get_progress", &json!({}));
+        assert!(text_of(&reply).contains("## Weird\n!!! text"));
+        assert_eq!(h.events.borrow().len(), 3);
     }
 
     #[test]
@@ -670,6 +779,7 @@ mod tests {
             agent: "codex",
             notes_file: &notes_file,
             notes_lock: &h.lock,
+            progress_file: Path::new("/none/progress.md"),
             ask: test_wait(alive),
         };
         let shown = RefCell::new(Vec::new());
@@ -748,6 +858,7 @@ mod tests {
             agent: "codex",
             notes_file: &notes_file,
             notes_lock: &h.lock,
+            progress_file: Path::new("/none/progress.md"),
             ask: test_wait(&alive),
         };
         let body = json!({"jsonrpc": "2.0", "id": 1, "method": "tools/call",
@@ -975,6 +1086,7 @@ mod tests {
                 agent: "a",
                 notes_file: Path::new("/none"),
                 notes_lock: &h.lock,
+                progress_file: Path::new("/none/progress.md"),
                 ask: test_wait(&|| true),
             },
             &|_| {},
@@ -1015,6 +1127,7 @@ mod tests {
                         agent: "claude",
                         notes_file,
                         notes_lock: lock,
+                        progress_file: Path::new("/none/progress.md"),
                         ask: test_wait(&alive),
                     };
                     let body = json!({"jsonrpc": "2.0", "id": 1, "method": "tools/call",

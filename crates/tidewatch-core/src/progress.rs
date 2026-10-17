@@ -7,6 +7,8 @@
 
 use std::fmt::{self, Write as _};
 
+use serde::{Deserialize, Serialize};
+
 use crate::civil_date::Date;
 
 /// The longest ledger `update_progress` accepts, in bytes.
@@ -280,6 +282,18 @@ impl fmt::Display for When {
             Self::You => f.write_str("you"),
             Self::Unknown(text) => f.write_str(text),
         }
+    }
+}
+
+impl Serialize for When {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.collect_str(self)
+    }
+}
+
+impl<'de> Deserialize<'de> for When {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        Ok(Self::parse(&String::deserialize(deserializer)?))
     }
 }
 
