@@ -49,6 +49,7 @@ pub(crate) fn saved_window(
         session_id: Some(session.to_owned()),
         stages: None,
         crashed: false,
+        remote: false,
     });
     Ok(SavedWindow {
         dir: target.repo.to_path_buf(),

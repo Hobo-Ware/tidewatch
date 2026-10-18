@@ -75,6 +75,7 @@ fn session_for(dir: &Path, worktree: &Worktree) -> Session {
                     session_id: Some(SESSION_ID.into()),
                     stages: None,
                     crashed: false,
+                    remote: false,
                 }),
             ],
         }],

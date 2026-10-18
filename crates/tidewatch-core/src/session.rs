@@ -69,6 +69,9 @@ pub struct SavedAgentTab {
     /// `resume_mode::exit_is_abnormal`). The next launch types its resume command and leaves Enter.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub crashed: bool,
+    /// The agent was started with remote control on, so a resume starts it the same way.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub remote: bool,
 }
 
 impl SavedTab {
@@ -163,6 +166,7 @@ mod tests {
             session_id: Some("0c2cbc96-1111-4222-8333-444455556666".into()),
             stages: Some(PathBuf::from("/root/.state/web-ab12cd/brave-otter/stages.json")),
             crashed: false,
+            remote: false,
         })
     }
 
@@ -188,6 +192,7 @@ mod tests {
                     session_id: None,
                     stages: None,
                     crashed: false,
+                    remote: false,
                 }),
             ],
         }
@@ -211,6 +216,28 @@ mod tests {
         };
         session.save(&paths).unwrap();
         assert_eq!(Session::load(&paths), session);
+    }
+
+    #[test]
+    fn remote_control_is_remembered_and_a_file_without_it_loads_as_off() {
+        let home = tempfile::tempdir().unwrap();
+        let paths = TidewatchPaths::new(home.path());
+        let mut on = window();
+        if let SavedTab::Agent(tab) = &mut on.tabs[2] {
+            tab.remote = true;
+        }
+        let session = Session { windows: vec![on] };
+        session.save(&paths).unwrap();
+        let text = std::fs::read_to_string(paths.session_file()).unwrap();
+        assert_eq!(text.matches("remote = true").count(), 1, "{text}");
+        assert_eq!(Session::load(&paths), session);
+
+        let old = "[[window]]\ndir = \"/a\"\n[[window.tab]]\nkind = \"agent\"\ndir = \"/a\"\n\
+                   agent = \"claude\"\nprofile = \"builder\"\nlevel = \"edits\"\n";
+        let loaded: Session = toml::from_str(old).unwrap();
+        let SavedTab::Agent(tab) = &loaded.windows[0].tabs[0] else { panic!("an agent tab") };
+        assert!(!tab.remote);
+        assert!(!toml::to_string(&loaded).unwrap().contains("remote"));
     }
 
     #[test]

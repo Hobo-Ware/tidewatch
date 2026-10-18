@@ -43,7 +43,12 @@ fn credential(token: &str) -> Credential {
 }
 
 fn launched(session: &str) -> Launched {
-    Launched { profile_id: "builder".into(), level: Level::Edits, session_id: Some(session.into()) }
+    Launched {
+        profile_id: "builder".into(),
+        level: Level::Edits,
+        session_id: Some(session.into()),
+        remote: false,
+    }
 }
 
 fn agent_pane(term: u32, name: &str, session: &str) -> Pane<u32> {

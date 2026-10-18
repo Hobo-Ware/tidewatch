@@ -44,6 +44,7 @@ pub mod prompt;
 pub mod propose;
 pub mod question;
 mod registry;
+pub mod remote;
 pub mod restore;
 pub mod resume_mode;
 mod rfc3339;

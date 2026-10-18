@@ -56,6 +56,8 @@ pub(crate) struct AgentRequest {
     /// Given to the agent at launch as its first prompt (`prepare::task_args`); empty starts it idle.
     pub(crate) task: String,
     pub(crate) placement: Placement,
+    /// Start the agent with remote control on. Never set for a CLI that has no flag for it.
+    pub(crate) remote: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -553,6 +555,7 @@ impl NewTab {
             agent: agent.clone(),
             task: self.message.trim().to_owned(),
             placement: self.placement(facts),
+            remote: false,
         })))
     }
 

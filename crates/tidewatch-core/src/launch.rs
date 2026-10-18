@@ -76,6 +76,9 @@ pub struct LaunchCtx {
     /// True for an agent worktree tab. False for the main checkout, Other and split panes.
     pub worktree_tab: bool,
     pub session_id: Option<String>,
+    /// The name of the remote session. Setting it turns remote control on for a CLI that has a flag
+    /// for it (`Agent::remote_args`); the others ignore it.
+    pub remote: Option<String>,
     pub hooks: Option<HookListener>,
     /// The MCP config file the caller wrote (Claude, Copilot). Setting it turns MCP on for every CLI;
     /// Gemini and Codex also need `hooks` for the listener address.
@@ -139,7 +142,7 @@ impl std::error::Error for LaunchError {}
 
 /// Builds the command for `profile` running `agent` in the tab described by `ctx`.
 ///
-/// Argument order: permission level, model, effort, session id, wiring, then the profile's extra
+/// Argument order: permission level, model, effort, session id, remote control, wiring, then the profile's extra
 /// arguments. Append a task prompt after a literal `--`: list-valued flags would swallow it otherwise.
 pub fn launch_command(
     agent: &Agent,
@@ -162,6 +165,9 @@ pub fn launch_command(
     }
     if let (Some(flag), Some(id)) = (&agent.session_id_flag, ctx.session_id.as_deref()) {
         args.extend([flag.clone(), id.to_owned()]);
+    }
+    if let Some(name) = &ctx.remote {
+        args.extend(agent.remote_args(name));
     }
 
     let mut env = Vec::new();
@@ -466,6 +472,54 @@ mod tests {
 
     fn env_of<'a>(launch: &'a Launch, key: &str) -> Option<&'a str> {
         launch.env.iter().find(|(k, _)| k == key).map(|(_, v)| v.as_str())
+    }
+
+    #[test]
+    fn remote_control_adds_the_clis_flag_after_the_session_id_and_only_where_there_is_one() {
+        let name = "acme-web \u{b7} otter";
+        let cases: [(&str, Vec<&str>); 4] = [
+            ("claude", vec!["--remote-control", name]),
+            ("copilot", vec!["--remote"]),
+            ("codex", vec![]),
+            ("gemini", vec![]),
+        ];
+        for (agent, flag) in cases {
+            let base = LaunchCtx {
+                session_id: Some("11111111-2222-3333-4444-555555555555".into()),
+                ..worktree_ctx()
+            };
+            let off = run(agent, &profile(agent, Level::Edits), &base);
+            let on_ctx = LaunchCtx { remote: Some(name.into()), ..base };
+            let on = run(agent, &profile(agent, Level::Edits), &on_ctx);
+            if flag.is_empty() {
+                assert_eq!(on.args, off.args, "{agent} has no flag to add");
+                continue;
+            }
+            let at = off.args.len();
+            assert_eq!(&on.args[..at], &off.args[..], "{agent} keeps its own arguments");
+            assert_eq!(&on.args[at..], flag.as_slice(), "{agent}");
+        }
+    }
+
+    #[test]
+    fn remote_control_sits_between_the_session_id_and_the_wiring() {
+        let ctx = LaunchCtx { remote: Some("web \u{b7} otter".into()), ..full_ctx() };
+        let launch = run("claude", &profile("claude", Level::Edits), &ctx);
+        let at = |needle: &str| launch.args.iter().position(|a| a == needle).unwrap();
+        assert_eq!(launch.args[at("--remote-control") + 1], "web \u{b7} otter");
+        assert!(at("--session-id") < at("--remote-control"));
+        assert!(at("--remote-control") < at("--settings"));
+        let copilot = run("copilot", &profile("copilot", Level::Edits), &ctx);
+        let at = |needle: &str| copilot.args.iter().position(|a| a == needle).unwrap();
+        assert!(at("--session-id") < at("--remote"));
+        assert!(at("--remote") < at("--additional-mcp-config"));
+    }
+
+    #[test]
+    fn the_shell_line_quotes_the_session_name() {
+        let ctx = LaunchCtx { remote: Some("acme-web \u{b7} otter".into()), ..worktree_ctx() };
+        let line = run("claude", &profile("claude", Level::Edits), &ctx).shell_line();
+        assert!(line.contains("--remote-control 'acme-web \u{b7} otter'"), "{line}");
     }
 
     #[test]

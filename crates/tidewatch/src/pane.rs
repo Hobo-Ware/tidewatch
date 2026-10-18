@@ -35,6 +35,9 @@ pub(crate) struct Launched {
     pub(crate) level: Level,
     /// The id given to the agent's `--session-id`, when its CLI takes one.
     pub(crate) session_id: Option<String>,
+    /// The agent was started with remote control on, and a restart starts it that way again.
+    #[serde(default)]
+    pub(crate) remote: bool,
 }
 
 /// Whether an agent tab still waits for its first message, which is typed in the tab, not in the
@@ -102,6 +105,7 @@ pub(crate) struct Started {
     /// The id given to the agent's `--session-id`, when its CLI takes one.
     pub(crate) session_id: Option<String>,
     pub(crate) awaiting_prompt: bool,
+    pub(crate) remote: bool,
     pub(crate) prepared: Prepared,
 }
 
@@ -111,6 +115,7 @@ impl Started {
             profile_id: self.profile_id.clone(),
             level: self.level,
             session_id: self.session_id.clone(),
+            remote: self.remote,
         }
     }
 }
@@ -339,6 +344,7 @@ mod tests {
             notes_file: None,
             session_id: None,
             awaiting_prompt: false,
+            remote: false,
             prepared: Prepared {
                 launch: tidewatch_core::launch::Launch {
                     program: "claude".into(),

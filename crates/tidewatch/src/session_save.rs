@@ -55,6 +55,7 @@ struct AgentRef<'a> {
     session_id: Option<&'a str>,
     stages: Option<&'a Path>,
     crashed: bool,
+    remote: bool,
 }
 
 impl TabRef<'_> {
@@ -73,6 +74,7 @@ impl TabRef<'_> {
                 session_id: a.session_id.map(str::to_owned),
                 stages: a.stages.map(Path::to_path_buf),
                 crashed: a.crashed,
+                remote: a.remote,
             }),
         }
     }
@@ -84,13 +86,16 @@ fn agent_ref<'a>(
     branch: Option<&'a str>,
 ) -> Option<TabRef<'a>> {
     let run = agent.workflow.as_deref();
-    let (profile, level, session_id) = match (&agent.launched, run) {
-        (Some(launched), _) => {
-            (launched.profile_id.as_str(), launched.level, launched.session_id.as_deref())
-        }
+    let (profile, level, session_id, remote) = match (&agent.launched, run) {
+        (Some(launched), _) => (
+            launched.profile_id.as_str(),
+            launched.level,
+            launched.session_id.as_deref(),
+            launched.remote,
+        ),
         (None, Some(run)) => {
             let profile = run.runner().profile(run.runner().position())?;
-            (profile.name.as_str(), profile.level, None)
+            (profile.name.as_str(), profile.level, None, false)
         }
         (None, None) => return None,
     };
@@ -103,6 +108,7 @@ fn agent_ref<'a>(
         session_id,
         stages: run.and_then(|run| run.stages_file()),
         crashed: agent.run.exited_abnormally(),
+        remote,
     }))
 }
 
@@ -220,6 +226,7 @@ mod tests {
             profile_id: "builder".into(),
             level: Level::Edits,
             session_id: session.map(str::to_owned),
+            remote: false,
         }
     }
 
@@ -310,6 +317,7 @@ mod tests {
                     session_id: Some("0c2cbc96-1111-4222-8333-444455556666".into()),
                     stages: None,
                     crashed: false,
+                    remote: false,
                 }),
             ]
         );
