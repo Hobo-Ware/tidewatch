@@ -133,10 +133,12 @@ pub(crate) fn stage_columns(width: f32) -> usize {
 }
 
 /// What stands above the message box, each block as tall as it was measured: the permission
-/// control and its text, the stages of a workflow, warnings and the name and branch fields.
+/// control and its text, the Remote control row, the stages of a workflow, warnings and the name and
+/// branch fields.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub(crate) struct Above {
     pub(crate) permission: f32,
+    pub(crate) remote: f32,
     pub(crate) stages: f32,
     pub(crate) warnings: f32,
     pub(crate) fields: f32,
@@ -144,7 +146,7 @@ pub(crate) struct Above {
 
 impl Above {
     pub(crate) fn height(&self) -> f32 {
-        [self.stages, self.permission, self.warnings, self.fields]
+        [self.stages, self.permission, self.remote, self.warnings, self.fields]
             .into_iter()
             .filter(|height| *height > 0.0)
             .map(|height| height + SECTION_GAP)

@@ -1,11 +1,12 @@
 //! The General page: the Startup card (restore, open at login), the Window section and the Updates section.
 
 use egui::Ui;
-use tidewatch_core::prefs::{GithubPrefs, ResumeAgents};
+use tidewatch_core::prefs::{GithubPrefs, NewTabPrefs, ResumeAgents};
 
 use crate::github_view;
 use crate::login_item;
 use crate::macos::LoginItem;
+use crate::new_tab_prefs_view::{self, ProfileOption};
 use crate::settings_ui::{self, Control, footer_note, page_header, section, switch_row};
 use crate::settings_view::Action;
 use crate::updates::Updates;
@@ -20,6 +21,8 @@ pub(crate) struct General {
     pub(crate) login_offered: bool,
     pub(crate) window: window_view::View,
     pub(crate) github: GithubPrefs,
+    pub(crate) new_tab: NewTabPrefs,
+    pub(crate) profiles: Vec<ProfileOption>,
 }
 
 pub(crate) fn page(
@@ -58,6 +61,8 @@ pub(crate) fn page(
         }
     });
     let window = window_view::section(ui, window, &general.window).map(Action::Window);
+    let new_tab =
+        new_tab_prefs_view::card(ui, &general.new_tab, &general.profiles).map(Action::NewTab);
     let github = github_view::card(ui, general.github).map(Action::Github);
     let updates = updates_view::section(ui, updates).map(Action::Updates);
     footer_note(ui, file);
@@ -66,6 +71,7 @@ pub(crate) fn page(
         .or(resume.map(Action::ResumeAgents))
         .or(open_at_login.map(Action::LoginItem))
         .or(window)
+        .or(new_tab)
         .or(github)
         .or(updates)
 }

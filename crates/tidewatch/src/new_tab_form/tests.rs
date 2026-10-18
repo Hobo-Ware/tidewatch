@@ -251,6 +251,7 @@ fn the_start_button_starts_too_and_a_blocked_one_does_nothing() {
     assert!(matches!(started(harness.click_start()), Request::Agent(_)));
     harness.facts = Some(RepoFacts {
         checked_out: Some("main".into()),
+        default_branch: None,
         branches: vec!["main".into()],
         taken: HashSet::new(),
     });
@@ -278,6 +279,7 @@ fn a_taken_name_blocks_cmd_enter() {
     let mut harness = Harness::new(Group::Repo);
     harness.facts = Some(RepoFacts {
         checked_out: None,
+        default_branch: None,
         branches: Vec::new(),
         taken: ["dup".to_owned()].into_iter().collect(),
     });
@@ -353,6 +355,7 @@ fn nothing_meets(harness: &Harness, what: &str) {
 fn dup_facts() -> RepoFacts {
     RepoFacts {
         checked_out: Some("main".into()),
+        default_branch: None,
         branches: vec!["main".into()],
         taken: ["dup".to_owned()].into_iter().collect(),
     }
@@ -374,7 +377,7 @@ fn no_part_of_the_form_meets_another_in_a_short_or_a_narrow_window() {
 
 #[test]
 fn nothing_meets_with_a_taken_name_a_warning_and_a_typed_message() {
-    for (width, height) in [(980.0, 560.0), (638.0, 562.0)] {
+    for (width, height) in [(980.0, 560.0), (638.0, 660.0)] {
         let mut harness = Harness::sized(Group::Repo, width, height);
         harness.facts = Some(dup_facts());
         harness.state.select(6, &harness.catalog);
@@ -407,7 +410,10 @@ fn a_pane_too_short_for_the_message_scrolls_and_the_footer_stays_pinned() {
     let start = short.placed().start.unwrap();
     assert_eq!(start.bottom(), short.area.bottom() - 14.0);
     assert_eq!(start.size(), tall.size());
-    assert!(start.top() > short.placed().message.unwrap().top());
+    assert!(
+        short.placed().message.unwrap().bottom() > start.top(),
+        "the body scrolls under the footer"
+    );
 }
 
 #[test]
@@ -456,4 +462,116 @@ fn the_picked_row_stays_in_view_when_the_keys_move_it() {
     harness.frame(Vec::new());
     let row = harness.placed().selected_row.unwrap();
     assert!(row.top() >= lane.top() && row.bottom() <= lane.bottom() + 0.5, "{row:?} in {lane:?}");
+}
+
+fn pick_profile(harness: &mut Harness, id: &str) {
+    harness.state.select_id(id, &harness.catalog);
+    harness.frame(Vec::new());
+    harness.frame(Vec::new());
+}
+
+fn click_remote_switch(harness: &mut Harness) -> Option<Out> {
+    let at = harness.placed().remote_switch.expect("the Remote control row").center();
+    harness.click(at)
+}
+
+fn started_remote(harness: &mut Harness) -> bool {
+    match started(harness.click_start()) {
+        Request::Agent(request) => request.remote,
+        other => panic!("not an agent: {other:?}"),
+    }
+}
+
+#[test]
+fn the_remote_row_sits_under_permission_and_its_switch_turns_remote_control_on_and_off() {
+    for id in ["builder", "copilot-builder"] {
+        let mut harness = Harness::new(Group::Repo);
+        pick_profile(&mut harness, id);
+        let placed = harness.placed();
+        let (permission, remote, name) =
+            (placed.permission.unwrap(), placed.remote.unwrap(), placed.name.unwrap());
+        assert!(permission.bottom() < remote.top() && remote.bottom() < name.top(), "{id}");
+        assert!(remote.contains_rect(placed.remote_switch.unwrap()), "{id}");
+        assert!(!harness.state.remote());
+        assert_eq!(click_remote_switch(&mut harness), None);
+        assert!(harness.state.remote(), "{id}: on");
+        assert!(started_remote(&mut harness), "{id}: the request asks for it");
+        click_remote_switch(&mut harness);
+        assert!(!harness.state.remote(), "{id}: off again");
+        assert!(!started_remote(&mut harness), "{id}");
+    }
+}
+
+#[test]
+fn for_a_cli_without_it_the_row_is_there_but_its_switch_does_nothing() {
+    for id in ["gemini-builder", "codex-builder"] {
+        let mut harness = Harness::new(Group::Repo);
+        pick_profile(&mut harness, id);
+        assert!(harness.placed().remote.is_some(), "{id}: the row stays so the reason shows");
+        click_remote_switch(&mut harness);
+        assert!(!harness.state.remote(), "{id}: a click changes nothing");
+        assert!(!started_remote(&mut harness), "{id}");
+    }
+}
+
+#[test]
+fn a_remote_default_that_a_cli_cannot_honour_is_not_sent_to_it() {
+    let mut harness = Harness::new(Group::Repo);
+    harness.state.set_remote(true);
+    pick_profile(&mut harness, "gemini-builder");
+    assert!(harness.state.remote(), "the form remembers the wish");
+    assert!(!started_remote(&mut harness));
+    pick_profile(&mut harness, "builder");
+    assert!(started_remote(&mut harness));
+}
+
+#[test]
+fn a_workflow_form_has_no_remote_row() {
+    let mut harness = Harness::unfocused(Group::Repo);
+    harness.press(Key::W);
+    harness.frame(Vec::new());
+    assert_eq!(harness.placed().remote, None);
+}
+
+#[test]
+fn in_a_plain_folder_the_row_is_there_too() {
+    let mut harness = Harness::new(Group::Other);
+    assert!(harness.placed().remote.is_some());
+    click_remote_switch(&mut harness);
+    assert!(started_remote(&mut harness));
+}
+
+fn tab_stops(harness: &mut Harness) -> Vec<egui::Id> {
+    let mut stops = Vec::new();
+    for _ in 0..80 {
+        harness.frame(vec![key(Key::Tab)]);
+        match harness.ctx.memory(egui::Memory::focused) {
+            Some(id) if !stops.contains(&id) => stops.push(id),
+            _ => {}
+        }
+    }
+    stops
+}
+
+#[test]
+fn the_switch_takes_tab_focus_when_it_works_and_space_flips_it() {
+    let stops_of = |id: &str| {
+        let mut harness = Harness::unfocused(Group::Repo);
+        pick_profile(&mut harness, id);
+        tab_stops(&mut harness)
+    };
+    let (claude, gemini) = (stops_of("builder"), stops_of("gemini-builder"));
+    let only_claude: Vec<_> = claude.iter().filter(|id| !gemini.contains(id)).collect();
+    assert_eq!(only_claude.len(), 1, "an enabled switch is one more stop than a disabled one");
+    let switch = *only_claude[0];
+    let mut harness = Harness::unfocused(Group::Repo);
+    for _ in 0..80 {
+        harness.frame(vec![key(Key::Tab)]);
+        if harness.ctx.memory(egui::Memory::focused) == Some(switch) {
+            break;
+        }
+    }
+    assert!(!harness.state.remote());
+    harness.frame(vec![key(Key::Space)]);
+    assert!(harness.state.remote(), "Space on the focused switch turns remote control on");
 }

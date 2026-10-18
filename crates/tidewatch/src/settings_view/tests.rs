@@ -47,6 +47,8 @@ fn general(restore: bool, resume: ResumeAgents, login_offered: bool) -> General 
             menu_bar_available: true,
         },
         github: tidewatch_core::prefs::GithubPrefs::default(),
+        new_tab: tidewatch_core::prefs::NewTabPrefs::default(),
+        profiles: Vec::new(),
     }
 }
 

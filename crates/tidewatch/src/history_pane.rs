@@ -64,7 +64,8 @@ pub(crate) fn show(
         Some(Progress { input, state }) => (Some(input), Some(state)),
         None => (None, None),
     };
-    let shown = state.as_deref().map(|state| progress_view::side_shown(state.chosen, true));
+    let first = input.as_ref().map_or(Side::Progress, |input| input.first);
+    let shown = state.as_deref().map(|state| progress_view::side_shown(state.chosen, true, first));
     if let Some(chose) = show_card_header(ui, header, view, shown)
         && let Some(state) = state.as_deref_mut()
     {
@@ -418,7 +419,13 @@ mod tests {
             let mut out = Out::default();
             let output = self.ctx.run_ui(raw, |ui| {
                 let progress = with_ledger.then_some(Progress {
-                    input: progress_view::Input { ledger, now_ms: 0, time: 0.0, animate: false },
+                    input: progress_view::Input {
+                        ledger,
+                        now_ms: 0,
+                        time: 0.0,
+                        animate: false,
+                        first: Side::Progress,
+                    },
                     state: &mut *state,
                 });
                 let rect = Rect::from_min_size(pos2(0.0, 0.0), vec2(420.0, 600.0));

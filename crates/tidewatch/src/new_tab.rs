@@ -3,9 +3,10 @@
 
 use std::path::PathBuf;
 
-use tidewatch_core::agents::{Agent, Level};
+use tidewatch_core::agents::{Agent, Level, Remote};
 use tidewatch_core::branch_name::{self, Problem};
 use tidewatch_core::names;
+use tidewatch_core::prefs::{NewTabPrefs, StartFrom};
 use tidewatch_core::profiles::Profile;
 use tidewatch_core::workflows::Workflow;
 
@@ -90,6 +91,48 @@ pub(crate) fn level_hint(level: Level) -> &'static str {
     }
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum RemoteOffer {
+    /// The switch works; the line says where the session is driven from.
+    Available { line: String },
+    /// The switch is off and disabled; the line says why.
+    Unavailable { line: String },
+}
+
+impl RemoteOffer {
+    pub(crate) fn of(agent: &Agent) -> Self {
+        match agent.remote {
+            Remote::Flag { app, .. } => Self::Available { line: format!("Drive it from {app}") },
+            Remote::Later => {
+                Self::Unavailable { line: format!("Experimental in {}, not yet", agent.name) }
+            }
+            Remote::None => Self::Unavailable { line: format!("Not available for {}", agent.name) },
+        }
+    }
+
+    pub(crate) fn is_available(&self) -> bool {
+        matches!(self, Self::Available { .. })
+    }
+
+    pub(crate) fn line(&self) -> &str {
+        match self {
+            Self::Available { line } | Self::Unavailable { line } => line,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Switch {
+    Off,
+    On,
+}
+
+impl Switch {
+    fn of(on: bool) -> Self {
+        if on { Self::On } else { Self::Off }
+    }
+}
+
 fn opening_level(group: Group, agent: &Agent, wanted: Level) -> Level {
     [wanted, Level::Auto]
         .into_iter()
@@ -110,7 +153,8 @@ enum Name {
     Typed(String),
 }
 
-/// The branch the worktree starts from: what the repo has checked out, or the user's pick.
+/// The branch the worktree starts from: what Settings says (the checked-out branch or the default
+/// branch), or the user's pick.
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum Base {
     Default,
@@ -145,6 +189,8 @@ pub(crate) struct NewTab {
     agent_pick: usize,
     workflow_pick: usize,
     level: Level,
+    remote: Switch,
+    defaults: NewTabPrefs,
     running_here: Vec<String>,
     message: String,
     task: String,
@@ -177,6 +223,8 @@ impl NewTab {
             agent_pick: 0,
             workflow_pick: 0,
             level: Level::Auto,
+            remote: Switch::Off,
+            defaults: NewTabPrefs::default(),
             running_here,
             message: String::new(),
             task: String::new(),
@@ -188,6 +236,13 @@ impl NewTab {
             scroll_to_selected: true,
             error: None,
         }
+    }
+
+    /// The form opens with what Settings says new tabs start with.
+    pub(crate) fn with_defaults(mut self, defaults: NewTabPrefs) -> Self {
+        self.remote = Switch::of(defaults.remote);
+        self.defaults = defaults;
+        self
     }
 
     pub(crate) fn group(&self) -> Group {
@@ -252,17 +307,23 @@ impl NewTab {
         self.group == Group::Repo
     }
 
-    /// Settles the form on the catalog the first time it is known: the last used profile, with its
-    /// level.
+    /// Settles the form on the catalog the first time it is known: the default profile, else the
+    /// last used one, with its level or the default permission.
     pub(crate) fn settle(&mut self, catalog: &Catalog) {
         if self.settled || !catalog.is_loaded() {
             return;
         }
         self.settled = true;
-        if let Some(last) = self.last_profile.clone() {
-            self.select_id(&last, catalog);
+        let visible = self.visible(catalog);
+        let default = self.defaults.agent.clone().filter(|id| visible.contains(id));
+        let wanted = default.or_else(|| self.last_profile.clone());
+        if let Some(wanted) = wanted {
+            self.select_id(&wanted, catalog);
         }
         self.apply_selection(catalog);
+        if let Some(level) = self.defaults.permission {
+            self.set_level(level, catalog);
+        }
     }
 
     pub(crate) fn jump(&mut self, preselect: &str, catalog: &Catalog) {
@@ -416,6 +477,19 @@ impl NewTab {
         true
     }
 
+    pub(crate) fn remote(&self) -> bool {
+        self.remote == Switch::On
+    }
+
+    pub(crate) fn set_remote(&mut self, on: bool) {
+        self.remote = Switch::of(on);
+        self.error = None;
+    }
+
+    pub(crate) fn remote_for(&self, agent: &Agent) -> bool {
+        self.remote() && RemoteOffer::of(agent).is_available()
+    }
+
     /// Left and Right: the next open level in that direction, staying put at the end.
     pub(crate) fn step_level(&mut self, forward: bool, catalog: &Catalog) -> bool {
         let Some((_, agent)) = self.selected_entry(catalog) else { return false };
@@ -475,7 +549,12 @@ impl NewTab {
     pub(crate) fn base(&self, facts: Option<&RepoFacts>) -> Option<String> {
         match &self.base {
             Base::Picked(branch) => Some(branch.clone()),
-            Base::Default => facts.and_then(|facts| facts.checked_out.clone()),
+            Base::Default => facts.and_then(|facts| match self.defaults.start_from {
+                StartFrom::Current => facts.checked_out.clone(),
+                StartFrom::DefaultBranch => {
+                    facts.default_branch.clone().or_else(|| facts.checked_out.clone())
+                }
+            }),
         }
     }
 
@@ -555,7 +634,7 @@ impl NewTab {
             agent: agent.clone(),
             task: self.message.trim().to_owned(),
             placement: self.placement(facts),
-            remote: false,
+            remote: self.remote_for(agent),
         })))
     }
 

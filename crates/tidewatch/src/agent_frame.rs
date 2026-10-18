@@ -12,6 +12,7 @@ use tidewatch_core::workflows::Workflow;
 use crate::agent_run::{Change, Finding, TermSnapshot};
 use crate::notify::Notifier;
 use crate::pane::{Body, Pane};
+use crate::remote_session::Step;
 use crate::status_view::{self, Tone};
 use crate::tabs::Tabs;
 
@@ -123,6 +124,41 @@ pub(crate) fn poll<T>(
         }
     }
     Polled { wake, changes }
+}
+
+/// The terminal rows a look for the remote link reads, and how wide the terminal is.
+pub(crate) struct Rows {
+    pub(crate) lines: Vec<String>,
+    pub(crate) cols: usize,
+}
+
+/// Looks at the terminal of every agent tab that runs with remote control and has shown no link yet.
+/// `output` is a cheap counter that moves with the terminal's output; `rows` reads the buffer and
+/// is only called when there is new output and the last look was not just now. Returns the time
+/// the next look is due when output came in too soon after one.
+pub(crate) fn watch_links<T>(
+    tabs: &mut Tabs<Pane<T>>,
+    output: impl Fn(&T) -> u64,
+    rows: impl Fn(&T) -> Rows,
+    now: f64,
+) -> Option<f64> {
+    let mut later: Option<f64> = None;
+    for tab in tabs.items_mut() {
+        let Pane { body: Body::Shell(term), agent: Some(agent), .. } = &mut tab.pane else {
+            continue;
+        };
+        let Some(session) = agent.remote.as_mut() else { continue };
+        let seen = output(term);
+        match session.step(seen, now) {
+            Step::Rest => {}
+            Step::Scan => {
+                let Rows { lines, cols } = rows(term);
+                session.scanned(seen, now, &lines, cols, &agent.run.agent_id);
+            }
+            Step::Later(at) => later = Some(later.map_or(at, |soonest| soonest.min(at))),
+        }
+    }
+    later
 }
 
 /// Tones of every agent tab, in tab order (for the Overview button's badge and tests).
@@ -458,5 +494,55 @@ mod tests {
             std::thread::sleep(Duration::from_millis(50));
             assert_eq!(hooks.drain(), Vec::new());
         }
+    }
+
+    #[test]
+    fn links_are_looked_for_only_on_tabs_with_remote_control_and_only_on_new_output() {
+        use crate::remote_session::RemoteSession;
+        use std::cell::Cell;
+        let link = "https://claude.ai/code/session_01AbCd";
+        let (mut tabs, id) = tabs_with_agent();
+        let plain = tabs.push("plain".into(), {
+            let mut pane = Pane::shell(2);
+            pane.agent = Some(crate::pane::AgentTab::new(
+                "Reviewer".into(),
+                AgentRun::setting_up("claude".into(), 0.0),
+            ));
+            pane
+        });
+        tabs.get_mut(id).unwrap().pane.agent.as_mut().unwrap().remote =
+            Some(RemoteSession::new("web \u{b7} otter".into()));
+        let reads = Cell::new(0);
+        let rows = |_: &u32| {
+            reads.set(reads.get() + 1);
+            Rows { lines: vec![format!("Remote Control active {link}")], cols: 80 }
+        };
+        let link_of = |tabs: &Tabs<Pane<u32>>, id: u64| {
+            tabs.items()
+                .iter()
+                .find(|t| t.id == id)
+                .and_then(|t| t.pane.agent.as_ref()?.remote.as_ref()?.link().map(str::to_owned))
+        };
+        assert_eq!(watch_links(&mut tabs, |_| 0, rows, 1.0), None, "no output yet");
+        assert_eq!(reads.get(), 0);
+        assert_eq!(watch_links(&mut tabs, |_| 7, rows, 1.0), None);
+        assert_eq!(reads.get(), 1, "only the tab with remote control is read");
+        assert_eq!(link_of(&tabs, id).as_deref(), Some(link));
+        assert_eq!(link_of(&tabs, plain), None);
+        assert_eq!(watch_links(&mut tabs, |_| 9, rows, 5.0), None);
+        assert_eq!(reads.get(), 1, "a tab with its link is not read again");
+    }
+
+    #[test]
+    fn output_that_comes_too_soon_after_a_look_asks_for_a_wake_up() {
+        use crate::remote_session::RemoteSession;
+        let (mut tabs, id) = tabs_with_agent();
+        tabs.get_mut(id).unwrap().pane.agent.as_mut().unwrap().remote =
+            Some(RemoteSession::new("web".into()));
+        let rows = |_: &u32| Rows { lines: vec!["starting".into()], cols: 80 };
+        assert_eq!(watch_links(&mut tabs, |_| 1, rows, 1.0), None);
+        let later = watch_links(&mut tabs, |_| 2, rows, 1.5);
+        assert_eq!(later, Some(3.0));
+        assert_eq!(watch_links(&mut tabs, |_| 2, rows, 3.0), None);
     }
 }

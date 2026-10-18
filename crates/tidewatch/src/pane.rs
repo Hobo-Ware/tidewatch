@@ -11,6 +11,7 @@ use tidewatch_core::worktree::Worktree;
 use crate::agent_run::AgentRun;
 use crate::new_tab::NewTab;
 use crate::reader::Reader;
+use crate::remote_session::RemoteSession;
 use crate::tabs::Tabs;
 use crate::workflow_run::TabRun;
 
@@ -65,6 +66,8 @@ pub(crate) struct AgentTab {
     pub(crate) first_prompt: FirstPrompt,
     /// Why this tab's resume command waits typed at the prompt; shown until the user types.
     pub(crate) resume_note: Option<&'static str>,
+    /// The agent process runs with remote control on, whatever the saved setting says now.
+    pub(crate) remote: Option<RemoteSession>,
 }
 
 impl AgentTab {
@@ -78,6 +81,7 @@ impl AgentTab {
             workflow: None,
             first_prompt: FirstPrompt::NotNeeded,
             resume_note: None,
+            remote: None,
         }
     }
 }
@@ -105,7 +109,6 @@ pub(crate) struct Started {
     /// The id given to the agent's `--session-id`, when its CLI takes one.
     pub(crate) session_id: Option<String>,
     pub(crate) awaiting_prompt: bool,
-    pub(crate) remote: bool,
     pub(crate) prepared: Prepared,
 }
 
@@ -115,7 +118,7 @@ impl Started {
             profile_id: self.profile_id.clone(),
             level: self.level,
             session_id: self.session_id.clone(),
-            remote: self.remote,
+            remote: self.prepared.remote.is_some(),
         }
     }
 }
@@ -232,6 +235,7 @@ pub(crate) fn finish_open<T>(
                     );
                     run.started(started.notes_file.clone(), now);
                     let launched = started.launched();
+                    let remote = started.prepared.remote.clone().map(RemoteSession::new);
                     let reader = Reader::for_agent(
                         &started.agent_id,
                         started.session_id,
@@ -249,6 +253,7 @@ pub(crate) fn finish_open<T>(
                             FirstPrompt::NotNeeded
                         },
                         resume_note: None,
+                        remote,
                     }
                 }),
             };
@@ -294,6 +299,7 @@ pub(crate) fn relaunch_stage<T>(
     let Some(agent) = tab.pane.agent.as_mut() else { return Vec::new() };
     tab.pane.body = Body::Shell(spawn(dir, &started.prepared));
     agent.launched = Some(started.launched());
+    agent.remote = started.prepared.remote.clone().map(RemoteSession::new);
     agent.profile_name = started.profile_name;
     agent.run = AgentRun::setting_up(started.agent_id.clone(), now);
     agent.run.started(started.notes_file, now);
@@ -344,7 +350,6 @@ mod tests {
             notes_file: None,
             session_id: None,
             awaiting_prompt: false,
-            remote: false,
             prepared: Prepared {
                 launch: tidewatch_core::launch::Launch {
                     program: "claude".into(),
@@ -355,6 +360,7 @@ mod tests {
                 env: Vec::new(),
                 setup: String::new(),
                 notes: notes.iter().map(|n| (*n).to_owned()).collect(),
+                remote: None,
             },
         })
     }

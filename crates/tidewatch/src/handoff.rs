@@ -28,6 +28,7 @@ use crate::agent_run::AgentRun;
 use crate::pane::{AgentTab, Body, FirstPrompt, Launched, Pane};
 use crate::pty;
 use crate::reader::Reader;
+use crate::remote_session::RemoteSession;
 use crate::repo::Workspace;
 use crate::tabs::{Action, Tab, Tabs};
 use crate::workflow_run::TabRun;
@@ -130,6 +131,9 @@ pub(crate) struct AgentEntry {
     pub(crate) credential: Option<Credential>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) workflow: Option<WorkflowEntry>,
+    /// The name of the remote session the running agent has, when remote control is on.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) remote: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -177,6 +181,7 @@ fn agent_entry(tab: &AgentTab, credential: Option<Credential>) -> AgentEntry {
                 blurb: run.blurb().to_owned(),
             })
         }),
+        remote: tab.remote.as_ref().map(|session| session.name.clone()),
     }
 }
 
@@ -368,6 +373,7 @@ fn agent_tab(entry: &AgentEntry, dir: &Path, now: f64, notes: &mut Vec<String>) 
         workflow,
         first_prompt: entry.first_prompt,
         resume_note: None,
+        remote: entry.remote.clone().map(RemoteSession::new),
     }
 }
 

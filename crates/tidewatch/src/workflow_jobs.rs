@@ -139,7 +139,6 @@ fn run_stage(spec: &StageSpec) -> Result<Started, String> {
         notes_file: Some(spec.paths.notes_file(repo, &tab_key)),
         session_id,
         awaiting_prompt: false,
-        remote: false,
         prepared,
     })
 }

@@ -45,7 +45,8 @@ impl Panel {
         let mut action = None;
         let (ledger, state, size) = (&self.ledger, &mut self.state, self.size);
         let output = self.ctx.run_ui(raw, |ui| {
-            let input = Input { ledger, now_ms: 240_000, time: 1.0, animate: false };
+            let input =
+                Input { ledger, now_ms: 240_000, time: 1.0, animate: false, first: Side::Progress };
             action = show(ui, Rect::from_min_size(pos2(0.0, 0.0), size), &input, state);
         });
         self.texts.clear();
@@ -100,15 +101,23 @@ fn collect(shape: &Shape, out: &mut Vec<(String, Rect)>) {
 #[test]
 fn history_shows_until_a_ledger_arrives_then_the_choice_or_progress() {
     let cases = [
-        (None, false, Side::History),
-        (Some(Side::Progress), false, Side::History),
-        (None, true, Side::Progress),
-        (Some(Side::History), true, Side::History),
-        (Some(Side::Progress), true, Side::Progress),
+        (None, false, Side::Progress, Side::History),
+        (None, false, Side::History, Side::History),
+        (Some(Side::Progress), false, Side::Progress, Side::History),
+        (None, true, Side::Progress, Side::Progress),
+        (None, true, Side::History, Side::History),
+        (Some(Side::History), true, Side::Progress, Side::History),
+        (Some(Side::Progress), true, Side::History, Side::Progress),
     ];
-    for (chosen, has_ledger, want) in cases {
-        assert_eq!(side_shown(chosen, has_ledger), want, "{chosen:?} {has_ledger}");
+    for (chosen, has_ledger, first, want) in cases {
+        assert_eq!(
+            side_shown(chosen, has_ledger, first),
+            want,
+            "{chosen:?} {has_ledger} {first:?}"
+        );
     }
+    assert_eq!(Side::from(RightPanel::Progress), Side::Progress);
+    assert_eq!(Side::from(RightPanel::History), Side::History);
     assert_eq!(SIDES.map(str::len), [8, 7]);
     assert_eq!([Side::Progress, Side::History].map(Side::index), [0, 1]);
     assert_eq!([0, 1].map(Side::at), [Side::Progress, Side::History]);

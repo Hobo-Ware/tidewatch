@@ -57,7 +57,8 @@ impl Tidewatch {
         };
         let running = agent_tabs_in_folder(&self.tabs);
         let last = self.last_profile.as_deref();
-        let mut state = NewTab::open(group, label, dir, running, last, random_seed());
+        let mut state = NewTab::open(group, label, dir, running, last, random_seed())
+            .with_defaults(self.new_tab_prefs.clone());
         state.settle(&self.catalog);
         if let Some(preselect) = preselect {
             state.jump(preselect, &self.catalog);

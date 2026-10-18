@@ -8,11 +8,13 @@
 //!   window), to look at the file view when it is narrow.
 //! - `TIDEWATCH_DEV_WINDOW=<w>x<h>`: open the window that size (in points, 600 to 4000 each), to
 //!   look at a view in a shorter or wider window.
+//! - `TIDEWATCH_DEV_REMOTE_POPOVER=1`: the Remote pill's popover is open on an agent tab that has one.
 //! - `TIDEWATCH_DEV_KEYS=<text>` after `TIDEWATCH_DEV_KEYS_AFTER=<seconds>` (default 8): type the text
 //!   into the newest agent tab once, to answer a prompt a check cannot avoid (`\r`, `\n`, `\e` and
 //!   `\\` are escapes; `\e[B\r` is Down then Enter).
 
 use crate::layout;
+use crate::remote_pill::Popover;
 
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct DevKeys {
@@ -27,6 +29,7 @@ pub(crate) struct DevView {
     pub(crate) status_log: bool,
     pub(crate) keys: Option<DevKeys>,
     pub(crate) side: Option<f32>,
+    pub(crate) remote_popover: Popover,
 }
 
 const DEFAULT_KEYS_AFTER_SECS: f64 = 8.0;
@@ -55,6 +58,12 @@ impl DevView {
             var("TIDEWATCH_DEV_KEYS_AFTER").as_deref(),
         )
         .with_side(var("TIDEWATCH_DEV_SIDE").as_deref())
+        .with_remote_popover(var("TIDEWATCH_DEV_REMOTE_POPOVER").as_deref())
+    }
+
+    fn with_remote_popover(self, value: Option<&str>) -> Self {
+        let open = value.is_some_and(|v| !v.is_empty() && v != "0");
+        Self { remote_popover: if open { Popover::Open } else { Popover::OnClick }, ..self }
     }
 
     fn with_side(self, side: Option<&str>) -> Self {
@@ -81,6 +90,7 @@ impl DevView {
                 after: keys_after.and_then(|s| s.parse().ok()).unwrap_or(DEFAULT_KEYS_AFTER_SECS),
             }),
             side: None,
+            remote_popover: Popover::OnClick,
         }
     }
 }
@@ -117,10 +127,12 @@ mod tests {
     #[test]
     fn a_switch_is_on_for_any_value_but_empty_or_zero() {
         let view = DevView::parse(Some("1"), None, Some("yes"), None, None);
-        assert_eq!(
-            view,
-            DevView { overview: true, focus: false, status_log: true, keys: None, side: None }
-        );
+        assert_eq!(view, DevView { overview: true, status_log: true, ..DevView::default() });
+        for (value, want) in
+            [(Some("1"), Popover::Open), (Some("0"), Popover::OnClick), (None, Popover::OnClick)]
+        {
+            assert_eq!(DevView::default().with_remote_popover(value).remote_popover, want);
+        }
         assert!(DevView::parse(None, Some("1"), None, None, None).focus);
         assert_eq!(
             DevView::parse(Some(""), Some("0"), Some("0"), Some(""), None),

@@ -1,4 +1,4 @@
-//! What a repo says about its next worktree - the checked-out branch, the local branches and the names already taken - looked up off the UI thread.
+//! What a repo says about its next worktree - the checked-out branch, the default branch, the local branches and the names already taken - looked up off the UI thread.
 
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -21,18 +21,47 @@ fn checked_out(repo: &Path) -> Option<String> {
     (out.status.success() && !name.is_empty()).then_some(name)
 }
 
+/// `origin/HEAD` as `origin/main`, or `None` without a remote or when it was never set.
+fn origin_head(repo: &Path) -> Option<String> {
+    let out = Command::new("git")
+        .arg("-C")
+        .arg(repo)
+        .args(["symbolic-ref", "--short", "-q", "refs/remotes/origin/HEAD"])
+        .output()
+        .ok()?;
+    let name = String::from_utf8_lossy(&out.stdout).trim().to_owned();
+    (out.status.success() && !name.is_empty()).then_some(name)
+}
+
+/// The default branch among the local `branches`: the one `origin/HEAD` names, else `main`, else
+/// `master`. `None` when the repo has none of them, so the form falls back to the checked-out branch.
+pub(crate) fn pick_default_branch(
+    origin_head: Option<&str>,
+    branches: &[String],
+) -> Option<String> {
+    let named = origin_head.map(|head| head.strip_prefix("origin/").unwrap_or(head));
+    named
+        .into_iter()
+        .chain(["main", "master"])
+        .find(|candidate| branches.iter().any(|branch| branch == candidate))
+        .map(str::to_owned)
+}
+
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(crate) struct RepoFacts {
     pub(crate) checked_out: Option<String>,
+    pub(crate) default_branch: Option<String>,
     pub(crate) branches: Vec<String>,
     pub(crate) taken: HashSet<String>,
 }
 
 impl RepoFacts {
     fn look(repo: &Path, paths: Option<&TidewatchPaths>) -> Self {
+        let branches = local_branches(repo);
         Self {
             checked_out: checked_out(repo),
-            branches: local_branches(repo),
+            default_branch: pick_default_branch(origin_head(repo).as_deref(), &branches),
+            branches,
             taken: paths.map(|paths| taken_names(paths, repo)).unwrap_or_default(),
         }
     }
@@ -169,5 +198,64 @@ mod tests {
         taken.sort_unstable();
         assert_eq!(taken, ["busy", "old"]);
         assert_eq!(RepoFacts::look(&repo, None).taken, HashSet::new());
+    }
+
+    #[test]
+    fn the_default_branch_is_what_origin_names_else_main_else_master() {
+        let list = |names: &[&str]| names.iter().map(|n| (*n).to_owned()).collect::<Vec<_>>();
+        let cases = [
+            (Some("origin/trunk"), list(&["main", "trunk"]), Some("trunk")),
+            (Some("origin/trunk"), list(&["main", "master"]), Some("main")),
+            (Some("origin/trunk"), list(&["master"]), Some("master")),
+            (None, list(&["master", "main"]), Some("main")),
+            (None, list(&["feat/x", "master"]), Some("master")),
+            (None, list(&["feat/x", "trunk"]), None),
+            (Some("origin/main"), list(&[]), None),
+            (Some("main"), list(&["main"]), Some("main")),
+            (Some("origin/release/1.0"), list(&["release/1.0", "main"]), Some("release/1.0")),
+        ];
+        for (head, branches, want) in cases {
+            assert_eq!(
+                pick_default_branch(head, &branches).as_deref(),
+                want,
+                "{head:?} {branches:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_look_finds_the_default_branch_through_origin_head_and_without_a_remote() {
+        let dir = tempfile::tempdir().unwrap();
+        let commit = [
+            "-c",
+            "user.name=t",
+            "-c",
+            "user.email=t@t",
+            "commit",
+            "-q",
+            "--allow-empty",
+            "-m",
+            "x",
+        ];
+        let origin = dir.path().join("origin");
+        std::fs::create_dir_all(&origin).unwrap();
+        git(&origin, &["init", "-q", "-b", "trunk"]);
+        git(&origin, &commit);
+        let clone = dir.path().join("clone");
+        let status =
+            Command::new("git").arg("clone").arg("-q").arg(&origin).arg(&clone).status().unwrap();
+        assert!(status.success());
+        git(&clone, &["checkout", "-q", "-b", "work"]);
+        git(&clone, &["branch", "main"]);
+        let facts = RepoFacts::look(&clone, None);
+        assert_eq!(origin_head(&clone).as_deref(), Some("origin/trunk"));
+        assert_eq!(facts.checked_out.as_deref(), Some("work"));
+        assert_eq!(facts.default_branch.as_deref(), Some("trunk"));
+        let alone = dir.path().join("alone");
+        std::fs::create_dir_all(&alone).unwrap();
+        git(&alone, &["init", "-q", "-b", "master"]);
+        git(&alone, &commit);
+        assert_eq!(origin_head(&alone), None);
+        assert_eq!(RepoFacts::look(&alone, None).default_branch.as_deref(), Some("master"));
     }
 }

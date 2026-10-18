@@ -3,6 +3,7 @@
 
 use std::collections::HashMap;
 use std::time::Duration;
+use tidewatch_core::prefs::RightPanel;
 
 use egui::epaint::text::{LayoutJob, TextFormat, TextWrapping};
 use egui::{
@@ -56,12 +57,22 @@ impl Side {
     }
 }
 
-/// The side the card shows: History until a ledger exists, then the user's choice, else Progress.
-pub(crate) fn side_shown(chosen: Option<Side>, has_ledger: bool) -> Side {
+impl From<RightPanel> for Side {
+    fn from(panel: RightPanel) -> Self {
+        match panel {
+            RightPanel::Progress => Self::Progress,
+            RightPanel::History => Self::History,
+        }
+    }
+}
+
+/// The side the card shows: History until a ledger exists, then the user's choice, else `first`
+/// (the Settings default).
+pub(crate) fn side_shown(chosen: Option<Side>, has_ledger: bool, first: Side) -> Side {
     match (has_ledger, chosen) {
         (false, _) => Side::History,
         (true, Some(side)) => side,
-        (true, None) => Side::Progress,
+        (true, None) => first,
     }
 }
 
@@ -117,6 +128,8 @@ pub(crate) struct Input<'a> {
     pub(crate) time: f64,
     /// Whether things that turn may ask for frames.
     pub(crate) animate: bool,
+    /// The side shown first once a ledger exists.
+    pub(crate) first: Side,
 }
 
 fn pad_of(width: f32) -> f32 {
