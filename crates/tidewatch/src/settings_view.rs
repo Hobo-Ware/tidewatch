@@ -38,6 +38,8 @@ pub(crate) enum Action {
     Window(tidewatch_core::prefs::WindowPrefs),
     /// An Updates switch moved: the whole table. Applies at once too.
     Updates(tidewatch_core::prefs::UpdatePrefs),
+    /// The New tabs card changed something: all of its choices. Applies at once too.
+    NewTab(tidewatch_core::prefs::NewTabPrefs),
     /// The GitHub card changed something: all of its choices. Applies at once too.
     Github(tidewatch_core::prefs::GithubPrefs),
     LoginItem(login_item::Click),

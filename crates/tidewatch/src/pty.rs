@@ -140,6 +140,7 @@ mod tests {
             env: Vec::new(),
             setup: String::new(),
             notes: Vec::new(),
+            remote: None,
         };
         let line = String::from_utf8(typed_line(&prepared)).unwrap();
         assert_eq!(line, "claude --resume abc --settings '{\"a\": 1}'");

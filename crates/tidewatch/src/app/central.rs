@@ -315,21 +315,30 @@ impl Tidewatch {
     fn show_status_line(&mut self, ui: &mut egui::Ui, terminal: &mut egui::Rect) {
         let pane = self.tabs.active_pane_mut();
         let Some(shown) = reader_glue::shown(pane) else { return };
-        let (cli_name, available) = pane.agent.as_ref().map_or_else(Default::default, |agent| {
-            (
-                self.catalog.agent(&agent.run.agent_id).map(|a| a.name.clone()).unwrap_or_default(),
-                agent.reader.available(),
-            )
-        });
+        let (cli_name, available, remote_app) =
+            pane.agent.as_ref().map_or_else(Default::default, |agent| {
+                let cli = self.catalog.agent(&agent.run.agent_id);
+                (
+                    cli.map(|a| a.name.clone()).unwrap_or_default(),
+                    agent.reader.available(),
+                    cli.and_then(|a| a.remote.app()),
+                )
+            });
         let pane = &self.tabs.items()[self.tabs.active()].pane;
-        let Some(line) = agent_status_line::line_of(pane, shown, available, &cli_name) else {
+        let Some(line) =
+            agent_status_line::line_of(pane, shown, available, (&cli_name, remote_app))
+        else {
             return;
         };
         let rect = layout::band_above(terminal, agent_status_line::HEIGHT);
-        if let Some(choice) = agent_status_line::show(ui, rect, &line)
+        let out = agent_status_line::show(ui, rect, &line, self.dev_remote_popover);
+        if let Some(choice) = out.choice
             && let Some(agent) = self.tabs.active_pane_mut().agent.as_mut()
         {
             agent.reader.set_wants_reader(choice == agent_status_line::Choice::Reader);
+        }
+        if let Some(action) = out.remote {
+            self.apply_remote_action(action, ui.ctx());
         }
     }
 

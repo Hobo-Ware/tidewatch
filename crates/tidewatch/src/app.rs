@@ -16,6 +16,7 @@ mod palette;
 mod panes;
 mod pr;
 mod progress;
+mod remote;
 mod reopen;
 mod repos;
 mod restart;
@@ -38,7 +39,7 @@ use stdusk_egui::colors;
 use stdusk_egui::ui::apply_theme;
 use tidewatch_core::notes::NotesWriter;
 use tidewatch_core::paths::TidewatchPaths;
-use tidewatch_core::prefs::Prefs;
+use tidewatch_core::prefs::{NewTabPrefs, Prefs};
 use tidewatch_core::restore::RealDisk;
 use tidewatch_core::run_marker;
 use tidewatch_core::tools::Tools;
@@ -80,6 +81,7 @@ use crate::pr_glue;
 use crate::progress_glue;
 use crate::progress_view;
 use crate::pty::spawn_shell;
+use crate::remote_pill::Popover;
 use crate::repo::Workspace;
 use crate::repo_base::Bases;
 use crate::repo_close::RepoClose;
@@ -138,6 +140,7 @@ pub(crate) struct Tidewatch {
     settings: Option<Settings>,
     palette: Option<Palette>,
     last_profile: Option<String>,
+    new_tab_prefs: NewTabPrefs,
     welcome: Option<Vec<Recent>>,
     bases: Bases,
     hooks: Hooks,
@@ -159,6 +162,7 @@ pub(crate) struct Tidewatch {
     focus: bool,
     side_fraction: f32,
     status_log: bool,
+    dev_remote_popover: Popover,
     dev_keys: Option<DevKeys>,
     dev_reader: DevReader,
     trust: Trust,
@@ -214,6 +218,7 @@ impl Tidewatch {
             hooks.adopt(*tab, credential);
         }
         let restored = hooks_port.is_some();
+        let new_tab_prefs = paths.as_ref().map(Prefs::load).unwrap_or_default().new_tab;
         let dev_flow = DevFlow::from_env();
         let flow = Flow::new(Tools::with_path(dev_flow.tool_path(agent_path.clone())));
         let pr = pr_glue::Host::new(
@@ -268,6 +273,7 @@ impl Tidewatch {
             settings: None,
             palette: None,
             last_profile: None,
+            new_tab_prefs: new_tab_prefs.clone(),
             welcome: recent,
             bases: Bases::new(),
             hooks,
@@ -291,6 +297,7 @@ impl Tidewatch {
             focus: dev_view.focus || focus,
             side_fraction: dev_view.side.unwrap_or(layout::SIDE_FRACTION),
             status_log: dev_view.status_log,
+            dev_remote_popover: dev_view.remote_popover,
             dev_keys: dev_view.keys,
             dev_reader: DevReader::from_env(),
             trust,

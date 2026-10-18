@@ -199,7 +199,6 @@ fn run_reopen(spec: &ReopenSpec) -> Reopened {
                 notes_file: Some(spec.paths.notes_file(&spec.repo, &tab_key)),
                 session_id: Some(spec.session_id.clone()),
                 awaiting_prompt: false,
-                remote: spec.remote,
                 prepared,
             };
             (Some(Box::new(started)), None)

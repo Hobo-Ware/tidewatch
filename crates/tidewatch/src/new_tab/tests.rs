@@ -5,6 +5,8 @@ use tidewatch_core::agents::{AgentOverride, ArgList, LevelOverrides};
 use tidewatch_core::profiles::Profiles;
 use tidewatch_core::workflows::{BUILT_IN_IDS, Workflows};
 
+use tidewatch_core::prefs::{NewTabPrefs, StartFrom};
+
 use super::*;
 
 fn catalog_with(profiles: Profiles) -> Catalog {
@@ -42,6 +44,7 @@ fn in_workflow_form(catalog: &Catalog) -> NewTab {
 fn facts(checked_out: Option<&str>, branches: &[&str], taken: &[&str]) -> RepoFacts {
     RepoFacts {
         checked_out: checked_out.map(str::to_owned),
+        default_branch: None,
         branches: branches.iter().map(|b| (*b).to_owned()).collect(),
         taken: taken.iter().map(|t| (*t).to_owned()).collect::<HashSet<_>>(),
     }
@@ -571,4 +574,165 @@ fn a_workflow_warns_about_each_agent_it_needs_that_is_missing() {
         state.warnings(&catalog),
         ["gemini was not found on PATH. A stage that uses it will fail to start."]
     );
+}
+
+fn all_clis() -> Catalog {
+    catalog_with(Profiles::seeded(&[
+        "claude".to_owned(),
+        "codex".to_owned(),
+        "gemini".to_owned(),
+        "copilot".to_owned(),
+    ]))
+}
+
+fn agent_request_of(state: &NewTab, catalog: &Catalog) -> AgentRequest {
+    match state.request(catalog, None).unwrap() {
+        Request::Agent(request) => *request,
+        other => panic!("not an agent request: {other:?}"),
+    }
+}
+
+#[test]
+fn the_remote_row_offers_each_cli_what_it_has() {
+    let catalog = all_clis();
+    let cases = [
+        ("builder", true, "Drive it from the Claude app"),
+        ("copilot-builder", true, "Drive it from GitHub mobile"),
+        ("codex-builder", false, "Experimental in Codex, not yet"),
+        ("gemini-builder", false, "Not available for Gemini CLI"),
+    ];
+    for (id, available, line) in cases {
+        let mut state = in_agent_form(Group::Repo, &catalog, None);
+        state.select_id(id, &catalog);
+        let (_, agent) = state.selected_entry(&catalog).unwrap();
+        let offer = RemoteOffer::of(agent);
+        assert_eq!((offer.is_available(), offer.line()), (available, line), "{id}");
+    }
+}
+
+#[test]
+fn remote_control_starts_off_and_only_reaches_the_request_for_a_cli_that_has_it() {
+    let catalog = all_clis();
+    let mut state = in_agent_form(Group::Repo, &catalog, None);
+    assert!(!state.remote());
+    assert!(!agent_request_of(&state, &catalog).remote);
+    state.set_remote(true);
+    for (id, want) in [
+        ("builder", true),
+        ("copilot-builder", true),
+        ("codex-builder", false),
+        ("gemini-builder", false),
+        ("reviewer", true),
+    ] {
+        state.select_id(id, &catalog);
+        assert!(state.remote(), "{id}: the form keeps what was switched");
+        assert_eq!(agent_request_of(&state, &catalog).remote, want, "{id}");
+    }
+}
+
+#[test]
+fn a_custom_agent_has_no_remote_row_to_switch() {
+    let catalog = custom_catalog();
+    let mut state = in_agent_form(Group::Repo, &catalog, None);
+    state.select_id("aider", &catalog);
+    state.set_remote(true);
+    let (_, agent) = state.selected_entry(&catalog).unwrap();
+    assert!(!RemoteOffer::of(agent).is_available());
+    assert!(!state.remote_for(agent));
+}
+
+fn defaults(change: impl FnOnce(&mut NewTabPrefs)) -> NewTabPrefs {
+    let mut prefs = NewTabPrefs::default();
+    change(&mut prefs);
+    prefs
+}
+
+fn opened_with(prefs: NewTabPrefs, last: Option<&str>, catalog: &Catalog) -> NewTab {
+    let mut state = open(Group::Repo, last).with_defaults(prefs);
+    state.settle(catalog);
+    state
+}
+
+#[test]
+fn the_form_opens_on_the_default_profile_else_the_last_used_one_else_the_first() {
+    let catalog = all_clis();
+    let cases = [
+        (None, None, "builder"),
+        (None, Some("codex-builder"), "codex-builder"),
+        (Some("gemini-builder"), Some("codex-builder"), "gemini-builder"),
+        (Some("gemini-builder"), None, "gemini-builder"),
+        (Some("deleted"), Some("codex-builder"), "codex-builder"),
+        (Some("deleted"), None, "builder"),
+    ];
+    for (agent, last, want) in cases {
+        let state = opened_with(defaults(|p| p.agent = agent.map(str::to_owned)), last, &catalog);
+        assert_eq!(state.selected_id(&catalog).as_deref(), Some(want), "{agent:?} {last:?}");
+    }
+}
+
+#[test]
+fn the_default_permission_replaces_the_profiles_level_when_the_agent_allows_it() {
+    let catalog = all_clis();
+    let cases = [
+        (None, "builder", Level::Edits),
+        (None, "reviewer", Level::Plan),
+        (Some(Level::Auto), "builder", Level::Auto),
+        (Some(Level::Auto), "reviewer", Level::Auto),
+        (Some(Level::Plan), "builder", Level::Plan),
+        (Some(Level::Ask), "gemini-builder", Level::Ask),
+    ];
+    for (permission, agent, want) in cases {
+        let prefs = defaults(|p| {
+            p.agent = Some(agent.to_owned());
+            p.permission = permission;
+        });
+        let state = opened_with(prefs, None, &catalog);
+        assert_eq!(state.level(), want, "{permission:?} {agent}");
+    }
+}
+
+#[test]
+fn a_default_permission_the_agent_lacks_leaves_the_profiles_level() {
+    let catalog = custom_catalog();
+    let prefs = defaults(|p| {
+        p.agent = Some("aider".to_owned());
+        p.permission = Some(Level::Auto);
+    });
+    let state = opened_with(prefs, None, &catalog);
+    assert_eq!(state.level(), Level::Ask, "Aider has flags for Ask alone");
+}
+
+#[test]
+fn the_default_remote_setting_opens_the_switch() {
+    let catalog = all_clis();
+    for on in [false, true] {
+        let state = opened_with(defaults(|p| p.remote = on), None, &catalog);
+        assert_eq!(state.remote(), on);
+        assert_eq!(agent_request_of(&state, &catalog).remote, on, "builder is a Claude profile");
+    }
+}
+
+#[test]
+fn start_from_follows_the_default_until_a_branch_is_picked() {
+    let catalog = catalog();
+    let mut repo = facts(Some("feat/x"), &["main", "feat/x", "release"], &[]);
+    repo.default_branch = Some("main".into());
+    let no_default = facts(Some("feat/x"), &["feat/x"], &[]);
+    let detached = facts(None, &["main"], &[]);
+    let cases = [
+        (StartFrom::Current, &repo, Some("feat/x")),
+        (StartFrom::DefaultBranch, &repo, Some("main")),
+        (StartFrom::DefaultBranch, &no_default, Some("feat/x")),
+        (StartFrom::DefaultBranch, &detached, None),
+    ];
+    for (start_from, facts, want) in cases {
+        let mut state = opened_with(defaults(|p| p.start_from = start_from), None, &catalog);
+        assert_eq!(state.base(Some(facts)).as_deref(), want, "{start_from:?}");
+        state.pick_base("release");
+        assert_eq!(state.base(Some(facts)).as_deref(), Some("release"));
+        state.pick_base("HEAD");
+        assert_eq!(state.base(Some(facts)).as_deref(), want, "{start_from:?} back to the default");
+    }
+    let state = opened_with(defaults(|p| p.start_from = StartFrom::DefaultBranch), None, &catalog);
+    assert_eq!(state.base(None), None);
 }

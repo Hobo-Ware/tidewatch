@@ -108,7 +108,6 @@ fn run_open(spec: &OpenSpec) -> Result<Opened, OpenFailure> {
                 notes_file: Some(spec.paths.notes_file(&repo, &tab_key)),
                 session_id,
                 awaiting_prompt: request.task.trim().is_empty(),
-                remote: request.remote,
                 prepared,
             })),
         }),

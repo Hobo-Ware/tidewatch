@@ -6,7 +6,7 @@ use stdusk_core::terminal::PtyTerm;
 use tidewatch_core::trust::TrustCli;
 
 use super::{ANIMATION_FRAME_MS, Tidewatch, WAKE_SLACK_S, wall_ms};
-use crate::agent_frame::{self, Follow, Wake};
+use crate::agent_frame::{self, Follow, Rows, Wake};
 use crate::agent_jobs;
 use crate::agent_run::TermSnapshot;
 use crate::notify;
@@ -149,6 +149,14 @@ impl Tidewatch {
         self.drive_workflows(ctx, now, asked);
         self.send_dev_keys(now);
         release_typed_commands(ctx, &mut self.tabs, now);
+        let rows = |term: &PtyTerm| Rows {
+            lines: term.buffer_lines().into_iter().map(|(_, line)| line).collect(),
+            cols: term.cols(),
+        };
+        let output = |term: &PtyTerm| term.output_gen();
+        if let Some(at) = agent_frame::watch_links(&mut self.tabs, output, rows, now) {
+            ctx.request_repaint_after(Duration::from_secs_f64((at - now).max(0.0) + WAKE_SLACK_S));
+        }
         schedule(ctx, polled.wake, now, minimized == Some(true));
     }
 }

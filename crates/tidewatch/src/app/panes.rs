@@ -120,6 +120,7 @@ impl Tidewatch {
                 now_ms: wall_ms() as i64,
                 time: ctx.input(|i| i.time),
                 animate: ctx.input(|i| i.viewport().focused.unwrap_or(true)),
+                first: self.new_tab_prefs.right_panel.into(),
             };
             Some(history_pane::Progress { input, state: self.progress_ui.tab(active_id) })
         });

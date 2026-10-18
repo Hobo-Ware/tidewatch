@@ -57,6 +57,7 @@ pub struct Prepared {
     pub setup: String,
     /// Things that did not work and were skipped, for the UI to mention.
     pub notes: Vec<String>,
+    pub remote: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -178,7 +179,8 @@ fn prepare_with(input: &PrepareInput, resume: Option<&str>) -> Result<Prepared, 
         launch.args.extend(task_args(wiring, input.task));
     }
     let env = merge_env(&ctx.env, &launch.env);
-    Ok(Prepared { launch, env, setup: input.profile.setup.clone(), notes })
+    let remote = ctx.remote.filter(|name| !input.agent.remote_args(name).is_empty());
+    Ok(Prepared { launch, env, setup: input.profile.setup.clone(), notes, remote })
 }
 
 fn context(
@@ -871,6 +873,10 @@ mod tests {
                 PrepareInput { remote, ..resume_input(&fx, &table, agent, &p, Some(listener())) };
             for prepared in [prepare(&input).unwrap(), prepare_resume(&input, SESSION).unwrap()] {
                 let args = &prepared.launch.args;
+                assert_eq!(prepared.remote.is_some(), !want.is_empty(), "{agent} {remote}");
+                if let Some(named) = &prepared.remote {
+                    assert_eq!(named, name);
+                }
                 let found =
                     want.is_empty() || args.windows(want.len()).any(|window| window == want);
                 assert!(found, "{agent} {remote}: {args:?}");

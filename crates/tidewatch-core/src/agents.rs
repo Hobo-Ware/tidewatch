@@ -94,6 +94,16 @@ pub enum Remote {
     None,
 }
 
+impl Remote {
+    #[must_use]
+    pub fn app(self) -> Option<&'static str> {
+        match self {
+            Self::Flag { app, .. } => Some(app),
+            Self::Later | Self::None => None,
+        }
+    }
+}
+
 /// How a profile's effort reaches the CLI: `<flag> <value_prefix><effort>`.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct EffortFlag {

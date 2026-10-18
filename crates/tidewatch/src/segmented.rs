@@ -145,6 +145,17 @@ pub(crate) fn show_keyed(
     Output { clicked, left }
 }
 
+/// The width of the control `inline` draws for `labels`.
+pub(crate) fn inline_width(ui: &Ui, labels: &[&str]) -> f32 {
+    rects(0.0, 0.0, &text_widths(ui, labels)).0.width()
+}
+
+/// The centre of each segment of a control with its right edge at `right`, for a headless test to aim at.
+#[cfg(test)]
+pub(crate) fn centers(ui: &Ui, labels: &[&str], right: f32, center_y: f32) -> Vec<egui::Pos2> {
+    rects(right, center_y, &text_widths(ui, labels)).1.iter().map(Rect::center).collect()
+}
+
 /// The same control flowing in the current row; returns the segment clicked that is not the active one.
 pub(crate) fn inline(ui: &mut Ui, id: Id, labels: &[&str], active: usize) -> Option<usize> {
     inline_toned(ui, id, labels, &[], active)

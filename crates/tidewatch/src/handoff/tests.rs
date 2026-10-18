@@ -349,6 +349,33 @@ fn an_agent_tab_comes_back_running_with_its_reader_session_and_credential_under_
 }
 
 #[test]
+fn an_agent_with_remote_control_comes_back_with_its_session_and_the_saved_setting() {
+    let mut w = window();
+    for saved in [true, false] {
+        let agent = w.tabs.get_mut(w.agent_tab).unwrap().pane.agent.as_mut().unwrap();
+        agent.remote = Some(RemoteSession::new("web \u{b7} otter".into()));
+        agent.launched.as_mut().unwrap().remote = saved;
+        let (handover, _) = handover_of(&w);
+        let entry = handover.groups[0].tabs[1].agent.as_ref().unwrap();
+        assert_eq!(entry.remote.as_deref(), Some("web \u{b7} otter"));
+        let mut adopt = |term: u32, _: &Path| Ok(term);
+        let ptys = Ptys { adopt: &mut adopt, fresh: &fresh };
+        let rebuilt = rebuild(&handover, vec![100, 101, 102, 200, 201], 5.0, ptys).unwrap();
+        let tab = rebuilt.tabs.items().iter().find(|tab| tab.title == "otter").unwrap();
+        let agent = tab.pane.agent.as_ref().unwrap();
+        assert_eq!(agent.remote.as_ref().map(|s| s.name.as_str()), Some("web \u{b7} otter"));
+        assert_eq!(agent.launched.as_ref().map(|l| l.remote), Some(saved));
+    }
+}
+
+#[test]
+fn an_agent_without_remote_control_hands_over_without_a_session_name() {
+    let w = window();
+    let (handover, _) = handover_of(&w);
+    assert_eq!(handover.groups[0].tabs[1].agent.as_ref().unwrap().remote, None);
+}
+
+#[test]
 fn a_workflow_tab_comes_back_with_its_saved_run_and_stage_generation() {
     let dir = tempfile::tempdir().unwrap();
     let stages = dir.path().join("stages.json");

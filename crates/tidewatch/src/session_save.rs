@@ -324,6 +324,31 @@ mod tests {
     }
 
     #[test]
+    fn an_agent_started_with_remote_control_is_saved_with_it_until_it_is_turned_off() {
+        let mut remote = agent(Some("0c2cbc96-1111-4222-8333-444455556666"));
+        remote.launched.as_mut().unwrap().remote = true;
+        let mut tabs = tabs();
+        tabs.push(
+            "brave-otter".into(),
+            pane(Body::Shell(2), Some(worktree("brave-otter")), Some(remote)),
+        );
+        let flags = |tabs: &Tabs<Pane<u32>>| -> Vec<bool> {
+            saved_window(&view(true), tabs)
+                .tabs
+                .iter()
+                .filter_map(|tab| match tab {
+                    SavedTab::Agent(agent) => Some(agent.remote),
+                    _ => None,
+                })
+                .collect()
+        };
+        assert_eq!(flags(&tabs), [true]);
+        let launched = tabs.items_mut()[1].pane.agent.as_mut().unwrap().launched.as_mut().unwrap();
+        launched.remote = false;
+        assert_eq!(flags(&tabs), [false]);
+    }
+
+    #[test]
     fn the_active_tab_is_the_selected_one_not_the_last() {
         let mut tabs = tabs();
         tabs.push("a".into(), pane(Body::Shell(1), Some(worktree("a")), None));

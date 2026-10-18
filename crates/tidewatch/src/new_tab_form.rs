@@ -11,11 +11,12 @@ use tidewatch_core::agents::Level;
 
 use crate::brand;
 use crate::catalog::Catalog;
-use crate::new_tab::{Kind, NameCheck, NewTab, Request, level_hint, level_refusal};
+use crate::new_tab::{Kind, NameCheck, NewTab, RemoteOffer, Request, level_hint, level_refusal};
 use crate::new_tab_cards;
 use crate::new_tab_fields::{self, NameEdit, section_label, text_box};
 use crate::new_tab_lane;
 use crate::new_tab_layout::{self as layout, Above, LABEL_GAP, LABEL_H, SECTION_GAP};
+use crate::new_tab_remote;
 use crate::new_tab_workflow::{self, StageCard};
 use crate::repo_base::RepoFacts;
 use crate::screen_kit::{
@@ -43,6 +44,8 @@ pub(crate) enum Out {
 pub(crate) struct Placed {
     pub(crate) lane: Option<Rect>,
     pub(crate) permission: Option<Rect>,
+    pub(crate) remote: Option<Rect>,
+    pub(crate) remote_switch: Option<Rect>,
     pub(crate) name: Option<Rect>,
     pub(crate) base: Option<Rect>,
     pub(crate) message: Option<Rect>,
@@ -215,6 +218,7 @@ struct Content<'a> {
     refusal: Option<String>,
     problem: bool,
     has_permission: bool,
+    remote: Option<RemoteOffer>,
     state: &'a NewTab,
 }
 
@@ -234,6 +238,9 @@ impl<'a> Content<'a> {
             problem: !state.name_check(facts).is_fine(),
             has_permission: state.kind() != Kind::Workflow
                 && state.selected_entry(catalog).is_some(),
+            remote: (state.kind() != Kind::Workflow)
+                .then(|| state.selected_entry(catalog).map(|(_, agent)| RemoteOffer::of(agent)))
+                .flatten(),
             state,
         }
     }
@@ -249,6 +256,9 @@ impl<'a> Content<'a> {
             });
             above.permission =
                 LABEL_H + CAPTION_GAP + control + DESCRIPTION_GAP + description.size().y + note;
+        }
+        if self.remote.is_some() {
+            above.remote = new_tab_remote::ROW_H;
         }
         if self.kind == Kind::Workflow && !self.stages.is_empty() {
             let columns = layout::stage_columns(width);
@@ -365,6 +375,7 @@ fn pane(
     let warnings = content.warnings.clone();
     let refusal = content.refusal.clone();
     let has_permission = content.has_permission;
+    let remote = content.remote.clone();
     let kind = content.kind;
     let mut body_ui = ui.new_child(UiBuilder::new().max_rect(plan.body));
     ScrollArea::vertical().id_salt("new-tab-pane").auto_shrink([false, false]).show(
@@ -381,6 +392,15 @@ fn pane(
             }
             if has_permission {
                 placed.permission = permission(ui, state, catalog, refusal.as_deref());
+                ui.add_space(SECTION_GAP);
+            }
+            if let Some(offer) = &remote {
+                let row = new_tab_remote::show(ui, offer, state.remote());
+                placed.remote = Some(row.rect);
+                placed.remote_switch = Some(row.switch);
+                if let Some(on) = row.toggled {
+                    state.set_remote(on);
+                }
                 ui.add_space(SECTION_GAP);
             }
             if !warnings.is_empty() {

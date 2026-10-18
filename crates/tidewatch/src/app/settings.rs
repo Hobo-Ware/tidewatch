@@ -1,13 +1,14 @@
 //! Settings: the page, saving profiles and workflows, window preferences and shell events.
 
 use tidewatch_core::house_style;
-use tidewatch_core::prefs::WindowPrefs;
+use tidewatch_core::prefs::{NewTabPrefs, Prefs, WindowPrefs};
 
 use super::{Tidewatch, wall_ms};
 use crate::agent_jobs;
 use crate::general_view::General;
 use crate::login_item;
 use crate::macos;
+use crate::new_tab_prefs_view::ProfileOption;
 use crate::profiles_view::Probes;
 use crate::settings::{Section, Settings};
 use crate::settings_view::{self, Files, Host};
@@ -87,6 +88,17 @@ impl Tidewatch {
             && self.closing.is_none()
     }
 
+    fn set_new_tab_prefs(&mut self, prefs: NewTabPrefs) {
+        self.new_tab_prefs = prefs.clone();
+        if let Some(paths) = self.paths.clone() {
+            std::thread::spawn(move || {
+                if let Err(e) = Prefs::update(&paths, |p| p.new_tab = prefs) {
+                    eprintln!("tidewatch: cannot save settings.toml: {e}");
+                }
+            });
+        }
+    }
+
     pub(super) fn show_settings_page(
         &mut self,
         ui: &mut egui::Ui,
@@ -115,6 +127,17 @@ impl Tidewatch {
                 menu_bar_available: self.shell.tray_supported(),
             },
             github: self.pr.default_prefs(),
+            new_tab: self.new_tab_prefs.clone(),
+            profiles: self
+                .catalog
+                .entries()
+                .into_iter()
+                .map(|(id, profile, agent)| ProfileOption {
+                    id: id.to_owned(),
+                    name: profile.name.clone(),
+                    agent_id: agent.id.clone(),
+                })
+                .collect(),
         };
         let probes: Probes = self
             .catalog
@@ -193,6 +216,7 @@ impl Tidewatch {
                     updates::save(paths.clone(), prefs);
                 }
             }
+            Some(settings_view::Action::NewTab(prefs)) => self.set_new_tab_prefs(prefs),
             Some(settings_view::Action::Github(prefs)) => self.set_github_default(prefs),
             Some(settings_view::Action::LoginItem(click)) => self.apply_login_click(click, ctx),
             Some(settings_view::Action::OpenHouseStyle) => self.open_house_style(ctx),
