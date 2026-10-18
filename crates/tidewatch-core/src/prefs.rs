@@ -2,15 +2,17 @@
 //! session (PLAN.md, D11, on by default) and how it brings agents back (`resume_agents`), the
 //! `[window]` table (quake mode, its hotkey, the
 //! menu-bar item, the panel layout), the `[updates]` table (check for releases, install them) and
-//! the `[github]` table (what a new tab does when its pull request changes).
+//! the `[github]` table (what a new tab does when its pull request changes) and the `[new_tab]`
+//! table (what the new-tab form opens with).
 //!
 //! A missing or bad file is the defaults, with a stderr note for a bad one: a settings file must
 //! never stop the app.
 
 use std::path::Path;
 
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 
+use crate::agents::Level;
 use crate::fsutil::write_atomic;
 use crate::paths::TidewatchPaths;
 
@@ -29,6 +31,58 @@ pub struct Prefs {
     pub updates: UpdatePrefs,
     #[serde(default)]
     pub github: GithubPrefs,
+    #[serde(default)]
+    pub new_tab: NewTabPrefs,
+}
+
+/// Where a new tab's worktree is cut from.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum StartFrom {
+    /// The branch the repo has checked out.
+    #[default]
+    Current,
+    /// The repo's default branch: what `origin/HEAD` names, else `main` or `master`.
+    DefaultBranch,
+}
+
+/// Which side of an agent tab's right card shows first once the agent keeps a ledger.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum RightPanel {
+    #[default]
+    Progress,
+    History,
+}
+
+/// What the new-tab form opens with. The form still changes every one of them per tab.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct NewTabPrefs {
+    /// A `profiles.toml` key. Without one the form opens on the profile used last.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent: Option<String>,
+    /// Without one the form opens at the profile's own level. YOLO cannot be a default: a file
+    /// that names it is read as `edits`.
+    #[serde(default, skip_serializing_if = "Option::is_none", deserialize_with = "default_level")]
+    pub permission: Option<Level>,
+    #[serde(default)]
+    pub remote: bool,
+    #[serde(default)]
+    pub start_from: StartFrom,
+    #[serde(default)]
+    pub right_panel: RightPanel,
+}
+
+fn default_level<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Option<Level>, D::Error> {
+    let level = Option::<Level>::deserialize(deserializer)?;
+    Ok(level.map(|level| {
+        if level == Level::Yolo {
+            eprintln!("tidewatch: settings.toml [new_tab] permission cannot be yolo; using edits");
+            Level::Edits
+        } else {
+            level
+        }
+    }))
 }
 
 /// What a tab does when GitHub reports something about its pull request: `ask` shows a card with
@@ -121,6 +175,7 @@ impl Default for Prefs {
             window: WindowPrefs::default(),
             updates: UpdatePrefs::default(),
             github: GithubPrefs::default(),
+            new_tab: NewTabPrefs::default(),
         }
     }
 }
@@ -423,5 +478,116 @@ mod tests {
         assert_eq!(prefs.updates, UpdatePrefs { check: false, install: true });
         assert!(!prefs.window.quake);
         assert!(prefs.restore_session);
+    }
+
+    fn write_prefs(paths: &TidewatchPaths, text: &str) {
+        std::fs::create_dir_all(paths.config_dir()).unwrap();
+        std::fs::write(paths.prefs_file(), text).unwrap();
+    }
+
+    #[test]
+    fn new_tabs_open_on_the_last_profile_at_its_own_level_with_remote_off_without_a_file() {
+        let (_home, paths) = paths();
+        assert_eq!(
+            Prefs::load(&paths).new_tab,
+            NewTabPrefs {
+                agent: None,
+                permission: None,
+                remote: false,
+                start_from: StartFrom::Current,
+                right_panel: RightPanel::Progress,
+            }
+        );
+    }
+
+    #[test]
+    fn every_new_tab_key_is_read_from_the_file() {
+        let (_home, paths) = paths();
+        let cases = [
+            (
+                "agent = \"reviewer\"",
+                NewTabPrefs { agent: Some("reviewer".into()), ..NewTabPrefs::default() },
+            ),
+            (
+                "permission = \"plan\"",
+                NewTabPrefs { permission: Some(Level::Plan), ..NewTabPrefs::default() },
+            ),
+            (
+                "permission = \"ask\"",
+                NewTabPrefs { permission: Some(Level::Ask), ..NewTabPrefs::default() },
+            ),
+            (
+                "permission = \"edits\"",
+                NewTabPrefs { permission: Some(Level::Edits), ..NewTabPrefs::default() },
+            ),
+            (
+                "permission = \"auto\"",
+                NewTabPrefs { permission: Some(Level::Auto), ..NewTabPrefs::default() },
+            ),
+            ("remote = true", NewTabPrefs { remote: true, ..NewTabPrefs::default() }),
+            ("start_from = \"current\"", NewTabPrefs::default()),
+            (
+                "start_from = \"default_branch\"",
+                NewTabPrefs { start_from: StartFrom::DefaultBranch, ..NewTabPrefs::default() },
+            ),
+            ("right_panel = \"progress\"", NewTabPrefs::default()),
+            (
+                "right_panel = \"history\"",
+                NewTabPrefs { right_panel: RightPanel::History, ..NewTabPrefs::default() },
+            ),
+        ];
+        for (line, want) in cases {
+            write_prefs(&paths, &format!("[new_tab]\n{line}\n"));
+            assert_eq!(Prefs::load(&paths).new_tab, want, "{line}");
+        }
+    }
+
+    #[test]
+    fn a_yolo_default_is_read_as_auto_edit() {
+        let (_home, paths) = paths();
+        write_prefs(&paths, "[new_tab]\npermission = \"yolo\"\nremote = true\n");
+        let new_tab = Prefs::load(&paths).new_tab;
+        assert_eq!(new_tab.permission, Some(Level::Edits));
+        assert!(new_tab.remote, "the rest of the table is kept");
+    }
+
+    #[test]
+    fn a_bad_new_tab_value_makes_the_whole_file_fall_back_to_the_defaults() {
+        let (_home, paths) = paths();
+        for bad in [
+            "permission = \"sudo\"",
+            "start_from = \"origin\"",
+            "right_panel = \"left\"",
+            "remote = \"yes\"",
+            "agent = 3",
+        ] {
+            write_prefs(&paths, &format!("restore_session = false\n[new_tab]\n{bad}\n"));
+            assert_eq!(Prefs::load(&paths), Prefs::default(), "{bad}");
+        }
+    }
+
+    #[test]
+    fn the_new_tab_table_survives_a_save_and_an_update_of_another_part() {
+        let (_home, paths) = paths();
+        let wanted = NewTabPrefs {
+            agent: Some("builder".into()),
+            permission: Some(Level::Auto),
+            remote: true,
+            start_from: StartFrom::DefaultBranch,
+            right_panel: RightPanel::History,
+        };
+        Prefs::update(&paths, |p| p.new_tab = wanted.clone()).unwrap();
+        Prefs::update(&paths, |p| p.window.quake = false).unwrap();
+        assert_eq!(Prefs::load(&paths).new_tab, wanted);
+        Prefs::update(&paths, |p| p.new_tab = NewTabPrefs::default()).unwrap();
+        let text = std::fs::read_to_string(paths.prefs_file()).unwrap();
+        assert!(!text.contains("agent =") && !text.contains("permission ="), "{text}");
+    }
+
+    #[test]
+    fn a_file_from_before_the_new_tab_table_gets_its_defaults() {
+        let (_home, paths) = paths();
+        write_prefs(&paths, "restore_session = false\n[github]\nmode = \"off\"\n");
+        assert_eq!(Prefs::load(&paths).new_tab, NewTabPrefs::default());
     }
 }
