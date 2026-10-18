@@ -134,6 +134,8 @@ pub(crate) struct ReopenSpec {
     /// The profile at the level the tab ran at.
     pub(crate) profile: Profile,
     pub(crate) session_id: String,
+    /// The tab had remote control on when it was saved.
+    pub(crate) remote: bool,
     /// Set when the resume command is typed and waits for Enter instead of running.
     pub(crate) typed: Option<Why>,
     pub(crate) path_var: OsString,
@@ -180,6 +182,7 @@ fn run_reopen(spec: &ReopenSpec) -> Reopened {
             worktree_tab: spec.worktree.is_some(),
             task: "",
             session_id: None,
+            remote: spec.remote,
             path_var: Some(&spec.path_var),
             listener: hooks,
             trust: spec.trust.as_ref(),
@@ -196,6 +199,7 @@ fn run_reopen(spec: &ReopenSpec) -> Reopened {
                 notes_file: Some(spec.paths.notes_file(&spec.repo, &tab_key)),
                 session_id: Some(spec.session_id.clone()),
                 awaiting_prompt: false,
+                remote: spec.remote,
                 prepared,
             };
             (Some(Box::new(started)), None)

@@ -20,6 +20,7 @@ use crate::launch::{
 };
 use crate::paths::TidewatchPaths;
 use crate::profiles::Profile;
+use crate::remote::session_name;
 use crate::restore::{ResumeError, resume_command};
 use crate::trust::TrustCli;
 use crate::trust_apply::{Grant, Outcome};
@@ -41,6 +42,7 @@ pub struct PrepareInput<'a> {
     pub worktree_tab: bool,
     pub task: &'a str,
     pub session_id: Option<String>,
+    pub remote: bool,
     pub path_var: Option<&'a OsStr>,
     pub listener: Option<HookListener>,
     /// With consent (D14): the folder-trust entry to add for this worktree before the agent starts.
@@ -190,6 +192,7 @@ fn context(
         worktree: input.dir.to_path_buf(),
         worktree_tab: input.worktree_tab,
         session_id: input.session_id.clone(),
+        remote: input.remote.then(|| remote_name(input)),
         hooks: input.listener.clone(),
         mcp_config,
         house_style,
@@ -200,6 +203,12 @@ fn context(
             .map(|path| vec![("PATH".to_owned(), path.to_string_lossy().into_owned())])
             .unwrap_or_default(),
     }
+}
+
+fn remote_name(input: &PrepareInput) -> String {
+    let repo = input.repo.file_name().map(|name| name.to_string_lossy());
+    let repo = repo.as_deref().unwrap_or_default();
+    session_name(repo, input.worktree_tab.then_some(input.tab))
 }
 
 /// The house style this agent reads: the user's file with the ledger format and the repo's
@@ -400,6 +409,7 @@ mod tests {
                 worktree_tab,
                 task,
                 session_id: None,
+                remote: false,
                 path_var: Some(OsStr::new("/opt/homebrew/bin:/usr/bin:/bin")),
                 listener,
                 trust: None,
@@ -560,6 +570,7 @@ mod tests {
             worktree_tab: true,
             task: "",
             session_id: None,
+            remote: false,
             path_var: None,
             listener: None,
             trust: None,
@@ -614,6 +625,7 @@ mod tests {
                 worktree_tab: true,
                 task: "do it",
                 session_id: None,
+                remote: false,
                 path_var: None,
                 listener: None,
                 trust: None,
@@ -812,6 +824,7 @@ mod tests {
             worktree_tab: true,
             task: "ignored task",
             session_id: Some("99999999-8888-7777-6666-555555555555".into()),
+            remote: false,
             path_var: Some(OsStr::new("/opt/homebrew/bin:/usr/bin:/bin")),
             listener,
             trust: None,
@@ -838,6 +851,50 @@ mod tests {
             "{:?}",
             resumed.launch.args
         );
+    }
+
+    #[test]
+    fn remote_control_names_the_session_after_the_repo_and_the_worktree_fresh_and_resumed() {
+        let fx = Fixture::new();
+        let table = AgentTable::builtin();
+        let name = "web \u{b7} brave-otter";
+        let cases: [(&str, bool, &[&str]); 5] = [
+            ("claude", true, &["--remote-control", name]),
+            ("claude", false, &[]),
+            ("copilot", true, &["--remote"]),
+            ("codex", true, &[]),
+            ("gemini", true, &[]),
+        ];
+        for (agent, remote, want) in cases {
+            let p = profile(agent, Level::Edits);
+            let input =
+                PrepareInput { remote, ..resume_input(&fx, &table, agent, &p, Some(listener())) };
+            for prepared in [prepare(&input).unwrap(), prepare_resume(&input, SESSION).unwrap()] {
+                let args = &prepared.launch.args;
+                let found =
+                    want.is_empty() || args.windows(want.len()).any(|window| window == want);
+                assert!(found, "{agent} {remote}: {args:?}");
+                let flagged = args.iter().any(|a| a.starts_with("--remote"));
+                assert_eq!(flagged, !want.is_empty(), "{agent} {remote}");
+            }
+        }
+    }
+
+    #[test]
+    fn a_tab_in_a_plain_folder_is_named_by_the_folder_alone() {
+        let fx = Fixture::new();
+        let table = AgentTable::builtin();
+        let p = profile("claude", Level::Edits);
+        let input = PrepareInput {
+            remote: true,
+            worktree_tab: false,
+            repo: Path::new("/work/notes"),
+            tab: "tab-4",
+            ..resume_input(&fx, &table, "claude", &p, None)
+        };
+        let prepared = prepare(&input).unwrap();
+        let at = prepared.launch.args.iter().position(|a| a == "--remote-control").unwrap();
+        assert_eq!(prepared.launch.args[at + 1], "notes");
     }
 
     #[test]
@@ -1006,6 +1063,7 @@ mod tests {
             worktree_tab: true,
             task: "",
             session_id: None,
+            remote: false,
             path_var: Some(OsStr::new(&path)),
             listener: None,
             trust: None,

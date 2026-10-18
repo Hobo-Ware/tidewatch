@@ -123,8 +123,12 @@ mod tests {
     fn pane(first: FirstPrompt, worktree: bool) -> Pane<u32> {
         let mut agent = AgentTab::new("Builder".into(), AgentRun::setting_up("claude".into(), 0.0));
         agent.first_prompt = first;
-        agent.launched =
-            Some(Launched { profile_id: "builder".into(), level: Level::Edits, session_id: None });
+        agent.launched = Some(Launched {
+            profile_id: "builder".into(),
+            level: Level::Edits,
+            session_id: None,
+            remote: false,
+        });
         let worktree = worktree.then(|| Worktree {
             repo: PathBuf::from("/work/web"),
             path: PathBuf::from("/home/.tidewatch/web-1/quick-beacon"),

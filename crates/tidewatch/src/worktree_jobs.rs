@@ -86,6 +86,7 @@ fn run_open(spec: &OpenSpec) -> Result<Opened, OpenFailure> {
         worktree_tab: worktree.is_some(),
         task: &request.task,
         session_id: session_id.clone(),
+        remote: request.remote,
         path_var: Some(&spec.path_var),
         listener: hooks,
         trust: spec.trust.as_ref(),
@@ -107,6 +108,7 @@ fn run_open(spec: &OpenSpec) -> Result<Opened, OpenFailure> {
                 notes_file: Some(spec.paths.notes_file(&repo, &tab_key)),
                 session_id,
                 awaiting_prompt: request.task.trim().is_empty(),
+                remote: request.remote,
                 prepared,
             })),
         }),
@@ -235,6 +237,7 @@ mod tests {
             agent,
             task: task.into(),
             placement: Placement::default(),
+            remote: false,
         })
     }
 

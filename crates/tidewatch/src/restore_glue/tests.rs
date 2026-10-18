@@ -167,6 +167,7 @@ fn agent(worktree: &Worktree, session: &str, level: Level) -> SavedTab {
         session_id: Some(session.into()),
         stages: None,
         crashed: false,
+        remote: false,
     })
 }
 
@@ -358,6 +359,7 @@ fn a_workflow_tab_with_unreadable_state_reopens_as_a_shell_with_a_toast() {
                 session_id: None,
                 stages: Some(f.home.join("missing-stages.json")),
                 crashed: false,
+                remote: false,
             }),
             dir: wt.path.clone(),
             worktree: Some(wt.clone()),
@@ -409,6 +411,7 @@ fn a_saved_workflow_run_goes_back_through_the_workflow_host_in_its_place() {
         session_id: None,
         stages: Some(stages),
         crashed: false,
+        remote: false,
     });
     f.save(2, false, vec![SavedTab::Main, shell(&first), workflow_tab]);
     f.begin();

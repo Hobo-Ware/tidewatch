@@ -626,6 +626,7 @@ mod tests {
             session_id: id.map(str::to_owned),
             stages: None,
             crashed: false,
+            remote: false,
         })
     }
 
@@ -877,6 +878,7 @@ mod tests {
             session_id: Some(ID_C.into()),
             stages: Some(PathBuf::from("/state/stages.json")),
             crashed: false,
+            remote: false,
         };
         let mut disk = disk_for_all();
         disk.workflows.push("/state/stages.json".into());
@@ -902,6 +904,7 @@ mod tests {
             session_id: None,
             stages: Some(PathBuf::from("/state/stages.json")),
             crashed: false,
+            remote: false,
         });
         let mut disk = disk_for_all();
         let unreadable = plan_with(&window(vec![tab.clone()]), &everything_installed(), &disk);
@@ -993,6 +996,7 @@ mod tests {
                 session_id: Some(id.into()),
                 stages: None,
                 crashed: false,
+                remote: false,
             })
         };
         let other = SavedWindow {
@@ -1136,6 +1140,7 @@ mod tests {
             session_id: None,
             stages: Some(PathBuf::from("/state/stages.json")),
             crashed: true,
+            remote: false,
         };
         let window = window(vec![SavedTab::Agent(tab)]);
         let mut disk = disk_for_all();
@@ -1193,6 +1198,7 @@ mod tests {
             worktree: "/root/web-ab12cd/a-claude".into(),
             worktree_tab: true,
             session_id: Some("99999999-8888-7777-6666-555555555555".into()),
+            remote: None,
             hooks: Some(HookListener {
                 base_url: "http://127.0.0.1:5555".into(),
                 token: "tok123".into(),
@@ -1307,5 +1313,29 @@ mod tests {
                 .map(|l| l.program),
             Ok("claude".to_owned())
         );
+    }
+
+    #[test]
+    fn a_resumed_tab_keeps_remote_control_and_the_same_session_name() {
+        let table = table();
+        let name = "web \u{b7} otter";
+        let cases: [(&str, &str, &[&str], &[&str]); 4] = [
+            ("claude", ID_C, &["--resume", ID_C], &["--remote-control", name]),
+            ("copilot", ID_P, &["--resume=2c2cbc96-1111-4222-8333-444455556666"], &["--remote"]),
+            ("codex", ID_X, &["resume", ID_X], &[]),
+            ("gemini", ID_G, &["--resume", "latest"], &[]),
+        ];
+        for (agent, id, reopen, flag) in cases {
+            let (agent, profile) = (table.get(agent).unwrap(), profile(agent, Level::Edits));
+            let on = LaunchCtx { remote: Some(name.into()), ..launch_ctx() };
+            let resumed = resume_command(agent, &profile, id, &on).unwrap();
+            assert_eq!(&resumed.args[..reopen.len()], reopen, "{}", agent.id);
+            let fresh = launch_command(agent, &profile, &LaunchCtx { session_id: None, ..on });
+            assert_eq!(resumed.args[reopen.len()..], fresh.unwrap().args, "{}", agent.id);
+            let flagged = resumed.args.windows(flag.len().max(1)).any(|window| window == flag);
+            assert!(flagged || flag.is_empty(), "{} carries {flag:?}", agent.id);
+            let off = resume_command(agent, &profile, id, &launch_ctx()).unwrap();
+            assert!(!off.args.iter().any(|arg| arg.starts_with("--remote")), "{}", agent.id);
+        }
     }
 }

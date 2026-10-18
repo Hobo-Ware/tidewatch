@@ -124,6 +124,7 @@ fn run_stage(spec: &StageSpec) -> Result<Started, String> {
         worktree_tab: true,
         task: &launch.prompt,
         session_id: session_id.clone(),
+        remote: false,
         path_var: Some(&spec.path_var),
         listener: hooks,
         trust: spec.trust.as_ref(),
@@ -138,6 +139,7 @@ fn run_stage(spec: &StageSpec) -> Result<Started, String> {
         notes_file: Some(spec.paths.notes_file(repo, &tab_key)),
         session_id,
         awaiting_prompt: false,
+        remote: false,
         prepared,
     })
 }

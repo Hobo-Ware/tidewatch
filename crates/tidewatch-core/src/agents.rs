@@ -71,6 +71,29 @@ pub enum ResumeForm {
     FlagLatest(&'static str),
 }
 
+/// Whether the CLI takes a name for the remote session.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RemoteName {
+    Takes,
+    Ignores,
+}
+
+/// How a CLI is driven from a phone or a browser, checked with `--help` of claude 2.1.302 (`--remote-control
+/// [name]`), copilot 1.0.96 (`--remote`), codex 0.162.1 (a daemon, `codex remote-control start`, not a
+/// per-session flag) and gemini 0.46.0 (none).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Remote {
+    /// A flag that turns it on for this session. `app` is where the session is driven from.
+    Flag {
+        flag: &'static str,
+        name: RemoteName,
+        app: &'static str,
+    },
+    /// The CLI has it, but not as a flag Tidewatch can pass yet.
+    Later,
+    None,
+}
+
 /// How a profile's effort reaches the CLI: `<flag> <value_prefix><effort>`.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct EffortFlag {
@@ -89,6 +112,7 @@ pub struct Agent {
     pub effort: Option<EffortFlag>,
     pub session_id_flag: Option<String>,
     pub resume: Option<ResumeForm>,
+    pub remote: Remote,
     /// False for custom agents: only the built-in CLIs were run live.
     pub verified: bool,
     /// The CLI version the built-in flags were checked against.
@@ -100,6 +124,17 @@ impl Agent {
     #[must_use]
     pub fn level_args(&self, level: Level) -> Option<&[String]> {
         self.levels[level.index()].as_deref()
+    }
+
+    #[must_use]
+    pub fn remote_args(&self, name: &str) -> Vec<String> {
+        match self.remote {
+            Remote::Flag { flag, name: RemoteName::Takes, .. } => {
+                vec![flag.to_owned(), name.to_owned()]
+            }
+            Remote::Flag { flag, name: RemoteName::Ignores, .. } => vec![flag.to_owned()],
+            Remote::Later | Remote::None => Vec::new(),
+        }
     }
 
     /// Arguments that reopen `session_id`, for the CLIs that can.
@@ -141,6 +176,11 @@ fn builtin_agents() -> Vec<Agent> {
             effort: Some(EffortFlag { flag: "--effort".into(), value_prefix: String::new() }),
             session_id_flag: Some("--session-id".into()),
             resume: Some(ResumeForm::Flag("--resume")),
+            remote: Remote::Flag {
+                flag: "--remote-control",
+                name: RemoteName::Takes,
+                app: "the Claude app",
+            },
             verified: true,
             checked_version: Some("2.1.296"),
         },
@@ -163,6 +203,7 @@ fn builtin_agents() -> Vec<Agent> {
             }),
             session_id_flag: None,
             resume: Some(ResumeForm::Subcommand("resume")),
+            remote: Remote::Later,
             verified: true,
             checked_version: Some("0.162.1"),
         },
@@ -182,6 +223,7 @@ fn builtin_agents() -> Vec<Agent> {
             effort: None,
             session_id_flag: Some("--session-id".into()),
             resume: Some(ResumeForm::FlagLatest("--resume")),
+            remote: Remote::None,
             verified: true,
             checked_version: Some("0.46.0"),
         },
@@ -204,6 +246,11 @@ fn builtin_agents() -> Vec<Agent> {
             }),
             session_id_flag: Some("--session-id".into()),
             resume: Some(ResumeForm::FlagEquals("--resume")),
+            remote: Remote::Flag {
+                flag: "--remote",
+                name: RemoteName::Ignores,
+                app: "GitHub mobile",
+            },
             verified: true,
             checked_version: Some("1.0.91"),
         },
@@ -382,6 +429,7 @@ fn custom_agent(id: &str, over: &AgentOverride) -> Option<Agent> {
         effort: None,
         session_id_flag: over.session_id_flag.clone(),
         resume: None,
+        remote: Remote::None,
         verified: false,
         checked_version: None,
     })
@@ -556,6 +604,52 @@ mod tests {
                 ),
             ]
         );
+    }
+
+    #[test]
+    fn remote_control_per_cli_claude_2_1_302_copilot_1_0_96_codex_0_162_1_gemini_0_46_0() {
+        let table = AgentTable::builtin();
+        let rows: Vec<_> = table.iter().map(|a| (a.id.as_str(), a.remote)).collect();
+        assert_eq!(
+            rows,
+            [
+                (
+                    "claude",
+                    Remote::Flag {
+                        flag: "--remote-control",
+                        name: RemoteName::Takes,
+                        app: "the Claude app"
+                    }
+                ),
+                ("codex", Remote::Later),
+                ("gemini", Remote::None),
+                (
+                    "copilot",
+                    Remote::Flag {
+                        flag: "--remote",
+                        name: RemoteName::Ignores,
+                        app: "GitHub mobile"
+                    }
+                ),
+            ]
+        );
+        let cases: [(&str, &[&str]); 4] = [
+            ("claude", &["--remote-control", "web \u{b7} otter"]),
+            ("codex", &[]),
+            ("gemini", &[]),
+            ("copilot", &["--remote"]),
+        ];
+        for (id, want) in cases {
+            assert_eq!(table.get(id).unwrap().remote_args("web \u{b7} otter"), want, "{id}");
+        }
+    }
+
+    #[test]
+    fn a_custom_agent_has_no_remote_control() {
+        let table = AgentTable::with_overrides(&overrides("[agent.aider]\nbin = \"aider\"\n"));
+        let aider = table.get("aider").unwrap();
+        assert_eq!(aider.remote, Remote::None);
+        assert_eq!(aider.remote_args("x"), Vec::<String>::new());
     }
 
     #[test]
