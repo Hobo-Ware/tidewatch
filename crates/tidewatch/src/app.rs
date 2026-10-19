@@ -51,6 +51,7 @@ use self::open_link::LinkDone;
 use self::repos::Picker;
 use crate::agent_events::{self, Hooks};
 use crate::agent_jobs;
+use crate::avatar_glue;
 use crate::brand;
 use crate::build_workflow::Asked;
 use crate::catalog::Catalog;
@@ -156,6 +157,7 @@ pub(crate) struct Tidewatch {
     pr: pr_glue::Host,
     progress: progress_glue::Host,
     job_live: job_glue::Host,
+    avatar_live: avatar_glue::Host,
     progress_ui: progress_view::Memory,
     checklist: overview_checklist::Host,
     snoozes: due::Snoozes,
@@ -241,6 +243,7 @@ impl Tidewatch {
             progress_glue::Dev::from_env(),
         );
         let job_live = job_glue::Host::from_env(paths.is_some() && screenshot.is_none());
+        let avatar_live = avatar_glue::Host::from_env(paths.is_some() && screenshot.is_none());
         let dev_view = DevView::from_env();
         let trust = Trust::new(paths.as_ref(), cli_home);
         let dev_session = DevSession::from_env();
@@ -297,6 +300,7 @@ impl Tidewatch {
             pr,
             progress,
             job_live,
+            avatar_live,
             progress_ui: progress_view::Memory::default(),
             checklist: overview_checklist::Host::new(),
             snoozes: due::Snoozes::default(),

@@ -133,13 +133,16 @@ impl Tidewatch {
             };
             Some(history_pane::Progress { input, state: self.progress_ui.tab(active_id) })
         });
+        let face = agent
+            .and_then(|_| self.avatar_live.get(active_id))
+            .map(|avatar| history_pane::Face { tab: active_id, avatar });
         let shown = history_pane::show(
             ui,
             areas.history,
             view,
             &mut self.avatars,
             side,
-            (agent_id, progress),
+            (agent_id, progress, face),
         );
         let graph_action = shown.graph;
         let answer = shown.progress == Some(progress_view::Action::Answer);

@@ -5,6 +5,7 @@
 
 use std::path::PathBuf;
 
+use tidewatch_core::avatar::Avatar;
 use tidewatch_core::events::{TabEvent, TabMessage};
 use tidewatch_core::job::Report;
 use tidewatch_core::progress::Ledger;
@@ -53,6 +54,8 @@ pub(crate) enum Follow {
     Progress { tab: u64, ledger: Box<Ledger> },
     /// The agent reported a job; the tab's board takes it.
     Job { tab: u64, report: Box<Report> },
+    /// The agent drew an avatar; it is already saved in the tab's state folder.
+    Avatar { tab: u64, avatar: Box<Avatar> },
 }
 
 /// Hands one listener message to its tab. A message for a closed tab is dropped.
@@ -89,7 +92,10 @@ pub(crate) fn route<T>(tabs: &mut Tabs<Pane<T>>, message: TabMessage, now: f64) 
         TabEvent::Job { report } => {
             Some(Follow::Job { tab: message.tab_id, report: Box::new(report.clone()) })
         }
-        TabEvent::Hook(_) | TabEvent::StageDone { .. } | TabEvent::Avatar { .. } => None,
+        TabEvent::Avatar { avatar } => {
+            Some(Follow::Avatar { tab: message.tab_id, avatar: Box::new(avatar.clone()) })
+        }
+        TabEvent::Hook(_) | TabEvent::StageDone { .. } => None,
     };
     if let TabEvent::Hook(hook) = &message.event {
         agent.reader.hook(hook.transcript_path.clone());

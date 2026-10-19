@@ -2,11 +2,14 @@
 //! scope switch, then Kelp's commit graph for the tab. Side by side it is a raised card.
 
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use std::f32::consts::FRAC_PI_2;
 
 use egui::text::LayoutJob;
-use egui::{CornerRadius, Mesh, Rect, RichText, Stroke, StrokeKind, Ui, UiBuilder, pos2, vec2};
+use egui::{
+    CornerRadius, Mesh, Rect, RichText, Sense, Stroke, StrokeKind, Ui, UiBuilder, pos2, vec2,
+};
 use kelp_core::history::History;
 use kelp_ui::avatars::AvatarStore;
 use kelp_ui::graph::Marks;
@@ -14,8 +17,10 @@ use kelp_ui::graph::{
     GraphAction, GraphColumns, GraphInput, GraphStyle, MenuFor, Preview, Selection, Wip,
 };
 use stdusk_egui::widgets::{menu_item, style_menu};
+use tidewatch_core::avatar::Avatar;
 use tidewatch_core::history::{BaseCompare, Scope};
 
+use crate::agent_avatar;
 use crate::brand;
 use crate::commit_files::{self, Spot};
 use crate::progress_view::{self, Side, TabState};
@@ -30,11 +35,18 @@ const BODY_PAD_X: f32 = 8.0;
 const BODY_PAD_Y: f32 = 6.0;
 const PILL_GAP: f32 = 10.0;
 const SWITCH_GAP: f32 = 8.0;
+const FACE: f32 = 24.0;
+const FACE_GAP: f32 = 8.0;
 const CORNER_STEPS: u32 = 8;
 
 pub(crate) const SCOPES: [&str; 2] = ["This branch", "Whole repo"];
 
 /// A tab's ledger for the card: the panel's input and the tab's memory of its two choices.
+pub(crate) struct Face<'a> {
+    pub(crate) tab: u64,
+    pub(crate) avatar: &'a Arc<Avatar>,
+}
+
 pub(crate) struct Progress<'a> {
     pub(crate) input: progress_view::Input<'a>,
     pub(crate) state: &'a mut TabState,
@@ -56,7 +68,7 @@ pub(crate) fn show(
     view: &mut TabView,
     avatars: &mut AvatarStore,
     side: bool,
-    (agent, progress): (&str, Option<Progress<'_>>),
+    (agent, progress, face): (&str, Option<Progress<'_>>, Option<Face<'_>>),
 ) -> Out {
     paint_card(ui, rect);
     let header = Rect::from_min_max(rect.min, pos2(rect.right(), rect.top() + layout::CHROME_H));
@@ -66,7 +78,7 @@ pub(crate) fn show(
     };
     let first = input.as_ref().map_or(Side::Progress, |input| input.first);
     let shown = state.as_deref().map(|state| progress_view::side_shown(state.chosen, true, first));
-    if let Some(chose) = show_card_header(ui, header, view, shown)
+    if let Some(chose) = show_card_header(ui, header, view, shown, face.as_ref())
         && let Some(state) = state.as_deref_mut()
     {
         state.chosen = Some(chose);
@@ -170,6 +182,7 @@ fn show_card_header(
     rect: Rect,
     view: &mut TabView,
     shown: Option<Side>,
+    face: Option<&Face<'_>>,
 ) -> Option<Side> {
     let painter = ui.painter().clone();
     painter.hline(rect.x_range(), rect.bottom(), Stroke::new(1.0, brand::CARD_LINE));
@@ -182,7 +195,24 @@ fn show_card_header(
         chose = control.clicked.map(Side::at);
         right = control.left - SWITCH_GAP;
     }
+    let mut x = rect.left() + CARD_PAD;
+    if let Some(face) = face {
+        let place = Rect::from_center_size(pos2(x + FACE / 2.0, center_y), vec2(FACE, FACE));
+        if agent_avatar::paint(ui.ctx(), &painter, place, face.avatar) {
+            agent_avatar::hover(ui, place, face.tab, face.avatar);
+            x += FACE + FACE_GAP;
+        }
+        let click = ui.interact(place, ui.id().with(("history-face", face.tab)), Sense::click());
+        agent_avatar::menu(&click, face.tab);
+    }
     if shown == Some(Side::Progress) {
+        let title = branch_title(view.loaded.as_ref().and_then(|l| l.branch.as_deref()));
+        let mut job = LayoutJob::simple_singleline(title.to_owned(), mono(14.0), brand::TEXT);
+        job.wrap.max_width = (right - x).max(0.0);
+        job.wrap.max_rows = 1;
+        job.wrap.break_anywhere = true;
+        let galley = painter.layout_job(job);
+        painter.galley(pos2(x, center_y - galley.size().y / 2.0), galley, brand::TEXT);
         return chose;
     }
     let showing_whole = view.scope == Scope::Whole;
@@ -195,7 +225,6 @@ fn show_card_header(
     let loaded = view.loaded.as_ref();
     let pills = pills(loaded.and_then(|l| l.base.as_ref()));
     let limit = switch.left - PILL_GAP;
-    let mut x = rect.left() + CARD_PAD;
     let title = branch_title(loaded.and_then(|l| l.branch.as_deref()));
     let mut job = LayoutJob::simple_singleline(title.to_owned(), mono(14.0), brand::TEXT);
     job.wrap.max_width = (limit - x).max(0.0);
@@ -373,6 +402,7 @@ mod tests {
         ledger: TabLedger,
         state: TabState,
         with_ledger: bool,
+        face: Option<Arc<Avatar>>,
         texts: Vec<(String, egui::Rect)>,
         out: Out,
     }
@@ -398,6 +428,7 @@ mod tests {
                 ledger: TabLedger { ledger: Ledger::parse(LEDGER), updated_ms: None },
                 state: TabState::default(),
                 with_ledger,
+                face: None,
                 texts: Vec::new(),
                 out: Out::default(),
             };
@@ -416,6 +447,7 @@ mod tests {
             let (view, avatars, ledger, state) =
                 (&mut self.view, &mut self.avatars, &self.ledger, &mut self.state);
             let with_ledger = self.with_ledger;
+            let face = self.face.clone();
             let mut out = Out::default();
             let output = self.ctx.run_ui(raw, |ui| {
                 let progress = with_ledger.then_some(Progress {
@@ -430,7 +462,8 @@ mod tests {
                     state: &mut *state,
                 });
                 let rect = Rect::from_min_size(pos2(0.0, 0.0), vec2(420.0, 600.0));
-                out = show(ui, rect, view, avatars, true, ("", progress));
+                let face = face.as_ref().map(|avatar| Face { tab: 1, avatar });
+                out = show(ui, rect, view, avatars, true, ("", progress, face));
             });
             self.out = out;
             self.texts.clear();
@@ -495,5 +528,37 @@ mod tests {
         card.frame(vec![button(true)]);
         card.frame(vec![button(false)]);
         assert_eq!(card.out.progress, Some(progress_view::Action::Answer));
+    }
+
+    fn picture() -> Arc<Avatar> {
+        let (svg, reason) = crate::avatar_glue::FAKE[0];
+        Arc::new(tidewatch_core::avatar::clean(svg, reason).unwrap())
+    }
+
+    #[test]
+    fn an_avatar_takes_the_left_of_the_header_on_both_sides_and_pushes_the_title_over() {
+        for with_ledger in [false, true] {
+            let plain = Card::new(with_ledger);
+            let mut drawn = Card::new(with_ledger);
+            drawn.face = Some(picture());
+            drawn.frame(Vec::new());
+            drawn.frame(Vec::new());
+            let left = |card: &Card| {
+                card.texts.iter().find(|(text, _)| text == "detached HEAD").unwrap().1.left()
+            };
+            assert!(
+                (left(&drawn) - left(&plain) - (FACE + FACE_GAP)).abs() < 0.5,
+                "{with_ledger}: {} vs {}",
+                left(&drawn),
+                left(&plain)
+            );
+        }
+    }
+
+    #[test]
+    fn a_progress_header_names_the_branch_where_the_mockup_has_the_tab_name() {
+        let card = Card::new(true);
+        assert!(card.at("detached HEAD").is_some());
+        assert!(card.at("Progress").is_some());
     }
 }

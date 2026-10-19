@@ -10,6 +10,7 @@ use stdusk_egui::colors;
 use stdusk_egui::ui::ellipsize;
 use stdusk_egui::widgets::ICON_BTN_W;
 
+use crate::agent_avatar;
 use crate::brand;
 use crate::coming_up_view;
 use crate::commands::Command;
@@ -35,6 +36,7 @@ const CARD_PAD: f32 = 20.0;
 const CARD_RADIUS: u8 = 14;
 const CARD_SHADOW: f32 = 36.0;
 const RING: f32 = 52.0;
+const FACE: f32 = 36.0;
 const TAG_H: f32 = 22.0;
 const GROUP_HEAD_H: f32 = 34.0;
 const CHIP_H: f32 = 30.0;
@@ -283,7 +285,8 @@ fn card(ui: &mut egui::Ui, rect: Rect, row: &Row, in_needs_group: bool) -> bool 
     let ring_center = pos2(inner.left() + RING / 2.0, inner.top() + RING / 2.0);
     progress_ring::paint(&painter, ring_center, RING, view.fraction, view.ring, brand::CARD_LINE);
     let text_x = inner.left() + RING + 14.0;
-    let room = (inner.right() - text_x).max(1.0);
+    let face_w = if row.avatar.is_some() { FACE + 10.0 } else { 0.0 };
+    let room = (inner.right() - text_x - face_w).max(1.0);
     let what = row.workflow.as_deref().unwrap_or(&row.profile);
     let sub = if in_needs_group { format!("{} \u{b7} {what}", row.place) } else { what.to_owned() };
     let name = ellipsized(&painter, &row.title, heading(15.0), brand::TEXT, room);
@@ -311,6 +314,13 @@ fn card(ui: &mut egui::Ui, rect: Rect, row: &Row, in_needs_group: bool) -> bool 
         }
     }
     painter.galley(pos2(clock_left, tag_mid - clock.size().y / 2.0), clock, brand::MUTED);
+    if let Some(avatar) = &row.avatar {
+        let face = Rect::from_min_size(pos2(inner.right() - FACE, inner.top()), vec2(FACE, FACE));
+        if agent_avatar::paint(ui.ctx(), &painter, face, avatar) {
+            agent_avatar::hover(ui, face, row.tab_id, avatar);
+        }
+        agent_avatar::menu(&resp, row.tab_id);
+    }
     let tip = status_view::describe(&row.status);
     resp.on_hover_cursor(egui::CursorIcon::PointingHand).on_hover_text(tip).clicked()
 }
@@ -434,6 +444,7 @@ mod tests {
             pr: None,
             look: None,
             job_line: None,
+            avatar: None,
         }
     }
 

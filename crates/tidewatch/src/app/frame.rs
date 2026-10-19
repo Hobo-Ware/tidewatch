@@ -77,6 +77,7 @@ impl Tidewatch {
         self.drive_flow(ctx, now);
         self.drive_pr(ctx, now);
         self.drive_progress(ctx);
+        self.drive_avatar_choice(ctx);
         self.drive_jobs(ctx);
         self.drive_checklist(ctx, now);
         self.drive_due(ctx);

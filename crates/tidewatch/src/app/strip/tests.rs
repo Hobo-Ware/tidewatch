@@ -1,5 +1,7 @@
 use egui::{Event, PointerButton, RawInput, Rect, Shape, pos2, vec2};
 
+use std::sync::Arc;
+
 use super::*;
 
 const SHELLS: u32 = 3;
@@ -256,7 +258,7 @@ fn collect_text(shape: &Shape, out: &mut Vec<(String, Rect)>) {
 fn agent_strip(
     title: &str,
     width: f32,
-    (with_ring, with_job): (bool, bool),
+    (with_ring, with_job, with_avatar): (bool, bool, bool),
 ) -> (Vec<Rect>, Vec<(String, Rect)>) {
     use crate::agent_run::AgentRun;
     use crate::pane::AgentTab;
@@ -290,6 +292,10 @@ fn agent_strip(
                             |_: &Pane<u32>| (Progress::default(), CmdState::default()),
                             |_| TabExtras {
                                 ring: with_ring.then(|| tab_ring(&ledger)),
+                                avatar: with_avatar.then(|| {
+                                    let (svg, reason) = crate::avatar_glue::FAKE[0];
+                                    Arc::new(tidewatch_core::avatar::clean(svg, reason).unwrap())
+                                }),
                                 job: with_job.then(|| TabJob {
                                     fraction: 0.21,
                                     label: "21%".into(),
@@ -313,7 +319,8 @@ fn agent_strip(
 #[test]
 fn a_tab_with_a_ledger_cuts_its_title_before_the_ring() {
     for width in [100.0, 120.0, 200.0] {
-        let (rects, texts) = agent_strip("a-very-long-worktree-name-indeed", width, (true, false));
+        let (rects, texts) =
+            agent_strip("a-very-long-worktree-name-indeed", width, (true, false, false));
         let tab = rects[1];
         let title = texts.iter().find(|(text, _)| text.starts_with("2  ")).unwrap();
         assert!(
@@ -327,8 +334,10 @@ fn a_tab_with_a_ledger_cuts_its_title_before_the_ring() {
 
 #[test]
 fn a_tab_without_a_ledger_keeps_the_whole_title_room() {
-    let (rects, with) = agent_strip("a-very-long-worktree-name-indeed", 200.0, (true, false));
-    let (_, without) = agent_strip("a-very-long-worktree-name-indeed", 200.0, (false, false));
+    let (rects, with) =
+        agent_strip("a-very-long-worktree-name-indeed", 200.0, (true, false, false));
+    let (_, without) =
+        agent_strip("a-very-long-worktree-name-indeed", 200.0, (false, false, false));
     let width = |texts: &[(String, Rect)]| {
         texts.iter().find(|(text, _)| text.starts_with("2  ")).unwrap().1.width()
     };
@@ -339,7 +348,8 @@ fn a_tab_without_a_ledger_keeps_the_whole_title_room() {
 #[test]
 fn a_tab_with_a_job_cuts_its_title_before_the_percent_and_shows_it() {
     for width in [120.0, 200.0, 260.0] {
-        let (rects, texts) = agent_strip("a-very-long-worktree-name-indeed", width, (false, true));
+        let (rects, texts) =
+            agent_strip("a-very-long-worktree-name-indeed", width, (false, true, false));
         let tab = rects[1];
         let title = texts.iter().find(|(text, _)| text.starts_with("2  ")).unwrap();
         let label = texts.iter().find(|(text, _)| text == "21%").unwrap();
@@ -350,8 +360,8 @@ fn a_tab_with_a_job_cuts_its_title_before_the_percent_and_shows_it() {
 
 #[test]
 fn a_job_percent_sits_left_of_the_ring_when_there_is_one() {
-    let (_, texts) = agent_strip("orders", 220.0, (true, true));
-    let (rects, _) = agent_strip("orders", 220.0, (true, true));
+    let (_, texts) = agent_strip("orders", 220.0, (true, true, false));
+    let (rects, _) = agent_strip("orders", 220.0, (true, true, false));
     let label = texts.iter().find(|(text, _)| text == "21%").unwrap();
     assert!(label.1.right() <= ring_rect(rects[1]).left());
 }
@@ -383,4 +393,46 @@ fn a_stalled_job_paints_its_label_orange_and_a_running_one_teal() {
         }
         assert_eq!(inks, [want]);
     }
+}
+
+#[test]
+fn an_avatar_sits_after_the_number_and_the_title_starts_after_it() {
+    for width in [160.0, 220.0, 300.0] {
+        let (rects, texts) =
+            agent_strip("backfill-orders-with-a-long-tail", width, (false, false, true));
+        let title = texts.iter().find(|(text, _)| text.starts_with("2  ")).unwrap();
+        let raw = texts.iter().find(|(text, _)| text.starts_with("2  ")).unwrap().0.clone();
+        assert!(raw.starts_with("2      "), "four spaces of room: {raw:?}");
+        let ctx = egui::Context::default();
+        let _ = ctx.run_ui(RawInput::default(), |ui| {
+            let face = avatar_rect(ui, rects[1], 2);
+            assert_eq!((face.width(), face.height()), (AVATAR_SIZE, AVATAR_SIZE));
+            assert!(face.left() > rects[1].left() + TAB_PAD_X);
+            let char_w = ui
+                .painter()
+                .layout_no_wrap("0".to_owned(), egui::FontId::monospace(12.0), brand::SOFT)
+                .size()
+                .x;
+            let name_starts = title.1.left() + (3 + AVATAR_PAD_CHARS) as f32 * char_w;
+            assert!(face.right() < name_starts, "{face:?} meets the name at {name_starts}");
+            assert!(face.right() <= job_label_rect(rects[1], true).left());
+        });
+    }
+}
+
+#[test]
+fn an_avatar_with_a_ring_and_a_job_still_leaves_the_title_clear_of_both() {
+    let (rects, texts) = agent_strip("a-very-long-worktree-name-indeed", 240.0, (true, true, true));
+    let title = texts.iter().find(|(text, _)| text.starts_with("2  ")).unwrap();
+    assert!(title.1.right() <= job_label_rect(rects[1], true).left(), "{:?}", title.1);
+}
+
+#[test]
+fn a_long_name_is_cut_after_the_avatars_room_is_taken() {
+    let (_, with) = agent_strip("a-very-long-worktree-name-indeed", 200.0, (false, false, true));
+    let (_, without) = agent_strip("a-very-long-worktree-name-indeed", 200.0, (true, false, false));
+    let shown = |texts: &[(String, Rect)]| {
+        texts.iter().find(|(text, _)| text.starts_with("2  ")).unwrap().0.chars().count()
+    };
+    assert!(shown(&with) <= shown(&without) + AVATAR_PAD_CHARS);
 }

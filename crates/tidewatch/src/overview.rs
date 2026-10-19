@@ -34,6 +34,8 @@ pub(crate) struct Row {
     pub(crate) look: Option<Look>,
     /// The tab's leading job as `21% \u{b7} 1h 52m`, when it has one.
     pub(crate) job_line: Option<String>,
+    /// The picture the agent drew for the tab, shown at the card's corner.
+    pub(crate) avatar: Option<std::sync::Arc<tidewatch_core::avatar::Avatar>>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -145,6 +147,7 @@ pub(crate) fn collect<T>(
                 pr: None,
                 look: None,
                 job_line: None,
+                avatar: None,
             })
         })
         .collect();
@@ -255,6 +258,7 @@ mod tests {
             pr: None,
             look: None,
             job_line: None,
+            avatar: None,
         }
     }
 
