@@ -18,6 +18,9 @@ pub(crate) fn section(ui: &mut Ui, updates: &mut Updates) -> Option<UpdatePrefs>
 
 fn section_in(ui: &mut Ui, updates: &mut Updates, mode: Mode) -> Option<UpdatePrefs> {
     let mut applied = None;
+    if std::env::var_os("TIDEWATCH_DEV_SCROLL_UPDATES").is_some() {
+        ui.scroll_to_cursor(Some(Align::TOP));
+    }
     settings_ui::section(ui, "Updates", |ui| {
         status_row(ui, updates, mode);
         if updates.is_stuck() {
