@@ -70,6 +70,7 @@ impl Tidewatch {
         if let Some(answer) = answer {
             self.answer_close(answer, ctx);
         }
+        self.updates.show_fix_dialog(ctx);
         self.show_palette(ctx);
         self.show_takeover_dialog(ctx);
         self.leftovers.show(ctx, self.paths.as_ref(), self.trust.grant().as_ref());

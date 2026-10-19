@@ -1,22 +1,57 @@
 //! Self-update: Kelp's shared updater pointed at Tidewatch's repo and cask.
 
+use std::path::{Path, PathBuf};
+
 use kelp_core::update::Release;
 use kelp_ui::update::{Status, UpdateConfig, Updater};
 use tidewatch_core::paths::TidewatchPaths;
 use tidewatch_core::prefs::{Prefs, UpdatePrefs};
 use tidewatch_core::update::{self, APP_NAME, Mode};
 
+use crate::fix_dialog;
 use crate::update_chip;
 
 pub(crate) const NOTIFY_ONLY_HINT: &str =
     "This copy has no installer: Tidewatch tells you when a release is out and opens its page.";
 pub(crate) const INSTALL_HINT: &str = "With Homebrew. The new version starts when you restart.";
 
+const FAKE_APP: &str = "/Applications/Tidewatch.app";
+const FAKE_STUCK: &str = "/opt/homebrew/Caskroom/tidewatch/0.1.10.upgrading";
+const FAKE_FAILURE: &str = "brew upgrade failed: Error: It seems there is already an App at '/opt/homebrew/Caskroom/tidewatch/0.1.10.upgrading/Tidewatch.app'";
+
+/// `TIDEWATCH_FAKE_UPDATE_STATE`: a failed or a stuck update to look at; `confirm` also opens the Fix confirm.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum FakeState {
+    Failed,
+    Stuck,
+    Confirm,
+}
+
+pub(crate) fn fake_state(value: Option<&str>) -> Option<FakeState> {
+    match value?.trim() {
+        "failed" => Some(FakeState::Failed),
+        "stuck" => Some(FakeState::Stuck),
+        "confirm" => Some(FakeState::Confirm),
+        _ => None,
+    }
+}
+
+/// What the host has to do after a click on the chip or the Fix confirm.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum Wish {
+    OpenSettings,
+    Quit,
+    Toast(String),
+}
+
 pub(crate) struct Updates {
     updater: Updater,
     prefs: UpdatePrefs,
     quiet: bool,
     restart: bool,
+    fake_state: Option<FakeState>,
+    fix_dialog: bool,
+    wish: Option<Wish>,
 }
 
 impl Updates {
@@ -27,18 +62,41 @@ impl Updates {
         prefs: UpdatePrefs,
         fake: Option<Release>,
         screenshot: bool,
+        state_dir: PathBuf,
     ) -> Self {
         let config = UpdateConfig {
             source: update::source(),
             app_name: APP_NAME.to_owned(),
             version: env!("CARGO_PKG_VERSION").to_owned(),
+            state_dir,
         };
         let mut updater = Updater::new(ctx.clone(), config);
         let quiet = offline(screenshot, fake.is_some(), cfg!(test));
         if let Some(release) = fake {
             updater.status = Status::Available(release);
         }
-        Self { updater, prefs, quiet, restart: false }
+        Self {
+            updater,
+            prefs,
+            quiet,
+            restart: false,
+            fake_state: None,
+            fix_dialog: false,
+            wish: None,
+        }
+    }
+
+    /// Shows a failed or a stuck update without one; like a fake release it keeps the run offline.
+    pub(crate) fn with_fake_state(mut self, state: Option<FakeState>) -> Self {
+        let Some(state) = state else { return self };
+        self.quiet = true;
+        self.fake_state = Some(state);
+        self.updater.status = match state {
+            FakeState::Failed => Status::Failed(FAKE_FAILURE.to_owned()),
+            FakeState::Stuck | FakeState::Confirm => Status::Stuck(PathBuf::from(FAKE_STUCK)),
+        };
+        self.fix_dialog = state == FakeState::Confirm;
+        self
     }
 
     /// Once per frame: collects a finished check and starts the next one when it is due.
@@ -55,7 +113,12 @@ impl Updates {
             return;
         }
         match (spec.click, &self.updater.status) {
-            (update_chip::Click::Restart, _) => self.restart = true,
+            (update_chip::Click::Restart, _) if self.updater.can_restart() => self.restart = true,
+            (update_chip::Click::Restart, _) => {
+                self.wish = Some(Wish::Toast(update_chip::RESTART_WAITS.to_owned()));
+            }
+            (update_chip::Click::Fix, _) => self.fix_dialog = true,
+            (update_chip::Click::OpenSettings, _) => self.wish = Some(Wish::OpenSettings),
             (update_chip::Click::Install, Status::Available(release)) => {
                 self.updater.install(release.clone());
             }
@@ -76,6 +139,57 @@ impl Updates {
             return None;
         }
         update_chip::spec(&self.updater.status, self.updater.brew_install())
+    }
+
+    /// Draws the Fix confirm while it is open and acts on the answer.
+    pub(crate) fn show_fix_dialog(&mut self, ctx: &egui::Context) {
+        if !self.fix_dialog {
+            return;
+        }
+        match fix_dialog::show(ctx) {
+            Some(fix_dialog::Answer::Cancel) => self.fix_dialog = false,
+            Some(fix_dialog::Answer::QuitAndFix) => {
+                self.fix_dialog = false;
+                self.start_fix();
+            }
+            None => {}
+        }
+    }
+
+    fn start_fix(&mut self) {
+        if self.fake_state.is_some() {
+            self.wish = Some(Wish::Toast(format!(
+                "Fake update state, nothing was started. Fix would run:\n{}",
+                Self::repair_script()
+            )));
+            return;
+        }
+        self.updater.fix();
+        if self.updater.take_quit_request() {
+            self.wish = Some(Wish::Quit);
+        }
+    }
+
+    /// The script Fix runs once the app is gone.
+    pub(crate) fn repair_script() -> String {
+        let bundle = kelp_core::update::app_bundle().unwrap_or_else(|| Path::new(FAKE_APP).into());
+        kelp_core::update::repair_command(&update::source(), &bundle, std::process::id())
+    }
+
+    pub(crate) fn dialog_open(&self) -> bool {
+        self.fix_dialog
+    }
+
+    pub(crate) fn is_stuck(&self) -> bool {
+        matches!(self.updater.status, Status::Stuck(_))
+    }
+
+    pub(crate) fn can_restart(&self) -> bool {
+        self.updater.can_restart()
+    }
+
+    pub(crate) fn take_wish(&mut self) -> Option<Wish> {
+        self.wish.take()
     }
 
     /// Whether Restart was clicked since the last call.
@@ -138,7 +252,10 @@ fn status_line(status: &Status, current: &str) -> String {
         Status::Ready(release) => {
             format!("{APP_NAME} {} is installed. Restart to use it.", release.version)
         }
-        Status::Failed(reason) => format!("Update check failed: {reason}"),
+        Status::Failed(reason) => format!("Update failed: {reason}"),
+        Status::Stuck(path) => {
+            format!("Update stuck: an earlier Homebrew upgrade left {}", path.display())
+        }
     }
 }
 
@@ -150,7 +267,8 @@ fn short_status(status: &Status) -> String {
         Status::Available(release) => format!("{} available", release.version),
         Status::Installing(_) => "Installing...".to_owned(),
         Status::Ready(_) => "Restart to update".to_owned(),
-        Status::Failed(_) => "Update check failed".to_owned(),
+        Status::Failed(_) => "Update failed".to_owned(),
+        Status::Stuck(_) => "Update stuck".to_owned(),
     }
 }
 
@@ -173,7 +291,13 @@ mod tests {
     }
 
     fn updates(fake: Option<Release>, screenshot: bool) -> Updates {
-        Updates::new(&egui::Context::default(), UpdatePrefs::default(), fake, screenshot)
+        Updates::new(
+            &egui::Context::default(),
+            UpdatePrefs::default(),
+            fake,
+            screenshot,
+            std::env::temp_dir(),
+        )
     }
 
     #[test]
@@ -238,7 +362,11 @@ mod tests {
             (Status::Ready(release("0.2.0")), "Tidewatch 0.2.0 is installed. Restart to use it."),
             (
                 Status::Failed("GitHub answered 404 without a release link".to_owned()),
-                "Update check failed: GitHub answered 404 without a release link",
+                "Update failed: GitHub answered 404 without a release link",
+            ),
+            (
+                Status::Stuck(PathBuf::from("/tmp/x/tidewatch/0.1.10.upgrading")),
+                "Update stuck: an earlier Homebrew upgrade left /tmp/x/tidewatch/0.1.10.upgrading",
             ),
         ];
         for (status, want) in cases {
@@ -255,7 +383,8 @@ mod tests {
             (Status::Available(release("0.2.0")), "0.2.0 available"),
             (Status::Installing(release("0.2.0")), "Installing..."),
             (Status::Ready(release("0.2.0")), "Restart to update"),
-            (Status::Failed("offline".to_owned()), "Update check failed"),
+            (Status::Failed("offline".to_owned()), "Update failed"),
+            (Status::Stuck(PathBuf::from("/tmp/x")), "Update stuck"),
         ];
         for (status, want) in cases {
             assert_eq!(short_status(&status), want);
@@ -345,5 +474,73 @@ mod tests {
         assert_eq!(pill_frame(&ctx, &mut updates, vec![]).width(), 0.0, "nothing to show yet");
         updates.updater.status = Status::Ready(release("0.2.0"));
         assert!(pill_frame(&ctx, &mut updates, vec![]).width() > 0.0);
+    }
+
+    #[test]
+    fn the_fake_state_switch_reads_three_words() {
+        assert_eq!(fake_state(Some("failed")), Some(FakeState::Failed));
+        assert_eq!(fake_state(Some(" stuck ")), Some(FakeState::Stuck));
+        assert_eq!(fake_state(Some("confirm")), Some(FakeState::Confirm));
+        assert_eq!(fake_state(Some("nope")), None);
+        assert_eq!(fake_state(None), None);
+    }
+
+    #[test]
+    fn a_fake_state_shows_the_chip_and_keeps_the_run_offline() {
+        let failed = updates(None, false).with_fake_state(Some(FakeState::Failed));
+        assert_eq!(failed.updater.status, Status::Failed(FAKE_FAILURE.to_owned()));
+        assert!(failed.quiet && !failed.fix_dialog && !failed.is_stuck());
+        let stuck = updates(None, false).with_fake_state(Some(FakeState::Stuck));
+        assert!(stuck.is_stuck() && !stuck.fix_dialog);
+        let confirm = updates(None, false).with_fake_state(Some(FakeState::Confirm));
+        assert!(confirm.is_stuck() && confirm.fix_dialog);
+        assert_eq!(updates(None, false).with_fake_state(None).updater.status, Status::Idle);
+    }
+
+    #[test]
+    fn clicking_the_failed_chip_asks_the_host_for_settings() {
+        let ctx = crate::fonts::test_context();
+        let mut updates = updates(None, false).with_fake_state(Some(FakeState::Failed));
+        assert_eq!(updates.take_wish(), None);
+        click_pill(&ctx, &mut updates);
+        assert_eq!(updates.take_wish(), Some(Wish::OpenSettings));
+        assert_eq!(updates.take_wish(), None);
+        assert!(!updates.fix_dialog);
+    }
+
+    #[test]
+    fn clicking_the_stuck_chip_opens_the_confirm_without_starting_anything() {
+        let ctx = crate::fonts::test_context();
+        let mut updates = updates(None, false).with_fake_state(Some(FakeState::Stuck));
+        click_pill(&ctx, &mut updates);
+        assert!(updates.fix_dialog);
+        assert_eq!(updates.take_wish(), None);
+    }
+
+    #[test]
+    fn quit_and_fix_under_a_fake_state_only_toasts_the_script() {
+        let mut updates = updates(None, false).with_fake_state(Some(FakeState::Stuck));
+        updates.start_fix();
+        let Some(Wish::Toast(text)) = updates.take_wish() else { panic!("a toast") };
+        assert!(text.starts_with("Fake update state, nothing was started."), "{text}");
+        assert!(text.contains("brew reinstall --cask --force 'hobo-ware/tap/tidewatch'"), "{text}");
+        assert!(!updates.updater.take_quit_request());
+    }
+
+    #[test]
+    fn a_restart_is_refused_out_loud_while_installing() {
+        let mut updates = updates(Some(release("9.9.9")), false);
+        updates.updater.status = Status::Installing(release("9.9.9"));
+        assert!(!updates.can_restart());
+        updates.updater.status = Status::Ready(release("9.9.9"));
+        assert!(updates.can_restart());
+    }
+
+    #[test]
+    fn the_repair_script_names_the_cask_and_this_process() {
+        let script = Updates::repair_script();
+        assert!(script.contains(&format!("kill -0 {}", std::process::id())));
+        assert!(script.contains("HOMEBREW_NO_AUTO_UPDATE=1 brew reinstall --cask --force"));
+        assert!(script.contains("open -a '"));
     }
 }

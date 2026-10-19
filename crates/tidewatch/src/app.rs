@@ -95,7 +95,7 @@ use crate::takeover::Takeover;
 use crate::takeover_jobs;
 use crate::toast::Toast;
 use crate::trust_glue::Trust;
-use crate::updates::Updates;
+use crate::updates::{Updates, fake_state};
 use crate::welcome::{Recent, recent_repos};
 use crate::workflow_glue::{self};
 use crate::workflow_run::Exec;
@@ -243,7 +243,9 @@ impl Tidewatch {
             paths.as_ref().map(Prefs::load).unwrap_or_default().updates,
             fake_release(std::env::var("TIDEWATCH_FAKE_UPDATE").ok().as_deref()),
             screenshot.is_some(),
-        );
+            paths.as_ref().map_or_else(std::env::temp_dir, TidewatchPaths::state_dir),
+        )
+        .with_fake_state(fake_state(std::env::var("TIDEWATCH_FAKE_UPDATE_STATE").ok().as_deref()));
         let mut app = Self {
             tabs,
             jobs: Jobs::new(),

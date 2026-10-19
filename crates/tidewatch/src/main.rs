@@ -37,6 +37,7 @@ mod due_view;
 mod end_block_view;
 mod file_nav;
 mod file_view;
+mod fix_dialog;
 mod flow;
 mod flow_glue;
 mod flow_jobs;

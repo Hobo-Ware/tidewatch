@@ -5,7 +5,7 @@ use egui::{Align, Layout, RichText, Ui};
 use tidewatch_core::prefs::UpdatePrefs;
 use tidewatch_core::update::Mode;
 
-use crate::screen_kit::Size;
+use crate::screen_kit::{Size, mono};
 use crate::settings_ui::{self, Control, MUTED, TEXT, Tone, button, row_with, switch_row};
 use crate::updates::{INSTALL_HINT, NOTIFY_ONLY_HINT, Updates};
 
@@ -20,6 +20,9 @@ fn section_in(ui: &mut Ui, updates: &mut Updates, mode: Mode) -> Option<UpdatePr
     let mut applied = None;
     settings_ui::section(ui, "Updates", |ui| {
         status_row(ui, updates, mode);
+        if updates.is_stuck() {
+            repair_row(ui, &Updates::repair_script());
+        }
         if let Some(on) = switch_row(
             ui,
             "Check for updates automatically",
@@ -40,6 +43,21 @@ fn section_in(ui: &mut Ui, updates: &mut Updates, mode: Mode) -> Option<UpdatePr
         }
     });
     applied
+}
+
+fn repair_row(ui: &mut Ui, script: &str) {
+    row_with(
+        ui,
+        Control::NONE,
+        |ui| {
+            ui.spacing_mut().item_spacing.y = 6.0;
+            ui.label(
+                RichText::new("Fix runs this once Tidewatch has quit").size(13.0).color(MUTED),
+            );
+            ui.add(egui::Label::new(RichText::new(script).font(mono(11.5)).color(TEXT)).wrap());
+        },
+        |_| {},
+    );
 }
 
 fn status_row(ui: &mut Ui, updates: &mut Updates, mode: Mode) {
@@ -70,6 +88,7 @@ fn status_row(ui: &mut Ui, updates: &mut Updates, mode: Mode) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::updates::FakeState;
     use egui::{Event, Modifiers, PointerButton, Pos2, RawInput, Rect, UiBuilder, Vec2, pos2};
     use kelp_core::update::Release;
 
@@ -121,7 +140,8 @@ mod tests {
             for fake in [None, Some(fake())] {
                 let ctx = crate::fonts::test_context();
                 ctx.set_fonts(crate::fonts::definitions());
-                let mut updates = Updates::new(&ctx, UpdatePrefs::default(), fake, true);
+                let mut updates =
+                    Updates::new(&ctx, UpdatePrefs::default(), fake, true, std::env::temp_dir());
                 for _ in 0..2 {
                     assert_eq!(run_in(&ctx, &mut updates, mode, vec![]).0, None);
                 }
@@ -130,9 +150,28 @@ mod tests {
     }
 
     #[test]
+    fn a_failed_or_stuck_update_renders_and_the_stuck_one_lists_the_fix() {
+        let heights: Vec<f32> = [None, Some(FakeState::Failed), Some(FakeState::Stuck)]
+            .into_iter()
+            .map(|state| {
+                let ctx = crate::fonts::test_context();
+                ctx.set_fonts(crate::fonts::definitions());
+                let mut updates =
+                    Updates::new(&ctx, UpdatePrefs::default(), None, true, std::env::temp_dir())
+                        .with_fake_state(state);
+                run_in(&ctx, &mut updates, Mode::Install, vec![]);
+                run_in(&ctx, &mut updates, Mode::Install, vec![]).1.height()
+            })
+            .collect();
+        assert!(heights.iter().all(|h| *h > 0.0), "{heights:?}");
+        assert!(heights[2] > heights[1], "the repair script adds a row: {heights:?}");
+    }
+
+    #[test]
     fn the_check_switch_applies_at_once_and_leaves_install_alone() {
         let ctx = crate::fonts::test_context();
-        let mut updates = Updates::new(&ctx, UpdatePrefs::default(), None, true);
+        let mut updates =
+            Updates::new(&ctx, UpdatePrefs::default(), None, true, std::env::temp_dir());
         let (_, used) = run_in(&ctx, &mut updates, Mode::NotifyOnly, vec![]);
         let at = pos2(used.right() - 40.0, used.bottom() - 36.0);
         let mut run = |events| run_in(&ctx, &mut updates, Mode::NotifyOnly, events).0;
@@ -146,7 +185,8 @@ mod tests {
     #[test]
     fn the_install_switch_only_exists_in_install_mode() {
         let ctx = crate::fonts::test_context();
-        let mut updates = Updates::new(&ctx, UpdatePrefs::default(), None, true);
+        let mut updates =
+            Updates::new(&ctx, UpdatePrefs::default(), None, true, std::env::temp_dir());
         let height = |mode, updates: &mut Updates| run_in(&ctx, updates, mode, vec![]).1.height();
         let install = height(Mode::Install, &mut updates);
         let notify = height(Mode::NotifyOnly, &mut updates);

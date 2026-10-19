@@ -33,6 +33,15 @@ impl Tidewatch {
         }
     }
 
+    pub(super) fn open_updates_settings(&mut self) {
+        if self.settings.is_none() {
+            self.toggle_settings();
+        }
+        if let Some(settings) = &mut self.settings {
+            settings.section = Section::General;
+        }
+    }
+
     /// What another launch, the hotkey or the menu-bar item asked of the app itself.
     pub(super) fn shell_event(&mut self, event: &Event, ctx: &egui::Context) {
         if self.status_log {
@@ -83,6 +92,7 @@ impl Tidewatch {
         let active_id = self.tabs.items()[self.tabs.active()].id;
         !self.trust.dialog_open()
             && !self.leftovers.is_open()
+            && !self.updates.dialog_open()
             && !self.flow.modal_open(active_id)
             && self.palette.is_none()
             && self.closing.is_none()
