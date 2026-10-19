@@ -4,7 +4,7 @@
 //! [`handle_post`] takes the raw request body of an authenticated `/mcp` POST and returns the reply.
 //! It speaks `initialize`, `ping`, `tools/list` and `tools/call` and swallows notifications. The
 //! tools are `stage_done`, `report_finding`, `list_notes`, `reply_to_note`, `propose_workflow`,
-//! `ask_user`, `update_progress`, `get_progress` and `report_job`. Calls that matter to the app become [`TabEvent`]s through `emit`; the note tools read
+//! `ask_user`, `update_progress`, `get_progress`, `report_job` and `set_avatar`. Calls that matter to the app become [`TabEvent`]s through `emit`; the note tools read
 //! and write the tab's `notes.json` through `notes.rs`. `ask_user` holds its reply until the user
 //! answers (or [`AskWait::timeout`] runs out, or the client hangs up): the listener serves each
 //! connection on its own thread, so a held call blocks nothing else.
@@ -23,6 +23,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use kelp_core::review::Comment;
 use serde_json::{Map, Value, json};
 
+use crate::avatar_mcp;
 use crate::events::TabEvent;
 use crate::job_mcp;
 use crate::launch::MCP_SERVER_NAME;
@@ -164,11 +165,11 @@ fn initialize_result(params: Option<&Value>) -> Value {
         "protocolVersion": version,
         "capabilities": { "tools": { "listChanged": false } },
         "serverInfo": { "name": MCP_SERVER_NAME, "version": env!("CARGO_PKG_VERSION") },
-        "instructions": "Tidewatch tools for the task in this worktree: report that a stage is done, report review findings, read and answer the notes the user left on your changes, and report jobs that run over a minute.",
+        "instructions": "Tidewatch tools for the task in this worktree: report that a stage is done, report review findings, read and answer the notes the user left on your changes, report jobs that run over a minute, and draw the tab's icon.",
     })
 }
 
-/// The nine tools with their JSON Schemas, as `tools/list` returns them.
+/// The ten tools with their JSON Schemas, as `tools/list` returns them.
 #[must_use]
 pub fn tool_definitions() -> Value {
     let [update_progress, get_progress] = progress_mcp::tool_definitions();
@@ -229,6 +230,7 @@ pub fn tool_definitions() -> Value {
         update_progress,
         get_progress,
         job_mcp::tool_definition(),
+        avatar_mcp::tool_definition(),
     ])
 }
 
@@ -260,6 +262,10 @@ fn call_tool(
     }
     if name == progress_mcp::GET_TOOL {
         let (text, is_error) = progress_mcp::get(ctx.progress_file);
+        return Ok(tool_result(&text, is_error));
+    }
+    if name == avatar_mcp::SET_TOOL {
+        let (text, is_error) = avatar_mcp::set(args, ctx.notes_file, emit);
         return Ok(tool_result(&text, is_error));
     }
     if name == job_mcp::REPORT_TOOL {
@@ -573,7 +579,7 @@ mod tests {
     }
 
     #[test]
-    fn tools_list_has_nine_tools_with_object_schemas_and_required_fields() {
+    fn tools_list_has_ten_tools_with_object_schemas_and_required_fields() {
         let reply =
             Harness::new().json(&json!({"jsonrpc": "2.0", "id": 2, "method": "tools/list"}));
         let tools = reply["result"]["tools"].as_array().unwrap();
@@ -589,7 +595,8 @@ mod tests {
                 "ask_user",
                 "update_progress",
                 "get_progress",
-                "report_job"
+                "report_job",
+                "set_avatar"
             ]
         );
         let required: Vec<Vec<&str>> = tools
@@ -613,6 +620,7 @@ mod tests {
                 vec!["ledger"],
                 vec![],
                 vec!["name"],
+                vec!["svg", "reason"],
             ]
         );
         for tool in tools {
@@ -666,6 +674,37 @@ mod tests {
             *h.events.borrow(),
             [TabEvent::Progress { ledger: Box::new(Ledger::parse(LEDGER)) }]
         );
+    }
+
+    #[test]
+    fn set_avatar_over_rpc_saves_beside_the_notes_and_shows_it_without_the_script() {
+        let h = Harness::new();
+        let svg = "<svg viewBox=\"0 0 64 64\"><circle cx=\"32\" cy=\"32\" r=\"20\" fill=\"#2dd4bf\"/><script>1</script></svg>";
+        let reply = h.call("set_avatar", &json!({"svg": svg, "reason": "a teal dot"}));
+        assert_eq!(reply["result"]["isError"], false, "{reply}");
+        let events = h.events.borrow();
+        let [TabEvent::Avatar { avatar }] = events.as_slice() else { panic!("{events:?}") };
+        assert!(avatar.svg.contains("<circle") && !avatar.svg.contains("script"));
+        let saved = crate::avatar_store::load(&h.notes_file().with_file_name("avatar.json"));
+        assert_eq!(saved.as_ref(), Some(avatar));
+        drop(events);
+        let bad = h.call("set_avatar", &json!({"svg": "<svg><script/></svg>", "reason": "x"}));
+        assert_eq!(bad["result"]["isError"], true);
+        assert_eq!(h.events.borrow().len(), 1);
+    }
+
+    #[test]
+    fn report_job_over_rpc_shows_the_job_and_a_bad_call_is_a_tool_error() {
+        let h = Harness::new();
+        let reply = h.call("report_job", &json!({"name": "PR checks", "done": 3, "total": 5}));
+        assert_eq!(reply["result"]["isError"], false, "{reply}");
+        let events = h.events.borrow();
+        let [TabEvent::Job { report }] = events.as_slice() else { panic!("{events:?}") };
+        assert_eq!((report.done, report.total), (Some(3.0), Some(5.0)));
+        drop(events);
+        let bad = h.call("report_job", &json!({"done": 3}));
+        assert_eq!(bad["result"]["isError"], true);
+        assert_eq!(h.events.borrow().len(), 1);
     }
 
     #[test]

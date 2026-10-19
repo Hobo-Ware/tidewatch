@@ -59,6 +59,7 @@ pub const TOOL_GUIDANCE: &str = "\
 ## Tidewatch tool guidance
 
 - For any job you expect to run over a minute, call `report_job`, or have the script append JSON progress lines (`name`, `done`, `total`, `unit`, `phase`, `state`) to the file in `$TIDEWATCH_PROGRESS`.
+- Once you understand the task, call `set_avatar` once with a 64x64 flat icon about the task (2-3 colors, simple shapes) and a one-line reason.
 ";
 
 /// Writes the default text over `house-style.md`, edits included. Returns its path.
@@ -211,6 +212,7 @@ mod tests {
             let text = compose(mine, checklist);
             assert_eq!(text.matches("report_job").count(), 1, "{mine:?}");
             assert!(text.contains("`$TIDEWATCH_PROGRESS`"));
+            assert_eq!(text.matches("`set_avatar`").count(), 1, "{mine:?}");
             let guidance = text.find("## Tidewatch tool guidance").unwrap();
             assert!(text.starts_with(mine.trim_end()));
             assert!(guidance >= mine.trim_end().len());
@@ -222,5 +224,6 @@ mod tests {
     fn the_editable_default_does_not_carry_the_tool_guidance() {
         assert!(!DEFAULT_HOUSE_STYLE.contains("report_job"));
         assert!(!DEFAULT_HOUSE_STYLE.contains("TIDEWATCH_PROGRESS"));
+        assert!(!DEFAULT_HOUSE_STYLE.contains("set_avatar"));
     }
 }

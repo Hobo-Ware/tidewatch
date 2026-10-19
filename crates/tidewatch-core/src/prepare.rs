@@ -585,6 +585,7 @@ mod tests {
         let text = agent_style(&fx);
         assert!(text.starts_with("my own style\n\n## Tidewatch tool guidance"), "{text}");
         assert!(text.contains("`report_job`") && text.contains("`$TIDEWATCH_PROGRESS`"));
+        assert!(text.contains("`set_avatar`"));
         assert!(text.contains("\n\n## Progress ledger format"), "{text}");
         assert!(text.contains("### 1. Mine\n- [ ] my item\n"));
         assert!(!text.contains("Close out"));

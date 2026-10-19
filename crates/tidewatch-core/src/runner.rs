@@ -114,6 +114,7 @@ impl RunEvent {
             | TabEvent::Proposal { .. }
             | TabEvent::Progress { .. }
             | TabEvent::Job { .. }
+            | TabEvent::Avatar { .. }
             | TabEvent::Ask { .. } => None,
         }
     }
