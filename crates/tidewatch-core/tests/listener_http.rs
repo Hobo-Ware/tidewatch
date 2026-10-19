@@ -270,7 +270,7 @@ fn mcp_over_http_runs_the_handshake_and_both_event_tools() {
     assert_eq!((note.status, note.body.as_str()), (202, ""));
 
     let list = client.request("POST", "/mcp", token, &rpc(2, "tools/list", &json!({})));
-    assert_eq!(list.json()["result"]["tools"].as_array().unwrap().len(), 9);
+    assert_eq!(list.json()["result"]["tools"].as_array().unwrap().len(), 10);
 
     let done =
         client.request("POST", "/mcp", token, &call(3, "stage_done", &json!({"summary": "hello"})));

@@ -1,5 +1,6 @@
 //! What the listener tells the app: one [`TabMessage`] per hook payload or MCP tool call.
 
+use crate::avatar::Avatar;
 use crate::job::Report;
 use crate::progress::Ledger;
 use crate::question::{AskReply, Question};
@@ -24,6 +25,8 @@ pub enum TabEvent {
     Proposal { workflow: Workflow },
     /// The agent called `update_progress`; the ledger is already saved in the tab's `progress.md`.
     Progress { ledger: Box<Ledger> },
+    /// The agent called `set_avatar`; the cleaned avatar is already saved in the tab's state folder.
+    Avatar { avatar: Avatar },
     /// The agent called `report_job`.
     Job { report: Report },
     /// The agent called `ask_user` and its call is held until `reply` is used.

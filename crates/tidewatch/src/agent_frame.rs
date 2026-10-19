@@ -89,7 +89,7 @@ pub(crate) fn route<T>(tabs: &mut Tabs<Pane<T>>, message: TabMessage, now: f64) 
         TabEvent::Job { report } => {
             Some(Follow::Job { tab: message.tab_id, report: Box::new(report.clone()) })
         }
-        TabEvent::Hook(_) | TabEvent::StageDone { .. } => None,
+        TabEvent::Hook(_) | TabEvent::StageDone { .. } | TabEvent::Avatar { .. } => None,
     };
     if let TabEvent::Hook(hook) = &message.event {
         agent.reader.hook(hook.transcript_path.clone());
