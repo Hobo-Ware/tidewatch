@@ -9,6 +9,14 @@ A running log of what got done, newest first. The plan lives in [PLAN.md](PLAN.m
 - **Also:** six habit workflows are built in, and Build workflow from this session (palette; the agent proposes a workflow that opens as an unsaved draft), 2026-10-16. Restart to update keeps every shell and agent running (live handoff, 2026-10-15). The receiving side of stdusk's "Move tabs to Tidewatch" is built (#49).
 - **Next:** the diff widgets go teal (the graph already does on the side layout); commit messages that truncate early in the narrow tree; the divider position saved between runs; the site hero screenshot; the owner's live checks; Linux desktop runs.
 
+## 2026-10-19
+
+- **Self-update repair (branch `update-repair`).** The owner: "fix the self-update bug". Seen live: Homebrew listed the cask as `0.1.10.upgrading`, the app ran from the Caskroom, every later `brew upgrade --cask` failed with "already an App", and the app never said so; it stayed on 0.1.10 for three releases. A killed `brew upgrade` (the app ran it from its own process group) leaves that folder, and the failure only showed in Settings.
+  Decisions: `brew upgrade` runs in its own process group and refuses to start over a `.upgrading` folder; a failed or stuck update is a chip, not only a Settings line; Fix is a detached helper that waits for the app to exit, runs `brew reinstall --cask --force` and reopens it, started after a confirm and followed by the normal close so the session is saved.
+  Numbers: 2,246 tests passing, up from 2,232 (14 new: the chip specs for failed, stuck and installing, the fake state switch, the Fix confirm's buttons, the wish and restart refusal, the repair script, the Updates section with a stuck update). Kelp side: 12 new tests in `kelp-core` and `kelp-ui`.
+  Checked with `TIDEWATCH_SCREENSHOT` (background, throwaway home, 1440x900): the failed chip, the stuck chip, the Fix confirm and the Updates card, by eye. New dev switches: `TIDEWATCH_FAKE_UPDATE_STATE=failed|stuck|confirm`, `TIDEWATCH_DEV_SCROLL_UPDATES`.
+  Not checked: the helper against a real Homebrew (never run `brew` from an agent session), a real stuck folder, Linux.
+
 ## 2026-10-18
 
 - **v0.1.12.** Ships remote control and new tab defaults (#80).
