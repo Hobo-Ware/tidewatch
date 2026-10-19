@@ -45,6 +45,7 @@ impl Tidewatch {
             self.apply_stdusk_done(done, ctx);
         }
         self.drain_picked(ctx);
+        self.drain_link_jobs(ctx);
         self.bases.drain();
         for event in self.shell.tick(ctx) {
             self.shell_event(&event, ctx);
@@ -84,6 +85,7 @@ impl Tidewatch {
         self.drive_takeover(ctx, now);
         self.drive_repo_close(ctx);
         self.drive_dev_leftovers(ctx);
+        self.drive_dev_link(ctx);
         self.drive_views();
     }
 
@@ -132,8 +134,10 @@ impl Tidewatch {
     }
 
     fn key_gate(&self, active_id: u64, typing: bool) -> Gate {
-        let other =
-            self.trust.dialog_open() || self.leftovers.is_open() || self.flow.modal_open(active_id);
+        let other = self.trust.dialog_open()
+            || self.leftovers.is_open()
+            || self.open_link.is_some()
+            || self.flow.modal_open(active_id);
         let dialog = if self.closing.is_some() || self.takeover.dialog_open() {
             Dialog::TabChoice
         } else if other {

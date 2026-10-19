@@ -13,6 +13,8 @@ pub mod elsewhere_scan;
 pub mod end_block;
 pub mod events;
 mod fsutil;
+pub mod github_clone;
+pub mod github_link;
 pub mod history;
 pub mod house_style;
 pub mod instance;
