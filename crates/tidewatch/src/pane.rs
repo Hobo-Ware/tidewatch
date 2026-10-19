@@ -66,6 +66,8 @@ pub(crate) struct AgentTab {
     pub(crate) first_prompt: FirstPrompt,
     /// Why this tab's resume command waits typed at the prompt; shown until the user types.
     pub(crate) resume_note: Option<&'static str>,
+    /// Why the worktree did not start from the fresh remote branch; shown until the user types.
+    pub(crate) base_note: Option<String>,
     /// The agent process runs with remote control on, whatever the saved setting says now.
     pub(crate) remote: Option<RemoteSession>,
 }
@@ -81,6 +83,7 @@ impl AgentTab {
             workflow: None,
             first_prompt: FirstPrompt::NotNeeded,
             resume_note: None,
+            base_note: None,
             remote: None,
         }
     }
@@ -98,6 +101,8 @@ pub(crate) struct Opened {
     pub(crate) worktree: Option<Worktree>,
     pub(crate) dir: PathBuf,
     pub(crate) started: Option<Box<Started>>,
+    /// Set when the start branch could not be fetched, for the tab to say so.
+    pub(crate) base_note: Option<String>,
 }
 
 pub(crate) struct Started {
@@ -253,6 +258,7 @@ pub(crate) fn finish_open<T>(
                             FirstPrompt::NotNeeded
                         },
                         resume_note: None,
+                        base_note: None,
                         remote,
                     }
                 }),
@@ -338,7 +344,7 @@ mod tests {
     }
 
     fn opened(started: Option<Box<Started>>) -> Opened {
-        Opened { worktree: Some(worktree()), dir: worktree().path, started }
+        Opened { worktree: Some(worktree()), dir: worktree().path, started, base_note: None }
     }
 
     fn started(notes: &[&str]) -> Box<Started> {
@@ -408,8 +414,12 @@ mod tests {
     #[test]
     fn an_agent_tab_in_other_has_no_worktree_and_is_named_after_its_profile() {
         let (mut tabs, id) = tabs_with_creating();
-        let in_other =
-            Opened { worktree: None, dir: PathBuf::from("/notes"), started: Some(started(&[])) };
+        let in_other = Opened {
+            worktree: None,
+            dir: PathBuf::from("/notes"),
+            started: Some(started(&[])),
+            base_note: None,
+        };
         finish_open(&mut tabs, id, Ok(in_other), 0.0, |_, _| 7);
         let tab = tabs.get_mut(id).unwrap();
         assert_eq!(tab.title, "Builder");

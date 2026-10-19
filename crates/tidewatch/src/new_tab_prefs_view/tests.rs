@@ -45,7 +45,9 @@ impl Harness {
             ..RawInput::default()
         };
         let mut changed = None;
-        let _ = self.ctx.run_ui(raw, |ui| changed = card(ui, &self.prefs, &self.profiles));
+        let _ = self
+            .ctx
+            .run_ui(raw, |ui| changed = card(ui, &self.prefs, &self.profiles, Some("main")));
         changed
     }
 
@@ -129,13 +131,16 @@ fn the_remote_switch_flips_the_default() {
 fn start_from_and_right_panel_pick_their_other_option() {
     let mut harness = Harness::new(NewTabPrefs::default());
     let control = harness.placed().start_from.unwrap();
-    let labels = START_FROM.map(|(_, label)| label);
+    let options = start_options(Some("main"));
+    let labels = options.each_ref().map(|(_, label)| label.as_str());
+    assert_eq!(labels, ["origin/main", "Current branch"]);
     assert_eq!(harness.click_segment(control, &labels, 0), None, "already on");
     let changed = harness.click_segment(control, &labels, 1);
     assert_eq!(
         changed,
-        Some(NewTabPrefs { start_from: StartFrom::DefaultBranch, ..NewTabPrefs::default() })
+        Some(NewTabPrefs { start: Some(StartFrom::Current), ..NewTabPrefs::default() })
     );
+    assert_eq!(start_options(None)[0].1, "Remote default");
 
     let mut harness = Harness::new(NewTabPrefs::default());
     let control = harness.placed().right_panel.unwrap();

@@ -8,6 +8,7 @@ use tidewatch_core::branch_name::{self, Problem};
 use tidewatch_core::names;
 use tidewatch_core::prefs::{NewTabPrefs, StartFrom};
 use tidewatch_core::profiles::Profile;
+use tidewatch_core::start_base;
 use tidewatch_core::workflows::Workflow;
 
 use crate::catalog::{Availability, Catalog};
@@ -545,15 +546,20 @@ impl NewTab {
         NameCheck::Fine
     }
 
-    /// The branch the worktree starts from, `None` for HEAD.
+    /// The branch the worktree starts from, `None` for HEAD. By default the remote's default branch
+    /// as `origin/main`, which the job fetches first; a repo with no such remote falls back to its
+    /// local default branch, then the checked-out one.
     pub(crate) fn base(&self, facts: Option<&RepoFacts>) -> Option<String> {
         match &self.base {
             Base::Picked(branch) => Some(branch.clone()),
-            Base::Default => facts.and_then(|facts| match self.defaults.start_from {
+            Base::Default => facts.and_then(|facts| match self.defaults.start_from() {
                 StartFrom::Current => facts.checked_out.clone(),
-                StartFrom::DefaultBranch => {
-                    facts.default_branch.clone().or_else(|| facts.checked_out.clone())
-                }
+                StartFrom::DefaultBranch => facts
+                    .remote_default
+                    .as_deref()
+                    .map(start_base::remote_ref)
+                    .or_else(|| facts.default_branch.clone())
+                    .or_else(|| facts.checked_out.clone()),
             }),
         }
     }
@@ -562,12 +568,14 @@ impl NewTab {
         self.base = if branch == HEAD { Base::Default } else { Base::Picked(branch.to_owned()) };
     }
 
-    /// Every branch the field offers: the checked-out one first, or HEAD when none is.
+    /// Every branch the field offers: the remote default first, then the checked-out one (or HEAD
+    /// when none is), then the other local branches.
     pub(crate) fn base_options(facts: Option<&RepoFacts>) -> Vec<String> {
         let Some(facts) = facts else { return Vec::new() };
+        let remote = facts.remote_default.as_deref().map(start_base::remote_ref);
         let first = facts.checked_out.clone().unwrap_or_else(|| HEAD.to_owned());
         let rest = facts.branches.iter().filter(|branch| **branch != first).cloned();
-        std::iter::once(first.clone()).chain(rest).collect()
+        remote.into_iter().chain(std::iter::once(first.clone())).chain(rest).collect()
     }
 
     /// What Start does: the request, or the reason it cannot start.

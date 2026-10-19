@@ -4,6 +4,7 @@
 use egui::{CornerRadius, Id, Popup, Rect, RichText, Sense, Stroke, Ui, pos2, vec2};
 use tidewatch_core::agents::Level;
 use tidewatch_core::prefs::{NewTabPrefs, RightPanel, StartFrom};
+use tidewatch_core::start_base;
 
 use crate::brand;
 use crate::screen_kit::{body, paint_cli_badge};
@@ -18,10 +19,16 @@ const SEGMENT_H: f32 = 28.0;
 const AGENT_ID: &str = "new-tab-prefs-agent";
 const PLACED: &str = "new-tab-prefs-placed";
 const OPTIONS: &str = "new-tab-prefs-options";
-const START_FROM: [(StartFrom, &str); 2] =
-    [(StartFrom::Current, "Current branch"), (StartFrom::DefaultBranch, "Default branch")];
+const NO_DEFAULT: &str = "Remote default";
 const RIGHT_PANEL: [(RightPanel, &str); 2] =
     [(RightPanel::Progress, "Progress"), (RightPanel::History, "History")];
+
+/// The Start from choices: the remote default (`origin/main` once the repo says which it is) and the
+/// checked-out branch.
+pub(crate) fn start_options(default_branch: Option<&str>) -> [(StartFrom, String); 2] {
+    let remote = default_branch.map_or_else(|| NO_DEFAULT.to_owned(), start_base::remote_ref);
+    [(StartFrom::DefaultBranch, remote), (StartFrom::Current, "Current branch".to_owned())]
+}
 
 /// A profile the Agent dropdown offers.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -67,6 +74,7 @@ pub(crate) fn card(
     ui: &mut Ui,
     prefs: &NewTabPrefs,
     profiles: &[ProfileOption],
+    default_branch: Option<&str>,
 ) -> Option<NewTabPrefs> {
     let mut changed = None;
     let mut placed = Placed::default();
@@ -108,12 +116,13 @@ pub(crate) fn card(
             changed = Some(NewTabPrefs { remote: on, ..prefs.clone() });
         }
 
-        let labels = START_FROM.map(|(_, label)| label);
-        let active = START_FROM.iter().position(|(from, _)| *from == prefs.start_from);
+        let options = start_options(default_branch);
+        let labels = options.each_ref().map(|(_, label)| label.as_str());
+        let active = options.iter().position(|(from, _)| *from == prefs.start_from());
         let picked = pick_row(ui, "Start from", "new-tab-prefs-start", &labels, active);
         placed.start_from = picked.0;
         if let Some(index) = picked.1 {
-            changed = Some(NewTabPrefs { start_from: START_FROM[index].0, ..prefs.clone() });
+            changed = Some(NewTabPrefs { start: Some(options[index].0), ..prefs.clone() });
         }
 
         let labels = RIGHT_PANEL.map(|(_, label)| label);

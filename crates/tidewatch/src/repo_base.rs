@@ -5,6 +5,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use tidewatch_core::paths::TidewatchPaths;
+use tidewatch_core::start_base;
 use tidewatch_core::worktree::{local_branches, taken_names};
 
 use crate::jobs::Jobs;
@@ -51,6 +52,8 @@ pub(crate) fn pick_default_branch(
 pub(crate) struct RepoFacts {
     pub(crate) checked_out: Option<String>,
     pub(crate) default_branch: Option<String>,
+    /// The remote's default branch (`main`, no `origin/`), when the repo has an `origin` with one.
+    pub(crate) remote_default: Option<String>,
     pub(crate) branches: Vec<String>,
     pub(crate) taken: HashSet<String>,
 }
@@ -61,6 +64,7 @@ impl RepoFacts {
         Self {
             checked_out: checked_out(repo),
             default_branch: pick_default_branch(origin_head(repo).as_deref(), &branches),
+            remote_default: start_base::remote_default(repo),
             branches,
             taken: paths.map(|paths| taken_names(paths, repo)).unwrap_or_default(),
         }

@@ -9,6 +9,7 @@ use tidewatch_core::listener::{Listener, TabRegistration};
 use tidewatch_core::paths::TidewatchPaths;
 use tidewatch_core::prepare::{PrepareInput, prepare};
 use tidewatch_core::session_id;
+use tidewatch_core::start_base;
 use tidewatch_core::trust_apply::Grant;
 use tidewatch_core::worktree::{
     self, BranchChoice, BranchOutcome, Inspection, Leftover, RemoveMode, Worktree,
@@ -49,20 +50,22 @@ pub(crate) fn open(jobs: &Jobs<Done>, ctx: &egui::Context, spec: OpenSpec) {
 }
 
 fn run_open(spec: &OpenSpec) -> Result<Opened, OpenFailure> {
-    let (worktree, dir, repo) = match &spec.target {
+    let (worktree, dir, repo, base_note) = match &spec.target {
         Target::Worktree { repo, placement } => {
+            let start =
+                start_base::prepare(repo, placement.base.as_deref(), start_base::FETCH_TIMEOUT);
             let made = match &placement.name {
-                Some(name) => {
-                    worktree::add_free(&spec.paths, repo, name, placement.base.as_deref())
-                }
+                Some(name) => worktree::add_free(&spec.paths, repo, name, start.base.as_deref()),
                 None => worktree::add(&spec.paths, repo),
             }
             .map_err(|e| OpenFailure::Nothing(e.to_string()))?;
-            (Some(made.clone()), made.path, repo.clone())
+            (Some(made.clone()), made.path, repo.clone(), start.note)
         }
-        Target::Folder { dir } => (None, dir.clone(), dir.clone()),
+        Target::Folder { dir } => (None, dir.clone(), dir.clone(), None),
     };
-    let Some(request) = &spec.agent else { return Ok(Opened { worktree, dir, started: None }) };
+    let Some(request) = &spec.agent else {
+        return Ok(Opened { worktree, dir, started: None, base_note });
+    };
     let tab_key = worktree
         .as_ref()
         .map_or_else(|| format!("tab-{}", spec.tab), |made| made.name().to_owned());
@@ -100,6 +103,7 @@ fn run_open(spec: &OpenSpec) -> Result<Opened, OpenFailure> {
         Ok(prepared) => Ok(Opened {
             worktree,
             dir,
+            base_note,
             started: Some(Box::new(Started {
                 profile_name: request.profile.name.clone(),
                 profile_id: request.profile_id.clone(),

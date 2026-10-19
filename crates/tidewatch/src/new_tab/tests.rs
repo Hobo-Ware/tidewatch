@@ -45,6 +45,7 @@ fn facts(checked_out: Option<&str>, branches: &[&str], taken: &[&str]) -> RepoFa
     RepoFacts {
         checked_out: checked_out.map(str::to_owned),
         default_branch: None,
+        remote_default: None,
         branches: branches.iter().map(|b| (*b).to_owned()).collect(),
         taken: taken.iter().map(|t| (*t).to_owned()).collect::<HashSet<_>>(),
     }
@@ -468,9 +469,11 @@ fn the_base_is_the_checked_out_branch_unless_one_is_picked() {
 }
 
 #[test]
-fn the_branch_list_starts_with_the_checked_out_branch_or_head() {
-    let repo = facts(Some("feat/x"), &["main", "feat/x", "release"], &[]);
+fn the_branch_list_starts_with_the_remote_default_then_the_checked_out_branch_or_head() {
+    let mut repo = facts(Some("feat/x"), &["main", "feat/x", "release"], &[]);
     assert_eq!(NewTab::base_options(Some(&repo)), ["feat/x", "main", "release"]);
+    repo.remote_default = Some("main".into());
+    assert_eq!(NewTab::base_options(Some(&repo)), ["origin/main", "feat/x", "main", "release"]);
     let detached = facts(None, &["main"], &[]);
     assert_eq!(NewTab::base_options(Some(&detached)), ["HEAD", "main"]);
     assert_eq!(NewTab::base_options(None), Vec::<String>::new());
@@ -717,22 +720,29 @@ fn start_from_follows_the_default_until_a_branch_is_picked() {
     let catalog = catalog();
     let mut repo = facts(Some("feat/x"), &["main", "feat/x", "release"], &[]);
     repo.default_branch = Some("main".into());
+    repo.remote_default = Some("main".into());
+    let mut renamed = facts(Some("feat/x"), &["trunk", "feat/x"], &[]);
+    renamed.remote_default = Some("trunk".into());
+    let mut local_only = facts(Some("feat/x"), &["main", "feat/x"], &[]);
+    local_only.default_branch = Some("main".into());
     let no_default = facts(Some("feat/x"), &["feat/x"], &[]);
     let detached = facts(None, &["main"], &[]);
     let cases = [
         (StartFrom::Current, &repo, Some("feat/x")),
-        (StartFrom::DefaultBranch, &repo, Some("main")),
+        (StartFrom::DefaultBranch, &repo, Some("origin/main")),
+        (StartFrom::DefaultBranch, &renamed, Some("origin/trunk")),
+        (StartFrom::DefaultBranch, &local_only, Some("main")),
         (StartFrom::DefaultBranch, &no_default, Some("feat/x")),
         (StartFrom::DefaultBranch, &detached, None),
     ];
     for (start_from, facts, want) in cases {
-        let mut state = opened_with(defaults(|p| p.start_from = start_from), None, &catalog);
+        let mut state = opened_with(defaults(|p| p.start = Some(start_from)), None, &catalog);
         assert_eq!(state.base(Some(facts)).as_deref(), want, "{start_from:?}");
         state.pick_base("release");
         assert_eq!(state.base(Some(facts)).as_deref(), Some("release"));
         state.pick_base("HEAD");
         assert_eq!(state.base(Some(facts)).as_deref(), want, "{start_from:?} back to the default");
     }
-    let state = opened_with(defaults(|p| p.start_from = StartFrom::DefaultBranch), None, &catalog);
+    let state = opened_with(defaults(|p| p.start = Some(StartFrom::DefaultBranch)), None, &catalog);
     assert_eq!(state.base(None), None);
 }

@@ -23,6 +23,8 @@ pub(crate) struct General {
     pub(crate) github: GithubPrefs,
     pub(crate) new_tab: NewTabPrefs,
     pub(crate) profiles: Vec<ProfileOption>,
+    /// The active repo's remote default branch, for the Start from label.
+    pub(crate) default_branch: Option<String>,
 }
 
 pub(crate) fn page(
@@ -61,8 +63,13 @@ pub(crate) fn page(
         }
     });
     let window = window_view::section(ui, window, &general.window).map(Action::Window);
-    let new_tab =
-        new_tab_prefs_view::card(ui, &general.new_tab, &general.profiles).map(Action::NewTab);
+    let new_tab = new_tab_prefs_view::card(
+        ui,
+        &general.new_tab,
+        &general.profiles,
+        general.default_branch.as_deref(),
+    )
+    .map(Action::NewTab);
     let github = github_view::card(ui, general.github).map(Action::Github);
     let updates = updates_view::section(ui, updates).map(Action::Updates);
     footer_note(ui, file);

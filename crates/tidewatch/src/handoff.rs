@@ -373,6 +373,7 @@ fn agent_tab(entry: &AgentEntry, dir: &Path, now: f64, notes: &mut Vec<String>) 
         workflow,
         first_prompt: entry.first_prompt,
         resume_note: None,
+        base_note: None,
         remote: entry.remote.clone().map(RemoteSession::new),
     }
 }
