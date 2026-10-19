@@ -11,11 +11,29 @@ const STAGES_FILE: &str = "stages.json";
 const PR_CARDS_FILE: &str = "pr_cards.json";
 const PROGRESS_FILE: &str = "progress.md";
 const HOUSE_STYLE_FILE: &str = "house-style.md";
+const JOBS_FILE: &str = "jobs.json";
+const AVATAR_FILE: &str = "avatar.json";
+const PROGRESS_FEED_FILE: &str = "progress-feed.jsonl";
 
 /// The ledger file that sits next to a tab's `notes.json`.
 #[must_use]
 pub fn progress_file_beside(notes_file: &Path) -> PathBuf {
     notes_file.with_file_name(PROGRESS_FILE)
+}
+
+#[must_use]
+pub fn jobs_file_beside(notes_file: &Path) -> PathBuf {
+    notes_file.with_file_name(JOBS_FILE)
+}
+
+#[must_use]
+pub fn avatar_file_beside(notes_file: &Path) -> PathBuf {
+    notes_file.with_file_name(AVATAR_FILE)
+}
+
+#[must_use]
+pub fn progress_feed_file_beside(notes_file: &Path) -> PathBuf {
+    notes_file.with_file_name(PROGRESS_FEED_FILE)
 }
 
 fn repo_key(repo: &Path) -> String {
@@ -174,6 +192,11 @@ impl TidewatchPaths {
         self.tab_state_dir(repo, tab).join(PROGRESS_FILE)
     }
 
+    #[must_use]
+    pub fn progress_feed_file(&self, repo: &Path, tab: &str) -> PathBuf {
+        self.tab_state_dir(repo, tab).join(PROGRESS_FEED_FILE)
+    }
+
     /// What one agent is given as its house style: the house-style file and the ledger format with
     /// the repo's checklist filled in.
     #[must_use]
@@ -322,6 +345,20 @@ mod tests {
         );
         assert_ne!(paths.progress_file(repo, "main"), paths.progress_file(repo, "brave-otter"));
         assert_eq!(progress_file_beside(&notes), paths.progress_file(repo, "brave-otter"));
+    }
+
+    #[test]
+    fn jobs_avatar_and_the_progress_feed_sit_with_the_notes_of_their_tab() {
+        let paths = paths();
+        let repo = Path::new("/work/web");
+        let notes = paths.notes_file(repo, "brave-otter");
+        let feed = paths.progress_feed_file(repo, "brave-otter");
+        assert_eq!(feed.parent(), notes.parent());
+        assert!(feed.ends_with("brave-otter/progress-feed.jsonl"));
+        assert_eq!(progress_feed_file_beside(&notes), feed);
+        assert!(jobs_file_beside(&notes).ends_with("brave-otter/jobs.json"));
+        assert!(avatar_file_beside(&notes).ends_with("brave-otter/avatar.json"));
+        assert_ne!(feed, paths.progress_feed_file(repo, "main"));
     }
 
     #[test]

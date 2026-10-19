@@ -113,6 +113,7 @@ impl RunEvent {
             TabEvent::NoteReply { .. }
             | TabEvent::Proposal { .. }
             | TabEvent::Progress { .. }
+            | TabEvent::Job { .. }
             | TabEvent::Ask { .. } => None,
         }
     }
