@@ -6,6 +6,7 @@
 use std::path::PathBuf;
 
 use tidewatch_core::events::{TabEvent, TabMessage};
+use tidewatch_core::job::Report;
 use tidewatch_core::progress::Ledger;
 use tidewatch_core::workflows::Workflow;
 
@@ -34,7 +35,7 @@ pub(crate) struct Polled {
 }
 
 /// What a message asks the app to do beyond updating the tab's run.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub(crate) enum Follow {
     /// Add the finding to the tab's notes file.
     Finding {
@@ -50,6 +51,8 @@ pub(crate) enum Follow {
     Proposal { tab: u64, workflow: Box<Workflow> },
     /// The agent sent its progress ledger; it is already saved in the tab's state folder.
     Progress { tab: u64, ledger: Box<Ledger> },
+    /// The agent reported a job; the tab's board takes it.
+    Job { tab: u64, report: Box<Report> },
 }
 
 /// Hands one listener message to its tab. A message for a closed tab is dropped.
@@ -83,7 +86,10 @@ pub(crate) fn route<T>(tabs: &mut Tabs<Pane<T>>, message: TabMessage, now: f64) 
             agent.reader.ask_arrived(questions.clone(), reply.clone());
             None
         }
-        TabEvent::Hook(_) | TabEvent::StageDone { .. } | TabEvent::Job { .. } => None,
+        TabEvent::Job { report } => {
+            Some(Follow::Job { tab: message.tab_id, report: Box::new(report.clone()) })
+        }
+        TabEvent::Hook(_) | TabEvent::StageDone { .. } => None,
     };
     if let TabEvent::Hook(hook) = &message.event {
         agent.reader.hook(hook.transcript_path.clone());

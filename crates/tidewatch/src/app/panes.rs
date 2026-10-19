@@ -12,7 +12,7 @@ use crate::diff_pane::{PaneAction, PaneOut};
 use crate::file_view::{self, TerminalChip};
 use crate::repo::Workspace;
 use crate::tab_view::ViewSpec;
-use crate::{diff_pane, flow_glue, history_pane, layout, pane_jobs, progress_view};
+use crate::{diff_pane, flow_glue, history_pane, job_model, layout, pane_jobs, progress_view};
 
 impl Tidewatch {
     /// Keeps one view per tab that has panes: only the visible tab's view is loaded and watched.
@@ -113,11 +113,20 @@ impl Tidewatch {
             .as_ref()
             .and_then(|status| self.flow.extras(active_id, &view.notes, status));
         let agent_id = agent.map_or("", |agent| agent.run.agent_id.as_str());
+        let now_ms = wall_ms() as i64;
+        let cards = agent
+            .and_then(|_| self.job_live.board(active_id))
+            .map(|board| job_model::cards(board, now_ms, self.job_live.zone()))
+            .unwrap_or_default();
         let progress = agent.and_then(|_| {
-            let known = self.progress.ledger(active_id)?;
+            let known = self.progress.ledger(active_id);
+            if known.is_none() && cards.is_empty() {
+                return None;
+            }
             let input = progress_view::Input {
                 ledger: known,
-                now_ms: wall_ms() as i64,
+                jobs: &cards,
+                now_ms,
                 time: ctx.input(|i| i.time),
                 animate: ctx.input(|i| i.viewport().focused.unwrap_or(true)),
                 first: self.new_tab_prefs.right_panel.into(),
@@ -134,6 +143,10 @@ impl Tidewatch {
         );
         let graph_action = shown.graph;
         let answer = shown.progress == Some(progress_view::Action::Answer);
+        let ask = match shown.progress.clone() {
+            Some(progress_view::Action::Ask { message, .. }) => Some(message),
+            _ => None,
+        };
         let now_unix = flow_glue::unix_now();
         let pane = match (side, view.file_open()) {
             (false, _) => diff_pane::show(ui, areas.diff, view, extras.as_ref(), now_unix),
@@ -168,6 +181,9 @@ impl Tidewatch {
         }
         if answer {
             self.open_reply_box();
+        }
+        if let Some(message) = ask {
+            self.ask_agent(active_id, &message, ctx, ctx.input(|i| i.time));
         }
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)

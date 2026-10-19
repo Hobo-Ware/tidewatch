@@ -63,7 +63,10 @@ impl Strip {
                         120.0,
                         0.0,
                         &mut actions,
-                        (|_: &Pane<u32>| (Progress::default(), CmdState::default()), |_| None),
+                        (
+                            |_: &Pane<u32>| (Progress::default(), CmdState::default()),
+                            |_| TabExtras::default(),
+                        ),
                     );
                 });
             });
@@ -237,7 +240,7 @@ fn a_hovered_inactive_tab_gets_a_fainter_tint_under_its_text_and_a_plain_one_not
 fn the_room_for_a_title_leaves_the_ring_and_the_trailing_slot_free() {
     let cases = [(200.0, 7.2, 2, 15), (120.0, 7.2, 2, 4), (60.0, 7.2, 2, 1), (200.0, 7.2, 12, 14)];
     for (width, char_w, number, want) in cases {
-        assert_eq!(title_budget(width, char_w, number), want, "{width} {number}");
+        assert_eq!(title_budget(width, char_w, number, (true, false)), want, "{width} {number}");
     }
 }
 
@@ -250,7 +253,11 @@ fn collect_text(shape: &Shape, out: &mut Vec<(String, Rect)>) {
     }
 }
 
-fn agent_strip(title: &str, width: f32, with_ring: bool) -> (Vec<Rect>, Vec<(String, Rect)>) {
+fn agent_strip(
+    title: &str,
+    width: f32,
+    (with_ring, with_job): (bool, bool),
+) -> (Vec<Rect>, Vec<(String, Rect)>) {
     use crate::agent_run::AgentRun;
     use crate::pane::AgentTab;
     let ctx = crate::fonts::test_context();
@@ -281,7 +288,15 @@ fn agent_strip(title: &str, width: f32, with_ring: bool) -> (Vec<Rect>, Vec<(Str
                         &mut actions,
                         (
                             |_: &Pane<u32>| (Progress::default(), CmdState::default()),
-                            |_| with_ring.then(|| tab_ring(&ledger)),
+                            |_| TabExtras {
+                                ring: with_ring.then(|| tab_ring(&ledger)),
+                                job: with_job.then(|| TabJob {
+                                    fraction: 0.21,
+                                    label: "21%".into(),
+                                    stalled: false,
+                                    tip: "orders".into(),
+                                }),
+                            },
                         ),
                     );
                 });
@@ -298,7 +313,7 @@ fn agent_strip(title: &str, width: f32, with_ring: bool) -> (Vec<Rect>, Vec<(Str
 #[test]
 fn a_tab_with_a_ledger_cuts_its_title_before_the_ring() {
     for width in [100.0, 120.0, 200.0] {
-        let (rects, texts) = agent_strip("a-very-long-worktree-name-indeed", width, true);
+        let (rects, texts) = agent_strip("a-very-long-worktree-name-indeed", width, (true, false));
         let tab = rects[1];
         let title = texts.iter().find(|(text, _)| text.starts_with("2  ")).unwrap();
         assert!(
@@ -312,11 +327,60 @@ fn a_tab_with_a_ledger_cuts_its_title_before_the_ring() {
 
 #[test]
 fn a_tab_without_a_ledger_keeps_the_whole_title_room() {
-    let (rects, with) = agent_strip("a-very-long-worktree-name-indeed", 200.0, true);
-    let (_, without) = agent_strip("a-very-long-worktree-name-indeed", 200.0, false);
+    let (rects, with) = agent_strip("a-very-long-worktree-name-indeed", 200.0, (true, false));
+    let (_, without) = agent_strip("a-very-long-worktree-name-indeed", 200.0, (false, false));
     let width = |texts: &[(String, Rect)]| {
         texts.iter().find(|(text, _)| text.starts_with("2  ")).unwrap().1.width()
     };
     assert!(width(&without) > width(&with));
     assert_eq!(rects[1].width(), 200.0);
+}
+
+#[test]
+fn a_tab_with_a_job_cuts_its_title_before_the_percent_and_shows_it() {
+    for width in [120.0, 200.0, 260.0] {
+        let (rects, texts) = agent_strip("a-very-long-worktree-name-indeed", width, (false, true));
+        let tab = rects[1];
+        let title = texts.iter().find(|(text, _)| text.starts_with("2  ")).unwrap();
+        let label = texts.iter().find(|(text, _)| text == "21%").unwrap();
+        assert!(title.1.right() <= label.1.left(), "{:?} meets {:?} at {width}", title.1, label.1);
+        assert!(label.1.right() <= tab.right() - TAB_PAD_X - TAB_SLOT_W, "{:?}", label.1);
+    }
+}
+
+#[test]
+fn a_job_percent_sits_left_of_the_ring_when_there_is_one() {
+    let (_, texts) = agent_strip("orders", 220.0, (true, true));
+    let (rects, _) = agent_strip("orders", 220.0, (true, true));
+    let label = texts.iter().find(|(text, _)| text == "21%").unwrap();
+    assert!(label.1.right() <= ring_rect(rects[1]).left());
+}
+
+#[test]
+fn the_job_bar_runs_from_the_left_inset_by_its_fraction_along_the_tab_floor() {
+    let tab = Rect::from_min_size(pos2(10.0, 0.0), vec2(200.0, TAB_H));
+    let half = job_bar_rect(tab, 0.5);
+    assert_eq!(half.left(), 16.0);
+    assert_eq!(half.width(), 94.0);
+    assert_eq!(half.height(), 2.0);
+    assert_eq!(half.bottom(), TAB_H - 3.0);
+    assert_eq!(job_bar_rect(tab, 2.0).width(), 188.0);
+    assert_eq!(job_bar_rect(tab, -1.0).width(), 0.0);
+}
+
+#[test]
+fn a_stalled_job_paints_its_label_orange_and_a_running_one_teal() {
+    for (stalled, want) in [(false, brand::TEAL), (true, brand::ORANGE)] {
+        let ctx = egui::Context::default();
+        let tab = Rect::from_min_size(pos2(0.0, 0.0), vec2(200.0, TAB_H));
+        let job = TabJob { fraction: 0.5, label: "50%".into(), stalled, tip: String::new() };
+        let output = ctx.run_ui(RawInput::default(), |ui| paint_job(ui, tab, &job, false, 1));
+        let mut inks = Vec::new();
+        for clipped in &output.shapes {
+            if let Shape::Text(text) = &clipped.shape {
+                inks.push(text.galley.job.sections[0].format.color);
+            }
+        }
+        assert_eq!(inks, [want]);
+    }
 }

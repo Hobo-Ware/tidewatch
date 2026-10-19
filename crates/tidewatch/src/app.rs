@@ -69,6 +69,7 @@ use crate::due;
 use crate::flow::Flow;
 use crate::fonts;
 use crate::handoff;
+use crate::job_glue;
 use crate::jobs::Jobs;
 use crate::last_used::LastUsed;
 use crate::layout;
@@ -154,6 +155,7 @@ pub(crate) struct Tidewatch {
     flow: Flow,
     pr: pr_glue::Host,
     progress: progress_glue::Host,
+    job_live: job_glue::Host,
     progress_ui: progress_view::Memory,
     checklist: overview_checklist::Host,
     snoozes: due::Snoozes,
@@ -238,6 +240,7 @@ impl Tidewatch {
             paths.as_ref().filter(|_| screenshot.is_none()),
             progress_glue::Dev::from_env(),
         );
+        let job_live = job_glue::Host::from_env(paths.is_some() && screenshot.is_none());
         let dev_view = DevView::from_env();
         let trust = Trust::new(paths.as_ref(), cli_home);
         let dev_session = DevSession::from_env();
@@ -293,6 +296,7 @@ impl Tidewatch {
             flow,
             pr,
             progress,
+            job_live,
             progress_ui: progress_view::Memory::default(),
             checklist: overview_checklist::Host::new(),
             snoozes: due::Snoozes::default(),

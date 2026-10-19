@@ -10,6 +10,8 @@ use super::settings::open_in_editor;
 use super::{Tidewatch, wall_ms};
 use crate::coming_up::{Row, coming_up};
 use crate::due::{Due, Key, ask_blocked, due_items, secs_to_midnight, tell_all};
+use crate::job_glue;
+use crate::job_model::lane_line;
 use crate::note_send::ENTER_DELAY_SECS;
 use crate::notify;
 use crate::overview::Overview;
@@ -54,6 +56,33 @@ impl Tidewatch {
         self.progress_ui.forget_except(|id| open.contains(&id));
     }
 
+    pub(super) fn drive_jobs(&mut self, ctx: &egui::Context) {
+        let now_ms = wall_ms() as i64;
+        let facts: Vec<job_glue::Facts<'_>> = self
+            .tabs
+            .items()
+            .iter()
+            .filter_map(|tab| {
+                let notes_file = tab.pane.agent.as_ref()?.run.notes_file.as_deref()?;
+                Some(job_glue::Facts { id: tab.id, notes_file })
+            })
+            .collect();
+        let mut wake = self.job_live.tick(&facts, ctx, now_ms);
+        for tab in self.tabs.items() {
+            let (Body::Shell(term), Some(_)) = (&tab.pane.body, &tab.pane.agent) else { continue };
+            let later = self.job_live.scan(tab.id, term.output_gen(), now_ms, || {
+                job_glue::screen_rows(&term.grid_snapshot())
+            });
+            wake = wake.into_iter().chain(later).min();
+        }
+        if let Some(at) = wake {
+            let wait = u64::try_from((at - now_ms).max(0)).unwrap_or(0);
+            ctx.request_repaint_after(
+                Duration::from_millis(wait) + Duration::from_secs_f64(WAKE_SLACK_S),
+            );
+        }
+    }
+
     /// The marks of the steps of a scheduled item, when its tab is open and its ledger lists them.
     pub(super) fn steps_of(&self, row: &Row) -> Vec<Mark> {
         self.open_tab_of(&row.repo, &row.tab)
@@ -83,7 +112,7 @@ impl Tidewatch {
     ) {
         for click in clicks {
             match click {
-                due_view::Action::Ask(text) => self.ask_to_start(tab, &text, ctx, now),
+                due_view::Action::Ask(text) => self.ask_agent(tab, &text, ctx, now),
                 due_view::Action::Snooze(what) => {
                     let key = self.due_key(tab, &what);
                     if let Some(key) = key {
@@ -101,7 +130,7 @@ impl Tidewatch {
     }
 
     /// Pastes the message and presses Enter, only while the agent is idle.
-    fn ask_to_start(&mut self, tab: u64, text: &str, ctx: &egui::Context, now: f64) {
+    pub(super) fn ask_agent(&mut self, tab: u64, text: &str, ctx: &egui::Context, now: f64) {
         let status = self
             .tabs
             .items()
@@ -141,9 +170,12 @@ impl Tidewatch {
     }
 
     pub(super) fn add_looks(&self, overview: &mut Overview) {
+        let now_ms = wall_ms() as i64;
         let places = overview.places.iter_mut().flat_map(|place| place.rows.iter_mut());
         for row in overview.needs.iter_mut().chain(places) {
             row.look = self.progress.ledger(row.tab_id).map(|known| look(&known.ledger));
+            row.job_line =
+                self.job_live.board(row.tab_id).and_then(|board| lane_line(board, now_ms));
         }
     }
 
