@@ -11,6 +11,7 @@ mod dev;
 mod draft;
 mod flow;
 mod frame;
+mod open_link;
 mod overlays;
 mod palette;
 mod panes;
@@ -46,6 +47,7 @@ use tidewatch_core::tools::Tools;
 use tidewatch_core::update::fake_release;
 use tidewatch_core::worktree::{Inspection, Worktree};
 
+use self::open_link::LinkDone;
 use self::repos::Picker;
 use crate::agent_events::{self, Hooks};
 use crate::agent_jobs;
@@ -54,6 +56,7 @@ use crate::build_workflow::Asked;
 use crate::catalog::Catalog;
 use crate::dev_agent::{DevAgent, DevDraft};
 use crate::dev_flow::DevFlow;
+use crate::dev_link::DevLink;
 use crate::dev_panes::DevPanes;
 use crate::dev_reader::DevReader;
 use crate::dev_screenshot::DevScreenshot;
@@ -72,6 +75,7 @@ use crate::layout;
 use crate::leftover_glue;
 use crate::new_tab::Request;
 use crate::notify::Notifier;
+use crate::open_link::OpenLink;
 use crate::os::RealOs;
 use crate::overview_checklist;
 use crate::palette::Palette;
@@ -131,6 +135,9 @@ pub(crate) struct Tidewatch {
     takeover_jobs: Jobs<takeover_jobs::Done>,
     dev_takeover: Option<DevTakeover>,
     picker: Picker,
+    open_link: Option<OpenLink>,
+    link_jobs: Jobs<LinkDone>,
+    dev_link: Option<DevLink>,
     repo_close: Option<RepoClose>,
     notes_writer: NotesWriter,
     avatars: AvatarStore,
@@ -267,6 +274,9 @@ impl Tidewatch {
             takeover_jobs: Jobs::new(),
             dev_takeover: DevTakeover::from_env(),
             picker: Picker::new(),
+            open_link: None,
+            link_jobs: Jobs::new(),
+            dev_link: DevLink::from_env(),
             repo_close: None,
             notes_writer: NotesWriter::new(),
             avatars: AvatarStore::offline(cc.egui_ctx.clone()),

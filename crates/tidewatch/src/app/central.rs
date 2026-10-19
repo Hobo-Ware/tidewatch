@@ -124,6 +124,7 @@ impl Tidewatch {
         area: egui::Rect,
         frame: &mut FrameIntent,
     ) {
+        self.open_pasted_link(ctx);
         let home = self.paths.as_ref().and_then(|paths| paths.root().parent());
         let recent = self.welcome.as_deref().unwrap_or_default();
         let elsewhere = self.takeover_welcome_line();

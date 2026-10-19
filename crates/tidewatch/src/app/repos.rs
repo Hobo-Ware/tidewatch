@@ -1,4 +1,4 @@
-//! The repo menu's two items: a folder picker that opens another repo, and closing the repo on
+//! The repo menu's two items: opening another repo (a link or a folder picker), and closing the repo on
 //! show one tab at a time.
 
 use std::path::PathBuf;
@@ -42,12 +42,12 @@ impl Picker {
 impl Tidewatch {
     pub(super) fn run_repo_command(&mut self, command: RepoCommand, ctx: &egui::Context) {
         match command {
-            RepoCommand::Open => self.pick_repo(ctx),
+            RepoCommand::Open => self.open_repo_dialog(""),
             RepoCommand::Close => self.begin_close_repo(ctx),
         }
     }
 
-    fn pick_repo(&mut self, ctx: &egui::Context) {
+    pub(super) fn pick_repo(&mut self, ctx: &egui::Context) {
         self.picker.start(ctx);
     }
 

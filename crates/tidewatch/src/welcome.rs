@@ -64,6 +64,29 @@ pub(crate) fn recent(
     found
 }
 
+/// Every repo folder the last window and the saved session remember, each once and only while it
+/// is still there: where a pasted GitHub link may already have a checkout.
+pub(crate) fn known_dirs(
+    remembered: Option<&Remembered>,
+    session: &Session,
+    is_dir: impl Fn(&Path) -> bool,
+) -> Vec<PathBuf> {
+    let from_last = remembered.into_iter().flat_map(|r| std::iter::once(&r.dir).chain(&r.also));
+    let from_session = session.windows.iter().filter(|window| !window.other).map(|w| &w.dir);
+    let mut found: Vec<PathBuf> = Vec::new();
+    for dir in from_last.chain(from_session) {
+        if dir != Path::new("/") && is_dir(dir) && !found.contains(dir) {
+            found.push(dir.clone());
+        }
+    }
+    found
+}
+
+pub(crate) fn known_repo_dirs(paths: Option<&TidewatchPaths>) -> Vec<PathBuf> {
+    let Some(paths) = paths else { return Vec::new() };
+    known_dirs(last_workspace::load(paths).as_ref(), &Session::load(paths), Path::is_dir)
+}
+
 /// Reads the two files the list comes from. They are small and read once, at launch.
 pub(crate) fn recent_repos(paths: Option<&TidewatchPaths>) -> Vec<Recent> {
     let Some(paths) = paths else { return Vec::new() };
@@ -82,6 +105,27 @@ mod tests {
 
     fn shell(dir: &str) -> SavedTab {
         SavedTab::Shell { dir: PathBuf::from(dir), branch: None }
+    }
+
+    #[test]
+    fn every_remembered_repo_is_known_once_while_its_folder_is_there() {
+        let session = Session {
+            windows: vec![
+                window("/code/api", false, vec![SavedTab::Main]),
+                window("/code/web", false, vec![]),
+                window("/scratch", true, vec![]),
+                window("/code/old", false, vec![]),
+                window("/", false, vec![]),
+            ],
+        };
+        let remembered = Remembered {
+            dir: PathBuf::from("/code/web"),
+            also: vec![PathBuf::from("/code/api"), PathBuf::from("/code/gone")],
+        };
+        let known = known_dirs(Some(&remembered), &session, |dir| dir != Path::new("/code/gone"));
+        let want: Vec<PathBuf> = ["/code/web", "/code/api", "/code/old"].map(PathBuf::from).into();
+        assert_eq!(known, want);
+        assert_eq!(known_dirs(None, &Session { windows: vec![] }, |_| true), Vec::<PathBuf>::new());
     }
 
     #[test]
