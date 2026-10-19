@@ -14,6 +14,7 @@ use tidewatch_core::listener::{Listener, TabRegistration};
 use tidewatch_core::paths::TidewatchPaths;
 use tidewatch_core::prepare::{PrepareInput, banner_line, prepare};
 use tidewatch_core::session_id;
+use tidewatch_core::start_base;
 use tidewatch_core::test_command::{self, TestRun, run_in_timeout};
 use tidewatch_core::tools::Tools;
 use tidewatch_core::trust_apply::Grant;
@@ -58,15 +59,22 @@ pub(crate) fn open(jobs: &Jobs<Done>, ctx: &egui::Context, spec: OpenSpec) {
 }
 
 fn run_open(spec: &OpenSpec) -> Result<Opening, String> {
-    let worktree = match &spec.existing {
-        Some(worktree) => worktree.clone(),
-        None => match &spec.placement.name {
-            Some(name) => {
-                worktree::add_free(&spec.paths, &spec.repo, name, spec.placement.base.as_deref())
-            }
+    let worktree = if let Some(worktree) = &spec.existing {
+        worktree.clone()
+    } else {
+        let start = start_base::prepare(
+            &spec.repo,
+            spec.placement.base.as_deref(),
+            start_base::FETCH_TIMEOUT,
+        );
+        if let Some(note) = &start.note {
+            eprintln!("tidewatch: {note}");
+        }
+        match &spec.placement.name {
+            Some(name) => worktree::add_free(&spec.paths, &spec.repo, name, start.base.as_deref()),
             None => worktree::add(&spec.paths, &spec.repo),
         }
-        .map_err(|e| e.to_string())?,
+        .map_err(|e| e.to_string())?
     };
     Ok(Opening {
         base: detect_base(&spec.tools, &worktree.path).unwrap_or_else(|| FALLBACK_BASE.to_owned()),

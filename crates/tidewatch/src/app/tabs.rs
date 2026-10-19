@@ -198,8 +198,9 @@ impl Tidewatch {
 
     pub(super) fn apply_done(&mut self, done: Done, ctx: &egui::Context) {
         match done {
-            Done::Opened { tab, result } => {
+            Done::Opened { tab, mut result } => {
                 let created = result.is_ok();
+                let base_note = result.as_mut().ok().and_then(|opened| opened.base_note.take());
                 let now = ctx.input(|i| i.time);
                 let notes =
                     finish_open(&mut self.tabs, tab, result, now, |dir, prepared| match prepared {
@@ -208,6 +209,12 @@ impl Tidewatch {
                     });
                 if let Some(note) = notes.first() {
                     self.show_toast(format!("Started without part of the setup: {note}"), ctx);
+                }
+                if let Some(note) = base_note {
+                    match self.tabs.get_mut(tab).and_then(|tab| tab.pane.agent.as_mut()) {
+                        Some(agent) => agent.base_note = Some(note),
+                        None => self.show_toast(note, ctx),
+                    }
                 }
                 if created
                     && self.dev.is_some_and(DevWorktree::closes_after_opening)

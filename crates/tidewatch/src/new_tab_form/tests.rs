@@ -252,6 +252,7 @@ fn the_start_button_starts_too_and_a_blocked_one_does_nothing() {
     harness.facts = Some(RepoFacts {
         checked_out: Some("main".into()),
         default_branch: None,
+        remote_default: None,
         branches: vec!["main".into()],
         taken: HashSet::new(),
     });
@@ -280,6 +281,7 @@ fn a_taken_name_blocks_cmd_enter() {
     harness.facts = Some(RepoFacts {
         checked_out: None,
         default_branch: None,
+        remote_default: None,
         branches: Vec::new(),
         taken: ["dup".to_owned()].into_iter().collect(),
     });
@@ -356,6 +358,7 @@ fn dup_facts() -> RepoFacts {
     RepoFacts {
         checked_out: Some("main".into()),
         default_branch: None,
+        remote_default: None,
         branches: vec!["main".into()],
         taken: ["dup".to_owned()].into_iter().collect(),
     }

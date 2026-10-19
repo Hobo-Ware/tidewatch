@@ -62,6 +62,7 @@ impl Tidewatch {
                         }
                         if let Some(agent) = agent {
                             agent.resume_note = None;
+                            agent.base_note = None;
                         }
                     }
                     let snap = term.grid_snapshot();
@@ -89,7 +90,10 @@ impl Tidewatch {
                 }
                 if let (Some(name), Some(exit)) = (agent_name, term.exited()) {
                     exit_notice(ui, area, &exit_notice_text(name, exit.code));
-                } else if let Some(note) = agent.as_ref().and_then(|agent| agent.resume_note) {
+                } else if let Some(note) = agent
+                    .as_ref()
+                    .and_then(|agent| agent.resume_note.or(agent.base_note.as_deref()))
+                {
                     let pill = pane_notice(ui, area, note);
                     caught_above(ui, area, pill);
                 }

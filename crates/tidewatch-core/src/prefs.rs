@@ -40,9 +40,9 @@ pub struct Prefs {
 #[serde(rename_all = "snake_case")]
 pub enum StartFrom {
     /// The branch the repo has checked out.
-    #[default]
     Current,
-    /// The repo's default branch: what `origin/HEAD` names, else `main` or `master`.
+    /// The remote's default branch, fetched fresh: `origin/HEAD` names it, else `main` or `master`.
+    #[default]
     DefaultBranch,
 }
 
@@ -67,10 +67,20 @@ pub struct NewTabPrefs {
     pub permission: Option<Level>,
     #[serde(default)]
     pub remote: bool,
-    #[serde(default)]
-    pub start_from: StartFrom,
+    /// Only what the person picked in Settings is stored. Earlier versions wrote `start_from =
+    /// "current"` for everyone whenever any setting was saved, so that key is not read: it cannot
+    /// say who chose it. Without a choice the default applies.
+    #[serde(default, rename = "start_base", skip_serializing_if = "Option::is_none")]
+    pub start: Option<StartFrom>,
     #[serde(default)]
     pub right_panel: RightPanel,
+}
+
+impl NewTabPrefs {
+    #[must_use]
+    pub fn start_from(&self) -> StartFrom {
+        self.start.unwrap_or_default()
+    }
 }
 
 fn default_level<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Option<Level>, D::Error> {
@@ -494,10 +504,11 @@ mod tests {
                 agent: None,
                 permission: None,
                 remote: false,
-                start_from: StartFrom::Current,
+                start: None,
                 right_panel: RightPanel::Progress,
             }
         );
+        assert_eq!(Prefs::load(&paths).new_tab.start_from(), StartFrom::DefaultBranch);
     }
 
     #[test]
@@ -525,10 +536,13 @@ mod tests {
                 NewTabPrefs { permission: Some(Level::Auto), ..NewTabPrefs::default() },
             ),
             ("remote = true", NewTabPrefs { remote: true, ..NewTabPrefs::default() }),
-            ("start_from = \"current\"", NewTabPrefs::default()),
             (
-                "start_from = \"default_branch\"",
-                NewTabPrefs { start_from: StartFrom::DefaultBranch, ..NewTabPrefs::default() },
+                "start_base = \"current\"",
+                NewTabPrefs { start: Some(StartFrom::Current), ..NewTabPrefs::default() },
+            ),
+            (
+                "start_base = \"default_branch\"",
+                NewTabPrefs { start: Some(StartFrom::DefaultBranch), ..NewTabPrefs::default() },
             ),
             ("right_panel = \"progress\"", NewTabPrefs::default()),
             (
@@ -540,6 +554,47 @@ mod tests {
             write_prefs(&paths, &format!("[new_tab]\n{line}\n"));
             assert_eq!(Prefs::load(&paths).new_tab, want, "{line}");
         }
+    }
+
+    #[test]
+    fn the_start_branch_is_the_remote_default_until_one_is_picked_and_old_files_do_not_pick() {
+        let (_home, paths) = paths();
+        let cases = [
+            ("", StartFrom::DefaultBranch, None),
+            ("start_from = \"current\"\n", StartFrom::DefaultBranch, None),
+            ("start_from = \"default_branch\"\n", StartFrom::DefaultBranch, None),
+            (
+                "start_from = \"current\"\nstart_base = \"current\"\n",
+                StartFrom::Current,
+                Some(StartFrom::Current),
+            ),
+            (
+                "start_base = \"default_branch\"\n",
+                StartFrom::DefaultBranch,
+                Some(StartFrom::DefaultBranch),
+            ),
+        ];
+        for (lines, want, stored) in cases {
+            write_prefs(&paths, &format!("[new_tab]\nremote = true\n{lines}"));
+            let new_tab = Prefs::load(&paths).new_tab;
+            assert_eq!((new_tab.start_from(), new_tab.start), (want, stored), "{lines:?}");
+        }
+    }
+
+    #[test]
+    fn saving_with_no_pick_writes_no_start_key_and_a_pick_is_kept() {
+        let (_home, paths) = paths();
+        write_prefs(&paths, "[new_tab]\nstart_from = \"current\"\n");
+        Prefs::update(&paths, |p| p.window.quake = false).unwrap();
+        let text = std::fs::read_to_string(paths.prefs_file()).unwrap();
+        assert!(!text.contains("start_"), "{text}");
+        Prefs::update(&paths, |p| p.new_tab.start = Some(StartFrom::Current)).unwrap();
+        assert!(
+            std::fs::read_to_string(paths.prefs_file())
+                .unwrap()
+                .contains("start_base = \"current\"")
+        );
+        assert_eq!(Prefs::load(&paths).new_tab.start_from(), StartFrom::Current);
     }
 
     #[test]
@@ -556,7 +611,7 @@ mod tests {
         let (_home, paths) = paths();
         for bad in [
             "permission = \"sudo\"",
-            "start_from = \"origin\"",
+            "start_base = \"origin\"",
             "right_panel = \"left\"",
             "remote = \"yes\"",
             "agent = 3",
@@ -573,7 +628,7 @@ mod tests {
             agent: Some("builder".into()),
             permission: Some(Level::Auto),
             remote: true,
-            start_from: StartFrom::DefaultBranch,
+            start: Some(StartFrom::Current),
             right_panel: RightPanel::History,
         };
         Prefs::update(&paths, |p| p.new_tab = wanted.clone()).unwrap();

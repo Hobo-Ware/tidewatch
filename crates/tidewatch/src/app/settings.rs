@@ -115,6 +115,8 @@ impl Tidewatch {
         area: egui::Rect,
     ) -> Option<settings_view::Action> {
         let esc_closes = self.settings_owns_escape();
+        let default_branch =
+            self.bases.facts(self.workspace().dir()).and_then(|facts| facts.remote_default.clone());
         let settings = self.settings.as_mut()?;
         let files = self
             .paths
@@ -138,6 +140,7 @@ impl Tidewatch {
             },
             github: self.pr.default_prefs(),
             new_tab: self.new_tab_prefs.clone(),
+            default_branch,
             profiles: self
                 .catalog
                 .entries()

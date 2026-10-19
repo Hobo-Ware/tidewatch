@@ -212,7 +212,12 @@ fn run_reopen(spec: &ReopenSpec) -> Reopened {
     };
     Reopened {
         tab: spec.tab,
-        result: Ok(Opened { worktree: spec.worktree.clone(), dir: spec.dir.clone(), started }),
+        result: Ok(Opened {
+            worktree: spec.worktree.clone(),
+            dir: spec.dir.clone(),
+            started,
+            base_note: None,
+        }),
         note,
         typed: spec.typed,
     }

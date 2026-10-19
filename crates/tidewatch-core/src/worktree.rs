@@ -245,7 +245,16 @@ pub fn add_named(
     let path_existed = worktree.path.exists();
     let mut command = git(repo);
     command
-        .args(["worktree", "add", "--lock", "--reason", LOCK_REASON, "-b", &worktree.branch])
+        .args([
+            "worktree",
+            "add",
+            "--lock",
+            "--no-track",
+            "--reason",
+            LOCK_REASON,
+            "-b",
+            &worktree.branch,
+        ])
         .arg(&worktree.path);
     command.args(base);
     if let Err(error) = run(command) {
