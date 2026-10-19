@@ -4,7 +4,7 @@
 //! [`handle_post`] takes the raw request body of an authenticated `/mcp` POST and returns the reply.
 //! It speaks `initialize`, `ping`, `tools/list` and `tools/call` and swallows notifications. The
 //! tools are `stage_done`, `report_finding`, `list_notes`, `reply_to_note`, `propose_workflow`,
-//! `ask_user`, `update_progress` and `get_progress`. Calls that matter to the app become [`TabEvent`]s through `emit`; the note tools read
+//! `ask_user`, `update_progress`, `get_progress` and `report_job`. Calls that matter to the app become [`TabEvent`]s through `emit`; the note tools read
 //! and write the tab's `notes.json` through `notes.rs`. `ask_user` holds its reply until the user
 //! answers (or [`AskWait::timeout`] runs out, or the client hangs up): the listener serves each
 //! connection on its own thread, so a held call blocks nothing else.
@@ -24,6 +24,7 @@ use kelp_core::review::Comment;
 use serde_json::{Map, Value, json};
 
 use crate::events::TabEvent;
+use crate::job_mcp;
 use crate::launch::MCP_SERVER_NAME;
 use crate::notes::Notes;
 use crate::progress_mcp;
@@ -163,11 +164,11 @@ fn initialize_result(params: Option<&Value>) -> Value {
         "protocolVersion": version,
         "capabilities": { "tools": { "listChanged": false } },
         "serverInfo": { "name": MCP_SERVER_NAME, "version": env!("CARGO_PKG_VERSION") },
-        "instructions": "Tidewatch tools for the task in this worktree: report that a stage is done, report review findings, and read and answer the notes the user left on your changes.",
+        "instructions": "Tidewatch tools for the task in this worktree: report that a stage is done, report review findings, read and answer the notes the user left on your changes, and report jobs that run over a minute.",
     })
 }
 
-/// The eight tools with their JSON Schemas, as `tools/list` returns them.
+/// The nine tools with their JSON Schemas, as `tools/list` returns them.
 #[must_use]
 pub fn tool_definitions() -> Value {
     let [update_progress, get_progress] = progress_mcp::tool_definitions();
@@ -227,6 +228,7 @@ pub fn tool_definitions() -> Value {
         question::tool_definition(),
         update_progress,
         get_progress,
+        job_mcp::tool_definition(),
     ])
 }
 
@@ -258,6 +260,10 @@ fn call_tool(
     }
     if name == progress_mcp::GET_TOOL {
         let (text, is_error) = progress_mcp::get(ctx.progress_file);
+        return Ok(tool_result(&text, is_error));
+    }
+    if name == job_mcp::REPORT_TOOL {
+        let (text, is_error) = job_mcp::report(args, emit);
         return Ok(tool_result(&text, is_error));
     }
     if name == question::TOOL_NAME {
@@ -567,7 +573,7 @@ mod tests {
     }
 
     #[test]
-    fn tools_list_has_eight_tools_with_object_schemas_and_required_fields() {
+    fn tools_list_has_nine_tools_with_object_schemas_and_required_fields() {
         let reply =
             Harness::new().json(&json!({"jsonrpc": "2.0", "id": 2, "method": "tools/list"}));
         let tools = reply["result"]["tools"].as_array().unwrap();
@@ -582,7 +588,8 @@ mod tests {
                 "propose_workflow",
                 "ask_user",
                 "update_progress",
-                "get_progress"
+                "get_progress",
+                "report_job"
             ]
         );
         let required: Vec<Vec<&str>> = tools
@@ -605,6 +612,7 @@ mod tests {
                 vec!["questions"],
                 vec!["ledger"],
                 vec![],
+                vec!["name"],
             ]
         );
         for tool in tools {

@@ -1,5 +1,6 @@
 //! What the listener tells the app: one [`TabMessage`] per hook payload or MCP tool call.
 
+use crate::job::Report;
 use crate::progress::Ledger;
 use crate::question::{AskReply, Question};
 use crate::status::HookEvent;
@@ -8,7 +9,7 @@ use crate::workflows::Workflow;
 /// Asks the UI for a redraw from a background thread. The app passes `ctx.request_repaint`.
 pub type Repaint = Box<dyn Fn() + Send + Sync>;
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum TabEvent {
     /// A hook payload that carries a status (see `status::parse_hook`).
     Hook(HookEvent),
@@ -23,11 +24,13 @@ pub enum TabEvent {
     Proposal { workflow: Workflow },
     /// The agent called `update_progress`; the ledger is already saved in the tab's `progress.md`.
     Progress { ledger: Box<Ledger> },
+    /// The agent called `report_job`.
+    Job { report: Report },
     /// The agent called `ask_user` and its call is held until `reply` is used.
     Ask { questions: Vec<Question>, reply: AskReply },
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct TabMessage {
     pub tab_id: u64,
     /// The generation the sender registered with (see `TabRegistration::generation`).

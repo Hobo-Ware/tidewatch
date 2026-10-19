@@ -206,6 +206,7 @@ impl AgentRun {
             TabEvent::NoteReply { .. }
             | TabEvent::Proposal { .. }
             | TabEvent::Progress { .. }
+            | TabEvent::Job { .. }
             | TabEvent::Ask { .. } => {}
         }
     }

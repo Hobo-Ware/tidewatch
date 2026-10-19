@@ -83,7 +83,7 @@ pub(crate) fn route<T>(tabs: &mut Tabs<Pane<T>>, message: TabMessage, now: f64) 
             agent.reader.ask_arrived(questions.clone(), reply.clone());
             None
         }
-        TabEvent::Hook(_) | TabEvent::StageDone { .. } => None,
+        TabEvent::Hook(_) | TabEvent::StageDone { .. } | TabEvent::Job { .. } => None,
     };
     if let TabEvent::Hook(hook) = &message.event {
         agent.reader.hook(hook.transcript_path.clone());

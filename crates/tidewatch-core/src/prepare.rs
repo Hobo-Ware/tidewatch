@@ -26,6 +26,7 @@ use crate::trust::TrustCli;
 use crate::trust_apply::{Grant, Outcome};
 
 const MCP_CONFIG_FILE: &str = "mcp.json";
+pub const PROGRESS_ENV: &str = "TIDEWATCH_PROGRESS";
 const FALLBACK_NOTICE: &str =
     "Tidewatch: setup failed or the agent could not start. Here is a shell.";
 
@@ -161,6 +162,10 @@ fn prepare_with(input: &PrepareInput, resume: Option<&str>) -> Result<Prepared, 
         mcp_path.clone()
     });
 
+    let feed = paths.progress_feed_file(input.repo, input.tab);
+    let feed_env = soft("progress feed", touch(&feed).map(|()| feed.clone()))
+        .map(|file| (PROGRESS_ENV.to_owned(), file.display().to_string()));
+
     let ctx = context(input, house_style, copilot_instructions_dir, guard_bin_dir, mcp_config);
     let mut launch = match resume {
         Some(id) => resume_command(input.agent, input.profile, id, &ctx)?,
@@ -178,7 +183,8 @@ fn prepare_with(input: &PrepareInput, resume: Option<&str>) -> Result<Prepared, 
     if resume.is_none() {
         launch.args.extend(task_args(wiring, input.task));
     }
-    let env = merge_env(&ctx.env, &launch.env);
+    let mut env = merge_env(&ctx.env, &launch.env);
+    env.extend(feed_env);
     let remote = ctx.remote.filter(|name| !input.agent.remote_args(name).is_empty());
     Ok(Prepared { launch, env, setup: input.profile.setup.clone(), notes, remote })
 }
@@ -263,6 +269,13 @@ pub fn task_args(wiring: Wiring, task: &str) -> Vec<String> {
         Wiring::Copilot => vec!["-i".to_owned(), task],
         Wiring::Custom => vec![task],
     }
+}
+
+fn touch(file: &Path) -> std::io::Result<()> {
+    if let Some(dir) = file.parent() {
+        std::fs::create_dir_all(dir)?;
+    }
+    std::fs::OpenOptions::new().create(true).append(true).open(file).map(drop)
 }
 
 fn merge_env(base: &[(String, String)], over: &[(String, String)]) -> Vec<(String, String)> {
@@ -428,6 +441,32 @@ mod tests {
     }
 
     #[test]
+    fn every_agent_is_told_where_to_append_job_progress_and_the_file_exists() {
+        let fx = Fixture::new();
+        for id in ["claude", "codex", "gemini", "copilot"] {
+            let prepared =
+                fx.run(id, &profile(id, Level::Edits), true, "fix the bug", None).unwrap();
+            let want = fx.paths.progress_feed_file(Path::new("/work/web"), "brave-otter");
+            assert_eq!(env_of(&prepared, PROGRESS_ENV), want.to_str(), "{id}");
+            assert!(want.is_file(), "{id}");
+        }
+    }
+
+    #[test]
+    fn a_resumed_agent_gets_the_same_feed_and_its_lines_are_kept() {
+        let fx = Fixture::new();
+        let table = AgentTable::builtin();
+        let claude = profile("claude", Level::Edits);
+        let feed = fx.paths.progress_feed_file(Path::new("/work/web"), "brave-otter");
+        std::fs::create_dir_all(feed.parent().unwrap()).unwrap();
+        std::fs::write(&feed, "{\"name\":\"orders\",\"done\":1}\n").unwrap();
+        let input = resume_input(&fx, &table, "claude", &claude, None);
+        let resumed = prepare_resume(&input, SESSION).unwrap();
+        assert_eq!(env_of(&resumed, PROGRESS_ENV), feed.to_str());
+        assert_eq!(std::fs::read_to_string(&feed).unwrap(), "{\"name\":\"orders\",\"done\":1}\n");
+    }
+
+    #[test]
     fn a_builder_launch_has_the_level_flag_the_house_style_and_the_task_last() {
         let fx = Fixture::new();
         let prepared =
@@ -544,7 +583,9 @@ mod tests {
         std::fs::write(fx.paths.checklist_file(), "### 1. Mine\n- [ ] my item\n").unwrap();
         fx.run("claude", &profile("claude", Level::Edits), true, "", None).unwrap();
         let text = agent_style(&fx);
-        assert!(text.starts_with("my own style\n\n## Progress ledger format"), "{text}");
+        assert!(text.starts_with("my own style\n\n## Tidewatch tool guidance"), "{text}");
+        assert!(text.contains("`report_job`") && text.contains("`$TIDEWATCH_PROGRESS`"));
+        assert!(text.contains("\n\n## Progress ledger format"), "{text}");
         assert!(text.contains("### 1. Mine\n- [ ] my item\n"));
         assert!(!text.contains("Close out"));
         assert_eq!(std::fs::read_to_string(fx.paths.house_style_file()).unwrap(), "my own style\n");

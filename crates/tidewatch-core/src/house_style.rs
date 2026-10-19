@@ -53,6 +53,14 @@ Keep a progress ledger for the task with the `update_progress` tool of the `tide
 When you need the user to choose between options, ask a multiple-choice question instead of describing the options in prose. Use your own question tool if you have one (for example `AskUserQuestion`), otherwise call the `ask_user` tool of the `tidewatch` MCP server. Put the option you recommend first and end its label with (Recommended).
 ";
 
+/// Tool guidance Tidewatch always puts after the house style, so an older or edited `house-style.md`
+/// reaches agents with it too.
+pub const TOOL_GUIDANCE: &str = "\
+## Tidewatch tool guidance
+
+- For any job you expect to run over a minute, call `report_job`, or have the script append JSON progress lines (`name`, `done`, `total`, `unit`, `phase`, `state`) to the file in `$TIDEWATCH_PROGRESS`.
+";
+
 /// Writes the default text over `house-style.md`, edits included. Returns its path.
 pub fn reset(paths: &TidewatchPaths) -> std::io::Result<PathBuf> {
     let file = paths.house_style_file();
@@ -82,11 +90,13 @@ pub fn copilot_instructions_md(house_style: &str) -> String {
     format!("---\napplyTo: \"**\"\n---\n\n{house_style}")
 }
 
-/// The house style an agent is given: `house_style` as the user keeps it, then the ledger format
-/// with `checklist` filled in. The user's file is never changed.
 #[must_use]
 pub fn compose(house_style: &str, checklist: &str) -> String {
-    format!("{}\n\n{}", house_style.trim_end(), progress_prompt::section(checklist))
+    format!(
+        "{}\n\n{TOOL_GUIDANCE}\n{}",
+        house_style.trim_end(),
+        progress_prompt::section(checklist)
+    )
 }
 
 /// Rewrites the derived Copilot copy of `house_style` in `dir` and returns `dir`, the value for
@@ -190,5 +200,27 @@ mod tests {
             assert!(text.ends_with('\n'));
         }
         assert!(compose(DEFAULT_HOUSE_STYLE, checklist).contains("`get_progress` first"));
+    }
+
+    #[test]
+    fn the_tool_guidance_reaches_agents_whatever_the_users_file_says() {
+        let old_style =
+            "# Tidewatch house style\n\nOld rules, written before the job lines existed.\n";
+        let checklist = "### 1. Mine\n- [ ] only this\n";
+        for mine in [old_style, "", DEFAULT_HOUSE_STYLE] {
+            let text = compose(mine, checklist);
+            assert_eq!(text.matches("report_job").count(), 1, "{mine:?}");
+            assert!(text.contains("`$TIDEWATCH_PROGRESS`"));
+            let guidance = text.find("## Tidewatch tool guidance").unwrap();
+            assert!(text.starts_with(mine.trim_end()));
+            assert!(guidance >= mine.trim_end().len());
+            assert!(guidance < text.find("## Progress ledger format").unwrap());
+        }
+    }
+
+    #[test]
+    fn the_editable_default_does_not_carry_the_tool_guidance() {
+        assert!(!DEFAULT_HOUSE_STYLE.contains("report_job"));
+        assert!(!DEFAULT_HOUSE_STYLE.contains("TIDEWATCH_PROGRESS"));
     }
 }
