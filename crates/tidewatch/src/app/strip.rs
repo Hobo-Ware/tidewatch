@@ -9,7 +9,12 @@ use stdusk_egui::widgets::{chip, icon_button, menu_item, style_menu};
 
 use super::frame::FrameIntent;
 use super::repos::RepoCommand;
+use std::sync::Arc;
+
+use tidewatch_core::avatar::Avatar;
+
 use super::{Tidewatch, wall_ms};
+use crate::agent_avatar;
 use crate::agent_frame;
 use crate::agent_run::progress_fraction;
 use crate::brand;
@@ -31,6 +36,8 @@ const TAB_BAR_W: f32 = 2.0;
 const TAB_BAR_INSET: f32 = 8.0;
 const RING_SIZE: f32 = 16.0;
 const RING_GAP: f32 = 6.0;
+const AVATAR_SIZE: f32 = 20.0;
+const AVATAR_PAD_CHARS: usize = 4;
 const JOB_LABEL_W: f32 = 30.0;
 const JOB_BAR_H: f32 = 2.0;
 const JOB_BAR_INSET: f32 = 6.0;
@@ -40,6 +47,7 @@ const JOB_BAR_INSET: f32 = 6.0;
 pub(crate) struct TabExtras {
     pub(crate) ring: Option<TabRing>,
     pub(crate) job: Option<TabJob>,
+    pub(crate) avatar: Option<Arc<Avatar>>,
 }
 
 impl Tidewatch {
@@ -193,6 +201,7 @@ impl Tidewatch {
         let extras = |id| TabExtras {
             ring: self.progress.ledger(id).map(|known| tab_ring(&known.ledger)),
             job: self.job_live.board(id).and_then(|board| tab_job(board, now_ms)),
+            avatar: self.avatar_live.get(id).cloned(),
         };
         tab_row(ui, &self.tabs, width, now, actions, (tab_signals, extras));
     }
@@ -225,12 +234,11 @@ fn tab_row<T>(
         let painter = ui.painter().clone();
         let under = painter.add(Shape::Noop);
         let draft = matches!(tab.pane.body, Body::Draft(_));
-        let TabExtras { ring, job } = agent.map(|_| extras(tab.id)).unwrap_or_default();
-        let title = match (ring.is_some() || job.is_some(), draft) {
+        let TabExtras { ring, job, avatar } = agent.map(|_| extras(tab.id)).unwrap_or_default();
+        let parts = (ring.is_some(), job.is_some(), avatar.is_some());
+        let title = match (parts != (false, false, false), draft) {
             (_, true) => String::new(),
-            (true, false) => {
-                ring_title(ui, &tab.title, position + 1, width, (ring.is_some(), job.is_some()))
-            }
+            (true, false) => ring_title(ui, &tab.title, position + 1, width, parts),
             (false, false) => tab.title.clone(),
         };
         let (resp, close) = draw_tab(
@@ -256,6 +264,13 @@ fn tab_row<T>(
         }
         if let Some(job) = &job {
             paint_job(ui, resp.rect, job, ring.is_some(), tab.id);
+        }
+        if let Some(avatar) = &avatar {
+            let rect = avatar_rect(ui, resp.rect, position + 1);
+            if agent_avatar::paint(ui.ctx(), ui.painter(), rect, avatar) {
+                agent_avatar::hover(ui, rect, tab.id, avatar);
+            }
+            agent_avatar::menu(&resp, tab.id);
         }
         if let Some(agent) = agent {
             let tone = status_view::tone(agent.run.status());
@@ -319,14 +334,33 @@ fn ring_title(
     title: &str,
     number: usize,
     width: f32,
-    parts: (bool, bool),
+    (ring, job, avatar): (bool, bool, bool),
 ) -> String {
     let char_w = ui
         .painter()
         .layout_no_wrap("0".to_owned(), egui::FontId::monospace(12.0), brand::SOFT)
         .size()
         .x;
-    ellipsize(title, title_budget(width, char_w, number, parts)).0
+    let room = title_budget(width, char_w, number, (ring, job));
+    if avatar {
+        let name = ellipsize(title, room.saturating_sub(AVATAR_PAD_CHARS).max(1)).0;
+        format!("{}{name}", " ".repeat(AVATAR_PAD_CHARS))
+    } else {
+        ellipsize(title, room).0
+    }
+}
+
+fn avatar_rect(ui: &egui::Ui, tab: egui::Rect, number: usize) -> egui::Rect {
+    let char_w = ui
+        .painter()
+        .layout_no_wrap("0".to_owned(), egui::FontId::monospace(12.0), brand::SOFT)
+        .size()
+        .x;
+    let left = tab.left() + TAB_PAD_X + (number.to_string().len() + 2) as f32 * char_w;
+    egui::Rect::from_min_size(
+        pos2(left, tab.center().y - AVATAR_SIZE / 2.0),
+        vec2(AVATAR_SIZE, AVATAR_SIZE),
+    )
 }
 
 fn ring_rect(tab: egui::Rect) -> egui::Rect {

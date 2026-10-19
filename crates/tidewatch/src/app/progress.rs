@@ -8,6 +8,7 @@ use std::time::Duration;
 use super::WAKE_SLACK_S;
 use super::settings::open_in_editor;
 use super::{Tidewatch, wall_ms};
+use crate::agent_avatar;
 use crate::coming_up::{Row, coming_up};
 use crate::due::{Due, Key, ask_blocked, due_items, secs_to_midnight, tell_all};
 use crate::job_glue;
@@ -22,6 +23,8 @@ use crate::progress_model::look;
 use crate::progress_state::Facts;
 use crate::{due_view, flow_glue};
 use tidewatch_core::progress::Mark;
+
+const REDRAW_ASK: &str = "Call set_avatar again with a fresh idea for this task.";
 
 impl Tidewatch {
     pub(super) fn drive_progress(&mut self, ctx: &egui::Context) {
@@ -56,6 +59,27 @@ impl Tidewatch {
         self.progress_ui.forget_except(|id| open.contains(&id));
     }
 
+    pub(super) fn drive_avatar_choice(&mut self, ctx: &egui::Context) {
+        let Some((tab, choice)) = agent_avatar::take_choice(ctx) else { return };
+        match choice {
+            agent_avatar::Choice::Redraw => {
+                let now = ctx.input(|i| i.time);
+                self.ask_agent(tab, REDRAW_ASK, ctx, now);
+            }
+            agent_avatar::Choice::UseLetter => {
+                let notes = self
+                    .tabs
+                    .items()
+                    .iter()
+                    .find(|t| t.id == tab)
+                    .and_then(|t| t.pane.agent.as_ref()?.run.notes_file.clone());
+                if let Some(notes) = notes {
+                    self.avatar_live.clear(tab, &notes, ctx);
+                }
+            }
+        }
+    }
+
     pub(super) fn drive_jobs(&mut self, ctx: &egui::Context) {
         let now_ms = wall_ms() as i64;
         let facts: Vec<job_glue::Facts<'_>> = self
@@ -67,6 +91,7 @@ impl Tidewatch {
                 Some(job_glue::Facts { id: tab.id, notes_file })
             })
             .collect();
+        self.avatar_live.tick(&facts, ctx);
         let mut wake = self.job_live.tick(&facts, ctx, now_ms);
         for tab in self.tabs.items() {
             let (Body::Shell(term), Some(_)) = (&tab.pane.body, &tab.pane.agent) else { continue };
@@ -174,6 +199,7 @@ impl Tidewatch {
         let places = overview.places.iter_mut().flat_map(|place| place.rows.iter_mut());
         for row in overview.needs.iter_mut().chain(places) {
             row.look = self.progress.ledger(row.tab_id).map(|known| look(&known.ledger));
+            row.avatar = self.avatar_live.get(row.tab_id).cloned();
             row.job_line =
                 self.job_live.board(row.tab_id).and_then(|board| lane_line(board, now_ms));
         }
