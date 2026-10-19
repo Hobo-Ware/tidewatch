@@ -13,7 +13,8 @@ fn known(text: &str) -> TabLedger {
 
 struct Panel {
     ctx: egui::Context,
-    ledger: TabLedger,
+    ledger: Option<TabLedger>,
+    jobs: Vec<Card>,
     state: TabState,
     size: egui::Vec2,
     texts: Vec<(String, Rect)>,
@@ -24,7 +25,8 @@ impl Panel {
     fn new(text: &str, width: f32) -> Self {
         let mut panel = Self {
             ctx: crate::fonts::test_context(),
-            ledger: known(text),
+            ledger: Some(known(text)),
+            jobs: Vec::new(),
             state: TabState::default(),
             size: vec2(width, 900.0),
             texts: Vec::new(),
@@ -43,17 +45,24 @@ impl Panel {
             ..RawInput::default()
         };
         let mut action = None;
-        let (ledger, state, size) = (&self.ledger, &mut self.state, self.size);
+        let (ledger, jobs, state, size) =
+            (self.ledger.as_ref(), &self.jobs, &mut self.state, self.size);
         let output = self.ctx.run_ui(raw, |ui| {
-            let input =
-                Input { ledger, now_ms: 240_000, time: 1.0, animate: false, first: Side::Progress };
+            let input = Input {
+                ledger,
+                jobs,
+                now_ms: 240_000,
+                time: 1.0,
+                animate: false,
+                first: Side::Progress,
+            };
             action = show(ui, Rect::from_min_size(pos2(0.0, 0.0), size), &input, state);
         });
         self.texts.clear();
         for clipped in &output.shapes {
             collect(&clipped.shape, &mut self.texts);
         }
-        self.action = action;
+        self.action.clone_from(&action);
         action
     }
 
@@ -224,7 +233,8 @@ fn no_text_overlaps_at_any_width_the_card_has() {
     for width in [200.0, 240.0, 300.0, 330.0, 420.0, 640.0] {
         let mut panel = Panel::new(LONG, width);
         for tag in TAGS {
-            let at = panel.center_of(&tag.label(entries(&panel.ledger.ledger, tag).len()));
+            let at = panel
+                .center_of(&tag.label(entries(&panel.ledger.as_ref().unwrap().ledger, tag).len()));
             panel.click(at);
         }
         let at = panel.center_of("Show all 10");

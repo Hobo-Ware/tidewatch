@@ -32,6 +32,8 @@ pub(crate) struct Row {
     pub(crate) pr: Option<(tidewatch_core::pr_status::Tone, String)>,
     /// What the tab's ledger says, when it has one.
     pub(crate) look: Option<Look>,
+    /// The tab's leading job as `21% \u{b7} 1h 52m`, when it has one.
+    pub(crate) job_line: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -142,6 +144,7 @@ pub(crate) fn collect<T>(
                 elapsed: agent.run.elapsed(now),
                 pr: None,
                 look: None,
+                job_line: None,
             })
         })
         .collect();
@@ -154,6 +157,7 @@ pub(crate) struct CardView {
     pub(crate) fraction: f32,
     pub(crate) ring: Color32,
     pub(crate) line: String,
+    pub(crate) line_ink: Color32,
     pub(crate) tag: String,
     pub(crate) tag_ink: Color32,
 }
@@ -165,6 +169,15 @@ fn first_line(text: &str) -> String {
 }
 
 pub(crate) fn card_view(row: &Row) -> CardView {
+    let mut view = card_view_of(row);
+    if let Some(line) = &row.job_line {
+        view.line.clone_from(line);
+        view.line_ink = crate::brand::TEAL;
+    }
+    view
+}
+
+fn card_view_of(row: &Row) -> CardView {
     if let Some(look) = &row.look {
         let tag_ink = match look.tag {
             CardTag::Question => crate::brand::NEEDS,
@@ -174,6 +187,7 @@ pub(crate) fn card_view(row: &Row) -> CardView {
             fraction: look.ring.fraction,
             ring: tone_color(look.ring.tone),
             line: look.line.clone(),
+            line_ink: crate::brand::SOFT,
             tag: look.tag.label(look.questions),
             tag_ink,
         };
@@ -190,6 +204,7 @@ pub(crate) fn card_view(row: &Row) -> CardView {
             .map(|done| first_line(done))
             .or_else(|| row.detail.as_deref().map(first_line))
             .unwrap_or_default(),
+        line_ink: crate::brand::SOFT,
         tag: label(status_tone).to_owned(),
         tag_ink: ink,
     }
@@ -239,6 +254,7 @@ mod tests {
             elapsed: 0.0,
             pr: None,
             look: None,
+            job_line: None,
         }
     }
 
@@ -455,5 +471,17 @@ mod tests {
         done.end_block =
             Some(EndBlock { done: vec!["Committed ec84557".into()], ..EndBlock::default() });
         assert_eq!(card_view(&done).line, "Committed ec84557");
+    }
+
+    #[test]
+    fn a_job_line_takes_the_status_line_in_teal_and_leaves_the_rest() {
+        let mut working = row(1, "a", AgentStatus::Working);
+        working.detail = Some("thinking".into());
+        let plain = card_view(&working);
+        assert_eq!((plain.line.as_str(), plain.line_ink), ("thinking", crate::brand::SOFT));
+        working.job_line = Some("21% \u{b7} 1h 52m".into());
+        let view = card_view(&working);
+        assert_eq!((view.line.as_str(), view.line_ink), ("21% \u{b7} 1h 52m", crate::brand::TEAL));
+        assert_eq!((view.tag, view.fraction), (plain.tag, plain.fraction));
     }
 }

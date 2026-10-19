@@ -295,8 +295,8 @@ fn card(ui: &mut egui::Ui, rect: Rect, row: &Row, in_needs_group: bool) -> bool 
     painter.galley(pos2(text_x, sub_top), sub, brand::MUTED);
     let line_top = inner.top() + RING + 16.0;
     let said =
-        ellipsized(&painter, &view.line, FontId::proportional(13.5), brand::SOFT, inner.width());
-    painter.galley(pos2(inner.left(), line_top), said, brand::SOFT);
+        ellipsized(&painter, &view.line, FontId::proportional(13.5), view.line_ink, inner.width());
+    painter.galley(pos2(inner.left(), line_top), said, view.line_ink);
     let tag_mid = inner.bottom() - TAG_H / 2.0;
     let tag_right = paint_pill(&painter, inner.left(), tag_mid, &view.tag, view.tag_ink);
     let clock =
@@ -433,6 +433,7 @@ mod tests {
             elapsed: 242.0,
             pr: None,
             look: None,
+            job_line: None,
         }
     }
 

@@ -7,13 +7,14 @@ use stdusk_core::terminal::{CmdState, PtyTerm};
 use stdusk_egui::ui::{TAB_H, TAB_PAD_X, TAB_SLOT_W, draw_tab, ellipsize, icons};
 use stdusk_egui::widgets::{chip, icon_button, menu_item, style_menu};
 
-use super::Tidewatch;
 use super::frame::FrameIntent;
 use super::repos::RepoCommand;
+use super::{Tidewatch, wall_ms};
 use crate::agent_frame;
 use crate::agent_run::progress_fraction;
 use crate::brand;
 use crate::commands::Command;
+use crate::job_model::{TabJob, tab_job};
 use crate::pane::{Body, Pane};
 use crate::progress_model::{TabRing, tab_ring};
 use crate::progress_ring;
@@ -30,6 +31,16 @@ const TAB_BAR_W: f32 = 2.0;
 const TAB_BAR_INSET: f32 = 8.0;
 const RING_SIZE: f32 = 16.0;
 const RING_GAP: f32 = 6.0;
+const JOB_LABEL_W: f32 = 30.0;
+const JOB_BAR_H: f32 = 2.0;
+const JOB_BAR_INSET: f32 = 6.0;
+
+/// What an agent tab shows besides its title: the ledger's ring and the leading job's percent.
+#[derive(Default)]
+pub(crate) struct TabExtras {
+    pub(crate) ring: Option<TabRing>,
+    pub(crate) job: Option<TabJob>,
+}
 
 impl Tidewatch {
     pub(super) fn show_tab_strip(&mut self, ui: &mut egui::Ui, now: f64, frame: &mut FrameIntent) {
@@ -178,8 +189,12 @@ impl Tidewatch {
     }
 
     fn draw_tabs(&self, ui: &mut egui::Ui, width: f32, now: f64, actions: &mut Vec<Action>) {
-        let rings = |id| self.progress.ledger(id).map(|known| tab_ring(&known.ledger));
-        tab_row(ui, &self.tabs, width, now, actions, (tab_signals, rings));
+        let now_ms = wall_ms() as i64;
+        let extras = |id| TabExtras {
+            ring: self.progress.ledger(id).map(|known| tab_ring(&known.ledger)),
+            job: self.job_live.board(id).and_then(|board| tab_job(board, now_ms)),
+        };
+        tab_row(ui, &self.tabs, width, now, actions, (tab_signals, extras));
     }
 }
 
@@ -198,7 +213,7 @@ fn tab_row<T>(
     width: f32,
     now: f64,
     actions: &mut Vec<Action>,
-    (signals, rings): (impl Fn(&Pane<T>) -> (Progress, CmdState), impl Fn(u64) -> Option<TabRing>),
+    (signals, extras): (impl Fn(&Pane<T>) -> (Progress, CmdState), impl Fn(u64) -> TabExtras),
 ) -> Vec<egui::Rect> {
     let mut slots = Vec::new();
     let mut drag = None;
@@ -210,11 +225,13 @@ fn tab_row<T>(
         let painter = ui.painter().clone();
         let under = painter.add(Shape::Noop);
         let draft = matches!(tab.pane.body, Body::Draft(_));
-        let ring = agent.and_then(|_| rings(tab.id));
-        let title = match (&ring, draft) {
+        let TabExtras { ring, job } = agent.map(|_| extras(tab.id)).unwrap_or_default();
+        let title = match (ring.is_some() || job.is_some(), draft) {
             (_, true) => String::new(),
-            (Some(_), false) => ring_title(ui, &tab.title, position + 1, width),
-            (None, false) => tab.title.clone(),
+            (true, false) => {
+                ring_title(ui, &tab.title, position + 1, width, (ring.is_some(), job.is_some()))
+            }
+            (false, false) => tab.title.clone(),
         };
         let (resp, close) = draw_tab(
             ui,
@@ -236,6 +253,9 @@ fn tab_row<T>(
         }
         if let Some(ring) = &ring {
             paint_ring(ui, resp.rect, ring, tab.id);
+        }
+        if let Some(job) = &job {
+            paint_job(ui, resp.rect, job, ring.is_some(), tab.id);
         }
         if let Some(agent) = agent {
             let tone = status_view::tone(agent.run.status());
@@ -274,21 +294,39 @@ fn tab_row<T>(
     slots.iter().map(|slot| slot.rect).collect()
 }
 
-/// How many characters of a tab's title fit in a tab `width` wide that also holds a ring: the
-/// tab's padding, the trailing slot and the ring come off, then the number before the title.
-pub(crate) fn title_budget(width: f32, char_w: f32, number: usize) -> usize {
-    let taken = 2.0 * TAB_PAD_X + TAB_SLOT_W + RING_GAP + RING_SIZE + RING_GAP;
+/// How many characters of a tab's title fit in a tab `width` wide that also holds a ring and a job
+/// percent: the tab's padding, the trailing slot and what sits before it come off, then the number
+/// before the title.
+pub(crate) fn title_budget(
+    width: f32,
+    char_w: f32,
+    number: usize,
+    (ring, job): (bool, bool),
+) -> usize {
+    let mut taken = 2.0 * TAB_PAD_X + TAB_SLOT_W + RING_GAP;
+    if ring {
+        taken += RING_SIZE + RING_GAP;
+    }
+    if job {
+        taken += JOB_LABEL_W + RING_GAP;
+    }
     let prefix = number.to_string().len() + 2;
     (((width - taken) / char_w).floor() as usize).saturating_sub(prefix).max(1)
 }
 
-fn ring_title(ui: &egui::Ui, title: &str, number: usize, width: f32) -> String {
+fn ring_title(
+    ui: &egui::Ui,
+    title: &str,
+    number: usize,
+    width: f32,
+    parts: (bool, bool),
+) -> String {
     let char_w = ui
         .painter()
         .layout_no_wrap("0".to_owned(), egui::FontId::monospace(12.0), brand::SOFT)
         .size()
         .x;
-    ellipsize(title, title_budget(width, char_w, number)).0
+    ellipsize(title, title_budget(width, char_w, number, parts)).0
 }
 
 fn ring_rect(tab: egui::Rect) -> egui::Rect {
@@ -297,6 +335,42 @@ fn ring_rect(tab: egui::Rect) -> egui::Rect {
         pos2(right - RING_SIZE / 2.0, tab.center().y),
         vec2(RING_SIZE, RING_SIZE),
     )
+}
+
+fn job_label_rect(tab: egui::Rect, ring: bool) -> egui::Rect {
+    let mut right = tab.right() - TAB_PAD_X - TAB_SLOT_W - RING_GAP;
+    if ring {
+        right -= RING_SIZE + RING_GAP;
+    }
+    egui::Rect::from_min_size(
+        pos2(right - JOB_LABEL_W, tab.center().y - 8.0),
+        vec2(JOB_LABEL_W, 16.0),
+    )
+}
+
+fn job_bar_rect(tab: egui::Rect, fraction: f32) -> egui::Rect {
+    let floor = tab.bottom() - TAB_INSET_Y;
+    let room = (tab.width() - 2.0 * JOB_BAR_INSET).max(0.0);
+    egui::Rect::from_min_size(
+        pos2(tab.left() + JOB_BAR_INSET, floor - JOB_BAR_H),
+        vec2(room * fraction.clamp(0.0, 1.0), JOB_BAR_H),
+    )
+}
+
+fn paint_job(ui: &mut egui::Ui, tab: egui::Rect, job: &TabJob, ring: bool, id: u64) {
+    let ink = if job.stalled { brand::ORANGE } else { brand::TEAL };
+    let label = job_label_rect(tab, ring);
+    let painter = ui.painter();
+    painter.text(
+        pos2(label.right(), label.center().y),
+        egui::Align2::RIGHT_CENTER,
+        &job.label,
+        egui::FontId::monospace(11.0),
+        ink,
+    );
+    painter.rect_filled(job_bar_rect(tab, job.fraction), CornerRadius::same(1), ink);
+    ui.interact(label.expand(3.0), ui.id().with(("tab-job", id)), egui::Sense::hover())
+        .on_hover_text(&job.tip);
 }
 
 fn paint_ring(ui: &mut egui::Ui, tab: egui::Rect, ring: &TabRing, id: u64) {

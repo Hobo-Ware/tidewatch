@@ -13,6 +13,8 @@ use egui::{
 use tidewatch_core::progress::{Entry, Ledger, Mark};
 
 use crate::brand;
+use crate::job_model::Card;
+use crate::job_view;
 use crate::progress_model::{
     self as model, Bar, BarKind, ItemRow, Ring, TAGS, Tag, Tone, entries, item_rows, questions,
     rows_shown,
@@ -117,13 +119,15 @@ impl Memory {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum Action {
     Answer,
+    Ask { job: u64, message: String },
 }
 
 pub(crate) struct Input<'a> {
-    pub(crate) ledger: &'a TabLedger,
+    pub(crate) ledger: Option<&'a TabLedger>,
+    pub(crate) jobs: &'a [Card],
     pub(crate) now_ms: i64,
     pub(crate) time: f64,
     /// Whether things that turn may ask for frames.
@@ -156,11 +160,16 @@ pub(crate) fn show(
 }
 
 fn content(ui: &mut Ui, input: &Input<'_>, state: &mut TabState) -> Option<Action> {
-    let ledger = &input.ledger.ledger;
     let width = ui.available_width();
+    let mut action =
+        job_view::show(ui, width, input.jobs).map(|(job, message)| Action::Ask { job, message });
+    let Some(known) = input.ledger else { return action };
+    if !input.jobs.is_empty() {
+        ui.add_space(GAP);
+    }
+    let ledger = &known.ledger;
     let ring = model::ring(ledger);
-    let mut action = None;
-    header(ui, width, ledger, &ring, input);
+    header(ui, width, ledger, &ring, input.now_ms, known.updated_ms);
     ui.add_space(GAP);
     phase_bars(ui, width, ledger, ring.tone);
     let asked = questions(ledger);
@@ -192,7 +201,14 @@ fn single_line(
     ellipsized(painter, text, font, ink, w)
 }
 
-fn header(ui: &mut Ui, width: f32, ledger: &Ledger, ring: &Ring, input: &Input<'_>) {
+fn header(
+    ui: &mut Ui,
+    width: f32,
+    ledger: &Ledger,
+    ring: &Ring,
+    now_ms: i64,
+    updated_ms: Option<i64>,
+) {
     let narrow = width < NARROW_BELOW - 2.0 * NARROW_PAD;
     let size = if narrow { 52.0 } else { 72.0 };
     let (rect, response) = ui.allocate_exact_size(vec2(width, size), Sense::hover());
@@ -215,7 +231,7 @@ fn header(ui: &mut Ui, width: f32, ledger: &Ledger, ring: &Ring, input: &Input<'
     let room = (rect.right() - x).max(1.0);
     let goal_size = if narrow { 14.0 } else { 16.0 };
     let goal = single_line(painter, ledger.goal.trim(), heading(goal_size), brand::TEXT, room);
-    let meta = meta_line(painter, ring.tone, input, room);
+    let meta = meta_line(painter, ring.tone, (now_ms, updated_ms), room);
     let block = goal.size().y + 4.0 + meta.size().y;
     let top = rect.center().y - block / 2.0;
     let meta_top = top + goal.size().y + 4.0;
@@ -230,7 +246,7 @@ fn header(ui: &mut Ui, width: f32, ledger: &Ledger, ring: &Ring, input: &Input<'
 fn meta_line(
     painter: &egui::Painter,
     tone: Tone,
-    input: &Input<'_>,
+    (now_ms, updated_ms): (i64, Option<i64>),
     room: f32,
 ) -> std::sync::Arc<egui::Galley> {
     let ink = tone_color(tone);
@@ -238,7 +254,7 @@ fn meta_line(
     let mut job = LayoutJob::default();
     job.append("\u{25cf} ", 0.0, TextFormat::simple(body(12.5), ink));
     job.append(tone.word(), 0.0, TextFormat::simple(body(12.5), ink));
-    if let Some(updated) = model::updated(input.now_ms, input.ledger.updated_ms) {
+    if let Some(updated) = model::updated(now_ms, updated_ms) {
         job.append(&format!(" \u{b7} {updated}"), 0.0, quiet);
     }
     job.wrap = TextWrapping::truncate_at_width(room.max(1.0));

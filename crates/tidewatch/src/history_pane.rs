@@ -420,7 +420,8 @@ mod tests {
             let output = self.ctx.run_ui(raw, |ui| {
                 let progress = with_ledger.then_some(Progress {
                     input: progress_view::Input {
-                        ledger,
+                        ledger: Some(ledger),
+                        jobs: &[],
                         now_ms: 0,
                         time: 0.0,
                         animate: false,

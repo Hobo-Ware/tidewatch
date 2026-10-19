@@ -106,6 +106,10 @@ impl Tidewatch {
             }
             Follow::Proposal { tab, workflow } => self.proposal_arrived(tab, &workflow, ctx),
             Follow::Progress { tab, ledger } => self.progress_arrived(tab, *ledger, ctx),
+            Follow::Job { tab, report } => {
+                self.job_live.report(tab, *report, wall_ms() as i64);
+                ctx.request_repaint();
+            }
         }
     }
 

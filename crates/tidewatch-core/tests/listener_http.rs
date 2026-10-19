@@ -270,7 +270,7 @@ fn mcp_over_http_runs_the_handshake_and_both_event_tools() {
     assert_eq!((note.status, note.body.as_str()), (202, ""));
 
     let list = client.request("POST", "/mcp", token, &rpc(2, "tools/list", &json!({})));
-    assert_eq!(list.json()["result"]["tools"].as_array().unwrap().len(), 8);
+    assert_eq!(list.json()["result"]["tools"].as_array().unwrap().len(), 9);
 
     let done =
         client.request("POST", "/mcp", token, &call(3, "stage_done", &json!({"summary": "hello"})));
@@ -307,6 +307,19 @@ fn mcp_over_http_runs_the_handshake_and_both_event_tools() {
                 text: "bug".into()
             },
         }
+    );
+
+    let job = client.request(
+        "POST",
+        "/mcp",
+        token,
+        &call(6, "report_job", &json!({"name": "PR checks", "done": 3, "total": 5})),
+    );
+    assert_eq!(job.json()["result"]["isError"], false);
+    let TabEvent::Job { report } = h.next_event().event else { panic!("a job event") };
+    assert_eq!(
+        (report.name.as_str(), report.done, report.total),
+        ("PR checks", Some(3.0), Some(5.0))
     );
 
     let get = client.request("GET", "/mcp", token, "");
