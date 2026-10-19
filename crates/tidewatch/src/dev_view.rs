@@ -12,6 +12,8 @@
 //! - `TIDEWATCH_DEV_KEYS=<text>` after `TIDEWATCH_DEV_KEYS_AFTER=<seconds>` (default 8): type the text
 //!   into the newest agent tab once, to answer a prompt a check cannot avoid (`\r`, `\n`, `\e` and
 //!   `\\` are escapes; `\e[B\r` is Down then Enter).
+//! - `TIDEWATCH_DEV_PASTE=<text>`: after the same delay, one Cmd+V of that text (the escapes above apply),
+//!   as egui delivers it, to whatever has the focus: the newest tab's terminal, or a text field.
 
 use crate::layout;
 use crate::remote_pill::Popover;
@@ -22,12 +24,19 @@ pub(crate) struct DevKeys {
     pub(crate) after: f64,
 }
 
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct DevPaste {
+    pub(crate) text: String,
+    pub(crate) after: f64,
+}
+
 #[derive(Clone, Debug, Default, PartialEq)]
 pub(crate) struct DevView {
     pub(crate) overview: bool,
     pub(crate) focus: bool,
     pub(crate) status_log: bool,
     pub(crate) keys: Option<DevKeys>,
+    pub(crate) paste: Option<DevPaste>,
     pub(crate) side: Option<f32>,
     pub(crate) remote_popover: Popover,
 }
@@ -59,6 +68,18 @@ impl DevView {
         )
         .with_side(var("TIDEWATCH_DEV_SIDE").as_deref())
         .with_remote_popover(var("TIDEWATCH_DEV_REMOTE_POPOVER").as_deref())
+        .with_paste(
+            var("TIDEWATCH_DEV_PASTE").as_deref(),
+            var("TIDEWATCH_DEV_KEYS_AFTER").as_deref(),
+        )
+    }
+
+    fn with_paste(self, text: Option<&str>, after: Option<&str>) -> Self {
+        let paste = text.filter(|text| !text.is_empty()).map(|text| DevPaste {
+            text: String::from_utf8_lossy(&unescape(text)).into_owned(),
+            after: after.and_then(|s| s.parse().ok()).unwrap_or(DEFAULT_KEYS_AFTER_SECS),
+        });
+        Self { paste, ..self }
     }
 
     fn with_remote_popover(self, value: Option<&str>) -> Self {
@@ -89,6 +110,7 @@ impl DevView {
                 bytes: unescape(k),
                 after: keys_after.and_then(|s| s.parse().ok()).unwrap_or(DEFAULT_KEYS_AFTER_SECS),
             }),
+            paste: None,
             side: None,
             remote_popover: Popover::OnClick,
         }
@@ -139,6 +161,16 @@ mod tests {
             DevView::default()
         );
         assert_eq!(DevView::parse(None, None, None, None, None), DevView::default());
+    }
+
+    #[test]
+    fn the_paste_switch_takes_escaped_text_and_the_keys_delay() {
+        let paste = DevView::default().with_paste(Some("a\\r\\nb"), Some("3")).paste;
+        assert_eq!(paste, Some(DevPaste { text: "a\r\nb".into(), after: 3.0 }));
+        let late = DevView::default().with_paste(Some("x"), None).paste;
+        assert_eq!(late.map(|paste| paste.after), Some(DEFAULT_KEYS_AFTER_SECS));
+        assert_eq!(DevView::default().with_paste(Some(""), None).paste, None);
+        assert_eq!(DevView::default().with_paste(None, None).paste, None);
     }
 
     #[test]

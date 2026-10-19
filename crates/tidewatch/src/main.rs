@@ -82,6 +82,7 @@ mod palette;
 mod palette_view;
 mod pane;
 mod pane_jobs;
+mod paste;
 mod post_confirm;
 mod pr_card_model;
 mod pr_cards_view;

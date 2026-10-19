@@ -148,6 +148,7 @@ impl Tidewatch {
         self.drive_build_workflow(ctx, now);
         self.drive_workflows(ctx, now, asked);
         self.send_dev_keys(now);
+        self.send_dev_paste(ctx, now);
         release_typed_commands(ctx, &mut self.tabs, now);
         let rows = |term: &PtyTerm| Rows {
             lines: term.buffer_lines().into_iter().map(|(_, line)| line).collect(),

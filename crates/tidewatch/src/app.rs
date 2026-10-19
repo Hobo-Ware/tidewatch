@@ -59,7 +59,7 @@ use crate::dev_reader::DevReader;
 use crate::dev_screenshot::DevScreenshot;
 use crate::dev_session::DevSession;
 use crate::dev_takeover::DevTakeover;
-use crate::dev_view::{DevKeys, DevView};
+use crate::dev_view::{DevKeys, DevPaste, DevView};
 use crate::dev_workflow::DevWorkflow;
 use crate::dev_worktree::DevWorktree;
 use crate::due;
@@ -164,6 +164,7 @@ pub(crate) struct Tidewatch {
     status_log: bool,
     dev_remote_popover: Popover,
     dev_keys: Option<DevKeys>,
+    dev_paste: Option<DevPaste>,
     dev_reader: DevReader,
     trust: Trust,
     saver: Saver,
@@ -301,6 +302,7 @@ impl Tidewatch {
             status_log: dev_view.status_log,
             dev_remote_popover: dev_view.remote_popover,
             dev_keys: dev_view.keys,
+            dev_paste: dev_view.paste,
             dev_reader: DevReader::from_env(),
             trust,
             saver,

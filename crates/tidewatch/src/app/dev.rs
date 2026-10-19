@@ -244,4 +244,16 @@ impl Tidewatch {
             self.dev_keys = None;
         }
     }
+
+    pub(super) fn send_dev_paste(&mut self, ctx: &egui::Context, now: f64) {
+        let Some(paste) = &self.dev_paste else { return };
+        if now < paste.after {
+            ctx.request_repaint_after(std::time::Duration::from_secs_f64(paste.after - now));
+            return;
+        }
+        let text = paste.text.clone();
+        self.dev_paste = None;
+        ctx.input_mut(|input| input.events.push(egui::Event::Paste(text)));
+        ctx.request_repaint();
+    }
 }

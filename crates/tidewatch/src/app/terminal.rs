@@ -9,6 +9,7 @@ use crate::brand;
 use crate::commands::Command;
 use crate::mascot::{self, Pose};
 use crate::pane::{Body, Pane};
+use crate::paste;
 use crate::reader::Shown;
 use crate::reader_view::Action;
 use crate::screen_kit::paint_pill_card;
@@ -52,9 +53,13 @@ impl Tidewatch {
                 term.resize(grid.cols, grid.rows);
                 if !reader_on {
                     let typed = collect_input(ui, false, false, term.app_cursor());
-                    if !typed.is_empty() && !frame.keys.modal_open && !frame.keys.typing_in_a_panel
-                    {
+                    let keys_free = !frame.keys.modal_open && !frame.keys.typing_in_a_panel;
+                    let pasted = ui.input(|i| paste::texts(&i.events, keys_free));
+                    if keys_free && (!typed.is_empty() || !pasted.is_empty()) {
                         term.send(&typed);
+                        for text in &pasted {
+                            paste::into_terminal(term, text);
+                        }
                         if let Some(agent) = agent {
                             agent.resume_note = None;
                         }
