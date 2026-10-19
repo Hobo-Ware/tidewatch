@@ -9,6 +9,7 @@ use crate::reader_glue;
 use crate::settings_view;
 use crate::tab_view::TabView;
 use crate::tabs::Action;
+use crate::updates::Wish;
 
 pub(super) struct KeyRoute {
     pub(super) modal_open: bool,
@@ -51,6 +52,12 @@ impl Tidewatch {
         self.updates.tick();
         if self.updates.take_restart() {
             self.restart_to_update(ctx);
+        }
+        match self.updates.take_wish() {
+            Some(Wish::OpenSettings) => self.open_updates_settings(),
+            Some(Wish::Quit) => ctx.send_viewport_cmd(egui::ViewportCommand::Close),
+            Some(Wish::Toast(text)) => self.show_toast(text, ctx),
+            None => {}
         }
         let toasts = [self.trust.drain(ctx), self.leftovers.tick()];
         for text in toasts.into_iter().flatten() {

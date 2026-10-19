@@ -15,11 +15,16 @@ use tidewatch_core::paths::TidewatchPaths;
 
 use super::Tidewatch;
 use crate::handoff::{self, Facts};
+use crate::update_chip;
 
 impl Tidewatch {
     /// The update pill's Restart. With a home folder the terminals travel to the new window; without
     /// one nothing is saved anyway, so the window just starts again.
     pub(super) fn restart_to_update(&mut self, ctx: &egui::Context) {
+        if !self.updates.can_restart() {
+            self.show_toast(update_chip::RESTART_WAITS, ctx);
+            return;
+        }
         let Some(paths) = self.paths.clone() else {
             restart_plainly(ctx);
             return;

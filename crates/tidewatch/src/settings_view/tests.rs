@@ -53,7 +53,13 @@ fn general(restore: bool, resume: ResumeAgents, login_offered: bool) -> General 
 }
 
 fn updates(ctx: &egui::Context) -> Updates {
-    Updates::new(ctx, tidewatch_core::prefs::UpdatePrefs::default(), None, true)
+    Updates::new(
+        ctx,
+        tidewatch_core::prefs::UpdatePrefs::default(),
+        None,
+        true,
+        std::env::temp_dir(),
+    )
 }
 
 fn input(events: Vec<Event>) -> RawInput {
