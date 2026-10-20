@@ -389,11 +389,13 @@ fn agent_resume(
     if !env.installed.contains(&tab.agent) {
         return Err(Reason::AgentMissing(tab.agent.clone()));
     }
+    let defaults = tab.meeseeks.is_some().then(|| Profile::defaults_for(&tab.agent, tab.level));
     let profile = env
         .profiles
         .profile
         .get(&tab.profile)
         .or_else(|| env.profiles.profile.values().find(|p| p.name == tab.profile))
+        .or(defaults.as_ref().filter(|_| tab.profile == Profile::DEFAULTS_ID))
         .ok_or_else(|| Reason::ProfileGone(tab.profile.clone()))?;
     if profile.agent != tab.agent {
         return Err(Reason::ProfileChanged {
@@ -896,6 +898,32 @@ mod tests {
             );
             assert!(plan.tabs[0].note().is_some());
         }
+    }
+
+    #[test]
+    fn a_meeseeks_that_ran_on_its_cli_defaults_resumes_typed_at_yolo() {
+        let meeseeks = Some(Box::new(crate::meeseeks::Meeseeks::default()));
+        let mut tab =
+            agent_tab("a-claude", "claude", Profile::DEFAULTS_ID, Level::Yolo, Some(ID_C));
+        let SavedTab::Agent(saved) = &mut tab else { unreachable!("agent_tab makes an agent") };
+        saved.meeseeks = meeseeks;
+        let plan = plan_with(&window(vec![tab.clone()]), &everything_installed(), &disk_for_all());
+        let TabAction::ResumeAgent { profile, how, .. } = &plan.tabs[0].action else {
+            panic!("{:?}", plan.tabs[0].action)
+        };
+        assert_eq!((profile.level, profile.agent.as_str()), (Level::Yolo, "claude"));
+        assert_eq!(*how, Resume::TypeOnly(Why::Yolo));
+        let SavedTab::Agent(mut plain) = tab else { unreachable!("agent_tab makes an agent") };
+        plain.meeseeks = None;
+        let plan = plan_with(
+            &window(vec![SavedTab::Agent(plain)]),
+            &everything_installed(),
+            &disk_for_all(),
+        );
+        assert_eq!(
+            plan.tabs[0].action,
+            TabAction::ShellInstead(Reason::ProfileGone(Profile::DEFAULTS_ID.into()))
+        );
     }
 
     #[test]

@@ -126,6 +126,9 @@ pub struct NewTabPrefs {
     pub start: Option<StartFrom>,
     #[serde(default)]
     pub right_panel: RightPanel,
+    /// The agent CLI (`claude`, `codex`, ...) the last Meeseeks ran on, kept apart from `agent`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub meeseeks_agent: Option<String>,
     #[serde(default, skip_serializing_if = "Criteria::is_default")]
     pub meeseeks: Criteria,
 }
@@ -561,6 +564,7 @@ mod tests {
                 remote: false,
                 start: None,
                 right_panel: RightPanel::Progress,
+                meeseeks_agent: None,
                 meeseeks: Criteria { tests: true, committed: true, pr: true },
             }
         );
@@ -686,6 +690,7 @@ mod tests {
             remote: true,
             start: Some(StartFrom::Current),
             right_panel: RightPanel::History,
+            meeseeks_agent: Some("codex".into()),
             meeseeks: Criteria { tests: false, committed: true, pr: false },
         };
         Prefs::update(&paths, |p| p.new_tab = wanted.clone()).unwrap();
@@ -711,6 +716,22 @@ mod tests {
         Prefs::update(&paths, |p| p.new_tab.meeseeks = Criteria::default()).unwrap();
         let text = std::fs::read_to_string(paths.prefs_file()).unwrap();
         assert!(!text.contains("meeseeks"), "{text}");
+    }
+
+    #[test]
+    fn the_last_meeseeks_cli_is_its_own_key_apart_from_the_agent_pick() {
+        let (_home, paths) = paths();
+        assert_eq!(Prefs::load(&paths).new_tab.meeseeks_agent, None);
+        Prefs::update(&paths, |p| p.new_tab.meeseeks_agent = Some("gemini".into())).unwrap();
+        let text = std::fs::read_to_string(paths.prefs_file()).unwrap();
+        assert!(text.contains("meeseeks_agent = \"gemini\""), "{text}");
+        let loaded = Prefs::load(&paths).new_tab;
+        assert_eq!((loaded.meeseeks_agent.as_deref(), loaded.agent), (Some("gemini"), None));
+        Prefs::update(&paths, |p| p.new_tab.agent = Some("builder".into())).unwrap();
+        assert_eq!(Prefs::load(&paths).new_tab.meeseeks_agent.as_deref(), Some("gemini"));
+        Prefs::update(&paths, |p| p.new_tab.meeseeks_agent = None).unwrap();
+        let text = std::fs::read_to_string(paths.prefs_file()).unwrap();
+        assert!(!text.contains("meeseeks_agent"), "{text}");
     }
 
     #[test]

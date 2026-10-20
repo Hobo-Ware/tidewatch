@@ -10,6 +10,7 @@ use crate::brand;
 use crate::catalog::{Availability, Catalog};
 use crate::new_tab::{Kind, NewTab};
 use crate::new_tab_layout::{self as layout, Slot};
+use crate::new_tab_meeseeks;
 use crate::new_tab_workflow;
 use crate::reader_view::{ellipsized, field_frame_on};
 use crate::screen_kit::{body, clickable, heading, mono, paint_cli_badge, selection_row};
@@ -54,6 +55,23 @@ pub(crate) fn subtitle(profile: &Profile, availability: &Availability) -> String
     }
 }
 
+/// `Builder · opus · high` for the profile a Meeseeks on this CLI will use (the CLI's own name
+/// left off the profile's), `default model` when the CLI has no profile; `not installed` when the
+/// CLI is missing.
+pub(crate) fn meeseeks_subtitle(
+    cli: &str,
+    key: &str,
+    profile: &Profile,
+    availability: &Availability,
+) -> String {
+    let line = subtitle(profile, availability);
+    if key == Profile::DEFAULTS_ID || *availability == Availability::Missing {
+        return line;
+    }
+    let name = profile.name.strip_prefix(&format!("{cli} ")).unwrap_or(&profile.name);
+    format!("{name} \u{b7} {line}")
+}
+
 /// The stage names of a workflow in one line: `Plan › Build › Review`.
 pub(crate) fn stages_line(chips: &[&str]) -> String {
     chips.join(" \u{203a} ")
@@ -81,6 +99,23 @@ pub(crate) fn entries(state: &NewTab, catalog: &Catalog) -> Vec<Entry> {
         return out;
     }
     let profiles = catalog.entries();
+    if state.kind() == Kind::Meeseeks {
+        let ids = state.visible(catalog);
+        for (index, id) in ids.into_iter().enumerate() {
+            let Some(agent) = catalog.agent(&id) else { continue };
+            let (key, profile) = new_tab_meeseeks::profile_for(&id, &profiles);
+            let availability = catalog.availability(&id);
+            out.push(Entry::Row(Row {
+                index,
+                title: agent.name.clone(),
+                subtitle: meeseeks_subtitle(&agent.name, &key, &profile, &availability),
+                badge: Badge::Cli(id.clone()),
+                dim: availability == Availability::Missing,
+                id,
+            }));
+        }
+        return out;
+    }
     let names = catalog.agent_names();
     for (agent_id, ids) in state.agent_groups(catalog) {
         let label = names.iter().find(|(id, _)| *id == agent_id).map_or(&agent_id, |(_, n)| n);
@@ -122,14 +157,12 @@ pub(crate) struct Out {
 }
 
 fn top_row(ui: &mut Ui, rect: Rect, state: &NewTab) -> Option<String> {
-    if state.kind() == Kind::Workflow {
-        ui.painter().text(
-            rect.left_center(),
-            Align2::LEFT_CENTER,
-            "WORKFLOW",
-            body(11.5),
-            brand::MUTED,
-        );
+    if let Some(title) = match state.kind() {
+        Kind::Workflow => Some("WORKFLOW"),
+        Kind::Meeseeks => Some("AGENT"),
+        Kind::Agent | Kind::Shell => None,
+    } {
+        ui.painter().text(rect.left_center(), Align2::LEFT_CENTER, title, body(11.5), brand::MUTED);
         return None;
     }
     let current = state.filter();

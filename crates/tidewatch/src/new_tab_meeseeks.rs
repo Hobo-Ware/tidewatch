@@ -1,13 +1,17 @@
 //! The Meeseeks side of the new-tab form, pure: the ticks of "Done means", the worktree name of
-//! each task line and the Summon label.
+//! each task line, the Summon label, and the profile a picked CLI runs with (always at YOLO).
 
+use tidewatch_core::agents::{Agent, Level};
 use tidewatch_core::branch_name;
 use tidewatch_core::meeseeks::Criteria;
 use tidewatch_core::names;
+use tidewatch_core::profiles::Profile;
 
 use crate::repo_base::RepoFacts;
 
 pub(crate) const NO_TESTS: &str = "needs a test command, none found";
+pub(crate) const YOLO_LINE: &str = "Meeseeks always run in YOLO, in their own worktree.";
+pub(crate) const LEVEL: Level = Level::Yolo;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Tick {
@@ -90,6 +94,31 @@ pub(crate) fn names_for(lines: &[String], seed: u64, taken: impl Fn(&str) -> boo
         chosen.push(name);
     }
     chosen
+}
+
+fn is_builder(key: &str, profile: &Profile) -> bool {
+    let named = |text: &str| {
+        let text = text.trim().to_lowercase();
+        text == "builder" || text.ends_with(" builder") || text.ends_with("-builder")
+    };
+    named(key) || named(&profile.name)
+}
+
+pub(crate) fn profile_for(
+    agent_id: &str,
+    entries: &[(&str, &Profile, &Agent)],
+) -> (String, Profile) {
+    let ours: Vec<(&str, &Profile)> = entries
+        .iter()
+        .filter(|(_, _, agent)| agent.id == agent_id)
+        .map(|(key, profile, _)| (*key, *profile))
+        .collect();
+    let picked =
+        ours.iter().find(|(key, profile)| is_builder(key, profile)).or_else(|| ours.first());
+    match picked {
+        Some((key, profile)) => ((*key).to_owned(), Profile { level: LEVEL, ..(*profile).clone() }),
+        None => (Profile::DEFAULTS_ID.to_owned(), Profile::defaults_for(agent_id, LEVEL)),
+    }
 }
 
 pub(crate) fn summon_label(tasks: usize) -> String {
