@@ -4,13 +4,14 @@ A running log of what got done, newest first. The plan lives in [PLAN.md](PLAN.m
 
 ## Status
 
-- **Current milestone:** v0.1.15: Meeseeks one-task agents.
-- **Done:** Phases 0 to 10; v0.1.0 to v0.1.15 released (Homebrew cask, Linux tarball and AppImage); the K mark identity; the showcase page.
+- **Current milestone:** v0.1.16: Meeseeks always run in YOLO with only the agent CLI to pick, and every agent may push its own branch, force included.
+- **Done:** Phases 0 to 10; v0.1.0 to v0.1.16 released (Homebrew cask, Linux tarball and AppImage); the K mark identity; the showcase page.
 - **Also:** six habit workflows are built in, and Build workflow from this session (palette; the agent proposes a workflow that opens as an unsaved draft), 2026-10-16. Restart to update keeps every shell and agent running (live handoff, 2026-10-15). The receiving side of stdusk's "Move tabs to Tidewatch" is built (#49).
 - **Next:** the diff widgets go teal (the graph already does on the side layout); commit messages that truncate early in the narrow tree; the divider position saved between runs; the site hero screenshot; the owner's live checks; Linux desktop runs.
 
 ## 2026-10-20
 
+- **v0.1.16.** Ships #89 and the push rule (#90).
 - **Agents may push their own branch, nothing else (D7 changed).** The owner: "the push block just protects from destructive shit but the branch can still be pushed", "I want for all then not just for meeseeks", "Force push is allowed how else do you fold fixups?", "go ahead with the push rule". The `pushInsteadOf` rewrite stays; `git-remote-tidewatch-no-push` became a real git remote helper (list for-push from `git ls-remote`, push batches, `option cas` for `--force-with-lease`, `option force`, `option dry-run`) that forwards a batch to the real url with the guard key neutralised only when every ref is `refs/heads/$TIDEWATCH_PUSH_BRANCH`. `prepare` reads that branch from the worktree's HEAD (an `agent/` branch only, else nothing can be pushed). The house style tool guidance and the Meeseeks block say so, and the profile switch reads "Only let this agent push its own branch". Pull requests are still opened by Tidewatch.
   Checked: `tests/push_guard.rs` against a real bare remote (7 allowed forms land and move `origin/agent/...`, 15 refused forms change nothing and show the message, fetch works, no branch or no helper refuses all, a normal shell still pushes main), and a `prepare` test that pushes the tab's own branch through the prepared environment. Not checked: Linux (dash runs the helper script in CI), an ssh or https remote with credentials, Codex, Gemini and Copilot shells.
 - **Meeseeks always run in YOLO and you pick only the agent CLI (branch `meeseeks-yolo`).** The owner: "meeseeks should always be yolo and should implicitly be builder so you only choose your flavor like codex, claude etc." A Meeseeks form's lane lists the four CLIs (dimmed with "not installed" when missing, keys 1-4) instead of profiles, the Permission row is replaced by one muted line ("Meeseeks always run in YOLO, in their own worktree."), and Left and Right do nothing there.
