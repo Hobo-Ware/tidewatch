@@ -97,6 +97,9 @@ impl Tidewatch {
         let typing_in_a_panel = ctx.text_edit_focused();
         let active_id = self.tabs.items()[self.tabs.active()].id;
         let gate = self.key_gate(active_id, typing_in_a_panel);
+        if gate.focus == Focus::Terminal && !gate.modal_open() && !self.overview {
+            crate::screen_kit::esc_left_a_widget(ctx, false);
+        }
         let mut actions = Vec::new();
         let mut toggle_overview = false;
         for command in commands::pressed(ctx, gate) {
@@ -217,6 +220,7 @@ impl Tidewatch {
     }
 
     pub(super) fn finish_frame(&mut self, ctx: &egui::Context, now: f64) {
+        crate::screen_kit::remember_focus(ctx);
         self.dev_session.tick(ctx, &mut self.tabs, now);
         if self.dev_session.restart_due(now) {
             self.restart_to_update(ctx);

@@ -54,15 +54,18 @@ impl Harness {
         harness
     }
 
-    /// A form whose message box has given the keyboard up with one Esc, as a user does before
-    /// pressing a letter that means something.
     fn unfocused(group: Group) -> Self {
         Self::unfocused_sized(group, 900.0, 800.0)
     }
 
     fn unfocused_sized(group: Group, width: f32, height: f32) -> Self {
-        let mut harness = Self::sized(group, width, height);
-        assert_eq!(harness.press(Key::Escape), None);
+        Self::sized(group, width, height)
+    }
+
+    fn in_the_box(group: Group) -> Self {
+        let mut harness = Self::new(group);
+        assert_eq!(harness.press(Key::Enter), None);
+        assert!(harness.typing());
         harness
     }
 
@@ -152,14 +155,50 @@ fn started(out: Option<Out>) -> Request {
 }
 
 #[test]
-fn the_message_box_has_the_keyboard_when_the_form_opens() {
+fn the_form_opens_with_no_text_field_focused() {
     let harness = Harness::new(Group::Repo);
-    assert!(harness.typing());
+    assert!(!harness.typing());
+}
+
+#[test]
+fn a_and_m_switch_the_kind_at_once() {
+    let mut harness = Harness::new(Group::Repo);
+    assert_eq!(harness.press(Key::M), None);
+    assert_eq!(harness.state.kind(), Kind::Meeseeks);
+    assert_eq!(harness.press(Key::A), None);
+    assert_eq!(harness.state.kind(), Kind::Agent);
+}
+
+#[test]
+fn enter_and_slash_move_into_the_message_box() {
+    for key_name in [Key::Enter, Key::Slash] {
+        let mut harness = Harness::new(Group::Repo);
+        assert_eq!(harness.press(key_name), None);
+        assert!(harness.typing(), "{key_name:?}");
+        assert_eq!(harness.state.kind(), Kind::Agent);
+    }
+}
+
+#[test]
+fn the_slash_that_moved_into_the_box_is_not_typed_into_it() {
+    let mut harness = Harness::new(Group::Repo);
+    harness.frame(vec![key(Key::Slash), Event::Text("/".into())]);
+    harness.type_text("hi");
+    assert_eq!(harness.state.text(), "hi");
+}
+
+#[test]
+fn enter_is_left_to_a_focused_button() {
+    let mut harness = Harness::new(Group::Repo);
+    harness.press(Key::Tab);
+    assert!(harness.ctx.memory(|memory| memory.focused().is_some()) && !harness.typing());
+    harness.press(Key::Enter);
+    assert!(!harness.typing());
 }
 
 #[test]
 fn keys_are_never_taken_from_a_focused_text_field() {
-    let mut harness = Harness::new(Group::Repo);
+    let mut harness = Harness::in_the_box(Group::Repo);
     for letter in [Key::A, Key::W, Key::S, Key::Num2, Key::ArrowLeft, Key::ArrowRight] {
         assert_eq!(harness.frame(vec![key(letter)]), None);
     }
@@ -172,10 +211,42 @@ fn keys_are_never_taken_from_a_focused_text_field() {
 }
 
 #[test]
-fn the_first_esc_gives_the_keyboard_up_and_the_second_closes_the_draft() {
-    let mut harness = Harness::new(Group::Repo);
+fn esc_leaves_the_message_box_without_closing_and_the_next_one_closes_the_draft() {
+    let mut harness = Harness::in_the_box(Group::Repo);
     assert_eq!(harness.press(Key::Escape), None);
     assert!(!harness.typing());
+    assert!(matches!(harness.press(Key::Escape), Some(Out::Close)));
+}
+
+#[test]
+fn esc_leaves_the_name_field_too() {
+    let mut harness = Harness::new(Group::Repo);
+    harness.ctx.memory_mut(|memory| memory.request_focus(Id::new("new-tab-name")));
+    harness.frame(Vec::new());
+    assert!(harness.typing());
+    assert_eq!(harness.press(Key::Escape), None);
+    assert!(!harness.typing());
+    assert!(matches!(harness.press(Key::Escape), Some(Out::Close)));
+}
+
+#[test]
+fn esc_closes_the_branch_dropdown_and_lets_go_of_it_before_the_next_one_closes_the_draft() {
+    let mut harness = Harness::new(Group::Repo);
+    let at = harness.placed().base.expect("the start branch field").center();
+    harness.click(at);
+    assert!(egui::Popup::is_any_open(&harness.ctx));
+    assert_eq!(harness.press(Key::Escape), None);
+    assert!(!egui::Popup::is_any_open(&harness.ctx));
+    assert!(harness.ctx.memory(|memory| memory.focused().is_none()));
+    assert!(matches!(harness.press(Key::Escape), Some(Out::Close)));
+}
+
+#[test]
+fn esc_lets_go_of_a_focused_button_before_it_closes_the_draft() {
+    let mut harness = Harness::new(Group::Repo);
+    harness.press(Key::Tab);
+    assert!(harness.ctx.memory(|memory| memory.focused().is_some()) && !harness.typing());
+    assert_eq!(harness.press(Key::Escape), None);
     assert!(matches!(harness.press(Key::Escape), Some(Out::Close)));
 }
 
@@ -237,7 +308,7 @@ fn clicking_a_lane_row_picks_it() {
 
 #[test]
 fn cmd_enter_starts_from_the_message_box_with_the_message_and_a_name_from_it() {
-    let mut harness = Harness::new(Group::Repo);
+    let mut harness = Harness::in_the_box(Group::Repo);
     harness.type_text("Add retry to the stage gates");
     let out = harness.frame(vec![key_with(Key::Enter, Modifiers::COMMAND)]);
     let Request::Agent(request) = started(out) else { panic!("agent") };
@@ -445,7 +516,7 @@ fn up_and_down_move_the_pick_and_stop_at_the_ends() {
 
 #[test]
 fn up_and_down_are_left_to_a_focused_text_field() {
-    let mut harness = Harness::new(Group::Repo);
+    let mut harness = Harness::in_the_box(Group::Repo);
     harness.press(Key::ArrowDown);
     assert_eq!(harness.state.selected(), 0);
 }
@@ -671,6 +742,7 @@ fn cmd_enter_summons_from_the_task_box_too() {
     let mut harness = Harness::new(Group::Repo);
     harness.facts = Some(command_facts());
     harness.state.choose(Kind::Meeseeks);
+    harness.press(Key::Enter);
     harness.type_text("Fix the flaky retry test");
     let request = meeseeks_of(harness.frame(vec![key_with(Key::Enter, Modifiers::COMMAND)]));
     assert_eq!(request.tabs[0].task, "Fix the flaky retry test");

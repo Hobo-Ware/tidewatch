@@ -337,6 +337,34 @@ pub(crate) fn footer_row(ui: &mut Ui, hint: &str, add: impl FnOnce(&mut Ui)) {
 }
 
 /// The shortcut that confirms a form or a dialog, as the text of a key cap.
+#[derive(Clone, Copy, Default)]
+struct Held {
+    any: bool,
+    not_text: bool,
+}
+
+fn held_id() -> egui::Id {
+    egui::Id::new("focus-held-last-frame")
+}
+
+/// Records at the end of a frame whether a widget holds the keyboard. egui drops that focus on Esc
+/// before any code of the next frame runs, so this is the only way to tell that Esc did it.
+pub(crate) fn remember_focus(ctx: &egui::Context) {
+    let focused = ctx.memory(|memory| memory.focused().is_some());
+    let held = Held { any: focused, not_text: focused && !ctx.text_edit_focused() };
+    ctx.data_mut(|data| data.insert_temp(held_id(), held));
+}
+
+/// Whether this frame's Esc only took the keyboard from a widget (any widget, or with `text` false
+/// one that is not a text field), unless an open dropdown needs the key to close. When it did, the
+/// key is used up.
+pub(crate) fn esc_left_a_widget(ctx: &egui::Context, text: bool) -> bool {
+    let held: Held = ctx.data(|data| data.get_temp(held_id())).unwrap_or_default();
+    let held = if text { held.any } else { held.not_text };
+    held && !egui::Popup::is_any_open(ctx)
+        && ctx.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Escape))
+}
+
 pub(crate) fn confirm_key() -> &'static str {
     match Platform::CURRENT {
         Platform::Mac => "\u{2318}\u{21b5}",
@@ -532,5 +560,49 @@ mod tests {
         assert_eq!(badge_colors("other"), (brand::BUTTON, brand::MUTED));
         assert_eq!(badge_letter("copilot"), "P");
         assert_eq!(badge_letter("zed"), "Z");
+    }
+
+    fn esc_frame(ctx: &Context, text: bool) -> bool {
+        let key = egui::Event::Key {
+            key: egui::Key::Escape,
+            physical_key: Some(egui::Key::Escape),
+            pressed: true,
+            repeat: false,
+            modifiers: egui::Modifiers::NONE,
+        };
+        let input = egui::RawInput { events: vec![key], ..egui::RawInput::default() };
+        let mut taken = false;
+        let _ = ctx.run_ui(input, |_| taken = esc_left_a_widget(ctx, text));
+        taken
+    }
+
+    fn held(ctx: &Context, any: bool, not_text: bool) {
+        ctx.data_mut(|data| data.insert_temp(held_id(), Held { any, not_text }));
+    }
+
+    #[test]
+    fn esc_is_left_alone_when_no_widget_held_the_keyboard() {
+        let ctx = Context::default();
+        held(&ctx, false, false);
+        assert!(!esc_left_a_widget(&ctx, true));
+        assert!(!esc_left_a_widget(&ctx, false));
+        assert!(!esc_frame(&ctx, true));
+        assert!(!esc_frame(&ctx, false));
+    }
+
+    #[test]
+    fn esc_is_used_up_by_a_widget_that_held_the_keyboard() {
+        let ctx = Context::default();
+        held(&ctx, true, true);
+        assert!(esc_frame(&ctx, false));
+        assert!(esc_frame(&ctx, true));
+    }
+
+    #[test]
+    fn esc_in_a_text_field_is_left_to_its_own_owner_unless_asked() {
+        let ctx = Context::default();
+        held(&ctx, true, false);
+        assert!(!esc_frame(&ctx, false));
+        assert!(esc_frame(&ctx, true));
     }
 }

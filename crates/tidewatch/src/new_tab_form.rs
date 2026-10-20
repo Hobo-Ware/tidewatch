@@ -22,11 +22,11 @@ use crate::new_tab_remote;
 use crate::new_tab_workflow::{self, StageCard};
 use crate::repo_base::RepoFacts;
 use crate::screen_kit::{
-    Size, body, confirm_key, heading, keyed_button_width, mono, primary_button_keyed,
+    Size, body, confirm_key, esc_left_a_widget, heading, keyed_button_width, mono,
+    primary_button_keyed, remember_focus,
 };
 use crate::segmented;
 
-const TYPING: &str = "new-tab-typing";
 const PLACED: &str = "new-tab-placed";
 const CAPTION_GAP: f32 = 8.0;
 const DESCRIPTION_GAP: f32 = 6.0;
@@ -59,10 +59,6 @@ pub(crate) struct Placed {
     pub(crate) start: Option<Rect>,
 }
 
-fn typing_id() -> Id {
-    Id::new(TYPING)
-}
-
 pub(crate) fn placed_id() -> Id {
     Id::new(PLACED)
 }
@@ -92,9 +88,10 @@ fn start(state: &mut NewTab, catalog: &Catalog, facts: Option<&RepoFacts>) -> Op
     }
 }
 
-/// The keys of the form. Cmd+Enter starts from anywhere in it; the bare keys (A, W, S, 1-9, Up, Down,
-/// Left, Right, Esc) are only read while no text field has the keyboard. Esc is also left alone for the
-/// frame in which it took the keyboard from a text field.
+/// The keys of the form. Cmd+Enter starts from anywhere in it; the bare keys (A, M, W, S, 1-9, Up, Down,
+/// Left, Right, Esc) are only read while no text field has the keyboard. Enter and `/` then hand
+/// the keyboard to the message box. Esc that closes a dropdown or takes the keyboard from a widget does
+/// only that, and an Esc with neither to do closes the draft.
 fn keys(
     ctx: &egui::Context,
     state: &mut NewTab,
@@ -104,9 +101,13 @@ fn keys(
     if ctx.input_mut(|input| input.consume_key(Modifiers::COMMAND, Key::Enter)) {
         return start(state, catalog, facts);
     }
-    let typing = ctx.text_edit_focused();
-    let typed_before = ctx.data(|data| data.get_temp::<bool>(typing_id())).unwrap_or(false);
-    if typing {
+    if esc_left_a_widget(ctx, true) || ctx.text_edit_focused() {
+        return None;
+    }
+    let nothing_focused = ctx.memory(|memory| memory.focused().is_none());
+    let to_message = pressed(ctx, Key::Slash) || (nothing_focused && pressed(ctx, Key::Enter));
+    if to_message && state.kind() != Kind::Shell {
+        state.focus_message = true;
         return None;
     }
     for (key, kind) in [
@@ -141,7 +142,7 @@ fn keys(
             state.step_level(true, catalog);
         }
     }
-    (!typed_before && !popup_open && pressed(ctx, Key::Escape)).then_some(Out::Close)
+    (!popup_open && pressed(ctx, Key::Escape)).then_some(Out::Close)
 }
 
 fn hint_job(parts: &[(&str, bool)]) -> LayoutJob {
@@ -163,21 +164,39 @@ fn footer_hints(kind: Kind) -> [Hint; 3] {
             &[
                 ("1-9 Up Down", true),
                 (" workflow \u{b7} ", false),
+                ("Enter", true),
+                (" type \u{b7} ", false),
                 ("Esc", true),
                 (" closes the tab", false),
             ],
-            &[("1-9", true), (" workflow \u{b7} ", false), ("Esc", true), (" closes", false)],
-            &[("Esc", true), (" closes", false)],
+            &[
+                ("1-9", true),
+                (" workflow \u{b7} ", false),
+                ("Enter", true),
+                (" type \u{b7} ", false),
+                ("Esc", true),
+                (" closes", false),
+            ],
+            &[("Enter", true), (" type \u{b7} ", false), ("Esc", true), (" closes", false)],
         ],
         Kind::Meeseeks => [
             &[
                 ("1-4 Up Down", true),
                 (" agent \u{b7} ", false),
+                ("Enter", true),
+                (" type \u{b7} ", false),
                 ("Esc", true),
                 (" closes the tab", false),
             ],
-            &[("1-4", true), (" agent \u{b7} ", false), ("Esc", true), (" closes", false)],
-            &[("Esc", true), (" closes", false)],
+            &[
+                ("1-4", true),
+                (" agent \u{b7} ", false),
+                ("Enter", true),
+                (" type \u{b7} ", false),
+                ("Esc", true),
+                (" closes", false),
+            ],
+            &[("Enter", true), (" type \u{b7} ", false), ("Esc", true), (" closes", false)],
         ],
         Kind::Agent | Kind::Shell => [
             &[
@@ -185,6 +204,8 @@ fn footer_hints(kind: Kind) -> [Hint; 3] {
                 (" agent \u{b7} ", false),
                 ("Left Right", true),
                 (" level \u{b7} ", false),
+                ("Enter", true),
+                (" type \u{b7} ", false),
                 ("Esc", true),
                 (" closes the tab", false),
             ],
@@ -193,10 +214,12 @@ fn footer_hints(kind: Kind) -> [Hint; 3] {
                 (" agent \u{b7} ", false),
                 ("Left Right", true),
                 (" level \u{b7} ", false),
+                ("Enter", true),
+                (" type \u{b7} ", false),
                 ("Esc", true),
                 (" closes", false),
             ],
-            &[("Esc", true), (" closes", false)],
+            &[("Enter", true), (" type \u{b7} ", false), ("Esc", true), (" closes", false)],
         ],
     }
 }
@@ -328,11 +351,8 @@ pub(crate) fn show(
     placed.selected_row = lane(ui, columns.lane, state, catalog);
     placed.lane = Some(columns.lane);
     out = out.or(pane(ui, columns.pane, state, catalog, facts, &mut placed));
-    let typing = ctx.text_edit_focused();
-    ctx.data_mut(|data| {
-        data.insert_temp(typing_id(), typing);
-        data.insert_temp(placed_id(), placed);
-    });
+    ctx.data_mut(|data| data.insert_temp(placed_id(), placed));
+    remember_focus(&ctx);
     out
 }
 
