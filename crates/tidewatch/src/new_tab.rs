@@ -5,6 +5,7 @@ use std::path::PathBuf;
 
 use tidewatch_core::agents::{Agent, Level, Remote};
 use tidewatch_core::branch_name::{self, Problem};
+use tidewatch_core::meeseeks::Criteria;
 use tidewatch_core::names;
 use tidewatch_core::prefs::{NewTabPrefs, StartFrom};
 use tidewatch_core::profiles::Profile;
@@ -60,6 +61,8 @@ pub(crate) struct AgentRequest {
     pub(crate) placement: Placement,
     /// Start the agent with remote control on. Never set for a CLI that has no flag for it.
     pub(crate) remote: bool,
+    /// Set for a Meeseeks: what done means for its one task.
+    pub(crate) meeseeks: Option<Criteria>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -643,6 +646,7 @@ impl NewTab {
             task: self.message.trim().to_owned(),
             placement: self.placement(facts),
             remote: self.remote_for(agent),
+            meeseeks: None,
         })))
     }
 

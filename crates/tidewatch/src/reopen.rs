@@ -50,6 +50,7 @@ pub(crate) fn saved_window(
         stages: None,
         crashed: false,
         remote: false,
+        meeseeks: None,
     });
     Ok(SavedWindow {
         dir: target.repo.to_path_buf(),

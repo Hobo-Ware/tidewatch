@@ -133,6 +133,7 @@ fn run_stage(spec: &StageSpec) -> Result<Started, String> {
         task: &launch.prompt,
         session_id: session_id.clone(),
         remote: false,
+        meeseeks: false,
         path_var: Some(&spec.path_var),
         listener: hooks,
         trust: spec.trust.as_ref(),
@@ -148,6 +149,7 @@ fn run_stage(spec: &StageSpec) -> Result<Started, String> {
         session_id,
         awaiting_prompt: false,
         prepared,
+        meeseeks: None,
     })
 }
 

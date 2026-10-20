@@ -499,6 +499,7 @@ pub(crate) fn window_plan(
         stages: None,
         crashed: false,
         remote: false,
+        meeseeks: None,
     });
     let action = TabAction::ResumeAgent {
         agent: agent.id.clone(),

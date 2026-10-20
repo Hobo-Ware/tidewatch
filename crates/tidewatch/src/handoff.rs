@@ -21,6 +21,7 @@ use serde::{Deserialize, Serialize};
 use stdusk_core::handoff::{Fallback, Layout, PaneMeta, capture_pane, fallback};
 use stdusk_core::terminal::PtyTerm;
 use tidewatch_core::listener::Credential;
+use tidewatch_core::meeseeks::Meeseeks;
 use tidewatch_core::runner::Runner;
 use tidewatch_core::worktree::Worktree;
 
@@ -139,6 +140,9 @@ pub(crate) struct AgentEntry {
     /// The name of the remote session the running agent has, when remote control is on.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) remote: Option<String>,
+    /// The tab is a Meeseeks: the new window keeps it one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) meeseeks: Option<Meeseeks>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -187,6 +191,7 @@ fn agent_entry(tab: &AgentTab, credential: Option<Credential>) -> AgentEntry {
             })
         }),
         remote: tab.remote.as_ref().map(|session| session.name.clone()),
+        meeseeks: tab.meeseeks.clone(),
     }
 }
 
@@ -386,6 +391,7 @@ fn agent_tab(entry: &AgentEntry, dir: &Path, now: f64, notes: &mut Vec<String>) 
         resume_note: None,
         base_note: None,
         remote: entry.remote.clone().map(RemoteSession::new),
+        meeseeks: entry.meeseeks.clone(),
     }
 }
 

@@ -95,7 +95,7 @@ pub(crate) fn route<T>(tabs: &mut Tabs<Pane<T>>, message: TabMessage, now: f64) 
         TabEvent::Avatar { avatar } => {
             Some(Follow::Avatar { tab: message.tab_id, avatar: Box::new(avatar.clone()) })
         }
-        TabEvent::Hook(_) | TabEvent::StageDone { .. } => None,
+        TabEvent::Hook(_) | TabEvent::StageDone { .. } | TabEvent::MeeseeksDone { .. } => None,
     };
     if let TabEvent::Hook(hook) = &message.event {
         agent.reader.hook(hook.transcript_path.clone());

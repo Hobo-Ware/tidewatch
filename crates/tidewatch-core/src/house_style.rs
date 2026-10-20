@@ -62,6 +62,19 @@ pub const TOOL_GUIDANCE: &str = "\
 - Once you understand the task, call `set_avatar` once with a 64x64 flat icon about the task (2-3 colors, simple shapes) and a one-line reason.
 ";
 
+/// Put after the tool guidance of a Meeseeks tab: the one task, and how it ends.
+pub const MEESEEKS_GUIDANCE: &str = "\
+## You are a Meeseeks
+
+You are a Meeseeks with exactly one task: the one you were given. Do it, and nothing else.
+
+- Work only in this worktree and commit your work on this branch as you go.
+- When the task is done and committed, call `meeseeks_done` once with a one-line summary of what you did. Tidewatch then checks the work and ends this session itself.
+- Do not push, open a pull request or remove anything yourself. Tidewatch does that.
+- If Tidewatch pastes a failed check, fix it, commit, and call `meeseeks_done` again.
+- Do not call `set_avatar`: your face is fixed.
+";
+
 /// Writes the default text over `house-style.md`, edits included. Returns its path.
 pub fn reset(paths: &TidewatchPaths) -> std::io::Result<PathBuf> {
     let file = paths.house_style_file();
@@ -93,8 +106,15 @@ pub fn copilot_instructions_md(house_style: &str) -> String {
 
 #[must_use]
 pub fn compose(house_style: &str, checklist: &str) -> String {
+    compose_for(house_style, checklist, false)
+}
+
+/// [`compose`], and for a Meeseeks the one-task block after the tool guidance.
+#[must_use]
+pub fn compose_for(house_style: &str, checklist: &str, meeseeks: bool) -> String {
+    let one_task = if meeseeks { format!("{MEESEEKS_GUIDANCE}\n") } else { String::new() };
     format!(
-        "{}\n\n{TOOL_GUIDANCE}\n{}",
+        "{}\n\n{TOOL_GUIDANCE}\n{one_task}{}",
         house_style.trim_end(),
         progress_prompt::section(checklist)
     )
@@ -218,6 +238,20 @@ mod tests {
             assert!(guidance >= mine.trim_end().len());
             assert!(guidance < text.find("## Progress ledger format").unwrap());
         }
+    }
+
+    #[test]
+    fn a_meeseeks_gets_its_one_task_block_between_the_tool_guidance_and_the_ledger_format() {
+        let checklist = "### 1. Mine\n- [ ] only this\n";
+        let plain = compose("be brief", checklist);
+        assert!(!plain.contains("Meeseeks") && !plain.contains("meeseeks_done"));
+        assert_eq!(compose_for("be brief", checklist, false), plain);
+        let text = compose_for("be brief", checklist, true);
+        let guidance = text.find("## Tidewatch tool guidance").unwrap();
+        let block = text.find("## You are a Meeseeks").unwrap();
+        assert!(guidance < block && block < text.find("## Progress ledger format").unwrap());
+        assert_eq!(text.matches("`meeseeks_done`").count(), 2);
+        assert!(text.contains("Do not push, open a pull request"));
     }
 
     #[test]

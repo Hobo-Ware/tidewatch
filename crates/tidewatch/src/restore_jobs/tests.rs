@@ -74,6 +74,7 @@ fn agent_tab(worktree: &Worktree, level: Level) -> SavedTab {
         stages: None,
         crashed: false,
         remote: false,
+        meeseeks: None,
     })
 }
 
@@ -298,6 +299,7 @@ fn reopen_spec(f: &Fixture, level: Level, listener: Option<Arc<Listener>>) -> Re
         profile: Profile { level, ..profiles.profile["builder"].clone() },
         session_id: SESSION_ID.into(),
         remote: false,
+        meeseeks: None,
         typed: None,
         path_var: OsString::from("/usr/bin:/bin"),
         listener,

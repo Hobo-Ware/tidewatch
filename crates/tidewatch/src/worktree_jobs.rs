@@ -6,6 +6,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use tidewatch_core::listener::{Listener, TabRegistration};
+use tidewatch_core::meeseeks::Meeseeks;
 use tidewatch_core::paths::TidewatchPaths;
 use tidewatch_core::prepare::{PrepareInput, prepare};
 use tidewatch_core::session_id;
@@ -44,6 +45,12 @@ pub(crate) struct OpenSpec {
     pub(crate) trust: Option<Grant>,
 }
 
+fn unix_ms() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| i64::try_from(d.as_millis()).unwrap_or(0))
+}
+
 /// Makes the worktree (when asked) and gets the agent ready, off the UI thread.
 pub(crate) fn open(jobs: &Jobs<Done>, ctx: &egui::Context, spec: OpenSpec) {
     jobs.spawn(ctx, move || Done::Opened { tab: spec.tab, result: run_open(&spec) });
@@ -79,6 +86,8 @@ fn run_open(spec: &OpenSpec) -> Result<Opened, OpenFailure> {
         })
     });
     let session_id = request.agent.session_id_flag.is_some().then(session_id::new);
+    let meeseeks =
+        request.meeseeks.map(|criteria| Meeseeks::summon(&request.task, criteria, unix_ms()));
     let prepared = prepare(&PrepareInput {
         paths: &spec.paths,
         agent: &request.agent,
@@ -90,6 +99,7 @@ fn run_open(spec: &OpenSpec) -> Result<Opened, OpenFailure> {
         task: &request.task,
         session_id: session_id.clone(),
         remote: request.remote,
+        meeseeks: meeseeks.is_some(),
         path_var: Some(&spec.path_var),
         listener: hooks,
         trust: spec.trust.as_ref(),
@@ -113,6 +123,7 @@ fn run_open(spec: &OpenSpec) -> Result<Opened, OpenFailure> {
                 session_id,
                 awaiting_prompt: request.task.trim().is_empty(),
                 prepared,
+                meeseeks,
             })),
         }),
         Err(e) => Err(match worktree {
@@ -241,6 +252,7 @@ mod tests {
             task: task.into(),
             placement: Placement::default(),
             remote: false,
+            meeseeks: None,
         })
     }
 

@@ -4,7 +4,7 @@
 //! [`handle_post`] takes the raw request body of an authenticated `/mcp` POST and returns the reply.
 //! It speaks `initialize`, `ping`, `tools/list` and `tools/call` and swallows notifications. The
 //! tools are `stage_done`, `report_finding`, `list_notes`, `reply_to_note`, `propose_workflow`,
-//! `ask_user`, `update_progress`, `get_progress`, `report_job` and `set_avatar`. Calls that matter to the app become [`TabEvent`]s through `emit`; the note tools read
+//! `ask_user`, `update_progress`, `get_progress`, `report_job`, `set_avatar` and `meeseeks_done`. Calls that matter to the app become [`TabEvent`]s through `emit`; the note tools read
 //! and write the tab's `notes.json` through `notes.rs`. `ask_user` holds its reply until the user
 //! answers (or [`AskWait::timeout`] runs out, or the client hangs up): the listener serves each
 //! connection on its own thread, so a held call blocks nothing else.
@@ -27,6 +27,7 @@ use crate::avatar_mcp;
 use crate::events::TabEvent;
 use crate::job_mcp;
 use crate::launch::MCP_SERVER_NAME;
+use crate::meeseeks_mcp;
 use crate::notes::Notes;
 use crate::progress_mcp;
 use crate::propose;
@@ -169,7 +170,7 @@ fn initialize_result(params: Option<&Value>) -> Value {
     })
 }
 
-/// The ten tools with their JSON Schemas, as `tools/list` returns them.
+/// The eleven tools with their JSON Schemas, as `tools/list` returns them.
 #[must_use]
 pub fn tool_definitions() -> Value {
     let [update_progress, get_progress] = progress_mcp::tool_definitions();
@@ -231,6 +232,7 @@ pub fn tool_definitions() -> Value {
         get_progress,
         job_mcp::tool_definition(),
         avatar_mcp::tool_definition(),
+        meeseeks_mcp::tool_definition(),
     ])
 }
 
@@ -266,6 +268,10 @@ fn call_tool(
     }
     if name == avatar_mcp::SET_TOOL {
         let (text, is_error) = avatar_mcp::set(args, ctx.notes_file, emit);
+        return Ok(tool_result(&text, is_error));
+    }
+    if name == meeseeks_mcp::DONE_TOOL {
+        let (text, is_error) = meeseeks_mcp::done(args, emit);
         return Ok(tool_result(&text, is_error));
     }
     if name == job_mcp::REPORT_TOOL {
@@ -579,7 +585,7 @@ mod tests {
     }
 
     #[test]
-    fn tools_list_has_ten_tools_with_object_schemas_and_required_fields() {
+    fn tools_list_has_eleven_tools_with_object_schemas_and_required_fields() {
         let reply =
             Harness::new().json(&json!({"jsonrpc": "2.0", "id": 2, "method": "tools/list"}));
         let tools = reply["result"]["tools"].as_array().unwrap();
@@ -596,7 +602,8 @@ mod tests {
                 "update_progress",
                 "get_progress",
                 "report_job",
-                "set_avatar"
+                "set_avatar",
+                "meeseeks_done"
             ]
         );
         let required: Vec<Vec<&str>> = tools
@@ -621,6 +628,7 @@ mod tests {
                 vec![],
                 vec!["name"],
                 vec!["svg", "reason"],
+                vec!["summary"],
             ]
         );
         for tool in tools {
@@ -690,6 +698,21 @@ mod tests {
         drop(events);
         let bad = h.call("set_avatar", &json!({"svg": "<svg><script/></svg>", "reason": "x"}));
         assert_eq!(bad["result"]["isError"], true);
+        assert_eq!(h.events.borrow().len(), 1);
+    }
+
+    #[test]
+    fn meeseeks_done_over_rpc_tells_the_tab_and_a_bad_call_is_a_tool_error() {
+        let h = Harness::new();
+        let reply = h.call("meeseeks_done", &json!({"summary": "Renamed the helper"}));
+        assert_eq!(reply["result"]["isError"], false, "{reply}");
+        let events = h.events.borrow();
+        assert_eq!(*events, [TabEvent::MeeseeksDone { summary: "Renamed the helper".into() }]);
+        drop(events);
+        for bad in [json!({}), json!({"summary": "a\nb"}), json!({"summary": "x", "pr": 1})] {
+            let reply = h.call("meeseeks_done", &bad);
+            assert_eq!(reply["result"]["isError"], true, "{bad}");
+        }
         assert_eq!(h.events.borrow().len(), 1);
     }
 
