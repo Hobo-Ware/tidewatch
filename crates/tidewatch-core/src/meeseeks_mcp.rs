@@ -1,5 +1,5 @@
 //! The `meeseeks_done` tool of the Tidewatch MCP server: a Meeseeks says its one task is finished.
-//! Tidewatch then checks the work; the agent is never asked to push or end itself.
+//! Tidewatch then checks the work and opens the pull request; the agent never ends itself.
 
 use serde_json::{Map, Value, json};
 

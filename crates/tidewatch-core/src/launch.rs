@@ -22,8 +22,8 @@ use crate::profiles::Profile;
 /// Name of the MCP server Tidewatch attaches to every agent.
 pub const MCP_SERVER_NAME: &str = "tidewatch";
 pub const NO_PUSH_HELPER_NAME: &str = "git-remote-tidewatch-no-push";
-pub const NO_PUSH_MESSAGE: &str =
-    "Tidewatch: pushing is blocked in agent tabs; Tidewatch pushes for you after approval.";
+pub const NO_PUSH_MESSAGE: &str = "Tidewatch: an agent tab may push only its own agent/ branch; Tidewatch pushes the rest after approval.";
+pub const PUSH_BRANCH_ENV: &str = "TIDEWATCH_PUSH_BRANCH";
 const NO_PUSH_URL_PREFIX: &str = "url.tidewatch-no-push://blocked/.pushInsteadOf";
 const CODEX_MCP_TOKEN_ENV: &str = "TIDEWATCH_MCP_TOKEN";
 /// How long a CLI waits for one Tidewatch tool call: the longest `ask_user` hold and five minutes
@@ -88,6 +88,8 @@ pub struct LaunchCtx {
     pub copilot_instructions_dir: Option<PathBuf>,
     /// Directory holding the never-push helper, see `ensure_no_push_helper`.
     pub guard_bin_dir: Option<PathBuf>,
+    /// The tab's own `agent/<name>` branch, the only ref the push guard lets through.
+    pub push_branch: Option<String>,
     /// The environment the agent would otherwise get. Read for `GIT_CONFIG_COUNT` and `PATH`.
     pub env: Vec<(String, String)>,
 }
@@ -180,7 +182,7 @@ pub fn launch_command(
         Wiring::Custom => {}
     }
     if profile.never_push && ctx.worktree_tab {
-        env.extend(guard_env(&ctx.env, ctx.guard_bin_dir.as_deref()));
+        env.extend(guard_env(&ctx.env, ctx.guard_bin_dir.as_deref(), ctx.push_branch.as_deref()));
     }
     args.extend(profile.extra_args.iter().cloned());
 
@@ -374,16 +376,18 @@ pub fn gemini_exclude_lines() -> [&'static str; 1] {
     ["/.gemini/settings.json"]
 }
 
-/// Environment that turns every `git push` in the tab into a failure with the Tidewatch message (D7).
+/// Environment that routes every `git push` in the tab through the guard helper (D7).
 ///
 /// Appends one `url.tidewatch-no-push://blocked/.pushInsteadOf` entry (empty value, so it matches every
-/// remote) after any `GIT_CONFIG_COUNT` entries already in `base_env`, and puts `guard_bin_dir` first on
-/// `PATH` so git finds the helper that prints the message. Without a helper the push still fails, with
-/// git's own "remote helper not found" error.
+/// remote) after any `GIT_CONFIG_COUNT` entries already in `base_env`, names the tab's own branch in
+/// `TIDEWATCH_PUSH_BRANCH`, and puts `guard_bin_dir` first on `PATH` so git finds the helper. The helper
+/// forwards a push of that branch alone and refuses everything else. Without a helper every push
+/// fails, with git's own "remote helper not found" error.
 #[must_use]
 pub fn guard_env(
     base_env: &[(String, String)],
     guard_bin_dir: Option<&Path>,
+    push_branch: Option<&str>,
 ) -> Vec<(String, String)> {
     let var = |key: &str| base_env.iter().find(|(k, _)| k == key).map(|(_, v)| v.as_str());
     let count = var("GIT_CONFIG_COUNT").and_then(|c| c.trim().parse::<usize>().ok()).unwrap_or(0);
@@ -391,6 +395,7 @@ pub fn guard_env(
         ("GIT_CONFIG_COUNT".to_owned(), (count + 1).to_string()),
         (format!("GIT_CONFIG_KEY_{count}"), NO_PUSH_URL_PREFIX.to_owned()),
         (format!("GIT_CONFIG_VALUE_{count}"), String::new()),
+        (PUSH_BRANCH_ENV.to_owned(), push_branch.unwrap_or_default().to_owned()),
     ];
     if let Some(dir) = guard_bin_dir {
         let mut dirs = vec![dir.to_path_buf()];
@@ -402,11 +407,96 @@ pub fn guard_env(
     env
 }
 
-/// Content of the `git-remote-tidewatch-no-push` helper: prints the message and fails.
+/// Content of the `git-remote-tidewatch-no-push` helper, a git remote helper (`gitremote-helpers`):
+/// it lists the real remote's refs, and forwards a push batch to the real url only when every ref
+/// in it is `refs/heads/$TIDEWATCH_PUSH_BRANCH`. Deletes, tags and any other ref refuse the batch.
 #[must_use]
 pub fn no_push_helper_script() -> String {
-    format!("#!/bin/sh\necho \"{NO_PUSH_MESSAGE}\" >&2\nexit 1\n")
+    GUARD_HELPER_TEMPLATE
+        .replace("@MESSAGE@", NO_PUSH_MESSAGE)
+        .replace("@GUARD_KEY@", NO_PUSH_URL_PREFIX)
 }
+
+const GUARD_HELPER_TEMPLATE: &str = r#"#!/bin/sh
+url="${2#tidewatch-no-push://blocked/}"
+own="${TIDEWATCH_PUSH_BRANCH:-}"
+i=0
+while [ "$i" -lt "${GIT_CONFIG_COUNT:-0}" ]; do
+  eval "key=\${GIT_CONFIG_KEY_$i:-}"
+  if [ "$key" = "@GUARD_KEY@" ]; then export "GIT_CONFIG_KEY_$i=tidewatch.pushguard"; fi
+  i=$((i + 1))
+done
+nl='
+'
+dry=false
+force=
+leases=
+batch=
+finish() {
+  out=
+  specs=
+  refused=
+  old_ifs=$IFS
+  IFS=$nl
+  for spec in $batch; do
+    src="${spec%%:*}"
+    dst="${spec#*:}"
+    plus=$force
+    case "$src" in +*) plus=+; src="${src#+}" ;; esac
+    case "$leases" in *"=$dst:"*) plus= ;; esac
+    if [ -z "$src" ]; then
+      refused=yes
+      out="${out}error $dst deleting a branch is blocked in agent tabs$nl"
+    elif [ -z "$own" ] || [ "$dst" != "refs/heads/$own" ]; then
+      refused=yes
+      out="${out}error $dst only refs/heads/${own:-agent/<name>} can be pushed from this tab$nl"
+    else
+      out="${out}ok $dst$nl"
+      specs="$specs$plus$src:$dst$nl"
+    fi
+  done
+  IFS=$old_ifs
+  if [ -n "$refused" ]; then
+    echo "@MESSAGE@" >&2
+    printf '%s' "$out" | sed 's/^ok \(.*\)$/error \1 refused with the rest of the push/'
+  elif [ "$dry" = true ]; then
+    printf '%s' "$out"
+  else
+    IFS=$nl
+    if git push $leases "$url" $specs </dev/null 1>&2; then
+      IFS=$old_ifs
+      printf '%s' "$out"
+    else
+      IFS=$old_ifs
+      printf '%s' "$out" | sed 's/^ok \(.*\)$/error \1 the push to the remote failed/'
+    fi
+  fi
+  echo
+  batch=
+}
+while IFS= read -r line; do
+  case "$line" in
+    capabilities) printf 'option\npush\n\n' ;;
+    "option dry-run "*) dry="${line#option dry-run }"; echo ok ;;
+    "option force true") force=+; echo ok ;;
+    "option cas "*) leases="$leases$nl--force-with-lease=${line#option cas }"; echo ok ;;
+    "option verbosity "* | "option progress "* | "option force "*) echo ok ;;
+    "option "*) echo unsupported ;;
+    list | "list for-push")
+      git ls-remote "$url" </dev/null 2>/dev/null | while read -r sha ref; do
+        case "$ref" in HEAD | *"^{}") ;; *) echo "$sha $ref" ;; esac
+      done
+      echo
+      ;;
+    "push "*) batch="$batch${line#push }$nl" ;;
+    "")
+      if [ -z "$batch" ]; then exit 0; fi
+      finish
+      ;;
+    *) echo "unsupported command: $line" >&2; exit 1 ;;
+  esac
+done
+"#;
 
 /// Writes the helper into `dir` as an executable file. Rewrites it only when the content differs.
 pub fn ensure_no_push_helper(dir: &Path) -> std::io::Result<PathBuf> {
@@ -861,13 +951,14 @@ mod tests {
             ("GIT_CONFIG_KEY_1".to_owned(), "user.email".to_owned()),
             ("GIT_CONFIG_VALUE_1".to_owned(), "b".to_owned()),
         ];
-        let env = guard_env(&base, None);
+        let env = guard_env(&base, None, Some("agent/brave-otter"));
         assert_eq!(
             env,
             [
                 ("GIT_CONFIG_COUNT".to_owned(), "3".to_owned()),
                 ("GIT_CONFIG_KEY_2".to_owned(), NO_PUSH_URL_PREFIX.to_owned()),
                 ("GIT_CONFIG_VALUE_2".to_owned(), String::new()),
+                (PUSH_BRANCH_ENV.to_owned(), "agent/brave-otter".to_owned()),
             ]
         );
     }
@@ -875,7 +966,7 @@ mod tests {
     #[test]
     fn guard_env_treats_a_missing_or_garbage_count_as_zero() {
         for base in [vec![], vec![("GIT_CONFIG_COUNT".to_owned(), "lots".to_owned())]] {
-            let env = guard_env(&base, None);
+            let env = guard_env(&base, None, None);
             assert_eq!(env[0], ("GIT_CONFIG_COUNT".to_owned(), "1".to_owned()));
             assert_eq!(env[1].0, "GIT_CONFIG_KEY_0");
         }
@@ -883,16 +974,19 @@ mod tests {
 
     #[test]
     fn guard_env_puts_the_helper_dir_first_even_without_a_base_path() {
-        let env = guard_env(&[], Some(Path::new("/g")));
+        let env = guard_env(&[], Some(Path::new("/g")), None);
         assert_eq!(env.last().unwrap(), &("PATH".to_owned(), "/g".to_owned()));
     }
 
     #[test]
-    fn helper_script_prints_the_message_and_fails() {
+    fn helper_script_is_a_remote_helper_that_names_the_guard_key_and_the_message() {
         let script = no_push_helper_script();
         assert!(script.starts_with("#!/bin/sh\n"));
         assert!(script.contains(NO_PUSH_MESSAGE));
-        assert!(script.trim_end().ends_with("exit 1"));
+        assert!(script.contains(NO_PUSH_URL_PREFIX));
+        assert!(script.contains("printf 'option\\npush\\n\\n'"));
+        assert!(!script.contains("@MESSAGE@"));
+        assert!(!script.contains("@GUARD_KEY@"));
     }
 
     #[test]

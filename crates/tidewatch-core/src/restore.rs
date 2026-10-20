@@ -1270,6 +1270,7 @@ mod tests {
             house_style: Some("/cfg/house-style.md".into()),
             copilot_instructions_dir: Some("/cfg/copilot".into()),
             guard_bin_dir: Some("/state/guard-bin".into()),
+            push_branch: Some("agent/a-claude".into()),
             env: vec![("PATH".into(), "/usr/bin:/bin".into())],
         }
     }

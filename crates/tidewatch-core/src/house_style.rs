@@ -60,6 +60,7 @@ pub const TOOL_GUIDANCE: &str = "\
 
 - For any job you expect to run over a minute, call `report_job`, or have the script append JSON progress lines (`name`, `done`, `total`, `unit`, `phase`, `state`) to the file in `$TIDEWATCH_PROGRESS`.
 - Once you understand the task, call `set_avatar` once with a 64x64 flat icon about the task (2-3 colors, simple shapes) and a one-line reason.
+- You may push this worktree's own `agent/` branch, force included; after folding fixups use `git push --force-with-lease`. Any other branch, a delete or a tag is refused, and Tidewatch opens pull requests.
 ";
 
 pub const MEESEEKS_GUIDANCE: &str = "\
@@ -69,7 +70,7 @@ You are a Meeseeks with exactly one task: the one you were given. Do it, and not
 
 - Work only in this worktree and commit your work on this branch as you go.
 - When the task is done and committed, call `meeseeks_done` once with a one-line summary of what you did. Tidewatch then checks the work and ends this session itself.
-- Do not push, open a pull request or remove anything yourself. Tidewatch does that.
+- You may push this branch. Do not push anything else, open a pull request or remove anything yourself. Tidewatch does that.
 - If Tidewatch pastes a failed check, fix it, commit, and call `meeseeks_done` again.
 - Do not call `set_avatar`: your face is fixed.
 ";
@@ -249,7 +250,8 @@ mod tests {
         let block = text.find("## You are a Meeseeks").unwrap();
         assert!(guidance < block && block < text.find("## Progress ledger format").unwrap());
         assert_eq!(text.matches("`meeseeks_done`").count(), 2);
-        assert!(text.contains("Do not push, open a pull request"));
+        assert!(text.contains("You may push this branch. Do not push anything else"));
+        assert!(text.contains("git push --force-with-lease"));
     }
 
     #[test]
