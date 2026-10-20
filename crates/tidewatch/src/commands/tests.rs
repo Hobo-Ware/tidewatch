@@ -15,8 +15,14 @@ fn bound_to_a_chord(action: Action) -> bool {
         | Action::SelectNth(_)
         | Action::NextGroup
         | Action::PrevGroup
-        | Action::MoveActive(_) => true,
-        Action::Close(_) | Action::Select(_) | Action::ShowGroup(_) | Action::Move(..) => false,
+        | Action::MoveActive(_)
+        | Action::ParkActive => true,
+        Action::Close(_)
+        | Action::Select(_)
+        | Action::ShowGroup(_)
+        | Action::Move(..)
+        | Action::Park(_)
+        | Action::ToggleKeep(_) => false,
     }
 }
 
@@ -106,6 +112,7 @@ fn every_action_that_has_a_chord_is_in_the_table() {
             .into_iter()
             .chain([Action::PrevGroup, Action::Move(1, Step::Left)])
             .chain([Action::MoveActive(Step::Left), Action::MoveActive(Step::Right)])
+            .chain([Action::ParkActive, Action::Park(0), Action::ToggleKeep(0)])
             .chain((0..TAB_SHORTCUTS).map(Action::SelectNth));
     for action in actions {
         let listed = TABLE.iter().any(|entry| entry.command.action() == Some(action));
@@ -202,6 +209,7 @@ fn the_palette_lists_what_a_person_would_look_for() {
             "close-tab",
             "move-tab-left",
             "move-tab-right",
+            "park-tab",
             "next-repo",
             "prev-repo",
             "overview",
@@ -234,6 +242,24 @@ fn the_move_tab_chords() {
     }
     assert_eq!(Command::MoveTabLeft.action(), Some(Action::MoveActive(Step::Left)));
     assert_eq!(Command::MoveTabRight.action(), Some(Action::MoveActive(Step::Right)));
+}
+
+#[test]
+fn park_tab_has_a_chord_the_terminal_and_the_palette_leave_alone() {
+    let entry = TABLE.iter().find(|entry| entry.id == "park-tab").unwrap();
+    assert_eq!(entry.chord(Platform::Mac).unwrap().label(), "Cmd+Shift+K");
+    assert_eq!(entry.chord(Platform::Linux).unwrap().label(), "Ctrl+Shift+K");
+    assert_eq!(Command::ParkTab.action(), Some(Action::ParkActive));
+    assert!(Command::ParkTab.in_palette());
+    for platform in PLATFORMS {
+        let chord = entry.chord(platform).unwrap();
+        let rivals: Vec<_> = TABLE
+            .iter()
+            .filter(|other| other.command != Command::ParkTab)
+            .filter(|other| other.chord(platform) == Some(chord))
+            .collect();
+        assert_eq!(rivals.len(), 0, "{platform:?}");
+    }
 }
 
 #[test]
@@ -305,6 +331,21 @@ mod gate {
             .collect();
         assert_eq!(allowed(NONE), all);
         assert!(allowed(NONE).contains(&Command::FileView));
+    }
+
+    #[test]
+    fn parking_a_tab_waits_for_every_overlay_and_works_over_a_text_field() {
+        assert!(NONE.allows(Command::ParkTab));
+        assert!(Gate { focus: Focus::TextField, ..NONE }.allows(Command::ParkTab));
+        for gate in [
+            Gate { overview: true, ..NONE },
+            Gate { settings: true, ..NONE },
+            Gate { palette: true, ..NONE },
+            Gate { dialog: Dialog::TabChoice, ..NONE },
+            Gate { dialog: Dialog::Other, ..NONE },
+        ] {
+            assert!(!gate.allows(Command::ParkTab), "{gate:?}");
+        }
     }
 
     #[test]

@@ -13,6 +13,7 @@ use tidewatch_core::runner::RunContext;
 use tidewatch_core::workflows::Workflows;
 
 use super::*;
+use crate::park::Why;
 use crate::repo::Repo;
 
 const REPO: &str = "/work/web";
@@ -321,6 +322,43 @@ fn the_active_group_the_selected_tabs_and_the_pinned_mains_come_back() {
     assert!(rebuilt.main_id(0).is_some() && rebuilt.main_id(1).is_some());
     rebuilt.apply(Action::ShowGroup(0), || unreachable!());
     assert_eq!(rebuilt.items()[rebuilt.active()].title, "shell");
+}
+
+#[test]
+fn parking_and_never_park_cross_the_handover_and_an_old_layout_has_neither() {
+    let mut w = window();
+    let (otter, shell) = (w.agent_tab, w.tabs.in_group(0).nth(2).map(|(_, tab)| tab.id).unwrap());
+    w.tabs.set_park(otter, Park { why: Why::Job, since_ms: 5 });
+    w.tabs.get_mut(shell).unwrap().keep = true;
+    let (handover, _) = handover_of(&w);
+    let text = serde_json::to_string(&handover).unwrap();
+    let handover: Handover = serde_json::from_str(&text).unwrap();
+    let mut adopt = |term: u32, _: &Path| Ok(term);
+    let rebuilt = rebuild(
+        &handover,
+        vec![100, 101, 102, 200, 201],
+        0.0,
+        Ptys { adopt: &mut adopt, fresh: &fresh },
+    )
+    .unwrap()
+    .tabs;
+    let state: Vec<_> = rebuilt.items().iter().map(|tab| (tab.park, tab.keep)).collect();
+    assert_eq!(
+        state,
+        [
+            (None, false),
+            (Some(Park { why: Why::Job, since_ms: 5 }), false),
+            (None, true),
+            (None, false),
+            (None, false)
+        ]
+    );
+    assert_eq!((text.matches("\"park\"").count(), text.matches("\"keep\"").count()), (1, 1));
+
+    let plain = serde_json::to_string(&handover_of(&window()).0).unwrap();
+    assert!(!plain.contains("park") && !plain.contains("keep"), "{plain}");
+    let old: Handover = serde_json::from_str(&plain).unwrap();
+    assert!(old.groups.iter().flat_map(|group| &group.tabs).all(|t| t.park.is_none() && !t.keep));
 }
 
 #[test]

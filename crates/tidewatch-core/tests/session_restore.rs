@@ -78,6 +78,7 @@ fn session_for(dir: &Path, worktree: &Worktree) -> Session {
                     remote: false,
                 }),
             ],
+            parked: Vec::new(),
         }],
     }
 }

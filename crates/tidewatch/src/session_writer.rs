@@ -134,6 +134,7 @@ mod tests {
             active,
             focus_mode: false,
             tabs: vec![SavedTab::Main],
+            parked: Vec::new(),
         }
     }
 

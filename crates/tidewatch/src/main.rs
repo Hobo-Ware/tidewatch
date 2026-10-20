@@ -90,6 +90,7 @@ mod palette;
 mod palette_view;
 mod pane;
 mod pane_jobs;
+mod park;
 mod paste;
 mod post_confirm;
 mod pr_card_model;

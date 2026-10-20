@@ -9,6 +9,7 @@
 //! - `TIDEWATCH_DEV_WINDOW=<w>x<h>`: open the window that size (in points, 600 to 4000 each), to
 //!   look at a view in a shorter or wider window.
 //! - `TIDEWATCH_DEV_REMOTE_POPOVER=1`: the Remote pill's popover is open on an agent tab that has one.
+//! - `TIDEWATCH_DEV_PARKED_POPOVER=1`: the Parked pill's list is open (with `TIDEWATCH_FAKE_PARKED=1`).
 //! - `TIDEWATCH_DEV_KEYS=<text>` after `TIDEWATCH_DEV_KEYS_AFTER=<seconds>` (default 8): type the text
 //!   into the newest agent tab once, to answer a prompt a check cannot avoid (`\r`, `\n`, `\e` and
 //!   `\\` are escapes; `\e[B\r` is Down then Enter).
@@ -39,6 +40,7 @@ pub(crate) struct DevView {
     pub(crate) paste: Option<DevPaste>,
     pub(crate) side: Option<f32>,
     pub(crate) remote_popover: Popover,
+    pub(crate) parked_popover: Popover,
 }
 
 const DEFAULT_KEYS_AFTER_SECS: f64 = 8.0;
@@ -68,6 +70,7 @@ impl DevView {
         )
         .with_side(var("TIDEWATCH_DEV_SIDE").as_deref())
         .with_remote_popover(var("TIDEWATCH_DEV_REMOTE_POPOVER").as_deref())
+        .with_parked_popover(var("TIDEWATCH_DEV_PARKED_POPOVER").as_deref())
         .with_paste(
             var("TIDEWATCH_DEV_PASTE").as_deref(),
             var("TIDEWATCH_DEV_KEYS_AFTER").as_deref(),
@@ -85,6 +88,11 @@ impl DevView {
     fn with_remote_popover(self, value: Option<&str>) -> Self {
         let open = value.is_some_and(|v| !v.is_empty() && v != "0");
         Self { remote_popover: if open { Popover::Open } else { Popover::OnClick }, ..self }
+    }
+
+    fn with_parked_popover(self, value: Option<&str>) -> Self {
+        let open = value.is_some_and(|v| !v.is_empty() && v != "0");
+        Self { parked_popover: if open { Popover::Open } else { Popover::OnClick }, ..self }
     }
 
     fn with_side(self, side: Option<&str>) -> Self {
@@ -113,6 +121,7 @@ impl DevView {
             paste: None,
             side: None,
             remote_popover: Popover::OnClick,
+            parked_popover: Popover::OnClick,
         }
     }
 }
@@ -154,6 +163,11 @@ mod tests {
             [(Some("1"), Popover::Open), (Some("0"), Popover::OnClick), (None, Popover::OnClick)]
         {
             assert_eq!(DevView::default().with_remote_popover(value).remote_popover, want);
+        }
+        for (value, want) in
+            [(Some("1"), Popover::Open), (Some("0"), Popover::OnClick), (None, Popover::OnClick)]
+        {
+            assert_eq!(DevView::default().with_parked_popover(value).parked_popover, want);
         }
         assert!(DevView::parse(None, Some("1"), None, None, None).focus);
         assert_eq!(

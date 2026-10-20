@@ -83,11 +83,23 @@ pub(crate) struct Item {
     pub(crate) disabled: Option<&'static str>,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct TabRow {
+    pub(crate) title: String,
+    pub(crate) parked: bool,
+}
+
+impl TabRow {
+    pub(crate) fn new(title: impl Into<String>, parked: bool) -> Self {
+        Self { title: title.into(), parked }
+    }
+}
+
 /// What the app has open right now: the tabs of the repo on show (and which one is active), the
 /// repos of the window (and which one is on show). Profile and workflow entries are `(id, name)`.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(crate) struct Sources {
-    pub(crate) tabs: Vec<String>,
+    pub(crate) tabs: Vec<TabRow>,
     pub(crate) active: usize,
     pub(crate) repos: Vec<String>,
     pub(crate) repo: usize,
@@ -125,16 +137,23 @@ pub(crate) fn items(sources: &Sources, platform: Platform) -> Vec<Item> {
             target: Target::Command(entry.command),
             disabled: sources.blocked(entry.command),
         });
-    let tabs =
-        sources.tabs.iter().enumerate().filter(|(i, _)| *i != sources.active).map(|(i, title)| {
-            Item {
-                label: format!("Switch to tab {}: {title}", i + 1),
-                keys: Command::SelectTab(i).keys_on(platform),
-                kind: "tab",
-                target: Target::Tab(i),
-                disabled: None,
-            }
-        });
+    let mut shown = 0;
+    let mut tabs = Vec::new();
+    for (i, tab) in sources.tabs.iter().enumerate() {
+        shown += usize::from(!tab.parked);
+        if i == sources.active {
+            continue;
+        }
+        let (label, keys) = if tab.parked {
+            (format!("Open parked tab: {}", tab.title), String::new())
+        } else {
+            (
+                format!("Switch to tab {shown}: {}", tab.title),
+                Command::SelectTab(shown - 1).keys_on(platform),
+            )
+        };
+        tabs.push(Item { label, keys, kind: "tab", target: Target::Tab(i), disabled: None });
+    }
     let repos =
         sources.repos.iter().enumerate().filter(|(i, _)| *i != sources.repo).map(|(i, label)| {
             Item {
@@ -239,7 +258,11 @@ mod tests {
 
     fn sources() -> Sources {
         Sources {
-            tabs: vec!["main".into(), "calm-comet".into(), "brave-otter".into()],
+            tabs: vec![
+                TabRow::new("main", false),
+                TabRow::new("calm-comet", false),
+                TabRow::new("brave-otter", false),
+            ],
             active: 0,
             repos: vec!["web".into()],
             repo: 0,
@@ -283,6 +306,7 @@ mod tests {
                 "Close tab",
                 "Move tab left",
                 "Move tab right",
+                "Park tab",
                 "Overview",
                 "Focus mode",
                 "Reader or raw terminal",
@@ -322,10 +346,10 @@ mod tests {
         let linux = items(&sources(), Platform::Linux);
         assert_eq!(mac[0].keys, "Cmd+T");
         assert_eq!(linux[0].keys, "Ctrl+Shift+T");
-        assert_eq!(mac[11].keys, "Cmd+2");
-        assert_eq!(linux[11].keys, "Alt+2");
-        assert_eq!((mac[13].label.as_str(), mac[13].keys.as_str()), ("Open repo...", "Cmd+O"));
-        assert_eq!(linux[13].keys, "Ctrl+Shift+O");
+        assert_eq!(mac[12].keys, "Cmd+2");
+        assert_eq!(linux[12].keys, "Alt+2");
+        assert_eq!((mac[14].label.as_str(), mac[14].keys.as_str()), ("Open repo...", "Cmd+O"));
+        assert_eq!(linux[14].keys, "Ctrl+Shift+O");
     }
 
     #[test]
@@ -349,8 +373,39 @@ mod tests {
     }
 
     #[test]
+    fn parked_tabs_are_listed_without_a_number_and_the_chords_count_the_shown_ones() {
+        let tabs = ["main", "a", "b", "c", "d"];
+        let parked = [false, false, true, false, true];
+        let sources = Sources {
+            tabs: tabs
+                .iter()
+                .zip(parked)
+                .map(|(title, parked)| TabRow::new(*title, parked))
+                .collect(),
+            ..sources()
+        };
+        let rows: Vec<_> = items(&sources, Platform::Mac)
+            .into_iter()
+            .filter(|item| item.kind == "tab")
+            .map(|item| (item.label, item.keys, item.target))
+            .collect();
+        assert_eq!(
+            rows,
+            [
+                ("Switch to tab 2: a".to_owned(), "Cmd+2".to_owned(), Target::Tab(1)),
+                ("Open parked tab: b".to_owned(), String::new(), Target::Tab(2)),
+                ("Switch to tab 3: c".to_owned(), "Cmd+3".to_owned(), Target::Tab(3)),
+                ("Open parked tab: d".to_owned(), String::new(), Target::Tab(4)),
+            ]
+        );
+    }
+
+    #[test]
     fn a_tab_past_the_ninth_has_no_chord() {
-        let many = Sources { tabs: (0..12).map(|n| format!("t{n}")).collect(), ..sources() };
+        let many = Sources {
+            tabs: (0..12).map(|n| TabRow::new(format!("t{n}"), false)).collect(),
+            ..sources()
+        };
         let all = items(&many, Platform::Mac);
         let twelfth = all.iter().find(|item| item.target == Target::Tab(11)).unwrap();
         assert_eq!(twelfth.keys, "");

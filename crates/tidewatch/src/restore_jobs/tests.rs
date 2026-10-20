@@ -86,7 +86,14 @@ fn save(f: &Fixture, windows: Vec<SavedWindow>) {
 }
 
 fn window(dir: &Path, tabs: Vec<SavedTab>) -> SavedWindow {
-    SavedWindow { dir: dir.to_path_buf(), other: false, active: 1, focus_mode: true, tabs }
+    SavedWindow {
+        dir: dir.to_path_buf(),
+        other: false,
+        active: 1,
+        focus_mode: true,
+        tabs,
+        parked: Vec::new(),
+    }
 }
 
 fn spec(f: &Fixture, skip: bool) -> StartupSpec {

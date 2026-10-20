@@ -26,6 +26,7 @@ use tidewatch_core::worktree::Worktree;
 
 use crate::agent_run::AgentRun;
 use crate::pane::{AgentTab, Body, FirstPrompt, Launched, Pane};
+use crate::park::Park;
 use crate::pty;
 use crate::reader::Reader;
 use crate::remote_session::RemoteSession;
@@ -114,6 +115,10 @@ pub(crate) struct TabEntry {
     pub(crate) worktree: Option<Worktree>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) agent: Option<AgentEntry>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) park: Option<Park>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub(crate) keep: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -223,6 +228,8 @@ pub(crate) fn plan<T>(
                         live,
                         worktree: tab.pane.worktree.clone(),
                         agent: agent.map(|agent| agent_entry(agent, credential(tab.id))),
+                        park: tab.park,
+                        keep: tab.keep,
                     }
                 })
                 .collect();
@@ -330,6 +337,10 @@ pub(crate) fn rebuild<P, T>(
             };
             if let Some(credential) = credential {
                 credentials.push((id, credential));
+            }
+            if let Some(tab) = tabs.as_mut().and_then(|tabs| tabs.get_mut(id)) {
+                tab.park = entry.park.filter(|_| !tab.pinned);
+                tab.keep = entry.keep && !tab.pinned;
             }
             group_ids.push(id);
         }

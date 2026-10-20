@@ -1,7 +1,7 @@
 //! Pure geometry for the window: the terminal/panel split, grid dimensions and tab widths.
 
 use egui::{Rect, pos2};
-use stdusk_egui::ui::{TAB_FIXED_W, TAB_MIN_W};
+use stdusk_egui::ui::TAB_FIXED_W;
 
 pub(crate) const TERMINAL_FRACTION: f32 = 0.45;
 pub(crate) const SIDE_FRACTION: f32 = 0.58;
@@ -99,9 +99,15 @@ pub(crate) fn grid_dims(rect: Rect, cell_w: f32, cell_h: f32) -> (usize, usize) 
     (cols, rows)
 }
 
+pub(crate) const MIN_TAB_W: f32 = 140.0;
+
 pub(crate) fn tab_width(available: f32, count: usize, gap: f32) -> f32 {
     let count = count.max(1) as f32;
-    ((available - gap * (count - 1.0)) / count).clamp(TAB_MIN_W, TAB_FIXED_W)
+    ((available - gap * (count - 1.0)) / count).clamp(MIN_TAB_W, TAB_FIXED_W)
+}
+
+pub(crate) fn tab_capacity(available: f32, gap: f32) -> usize {
+    (((available + gap) / (MIN_TAB_W + gap)).floor().max(0.0)) as usize
 }
 
 #[cfg(test)]
@@ -205,8 +211,48 @@ mod tests {
     #[test]
     fn tab_width_caps_at_fixed_and_shrinks_to_the_floor() {
         assert_eq!(tab_width(2000.0, 2, 4.0), TAB_FIXED_W);
-        assert_eq!(tab_width(10.0, 5, 4.0), TAB_MIN_W);
-        let shared = tab_width(504.0, 5, 4.0);
-        assert!((shared - 97.6).abs() < 0.01);
+        assert_eq!(tab_width(10.0, 5, 4.0), MIN_TAB_W);
+        assert_eq!(tab_width(504.0, 5, 4.0), MIN_TAB_W);
+        let shared = tab_width(900.0, 5, 4.0);
+        assert!((shared - 176.8).abs() < 0.01);
+    }
+
+    #[test]
+    fn a_tab_never_gets_less_than_the_least_width_however_many_there_are() {
+        for count in [1, 2, 6, 12, 40] {
+            for available in [0.0, 100.0, 700.0, 1400.0] {
+                let width = tab_width(available, count, 4.0);
+                assert!((MIN_TAB_W..=TAB_FIXED_W).contains(&width), "{count} in {available}");
+            }
+        }
+    }
+
+    #[test]
+    fn the_strip_holds_as_many_least_width_tabs_as_fit_with_their_gaps() {
+        let cases = [
+            (-10.0, 0),
+            (0.0, 0),
+            (139.0, 0),
+            (140.0, 1),
+            (283.0, 1),
+            (284.0, 2),
+            (572.0, 4),
+            (571.0, 3),
+            (1000.0, 6),
+            (1008.0, 7),
+        ];
+        for (available, want) in cases {
+            assert_eq!(tab_capacity(available, 4.0), want, "{available}");
+        }
+    }
+
+    #[test]
+    fn what_tab_capacity_counts_really_fits_and_one_more_does_not() {
+        for available in [140.0, 300.0, 575.5, 880.0, 1337.0] {
+            let fits = tab_capacity(available, 4.0) as f32;
+            assert!(fits * MIN_TAB_W + (fits - 1.0).max(0.0) * 4.0 <= available + 0.001);
+            let more = fits + 1.0;
+            assert!(more * MIN_TAB_W + (more - 1.0) * 4.0 > available);
+        }
     }
 }

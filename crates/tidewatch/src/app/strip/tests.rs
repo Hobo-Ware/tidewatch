@@ -14,14 +14,15 @@ fn tabs() -> Tabs<Pane<u32>> {
     tabs
 }
 
+fn order_of(tab: &crate::tabs::Tab<Pane<u32>>) -> u32 {
+    match tab.pane.body {
+        Body::Shell(n) => n,
+        _ => unreachable!("only shells here"),
+    }
+}
+
 fn order(tabs: &Tabs<Pane<u32>>) -> Vec<u32> {
-    tabs.items()
-        .iter()
-        .map(|tab| match tab.pane.body {
-            Body::Shell(n) => n,
-            _ => unreachable!("only shells here"),
-        })
-        .collect()
+    tabs.items().iter().map(order_of).collect()
 }
 
 struct Strip {
@@ -30,19 +31,33 @@ struct Strip {
     time: f64,
     rects: Vec<Rect>,
     seen: Vec<Action>,
+    texts: Vec<(String, Rect)>,
 }
 
 impl Strip {
     fn new() -> Self {
         let mut strip = Self {
-            ctx: egui::Context::default(),
+            ctx: crate::fonts::test_context(),
             tabs: tabs(),
             time: 0.0,
             rects: Vec::new(),
             seen: Vec::new(),
+            texts: Vec::new(),
         };
         strip.frame(Vec::new());
         strip
+    }
+
+    fn rows(&self) -> Vec<pill::Row> {
+        self.tabs
+            .parked_in(0)
+            .map(|(index, tab)| pill::Row {
+                index,
+                name: tab.title.clone(),
+                face: Face::of("Builder", "claude", None),
+                line: crate::park::Line { text: "Idle 6h".into(), tone: crate::park::Tone::Muted },
+            })
+            .collect()
     }
 
     fn frame(&mut self, events: Vec<Event>) {
@@ -56,7 +71,8 @@ impl Strip {
         };
         let mut actions = Vec::new();
         let mut rects = Vec::new();
-        let _ = self.ctx.run_ui(raw, |ui| {
+        let rows = self.rows();
+        let output = self.ctx.run_ui(raw, |ui| {
             egui::Panel::top("tabbar").exact_size(TAB_H + 6.0).show(ui, |ui| {
                 ui.horizontal(|ui| {
                     rects = tab_row(
@@ -70,14 +86,48 @@ impl Strip {
                             |_| TabExtras::default(),
                         ),
                     );
+                    if pill::wanted(ui.ctx(), rows.len()) {
+                        let out = pill::show(ui, &rows, crate::remote_pill::Popover::OnClick);
+                        if let Some(row) = out.picked {
+                            actions.push(Action::Select(rows[row].index));
+                        }
+                    }
                 });
             });
         });
+        self.texts.clear();
+        for clipped in &output.shapes {
+            collect_text(&clipped.shape, &mut self.texts);
+        }
         self.rects = rects;
         for action in actions {
             self.tabs.apply(action, || unreachable!());
             self.seen.push(action);
         }
+    }
+
+    fn park(&mut self, pane: u32) {
+        let id = self.tabs.items().iter().find(|tab| order_of(tab) == pane).unwrap().id;
+        self.tabs.set_park(id, crate::park::Park { why: crate::park::Why::Idle, since_ms: 0 });
+    }
+
+    fn placed(&self) -> pill::Placed {
+        self.ctx.data(|data| data.get_temp(pill::placed_id())).unwrap_or_default()
+    }
+
+    fn pill_center(&self) -> egui::Pos2 {
+        self.placed().pill.expect("the pill is drawn").center()
+    }
+
+    fn click(&mut self, at: egui::Pos2) {
+        self.pointer(at);
+        self.button(at, true);
+        self.button(at, false);
+        self.frame(Vec::new());
+    }
+
+    fn parked(&self) -> Vec<u32> {
+        self.tabs.parked_in(0).map(|(_, tab)| order_of(tab)).collect()
     }
 
     fn center(&self, position: usize) -> egui::Pos2 {
@@ -240,9 +290,15 @@ fn a_hovered_inactive_tab_gets_a_fainter_tint_under_its_text_and_a_plain_one_not
 
 #[test]
 fn the_room_for_a_title_leaves_the_ring_and_the_trailing_slot_free() {
-    let cases = [(200.0, 7.2, 2, 15), (120.0, 7.2, 2, 4), (60.0, 7.2, 2, 1), (200.0, 7.2, 12, 14)];
-    for (width, char_w, number, want) in cases {
-        assert_eq!(title_budget(width, char_w, number, (true, false)), want, "{width} {number}");
+    let cases = [
+        (200.0, 7.2, true, 18),
+        (200.0, 7.2, false, 21),
+        (140.0, 7.2, true, 10),
+        (140.0, 7.2, false, 13),
+        (60.0, 7.2, true, 1),
+    ];
+    for (width, char_w, ring, want) in cases {
+        assert_eq!(title_budget(width, char_w, ring), want, "{width} {ring}");
     }
 }
 
@@ -316,15 +372,70 @@ fn agent_strip(
     (rects, texts)
 }
 
+const QUARTZ: &str = "quartz-worktree-name-that-is-far-too-long";
+
+fn title_of(texts: &[(String, Rect)]) -> &(String, Rect) {
+    texts.iter().find(|(text, _)| text.contains("qua")).expect("the title is drawn")
+}
+
 #[test]
-fn a_tab_with_a_ledger_cuts_its_title_before_the_ring() {
-    for width in [100.0, 120.0, 200.0] {
-        let (rects, texts) =
-            agent_strip("a-very-long-worktree-name-indeed", width, (true, false, false));
-        let tab = rects[1];
-        let title = texts.iter().find(|(text, _)| text.starts_with("2  ")).unwrap();
+fn an_agent_tab_shows_its_face_in_place_of_the_number_and_the_cli_logo() {
+    for width in [140.0, 200.0, 260.0] {
+        let (rects, texts) = agent_strip(QUARTZ, width, (false, false, true));
+        let title = title_of(&texts);
+        assert!(title.0.starts_with("    qua"), "four spaces of room for the face: {:?}", title.0);
+        assert!(texts.iter().all(|(text, _)| !text.starts_with("2 ")), "no number in {texts:?}");
+        let face = face_rect(rects[1]);
+        assert_eq!((face.width(), face.height()), (AVATAR_SIZE, AVATAR_SIZE));
+        assert_eq!(face.left(), rects[1].left() + TAB_PAD_X);
+        let char_w = title.1.width() / title.0.chars().count() as f32;
+        assert!(face.right() <= title.1.left() + AVATAR_PAD_CHARS as f32 * char_w + 0.5);
+    }
+}
+
+#[test]
+fn a_shell_tab_keeps_its_number() {
+    let ctx = crate::fonts::test_context();
+    let mut texts = Vec::new();
+    for _ in 0..2 {
+        let raw = RawInput {
+            screen_rect: Some(Rect::from_min_size(pos2(0.0, 0.0), vec2(800.0, 200.0))),
+            ..RawInput::default()
+        };
+        let mut actions = Vec::new();
+        let tabs = tabs();
+        let output = ctx.run_ui(raw, |ui| {
+            egui::Panel::top("tabbar").exact_size(TAB_H + 6.0).show(ui, |ui| {
+                ui.horizontal(|ui| {
+                    tab_row(
+                        ui,
+                        &tabs,
+                        160.0,
+                        0.0,
+                        &mut actions,
+                        (
+                            |_: &Pane<u32>| (Progress::default(), CmdState::default()),
+                            |_| TabExtras::default(),
+                        ),
+                    );
+                });
+            });
+        });
+        texts.clear();
+        for clipped in &output.shapes {
+            collect_text(&clipped.shape, &mut texts);
+        }
+    }
+    assert!(texts.iter().any(|(text, _)| text.starts_with("2  shell 1")), "{texts:?}");
+}
+
+#[test]
+fn a_tab_with_a_ledger_cuts_its_title_before_the_ring_at_every_width_from_the_floor_up() {
+    for width in [crate::layout::MIN_TAB_W, 180.0, 260.0] {
+        let (rects, texts) = agent_strip(QUARTZ, width, (true, false, true));
+        let title = title_of(&texts);
         assert!(
-            title.1.right() <= ring_rect(tab).left(),
+            title.1.right() <= ring_rect(rects[1]).left(),
             "{:?} reaches the ring at {width}",
             title.1
         );
@@ -334,40 +445,25 @@ fn a_tab_with_a_ledger_cuts_its_title_before_the_ring() {
 
 #[test]
 fn a_tab_without_a_ledger_keeps_the_whole_title_room() {
-    let (rects, with) =
-        agent_strip("a-very-long-worktree-name-indeed", 200.0, (true, false, false));
-    let (_, without) =
-        agent_strip("a-very-long-worktree-name-indeed", 200.0, (false, false, false));
-    let width = |texts: &[(String, Rect)]| {
-        texts.iter().find(|(text, _)| text.starts_with("2  ")).unwrap().1.width()
-    };
-    assert!(width(&without) > width(&with));
+    let (rects, with) = agent_strip(QUARTZ, 200.0, (true, false, true));
+    let (_, without) = agent_strip(QUARTZ, 200.0, (false, false, true));
+    assert!(title_of(&without).1.width() > title_of(&with).1.width());
     assert_eq!(rects[1].width(), 200.0);
 }
 
 #[test]
-fn a_tab_with_a_job_cuts_its_title_before_the_percent_and_shows_it() {
-    for width in [120.0, 200.0, 260.0] {
-        let (rects, texts) =
-            agent_strip("a-very-long-worktree-name-indeed", width, (false, true, false));
-        let tab = rects[1];
-        let title = texts.iter().find(|(text, _)| text.starts_with("2  ")).unwrap();
-        let label = texts.iter().find(|(text, _)| text == "21%").unwrap();
-        assert!(title.1.right() <= label.1.left(), "{:?} meets {:?} at {width}", title.1, label.1);
-        assert!(label.1.right() <= tab.right() - TAB_PAD_X - TAB_SLOT_W, "{:?}", label.1);
-    }
+fn the_title_gets_what_the_face_and_the_slot_leave_at_the_least_tab_width() {
+    let (rects, texts) =
+        agent_strip("backfill-orders", crate::layout::MIN_TAB_W, (false, false, true));
+    let title = texts.iter().find(|(text, _)| text.contains("backf")).unwrap();
+    assert!(title.0.ends_with('\u{2026}'), "cut with an ellipsis: {:?}", title.0);
+    assert!(title.1.right() <= rects[1].right() - TAB_PAD_X - TAB_SLOT_W);
 }
 
 #[test]
-fn a_job_percent_sits_left_of_the_ring_when_there_is_one() {
-    let (_, texts) = agent_strip("orders", 220.0, (true, true, false));
-    let (rects, _) = agent_strip("orders", 220.0, (true, true, false));
-    let label = texts.iter().find(|(text, _)| text == "21%").unwrap();
-    assert!(label.1.right() <= ring_rect(rects[1]).left());
-}
-
-#[test]
-fn the_job_bar_runs_from_the_left_inset_by_its_fraction_along_the_tab_floor() {
+fn the_job_percent_is_not_in_the_title_row_but_the_bar_along_the_floor_stays() {
+    let (_, texts) = agent_strip("orders", 200.0, (true, true, true));
+    assert!(texts.iter().all(|(text, _)| !text.contains('%')), "{texts:?}");
     let tab = Rect::from_min_size(pos2(10.0, 0.0), vec2(200.0, TAB_H));
     let half = job_bar_rect(tab, 0.5);
     assert_eq!(half.left(), 16.0);
@@ -379,60 +475,193 @@ fn the_job_bar_runs_from_the_left_inset_by_its_fraction_along_the_tab_floor() {
 }
 
 #[test]
-fn a_stalled_job_paints_its_label_orange_and_a_running_one_teal() {
+fn a_stalled_job_paints_its_bar_orange_and_a_running_one_teal() {
     for (stalled, want) in [(false, brand::TEAL), (true, brand::ORANGE)] {
         let ctx = egui::Context::default();
         let tab = Rect::from_min_size(pos2(0.0, 0.0), vec2(200.0, TAB_H));
         let job = TabJob { fraction: 0.5, label: "50%".into(), stalled, tip: String::new() };
-        let output = ctx.run_ui(RawInput::default(), |ui| paint_job(ui, tab, &job, false, 1));
-        let mut inks = Vec::new();
+        let output = ctx.run_ui(RawInput::default(), |ui| paint_job(ui, tab, &job));
+        let mut fills = Vec::new();
         for clipped in &output.shapes {
-            if let Shape::Text(text) = &clipped.shape {
-                inks.push(text.galley.job.sections[0].format.color);
+            if let Shape::Rect(rect) = &clipped.shape {
+                fills.push(rect.fill);
             }
         }
-        assert_eq!(inks, [want]);
+        assert_eq!(fills, [want]);
     }
 }
 
 #[test]
-fn an_avatar_sits_after_the_number_and_the_title_starts_after_it() {
-    for width in [160.0, 220.0, 300.0] {
-        let (rects, texts) =
-            agent_strip("backfill-orders-with-a-long-tail", width, (false, false, true));
-        let title = texts.iter().find(|(text, _)| text.starts_with("2  ")).unwrap();
-        let raw = texts.iter().find(|(text, _)| text.starts_with("2  ")).unwrap().0.clone();
-        assert!(raw.starts_with("2      "), "four spaces of room: {raw:?}");
-        let ctx = egui::Context::default();
-        let _ = ctx.run_ui(RawInput::default(), |ui| {
-            let face = avatar_rect(ui, rects[1], 2);
-            assert_eq!((face.width(), face.height()), (AVATAR_SIZE, AVATAR_SIZE));
-            assert!(face.left() > rects[1].left() + TAB_PAD_X);
-            let char_w = ui
-                .painter()
-                .layout_no_wrap("0".to_owned(), egui::FontId::monospace(12.0), brand::SOFT)
-                .size()
-                .x;
-            let name_starts = title.1.left() + (3 + AVATAR_PAD_CHARS) as f32 * char_w;
-            assert!(face.right() < name_starts, "{face:?} meets the name at {name_starts}");
-            assert!(face.right() <= job_label_rect(rects[1], true).left());
-        });
+fn the_tooltip_names_the_number_the_chord_and_the_job() {
+    let job =
+        TabJob { fraction: 0.2, label: "21%".into(), stalled: false, tip: "orders: 21%".into() };
+    let cases = [
+        ("backfill", 3, None, "backfill\nTab 3 (Cmd+3)"),
+        ("backfill", 3, Some(&job), "backfill\nTab 3 (Cmd+3)\norders: 21%"),
+        ("backfill", 10, None, "backfill\nTab 10"),
+    ];
+    for (title, number, job, want) in cases {
+        let got = tab_tip(title, number, job);
+        if cfg!(target_os = "macos") {
+            assert_eq!(got, want);
+        } else {
+            assert!(got.starts_with(&format!("{title}\nTab {number}")), "{got}");
+        }
     }
 }
 
-#[test]
-fn an_avatar_with_a_ring_and_a_job_still_leaves_the_title_clear_of_both() {
-    let (rects, texts) = agent_strip("a-very-long-worktree-name-indeed", 240.0, (true, true, true));
-    let title = texts.iter().find(|(text, _)| text.starts_with("2  ")).unwrap();
-    assert!(title.1.right() <= job_label_rect(rects[1], true).left(), "{:?}", title.1);
+fn parked_strip() -> Strip {
+    let mut strip = Strip::new();
+    strip.tabs.apply(Action::Select(1), || unreachable!());
+    strip.park(2);
+    strip.park(3);
+    strip.frame(Vec::new());
+    strip.frame(Vec::new());
+    strip
 }
 
 #[test]
-fn a_long_name_is_cut_after_the_avatars_room_is_taken() {
-    let (_, with) = agent_strip("a-very-long-worktree-name-indeed", 200.0, (false, false, true));
-    let (_, without) = agent_strip("a-very-long-worktree-name-indeed", 200.0, (true, false, false));
-    let shown = |texts: &[(String, Rect)]| {
-        texts.iter().find(|(text, _)| text.starts_with("2  ")).unwrap().0.chars().count()
+fn the_strip_draws_the_tabs_that_are_not_parked_and_a_pill_to_their_right_that_counts_the_rest() {
+    let strip = parked_strip();
+    assert_eq!(strip.rects.len(), 2);
+    let placed = strip.placed();
+    let pill = placed.pill.expect("a pill");
+    assert!(pill.left() > strip.rects[1].right());
+    assert!(strip.texts.iter().any(|(text, _)| text == "Parked 2"), "{:?}", strip.texts);
+    assert_eq!(placed.rows, Vec::<Rect>::new(), "the list is closed until it is clicked");
+}
+
+#[test]
+fn nothing_parked_and_nothing_dragged_draws_no_pill() {
+    let strip = Strip::new();
+    assert_eq!(strip.placed().pill, None);
+    assert!(strip.texts.iter().all(|(text, _)| !text.starts_with("Parked")));
+}
+
+#[test]
+fn a_click_on_the_pill_opens_the_list_and_a_click_on_a_row_brings_that_tab_back_selected() {
+    let mut strip = parked_strip();
+    let at = strip.pill_center();
+    strip.click(at);
+    strip.frame(Vec::new());
+    let rows = strip.placed().rows;
+    assert_eq!(rows.len(), 2, "one row per parked tab, in the order of the tabs");
+    assert!(rows[0].top() > strip.placed().pill.unwrap().bottom());
+    assert!(strip.texts.iter().any(|(text, _)| text == "Idle 6h"));
+    let second = rows[1].center();
+    strip.seen.clear();
+    strip.click(second);
+    assert_eq!(strip.seen, [Action::Select(3)]);
+    assert_eq!(strip.parked(), [2], "the other one is still parked");
+    assert_eq!(order_of(&strip.tabs.items()[strip.tabs.active()]), 3);
+    strip.frame(Vec::new());
+    assert_eq!(strip.rects.len(), 3, "the tab is back in the strip");
+}
+
+#[test]
+fn a_tab_dragged_onto_the_pill_is_parked_and_the_tabs_it_passed_stay_in_order() {
+    let mut strip = parked_strip();
+    strip.tabs.apply(Action::Select(1), || unreachable!());
+    let (from, onto) = (strip.center(1), strip.pill_center());
+    strip.seen.clear();
+    strip.drag(from, onto);
+    assert_eq!(strip.seen.iter().filter(|a| matches!(a, Action::Park(_))).count(), 1);
+    assert_eq!(strip.moves(), Vec::<Action>::new(), "nothing swapped on the way");
+    assert_eq!(strip.parked(), [1, 2, 3]);
+    assert_eq!(order(&strip.tabs), [0, 1, 2, 3]);
+    assert_eq!(strip.tabs.active(), 0, "the selection went to the main tab, the only one left");
+}
+
+#[test]
+fn with_nothing_parked_a_drag_shows_a_place_to_drop_and_dropping_there_parks_the_tab() {
+    let mut strip = Strip::new();
+    strip.tabs.apply(Action::Select(1), || unreachable!());
+    strip.frame(Vec::new());
+    let from = strip.center(3);
+    strip.pointer(from);
+    strip.button(from, true);
+    for step in 1..=4 {
+        strip.pointer(from + vec2(0.0, 1.0) + vec2(step as f32 * 3.0, 0.0));
+    }
+    strip.frame(Vec::new());
+    assert!(strip.texts.iter().any(|(text, _)| text == "Drop to park"), "{:?}", strip.texts);
+    let onto = strip.pill_center();
+    strip.pointer(onto);
+    strip.frame(Vec::new());
+    strip.button(onto, false);
+    strip.frame(Vec::new());
+    strip.frame(Vec::new());
+    assert_eq!(strip.parked(), [3]);
+    assert_eq!(order(&strip.tabs), [0, 1, 2, 3]);
+    assert!(strip.texts.iter().any(|(text, _)| text == "Parked 1"), "{:?}", strip.texts);
+}
+
+#[test]
+fn a_tab_let_go_beside_the_pill_is_not_parked() {
+    let mut strip = parked_strip();
+    let (from, beside) = (strip.center(1), strip.pill_center() + vec2(0.0, 60.0));
+    strip.drag(from, beside);
+    assert_eq!(strip.parked(), [2, 3]);
+}
+
+#[test]
+fn the_pinned_tab_cannot_be_dropped_on_the_pill() {
+    let mut strip = parked_strip();
+    let (main, onto) = (strip.center(0), strip.pill_center());
+    strip.drag(main, onto);
+    assert_eq!(strip.seen.iter().filter(|action| matches!(action, Action::Park(_))).count(), 0);
+    assert_eq!(strip.parked(), [2, 3]);
+}
+
+#[test]
+fn a_right_click_on_a_tab_offers_park_and_never_park_and_the_pinned_tab_offers_neither() {
+    let mut strip = Strip::new();
+    let at = strip.center(1);
+    strip.pointer(at);
+    strip.frame(vec![Event::PointerButton {
+        pos: at,
+        button: PointerButton::Secondary,
+        pressed: true,
+        modifiers: egui::Modifiers::default(),
+    }]);
+    strip.frame(vec![Event::PointerButton {
+        pos: at,
+        button: PointerButton::Secondary,
+        pressed: false,
+        modifiers: egui::Modifiers::default(),
+    }]);
+    strip.frame(Vec::new());
+    let find = |strip: &Strip, label: &str| {
+        strip.texts.iter().find(|(text, _)| text == label).map(|(_, rect)| rect.center())
     };
-    assert!(shown(&with) <= shown(&without) + AVATAR_PAD_CHARS);
+    assert!(find(&strip, "Park").is_some(), "{:?}", strip.texts);
+    let keep = find(&strip, "Never park this tab").expect("never park");
+    strip.seen.clear();
+    strip.click(keep);
+    assert_eq!(strip.seen, [Action::ToggleKeep(1)]);
+    assert!(strip.tabs.items()[1].keep);
+
+    let mut main = Strip::new();
+    let at = main.center(0);
+    main.pointer(at);
+    for pressed in [true, false] {
+        main.frame(vec![Event::PointerButton {
+            pos: at,
+            button: PointerButton::Secondary,
+            pressed,
+            modifiers: egui::Modifiers::default(),
+        }]);
+    }
+    main.frame(Vec::new());
+    assert!(main.texts.iter().all(|(text, _)| text != "Park"), "{:?}", main.texts);
+}
+
+#[test]
+fn the_pill_list_names_each_tab_and_says_why_it_left() {
+    let mut strip = parked_strip();
+    let at = strip.pill_center();
+    strip.click(at);
+    strip.frame(Vec::new());
+    let names: Vec<_> = strip.texts.iter().map(|(text, _)| text.as_str()).collect();
+    assert!(names.contains(&"shell 2") && names.contains(&"shell 3"), "{names:?}");
 }

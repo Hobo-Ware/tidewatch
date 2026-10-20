@@ -26,6 +26,7 @@ use crate::catalog::Catalog;
 use crate::jobs::Jobs;
 use crate::leftover_glue::merge;
 use crate::pane::{Body, Pane, STARTING_TITLE, finish_open};
+use crate::park::Park;
 use crate::repo::Workspace;
 use crate::restore_jobs::{self, Done, ReopenSpec, Reopened, Startup, StartupSpec};
 use crate::tabs::Tabs;
@@ -244,6 +245,14 @@ impl Host {
                 self.open_one(&opened, tabs, spawn, runs, &mut report.toasts)
             })
             .collect();
+        for (tab, id) in plan.tabs.iter().zip(&ids) {
+            if let (Some(saved), Some(found)) = (tab.park, tabs.get_mut(*id))
+                && !found.pinned
+            {
+                found.park = saved.why.map(|why| Park { why, since_ms: saved.since_ms });
+                found.keep = saved.keep;
+            }
+        }
         let selected = if untouched { ids.get(plan.active).copied() } else { None };
         tabs.select_id(selected.unwrap_or(current));
         if untouched && group == 0 {
@@ -414,6 +423,7 @@ pub(crate) fn dev_resume_plan(paths: &TidewatchPaths, repo: &Path, name: &str) -
             dir: worktree.path.clone(),
             worktree: Some(worktree),
             action: TabAction::ResumeWorkflow { stages },
+            park: None,
         }],
         skipped: Vec::new(),
     }

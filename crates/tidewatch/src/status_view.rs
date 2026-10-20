@@ -4,7 +4,6 @@
 
 use crate::brand;
 use egui::{Color32, Id, LayerId, Order, Rect, Stroke, pos2, vec2};
-use stdusk_core::procwatch::Cli;
 use tidewatch_core::status::{AgentStatus, Reason};
 
 const BAR_HEIGHT: f32 = 2.0;
@@ -87,17 +86,6 @@ pub(crate) fn sweep(time: f64) -> (f32, f32) {
     let phase = (time * SWEEP_PERIODS_PER_SECOND).rem_euclid(1.0) as f32;
     let head = phase * (1.0 + SWEEP_WIDTH);
     ((head - SWEEP_WIDTH).clamp(0.0, 1.0), head.clamp(0.0, 1.0))
-}
-
-/// The CLI mark stdusk already draws in a tab's trailing slot. A custom agent has none.
-pub(crate) fn cli_of(agent_id: &str) -> Option<Cli> {
-    match agent_id {
-        "claude" => Some(Cli::Claude),
-        "codex" => Some(Cli::Codex),
-        "gemini" => Some(Cli::Gemini),
-        "copilot" => Some(Cli::Copilot),
-        _ => None,
-    }
 }
 
 /// Paints the status bar over a tab's top edge, on the layer `draw_tab` uses for its own edge
@@ -215,14 +203,5 @@ mod tests {
         }
         assert_ne!(starts.first(), starts.last());
         assert_eq!(sweep(0.0), (0.0, 0.0));
-    }
-
-    #[test]
-    fn the_four_built_in_agents_have_a_logo_and_custom_ones_do_not() {
-        assert_eq!(cli_of("claude"), Some(Cli::Claude));
-        assert_eq!(cli_of("codex"), Some(Cli::Codex));
-        assert_eq!(cli_of("gemini"), Some(Cli::Gemini));
-        assert_eq!(cli_of("copilot"), Some(Cli::Copilot));
-        assert_eq!(cli_of("my-agent"), None);
     }
 }

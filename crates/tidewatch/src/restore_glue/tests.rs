@@ -93,8 +93,14 @@ impl Fixture {
     }
 
     fn save(&self, active: usize, focus: bool, tabs: Vec<SavedTab>) {
-        let window =
-            SavedWindow { dir: self.repo.clone(), other: false, active, focus_mode: focus, tabs };
+        let window = SavedWindow {
+            dir: self.repo.clone(),
+            other: false,
+            active,
+            focus_mode: focus,
+            tabs,
+            parked: Vec::new(),
+        };
         Session { windows: vec![window] }.save(&self.paths).unwrap();
     }
 
@@ -173,6 +179,37 @@ fn agent(worktree: &Worktree, session: &str, level: Level) -> SavedTab {
 
 fn shell(worktree: &Worktree) -> SavedTab {
     SavedTab::Shell { dir: worktree.path.clone(), branch: Some(worktree.branch.clone()) }
+}
+
+#[test]
+fn parked_and_never_park_marks_come_back_on_the_tabs_they_were_saved_with() {
+    use tidewatch_core::session::SavedPark;
+    let mut f = Fixture::new(false);
+    let calm = worktree::add(&f.paths, &f.repo).unwrap();
+    let brave = worktree::add(&f.paths, &f.repo).unwrap();
+    let window = SavedWindow {
+        dir: f.repo.clone(),
+        other: false,
+        active: 0,
+        focus_mode: false,
+        tabs: vec![SavedTab::Main, shell(&calm), shell(&brave)],
+        parked: vec![
+            SavedPark { tab: 1, why: Some(crate::park::Why::Idle), since_ms: 9, keep: false },
+            SavedPark { tab: 2, why: None, since_ms: 0, keep: true },
+        ],
+    };
+    Session { windows: vec![window] }.save(&f.paths).unwrap();
+    f.begin();
+    f.until_settled();
+    let marks: Vec<_> = f.tabs.items().iter().map(|tab| (tab.park, tab.keep)).collect();
+    assert_eq!(
+        marks,
+        [
+            (None, false),
+            (Some(Park { why: crate::park::Why::Idle, since_ms: 9 }), false),
+            (None, true)
+        ]
+    );
 }
 
 #[test]
@@ -364,6 +401,7 @@ fn a_workflow_tab_with_unreadable_state_reopens_as_a_shell_with_a_toast() {
             dir: wt.path.clone(),
             worktree: Some(wt.clone()),
             action: TabAction::ResumeWorkflow { stages: f.home.join("missing-stages.json") },
+            park: None,
         }],
         skipped: Vec::new(),
     };
@@ -490,7 +528,14 @@ fn second_repo(f: &Fixture) -> PathBuf {
 }
 
 fn saved_window(dir: &Path, focus_mode: bool, tabs: Vec<SavedTab>) -> SavedWindow {
-    SavedWindow { dir: dir.to_path_buf(), other: false, active: 1, focus_mode, tabs }
+    SavedWindow {
+        dir: dir.to_path_buf(),
+        other: false,
+        active: 1,
+        focus_mode,
+        tabs,
+        parked: Vec::new(),
+    }
 }
 
 fn api(repo: &Path) -> Workspace {

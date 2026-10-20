@@ -511,7 +511,7 @@ pub(crate) fn window_plan(
         other: workspace.1,
         focus_mode: false,
         active: 0,
-        tabs: vec![TabPlan { saved, dir, worktree, action }],
+        tabs: vec![TabPlan { saved, dir, worktree, action, park: None }],
         skipped: Vec::new(),
     })
 }
