@@ -6,6 +6,7 @@ use std::process::Command;
 
 use tidewatch_core::paths::TidewatchPaths;
 use tidewatch_core::start_base;
+use tidewatch_core::test_command;
 use tidewatch_core::worktree::{local_branches, taken_names};
 
 use crate::jobs::Jobs;
@@ -56,6 +57,8 @@ pub(crate) struct RepoFacts {
     pub(crate) remote_default: Option<String>,
     pub(crate) branches: Vec<String>,
     pub(crate) taken: HashSet<String>,
+    /// The repo's test command, which a Meeseeks can be held to.
+    pub(crate) test_command: Option<String>,
 }
 
 impl RepoFacts {
@@ -67,6 +70,7 @@ impl RepoFacts {
             remote_default: start_base::remote_default(repo),
             branches,
             taken: paths.map(|paths| taken_names(paths, repo)).unwrap_or_default(),
+            test_command: test_command::test_command(repo),
         }
     }
 }

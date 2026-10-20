@@ -39,6 +39,8 @@ pub(crate) struct Output {
     pub(crate) clicked: Option<usize>,
     /// The left edge of the drawn control.
     pub(crate) left: f32,
+    /// Where each segment was drawn, for a headless test to aim at.
+    pub(crate) segments: Vec<Rect>,
 }
 
 /// What each segment says: its label, optionally a key cap after it, optionally an ink of its own.
@@ -115,8 +117,9 @@ pub(crate) fn show(
 ) -> Output {
     let placed = rects(right, center_y, &text_widths(ui, labels));
     let left = placed.0.left();
+    let segments = placed.1.clone();
     let clicked = paint_segments(ui, id, placed, &Look { labels, keys: &[], tones: &[] }, active);
-    Output { clicked, left }
+    Output { clicked, left, segments }
 }
 
 /// `show` with a dim key cap after each label (`Agent  A`), for a choice a key also picks.
@@ -140,9 +143,10 @@ pub(crate) fn show_keyed(
         .collect();
     let placed = rects(right, center_y, &widths);
     let left = placed.0.left();
+    let segments = placed.1.clone();
     let clicked =
         paint_segments(ui, id, placed, &Look { labels: &labels, keys: &keys, tones: &[] }, active);
-    Output { clicked, left }
+    Output { clicked, left, segments }
 }
 
 /// The width of the control `inline` draws for `labels`.

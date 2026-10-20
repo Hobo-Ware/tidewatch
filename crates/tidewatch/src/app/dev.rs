@@ -52,6 +52,9 @@ impl Tidewatch {
             Some("agent") => {
                 state.choose(Kind::Agent);
             }
+            Some("meeseeks") => {
+                state.choose(Kind::Meeseeks);
+            }
             Some("workflow") => {
                 state.choose(Kind::Workflow);
             }

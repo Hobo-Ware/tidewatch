@@ -7,7 +7,8 @@ use tidewatch_core::profiles::Profiles;
 use tidewatch_core::workflows::Workflows;
 
 use super::*;
-use crate::new_tab::Group;
+use crate::new_tab::{Group, MeeseeksRequest};
+use tidewatch_core::meeseeks::Criteria;
 
 struct Harness {
     ctx: egui::Context,
@@ -255,6 +256,7 @@ fn the_start_button_starts_too_and_a_blocked_one_does_nothing() {
         remote_default: None,
         branches: vec!["main".into()],
         taken: HashSet::new(),
+        test_command: None,
     });
     harness.state.type_name("has space");
     assert_eq!(harness.click_start(), None);
@@ -284,6 +286,7 @@ fn a_taken_name_blocks_cmd_enter() {
         remote_default: None,
         branches: Vec::new(),
         taken: ["dup".to_owned()].into_iter().collect(),
+        test_command: None,
     });
     harness.state.type_name("dup");
     assert_eq!(harness.frame(vec![key_with(Key::Enter, Modifiers::COMMAND)]), None);
@@ -361,6 +364,7 @@ fn dup_facts() -> RepoFacts {
         remote_default: None,
         branches: vec!["main".into()],
         taken: ["dup".to_owned()].into_iter().collect(),
+        test_command: None,
     }
 }
 
@@ -577,4 +581,141 @@ fn the_switch_takes_tab_focus_when_it_works_and_space_flips_it() {
     assert!(!harness.state.remote());
     harness.frame(vec![key(Key::Space)]);
     assert!(harness.state.remote(), "Space on the focused switch turns remote control on");
+}
+
+fn command_facts() -> RepoFacts {
+    RepoFacts {
+        checked_out: Some("main".into()),
+        branches: vec!["main".into()],
+        test_command: Some("npm test".into()),
+        ..RepoFacts::default()
+    }
+}
+
+fn meeseeks_form(text: &str) -> Harness {
+    let mut harness = Harness::unfocused(Group::Repo);
+    harness.facts = Some(command_facts());
+    assert_eq!(harness.press(Key::M), None);
+    harness.state.set_text(text);
+    harness.frame(Vec::new());
+    harness
+}
+
+fn meeseeks_of(out: Option<Out>) -> MeeseeksRequest {
+    match started(out) {
+        Request::Meeseeks(request) => *request,
+        other => panic!("a Meeseeks request, got {other:?}"),
+    }
+}
+
+fn center(rect: Option<Rect>) -> egui::Pos2 {
+    rect.expect("drawn").center()
+}
+
+#[test]
+fn m_picks_the_meeseeks_kind_and_the_control_lists_it_between_agent_and_workflow() {
+    let mut harness = Harness::unfocused(Group::Repo);
+    assert_eq!(harness.press(Key::M), None);
+    assert_eq!(harness.state.kind(), Kind::Meeseeks);
+    assert_eq!(harness.state.title(), "New Meeseeks");
+    assert!(harness.placed().kinds.iter().all(Option::is_some));
+    assert_eq!(harness.press(Key::A), None);
+    assert_eq!(harness.state.kind(), Kind::Agent);
+}
+
+#[test]
+fn clicking_the_meeseeks_segment_switches_the_form_and_the_other_segments_switch_back() {
+    let mut harness = Harness::unfocused(Group::Repo);
+    let at = center(harness.placed().kinds[1]);
+    assert_eq!(harness.click(at), None);
+    assert_eq!(harness.state.kind(), Kind::Meeseeks);
+    let at = center(harness.placed().kinds[2]);
+    assert_eq!(harness.click(at), None);
+    assert_eq!(harness.state.kind(), Kind::Workflow);
+    let at = center(harness.placed().kinds[0]);
+    harness.click(at);
+    assert_eq!(harness.state.kind(), Kind::Agent);
+}
+
+#[test]
+fn in_other_there_is_no_meeseeks_segment_and_m_does_nothing() {
+    let mut harness = Harness::unfocused(Group::Other);
+    assert_eq!(harness.press(Key::M), None);
+    assert_eq!(harness.state.kind(), Kind::Agent);
+    assert_eq!(harness.placed().kinds.iter().flatten().count(), 2);
+}
+
+#[test]
+fn the_meeseeks_form_has_no_name_fields_or_remote_row_and_shows_three_ticks_on() {
+    let harness = meeseeks_form("one task");
+    let placed = harness.placed();
+    assert!(placed.name.is_none() && placed.base.is_none() && placed.remote.is_none());
+    assert!(placed.permission.is_some() && placed.message.is_some());
+    assert!(placed.ticks.iter().all(Option::is_some));
+    assert_eq!(harness.state.ticks(), Criteria::default());
+}
+
+#[test]
+fn summon_says_how_many_and_starts_one_request_per_line() {
+    let mut harness = meeseeks_form("Bump vite\nAdd a test\n\nRename a helper");
+    assert_eq!(start_label(&harness.state, &harness.catalog), "Summon 3");
+    let request = meeseeks_of(harness.click_start());
+    assert_eq!(request.tabs.len(), 3);
+    assert_eq!(request.ticks, Criteria::default());
+    assert!(request.tabs.iter().all(|tab| tab.meeseeks == Some(Criteria::default())));
+}
+
+#[test]
+fn cmd_enter_summons_from_the_task_box_too() {
+    let mut harness = Harness::new(Group::Repo);
+    harness.facts = Some(command_facts());
+    harness.state.choose(Kind::Meeseeks);
+    harness.type_text("Fix the flaky retry test");
+    let request = meeseeks_of(harness.frame(vec![key_with(Key::Enter, Modifiers::COMMAND)]));
+    assert_eq!(request.tabs[0].task, "Fix the flaky retry test");
+}
+
+#[test]
+fn summon_with_an_empty_box_does_nothing_and_says_why_in_the_footer() {
+    let mut harness = meeseeks_form("");
+    assert_eq!(start_label(&harness.state, &harness.catalog), "Summon");
+    assert_eq!(harness.click_start(), None);
+    assert_eq!(harness.frame(vec![key_with(Key::Enter, Modifiers::COMMAND)]), None);
+    assert_eq!(harness.state.error.as_deref(), Some("Write one task per line."));
+}
+
+#[test]
+fn a_click_on_a_tick_flips_it_and_the_request_carries_the_new_ticks() {
+    let mut harness = meeseeks_form("one task");
+    let at = center(harness.placed().ticks[2]);
+    assert_eq!(harness.click(at), None);
+    let at = center(harness.placed().ticks[1]);
+    assert_eq!(harness.click(at), None);
+    let want = Criteria { tests: true, committed: false, pr: false };
+    assert_eq!(harness.state.ticks(), want);
+    assert_eq!(meeseeks_of(harness.click_start()).ticks, want);
+}
+
+#[test]
+fn the_tests_tick_cannot_be_clicked_without_a_test_command_and_the_tabs_drop_it() {
+    let mut harness = meeseeks_form("one task");
+    harness.facts = Some(RepoFacts { test_command: None, ..command_facts() });
+    harness.frame(Vec::new());
+    let at = center(harness.placed().ticks[0]);
+    assert_eq!(harness.click(at), None);
+    assert!(harness.state.ticks().tests, "the stored tick is left alone");
+    let request = meeseeks_of(harness.click_start());
+    assert_eq!(request.tabs[0].meeseeks, Some(Criteria { tests: false, ..Criteria::default() }));
+}
+
+#[test]
+fn left_and_right_change_the_level_and_the_number_keys_pick_the_profile_in_a_meeseeks_form() {
+    let mut harness = meeseeks_form("one task");
+    harness.press(Key::ArrowRight);
+    assert_eq!(harness.state.level(), Level::Auto);
+    harness.press(Key::Num2);
+    assert_eq!(harness.state.selected_id(&harness.catalog).as_deref(), Some("reviewer"));
+    harness.state.set_text("one task");
+    let request = meeseeks_of(harness.click_start());
+    assert_eq!(request.tabs[0].profile_id, "reviewer");
 }

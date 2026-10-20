@@ -48,6 +48,7 @@ pub(crate) fn place(branch: &str, base: Option<&str>) -> String {
 pub(crate) fn draft_place(kind: Kind) -> String {
     let start = match kind {
         Kind::Workflow => "Start run",
+        Kind::Meeseeks => "Summon",
         Kind::Agent | Kind::Shell => "Start",
     };
     format!("New tab \u{b7} nothing starts until you press {start}")

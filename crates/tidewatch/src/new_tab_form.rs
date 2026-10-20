@@ -13,9 +13,11 @@ use crate::brand;
 use crate::catalog::Catalog;
 use crate::new_tab::{Kind, NameCheck, NewTab, RemoteOffer, Request, level_hint, level_refusal};
 use crate::new_tab_cards;
+use crate::new_tab_done;
 use crate::new_tab_fields::{self, NameEdit, section_label, text_box};
 use crate::new_tab_lane;
 use crate::new_tab_layout::{self as layout, Above, LABEL_GAP, LABEL_H, SECTION_GAP};
+use crate::new_tab_meeseeks::{self, TestsOffer, Tick};
 use crate::new_tab_remote;
 use crate::new_tab_workflow::{self, StageCard};
 use crate::repo_base::RepoFacts;
@@ -49,6 +51,8 @@ pub(crate) struct Placed {
     pub(crate) name: Option<Rect>,
     pub(crate) base: Option<Rect>,
     pub(crate) message: Option<Rect>,
+    pub(crate) kinds: [Option<Rect>; 4],
+    pub(crate) ticks: [Option<Rect>; 3],
     pub(crate) selected_row: Option<Rect>,
     pub(crate) hints: Option<Rect>,
     pub(crate) start: Option<Rect>,
@@ -104,7 +108,12 @@ fn keys(
     if typing {
         return None;
     }
-    for (key, kind) in [(Key::A, Kind::Agent), (Key::W, Kind::Workflow), (Key::S, Kind::Shell)] {
+    for (key, kind) in [
+        (Key::A, Kind::Agent),
+        (Key::M, Kind::Meeseeks),
+        (Key::W, Kind::Workflow),
+        (Key::S, Kind::Shell),
+    ] {
         if pressed(ctx, key) {
             return state.choose(kind).map(Out::Start);
         }
@@ -123,7 +132,7 @@ fn keys(
             state.select(state.selected() + 1, catalog);
         }
     }
-    if state.kind() == Kind::Agent {
+    if matches!(state.kind(), Kind::Agent | Kind::Meeseeks) {
         if pressed(ctx, Key::ArrowLeft) {
             state.step_level(false, catalog);
         }
@@ -159,7 +168,7 @@ fn footer_hints(kind: Kind) -> [Hint; 3] {
             &[("1-9", true), (" workflow \u{b7} ", false), ("Esc", true), (" closes", false)],
             &[("Esc", true), (" closes", false)],
         ],
-        Kind::Agent | Kind::Shell => [
+        Kind::Agent | Kind::Meeseeks | Kind::Shell => [
             &[
                 ("1-9 Up Down", true),
                 (" agent \u{b7} ", false),
@@ -184,6 +193,7 @@ fn footer_hints(kind: Kind) -> [Hint; 3] {
 fn start_label(state: &NewTab, catalog: &Catalog) -> String {
     match state.kind() {
         Kind::Workflow => "Start run".to_owned(),
+        Kind::Meeseeks => new_tab_meeseeks::summon_label(state.tasks().len()),
         Kind::Agent | Kind::Shell => state
             .selected_entry(catalog)
             .map_or_else(|| "Start".to_owned(), |(profile, _)| format!("Start {}", profile.name)),
@@ -238,7 +248,7 @@ impl<'a> Content<'a> {
             problem: !state.name_check(facts).is_fine(),
             has_permission: state.kind() != Kind::Workflow
                 && state.selected_entry(catalog).is_some(),
-            remote: (state.kind() != Kind::Workflow)
+            remote: (state.kind() == Kind::Agent)
                 .then(|| state.selected_entry(catalog).map(|(_, agent)| RemoteOffer::of(agent)))
                 .flatten(),
             state,
@@ -270,13 +280,16 @@ impl<'a> Content<'a> {
             .iter()
             .map(|warning| wrapped(ui, warning, 12.0, brand::ORANGE, width).size().y + WARNING_GAP)
             .sum();
-        if self.state.makes_a_worktree() {
+        if self.state.shows_name_fields() {
             above.fields = layout::fields_height(width, self.problem);
         }
         above
     }
 
     fn hint_height(&self, ui: &Ui, width: f32) -> f32 {
+        if self.kind == Kind::Meeseeks {
+            return HINT_GAP + new_tab_done::height(Tick::ALL.len());
+        }
         HINT_GAP + wrapped(ui, message_hint(self.state), 12.0, brand::FAINT, width).size().y
     }
 }
@@ -294,9 +307,10 @@ pub(crate) fn show(
     let mut out = if keys_free { keys(&ctx, state, catalog, facts) } else { None };
     let columns = layout::columns(layout::form_rect(area));
     let mut header_ui = ui.new_child(UiBuilder::new().max_rect(columns.header));
-    out = out.or(header(&mut header_ui, state));
-    let selected_row = lane(ui, columns.lane, state, catalog);
-    let mut placed = Placed { lane: Some(columns.lane), selected_row, ..Placed::default() };
+    let mut placed = Placed::default();
+    out = out.or(header(&mut header_ui, state, &mut placed));
+    placed.selected_row = lane(ui, columns.lane, state, catalog);
+    placed.lane = Some(columns.lane);
     out = out.or(pane(ui, columns.pane, state, catalog, facts, &mut placed));
     let typing = ctx.text_edit_focused();
     ctx.data_mut(|data| {
@@ -321,7 +335,7 @@ fn lane(ui: &mut Ui, rect: Rect, state: &mut NewTab, catalog: &Catalog) -> Optio
     out.selected
 }
 
-fn header(ui: &mut Ui, state: &mut NewTab) -> Option<Out> {
+fn header(ui: &mut Ui, state: &mut NewTab, placed: &mut Placed) -> Option<Out> {
     let (rect, _) =
         ui.allocate_exact_size(vec2(ui.available_width(), layout::HEADER_H), Sense::hover());
     let painter = ui.painter();
@@ -330,7 +344,9 @@ fn header(ui: &mut Ui, state: &mut NewTab) -> Option<Out> {
     let faint = |color: Color32| TextFormat::simple(body(13.0), color);
     job.append("in ", 0.0, faint(brand::MUTED));
     job.append(state.label(), 0.0, faint(brand::TEAL_TEXT));
-    let tail = if state.makes_a_worktree() {
+    let tail = if state.kind() == Kind::Meeseeks {
+        ", a fresh worktree for each task"
+    } else if state.makes_a_worktree() {
         ", a fresh worktree"
     } else {
         ", no worktree, runs in the folder itself"
@@ -339,6 +355,7 @@ fn header(ui: &mut Ui, state: &mut NewTab) -> Option<Out> {
     painter.galley(rect.left_top() + vec2(0.0, 27.0), painter.layout_job(job), brand::MUTED);
     let choices: Vec<(&str, &str, Kind)> = [
         ("Agent", "A", Kind::Agent),
+        ("Meeseeks", "M", Kind::Meeseeks),
         ("Workflow", "W", Kind::Workflow),
         ("Shell", "S", Kind::Shell),
     ]
@@ -355,6 +372,9 @@ fn header(ui: &mut Ui, state: &mut NewTab) -> Option<Out> {
         &labels,
         active,
     );
+    for (slot, rect) in placed.kinds.iter_mut().zip(&shown.segments) {
+        *slot = Some(*rect);
+    }
     let kind = shown.clicked.map(|index| choices[index].2)?;
     state.choose(kind).map(Out::Start)
 }
@@ -419,7 +439,7 @@ fn pane(
                 placed.base = Some(base);
                 ui.add_space(SECTION_GAP);
             }
-            placed.message = Some(message(ui, state, plan.message_h));
+            placed.message = Some(message(ui, state, facts, plan.message_h, &mut placed.ticks));
         },
     );
     if plan.scrolls {
@@ -432,9 +452,19 @@ fn pane(
     footer(ui, plan.footer, state, catalog, facts, placed)
 }
 
-fn message(ui: &mut Ui, state: &mut NewTab, height: f32) -> Rect {
+fn message(
+    ui: &mut Ui,
+    state: &mut NewTab,
+    facts: Option<&RepoFacts>,
+    height: f32,
+    ticks: &mut [Option<Rect>; 3],
+) -> Rect {
     let (title, hint) = match state.kind() {
         Kind::Workflow => ("Task", "What should this run deliver?"),
+        Kind::Meeseeks => (
+            "One task, one line each",
+            "Bump vite to 6.3 and fix the build\nAdd a test for expired promo codes",
+        ),
         Kind::Agent | Kind::Shell => {
             ("First message", "Optional. Leave it empty to start the agent idle.")
         }
@@ -446,6 +476,16 @@ fn message(ui: &mut Ui, state: &mut NewTab, height: f32) -> Rect {
         state.set_text(&text);
     }
     ui.add_space(HINT_GAP);
+    if state.kind() == Kind::Meeseeks {
+        let offer = TestsOffer::of(facts);
+        let rows = new_tab_meeseeks::rows(state.ticks(), &offer);
+        let shown = new_tab_done::show(ui, &rows);
+        *ticks = shown.rects;
+        if let Some(tick) = shown.clicked {
+            state.toggle_tick(tick, facts);
+        }
+        return rect;
+    }
     let width = ui.available_width();
     let galley = wrapped(ui, message_hint(state), 12.0, brand::FAINT, width);
     let (hint_rect, _) = ui.allocate_exact_size(vec2(width, galley.size().y), Sense::hover());
@@ -496,7 +536,7 @@ fn permission(
 }
 
 fn fields(ui: &mut Ui, state: &mut NewTab, facts: Option<&RepoFacts>) -> Option<(Rect, Rect)> {
-    if !state.makes_a_worktree() {
+    if !state.shows_name_fields() {
         return None;
     }
     let problem = !state.name_check(facts).is_fine();
