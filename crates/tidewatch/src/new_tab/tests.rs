@@ -8,6 +8,7 @@ use tidewatch_core::workflows::{BUILT_IN_IDS, Workflows};
 use tidewatch_core::prefs::{NewTabPrefs, StartFrom};
 
 use super::*;
+use crate::new_tab_meeseeks::Tick;
 
 fn catalog_with(profiles: Profiles) -> Catalog {
     let mut catalog = Catalog::new(OsString::from("/usr/bin"));
@@ -48,6 +49,7 @@ fn facts(checked_out: Option<&str>, branches: &[&str], taken: &[&str]) -> RepoFa
         remote_default: None,
         branches: branches.iter().map(|b| (*b).to_owned()).collect(),
         taken: taken.iter().map(|t| (*t).to_owned()).collect::<HashSet<_>>(),
+        test_command: None,
     }
 }
 
@@ -745,4 +747,158 @@ fn start_from_follows_the_default_until_a_branch_is_picked() {
     }
     let state = opened_with(defaults(|p| p.start = Some(StartFrom::DefaultBranch)), None, &catalog);
     assert_eq!(state.base(None), None);
+}
+
+fn in_meeseeks_form(catalog: &Catalog) -> NewTab {
+    let mut state = in_agent_form(Group::Repo, catalog, None);
+    assert_eq!(state.choose(Kind::Meeseeks), None);
+    state
+}
+
+fn with_tests(command: Option<&str>) -> RepoFacts {
+    RepoFacts { test_command: command.map(str::to_owned), ..facts(Some("main"), &["main"], &[]) }
+}
+
+fn summoned(state: &NewTab, catalog: &Catalog, facts: &RepoFacts) -> MeeseeksRequest {
+    match state.start_request(catalog, Some(facts)) {
+        Ok(Request::Meeseeks(request)) => *request,
+        other => panic!("a Meeseeks request, got {other:?}"),
+    }
+}
+
+#[test]
+fn a_meeseeks_form_is_offered_in_a_repo_only_and_titles_its_tab() {
+    let catalog = catalog();
+    assert_eq!(in_meeseeks_form(&catalog).title(), "New Meeseeks");
+    let mut other = open(Group::Other, None);
+    assert!(!other.offers(Kind::Meeseeks));
+    assert_eq!(other.choose(Kind::Meeseeks), None);
+    assert_eq!(other.kind(), Kind::Agent);
+    other.jump("meeseeks", &catalog);
+    assert_eq!(other.kind(), Kind::Agent);
+    let mut repo = in_agent_form(Group::Repo, &catalog, None);
+    repo.jump("meeseeks", &catalog);
+    assert_eq!(repo.kind(), Kind::Meeseeks);
+}
+
+#[test]
+fn the_meeseeks_form_keeps_the_agent_lane_and_its_message_box_keeps_the_keyboard() {
+    let catalog = catalog();
+    let mut state = in_agent_form(Group::Repo, &catalog, Some("reviewer"));
+    state.choose(Kind::Meeseeks);
+    assert_eq!(state.selected_id(&catalog).as_deref(), Some("reviewer"));
+    assert!(state.focus_message);
+    assert_eq!(state.level(), Level::Plan);
+    assert!(!state.shows_name_fields());
+    assert_eq!(state.name_check(None), NameCheck::Fine);
+    state.set_text("one\ntwo");
+    state.choose(Kind::Agent);
+    assert_eq!(state.text(), "one\ntwo", "the box is shared with the agent form");
+}
+
+#[test]
+fn each_line_of_the_box_becomes_one_request_with_its_own_name_and_the_same_profile_and_level() {
+    let catalog = catalog();
+    let mut state = in_meeseeks_form(&catalog);
+    state.set_text("  Bump vite to 6.3 and fix the build \n\nAdd a test for expired promo codes\nBump vite to 6.3 and fix the build\n");
+    state.set_level(Level::Auto, &catalog);
+    let request = summoned(&state, &catalog, &with_tests(Some("npm test")));
+    let tasks: Vec<&str> = request.tabs.iter().map(|tab| tab.task.as_str()).collect();
+    assert_eq!(
+        tasks,
+        [
+            "Bump vite to 6.3 and fix the build",
+            "Add a test for expired promo codes",
+            "Bump vite to 6.3 and fix the build",
+        ]
+    );
+    let names: Vec<_> =
+        request.tabs.iter().map(|tab| tab.placement.name.clone().unwrap()).collect();
+    assert_eq!(names, ["bump-vite-fix-build", "add-test-expired-promo", "bump-vite-fix-build-2"]);
+    for tab in &request.tabs {
+        assert_eq!(tab.profile_id, "builder");
+        assert_eq!(tab.profile.level, Level::Auto);
+        assert!(!tab.remote);
+        assert_eq!(tab.placement.base.as_deref(), Some("main"));
+        assert_eq!(tab.meeseeks, Some(Criteria::default()));
+    }
+}
+
+#[test]
+fn a_name_the_repo_has_taken_moves_a_line_to_the_next_free_one() {
+    let catalog = catalog();
+    let mut state = in_meeseeks_form(&catalog);
+    state.set_text("Rename getUserData to loadProfile");
+    let taken = RepoFacts {
+        taken: ["rename-getuserdata-loadprofile".to_owned()].into(),
+        ..with_tests(None)
+    };
+    let request = summoned(&state, &catalog, &taken);
+    assert_eq!(request.tabs[0].placement.name.as_deref(), Some("rename-getuserdata-loadprofile-2"));
+}
+
+#[test]
+fn an_empty_box_cannot_summon_and_says_what_to_write() {
+    let catalog = catalog();
+    let mut state = in_meeseeks_form(&catalog);
+    assert_eq!(
+        state.start_request(&catalog, Some(&with_tests(None))),
+        Err("Write one task per line.".to_owned())
+    );
+    state.set_text(" \n  \n");
+    assert_eq!(state.tasks().len(), 0);
+    assert_eq!(state.start_request(&catalog, None), Err("Write one task per line.".to_owned()));
+}
+
+#[test]
+fn the_ticks_start_from_settings_flip_on_a_click_and_ride_along_in_the_request() {
+    let catalog = catalog();
+    let remembered = Criteria { tests: true, committed: false, pr: true };
+    let mut state = in_agent_form(Group::Repo, &catalog, None)
+        .with_defaults(defaults(|prefs| prefs.meeseeks = remembered));
+    state.choose(Kind::Meeseeks);
+    assert_eq!(state.ticks(), remembered);
+    let facts = with_tests(Some("npm test"));
+    state.toggle_tick(Tick::Pr, Some(&facts));
+    state.toggle_tick(Tick::Committed, Some(&facts));
+    state.set_text("one task");
+    let request = summoned(&state, &catalog, &facts);
+    let want = Criteria { tests: true, committed: true, pr: false };
+    assert_eq!(request.ticks, want);
+    assert_eq!(request.tabs[0].meeseeks, Some(want));
+}
+
+#[test]
+fn without_a_test_command_the_tests_tick_is_off_for_the_tabs_but_stays_as_the_user_left_it() {
+    let catalog = catalog();
+    let mut state = in_meeseeks_form(&catalog);
+    state.set_text("one task");
+    let none = with_tests(None);
+    state.toggle_tick(Tick::Tests, Some(&none));
+    assert!(state.ticks().tests, "a disabled row cannot be toggled");
+    let request = summoned(&state, &catalog, &none);
+    assert!(request.ticks.tests, "what the form remembers");
+    assert_eq!(request.tabs[0].meeseeks, Some(Criteria { tests: false, ..Criteria::default() }));
+    let found = summoned(&state, &catalog, &with_tests(Some("make test")));
+    assert_eq!(found.tabs[0].meeseeks, Some(Criteria::default()));
+    let unknown = state.start_request(&catalog, None);
+    let Ok(Request::Meeseeks(unknown)) = unknown else { panic!("{unknown:?}") };
+    assert_eq!(unknown.tabs[0].meeseeks, Some(Criteria::default()), "not looked at yet");
+}
+
+#[test]
+fn yolo_is_refused_for_a_meeseeks_where_an_agent_would_be() {
+    let catalog = catalog();
+    let mut state = in_agent_form(Group::Repo, &catalog, None);
+    state.choose(Kind::Meeseeks);
+    assert!(state.set_level(Level::Yolo, &catalog), "open in a repo, like an agent form");
+    let other = open(Group::Other, None);
+    assert!(
+        !other.offers(Kind::Meeseeks),
+        "a Meeseeks never reaches the Other group, where YOLO is refused"
+    );
+    assert!(
+        level_refusal(Group::Other, &catalog.agent("claude").unwrap().clone(), Level::Yolo)
+            .is_some()
+    );
 }

@@ -5,7 +5,7 @@ use std::path::PathBuf;
 
 use tidewatch_core::agents::{Agent, Level, Remote};
 use tidewatch_core::branch_name::{self, Problem};
-use tidewatch_core::meeseeks::Criteria;
+use tidewatch_core::meeseeks::{Criteria, tasks_of};
 use tidewatch_core::names;
 use tidewatch_core::prefs::{NewTabPrefs, StartFrom};
 use tidewatch_core::profiles::Profile;
@@ -13,6 +13,7 @@ use tidewatch_core::start_base;
 use tidewatch_core::workflows::Workflow;
 
 use crate::catalog::{Availability, Catalog};
+use crate::new_tab_meeseeks::{self, TestsOffer, Tick};
 use crate::new_tab_workflow;
 use crate::repo_base::RepoFacts;
 use crate::workflow_glue::WorkflowRequest;
@@ -28,6 +29,7 @@ pub(crate) enum Group {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Kind {
     Agent,
+    Meeseeks,
     Workflow,
     Shell,
 }
@@ -36,6 +38,7 @@ impl Kind {
     pub(crate) fn title(self) -> &'static str {
         match self {
             Self::Agent => "New agent",
+            Self::Meeseeks => "New Meeseeks",
             Self::Workflow => "New workflow",
             Self::Shell => "New shell",
         }
@@ -65,10 +68,19 @@ pub(crate) struct AgentRequest {
     pub(crate) meeseeks: Option<Criteria>,
 }
 
+/// One Meeseeks per task line, each in its own worktree. `ticks` are what the form showed, which
+/// the next form opens with.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct MeeseeksRequest {
+    pub(crate) ticks: Criteria,
+    pub(crate) tabs: Vec<AgentRequest>,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum Request {
     Shell,
     Agent(Box<AgentRequest>),
+    Meeseeks(Box<MeeseeksRequest>),
     Workflow(Box<WorkflowRequest>),
 }
 
@@ -194,6 +206,7 @@ pub(crate) struct NewTab {
     workflow_pick: usize,
     level: Level,
     remote: Switch,
+    ticks: Criteria,
     defaults: NewTabPrefs,
     running_here: Vec<String>,
     message: String,
@@ -228,6 +241,7 @@ impl NewTab {
             workflow_pick: 0,
             level: Level::Auto,
             remote: Switch::Off,
+            ticks: Criteria::default(),
             defaults: NewTabPrefs::default(),
             running_here,
             message: String::new(),
@@ -245,6 +259,7 @@ impl NewTab {
     /// The form opens with what Settings says new tabs start with.
     pub(crate) fn with_defaults(mut self, defaults: NewTabPrefs) -> Self {
         self.remote = Switch::of(defaults.remote);
+        self.ticks = defaults.meeseeks;
         self.defaults = defaults;
         self
     }
@@ -281,14 +296,14 @@ impl NewTab {
     pub(crate) fn text(&self) -> &str {
         match self.kind {
             Kind::Workflow => &self.task,
-            Kind::Agent | Kind::Shell => &self.message,
+            Kind::Agent | Kind::Meeseeks | Kind::Shell => &self.message,
         }
     }
 
     pub(crate) fn set_text(&mut self, text: &str) {
         let slot = match self.kind {
             Kind::Workflow => &mut self.task,
-            Kind::Agent | Kind::Shell => &mut self.message,
+            Kind::Agent | Kind::Meeseeks | Kind::Shell => &mut self.message,
         };
         text.clone_into(slot);
         self.error = None;
@@ -297,18 +312,23 @@ impl NewTab {
     pub(crate) fn selected(&self) -> usize {
         match self.kind {
             Kind::Workflow => self.workflow_pick,
-            Kind::Agent | Kind::Shell => self.agent_pick,
+            Kind::Agent | Kind::Meeseeks | Kind::Shell => self.agent_pick,
         }
     }
 
-    /// Whether the form offers `kind` here: a workflow needs a worktree to run in.
+    /// Whether the form offers `kind` here: a workflow or a Meeseeks needs a worktree to run in.
     pub(crate) fn offers(&self, kind: Kind) -> bool {
-        kind != Kind::Workflow || self.group == Group::Repo
+        !matches!(kind, Kind::Workflow | Kind::Meeseeks) || self.group == Group::Repo
     }
 
     /// Whether the form has a worktree to name and a branch to start from.
     pub(crate) fn makes_a_worktree(&self) -> bool {
         self.group == Group::Repo
+    }
+
+    /// The name and branch fields. A Meeseeks form has none: each task line names its worktree.
+    pub(crate) fn shows_name_fields(&self) -> bool {
+        self.makes_a_worktree() && self.kind != Kind::Meeseeks
     }
 
     /// Settles the form on the catalog the first time it is known: the default profile, else the
@@ -331,6 +351,12 @@ impl NewTab {
     }
 
     pub(crate) fn jump(&mut self, preselect: &str, catalog: &Catalog) {
+        if preselect == "meeseeks" {
+            if self.offers(Kind::Meeseeks) {
+                self.enter(Kind::Meeseeks);
+            }
+            return;
+        }
         match preselect.strip_prefix("workflow:") {
             Some(id) if self.offers(Kind::Workflow) => {
                 self.enter(Kind::Workflow);
@@ -351,7 +377,7 @@ impl NewTab {
         }
         match kind {
             Kind::Shell => return Some(Request::Shell),
-            Kind::Agent | Kind::Workflow => {
+            Kind::Agent | Kind::Meeseeks | Kind::Workflow => {
                 if kind != self.kind {
                     self.enter(kind);
                 }
@@ -362,7 +388,7 @@ impl NewTab {
 
     fn enter(&mut self, kind: Kind) {
         self.kind = kind;
-        self.focus_message &= kind == Kind::Agent;
+        self.focus_message &= matches!(kind, Kind::Agent | Kind::Meeseeks);
         self.error = None;
         self.scroll_to_selected = true;
     }
@@ -414,7 +440,7 @@ impl NewTab {
     /// The ids of the cards the form shows, in order: what the number keys pick from.
     pub(crate) fn visible(&self, catalog: &Catalog) -> Vec<String> {
         match self.kind {
-            Kind::Agent | Kind::Shell => {
+            Kind::Agent | Kind::Meeseeks | Kind::Shell => {
                 self.agent_groups(catalog).into_iter().flat_map(|(_, ids)| ids).collect()
             }
             Kind::Workflow => Self::workflow_ids(catalog),
@@ -429,7 +455,7 @@ impl NewTab {
         &self,
         catalog: &'a Catalog,
     ) -> Option<(&'a Profile, &'a Agent)> {
-        if self.kind != Kind::Agent {
+        if !matches!(self.kind, Kind::Agent | Kind::Meeseeks) {
             return None;
         }
         let id = self.selected_id(catalog)?;
@@ -454,7 +480,7 @@ impl NewTab {
         if index < self.visible(catalog).len() && index != self.selected() {
             match self.kind {
                 Kind::Workflow => self.workflow_pick = index,
-                Kind::Agent | Kind::Shell => self.agent_pick = index,
+                Kind::Agent | Kind::Meeseeks | Kind::Shell => self.agent_pick = index,
             }
             self.apply_selection(catalog);
         } else {
@@ -535,7 +561,7 @@ impl NewTab {
     }
 
     pub(crate) fn name_check(&self, facts: Option<&RepoFacts>) -> NameCheck {
-        if !self.makes_a_worktree() {
+        if !self.makes_a_worktree() || self.kind == Kind::Meeseeks {
             return NameCheck::Fine;
         }
         let name = self.name(facts);
@@ -610,8 +636,52 @@ impl NewTab {
         match self.kind {
             Kind::Shell => Ok(Request::Shell),
             Kind::Agent => self.agent_request(catalog, facts),
+            Kind::Meeseeks => self.meeseeks_request(catalog, facts),
             Kind::Workflow => self.workflow_request(catalog, facts),
         }
+    }
+
+    pub(crate) fn ticks(&self) -> Criteria {
+        self.ticks
+    }
+
+    pub(crate) fn toggle_tick(&mut self, tick: Tick, facts: Option<&RepoFacts>) {
+        self.ticks = new_tab_meeseeks::toggled(self.ticks, tick, &TestsOffer::of(facts));
+        self.error = None;
+    }
+
+    /// The task lines of the box: one Meeseeks each.
+    pub(crate) fn tasks(&self) -> Vec<String> {
+        tasks_of(&self.message)
+    }
+
+    fn meeseeks_request(
+        &self,
+        catalog: &Catalog,
+        facts: Option<&RepoFacts>,
+    ) -> Result<Request, String> {
+        let tasks = self.tasks();
+        if tasks.is_empty() {
+            return Err("Write one task per line.".to_owned());
+        }
+        let Request::Agent(one) = self.agent_request(catalog, facts)? else {
+            return Err("No profile to start. Add one in Settings.".to_owned());
+        };
+        let criteria = new_tab_meeseeks::criteria(self.ticks, &TestsOffer::of(facts));
+        let names = new_tab_meeseeks::names_for(&tasks, self.seed, |name| is_taken(facts, name));
+        let base = self.base(facts);
+        let tabs = tasks
+            .into_iter()
+            .zip(names)
+            .map(|(task, name)| AgentRequest {
+                task,
+                placement: Placement { name: Some(name), base: base.clone() },
+                remote: false,
+                meeseeks: Some(criteria),
+                ..(*one).clone()
+            })
+            .collect();
+        Ok(Request::Meeseeks(Box::new(MeeseeksRequest { ticks: self.ticks, tabs })))
     }
 
     fn placement(&self, facts: Option<&RepoFacts>) -> Placement {

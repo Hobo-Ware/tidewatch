@@ -8,7 +8,7 @@ use tidewatch_core::worktree::BranchOutcome;
 use super::{Closing, Tidewatch};
 use crate::close_dialog::{self, Answer, Choice};
 use crate::dev_worktree::DevWorktree;
-use crate::new_tab::{Group, NewTab, Request};
+use crate::new_tab::{Group, MeeseeksRequest, NewTab, Request};
 use crate::pane::{
     CREATING_TITLE, ClosePolicy, Pane, STARTING_TITLE, agent_tabs_in_folder, finish_open,
 };
@@ -68,10 +68,33 @@ impl Tidewatch {
 
     /// Turns the tab `tab` into what the draft asked for.
     pub(super) fn start_draft(&mut self, ctx: &egui::Context, tab: u64, request: Request) {
-        if let Request::Agent(agent) = &request {
-            self.last_profile = Some(agent.profile_id.clone());
+        match &request {
+            Request::Agent(agent) => self.last_profile = Some(agent.profile_id.clone()),
+            Request::Meeseeks(request) => {
+                self.last_profile = request.tabs.first().map(|tab| tab.profile_id.clone());
+                self.remember_ticks(request.ticks);
+            }
+            Request::Shell | Request::Workflow(_) => {}
         }
         self.open_tab_in(ctx, request, Some(tab));
+    }
+
+    fn remember_ticks(&mut self, ticks: tidewatch_core::meeseeks::Criteria) {
+        self.new_tab_prefs.meeseeks = ticks;
+        if let Some(paths) = self.paths.as_ref().filter(|_| self.screenshot.is_none())
+            && let Err(e) =
+                tidewatch_core::prefs::Prefs::update(paths, |p| p.new_tab.meeseeks = ticks)
+        {
+            eprintln!("tidewatch: cannot save the Meeseeks ticks: {e}");
+        }
+    }
+
+    /// One tab per task line: the first takes the draft's place, the rest open after it.
+    fn summon(&mut self, ctx: &egui::Context, request: MeeseeksRequest, into: Option<u64>) {
+        let mut draft = into;
+        for agent in request.tabs {
+            self.open_tab_in(ctx, Request::Agent(Box::new(agent)), draft.take());
+        }
     }
 
     pub(super) fn open_tab(&mut self, ctx: &egui::Context, request: Request) {
@@ -99,6 +122,10 @@ impl Tidewatch {
         let agent = match request {
             Request::Shell => None,
             Request::Agent(agent) => Some(agent),
+            Request::Meeseeks(request) => {
+                self.summon(ctx, *request, into);
+                return;
+            }
             Request::Workflow(request) => {
                 self.open_workflow(ctx, Start::New(request), None, into);
                 return;

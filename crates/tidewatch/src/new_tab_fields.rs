@@ -69,7 +69,7 @@ pub(crate) fn name_field(ui: &mut Ui, state: &NewTab, facts: Option<&RepoFacts>)
     section_label(ui, "Worktree name");
     let follows = state.name_follows_text().then(|| match state.kind() {
         Kind::Workflow => "follows the task",
-        Kind::Agent | Kind::Shell => "follows the message",
+        Kind::Agent | Kind::Meeseeks | Kind::Shell => "follows the message",
     });
     if let Some(note) = follows {
         let label_w = text_width(ui, "WORKTREE NAME", 11.5);
@@ -180,6 +180,7 @@ pub(crate) fn text_box(
     hint: &str,
 ) -> (Rect, Option<String>) {
     let mut text = state.text().to_owned();
+    let state_is_meeseeks = state.kind() == Kind::Meeseeks;
     let inner = (height - 12.0).max(40.0);
     let width = ui.available_width();
     let top = ui.cursor().top();
@@ -197,7 +198,7 @@ pub(crate) fn text_box(
                         .margin(Margin::symmetric(4, 4))
                         .desired_width(width - 28.0)
                         .desired_rows(((inner - 8.0) / 18.0).floor().max(2.0) as usize)
-                        .font(body(14.0))
+                        .font(if state_is_meeseeks { mono(13.0) } else { body(14.0) })
                         .text_color(brand::TEXT)
                         .hint_text(RichText::new(hint).color(brand::FAINT)),
                 )
