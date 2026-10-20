@@ -59,7 +59,7 @@ fn the_form_opens_on_an_agent_and_a_shell_is_a_request_at_once() {
     let mut state = in_agent_form(Group::Repo, &catalog, None);
     assert_eq!(state.kind(), Kind::Agent);
     assert_eq!(state.title(), "New agent");
-    assert!(state.focus_message);
+    assert!(!state.focus_message);
     assert_eq!(state.choose(Kind::Shell), Some(Request::Shell));
     assert_eq!(state.kind(), Kind::Agent, "a shell never becomes the form's kind");
 }
@@ -84,16 +84,6 @@ fn a_workflow_is_offered_in_a_repo_only() {
     other.jump("workflow:ship", &catalog);
     assert_eq!(other.kind(), Kind::Agent);
     assert!(!other.makes_a_worktree());
-}
-
-#[test]
-fn switching_to_a_workflow_takes_the_keyboard_off_the_message_for_good() {
-    let catalog = workflow_catalog();
-    let mut state = in_agent_form(Group::Repo, &catalog, None);
-    state.choose(Kind::Workflow);
-    assert!(!state.focus_message);
-    state.choose(Kind::Agent);
-    assert!(!state.focus_message);
 }
 
 #[test]
@@ -788,7 +778,7 @@ fn the_meeseeks_lane_lists_the_clis_and_keeps_the_agent_pick_apart() {
     state.choose(Kind::Meeseeks);
     assert_eq!(state.visible(&catalog), ["claude", "codex", "gemini", "copilot"]);
     assert_eq!(state.selected_id(&catalog).as_deref(), Some("claude"));
-    assert!(state.focus_message);
+    assert!(!state.focus_message);
     assert!(!state.shows_name_fields());
     assert_eq!(state.name_check(None), NameCheck::Fine);
     state.select(2, &catalog);

@@ -213,7 +213,7 @@ pub(crate) struct NewTab {
     base: Base,
     seed: u64,
     settled: bool,
-    /// The message box takes the keyboard once, when the form opens.
+    /// Set by Enter or / to hand the keyboard to the message box on the next draw.
     pub(crate) focus_message: bool,
     pub(crate) scroll_to_selected: bool,
     pub(crate) error: Option<String>,
@@ -249,7 +249,7 @@ impl NewTab {
             base: Base::Default,
             seed,
             settled: false,
-            focus_message: true,
+            focus_message: false,
             scroll_to_selected: true,
             error: None,
         }
@@ -391,7 +391,6 @@ impl NewTab {
 
     fn enter(&mut self, kind: Kind) {
         self.kind = kind;
-        self.focus_message &= matches!(kind, Kind::Agent | Kind::Meeseeks);
         self.error = None;
         self.scroll_to_selected = true;
     }
