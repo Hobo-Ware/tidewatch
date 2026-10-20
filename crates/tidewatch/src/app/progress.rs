@@ -91,6 +91,14 @@ impl Tidewatch {
                 Some(job_glue::Facts { id: tab.id, notes_file })
             })
             .collect();
+        let meeseeks: Vec<u64> = self
+            .tabs
+            .items()
+            .iter()
+            .filter(|tab| tab.pane.agent.as_ref().is_some_and(|agent| agent.meeseeks.is_some()))
+            .map(|tab| tab.id)
+            .collect();
+        self.avatar_live.fixed_faces(&meeseeks, ctx);
         self.avatar_live.tick(&facts, ctx);
         let mut wake = self.job_live.tick(&facts, ctx, now_ms);
         for tab in self.tabs.items() {

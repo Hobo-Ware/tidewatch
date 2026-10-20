@@ -16,6 +16,7 @@ use crate::brand;
 use crate::screen_kit::{badge_colors, badge_letter, heading};
 
 const CHOICE: &str = "agent-avatar-choice";
+const LOCKED: &str = "agent-avatar-locked";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Choice {
@@ -71,8 +72,20 @@ pub(crate) fn hover(ui: &Ui, rect: Rect, tab: u64, avatar: &Avatar) {
         .on_hover_text(&avatar.reason);
 }
 
+pub(crate) fn lock(ctx: &Context, tabs: Vec<u64>) {
+    ctx.data_mut(|d| d.insert_temp(Id::new(LOCKED), Arc::new(tabs)));
+}
+
+pub(crate) fn is_locked(ctx: &Context, tab: u64) -> bool {
+    ctx.data(|d| d.get_temp::<Arc<Vec<u64>>>(Id::new(LOCKED)))
+        .is_some_and(|tabs| tabs.contains(&tab))
+}
+
 /// The right-click menu on whatever `response` is the avatar's place.
 pub(crate) fn menu(response: &Response, tab: u64) {
+    if is_locked(&response.ctx, tab) {
+        return;
+    }
     response.context_menu(|ui| {
         style_menu(ui);
         menu_items(ui, tab);
@@ -80,6 +93,9 @@ pub(crate) fn menu(response: &Response, tab: u64) {
 }
 
 pub(crate) fn menu_items(ui: &mut Ui, tab: u64) {
+    if is_locked(ui.ctx(), tab) {
+        return;
+    }
     for (label, choice) in [("Redraw", Choice::Redraw), ("Use letter", Choice::UseLetter)] {
         if menu_item(ui, label, "").clicked() {
             ui.ctx().data_mut(|d| d.insert_temp(Id::new(CHOICE), Some((tab, choice))));

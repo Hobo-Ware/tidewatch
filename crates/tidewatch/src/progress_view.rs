@@ -15,6 +15,8 @@ use tidewatch_core::progress::{Entry, Ledger, Mark};
 use crate::brand;
 use crate::job_model::Card;
 use crate::job_view;
+use crate::meeseeks_model::Card as MeeseeksCard;
+use crate::meeseeks_view;
 use crate::progress_model::{
     self as model, Bar, BarKind, ItemRow, Ring, TAGS, Tag, Tone, entries, item_rows, questions,
     rows_shown,
@@ -123,6 +125,8 @@ impl Memory {
 pub(crate) enum Action {
     Answer,
     Ask { job: u64, message: String },
+    TakeOver,
+    GiveUp,
 }
 
 pub(crate) struct Input<'a> {
@@ -134,6 +138,7 @@ pub(crate) struct Input<'a> {
     pub(crate) animate: bool,
     /// The side shown first once a ledger exists.
     pub(crate) first: Side,
+    pub(crate) meeseeks: Option<&'a MeeseeksCard>,
 }
 
 fn pad_of(width: f32) -> f32 {
@@ -161,8 +166,19 @@ pub(crate) fn show(
 
 fn content(ui: &mut Ui, input: &Input<'_>, state: &mut TabState) -> Option<Action> {
     let width = ui.available_width();
-    let mut action =
+    let mut action = None;
+    if let Some(card) = input.meeseeks {
+        action = meeseeks_view::show(ui, width, card).map(|clicked| match clicked {
+            meeseeks_view::Action::TakeOver => Action::TakeOver,
+            meeseeks_view::Action::GiveUp => Action::GiveUp,
+        });
+        if !input.jobs.is_empty() || input.ledger.is_some() {
+            ui.add_space(GAP);
+        }
+    }
+    let asked =
         job_view::show(ui, width, input.jobs).map(|(job, message)| Action::Ask { job, message });
+    action = action.or(asked);
     let Some(known) = input.ledger else { return action };
     if !input.jobs.is_empty() {
         ui.add_space(GAP);

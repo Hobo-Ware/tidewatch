@@ -140,3 +140,50 @@ fn every_fake_icon_passes_the_sanitizer_untouched_in_its_shapes() {
         assert_eq!(avatar.svg.matches("script").count(), 0);
     }
 }
+
+#[test]
+fn the_meeseeks_face_is_the_art_file_as_it_is_and_rasterizes_at_every_tab_size() {
+    let file =
+        std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/../../assets/meeseeks.svg"))
+            .unwrap();
+    let face = meeseeks_avatar();
+    assert_eq!(face.svg, file);
+    assert!(face.svg.contains("viewBox=\"0 0 64 64\""));
+    let ctx = egui::Context::default();
+    for px in [20, 24, 40, 52, 72] {
+        assert!(crate::agent_avatar::texture(&ctx, &face, px).is_some(), "{px} px");
+    }
+}
+
+#[test]
+fn a_meeseeks_tab_wears_the_fixed_face_whatever_the_agent_draws_or_the_file_holds() {
+    let fx = Fx::new();
+    avatar_store::save(&fx.file(), &clean(SVG, "its own").unwrap()).unwrap();
+    let mut host = Host::new(true, false);
+    host.fixed_faces(&[1], &fx.ctx);
+    fx.tick(&mut host, &[1]);
+    assert_eq!(host.get(1).unwrap().reason, "Caaan do! Every Meeseeks wears this face.");
+    host.arrived(1, clean(SVG, "set_avatar").unwrap());
+    std::thread::sleep(Duration::from_millis(50));
+    fx.tick(&mut host, &[1]);
+    host.fixed_faces(&[1], &fx.ctx);
+    assert_eq!(host.get(1).unwrap().reason, "Caaan do! Every Meeseeks wears this face.");
+    host.clear(1, &fx.notes(), &fx.ctx);
+    assert!(host.get(1).is_some(), "Use letter does nothing to a fixed face");
+    assert!(fx.file().exists());
+    assert!(crate::agent_avatar::is_locked(&fx.ctx, 1));
+}
+
+#[test]
+fn a_tab_that_takes_over_gets_its_own_avatar_back_and_the_menu_with_it() {
+    let fx = Fx::new();
+    avatar_store::save(&fx.file(), &clean(SVG, "its own").unwrap()).unwrap();
+    let mut host = Host::new(true, false);
+    host.fixed_faces(&[1], &fx.ctx);
+    fx.tick(&mut host, &[1]);
+    host.fixed_faces(&[], &fx.ctx);
+    assert!(host.get(1).is_none());
+    assert!(!crate::agent_avatar::is_locked(&fx.ctx, 1));
+    fx.until(&mut host, 1, |host| host.get(1).is_some());
+    assert_eq!(host.get(1).unwrap().reason, "its own");
+}

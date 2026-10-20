@@ -458,6 +458,7 @@ mod tests {
                         time: 0.0,
                         animate: false,
                         first: Side::Progress,
+                        meeseeks: None,
                     },
                     state: &mut *state,
                 });

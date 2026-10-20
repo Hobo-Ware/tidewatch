@@ -448,3 +448,29 @@ fn a_reopened_agent_remembers_whether_its_command_is_typed_or_run() {
         assert!(started.prepared.launch.shell_line().contains(SESSION_ID));
     }
 }
+
+#[test]
+fn a_resumed_meeseeks_comes_back_as_one_with_its_counts_and_its_one_task_block() {
+    let f = fixture();
+    let mut meeseeks = tidewatch_core::meeseeks::Meeseeks::summon(
+        "rename the helper",
+        tidewatch_core::meeseeks::Criteria::default(),
+        1_760_000_000_000,
+    );
+    meeseeks.turns = 11;
+    meeseeks.failures = 1;
+    let mut profile = Profile { house_style: false, ..reopen_spec(&f, Level::Edits, None).profile };
+    profile.house_style = false;
+    let spec = ReopenSpec {
+        meeseeks: Some(meeseeks.clone()),
+        profile,
+        ..reopen_spec(&f, Level::Edits, None)
+    };
+    let started = reopened(spec).result.ok().unwrap().started.unwrap();
+    assert_eq!(started.meeseeks, Some(meeseeks));
+    let style = f.paths.tab_house_style_file(&f.repo, f.worktree.name());
+    let text = std::fs::read_to_string(style).unwrap();
+    assert!(text.contains("## You are a Meeseeks"), "even with the house style off");
+    let line = started.prepared.launch.shell_line();
+    assert!(line.starts_with(&format!("claude --resume {SESSION_ID} ")), "{line}");
+}

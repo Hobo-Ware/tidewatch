@@ -122,7 +122,6 @@ impl TidewatchPaths {
         self.state_dir().join("schedule.toml")
     }
 
-    /// The Meeseeks that poofed, for the Overview's Poofed today list.
     #[must_use]
     pub fn meeseeks_file(&self) -> PathBuf {
         self.state_dir().join("meeseeks.toml")

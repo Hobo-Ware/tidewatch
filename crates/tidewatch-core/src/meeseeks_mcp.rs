@@ -31,7 +31,6 @@ fn refused(problems: &[String]) -> (String, bool) {
     )
 }
 
-/// A bad call is a tool error that says what to fix and tells the tab nothing.
 pub fn done(args: &Map<String, Value>, emit: &dyn Fn(TabEvent)) -> (String, bool) {
     let mut problems: Vec<String> = args
         .keys()

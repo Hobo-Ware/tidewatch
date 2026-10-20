@@ -40,6 +40,19 @@ pub(crate) const FAKE: [(&str, &str); 6] = [
     ),
 ];
 
+const MEESEEKS_SVG: &str = include_str!("../../../assets/meeseeks.svg");
+
+pub(crate) fn meeseeks_avatar() -> Arc<Avatar> {
+    static FACE: std::sync::OnceLock<Arc<Avatar>> = std::sync::OnceLock::new();
+    FACE.get_or_init(|| {
+        Arc::new(Avatar {
+            svg: MEESEEKS_SVG.to_owned(),
+            reason: "Caaan do! Every Meeseeks wears this face.".to_owned(),
+        })
+    })
+    .clone()
+}
+
 pub(crate) enum Done {
     Loaded { tab: u64, avatar: Option<Box<Avatar>> },
     Cleared,
@@ -56,6 +69,7 @@ pub(crate) struct Host {
     writable: bool,
     fake: bool,
     fake_next: usize,
+    fixed: Vec<u64>,
 }
 
 impl Host {
@@ -66,6 +80,7 @@ impl Host {
             writable: writable && !fake,
             fake,
             fake_next: 0,
+            fixed: Vec::new(),
         }
     }
 
@@ -80,6 +95,20 @@ impl Host {
             Slot::Known(avatar) => avatar.as_ref(),
             Slot::Loading => None,
         }
+    }
+
+    pub(crate) fn fixed_faces(&mut self, meeseeks: &[u64], ctx: &egui::Context) {
+        for gone in self.fixed.iter().filter(|id| !meeseeks.contains(id)) {
+            self.tabs.remove(gone);
+        }
+        self.fixed.retain(|id| meeseeks.contains(id));
+        for id in meeseeks {
+            if !self.fixed.contains(id) {
+                self.fixed.push(*id);
+            }
+            self.tabs.insert(*id, Slot::Known(Some(meeseeks_avatar())));
+        }
+        crate::agent_avatar::lock(ctx, self.fixed.clone());
     }
 
     pub(crate) fn tick(&mut self, tabs: &[Facts<'_>], ctx: &egui::Context) {
@@ -113,14 +142,14 @@ impl Host {
 
     /// The agent called `set_avatar`; the file is saved already.
     pub(crate) fn arrived(&mut self, tab: u64, avatar: Avatar) {
-        if self.tabs.contains_key(&tab) {
+        if self.tabs.contains_key(&tab) && !self.fixed.contains(&tab) {
             self.tabs.insert(tab, Slot::Known(Some(Arc::new(avatar))));
         }
     }
 
     /// Use letter: the avatar goes, from the tab and from disk.
     pub(crate) fn clear(&mut self, tab: u64, notes_file: &std::path::Path, ctx: &egui::Context) {
-        if !self.tabs.contains_key(&tab) {
+        if !self.tabs.contains_key(&tab) || self.fixed.contains(&tab) {
             return;
         }
         self.tabs.insert(tab, Slot::Known(None));

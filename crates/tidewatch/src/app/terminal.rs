@@ -47,6 +47,8 @@ impl Tidewatch {
         frame: &FrameIntent,
     ) {
         let area = grid.rect;
+        let active_id = self.tabs.items()[self.tabs.active()].id;
+        let poof = self.meeseeks.fade(active_id, ui.ctx().input(|i| i.time));
         let Pane { body, agent, .. } = self.tabs.active_pane_mut();
         match body {
             Body::Shell(term) => {
@@ -102,9 +104,12 @@ impl Tidewatch {
             Body::Creating => {
                 status_message(ui, area, "Creating worktree...", brand::MUTED);
             }
-            Body::Removing => {
-                status_message(ui, area, "Removing worktree...", brand::MUTED);
-            }
+            Body::Removing => match poof {
+                Some(fade) => {
+                    status_message(ui, area, "Poofed", brand::TEAL.gamma_multiply(1.0 - fade));
+                }
+                None => status_message(ui, area, "Removing worktree...", brand::MUTED),
+            },
             Body::Failed(message) => status_message(ui, area, message, brand::RED),
         }
     }

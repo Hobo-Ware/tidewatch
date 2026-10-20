@@ -784,3 +784,55 @@ fn the_new_window_speaks_up_only_about_what_did_not_come_back_as_it_was() {
     assert_eq!(notice(&lost, 0, true), Some(LOST_TERMINAL.to_owned()));
     assert_eq!(notice(&lost, 1, false), Some(format!("{LOST_TERMINAL}\n{HOOKS_LOST}")));
 }
+
+fn a_meeseeks() -> tidewatch_core::meeseeks::Meeseeks {
+    let mut meeseeks = tidewatch_core::meeseeks::Meeseeks::summon(
+        "rename the helper",
+        tidewatch_core::meeseeks::Criteria { tests: false, committed: true, pr: true },
+        1_760_000_000_000,
+    );
+    meeseeks.turns = 9;
+    meeseeks.failures = 2;
+    meeseeks
+}
+
+#[test]
+fn a_meeseeks_crosses_the_handover_with_its_counts_and_comes_back_as_one() {
+    let mut w = window();
+    w.tabs.get_mut(w.agent_tab).unwrap().pane.agent.as_mut().unwrap().meeseeks = Some(a_meeseeks());
+    let (handover, _) = handover_of(&w);
+    let text = serde_json::to_string(&handover).unwrap();
+    let handover: Handover = serde_json::from_str(&text).unwrap();
+    let mut adopt = |term: u32, _: &Path| Ok(term);
+    let mut rebuilt = rebuild(
+        &handover,
+        vec![100, 101, 102, 200, 201],
+        0.0,
+        Ptys { adopt: &mut adopt, fresh: &fresh },
+    )
+    .unwrap()
+    .tabs;
+    let otter = rebuilt.items_mut().iter().find(|tab| tab.title == "otter").unwrap();
+    assert_eq!(otter.pane.agent.as_ref().unwrap().meeseeks, Some(a_meeseeks()));
+    let others = rebuilt.items().iter().filter(|tab| tab.title != "otter");
+    assert!(others.filter_map(|tab| tab.pane.agent.as_ref()).all(|agent| agent.meeseeks.is_none()));
+}
+
+#[test]
+fn a_meeseeks_that_is_being_checked_blocks_a_handover_and_one_that_works_does_not() {
+    let mut w = window();
+    let mut meeseeks = a_meeseeks();
+    w.tabs.get_mut(w.agent_tab).unwrap().pane.agent.as_mut().unwrap().meeseeks =
+        Some(meeseeks.clone());
+    assert_eq!(blocker(&w.tabs), None);
+    for phase in [
+        tidewatch_core::meeseeks::Phase::Checking(tidewatch_core::meeseeks::Step::Tests),
+        tidewatch_core::meeseeks::Phase::Poofing,
+    ] {
+        meeseeks.phase = phase;
+        w.tabs.get_mut(w.agent_tab).unwrap().pane.agent.as_mut().unwrap().meeseeks =
+            Some(meeseeks.clone());
+        assert_eq!(blocker(&w.tabs), Some(Blocker::MeeseeksBusy), "{phase:?}");
+    }
+    assert_eq!(Blocker::MeeseeksBusy.text(), "a Meeseeks is being checked");
+}

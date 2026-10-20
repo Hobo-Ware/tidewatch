@@ -73,6 +73,7 @@ impl Tidewatch {
             Request::Meeseeks(request) => {
                 self.last_profile = request.tabs.first().map(|tab| tab.profile_id.clone());
                 self.remember_ticks(request.ticks);
+                self.show_toast("Caaan do!", ctx);
             }
             Request::Shell | Request::Workflow(_) => {}
         }
@@ -89,7 +90,6 @@ impl Tidewatch {
         }
     }
 
-    /// One tab per task line: the first takes the draft's place, the rest open after it.
     fn summon(&mut self, ctx: &egui::Context, request: MeeseeksRequest, into: Option<u64>) {
         let mut draft = into;
         for agent in request.tabs {
@@ -199,6 +199,7 @@ impl Tidewatch {
         self.flow.forget(id);
         self.pr.forget(id);
         self.runs.forget(id);
+        self.meeseeks.forget(id);
     }
 
     pub(super) fn answer_close(&mut self, answer: Answer, ctx: &egui::Context) {

@@ -170,7 +170,6 @@ fn initialize_result(params: Option<&Value>) -> Value {
     })
 }
 
-/// The eleven tools with their JSON Schemas, as `tools/list` returns them.
 #[must_use]
 pub fn tool_definitions() -> Value {
     let [update_progress, get_progress] = progress_mcp::tool_definitions();

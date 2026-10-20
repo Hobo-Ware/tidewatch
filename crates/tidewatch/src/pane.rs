@@ -71,7 +71,6 @@ pub(crate) struct AgentTab {
     pub(crate) base_note: Option<String>,
     /// The agent process runs with remote control on, whatever the saved setting says now.
     pub(crate) remote: Option<RemoteSession>,
-    /// Set while the tab is a Meeseeks: one task, checked by Tidewatch, ended by Tidewatch.
     pub(crate) meeseeks: Option<Meeseeks>,
 }
 
@@ -119,7 +118,6 @@ pub(crate) struct Started {
     pub(crate) session_id: Option<String>,
     pub(crate) awaiting_prompt: bool,
     pub(crate) prepared: Prepared,
-    /// Set for a Meeseeks, new or resumed.
     pub(crate) meeseeks: Option<Meeseeks>,
 }
 
@@ -188,6 +186,12 @@ impl<T> Pane<T> {
                 self.body = other;
                 None
             }
+        }
+    }
+
+    pub(crate) fn restore_shell(&mut self, shell: T) {
+        if matches!(self.body, Body::Removing) {
+            self.body = Body::Shell(shell);
         }
     }
 
@@ -705,5 +709,19 @@ mod tests {
             assert_eq!(notes, Vec::<String>::new(), "tab {id}");
         }
         assert!(matches!(tabs.get_mut(plain).unwrap().pane.body, Body::Shell(3)));
+    }
+
+    #[test]
+    fn a_removal_refused_before_it_began_gives_the_shell_back_and_only_then() {
+        let mut pane = Pane { body: Body::Shell(3), worktree: Some(worktree()), agent: None };
+        let (shell, _) = pane.begin_remove().unwrap();
+        assert!(matches!(pane.body, Body::Removing));
+        pane.restore_shell(shell.unwrap());
+        assert_eq!(shell_of(&pane), Some(3));
+        pane.restore_shell(9);
+        assert_eq!(shell_of(&pane), Some(3), "a tab that is not being removed keeps its shell");
+        pane.remove_failed("gone".into());
+        pane.restore_shell(9);
+        assert!(matches!(pane.body, Body::Failed(_)));
     }
 }

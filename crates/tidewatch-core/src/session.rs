@@ -96,7 +96,6 @@ pub struct SavedAgentTab {
     /// The agent was started with remote control on, so a resume starts it the same way.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub remote: bool,
-    /// The tab is a Meeseeks: its criteria, turns, failed checks and start time come back with it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub meeseeks: Option<Box<Meeseeks>>,
 }

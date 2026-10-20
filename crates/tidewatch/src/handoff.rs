@@ -21,7 +21,7 @@ use serde::{Deserialize, Serialize};
 use stdusk_core::handoff::{Fallback, Layout, PaneMeta, capture_pane, fallback};
 use stdusk_core::terminal::PtyTerm;
 use tidewatch_core::listener::Credential;
-use tidewatch_core::meeseeks::Meeseeks;
+use tidewatch_core::meeseeks::{Meeseeks, Phase};
 use tidewatch_core::runner::Runner;
 use tidewatch_core::worktree::Worktree;
 
@@ -51,6 +51,7 @@ const NOT_INHERITED_ENV: [&str; 5] = [
 pub(crate) enum Blocker {
     TabInTransition,
     WorkflowBusy,
+    MeeseeksBusy,
 }
 
 impl Blocker {
@@ -58,6 +59,7 @@ impl Blocker {
         match self {
             Self::TabInTransition => "a tab is still being made or removed",
             Self::WorkflowBusy => "a workflow stage is starting or its tests are running",
+            Self::MeeseeksBusy => "a Meeseeks is being checked",
         }
     }
 }
@@ -74,7 +76,15 @@ pub(crate) fn blocker<T>(tabs: &Tabs<Pane<T>>) -> Option<Blocker> {
             .as_ref()
             .and_then(|agent| agent.workflow.as_deref())
             .is_some_and(TabRun::busy);
-        busy.then_some(Blocker::WorkflowBusy)
+        if busy {
+            return Some(Blocker::WorkflowBusy);
+        }
+        let checking = pane
+            .agent
+            .as_ref()
+            .and_then(|agent| agent.meeseeks.as_ref())
+            .is_some_and(|meeseeks| meeseeks.phase != Phase::Working);
+        checking.then_some(Blocker::MeeseeksBusy)
     })
 }
 
@@ -140,7 +150,6 @@ pub(crate) struct AgentEntry {
     /// The name of the remote session the running agent has, when remote control is on.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) remote: Option<String>,
-    /// The tab is a Meeseeks: the new window keeps it one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) meeseeks: Option<Meeseeks>,
 }

@@ -51,6 +51,13 @@ pub(crate) struct TabExtras {
     pub(crate) ring: Option<TabRing>,
     pub(crate) job: Option<TabJob>,
     pub(crate) avatar: Option<Arc<Avatar>>,
+    pub(crate) mood: Mood,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub(crate) struct Mood {
+    pub(crate) struggling: bool,
+    pub(crate) fade: Option<f32>,
 }
 
 impl Tidewatch {
@@ -226,10 +233,24 @@ impl Tidewatch {
 
     fn draw_tabs(&self, ui: &mut egui::Ui, width: f32, now: f64, actions: &mut Vec<Action>) {
         let now_ms = wall_ms() as i64;
+        let mood = |id| {
+            let meeseeks = self
+                .tabs
+                .items()
+                .iter()
+                .find(|tab| tab.id == id)
+                .and_then(|tab| tab.pane.agent.as_ref())
+                .and_then(|agent| agent.meeseeks.as_ref());
+            Mood {
+                struggling: meeseeks.is_some_and(|m| m.struggle(now_ms).is_some()),
+                fade: self.meeseeks.fade(id, now),
+            }
+        };
         let extras = |id| TabExtras {
             ring: self.progress.ledger(id).map(|known| tab_ring(&known.ledger)),
             job: self.job_live.board(id).and_then(|board| tab_job(board, now_ms)),
             avatar: self.avatar_live.get(id).cloned(),
+            mood: mood(id),
         };
         tab_row(ui, &self.tabs, width, now, actions, (tab_signals, extras));
     }
@@ -302,7 +323,8 @@ fn tab_row<T>(
         let painter = ui.painter().clone();
         let under = painter.add(Shape::Noop);
         let draft = matches!(tab.pane.body, Body::Draft(_));
-        let TabExtras { ring, job, avatar } = agent.map(|_| extras(tab.id)).unwrap_or_default();
+        let TabExtras { ring, job, avatar, mood } =
+            agent.map(|_| extras(tab.id)).unwrap_or_default();
         let face = agent.map(|agent| Face::of(&agent.profile_name, &agent.run.agent_id, avatar));
         let title = match (&face, draft) {
             (_, true) => String::new(),
@@ -325,6 +347,9 @@ fn tab_row<T>(
             Some(width),
         );
         nav_look(&painter, under, resp.rect, i == tabs.active(), resp.hovered());
+        if mood.struggling {
+            paint_struggle(&painter, resp.rect);
+        }
         if draft {
             paint_draft_title(&painter, resp.rect, position + 1, &tab.title);
         }
@@ -349,7 +374,8 @@ fn tab_row<T>(
                 ParkMenu::Offered { parkable: !needs_you(&tab.pane), keep: tab.keep }
             },
             active: i == tabs.active(),
-            picture: face.as_ref().is_some_and(|face| face.avatar().is_some()),
+            picture: face.as_ref().is_some_and(|face| face.avatar().is_some())
+                && !agent_avatar::is_locked(ui.ctx(), tab.id),
         };
         tab_menu(&resp, i, tab.id, &menu, actions);
         let resp = if agent.is_some() {
@@ -384,6 +410,13 @@ fn tab_row<T>(
         {
             actions.push(Action::Park(i));
         }
+        if let Some(fade) = mood.fade {
+            painter.rect_filled(
+                resp.rect,
+                CornerRadius::same(TAB_RADIUS),
+                brand::SIDEBAR.gamma_multiply(fade),
+            );
+        }
         slots.push(Slot { index: i, rect: resp.rect, pinned: tab.pinned });
     }
     pill::set_hot(ui.ctx(), over_pill);
@@ -404,6 +437,16 @@ fn tab_row<T>(
         }
     }
     slots.iter().map(|slot| slot.rect).collect()
+}
+
+fn paint_struggle(painter: &egui::Painter, tab: egui::Rect) {
+    let body = tab.shrink2(vec2(0.0, TAB_INSET_Y));
+    painter.rect_filled(body, CornerRadius::same(TAB_RADIUS), brand::ORANGE.gamma_multiply(0.16));
+    let bar = egui::Rect::from_min_size(
+        body.left_top() + vec2(0.0, TAB_BAR_INSET),
+        vec2(TAB_BAR_W, body.height() - 2.0 * TAB_BAR_INSET),
+    );
+    painter.rect_filled(bar, CornerRadius::same(1), brand::ORANGE);
 }
 
 fn tab_tip(title: &str, number: usize, job: Option<&TabJob>) -> String {
