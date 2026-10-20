@@ -44,6 +44,8 @@ pub struct PrepareInput<'a> {
     pub task: &'a str,
     pub session_id: Option<String>,
     pub remote: bool,
+    /// A Meeseeks: its house style gets the one-task block, whatever the profile says.
+    pub meeseeks: bool,
     pub path_var: Option<&'a OsStr>,
     pub listener: Option<HookListener>,
     /// With consent (D14): the folder-trust entry to add for this worktree before the agent starts.
@@ -113,8 +115,11 @@ pub fn prepare_resume(input: &PrepareInput, session_id: &str) -> Result<Prepared
 }
 
 fn prepare_with(input: &PrepareInput, resume: Option<&str>) -> Result<Prepared, PrepareError> {
+    let wanted_style = Profile { house_style: true, ..input.profile.clone() };
+    let profile =
+        if input.meeseeks && !input.profile.house_style { &wanted_style } else { input.profile };
     let bare = LaunchCtx { worktree_tab: input.worktree_tab, ..LaunchCtx::default() };
-    launch_command(input.agent, input.profile, &bare)?;
+    launch_command(input.agent, profile, &bare)?;
 
     let mut notes = Vec::new();
     let paths = input.paths;
@@ -134,12 +139,10 @@ fn prepare_with(input: &PrepareInput, resume: Option<&str>) -> Result<Prepared, 
         }
     };
 
-    let house_style = input
-        .profile
-        .house_style
-        .then(|| soft("house style", house_style::ensure(paths)))
-        .flatten()
-        .map(|shared| soft("progress ledger", write_agent_style(input, &shared)).unwrap_or(shared));
+    let house_style =
+        profile.house_style.then(|| soft("house style", house_style::ensure(paths))).flatten().map(
+            |shared| soft("progress ledger", write_agent_style(input, &shared)).unwrap_or(shared),
+        );
     let copilot_instructions_dir =
         house_style.as_ref().filter(|_| wiring == Wiring::Copilot).and_then(|file| {
             let dir = paths.tab_copilot_instructions_dir(input.repo, input.tab);
@@ -147,7 +150,7 @@ fn prepare_with(input: &PrepareInput, resume: Option<&str>) -> Result<Prepared, 
                 .and_then(|text| house_style::sync_copilot_instructions(&dir, &text));
             soft("Copilot instructions", synced)
         });
-    let guard_bin_dir = (input.worktree_tab && input.profile.never_push)
+    let guard_bin_dir = (input.worktree_tab && profile.never_push)
         .then(|| {
             let dir = paths.guard_bin_dir();
             soft("push guard helper", ensure_no_push_helper(&dir).map(|_| dir))
@@ -168,13 +171,13 @@ fn prepare_with(input: &PrepareInput, resume: Option<&str>) -> Result<Prepared, 
 
     let ctx = context(input, house_style, copilot_instructions_dir, guard_bin_dir, mcp_config);
     let mut launch = match resume {
-        Some(id) => resume_command(input.agent, input.profile, id, &ctx)?,
-        None => launch_command(input.agent, input.profile, &ctx)?,
+        Some(id) => resume_command(input.agent, profile, id, &ctx)?,
+        None => launch_command(input.agent, profile, &ctx)?,
     };
 
     if wiring == Wiring::Gemini
         && input.worktree_tab
-        && let Some(settings) = gemini_project_settings(input.profile, &ctx)
+        && let Some(settings) = gemini_project_settings(profile, &ctx)
         && let Some(note) = write_gemini_settings(input.dir, &settings, resume.is_some())
     {
         notes.push(note);
@@ -186,7 +189,7 @@ fn prepare_with(input: &PrepareInput, resume: Option<&str>) -> Result<Prepared, 
     let mut env = merge_env(&ctx.env, &launch.env);
     env.extend(feed_env);
     let remote = ctx.remote.filter(|name| !input.agent.remote_args(name).is_empty());
-    Ok(Prepared { launch, env, setup: input.profile.setup.clone(), notes, remote })
+    Ok(Prepared { launch, env, setup: profile.setup.clone(), notes, remote })
 }
 
 fn context(
@@ -224,9 +227,10 @@ fn remote_name(input: &PrepareInput) -> String {
 fn write_agent_style(input: &PrepareInput, shared: &Path) -> std::io::Result<PathBuf> {
     let paths = input.paths;
     let _ = checklist::ensure(paths);
-    let text = house_style::compose(
+    let text = house_style::compose_for(
         &std::fs::read_to_string(shared)?,
         &checklist::for_repo(paths, input.repo),
+        input.meeseeks,
     );
     let file = paths.tab_house_style_file(input.repo, input.tab);
     write_atomic(&file, &text)?;
@@ -425,6 +429,7 @@ mod tests {
                 task,
                 session_id: None,
                 remote: false,
+                meeseeks: false,
                 path_var: Some(OsStr::new("/opt/homebrew/bin:/usr/bin:/bin")),
                 listener,
                 trust: None,
@@ -438,6 +443,44 @@ mod tests {
 
     fn env_of<'a>(prepared: &'a Prepared, key: &str) -> Option<&'a str> {
         prepared.env.iter().find(|(k, _)| k == key).map(|(_, v)| v.as_str())
+    }
+
+    #[test]
+    fn a_meeseeks_reads_its_one_task_block_even_with_the_house_style_off_and_a_plain_agent_never_does()
+     {
+        let fx = Fixture::new();
+        let table = AgentTable::builtin();
+        let mut quiet = profile("claude", Level::Edits);
+        quiet.house_style = false;
+        let style = fx.paths.tab_house_style_file(Path::new("/work/web"), "brave-otter");
+        let input = |meeseeks| PrepareInput {
+            paths: &fx.paths,
+            agent: table.get("claude").unwrap(),
+            profile: &quiet,
+            repo: Path::new("/work/web"),
+            tab: "brave-otter",
+            dir: &fx.dir,
+            worktree_tab: true,
+            task: "rename it",
+            session_id: None,
+            remote: false,
+            meeseeks,
+            path_var: None,
+            listener: None,
+            trust: None,
+        };
+        prepare(&input(false)).unwrap();
+        assert!(!style.exists(), "a plain agent with the house style off gets no file");
+        let prepared = prepare(&input(true)).unwrap();
+        let text = std::fs::read_to_string(&style).unwrap();
+        assert!(text.contains("## You are a Meeseeks") && text.contains("`meeseeks_done`"));
+        assert!(
+            prepared.launch.args.iter().any(|arg| arg.contains("house-style")),
+            "{:?}",
+            prepared.launch.args
+        );
+        let resumed = prepare_resume(&input(true), SESSION).unwrap();
+        assert!(resumed.launch.args.iter().any(|arg| arg.contains("house-style")));
     }
 
     #[test]
@@ -615,6 +658,7 @@ mod tests {
             task: "",
             session_id: None,
             remote: false,
+            meeseeks: false,
             path_var: None,
             listener: None,
             trust: None,
@@ -670,6 +714,7 @@ mod tests {
                 task: "do it",
                 session_id: None,
                 remote: false,
+                meeseeks: false,
                 path_var: None,
                 listener: None,
                 trust: None,
@@ -869,6 +914,7 @@ mod tests {
             task: "ignored task",
             session_id: Some("99999999-8888-7777-6666-555555555555".into()),
             remote: false,
+            meeseeks: false,
             path_var: Some(OsStr::new("/opt/homebrew/bin:/usr/bin:/bin")),
             listener,
             trust: None,
@@ -1112,6 +1158,7 @@ mod tests {
             task: "",
             session_id: None,
             remote: false,
+            meeseeks: false,
             path_var: Some(OsStr::new(&path)),
             listener: None,
             trust: None,

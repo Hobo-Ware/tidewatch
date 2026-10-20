@@ -208,6 +208,7 @@ impl AgentRun {
             | TabEvent::Progress { .. }
             | TabEvent::Job { .. }
             | TabEvent::Avatar { .. }
+            | TabEvent::MeeseeksDone { .. }
             | TabEvent::Ask { .. } => {}
         }
     }

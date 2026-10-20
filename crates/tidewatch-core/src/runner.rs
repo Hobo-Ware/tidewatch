@@ -115,6 +115,7 @@ impl RunEvent {
             | TabEvent::Progress { .. }
             | TabEvent::Job { .. }
             | TabEvent::Avatar { .. }
+            | TabEvent::MeeseeksDone { .. }
             | TabEvent::Ask { .. } => None,
         }
     }

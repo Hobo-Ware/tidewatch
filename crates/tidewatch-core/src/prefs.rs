@@ -15,6 +15,7 @@ use serde::{Deserialize, Deserializer, Serialize};
 
 use crate::agents::Level;
 use crate::fsutil::write_atomic;
+use crate::meeseeks::Criteria;
 use crate::paths::TidewatchPaths;
 
 /// `QUAKE_HOTKEY_DEFAULT` (PLAN.md): stdusk keeps `Ctrl+Grave`, so both apps can run at once.
@@ -125,6 +126,9 @@ pub struct NewTabPrefs {
     pub start: Option<StartFrom>,
     #[serde(default)]
     pub right_panel: RightPanel,
+    /// The ticks of the Meeseeks form's "Done means", kept from the last summon.
+    #[serde(default, skip_serializing_if = "Criteria::is_default")]
+    pub meeseeks: Criteria,
 }
 
 impl NewTabPrefs {
@@ -558,6 +562,7 @@ mod tests {
                 remote: false,
                 start: None,
                 right_panel: RightPanel::Progress,
+                meeseeks: Criteria { tests: true, committed: true, pr: true },
             }
         );
         assert_eq!(Prefs::load(&paths).new_tab.start_from(), StartFrom::DefaultBranch);
@@ -682,6 +687,7 @@ mod tests {
             remote: true,
             start: Some(StartFrom::Current),
             right_panel: RightPanel::History,
+            meeseeks: Criteria { tests: false, committed: true, pr: false },
         };
         Prefs::update(&paths, |p| p.new_tab = wanted.clone()).unwrap();
         Prefs::update(&paths, |p| p.window.quake = false).unwrap();
@@ -689,6 +695,23 @@ mod tests {
         Prefs::update(&paths, |p| p.new_tab = NewTabPrefs::default()).unwrap();
         let text = std::fs::read_to_string(paths.prefs_file()).unwrap();
         assert!(!text.contains("agent =") && !text.contains("permission ="), "{text}");
+    }
+
+    #[test]
+    fn the_meeseeks_ticks_start_on_are_kept_when_changed_and_leave_no_trace_when_back_on() {
+        let (_home, paths) = paths();
+        assert_eq!(Prefs::load(&paths).new_tab.meeseeks, Criteria::default());
+        let off = Criteria { tests: true, committed: false, pr: false };
+        Prefs::update(&paths, |p| p.new_tab.meeseeks = off).unwrap();
+        let text = std::fs::read_to_string(paths.prefs_file()).unwrap();
+        assert!(text.contains("[new_tab.meeseeks]") && text.contains("pr = false"), "{text}");
+        assert_eq!(Prefs::load(&paths).new_tab.meeseeks, off);
+        write_prefs(&paths, "[new_tab.meeseeks]\npr = false\n");
+        let partial = Prefs::load(&paths).new_tab.meeseeks;
+        assert_eq!(partial, Criteria { tests: true, committed: true, pr: false });
+        Prefs::update(&paths, |p| p.new_tab.meeseeks = Criteria::default()).unwrap();
+        let text = std::fs::read_to_string(paths.prefs_file()).unwrap();
+        assert!(!text.contains("meeseeks"), "{text}");
     }
 
     #[test]

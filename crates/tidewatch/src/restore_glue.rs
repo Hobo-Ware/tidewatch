@@ -302,6 +302,7 @@ impl Host {
                         profile: (**profile).clone(),
                         session_id: session_id.clone(),
                         remote: saved.remote,
+                        meeseeks: saved.meeseeks.as_deref().cloned(),
                         typed: match how {
                             Resume::Run => None,
                             Resume::TypeOnly(why) => Some(*why),
@@ -412,6 +413,7 @@ pub(crate) fn dev_resume_plan(paths: &TidewatchPaths, repo: &Path, name: &str) -
         stages: Some(stages.clone()),
         crashed: false,
         remote: false,
+        meeseeks: None,
     });
     WindowPlan {
         dir: repo.to_path_buf(),

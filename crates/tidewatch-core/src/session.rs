@@ -10,6 +10,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::agents::Level;
 use crate::fsutil::write_atomic;
+use crate::meeseeks::Meeseeks;
 use crate::paths::TidewatchPaths;
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -95,6 +96,9 @@ pub struct SavedAgentTab {
     /// The agent was started with remote control on, so a resume starts it the same way.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub remote: bool,
+    /// The tab is a Meeseeks: its criteria, turns, failed checks and start time come back with it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub meeseeks: Option<Box<Meeseeks>>,
 }
 
 impl SavedTab {
@@ -190,6 +194,7 @@ mod tests {
             stages: Some(PathBuf::from("/root/.state/web-ab12cd/brave-otter/stages.json")),
             crashed: false,
             remote: false,
+            meeseeks: None,
         })
     }
 
@@ -216,6 +221,7 @@ mod tests {
                     stages: None,
                     crashed: false,
                     remote: false,
+                    meeseeks: None,
                 }),
             ],
             parked: Vec::new(),
@@ -263,6 +269,34 @@ mod tests {
         let SavedTab::Agent(tab) = &loaded.windows[0].tabs[0] else { panic!("an agent tab") };
         assert!(!tab.remote);
         assert!(!toml::to_string(&loaded).unwrap().contains("remote"));
+    }
+
+    #[test]
+    fn a_meeseeks_keeps_its_counts_through_the_file_and_an_old_file_loads_without_one() {
+        use crate::meeseeks::{Criteria, Meeseeks};
+        let home = tempfile::tempdir().unwrap();
+        let paths = TidewatchPaths::new(home.path());
+        let mut saved = Meeseeks::summon(
+            "rename the helper",
+            Criteria { tests: false, committed: true, pr: true },
+            1_760_000_000_000,
+        );
+        saved.turns = 9;
+        saved.failures = 2;
+        let mut one = window();
+        if let SavedTab::Agent(tab) = &mut one.tabs[2] {
+            tab.meeseeks = Some(Box::new(saved.clone()));
+        }
+        let session = Session { windows: vec![one] };
+        session.save(&paths).unwrap();
+        let text = std::fs::read_to_string(paths.session_file()).unwrap();
+        for part in ["turns = 9", "failures = 2", "started_ms = 1760000000000", "tests = false"] {
+            assert!(text.contains(part), "{part} in {text}");
+        }
+        assert_eq!(text.matches("meeseeks").count(), 2, "{text}");
+        assert_eq!(Session::load(&paths), session);
+        let plain = toml::to_string(&Session { windows: vec![window()] }).unwrap();
+        assert!(!plain.contains("meeseeks"), "{plain}");
     }
 
     #[test]

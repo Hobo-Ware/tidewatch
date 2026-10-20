@@ -29,6 +29,8 @@ pub enum TabEvent {
     Avatar { avatar: Avatar },
     /// The agent called `report_job`.
     Job { report: Report },
+    /// A Meeseeks called `meeseeks_done`: its one task is finished and Tidewatch should check it.
+    MeeseeksDone { summary: String },
     /// The agent called `ask_user` and its call is held until `reply` is used.
     Ask { questions: Vec<Question>, reply: AskReply },
 }

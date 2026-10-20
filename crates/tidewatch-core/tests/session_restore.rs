@@ -76,6 +76,7 @@ fn session_for(dir: &Path, worktree: &Worktree) -> Session {
                     stages: None,
                     crashed: false,
                     remote: false,
+                    meeseeks: None,
                 }),
             ],
             parked: Vec::new(),

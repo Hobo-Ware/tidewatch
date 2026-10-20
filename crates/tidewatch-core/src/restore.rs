@@ -631,6 +631,7 @@ mod tests {
             stages: None,
             crashed: false,
             remote: false,
+            meeseeks: None,
         })
     }
 
@@ -909,6 +910,7 @@ mod tests {
             stages: Some(PathBuf::from("/state/stages.json")),
             crashed: false,
             remote: false,
+            meeseeks: None,
         };
         let mut disk = disk_for_all();
         disk.workflows.push("/state/stages.json".into());
@@ -935,6 +937,7 @@ mod tests {
             stages: Some(PathBuf::from("/state/stages.json")),
             crashed: false,
             remote: false,
+            meeseeks: None,
         });
         let mut disk = disk_for_all();
         let unreadable = plan_with(&window(vec![tab.clone()]), &everything_installed(), &disk);
@@ -1027,6 +1030,7 @@ mod tests {
                 stages: None,
                 crashed: false,
                 remote: false,
+                meeseeks: None,
             })
         };
         let other = SavedWindow {
@@ -1171,6 +1175,7 @@ mod tests {
             stages: Some(PathBuf::from("/state/stages.json")),
             crashed: true,
             remote: false,
+            meeseeks: None,
         };
         let window = window(vec![SavedTab::Agent(tab)]);
         let mut disk = disk_for_all();

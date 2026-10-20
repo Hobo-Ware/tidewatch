@@ -9,6 +9,7 @@ use std::sync::Arc;
 
 use tidewatch_core::agents::Agent;
 use tidewatch_core::listener::{Listener, TabRegistration};
+use tidewatch_core::meeseeks::Meeseeks;
 use tidewatch_core::paths::TidewatchPaths;
 use tidewatch_core::prefs::{Prefs, ResumeAgents};
 use tidewatch_core::prepare::{PrepareInput, prepare_resume};
@@ -136,6 +137,8 @@ pub(crate) struct ReopenSpec {
     pub(crate) session_id: String,
     /// The tab had remote control on when it was saved.
     pub(crate) remote: bool,
+    /// The tab was a Meeseeks when it was saved, and comes back as one.
+    pub(crate) meeseeks: Option<Meeseeks>,
     /// Set when the resume command is typed and waits for Enter instead of running.
     pub(crate) typed: Option<Why>,
     pub(crate) path_var: OsString,
@@ -183,6 +186,7 @@ fn run_reopen(spec: &ReopenSpec) -> Reopened {
             task: "",
             session_id: None,
             remote: spec.remote,
+            meeseeks: spec.meeseeks.is_some(),
             path_var: Some(&spec.path_var),
             listener: hooks,
             trust: spec.trust.as_ref(),
@@ -200,6 +204,7 @@ fn run_reopen(spec: &ReopenSpec) -> Reopened {
                 session_id: Some(spec.session_id.clone()),
                 awaiting_prompt: false,
                 prepared,
+                meeseeks: spec.meeseeks.clone(),
             };
             (Some(Box::new(started)), None)
         }

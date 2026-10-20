@@ -11,6 +11,7 @@ use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
 
 use tidewatch_core::agents::Level;
+use tidewatch_core::meeseeks::Meeseeks;
 use tidewatch_core::session::{SavedAgentTab, SavedPark, SavedTab, SavedWindow};
 
 use crate::pane::{AgentTab, Body, Pane};
@@ -57,6 +58,7 @@ struct AgentRef<'a> {
     stages: Option<&'a Path>,
     crashed: bool,
     remote: bool,
+    meeseeks: Option<&'a Meeseeks>,
 }
 
 impl TabRef<'_> {
@@ -76,6 +78,7 @@ impl TabRef<'_> {
                 stages: a.stages.map(Path::to_path_buf),
                 crashed: a.crashed,
                 remote: a.remote,
+                meeseeks: a.meeseeks.cloned().map(Box::new),
             }),
         }
     }
@@ -110,6 +113,7 @@ fn agent_ref<'a>(
         stages: run.and_then(|run| run.stages_file()),
         crashed: agent.run.exited_abnormally(),
         remote,
+        meeseeks: agent.meeseeks.as_ref(),
     }))
 }
 
@@ -343,6 +347,7 @@ mod tests {
                     stages: None,
                     crashed: false,
                     remote: false,
+                    meeseeks: None,
                 }),
             ]
         );

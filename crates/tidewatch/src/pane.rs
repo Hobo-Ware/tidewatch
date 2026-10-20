@@ -5,6 +5,7 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 use tidewatch_core::agents::Level;
+use tidewatch_core::meeseeks::Meeseeks;
 use tidewatch_core::prepare::Prepared;
 use tidewatch_core::worktree::Worktree;
 
@@ -70,6 +71,8 @@ pub(crate) struct AgentTab {
     pub(crate) base_note: Option<String>,
     /// The agent process runs with remote control on, whatever the saved setting says now.
     pub(crate) remote: Option<RemoteSession>,
+    /// Set while the tab is a Meeseeks: one task, checked by Tidewatch, ended by Tidewatch.
+    pub(crate) meeseeks: Option<Meeseeks>,
 }
 
 impl AgentTab {
@@ -85,6 +88,7 @@ impl AgentTab {
             resume_note: None,
             base_note: None,
             remote: None,
+            meeseeks: None,
         }
     }
 }
@@ -115,6 +119,8 @@ pub(crate) struct Started {
     pub(crate) session_id: Option<String>,
     pub(crate) awaiting_prompt: bool,
     pub(crate) prepared: Prepared,
+    /// Set for a Meeseeks, new or resumed.
+    pub(crate) meeseeks: Option<Meeseeks>,
 }
 
 impl Started {
@@ -260,6 +266,7 @@ pub(crate) fn finish_open<T>(
                         resume_note: None,
                         base_note: None,
                         remote,
+                        meeseeks: started.meeseeks,
                     }
                 }),
             };
@@ -368,6 +375,7 @@ mod tests {
                 notes: notes.iter().map(|n| (*n).to_owned()).collect(),
                 remote: None,
             },
+            meeseeks: None,
         })
     }
 
