@@ -28,7 +28,6 @@ impl Tick {
     }
 }
 
-/// What the repo says about running tests, once it has been looked at.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum TestsOffer {
     Command(String),
@@ -49,7 +48,6 @@ impl TestsOffer {
 pub(crate) struct Row {
     pub(crate) tick: Tick,
     pub(crate) on: bool,
-    /// Why the row cannot be ticked, when it cannot.
     pub(crate) disabled: Option<&'static str>,
 }
 
@@ -64,7 +62,6 @@ pub(crate) fn rows(ticks: Criteria, offer: &TestsOffer) -> [Row; 3] {
     })
 }
 
-/// The ticks after one click. A disabled row stays as it was.
 pub(crate) fn toggled(ticks: Criteria, tick: Tick, offer: &TestsOffer) -> Criteria {
     match tick {
         Tick::Tests if *offer == TestsOffer::Missing => ticks,
@@ -74,14 +71,10 @@ pub(crate) fn toggled(ticks: Criteria, tick: Tick, offer: &TestsOffer) -> Criter
     }
 }
 
-/// What the new Meeseeks are held to: the ticks, minus tests where the repo has no command.
 pub(crate) fn criteria(ticks: Criteria, offer: &TestsOffer) -> Criteria {
     Criteria { tests: ticks.tests && *offer != TestsOffer::Missing, ..ticks }
 }
 
-/// One worktree name per task line: the slug of the line, `-2`, `-3` when something has it
-/// already, which counts the names this batch has handed out. A line with nothing to slug gets an
-/// adjective-noun.
 pub(crate) fn names_for(lines: &[String], seed: u64, taken: impl Fn(&str) -> bool) -> Vec<String> {
     let mut chosen: Vec<String> = Vec::with_capacity(lines.len());
     for (index, line) in lines.iter().enumerate() {

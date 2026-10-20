@@ -6,6 +6,8 @@ use std::path::Path;
 use egui::Color32;
 
 use tidewatch_core::end_block::EndBlock;
+use tidewatch_core::meeseeks::elapsed_text;
+use tidewatch_core::meeseeks_log::Poofed;
 use tidewatch_core::status::AgentStatus;
 
 use crate::pane::Pane;
@@ -230,6 +232,27 @@ pub(crate) fn is_ticking(overview: &Overview) -> bool {
         .iter()
         .chain(overview.places.iter().flat_map(|place| &place.rows))
         .any(|row| !matches!(tone(&row.status), Tone::Done | Tone::Failed))
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct PoofedRow {
+    pub(crate) name: String,
+    pub(crate) detail: String,
+    pub(crate) summary: String,
+}
+
+pub(crate) fn poofed_rows(entries: &[Poofed]) -> Vec<PoofedRow> {
+    entries
+        .iter()
+        .map(|entry| {
+            let took = elapsed_text(i64::try_from(entry.duration_secs).unwrap_or(0) * 1000);
+            let detail = match entry.pr_label() {
+                Some(pr) => format!("{pr} \u{b7} {took}"),
+                None => took,
+            };
+            PoofedRow { name: entry.name.clone(), detail, summary: entry.summary.clone() }
+        })
+        .collect()
 }
 
 #[cfg(test)]

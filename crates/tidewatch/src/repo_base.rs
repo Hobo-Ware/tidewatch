@@ -57,7 +57,6 @@ pub(crate) struct RepoFacts {
     pub(crate) remote_default: Option<String>,
     pub(crate) branches: Vec<String>,
     pub(crate) taken: HashSet<String>,
-    /// The repo's test command, which a Meeseeks can be held to.
     pub(crate) test_command: Option<String>,
 }
 

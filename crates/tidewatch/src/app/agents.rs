@@ -106,6 +106,7 @@ impl Tidewatch {
             }
             Follow::Proposal { tab, workflow } => self.proposal_arrived(tab, &workflow, ctx),
             Follow::Progress { tab, ledger } => self.progress_arrived(tab, *ledger, ctx),
+            Follow::MeeseeksDone { tab, summary } => self.meeseeks_said(tab, summary, ctx),
             Follow::Avatar { tab, avatar } => {
                 self.avatar_live.arrived(tab, *avatar);
                 ctx.request_repaint();

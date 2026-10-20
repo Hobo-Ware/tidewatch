@@ -44,7 +44,6 @@ pub struct PrepareInput<'a> {
     pub task: &'a str,
     pub session_id: Option<String>,
     pub remote: bool,
-    /// A Meeseeks: its house style gets the one-task block, whatever the profile says.
     pub meeseeks: bool,
     pub path_var: Option<&'a OsStr>,
     pub listener: Option<HookListener>,

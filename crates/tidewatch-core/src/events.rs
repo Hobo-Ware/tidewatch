@@ -15,24 +15,46 @@ pub enum TabEvent {
     /// A hook payload that carries a status (see `status::parse_hook`).
     Hook(HookEvent),
     /// The agent called `stage_done`.
-    StageDone { summary: String },
+    StageDone {
+        summary: String,
+    },
     /// The agent called `report_finding`. The app turns it into a note in the diff.
-    Finding { file: String, line: u32, blocking: bool, text: String },
+    Finding {
+        file: String,
+        line: u32,
+        blocking: bool,
+        text: String,
+    },
     /// The agent called `reply_to_note` and the reply is already saved in the tab's `notes.json`.
-    NoteReply { note_id: u64, text: String },
+    NoteReply {
+        note_id: u64,
+        text: String,
+    },
     /// The agent called `propose_workflow` with a workflow that passed the editor's rules. The app
     /// opens it as an unsaved draft in Settings, Workflows.
-    Proposal { workflow: Workflow },
+    Proposal {
+        workflow: Workflow,
+    },
     /// The agent called `update_progress`; the ledger is already saved in the tab's `progress.md`.
-    Progress { ledger: Box<Ledger> },
+    Progress {
+        ledger: Box<Ledger>,
+    },
     /// The agent called `set_avatar`; the cleaned avatar is already saved in the tab's state folder.
-    Avatar { avatar: Avatar },
+    Avatar {
+        avatar: Avatar,
+    },
     /// The agent called `report_job`.
-    Job { report: Report },
-    /// A Meeseeks called `meeseeks_done`: its one task is finished and Tidewatch should check it.
-    MeeseeksDone { summary: String },
+    Job {
+        report: Report,
+    },
+    MeeseeksDone {
+        summary: String,
+    },
     /// The agent called `ask_user` and its call is held until `reply` is used.
-    Ask { questions: Vec<Question>, reply: AskReply },
+    Ask {
+        questions: Vec<Question>,
+        reply: AskReply,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq)]

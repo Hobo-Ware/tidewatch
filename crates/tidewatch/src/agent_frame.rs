@@ -9,6 +9,7 @@ use tidewatch_core::avatar::Avatar;
 use tidewatch_core::events::{TabEvent, TabMessage};
 use tidewatch_core::job::Report;
 use tidewatch_core::progress::Ledger;
+use tidewatch_core::status::HookKind;
 use tidewatch_core::workflows::Workflow;
 
 use crate::agent_run::{Change, Finding, TermSnapshot};
@@ -47,15 +48,33 @@ pub(crate) enum Follow {
         finding: Finding,
     },
     /// The listener wrote the tab's notes file: read it again.
-    ReloadNotes { tab: u64 },
+    ReloadNotes {
+        tab: u64,
+    },
     /// The agent proposed a workflow built from its session; it opens as a draft in Settings.
-    Proposal { tab: u64, workflow: Box<Workflow> },
+    Proposal {
+        tab: u64,
+        workflow: Box<Workflow>,
+    },
     /// The agent sent its progress ledger; it is already saved in the tab's state folder.
-    Progress { tab: u64, ledger: Box<Ledger> },
+    Progress {
+        tab: u64,
+        ledger: Box<Ledger>,
+    },
     /// The agent reported a job; the tab's board takes it.
-    Job { tab: u64, report: Box<Report> },
+    Job {
+        tab: u64,
+        report: Box<Report>,
+    },
     /// The agent drew an avatar; it is already saved in the tab's state folder.
-    Avatar { tab: u64, avatar: Box<Avatar> },
+    Avatar {
+        tab: u64,
+        avatar: Box<Avatar>,
+    },
+    MeeseeksDone {
+        tab: u64,
+        summary: String,
+    },
 }
 
 /// Hands one listener message to its tab. A message for a closed tab is dropped.
@@ -95,10 +114,19 @@ pub(crate) fn route<T>(tabs: &mut Tabs<Pane<T>>, message: TabMessage, now: f64) 
         TabEvent::Avatar { avatar } => {
             Some(Follow::Avatar { tab: message.tab_id, avatar: Box::new(avatar.clone()) })
         }
-        TabEvent::Hook(_) | TabEvent::StageDone { .. } | TabEvent::MeeseeksDone { .. } => None,
+        TabEvent::MeeseeksDone { summary } => agent
+            .meeseeks
+            .is_some()
+            .then(|| Follow::MeeseeksDone { tab: message.tab_id, summary: summary.clone() }),
+        TabEvent::Hook(_) | TabEvent::StageDone { .. } => None,
     };
     if let TabEvent::Hook(hook) = &message.event {
         agent.reader.hook(hook.transcript_path.clone());
+        if matches!(hook.kind, HookKind::TurnDone)
+            && let Some(meeseeks) = agent.meeseeks.as_mut()
+        {
+            meeseeks.turn();
+        }
     }
     agent.run.on_event(message.event, now);
     follow
@@ -556,5 +584,61 @@ mod tests {
         let later = watch_links(&mut tabs, |_| 2, rows, 1.5);
         assert_eq!(later, Some(3.0));
         assert_eq!(watch_links(&mut tabs, |_| 2, rows, 3.0), None);
+    }
+
+    fn meeseeks_tab() -> (Tabs<Pane<u32>>, u64) {
+        let (mut tabs, id) = tabs_with_agent();
+        tabs.get_mut(id).unwrap().pane.agent.as_mut().unwrap().meeseeks =
+            Some(tidewatch_core::meeseeks::Meeseeks::summon(
+                "x",
+                tidewatch_core::meeseeks::Criteria::default(),
+                0,
+            ));
+        (tabs, id)
+    }
+
+    fn turns(tabs: &Tabs<Pane<u32>>, id: u64) -> u32 {
+        tabs.items()
+            .iter()
+            .find(|tab| tab.id == id)
+            .and_then(|tab| tab.pane.agent.as_ref()?.meeseeks.as_ref())
+            .map_or(0, |meeseeks| meeseeks.turns)
+    }
+
+    #[test]
+    fn every_stop_hook_is_one_turn_of_a_meeseeks_and_nothing_else_is() {
+        let (mut tabs, id) = meeseeks_tab();
+        for kind in [HookKind::TurnStarted, HookKind::PermissionNeeded] {
+            route(&mut tabs, hook(id, kind, None), 1.0);
+        }
+        assert_eq!(turns(&tabs, id), 0);
+        for _ in 0..3 {
+            route(&mut tabs, hook(id, HookKind::TurnStarted, None), 2.0);
+            route(&mut tabs, hook(id, HookKind::TurnDone, Some("done")), 3.0);
+        }
+        assert_eq!(turns(&tabs, id), 3);
+        let (mut plain, plain_id) = tabs_with_agent();
+        route(&mut plain, hook(plain_id, HookKind::TurnDone, None), 3.0);
+        assert_eq!(turns(&plain, plain_id), 0);
+    }
+
+    fn said(tab: u64) -> TabMessage {
+        TabMessage {
+            tab_id: tab,
+            generation: 0,
+            event: TabEvent::MeeseeksDone { summary: "renamed it".into() },
+        }
+    }
+
+    #[test]
+    fn meeseeks_done_reaches_the_app_only_from_a_meeseeks_tab() {
+        let (mut tabs, id) = meeseeks_tab();
+        assert_eq!(
+            route(&mut tabs, said(id), 1.0),
+            Some(Follow::MeeseeksDone { tab: id, summary: "renamed it".into() })
+        );
+        let (mut plain, plain_id) = tabs_with_agent();
+        assert_eq!(route(&mut plain, said(plain_id), 1.0), None, "an ordinary agent is ignored");
+        assert_eq!(route(&mut tabs, said(99), 1.0), None, "and so is a closed tab");
     }
 }

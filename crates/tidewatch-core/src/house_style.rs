@@ -62,7 +62,6 @@ pub const TOOL_GUIDANCE: &str = "\
 - Once you understand the task, call `set_avatar` once with a 64x64 flat icon about the task (2-3 colors, simple shapes) and a one-line reason.
 ";
 
-/// Put after the tool guidance of a Meeseeks tab: the one task, and how it ends.
 pub const MEESEEKS_GUIDANCE: &str = "\
 ## You are a Meeseeks
 
@@ -109,7 +108,6 @@ pub fn compose(house_style: &str, checklist: &str) -> String {
     compose_for(house_style, checklist, false)
 }
 
-/// [`compose`], and for a Meeseeks the one-task block after the tool guidance.
 #[must_use]
 pub fn compose_for(house_style: &str, checklist: &str, meeseeks: bool) -> String {
     let one_task = if meeseeks { format!("{MEESEEKS_GUIDANCE}\n") } else { String::new() };

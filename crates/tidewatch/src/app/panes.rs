@@ -12,7 +12,9 @@ use crate::diff_pane::{PaneAction, PaneOut};
 use crate::file_view::{self, TerminalChip};
 use crate::repo::Workspace;
 use crate::tab_view::ViewSpec;
-use crate::{diff_pane, flow_glue, history_pane, job_model, layout, pane_jobs, progress_view};
+use crate::{
+    diff_pane, flow_glue, history_pane, job_model, layout, meeseeks_model, pane_jobs, progress_view,
+};
 
 impl Tidewatch {
     /// Keeps one view per tab that has panes: only the visible tab's view is loaded and watched.
@@ -118,9 +120,20 @@ impl Tidewatch {
             .and_then(|_| self.job_live.board(active_id))
             .map(|board| job_model::cards(board, now_ms, self.job_live.zone()))
             .unwrap_or_default();
+        let active_tab = &self.tabs.items()[self.tabs.active()];
+        let meeseeks_card = agent.and_then(|agent| {
+            let meeseeks = agent.meeseeks.as_ref()?;
+            let tests = active_tab
+                .pane
+                .worktree
+                .as_ref()
+                .and_then(|worktree| self.bases.facts(&worktree.repo))
+                .and_then(|facts| facts.test_command.as_deref());
+            Some(meeseeks_model::card(meeseeks, &active_tab.title, now_ms, tests))
+        });
         let progress = agent.and_then(|_| {
             let known = self.progress.ledger(active_id);
-            if known.is_none() && cards.is_empty() {
+            if known.is_none() && cards.is_empty() && meeseeks_card.is_none() {
                 return None;
             }
             let input = progress_view::Input {
@@ -129,7 +142,12 @@ impl Tidewatch {
                 now_ms,
                 time: ctx.input(|i| i.time),
                 animate: ctx.input(|i| i.viewport().focused.unwrap_or(true)),
-                first: self.new_tab_prefs.right_panel.into(),
+                first: if meeseeks_card.is_some() {
+                    progress_view::Side::Progress
+                } else {
+                    self.new_tab_prefs.right_panel.into()
+                },
+                meeseeks: meeseeks_card.as_ref(),
             };
             Some(history_pane::Progress { input, state: self.progress_ui.tab(active_id) })
         });
@@ -146,6 +164,11 @@ impl Tidewatch {
         );
         let graph_action = shown.graph;
         let answer = shown.progress == Some(progress_view::Action::Answer);
+        let meeseeks_choice = match shown.progress {
+            Some(progress_view::Action::TakeOver) => Some(true),
+            Some(progress_view::Action::GiveUp) => Some(false),
+            _ => None,
+        };
         let ask = match shown.progress.clone() {
             Some(progress_view::Action::Ask { message, .. }) => Some(message),
             _ => None,
@@ -184,6 +207,11 @@ impl Tidewatch {
         }
         if answer {
             self.open_reply_box();
+        }
+        match meeseeks_choice {
+            Some(true) => self.take_over_meeseeks(active_id, ctx),
+            Some(false) => self.give_up_meeseeks(active_id, ctx),
+            None => {}
         }
         if let Some(message) = ask {
             self.ask_agent(active_id, &message, ctx, ctx.input(|i| i.time));

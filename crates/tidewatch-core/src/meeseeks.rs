@@ -11,7 +11,6 @@ pub const MAX_MINUTES: i64 = 60;
 const TAIL_LINES: usize = 12;
 const LINE_CHARS: usize = 200;
 
-/// What "done" means for one Meeseeks, ticked in the new-tab form.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct Criteria {
     #[serde(default = "on")]
@@ -39,15 +38,11 @@ impl Default for Criteria {
     }
 }
 
-/// The checks after `meeseeks_done`, in the order they run, which are also the stages of the row.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Step {
-    /// The worktree is clean and at least one commit is ahead of the base.
     Change,
     Tests,
-    /// The tree is still clean after the tests.
     Proof,
-    /// The pull request, when ticked, then the poof.
     HandOff,
 }
 
@@ -119,7 +114,6 @@ pub enum Command {
     Poof { summary: String, pr_url: Option<String> },
 }
 
-/// One Meeseeks tab. The saved part is the first five fields; the rest starts over after a restart.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Meeseeks {
     #[serde(default)]
@@ -154,7 +148,6 @@ impl Meeseeks {
         Self { task: task.trim().to_owned(), criteria, started_ms: now_ms, ..Self::default() }
     }
 
-    /// A Stop hook: the agent finished one turn.
     pub fn turn(&mut self) {
         self.turns = self.turns.saturating_add(1);
     }
@@ -234,7 +227,6 @@ impl Meeseeks {
         Command::Paste(paste)
     }
 
-    /// Folds one event in. A struggling Meeseeks hears nothing: it waits for the user.
     pub fn apply(&mut self, event: Event, now_ms: i64) -> Command {
         match (event, self.phase) {
             (Event::Said(_), Phase::Working) if self.struggle(now_ms).is_some() => {
@@ -267,8 +259,6 @@ fn first_line(text: &str) -> &str {
     text.lines().map(str::trim).find(|line| !line.is_empty()).unwrap_or("no details")
 }
 
-/// What Tidewatch pastes into the agent after a failed check. The agent is asked to call
-/// `meeseeks_done` again so the checks start over.
 #[must_use]
 pub fn fix_note(step: Step, detail: &str) -> String {
     let again = "then call meeseeks_done again";
@@ -292,8 +282,6 @@ pub fn fix_note(step: Step, detail: &str) -> String {
     }
 }
 
-/// The last lines of a command's output, one line cut at 200 characters, without control
-/// characters or anything that could close a code fence.
 #[must_use]
 pub fn tail_of(output: &str) -> String {
     let lines: Vec<String> = output
@@ -309,13 +297,11 @@ pub fn tail_of(output: &str) -> String {
     lines[start..end].join("\n")
 }
 
-/// The task lines of the form's box: one task per non-blank line.
 #[must_use]
 pub fn tasks_of(text: &str) -> Vec<String> {
     text.lines().map(str::trim).filter(|line| !line.is_empty()).map(str::to_owned).collect()
 }
 
-/// `12m`, `1h 05m`: how long a Meeseeks has been at it.
 #[must_use]
 pub fn elapsed_text(ms: i64) -> String {
     let minutes = ms.max(0) / 60_000;

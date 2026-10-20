@@ -39,7 +39,6 @@ pub(crate) struct Output {
     pub(crate) clicked: Option<usize>,
     /// The left edge of the drawn control.
     pub(crate) left: f32,
-    /// Where each segment was drawn, for a headless test to aim at.
     pub(crate) segments: Vec<Rect>,
 }
 

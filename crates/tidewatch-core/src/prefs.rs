@@ -126,7 +126,6 @@ pub struct NewTabPrefs {
     pub start: Option<StartFrom>,
     #[serde(default)]
     pub right_panel: RightPanel,
-    /// The ticks of the Meeseeks form's "Done means", kept from the last summon.
     #[serde(default, skip_serializing_if = "Criteria::is_default")]
     pub meeseeks: Criteria,
 }

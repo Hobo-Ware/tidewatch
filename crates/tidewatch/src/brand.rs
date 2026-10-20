@@ -34,6 +34,10 @@ pub(crate) const RED: Color32 = Color32::from_rgb(0xf8, 0x71, 0x71);
 pub(crate) const RED_LINE: Color32 = Color32::from_rgb(0x3a, 0x25, 0x30);
 pub(crate) const RED_FILL: Color32 = Color32::from_rgb(0x24, 0x17, 0x1e);
 
+pub(crate) const STRUGGLE_FILL: Color32 = Color32::from_rgb(0x1c, 0x16, 0x10);
+pub(crate) const STRUGGLE_LINE: Color32 = Color32::from_rgb(0x4a, 0x34, 0x18);
+pub(crate) const SUNKEN: Color32 = Color32::from_rgb(0x0f, 0x14, 0x1c);
+
 /// Each CLI's badge, as its fill and its letter's ink: the one place a hue outside the palette lives.
 pub(crate) const CLAUDE_BADGE: (Color32, Color32) = (Color32::from_rgb(0x3b, 0x24, 0x18), ORANGE);
 pub(crate) const CODEX_BADGE: (Color32, Color32) = (Color32::from_rgb(0x1e, 0x2a, 0x22), GREEN);

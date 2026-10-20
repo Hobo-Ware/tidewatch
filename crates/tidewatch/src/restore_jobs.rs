@@ -137,7 +137,6 @@ pub(crate) struct ReopenSpec {
     pub(crate) session_id: String,
     /// The tab had remote control on when it was saved.
     pub(crate) remote: bool,
-    /// The tab was a Meeseeks when it was saved, and comes back as one.
     pub(crate) meeseeks: Option<Meeseeks>,
     /// Set when the resume command is typed and waits for Enter instead of running.
     pub(crate) typed: Option<Why>,

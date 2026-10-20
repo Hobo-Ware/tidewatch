@@ -11,6 +11,7 @@ mod dev;
 mod draft;
 mod flow;
 mod frame;
+mod meeseeks;
 mod open_link;
 mod overlays;
 mod palette;
@@ -76,6 +77,7 @@ use crate::jobs::Jobs;
 use crate::last_used::LastUsed;
 use crate::layout;
 use crate::leftover_glue;
+use crate::meeseeks_glue;
 use crate::new_tab::Request;
 use crate::notify::Notifier;
 use crate::open_link::OpenLink;
@@ -159,6 +161,7 @@ pub(crate) struct Tidewatch {
     progress: progress_glue::Host,
     job_live: job_glue::Host,
     avatar_live: avatar_glue::Host,
+    meeseeks: meeseeks_glue::Host,
     progress_ui: progress_view::Memory,
     checklist: overview_checklist::Host,
     snoozes: due::Snoozes,
@@ -248,6 +251,7 @@ impl Tidewatch {
         );
         let job_live = job_glue::Host::from_env(paths.is_some() && screenshot.is_none());
         let avatar_live = avatar_glue::Host::from_env(paths.is_some() && screenshot.is_none());
+        let meeseeks = meeseeks_glue::Host::from_env(paths.as_ref(), screenshot.is_none());
         let dev_view = DevView::from_env();
         let trust = Trust::new(paths.as_ref(), cli_home);
         let dev_session = DevSession::from_env();
@@ -305,6 +309,7 @@ impl Tidewatch {
             progress,
             job_live,
             avatar_live,
+            meeseeks,
             progress_ui: progress_view::Memory::default(),
             checklist: overview_checklist::Host::new(),
             snoozes: due::Snoozes::default(),

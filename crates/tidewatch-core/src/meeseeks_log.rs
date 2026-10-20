@@ -23,7 +23,6 @@ pub struct Poofed {
 }
 
 impl Poofed {
-    /// `PR #214` from a pull request address, else nothing.
     #[must_use]
     pub fn pr_label(&self) -> Option<String> {
         let number = self.pr_url.as_deref()?.rsplit('/').next()?;
@@ -39,7 +38,6 @@ pub struct Log {
 }
 
 impl Log {
-    /// A missing or unreadable file is an empty log.
     #[must_use]
     pub fn load(file: &Path) -> Self {
         let Ok(text) = std::fs::read_to_string(file) else { return Self::default() };
@@ -49,14 +47,12 @@ impl Log {
         })
     }
 
-    /// The entries of `day`, the latest first.
     #[must_use]
     pub fn on(&self, day: Date) -> Vec<&Poofed> {
         self.entries.iter().rev().filter(|entry| entry.date == day).collect()
     }
 }
 
-/// Adds one entry to the file, dropping the oldest past 500. Safe to call from several threads.
 pub fn append(file: &Path, entry: Poofed) -> std::io::Result<()> {
     let _one_at_a_time = APPENDING.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
     let mut log = Log::load(file);

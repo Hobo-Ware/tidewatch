@@ -15,7 +15,7 @@ use crate::brand;
 use crate::coming_up_view;
 use crate::commands::Command;
 use crate::mascot::{self, Pose};
-use crate::overview::{Counts, Overview, Row, card_view, fmt_elapsed};
+use crate::overview::{Counts, Overview, PoofedRow, Row, card_view, fmt_elapsed};
 use crate::overview_checklist::{Checklist, Chip};
 use crate::pr_strip::tone_ink;
 use crate::progress_ring;
@@ -104,6 +104,7 @@ fn paint_badge(ui: &egui::Ui, button: Rect, count: usize) {
 pub(crate) struct Sections<'a> {
     pub(crate) coming_up: &'a [Block],
     pub(crate) checklist: Option<&'a Checklist>,
+    pub(crate) poofed: &'a [PoofedRow],
 }
 
 #[derive(Debug, Default, PartialEq, Eq)]
@@ -147,6 +148,10 @@ pub(crate) fn show(
                 continue;
             }
             out.jump = out.jump.or(group(ui, &place.label, &place.path, &place.rows, false));
+            ui.add_space(SECTION_GAP);
+        }
+        if !sections.poofed.is_empty() {
+            poofed_list(ui, sections.poofed);
             ui.add_space(SECTION_GAP);
         }
         if !sections.coming_up.is_empty() {
@@ -333,6 +338,36 @@ fn paint_pill(painter: &egui::Painter, left: f32, mid: f32, text: &str, ink: Col
     painter.rect_filled(pill, CornerRadius::same(255), ink.gamma_multiply(0.12));
     painter.galley(pill.center() - galley.size() / 2.0, galley, ink);
     pill.right()
+}
+
+const POOFED_ROW_H: f32 = 26.0;
+
+fn poofed_list(ui: &mut egui::Ui, rows: &[PoofedRow]) {
+    let width = ui.available_width();
+    let (head, _) = ui.allocate_exact_size(vec2(width, 26.0), Sense::hover());
+    ui.painter_at(head).text(
+        head.left_center(),
+        Align2::LEFT_CENTER,
+        "Poofed today",
+        heading(16.0),
+        brand::TEXT,
+    );
+    ui.add_space(6.0);
+    for row in rows {
+        let (rect, response) = ui.allocate_exact_size(vec2(width, POOFED_ROW_H), Sense::hover());
+        let painter = ui.painter_at(rect);
+        let detail =
+            painter.layout_no_wrap(row.detail.clone(), FontId::proportional(13.0), brand::MUTED);
+        let room = (width - detail.size().x - 14.0).max(1.0);
+        let name = ellipsized(&painter, &row.name, FontId::proportional(13.0), brand::SOFT, room);
+        painter.galley(pos2(rect.left(), rect.center().y - name.size().y / 2.0), name, brand::SOFT);
+        painter.galley(
+            pos2(rect.right() - detail.size().x, rect.center().y - detail.size().y / 2.0),
+            detail,
+            brand::MUTED,
+        );
+        response.on_hover_text(&row.summary);
+    }
 }
 
 fn chip_title(chip: &Chip) -> String {
@@ -674,7 +709,8 @@ mod tests {
             }],
         };
         let blocks = [block];
-        let sections = Sections { coming_up: &blocks, checklist: Some(&list) };
+        let sections =
+            Sections { coming_up: &blocks, checklist: Some(&list), ..Sections::default() };
         frame_with(&ctx, &data, &sections, vec![]);
         let found = texts(&ctx, &data, &sections, 1000.0);
         let y =
@@ -692,7 +728,7 @@ mod tests {
         frame_with(&ctx, &data, &sections, vec![button(true)]);
         let out = frame_with(&ctx, &data, &sections, vec![button(false)]);
         assert_eq!((out.coming_up, out.jump), (Some(3), None));
-        let empty = Sections { coming_up: &[], checklist: Some(&list) };
+        let empty = Sections { coming_up: &[], checklist: Some(&list), ..Sections::default() };
         let found = texts(&ctx, &data, &empty, 1000.0);
         assert!(!found.iter().any(|(text, _)| text == "Coming up"));
     }

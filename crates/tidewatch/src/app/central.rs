@@ -158,8 +158,12 @@ impl Tidewatch {
         let items: Vec<_> =
             rows.iter().zip(steps).map(|(row, steps)| timeline::Item { row, steps }).collect();
         let blocks = timeline::blocks(&items);
-        let sections =
-            overview_view::Sections { coming_up: &blocks, checklist: self.checklist.of(&repo) };
+        let poofed = overview::poofed_rows(&self.meeseeks.poofed_on(today()));
+        let sections = overview_view::Sections {
+            coming_up: &blocks,
+            checklist: self.checklist.of(&repo),
+            poofed: &poofed,
+        };
         let out = overview_view::show(ui, area, &data, &sections, |ui| {
             if let Some(card) = &card {
                 clicked = takeover_view::card(ui, card, reveal);

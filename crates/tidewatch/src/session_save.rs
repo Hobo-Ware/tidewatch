@@ -650,4 +650,43 @@ mod tests {
         assert_eq!(signature(&view(false), &tabs), web_before);
         assert_ne!(signature(&other, &tabs), api_before);
     }
+
+    fn with_agent(meeseeks: Option<tidewatch_core::meeseeks::Meeseeks>) -> Tabs<Pane<u32>> {
+        let mut one = agent(Some("0c2cbc96-1111-4222-8333-444455556666"));
+        one.meeseeks = meeseeks;
+        let mut tabs = tabs();
+        tabs.push(
+            "brave-otter".into(),
+            pane(Body::Shell(2), Some(worktree("brave-otter")), Some(one)),
+        );
+        tabs
+    }
+
+    #[test]
+    fn a_meeseeks_is_saved_with_its_counts_moves_the_signature_and_a_plain_agent_has_none() {
+        let mut meeseeks = tidewatch_core::meeseeks::Meeseeks::summon(
+            "rename the helper",
+            tidewatch_core::meeseeks::Criteria { tests: true, committed: false, pr: true },
+            1_760_000_000_000,
+        );
+        meeseeks.turns = 9;
+        let with = with_agent(Some(meeseeks.clone()));
+        let saved = saved_window(&view(false), &with);
+        let SavedTab::Agent(tab) = &saved.tabs[1] else { panic!("an agent tab") };
+        assert_eq!(tab.meeseeks.as_deref(), Some(&meeseeks));
+        let before = signature(&view(false), &with);
+        let mut more = meeseeks;
+        more.turns = 10;
+        assert_ne!(
+            before,
+            signature(&view(false), &with_agent(Some(more))),
+            "a turn is worth a save"
+        );
+        let plain = with_agent(None);
+        let SavedTab::Agent(plain_tab) = &saved_window(&view(false), &plain).tabs[1] else {
+            panic!("an agent tab")
+        };
+        assert!(plain_tab.meeseeks.is_none());
+        assert_ne!(before, signature(&view(false), &plain));
+    }
 }

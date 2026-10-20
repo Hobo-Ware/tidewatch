@@ -55,6 +55,7 @@ impl Panel {
                 time: 1.0,
                 animate: false,
                 first: Side::Progress,
+                meeseeks: None,
             };
             action = show(ui, Rect::from_min_size(pos2(0.0, 0.0), size), &input, state);
         });

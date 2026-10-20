@@ -64,12 +64,9 @@ pub(crate) struct AgentRequest {
     pub(crate) placement: Placement,
     /// Start the agent with remote control on. Never set for a CLI that has no flag for it.
     pub(crate) remote: bool,
-    /// Set for a Meeseeks: what done means for its one task.
     pub(crate) meeseeks: Option<Criteria>,
 }
 
-/// One Meeseeks per task line, each in its own worktree. `ticks` are what the form showed, which
-/// the next form opens with.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct MeeseeksRequest {
     pub(crate) ticks: Criteria,
@@ -316,7 +313,6 @@ impl NewTab {
         }
     }
 
-    /// Whether the form offers `kind` here: a workflow or a Meeseeks needs a worktree to run in.
     pub(crate) fn offers(&self, kind: Kind) -> bool {
         !matches!(kind, Kind::Workflow | Kind::Meeseeks) || self.group == Group::Repo
     }
@@ -326,7 +322,6 @@ impl NewTab {
         self.group == Group::Repo
     }
 
-    /// The name and branch fields. A Meeseeks form has none: each task line names its worktree.
     pub(crate) fn shows_name_fields(&self) -> bool {
         self.makes_a_worktree() && self.kind != Kind::Meeseeks
     }
@@ -650,7 +645,6 @@ impl NewTab {
         self.error = None;
     }
 
-    /// The task lines of the box: one Meeseeks each.
     pub(crate) fn tasks(&self) -> Vec<String> {
         tasks_of(&self.message)
     }

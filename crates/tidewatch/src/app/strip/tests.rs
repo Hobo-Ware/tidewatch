@@ -358,6 +358,7 @@ fn agent_strip(
                                     stalled: false,
                                     tip: "orders".into(),
                                 }),
+                                mood: Mood::default(),
                             },
                         ),
                     );
@@ -664,4 +665,79 @@ fn the_pill_list_names_each_tab_and_says_why_it_left() {
     strip.frame(Vec::new());
     let names: Vec<_> = strip.texts.iter().map(|(text, _)| text.as_str()).collect();
     assert!(names.contains(&"shell 2") && names.contains(&"shell 3"), "{names:?}");
+}
+
+fn fills(shape: &Shape, out: &mut Vec<egui::Color32>) {
+    match shape {
+        Shape::Rect(rect) => out.push(rect.fill),
+        Shape::Vec(shapes) => shapes.iter().for_each(|shape| fills(shape, out)),
+        _ => {}
+    }
+}
+
+fn strip_fills(mood: Mood, locked: bool) -> (Vec<egui::Color32>, bool) {
+    use crate::agent_run::AgentRun;
+    use crate::pane::AgentTab;
+    let ctx = crate::fonts::test_context();
+    let mut pane = Pane::shell(1_u32);
+    pane.agent = Some(AgentTab::new("Builder".into(), AgentRun::setting_up("claude".into(), 0.0)));
+    let mut tabs = Tabs::new(Pane::shell(0));
+    let id = tabs.push_in(0, "rename".into(), pane);
+    crate::agent_avatar::lock(&ctx, if locked { vec![id] } else { Vec::new() });
+    let mut all = Vec::new();
+    for _ in 0..2 {
+        let raw = RawInput {
+            screen_rect: Some(Rect::from_min_size(pos2(0.0, 0.0), vec2(800.0, 200.0))),
+            focused: true,
+            ..RawInput::default()
+        };
+        let mut actions = Vec::new();
+        let output = ctx.run_ui(raw, |ui| {
+            egui::Panel::top("tabbar").exact_size(TAB_H + 6.0).show(ui, |ui| {
+                ui.horizontal(|ui| {
+                    tab_row(
+                        ui,
+                        &tabs,
+                        200.0,
+                        0.0,
+                        &mut actions,
+                        (
+                            |_: &Pane<u32>| (Progress::default(), CmdState::default()),
+                            |_| TabExtras {
+                                avatar: Some(crate::avatar_glue::meeseeks_avatar()),
+                                mood,
+                                ..TabExtras::default()
+                            },
+                        ),
+                    );
+                });
+            });
+        });
+        all.clear();
+        for clipped in &output.shapes {
+            fills(&clipped.shape, &mut all);
+        }
+    }
+    (all, locked)
+}
+
+#[test]
+fn a_struggling_tab_is_tinted_orange_and_a_calm_one_is_not() {
+    let orange = brand::ORANGE.gamma_multiply(0.16);
+    let (calm, _) = strip_fills(Mood::default(), true);
+    assert!(!calm.contains(&orange));
+    let (struggling, _) = strip_fills(Mood { struggling: true, fade: None }, true);
+    assert!(struggling.contains(&orange), "the tint over the tab");
+    assert!(struggling.contains(&brand::ORANGE), "the bar at its left");
+}
+
+#[test]
+fn a_fading_tab_is_veiled_in_the_strips_own_color_more_as_the_fade_goes_on() {
+    let veil = |fade: f32| brand::SIDEBAR.gamma_multiply(fade);
+    let (plain, _) = strip_fills(Mood::default(), true);
+    assert!(!plain.contains(&veil(0.5)));
+    for fade in [0.25, 0.5, 1.0] {
+        let (shown, _) = strip_fills(Mood { struggling: false, fade: Some(fade) }, true);
+        assert!(shown.contains(&veil(fade)), "{fade}");
+    }
 }
