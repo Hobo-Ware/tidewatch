@@ -100,7 +100,14 @@ mod tests {
     use tidewatch_core::session::SavedWindow;
 
     fn window(dir: &str, other: bool, tabs: Vec<SavedTab>) -> SavedWindow {
-        SavedWindow { dir: PathBuf::from(dir), other, active: 0, focus_mode: false, tabs }
+        SavedWindow {
+            dir: PathBuf::from(dir),
+            other,
+            active: 0,
+            focus_mode: false,
+            tabs,
+            parked: Vec::new(),
+        }
     }
 
     fn shell(dir: &str) -> SavedTab {

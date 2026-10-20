@@ -77,6 +77,7 @@ impl Tidewatch {
         self.drive_flow(ctx, now);
         self.drive_pr(ctx, now);
         self.drive_progress(ctx);
+        self.drive_parking(ctx);
         self.drive_avatar_choice(ctx);
         self.drive_jobs(ctx);
         self.drive_checklist(ctx, now);
@@ -111,6 +112,7 @@ impl Tidewatch {
                 | Command::SelectTab(_)
                 | Command::MoveTabLeft
                 | Command::MoveTabRight
+                | Command::ParkTab
                 | Command::NextRepo
                 | Command::PrevRepo => actions.extend(command.action()),
                 _ => self.run_command(command, ctx),
@@ -169,6 +171,7 @@ impl Tidewatch {
             | Command::SelectTab(_)
             | Command::MoveTabLeft
             | Command::MoveTabRight
+            | Command::ParkTab
             | Command::NextRepo
             | Command::PrevRepo => {
                 if let Some(action) = command.action() {

@@ -168,6 +168,7 @@ impl Tidewatch {
     pub(super) fn forget_tab(&mut self, id: u64) {
         self.hooks.close_tab(id);
         self.notifier.forget(id);
+        self.parking.forget(id);
         self.flow.forget(id);
         self.pr.forget(id);
         self.runs.forget(id);
@@ -256,6 +257,9 @@ impl Tidewatch {
             self.tabs.apply(action, || unreachable!());
             return;
         }
+        if self.dispatch_parking(action, ctx) {
+            return;
+        }
         self.settings = None;
         self.overview = false;
         match action {
@@ -271,7 +275,10 @@ impl Tidewatch {
             | Action::SelectNth(_)
             | Action::NextGroup
             | Action::PrevGroup
-            | Action::ShowGroup(_) => self.tabs.apply(action, || unreachable!()),
+            | Action::ShowGroup(_)
+            | Action::Park(_)
+            | Action::ParkActive
+            | Action::ToggleKeep(_) => self.tabs.apply(action, || unreachable!()),
         }
     }
 }

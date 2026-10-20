@@ -7,6 +7,8 @@
 
 mod groups;
 
+use crate::park::{Park, Why};
+
 pub(crate) const MAIN_TITLE: &str = "main";
 
 pub(crate) struct Tab<T> {
@@ -15,6 +17,8 @@ pub(crate) struct Tab<T> {
     pub(crate) title: String,
     pub(crate) pinned: bool,
     pub(crate) pane: T,
+    pub(crate) park: Option<Park>,
+    pub(crate) keep: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -37,6 +41,9 @@ pub(crate) enum Action {
     /// Swaps a tab with its neighbour in the same group, never past the pinned main tab.
     Move(usize, Step),
     MoveActive(Step),
+    Park(usize),
+    ParkActive,
+    ToggleKeep(usize),
 }
 
 pub(crate) struct Tabs<T> {
@@ -57,6 +64,8 @@ impl<T> Tabs<T> {
                 title: MAIN_TITLE.into(),
                 pinned: true,
                 pane: main_pane,
+                park: None,
+                keep: false,
             }],
             active: 0,
             next_id: 1,
@@ -90,7 +99,15 @@ impl<T> Tabs<T> {
     pub(crate) fn add_group(&mut self, main_pane: T) -> usize {
         let group = self.recent.len();
         let id = self.take_id();
-        self.items.push(Tab { id, group, title: MAIN_TITLE.into(), pinned: true, pane: main_pane });
+        self.items.push(Tab {
+            id,
+            group,
+            title: MAIN_TITLE.into(),
+            pinned: true,
+            pane: main_pane,
+            park: None,
+            keep: false,
+        });
         self.recent.push(id);
         group
     }
@@ -98,6 +115,14 @@ impl<T> Tabs<T> {
     /// The tabs of one group with their positions in the whole list, in order.
     pub(crate) fn in_group(&self, group: usize) -> impl Iterator<Item = (usize, &Tab<T>)> {
         self.items.iter().enumerate().filter(move |(_, tab)| tab.group == group)
+    }
+
+    pub(crate) fn shown_in(&self, group: usize) -> impl Iterator<Item = (usize, &Tab<T>)> {
+        self.in_group(group).filter(|(_, tab)| tab.park.is_none())
+    }
+
+    pub(crate) fn parked_in(&self, group: usize) -> impl Iterator<Item = (usize, &Tab<T>)> {
+        self.in_group(group).filter(|(_, tab)| tab.park.is_some())
     }
 
     pub(crate) fn group_of(&self, id: u64) -> Option<usize> {
@@ -116,7 +141,8 @@ impl<T> Tabs<T> {
         self.recent
             .get(group)
             .and_then(|id| self.index_of(*id))
-            .or_else(|| self.in_group(group).next().map(|(i, _)| i))
+            .filter(|i| self.items[*i].park.is_none())
+            .or_else(|| self.shown_in(group).next().map(|(i, _)| i))
             .unwrap_or(self.active)
     }
 
@@ -136,7 +162,7 @@ impl<T> Tabs<T> {
     /// Appends a tab to a group without selecting it, and returns its id.
     pub(crate) fn push_in(&mut self, group: usize, title: String, pane: T) -> u64 {
         let id = self.take_id();
-        self.items.push(Tab { id, group, title, pinned: false, pane });
+        self.items.push(Tab { id, group, title, pinned: false, pane, park: None, keep: false });
         id
     }
 
@@ -147,6 +173,7 @@ impl<T> Tabs<T> {
         if self.items[index].group == self.active_group() {
             self.select_index(index);
         } else {
+            self.items[index].park = None;
             self.recent[self.items[index].group] = id;
         }
     }
@@ -180,7 +207,7 @@ impl<T> Tabs<T> {
                 }
             }
             Action::SelectNth(n) => {
-                let found = self.in_group(self.active_group()).nth(n).map(|(i, _)| i);
+                let found = self.shown_in(self.active_group()).nth(n).map(|(i, _)| i);
                 if let Some(i) = found {
                     self.select_index(i);
                 }
@@ -194,17 +221,60 @@ impl<T> Tabs<T> {
             }
             Action::Move(i, step) => self.move_tab(i, step),
             Action::MoveActive(step) => self.move_tab(self.active, step),
+            Action::Park(i) => {
+                self.park_index(i, Why::Manual, 0);
+            }
+            Action::ParkActive => {
+                self.park_index(self.active, Why::Manual, 0);
+            }
+            Action::ToggleKeep(i) => {
+                if let Some(tab) = self.items.get_mut(i).filter(|tab| !tab.pinned) {
+                    tab.keep = !tab.keep;
+                    tab.park = tab.park.filter(|_| !tab.keep);
+                }
+            }
+        }
+    }
+
+    pub(crate) fn park_index(&mut self, index: usize, why: Why, since_ms: u64) -> bool {
+        let Some(tab) = self.items.get(index) else { return false };
+        if tab.pinned || tab.park.is_some() {
+            return false;
+        }
+        if index == self.active {
+            let group = tab.group;
+            let shown = |i: &usize| *i != index && self.items[*i].park.is_none();
+            let after =
+                (index + 1..self.items.len()).filter(|i| self.items[*i].group == group).find(shown);
+            let before = (0..index).rev().filter(|i| self.items[*i].group == group).find(shown);
+            let Some(next) = after.or(before) else { return false };
+            self.select_index(next);
+        }
+        self.items[index].park = Some(Park { why, since_ms });
+        true
+    }
+
+    pub(crate) fn set_park(&mut self, id: u64, park: Park) {
+        let Some(index) = self.index_of(id) else { return };
+        let tab = &mut self.items[index];
+        if index != self.active && !tab.pinned && !tab.keep {
+            tab.park = Some(park);
+        }
+    }
+
+    pub(crate) fn unpark(&mut self, id: u64) {
+        if let Some(tab) = self.get_mut(id) {
+            tab.park = None;
         }
     }
 
     fn move_tab(&mut self, i: usize, step: Step) {
         let Some(tab) = self.items.get(i) else { return };
         let group = tab.group;
+        let on_show = |t: &Tab<T>| t.group == group && t.park.is_none();
         let neighbor = match step {
-            Step::Left => self.items[..i].iter().rposition(|t| t.group == group),
-            Step::Right => {
-                self.items[i + 1..].iter().position(|t| t.group == group).map(|n| n + i + 1)
-            }
+            Step::Left => self.items[..i].iter().rposition(on_show),
+            Step::Right => self.items[i + 1..].iter().position(on_show).map(|n| n + i + 1),
         };
         let Some(j) = neighbor else { return };
         if self.items[i].pinned || self.items[j].pinned {
@@ -220,6 +290,7 @@ impl<T> Tabs<T> {
 
     fn select_index(&mut self, index: usize) {
         self.active = index;
+        self.items[index].park = None;
         self.recent[self.items[index].group] = self.items[index].id;
     }
 
@@ -230,9 +301,9 @@ impl<T> Tabs<T> {
 
     /// The tab of a group at `from`, else the one before it. A group always has its main tab.
     fn neighbor(&self, group: usize, from: usize) -> usize {
-        let after = self.items.iter().enumerate().skip(from).find(|(_, tab)| tab.group == group);
-        let before =
-            self.items[..from.min(self.items.len())].iter().rposition(|tab| tab.group == group);
+        let shown = |tab: &Tab<T>| tab.group == group && tab.park.is_none();
+        let after = self.items.iter().enumerate().skip(from).find(|(_, tab)| shown(tab));
+        let before = self.items[..from.min(self.items.len())].iter().rposition(shown);
         after.map(|(i, _)| i).or(before).unwrap_or(0)
     }
 
@@ -591,5 +662,168 @@ mod tests {
         assert_eq!(tabs.active_group(), 0);
         assert_eq!(tabs.items()[tabs.selected_in(1)].id, extra);
         assert_eq!(ids_in(&tabs, 1), [10, 12, 11]);
+    }
+
+    fn parked_ids(tabs: &Tabs<u32>, group: usize) -> Vec<u32> {
+        tabs.parked_in(group).map(|(_, tab)| tab.pane).collect()
+    }
+
+    fn shown(tabs: &Tabs<u32>, group: usize) -> Vec<u32> {
+        tabs.shown_in(group).map(|(_, tab)| tab.pane).collect()
+    }
+
+    fn park(tabs: &mut Tabs<u32>, pane: u32) {
+        let id = tabs.items().iter().find(|tab| tab.pane == pane).unwrap().id;
+        tabs.set_park(id, Park { why: Why::Idle, since_ms: 1 });
+    }
+
+    #[test]
+    fn a_parked_tab_leaves_the_shown_list_and_keeps_its_place_in_the_whole_one() {
+        let mut tabs = tabs_with(4);
+        tabs.apply(Action::Select(1), || unreachable!());
+        park(&mut tabs, 3);
+        park(&mut tabs, 2);
+        assert_eq!(panes(&tabs), [0, 1, 2, 3, 4]);
+        assert_eq!(shown(&tabs, 0), [0, 1, 4]);
+        assert_eq!(parked_ids(&tabs, 0), [2, 3]);
+    }
+
+    #[test]
+    fn the_number_chords_count_the_shown_tabs_only() {
+        let mut tabs = tabs_with(4);
+        tabs.apply(Action::Select(1), || unreachable!());
+        park(&mut tabs, 2);
+        park(&mut tabs, 3);
+        for (n, want) in [(0, 0), (1, 1), (2, 4), (3, 4)] {
+            tabs.apply(Action::SelectNth(n), || unreachable!());
+            assert_eq!(*tabs.active_pane_mut(), want, "tab {n}");
+        }
+    }
+
+    #[test]
+    fn selecting_a_parked_tab_by_any_way_brings_it_back() {
+        let mut tabs = tabs_with(3);
+        tabs.apply(Action::Select(1), || unreachable!());
+        park(&mut tabs, 2);
+        park(&mut tabs, 3);
+        tabs.apply(Action::Select(2), || unreachable!());
+        assert_eq!(parked_ids(&tabs, 0), [3]);
+        assert_eq!(*tabs.active_pane_mut(), 2);
+        let id = tabs.items()[3].id;
+        tabs.select_id(id);
+        assert_eq!(parked_ids(&tabs, 0), Vec::<u32>::new());
+        assert_eq!(*tabs.active_pane_mut(), 3);
+    }
+
+    #[test]
+    fn selecting_a_parked_tab_of_another_group_brings_it_back_and_it_shows_with_the_group() {
+        let mut tabs = two_groups();
+        let extra = tabs.push_in(1, "more".into(), 12);
+        tabs.set_park(extra, Park { why: Why::Manual, since_ms: 0 });
+        assert_eq!(tabs.selected_in(1), tabs.main_id(1).and_then(|id| tabs.index_of(id)).unwrap());
+        tabs.select_id(extra);
+        assert_eq!(tabs.items()[tabs.index_of(extra).unwrap()].park, None);
+        tabs.apply(Action::NextGroup, || unreachable!());
+        assert_eq!(*tabs.active_pane_mut(), 12);
+    }
+
+    #[test]
+    fn a_group_never_comes_back_to_a_parked_tab() {
+        let mut tabs = two_groups();
+        let api = tabs.in_group(1).last().unwrap().1.id;
+        tabs.select_id(api);
+        tabs.set_park(api, Park { why: Why::Idle, since_ms: 0 });
+        tabs.apply(Action::NextGroup, || unreachable!());
+        assert_eq!((tabs.active_group(), *tabs.active_pane_mut()), (1, 10), "its main tab");
+        assert_eq!(parked_ids(&tabs, 1), [11]);
+    }
+
+    #[test]
+    fn parking_the_selected_tab_hands_the_selection_to_the_shown_tab_after_it_else_before() {
+        let mut tabs = tabs_with(3);
+        tabs.apply(Action::Select(2), || unreachable!());
+        park(&mut tabs, 3);
+        tabs.apply(Action::ParkActive, || unreachable!());
+        assert_eq!(*tabs.active_pane_mut(), 1, "the tab after it was parked, so the one before");
+        assert_eq!(parked_ids(&tabs, 0), [2, 3]);
+
+        let mut tabs = tabs_with(3);
+        tabs.apply(Action::Select(1), || unreachable!());
+        tabs.apply(Action::Park(1), || unreachable!());
+        assert_eq!(*tabs.active_pane_mut(), 2);
+        assert_eq!(parked_ids(&tabs, 0), [1]);
+        assert_eq!(tabs.items()[1].park.map(|park| park.why), Some(Why::Manual));
+    }
+
+    #[test]
+    fn nothing_parks_the_pinned_tab_a_tab_that_is_not_there_or_one_with_nowhere_to_go() {
+        let mut tabs = tabs_with(1);
+        tabs.apply(Action::Park(0), || unreachable!());
+        tabs.apply(Action::Park(9), || unreachable!());
+        assert_eq!(parked_ids(&tabs, 0), Vec::<u32>::new());
+        tabs.apply(Action::ParkActive, || unreachable!());
+        assert_eq!(parked_ids(&tabs, 0), [1], "the main tab takes the selection");
+        assert_eq!(tabs.active(), 0);
+        assert!(!tabs.park_index(1, Why::Manual, 0), "already parked");
+    }
+
+    #[test]
+    fn the_rules_never_park_the_selected_the_pinned_or_a_kept_tab() {
+        let mut tabs = tabs_with(2);
+        let (main, selected, other) = (tabs.items()[0].id, tabs.items()[2].id, tabs.items()[1].id);
+        let park = Park { why: Why::Idle, since_ms: 0 };
+        for id in [main, selected] {
+            tabs.set_park(id, park);
+        }
+        tabs.apply(Action::ToggleKeep(1), || unreachable!());
+        tabs.set_park(other, park);
+        assert_eq!(parked_ids(&tabs, 0), Vec::<u32>::new());
+        tabs.apply(Action::ToggleKeep(1), || unreachable!());
+        tabs.set_park(other, park);
+        assert_eq!(parked_ids(&tabs, 0), [1]);
+    }
+
+    #[test]
+    fn never_park_unparks_a_tab_and_flips_back_and_the_pinned_tab_has_no_such_mark() {
+        let mut tabs = tabs_with(2);
+        tabs.apply(Action::Select(2), || unreachable!());
+        park(&mut tabs, 1);
+        tabs.apply(Action::ToggleKeep(1), || unreachable!());
+        assert!(tabs.items()[1].keep);
+        assert_eq!(tabs.items()[1].park, None);
+        tabs.apply(Action::ToggleKeep(1), || unreachable!());
+        assert!(!tabs.items()[1].keep);
+        tabs.apply(Action::ToggleKeep(0), || unreachable!());
+        assert!(!tabs.items()[0].keep);
+    }
+
+    #[test]
+    fn moving_a_tab_steps_over_parked_neighbours_and_leaves_them_where_they_are() {
+        let mut tabs = tabs_with(4);
+        tabs.apply(Action::Select(1), || unreachable!());
+        park(&mut tabs, 2);
+        park(&mut tabs, 3);
+        tabs.apply(Action::Move(1, Step::Right), || unreachable!());
+        assert_eq!(
+            panes(&tabs),
+            [0, 4, 2, 3, 1],
+            "swapped with the next shown tab, not a parked one"
+        );
+        assert_eq!(*tabs.active_pane_mut(), 1, "the selected tab is still the same tab");
+        let at = tabs.items().iter().position(|tab| tab.pane == 1).unwrap();
+        tabs.apply(Action::Move(at, Step::Left), || unreachable!());
+        assert_eq!(panes(&tabs), [0, 1, 2, 3, 4]);
+        assert_eq!(*tabs.active_pane_mut(), 1);
+    }
+
+    #[test]
+    fn closing_the_selected_tab_selects_a_shown_neighbour_not_a_parked_one() {
+        let mut tabs = tabs_with(3);
+        tabs.apply(Action::Select(1), || unreachable!());
+        park(&mut tabs, 2);
+        tabs.apply(Action::CloseActive, || unreachable!());
+        assert_eq!(panes(&tabs), [0, 2, 3]);
+        assert_eq!(*tabs.active_pane_mut(), 3);
+        assert_eq!(parked_ids(&tabs, 0), [2]);
     }
 }

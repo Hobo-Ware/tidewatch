@@ -3,12 +3,13 @@
 //! `[window]` table (quake mode, its hotkey, the
 //! menu-bar item, the panel layout), the `[updates]` table (check for releases, install them) and
 //! the `[github]` table (what a new tab does when its pull request changes) and the `[new_tab]`
-//! table (what the new-tab form opens with).
+//! table (what the new-tab form opens with) and the `[tabs]` table (when a quiet tab is parked).
 //!
 //! A missing or bad file is the defaults, with a stderr note for a bad one: a settings file must
 //! never stop the app.
 
 use std::path::Path;
+use std::time::Duration;
 
 use serde::{Deserialize, Deserializer, Serialize};
 
@@ -33,6 +34,56 @@ pub struct Prefs {
     pub github: GithubPrefs,
     #[serde(default)]
     pub new_tab: NewTabPrefs,
+    #[serde(default)]
+    pub tabs: TabsPrefs,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ParkAfter {
+    #[serde(rename = "off")]
+    Off,
+    #[serde(rename = "1h")]
+    Hour,
+    #[default]
+    #[serde(rename = "4h")]
+    FourHours,
+    #[serde(rename = "8h")]
+    EightHours,
+    #[serde(rename = "24h")]
+    Day,
+}
+
+impl ParkAfter {
+    pub const ALL: [Self; 5] =
+        [Self::Off, Self::Hour, Self::FourHours, Self::EightHours, Self::Day];
+
+    #[must_use]
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Off => "Off",
+            Self::Hour => "1 h",
+            Self::FourHours => "4 h",
+            Self::EightHours => "8 h",
+            Self::Day => "24 h",
+        }
+    }
+
+    #[must_use]
+    pub fn duration(self) -> Option<Duration> {
+        match self {
+            Self::Off => None,
+            Self::Hour => Some(Duration::from_hours(1)),
+            Self::FourHours => Some(Duration::from_hours(4)),
+            Self::EightHours => Some(Duration::from_hours(8)),
+            Self::Day => Some(Duration::from_hours(24)),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TabsPrefs {
+    #[serde(default)]
+    pub park_after: ParkAfter,
 }
 
 /// Where a new tab's worktree is cut from.
@@ -186,6 +237,7 @@ impl Default for Prefs {
             updates: UpdatePrefs::default(),
             github: GithubPrefs::default(),
             new_tab: NewTabPrefs::default(),
+            tabs: TabsPrefs::default(),
         }
     }
 }
@@ -644,5 +696,41 @@ mod tests {
         let (_home, paths) = paths();
         write_prefs(&paths, "restore_session = false\n[github]\nmode = \"off\"\n");
         assert_eq!(Prefs::load(&paths).new_tab, NewTabPrefs::default());
+    }
+
+    #[test]
+    fn quiet_tabs_park_after_four_hours_until_a_choice_and_old_files_get_that() {
+        let (_home, paths) = paths();
+        assert_eq!(Prefs::load(&paths).tabs.park_after, ParkAfter::FourHours);
+        write_prefs(&paths, "restore_session = false\n");
+        assert_eq!(Prefs::load(&paths).tabs, TabsPrefs::default());
+    }
+
+    #[test]
+    fn every_park_after_choice_reads_from_the_file_and_survives_a_save() {
+        let (_home, paths) = paths();
+        let cases = [
+            ("off", ParkAfter::Off, None),
+            ("1h", ParkAfter::Hour, Some(Duration::from_hours(1))),
+            ("4h", ParkAfter::FourHours, Some(Duration::from_hours(4))),
+            ("8h", ParkAfter::EightHours, Some(Duration::from_hours(8))),
+            ("24h", ParkAfter::Day, Some(Duration::from_hours(24))),
+        ];
+        for (word, want, after) in cases {
+            write_prefs(&paths, &format!("[tabs]\npark_after = \"{word}\"\n"));
+            let loaded = Prefs::load(&paths).tabs.park_after;
+            assert_eq!(loaded, want, "{word}");
+            assert_eq!(loaded.duration(), after, "{word}");
+            Prefs::update(&paths, |p| p.window.quake = false).unwrap();
+            assert_eq!(Prefs::load(&paths).tabs.park_after, want, "{word} after a save");
+        }
+        assert_eq!(ParkAfter::ALL.map(ParkAfter::label), ["Off", "1 h", "4 h", "8 h", "24 h"]);
+    }
+
+    #[test]
+    fn an_unknown_park_after_makes_the_whole_file_fall_back_to_the_defaults() {
+        let (_home, paths) = paths();
+        write_prefs(&paths, "restore_session = false\n[tabs]\npark_after = \"2h\"\n");
+        assert_eq!(Prefs::load(&paths), Prefs::default());
     }
 }

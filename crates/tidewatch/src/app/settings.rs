@@ -1,7 +1,7 @@
 //! Settings: the page, saving profiles and workflows, window preferences and shell events.
 
 use tidewatch_core::house_style;
-use tidewatch_core::prefs::{NewTabPrefs, Prefs, WindowPrefs};
+use tidewatch_core::prefs::{NewTabPrefs, Prefs, TabsPrefs, WindowPrefs};
 
 use super::{Tidewatch, wall_ms};
 use crate::agent_jobs;
@@ -98,6 +98,17 @@ impl Tidewatch {
             && self.closing.is_none()
     }
 
+    fn set_tabs_prefs(&mut self, prefs: TabsPrefs) {
+        self.parking.set_after(prefs.park_after);
+        if let Some(paths) = self.paths.clone() {
+            std::thread::spawn(move || {
+                if let Err(e) = Prefs::update(&paths, |p| p.tabs = prefs) {
+                    eprintln!("tidewatch: cannot save settings.toml: {e}");
+                }
+            });
+        }
+    }
+
     fn set_new_tab_prefs(&mut self, prefs: NewTabPrefs) {
         self.new_tab_prefs = prefs.clone();
         if let Some(paths) = self.paths.clone() {
@@ -140,6 +151,7 @@ impl Tidewatch {
             },
             github: self.pr.default_prefs(),
             new_tab: self.new_tab_prefs.clone(),
+            tabs: TabsPrefs { park_after: self.parking.after() },
             default_branch,
             profiles: self
                 .catalog
@@ -230,6 +242,7 @@ impl Tidewatch {
                 }
             }
             Some(settings_view::Action::NewTab(prefs)) => self.set_new_tab_prefs(prefs),
+            Some(settings_view::Action::Tabs(prefs)) => self.set_tabs_prefs(prefs),
             Some(settings_view::Action::Github(prefs)) => self.set_github_default(prefs),
             Some(settings_view::Action::LoginItem(click)) => self.apply_login_click(click, ctx),
             Some(settings_view::Action::OpenHouseStyle) => self.open_house_style(ctx),

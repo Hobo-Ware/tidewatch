@@ -4,7 +4,7 @@ use super::Tidewatch;
 use super::repos::RepoCommand;
 use crate::commands::Platform;
 use crate::new_tab_workflow;
-use crate::palette::{self, Palette, Sources, Target};
+use crate::palette::{self, Palette, Sources, TabRow, Target};
 use crate::palette_view::{self, Outcome};
 use crate::repo::Workspace;
 use crate::tabs::Action;
@@ -37,7 +37,11 @@ impl Tidewatch {
         let group = self.tabs.active_group();
         let active = self.tabs.in_group(group).position(|(i, _)| i == self.tabs.active());
         Sources {
-            tabs: self.tabs.in_group(group).map(|(_, tab)| tab.title.clone()).collect(),
+            tabs: self
+                .tabs
+                .in_group(group)
+                .map(|(_, tab)| TabRow::new(tab.title.clone(), tab.park.is_some()))
+                .collect(),
             active: active.unwrap_or_default(),
             repos: self.workspaces.iter().map(Workspace::chip_label).collect(),
             repo: group,
@@ -60,7 +64,13 @@ impl Tidewatch {
     fn run_target(&mut self, target: Target, ctx: &egui::Context) {
         match target {
             Target::Command(command) => self.run_command(command, ctx),
-            Target::Tab(index) => self.dispatch(Action::SelectNth(index), ctx),
+            Target::Tab(index) => {
+                let group = self.tabs.active_group();
+                let picked = self.tabs.in_group(group).nth(index).map(|(i, _)| i);
+                if let Some(i) = picked {
+                    self.dispatch(Action::Select(i), ctx);
+                }
+            }
             Target::Repo(group) => self.dispatch(Action::ShowGroup(group), ctx),
             Target::OpenRepo => self.run_repo_command(RepoCommand::Open, ctx),
             Target::CloseRepo => self.run_repo_command(RepoCommand::Close, ctx),

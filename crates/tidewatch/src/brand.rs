@@ -28,6 +28,7 @@ pub(crate) const GREEN: Color32 = Color32::from_rgb(0x8f, 0xd1, 0x6a);
 pub(crate) const ORANGE: Color32 = Color32::from_rgb(0xfb, 0x92, 0x3c);
 pub(crate) const ORANGE_SOFT: Color32 = Color32::from_rgb(0xd6, 0xa7, 0x7a);
 pub(crate) const BLUE: Color32 = Color32::from_rgb(0x60, 0xa5, 0xfa);
+pub(crate) const BLUE_TEXT: Color32 = Color32::from_rgb(0x93, 0xc5, 0xfd);
 pub(crate) const AMBER: Color32 = Color32::from_rgb(0xfb, 0xbf, 0x24);
 pub(crate) const RED: Color32 = Color32::from_rgb(0xf8, 0x71, 0x71);
 pub(crate) const RED_LINE: Color32 = Color32::from_rgb(0x3a, 0x25, 0x30);

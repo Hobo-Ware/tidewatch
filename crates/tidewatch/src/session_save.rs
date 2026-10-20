@@ -11,9 +11,10 @@ use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
 
 use tidewatch_core::agents::Level;
-use tidewatch_core::session::{SavedAgentTab, SavedTab, SavedWindow};
+use tidewatch_core::session::{SavedAgentTab, SavedPark, SavedTab, SavedWindow};
 
 use crate::pane::{AgentTab, Body, Pane};
+use crate::park::Park;
 use crate::repo::Workspace;
 use crate::tabs::{Tab, Tabs};
 
@@ -133,16 +134,34 @@ fn tab_ref<'a, T>(tab: &'a Tab<Pane<T>>, window_dir: &'a Path) -> Option<TabRef<
     }
 }
 
+#[derive(Clone, Copy, Hash)]
+struct Parking {
+    park: Option<Park>,
+    keep: bool,
+}
+
+impl Parking {
+    fn saved(self, tab: usize) -> Option<SavedPark> {
+        (self.park.is_some() || self.keep).then(|| SavedPark {
+            tab,
+            why: self.park.map(|park| park.why),
+            since_ms: self.park.map_or(0, |park| park.since_ms),
+            keep: self.keep,
+        })
+    }
+}
+
 /// The tabs of the view's group to save, in order, each with whether it sits at or before the
-/// group's selected tab.
 fn kept<'a, T>(
     tabs: &'a Tabs<Pane<T>>,
     view: &WindowView<'a>,
-) -> impl Iterator<Item = (bool, TabRef<'a>)> {
+) -> impl Iterator<Item = (bool, Parking, TabRef<'a>)> {
     let selected = tabs.selected_in(view.group);
     let dir = view.dir;
-    tabs.in_group(view.group)
-        .filter_map(move |(i, tab)| tab_ref(tab, dir).map(|tab| (i <= selected, tab)))
+    tabs.in_group(view.group).filter_map(move |(i, tab)| {
+        let parking = Parking { park: tab.park, keep: tab.keep };
+        tab_ref(tab, dir).map(|saved| (i <= selected, parking, saved))
+    })
 }
 
 fn active_index(before_or_at_active: usize) -> usize {
@@ -153,9 +172,12 @@ fn active_index(before_or_at_active: usize) -> usize {
 /// group's selected tab, so it still points somewhere when that tab is one that is not saved.
 pub(crate) fn saved_window<T>(view: &WindowView, tabs: &Tabs<Pane<T>>) -> SavedWindow {
     let mut active = 0;
+    let mut parked = Vec::new();
     let saved: Vec<SavedTab> = kept(tabs, view)
-        .map(|(upto_active, tab)| {
+        .enumerate()
+        .map(|(index, (upto_active, parking, tab))| {
             active += usize::from(upto_active);
+            parked.extend(parking.saved(index));
             tab.into_saved()
         })
         .collect();
@@ -165,6 +187,7 @@ pub(crate) fn saved_window<T>(view: &WindowView, tabs: &Tabs<Pane<T>>) -> SavedW
         active: active_index(active),
         focus_mode: view.focus,
         tabs: saved,
+        parked,
     }
 }
 
@@ -175,8 +198,9 @@ pub(crate) fn signature<T>(view: &WindowView, tabs: &Tabs<Pane<T>>) -> u64 {
     view.other.hash(&mut hasher);
     view.focus.hash(&mut hasher);
     let mut active = 0;
-    for (upto_active, tab) in kept(tabs, view) {
+    for (upto_active, parking, tab) in kept(tabs, view) {
         active += usize::from(upto_active);
+        parking.hash(&mut hasher);
         tab.hash(&mut hasher);
     }
     active_index(active).hash(&mut hasher);
@@ -281,6 +305,7 @@ mod tests {
                 active: 0,
                 focus_mode: false,
                 tabs: vec![SavedTab::Main],
+                parked: Vec::new(),
             }
         );
     }
@@ -496,6 +521,34 @@ mod tests {
         let mut renamed = base(Some("s1"));
         renamed.items_mut()[1].title = "something else".into();
         assert_eq!(sig(&one, false), sig(&renamed, false), "a title is not saved");
+    }
+
+    #[test]
+    fn parking_is_saved_by_the_place_among_the_saved_tabs_and_moves_the_signature() {
+        use crate::park::{Park, Why};
+        use tidewatch_core::session::SavedPark;
+        let mut tabs = tabs();
+        tabs.push("making".into(), pane(Body::Creating, None, None));
+        let calm = tabs.push("calm".into(), pane(Body::Shell(1), Some(worktree("calm")), None));
+        let late = tabs.push("late".into(), pane(Body::Shell(2), Some(worktree("late")), None));
+        tabs.push("last".into(), pane(Body::Shell(3), Some(worktree("last")), None));
+        let before = signature(&view(false), &tabs);
+        assert_eq!(saved_window(&view(false), &tabs).parked, []);
+        tabs.set_park(calm, Park { why: Why::Job, since_ms: 77 });
+        tabs.get_mut(late).unwrap().keep = true;
+        let saved = saved_window(&view(false), &tabs);
+        assert_eq!(
+            saved.parked,
+            [
+                SavedPark { tab: 1, why: Some(Why::Job), since_ms: 77, keep: false },
+                SavedPark { tab: 2, why: None, since_ms: 0, keep: true },
+            ],
+            "the tab still being made is not saved, so the places count from the saved ones"
+        );
+        assert_ne!(signature(&view(false), &tabs), before);
+        tabs.unpark(calm);
+        tabs.get_mut(late).unwrap().keep = false;
+        assert_eq!(signature(&view(false), &tabs), before);
     }
 
     #[test]

@@ -3,10 +3,17 @@
 //! A click on the menu is left in egui's memory for `take_choice`.
 
 use std::hash::{DefaultHasher, Hash, Hasher};
+use std::sync::Arc;
 
-use egui::{ColorImage, Context, Id, Rect, Response, Sense, TextureHandle, TextureOptions, Ui};
+use egui::{
+    Align2, Color32, ColorImage, Context, CornerRadius, Id, Rect, Response, Sense, TextureHandle,
+    TextureOptions, Ui,
+};
 use stdusk_egui::widgets::{menu_item, style_menu};
 use tidewatch_core::avatar::Avatar;
+
+use crate::brand;
+use crate::screen_kit::{badge_colors, badge_letter, heading};
 
 const CHOICE: &str = "agent-avatar-choice";
 
@@ -68,14 +75,70 @@ pub(crate) fn hover(ui: &Ui, rect: Rect, tab: u64, avatar: &Avatar) {
 pub(crate) fn menu(response: &Response, tab: u64) {
     response.context_menu(|ui| {
         style_menu(ui);
-        for (label, choice) in [("Redraw", Choice::Redraw), ("Use letter", Choice::UseLetter)] {
-            if menu_item(ui, label, "").clicked() {
-                ui.ctx().data_mut(|d| d.insert_temp(Id::new(CHOICE), Some((tab, choice))));
-                ui.ctx().request_repaint();
-                ui.close();
-            }
-        }
+        menu_items(ui, tab);
     });
+}
+
+pub(crate) fn menu_items(ui: &mut Ui, tab: u64) {
+    for (label, choice) in [("Redraw", Choice::Redraw), ("Use letter", Choice::UseLetter)] {
+        if menu_item(ui, label, "").clicked() {
+            ui.ctx().data_mut(|d| d.insert_temp(Id::new(CHOICE), Some((tab, choice))));
+            ui.ctx().request_repaint();
+            ui.close();
+        }
+    }
+}
+
+#[derive(Clone)]
+pub(crate) enum Face {
+    Picture(Arc<Avatar>),
+    Letter { letter: String, tint: (Color32, Color32) },
+}
+
+impl Face {
+    pub(crate) fn of(profile: &str, agent_id: &str, avatar: Option<Arc<Avatar>>) -> Self {
+        avatar.map_or_else(
+            || Self::Letter {
+                letter: profile
+                    .chars()
+                    .find(|c| c.is_alphanumeric())
+                    .map_or_else(|| badge_letter(agent_id), |c| c.to_uppercase().to_string()),
+                tint: badge_colors(agent_id),
+            },
+            Self::Picture,
+        )
+    }
+
+    pub(crate) fn avatar(&self) -> Option<&Avatar> {
+        match self {
+            Self::Picture(avatar) => Some(avatar),
+            Self::Letter { .. } => None,
+        }
+    }
+}
+
+pub(crate) fn paint_face(ctx: &Context, painter: &egui::Painter, rect: Rect, face: &Face) -> bool {
+    let radius = CornerRadius::same((rect.width() * 0.28) as u8);
+    match face {
+        Face::Picture(avatar) => {
+            let drawn = paint(ctx, painter, rect, avatar);
+            if !drawn {
+                painter.rect_filled(rect, radius, brand::ITEM);
+            }
+            drawn
+        }
+        Face::Letter { letter, tint } => {
+            painter.rect_filled(rect, radius, tint.0);
+            painter.text(
+                rect.center(),
+                Align2::CENTER_CENTER,
+                letter,
+                heading(rect.width() * 0.55),
+                tint.1,
+            );
+            false
+        }
+    }
 }
 
 /// What the menu chose since the last call.

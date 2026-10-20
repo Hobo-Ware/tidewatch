@@ -1,7 +1,7 @@
 //! The General page: the Startup card (restore, open at login), the Window section and the Updates section.
 
 use egui::Ui;
-use tidewatch_core::prefs::{GithubPrefs, NewTabPrefs, ResumeAgents};
+use tidewatch_core::prefs::{GithubPrefs, NewTabPrefs, ParkAfter, ResumeAgents, TabsPrefs};
 
 use crate::github_view;
 use crate::login_item;
@@ -22,6 +22,7 @@ pub(crate) struct General {
     pub(crate) window: window_view::View,
     pub(crate) github: GithubPrefs,
     pub(crate) new_tab: NewTabPrefs,
+    pub(crate) tabs: TabsPrefs,
     pub(crate) profiles: Vec<ProfileOption>,
     /// The active repo's remote default branch, for the Start from label.
     pub(crate) default_branch: Option<String>,
@@ -70,6 +71,7 @@ pub(crate) fn page(
         general.default_branch.as_deref(),
     )
     .map(Action::NewTab);
+    let tabs = tabs_card(ui, general.tabs).map(Action::Tabs);
     let github = github_view::card(ui, general.github).map(Action::Github);
     let updates = updates_view::section(ui, updates).map(Action::Updates);
     footer_note(ui, file);
@@ -79,8 +81,25 @@ pub(crate) fn page(
         .or(open_at_login.map(Action::LoginItem))
         .or(window)
         .or(new_tab)
+        .or(tabs)
         .or(github)
         .or(updates)
+}
+
+fn tabs_card(ui: &mut Ui, current: TabsPrefs) -> Option<TabsPrefs> {
+    let labels = ParkAfter::ALL.map(ParkAfter::label);
+    let active = ParkAfter::ALL.iter().position(|after| *after == current.park_after);
+    let mut picked = None;
+    section(ui, "Tabs", |ui| {
+        picked = settings_ui::row(
+            ui,
+            "Park quiet tabs after",
+            "A tab nobody touched for this long leaves the strip and waits under Parked. It keeps running.",
+            Control::new(settings_ui::inline_width(ui, &labels), 28.0),
+            |ui| settings_ui::pick(ui, "park-after", &labels, active),
+        );
+    });
+    picked.map(|index| TabsPrefs { park_after: ParkAfter::ALL[index] })
 }
 
 fn resume_row(ui: &mut Ui, current: ResumeAgents, enabled: bool) -> Option<ResumeAgents> {

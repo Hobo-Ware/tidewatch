@@ -658,7 +658,7 @@ mod tests {
     }
 
     fn tab(pinned: bool, pane: Pane<u8>) -> Tab<Pane<u8>> {
-        Tab { id: 3, group: 0, title: "t".into(), pinned, pane }
+        Tab { id: 3, group: 0, title: "t".into(), pinned, pane, park: None, keep: false }
     }
 
     fn repo_workspace() -> Workspace {

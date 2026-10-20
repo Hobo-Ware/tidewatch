@@ -40,6 +40,7 @@ pub(crate) enum Action {
     Updates(tidewatch_core::prefs::UpdatePrefs),
     /// The New tabs card changed something: all of its choices. Applies at once too.
     NewTab(tidewatch_core::prefs::NewTabPrefs),
+    Tabs(tidewatch_core::prefs::TabsPrefs),
     /// The GitHub card changed something: all of its choices. Applies at once too.
     Github(tidewatch_core::prefs::GithubPrefs),
     LoginItem(login_item::Click),

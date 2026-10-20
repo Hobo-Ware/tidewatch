@@ -14,17 +14,20 @@ use std::sync::Arc;
 use tidewatch_core::avatar::Avatar;
 
 use super::{Tidewatch, wall_ms};
-use crate::agent_avatar;
+use crate::agent_avatar::{self, Face};
 use crate::agent_frame;
 use crate::agent_run::progress_fraction;
 use crate::brand;
 use crate::commands::Command;
 use crate::job_model::{TabJob, tab_job};
 use crate::pane::{Body, Pane};
+use crate::park::Fits;
 use crate::progress_model::{TabRing, tab_ring};
 use crate::progress_ring;
 use crate::tabs::{Action, Step, Tabs};
 use crate::{layout, overview_view, status_view};
+
+pub(crate) mod pill;
 
 const STRIP_TOP_MARGIN: i8 = 6;
 const STRIP_SIDE_MARGIN: i8 = 8;
@@ -38,7 +41,7 @@ const RING_SIZE: f32 = 16.0;
 const RING_GAP: f32 = 6.0;
 const AVATAR_SIZE: f32 = 20.0;
 const AVATAR_PAD_CHARS: usize = 4;
-const JOB_LABEL_W: f32 = 30.0;
+const PILL_DROP_SLACK: f32 = 6.0;
 const JOB_BAR_H: f32 = 2.0;
 const JOB_BAR_INSET: f32 = 6.0;
 
@@ -93,13 +96,28 @@ impl Tidewatch {
                     ui.add_space(8.0);
                     let pill_width = self.updates.pill_width(ui);
                     let tail = if pill_width > 0.0 { pill_width + STRIP_GAP } else { 0.0 };
+                    let group = self.tabs.active_group();
+                    let rows = self.parked_rows(group);
+                    let parked_tail = if pill::wanted(ui.ctx(), rows.len()) {
+                        pill::width(ui, rows.len()) + STRIP_GAP
+                    } else {
+                        0.0
+                    };
+                    let room = ui.available_width()
+                        - stdusk_egui::widgets::ICON_BTN_W * 2.0
+                        - overview_view::BUTTON_W
+                        - 22.0
+                        - tail;
+                    self.parking.set_fits(Fits {
+                        alone: layout::tab_capacity(room, STRIP_GAP),
+                        with_pill: layout::tab_capacity(
+                            room - pill::widest(ui) - STRIP_GAP,
+                            STRIP_GAP,
+                        ),
+                    });
                     let width = layout::tab_width(
-                        ui.available_width()
-                            - stdusk_egui::widgets::ICON_BTN_W * 2.0
-                            - overview_view::BUTTON_W
-                            - 22.0
-                            - tail,
-                        self.tabs.in_group(self.tabs.active_group()).count(),
+                        room - parked_tail,
+                        self.tabs.shown_in(group).count(),
                         STRIP_GAP,
                     );
                     self.draw_tabs(ui, width, now, &mut frame.actions);
@@ -114,8 +132,18 @@ impl Tidewatch {
                         frame.actions.push(Action::New);
                     }
                     ui.add_space(
-                        (ui.available_width() - stdusk_egui::widgets::ICON_BTN_W - tail).max(0.0),
+                        (ui.available_width()
+                            - stdusk_egui::widgets::ICON_BTN_W
+                            - tail
+                            - parked_tail)
+                            .max(0.0),
                     );
+                    if pill::wanted(ui.ctx(), rows.len()) {
+                        let out = pill::show(ui, &rows, self.dev_parked_popover);
+                        if let Some(row) = out.picked {
+                            frame.actions.push(Action::Select(rows[row].index));
+                        }
+                    }
                     self.updates.pill(ui);
                     if icon_button(
                         ui,
@@ -205,6 +233,35 @@ impl Tidewatch {
         };
         tab_row(ui, &self.tabs, width, now, actions, (tab_signals, extras));
     }
+
+    fn parked_rows(&self, group: usize) -> Vec<pill::Row> {
+        let now_ms = wall_ms() as u64;
+        let today = crate::progress_glue::today();
+        self.tabs
+            .parked_in(group)
+            .filter_map(|(index, tab)| {
+                let park = tab.park?;
+                let face = match &tab.pane.agent {
+                    Some(agent) => Face::of(
+                        &agent.profile_name,
+                        &agent.run.agent_id,
+                        self.avatar_live.get(tab.id).cloned(),
+                    ),
+                    None => Face::of(&tab.title, "", None),
+                };
+                let line = self.parking.fake_line(tab.id).unwrap_or_else(|| {
+                    let board = self.job_live.board(tab.id);
+                    let job = crate::park::job_line(board, now_ms as i64);
+                    let schedule =
+                        self.progress.ledger(tab.id).map_or(crate::park::Schedule::None, |known| {
+                            crate::park::schedule_of(&known.ledger, today)
+                        });
+                    crate::park::reason_line(park, now_ms, job, schedule)
+                });
+                Some(pill::Row { index, name: tab.title.clone(), face, line })
+            })
+            .collect()
+    }
 }
 
 /// A drawn tab: its place in the whole list and where it sits on screen.
@@ -214,8 +271,18 @@ struct Slot {
     pinned: bool,
 }
 
-/// Draws the visible group's tabs and reports clicks, closes and drag-reorders as actions. Returns
-/// the tabs' rects in order.
+struct MenuView {
+    parking: ParkMenu,
+    active: bool,
+    picture: bool,
+}
+
+#[derive(Clone, Copy)]
+enum ParkMenu {
+    Hidden,
+    Offered { parkable: bool, keep: bool },
+}
+
 fn tab_row<T>(
     ui: &mut egui::Ui,
     tabs: &Tabs<Pane<T>>,
@@ -226,24 +293,26 @@ fn tab_row<T>(
 ) -> Vec<egui::Rect> {
     let mut slots = Vec::new();
     let mut drag = None;
-    for (position, (i, tab)) in tabs.in_group(tabs.active_group()).enumerate() {
+    let pill = pill::rect(ui.ctx());
+    let mut over_pill = false;
+    for (position, (i, tab)) in tabs.shown_in(tabs.active_group()).enumerate() {
         let (pty_progress, cmd) = signals(&tab.pane);
         let agent = tab.pane.agent.as_ref();
         let progress = if agent.is_some() { Progress::None } else { pty_progress };
-        let cli = agent.and_then(|a| status_view::cli_of(&a.run.agent_id));
         let painter = ui.painter().clone();
         let under = painter.add(Shape::Noop);
         let draft = matches!(tab.pane.body, Body::Draft(_));
         let TabExtras { ring, job, avatar } = agent.map(|_| extras(tab.id)).unwrap_or_default();
-        let parts = (ring.is_some(), job.is_some(), avatar.is_some());
-        let title = match (parts != (false, false, false), draft) {
+        let face = agent.map(|agent| Face::of(&agent.profile_name, &agent.run.agent_id, avatar));
+        let title = match (&face, draft) {
             (_, true) => String::new(),
-            (true, false) => ring_title(ui, &tab.title, position + 1, width, parts),
-            (false, false) => tab.title.clone(),
+            (Some(_), false) => face_title(ui, &tab.title, width, ring.is_some()),
+            (None, false) => tab.title.clone(),
         };
+        let number = face.is_none().then_some(position + 1);
         let (resp, close) = draw_tab(
             ui,
-            Some(position + 1),
+            number,
             tab.id,
             &title,
             i == tabs.active(),
@@ -252,7 +321,7 @@ fn tab_row<T>(
             progress,
             cmd,
             &[],
-            cli,
+            None,
             Some(width),
         );
         nav_look(&painter, under, resp.rect, i == tabs.active(), resp.hovered());
@@ -263,15 +332,31 @@ fn tab_row<T>(
             paint_ring(ui, resp.rect, ring, tab.id);
         }
         if let Some(job) = &job {
-            paint_job(ui, resp.rect, job, ring.is_some(), tab.id);
+            paint_job(ui, resp.rect, job);
         }
-        if let Some(avatar) = &avatar {
-            let rect = avatar_rect(ui, resp.rect, position + 1);
-            if agent_avatar::paint(ui.ctx(), ui.painter(), rect, avatar) {
+        if let Some(face) = &face {
+            let rect = face_rect(resp.rect);
+            if agent_avatar::paint_face(ui.ctx(), ui.painter(), rect, face)
+                && let Some(avatar) = face.avatar()
+            {
                 agent_avatar::hover(ui, rect, tab.id, avatar);
             }
-            agent_avatar::menu(&resp, tab.id);
         }
+        let menu = MenuView {
+            parking: if tab.pinned || draft {
+                ParkMenu::Hidden
+            } else {
+                ParkMenu::Offered { parkable: !needs_you(&tab.pane), keep: tab.keep }
+            },
+            active: i == tabs.active(),
+            picture: face.as_ref().is_some_and(|face| face.avatar().is_some()),
+        };
+        tab_menu(&resp, i, tab.id, &menu, actions);
+        let resp = if agent.is_some() {
+            resp.on_hover_text(tab_tip(&tab.title, position + 1, job.as_ref()))
+        } else {
+            resp
+        };
         if let Some(agent) = agent {
             let tone = status_view::tone(agent.run.status());
             let fraction = progress_fraction(pty_progress);
@@ -288,9 +373,21 @@ fn tab_row<T>(
             && let Some(pointer) = resp.interact_pointer_pos()
         {
             drag = Some((position, pointer.x));
+            over_pill = pill.is_some_and(|pill| pill.expand(PILL_DROP_SLACK).contains(pointer));
+        }
+        if !tab.pinned
+            && resp.drag_stopped()
+            && let Some(pill) = pill
+            && ui
+                .input(|input| input.pointer.latest_pos())
+                .is_some_and(|at| pill.expand(PILL_DROP_SLACK).contains(at))
+        {
+            actions.push(Action::Park(i));
         }
         slots.push(Slot { index: i, rect: resp.rect, pinned: tab.pinned });
     }
+    pill::set_hot(ui.ctx(), over_pill);
+    pill::set_dragging(ui.ctx(), drag.is_some());
     if let Some((from, x)) = drag {
         ui.output_mut(|output| output.cursor_icon = egui::CursorIcon::Grabbing);
         let overlay = ui.ctx().layer_painter(egui::LayerId::new(
@@ -302,63 +399,83 @@ fn tab_row<T>(
             CornerRadius::same(TAB_RADIUS),
             brand::TEAL.gamma_multiply(0.35),
         );
-        if let Some(step) = drag_step(&slots, from, x) {
+        if let Some(step) = drag_step(&slots, from, x).filter(|_| !over_pill) {
             actions.push(Action::Move(slots[from].index, step));
         }
     }
     slots.iter().map(|slot| slot.rect).collect()
 }
 
-/// How many characters of a tab's title fit in a tab `width` wide that also holds a ring and a job
-/// percent: the tab's padding, the trailing slot and what sits before it come off, then the number
-/// before the title.
-pub(crate) fn title_budget(
-    width: f32,
-    char_w: f32,
-    number: usize,
-    (ring, job): (bool, bool),
-) -> usize {
+fn tab_tip(title: &str, number: usize, job: Option<&TabJob>) -> String {
+    let keys = number.checked_sub(1).map(Command::SelectTab).map(Command::keys).unwrap_or_default();
+    let place = if number <= 9 && !keys.is_empty() {
+        format!("Tab {number} ({keys})")
+    } else {
+        format!("Tab {number}")
+    };
+    match job {
+        Some(job) => format!("{title}\n{place}\n{}", job.tip),
+        None => format!("{title}\n{place}"),
+    }
+}
+
+fn tab_menu(
+    resp: &egui::Response,
+    index: usize,
+    tab: u64,
+    menu: &MenuView,
+    actions: &mut Vec<Action>,
+) {
+    let offered = matches!(menu.parking, ParkMenu::Offered { .. });
+    if !offered && !menu.picture {
+        return;
+    }
+    resp.context_menu(|ui| {
+        style_menu(ui);
+        if let ParkMenu::Offered { parkable, keep } = menu.parking {
+            let keys = if menu.active { Command::ParkTab.keys() } else { String::new() };
+            let park = ui.add_enabled_ui(parkable, |ui| menu_item(ui, "Park", &keys)).inner;
+            if park.clicked() {
+                actions.push(Action::Park(index));
+                ui.close();
+            }
+            let keep = if keep { "Allow parking this tab" } else { "Never park this tab" };
+            if menu_item(ui, keep, "").clicked() {
+                actions.push(Action::ToggleKeep(index));
+                ui.close();
+            }
+        }
+        if menu.picture {
+            if offered {
+                ui.separator();
+            }
+            agent_avatar::menu_items(ui, tab);
+        }
+    });
+}
+
+pub(crate) fn title_budget(width: f32, char_w: f32, ring: bool) -> usize {
     let mut taken = 2.0 * TAB_PAD_X + TAB_SLOT_W + RING_GAP;
     if ring {
         taken += RING_SIZE + RING_GAP;
     }
-    if job {
-        taken += JOB_LABEL_W + RING_GAP;
-    }
-    let prefix = number.to_string().len() + 2;
-    (((width - taken) / char_w).floor() as usize).saturating_sub(prefix).max(1)
+    (((width - taken) / char_w).floor() as usize).max(1)
 }
 
-fn ring_title(
-    ui: &egui::Ui,
-    title: &str,
-    number: usize,
-    width: f32,
-    (ring, job, avatar): (bool, bool, bool),
-) -> String {
+fn face_title(ui: &egui::Ui, title: &str, width: f32, ring: bool) -> String {
     let char_w = ui
         .painter()
         .layout_no_wrap("0".to_owned(), egui::FontId::monospace(12.0), brand::SOFT)
         .size()
         .x;
-    let room = title_budget(width, char_w, number, (ring, job));
-    if avatar {
-        let name = ellipsize(title, room.saturating_sub(AVATAR_PAD_CHARS).max(1)).0;
-        format!("{}{name}", " ".repeat(AVATAR_PAD_CHARS))
-    } else {
-        ellipsize(title, room).0
-    }
+    let room = title_budget(width, char_w, ring);
+    let name = ellipsize(title, room.saturating_sub(AVATAR_PAD_CHARS).max(1)).0;
+    format!("{}{name}", " ".repeat(AVATAR_PAD_CHARS))
 }
 
-fn avatar_rect(ui: &egui::Ui, tab: egui::Rect, number: usize) -> egui::Rect {
-    let char_w = ui
-        .painter()
-        .layout_no_wrap("0".to_owned(), egui::FontId::monospace(12.0), brand::SOFT)
-        .size()
-        .x;
-    let left = tab.left() + TAB_PAD_X + (number.to_string().len() + 2) as f32 * char_w;
+fn face_rect(tab: egui::Rect) -> egui::Rect {
     egui::Rect::from_min_size(
-        pos2(left, tab.center().y - AVATAR_SIZE / 2.0),
+        pos2(tab.left() + TAB_PAD_X, tab.center().y - AVATAR_SIZE / 2.0),
         vec2(AVATAR_SIZE, AVATAR_SIZE),
     )
 }
@@ -371,17 +488,6 @@ fn ring_rect(tab: egui::Rect) -> egui::Rect {
     )
 }
 
-fn job_label_rect(tab: egui::Rect, ring: bool) -> egui::Rect {
-    let mut right = tab.right() - TAB_PAD_X - TAB_SLOT_W - RING_GAP;
-    if ring {
-        right -= RING_SIZE + RING_GAP;
-    }
-    egui::Rect::from_min_size(
-        pos2(right - JOB_LABEL_W, tab.center().y - 8.0),
-        vec2(JOB_LABEL_W, 16.0),
-    )
-}
-
 fn job_bar_rect(tab: egui::Rect, fraction: f32) -> egui::Rect {
     let floor = tab.bottom() - TAB_INSET_Y;
     let room = (tab.width() - 2.0 * JOB_BAR_INSET).max(0.0);
@@ -391,20 +497,9 @@ fn job_bar_rect(tab: egui::Rect, fraction: f32) -> egui::Rect {
     )
 }
 
-fn paint_job(ui: &mut egui::Ui, tab: egui::Rect, job: &TabJob, ring: bool, id: u64) {
+fn paint_job(ui: &mut egui::Ui, tab: egui::Rect, job: &TabJob) {
     let ink = if job.stalled { brand::ORANGE } else { brand::TEAL };
-    let label = job_label_rect(tab, ring);
-    let painter = ui.painter();
-    painter.text(
-        pos2(label.right(), label.center().y),
-        egui::Align2::RIGHT_CENTER,
-        &job.label,
-        egui::FontId::monospace(11.0),
-        ink,
-    );
-    painter.rect_filled(job_bar_rect(tab, job.fraction), CornerRadius::same(1), ink);
-    ui.interact(label.expand(3.0), ui.id().with(("tab-job", id)), egui::Sense::hover())
-        .on_hover_text(&job.tip);
+    ui.painter().rect_filled(job_bar_rect(tab, job.fraction), CornerRadius::same(1), ink);
 }
 
 fn paint_ring(ui: &mut egui::Ui, tab: egui::Rect, ring: &TabRing, id: u64) {
@@ -492,7 +587,7 @@ fn drag_step(slots: &[Slot], from: usize, pointer_x: f32) -> Option<Step> {
     }
 }
 
-fn needs_you<T>(pane: &Pane<T>) -> bool {
+pub(super) fn needs_you<T>(pane: &Pane<T>) -> bool {
     pane.agent
         .as_ref()
         .is_some_and(|agent| status_view::tone(agent.run.status()) == status_view::Tone::Needs)

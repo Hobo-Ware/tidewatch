@@ -32,6 +32,29 @@ pub struct SavedWindow {
     pub focus_mode: bool,
     #[serde(default, rename = "tab")]
     pub tabs: Vec<SavedTab>,
+    #[serde(default, rename = "park", skip_serializing_if = "Vec::is_empty")]
+    pub parked: Vec<SavedPark>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Why {
+    Idle,
+    Job,
+    Waiting,
+    Manual,
+    Overflow,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SavedPark {
+    pub tab: usize,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub why: Option<Why>,
+    #[serde(default)]
+    pub since_ms: u64,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub keep: bool,
 }
 
 /// A tab as it was open. `branch` is `Some` for a tab in an agent worktree (`dir` is that
@@ -195,6 +218,7 @@ mod tests {
                     remote: false,
                 }),
             ],
+            parked: Vec::new(),
         }
     }
 
@@ -211,6 +235,7 @@ mod tests {
                     active: 0,
                     focus_mode: false,
                     tabs: vec![SavedTab::Main],
+                    parked: Vec::new(),
                 },
             ],
         };
@@ -238,6 +263,45 @@ mod tests {
         let SavedTab::Agent(tab) = &loaded.windows[0].tabs[0] else { panic!("an agent tab") };
         assert!(!tab.remote);
         assert!(!toml::to_string(&loaded).unwrap().contains("remote"));
+    }
+
+    #[test]
+    fn parking_round_trips_and_an_old_file_loads_unparked() {
+        let home = tempfile::tempdir().unwrap();
+        let paths = TidewatchPaths::new(home.path());
+        let mut parked = window();
+        parked.parked = vec![
+            SavedPark { tab: 1, why: Some(Why::Waiting), since_ms: 42, keep: false },
+            SavedPark { tab: 2, why: None, since_ms: 0, keep: true },
+        ];
+        let session = Session { windows: vec![parked] };
+        session.save(&paths).unwrap();
+        let text = std::fs::read_to_string(paths.session_file()).unwrap();
+        assert!(text.contains("[[window.park]]") && text.contains("why = \"waiting\""), "{text}");
+        assert_eq!(Session::load(&paths), session);
+
+        let plain = toml::to_string(&Session { windows: vec![window()] }).unwrap();
+        assert!(!plain.contains("park"), "{plain}");
+        let old: Session =
+            toml::from_str("[[window]]\ndir = \"/a\"\n[[window.tab]]\nkind = \"main\"\n").unwrap();
+        assert_eq!(old.windows[0].parked, []);
+    }
+
+    #[test]
+    fn every_reason_has_a_snake_case_word() {
+        let cases = [
+            (Why::Idle, "idle"),
+            (Why::Job, "job"),
+            (Why::Waiting, "waiting"),
+            (Why::Manual, "manual"),
+            (Why::Overflow, "overflow"),
+        ];
+        for (why, word) in cases {
+            let text =
+                toml::to_string(&SavedPark { tab: 0, why: Some(why), since_ms: 0, keep: false })
+                    .unwrap();
+            assert!(text.contains(&format!("why = \"{word}\"")), "{text}");
+        }
     }
 
     #[test]

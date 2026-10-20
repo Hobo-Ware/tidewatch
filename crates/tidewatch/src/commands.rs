@@ -60,6 +60,7 @@ pub(crate) enum Command {
     SelectTab(usize),
     MoveTabLeft,
     MoveTabRight,
+    ParkTab,
     NextRepo,
     PrevRepo,
     Overview,
@@ -87,6 +88,7 @@ impl Command {
             Self::SelectTab(index) => Some(Action::SelectNth(index)),
             Self::MoveTabLeft => Some(Action::MoveActive(Step::Left)),
             Self::MoveTabRight => Some(Action::MoveActive(Step::Right)),
+            Self::ParkTab => Some(Action::ParkActive),
             Self::NextRepo => Some(Action::NextGroup),
             Self::PrevRepo => Some(Action::PrevGroup),
             Self::Overview
@@ -284,7 +286,7 @@ const fn tab(id: &'static str, title: &'static str, index: usize, key: Key) -> E
     entry(id, title, Group::Tabs, Command::SelectTab(index), (cmd(key), alt(key)))
 }
 
-pub(crate) const TABLE: [Entry; 30] = [
+pub(crate) const TABLE: [Entry; 31] = [
     entry("new-tab", "New tab", Group::Tabs, Command::NewTab, (cmd(Key::T), ctrl(Key::T).shift())),
     entry(
         "close-tab",
@@ -315,6 +317,13 @@ pub(crate) const TABLE: [Entry; 30] = [
         Group::Tabs,
         Command::MoveTabRight,
         (cmd(Key::ArrowRight).shift(), ctrl(Key::PageDown).shift()),
+    ),
+    entry(
+        "park-tab",
+        "Park tab",
+        Group::Tabs,
+        Command::ParkTab,
+        (cmd(Key::K).shift(), ctrl(Key::K).shift()),
     ),
     entry(
         "next-repo",
@@ -540,7 +549,9 @@ impl Gate {
             Command::Settings | Command::Overview | Command::Focus => {
                 self.dialog != Dialog::TabChoice
             }
-            Command::Reader | Command::CloseTab | Command::FileView => !modal && !self.overview,
+            Command::Reader | Command::CloseTab | Command::FileView | Command::ParkTab => {
+                !modal && !self.overview
+            }
             Command::BackToTerminal
             | Command::PrevFile
             | Command::NextFile

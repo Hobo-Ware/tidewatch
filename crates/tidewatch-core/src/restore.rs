@@ -29,7 +29,7 @@ use crate::prefs::ResumeAgents;
 use crate::profiles::{Profile, Profiles};
 use crate::resume_mode::{Ended, Resume, decide};
 use crate::runner::{self, Runner};
-use crate::session::{SavedAgentTab, SavedTab, SavedWindow, Session};
+use crate::session::{SavedAgentTab, SavedPark, SavedTab, SavedWindow, Session};
 use crate::tools::Tools;
 use crate::transcript::Source;
 use crate::transcript_locate::Locator;
@@ -180,6 +180,7 @@ pub struct TabPlan {
     /// The tab's worktree, for a tab in one.
     pub worktree: Option<Worktree>,
     pub action: TabAction,
+    pub park: Option<SavedPark>,
 }
 
 impl TabPlan {
@@ -298,10 +299,13 @@ fn plan_one(
     let mut tabs = Vec::new();
     let mut skipped = Vec::new();
     let mut kept = Vec::new();
-    for tab in &window.tabs {
+    for (index, tab) in window.tabs.iter().enumerate() {
         let planned = match &window_missing {
             Some(reason) => Err(reason.clone()),
-            None => plan_tab(tab, window, env, disk, claims),
+            None => plan_tab(tab, window, env, disk, claims).map(|plan| TabPlan {
+                park: window.parked.iter().find(|park| park.tab == index).copied(),
+                ..plan
+            }),
         };
         kept.push(planned.is_ok());
         match planned {
@@ -348,7 +352,7 @@ fn plan_tab(
         SavedTab::Main | SavedTab::Shell { .. } => TabAction::Shell,
         SavedTab::Agent(agent) => plan_agent(agent, env, disk, claims),
     };
-    Ok(TabPlan { saved: tab.clone(), dir, worktree, action })
+    Ok(TabPlan { saved: tab.clone(), dir, worktree, action, park: None })
 }
 
 fn plan_agent(
@@ -631,7 +635,14 @@ mod tests {
     }
 
     fn window(tabs: Vec<SavedTab>) -> SavedWindow {
-        SavedWindow { dir: PathBuf::from(REPO), other: false, active: 0, focus_mode: false, tabs }
+        SavedWindow {
+            dir: PathBuf::from(REPO),
+            other: false,
+            active: 0,
+            focus_mode: false,
+            tabs,
+            parked: Vec::new(),
+        }
     }
 
     fn plan_with(window: &SavedWindow, installed: &[String], disk: &FakeDisk) -> WindowPlan {
@@ -723,6 +734,25 @@ mod tests {
             })
         );
         assert_eq!(plan.tabs[0].dir, PathBuf::from(REPO));
+    }
+
+    #[test]
+    fn a_tab_keeps_its_parking_through_the_plan_even_when_a_tab_before_it_is_skipped() {
+        use crate::session::{SavedPark, Why};
+        let mut saved = window(all_four_tabs());
+        saved.parked = vec![
+            SavedPark { tab: 3, why: Some(Why::Idle), since_ms: 7, keep: false },
+            SavedPark { tab: 4, why: None, since_ms: 0, keep: true },
+        ];
+        let mut disk = disk_for_all();
+        disk.dirs.retain(|dir| dir != &wt("a-claude"));
+        let plan = plan_with(&saved, &everything_installed(), &disk);
+        let parks: Vec<_> = plan.tabs.iter().map(|tab| tab.park).collect();
+        assert_eq!(
+            parks,
+            [None, None, Some(saved.parked[0]), Some(saved.parked[1])],
+            "the indices are the saved ones, not the planned ones"
+        );
     }
 
     #[test]

@@ -15,6 +15,7 @@ mod open_link;
 mod overlays;
 mod palette;
 mod panes;
+mod parking;
 mod pr;
 mod progress;
 mod remote;
@@ -174,6 +175,8 @@ pub(crate) struct Tidewatch {
     side_fraction: f32,
     status_log: bool,
     dev_remote_popover: Popover,
+    dev_parked_popover: Popover,
+    parking: parking::Parking,
     dev_keys: Option<DevKeys>,
     dev_paste: Option<DevPaste>,
     dev_reader: DevReader,
@@ -230,7 +233,8 @@ impl Tidewatch {
             hooks.adopt(*tab, credential);
         }
         let restored = hooks_port.is_some();
-        let new_tab_prefs = paths.as_ref().map(Prefs::load).unwrap_or_default().new_tab;
+        let loaded = paths.as_ref().map(Prefs::load).unwrap_or_default();
+        let (new_tab_prefs, park_after) = (loaded.new_tab, loaded.tabs.park_after);
         let dev_flow = DevFlow::from_env();
         let flow = Flow::new(Tools::with_path(dev_flow.tool_path(agent_path.clone())));
         let pr = pr_glue::Host::new(
@@ -319,6 +323,8 @@ impl Tidewatch {
             side_fraction: dev_view.side.unwrap_or(layout::SIDE_FRACTION),
             status_log: dev_view.status_log,
             dev_remote_popover: dev_view.remote_popover,
+            dev_parked_popover: dev_view.parked_popover,
+            parking: parking::Parking::new(park_after),
             dev_keys: dev_view.keys,
             dev_paste: dev_view.paste,
             dev_reader: DevReader::from_env(),

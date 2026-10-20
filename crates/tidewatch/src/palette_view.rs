@@ -196,7 +196,10 @@ mod tests {
 
         fn with(query: &str, build_workflow_blocked: Option<&'static str>) -> Self {
             let sources = Sources {
-                tabs: vec!["main".into(), "calm-comet".into()],
+                tabs: vec![
+                    crate::palette::TabRow::new("main", false),
+                    crate::palette::TabRow::new("calm-comet", false),
+                ],
                 active: 0,
                 repos: vec!["web".into()],
                 repo: 0,
