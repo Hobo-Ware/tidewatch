@@ -290,7 +290,8 @@ fn form(ui: &mut Ui, draft: &mut Draft, agents: &[(String, String)]) -> bool {
                 "added to the agent's command line, quote words with spaces",
             );
             ui.add_space(2.0);
-            changed |= switch_line(ui, "Block git push in this agent's tab", &mut draft.never_push);
+            changed |=
+                switch_line(ui, "Only let this agent push its own branch", &mut draft.never_push);
             changed |= switch_line(ui, "Add the Tidewatch house style", &mut draft.house_style);
         },
     );

@@ -208,11 +208,26 @@ fn context(
         house_style,
         copilot_instructions_dir,
         guard_bin_dir,
+        push_branch: input.worktree_tab.then(|| checked_out_agent_branch(input.dir)).flatten(),
         env: input
             .path_var
             .map(|path| vec![("PATH".to_owned(), path.to_string_lossy().into_owned())])
             .unwrap_or_default(),
     }
+}
+
+fn checked_out_agent_branch(dir: &Path) -> Option<String> {
+    let dot_git = dir.join(".git");
+    let git_dir = match std::fs::read_to_string(&dot_git) {
+        Ok(text) => {
+            let linked = PathBuf::from(text.trim().strip_prefix("gitdir:")?.trim());
+            if linked.is_absolute() { linked } else { dir.join(linked) }
+        }
+        Err(_) => dot_git,
+    };
+    let head = std::fs::read_to_string(git_dir.join("HEAD")).ok()?;
+    let branch = head.trim().strip_prefix("ref: refs/heads/")?;
+    branch.starts_with(crate::worktree::BRANCH_PREFIX).then(|| branch.to_owned())
 }
 
 fn remote_name(input: &PrepareInput) -> String {
@@ -1176,6 +1191,58 @@ mod tests {
         }
         let refs = Command::new("git").arg("-C").arg(&remote).arg("for-each-ref").output().unwrap();
         assert_eq!(String::from_utf8_lossy(&refs.stdout), "");
+
+        git(&clone, &["checkout", "-q", "-b", "agent/brave-otter"]);
+        let input = PrepareInput {
+            paths: &fx.paths,
+            agent: table.get("claude").unwrap(),
+            profile: &profile("claude", Level::Edits),
+            repo: Path::new("/work/web"),
+            tab: "brave-otter",
+            dir: &clone,
+            worktree_tab: true,
+            task: "",
+            session_id: None,
+            remote: false,
+            meeseeks: false,
+            path_var: Some(OsStr::new(&path)),
+            listener: None,
+            trust: None,
+        };
+        let prepared = prepare(&input).unwrap();
+        let out = Command::new("/bin/sh")
+            .args(["-c", "git push -q origin agent/brave-otter"])
+            .current_dir(&clone)
+            .envs(prepared.env.iter().map(|(k, v)| (k, v)))
+            .output()
+            .unwrap();
+        assert!(
+            out.status.success(),
+            "its own branch goes: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        let refs = Command::new("git").arg("-C").arg(&remote).arg("for-each-ref").output().unwrap();
+        assert!(String::from_utf8_lossy(&refs.stdout).contains("refs/heads/agent/brave-otter"));
+    }
+
+    #[test]
+    fn the_push_branch_is_the_checked_out_agent_branch_of_a_linked_worktree_only() {
+        let dir = tempfile::tempdir().unwrap();
+        let linked = dir.path().join("wt");
+        let admin = dir.path().join("repo/.git/worktrees/wt");
+        std::fs::create_dir_all(&linked).unwrap();
+        std::fs::create_dir_all(&admin).unwrap();
+        std::fs::write(linked.join(".git"), format!("gitdir: {}\n", admin.display())).unwrap();
+        let cases = [
+            ("ref: refs/heads/agent/brave-otter\n", Some("agent/brave-otter")),
+            ("ref: refs/heads/main\n", None),
+            ("0123456789abcdef0123456789abcdef01234567\n", None),
+        ];
+        for (head, want) in cases {
+            std::fs::write(admin.join("HEAD"), head).unwrap();
+            assert_eq!(checked_out_agent_branch(&linked).as_deref(), want, "{head}");
+        }
+        assert_eq!(checked_out_agent_branch(&dir.path().join("missing")), None);
     }
 
     #[test]
