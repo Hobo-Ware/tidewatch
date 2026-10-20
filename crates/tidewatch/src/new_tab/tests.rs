@@ -782,18 +782,52 @@ fn a_meeseeks_form_is_offered_in_a_repo_only_and_titles_its_tab() {
 }
 
 #[test]
-fn the_meeseeks_form_keeps_the_agent_lane_and_its_message_box_keeps_the_keyboard() {
+fn the_meeseeks_lane_lists_the_clis_and_keeps_the_agent_pick_apart() {
     let catalog = catalog();
     let mut state = in_agent_form(Group::Repo, &catalog, Some("reviewer"));
     state.choose(Kind::Meeseeks);
-    assert_eq!(state.selected_id(&catalog).as_deref(), Some("reviewer"));
+    assert_eq!(state.visible(&catalog), ["claude", "codex", "gemini", "copilot"]);
+    assert_eq!(state.selected_id(&catalog).as_deref(), Some("claude"));
     assert!(state.focus_message);
-    assert_eq!(state.level(), Level::Plan);
     assert!(!state.shows_name_fields());
     assert_eq!(state.name_check(None), NameCheck::Fine);
+    state.select(2, &catalog);
+    assert_eq!(state.selected_id(&catalog).as_deref(), Some("gemini"));
     state.set_text("one\ntwo");
     state.choose(Kind::Agent);
+    assert_eq!(state.selected_id(&catalog).as_deref(), Some("reviewer"), "the agent pick stays");
     assert_eq!(state.text(), "one\ntwo", "the box is shared with the agent form");
+    state.choose(Kind::Meeseeks);
+    assert_eq!(state.selected_id(&catalog).as_deref(), Some("gemini"), "so does the CLI pick");
+}
+
+#[test]
+fn the_number_keys_reach_four_clis_and_no_further() {
+    let catalog = catalog();
+    let mut state = in_meeseeks_form(&catalog);
+    for (index, want) in ["claude", "codex", "gemini", "copilot"].into_iter().enumerate() {
+        state.select(index, &catalog);
+        assert_eq!(state.selected_id(&catalog).as_deref(), Some(want));
+    }
+    state.select(4, &catalog);
+    assert_eq!(state.selected_id(&catalog).as_deref(), Some("copilot"));
+}
+
+#[test]
+fn the_last_meeseeks_cli_opens_the_form_on_it_without_touching_the_agent_default() {
+    let catalog = catalog();
+    let prefs = defaults(|p| {
+        p.meeseeks_agent = Some("gemini".into());
+        p.agent = Some("reviewer".into());
+    });
+    let mut state = opened_with(prefs, None, &catalog);
+    assert_eq!(state.selected_id(&catalog).as_deref(), Some("reviewer"));
+    state.choose(Kind::Meeseeks);
+    assert_eq!(state.selected_id(&catalog).as_deref(), Some("gemini"));
+    let unknown = defaults(|p| p.meeseeks_agent = Some("vanished".into()));
+    let mut state = opened_with(unknown, None, &catalog);
+    state.choose(Kind::Meeseeks);
+    assert_eq!(state.selected_id(&catalog).as_deref(), Some("claude"));
 }
 
 #[test]
@@ -801,7 +835,6 @@ fn each_line_of_the_box_becomes_one_request_with_its_own_name_and_the_same_profi
     let catalog = catalog();
     let mut state = in_meeseeks_form(&catalog);
     state.set_text("  Bump vite to 6.3 and fix the build \n\nAdd a test for expired promo codes\nBump vite to 6.3 and fix the build\n");
-    state.set_level(Level::Auto, &catalog);
     let request = summoned(&state, &catalog, &with_tests(Some("npm test")));
     let tasks: Vec<&str> = request.tabs.iter().map(|tab| tab.task.as_str()).collect();
     assert_eq!(
@@ -817,7 +850,8 @@ fn each_line_of_the_box_becomes_one_request_with_its_own_name_and_the_same_profi
     assert_eq!(names, ["bump-vite-fix-build", "add-test-expired-promo", "bump-vite-fix-build-2"]);
     for tab in &request.tabs {
         assert_eq!(tab.profile_id, "builder");
-        assert_eq!(tab.profile.level, Level::Auto);
+        assert_eq!(tab.profile.level, Level::Yolo);
+        assert_eq!(tab.agent.id, "claude");
         assert!(!tab.remote);
         assert_eq!(tab.placement.base.as_deref(), Some("main"));
         assert_eq!(tab.meeseeks, Some(Criteria::default()));
@@ -887,18 +921,54 @@ fn without_a_test_command_the_tests_tick_is_off_for_the_tabs_but_stays_as_the_us
 }
 
 #[test]
-fn yolo_is_refused_for_a_meeseeks_where_an_agent_would_be() {
+fn a_meeseeks_is_always_yolo_whatever_the_agent_form_was_set_to() {
     let catalog = catalog();
-    let mut state = in_agent_form(Group::Repo, &catalog, None);
+    let mut state = in_agent_form(Group::Repo, &catalog, Some("reviewer"));
+    assert_eq!(state.level(), Level::Plan);
     state.choose(Kind::Meeseeks);
-    assert!(state.set_level(Level::Yolo, &catalog), "open in a repo, like an agent form");
+    assert_eq!(state.level(), Level::Yolo);
+    assert!(!state.set_level(Level::Auto, &catalog), "there is no level to pick");
+    assert!(!state.step_level(false, &catalog));
+    assert_eq!(state.level(), Level::Yolo);
+    state.set_text("one task");
+    let request = summoned(&state, &catalog, &with_tests(None));
+    assert_eq!(request.tabs[0].profile.level, Level::Yolo);
+    state.choose(Kind::Agent);
+    assert_eq!(state.level(), Level::Plan, "the agent form keeps its own level");
+}
+
+#[test]
+fn a_meeseeks_never_reaches_the_other_group_where_yolo_is_refused() {
+    let catalog = catalog();
     let other = open(Group::Other, None);
-    assert!(
-        !other.offers(Kind::Meeseeks),
-        "a Meeseeks never reaches the Other group, where YOLO is refused"
-    );
+    assert!(!other.offers(Kind::Meeseeks));
     assert!(
         level_refusal(Group::Other, &catalog.agent("claude").unwrap().clone(), Level::Yolo)
             .is_some()
     );
+}
+
+#[test]
+fn a_meeseeks_takes_the_builder_of_the_picked_cli_and_the_cli_defaults_when_it_has_no_profile() {
+    let catalog = catalog_with(Profiles::seeded(&["claude".to_owned()]));
+    let mut state = in_meeseeks_form(&catalog);
+    state.set_text("one task");
+    let facts = with_tests(None);
+    let claude = summoned(&state, &catalog, &facts);
+    assert_eq!(claude.tabs[0].profile_id, "builder");
+    assert_eq!(claude.tabs[0].profile.model.as_deref(), Some("opus"));
+    state.select(1, &catalog);
+    let codex = summoned(&state, &catalog, &facts);
+    let tab = &codex.tabs[0];
+    assert_eq!((tab.profile_id.as_str(), tab.agent.id.as_str()), (Profile::DEFAULTS_ID, "codex"));
+    assert_eq!((tab.profile.model.clone(), tab.profile.level), (None, Level::Yolo));
+}
+
+#[test]
+fn a_meeseeks_on_a_cli_that_is_not_installed_still_warns_like_an_agent() {
+    let mut catalog = catalog();
+    catalog.set_availability("codex", Availability::Missing);
+    let mut state = in_meeseeks_form(&catalog);
+    state.select(1, &catalog);
+    assert!(state.warnings(&catalog).iter().any(|w| w.contains("not found on PATH")));
 }

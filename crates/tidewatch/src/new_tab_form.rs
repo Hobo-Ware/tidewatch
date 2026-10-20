@@ -46,6 +46,7 @@ pub(crate) enum Out {
 pub(crate) struct Placed {
     pub(crate) lane: Option<Rect>,
     pub(crate) permission: Option<Rect>,
+    pub(crate) yolo_line: Option<Rect>,
     pub(crate) remote: Option<Rect>,
     pub(crate) remote_switch: Option<Rect>,
     pub(crate) name: Option<Rect>,
@@ -132,7 +133,7 @@ fn keys(
             state.select(state.selected() + 1, catalog);
         }
     }
-    if matches!(state.kind(), Kind::Agent | Kind::Meeseeks) {
+    if state.kind() == Kind::Agent {
         if pressed(ctx, Key::ArrowLeft) {
             state.step_level(false, catalog);
         }
@@ -168,7 +169,17 @@ fn footer_hints(kind: Kind) -> [Hint; 3] {
             &[("1-9", true), (" workflow \u{b7} ", false), ("Esc", true), (" closes", false)],
             &[("Esc", true), (" closes", false)],
         ],
-        Kind::Agent | Kind::Meeseeks | Kind::Shell => [
+        Kind::Meeseeks => [
+            &[
+                ("1-4 Up Down", true),
+                (" agent \u{b7} ", false),
+                ("Esc", true),
+                (" closes the tab", false),
+            ],
+            &[("1-4", true), (" agent \u{b7} ", false), ("Esc", true), (" closes", false)],
+            &[("Esc", true), (" closes", false)],
+        ],
+        Kind::Agent | Kind::Shell => [
             &[
                 ("1-9 Up Down", true),
                 (" agent \u{b7} ", false),
@@ -228,6 +239,7 @@ struct Content<'a> {
     refusal: Option<String>,
     problem: bool,
     has_permission: bool,
+    yolo_line: bool,
     remote: Option<RemoteOffer>,
     state: &'a NewTab,
 }
@@ -246,8 +258,8 @@ impl<'a> Content<'a> {
             warnings: state.warnings(catalog),
             refusal: refusal_note(state, catalog),
             problem: !state.name_check(facts).is_fine(),
-            has_permission: state.kind() != Kind::Workflow
-                && state.selected_entry(catalog).is_some(),
+            has_permission: state.selected_entry(catalog).is_some(),
+            yolo_line: state.kind() == Kind::Meeseeks,
             remote: (state.kind() == Kind::Agent)
                 .then(|| state.selected_entry(catalog).map(|(_, agent)| RemoteOffer::of(agent)))
                 .flatten(),
@@ -266,6 +278,10 @@ impl<'a> Content<'a> {
             });
             above.permission =
                 LABEL_H + CAPTION_GAP + control + DESCRIPTION_GAP + description.size().y + note;
+        }
+        if self.yolo_line {
+            above.permission =
+                wrapped(ui, new_tab_meeseeks::YOLO_LINE, 12.0, brand::MUTED, width).size().y;
         }
         if self.remote.is_some() {
             above.remote = new_tab_remote::ROW_H;
@@ -322,7 +338,11 @@ pub(crate) fn show(
 
 fn lane(ui: &mut Ui, rect: Rect, state: &mut NewTab, catalog: &Catalog) -> Option<Rect> {
     let entries = new_tab_lane::entries(state, catalog);
-    let noun = if state.kind() == Kind::Workflow { "workflow" } else { "profile" };
+    let noun = match state.kind() {
+        Kind::Workflow => "workflow",
+        Kind::Meeseeks => "agent",
+        Kind::Agent | Kind::Shell => "profile",
+    };
     let empty = new_tab_cards::empty_text(state.filter(), catalog.is_loaded(), noun);
     let scroll = std::mem::take(&mut state.scroll_to_selected);
     let out = new_tab_lane::show(ui, rect, state, &entries, &empty, scroll);
@@ -395,6 +415,7 @@ fn pane(
     let warnings = content.warnings.clone();
     let refusal = content.refusal.clone();
     let has_permission = content.has_permission;
+    let yolo_line = content.yolo_line;
     let remote = content.remote.clone();
     let kind = content.kind;
     let mut body_ui = ui.new_child(UiBuilder::new().max_rect(plan.body));
@@ -412,6 +433,10 @@ fn pane(
             }
             if has_permission {
                 placed.permission = permission(ui, state, catalog, refusal.as_deref());
+                ui.add_space(SECTION_GAP);
+            }
+            if yolo_line {
+                placed.yolo_line = Some(muted_line(ui, new_tab_meeseeks::YOLO_LINE, width));
                 ui.add_space(SECTION_GAP);
             }
             if let Some(offer) = &remote {
@@ -450,6 +475,13 @@ fn pane(
         );
     }
     footer(ui, plan.footer, state, catalog, facts, placed)
+}
+
+fn muted_line(ui: &mut Ui, text: &str, width: f32) -> Rect {
+    let galley = wrapped(ui, text, 12.0, brand::MUTED, width);
+    let (rect, _) = ui.allocate_exact_size(vec2(width, galley.size().y), Sense::hover());
+    ui.painter().galley(rect.min, galley, brand::MUTED);
+    rect
 }
 
 fn message(

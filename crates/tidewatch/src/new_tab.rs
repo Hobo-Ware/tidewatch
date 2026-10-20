@@ -200,6 +200,7 @@ pub(crate) struct NewTab {
     last_profile: Option<String>,
     filter: String,
     agent_pick: usize,
+    meeseeks_pick: usize,
     workflow_pick: usize,
     level: Level,
     remote: Switch,
@@ -235,6 +236,7 @@ impl NewTab {
             last_profile: last_profile.map(str::to_owned),
             filter: String::new(),
             agent_pick: 0,
+            meeseeks_pick: 0,
             workflow_pick: 0,
             level: Level::Auto,
             remote: Switch::Off,
@@ -286,7 +288,7 @@ impl NewTab {
     }
 
     pub(crate) fn level(&self) -> Level {
-        self.level
+        if self.kind == Kind::Meeseeks { new_tab_meeseeks::LEVEL } else { self.level }
     }
 
     /// The text the worktree name follows: the first message of an agent, the task of a workflow.
@@ -309,7 +311,8 @@ impl NewTab {
     pub(crate) fn selected(&self) -> usize {
         match self.kind {
             Kind::Workflow => self.workflow_pick,
-            Kind::Agent | Kind::Meeseeks | Kind::Shell => self.agent_pick,
+            Kind::Meeseeks => self.meeseeks_pick,
+            Kind::Agent | Kind::Shell => self.agent_pick,
         }
     }
 
@@ -340,6 +343,11 @@ impl NewTab {
             self.select_id(&wanted, catalog);
         }
         self.apply_selection(catalog);
+        if let Some(wanted) = &self.defaults.meeseeks_agent
+            && let Some(index) = catalog.agent_names().iter().position(|(id, _)| id == wanted)
+        {
+            self.meeseeks_pick = index;
+        }
         if let Some(level) = self.defaults.permission {
             self.set_level(level, catalog);
         }
@@ -435,9 +443,11 @@ impl NewTab {
     /// The ids of the cards the form shows, in order: what the number keys pick from.
     pub(crate) fn visible(&self, catalog: &Catalog) -> Vec<String> {
         match self.kind {
-            Kind::Agent | Kind::Meeseeks | Kind::Shell => {
+            Kind::Agent | Kind::Shell => {
                 self.agent_groups(catalog).into_iter().flat_map(|(_, ids)| ids).collect()
             }
+            Kind::Meeseeks if !catalog.is_loaded() => Vec::new(),
+            Kind::Meeseeks => catalog.agent_names().into_iter().map(|(id, _)| id).collect(),
             Kind::Workflow => Self::workflow_ids(catalog),
         }
     }
@@ -450,11 +460,21 @@ impl NewTab {
         &self,
         catalog: &'a Catalog,
     ) -> Option<(&'a Profile, &'a Agent)> {
-        if !matches!(self.kind, Kind::Agent | Kind::Meeseeks) {
+        if self.kind != Kind::Agent {
             return None;
         }
         let id = self.selected_id(catalog)?;
         catalog.entries().into_iter().find(|(x, _, _)| *x == id).map(|(_, p, a)| (p, a))
+    }
+
+    /// The agent CLI the form would start: the picked profile's, or for a Meeseeks the picked CLI.
+    pub(crate) fn selected_agent<'a>(&self, catalog: &'a Catalog) -> Option<&'a Agent> {
+        match self.kind {
+            Kind::Meeseeks => self.selected_id(catalog).and_then(|id| catalog.agent(&id)),
+            Kind::Agent | Kind::Shell | Kind::Workflow => {
+                self.selected_entry(catalog).map(|(_, agent)| agent)
+            }
+        }
     }
 
     pub(crate) fn selected_workflow<'a>(&self, catalog: &'a Catalog) -> Option<&'a Workflow> {
@@ -475,7 +495,8 @@ impl NewTab {
         if index < self.visible(catalog).len() && index != self.selected() {
             match self.kind {
                 Kind::Workflow => self.workflow_pick = index,
-                Kind::Agent | Kind::Meeseeks | Kind::Shell => self.agent_pick = index,
+                Kind::Meeseeks => self.meeseeks_pick = index,
+                Kind::Agent | Kind::Shell => self.agent_pick = index,
             }
             self.apply_selection(catalog);
         } else {
@@ -658,9 +679,16 @@ impl NewTab {
         if tasks.is_empty() {
             return Err("Write one task per line.".to_owned());
         }
-        let Request::Agent(one) = self.agent_request(catalog, facts)? else {
-            return Err("No profile to start. Add one in Settings.".to_owned());
+        if !catalog.is_loaded() {
+            return Err("Profiles are still loading.".to_owned());
+        }
+        let Some(agent) = self.selected_agent(catalog) else {
+            return Err("No agent CLI to start. Add one in Settings.".to_owned());
         };
+        if let Some(reason) = level_refusal(self.group, agent, new_tab_meeseeks::LEVEL) {
+            return Err(reason);
+        }
+        let (profile_id, profile) = new_tab_meeseeks::profile_for(&agent.id, &catalog.entries());
         let criteria = new_tab_meeseeks::criteria(self.ticks, &TestsOffer::of(facts));
         let names = new_tab_meeseeks::names_for(&tasks, self.seed, |name| is_taken(facts, name));
         let base = self.base(facts);
@@ -668,11 +696,13 @@ impl NewTab {
             .into_iter()
             .zip(names)
             .map(|(task, name)| AgentRequest {
+                profile_id: profile_id.clone(),
+                profile: profile.clone(),
+                agent: agent.clone(),
                 task,
                 placement: Placement { name: Some(name), base: base.clone() },
                 remote: false,
                 meeseeks: Some(criteria),
-                ..(*one).clone()
             })
             .collect();
         Ok(Request::Meeseeks(Box::new(MeeseeksRequest { ticks: self.ticks, tabs })))
@@ -744,7 +774,7 @@ impl NewTab {
                 catalog.availability(agent) != Availability::Missing
             });
         }
-        let Some((_, agent)) = self.selected_entry(catalog) else { return Vec::new() };
+        let Some(agent) = self.selected_agent(catalog) else { return Vec::new() };
         let mut warnings = Vec::new();
         if catalog.availability(&agent.id) == Availability::Missing {
             warnings.push(format!(

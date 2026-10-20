@@ -646,11 +646,12 @@ fn in_other_there_is_no_meeseeks_segment_and_m_does_nothing() {
 }
 
 #[test]
-fn the_meeseeks_form_has_no_name_fields_or_remote_row_and_shows_three_ticks_on() {
+fn the_meeseeks_form_has_no_name_fields_permission_or_remote_row_and_shows_three_ticks_on() {
     let harness = meeseeks_form("one task");
     let placed = harness.placed();
     assert!(placed.name.is_none() && placed.base.is_none() && placed.remote.is_none());
-    assert!(placed.permission.is_some() && placed.message.is_some());
+    assert!(placed.permission.is_none(), "the level is not a choice");
+    assert!(placed.yolo_line.is_some() && placed.message.is_some());
     assert!(placed.ticks.iter().all(Option::is_some));
     assert_eq!(harness.state.ticks(), Criteria::default());
 }
@@ -709,13 +710,29 @@ fn the_tests_tick_cannot_be_clicked_without_a_test_command_and_the_tabs_drop_it(
 }
 
 #[test]
-fn left_and_right_change_the_level_and_the_number_keys_pick_the_profile_in_a_meeseeks_form() {
+fn the_number_keys_pick_the_cli_and_left_and_right_leave_the_yolo_level_alone() {
     let mut harness = meeseeks_form("one task");
     harness.press(Key::ArrowRight);
-    assert_eq!(harness.state.level(), Level::Auto);
-    harness.press(Key::Num2);
-    assert_eq!(harness.state.selected_id(&harness.catalog).as_deref(), Some("reviewer"));
+    harness.press(Key::ArrowLeft);
+    assert_eq!(harness.state.level(), Level::Yolo);
+    harness.press(Key::Num3);
+    assert_eq!(harness.state.selected_id(&harness.catalog).as_deref(), Some("gemini"));
     harness.state.set_text("one task");
     let request = meeseeks_of(harness.click_start());
-    assert_eq!(request.tabs[0].profile_id, "reviewer");
+    let tab = &request.tabs[0];
+    assert_eq!((tab.agent.id.as_str(), tab.profile.level), ("gemini", Level::Yolo));
+    assert_eq!(tab.profile_id, "gemini-builder");
+}
+
+#[test]
+fn the_meeseeks_lane_has_one_row_per_cli_the_yolo_line_replaces_the_permission_row_and_the_footer_counts_to_four()
+ {
+    let mut harness = meeseeks_form("one task");
+    let rows = new_tab_lane::entries(&harness.state, &harness.catalog);
+    assert_eq!(rows.len(), 4);
+    assert_eq!(footer_hints(Kind::Meeseeks)[0][0].0, "1-4 Up Down");
+    let yolo = harness.placed().yolo_line.expect("drawn");
+    assert!(yolo.height() > 0.0 && harness.placed().message.unwrap().top() > yolo.bottom());
+    harness.press(Key::A);
+    assert!(harness.placed().yolo_line.is_none() && harness.placed().permission.is_some());
 }

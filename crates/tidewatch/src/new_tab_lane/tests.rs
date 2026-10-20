@@ -1,11 +1,12 @@
 use std::ffi::OsString;
 use std::path::PathBuf;
 
+use tidewatch_core::agents::Level;
 use tidewatch_core::profiles::Profiles;
 use tidewatch_core::workflows::Workflows;
 
 use super::*;
-use crate::new_tab::Group;
+use crate::new_tab::{Group, Kind};
 
 fn catalog() -> Catalog {
     let mut catalog = Catalog::new(OsString::from("/usr/bin"));
@@ -124,4 +125,54 @@ fn workflows_are_a_flat_list_with_their_stages_as_the_subtitle() {
 fn no_profiles_loaded_means_no_rows() {
     let catalog = Catalog::new(OsString::from("/usr/bin"));
     assert_eq!(super::entries(&form(), &catalog), Vec::new());
+}
+
+#[test]
+fn a_meeseeks_lane_lists_each_cli_once_with_its_builder_or_defaults_and_dims_the_missing_ones() {
+    let catalog = catalog();
+    let mut state = form();
+    state.settle(&catalog);
+    assert_eq!(state.choose(Kind::Meeseeks), None);
+    let entries = entries(&state, &catalog);
+    assert!(entries.iter().all(|entry| matches!(entry, Entry::Row(_))), "no groups");
+    let found: Vec<(usize, &str, &str, &str, bool)> = rows(&entries)
+        .iter()
+        .map(|row| {
+            let Badge::Cli(cli) = &row.badge else { panic!("{row:?}") };
+            (row.index, row.title.as_str(), row.subtitle.as_str(), cli.as_str(), row.dim)
+        })
+        .collect();
+    let want = [
+        (0, "Claude Code", "Builder \u{b7} opus \u{b7} high", "claude", false),
+        (1, "Codex", "not installed", "codex", true),
+        (2, "Gemini CLI", "Builder \u{b7} default model", "gemini", false),
+        (3, "Copilot CLI", "default model", "copilot", false),
+    ];
+    assert_eq!(found, want);
+}
+
+#[test]
+fn the_meeseeks_subtitle_names_the_profile_unless_the_cli_runs_on_defaults() {
+    let profile =
+        Profile { model: Some("opus".into()), ..Profile::defaults_for("claude", Level::Yolo) };
+    let found = Availability::Found(None);
+    let cases = [
+        ("Claude Code", "builder", &found, "Default \u{b7} opus"),
+        ("Claude Code", Profile::DEFAULTS_ID, &found, "opus"),
+        ("Claude Code", "builder", &Availability::Missing, "not installed"),
+        ("Claude Code", Profile::DEFAULTS_ID, &Availability::Missing, "not installed"),
+    ];
+    for (cli, key, availability, want) in cases {
+        assert_eq!(
+            meeseeks_subtitle(cli, key, &profile, availability),
+            want,
+            "{key} {availability:?}"
+        );
+    }
+    let prefixed = Profile { name: "Claude Code Builder".into(), ..profile };
+    let found = Availability::Found(None);
+    assert_eq!(
+        meeseeks_subtitle("Claude Code", "claude-builder", &prefixed, &found),
+        "Builder \u{b7} opus"
+    );
 }

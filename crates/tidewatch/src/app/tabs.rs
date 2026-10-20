@@ -71,8 +71,8 @@ impl Tidewatch {
         match &request {
             Request::Agent(agent) => self.last_profile = Some(agent.profile_id.clone()),
             Request::Meeseeks(request) => {
-                self.last_profile = request.tabs.first().map(|tab| tab.profile_id.clone());
-                self.remember_ticks(request.ticks);
+                let agent = request.tabs.first().map(|tab| tab.agent.id.clone());
+                self.remember_meeseeks(request.ticks, agent);
                 self.show_toast("Caaan do!", ctx);
             }
             Request::Shell | Request::Workflow(_) => {}
@@ -80,13 +80,20 @@ impl Tidewatch {
         self.open_tab_in(ctx, request, Some(tab));
     }
 
-    fn remember_ticks(&mut self, ticks: tidewatch_core::meeseeks::Criteria) {
+    fn remember_meeseeks(
+        &mut self,
+        ticks: tidewatch_core::meeseeks::Criteria,
+        agent: Option<String>,
+    ) {
         self.new_tab_prefs.meeseeks = ticks;
+        self.new_tab_prefs.meeseeks_agent.clone_from(&agent);
         if let Some(paths) = self.paths.as_ref().filter(|_| self.screenshot.is_none())
-            && let Err(e) =
-                tidewatch_core::prefs::Prefs::update(paths, |p| p.new_tab.meeseeks = ticks)
+            && let Err(e) = tidewatch_core::prefs::Prefs::update(paths, |p| {
+                p.new_tab.meeseeks = ticks;
+                p.new_tab.meeseeks_agent = agent;
+            })
         {
-            eprintln!("tidewatch: cannot save the Meeseeks ticks: {e}");
+            eprintln!("tidewatch: cannot save the Meeseeks choices: {e}");
         }
     }
 

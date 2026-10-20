@@ -1,6 +1,7 @@
 use std::collections::HashSet;
 
 use super::*;
+use tidewatch_core::agents::AgentTable;
 
 fn facts(command: Option<&str>) -> RepoFacts {
     RepoFacts { test_command: command.map(str::to_owned), ..RepoFacts::default() }
@@ -90,4 +91,55 @@ fn the_summon_label_counts_the_tasks() {
     assert_eq!(summon_label(0), "Summon");
     assert_eq!(summon_label(1), "Summon 1");
     assert_eq!(summon_label(3), "Summon 3");
+}
+
+type Entry<'a> = (&'a str, &'a Profile, &'a Agent);
+
+fn named(agent: &str, name: &str) -> Profile {
+    Profile { name: name.into(), ..Profile::defaults_for(agent, Level::Edits) }
+}
+
+#[test]
+fn the_profile_of_a_meeseeks_is_the_builder_else_the_first_else_the_cli_defaults_always_at_yolo() {
+    let table = AgentTable::builtin();
+    let claude = table.get("claude").unwrap();
+    let codex = table.get("codex").unwrap();
+    let first = named("claude", "Scout");
+    let upper = named("claude", "BUILDER");
+    let other = named("codex", "Builder");
+    let seeded = named("claude", "Codex CLI Builder");
+    let zed = named("claude", "Z");
+    let cases: [(&str, Vec<Entry>, &str); 7] = [
+        ("claude", vec![("scout", &first, claude), ("build", &upper, claude)], "build"),
+        ("claude", vec![("scout", &first, claude), ("x", &other, codex)], "scout"),
+        ("claude", vec![("b", &first, claude), ("a", &zed, claude)], "b"),
+        ("claude", vec![("Builder", &first, claude), ("o", &first, claude)], "Builder"),
+        (
+            "claude",
+            vec![("o", &first, claude), ("claude-builder", &first, claude)],
+            "claude-builder",
+        ),
+        ("claude", vec![("o", &first, claude), ("p", &seeded, claude)], "p"),
+        ("gemini", vec![("scout", &first, claude), ("x", &other, codex)], Profile::DEFAULTS_ID),
+    ];
+    for (agent, entries, want) in cases {
+        let (key, profile) = profile_for(agent, &entries);
+        assert_eq!(key, want, "{agent} {entries:?}");
+        assert_eq!(profile.level, Level::Yolo);
+        assert_eq!(profile.agent, agent);
+    }
+}
+
+#[test]
+fn the_cli_defaults_have_no_model_and_keep_the_house_style_and_never_push_on() {
+    let (key, profile) = profile_for("codex", &[]);
+    assert_eq!(key, Profile::DEFAULTS_ID);
+    assert_eq!((profile.model, profile.effort, profile.setup.as_str()), (None, None, ""));
+    assert!(profile.never_push && profile.house_style);
+}
+
+#[test]
+fn the_yolo_line_names_the_worktree() {
+    assert_eq!(YOLO_LINE, "Meeseeks always run in YOLO, in their own worktree.");
+    assert_eq!(LEVEL, Level::Yolo);
 }

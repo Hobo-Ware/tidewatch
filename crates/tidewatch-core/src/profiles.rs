@@ -45,6 +45,27 @@ pub struct Profile {
     pub house_style: bool,
 }
 
+impl Profile {
+    /// The profile id a tab saves when its CLI ran on `defaults_for`, which `profiles.toml` has no key for.
+    pub const DEFAULTS_ID: &'static str = "default";
+
+    /// What a CLI runs with when no profile names it: its own model and effort, no setup.
+    #[must_use]
+    pub fn defaults_for(agent: &str, level: Level) -> Self {
+        Self {
+            name: "Default".to_owned(),
+            agent: agent.to_owned(),
+            model: None,
+            effort: None,
+            level,
+            setup: String::new(),
+            never_push: true,
+            extra_args: ArgList::default(),
+            house_style: true,
+        }
+    }
+}
+
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Profiles {
     #[serde(default)]
