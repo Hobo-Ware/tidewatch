@@ -10,6 +10,7 @@ use tidewatch_core::meeseeks::Meeseeks;
 use tidewatch_core::paths::TidewatchPaths;
 use tidewatch_core::prepare::{PrepareInput, prepare};
 use tidewatch_core::session_id;
+use tidewatch_core::setup_recipe::{self, Recipe};
 use tidewatch_core::start_base;
 use tidewatch_core::trust_apply::Grant;
 use tidewatch_core::worktree::{
@@ -70,7 +71,12 @@ fn run_open(spec: &OpenSpec) -> Result<Opened, OpenFailure> {
         }
         Target::Folder { dir } => (None, dir.clone(), dir.clone(), None),
     };
+    let (recipe, setup_notes) =
+        worktree.as_ref().map_or_else(Default::default, |made| set_up(&spec.paths, made));
     let Some(request) = &spec.agent else {
+        for note in &setup_notes {
+            eprintln!("tidewatch: worktree setup: {note}");
+        }
         return Ok(Opened { worktree, dir, started: None, base_note });
     };
     let tab_key = worktree
@@ -109,6 +115,12 @@ fn run_open(spec: &OpenSpec) -> Result<Opened, OpenFailure> {
     {
         listener.unregister_tab(spec.tab);
     }
+    let prepared = prepared.map(|mut prepared| {
+        prepared.notes.extend(setup_notes);
+        prepared.notes.extend(setup_recipe::install_through_links(&recipe).map(str::to_owned));
+        prepared.setup = setup_recipe::with_generator(&recipe, &prepared.setup);
+        prepared
+    });
     match prepared {
         Ok(prepared) => Ok(Opened {
             worktree,
@@ -131,6 +143,13 @@ fn run_open(spec: &OpenSpec) -> Result<Opened, OpenFailure> {
             None => OpenFailure::Nothing(e.to_string()),
         }),
     }
+}
+
+/// Copies and links what the repo's recipe lists into the new worktree. Never fails the tab.
+pub(crate) fn set_up(paths: &TidewatchPaths, made: &Worktree) -> (Recipe, Vec<String>) {
+    let recipe = setup_recipe::recipe_for(paths, &made.repo);
+    let outcome = setup_recipe::apply(&recipe, &made.repo, &made.path);
+    (recipe, outcome.notes)
 }
 
 pub(crate) fn inspect(jobs: &Jobs<Done>, ctx: &egui::Context, tab: u64, worktree: Worktree) {
@@ -281,6 +300,39 @@ mod tests {
         let path = &env.iter().find(|(k, _)| k == "PATH").unwrap().1;
         assert!(path.starts_with(&paths.guard_bin_dir().display().to_string()), "{path}");
         assert!(paths.house_style_file().is_file());
+    }
+
+    #[test]
+    fn a_new_worktree_gets_the_repos_recipe_before_the_agent_and_a_missing_file_is_only_a_note() {
+        let dir = tempfile::tempdir().unwrap();
+        let home = dir.path().canonicalize().unwrap();
+        let repo = throwaway_repo(&home);
+        std::fs::write(repo.join(".env"), "TOKEN=1\n").unwrap();
+        let paths = TidewatchPaths::new(&home);
+        setup_recipe::Store::update(&paths, |store| {
+            store.set(
+                &repo,
+                &Recipe {
+                    copy: vec![".env".into(), ".env.local".into()],
+                    generator: "echo hi".into(),
+                    ..Recipe::default()
+                },
+            );
+        })
+        .unwrap();
+        let jobs = Jobs::new();
+        open(
+            &jobs,
+            &egui::Context::default(),
+            spec(&paths, &repo, 8, Some(request(Level::Edits, ""))),
+        );
+        let Done::Opened { result: Ok(opened), .. } = next(&jobs) else {
+            panic!("expected Opened")
+        };
+        assert_eq!(std::fs::read_to_string(opened.dir.join(".env")).unwrap(), "TOKEN=1\n");
+        let prepared = opened.started.unwrap().prepared;
+        assert_eq!(prepared.notes, [".env.local is not in the main checkout, skipped"]);
+        assert!(prepared.setup.contains("echo hi"), "{}", prepared.setup);
     }
 
     #[test]

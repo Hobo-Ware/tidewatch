@@ -187,6 +187,14 @@ fn prepare_with(input: &PrepareInput, resume: Option<&str>) -> Result<Prepared, 
     }
     let mut env = merge_env(&ctx.env, &launch.env);
     env.extend(feed_env);
+    if input.worktree_tab {
+        let recipe = crate::setup_recipe::recipe_for(paths, input.repo);
+        for (key, value) in crate::setup_recipe::env_for(&recipe, input.repo) {
+            if !env.iter().any(|(set, _)| *set == key) {
+                env.push((key, value));
+            }
+        }
+    }
     let remote = ctx.remote.filter(|name| !input.agent.remote_args(name).is_empty());
     Ok(Prepared { launch, env, setup: profile.setup.clone(), notes, remote })
 }
@@ -328,7 +336,7 @@ fn is_tracked(dir: &Path, file: &str) -> bool {
 
 /// Adds `lines` to the repo's `info/exclude` unless they are there. For a linked worktree git keeps
 /// that file in the main repo, so the lines apply to every checkout of it.
-fn exclude_from_git(dir: &Path, lines: &[&str]) -> std::io::Result<()> {
+pub(crate) fn exclude_from_git(dir: &Path, lines: &[&str]) -> std::io::Result<()> {
     let out = Command::new("git")
         .arg("-C")
         .arg(dir)
@@ -1243,6 +1251,47 @@ mod tests {
             assert_eq!(checked_out_agent_branch(&linked).as_deref(), want, "{head}");
         }
         assert_eq!(checked_out_agent_branch(&dir.path().join("missing")), None);
+    }
+
+    #[test]
+    fn a_rust_repos_recipe_points_its_worktree_agents_at_the_main_checkouts_target() {
+        use crate::setup_recipe::{BUILD_DIR_VAR, Recipe, Store};
+        let fx = Fixture::new();
+        let repo = fx.dir.join("main-checkout");
+        std::fs::create_dir_all(&repo).unwrap();
+        std::fs::write(repo.join("Cargo.toml"), "[package]\n").unwrap();
+        let table = AgentTable::builtin();
+        let prepare_in = |worktree_tab| {
+            prepare(&PrepareInput {
+                paths: &fx.paths,
+                agent: table.get("claude").unwrap(),
+                profile: &profile("claude", Level::Edits),
+                repo: &repo,
+                tab: "brave-otter",
+                dir: &fx.dir,
+                worktree_tab,
+                task: "",
+                session_id: None,
+                remote: false,
+                meeseeks: false,
+                path_var: None,
+                listener: None,
+                trust: None,
+            })
+            .unwrap()
+        };
+        assert_eq!(env_of(&prepare_in(true), BUILD_DIR_VAR), None, "off until the recipe asks");
+        Store::update(&fx.paths, |store| {
+            store.set(&repo, &Recipe { shared_build_dir: true, ..Recipe::default() });
+        })
+        .unwrap();
+        let want = repo.join("target").display().to_string();
+        assert_eq!(env_of(&prepare_in(true), BUILD_DIR_VAR), Some(want.as_str()));
+        assert_eq!(
+            env_of(&prepare_in(false), BUILD_DIR_VAR),
+            None,
+            "a plain folder tab is left alone"
+        );
     }
 
     #[test]
