@@ -4,13 +4,14 @@ A running log of what got done, newest first. The plan lives in [PLAN.md](PLAN.m
 
 ## Status
 
-- **Current milestone:** v0.1.16: Meeseeks always run in YOLO with only the agent CLI to pick, and every agent may push its own branch, force included.
-- **Done:** Phases 0 to 10; v0.1.0 to v0.1.16 released (Homebrew cask, Linux tarball and AppImage); the K mark identity; the showcase page.
+- **Current milestone:** v0.1.17: plain-English decision cards with Go with your picks, outbound text guards and a comment guard, the done check, the worktree setup recipe with merged-tab cleanup, and a keyboard-only new tab form.
+- **Done:** Phases 0 to 10; v0.1.0 to v0.1.17 released (Homebrew cask, Linux tarball and AppImage); the K mark identity; the showcase page.
 - **Also:** six habit workflows are built in, and Build workflow from this session (palette; the agent proposes a workflow that opens as an unsaved draft), 2026-10-16. Restart to update keeps every shell and agent running (live handoff, 2026-10-15). The receiving side of stdusk's "Move tabs to Tidewatch" is built (#49).
 - **Next:** the diff widgets go teal (the graph already does on the side layout); commit messages that truncate early in the narrow tree; the divider position saved between runs; the site hero screenshot; the owner's live checks; Linux desktop runs.
 
 ## 2026-10-23
 
+- **v0.1.17.** Ships #92 (keyboard-only new tab form), #93 (decision cards, Go with your picks), #94 (outbound guards), #95 (worktree setup recipe, merged-tab cleanup), #96 (done check) and #97 (comment guard). The site's new-tab shot was retaken for the form's `Enter type` hint (2200x1375, 140 kB to 170 kB, PSNR 45.5 dB, throwaway acme-web repo and home); the other site shots show nothing these PRs changed.
 - **Comment guard (branch `comment-guard`).** The owner: "build 1 to 5 :P" (item 5 of the skill sweep). A Guards rule `comments` (on by default, per repo) with a classifier, a branch-diff sweep and the hooks described in PLAN.md's Deviations log; a chip `Comment guard: N flags` on the agent tab with the lines in a popover and an off switch per tab. Claude Code tabs get PostToolUse and Stop command hooks; the other CLIs are swept when their turn ends and told through the idle-only paste.
   Checked: table tests per syntax (Rust, TypeScript and JavaScript, Python, Ruby, shell, SQL), the diff sweep on a real temp branch, the hook output shape (`tests/guard_comments.rs` runs the real binary the way Claude Code runs a command hook), the host's sweep and paste, the strip headless, and a `TIDEWATCH_SCREENSHOT` run with `TIDEWATCH_FAKE_COMMENTS=1`. Not checked: a live Claude Code turn through the hooks (a throwaway home has no login), Codex, Gemini and Copilot, Linux.
 
