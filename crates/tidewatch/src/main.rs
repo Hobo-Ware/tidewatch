@@ -48,6 +48,8 @@ mod fonts;
 mod from_stdusk;
 mod general_view;
 mod github_view;
+mod guard;
+mod guards_view;
 mod handoff;
 mod history_pane;
 mod hotkey;
@@ -210,6 +212,9 @@ const APP_ID: &str = "tidewatch";
 const LINUX_ICON: &[u8] = include_bytes!("../../../assets/icon-512.png");
 
 fn main() -> eframe::Result<()> {
+    if std::env::args_os().nth(1).is_some_and(|flag| flag == guard::FLAG) {
+        std::process::exit(guard::run(&std::env::args_os().skip(2).collect::<Vec<_>>()));
+    }
     let args = cli::parse(std::env::args_os().skip(1));
     let home = std::env::var_os("HOME").map(PathBuf::from);
     let isolated = std::env::var_os("TIDEWATCH_HOME").is_some();

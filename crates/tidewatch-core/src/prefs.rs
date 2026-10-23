@@ -15,6 +15,7 @@ use serde::{Deserialize, Deserializer, Serialize};
 
 use crate::agents::Level;
 use crate::fsutil::write_atomic;
+use crate::guards::GuardPrefs;
 use crate::meeseeks::Criteria;
 use crate::paths::TidewatchPaths;
 
@@ -37,6 +38,8 @@ pub struct Prefs {
     pub new_tab: NewTabPrefs,
     #[serde(default)]
     pub tabs: TabsPrefs,
+    #[serde(default)]
+    pub guards: GuardPrefs,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -244,6 +247,7 @@ impl Default for Prefs {
             github: GithubPrefs::default(),
             new_tab: NewTabPrefs::default(),
             tabs: TabsPrefs::default(),
+            guards: GuardPrefs::default(),
         }
     }
 }
@@ -266,7 +270,8 @@ impl Prefs {
         Self::load_file(&paths.prefs_file())
     }
 
-    fn load_file(file: &Path) -> Self {
+    #[must_use]
+    pub fn load_file(file: &Path) -> Self {
         let text = match std::fs::read_to_string(file) {
             Ok(text) => text,
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Self::default(),

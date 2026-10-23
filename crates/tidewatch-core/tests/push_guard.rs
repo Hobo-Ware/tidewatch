@@ -4,7 +4,10 @@
 use std::path::Path;
 use std::process::{Command, Output};
 
+mod common;
+
 use tidewatch_core::agents::{AgentTable, ArgList, Level};
+use tidewatch_core::guard_shim::{GuardCtx, shims};
 use tidewatch_core::launch::{LaunchCtx, NO_PUSH_MESSAGE, ensure_no_push_helper, launch_command};
 use tidewatch_core::profiles::Profile;
 
@@ -243,4 +246,35 @@ fn without_a_branch_or_a_helper_nothing_can_be_pushed_and_a_normal_shell_still_p
 
     ok(&repo.work, &repo.normal, &["push", "-q", "origin", "HEAD:main"]);
     assert_eq!(repo.remote_sha("main"), Some(repo.head()), "a push from a normal shell moved main");
+}
+
+#[test]
+fn the_push_rule_holds_with_the_outbound_shims_in_front_of_git() {
+    if !git_available() {
+        eprintln!("git not found; skipping");
+        return;
+    }
+    let repo = Repo::new();
+    for (name, content) in shims() {
+        common::write_executable_from_a_child(&repo.helper_dir.join(name), &content);
+    }
+    let mut env = repo.guarded();
+    env.extend(
+        GuardCtx {
+            bin: "/nonexistent/tidewatch".into(),
+            config: repo.helper_dir.join("settings.toml"),
+            repo: repo.work.clone(),
+            cache_dir: repo.helper_dir.join("cache"),
+        }
+        .env(&repo.helper_dir),
+    );
+    ok(&repo.work, &env, &["commit", "-q", "--allow-empty", "-m", "three"]);
+    ok(&repo.work, &env, &["push", "origin", OWN]);
+    assert_eq!(repo.remote_sha(&format!("refs/heads/{OWN}")), Some(repo.head()));
+
+    let before = repo.remote_refs();
+    let out = git(&repo.work, &env, &["push", "origin", "HEAD:main"]);
+    assert!(!out.status.success(), "main stays refused");
+    assert!(String::from_utf8_lossy(&out.stderr).contains(NO_PUSH_MESSAGE));
+    assert_eq!(repo.remote_refs(), before);
 }
