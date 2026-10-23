@@ -13,6 +13,7 @@ use std::process::Command;
 use crate::agents::{Agent, Wiring};
 use crate::checklist;
 use crate::fsutil::write_atomic;
+use crate::guard_shim::{GuardCtx, ensure_shims};
 use crate::house_style;
 use crate::launch::{
     GEMINI_SETTINGS_PATH, HookListener, Launch, LaunchCtx, LaunchError, ensure_no_push_helper,
@@ -149,10 +150,14 @@ fn prepare_with(input: &PrepareInput, resume: Option<&str>) -> Result<Prepared, 
                 .and_then(|text| house_style::sync_copilot_instructions(&dir, &text));
             soft("Copilot instructions", synced)
         });
-    let guard_bin_dir = (input.worktree_tab && profile.never_push)
+    let guard_bin_dir = input
+        .worktree_tab
         .then(|| {
             let dir = paths.guard_bin_dir();
-            soft("push guard helper", ensure_no_push_helper(&dir).map(|_| dir))
+            let helper =
+                if profile.never_push { ensure_no_push_helper(&dir).map(|_| ()) } else { Ok(()) };
+            let shims = helper.and_then(|()| ensure_shims(&dir));
+            soft("guard helpers", shims.map(|()| dir))
         })
         .flatten();
 
@@ -217,11 +222,21 @@ fn context(
         copilot_instructions_dir,
         guard_bin_dir,
         push_branch: input.worktree_tab.then(|| checked_out_agent_branch(input.dir)).flatten(),
+        guards: input.worktree_tab.then(|| guard_ctx(input.paths, input.repo)).flatten(),
         env: input
             .path_var
             .map(|path| vec![("PATH".to_owned(), path.to_string_lossy().into_owned())])
             .unwrap_or_default(),
     }
+}
+
+fn guard_ctx(paths: &TidewatchPaths, repo: &Path) -> Option<GuardCtx> {
+    Some(GuardCtx {
+        bin: std::env::current_exe().ok()?,
+        config: paths.prefs_file(),
+        repo: repo.to_path_buf(),
+        cache_dir: paths.guard_cache_dir(),
+    })
 }
 
 fn checked_out_agent_branch(dir: &Path) -> Option<String> {
@@ -562,17 +577,37 @@ mod tests {
     }
 
     #[test]
-    fn without_never_push_or_outside_a_worktree_there_is_no_guard_and_path_is_the_given_one() {
+    fn without_never_push_there_is_no_push_guard_but_the_outbound_shims_stay() {
         let fx = Fixture::new();
         let mut open = profile("claude", Level::Edits);
         open.never_push = false;
         let prepared = fx.run("claude", &open, true, "", None).unwrap();
+        let dir = fx.paths.guard_bin_dir();
         assert_eq!(env_of(&prepared, "GIT_CONFIG_COUNT"), None);
-        assert_eq!(env_of(&prepared, "PATH"), Some("/opt/homebrew/bin:/usr/bin:/bin"));
-        assert!(!fx.paths.guard_bin_dir().exists());
+        assert!(!dir.join(crate::launch::NO_PUSH_HELPER_NAME).exists());
+        assert!(dir.join("git").is_file() && dir.join("gh").is_file());
+        assert_eq!(
+            env_of(&prepared, "PATH"),
+            Some(format!("{}:/opt/homebrew/bin:/usr/bin:/bin", dir.display()).as_str())
+        );
+        assert_eq!(
+            env_of(&prepared, crate::guard_run::CONFIG_ENV),
+            Some(fx.paths.prefs_file().display().to_string().as_str())
+        );
+        assert_eq!(env_of(&prepared, crate::guard_run::REPO_ENV), Some("/work/web"));
+        assert_eq!(
+            env_of(&prepared, crate::guard_run::DIR_ENV),
+            Some(dir.display().to_string().as_str())
+        );
+    }
 
+    #[test]
+    fn outside_a_worktree_there_is_no_guard_and_path_is_the_given_one() {
+        let fx = Fixture::new();
         let other = fx.run("claude", &profile("claude", Level::Edits), false, "", None).unwrap();
         assert_eq!(env_of(&other, "GIT_CONFIG_COUNT"), None);
+        assert_eq!(env_of(&other, "PATH"), Some("/opt/homebrew/bin:/usr/bin:/bin"));
+        assert_eq!(env_of(&other, crate::guard_run::CONFIG_ENV), None);
         assert!(!fx.paths.guard_bin_dir().exists());
     }
 

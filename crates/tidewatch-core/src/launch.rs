@@ -16,6 +16,7 @@ use std::path::{Path, PathBuf};
 use serde_json::{Value, json};
 
 use crate::agents::{Agent, Level, Wiring};
+use crate::guard_shim::GuardCtx;
 use crate::listener::ASK_TIMEOUT;
 use crate::profiles::Profile;
 
@@ -90,6 +91,8 @@ pub struct LaunchCtx {
     pub guard_bin_dir: Option<PathBuf>,
     /// The tab's own `agent/<name>` branch, the only ref the push guard lets through.
     pub push_branch: Option<String>,
+    /// Wakes the `git` and `gh` shims in `guard_bin_dir`, see `guard_shim`.
+    pub guards: Option<GuardCtx>,
     /// The environment the agent would otherwise get. Read for `GIT_CONFIG_COUNT` and `PATH`.
     pub env: Vec<(String, String)>,
 }
@@ -183,6 +186,20 @@ pub fn launch_command(
     }
     if profile.never_push && ctx.worktree_tab {
         env.extend(guard_env(&ctx.env, ctx.guard_bin_dir.as_deref(), ctx.push_branch.as_deref()));
+    }
+    if ctx.worktree_tab
+        && let (Some(guards), Some(dir)) = (&ctx.guards, ctx.guard_bin_dir.as_deref())
+    {
+        env.extend(guards.env(dir));
+        if !env.iter().any(|(k, _)| k == "PATH") {
+            let inherited = std::env::var("PATH").map(|path| vec![("PATH".to_owned(), path)]);
+            let base = if ctx.env.iter().any(|(k, _)| k == "PATH") {
+                ctx.env.clone()
+            } else {
+                inherited.unwrap_or_default()
+            };
+            env.extend(path_with_first(&base, dir));
+        }
     }
     args.extend(profile.extra_args.iter().cloned());
 
@@ -397,14 +414,20 @@ pub fn guard_env(
         (format!("GIT_CONFIG_VALUE_{count}"), String::new()),
         (PUSH_BRANCH_ENV.to_owned(), push_branch.unwrap_or_default().to_owned()),
     ];
-    if let Some(dir) = guard_bin_dir {
-        let mut dirs = vec![dir.to_path_buf()];
-        dirs.extend(var("PATH").iter().flat_map(|path| std::env::split_paths(path)));
-        if let Ok(path) = std::env::join_paths(dirs) {
-            env.push(("PATH".to_owned(), path.to_string_lossy().into_owned()));
-        }
-    }
+    env.extend(guard_bin_dir.and_then(|dir| path_with_first(base_env, dir)));
     env
+}
+
+/// `PATH` from `base_env` with `dir` in front.
+pub(crate) fn path_with_first(
+    base_env: &[(String, String)],
+    dir: &Path,
+) -> Option<(String, String)> {
+    let path = base_env.iter().find(|(k, _)| k == "PATH").map(|(_, v)| v.as_str());
+    let mut dirs = vec![dir.to_path_buf()];
+    dirs.extend(path.iter().flat_map(|path| std::env::split_paths(path)));
+    let joined = std::env::join_paths(dirs).ok()?;
+    Some(("PATH".to_owned(), joined.to_string_lossy().into_owned()))
 }
 
 /// Content of the `git-remote-tidewatch-no-push` helper, a git remote helper (`gitremote-helpers`):
@@ -940,6 +963,49 @@ mod tests {
         let mut open = guarded.clone();
         open.never_push = false;
         assert_eq!(env_of(&run("claude", &open, &full_ctx()), "GIT_CONFIG_COUNT"), None);
+    }
+
+    fn guard_ctx() -> GuardCtx {
+        GuardCtx {
+            bin: "/app/tidewatch".into(),
+            config: "/cfg/settings.toml".into(),
+            repo: "/work/web".into(),
+            cache_dir: "/state/guard-cache".into(),
+        }
+    }
+
+    #[test]
+    fn the_outbound_guards_name_the_settings_and_put_the_shims_first_in_worktree_tabs_only() {
+        let open = profile("claude", Level::Plan);
+        let ctx = LaunchCtx { guards: Some(guard_ctx()), ..full_ctx() };
+        let launch = run("claude", &open, &ctx);
+        assert_eq!(env_of(&launch, "TIDEWATCH_GUARD_CONFIG"), Some("/cfg/settings.toml"));
+        assert_eq!(env_of(&launch, "TIDEWATCH_GUARD_BIN"), Some("/app/tidewatch"));
+        assert_eq!(env_of(&launch, "TIDEWATCH_GUARD_REPO"), Some("/work/web"));
+        assert_eq!(env_of(&launch, "TIDEWATCH_GUARD_DIR"), Some("/state/guard-bin"));
+        assert_eq!(env_of(&launch, "PATH"), Some("/state/guard-bin:/usr/bin:/bin"));
+        assert_eq!(env_of(&launch, "GIT_CONFIG_COUNT"), None);
+
+        let main_tab = LaunchCtx { worktree_tab: false, ..ctx.clone() };
+        assert_eq!(env_of(&run("claude", &open, &main_tab), "TIDEWATCH_GUARD_CONFIG"), None);
+        let no_dir = LaunchCtx { guard_bin_dir: None, ..ctx.clone() };
+        let launch = run("claude", &open, &no_dir);
+        assert_eq!(env_of(&launch, "TIDEWATCH_GUARD_CONFIG"), None);
+        assert_eq!(env_of(&launch, "PATH"), None);
+        assert_eq!(env_of(&run("claude", &open, &full_ctx()), "TIDEWATCH_GUARD_CONFIG"), None);
+    }
+
+    #[test]
+    fn the_push_guard_and_the_outbound_guards_share_one_path_entry() {
+        let mut both = profile("claude", Level::Plan);
+        both.never_push = true;
+        let ctx = LaunchCtx { guards: Some(guard_ctx()), ..full_ctx() };
+        let launch = run("claude", &both, &ctx);
+        let paths: Vec<&str> =
+            launch.env.iter().filter(|(k, _)| k == "PATH").map(|(_, v)| v.as_str()).collect();
+        assert_eq!(paths, ["/state/guard-bin:/usr/bin:/bin"]);
+        assert_eq!(env_of(&launch, "GIT_CONFIG_COUNT"), Some("1"));
+        assert_eq!(env_of(&launch, "TIDEWATCH_GUARD_CONFIG"), Some("/cfg/settings.toml"));
     }
 
     #[test]

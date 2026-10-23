@@ -118,6 +118,12 @@ impl TidewatchPaths {
         self.state_dir().join("guard-bin")
     }
 
+    /// Where the guard shims remember whether a repo is public.
+    #[must_use]
+    pub fn guard_cache_dir(&self) -> PathBuf {
+        self.state_dir().join("guard-cache")
+    }
+
     #[must_use]
     pub fn state_dir(&self) -> PathBuf {
         self.root.join(".state")

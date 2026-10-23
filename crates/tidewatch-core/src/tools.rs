@@ -3,7 +3,7 @@
 //! Every call blocks until the child exits: call these from a background thread, never the UI
 //! thread. Children run with prompts off and stdin closed, so a missing login fails fast instead of
 //! waiting for a keypress that nobody can type. They also run in Tidewatch's own environment, not an
-//! agent tab's, so the never-push guard (D7) does not apply to them.
+//! agent tab's, so the never-push guard (D7) and the outbound guards do not apply to them.
 //!
 //! `gh` messages were checked against gh 2.98.0, `git` against 2.55.0.
 
@@ -43,7 +43,8 @@ impl Tools {
             .env("GIT_TERMINAL_PROMPT", "0")
             .env("GH_PROMPT_DISABLED", "1")
             .env("GH_NO_UPDATE_NOTIFIER", "1")
-            .env("NO_COLOR", "1");
+            .env("NO_COLOR", "1")
+            .env_remove(crate::guard_run::CONFIG_ENV);
         if let Some(path) = &self.path {
             command.env("PATH", path);
         }
@@ -142,6 +143,17 @@ mod tests {
 
     fn failed(stdout: &str, stderr: &str) -> Finished {
         Finished { success: false, stdout: stdout.into(), stderr: stderr.into() }
+    }
+
+    #[test]
+    fn tidewatch_own_commands_never_carry_the_agent_guard_setting() {
+        let tools = Tools::with_path("/usr/bin");
+        for command in [tools.git(Path::new("/w")), tools.gh(Path::new("/w"))] {
+            let removed = command
+                .get_envs()
+                .find(|(key, _)| *key == std::ffi::OsStr::new(crate::guard_run::CONFIG_ENV));
+            assert_eq!(removed, Some((std::ffi::OsStr::new(crate::guard_run::CONFIG_ENV), None)));
+        }
     }
 
     #[test]
