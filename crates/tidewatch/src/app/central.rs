@@ -22,8 +22,9 @@ use crate::tab_view::TabView;
 use crate::tabs::Action;
 use crate::workflow_run::TabRun;
 use crate::{
-    agent_status_line, brand, delivery_view, end_block_view, layout, overview, overview_view,
-    reader_glue, stepper_view, takeover_view, timeline, welcome_view, workflow_start_view,
+    agent_status_line, brand, delivery_view, done_check_view, end_block_view, layout, overview,
+    overview_view, reader_glue, stepper_view, takeover_view, timeline, welcome_view,
+    workflow_start_view,
 };
 
 const EMPTY_PANELS_H: f32 = 200.0;
@@ -40,6 +41,7 @@ impl Tidewatch {
             .collect();
         let mut overview = overview::build(places);
         self.add_pr_pills(&mut overview);
+        self.add_done_check_tags(&mut overview);
         self.add_looks(&mut overview);
         overview
     }
@@ -237,6 +239,10 @@ impl Tidewatch {
         let end_band = end.as_ref().map(|(block, open)| {
             layout::band_below(&mut areas.terminal, end_block_view::height(block, *open))
         });
+        let check = self.done_check_look(active_id);
+        let check_band = check
+            .as_ref()
+            .map(|look| layout::band_below(&mut areas.terminal, done_check_view::height(look)));
         let card = self.flow.tab(active_id).and_then(|state| {
             state
                 .delivery
@@ -260,6 +266,9 @@ impl Tidewatch {
             && let Some(agent) = self.tabs.active_pane_mut().agent.as_mut()
         {
             agent.run.end_open = !agent.run.end_open;
+        }
+        if let (Some(look), Some(band)) = (&check, check_band) {
+            self.show_done_check(ui, band, look, active_id, ctx, now);
         }
         if let (Some((commits, building)), Some(band)) = (card, band)
             && delivery_view::show_card(ui, band, commits, building).is_some()

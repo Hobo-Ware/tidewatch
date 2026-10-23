@@ -207,6 +207,7 @@ impl Tidewatch {
         self.pr.forget(id);
         self.runs.forget(id);
         self.meeseeks.forget(id);
+        self.done_check.forget(id);
     }
 
     pub(super) fn answer_close(&mut self, answer: Answer, ctx: &egui::Context) {

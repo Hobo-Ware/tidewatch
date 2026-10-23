@@ -8,6 +8,7 @@ mod bar;
 mod build_workflow;
 mod central;
 mod dev;
+mod done_check;
 mod draft;
 mod flow;
 mod frame;
@@ -69,6 +70,7 @@ use crate::dev_takeover::DevTakeover;
 use crate::dev_view::{DevKeys, DevPaste, DevView};
 use crate::dev_workflow::DevWorkflow;
 use crate::dev_worktree::DevWorktree;
+use crate::done_check_glue;
 use crate::due;
 use crate::flow::Flow;
 use crate::fonts;
@@ -164,6 +166,7 @@ pub(crate) struct Tidewatch {
     job_live: job_glue::Host,
     avatar_live: avatar_glue::Host,
     meeseeks: meeseeks_glue::Host,
+    done_check: done_check_glue::Host,
     progress_ui: progress_view::Memory,
     checklist: overview_checklist::Host,
     snoozes: due::Snoozes,
@@ -255,6 +258,7 @@ impl Tidewatch {
         let job_live = job_glue::Host::from_env(paths.is_some() && screenshot.is_none());
         let avatar_live = avatar_glue::Host::from_env(paths.is_some() && screenshot.is_none());
         let meeseeks = meeseeks_glue::Host::from_env(paths.as_ref(), screenshot.is_none());
+        let done_check = done_check_glue::Host::from_env(loaded.done_check.enabled);
         let dev_view = DevView::from_env();
         let trust = Trust::new(paths.as_ref(), cli_home);
         let dev_session = DevSession::from_env();
@@ -314,6 +318,7 @@ impl Tidewatch {
             job_live,
             avatar_live,
             meeseeks,
+            done_check,
             progress_ui: progress_view::Memory::default(),
             checklist: overview_checklist::Host::new(),
             snoozes: due::Snoozes::default(),

@@ -81,6 +81,7 @@ impl Tidewatch {
         self.drive_avatar_choice(ctx);
         self.drive_jobs(ctx);
         self.drive_meeseeks(ctx, now);
+        self.drive_done_check(ctx);
         self.drive_checklist(ctx, now);
         self.drive_due(ctx);
         self.drive_dev_scheduled(ctx);

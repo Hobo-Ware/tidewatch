@@ -50,6 +50,7 @@ fn general(restore: bool, resume: ResumeAgents, login_offered: bool) -> General 
         github: tidewatch_core::prefs::GithubPrefs::default(),
         new_tab: tidewatch_core::prefs::NewTabPrefs::default(),
         tabs: tidewatch_core::prefs::TabsPrefs::default(),
+        done_check: tidewatch_core::prefs::DoneCheckPrefs::default(),
         guards: tidewatch_core::guards::GuardPrefs::default(),
         guards_repo: None,
         profiles: Vec::new(),
@@ -247,6 +248,38 @@ fn the_window_section_sits_under_the_startup_card_and_reports_its_own_change() {
         found.iter().any(|action| matches!(action, Action::Window(prefs) if *prefs == quake_off)),
         "no Window action turned the drop-down off"
     );
+}
+
+fn done_check_frame(ctx: &egui::Context, on: bool, events: Vec<Event>) -> Option<bool> {
+    let raw = RawInput {
+        screen_rect: Some(Rect::from_min_size(pos2(0.0, 0.0), Vec2::new(900.0, 300.0))),
+        focused: true,
+        events,
+        ..RawInput::default()
+    };
+    let mut answer = None;
+    let _ = ctx.run_ui(raw, |ui| answer = crate::general_view::done_check_card(ui, on));
+    answer
+}
+
+#[test]
+fn the_done_check_card_reports_the_switch_and_its_new_value() {
+    for on in [true, false] {
+        let ctx = egui::Context::default();
+        ctx.set_fonts(crate::fonts::definitions());
+        done_check_frame(&ctx, on, vec![]);
+        let mut found = Vec::new();
+        for y in (10..120).step_by(6) {
+            for x in (500..880).step_by(10) {
+                let at = pos2(x as f32, y as f32);
+                done_check_frame(&ctx, on, vec![Event::PointerMoved(at)]);
+                done_check_frame(&ctx, on, vec![press(at, true)]);
+                found.extend(done_check_frame(&ctx, on, vec![press(at, false)]));
+            }
+        }
+        assert!(found.contains(&!on), "switch from {on}: {found:?}");
+        assert!(!found.contains(&on), "switch from {on}: {found:?}");
+    }
 }
 
 #[test]

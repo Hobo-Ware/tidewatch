@@ -310,12 +310,15 @@ fn card(ui: &mut egui::Ui, rect: Rect, row: &Row, in_needs_group: bool) -> bool 
     let clock =
         painter.layout_no_wrap(fmt_elapsed(row.elapsed), FontId::monospace(11.0), brand::MUTED);
     let clock_left = inner.right() - clock.size().x;
-    if let Some((tone, text)) = &row.pr {
-        let ink = tone_ink(*tone);
+    let mut pill_right = tag_right;
+    let pills = row.pr.iter().map(|(tone, text)| (*tone, text.as_str())).chain(row.done_check);
+    for (tone, text) in pills {
+        let ink = tone_ink(tone);
         let width =
-            painter.layout_no_wrap(text.clone(), FontId::proportional(11.5), ink).size().x + 20.0;
-        if tag_right + 8.0 + width < clock_left - 8.0 {
-            paint_pill(&painter, tag_right + 8.0, tag_mid, text, ink);
+            painter.layout_no_wrap(text.to_owned(), FontId::proportional(11.5), ink).size().x
+                + 20.0;
+        if pill_right + 8.0 + width < clock_left - 8.0 {
+            pill_right = paint_pill(&painter, pill_right + 8.0, tag_mid, text, ink);
         }
     }
     painter.galley(pos2(clock_left, tag_mid - clock.size().y / 2.0), clock, brand::MUTED);
@@ -477,6 +480,7 @@ mod tests {
             end_block: None,
             elapsed: 242.0,
             pr: None,
+            done_check: None,
             look: None,
             job_line: None,
             avatar: None,

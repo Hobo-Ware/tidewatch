@@ -32,6 +32,8 @@ pub(crate) struct Row {
     pub(crate) elapsed: f64,
     /// The tab's pull request: `#42 checks failed`, with its tone.
     pub(crate) pr: Option<(tidewatch_core::pr_status::Tone, String)>,
+    /// What the done check found, when it ran on the tab.
+    pub(crate) done_check: Option<(tidewatch_core::pr_status::Tone, &'static str)>,
     /// What the tab's ledger says, when it has one.
     pub(crate) look: Option<Look>,
     /// The tab's leading job as `21% \u{b7} 1h 52m`, when it has one.
@@ -147,6 +149,7 @@ pub(crate) fn collect<T>(
                 end_block: agent.run.end_block().cloned(),
                 elapsed: agent.run.elapsed(now),
                 pr: None,
+                done_check: None,
                 look: None,
                 job_line: None,
                 avatar: None,
@@ -279,6 +282,7 @@ mod tests {
             end_block: None,
             elapsed: 0.0,
             pr: None,
+            done_check: None,
             look: None,
             job_line: None,
             avatar: None,

@@ -2,7 +2,9 @@
 
 use egui::Ui;
 use tidewatch_core::guards::GuardPrefs;
-use tidewatch_core::prefs::{GithubPrefs, NewTabPrefs, ParkAfter, ResumeAgents, TabsPrefs};
+use tidewatch_core::prefs::{
+    DoneCheckPrefs, GithubPrefs, NewTabPrefs, ParkAfter, ResumeAgents, TabsPrefs,
+};
 
 use crate::github_view;
 use crate::guards_view;
@@ -25,6 +27,7 @@ pub(crate) struct General {
     pub(crate) github: GithubPrefs,
     pub(crate) new_tab: NewTabPrefs,
     pub(crate) tabs: TabsPrefs,
+    pub(crate) done_check: DoneCheckPrefs,
     pub(crate) guards: GuardPrefs,
     /// The repo on show, when it is one: a guard rule can be set for it alone.
     pub(crate) guards_repo: Option<guards_view::Repo>,
@@ -77,6 +80,7 @@ pub(crate) fn page(
     )
     .map(Action::NewTab);
     let tabs = tabs_card(ui, general.tabs).map(Action::Tabs);
+    let done_check = done_check_card(ui, general.done_check.enabled).map(Action::DoneCheck);
     let github = github_view::card(ui, general.github).map(Action::Github);
     let guards =
         guards_view::card(ui, &general.guards, general.guards_repo.as_ref()).map(Action::Guards);
@@ -89,6 +93,7 @@ pub(crate) fn page(
         .or(window)
         .or(new_tab)
         .or(tabs)
+        .or(done_check)
         .or(github)
         .or(guards)
         .or(updates)
@@ -108,6 +113,19 @@ fn tabs_card(ui: &mut Ui, current: TabsPrefs) -> Option<TabsPrefs> {
         );
     });
     picked.map(|index| TabsPrefs { park_after: ParkAfter::ALL[index] })
+}
+
+pub(crate) fn done_check_card(ui: &mut Ui, on: bool) -> Option<bool> {
+    let mut changed = None;
+    section(ui, "Done check", |ui| {
+        changed = switch_row(
+            ui,
+            "Check the work when an agent says it is done",
+            "Looks at whether the work is committed, pushed and its pull request is green, and shows Done, Blocked or Not verified on the tab. It never changes anything.",
+            on,
+        );
+    });
+    changed
 }
 
 fn resume_row(ui: &mut Ui, current: ResumeAgents, enabled: bool) -> Option<ResumeAgents> {

@@ -42,6 +42,8 @@ pub(crate) enum Action {
     /// The New tabs card changed something: all of its choices. Applies at once too.
     NewTab(tidewatch_core::prefs::NewTabPrefs),
     Tabs(tidewatch_core::prefs::TabsPrefs),
+    /// The Done check switch moved: the new value. Applies at once too.
+    DoneCheck(bool),
     /// The GitHub card changed something: all of its choices. Applies at once too.
     Github(tidewatch_core::prefs::GithubPrefs),
     /// A Guards switch or the private repo list changed. Applies at once too.
