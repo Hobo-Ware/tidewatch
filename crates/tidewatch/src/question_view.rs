@@ -11,7 +11,7 @@ use egui::{
     Modifiers, Painter, Pos2, Rect, Response, Sense, Stroke, StrokeKind, TextEdit, Ui, UiBuilder,
     pos2, vec2,
 };
-use tidewatch_core::question::{QuestionOption, Select};
+use tidewatch_core::question::{Question, QuestionOption, Select};
 
 use crate::brand;
 use crate::question_card::{Card, CardKey, Effect, MAX_KEYED, Row};
@@ -47,6 +47,8 @@ fn teal_wash() -> Color32 {
 pub(crate) struct Live {
     pub(crate) seq: u64,
     pub(crate) card: Card,
+    /// How many waiting questions of the tab the agent's picks answer, set before each draw.
+    pub(crate) picks: usize,
     height: f32,
     focus_other: bool,
     focused_once: bool,
@@ -61,6 +63,7 @@ impl Live {
         Self {
             seq,
             card,
+            picks: 0,
             height: ESTIMATED_H,
             focus_other: false,
             focused_once: false,
@@ -119,6 +122,7 @@ fn read_keys(ui: &mut Ui, plain: bool) -> Vec<CardKey> {
             (Key::Space, CardKey::Space),
             (Key::ArrowUp, CardKey::Up),
             (Key::ArrowDown, CardKey::Down),
+            (Key::G, CardKey::Picks),
         ] {
             if input.consume_key(Modifiers::NONE, key) {
                 keys.push(mapped);
@@ -152,6 +156,7 @@ enum Mark {
 struct OptionLayout {
     label: Arc<Galley>,
     description: Option<Arc<Galley>>,
+    tradeoff: Option<Arc<Galley>>,
     recommended: Option<Arc<Galley>>,
     height: f32,
 }
@@ -167,10 +172,15 @@ fn layout_option(painter: &Painter, option: &QuestionOption, text_w: f32) -> Opt
         .description
         .as_ref()
         .map(|text| painter.layout(text.clone(), body(13.0), brand::SOFT, text_w));
+    let tradeoff = option
+        .tradeoff
+        .as_ref()
+        .map(|text| painter.layout(text.clone(), body(12.5), brand::MUTED, text_w));
     let height = ROW_PAD_Y * 2.0
         + label.size().y.max(18.0)
-        + description.as_ref().map_or(0.0, |text| 2.0 + text.size().y);
-    OptionLayout { label, description, recommended, height }
+        + description.as_ref().map_or(0.0, |text| 2.0 + text.size().y)
+        + tradeoff.as_ref().map_or(0.0, |text| 2.0 + text.size().y);
+    OptionLayout { label, description, tradeoff, recommended, height }
 }
 
 fn paint_mark(painter: &Painter, at: Pos2, mark: Mark, selected: bool) {
@@ -254,12 +264,13 @@ fn paint_option(
             brand::TEAL_TEXT,
         );
     }
+    let mut below = top + layout.label.size().y.max(18.0);
     if let Some(text) = &layout.description {
-        painter.galley(
-            pos2(text_x, top + layout.label.size().y.max(18.0) + 2.0),
-            text.clone(),
-            brand::SOFT,
-        );
+        painter.galley(pos2(text_x, below + 2.0), text.clone(), brand::SOFT);
+        below += 2.0 + text.size().y;
+    }
+    if let Some(text) = &layout.tradeoff {
+        painter.galley(pos2(text_x, below + 2.0), text.clone(), brand::MUTED);
     }
     if pick.number <= MAX_KEYED {
         painter.text(
@@ -400,7 +411,11 @@ fn other_field(ui: &mut Ui, live: &mut Live, id: Id, field: Rect) {
 fn draw_multi(ui: &mut Ui, live: &Live) -> Option<Row> {
     let width = ui.available_width();
     let card = &live.card;
-    let any_description = card.question().options.iter().any(|option| option.description.is_some());
+    let any_description = card
+        .question()
+        .options
+        .iter()
+        .any(|option| option.description.is_some() || option.tradeoff.is_some());
     let columns = if any_description { 1 } else { 2 };
     let tile_w = (width - ROW_GAP * (columns as f32 - 1.0)) / columns as f32;
     let mut clicked = None;
@@ -434,6 +449,18 @@ fn draw_multi(ui: &mut Ui, live: &Live) -> Option<Row> {
         ui.add_space(ROW_GAP);
     }
     clicked
+}
+
+/// The big line of the card and the smaller one under it: the agent's decision sentence over its
+/// question, or the question alone.
+fn headlines(question: &Question) -> (String, Option<String>) {
+    match &question.decision {
+        Some(decision) if *decision != question.text => {
+            (decision.clone(), Some(question.text.clone()))
+        }
+        Some(decision) => (decision.clone(), None),
+        None => (question.text.clone(), None),
+    }
 }
 
 fn header_row(ui: &mut Ui, live: &Live, profile: &str) {
@@ -493,6 +520,10 @@ fn hint_job(live: &Live) -> LayoutJob {
     job.append(&pick, 0.0, keys.clone());
     job.append(verb, 0.0, words.clone());
     job.append(" \u{b7} ", 0.0, words.clone());
+    if live.picks > 0 {
+        job.append("G", 0.0, keys.clone());
+        job.append(" picks \u{b7} ", 0.0, words.clone());
+    }
     if card.is_last() {
         job.append(&format!("{}+Enter", command_label()), 0.0, keys);
         job.append(" send", 0.0, words);
@@ -525,6 +556,13 @@ fn footer(ui: &mut Ui, live: &mut Live, profile: &str) -> Effect {
         }
         if quiet_button(ui, &format!("Skip, let {profile} pick"), true, Size::Compact).clicked() {
             effect = Effect::Skip;
+        }
+        if live.picks > 0
+            && quiet_button(ui, "Go with your picks", true, Size::Compact)
+                .on_hover_text(format!("Answer every waiting question with {profile}'s pick"))
+                .clicked()
+        {
+            effect = Effect::GoWithPicks;
         }
         let galley = ui.painter().layout_job(hint_job(live));
         ui.add_space((ui.available_width() - galley.size().x).max(0.0));
@@ -568,10 +606,14 @@ pub(crate) fn live_card(
         ui.set_width(width - 2.0 * f32::from(CARD_PAD_X));
         header_row(ui, live, profile);
         ui.add_space(8.0);
-        let question = live.card.question().text.clone();
+        let (headline, detail) = headlines(live.card.question());
         ui.label(
-            egui::RichText::new(question).font(crate::screen_kit::heading(15.5)).color(brand::TEXT),
+            egui::RichText::new(headline).font(crate::screen_kit::heading(15.5)).color(brand::TEXT),
         );
+        if let Some(detail) = detail {
+            ui.add_space(2.0);
+            ui.label(egui::RichText::new(detail).font(body(13.0)).color(brand::MUTED));
+        }
         ui.add_space(10.0);
         egui::ScrollArea::vertical()
             .id_salt(("question-list", live.seq, live.card.step()))
@@ -625,7 +667,9 @@ pub(crate) fn live_card(
             if keyed == Effect::TypeOther {
                 live.focus_other = true;
             }
-            if matches!(keyed, Effect::Send(_)) {
+            if matches!(keyed, Effect::Send(_))
+                || matches!(keyed, Effect::GoWithPicks) && live.picks > 0
+            {
                 effect = keyed;
             }
         }
@@ -817,10 +861,9 @@ pub(crate) fn permission_card(
 mod tests {
     use super::*;
     use egui::{Event, PointerButton, RawInput};
-    use tidewatch_core::question::Question;
 
     fn option(label: &str) -> QuestionOption {
-        QuestionOption { label: label.into(), description: None }
+        QuestionOption::new(label)
     }
 
     fn live() -> Live {
@@ -830,12 +873,14 @@ mod tests {
                 Question {
                     text: "Where?".into(),
                     header: Some("Retry".into()),
+                    decision: None,
                     select: Select::Single,
-                    options: vec![option("Stage (Recommended)"), option("Run")],
+                    options: vec![option("Stage"), option("Run")],
                 },
                 Question {
                     text: "Which?".into(),
                     header: None,
+                    decision: None,
                     select: Select::Multi,
                     options: vec![option("Unit"), option("Lints"), option("UI")],
                 },
@@ -982,6 +1027,98 @@ mod tests {
         assert!(screen.live.card.other_is_on());
         assert_eq!(screen.live.card.typed_mut(), "45");
         assert!(!screen.live.card.is_picked(0));
+    }
+
+    fn picks_screen() -> Screen {
+        let mut screen = Screen::new();
+        screen.live = Live::new(
+            8,
+            Card::new(vec![Question {
+                text: "Which storage?".into(),
+                header: None,
+                decision: Some("Pick where the retry count is kept.".into()),
+                select: Select::Single,
+                options: vec![
+                    QuestionOption {
+                        tradeoff: Some("Simple, but every stage shares one count.".into()),
+                        ..option("On the run")
+                    },
+                    QuestionOption {
+                        tradeoff: Some("A bit more code, each stage counts alone.".into()),
+                        top_pick: true,
+                        ..option("On the stage")
+                    },
+                ],
+            }]),
+        );
+        screen
+    }
+
+    #[test]
+    fn the_pick_is_preselected_and_enter_with_the_command_key_sends_it_untouched() {
+        let mut screen = picks_screen();
+        screen.settle();
+        assert!(screen.live.card.is_picked(1));
+        assert_eq!(screen.live.card.cursor(), 1);
+        screen.frame(vec![key(Key::Enter, Modifiers::COMMAND)]);
+        let Some(Effect::Send(given)) =
+            screen.effects.iter().find(|e| matches!(e, Effect::Send(_)))
+        else {
+            panic!("no send")
+        };
+        assert_eq!(given[0].picked, [1]);
+    }
+
+    #[test]
+    fn g_goes_with_the_picks_only_when_the_tab_has_some_waiting() {
+        let mut screen = picks_screen();
+        screen.settle();
+        screen.frame(vec![key(Key::G, Modifiers::NONE)]);
+        assert!(!screen.effects.contains(&Effect::GoWithPicks));
+        screen.live.picks = 2;
+        screen.frame(vec![key(Key::G, Modifiers::NONE)]);
+        assert!(screen.effects.contains(&Effect::GoWithPicks));
+    }
+
+    #[test]
+    fn the_decision_and_the_tradeoffs_make_the_card_taller_than_the_bare_one() {
+        let mut decided = picks_screen();
+        decided.settle();
+        let bare = {
+            let mut screen = picks_screen();
+            screen.live = Live::new(
+                9,
+                Card::new(vec![Question {
+                    text: "Which storage?".into(),
+                    header: None,
+                    decision: None,
+                    select: Select::Single,
+                    options: vec![option("On the run"), option("On the stage")],
+                }]),
+            );
+            screen.settle();
+            screen.live.height
+        };
+        assert!(decided.live.height > bare, "{} vs {bare}", decided.live.height);
+    }
+
+    #[test]
+    fn the_headline_is_the_decision_over_the_question_or_the_question_alone() {
+        let mut q = Question {
+            text: "Which storage?".into(),
+            header: None,
+            decision: None,
+            select: Select::Single,
+            options: vec![option("a"), option("b")],
+        };
+        assert_eq!(headlines(&q), ("Which storage?".to_owned(), None));
+        q.decision = Some("Pick where the count lives.".into());
+        assert_eq!(
+            headlines(&q),
+            ("Pick where the count lives.".to_owned(), Some("Which storage?".to_owned()))
+        );
+        q.decision = Some("Which storage?".into());
+        assert_eq!(headlines(&q), ("Which storage?".to_owned(), None));
     }
 
     #[test]

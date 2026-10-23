@@ -34,6 +34,8 @@ pub(crate) enum Effect {
     Skip,
     /// The text field of "Something else" should take the keyboard.
     TypeOther,
+    /// Answer every waiting question with the agent's picks.
+    GoWithPicks,
 }
 
 /// The keys the card reads while it has the keyboard.
@@ -45,6 +47,7 @@ pub(crate) enum CardKey {
     CmdEnter,
     Up,
     Down,
+    Picks,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -59,9 +62,20 @@ impl Card {
     pub(crate) fn new(questions: Vec<Question>) -> Self {
         let slots = questions
             .iter()
-            .map(|_| Slot { picked: Vec::new(), other: Other::Off, typed: String::new() })
+            .map(|question| Slot {
+                picked: question.picks(),
+                other: Other::Off,
+                typed: String::new(),
+            })
             .collect();
-        Self { questions, slots, step: 0, cursor: 0 }
+        let mut card = Self { questions, slots, step: 0, cursor: 0 };
+        card.cursor = card.resting_cursor();
+        card
+    }
+
+    /// Where the cursor starts on the shown question: on the first option picked, else the top.
+    fn resting_cursor(&self) -> usize {
+        self.slots[self.step].picked.first().copied().unwrap_or(0)
     }
 
     pub(crate) fn step(&self) -> usize {
@@ -150,14 +164,14 @@ impl Card {
     pub(crate) fn next(&mut self) {
         if self.answered() && !self.is_last() {
             self.step += 1;
-            self.cursor = 0;
+            self.cursor = self.resting_cursor();
         }
     }
 
     pub(crate) fn back(&mut self) {
         if self.step > 0 {
             self.step -= 1;
-            self.cursor = 0;
+            self.cursor = self.resting_cursor();
         }
     }
 
@@ -209,6 +223,7 @@ impl Card {
                 Effect::Nothing
             }
             CardKey::CmdEnter => self.send(),
+            CardKey::Picks => Effect::GoWithPicks,
         }
     }
 }
@@ -222,11 +237,9 @@ mod tests {
         Question {
             text: text.into(),
             header: None,
+            decision: None,
             select,
-            options: labels
-                .iter()
-                .map(|label| QuestionOption { label: (*label).into(), description: None })
-                .collect(),
+            options: labels.iter().map(|label| QuestionOption::new(*label)).collect(),
         }
     }
 
@@ -373,6 +386,49 @@ mod tests {
         card.key(CardKey::Enter);
         assert_eq!(card.step(), 1);
         assert!(matches!(card.key(CardKey::CmdEnter), Effect::Send(_)));
+    }
+
+    fn picked_card() -> Card {
+        Card::new(vec![
+            question("Where?", Select::Single, &["Stage", "Run (Recommended)", "File"]),
+            question("Which?", Select::Multi, &["Unit (Recommended)", "Lints", "UI (Recommended)"]),
+            question("How?", Select::Single, &["Fast", "Slow"]),
+        ])
+    }
+
+    #[test]
+    fn the_recommended_option_is_preselected_with_the_cursor_on_it() {
+        let card = picked_card();
+        assert!(card.is_picked(1) && !card.is_picked(0) && !card.is_picked(2));
+        assert_eq!(card.cursor(), 1);
+        assert!(card.answered());
+    }
+
+    #[test]
+    fn a_multiple_choice_preselects_every_recommended_option_and_a_card_without_picks_starts_empty()
+    {
+        let mut card = picked_card();
+        card.next();
+        assert!(card.is_picked(0) && card.is_picked(2) && !card.is_picked(1));
+        assert_eq!(card.cursor(), 0);
+        card.next();
+        assert!(!card.is_picked(0) && !card.is_picked(1));
+        assert!(!card.answered());
+        assert_eq!(card.send(), Effect::Nothing);
+    }
+
+    #[test]
+    fn the_preselected_pick_sends_as_it_is_and_another_click_replaces_it() {
+        let mut card =
+            Card::new(vec![question("Where?", Select::Single, &["Stage", "Run (Recommended)"])]);
+        assert_eq!(card.send(), Effect::Send(vec![Given { picked: vec![1], other: None }]));
+        card.choose(Row::Option(0));
+        assert_eq!(card.send(), Effect::Send(vec![Given { picked: vec![0], other: None }]));
+    }
+
+    #[test]
+    fn the_g_key_asks_to_go_with_the_picks() {
+        assert_eq!(picked_card().key(CardKey::Picks), Effect::GoWithPicks);
     }
 
     #[test]

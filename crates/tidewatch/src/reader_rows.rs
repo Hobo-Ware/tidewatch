@@ -128,17 +128,26 @@ impl Rows {
         self.add(Kind::Question(row), String::new())
     }
 
-    /// The oldest question still waiting for an answer that can be given from the Reader. A Claude
-    /// menu counts only while it is the newest row: anything after it means the menu is gone.
-    pub(crate) fn pending_question(&self) -> Option<&Row> {
+    /// Every question still waiting for an answer that can be given from the Reader, oldest first.
+    /// A Claude menu counts only while it is the newest row: anything after it means the menu is
+    /// gone.
+    pub(crate) fn pending_questions(&self) -> Vec<&Row> {
         let newest = self.newest_seq();
-        self.list.iter().find(|row| match &row.kind {
-            Kind::Question(q) => {
-                q.asked == Asked::Pending
-                    && (matches!(q.origin, Origin::Tidewatch(_)) || Some(row.seq) == newest)
-            }
-            _ => false,
-        })
+        self.list
+            .iter()
+            .filter(|row| match &row.kind {
+                Kind::Question(q) => {
+                    q.asked == Asked::Pending
+                        && (matches!(q.origin, Origin::Tidewatch(_)) || Some(row.seq) == newest)
+                }
+                _ => false,
+            })
+            .collect()
+    }
+
+    /// The oldest of them.
+    pub(crate) fn pending_question(&self) -> Option<&Row> {
+        self.pending_questions().into_iter().next()
     }
 
     pub(crate) fn question_of(&self, seq: u64) -> Option<&QuestionRow> {
@@ -492,8 +501,9 @@ mod tests {
         vec![Question {
             text: "Where?".into(),
             header: None,
+            decision: None,
             select: Select::Single,
-            options: vec![QuestionOption { label: "A".into(), description: None }],
+            options: vec![QuestionOption::new("A")],
         }]
     }
 

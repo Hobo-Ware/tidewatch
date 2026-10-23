@@ -25,6 +25,7 @@ use crate::due_view::{self, Facts as DueFacts};
 use crate::pr_card_model::CardAction;
 use crate::pr_cards_view::{self, Data as PrData, Heights as PrHeights};
 use crate::pr_timeline::{self, Place};
+use crate::question_bulk;
 use crate::question_card::{Card, Effect};
 use crate::question_view::{self, ChipClick, Live, PermissionClick};
 use crate::quick_reply::{self, Quick};
@@ -145,6 +146,8 @@ pub(crate) enum Action {
     Pr(CardAction),
     /// The user answered, or skipped, the questions in row `seq`.
     Ask(u64, Reply),
+    /// Answer every waiting question that has a pick with it.
+    GoWithPicks,
     /// A click on the Due today card.
     Due(due_view::Action),
 }
@@ -364,10 +367,12 @@ pub(crate) fn show(
         });
         reply_enabled = tidewatch;
         let grab = state.reply.trim().is_empty();
+        live.picks = question_bulk::plan(rows).count();
         let dock = Rect::from_min_max(rect.min, pos2(rect.right(), input.top()));
         match question_view::live_card(ui, dock, live, facts.profile, grab) {
             Effect::Send(given) => actions.push(Action::Ask(live.seq, Reply::Answered(given))),
             Effect::Skip => actions.push(Action::Ask(live.seq, Reply::Skipped)),
+            Effect::GoWithPicks => actions.push(Action::GoWithPicks),
             Effect::Nothing | Effect::TypeOther => {}
         }
     } else if let Some(prompt) = facts.prompt {
@@ -1341,11 +1346,9 @@ mod tests {
                 ask: Some(AskPart::Asked(vec![Question {
                     text: "Where?".into(),
                     header: None,
+                    decision: None,
                     select: Select::Single,
-                    options: vec![
-                        QuestionOption { label: "Stage".into(), description: None },
-                        QuestionOption { label: "Run".into(), description: None },
-                    ],
+                    options: vec![QuestionOption::new("Stage"), QuestionOption::new("Run")],
                 }])),
             }),
             ts: None,

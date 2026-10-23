@@ -8,7 +8,7 @@
 //!   reply from the Reader's box once, when it is enabled.
 //! - `TIDEWATCH_DEV_QUESTION=<steps>`: drive the live question card, one step every 0.4 s once it
 //!   shows. Steps, comma separated: `pick<N>` (the number key), `next`, `back`, `space`, `down`,
-//!   `type:<text>` ("Something else" with that text), `send`, `skip`.
+//!   `all` (Go with your picks), `type:<text>` ("Something else" with that text), `send`, `skip`.
 
 use std::collections::VecDeque;
 
@@ -43,6 +43,7 @@ fn card_steps(text: &str) -> VecDeque<CardStep> {
                 "next" => Some(CardStep::Key(CardKey::Enter)),
                 "space" => Some(CardStep::Key(CardKey::Space)),
                 "down" => Some(CardStep::Key(CardKey::Down)),
+                "all" => Some(CardStep::Key(CardKey::Picks)),
                 "back" => Some(CardStep::Back),
                 "send" => Some(CardStep::Send),
                 "skip" => Some(CardStep::Skip),
@@ -144,7 +145,8 @@ impl DevReader {
         match effect {
             Effect::Send(given) => Some(Action::Ask(seq, Reply::Answered(given))),
             Effect::Skip => Some(Action::Ask(seq, Reply::Skipped)),
-            Effect::Nothing | Effect::TypeOther => None,
+            Effect::GoWithPicks if live.picks > 0 => Some(Action::GoWithPicks),
+            Effect::Nothing | Effect::TypeOther | Effect::GoWithPicks => None,
         }
     }
 
@@ -184,7 +186,7 @@ mod tests {
             Some("allow"),
             Some("hi"),
             Some("5"),
-            Some("pick2,next,type:both,send,bogus"),
+            Some("pick2,next,all,type:both,send,bogus"),
         );
         assert!(dev.raw);
         assert_eq!(
@@ -192,6 +194,7 @@ mod tests {
             [
                 CardStep::Key(CardKey::Digit(2)),
                 CardStep::Key(CardKey::Enter),
+                CardStep::Key(CardKey::Picks),
                 CardStep::Type("both".into()),
                 CardStep::Send,
             ]

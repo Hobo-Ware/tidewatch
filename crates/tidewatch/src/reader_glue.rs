@@ -20,6 +20,7 @@ use crate::note_send::ENTER_DELAY_SECS;
 use crate::pane::{Body, FirstPrompt, Pane};
 use crate::pr_card_model::CardAction;
 use crate::pr_cards_view::Data as PrData;
+use crate::question_bulk;
 use crate::reader::{Note, Shown, Step};
 use crate::reader_keys;
 use crate::reader_rows::{Asked, Kind, Origin};
@@ -241,6 +242,7 @@ pub(crate) fn apply(
             }
             Action::Review(_) | Action::Pr(_) | Action::Due(_) => {}
             Action::Ask(seq, reply) => answer_question(&mut found.pane, seq, reply, now),
+            Action::GoWithPicks => toast = go_with_picks(&mut found.pane, now),
         }
     }
     toast
@@ -267,6 +269,17 @@ fn claude_menu_steps(
     let mut steps = vec![(0.0, Step::Keys(reader_keys::CLAUDE_MENU_ESCAPE.to_vec()))];
     steps.extend(reply_steps(question::late_answer_text(questions, given), MENU_CLOSE_S));
     steps
+}
+
+/// Answers every waiting question that has a pick with it, and says which were answered and which
+/// stay open.
+fn go_with_picks<T>(pane: &mut Pane<T>, now: f64) -> Option<String> {
+    let bulk = question_bulk::plan(&pane.agent.as_ref()?.reader.rows);
+    let text = question_bulk::toast(&bulk);
+    for answer in bulk.answers {
+        answer_question(pane, answer.seq, Reply::Answered(answer.given), now);
+    }
+    Some(text)
 }
 
 /// Gives the user's answer to the questions in row `seq`. A held `ask_user` call takes it through
@@ -329,17 +342,19 @@ mod tests {
     use crate::reader_rows::QuestionRow;
 
     fn questions() -> Vec<question::Question> {
-        let option = |label: &str| QuestionOption { label: label.into(), description: None };
+        let option = |label: &str| QuestionOption::new(label);
         vec![
             question::Question {
                 text: "Where?".into(),
                 header: None,
+                decision: None,
                 select: Select::Single,
                 options: vec![option("Stage"), option("Run")],
             },
             question::Question {
                 text: "Which?".into(),
                 header: None,
+                decision: None,
                 select: Select::Multi,
                 options: vec![option("Unit"), option("Lints")],
             },
@@ -451,6 +466,55 @@ mod tests {
         answer_question(&mut dead, seq, Reply::Skipped, 100.0);
         assert_eq!(steps_only(typed(&mut dead))[0], Step::Paste(question::SKIP_REPLY.into()));
         assert_eq!(asked_of(&dead, seq), Asked::Declined);
+    }
+
+    fn ask(pane: &mut Pane<()>, labels: &[&str]) -> std::sync::mpsc::Receiver<Reply> {
+        let (sender, receiver) = channel();
+        let question = question::Question {
+            text: format!("Pick one of {labels:?}?"),
+            header: Some(labels[0].to_owned()),
+            decision: None,
+            select: Select::Single,
+            options: labels.iter().map(|label| QuestionOption::new(*label)).collect(),
+        };
+        pane.agent.as_mut().unwrap().reader.rows.push_ask(vec![question], AskReply::new(sender));
+        receiver
+    }
+
+    #[test]
+    fn go_with_picks_answers_the_rows_that_have_one_and_names_the_others() {
+        let mut agent = AgentTab::new("Builder".into(), AgentRun::setting_up("claude".into(), 0.0));
+        agent.reader.rows.push_all(Vec::new());
+        let mut pane =
+            Pane { body: crate::pane::Body::Shell(()), worktree: None, agent: Some(agent) };
+        let first = ask(&mut pane, &["Stage (Recommended)", "Run"]);
+        let open = ask(&mut pane, &["Fast", "Slow"]);
+        let last = ask(&mut pane, &["Unit", "Lints (Recommended)"]);
+        let toast = go_with_picks(&mut pane, 100.0).unwrap();
+        assert_eq!(
+            first.recv().unwrap(),
+            Reply::Answered(vec![Given { picked: vec![0], other: None }])
+        );
+        assert_eq!(
+            last.recv().unwrap(),
+            Reply::Answered(vec![Given { picked: vec![1], other: None }])
+        );
+        assert!(open.try_recv().is_err());
+        assert_eq!(toast, "Went with the picks for 2: Stage, Lints. Still open: Fast.");
+        let rows = &pane.agent.as_ref().unwrap().reader.rows;
+        assert_eq!(rows.pending_questions().len(), 1);
+    }
+
+    #[test]
+    fn go_with_picks_when_no_question_has_one_answers_nothing_and_names_them() {
+        let (mut pane, seq) = pane(Origin::Claude);
+        let toast = go_with_picks(&mut pane, 100.0);
+        assert_eq!(
+            toast.as_deref(),
+            Some("No waiting question has a pick. Still open: Where?, Which?.")
+        );
+        assert_eq!(asked_of(&pane, seq), Asked::Pending);
+        assert_eq!(typed(&mut pane), Vec::new());
     }
 
     #[test]
