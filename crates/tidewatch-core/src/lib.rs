@@ -36,6 +36,7 @@ pub mod job_feed;
 pub mod job_mcp;
 pub mod job_store;
 mod jsonc_edit;
+pub mod keep_awake;
 pub mod last_workspace;
 pub mod launch;
 pub mod listener;

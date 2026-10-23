@@ -13,6 +13,7 @@ mod done_check;
 mod draft;
 mod flow;
 mod frame;
+mod keep_awake;
 mod meeseeks;
 mod open_link;
 mod overlays;
@@ -79,6 +80,8 @@ use crate::fonts;
 use crate::handoff;
 use crate::job_glue;
 use crate::jobs::Jobs;
+use crate::keep_awake_glue;
+use crate::keep_awake_hold::RealHold;
 use crate::last_used::LastUsed;
 use crate::layout;
 use crate::leftover_glue;
@@ -170,6 +173,7 @@ pub(crate) struct Tidewatch {
     avatar_live: avatar_glue::Host,
     meeseeks: meeseeks_glue::Host,
     done_check: done_check_glue::Host,
+    keep_awake: keep_awake_glue::Host<RealHold>,
     progress_ui: progress_view::Memory,
     checklist: overview_checklist::Host,
     snoozes: due::Snoozes,
@@ -262,6 +266,14 @@ impl Tidewatch {
         let avatar_live = avatar_glue::Host::from_env(paths.is_some() && screenshot.is_none());
         let meeseeks = meeseeks_glue::Host::from_env(paths.as_ref(), screenshot.is_none());
         let done_check = done_check_glue::Host::from_env(loaded.done_check.enabled);
+        let keep_awake = keep_awake_glue::Host::new(
+            RealHold::default(),
+            loaded.keep_awake.enabled,
+            !shell.env.background
+                || keep_awake_glue::dev_asks(
+                    std::env::var("TIDEWATCH_DEV_KEEP_AWAKE").ok().as_deref(),
+                ),
+        );
         let dev_view = DevView::from_env();
         let trust = Trust::new(paths.as_ref(), cli_home);
         let dev_session = DevSession::from_env();
@@ -323,6 +335,7 @@ impl Tidewatch {
             avatar_live,
             meeseeks,
             done_check,
+            keep_awake,
             progress_ui: progress_view::Memory::default(),
             checklist: overview_checklist::Host::new(),
             snoozes: due::Snoozes::default(),

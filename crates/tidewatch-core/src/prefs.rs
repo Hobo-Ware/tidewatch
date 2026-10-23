@@ -42,6 +42,21 @@ pub struct Prefs {
     pub guards: GuardPrefs,
     #[serde(default)]
     pub done_check: DoneCheckPrefs,
+    #[serde(default)]
+    pub keep_awake: KeepAwakePrefs,
+}
+
+/// Whether the computer is kept from idle-sleeping while an agent works.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct KeepAwakePrefs {
+    #[serde(default = "on")]
+    pub enabled: bool,
+}
+
+impl Default for KeepAwakePrefs {
+    fn default() -> Self {
+        Self { enabled: true }
+    }
 }
 
 /// Whether an agent that says it is done gets its work checked.
@@ -264,6 +279,7 @@ impl Default for Prefs {
             tabs: TabsPrefs::default(),
             guards: GuardPrefs::default(),
             done_check: DoneCheckPrefs::default(),
+            keep_awake: KeepAwakePrefs::default(),
         }
     }
 }
@@ -789,6 +805,23 @@ mod tests {
             assert_eq!(Prefs::load(&paths).tabs.park_after, want, "{word} after a save");
         }
         assert_eq!(ParkAfter::ALL.map(ParkAfter::label), ["Off", "1 h", "4 h", "8 h", "24 h"]);
+    }
+
+    #[test]
+    fn keeping_awake_is_on_until_switched_off_and_the_choice_survives_a_save() {
+        let (_home, paths) = paths();
+        assert!(Prefs::load(&paths).keep_awake.enabled);
+        write_prefs(&paths, "restore_session = false\n");
+        assert_eq!(Prefs::load(&paths).keep_awake, KeepAwakePrefs::default());
+        write_prefs(&paths, "[keep_awake]\n");
+        assert!(Prefs::load(&paths).keep_awake.enabled);
+        Prefs::update(&paths, |p| p.keep_awake.enabled = false).unwrap();
+        assert!(!Prefs::load(&paths).keep_awake.enabled);
+        Prefs::update(&paths, |p| p.window.quake = false).unwrap();
+        assert!(!Prefs::load(&paths).keep_awake.enabled);
+        Prefs::update(&paths, |p| p.keep_awake.enabled = true).unwrap();
+        let text = std::fs::read_to_string(paths.prefs_file()).unwrap();
+        assert!(text.contains("[keep_awake]") && text.contains("enabled = true"), "{text}");
     }
 
     #[test]
