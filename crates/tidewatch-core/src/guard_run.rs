@@ -22,6 +22,7 @@ pub const BIN_ENV: &str = "TIDEWATCH_GUARD_BIN";
 pub const REPO_ENV: &str = "TIDEWATCH_GUARD_REPO";
 pub const CACHE_ENV: &str = "TIDEWATCH_GUARD_CACHE";
 pub const DIR_ENV: &str = "TIDEWATCH_GUARD_DIR";
+pub const TAB_ENV: &str = "TIDEWATCH_GUARD_TAB";
 
 const VISIBILITY_FRESH: Duration = Duration::from_hours(6);
 
@@ -227,6 +228,7 @@ pub struct GuardEnv {
     pub repo: PathBuf,
     pub cache: Option<PathBuf>,
     pub shim_dir: PathBuf,
+    pub tab: Option<PathBuf>,
     pub path: OsString,
 }
 
@@ -239,6 +241,7 @@ impl GuardEnv {
             repo: get(REPO_ENV).map(PathBuf::from).unwrap_or_default(),
             cache: get(CACHE_ENV).map(PathBuf::from),
             shim_dir: get(DIR_ENV).map(PathBuf::from).unwrap_or_default(),
+            tab: get(TAB_ENV).filter(|v| !v.is_empty()).map(PathBuf::from),
             path: get("PATH").unwrap_or_default(),
         })
     }

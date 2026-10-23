@@ -7,6 +7,7 @@ fn the_environment_names_the_binary_the_settings_the_repo_the_cache_and_the_shim
         config: "/cfg/settings.toml".into(),
         repo: "/work/web".into(),
         cache_dir: "/state/guard-cache".into(),
+        tab_dir: "/state/web/brave-otter".into(),
     };
     let env = ctx.env(Path::new("/state/guard-bin"));
     let get = |key: &str| env.iter().find(|(k, _)| k == key).map(|(_, v)| v.as_str());
@@ -15,7 +16,8 @@ fn the_environment_names_the_binary_the_settings_the_repo_the_cache_and_the_shim
     assert_eq!(get(REPO_ENV), Some("/work/web"));
     assert_eq!(get(CACHE_ENV), Some("/state/guard-cache"));
     assert_eq!(get(DIR_ENV), Some("/state/guard-bin"));
-    assert_eq!(env.len(), 5);
+    assert_eq!(get(TAB_ENV), Some("/state/web/brave-otter"));
+    assert_eq!(env.len(), 6);
 }
 
 #[test]

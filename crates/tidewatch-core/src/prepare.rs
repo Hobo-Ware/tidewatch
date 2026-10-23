@@ -222,7 +222,7 @@ fn context(
         copilot_instructions_dir,
         guard_bin_dir,
         push_branch: input.worktree_tab.then(|| checked_out_agent_branch(input.dir)).flatten(),
-        guards: input.worktree_tab.then(|| guard_ctx(input.paths, input.repo)).flatten(),
+        guards: input.worktree_tab.then(|| guard_ctx(input.paths, input.repo, input.tab)).flatten(),
         env: input
             .path_var
             .map(|path| vec![("PATH".to_owned(), path.to_string_lossy().into_owned())])
@@ -230,12 +230,13 @@ fn context(
     }
 }
 
-fn guard_ctx(paths: &TidewatchPaths, repo: &Path) -> Option<GuardCtx> {
+fn guard_ctx(paths: &TidewatchPaths, repo: &Path, tab: &str) -> Option<GuardCtx> {
     Some(GuardCtx {
         bin: std::env::current_exe().ok()?,
         config: paths.prefs_file(),
         repo: repo.to_path_buf(),
         cache_dir: paths.guard_cache_dir(),
+        tab_dir: paths.tab_state_dir(repo, tab),
     })
 }
 
@@ -799,12 +800,14 @@ mod tests {
     }
 
     #[test]
-    fn hooks_and_mcp_are_wired_only_when_a_listener_is_given() {
+    fn status_hooks_and_mcp_are_wired_only_when_a_listener_is_given() {
         let fx = Fixture::new();
         let none = fx.run("claude", &profile("claude", Level::Edits), true, "", None).unwrap();
-        assert!(
-            !none.launch.args.iter().any(|a| a == "--settings" || a.starts_with("--mcp-config"))
-        );
+        assert!(!none.launch.args.iter().any(|a| a.starts_with("--mcp-config")));
+        let at = none.launch.args.iter().position(|a| a == "--settings").unwrap();
+        let settings: serde_json::Value = serde_json::from_str(&none.launch.args[at + 1]).unwrap();
+        assert!(settings["hooks"]["SessionStart"].is_null(), "no status hooks without a listener");
+        assert_eq!(settings["hooks"]["PostToolUse"][0]["hooks"][0]["type"], "command");
 
         let wired =
             fx.run("claude", &profile("claude", Level::Edits), true, "", Some(listener())).unwrap();

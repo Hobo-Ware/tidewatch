@@ -92,7 +92,10 @@ fn typed_names_split_on_lines_commas_and_spaces_without_repeats() {
 #[test]
 fn every_rule_has_a_key_a_title_and_a_reason_and_only_drafts_start_off() {
     let keys: Vec<&str> = Rule::ALL.iter().map(|r| r.key()).collect();
-    assert_eq!(keys, ["dashes", "trailers", "private_names", "draft_prs", "rerun_failed"]);
+    assert_eq!(
+        keys,
+        ["dashes", "trailers", "private_names", "draft_prs", "rerun_failed", "comments"]
+    );
     for rule in Rule::ALL {
         assert_ne!(rule.title().len(), 0);
         assert_ne!(rule.reason().len(), 0);
