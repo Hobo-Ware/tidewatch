@@ -64,6 +64,8 @@ mod job_glue;
 mod job_model;
 mod job_view;
 mod jobs;
+mod keep_awake_glue;
+mod keep_awake_hold;
 mod last_used;
 mod layout;
 mod leftover_glue;

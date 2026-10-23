@@ -51,6 +51,7 @@ fn general(restore: bool, resume: ResumeAgents, login_offered: bool) -> General 
         new_tab: tidewatch_core::prefs::NewTabPrefs::default(),
         tabs: tidewatch_core::prefs::TabsPrefs::default(),
         done_check: tidewatch_core::prefs::DoneCheckPrefs::default(),
+        keep_awake: tidewatch_core::prefs::KeepAwakePrefs::default(),
         guards: tidewatch_core::guards::GuardPrefs::default(),
         guards_repo: None,
         profiles: Vec::new(),
@@ -275,6 +276,37 @@ fn the_done_check_card_reports_the_switch_and_its_new_value() {
                 done_check_frame(&ctx, on, vec![Event::PointerMoved(at)]);
                 done_check_frame(&ctx, on, vec![press(at, true)]);
                 found.extend(done_check_frame(&ctx, on, vec![press(at, false)]));
+            }
+        }
+        assert!(found.contains(&!on), "switch from {on}: {found:?}");
+        assert!(!found.contains(&on), "switch from {on}: {found:?}");
+    }
+}
+
+#[test]
+fn the_keep_awake_card_reports_the_switch_and_its_new_value() {
+    for on in [true, false] {
+        let ctx = egui::Context::default();
+        ctx.set_fonts(crate::fonts::definitions());
+        let frame = |events: Vec<Event>| {
+            let raw = RawInput {
+                screen_rect: Some(Rect::from_min_size(pos2(0.0, 0.0), Vec2::new(900.0, 300.0))),
+                focused: true,
+                events,
+                ..RawInput::default()
+            };
+            let mut answer = None;
+            let _ = ctx.run_ui(raw, |ui| answer = crate::general_view::keep_awake_card(ui, on));
+            answer
+        };
+        frame(vec![]);
+        let mut found = Vec::new();
+        for y in (10..120).step_by(6) {
+            for x in (500..880).step_by(10) {
+                let at = pos2(x as f32, y as f32);
+                frame(vec![Event::PointerMoved(at)]);
+                frame(vec![press(at, true)]);
+                found.extend(frame(vec![press(at, false)]));
             }
         }
         assert!(found.contains(&!on), "switch from {on}: {found:?}");

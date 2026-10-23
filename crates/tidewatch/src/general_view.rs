@@ -3,7 +3,7 @@
 use egui::Ui;
 use tidewatch_core::guards::GuardPrefs;
 use tidewatch_core::prefs::{
-    DoneCheckPrefs, GithubPrefs, NewTabPrefs, ParkAfter, ResumeAgents, TabsPrefs,
+    DoneCheckPrefs, GithubPrefs, KeepAwakePrefs, NewTabPrefs, ParkAfter, ResumeAgents, TabsPrefs,
 };
 
 use crate::github_view;
@@ -28,6 +28,7 @@ pub(crate) struct General {
     pub(crate) new_tab: NewTabPrefs,
     pub(crate) tabs: TabsPrefs,
     pub(crate) done_check: DoneCheckPrefs,
+    pub(crate) keep_awake: KeepAwakePrefs,
     pub(crate) guards: GuardPrefs,
     /// The repo on show, when it is one: a guard rule can be set for it alone.
     pub(crate) guards_repo: Option<guards_view::Repo>,
@@ -81,6 +82,7 @@ pub(crate) fn page(
     .map(Action::NewTab);
     let tabs = tabs_card(ui, general.tabs).map(Action::Tabs);
     let done_check = done_check_card(ui, general.done_check.enabled).map(Action::DoneCheck);
+    let keep_awake = keep_awake_card(ui, general.keep_awake.enabled).map(Action::KeepAwake);
     let github = github_view::card(ui, general.github).map(Action::Github);
     let guards =
         guards_view::card(ui, &general.guards, general.guards_repo.as_ref()).map(Action::Guards);
@@ -94,6 +96,7 @@ pub(crate) fn page(
         .or(new_tab)
         .or(tabs)
         .or(done_check)
+        .or(keep_awake)
         .or(github)
         .or(guards)
         .or(updates)
@@ -122,6 +125,19 @@ pub(crate) fn done_check_card(ui: &mut Ui, on: bool) -> Option<bool> {
             ui,
             "Check the work when an agent says it is done",
             "Looks at whether the work is committed, pushed and its pull request is green, and shows Done, Blocked or Not verified on the tab. It never changes anything.",
+            on,
+        );
+    });
+    changed
+}
+
+pub(crate) fn keep_awake_card(ui: &mut Ui, on: bool) -> Option<bool> {
+    let mut changed = None;
+    section(ui, "Keep awake", |ui| {
+        changed = switch_row(
+            ui,
+            "Keep the computer awake while agents work",
+            "Stops it from going to sleep on its own while any agent is working, so a long turn is not frozen. The screen can still turn off and lock. It lets go two minutes after the last agent stops or waits for you.",
             on,
         );
     });

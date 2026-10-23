@@ -4,6 +4,8 @@
 //! - `TIDEWATCH_DEV_FOCUS=1`: start in focus mode.
 //! - `TIDEWATCH_DEV_STATUS_LOG=1`: print every hook and status change to stderr with a wall-clock
 //!   time in milliseconds, to measure how fast a tab reacts.
+//! - `TIDEWATCH_DEV_KEEP_AWAKE=1`: let a background or screenshot run hold the sleep assertion
+//!   too (it never does otherwise), to check `pmset -g assertions`.
 //! - `TIDEWATCH_DEV_SIDE=<fraction>`: start with the left column that wide (0.3 to 0.75 of the
 //!   window), to look at the file view when it is narrow.
 //! - `TIDEWATCH_DEV_WINDOW=<w>x<h>`: open the window that size (in points, 600 to 4000 each), to

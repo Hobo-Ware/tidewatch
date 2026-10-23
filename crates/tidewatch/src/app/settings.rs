@@ -1,7 +1,9 @@
 //! Settings: the page, saving profiles and workflows, window preferences and shell events.
 
 use tidewatch_core::house_style;
-use tidewatch_core::prefs::{DoneCheckPrefs, NewTabPrefs, Prefs, TabsPrefs, WindowPrefs};
+use tidewatch_core::prefs::{
+    DoneCheckPrefs, KeepAwakePrefs, NewTabPrefs, Prefs, TabsPrefs, WindowPrefs,
+};
 use tidewatch_core::setup_recipe::{Recipe, Store};
 
 use super::{Tidewatch, wall_ms};
@@ -136,6 +138,17 @@ impl Tidewatch {
         }
     }
 
+    fn set_keep_awake(&mut self, enabled: bool) {
+        self.keep_awake.set_enabled(enabled);
+        if let Some(paths) = self.paths.clone() {
+            std::thread::spawn(move || {
+                if let Err(e) = Prefs::update(&paths, |p| p.keep_awake.enabled = enabled) {
+                    eprintln!("tidewatch: cannot save settings.toml: {e}");
+                }
+            });
+        }
+    }
+
     fn set_guards(&mut self, change: &guards_view::Change) {
         change.apply(&mut self.guards);
         if let Some(paths) = self.paths.clone() {
@@ -201,6 +214,7 @@ impl Tidewatch {
             guards: self.guards.clone(),
             guards_repo,
             done_check: DoneCheckPrefs { enabled: self.done_check.enabled() },
+            keep_awake: KeepAwakePrefs { enabled: self.keep_awake.enabled() },
             default_branch,
             profiles: self
                 .catalog
@@ -302,6 +316,7 @@ impl Tidewatch {
             Some(settings_view::Action::NewTab(prefs)) => self.set_new_tab_prefs(prefs),
             Some(settings_view::Action::Tabs(prefs)) => self.set_tabs_prefs(prefs),
             Some(settings_view::Action::DoneCheck(on)) => self.set_done_check(on),
+            Some(settings_view::Action::KeepAwake(on)) => self.set_keep_awake(on),
             Some(settings_view::Action::Github(prefs)) => self.set_github_default(prefs),
             Some(settings_view::Action::Guards(change)) => self.set_guards(&change),
             Some(settings_view::Action::LoginItem(click)) => self.apply_login_click(click, ctx),

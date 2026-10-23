@@ -1,7 +1,7 @@
 //! The status bar along the bottom of the window: how many agents work and need you, where this
 //! agent tab stands, and the keys that matter on the screen. The logic is pure; `show` only draws.
 
-use egui::{Align2, Color32, CornerRadius, FontId, Id, Pos2, Rect, Sense, Ui, pos2, vec2};
+use egui::{Align2, Color32, CornerRadius, FontId, Id, Pos2, Rect, Sense, Stroke, Ui, pos2, vec2};
 
 use crate::brand;
 use tidewatch_core::pr_status::Tone as PrTone;
@@ -19,6 +19,7 @@ const DOT: f32 = 7.0;
 const FONT: f32 = 12.0;
 const MOST_HINTS: usize = 4;
 const CHIP_H: f32 = 20.0;
+const AWAKE_R: f32 = 5.0;
 const CHIP_PAD: f32 = 9.0;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -216,6 +217,8 @@ pub(crate) struct Bar {
     pub(crate) hints: Vec<Hint>,
     /// The active tab's pull request: `PR #42 checks running`, with the tone of its dot.
     pub(crate) pr: Option<(PrTone, String)>,
+    /// The tooltip of the mark that shows while the computer is kept awake.
+    pub(crate) awake: Option<String>,
 }
 
 /// Draws the bar. Returns whether the review chip was clicked.
@@ -236,6 +239,14 @@ pub(crate) fn show(ui: &mut Ui, rect: Rect, bar: &Bar) -> bool {
         x += DOT + 6.0;
         let label = format!("{count} {word}");
         x += put(pos2(x, y), Align2::LEFT_CENTER, &label, body(FONT), brand::MUTED) + GAP;
+    }
+    if let Some(tip) = &bar.awake {
+        let center = pos2(x + AWAKE_R + 1.0, y);
+        painter.circle_stroke(center, AWAKE_R, Stroke::new(1.2, brand::SOFT));
+        painter.circle_filled(center, 1.6, brand::SOFT);
+        let mark = Rect::from_center_size(center, vec2(2.0 * AWAKE_R + 8.0, HEIGHT));
+        ui.interact(mark, Id::new("status-bar-awake"), Sense::hover()).on_hover_text(tip.as_str());
+        x += 2.0 * AWAKE_R + GAP;
     }
     if let Some((tone, text)) = &bar.pr {
         let ink = tone_ink(*tone);

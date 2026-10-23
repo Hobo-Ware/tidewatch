@@ -69,6 +69,7 @@ impl Tidewatch {
             review,
             note_hint: status_bar::note_hint(screen),
             hints: status_bar::hints(screen, Platform::CURRENT),
+            awake: self.keep_awake.tip(),
             pr: self.pr_bar_item(active_id).filter(|_| matches!(screen, Screen::Workspace(_))),
         }
     }
