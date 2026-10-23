@@ -235,6 +235,7 @@ impl Tidewatch {
         }
         self.show_status_line(ui, &mut areas.terminal);
         self.show_pr_strip(ui, &mut areas.terminal, ctx, active_id);
+        self.show_comment_strip(ui, &mut areas.terminal, active_id);
         let end = self.waiting_end_block();
         let end_band = end.as_ref().map(|(block, open)| {
             layout::band_below(&mut areas.terminal, end_block_view::height(block, *open))

@@ -76,6 +76,7 @@ impl Tidewatch {
         self.drive_agents(ctx, now);
         self.drive_flow(ctx, now);
         self.drive_pr(ctx, now);
+        self.drive_comments(ctx, now);
         self.drive_progress(ctx);
         self.drive_parking(ctx);
         self.drive_avatar_choice(ctx);
