@@ -22,6 +22,7 @@ use crate::shortcuts_view;
 use crate::trust_view;
 use crate::updates::Updates;
 use crate::workflow_editor_view;
+use crate::worktree_setup_view;
 
 const SIDEBAR_WIDTH: f32 = 232.0;
 const ITEM_HEIGHT: f32 = 38.0;
@@ -46,6 +47,11 @@ pub(crate) enum Action {
     LoginItem(login_item::Click),
     OpenHouseStyle,
     ResetHouseStyle,
+    /// The Worktree setup page changed a repo's recipe: all of it. Applies at once too.
+    WorktreeSetup {
+        repo: std::path::PathBuf,
+        recipe: tidewatch_core::setup_recipe::Recipe,
+    },
 }
 
 #[derive(Default)]
@@ -55,6 +61,7 @@ pub(crate) struct Files {
     pub(crate) trust: String,
     pub(crate) general: String,
     pub(crate) house_style: String,
+    pub(crate) worktree_setup: String,
 }
 
 pub(crate) struct Host<'a> {
@@ -125,6 +132,9 @@ fn page(
         Section::HouseStyle => {
             scrolling(ui, main, section, |ui| house_style_view::page(ui, &host.files.house_style))
         }
+        Section::WorktreeSetup => scrolling(ui, main, section, |ui| {
+            worktree_setup_view::page(ui, &mut settings.setup, &host.files.worktree_setup)
+        }),
     }
 }
 

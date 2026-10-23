@@ -8,6 +8,7 @@ use tidewatch_core::prefs::WindowPrefs;
 
 use crate::login_item;
 use crate::profile_editor;
+use crate::setup_editor;
 use crate::window_settings;
 use crate::workflow_editor;
 
@@ -19,6 +20,7 @@ pub(crate) enum Section {
     Trust,
     Shortcuts,
     HouseStyle,
+    WorktreeSetup,
 }
 
 pub(crate) struct Settings {
@@ -27,6 +29,7 @@ pub(crate) struct Settings {
     pub(crate) workflows: workflow_editor::Editor,
     pub(crate) window: window_settings::Editor,
     pub(crate) login: login_item::Row,
+    pub(crate) setup: setup_editor::Editor,
 }
 
 impl Settings {
@@ -45,10 +48,11 @@ impl Settings {
             profiles: profile_editor::Editor::new(profiles, agents),
             window: window_settings::Editor::new(window),
             login: login_item::Row::default(),
+            setup: setup_editor::Editor::default(),
         }
     }
 
-    pub(crate) fn sections(&self) -> [(Section, &'static str, bool); 6] {
+    pub(crate) fn sections(&self) -> [(Section, &'static str, bool); 7] {
         [
             (Section::General, "General", false),
             (Section::Profiles, "Agents and profiles", self.profiles.dirty),
@@ -56,6 +60,7 @@ impl Settings {
             (Section::Trust, "Folder trust", false),
             (Section::Shortcuts, "Shortcuts", false),
             (Section::HouseStyle, "House style", false),
+            (Section::WorktreeSetup, "Worktree setup", false),
         ]
     }
 
@@ -91,6 +96,7 @@ mod tests {
                 (Section::Trust, "Folder trust", false),
                 (Section::Shortcuts, "Shortcuts", false),
                 (Section::HouseStyle, "House style", false),
+                (Section::WorktreeSetup, "Worktree setup", false),
             ]
         );
         assert!(!settings.profiles.dirty && !settings.workflows.dirty);
@@ -101,11 +107,11 @@ mod tests {
         let mut settings = settings();
         settings.workflows.touched();
         let marks: Vec<bool> = settings.sections().iter().map(|item| item.2).collect();
-        assert_eq!(marks, [false, false, true, false, false, false]);
+        assert_eq!(marks, [false, false, true, false, false, false, false]);
         settings.workflows.saved();
         settings.profiles.touched();
         let marks: Vec<bool> = settings.sections().iter().map(|item| item.2).collect();
-        assert_eq!(marks, [false, true, false, false, false, false]);
+        assert_eq!(marks, [false, true, false, false, false, false, false]);
     }
 
     #[test]

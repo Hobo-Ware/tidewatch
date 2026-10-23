@@ -70,6 +70,20 @@ pub(crate) fn paint(painter: &Painter, rect: Rect, section: Section, color: Colo
             }
             line(&[(5.0, 9.5), (11.0, 9.5)]);
         }
+        Section::WorktreeSetup => {
+            painter.rect_stroke(
+                Rect::from_min_size(at(1.5, 2.5), egui::vec2(8.0, 8.0) * scale),
+                1.5 * scale,
+                stroke,
+                egui::StrokeKind::Middle,
+            );
+            painter.rect_stroke(
+                Rect::from_min_size(at(6.5, 5.5), egui::vec2(8.0, 8.0) * scale),
+                1.5 * scale,
+                stroke,
+                egui::StrokeKind::Middle,
+            );
+        }
         Section::HouseStyle => {
             curve([(2.0, 8.0), (3.5, 6.0), (5.0, 6.0), (6.5, 8.0)]);
             curve([(6.5, 8.0), (8.0, 10.0), (9.5, 10.0), (11.0, 8.0)]);
