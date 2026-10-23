@@ -70,11 +70,15 @@ fn run_open(spec: &OpenSpec) -> Result<Opening, String> {
         if let Some(note) = &start.note {
             eprintln!("tidewatch: {note}");
         }
-        match &spec.placement.name {
+        let made = match &spec.placement.name {
             Some(name) => worktree::add_free(&spec.paths, &spec.repo, name, start.base.as_deref()),
             None => worktree::add(&spec.paths, &spec.repo),
         }
-        .map_err(|e| e.to_string())?
+        .map_err(|e| e.to_string())?;
+        for note in crate::worktree_jobs::set_up(&spec.paths, &made).1 {
+            eprintln!("tidewatch: worktree setup: {note}");
+        }
+        made
     };
     Ok(Opening {
         base: detect_base(&spec.tools, &worktree.path).unwrap_or_else(|| FALLBACK_BASE.to_owned()),

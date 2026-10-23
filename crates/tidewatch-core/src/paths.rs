@@ -105,6 +105,13 @@ impl TidewatchPaths {
         self.config_dir.join("checklist.md")
     }
 
+    /// The per-repo worktree setup recipes (files to copy, folders to link, a shared build folder,
+    /// a generator command).
+    #[must_use]
+    pub fn worktree_setup_file(&self) -> PathBuf {
+        self.config_dir.join("worktree-setup.toml")
+    }
+
     /// Holds the `git-remote-tidewatch-no-push` helper that agent tabs get on their `PATH`.
     #[must_use]
     pub fn guard_bin_dir(&self) -> PathBuf {
@@ -371,6 +378,12 @@ mod tests {
         let paths = paths();
         assert_eq!(paths.checklist_file(), paths.config_dir().join("checklist.md"));
         assert_eq!(paths.schedule_file(), paths.state_dir().join("schedule.toml"));
+    }
+
+    #[test]
+    fn the_worktree_setup_recipes_are_a_setting_not_a_file_in_any_repo() {
+        let paths = paths();
+        assert_eq!(paths.worktree_setup_file(), paths.config_dir().join("worktree-setup.toml"));
     }
 
     #[test]
