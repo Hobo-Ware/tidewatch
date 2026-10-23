@@ -1,9 +1,11 @@
 //! The General page: the Startup card (restore, open at login), the Window section and the Updates section.
 
 use egui::Ui;
+use tidewatch_core::guards::GuardPrefs;
 use tidewatch_core::prefs::{GithubPrefs, NewTabPrefs, ParkAfter, ResumeAgents, TabsPrefs};
 
 use crate::github_view;
+use crate::guards_view;
 use crate::login_item;
 use crate::macos::LoginItem;
 use crate::new_tab_prefs_view::{self, ProfileOption};
@@ -23,6 +25,9 @@ pub(crate) struct General {
     pub(crate) github: GithubPrefs,
     pub(crate) new_tab: NewTabPrefs,
     pub(crate) tabs: TabsPrefs,
+    pub(crate) guards: GuardPrefs,
+    /// The repo on show, when it is one: a guard rule can be set for it alone.
+    pub(crate) guards_repo: Option<guards_view::Repo>,
     pub(crate) profiles: Vec<ProfileOption>,
     /// The active repo's remote default branch, for the Start from label.
     pub(crate) default_branch: Option<String>,
@@ -73,6 +78,8 @@ pub(crate) fn page(
     .map(Action::NewTab);
     let tabs = tabs_card(ui, general.tabs).map(Action::Tabs);
     let github = github_view::card(ui, general.github).map(Action::Github);
+    let guards =
+        guards_view::card(ui, &general.guards, general.guards_repo.as_ref()).map(Action::Guards);
     let updates = updates_view::section(ui, updates).map(Action::Updates);
     footer_note(ui, file);
     restore
@@ -83,6 +90,7 @@ pub(crate) fn page(
         .or(new_tab)
         .or(tabs)
         .or(github)
+        .or(guards)
         .or(updates)
 }
 
