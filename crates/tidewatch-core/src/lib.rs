@@ -10,6 +10,7 @@ pub mod checklist;
 pub mod civil_date;
 pub mod consent;
 pub mod delivery;
+pub mod done_check;
 pub mod elsewhere;
 pub mod elsewhere_flags;
 pub mod elsewhere_scan;

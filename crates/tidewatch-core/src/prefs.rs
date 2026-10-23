@@ -40,6 +40,21 @@ pub struct Prefs {
     pub tabs: TabsPrefs,
     #[serde(default)]
     pub guards: GuardPrefs,
+    #[serde(default)]
+    pub done_check: DoneCheckPrefs,
+}
+
+/// Whether an agent that says it is done gets its work checked.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DoneCheckPrefs {
+    #[serde(default = "on")]
+    pub enabled: bool,
+}
+
+impl Default for DoneCheckPrefs {
+    fn default() -> Self {
+        Self { enabled: true }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -248,6 +263,7 @@ impl Default for Prefs {
             new_tab: NewTabPrefs::default(),
             tabs: TabsPrefs::default(),
             guards: GuardPrefs::default(),
+            done_check: DoneCheckPrefs::default(),
         }
     }
 }
@@ -773,6 +789,24 @@ mod tests {
             assert_eq!(Prefs::load(&paths).tabs.park_after, want, "{word} after a save");
         }
         assert_eq!(ParkAfter::ALL.map(ParkAfter::label), ["Off", "1 h", "4 h", "8 h", "24 h"]);
+    }
+
+    #[test]
+    fn the_done_check_is_on_until_switched_off_and_the_choice_survives_a_save() {
+        let (_home, paths) = paths();
+        assert!(Prefs::load(&paths).done_check.enabled);
+        write_prefs(&paths, "restore_session = false\n");
+        assert_eq!(Prefs::load(&paths).done_check, DoneCheckPrefs::default());
+        write_prefs(&paths, "[done_check]\n");
+        assert!(Prefs::load(&paths).done_check.enabled);
+        Prefs::update(&paths, |p| p.done_check.enabled = false).unwrap();
+        assert!(!Prefs::load(&paths).done_check.enabled);
+        Prefs::update(&paths, |p| p.window.quake = false).unwrap();
+        assert!(!Prefs::load(&paths).done_check.enabled);
+        Prefs::update(&paths, |p| p.done_check.enabled = true).unwrap();
+        let text = std::fs::read_to_string(paths.prefs_file()).unwrap();
+        assert!(text.contains("[done_check]") && text.contains("enabled = true"), "{text}");
+        assert!(Prefs::load(&paths).done_check.enabled);
     }
 
     #[test]
