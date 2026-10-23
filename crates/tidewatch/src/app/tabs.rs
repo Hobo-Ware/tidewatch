@@ -205,6 +205,7 @@ impl Tidewatch {
         self.parking.forget(id);
         self.flow.forget(id);
         self.pr.forget(id);
+        self.comments.forget(id);
         self.runs.forget(id);
         self.meeseeks.forget(id);
         self.done_check.forget(id);

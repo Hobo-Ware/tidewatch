@@ -7,6 +7,7 @@ mod agents;
 mod bar;
 mod build_workflow;
 mod central;
+mod comments;
 mod dev;
 mod done_check;
 mod draft;
@@ -59,6 +60,7 @@ use crate::avatar_glue;
 use crate::brand;
 use crate::build_workflow::Asked;
 use crate::catalog::Catalog;
+use crate::comment_glue;
 use crate::dev_agent::{DevAgent, DevDraft};
 use crate::dev_flow::DevFlow;
 use crate::dev_link::DevLink;
@@ -162,6 +164,7 @@ pub(crate) struct Tidewatch {
     hooks: Hooks,
     flow: Flow,
     pr: pr_glue::Host,
+    comments: comment_glue::Host,
     progress: progress_glue::Host,
     job_live: job_glue::Host,
     avatar_live: avatar_glue::Host,
@@ -314,6 +317,7 @@ impl Tidewatch {
             hooks,
             flow,
             pr,
+            comments: comment_glue::Host::new(),
             progress,
             job_live,
             avatar_live,
