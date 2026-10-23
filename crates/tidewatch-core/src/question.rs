@@ -22,10 +22,13 @@ const MAX_QUESTION_CHARS: usize = 400;
 const MAX_HEADER_CHARS: usize = 40;
 const MAX_LABEL_CHARS: usize = 120;
 const MAX_DESCRIPTION_CHARS: usize = 400;
+const MAX_DECISION_CHARS: usize = 200;
+const MAX_TRADEOFF_CHARS: usize = 160;
 const RECOMMENDED: &str = "(Recommended)";
 
-const QUESTION_KEYS: [&str; 5] = ["question", "header", "multi_select", "multiSelect", "options"];
-const OPTION_KEYS: [&str; 2] = ["label", "description"];
+const QUESTION_KEYS: [&str; 6] =
+    ["question", "header", "decision", "multi_select", "multiSelect", "options"];
+const OPTION_KEYS: [&str; 4] = ["label", "description", "tradeoff", "recommended"];
 
 /// What the tool result says when the user chose to leave the choice to the agent.
 pub const SKIPPED_TEXT: &str = "The user skipped your questions and left the choice to you. Use your best judgment and carry on.";
@@ -47,9 +50,19 @@ pub enum Select {
 pub struct QuestionOption {
     pub label: String,
     pub description: Option<String>,
+    /// One line on what choosing it costs or gives up.
+    pub tradeoff: Option<String>,
+    /// The agent's top pick, set by the `recommended` flag; a trailing "(Recommended)" on the label
+    /// counts too.
+    pub top_pick: bool,
 }
 
 impl QuestionOption {
+    #[must_use]
+    pub fn new(label: impl Into<String>) -> Self {
+        Self { label: label.into(), description: None, tradeoff: None, top_pick: false }
+    }
+
     /// The label as shown: without a trailing "(Recommended)".
     #[must_use]
     pub fn shown(&self) -> &str {
@@ -58,7 +71,7 @@ impl QuestionOption {
 
     #[must_use]
     pub fn recommended(&self) -> bool {
-        split_recommended(&self.label).1
+        self.top_pick || split_recommended(&self.label).1
     }
 }
 
@@ -79,8 +92,48 @@ pub fn split_recommended(label: &str) -> (&str, bool) {
 pub struct Question {
     pub text: String,
     pub header: Option<String>,
+    /// The choice in one plain sentence, shown on top of the card when the agent gave one.
+    pub decision: Option<String>,
     pub select: Select,
     pub options: Vec<QuestionOption>,
+}
+
+impl Question {
+    /// The options the agent recommends, by index: the first one for a single choice, all of them
+    /// for a multiple choice.
+    #[must_use]
+    pub fn picks(&self) -> Vec<usize> {
+        let mut found = (0..self.options.len()).filter(|index| self.options[*index].recommended());
+        match self.select {
+            Select::Single => found.next().into_iter().collect(),
+            Select::Multi => found.collect(),
+        }
+    }
+
+    /// The answer that goes with the agent's picks, when it has any.
+    #[must_use]
+    pub fn pick_given(&self) -> Option<Given> {
+        let picked = self.picks();
+        (!picked.is_empty()).then_some(Given { picked, other: None })
+    }
+
+    /// A short name for the question in a list: its header, else its text cut to 60 characters.
+    #[must_use]
+    pub fn name(&self) -> String {
+        const MAX: usize = 60;
+        let text = self.header.as_deref().unwrap_or(&self.text);
+        if text.chars().count() <= MAX {
+            return text.to_owned();
+        }
+        let cut: String = text.chars().take(MAX - 3).collect();
+        format!("{}...", cut.trim_end())
+    }
+}
+
+/// The answers that take every pick of `questions`, or nothing when one of them has none.
+#[must_use]
+pub fn all_picks(questions: &[Question]) -> Option<Vec<Given>> {
+    questions.iter().map(Question::pick_given).collect()
 }
 
 /// What the user gave for one question: the options picked (by index) and a typed answer.
@@ -188,14 +241,15 @@ pub fn from_claude_input(input: &Value) -> Option<Vec<Question>> {
                 .iter()
                 .filter_map(|option| {
                     Some(QuestionOption {
-                        label: clean(option["label"].as_str()?)?,
                         description: option["description"].as_str().and_then(clean),
+                        ..QuestionOption::new(clean(option["label"].as_str()?)?)
                     })
                 })
                 .collect();
             (!options.is_empty()).then(|| Question {
                 text,
                 header: item["header"].as_str().and_then(clean),
+                decision: None,
                 select: if item["multiSelect"].as_bool() == Some(true) {
                     Select::Multi
                 } else {
@@ -260,7 +314,7 @@ fn pairs_in_text(content: &str) -> Vec<(String, String)> {
 pub fn tool_definition() -> Value {
     json!({
         "name": TOOL_NAME,
-        "description": "Ask the user one to four multiple-choice questions and wait for the answers. Tidewatch shows them as radio buttons (one answer) or checkboxes (several) with a field for another answer. Use it instead of guessing when the user's choice changes what you do. The result lists each question with the answer.",
+        "description": "Ask the user one to four multiple-choice questions and wait for the answers. Tidewatch shows them as radio buttons (one answer) or checkboxes (several) with a field for another answer. Use it instead of guessing when the user's choice changes what you do. Write for someone who has not followed your work: plain words, no jargon, no code names. Give two or three options, and mark your top pick with recommended: true on one option. Give each question a one-sentence decision and each option a one-line tradeoff. If an option deletes or overwrites anything, its label names the exact items and how many. The user can answer every open question with your picks in one click, so only mark an option you would stand behind. The result lists each question with the answer.",
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -273,17 +327,20 @@ pub fn tool_definition() -> Value {
                         "properties": {
                             "question": { "type": "string", "description": "The question, ending with a question mark." },
                             "header": { "type": "string", "description": "A word or two naming the topic." },
+                            "decision": { "type": "string", "description": "The choice in one plain sentence, for example: Pick how the retry count is stored. Shown on top of the card." },
                             "multi_select": { "type": "boolean", "description": "True when several options may be picked. Default false." },
                             "options": {
                                 "type": "array",
                                 "minItems": MIN_OPTIONS,
                                 "maxItems": MAX_OPTIONS,
-                                "description": "The choices. Put the one you recommend first and end its label with (Recommended). Tidewatch adds a Something else field itself.",
+                                "description": "The choices: two or three, in plain words. Mark at most one with recommended: true. Tidewatch adds a Something else field itself.",
                                 "items": {
                                     "type": "object",
                                     "properties": {
                                         "label": { "type": "string", "description": "A short name for the choice." },
                                         "description": { "type": "string", "description": "What choosing it means." },
+                                        "tradeoff": { "type": "string", "description": "One line on what this costs or gives up compared with the others." },
+                                        "recommended": { "type": "boolean", "description": "True on your top pick. At most one option per question." },
                                     },
                                     "required": ["label"],
                                     "additionalProperties": false,
@@ -343,9 +400,19 @@ fn option_from(value: &Value, context: &str, problems: &mut Vec<String>) -> Opti
         problems.push(format!("{context}needs a label"));
         return None;
     };
+    let top_pick = match object.get("recommended") {
+        None | Some(Value::Null | Value::Bool(false)) => false,
+        Some(Value::Bool(true)) => true,
+        Some(_) => {
+            problems.push(format!("{context}recommended must be true or false"));
+            false
+        }
+    };
     Some(QuestionOption {
-        label,
         description: text_field(object, "description", MAX_DESCRIPTION_CHARS, context, problems),
+        tradeoff: text_field(object, "tradeoff", MAX_TRADEOFF_CHARS, context, problems),
+        top_pick,
+        ..QuestionOption::new(label)
     })
 }
 
@@ -362,6 +429,7 @@ fn question_from(
             String::new()
         });
     let header = text_field(object, "header", MAX_HEADER_CHARS, &context, problems);
+    let decision = text_field(object, "decision", MAX_DECISION_CHARS, &context, problems);
     let select = match object.get("multi_select").or_else(|| object.get("multiSelect")) {
         None | Some(Value::Null | Value::Bool(false)) => Select::Single,
         Some(Value::Bool(true)) => Select::Multi,
@@ -392,7 +460,10 @@ fn question_from(
             problems.push(format!("{context}the option \"{}\" appears twice", option.shown()));
         }
     }
-    Question { text, header, select, options }
+    if options.iter().filter(|option| option.recommended()).count() > 1 {
+        problems.push(format!("{context}mark at most one option as recommended"));
+    }
+    Question { text, header, decision, select, options }
 }
 
 /// The questions the `ask_user` arguments describe, or every way they do not (in words for the
@@ -421,13 +492,14 @@ mod tests {
     use super::*;
 
     fn option(label: &str) -> QuestionOption {
-        QuestionOption { label: label.into(), description: None }
+        QuestionOption::new(label)
     }
 
     fn question(text: &str, select: Select, labels: &[&str]) -> Question {
         Question {
             text: text.into(),
             header: None,
+            decision: None,
             select,
             options: labels.iter().map(|label| option(label)).collect(),
         }
@@ -653,6 +725,128 @@ mod tests {
         assert_eq!(items["maxItems"], MAX_QUESTIONS);
         assert_eq!(items["items"]["properties"]["options"]["minItems"], MIN_OPTIONS);
         assert_eq!(items["items"]["properties"]["options"]["maxItems"], MAX_OPTIONS);
+    }
+
+    #[test]
+    fn the_old_payload_still_parses_with_nothing_new_in_it() {
+        let questions = from_tool_args(&args(&json!({"questions": [
+            {"question": "Q?", "options": [{"label": "A (Recommended)", "description": "first"}, {"label": "B"}]},
+        ]})))
+        .unwrap();
+        assert_eq!(questions[0].decision, None);
+        assert_eq!(questions[0].options[0].tradeoff, None);
+        assert!(questions[0].options[0].recommended());
+        assert!(!questions[0].options[1].recommended());
+        assert_eq!(questions[0].picks(), [0]);
+    }
+
+    #[test]
+    fn the_new_payload_carries_a_decision_tradeoffs_and_a_pick() {
+        let questions = from_tool_args(&args(&json!({"questions": [
+            {"question": "Which storage?", "decision": "  Pick where the retry count is kept.  ",
+             "options": [
+                {"label": "On the run", "tradeoff": "Simple, but every stage shares one count."},
+                {"label": "On the stage", "recommended": true, "tradeoff": "A bit more code, each stage counts alone."},
+                {"label": "In a file", "recommended": false},
+            ]},
+        ]})))
+        .unwrap();
+        let question = &questions[0];
+        assert_eq!(question.decision.as_deref(), Some("Pick where the retry count is kept."));
+        assert_eq!(
+            question.options[0].tradeoff.as_deref(),
+            Some("Simple, but every stage shares one count.")
+        );
+        assert_eq!(question.options[2].tradeoff, None);
+        assert_eq!(question.picks(), [1]);
+        assert_eq!(question.pick_given(), Some(Given { picked: vec![1], other: None }));
+    }
+
+    #[test]
+    fn a_pick_is_one_option_and_the_flag_or_the_suffix_both_count() {
+        let cases: Vec<(Value, &str)> = vec![
+            (
+                json!({"question": "Q?", "options": [{"label": "A", "recommended": true}, {"label": "B", "recommended": true}]}),
+                "mark at most one option as recommended",
+            ),
+            (
+                json!({"question": "Q?", "options": [{"label": "A", "recommended": true}, {"label": "B (Recommended)"}]}),
+                "mark at most one option as recommended",
+            ),
+            (
+                json!({"question": "Q?", "options": [{"label": "A", "recommended": "yes"}, {"label": "B"}]}),
+                "option 1: recommended must be true or false",
+            ),
+            (
+                json!({"question": "Q?", "decision": "x".repeat(201), "options": [{"label": "A"}, {"label": "B"}]}),
+                "decision is longer than 200 characters",
+            ),
+            (
+                json!({"question": "Q?", "options": [{"label": "A", "tradeoff": "x".repeat(161)}, {"label": "B"}]}),
+                "tradeoff is longer than 160 characters",
+            ),
+        ];
+        for (question, want) in cases {
+            let problems =
+                from_tool_args(&args(&json!({"questions": [question.clone()]}))).unwrap_err();
+            assert!(
+                problems.iter().any(|problem| problem.contains(want)),
+                "{question}: {problems:?} lacks {want:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn picks_are_the_first_recommended_option_of_a_single_choice_and_all_of_a_multiple_choice() {
+        let single = question("Q?", Select::Single, &["A", "B (Recommended)", "C (Recommended)"]);
+        assert_eq!(single.picks(), [1]);
+        let multi = question("Q?", Select::Multi, &["A (Recommended)", "B", "C (Recommended)"]);
+        assert_eq!(multi.picks(), [0, 2]);
+        assert_eq!(question("Q?", Select::Single, &["A", "B"]).pick_given(), None);
+    }
+
+    #[test]
+    fn all_picks_answers_every_question_or_none_of_them() {
+        let with = question("A?", Select::Single, &["x", "y (Recommended)"]);
+        let without = question("B?", Select::Single, &["x", "y"]);
+        assert_eq!(
+            all_picks(&[with.clone(), with.clone()]),
+            Some(vec![
+                Given { picked: vec![1], other: None },
+                Given { picked: vec![1], other: None }
+            ])
+        );
+        assert_eq!(all_picks(&[with, without]), None);
+        assert_eq!(all_picks(&[]), Some(Vec::new()));
+    }
+
+    #[test]
+    fn a_question_is_named_by_its_header_or_its_cut_text() {
+        let mut q = question("Where should the retry count live?", Select::Single, &["a", "b"]);
+        assert_eq!(q.name(), "Where should the retry count live?");
+        q.header = Some("Retries".into());
+        assert_eq!(q.name(), "Retries");
+        q.header = None;
+        q.text = "w".repeat(80);
+        assert_eq!(q.name().chars().count(), 60);
+        assert!(q.name().ends_with("..."));
+    }
+
+    #[test]
+    fn the_tool_description_tells_agents_how_to_write_a_decision() {
+        let schema = tool_definition();
+        let description = schema["description"].as_str().unwrap();
+        for needle in
+            ["plain words", "no jargon", "two or three options", "top pick", "exact items"]
+        {
+            assert!(description.contains(needle), "missing {needle}");
+        }
+        let option = &schema["inputSchema"]["properties"]["questions"]["items"]["properties"]["options"]
+            ["items"]["properties"];
+        assert_eq!(option["recommended"]["type"], "boolean");
+        assert_eq!(option["tradeoff"]["type"], "string");
+        let question = &schema["inputSchema"]["properties"]["questions"]["items"]["properties"];
+        assert_eq!(question["decision"]["type"], "string");
     }
 
     #[test]

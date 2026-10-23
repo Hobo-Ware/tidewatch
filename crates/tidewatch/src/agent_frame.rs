@@ -279,6 +279,7 @@ mod tests {
         let question = tidewatch_core::question::Question {
             text: "Where?".into(),
             header: None,
+            decision: None,
             select: tidewatch_core::question::Select::Single,
             options: vec![],
         };

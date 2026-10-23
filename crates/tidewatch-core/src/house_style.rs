@@ -50,7 +50,7 @@ Keep a progress ledger for the task with the `update_progress` tool of the `tide
 
 ## Questions
 
-When you need the user to choose between options, ask a multiple-choice question instead of describing the options in prose. Use your own question tool if you have one (for example `AskUserQuestion`), otherwise call the `ask_user` tool of the `tidewatch` MCP server. Put the option you recommend first and end its label with (Recommended).
+When you need the user to choose between options, ask a multiple-choice question instead of describing the options in prose. Use your own question tool if you have one (for example `AskUserQuestion`), otherwise call the `ask_user` tool of the `tidewatch` MCP server. Write the question for someone who has not followed your work: plain words, no jargon. Give two or three options, put the one you recommend first and end its label with (Recommended). With `ask_user`, also give the question a one-sentence `decision` and each option a one-line `tradeoff`, and set `recommended` on your top pick. An option that deletes anything names the exact items and how many.
 ";
 
 /// Tool guidance Tidewatch always puts after the house style, so an older or edited `house-style.md`
@@ -59,6 +59,7 @@ pub const TOOL_GUIDANCE: &str = "\
 ## Tidewatch tool guidance
 
 - For any job you expect to run over a minute, call `report_job`, or have the script append JSON progress lines (`name`, `done`, `total`, `unit`, `phase`, `state`) to the file in `$TIDEWATCH_PROGRESS`.
+- Ask choices in plain words with two or three options, mark your top pick, and name the exact items and the count for anything that deletes. The user can answer every open question with your picks in one click.
 - Once you understand the task, call `set_avatar` once with a 64x64 flat icon about the task (2-3 colors, simple shapes) and a one-line reason.
 - You may push this worktree's own `agent/` branch, force included; after folding fixups use `git push --force-with-lease`. Any other branch, a delete or a tag is refused, and Tidewatch opens pull requests.
 ";

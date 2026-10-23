@@ -118,13 +118,11 @@ mod tests {
         Question {
             text: "Q?".into(),
             header: None,
+            decision: None,
             select,
             options: labels
                 .iter()
-                .map(|label| tidewatch_core::question::QuestionOption {
-                    label: (*label).into(),
-                    description: None,
-                })
+                .map(|label| tidewatch_core::question::QuestionOption::new(*label))
                 .collect(),
         }
     }
