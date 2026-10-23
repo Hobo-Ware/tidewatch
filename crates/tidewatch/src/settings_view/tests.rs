@@ -23,6 +23,7 @@ fn files() -> Files {
         trust: "trust.toml".into(),
         general: "settings.toml".into(),
         house_style: "house-style.md".into(),
+        worktree_setup: "worktree-setup.toml".into(),
     }
 }
 
@@ -175,7 +176,7 @@ fn every_page_renders_headless_and_asks_for_nothing_until_clicked() {
 #[test]
 fn a_click_on_a_sidebar_item_opens_its_page_in_sidebar_order() {
     let sections: Vec<Section> = settings().sections().iter().map(|(s, _, _)| *s).collect();
-    assert_eq!(sections.len(), 6);
+    assert_eq!(sections.len(), 7);
     let mut harness = Harness::new(Section::General);
     harness.frame(vec![]);
     for (index, want) in sections.iter().enumerate() {

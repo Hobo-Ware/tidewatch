@@ -5,7 +5,7 @@
 //! - `TIDEWATCH_DEV_FORM_MESSAGE=<text>`: typed into the form's first message or task box.
 //! - `TIDEWATCH_DEV_WORKFLOW=<workflow id>`: open a tab for that workflow, which then asks for its task.
 //! - `TIDEWATCH_DEV_RESUME=<worktree name>`: open the tab of a saved workflow run and carry on where it was.
-//! - `TIDEWATCH_DEV_SETTINGS=1`: open the settings; `general`, `workflows`, `trust`, `shortcuts` or `house` open that page, `dirty` the profiles with an unsaved edit.
+//! - `TIDEWATCH_DEV_SETTINGS=1`: open the settings; `general`, `workflows`, `trust`, `shortcuts`, `house` or `worktree` open that page, `dirty` the profiles with an unsaved edit.
 //! - `TIDEWATCH_DEV_PROPOSE=<toml file>`: open that workflow (a `workflows.toml` table or one bare workflow) as a
 //!   proposal from a stand-in tab, the way an agent's answer opens: Settings, Workflows with an unsaved draft.
 //! - `TIDEWATCH_DEV_PALETTE=<query>` (or `1`): open the command palette, filled with that query.

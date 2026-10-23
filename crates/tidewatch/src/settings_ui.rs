@@ -78,7 +78,7 @@ pub(crate) fn card<R>(ui: &mut Ui, add: impl FnOnce(&mut Ui) -> R) -> R {
         .inner
 }
 
-fn divider(ui: &Ui) {
+pub(crate) fn divider(ui: &Ui) {
     if ui.min_rect().height() > 0.5 {
         let rect = ui.available_rect_before_wrap();
         ui.painter().hline(rect.x_range(), rect.top(), Stroke::new(1.0, CARD_LINE));

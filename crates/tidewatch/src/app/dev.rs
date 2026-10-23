@@ -28,6 +28,7 @@ impl Tidewatch {
                     Some("general") => settings.section = Section::General,
                     Some("shortcuts") => settings.section = Section::Shortcuts,
                     Some("house") => settings.section = Section::HouseStyle,
+                    Some("worktree") => settings.section = Section::WorktreeSetup,
                     Some("dirty") => settings.profiles.touched(),
                     _ => {}
                 }

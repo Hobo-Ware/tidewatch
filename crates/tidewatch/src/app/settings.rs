@@ -2,6 +2,7 @@
 
 use tidewatch_core::house_style;
 use tidewatch_core::prefs::{NewTabPrefs, Prefs, TabsPrefs, WindowPrefs};
+use tidewatch_core::setup_recipe::{Recipe, Store};
 
 use super::{Tidewatch, wall_ms};
 use crate::agent_jobs;
@@ -10,8 +11,10 @@ use crate::login_item;
 use crate::macos;
 use crate::new_tab_prefs_view::ProfileOption;
 use crate::profiles_view::Probes;
+use crate::repo::Workspace;
 use crate::settings::{Section, Settings};
 use crate::settings_view::{self, Files, Host};
+use crate::setup_editor::{Editor, RepoEntry};
 use crate::shell::{self, Event};
 use crate::updates;
 use crate::window_view;
@@ -24,12 +27,20 @@ impl Tidewatch {
         if let (Some(profiles), Some(workflows)) =
             (self.catalog.profiles(), self.catalog.workflows())
         {
-            self.settings = Some(Settings::new(
-                profiles,
-                workflows,
-                self.catalog.agent_names(),
-                self.shell.prefs(),
-            ));
+            let mut settings =
+                Settings::new(profiles, workflows, self.catalog.agent_names(), self.shell.prefs());
+            let repos = self
+                .workspaces
+                .iter()
+                .filter_map(|workspace| match workspace {
+                    Workspace::Repo(repo) => {
+                        Some(RepoEntry { name: repo.label.clone(), dir: repo.root.clone() })
+                    }
+                    Workspace::Other { .. } => None,
+                })
+                .collect();
+            settings.setup = Editor::new(repos, self.paths.clone(), self.workspace().dir());
+            self.settings = Some(settings);
         }
     }
 
@@ -84,7 +95,11 @@ impl Tidewatch {
                 }
                 Err(message) => settings.workflows.error = Some(message),
             },
-            Section::Trust | Section::General | Section::Shortcuts | Section::HouseStyle => {}
+            Section::Trust
+            | Section::General
+            | Section::Shortcuts
+            | Section::HouseStyle
+            | Section::WorktreeSetup => {}
         }
     }
 
@@ -138,6 +153,7 @@ impl Tidewatch {
                 trust: p.trust_file().display().to_string(),
                 general: p.prefs_file().display().to_string(),
                 house_style: p.house_style_file().display().to_string(),
+                worktree_setup: p.worktree_setup_file().display().to_string(),
             })
             .unwrap_or_default();
         let general = General {
@@ -199,6 +215,15 @@ impl Tidewatch {
         }
     }
 
+    fn save_worktree_setup(&mut self, repo: std::path::PathBuf, recipe: Recipe) {
+        let Some(paths) = self.paths.clone() else { return };
+        std::thread::spawn(move || {
+            if let Err(e) = Store::update(&paths, |store| store.set(&repo, &recipe)) {
+                eprintln!("tidewatch: cannot save worktree-setup.toml: {e}");
+            }
+        });
+    }
+
     fn open_house_style(&mut self, ctx: &egui::Context) {
         let Some(paths) = &self.paths else { return };
         match house_style::ensure(paths) {
@@ -247,6 +272,9 @@ impl Tidewatch {
             Some(settings_view::Action::LoginItem(click)) => self.apply_login_click(click, ctx),
             Some(settings_view::Action::OpenHouseStyle) => self.open_house_style(ctx),
             Some(settings_view::Action::ResetHouseStyle) => self.reset_house_style(ctx),
+            Some(settings_view::Action::WorktreeSetup { repo, recipe }) => {
+                self.save_worktree_setup(repo, recipe);
+            }
             None => {}
         }
     }

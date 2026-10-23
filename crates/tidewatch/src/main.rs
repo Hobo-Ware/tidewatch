@@ -147,6 +147,7 @@ mod settings;
 mod settings_icons;
 mod settings_ui;
 mod settings_view;
+mod setup_editor;
 mod shell;
 mod shell_plan;
 mod shortcuts_view;
@@ -183,6 +184,7 @@ mod workflow_jobs;
 mod workflow_run;
 mod workflow_start_view;
 mod worktree_jobs;
+mod worktree_setup_view;
 
 use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
