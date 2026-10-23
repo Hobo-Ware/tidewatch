@@ -7,18 +7,40 @@ use std::path::{Path, PathBuf};
 use std::sync::mpsc::{Receiver, Sender, channel};
 use std::thread::JoinHandle;
 
+use tidewatch_core::paths::TidewatchPaths;
 use tidewatch_core::pr_cards::Cards;
 use tidewatch_core::pr_gh::{self, Polled};
+use tidewatch_core::setup_recipe;
 use tidewatch_core::tools::{GhError, Tools};
+use tidewatch_core::worktree::Worktree;
+use tidewatch_core::worktree_cleanup::{self, Report};
 
 use crate::jobs::Jobs;
 use crate::pr_watch::Look;
 
 pub(crate) enum Done {
-    Loaded { tab: u64, cards: Box<Cards> },
-    Looked { tab: u64, result: Result<Box<Polled>, GhError> },
-    Committed { tab: u64, found: Option<(String, usize)> },
-    Reran { tab: u64, result: Result<(), GhError> },
+    Loaded {
+        tab: u64,
+        cards: Box<Cards>,
+    },
+    Looked {
+        tab: u64,
+        result: Result<Box<Polled>, GhError>,
+    },
+    Committed {
+        tab: u64,
+        found: Option<(String, usize)>,
+    },
+    Reran {
+        tab: u64,
+        result: Result<(), GhError>,
+    },
+    /// `remove` is set when the check was the last look before a removal the user asked for.
+    Checked {
+        tab: u64,
+        remove: bool,
+        result: Result<Report, String>,
+    },
 }
 
 pub(crate) fn load(jobs: &Jobs<Done>, ctx: &egui::Context, tab: u64, file: PathBuf) {
@@ -65,6 +87,23 @@ pub(crate) fn rerun(
     run: u64,
 ) {
     jobs.spawn(ctx, move || Done::Reran { tab, result: pr_gh::rerun_failed(&tools, &dir, run) });
+}
+
+/// Is the merged tab's worktree safe to remove? Local git and disk only.
+pub(crate) fn check_cleanup(
+    jobs: &Jobs<Done>,
+    ctx: &egui::Context,
+    paths: TidewatchPaths,
+    tab: u64,
+    worktree: Worktree,
+    pr_head: Option<String>,
+    remove: bool,
+) {
+    jobs.spawn(ctx, move || {
+        let copied = setup_recipe::recipe_for(&paths, &worktree.repo).copy;
+        let result = worktree_cleanup::check(&worktree, pr_head.as_deref(), &copied);
+        Done::Checked { tab, remove, result }
+    });
 }
 
 /// Writes cards off the UI thread. A newer copy of the same file replaces one still waiting.

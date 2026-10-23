@@ -30,8 +30,11 @@ fn cards_of(bodies: Vec<Body>) -> Cards {
     cards
 }
 
+static UNCHECKED: Cleanup = Cleanup::Unchecked;
+
 fn context(cards: &Cards, mode: PrMode) -> Context<'_> {
     Context {
+        cleanup: &UNCHECKED,
         cards,
         profile: "Builder",
         mode,
@@ -194,15 +197,64 @@ fn approval_only_opens_the_browser_and_says_merging_stays_yours() {
     assert_eq!(model.note.as_deref(), Some("Merging stays yours"));
 }
 
+fn merged_with(cleanup: &Cleanup) -> (Cards, Model) {
+    let cards = cards_of(vec![Body::Merged { number: 42, base: "main".into() }]);
+    let context = Context { cleanup, ..context(&cards, PrMode::Ask) };
+    let Some(Look::Card(model)) = look(0, context) else { panic!() };
+    (cards, model)
+}
+
+fn report(ignored: &[&str]) -> tidewatch_core::worktree_cleanup::Report {
+    tidewatch_core::worktree_cleanup::Report {
+        local_commits: Some(0),
+        ignored: ignored.iter().map(ToString::to_string).collect(),
+        ..Default::default()
+    }
+}
+
 #[test]
-fn merged_closes_the_tab_through_the_dialog_and_keep_it_hides_the_buttons() {
-    let mut cards = cards_of(vec![Body::Merged { number: 42, base: "main".into() }]);
-    let Some(Look::Card(model)) = look(0, context(&cards, PrMode::Ask)) else { panic!() };
-    assert_eq!(model.title, "Merged into main");
-    assert_eq!(labels(&model), [("Close tab and clean up", true), ("Keep it", false)]);
+fn a_merged_card_waits_for_the_check_with_only_keep_it() {
+    for cleanup in [Cleanup::Unchecked, Cleanup::Checking] {
+        let (_, model) = merged_with(&cleanup);
+        assert_eq!(model.title, "Merged into main");
+        assert_eq!(labels(&model), [("Keep it", false)]);
+    }
+}
+
+#[test]
+fn a_safe_merged_worktree_offers_to_remove_it_and_lists_what_ignored_files_would_go() {
+    let (_, plain) = merged_with(&Cleanup::Checked(report(&[])));
+    assert_eq!(labels(&plain), [("Remove worktree and branch", true), ("Keep it", false)]);
+    assert_eq!(plain.buttons[0].action, CardAction::Cleanup);
+    assert_eq!(plain.body, [Block::Text("PR merged. Remove worktree and branch?".into())]);
+    let (_, lost) = merged_with(&Cleanup::Checked(report(&["scratch.log", ".env.local"])));
+    assert_eq!(lost.body[2], Block::Log(vec!["scratch.log".to_owned(), ".env.local".to_owned()]));
+}
+
+#[test]
+fn a_merged_worktree_with_unsaved_work_is_not_offered_for_removal() {
+    let blocked = tidewatch_core::worktree_cleanup::Report {
+        untracked: vec!["idea.md".into()],
+        local_commits: Some(0),
+        ..Default::default()
+    };
+    let (_, model) = merged_with(&Cleanup::Checked(blocked));
+    assert_eq!(labels(&model), [("Close tab and clean up", false), ("Keep it", false)]);
+    assert_eq!(model.buttons[0].action, CardAction::CloseTab);
+    let Block::Log(lines) = &model.body[1] else { panic!("{:?}", model.body) };
+    assert_eq!(lines, &["1 untracked file", "  untracked  idea.md"]);
+    let (_, failed) = merged_with(&Cleanup::Failed("no such folder".into()));
+    assert_eq!(labels(&failed), [("Close tab and clean up", false), ("Keep it", false)]);
+}
+
+#[test]
+fn keep_it_hides_the_merged_buttons() {
+    let (mut cards, model) = merged_with(&Cleanup::Checked(report(&[])));
     let CardAction::KeepIt(id) = model.buttons[1].action else { panic!() };
     cards.handle(id);
-    let Some(Look::Card(kept)) = look(0, context(&cards, PrMode::Ask)) else { panic!() };
+    let context =
+        Context { cleanup: &Cleanup::Checked(report(&[])), ..context(&cards, PrMode::Ask) };
+    let Some(Look::Card(kept)) = look(0, context) else { panic!() };
     assert_eq!(kept.buttons, []);
 }
 

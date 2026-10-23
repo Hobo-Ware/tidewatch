@@ -9,8 +9,10 @@ use tidewatch_core::pr_cards::Cards;
 use tidewatch_core::pr_status::Body;
 use tidewatch_core::prefs::GithubPrefs;
 use tidewatch_core::tools::Tools;
+use tidewatch_core::worktree::{BRANCH_PREFIX, Worktree};
 
 use crate::jobs::Jobs;
+use crate::merge_cleanup::Cleanup;
 use crate::pr_cards_view::Data;
 use crate::pr_jobs::{self, Done, Saver};
 use crate::pr_watch::{Facts, Out, Watch};
@@ -158,6 +160,23 @@ impl Host {
                 );
             }
             outs.extend(watch.flush(default, now, now_ms));
+            if watch.cleanup.wants_check() && watch.merge_offered() {
+                watch.cleanup = Cleanup::Checking;
+                let worktree = Worktree {
+                    repo: fact.repo.to_path_buf(),
+                    path: fact.dir.to_path_buf(),
+                    branch: format!("{BRANCH_PREFIX}{}", fact.name),
+                };
+                pr_jobs::check_cleanup(
+                    &self.jobs,
+                    ctx,
+                    paths.clone(),
+                    fact.id,
+                    worktree,
+                    watch.pr_head(),
+                    false,
+                );
+            }
             if self.dev.outside_reachable()
                 && let Some(look) = watch.should_look(default, now)
             {
@@ -209,6 +228,10 @@ impl Host {
                     let outs =
                         if watch.committed(found, now_ms) { vec![Out::Save] } else { vec![] };
                     (tab, outs)
+                }
+                Done::Checked { tab, remove, result } => {
+                    let Some(watch) = self.tabs.get_mut(&tab) else { continue };
+                    (tab, watch.checked(remove, result))
                 }
                 Done::Reran { tab, result } => {
                     let Some(watch) = self.tabs.get_mut(&tab) else { continue };
@@ -277,6 +300,27 @@ impl Host {
         self.saver.save(&watch.file, watch.cards.clone());
     }
 
+    /// Looks at the merged tab's worktree once more before it is removed.
+    pub(crate) fn check_before_removal(
+        &mut self,
+        tab: u64,
+        worktree: Worktree,
+        paths: &TidewatchPaths,
+        ctx: &egui::Context,
+    ) {
+        let Some(watch) = self.tabs.get_mut(&tab) else { return };
+        watch.cleanup = Cleanup::Checking;
+        pr_jobs::check_cleanup(
+            &self.jobs,
+            ctx,
+            paths.clone(),
+            tab,
+            worktree,
+            watch.pr_head(),
+            true,
+        );
+    }
+
     /// The body of a card, for the app to act on (the failed run to re-run, the commits to push).
     pub(crate) fn body(&self, tab: u64, card: u64) -> Option<Body> {
         self.tabs.get(&tab)?.cards.get(card).map(|card| card.body.clone())
@@ -297,3 +341,6 @@ impl Host {
         self.saver.save(&watch.file, watch.cards.clone());
     }
 }
+
+#[cfg(test)]
+mod tests;
