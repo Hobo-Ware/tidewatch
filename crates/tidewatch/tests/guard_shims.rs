@@ -117,6 +117,7 @@ impl Lab {
             config: self.paths.prefs_file(),
             repo: self.repo.clone(),
             cache_dir: self.paths.guard_cache_dir(),
+            tab_dir: self.root.path().join("tab"),
         };
         let mut command = self.base(&self.shims.join(tool), &self.path(true));
         command.envs(ctx.env(&self.shims));

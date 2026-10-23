@@ -17,11 +17,18 @@ pub enum Rule {
     PrivateNames,
     DraftPrs,
     RerunFailed,
+    Comments,
 }
 
 impl Rule {
-    pub const ALL: [Self; 5] =
-        [Self::Dashes, Self::Trailers, Self::PrivateNames, Self::DraftPrs, Self::RerunFailed];
+    pub const ALL: [Self; 6] = [
+        Self::Dashes,
+        Self::Trailers,
+        Self::PrivateNames,
+        Self::DraftPrs,
+        Self::RerunFailed,
+        Self::Comments,
+    ];
 
     /// The key in `settings.toml`.
     #[must_use]
@@ -32,6 +39,7 @@ impl Rule {
             Self::PrivateNames => "private_names",
             Self::DraftPrs => "draft_prs",
             Self::RerunFailed => "rerun_failed",
+            Self::Comments => "comments",
         }
     }
 
@@ -43,6 +51,7 @@ impl Rule {
             Self::PrivateNames => "No private repo names in public repos",
             Self::DraftPrs => "Pull requests open as drafts",
             Self::RerunFailed => "Rerun only failed jobs",
+            Self::Comments => "Comment guard",
         }
     }
 
@@ -62,6 +71,9 @@ impl Rule {
             Self::DraftPrs => "Open the pull request as a draft: add --draft to gh pr create.",
             Self::RerunFailed => {
                 "Rerun only the failed jobs: add --failed (or --job <id>) to gh run rerun."
+            }
+            Self::Comments => {
+                "Code comments an agent writes are checked against a keep-list: no narration, banners, commented-out code, alibis or bare TODOs."
             }
         }
     }
@@ -86,6 +98,8 @@ pub struct Rules {
     pub draft_prs: bool,
     #[serde(default = "on")]
     pub rerun_failed: bool,
+    #[serde(default = "on")]
+    pub comments: bool,
 }
 
 fn on() -> bool {
@@ -100,6 +114,7 @@ impl Default for Rules {
             private_names: true,
             draft_prs: false,
             rerun_failed: true,
+            comments: true,
         }
     }
 }
@@ -113,6 +128,7 @@ impl Rules {
             Rule::PrivateNames => self.private_names,
             Rule::DraftPrs => self.draft_prs,
             Rule::RerunFailed => self.rerun_failed,
+            Rule::Comments => self.comments,
         }
     }
 
@@ -123,6 +139,7 @@ impl Rules {
             Rule::PrivateNames => self.private_names = on,
             Rule::DraftPrs => self.draft_prs = on,
             Rule::RerunFailed => self.rerun_failed = on,
+            Rule::Comments => self.comments = on,
         }
     }
 }

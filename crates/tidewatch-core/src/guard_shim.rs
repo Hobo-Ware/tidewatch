@@ -13,7 +13,7 @@
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 
-use crate::guard_run::{BIN_ENV, CACHE_ENV, CONFIG_ENV, DIR_ENV, REPO_ENV};
+use crate::guard_run::{BIN_ENV, CACHE_ENV, CONFIG_ENV, DIR_ENV, REPO_ENV, TAB_ENV};
 
 /// What a tab's launch needs to wake the shims.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -25,6 +25,8 @@ pub struct GuardCtx {
     /// The repo the tab belongs to, for its own rule answers.
     pub repo: PathBuf,
     pub cache_dir: PathBuf,
+    /// The tab's state folder, where the comment guard keeps its flags and off switch.
+    pub tab_dir: PathBuf,
 }
 
 impl GuardCtx {
@@ -38,6 +40,7 @@ impl GuardCtx {
             (REPO_ENV.to_owned(), show(&self.repo)),
             (CACHE_ENV.to_owned(), show(&self.cache_dir)),
             (DIR_ENV.to_owned(), show(shim_dir)),
+            (TAB_ENV.to_owned(), show(&self.tab_dir)),
         ]
     }
 }

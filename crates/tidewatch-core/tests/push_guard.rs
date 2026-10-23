@@ -265,6 +265,7 @@ fn the_push_rule_holds_with_the_outbound_shims_in_front_of_git() {
             config: repo.helper_dir.join("settings.toml"),
             repo: repo.work.clone(),
             cache_dir: repo.helper_dir.join("cache"),
+            tab_dir: repo.helper_dir.join("tab"),
         }
         .env(&repo.helper_dir),
     );

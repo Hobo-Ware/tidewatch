@@ -211,8 +211,10 @@ fn non_empty(value: Option<&str>) -> Option<&str> {
 }
 
 fn claude_wiring(ctx: &LaunchCtx, house_style: Option<&Path>, args: &mut Vec<String>) {
-    if let Some(listener) = &ctx.hooks {
-        args.extend(["--settings".to_owned(), claude_hook_settings(listener)]);
+    let comment_guard =
+        ctx.guards.as_ref().filter(|_| ctx.worktree_tab).map(|guards| guards.bin.as_path());
+    if let Some(settings) = claude_settings(ctx.hooks.as_ref(), comment_guard) {
+        args.extend(["--settings".to_owned(), settings]);
     }
     if let Some(config) = &ctx.mcp_config {
         args.push(format!("--mcp-config={}", config.display()));
@@ -312,16 +314,41 @@ fn curl_hook_command(url: &str, bearer: &str) -> String {
 /// The `--settings` JSON for Claude: http hooks for the events the status layer reads (D5).
 #[must_use]
 pub fn claude_hook_settings(listener: &HookListener) -> String {
-    let hook = json!({
-        "type": "http",
-        "url": listener.hook_url("claude"),
-        "headers": { "Authorization": listener.bearer() },
-    });
-    let hooks: serde_json::Map<String, Value> = CLAUDE_HOOK_EVENTS
-        .iter()
-        .map(|event| ((*event).to_owned(), json!([{ "hooks": [hook.clone()] }])))
-        .collect();
-    json!({ "hooks": hooks }).to_string()
+    claude_settings(Some(listener), None).unwrap_or_default()
+}
+
+/// The `--settings` JSON for Claude: the http hooks of the status layer when there is a `listener`,
+/// and, when `comment_guard` names the Tidewatch binary, the comment guard's command hooks beside
+/// them: PostToolUse after Write, Edit and MultiEdit, and a Stop sweep of the branch diff. `None`
+/// when neither applies.
+#[must_use]
+pub fn claude_settings(
+    listener: Option<&HookListener>,
+    comment_guard: Option<&Path>,
+) -> Option<String> {
+    let mut hooks = serde_json::Map::new();
+    if let Some(listener) = listener {
+        let hook = json!({
+            "type": "http",
+            "url": listener.hook_url("claude"),
+            "headers": { "Authorization": listener.bearer() },
+        });
+        for event in CLAUDE_HOOK_EVENTS {
+            hooks.insert(event.to_owned(), json!([{ "hooks": [hook.clone()] }]));
+        }
+    }
+    if let Some(bin) = comment_guard {
+        let command = |tail: &str| json!({ "type": "command", "command": format!("{} --guard comments{tail}", shell_quote(&bin.display().to_string())) });
+        let mut push = |event: &str, group: Value| {
+            let slot = hooks.entry(event.to_owned()).or_insert_with(|| json!([]));
+            if let Some(groups) = slot.as_array_mut() {
+                groups.push(group);
+            }
+        };
+        push("PostToolUse", json!({ "matcher": "Write|Edit|MultiEdit", "hooks": [command("")] }));
+        push("Stop", json!({ "hooks": [command(" --stop")] }));
+    }
+    (!hooks.is_empty()).then(|| json!({ "hooks": hooks }).to_string())
 }
 
 /// The MCP config file content for the CLIs that read one (Claude, Copilot). `None` for the others.
@@ -971,6 +998,7 @@ mod tests {
             config: "/cfg/settings.toml".into(),
             repo: "/work/web".into(),
             cache_dir: "/state/guard-cache".into(),
+            tab_dir: "/state/web/brave-otter".into(),
         }
     }
 
@@ -993,6 +1021,51 @@ mod tests {
         assert_eq!(env_of(&launch, "TIDEWATCH_GUARD_CONFIG"), None);
         assert_eq!(env_of(&launch, "PATH"), None);
         assert_eq!(env_of(&run("claude", &open, &full_ctx()), "TIDEWATCH_GUARD_CONFIG"), None);
+    }
+
+    #[test]
+    fn the_comment_guard_adds_command_hooks_beside_the_status_hooks_in_worktree_tabs_only() {
+        let ctx = LaunchCtx { guards: Some(guard_ctx()), ..full_ctx() };
+        let args = run("claude", &profile("claude", Level::Plan), &ctx).args;
+        let at = args.iter().position(|a| a == "--settings").unwrap();
+        let settings: Value = serde_json::from_str(&args[at + 1]).unwrap();
+        let post = &settings["hooks"]["PostToolUse"];
+        assert_eq!(post.as_array().unwrap().len(), 1);
+        assert_eq!(post[0]["matcher"], "Write|Edit|MultiEdit");
+        assert_eq!(post[0]["hooks"][0]["type"], "command");
+        assert_eq!(post[0]["hooks"][0]["command"], "/app/tidewatch --guard comments");
+        let stop = settings["hooks"]["Stop"].as_array().unwrap();
+        assert_eq!(stop.len(), 2);
+        assert_eq!(stop[0]["hooks"][0]["type"], "http");
+        assert_eq!(stop[1]["hooks"][0]["command"], "/app/tidewatch --guard comments --stop");
+        assert!(settings["hooks"]["SessionStart"][0]["hooks"][0]["url"].is_string());
+
+        let main_tab = LaunchCtx { worktree_tab: false, ..ctx.clone() };
+        let args = run("claude", &profile("claude", Level::Plan), &main_tab).args;
+        let at = args.iter().position(|a| a == "--settings").unwrap();
+        let settings: Value = serde_json::from_str(&args[at + 1]).unwrap();
+        assert!(settings["hooks"]["PostToolUse"].is_null());
+        assert_eq!(settings["hooks"]["Stop"].as_array().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn the_comment_guard_alone_still_gets_a_settings_file_and_a_path_with_spaces_is_quoted() {
+        let guards =
+            GuardCtx { bin: "/Applications/Tide watch.app/tidewatch".into(), ..guard_ctx() };
+        let settings = claude_settings(None, Some(&guards.bin)).unwrap();
+        let parsed: Value = serde_json::from_str(&settings).unwrap();
+        assert_eq!(
+            parsed["hooks"]["Stop"][0]["hooks"][0]["command"],
+            "'/Applications/Tide watch.app/tidewatch' --guard comments --stop"
+        );
+        assert_eq!(parsed["hooks"].as_object().unwrap().len(), 2);
+        assert_eq!(claude_settings(None, None), None);
+        let ctx = LaunchCtx { hooks: None, guards: Some(guard_ctx()), ..full_ctx() };
+        assert!(
+            run("claude", &profile("claude", Level::Plan), &ctx)
+                .args
+                .contains(&"--settings".to_owned())
+        );
     }
 
     #[test]
