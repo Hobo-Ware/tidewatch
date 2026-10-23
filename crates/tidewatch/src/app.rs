@@ -40,6 +40,7 @@ use kelp_ui::avatars::AvatarStore;
 use stdusk_core::terminal::PtyTerm;
 use stdusk_egui::colors;
 use stdusk_egui::ui::apply_theme;
+use tidewatch_core::guards::GuardPrefs;
 use tidewatch_core::notes::NotesWriter;
 use tidewatch_core::paths::TidewatchPaths;
 use tidewatch_core::prefs::{NewTabPrefs, Prefs};
@@ -153,6 +154,7 @@ pub(crate) struct Tidewatch {
     palette: Option<Palette>,
     last_profile: Option<String>,
     new_tab_prefs: NewTabPrefs,
+    guards: GuardPrefs,
     welcome: Option<Vec<Recent>>,
     bases: Bases,
     hooks: Hooks,
@@ -238,6 +240,7 @@ impl Tidewatch {
         let restored = hooks_port.is_some();
         let loaded = paths.as_ref().map(Prefs::load).unwrap_or_default();
         let (new_tab_prefs, park_after) = (loaded.new_tab, loaded.tabs.park_after);
+        let guards = loaded.guards;
         let dev_flow = DevFlow::from_env();
         let flow = Flow::new(Tools::with_path(dev_flow.tool_path(agent_path.clone())));
         let pr = pr_glue::Host::new(
@@ -301,6 +304,7 @@ impl Tidewatch {
             palette: None,
             last_profile: None,
             new_tab_prefs: new_tab_prefs.clone(),
+            guards,
             welcome: recent,
             bases: Bases::new(),
             hooks,

@@ -44,6 +44,8 @@ pub(crate) enum Action {
     Tabs(tidewatch_core::prefs::TabsPrefs),
     /// The GitHub card changed something: all of its choices. Applies at once too.
     Github(tidewatch_core::prefs::GithubPrefs),
+    /// A Guards switch or the private repo list changed. Applies at once too.
+    Guards(crate::guards_view::Change),
     LoginItem(login_item::Click),
     OpenHouseStyle,
     ResetHouseStyle,

@@ -7,6 +7,7 @@ use tidewatch_core::setup_recipe::{Recipe, Store};
 use super::{Tidewatch, wall_ms};
 use crate::agent_jobs;
 use crate::general_view::General;
+use crate::guards_view;
 use crate::login_item;
 use crate::macos;
 use crate::new_tab_prefs_view::ProfileOption;
@@ -124,6 +125,18 @@ impl Tidewatch {
         }
     }
 
+    fn set_guards(&mut self, change: &guards_view::Change) {
+        change.apply(&mut self.guards);
+        if let Some(paths) = self.paths.clone() {
+            let change = change.clone();
+            std::thread::spawn(move || {
+                if let Err(e) = Prefs::update(&paths, |p| change.apply(&mut p.guards)) {
+                    eprintln!("tidewatch: cannot save settings.toml: {e}");
+                }
+            });
+        }
+    }
+
     fn set_new_tab_prefs(&mut self, prefs: NewTabPrefs) {
         self.new_tab_prefs = prefs.clone();
         if let Some(paths) = self.paths.clone() {
@@ -143,6 +156,12 @@ impl Tidewatch {
         let esc_closes = self.settings_owns_escape();
         let default_branch =
             self.bases.facts(self.workspace().dir()).and_then(|facts| facts.remote_default.clone());
+        let guards_repo = match self.workspace() {
+            Workspace::Repo(repo) => {
+                Some(guards_view::Repo { path: repo.root.clone(), label: repo.label.clone() })
+            }
+            Workspace::Other { .. } => None,
+        };
         let settings = self.settings.as_mut()?;
         let files = self
             .paths
@@ -168,6 +187,8 @@ impl Tidewatch {
             github: self.pr.default_prefs(),
             new_tab: self.new_tab_prefs.clone(),
             tabs: TabsPrefs { park_after: self.parking.after() },
+            guards: self.guards.clone(),
+            guards_repo,
             default_branch,
             profiles: self
                 .catalog
@@ -269,6 +290,7 @@ impl Tidewatch {
             Some(settings_view::Action::NewTab(prefs)) => self.set_new_tab_prefs(prefs),
             Some(settings_view::Action::Tabs(prefs)) => self.set_tabs_prefs(prefs),
             Some(settings_view::Action::Github(prefs)) => self.set_github_default(prefs),
+            Some(settings_view::Action::Guards(change)) => self.set_guards(&change),
             Some(settings_view::Action::LoginItem(click)) => self.apply_login_click(click, ctx),
             Some(settings_view::Action::OpenHouseStyle) => self.open_house_style(ctx),
             Some(settings_view::Action::ResetHouseStyle) => self.reset_house_style(ctx),
