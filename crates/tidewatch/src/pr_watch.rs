@@ -12,7 +12,9 @@ use tidewatch_core::pr_status::{Body, Seen, Summary, Tone as PrTone, Via};
 use tidewatch_core::prefs::{GithubPrefs, PrMode};
 use tidewatch_core::status::AgentStatus;
 use tidewatch_core::tools::GhError;
+use tidewatch_core::worktree_cleanup::Report;
 
+use crate::merge_cleanup::Cleanup;
 use crate::note_send::{HOLD_SECS, gate, gate_reason};
 use crate::status_view::Tone;
 
@@ -86,6 +88,8 @@ pub(crate) enum Out {
     Toast(String),
     Notify(Notice),
     Save,
+    /// The merged tab's worktree was checked once more and is safe: remove it and its branch.
+    Remove,
 }
 
 /// What a frame knows of the tab, for the watch.
@@ -130,6 +134,7 @@ pub(crate) struct Watch {
     ended: bool,
     pub(crate) pause: Option<Pause>,
     pub(crate) pending: Vec<Pending>,
+    pub(crate) cleanup: Cleanup,
     hold_until: Option<f64>,
     next_pending: u64,
     status: AgentStatus,
@@ -149,6 +154,7 @@ impl Watch {
             ended: false,
             pause: None,
             pending: Vec::new(),
+            cleanup: Cleanup::default(),
             hold_until: None,
             next_pending: 0,
             status: AgentStatus::SettingUp,
@@ -411,6 +417,31 @@ impl Watch {
         if was_off && policy.mode != PrMode::Off {
             self.due = now;
         }
+    }
+
+    /// A merge card still offers its buttons.
+    pub(crate) fn merge_offered(&self) -> bool {
+        let cards = self.cards.cards();
+        (0..cards.len())
+            .any(|at| matches!(cards[at].body, Body::Merged { .. }) && self.cards.is_current(at))
+    }
+
+    /// The head GitHub last reported for the pull request.
+    pub(crate) fn pr_head(&self) -> Option<String> {
+        self.cards.seen.as_ref().map(|seen| seen.head.clone()).filter(|head| !head.is_empty())
+    }
+
+    /// A safety check finished. With `remove` set and the worktree safe, the removal goes ahead.
+    pub(crate) fn checked(&mut self, remove: bool, result: Result<Report, String>) -> Vec<Out> {
+        let outs = match &result {
+            Ok(report) if remove && report.is_safe() => vec![Out::Remove],
+            Ok(_) if remove => {
+                vec![Out::Toast("The worktree changed since the check, so it stays".into())]
+            }
+            _ => Vec::new(),
+        };
+        self.cleanup = result.map_or_else(Cleanup::Failed, Cleanup::Checked);
+        outs
     }
 
     /// The next wake-up for the hold after a send, when messages wait.

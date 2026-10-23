@@ -463,3 +463,33 @@ fn a_lookup_that_follows_a_head_that_moved_looks_again_at_once() {
     watch.learn(42, "head-2", 11.0);
     assert!(watch.should_look(default, 11.0).is_some(), "a push just went out");
 }
+
+#[test]
+fn a_merge_card_is_offered_until_it_is_kept() {
+    let default = GithubPrefs::default();
+    let mut watch = ready(Some(42));
+    assert!(!watch.merge_offered());
+    watch.look_started();
+    let merged = Body::Merged { number: 42, base: "main".into() };
+    watch.polled(Ok(polled(vec![merged], false, true)), default, "tab", 5.0, 0);
+    assert!(watch.merge_offered());
+    let id = watch.cards.cards()[0].id;
+    watch.cards.handle(id);
+    assert!(!watch.merge_offered());
+}
+
+#[test]
+fn only_a_clean_second_check_lets_the_removal_go() {
+    use tidewatch_core::worktree_cleanup::Report;
+    let clean = Report { local_commits: Some(0), ..Report::default() };
+    let dirty = Report { changed: vec!["a.rs".into()], ..clean.clone() };
+    let mut watch = ready(Some(42));
+    assert_eq!(watch.checked(false, Ok(clean.clone())), []);
+    assert_eq!(watch.cleanup, Cleanup::Checked(clean.clone()));
+    assert_eq!(watch.checked(true, Ok(clean)), [Out::Remove]);
+    let outs = watch.checked(true, Ok(dirty.clone()));
+    assert!(matches!(outs.as_slice(), [Out::Toast(_)]), "{outs:?}");
+    assert_eq!(watch.cleanup, Cleanup::Checked(dirty));
+    assert_eq!(watch.checked(true, Err("gone".into())), []);
+    assert_eq!(watch.cleanup, Cleanup::Failed("gone".into()));
+}

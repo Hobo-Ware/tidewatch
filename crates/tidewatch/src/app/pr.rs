@@ -15,7 +15,9 @@ use crate::pane::Body as PaneBody;
 use crate::pr_card_model::{CardAction, is_web_url};
 use crate::pr_glue::Applied;
 use crate::pr_watch::{Facts, Out, Watch};
+use crate::worktree_jobs;
 use crate::{flow_glue, layout, pr_strip};
+use tidewatch_core::worktree::{BranchChoice, RemoveMode};
 
 fn now_ms() -> i64 {
     wall_ms() as i64
@@ -78,6 +80,7 @@ impl Tidewatch {
                     self.notifier.offer_pr(tab, notice.tone, notification, away, now);
                 }
                 Out::Save => {}
+                Out::Remove => self.remove_merged(tab, ctx),
             }
         }
     }
@@ -102,6 +105,7 @@ impl Tidewatch {
                         self.close_tab(index, ctx);
                     }
                 }
+                CardAction::Cleanup => self.begin_cleanup(tab, ctx),
                 CardAction::KeepIt(card) => self.pr.dismiss(tab, card, false),
                 CardAction::NotNow(card) => self.pr.dismiss(tab, card, true),
                 CardAction::PushFix(card) => self.push_fix(tab, card, ctx),
@@ -110,6 +114,34 @@ impl Tidewatch {
             }
         }
         self.apply_pr(applied, ctx, now);
+    }
+
+    fn begin_cleanup(&mut self, tab: u64, ctx: &egui::Context) {
+        let Some(paths) = self.paths.clone() else { return };
+        let Some(worktree) = self.tabs.get_mut(tab).and_then(|t| t.pane.worktree.clone()) else {
+            return;
+        };
+        self.pr.check_before_removal(tab, worktree, &paths, ctx);
+    }
+
+    fn remove_merged(&mut self, tab: u64, ctx: &egui::Context) {
+        let Some(paths) = self.paths.clone() else { return };
+        let Some((shell, worktree)) = self.tabs.get_mut(tab).and_then(|t| t.pane.begin_remove())
+        else {
+            return;
+        };
+        let trust = self.trust.grant();
+        worktree_jobs::remove(
+            &self.jobs,
+            ctx,
+            paths,
+            tab,
+            shell,
+            worktree,
+            BranchChoice::Delete,
+            RemoveMode::Safe,
+            trust,
+        );
     }
 
     fn open_pr_page(&mut self, url: &str, ctx: &egui::Context) {

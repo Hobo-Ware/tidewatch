@@ -7,6 +7,7 @@ use tidewatch_core::pr_prompt::short_step;
 use tidewatch_core::pr_status::{Body, Job, ReviewComment, Via};
 use tidewatch_core::prefs::PrMode;
 
+use crate::merge_cleanup::{self, Cleanup};
 use crate::pr_watch::{Pause, Pending};
 
 /// Most bars drawn for running checks.
@@ -49,6 +50,8 @@ pub(crate) enum CardAction {
     OpenNotes,
     CloseTab,
     KeepIt(u64),
+    /// Remove the merged tab's worktree and delete its branch.
+    Cleanup,
     PushFix(u64),
     NotNow(u64),
     SendNow(u64),
@@ -125,6 +128,54 @@ pub(crate) struct Context<'a> {
     pub(crate) url: &'a str,
     /// The checks are green right now, for the line under Approved.
     pub(crate) checks_green: bool,
+    pub(crate) cleanup: &'a Cleanup,
+}
+
+fn merged_body(cleanup: &Cleanup) -> Vec<Block> {
+    match cleanup {
+        Cleanup::Unchecked | Cleanup::Checking => {
+            vec![Block::Text("PR merged. Checking whether the worktree can go.".to_owned())]
+        }
+        Cleanup::Checked(report) if report.is_safe() => {
+            let mut body = vec![Block::Text("PR merged. Remove worktree and branch?".to_owned())];
+            if !report.ignored.is_empty() {
+                body.push(Block::Text(
+                    "Ignored files that exist only here and would be lost:".to_owned(),
+                ));
+                body.push(Block::Log(merge_cleanup::ignored_lines(report)));
+            }
+            body
+        }
+        Cleanup::Checked(report) => vec![
+            Block::Text("PR merged, but this worktree holds work that is not in it.".to_owned()),
+            Block::Log(merge_cleanup::blocker_lines(report)),
+        ],
+        Cleanup::Failed(why) => vec![Block::Text(format!(
+            "PR merged. The worktree could not be checked ({why}). Closing the tab asks first."
+        ))],
+    }
+}
+
+fn merged_buttons(cleanup: &Cleanup, card: u64) -> Vec<Button> {
+    let keep =
+        Button { label: "Keep it".to_owned(), primary: false, action: CardAction::KeepIt(card) };
+    let close = Button {
+        label: "Close tab and clean up".to_owned(),
+        primary: false,
+        action: CardAction::CloseTab,
+    };
+    match cleanup {
+        Cleanup::Unchecked | Cleanup::Checking => vec![keep],
+        Cleanup::Checked(report) if report.is_safe() => vec![
+            Button {
+                label: "Remove worktree and branch".to_owned(),
+                primary: true,
+                action: CardAction::Cleanup,
+            },
+            keep,
+        ],
+        Cleanup::Checked(_) | Cleanup::Failed(_) => vec![close, keep],
+    }
 }
 
 pub(crate) fn look(index: usize, context: Context<'_>) -> Option<Look> {
@@ -282,16 +333,9 @@ pub(crate) fn look(index: usize, context: Context<'_>) -> Option<Look> {
         Body::Merged { number, base } => {
             let mut m =
                 model(Icon::Merged, Ink::Teal, format!("Merged into {base}"), format!("#{number}"));
-            m.body = vec![Block::Text(
-                "The branch is in. Close the tab to clean up its worktree.".to_owned(),
-            )];
+            m.body = merged_body(context.cleanup);
             if current {
-                m.buttons.push(Button {
-                    label: "Close tab and clean up".to_owned(),
-                    primary: true,
-                    action: CardAction::CloseTab,
-                });
-                m.buttons.push(quiet("Keep it", CardAction::KeepIt(card.id)));
+                m.buttons = merged_buttons(context.cleanup, card.id);
             }
             Look::Card(m)
         }
