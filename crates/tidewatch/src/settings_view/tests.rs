@@ -7,7 +7,9 @@ use tidewatch_core::workflows::Workflows;
 
 use super::*;
 use crate::catalog::Availability;
+use crate::general_view::KeepAwakeChange;
 use crate::macos::LoginItem;
+use crate::touch_id_view::{self, TouchId};
 use crate::window_view;
 
 fn settings() -> Settings {
@@ -53,6 +55,7 @@ fn general(restore: bool, resume: ResumeAgents, login_offered: bool) -> General 
         git: tidewatch_core::prefs::GitPrefs::default(),
         done_check: tidewatch_core::prefs::DoneCheckPrefs::default(),
         keep_awake: tidewatch_core::prefs::KeepAwakePrefs::default(),
+        touch_id: None,
         guards: tidewatch_core::guards::GuardPrefs::default(),
         guards_repo: None,
         profiles: Vec::new(),
@@ -311,7 +314,8 @@ fn the_keep_awake_card_reports_the_switch_and_its_new_value() {
                 ..RawInput::default()
             };
             let mut answer = None;
-            let _ = ctx.run_ui(raw, |ui| answer = crate::general_view::keep_awake_card(ui, on));
+            let _ =
+                ctx.run_ui(raw, |ui| answer = crate::general_view::keep_awake_card(ui, on, None));
             answer
         };
         frame(vec![]);
@@ -324,8 +328,54 @@ fn the_keep_awake_card_reports_the_switch_and_its_new_value() {
                 found.extend(frame(vec![press(at, false)]));
             }
         }
-        assert!(found.contains(&!on), "switch from {on}: {found:?}");
-        assert!(!found.contains(&on), "switch from {on}: {found:?}");
+        let switched = |to: bool| found.contains(&KeepAwakeChange::Switch(to));
+        assert!(switched(!on), "switch from {on}: {found:?}");
+        assert!(!switched(on), "switch from {on}: {found:?}");
+    }
+}
+
+#[test]
+fn the_touch_id_row_reports_the_click_its_state_allows() {
+    let cases = [
+        (TouchId::Missing, Some(touch_id_view::Click::SetUp)),
+        (TouchId::Installed, Some(touch_id_view::Click::Remove)),
+        (TouchId::Working, None),
+    ];
+    for (state, want) in cases {
+        let ctx = egui::Context::default();
+        ctx.set_fonts(crate::fonts::definitions());
+        let frame = |events: Vec<Event>| {
+            let raw = RawInput {
+                screen_rect: Some(Rect::from_min_size(pos2(0.0, 0.0), Vec2::new(900.0, 400.0))),
+                focused: true,
+                events,
+                ..RawInput::default()
+            };
+            let mut answer = None;
+            let _ = ctx.run_ui(raw, |ui| {
+                answer = crate::general_view::keep_awake_card(ui, true, Some(state));
+            });
+            answer
+        };
+        frame(vec![]);
+        let mut found = Vec::new();
+        for y in (10..300).step_by(6) {
+            for x in (700..880).step_by(8) {
+                let at = pos2(x as f32, y as f32);
+                frame(vec![Event::PointerMoved(at)]);
+                frame(vec![press(at, true)]);
+                found.extend(frame(vec![press(at, false)]));
+            }
+        }
+        let clicks: Vec<_> = found
+            .iter()
+            .filter_map(|change| match change {
+                KeepAwakeChange::TouchId(click) => Some(*click),
+                KeepAwakeChange::Switch(_) => None,
+            })
+            .collect();
+        assert_eq!(clicks.first().copied(), want, "{state:?}");
+        assert!(clicks.iter().all(|click| Some(*click) == want), "{state:?}: {clicks:?}");
     }
 }
 

@@ -32,6 +32,12 @@ pub(crate) fn caption(ui: &mut Ui, text: &str) {
     ui.label(RichText::new(text).size(13.0).color(MUTED));
 }
 
+/// A caption that closes a card: set off by a divider and inset like the rows above it.
+pub(crate) fn card_caption(ui: &mut Ui, text: &str) {
+    divider(ui);
+    Frame::new().inner_margin(Margin::symmetric(18, 14)).show(ui, |ui| caption(ui, text));
+}
+
 pub(crate) fn note(ui: &mut Ui, text: &str, color: Color32) {
     ui.label(RichText::new(text).size(13.0).color(color));
 }

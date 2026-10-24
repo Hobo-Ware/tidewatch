@@ -194,6 +194,8 @@ mod terminal_font;
 mod test_exec;
 mod timeline;
 mod toast;
+mod touch_id;
+mod touch_id_view;
 mod tray;
 mod trust_glue;
 mod trust_view;

@@ -48,6 +48,7 @@ pub enum State {
         until: Option<f64>,
         told: u32,
     },
+    /// The stop command is running; sleep is confirmed back in the background after it.
     Stopping,
 }
 
@@ -75,8 +76,12 @@ impl State {
 #[derive(Clone, Debug, PartialEq)]
 pub enum Event {
     Pick(Choice),
-    /// The admin prompt was answered and the helper runs.
+    /// The start command answered and the helper runs.
     Started,
+    /// `pmset` never showed sleep off after a start that reported success.
+    Unconfirmed,
+    /// The stop command returned.
+    Stopped,
     StartFailed(String),
     AddHour,
     TurnOff,
@@ -94,7 +99,13 @@ pub enum Effect {
     TakeHold,
     ReleaseHold,
     WriteDeadline(Option<f64>),
+    /// Check in the background that `pmset` shows lid mode on.
+    ConfirmOn,
+    /// Drop the token so the helper lets go, with no check of what comes back.
+    Abandon,
     StopLid,
+    /// Check in the background that `pmset` shows sleep back on.
+    ConfirmOff,
     Say(Voice),
 }
 
@@ -105,6 +116,9 @@ pub enum Voice {
     End,
     NotStarted(String),
     StillOff,
+    TouchIdReady,
+    TouchIdGone,
+    TouchIdFailed(String),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -157,6 +171,19 @@ impl Voice {
             Self::StillOff => {
                 vec![line(Omen::Plain, "Sleep may still be off. Run: sudo pmset -a disablesleep 0")]
             }
+            Self::TouchIdReady => {
+                vec![line(
+                    Omen::Plain,
+                    "Touch ID is set up. Amphetamine asks for your fingerprint now.",
+                )]
+            }
+            Self::TouchIdGone => vec![line(
+                Omen::Plain,
+                "Touch ID for Amphetamine is removed. It asks for your password again.",
+            )],
+            Self::TouchIdFailed(why) => {
+                vec![(Omen::Plain, format!("Touch ID for Amphetamine was not changed: {why}"))]
+            }
         }
     }
 }
@@ -183,9 +210,22 @@ pub fn step(state: State, event: &Event, now: f64, lid: bool) -> (State, Vec<Eff
             let until = choice.seconds().map(|seconds| now + seconds);
             (
                 on(until, now),
-                vec![Effect::TakeHold, Effect::WriteDeadline(until), Effect::Say(Voice::Start)],
+                vec![
+                    Effect::TakeHold,
+                    Effect::WriteDeadline(until),
+                    Effect::Say(Voice::Start),
+                    Effect::ConfirmOn,
+                ],
             )
         }
+        (State::On { .. }, Event::Unconfirmed) => (
+            State::Off,
+            vec![
+                Effect::ReleaseHold,
+                Effect::Abandon,
+                Effect::Say(Voice::NotStarted("macOS did not turn sleep off".to_owned())),
+            ],
+        ),
         (State::Starting { .. }, Event::StartFailed(why)) => {
             (State::Off, vec![Effect::Say(Voice::NotStarted(why.clone()))])
         }
@@ -211,10 +251,8 @@ pub fn step(state: State, event: &Event, now: f64, lid: bool) -> (State, Vec<Eff
                 (state, Vec::new())
             }
         }
-        (State::Stopping, Event::Settled(true)) => (State::Off, Vec::new()),
-        (State::Stopping, Event::Settled(false)) => {
-            (State::Off, vec![Effect::Say(Voice::StillOff)])
-        }
+        (State::Stopping, Event::Stopped) => (State::Off, vec![Effect::ConfirmOff]),
+        (State::Off, Event::Settled(false)) => (State::Off, vec![Effect::Say(Voice::StillOff)]),
         _ => (state, Vec::new()),
     }
 }

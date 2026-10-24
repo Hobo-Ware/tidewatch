@@ -49,6 +49,8 @@ pub(crate) enum Action {
     /// The Done check switch moved: the new value. Applies at once too.
     DoneCheck(bool),
     KeepAwake(bool),
+    /// Set up or Remove on the Touch ID row of the Keep awake card.
+    TouchId(crate::touch_id_view::Click),
     /// The GitHub card changed something: all of its choices. Applies at once too.
     Github(tidewatch_core::prefs::GithubPrefs),
     /// A Guards switch or the private repo list changed. Applies at once too.

@@ -25,6 +25,16 @@ impl Hold for NoHold {
     }
 }
 
+#[cfg(target_os = "macos")]
+fn real_system() -> Arc<dyn System> {
+    Arc::new(RealSystem::with_authenticator(crate::touch_id::authenticate))
+}
+
+#[cfg(not(target_os = "macos"))]
+fn real_system() -> Arc<dyn System> {
+    Arc::new(RealSystem)
+}
+
 pub(super) fn wall_secs() -> f64 {
     wall_ms() as f64 / 1000.0
 }
@@ -40,13 +50,18 @@ pub(super) fn host(
     let dev = Dev::parse(std::env::var("TIDEWATCH_FAKE_AMPHETAMINE").ok().as_deref());
     let lid = cfg!(target_os = "macos");
     if let Some(dev) = dev {
-        return Host::dev(&dev, Arc::new(FakeSystem::new()), Box::new(NoHold), lid, wall_secs());
+        let system = if matches!(dev, Dev::TouchId | Dev::Start) {
+            FakeSystem::with_touch_id()
+        } else {
+            FakeSystem::new()
+        };
+        return Host::dev(&dev, Arc::new(system), Box::new(NoHold), lid, wall_secs());
     }
     if background || screenshot {
         let files = paths.filter(|_| !screenshot).map(Files::of);
         return Host::new(Arc::new(FakeSystem::new()), Box::new(NoHold), files, lid, false);
     }
-    let system: Arc<dyn System> = Arc::new(RealSystem);
+    let system = real_system();
     let hold: Box<dyn Hold> = Box::new(RealHold::default());
     let host = Host::new(system, hold, paths.map(Files::of), lid, true);
     host.check_last_run(ctx);

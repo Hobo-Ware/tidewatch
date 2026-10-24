@@ -25,7 +25,26 @@ fn an_answered_prompt_turns_it_on_from_that_moment() {
     assert_eq!(state, on(Some(until), 1));
     assert_eq!(
         effects,
-        [Effect::TakeHold, Effect::WriteDeadline(Some(until)), Effect::Say(Voice::Start)]
+        [
+            Effect::TakeHold,
+            Effect::WriteDeadline(Some(until)),
+            Effect::Say(Voice::Start),
+            Effect::ConfirmOn
+        ]
+    );
+}
+
+#[test]
+fn a_start_pmset_never_confirms_flips_back_with_the_reason() {
+    let (state, effects) = run(on(Some(NOW + 100.0), 1), &Event::Unconfirmed, NOW, true);
+    assert_eq!(state, State::Off);
+    assert_eq!(
+        effects,
+        [
+            Effect::ReleaseHold,
+            Effect::Abandon,
+            Effect::Say(Voice::NotStarted("macOS did not turn sleep off".to_owned()))
+        ]
     );
 }
 
@@ -48,10 +67,12 @@ fn without_lid_mode_there_is_no_prompt_and_no_waiting() {
 }
 
 #[test]
-fn turning_off_removes_the_token_and_waits_for_sleep_to_come_back() {
+fn turning_off_is_off_as_soon_as_the_stop_command_returns_and_sleep_is_checked_after() {
     let (state, effects) = run(on(None, 0), &Event::TurnOff, NOW, true);
     assert_eq!(state, State::Stopping);
     assert_eq!(effects, [Effect::ReleaseHold, Effect::StopLid, Effect::Say(Voice::End)]);
+    let (state, effects) = run(state, &Event::Stopped, NOW, true);
+    assert_eq!((state, effects), (State::Off, vec![Effect::ConfirmOff]));
     assert_eq!(run(state, &Event::Settled(true), NOW, true), (State::Off, vec![]));
     assert_eq!(
         run(state, &Event::Settled(false), NOW, true),
@@ -113,6 +134,11 @@ fn events_that_make_no_sense_in_a_state_change_nothing() {
         (State::Off, Event::Started),
         (State::Off, Event::AddHour),
         (State::Off, Event::Settled(true)),
+        (State::Off, Event::Unconfirmed),
+        (State::Off, Event::Stopped),
+        (State::Stopping, Event::Settled(false)),
+        (on(None, 0), Event::Stopped),
+        (State::Starting { choice: Choice::Hour }, Event::Unconfirmed),
         (State::Starting { choice: Choice::Hour }, Event::TurnOff),
         (State::Starting { choice: Choice::Hour }, Event::Pick(Choice::Open)),
         (State::Stopping, Event::Pick(Choice::Hour)),
@@ -148,7 +174,15 @@ fn the_voice_is_cosmic_horror_omen_by_omen() {
         Voice::End.lines()[1].1,
         "That is not dead which can eternal lie. Session complete."
     );
-    for voice in [Voice::Start, Voice::End, Voice::HoursLeft(2), Voice::StillOff] {
+    for voice in [
+        Voice::Start,
+        Voice::End,
+        Voice::HoursLeft(2),
+        Voice::StillOff,
+        Voice::TouchIdReady,
+        Voice::TouchIdGone,
+        Voice::TouchIdFailed("cancelled".to_owned()),
+    ] {
         for (_, text) in voice.lines() {
             assert!(!text.contains(['\u{2014}', '\u{2013}']), "{text}");
         }

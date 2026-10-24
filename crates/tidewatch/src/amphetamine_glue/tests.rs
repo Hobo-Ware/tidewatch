@@ -1,6 +1,10 @@
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
+use std::path::Path;
+use std::sync::atomic::{AtomicBool, Ordering};
+
+use tidewatch_core::amphetamine_helper::Auth;
 use tidewatch_core::amphetamine_lid::read_marker;
 use tidewatch_core::amphetamine_system::{Call, FakeSystem};
 
@@ -139,7 +143,8 @@ fn turning_off_removes_the_token_waits_for_sleep_and_asks_for_no_second_password
     rig.until(|host| host.state() == State::Off);
     assert_eq!(rig.host.take_voices(), [Voice::End]);
     assert!(!rig.host.hold.held);
-    assert_eq!(read_marker(&rig.files().marker), None);
+    let marker = rig.files().marker;
+    rig.until(|_| read_marker(&marker).is_none());
     assert!(!rig.system.calls().contains(&Call::RestoreLid));
     let starts = rig.system.calls().iter().filter(|c| matches!(c, Call::StartLid { .. })).count();
     assert_eq!(starts, 1);
@@ -341,4 +346,283 @@ fn each_dev_switch_value_shows_its_own_state_and_none_reaches_the_machine() {
     assert_eq!(forever.state(), State::On { until: None, told: 0 });
     let on = Host::dev(&Dev::On, Arc::new(FakeSystem::new()), Recorder::default(), true, WALL);
     assert_eq!(on.state().left(WALL), Some(41.5 * 60.0));
+}
+
+fn sudo_starts(system: &FakeSystem) -> usize {
+    system.calls().iter().filter(|c| matches!(c, Call::SudoStart { .. })).count()
+}
+
+fn password_starts(system: &FakeSystem) -> usize {
+    system.calls().iter().filter(|c| matches!(c, Call::StartLid { .. })).count()
+}
+
+#[test]
+fn with_the_helper_installed_a_fingerprint_starts_it_and_the_password_is_never_asked() {
+    let mut rig = Rig::with(FakeSystem::with_touch_id(), true);
+    rig.pick(Choice::Hour);
+    rig.until(is_on);
+    assert_eq!(rig.host.take_voices(), [Voice::Start]);
+    assert_eq!(read_marker(&rig.files().marker).unwrap().helper, Some(4242));
+    assert_eq!((sudo_starts(&rig.system), password_starts(&rig.system)), (1, 0));
+    let asked = rig.system.calls().iter().filter(|c| **c == Call::Authenticate).count();
+    assert_eq!(asked, 1);
+}
+
+#[test]
+fn a_cancelled_fingerprint_leaves_it_off_and_asks_nothing_else() {
+    let fake = FakeSystem::with_touch_id().answering(Auth::Denied("Touch ID was cancelled".into()));
+    let mut rig = Rig::with(fake, true);
+    rig.pick(Choice::Hour);
+    rig.until(|host| host.state() == State::Off);
+    assert_eq!(rig.host.take_voices(), [Voice::NotStarted("Touch ID was cancelled".to_owned())]);
+    assert_eq!((rig.token(), read_marker(&rig.files().marker)), (None, None));
+    assert_eq!((sudo_starts(&rig.system), password_starts(&rig.system)), (0, 0));
+}
+
+#[test]
+fn a_broken_sudo_rule_falls_back_to_the_password_prompt_and_still_turns_on() {
+    let fake = FakeSystem::with_touch_id().sudo_refusing("a password is required");
+    let mut rig = Rig::with(fake, true);
+    rig.pick(Choice::Hour);
+    rig.until(is_on);
+    assert_eq!((sudo_starts(&rig.system), password_starts(&rig.system)), (1, 1));
+}
+
+#[test]
+fn turning_off_with_the_helper_installed_asks_it_to_restore_sleep_at_once() {
+    let mut rig = Rig::with(FakeSystem::with_touch_id(), true);
+    rig.pick(Choice::Open);
+    rig.until(is_on);
+    rig.turn_off();
+    rig.until(|host| host.state() == State::Off);
+    assert!(rig.system.calls().contains(&Call::SudoStop));
+    assert!(!rig.system.calls().contains(&Call::RestoreLid));
+}
+
+struct Gated {
+    inner: Arc<FakeSystem>,
+    open: Arc<AtomicBool>,
+}
+
+impl System for Gated {
+    fn start_lid(&self, token: &Path, owner: u32) -> Result<u32, String> {
+        self.inner.start_lid(token, owner)
+    }
+    fn restore_lid(&self) -> Result<(), String> {
+        self.inner.restore_lid()
+    }
+    fn sleep_disabled(&self) -> Option<bool> {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while !self.open.load(Ordering::SeqCst) && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(2));
+        }
+        self.inner.sleep_disabled()
+    }
+    fn alive(&self, pid: u32) -> bool {
+        self.inner.alive(pid)
+    }
+    fn touch_id_installed(&self) -> bool {
+        self.inner.touch_id_installed()
+    }
+    fn install_touch_id(&self) -> Result<(), String> {
+        self.inner.install_touch_id()
+    }
+    fn remove_touch_id(&self) -> Result<(), String> {
+        self.inner.remove_touch_id()
+    }
+    fn authenticate(&self, reason: &str) -> Auth {
+        self.inner.authenticate(reason)
+    }
+    fn sudo_start(&self, token: &Path, owner: u32) -> Result<u32, String> {
+        self.inner.sudo_start(token, owner)
+    }
+    fn sudo_stop(&self) -> Result<(), String> {
+        self.inner.sudo_stop()
+    }
+}
+
+fn gated_rig() -> (Rig, Arc<AtomicBool>, Arc<FakeSystem>) {
+    let inner = Arc::new(FakeSystem::with_touch_id());
+    let open = Arc::new(AtomicBool::new(false));
+    let home = tempfile::tempdir().unwrap();
+    let files = Files::of(&TidewatchPaths::new(home.path()));
+    let system: Arc<dyn System> = Arc::new(Gated { inner: inner.clone(), open: open.clone() });
+    let host = Host::new(system, Recorder::default(), Some(files), true, true);
+    let rig = Rig {
+        home,
+        ctx: egui::Context::default(),
+        host,
+        system: Arc::new(FakeSystem::new()),
+        clock: Mutex::new(WALL),
+    };
+    (rig, open, inner)
+}
+
+#[test]
+fn the_button_is_on_as_soon_as_the_start_returns_without_waiting_for_pmset() {
+    let (mut rig, open, _) = gated_rig();
+    rig.pick(Choice::Hour);
+    rig.until(is_on);
+    assert_eq!(rig.host.take_voices(), [Voice::Start]);
+    assert!(rig.host.hold.held);
+    assert!(matches!(rig.host.look(1.0), Look::On { .. }));
+    open.store(true, Ordering::SeqCst);
+    std::thread::sleep(Duration::from_millis(100));
+    rig.tick();
+    assert!(is_on(&rig.host), "a confirmed start changes nothing");
+    assert_eq!(rig.host.take_voices(), []);
+}
+
+#[test]
+fn the_button_is_off_as_soon_as_the_stop_returns_and_the_check_runs_after() {
+    let (mut rig, open, inner) = gated_rig();
+    open.store(true, Ordering::SeqCst);
+    rig.pick(Choice::Open);
+    rig.until(is_on);
+    rig.host.take_voices();
+    open.store(false, Ordering::SeqCst);
+    rig.turn_off();
+    rig.until(|host| host.state() == State::Off);
+    assert_eq!(rig.host.take_voices(), [Voice::End]);
+    assert!(inner.calls().contains(&Call::SudoStop));
+    assert!(
+        read_marker(&rig.files().marker).is_some(),
+        "the marker stays until sleep is confirmed"
+    );
+    open.store(true, Ordering::SeqCst);
+    let marker = rig.files().marker;
+    rig.until(|_| read_marker(&marker).is_none());
+    assert_eq!(rig.host.take_voices(), []);
+}
+
+#[test]
+fn the_tablet_plays_its_whole_close_even_though_the_state_is_already_off() {
+    let (mut rig, open, _) = gated_rig();
+    open.store(true, Ordering::SeqCst);
+    rig.pick(Choice::Open);
+    rig.until(is_on);
+    rig.turn_off();
+    rig.until(|host| host.state() == State::Off);
+    let at = rig.host.fading_since.unwrap();
+    assert!(matches!(rig.host.look(at + 0.1), Look::Stopping { age } if (age - 0.1).abs() < 1e-9));
+    assert_eq!(rig.host.look(at + 5.0), Look::Off);
+}
+
+#[test]
+fn a_start_pmset_never_shows_flips_back_with_a_toast_and_lets_the_helper_go() {
+    let mut rig = Rig::with(FakeSystem::new().sleep_stays_on(), true);
+    rig.pick(Choice::Hour);
+    rig.until(is_on);
+    assert_eq!(rig.host.take_voices(), [Voice::Start]);
+    rig.until(|host| host.state() == State::Off);
+    assert_eq!(
+        rig.host.take_voices(),
+        [Voice::NotStarted("macOS did not turn sleep off".to_owned())]
+    );
+    assert!(!rig.host.hold.held);
+    assert_eq!((rig.token(), read_marker(&rig.files().marker)), (None, None));
+}
+
+#[test]
+fn a_stop_pmset_never_confirms_says_sleep_may_still_be_off() {
+    let mut rig = Rig::with(FakeSystem::new().helper_ignoring_the_token(), true);
+    rig.pick(Choice::Open);
+    rig.until(is_on);
+    rig.host.take_voices();
+    rig.turn_off();
+    rig.until(|host| host.state() == State::Off);
+    let mut said = rig.host.take_voices();
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while !said.contains(&Voice::StillOff) && Instant::now() < deadline {
+        rig.tick();
+        std::thread::sleep(Duration::from_millis(5));
+        said.extend(rig.host.take_voices());
+    }
+    assert_eq!(said, [Voice::End, Voice::StillOff]);
+    assert!(read_marker(&rig.files().marker).is_some());
+}
+
+#[test]
+fn a_check_that_belongs_to_an_earlier_session_is_ignored() {
+    let mut rig = Rig::new();
+    rig.pick(Choice::Open);
+    rig.until(is_on);
+    let stale = rig.host.epoch - 1;
+    let wall = rig.wall();
+    for done in [
+        Done::Confirmed { epoch: stale, on: false, ok: true },
+        Done::Confirmed { epoch: stale, on: true, ok: false },
+        Done::Stopped(stale),
+    ] {
+        rig.host.apply_done(done, wall, 1.0, &rig.ctx);
+    }
+    assert!(is_on(&rig.host));
+    assert!(read_marker(&rig.files().marker).is_some());
+    assert_eq!(rig.host.take_voices(), [Voice::Start]);
+}
+
+#[test]
+fn setting_up_touch_id_shows_working_then_installed_and_remove_goes_back() {
+    let mut rig = Rig::new();
+    assert_eq!(rig.host.touch_id(), Some(TouchId::Missing));
+    rig.host.change_touch_id(Click::SetUp, &rig.ctx);
+    assert_eq!(rig.host.touch_id(), Some(TouchId::Working));
+    rig.until(|host| host.touch_id() == Some(TouchId::Installed));
+    assert_eq!(rig.host.take_voices(), [Voice::TouchIdReady]);
+    rig.host.change_touch_id(Click::Remove, &rig.ctx);
+    rig.until(|host| host.touch_id() == Some(TouchId::Missing));
+    assert_eq!(rig.host.take_voices(), [Voice::TouchIdGone]);
+    assert_eq!(rig.system.calls(), [Call::InstallTouchId, Call::RemoveTouchId]);
+}
+
+#[test]
+fn a_cancelled_setup_prompt_changes_nothing_and_says_why() {
+    let mut rig = Rig::with(FakeSystem::refusing("the password prompt was cancelled"), true);
+    rig.host.change_touch_id(Click::SetUp, &rig.ctx);
+    rig.until(|host| host.touch_id() == Some(TouchId::Missing) && host.touch_id_job.is_none());
+    assert_eq!(
+        rig.host.take_voices(),
+        [Voice::TouchIdFailed("the password prompt was cancelled".to_owned())]
+    );
+}
+
+#[test]
+fn a_second_click_while_one_runs_is_ignored() {
+    let (mut rig, _, inner) = gated_rig();
+    rig.host.change_touch_id(Click::Remove, &rig.ctx);
+    rig.host.change_touch_id(Click::Remove, &rig.ctx);
+    rig.until(|host| host.touch_id() == Some(TouchId::Missing));
+    let removed = inner.calls().iter().filter(|c| **c == Call::RemoveTouchId).count();
+    assert_eq!(removed, 1);
+}
+
+#[test]
+fn there_is_no_touch_id_row_without_lid_mode_and_a_background_run_cannot_change_it() {
+    let rig = Rig::with(FakeSystem::new(), false);
+    assert_eq!(rig.host.touch_id(), None);
+    let system = Arc::new(FakeSystem::new());
+    let mut host = Host::new(system.clone(), Recorder::default(), None, true, false);
+    host.change_touch_id(Click::SetUp, &egui::Context::default());
+    assert_eq!((host.touch_id(), system.calls()), (Some(TouchId::Missing), vec![]));
+}
+
+#[test]
+fn the_touchid_dev_switch_shows_the_row_installed_and_the_start_switch_runs_a_whole_session() {
+    let ctx = egui::Context::default();
+    let dev = Dev::parse(Some("touchid")).unwrap();
+    let system = Arc::new(FakeSystem::with_touch_id());
+    let host = Host::dev(&dev, system.clone(), Recorder::default(), true, WALL);
+    assert_eq!((host.touch_id(), host.state()), (Some(TouchId::Installed), State::Off));
+    assert_eq!(system.calls(), []);
+
+    let dev = Dev::parse(Some("start")).unwrap();
+    let system = Arc::new(FakeSystem::with_touch_id());
+    let mut host = Host::dev(&dev, system.clone(), Recorder::default(), true, WALL);
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while !host.state().is_on() && Instant::now() < deadline {
+        host.tick(WALL, 0.0, &ctx);
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    assert!(host.state().is_on());
+    assert_eq!(sudo_starts(&system), 1);
 }

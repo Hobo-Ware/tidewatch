@@ -288,6 +288,7 @@ impl Tidewatch {
             guards_repo,
             done_check: DoneCheckPrefs { enabled: self.done_check.enabled() },
             keep_awake: KeepAwakePrefs { enabled: self.keep_awake.enabled() },
+            touch_id: self.amphetamine.touch_id(),
             default_branch,
             profiles: self
                 .catalog
@@ -398,6 +399,9 @@ impl Tidewatch {
             Some(settings_view::Action::Git(prefs)) => self.set_git_prefs(prefs),
             Some(settings_view::Action::DoneCheck(on)) => self.set_done_check(on),
             Some(settings_view::Action::KeepAwake(on)) => self.set_keep_awake(on),
+            Some(settings_view::Action::TouchId(click)) => {
+                self.amphetamine.change_touch_id(click, ctx);
+            }
             Some(settings_view::Action::Github(prefs)) => self.set_github_default(prefs),
             Some(settings_view::Action::Guards(change)) => self.set_guards(&change),
             Some(settings_view::Action::TerminalFont(choice)) => {
