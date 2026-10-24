@@ -96,6 +96,7 @@ impl Tidewatch {
         ctx: &egui::Context,
     ) {
         let active_id = self.tabs.items()[self.tabs.active()].id;
+        let stale = self.ledger_stale(active_id, ctx.input(|i| i.time));
         let side = self.side_layout();
         let Some(view) = self.views.get_mut(&active_id) else {
             if side {
@@ -138,6 +139,7 @@ impl Tidewatch {
             }
             let input = progress_view::Input {
                 ledger: known,
+                stale,
                 jobs: &cards,
                 now_ms,
                 time: ctx.input(|i| i.time),

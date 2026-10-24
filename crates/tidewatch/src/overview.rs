@@ -499,7 +499,7 @@ mod tests {
             "# Goal\nx\n\n## Status\nphase: 2 Build\nstate: working\nnote: writing the validator\n\n## Checklist\n### 1. A\n- [x] a\n### 2. Build\n- [~] b\n",
         );
         let mut with = row(1, "a", AgentStatus::Working);
-        with.look = Some(look(&ledger));
+        with.look = Some(look(&ledger, false));
         let view = card_view(&with);
         assert_eq!(view.line, "Build \u{b7} writing the validator");
         assert_eq!((view.tag.as_str(), view.fraction), ("Working", 0.5));
@@ -507,7 +507,7 @@ mod tests {
 
         let mut question = Ledger::parse("# Goal\nx\n\n## Needs you\n- Pick\n");
         question.status.state = Some(tidewatch_core::progress::State::Done);
-        with.look = Some(look(&question));
+        with.look = Some(look(&question, false));
         let view = card_view(&with);
         assert_eq!((view.tag.as_str(), view.tag_ink), ("1 question", crate::brand::NEEDS));
 

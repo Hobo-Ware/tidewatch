@@ -452,6 +452,15 @@ impl Ledger {
         real(&self.needs_you).next().is_some()
     }
 
+    /// The work is not done and the ledger holds it back on the owner: a question, or a state of
+    /// waiting or blocked.
+    #[must_use]
+    pub fn awaits_owner(&self) -> bool {
+        self.status.state != Some(State::Done)
+            && (self.has_question()
+                || matches!(self.status.state, Some(State::Waiting | State::Blocked)))
+    }
+
     /// The agent says it is blocked, or an item is, and it is not done.
     #[must_use]
     pub fn is_blocked(&self) -> bool {

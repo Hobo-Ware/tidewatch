@@ -1,12 +1,12 @@
 //! When a tab that has no avatar is asked to draw one: once, on its next prompt. The ask rides the
-//! answer to Claude's `UserPromptSubmit` hook as extra context, so it never touches the input box.
-//! The decision is pure; the listener reads the facts and writes the answer.
+//! answer to Claude's `UserPromptSubmit` hook as extra context (see `prompt_answer.rs`), so it
+//! never touches the input box. The decision is pure; the listener reads the facts.
 
 use crate::agents::Wiring;
 
 /// The line pasted into an idle agent when the owner clicks Draw avatar.
 pub const ASK: &str = "Call set_avatar once with an icon for this task.";
-const CONTEXT: &str = "Also call set_avatar once with an icon for this task.";
+pub const CONTEXT: &str = "Also call set_avatar once with an icon for this task.";
 
 /// The hook agent whose `UserPromptSubmit` answer reaches the model as context.
 const PROMPT_ANSWERING_AGENT: &str = "claude";
@@ -40,15 +40,6 @@ pub fn answers_prompts(hook_agent: &str) -> bool {
 #[must_use]
 pub fn due(facts: &Facts) -> bool {
     facts.answers_prompts && facts.face == Face::Letter && !facts.asked && facts.on_prompt
-}
-
-/// The hook answer that adds the ask to the prompt the model is about to read.
-#[must_use]
-pub fn answer() -> String {
-    serde_json::json!({
-        "hookSpecificOutput": { "hookEventName": "UserPromptSubmit", "additionalContext": CONTEXT }
-    })
-    .to_string()
 }
 
 #[cfg(test)]
@@ -104,13 +95,5 @@ mod tests {
     fn both_lines_name_the_tool() {
         assert!(ASK.contains(crate::avatar_mcp::SET_TOOL));
         assert!(CONTEXT.contains(crate::avatar_mcp::SET_TOOL));
-    }
-
-    #[test]
-    fn the_answer_is_the_shape_claude_reads_for_a_prompt() {
-        let answer: serde_json::Value = serde_json::from_str(&answer()).unwrap();
-        assert_eq!(answer["hookSpecificOutput"]["hookEventName"], "UserPromptSubmit");
-        assert_eq!(answer["hookSpecificOutput"]["additionalContext"], CONTEXT);
-        assert_eq!(answer.as_object().unwrap().len(), 1);
     }
 }

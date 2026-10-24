@@ -50,6 +50,7 @@ impl Panel {
         let output = self.ctx.run_ui(raw, |ui| {
             let input = Input {
                 ledger,
+                stale: false,
                 jobs,
                 now_ms: 240_000,
                 time: 1.0,

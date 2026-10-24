@@ -20,9 +20,11 @@ use crate::overview_checklist::Source;
 use crate::pane::Body;
 use crate::progress_glue::today;
 use crate::progress_model::look;
+use crate::progress_stale::{Live, is_stale};
 use crate::progress_state::Facts;
 use crate::{due_view, flow_glue};
 use tidewatch_core::progress::Mark;
+use tidewatch_core::status::{AgentStatus, Reason};
 
 const REDRAW_ASK: &str = "Call set_avatar again with a fresh idea for this task.";
 const DRAW_ASK: &str = tidewatch_core::avatar_ask::ASK;
@@ -238,11 +240,37 @@ impl Tidewatch {
         ctx.request_repaint_after(Duration::from_secs(secs_to_midnight(secs) + 1));
     }
 
-    pub(super) fn add_looks(&self, overview: &mut Overview) {
+    /// Whether the tab's ledger still asks the owner something the agent has moved on from.
+    pub(super) fn ledger_stale(&self, tab: u64, now: f64) -> bool {
+        let Some(known) = self.progress.ledger(tab) else { return false };
+        let Some(agent) = self
+            .tabs
+            .items()
+            .iter()
+            .find(|candidate| candidate.id == tab)
+            .and_then(|candidate| candidate.pane.agent.as_ref())
+        else {
+            return false;
+        };
+        let now_ms = wall_ms() as i64;
+        let wall = |at: f64| now_ms - ((now - at) * 1000.0) as i64;
+        let live = Live {
+            asking: matches!(
+                agent.run.status(),
+                AgentStatus::NeedsYou(Reason::Permission | Reason::Question)
+            ),
+            turn_started_ms: agent.run.turn_started_at().map(wall),
+            working_since_ms: agent.run.working_since().map(wall),
+        };
+        is_stale(&known.ledger, known.updated_ms, live)
+    }
+
+    pub(super) fn add_looks(&self, overview: &mut Overview, now: f64) {
         let now_ms = wall_ms() as i64;
         let places = overview.places.iter_mut().flat_map(|place| place.rows.iter_mut());
         for row in overview.needs.iter_mut().chain(places) {
-            row.look = self.progress.ledger(row.tab_id).map(|known| look(&known.ledger));
+            let stale = self.ledger_stale(row.tab_id, now);
+            row.look = self.progress.ledger(row.tab_id).map(|known| look(&known.ledger, stale));
             row.avatar = self.avatar_live.get(row.tab_id).cloned();
             row.job_line =
                 self.job_live.board(row.tab_id).and_then(|board| lane_line(board, now_ms));

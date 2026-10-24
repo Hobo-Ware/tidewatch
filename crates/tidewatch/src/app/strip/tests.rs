@@ -358,7 +358,7 @@ fn agent_strip(
                         (
                             |_: &Pane<u32>| (Progress::default(), CmdState::default()),
                             |_| TabExtras {
-                                ring: with_ring.then(|| tab_ring(&ledger)),
+                                ring: with_ring.then(|| tab_ring(&ledger, false)),
                                 avatar: with_avatar.then(|| {
                                     let (svg, reason) = crate::avatar_glue::FAKE[0];
                                     Arc::new(tidewatch_core::avatar::clean(svg, reason).unwrap())

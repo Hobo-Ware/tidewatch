@@ -72,6 +72,7 @@ pub mod progress_mcp;
 pub mod progress_prompt;
 pub mod progress_store;
 pub mod prompt;
+pub mod prompt_answer;
 pub mod propose;
 pub mod question;
 mod registry;

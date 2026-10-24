@@ -814,6 +814,7 @@ mod tests {
             &tidewatch_core::progress::Ledger::parse(
                 "# Goal\nx\n\n## Status\nphase: 2 Build\nstate: working\nnote: a rather long note about what is happening right now in the build\n\n## Checklist\n### 2. Build\n- [~] a\n\n## Needs you\n- Pick\n",
             ),
+            false,
         ));
         with_ledger.pr = Some((tidewatch_core::pr_status::Tone::Bad, "#42 checks failed".into()));
         let data = overview(vec![with_ledger, row(9, "busy", AgentStatus::Working)]);
