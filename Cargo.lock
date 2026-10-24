@@ -3415,7 +3415,7 @@ dependencies = [
 [[package]]
 name = "kelp-core"
 version = "0.8.22"
-source = "git+https://github.com/Hobo-Ware/kelp?rev=9e0749d76c055e034576e14e9bd5b2074965c8b9#9e0749d76c055e034576e14e9bd5b2074965c8b9"
+source = "git+https://github.com/Hobo-Ware/kelp?rev=edf3eaae1f49e5c286fae17b4cd8004e74be274e#edf3eaae1f49e5c286fae17b4cd8004e74be274e"
 dependencies = [
  "anyhow",
  "gix",
@@ -3432,7 +3432,7 @@ dependencies = [
 [[package]]
 name = "kelp-ui"
 version = "0.8.22"
-source = "git+https://github.com/Hobo-Ware/kelp?rev=9e0749d76c055e034576e14e9bd5b2074965c8b9#9e0749d76c055e034576e14e9bd5b2074965c8b9"
+source = "git+https://github.com/Hobo-Ware/kelp?rev=edf3eaae1f49e5c286fae17b4cd8004e74be274e#edf3eaae1f49e5c286fae17b4cd8004e74be274e"
 dependencies = [
  "anyhow",
  "egui",
