@@ -118,6 +118,12 @@ impl Host {
         restore_jobs::save_resume_agents(paths.clone(), mode);
     }
 
+    /// The settings file changed under the app (a sync): take its two switches without writing.
+    pub(crate) fn reload(&mut self, restore_session: bool, resume_agents: ResumeAgents) {
+        self.prefs.restore_session = restore_session;
+        self.prefs.resume_agents = resume_agents;
+    }
+
     /// This run was started with `--no-restore`.
     pub(crate) fn skipped_by_flag(&self) -> bool {
         self.skip

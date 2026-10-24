@@ -35,6 +35,10 @@ impl Tools {
         Self { path: Some(path.into()) }
     }
 
+    pub(crate) fn path(&self) -> Option<&OsString> {
+        self.path.as_ref()
+    }
+
     pub(crate) fn command(&self, program: &str, dir: &Path) -> Command {
         let mut command = Command::new(program);
         command

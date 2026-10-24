@@ -5365,7 +5365,7 @@ checksum = "a2eb9349b6444b326872e140eb1cf5e7c522154d69e7a0ffb0fb81c06b37543f"
 [[package]]
 name = "stdusk-core"
 version = "1.9.1"
-source = "git+https://github.com/Hobo-Ware/stdusk?rev=879c55a84b68be926b02274111268f5278eeacee#879c55a84b68be926b02274111268f5278eeacee"
+source = "git+https://github.com/Hobo-Ware/stdusk?rev=ebb75a6b82906de2e4f516f4aa442d4bbdb3254f#ebb75a6b82906de2e4f516f4aa442d4bbdb3254f"
 dependencies = [
  "alacritty_terminal",
  "base64 0.22.1",
@@ -5384,7 +5384,7 @@ dependencies = [
 [[package]]
 name = "stdusk-egui"
 version = "1.9.1"
-source = "git+https://github.com/Hobo-Ware/stdusk?rev=879c55a84b68be926b02274111268f5278eeacee#879c55a84b68be926b02274111268f5278eeacee"
+source = "git+https://github.com/Hobo-Ware/stdusk?rev=ebb75a6b82906de2e4f516f4aa442d4bbdb3254f#ebb75a6b82906de2e4f516f4aa442d4bbdb3254f"
 dependencies = [
  "block2 0.6.2",
  "egui",
@@ -5605,6 +5605,7 @@ dependencies = [
  "serde_json",
  "sha2 0.10.9",
  "shell-words",
+ "stdusk-core",
  "tempfile",
  "toml 1.1.8+spec-1.1.0",
  "uuid",

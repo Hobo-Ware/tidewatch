@@ -57,6 +57,8 @@ pub(crate) enum Action {
     TerminalFont(tidewatch_core::prefs::FontChoice),
     TerminalCopyOnSelect(bool),
     LoginItem(login_item::Click),
+    /// The Sync card: the switch, the repo, Sync now or Create private repo.
+    Sync(crate::sync_view::Change),
     OpenHouseStyle,
     ResetHouseStyle,
     /// The Worktree setup page changed a repo's recipe: all of it. Applies at once too.
@@ -131,6 +133,7 @@ fn page(
                 &mut settings.font,
                 updates,
                 &mut settings.login,
+                &mut settings.sync,
                 host.read_login,
                 &host.files.general,
             )

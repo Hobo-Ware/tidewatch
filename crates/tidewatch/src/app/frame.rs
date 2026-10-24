@@ -91,6 +91,7 @@ impl Tidewatch {
         self.drive_autofetch(ctx);
         self.drive_amphetamine(ctx, now);
         self.drive_checklist(ctx, now);
+        self.drive_settings_sync(ctx, now);
         self.drive_due(ctx);
         self.drive_dev_scheduled(ctx);
         self.drive_dev_draft(ctx, now);

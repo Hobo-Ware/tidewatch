@@ -10,6 +10,7 @@ use crate::font_view;
 use crate::login_item;
 use crate::profile_editor;
 use crate::setup_editor;
+use crate::sync_view;
 use crate::window_settings;
 use crate::workflow_editor;
 
@@ -32,6 +33,7 @@ pub(crate) struct Settings {
     pub(crate) font: font_view::Picker,
     pub(crate) login: login_item::Row,
     pub(crate) setup: setup_editor::Editor,
+    pub(crate) sync: sync_view::Editor,
 }
 
 impl Settings {
@@ -52,6 +54,7 @@ impl Settings {
             font: font_view::Picker::default(),
             login: login_item::Row::default(),
             setup: setup_editor::Editor::default(),
+            sync: sync_view::Editor::default(),
         }
     }
 
@@ -65,6 +68,31 @@ impl Settings {
             (Section::HouseStyle, "House style", false),
             (Section::WorktreeSetup, "Worktree setup", false),
         ]
+    }
+
+    /// Profiles and workflows were replaced on disk by a sync. A page with unsaved edits keeps its
+    /// drafts; a page without any shows what arrived.
+    pub(crate) fn pulled(
+        &mut self,
+        profiles: &Profiles,
+        workflows: &Workflows,
+        agents: Vec<(String, String)>,
+    ) {
+        let names: Vec<(String, String)> =
+            profiles.profile.iter().map(|(id, p)| (id.clone(), p.name.clone())).collect();
+        if !self.profiles.dirty {
+            let selected = self.profiles.selected;
+            self.profiles = profile_editor::Editor::new(profiles, agents.clone());
+            self.profiles.selected = selected.min(self.profiles.drafts.len().saturating_sub(1));
+        }
+        if self.workflows.dirty {
+            self.workflows.set_profiles(names);
+        } else {
+            let (selected, stage) = (self.workflows.selected, self.workflows.stage);
+            self.workflows = workflow_editor::Editor::new(workflows, agents, names);
+            self.workflows.selected = selected.min(self.workflows.drafts.len().saturating_sub(1));
+            self.workflows.stage = stage;
+        }
     }
 
     /// The names of the profiles, for a workflow stage that runs one. Called after profiles were saved.
@@ -84,6 +112,57 @@ mod tests {
         let profiles = Profiles::seeded(&["claude".to_owned()]);
         let agents = vec![("claude".to_owned(), "Claude Code".to_owned())];
         Settings::new(&profiles, &Workflows::defaults(), agents, &WindowPrefs::default())
+    }
+
+    fn pulled_profiles() -> Profiles {
+        let mut profiles = Profiles::seeded(&["claude".to_owned()]);
+        profiles.profile.remove("reviewer");
+        profiles
+    }
+
+    fn agents() -> Vec<(String, String)> {
+        vec![("claude".to_owned(), "Claude Code".to_owned())]
+    }
+
+    #[test]
+    fn a_pull_replaces_the_pages_nobody_edited() {
+        let mut settings = settings();
+        let profiles = pulled_profiles();
+        let mut workflows = Workflows::defaults();
+        workflows.workflow.remove(Workflows::defaults().workflow.keys().next().unwrap());
+        settings.pulled(&profiles, &workflows, agents());
+        assert_eq!(settings.profiles.drafts.len(), profiles.profile.len());
+        assert_eq!(settings.workflows.drafts.len(), workflows.workflow.len());
+        assert!(!settings.profiles.dirty && !settings.workflows.dirty);
+        let names: Vec<&str> =
+            settings.workflows.profiles().iter().map(|(id, _)| id.as_str()).collect();
+        assert_eq!(names, ["builder"]);
+    }
+
+    #[test]
+    fn a_pull_never_throws_away_a_page_with_unsaved_edits() {
+        let mut settings = settings();
+        let before = settings.profiles.drafts.len();
+        settings.profiles.touched();
+        settings.workflows.touched();
+        let workflows_before = settings.workflows.drafts.len();
+        let mut workflows = Workflows::defaults();
+        workflows.workflow.clear();
+        settings.pulled(&pulled_profiles(), &workflows, agents());
+        assert_eq!(settings.profiles.drafts.len(), before);
+        assert_eq!(settings.workflows.drafts.len(), workflows_before);
+        assert!(settings.profiles.dirty && settings.workflows.dirty);
+        let names: Vec<&str> =
+            settings.workflows.profiles().iter().map(|(id, _)| id.as_str()).collect();
+        assert_eq!(names, ["builder"], "stage pickers follow the profiles that arrived");
+    }
+
+    #[test]
+    fn the_selection_stays_in_range_when_the_pull_has_fewer_entries() {
+        let mut settings = settings();
+        settings.profiles.selected = 1;
+        settings.pulled(&pulled_profiles(), &Workflows::defaults(), agents());
+        assert_eq!(settings.profiles.selected, 0);
     }
 
     #[test]

@@ -100,6 +100,12 @@ impl TidewatchPaths {
         self.config_dir.join("settings.toml")
     }
 
+    /// Whether settings sync is on, its repo and the last sync. Never synced: it describes this machine.
+    #[must_use]
+    pub fn sync_file(&self) -> PathBuf {
+        self.config_dir.join("sync.toml")
+    }
+
     #[must_use]
     pub fn house_style_file(&self) -> PathBuf {
         self.config_dir.join(HOUSE_STYLE_FILE)
