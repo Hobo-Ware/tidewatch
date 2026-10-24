@@ -105,7 +105,7 @@ pub(crate) fn menu_items(ui: &mut Ui, tab: u64) {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub(crate) enum Face {
     Picture(Arc<Avatar>),
     Letter { letter: String, tint: (Color32, Color32) },

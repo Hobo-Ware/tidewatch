@@ -3,22 +3,24 @@
 //! drawn; the others take their measured or estimated height. It also holds the small card and
 //! field looks the other inline items of the left column share.
 
+use std::collections::HashSet;
 use std::path::Path;
 use std::sync::Arc;
 
-use egui::collapsing_header::CollapsingState;
-use egui::epaint::text::{LayoutJob, TextFormat, TextWrapping};
+use egui::epaint::text::{LayoutJob, TextWrapping};
 use egui::style::ScrollAnimation;
 use egui::{
     Align, Align2, Color32, CornerRadius, FontId, Frame, Galley, Key, Layout, Margin, Painter,
     Rect, Response, RichText, ScrollArea, Sense, Stroke, StrokeKind, TextEdit, Ui, UiBuilder, pos2,
     vec2,
 };
-use egui_commonmark::{CommonMarkCache, CommonMarkViewer};
+use egui_commonmark::CommonMarkCache;
+use jiff::tz::TimeZone;
 use stdusk_egui::widgets::chip;
 use tidewatch_core::question::Reply;
 use tidewatch_core::transcript::Source;
 
+use crate::agent_avatar::Face;
 use crate::agent_ready::{self, COMPOSER_H, Ready};
 use crate::brand;
 use crate::due_view::{self, Facts as DueFacts};
@@ -29,21 +31,23 @@ use crate::question_bulk;
 use crate::question_card::{Card, Effect};
 use crate::question_view::{self, ChipClick, Live, PermissionClick};
 use crate::quick_reply::{self, Quick};
+use crate::reader_chat_view::{self, Scene};
 use crate::reader_keys::{self, Answer};
-use crate::reader_rows::{Kind, Origin, Row, Rows, Tool};
-use crate::reader_scroll::{Autoscroll, Heights};
+use crate::reader_rows::{Kind, Origin, Row, Rows};
+use crate::reader_scroll::{self, Autoscroll, Heights};
+use crate::reader_turns::{self, Slot};
 use crate::review::ReviewFacts;
 use crate::review_row_view;
 use crate::review_view::{self, ReviewAction};
-use crate::screen_kit::{Size, body, mono, primary_button, quiet_button};
+use crate::screen_kit::{Size, body, primary_button, quiet_button};
 
 /// The side inset every inline item of the left column keeps.
 pub(crate) const INSET: f32 = 14.0;
 const CARD_RADIUS: u8 = 8;
 const OVERSCAN: f32 = 600.0;
-const INPUT_H: f32 = 48.0;
+const INPUT_H: f32 = 60.0;
+const COMPOSER_RADIUS: u8 = 14;
 const STRIP_H: f32 = 48.0;
-const TOOL_HEAD_H: f32 = 20.0;
 const BAR_W: f32 = 2.0;
 const BAR_INSET: f32 = 7.0;
 const JUMP_W: f32 = 140.0;
@@ -65,6 +69,9 @@ pub(crate) struct ViewState {
     live: Option<Live>,
     quick: Option<(u64, Vec<Quick>)>,
     quick_used: Option<u64>,
+    expanded: HashSet<u64>,
+    turns: Option<(u64, usize, reader_turns::Layout)>,
+    zone: TimeZone,
 }
 
 impl Default for ViewState {
@@ -83,6 +90,9 @@ impl Default for ViewState {
             live: None,
             quick: None,
             quick_used: None,
+            expanded: HashSet::new(),
+            turns: None,
+            zone: TimeZone::system(),
         }
     }
 }
@@ -90,6 +100,26 @@ impl Default for ViewState {
 impl ViewState {
     pub(crate) fn live_mut(&mut self) -> Option<&mut Live> {
         self.live.as_mut()
+    }
+
+    /// Groups the rows into turns again when they changed since the last frame.
+    fn refresh_turns(&mut self, rows: &Rows) {
+        let stamp = (rows.revision(), rows.len());
+        if self.turns.as_ref().map(|(revision, len, _)| (*revision, *len)) == Some(stamp) {
+            return;
+        }
+        self.turns = Some((stamp.0, stamp.1, reader_turns::layout(rows)));
+        let first = rows.iter().next().map_or(0, |row| row.seq);
+        self.expanded.retain(|key| *key >= first);
+    }
+
+    /// Opens the list of calls under every turn, as a click on a chip does.
+    pub(crate) fn open_turns(&mut self, rows: &Rows) {
+        self.refresh_turns(rows);
+        if let Some((_, _, layout)) = &self.turns {
+            let keys = layout.groups.iter().filter(|group| !group.calls.is_empty());
+            self.expanded.extend(keys.map(|group| group.key));
+        }
     }
 
     /// The reply box takes the keyboard the next time it is drawn.
@@ -131,6 +161,8 @@ pub(crate) struct Facts<'a> {
     pub(crate) due: Option<DueFacts<'a>>,
     /// The profile's name, for "<Profile> asks".
     pub(crate) profile: &'a str,
+    /// The tab's face, shown beside each of the agent's turns.
+    pub(crate) face: Option<&'a Face>,
     pub(crate) turn: Turn,
 }
 
@@ -203,10 +235,20 @@ pub(crate) fn field_frame_on(
     ring: bool,
     add: impl FnOnce(&mut Ui) -> Response,
 ) -> Response {
+    field_frame_shaped(ui, (fill, CARD_RADIUS, Margin::symmetric(10, 5)), ring, add)
+}
+
+/// The field look with its own fill, corner radius and inner margin.
+pub(crate) fn field_frame_shaped(
+    ui: &mut Ui,
+    (fill, radius, margin): (Color32, u8, Margin),
+    ring: bool,
+    add: impl FnOnce(&mut Ui) -> Response,
+) -> Response {
     let mut prepared = Frame::new()
         .fill(fill)
-        .corner_radius(CornerRadius::same(CARD_RADIUS))
-        .inner_margin(Margin::symmetric(10, 5))
+        .corner_radius(CornerRadius::same(radius))
+        .inner_margin(margin)
         .begin(ui);
     prepared.content_ui.set_width(prepared.content_ui.available_width());
     let response = add(&mut prepared.content_ui);
@@ -217,7 +259,7 @@ pub(crate) fn field_frame_on(
     if ring && focused {
         ui.painter().rect_stroke(
             frame.rect.expand(1.5),
-            CornerRadius::same(CARD_RADIUS + 1),
+            CornerRadius::same(radius + 1),
             Stroke::new(3.0, brand::TEAL.gamma_multiply(0.10)),
             StrokeKind::Middle,
         );
@@ -350,6 +392,7 @@ pub(crate) fn show(
         (facts.root, facts.pr),
         facts.review.as_ref(),
         (live_seq, &quick, facts.profile),
+        (facts.face, facts.turn == Turn::Running, facts.prompt == Some(Prompt::Permission)),
         &mut actions,
     );
     match chips {
@@ -396,6 +439,7 @@ fn transcript(
     (root, pr): (Option<&Path>, Option<PrData<'_>>),
     review: Option<&ReviewFacts<'_>>,
     (live_seq, quick, profile): (Option<u64>, &[Quick], &str),
+    (face, running, waiting): (Option<&Face>, bool, bool),
     actions: &mut Vec<Action>,
 ) -> Option<ChipClick> {
     let mut chip_click = None;
@@ -427,7 +471,10 @@ fn transcript(
     }
     let follow = state.scroll.following();
     let scroll_down = follow && std::mem::take(&mut state.stick_pending);
-    let ViewState { heights, cache, pr_heights, .. } = state;
+    state.refresh_turns(rows);
+    let ViewState { heights, cache, pr_heights, expanded, turns, zone, .. } = state;
+    let (_, _, layout) = turns.as_ref()?;
+    let scene = Scene { root, profile, face, zone, now_ms: now_ms(), running, waiting };
     let mut body_ui = ui.new_child(UiBuilder::new().max_rect(body));
     let out = ScrollArea::vertical().id_salt("reader-scroll").auto_shrink([false, false]).show(
         &mut body_ui,
@@ -441,12 +488,33 @@ fn transcript(
                 });
             }
             let clip = ui.clip_rect();
-            let list: Vec<&Row> = rows.iter().collect();
+            let (list, stamps): (Vec<&Row>, Vec<Option<i64>>) = rows.stamped().unzip();
             let cards = pr.map_or(&[][..], |pr| pr.cards());
             for place in pr_timeline::places(rows, cards) {
+                if let Place::Row(index) = place
+                    && layout.slots[index] == Slot::Hidden
+                {
+                    continue;
+                }
                 let top = ui.next_widget_position().y;
                 let (key, height) = match place {
-                    Place::Row(index) => (None, heights.height(list[index])),
+                    Place::Row(index) => match layout.slots[index] {
+                        Slot::Group(n) => {
+                            let group = &layout.groups[n];
+                            (
+                                None,
+                                heights.height_with(group.key, |w| {
+                                    turn_guess(
+                                        &list,
+                                        group,
+                                        expanded.contains(&group.key),
+                                        (running, w),
+                                    )
+                                }),
+                            )
+                        }
+                        _ => (None, heights.height(list[index])),
+                    },
                     Place::Card(index) => {
                         (Some(cards[index].id), pr_heights.height(cards[index].id))
                     }
@@ -458,16 +526,39 @@ fn transcript(
                 match (place, pr) {
                     (Place::Row(index), _) => {
                         let row = list[index];
+                        let slot = layout.slots[index];
                         let drawn = ui.horizontal(|ui| {
                             ui.add_space(INSET);
                             ui.vertical(|ui| {
                                 ui.set_width(width);
-                                let asked =
-                                    draw_row(ui, row, cache, root, review, live_seq, profile);
-                                actions.extend(asked.into_iter().map(Action::Review));
+                                match slot {
+                                    Slot::Group(n) => reader_chat_view::turn(
+                                        ui,
+                                        &scene,
+                                        &list,
+                                        &layout.groups[n],
+                                        (expanded, cache),
+                                        width,
+                                    ),
+                                    _ if row.kind == Kind::User => reader_chat_view::user(
+                                        ui,
+                                        &row.text,
+                                        stamps[index],
+                                        scene.zone,
+                                        width,
+                                    ),
+                                    _ => {
+                                        let asked = draw_row(ui, row, review, live_seq, profile);
+                                        actions.extend(asked.into_iter().map(Action::Review));
+                                    }
+                                }
                             })
                         });
-                        heights.record(row.seq, drawn.response.rect.height());
+                        let key = match slot {
+                            Slot::Group(n) => layout.groups[n].key,
+                            _ => row.seq,
+                        };
+                        heights.record(key, drawn.response.rect.height());
                     }
                     (Place::Card(index), Some(pr)) => {
                         let drawn = ui.horizontal(|ui| {
@@ -487,6 +578,15 @@ fn transcript(
                     }
                     (Place::Card(_), None) => {}
                 }
+            }
+            if running && layout.awaiting {
+                ui.horizontal(|ui| {
+                    ui.add_space(INSET);
+                    ui.vertical(|ui| {
+                        ui.set_width(width);
+                        reader_chat_view::pending(ui, &scene, width);
+                    });
+                });
             }
             if let Some(pr) = pr {
                 let tail = ui.horizontal(|ui| {
@@ -535,8 +635,6 @@ fn transcript(
 fn draw_row(
     ui: &mut Ui,
     row: &Row,
-    cache: &mut CommonMarkCache,
-    root: Option<&Path>,
     review: Option<&ReviewFacts<'_>>,
     live_seq: Option<u64>,
     profile: &str,
@@ -548,20 +646,7 @@ fn draw_row(
                 question_view::summary(ui, question, profile);
             }
         }
-        Kind::User => {
-            item_frame().inner_margin(Margin::symmetric(12, 8)).show(ui, |ui| {
-                ui.set_width(ui.available_width());
-                ui.label(RichText::new("You").size(11.5).color(brand::MUTED));
-                ui.label(RichText::new(&row.text).color(brand::TEXT));
-            });
-        }
-        Kind::Assistant => {
-            ui.scope(|ui| {
-                ui.visuals_mut().code_bg_color = brand::ITEM;
-                CommonMarkViewer::new().show(ui, cache, &row.text);
-            });
-        }
-        Kind::Tool(tool) => draw_tool(ui, row.seq, tool, root),
+        Kind::User | Kind::Assistant | Kind::Tool(_) => {}
         Kind::Divider => draw_divider(ui, &row.text),
         Kind::Notice => {
             Frame::new()
@@ -576,6 +661,23 @@ fn draw_row(
         }
     }
     Vec::new()
+}
+
+fn turn_guess(
+    list: &[&Row],
+    group: &reader_turns::Group,
+    listing: bool,
+    (running, width): (bool, f32),
+) -> f32 {
+    let texts: Vec<&str> = group.texts.iter().map(|index| list[*index].text.as_str()).collect();
+    let live = running && !group.closed;
+    reader_scroll::estimate_turn(&texts, group.calls.len(), (live, listing), width)
+}
+
+fn now_ms() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |since| i64::try_from(since.as_millis()).unwrap_or(0))
 }
 
 fn draw_divider(ui: &mut Ui, text: &str) {
@@ -599,84 +701,6 @@ pub(crate) fn divider_label(text: &str) -> String {
         .replace(", ", " \u{b7} ")
         .trim_end_matches(')')
         .to_owned()
-}
-
-fn draw_tool(ui: &mut Ui, seq: u64, tool: &Tool, root: Option<&Path>) {
-    let id = ui.make_persistent_id(("reader-tool", seq));
-    let mut state = CollapsingState::load_with_default_open(ui.ctx(), id, false);
-    let line = split_label(&tool.label, root);
-    let mut clicked = false;
-    item_frame().inner_margin(Margin::symmetric(10, 5)).show(ui, |ui| {
-        ui.set_width(ui.available_width());
-        let (head, response) =
-            ui.allocate_exact_size(vec2(ui.available_width(), TOOL_HEAD_H), Sense::click());
-        let painter = ui.painter();
-        painter.circle_filled(pos2(head.left() + 4.0, head.center().y), 3.5, tool_ink(tool));
-        let mut job = LayoutJob::default();
-        job.append(line.name, 0.0, TextFormat::simple(body(12.0), brand::SOFT));
-        if !line.dir.is_empty() {
-            job.append(&line.dir, 8.0, TextFormat::simple(mono(11.5), brand::FAINT));
-        }
-        if !line.leaf.is_empty() {
-            let gap = if line.dir.is_empty() { 8.0 } else { 0.0 };
-            job.append(&line.leaf, gap, TextFormat::simple(mono(11.5), brand::TEXT));
-        }
-        job.wrap = TextWrapping::truncate_at_width((head.width() - 40.0).max(1.0));
-        let galley = painter.layout_job(job);
-        painter.galley(
-            pos2(head.left() + 16.0, head.center().y - galley.size().y / 2.0),
-            galley,
-            brand::TEXT,
-        );
-        paint_chevron(painter, pos2(head.right() - 6.0, head.center().y), state.is_open());
-        clicked = response
-            .on_hover_cursor(egui::CursorIcon::PointingHand)
-            .on_hover_text(&tool.label)
-            .clicked();
-        if clicked {
-            state.set_open(!state.is_open());
-        }
-        if state.is_open() {
-            tool_output(ui, tool);
-        }
-    });
-    if clicked {
-        state.store(ui.ctx());
-    }
-}
-
-fn paint_chevron(painter: &Painter, at: egui::Pos2, open: bool) {
-    let stroke = Stroke::new(1.3, brand::FAINT);
-    let (a, b, c) = if open {
-        (vec2(-3.5, -1.5), vec2(0.0, 2.0), vec2(3.5, -1.5))
-    } else {
-        (vec2(-1.5, -3.5), vec2(2.0, 0.0), vec2(-1.5, 3.5))
-    };
-    painter.line_segment([at + a, at + b], stroke);
-    painter.line_segment([at + b, at + c], stroke);
-}
-
-fn tool_output(ui: &mut Ui, tool: &Tool) {
-    ui.add_space(4.0);
-    let at = ui.available_rect_before_wrap();
-    ui.painter().hline(at.x_range(), at.top(), Stroke::new(1.0, brand::ITEM_LINE));
-    ui.add_space(6.0);
-    if tool.output.is_empty() {
-        let text = if tool.done { "No output" } else { "Running..." };
-        ui.label(RichText::new(text).size(12.0).color(brand::MUTED));
-        return;
-    }
-    let ink = if tool.error { brand::RED } else { brand::MUTED };
-    ui.label(RichText::new(output_preview(&tool.output)).monospace().size(11.5).color(ink));
-}
-
-/// The dot of a tool row: running, done or failed.
-pub(crate) fn tool_ink(tool: &Tool) -> Color32 {
-    match (tool.done, tool.error) {
-        (_, true) => brand::FAILED,
-        (true, false) => brand::DONE.gamma_multiply(0.6),
-        (false, false) => brand::WORKING,
-    }
 }
 
 /// A tool row's label split for drawing: the tool, then the folder and leaf of its path.
@@ -815,16 +839,17 @@ pub(crate) fn reply_box(
     ui.add_enabled_ui(enabled, |ui| {
         let hint = if enabled { "Reply to the agent" } else { "Answer the prompt above first" };
         let mut clicked = false;
-        let field = field_frame(ui, |ui| {
+        let look = (brand::CARD, COMPOSER_RADIUS, Margin::symmetric(14, 6));
+        let field = field_frame_shaped(ui, look, true, |ui| {
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                 clicked =
-                    quiet_button(ui, "Send", !text.trim().is_empty(), Size::Compact).clicked();
+                    primary_button(ui, "Send", !text.trim().is_empty(), Size::Compact).clicked();
                 ui.add(
                     TextEdit::singleline(text)
                         .frame(Frame::NONE)
                         .hint_text(hint)
                         .desired_width(f32::INFINITY)
-                        .font(FontId::proportional(14.0))
+                        .font(FontId::proportional(reader_chat_view::BODY_PX))
                         .text_color(brand::TEXT),
                 )
             })
@@ -938,20 +963,6 @@ mod tests {
         assert!(focus);
     }
 
-    #[test]
-    fn a_tool_row_shows_running_done_or_failed() {
-        let tool = |done, error| Tool { label: "Bash".into(), output: String::new(), error, done };
-        let inks = [
-            tool_ink(&tool(false, false)),
-            tool_ink(&tool(true, false)),
-            tool_ink(&tool(true, true)),
-        ];
-        assert_ne!(inks[0], inks[1]);
-        assert_ne!(inks[1], inks[2]);
-        assert_ne!(inks[0], inks[2]);
-        assert_eq!(inks[2], brand::FAILED);
-    }
-
     fn line(name: &'static str, dir: &str, leaf: &str) -> ToolLine<'static> {
         ToolLine { name, dir: dir.into(), leaf: leaf.into() }
     }
@@ -1020,7 +1031,7 @@ mod tests {
     }
 
     fn repaint_delays(rows: &Rows, frames: usize) -> Vec<std::time::Duration> {
-        let ctx = egui::Context::default();
+        let ctx = crate::fonts::test_context();
         let mut state = ViewState::default();
         let mut delays = Vec::new();
         for frame in 0..frames {
@@ -1046,6 +1057,7 @@ mod tests {
                         pr: None,
                         due: None,
                         profile: "Builder",
+                        face: None,
                         turn: Turn::Finished,
                     },
                 );
@@ -1082,7 +1094,7 @@ mod tests {
             },
             Entry { role: Role::System, text: "boom".into(), tool: None, ts: None },
         ]);
-        let ctx = egui::Context::default();
+        let ctx = crate::fonts::test_context();
         let mut state = ViewState::default();
         let raw = RawInput {
             screen_rect: Some(Rect::from_min_size(pos2(0.0, 0.0), vec2(800.0, 500.0))),
@@ -1101,6 +1113,7 @@ mod tests {
                     pr: None,
                     due: None,
                     profile: "Builder",
+                    face: None,
                     turn: Turn::Running,
                 };
                 let actions = show(ui, rect, &rows, &mut state, facts);
@@ -1176,6 +1189,7 @@ mod tests {
                         pr: None,
                         due: None,
                         profile: "Builder",
+                        face: None,
                         turn: Turn::Finished,
                     };
                     let rect = ui.max_rect();
@@ -1312,6 +1326,7 @@ mod tests {
                     pr: None,
                     due: None,
                     profile: "Builder",
+                    face: None,
                     turn: Turn::Finished,
                 };
                 let rect = ui.max_rect();
@@ -1335,6 +1350,7 @@ mod tests {
             pr: None,
             due: None,
             profile: "Builder",
+            face: None,
             turn,
         }
     }
@@ -1428,6 +1444,172 @@ mod tests {
         state.quick_used = rows.newest_seq();
         draw(&rows, &mut state, facts(None, Turn::Finished));
         assert!(state.quick.is_none(), "a used chip row does not come back");
+    }
+
+    fn shape_texts(shape: &egui::Shape, out: &mut Vec<(String, Rect)>) {
+        match shape {
+            egui::Shape::Text(text) => out.push((
+                text.galley.text().to_owned(),
+                text.galley.rect.translate(text.pos.to_vec2()),
+            )),
+            egui::Shape::Vec(shapes) => shapes.iter().for_each(|shape| shape_texts(shape, out)),
+            _ => {}
+        }
+    }
+
+    struct Frames {
+        ctx: egui::Context,
+        state: ViewState,
+        shapes: Vec<(String, Rect)>,
+    }
+
+    impl Frames {
+        fn new() -> Self {
+            Self {
+                ctx: crate::fonts::test_context(),
+                state: ViewState::default(),
+                shapes: Vec::new(),
+            }
+        }
+
+        fn run(&mut self, rows: &Rows, turn: Turn, events: Vec<Event>) {
+            let raw = RawInput {
+                screen_rect: Some(Rect::from_min_size(pos2(0.0, 0.0), vec2(1000.0, 800.0))),
+                events,
+                focused: true,
+                ..RawInput::default()
+            };
+            let state = &mut self.state;
+            let output = self.ctx.run_ui(raw, |ui| {
+                let rect = ui.max_rect();
+                show(ui, rect, rows, state, facts(None, turn));
+            });
+            self.shapes.clear();
+            output.shapes.iter().for_each(|clipped| shape_texts(&clipped.shape, &mut self.shapes));
+        }
+
+        fn at(&self, text: &str) -> Option<egui::Pos2> {
+            self.shapes.iter().find(|(drawn, _)| drawn == text).map(|(_, rect)| rect.center())
+        }
+
+        fn click(&mut self, rows: &Rows, at: egui::Pos2) {
+            let button = |pressed| Event::PointerButton {
+                pos: at,
+                button: egui::PointerButton::Primary,
+                pressed,
+                modifiers: Modifiers::NONE,
+            };
+            self.run(rows, Turn::Finished, vec![Event::PointerMoved(at)]);
+            self.run(rows, Turn::Finished, vec![button(true)]);
+            self.run(rows, Turn::Finished, vec![button(false)]);
+            self.run(rows, Turn::Finished, vec![]);
+        }
+    }
+
+    fn turn_rows() -> Rows {
+        use tidewatch_core::transcript::{Entry, Role, ToolCall, ToolPhase};
+        let call = |id: &str, name: &str, summary: &str, phase| Entry {
+            role: Role::Tool,
+            text: String::new(),
+            tool: Some(ToolCall {
+                name: name.into(),
+                summary: summary.into(),
+                id: Some(id.into()),
+                phase,
+                ask: None,
+            }),
+            ts: Some(1_700_000_000_000),
+        };
+        let mut rows = Rows::default();
+        rows.push(Entry {
+            role: Role::User,
+            text: "tidy up".into(),
+            tool: None,
+            ts: Some(1_700_000_000_000),
+        });
+        for (id, name, summary, error) in [
+            ("a", "Bash", "git status", false),
+            ("b", "Bash", "bun test", true),
+            ("c", "Read", "src/auth.rs", false),
+        ] {
+            rows.push(call(id, name, summary, ToolPhase::Call));
+            rows.push(call(id, name, summary, ToolPhase::Result { error }));
+        }
+        rows.push(Entry {
+            role: Role::Assistant,
+            text: "All tidy.".into(),
+            tool: None,
+            ts: Some(1_700_000_060_000),
+        });
+        rows
+    }
+
+    #[test]
+    fn a_turn_is_one_bubble_and_one_chip_row_with_no_line_per_call() {
+        let rows = turn_rows();
+        let mut frames = Frames::new();
+        frames.run(&rows, Turn::Finished, vec![]);
+        frames.run(&rows, Turn::Finished, vec![]);
+        for want in ["All tidy.", "2 commands \u{b7} 1 failed", "1 read", "1m"] {
+            assert!(frames.at(want).is_some(), "{want}: {:?}", frames.shapes);
+        }
+        assert!(frames.shapes.iter().all(|(text, _)| !text.contains("git status")));
+        assert!(frames.shapes.iter().all(|(text, _)| !text.starts_with("Bash")));
+        assert_eq!(frames.state.heights.measured_count(), 2);
+    }
+
+    #[test]
+    fn a_click_on_a_chip_opens_the_list_of_calls_and_a_second_click_folds_it() {
+        let rows = turn_rows();
+        let mut frames = Frames::new();
+        frames.run(&rows, Turn::Finished, vec![]);
+        frames.run(&rows, Turn::Finished, vec![]);
+        let chip = frames.at("1 read").unwrap();
+        frames.click(&rows, chip);
+        for want in ["$ git status", "$ bun test", "read  src/auth.rs"] {
+            assert!(frames.at(want).is_some(), "{want}: {:?}", frames.shapes);
+        }
+        let again = frames.at("1 read").unwrap();
+        frames.click(&rows, again);
+        assert!(frames.at("$ git status").is_none());
+        assert_eq!(frames.state.expanded.len(), 0);
+    }
+
+    #[test]
+    fn a_turn_in_progress_shows_a_live_pill_and_no_bubble_until_text_arrives() {
+        use tidewatch_core::transcript::{Entry, Role, ToolCall, ToolPhase};
+        let mut rows = Rows::default();
+        rows.push(Entry {
+            role: Role::User,
+            text: "run it".into(),
+            tool: None,
+            ts: Some(1_700_000_000_000),
+        });
+        rows.push(Entry {
+            role: Role::Tool,
+            text: String::new(),
+            tool: Some(ToolCall {
+                name: "Bash".into(),
+                summary: "bun test e2e/auth".into(),
+                id: Some("t".into()),
+                phase: ToolPhase::Call,
+                ask: None,
+            }),
+            ts: Some(1_700_000_000_000),
+        });
+        let mut frames = Frames::new();
+        frames.run(&rows, Turn::Running, vec![]);
+        frames.run(&rows, Turn::Running, vec![]);
+        assert!(frames.at("Running").is_some(), "{:?}", frames.shapes);
+        assert!(frames.at("bun test e2e/auth").is_some());
+        assert!(frames.shapes.iter().any(|(text, _)| text.starts_with("1 command so far")));
+        assert!(
+            frames
+                .state
+                .turns
+                .as_ref()
+                .is_some_and(|(_, _, layout)| layout.groups[0].texts.is_empty())
+        );
     }
 
     #[test]
