@@ -100,7 +100,7 @@ impl Tidewatch {
     }
 
     fn set_window_prefs(&mut self, prefs: WindowPrefs, ctx: &egui::Context) {
-        ctx.set_zoom_factor(prefs.ui_zoom);
+        ctx.set_zoom_factor(ui_zoom::render_factor(prefs.ui_zoom));
         if let Some(paths) = &self.paths {
             shell::save(paths.clone(), prefs.clone());
         }
