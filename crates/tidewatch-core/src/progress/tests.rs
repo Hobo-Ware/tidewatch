@@ -391,6 +391,26 @@ fn a_question_is_anything_in_needs_you_that_is_not_a_placeholder() {
 }
 
 #[test]
+fn the_owner_is_awaited_by_a_question_or_a_waiting_or_blocked_state_unless_the_work_is_done() {
+    let cases = [
+        ("state: waiting", "- Pick one", true),
+        ("state: waiting", "- Nothing", true),
+        ("state: blocked", "- Nothing", true),
+        ("state: working", "- Pick one", true),
+        ("", "- Pick one", true),
+        ("state: working", "- Nothing", false),
+        ("", "- Nothing", false),
+        ("state: done", "- Pick one", false),
+        ("state: done", "- Nothing", false),
+    ];
+    for (status, needs, want) in cases {
+        let l =
+            Ledger::parse(&format!("# Goal\ng\n\n## Status\n{status}\n\n## Needs you\n{needs}\n"));
+        assert_eq!(l.awaits_owner(), want, "{status:?} {needs:?}");
+    }
+}
+
+#[test]
 fn blocked_means_the_agent_says_so_or_an_item_is_and_the_work_is_not_done() {
     let cases = [
         ("state: blocked", "- [ ] a", true),

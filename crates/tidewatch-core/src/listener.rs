@@ -36,6 +36,7 @@ use crate::paths::{
     TidewatchPaths, avatar_asked_file_beside, avatar_file_beside, progress_file_beside,
 };
 use crate::status::parse_hook;
+use crate::{progress_store, prompt_answer};
 
 /// Where the listener binds: loopback only, a random free port (PLAN.md, Constants).
 pub const HOOK_BIND: &str = "127.0.0.1:0";
@@ -409,16 +410,14 @@ fn hook_route(shared: &Shared, entry: &Entry, agent: &str, request: &Request) ->
     if let Some(event) = parse_hook(agent, &payload) {
         shared.emit(entry, TabEvent::Hook(event));
     }
-    Response::json(
-        200,
-        avatar_answer(shared, entry, agent, &payload).unwrap_or_else(|| "{}".into()),
-    )
+    Response::json(200, prompt_reply(shared, entry, agent, &payload).unwrap_or_else(|| "{}".into()))
 }
 
-/// The answer to a prompt of a tab with no avatar that was never asked for one: extra context that
-/// asks for it. The marker is written first, so a tab whose state folder cannot be written is not
-/// asked on every prompt.
-fn avatar_answer(
+/// The answer to a prompt: extra context that asks a tab with no avatar, never asked, to draw
+/// one, and one that asks a tab whose ledger waits on the owner to refresh it. Both ride the one
+/// answer when both apply. The avatar marker is written first, so a tab whose state folder cannot
+/// be written is not asked on every prompt.
+fn prompt_reply(
     shared: &Shared,
     entry: &Entry,
     agent: &str,
@@ -429,6 +428,19 @@ fn avatar_answer(
     if !on_prompt || !avatar_ask::answers_prompts(agent) {
         return None;
     }
+    let mut contexts = Vec::new();
+    if avatar_due(shared, entry, on_prompt) {
+        contexts.push(avatar_ask::CONTEXT);
+    }
+    if progress_store::load(&progress_file_beside(&entry.notes_file))
+        .is_some_and(|ledger| ledger.awaits_owner())
+    {
+        contexts.push(prompt_answer::LEDGER_CONTEXT);
+    }
+    prompt_answer::answer(&contexts)
+}
+
+fn avatar_due(shared: &Shared, entry: &Entry, on_prompt: bool) -> bool {
     let exempt = shared
         .avatar_ask_exempt
         .lock()
@@ -449,7 +461,7 @@ fn avatar_answer(
         asked: avatar_store::was_asked(&marker),
         on_prompt,
     });
-    (due && avatar_store::mark_asked(&marker).is_ok()).then(avatar_ask::answer)
+    due && avatar_store::mark_asked(&marker).is_ok()
 }
 
 /// Whether the client of `stream` still waits for its reply: false once it has closed the
@@ -872,6 +884,79 @@ mod tests {
         std::fs::write(state_dir, "not a folder").unwrap();
         let response = f.send("POST", "/hook/claude", Some(&token), PROMPT);
         assert_eq!(response.body, "{}");
+    }
+
+    fn context_of(response: &Response) -> String {
+        body_json(response)["hookSpecificOutput"]["additionalContext"]
+            .as_str()
+            .unwrap_or_default()
+            .to_owned()
+    }
+
+    fn save_ledger(f: &Fixture, token: &str, text: &str) {
+        let file = progress_file_beside(&notes_of(f, token));
+        progress_store::save(&file, &crate::progress::Ledger::parse(text)).unwrap();
+    }
+
+    const QUESTION: &str = "# Goal\nShip\n\n## Status\nstate: waiting\n\n## Needs you\n- Yes or changes on the board?\n";
+
+    #[test]
+    fn a_prompt_to_a_tab_whose_ledger_waits_on_the_owner_is_answered_with_the_ledger_nudge() {
+        let cases = [
+            ("a question", QUESTION, true),
+            ("waiting, no question", "# Goal\nShip\n\n## Status\nstate: waiting\n", true),
+            ("blocked", "# Goal\nShip\n\n## Status\nstate: blocked\n", true),
+            ("working", "# Goal\nShip\n\n## Status\nstate: working\n", false),
+            (
+                "done with a hand-off",
+                "# Goal\nShip\n\n## Status\nstate: done\n\n## Needs you\n- Merge it\n",
+                false,
+            ),
+        ];
+        for (what, text, nudged) in cases {
+            let f = fixture();
+            let token = f.register(1, "a");
+            avatar_store::mark_asked(&avatar_asked_file_beside(&notes_of(&f, &token))).unwrap();
+            save_ledger(&f, &token, text);
+            let response = f.send("POST", "/hook/claude", Some(&token), PROMPT);
+            if nudged {
+                assert_eq!(context_of(&response), prompt_answer::LEDGER_CONTEXT, "{what}");
+            } else {
+                assert_eq!(response.body, "{}", "{what}");
+            }
+        }
+    }
+
+    #[test]
+    fn the_ledger_nudge_comes_with_every_prompt_while_the_ledger_waits_and_keeps_the_avatar_ask() {
+        let f = fixture();
+        let token = f.register(1, "a");
+        save_ledger(&f, &token, QUESTION);
+        let first = f.send("POST", "/hook/claude", Some(&token), PROMPT);
+        let context = context_of(&first);
+        assert!(context.contains(avatar_ask::CONTEXT), "{context}");
+        assert!(context.contains(prompt_answer::LEDGER_CONTEXT), "{context}");
+        let second = f.send("POST", "/hook/claude", Some(&token), PROMPT);
+        assert_eq!(context_of(&second), prompt_answer::LEDGER_CONTEXT);
+        save_ledger(&f, &token, "# Goal\nShip\n\n## Status\nstate: working\n");
+        let third = f.send("POST", "/hook/claude", Some(&token), PROMPT);
+        assert_eq!(third.body, "{}", "the agent refreshed its ledger, nothing more to say");
+    }
+
+    #[test]
+    fn the_ledger_nudge_rides_only_a_claude_prompt() {
+        let f = fixture();
+        let token = f.register(1, "a");
+        save_ledger(&f, &token, QUESTION);
+        let others = [
+            ("/hook/claude", STOP),
+            ("/hook/copilot", PROMPT),
+            ("/hook/gemini", r#"{"hook_event_name":"BeforeAgent"}"#),
+        ];
+        for (path, body) in others {
+            let response = f.send("POST", path, Some(&token), body);
+            assert_eq!(response.body, "{}", "{path}");
+        }
     }
 
     #[test]

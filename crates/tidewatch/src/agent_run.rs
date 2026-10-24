@@ -92,6 +92,8 @@ pub(crate) struct AgentRun {
     asking: Option<String>,
     exited_abnormally: bool,
     host: Host,
+    turn_started_at: Option<f64>,
+    working_since: Option<f64>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -125,6 +127,8 @@ impl AgentRun {
             asking: None,
             exited_abnormally: false,
             host: Host::Pty,
+            turn_started_at: None,
+            working_since: None,
         }
     }
 
@@ -206,7 +210,10 @@ impl AgentRun {
             TabEvent::Hook(hook) => {
                 self.host = Host::Pty;
                 match (&hook.kind, &hook.message) {
-                    (HookKind::TurnStarted, _) => self.end_block = None,
+                    (HookKind::TurnStarted, _) => {
+                        self.end_block = None;
+                        self.turn_started_at = Some(now);
+                    }
                     (HookKind::TurnDone, Some(message)) => {
                         self.end_block = end_block::parse(message);
                     }
@@ -293,9 +300,20 @@ impl AgentRun {
             return None;
         }
         let from = std::mem::replace(&mut self.status, next.clone());
+        self.working_since = (next == AgentStatus::Working).then_some(now);
         let finished = matches!(next, AgentStatus::Done | AgentStatus::Failed(_));
         self.finished_at = finished.then_some(now);
         Some(Change { from, to: next })
+    }
+
+    /// When the last turn started (a prompt reached the agent), in the egui clock.
+    pub(crate) fn turn_started_at(&self) -> Option<f64> {
+        self.turn_started_at
+    }
+
+    /// When the status last became Working, `None` while it is anything else, in the egui clock.
+    pub(crate) fn working_since(&self) -> Option<f64> {
+        self.working_since
     }
 
     /// When the status next changes with no new input, in the egui clock.
@@ -322,6 +340,26 @@ mod tests {
         let mut run = AgentRun::setting_up("claude".into(), 0.0);
         run.started(None, now);
         run
+    }
+
+    #[test]
+    fn the_run_remembers_when_the_turn_started_and_since_when_it_works() {
+        let mut run = running(1.0);
+        assert_eq!((run.turn_started_at(), run.working_since()), (None, None));
+        run.refresh(1.5);
+        assert_eq!(run.working_since(), Some(1.5));
+        run.on_event(hook(HookKind::TurnDone, Some("asked")), 10.0);
+        run.refresh(10.0);
+        assert_eq!(run.working_since(), None, "done is not working");
+        assert_eq!(run.turn_started_at(), None);
+        run.on_event(hook(HookKind::TurnStarted, None), 20.0);
+        run.refresh(20.0);
+        assert_eq!((run.turn_started_at(), run.working_since()), (Some(20.0), Some(20.0)));
+        run.refresh(25.0);
+        assert_eq!(run.working_since(), Some(20.0), "a steady status keeps its start");
+        run.on_event(hook(HookKind::PermissionNeeded, Some("Bash: ls")), 30.0);
+        run.refresh(30.0);
+        assert_eq!((run.turn_started_at(), run.working_since()), (Some(20.0), None));
     }
 
     #[test]

@@ -405,6 +405,7 @@ mod tests {
         ledger: TabLedger,
         state: TabState,
         with_ledger: bool,
+        stale: bool,
         face: Option<Arc<Avatar>>,
         texts: Vec<(String, egui::Rect)>,
         out: Out,
@@ -431,6 +432,7 @@ mod tests {
                 ledger: TabLedger { ledger: Ledger::parse(LEDGER), updated_ms: None },
                 state: TabState::default(),
                 with_ledger,
+                stale: false,
                 face: None,
                 texts: Vec::new(),
                 out: Out::default(),
@@ -449,12 +451,13 @@ mod tests {
             };
             let (view, avatars, ledger, state) =
                 (&mut self.view, &mut self.avatars, &self.ledger, &mut self.state);
-            let with_ledger = self.with_ledger;
+            let (with_ledger, stale) = (self.with_ledger, self.stale);
             let face = self.face.clone();
             let mut out = Out::default();
             let output = self.ctx.run_ui(raw, |ui| {
                 let progress = with_ledger.then_some(progress_view::Input {
                     ledger: Some(ledger),
+                    stale,
                     jobs: &[],
                     now_ms: 0,
                     time: 0.0,
@@ -507,6 +510,23 @@ mod tests {
         card.click(progress);
         assert_eq!(card.state.chosen, Some(Side::Progress));
         assert!(card.at("Answer").is_some());
+    }
+
+    #[test]
+    fn a_stale_question_is_not_asked_and_the_state_line_says_the_progress_is_old() {
+        let mut card = Card::new(true);
+        card.ledger.updated_ms = Some(-480_000);
+        card.frame(Vec::new());
+        assert!(card.at("Answer").is_some());
+        card.stale = true;
+        card.frame(Vec::new());
+        assert!(card.at("Answer").is_none());
+        assert!(card.at("Pick one").is_none());
+        let line = card.texts.iter().map(|(drawn, _)| drawn.as_str());
+        assert!(
+            line.into_iter()
+                .any(|text| text.ends_with("Working \u{b7} progress updated 8 min ago"))
+        );
     }
 
     #[test]

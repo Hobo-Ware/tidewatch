@@ -42,7 +42,7 @@ impl Tidewatch {
         let mut overview = overview::build(places);
         self.add_pr_pills(&mut overview);
         self.add_done_check_tags(&mut overview);
-        self.add_looks(&mut overview);
+        self.add_looks(&mut overview, now);
         overview
     }
 

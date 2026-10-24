@@ -2,6 +2,8 @@
 
 use tidewatch_core::progress::{Entry, Ledger, Mark, Phase, PhaseState, State, real};
 
+use crate::progress_stale::fresh;
+
 /// How many checklist rows show before "Show all".
 pub(crate) const ROW_LIMIT: usize = 8;
 
@@ -221,9 +223,11 @@ pub(crate) fn ago(now_ms: i64, then_ms: i64) -> String {
     }
 }
 
-/// The quiet line under the goal: the state word, then when the ledger changed.
-pub(crate) fn updated(now_ms: i64, then_ms: Option<i64>) -> Option<String> {
-    then_ms.map(|then| format!("updated {}", ago(now_ms, then)))
+/// The quiet line under the goal: the state word, then when the ledger changed. A stale ledger
+/// says it is the progress that is old, not the agent.
+pub(crate) fn updated(now_ms: i64, then_ms: Option<i64>, stale: bool) -> Option<String> {
+    let what = if stale { "progress updated" } else { "updated" };
+    then_ms.map(|then| format!("{what} {}", ago(now_ms, then)))
 }
 
 fn phase_name(ledger: &Ledger) -> String {
@@ -256,8 +260,9 @@ pub(crate) struct TabRing {
     pub(crate) tip: String,
 }
 
-pub(crate) fn tab_ring(ledger: &Ledger) -> TabRing {
-    TabRing { ring: ring(ledger), tip: tab_tip(ledger) }
+pub(crate) fn tab_ring(ledger: &Ledger, stale: bool) -> TabRing {
+    let ledger = fresh(ledger, stale);
+    TabRing { ring: ring(&ledger), tip: tab_tip(&ledger) }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -319,7 +324,8 @@ pub(crate) struct Look {
     pub(crate) questions: usize,
 }
 
-pub(crate) fn look(ledger: &Ledger) -> Look {
+pub(crate) fn look(ledger: &Ledger, stale: bool) -> Look {
+    let ledger = &*fresh(ledger, stale);
     Look {
         ring: ring(ledger),
         line: card_line(ledger),
@@ -498,8 +504,16 @@ mod tests {
         for (diff, want) in cases {
             assert_eq!(ago(1_000_000_000 + diff, 1_000_000_000), want, "{diff}");
         }
-        assert_eq!(updated(5_000, None), None);
-        assert_eq!(updated(5_000, Some(0)).as_deref(), Some("updated just now"));
+        assert_eq!(updated(5_000, None, false), None);
+        assert_eq!(updated(5_000, Some(0), false).as_deref(), Some("updated just now"));
+        assert_eq!(updated(480_000, Some(0), true).as_deref(), Some("progress updated 8 min ago"));
+    }
+
+    #[test]
+    fn a_stale_wait_gives_the_tab_ring_the_working_tone() {
+        let waiting = ledger("# Goal\nx\n\n## Status\nstate: waiting\n\n## Needs you\n- Yes?\n");
+        assert_eq!(tab_ring(&waiting, false).ring.tone, Tone::Waiting);
+        assert_eq!(tab_ring(&waiting, true).ring.tone, Tone::Working);
     }
 
     #[test]
@@ -524,6 +538,12 @@ mod tests {
         for (rest, want) in cases {
             let text = format!("# Goal\nx\n\n## Status\n{rest}\n");
             assert_eq!(card_tag(&ledger(&text)), want, "{rest}");
+        }
+        for rest in ["state: waiting\n\n## Needs you\n- Yes or changes?", "state: blocked"] {
+            let text = format!("# Goal\nx\n\n## Status\n{rest}\n");
+            let stale = look(&ledger(&text), true);
+            assert_eq!(stale.tag, CardTag::Working, "{rest}");
+            assert_eq!((stale.ring.tone, stale.questions), (Tone::Working, 0), "{rest}");
         }
         assert_eq!(CardTag::Question.label(1), "1 question");
         assert_eq!(CardTag::Question.label(3), "3 questions");
@@ -550,7 +570,7 @@ mod tests {
     #[test]
     fn a_look_gathers_the_ring_the_line_the_tag_and_the_question_count() {
         let text = "# Goal\nx\n\n## Status\nphase: 1\nstate: done\nnote: Committed\n\n## Checklist\n### 1. A\n- [x] a\n\n## Needs you\n- One\n- Two\n";
-        let look = look(&ledger(text));
+        let look = look(&ledger(text), false);
         assert_eq!(look.tag, CardTag::Question);
         assert_eq!((look.questions, look.line.as_str()), (2, "Committed"));
         assert_eq!((look.ring.tone, look.ring.fraction), (Tone::Done, 1.0));

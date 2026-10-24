@@ -22,6 +22,7 @@ use crate::progress_model::{
     rows_shown,
 };
 use crate::progress_ring::{paint_mark, tone_color};
+use crate::progress_stale::fresh;
 use crate::progress_state::TabLedger;
 use crate::reader_view::{ellipsized, paint_item};
 use crate::screen_kit::{Size, body, heading, mono, primary_button};
@@ -141,6 +142,8 @@ pub(crate) enum Action {
 
 pub(crate) struct Input<'a> {
     pub(crate) ledger: Option<&'a TabLedger>,
+    /// The agent works on after the ledger asked the owner something (`progress_stale.rs`).
+    pub(crate) stale: bool,
     pub(crate) jobs: &'a [Card],
     pub(crate) now_ms: i64,
     pub(crate) time: f64,
@@ -193,9 +196,9 @@ fn content(ui: &mut Ui, input: &Input<'_>, state: &mut TabState) -> Option<Actio
     if !input.jobs.is_empty() {
         ui.add_space(GAP);
     }
-    let ledger = &known.ledger;
+    let ledger = &*fresh(&known.ledger, input.stale);
     let tone = model::tone(ledger);
-    header(ui, width, ledger, tone, input.now_ms, known.updated_ms);
+    header(ui, width, ledger, tone, input.now_ms, (known.updated_ms, input.stale));
     ui.add_space(GAP);
     phase_bars(ui, width, ledger, tone);
     let asked = questions(ledger);
@@ -233,14 +236,14 @@ fn header(
     ledger: &Ledger,
     tone: Tone,
     now_ms: i64,
-    updated_ms: Option<i64>,
+    (updated_ms, stale): (Option<i64>, bool),
 ) {
     let narrow = width < NARROW_BELOW - 2.0 * NARROW_PAD;
     let goal_size = if narrow { 14.0 } else { 16.0 };
     let painter = ui.painter().clone();
     let goal = single_line(&painter, ledger.goal.trim(), heading(goal_size), brand::TEXT, width);
     let step = model::step(ledger).map(|step| step_line(&painter, &step, width));
-    let meta = meta_line(&painter, tone, (now_ms, updated_ms), width);
+    let meta = meta_line(&painter, tone, (now_ms, updated_ms, stale), width);
     let rows = step.as_ref().map_or(2.0, |_| 3.0);
     let step_h = step.as_ref().map_or(0.0, |galley| galley.size().y);
     let block = goal.size().y + step_h + meta.size().y + 4.0 * (rows - 1.0);
@@ -284,7 +287,7 @@ fn step_line(
 fn meta_line(
     painter: &egui::Painter,
     tone: Tone,
-    (now_ms, updated_ms): (i64, Option<i64>),
+    (now_ms, updated_ms, stale): (i64, Option<i64>, bool),
     room: f32,
 ) -> std::sync::Arc<egui::Galley> {
     let ink = tone_color(tone);
@@ -292,7 +295,7 @@ fn meta_line(
     let mut job = LayoutJob::default();
     job.append("\u{25cf} ", 0.0, TextFormat::simple(body(12.5), ink));
     job.append(tone.word(), 0.0, TextFormat::simple(body(12.5), ink));
-    if let Some(updated) = model::updated(now_ms, updated_ms) {
+    if let Some(updated) = model::updated(now_ms, updated_ms, stale) {
         job.append(&format!(" \u{b7} {updated}"), 0.0, quiet);
     }
     job.wrap = TextWrapping::truncate_at_width(room.max(1.0));
