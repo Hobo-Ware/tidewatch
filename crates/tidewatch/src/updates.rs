@@ -220,6 +220,11 @@ impl Updates {
     }
 
     /// The new settings, which are the whole table with only this switch changed.
+    /// The settings file changed under the app (a sync): take its switches without writing.
+    pub(crate) fn reload(&mut self, prefs: UpdatePrefs) {
+        self.prefs = prefs;
+    }
+
     pub(crate) fn set_check(&mut self, on: bool) -> UpdatePrefs {
         self.prefs.check = on;
         self.prefs.clone()
@@ -340,6 +345,13 @@ mod tests {
         assert!(updates(None, true).quiet);
         assert!(!offline(false, false, false));
         assert!(offline(false, false, true));
+    }
+
+    #[test]
+    fn a_reload_takes_the_new_switches_without_a_write_back() {
+        let mut updates = updates(None, false);
+        updates.reload(UpdatePrefs { check: false, install: false });
+        assert_eq!(updates.prefs(), &UpdatePrefs { check: false, install: false });
     }
 
     #[test]

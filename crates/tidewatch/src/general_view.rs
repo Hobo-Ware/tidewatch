@@ -17,6 +17,7 @@ use crate::new_tab_prefs_view::{self, ProfileOption};
 use crate::segmented;
 use crate::settings_ui::{self, Control, footer_note, page_header, section, switch_row};
 use crate::settings_view::Action;
+use crate::sync_view;
 use crate::updates::Updates;
 use crate::updates_view;
 use crate::window_settings;
@@ -41,6 +42,7 @@ pub(crate) struct General {
     /// The active repo's remote default branch, for the Start from label.
     pub(crate) default_branch: Option<String>,
     pub(crate) terminal: font_view::View,
+    pub(crate) sync: sync_view::View,
 }
 
 pub(crate) fn page(
@@ -50,6 +52,7 @@ pub(crate) fn page(
     font: &mut font_view::Picker,
     updates: &mut Updates,
     login: &mut login_item::Row,
+    sync: &mut sync_view::Editor,
     read_login: impl FnOnce() -> LoginItem,
     file: &str,
 ) -> Option<Action> {
@@ -98,6 +101,7 @@ pub(crate) fn page(
     let github = github_view::card(ui, general.github).map(Action::Github);
     let guards =
         guards_view::card(ui, &general.guards, general.guards_repo.as_ref()).map(Action::Guards);
+    let sync = sync_view::card(ui, sync, &general.sync).map(Action::Sync);
     let updates = updates_view::section(ui, updates).map(Action::Updates);
     footer_note(ui, file);
     restore
@@ -113,6 +117,7 @@ pub(crate) fn page(
         .or(keep_awake)
         .or(github)
         .or(guards)
+        .or(sync)
         .or(updates)
 }
 

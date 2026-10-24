@@ -21,7 +21,10 @@ use crate::settings::{Section, Settings};
 use crate::settings_view::{self, Files, Host};
 use crate::setup_editor::{Editor, RepoEntry};
 use crate::shell::{self, Event};
+use crate::sync_glue::wall_secs;
+use crate::sync_view;
 use crate::updates;
+use crate::window_settings;
 use crate::window_view;
 
 impl Tidewatch {
@@ -45,6 +48,7 @@ impl Tidewatch {
                 })
                 .collect();
             settings.setup = Editor::new(repos, self.paths.clone(), self.workspace().dir());
+            settings.sync = sync_view::Editor::new(self.settings_sync.repo());
             self.settings = Some(settings);
         }
     }
@@ -105,6 +109,37 @@ impl Tidewatch {
             shell::save(paths.clone(), prefs.clone());
         }
         self.shell.apply_prefs(ctx, prefs);
+    }
+
+    pub(super) fn drive_settings_sync(&mut self, ctx: &egui::Context, now: f64) {
+        if self.settings_sync.drive(ctx, now) {
+            self.reload_synced_settings(ctx);
+        }
+    }
+
+    fn reload_synced_settings(&mut self, ctx: &egui::Context) {
+        let Some(paths) = self.paths.clone() else { return };
+        self.apply_pulled_prefs(Prefs::load(&paths), ctx);
+        agent_jobs::reload(&self.agent_jobs, ctx, paths, self.catalog.path.clone());
+    }
+
+    fn apply_pulled_prefs(&mut self, prefs: Prefs, ctx: &egui::Context) {
+        ctx.set_zoom_factor(prefs.window.ui_zoom);
+        if let Some(settings) = &mut self.settings {
+            settings.window = window_settings::Editor::new(&prefs.window);
+        }
+        self.shell.apply_prefs(ctx, prefs.window);
+        self.restore.reload(prefs.restore_session, prefs.resume_agents);
+        self.updates.reload(prefs.updates);
+        self.new_tab_prefs = prefs.new_tab;
+        self.parking.set_after(prefs.tabs.park_after);
+        self.done_check.set_enabled(prefs.done_check.enabled);
+        self.keep_awake.set_enabled(prefs.keep_awake.enabled);
+        self.guards = prefs.guards;
+        self.pr.set_default(prefs.github);
+        self.terminal_prefs = prefs.terminal.clone();
+        self.terminal_font.choose(ctx, None, prefs.terminal.font);
+        ctx.request_repaint();
     }
 
     fn save_settings(&mut self, ctx: &egui::Context) {
@@ -270,6 +305,7 @@ impl Tidewatch {
                 families: crate::terminal_font::families(),
                 copy_on_select: self.terminal_prefs.copy_on_select,
             },
+            sync: self.settings_sync.view(wall_secs()),
         };
         let probes: Probes = self
             .catalog
@@ -369,6 +405,7 @@ impl Tidewatch {
             }
             Some(settings_view::Action::TerminalCopyOnSelect(on)) => self.set_copy_on_select(on),
             Some(settings_view::Action::LoginItem(click)) => self.apply_login_click(click, ctx),
+            Some(settings_view::Action::Sync(change)) => self.settings_sync.apply(change, ctx),
             Some(settings_view::Action::OpenHouseStyle) => self.open_house_style(ctx),
             Some(settings_view::Action::ResetHouseStyle) => self.reset_house_style(ctx),
             Some(settings_view::Action::WorktreeSetup { repo, recipe }) => {

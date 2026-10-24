@@ -28,6 +28,15 @@ impl Tidewatch {
                 }
                 self.run_dev_agent(ctx);
             }
+            agent_jobs::Done::Reloaded { profiles, workflows } => {
+                self.catalog.set_workflows(workflows.clone());
+                let probes = self.catalog.set_profiles(profiles.clone());
+                self.probe_agents(probes, ctx);
+                let agents = self.catalog.agent_names();
+                if let Some(settings) = &mut self.settings {
+                    settings.pulled(&profiles, &workflows, agents);
+                }
+            }
             agent_jobs::Done::Probed { agent, availability } => {
                 self.catalog.set_availability(&agent, availability);
             }

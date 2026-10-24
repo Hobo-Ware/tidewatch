@@ -82,6 +82,7 @@ pub mod runner;
 pub mod schedule;
 pub mod session;
 pub mod session_id;
+pub mod settings_sync;
 pub mod setup_recipe;
 pub mod start_base;
 pub mod status;

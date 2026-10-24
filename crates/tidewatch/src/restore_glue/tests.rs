@@ -739,3 +739,14 @@ fn yolo_with_resuming_off_is_a_plain_shell_like_every_agent() {
         assert!(!got.started);
     }
 }
+
+#[test]
+fn a_reload_takes_the_restore_switches_and_writes_nothing() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut host = Host::new(false, false, RealDisk::new(dir.path()));
+    assert!(host.restore_enabled());
+    host.reload(false, ResumeAgents::Off);
+    assert!(!host.restore_enabled());
+    assert_eq!(host.resume_agents(), ResumeAgents::Off);
+    assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 0);
+}

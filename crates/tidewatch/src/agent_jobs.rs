@@ -14,6 +14,7 @@ use crate::jobs::Jobs;
 
 pub(crate) enum Done {
     Loaded { profiles: Profiles, workflows: Workflows },
+    Reloaded { profiles: Profiles, workflows: Workflows },
     Probed { agent: String, availability: Availability },
     Saved { result: Result<(), String>, profiles: Profiles },
     WorkflowsSaved { result: Result<(), String>, workflows: Workflows },
@@ -21,6 +22,18 @@ pub(crate) enum Done {
 
 pub(crate) fn load(jobs: &Jobs<Done>, ctx: &egui::Context, paths: TidewatchPaths, path: OsString) {
     jobs.spawn(ctx, move || Done::Loaded {
+        profiles: Profiles::load_or_seed(&paths, Some(&path)),
+        workflows: Workflows::load_or_seed(&paths, Some(&path)),
+    });
+}
+
+pub(crate) fn reload(
+    jobs: &Jobs<Done>,
+    ctx: &egui::Context,
+    paths: TidewatchPaths,
+    path: OsString,
+) {
+    jobs.spawn(ctx, move || Done::Reloaded {
         profiles: Profiles::load_or_seed(&paths, Some(&path)),
         workflows: Workflows::load_or_seed(&paths, Some(&path)),
     });

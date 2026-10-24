@@ -114,6 +114,7 @@ use crate::restore_glue::{self};
 use crate::session_glue::Saver;
 use crate::settings::Settings;
 use crate::shell::{self, Shell};
+use crate::sync_glue;
 use crate::tab_view::TabView;
 use crate::tabs::Tabs;
 use crate::takeover::Takeover;
@@ -221,6 +222,7 @@ pub(crate) struct Tidewatch {
     restore: restore_glue::Host,
     notice: Option<String>,
     updates: Updates,
+    settings_sync: sync_glue::Host,
     shell: Shell<RealOs>,
     desktop: window_chrome::Desktop,
 }
@@ -328,6 +330,8 @@ impl Tidewatch {
             paths.as_ref().map_or_else(std::env::temp_dir, TidewatchPaths::state_dir),
         )
         .with_fake_state(fake_state(std::env::var("TIDEWATCH_FAKE_UPDATE_STATE").ok().as_deref()));
+        let settings_sync =
+            sync_glue::Host::new(paths.as_ref(), flow.tools(), screenshot.is_none(), &cc.egui_ctx);
         let mut app = Self {
             terminal_font,
             terminal_prefs,
@@ -413,6 +417,7 @@ impl Tidewatch {
             restore: restore_glue::Host::new(no_restore, crash_loop, RealDisk::from_env()),
             notice: handoff::notice(&notes, kept_agents, hooks_kept),
             updates,
+            settings_sync,
             desktop: shell.desktop.clone(),
             shell: shell::start(&cc.egui_ctx, shell),
         };
