@@ -20,9 +20,9 @@ pub(crate) fn tone_color(tone: Tone) -> Color32 {
     }
 }
 
-/// The stroke of a ring `size` across: a tenth of it, never thinner than 2 px.
+/// The stroke of a ring `size` across: a fourteenth of it, never thinner than 2 px.
 pub(crate) fn stroke_of(size: f32) -> f32 {
-    (size * 0.105).max(2.0)
+    (size * 0.07).max(2.0)
 }
 
 /// Points of the arc that starts at the top and runs clockwise over `fraction` of a turn. Empty
@@ -56,7 +56,8 @@ pub(crate) fn paint(
     }
     let stroke = stroke_of(size);
     let radius = (size - stroke) / 2.0;
-    painter.circle_stroke(center, radius, Stroke::new(stroke, track));
+    // egui strokes a circle outside its radius, so the track is pulled in to share the arc's middle.
+    painter.circle_stroke(center, radius - stroke / 2.0, Stroke::new(stroke, track));
     let points = arc_points(center, radius, fraction);
     let (Some(first), Some(last)) = (points.first().copied(), points.last().copied()) else {
         return;
@@ -165,9 +166,60 @@ mod tests {
     }
 
     #[test]
+    fn the_arc_is_an_open_sweep_of_the_fraction_for_any_fraction() {
+        for fraction in [0.1_f32, 0.33, 0.5, 0.9] {
+            let points = arc_points(C, 5.0, fraction);
+            assert!(near(points[0], pos2(10.0, 5.0)), "starts at the top at {fraction}");
+            assert!(!near(points[0], *points.last().unwrap()), "open at {fraction}");
+            let angle = |point: Pos2| {
+                let v = point - C;
+                (v.x.atan2(-v.y)).rem_euclid(TAU)
+            };
+            let swept = angle(*points.last().unwrap()) / TAU;
+            assert!((swept - fraction).abs() < 0.001, "{swept} swept for {fraction}");
+            assert!(points.windows(2).all(|pair| angle(pair[1]) > angle(pair[0])), "clockwise");
+            for point in &points {
+                assert!(((*point - C).length() - 5.0).abs() < 0.01);
+            }
+        }
+    }
+
+    #[test]
+    fn the_track_and_the_arc_cover_the_same_band() {
+        let ctx = egui::Context::default();
+        let (size, center) = (56.0, pos2(60.0, 60.0));
+        let output = ctx.run_ui(egui::RawInput::default(), |ui| {
+            paint(ui.painter(), center, size, 0.33, Color32::WHITE, Color32::GRAY);
+        });
+        let stroke = stroke_of(size);
+        let radius = (size - stroke) / 2.0;
+        let band = |shapes: Vec<egui::epaint::ClippedShape>| {
+            let mut near_edge = f32::MAX;
+            let mut far_edge = 0.0_f32;
+            for primitive in ctx.tessellate(shapes, 1.0) {
+                let egui::epaint::Primitive::Mesh(mesh) = primitive.primitive else { continue };
+                for vertex in mesh.vertices {
+                    let d = (vertex.pos - center).length();
+                    near_edge = near_edge.min(d);
+                    far_edge = far_edge.max(d);
+                }
+            }
+            (near_edge, far_edge)
+        };
+        let mut shapes = output.shapes.into_iter();
+        let track = band(vec![shapes.next().unwrap()]);
+        let arc = band(vec![shapes.next().unwrap()]);
+        let (inner, outer) = (radius - stroke / 2.0, radius + stroke / 2.0);
+        for (name, (near_edge, far_edge)) in [("track", track), ("arc", arc)] {
+            assert!((near_edge - inner).abs() < 0.8, "{name} inner edge {near_edge} vs {inner}");
+            assert!((far_edge - outer).abs() < 0.8, "{name} outer edge {far_edge} vs {outer}");
+        }
+    }
+
+    #[test]
     fn the_stroke_scales_with_the_ring_and_has_a_floor() {
         assert_eq!(stroke_of(10.0), 2.0);
-        assert!((stroke_of(72.0) - 7.56).abs() < 0.01);
+        assert!((stroke_of(72.0) - 5.04).abs() < 0.01);
         assert!(stroke_of(52.0) > stroke_of(26.0));
     }
 
