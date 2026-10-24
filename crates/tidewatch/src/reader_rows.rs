@@ -18,6 +18,12 @@ pub(crate) enum Kind {
     Tool(Tool),
     /// An error or notice the CLI wrote itself.
     Notice,
+    /// A slash command the user ran, as `/name args`.
+    SlashCommand,
+    /// What a local command printed.
+    CommandOutput,
+    /// Where Claude Code compacted the conversation; the row's text is its label.
+    Compacted,
     /// A review sent to the agent, as the ids of its notes; the row's text is the user's message.
     /// The pasted block itself is not kept.
     Review(Vec<u64>),
@@ -148,6 +154,15 @@ impl Rows {
             }
             Role::System => {
                 self.add(Kind::Notice, entry.text);
+            }
+            Role::Command => {
+                self.add(Kind::SlashCommand, entry.text);
+            }
+            Role::CommandOutput => {
+                self.add(Kind::CommandOutput, entry.text);
+            }
+            Role::Compacted => {
+                self.add(Kind::Compacted, entry.text);
             }
             Role::Tool => self.tool(entry),
         }
@@ -436,9 +451,14 @@ mod tests {
             text(Role::User, "fix it"),
             text(Role::Assistant, "# Done"),
             text(Role::System, "API error"),
+            text(Role::Command, "/rate-limit-options"),
+            text(Role::CommandOutput, "continues at 3pm"),
         ]);
         let kinds: Vec<_> = rows.iter().map(|row| row.kind.clone()).collect();
-        assert_eq!(kinds, [Kind::User, Kind::Assistant, Kind::Notice]);
+        assert_eq!(
+            kinds,
+            [Kind::User, Kind::Assistant, Kind::Notice, Kind::SlashCommand, Kind::CommandOutput]
+        );
         assert_eq!(rows.iter().nth(1).unwrap().text, "# Done");
     }
 

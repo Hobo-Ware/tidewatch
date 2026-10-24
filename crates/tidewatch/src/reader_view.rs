@@ -570,10 +570,10 @@ fn transcript(
                                     ),
                                     _ if row.kind == Kind::User => reader_chat_view::user(
                                         ui,
-                                        &row.text,
+                                        row,
                                         stamps[index],
                                         scene.zone,
-                                        width,
+                                        (width, &mut *cache),
                                     ),
                                     _ => {
                                         let asked = draw_row(ui, row, review, live_seq, profile);
@@ -678,7 +678,9 @@ fn draw_row(
             }
         }
         Kind::User | Kind::Assistant | Kind::Tool(_) => {}
-        Kind::Divider => draw_divider(ui, &row.text),
+        Kind::Divider | Kind::Compacted => draw_divider(ui, &row.text),
+        Kind::SlashCommand => reader_chat_view::slash_command(ui, &row.text),
+        Kind::CommandOutput => reader_chat_view::command_output(ui, &row.text),
         Kind::Notice => {
             Frame::new()
                 .fill(brand::RED_FILL)

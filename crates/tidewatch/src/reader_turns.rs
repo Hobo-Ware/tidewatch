@@ -148,7 +148,11 @@ pub(crate) fn layout(rows: &Rows) -> Layout {
                     _ => group.texts.push(index),
                 }
             }
-            Kind::Notice | Kind::Question(_) => {
+            Kind::Notice
+            | Kind::SlashCommand
+            | Kind::CommandOutput
+            | Kind::Compacted
+            | Kind::Question(_) => {
                 last_boundary = false;
                 out.slots.push(Slot::Plain);
             }
@@ -409,6 +413,41 @@ mod tests {
         assert_eq!(layout.groups.len(), 1);
         assert_eq!(layout.groups[0].calls.len(), 2);
         assert_eq!(layout.slots, [Slot::Plain, Slot::Group(0), Slot::Plain, Slot::Hidden]);
+    }
+
+    #[test]
+    fn a_message_sent_mid_turn_ends_that_turn_and_starts_another() {
+        let entries = vec![
+            text(Role::User, "go", 1),
+            text(Role::Assistant, "working", 2),
+            call("a", "Bash", "make", 3),
+            text(Role::User, "also keep the old API", 4),
+            done("a", "Bash", false, 5),
+            text(Role::Assistant, "kept it", 6),
+        ];
+        let layout = layout(&rows_of(entries));
+        assert_eq!(layout.groups.len(), 2);
+        assert!(layout.groups[0].closed);
+        assert_eq!(layout.groups[0].calls.len(), 1);
+        assert_eq!(layout.groups[0].ended_ms, Some(3));
+        assert_eq!(layout.groups[1].texts.len(), 1);
+        assert_eq!(layout.groups[1].started_ms, Some(6));
+        assert!(!layout.awaiting);
+    }
+
+    #[test]
+    fn a_compaction_marker_neither_splits_a_turn_nor_opens_a_user_turn() {
+        let entries = vec![
+            text(Role::User, "go", 1),
+            text(Role::Assistant, "working", 2),
+            text(Role::Compacted, "Conversation compacted", 3),
+            text(Role::Assistant, "carrying on", 4),
+        ];
+        let layout = layout(&rows_of(entries));
+        assert_eq!(layout.groups.len(), 1);
+        assert_eq!(layout.groups[0].texts.len(), 2);
+        assert_eq!(layout.slots, [Slot::Plain, Slot::Group(0), Slot::Plain, Slot::Hidden]);
+        assert!(!layout.awaiting);
     }
 
     #[test]
