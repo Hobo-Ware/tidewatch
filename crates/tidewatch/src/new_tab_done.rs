@@ -40,7 +40,7 @@ fn paint_mark(ui: &Ui, rect: Rect, on: bool, enabled: bool) {
     }
 }
 
-pub(crate) fn show(ui: &mut Ui, rows: &[Row; 3]) -> Shown {
+pub(crate) fn show(ui: &mut Ui, rows: &[Row; 3], tests_tip: Option<&str>) -> Shown {
     let mut shown = Shown::default();
     section_label(ui, "Done means");
     ui.add_space(CAPTION_GAP);
@@ -76,7 +76,10 @@ pub(crate) fn show(ui: &mut Ui, rows: &[Row; 3]) -> Shown {
             );
         }
         if enabled {
-            let response = response.on_hover_cursor(CursorIcon::PointingHand);
+            let mut response = response.on_hover_cursor(CursorIcon::PointingHand);
+            if let Some(tip) = tests_tip.filter(|_| row.tick == Tick::Tests) {
+                response = response.on_hover_text(tip);
+            }
             if response.clicked() {
                 shown.clicked = Some(row.tick);
             }

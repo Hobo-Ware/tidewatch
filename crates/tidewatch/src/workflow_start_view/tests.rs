@@ -55,11 +55,50 @@ fn setup() -> (egui::Context, TabRun) {
 
 #[test]
 fn a_card_per_stage_names_the_cli_and_the_level() {
-    let cards = cards(run().runner());
+    let cards = cards(run().runner(), None);
     let titles: Vec<_> = cards.iter().map(|card| card.title).collect();
     assert_eq!(titles, ["Work", "Review", "Refactor", "Hand off"]);
     assert_eq!(cards[0].who, "Claude \u{b7} Auto edit");
     assert_eq!(cards[3].tip, "Gate: You approve");
+}
+
+fn run_testing(command: Option<&str>) -> TabRun {
+    let ship = Workflows::defaults().workflow.remove("ship").unwrap();
+    let ctx = RunContext {
+        task: String::new(),
+        base: "main".into(),
+        branch: "agent/otter".into(),
+        test_command: command.map(str::to_owned),
+    };
+    let runner = Runner::new(&ship, &BTreeMap::new(), ctx).unwrap();
+    TabRun::new(runner, None, Duration::from_secs(600))
+}
+
+#[test]
+fn a_test_gate_card_shows_the_command_and_what_picked_it() {
+    let run = run_testing(Some("bun test")).with_test_why(Some("bun.lock".into()));
+    let cards = cards(run.runner(), run.test_why());
+    assert_eq!(
+        cards[0].tip,
+        "Gate: Tests pass\nRuns bun test (bun.lock). Wrong command? Set test = \"...\" in .tidewatch.toml at the repo root."
+    );
+    assert_eq!(cards[3].tip, "Gate: You approve");
+}
+
+#[test]
+fn a_test_gate_card_without_a_command_says_how_to_set_one() {
+    let run = run_testing(None);
+    let cards = cards(run.runner(), run.test_why());
+    assert_eq!(cards[0].tip, format!("Gate: Tests pass\n{}", test_command::MISSING_TIP));
+}
+
+#[test]
+fn a_configured_command_names_the_repo_file_without_asking_to_set_it() {
+    let run = run_testing(Some("make check")).with_test_why(Some(".tidewatch.toml".into()));
+    assert_eq!(
+        cards(run.runner(), run.test_why())[0].tip,
+        "Gate: Tests pass\nRuns make check (.tidewatch.toml)."
+    );
 }
 
 #[test]

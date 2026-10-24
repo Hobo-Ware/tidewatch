@@ -22,6 +22,23 @@ fn the_offer_follows_what_the_repo_says_and_waits_while_it_is_unknown() {
 }
 
 #[test]
+fn the_tests_row_tip_names_the_command_and_what_picked_it() {
+    let found = RepoFacts {
+        test_command: Some("bun test".into()),
+        test_why: Some("bun.lock".into()),
+        ..RepoFacts::default()
+    };
+    assert_eq!(
+        tests_tip(Some(&found)).as_deref(),
+        Some(
+            "Runs bun test (bun.lock). Wrong command? Set test = \"...\" in .tidewatch.toml at the repo root."
+        )
+    );
+    assert_eq!(tests_tip(Some(&facts(None))), None);
+    assert_eq!(tests_tip(None), None);
+}
+
+#[test]
 fn every_tick_shows_on_by_default_and_the_tests_row_is_off_and_says_why_without_a_command() {
     let on = rows(Criteria::default(), &TestsOffer::Command("npm test".into()));
     assert!(on.iter().all(|row| row.on && row.disabled.is_none()));

@@ -1,7 +1,9 @@
 //! The repo's test command, which the Tests, TestFails, TestPasses and SameBehavior gates run.
 //!
 //! `<repo>/.tidewatch.toml` with `test = "..."` wins (an empty string switches the gates off for
-//! that repo); otherwise the first marker file found picks a conventional command.
+//! that repo); otherwise the first marker file found picks a conventional command. Only the repo
+//! root is looked at, so a monorepo gets its root's toolchain. Every pick carries the file that
+//! decided it ([`Detected::why`]) so the UI can show a wrong guess.
 //! `test_timeout_secs = N` in the same file changes how long a run may take (default 10 minutes).
 //! `checklist = "<path>"` points at the repo's own checklist template for the progress ledger.
 
@@ -21,6 +23,41 @@ const REPO_CONFIG: &str = ".tidewatch.toml";
 pub const DEFAULT_TIMEOUT: Duration = Duration::from_secs(600);
 const POLL: Duration = Duration::from_millis(25);
 const PIPE_GRACE: Duration = Duration::from_secs(2);
+
+/// A test command and what it was picked from.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Detected {
+    pub command: String,
+    /// The file or setting that decided it, for example `bun.lock` or `.tidewatch.toml`.
+    pub why: String,
+}
+
+impl Detected {
+    fn new(command: impl Into<String>, why: impl Into<String>) -> Self {
+        Self { command: command.into(), why: why.into() }
+    }
+
+    /// `bun test (bun.lock)`.
+    #[must_use]
+    pub fn describe(&self) -> String {
+        format!("{} ({})", self.command, self.why)
+    }
+}
+
+/// What a tooltip says when no command was found.
+pub const MISSING_TIP: &str =
+    "No test command found. Set test = \"...\" in .tidewatch.toml at the repo root.";
+
+/// What a tooltip says about the command the gates run: where it came from and how to change it.
+#[must_use]
+pub fn tip(command: &str, why: &str) -> String {
+    let source = format!("Runs {command} ({why}).");
+    if why == REPO_CONFIG {
+        source
+    } else {
+        format!("{source} Wrong command? Set test = \"...\" in {REPO_CONFIG} at the repo root.")
+    }
+}
 
 #[derive(Debug, PartialEq, Eq)]
 enum Configured {
@@ -51,14 +88,20 @@ fn configured(repo: &Path) -> Configured {
     }
 }
 
+/// The command to run in a worktree of `repo` and why, or `None` when there is none to run.
+#[must_use]
+pub fn plan(repo: &Path) -> Option<Detected> {
+    match configured(repo) {
+        Configured::Command(command) => Some(Detected::new(command, REPO_CONFIG)),
+        Configured::Disabled => None,
+        Configured::Absent => detect_with_reason(repo),
+    }
+}
+
 /// The command to run in a worktree of `repo`, or `None` when there is none to run.
 #[must_use]
 pub fn test_command(repo: &Path) -> Option<String> {
-    match configured(repo) {
-        Configured::Command(command) => Some(command),
-        Configured::Disabled => None,
-        Configured::Absent => detect(repo),
-    }
+    plan(repo).map(|plan| plan.command)
 }
 
 /// How long a test run in `repo` may take: `test_timeout_secs` from `.tidewatch.toml` when it is a
@@ -94,23 +137,191 @@ fn file_contains(dir: &Path, name: &str, needle: &str) -> bool {
     std::fs::read_to_string(dir.join(name)).is_ok_and(|text| text.contains(needle))
 }
 
-fn has_node_test_script(dir: &Path) -> bool {
-    let manifest = std::fs::read_to_string(dir.join("package.json"))
-        .ok()
-        .and_then(|text| serde_json::from_str::<serde_json::Value>(&text).ok());
-    let script = manifest.as_ref().and_then(|m| m.pointer("/scripts/test")?.as_str());
-    script.is_some_and(|script| !script.trim().is_empty() && !script.contains("no test specified"))
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Js {
+    Npm,
+    Pnpm,
+    Yarn,
+    Bun,
 }
 
-fn node_command(dir: &Path) -> &'static str {
-    if has(dir, "pnpm-lock.yaml") {
-        "pnpm test"
-    } else if has(dir, "yarn.lock") {
-        "yarn test"
-    } else if has(dir, "bun.lock") || has(dir, "bun.lockb") {
-        "bun run test"
+impl Js {
+    const LOCKFILES: [(&'static str, Js); 5] = [
+        ("bun.lock", Js::Bun),
+        ("bun.lockb", Js::Bun),
+        ("pnpm-lock.yaml", Js::Pnpm),
+        ("yarn.lock", Js::Yarn),
+        ("package-lock.json", Js::Npm),
+    ];
+
+    fn script_command(self) -> &'static str {
+        match self {
+            Js::Npm => "npm test",
+            Js::Pnpm => "pnpm test",
+            Js::Yarn => "yarn test",
+            Js::Bun => "bun run test",
+        }
+    }
+
+    fn from_package_manager(field: &str) -> Option<Self> {
+        match field.split('@').next()? {
+            "npm" => Some(Js::Npm),
+            "pnpm" => Some(Js::Pnpm),
+            "yarn" => Some(Js::Yarn),
+            "bun" => Some(Js::Bun),
+            _ => None,
+        }
+    }
+}
+
+struct Package {
+    manager: Option<Js>,
+    has_test_script: bool,
+}
+
+fn read_package(dir: &Path) -> Option<Package> {
+    let text = std::fs::read_to_string(dir.join("package.json")).ok()?;
+    let manifest = serde_json::from_str::<serde_json::Value>(&text).ok();
+    let script = manifest.as_ref().and_then(|m| m.pointer("/scripts/test")?.as_str());
+    Some(Package {
+        manager: manifest
+            .as_ref()
+            .and_then(|m| m.get("packageManager")?.as_str())
+            .and_then(Js::from_package_manager),
+        has_test_script: script.is_some_and(|script| {
+            !script.trim().is_empty() && !script.contains("no test specified")
+        }),
+    })
+}
+
+fn js_runner(dir: &Path, package: &Package) -> (Js, String) {
+    if let Some(js) = package.manager {
+        return (js, "package.json packageManager".to_owned());
+    }
+    Js::LOCKFILES
+        .iter()
+        .find(|(file, _)| has(dir, file))
+        .map_or((Js::Npm, "package.json".to_owned()), |(file, js)| (*js, (*file).to_owned()))
+}
+
+const SKIPPED_DIRS: [&str; 7] =
+    ["node_modules", ".git", "target", "dist", "build", "vendor", ".next"];
+const MAX_TEST_SCAN_DEPTH: usize = 6;
+const MAX_TEST_SCAN_DIRS: usize = 500;
+
+fn is_bun_test_file(name: &str) -> bool {
+    let Some((stem, extension)) = name.rsplit_once('.') else { return false };
+    ["ts", "tsx", "js", "jsx", "mjs", "cjs", "mts", "cts"].contains(&extension)
+        && [".test", ".spec", "_test", "_spec"].iter().any(|mark| stem.ends_with(mark))
+}
+
+fn has_bun_test_files(root: &Path) -> bool {
+    let mut pending = vec![(root.to_path_buf(), 0)];
+    let mut visited = 0;
+    while let Some((dir, depth)) = pending.pop() {
+        visited += 1;
+        if visited > MAX_TEST_SCAN_DIRS {
+            return false;
+        }
+        let Ok(entries) = std::fs::read_dir(&dir) else { continue };
+        for entry in entries.flatten() {
+            let Ok(name) = entry.file_name().into_string() else { continue };
+            let Ok(kind) = entry.file_type() else { continue };
+            if kind.is_file() && is_bun_test_file(&name) {
+                return true;
+            }
+            if kind.is_dir()
+                && depth < MAX_TEST_SCAN_DEPTH
+                && !SKIPPED_DIRS.contains(&name.as_str())
+            {
+                pending.push((entry.path(), depth + 1));
+            }
+        }
+    }
+    false
+}
+
+fn node_detected(dir: &Path, package: &Package) -> Option<Detected> {
+    let (js, why) = js_runner(dir, package);
+    if package.has_test_script {
+        Some(Detected::new(js.script_command(), why))
+    } else if js == Js::Bun && has_bun_test_files(dir) {
+        Some(Detected::new("bun test", format!("{why}, test files")))
     } else {
-        "npm test"
+        None
+    }
+}
+
+struct DenoConfig {
+    file: &'static str,
+    has_test_task: bool,
+}
+
+fn without_jsonc_comments(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut chars = text.chars().peekable();
+    let mut in_string = false;
+    while let Some(c) = chars.next() {
+        if in_string {
+            out.push(c);
+            match c {
+                '\\' => out.extend(chars.next()),
+                '"' => in_string = false,
+                _ => {}
+            }
+        } else if c == '"' {
+            in_string = true;
+            out.push(c);
+        } else if c == '/' && chars.peek() == Some(&'/') {
+            for next in chars.by_ref() {
+                if next == '\n' {
+                    out.push('\n');
+                    break;
+                }
+            }
+        } else if c == '/' && chars.peek() == Some(&'*') {
+            chars.next();
+            let mut last = ' ';
+            for next in chars.by_ref() {
+                if last == '*' && next == '/' {
+                    break;
+                }
+                last = next;
+            }
+        } else {
+            out.push(c);
+        }
+    }
+    out
+}
+
+fn deno_config(dir: &Path) -> Option<DenoConfig> {
+    let file = ["deno.json", "deno.jsonc"].into_iter().find(|name| has(dir, name))?;
+    let text = std::fs::read_to_string(dir.join(file)).unwrap_or_default();
+    let text = without_jsonc_comments(&text);
+    let has_test_task = match serde_json::from_str::<serde_json::Value>(&text) {
+        Ok(config) => config.pointer("/tasks/test").is_some(),
+        Err(_) => text.contains("\"test\""),
+    };
+    Some(DenoConfig { file, has_test_task })
+}
+
+fn deno_detected(config: &DenoConfig) -> Detected {
+    if config.has_test_task {
+        Detected::new("deno task test", format!("{} test task", config.file))
+    } else {
+        Detected::new("deno test", config.file)
+    }
+}
+
+fn js_detected(dir: &Path) -> Option<Detected> {
+    match (read_package(dir), deno_config(dir)) {
+        (Some(package), Some(deno)) if deno.has_test_task && !package.has_test_script => {
+            Some(deno_detected(&deno))
+        }
+        (Some(package), _) => node_detected(dir, &package),
+        (None, Some(deno)) => Some(deno_detected(&deno)),
+        (None, None) => None,
     }
 }
 
@@ -119,35 +330,42 @@ fn makefile_has_test_target(dir: &Path) -> bool {
         .is_ok_and(|text| text.lines().any(|line| line.starts_with("test:")))
 }
 
-/// Picks a conventional command from the files in `dir`. Cargo, Node, Deno, Go, Python, Ruby,
-/// Elixir, then a Makefile `test` target, in that order.
+/// Picks a conventional command from the files in `dir`. Cargo, then JavaScript (the package
+/// manager's lockfile or `packageManager` field picks npm, pnpm, yarn or bun; Deno only without a
+/// `package.json`, or when `deno.json` has the only `test` task), Go, Python, Ruby, Elixir, then a
+/// Makefile `test` target, in that order.
 #[must_use]
 pub fn detect(dir: &Path) -> Option<String> {
-    let command = if has(dir, "Cargo.toml") {
-        "cargo test"
-    } else if has_node_test_script(dir) {
-        node_command(dir)
-    } else if has(dir, "deno.json") || has(dir, "deno.jsonc") {
-        "deno test"
+    detect_with_reason(dir).map(|detected| detected.command)
+}
+
+/// [`detect`], with the file that decided it.
+#[must_use]
+pub fn detect_with_reason(dir: &Path) -> Option<Detected> {
+    let (command, why) = if has(dir, "Cargo.toml") {
+        ("cargo test", "Cargo.toml")
+    } else if let Some(js) = js_detected(dir) {
+        return Some(js);
     } else if has(dir, "go.mod") {
-        "go test ./..."
-    } else if has(dir, "pytest.ini")
-        || file_contains(dir, "pyproject.toml", "pytest")
-        || file_contains(dir, "setup.cfg", "[tool:pytest]")
-    {
-        "pytest"
+        ("go test ./...", "go.mod")
+    } else if has(dir, "pytest.ini") {
+        ("pytest", "pytest.ini")
+    } else if file_contains(dir, "pyproject.toml", "pytest") {
+        ("pytest", "pyproject.toml")
+    } else if file_contains(dir, "setup.cfg", "[tool:pytest]") {
+        ("pytest", "setup.cfg")
     } else if has(dir, "Gemfile") && (has(dir, "spec") || has(dir, ".rspec")) {
-        "bundle exec rspec"
+        ("bundle exec rspec", "Gemfile, spec")
     } else if has(dir, "Gemfile") && has(dir, "test") {
-        "bundle exec rake test"
+        ("bundle exec rake test", "Gemfile, test")
     } else if has(dir, "mix.exs") {
-        "mix test"
+        ("mix test", "mix.exs")
     } else if makefile_has_test_target(dir) {
-        "make test"
+        ("make test", "Makefile")
     } else {
         return None;
     };
-    Some(command.to_owned())
+    Some(Detected::new(command, why))
 }
 
 /// What a finished test command left behind.
@@ -257,6 +475,7 @@ mod tests {
     use super::*;
 
     type Files<'a> = &'a [(&'a str, &'a str)];
+    type Case<'a> = (&'a str, Files<'a>, Option<(&'a str, &'a str)>);
 
     fn repo_with(files: Files) -> tempfile::TempDir {
         let dir = tempfile::tempdir().unwrap();
@@ -329,6 +548,191 @@ mod tests {
             let dir = repo_with(files);
             assert_eq!(detect(dir.path()).as_deref(), *expected, "{name}");
         }
+    }
+
+    #[test]
+    fn detection_says_which_file_decided() {
+        const TEST: &str = r#"{"scripts":{"test":"vitest"}}"#;
+        const NO_TEST: &str = r#"{"scripts":{"build":"tsc"}}"#;
+        const DENO_TASK: &str = r#"{"tasks":{"test":"deno test -A"}}"#;
+        let cases: &[Case] = &[
+            (
+                "bun.lock",
+                &[("package.json", TEST), ("bun.lock", "")],
+                Some(("bun run test", "bun.lock")),
+            ),
+            (
+                "bun.lockb",
+                &[("package.json", TEST), ("bun.lockb", "")],
+                Some(("bun run test", "bun.lockb")),
+            ),
+            (
+                "pnpm",
+                &[("package.json", TEST), ("pnpm-lock.yaml", "")],
+                Some(("pnpm test", "pnpm-lock.yaml")),
+            ),
+            (
+                "yarn",
+                &[("package.json", TEST), ("yarn.lock", "")],
+                Some(("yarn test", "yarn.lock")),
+            ),
+            (
+                "npm",
+                &[("package.json", TEST), ("package-lock.json", "")],
+                Some(("npm test", "package-lock.json")),
+            ),
+            ("no lockfile", &[("package.json", TEST)], Some(("npm test", "package.json"))),
+            (
+                "packageManager beats the lockfile",
+                &[
+                    ("package.json", r#"{"packageManager":"pnpm@9.1.0","scripts":{"test":"x"}}"#),
+                    ("bun.lock", ""),
+                ],
+                Some(("pnpm test", "package.json packageManager")),
+            ),
+            (
+                "packageManager bun",
+                &[
+                    ("package.json", r#"{"packageManager":"bun@1.2.0","scripts":{"test":"x"}}"#),
+                    ("package-lock.json", ""),
+                ],
+                Some(("bun run test", "package.json packageManager")),
+            ),
+            (
+                "unknown packageManager falls back to the lockfile",
+                &[
+                    ("package.json", r#"{"packageManager":"deno@2","scripts":{"test":"x"}}"#),
+                    ("yarn.lock", ""),
+                ],
+                Some(("yarn test", "yarn.lock")),
+            ),
+            (
+                "bun lock beats the other lockfiles",
+                &[("package.json", TEST), ("package-lock.json", ""), ("bun.lock", "")],
+                Some(("bun run test", "bun.lock")),
+            ),
+            (
+                "bun without a test script runs bun test when test files exist",
+                &[("package.json", NO_TEST), ("bun.lock", ""), ("src/math.test.ts", "")],
+                Some(("bun test", "bun.lock, test files")),
+            ),
+            (
+                "bun test files in a nested folder",
+                &[("package.json", "{}"), ("bun.lock", ""), ("packages/a/src/b_spec.js", "")],
+                Some(("bun test", "bun.lock, test files")),
+            ),
+            (
+                "bun without a test script or test files",
+                &[("package.json", NO_TEST), ("bun.lock", ""), ("src/index.ts", "")],
+                None,
+            ),
+            (
+                "test files under node_modules do not count",
+                &[("package.json", NO_TEST), ("bun.lock", ""), ("node_modules/x/a.test.js", "")],
+                None,
+            ),
+            (
+                "npm without a test script ignores test files",
+                &[("package.json", NO_TEST), ("package-lock.json", ""), ("a.test.ts", "")],
+                None,
+            ),
+            ("deno alone", &[("deno.json", "{}")], Some(("deno test", "deno.json"))),
+            ("deno jsonc", &[("deno.jsonc", "{}")], Some(("deno test", "deno.jsonc"))),
+            (
+                "deno with a test task",
+                &[("deno.json", DENO_TASK)],
+                Some(("deno task test", "deno.json test task")),
+            ),
+            (
+                "deno jsonc with comments and a trailing comma",
+                &[(
+                    "deno.jsonc",
+                    "{\n  // run everything\n  \"tasks\": { \"test\": \"deno test\", /* x */ },\n}\n",
+                )],
+                Some(("deno task test", "deno.jsonc test task")),
+            ),
+            (
+                "a test string inside a comment is not a task",
+                &[("deno.jsonc", "{ \"name\": \"a//b\" // \"test\"\n}")],
+                Some(("deno test", "deno.jsonc")),
+            ),
+            (
+                "bun project with a leftover deno.json",
+                &[("package.json", TEST), ("bun.lock", ""), ("deno.json", "{}")],
+                Some(("bun run test", "bun.lock")),
+            ),
+            (
+                "bun project without a test script and a plain deno.json",
+                &[
+                    ("package.json", NO_TEST),
+                    ("bun.lock", ""),
+                    ("deno.json", "{}"),
+                    ("a.test.ts", ""),
+                ],
+                Some(("bun test", "bun.lock, test files")),
+            ),
+            (
+                "bun project without a test script, test files or a deno test task",
+                &[("package.json", NO_TEST), ("bun.lock", ""), ("deno.json", "{}")],
+                None,
+            ),
+            (
+                "deno test task beats a package.json with no test script",
+                &[("package.json", NO_TEST), ("bun.lock", ""), ("deno.json", DENO_TASK)],
+                Some(("deno task test", "deno.json test task")),
+            ),
+            (
+                "package.json test script beats a deno test task",
+                &[("package.json", TEST), ("bun.lock", ""), ("deno.json", DENO_TASK)],
+                Some(("bun run test", "bun.lock")),
+            ),
+            (
+                "the repo root decides over a nested deno project",
+                &[("package.json", TEST), ("bun.lock", ""), ("packages/api/deno.json", DENO_TASK)],
+                Some(("bun run test", "bun.lock")),
+            ),
+            (
+                "the repo root decides over a nested package",
+                &[("deno.json", "{}"), ("web/package.json", TEST), ("web/bun.lock", "")],
+                Some(("deno test", "deno.json")),
+            ),
+            (
+                "a node project with no test script falls through to later markers",
+                &[("package.json", NO_TEST), ("deno.json", "{}"), ("go.mod", "module x")],
+                Some(("go test ./...", "go.mod")),
+            ),
+            ("cargo", &[("Cargo.toml", "")], Some(("cargo test", "Cargo.toml"))),
+            ("go", &[("go.mod", "module x")], Some(("go test ./...", "go.mod"))),
+            ("pytest.ini", &[("pytest.ini", "")], Some(("pytest", "pytest.ini"))),
+            (
+                "pyproject",
+                &[("pyproject.toml", "[tool.pytest.ini_options]")],
+                Some(("pytest", "pyproject.toml")),
+            ),
+            ("setup.cfg", &[("setup.cfg", "[tool:pytest]")], Some(("pytest", "setup.cfg"))),
+            ("make", &[("Makefile", "test:\n\t./t\n")], Some(("make test", "Makefile"))),
+        ];
+        for (name, files, expected) in cases {
+            let dir = repo_with(files);
+            let found = detect_with_reason(dir.path());
+            let got = found.as_ref().map(|d| (d.command.as_str(), d.why.as_str()));
+            assert_eq!(got, *expected, "{name}");
+        }
+    }
+
+    #[test]
+    fn a_detection_reads_as_command_and_reason() {
+        let dir = repo_with(&[("package.json", "{}"), ("bun.lock", ""), ("a.test.ts", "")]);
+        assert_eq!(
+            detect_with_reason(dir.path()).unwrap().describe(),
+            "bun test (bun.lock, test files)"
+        );
+    }
+
+    #[test]
+    fn the_repo_config_is_the_reason_when_it_sets_the_command() {
+        let dir = repo_with(&[("deno.json", "{}"), (".tidewatch.toml", "test = \"bun test\"\n")]);
+        assert_eq!(plan(dir.path()).unwrap().describe(), "bun test (.tidewatch.toml)");
     }
 
     #[test]

@@ -62,6 +62,7 @@ pub(crate) struct TabRun {
     runner: Runner,
     stages_file: Option<PathBuf>,
     test_timeout: Duration,
+    test_why: Option<String>,
     generation: u64,
     launching: bool,
     pub(crate) ui: RunUi,
@@ -107,6 +108,7 @@ impl TabRun {
             runner,
             stages_file,
             test_timeout,
+            test_why: None,
             generation: 0,
             launching: false,
             ui,
@@ -118,6 +120,15 @@ impl TabRun {
     pub(crate) fn with_blurb(mut self, blurb: String) -> Self {
         self.blurb = blurb;
         self
+    }
+
+    pub(crate) fn with_test_why(mut self, why: Option<String>) -> Self {
+        self.test_why = why;
+        self
+    }
+
+    pub(crate) fn test_why(&self) -> Option<&str> {
+        self.test_why.as_deref()
     }
 
     /// A run taken over from another process continues at the stage generation its agent holds.

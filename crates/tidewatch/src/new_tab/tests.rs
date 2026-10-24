@@ -50,6 +50,7 @@ fn facts(checked_out: Option<&str>, branches: &[&str], taken: &[&str]) -> RepoFa
         branches: branches.iter().map(|b| (*b).to_owned()).collect(),
         taken: taken.iter().map(|t| (*t).to_owned()).collect::<HashSet<_>>(),
         test_command: None,
+        test_why: None,
     }
 }
 

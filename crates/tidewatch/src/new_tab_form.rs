@@ -562,7 +562,7 @@ fn message(
     if state.kind() == Kind::Meeseeks {
         let offer = TestsOffer::of(facts);
         let rows = new_tab_meeseeks::rows(state.ticks(), &offer);
-        let shown = new_tab_done::show(ui, &rows);
+        let shown = new_tab_done::show(ui, &rows, new_tab_meeseeks::tests_tip(facts).as_deref());
         *ticks = shown.rects;
         if let Some(tick) = shown.clicked {
             state.toggle_tick(tick, facts);
