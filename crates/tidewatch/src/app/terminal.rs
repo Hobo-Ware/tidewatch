@@ -13,6 +13,7 @@ use crate::paste;
 use crate::reader::Shown;
 use crate::reader_view::Action;
 use crate::screen_kit::paint_pill_card;
+use crate::terminal_focus;
 use crate::terminal_font::InUse;
 use crate::{layout, reader_glue};
 
@@ -70,7 +71,7 @@ impl Tidewatch {
                         }
                     }
                     let snap = term.grid_snapshot();
-                    render_grid(
+                    let grid_response = render_grid(
                         ui,
                         &[],
                         area,
@@ -91,6 +92,7 @@ impl Tidewatch {
                         },
                         &[],
                     );
+                    terminal_focus::hold(ui.ctx(), grid_response.id, keys_free);
                 }
                 if let (Some(name), Some(exit)) = (agent_name, term.exited()) {
                     exit_notice(ui, area, &exit_notice_text(name, exit.code));
