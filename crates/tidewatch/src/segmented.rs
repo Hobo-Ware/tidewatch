@@ -16,6 +16,11 @@ const CHIP_GAP: f32 = 6.0;
 const GAP_ROWS: f32 = 6.0;
 const KEY_GAP: f32 = 8.0;
 const KEY_FONT: f32 = 11.0;
+const BADGE_W: f32 = 24.0;
+const BADGE_H: f32 = 16.0;
+const BADGE_GAP: f32 = 6.0;
+const BADGE_FONT: f32 = 11.0;
+const BADGE_MOST: usize = 99;
 
 /// The container and then each segment, for text widths `text` and the control's right edge.
 fn rects(right: f32, center_y: f32, text: &[f32]) -> (Rect, Vec<Rect>) {
@@ -51,6 +56,7 @@ struct Look<'a> {
     keys: &'a [&'a str],
     tones: &'a [Option<Color32>],
     refused: &'a [Option<String>],
+    badges: &'a [Option<usize>],
 }
 
 fn refusal(refused: &[Option<String>], index: usize) -> Option<&str> {
@@ -73,7 +79,7 @@ fn paint_segments(
     look: &Look,
     active: usize,
 ) -> Option<usize> {
-    let Look { labels, keys, tones, refused } = *look;
+    let Look { labels, keys, tones, refused, badges } = *look;
     let painter = ui.painter().clone();
     painter.rect(
         container,
@@ -97,14 +103,21 @@ fn paint_segments(
             (false, false, true) => brand::TEXT,
             (false, false, false) => tone.unwrap_or(brand::SOFT),
         };
-        match keys.get(index) {
-            Some(key) => {
+        match (badges.get(index).copied().flatten(), keys.get(index)) {
+            (Some(count), _) => {
+                let at = pos2(rect.left() + SEGMENT_PAD, rect.center().y);
+                painter.text(at, Align2::LEFT_CENTER, *label, body(FONT), ink);
+                if count > 0 {
+                    paint_badge(&painter, rect, count);
+                }
+            }
+            (None, Some(key)) => {
                 let at = pos2(rect.left() + SEGMENT_PAD, rect.center().y);
                 painter.text(at, Align2::LEFT_CENTER, *label, body(FONT), ink);
                 let at = pos2(rect.right() - SEGMENT_PAD, rect.center().y);
                 painter.text(at, Align2::RIGHT_CENTER, *key, mono(KEY_FONT), brand::FAINT);
             }
-            None => {
+            (None, None) => {
                 painter.text(rect.center(), Align2::CENTER_CENTER, *label, body(FONT), ink);
             }
         }
@@ -113,6 +126,25 @@ fn paint_segments(
         }
     }
     clicked
+}
+
+fn badge_label(count: usize) -> String {
+    if count > BADGE_MOST { format!("{BADGE_MOST}+") } else { count.to_string() }
+}
+
+fn paint_badge(painter: &egui::Painter, segment: Rect, count: usize) {
+    let pill = Rect::from_center_size(
+        pos2(segment.right() - SEGMENT_PAD - BADGE_W / 2.0, segment.center().y),
+        vec2(BADGE_W, BADGE_H),
+    );
+    painter.rect_filled(pill, CornerRadius::same(255), brand::TEAL.gamma_multiply(0.22));
+    painter.text(
+        pill.center(),
+        Align2::CENTER_CENTER,
+        badge_label(count),
+        mono(BADGE_FONT),
+        brand::TEAL_TEXT,
+    );
 }
 
 fn text_widths(ui: &Ui, labels: &[&str]) -> Vec<f32> {
@@ -140,7 +172,38 @@ pub(crate) fn show(
         ui,
         id,
         placed,
-        &Look { labels, keys: &[], tones: &[], refused: &[] },
+        &Look { labels, keys: &[], tones: &[], refused: &[], badges: &[] },
+        active,
+    );
+    Output { clicked, left, segments }
+}
+
+/// `show` with a count pill after the label of every segment that has `Some` badge. The slot is
+/// always as wide as the pill, so the control keeps its width whether the count is 0 or 99+.
+pub(crate) fn show_badged(
+    ui: &mut Ui,
+    id: Id,
+    right: f32,
+    center_y: f32,
+    (labels, badges): (&[&str], &[Option<usize>]),
+    active: usize,
+) -> Output {
+    let widths: Vec<f32> = text_widths(ui, labels)
+        .into_iter()
+        .enumerate()
+        .map(|(index, width)| match badges.get(index).copied().flatten() {
+            Some(_) => width + BADGE_GAP + BADGE_W,
+            None => width,
+        })
+        .collect();
+    let placed = rects(right, center_y, &widths);
+    let left = placed.0.left();
+    let segments = placed.1.clone();
+    let clicked = paint_segments(
+        ui,
+        id,
+        placed,
+        &Look { labels, keys: &[], tones: &[], refused: &[], badges },
         active,
     );
     Output { clicked, left, segments }
@@ -172,7 +235,7 @@ pub(crate) fn show_keyed(
         ui,
         id,
         placed,
-        &Look { labels: &labels, keys: &keys, tones: &[], refused: &[] },
+        &Look { labels: &labels, keys: &keys, tones: &[], refused: &[], badges: &[] },
         active,
     );
     Output { clicked, left, segments }
@@ -217,7 +280,7 @@ fn inline_gated(
     let width = rects(0.0, 0.0, &text).0.width();
     let (slot, _) = ui.allocate_exact_size(vec2(width, HEIGHT), Sense::hover());
     let placed = rects(slot.right(), slot.center().y, &text);
-    paint_segments(ui, id, placed, &Look { labels, keys: &[], tones, refused }, active)
+    paint_segments(ui, id, placed, &Look { labels, keys: &[], tones, refused, badges: &[] }, active)
 }
 
 /// Where each chip of widths `widths` goes in rows of at most `avail`, and the height the rows take.
@@ -347,5 +410,39 @@ mod tests {
         assert_eq!((placed[0].left(), placed[1].left()), (0.0, 0.0));
         assert_eq!(height, 2.0 * HEIGHT + GAP_ROWS);
         assert_eq!(flow(&[], 100.0).1, 0.0);
+    }
+
+    #[test]
+    fn a_count_past_99_reads_99_plus() {
+        let cases = [(1, "1"), (42, "42"), (99, "99"), (100, "99+"), (4000, "99+")];
+        for (count, want) in cases {
+            assert_eq!(badge_label(count), want, "{count}");
+        }
+    }
+
+    #[test]
+    fn the_badge_slot_keeps_the_control_as_wide_with_no_count_as_with_a_big_one() {
+        let ctx = crate::fonts::test_context();
+        let mut lefts = Vec::new();
+        for count in [0, 1, 99, 400] {
+            let _ = ctx.run_ui(egui::RawInput::default(), |ui| {
+                let out = show_badged(
+                    ui,
+                    Id::new("badged"),
+                    400.0,
+                    20.0,
+                    (&["Progress", "Changes", "History"], &[None, Some(count), None]),
+                    2,
+                );
+                lefts.push(out.left);
+            });
+        }
+        assert!(lefts.windows(2).all(|pair| pair[0] == pair[1]), "{lefts:?}");
+        let _ = ctx.run_ui(egui::RawInput::default(), |ui| {
+            let plain =
+                show(ui, Id::new("plain"), 400.0, 20.0, &["Progress", "Changes", "History"], 2);
+            assert!(lefts[0] < plain.left, "the slot makes room for the pill");
+            assert_eq!(plain.left - lefts[0], BADGE_GAP + BADGE_W);
+        });
     }
 }

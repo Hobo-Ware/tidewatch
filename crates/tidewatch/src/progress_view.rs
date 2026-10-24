@@ -26,8 +26,6 @@ use crate::progress_state::TabLedger;
 use crate::reader_view::{ellipsized, paint_item};
 use crate::screen_kit::{Size, body, heading, mono, primary_button};
 
-pub(crate) const SIDES: [&str; 2] = ["Progress", "History"];
-
 const WIDE_PAD: f32 = 22.0;
 const NARROW_PAD: f32 = 14.0;
 const NARROW_BELOW: f32 = 330.0;
@@ -45,19 +43,25 @@ const SPIN_EVERY: Duration = Duration::from_millis(40);
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Side {
     Progress,
+    Changes,
     History,
 }
 
 impl Side {
-    pub(crate) const fn index(self) -> usize {
+    pub(crate) const fn label(self) -> &'static str {
         match self {
-            Self::Progress => 0,
-            Self::History => 1,
+            Self::Progress => "Progress",
+            Self::Changes => "Changes",
+            Self::History => "History",
         }
     }
+}
 
-    pub(crate) const fn at(index: usize) -> Self {
-        if index == 0 { Self::Progress } else { Self::History }
+pub(crate) const fn sides(has_progress: bool) -> &'static [Side] {
+    if has_progress {
+        &[Side::Progress, Side::Changes, Side::History]
+    } else {
+        &[Side::Changes, Side::History]
     }
 }
 
@@ -70,10 +74,11 @@ impl From<RightPanel> for Side {
     }
 }
 
-/// The side the card shows: History until a ledger exists, then the user's choice, else `first`
-/// (the Settings default).
+/// The side the card shows: Changes whenever the user chose it, else History until a ledger
+/// exists, then the user's choice, else `first` (the Settings default).
 pub(crate) fn side_shown(chosen: Option<Side>, has_ledger: bool, first: Side) -> Side {
     match (has_ledger, chosen) {
+        (_, Some(Side::Changes)) => Side::Changes,
         (false, _) => Side::History,
         (true, Some(side)) => side,
         (true, None) => first,

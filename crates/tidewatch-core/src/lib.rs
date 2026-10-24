@@ -10,6 +10,7 @@ pub mod avatar_mcp;
 pub mod avatar_store;
 pub mod branch_name;
 mod builtin_workflows;
+pub mod changes;
 pub mod checklist;
 pub mod civil_date;
 pub mod comment_flags;

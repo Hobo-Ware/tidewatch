@@ -1,5 +1,6 @@
 //! The History pane: a header with the branch, how far it is ahead of the default branch and the
-//! scope switch, then Kelp's commit graph for the tab. Side by side it is a raised card.
+//! scope switch and the Progress | Changes | History switch, then the side the tab shows: the
+//! Changes list, or Kelp's commit graph. Side by side it is a raised card.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -27,7 +28,7 @@ use crate::progress_view::{self, Side, TabState};
 use crate::screen_kit::{body, mono};
 use crate::tab_view::TabView;
 use crate::waiting_notes::Waiting;
-use crate::{layout, segmented};
+use crate::{changes_view, layout, segmented};
 
 const CARD_PAD: f32 = 18.0;
 pub(crate) const CARD_RADIUS: u8 = 12;
@@ -47,9 +48,11 @@ pub(crate) struct Face<'a> {
     pub(crate) avatar: &'a Arc<Avatar>,
 }
 
-pub(crate) struct Progress<'a> {
-    pub(crate) input: progress_view::Input<'a>,
+pub(crate) struct Panel<'a> {
+    pub(crate) agent: &'a str,
+    pub(crate) progress: Option<progress_view::Input<'a>>,
     pub(crate) state: &'a mut TabState,
+    pub(crate) face: Option<Face<'a>>,
 }
 
 #[derive(Default)]
@@ -60,35 +63,40 @@ pub(crate) struct Out {
 
 /// The pane is a card in both layouts. `side` is the layout where a click on a commit opens its
 /// files under the row and a file's diff takes the terminal's place. `agent` is the id the tab's
-/// agent signs replies with, `""` without one. With `progress` the header offers Progress |
-/// History and the card shows the side the tab chose.
+/// agent signs replies with, `""` without one. The header offers Progress (with a ledger) |
+/// Changes | History and the card shows the side the tab chose.
 pub(crate) fn show(
     ui: &mut Ui,
     rect: Rect,
     view: &mut TabView,
     avatars: &mut AvatarStore,
     side: bool,
-    (agent, progress, face): (&str, Option<Progress<'_>>, Option<Face<'_>>),
+    panel: Panel<'_>,
 ) -> Out {
+    let Panel { agent, progress, state, face } = panel;
     paint_card(ui, rect);
     let header = Rect::from_min_max(rect.min, pos2(rect.right(), rect.top() + layout::CHROME_H));
-    let (input, mut state) = match progress {
-        Some(Progress { input, state }) => (Some(input), Some(state)),
-        None => (None, None),
-    };
-    let first = input.as_ref().map_or(Side::Progress, |input| input.first);
-    let shown = state.as_deref().map(|state| progress_view::side_shown(state.chosen, true, first));
-    if let Some(chose) = show_card_header(ui, header, view, shown, face.as_ref())
-        && let Some(state) = state.as_deref_mut()
+    let first = progress.as_ref().map_or(Side::Progress, |input| input.first);
+    let shown = progress_view::side_shown(state.chosen, progress.is_some(), first);
+    if let Some(chose) =
+        show_card_header(ui, header, view, (shown, progress.is_some()), face.as_ref())
     {
         state.chosen = Some(chose);
     }
-    let body = Rect::from_min_max(pos2(rect.left(), header.bottom()), rect.max)
-        .shrink2(vec2(BODY_PAD_X, BODY_PAD_Y));
-    if let (Some(Side::Progress), Some(input), Some(state)) = (shown, input.as_ref(), state) {
-        let panel = Rect::from_min_max(pos2(rect.left(), header.bottom() + 1.0), rect.max);
-        return Out { graph: None, progress: progress_view::show(ui, panel, input, state) };
+    let below = Rect::from_min_max(pos2(rect.left(), header.bottom()), rect.max);
+    match (shown, progress.as_ref()) {
+        (Side::Progress, Some(input)) => {
+            let panel = Rect::from_min_max(pos2(rect.left(), header.bottom() + 1.0), rect.max);
+            let progress = progress_view::show(ui, panel, input, state);
+            return Out { graph: None, progress };
+        }
+        (Side::Changes, _) => {
+            changes_view::show(ui, below, view, side);
+            return Out::default();
+        }
+        _ => {}
     }
+    let body = Rect::from_min_max(below.min, rect.max).shrink2(vec2(BODY_PAD_X, BODY_PAD_Y));
     let waiting = Waiting::of(&view.notes, agent);
     let mut action = None;
     ui.scope_builder(UiBuilder::new().id_salt("history-graph").max_rect(body), |ui| {
@@ -175,26 +183,26 @@ fn branch_title(branch: Option<&str>) -> &str {
     branch.unwrap_or("detached HEAD")
 }
 
-/// Draws the header. Returns the side the user picked on the Progress | History control, which
-/// shows (`shown`) only on a tab with a ledger.
 fn show_card_header(
     ui: &mut Ui,
     rect: Rect,
     view: &mut TabView,
-    shown: Option<Side>,
+    (shown, has_progress): (Side, bool),
     face: Option<&Face<'_>>,
 ) -> Option<Side> {
     let painter = ui.painter().clone();
     painter.hline(rect.x_range(), rect.bottom(), Stroke::new(1.0, brand::CARD_LINE));
     let center_y = rect.center().y;
-    let mut right = rect.right() - 10.0;
-    let mut chose = None;
-    if let Some(side) = shown {
-        let id = ui.id().with("history-side");
-        let control = segmented::show(ui, id, right, center_y, &progress_view::SIDES, side.index());
-        chose = control.clicked.map(Side::at);
-        right = control.left - SWITCH_GAP;
-    }
+    let sides = progress_view::sides(has_progress);
+    let labels: Vec<&str> = sides.iter().map(|side| side.label()).collect();
+    let badges: Vec<Option<usize>> =
+        sides.iter().map(|side| (*side == Side::Changes).then(|| view.changes().len())).collect();
+    let id = ui.id().with("history-side");
+    let active = sides.iter().position(|side| *side == shown).unwrap_or_default();
+    let control =
+        segmented::show_badged(ui, id, rect.right() - 10.0, center_y, (&labels, &badges), active);
+    let chose = control.clicked.and_then(|index| sides.get(index).copied());
+    let mut right = control.left - SWITCH_GAP;
     let mut x = rect.left() + CARD_PAD;
     if let Some(face) = face {
         let place = Rect::from_center_size(pos2(x + FACE / 2.0, center_y), vec2(FACE, FACE));
@@ -205,43 +213,36 @@ fn show_card_header(
         let click = ui.interact(place, ui.id().with(("history-face", face.tab)), Sense::click());
         agent_avatar::menu(&click, face.tab);
     }
-    if shown == Some(Side::Progress) {
-        let title = branch_title(view.loaded.as_ref().and_then(|l| l.branch.as_deref()));
-        let mut job = LayoutJob::simple_singleline(title.to_owned(), mono(14.0), brand::TEXT);
-        job.wrap.max_width = (right - x).max(0.0);
-        job.wrap.max_rows = 1;
-        job.wrap.break_anywhere = true;
-        let galley = painter.layout_job(job);
-        painter.galley(pos2(x, center_y - galley.size().y / 2.0), galley, brand::TEXT);
-        return chose;
-    }
-    let showing_whole = view.scope == Scope::Whole;
-    let id = ui.id().with("history-scope");
-    let active = usize::from(showing_whole);
-    let switch = segmented::show(ui, id, right, center_y, &SCOPES, active);
-    if let Some(index) = switch.clicked {
-        view.set_scope(if index == 1 { Scope::Whole } else { Scope::Current });
+    if shown == Side::History {
+        let id = ui.id().with("history-scope");
+        let active = usize::from(view.scope == Scope::Whole);
+        let switch = segmented::show(ui, id, right, center_y, &SCOPES, active);
+        if let Some(index) = switch.clicked {
+            view.set_scope(if index == 1 { Scope::Whole } else { Scope::Current });
+        }
+        right = switch.left - PILL_GAP;
     }
     let loaded = view.loaded.as_ref();
-    let pills = pills(loaded.and_then(|l| l.base.as_ref()));
-    let limit = switch.left - PILL_GAP;
     let title = branch_title(loaded.and_then(|l| l.branch.as_deref()));
     let mut job = LayoutJob::simple_singleline(title.to_owned(), mono(14.0), brand::TEXT);
-    job.wrap.max_width = (limit - x).max(0.0);
+    job.wrap.max_width = (right - x).max(0.0);
     job.wrap.max_rows = 1;
     job.wrap.break_anywhere = true;
     let galley = painter.layout_job(job);
     let width = galley.size().x;
     painter.galley(pos2(x, center_y - galley.size().y / 2.0), galley, brand::TEXT);
+    if shown == Side::Progress {
+        return chose;
+    }
     x += width + PILL_GAP;
-    for pill in pills {
+    for pill in pills(loaded.and_then(|l| l.base.as_ref())) {
         let (ink, fill) = match pill.kind {
             PillKind::Ahead => (brand::GREEN, brand::GREEN.gamma_multiply(0.12)),
             PillKind::Behind => (brand::ORANGE, brand::ORANGE.gamma_multiply(0.12)),
         };
         let galley = painter.layout_no_wrap(pill.text, body(12.0), ink);
         let size = galley.size() + vec2(14.0, 4.0);
-        if x + size.x > limit {
+        if x + size.x > right {
             break;
         }
         let pill_rect = Rect::from_min_size(pos2(x, center_y - size.y / 2.0), size);
@@ -450,21 +451,19 @@ mod tests {
             let face = self.face.clone();
             let mut out = Out::default();
             let output = self.ctx.run_ui(raw, |ui| {
-                let progress = with_ledger.then_some(Progress {
-                    input: progress_view::Input {
-                        ledger: Some(ledger),
-                        jobs: &[],
-                        now_ms: 0,
-                        time: 0.0,
-                        animate: false,
-                        first: Side::Progress,
-                        meeseeks: None,
-                    },
-                    state: &mut *state,
+                let progress = with_ledger.then_some(progress_view::Input {
+                    ledger: Some(ledger),
+                    jobs: &[],
+                    now_ms: 0,
+                    time: 0.0,
+                    animate: false,
+                    first: Side::Progress,
+                    meeseeks: None,
                 });
                 let rect = Rect::from_min_size(pos2(0.0, 0.0), vec2(420.0, 600.0));
                 let face = face.as_ref().map(|avatar| Face { tab: 1, avatar });
-                out = show(ui, rect, view, avatars, true, ("", progress, face));
+                let panel = Panel { agent: "", progress, state: &mut *state, face };
+                out = show(ui, rect, view, avatars, true, panel);
             });
             self.out = out;
             self.texts.clear();

@@ -149,19 +149,18 @@ impl Tidewatch {
                 },
                 meeseeks: meeseeks_card.as_ref(),
             };
-            Some(history_pane::Progress { input, state: self.progress_ui.tab(active_id) })
+            Some(input)
         });
         let face = agent
             .and_then(|_| self.avatar_live.get(active_id))
             .map(|avatar| history_pane::Face { tab: active_id, avatar });
-        let shown = history_pane::show(
-            ui,
-            areas.history,
-            view,
-            &mut self.avatars,
-            side,
-            (agent_id, progress, face),
-        );
+        let panel = history_pane::Panel {
+            agent: agent_id,
+            progress,
+            state: self.progress_ui.tab(active_id),
+            face,
+        };
+        let shown = history_pane::show(ui, areas.history, view, &mut self.avatars, side, panel);
         let graph_action = shown.graph;
         let answer = shown.progress == Some(progress_view::Action::Answer);
         let meeseeks_choice = match shown.progress {
@@ -222,6 +221,9 @@ impl Tidewatch {
         if notes_changed || self.apply_dev_panes(active_id, now) {
             self.save_notes(active_id);
             ctx.request_repaint();
+        }
+        if self.dev_panes.pending() {
+            ctx.request_repaint_after(std::time::Duration::from_millis(50));
         }
         if let Some(label) = clicked_ref {
             self.double_clicked_ref(&label, ctx);

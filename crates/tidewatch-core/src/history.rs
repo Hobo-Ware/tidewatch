@@ -7,6 +7,7 @@
 
 use std::path::Path;
 
+use crate::changes::Groups;
 use kelp_core::ObjectId;
 use kelp_core::commit::{self, FileChange, Summary};
 use kelp_core::diff::{self, FileDiff};
@@ -119,7 +120,7 @@ pub fn working_status(dir: &Path) -> anyhow::Result<WorkingStatus> {
 pub fn changed_files(dir: &Path, source: Source) -> anyhow::Result<Vec<FileChange>> {
     match source {
         Source::Commit(id) => Ok(commit::details(&gix::discover(dir)?, id)?.changes),
-        Source::WorkTree => Ok(status::working_status(dir)?.all()),
+        Source::WorkTree => Ok(Groups::of(&status::working_status(dir)?).ordered()),
     }
 }
 

@@ -13,6 +13,7 @@
 //! - `TIDEWATCH_DEV_NOTES=[<row>@]<path>:<line>[-<last>]:<text>|...`: add those notes to the draft
 //!   review once the tab's notes have loaded, so a capture shows a review across several files. A
 //!   `row@` puts the note on that graph row's commit, a range makes it a block note.
+//! - `TIDEWATCH_DEV_PANEL=progress|changes|history`: show that side of the History card.
 //! - `TIDEWATCH_DEV_COMPOSER=<line>|<first>-<last>`: open the note composer on those lines of the
 //!   file view once its diff has loaded.
 
@@ -22,6 +23,7 @@ use kelp_ui::diff::DiffAction;
 use tidewatch_core::history::Scope;
 
 use crate::commands::{self, Command};
+use crate::progress_view::Side as Panel;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum DevOpen {
@@ -38,6 +40,7 @@ pub(crate) struct DevPanes {
     pub(crate) note_span: u32,
     pub(crate) notes: Vec<DevNote>,
     pub(crate) composer: Option<(u32, u32)>,
+    pub(crate) panel: Option<Panel>,
 }
 
 /// A note for the draft review: `src/a.rs:12:rename this`, `2@src/a.rs:12-14:extract these`.
@@ -107,6 +110,7 @@ impl DevPanes {
             std::env::var("TIDEWATCH_DEV_NOTE").ok(),
         )
         .with_notes(std::env::var("TIDEWATCH_DEV_NOTES").ok().as_deref())
+        .with_panel(std::env::var("TIDEWATCH_DEV_PANEL").ok().as_deref())
         .with_block(
             std::env::var("TIDEWATCH_DEV_COMPOSER").ok().as_deref(),
             std::env::var("TIDEWATCH_DEV_NOTE_SPAN").ok().as_deref(),
@@ -119,6 +123,16 @@ impl DevPanes {
             note_span: span.and_then(|span| span.parse().ok()).unwrap_or(0),
             ..self
         }
+    }
+
+    fn with_panel(self, panel: Option<&str>) -> Self {
+        let panel = match panel {
+            Some("progress") => Some(Panel::Progress),
+            Some("changes") => Some(Panel::Changes),
+            Some("history") => Some(Panel::History),
+            _ => None,
+        };
+        Self { panel, ..self }
     }
 
     fn with_notes(self, notes: Option<&str>) -> Self {
@@ -141,11 +155,16 @@ impl DevPanes {
             note_span: 0,
             notes: Vec::new(),
             composer: None,
+            panel: None,
         }
     }
 }
 
 impl DevPanes {
+    pub(crate) fn pending(&self) -> bool {
+        self.pick_row.is_some() || self.open.is_some() || self.panel.is_some()
+    }
+
     /// Presses the next command that is due. A command with no chord (`build-workflow`) cannot be
     /// pressed, so it comes back for the app to run.
     pub(crate) fn press(&mut self, ctx: &egui::Context, now: f64) -> Option<Command> {

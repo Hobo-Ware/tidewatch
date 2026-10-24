@@ -172,6 +172,9 @@ impl Tidewatch {
                 view.select(Selection::Commit(row));
             }
         }
+        if let Some(panel) = self.dev_panes.panel.take() {
+            self.progress_ui.tab(view_id).chosen = Some(panel);
+        }
         if let Some(open) = self.dev_panes.open
             && view.status_known()
             && view.loaded.is_some()

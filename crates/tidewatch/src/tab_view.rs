@@ -15,6 +15,7 @@ use kelp_core::diff::FileDiff;
 use kelp_core::watch::{Change, Watcher};
 use kelp_ui::diff::{DiffBody, DiffLayout};
 use kelp_ui::graph::{GraphView, Selection};
+use tidewatch_core::changes::Groups;
 use tidewatch_core::history::{Loaded, Scope, Source};
 use tidewatch_core::notes::Notes;
 
@@ -157,6 +158,7 @@ pub(crate) struct TabView {
     pub(crate) scope: Scope,
     pub(crate) loaded: Option<Loaded>,
     pub(crate) wip: Option<Vec<FileChange>>,
+    pub(crate) groups: Option<Groups>,
     pick: Option<Pick>,
     pub(crate) graph: GraphView,
     source_requested: Option<Source>,
@@ -193,6 +195,7 @@ impl TabView {
             scope: Scope::Current,
             loaded: None,
             wip: None,
+            groups: None,
             pick: None,
             graph: GraphView::new(),
             source_requested: None,
@@ -274,6 +277,12 @@ impl TabView {
             Selection::Wip => Some(Pick::WorkTree),
             Selection::Commit(row) => self.loaded.as_ref().map(|l| Pick::Commit(l.history.id(row))),
         };
+    }
+
+    pub(crate) fn show_work_tree(&mut self) {
+        if self.pick != Some(Pick::WorkTree) {
+            self.select(Selection::Wip);
+        }
     }
 
     pub(crate) fn select_file(&mut self, path: &str) {
@@ -567,6 +576,7 @@ impl TabView {
     fn finish_status(&mut self, result: Result<kelp_core::status::WorkingStatus, String>) {
         match result {
             Ok(status) => {
+                self.groups = Some(Groups::of(&status));
                 self.wip = Some(status.all());
             }
             Err(message) => self.error = Some(message),
@@ -1045,6 +1055,47 @@ mod tests {
             .collect();
         got.sort_unstable();
         assert_eq!(got, [("a.txt", Some((1, 0))), ("b.txt", Some((1, 0)))]);
+    }
+
+    fn dirty_repo() -> (tempfile::TempDir, PathBuf) {
+        let (dir, repo) = repo();
+        std::fs::write(repo.join("s.txt"), "staged\nlines\n").unwrap();
+        git(&repo, &["add", "s.txt"]);
+        std::fs::write(repo.join("a.txt"), "one\nTWO\nthree\n").unwrap();
+        std::fs::write(repo.join("n.txt"), "new\n").unwrap();
+        (dir, repo)
+    }
+
+    #[test]
+    fn the_status_lands_in_staged_changed_and_new_files_with_the_lines_of_each() {
+        let (_dir, repo) = dirty_repo();
+        let jobs = Jobs::new();
+        let mut view = started_view(&repo, repo.join("notes.json"), &jobs);
+        let ctx = egui::Context::default();
+        pump(&mut view, &jobs, &ctx, |v| v.shown_source == Some(Source::WorkTree));
+        let groups = view.groups.clone().unwrap();
+        let paths = |list: &[FileChange]| list.iter().map(|c| c.path.clone()).collect::<Vec<_>>();
+        assert_eq!(paths(&groups.staged), ["s.txt"]);
+        assert_eq!(paths(&groups.changed), ["a.txt"]);
+        assert_eq!(paths(&groups.new_files), ["n.txt"]);
+        assert_eq!(groups.files(), 3);
+        let listed: Vec<&str> = view.files.iter().map(|f| f.path.as_str()).collect();
+        assert_eq!(listed, ["s.txt", "a.txt", "n.txt"], "the file view walks the tab's order");
+        let counts = view.counts.clone();
+        assert_eq!(counts, [Some((2, 0)), Some((1, 1)), Some((1, 0))]);
+    }
+
+    #[test]
+    fn showing_the_changes_after_a_commit_was_picked_goes_back_to_the_working_tree() {
+        let (_dir, repo) = dirty_repo();
+        let jobs = Jobs::new();
+        let ctx = egui::Context::default();
+        let mut view = started_view(&repo, repo.join("notes.json"), &jobs);
+        view.select(Selection::Commit(1));
+        pump(&mut view, &jobs, &ctx, |v| v.shown_source != Some(Source::WorkTree));
+        view.show_work_tree();
+        pump(&mut view, &jobs, &ctx, |v| v.shown_source == Some(Source::WorkTree));
+        assert_eq!(view.selection(), Some(Selection::Wip));
     }
 
     #[test]
