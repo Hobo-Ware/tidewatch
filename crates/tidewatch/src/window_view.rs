@@ -1,10 +1,10 @@
-//! Draws the Window section of General: the quake switch, the hotkey recorder with its status, and
-//! the menu-bar switch. It returns the new window settings when something was applied.
+//! Draws the Window section of General: the quake switch, the hotkey recorder with its status, the
+//! drop-down height and the menu-bar switch. It returns the new window settings when something was applied.
 
 use egui::{
     Align, CornerRadius, Event, Layout, RichText, Sense, Stroke, StrokeKind, Ui, UiBuilder, vec2,
 };
-use tidewatch_core::prefs::{Panels, WindowPrefs};
+use tidewatch_core::prefs::{Panels, QUAKE_HEIGHT_RANGE, WindowPrefs};
 
 use crate::hotkey;
 use crate::settings_ui::{
@@ -18,6 +18,9 @@ const RECORDER_WIDTH: f32 = 230.0;
 const RECORDER_HEIGHT: f32 = 38.0;
 const MIN_RECORDER: f32 = 112.0;
 const CAP_GAP: f32 = 6.0;
+const HEIGHT_SLIDER_WIDTH: f32 = 240.0;
+const HEIGHT_VALUE_WIDTH: f32 = 40.0;
+const HEIGHT_CONTROL_WIDTH: f32 = HEIGHT_SLIDER_WIDTH + 12.0 + HEIGHT_VALUE_WIDTH;
 
 /// What the section shows beside the editor's own state.
 pub(crate) struct View {
@@ -38,6 +41,7 @@ pub(crate) fn section(ui: &mut Ui, editor: &mut Editor, view: &View) -> Option<W
         }
         if editor.quake() {
             applied = hotkey_row(ui, editor, &view.status).or(applied);
+            applied = height_row(ui, editor).or(applied);
         }
         if view.menu_bar_available
             && let Some(on) = switch_row(
@@ -54,6 +58,44 @@ pub(crate) fn section(ui: &mut Ui, editor: &mut Editor, view: &View) -> Option<W
         }
         applied
     })
+}
+
+fn height_row(ui: &mut Ui, editor: &mut Editor) -> Option<WindowPrefs> {
+    settings_ui::row(
+        ui,
+        "Height",
+        "How much of the screen the drop-down window covers.",
+        Control::new(HEIGHT_CONTROL_WIDTH, 24.0),
+        |ui| {
+            let response = ui
+                .allocate_ui_with_layout(
+                    vec2(HEIGHT_CONTROL_WIDTH, 24.0),
+                    Layout::left_to_right(Align::Center),
+                    |ui| height_slider(ui, &mut editor.height),
+                )
+                .inner;
+            let settled = response.drag_stopped() || (response.changed() && !response.dragged());
+            settled.then(|| editor.settle_height()).flatten()
+        },
+    )
+}
+
+fn height_slider(ui: &mut Ui, height: &mut f32) -> egui::Response {
+    ui.spacing_mut().slider_width = HEIGHT_SLIDER_WIDTH;
+    ui.spacing_mut().item_spacing.x = 12.0;
+    ui.visuals_mut().selection.bg_fill = TEAL;
+    let response =
+        ui.add(egui::Slider::new(height, QUAKE_HEIGHT_RANGE).show_value(false).trailing_fill(true));
+    kelp_ui::widgets::focus_ring(ui, &response, 4.0);
+    let (rect, _) = ui.allocate_exact_size(vec2(HEIGHT_VALUE_WIDTH, 24.0), Sense::hover());
+    ui.painter().text(
+        rect.right_center(),
+        egui::Align2::RIGHT_CENTER,
+        format!("{:.0}%", *height * 100.0),
+        egui::FontId::monospace(13.0),
+        settings_ui::TEXT,
+    );
+    response
 }
 
 fn panels_row(ui: &mut Ui, current: Panels) -> Option<Panels> {

@@ -165,7 +165,7 @@ fn the_panels_choice_applies_at_once_and_keeps_the_rest() {
     let mut page = registered();
     page.section(vec![], true);
     let mut applied = None;
-    'scan: for y in (20..300).step_by(8) {
+    'scan: for y in (20..420).step_by(8) {
         for x in (400..690).step_by(8) {
             let at = pos2(x as f32, y as f32);
             page.section(vec![Event::PointerMoved(at)], true);
@@ -183,4 +183,55 @@ fn the_panels_choice_applies_at_once_and_keeps_the_rest() {
     let applied = applied.expect("a click on Below applies it");
     assert_eq!(applied, WindowPrefs { panels: Panels::Below, ..WindowPrefs::default() });
     assert_eq!(page.editor.panels(), Panels::Below);
+}
+
+fn height_click(page: &mut Page) -> WindowPrefs {
+    page.section(vec![], true);
+    page.section(vec![], true);
+    let mut best = None;
+    for y in (20..300).step_by(4) {
+        for x in (380..690).step_by(4) {
+            let at = pos2(x as f32, y as f32);
+            page.section(vec![Event::PointerMoved(at)], true);
+            page.section(vec![button(at, true)], true);
+            let answer = page.section(vec![button(at, false)], true);
+            if let Some(prefs) = answer.filter(|prefs| prefs.height_pct != 0.5) {
+                best = Some(prefs);
+                break;
+            }
+        }
+        if best.is_some() {
+            break;
+        }
+    }
+    best.expect("a click on the slider track applies a new height")
+}
+
+#[test]
+fn the_height_slider_applies_when_it_is_let_go_and_keeps_the_rest() {
+    let mut page = registered();
+    let applied = height_click(&mut page);
+    assert_eq!(applied, WindowPrefs { height_pct: page.editor.height, ..WindowPrefs::default() });
+    assert!((0.2..=0.9).contains(&applied.height_pct));
+    assert_eq!(page.editor.settle_height(), None, "the release already applied it");
+}
+
+#[test]
+fn the_height_row_is_only_there_while_the_drop_down_is_on() {
+    let on = WindowPrefs::default();
+    let off = WindowPrefs { quake: false, ..WindowPrefs::default() };
+    let mut with = page(&on, HotkeyStatus::Registered);
+    let mut without = page(&off, HotkeyStatus::Registered);
+    let mut heights = Vec::new();
+    for page in [&mut with, &mut without] {
+        let mut height = 0.0;
+        let view = View { status: HotkeyStatus::Registered, menu_bar_available: true };
+        let editor = &mut page.editor;
+        let _ = page.ctx.run_ui(input(vec![]), |ui| {
+            section(ui, editor, &view);
+            height = ui.min_rect().height();
+        });
+        heights.push(height);
+    }
+    assert!(heights[0] > heights[1] + 40.0, "{heights:?}");
 }

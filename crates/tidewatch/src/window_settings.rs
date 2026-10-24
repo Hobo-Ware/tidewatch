@@ -1,6 +1,7 @@
-//! The Window section of General: quake on or off, the hotkey and the menu-bar item. The two
-//! switches apply at once; the hotkey is recorded from a key press, checked at once and applied
-//! when it parses. Pure state; `window_view` draws it.
+//! The Window section of General: quake on or off, the hotkey, the drop-down height and the
+//! menu-bar item. The switches apply at once; the hotkey is recorded from a key press, checked at
+//! once and applied when it parses; the height follows the slider while it moves and is applied
+//! when it settles. Pure state; `window_view` draws it.
 
 use tidewatch_core::prefs::{Panels, WindowPrefs};
 
@@ -10,11 +11,17 @@ pub(crate) struct Editor {
     saved: WindowPrefs,
     pub(crate) hotkey: String,
     pub(crate) recording: bool,
+    pub(crate) height: f32,
 }
 
 impl Editor {
     pub(crate) fn new(prefs: &WindowPrefs) -> Self {
-        Self { saved: prefs.clone(), hotkey: prefs.hotkey.clone(), recording: false }
+        Self {
+            saved: prefs.clone(),
+            hotkey: prefs.hotkey.clone(),
+            recording: false,
+            height: prefs.height_pct,
+        }
     }
 
     pub(crate) fn quake(&self) -> bool {
@@ -47,6 +54,18 @@ impl Editor {
     pub(crate) fn set_panels(&mut self, panels: Panels) -> WindowPrefs {
         self.saved.panels = panels;
         self.saved.clone()
+    }
+
+    /// The slider let go (or a key nudged it): the height on show is applied when it differs from
+    /// the saved one.
+    pub(crate) fn settle_height(&mut self) -> Option<WindowPrefs> {
+        let height = WindowPrefs::clamp_height(self.height);
+        self.height = height;
+        if height == self.saved.height_pct {
+            return None;
+        }
+        self.saved.height_pct = height;
+        Some(self.saved.clone())
     }
 
     pub(crate) fn record(&mut self, chord: String) -> Option<WindowPrefs> {
@@ -97,6 +116,33 @@ mod tests {
         let both = editor.set_menu_bar(false);
         assert_eq!(both, WindowPrefs { quake: false, menu_bar: false, ..WindowPrefs::default() });
         assert!(!editor.quake() && !editor.menu_bar());
+    }
+
+    #[test]
+    fn the_height_is_applied_once_when_it_settles_and_a_value_between_the_steps_is_kept() {
+        let mut editor = editor();
+        assert_eq!(editor.height, 0.5);
+        editor.height = 0.505;
+        let applied = editor.settle_height().unwrap();
+        assert_eq!(applied, WindowPrefs { height_pct: 0.505, ..WindowPrefs::default() });
+        assert_eq!(editor.settle_height(), None, "nothing new the second time");
+    }
+
+    #[test]
+    fn a_height_outside_the_range_settles_inside_it() {
+        let mut editor = editor();
+        editor.height = 2.0;
+        assert_eq!(editor.settle_height().unwrap().height_pct, 0.9);
+        assert_eq!(editor.height, 0.9);
+        editor.height = 0.0;
+        assert_eq!(editor.settle_height().unwrap().height_pct, 0.2);
+    }
+
+    #[test]
+    fn a_switch_carries_the_applied_height_not_one_still_being_dragged() {
+        let mut editor = editor();
+        editor.height = 0.8;
+        assert_eq!(editor.set_quake(false).height_pct, 0.5);
     }
 
     #[test]

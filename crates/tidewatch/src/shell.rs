@@ -122,11 +122,21 @@ impl<O: Os> Shell<O> {
     }
 
     /// Takes new settings live: the hotkey and the menu-bar item reconcile on the next frame, a
-    /// change between quake and plain window changes the window's chrome now.
+    /// change between quake and plain window changes the window's chrome now, and a new height
+    /// resizes a shown quake window now (a hidden one takes it on its next drop).
     pub(crate) fn apply_prefs(&mut self, ctx: &Context, prefs: WindowPrefs) {
         let was_quake = self.plan.quake;
+        let was_height = self.prefs.height_pct;
         self.plan = Plan::new(self.env, &prefs);
         self.prefs = prefs;
+        if self.plan.activates
+            && self.plan.quake
+            && was_quake
+            && !self.quake.hidden()
+            && was_height != self.prefs.height_pct
+        {
+            quake::resize(ctx, &self.os, self.prefs.height_pct);
+        }
         if self.plan.activates && was_quake != self.plan.quake {
             self.switch_mode(ctx);
         }
@@ -228,7 +238,9 @@ impl<O: Os> Shell<O> {
 
     fn run(&mut self, ctx: &Context, op: Op) {
         match op {
-            Op::Present(visible) => quake::present(ctx, &mut self.os, visible),
+            Op::Present(visible) => {
+                quake::present(ctx, &mut self.os, visible, self.prefs.height_pct);
+            }
             Op::Repaint => ctx.request_repaint(),
             Op::RepaintAfter(after) => ctx.request_repaint_after(after),
         }
@@ -635,6 +647,54 @@ mod tests {
         assert!(sized.contains(&ViewportCommand::InnerSize(vec2(1440.0, 450.0))));
         let (_, after) = rig.frame(windowed(true, true));
         assert_eq!(after, vec![]);
+    }
+
+    fn with_height(height_pct: f32) -> WindowPrefs {
+        WindowPrefs { height_pct, ..WindowPrefs::default() }
+    }
+
+    #[test]
+    fn a_new_height_resizes_a_shown_quake_window_at_once_and_a_drop_uses_it() {
+        let mut rig = rig(X11, WindowPrefs::default());
+        rig.settle();
+        rig.shell.apply_prefs(&rig.ctx, with_height(0.8));
+        let (_, resized) = rig.quiet_frame();
+        assert_eq!(resized, vec![ViewportCommand::InnerSize(vec2(1440.0, 720.0))]);
+        rig.shell.apply_prefs(&rig.ctx, with_height(0.8));
+        let (_, unchanged) = rig.quiet_frame();
+        assert_eq!(unchanged, vec![]);
+        rig.tx.send(Command::Toggle).unwrap();
+        rig.quiet_frame();
+        rig.tx.send(Command::Toggle).unwrap();
+        let (_, shown) = rig.quiet_frame();
+        assert!(shown.contains(&ViewportCommand::InnerSize(vec2(1440.0, 720.0))));
+    }
+
+    #[test]
+    fn a_new_height_waits_for_the_next_drop_while_the_window_is_hidden() {
+        let mut rig = rig(X11, WindowPrefs::default());
+        rig.settle();
+        rig.tx.send(Command::Toggle).unwrap();
+        rig.quiet_frame();
+        rig.shell.apply_prefs(&rig.ctx, with_height(0.3));
+        let (_, quiet) = rig.quiet_frame();
+        assert!(!quiet.iter().any(|c| matches!(c, ViewportCommand::InnerSize(_))));
+        rig.tx.send(Command::Toggle).unwrap();
+        let (_, shown) = rig.quiet_frame();
+        assert!(shown.contains(&ViewportCommand::InnerSize(vec2(1440.0, 270.0))));
+    }
+
+    #[test]
+    fn a_new_height_leaves_a_plain_window_and_a_background_run_alone() {
+        let mut plain = rig(X11, prefs(false, "F13", true));
+        plain.settle();
+        plain
+            .shell
+            .apply_prefs(&plain.ctx, WindowPrefs { height_pct: 0.8, ..prefs(false, "F13", true) });
+        assert_eq!(plain.quiet_frame().1, vec![]);
+        let mut background = rig(BACKGROUND, WindowPrefs::default());
+        background.shell.apply_prefs(&background.ctx, with_height(0.8));
+        assert_eq!(background.quiet_frame().1, vec![]);
     }
 
     #[test]
