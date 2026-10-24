@@ -51,6 +51,7 @@ pub(crate) enum Action {
     Guards(crate::guards_view::Change),
     /// A font was picked for the terminal. Applies at once too.
     TerminalFont(tidewatch_core::prefs::FontChoice),
+    TerminalCopyOnSelect(bool),
     LoginItem(login_item::Click),
     OpenHouseStyle,
     ResetHouseStyle,

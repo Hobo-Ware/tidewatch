@@ -4,7 +4,7 @@
 //! menu-bar item, the panel layout), the `[updates]` table (check for releases, install them) and
 //! the `[github]` table (what a new tab does when its pull request changes) and the `[new_tab]`
 //! table (what the new-tab form opens with), the `[tabs]` table (when a quiet tab is parked) and
-//! the `[terminal]` table (the terminal's font).
+//! the `[terminal]` table (the terminal's font, and whether a finished selection is copied).
 //!
 //! A missing or bad file is the defaults, with a stderr note for a bad one: a settings file must
 //! never stop the app.
@@ -205,10 +205,18 @@ impl Default for GithubPrefs {
     }
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TerminalPrefs {
     #[serde(default)]
     pub font: FontChoice,
+    #[serde(default = "on")]
+    pub copy_on_select: bool,
+}
+
+impl Default for TerminalPrefs {
+    fn default() -> Self {
+        Self { font: FontChoice::default(), copy_on_select: true }
+    }
 }
 
 /// The terminal's font: an empty string is the bundled face, anything else names an installed
@@ -388,6 +396,21 @@ mod tests {
         assert!(text.contains("[terminal]\nfont = \"JetBrains Mono\""), "{text}");
         Prefs::update(&paths, |p| p.window.quake = false).unwrap();
         assert_eq!(Prefs::load(&paths).terminal.font, family);
+    }
+
+    #[test]
+    fn copy_on_select_is_on_unless_the_file_turns_it_off() {
+        let (_home, paths) = paths();
+        assert!(Prefs::default().terminal.copy_on_select);
+        std::fs::create_dir_all(paths.config_dir()).unwrap();
+        std::fs::write(paths.prefs_file(), "[terminal]\nfont = \"Hack\"\n").unwrap();
+        assert!(Prefs::load(&paths).terminal.copy_on_select);
+        Prefs::update(&paths, |p| p.terminal.copy_on_select = false).unwrap();
+        let text = std::fs::read_to_string(paths.prefs_file()).unwrap();
+        assert!(text.contains("copy_on_select = false"), "{text}");
+        let loaded = Prefs::load(&paths);
+        assert!(!loaded.terminal.copy_on_select);
+        assert_eq!(loaded.terminal.font, FontChoice::Family("Hack".to_owned()));
     }
 
     #[test]

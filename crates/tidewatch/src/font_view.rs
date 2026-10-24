@@ -1,5 +1,5 @@
-//! The Terminal section of General: the Font row, and its picker listed under it (Built-in, then a
-//! search over the installed families). A pick applies at once.
+//! The Terminal section of General: the Font row, its picker listed under it (Built-in, then a
+//! search over the installed families) and the Copy on select switch. A change applies at once.
 
 use egui::{Align2, FontId, Margin, RichText, Sense, Ui, vec2};
 use stdusk_egui::ui::icons;
@@ -17,6 +17,13 @@ pub(crate) struct View {
     pub(crate) choice: FontChoice,
     pub(crate) status: Option<Status>,
     pub(crate) families: &'static [String],
+    pub(crate) copy_on_select: bool,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum Change {
+    Font(FontChoice),
+    CopyOnSelect(bool),
 }
 
 #[derive(Default)]
@@ -47,41 +54,53 @@ pub(crate) fn rows(families: &[String], query: &str) -> Vec<FontChoice> {
         .collect()
 }
 
-pub(crate) fn section(ui: &mut Ui, picker: &mut Picker, view: &View) -> Option<FontChoice> {
+pub(crate) fn section(ui: &mut Ui, picker: &mut Picker, view: &View) -> Option<Change> {
     settings_ui::section(ui, "Terminal", |ui| {
-        let label = format!("{}  {}", terminal_font::label(&view.choice), caret(picker.open));
-        let mut clicked = false;
-        row_with(
+        let font = font_rows(ui, picker, view).map(Change::Font);
+        let copy = settings_ui::switch_row(
             ui,
-            Control::button(ui, &label, Size::Compact),
-            |ui| {
-                ui.spacing_mut().item_spacing.y = 3.0;
-                ui.label(RichText::new("Font").size(15.0).color(TEXT));
-                settings_ui::note(
-                    ui,
-                    "The terminal only: the rest of the window keeps its own fonts.",
-                    MUTED,
-                );
-                match &view.status {
-                    Some(Status::Fine(text)) => settings_ui::note(ui, text, FAINT),
-                    Some(Status::Warn(text)) => settings_ui::note(ui, text, ORANGE),
-                    None => {}
-                }
-            },
-            |ui| clicked = settings_ui::button(ui, &label, Tone::Quiet, Size::Compact).clicked(),
-        );
-        if clicked {
-            picker.toggle();
-        }
-        if !picker.open {
-            return None;
-        }
-        let picked = list(ui, picker, view);
-        if picked.is_some() {
-            picker.toggle();
-        }
-        picked.filter(|choice| *choice != view.choice)
+            "Copy on select",
+            "Selecting text in the terminal copies it, so Cmd+C is not needed.",
+            view.copy_on_select,
+        )
+        .map(Change::CopyOnSelect);
+        font.or(copy)
     })
+}
+
+fn font_rows(ui: &mut Ui, picker: &mut Picker, view: &View) -> Option<FontChoice> {
+    let label = format!("{}  {}", terminal_font::label(&view.choice), caret(picker.open));
+    let mut clicked = false;
+    row_with(
+        ui,
+        Control::button(ui, &label, Size::Compact),
+        |ui| {
+            ui.spacing_mut().item_spacing.y = 3.0;
+            ui.label(RichText::new("Font").size(15.0).color(TEXT));
+            settings_ui::note(
+                ui,
+                "The terminal only: the rest of the window keeps its own fonts.",
+                MUTED,
+            );
+            match &view.status {
+                Some(Status::Fine(text)) => settings_ui::note(ui, text, FAINT),
+                Some(Status::Warn(text)) => settings_ui::note(ui, text, ORANGE),
+                None => {}
+            }
+        },
+        |ui| clicked = settings_ui::button(ui, &label, Tone::Quiet, Size::Compact).clicked(),
+    );
+    if clicked {
+        picker.toggle();
+    }
+    if !picker.open {
+        return None;
+    }
+    let picked = list(ui, picker, view);
+    if picked.is_some() {
+        picker.toggle();
+    }
+    picked.filter(|choice| *choice != view.choice)
 }
 
 fn caret(open: bool) -> &'static str {
@@ -161,7 +180,8 @@ mod tests {
         let families: &'static [String] = Box::leak(
             vec!["Hack Nerd Font Mono".to_owned(), "Noto Sans".to_owned()].into_boxed_slice(),
         );
-        let view = View { choice: FontChoice::BuiltIn, status: None, families };
+        let view =
+            View { choice: FontChoice::BuiltIn, status: None, families, copy_on_select: true };
         let mut picker = Picker::default();
         let frame = |ctx: &egui::Context, picker: &mut Picker, events: Vec<egui::Event>| {
             let raw = egui::RawInput {
@@ -180,5 +200,40 @@ mod tests {
         assert!(picker.open && !picker.focus);
         picker.toggle();
         assert!(!picker.open && picker.query.is_empty());
+    }
+
+    #[test]
+    fn the_copy_on_select_switch_reports_the_new_value() {
+        let ctx = crate::fonts::test_context();
+        let view =
+            View { choice: FontChoice::BuiltIn, status: None, families: &[], copy_on_select: true };
+        let mut picker = Picker::default();
+        let mut frame = |events: Vec<egui::Event>| {
+            let raw = egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, vec2(900.0, 400.0))),
+                events,
+                ..Default::default()
+            };
+            let mut out = None;
+            let _ = ctx.run_ui(raw, |ui| out = section(ui, &mut picker, &view));
+            out
+        };
+        frame(Vec::new());
+        let button = |pos, pressed| egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        };
+        let mut found = Vec::new();
+        for y in (40..260).step_by(8) {
+            for x in (500..880).step_by(12) {
+                let at = egui::pos2(x as f32, y as f32);
+                frame(vec![egui::Event::PointerMoved(at)]);
+                frame(vec![button(at, true)]);
+                found.extend(frame(vec![button(at, false)]));
+            }
+        }
+        assert!(found.contains(&Change::CopyOnSelect(false)), "{found:?}");
     }
 }

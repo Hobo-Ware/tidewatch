@@ -60,6 +60,7 @@ fn general(restore: bool, resume: ResumeAgents, login_offered: bool) -> General 
             choice: tidewatch_core::prefs::FontChoice::BuiltIn,
             status: None,
             families: &[],
+            copy_on_select: true,
         },
     }
 }
