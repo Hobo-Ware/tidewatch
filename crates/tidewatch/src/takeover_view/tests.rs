@@ -184,6 +184,119 @@ fn the_recent_bar_toggles_and_its_rows_resume_when_open() {
     assert!(pressed.iter().all(|a| *a == CardAction::Press(data.ended[0].key.clone())));
 }
 
+struct Screen {
+    card: Option<Card>,
+    takeover: crate::takeover::Takeover,
+}
+
+impl Screen {
+    fn new(card: Option<Card>) -> Self {
+        Self { card, takeover: crate::takeover::Takeover::default() }
+    }
+
+    fn frame(&mut self, ctx: &egui::Context, events: Vec<Event>) -> Vec<(String, Rect)> {
+        use crate::overview::{Counts, Overview};
+        use crate::overview_checklist::{Checklist, Chip, Source};
+        use crate::overview_view::{Sections, show};
+        let data = Overview { needs: vec![], places: vec![], counts: Counts::default() };
+        let list = Checklist {
+            chips: vec![Chip { number: Some(1), title: "One".into() }],
+            source: Source::Default,
+            file: "/cfg/checklist.md".into(),
+        };
+        let sections = Sections { checklist: Some(&list), ..Sections::default() };
+        let (open, reveal) = (self.takeover.line_open(), self.takeover.take_reveal());
+        let mut clicked = None;
+        let output = ctx.run_ui(raw(events), |ui| {
+            let area = ui.max_rect();
+            show(ui, area, &data, &sections, |ui| {
+                if let Some(card) = &self.card {
+                    clicked = line(ui, card, open, reveal);
+                }
+            });
+        });
+        if clicked == Some(CardAction::ToggleLine) {
+            self.takeover.toggle_line();
+        }
+        let mut found = Vec::new();
+        for clipped in &output.shapes {
+            collect_texts(&clipped.shape, &mut found);
+        }
+        found
+    }
+
+    fn click_on(&mut self, ctx: &egui::Context, label: &str) {
+        let found = self.frame(ctx, vec![]);
+        let at = found.iter().find(|(text, _)| text == label).expect(label).1.center();
+        let button = |pressed| Event::PointerButton {
+            pos: at,
+            button: PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        };
+        self.frame(ctx, vec![Event::PointerMoved(at)]);
+        self.frame(ctx, vec![button(true)]);
+        self.frame(ctx, vec![button(false)]);
+    }
+}
+
+fn collect_texts(shape: &egui::Shape, found: &mut Vec<(String, Rect)>) {
+    match shape {
+        egui::Shape::Text(text) if !text.galley.text().trim().is_empty() => found
+            .push((text.galley.text().to_owned(), text.galley.rect.translate(text.pos.to_vec2()))),
+        egui::Shape::Vec(shapes) => shapes.iter().for_each(|shape| collect_texts(shape, found)),
+        _ => {}
+    }
+}
+
+fn top_of(found: &[(String, Rect)], text: &str) -> f32 {
+    found.iter().find(|(drawn, _)| drawn == text).expect(text).1.top()
+}
+
+fn has(found: &[(String, Rect)], text: &str) -> bool {
+    found.iter().any(|(drawn, _)| drawn == text)
+}
+
+#[test]
+fn the_line_is_hidden_with_no_session_elsewhere() {
+    let ctx = ready_context();
+    let mut screen = Screen::new(None);
+    let found = screen.frame(&ctx, vec![]);
+    assert!(has(&found, "Checklist"));
+    assert!(!found.iter().any(|(text, _)| text.contains("other terminal")));
+    assert!(!has(&found, "Running elsewhere"));
+}
+
+#[test]
+fn the_line_counts_the_live_sessions_and_sits_below_the_checklist() {
+    let ctx = ready_context();
+    let rows = (0..3).map(|n| row(&n.to_string(), Status::Idle, Offer::MoveHere)).collect();
+    let mut screen = Screen::new(Some(with_ended(card_data(true, rows), 2, false)));
+    let found = screen.frame(&ctx, vec![]);
+    assert!(top_of(&found, "3 sessions in other terminals") > top_of(&found, "Checklist"));
+    assert!(has(&found, "Move here \u{203a}"));
+    assert!(!has(&found, "Running elsewhere"));
+    let one = Screen::new(Some(card_data(true, vec![row("a", Status::Idle, Offer::MoveHere)])))
+        .frame(&ctx, vec![]);
+    assert!(has(&one, "1 session in another terminal"));
+}
+
+#[test]
+fn a_click_on_the_line_opens_the_list_below_it_and_a_second_folds_it() {
+    let ctx = ready_context();
+    let rows = (0..2).map(|n| row(&n.to_string(), Status::Idle, Offer::MoveHere)).collect();
+    let mut screen = Screen::new(Some(card_data(true, rows)));
+    screen.click_on(&ctx, "Move here \u{203a}");
+    assert!(screen.takeover.line_open());
+    let open = screen.frame(&ctx, vec![]);
+    assert!(top_of(&open, "Running elsewhere") > top_of(&open, "2 sessions in other terminals"));
+    assert!(has(&open, "Move all idle here"));
+    screen.click_on(&ctx, "Hide \u{2039}");
+    assert!(!screen.takeover.line_open());
+    let folded = screen.frame(&ctx, vec![]);
+    assert!(!has(&folded, "Running elsewhere"));
+}
+
 fn view(blocked: Option<&'static str>) -> DialogView {
     DialogView {
         title: "Move retry-stage-gates to Tidewatch?".to_owned(),

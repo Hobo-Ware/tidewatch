@@ -24,6 +24,9 @@ const DISCLOSURE_H: f32 = 38.0;
 const SIDE: f32 = 16.0;
 const BADGE: f32 = 26.0;
 const DIALOG_W: f32 = 560.0;
+const LINE_H: f32 = 40.0;
+const LINE_GAP: f32 = 8.0;
+const LINE_TAIL: f32 = 22.0;
 
 pub(crate) struct Card {
     pub(crate) summary: String,
@@ -49,6 +52,53 @@ fn status_ink(status: Status) -> Color32 {
         Status::Working => brand::WORKING,
         Status::Quiet | Status::NotRunning => brand::MUTED,
     }
+}
+
+fn line_text(live: usize) -> String {
+    if live == 1 {
+        "1 session in another terminal".to_owned()
+    } else {
+        format!("{live} sessions in other terminals")
+    }
+}
+
+/// The quiet line at the bottom of the Overview: how many sessions run in other terminals and a
+/// "Move here" at the right. A click folds out the card below it; `reveal` scrolls to both.
+pub(crate) fn line(ui: &mut Ui, data: &Card, open: bool, reveal: bool) -> Option<CardAction> {
+    let width = ui.available_width();
+    let (rect, response) = ui.allocate_exact_size(vec2(width, LINE_H), Sense::click());
+    let painter = ui.painter_at(rect);
+    painter.hline(rect.x_range(), rect.top(), Stroke::new(1.0, brand::CARD_LINE));
+    let ink = if response.hovered() { brand::TEXT } else { brand::MUTED };
+    let label = if open { "Hide \u{2039}" } else { "Move here \u{203a}" };
+    painter.text(
+        pos2(rect.left() + 4.0, rect.center().y),
+        Align2::LEFT_CENTER,
+        line_text(data.rows.len()),
+        body(12.5),
+        brand::MUTED,
+    );
+    painter.text(
+        pos2(rect.right() - 4.0, rect.center().y),
+        Align2::RIGHT_CENTER,
+        label,
+        body(12.5),
+        ink,
+    );
+    let mut action = response
+        .on_hover_cursor(egui::CursorIcon::PointingHand)
+        .clicked()
+        .then_some(CardAction::ToggleLine);
+    if open {
+        ui.add_space(LINE_GAP);
+        action = action.or(card(ui, data, false));
+        ui.add_space(LINE_TAIL);
+    }
+    if reveal {
+        let shown = Rect::from_min_max(rect.min, pos2(rect.right(), ui.min_rect().bottom()));
+        ui.scroll_to_rect(shown, Some(Align::TOP));
+    }
+    action
 }
 
 pub(crate) fn card(ui: &mut Ui, data: &Card, reveal: bool) -> Option<CardAction> {

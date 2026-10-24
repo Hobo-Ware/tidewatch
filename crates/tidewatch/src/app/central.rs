@@ -152,7 +152,8 @@ impl Tidewatch {
             ctx.request_repaint_after(Duration::from_secs(1));
         }
         let card = self.takeover_card();
-        let reveal = self.takeover.take_reveal();
+        let reveal = card.is_some() && self.takeover.take_reveal();
+        let line_open = self.takeover.line_open();
         let mut clicked = None;
         let repo = self.workspace().dir().to_path_buf();
         let rows = coming_up(today(), self.progress.index());
@@ -168,8 +169,7 @@ impl Tidewatch {
         };
         let out = overview_view::show(ui, area, &data, &sections, |ui| {
             if let Some(card) = &card {
-                clicked = takeover_view::card(ui, card, reveal);
-                ui.add_space(12.0);
+                clicked = takeover_view::line(ui, card, line_open, reveal);
             }
         });
         if out.edit_checklist {
