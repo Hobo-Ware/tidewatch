@@ -63,7 +63,7 @@ fn stored(cli: Cli, id: &str) -> Session {
 }
 
 fn scanned(sessions: Vec<Session>) -> Scanned {
-    Scanned { sessions, roots: HashMap::new() }
+    Scanned { sessions, roots: HashMap::new(), idents: HashMap::new() }
 }
 
 fn takeover_with(sessions: Vec<Session>) -> Takeover {
@@ -471,6 +471,29 @@ fn a_moved_session_opens_through_the_restore_path() {
 }
 
 #[test]
+fn a_session_in_a_tree_folder_runs_there_in_the_group_of_the_main_repo_and_is_no_tidewatch_worktree()
+ {
+    let fixture = Fixture::new();
+    let in_tree =
+        Session { cwd: PathBuf::from("/Users/me/code/acme_TREE"), ..claude(1, Activity::Idle) };
+    let spec = MoveSpec { session: in_tree, worktree: false, allow_quiet: false };
+    let plan = window_plan(
+        &fixture.agents,
+        Some(&fixture.profiles),
+        &spec,
+        (Path::new("/Users/me/code/acme"), false),
+        None,
+    )
+    .unwrap();
+    assert_eq!(plan.dir, PathBuf::from("/Users/me/code/acme"));
+    let tab = &plan.tabs[0];
+    assert_eq!(tab.dir, PathBuf::from("/Users/me/code/acme_TREE"));
+    assert_eq!(tab.worktree, None);
+    let SavedTab::Agent(saved) = &tab.saved else { panic!("expected an agent tab") };
+    assert_eq!((saved.dir.as_path(), saved.branch.as_deref()), (tab.dir.as_path(), None));
+}
+
+#[test]
 fn a_yolo_session_waits_typed_for_enter_and_a_worktree_is_where_the_tab_runs() {
     let fixture = Fixture::new();
     let yolo = Session {
@@ -571,7 +594,11 @@ fn the_worktree_box_is_offered_for_claude_in_a_repo_and_changes_the_second_line(
     assert!(!without.offer_worktree && !without.worktree, "no repo is known for the folder");
     let mut roots = HashMap::new();
     roots.insert(session.cwd.clone(), Some(session.cwd.clone()));
-    takeover.finish_scan(Scanned { sessions: vec![session.clone()], roots });
+    takeover.finish_scan(Scanned {
+        sessions: vec![session.clone()],
+        roots,
+        idents: HashMap::new(),
+    });
     takeover.confirm =
         Some(Confirm { sessions: vec![session.clone()], worktree: true, batch: false });
     let with = takeover.dialog_view(&env).unwrap();

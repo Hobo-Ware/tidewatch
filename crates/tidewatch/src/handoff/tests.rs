@@ -49,6 +49,7 @@ fn launched(session: &str) -> Launched {
         level: Level::Edits,
         session_id: Some(session.into()),
         remote: false,
+        dir: None,
     }
 }
 

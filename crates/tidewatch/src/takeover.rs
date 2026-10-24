@@ -15,6 +15,7 @@ use tidewatch_core::session::{SavedAgentTab, SavedTab};
 use tidewatch_core::worktree::Worktree;
 
 use crate::screen_kit::cli_short_name;
+use crate::takeover_group::Ident;
 use crate::welcome::shown_path;
 
 pub(crate) const SCAN_EVERY_S: f64 = 5.0;
@@ -128,6 +129,7 @@ pub(crate) struct Confirm {
 pub(crate) struct Scanned {
     pub(crate) sessions: Vec<Session>,
     pub(crate) roots: HashMap<PathBuf, Option<PathBuf>>,
+    pub(crate) idents: HashMap<PathBuf, Option<Ident>>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -146,6 +148,7 @@ pub(crate) enum Effect {
 pub(crate) struct Takeover {
     sessions: Vec<Session>,
     roots: HashMap<PathBuf, Option<PathBuf>>,
+    idents: HashMap<PathBuf, Option<Ident>>,
     last_scan: Option<f64>,
     in_flight: bool,
     was_shown: bool,
@@ -212,6 +215,7 @@ impl Takeover {
     pub(crate) fn finish_scan(&mut self, scanned: Scanned) -> Vec<MoveSpec> {
         self.in_flight = false;
         self.roots.extend(scanned.roots);
+        self.idents.extend(scanned.idents);
         self.sessions = scanned.sessions;
         self.moving.retain(|key| self.sessions.iter().any(|s| s.key().as_ref() == Some(key)));
         let mut ready = Vec::new();
@@ -238,6 +242,14 @@ impl Takeover {
 
     pub(crate) fn known_roots(&self) -> HashMap<PathBuf, Option<PathBuf>> {
         self.roots.clone()
+    }
+
+    pub(crate) fn known_idents(&self) -> HashMap<PathBuf, Option<Ident>> {
+        self.idents.clone()
+    }
+
+    pub(crate) fn ident_of(&self, dir: &Path) -> Option<&Ident> {
+        self.idents.get(dir).and_then(Option::as_ref)
     }
 
     pub(crate) fn root_of(&self, session: &Session) -> Option<&Path> {

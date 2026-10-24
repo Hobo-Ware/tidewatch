@@ -154,6 +154,7 @@ mod tests {
             level: Level::Edits,
             session_id: None,
             remote: false,
+            dir: None,
         });
         let worktree = worktree.then(|| Worktree {
             repo: PathBuf::from("/work/web"),

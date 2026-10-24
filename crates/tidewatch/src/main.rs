@@ -177,6 +177,7 @@ mod tab_title;
 mod tab_view;
 mod tabs;
 mod takeover;
+mod takeover_group;
 mod takeover_jobs;
 mod takeover_view;
 mod terminal_focus;

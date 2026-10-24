@@ -16,6 +16,7 @@ use crate::restore_glue::Spawn;
 use crate::takeover::{
     CardAction, END_WAIT_S, Effect, Env, MoveSpec, Scanned, Takeover, moved_text, window_plan,
 };
+use crate::takeover_group::{Ident, group_roots};
 use crate::takeover_jobs::{self, Done, Landed, MoveJob, ScanSpec};
 use crate::takeover_view::{self, Card, DialogOutcome};
 use crate::workflow_glue::Env as RunEnv;
@@ -87,6 +88,7 @@ impl Tidewatch {
             folders,
             held,
             roots: self.takeover.known_roots(),
+            idents: self.takeover.known_idents(),
         };
         takeover_jobs::scan(&self.takeover_jobs, ctx, spec);
     }
@@ -106,17 +108,34 @@ impl Tidewatch {
     }
 
     fn scanned(&mut self, scanned: Scanned, ctx: &egui::Context) {
-        for spec in self.takeover.finish_scan(scanned) {
-            self.start_takeover_move(spec, ctx);
-        }
+        let ready = self.takeover.finish_scan(scanned);
+        self.start_takeover_moves(ready, ctx);
     }
 
-    fn start_takeover_move(&mut self, spec: MoveSpec, ctx: &egui::Context) {
-        let root = self.takeover.root_of(&spec.session).map(Path::to_path_buf);
-        let wait = Duration::from_secs(END_WAIT_S);
-        let job =
-            MoveJob { spec, agents: self.agent_table(), paths: self.paths.clone(), root, wait };
-        takeover_jobs::start_move(&self.takeover_jobs, ctx, job);
+    fn start_takeover_moves(&mut self, specs: Vec<MoveSpec>, ctx: &egui::Context) {
+        let open: Vec<Ident> = if self.welcome.is_some() {
+            Vec::new()
+        } else {
+            self.workspaces
+                .iter()
+                .filter_map(|workspace| self.takeover.ident_of(workspace.dir()).cloned())
+                .collect()
+        };
+        let movers: Vec<Option<Ident>> = specs
+            .iter()
+            .map(|spec| {
+                let own_group = !spec.worktree;
+                own_group.then(|| self.takeover.ident_of(&spec.session.cwd).cloned()).flatten()
+            })
+            .collect();
+        let groups = group_roots(&open, &movers);
+        for (spec, group) in specs.into_iter().zip(groups) {
+            let root = self.takeover.root_of(&spec.session).map(Path::to_path_buf);
+            let wait = Duration::from_secs(END_WAIT_S);
+            let agents = self.agent_table();
+            let job = MoveJob { spec, agents, paths: self.paths.clone(), root, group, wait };
+            takeover_jobs::start_move(&self.takeover_jobs, ctx, job);
+        }
     }
 
     fn place_taken(&mut self, landed: Landed, ctx: &egui::Context) {
@@ -238,9 +257,8 @@ impl Tidewatch {
         match outcome {
             Some(DialogOutcome::Cancel) => self.takeover.cancel(),
             Some(DialogOutcome::Accept) => {
-                for spec in self.takeover.accept() {
-                    self.start_takeover_move(spec, ctx);
-                }
+                let accepted = self.takeover.accept();
+                self.start_takeover_moves(accepted, ctx);
                 ctx.request_repaint();
             }
             None => {}
@@ -267,9 +285,8 @@ impl Tidewatch {
             confirm.worktree = dev.worktree;
         }
         if dev.press {
-            for spec in self.takeover.accept() {
-                self.start_takeover_move(spec, ctx);
-            }
+            let accepted = self.takeover.accept();
+            self.start_takeover_moves(accepted, ctx);
         }
     }
 

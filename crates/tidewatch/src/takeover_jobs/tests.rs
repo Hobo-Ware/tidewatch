@@ -102,7 +102,14 @@ fn session(cwd: &Path, pid: u32, activity: Activity) -> tidewatch_core::elsewher
 }
 
 fn job(spec: MoveSpec) -> MoveJob {
-    MoveJob { spec, agents: agents(), paths: None, root: None, wait: Duration::from_secs(1) }
+    MoveJob {
+        spec,
+        agents: agents(),
+        paths: None,
+        root: None,
+        group: None,
+        wait: Duration::from_secs(1),
+    }
 }
 
 fn spec(session: tidewatch_core::elsewhere::Session, worktree: bool) -> MoveSpec {
@@ -129,7 +136,13 @@ fn throwaway_repo(home: &Path) -> PathBuf {
 }
 
 fn scan_spec(folders: Vec<PathBuf>) -> ScanSpec {
-    ScanSpec { agents: agents(), folders, held: HashSet::new(), roots: HashMap::new() }
+    ScanSpec {
+        agents: agents(),
+        folders,
+        held: HashSet::new(),
+        roots: HashMap::new(),
+        idents: HashMap::new(),
+    }
 }
 
 #[test]
@@ -228,6 +241,100 @@ fn an_idle_session_is_ended_and_its_folder_becomes_the_workspace_of_its_tab() {
     assert!(landed.worktree.is_none());
 }
 
+fn linked(repo: &Path, name: &str) -> PathBuf {
+    let dir = repo.parent().unwrap().join(name);
+    git(repo, &["worktree", "add", "-q", dir.to_str().unwrap(), "-b", name]);
+    dir.canonicalize().unwrap()
+}
+
+fn ps_of(pids: &[u32]) -> String {
+    let line = |pid: &u32| format!("{pid} 1 {START} claude --permission-mode acceptEdits\n");
+    pids.iter().map(line).collect::<Vec<_>>().concat()
+}
+
+fn clone_of(url: &str, dir: &Path) {
+    std::fs::create_dir_all(dir).unwrap();
+    git(dir, &["init", "-q", "-b", "main"]);
+    git(dir, &["remote", "add", "origin", url]);
+}
+
+#[test]
+fn sessions_in_linked_worktrees_land_in_the_group_of_their_main_repo_and_keep_their_folder() {
+    let home = tempfile::tempdir().unwrap();
+    let repo = throwaway_repo(home.path());
+    let trees = [linked(&repo, "web_TREE"), linked(&repo, "web_TREE_2"), repo.clone()];
+    for (pid, tree) in (11..).zip(&trees) {
+        registry(home.path(), pid, ID, tree, "idle");
+        let system = Fake::new(&ps_of(&[pid]));
+        let moved = run_move(
+            &system,
+            &env(home.path()),
+            &job(spec(session(tree, pid, Activity::Idle), false)),
+        );
+        let Done::Moved(landed) = moved else { panic!("expected the move to land") };
+        assert_eq!(landed.workspace.dir(), repo.as_path(), "{tree:?}");
+        assert!(landed.worktree.is_none(), "{tree:?} is not a Tidewatch worktree");
+        assert_eq!(landed.spec.session.cwd, *tree);
+    }
+}
+
+#[test]
+fn a_group_chosen_for_the_move_wins_over_the_folder_of_the_session() {
+    let home = tempfile::tempdir().unwrap();
+    let repo = throwaway_repo(home.path());
+    let clone = home.path().join("web_TREE");
+    clone_of(repo.to_str().unwrap(), &clone);
+    registry(home.path(), 11, ID, &clone, "idle");
+    let system = Fake::new(PS);
+    let moved = run_move(
+        &system,
+        &env(home.path()),
+        &MoveJob {
+            group: Some(repo.clone()),
+            ..job(spec(session(&clone, 11, Activity::Idle), false))
+        },
+    );
+    let Done::Moved(landed) = moved else { panic!("expected the move to land") };
+    assert_eq!(landed.workspace.dir(), repo.as_path());
+    assert_eq!(landed.spec.session.cwd, clone);
+}
+
+#[test]
+fn a_scan_knows_the_main_repo_and_remote_of_every_folder_once() {
+    let home = tempfile::tempdir().unwrap();
+    let repo = throwaway_repo(home.path());
+    git(&repo, &["remote", "add", "origin", "git@github.com:Acme/Web.git"]);
+    let tree = linked(&repo, "web_TREE");
+    let clone = home.path().join("web_TREE_2");
+    clone_of("https://github.com/acme/web", &clone);
+    let plain = home.path().join("plain");
+    std::fs::create_dir_all(&plain).unwrap();
+    for (pid, dir) in [(11, &tree), (12, &clone), (13, &plain)] {
+        registry(home.path(), pid, ID, dir, "idle");
+    }
+    let ps = ps_of(&[11, 12, 13]);
+    let mut spec = scan_spec(vec![repo.clone()]);
+    let Done::Scanned(scanned) = run_scan(&Fake::new(&ps), &env(home.path()), &spec) else {
+        panic!("expected a scan")
+    };
+    let remote = Some("github.com/acme/web".to_owned());
+    let clone_main = clone.canonicalize().unwrap();
+    assert_eq!(
+        scanned.idents,
+        HashMap::from([
+            (repo.clone(), Some(Ident { main: repo.clone(), origin: remote.clone() })),
+            (tree.clone(), Some(Ident { main: repo.clone(), origin: remote.clone() })),
+            (clone.clone(), Some(Ident { main: clone_main, origin: remote })),
+            (plain.clone(), None),
+        ])
+    );
+    spec.idents = scanned.idents;
+    let Done::Scanned(again) = run_scan(&Fake::new(&ps), &env(home.path()), &spec) else {
+        panic!("expected a scan")
+    };
+    assert_eq!(again.idents, HashMap::new());
+}
+
 #[test]
 fn a_folder_outside_any_repo_lands_in_the_other_group() {
     let home = tempfile::tempdir().unwrap();
@@ -275,6 +382,7 @@ fn a_process_that_ignores_sigterm_is_reported_and_never_killed_harder() {
             agents: agents(),
             paths: None,
             root: None,
+            group: None,
             wait: Duration::from_secs(1),
         },
     );
@@ -311,6 +419,7 @@ fn moving_into_a_worktree_makes_one_in_the_repo_before_the_session_is_ended() {
             agents: agents(),
             paths: Some(paths),
             root: Some(repo.clone()),
+            group: None,
             wait: Duration::from_secs(1),
         },
     );
@@ -336,6 +445,7 @@ fn a_refused_move_into_a_worktree_takes_the_new_worktree_back() {
             agents: agents(),
             paths: Some(paths.clone()),
             root: Some(repo.clone()),
+            group: None,
             wait: Duration::from_secs(1),
         },
     );
