@@ -20,6 +20,7 @@ const LOCKED: &str = "agent-avatar-locked";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Choice {
+    Draw,
     Redraw,
     UseLetter,
 }
@@ -88,20 +89,28 @@ pub(crate) fn menu(response: &Response, tab: u64) {
     }
     response.context_menu(|ui| {
         style_menu(ui);
-        menu_items(ui, tab);
+        menu_items(ui, tab, true);
     });
 }
 
-pub(crate) fn menu_items(ui: &mut Ui, tab: u64) {
+pub(crate) fn menu_items(ui: &mut Ui, tab: u64, picture: bool) {
     if is_locked(ui.ctx(), tab) {
         return;
     }
-    for (label, choice) in [("Redraw", Choice::Redraw), ("Use letter", Choice::UseLetter)] {
+    for (label, choice) in choices(picture) {
         if menu_item(ui, label, "").clicked() {
             ui.ctx().data_mut(|d| d.insert_temp(Id::new(CHOICE), Some((tab, choice))));
             ui.ctx().request_repaint();
             ui.close();
         }
+    }
+}
+
+fn choices(picture: bool) -> &'static [(&'static str, Choice)] {
+    if picture {
+        &[("Redraw", Choice::Redraw), ("Use letter", Choice::UseLetter)]
+    } else {
+        &[("Draw avatar", Choice::Draw)]
     }
 }
 

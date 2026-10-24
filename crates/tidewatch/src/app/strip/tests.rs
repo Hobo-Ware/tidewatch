@@ -364,6 +364,7 @@ fn agent_strip(
                                     stalled: false,
                                     tip: "orders".into(),
                                 }),
+                                can_draw: false,
                                 mood: Mood::default(),
                             },
                         ),
@@ -933,4 +934,23 @@ fn an_agent_tab_is_labelled_by_its_work_and_not_by_the_worktree_name() {
 fn the_tooltip_names_the_worktree_under_the_work() {
     let got = tab_tip("Fix login", "brave-otter", 12, None);
     assert_eq!(got, "Fix login\nbrave-otter\nTab 12");
+}
+
+#[test]
+fn the_avatar_menu_is_a_table_of_picture_tool_and_lock() {
+    let cases = [
+        (true, true, false, AvatarMenu::Picture),
+        (true, false, false, AvatarMenu::Picture),
+        (false, true, false, AvatarMenu::Letter),
+        (false, false, false, AvatarMenu::None),
+        (true, true, true, AvatarMenu::None),
+        (false, true, true, AvatarMenu::None),
+    ];
+    for (picture, can_draw, locked, want) in cases {
+        assert_eq!(
+            avatar_menu(picture, can_draw, locked),
+            want,
+            "picture {picture} can_draw {can_draw} locked {locked}"
+        );
+    }
 }
