@@ -389,6 +389,7 @@ mod tests {
             egui::CentralPanel::default().frame(Frame::NONE).show(ui, |ui| {
                 column = ui.max_rect();
                 let facts = Facts {
+                    tab: 1,
                     source: None,
                     prompt: None,
                     ready: Some(ready()),
