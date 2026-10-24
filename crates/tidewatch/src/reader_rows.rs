@@ -53,8 +53,50 @@ pub(crate) struct QuestionRow {
     pub(crate) origin: Origin,
 }
 
+/// What a tool call does, as far as the turn chips are concerned.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub(crate) enum ToolKind {
+    Command,
+    Edit,
+    Read,
+    Search,
+    Agent,
+    Other,
+}
+
+impl ToolKind {
+    pub(crate) const ALL: [Self; 6] =
+        [Self::Command, Self::Edit, Self::Read, Self::Search, Self::Agent, Self::Other];
+
+    /// The kind of the tool the CLI calls `name`: Claude's `Bash`, Codex's `exec`, Gemini's
+    /// `run_shell_command` and so on. A name no list knows, an MCP tool among them, is `Other`.
+    pub(crate) fn of(name: &str) -> Self {
+        match name.to_ascii_lowercase().as_str() {
+            "bash" | "shell" | "exec" | "exec_command" | "run_shell_command" | "local_shell"
+            | "shell_command" | "run_command" => Self::Command,
+            "edit" | "multiedit" | "write" | "notebookedit" | "apply_patch" | "write_file"
+            | "replace" | "str_replace" | "str_replace_editor" | "create" | "patch" => Self::Edit,
+            "read" | "read_file" | "read_many_files" | "notebookread" | "view" => Self::Read,
+            "grep"
+            | "glob"
+            | "ls"
+            | "list_directory"
+            | "search_file_content"
+            | "websearch"
+            | "webfetch"
+            | "web_search"
+            | "web_fetch"
+            | "google_web_search"
+            | "find" => Self::Search,
+            "task" | "agent" | "subagent" => Self::Agent,
+            _ => Self::Other,
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct Tool {
+    pub(crate) kind: ToolKind,
     pub(crate) label: String,
     pub(crate) output: String,
     pub(crate) error: bool,
@@ -80,6 +122,7 @@ pub(crate) struct Rows {
     next_seq: u64,
     calls: HashMap<String, u64>,
     dropped: usize,
+    revision: u64,
 }
 
 impl Rows {
@@ -112,6 +155,7 @@ impl Rows {
             self.list.pop_front();
             self.stamps.pop_front();
             self.dropped += 1;
+            self.revision += 1;
         }
     }
 
@@ -162,6 +206,7 @@ impl Rows {
         match self.row_mut(seq).map(|row| &mut row.kind) {
             Some(Kind::Question(q)) => {
                 q.asked = asked;
+                self.revision += 1;
                 true
             }
             _ => false,
@@ -184,6 +229,7 @@ impl Rows {
             self.list.pop_front();
             self.stamps.pop_front();
             self.dropped += 1;
+            self.revision += 1;
         }
     }
 
@@ -204,6 +250,12 @@ impl Rows {
         self.list.len()
     }
 
+    /// Changes whenever a row is added, dropped or filled in, so a view can keep what it derived
+    /// from the rows until then.
+    pub(crate) fn revision(&self) -> u64 {
+        self.revision
+    }
+
     /// How many older rows were dropped to stay under the cap.
     pub(crate) fn dropped(&self) -> usize {
         self.dropped
@@ -213,12 +265,14 @@ impl Rows {
         while self.list.len() > MAX_ROWS {
             self.list.pop_front();
             self.dropped += 1;
+            self.revision += 1;
         }
     }
 
     fn add(&mut self, kind: Kind, text: String) -> u64 {
         let seq = self.next_seq;
         self.next_seq += 1;
+        self.revision += 1;
         self.list.push_back(Row { seq, kind, text });
         self.stamps.push_back(self.stamp);
         seq
@@ -236,7 +290,13 @@ impl Rows {
         let label = tool_label(&call.name, &call.summary);
         match call.phase {
             ToolPhase::Call => {
-                let tool = Tool { label, output: String::new(), error: false, done: false };
+                let tool = Tool {
+                    kind: ToolKind::of(&call.name),
+                    label,
+                    output: String::new(),
+                    error: false,
+                    done: false,
+                };
                 let seq = self.add(Kind::Tool(tool), String::new());
                 if let Some(id) = call.id.filter(|id| !id.is_empty()) {
                     self.calls.insert(id, seq);
@@ -256,8 +316,15 @@ impl Rows {
                     tool.output = entry.text;
                     tool.error = error;
                     tool.done = true;
+                    self.revision += 1;
                 } else {
-                    let tool = Tool { label, output: entry.text, error, done: true };
+                    let tool = Tool {
+                        kind: ToolKind::of(&call.name),
+                        label,
+                        output: entry.text,
+                        error,
+                        done: true,
+                    };
                     self.add(Kind::Tool(tool), String::new());
                 }
             }
@@ -417,7 +484,13 @@ mod tests {
         assert_eq!(rows.len(), 2);
         assert_eq!(
             tool_of(&rows, 0),
-            Tool { label: "Bash  ls".into(), output: "a.txt".into(), error: false, done: true }
+            Tool {
+                kind: ToolKind::Command,
+                label: "Bash  ls".into(),
+                output: "a.txt".into(),
+                error: false,
+                done: true
+            }
         );
     }
 
