@@ -18,7 +18,20 @@ fn row(id: &str, status: Status, offer: Offer) -> Row {
 }
 
 fn card_data(can_move_all: bool, rows: Vec<Row>) -> Card {
-    Card { summary: format!("{} sessions \u{b7} 1 idle", rows.len()), can_move_all, rows }
+    Card {
+        summary: format!("{} sessions \u{b7} 1 idle", rows.len()),
+        can_move_all,
+        rows,
+        ended: Vec::new(),
+        ended_open: false,
+    }
+}
+
+fn with_ended(mut data: Card, ended: usize, open: bool) -> Card {
+    data.ended =
+        (0..ended).map(|n| row(&format!("e{n}"), Status::NotRunning, Offer::ResumeHere)).collect();
+    data.ended_open = open;
+    data
 }
 
 fn raw(events: Vec<Event>) -> RawInput {
@@ -128,6 +141,47 @@ fn the_card_is_as_tall_as_its_header_and_rows() {
     });
     let wanted = HEADER_H + 3.0 * ROW_H;
     assert!(height >= wanted && height < wanted + 8.0, "{height}");
+}
+
+fn card_height(ctx: &egui::Context, data: &Card) -> f32 {
+    let mut height = 0.0;
+    let _ = ctx.run_ui(raw(vec![]), |ui| {
+        let before = ui.cursor().top();
+        card(ui, data, false);
+        height = ui.cursor().top() - before;
+    });
+    height
+}
+
+#[test]
+fn ended_sessions_add_only_a_bar_until_it_is_opened() {
+    let ctx = ready_context();
+    let running = || card_data(true, vec![row("a", Status::Idle, Offer::MoveHere)]);
+    let shut = with_ended(running(), 2, false);
+    let open = with_ended(running(), 2, true);
+    let bare = HEADER_H + ROW_H;
+    let near = |got: f32, want: f32| got >= want && got < want + 8.0;
+    assert!(near(card_height(&ctx, &shut), bare + DISCLOSURE_H));
+    assert!(near(card_height(&ctx, &open), bare + DISCLOSURE_H + 2.0 * ROW_H));
+    assert!(near(card_height(&ctx, &running()), bare));
+}
+
+#[test]
+fn the_recent_bar_toggles_and_its_rows_resume_when_open() {
+    let ctx = ready_context();
+    let data = with_ended(card_data(true, vec![row("a", Status::Idle, Offer::MoveHere)]), 1, true);
+    warmed(&ctx, &data);
+    let bar_y = HEADER_H + ROW_H + DISCLOSURE_H / 2.0;
+    let hit: Vec<_> = (20..=200)
+        .step_by(20)
+        .filter_map(|x| card_frame(&ctx, &data, click(pos2(x as f32, bar_y))))
+        .collect();
+    assert_ne!(hit, Vec::new());
+    assert!(hit.iter().all(|a| *a == CardAction::ToggleRecent), "{hit:?}");
+    let ended_y = HEADER_H + ROW_H + DISCLOSURE_H + ROW_H / 2.0;
+    let pressed = any_click(&ctx, &data, ended_y);
+    assert_ne!(pressed, Vec::new());
+    assert!(pressed.iter().all(|a| *a == CardAction::Press(data.ended[0].key.clone())));
 }
 
 fn view(blocked: Option<&'static str>) -> DialogView {

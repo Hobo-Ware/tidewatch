@@ -2,11 +2,12 @@
 //! UTC), `lsof` or `/proc` for a folder, session files, and ending a session with SIGTERM to one
 //! re-checked pid, never SIGKILL (claude 2.1.301 exits in under a second). Call it off the UI thread.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::io::{Read as _, Seek as _, SeekFrom};
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime};
 
 use crate::agents::AgentTable;
@@ -16,7 +17,7 @@ use crate::elsewhere::{
 };
 use crate::restore::codex_session_id;
 use crate::tools::Tools;
-use crate::transcript::{Role, parse_all};
+use crate::transcript::{Parser, Role, Source, parse_all};
 use crate::transcript_locate::{Locator, claude_project_dir_name};
 
 const TAIL_BYTES: u64 = 128 * 1024;
@@ -26,6 +27,8 @@ const START_SLACK_MS: i64 = 5000;
 const RECENT_DAYS: i64 = 30;
 const CODEX_RECENT_FILES: usize = 30;
 const COPILOT_RECENT_DIRS: usize = 40;
+const TITLE_CACHE_FILES: usize = 256;
+const TITLE_FILE_MAX_BYTES: u64 = 64 * 1024 * 1024;
 const POLL: Duration = Duration::from_millis(100);
 
 pub trait System {
@@ -321,40 +324,92 @@ fn turn_finished(cli: Cli, file: &Path) -> bool {
         .is_some_and(|entry| entry.role == Role::Assistant && entry.tool.is_none())
 }
 
-/// Recent sessions of `folders` whose process is gone, newest first, at most `per_folder` for each
-/// folder and CLI. `held` are the ids to leave out (running, or already open in a tab).
+/// What keeps a session out of the recent list: an id, or the transcript file, that a running
+/// process or an open Tidewatch tab holds, or that Tidewatch started or resumed itself. Either one
+/// is enough, because a tab can write to another file than the id it was launched with.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Held {
+    pub ids: HashSet<String>,
+    pub transcripts: HashSet<PathBuf>,
+}
+
+impl Held {
+    pub fn add_id(&mut self, id: &str) {
+        if !self.ids.contains(id) {
+            self.ids.insert(id.to_owned());
+        }
+    }
+
+    pub fn add_transcript(&mut self, file: &Path) {
+        if !self.transcripts.contains(file) {
+            self.transcripts.insert(file.to_path_buf());
+        }
+    }
+
+    fn resolved(&self) -> HashSet<PathBuf> {
+        self.transcripts.iter().map(|file| resolve(file)).collect()
+    }
+}
+
+fn resolve(file: &Path) -> PathBuf {
+    fs::canonicalize(file).unwrap_or_else(|_| file.to_path_buf())
+}
+
+/// The newest session of each of `folders` whose process is gone, at most `per_folder` for each
+/// folder across every CLI, left out when `held` names its id or its transcript.
 #[must_use]
-pub fn recent_sessions<S: std::hash::BuildHasher>(
+pub fn recent_sessions(
     env: &ScanEnv,
     folders: &[PathBuf],
-    held: &HashSet<String, S>,
+    held: &Held,
+    titles: &TitleCache,
     per_folder: usize,
 ) -> Vec<Session> {
     let now = unix_ms(SystemTime::now());
     let oldest = now - RECENT_DAYS * 86_400_000;
+    let files = held.resolved();
     let mut found = Vec::new();
     for folder in folders {
-        let recent = [
+        let all = [
             claude_recent(env, folder),
             codex_recent(env, folder),
             gemini_recent(env, folder),
             copilot_recent(env, folder),
-        ];
-        for list in recent {
-            found.extend(
-                list.into_iter()
-                    .filter(|(_, id, at)| {
-                        *at >= oldest && id.as_ref().is_none_or(|id| !held.contains(id))
-                    })
-                    .take(per_folder)
-                    .map(|(cli, id, at)| stored(cli, id, folder, at)),
-            );
+        ]
+        .concat();
+        for recent in newest_unheld(all, &held.ids, &files, oldest, per_folder) {
+            let title = recent.file.as_deref().filter(|_| recent.cli == Cli::Claude);
+            let name = title.and_then(|file| titles.title_of(file));
+            found.push(Session { name, ..stored(recent.cli, recent.id, folder, recent.at) });
         }
     }
     found
 }
 
-type Recent = (Cli, Option<String>, i64);
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct Recent {
+    cli: Cli,
+    id: Option<String>,
+    at: i64,
+    file: Option<PathBuf>,
+}
+
+fn newest_unheld(
+    mut list: Vec<Recent>,
+    ids: &HashSet<String>,
+    files: &HashSet<PathBuf>,
+    oldest: i64,
+    take: usize,
+) -> Vec<Recent> {
+    list.retain(|recent| {
+        let id_held = recent.id.as_ref().is_some_and(|id| ids.contains(id));
+        let file_held = recent.file.as_deref().is_some_and(|file| files.contains(&resolve(file)));
+        recent.at >= oldest && !id_held && !file_held
+    });
+    list.sort_by_key(|recent| std::cmp::Reverse(recent.at));
+    list.truncate(take);
+    list
+}
 
 fn stored(cli: Cli, session_id: Option<String>, cwd: &Path, at: i64) -> Session {
     Session {
@@ -368,6 +423,49 @@ fn stored(cli: Cli, session_id: Option<String>, cwd: &Path, at: i64) -> Session 
     }
 }
 
+type ReadTitle = (u64, i64, Option<String>);
+
+/// The titles read from transcripts, kept per file with the size and modification time they were
+/// read at, so a scan reads a transcript again only after it changed. Clones share one table.
+#[derive(Clone, Debug, Default)]
+pub struct TitleCache {
+    read: Arc<Mutex<HashMap<PathBuf, ReadTitle>>>,
+}
+
+impl TitleCache {
+    fn title_of(&self, file: &Path) -> Option<String> {
+        let meta = fs::metadata(file).ok()?;
+        let stamp = (meta.len(), meta.modified().ok().map_or(0, unix_ms));
+        let hit = self.read.lock().ok()?.get(file).cloned();
+        if let Some((len, at, title)) = hit
+            && (len, at) == stamp
+        {
+            return title;
+        }
+        let title = claude_title(file, stamp.0);
+        let mut read = self.read.lock().ok()?;
+        if read.len() >= TITLE_CACHE_FILES {
+            read.clear();
+        }
+        read.insert(file.to_path_buf(), (stamp.0, stamp.1, title.clone()));
+        title
+    }
+}
+
+fn claude_title(file: &Path, len: u64) -> Option<String> {
+    use std::io::BufRead as _;
+    if len > TITLE_FILE_MAX_BYTES {
+        return None;
+    }
+    let mut parser = Parser::new(Source::Claude);
+    for line in std::io::BufReader::new(fs::File::open(file).ok()?).lines().map_while(Result::ok) {
+        if line.contains("-title\"") || line.contains("\"type\":\"summary\"") {
+            parser.feed_line(&line);
+        }
+    }
+    parser.session_title().map(str::to_owned)
+}
+
 fn claude_recent(env: &ScanEnv, folder: &Path) -> Vec<Recent> {
     let dir = env.claude_dir.join("projects").join(claude_project_dir_name(folder));
     let is_session = |path: &Path| path.extension().is_some_and(|ext| ext == "jsonl");
@@ -375,7 +473,12 @@ fn claude_recent(env: &ScanEnv, folder: &Path) -> Vec<Recent> {
         .into_iter()
         .filter_map(|(path, at)| {
             let id = path.file_stem()?.to_str()?.to_owned();
-            is_session_id(&id).then_some((Cli::Claude, Some(id), at))
+            is_session_id(&id).then_some(Recent {
+                cli: Cli::Claude,
+                id: Some(id),
+                at,
+                file: Some(path),
+            })
         })
         .collect()
 }
@@ -404,7 +507,12 @@ fn codex_recent(env: &ScanEnv, folder: &Path) -> Vec<Recent> {
         .filter(|path| codex_cwd_is(path, folder))
         .filter_map(|path| {
             let id = codex_session_id(&path)?;
-            Some((Cli::Codex, Some(id), modified_ms(&path)?))
+            Some(Recent {
+                cli: Cli::Codex,
+                id: Some(id),
+                at: modified_ms(&path)?,
+                file: Some(path),
+            })
         })
         .collect()
 }
@@ -443,7 +551,7 @@ fn gemini_recent(env: &ScanEnv, folder: &Path) -> Vec<Recent> {
         .filter_map(|(path, at)| {
             let head: serde_json::Value = serde_json::from_str(&first_line(&path)?).ok()?;
             let id = head["sessionId"].as_str().filter(|id| is_session_id(id))?;
-            Some((Cli::Gemini, Some(id.to_owned()), at))
+            Some(Recent { cli: Cli::Gemini, id: Some(id.to_owned()), at, file: Some(path) })
         })
         .collect()
 }
@@ -456,8 +564,12 @@ fn copilot_recent(env: &ScanEnv, folder: &Path) -> Vec<Recent> {
             let yaml = fs::read_to_string(dir.join("workspace.yaml")).ok()?;
             let cwd = yaml.lines().find_map(|line| line.strip_prefix("cwd: "))?;
             let id = dir.file_name()?.to_str()?;
-            (Path::new(cwd.trim()) == folder && is_session_id(id))
-                .then(|| (Cli::Copilot, Some(id.to_owned()), at))
+            (Path::new(cwd.trim()) == folder && is_session_id(id)).then(|| Recent {
+                cli: Cli::Copilot,
+                id: Some(id.to_owned()),
+                at,
+                file: Some(dir.join("events.jsonl")),
+            })
         })
         .collect()
 }

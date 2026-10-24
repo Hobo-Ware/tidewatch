@@ -199,6 +199,10 @@ impl Reader {
         self.rows.divider(divider);
     }
 
+    pub(crate) fn transcript(&self) -> Option<&Path> {
+        self.file.as_deref()
+    }
+
     pub(crate) fn session_title(&self) -> Option<&str> {
         self.session_title.as_deref()
     }

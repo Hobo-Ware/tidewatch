@@ -277,8 +277,14 @@ fn recent_sessions_of_a_folder_come_newest_first_without_the_ones_held() {
     }
     write(&projects.join("notes.txt"), "x");
     age(&projects.join(format!("{}.jsonl", ids[4])), 40 * 86_400);
-    let held = HashSet::from([ids[0].to_owned()]);
-    let got = recent_sessions(&env(home.path()), &[folder.to_path_buf()], &held, 3);
+    let held = Held { ids: HashSet::from([ids[0].to_owned()]), ..Held::default() };
+    let got = recent_sessions(
+        &env(home.path()),
+        &[folder.to_path_buf()],
+        &held,
+        &TitleCache::default(),
+        3,
+    );
     let seen: Vec<_> = got.iter().map(|s| s.session_id.clone().unwrap()).collect();
     assert_eq!(seen, [ids[1], ids[2], ids[3]]);
     assert!(got.iter().all(|s| s.presence == Presence::NotRunning && s.cli == Cli::Claude));
@@ -310,8 +316,10 @@ fn recent_codex_gemini_and_copilot_sessions_are_matched_to_the_folder() {
         &state.join("1c2cbc96-1111-4222-8333-444455556666/workspace.yaml"),
         "cwd: /somewhere/else\n",
     );
-    let got = recent_sessions(&env(home.path()), &[folder], &HashSet::new(), 3);
-    let seen: Vec<_> = got.iter().map(|s| (s.cli, s.session_id.clone().unwrap())).collect();
+    let got =
+        recent_sessions(&env(home.path()), &[folder], &Held::default(), &TitleCache::default(), 3);
+    let mut seen: Vec<_> = got.iter().map(|s| (s.cli, s.session_id.clone().unwrap())).collect();
+    seen.sort_by_key(|(cli, _)| Cli::ALL.iter().position(|each| each == cli));
     assert_eq!(
         seen,
         [
@@ -320,6 +328,118 @@ fn recent_codex_gemini_and_copilot_sessions_are_matched_to_the_folder() {
             (Cli::Copilot, ID_A.to_owned()),
         ]
     );
+}
+
+fn recent(cli: Cli, id: &str, at: i64) -> Recent {
+    Recent {
+        cli,
+        id: Some(id.to_owned()),
+        at,
+        file: Some(PathBuf::from(format!("/store/{cli:?}/{id}.jsonl"))),
+    }
+}
+
+fn ids_of(list: &[Recent]) -> Vec<&str> {
+    list.iter().filter_map(|recent| recent.id.as_deref()).collect()
+}
+
+type Case<'a> = (&'a str, &'a [&'a str], &'a [&'a str], Vec<&'a str>);
+
+#[test]
+fn the_recent_list_leaves_out_what_is_held_by_id_or_by_transcript() {
+    let list = || {
+        vec![
+            recent(Cli::Claude, "a", 900),
+            recent(Cli::Claude, "b", 800),
+            recent(Cli::Codex, "c", 700),
+            recent(Cli::Claude, "d", 600),
+        ]
+    };
+    let file_b = "/store/Claude/b.jsonl";
+    let table: [Case; 4] = [
+        ("nothing held", &[], &[], vec!["a", "b", "c", "d"]),
+        ("held by id", &["a"], &[], vec!["b", "c", "d"]),
+        ("held by transcript", &[], &[file_b], vec!["a", "c", "d"]),
+        ("held by both", &["a"], &[file_b], vec!["c", "d"]),
+    ];
+    for (name, ids, files, want) in table {
+        let ids = ids.iter().map(|id| (*id).to_owned()).collect();
+        let files = files.iter().map(PathBuf::from).collect();
+        assert_eq!(ids_of(&newest_unheld(list(), &ids, &files, 0, 10)), want, "{name}");
+    }
+}
+
+#[test]
+fn the_recent_list_is_newest_first_across_clis_and_cut_to_the_count_after_leaving_out() {
+    let list = vec![
+        recent(Cli::Claude, "old", 100),
+        recent(Cli::Gemini, "newest", 900),
+        recent(Cli::Claude, "held", 800),
+        recent(Cli::Codex, "next", 700),
+        recent(Cli::Claude, "ancient", 5),
+    ];
+    let held = HashSet::from(["held".to_owned()]);
+    let got = newest_unheld(list, &held, &HashSet::new(), 50, 2);
+    assert_eq!(ids_of(&got), ["newest", "next"], "the held one does not use up a place");
+}
+
+#[test]
+fn a_transcript_is_held_through_a_symlinked_path() {
+    let home = tempfile::tempdir().unwrap();
+    let real = home.path().join("real");
+    fs::create_dir_all(&real).unwrap();
+    let file = real.join(format!("{ID_A}.jsonl"));
+    write(&file, "{}\n");
+    let link = home.path().join("link");
+    std::os::unix::fs::symlink(&real, &link).unwrap();
+    let mut held = Held::default();
+    held.add_transcript(&link.join(format!("{ID_A}.jsonl")));
+    let list =
+        vec![Recent { cli: Cli::Claude, id: Some("other".to_owned()), at: 5, file: Some(file) }];
+    assert_eq!(newest_unheld(list, &HashSet::new(), &held.resolved(), 0, 10), []);
+}
+
+#[test]
+fn recent_claude_sessions_carry_their_transcript_title() {
+    let home = tempfile::tempdir().unwrap();
+    let folder = Path::new("/work/acme");
+    let projects = home.path().join(".claude/projects").join(claude_project_dir_name(folder));
+    write(
+        &projects.join(format!("{ID_A}.jsonl")),
+        "{\"type\":\"ai-title\",\"aiTitle\":\"Fix login redirect\"}\n{\"type\":\"custom-title\",\"customTitle\":\"Login work\"}\n",
+    );
+    write(&projects.join(format!("{ID_B}.jsonl")), "{}\n");
+    age(&projects.join(format!("{ID_B}.jsonl")), 3600);
+    let got = recent_sessions(
+        &env(home.path()),
+        &[folder.to_path_buf()],
+        &Held::default(),
+        &TitleCache::default(),
+        2,
+    );
+    let names: Vec<_> = got.iter().map(|s| s.name.as_deref()).collect();
+    assert_eq!(names, [Some("Login work"), None]);
+}
+
+#[test]
+fn a_title_is_read_again_only_after_its_transcript_changed() {
+    let home = tempfile::tempdir().unwrap();
+    let file = home.path().join("t.jsonl");
+    write(&file, "{\"type\":\"ai-title\",\"aiTitle\":\"First\"}\n");
+    let cache = TitleCache::default();
+    assert_eq!(cache.title_of(&file).as_deref(), Some("First"));
+    let stamp = fs::metadata(&file).unwrap();
+    write(&file, "{\"type\":\"ai-title\",\"aiTitle\":\"Other\"}\n");
+    fs::File::options()
+        .write(true)
+        .open(&file)
+        .unwrap()
+        .set_modified(stamp.modified().unwrap())
+        .unwrap();
+    assert_eq!(cache.title_of(&file).as_deref(), Some("First"), "same size and time: not read");
+    write(&file, "{\"type\":\"custom-title\",\"customTitle\":\"Renamed\"}\n");
+    assert_eq!(cache.title_of(&file).as_deref(), Some("Renamed"), "changed: read again");
+    assert_eq!(cache.clone().title_of(&home.path().join("gone.jsonl")), None);
 }
 
 fn request() -> EndRequest {

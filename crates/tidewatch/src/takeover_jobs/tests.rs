@@ -3,6 +3,7 @@ use std::process::Command;
 
 use tidewatch_core::elsewhere::{Activity, Host};
 use tidewatch_core::elsewhere_flags::Flags;
+use tidewatch_core::elsewhere_scan::{Held, TitleCache};
 
 use super::*;
 use crate::takeover::status_of;
@@ -139,7 +140,8 @@ fn scan_spec(folders: Vec<PathBuf>) -> ScanSpec {
     ScanSpec {
         agents: agents(),
         folders,
-        held: HashSet::new(),
+        held: Held::default(),
+        titles: TitleCache::default(),
         roots: HashMap::new(),
         idents: HashMap::new(),
     }
@@ -192,7 +194,7 @@ fn a_folder_looked_up_before_is_not_looked_up_again_and_open_tabs_are_not_recent
     std::fs::write(projects.join(format!("{ID_B}.jsonl")), "{}\n").unwrap();
     let mut spec = scan_spec(vec![work.clone()]);
     spec.roots.insert(work.clone(), None);
-    spec.held.insert(ID_B.to_owned());
+    spec.held.add_id(ID_B);
     let system = Fake::new(PS);
     let Done::Scanned(scanned) = run_scan(&system, &env(home.path()), &spec) else {
         panic!("expected a scan")
@@ -200,6 +202,43 @@ fn a_folder_looked_up_before_is_not_looked_up_again_and_open_tabs_are_not_recent
     assert_eq!(scanned.sessions.len(), 1);
     assert_eq!(system.git_lookups.get(), 0);
     assert_eq!(scanned.roots, HashMap::new());
+}
+
+#[test]
+fn a_scan_lists_one_ended_session_per_folder_and_none_that_a_tab_holds_by_id_or_file() {
+    let home = tempfile::tempdir().unwrap();
+    let work = home.path().join("acme");
+    registry(home.path(), 11, ID, &work, "idle");
+    let projects = home
+        .path()
+        .join(".claude/projects")
+        .join(tidewatch_core::transcript_locate::claude_project_dir_name(&work));
+    std::fs::create_dir_all(&projects).unwrap();
+    let ids = [
+        "aaaaaaaa-0000-4000-8000-000000000001",
+        "aaaaaaaa-0000-4000-8000-000000000002",
+        "aaaaaaaa-0000-4000-8000-000000000003",
+        "aaaaaaaa-0000-4000-8000-000000000004",
+    ];
+    for (n, id) in ids.iter().enumerate() {
+        let file = projects.join(format!("{id}.jsonl"));
+        std::fs::write(&file, "{}\n").unwrap();
+        let at = std::time::SystemTime::now() - Duration::from_secs(60 * (n as u64 + 1));
+        std::fs::File::options().write(true).open(&file).unwrap().set_modified(at).unwrap();
+    }
+    let mut spec = scan_spec(vec![work]);
+    spec.held.add_id(ids[0]);
+    spec.held.add_transcript(&projects.join(format!("{}.jsonl", ids[1])));
+    let Done::Scanned(scanned) = run_scan(&Fake::new(PS), &env(home.path()), &spec) else {
+        panic!("expected a scan")
+    };
+    let stored: Vec<_> = scanned
+        .sessions
+        .iter()
+        .filter(|s| status_of(s) == crate::takeover::Status::NotRunning)
+        .filter_map(|s| s.session_id.as_deref())
+        .collect();
+    assert_eq!(stored, [ids[2]]);
 }
 
 #[test]
