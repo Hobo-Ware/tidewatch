@@ -30,14 +30,14 @@ mod main_icon;
 pub(crate) mod pill;
 mod repo_chip;
 
-pub(crate) const STRIP_H: f32 = 64.0;
-pub(crate) const TAB_H: f32 = 44.0;
-pub(crate) const ICON_BOX: f32 = 44.0;
+pub(crate) const STRIP_H: f32 = 48.0;
+pub(crate) const TAB_H: f32 = 40.0;
+pub(crate) const ICON_BOX: f32 = 40.0;
 pub(crate) const ICON_GLYPH: f32 = 24.0;
 const ICON_GLYPH_SMALL: f32 = 22.0;
 const ICON_RADIUS: f32 = 8.0;
 const TAB_FONT_PX: f32 = 14.0;
-const STRIP_VERTICAL_MARGIN: i8 = 10;
+const STRIP_VERTICAL_MARGIN: i8 = 4;
 const STRIP_SIDE_MARGIN: i8 = 8;
 const STRIP_GAP: f32 = 4.0;
 const STRIP_CORNER: u8 = 10;

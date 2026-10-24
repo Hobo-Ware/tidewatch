@@ -13,12 +13,13 @@ use crate::amphetamine_motion::{Look, STANDARD, bezier};
 use crate::amphetamine_pill::{
     self as pill, Fit, ICON_W, INFINITY, ROLL_S, Slide, clock_texts, left_text, line_fraction,
 };
+use crate::app::strip::ICON_BOX;
 use crate::brand;
 use crate::mascot_motion;
 use crate::screen_kit::{Size, body, mono, quiet_button, selection_row};
 
 pub(crate) const SLOT_W: f32 = ICON_W;
-const SLOT_H: f32 = 44.0;
+const SLOT_H: f32 = ICON_BOX;
 const PILL_H: f32 = 32.0;
 const LABEL_SIZE: f32 = 13.0;
 const LABEL_PAD_LEFT: f32 = 10.0;
