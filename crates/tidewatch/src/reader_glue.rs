@@ -118,6 +118,7 @@ fn prompt_of(status: &AgentStatus) -> Option<Prompt> {
 pub(crate) fn draw(
     ui: &mut Ui,
     area: Rect,
+    tab: u64,
     pane: &mut Pane<PtyTerm>,
     dev: &mut DevReader,
     now: f64,
@@ -142,6 +143,7 @@ pub(crate) fn draw(
     });
     let face = Face::of(&agent.profile_name, &agent.run.agent_id, avatar);
     let facts = Facts {
+        tab,
         source: agent.reader.source(),
         prompt,
         ready,

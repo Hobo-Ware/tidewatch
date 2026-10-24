@@ -243,6 +243,7 @@ impl Tidewatch {
                 let mut asked = reader_glue::draw(
                     ui,
                     terminal,
+                    active_id,
                     pane,
                     &mut self.dev_reader,
                     now,

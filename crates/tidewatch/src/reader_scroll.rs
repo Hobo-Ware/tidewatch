@@ -61,6 +61,12 @@ impl Autoscroll {
     }
 }
 
+/// Whether the view was not drawn in the pass before `pass`: it was behind another tab or screen
+/// and has just come back (or is drawn for the first time).
+pub(crate) fn returned(last_pass: Option<u64>, pass: u64) -> bool {
+    last_pass.is_none_or(|last| pass > last.saturating_add(1))
+}
+
 /// Measured heights of drawn rows, kept per row and thrown away when the width changes (text wraps
 /// differently). A row never drawn gets an estimate from its text.
 #[derive(Debug, Default)]
@@ -166,6 +172,21 @@ mod tests {
 
     fn row(seq: u64, text: &str) -> Row {
         Row { seq, kind: Kind::Assistant, text: text.into() }
+    }
+
+    #[test]
+    fn a_view_has_returned_when_a_pass_went_by_without_drawing_it() {
+        let cases = [
+            (None, 7, true),
+            (Some(6), 7, false),
+            (Some(7), 7, false),
+            (Some(5), 7, true),
+            (Some(0), 40, true),
+            (Some(u64::MAX), u64::MAX, false),
+        ];
+        for (last, pass, want) in cases {
+            assert_eq!(returned(last, pass), want, "last {last:?} pass {pass}");
+        }
     }
 
     #[test]
