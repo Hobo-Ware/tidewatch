@@ -126,3 +126,57 @@ fn plain_enter_is_a_new_line_and_a_blank_task_never_starts() {
     frame(&ctx, &mut run, vec![Event::Text("two".into())]);
     assert_eq!(run.ui.task, "one\ntwo");
 }
+
+fn painted<'a>(
+    shapes: &'a [egui::epaint::ClippedShape],
+    needle: &str,
+) -> Option<(&'a egui::epaint::TextShape, Rect)> {
+    shapes.iter().find_map(|clipped| match &clipped.shape {
+        egui::Shape::Text(text) if text.galley.text().contains(needle) => {
+            Some((text, clipped.clip_rect))
+        }
+        _ => None,
+    })
+}
+
+#[test]
+fn sixty_typed_lines_scroll_inside_the_task_box_and_keep_start_run_on_screen() {
+    let (ctx, mut run) = setup();
+    let mut step = 0;
+    let mut column = Rect::NOTHING;
+    let mut draw = |events: Vec<Event>, run: &mut TabRun| {
+        step += 1;
+        let raw = RawInput {
+            screen_rect: Some(Rect::from_min_size(pos2(0.0, 0.0), vec2(1200.0, 700.0))),
+            events,
+            focused: true,
+            time: Some(10.0 + f64::from(step) * 0.05),
+            ..RawInput::default()
+        };
+        ctx.run_ui(raw, |ui| {
+            egui::Panel::bottom("statusbar")
+                .exact_size(crate::status_bar::HEIGHT)
+                .frame(Frame::NONE)
+                .show(ui, |_| {});
+            egui::CentralPanel::default().frame(Frame::NONE).show(ui, |ui| {
+                column = ui.max_rect();
+                show(ui, column, run);
+            });
+        })
+    };
+    for _ in 0..2 {
+        draw(vec![], &mut run);
+    }
+    for line in 1..=60 {
+        draw(vec![Event::Text(format!("line {line}")), key(Modifiers::NONE)], &mut run);
+    }
+    draw(vec![Event::Text("line 61".into())], &mut run);
+    let out = (0..20).map(|_| draw(vec![], &mut run)).last().unwrap();
+    let (hint, _) = painted(&out.shapes, "starts").expect("the footer is painted");
+    let hint = Rect::from_min_size(hint.pos, hint.galley.size());
+    assert!(hint.bottom() <= column.bottom(), "footer {hint:?} below the window {column:?}");
+    let (text, clip) = painted(&out.shapes, "line 61").expect("the last typed line is painted");
+    let row = text.galley.rows.last().unwrap().rect().translate(text.pos.to_vec2());
+    assert!(clip.contains_rect(row.shrink(0.5)), "cursor row {row:?} outside visible {clip:?}");
+    assert!(clip.bottom() < hint.top(), "the box {clip:?} runs into the footer {hint:?}");
+}

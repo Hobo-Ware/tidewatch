@@ -1,6 +1,8 @@
 //! The card a workflow tab shows until Start run, where its task is typed; nothing runs before it.
 
-use egui::{Frame, Id, Key, Modifiers, Rect, RichText, TextEdit, Ui, UiBuilder, pos2, vec2};
+use egui::{
+    Frame, Id, Key, Modifiers, Rect, RichText, ScrollArea, TextEdit, Ui, UiBuilder, pos2, vec2,
+};
 use tidewatch_core::runner::Runner;
 use tidewatch_core::test_command;
 use tidewatch_core::workflows::Gate;
@@ -15,6 +17,9 @@ const COLUMN_W: f32 = 760.0;
 const CARD_H: f32 = 56.0;
 const CARD_GAP: f32 = 8.0;
 const PER_ROW: usize = 5;
+const TASK_ROWS: usize = 3;
+const TASK_FRAME_H: f32 = 12.0;
+const SECTION_GAP: f32 = 18.0;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct Card {
@@ -79,9 +84,10 @@ pub(crate) fn show(ui: &mut Ui, area: Rect, run: &mut TabRun) -> Option<String> 
     let focused = child.memory(|m| m.has_focus(id));
     let command_enter =
         focused && child.input_mut(|i| i.consume_key(Modifiers::COMMAND, Key::Enter));
-    task_box(&mut child, run, id);
+    let cards = cards(run.runner(), run.test_why());
+    task_box(&mut child, run, id, below_task(cards.len()));
     child.add_space(18.0);
-    stage_cards(&mut child, &cards(run.runner(), run.test_why()));
+    stage_cards(&mut child, &cards);
     child.add_space(18.0);
     let mut start = command_enter;
     let hint = format!(
@@ -95,20 +101,36 @@ pub(crate) fn show(ui: &mut Ui, area: Rect, run: &mut TabRun) -> Option<String> 
     (start && !run.ui.task.trim().is_empty()).then(|| run.ui.task.clone())
 }
 
-fn task_box(ui: &mut Ui, run: &mut TabRun, id: Id) {
+fn below_task(cards: usize) -> f32 {
+    let rows = cards.div_ceil(PER_ROW) as f32;
+    SECTION_GAP + rows * (CARD_H + CARD_GAP) + SECTION_GAP + Size::Regular.height()
+}
+
+fn task_box(ui: &mut Ui, run: &mut TabRun, id: Id, below: f32) {
     ui.label(RichText::new("Task").size(12.5).color(brand::MUTED));
     ui.add_space(6.0);
+    let font = egui::FontId::proportional(16.0);
+    let rows = "\n".repeat(TASK_ROWS - 1);
+    let min_h = ui.painter().layout(rows, font.clone(), brand::TEXT, f32::INFINITY).size().y;
+    let max_h = (ui.available_height() - below - TASK_FRAME_H).max(min_h);
     let field = field_frame(ui, |ui| {
-        ui.add(
-            TextEdit::multiline(&mut run.ui.task)
-                .id(id)
-                .frame(Frame::NONE)
-                .desired_rows(3)
-                .desired_width(f32::INFINITY)
-                .hint_text("Describe the change, in a sentence or two")
-                .font(egui::FontId::proportional(16.0))
-                .text_color(brand::TEXT),
-        )
+        ScrollArea::vertical()
+            .id_salt("workflow-task-scroll")
+            .max_height(max_h)
+            .auto_shrink([false, true])
+            .show(ui, |ui| {
+                ui.add(
+                    TextEdit::multiline(&mut run.ui.task)
+                        .id(id)
+                        .frame(Frame::NONE)
+                        .desired_rows(TASK_ROWS)
+                        .desired_width(f32::INFINITY)
+                        .hint_text("Describe the change, in a sentence or two")
+                        .font(font)
+                        .text_color(brand::TEXT),
+                )
+            })
+            .inner
     });
     if std::mem::take(&mut run.ui.focus_task) {
         field.request_focus();
