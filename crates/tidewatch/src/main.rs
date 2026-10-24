@@ -87,6 +87,7 @@ mod meeseeks_glue;
 mod meeseeks_model;
 mod meeseeks_view;
 mod merge_cleanup;
+mod merge_groups;
 mod new_tab;
 mod new_tab_cards;
 mod new_tab_done;
