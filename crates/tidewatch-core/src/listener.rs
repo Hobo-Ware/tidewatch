@@ -12,7 +12,7 @@
 //! `tiny_http` out. Events leave through an `mpsc` channel plus a repaint callback, so the UI never
 //! waits on a socket.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fmt::Write as _;
 use std::fs::File;
 use std::io::{self, Read, Write};
@@ -27,10 +27,14 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
+use crate::avatar_ask::{self, Face};
+use crate::avatar_store;
 use crate::events::{Repaint, TabEvent, TabMessage};
 use crate::launch::HookListener;
 use crate::mcp::{AskWait, McpReply, ToolCtx, handle_post};
-use crate::paths::{TidewatchPaths, progress_file_beside};
+use crate::paths::{
+    TidewatchPaths, avatar_asked_file_beside, avatar_file_beside, progress_file_beside,
+};
 use crate::status::parse_hook;
 
 /// Where the listener binds: loopback only, a random free port (PLAN.md, Constants).
@@ -87,6 +91,8 @@ struct Shared {
     repaint: Repaint,
     notes_lock: Mutex<()>,
     ask_timeout_ms: AtomicU64,
+    avatar_ask_lock: Mutex<()>,
+    avatar_ask_exempt: Mutex<HashSet<u64>>,
 }
 
 impl Shared {
@@ -150,6 +156,15 @@ impl Listener {
         self.shared.ask_timeout_ms.store(millis, Ordering::SeqCst);
     }
 
+    /// The tabs whose prompts never carry the avatar ask: a Meeseeks wears a fixed face, and a
+    /// host that writes nothing must not leave a marker. Replaces the earlier list.
+    pub fn exempt_from_avatar_ask(&self, tabs: &[u64]) {
+        let mut exempt =
+            self.shared.avatar_ask_exempt.lock().unwrap_or_else(PoisonError::into_inner);
+        exempt.clear();
+        exempt.extend(tabs.iter().copied());
+    }
+
     /// The port the listener serves.
     #[must_use]
     pub fn port(&self) -> u16 {
@@ -168,6 +183,8 @@ impl Listener {
             events,
             repaint,
             notes_lock: Mutex::new(()),
+            avatar_ask_lock: Mutex::new(()),
+            avatar_ask_exempt: Mutex::new(HashSet::new()),
             ask_timeout_ms: AtomicU64::new(
                 u64::try_from(ASK_TIMEOUT.as_millis()).unwrap_or(u64::MAX),
             ),
@@ -392,7 +409,47 @@ fn hook_route(shared: &Shared, entry: &Entry, agent: &str, request: &Request) ->
     if let Some(event) = parse_hook(agent, &payload) {
         shared.emit(entry, TabEvent::Hook(event));
     }
-    Response::json(200, "{}".into())
+    Response::json(
+        200,
+        avatar_answer(shared, entry, agent, &payload).unwrap_or_else(|| "{}".into()),
+    )
+}
+
+/// The answer to a prompt of a tab with no avatar that was never asked for one: extra context that
+/// asks for it. The marker is written first, so a tab whose state folder cannot be written is not
+/// asked on every prompt.
+fn avatar_answer(
+    shared: &Shared,
+    entry: &Entry,
+    agent: &str,
+    payload: &serde_json::Value,
+) -> Option<String> {
+    let on_prompt = payload.get("hook_event_name").and_then(serde_json::Value::as_str)
+        == Some("UserPromptSubmit");
+    if !on_prompt || !avatar_ask::answers_prompts(agent) {
+        return None;
+    }
+    let exempt = shared
+        .avatar_ask_exempt
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .contains(&entry.tab_id);
+    let _one_at_a_time = shared.avatar_ask_lock.lock().unwrap_or_else(PoisonError::into_inner);
+    let marker = avatar_asked_file_beside(&entry.notes_file);
+    let face = if exempt {
+        Face::Fixed
+    } else if avatar_store::load(&avatar_file_beside(&entry.notes_file)).is_some() {
+        Face::Picture
+    } else {
+        Face::Letter
+    };
+    let due = avatar_ask::due(&avatar_ask::Facts {
+        answers_prompts: true,
+        face,
+        asked: avatar_store::was_asked(&marker),
+        on_prompt,
+    });
+    (due && avatar_store::mark_asked(&marker).is_ok()).then(avatar_ask::answer)
 }
 
 /// Whether the client of `stream` still waits for its reply: false once it has closed the
@@ -656,7 +713,7 @@ mod tests {
     use super::*;
     use crate::notes::Notes;
     use serde_json::{Value, json};
-    use std::path::Path;
+    use std::path::{Path, PathBuf};
     use std::sync::atomic::AtomicUsize;
 
     struct Fixture {
@@ -681,6 +738,8 @@ mod tests {
                 counter.fetch_add(1, Ordering::SeqCst);
             }),
             notes_lock: Mutex::new(()),
+            avatar_ask_lock: Mutex::new(()),
+            avatar_ask_exempt: Mutex::new(HashSet::new()),
             ask_timeout_ms: AtomicU64::new(1000),
         });
         let server = TcpListener::bind(HOOK_BIND).unwrap();
@@ -732,6 +791,88 @@ mod tests {
     const STOP: &str =
         r#"{"hook_event_name":"Stop","session_id":"s1","last_assistant_message":"done"}"#;
     const INIT: &str = r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}"#;
+
+    const PROMPT: &str =
+        r#"{"hook_event_name":"UserPromptSubmit","session_id":"s1","prompt":"hi"}"#;
+
+    fn asks_for_an_avatar(response: &Response) -> bool {
+        response.status == 200
+            && body_json(response)["hookSpecificOutput"]["additionalContext"]
+                .as_str()
+                .is_some_and(|context| context.contains("set_avatar"))
+    }
+
+    fn notes_of(f: &Fixture, token: &str) -> PathBuf {
+        f.shared.entry(token).unwrap().notes_file.clone()
+    }
+
+    #[test]
+    fn the_first_prompt_of_a_tab_with_no_avatar_is_answered_with_the_ask_and_only_the_first() {
+        let f = fixture();
+        let token = f.register(1, "a");
+        let marker = avatar_asked_file_beside(&notes_of(&f, &token));
+        let first = f.send("POST", "/hook/claude", Some(&token), PROMPT);
+        assert!(asks_for_an_avatar(&first), "{}", first.body);
+        assert_eq!(body_json(&first)["hookSpecificOutput"]["hookEventName"], "UserPromptSubmit");
+        assert!(marker.exists());
+        let second = f.send("POST", "/hook/claude", Some(&token), PROMPT);
+        assert_eq!(second.body, "{}");
+        assert_eq!(f.events().len(), 2, "the prompt is still a status event both times");
+    }
+
+    #[test]
+    fn a_tab_asked_before_a_tab_with_a_picture_and_a_tab_that_is_exempt_are_not_asked() {
+        let f = fixture();
+        let asked = f.register(1, "asked");
+        avatar_store::mark_asked(&avatar_asked_file_beside(&notes_of(&f, &asked))).unwrap();
+        let drawn = f.register(2, "drawn");
+        let svg = "<svg><circle cx=\"1\" cy=\"1\" r=\"1\"/></svg>";
+        avatar_store::save(
+            &avatar_file_beside(&notes_of(&f, &drawn)),
+            &crate::avatar::clean(svg, "a dot").unwrap(),
+        )
+        .unwrap();
+        let fixed = f.register(3, "fixed");
+        let fixed_marker = avatar_asked_file_beside(&notes_of(&f, &fixed));
+        let listener_exempt = [3];
+        f.shared.avatar_ask_exempt.lock().unwrap().extend(listener_exempt);
+        for (what, token) in [("asked", &asked), ("drawn", &drawn), ("fixed", &fixed)] {
+            let response = f.send("POST", "/hook/claude", Some(token), PROMPT);
+            assert_eq!(response.body, "{}", "{what}");
+        }
+        assert!(!fixed_marker.exists(), "an exempt tab leaves no marker");
+    }
+
+    #[test]
+    fn only_a_claude_prompt_carries_the_ask() {
+        let f = fixture();
+        let token = f.register(1, "a");
+        let marker = avatar_asked_file_beside(&notes_of(&f, &token));
+        let others = [
+            ("/hook/claude", STOP),
+            ("/hook/claude", r#"{"hook_event_name":"SessionStart"}"#),
+            ("/hook/copilot", PROMPT),
+            ("/hook/codex", PROMPT),
+            ("/hook/gemini", r#"{"hook_event_name":"BeforeAgent"}"#),
+        ];
+        for (path, body) in others {
+            let response = f.send("POST", path, Some(&token), body);
+            assert_eq!(response.body, "{}", "{path} {body}");
+        }
+        assert!(!marker.exists());
+    }
+
+    #[test]
+    fn a_tab_whose_marker_cannot_be_written_is_not_asked() {
+        let f = fixture();
+        let token = f.register(1, "a");
+        let marker = avatar_asked_file_beside(&notes_of(&f, &token));
+        let state_dir = marker.parent().unwrap();
+        std::fs::create_dir_all(state_dir.parent().unwrap()).unwrap();
+        std::fs::write(state_dir, "not a folder").unwrap();
+        let response = f.send("POST", "/hook/claude", Some(&token), PROMPT);
+        assert_eq!(response.body, "{}");
+    }
 
     #[test]
     fn a_missing_or_unknown_token_is_401_on_every_route_and_method() {

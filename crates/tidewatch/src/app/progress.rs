@@ -25,6 +25,7 @@ use crate::{due_view, flow_glue};
 use tidewatch_core::progress::Mark;
 
 const REDRAW_ASK: &str = "Call set_avatar again with a fresh idea for this task.";
+const DRAW_ASK: &str = tidewatch_core::avatar_ask::ASK;
 
 impl Tidewatch {
     pub(super) fn drive_progress(&mut self, ctx: &egui::Context) {
@@ -72,6 +73,12 @@ impl Tidewatch {
                 let now = ctx.input(|i| i.time);
                 self.ask_agent(tab, REDRAW_ASK, ctx, now);
             }
+            agent_avatar::Choice::Draw => {
+                let now = ctx.input(|i| i.time);
+                if self.ask_agent(tab, DRAW_ASK, ctx, now) {
+                    self.remember_avatar_ask(tab, ctx);
+                }
+            }
             agent_avatar::Choice::UseLetter => {
                 let notes = self
                     .tabs
@@ -83,6 +90,16 @@ impl Tidewatch {
                     self.avatar_live.clear(tab, &notes, ctx);
                 }
             }
+        }
+    }
+
+    fn notes_of(&self, tab: u64) -> Option<std::path::PathBuf> {
+        self.tabs.items().iter().find(|t| t.id == tab)?.pane.agent.as_ref()?.run.notes_file.clone()
+    }
+
+    fn remember_avatar_ask(&mut self, tab: u64, ctx: &egui::Context) {
+        if let Some(notes) = self.notes_of(tab) {
+            self.avatar_live.mark_asked(&notes, ctx);
         }
     }
 
@@ -106,6 +123,9 @@ impl Tidewatch {
             .collect();
         self.avatar_live.fixed_faces(&meeseeks, ctx);
         self.avatar_live.tick(&facts, ctx);
+        if let Some(listener) = self.hooks.listener() {
+            listener.exempt_from_avatar_ask(&self.avatar_live.exempt_from_ask(&facts));
+        }
         let mut wake = self.job_live.tick(&facts, ctx, now_ms);
         for tab in self.tabs.items() {
             let (Body::Shell(term), Some(_)) = (&tab.pane.body, &tab.pane.agent) else { continue };
@@ -151,7 +171,9 @@ impl Tidewatch {
     ) {
         for click in clicks {
             match click {
-                due_view::Action::Ask(text) => self.ask_agent(tab, &text, ctx, now),
+                due_view::Action::Ask(text) => {
+                    self.ask_agent(tab, &text, ctx, now);
+                }
                 due_view::Action::Snooze(what) => {
                     let key = self.due_key(tab, &what);
                     if let Some(key) = key {
@@ -169,7 +191,13 @@ impl Tidewatch {
     }
 
     /// Pastes the message and presses Enter, only while the agent is idle.
-    pub(super) fn ask_agent(&mut self, tab: u64, text: &str, ctx: &egui::Context, now: f64) {
+    pub(super) fn ask_agent(
+        &mut self,
+        tab: u64,
+        text: &str,
+        ctx: &egui::Context,
+        now: f64,
+    ) -> bool {
         let status = self
             .tabs
             .items()
@@ -179,11 +207,12 @@ impl Tidewatch {
             .map(|agent| agent.run.status().clone());
         if let Some(reason) = ask_blocked(status.as_ref()) {
             self.show_toast(reason, ctx);
-            return;
+            return false;
         }
         flow_glue::paste(&mut self.tabs, tab, text);
         self.flow.queue_enter(tab, now);
         ctx.request_repaint_after(Duration::from_secs_f64(ENTER_DELAY_SECS + WAKE_SLACK_S));
+        true
     }
 
     /// Tells the desktop about each item that turned due, once a day, while the window is away.

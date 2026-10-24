@@ -22,6 +22,15 @@ pub fn clear(file: &Path) -> std::io::Result<()> {
     }
 }
 
+#[must_use]
+pub fn was_asked(marker: &Path) -> bool {
+    marker.exists()
+}
+
+pub fn mark_asked(marker: &Path) -> std::io::Result<()> {
+    write_atomic(marker, "")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -57,5 +66,16 @@ mod tests {
         save(&file, &clean(SVG, "a dot").unwrap()).unwrap();
         clear(&file).unwrap();
         assert!(!file.exists());
+    }
+
+    #[test]
+    fn the_asked_marker_is_absent_until_marked_and_marking_twice_is_fine() {
+        let dir = tempfile::tempdir().unwrap();
+        let marker = dir.path().join("tab").join("avatar-asked");
+        assert!(!was_asked(&marker));
+        mark_asked(&marker).unwrap();
+        assert!(was_asked(&marker));
+        mark_asked(&marker).unwrap();
+        assert!(was_asked(&marker));
     }
 }

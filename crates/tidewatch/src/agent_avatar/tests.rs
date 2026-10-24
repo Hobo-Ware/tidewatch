@@ -111,3 +111,11 @@ fn a_choice_is_taken_once_and_nothing_is_chosen_before_it() {
     assert_eq!(take_choice(&ctx), Some((4, Choice::Redraw)));
     assert_eq!(take_choice(&ctx), None);
 }
+
+#[test]
+fn a_picture_offers_redraw_and_use_letter_and_a_letter_offers_draw_avatar() {
+    let labels = |picture| choices(picture).iter().map(|(label, _)| *label).collect::<Vec<_>>();
+    assert_eq!(labels(true), ["Redraw", "Use letter"]);
+    assert_eq!(labels(false), ["Draw avatar"]);
+    assert_eq!(choices(false)[0].1, Choice::Draw);
+}
