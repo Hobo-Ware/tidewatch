@@ -40,7 +40,12 @@ impl Tidewatch {
             tabs: self
                 .tabs
                 .in_group(group)
-                .map(|(_, tab)| TabRow::new(tab.title.clone(), tab.park.is_some()))
+                .map(|(_, tab)| {
+                    TabRow::new(
+                        crate::tab_title::label(tab.pane.agent.as_ref(), &tab.title),
+                        tab.park.is_some(),
+                    )
+                })
                 .collect(),
             active: active.unwrap_or_default(),
             repos: self.workspaces.iter().map(Workspace::chip_label).collect(),

@@ -508,7 +508,7 @@ fn the_tooltip_names_the_number_the_chord_and_the_job() {
         ("backfill", 10, None, "backfill\nTab 10"),
     ];
     for (title, number, job, want) in cases {
-        let got = tab_tip(title, number, job);
+        let got = tab_tip(title, title, number, job);
         if cfg!(target_os = "macos") {
             assert_eq!(got, want);
         } else {
@@ -859,4 +859,78 @@ fn the_main_icon_tip_names_the_repo_the_branch_the_chord_and_a_running_command()
         main_icon::tip("Other: notes", None, true),
         format!("main \u{b7} Other: notes \u{b7} {keys}\nRunning a command")
     );
+}
+
+fn titled_strip(prepare: impl FnOnce(&mut crate::pane::AgentTab)) -> (Vec<(String, Rect)>, String) {
+    use crate::agent_run::AgentRun;
+    use crate::pane::AgentTab;
+    let ctx = crate::fonts::test_context();
+    let mut agent = AgentTab::new("Builder".into(), AgentRun::setting_up("claude".into(), 0.0));
+    prepare(&mut agent);
+    let mut pane = Pane::shell(1_u32);
+    pane.agent = Some(agent);
+    let mut tabs = Tabs::new(Pane::shell(0));
+    tabs.push_in(0, "brave-otter".into(), pane);
+    let mut texts = Vec::new();
+    let mut tip = String::new();
+    for _ in 0..2 {
+        let raw = RawInput {
+            screen_rect: Some(Rect::from_min_size(pos2(0.0, 0.0), vec2(800.0, 200.0))),
+            focused: true,
+            ..RawInput::default()
+        };
+        let mut actions = Vec::new();
+        let output = ctx.run_ui(raw, |ui| {
+            egui::Panel::top("tabbar").exact_size(TAB_H + 6.0).show(ui, |ui| {
+                ui.horizontal(|ui| {
+                    tab_row(
+                        ui,
+                        &tabs,
+                        260.0,
+                        0.0,
+                        &mut actions,
+                        (
+                            |_: &Pane<u32>| (Progress::default(), CmdState::default()),
+                            |_| TabExtras::default(),
+                        ),
+                    );
+                });
+            });
+        });
+        texts.clear();
+        for clipped in &output.shapes {
+            collect_text(&clipped.shape, &mut texts);
+        }
+        tip = tabs.items()[1]
+            .pane
+            .agent
+            .as_ref()
+            .map(|agent| crate::tab_title::label(Some(agent), &tabs.items()[1].title))
+            .unwrap_or_default();
+    }
+    (texts, tip)
+}
+
+#[test]
+fn an_agent_tab_is_labelled_by_its_work_and_not_by_the_worktree_name() {
+    use crate::agent_run::TermSnapshot;
+    let (texts, _) = titled_strip(|_| {});
+    assert!(texts.iter().any(|(text, _)| text.contains("brave-otter")), "{texts:?}");
+    let (texts, label) = titled_strip(|agent| agent.run.set_goal(Some("Fix the login redirect")));
+    assert!(texts.iter().any(|(text, _)| text.contains("Fix the login redirect")), "{texts:?}");
+    assert!(texts.iter().all(|(text, _)| !text.contains("brave-otter")), "{texts:?}");
+    assert_eq!(label, "Fix the login redirect");
+    let (texts, _) = titled_strip(|agent| {
+        agent.run.set_goal(Some("Ledger goal"));
+        let title = Some("\u{2733} Add retry to sync".to_owned());
+        agent.run.feed(TermSnapshot { title, ..TermSnapshot::default() }, 1.0);
+    });
+    assert!(texts.iter().any(|(text, _)| text.contains("Add retry to sync")), "{texts:?}");
+    assert!(texts.iter().all(|(text, _)| !text.contains("Ledger goal")), "{texts:?}");
+}
+
+#[test]
+fn the_tooltip_names_the_worktree_under_the_work() {
+    let got = tab_tip("Fix login", "brave-otter", 12, None);
+    assert_eq!(got, "Fix login\nbrave-otter\nTab 12");
 }

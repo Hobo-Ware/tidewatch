@@ -41,6 +41,7 @@ pub(crate) enum Message {
     Found(PathBuf),
     Missing,
     Entries(Vec<Entry>),
+    Title(String),
 }
 
 enum Command {
@@ -99,6 +100,7 @@ fn run(
     let mut tail: Option<Tail> = None;
     let mut empty_reads = 0_u32;
     let mut said_missing = false;
+    let mut sent_title: Option<String> = None;
     let mut delay = Duration::ZERO;
     let send = |message: Message| {
         let sent = messages.send(message).is_ok();
@@ -139,6 +141,17 @@ fn run(
             empty_reads = 0;
         }
         let entries = tail.as_mut().map(Tail::poll).unwrap_or_default();
+        let title = tail
+            .as_ref()
+            .and_then(Tail::session_title)
+            .filter(|title| sent_title.as_deref() != Some(*title))
+            .map(str::to_owned);
+        if let Some(title) = title {
+            sent_title = Some(title.clone());
+            if !send(Message::Title(title)) {
+                return;
+            }
+        }
         if entries.is_empty() {
             empty_reads = empty_reads.saturating_add(1);
         } else {
@@ -259,5 +272,42 @@ mod tests {
         let seen = wait_for(&feed, |m| matches!(m, Message::Entries(_)));
         assert!(seen.iter().any(|m| matches!(m, Message::Entries(e) if e[0].text == "two")));
         assert!(started.elapsed() < Duration::from_secs(1));
+    }
+
+    #[test]
+    fn a_session_title_is_sent_once_and_again_when_it_changes() {
+        let home = tempfile::tempdir().unwrap();
+        let cwd = home.path().join("work");
+        fs::create_dir_all(&cwd).unwrap();
+        let dir = home
+            .path()
+            .join(".claude")
+            .join("projects")
+            .join(tidewatch_core::transcript_locate::claude_project_dir_name(&cwd));
+        fs::create_dir_all(&dir).unwrap();
+        let id = "33333333-aaaa-bbbb-cccc-000000000003";
+        let file = dir.join(format!("{id}.jsonl"));
+        let title = |text: &str| format!("{{\"type\":\"ai-title\",\"aiTitle\":\"{text}\"}}\n");
+        fs::write(&file, title("Fix login redirect")).unwrap();
+        let mut locator = Locator::new(home.path(), &cwd);
+        locator.session_id = Some(id.into());
+        let feed = Feed::start(Source::Claude, locator, || {});
+        let titles = |seen: &[Message]| -> Vec<String> {
+            seen.iter()
+                .filter_map(|m| match m {
+                    Message::Title(title) => Some(title.clone()),
+                    _ => None,
+                })
+                .collect()
+        };
+        let seen = wait_for(&feed, |m| matches!(m, Message::Title(_)));
+        assert_eq!(titles(&seen), ["Fix login redirect"]);
+        let mut text = fs::read_to_string(&file).unwrap();
+        text.push_str(&title("Fix login redirect"));
+        text.push_str(&title("Send people back after login"));
+        fs::write(&file, text).unwrap();
+        feed.poke();
+        let seen = wait_for(&feed, |m| matches!(m, Message::Title(_)));
+        assert_eq!(titles(&seen), ["Send people back after login"]);
     }
 }

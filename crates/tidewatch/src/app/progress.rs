@@ -56,6 +56,12 @@ impl Tidewatch {
             .collect();
         self.progress.tick(&facts, ctx);
         let open: std::collections::HashSet<u64> = facts.iter().map(|facts| facts.id).collect();
+        for tab in self.tabs.items_mut() {
+            if let Some(agent) = tab.pane.agent.as_mut() {
+                let goal = self.progress.ledger(tab.id).map(|known| known.ledger.goal.as_str());
+                agent.run.set_goal(goal);
+            }
+        }
         self.progress_ui.forget_except(|id| open.contains(&id));
     }
 

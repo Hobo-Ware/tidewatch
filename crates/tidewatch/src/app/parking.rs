@@ -168,7 +168,8 @@ impl Tidewatch {
         } else if matches!(tab.pane.body, Body::Draft(_)) {
             Some("Start or close the new tab first.".to_owned())
         } else if needs_you(&tab.pane) {
-            Some(format!("{} needs you, so it stays in the strip.", tab.title))
+            let label = crate::tab_title::label(tab.pane.agent.as_ref(), &tab.title);
+            Some(format!("{label} needs you, so it stays in the strip."))
         } else {
             None
         };

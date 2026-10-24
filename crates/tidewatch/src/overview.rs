@@ -138,7 +138,7 @@ pub(crate) fn collect<T>(
                 .map_or_else(|| folder.clone(), |worktree| worktree.branch.clone());
             Some(Row {
                 tab_id: tab.id,
-                title: tab.title.clone(),
+                title: crate::tab_title::label(Some(agent), &tab.title),
                 place: label.to_owned(),
                 profile: agent.profile_name.clone(),
                 workflow: agent.workflow.as_ref().map(|run| run.position()),
@@ -396,6 +396,19 @@ mod tests {
         assert_eq!(titles(&input.rows), ["brave-otter", "Reviewer"]);
         assert_eq!(input.rows[0].elapsed, 5.0);
         assert_eq!(input.rows[0].status, AgentStatus::SettingUp);
+    }
+
+    #[test]
+    fn a_row_carries_the_work_of_its_tab_and_not_the_worktree_name() {
+        let mut agent = AgentTab::new("Builder".into(), AgentRun::setting_up("claude".into(), 0.0));
+        agent.run.set_goal(Some("Fix the login redirect"));
+        let mut tabs: Tabs<Pane<u32>> = Tabs::new(Pane::shell(0));
+        tabs.push(
+            "brave-otter".into(),
+            Pane { body: Body::Shell(1), worktree: None, agent: Some(agent) },
+        );
+        let input = collect("web", Path::new("/work/web"), 0, &tabs, 0.0);
+        assert_eq!(titles(&input.rows), ["Fix the login redirect"]);
     }
 
     #[test]

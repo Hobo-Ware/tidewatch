@@ -320,7 +320,8 @@ impl Tidewatch {
                         });
                     crate::park::reason_line(park, now_ms, job, schedule)
                 });
-                Some(pill::Row { index, name: tab.title.clone(), face, line })
+                let name = crate::tab_title::label(tab.pane.agent.as_ref(), &tab.title);
+                Some(pill::Row { index, name, face, line })
             })
             .collect()
     }
@@ -369,9 +370,10 @@ fn tab_row<T>(
         let TabExtras { ring, job, avatar, mood } =
             agent.map(|_| extras(tab.id)).unwrap_or_default();
         let face = agent.map(|agent| Face::of(&agent.profile_name, &agent.run.agent_id, avatar));
+        let label = crate::tab_title::label(agent, &tab.title);
         let title = match (&face, draft) {
             (_, true) => String::new(),
-            (Some(_), false) => face_title(ui, &tab.title, width, ring.is_some()),
+            (Some(_), false) => face_title(ui, &label, width, ring.is_some()),
             (None, false) => tab.title.clone(),
         };
         let number = face.is_none().then_some(position + 1);
@@ -422,7 +424,7 @@ fn tab_row<T>(
         };
         tab_menu(&resp, i, tab.id, &menu, actions);
         let resp = if agent.is_some() {
-            resp.on_hover_text(tab_tip(&tab.title, position + 1, job.as_ref()))
+            resp.on_hover_text(tab_tip(&label, &tab.title, position + 1, job.as_ref()))
         } else {
             resp
         };
@@ -490,16 +492,17 @@ fn paint_struggle(painter: &egui::Painter, tab: egui::Rect) {
     painter.rect_filled(bar, CornerRadius::same(1), brand::ORANGE);
 }
 
-fn tab_tip(title: &str, number: usize, job: Option<&TabJob>) -> String {
+fn tab_tip(label: &str, name: &str, number: usize, job: Option<&TabJob>) -> String {
     let keys = number.checked_sub(1).map(Command::SelectTab).map(Command::keys).unwrap_or_default();
     let place = if number <= 9 && !keys.is_empty() {
         format!("Tab {number} ({keys})")
     } else {
         format!("Tab {number}")
     };
+    let head = if label == name { label.to_owned() } else { format!("{label}\n{name}") };
     match job {
-        Some(job) => format!("{title}\n{place}\n{}", job.tip),
-        None => format!("{title}\n{place}"),
+        Some(job) => format!("{head}\n{place}\n{}", job.tip),
+        None => format!("{head}\n{place}"),
     }
 }
 
