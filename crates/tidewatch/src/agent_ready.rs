@@ -184,4 +184,59 @@ mod tests {
         frame(&ctx, vec![Event::Text("  ".into())], &mut text, &mut focus);
         assert_eq!(frame(&ctx, vec![enter(false)], &mut text, &mut focus), None);
     }
+
+    fn frame_with_paste(ctx: &egui::Context, pasted: &str, text: &mut String, focus: &mut bool) {
+        let raw = RawInput {
+            screen_rect: Some(Rect::from_min_size(pos2(0.0, 0.0), vec2(800.0, 400.0))),
+            focused: true,
+            ..RawInput::default()
+        };
+        let _ = ctx.run_ui(raw, |ui| {
+            crate::image_paste::inject_paste(ui.ctx(), pasted.to_owned());
+            let rect = Rect::from_min_size(pos2(0.0, 200.0), vec2(800.0, COMPOSER_H));
+            composer(ui, rect, text, focus, ready());
+        });
+    }
+
+    #[test]
+    fn an_image_only_cmd_v_puts_the_saved_path_in_the_composer() {
+        use crate::image_paste::testing::screenshot;
+        use crate::image_paste::{Delivery, resolve};
+        use tidewatch_core::image_paste::Target;
+
+        let (ctx, mut text, mut focus) = started();
+        frame(&ctx, vec![Event::Text("see ".into())], &mut text, &mut focus);
+        let dir = tempfile::tempdir().unwrap();
+        let Delivery::Text(path) = resolve(&mut screenshot(), Target::TextField, dir.path(), 3)
+        else {
+            panic!("an image-only clipboard in a text field must give a path");
+        };
+        frame_with_paste(&ctx, &path, &mut text, &mut focus);
+        assert_eq!(text, format!("see {path}"));
+        assert!(std::path::Path::new(&path).is_file());
+    }
+
+    #[test]
+    fn a_clipboard_with_text_and_a_picture_still_pastes_the_text() {
+        use crate::image_paste::testing::{Fake, screenshot};
+        use crate::image_paste::{Delivery, resolve};
+        use tidewatch_core::image_paste::{Clip, Target};
+
+        let (ctx, mut text, mut focus) = started();
+        let dir = tempfile::tempdir().unwrap();
+        let mut mixed = Fake { clip: Clip::TextAndImage, ..screenshot() };
+        assert_eq!(resolve(&mut mixed, Target::TextField, dir.path(), 3), Delivery::Nothing);
+        let raw = RawInput {
+            screen_rect: Some(Rect::from_min_size(pos2(0.0, 0.0), vec2(800.0, 400.0))),
+            events: vec![Event::Paste("copied words".into())],
+            focused: true,
+            ..RawInput::default()
+        };
+        let _ = ctx.run_ui(raw, |ui| {
+            let rect = Rect::from_min_size(pos2(0.0, 200.0), vec2(800.0, COMPOSER_H));
+            composer(ui, rect, &mut text, &mut focus, ready());
+        });
+        assert_eq!(text, "copied words");
+        assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 0);
+    }
 }

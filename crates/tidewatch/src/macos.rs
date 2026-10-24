@@ -223,6 +223,147 @@ pub(crate) fn cocoa_to_top_left(frame: Rect, primary_h: f32) -> Rect {
     Rect::from_min_size(egui::pos2(frame.min.x, primary_h - frame.max.y), frame.size())
 }
 
+use std::path::PathBuf;
+use std::sync::Arc;
+use std::sync::atomic::AtomicUsize;
+
+use tidewatch_core::image_paste::{Clip, clip_of};
+
+use crate::image_paste::{Clipboard, Picture};
+
+#[cfg(target_os = "macos")]
+fn pasteboard_types() -> Vec<String> {
+    let board = objc2_app_kit::NSPasteboard::generalPasteboard();
+    board.types().map(|types| types.iter().map(|t| t.to_string()).collect()).unwrap_or_default()
+}
+
+#[cfg(target_os = "macos")]
+fn has_any(types: &[String], wanted: &[&str]) -> bool {
+    types.iter().any(|t| wanted.contains(&t.as_str()))
+}
+
+/// The general pasteboard. `clip` looks at the type list only, so it is cheap enough for the key
+/// monitor on the main thread; the picture itself is decoded later on a job thread.
+pub(crate) struct SystemClipboard;
+
+#[cfg(target_os = "macos")]
+impl Clipboard for SystemClipboard {
+    fn clip(&mut self) -> Clip {
+        let types = pasteboard_types();
+        let files =
+            if has_any(&types, &["public.file-url"]) { self.image_files().len() } else { 0 };
+        let text = has_any(&types, &["public.utf8-plain-text", "NSStringPboardType"]);
+        let image = has_any(&types, &["public.png", "public.tiff", "public.jpeg"]);
+        clip_of(text, image, files)
+    }
+
+    fn picture(&mut self) -> Option<Picture> {
+        let image = arboard::Clipboard::new().ok()?.get_image().ok()?;
+        Some(Picture {
+            width: u32::try_from(image.width).ok()?,
+            height: u32::try_from(image.height).ok()?,
+            rgba: image.bytes.into_owned(),
+        })
+    }
+
+    fn image_files(&mut self) -> Vec<PathBuf> {
+        let Ok(files) = arboard::Clipboard::new().and_then(|mut board| board.get().file_list())
+        else {
+            return Vec::new();
+        };
+        files.into_iter().filter(|path| tidewatch_core::image_paste::is_image_file(path)).collect()
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+impl Clipboard for SystemClipboard {
+    fn clip(&mut self) -> Clip {
+        clip_of(false, false, 0)
+    }
+
+    fn picture(&mut self) -> Option<Picture> {
+        None
+    }
+
+    fn image_files(&mut self) -> Vec<PathBuf> {
+        Vec::new()
+    }
+}
+
+/// egui-winit folds Cmd+V into a text-only `Event::Paste` and sends nothing for an image-only
+/// clipboard, so this local key-down monitor sees the press first. It runs on the main thread
+/// inside `[NSApplication sendEvent:]`: for a picture on the clipboard it counts a request, wakes
+/// the UI and swallows the event; every other key is returned as it came.
+#[cfg(target_os = "macos")]
+pub(crate) fn install_cmd_v_image_monitor(ctx: egui::Context, requests: Arc<AtomicUsize>) {
+    use std::ptr::NonNull;
+    use std::sync::atomic::Ordering;
+
+    use objc2_app_kit::{NSEvent, NSEventMask, NSEventModifierFlags};
+
+    const KEY_V: u16 = 9;
+    let block = block2::RcBlock::new(move |event: NonNull<NSEvent>| -> *mut NSEvent {
+        // SAFETY: AppKit hands the monitor a live NSEvent for the duration of the call.
+        #[allow(unsafe_code)]
+        let ev = unsafe { event.as_ref() };
+        let held = ev.modifierFlags() & NSEventModifierFlags::DeviceIndependentFlagsMask;
+        let only_command = held == NSEventModifierFlags::Command;
+        let is_v = ev.keyCode() == KEY_V;
+        if only_command && is_v && clip_has_picture(&mut SystemClipboard) {
+            if !ev.isARepeat() {
+                requests.fetch_add(1, Ordering::SeqCst);
+                ctx.request_repaint();
+            }
+            return std::ptr::null_mut();
+        }
+        event.as_ptr()
+    });
+    // SAFETY: the handler returns the event it was given or null, as the monitor contract allows.
+    #[allow(unsafe_code)]
+    let monitor = unsafe {
+        NSEvent::addLocalMonitorForEventsMatchingMask_handler(NSEventMask::KeyDown, &block)
+    };
+    std::mem::forget(monitor);
+    std::mem::forget(block);
+}
+#[cfg(not(target_os = "macos"))]
+pub(crate) fn install_cmd_v_image_monitor(_ctx: egui::Context, _requests: Arc<AtomicUsize>) {}
+
+/// Queues a Cmd+V key press in the app's own event queue, so it passes the key monitor like a real
+/// one. Only the `TIDEWATCH_DEV_IMAGE_PASTE` switch uses it.
+#[cfg(target_os = "macos")]
+pub(crate) fn post_cmd_v() -> bool {
+    use objc2_app_kit::{NSApplication, NSEvent, NSEventModifierFlags, NSEventType};
+    use objc2_foundation::{NSPoint, NSString};
+
+    let Some(mtm) = objc2::MainThreadMarker::new() else { return false };
+    let v = NSString::from_str("v");
+    let event = NSEvent::keyEventWithType_location_modifierFlags_timestamp_windowNumber_context_characters_charactersIgnoringModifiers_isARepeat_keyCode(
+        NSEventType::KeyDown,
+        NSPoint::new(0.0, 0.0),
+        NSEventModifierFlags::Command,
+        0.0,
+        0,
+        None,
+        &v,
+        &v,
+        false,
+        9,
+    );
+    let Some(event) = event else { return false };
+    NSApplication::sharedApplication(mtm).postEvent_atStart(&event, false);
+    true
+}
+#[cfg(not(target_os = "macos"))]
+pub(crate) fn post_cmd_v() -> bool {
+    false
+}
+
+#[cfg(target_os = "macos")]
+fn clip_has_picture(clipboard: &mut dyn Clipboard) -> bool {
+    matches!(clipboard.clip(), Clip::Image | Clip::ImageFiles)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

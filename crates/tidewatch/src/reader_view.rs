@@ -893,6 +893,32 @@ mod tests {
     }
 
     #[test]
+    fn an_image_only_cmd_v_puts_the_saved_path_in_the_reply_box() {
+        use crate::image_paste::testing::screenshot;
+        use crate::image_paste::{Delivery, resolve};
+        use tidewatch_core::image_paste::Target;
+
+        let ctx = egui::Context::default();
+        let (mut text, mut focus) = (String::new(), true);
+        frame(&ctx, vec![], &mut text, &mut focus);
+        let dir = tempfile::tempdir().unwrap();
+        let Delivery::Text(path) = resolve(&mut screenshot(), Target::TextField, dir.path(), 4)
+        else {
+            panic!("an image-only clipboard in a text field must give a path");
+        };
+        let raw = RawInput {
+            screen_rect: Some(Rect::from_min_size(pos2(0.0, 0.0), vec2(600.0, 200.0))),
+            focused: true,
+            ..RawInput::default()
+        };
+        let _ = ctx.run_ui(raw, |ui| {
+            crate::image_paste::inject_paste(ui.ctx(), path.clone());
+            reply_box(ui, &mut text, &mut focus, true);
+        });
+        assert_eq!(text, path);
+    }
+
+    #[test]
     fn enter_on_an_empty_or_blank_reply_sends_nothing() {
         let ctx = egui::Context::default();
         let (mut text, mut focus) = (String::new(), true);
