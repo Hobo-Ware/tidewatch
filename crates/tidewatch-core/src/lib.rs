@@ -2,6 +2,7 @@
 
 pub mod agents;
 pub mod amphetamine;
+pub mod amphetamine_helper;
 pub mod amphetamine_lid;
 pub mod amphetamine_system;
 pub mod avatar;

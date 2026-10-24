@@ -18,6 +18,7 @@ use crate::segmented;
 use crate::settings_ui::{self, Control, footer_note, page_header, section, switch_row};
 use crate::settings_view::Action;
 use crate::sync_view;
+use crate::touch_id_view::{self, TouchId};
 use crate::updates::Updates;
 use crate::updates_view;
 use crate::window_settings;
@@ -35,6 +36,8 @@ pub(crate) struct General {
     pub(crate) git: GitPrefs,
     pub(crate) done_check: DoneCheckPrefs,
     pub(crate) keep_awake: KeepAwakePrefs,
+    /// `None` where Amphetamine has no lid mode (Linux): the row is not offered.
+    pub(crate) touch_id: Option<TouchId>,
     pub(crate) guards: GuardPrefs,
     /// The repo on show, when it is one: a guard rule can be set for it alone.
     pub(crate) guards_repo: Option<guards_view::Repo>,
@@ -97,7 +100,12 @@ pub(crate) fn page(
     .map(Action::NewTab);
     let tabs = tabs_card(ui, general.tabs).map(Action::Tabs);
     let done_check = done_check_card(ui, general.done_check.enabled).map(Action::DoneCheck);
-    let keep_awake = keep_awake_card(ui, general.keep_awake.enabled).map(Action::KeepAwake);
+    let keep_awake = keep_awake_card(ui, general.keep_awake.enabled, general.touch_id).map(
+        |change| match change {
+            KeepAwakeChange::Switch(on) => Action::KeepAwake(on),
+            KeepAwakeChange::TouchId(click) => Action::TouchId(click),
+        },
+    );
     let github = github_view::card(ui, general.github).map(Action::Github);
     let guards =
         guards_view::card(ui, &general.guards, general.guards_repo.as_ref()).map(Action::Guards);
@@ -189,16 +197,33 @@ pub(crate) fn done_check_card(ui: &mut Ui, on: bool) -> Option<bool> {
     changed
 }
 
-pub(crate) fn keep_awake_card(ui: &mut Ui, on: bool) -> Option<bool> {
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum KeepAwakeChange {
+    Switch(bool),
+    TouchId(touch_id_view::Click),
+}
+
+pub(crate) fn keep_awake_card(
+    ui: &mut Ui,
+    on: bool,
+    touch_id: Option<TouchId>,
+) -> Option<KeepAwakeChange> {
     let mut changed = None;
+    if std::env::var_os("TIDEWATCH_DEV_SCROLL_KEEP_AWAKE").is_some() {
+        ui.scroll_to_cursor(Some(egui::Align::TOP));
+    }
     section(ui, "Keep awake", |ui| {
         changed = switch_row(
             ui,
             "Keep the computer awake while agents work",
             "Stops it from going to sleep on its own while any agent is working, so a long turn is not frozen. The screen can still turn off and lock. It lets go two minutes after the last agent stops or waits for you.",
             on,
-        );
-        settings_ui::caption(
+        )
+        .map(KeepAwakeChange::Switch);
+        if let Some(state) = touch_id {
+            changed = touch_id_view::show(ui, state).map(KeepAwakeChange::TouchId).or(changed);
+        }
+        settings_ui::card_caption(
             ui,
             "Amphetamine, the button at the right end of the tab strip, keeps it awake for a set time, lid closed included on a Mac.",
         );

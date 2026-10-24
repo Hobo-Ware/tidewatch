@@ -11,12 +11,13 @@ use tidewatch_core::amphetamine::{ADD_S, Choice, Effect, Event, State, Voice, st
 use tidewatch_core::amphetamine_lid::{
     Marker, Recovery, read_marker, recovery, remove_marker, remove_token, write_marker, write_token,
 };
-use tidewatch_core::amphetamine_system::System;
+use tidewatch_core::amphetamine_system::{System, begin_lid, end_lid};
 use tidewatch_core::paths::TidewatchPaths;
 
 use crate::amphetamine_motion::{DEACTIVATE_S, Look};
 use crate::jobs::Jobs;
 use crate::keep_awake_hold::Hold;
+use crate::touch_id_view::{Click, TouchId};
 
 impl Hold for Box<dyn Hold> {
     fn take(&mut self, reason: &str) -> Result<(), String> {
@@ -32,7 +33,8 @@ impl Hold for Box<dyn Hold> {
 
 pub(crate) const HOLD_REASON: &str = "Tidewatch: Amphetamine";
 const SETTLE_TRIES: u32 = 20;
-const SETTLE_EVERY: Duration = Duration::from_millis(500);
+const CONFIRM_TRIES: u32 = 6;
+const SETTLE_EVERY: Duration = Duration::from_millis(if cfg!(test) { 5 } else { 500 });
 const PALETTE_CHOICE: Choice = Choice::Hour;
 const PINNED_ON_AGE: f64 = 30.5;
 const PINNED_ACTIVATING_AGE: f64 = 0.62;
@@ -48,6 +50,8 @@ pub(crate) enum Dev {
     Short,
     Notice,
     Toast(Voice),
+    TouchId,
+    Start,
 }
 
 impl Dev {
@@ -59,6 +63,8 @@ impl Dev {
             "activating" => Self::Activating,
             "short" => Self::Short,
             "notice" => Self::Notice,
+            "touchid" => Self::TouchId,
+            "start" => Self::Start,
             "toast" => Self::Toast(Voice::Start),
             "hour" => Self::Toast(Voice::HoursLeft(3)),
             "end" => Self::Toast(Voice::End),
@@ -135,9 +141,12 @@ pub(crate) fn notice_for(kind: NoticeKind, why: &str) -> Notice {
 
 enum Done {
     Started(Result<u32, String>),
-    Settled(bool),
+    Stopped(u64),
+    Confirmed { epoch: u64, on: bool, ok: bool },
     Checked(Recovery),
     Recovered(Result<(), String>),
+    TouchIdSet(Result<(), String>),
+    TouchIdRemoved(Result<(), String>),
 }
 
 pub(crate) struct Host<H: Hold> {
@@ -154,6 +163,10 @@ pub(crate) struct Host<H: Hold> {
     changed_at: f64,
     pinned: Option<Pin>,
     total: Option<f64>,
+    epoch: u64,
+    fading_since: Option<f64>,
+    touch_id_job: Option<Click>,
+    autostart: Option<Choice>,
 }
 
 impl<H: Hold> Host<H> {
@@ -178,6 +191,10 @@ impl<H: Hold> Host<H> {
             changed_at: f64::NEG_INFINITY,
             pinned: None,
             total: None,
+            epoch: 0,
+            fading_since: None,
+            touch_id_job: None,
+            autostart: None,
         }
     }
 
@@ -186,7 +203,7 @@ impl<H: Hold> Host<H> {
         let mut host = Self::new(system, hold, None, lid, true);
         let on = |until: Option<f64>| State::On { until, told: 0 };
         match dev {
-            Dev::Off => {}
+            Dev::Off | Dev::TouchId => {}
             Dev::On | Dev::Short | Dev::Activating => {
                 let left = if *dev == Dev::Short { DEV_SHORT_LEFT_S } else { DEV_LEFT_S };
                 host.state = on(Some(wall + left));
@@ -199,6 +216,7 @@ impl<H: Hold> Host<H> {
                 host.state = on(None);
                 host.pinned = Some(Pin { age: PINNED_ON_AGE, short: false });
             }
+            Dev::Start => host.autostart = Some(PALETTE_CHOICE),
             Dev::Notice => host.notice = Some(notice_for(NoticeKind::Restored, "")),
             Dev::Toast(voice) => host.voices.push(voice.clone()),
         }
@@ -207,6 +225,32 @@ impl<H: Hold> Host<H> {
 
     pub(crate) fn state(&self) -> State {
         self.state
+    }
+
+    /// The Touch ID row of Settings; `None` where there is no lid mode to unlock.
+    pub(crate) fn touch_id(&self) -> Option<TouchId> {
+        if !self.lid {
+            return None;
+        }
+        Some(if self.touch_id_job.is_some() {
+            TouchId::Working
+        } else if self.system.touch_id_installed() {
+            TouchId::Installed
+        } else {
+            TouchId::Missing
+        })
+    }
+
+    pub(crate) fn change_touch_id(&mut self, click: Click, ctx: &egui::Context) {
+        if !self.allowed || !self.lid || self.touch_id_job.is_some() {
+            return;
+        }
+        self.touch_id_job = Some(click);
+        let system = Arc::clone(&self.system);
+        self.jobs.spawn(ctx, move || match click {
+            Click::SetUp => Done::TouchIdSet(system.install_touch_id()),
+            Click::Remove => Done::TouchIdRemoved(system.remove_touch_id()),
+        });
     }
 
     pub(crate) fn lid(&self) -> bool {
@@ -243,8 +287,10 @@ impl<H: Hold> Host<H> {
         match self.state {
             State::Starting { .. } => Look::Pending,
             State::On { .. } => Look::On { age },
-            State::Stopping if age < DEACTIVATE_S => Look::Stopping { age },
-            State::Off | State::Stopping => Look::Off,
+            State::Off | State::Stopping => match self.fading_since {
+                Some(since) if now - since < DEACTIVATE_S => Look::Stopping { age: now - since },
+                _ => Look::Off,
+            },
         }
     }
 
@@ -273,6 +319,9 @@ impl<H: Hold> Host<H> {
     pub(crate) fn tick(&mut self, wall: f64, now: f64, ctx: &egui::Context) -> Option<f64> {
         for done in self.jobs.drain() {
             self.apply_done(done, wall, now, ctx);
+        }
+        if let Some(choice) = self.autostart.take() {
+            self.pick(choice, wall, now, ctx);
         }
         if self.pinned.is_some() {
             return None;
@@ -320,6 +369,10 @@ impl<H: Hold> Host<H> {
         let (state, effects) = step(self.state, event, wall, self.lid);
         if std::mem::discriminant(&state) != std::mem::discriminant(&self.state) {
             self.changed_at = now;
+            self.epoch += 1;
+            if matches!((self.state, state), (State::On { .. }, State::Stopping)) {
+                self.fading_since = Some(now);
+            }
         }
         self.state = state;
         for effect in effects {
@@ -347,13 +400,36 @@ impl<H: Hold> Host<H> {
                 self.write_token(until);
                 let (system, token) = (Arc::clone(&self.system), self.files.token.clone());
                 self.jobs.spawn(ctx, move || {
-                    Done::Started(system.start_lid(&token, std::process::id()))
+                    Done::Started(begin_lid(system.as_ref(), &token, std::process::id()))
                 });
+            }
+            Effect::ConfirmOn => {
+                let (system, epoch) = (Arc::clone(&self.system), self.epoch);
+                self.jobs.spawn(ctx, move || Done::Confirmed {
+                    epoch,
+                    on: true,
+                    ok: confirmed_on(system.as_ref()),
+                });
+            }
+            Effect::Abandon => {
+                remove_token(&self.files.token);
+                remove_marker(&self.files.marker);
             }
             Effect::StopLid => {
                 remove_token(&self.files.token);
-                let system = Arc::clone(&self.system);
-                self.jobs.spawn(ctx, move || Done::Settled(settled(system.as_ref())));
+                let (system, epoch) = (Arc::clone(&self.system), self.epoch);
+                self.jobs.spawn(ctx, move || {
+                    end_lid(system.as_ref());
+                    Done::Stopped(epoch)
+                });
+            }
+            Effect::ConfirmOff => {
+                let (system, epoch) = (Arc::clone(&self.system), self.epoch);
+                self.jobs.spawn(ctx, move || Done::Confirmed {
+                    epoch,
+                    on: false,
+                    ok: settled(system.as_ref()),
+                });
             }
         }
     }
@@ -380,11 +456,35 @@ impl<H: Hold> Host<H> {
                 remove_marker(&self.files.marker);
                 self.event(&Event::StartFailed(why), wall, now, ctx);
             }
-            Done::Settled(ok) => {
-                if ok {
-                    remove_marker(&self.files.marker);
+            Done::Stopped(epoch) if epoch == self.epoch => {
+                self.event(&Event::Stopped, wall, now, ctx);
+            }
+            Done::Confirmed { epoch, on, ok } if epoch == self.epoch => {
+                if on {
+                    if !ok {
+                        self.event(&Event::Unconfirmed, wall, now, ctx);
+                    }
+                } else {
+                    if ok {
+                        remove_marker(&self.files.marker);
+                    }
+                    self.event(&Event::Settled(ok), wall, now, ctx);
                 }
-                self.event(&Event::Settled(ok), wall, now, ctx);
+            }
+            Done::Stopped(_) | Done::Confirmed { .. } => {}
+            Done::TouchIdSet(result) => {
+                self.touch_id_job = None;
+                self.voices.push(match result {
+                    Ok(()) => Voice::TouchIdReady,
+                    Err(why) => Voice::TouchIdFailed(why),
+                });
+            }
+            Done::TouchIdRemoved(result) => {
+                self.touch_id_job = None;
+                self.voices.push(match result {
+                    Ok(()) => Voice::TouchIdGone,
+                    Err(why) => Voice::TouchIdFailed(why),
+                });
             }
             Done::Checked(found) => self.start_recovery(found, ctx),
             Done::Recovered(result) => {
@@ -425,6 +525,16 @@ impl<H: Hold> Host<H> {
             }
         }
     }
+}
+
+fn confirmed_on(system: &dyn System) -> bool {
+    for _ in 0..CONFIRM_TRIES {
+        if system.sleep_disabled() != Some(false) {
+            return true;
+        }
+        std::thread::sleep(SETTLE_EVERY);
+    }
+    false
 }
 
 fn settled(system: &dyn System) -> bool {
