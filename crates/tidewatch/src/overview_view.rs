@@ -36,6 +36,7 @@ const CARD_PAD: f32 = 20.0;
 const CARD_RADIUS: u8 = 14;
 const CARD_SHADOW: f32 = 36.0;
 const RING: f32 = 52.0;
+const RING_OUTER: f32 = 56.0;
 const TILE: f32 = 40.0;
 const DOT: f32 = 8.0;
 const COUNT_GAP: f32 = 18.0;
@@ -366,7 +367,7 @@ fn card(
         progress_ring::paint(
             &painter,
             ring_center,
-            RING,
+            RING_OUTER,
             view.fraction,
             view.ring,
             brand::CARD_LINE,
@@ -551,6 +552,17 @@ fn checklist_row(ui: &mut egui::Ui, checklist: &Checklist) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_ring_clears_the_corners_of_the_avatar_tile() {
+        let corner = (TILE * 0.28).floor();
+        let corner_reach = (TILE / 2.0 - corner) * std::f32::consts::SQRT_2 + corner;
+        let inner_edge = RING_OUTER / 2.0 - progress_ring::stroke_of(RING_OUTER);
+        assert!(
+            inner_edge >= corner_reach,
+            "ring starts at {inner_edge}, tile reaches {corner_reach}"
+        );
+    }
 
     #[test]
     fn the_button_tip_says_what_the_badge_counts() {
