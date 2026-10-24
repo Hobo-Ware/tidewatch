@@ -4,29 +4,23 @@
 use jiff::tz::TimeZone;
 use tidewatch_core::job::{Job, JobBoard, JobState};
 
-const SPARK_POINTS: usize = 24;
-
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) enum Card {
     Bar(BarCard),
     Segments(SegmentsCard),
+    Quiet(QuietLine),
     Stalled(StalledCard),
     Finished(FinishedLine),
 }
 
+/// A job measured against a total, or against the time its reporter expects it to take.
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct BarCard {
     pub(crate) id: u64,
     pub(crate) name: String,
-    pub(crate) elapsed: String,
-    pub(crate) percent: Option<String>,
-    pub(crate) counts: String,
-    pub(crate) fraction: Option<f32>,
-    pub(crate) series: Vec<f32>,
-    pub(crate) rate: Option<String>,
-    pub(crate) eta: Option<String>,
-    pub(crate) done_at: Option<String>,
-    pub(crate) phase: String,
+    pub(crate) right: Option<String>,
+    pub(crate) fraction: f32,
+    pub(crate) detail: String,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -45,10 +39,17 @@ pub(crate) struct SegmentsCard {
     pub(crate) sub: String,
 }
 
+/// A job with nothing to measure by: its name and how long it has been going.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct QuietLine {
+    pub(crate) id: u64,
+    pub(crate) name: String,
+    pub(crate) elapsed: String,
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct StalledCard {
     pub(crate) id: u64,
-    pub(crate) name: String,
     pub(crate) line: String,
     pub(crate) ask: String,
 }
@@ -104,11 +105,11 @@ pub(crate) fn count_text(value: f64) -> String {
     out
 }
 
-fn rate_text(per_min: f64) -> String {
-    if per_min >= 10.0 {
-        format!("{}/min", count_text(per_min.round()))
-    } else {
-        format!("{per_min:.1}/min")
+fn counts_text(job: &Job) -> String {
+    let unit = unit_suffix(job);
+    match job.total {
+        Some(total) => format!("{} / {}{unit}", count_text(job.done), count_text(total)),
+        None => format!("{}{unit}", count_text(job.done)),
     }
 }
 
@@ -117,27 +118,37 @@ pub(crate) fn clock_label(at_ms: i64, zone: &TimeZone) -> Option<String> {
     Some(stamp.to_zoned(zone.clone()).strftime("%H:%M").to_string())
 }
 
-fn counts_text(job: &Job) -> String {
-    let unit = if job.unit.is_empty() || job.unit == "%" {
-        String::new()
+/// The percent to show, whole and never 0: a job that has not moved shows none, one under 1% says
+/// so, and one short of the total never reads 100.
+pub(crate) fn percent_text(percent: f64) -> Option<String> {
+    if !percent.is_finite() || percent <= 0.0 {
+        None
+    } else if percent < 1.0 {
+        Some("<1%".to_owned())
+    } else if percent >= 100.0 {
+        Some("100%".to_owned())
     } else {
-        format!(" {}", job.unit)
-    };
-    match job.total {
-        Some(total) => format!("{} / {}{unit}", count_text(job.done), count_text(total)),
-        None => format!("{}{unit}", count_text(job.done)),
+        Some(format!("{}%", percent.round().min(99.0)))
     }
 }
 
 fn percent_label(job: &Job) -> Option<String> {
-    job.percent().map(|percent| format!("{percent:.1}%"))
+    job.percent().and_then(percent_text)
+}
+
+fn unit_suffix(job: &Job) -> String {
+    if job.unit.is_empty() || job.unit == "%" { String::new() } else { format!(" {}", job.unit) }
+}
+
+fn left_text(secs: u64) -> String {
+    format!("about {} left", duration_text(secs))
 }
 
 fn stalled_line(job: &Job, now_ms: i64) -> String {
     let quiet = ms_text(job.quiet_ms(now_ms));
-    match job.percent() {
-        Some(percent) => format!("Stuck at {percent:.1}% for {quiet}"),
-        None => format!("No movement for {quiet}"),
+    match job.percent().and_then(percent_text) {
+        Some(percent) => format!("{} stuck at {percent} for {quiet}", job.name),
+        None => format!("{} stuck for {quiet}", job.name),
     }
 }
 
@@ -145,92 +156,136 @@ pub(crate) fn ask_text(job: &Job, now_ms: i64) -> String {
     format!("{} has not moved for {}. Check on it.", job.name, ms_text(job.quiet_ms(now_ms)))
 }
 
-fn bar_card(job: &Job, now_ms: i64, zone: &TimeZone) -> BarCard {
-    let eta = job.eta_left(now_ms);
+fn counted_detail(job: &Job, total: f64, now_ms: i64) -> String {
+    let mut parts = Vec::new();
+    if !job.phase.is_empty() {
+        parts.push(job.phase.clone());
+    }
+    if job.done <= 0.0 {
+        parts.push("Starting".to_owned());
+    } else if job.unit != "%" {
+        parts.push(format!(
+            "{} of {}{}",
+            count_text(job.done),
+            count_text(total),
+            unit_suffix(job)
+        ));
+    }
+    parts.extend(job.eta_left(now_ms).map(left_text));
+    parts.join(" \u{b7} ")
+}
+
+fn timed_detail(job: &Job, now_ms: i64) -> String {
+    let mut parts = Vec::new();
+    if !job.phase.is_empty() {
+        parts.push(job.phase.clone());
+    }
+    parts.extend(job.eta_left(now_ms).map(left_text));
+    parts.join(" \u{b7} ")
+}
+
+fn bar_card(job: &Job, total: f64, now_ms: i64) -> BarCard {
     BarCard {
         id: job.id,
         name: job.name.clone(),
-        elapsed: ms_text(job.elapsed_ms(now_ms)),
-        percent: percent_label(job),
-        counts: counts_text(job),
-        fraction: job.fraction(),
-        series: job.rate_series(SPARK_POINTS),
-        rate: job.rate_per_min.map(rate_text),
-        eta: eta.map(duration_text),
-        done_at: eta.and_then(|secs| {
-            clock_label(now_ms.saturating_add(i64::try_from(secs).unwrap_or(0) * 1000), zone)
-        }),
-        phase: job.phase.clone(),
+        right: percent_label(job),
+        fraction: job.fraction().unwrap_or(0.0),
+        detail: counted_detail(job, total, now_ms),
     }
 }
 
-fn segments_card(job: &Job, now_ms: i64) -> SegmentsCard {
-    let total = job.total.unwrap_or(0.0) as usize;
-    let done = (job.done as usize).min(total);
-    let segments = (0..total)
+fn timed_card(job: &Job, fraction: f32, now_ms: i64) -> BarCard {
+    BarCard {
+        id: job.id,
+        name: job.name.clone(),
+        right: Some(ms_text(job.elapsed_ms(now_ms))),
+        fraction,
+        detail: timed_detail(job, now_ms),
+    }
+}
+
+fn segments_card(job: &Job, total: f64, now_ms: i64) -> SegmentsCard {
+    let count = total as usize;
+    let done = (job.done as usize).min(count);
+    let segments = (0..count)
         .map(|index| match index.cmp(&done) {
             std::cmp::Ordering::Less => Segment::Done,
             std::cmp::Ordering::Equal => Segment::Active,
             std::cmp::Ordering::Greater => Segment::Todo,
         })
         .collect();
-    let unit = if job.unit.is_empty() { String::new() } else { format!(" {}", job.unit) };
     let mut parts = Vec::new();
     if !job.phase.is_empty() {
         parts.push(job.phase.clone());
     }
-    if let Some(secs) = job.eta_left(now_ms) {
-        parts.push(format!("about {} left", duration_text(secs.max(1))));
-    }
+    parts.extend(job.eta_left(now_ms).map(|secs| left_text(secs.max(1))));
+    let label = if job.done > 0.0 {
+        format!("{} of {}{}", count_text(job.done), count_text(total), unit_suffix(job))
+    } else {
+        String::new()
+    };
     SegmentsCard {
         id: job.id,
         name: job.name.clone(),
-        label: format!(
-            "{} of {}{unit}",
-            count_text(job.done),
-            count_text(job.total.unwrap_or(0.0))
-        ),
+        label,
         segments,
         sub: parts.join(" \u{b7} "),
     }
 }
 
-fn finished_line(job: &Job, now_ms: i64) -> FinishedLine {
-    let failed = job.state == JobState::Failed;
-    let mut parts = Vec::new();
-    if failed {
-        parts.push("failed".to_owned());
-    } else if job.done > 0.0 && !job.unit.is_empty() && job.unit != "%" {
-        parts.push(format!("{} {}", count_text(job.done), job.unit));
-    }
-    parts.push(ms_text(job.elapsed_ms(now_ms)));
-    FinishedLine { id: job.id, name: job.name.clone(), failed, detail: parts.join(" \u{b7} ") }
+fn quiet_line(job: &Job, now_ms: i64) -> QuietLine {
+    QuietLine { id: job.id, name: job.name.clone(), elapsed: ms_text(job.elapsed_ms(now_ms)) }
 }
 
-/// The cards of a board: running jobs in the order they began, then stalled ones, then finished
-/// ones with the latest first.
-pub(crate) fn cards(board: &JobBoard, now_ms: i64, zone: &TimeZone) -> Vec<Card> {
+fn finished_line(job: &Job, now_ms: i64) -> FinishedLine {
+    let failed = job.state == JobState::Failed;
+    let result = if failed {
+        "failed".to_owned()
+    } else if job.done > 0.0 && !job.unit.is_empty() && job.unit != "%" {
+        format!("{} {}", count_text(job.done), job.unit)
+    } else {
+        "done".to_owned()
+    };
+    FinishedLine {
+        id: job.id,
+        name: job.name.clone(),
+        failed,
+        detail: format!("{result} \u{b7} {}", ms_text(job.elapsed_ms(now_ms))),
+    }
+}
+
+/// The cards of a board: running jobs in the order they began, quiet lines for the ones with
+/// nothing to measure, stalled ones, then finished ones with the latest first.
+pub(crate) fn cards(board: &JobBoard, now_ms: i64) -> Vec<Card> {
     let mut running = Vec::new();
+    let mut quiet = Vec::new();
     let mut stalled = Vec::new();
     let mut finished: Vec<&Job> = Vec::new();
     for job in &board.jobs {
-        match job.state {
-            JobState::Running if job.is_segmented() => {
-                running.push(Card::Segments(segments_card(job, now_ms)));
+        match (job.state, job.total) {
+            (JobState::Running, Some(total)) if job.is_segmented() => {
+                running.push(Card::Segments(segments_card(job, total, now_ms)));
             }
-            JobState::Running => running.push(Card::Bar(bar_card(job, now_ms, zone))),
-            JobState::Stalled => stalled.push(Card::Stalled(StalledCard {
+            (JobState::Running, Some(total)) => {
+                running.push(Card::Bar(bar_card(job, total, now_ms)));
+            }
+            (JobState::Running, None) => match job.time_fraction(now_ms) {
+                Some(fraction) => running.push(Card::Bar(timed_card(job, fraction, now_ms))),
+                None => quiet.push(Card::Quiet(quiet_line(job, now_ms))),
+            },
+            (JobState::Stalled, Some(_)) => stalled.push(Card::Stalled(StalledCard {
                 id: job.id,
-                name: job.name.clone(),
                 line: stalled_line(job, now_ms),
                 ask: ask_text(job, now_ms),
             })),
-            JobState::Done | JobState::Failed => finished.push(job),
+            (JobState::Stalled, None) => quiet.push(Card::Quiet(quiet_line(job, now_ms))),
+            (JobState::Done | JobState::Failed, _) => finished.push(job),
         }
     }
     finished.sort_by_key(|job| std::cmp::Reverse(job.finished_ms));
     running
         .into_iter()
+        .chain(quiet)
         .chain(stalled)
         .chain(finished.into_iter().map(|job| Card::Finished(finished_line(job, now_ms))))
         .collect()
@@ -240,6 +295,7 @@ pub(crate) fn cards(board: &JobBoard, now_ms: i64, zone: &TimeZone) -> Vec<Card>
 pub(crate) fn tab_job(board: &JobBoard, now_ms: i64) -> Option<TabJob> {
     let job = board.lead()?;
     let percent = job.percent()?;
+    let label = percent_text(percent)?;
     let mut parts = vec![format!("{}: {}", job.name, counts_text(job))];
     parts.extend(job.eta_left(now_ms).map(|secs| format!("{} left", duration_text(secs))));
     if job.state == JobState::Stalled {
@@ -248,7 +304,7 @@ pub(crate) fn tab_job(board: &JobBoard, now_ms: i64) -> Option<TabJob> {
     let tip = parts.join(" \u{b7} ");
     Some(TabJob {
         fraction: (percent / 100.0) as f32,
-        label: format!("{}%", percent.round()),
+        label,
         stalled: job.state == JobState::Stalled,
         tip,
     })
@@ -258,9 +314,7 @@ pub(crate) fn tab_job(board: &JobBoard, now_ms: i64) -> Option<TabJob> {
 pub(crate) fn lane_line(board: &JobBoard, now_ms: i64) -> Option<String> {
     let job = board.lead()?;
     let mut parts = Vec::new();
-    if let Some(percent) = job.percent() {
-        parts.push(format!("{}%", percent.round()));
-    }
+    parts.extend(job.percent().and_then(percent_text));
     match job.state {
         JobState::Stalled => parts.push(format!("stuck {}", ms_text(job.quiet_ms(now_ms)))),
         _ => parts.extend(job.eta_left(now_ms).map(duration_text)),

@@ -1,7 +1,7 @@
 //! What a Meeseeks card says, as plain data: the title and meta line, the four stage bars, the
 //! status box and the struggling card (pure).
 
-use tidewatch_core::meeseeks::{MAX_TURNS, Meeseeks, Phase, StageMark, Step, elapsed_text};
+use tidewatch_core::meeseeks::{Meeseeks, Phase, StageMark, Step, elapsed_text};
 
 pub(crate) const STRUGGLE_BODY: &str = "It can't finish alone. It won't poof until you decide.";
 
@@ -37,7 +37,7 @@ pub(crate) struct Struggling {
 pub(crate) struct Card {
     pub(crate) title: String,
     pub(crate) meta: String,
-    pub(crate) bars: [(&'static str, Look); 4],
+    pub(crate) bars: Vec<(&'static str, Look)>,
     pub(crate) status: Vec<Span>,
     pub(crate) struggling: Option<Struggling>,
 }
@@ -81,17 +81,15 @@ fn status(meeseeks: &Meeseeks, struggling: bool, tests: Option<&str>) -> Vec<Spa
 
 pub(crate) fn card(meeseeks: &Meeseeks, name: &str, now_ms: i64, tests: Option<&str>) -> Card {
     let struggle = meeseeks.struggle(now_ms);
-    let turn = (meeseeks.turns + 1).min(MAX_TURNS);
     let marks = meeseeks.stages();
-    let bars = [Step::Change, Step::Tests, Step::Proof, Step::HandOff].map(|step| {
-        (step.label(), look(marks[Step::ALL.iter().position(|s| *s == step).unwrap_or(0)]))
-    });
+    let bars = if meeseeks.phase == Phase::Working {
+        Vec::new()
+    } else {
+        Step::ALL.iter().zip(marks).map(|(step, mark)| (step.label(), look(mark))).collect()
+    };
     Card {
         title: meeseeks.task.clone(),
-        meta: format!(
-            "{} \u{b7} turn {turn} of {MAX_TURNS}",
-            elapsed_text(meeseeks.elapsed_ms(now_ms))
-        ),
+        meta: elapsed_text(meeseeks.elapsed_ms(now_ms)),
         bars,
         status: status(meeseeks, struggle.is_some(), tests),
         struggling: struggle

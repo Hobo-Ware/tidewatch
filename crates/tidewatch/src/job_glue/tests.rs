@@ -187,6 +187,8 @@ fn the_terminal_scan_reads_only_lines_it_has_not_seen_and_waits_between_looks() 
     let fx = Fx::new();
     let mut host = Host::new(false, false);
     fx.until_loaded(&mut host, 1, NOW);
+    let known = Report { done: Some(1.0), total: Some(10.0), ..Report::named("orders") };
+    host.report(1, known, NOW);
     let screen = |lines: &[&str]| lines.iter().map(|line| (*line).to_owned()).collect::<Vec<_>>();
     let first = screen(&["noise", "orders [###-------] 30% 3/10", "more noise"]);
     assert_eq!(host.scan(1, 1, NOW + 5_000, || first.clone()), None);
@@ -196,7 +198,17 @@ fn the_terminal_scan_reads_only_lines_it_has_not_seen_and_waits_between_looks() 
     let again = screen(&["orders [###-------] 30% 3/10", "orders [#####-----] 50% 5/10"]);
     assert_eq!(host.scan(1, 2, NOW + 6_000, || again.clone()), None);
     let job = &host.board(1).unwrap().jobs[0];
-    assert_eq!((job.done, job.samples.len()), (5.0, 2));
+    assert_eq!((job.done, job.samples.len()), (5.0, 3));
+}
+
+#[test]
+fn a_line_from_the_terminal_never_starts_a_job() {
+    let fx = Fx::new();
+    let mut host = Host::new(false, false);
+    fx.until_loaded(&mut host, 1, NOW);
+    let screen = vec!["orders [###-------] 30% 3/10".to_owned(), "[2/5] building".to_owned()];
+    assert_eq!(host.scan(1, 1, NOW + 5_000, || screen.clone()), None);
+    assert!(host.board(1).is_none());
 }
 
 #[test]
@@ -206,7 +218,7 @@ fn the_terminal_scan_ignores_a_tab_it_does_not_know() {
 }
 
 #[test]
-fn the_fake_board_has_the_four_jobs_of_the_mockup() {
+fn the_fake_board_has_the_jobs_of_the_mockup() {
     let board = fake_board(NOW);
     let by_name = |name: &str| board.jobs.iter().find(|job| job.name == name).unwrap();
     let orders = by_name("Backfill orders");
@@ -221,6 +233,8 @@ fn the_fake_board_has_the_four_jobs_of_the_mockup() {
     assert_eq!(users.state, JobState::Stalled);
     assert_eq!(users.quiet_ms(NOW), 6 * MIN_MS);
     assert_eq!(by_name("cargo test").state, JobState::Done);
+    assert!(by_name("Worktree setup").total.is_none());
+    assert!(by_name("Deploy staging").is_timed());
 }
 
 #[test]
@@ -228,8 +242,8 @@ fn the_fake_switch_fills_every_new_tab_and_never_reads_or_writes() {
     let fx = Fx::new();
     let mut host = Host::new(true, true);
     fx.tick(&mut host, &[1, 2], NOW);
-    assert_eq!(host.board(1).unwrap().jobs.len(), 4);
-    assert_eq!(host.board(2).unwrap().jobs.len(), 4);
+    assert_eq!(host.board(1).unwrap().jobs.len(), 6);
+    assert_eq!(host.board(2).unwrap().jobs.len(), 6);
     fx.tick(&mut host, &[1, 2], NOW + 10 * SAVE_EVERY_MS);
     std::thread::sleep(Duration::from_millis(50));
     assert!(!jobs_file_beside(&fx.notes()).exists());

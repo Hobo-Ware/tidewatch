@@ -97,7 +97,8 @@ fn stage_card(ui: &mut Ui, width: f32, card: &Card, placed: &mut Placed) {
     let head_h = title.size().y.max(meta.size().y);
     let label_h = labels.iter().map(|galley| galley.size().y).fold(0.0, f32::max);
     let box_h = status.size().y + 2.0 * BOX_PAD_Y;
-    let height = 2.0 * PAD + head_h + GAP + BAR_H + GAP + label_h + GAP + box_h;
+    let bars_h = if labels.is_empty() { 0.0 } else { BAR_H + GAP + label_h + GAP };
+    let height = 2.0 * PAD + head_h + GAP + bars_h + box_h;
     let (rect, _) = ui.allocate_exact_size(vec2(width, height), Sense::hover());
     placed.card = Some(rect);
     frame(ui, rect, brand::ITEM, brand::ITEM_LINE);
@@ -110,25 +111,27 @@ fn stage_card(ui: &mut Ui, width: f32, card: &Card, placed: &mut Placed) {
         brand::MUTED,
     );
     y += head_h + GAP;
-    let bar_w = (inner - 3.0 * BAR_GAP) / 4.0;
-    for (index, (_, look)) in card.bars.iter().enumerate() {
-        let bar = Rect::from_min_size(
-            pos2(left + index as f32 * (bar_w + BAR_GAP), y),
-            vec2(bar_w, BAR_H),
-        );
-        painter.rect_filled(bar, CornerRadius::same(3), bar_ink(*look));
-        placed.bars[index] = Some(bar);
+    if !card.bars.is_empty() {
+        let bar_w = (inner - 3.0 * BAR_GAP) / 4.0;
+        for (index, (_, look)) in card.bars.iter().enumerate() {
+            let bar = Rect::from_min_size(
+                pos2(left + index as f32 * (bar_w + BAR_GAP), y),
+                vec2(bar_w, BAR_H),
+            );
+            painter.rect_filled(bar, CornerRadius::same(3), bar_ink(*look));
+            placed.bars[index] = Some(bar);
+        }
+        y += BAR_H + GAP;
+        let used: f32 = labels.iter().map(|galley| galley.size().x).sum();
+        let space = ((inner - used) / 3.0).max(0.0);
+        let mut x = left;
+        for (galley, (_, look)) in labels.into_iter().zip(&card.bars) {
+            let width = galley.size().x;
+            painter.galley(pos2(x, y), galley, label_ink(*look));
+            x += width + space;
+        }
+        y += label_h + GAP;
     }
-    y += BAR_H + GAP;
-    let used: f32 = labels.iter().map(|galley| galley.size().x).sum();
-    let space = ((inner - used) / 3.0).max(0.0);
-    let mut x = left;
-    for (galley, (_, look)) in labels.into_iter().zip(&card.bars) {
-        let width = galley.size().x;
-        painter.galley(pos2(x, y), galley, label_ink(*look));
-        x += width + space;
-    }
-    y += label_h + GAP;
     let sunken = Rect::from_min_size(pos2(left, y), vec2(inner, box_h));
     painter.rect_filled(sunken, CornerRadius::same(8), brand::SUNKEN);
     painter.galley(sunken.min + vec2(BOX_PAD_X, BOX_PAD_Y), status, brand::SOFT);

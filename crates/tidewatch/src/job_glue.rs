@@ -1,11 +1,10 @@
 //! The app's side of long jobs: per-tab boards fed by the progress file, `report_job` and the terminal.
-//! `TIDEWATCH_FAKE_JOBS=1` gives every agent tab four fake jobs and writes nothing.
+//! `TIDEWATCH_FAKE_JOBS=1` gives every agent tab six fake jobs and writes nothing.
 
 use std::collections::{HashMap, HashSet};
 use std::hash::{DefaultHasher, Hash, Hasher};
 use std::path::{Path, PathBuf};
 
-use jiff::tz::TimeZone;
 use stdusk_core::terminal::GridSnap;
 use tidewatch_core::job::{JobBoard, JobState, Report};
 use tidewatch_core::job_bar;
@@ -59,7 +58,6 @@ struct Tab {
 }
 
 pub(crate) struct Host {
-    zone: TimeZone,
     tabs: HashMap<u64, Tab>,
     jobs: Jobs<Done>,
     writable: bool,
@@ -68,13 +66,7 @@ pub(crate) struct Host {
 
 impl Host {
     pub(crate) fn new(writable: bool, fake: bool) -> Self {
-        Self {
-            zone: TimeZone::system(),
-            tabs: HashMap::new(),
-            jobs: Jobs::new(),
-            writable: writable && !fake,
-            fake,
-        }
+        Self { tabs: HashMap::new(), jobs: Jobs::new(), writable: writable && !fake, fake }
     }
 
     pub(crate) fn from_env(writable: bool) -> Self {
@@ -85,10 +77,6 @@ impl Host {
 
     pub(crate) fn board(&self, tab: u64) -> Option<&JobBoard> {
         self.tabs.get(&tab).map(|tab| &tab.board).filter(|board| !board.is_empty())
-    }
-
-    pub(crate) fn zone(&self) -> &TimeZone {
-        &self.zone
     }
 
     pub(crate) fn report(&mut self, tab: u64, report: Report, now_ms: i64) {
@@ -135,7 +123,7 @@ impl Host {
             if tab.board.has_running() {
                 soonest(now_ms + RUNNING_POLL_MS);
             }
-            if let Some(at) = tab.board.next_stall_at() {
+            if let Some(at) = tab.board.next_change_at() {
                 soonest(at);
             }
             if tab.dirty && self.writable {
@@ -217,7 +205,7 @@ impl Host {
                 continue;
             }
             if let Some(report) = job_bar::parse(&line) {
-                tab.dirty |= tab.board.report(&report, now_ms);
+                tab.dirty |= tab.board.report_known(&report, now_ms);
             }
         }
         if tab.scan.seen.len() > SEEN_LINES_CAP {
@@ -282,6 +270,11 @@ pub(crate) fn fake_board(now_ms: i64) -> JobBoard {
     board.report(
         &Report { done: Some(0.0), unit: Some("passed".into()), ..Report::named("cargo test") },
         now_ms - 4 * MIN_MS,
+    );
+    board.report(&Report::named("Worktree setup"), now_ms - 2 * MIN_MS);
+    board.report(
+        &Report { eta_s: Some(1_200), ..Report::named("Deploy staging") },
+        now_ms - 6 * MIN_MS,
     );
     board.report(
         &Report { done: Some(2_246.0), state: Some(JobState::Done), ..Report::named("cargo test") },

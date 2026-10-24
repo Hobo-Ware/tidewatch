@@ -41,7 +41,8 @@ pub(crate) fn arc_points(center: Pos2, radius: f32, fraction: f32) -> Vec<Pos2> 
         .collect()
 }
 
-/// Draws a ring of outer diameter `size` centered on `center`.
+/// Draws a ring of outer diameter `size` centered on `center`. Nothing at all for a fraction of
+/// zero: an empty ring says nothing.
 pub(crate) fn paint(
     painter: &Painter,
     center: Pos2,
@@ -50,6 +51,9 @@ pub(crate) fn paint(
     color: Color32,
     track: Color32,
 ) {
+    if fraction <= 0.0 {
+        return;
+    }
     let stroke = stroke_of(size);
     let radius = (size - stroke) / 2.0;
     painter.circle_stroke(center, radius, Stroke::new(stroke, track));
@@ -135,6 +139,20 @@ mod tests {
         assert_eq!(arc_points(C, 5.0, 0.0), Vec::<Pos2>::new());
         assert_eq!(arc_points(C, 5.0, -3.0), Vec::<Pos2>::new());
         assert!(near(*arc_points(C, 5.0, 7.0).last().unwrap(), full[0]));
+    }
+
+    #[test]
+    fn a_ring_at_zero_draws_no_track_and_no_arc() {
+        let ctx = egui::Context::default();
+        let drawn = |fraction: f32| {
+            let output = ctx.run_ui(egui::RawInput::default(), |ui| {
+                paint(ui.painter(), C, 20.0, fraction, Color32::WHITE, Color32::GRAY);
+            });
+            output.shapes.len()
+        };
+        let (empty, started) = (drawn(0.0), drawn(0.3));
+        assert!(started > empty, "{started} shapes at 0.3, {empty} at 0");
+        assert_eq!(drawn(-1.0), empty);
     }
 
     #[test]

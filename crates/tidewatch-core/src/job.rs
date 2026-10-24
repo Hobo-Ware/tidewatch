@@ -4,7 +4,9 @@
 use serde::{Deserialize, Serialize};
 
 pub const STALL_AFTER_MS: i64 = 5 * 60 * 1000;
-pub const MIN_SAMPLES_FOR_ETA: usize = 3;
+pub const QUIET_GONE_AFTER_MS: i64 = 5 * 60 * 1000;
+pub const FINISHED_KEEP_MS: i64 = 10 * 60 * 1000;
+pub const MIN_SAMPLES_FOR_ETA: usize = 2;
 pub const MAX_JOBS: usize = 24;
 pub const MAX_NAME_CHARS: usize = 60;
 pub const MAX_WORD_CHARS: usize = 40;
@@ -180,7 +182,43 @@ impl Job {
             _ => return None,
         };
         let spent = u64::try_from((now_ms - base_ms).max(0) / 1000).unwrap_or(0);
-        Some(secs.saturating_sub(spent))
+        Some(secs.saturating_sub(spent)).filter(|left| *left > 0)
+    }
+
+    /// A job with no total whose reporter gave a time left: its bar is the clock.
+    #[must_use]
+    pub fn is_timed(&self) -> bool {
+        self.total.is_none() && self.eta_hint.is_some()
+    }
+
+    /// How much of a timed job's expected run has passed, 0 to 1. `None` for any other job.
+    #[must_use]
+    pub fn time_fraction(&self, now_ms: i64) -> Option<f32> {
+        if !self.is_timed() {
+            return None;
+        }
+        let (hint_ms, secs) = self.eta_hint?;
+        let expected_ms = (hint_ms - self.started_ms).max(0) + i64::try_from(secs).ok()? * 1000;
+        (expected_ms > 0)
+            .then(|| (self.elapsed_ms(now_ms) as f64 / expected_ms as f64).clamp(0.0, 1.0) as f32)
+    }
+
+    /// When the board drops this job if nothing more is reported: a finished job after ten minutes,
+    /// a job with no total once it has been quiet for five (a timed one counts from the end of its
+    /// expected run). A job with a total stays until it finishes.
+    #[must_use]
+    pub fn gone_at(&self) -> Option<i64> {
+        if let Some(finished) = self.finished_ms {
+            return Some(finished + FINISHED_KEEP_MS);
+        }
+        if self.total.is_some() {
+            return None;
+        }
+        let expected_end = self
+            .eta_hint
+            .and_then(|(at_ms, secs)| Some(at_ms + i64::try_from(secs).ok()? * 1000))
+            .unwrap_or(0);
+        Some(self.updated_ms.max(expected_end) + QUIET_GONE_AFTER_MS)
     }
 
     /// How long `done` has stood still.
@@ -193,31 +231,6 @@ impl Job {
     #[must_use]
     pub fn elapsed_ms(&self, now_ms: i64) -> i64 {
         (self.finished_ms.unwrap_or(now_ms) - self.started_ms).max(0)
-    }
-
-    /// The rate between neighbouring samples, the last `points` of them, scaled so the largest is 1.
-    /// Empty before there are three samples.
-    #[must_use]
-    pub fn rate_series(&self, points: usize) -> Vec<f32> {
-        if self.samples.len() < MIN_SAMPLES_FOR_ETA {
-            return Vec::new();
-        }
-        let rates: Vec<f64> = self
-            .samples
-            .windows(2)
-            .filter_map(|pair| {
-                let span = pair[1].at_ms - pair[0].at_ms;
-                (span >= MIN_RATE_SPAN_MS)
-                    .then(|| (pair[1].done - pair[0].done).max(0.0) / span as f64)
-            })
-            .collect();
-        let skip = rates.len().saturating_sub(points);
-        let shown = &rates[skip..];
-        let peak = shown.iter().copied().fold(0.0_f64, f64::max);
-        if peak <= 0.0 {
-            return Vec::new();
-        }
-        shown.iter().map(|rate| (rate / peak) as f32).collect()
     }
 
     fn refresh_rate(&mut self) {
@@ -237,13 +250,13 @@ pub fn rate_per_min(samples: &[Sample]) -> Option<f64> {
     (span >= MIN_RATE_SPAN_MS && moved > 0.0).then(|| moved / (span as f64 / 60_000.0))
 }
 
-/// Seconds to finish at `rate` (per minute). `None` before three samples, without a total, when
-/// done is past the total, without a positive rate, or for a time past a hundred days.
+/// Seconds to finish at `rate` (per minute). `None` before two samples, without a total, when
+/// done has reached the total, without a positive rate, or for a time past a hundred days.
 #[must_use]
 pub fn eta_secs(done: f64, total: Option<f64>, rate: Option<f64>, samples: usize) -> Option<u64> {
     let total = total.filter(|total| *total > 0.0)?;
     let rate = rate.filter(|rate| *rate > 0.0)?;
-    if samples < MIN_SAMPLES_FOR_ETA || done > total {
+    if samples < MIN_SAMPLES_FOR_ETA || done >= total {
         return None;
     }
     let secs = ((total - done) / rate * 60.0).round();
@@ -283,6 +296,16 @@ impl JobBoard {
         moved || before.updated_ms == after.started_ms && before.samples.is_empty()
     }
 
+    /// Takes a reading for a job the board already runs. A reading with no such job (a line
+    /// scraped from the terminal) never starts one, and never restarts a finished one.
+    pub fn report_known(&mut self, report: &Report, now_ms: i64) -> bool {
+        let Some(cleaned) = report.cleaned() else { return false };
+        let key = cleaned.name.to_lowercase();
+        let known =
+            self.jobs.iter().any(|job| job.name.to_lowercase() == key && !job.state.is_finished());
+        known && self.report(&cleaned, now_ms)
+    }
+
     fn add(&mut self, name: String, now_ms: i64) -> usize {
         if self.jobs.len() >= MAX_JOBS {
             let drop = self.jobs.iter().position(|job| job.state.is_finished()).unwrap_or(0);
@@ -293,12 +316,17 @@ impl JobBoard {
         self.jobs.len() - 1
     }
 
-    /// Marks a running job whose `done` has stood still for five minutes as stalled. Returns
-    /// whether one changed.
+    /// Drops the jobs that are gone by `now_ms` and marks a running job with a total whose `done`
+    /// has stood still for five minutes as stalled. Returns whether anything changed.
     pub fn tick(&mut self, now_ms: i64) -> bool {
-        let mut changed = false;
+        let before = self.jobs.len();
+        self.jobs.retain(|job| job.gone_at().is_none_or(|at| at > now_ms));
+        let mut changed = self.jobs.len() != before;
         for job in &mut self.jobs {
-            if job.state == JobState::Running && job.quiet_ms(now_ms) >= STALL_AFTER_MS {
+            if job.state == JobState::Running
+                && job.total.is_some()
+                && job.quiet_ms(now_ms) >= STALL_AFTER_MS
+            {
                 job.state = JobState::Stalled;
                 changed = true;
             }
@@ -306,14 +334,16 @@ impl JobBoard {
         changed
     }
 
-    /// The moment a running job turns stalled if nothing moves, the earliest of them.
+    /// The next moment `tick` changes something if nothing is reported: a running job with a
+    /// total turning stalled, or a job going away.
     #[must_use]
-    pub fn next_stall_at(&self) -> Option<i64> {
-        self.jobs
+    pub fn next_change_at(&self) -> Option<i64> {
+        let stalls = self
+            .jobs
             .iter()
-            .filter(|job| job.state == JobState::Running)
-            .map(|job| job.changed_ms + STALL_AFTER_MS)
-            .min()
+            .filter(|job| job.state == JobState::Running && job.total.is_some())
+            .map(|job| job.changed_ms + STALL_AFTER_MS);
+        stalls.chain(self.jobs.iter().filter_map(Job::gone_at)).min()
     }
 
     #[must_use]
@@ -360,7 +390,8 @@ fn apply(job: &mut Job, report: &Report, now_ms: i64) {
     if let Some(phase) = &report.phase {
         job.phase.clone_from(phase);
     }
-    let moved = report.done.is_some_and(|done| done != job.done) || job.samples.is_empty();
+    let moved = report.done.is_some_and(|done| done != job.done)
+        || (report.done.is_some() && job.samples.is_empty());
     if let Some(done) = report.done {
         job.done = done;
     }

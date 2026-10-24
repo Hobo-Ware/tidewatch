@@ -47,13 +47,14 @@ fn rate_looks_only_at_the_latest_samples() {
 fn eta_follows_the_rate_and_hides_when_it_would_be_a_guess() {
     let cases = [
         ("three samples, steady rate", 12_431.0, Some(58_650.0), Some(412.0), 3, Some(6_731)),
-        ("two samples is not enough", 12_431.0, Some(58_650.0), Some(412.0), 2, None),
+        ("two samples is enough", 12_431.0, Some(58_650.0), Some(412.0), 2, Some(6_731)),
+        ("one sample is not enough", 12_431.0, Some(58_650.0), Some(412.0), 1, None),
         ("no total", 12_431.0, None, Some(412.0), 9, None),
         ("a total of zero", 373.0, Some(0.0), Some(412.0), 9, None),
         ("done past the total", 58_650.0, Some(58_649.0), Some(412.0), 9, None),
         ("no rate", 100.0, Some(200.0), None, 9, None),
         ("a rate of zero", 100.0, Some(200.0), Some(0.0), 9, None),
-        ("done equals total", 200.0, Some(200.0), Some(5.0), 9, Some(0)),
+        ("done equals total is never zero seconds", 200.0, Some(200.0), Some(5.0), 9, None),
         ("longer than a hundred days", 1.0, Some(1e12), Some(1.0), 9, None),
     ];
     for (what, done, total, rate, samples, want) in cases {
@@ -62,18 +63,36 @@ fn eta_follows_the_rate_and_hides_when_it_would_be_a_guess() {
 }
 
 #[test]
-fn a_board_shows_no_eta_before_the_third_distinct_reading() {
+fn a_board_shows_no_eta_before_the_second_distinct_reading() {
     let mut board = JobBoard::default();
     board.report(&with("orders", 0.0, 1000.0), 0);
     assert_eq!(job(&board).eta_s, None);
+    assert_eq!(job(&board).eta_left(0), None);
     board.report(&with("orders", 100.0, 1000.0), MIN);
-    assert_eq!(job(&board).eta_s, None);
     assert_eq!(job(&board).rate_per_min, Some(100.0));
+    assert_eq!(job(&board).eta_s, Some(540));
     board.report(&with("orders", 200.0, 1000.0), 2 * MIN);
     assert_eq!(job(&board).eta_s, Some(480));
     assert_eq!(job(&board).eta_left(2 * MIN), Some(480));
     assert_eq!(job(&board).eta_left(2 * MIN + 100_000), Some(380));
-    assert_eq!(job(&board).eta_left(10 * MIN), Some(0));
+}
+
+#[test]
+fn an_eta_that_ran_out_is_gone_not_zero_seconds() {
+    let mut board = JobBoard::default();
+    steady(&mut board, "orders", 1000.0, &[(0, 0.0), (MIN, 100.0), (2 * MIN, 200.0)]);
+    assert_eq!(job(&board).eta_left(2 * MIN + 479_000), Some(1));
+    assert_eq!(job(&board).eta_left(2 * MIN + 480_000), None);
+    assert_eq!(job(&board).eta_left(10 * MIN), None);
+}
+
+#[test]
+fn a_name_only_report_is_no_sample() {
+    let mut board = JobBoard::default();
+    board.report(&Report::named("setup"), 0);
+    assert_eq!(job(&board).samples.len(), 0);
+    board.report(&Report { done: Some(4.0), ..Report::named("setup") }, MIN);
+    assert_eq!(job(&board).samples.len(), 1);
 }
 
 #[test]
@@ -92,7 +111,7 @@ fn a_running_job_stalls_after_five_quiet_minutes_and_wakes_when_done_moves() {
     steady(&mut board, "orders", 1000.0, &[(0, 10.0), (MIN, 20.0)]);
     assert!(!board.tick(MIN + 5 * MIN - 1));
     assert_eq!(job(&board).state, JobState::Running);
-    assert_eq!(board.next_stall_at(), Some(6 * MIN));
+    assert_eq!(board.next_change_at(), Some(6 * MIN));
     assert!(board.tick(6 * MIN));
     assert_eq!(job(&board).state, JobState::Stalled);
     assert_eq!(job(&board).quiet_ms(7 * MIN), 6 * MIN);
@@ -101,7 +120,7 @@ fn a_running_job_stalls_after_five_quiet_minutes_and_wakes_when_done_moves() {
     assert_eq!(job(&board).state, JobState::Stalled, "a heartbeat is not progress");
     board.report(&with("orders", 21.0, 1000.0), 9 * MIN);
     assert_eq!(job(&board).state, JobState::Running);
-    assert_eq!(board.next_stall_at(), Some(14 * MIN));
+    assert_eq!(board.next_change_at(), Some(14 * MIN));
 }
 
 #[test]
@@ -109,11 +128,11 @@ fn finished_jobs_never_stall_and_keep_their_duration() {
     let mut board = JobBoard::default();
     steady(&mut board, "orders", 10.0, &[(0, 4.0)]);
     board.report(&Report { state: Some(JobState::Done), ..Report::named("orders") }, 3 * MIN);
-    assert!(!board.tick(60 * MIN));
+    assert!(!board.tick(12 * MIN));
     assert_eq!(job(&board).state, JobState::Done);
     assert_eq!(job(&board).elapsed_ms(60 * MIN), 3 * MIN);
     assert_eq!(job(&board).eta_left(3 * MIN), None);
-    assert_eq!(board.next_stall_at(), None);
+    assert_eq!(board.next_change_at(), Some(13 * MIN));
     assert!(board.lead().is_none());
 }
 
@@ -235,16 +254,6 @@ fn lead_is_the_moving_job_with_a_percent_and_never_a_finished_one() {
 }
 
 #[test]
-fn the_rate_series_scales_to_its_peak_and_waits_for_three_samples() {
-    let mut board = JobBoard::default();
-    steady(&mut board, "orders", 1e6, &[(0, 0.0), (MIN, 100.0)]);
-    assert_eq!(job(&board).rate_series(10), Vec::<f32>::new());
-    steady(&mut board, "orders", 1e6, &[(2 * MIN, 300.0), (3 * MIN, 350.0)]);
-    assert_eq!(job(&board).rate_series(10), [0.5, 1.0, 0.25]);
-    assert_eq!(job(&board).rate_series(2), [1.0, 0.25]);
-}
-
-#[test]
 fn the_board_is_capped_and_drops_a_finished_job_first() {
     let mut board = JobBoard::default();
     for i in 0..MAX_JOBS {
@@ -290,4 +299,71 @@ fn a_board_round_trips_through_json() {
     steady(&mut board, "orders", 100.0, &[(0, 1.0), (MIN, 2.0), (2 * MIN, 3.0)]);
     let text = serde_json::to_string(&board).unwrap();
     assert_eq!(serde_json::from_str::<JobBoard>(&text).unwrap(), board);
+}
+
+#[test]
+fn a_finished_job_is_dropped_ten_minutes_after_it_finished() {
+    let mut board = JobBoard::default();
+    steady(&mut board, "orders", 10.0, &[(0, 4.0)]);
+    board.report(&Report { state: Some(JobState::Done), ..Report::named("orders") }, 3 * MIN);
+    assert!(!board.tick(13 * MIN - 1));
+    assert_eq!(board.jobs.len(), 1);
+    assert!(board.tick(13 * MIN));
+    assert!(board.is_empty());
+}
+
+#[test]
+fn a_job_with_no_total_is_dropped_after_five_quiet_minutes_and_never_stalls() {
+    let mut board = JobBoard::default();
+    board.report(&Report::named("setup"), 0);
+    assert!(!board.tick(5 * MIN - 1));
+    assert_eq!(job(&board).state, JobState::Running);
+    board.report(&Report::named("setup"), 2 * MIN);
+    assert!(!board.tick(7 * MIN - 1), "a heartbeat keeps it");
+    assert_eq!(board.next_change_at(), Some(7 * MIN));
+    assert!(board.tick(7 * MIN));
+    assert!(board.is_empty());
+}
+
+#[test]
+fn a_job_with_a_total_is_never_dropped_for_being_quiet() {
+    let mut board = JobBoard::default();
+    steady(&mut board, "orders", 1000.0, &[(0, 10.0), (MIN, 20.0)]);
+    board.tick(100 * MIN);
+    assert_eq!(board.jobs.len(), 1);
+    assert_eq!(job(&board).state, JobState::Stalled);
+}
+
+#[test]
+fn a_timed_job_runs_its_clock_and_leaves_five_minutes_after_the_expected_end() {
+    let mut board = JobBoard::default();
+    let hinted = Report { eta_s: Some(600), ..Report::named("deploy") };
+    board.report(&hinted, 0);
+    assert!(job(&board).is_timed());
+    assert_eq!(job(&board).time_fraction(0), Some(0.0));
+    assert_eq!(job(&board).time_fraction(5 * MIN), Some(0.5));
+    assert_eq!(job(&board).time_fraction(30 * MIN), Some(1.0));
+    assert!(!board.tick(15 * MIN - 1));
+    assert!(board.tick(15 * MIN));
+}
+
+#[test]
+fn a_job_with_a_total_is_not_timed() {
+    let mut board = JobBoard::default();
+    board.report(&Report { eta_s: Some(600), ..with("checks", 3.0, 5.0) }, 0);
+    assert!(!job(&board).is_timed());
+    assert_eq!(job(&board).time_fraction(MIN), None);
+}
+
+#[test]
+fn a_terminal_line_only_updates_a_job_that_is_already_there() {
+    let mut board = JobBoard::default();
+    assert!(!board.report_known(&with("orders", 5.0, 10.0), 0));
+    assert!(board.is_empty());
+    board.report(&with("orders", 1.0, 10.0), 0);
+    assert!(board.report_known(&with("Orders", 5.0, 10.0), MIN));
+    assert_eq!(job(&board).done, 5.0);
+    board.report(&Report { state: Some(JobState::Done), ..Report::named("orders") }, 2 * MIN);
+    assert!(!board.report_known(&with("orders", 1.0, 10.0), 3 * MIN));
+    assert_eq!(job(&board).state, JobState::Done);
 }

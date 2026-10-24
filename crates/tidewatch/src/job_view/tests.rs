@@ -1,5 +1,4 @@
 use egui::{Event, Modifiers, PointerButton, Pos2, RawInput, Rect, Shape, pos2, vec2};
-use jiff::tz::TimeZone;
 use tidewatch_core::job::{JobState, Report};
 
 use super::*;
@@ -89,19 +88,18 @@ impl Frame {
 
 #[test]
 fn the_mockup_cards_say_what_the_mockup_says() {
-    let frame = Frame::new(cards(&fake_board(NOW), NOW, &TimeZone::UTC), 400.0);
+    let frame = Frame::new(cards(&fake_board(NOW), NOW), 400.0);
     for want in [
         "Backfill orders",
-        "21.2%",
-        "12,431 / 58,650 rows",
-        "RATE",
-        "ETA",
-        "DONE AT",
+        "21%",
+        "12,431 of 58,650 rows \u{b7} about 1h 51m left",
         "PR checks",
         "3 of 5 checks",
-        "Import users",
-        "Stuck at 97.4% for 6m",
+        "Import users stuck at 97% for 6m",
         "Ask agent",
+        "Worktree setup",
+        "Deploy staging",
+        "about 14m left",
         "cargo test",
         "2,246 passed \u{b7} 4m",
     ] {
@@ -110,8 +108,19 @@ fn the_mockup_cards_say_what_the_mockup_says() {
 }
 
 #[test]
+fn no_card_ever_says_estimating_or_a_bare_zero() {
+    for width in [240.0, 400.0] {
+        let frame = Frame::new(cards(&fake_board(NOW), NOW), width);
+        for (text, _) in &frame.texts {
+            assert!(!text.contains("estimating") && !text.contains("ETA"), "{text:?}");
+            assert!(!matches!(text.as_str(), "0" | "0%" | "0.0%" | "0s"), "{text:?}");
+        }
+    }
+}
+
+#[test]
 fn ask_agent_hands_back_the_job_and_its_message() {
-    let mut frame = Frame::new(cards(&fake_board(NOW), NOW, &TimeZone::UTC), 400.0);
+    let mut frame = Frame::new(cards(&fake_board(NOW), NOW), 400.0);
     let at = frame.center_of("Ask agent");
     let (job, message) = frame.click(at).expect("a click on the button asks");
     assert_eq!(message, "Import users has not moved for 6m. Check on it.");
@@ -124,7 +133,7 @@ fn ask_agent_hands_back_the_job_and_its_message() {
 
 #[test]
 fn a_click_anywhere_else_asks_nothing() {
-    let mut frame = Frame::new(cards(&fake_board(NOW), NOW, &TimeZone::UTC), 400.0);
+    let mut frame = Frame::new(cards(&fake_board(NOW), NOW), 400.0);
     let at = frame.center_of("Backfill orders");
     assert_eq!(frame.click(at), None);
 }
@@ -132,7 +141,7 @@ fn a_click_anywhere_else_asks_nothing() {
 #[test]
 fn no_text_overlaps_at_any_width_from_narrow_to_wide() {
     for width in [180.0, 240.0, 320.0, 400.0, 600.0] {
-        let frame = Frame::new(cards(&fake_board(NOW), NOW, &TimeZone::UTC), width);
+        let frame = Frame::new(cards(&fake_board(NOW), NOW), width);
         for (index, (a, rect_a)) in frame.texts.iter().enumerate() {
             for (b, rect_b) in &frame.texts[index + 1..] {
                 let overlap = rect_a.intersect(*rect_b);
@@ -151,36 +160,34 @@ fn a_card_for_every_kind_takes_height_and_nothing_means_none() {
     let none = Frame::new(Vec::new(), 400.0);
     assert_eq!(none.height, 0.0);
     let mut board = fake_board(NOW);
-    let all = Frame::new(cards(&board, NOW, &TimeZone::UTC), 400.0);
+    let all = Frame::new(cards(&board, NOW), 400.0);
     board.remove_finished();
-    let without_finished = Frame::new(cards(&board, NOW, &TimeZone::UTC), 400.0);
+    let without_finished = Frame::new(cards(&board, NOW), 400.0);
     assert!(all.height > without_finished.height);
-    assert!(without_finished.height > 200.0);
+    assert!(without_finished.height > 150.0);
 }
 
 #[test]
 fn a_failed_job_reads_failed_in_its_line() {
     let mut board = tidewatch_core::job::JobBoard::default();
     board.report(&Report { state: Some(JobState::Failed), ..Report::named("lint") }, NOW);
-    let frame = Frame::new(cards(&board, NOW + 61_000, &TimeZone::UTC), 400.0);
+    let frame = Frame::new(cards(&board, NOW + 61_000), 400.0);
     assert!(frame.texts.iter().any(|(text, _)| text == "failed \u{b7} 0s"), "{:?}", frame.texts);
 }
 
 #[test]
-fn a_running_job_with_no_total_still_draws_its_count() {
+fn a_job_with_no_total_is_one_short_line_with_its_name_and_time() {
     let mut board = tidewatch_core::job::JobBoard::default();
-    board.report(
-        &Report { done: Some(373.0), unit: Some("rows".into()), ..Report::named("scan") },
-        NOW,
-    );
-    let frame = Frame::new(cards(&board, NOW, &TimeZone::UTC), 400.0);
-    assert!(frame.texts.iter().any(|(text, _)| text == "373 rows"), "{:?}", frame.texts);
-    assert!(frame.texts.iter().any(|(text, _)| text == "estimating"));
+    board.report(&Report::named("Worktree setup"), NOW);
+    let frame = Frame::new(cards(&board, NOW + 90_000), 400.0);
+    let names: Vec<_> = frame.texts.iter().map(|(text, _)| text.as_str()).collect();
+    assert_eq!(names, ["Worktree setup", "1m"]);
+    assert!(frame.height < 30.0, "{}", frame.height);
 }
 
 #[test]
 fn the_card_after_the_stalled_one_starts_below_it() {
-    let mut frame = Frame::new(cards(&fake_board(NOW), NOW, &TimeZone::UTC), 400.0);
+    let mut frame = Frame::new(cards(&fake_board(NOW), NOW), 400.0);
     frame.run(Vec::new());
     let ask = frame.texts.iter().find(|(text, _)| text == "Ask agent").unwrap().1;
     let finished = frame.texts.iter().find(|(text, _)| text == "cargo test").unwrap().1;

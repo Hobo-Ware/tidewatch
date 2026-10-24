@@ -118,7 +118,8 @@ fn take_over_and_give_up_are_clicks_that_say_which_and_only_on_release() {
 #[test]
 fn nothing_overlaps_or_leaves_the_card_from_a_narrow_panel_up() {
     for width in [220.0, 260.0, 320.0, 420.0, 600.0] {
-        let harness = Harness::new(card_of(&struggling(), 38 * MIN), width);
+        let checking = Meeseeks { phase: Phase::Checking(Step::Tests), ..struggling() };
+        let harness = Harness::new(card_of(&checking, 38 * MIN), width);
         let placed = harness.placed();
         let stage = placed.card.unwrap();
         assert!((stage.width() - width).abs() < 0.5, "{width}");
@@ -132,11 +133,10 @@ fn nothing_overlaps_or_leaves_the_card_from_a_narrow_panel_up() {
 }
 
 #[test]
-fn an_unticked_stage_and_every_phase_still_draw_four_bars() {
+fn an_unticked_stage_and_every_checking_phase_still_draw_four_bars() {
     let mut meeseeks = running();
     meeseeks.criteria.tests = false;
     for phase in [
-        Phase::Working,
         Phase::Checking(Step::Change),
         Phase::Checking(Step::Tests),
         Phase::Checking(Step::Proof),
@@ -147,4 +147,14 @@ fn an_unticked_stage_and_every_phase_still_draw_four_bars() {
         let harness = Harness::new(card_of(&meeseeks, 5 * MIN), 380.0);
         assert!(harness.placed().bars.iter().all(Option::is_some), "{phase:?}");
     }
+}
+
+#[test]
+fn a_working_meeseeks_has_no_bars_and_a_shorter_card() {
+    let mut meeseeks = running();
+    let checking = Harness::new(card_of(&meeseeks, 5 * MIN), 380.0).placed();
+    meeseeks.phase = Phase::Working;
+    let working = Harness::new(card_of(&meeseeks, 5 * MIN), 380.0).placed();
+    assert!(working.bars.iter().all(Option::is_none));
+    assert!(working.card.unwrap().height() < checking.card.unwrap().height());
 }

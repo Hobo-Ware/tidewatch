@@ -18,10 +18,10 @@ use crate::job_view;
 use crate::meeseeks_model::Card as MeeseeksCard;
 use crate::meeseeks_view;
 use crate::progress_model::{
-    self as model, Bar, BarKind, ItemRow, Ring, TAGS, Tag, Tone, entries, item_rows, questions,
+    self as model, Bar, BarKind, ItemRow, TAGS, Tag, Tone, entries, item_rows, questions,
     rows_shown,
 };
-use crate::progress_ring::{paint, paint_mark, tone_color};
+use crate::progress_ring::{paint_mark, tone_color};
 use crate::progress_state::TabLedger;
 use crate::reader_view::{ellipsized, paint_item};
 use crate::screen_kit::{Size, body, heading, mono, primary_button};
@@ -184,10 +184,10 @@ fn content(ui: &mut Ui, input: &Input<'_>, state: &mut TabState) -> Option<Actio
         ui.add_space(GAP);
     }
     let ledger = &known.ledger;
-    let ring = model::ring(ledger);
-    header(ui, width, ledger, &ring, input.now_ms, known.updated_ms);
+    let tone = model::tone(ledger);
+    header(ui, width, ledger, tone, input.now_ms, known.updated_ms);
     ui.add_space(GAP);
-    phase_bars(ui, width, ledger, ring.tone);
+    phase_bars(ui, width, ledger, tone);
     let asked = questions(ledger);
     if !asked.is_empty() {
         ui.add_space(GAP);
@@ -221,42 +221,54 @@ fn header(
     ui: &mut Ui,
     width: f32,
     ledger: &Ledger,
-    ring: &Ring,
+    tone: Tone,
     now_ms: i64,
     updated_ms: Option<i64>,
 ) {
     let narrow = width < NARROW_BELOW - 2.0 * NARROW_PAD;
-    let size = if narrow { 52.0 } else { 72.0 };
-    let (rect, response) = ui.allocate_exact_size(vec2(width, size), Sense::hover());
-    let painter = ui.painter();
-    let center = pos2(rect.left() + size / 2.0, rect.center().y);
-    let color = tone_color(ring.tone);
-    paint(painter, center, size, ring.fraction, color, brand::CARD_LINE);
-    let label = ring.label();
-    if !label.is_empty() {
-        let mut font = heading(size * 0.24);
-        let mut galley = painter.layout_no_wrap(label.clone(), font.clone(), brand::TEXT);
-        let room = size * 0.62;
-        if galley.size().x > room {
-            font.size *= room / galley.size().x;
-            galley = painter.layout_no_wrap(label, font, brand::TEXT);
-        }
-        painter.galley(center - galley.size() / 2.0, galley, brand::TEXT);
-    }
-    let x = rect.left() + size + if narrow { 12.0 } else { 16.0 };
-    let room = (rect.right() - x).max(1.0);
     let goal_size = if narrow { 14.0 } else { 16.0 };
-    let goal = single_line(painter, ledger.goal.trim(), heading(goal_size), brand::TEXT, room);
-    let meta = meta_line(painter, ring.tone, (now_ms, updated_ms), room);
-    let block = goal.size().y + 4.0 + meta.size().y;
-    let top = rect.center().y - block / 2.0;
-    let meta_top = top + goal.size().y + 4.0;
-    painter.galley(pos2(x, top), goal, brand::TEXT);
-    painter.galley(pos2(x, meta_top), meta, brand::MUTED);
-    let text_area = Rect::from_min_max(pos2(x, top), pos2(rect.right(), top + block));
-    let hover = ui.interact(text_area, ui.id().with("progress-goal"), Sense::hover());
+    let painter = ui.painter().clone();
+    let goal = single_line(&painter, ledger.goal.trim(), heading(goal_size), brand::TEXT, width);
+    let step = model::step(ledger).map(|step| step_line(&painter, &step, width));
+    let meta = meta_line(&painter, tone, (now_ms, updated_ms), width);
+    let rows = step.as_ref().map_or(2.0, |_| 3.0);
+    let step_h = step.as_ref().map_or(0.0, |galley| galley.size().y);
+    let block = goal.size().y + step_h + meta.size().y + 4.0 * (rows - 1.0);
+    let (rect, _) = ui.allocate_exact_size(vec2(width, block), Sense::hover());
+    let mut y = rect.top();
+    let hover = ui.interact(
+        Rect::from_min_size(rect.min, vec2(width, goal.size().y)),
+        ui.id().with("progress-goal"),
+        Sense::hover(),
+    );
     hover.on_hover_text(ledger.goal.trim());
-    let _ = response;
+    y += paint_row(&painter, rect.left(), y, goal);
+    if let Some(step) = step {
+        y += paint_row(&painter, rect.left(), y, step);
+    }
+    paint_row(&painter, rect.left(), y, meta);
+}
+
+fn paint_row(painter: &egui::Painter, x: f32, y: f32, galley: std::sync::Arc<egui::Galley>) -> f32 {
+    let height = galley.size().y;
+    painter.galley(pos2(x, y), galley, brand::MUTED);
+    height + 4.0
+}
+
+fn step_line(
+    painter: &egui::Painter,
+    step: &model::Step,
+    room: f32,
+) -> std::sync::Arc<egui::Galley> {
+    let mut job = LayoutJob::default();
+    job.append(
+        &format!("Step {} of {} \u{b7} ", step.number, step.of),
+        0.0,
+        TextFormat::simple(body(12.5), brand::MUTED),
+    );
+    job.append(&step.name, 0.0, TextFormat::simple(body(12.5), brand::TEAL_TEXT));
+    job.wrap = TextWrapping::truncate_at_width(room.max(1.0));
+    painter.layout_job(job)
 }
 
 fn meta_line(
