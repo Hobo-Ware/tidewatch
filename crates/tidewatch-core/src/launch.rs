@@ -360,7 +360,9 @@ pub fn mcp_config_json(wiring: Wiring, listener: &HookListener) -> Option<String
         "headers": { "Authorization": listener.bearer() },
     });
     match wiring {
-        Wiring::Claude => {}
+        // Claude 2.1.310 hides MCP tools behind its ToolSearch tool unless the server asks to be
+        // always loaded, and an agent that never searches never sees `set_avatar`.
+        Wiring::Claude => server["alwaysLoad"] = json!(true),
         Wiring::Copilot => server["tools"] = json!(["*"]),
         Wiring::Codex | Wiring::Gemini | Wiring::Custom => return None,
     }
@@ -1149,9 +1151,11 @@ mod tests {
         assert_eq!(claude["mcpServers"]["tidewatch"]["url"], "http://127.0.0.1:5555/mcp");
         assert_eq!(claude["mcpServers"]["tidewatch"]["headers"]["Authorization"], "Bearer tok123");
         assert!(claude["mcpServers"]["tidewatch"].get("tools").is_none());
+        assert_eq!(claude["mcpServers"]["tidewatch"]["alwaysLoad"], json!(true));
         let copilot: Value =
             serde_json::from_str(&mcp_config_json(Wiring::Copilot, &listener()).unwrap()).unwrap();
         assert_eq!(copilot["mcpServers"]["tidewatch"]["tools"], json!(["*"]));
+        assert!(copilot["mcpServers"]["tidewatch"].get("alwaysLoad").is_none());
         for wiring in [Wiring::Gemini, Wiring::Codex, Wiring::Custom] {
             assert_eq!(mcp_config_json(wiring, &listener()), None);
         }
