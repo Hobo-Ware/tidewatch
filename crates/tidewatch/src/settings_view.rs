@@ -24,9 +24,11 @@ use crate::updates::Updates;
 use crate::workflow_editor_view;
 use crate::worktree_setup_view;
 
-const SIDEBAR_WIDTH: f32 = 232.0;
-const ITEM_HEIGHT: f32 = 38.0;
-const CONTENT_MAX: f32 = 980.0;
+const SIDEBAR_WIDTH: f32 = 248.0;
+const ITEM_HEIGHT: f32 = 44.0;
+const ITEM_ICON: f32 = 20.0;
+const CONTENT_MAX: f32 = 820.0;
+const CONTENT_MIN_SIDE: f32 = 40.0;
 
 pub(crate) enum Action {
     Save,
@@ -159,16 +161,29 @@ fn scrolling(
         .id_salt(format!("settings_page_{section:?}"))
         .auto_shrink(false)
         .show(&mut child, |ui| {
-            Frame::new()
-                .inner_margin(Margin { left: 40, right: 40, top: 0, bottom: 28 })
-                .show(ui, |ui| {
-                    ui.set_width(ui.available_width().min(CONTENT_MAX));
-                    ui.spacing_mut().item_spacing.y = 0.0;
-                    add(ui)
+            let side = content_side(main.width());
+            ui.horizontal_top(|ui| {
+                ui.spacing_mut().item_spacing.x = 0.0;
+                ui.add_space(side);
+                ui.vertical(|ui| {
+                    Frame::new()
+                        .inner_margin(Margin { left: 0, right: 0, top: 0, bottom: 28 })
+                        .show(ui, |ui| {
+                            ui.set_width((main.width() - 2.0 * side).min(CONTENT_MAX));
+                            ui.spacing_mut().item_spacing.y = 0.0;
+                            add(ui)
+                        })
+                        .inner
                 })
                 .inner
+            })
+            .inner
         })
         .inner
+}
+
+fn content_side(width: f32) -> f32 {
+    ((width - CONTENT_MAX) / 2.0).max(CONTENT_MIN_SIDE)
 }
 
 fn sidebar(ui: &mut Ui, rect: Rect, settings: &mut Settings, updates: &Updates) {
@@ -180,7 +195,7 @@ fn sidebar(ui: &mut Ui, rect: Rect, settings: &mut Settings, updates: &Updates) 
         rect.left_top() + vec2(24.0, HEADER_H / 2.0),
         Align2::LEFT_CENTER,
         "Settings",
-        font_semibold(20.0),
+        font_semibold(16.0),
         TEXT,
     );
     let mut inner = ui.new_child(
@@ -204,14 +219,14 @@ fn sidebar(ui: &mut Ui, rect: Rect, settings: &mut Settings, updates: &Updates) 
         pos2(left, rect.bottom() - 22.0),
         Align2::LEFT_BOTTOM,
         updates.short_status(),
-        FontId::proportional(12.0),
+        FontId::proportional(13.0),
         FAINT,
     );
     painter.text(
         pos2(left, status.top() - 2.0),
         Align2::LEFT_BOTTOM,
         version,
-        FontId::proportional(12.0),
+        FontId::proportional(13.0),
         FAINT,
     );
 }
@@ -228,14 +243,16 @@ fn item(
     let painter = ui.painter();
     selection_row(painter, rect, selected, response.hovered());
     let (text, icon) = if selected { (TEXT, TEAL_TEXT) } else { (SOFT, SOFT) };
-    let icon_rect =
-        Rect::from_center_size(pos2(rect.left() + 18.0, rect.center().y), vec2(16.0, 16.0));
+    let icon_rect = Rect::from_center_size(
+        pos2(rect.left() + 12.0 + ITEM_ICON / 2.0, rect.center().y),
+        vec2(ITEM_ICON, ITEM_ICON),
+    );
     settings_icons::paint(painter, icon_rect, section, icon);
     painter.text(
         pos2(rect.left() + 44.0, rect.center().y),
         Align2::LEFT_CENTER,
         label,
-        FontId::proportional(14.0),
+        FontId::proportional(15.0),
         text,
     );
     if unsaved {

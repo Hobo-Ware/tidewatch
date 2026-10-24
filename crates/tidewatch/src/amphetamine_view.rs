@@ -18,8 +18,9 @@ use crate::mascot_motion;
 use crate::screen_kit::{Size, body, mono, quiet_button, selection_row};
 
 pub(crate) const SLOT_W: f32 = ICON_W;
-const SLOT_H: f32 = 28.0;
-const LABEL_SIZE: f32 = 12.0;
+const SLOT_H: f32 = 44.0;
+const PILL_H: f32 = 32.0;
+const LABEL_SIZE: f32 = 13.0;
 const LABEL_PAD_LEFT: f32 = 10.0;
 const LABEL_PAD_RIGHT: f32 = 4.0;
 const LINE_H: f32 = 2.0;
@@ -132,7 +133,10 @@ pub(crate) fn show(ui: &mut Ui, input: &Input, memory: &mut Memory, now: f64) ->
     let amount = slide.amount(now);
     let sliding = slide.moving(now);
     let width = ICON_W + (memory.open_width.max(ICON_W) - ICON_W) * amount as f32;
-    let pill_rect = Rect::from_min_max(pos2(slot.right() - width, slot.top()), slot.right_bottom());
+    let pill_rect = Rect::from_min_max(
+        pos2(slot.right() - width, slot.center().y - PILL_H / 2.0),
+        pos2(slot.right(), slot.center().y + PILL_H / 2.0),
+    );
     let id = ui.id().with("amphetamine");
     let response = ui.interact(pill_rect.union(slot), id, Sense::click());
     let open = menu_open(&ctx, &response);

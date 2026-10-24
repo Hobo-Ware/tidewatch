@@ -3,7 +3,7 @@
 
 use crate::amphetamine_motion::{POP, STANDARD, bezier};
 
-pub(crate) const ICON_W: f32 = 28.0;
+pub(crate) const ICON_W: f32 = 44.0;
 pub(crate) const GAP_MARGIN: f32 = 8.0;
 pub(crate) const OPEN_S: f64 = 0.26;
 pub(crate) const CLOSE_S: f64 = 0.2;

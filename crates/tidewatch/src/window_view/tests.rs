@@ -100,7 +100,7 @@ fn the_quake_switch_in_the_section_applies_at_once_with_the_hotkey_in_use() {
     let mut page = registered();
     page.section(vec![], true);
     let mut applied = None;
-    'scan: for y in (20..80).step_by(6) {
+    'scan: for y in (20..120).step_by(6) {
         for x in (560..690).step_by(6) {
             let at = pos2(x as f32, y as f32);
             page.section(vec![Event::PointerMoved(at)], true);

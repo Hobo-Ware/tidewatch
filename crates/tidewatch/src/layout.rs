@@ -10,6 +10,8 @@ const DIVIDER_GRAB: f32 = 8.0;
 pub(crate) const GAP: f32 = 1.0;
 pub(crate) const TERMINAL_PAD: f32 = 10.0;
 pub(crate) const CARD_MARGIN: f32 = 10.0;
+/// The one left edge of an agent tab: its status line, its content and the bar under them.
+pub(crate) const EDGE: f32 = 24.0;
 /// The height of the History card's header and of the status line above an agent tab, so both tops
 /// line up.
 pub(crate) const CHROME_H: f32 = 48.0;
@@ -93,6 +95,10 @@ pub(crate) fn terminal_only(area: Rect) -> Rect {
     area.shrink(TERMINAL_PAD)
 }
 
+pub(crate) fn agent_grid(terminal: Rect) -> Rect {
+    Rect::from_min_max(pos2(terminal.left() + EDGE - TERMINAL_PAD, terminal.top()), terminal.max)
+}
+
 pub(crate) fn grid_dims(rect: Rect, cell_w: f32, cell_h: f32) -> (usize, usize) {
     let cols = (rect.width() / cell_w).floor().max(1.0) as usize;
     let rows = (rect.height() / cell_h).floor().max(1.0) as usize;
@@ -116,6 +122,15 @@ mod tests {
 
     fn area() -> Rect {
         Rect::from_min_max(pos2(0.0, 40.0), pos2(1000.0, 840.0))
+    }
+
+    #[test]
+    fn an_agent_grid_starts_at_the_edge_from_the_window() {
+        let l = split_side(area(), SIDE_FRACTION);
+        assert_eq!(l.terminal.left(), TERMINAL_PAD);
+        let grid = agent_grid(l.terminal);
+        assert_eq!(grid.left(), EDGE);
+        assert_eq!((grid.top(), grid.max), (l.terminal.top(), l.terminal.max));
     }
 
     #[test]

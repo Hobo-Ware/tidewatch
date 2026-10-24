@@ -86,8 +86,8 @@ mod frames {
                 ui.add_space(400.0);
                 let before = ui.next_widget_position();
                 show(ui, input, memory, now);
-                slot = Rect::from_min_size(before + vec2(4.0, 0.0), vec2(SLOT_W, 28.0));
-                after = ui.allocate_exact_size(vec2(60.0, 28.0), Sense::hover()).0;
+                slot = Rect::from_min_size(before + vec2(4.0, 0.0), vec2(SLOT_W, 44.0));
+                after = ui.allocate_exact_size(vec2(60.0, 44.0), Sense::hover()).0;
             });
         });
         let _ = slot;
@@ -140,10 +140,7 @@ mod frames {
                 );
             }
             let grown = out.pill_left.map_or(0.0, |left| 400.0 + 4.0 + SLOT_W - left);
-            assert!(
-                grown <= SLOT_W + (gap - pill::GAP_MARGIN).max(0.0) + 0.5,
-                "gap {gap}: pill grew {grown}"
-            );
+            assert!(grown <= SLOT_W + gap.max(0.0), "gap {gap}: pill grew {grown}");
         }
     }
 

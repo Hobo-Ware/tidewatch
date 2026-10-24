@@ -21,10 +21,10 @@ fn the_label_shortens_then_hides_as_the_gap_closes() {
     let (full, short) = (96.0, 64.0);
     let cases = [
         (400.0, Fit::Full),
-        (96.0 - 28.0 + 8.0, Fit::Full),
-        (96.0 - 28.0 + 7.9, Fit::Short),
-        (64.0 - 28.0 + 8.0, Fit::Short),
-        (64.0 - 28.0 + 7.9, Fit::Hidden),
+        (96.0 - ICON_W + 8.0, Fit::Full),
+        (96.0 - ICON_W + 7.9, Fit::Short),
+        (64.0 - ICON_W + 8.0, Fit::Short),
+        (64.0 - ICON_W + 7.9, Fit::Hidden),
         (0.0, Fit::Hidden),
     ];
     for (gap, expected) in cases {

@@ -2,7 +2,7 @@ use egui::pos2;
 
 use super::*;
 
-const BOX: f32 = 28.0;
+const BOX: f32 = 44.0;
 
 fn shapes_of(look: Look, hover: f64) -> Vec<egui::epaint::ClippedShape> {
     let ctx = egui::Context::default();
@@ -60,6 +60,6 @@ fn the_eyes_peek_only_on_hover_while_on_and_while_the_prompt_is_open() {
 }
 
 #[test]
-fn the_glyph_is_eighteen_pixels_on_a_twenty_four_unit_grid() {
-    assert_eq!(GLYPH_PX / GRID, 0.75);
+fn the_glyph_is_twenty_eight_pixels_on_a_twenty_four_unit_grid() {
+    assert_eq!(GLYPH_PX / GRID, 28.0 / 24.0);
 }

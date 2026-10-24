@@ -4,9 +4,8 @@
 use egui::epaint::PathShape;
 use egui::text::{LayoutJob, TextWrapping};
 use egui::{CornerRadius, FontId, Painter, Pos2, Rect, Response, Sense, Stroke, pos2, vec2};
-use stdusk_egui::ui::TAB_H;
 
-use super::TAB_INSET_Y;
+use super::TAB_H;
 use crate::brand;
 
 pub(super) const WIDTH: f32 = 180.0;
@@ -25,11 +24,7 @@ pub(super) fn show(ui: &mut egui::Ui, label: &str) -> Response {
     let menu_open = egui::Popup::is_id_open(ui.ctx(), egui::Popup::default_response_id(&resp));
     let painter = ui.painter();
     if resp.hovered() || menu_open {
-        painter.rect_filled(
-            rect.shrink2(vec2(0.0, TAB_INSET_Y)),
-            CornerRadius::same(RADIUS),
-            brand::ITEM,
-        );
+        painter.rect_filled(rect, CornerRadius::same(RADIUS), brand::ITEM);
     }
     let icon = Rect::from_min_size(
         pos2(rect.left() + PAD, rect.center().y - ICON / 2.0),
