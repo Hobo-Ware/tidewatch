@@ -118,6 +118,8 @@ fn history_shows_until_a_ledger_arrives_then_the_choice_or_progress() {
         (None, true, Side::History, Side::History),
         (Some(Side::History), true, Side::Progress, Side::History),
         (Some(Side::Progress), true, Side::History, Side::Progress),
+        (Some(Side::Changes), false, Side::Progress, Side::Changes),
+        (Some(Side::Changes), true, Side::History, Side::Changes),
     ];
     for (chosen, has_ledger, first, want) in cases {
         assert_eq!(
@@ -128,9 +130,14 @@ fn history_shows_until_a_ledger_arrives_then_the_choice_or_progress() {
     }
     assert_eq!(Side::from(RightPanel::Progress), Side::Progress);
     assert_eq!(Side::from(RightPanel::History), Side::History);
-    assert_eq!(SIDES.map(str::len), [8, 7]);
-    assert_eq!([Side::Progress, Side::History].map(Side::index), [0, 1]);
-    assert_eq!([0, 1].map(Side::at), [Side::Progress, Side::History]);
+}
+
+#[test]
+fn the_switch_offers_progress_only_with_a_ledger_and_always_changes_before_history() {
+    assert_eq!(sides(true), [Side::Progress, Side::Changes, Side::History]);
+    assert_eq!(sides(false), [Side::Changes, Side::History]);
+    let labels: Vec<&str> = sides(true).iter().map(|side| side.label()).collect();
+    assert_eq!(labels, ["Progress", "Changes", "History"]);
 }
 
 #[test]

@@ -20,6 +20,7 @@ mod avatar_glue;
 mod brand;
 mod build_workflow;
 mod catalog;
+mod changes_view;
 mod checkout;
 mod cli;
 mod close_dialog;
