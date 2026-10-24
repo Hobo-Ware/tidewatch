@@ -12,7 +12,7 @@ use crate::reader_glue;
 use stdusk_core::paste::prepare;
 use stdusk_egui::terminal_view::paste_into;
 
-use super::terminal::PASTE_RULES;
+use super::terminal::paste_rules;
 
 const PASTES_DIR: &str = "pastes";
 
@@ -84,8 +84,9 @@ impl Tidewatch {
             }
             Delivery::Text(text) => match target {
                 Target::Terminal(_) => {
+                    let rules = paste_rules(&self.terminal_config);
                     if let (Some(Body::Shell(term)), Some(text)) =
-                        (self.tab_body_mut(tab), prepare(&text, PASTE_RULES))
+                        (self.tab_body_mut(tab), prepare(&text, rules))
                     {
                         paste_into(term, &text);
                     }

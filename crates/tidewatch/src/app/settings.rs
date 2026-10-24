@@ -201,6 +201,7 @@ impl Tidewatch {
 
     fn set_copy_on_select(&mut self, enabled: bool) {
         self.terminal_prefs.copy_on_select = enabled;
+        self.terminal_config.copy_on_select = enabled;
         if let Some(paths) = self.paths.clone() {
             std::thread::spawn(move || {
                 if let Err(e) = Prefs::update(&paths, |p| p.terminal.copy_on_select = enabled) {

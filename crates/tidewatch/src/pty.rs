@@ -6,6 +6,7 @@ use std::os::fd::OwnedFd;
 use std::path::Path;
 
 use stdusk_core::agent_pane::{AgentSetup, PROMPT_FALLBACK};
+use stdusk_core::config::TerminalConfig;
 use stdusk_core::handoff::{PaneMeta, adopt_pane};
 use stdusk_core::shell::ShellProfile;
 use stdusk_core::terminal::{PtyTerm, SpawnOpts};
@@ -14,8 +15,6 @@ use tidewatch_core::prepare::{Prepared, note_script};
 
 const INITIAL_COLS: usize = 80;
 const INITIAL_ROWS: usize = 24;
-const SCROLLBACK_LINES: usize = 25_000;
-const WORD_SEPARATORS: &str = " ()[]{}'\"";
 
 pub(crate) fn spawn_shell(ctx: &egui::Context, dir: &Path) -> PtyTerm {
     PtyTerm::spawn(INITIAL_COLS, INITIAL_ROWS, repaint_handle(ctx), &spawn_opts(dir, None))
@@ -87,15 +86,9 @@ pub(crate) fn spawn_typed(ctx: &egui::Context, dir: &Path, prepared: &Prepared) 
 
 fn spawn_opts(dir: &Path, profile: Option<ShellProfile>) -> SpawnOpts {
     SpawnOpts {
-        detect_progress: true,
-        shell_integration: true,
-        autosuggestions: false,
-        scrollback_lines: SCROLLBACK_LINES,
-        word_separators: WORD_SEPARATORS.into(),
-        bold_bright: true,
         cwd: Some(dir.to_string_lossy().into_owned()),
         profile,
-        agent_tracking: None,
+        ..SpawnOpts::from_config(&TerminalConfig::default())
     }
 }
 

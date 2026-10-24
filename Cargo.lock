@@ -5376,7 +5376,7 @@ checksum = "a2eb9349b6444b326872e140eb1cf5e7c522154d69e7a0ffb0fb81c06b37543f"
 [[package]]
 name = "stdusk-core"
 version = "1.9.1"
-source = "git+https://github.com/Hobo-Ware/stdusk?rev=ebb75a6b82906de2e4f516f4aa442d4bbdb3254f#ebb75a6b82906de2e4f516f4aa442d4bbdb3254f"
+source = "git+https://github.com/Hobo-Ware/stdusk?rev=bf197c174fa70bafdf2282071d07dd04584bdbbf#bf197c174fa70bafdf2282071d07dd04584bdbbf"
 dependencies = [
  "alacritty_terminal",
  "base64 0.22.1",
@@ -5395,8 +5395,9 @@ dependencies = [
 [[package]]
 name = "stdusk-egui"
 version = "1.9.1"
-source = "git+https://github.com/Hobo-Ware/stdusk?rev=ebb75a6b82906de2e4f516f4aa442d4bbdb3254f#ebb75a6b82906de2e4f516f4aa442d4bbdb3254f"
+source = "git+https://github.com/Hobo-Ware/stdusk?rev=bf197c174fa70bafdf2282071d07dd04584bdbbf#bf197c174fa70bafdf2282071d07dd04584bdbbf"
 dependencies = [
+ "arboard",
  "block2 0.6.2",
  "egui",
  "font-kit",
