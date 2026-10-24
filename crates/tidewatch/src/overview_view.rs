@@ -117,14 +117,14 @@ pub(crate) struct Out {
     pub(crate) edit_checklist: bool,
 }
 
-/// Draws the Overview in `area` and returns what the user clicked. `above` draws first, inside the
+/// Draws the Overview in `area` and returns what the user clicked. `below` draws last, inside the
 /// scrolling list.
 pub(crate) fn show(
     ui: &mut egui::Ui,
     area: Rect,
     overview: &Overview,
     sections: &Sections<'_>,
-    above: impl FnOnce(&mut egui::Ui),
+    below: impl FnOnce(&mut egui::Ui),
 ) -> Out {
     ui.painter().rect_filled(area, 0.0, brand::GROUND);
     header(ui, area, overview);
@@ -135,7 +135,6 @@ pub(crate) fn show(
     );
     let mut content = ui.new_child(egui::UiBuilder::new().max_rect(body));
     ScrollArea::vertical().auto_shrink([false, false]).show(&mut content, |ui| {
-        above(ui);
         if overview.counts.total() == 0 {
             empty(ui);
         }
@@ -162,6 +161,7 @@ pub(crate) fn show(
             out.edit_checklist = checklist_row(ui, checklist);
         }
         ui.add_space(SECTION_GAP);
+        below(ui);
     });
     out
 }

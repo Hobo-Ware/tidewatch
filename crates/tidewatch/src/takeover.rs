@@ -138,6 +138,7 @@ pub(crate) enum CardAction {
     Press(Key),
     MoveAllIdle,
     ToggleRecent,
+    ToggleLine,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -153,6 +154,13 @@ enum RecentList {
     Open,
 }
 
+#[derive(Clone, Copy, Default, PartialEq, Eq)]
+enum Fold {
+    #[default]
+    Folded,
+    Open,
+}
+
 #[derive(Default)]
 pub(crate) struct Takeover {
     sessions: Vec<Session>,
@@ -165,6 +173,7 @@ pub(crate) struct Takeover {
     armed: Vec<Armed>,
     moving: Vec<Key>,
     reveal: bool,
+    line: Fold,
     held: Held,
     titles: TitleCache,
     recent: RecentList,
@@ -224,7 +233,21 @@ impl Takeover {
         !self.armed.is_empty()
     }
 
+    pub(crate) fn line_open(&self) -> bool {
+        self.line == Fold::Open
+    }
+
+    pub(crate) fn toggle_line(&mut self) {
+        self.line = if self.line_open() { Fold::Folded } else { Fold::Open };
+        self.reveal = self.line_open();
+    }
+
+    pub(crate) fn fold_line(&mut self) {
+        self.line = Fold::Folded;
+    }
+
     pub(crate) fn ask_to_reveal(&mut self) {
+        self.line = Fold::Open;
         self.reveal = true;
         self.last_scan = None;
     }
@@ -266,6 +289,10 @@ impl Takeover {
         self.roots.extend(scanned.roots);
         self.idents.extend(scanned.idents);
         self.sessions = scanned.sessions;
+        if self.counts().0 == 0 {
+            self.line = Fold::Folded;
+            self.reveal = false;
+        }
         self.moving.retain(|key| self.sessions.iter().any(|s| s.key().as_ref() == Some(key)));
         let mut ready = Vec::new();
         let sessions = &self.sessions;

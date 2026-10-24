@@ -225,6 +225,7 @@ impl Tidewatch {
             }
             CardAction::MoveAllIdle => self.open_batch(ctx),
             CardAction::ToggleRecent => self.takeover.toggle_recent(),
+            CardAction::ToggleLine => self.takeover.toggle_line(),
         }
     }
 
@@ -234,7 +235,7 @@ impl Tidewatch {
         }
     }
 
-    /// The palette command: the Overview at the card, or the dialog for every idle session from the
+    /// The palette command: the Overview with the elsewhere line opened and scrolled to, or the dialog for every idle session from the
     /// welcome screen, which has no Overview.
     pub(super) fn run_move_sessions(&mut self, ctx: &egui::Context) {
         if self.welcome.is_some() {

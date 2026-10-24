@@ -132,7 +132,11 @@ impl Tidewatch {
             && self.overview
             && ctx.input_mut(|i| i.consume_key(Modifiers::NONE, Key::Escape))
         {
-            toggle_overview = true;
+            if self.takeover.line_open() {
+                self.takeover.fold_line();
+            } else {
+                toggle_overview = true;
+            }
         }
         FrameIntent {
             active_id,

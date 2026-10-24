@@ -667,6 +667,33 @@ fn a_reveal_is_asked_for_once_and_forces_a_scan() {
     assert!(!takeover.take_reveal());
 }
 
+#[test]
+fn the_elsewhere_line_folds_and_opens_and_a_reveal_opens_it() {
+    let mut takeover = Takeover::default();
+    assert!(!takeover.line_open());
+    takeover.toggle_line();
+    assert!(takeover.line_open());
+    assert!(takeover.take_reveal());
+    takeover.toggle_line();
+    assert!(!takeover.line_open());
+    assert!(!takeover.take_reveal());
+    takeover.ask_to_reveal();
+    assert!(takeover.line_open());
+    takeover.fold_line();
+    assert!(!takeover.line_open());
+}
+
+#[test]
+fn a_scan_that_finds_nothing_running_folds_the_line() {
+    let mut takeover = Takeover::default();
+    takeover.ask_to_reveal();
+    takeover.finish_scan(scanned(vec![claude(1, Activity::Idle)]));
+    assert!(takeover.line_open());
+    takeover.finish_scan(scanned(vec![]));
+    assert!(!takeover.line_open());
+    assert!(!takeover.take_reveal());
+}
+
 fn titled(id: &str, title: &str) -> Session {
     Session { name: Some(title.to_owned()), ..stored(Cli::Claude, id) }
 }
