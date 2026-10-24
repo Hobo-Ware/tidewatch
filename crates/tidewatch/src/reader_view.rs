@@ -21,7 +21,7 @@ use tidewatch_core::question::Reply;
 use tidewatch_core::transcript::Source;
 
 use crate::agent_avatar::Face;
-use crate::agent_ready::{self, COMPOSER_H, Ready};
+use crate::agent_ready::{self, Ready};
 use crate::brand;
 use crate::due_view::{self, Facts as DueFacts};
 use crate::pr_card_model::CardAction;
@@ -360,7 +360,8 @@ pub(crate) fn show(
     sync_live(state, shown);
     let live_seq = state.live.as_ref().map(|live| live.seq);
     let composing = facts.ready.filter(|_| rows.len() == 0 && facts.prompt.is_none());
-    let input_h = if composing.is_some() { COMPOSER_H } else { INPUT_H };
+    let input_h =
+        if composing.is_some() { agent_ready::height(ui, &state.reply, rect) } else { INPUT_H };
     let input = Rect::from_min_max(pos2(rect.left(), rect.bottom() - input_h), rect.max);
     let dock_h = dock_height(&facts, rows, state.live.as_ref());
     let review_h = facts
