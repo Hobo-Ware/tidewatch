@@ -96,6 +96,7 @@ pub mod trust;
 pub mod trust_apply;
 pub mod ui_zoom;
 pub mod update;
+pub mod user_markup;
 mod workflow_upgrade;
 pub mod workflows;
 pub mod worktree;

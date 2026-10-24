@@ -13,6 +13,7 @@ use egui::{
 };
 use egui_commonmark::{CommonMarkCache, CommonMarkViewer};
 use jiff::tz::TimeZone;
+use tidewatch_core::user_markup;
 
 use crate::agent_avatar::{Face, paint_face};
 use crate::brand;
@@ -43,6 +44,10 @@ const USER_RADIUS: CornerRadius = CornerRadius { nw: 16, ne: 16, se: 4, sw: 16 }
 const AGENT_RADIUS: CornerRadius = CornerRadius { nw: 4, ne: 16, se: 16, sw: 16 };
 const USER_FILL: Color32 = brand::TEAL_NAV;
 const USER_LINE: Color32 = Color32::from_rgb(0x1f, 0x3a, 0x3a);
+const USER_CODE_FILL: Color32 = Color32::from_black_alpha(90);
+const LIST_SLACK: f32 = 32.0;
+const TEXT_SLACK: f32 = 8.0;
+const NOTE_GAP: f32 = 6.0;
 const LIVE_FILL: Color32 = Color32::from_rgb(0x12, 0x20, 0x1f);
 
 /// What a drawn turn needs besides its rows.
@@ -101,10 +106,18 @@ fn stamped(who: &str, at_ms: Option<i64>, zone: &TimeZone) -> String {
     }
 }
 
-/// A user message: a bubble at the right, `You · 16:02` over it.
-pub(crate) fn user(ui: &mut Ui, text: &str, at_ms: Option<i64>, zone: &TimeZone, width: f32) {
+/// A user message: a bubble at the right, `You · 16:02` over it. The text inside is markdown,
+/// left-aligned, in a bubble as wide as its text up to the user share of the column.
+pub(crate) fn user(
+    ui: &mut Ui,
+    row: &Row,
+    at_ms: Option<i64>,
+    zone: &TimeZone,
+    (width, cache): (f32, &mut CommonMarkCache),
+) {
     ui.add_space(OUTER);
     let max_w = user_width(width);
+    let markdown = user_markup::chat_markdown(&row.text);
     ui.with_layout(Layout::right_to_left(Align::Min), |ui| {
         ui.allocate_ui_with_layout(vec2(max_w, 0.0), Layout::top_down(Align::Max), |ui| {
             ui.spacing_mut().item_spacing.y = 4.0;
@@ -115,13 +128,50 @@ pub(crate) fn user(ui: &mut Ui, text: &str, at_ms: Option<i64>, zone: &TimeZone,
                 .corner_radius(USER_RADIUS)
                 .inner_margin(USER_PAD)
                 .show(ui, |ui| {
-                    chat_text(ui, |ui| {
-                        ui.add(Label::new(RichText::new(text).color(brand::TEXT)));
+                    let room = max_w - f32::from(USER_PAD.left + USER_PAD.right) - 2.0;
+                    let natural = ui
+                        .painter()
+                        .layout(markdown.clone(), FontId::proportional(BODY_PX), brand::TEXT, room)
+                        .size()
+                        .x;
+                    ui.set_width(user_text_width(
+                        natural,
+                        user_markup::has_indented_block(&row.text),
+                        room,
+                    ));
+                    ui.with_layout(Layout::top_down(Align::Min), |ui| {
+                        chat_text(ui, |ui| {
+                            ui.visuals_mut().code_bg_color = USER_CODE_FILL;
+                            ui.push_id(row.seq, |ui| {
+                                CommonMarkViewer::new().show(ui, cache, &markdown);
+                            });
+                        });
                     });
                 });
         });
     });
     ui.add_space(OUTER);
+}
+
+/// The width of a user bubble's text: what the text measured, with room for the bullets and
+/// numbers of a list and for the bold and code the measure did not see, never past `room`.
+pub(crate) fn user_text_width(natural: f32, indented: bool, room: f32) -> f32 {
+    let slack = if indented { LIST_SLACK } else { TEXT_SLACK };
+    (natural.ceil() + slack).min(room).max(0.0)
+}
+
+/// A slash command the user ran, as a muted mono line.
+pub(crate) fn slash_command(ui: &mut Ui, text: &str) {
+    ui.add_space(NOTE_GAP);
+    ui.add(Label::new(RichText::new(text).font(mono(13.0)).color(brand::MUTED)).truncate());
+    ui.add_space(NOTE_GAP);
+}
+
+/// What a local command printed, as a muted note.
+pub(crate) fn command_output(ui: &mut Ui, text: &str) {
+    ui.add_space(NOTE_GAP);
+    ui.add(Label::new(RichText::new(text).font(body(13.0)).color(brand::MUTED)));
+    ui.add_space(NOTE_GAP);
 }
 
 /// Draws turn `group` of `list`: header, bubble, chips and the open list. Flips `open` for the
@@ -459,4 +509,23 @@ fn call_list(ui: &mut Ui, root: Option<&Path>, list: &[&Row], group: &Group, col
                 });
             }
         });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_user_bubble_is_as_wide_as_its_text_and_never_past_the_room() {
+        let cases = [
+            (120.2, false, 500.0, 129.0),
+            (120.2, true, 500.0, 153.0),
+            (480.0, false, 400.0, 400.0),
+            (0.0, false, 400.0, 8.0),
+            (10.0, true, 20.0, 20.0),
+        ];
+        for (natural, indented, room, want) in cases {
+            assert_eq!(user_text_width(natural, indented, room), want, "{natural} {indented}");
+        }
+    }
 }

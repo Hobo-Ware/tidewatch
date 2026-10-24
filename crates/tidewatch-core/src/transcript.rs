@@ -31,12 +31,14 @@ use serde_json::Value;
 
 use crate::question::{self, Question};
 use crate::rfc3339;
+use crate::user_markup::{self, Record};
 
 const SUMMARY_MAX_CHARS: usize = 120;
 const TOOL_RESULT_MAX_CHARS: usize = 4000;
 const HEAD_BYTES: usize = 64;
 const PARTIAL_MAX_BYTES: usize = 16 << 20;
 const CLAUDE_ASK_TOOL: &str = "AskUserQuestion";
+const COMPACTED_TEXT: &str = "Conversation compacted";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Role {
@@ -44,6 +46,12 @@ pub enum Role {
     Assistant,
     Tool,
     System,
+    /// A slash command the user ran; `Entry::text` is `/name args`.
+    Command,
+    /// What a local command printed, tags removed.
+    CommandOutput,
+    /// Claude Code compacted the conversation here; `Entry::text` is the marker's words.
+    Compacted,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -207,6 +215,9 @@ impl Parser {
         let ts = timestamp(&line["timestamp"]);
         let content = &line["message"]["content"];
         match line["type"].as_str() {
+            Some("user") if line["isCompactSummary"].as_bool() == Some(true) => {
+                entry(Role::Compacted, Some(COMPACTED_TEXT), ts).into_iter().collect()
+            }
             Some("user") => {
                 let mut entries = Vec::new();
                 for block in blocks(content) {
@@ -264,6 +275,7 @@ impl Parser {
                 }
                 entries
             }
+            Some("attachment") => claude_queued_prompt(&line["attachment"], ts),
             _ => Vec::new(),
         }
     }
@@ -532,15 +544,37 @@ fn result_text(content: &Value) -> String {
         .join("\n")
 }
 
+/// A message the user sent while the agent was working: Claude Code files it as a `queued_command`
+/// attachment, not as a user line. Only a typed prompt counts, not a queued task notification.
+fn claude_queued_prompt(attachment: &Value, ts: Option<i64>) -> Vec<Entry> {
+    let typed = attachment["type"].as_str() == Some("queued_command")
+        && attachment["commandMode"].as_str() == Some("prompt")
+        && attachment["origin"]["kind"].as_str() == Some("human");
+    if !typed {
+        return Vec::new();
+    }
+    let prompt = &attachment["prompt"];
+    match prompt.as_str() {
+        Some(text) => claude_user_text(Some(text), ts).into_iter().collect(),
+        None => blocks(prompt)
+            .filter(|block| block["type"].as_str() == Some("text"))
+            .filter_map(|block| claude_user_text(block["text"].as_str(), ts))
+            .collect(),
+    }
+}
+
 fn claude_user_text(text: Option<&str>, ts: Option<i64>) -> Option<Entry> {
     let trimmed = text?.trim();
-    if trimmed.starts_with("<local-command-caveat>") || trimmed.starts_with("<system-reminder>") {
-        return None;
+    match user_markup::classify(trimmed) {
+        Record::Hidden => None,
+        Record::Command(line) => entry(Role::Command, Some(&line), ts),
+        Record::Output(output) => entry(Role::CommandOutput, Some(&output), ts),
+        Record::Compacted => entry(Role::Compacted, Some(COMPACTED_TEXT), ts),
+        Record::Text(_) if trimmed.starts_with("[Request interrupted") => {
+            entry(Role::System, Some(trimmed), ts)
+        }
+        Record::Text(body) => entry(Role::User, Some(&body), ts),
     }
-    let system = trimmed.starts_with("<command-name>")
-        || trimmed.starts_with("<local-command-stdout>")
-        || trimmed.starts_with("[Request interrupted");
-    entry(if system { Role::System } else { Role::User }, Some(trimmed), ts)
 }
 
 fn gemini_user_text(content: &Value) -> String {
@@ -970,7 +1004,7 @@ mod tests {
             shape(&entries),
             [
                 (Role::User, "Fix the bug".into(), None),
-                (Role::System, "<command-name>/clear</command-name>".into(), None),
+                (Role::Command, "/clear".into(), None),
                 (Role::System, "[Request interrupted by user]".into(), None),
                 (Role::System, "API Error: overloaded".into(), None),
                 (Role::Tool, String::new(), Some(call("Read", "/work/a.rs"))),
@@ -980,6 +1014,120 @@ mod tests {
                     "no such file\n[image]".into(),
                     Some(result("Read", "/work/a.rs", true))
                 ),
+            ]
+        );
+    }
+
+    #[test]
+    fn claude_internal_records_become_commands_output_or_nothing() {
+        let lines = [
+            r#"{"type":"user","message":{"role":"user","content":"<command-name>/rate-limit-options</command-name>\n<command-message>rate-limit-options</command-message>\n<command-args></command-args>"}}"#,
+            r#"{"type":"user","message":{"role":"user","content":"<local-command-stdout>Claude Code will continue automatically at 3pm</local-command-stdout>"}}"#,
+            r#"{"type":"user","message":{"role":"user","content":"<local-command-stdout></local-command-stdout>"}}"#,
+            r#"{"type":"user","message":{"role":"user","content":[{"type":"text","text":"<pasted_content id=\"e482\">\n1. one\n2. two\n</pasted_content id=\"e482\">"},{"type":"text","text":"[Image #1]"}]}}"#,
+            r#"{"type":"user","message":{"role":"user","content":"why does <command-name> show up here?"}}"#,
+        ];
+        let mut parser = Parser::new(Source::Claude);
+        let entries: Vec<Entry> = lines.iter().flat_map(|l| parser.feed_line(l)).collect();
+        assert_eq!(
+            shape(&entries),
+            [
+                (Role::Command, "/rate-limit-options".into(), None),
+                (
+                    Role::CommandOutput,
+                    "Claude Code will continue automatically at 3pm".into(),
+                    None
+                ),
+                (Role::User, "1. one\n2. two".into(), None),
+                (Role::User, "[Image #1]".into(), None),
+                (Role::User, "why does <command-name> show up here?".into(), None),
+            ]
+        );
+    }
+
+    #[test]
+    fn claude_queued_prompts_become_user_messages() {
+        let cases = [
+            (
+                r#"{"type":"attachment","attachment":{"type":"queued_command","prompt":"also add a test","commandMode":"prompt","origin":{"kind":"human"}},"timestamp":"2026-10-13T10:00:05Z"}"#,
+                vec![(Role::User, "also add a test")],
+            ),
+            (
+                r#"{"type":"attachment","attachment":{"type":"queued_command","prompt":[{"type":"text","text":"see [Image #1]"},{"type":"image","source":{}},{"type":"text","text":"and then ship it"}],"commandMode":"prompt","origin":{"kind":"human"}}}"#,
+                vec![(Role::User, "see [Image #1]"), (Role::User, "and then ship it")],
+            ),
+            (
+                r#"{"type":"attachment","attachment":{"type":"queued_command","prompt":"/rate-limit-options","commandMode":"prompt","origin":{"kind":"human"}}}"#,
+                vec![(Role::User, "/rate-limit-options")],
+            ),
+            (
+                r#"{"type":"attachment","attachment":{"type":"queued_command","prompt":"<task-notification>done</task-notification>","commandMode":"task-notification","origin":{"kind":"task-notification"}}}"#,
+                vec![],
+            ),
+            (
+                r#"{"type":"attachment","attachment":{"type":"queued_command","prompt":"from a hook","commandMode":"prompt","origin":{"kind":"system"}}}"#,
+                vec![],
+            ),
+            (
+                r#"{"type":"attachment","attachment":{"type":"queued_command","prompt":"no origin","commandMode":"prompt"}}"#,
+                vec![],
+            ),
+            (
+                r#"{"type":"attachment","attachment":{"type":"queued_command","prompt":"  ","commandMode":"prompt","origin":{"kind":"human"}}}"#,
+                vec![],
+            ),
+            (r#"{"type":"attachment","attachment":{"type":"hook_success"}}"#, vec![]),
+        ];
+        for (line, want) in &cases {
+            let entries = Parser::new(Source::Claude).feed_line(line);
+            let got: Vec<(Role, &str)> =
+                entries.iter().map(|e| (e.role, e.text.as_str())).collect();
+            assert_eq!(&got, want, "line {line}");
+        }
+        let stamped = Parser::new(Source::Claude).feed_line(cases[0].0);
+        assert_eq!(stamped[0].ts, rfc3339::unix_millis("2026-10-13T10:00:05Z"));
+    }
+
+    #[test]
+    fn a_queued_message_sits_between_the_agent_lines_it_arrived_during() {
+        let mut parser = Parser::new(Source::Claude);
+        let entries: Vec<Entry> = include_str!("../tests/fixtures/claude_queued.jsonl")
+            .lines()
+            .flat_map(|line| parser.feed_line(line))
+            .collect();
+        let roles: Vec<(Role, &str)> = entries
+            .iter()
+            .filter(|e| e.tool.is_none())
+            .map(|e| (e.role, e.text.as_str()))
+            .collect();
+        assert_eq!(
+            roles,
+            [
+                (Role::User, "Build the thing"),
+                (Role::Assistant, "Working on it."),
+                (Role::User, "Also keep the old API"),
+                (Role::Assistant, "Kept the old API."),
+            ]
+        );
+        assert_eq!(entries[3].ts, rfc3339::unix_millis("2026-10-13T10:00:04Z"));
+    }
+
+    #[test]
+    fn a_compaction_summary_becomes_one_marker_in_the_middle_of_a_turn() {
+        let mut parser = Parser::new(Source::Claude);
+        let entries: Vec<Entry> = include_str!("../tests/fixtures/claude_compacted.jsonl")
+            .lines()
+            .flat_map(|line| parser.feed_line(line))
+            .collect();
+        let roles: Vec<(Role, &str)> = entries.iter().map(|e| (e.role, e.text.as_str())).collect();
+        assert_eq!(
+            roles,
+            [
+                (Role::User, "Start the migration"),
+                (Role::Assistant, "Running it."),
+                (Role::Compacted, "Conversation compacted"),
+                (Role::Compacted, "Conversation compacted"),
+                (Role::Assistant, "Carrying on."),
             ]
         );
     }
