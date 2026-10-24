@@ -296,11 +296,11 @@ fn the_active_underline_is_two_points_along_the_floor_inside_the_corners() {
 }
 
 #[test]
-fn the_status_dot_sits_where_the_close_button_does_and_the_strip_is_sixty_four_tall() {
+fn the_status_dot_sits_where_the_close_button_does_and_the_strip_is_forty_eight_tall() {
     let tab = Rect::from_min_size(pos2(10.0, 0.0), vec2(200.0, TAB_H));
     let dot = crate::status_view::dot_center(tab, STATUS_DOT_TRAILING);
     assert_eq!(dot, pos2(tab.right() - TAB_PAD_X - TAB_SLOT_W / 2.0, tab.center().y));
-    assert_eq!((STRIP_H, TAB_H, ICON_BOX), (64.0, 44.0, 44.0));
+    assert_eq!((STRIP_H, TAB_H, ICON_BOX), (48.0, 40.0, 40.0));
     assert_eq!(TAB_H + 2.0 * f32::from(STRIP_VERTICAL_MARGIN), STRIP_H);
 }
 

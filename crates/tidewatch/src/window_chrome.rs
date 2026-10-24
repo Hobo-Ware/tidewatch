@@ -325,6 +325,7 @@ pub(crate) fn edges(ctx: &Context) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::app::strip::TAB_H;
 
     #[test]
     fn only_linux_outside_quake_draws_its_own_frame() {
@@ -492,12 +493,12 @@ mod tests {
             };
             let mut clicked = false;
             let output = self.ctx.run_ui(raw, |ui| {
-                egui::Panel::top("tabbar").exact_size(40.0).frame(egui::Frame::NONE).show(
+                egui::Panel::top("tabbar").exact_size(TAB_H).frame(egui::Frame::NONE).show(
                     ui,
                     |ui| {
                         title_bar(ui, ui.max_rect(), &self.desktop);
                         ui.horizontal(|ui| {
-                            ui.set_min_height(BUTTON_H);
+                            ui.set_min_height(TAB_H);
                             clicked = ui
                                 .add_sized(vec2(120.0, BUTTON_H), egui::Button::new("main"))
                                 .clicked();
@@ -593,6 +594,14 @@ mod tests {
         let mut commands = strip.click(pos2(400.0, 20.0));
         commands.extend(strip.click(pos2(400.0, 20.0)));
         assert_eq!(commands, vec![]);
+    }
+
+    #[test]
+    fn the_window_buttons_are_centred_in_the_tab_row() {
+        let strip = Strip::new();
+        for i in 0..3 {
+            assert_eq!(strip.button_center(i).y, TAB_H / 2.0, "button {i}");
+        }
     }
 
     #[test]

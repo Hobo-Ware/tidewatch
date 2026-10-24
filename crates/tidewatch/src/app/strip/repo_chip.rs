@@ -9,11 +9,11 @@ use super::TAB_H;
 use crate::brand;
 
 pub(super) const WIDTH: f32 = 180.0;
-const PAD: f32 = 8.0;
+const PAD: f32 = 10.0;
 const GAP: f32 = 8.0;
-const ICON: f32 = 18.0;
+const ICON: f32 = 20.0;
 const CHEVRON: f32 = 12.0;
-const LABEL_SIZE: f32 = 13.0;
+const LABEL_SIZE: f32 = 14.0;
 const RADIUS: u8 = 8;
 const FOLDER: [(f32, f32); 6] =
     [(3.0, 6.0), (9.0, 6.0), (11.0, 8.0), (21.0, 8.0), (21.0, 19.0), (3.0, 19.0)];
@@ -23,9 +23,14 @@ pub(super) fn show(ui: &mut egui::Ui, label: &str) -> Response {
     let (rect, resp) = ui.allocate_exact_size(vec2(WIDTH, TAB_H), Sense::click());
     let menu_open = egui::Popup::is_id_open(ui.ctx(), egui::Popup::default_response_id(&resp));
     let painter = ui.painter();
-    if resp.hovered() || menu_open {
-        painter.rect_filled(rect, CornerRadius::same(RADIUS), brand::ITEM);
-    }
+    let fill = if resp.hovered() || menu_open { brand::ITEM } else { egui::Color32::TRANSPARENT };
+    painter.rect(
+        rect.shrink(0.5),
+        CornerRadius::same(RADIUS),
+        fill,
+        Stroke::new(1.0, brand::ITEM_LINE),
+        egui::StrokeKind::Inside,
+    );
     let icon = Rect::from_min_size(
         pos2(rect.left() + PAD, rect.center().y - ICON / 2.0),
         vec2(ICON, ICON),
