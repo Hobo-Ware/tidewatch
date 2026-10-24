@@ -10,7 +10,7 @@ use crate::amphetamine_motion::{
 };
 use crate::brand;
 
-pub(crate) const GLYPH_PX: f32 = 18.0;
+pub(crate) const GLYPH_PX: f32 = 28.0;
 pub(crate) const SEED: u32 = 21;
 const GRID: f32 = 24.0;
 const WOBBLE_AT: Vec2 = vec2(12.0, 12.0);

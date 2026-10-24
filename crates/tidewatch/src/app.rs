@@ -32,7 +32,7 @@ mod restart;
 mod review;
 mod settings;
 mod stdusk;
-mod strip;
+pub(crate) mod strip;
 mod tabs;
 mod takeover;
 mod terminal;

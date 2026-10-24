@@ -13,10 +13,10 @@ use crate::screen_kit::{body, mono};
 use crate::status_view::Tone;
 
 pub(crate) const HEIGHT: f32 = 30.0;
-const PAD: f32 = 16.0;
+const PAD: f32 = crate::layout::EDGE;
 const GAP: f32 = 18.0;
 const DOT: f32 = 7.0;
-const FONT: f32 = 12.0;
+const FONT: f32 = 13.0;
 const MOST_HINTS: usize = 4;
 const CHIP_H: f32 = 20.0;
 const AWAKE_R: f32 = 5.0;

@@ -8,9 +8,9 @@ use egui::{
 };
 use stdusk_egui::colors;
 use stdusk_egui::ui::ellipsize;
-use stdusk_egui::widgets::ICON_BTN_W;
 
-use crate::agent_avatar;
+use crate::agent_avatar::{self, Face};
+use crate::app::strip::{ICON_BOX, ICON_GLYPH};
 use crate::brand;
 use crate::coming_up_view;
 use crate::commands::Command;
@@ -25,8 +25,8 @@ use crate::screen_kit::{Size, button_width, heading, quiet_button};
 use crate::status_view::{self, Tone};
 use crate::timeline::Block;
 
-const BUTTON_H: f32 = 30.0;
-const SIDE: f32 = 20.0;
+const BUTTON_H: f32 = ICON_BOX;
+const SIDE: f32 = crate::layout::EDGE;
 const SECTION_GAP: f32 = 22.0;
 const CARD_MIN_W: f32 = 300.0;
 const MAX_COLUMNS: usize = 4;
@@ -36,7 +36,9 @@ const CARD_PAD: f32 = 20.0;
 const CARD_RADIUS: u8 = 14;
 const CARD_SHADOW: f32 = 36.0;
 const RING: f32 = 52.0;
-const FACE: f32 = 36.0;
+const TILE: f32 = 40.0;
+const DOT: f32 = 8.0;
+const COUNT_GAP: f32 = 18.0;
 const TAG_H: f32 = 22.0;
 const GROUP_HEAD_H: f32 = 34.0;
 const CHIP_H: f32 = 30.0;
@@ -45,10 +47,10 @@ const CHIP_PAD: f32 = 13.0;
 const CHIP_CHARS: usize = 24;
 const HEADER_H: f32 = 48.0;
 const GRID_ICON: &str = "\u{E464}";
-const BADGE_H: f32 = 15.0;
+const BADGE_H: f32 = 17.0;
 const MASCOT_H: f32 = 120.0;
 
-pub(crate) const BUTTON_W: f32 = ICON_BTN_W;
+pub(crate) const BUTTON_W: f32 = ICON_BOX;
 
 /// The tab strip's Overview button. `needs` is how many tabs wait on you in each repo; none draws no
 /// badge.
@@ -57,9 +59,9 @@ pub(crate) fn button(ui: &mut egui::Ui, active: bool, needs: &[(String, usize)])
     let (rect, resp) = ui.allocate_exact_size(vec2(BUTTON_W, BUTTON_H), Sense::click());
     let hovered = resp.hovered();
     if active {
-        ui.painter().rect_filled(rect, 6.0, colors::selection());
+        ui.painter().rect_filled(rect, 8.0, colors::selection());
     } else if hovered {
-        ui.painter().rect_filled(rect, 6.0, colors::hover());
+        ui.painter().rect_filled(rect, 8.0, colors::hover());
     }
     let ink = if active {
         brand::TEAL
@@ -72,7 +74,7 @@ pub(crate) fn button(ui: &mut egui::Ui, active: bool, needs: &[(String, usize)])
         rect.center(),
         Align2::CENTER_CENTER,
         GRID_ICON,
-        FontId::proportional(17.0),
+        FontId::proportional(ICON_GLYPH),
         ink,
     );
     if total > 0 {
@@ -102,7 +104,7 @@ fn button_tip(keys: &str, needs: &[(String, usize)]) -> String {
 
 fn paint_badge(ui: &egui::Ui, button: Rect, count: usize) {
     let text = if count > 9 { "9+".to_owned() } else { count.to_string() };
-    let font = FontId::monospace(9.5);
+    let font = FontId::monospace(11.0);
     let galley = ui.painter().layout_no_wrap(text, font, colors::bg());
     let width = (galley.size().x + 8.0).max(BADGE_H);
     let badge = Rect::from_min_size(
@@ -155,14 +157,16 @@ pub(crate) fn show(
             empty(ui);
         }
         if !overview.needs.is_empty() {
-            out.jump = out.jump.or(group(ui, "Needs you", "", &overview.needs, true));
+            let several = single_repo(overview).is_none();
+            out.jump = out.jump.or(group(ui, "Needs you", "", &overview.needs, (true, several)));
             ui.add_space(SECTION_GAP);
         }
         for place in &overview.places {
             if place.rows.is_empty() {
                 continue;
             }
-            out.jump = out.jump.or(group(ui, &place.label, &place.path, &place.rows, false));
+            out.jump =
+                out.jump.or(group(ui, &place.label, &place.path, &place.rows, (false, false)));
             ui.add_space(SECTION_GAP);
         }
         if !sections.poofed.is_empty() {
@@ -189,34 +193,73 @@ fn header(ui: &egui::Ui, area: Rect, overview: &Overview) {
         pos2(rect.left() + SIDE, rect.center().y),
         Align2::LEFT_CENTER,
         "Overview",
-        heading(18.0),
+        heading(16.0),
         brand::TEXT,
     );
-    let mut x = title.right() + 18.0;
-    for (text, tone) in summary(overview.counts) {
+    let mut left = title.right();
+    if let Some(repo) = single_repo(overview) {
+        let galley =
+            painter.layout_no_wrap(repo.to_owned(), FontId::proportional(13.0), brand::MUTED);
+        let at = pos2(left + 14.0, rect.center().y - galley.size().y / 2.0 + 1.0);
+        left = at.x + galley.size().x;
+        if left + COUNT_GAP < rect.right() - SIDE - COUNT_GAP {
+            painter.galley(at, galley, brand::MUTED);
+        } else {
+            left = title.right();
+        }
+    }
+    let counts: Vec<_> = counts_row(overview.counts)
+        .into_iter()
+        .map(|(text, tone)| {
+            let galley = painter.layout_no_wrap(text, FontId::proportional(13.0), brand::SOFT);
+            (galley, tone)
+        })
+        .collect();
+    let widths: Vec<f32> = counts.iter().map(|(galley, _)| galley.size().x + 8.0 + DOT).collect();
+    let room = rect.right() - SIDE - left - COUNT_GAP;
+    let kept = fitting(&widths, room);
+    let mut right = rect.right() - SIDE;
+    let shown: Vec<_> = counts.into_iter().zip(widths).take(kept).collect();
+    for ((galley, tone), width) in shown.into_iter().rev() {
         let color = status_view::color(tone).unwrap_or(brand::MUTED);
-        let galley = painter.layout_no_wrap(text, FontId::proportional(13.0), color);
-        let width = galley.size().x;
-        painter.galley(pos2(x, rect.center().y - galley.size().y / 2.0 + 1.0), galley, color);
-        x += width + 16.0;
+        let y = rect.center().y;
+        painter.galley(
+            pos2(right - width + 8.0 + DOT, y - galley.size().y / 2.0),
+            galley,
+            brand::SOFT,
+        );
+        painter.circle_filled(pos2(right - width + DOT / 2.0, y), DOT / 2.0, color);
+        right -= width + COUNT_GAP;
     }
     painter.hline(rect.x_range(), rect.bottom(), Stroke::new(1.0, brand::CARD_LINE));
 }
 
-fn summary(counts: Counts) -> Vec<(String, Tone)> {
-    let total = counts.total();
-    let noun = if total == 1 { "agent" } else { "agents" };
-    let mut parts = vec![(format!("{total} {noun}"), Tone::Shell)];
-    for (n, label, tone) in [
-        (counts.working, "working", Tone::Working),
-        (counts.needs, "need you", Tone::Needs),
-        (counts.done, "done", Tone::Done),
-        (counts.failed, "failed", Tone::Failed),
-    ] {
-        if n > 0 {
-            parts.push((format!("{n} {label}"), tone));
-        }
+fn fitting(widths: &[f32], room: f32) -> usize {
+    let mut used = 0.0;
+    widths
+        .iter()
+        .take_while(|width| {
+            used += **width + COUNT_GAP;
+            used - COUNT_GAP <= room
+        })
+        .count()
+}
+
+fn single_repo(overview: &Overview) -> Option<&str> {
+    match overview.places.as_slice() {
+        [place] => Some(&place.label),
+        _ => None,
     }
+}
+
+fn counts_row(counts: Counts) -> Vec<(String, Tone)> {
+    let mut parts = Vec::new();
+    if counts.failed > 0 {
+        parts.push((format!("{} failed", counts.failed), Tone::Failed));
+    }
+    parts.push((format!("{} need you", counts.needs), Tone::Needs));
+    parts.push((format!("{} working", counts.working + counts.setup), Tone::Working));
+    parts.push((format!("{} idle", counts.done), Tone::Done));
     parts
 }
 
@@ -242,7 +285,13 @@ fn columns(width: f32) -> usize {
     (((width + CARD_GAP) / (CARD_MIN_W + CARD_GAP)).floor() as usize).clamp(1, MAX_COLUMNS)
 }
 
-fn group(ui: &mut egui::Ui, title: &str, path: &str, rows: &[Row], needs: bool) -> Option<u64> {
+fn group(
+    ui: &mut egui::Ui,
+    title: &str,
+    path: &str,
+    rows: &[Row],
+    (needs, name_the_repo): (bool, bool),
+) -> Option<u64> {
     let width = ui.available_width();
     let columns = columns(width);
     let card_w = (width - CARD_GAP * (columns - 1) as f32) / columns as f32;
@@ -252,7 +301,7 @@ fn group(ui: &mut egui::Ui, title: &str, path: &str, rows: &[Row], needs: bool) 
     let painter = ui.painter_at(rect);
     let title_color =
         if needs { status_view::color(Tone::Needs).unwrap_or(brand::TEXT) } else { brand::TEXT };
-    let galley = painter.layout_no_wrap(title.to_owned(), heading(13.0), title_color);
+    let galley = painter.layout_no_wrap(title.to_owned(), heading(14.0), title_color);
     let title_w = galley.size().x;
     let mid = rect.top() + (GROUP_HEAD_H - 10.0) / 2.0;
     painter.galley(pos2(rect.left(), mid - galley.size().y / 2.0), galley, title_color);
@@ -261,7 +310,7 @@ fn group(ui: &mut egui::Ui, title: &str, path: &str, rows: &[Row], needs: bool) 
             pos2(rect.left() + title_w + 10.0, mid),
             Align2::LEFT_CENTER,
             path,
-            FontId::monospace(11.0),
+            FontId::monospace(13.0),
             brand::MUTED,
         );
     }
@@ -269,7 +318,7 @@ fn group(ui: &mut egui::Ui, title: &str, path: &str, rows: &[Row], needs: bool) 
         pos2(rect.right(), mid),
         Align2::RIGHT_CENTER,
         format!("{} tab{}", rows.len(), if rows.len() == 1 { "" } else { "s" }),
-        FontId::proportional(11.5),
+        FontId::proportional(13.0),
         brand::MUTED,
     );
     let mut jump = None;
@@ -279,14 +328,20 @@ fn group(ui: &mut egui::Ui, title: &str, path: &str, rows: &[Row], needs: bool) 
             rect.left() + column as f32 * (card_w + CARD_GAP),
             rect.top() + GROUP_HEAD_H + line as f32 * (CARD_H + CARD_GAP),
         );
-        if card(ui, Rect::from_min_size(at, vec2(card_w, CARD_H)), row, needs) {
+        if card(ui, Rect::from_min_size(at, vec2(card_w, CARD_H)), row, needs, name_the_repo) {
             jump = Some(row.tab_id);
         }
     }
     jump
 }
 
-fn card(ui: &mut egui::Ui, rect: Rect, row: &Row, in_needs_group: bool) -> bool {
+fn card(
+    ui: &mut egui::Ui,
+    rect: Rect,
+    row: &Row,
+    in_needs_group: bool,
+    name_the_repo: bool,
+) -> bool {
     let resp = ui.interact(rect, ui.id().with(("overview_card", row.tab_id)), Sense::click());
     let view = card_view(row);
     let painter = ui.painter_at(rect.expand(CARD_SHADOW));
@@ -304,14 +359,26 @@ fn card(ui: &mut egui::Ui, rect: Rect, row: &Row, in_needs_group: bool) -> bool 
     );
     let inner = rect.shrink(CARD_PAD);
     let ring_center = pos2(inner.left() + RING / 2.0, inner.top() + RING / 2.0);
-    progress_ring::paint(&painter, ring_center, RING, view.fraction, view.ring, brand::CARD_LINE);
+    if row.look.is_some() && view.fraction > 0.0 {
+        progress_ring::paint(
+            &painter,
+            ring_center,
+            RING,
+            view.fraction,
+            view.ring,
+            brand::CARD_LINE,
+        );
+    }
     let text_x = inner.left() + RING + 14.0;
-    let face_w = if row.avatar.is_some() { FACE + 10.0 } else { 0.0 };
-    let room = (inner.right() - text_x - face_w).max(1.0);
+    let room = (inner.right() - text_x).max(1.0);
     let what = row.workflow.as_deref().unwrap_or(&row.profile);
-    let sub = if in_needs_group { format!("{} \u{b7} {what}", row.place) } else { what.to_owned() };
+    let sub = if in_needs_group && name_the_repo {
+        format!("{} \u{b7} {what}", row.place)
+    } else {
+        what.to_owned()
+    };
     let name = ellipsized(&painter, &row.title, heading(15.0), brand::TEXT, room);
-    let sub = ellipsized(&painter, &sub, FontId::proportional(12.5), brand::MUTED, room);
+    let sub = ellipsized(&painter, &sub, FontId::proportional(13.0), brand::MUTED, room);
     let block = name.size().y + 2.0 + sub.size().y;
     let top = ring_center.y - block / 2.0;
     let sub_top = top + name.size().y + 2.0;
@@ -319,30 +386,33 @@ fn card(ui: &mut egui::Ui, rect: Rect, row: &Row, in_needs_group: bool) -> bool 
     painter.galley(pos2(text_x, sub_top), sub, brand::MUTED);
     let line_top = inner.top() + RING + 16.0;
     let said =
-        ellipsized(&painter, &view.line, FontId::proportional(13.5), view.line_ink, inner.width());
+        ellipsized(&painter, &view.line, FontId::proportional(14.0), view.line_ink, inner.width());
     painter.galley(pos2(inner.left(), line_top), said, view.line_ink);
     let tag_mid = inner.bottom() - TAG_H / 2.0;
     let tag_right = paint_pill(&painter, inner.left(), tag_mid, &view.tag, view.tag_ink);
     let clock =
-        painter.layout_no_wrap(fmt_elapsed(row.elapsed), FontId::monospace(11.0), brand::MUTED);
+        painter.layout_no_wrap(fmt_elapsed(row.elapsed), FontId::monospace(13.0), brand::MUTED);
     let clock_left = inner.right() - clock.size().x;
     let mut pill_right = tag_right;
     let pills = row.pr.iter().map(|(tone, text)| (*tone, text.as_str())).chain(row.done_check);
     for (tone, text) in pills {
         let ink = tone_ink(tone);
         let width =
-            painter.layout_no_wrap(text.to_owned(), FontId::proportional(11.5), ink).size().x
+            painter.layout_no_wrap(text.to_owned(), FontId::proportional(13.0), ink).size().x
                 + 20.0;
         if pill_right + 8.0 + width < clock_left - 8.0 {
             pill_right = paint_pill(&painter, pill_right + 8.0, tag_mid, text, ink);
         }
     }
     painter.galley(pos2(clock_left, tag_mid - clock.size().y / 2.0), clock, brand::MUTED);
-    if let Some(avatar) = &row.avatar {
-        let face = Rect::from_min_size(pos2(inner.right() - FACE, inner.top()), vec2(FACE, FACE));
-        if agent_avatar::paint(ui.ctx(), &painter, face, avatar) {
-            agent_avatar::hover(ui, face, row.tab_id, avatar);
-        }
+    let face = Face::of(&row.profile, &row.agent_id, row.avatar.clone());
+    let tile = Rect::from_center_size(ring_center, vec2(TILE, TILE));
+    if agent_avatar::paint_face(ui.ctx(), &painter, tile, &face)
+        && let Some(avatar) = face.avatar()
+    {
+        agent_avatar::hover(ui, tile, row.tab_id, avatar);
+    }
+    if row.avatar.is_some() {
         agent_avatar::menu(&resp, row.tab_id);
     }
     let tip = status_view::describe(&row.status);
@@ -351,7 +421,7 @@ fn card(ui: &mut egui::Ui, rect: Rect, row: &Row, in_needs_group: bool) -> bool 
 
 /// A tinted pill whose left edge is at `left`, centered on `mid`. Returns its right edge.
 fn paint_pill(painter: &egui::Painter, left: f32, mid: f32, text: &str, ink: Color32) -> f32 {
-    let galley = painter.layout_no_wrap(text.to_owned(), FontId::proportional(11.5), ink);
+    let galley = painter.layout_no_wrap(text.to_owned(), FontId::proportional(13.0), ink);
     let size = vec2(galley.size().x + 20.0, TAG_H);
     let pill = Rect::from_min_size(pos2(left, mid - TAG_H / 2.0), size);
     painter.rect_filled(pill, CornerRadius::same(255), ink.gamma_multiply(0.12));
@@ -606,12 +676,26 @@ mod tests {
     }
 
     #[test]
-    fn the_summary_names_only_the_counts_that_are_not_zero() {
-        let counts = Counts { setup: 0, working: 2, needs: 1, done: 0, failed: 0 };
-        let texts: Vec<String> = summary(counts).into_iter().map(|(text, _)| text).collect();
-        assert_eq!(texts, ["3 agents", "2 working", "1 need you"]);
-        let one = summary(Counts { done: 1, ..Counts::default() });
-        assert_eq!(one[0].0, "1 agent");
+    fn the_counts_row_always_names_need_you_working_and_idle() {
+        let counts = Counts { setup: 1, working: 2, needs: 1, done: 0, failed: 0 };
+        let texts: Vec<String> = counts_row(counts).into_iter().map(|(text, _)| text).collect();
+        assert_eq!(texts, ["1 need you", "3 working", "0 idle"]);
+        let failed = counts_row(Counts { failed: 2, ..Counts::default() });
+        assert_eq!(failed[0].0, "2 failed");
+        assert_eq!(failed.len(), 4);
+    }
+
+    #[test]
+    fn the_repo_is_named_in_the_header_only_when_there_is_one() {
+        let place = |label: &str| Place { label: label.into(), path: String::new(), rows: vec![] };
+        let one = Overview { needs: vec![], places: vec![place("web")], counts: Counts::default() };
+        assert_eq!(single_repo(&one), Some("web"));
+        let two = Overview {
+            needs: vec![],
+            places: vec![place("web"), place("api")],
+            counts: Counts::default(),
+        };
+        assert_eq!(single_repo(&two), None);
     }
 
     fn chips(titles: &[&str]) -> Checklist {

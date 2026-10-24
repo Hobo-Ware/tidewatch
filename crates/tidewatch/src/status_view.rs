@@ -1,16 +1,14 @@
 //! How an agent status looks: its tone, wording and color, the CLI logo it gets in the tab, and the
-//! thin bar along a tab's top edge. Working is the only tone that animates, so a tab that waits for
+//! status dot at the right end of a tab. Working is the only tone that animates, so a tab that waits for
 //! you or is done costs no frames.
 
 use crate::brand;
-use egui::{Color32, Id, LayerId, Order, Rect, Stroke, pos2, vec2};
+use egui::{Color32, Id, LayerId, Order, Pos2, Rect, pos2};
 use tidewatch_core::status::{AgentStatus, Reason};
 
-const BAR_HEIGHT: f32 = 2.0;
-const NEEDS_BAR_HEIGHT: f32 = 3.0;
-const SWEEP_WIDTH: f32 = 0.35;
-const SWEEP_PERIODS_PER_SECOND: f64 = 0.8;
-const FAIL_TICK_HEIGHT: f32 = 12.0;
+const DOT: f32 = 8.0;
+const PULSE_HZ: f64 = 0.8;
+const PULSE_LOW: f32 = 0.45;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(crate) enum Tone {
@@ -80,47 +78,23 @@ pub(crate) fn is_animated(tone: Tone) -> bool {
     tone == Tone::Working
 }
 
-/// The moving segment of the working bar as fractions of the tab width, `start <= end`, both inside
-/// `0.0..=1.0`. It enters from the left edge and leaves at the right.
-pub(crate) fn sweep(time: f64) -> (f32, f32) {
-    let phase = (time * SWEEP_PERIODS_PER_SECOND).rem_euclid(1.0) as f32;
-    let head = phase * (1.0 + SWEEP_WIDTH);
-    ((head - SWEEP_WIDTH).clamp(0.0, 1.0), head.clamp(0.0, 1.0))
+/// How bright the working dot is at `time`, from `PULSE_LOW` to 1.0.
+pub(crate) fn pulse(time: f64) -> f32 {
+    let wave = 0.5 - 0.5 * (time * PULSE_HZ * std::f64::consts::TAU).cos();
+    PULSE_LOW + (1.0 - PULSE_LOW) * wave as f32
 }
 
-/// Paints the status bar over a tab's top edge, on the layer `draw_tab` uses for its own edge
-/// strokes. `fraction` is a real percentage from the agent, drawn instead of the moving segment.
-pub(crate) fn paint_bar(ui: &egui::Ui, tab: Rect, tone: Tone, time: f64, fraction: Option<f32>) {
+pub(crate) fn dot_center(tab: Rect, trailing: f32) -> Pos2 {
+    pos2(tab.right() - trailing, tab.center().y)
+}
+
+/// Paints the status dot at the right end of a tab, on the layer `draw_tab` uses for its own edge
+/// strokes. A shell has no status and gets none.
+pub(crate) fn paint_dot(ui: &egui::Ui, center: Pos2, tone: Tone, time: f64) {
     let Some(color) = color(tone) else { return };
     let painter = ui.ctx().layer_painter(LayerId::new(Order::Middle, Id::new("tab_deco")));
-    let height = if tone == Tone::Needs { NEEDS_BAR_HEIGHT } else { BAR_HEIGHT };
-    let bar = |from: f32, to: f32| {
-        Rect::from_min_max(
-            pos2(tab.left() + tab.width() * from, tab.top()),
-            pos2(tab.left() + tab.width() * to, tab.top() + height),
-        )
-    };
-    match (tone, fraction) {
-        (Tone::Working, Some(done)) => {
-            painter.rect_filled(bar(0.0, 1.0), 0.0, color.gamma_multiply(0.25));
-            painter.rect_filled(bar(0.0, done.clamp(0.0, 1.0)), 0.0, color);
-        }
-        (Tone::Working, None) => {
-            painter.rect_filled(bar(0.0, 1.0), 0.0, color.gamma_multiply(0.25));
-            let (start, end) = sweep(time);
-            painter.rect_filled(bar(start, end), 0.0, color);
-        }
-        _ => {
-            painter.rect_filled(bar(0.0, 1.0), 0.0, color);
-        }
-    }
-    if tone == Tone::Failed {
-        let tick = Rect::from_center_size(
-            pos2(tab.left() + 2.0, tab.center().y),
-            vec2(2.0, FAIL_TICK_HEIGHT),
-        );
-        painter.line_segment([tick.center_top(), tick.center_bottom()], Stroke::new(2.0, color));
-    }
+    let color = if tone == Tone::Working { color.gamma_multiply(pulse(time)) } else { color };
+    painter.circle_filled(center, DOT / 2.0, color);
 }
 
 #[cfg(test)]
@@ -192,16 +166,10 @@ mod tests {
     }
 
     #[test]
-    fn the_sweep_stays_inside_the_tab_and_moves() {
-        let mut starts = Vec::new();
-        for step in 0..200 {
-            let (start, end) = sweep(f64::from(step) * 0.017);
-            assert!((0.0..=1.0).contains(&start) && (0.0..=1.0).contains(&end));
-            assert!(start <= end);
-            assert!(end - start <= SWEEP_WIDTH + 1e-6);
-            starts.push(start);
-        }
-        assert_ne!(starts.first(), starts.last());
-        assert_eq!(sweep(0.0), (0.0, 0.0));
+    fn the_pulse_stays_between_dim_and_full_and_moves() {
+        let samples: Vec<f32> = (0..200).map(|step| pulse(f64::from(step) * 0.017)).collect();
+        assert!(samples.iter().all(|v| (PULSE_LOW..=1.0).contains(v)));
+        assert_eq!(pulse(0.0), PULSE_LOW);
+        assert!(samples.iter().any(|v| *v > 0.95));
     }
 }

@@ -251,13 +251,14 @@ impl Tidewatch {
                 .map(|n| (n, matches!(state.delivery, Delivery::Building { .. })))
         });
         let band = card.map(|_| layout::band_below(&mut areas.terminal, delivery_view::BAND_H));
-        let grid = TerminalGrid::measure(ui, areas.terminal, self.terminal_font.in_use());
-
         let agent_name = self.tabs.items()[self.tabs.active()]
             .pane
             .agent
             .as_ref()
             .map(|agent| agent.profile_name.clone());
+        let grid_area =
+            if agent_name.is_some() { layout::agent_grid(areas.terminal) } else { areas.terminal };
+        let grid = TerminalGrid::measure(ui, grid_area, self.terminal_font.in_use());
         let shown = reader_glue::shown(self.tabs.active_pane_mut());
         self.show_terminal(ui, &grid, agent_name.as_deref(), shown == Some(Shown::Reader), frame);
         self.show_reader(ui, areas.terminal, shown, ctx, now, active_id, !frame.keys.modal_open);

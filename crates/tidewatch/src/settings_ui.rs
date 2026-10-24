@@ -33,7 +33,7 @@ pub(crate) fn caption(ui: &mut Ui, text: &str) {
 }
 
 pub(crate) fn note(ui: &mut Ui, text: &str, color: Color32) {
-    ui.label(RichText::new(text).size(12.0).color(color));
+    ui.label(RichText::new(text).size(13.0).color(color));
 }
 
 pub(crate) fn page_header(ui: &mut Ui, title: &str, subtitle: &str) -> Response {
@@ -41,7 +41,7 @@ pub(crate) fn page_header(ui: &mut Ui, title: &str, subtitle: &str) -> Response 
         ui.allocate_exact_size(vec2(ui.available_width(), HEADER_H), Sense::hover());
     let painter = ui.painter_at(rect);
     let title =
-        painter.text(rect.left_center(), Align2::LEFT_CENTER, title, font_semibold(18.0), TEXT);
+        painter.text(rect.left_center(), Align2::LEFT_CENTER, title, font_semibold(16.0), TEXT);
     painter.text(
         pos2(title.right() + 14.0, rect.center().y + 1.0),
         Align2::LEFT_CENTER,
@@ -55,12 +55,12 @@ pub(crate) fn page_header(ui: &mut Ui, title: &str, subtitle: &str) -> Response 
 
 pub(crate) fn footer_note(ui: &mut Ui, text: &str) {
     ui.add_space(SECTION_GAP);
-    ui.label(RichText::new(text).monospace().size(11.5).color(FAINT));
+    ui.label(RichText::new(text).monospace().size(13.0).color(FAINT));
 }
 
 pub(crate) fn section<R>(ui: &mut Ui, title: &str, add: impl FnOnce(&mut Ui) -> R) -> R {
     ui.add_space(SECTION_GAP);
-    ui.label(RichText::new(title.to_uppercase()).size(12.0).color(FAINT));
+    ui.label(heading(title, 14.0).color(SOFT));
     ui.add_space(8.0);
     card(ui, add)
 }

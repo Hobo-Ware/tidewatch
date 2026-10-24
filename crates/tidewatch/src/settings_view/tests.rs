@@ -190,7 +190,7 @@ fn a_click_on_a_sidebar_item_opens_its_page_in_sidebar_order() {
     let mut harness = Harness::new(Section::General);
     harness.frame(vec![]);
     for (index, want) in sections.iter().enumerate() {
-        let at = pos2(100.0, 60.0 + index as f32 * 40.0 + 19.0);
+        let at = pos2(100.0, 62.0 + index as f32 * (ITEM_HEIGHT + 2.0) + ITEM_HEIGHT / 2.0);
         assert!(harness.click(at).is_none());
         assert_eq!(harness.settings.section, *want, "item {index}");
     }

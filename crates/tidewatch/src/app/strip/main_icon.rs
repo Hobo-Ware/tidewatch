@@ -1,18 +1,16 @@
 //! The main checkout of the repo on show, drawn in the strip as a square icon next to the repo chip instead of a tab.
 
-use egui::{Align2, FontId, Rect, Sense, Shape, vec2};
-use stdusk_core::terminal::CmdState;
-use stdusk_egui::ui::TAB_H;
-
-use super::{FrameIntent, TAB_INSET_Y, Tidewatch, nav_look, tab_signals};
+use super::{FrameIntent, ICON_BOX, ICON_GLYPH, TAB_H, Tidewatch, nav_look, tab_signals};
 use crate::brand;
 use crate::commands::Command;
 use crate::pane::Pane;
 use crate::tabs::{Action, Tabs};
+use egui::{Align2, FontId, Rect, Sense, Shape, vec2};
+use stdusk_core::terminal::CmdState;
 
-pub(super) const WIDTH: f32 = 32.0;
+pub(super) const WIDTH: f32 = ICON_BOX;
 const GLYPH: &str = "\u{E47E}";
-const GLYPH_SIZE: f32 = 17.0;
+const GLYPH_SIZE: f32 = ICON_GLYPH;
 const DOT: f32 = 8.0;
 const DOT_RING: f32 = 11.0;
 const DOT_INSET: f32 = 2.0;
@@ -68,7 +66,7 @@ pub(super) fn draw<T>(
         ink,
     );
     if running {
-        let center = dot_center(rect.shrink2(vec2(0.0, TAB_INSET_Y)));
+        let center = dot_center(rect);
         painter.circle_filled(center, DOT_RING / 2.0, brand::SIDEBAR);
         painter.circle_filled(center, DOT / 2.0, brand::TEAL);
     }

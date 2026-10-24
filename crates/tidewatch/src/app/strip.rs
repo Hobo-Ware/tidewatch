@@ -4,8 +4,8 @@ use egui::layers::ShapeIdx;
 use egui::{CornerRadius, Frame, Margin, Shape, pos2, vec2};
 use stdusk_core::progress::Progress;
 use stdusk_core::terminal::{CmdState, PtyTerm};
-use stdusk_egui::ui::{TAB_H, TAB_PAD_X, TAB_SLOT_W, draw_tab, ellipsize, icons};
-use stdusk_egui::widgets::{chip, icon_button, menu_item, style_menu};
+use stdusk_egui::ui::{TAB_PAD_X, TAB_SLOT_W, TabMetrics, draw_tab_sized, icons};
+use stdusk_egui::widgets::{IconButtonSize, chip, icon_button_sized, menu_item, style_menu};
 
 use super::frame::FrameIntent;
 use super::repos::RepoCommand;
@@ -15,7 +15,6 @@ use tidewatch_core::avatar::Avatar;
 
 use super::{Tidewatch, wall_ms};
 use crate::agent_avatar::{self, Face};
-use crate::agent_run::progress_fraction;
 use crate::amphetamine_view;
 use crate::brand;
 use crate::commands::Command;
@@ -23,7 +22,6 @@ use crate::job_model::{TabJob, tab_job};
 use crate::pane::{Body, Pane};
 use crate::park::Fits;
 use crate::progress_model::{TabRing, tab_ring};
-use crate::progress_ring;
 use crate::tabs::{Action, Step, Tabs};
 use crate::window_chrome::{self, Chrome};
 use crate::{layout, overview_view, status_view};
@@ -32,23 +30,29 @@ mod main_icon;
 pub(crate) mod pill;
 mod repo_chip;
 
-const STRIP_TOP_MARGIN: i8 = 6;
+pub(crate) const STRIP_H: f32 = 64.0;
+pub(crate) const TAB_H: f32 = 44.0;
+pub(crate) const ICON_BOX: f32 = 44.0;
+pub(crate) const ICON_GLYPH: f32 = 24.0;
+const ICON_GLYPH_SMALL: f32 = 22.0;
+const ICON_RADIUS: f32 = 8.0;
+const TAB_FONT_PX: f32 = 14.0;
+const STRIP_VERTICAL_MARGIN: i8 = 10;
 const STRIP_SIDE_MARGIN: i8 = 8;
 const STRIP_GAP: f32 = 4.0;
 const STRIP_CORNER: u8 = 10;
 const TAB_RADIUS: u8 = 8;
-const TAB_INSET_Y: f32 = 3.0;
+const TAB_UNDERLINE_H: f32 = 2.0;
+const TAB_UNDERLINE_INSET: f32 = 8.0;
 const TAB_BAR_W: f32 = 2.0;
 const TAB_BAR_INSET: f32 = 8.0;
-const RING_SIZE: f32 = 16.0;
-const RING_GAP: f32 = 6.0;
-const AVATAR_SIZE: f32 = 20.0;
-const AVATAR_PAD_CHARS: usize = 4;
+const AVATAR_SIZE: f32 = 26.0;
+const AVATAR_GAP: f32 = 10.0;
+const TITLE_DOT_GAP: f32 = 8.0;
 const PILL_DROP_SLACK: f32 = 6.0;
-const JOB_BAR_H: f32 = 2.0;
-const JOB_BAR_INSET: f32 = 6.0;
+const STATUS_DOT_TRAILING: f32 = TAB_PAD_X + TAB_SLOT_W / 2.0;
 
-/// What an agent tab shows besides its title: the ledger's ring and the leading job's percent.
+/// What an agent tab keeps besides its title: the ledger's and the leading job's words for its tooltip.
 #[derive(Default)]
 pub(crate) struct TabExtras {
     pub(crate) ring: Option<TabRing>,
@@ -89,11 +93,11 @@ impl Tidewatch {
         let margin = Margin {
             left: STRIP_SIDE_MARGIN,
             right: STRIP_SIDE_MARGIN,
-            top: STRIP_TOP_MARGIN,
-            bottom: 0,
+            top: STRIP_VERTICAL_MARGIN,
+            bottom: STRIP_VERTICAL_MARGIN,
         };
         egui::Panel::top("tabbar")
-            .exact_size(TAB_H + f32::from(STRIP_TOP_MARGIN))
+            .exact_size(STRIP_H)
             .frame(
                 Frame::new()
                     .fill(brand::SIDEBAR)
@@ -132,7 +136,7 @@ impl Tidewatch {
                         0.0
                     };
                     let room = ui.available_width()
-                        - stdusk_egui::widgets::ICON_BTN_W * 2.0
+                        - ICON_BOX * 2.0
                         - overview_view::BUTTON_W
                         - 22.0
                         - tail
@@ -153,17 +157,18 @@ impl Tidewatch {
                     );
                     self.draw_tabs(ui, width, now, &mut frame.actions);
                     ui.add_space(6.0);
-                    let plus = icon_button(
+                    let plus = icon_button_sized(
                         ui,
                         icons::PLUS,
                         &format!("New tab ({})", Command::NewTab.keys()),
+                        strip_icon(),
                     );
                     if plus.clicked() {
                         frame.actions.push(Action::New);
                     }
                     ui.add_space(
                         (ui.available_width()
-                            - stdusk_egui::widgets::ICON_BTN_W
+                            - ICON_BOX
                             - tail
                             - parked_tail
                             - controls
@@ -183,10 +188,11 @@ impl Tidewatch {
                         }
                     }
                     self.updates.pill(ui);
-                    if icon_button(
+                    if icon_button_sized(
                         ui,
                         icons::GEAR,
                         &format!("Profiles ({})", Command::Settings.keys()),
+                        strip_icon(),
                     )
                     .clicked()
                     {
@@ -226,10 +232,15 @@ impl Tidewatch {
                 ui.close();
             }
         });
-        let gap = (ui.available_width() - stdusk_egui::widgets::ICON_BTN_W - controls).max(0.0);
+        let gap = (ui.available_width() - ICON_BOX - controls).max(0.0);
         ui.add_space(gap);
-        if icon_button(ui, icons::GEAR, &format!("Profiles ({})", Command::Settings.keys()))
-            .clicked()
+        if icon_button_sized(
+            ui,
+            icons::GEAR,
+            &format!("Profiles ({})", Command::Settings.keys()),
+            strip_icon(),
+        )
+        .clicked()
         {
             frame.toggle_settings = true;
         }
@@ -402,17 +413,11 @@ fn tab_row<T>(
             agent.map(|_| extras(tab.id)).unwrap_or_default();
         let face = agent.map(|agent| Face::of(&agent.profile_name, &agent.run.agent_id, avatar));
         let label = crate::tab_title::label(agent, &tab.title);
-        let title = match (&face, draft) {
-            (_, true) => String::new(),
-            (Some(_), false) => face_title(ui, &label, width, ring.is_some()),
-            (None, false) => tab.title.clone(),
-        };
-        let number = face.is_none().then_some(position + 1);
-        let (resp, close) = draw_tab(
+        let (resp, close) = draw_tab_sized(
             ui,
-            number,
+            None,
             tab.id,
-            &title,
+            "",
             i == tabs.active(),
             false,
             None,
@@ -421,20 +426,18 @@ fn tab_row<T>(
             &[],
             None,
             Some(width),
+            TabMetrics { height: TAB_H, font_px: TAB_FONT_PX },
         );
         nav_look(&painter, under, resp.rect, i == tabs.active(), resp.hovered());
         if mood.struggling {
             paint_struggle(&painter, resp.rect);
         }
-        if draft {
-            paint_draft_title(&painter, resp.rect, position + 1, &tab.title);
-        }
-        if let Some(ring) = &ring {
-            paint_ring(ui, resp.rect, ring, tab.id);
-        }
-        if let Some(job) = &job {
-            paint_job(ui, resp.rect, job);
-        }
+        let text = match (&face, draft) {
+            (Some(_), false) => label.clone(),
+            _ => format!("{}  {}", position + 1, tab.title),
+        };
+        let inset = if face.is_some() { AVATAR_SIZE + AVATAR_GAP } else { 0.0 };
+        paint_title(&painter, resp.rect, &text, inset, (i == tabs.active(), draft));
         if let Some(face) = &face {
             let rect = face_rect(resp.rect);
             if agent_avatar::paint_face(ui.ctx(), ui.painter(), rect, face)
@@ -458,14 +461,20 @@ fn tab_row<T>(
         };
         tab_menu(&resp, i, tab.id, &menu, actions);
         let resp = if agent.is_some() {
-            resp.on_hover_text(tab_tip(&label, &tab.title, position + 1, job.as_ref()))
+            let mut tip = tab_tip(&label, &tab.title, position + 1, job.as_ref());
+            if let Some(ring) = &ring {
+                tip = format!("{tip}\n{}", ring.tip);
+            }
+            resp.on_hover_text(tip)
         } else {
             resp
         };
-        if let Some(agent) = agent {
+        if let Some(agent) = agent
+            && !resp.contains_pointer()
+        {
             let tone = status_view::tone(agent.run.status());
-            let fraction = progress_fraction(pty_progress);
-            status_view::paint_bar(ui, resp.rect, tone, now, fraction);
+            let center = status_view::dot_center(resp.rect, STATUS_DOT_TRAILING);
+            status_view::paint_dot(ui, center, tone, now);
         }
         if close {
             actions.push(Action::Close(i));
@@ -505,7 +514,7 @@ fn tab_row<T>(
             egui::Id::new("tab_drag_overlay"),
         ));
         overlay.rect_filled(
-            slots[from].rect.shrink2(vec2(0.0, TAB_INSET_Y)),
+            slots[from].rect,
             CornerRadius::same(TAB_RADIUS),
             brand::TEAL.gamma_multiply(0.35),
         );
@@ -517,7 +526,7 @@ fn tab_row<T>(
 }
 
 fn paint_struggle(painter: &egui::Painter, tab: egui::Rect) {
-    let body = tab.shrink2(vec2(0.0, TAB_INSET_Y));
+    let body = tab;
     painter.rect_filled(body, CornerRadius::same(TAB_RADIUS), brand::ORANGE.gamma_multiply(0.16));
     let bar = egui::Rect::from_min_size(
         body.left_top() + vec2(0.0, TAB_BAR_INSET),
@@ -575,25 +584,6 @@ fn tab_menu(
     });
 }
 
-pub(crate) fn title_budget(width: f32, char_w: f32, ring: bool) -> usize {
-    let mut taken = 2.0 * TAB_PAD_X + TAB_SLOT_W + RING_GAP;
-    if ring {
-        taken += RING_SIZE + RING_GAP;
-    }
-    (((width - taken) / char_w).floor() as usize).max(1)
-}
-
-fn face_title(ui: &egui::Ui, title: &str, width: f32, ring: bool) -> String {
-    let char_w = ui
-        .painter()
-        .layout_no_wrap("0".to_owned(), egui::FontId::monospace(12.0), brand::SOFT)
-        .size()
-        .x;
-    let room = title_budget(width, char_w, ring);
-    let name = ellipsize(title, room.saturating_sub(AVATAR_PAD_CHARS).max(1)).0;
-    format!("{}{name}", " ".repeat(AVATAR_PAD_CHARS))
-}
-
 fn face_rect(tab: egui::Rect) -> egui::Rect {
     egui::Rect::from_min_size(
         pos2(tab.left() + TAB_PAD_X, tab.center().y - AVATAR_SIZE / 2.0),
@@ -601,62 +591,29 @@ fn face_rect(tab: egui::Rect) -> egui::Rect {
     )
 }
 
-fn ring_rect(tab: egui::Rect) -> egui::Rect {
-    let right = tab.right() - TAB_PAD_X - TAB_SLOT_W - RING_GAP;
-    egui::Rect::from_center_size(
-        pos2(right - RING_SIZE / 2.0, tab.center().y),
-        vec2(RING_SIZE, RING_SIZE),
-    )
-}
-
-fn job_bar_rect(tab: egui::Rect, fraction: f32) -> egui::Rect {
-    let floor = tab.bottom() - TAB_INSET_Y;
-    let room = (tab.width() - 2.0 * JOB_BAR_INSET).max(0.0);
-    egui::Rect::from_min_size(
-        pos2(tab.left() + JOB_BAR_INSET, floor - JOB_BAR_H),
-        vec2(room * fraction.clamp(0.0, 1.0), JOB_BAR_H),
-    )
-}
-
-fn paint_job(ui: &mut egui::Ui, tab: egui::Rect, job: &TabJob) {
-    let ink = if job.stalled { brand::ORANGE } else { brand::TEAL };
-    ui.painter().rect_filled(job_bar_rect(tab, job.fraction), CornerRadius::same(1), ink);
-}
-
-fn paint_ring(ui: &mut egui::Ui, tab: egui::Rect, ring: &TabRing, id: u64) {
-    let rect = ring_rect(tab);
-    progress_ring::paint(
-        ui.painter(),
-        rect.center(),
-        RING_SIZE,
-        ring.ring.fraction,
-        progress_ring::tone_color(ring.ring.tone),
-        brand::ITEM_LINE,
-    );
-    ui.interact(rect.expand(3.0), ui.id().with(("tab-ring", id)), egui::Sense::hover())
-        .on_hover_text(&ring.tip);
-}
-
-/// The label of a draft tab, in italics after the tab's number: `draw_tab` has no italic title, so
-/// it is given none and this one is laid over the same place.
-fn paint_draft_title(painter: &egui::Painter, tab: egui::Rect, number: usize, title: &str) {
-    let digits = painter.layout_no_wrap("0".to_owned(), egui::FontId::monospace(12.0), brand::SOFT);
-    let prefix = (number.to_string().len() + 2) as f32 * digits.size().x;
-    let x = tab.left() + TAB_PAD_X + prefix;
-    let mut job = egui::text::LayoutJob::simple_singleline(
-        title.to_owned(),
-        egui::FontId::proportional(13.0),
-        brand::SOFT,
-    );
-    job.sections[0].format.italics = true;
+fn paint_title(
+    painter: &egui::Painter,
+    tab: egui::Rect,
+    text: &str,
+    inset: f32,
+    (active, draft): (bool, bool),
+) {
+    let x = tab.left() + TAB_PAD_X + inset;
+    let (font, ink) = if active {
+        (crate::screen_kit::heading(TAB_FONT_PX), brand::TEXT)
+    } else {
+        (egui::FontId::proportional(TAB_FONT_PX), brand::SOFT)
+    };
+    let mut job = egui::text::LayoutJob::simple_singleline(text.to_owned(), font, ink);
+    job.sections[0].format.italics = draft;
     job.wrap = egui::text::TextWrapping::truncate_at_width(
-        (tab.right() - x - TAB_PAD_X - TAB_SLOT_W - 6.0).max(1.0),
+        (tab.right() - x - TAB_PAD_X - TAB_SLOT_W - TITLE_DOT_GAP).max(1.0),
     );
     let galley = painter.layout_job(job);
-    painter.galley(pos2(x, tab.center().y - galley.size().y / 2.0), galley, brand::SOFT);
+    painter.galley(pos2(x, tab.center().y - galley.size().y / 2.0), galley, ink);
 }
 
-/// Gives a tab the nav look: a teal tint, rounded, with a short bar on the left when active, a
+/// Gives a tab the nav look: a teal tint, rounded, with a 2 px teal underline when active, a
 /// fainter tint when hovered. `draw_tab` fills the active tab with its own grey and has no
 /// styling, so that fill, the shape right after `under`, is swapped for the tint in place.
 fn nav_look(
@@ -666,7 +623,7 @@ fn nav_look(
     active: bool,
     hovered: bool,
 ) {
-    let rect = tab.shrink2(vec2(0.0, TAB_INSET_Y));
+    let rect = tab;
     let radius = CornerRadius::same(TAB_RADIUS);
     if active {
         let fill = ShapeIdx(under.0 + 1);
@@ -675,13 +632,25 @@ fn nav_look(
         } else {
             painter.rect_filled(rect, radius, brand::TEAL_NAV);
         }
-        let bar = egui::Rect::from_min_max(
-            egui::pos2(rect.left(), rect.top() + TAB_BAR_INSET),
-            egui::pos2(rect.left() + TAB_BAR_W, rect.bottom() - TAB_BAR_INSET),
-        );
-        painter.rect_filled(bar, CornerRadius::same(1), brand::TEAL);
+        painter.rect_filled(underline_rect(rect), CornerRadius::same(1), brand::TEAL);
     } else if hovered {
         painter.set(under, Shape::rect_filled(rect, radius, brand::TEAL_NAV.gamma_multiply(0.6)));
+    }
+}
+
+pub(super) fn underline_rect(tab: egui::Rect) -> egui::Rect {
+    egui::Rect::from_min_max(
+        pos2(tab.left() + TAB_UNDERLINE_INSET, tab.bottom() - TAB_UNDERLINE_H),
+        pos2(tab.right() - TAB_UNDERLINE_INSET, tab.bottom()),
+    )
+}
+
+fn strip_icon() -> IconButtonSize {
+    IconButtonSize {
+        width: ICON_BOX,
+        height: ICON_BOX,
+        glyph: ICON_GLYPH_SMALL,
+        radius: ICON_RADIUS,
     }
 }
 

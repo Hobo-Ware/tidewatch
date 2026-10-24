@@ -62,14 +62,6 @@ pub(crate) fn progress_signal(progress: Progress) -> ProgressSignal {
     }
 }
 
-/// A real percentage the agent reported with OSC 9;4, for the tab's bar.
-pub(crate) fn progress_fraction(progress: Progress) -> Option<f32> {
-    match progress {
-        Progress::Normal(pct) if pct > 0 => Some(f32::from(pct.min(100)) / 100.0),
-        _ => None,
-    }
-}
-
 /// A status that just changed, for notifications.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct Change {
@@ -483,18 +475,17 @@ mod tests {
     }
 
     #[test]
-    fn progress_maps_onto_the_status_layer_and_the_bar() {
+    fn progress_maps_onto_the_status_layer() {
         let cases = [
-            (Progress::None, ProgressSignal::Off, None),
-            (Progress::Normal(40), ProgressSignal::Working, Some(0.4)),
-            (Progress::Normal(0), ProgressSignal::Working, None),
-            (Progress::Indeterminate, ProgressSignal::Working, None),
-            (Progress::Error(10), ProgressSignal::Error, None),
-            (Progress::Paused(10), ProgressSignal::Paused, None),
+            (Progress::None, ProgressSignal::Off),
+            (Progress::Normal(40), ProgressSignal::Working),
+            (Progress::Normal(0), ProgressSignal::Working),
+            (Progress::Indeterminate, ProgressSignal::Working),
+            (Progress::Error(10), ProgressSignal::Error),
+            (Progress::Paused(10), ProgressSignal::Paused),
         ];
-        for (progress, signal, fraction) in cases {
+        for (progress, signal) in cases {
             assert_eq!(progress_signal(progress), signal, "{progress:?}");
-            assert_eq!(progress_fraction(progress), fraction, "{progress:?}");
         }
     }
 

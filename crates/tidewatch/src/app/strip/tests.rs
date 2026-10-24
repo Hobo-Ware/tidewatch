@@ -280,32 +280,37 @@ fn filled_by(
 
 #[test]
 fn the_active_tab_swaps_the_fill_draw_tab_painted_for_the_nav_tint_and_adds_a_bar() {
-    let tab = Rect::from_min_size(pos2(10.0, 0.0), vec2(120.0, 34.0));
+    let tab = Rect::from_min_size(pos2(10.0, 0.0), vec2(120.0, TAB_H));
     let fills = filled_by(|painter, under, tab| nav_look(painter, under, tab, true, false), tab);
     assert_eq!(fills, [None, Some(brand::TEAL_NAV), Some(brand::TEAL)]);
 }
 
 #[test]
+fn the_active_underline_is_two_points_along_the_floor_inside_the_corners() {
+    let tab = Rect::from_min_size(pos2(10.0, 0.0), vec2(120.0, TAB_H));
+    let line = underline_rect(tab);
+    assert_eq!(line.height(), 2.0);
+    assert_eq!(line.bottom(), tab.bottom());
+    assert_eq!(line.left(), tab.left() + TAB_UNDERLINE_INSET);
+    assert_eq!(line.right(), tab.right() - TAB_UNDERLINE_INSET);
+}
+
+#[test]
+fn the_status_dot_sits_where_the_close_button_does_and_the_strip_is_sixty_four_tall() {
+    let tab = Rect::from_min_size(pos2(10.0, 0.0), vec2(200.0, TAB_H));
+    let dot = crate::status_view::dot_center(tab, STATUS_DOT_TRAILING);
+    assert_eq!(dot, pos2(tab.right() - TAB_PAD_X - TAB_SLOT_W / 2.0, tab.center().y));
+    assert_eq!((STRIP_H, TAB_H, ICON_BOX), (64.0, 44.0, 44.0));
+    assert_eq!(TAB_H + 2.0 * f32::from(STRIP_VERTICAL_MARGIN), STRIP_H);
+}
+
+#[test]
 fn a_hovered_inactive_tab_gets_a_fainter_tint_under_its_text_and_a_plain_one_nothing() {
-    let tab = Rect::from_min_size(pos2(10.0, 0.0), vec2(120.0, 34.0));
+    let tab = Rect::from_min_size(pos2(10.0, 0.0), vec2(120.0, TAB_H));
     let hovered = filled_by(|painter, under, tab| nav_look(painter, under, tab, false, true), tab);
     assert_eq!(hovered[0], Some(brand::TEAL_NAV.gamma_multiply(0.6)));
     let plain = filled_by(|painter, under, tab| nav_look(painter, under, tab, false, false), tab);
     assert_eq!(plain[0], None);
-}
-
-#[test]
-fn the_room_for_a_title_leaves_the_ring_and_the_trailing_slot_free() {
-    let cases = [
-        (200.0, 7.2, true, 18),
-        (200.0, 7.2, false, 21),
-        (140.0, 7.2, true, 10),
-        (140.0, 7.2, false, 13),
-        (60.0, 7.2, true, 1),
-    ];
-    for (width, char_w, ring, want) in cases {
-        assert_eq!(title_budget(width, char_w, ring), want, "{width} {ring}");
-    }
 }
 
 fn collect_text(shape: &Shape, out: &mut Vec<(String, Rect)>) {
@@ -391,13 +396,12 @@ fn an_agent_tab_shows_its_face_in_place_of_the_number_and_the_cli_logo() {
     for width in [140.0, 200.0, 260.0] {
         let (rects, texts) = agent_strip(QUARTZ, width, (false, false, true));
         let title = title_of(&texts);
-        assert!(title.0.starts_with("    qua"), "four spaces of room for the face: {:?}", title.0);
+        assert!(title.0.starts_with("qua"), "no padding spaces for the face: {:?}", title.0);
         assert!(texts.iter().all(|(text, _)| !text.starts_with("2 ")), "no number in {texts:?}");
         let face = face_rect(rects[0]);
         assert_eq!((face.width(), face.height()), (AVATAR_SIZE, AVATAR_SIZE));
         assert_eq!(face.left(), rects[0].left() + TAB_PAD_X);
-        let char_w = title.1.width() / title.0.chars().count() as f32;
-        assert!(face.right() <= title.1.left() + AVATAR_PAD_CHARS as f32 * char_w + 0.5);
+        assert!((title.1.left() - (face.right() + AVATAR_GAP)).abs() < 1.0, "{title:?} {face:?}");
     }
 }
 
@@ -438,65 +442,74 @@ fn a_shell_tab_keeps_its_number() {
 }
 
 #[test]
-fn a_tab_with_a_ledger_cuts_its_title_before_the_ring_at_every_width_from_the_floor_up() {
-    for width in [crate::layout::MIN_TAB_W, 180.0, 260.0] {
-        let (rects, texts) = agent_strip(QUARTZ, width, (true, false, true));
-        let title = title_of(&texts);
-        assert!(
-            title.1.right() <= ring_rect(rects[0]).left(),
-            "{:?} reaches the ring at {width}",
-            title.1
-        );
-        assert!(title.0.ends_with('\u{2026}'), "{}", title.0);
+fn a_ledger_or_a_job_takes_no_room_from_the_title_on_a_tab() {
+    for width in [crate::layout::MIN_TAB_W, 200.0, 260.0] {
+        let (rects, bare) = agent_strip(QUARTZ, width, (false, false, true));
+        let (_, full) = agent_strip(QUARTZ, width, (true, true, true));
+        assert_eq!(title_of(&bare).1, title_of(&full).1, "{width}");
+        assert_eq!(title_of(&bare).0, title_of(&full).0, "{width}");
+        assert_eq!(rects[0].width(), width);
     }
-}
-
-#[test]
-fn a_tab_without_a_ledger_keeps_the_whole_title_room() {
-    let (rects, with) = agent_strip(QUARTZ, 200.0, (true, false, true));
-    let (_, without) = agent_strip(QUARTZ, 200.0, (false, false, true));
-    assert!(title_of(&without).1.width() > title_of(&with).1.width());
-    assert_eq!(rects[0].width(), 200.0);
 }
 
 #[test]
 fn the_title_gets_what_the_face_and_the_slot_leave_at_the_least_tab_width() {
-    let (rects, texts) =
-        agent_strip("backfill-orders", crate::layout::MIN_TAB_W, (false, false, true));
+    let (rects, texts) = agent_strip(
+        "backfill-orders-for-every-region",
+        crate::layout::MIN_TAB_W,
+        (false, false, true),
+    );
     let title = texts.iter().find(|(text, _)| text.contains("backf")).unwrap();
-    assert!(title.0.ends_with('\u{2026}'), "cut with an ellipsis: {:?}", title.0);
-    assert!(title.1.right() <= rects[0].right() - TAB_PAD_X - TAB_SLOT_W);
+    let room = rects[0].right() - TAB_PAD_X - TAB_SLOT_W - TITLE_DOT_GAP;
+    assert!(title.1.right() <= room + 0.5, "{title:?} reaches past {room}");
+    assert!(title.1.right() > room - 24.0, "{title:?} is cut early, not at {room}");
 }
 
 #[test]
-fn the_job_percent_is_not_in_the_title_row_but_the_bar_along_the_floor_stays() {
+fn the_job_percent_is_not_in_the_title_row_and_no_bar_runs_along_the_floor() {
     let (_, texts) = agent_strip("orders", 200.0, (true, true, true));
     assert!(texts.iter().all(|(text, _)| !text.contains('%')), "{texts:?}");
-    let tab = Rect::from_min_size(pos2(10.0, 0.0), vec2(200.0, TAB_H));
-    let half = job_bar_rect(tab, 0.5);
-    assert_eq!(half.left(), 16.0);
-    assert_eq!(half.width(), 94.0);
-    assert_eq!(half.height(), 2.0);
-    assert_eq!(half.bottom(), TAB_H - 3.0);
-    assert_eq!(job_bar_rect(tab, 2.0).width(), 188.0);
-    assert_eq!(job_bar_rect(tab, -1.0).width(), 0.0);
 }
 
 #[test]
-fn a_stalled_job_paints_its_bar_orange_and_a_running_one_teal() {
-    for (stalled, want) in [(false, brand::TEAL), (true, brand::ORANGE)] {
-        let ctx = egui::Context::default();
-        let tab = Rect::from_min_size(pos2(0.0, 0.0), vec2(200.0, TAB_H));
-        let job = TabJob { fraction: 0.5, label: "50%".into(), stalled, tip: String::new() };
-        let output = ctx.run_ui(RawInput::default(), |ui| paint_job(ui, tab, &job));
-        let mut fills = Vec::new();
+fn a_tab_title_is_the_proportional_ui_font_in_soft_not_mono() {
+    let ctx = crate::fonts::test_context();
+    let (_, texts) = agent_strip("orders", 200.0, (false, false, true));
+    assert!(texts.iter().any(|(text, _)| text == "orders"), "{texts:?}");
+    let mut found = Vec::new();
+    for _ in 0..2 {
+        let raw = RawInput {
+            screen_rect: Some(Rect::from_min_size(pos2(0.0, 0.0), vec2(800.0, 200.0))),
+            ..RawInput::default()
+        };
+        let output = ctx.run_ui(raw, |ui| {
+            let painter = ui.painter().clone();
+            paint_title(
+                &painter,
+                Rect::from_min_size(pos2(0.0, 0.0), vec2(200.0, TAB_H)),
+                "a",
+                0.0,
+                (false, false),
+            );
+            paint_title(
+                &painter,
+                Rect::from_min_size(pos2(0.0, 50.0), vec2(200.0, TAB_H)),
+                "b",
+                0.0,
+                (true, false),
+            );
+        });
+        found.clear();
         for clipped in &output.shapes {
-            if let Shape::Rect(rect) = &clipped.shape {
-                fills.push(rect.fill);
+            if let Shape::Text(text) = &clipped.shape {
+                let format = &text.galley.job.sections[0].format;
+                found.push((format.font_id.clone(), format.color));
             }
         }
-        assert_eq!(fills, [want]);
     }
+    assert_eq!(found.len(), 2);
+    assert_eq!(found[0], (egui::FontId::proportional(TAB_FONT_PX), brand::SOFT));
+    assert_eq!(found[1], (crate::screen_kit::heading(TAB_FONT_PX), brand::TEXT));
 }
 
 #[test]
@@ -798,7 +811,7 @@ fn the_main_icon_is_a_square_far_narrower_than_a_tab_and_sits_before_the_agent_t
     let strip = Strip::new();
     assert_eq!(strip.rects[0].width(), main_icon::WIDTH);
     assert_eq!(strip.rects[0].height(), TAB_H);
-    assert!(strip.rects[0].width() * 3.0 < strip.rects[1].width());
+    assert!(strip.rects[0].width() < strip.rects[1].width() / 2.0);
     assert!(strip.rects[0].right() <= strip.rects[1].left());
     assert_eq!(strip.rects.len(), 4, "the icon and the three shells");
 }
@@ -842,9 +855,8 @@ fn the_main_icon_has_the_active_tab_look_only_while_main_is_selected() {
 fn a_dot_shows_on_the_main_icon_only_while_its_shell_runs_a_command() {
     let (_, running, rect) = main_icon_shapes(false, true, false);
     assert_eq!(running, [brand::SIDEBAR, brand::TEAL]);
-    let body = rect.shrink2(vec2(0.0, TAB_INSET_Y));
-    let dot = main_icon::dot_center(body);
-    assert!(body.contains(dot), "the dot sits on the icon's corner");
+    let dot = main_icon::dot_center(rect);
+    assert!(rect.contains(dot), "the dot sits on the icon's corner");
     let (_, idle, _) = main_icon_shapes(false, false, false);
     assert_eq!(idle, Vec::<egui::Color32>::new());
 }
@@ -887,7 +899,7 @@ fn titled_strip(prepare: impl FnOnce(&mut crate::pane::AgentTab)) -> (Vec<(Strin
                     tab_row(
                         ui,
                         &tabs,
-                        260.0,
+                        300.0,
                         0.0,
                         &mut actions,
                         (
