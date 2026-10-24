@@ -514,6 +514,46 @@ fn amphetamine_is_palette_only_and_known_by_its_other_name() {
     assert_eq!(press_event(Command::Amphetamine), None);
 }
 
+fn events_left_after(platform: Platform, events: Vec<Event>) -> Vec<Event> {
+    let ctx = egui::Context::default();
+    let raw = RawInput {
+        screen_rect: Some(Rect::from_min_size(pos2(0.0, 0.0), vec2(800.0, 600.0))),
+        events,
+        ..Default::default()
+    };
+    let mut left = Vec::new();
+    let _ = ctx.run_ui(raw, |ui| {
+        consume(ui.ctx(), platform, |_| true);
+        left = ui.input(|input| input.events.clone());
+    });
+    left
+}
+
+#[test]
+fn an_alt_chord_does_not_also_type_its_key_into_the_terminal() {
+    let alt_chords: Vec<_> = TABLE
+        .iter()
+        .filter_map(|entry| entry.chord(Platform::Linux))
+        .filter(|chord| chord.types_its_key())
+        .collect();
+    assert!(alt_chords.len() >= 12, "{}", alt_chords.len());
+    for chord in alt_chords {
+        let mut events = press(Platform::Linux, chord);
+        events.push(Event::Text(chord.key.symbol_or_name().to_owned()));
+        events.push(Event::Text("x".to_owned()));
+        let left = events_left_after(Platform::Linux, events);
+        assert_eq!(left, [Event::Text("x".to_owned())], "{}", chord.label());
+    }
+}
+
+#[test]
+fn a_chord_with_ctrl_or_cmd_leaves_the_text_of_other_keys_alone() {
+    let chord = cmd(Key::T);
+    let mut events = press(Platform::Mac, chord);
+    events.push(Event::Text("t".to_owned()));
+    assert_eq!(events_left_after(Platform::Mac, events), [Event::Text("t".to_owned())]);
+}
+
 #[test]
 fn the_linux_shortcuts_chord_also_arrives_as_a_question_mark() {
     let held = Modifiers { ctrl: true, shift: true, command: true, ..Modifiers::default() };
