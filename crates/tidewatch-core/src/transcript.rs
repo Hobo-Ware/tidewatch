@@ -13,6 +13,13 @@
 //!   (a code string in `input`) with a list of text parts as `output`; `function_call` items are
 //!   still read, from a hand-written sample (`codex_function_call.jsonl`).
 //!
+//! Session titles (Claude Code only; the Gemini, Copilot and Codex fixtures hold no title record):
+//! `{"type":"custom-title","customTitle":...}` is what `/rename` writes (checked on a real 2.1.310
+//! run), `{"type":"ai-title","aiTitle":...}` the title Claude generates itself and `{"type":"summary",
+//! "summary":...}` the one a compaction leaves. The last record of a kind wins, and the order they
+//! are shown in is Claude's own: custom, generated, summary. Their shapes come from the 2.1.310
+//! binary; no real generated title could be captured without a signed-in run.
+//!
 //! A malformed line is skipped, never a panic. [`Tail::poll`] reads the file and blocks on disk: call
 //! it off the UI thread. The parsers are pure.
 
@@ -110,12 +117,55 @@ pub struct Parser {
     source: Source,
     tools: HashMap<String, (String, String)>,
     emitted: HashSet<String>,
+    titles: SessionTitles,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+struct SessionTitles {
+    custom: Option<String>,
+    generated: Option<String>,
+    summary: Option<String>,
+}
+
+impl SessionTitles {
+    fn take(&mut self, line: &Value) {
+        let (slot, key) = match line["type"].as_str() {
+            Some("custom-title") => (&mut self.custom, "customTitle"),
+            Some("ai-title") => (&mut self.generated, "aiTitle"),
+            Some("summary") => (&mut self.summary, "summary"),
+            _ => return,
+        };
+        *slot = line[key].as_str().map(one_line).filter(|title| !title.is_empty());
+    }
+
+    fn best(&self) -> Option<&str> {
+        [&self.custom, &self.generated, &self.summary]
+            .into_iter()
+            .flatten()
+            .next()
+            .map(String::as_str)
+    }
+}
+
+fn one_line(text: &str) -> String {
+    text.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
 impl Parser {
     #[must_use]
     pub fn new(source: Source) -> Self {
-        Self { source, tools: HashMap::new(), emitted: HashSet::new() }
+        Self {
+            source,
+            tools: HashMap::new(),
+            emitted: HashSet::new(),
+            titles: SessionTitles::default(),
+        }
+    }
+
+    /// The name the CLI gave the session, as of the lines fed so far.
+    #[must_use]
+    pub fn session_title(&self) -> Option<&str> {
+        self.titles.best()
     }
 
     /// The entries one line adds. A line that is not a JSON object, or that holds nothing worth
@@ -126,6 +176,9 @@ impl Parser {
         };
         if !value.is_object() {
             return Vec::new();
+        }
+        if self.source == Source::Claude {
+            self.titles.take(&value);
         }
         match self.source {
             Source::Claude => self.claude(&value),
@@ -586,6 +639,12 @@ impl Tail {
         &self.path
     }
 
+    /// The name the CLI gave the session, as of the last poll.
+    #[must_use]
+    pub fn session_title(&self) -> Option<&str> {
+        self.parser.session_title()
+    }
+
     /// Entries added since the last poll. A missing or unreadable file adds none and is tried again
     /// next time. Blocks on disk.
     pub fn poll(&mut self) -> Vec<Entry> {
@@ -686,6 +745,7 @@ mod tests {
     const CODEX_FUNCTION_CALL: &str = include_str!("../tests/fixtures/codex_function_call.jsonl");
     const CODEX_LIVE: &str = include_str!("../tests/fixtures/codex_live.jsonl");
     const CLAUDE_ASK: &str = include_str!("../tests/fixtures/claude_ask_user_question.jsonl");
+    const CLAUDE_TITLES: &str = include_str!("../tests/fixtures/claude_titles.jsonl");
 
     type ToolShape = (String, String, ToolPhase);
     type Shaped = (Role, String, Option<ToolShape>);
@@ -1163,5 +1223,92 @@ mod tests {
                 assert_eq!(split, whole, "{source:?} cut at {cut}");
             }
         }
+    }
+
+    fn title_after(source: Source, lines: &[&str]) -> Option<String> {
+        let mut parser = Parser::new(source);
+        for line in lines {
+            parser.feed_line(line);
+        }
+        parser.session_title().map(str::to_owned)
+    }
+
+    const GENERATED: &str =
+        r#"{"type":"ai-title","aiTitle":"Add retry to the sync job","sessionId":"s"}"#;
+    const RENAMED: &str =
+        r#"{"type":"custom-title","customTitle":"  Sync\nretries  ","sessionId":"s"}"#;
+    const SUMMARY: &str = r#"{"type":"summary","summary":"Sync job work","leafUuid":"l"}"#;
+
+    #[test]
+    fn a_claude_title_comes_from_the_last_record_and_a_rename_beats_a_generated_one() {
+        let cases: [(&[&str], Option<&str>); 8] = [
+            (&[], None),
+            (&[SUMMARY], Some("Sync job work")),
+            (&[SUMMARY, GENERATED], Some("Add retry to the sync job")),
+            (&[GENERATED, RENAMED], Some("Sync retries")),
+            (&[RENAMED, GENERATED], Some("Sync retries")),
+            (
+                &[GENERATED, r#"{"type":"ai-title","aiTitle":"Newer","sessionId":"s"}"#],
+                Some("Newer"),
+            ),
+            (
+                &[
+                    RENAMED,
+                    GENERATED,
+                    r#"{"type":"custom-title","customTitle":"  ","sessionId":"s"}"#,
+                ],
+                Some("Add retry to the sync job"),
+            ),
+            (&["not json", r#"{"type":"ai-title","aiTitle":5}"#, "[]"], None),
+        ];
+        for (lines, want) in cases {
+            assert_eq!(title_after(Source::Claude, lines).as_deref(), want, "{lines:?}");
+        }
+    }
+
+    #[test]
+    fn only_claude_records_name_a_session() {
+        for source in [Source::Gemini, Source::Copilot, Source::Codex] {
+            assert_eq!(title_after(source, &[GENERATED, RENAMED, SUMMARY]), None, "{source:?}");
+        }
+    }
+
+    #[test]
+    fn the_titles_fixture_ends_on_the_rename_and_still_reads_the_prompt() {
+        let mut parser = Parser::new(Source::Claude);
+        let mut seen = Vec::new();
+        for line in CLAUDE_TITLES.lines() {
+            seen.push(parser.session_title().map(str::to_owned));
+            parser.feed_line(line);
+        }
+        assert_eq!(
+            seen,
+            [
+                None,
+                None,
+                Some("Fix login redirect".into()),
+                Some("Fix login redirect".into()),
+                Some("Send people back to their page after login".into()),
+                Some("Fix the login redirect".into()),
+            ]
+        );
+        let entries = parse_all(Source::Claude, CLAUDE_TITLES);
+        assert_eq!(entries.iter().filter(|e| e.role == Role::User).count(), 1);
+        assert_eq!(entries.len(), 2);
+    }
+
+    #[test]
+    fn a_tail_reports_the_title_it_has_read_so_far() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("s.jsonl");
+        std::fs::write(&path, format!("{GENERATED}\n")).unwrap();
+        let mut tail = Tail::new(Source::Claude, &path);
+        assert_eq!(tail.session_title(), None);
+        tail.poll();
+        assert_eq!(tail.session_title(), Some("Add retry to the sync job"));
+        let mut file = std::fs::OpenOptions::new().append(true).open(&path).unwrap();
+        writeln!(file, "{RENAMED}").unwrap();
+        tail.poll();
+        assert_eq!(tail.session_title(), Some("Sync retries"));
     }
 }

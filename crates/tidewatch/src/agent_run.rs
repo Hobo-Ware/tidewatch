@@ -88,6 +88,7 @@ pub(crate) struct AgentRun {
     started_at: f64,
     finished_at: Option<f64>,
     title_seen: Option<String>,
+    goal: Option<String>,
     detail: Option<String>,
     end_block: Option<EndBlock>,
     failed: Option<String>,
@@ -110,6 +111,7 @@ impl AgentRun {
             started_at: now,
             finished_at: None,
             title_seen: None,
+            goal: None,
             detail: None,
             end_block: None,
             failed: None,
@@ -210,6 +212,20 @@ impl AgentRun {
             | TabEvent::Avatar { .. }
             | TabEvent::MeeseeksDone { .. }
             | TabEvent::Ask { .. } => {}
+        }
+    }
+
+    pub(crate) fn terminal_title(&self) -> Option<&str> {
+        self.title_seen.as_deref()
+    }
+
+    pub(crate) fn goal(&self) -> Option<&str> {
+        self.goal.as_deref()
+    }
+
+    pub(crate) fn set_goal(&mut self, goal: Option<&str>) {
+        if self.goal.as_deref() != goal {
+            self.goal = goal.map(str::to_owned);
         }
     }
 
@@ -511,5 +527,16 @@ mod tests {
         run.on_event(hook(HookKind::TurnDone, Some("agent words")), 1.0);
         run.hold(Some(AgentStatus::Working), Some("Running the tests".into()));
         assert_eq!(run.detail(), Some("agent words"));
+    }
+
+    #[test]
+    fn the_terminal_title_and_the_ledger_goal_are_kept_for_the_tab_label() {
+        let mut run = AgentRun::setting_up("claude".into(), 0.0);
+        assert_eq!((run.terminal_title(), run.goal()), (None, None));
+        run.feed(TermSnapshot { title: Some("Fixing tests".into()), ..Default::default() }, 1.0);
+        run.set_goal(Some("Ship it"));
+        assert_eq!((run.terminal_title(), run.goal()), (Some("Fixing tests"), Some("Ship it")));
+        run.set_goal(None);
+        assert_eq!(run.goal(), None);
     }
 }

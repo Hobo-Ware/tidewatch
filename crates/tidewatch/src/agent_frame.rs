@@ -153,7 +153,8 @@ pub(crate) fn poll<T>(
             agent.run.feed(seen, now);
         }
         if let Some(change) = agent.run.refresh(now) {
-            notifier.offer(tab.id, &tab.title, &change, agent.run.detail(), away, now);
+            let label = crate::tab_title::of_agent(agent, &tab.title).1;
+            notifier.offer(tab.id, &label, &change, agent.run.detail(), away, now);
             changes.push((tab.id, change));
         }
         if status_view::is_animated(status_view::tone(agent.run.status())) {

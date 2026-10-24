@@ -8,7 +8,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use tidewatch_core::question::{AskReply, Question};
 use tidewatch_core::restore::codex_session_id;
-use tidewatch_core::transcript::{Entry, Source};
+use tidewatch_core::transcript::{Entry, Role, Source};
 use tidewatch_core::transcript_locate::Locator;
 
 use crate::commands::Command;
@@ -149,6 +149,8 @@ pub(crate) struct Reader {
     last_poke: f64,
     answered: bool,
     typing: Typing,
+    session_title: Option<String>,
+    first_message: Option<String>,
     pub(crate) rows: Rows,
     pub(crate) view: ViewState,
 }
@@ -176,6 +178,8 @@ impl Reader {
             last_poke: f64::NEG_INFINITY,
             answered: false,
             typing: Typing::default(),
+            session_title: None,
+            first_message: None,
             rows: Rows::default(),
             view: ViewState::default(),
         }
@@ -191,7 +195,16 @@ impl Reader {
         self.started_ms = unix_ms_now();
         self.file = None;
         self.answered = false;
+        self.session_title = None;
         self.rows.divider(divider);
+    }
+
+    pub(crate) fn session_title(&self) -> Option<&str> {
+        self.session_title.as_deref()
+    }
+
+    pub(crate) fn first_message(&self) -> Option<&str> {
+        self.first_message.as_deref()
     }
 
     pub(crate) fn source(&self) -> Option<Source> {
@@ -323,12 +336,19 @@ impl Reader {
                 Message::Missing if self.link == Link::Searching => self.link = Link::Missing,
                 Message::Missing => {}
                 Message::Entries(entries) => self.add(entries),
+                Message::Title(title) => self.session_title = Some(title),
             }
         }
         changed
     }
 
     fn add(&mut self, entries: Vec<Entry>) {
+        if self.first_message.is_none() {
+            self.first_message = entries
+                .iter()
+                .find(|entry| entry.role == Role::User)
+                .map(|entry| entry.text.clone());
+        }
         self.rows.push_all(entries);
         if let Some(first) = self.rows.iter().next() {
             self.view.heights.keep_from(first.seq);
@@ -509,5 +529,23 @@ mod tests {
         assert!(!reader.needs_start());
         reader.relaunch("claude", None, "--- Stage 4 ---".into());
         assert_eq!(reader.link(), Link::Idle);
+    }
+
+    fn user(text: &str) -> Entry {
+        Entry { role: Role::User, text: text.into(), tool: None, ts: None }
+    }
+
+    #[test]
+    fn the_first_user_message_and_the_session_title_are_kept_for_the_tab_label() {
+        let mut reader = Reader::for_agent("claude", None, PathBuf::from("/w"));
+        assert_eq!((reader.first_message(), reader.session_title()), (None, None));
+        let assistant = Entry { role: Role::Assistant, ..user("Looking.") };
+        reader.add(vec![assistant, user("Fix the login redirect"), user("and add a test")]);
+        reader.add(vec![user("a later message")]);
+        assert_eq!(reader.first_message(), Some("Fix the login redirect"));
+        reader.session_title = Some("Login redirect".into());
+        reader.relaunch("claude", None, "--- Stage 2 ---".into());
+        assert_eq!(reader.session_title(), None);
+        assert_eq!(reader.first_message(), Some("Fix the login redirect"));
     }
 }
