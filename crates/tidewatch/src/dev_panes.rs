@@ -14,6 +14,8 @@
 //!   review once the tab's notes have loaded, so a capture shows a review across several files. A
 //!   `row@` puts the note on that graph row's commit, a range makes it a block note.
 //! - `TIDEWATCH_DEV_PANEL=progress|changes|history`: show that side of the History card.
+//! - `TIDEWATCH_DEV_SEARCH=<text>`: type that into the commit search once history loads, focus
+//!   the field and select the first match once it is found.
 //! - `TIDEWATCH_DEV_COMPOSER=<line>|<first>-<last>`: open the note composer on those lines of the
 //!   file view once its diff has loaded.
 
@@ -41,6 +43,8 @@ pub(crate) struct DevPanes {
     pub(crate) notes: Vec<DevNote>,
     pub(crate) composer: Option<(u32, u32)>,
     pub(crate) panel: Option<Panel>,
+    pub(crate) search: Option<String>,
+    pub(crate) search_step: bool,
 }
 
 /// A note for the draft review: `src/a.rs:12:rename this`, `2@src/a.rs:12-14:extract these`.
@@ -110,7 +114,10 @@ impl DevPanes {
             std::env::var("TIDEWATCH_DEV_NOTE").ok(),
         )
         .with_notes(std::env::var("TIDEWATCH_DEV_NOTES").ok().as_deref())
-        .with_panel(std::env::var("TIDEWATCH_DEV_PANEL").ok().as_deref())
+        .with_panel(
+            std::env::var("TIDEWATCH_DEV_PANEL").ok().as_deref(),
+            std::env::var("TIDEWATCH_DEV_SEARCH").ok(),
+        )
         .with_block(
             std::env::var("TIDEWATCH_DEV_COMPOSER").ok().as_deref(),
             std::env::var("TIDEWATCH_DEV_NOTE_SPAN").ok().as_deref(),
@@ -125,14 +132,14 @@ impl DevPanes {
         }
     }
 
-    fn with_panel(self, panel: Option<&str>) -> Self {
+    fn with_panel(self, panel: Option<&str>, search: Option<String>) -> Self {
         let panel = match panel {
             Some("progress") => Some(Panel::Progress),
             Some("changes") => Some(Panel::Changes),
             Some("history") => Some(Panel::History),
             _ => None,
         };
-        Self { panel, ..self }
+        Self { panel, search: search.filter(|text| !text.is_empty()), ..self }
     }
 
     fn with_notes(self, notes: Option<&str>) -> Self {
@@ -156,13 +163,19 @@ impl DevPanes {
             notes: Vec::new(),
             composer: None,
             panel: None,
+            search: None,
+            search_step: false,
         }
     }
 }
 
 impl DevPanes {
     pub(crate) fn pending(&self) -> bool {
-        self.pick_row.is_some() || self.open.is_some() || self.panel.is_some()
+        self.pick_row.is_some()
+            || self.open.is_some()
+            || self.panel.is_some()
+            || self.search.is_some()
+            || self.search_step
     }
 
     /// Presses the next command that is due. A command with no chord (`build-workflow`) cannot be

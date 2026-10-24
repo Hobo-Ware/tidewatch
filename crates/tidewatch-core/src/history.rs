@@ -117,6 +117,10 @@ pub fn working_status(dir: &Path) -> anyhow::Result<WorkingStatus> {
     status::working_status(dir)
 }
 
+pub fn search(dir: &Path, ids: &[ObjectId], query: &str) -> anyhow::Result<Vec<usize>> {
+    kelp_core::search::matching_rows(dir, ids, query)
+}
+
 pub fn changed_files(dir: &Path, source: Source) -> anyhow::Result<Vec<FileChange>> {
     match source {
         Source::Commit(id) => Ok(commit::details(&gix::discover(dir)?, id)?.changes),

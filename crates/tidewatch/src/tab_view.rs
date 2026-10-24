@@ -8,6 +8,7 @@
 use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::mpsc::{Receiver, Sender, channel};
+use std::time::Instant;
 
 use kelp_core::ObjectId;
 use kelp_core::commit::{FileChange, Summary};
@@ -21,6 +22,7 @@ use tidewatch_core::notes::Notes;
 
 use tidewatch_core::paths::TidewatchPaths;
 
+use crate::commit_search::{self, Ask, Search};
 use crate::file_nav;
 use crate::jobs::Jobs;
 use crate::pane::{Body, Pane};
@@ -159,6 +161,7 @@ pub(crate) struct TabView {
     pub(crate) loaded: Option<Loaded>,
     pub(crate) wip: Option<Vec<FileChange>>,
     pub(crate) groups: Option<Groups>,
+    pub(crate) search: Search,
     pick: Option<Pick>,
     pub(crate) graph: GraphView,
     source_requested: Option<Source>,
@@ -196,6 +199,7 @@ impl TabView {
             loaded: None,
             wip: None,
             groups: None,
+            search: Search::default(),
             pick: None,
             graph: GraphView::new(),
             source_requested: None,
@@ -220,6 +224,10 @@ impl TabView {
             watching: Watching::Off,
             changes: channel(),
         }
+    }
+
+    pub(crate) fn id(&self) -> u64 {
+        self.id
     }
 
     pub(crate) fn notes_file(&self) -> Option<&PathBuf> {
@@ -283,6 +291,22 @@ impl TabView {
         if self.pick != Some(Pick::WorkTree) {
             self.select(Selection::Wip);
         }
+    }
+
+    pub(crate) fn step_match(&mut self, delta: isize) -> bool {
+        let current = match self.selection() {
+            Some(Selection::Commit(row)) => Some(row),
+            Some(Selection::Wip) | None => None,
+        };
+        if self.search.matches().is_none() {
+            return false;
+        }
+        let Some(row) = commit_search::step(self.search.rows(), current, delta) else {
+            return false;
+        };
+        self.select(Selection::Commit(row));
+        self.graph.scroll_to = Some(Selection::Commit(row));
+        true
     }
 
     pub(crate) fn select_file(&mut self, path: &str) {
@@ -508,7 +532,25 @@ impl TabView {
             self.tickets.diff += 1;
             pane_jobs::load_diff(jobs, ctx, id, self.tickets.diff, self.dir.clone(), source, path);
         }
+        self.sync_search(jobs, ctx);
         self.cache_summary();
+    }
+
+    fn sync_search(&mut self, jobs: &Jobs<Done>, ctx: &egui::Context) {
+        let Some(loaded) = &self.loaded else { return };
+        match self.search.ask(Instant::now()) {
+            Ask::Nothing => {}
+            Ask::Wait(left) => ctx.request_repaint_after(left),
+            Ask::Now { ticket, query } => pane_jobs::search(
+                jobs,
+                ctx,
+                self.id,
+                ticket,
+                self.dir.clone(),
+                loaded.history.ids().to_vec(),
+                query,
+            ),
+        }
     }
 
     fn clear_diff(&mut self) {
@@ -553,6 +595,10 @@ impl TabView {
                     self.finish_diff(result);
                 }
             }
+            Done::Search { ticket, query, rows, .. } => {
+                let len = self.loaded.as_ref().map_or(0, |l| l.history.len());
+                self.search.answered(ticket, query, rows, len);
+            }
             Done::Notes { notes, .. } => {
                 self.notes = *notes;
                 self.notes_ready = true;
@@ -566,6 +612,7 @@ impl TabView {
         match result {
             Ok(loaded) => {
                 self.loaded = Some(*loaded);
+                self.search.history_changed();
                 self.graph.clear_cache();
                 self.error = None;
             }
@@ -1096,6 +1143,60 @@ mod tests {
         view.show_work_tree();
         pump(&mut view, &jobs, &ctx, |v| v.shown_source == Some(Source::WorkTree));
         assert_eq!(view.selection(), Some(Selection::Wip));
+    }
+
+    fn found(view: &mut TabView, jobs: &Jobs<Done>, query: &str) -> Vec<usize> {
+        let ctx = egui::Context::default();
+        view.search.query = query.to_owned();
+        view.search.edited(Instant::now());
+        pump(view, jobs, &ctx, |v| v.search.matches().is_some());
+        view.search.rows().to_vec()
+    }
+
+    #[test]
+    fn the_search_finds_commits_by_message_author_and_id() {
+        let (_dir, repo) = repo();
+        let jobs = Jobs::new();
+        let mut view = started_view(&repo, repo.join("notes.json"), &jobs);
+        assert_eq!(found(&mut view, &jobs, "SECOND"), [0]);
+        assert_eq!(found(&mut view, &jobs, "t@example"), [0, 1]);
+        let id = view.loaded.as_ref().unwrap().history.id(1).to_hex_with_len(8).to_string();
+        assert_eq!(found(&mut view, &jobs, &id), [1]);
+        assert_eq!(found(&mut view, &jobs, "nothing like this"), Vec::<usize>::new());
+    }
+
+    #[test]
+    fn enter_in_the_search_selects_the_next_match_and_asks_the_graph_to_scroll_to_it() {
+        let (_dir, repo) = repo();
+        let jobs = Jobs::new();
+        let mut view = started_view(&repo, repo.join("notes.json"), &jobs);
+        assert!(!view.step_match(1), "no search yet, nothing to step to");
+        found(&mut view, &jobs, "t@example");
+        assert_eq!(view.selection(), Some(Selection::Commit(0)), "HEAD is the starting point");
+        assert!(view.step_match(1));
+        assert_eq!(view.selection(), Some(Selection::Commit(1)));
+        assert_eq!(view.graph.scroll_to, Some(Selection::Commit(1)));
+        assert!(view.step_match(1), "it wraps around");
+        assert_eq!(view.selection(), Some(Selection::Commit(0)));
+        assert!(view.step_match(-1));
+        assert_eq!(view.selection(), Some(Selection::Commit(1)));
+        assert_eq!(found(&mut view, &jobs, "first"), [1]);
+        assert!(view.step_match(1), "the only match is where it stays");
+        assert_eq!(view.selection(), Some(Selection::Commit(1)));
+    }
+
+    #[test]
+    fn a_history_that_reloads_under_a_search_asks_again() {
+        let (_dir, repo) = repo();
+        let jobs = Jobs::new();
+        let ctx = egui::Context::default();
+        let mut view = started_view(&repo, repo.join("notes.json"), &jobs);
+        found(&mut view, &jobs, "second");
+        std::fs::write(repo.join("c.txt"), "c\n").unwrap();
+        git(&repo, &["add", "c.txt"]);
+        git(&repo, &["commit", "-q", "-m", "third second"]);
+        view.change_sender().send(Change { history: true, status: true }).unwrap();
+        pump(&mut view, &jobs, &ctx, |v| v.search.rows() == [0, 1]);
     }
 
     #[test]

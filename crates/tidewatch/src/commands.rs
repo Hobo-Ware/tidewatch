@@ -77,6 +77,7 @@ pub(crate) enum Command {
     NextFile,
     PrevCommit,
     NextCommit,
+    FindCommit,
     Settings,
     Shortcuts,
     OpenRepo,
@@ -110,6 +111,7 @@ impl Command {
             | Self::NextFile
             | Self::PrevCommit
             | Self::NextCommit
+            | Self::FindCommit
             | Self::Settings
             | Self::Shortcuts
             | Self::OpenRepo
@@ -145,6 +147,10 @@ impl Command {
     /// taken from the field, and so only read, while no text field is focused.
     fn yields_to_text_fields(self) -> bool {
         matches!(self, Self::MoveTabLeft | Self::MoveTabRight)
+    }
+
+    fn in_history_only(self) -> bool {
+        matches!(self, Self::FindCommit)
     }
 
     /// A command that does nothing in a window with one repo, so the palette leaves it out there.
@@ -334,7 +340,7 @@ const fn tab(id: &'static str, title: &'static str, index: usize, key: Key) -> E
     entry(id, title, Group::Tabs, Command::SelectTab(index), (cmd(key), alt(key)))
 }
 
-pub(crate) const TABLE: [Entry; 36] = [
+pub(crate) const TABLE: [Entry; 37] = [
     entry("new-tab", "New tab", Group::Tabs, Command::NewTab, (cmd(Key::T), ctrl(Key::T).shift())),
     entry(
         "close-tab",
@@ -466,6 +472,13 @@ pub(crate) const TABLE: [Entry; 36] = [
         (plain(Key::CloseBracket), plain(Key::CloseBracket)),
     ),
     entry(
+        "find-commit",
+        "Find a commit",
+        Group::View,
+        Command::FindCommit,
+        (cmd(Key::F), ctrl(Key::F).shift()),
+    ),
+    entry(
         "settings",
         "Settings",
         Group::App,
@@ -568,7 +581,9 @@ pub(crate) fn press_event(command: Command) -> Option<egui::Event> {
 fn wanted(gate: Gate) -> impl Fn(Command) -> bool {
     move |command| {
         command.global()
-            && !((command.in_file_view_only() || command.yields_to_text_fields())
+            && !((command.in_file_view_only()
+                || command.yields_to_text_fields()
+                || command.in_history_only())
                 && !gate.allows(command))
     }
 }
@@ -599,6 +614,14 @@ pub(crate) struct Gate {
     pub(crate) overview: bool,
     pub(crate) palette: bool,
     pub(crate) focus: Focus,
+    pub(crate) card: Card,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) enum Card {
+    #[default]
+    Other,
+    History,
 }
 
 /// Who gets the bare keys: the terminal, or the file view, which is the active tab showing a
@@ -646,6 +669,7 @@ impl Gate {
             | Command::NextRepo
             | Command::PrevRepo
             | Command::OpenRepo => !modal,
+            Command::FindCommit => !modal && !self.overview && self.card == Card::History,
             Command::Palette => self.dialog == Dialog::None,
             Command::ApproveDelivery
             | Command::BuildWorkflow

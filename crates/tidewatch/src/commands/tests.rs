@@ -219,6 +219,7 @@ fn the_palette_lists_what_a_person_would_look_for() {
             "zoom-reset",
             "reader",
             "file-view",
+            "find-commit",
             "settings",
             "shortcuts",
             "build-workflow",
@@ -232,6 +233,14 @@ fn the_palette_lists_what_a_person_would_look_for() {
 fn the_palette_chord_is_cmd_shift_p_and_ctrl_shift_p() {
     assert_eq!(Command::Palette.keys_on(Platform::Mac), "Cmd+Shift+P");
     assert_eq!(Command::Palette.keys_on(Platform::Linux), "Ctrl+Shift+P");
+}
+
+#[test]
+fn the_find_commit_chord_is_cmd_f_and_ctrl_shift_f() {
+    assert_eq!(Command::FindCommit.keys_on(Platform::Mac), "Cmd+F");
+    assert_eq!(Command::FindCommit.keys_on(Platform::Linux), "Ctrl+Shift+F");
+    assert_eq!(command_of("find-commit"), Some(Command::FindCommit));
+    assert!(Command::FindCommit.in_palette());
 }
 
 #[test]
@@ -311,6 +320,7 @@ mod gate {
         overview: false,
         palette: false,
         focus: Focus::Terminal,
+        card: Card::History,
     };
 
     const FILE_VIEW: Gate = Gate { focus: Focus::FileView, ..NONE };
@@ -350,6 +360,38 @@ mod gate {
             Gate { dialog: Dialog::Other, ..NONE },
         ] {
             assert!(!gate.allows(Command::ParkTab), "{gate:?}");
+        }
+    }
+
+    #[test]
+    fn finding_a_commit_needs_the_history_side_on_screen_and_no_overlay() {
+        assert!(NONE.allows(Command::FindCommit));
+        assert!(Gate { focus: Focus::TextField, ..NONE }.allows(Command::FindCommit));
+        assert!(Gate { focus: Focus::FileView, ..NONE }.allows(Command::FindCommit));
+        for gate in [
+            Gate { card: Card::Other, ..NONE },
+            Gate { overview: true, ..NONE },
+            Gate { settings: true, ..NONE },
+            Gate { palette: true, ..NONE },
+            Gate { dialog: Dialog::TabChoice, ..NONE },
+            Gate { dialog: Dialog::Other, ..NONE },
+        ] {
+            assert!(!gate.allows(Command::FindCommit), "{gate:?}");
+        }
+    }
+
+    #[test]
+    fn the_find_chord_is_left_alone_while_the_history_side_is_hidden() {
+        let hidden = Gate { card: Card::Other, ..NONE };
+        for platform in PLATFORMS {
+            let entry = TABLE.iter().find(|entry| entry.command == Command::FindCommit).unwrap();
+            let events = press(platform, entry.chord(platform).unwrap());
+            assert_eq!(
+                pressed_with(platform, events.clone(), wanted(hidden)),
+                Vec::<Command>::new(),
+                "{platform:?}"
+            );
+            assert_eq!(pressed_with(platform, events, wanted(NONE)), [Command::FindCommit]);
         }
     }
 

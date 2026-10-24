@@ -324,6 +324,7 @@ mod tests {
                 "Interface size 100%",
                 "Reader or raw terminal",
                 "Terminal or last file",
+                "Find a commit",
                 "Settings",
                 "Keyboard shortcuts",
                 "Build workflow from this session",
@@ -377,10 +378,10 @@ mod tests {
         let linux = items(&sources(), Platform::Linux);
         assert_eq!(mac[0].keys, "Cmd+T");
         assert_eq!(linux[0].keys, "Ctrl+Shift+T");
-        assert_eq!(mac[17].keys, "Cmd+2");
-        assert_eq!(linux[17].keys, "Alt+2");
-        assert_eq!((mac[19].label.as_str(), mac[19].keys.as_str()), ("Open repo...", "Cmd+O"));
-        assert_eq!(linux[19].keys, "Ctrl+Shift+O");
+        assert_eq!(mac[18].keys, "Cmd+2");
+        assert_eq!(linux[18].keys, "Alt+2");
+        assert_eq!((mac[20].label.as_str(), mac[20].keys.as_str()), ("Open repo...", "Cmd+O"));
+        assert_eq!(linux[20].keys, "Ctrl+Shift+O");
     }
 
     #[test]
