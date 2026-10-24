@@ -31,7 +31,7 @@ fn now_ms() -> i64 {
 }
 
 impl Tidewatch {
-    fn agent_table(&self) -> AgentTable {
+    pub(super) fn agent_table(&self) -> AgentTable {
         self.catalog.profiles().map_or_else(AgentTable::builtin, Profiles::agent_table)
     }
 

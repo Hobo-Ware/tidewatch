@@ -982,6 +982,26 @@ mod tests {
     }
 
     #[test]
+    fn a_resumed_tab_gets_its_mcp_config_rewritten_with_the_current_wiring() {
+        let fx = Fixture::new();
+        let table = AgentTable::builtin();
+        let claude = profile("claude", Level::Edits);
+        let input = resume_input(&fx, &table, "claude", &claude, Some(listener()));
+        let mcp = fx.paths.tab_state_dir(input.repo, input.tab).join("mcp.json");
+        std::fs::create_dir_all(mcp.parent().unwrap()).unwrap();
+        let old = r#"{"mcpServers":{"tidewatch":{"type":"http","url":"http://127.0.0.1:1/mcp"}}}"#;
+        std::fs::write(&mcp, old).unwrap();
+        prepare_resume(&input, SESSION).unwrap();
+        let written: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&mcp).unwrap()).unwrap();
+        assert_eq!(written["mcpServers"]["tidewatch"]["alwaysLoad"], serde_json::json!(true));
+        assert_eq!(
+            std::fs::read_to_string(&mcp).unwrap(),
+            mcp_config_json(Wiring::Claude, &listener()).unwrap()
+        );
+    }
+
+    #[test]
     fn a_resumed_tab_gets_the_same_wiring_as_a_fresh_one_and_neither_task_nor_new_session_id() {
         let fx = Fixture::new();
         let table = AgentTable::builtin();

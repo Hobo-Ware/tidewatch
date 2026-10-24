@@ -8,7 +8,7 @@ use std::sync::Arc;
 
 use tidewatch_core::avatar::{Avatar, clean};
 use tidewatch_core::avatar_store;
-use tidewatch_core::paths::avatar_file_beside;
+use tidewatch_core::paths::{avatar_asked_file_beside, avatar_file_beside};
 
 use crate::job_glue::Facts;
 use crate::jobs::Jobs;
@@ -55,6 +55,7 @@ pub(crate) fn meeseeks_avatar() -> Arc<Avatar> {
 
 pub(crate) enum Done {
     Loaded { tab: u64, avatar: Option<Box<Avatar>> },
+    Marked,
     Cleared,
 }
 
@@ -145,6 +146,25 @@ impl Host {
         if self.tabs.contains_key(&tab) && !self.fixed.contains(&tab) {
             self.tabs.insert(tab, Slot::Known(Some(Arc::new(avatar))));
         }
+    }
+
+    /// The tabs whose prompts must not carry the avatar ask: a Meeseeks wears a fixed face, and a
+    /// host that writes nothing (screenshot runs, fake avatars) leaves no marker.
+    pub(crate) fn exempt_from_ask(&self, tabs: &[Facts<'_>]) -> Vec<u64> {
+        if self.writable { self.fixed.clone() } else { tabs.iter().map(|facts| facts.id).collect() }
+    }
+
+    /// Draw avatar went out: the tab's state folder remembers it, so the prompt that follows does
+    /// not ask again.
+    pub(crate) fn mark_asked(&mut self, notes_file: &std::path::Path, ctx: &egui::Context) {
+        if !self.writable {
+            return;
+        }
+        let marker = avatar_asked_file_beside(notes_file);
+        self.jobs.spawn(ctx, move || {
+            let _ = avatar_store::mark_asked(&marker);
+            Done::Marked
+        });
     }
 
     /// Use letter: the avatar goes, from the tab and from disk.

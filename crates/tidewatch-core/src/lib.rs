@@ -5,6 +5,7 @@ pub mod amphetamine;
 pub mod amphetamine_lid;
 pub mod amphetamine_system;
 pub mod avatar;
+pub mod avatar_ask;
 pub mod avatar_mcp;
 pub mod avatar_store;
 pub mod branch_name;
