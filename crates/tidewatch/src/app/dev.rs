@@ -260,4 +260,21 @@ impl Tidewatch {
         ctx.input_mut(|input| input.events.push(egui::Event::Paste(text)));
         ctx.request_repaint();
     }
+
+    pub(super) fn take_dev_wheel(&mut self, ctx: &egui::Context, now: f64) -> Vec<egui::Event> {
+        let Some(scroll) = &self.dev_scroll else { return Vec::new() };
+        if now < scroll.after {
+            ctx.request_repaint_after(std::time::Duration::from_secs_f64(scroll.after - now));
+            return Vec::new();
+        }
+        let event = egui::Event::MouseWheel {
+            unit: egui::MouseWheelUnit::Line,
+            delta: egui::vec2(0.0, scroll.lines),
+            phase: egui::TouchPhase::Move,
+            modifiers: egui::Modifiers::NONE,
+        };
+        self.dev_scroll = None;
+        ctx.request_repaint();
+        vec![event]
+    }
 }

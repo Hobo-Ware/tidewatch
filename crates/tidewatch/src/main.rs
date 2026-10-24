@@ -175,6 +175,7 @@ mod takeover_jobs;
 mod takeover_view;
 mod terminal_focus;
 mod terminal_font;
+mod terminal_wheel;
 #[cfg(all(test, unix))]
 mod test_exec;
 mod timeline;

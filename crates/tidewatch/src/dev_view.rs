@@ -15,6 +15,8 @@
 //! - `TIDEWATCH_DEV_KEYS=<text>` after `TIDEWATCH_DEV_KEYS_AFTER=<seconds>` (default 8): type the text
 //!   into the newest agent tab once, to answer a prompt a check cannot avoid (`\r`, `\n`, `\e` and
 //!   `\\` are escapes; `\e[B\r` is Down then Enter).
+//! - `TIDEWATCH_DEV_SCROLL=<lines>` after `TIDEWATCH_DEV_SCROLL_AFTER=<seconds>` (default 10): one wheel
+//!   event of that many lines (positive is up, into the scrollback) over the active terminal.
 //! - `TIDEWATCH_DEV_PASTE=<text>`: after the same delay, one Cmd+V of that text (the escapes above apply),
 //!   as egui delivers it, to whatever has the focus: the newest tab's terminal, or a text field.
 
@@ -33,6 +35,12 @@ pub(crate) struct DevPaste {
     pub(crate) after: f64,
 }
 
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct DevScroll {
+    pub(crate) lines: f32,
+    pub(crate) after: f64,
+}
+
 #[derive(Clone, Debug, Default, PartialEq)]
 pub(crate) struct DevView {
     pub(crate) overview: bool,
@@ -40,12 +48,14 @@ pub(crate) struct DevView {
     pub(crate) status_log: bool,
     pub(crate) keys: Option<DevKeys>,
     pub(crate) paste: Option<DevPaste>,
+    pub(crate) scroll: Option<DevScroll>,
     pub(crate) side: Option<f32>,
     pub(crate) remote_popover: Popover,
     pub(crate) parked_popover: Popover,
 }
 
 const DEFAULT_KEYS_AFTER_SECS: f64 = 8.0;
+const DEFAULT_SCROLL_AFTER_SECS: f64 = 10.0;
 const WINDOW_EDGE: std::ops::RangeInclusive<f32> = 600.0..=4000.0;
 
 /// The size the window opens at: `TIDEWATCH_DEV_WINDOW` when it holds `<w>x<h>`, else `default`.
@@ -77,6 +87,18 @@ impl DevView {
             var("TIDEWATCH_DEV_PASTE").as_deref(),
             var("TIDEWATCH_DEV_KEYS_AFTER").as_deref(),
         )
+        .with_scroll(
+            var("TIDEWATCH_DEV_SCROLL").as_deref(),
+            var("TIDEWATCH_DEV_SCROLL_AFTER").as_deref(),
+        )
+    }
+
+    fn with_scroll(self, lines: Option<&str>, after: Option<&str>) -> Self {
+        let scroll = lines.and_then(|lines| lines.parse::<f32>().ok()).map(|lines| DevScroll {
+            lines,
+            after: after.and_then(|s| s.parse().ok()).unwrap_or(DEFAULT_SCROLL_AFTER_SECS),
+        });
+        Self { scroll, ..self }
     }
 
     fn with_paste(self, text: Option<&str>, after: Option<&str>) -> Self {
@@ -121,6 +143,7 @@ impl DevView {
                 after: keys_after.and_then(|s| s.parse().ok()).unwrap_or(DEFAULT_KEYS_AFTER_SECS),
             }),
             paste: None,
+            scroll: None,
             side: None,
             remote_popover: Popover::OnClick,
             parked_popover: Popover::OnClick,
@@ -187,6 +210,16 @@ mod tests {
         assert_eq!(late.map(|paste| paste.after), Some(DEFAULT_KEYS_AFTER_SECS));
         assert_eq!(DevView::default().with_paste(Some(""), None).paste, None);
         assert_eq!(DevView::default().with_paste(None, None).paste, None);
+    }
+
+    #[test]
+    fn the_scroll_switch_takes_a_line_count_and_a_delay() {
+        let scroll = DevView::default().with_scroll(Some("-12"), Some("4")).scroll;
+        assert_eq!(scroll, Some(DevScroll { lines: -12.0, after: 4.0 }));
+        let late = DevView::default().with_scroll(Some("30"), None).scroll;
+        assert_eq!(late.map(|scroll| scroll.after), Some(DEFAULT_SCROLL_AFTER_SECS));
+        assert_eq!(DevView::default().with_scroll(Some("up"), None).scroll, None);
+        assert_eq!(DevView::default().with_scroll(None, None).scroll, None);
     }
 
     #[test]
