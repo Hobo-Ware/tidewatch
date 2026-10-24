@@ -54,6 +54,7 @@ pub(crate) struct TabExtras {
     pub(crate) ring: Option<TabRing>,
     pub(crate) job: Option<TabJob>,
     pub(crate) avatar: Option<Arc<Avatar>>,
+    pub(crate) can_draw: bool,
     pub(crate) mood: Mood,
 }
 
@@ -278,6 +279,16 @@ impl Tidewatch {
 
     fn draw_tabs(&self, ui: &mut egui::Ui, width: f32, now: f64, actions: &mut Vec<Action>) {
         let now_ms = wall_ms() as i64;
+        let table = self.agent_table();
+        let can_draw = |id| {
+            self.tabs
+                .items()
+                .iter()
+                .find(|tab| tab.id == id)
+                .and_then(|tab| tab.pane.agent.as_ref())
+                .and_then(|agent| table.get(&agent.run.agent_id))
+                .is_some_and(|agent| tidewatch_core::avatar_ask::can_draw(agent.wiring))
+        };
         let mood = |id| {
             let meeseeks = self
                 .tabs
@@ -295,6 +306,7 @@ impl Tidewatch {
             ring: self.progress.ledger(id).map(|known| tab_ring(&known.ledger)),
             job: self.job_live.board(id).and_then(|board| tab_job(board, now_ms)),
             avatar: self.avatar_live.get(id).cloned(),
+            can_draw: can_draw(id),
             mood: mood(id),
         };
         tab_row(ui, &self.tabs, width, now, actions, (tab_signals, extras));
@@ -340,7 +352,22 @@ struct Slot {
 struct MenuView {
     parking: ParkMenu,
     active: bool,
-    picture: bool,
+    face: AvatarMenu,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum AvatarMenu {
+    None,
+    Picture,
+    Letter,
+}
+
+fn avatar_menu(has_picture: bool, can_draw: bool, locked: bool) -> AvatarMenu {
+    match (locked, has_picture, can_draw) {
+        (true, _, _) | (false, false, false) => AvatarMenu::None,
+        (false, true, _) => AvatarMenu::Picture,
+        (false, false, true) => AvatarMenu::Letter,
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -371,7 +398,7 @@ fn tab_row<T>(
         let painter = ui.painter().clone();
         let under = painter.add(Shape::Noop);
         let draft = matches!(tab.pane.body, Body::Draft(_));
-        let TabExtras { ring, job, avatar, mood } =
+        let TabExtras { ring, job, avatar, can_draw, mood } =
             agent.map(|_| extras(tab.id)).unwrap_or_default();
         let face = agent.map(|agent| Face::of(&agent.profile_name, &agent.run.agent_id, avatar));
         let label = crate::tab_title::label(agent, &tab.title);
@@ -423,8 +450,11 @@ fn tab_row<T>(
                 ParkMenu::Offered { parkable: !needs_you(&tab.pane), keep: tab.keep }
             },
             active: i == tabs.active(),
-            picture: face.as_ref().is_some_and(|face| face.avatar().is_some())
-                && !agent_avatar::is_locked(ui.ctx(), tab.id),
+            face: avatar_menu(
+                face.as_ref().is_some_and(|face| face.avatar().is_some()),
+                can_draw,
+                agent_avatar::is_locked(ui.ctx(), tab.id),
+            ),
         };
         tab_menu(&resp, i, tab.id, &menu, actions);
         let resp = if agent.is_some() {
@@ -518,7 +548,7 @@ fn tab_menu(
     actions: &mut Vec<Action>,
 ) {
     let offered = matches!(menu.parking, ParkMenu::Offered { .. });
-    if !offered && !menu.picture {
+    if !offered && menu.face == AvatarMenu::None {
         return;
     }
     resp.context_menu(|ui| {
@@ -536,11 +566,11 @@ fn tab_menu(
                 ui.close();
             }
         }
-        if menu.picture {
+        if menu.face != AvatarMenu::None {
             if offered {
                 ui.separator();
             }
-            agent_avatar::menu_items(ui, tab);
+            agent_avatar::menu_items(ui, tab, menu.face == AvatarMenu::Picture);
         }
     });
 }

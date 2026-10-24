@@ -827,6 +827,7 @@ mod tests {
         for event in CLAUDE_HOOK_EVENTS {
             assert!(settings["hooks"][event].is_array(), "{event}");
         }
+        assert_eq!(settings["hooks"]["UserPromptSubmit"][0]["hooks"][0]["type"], "http");
         for want in
             ["--mcp-config=/state/tab/mcp.json", "--allowedTools=mcp__tidewatch__*", "--session-id"]
         {
