@@ -172,6 +172,7 @@ mod tabs;
 mod takeover;
 mod takeover_jobs;
 mod takeover_view;
+mod terminal_focus;
 mod terminal_font;
 #[cfg(all(test, unix))]
 mod test_exec;
