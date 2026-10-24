@@ -15,6 +15,8 @@
 //!   for `STATUS_QUIET_SECS` becomes `NeedsYou(Quiet)` (the agent may be waiting on something no hook
 //!   reported), and a permission or question prompt flips back to `Working` once the terminal is
 //!   printing again (no hook reports the answer).
+//! - An idle notice (`Notification` `idle_prompt`) means "at the prompt", so it reads `Done`; only a
+//!   permission prompt, a question or an explicit ask reads `NeedsYou`.
 //! - With no hook state, progress, bell, title activity and quiet time decide.
 //!
 //! Claude's `SessionStart` http hook never fired in `claude` 2.1.296 (interactive or `-p`), so the
@@ -290,20 +292,19 @@ impl HookState {
             HookKind::TurnStarted => HookStatus::Working,
             HookKind::PermissionNeeded => HookStatus::NeedsYou(Reason::Permission),
             HookKind::QuestionAsked => HookStatus::NeedsYou(Reason::Question),
-            HookKind::IdleWaiting => HookStatus::NeedsYou(Reason::Input),
-            HookKind::TurnDone => HookStatus::Done,
+            HookKind::TurnDone | HookKind::IdleWaiting => HookStatus::Done,
             HookKind::TurnFailed(reason) => HookStatus::Failed(reason.clone()),
             HookKind::SessionStart | HookKind::SessionEnd => return None,
         };
         Some(Self { status, at: now })
     }
 
-    /// An idle notice arrives a minute after a finished turn and must not turn "done" back amber.
-    fn after(self, previous: Option<&Self>) -> Self {
-        match (&self.status, previous.map(|p| &p.status)) {
-            (HookStatus::NeedsYou(Reason::Input), Some(HookStatus::Done)) => {
-                previous.cloned().unwrap_or(self)
-            }
+    /// An idle notice (a minute after a turn, or after one the agent never reported finishing, such
+    /// as an interrupted one) says the agent is at its prompt. It only ever settles a turn that is
+    /// still `Working`: a finished, failed or prompting state is the better report.
+    fn after_idle(self, previous: Option<&Self>) -> Self {
+        match previous {
+            Some(previous) if previous.status != HookStatus::Working => previous.clone(),
             _ => self,
         }
     }
@@ -483,11 +484,20 @@ impl StatusTracker {
         self.inputs.terminal = TerminalState::default();
     }
 
+    /// The agent process was resumed from a saved session: it waits at its prompt, which reads as
+    /// `Done` until its next turn starts. No hook speaks for a resumed session before that, and the
+    /// quiet decay would call it `NeedsYou` for good.
+    pub fn agent_resumed(&mut self, now: f64) {
+        self.agent_started(now);
+        self.inputs.hook = Some(HookState { status: HookStatus::Done, at: now });
+    }
+
     pub fn on_hook(&mut self, event: &HookEvent, now: f64) {
-        if let Some(state) = HookState::from_event(event, now) {
-            let next = state.after(self.inputs.hook.as_ref());
-            self.inputs.hook = Some(next);
-        }
+        let Some(state) = HookState::from_event(event, now) else { return };
+        self.inputs.hook = Some(match event.kind {
+            HookKind::IdleWaiting => state.after_idle(self.inputs.hook.as_ref()),
+            _ => state,
+        });
     }
 
     pub fn on_terminal(&mut self, signal: TerminalSignal, now: f64) {
@@ -931,13 +941,13 @@ mod tests {
                 want: Working,
             },
             Case {
-                name: "idle prompt is not undone by typing",
+                name: "idle prompt reads as done and typing does not undo it",
                 inputs: with(|i| {
                     i.hook = hook(HookKind::IdleWaiting, 10.0);
                     i.process.last_output_at = printing(30.0);
                 }),
                 now: 30.1,
-                want: NeedsYou(Reason::Input),
+                want: Done,
             },
             Case {
                 name: "hook done beats terminal progress",
@@ -1039,6 +1049,93 @@ mod tests {
         assert_eq!(tracker.status(101.0), AgentStatus::Working);
         tracker.on_exit(Some(0));
         assert_eq!(tracker.status(102.0), AgentStatus::Done);
+    }
+
+    #[test]
+    fn an_idle_notice_reads_as_done_unless_something_asks_for_you() {
+        use AgentStatus::{Done, Failed, NeedsYou, Working};
+        type Sequence = (&'static str, Vec<(HookKind, f64)>, f64, AgentStatus);
+        let sequences: Vec<Sequence> = vec![
+            (
+                "after a finished turn",
+                vec![
+                    (HookKind::TurnStarted, 1.0),
+                    (HookKind::TurnDone, 5.0),
+                    (HookKind::IdleWaiting, 65.0),
+                ],
+                500.0,
+                Done,
+            ),
+            ("no turn reported at all", vec![(HookKind::IdleWaiting, 65.0)], 3600.0, Done),
+            (
+                "a turn whose stop was never reported, such as an interrupt",
+                vec![(HookKind::TurnStarted, 1.0), (HookKind::IdleWaiting, 65.0)],
+                3600.0,
+                Done,
+            ),
+            (
+                "a permission prompt still open",
+                vec![
+                    (HookKind::TurnStarted, 1.0),
+                    (HookKind::PermissionNeeded, 2.0),
+                    (HookKind::IdleWaiting, 65.0),
+                ],
+                66.0,
+                NeedsYou(Reason::Permission),
+            ),
+            (
+                "a question still open",
+                vec![
+                    (HookKind::TurnStarted, 1.0),
+                    (HookKind::QuestionAsked, 2.0),
+                    (HookKind::IdleWaiting, 65.0),
+                ],
+                66.0,
+                NeedsYou(Reason::Question),
+            ),
+            (
+                "a failed turn",
+                vec![
+                    (HookKind::TurnFailed("rate_limit".into()), 5.0),
+                    (HookKind::IdleWaiting, 65.0),
+                ],
+                66.0,
+                Failed("rate_limit".into()),
+            ),
+            (
+                "the next turn after the notice",
+                vec![
+                    (HookKind::TurnDone, 5.0),
+                    (HookKind::IdleWaiting, 65.0),
+                    (HookKind::TurnStarted, 70.0),
+                ],
+                71.0,
+                Working,
+            ),
+        ];
+        for (name, events, now, want) in sequences {
+            let mut tracker = StatusTracker::agent(0.0);
+            for (kind, at) in &events {
+                tracker.on_hook(&HookEvent::bare(kind.clone()), *at);
+            }
+            assert_eq!(tracker.status(now), want, "{name}");
+        }
+    }
+
+    #[test]
+    fn a_resumed_agent_waits_as_done_until_its_next_turn() {
+        let mut tracker = StatusTracker::setting_up(0.0);
+        tracker.agent_resumed(2.0);
+        tracker.on_output(3.0);
+        assert_eq!(tracker.status(4.0), AgentStatus::Done);
+        assert_eq!(tracker.status(3600.0), AgentStatus::Done);
+        assert_eq!(tracker.next_change_at(4.0), None);
+        tracker.on_hook(&HookEvent::bare(HookKind::IdleWaiting), 62.0);
+        assert_eq!(tracker.status(63.0), AgentStatus::Done);
+        tracker.on_hook(&HookEvent::bare(HookKind::TurnStarted), 70.0);
+        assert_eq!(tracker.status(71.0), AgentStatus::Working);
+        tracker.on_hook(&HookEvent::bare(HookKind::PermissionNeeded), 72.0);
+        assert_eq!(tracker.status(73.0), AgentStatus::NeedsYou(Reason::Permission));
     }
 
     #[test]

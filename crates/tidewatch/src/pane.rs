@@ -121,6 +121,8 @@ pub(crate) struct Started {
     /// The id given to the agent's `--session-id`, when its CLI takes one.
     pub(crate) session_id: Option<String>,
     pub(crate) awaiting_prompt: bool,
+    /// The agent resumes a saved session and waits at its prompt.
+    pub(crate) resumed: bool,
     pub(crate) prepared: Prepared,
     pub(crate) meeseeks: Option<Meeseeks>,
 }
@@ -254,6 +256,9 @@ pub(crate) fn finish_open<T>(
                         |agent| agent.run,
                     );
                     run.started(started.notes_file.clone(), now);
+                    if started.resumed {
+                        run.resumed(now);
+                    }
                     let launched = started.launched(&opened.dir);
                     let remote = started.prepared.remote.clone().map(RemoteSession::new);
                     let reader = Reader::for_agent(
@@ -372,6 +377,7 @@ mod tests {
             notes_file: None,
             session_id: None,
             awaiting_prompt: false,
+            resumed: false,
             prepared: Prepared {
                 launch: tidewatch_core::launch::Launch {
                     program: "claude".into(),
