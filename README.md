@@ -11,7 +11,7 @@ Esc or the Terminal chip takes you back. Built by [HoboWare](https://github.com/
 [Kelp](https://github.com/Hobo-Ware/kelp) (graph, diff, review) and
 [stdusk](https://github.com/Hobo-Ware/stdusk) (terminal, tabs, quake window).
 
-Status: v0.1.0, the first release. Showcase page: [tidewatch.hoboware.dev](https://tidewatch.hoboware.dev).
+Status: v0.1.21. Showcase page: [tidewatch.hoboware.dev](https://tidewatch.hoboware.dev).
 
 ## What it does
 
@@ -28,8 +28,10 @@ Status: v0.1.0, the first release. Showcase page: [tidewatch.hoboware.dev](https
 - **Delivery.** When the work is ready, Tidewatch shows the commits and the PR text. When you approve, it pushes and opens the pull request with `gh`.
 - **Overview and focus mode.** Overview lists every tab with its state: working, needs you, done or failed. Focus mode hides the history so the terminal gets the whole window.
 - **Session restore.** Quitting saves your tabs. The next launch brings them back and resumes the agents where the CLI can. `--no-restore` or a setting turns it off. `resume_agents` in `settings.toml` (Settings, General, Startup) is `auto` (run the resume command), `prefill` (type it and leave Enter to you) or `off` (a plain shell); when its agent crashed on its own, or Tidewatch crashed again within five minutes of a launch, the command is typed and never run (one crash of Tidewatch resumes as the setting says). A command too long to type is not typed: the tab reads Stopped, with an Agent is not running bar and a Resume button that runs it. The hook settings of a Claude tab live in a private file in the tab's state folder, so the typed line shows no token. A YOLO tab resumes with the same permissions it ran at, but its command is always typed and waits for Enter, whatever the setting (`off` still gives a plain shell). On macOS, Settings, General, Startup also has Open at login, which asks the system and keeps no setting of its own.
-- **Session restore.** Quitting saves your tabs. The next launch brings them back and resumes the agents where the CLI can. `--no-restore` or a setting turns it off. `resume_agents` in `settings.toml` (Settings, General, Startup) is `auto` (run the resume command), `prefill` (type it and leave Enter to you) or `off` (a plain shell); after a crash or a kill of Tidewatch or its agent the command is always typed and never run. A YOLO tab resumes with the same permissions it ran at, but its command is always typed and waits for Enter, whatever the setting (`off` still gives a plain shell). On macOS, Settings, General, Startup also has Open at login, which asks the system and keeps no setting of its own.
 - **Settings sync.** Settings, General, Sync keeps `settings.toml`, `profiles.toml` and `workflows.toml` in a private GitHub repo you own (`owner/name`, or a full git address). Turn it on and Tidewatch pulls at launch and pushes a few seconds after a setting changes, with your own git login: nothing is stored and nothing goes through a Tidewatch server. Folder trust (`trust.toml`), the app state under `~/.tidewatch` and the sync choice itself (`sync.toml`) never leave the Mac. Local changes are committed before anything is merged, and when the repo changed the same setting this Mac keeps its own and says so. A repo that does not exist yet is created, private, only when you click Create private repo (it runs `gh repo create --private`). What a pull brings in applies at once, with no restart (interface size, window height, hotkey, drop-down, profiles, workflows and the rest), and the card says `Settings updated from <repo>`; an open Settings page with unsaved edits keeps them, and tabs that are already running keep the profile they started with. Sync now runs it at once.
+- **Background fetch.** Open repos are fetched in the background every 5 minutes by default, so the ahead and behind counts stay fresh. Settings, General, Git sets the interval (1, 2, 5, 10, 15 or 30 minutes) or turns it off. A failed fetch shows a quiet `Fetch failed` note in the status bar.
+- **Touch ID for Amphetamine.** The keep-awake button (Amphetamine) can ask for Touch ID instead of your password when it starts lid-closed mode. Settings, General, Keep awake has a one-time Set up for it, which installs a small helper through one password prompt.
+- **Terminal links.** Links in the terminal are clickable, as in stdusk.
 - **Folder trust.** On first launch Tidewatch asks once before it marks its worktree folder as trusted in the agent CLIs' own config files, so they stop asking in every new worktree. It changes nothing without a yes, and Settings can undo it.
 - **House style.** One file, `~/.config/tidewatch/house-style.md`, tells every agent how to write its answers (summary first, file references, a Done / Needs you / Next block). Edit it freely: Tidewatch never overwrites it. Settings, House style opens it in your editor and can put the default text back.
 - **Quake window, palette, updates.** A drop-down window on a hotkey, a command palette, and update checks; see below.
@@ -43,6 +45,8 @@ Settings, General, Terminal picks the terminal's font: Built-in, the default, or
 ## Keyboard
 
 `Cmd+Shift+P` (`Ctrl+Shift+P` on Linux) opens the command palette: type to filter every command, the other open tabs, each agent profile and each workflow, Enter runs, Esc closes. Settings, Shortcuts, lists every chord for the platform you run on. [docs/shortcuts.md](docs/shortcuts.md) has both columns; a test keeps it equal to the command table in the code. On Linux a plain Ctrl chord would reach the shell, so it uses Ctrl+Shift or Alt where macOS uses Cmd.
+
+`Cmd+=` and `Cmd+-` (`Ctrl+Shift` on Linux) set the interface size from 80 to 150 percent, and Settings, General, Window has the same choice.
 
 ## Updates
 

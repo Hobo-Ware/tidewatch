@@ -47,7 +47,7 @@
 
 <nav><div class="wrap">
   <a class="brand" href="#top"><img src="icon.svg" alt="" width="30" height="30">tidewatch</a>
-  <span class="badge">v0.1.19</span>
+  <span class="badge">v0.1.21</span>
   <div class="navlinks">
     <a href="#features">Features</a>
     <a href="#install">Install</a>
@@ -57,7 +57,7 @@
 
 <header class="hero" id="top"><div class="wrap">
   <img class="mascot" src="mascot/mascot-hero-animated.svg" width="400" height="440" alt="Tidewatch's mascot, a shoggoth in a smiley mask">
-  <a class="pill" href="https://github.com/Hobo-Ware/tidewatch/releases/latest"><b>New</b> v0.1.19: tabs named by their work, YOLO as a new tab default, take-over that groups worktrees by repo, and bun or deno detection.</a>
+  <a class="pill" href="https://github.com/Hobo-Ware/tidewatch/releases/latest"><b>New</b> since v0.1.19: a Changes tab, commit search, background fetch, settings sync, crash resume, clickable links in the terminal, Touch ID for Amphetamine and an interface size setting.</a>
   <h1>AI agents side by side,<br><span class="teal">one worktree each.</span></h1>
   <p class="lede">Tidewatch is a desktop app for macOS and Linux that runs AI coding agents in one window per git repo. Every tab is its own git worktree, a separate checkout on its own branch, so several agents can work on the same repo without touching each other's files. You watch them, read what they did, comment on their diffs and decide what ships.</p>
   <div class="install"><span class="p">$</span><span class="txt">brew install hobo-ware/tap/tidewatch</span><button class="copy" type="button" data-copy="brew install hobo-ware/tap/tidewatch">Copy</button></div>
@@ -98,7 +98,7 @@
     </div>
     <div class="card">
       <svg viewBox="0 0 24 24" fill="none" stroke="#a6d189" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M20 11a8 8 0 0 0-14.3-4.9L4 8M4 4v4h4M4 13a8 8 0 0 0 14.3 4.9L20 16M20 20v-4h-4"/></svg>
-      <h3>Session restore</h3><p>Quitting saves your tabs. The next launch brings them back and resumes the agents where the CLI can. After a repeated crash the resume command is typed and waits for you; a tab whose agent is not running reads Stopped and offers Resume.</p>
+      <h3>Session restore</h3><p>Quitting saves your tabs. The next launch brings them back and resumes the agents where the CLI can. After a crash the agents resume by themselves; after a repeated crash, or when an agent crashed on its own, the command is typed and waits for you. A tab whose agent is not running reads Stopped and offers Resume.</p>
     </div>
     <div class="card">
       <svg viewBox="0 0 24 24" fill="none" stroke="#facc15" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h6l2 2h10v11H3z"/><path d="M9 14l2 2 4-4"/></svg>
@@ -108,7 +108,20 @@
       <svg viewBox="0 0 24 24" fill="none" stroke="#9fd4e8" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 6h14M5 12h9M5 18h14"/></svg>
       <h3>One house style</h3><p>One file, <code>~/.config/tidewatch/house-style.md</code>, tells every agent how to write its answers. Edit it freely: Tidewatch never overwrites it.</p>
     </div>
+    <div class="card">
+      <svg viewBox="0 0 24 24" fill="none" stroke="#67e8f9" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M7 18a4.5 4.5 0 0 1-.6-8.96A6 6 0 0 1 18 8.5a3.5 3.5 0 0 1 .5 9.5z"/></svg>
+      <h3>Settings in your own repo</h3><p>Settings, profiles and workflows can sync through a private GitHub repo you own, with your own git login.</p>
+    </div>
+    <div class="card">
+      <svg viewBox="0 0 24 24" fill="none" stroke="#34d399" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="8"/><path d="M12 8v4l3 2"/></svg>
+      <h3>Fresh ahead and behind counts</h3><p>Open repos are fetched in the background every few minutes, so the counts on History stay current.</p>
+    </div>
+    <div class="card">
+      <svg viewBox="0 0 24 24" fill="none" stroke="#fbbf24" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4a8 8 0 0 0-8 8v2M8.5 12.5a3.5 3.5 0 0 1 7 0v3.5M12 11v6.5a5 5 0 0 1-.3 1.8M16 11.5a4.5 4.5 0 0 1 .4 2.5"/></svg>
+      <h3>Keep awake with Touch ID</h3><p>The Amphetamine keep-awake button can ask for Touch ID instead of your password, after a one-time setup in Settings.</p>
+    </div>
   </div>
+  <p class="note">Also new: links in the terminal are clickable, as in stdusk.</p>
 
   <div class="row" id="overview">
     <div class="text">
@@ -139,6 +152,24 @@
 
   <div class="row flip">
     <div class="text">
+      <h3>See what the agent changed.</h3>
+      <p>A Changes tab sits next to History. It lists the staged, changed and new files with their line counts, and a click on a file shows its diff where the terminal was.</p>
+      <ul><li>Staged, Changed and New files, each with its line counts</li><li>View only: the agent makes the commits</li></ul>
+    </div>
+    <div class="shot"><img src="shot-changes.png" width="2200" height="1375" loading="lazy" alt="The Changes tab beside History, listing the staged, changed and new files in three groups with their line counts, and one file's diff open in the terminal's place"></div>
+  </div>
+
+  <div class="row">
+    <div class="text">
+      <h3>Find the commit you need.</h3>
+      <p>A search field sits above History. Commits that match stay bright and the others fade, Enter steps through the matches, and Cmd+F puts the cursor in the field.</p>
+      <ul><li>Matches the message, the author or the id</li><li>Enter and Shift+Enter jump between matches, Esc clears the search</li></ul>
+    </div>
+    <div class="shot"><img src="shot-search.png" width="2200" height="1375" loading="lazy" alt="History with a search for fix in the field above the graph: five matching commits stay bright, the other commits fade, and the first match is selected"></div>
+  </div>
+
+  <div class="row flip">
+    <div class="text">
       <h3>Chain agents into a workflow.</h3>
       <p>Write the steps once: work, review, refactor. Each stage has its own agent, model and permissions, and a gate that Tidewatch checks before the next stage starts.</p>
       <ul><li>Tests pass, no blocking findings, or your approval</li><li>A failed gate sends the work back a stage</li><li>Nine are built in, including Hunt a root cause, Finish with proof and Refactor safely</li></ul>
@@ -150,7 +181,7 @@
     <div class="text">
       <h3>Everything from the keyboard.</h3>
       <p>The command palette lists every command, the other open tabs, each agent profile and each workflow. A drop-down window on a hotkey keeps Tidewatch one keystroke away.</p>
-      <ul><li><span class="mono">Cmd+Shift+P</span> on macOS, <span class="mono">Ctrl+Shift+P</span> on Linux</li><li>A menu-bar item on macOS</li><li>Update checks, notify-only unless installed with Homebrew</li></ul>
+      <ul><li><span class="mono">Cmd+Shift+P</span> on macOS, <span class="mono">Ctrl+Shift+P</span> on Linux</li><li>A menu-bar item on macOS</li><li>Update checks, notify-only unless installed with Homebrew</li><li><span class="mono">Cmd+=</span> and <span class="mono">Cmd+-</span> set the interface size, 80 to 150 percent</li></ul>
     </div>
     <div class="shot"><img src="shot-palette.png" width="2200" height="1375" loading="lazy" alt="The command palette open over an agent tab, filtered to Switch, listing the other tabs with their shortcuts"></div>
   </div>
