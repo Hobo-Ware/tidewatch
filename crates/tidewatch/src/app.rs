@@ -71,7 +71,7 @@ use crate::dev_reader::DevReader;
 use crate::dev_screenshot::DevScreenshot;
 use crate::dev_session::DevSession;
 use crate::dev_takeover::DevTakeover;
-use crate::dev_view::{DevKeys, DevPaste, DevView};
+use crate::dev_view::{DevKeys, DevPaste, DevScroll, DevView};
 use crate::dev_workflow::DevWorkflow;
 use crate::dev_worktree::DevWorktree;
 use crate::done_check_glue;
@@ -199,6 +199,7 @@ pub(crate) struct Tidewatch {
     dev_keys: Option<DevKeys>,
     dev_paste: Option<DevPaste>,
     image_paste: picture_paste::Host,
+    dev_scroll: Option<DevScroll>,
     dev_reader: DevReader,
     trust: Trust,
     saver: Saver,
@@ -367,6 +368,7 @@ impl Tidewatch {
             dev_keys: dev_view.keys,
             dev_paste: dev_view.paste,
             image_paste: picture_paste::Host::new(&cc.egui_ctx),
+            dev_scroll: dev_view.scroll,
             dev_reader: DevReader::from_env(),
             trust,
             saver,

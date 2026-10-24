@@ -1,6 +1,7 @@
 //! The terminal area of the active tab: shell grid, status messages and the exit notice.
 
 use egui::FontId;
+use stdusk_core::terminal::PtyTerm;
 use stdusk_egui::ui::{CursorStyle, GridStyle, collect_input, render_grid};
 
 use super::frame::FrameIntent;
@@ -15,6 +16,7 @@ use crate::reader_view::Action;
 use crate::screen_kit::paint_pill_card;
 use crate::terminal_focus;
 use crate::terminal_font::InUse;
+use crate::terminal_wheel::{self, Cells};
 use crate::{layout, reader_glue};
 
 const CAUGHT_H: f32 = 72.0;
@@ -51,7 +53,9 @@ impl Tidewatch {
     ) {
         let area = grid.rect;
         let active_id = self.tabs.items()[self.tabs.active()].id;
-        let poof = self.meeseeks.fade(active_id, ui.ctx().input(|i| i.time));
+        let now = ui.ctx().input(|i| i.time);
+        let poof = self.meeseeks.fade(active_id, now);
+        let dev_wheel = if reader_on { Vec::new() } else { self.take_dev_wheel(ui.ctx(), now) };
         let Pane { body, agent, .. } = self.tabs.active_pane_mut();
         match body {
             Body::Shell(term) => {
@@ -61,10 +65,7 @@ impl Tidewatch {
                     let keys_free = !frame.keys.modal_open && !frame.keys.typing_in_a_panel;
                     let pasted = ui.input(|i| paste::texts(&i.events, keys_free));
                     if keys_free && (!typed.is_empty() || !pasted.is_empty()) {
-                        term.send(&typed);
-                        for text in &pasted {
-                            paste::into_terminal(term, text);
-                        }
+                        type_into(term, &typed, &pasted);
                         if let Some(agent) = agent {
                             agent.resume_note = None;
                             agent.base_note = None;
@@ -93,6 +94,16 @@ impl Tidewatch {
                         &[],
                     );
                     terminal_focus::hold(ui.ctx(), grid_response.id, keys_free);
+                    if !frame.keys.modal_open {
+                        let cells = Cells {
+                            rect: area,
+                            cell_w: grid.cell_w,
+                            cell_h: grid.cell_h,
+                            cols: grid.cols,
+                            rows: grid.rows,
+                        };
+                        terminal_wheel::drive(ui, &grid_response, term, cells, &dev_wheel);
+                    }
                 }
                 if let (Some(name), Some(exit)) = (agent_name, term.exited()) {
                     exit_notice(ui, area, &exit_notice_text(name, exit.code));
@@ -179,6 +190,14 @@ impl Tidewatch {
     }
 }
 
+fn type_into(term: &mut PtyTerm, typed: &[u8], pasted: &[String]) {
+    term.send(typed);
+    for text in pasted {
+        paste::into_terminal(term, text);
+    }
+    term.scroll_to_bottom();
+}
+
 fn caught_above(ui: &egui::Ui, area: egui::Rect, pill: egui::Rect) {
     let room = egui::Rect::from_min_max(area.min, egui::pos2(area.max.x, pill.top() - CAUGHT_GAP));
     if room.height() < CAUGHT_H * 2.0 {
@@ -238,7 +257,45 @@ fn pane_notice(ui: &egui::Ui, pane: egui::Rect, text: &str) -> egui::Rect {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeMap;
+    use std::time::{Duration, Instant};
+
+    use stdusk_core::repaint::Repaint;
+    use stdusk_core::shell::ShellProfile;
+    use stdusk_core::terminal::SpawnOpts;
+
     use super::*;
+
+    #[test]
+    fn typing_or_pasting_jumps_back_to_the_bottom_of_the_scrollback() {
+        let opts = SpawnOpts {
+            detect_progress: false,
+            shell_integration: false,
+            autosuggestions: false,
+            scrollback_lines: 1000,
+            word_separators: " ".into(),
+            bold_bright: false,
+            agent_tracking: None,
+            cwd: None,
+            profile: Some(ShellProfile {
+                shell: Some("/bin/sh".into()),
+                args: vec!["-c".into(), "seq 1 300; sleep 20".into()],
+                cwd: None,
+                env: BTreeMap::new(),
+            }),
+        };
+        let mut term = PtyTerm::spawn(80, 24, Repaint::none(), &opts);
+        let deadline = Instant::now() + Duration::from_secs(8);
+        while term.scroll_state().1 < 200 && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        for (typed, pasted) in [(&b"a"[..], vec![]), (&b""[..], vec!["text".to_owned()])] {
+            term.scroll(40);
+            assert_eq!(term.scroll_state().0, 40);
+            type_into(&mut term, typed, &pasted);
+            assert_eq!(term.scroll_state().0, 0);
+        }
+    }
 
     #[test]
     fn the_exit_notice_names_the_profile_and_the_code() {
