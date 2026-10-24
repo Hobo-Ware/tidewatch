@@ -1,13 +1,19 @@
 //! The terminal area of the active tab: shell grid, status messages and the exit notice.
 
 use egui::FontId;
+use stdusk_core::config::TerminalConfig;
 use stdusk_core::paste::PasteRules;
+use stdusk_core::terminal::PtyTerm;
 use stdusk_egui::mouse::GridGeom;
-use stdusk_egui::terminal_view::{Focus, Gate, TerminalOptions, TerminalView};
-use stdusk_egui::ui::{CursorStyle, GridStyle};
+use stdusk_egui::paste_confirm::{self, Verdict};
+use stdusk_egui::pointer::MousePasted;
+use stdusk_egui::terminal_view::{
+    Focus, Gate, TerminalOptions, TerminalOutput, TerminalView, paste_into,
+};
+use stdusk_egui::ui::GridStyle;
 
 use super::frame::FrameIntent;
-use super::{FONT_SIZE, MIN_CONTRAST, Tidewatch, wall_ms};
+use super::{FONT_SIZE, Tidewatch, wall_ms};
 use crate::brand;
 use crate::commands::Command;
 use crate::mascot::{self, Pose};
@@ -19,8 +25,6 @@ use crate::stopped_view;
 use crate::terminal_font::InUse;
 use crate::{layout, reader_glue};
 use tidewatch_core::status::AgentStatus;
-
-pub(super) const PASTE_RULES: PasteRules = PasteRules { newlines_to_spaces: false, trim: true };
 
 const CAUGHT_H: f32 = 72.0;
 const CAUGHT_GAP: f32 = 6.0;
@@ -35,16 +39,12 @@ pub(super) struct TerminalGrid {
     bold: Option<FontId>,
 }
 
-pub(super) fn view_options(copy_on_select: bool) -> TerminalOptions<'static> {
-    TerminalOptions {
-        alt_is_meta: false,
-        paste: PASTE_RULES,
-        confirm_multiline_paste: false,
-        ctrl_c_copies: true,
-        copy_on_select,
-        app_link_modifier: "cmd",
-        focus: Focus::Manage,
-    }
+pub(super) fn terminal_config(copy_on_select: bool) -> TerminalConfig {
+    TerminalConfig { copy_on_select, ..TerminalConfig::default() }
+}
+
+pub(super) fn paste_rules(config: &TerminalConfig) -> PasteRules {
+    TerminalOptions::from_config(config, Focus::Off).paste
 }
 
 pub(super) fn view_gate(keys_free: bool, modal_open: bool) -> Gate {
@@ -54,7 +54,32 @@ pub(super) fn view_gate(keys_free: bool, modal_open: bool) -> Gate {
         copy: keys_free,
         wheel: !modal_open,
         reports: !modal_open,
+        pointer: !modal_open,
     }
+}
+
+fn show_shell(
+    ui: &mut egui::Ui,
+    term: &mut PtyTerm,
+    grid: &TerminalGrid,
+    config: &TerminalConfig,
+    keys_free: bool,
+    modal_open: bool,
+    injected_wheel: &[egui::Event],
+) -> TerminalOutput {
+    let mods = ui.input(|i| i.modifiers);
+    TerminalView {
+        id_src: &[],
+        grid: grid.geom(),
+        font: &grid.font,
+        bold_font: grid.bold.as_ref(),
+        style: GridStyle::from_config(config, mods, keys_free),
+        search_marks: &[],
+        options: TerminalOptions::from_config(config, Focus::Manage),
+        gate: view_gate(keys_free, modal_open),
+        injected_wheel,
+    }
+    .show(ui, term)
 }
 
 impl TerminalGrid {
@@ -92,33 +117,29 @@ impl Tidewatch {
         let poof = self.meeseeks.fade(active_id, now);
         let dev_wheel = if reader_on { Vec::new() } else { self.take_dev_wheel(ui.ctx(), now) };
         let mut copied = false;
-        let options = view_options(self.terminal_prefs.copy_on_select);
+        let mut mouse_pasted = None;
         let Pane { body, agent, .. } = self.tabs.active_pane_mut();
         match body {
             Body::Shell(term) => {
                 term.resize(grid.cols, grid.rows);
                 if !reader_on {
                     let keys_free = !frame.keys.modal_open && !frame.keys.typing_in_a_panel;
-                    let out = TerminalView {
-                        id_src: &[],
-                        grid: grid.geom(),
-                        font: &grid.font,
-                        bold_font: grid.bold.as_ref(),
-                        style: GridStyle {
-                            cursor: CursorStyle::Block,
-                            dimmed: false,
-                            link_active: false,
-                            blink: false,
-                            ligatures: false,
-                            min_contrast: MIN_CONTRAST,
-                            app_mouse: false,
-                        },
-                        search_marks: &[],
-                        options,
-                        gate: view_gate(keys_free, frame.keys.modal_open),
-                        injected_wheel: &dev_wheel,
+                    let out = show_shell(
+                        ui,
+                        term,
+                        grid,
+                        &self.terminal_config,
+                        keys_free,
+                        frame.keys.modal_open,
+                        &dev_wheel,
+                    );
+                    for text in out.confirm_paste.iter().cloned() {
+                        self.pending_pastes.push_back((active_id, text));
                     }
-                    .show(ui, term);
+                    if out.bell_rang {
+                        self.bell.ring(now);
+                    }
+                    mouse_pasted = out.mouse_pasted;
                     if out.sent_input()
                         && let Some(agent) = agent
                     {
@@ -166,8 +187,29 @@ impl Tidewatch {
             },
             Body::Failed(message) => status_message(ui, area, message, brand::RED),
         }
+        self.bell.paint(ui, area, now);
         if copied {
             self.show_toast("Copied", ui.ctx());
+        }
+        match mouse_pasted {
+            Some(MousePasted::Text) => self.show_toast("Pasted", ui.ctx()),
+            Some(MousePasted::Image) => self.show_toast("Pasted image", ui.ctx()),
+            None => {}
+        }
+    }
+
+    pub(super) fn show_paste_confirm(&mut self, ctx: &egui::Context) {
+        let Some((tab, text)) = self.pending_pastes.pop_front() else { return };
+        match paste_confirm::show(ctx, &text, true) {
+            Verdict::Paste => {
+                if let Some(Body::Shell(term)) =
+                    self.tabs.get_mut(tab).map(|tab| &mut tab.pane.body)
+                {
+                    paste_into(term, &text);
+                }
+            }
+            Verdict::Cancel => {}
+            Verdict::Asking => self.pending_pastes.push_front((tab, text)),
         }
     }
 
@@ -365,30 +407,51 @@ mod tests {
             (" \r\n\t ", None),
         ];
         for (text, want) in cases {
-            assert_eq!(prepare(text, PASTE_RULES).as_deref(), want, "{text:?}");
+            assert_eq!(
+                prepare(text, paste_rules(&terminal_config(false))).as_deref(),
+                want,
+                "{text:?}"
+            );
         }
     }
 
     #[test]
     fn a_modal_takes_the_keys_and_the_pointer_but_a_text_panel_only_the_keys() {
         let free = view_gate(true, false);
-        assert!(free.keyboard && free.paste && free.copy && free.wheel && free.reports);
+        assert!(
+            free.keyboard && free.paste && free.copy && free.wheel && free.reports && free.pointer
+        );
         let typing = view_gate(false, false);
         assert!(
-            !typing.keyboard && !typing.paste && !typing.copy && typing.wheel && typing.reports
+            !typing.keyboard
+                && !typing.paste
+                && !typing.copy
+                && typing.wheel
+                && typing.reports
+                && typing.pointer
         );
         let modal = view_gate(false, true);
-        assert!(!modal.keyboard && !modal.paste && !modal.copy && !modal.wheel && !modal.reports);
+        assert!(
+            !modal.keyboard
+                && !modal.paste
+                && !modal.copy
+                && !modal.wheel
+                && !modal.reports
+                && !modal.pointer
+        );
     }
 
     struct Screen {
         ctx: Context,
         term: PtyTerm,
         typed: Vec<u8>,
+        pasted: Vec<String>,
+        confirm: Vec<String>,
         copied: Option<String>,
         clipboard: Vec<String>,
         grid: Option<egui::Id>,
-        copy_on_select: bool,
+        config: TerminalConfig,
+        cursor: egui::CursorIcon,
         commands: Vec<Command>,
     }
 
@@ -398,10 +461,13 @@ mod tests {
                 ctx: Context::default(),
                 term: spawn(script),
                 typed: Vec::new(),
+                pasted: Vec::new(),
+                confirm: Vec::new(),
                 copied: None,
                 clipboard: Vec::new(),
                 grid: None,
-                copy_on_select: false,
+                config: TerminalConfig { clickable_links: false, ..terminal_config(false) },
+                cursor: egui::CursorIcon::Default,
                 commands: Vec::new(),
             }
         }
@@ -420,41 +486,25 @@ mod tests {
                 self.commands =
                     crate::commands::pressed(ui.ctx(), crate::commands::Gate::default());
                 egui::CentralPanel::default().show(ui, |ui| {
-                    let out = TerminalView {
-                        id_src: &[],
-                        grid: GridGeom {
-                            rect: Rect::from_min_size(
-                                Pos2::new(0.0, 100.0),
-                                egui::vec2(600.0, 400.0),
-                            ),
-                            cw: 8.0,
-                            ch: 16.0,
-                            cols: 75,
-                            rows: 25,
-                        },
-                        font: &font,
-                        bold_font: None,
-                        style: GridStyle {
-                            cursor: CursorStyle::Block,
-                            dimmed: false,
-                            link_active: false,
-                            blink: false,
-                            ligatures: false,
-                            min_contrast: 1.0,
-                            app_mouse: false,
-                        },
-                        search_marks: &[],
-                        options: view_options(self.copy_on_select),
-                        gate: view_gate(true, false),
-                        injected_wheel: &[],
-                    }
-                    .show(ui, &mut self.term);
+                    let grid = TerminalGrid {
+                        rect: Rect::from_min_size(Pos2::new(0.0, 100.0), egui::vec2(600.0, 400.0)),
+                        cols: 75,
+                        rows: 25,
+                        cell_w: 8.0,
+                        cell_h: 16.0,
+                        font: font.clone(),
+                        bold: None,
+                    };
+                    let out = show_shell(ui, &mut self.term, &grid, &self.config, true, false, &[]);
                     self.grid = Some(out.response.id);
                     self.typed = out.typed;
+                    self.pasted = out.pasted;
+                    self.confirm = out.confirm_paste;
                     self.copied = out.copied;
                 });
                 remember_focus(ui.ctx());
             });
+            self.cursor = full.platform_output.cursor_icon;
             for command in full.platform_output.commands {
                 if let OutputCommand::CopyText(text) = command {
                     self.clipboard.push(text);
@@ -545,7 +595,7 @@ mod tests {
     fn a_finished_drag_is_copied_when_copy_on_select_is_on() {
         let mut screen = Screen::with_text();
         screen.term.clear_selection();
-        screen.copy_on_select = true;
+        screen.config.copy_on_select = true;
         screen.drag(cell(0.0), cell(10.0));
         assert_eq!(screen.clipboard.len(), 1);
         assert!(screen.clipboard[0].contains("llo wor"), "{:?}", screen.clipboard);
@@ -564,7 +614,7 @@ mod tests {
     fn a_double_click_on_a_word_is_copied_when_copy_on_select_is_on() {
         let mut screen = Screen::with_text();
         screen.term.clear_selection();
-        screen.copy_on_select = true;
+        screen.config.copy_on_select = true;
         screen.frame(vec![Event::PointerMoved(cell(7.0))], Modifiers::NONE);
         for _ in 0..2 {
             screen.click(cell(7.0), true);
@@ -621,6 +671,65 @@ mod tests {
         let mut taken = true;
         let _ = ctx.run_ui(raw, |_| taken = esc_left_a_widget(&ctx, false));
         assert!(!taken);
+    }
+
+    #[test]
+    fn a_multiline_paste_waits_for_the_paste_question_and_a_single_line_goes_through() {
+        let mut screen = Screen::new("sleep 20");
+        screen.settle();
+        screen.frame(vec![Event::Paste("one\ntwo".into())], Modifiers::NONE);
+        assert_eq!(screen.confirm, ["one\rtwo"]);
+        assert_eq!(screen.pasted.len(), 0);
+        screen.frame(vec![Event::Paste("one line".into())], Modifiers::NONE);
+        assert_eq!(screen.confirm.len(), 0);
+        assert_eq!(screen.pasted, ["one line"]);
+    }
+
+    fn with_link() -> Screen {
+        let mut screen = Screen::new("printf 'see https://example.com/page now\\n'; sleep 20");
+        wait_for(|| {
+            let snap = screen.term.grid_snapshot();
+            snap.cells.iter().take(32).map(|cell| cell.c).collect::<String>()
+                == "see https://example.com/page now"
+        });
+        screen.config.clickable_links = true;
+        screen.settle();
+        screen
+    }
+
+    fn hovering_a_link(screen: &mut Screen, col: f32, modifiers: Modifiers) -> bool {
+        screen.frame(vec![Event::PointerMoved(cell(col))], modifiers);
+        screen.frame(vec![], modifiers);
+        screen.cursor == egui::CursorIcon::PointingHand
+    }
+
+    #[test]
+    fn the_shell_terminal_marks_a_link_under_cmd_hover_and_not_other_text() {
+        let mut screen = with_link();
+        assert!(hovering_a_link(&mut screen, 12.0, Modifiers::COMMAND));
+        assert!(!hovering_a_link(&mut screen, 1.0, Modifiers::COMMAND));
+    }
+
+    #[test]
+    fn the_shell_terminal_follows_stdusks_link_settings() {
+        let mut screen = with_link();
+        assert!(hovering_a_link(&mut screen, 12.0, Modifiers::NONE));
+        screen.config.link_modifier = "cmd".into();
+        assert!(!hovering_a_link(&mut screen, 12.0, Modifiers::NONE));
+        assert!(hovering_a_link(&mut screen, 12.0, Modifiers::COMMAND));
+        screen.config.clickable_links = false;
+        assert!(!hovering_a_link(&mut screen, 12.0, Modifiers::COMMAND));
+    }
+
+    #[test]
+    fn the_config_tidewatch_hands_the_view_is_stdusks_default_but_for_copy_on_select() {
+        let stock = TerminalConfig::default();
+        assert_eq!(
+            serde_json::to_string(&terminal_config(stock.copy_on_select)).unwrap(),
+            serde_json::to_string(&stock).unwrap(),
+        );
+        assert!(terminal_config(true).copy_on_select);
+        assert!(!terminal_config(false).copy_on_select);
     }
 
     fn raw_screen(setup: &str, len: usize) -> (Screen, std::path::PathBuf) {

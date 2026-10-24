@@ -184,6 +184,7 @@ impl Tidewatch {
         let other = self.trust.dialog_open()
             || self.leftovers.is_open()
             || self.open_link.is_some()
+            || !self.pending_pastes.is_empty()
             || self.flow.modal_open(active_id);
         let dialog = if self.closing.is_some() || self.takeover.dialog_open() {
             Dialog::TabChoice

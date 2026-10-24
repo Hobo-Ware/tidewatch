@@ -39,14 +39,15 @@ mod takeover;
 mod terminal;
 mod workspaces;
 
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 
 use kelp_ui::avatars::AvatarStore;
+use stdusk_core::config::TerminalConfig;
 use stdusk_core::terminal::PtyTerm;
 use stdusk_egui::colors;
-use stdusk_egui::ui::apply_theme;
+use stdusk_egui::ui::{BellFlash, apply_theme};
 use tidewatch_core::guards::GuardPrefs;
 use tidewatch_core::notes::NotesWriter;
 use tidewatch_core::paths::TidewatchPaths;
@@ -130,7 +131,6 @@ use crate::workflow_run::Exec;
 use crate::worktree_jobs::Done;
 
 const FONT_SIZE: f32 = 13.0;
-const MIN_CONTRAST: f32 = 4.0;
 const ANIMATION_FRAME_MS: u64 = 40;
 const WAKE_SLACK_S: f64 = 0.02;
 
@@ -143,6 +143,9 @@ pub(crate) struct Tidewatch {
     workspaces: Vec<Workspace>,
     terminal_font: terminal_font::Host,
     terminal_prefs: TerminalPrefs,
+    terminal_config: TerminalConfig,
+    pending_pastes: VecDeque<(u64, String)>,
+    bell: BellFlash,
     paths: Option<TidewatchPaths>,
     tabs: Tabs<Pane<PtyTerm>>,
     jobs: Jobs<Done>,
@@ -334,7 +337,10 @@ impl Tidewatch {
             sync_glue::Host::new(paths.as_ref(), flow.tools(), screenshot.is_none(), &cc.egui_ctx);
         let mut app = Self {
             terminal_font,
+            terminal_config: terminal::terminal_config(terminal_prefs.copy_on_select),
             terminal_prefs,
+            pending_pastes: VecDeque::new(),
+            bell: BellFlash::default(),
             tabs,
             jobs: Jobs::new(),
             closing: None,
