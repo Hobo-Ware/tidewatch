@@ -2,13 +2,16 @@
 //! the view, drawing it in the terminal area and typing what the user chose into the pty.
 
 use std::path::PathBuf;
+use std::sync::Arc;
 use std::time::Duration;
 
 use egui::{Context, Rect, RichText, Ui, UiBuilder, pos2, vec2};
 use stdusk_core::terminal::PtyTerm;
+use tidewatch_core::avatar::Avatar;
 use tidewatch_core::question::{self, Reply};
 use tidewatch_core::status::{AgentStatus, Reason};
 
+use crate::agent_avatar::Face;
 use crate::agent_ready::Ready;
 use crate::brand;
 use crate::commands::Command;
@@ -120,6 +123,7 @@ pub(crate) fn draw(
     now: f64,
     review: Option<ReviewFacts<'_>>,
     (pr, due): (Option<PrData<'_>>, Option<(&Due, usize)>),
+    avatar: Option<Arc<Avatar>>,
 ) -> Vec<Action> {
     let Some(agent) = pane.agent.as_mut() else { return Vec::new() };
     let prompt = prompt_of(agent.run.status()).filter(|_| !agent.reader.prompt_answered());
@@ -136,6 +140,7 @@ pub(crate) fn draw(
         profile: &agent.profile_name,
         blocked: ask_blocked(Some(agent.run.status())),
     });
+    let face = Face::of(&agent.profile_name, &agent.run.agent_id, avatar);
     let facts = Facts {
         source: agent.reader.source(),
         prompt,
@@ -145,9 +150,13 @@ pub(crate) fn draw(
         pr,
         due,
         profile: &agent.profile_name,
+        face: Some(&face),
         turn,
     };
     let reader = &mut agent.reader;
+    if dev.take_open_turns(reader.rows.len()) {
+        reader.view.open_turns(&reader.rows);
+    }
     let mut actions = reader_view::show(ui, area, &reader.rows, &mut reader.view, facts);
     actions.extend(dev.drive_card(now, reader.view.live_mut()));
     actions.extend(dev.actions(now, facts.prompt));

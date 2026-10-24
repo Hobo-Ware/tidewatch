@@ -14,6 +14,17 @@ const REVIEW_NOTE_H: f32 = 70.0;
 const CHAR_W: f32 = 7.0;
 const MIN_COLUMNS: usize = 20;
 const WIDTH_STEP: f32 = 1.0;
+const CHAT_LINE_H: f32 = 22.0;
+const CHAT_CHAR_W: f32 = 8.0;
+const USER_SHARE: f32 = 0.62;
+const AGENT_SHARE: f32 = 0.82;
+const BUBBLE_PAD: f32 = 34.0;
+const USER_CHROME_H: f32 = 64.0;
+const TURN_CHROME_H: f32 = 70.0;
+const TURN_CHIPS_H: f32 = 34.0;
+const TURN_LIVE_H: f32 = 40.0;
+const TURN_LIST_LINE_H: f32 = 22.0;
+const TURN_LIST_PAD_H: f32 = 22.0;
 
 /// Whether the view sticks to the newest row. It follows until the user scrolls up, and follows again
 /// once they reach the bottom or press "jump to latest".
@@ -74,6 +85,11 @@ impl Heights {
         self.measured.get(&row.seq).copied().unwrap_or_else(|| estimate(row, self.width))
     }
 
+    /// The height of the item keyed `key`: measured, else `guess`, worked out only when needed.
+    pub(crate) fn height_with(&self, key: u64, guess: impl FnOnce(f32) -> f32) -> f32 {
+        self.measured.get(&key).copied().unwrap_or_else(|| guess(self.width))
+    }
+
     /// Forgets rows older than `first_seq`, which were dropped from the list.
     pub(crate) fn keep_from(&mut self, first_seq: u64) {
         self.measured.retain(|seq, _| *seq >= first_seq);
@@ -94,10 +110,53 @@ pub(crate) fn estimate(row: &Row, width: f32) -> f32 {
     if let Kind::Review(ids) = &row.kind {
         return REVIEW_BASE_H + ids.len() as f32 * REVIEW_NOTE_H;
     }
+    if matches!(row.kind, Kind::User) {
+        return estimate_user(&row.text, width);
+    }
     let columns = ((width / CHAR_W) as usize).max(MIN_COLUMNS);
     let lines: usize =
         row.text.lines().map(|line| line.chars().count().div_ceil(columns).max(1)).sum();
     lines.max(1) as f32 * LINE_H + ROW_PAD
+}
+
+fn chat_lines<'a>(texts: impl IntoIterator<Item = &'a str>, bubble_w: f32) -> usize {
+    let columns = (((bubble_w - BUBBLE_PAD) / CHAT_CHAR_W) as usize).max(MIN_COLUMNS);
+    texts
+        .into_iter()
+        .map(|text| {
+            text.lines().map(|line| line.chars().count().div_ceil(columns).max(1)).sum::<usize>()
+        })
+        .sum()
+}
+
+/// A guess at a user bubble: its wrapped lines, the name line over it and the gaps around it.
+pub(crate) fn estimate_user(text: &str, width: f32) -> f32 {
+    let lines = chat_lines([text], width * USER_SHARE).max(1);
+    lines as f32 * CHAT_LINE_H + USER_CHROME_H
+}
+
+/// A guess at an agent turn: the wrapped lines of its text (none while it only runs tools), its
+/// chip row or live row, and its open list of `calls` lines.
+pub(crate) fn estimate_turn(
+    texts: &[&str],
+    calls: usize,
+    (live, listing): (bool, bool),
+    width: f32,
+) -> f32 {
+    let bubble_w = width * AGENT_SHARE - 44.0;
+    let text_h = if texts.is_empty() {
+        0.0
+    } else {
+        chat_lines(texts.iter().copied(), bubble_w) as f32 * CHAT_LINE_H + 24.0
+    };
+    let under = match (live, calls) {
+        (true, _) => TURN_LIVE_H,
+        (false, 0) => 0.0,
+        (false, _) => TURN_CHIPS_H,
+    };
+    let list_h = if listing { calls as f32 * TURN_LIST_LINE_H + TURN_LIST_PAD_H } else { 0.0 };
+    let chrome = if texts.is_empty() && live { 20.0 } else { TURN_CHROME_H };
+    text_h + under + list_h + chrome
 }
 
 #[cfg(test)]
@@ -146,6 +205,7 @@ mod tests {
         let tool = Row {
             seq: 0,
             kind: Kind::Tool(Tool {
+                kind: crate::reader_rows::ToolKind::Command,
                 label: "Bash".into(),
                 output: String::new(),
                 error: false,
@@ -166,6 +226,28 @@ mod tests {
         let two = estimate(&review(vec![1, 2]), 800.0);
         let four = estimate(&review(vec![1, 2, 3, 4]), 800.0);
         assert_eq!(four - two, 2.0 * REVIEW_NOTE_H);
+    }
+
+    #[test]
+    fn a_user_bubble_and_a_turn_grow_with_their_lines_and_a_list_with_its_calls() {
+        let one = estimate_user("one", 800.0);
+        let three = estimate_user("a\nb\nc", 800.0);
+        assert_eq!(three - one, 2.0 * CHAT_LINE_H);
+        let closed = estimate_turn(&["done"], 6, (false, false), 800.0);
+        let open = estimate_turn(&["done"], 6, (false, true), 800.0);
+        assert_eq!(open - closed, 6.0 * TURN_LIST_LINE_H + TURN_LIST_PAD_H);
+        let bare = estimate_turn(&["done"], 0, (false, false), 800.0);
+        assert_eq!(closed - bare, TURN_CHIPS_H);
+        assert!(estimate_turn(&[], 2, (true, false), 800.0) < closed);
+    }
+
+    #[test]
+    fn a_measured_turn_height_wins_over_its_guess() {
+        let mut heights = Heights::default();
+        heights.for_width(800.0);
+        assert_eq!(heights.height_with(9, |_| 123.0), 123.0);
+        heights.record(9, 77.0);
+        assert_eq!(heights.height_with(9, |_| 123.0), 77.0);
     }
 
     #[test]
