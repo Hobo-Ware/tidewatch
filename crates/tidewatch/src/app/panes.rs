@@ -118,7 +118,7 @@ impl Tidewatch {
         let now_ms = wall_ms() as i64;
         let cards = agent
             .and_then(|_| self.job_live.board(active_id))
-            .map(|board| job_model::cards(board, now_ms, self.job_live.zone()))
+            .map(|board| job_model::cards(board, now_ms))
             .unwrap_or_default();
         let active_tab = &self.tabs.items()[self.tabs.active()];
         let meeseeks_card = agent.and_then(|agent| {

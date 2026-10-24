@@ -220,9 +220,10 @@ fn a_tag_with_nothing_behind_it_is_not_drawn() {
 }
 
 #[test]
-fn the_count_sits_in_the_ring_and_the_meta_line_says_state_and_age() {
+fn the_header_names_the_step_never_a_ring_count_and_the_meta_line_says_state_and_age() {
     let panel = Panel::new(LONG, 420.0);
-    assert!(panel.drawn("3/13"), "{:?}", panel.texts);
+    assert!(panel.drawn("Step 2 of 5 \u{b7} Build"), "{:?}", panel.texts);
+    assert!(!panel.texts.iter().any(|(text, _)| text == "3/13" || text.starts_with("0/")));
     assert!(
         panel.drawn("\u{25cf} Blocked \u{b7} updated 4 min ago"),
         "a blocked item makes it blocked"

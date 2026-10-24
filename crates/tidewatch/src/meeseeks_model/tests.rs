@@ -13,22 +13,24 @@ fn text(card: &Card) -> String {
 }
 
 #[test]
-fn the_meta_line_reads_elapsed_time_and_the_turn_in_progress_out_of_forty() {
+fn the_meta_line_is_the_elapsed_time_and_never_a_turn_count() {
     let mut meeseeks = running();
-    assert_eq!(card(&meeseeks, "vite", 12 * MIN, None).meta, "12m \u{b7} turn 1 of 40");
+    assert_eq!(card(&meeseeks, "vite", 12 * MIN, None).meta, "12m");
     meeseeks.turns = 8;
-    assert_eq!(card(&meeseeks, "vite", 12 * MIN, None).meta, "12m \u{b7} turn 9 of 40");
-    meeseeks.turns = 40;
-    assert_eq!(card(&meeseeks, "vite", 70 * MIN, None).meta, "1h 10m \u{b7} turn 40 of 40");
+    assert_eq!(card(&meeseeks, "vite", 70 * MIN, None).meta, "1h 10m");
 }
 
 #[test]
-fn the_card_is_titled_with_the_task_and_has_the_four_stages_in_order() {
-    let card = card(&running(), "vite", 0, None);
-    assert_eq!(card.title, "Bump vite to 6.3");
-    let names: Vec<&str> = card.bars.iter().map(|(name, _)| *name).collect();
+fn a_working_meeseeks_shows_no_stage_bars_and_a_checking_one_shows_the_four_in_order() {
+    let mut meeseeks = running();
+    let working = card(&meeseeks, "vite", 0, None);
+    assert_eq!(working.title, "Bump vite to 6.3");
+    assert_eq!(working.bars.len(), 0);
+    meeseeks.apply(Event::Said("done".into()), 0);
+    let checking = card(&meeseeks, "vite", 0, None);
+    let names: Vec<&str> = checking.bars.iter().map(|(name, _)| *name).collect();
     assert_eq!(names, ["Change", "Tests", "Proof", "Hand off"]);
-    let looks: Vec<Look> = card.bars.iter().map(|(_, look)| *look).collect();
+    let looks: Vec<Look> = checking.bars.iter().map(|(_, look)| *look).collect();
     assert_eq!(looks, [Look::Active, Look::Pending, Look::Pending, Look::Pending]);
 }
 

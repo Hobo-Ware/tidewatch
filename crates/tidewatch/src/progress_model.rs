@@ -46,10 +46,21 @@ pub(crate) struct Ring {
     pub(crate) total: usize,
 }
 
-impl Ring {
-    pub(crate) fn label(&self) -> String {
-        if self.total == 0 { String::new() } else { format!("{}/{}", self.done, self.total) }
-    }
+/// Where the work is: the current phase's place among the phases and its name.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct Step {
+    pub(crate) number: usize,
+    pub(crate) of: usize,
+    pub(crate) name: String,
+}
+
+pub(crate) fn step(ledger: &Ledger) -> Option<Step> {
+    let index = ledger.current_phase_index()?;
+    Some(Step {
+        number: index + 1,
+        of: ledger.checklist.len(),
+        name: phase_label(ledger.checklist.get(index)?),
+    })
 }
 
 pub(crate) fn ring(ledger: &Ledger) -> Ring {
@@ -103,10 +114,12 @@ pub(crate) fn bars(ledger: &Ledger) -> Vec<Bar> {
             } else {
                 BarKind::Plain
             };
+            let under_way = phase.items.iter().filter(|item| item.mark == Mark::Doing).count();
             let fill = if counts.total == 0 {
                 0.0
             } else {
-                (counts.done as f32 / counts.total as f32).clamp(0.0, 1.0)
+                ((counts.done as f32 + 0.5 * under_way as f32) / counts.total as f32)
+                    .clamp(0.0, 1.0)
             };
             Bar {
                 label: phase_label(phase),
@@ -355,22 +368,33 @@ mod tests {
         let ring = ring(&ledger(MIDDLE));
         assert_eq!((ring.done, ring.total), (3, 6));
         assert_eq!(ring.fraction, 0.5);
-        assert_eq!(ring.label(), "3/6");
         assert_eq!(ring.tone, Tone::Working);
     }
 
     #[test]
     fn a_ring_with_no_items_is_empty_unless_the_work_is_done() {
         let cases = [
-            ("# Goal\nx\n", 0.0, ""),
-            ("# Goal\nx\n\n## Status\nstate: done\n", 1.0, ""),
-            ("# Goal\nx\n\n## Checklist\n### 1. A\n- [x] a\n- [x] b\n", 1.0, "2/2"),
-            ("# Goal\nx\n\n## Checklist\n### 1. A\n- [-] a -- no\n", 0.0, ""),
+            ("# Goal\nx\n", 0.0),
+            ("# Goal\nx\n\n## Status\nstate: done\n", 1.0),
+            ("# Goal\nx\n\n## Checklist\n### 1. A\n- [x] a\n- [x] b\n", 1.0),
+            ("# Goal\nx\n\n## Checklist\n### 1. A\n- [-] a -- no\n", 0.0),
+            ("# Goal\nx\n\n## Checklist\n### 1. A\n- [~] a\n- [ ] b\n", 0.0),
         ];
-        for (text, fraction, label) in cases {
-            let ring = ring(&ledger(text));
-            assert_eq!((ring.fraction, ring.label().as_str()), (fraction, label), "{text:?}");
+        for (text, fraction) in cases {
+            assert_eq!(ring(&ledger(text)).fraction, fraction, "{text:?}");
         }
+    }
+
+    #[test]
+    fn the_step_is_the_current_phase_among_the_phases() {
+        let first = "# Goal\nx\n\n## Status\nphase: 1 Understand\n\n## Checklist\n### 1. Understand\n- [~] a\n### 2. Build\n- [ ] b\n### 3. Gate\n- [ ] c\n### 4. Close out\n- [ ] d\n";
+        let want = Step { number: 1, of: 4, name: "Understand".to_owned() };
+        assert_eq!(step(&ledger(first)), Some(want));
+        assert_eq!(
+            step(&ledger(MIDDLE)).map(|step| (step.number, step.name)),
+            Some((2, "Build".to_owned()))
+        );
+        assert_eq!(step(&ledger("# Goal\nx\n")), None);
     }
 
     #[test]
@@ -382,11 +406,21 @@ mod tests {
             seen,
             [
                 ("Understand", 1.0, BarKind::Plain, false),
-                ("Build", 1.0 / 3.0, BarKind::Plain, true),
+                ("Build", 0.5, BarKind::Plain, true),
                 ("Gate", 0.0, BarKind::Skipped, false),
                 ("Close out", 0.0, BarKind::Plain, false),
             ]
         );
+    }
+
+    #[test]
+    fn an_item_under_way_fills_its_own_phase_and_no_other() {
+        let bars = bars(&ledger(
+            "# Goal\nx\n\n## Status\nphase: 1 Understand\n\n## Checklist\n### 1. Understand\n- [~] Read\n- [ ] Decide\n### 2. Build\n- [ ] Change\n",
+        ));
+        let fills: Vec<_> =
+            bars.iter().map(|bar| (bar.label.as_str(), bar.fill, bar.current)).collect();
+        assert_eq!(fills, [("Understand", 0.25, true), ("Build", 0.0, false)]);
     }
 
     #[test]
