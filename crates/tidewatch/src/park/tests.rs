@@ -178,12 +178,8 @@ fn tabs_that_do_not_fit_park_the_least_recently_touched_first_until_they_fit() {
     let got = decide(&tabs, NOW, &rules(None));
     assert_eq!(
         got,
-        [
-            Change::Park(10, Why::Overflow),
-            Change::Park(9, Why::Overflow),
-            Change::Park(8, Why::Overflow),
-        ],
-        "11 shown against 8 with the pill"
+        [Change::Park(10, Why::Overflow), Change::Park(9, Why::Overflow)],
+        "10 agent tabs against 8 with the pill, the main tab takes no place"
     );
 }
 
@@ -194,31 +190,24 @@ fn overflow_never_parks_what_the_rules_forbid() {
     tabs[9].keep = true;
     tabs[8].active = true;
     let got = decide(&tabs, NOW, &rules(None));
-    assert_eq!(
-        got,
-        [
-            Change::Park(7, Why::Overflow),
-            Change::Park(6, Why::Overflow),
-            Change::Park(5, Why::Overflow),
-        ]
-    );
+    assert_eq!(got, [Change::Park(7, Why::Overflow), Change::Park(6, Why::Overflow)]);
 }
 
 #[test]
 fn a_strip_that_fits_alone_parks_nothing_and_one_more_tab_does() {
-    assert_eq!(decide(&crowd(9, 0), NOW, &rules(None)), []);
-    assert_eq!(decide(&crowd(10, 0), NOW, &rules(None)).len(), 2);
+    assert_eq!(decide(&crowd(10, 0), NOW, &rules(None)), []);
+    assert_eq!(decide(&crowd(11, 0), NOW, &rules(None)).len(), 2);
 }
 
 #[test]
 fn with_a_pill_already_showing_the_smaller_room_counts() {
-    let mut tabs = crowd(9, 0);
-    tabs[8] = parked(tabs[8], Why::Manual);
-    let got = decide(&tabs, NOW, &rules(None));
-    assert_eq!(got, [], "eight shown, eight fit with the pill");
     let mut tabs = crowd(10, 0);
     tabs[9] = parked(tabs[9], Why::Manual);
-    assert_eq!(decide(&tabs, NOW, &rules(None)), [Change::Park(8, Why::Overflow)]);
+    let got = decide(&tabs, NOW, &rules(None));
+    assert_eq!(got, [], "eight shown, eight fit with the pill");
+    let mut tabs = crowd(11, 0);
+    tabs[10] = parked(tabs[10], Why::Manual);
+    assert_eq!(decide(&tabs, NOW, &rules(None)), [Change::Park(9, Why::Overflow)]);
 }
 
 #[test]
@@ -226,7 +215,7 @@ fn overflow_is_counted_per_group() {
     let mut tabs = crowd(11, 0);
     tabs.extend(crowd(3, 1));
     let got = decide(&tabs, NOW, &rules(None));
-    assert_eq!(got.len(), 3);
+    assert_eq!(got.len(), 2);
     assert!(got.iter().all(|change| matches!(change, Change::Park(id, _) if *id < 100)));
 }
 
@@ -241,9 +230,9 @@ fn room_that_opens_up_brings_back_overflow_tabs_most_recently_touched_first() {
     assert_eq!(
         got,
         [Change::Refill(3), Change::Refill(4), Change::Refill(5)],
-        "two shown, eight fit, only overflow parks return"
+        "one shown, eight fit, only overflow parks return"
     );
-    let roomy = Rules { fits: Fits { alone: 9, with_pill: 4 }, ..rules(None) };
+    let roomy = Rules { fits: Fits { alone: 9, with_pill: 3 }, ..rules(None) };
     assert_eq!(decide(&tabs, NOW, &roomy), [Change::Refill(3), Change::Refill(4)], "two free");
 }
 
