@@ -108,54 +108,55 @@ pub enum Voice {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Skill {
-    Volition,
-    Electrochemistry,
-    Clock,
-    HalfLight,
-    Shivers,
+pub enum Omen {
+    StarsRight,
+    Shoggoth,
+    Hours,
+    ElderSign,
+    Rlyeh,
     Plain,
 }
 
-impl Skill {
+impl Omen {
     #[must_use]
     pub fn tag(self) -> &'static str {
         match self {
-            Self::Volition => "VOLITION",
-            Self::Electrochemistry => "ELECTROCHEMISTRY",
-            Self::Clock => "CLOCK",
-            Self::HalfLight => "HALF LIGHT",
-            Self::Shivers => "SHIVERS",
+            Self::StarsRight => "THE STARS ARE RIGHT",
+            Self::Shoggoth => "SHOGGOTH",
+            Self::Hours => "NON-EUCLIDEAN HOURS",
+            Self::ElderSign => "ELDER SIGN",
+            Self::Rlyeh => "R'LYEH SLEEPS",
             Self::Plain => "",
         }
     }
 }
 
 impl Voice {
-    /// The toast lines, each a skill tag and one short sentence.
+    /// The toast lines, each an omen tag and one short sentence.
     #[must_use]
-    pub fn lines(&self) -> Vec<(Skill, String)> {
-        let line = |skill, text: &str| (skill, text.to_owned());
+    pub fn lines(&self) -> Vec<(Omen, String)> {
+        let line = |omen, text: &str| (omen, text.to_owned());
         match self {
             Self::Start => vec![
-                line(Skill::Volition, "We proceed. Sleep will not claim this night."),
-                line(Skill::Electrochemistry, "Amphetamine engaged. We dance until dawn."),
+                line(Omen::StarsRight, "The stars are right. Sleep will not claim this night."),
+                line(Omen::Shoggoth, "Amphetamine engaged. The mask stays on."),
             ],
-            Self::HoursLeft(1) => vec![line(Skill::Clock, "1 h left. Dawn is close.")],
+            Self::HoursLeft(1) => {
+                vec![line(Omen::Hours, "The last non-Euclidean hour. 1 h remains.")]
+            }
             Self::HoursLeft(hours) => {
-                vec![(Skill::Clock, format!("{hours} h left. The night is still young."))]
+                vec![(Omen::Hours, format!("Another non-Euclidean hour. {hours} h remain."))]
             }
             Self::End => vec![
-                line(Skill::HalfLight, "Retreat in style. Restoring sleep."),
-                line(Skill::Shivers, "The city exhales. Session complete."),
+                line(Omen::ElderSign, "The Old Ones stir. Restoring the sleep of mortals..."),
+                line(Omen::Rlyeh, "That is not dead which can eternal lie. Session complete."),
             ],
             Self::NotStarted(why) => {
-                vec![(Skill::Plain, format!("Amphetamine did not start: {why}"))]
+                vec![(Omen::Plain, format!("Amphetamine did not start: {why}"))]
             }
-            Self::StillOff => vec![line(
-                Skill::Plain,
-                "Sleep may still be off. Run: sudo pmset -a disablesleep 0",
-            )],
+            Self::StillOff => {
+                vec![line(Omen::Plain, "Sleep may still be off. Run: sudo pmset -a disablesleep 0")]
+            }
         }
     }
 }

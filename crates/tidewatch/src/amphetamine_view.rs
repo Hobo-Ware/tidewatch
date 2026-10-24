@@ -1,12 +1,12 @@
 //! The Amphetamine button at the right end of the tab strip: the tablet, the time pill that grows to
-//! its left, the menu a click opens, the tooltip, the toast lines in the skills' voice and the
+//! its left, the menu a click opens, the tooltip, the toast lines in the Lovecraftian voice and the
 //! safety notice card.
 
 use egui::{
     Align2, Color32, CornerRadius, Id, Margin, Order, Rect, RectAlign, Response, RichText, Sense,
     Stroke, StrokeKind, Ui, pos2, vec2,
 };
-use tidewatch_core::amphetamine::{Choice, Skill, State};
+use tidewatch_core::amphetamine::{Choice, Omen, State};
 
 use crate::amphetamine_icon;
 use crate::amphetamine_motion::{Look, STANDARD, bezier};
@@ -445,31 +445,31 @@ fn paint_warning(painter: &egui::Painter, center: egui::Pos2, size: f32) {
     painter.circle_filled(center + vec2(0.0, 5.0 * unit), 1.0 * unit * 1.5, brand::AMBER);
 }
 
-fn skill_ink(skill: Skill) -> Color32 {
-    match skill {
-        Skill::Volition => brand::BLUE_TEXT,
-        Skill::Electrochemistry => brand::TEAL_TEXT,
-        Skill::Clock => brand::AMBER,
-        Skill::HalfLight => brand::ORANGE,
-        Skill::Shivers => brand::RED,
-        Skill::Plain => brand::TEXT,
+fn omen_ink(omen: Omen) -> Color32 {
+    match omen {
+        Omen::StarsRight => brand::BLUE_TEXT,
+        Omen::Shoggoth => brand::TEAL_TEXT,
+        Omen::Hours => brand::AMBER,
+        Omen::ElderSign => brand::ORANGE,
+        Omen::Rlyeh => brand::RED,
+        Omen::Plain => brand::TEXT,
     }
 }
 
-/// The toast pill with a skill tag in front of each line.
-pub(crate) fn toast(ui: &Ui, column: Rect, lines: &[(Skill, String)], fade: f32) {
+/// The toast pill with an omen tag in front of each line.
+pub(crate) fn toast(ui: &Ui, column: Rect, lines: &[(Omen, String)], fade: f32) {
     let alpha = |color: Color32| color.gamma_multiply(fade);
     let painter = ui.painter();
     let tag_font = mono(11.0);
     let rows: Vec<_> = lines
         .iter()
-        .map(|(skill, text)| {
+        .map(|(omen, text)| {
             let tag =
-                painter.layout_no_wrap(skill.tag().to_owned(), tag_font.clone(), skill_ink(*skill));
+                painter.layout_no_wrap(omen.tag().to_owned(), tag_font.clone(), omen_ink(*omen));
             let wrap =
                 (column.width() - 2.0 * (TOAST_PAD.x + 16.0) - tag.size().x - 10.0).max(120.0);
             let line = painter.layout(text.clone(), body(13.5), brand::TEXT, wrap);
-            (*skill, tag, line)
+            (*omen, tag, line)
         })
         .collect();
     let tag_w = rows.iter().map(|(_, tag, _)| tag.size().x).fold(0.0, f32::max);
@@ -483,11 +483,11 @@ pub(crate) fn toast(ui: &Ui, column: Rect, lines: &[(Skill, String)], fade: f32)
     painter.rect_filled(rect, 10.0, alpha(brand::ITEM));
     painter.rect_stroke(rect, 10.0, Stroke::new(1.0, alpha(brand::ITEM_LINE)), StrokeKind::Inside);
     let mut y = rect.top() + TOAST_PAD.y;
-    for (skill, tag, line) in rows {
+    for (omen, tag, line) in rows {
         let tag_at =
             pos2(rect.left() + TOAST_PAD.x, y + (line.size().y - tag.size().y) / 2.0 + 1.0);
         let line_height = line.size().y;
-        painter.galley_with_override_text_color(tag_at, tag, alpha(skill_ink(skill)));
+        painter.galley_with_override_text_color(tag_at, tag, alpha(omen_ink(omen)));
         painter.galley_with_override_text_color(
             pos2(rect.left() + TOAST_PAD.x + tag_w + gap, y),
             line,

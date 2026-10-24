@@ -134,15 +134,20 @@ fn the_choices_are_the_menu_in_order() {
 }
 
 #[test]
-fn the_voice_is_the_cocaine_function_skill_by_skill() {
+fn the_voice_is_cosmic_horror_omen_by_omen() {
     let tags = |voice: &Voice| -> Vec<&'static str> {
-        voice.lines().iter().map(|(skill, _)| skill.tag()).collect()
+        voice.lines().iter().map(|(omen, _)| omen.tag()).collect()
     };
-    assert_eq!(tags(&Voice::Start), ["VOLITION", "ELECTROCHEMISTRY"]);
-    assert_eq!(tags(&Voice::End), ["HALF LIGHT", "SHIVERS"]);
-    assert_eq!(Voice::HoursLeft(3).lines()[0].1, "3 h left. The night is still young.");
-    assert_eq!(Voice::HoursLeft(1).lines()[0].1, "1 h left. Dawn is close.");
-    assert_eq!(Voice::Start.lines()[0].1, "We proceed. Sleep will not claim this night.");
+    assert_eq!(tags(&Voice::Start), ["THE STARS ARE RIGHT", "SHOGGOTH"]);
+    assert_eq!(tags(&Voice::End), ["ELDER SIGN", "R'LYEH SLEEPS"]);
+    assert_eq!(tags(&Voice::HoursLeft(2)), ["NON-EUCLIDEAN HOURS"]);
+    assert_eq!(Voice::HoursLeft(3).lines()[0].1, "Another non-Euclidean hour. 3 h remain.");
+    assert_eq!(Voice::HoursLeft(1).lines()[0].1, "The last non-Euclidean hour. 1 h remains.");
+    assert_eq!(Voice::Start.lines()[0].1, "The stars are right. Sleep will not claim this night.");
+    assert_eq!(
+        Voice::End.lines()[1].1,
+        "That is not dead which can eternal lie. Session complete."
+    );
     for voice in [Voice::Start, Voice::End, Voice::HoursLeft(2), Voice::StillOff] {
         for (_, text) in voice.lines() {
             assert!(!text.contains(['\u{2014}', '\u{2013}']), "{text}");
