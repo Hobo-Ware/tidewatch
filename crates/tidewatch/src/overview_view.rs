@@ -50,8 +50,10 @@ const MASCOT_H: f32 = 120.0;
 
 pub(crate) const BUTTON_W: f32 = ICON_BTN_W;
 
-/// The tab strip's Overview button. `needs` is how many tabs wait on you; none draws no badge.
-pub(crate) fn button(ui: &mut egui::Ui, active: bool, needs: usize) -> egui::Response {
+/// The tab strip's Overview button. `needs` is how many tabs wait on you in each repo; none draws no
+/// badge.
+pub(crate) fn button(ui: &mut egui::Ui, active: bool, needs: &[(String, usize)]) -> egui::Response {
+    let total: usize = needs.iter().map(|(_, count)| count).sum();
     let (rect, resp) = ui.allocate_exact_size(vec2(BUTTON_W, BUTTON_H), Sense::click());
     let hovered = resp.hovered();
     if active {
@@ -73,15 +75,29 @@ pub(crate) fn button(ui: &mut egui::Ui, active: bool, needs: usize) -> egui::Res
         FontId::proportional(17.0),
         ink,
     );
-    if needs > 0 {
-        paint_badge(ui, rect, needs);
+    if total > 0 {
+        paint_badge(ui, rect, total);
     }
-    let keys = Command::Overview.keys();
-    let tip = match needs {
-        0 => format!("Overview ({keys})"),
-        n => format!("Overview ({keys}) - {n} need you"),
+    resp.on_hover_text(button_tip(&Command::Overview.keys(), needs))
+        .on_hover_cursor(egui::CursorIcon::PointingHand)
+}
+
+fn button_tip(keys: &str, needs: &[(String, usize)]) -> String {
+    let waiting: Vec<&(String, usize)> = needs.iter().filter(|(_, count)| *count > 0).collect();
+    let total: usize = waiting.iter().map(|(_, count)| count).sum();
+    let who = match total {
+        1 => "1 agent needs".to_owned(),
+        n => format!("{n} agents need"),
     };
-    resp.on_hover_text(tip).on_hover_cursor(egui::CursorIcon::PointingHand)
+    match waiting.as_slice() {
+        [] => format!("Overview ({keys})"),
+        [(repo, _)] => format!("Overview ({keys})\n{who} you in {repo}"),
+        several => {
+            let split: Vec<String> =
+                several.iter().map(|(repo, count)| format!("{count} in {repo}")).collect();
+            format!("Overview ({keys})\n{who} you: {}", split.join(", "))
+        }
+    }
 }
 
 fn paint_badge(ui: &egui::Ui, button: Rect, count: usize) {
@@ -462,6 +478,24 @@ fn checklist_row(ui: &mut egui::Ui, checklist: &Checklist) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_button_tip_says_what_the_badge_counts() {
+        let repo = |name: &str, count: usize| (name.to_owned(), count);
+        let cases = [
+            (vec![], "Overview (K)"),
+            (vec![repo("acme-web", 0)], "Overview (K)"),
+            (vec![repo("acme-web", 1)], "Overview (K)\n1 agent needs you in acme-web"),
+            (vec![repo("acme-web", 2)], "Overview (K)\n2 agents need you in acme-web"),
+            (
+                vec![repo("acme-web", 3), repo("acme-api", 0), repo("acme-docs", 1)],
+                "Overview (K)\n4 agents need you: 3 in acme-web, 1 in acme-docs",
+            ),
+        ];
+        for (needs, want) in cases {
+            assert_eq!(button_tip("K", &needs), want, "{needs:?}");
+        }
+    }
     use crate::overview::{Place, Row};
     use egui::{Event, PointerButton, RawInput, pos2};
     use tidewatch_core::status::{AgentStatus, Reason};
