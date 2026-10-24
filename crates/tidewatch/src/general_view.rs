@@ -168,7 +168,7 @@ fn resume_row(ui: &mut Ui, current: ResumeAgents, enabled: bool) -> Option<Resum
     settings_ui::row(
         ui,
         "Resume agents",
-        "Resume runs the agent's command. Type only leaves Enter to you. After a crash it is always typed.",
+        "Resume runs the agent's command. Type only leaves Enter to you. After repeated crashes it is always typed.",
         Control::new(settings_ui::inline_width(ui, &labels), 28.0),
         |ui| {
             ui.add_enabled_ui(enabled, |ui| {

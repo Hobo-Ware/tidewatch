@@ -104,7 +104,7 @@ fn spec(f: &Fixture, skip: bool) -> StartupSpec {
         dir: f.repo.clone(),
         other: false,
         skip,
-        app_crashed: false,
+        crash_loop: false,
         profiles: profiles(),
         path_var: f.path_var.clone(),
         disk: RealDisk::new(&f.home),
@@ -136,7 +136,7 @@ fn clone_spec(spec: &StartupSpec) -> StartupSpec {
         dir: spec.dir.clone(),
         other: spec.other,
         skip: spec.skip,
-        app_crashed: spec.app_crashed,
+        crash_loop: spec.crash_loop,
         profiles: spec.profiles.clone(),
         path_var: spec.path_var.clone(),
         disk: spec.disk.clone(),
@@ -164,23 +164,23 @@ fn the_saved_window_is_planned_against_the_disk_and_its_worktrees_are_not_leftov
 fn the_resume_setting_and_a_crashed_last_run_decide_how_a_saved_agent_comes_back() {
     let cases = [
         (ResumeAgents::Auto, false, Ok(Resume::Run)),
-        (ResumeAgents::Auto, true, Ok(Resume::TypeOnly(Why::AppCrashed))),
+        (ResumeAgents::Auto, true, Ok(Resume::TypeOnly(Why::CrashLoop))),
         (ResumeAgents::Prefill, false, Ok(Resume::TypeOnly(Why::Chosen))),
         (ResumeAgents::Off, false, Err(Reason::ResumeOff)),
     ];
-    for (mode, app_crashed, want) in cases {
+    for (mode, crash_loop, want) in cases {
         let f = fixture();
         save(&f, vec![window(&f.repo, vec![SavedTab::Main, agent_tab(&f.worktree, Level::Edits)])]);
         Prefs { resume_agents: mode, ..Prefs::default() }.save(&f.paths).unwrap();
         let mut s = spec(&f, false);
-        s.app_crashed = app_crashed;
+        s.crash_loop = crash_loop;
         let plan = run(&s).plan.expect("a plan");
         let got = match &plan.tabs[1].action {
             TabAction::ResumeAgent { how, .. } => Ok(*how),
             TabAction::ShellInstead(reason) => Err(reason.clone()),
             other => panic!("{other:?}"),
         };
-        assert_eq!(got, want, "{mode:?} {app_crashed}");
+        assert_eq!(got, want, "{mode:?} {crash_loop}");
     }
 }
 
@@ -438,7 +438,7 @@ fn an_agent_in_a_plain_folder_resumes_without_a_worktree_and_without_the_guard()
 #[test]
 fn a_reopened_agent_remembers_whether_its_command_is_typed_or_run() {
     let f = fixture();
-    for typed in [None, Some(Why::AppCrashed)] {
+    for typed in [None, Some(Why::CrashLoop)] {
         let mut spec = reopen_spec(&f, Level::Edits, None);
         spec.typed = typed;
         let done = reopened(spec);

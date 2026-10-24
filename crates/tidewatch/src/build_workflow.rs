@@ -65,7 +65,9 @@ pub(crate) fn availability<T>(pane: &Pane<T>, asked: bool) -> Result<(), Blocked
         AgentStatus::Working => Err(Blocked::Working),
         AgentStatus::NeedsYou(_) => Err(Blocked::WaitingOnYou),
         AgentStatus::SettingUp => Err(Blocked::Starting),
-        AgentStatus::Failed(_) | AgentStatus::Shell => Err(Blocked::NotRunning),
+        AgentStatus::Failed(_) | AgentStatus::Stopped | AgentStatus::Shell => {
+            Err(Blocked::NotRunning)
+        }
     }
 }
 

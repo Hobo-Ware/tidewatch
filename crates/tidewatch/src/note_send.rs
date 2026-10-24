@@ -23,9 +23,13 @@ pub(crate) fn gate(status: Option<&AgentStatus>) -> Gate {
     match status {
         Some(AgentStatus::Working | AgentStatus::Done) => Gate::Ready,
         Some(AgentStatus::NeedsYou(_)) => Gate::WaitingOnYou,
-        Some(AgentStatus::SettingUp | AgentStatus::Failed(_) | AgentStatus::Shell) | None => {
-            Gate::NoAgent
-        }
+        Some(
+            AgentStatus::SettingUp
+            | AgentStatus::Failed(_)
+            | AgentStatus::Stopped
+            | AgentStatus::Shell,
+        )
+        | None => Gate::NoAgent,
     }
 }
 
@@ -53,9 +57,13 @@ pub(crate) fn review_gate(status: Option<&AgentStatus>) -> ReviewGate {
     match status {
         Some(AgentStatus::Done) => ReviewGate::Now,
         Some(AgentStatus::Working | AgentStatus::NeedsYou(_)) => ReviewGate::WhenIdle,
-        Some(AgentStatus::SettingUp | AgentStatus::Failed(_) | AgentStatus::Shell) | None => {
-            ReviewGate::Refused(NO_AGENT)
-        }
+        Some(
+            AgentStatus::SettingUp
+            | AgentStatus::Failed(_)
+            | AgentStatus::Stopped
+            | AgentStatus::Shell,
+        )
+        | None => ReviewGate::Refused(NO_AGENT),
     }
 }
 
@@ -153,6 +161,7 @@ mod tests {
             (Some(AgentStatus::NeedsYou(Reason::Quiet)), Gate::WaitingOnYou),
             (Some(AgentStatus::SettingUp), Gate::NoAgent),
             (Some(AgentStatus::Failed("x".into())), Gate::NoAgent),
+            (Some(AgentStatus::Stopped), Gate::NoAgent),
             (Some(AgentStatus::Shell), Gate::NoAgent),
             (None, Gate::NoAgent),
         ];

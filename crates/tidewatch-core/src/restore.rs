@@ -156,7 +156,9 @@ pub struct RestoreEnv<'a> {
     /// Ids of the agents whose binary was found (`AgentTable::found_on_path`).
     pub installed: &'a [String],
     pub resume: ResumeAgents,
-    pub app_crashed: bool,
+    /// The window crashed again soon after a launch (`run_marker::begin`). One crash is no reason to
+    /// hold agents back: they come back as `resume` says.
+    pub crash_loop: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -190,7 +192,7 @@ impl TabPlan {
     pub fn note(&self) -> Option<String> {
         match &self.action {
             TabAction::ResumeAgent { how: Resume::TypeOnly(why), .. } => {
-                Some(why.note().to_owned())
+                Some(why.note(true).to_owned())
             }
             TabAction::ShellInstead(Reason::Yolo) => Some(
                 "This tab ran at YOLO, so Tidewatch did not restart its agent. Start it again yourself."
@@ -383,7 +385,7 @@ fn agent_resume(
             Err(Reason::WorkflowUnreadable)
         };
     }
-    let how = decide(env.resume, Ended::of(env.app_crashed, tab.crashed), tab.level)?;
+    let how = decide(env.resume, Ended::of(env.crash_loop, tab.crashed), tab.level)?;
     let agent =
         env.agents.get(&tab.agent).ok_or_else(|| Reason::AgentUnknown(tab.agent.clone()))?;
     if !env.installed.contains(&tab.agent) {
@@ -657,12 +659,11 @@ mod tests {
         installed: &[String],
         disk: &FakeDisk,
         resume: ResumeAgents,
-        app_crashed: bool,
+        crash_loop: bool,
     ) -> WindowPlan {
         let table = table();
         let profiles = profiles();
-        let env =
-            RestoreEnv { agents: &table, profiles: &profiles, installed, resume, app_crashed };
+        let env = RestoreEnv { agents: &table, profiles: &profiles, installed, resume, crash_loop };
         plan_window(window, &env, disk)
     }
 
@@ -837,7 +838,7 @@ mod tests {
         };
         assert_eq!(profile.level, Level::Yolo);
         assert_eq!(*how, Resume::TypeOnly(Why::Yolo));
-        assert_eq!(plan.tabs[0].note().as_deref(), Some(Why::Yolo.note()));
+        assert_eq!(plan.tabs[0].note().as_deref(), Some(Why::Yolo.note(true)));
     }
 
     #[test]
@@ -1093,7 +1094,7 @@ mod tests {
             profiles: &profiles,
             installed: &installed,
             resume: ResumeAgents::Auto,
-            app_crashed: false,
+            crash_loop: false,
         };
         let all = plan(&Session { windows: vec![one, two] }, &env, &disk);
         assert_eq!(all.windows[0].tabs[0].action, resume("claude", Level::Edits, ID_C));
@@ -1112,21 +1113,25 @@ mod tests {
     }
 
     #[test]
-    fn the_mode_and_a_crash_pick_run_type_or_shell_for_every_resumable_tab() {
+    fn the_mode_and_a_crash_loop_pick_run_type_or_shell_for_every_resumable_tab() {
         let window = window(all_four_tabs());
         let disk = disk_for_all();
         let installed = everything_installed();
         let cases = [
             (ResumeAgents::Auto, false, Some(Resume::Run)),
-            (ResumeAgents::Auto, true, Some(Resume::TypeOnly(Why::AppCrashed))),
+            (ResumeAgents::Auto, true, Some(Resume::TypeOnly(Why::CrashLoop))),
             (ResumeAgents::Prefill, false, Some(Resume::TypeOnly(Why::Chosen))),
-            (ResumeAgents::Prefill, true, Some(Resume::TypeOnly(Why::AppCrashed))),
+            (ResumeAgents::Prefill, true, Some(Resume::TypeOnly(Why::CrashLoop))),
             (ResumeAgents::Off, false, None),
             (ResumeAgents::Off, true, None),
         ];
-        for (mode, crashed, want) in cases {
-            let plan = plan_as(&window, &installed, &disk, mode, crashed);
-            assert_eq!(how_each_agent_tab_comes_back(&plan), vec![want; 4], "{mode:?} {crashed}");
+        for (mode, crash_loop, want) in cases {
+            let plan = plan_as(&window, &installed, &disk, mode, crash_loop);
+            assert_eq!(
+                how_each_agent_tab_comes_back(&plan),
+                vec![want; 4],
+                "{mode:?} crash loop {crash_loop}"
+            );
         }
     }
 
@@ -1179,7 +1184,7 @@ mod tests {
         let installed = everything_installed();
         let disk = disk_for_all();
         let typed = plan_as(&window, &installed, &disk, ResumeAgents::Prefill, false);
-        assert_eq!(typed.tabs[0].note().as_deref(), Some(Why::Chosen.note()));
+        assert_eq!(typed.tabs[0].note().as_deref(), Some(Why::Chosen.note(true)));
         assert_eq!(typed.toast(), None, "the tab says it itself");
         let off = plan_as(&window, &installed, &disk, ResumeAgents::Off, true);
         assert_eq!(
@@ -1267,6 +1272,7 @@ mod tests {
                 token: "tok123".into(),
             }),
             mcp_config: Some("/state/tab/mcp.json".into()),
+            settings_file: Some("/state/tab/claude-settings.json".into()),
             house_style: Some("/cfg/house-style.md".into()),
             copilot_instructions_dir: Some("/cfg/copilot".into()),
             guard_bin_dir: Some("/state/guard-bin".into()),

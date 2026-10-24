@@ -44,7 +44,9 @@ pub fn keeps_awake(status: &AgentStatus, job_running: bool) -> bool {
     match status {
         AgentStatus::Working | AgentStatus::NeedsYou(Reason::Quiet) => true,
         AgentStatus::NeedsYou(_) | AgentStatus::SettingUp => job_running,
-        AgentStatus::Done | AgentStatus::Failed(_) | AgentStatus::Shell => false,
+        AgentStatus::Done | AgentStatus::Failed(_) | AgentStatus::Stopped | AgentStatus::Shell => {
+            false
+        }
     }
 }
 
@@ -124,6 +126,7 @@ mod tests {
                 false,
             ),
             ("a shell", AgentStatus::Shell, true, false),
+            ("a stopped tab", AgentStatus::Stopped, true, false),
         ];
         for (name, status, job, expected) in cases {
             assert_eq!(keeps_awake(&status, job), expected, "{name}");

@@ -97,7 +97,7 @@ impl Tidewatch {
             profiles,
             installed: &installed,
             resume: ResumeAgents::Auto,
-            app_crashed: false,
+            crash_loop: false,
         };
         Ok(plan_window(&window, &env, &RealDisk::from_env()))
     }

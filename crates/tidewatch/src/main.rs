@@ -175,6 +175,7 @@ mod status_bar;
 mod status_view;
 mod stepper;
 mod stepper_view;
+mod stopped_view;
 mod tab_title;
 mod tab_view;
 mod tabs;

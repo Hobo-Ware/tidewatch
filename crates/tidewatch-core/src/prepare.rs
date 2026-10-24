@@ -12,12 +12,13 @@ use std::process::Command;
 
 use crate::agents::{Agent, Wiring};
 use crate::checklist;
-use crate::fsutil::write_atomic;
+use crate::fsutil::{write_atomic, write_private_atomic};
 use crate::guard_shim::{GuardCtx, ensure_shims};
 use crate::house_style;
 use crate::launch::{
-    GEMINI_SETTINGS_PATH, HookListener, Launch, LaunchCtx, LaunchError, ensure_no_push_helper,
-    gemini_exclude_lines, gemini_project_settings, launch_command, mcp_config_json,
+    GEMINI_SETTINGS_PATH, HookListener, Launch, LaunchCtx, LaunchError, claude_settings_json,
+    ensure_no_push_helper, gemini_exclude_lines, gemini_project_settings, launch_command,
+    mcp_config_json,
 };
 use crate::paths::TidewatchPaths;
 use crate::profiles::Profile;
@@ -27,6 +28,7 @@ use crate::trust::TrustCli;
 use crate::trust_apply::{Grant, Outcome};
 
 const MCP_CONFIG_FILE: &str = "mcp.json";
+const CLAUDE_SETTINGS_FILE: &str = "claude-settings.json";
 pub const PROGRESS_ENV: &str = "TIDEWATCH_PROGRESS";
 const FALLBACK_NOTICE: &str =
     "Tidewatch: setup failed or the agent could not start. Here is a shell.";
@@ -92,7 +94,18 @@ impl From<ResumeError> for PrepareError {
     }
 }
 
+/// The longest command line Tidewatch types at a prompt. macOS keeps 1024 bytes (MAX_CANON) of a
+/// line typed before the shell reads input itself and drops the rest, which leaves an unclosed quote.
+pub const MAX_TYPED_LINE_BYTES: usize = 900;
+
 impl Prepared {
+    /// The command as the shell line to type at a prompt, or `None` when it is too long to type.
+    #[must_use]
+    pub fn typed_line(&self) -> Option<String> {
+        let line = self.launch.shell_line();
+        (line.len() <= MAX_TYPED_LINE_BYTES).then_some(line)
+    }
+
     /// The line to run in the user's `shell` as `-c`: the setup commands, then the agent in place of
     /// the shell, so the pty ends with the agent and its exit code is the agent's. When setup fails or
     /// the agent cannot start, the tab falls back to an interactive shell with the error above it.
@@ -164,7 +177,7 @@ fn prepare_with(input: &PrepareInput, resume: Option<&str>) -> Result<Prepared, 
     let mcp_path = paths.tab_state_dir(input.repo, input.tab).join(MCP_CONFIG_FILE);
     let mcp_config = input.listener.as_ref().map(|listener| {
         if let Some(json) = mcp_config_json(wiring, listener) {
-            soft("MCP config", write_atomic(&mcp_path, &json).map(|()| mcp_path.clone()));
+            soft("MCP config", write_private_atomic(&mcp_path, &json).map(|()| mcp_path.clone()));
         }
         mcp_path.clone()
     });
@@ -173,7 +186,14 @@ fn prepare_with(input: &PrepareInput, resume: Option<&str>) -> Result<Prepared, 
     let feed_env = soft("progress feed", touch(&feed).map(|()| feed.clone()))
         .map(|file| (PROGRESS_ENV.to_owned(), file.display().to_string()));
 
-    let ctx = context(input, house_style, copilot_instructions_dir, guard_bin_dir, mcp_config);
+    let mut ctx = context(input, house_style, copilot_instructions_dir, guard_bin_dir, mcp_config);
+    if wiring == Wiring::Claude
+        && let Some(json) = claude_settings_json(&ctx)
+    {
+        let file = paths.tab_state_dir(input.repo, input.tab).join(CLAUDE_SETTINGS_FILE);
+        ctx.settings_file =
+            soft("Claude settings", write_private_atomic(&file, &json).map(|()| file));
+    }
     let mut launch = match resume {
         Some(id) => resume_command(input.agent, profile, id, &ctx)?,
         None => launch_command(input.agent, profile, &ctx)?,
@@ -218,6 +238,7 @@ fn context(
         remote: input.remote.then(|| remote_name(input)),
         hooks: input.listener.clone(),
         mcp_config,
+        settings_file: None,
         house_style,
         copilot_instructions_dir,
         guard_bin_dir,
@@ -289,7 +310,9 @@ pub fn preview(input: &PrepareInput) -> Result<Launch, LaunchError> {
         .listener
         .as_ref()
         .map(|_| paths.tab_state_dir(input.repo, input.tab).join(MCP_CONFIG_FILE));
-    let ctx = context(input, house_style, copilot_dir, guard, mcp);
+    let mut ctx = context(input, house_style, copilot_dir, guard, mcp);
+    ctx.settings_file = (wiring == Wiring::Claude && claude_settings_json(&ctx).is_some())
+        .then(|| paths.tab_state_dir(input.repo, input.tab).join(CLAUDE_SETTINGS_FILE));
     let mut launch = launch_command(input.agent, input.profile, &ctx)?;
     launch.args.extend(task_args(wiring, input.task));
     Ok(launch)
@@ -805,7 +828,12 @@ mod tests {
         let none = fx.run("claude", &profile("claude", Level::Edits), true, "", None).unwrap();
         assert!(!none.launch.args.iter().any(|a| a.starts_with("--mcp-config")));
         let at = none.launch.args.iter().position(|a| a == "--settings").unwrap();
-        let settings: serde_json::Value = serde_json::from_str(&none.launch.args[at + 1]).unwrap();
+        let file = fx.paths.tab_state_dir(Path::new("/work/web"), "brave-otter");
+        assert_eq!(none.launch.args[at + 1], file.join(CLAUDE_SETTINGS_FILE).display().to_string());
+        let settings: serde_json::Value = serde_json::from_str(
+            &std::fs::read_to_string(file.join(CLAUDE_SETTINGS_FILE)).unwrap(),
+        )
+        .unwrap();
         assert!(settings["hooks"]["SessionStart"].is_null(), "no status hooks without a listener");
         assert_eq!(settings["hooks"]["PostToolUse"][0]["hooks"][0]["type"], "command");
 
@@ -999,6 +1027,68 @@ mod tests {
             std::fs::read_to_string(&mcp).unwrap(),
             mcp_config_json(Wiring::Claude, &listener()).unwrap()
         );
+    }
+
+    #[test]
+    fn the_hook_token_lives_in_a_private_settings_file_and_never_on_the_command_line() {
+        use std::os::unix::fs::PermissionsExt as _;
+        let fx = Fixture::new();
+        let table = AgentTable::builtin();
+        let claude = profile("claude", Level::Edits);
+        let token = "5f0c1d2e-3a4b-4c5d-8e6f-7a8b9c0d1e2f";
+        let listener =
+            HookListener { base_url: "http://127.0.0.1:51234".into(), token: token.into() };
+        let input = resume_input(&fx, &table, "claude", &claude, Some(listener));
+        let file = fx.paths.tab_state_dir(input.repo, input.tab).join(CLAUDE_SETTINGS_FILE);
+        for prepared in [prepare(&input).unwrap(), prepare_resume(&input, SESSION).unwrap()] {
+            let line = prepared.launch.shell_line();
+            assert!(!line.contains("Bearer") && !line.contains(token), "{line}");
+            assert!(line.len() < 900, "{} bytes: {line}", line.len());
+            assert!(line.contains(&format!("--settings {}", file.display())), "{line}");
+            let text = std::fs::read_to_string(&file).unwrap();
+            assert!(text.contains(&format!("Bearer {token}")));
+            let mode = std::fs::metadata(&file).unwrap().permissions().mode();
+            assert_eq!(mode & 0o777, 0o600);
+        }
+    }
+
+    #[test]
+    fn the_mcp_config_with_the_token_is_private_even_when_it_replaces_an_open_file() {
+        use std::os::unix::fs::PermissionsExt as _;
+        let fx = Fixture::new();
+        let table = AgentTable::builtin();
+        let claude = profile("claude", Level::Edits);
+        let input = resume_input(&fx, &table, "claude", &claude, Some(listener()));
+        let mcp = fx.paths.tab_state_dir(input.repo, input.tab).join("mcp.json");
+        std::fs::create_dir_all(mcp.parent().unwrap()).unwrap();
+        std::fs::write(&mcp, "old").unwrap();
+        std::fs::set_permissions(&mcp, std::fs::Permissions::from_mode(0o644)).unwrap();
+        let stale = mcp.with_file_name("mcp.json.tmp");
+        std::fs::write(&stale, "stale").unwrap();
+        std::fs::set_permissions(&stale, std::fs::Permissions::from_mode(0o666)).unwrap();
+        prepare_resume(&input, SESSION).unwrap();
+        assert_eq!(std::fs::metadata(&mcp).unwrap().permissions().mode() & 0o777, 0o600);
+        assert!(std::fs::read_to_string(&mcp).unwrap().contains("Bearer tok"));
+    }
+
+    #[test]
+    fn a_command_longer_than_the_safe_length_is_never_offered_for_typing() {
+        let prepared = |args: Vec<String>| Prepared {
+            launch: Launch { program: "claude".into(), args, env: Vec::new(), experimental: false },
+            env: Vec::new(),
+            setup: String::new(),
+            notes: Vec::new(),
+            remote: None,
+        };
+        let short = prepared(vec!["--resume".into(), SESSION.into()]);
+        assert_eq!(short.typed_line(), Some(format!("claude --resume {SESSION}")));
+        let room = MAX_TYPED_LINE_BYTES - "claude ".len();
+        let exact = prepared(vec!["a".repeat(room)]);
+        assert_eq!(exact.typed_line().map(|line| line.len()), Some(MAX_TYPED_LINE_BYTES));
+        let over = prepared(vec!["a".repeat(room + 1)]);
+        assert_eq!(over.typed_line(), None);
+        let quoted = prepared(vec!["'".repeat(room / 2)]);
+        assert_eq!(quoted.typed_line(), None, "quoting counts: the line is what the shell reads");
     }
 
     #[test]

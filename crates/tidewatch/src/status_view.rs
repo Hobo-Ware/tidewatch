@@ -17,6 +17,7 @@ pub(crate) enum Tone {
     Needs,
     Done,
     Failed,
+    Stopped,
     Shell,
 }
 
@@ -27,6 +28,7 @@ pub(crate) fn tone(status: &AgentStatus) -> Tone {
         AgentStatus::NeedsYou(_) => Tone::Needs,
         AgentStatus::Done => Tone::Done,
         AgentStatus::Failed(_) => Tone::Failed,
+        AgentStatus::Stopped => Tone::Stopped,
         AgentStatus::Shell => Tone::Shell,
     }
 }
@@ -38,6 +40,7 @@ pub(crate) fn label(tone: Tone) -> &'static str {
         Tone::Needs => "Needs you",
         Tone::Done => "Done",
         Tone::Failed => "Failed",
+        Tone::Stopped => "Stopped",
         Tone::Shell => "Shell",
     }
 }
@@ -70,6 +73,7 @@ pub(crate) fn color(tone: Tone) -> Option<Color32> {
         Tone::Needs => Some(brand::NEEDS),
         Tone::Done => Some(brand::DONE),
         Tone::Failed => Some(brand::FAILED),
+        Tone::Stopped => Some(brand::MUTED),
         Tone::Shell => None,
     }
 }
@@ -110,6 +114,7 @@ mod tests {
             (AgentStatus::NeedsYou(Reason::Quiet), Tone::Needs),
             (AgentStatus::Done, Tone::Done),
             (AgentStatus::Failed("exited with code 2".into()), Tone::Failed),
+            (AgentStatus::Stopped, Tone::Stopped),
             (AgentStatus::Shell, Tone::Shell),
         ];
         for (status, want) in cases {
@@ -119,12 +124,22 @@ mod tests {
 
     #[test]
     fn tones_read_in_plain_words() {
-        let labels: Vec<&str> =
-            [Tone::Setup, Tone::Working, Tone::Needs, Tone::Done, Tone::Failed, Tone::Shell]
-                .into_iter()
-                .map(label)
-                .collect();
-        assert_eq!(labels, ["Setting up", "Working", "Needs you", "Done", "Failed", "Shell"]);
+        let labels: Vec<&str> = [
+            Tone::Setup,
+            Tone::Working,
+            Tone::Needs,
+            Tone::Done,
+            Tone::Failed,
+            Tone::Stopped,
+            Tone::Shell,
+        ]
+        .into_iter()
+        .map(label)
+        .collect();
+        assert_eq!(
+            labels,
+            ["Setting up", "Working", "Needs you", "Done", "Failed", "Stopped", "Shell"]
+        );
     }
 
     #[test]
@@ -138,6 +153,7 @@ mod tests {
             describe(&AgentStatus::Failed("exited with code 2".into())),
             "Failed - exited with code 2"
         );
+        assert_eq!(describe(&AgentStatus::Stopped), "Stopped");
     }
 
     #[test]
@@ -146,8 +162,10 @@ mod tests {
         assert_eq!(color(Tone::Done), Some(brand::DONE));
         assert_eq!(color(Tone::Failed), Some(brand::FAILED));
         assert_eq!(color(Tone::Working), Some(brand::WORKING));
+        assert_eq!(color(Tone::Stopped), Some(brand::MUTED));
         assert_eq!(color(Tone::Shell), None);
-        let lit = [Tone::Setup, Tone::Working, Tone::Needs, Tone::Done, Tone::Failed];
+        let lit =
+            [Tone::Setup, Tone::Working, Tone::Needs, Tone::Done, Tone::Failed, Tone::Stopped];
         for (i, a) in lit.iter().enumerate() {
             for b in &lit[i + 1..] {
                 assert_ne!(color(*a), color(*b), "{a:?} and {b:?} must look different");

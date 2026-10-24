@@ -18,7 +18,7 @@ use tidewatch_core::paths::TidewatchPaths;
 use tidewatch_core::prefs::{Prefs, ResumeAgents};
 use tidewatch_core::prepare::Prepared;
 use tidewatch_core::restore::{RealDisk, TabAction, TabPlan, WindowPlan, restore_workflow};
-use tidewatch_core::resume_mode::{Resume, Why};
+use tidewatch_core::resume_mode::Resume;
 use tidewatch_core::session::{SavedAgentTab, SavedTab};
 use tidewatch_core::worktree::{BRANCH_PREFIX, Leftover, Worktree};
 
@@ -76,22 +76,22 @@ pub(crate) struct Host {
     seeds: Vec<Seed>,
     planning: usize,
     skip: bool,
-    app_crashed: bool,
+    crash_loop: bool,
     prefs: Prefs,
     disk: RealDisk,
 }
 
 impl Host {
     /// `skip` is the `--no-restore` flag; `disk` is where the CLIs keep their session files;
-    /// `app_crashed` says the run before this one never quit cleanly.
-    pub(crate) fn new(skip: bool, app_crashed: bool, disk: RealDisk) -> Self {
+    /// `crash_loop` says the run before this one crashed soon after its own start.
+    pub(crate) fn new(skip: bool, crash_loop: bool, disk: RealDisk) -> Self {
         Self {
             jobs: Jobs::new(),
             phase: Phase::Waiting,
             seeds: Vec::new(),
             planning: 0,
             skip,
-            app_crashed,
+            crash_loop,
             prefs: Prefs::default(),
             disk,
         }
@@ -163,7 +163,7 @@ impl Host {
                     dir: seed.dir,
                     other: seed.other,
                     skip: self.skip,
-                    app_crashed: self.app_crashed,
+                    crash_loop: self.crash_loop,
                     profiles: profiles.clone(),
                     path_var: catalog.path.clone(),
                     disk: self.disk.clone(),
@@ -381,13 +381,20 @@ fn reopened<T>(
     toasts: &mut Vec<String>,
 ) {
     let Reopened { tab, result, note, typed } = done;
+    let prepared = result.as_ref().ok().and_then(|opened| opened.started.as_ref()).map(|started| {
+        (started.prepared.launch.shell_line(), started.prepared.typed_line().is_some())
+    });
     let notes = finish_open(tabs, tab, result, now, |dir, prepared| match (prepared, typed) {
         (Some(prepared), Some(_)) => (spawn.typed)(dir, prepared),
         (Some(prepared), None) => (spawn.agent)(dir, prepared),
         (None, _) => (spawn.shell)(dir, note.as_deref()),
     });
-    if let Some(agent) = tabs.get_mut(tab).and_then(|tab| tab.pane.agent.as_mut()) {
-        agent.resume_note = typed.map(Why::note);
+    if let Some(agent) = tabs.get_mut(tab).and_then(|tab| tab.pane.agent.as_mut())
+        && let (Some(why), Some((line, fits))) = (typed, prepared)
+    {
+        agent.resume_note = Some(why.note(fits));
+        agent.resume_line = Some(line);
+        agent.run.hosted_by_shell();
     }
     if let Some(note) = notes.first() {
         toasts.push(format!("Started without part of the setup: {note}"));

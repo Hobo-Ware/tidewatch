@@ -63,11 +63,12 @@ pub(crate) struct Counts {
     pub(crate) needs: usize,
     pub(crate) done: usize,
     pub(crate) failed: usize,
+    pub(crate) stopped: usize,
 }
 
 impl Counts {
     pub(crate) fn total(self) -> usize {
-        self.setup + self.working + self.needs + self.done + self.failed
+        self.setup + self.working + self.needs + self.done + self.failed + self.stopped
     }
 }
 
@@ -84,12 +85,13 @@ fn rank(tone: Tone) -> u8 {
         Tone::Working => 1,
         Tone::Setup => 2,
         Tone::Done => 3,
-        Tone::Needs | Tone::Shell => 4,
+        Tone::Stopped => 4,
+        Tone::Needs | Tone::Shell => 5,
     }
 }
 
 /// Groups the rows: tabs that need you first (oldest tab first, as opened), then each place with
-/// failed, working, setting up and done tabs in that order.
+/// failed, working, setting up, done and stopped tabs in that order.
 pub(crate) fn build(places: Vec<PlaceInput>) -> Overview {
     let mut counts = Counts::default();
     let mut needs = Vec::new();
@@ -103,6 +105,7 @@ pub(crate) fn build(places: Vec<PlaceInput>) -> Overview {
                 Tone::Needs => counts.needs += 1,
                 Tone::Done => counts.done += 1,
                 Tone::Failed => counts.failed += 1,
+                Tone::Stopped => counts.stopped += 1,
                 Tone::Shell => continue,
             }
             if tone(&row.status) == Tone::Needs {
@@ -308,15 +311,19 @@ mod tests {
                 row(4, "failed-a", AgentStatus::Failed("x".into())),
                 row(5, "setup-a", AgentStatus::SettingUp),
                 row(6, "needs-b", AgentStatus::NeedsYou(Reason::Quiet)),
+                row(7, "stopped-a", AgentStatus::Stopped),
             ],
         )]);
         assert_eq!(titles(&overview.needs), ["needs-a", "needs-b"]);
         assert_eq!(
             titles(&overview.places[0].rows),
-            ["failed-a", "working-a", "setup-a", "done-a"]
+            ["failed-a", "working-a", "setup-a", "done-a", "stopped-a"]
         );
-        assert_eq!(overview.counts, Counts { setup: 1, working: 1, needs: 2, done: 1, failed: 1 });
-        assert_eq!(overview.counts.total(), 6);
+        assert_eq!(
+            overview.counts,
+            Counts { setup: 1, working: 1, needs: 2, done: 1, failed: 1, stopped: 1 }
+        );
+        assert_eq!(overview.counts.total(), 7);
     }
 
     #[test]

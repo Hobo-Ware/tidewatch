@@ -84,6 +84,9 @@ pub struct LaunchCtx {
     /// The MCP config file the caller wrote (Claude, Copilot). Setting it turns MCP on for every CLI;
     /// Gemini and Codex also need `hooks` for the listener address.
     pub mcp_config: Option<PathBuf>,
+    /// The file holding `claude_settings_json` (Claude): the command line names the file, never the
+    /// JSON, so no hook token is printed and the line stays short enough to type.
+    pub settings_file: Option<PathBuf>,
     pub house_style: Option<PathBuf>,
     /// Directory holding `tidewatch.instructions.md` (Copilot), see `house_style::sync_copilot_instructions`.
     pub copilot_instructions_dir: Option<PathBuf>,
@@ -211,10 +214,8 @@ fn non_empty(value: Option<&str>) -> Option<&str> {
 }
 
 fn claude_wiring(ctx: &LaunchCtx, house_style: Option<&Path>, args: &mut Vec<String>) {
-    let comment_guard =
-        ctx.guards.as_ref().filter(|_| ctx.worktree_tab).map(|guards| guards.bin.as_path());
-    if let Some(settings) = claude_settings(ctx.hooks.as_ref(), comment_guard) {
-        args.extend(["--settings".to_owned(), settings]);
+    if let Some(file) = &ctx.settings_file {
+        args.extend(["--settings".to_owned(), file.display().to_string()]);
     }
     if let Some(config) = &ctx.mcp_config {
         args.push(format!("--mcp-config={}", config.display()));
@@ -311,13 +312,22 @@ fn curl_hook_command(url: &str, bearer: &str) -> String {
     )
 }
 
-/// The `--settings` JSON for Claude: http hooks for the events the status layer reads (D5).
+/// The JSON the Claude tab's `--settings` file holds, for the hooks and the comment guard that
+/// `ctx` asks for. `None` when neither applies, and then `ctx.settings_file` stays unset.
+#[must_use]
+pub fn claude_settings_json(ctx: &LaunchCtx) -> Option<String> {
+    let comment_guard =
+        ctx.guards.as_ref().filter(|_| ctx.worktree_tab).map(|guards| guards.bin.as_path());
+    claude_settings(ctx.hooks.as_ref(), comment_guard)
+}
+
+/// The settings JSON for Claude: http hooks for the events the status layer reads (D5).
 #[must_use]
 pub fn claude_hook_settings(listener: &HookListener) -> String {
     claude_settings(Some(listener), None).unwrap_or_default()
 }
 
-/// The `--settings` JSON for Claude: the http hooks of the status layer when there is a `listener`,
+/// The settings JSON for Claude: the http hooks of the status layer when there is a `listener`,
 /// and, when `comment_guard` names the Tidewatch binary, the comment guard's command hooks beside
 /// them: PostToolUse after Write, Edit and MultiEdit, and a Stop sweep of the branch diff. `None`
 /// when neither applies.
@@ -596,6 +606,7 @@ mod tests {
             session_id: Some("11111111-2222-3333-4444-555555555555".into()),
             hooks: Some(listener()),
             mcp_config: Some("/state/tab/mcp.json".into()),
+            settings_file: Some("/state/tab/claude-settings.json".into()),
             house_style: Some("/cfg/house-style.md".into()),
             copilot_instructions_dir: Some("/cfg/copilot".into()),
             guard_bin_dir: Some("/state/guard-bin".into()),
@@ -814,7 +825,9 @@ mod tests {
         let launch = run("claude", &profile("claude", Level::Edits), &full_ctx());
         let args = &launch.args;
         let settings_at = args.iter().position(|a| a == "--settings").unwrap();
-        let settings: Value = serde_json::from_str(&args[settings_at + 1]).unwrap();
+        assert_eq!(args[settings_at + 1], "/state/tab/claude-settings.json");
+        let settings: Value =
+            serde_json::from_str(&claude_settings_json(&full_ctx()).unwrap()).unwrap();
         assert_eq!(settings["hooks"]["Stop"][0]["hooks"][0]["type"], "http");
         assert_eq!(
             settings["hooks"]["Stop"][0]["hooks"][0]["url"],
@@ -841,7 +854,7 @@ mod tests {
 
     #[test]
     fn each_claude_piece_is_gated_on_its_own_field() {
-        let ctx = LaunchCtx { hooks: None, mcp_config: None, ..full_ctx() };
+        let ctx = LaunchCtx { settings_file: None, mcp_config: None, ..full_ctx() };
         let args = run("claude", &profile("claude", Level::Plan), &ctx).args;
         assert!(args.iter().any(|a| a == "--append-system-prompt-file"));
         assert!(!args.iter().any(|a| a == "--settings" || a.starts_with("--mcp-config")));
@@ -1029,9 +1042,7 @@ mod tests {
     #[test]
     fn the_comment_guard_adds_command_hooks_beside_the_status_hooks_in_worktree_tabs_only() {
         let ctx = LaunchCtx { guards: Some(guard_ctx()), ..full_ctx() };
-        let args = run("claude", &profile("claude", Level::Plan), &ctx).args;
-        let at = args.iter().position(|a| a == "--settings").unwrap();
-        let settings: Value = serde_json::from_str(&args[at + 1]).unwrap();
+        let settings: Value = serde_json::from_str(&claude_settings_json(&ctx).unwrap()).unwrap();
         let post = &settings["hooks"]["PostToolUse"];
         assert_eq!(post.as_array().unwrap().len(), 1);
         assert_eq!(post[0]["matcher"], "Write|Edit|MultiEdit");
@@ -1044,9 +1055,8 @@ mod tests {
         assert!(settings["hooks"]["SessionStart"][0]["hooks"][0]["url"].is_string());
 
         let main_tab = LaunchCtx { worktree_tab: false, ..ctx.clone() };
-        let args = run("claude", &profile("claude", Level::Plan), &main_tab).args;
-        let at = args.iter().position(|a| a == "--settings").unwrap();
-        let settings: Value = serde_json::from_str(&args[at + 1]).unwrap();
+        let settings: Value =
+            serde_json::from_str(&claude_settings_json(&main_tab).unwrap()).unwrap();
         assert!(settings["hooks"]["PostToolUse"].is_null());
         assert_eq!(settings["hooks"]["Stop"].as_array().unwrap().len(), 1);
     }
@@ -1064,11 +1074,18 @@ mod tests {
         assert_eq!(parsed["hooks"].as_object().unwrap().len(), 2);
         assert_eq!(claude_settings(None, None), None);
         let ctx = LaunchCtx { hooks: None, guards: Some(guard_ctx()), ..full_ctx() };
-        assert!(
-            run("claude", &profile("claude", Level::Plan), &ctx)
-                .args
-                .contains(&"--settings".to_owned())
-        );
+        assert!(claude_settings_json(&ctx).is_some());
+        let bare = LaunchCtx { hooks: None, guards: None, ..full_ctx() };
+        assert_eq!(claude_settings_json(&bare), None);
+    }
+
+    #[test]
+    fn a_claude_command_line_names_the_settings_file_and_never_holds_the_hook_token() {
+        let ctx = LaunchCtx { guards: Some(guard_ctx()), ..full_ctx() };
+        let line = run("claude", &profile("claude", Level::Edits), &ctx).shell_line();
+        assert!(line.contains("--settings /state/tab/claude-settings.json"), "{line}");
+        assert!(!line.contains("Bearer") && !line.contains("tok123"), "{line}");
+        assert!(line.len() < 900, "{} bytes", line.len());
     }
 
     #[test]

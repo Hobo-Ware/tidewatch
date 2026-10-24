@@ -71,6 +71,9 @@ pub(crate) struct AgentTab {
     pub(crate) first_prompt: FirstPrompt,
     /// Why this tab's resume command waits typed at the prompt; shown until the user types.
     pub(crate) resume_note: Option<&'static str>,
+    /// The command the Resume button runs in this tab's shell: set while the agent waits at a prompt
+    /// instead of running, typed there or too long to type.
+    pub(crate) resume_line: Option<String>,
     /// Why the worktree did not start from the fresh remote branch; shown until the user types.
     pub(crate) base_note: Option<String>,
     /// The agent process runs with remote control on, whatever the saved setting says now.
@@ -89,6 +92,7 @@ impl AgentTab {
             workflow: None,
             first_prompt: FirstPrompt::NotNeeded,
             resume_note: None,
+            resume_line: None,
             base_note: None,
             remote: None,
             meeseeks: None,
@@ -278,6 +282,7 @@ pub(crate) fn finish_open<T>(
                             FirstPrompt::NotNeeded
                         },
                         resume_note: None,
+                        resume_line: None,
                         base_note: None,
                         remote,
                         meeseeks: started.meeseeks,
