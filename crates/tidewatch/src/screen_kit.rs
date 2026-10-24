@@ -350,9 +350,8 @@ fn held_id() -> egui::Id {
 /// Records at the end of a frame whether a widget holds the keyboard. egui drops that focus on Esc
 /// before any code of the next frame runs, so this is the only way to tell that Esc did it.
 pub(crate) fn remember_focus(ctx: &egui::Context) {
-    let focused = ctx
-        .memory(egui::Memory::focused)
-        .is_some_and(|id| !crate::terminal_focus::is_grid(ctx, id));
+    let focused =
+        ctx.memory(egui::Memory::focused).is_some_and(|id| !stdusk_egui::focus::is_grid(ctx, id));
     let held = Held { any: focused, not_text: focused && !ctx.text_edit_focused() };
     ctx.data_mut(|data| data.insert_temp(held_id(), held));
 }

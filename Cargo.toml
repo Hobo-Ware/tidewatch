@@ -11,8 +11,8 @@ license = "MIT"
 tidewatch-core = { path = "crates/tidewatch-core" }
 kelp-core = { git = "https://github.com/Hobo-Ware/kelp", rev = "f1ddc1f7a886ce9fae597fdd357a007e678ec17d" }
 kelp-ui = { git = "https://github.com/Hobo-Ware/kelp", rev = "f1ddc1f7a886ce9fae597fdd357a007e678ec17d" }
-stdusk-core = { git = "https://github.com/Hobo-Ware/stdusk", rev = "b227a05a1f79e666e706021672a0f3d9a7965469" }
-stdusk-egui = { git = "https://github.com/Hobo-Ware/stdusk", rev = "b227a05a1f79e666e706021672a0f3d9a7965469" }
+stdusk-core = { git = "https://github.com/Hobo-Ware/stdusk", rev = "d3ecf6e5a4a488a62c95bbf61bbae86aa24f87ea" }
+stdusk-egui = { git = "https://github.com/Hobo-Ware/stdusk", rev = "d3ecf6e5a4a488a62c95bbf61bbae86aa24f87ea" }
 anyhow = "1.0.104"
 eframe = { version = "0.35.0", features = ["glow", "__screenshot"] }
 egui = "0.35.0"

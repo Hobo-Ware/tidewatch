@@ -17,6 +17,8 @@
 //!   `\\` are escapes; `\e[B\r` is Down then Enter).
 //! - `TIDEWATCH_DEV_SCROLL=<lines>` after `TIDEWATCH_DEV_SCROLL_AFTER=<seconds>` (default 10): one wheel
 //!   event of that many lines (positive is up, into the scrollback) over the active terminal.
+//! - `TIDEWATCH_DEV_COPY=<seconds>`: after that long, select everything in the active terminal and press
+//!   Cmd+C, as egui delivers it, to read the clipboard afterwards.
 //! - `TIDEWATCH_DEV_PASTE=<text>`: after the same delay, one Cmd+V of that text (the escapes above apply),
 //!   as egui delivers it, to whatever has the focus: the newest tab's terminal, or a text field.
 
@@ -36,6 +38,11 @@ pub(crate) struct DevPaste {
 }
 
 #[derive(Clone, Debug, PartialEq)]
+pub(crate) struct DevCopy {
+    pub(crate) after: f64,
+}
+
+#[derive(Clone, Debug, PartialEq)]
 pub(crate) struct DevScroll {
     pub(crate) lines: f32,
     pub(crate) after: f64,
@@ -49,6 +56,7 @@ pub(crate) struct DevView {
     pub(crate) keys: Option<DevKeys>,
     pub(crate) paste: Option<DevPaste>,
     pub(crate) scroll: Option<DevScroll>,
+    pub(crate) copy: Option<DevCopy>,
     pub(crate) side: Option<f32>,
     pub(crate) remote_popover: Popover,
     pub(crate) parked_popover: Popover,
@@ -91,6 +99,15 @@ impl DevView {
             var("TIDEWATCH_DEV_SCROLL").as_deref(),
             var("TIDEWATCH_DEV_SCROLL_AFTER").as_deref(),
         )
+        .with_copy(var("TIDEWATCH_DEV_COPY").as_deref())
+    }
+
+    fn with_copy(self, after: Option<&str>) -> Self {
+        let copy = after
+            .and_then(|after| after.parse::<f64>().ok())
+            .filter(|after| after.is_finite() && *after >= 0.0)
+            .map(|after| DevCopy { after });
+        Self { copy, ..self }
     }
 
     fn with_scroll(self, lines: Option<&str>, after: Option<&str>) -> Self {
@@ -144,6 +161,7 @@ impl DevView {
             }),
             paste: None,
             scroll: None,
+            copy: None,
             side: None,
             remote_popover: Popover::OnClick,
             parked_popover: Popover::OnClick,
@@ -210,6 +228,14 @@ mod tests {
         assert_eq!(late.map(|paste| paste.after), Some(DEFAULT_KEYS_AFTER_SECS));
         assert_eq!(DevView::default().with_paste(Some(""), None).paste, None);
         assert_eq!(DevView::default().with_paste(None, None).paste, None);
+    }
+
+    #[test]
+    fn the_copy_switch_takes_a_delay() {
+        assert_eq!(DevView::default().with_copy(Some("4")).copy, Some(DevCopy { after: 4.0 }));
+        assert_eq!(DevView::default().with_copy(Some("soon")).copy, None);
+        assert_eq!(DevView::default().with_copy(Some("-1")).copy, None);
+        assert_eq!(DevView::default().with_copy(None).copy, None);
     }
 
     #[test]

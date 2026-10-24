@@ -114,7 +114,6 @@ mod palette_view;
 mod pane;
 mod pane_jobs;
 mod park;
-mod paste;
 mod post_confirm;
 mod pr_card_model;
 mod pr_cards_view;
@@ -180,9 +179,7 @@ mod takeover;
 mod takeover_group;
 mod takeover_jobs;
 mod takeover_view;
-mod terminal_focus;
 mod terminal_font;
-mod terminal_wheel;
 #[cfg(all(test, unix))]
 mod test_exec;
 mod timeline;

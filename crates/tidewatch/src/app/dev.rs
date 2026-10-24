@@ -261,6 +261,20 @@ impl Tidewatch {
         ctx.request_repaint();
     }
 
+    pub(super) fn send_dev_copy(&mut self, ctx: &egui::Context, now: f64) {
+        let Some(copy) = &self.dev_copy else { return };
+        if now < copy.after {
+            ctx.request_repaint_after(std::time::Duration::from_secs_f64(copy.after - now));
+            return;
+        }
+        self.dev_copy = None;
+        if let Body::Shell(term) = &self.tabs.active_pane_mut().body {
+            term.select_all();
+        }
+        ctx.input_mut(|input| input.events.push(egui::Event::Copy));
+        ctx.request_repaint();
+    }
+
     pub(super) fn take_dev_wheel(&mut self, ctx: &egui::Context, now: f64) -> Vec<egui::Event> {
         let Some(scroll) = &self.dev_scroll else { return Vec::new() };
         if now < scroll.after {
