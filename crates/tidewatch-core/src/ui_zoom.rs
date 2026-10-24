@@ -6,6 +6,9 @@ pub const MAX: f32 = 1.5;
 pub const DEFAULT: f32 = 1.0;
 pub const STEPS: [f32; 6] = [0.8, 0.9, 1.0, 1.1, 1.25, 1.5];
 
+/// The size that reads as 100%: the egui zoom of 90%, which owners found right on a laptop screen.
+pub const BASE: f32 = 0.9;
+
 const SAME: f32 = 0.005;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -19,6 +22,12 @@ pub enum Direction {
 #[must_use]
 pub fn sane(value: f32) -> f32 {
     if value.is_nan() { DEFAULT } else { value.clamp(MIN, MAX) }
+}
+
+/// The egui zoom factor a stored size draws at.
+#[must_use]
+pub fn render_factor(value: f32) -> f32 {
+    sane(value) * BASE
 }
 
 /// The next step the shortcut lands on: one up or down from `current` (a value between steps goes
@@ -64,6 +73,14 @@ mod tests {
         ];
         for (value, want) in cases {
             assert_eq!(sane(value), want, "{value}");
+        }
+    }
+
+    #[test]
+    fn a_hundred_percent_draws_at_the_old_ninety() {
+        let cases = [(1.0, 0.9), (0.8, 0.72), (1.5, 1.35), (f32::NAN, 0.9)];
+        for (value, want) in cases {
+            assert!((render_factor(value) - want).abs() < 1e-6, "{value}");
         }
     }
 
