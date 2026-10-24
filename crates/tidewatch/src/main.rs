@@ -15,6 +15,7 @@ mod amphetamine_motion;
 mod amphetamine_pill;
 mod amphetamine_view;
 mod app;
+mod autofetch_glue;
 mod avatar_glue;
 mod brand;
 mod build_workflow;

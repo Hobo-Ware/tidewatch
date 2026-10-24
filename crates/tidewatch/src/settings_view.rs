@@ -44,6 +44,8 @@ pub(crate) enum Action {
     /// The New tabs card changed something: all of its choices. Applies at once too.
     NewTab(tidewatch_core::prefs::NewTabPrefs),
     Tabs(tidewatch_core::prefs::TabsPrefs),
+    /// The Git card changed something: both of its choices. Applies at once too.
+    Git(tidewatch_core::prefs::GitPrefs),
     /// The Done check switch moved: the new value. Applies at once too.
     DoneCheck(bool),
     KeepAwake(bool),

@@ -20,6 +20,7 @@ const FONT: f32 = 13.0;
 const MOST_HINTS: usize = 4;
 const CHIP_H: f32 = 20.0;
 const AWAKE_R: f32 = 5.0;
+const FETCH_FAILED: &str = "Fetch failed";
 const CHIP_PAD: f32 = 9.0;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -219,6 +220,8 @@ pub(crate) struct Bar {
     pub(crate) pr: Option<(PrTone, String)>,
     /// The tooltip of the mark that shows while the computer is kept awake.
     pub(crate) awake: Option<String>,
+    /// The tooltip of `Fetch failed`, which shows after a background fetch of the repo on show failed.
+    pub(crate) fetch_failed: Option<String>,
 }
 
 /// Draws the bar. Returns whether the review chip was clicked.
@@ -247,6 +250,12 @@ pub(crate) fn show(ui: &mut Ui, rect: Rect, bar: &Bar) -> bool {
         let mark = Rect::from_center_size(center, vec2(2.0 * AWAKE_R + 8.0, HEIGHT));
         ui.interact(mark, Id::new("status-bar-awake"), Sense::hover()).on_hover_text(tip.as_str());
         x += 2.0 * AWAKE_R + GAP;
+    }
+    if let Some(why) = &bar.fetch_failed {
+        let width = put(pos2(x, y), Align2::LEFT_CENTER, FETCH_FAILED, body(FONT), brand::MUTED);
+        let label = Rect::from_min_size(pos2(x, y - HEIGHT / 2.0), vec2(width, HEIGHT));
+        ui.interact(label, Id::new("status-bar-fetch"), Sense::hover()).on_hover_text(why.as_str());
+        x += width + GAP;
     }
     if let Some((tone, text)) = &bar.pr {
         let ink = tone_ink(*tone);

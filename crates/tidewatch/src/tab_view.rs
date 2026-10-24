@@ -376,6 +376,10 @@ impl TabView {
         self.counting = counting;
     }
 
+    pub(crate) fn reload_history(&mut self) {
+        self.want.insert(Request::History);
+    }
+
     pub(crate) fn reload_after_checkout(&mut self) {
         self.want.insert(Request::History);
         self.want.insert(Request::Status);

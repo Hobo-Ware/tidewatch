@@ -4,7 +4,8 @@
 use egui::Ui;
 use tidewatch_core::guards::GuardPrefs;
 use tidewatch_core::prefs::{
-    DoneCheckPrefs, GithubPrefs, KeepAwakePrefs, NewTabPrefs, ParkAfter, ResumeAgents, TabsPrefs,
+    DoneCheckPrefs, FETCH_MINUTES, GitPrefs, GithubPrefs, KeepAwakePrefs, NewTabPrefs, ParkAfter,
+    ResumeAgents, TabsPrefs,
 };
 
 use crate::font_view;
@@ -13,6 +14,7 @@ use crate::guards_view;
 use crate::login_item;
 use crate::macos::LoginItem;
 use crate::new_tab_prefs_view::{self, ProfileOption};
+use crate::segmented;
 use crate::settings_ui::{self, Control, footer_note, page_header, section, switch_row};
 use crate::settings_view::Action;
 use crate::updates::Updates;
@@ -29,6 +31,7 @@ pub(crate) struct General {
     pub(crate) github: GithubPrefs,
     pub(crate) new_tab: NewTabPrefs,
     pub(crate) tabs: TabsPrefs,
+    pub(crate) git: GitPrefs,
     pub(crate) done_check: DoneCheckPrefs,
     pub(crate) keep_awake: KeepAwakePrefs,
     pub(crate) guards: GuardPrefs,
@@ -77,6 +80,7 @@ pub(crate) fn page(
         }
     });
     let window = window_view::section(ui, window, &general.window).map(Action::Window);
+    let git = git_card(ui, general.git).map(Action::Git);
     let terminal = font_view::section(ui, font, &general.terminal).map(|change| match change {
         font_view::Change::Font(choice) => Action::TerminalFont(choice),
         font_view::Change::CopyOnSelect(on) => Action::TerminalCopyOnSelect(on),
@@ -101,6 +105,7 @@ pub(crate) fn page(
         .or(resume.map(Action::ResumeAgents))
         .or(open_at_login.map(Action::LoginItem))
         .or(window)
+        .or(git)
         .or(terminal)
         .or(new_tab)
         .or(tabs)
@@ -109,6 +114,45 @@ pub(crate) fn page(
         .or(github)
         .or(guards)
         .or(updates)
+}
+
+fn git_card(ui: &mut Ui, current: GitPrefs) -> Option<GitPrefs> {
+    let mut changed = None;
+    section(ui, "Git", |ui| {
+        if let Some(on) = switch_row(
+            ui,
+            "Fetch in the background",
+            "Keeps behind and ahead counts current without touching your files.",
+            current.background_fetch,
+        ) {
+            changed = Some(GitPrefs { background_fetch: on, ..current });
+        }
+        if let Some(minutes) = fetch_every_row(ui, current) {
+            changed = Some(GitPrefs { fetch_minutes: minutes, ..current });
+        }
+    });
+    changed
+}
+
+fn fetch_every_row(ui: &mut Ui, current: GitPrefs) -> Option<u32> {
+    let labels: Vec<String> =
+        FETCH_MINUTES.iter().map(|minutes| format!("{minutes} min")).collect();
+    let labels: Vec<&str> = labels.iter().map(String::as_str).collect();
+    let active = FETCH_MINUTES.iter().position(|minutes| *minutes == current.fetch_minutes);
+    settings_ui::row(
+        ui,
+        "Every",
+        "How often each open repo is fetched.",
+        Control::new(settings_ui::inline_width(ui, &labels), 28.0),
+        |ui| {
+            ui.add_enabled_ui(current.background_fetch, |ui| {
+                let id = ui.id().with("fetch-every");
+                segmented::inline(ui, id, &labels, active.unwrap_or(usize::MAX))
+                    .map(|index| FETCH_MINUTES[index])
+            })
+            .inner
+        },
+    )
 }
 
 fn tabs_card(ui: &mut Ui, current: TabsPrefs) -> Option<TabsPrefs> {
@@ -177,4 +221,66 @@ fn resume_row(ui: &mut Ui, current: ResumeAgents, enabled: bool) -> Option<Resum
             .inner
         },
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use egui::{Event, Modifiers, PointerButton, RawInput, Rect, Vec2, pos2};
+
+    use super::*;
+
+    fn frame(ctx: &egui::Context, git: GitPrefs, events: Vec<Event>) -> Option<GitPrefs> {
+        let mut answer = None;
+        let raw = RawInput {
+            screen_rect: Some(Rect::from_min_size(pos2(0.0, 0.0), Vec2::new(900.0, 400.0))),
+            focused: true,
+            events,
+            ..RawInput::default()
+        };
+        let _ = ctx.run_ui(raw, |ui| answer = git_card(ui, git));
+        answer
+    }
+
+    fn press(at: egui::Pos2, pressed: bool) -> Event {
+        Event::PointerButton {
+            pos: at,
+            button: PointerButton::Primary,
+            pressed,
+            modifiers: Modifiers::NONE,
+        }
+    }
+
+    fn every_click(git: GitPrefs) -> Vec<GitPrefs> {
+        let ctx = egui::Context::default();
+        ctx.set_fonts(crate::fonts::definitions());
+        frame(&ctx, git, vec![]);
+        let mut found = Vec::new();
+        for y in (0..220).step_by(6) {
+            for x in (0..900).step_by(6) {
+                let at = pos2(x as f32, y as f32);
+                frame(&ctx, git, vec![Event::PointerMoved(at)]);
+                frame(&ctx, git, vec![press(at, true)]);
+                found.extend(frame(&ctx, git, vec![press(at, false)]));
+            }
+        }
+        found
+    }
+
+    #[test]
+    fn the_git_card_flips_the_switch_and_picks_an_interval() {
+        let on = GitPrefs::default();
+        let found = every_click(on);
+        assert!(found.contains(&GitPrefs { background_fetch: false, ..on }));
+        for minutes in FETCH_MINUTES.into_iter().filter(|minutes| *minutes != on.fetch_minutes) {
+            assert!(found.contains(&GitPrefs { fetch_minutes: minutes, ..on }), "{minutes}");
+        }
+    }
+
+    #[test]
+    fn the_interval_cannot_be_picked_while_the_switch_is_off() {
+        let off = GitPrefs { background_fetch: false, ..GitPrefs::default() };
+        let found = every_click(off);
+        assert!(found.contains(&GitPrefs { background_fetch: true, ..off }));
+        assert!(found.iter().all(|git| git.fetch_minutes == off.fetch_minutes), "{found:?}");
+    }
 }

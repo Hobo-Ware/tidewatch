@@ -5,6 +5,7 @@
 
 mod agents;
 mod amphetamine;
+mod autofetch;
 mod bar;
 mod build_workflow;
 mod central;
@@ -62,6 +63,7 @@ use crate::agent_events::{self, Hooks};
 use crate::agent_jobs;
 use crate::amphetamine_glue;
 use crate::amphetamine_view;
+use crate::autofetch_glue;
 use crate::avatar_glue;
 use crate::brand;
 use crate::build_workflow::Asked;
@@ -185,6 +187,7 @@ pub(crate) struct Tidewatch {
     meeseeks: meeseeks_glue::Host,
     done_check: done_check_glue::Host,
     keep_awake: keep_awake_glue::Host<RealHold>,
+    autofetch: autofetch_glue::Host,
     amphetamine: amphetamine_glue::Host<Box<dyn Hold>>,
     amphetamine_view: amphetamine_view::Memory,
     progress_ui: progress_view::Memory,
@@ -295,6 +298,14 @@ impl Tidewatch {
                     std::env::var("TIDEWATCH_DEV_KEEP_AWAKE").ok().as_deref(),
                 ),
         );
+        let autofetch = autofetch_glue::Host::new(
+            loaded.git,
+            screenshot.is_none()
+                && (!shell.env.background
+                    || keep_awake_glue::dev_asks(
+                        std::env::var("TIDEWATCH_DEV_AUTOFETCH").ok().as_deref(),
+                    )),
+        );
         let amphetamine = amphetamine::host(
             paths.as_ref(),
             screenshot.is_some(),
@@ -366,6 +377,7 @@ impl Tidewatch {
             meeseeks,
             done_check,
             keep_awake,
+            autofetch,
             amphetamine,
             amphetamine_view: amphetamine_view::Memory::from_env(),
             progress_ui: progress_view::Memory::default(),

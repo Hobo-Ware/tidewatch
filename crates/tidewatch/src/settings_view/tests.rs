@@ -50,6 +50,7 @@ fn general(restore: bool, resume: ResumeAgents, login_offered: bool) -> General 
         github: tidewatch_core::prefs::GithubPrefs::default(),
         new_tab: tidewatch_core::prefs::NewTabPrefs::default(),
         tabs: tidewatch_core::prefs::TabsPrefs::default(),
+        git: tidewatch_core::prefs::GitPrefs::default(),
         done_check: tidewatch_core::prefs::DoneCheckPrefs::default(),
         keep_awake: tidewatch_core::prefs::KeepAwakePrefs::default(),
         guards: tidewatch_core::guards::GuardPrefs::default(),
