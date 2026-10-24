@@ -62,7 +62,7 @@ impl Tidewatch {
             self.dispatch(Action::ShowGroup(group), ctx);
             return;
         }
-        self.workspace_jobs.spawn(ctx, move || Workspace::open(&path));
+        self.workspace_jobs.spawn(ctx, move || Workspace::open_in_main_repo(&path));
     }
 
     /// Adds a repo with its own pinned main shell and its saved tabs, and brings it to the front.

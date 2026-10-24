@@ -223,6 +223,7 @@ use tidewatch_core::last_workspace;
 use tidewatch_core::path_env;
 use tidewatch_core::paths::TidewatchPaths;
 use tidewatch_core::prefs::Prefs;
+use tidewatch_core::session::Session;
 use window_chrome::Desktop;
 
 /// The Wayland app id and X11 class: the installed `tidewatch.desktop`, whose icon the desktop shows
@@ -308,6 +309,13 @@ fn main() -> eframe::Result<()> {
         Some(Start::Run(primary)) => primary,
         None => None,
     };
+    if incoming.is_none()
+        && restoring
+        && screenshot.is_none()
+        && let Some(paths) = &paths
+    {
+        merge_saved_windows(paths);
+    }
     let setup = Setup {
         env,
         prefs: window_prefs,
@@ -363,12 +371,27 @@ fn main() -> eframe::Result<()> {
     )
 }
 
+/// One saved window per repo: a window whose folder is a linked worktree of another saved window's
+/// repo is folded into it, so a session from before worktrees grouped comes back as one group.
+fn merge_saved_windows(paths: &TidewatchPaths) {
+    let mut session = Session::load(paths);
+    let main_of = |dir: &Path| {
+        let repo = dir.is_dir().then(|| Repo::discover_main(dir)).flatten()?;
+        Some(repo.root)
+    };
+    if session.merge_linked(main_of) {
+        session
+            .save(paths)
+            .unwrap_or_else(|e| eprintln!("tidewatch: cannot save the session: {e}"));
+    }
+}
+
 /// The repo in front, then the others a launch brings back, each once however its folder is spelled.
 fn open_workspaces(opening: &last_workspace::Opening, restoring: bool) -> Vec<Workspace> {
     let also = opening.also.iter().filter(|_| restoring);
-    let mut workspaces = vec![Workspace::open(&opening.dir)];
+    let mut workspaces = vec![Workspace::open_in_main_repo(&opening.dir)];
     for dir in also {
-        let workspace = Workspace::open(dir);
+        let workspace = Workspace::open_in_main_repo(dir);
         let key = single_instance::workspace_key(workspace.dir());
         let known = workspaces.iter().any(|w| single_instance::workspace_key(w.dir()) == key);
         if !known {

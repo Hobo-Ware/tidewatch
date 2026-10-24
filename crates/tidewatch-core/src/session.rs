@@ -169,6 +169,50 @@ impl Session {
         self.windows.iter().find(|w| w.dir == dir)
     }
 
+    /// Gathers the windows of folders that belong to one repo into one window of that repo, where
+    /// `main_of` names the repo a folder belongs to (`None` keeps the window as it is). A window
+    /// already at the repo's folder takes the others' tabs after its own, else the first of them
+    /// moves there. Each tab keeps the folder it runs in and its state, only the main tab of a
+    /// merged window is dropped. Returns whether anything changed.
+    pub fn merge_linked(&mut self, main_of: impl Fn(&Path) -> Option<PathBuf>) -> bool {
+        let old = std::mem::take(&mut self.windows);
+        let homes: Vec<PathBuf> = old
+            .iter()
+            .map(|w| (!w.other).then(|| main_of(&w.dir)).flatten().unwrap_or_else(|| w.dir.clone()))
+            .collect();
+        let absorbs: Vec<usize> = (0..old.len())
+            .map(|at| {
+                let kin = |other: &usize| !old[*other].other && homes[*other] == homes[at];
+                let kin_at_home = |other: &usize| kin(other) && old[*other].dir == homes[at];
+                (!old[at].other)
+                    .then(|| (0..old.len()).find(kin_at_home).or_else(|| (0..old.len()).find(kin)))
+                    .flatten()
+                    .unwrap_or(at)
+            })
+            .collect();
+        let mut merged: Vec<SavedWindow> = Vec::new();
+        let mut slots = vec![0; old.len()];
+        for (at, window) in old.iter().enumerate().filter(|(at, _)| absorbs[*at] == *at) {
+            slots[at] = merged.len();
+            merged.push(SavedWindow { dir: homes[at].clone(), ..window.clone() });
+        }
+        for (at, window) in old.iter().enumerate().filter(|(at, _)| absorbs[*at] != *at) {
+            let target = &mut merged[slots[absorbs[at]]];
+            for (index, tab) in window.tabs.iter().enumerate() {
+                if matches!(tab, SavedTab::Main) {
+                    continue;
+                }
+                let moved = target.tabs.len();
+                target.tabs.push(tab.clone());
+                let parks = window.parked.iter().filter(|park| park.tab == index);
+                target.parked.extend(parks.map(|park| SavedPark { tab: moved, ..*park }));
+            }
+        }
+        let changed = merged != old;
+        self.windows = merged;
+        changed
+    }
+
     /// Replaces the window of the same folder, or adds it, so a repo keeps one entry.
     pub fn replace_window(&mut self, window: SavedWindow) {
         match self.windows.iter_mut().find(|w| w.dir == window.dir) {
@@ -195,6 +239,109 @@ mod tests {
             remote: false,
             meeseeks: None,
         })
+    }
+
+    fn linked_window(dir: &str, tab_dirs: &[&str]) -> SavedWindow {
+        let tabs = std::iter::once(SavedTab::Main).chain(
+            tab_dirs.iter().map(|tab| SavedTab::Shell { dir: PathBuf::from(tab), branch: None }),
+        );
+        SavedWindow {
+            dir: PathBuf::from(dir),
+            other: false,
+            active: 0,
+            focus_mode: false,
+            tabs: tabs.collect(),
+            parked: Vec::new(),
+        }
+    }
+
+    fn main_of(dir: &Path) -> Option<PathBuf> {
+        let name = dir.file_name()?.to_str()?;
+        name.starts_with("web").then(|| PathBuf::from("/w/web"))
+    }
+
+    fn summary(session: &Session) -> Vec<(String, Vec<String>)> {
+        session
+            .windows
+            .iter()
+            .map(|w| {
+                let tabs = w.tabs.iter().map(|tab| match tab {
+                    SavedTab::Main => "main".to_owned(),
+                    other => other.dir(&w.dir).display().to_string(),
+                });
+                (w.dir.display().to_string(), tabs.collect())
+            })
+            .collect()
+    }
+
+    fn expected(rows: &[(&str, &[&str])]) -> Vec<(String, Vec<String>)> {
+        rows.iter()
+            .map(|(dir, tabs)| {
+                ((*dir).to_owned(), tabs.iter().map(|tab| (*tab).to_owned()).collect())
+            })
+            .collect()
+    }
+
+    #[test]
+    fn windows_of_one_repo_merge_into_the_window_at_its_main_folder() {
+        let mut session = Session {
+            windows: vec![
+                linked_window("/w/web-feat-a", &["/w/web-feat-a"]),
+                linked_window("/w/api", &["/w/api"]),
+                linked_window("/w/web", &["/w/web/src"]),
+                linked_window("/w/web-feat-b", &["/w/web-feat-b"]),
+                linked_window("/w/web-empty", &[]),
+            ],
+        };
+        assert!(session.merge_linked(main_of));
+        assert_eq!(
+            summary(&session),
+            expected(&[
+                ("/w/api", &["main", "/w/api"]),
+                ("/w/web", &["main", "/w/web/src", "/w/web-feat-a", "/w/web-feat-b"]),
+            ])
+        );
+        assert!(!session.merge_linked(main_of), "merging again changes nothing");
+    }
+
+    #[test]
+    fn with_no_window_at_the_main_folder_the_first_linked_one_moves_there() {
+        let mut session = Session {
+            windows: vec![
+                linked_window("/w/web-feat-a", &["/w/web-feat-a"]),
+                linked_window("/w/web-feat-b", &["/w/web-feat-b"]),
+            ],
+        };
+        assert!(session.merge_linked(main_of));
+        assert_eq!(
+            summary(&session),
+            expected(&[("/w/web", &["main", "/w/web-feat-a", "/w/web-feat-b"])])
+        );
+    }
+
+    #[test]
+    fn folders_outside_a_repo_and_the_other_group_stay_as_they_are() {
+        let mut other = linked_window("/w/web-notes", &["/w/web-notes"]);
+        other.other = true;
+        let mut session =
+            Session { windows: vec![other.clone(), linked_window("/w/gone", &["/w/gone"])] };
+        assert!(!session.merge_linked(main_of));
+        assert_eq!(session.windows[0], other);
+    }
+
+    #[test]
+    fn a_merged_tab_keeps_its_park_mark_at_its_new_place() {
+        let mut feature = linked_window("/w/web-feat-a", &["/w/web-feat-a"]);
+        feature.parked =
+            vec![SavedPark { tab: 1, why: Some(Why::Manual), since_ms: 5, keep: false }];
+        let mut session =
+            Session { windows: vec![linked_window("/w/web", &["/w/web/src"]), feature] };
+        assert!(session.merge_linked(main_of));
+        assert_eq!(session.windows.len(), 1);
+        assert_eq!(
+            session.windows[0].parked,
+            vec![SavedPark { tab: 2, why: Some(Why::Manual), since_ms: 5, keep: false }]
+        );
     }
 
     fn window() -> SavedWindow {
