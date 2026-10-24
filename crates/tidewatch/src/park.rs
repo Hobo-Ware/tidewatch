@@ -139,7 +139,9 @@ pub(crate) fn decide(tabs: &[Facts], now_ms: u64, rules: &Rules) -> Vec<Change> 
     }
     let groups: BTreeSet<usize> = tabs.iter().map(|tab| tab.group).collect();
     for group in groups {
-        let members: Vec<usize> = (0..tabs.len()).filter(|i| tabs[*i].group == group).collect();
+        let members: Vec<usize> = (0..tabs.len())
+            .filter(|i| tabs[*i].group == group && tabs[*i].role != Role::Pinned)
+            .collect();
         let shown = members.iter().filter(|i| parked[**i].is_none()).count();
         let away = members.len() - shown;
         let cap = if away > 0 { rules.fits.with_pill } else { rules.fits.alone };

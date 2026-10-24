@@ -1,4 +1,4 @@
-//! The tab strip: repo chip (a menu of the repos, Open repo and Close repo), leftovers chip, overview button, the tabs, new tab button, and at the right end the update chip and the settings button.
+//! The tab strip: overview button, repo chip (a menu of the repos, Open repo and Close repo), the repo's main checkout as an icon, leftovers chip, the agent tabs, new tab button, and at the right end the update chip and the settings button.
 
 use egui::layers::ShapeIdx;
 use egui::{CornerRadius, Frame, Margin, Shape, pos2, vec2};
@@ -28,6 +28,7 @@ use crate::tabs::{Action, Step, Tabs};
 use crate::window_chrome::{self, Chrome};
 use crate::{layout, overview_view, status_view};
 
+mod main_icon;
 pub(crate) mod pill;
 
 const STRIP_TOP_MARGIN: i8 = 6;
@@ -102,12 +103,12 @@ impl Tidewatch {
                         }
                         return;
                     }
-                    self.repo_chip(ui, frame);
-                    self.leftovers.chip(ui);
-                    ui.add_space(4.0);
                     if overview_view::button(ui, self.overview, needs_you).clicked() {
                         frame.toggle_overview = true;
                     }
+                    self.repo_chip(ui, frame);
+                    self.main_icon(ui, frame);
+                    self.leftovers.chip(ui);
                     ui.add_space(8.0);
                     let pill_width = self.updates.pill_width(ui);
                     let tail = if pill_width > 0.0 { pill_width + STRIP_GAP } else { 0.0 };
@@ -133,7 +134,7 @@ impl Tidewatch {
                     });
                     let width = layout::tab_width(
                         room - parked_tail,
-                        self.tabs.shown_in(group).count(),
+                        self.tabs.shown_in(group).filter(|(_, tab)| !tab.pinned).count(),
                         STRIP_GAP,
                     );
                     self.draw_tabs(ui, width, now, &mut frame.actions);
@@ -302,7 +303,6 @@ impl Tidewatch {
 struct Slot {
     index: usize,
     rect: egui::Rect,
-    pinned: bool,
 }
 
 struct MenuView {
@@ -330,6 +330,9 @@ fn tab_row<T>(
     let pill = pill::rect(ui.ctx());
     let mut over_pill = false;
     for (position, (i, tab)) in tabs.shown_in(tabs.active_group()).enumerate() {
+        if tab.pinned {
+            continue;
+        }
         let (pty_progress, cmd) = signals(&tab.pane);
         let agent = tab.pane.agent.as_ref();
         let progress = if agent.is_some() { Progress::None } else { pty_progress };
@@ -351,7 +354,7 @@ fn tab_row<T>(
             tab.id,
             &title,
             i == tabs.active(),
-            tab.pinned,
+            false,
             None,
             progress,
             cmd,
@@ -381,7 +384,7 @@ fn tab_row<T>(
             }
         }
         let menu = MenuView {
-            parking: if tab.pinned || draft {
+            parking: if draft {
                 ParkMenu::Hidden
             } else {
                 ParkMenu::Offered { parkable: !needs_you(&tab.pane), keep: tab.keep }
@@ -406,16 +409,14 @@ fn tab_row<T>(
         } else if resp.clicked() {
             actions.push(Action::Select(i));
         }
-        if !tab.pinned
-            && resp.dragged()
+        if resp.dragged()
             && ui.input(|input| input.pointer.is_decidedly_dragging())
             && let Some(pointer) = resp.interact_pointer_pos()
         {
-            drag = Some((position, pointer.x));
+            drag = Some((slots.len(), pointer.x));
             over_pill = pill.is_some_and(|pill| pill.expand(PILL_DROP_SLACK).contains(pointer));
         }
-        if !tab.pinned
-            && resp.drag_stopped()
+        if resp.drag_stopped()
             && let Some(pill) = pill
             && ui
                 .input(|input| input.pointer.latest_pos())
@@ -430,7 +431,7 @@ fn tab_row<T>(
                 brand::SIDEBAR.gamma_multiply(fade),
             );
         }
-        slots.push(Slot { index: i, rect: resp.rect, pinned: tab.pinned });
+        slots.push(Slot { index: i, rect: resp.rect });
     }
     pill::set_hot(ui.ctx(), over_pill);
     pill::set_dragging(ui.ctx(), drag.is_some());
@@ -632,8 +633,8 @@ fn is_fill_of(painter: &egui::Painter, idx: ShapeIdx, tab: egui::Rect) -> bool {
 /// The swap a drag asks for: the pointer past the middle of the next tab on either side. Asked
 /// again every frame, so a long drag moves the tab one place at a time.
 fn drag_step(slots: &[Slot], from: usize, pointer_x: f32) -> Option<Step> {
-    let after = slots.get(from + 1).filter(|slot| !slot.pinned);
-    let before = from.checked_sub(1).and_then(|n| slots.get(n)).filter(|slot| !slot.pinned);
+    let after = slots.get(from + 1);
+    let before = from.checked_sub(1).and_then(|n| slots.get(n));
     if after.is_some_and(|slot| pointer_x > slot.rect.center().x) {
         Some(Step::Right)
     } else if before.is_some_and(|slot| pointer_x < slot.rect.center().x) {

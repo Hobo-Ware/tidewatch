@@ -75,7 +75,13 @@ impl Strip {
         let output = self.ctx.run_ui(raw, |ui| {
             egui::Panel::top("tabbar").exact_size(TAB_H + 6.0).show(ui, |ui| {
                 ui.horizontal(|ui| {
-                    rects = tab_row(
+                    rects.extend(main_icon::draw(
+                        ui,
+                        &self.tabs,
+                        |_| (false, "main tip".to_owned()),
+                        &mut actions,
+                    ));
+                    rects.extend(tab_row(
                         ui,
                         &self.tabs,
                         120.0,
@@ -85,7 +91,7 @@ impl Strip {
                             |_: &Pane<u32>| (Progress::default(), CmdState::default()),
                             |_| TabExtras::default(),
                         ),
-                    );
+                    ));
                     if pill::wanted(ui.ctx(), rows.len()) {
                         let out = pill::show(ui, &rows, crate::remote_pill::Popover::OnClick);
                         if let Some(row) = out.picked {
@@ -386,9 +392,9 @@ fn an_agent_tab_shows_its_face_in_place_of_the_number_and_the_cli_logo() {
         let title = title_of(&texts);
         assert!(title.0.starts_with("    qua"), "four spaces of room for the face: {:?}", title.0);
         assert!(texts.iter().all(|(text, _)| !text.starts_with("2 ")), "no number in {texts:?}");
-        let face = face_rect(rects[1]);
+        let face = face_rect(rects[0]);
         assert_eq!((face.width(), face.height()), (AVATAR_SIZE, AVATAR_SIZE));
-        assert_eq!(face.left(), rects[1].left() + TAB_PAD_X);
+        assert_eq!(face.left(), rects[0].left() + TAB_PAD_X);
         let char_w = title.1.width() / title.0.chars().count() as f32;
         assert!(face.right() <= title.1.left() + AVATAR_PAD_CHARS as f32 * char_w + 0.5);
     }
@@ -436,7 +442,7 @@ fn a_tab_with_a_ledger_cuts_its_title_before_the_ring_at_every_width_from_the_fl
         let (rects, texts) = agent_strip(QUARTZ, width, (true, false, true));
         let title = title_of(&texts);
         assert!(
-            title.1.right() <= ring_rect(rects[1]).left(),
+            title.1.right() <= ring_rect(rects[0]).left(),
             "{:?} reaches the ring at {width}",
             title.1
         );
@@ -449,7 +455,7 @@ fn a_tab_without_a_ledger_keeps_the_whole_title_room() {
     let (rects, with) = agent_strip(QUARTZ, 200.0, (true, false, true));
     let (_, without) = agent_strip(QUARTZ, 200.0, (false, false, true));
     assert!(title_of(&without).1.width() > title_of(&with).1.width());
-    assert_eq!(rects[1].width(), 200.0);
+    assert_eq!(rects[0].width(), 200.0);
 }
 
 #[test]
@@ -458,7 +464,7 @@ fn the_title_gets_what_the_face_and_the_slot_leave_at_the_least_tab_width() {
         agent_strip("backfill-orders", crate::layout::MIN_TAB_W, (false, false, true));
     let title = texts.iter().find(|(text, _)| text.contains("backf")).unwrap();
     assert!(title.0.ends_with('\u{2026}'), "cut with an ellipsis: {:?}", title.0);
-    assert!(title.1.right() <= rects[1].right() - TAB_PAD_X - TAB_SLOT_W);
+    assert!(title.1.right() <= rects[0].right() - TAB_PAD_X - TAB_SLOT_W);
 }
 
 #[test]
@@ -740,4 +746,117 @@ fn a_fading_tab_is_veiled_in_the_strips_own_color_more_as_the_fade_goes_on() {
         let (shown, _) = strip_fills(Mood { struggling: false, fade: Some(fade) }, true);
         assert!(shown.contains(&veil(fade)), "{fade}");
     }
+}
+
+fn main_icon_shapes(
+    select_main: bool,
+    running: bool,
+    hover: bool,
+) -> (Vec<egui::Color32>, Vec<egui::Color32>, Rect) {
+    let ctx = crate::fonts::test_context();
+    let mut tabs = Tabs::new(Pane::shell(0_u32));
+    tabs.push_in(0, "agent".into(), Pane::shell(1));
+    if !select_main {
+        tabs.apply(Action::Select(1), || unreachable!());
+    }
+    let (mut rects, mut circles, mut rect) = (Vec::new(), Vec::new(), Rect::NOTHING);
+    for _ in 0..2 {
+        let events = if hover { vec![Event::PointerMoved(pos2(20.0, 20.0))] } else { Vec::new() };
+        let raw = RawInput {
+            screen_rect: Some(Rect::from_min_size(pos2(0.0, 0.0), vec2(400.0, 100.0))),
+            events,
+            focused: true,
+            ..RawInput::default()
+        };
+        let mut actions = Vec::new();
+        let output = ctx.run_ui(raw, |ui| {
+            ui.horizontal(|ui| {
+                rect =
+                    main_icon::draw(ui, &tabs, |_| (running, String::new()), &mut actions).unwrap();
+            });
+        });
+        (rects, circles) = (Vec::new(), Vec::new());
+        for clipped in &output.shapes {
+            fills(&clipped.shape, &mut rects);
+            circle_fills(&clipped.shape, &mut circles);
+        }
+    }
+    (rects, circles, rect)
+}
+
+fn circle_fills(shape: &Shape, out: &mut Vec<egui::Color32>) {
+    match shape {
+        Shape::Circle(circle) => out.push(circle.fill),
+        Shape::Vec(shapes) => shapes.iter().for_each(|shape| circle_fills(shape, out)),
+        _ => {}
+    }
+}
+
+#[test]
+fn the_main_icon_is_a_square_far_narrower_than_a_tab_and_sits_before_the_agent_tabs() {
+    let strip = Strip::new();
+    assert_eq!(strip.rects[0].width(), main_icon::WIDTH);
+    assert_eq!(strip.rects[0].height(), TAB_H);
+    assert!(strip.rects[0].width() * 3.0 < strip.rects[1].width());
+    assert!(strip.rects[0].right() <= strip.rects[1].left());
+    assert_eq!(strip.rects.len(), 4, "the icon and the three shells");
+}
+
+#[test]
+fn a_click_on_the_main_icon_selects_main_and_never_reorders_or_closes() {
+    let mut strip = Strip::new();
+    strip.tabs.apply(Action::Select(2), || unreachable!());
+    strip.frame(Vec::new());
+    strip.seen.clear();
+    let at = strip.center(0);
+    strip.click(at);
+    assert_eq!(strip.seen, [Action::Select(0)]);
+    assert_eq!(strip.tabs.active(), 0);
+    assert_eq!(order(&strip.tabs), [0, 1, 2, 3]);
+}
+
+#[test]
+fn cmd_1_selects_main_and_cmd_2_to_9_select_the_agent_tabs_in_order() {
+    let mut strip = Strip::new();
+    strip.tabs.apply(Action::Select(3), || unreachable!());
+    let nth = |n: usize| Command::SelectTab(n).action();
+    assert_eq!(nth(0), Some(Action::SelectNth(0)));
+    for (key, want) in [(1, 1), (2, 2), (0, 0)] {
+        strip.tabs.apply(nth(key).unwrap(), || unreachable!());
+        assert_eq!(strip.tabs.active(), want, "SelectTab({key})");
+    }
+}
+
+#[test]
+fn the_main_icon_has_the_active_tab_look_only_while_main_is_selected() {
+    let (on, _, _) = main_icon_shapes(true, false, false);
+    assert!(on.contains(&brand::TEAL_NAV) && on.contains(&brand::TEAL), "{on:?}");
+    let (off, _, _) = main_icon_shapes(false, false, false);
+    assert!(!off.contains(&brand::TEAL_NAV) && !off.contains(&brand::TEAL), "{off:?}");
+    let (hovered, _, _) = main_icon_shapes(false, false, true);
+    assert!(hovered.contains(&brand::TEAL_NAV.gamma_multiply(0.6)), "{hovered:?}");
+}
+
+#[test]
+fn a_dot_shows_on_the_main_icon_only_while_its_shell_runs_a_command() {
+    let (_, running, rect) = main_icon_shapes(false, true, false);
+    assert_eq!(running, [brand::SIDEBAR, brand::TEAL]);
+    let body = rect.shrink2(vec2(0.0, TAB_INSET_Y));
+    let dot = main_icon::dot_center(body);
+    assert!(body.contains(dot), "the dot sits on the icon's corner");
+    let (_, idle, _) = main_icon_shapes(false, false, false);
+    assert_eq!(idle, Vec::<egui::Color32>::new());
+}
+
+#[test]
+fn the_main_icon_tip_names_the_repo_the_branch_the_chord_and_a_running_command() {
+    let keys = Command::SelectTab(0).keys();
+    assert_eq!(
+        main_icon::tip("acme-web", Some("feat/auth"), false),
+        format!("main \u{b7} acme-web \u{b7} feat/auth \u{b7} {keys}")
+    );
+    assert_eq!(
+        main_icon::tip("Other: notes", None, true),
+        format!("main \u{b7} Other: notes \u{b7} {keys}\nRunning a command")
+    );
 }

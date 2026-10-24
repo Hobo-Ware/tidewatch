@@ -23,7 +23,7 @@ pub(crate) fn rows(platform: Platform) -> Vec<Row> {
                     let last = last_tab?.chord(platform)?;
                     Some(Row {
                         group: entry.group,
-                        title: "Switch to tab 1 to 9".to_owned(),
+                        title: "Switch to main (1) or tab 2 to 9".to_owned(),
                         keys: range(chord?, last),
                     })
                 }

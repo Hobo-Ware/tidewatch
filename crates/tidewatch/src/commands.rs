@@ -295,7 +295,7 @@ pub(crate) const TABLE: [Entry; 31] = [
         Command::CloseTab,
         (cmd(Key::W), ctrl(Key::W).shift()),
     ),
-    tab("tab-1", "Switch to tab 1", 0, Key::Num1),
+    tab("tab-1", "Switch to main (tab 1)", 0, Key::Num1),
     tab("tab-2", "Switch to tab 2", 1, Key::Num2),
     tab("tab-3", "Switch to tab 3", 2, Key::Num3),
     tab("tab-4", "Switch to tab 4", 3, Key::Num4),
