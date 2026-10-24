@@ -19,6 +19,7 @@ const SEGMENT_H: f32 = 28.0;
 const AGENT_ID: &str = "new-tab-prefs-agent";
 const PLACED: &str = "new-tab-prefs-placed";
 const OPTIONS: &str = "new-tab-prefs-options";
+const NOTE: &str = "The new tab form opens with these; you can still change them per tab. YOLO only runs in an agent worktree tab, so in Other the form opens at Auto.";
 const NO_DEFAULT: &str = "Remote default";
 const RIGHT_PANEL: [(RightPanel, &str); 2] =
     [(RightPanel::Progress, "Progress"), (RightPanel::History, "History")];
@@ -94,14 +95,14 @@ pub(crate) fn card(
         let labels = level_labels();
         let width = segmented::inline_width(ui, &labels);
         let active = prefs.permission.and_then(|level| Level::ALL.iter().position(|l| *l == level));
-        let tones = Level::ALL.map(|level| (level == Level::Yolo).then_some(brand::FAINT));
+        let tones = Level::ALL.map(|level| (level == Level::Yolo).then_some(brand::RED));
         let clicked =
             settings_ui::row(ui, "Permission", "", Control::new(width, SEGMENT_H), |ui| {
                 placed.permission = Some(control_rect(ui, width, SEGMENT_H));
                 let id = ui.id().with("new-tab-prefs-permission");
                 segmented::inline_toned(ui, id, &labels, &tones, active.unwrap_or(usize::MAX))
             });
-        if let Some(index) = clicked.filter(|index| Level::ALL[*index] != Level::Yolo) {
+        if let Some(index) = clicked {
             changed = Some(NewTabPrefs { permission: Some(Level::ALL[index]), ..prefs.clone() });
         }
 
@@ -134,7 +135,7 @@ pub(crate) fn card(
         }
     });
     ui.add_space(8.0);
-    note(ui, "The new tab form opens with these; you can still change them per tab.", brand::FAINT);
+    note(ui, NOTE, brand::FAINT);
     ui.ctx().data_mut(|data| data.insert_temp(placed_id(), placed));
     changed
 }

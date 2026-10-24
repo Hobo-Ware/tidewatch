@@ -188,6 +188,35 @@ mod tests {
         assert_eq!(Workspace::open(&linked).chip_label(), "web-fix");
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn a_real_repo_is_never_other_however_the_folder_is_reached() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("web");
+        let apart = dir.path().join("elsewhere.git");
+        std::fs::create_dir_all(root.join("src")).unwrap();
+        let init = Command::new("git")
+            .arg("-C")
+            .arg(&root)
+            .args(["init", "-q", "--separate-git-dir"])
+            .arg(&apart)
+            .status()
+            .unwrap();
+        assert!(init.success());
+        let link = dir.path().join("web-link");
+        std::os::unix::fs::symlink(&root, &link).unwrap();
+        let cases = [
+            ("the root, with its git dir elsewhere and no commit", root.clone()),
+            ("a subfolder", root.join("src")),
+            ("a symlink to it", link.clone()),
+            ("a subfolder through the symlink", link.join("src")),
+        ];
+        for (name, opened) in cases {
+            assert!(matches!(Workspace::open(&opened), Workspace::Repo(_)), "{name}");
+            assert!(matches!(Workspace::open_in_main_repo(&opened), Workspace::Repo(_)), "{name}");
+        }
+    }
+
     #[test]
     fn discovers_this_repo_from_a_subfolder() {
         let here = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");

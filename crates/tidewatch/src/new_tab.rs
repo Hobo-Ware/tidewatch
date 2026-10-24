@@ -85,9 +85,11 @@ pub(crate) enum Request {
 pub(crate) fn level_refusal(group: Group, agent: &Agent, level: Level) -> Option<String> {
     if agent.level_args(level).is_none() {
         return Some(format!(
-            "{} has no flags for {} in profiles.toml.",
+            "{} has no flags for {}. Add {key} = \"...\" under [agent.{}.permissions] in profiles.toml.",
             agent.name,
-            level.label()
+            level.label(),
+            agent.id,
+            key = format!("{level:?}").to_lowercase(),
         ));
     }
     (level == Level::Yolo && group == Group::Other)
@@ -217,6 +219,7 @@ pub(crate) struct NewTab {
     pub(crate) focus_message: bool,
     pub(crate) scroll_to_selected: bool,
     pub(crate) error: Option<String>,
+    level_note: Option<String>,
 }
 
 impl NewTab {
@@ -252,6 +255,7 @@ impl NewTab {
             focus_message: false,
             scroll_to_selected: true,
             error: None,
+            level_note: None,
         }
     }
 
@@ -348,8 +352,14 @@ impl NewTab {
         {
             self.meeseeks_pick = index;
         }
-        if let Some(level) = self.defaults.permission {
-            self.set_level(level, catalog);
+        if let Some(level) = self.defaults.permission
+            && !self.set_level(level, catalog)
+            && let Some((_, agent)) = self.selected_entry(catalog)
+        {
+            let fallback = opening_level(self.group, agent, Level::Auto);
+            let reason = self.level_note.take().unwrap_or_default();
+            self.level = fallback;
+            self.level_note = Some(format!("{reason} Opened at {} instead.", fallback.label()));
         }
     }
 
@@ -505,21 +515,30 @@ impl NewTab {
 
     fn apply_selection(&mut self, catalog: &Catalog) {
         self.error = None;
+        self.level_note = None;
         self.scroll_to_selected = true;
         if let Some((profile, agent)) = self.selected_entry(catalog) {
             self.level = opening_level(self.group, agent, profile.level);
         }
     }
 
-    /// Picks `level` when it is open for the selected agent. Returns whether it was taken.
+    /// Picks `level` when it is open for the selected agent. Returns whether it was taken; a
+    /// refusal leaves its reason in [`NewTab::level_note`].
     pub(crate) fn set_level(&mut self, level: Level, catalog: &Catalog) -> bool {
         let Some((_, agent)) = self.selected_entry(catalog) else { return false };
-        if level_refusal(self.group, agent, level).is_some() {
+        if let Some(reason) = level_refusal(self.group, agent, level) {
+            self.level_note = Some(reason);
             return false;
         }
         self.level = level;
+        self.level_note = None;
         self.error = None;
         true
+    }
+
+    /// Why the level the person just tried, or the one the form opened without, is not the pick.
+    pub(crate) fn level_note(&self) -> Option<&str> {
+        self.level_note.as_deref()
     }
 
     pub(crate) fn remote(&self) -> bool {
@@ -544,8 +563,11 @@ impl NewTab {
         } else {
             Level::ALL[..at].iter().rev().copied().collect()
         };
-        let next =
-            candidates.into_iter().find(|level| level_refusal(self.group, agent, *level).is_none());
+        let next = candidates
+            .iter()
+            .copied()
+            .find(|level| level_refusal(self.group, agent, *level).is_none())
+            .or_else(|| candidates.first().copied());
         next.is_some_and(|level| self.set_level(level, catalog))
     }
 

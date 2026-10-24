@@ -511,7 +511,10 @@ fn a_custom_agent_can_only_pick_levels_it_has_flags_for() {
     let agent = catalog.table().get("aider").unwrap();
     assert_eq!(
         level_refusal(Group::Repo, agent, Level::Yolo),
-        Some("aider has no flags for YOLO in profiles.toml.".to_owned())
+        Some(
+            "aider has no flags for YOLO. Add yolo = \"...\" under [agent.aider.permissions] in profiles.toml."
+                .to_owned()
+        )
     );
 }
 
@@ -961,4 +964,101 @@ fn a_meeseeks_on_a_cli_that_is_not_installed_still_warns_like_an_agent() {
     let mut state = in_meeseeks_form(&catalog);
     state.select(1, &catalog);
     assert!(state.warnings(&catalog).iter().any(|w| w.contains("not found on PATH")));
+}
+
+#[test]
+fn level_refusal_table() {
+    let catalog = custom_catalog();
+    let claude = catalog.table().get("claude").unwrap();
+    let aider = catalog.table().get("aider").unwrap();
+    let cases = [
+        (Group::Repo, claude, Level::Yolo, None),
+        (Group::Repo, claude, Level::Plan, None),
+        (Group::Other, claude, Level::Auto, None),
+        (
+            Group::Other,
+            claude,
+            Level::Yolo,
+            Some("YOLO only runs in an agent worktree tab, not in Other."),
+        ),
+        (Group::Repo, aider, Level::Ask, None),
+        (
+            Group::Repo,
+            aider,
+            Level::Edits,
+            Some(
+                "aider has no flags for Auto edit. Add edits = \"...\" under [agent.aider.permissions] in profiles.toml.",
+            ),
+        ),
+        (
+            Group::Other,
+            aider,
+            Level::Yolo,
+            Some(
+                "aider has no flags for YOLO. Add yolo = \"...\" under [agent.aider.permissions] in profiles.toml.",
+            ),
+        ),
+    ];
+    for (group, agent, level, want) in cases {
+        assert_eq!(
+            level_refusal(group, agent, level).as_deref(),
+            want,
+            "{group:?} {} {level:?}",
+            agent.id
+        );
+    }
+}
+
+#[test]
+fn a_yolo_default_opens_a_repo_form_at_yolo_with_no_note() {
+    let catalog = catalog();
+    let state = opened_with(defaults(|p| p.permission = Some(Level::Yolo)), None, &catalog);
+    assert_eq!((state.level(), state.level_note()), (Level::Yolo, None));
+}
+
+#[test]
+fn a_yolo_default_opens_the_other_form_at_auto_and_says_why() {
+    let catalog = catalog();
+    let mut state =
+        open(Group::Other, None).with_defaults(defaults(|p| p.permission = Some(Level::Yolo)));
+    state.settle(&catalog);
+    assert_eq!(state.level(), Level::Auto);
+    assert_eq!(
+        state.level_note(),
+        Some("YOLO only runs in an agent worktree tab, not in Other. Opened at Auto instead.")
+    );
+    state.select_id("reviewer", &catalog);
+    assert_eq!(state.level_note(), None, "picking another profile drops the note");
+}
+
+#[test]
+fn trying_a_refused_level_leaves_its_reason_and_a_taken_level_clears_it() {
+    let catalog = catalog();
+    let mut state = in_agent_form(Group::Other, &catalog, None);
+    assert_eq!(state.level_note(), None);
+    assert!(!state.set_level(Level::Yolo, &catalog));
+    assert!(state.level_note().is_some_and(|note| note.contains("not in Other")));
+    assert!(state.set_level(Level::Ask, &catalog));
+    assert_eq!(state.level_note(), None);
+}
+
+#[test]
+fn stepping_onto_a_refused_level_stays_put_and_says_why() {
+    let catalog = catalog();
+    let mut state = in_agent_form(Group::Other, &catalog, None);
+    assert!(state.set_level(Level::Auto, &catalog));
+    assert!(!state.step_level(true, &catalog));
+    assert_eq!(state.level(), Level::Auto);
+    assert!(state.level_note().is_some_and(|note| note.contains("not in Other")));
+    assert!(state.step_level(false, &catalog));
+    assert_eq!(state.level_note(), None);
+}
+
+#[test]
+fn a_custom_agent_without_yolo_flags_says_which_agent_and_where_to_add_them() {
+    let catalog = custom_catalog();
+    let mut state = in_agent_form(Group::Repo, &catalog, Some("aider"));
+    assert!(!state.set_level(Level::Yolo, &catalog));
+    let note = state.level_note().unwrap();
+    assert!(note.contains("[agent.aider.permissions]") && note.contains("yolo = "), "{note}");
 }
