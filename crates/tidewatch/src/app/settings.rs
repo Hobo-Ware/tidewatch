@@ -248,6 +248,7 @@ impl Tidewatch {
             github: self.pr.default_prefs(),
             new_tab: self.new_tab_prefs.clone(),
             tabs: TabsPrefs { park_after: self.parking.after() },
+            git: self.autofetch.prefs(),
             guards: self.guards.clone(),
             guards_repo,
             done_check: DoneCheckPrefs { enabled: self.done_check.enabled() },
@@ -358,6 +359,7 @@ impl Tidewatch {
             }
             Some(settings_view::Action::NewTab(prefs)) => self.set_new_tab_prefs(prefs),
             Some(settings_view::Action::Tabs(prefs)) => self.set_tabs_prefs(prefs),
+            Some(settings_view::Action::Git(prefs)) => self.set_git_prefs(prefs),
             Some(settings_view::Action::DoneCheck(on)) => self.set_done_check(on),
             Some(settings_view::Action::KeepAwake(on)) => self.set_keep_awake(on),
             Some(settings_view::Action::Github(prefs)) => self.set_github_default(prefs),

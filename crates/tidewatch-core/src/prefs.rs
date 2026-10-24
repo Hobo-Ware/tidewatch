@@ -4,7 +4,8 @@
 //! menu-bar item, the panel layout), the `[updates]` table (check for releases, install them) and
 //! the `[github]` table (what a new tab does when its pull request changes) and the `[new_tab]`
 //! table (what the new-tab form opens with), the `[tabs]` table (when a quiet tab is parked) and
-//! the `[terminal]` table (the terminal's font, and whether a finished selection is copied).
+//! the `[terminal]` table (the terminal's font, and whether a finished selection is copied) and
+//! the `[git]` table (fetching open repos in the background).
 //!
 //! A missing or bad file is the defaults, with a stderr note for a bad one: a settings file must
 //! never stop the app.
@@ -51,6 +52,48 @@ pub struct Prefs {
     pub keep_awake: KeepAwakePrefs,
     #[serde(default)]
     pub terminal: TerminalPrefs,
+    #[serde(default)]
+    pub git: GitPrefs,
+}
+
+pub const FETCH_MINUTES: [u32; 6] = [1, 2, 5, 10, 15, 30];
+pub const FETCH_MINUTES_DEFAULT: u32 = 5;
+
+/// Whether open repos are fetched in the background, and how often.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GitPrefs {
+    #[serde(default = "on")]
+    pub background_fetch: bool,
+    #[serde(default = "default_fetch_minutes")]
+    pub fetch_minutes: u32,
+}
+
+fn default_fetch_minutes() -> u32 {
+    FETCH_MINUTES_DEFAULT
+}
+
+impl Default for GitPrefs {
+    fn default() -> Self {
+        Self { background_fetch: true, fetch_minutes: FETCH_MINUTES_DEFAULT }
+    }
+}
+
+impl GitPrefs {
+    /// The offered interval nearest to `minutes`, the shorter one on a tie, so a hand-edited value
+    /// lands on a choice Settings can show.
+    #[must_use]
+    pub fn clamp_minutes(minutes: u32) -> u32 {
+        FETCH_MINUTES
+            .into_iter()
+            .min_by_key(|choice| choice.abs_diff(minutes))
+            .unwrap_or(FETCH_MINUTES_DEFAULT)
+    }
+
+    #[must_use]
+    pub fn interval(self) -> Option<Duration> {
+        self.background_fetch
+            .then(|| Duration::from_mins(u64::from(Self::clamp_minutes(self.fetch_minutes))))
+    }
 }
 
 /// Whether the computer is kept from idle-sleeping while an agent works.
@@ -346,6 +389,7 @@ impl Default for Prefs {
             done_check: DoneCheckPrefs::default(),
             keep_awake: KeepAwakePrefs::default(),
             terminal: TerminalPrefs::default(),
+            git: GitPrefs::default(),
         }
     }
 }
@@ -401,6 +445,7 @@ impl Prefs {
             Self::default()
         });
         prefs.window.height_pct = WindowPrefs::clamp_height(prefs.window.height_pct);
+        prefs.git.fetch_minutes = GitPrefs::clamp_minutes(prefs.git.fetch_minutes);
         prefs
     }
 
@@ -1042,5 +1087,63 @@ mod tests {
         let (_home, paths) = paths();
         write_prefs(&paths, "restore_session = false\n[tabs]\npark_after = \"2h\"\n");
         assert_eq!(Prefs::load(&paths), Prefs::default());
+    }
+
+    #[test]
+    fn background_fetch_is_on_every_five_minutes_until_the_file_says_otherwise() {
+        let (_home, paths) = paths();
+        let defaults = GitPrefs { background_fetch: true, fetch_minutes: 5 };
+        assert_eq!(Prefs::load(&paths).git, defaults);
+        write_prefs(&paths, "restore_session = false\n");
+        assert_eq!(Prefs::load(&paths).git, defaults);
+        write_prefs(&paths, "[git]\nbackground_fetch = false\n");
+        assert_eq!(Prefs::load(&paths).git, GitPrefs { background_fetch: false, ..defaults });
+        write_prefs(&paths, "[git]\nfetch_minutes = 15\n");
+        assert_eq!(Prefs::load(&paths).git, GitPrefs { fetch_minutes: 15, ..defaults });
+    }
+
+    #[test]
+    fn the_git_table_survives_a_save_and_a_save_of_another_table() {
+        let (_home, paths) = paths();
+        let git = GitPrefs { background_fetch: false, fetch_minutes: 30 };
+        Prefs::update(&paths, |p| p.git = git).unwrap();
+        let text = std::fs::read_to_string(paths.prefs_file()).unwrap();
+        assert!(text.contains("[git]\nbackground_fetch = false\nfetch_minutes = 30"), "{text}");
+        Prefs::update(&paths, |p| p.window.quake = false).unwrap();
+        assert_eq!(Prefs::load(&paths).git, git);
+    }
+
+    #[test]
+    fn a_hand_edited_interval_is_held_to_a_choice_on_load() {
+        let (_home, paths) = paths();
+        let cases = [
+            (0_u32, 1),
+            (1, 1),
+            (3, 2),
+            (4, 5),
+            (7, 5),
+            (8, 10),
+            (12, 10),
+            (13, 15),
+            (22, 15),
+            (23, 30),
+            (31, 30),
+            (4_000_000_000, 30),
+        ];
+        for (written, want) in cases {
+            write_prefs(&paths, &format!("[git]\nfetch_minutes = {written}\n"));
+            assert_eq!(Prefs::load(&paths).git.fetch_minutes, want, "{written}");
+        }
+        for choice in FETCH_MINUTES {
+            assert_eq!(GitPrefs::clamp_minutes(choice), choice);
+        }
+    }
+
+    #[test]
+    fn the_interval_is_none_when_the_switch_is_off() {
+        let on = GitPrefs { background_fetch: true, fetch_minutes: 10 };
+        assert_eq!(on.interval(), Some(Duration::from_secs(600)));
+        assert_eq!(GitPrefs { background_fetch: false, ..on }.interval(), None);
+        assert_eq!(GitPrefs { fetch_minutes: 0, ..on }.interval(), Some(Duration::from_secs(60)));
     }
 }
