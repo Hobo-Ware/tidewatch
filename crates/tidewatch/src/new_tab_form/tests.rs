@@ -3,6 +3,7 @@ use std::ffi::OsString;
 use std::path::PathBuf;
 
 use egui::{Event, Modifiers, PointerButton, RawInput, pos2};
+use tidewatch_core::prefs::NewTabPrefs;
 use tidewatch_core::profiles::Profiles;
 use tidewatch_core::workflows::Workflows;
 
@@ -407,6 +408,7 @@ fn parts(placed: &Placed) -> Vec<(&'static str, Rect)> {
     [
         ("lane", placed.lane),
         ("permission", placed.permission),
+        ("level note", placed.level_note),
         ("name", placed.name),
         ("base", placed.base),
         ("message", placed.message),
@@ -807,4 +809,106 @@ fn the_meeseeks_lane_has_one_row_per_cli_the_yolo_line_replaces_the_permission_r
     assert!(yolo.height() > 0.0 && harness.placed().message.unwrap().top() > yolo.bottom());
     harness.press(Key::A);
     assert!(harness.placed().yolo_line.is_none() && harness.placed().permission.is_some());
+}
+
+fn level_center(harness: &Harness, level: Level) -> egui::Pos2 {
+    let control = harness.placed().permission.expect("the permission row");
+    let labels = Level::ALL.map(Level::label);
+    let mut centers = Vec::new();
+    let _ = harness.ctx.run_ui(RawInput::default(), |ui| {
+        let right = control.left() + segmented::inline_width(ui, &labels);
+        centers = segmented::centers(ui, &labels, right, control.center().y);
+    });
+    centers[Level::ALL.iter().position(|l| *l == level).unwrap()]
+}
+
+#[test]
+fn clicking_yolo_in_other_keeps_the_level_and_shows_the_reason_under_the_control() {
+    let mut harness = Harness::new(Group::Other);
+    assert_eq!(harness.placed().level_note, None);
+    let at = level_center(&harness, Level::Yolo);
+    let level = harness.state.level();
+    harness.click(at);
+    harness.frame(Vec::new());
+    assert_eq!(harness.state.level(), level);
+    let note = harness.placed().level_note.expect("the reason shows");
+    let control = harness.placed().permission.unwrap();
+    assert!(note.top() > control.bottom());
+    assert!(harness.state.level_note().is_some_and(|text| text.contains("not in Other")));
+    let at = level_center(&harness, Level::Ask);
+    harness.click(at);
+    harness.frame(Vec::new());
+    assert_eq!(harness.state.level(), Level::Ask);
+    assert_eq!(harness.placed().level_note, None);
+}
+
+#[test]
+fn right_onto_a_refused_yolo_shows_the_reason_and_stays_put() {
+    let mut harness = Harness::unfocused(Group::Other);
+    harness.state.set_level(Level::Auto, &harness.catalog);
+    harness.press(Key::ArrowRight);
+    harness.frame(Vec::new());
+    assert_eq!(harness.state.level(), Level::Auto);
+    assert!(harness.placed().level_note.is_some());
+    harness.press(Key::ArrowLeft);
+    harness.frame(Vec::new());
+    assert_eq!(harness.placed().level_note, None);
+}
+
+#[test]
+fn a_yolo_default_in_other_opens_at_auto_with_the_reason_already_showing() {
+    let mut harness = Harness::new(Group::Other);
+    let defaults = NewTabPrefs { permission: Some(Level::Yolo), ..NewTabPrefs::default() };
+    harness.state =
+        NewTab::open(Group::Other, "web".into(), PathBuf::from("/work/web"), Vec::new(), None, 3)
+            .with_defaults(defaults);
+    harness.state.settle(&harness.catalog);
+    harness.frame(Vec::new());
+    harness.frame(Vec::new());
+    assert_eq!(harness.state.level(), Level::Auto);
+    assert!(harness.placed().level_note.is_some());
+}
+
+#[test]
+fn a_repo_form_has_nothing_refused_so_no_note_and_no_room_for_one() {
+    let repo = Harness::new(Group::Repo);
+    assert_eq!(repo.placed().level_note, None);
+    let other = Harness::new(Group::Other);
+    assert!(
+        other.placed().remote.unwrap().top() > repo.placed().remote.unwrap().top(),
+        "Other keeps one line free for the reason"
+    );
+}
+
+#[test]
+fn the_reason_appearing_moves_nothing_below_it() {
+    let mut harness = Harness::new(Group::Other);
+    let before = harness.placed();
+    let at = level_center(&harness, Level::Yolo);
+    harness.click(at);
+    harness.frame(Vec::new());
+    let after = harness.placed();
+    assert!(after.level_note.is_some());
+    assert_eq!(
+        (before.remote, before.name, before.message),
+        (after.remote, after.name, after.message)
+    );
+}
+
+fn tooltip_shows(harness: &mut Harness, over: Level) -> bool {
+    let at = level_center(harness, over);
+    harness.frame(vec![Event::PointerMoved(at)]);
+    for _ in 0..12 {
+        harness.frame(Vec::new());
+    }
+    harness.ctx.memory(|memory| {
+        memory.areas().visible_layer_ids().into_iter().any(|id| id.order == egui::Order::Tooltip)
+    })
+}
+
+#[test]
+fn hovering_the_greyed_yolo_segment_shows_its_reason_as_a_tooltip_and_an_open_one_shows_none() {
+    assert!(tooltip_shows(&mut Harness::new(Group::Other), Level::Yolo));
+    assert!(!tooltip_shows(&mut Harness::new(Group::Other), Level::Auto));
+    assert!(!tooltip_shows(&mut Harness::new(Group::Repo), Level::Yolo));
 }

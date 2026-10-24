@@ -1,6 +1,8 @@
 //! The segmented control of the window chrome: one bordered container, the active segment filled with a teal tint.
 
-use egui::{Align2, Color32, CornerRadius, Id, Rect, Sense, Stroke, StrokeKind, Ui, pos2, vec2};
+use egui::{
+    Align2, Color32, CornerRadius, Id, Rect, Response, Sense, Stroke, StrokeKind, Ui, pos2, vec2,
+};
 
 use crate::brand;
 use crate::screen_kit::{body, mono};
@@ -42,11 +44,26 @@ pub(crate) struct Output {
     pub(crate) segments: Vec<Rect>,
 }
 
-/// What each segment says: its label, optionally a key cap after it, optionally an ink of its own.
+/// What each segment says: its label, optionally a key cap after it, optionally an ink of its own,
+/// optionally the reason it cannot be picked (the segment is dimmed and the reason is its tooltip).
 struct Look<'a> {
     labels: &'a [&'a str],
     keys: &'a [&'a str],
     tones: &'a [Option<Color32>],
+    refused: &'a [Option<String>],
+}
+
+fn refusal(refused: &[Option<String>], index: usize) -> Option<&str> {
+    refused.get(index).and_then(Option::as_deref)
+}
+
+fn pointer_over(response: Response, reason: Option<&str>) -> Response {
+    match reason {
+        Some(reason) => {
+            response.on_hover_text(reason).on_hover_cursor(egui::CursorIcon::NotAllowed)
+        }
+        None => response.on_hover_cursor(egui::CursorIcon::PointingHand),
+    }
 }
 
 fn paint_segments(
@@ -56,7 +73,7 @@ fn paint_segments(
     look: &Look,
     active: usize,
 ) -> Option<usize> {
-    let Look { labels, keys, tones } = *look;
+    let Look { labels, keys, tones, refused } = *look;
     let painter = ui.painter().clone();
     painter.rect(
         container,
@@ -72,11 +89,13 @@ fn paint_segments(
         if on {
             painter.rect_filled(rect, 5.0, brand::SEGMENT_ON);
         }
+        let reason = refusal(refused, index);
         let tone = tones.get(index).copied().flatten();
-        let ink = match (on, response.hovered()) {
-            (true, _) => tone.unwrap_or(brand::TEAL_TEXT),
-            (false, true) => brand::TEXT,
-            (false, false) => tone.unwrap_or(brand::SOFT),
+        let ink = match (on, reason.is_some(), response.hovered()) {
+            (true, _, _) => tone.unwrap_or(brand::TEAL_TEXT),
+            (false, true, _) => brand::FAINT,
+            (false, false, true) => brand::TEXT,
+            (false, false, false) => tone.unwrap_or(brand::SOFT),
         };
         match keys.get(index) {
             Some(key) => {
@@ -89,7 +108,7 @@ fn paint_segments(
                 painter.text(rect.center(), Align2::CENTER_CENTER, *label, body(FONT), ink);
             }
         }
-        if response.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() && !on {
+        if pointer_over(response, reason).clicked() && !on {
             clicked = Some(index);
         }
     }
@@ -117,7 +136,13 @@ pub(crate) fn show(
     let placed = rects(right, center_y, &text_widths(ui, labels));
     let left = placed.0.left();
     let segments = placed.1.clone();
-    let clicked = paint_segments(ui, id, placed, &Look { labels, keys: &[], tones: &[] }, active);
+    let clicked = paint_segments(
+        ui,
+        id,
+        placed,
+        &Look { labels, keys: &[], tones: &[], refused: &[] },
+        active,
+    );
     Output { clicked, left, segments }
 }
 
@@ -143,8 +168,13 @@ pub(crate) fn show_keyed(
     let placed = rects(right, center_y, &widths);
     let left = placed.0.left();
     let segments = placed.1.clone();
-    let clicked =
-        paint_segments(ui, id, placed, &Look { labels: &labels, keys: &keys, tones: &[] }, active);
+    let clicked = paint_segments(
+        ui,
+        id,
+        placed,
+        &Look { labels: &labels, keys: &keys, tones: &[], refused: &[] },
+        active,
+    );
     Output { clicked, left, segments }
 }
 
@@ -172,11 +202,22 @@ pub(crate) fn inline_toned(
     tones: &[Option<Color32>],
     active: usize,
 ) -> Option<usize> {
+    inline_gated(ui, id, labels, tones, &[], active)
+}
+
+fn inline_gated(
+    ui: &mut Ui,
+    id: Id,
+    labels: &[&str],
+    tones: &[Option<Color32>],
+    refused: &[Option<String>],
+    active: usize,
+) -> Option<usize> {
     let text = text_widths(ui, labels);
     let width = rects(0.0, 0.0, &text).0.width();
     let (slot, _) = ui.allocate_exact_size(vec2(width, HEIGHT), Sense::hover());
     let placed = rects(slot.right(), slot.center().y, &text);
-    paint_segments(ui, id, placed, &Look { labels, keys: &[], tones }, active)
+    paint_segments(ui, id, placed, &Look { labels, keys: &[], tones, refused }, active)
 }
 
 /// Where each chip of widths `widths` goes in rows of at most `avail`, and the height the rows take.
@@ -196,7 +237,7 @@ fn flow(widths: &[f32], avail: f32) -> (Vec<Rect>, f32) {
 
 /// Chips that wrap onto more rows, for a choice with more options than a segmented control holds.
 pub(crate) fn wrap_chips(ui: &mut Ui, id: Id, labels: &[&str], active: usize) -> Option<usize> {
-    chips(ui, id, labels, &[], active)
+    chips(ui, id, labels, &[], &[], active)
 }
 
 fn chip_widths(ui: &Ui, labels: &[&str]) -> Vec<f32> {
@@ -211,18 +252,21 @@ pub(crate) fn inline_or_chips_height(ui: &Ui, labels: &[&str], avail: f32) -> f3
     if fits_inline(ui, labels, avail) { HEIGHT } else { flow(&chip_widths(ui, labels), avail).1 }
 }
 
-/// The segmented control when it fits the row, else chips that wrap; `tones` give a segment its own ink.
+/// The segmented control when it fits the row, else chips that wrap; `tones` give a segment its own
+/// ink, and a segment with a `refused` reason is dimmed and says it on hover. A refused segment still
+/// reports its click, so the caller can show the reason.
 pub(crate) fn inline_or_chips(
     ui: &mut Ui,
     id: Id,
     labels: &[&str],
     tones: &[Option<Color32>],
+    refused: &[Option<String>],
     active: usize,
 ) -> Option<usize> {
     if fits_inline(ui, labels, ui.available_width()) {
-        inline_toned(ui, id, labels, tones, active)
+        inline_gated(ui, id, labels, tones, refused, active)
     } else {
-        chips(ui, id, labels, tones, active)
+        chips(ui, id, labels, tones, refused, active)
     }
 }
 
@@ -231,6 +275,7 @@ fn chips(
     id: Id,
     labels: &[&str],
     tones: &[Option<Color32>],
+    refused: &[Option<String>],
     active: usize,
 ) -> Option<usize> {
     let widths = chip_widths(ui, labels);
@@ -248,14 +293,16 @@ fn chips(
             (brand::SEGMENT, brand::SEGMENT_LINE)
         };
         painter.rect(rect, CornerRadius::same(7), fill, Stroke::new(1.0, line), StrokeKind::Inside);
+        let reason = refusal(refused, index);
         let tone = tones.get(index).copied().flatten();
-        let ink = match (on, response.hovered()) {
-            (true, _) => tone.unwrap_or(brand::TEAL_TEXT),
-            (false, true) => brand::TEXT,
-            (false, false) => tone.unwrap_or(brand::SOFT),
+        let ink = match (on, reason.is_some(), response.hovered()) {
+            (true, _, _) => tone.unwrap_or(brand::TEAL_TEXT),
+            (false, true, _) => brand::FAINT,
+            (false, false, true) => brand::TEXT,
+            (false, false, false) => tone.unwrap_or(brand::SOFT),
         };
         painter.text(rect.center(), Align2::CENTER_CENTER, *label, body(FONT), ink);
-        if response.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() && !on {
+        if pointer_over(response, reason).clicked() && !on {
             clicked = Some(index);
         }
     }

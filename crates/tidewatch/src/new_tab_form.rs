@@ -46,6 +46,7 @@ pub(crate) enum Out {
 pub(crate) struct Placed {
     pub(crate) lane: Option<Rect>,
     pub(crate) permission: Option<Rect>,
+    pub(crate) level_note: Option<Rect>,
     pub(crate) yolo_line: Option<Rect>,
     pub(crate) remote: Option<Rect>,
     pub(crate) remote_switch: Option<Rect>,
@@ -248,9 +249,26 @@ fn message_hint(state: &NewTab) -> &'static str {
     }
 }
 
-fn refusal_note(state: &NewTab, catalog: &Catalog) -> Option<String> {
-    let (_, agent) = state.selected_entry(catalog)?;
-    Level::ALL.iter().find_map(|level| level_refusal(state.group(), agent, *level))
+fn any_level_refused(state: &NewTab, catalog: &Catalog) -> bool {
+    state.selected_entry(catalog).is_some_and(|(_, agent)| {
+        Level::ALL.iter().any(|level| level_refusal(state.group(), agent, *level).is_some())
+    })
+}
+
+fn note_height(ui: &Ui, note: Option<&str>, reserved: bool, width: f32) -> f32 {
+    if note.is_none() && !reserved {
+        return 0.0;
+    }
+    let line = wrapped(ui, "M", 12.0, brand::MUTED, width).size().y;
+    let shown = note.map_or(0.0, |note| wrapped(ui, note, 12.0, brand::MUTED, width).size().y);
+    NOTE_GAP + shown.max(line)
+}
+
+/// Whether the line under the permission control has room kept for a reason.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum NoteRoom {
+    None,
+    OneLine,
 }
 
 /// What the pane shows this frame, gathered once so that measuring and drawing agree.
@@ -259,7 +277,8 @@ struct Content<'a> {
     stages: Vec<StageCard>,
     stage_name: String,
     warnings: Vec<String>,
-    refusal: Option<String>,
+    level_note: Option<String>,
+    level_room: NoteRoom,
     problem: bool,
     has_permission: bool,
     yolo_line: bool,
@@ -279,7 +298,12 @@ impl<'a> Content<'a> {
             stages,
             stage_name,
             warnings: state.warnings(catalog),
-            refusal: refusal_note(state, catalog),
+            level_note: state.level_note().map(str::to_owned),
+            level_room: if any_level_refused(state, catalog) {
+                NoteRoom::OneLine
+            } else {
+                NoteRoom::None
+            },
             problem: !state.name_check(facts).is_fine(),
             has_permission: state.selected_entry(catalog).is_some(),
             yolo_line: state.kind() == Kind::Meeseeks,
@@ -296,9 +320,12 @@ impl<'a> Content<'a> {
             let control =
                 segmented::inline_or_chips_height(ui, &Level::ALL.map(Level::label), width);
             let description = wrapped(ui, level_hint(self.state.level()), 13.0, brand::SOFT, width);
-            let note = self.refusal.as_deref().map_or(0.0, |note| {
-                NOTE_GAP + wrapped(ui, note, 12.0, brand::MUTED, width).size().y
-            });
+            let note = note_height(
+                ui,
+                self.level_note.as_deref(),
+                self.level_room == NoteRoom::OneLine,
+                width,
+            );
             above.permission =
                 LABEL_H + CAPTION_GAP + control + DESCRIPTION_GAP + description.size().y + note;
         }
@@ -433,7 +460,8 @@ fn pane(
     let stages = content.stages.clone();
     let stage_name = content.stage_name.clone();
     let warnings = content.warnings.clone();
-    let refusal = content.refusal.clone();
+    let level_note = content.level_note.clone();
+    let level_reserved = content.level_room == NoteRoom::OneLine;
     let has_permission = content.has_permission;
     let yolo_line = content.yolo_line;
     let remote = content.remote.clone();
@@ -452,7 +480,10 @@ fn pane(
                 ui.add_space(SECTION_GAP);
             }
             if has_permission {
-                placed.permission = permission(ui, state, catalog, refusal.as_deref());
+                let (control, note) =
+                    permission(ui, state, catalog, level_note.as_deref(), level_reserved);
+                placed.permission = control;
+                placed.level_note = note;
                 ui.add_space(SECTION_GAP);
             }
             if yolo_line {
@@ -550,8 +581,9 @@ fn permission(
     state: &mut NewTab,
     catalog: &Catalog,
     note: Option<&str>,
-) -> Option<Rect> {
-    let (_, agent) = state.selected_entry(catalog)?;
+    reserved: bool,
+) -> (Option<Rect>, Option<Rect>) {
+    let Some((_, agent)) = state.selected_entry(catalog) else { return (None, None) };
     let width = ui.available_width();
     section_label(ui, "Permission");
     ui.add_space(CAPTION_GAP);
@@ -560,7 +592,14 @@ fn permission(
     let active = Level::ALL.iter().position(|level| *level == state.level()).unwrap_or(0);
     let refusals = Level::ALL.map(|level| level_refusal(state.group(), agent, level));
     let top = ui.cursor().top();
-    let picked = segmented::inline_or_chips(ui, Id::new("new_tab_level"), &labels, &tones, active);
+    let picked = segmented::inline_or_chips(
+        ui,
+        Id::new("new_tab_level"),
+        &labels,
+        &tones,
+        &refusals,
+        active,
+    );
     let control = Rect::from_min_max(
         pos2(ui.min_rect().left(), top),
         pos2(ui.min_rect().left() + width, ui.cursor().top()),
@@ -573,18 +612,21 @@ fn permission(
     let flags = agent.level_args(state.level()).map(|args| args.join(" ")).unwrap_or_default();
     let tip = if flags.is_empty() { text.to_owned() } else { format!("{text}\nAdds {flags}") };
     response.on_hover_text(tip);
-    if let Some(note) = note {
+    let mut note_rect = None;
+    let height = note_height(ui, note, reserved, width);
+    if height > 0.0 {
         ui.add_space(NOTE_GAP);
-        let galley = wrapped(ui, note, 12.0, brand::MUTED, width);
-        let (rect, _) = ui.allocate_exact_size(vec2(width, galley.size().y), Sense::hover());
-        ui.painter().galley(rect.min, galley, brand::MUTED);
+        let (rect, _) = ui.allocate_exact_size(vec2(width, height - NOTE_GAP), Sense::hover());
+        if let Some(note) = note {
+            let galley = wrapped(ui, note, 12.0, brand::MUTED, width);
+            ui.painter().galley(rect.min, galley, brand::MUTED);
+            note_rect = Some(rect);
+        }
     }
-    if let Some(index) = picked
-        && refusals[index].is_none()
-    {
+    if let Some(index) = picked {
         state.set_level(Level::ALL[index], catalog);
     }
-    Some(control)
+    (Some(control), note_rect)
 }
 
 fn fields(ui: &mut Ui, state: &mut NewTab, facts: Option<&RepoFacts>) -> Option<(Rect, Rect)> {

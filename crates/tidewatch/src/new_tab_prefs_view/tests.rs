@@ -93,11 +93,11 @@ fn the_card_draws_every_row_and_changes_nothing_by_itself() {
 }
 
 #[test]
-fn each_permission_segment_but_yolo_becomes_the_default() {
-    for (index, level) in
-        [Level::Plan, Level::Ask, Level::Edits, Level::Auto].into_iter().enumerate()
-    {
-        let mut harness = Harness::new(NewTabPrefs::default());
+fn each_permission_segment_becomes_the_default() {
+    for (index, level) in Level::ALL.into_iter().enumerate() {
+        let start = if level == Level::Plan { Level::Auto } else { Level::Plan };
+        let mut harness =
+            Harness::new(NewTabPrefs { permission: Some(start), ..NewTabPrefs::default() });
         let control = harness.placed().permission.unwrap();
         let changed = harness.click_segment(control, &levels(), index);
         assert_eq!(
@@ -108,12 +108,18 @@ fn each_permission_segment_but_yolo_becomes_the_default() {
 }
 
 #[test]
-fn yolo_is_shown_but_cannot_be_picked_as_a_default() {
-    let mut harness =
-        Harness::new(NewTabPrefs { permission: Some(Level::Edits), ..NewTabPrefs::default() });
+fn yolo_can_be_picked_as_the_default_and_the_card_shows_it_active() {
+    let mut harness = Harness::new(NewTabPrefs::default());
     let control = harness.placed().permission.unwrap();
-    assert_eq!(harness.click_segment(control, &levels(), 4), None);
-    assert!(levels().contains(&"YOLO"));
+    let changed = harness.click_segment(control, &levels(), 4);
+    assert_eq!(
+        changed,
+        Some(NewTabPrefs { permission: Some(Level::Yolo), ..NewTabPrefs::default() })
+    );
+    let mut on =
+        Harness::new(NewTabPrefs { permission: Some(Level::Yolo), ..NewTabPrefs::default() });
+    let control = on.placed().permission.unwrap();
+    assert_eq!(on.click_segment(control, &levels(), 4), None, "it is the active one already");
 }
 
 #[test]

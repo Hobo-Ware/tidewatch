@@ -12,7 +12,7 @@
 use std::path::Path;
 use std::time::Duration;
 
-use serde::{Deserialize, Deserializer, Serialize};
+use serde::{Deserialize, Serialize};
 
 use crate::agents::Level;
 use crate::fsutil::write_atomic;
@@ -149,9 +149,9 @@ pub struct NewTabPrefs {
     /// A `profiles.toml` key. Without one the form opens on the profile used last.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub agent: Option<String>,
-    /// Without one the form opens at the profile's own level. YOLO cannot be a default: a file
-    /// that names it is read as `edits`.
-    #[serde(default, skip_serializing_if = "Option::is_none", deserialize_with = "default_level")]
+    /// Without one the form opens at the profile's own level. YOLO can be the default; where YOLO
+    /// is refused (Other, an agent with no YOLO flags) the form opens at Auto and says so.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub permission: Option<Level>,
     #[serde(default)]
     pub remote: bool,
@@ -174,18 +174,6 @@ impl NewTabPrefs {
     pub fn start_from(&self) -> StartFrom {
         self.start.unwrap_or_default()
     }
-}
-
-fn default_level<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Option<Level>, D::Error> {
-    let level = Option::<Level>::deserialize(deserializer)?;
-    Ok(level.map(|level| {
-        if level == Level::Yolo {
-            eprintln!("tidewatch: settings.toml [new_tab] permission cannot be yolo; using edits");
-            Level::Edits
-        } else {
-            level
-        }
-    }))
 }
 
 /// What a tab does when GitHub reports something about its pull request: `ask` shows a card with
@@ -699,6 +687,10 @@ mod tests {
                 "permission = \"auto\"",
                 NewTabPrefs { permission: Some(Level::Auto), ..NewTabPrefs::default() },
             ),
+            (
+                "permission = \"yolo\"",
+                NewTabPrefs { permission: Some(Level::Yolo), ..NewTabPrefs::default() },
+            ),
             ("remote = true", NewTabPrefs { remote: true, ..NewTabPrefs::default() }),
             (
                 "start_base = \"current\"",
@@ -762,12 +754,16 @@ mod tests {
     }
 
     #[test]
-    fn a_yolo_default_is_read_as_auto_edit() {
+    fn a_yolo_default_is_read_and_saved_as_yolo() {
         let (_home, paths) = paths();
         write_prefs(&paths, "[new_tab]\npermission = \"yolo\"\nremote = true\n");
         let new_tab = Prefs::load(&paths).new_tab;
-        assert_eq!(new_tab.permission, Some(Level::Edits));
+        assert_eq!(new_tab.permission, Some(Level::Yolo));
         assert!(new_tab.remote, "the rest of the table is kept");
+        Prefs::update(&paths, |p| p.new_tab.remote = false).unwrap();
+        let text = std::fs::read_to_string(paths.prefs_file()).unwrap();
+        assert!(text.contains("permission = \"yolo\""), "{text}");
+        assert_eq!(Prefs::load(&paths).new_tab.permission, Some(Level::Yolo));
     }
 
     #[test]
