@@ -26,6 +26,11 @@ impl Workspace {
         )
     }
 
+    /// Like [`Workspace::open`], but a linked worktree opens as the repo it belongs to.
+    pub(crate) fn open_in_main_repo(path: &Path) -> Self {
+        Repo::discover_main(path).map_or_else(|| Self::open(path), Self::Repo)
+    }
+
     pub(crate) fn dir(&self) -> &Path {
         match self {
             Self::Repo(repo) => &repo.root,
@@ -60,6 +65,32 @@ impl Repo {
         Self::from_toplevel(&String::from_utf8_lossy(&out.stdout))
     }
 
+    /// The repo a folder belongs to, where a linked worktree counts as its main repo.
+    pub(crate) fn discover_main(path: &Path) -> Option<Self> {
+        let dir = if path.is_dir() { path } else { path.parent()? };
+        let out = Command::new("git")
+            .arg("-C")
+            .arg(dir)
+            .args(["rev-parse", "--path-format=absolute", "--show-toplevel", "--git-common-dir"])
+            .output()
+            .ok()?;
+        if !out.status.success() {
+            return None;
+        }
+        Self::from_main_output(&String::from_utf8_lossy(&out.stdout))
+    }
+
+    fn from_main_output(output: &str) -> Option<Self> {
+        let mut lines = output.lines();
+        let toplevel = lines.next()?;
+        let common = PathBuf::from(lines.next()?);
+        let root = match common.file_name() {
+            Some(name) if name == ".git" => common.parent()?.to_string_lossy().into_owned(),
+            _ => toplevel.to_owned(),
+        };
+        Self::from_toplevel(&root)
+    }
+
     fn from_toplevel(output: &str) -> Option<Self> {
         let root = PathBuf::from(output.trim());
         let label = root.file_name()?.to_string_lossy().into_owned();
@@ -76,6 +107,21 @@ mod tests {
         let repo = Repo::from_toplevel("/Users/me/Git/kelp\n").unwrap();
         assert_eq!(repo.label, "kelp");
         assert_eq!(repo.root, PathBuf::from("/Users/me/Git/kelp"));
+    }
+
+    #[test]
+    fn a_linked_worktree_belongs_to_the_repo_that_holds_its_git_dir() {
+        let cases = [
+            ("a repo root or subfolder", "/w/web\n/w/web/.git\n", "/w/web"),
+            ("a linked worktree", "/w/web-fix\n/w/web/.git\n", "/w/web"),
+            ("a submodule", "/w/web/lib\n/w/web/.git/modules/lib\n", "/w/web/lib"),
+            ("a repo with its git dir elsewhere", "/w/web\n/g/web.git\n", "/w/web"),
+        ];
+        for (name, output, want) in cases {
+            let repo = Repo::from_main_output(output).unwrap();
+            assert_eq!(repo.root, PathBuf::from(want), "{name}");
+        }
+        assert_eq!(Repo::from_main_output("\n"), None);
     }
 
     #[test]
@@ -111,6 +157,35 @@ mod tests {
         let workspace = Workspace::open(&root);
         assert!(matches!(workspace, Workspace::Repo(_)));
         assert_eq!(workspace.chip_label(), "web");
+    }
+
+    #[test]
+    fn a_linked_worktree_and_a_subfolder_open_as_the_main_repo() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("web");
+        let linked = dir.path().join("web-fix");
+        std::fs::create_dir_all(root.join("src")).unwrap();
+        let git = |args: &[&str]| {
+            let status = Command::new("git")
+                .arg("-C")
+                .arg(&root)
+                .args(["-c", "user.name=t", "-c", "user.email=t@t"])
+                .args(args)
+                .status()
+                .unwrap();
+            assert!(status.success(), "git {args:?}");
+        };
+        git(&["init", "-q"]);
+        git(&["commit", "-q", "--allow-empty", "-m", "init"]);
+        git(&["worktree", "add", "-q", linked.to_str().unwrap(), "-b", "fix"]);
+        std::fs::create_dir(linked.join("lib")).unwrap();
+        let main = std::fs::canonicalize(&root).unwrap();
+        for opened in [&root, &root.join("src"), &linked, &linked.join("lib")] {
+            let workspace = Workspace::open_in_main_repo(opened);
+            assert_eq!(std::fs::canonicalize(workspace.dir()).unwrap(), main, "{opened:?}");
+            assert_eq!(workspace.chip_label(), "web");
+        }
+        assert_eq!(Workspace::open(&linked).chip_label(), "web-fix");
     }
 
     #[test]
