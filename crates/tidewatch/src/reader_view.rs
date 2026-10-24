@@ -67,6 +67,9 @@ pub(crate) struct ViewState {
     content_h: f32,
     seen_rows: u64,
     stick_pending: bool,
+    last_pass: Option<u64>,
+    #[cfg(test)]
+    settled_at: (f32, f32),
     live: Option<Live>,
     quick: Option<(u64, Vec<Quick>)>,
     quick_used: Option<u64>,
@@ -88,6 +91,9 @@ impl Default for ViewState {
             content_h: 0.0,
             seen_rows: 0,
             stick_pending: true,
+            last_pass: None,
+            #[cfg(test)]
+            settled_at: (0.0, 0.0),
             live: None,
             quick: None,
             quick_used: None,
@@ -148,6 +154,8 @@ pub(crate) enum Prompt {
 /// What the Reader needs to know about the tab beyond its rows.
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct Facts<'a> {
+    /// The tab's stable id: each tab keeps its own scroll position.
+    pub(crate) tab: u64,
     pub(crate) source: Option<Source>,
     pub(crate) prompt: Option<Prompt>,
     /// Set while the tab waits for its first message: the empty state and the composer show.
@@ -343,6 +351,11 @@ pub(crate) fn show(
 ) -> Vec<Action> {
     let mut actions = Vec::new();
     ui.painter().rect_filled(rect, 0.0, brand::GROUND);
+    let pass = ui.ctx().cumulative_pass_nr();
+    if reader_scroll::returned(state.last_pass, pass) && state.scroll.following() {
+        state.stick_pending = true;
+    }
+    state.last_pass = Some(pass);
     let shown = live_row(rows, facts.turn);
     sync_live(state, shown);
     let live_seq = state.live.as_ref().map(|live| live.seq);
@@ -402,7 +415,7 @@ pub(crate) fn show(
         body,
         rows,
         state,
-        (facts.root, facts.pr),
+        (facts.tab, facts.root, facts.pr),
         facts.review.as_ref(),
         (live_seq, &quick, facts.profile),
         (facts.face, facts.turn == Turn::Running, facts.prompt == Some(Prompt::Permission)),
@@ -449,7 +462,7 @@ fn transcript(
     body: Rect,
     rows: &Rows,
     state: &mut ViewState,
-    (root, pr): (Option<&Path>, Option<PrData<'_>>),
+    (tab, root, pr): (u64, Option<&Path>, Option<PrData<'_>>),
     review: Option<&ReviewFacts<'_>>,
     (live_seq, quick, profile): (Option<u64>, &[Quick], &str),
     (face, running, waiting): (Option<&Face>, bool, bool),
@@ -489,9 +502,10 @@ fn transcript(
     let (_, _, layout) = turns.as_ref()?;
     let scene = Scene { root, profile, face, zone, now_ms: now_ms(), running, waiting };
     let mut body_ui = ui.new_child(UiBuilder::new().max_rect(body));
-    let out = ScrollArea::vertical().id_salt("reader-scroll").auto_shrink([false, false]).show(
-        &mut body_ui,
-        |ui| {
+    let out = ScrollArea::vertical()
+        .id_salt(("reader-scroll", tab))
+        .auto_shrink([false, false])
+        .show(&mut body_ui, |ui| {
             ui.add_space(8.0);
             if rows.dropped() > 0 {
                 let text = format!("{} earlier entries are not shown", rows.dropped());
@@ -621,10 +635,13 @@ fn transcript(
             if scroll_down {
                 ui.scroll_to_cursor_animation(Some(Align::BOTTOM), ScrollAnimation::none());
             }
-        },
-    );
+        });
     let max_offset = (out.content_size.y - out.inner_rect.height()).max(0.0);
     state.scroll.settle(out.state.offset.y, max_offset);
+    #[cfg(test)]
+    {
+        state.settled_at = (out.state.offset.y, max_offset);
+    }
     if (out.content_size.y - state.content_h).abs() > 0.5 {
         state.content_h = out.content_size.y;
         state.stick_pending = true;
@@ -1062,6 +1079,7 @@ mod tests {
                     rows,
                     &mut state,
                     Facts {
+                        tab: 1,
                         source: None,
                         prompt: None,
                         ready: None,
@@ -1119,6 +1137,7 @@ mod tests {
             let _ = ctx.run_ui(raw.clone(), |ui| {
                 let rect = ui.max_rect();
                 let facts = Facts {
+                    tab: 1,
                     source: Some(Source::Claude),
                     prompt: Some(Prompt::Permission),
                     ready: None,
@@ -1196,6 +1215,7 @@ mod tests {
                         keys_free: true,
                     };
                     let facts = Facts {
+                        tab: 1,
                         source: None,
                         prompt: None,
                         ready,
@@ -1391,6 +1411,7 @@ mod tests {
                     keys_free: true,
                 };
                 let facts = Facts {
+                    tab: 1,
                     source: None,
                     prompt: None,
                     ready: None,
@@ -1416,6 +1437,7 @@ mod tests {
 
     fn facts<'a>(prompt: Option<Prompt>, turn: Turn) -> Facts<'a> {
         Facts {
+            tab: 1,
             source: Some(Source::Claude),
             prompt,
             ready: None,
@@ -1717,5 +1739,129 @@ mod tests {
         let mut state = ViewState::default();
         let actions = draw(&rows, &mut state, facts(Some(Prompt::Permission), Turn::Running));
         assert_eq!(actions, Vec::<Action>::new());
+    }
+
+    fn conversation(turns: usize, words: usize) -> Rows {
+        use tidewatch_core::transcript::{Entry, Role};
+        let mut rows = Rows::default();
+        for n in 0..turns {
+            let ask = format!("question {n}");
+            rows.push(Entry { role: Role::User, text: ask, tool: None, ts: None });
+            let text = format!("answer {n}: {}", "word ".repeat(words + n % 7 * 30));
+            rows.push(Entry { role: Role::Assistant, text, tool: None, ts: None });
+        }
+        rows
+    }
+
+    struct Readers {
+        ctx: egui::Context,
+        time: f64,
+    }
+
+    impl Readers {
+        fn new() -> Self {
+            Self { ctx: crate::fonts::test_context(), time: 0.0 }
+        }
+
+        fn frame(&mut self, tab: u64, rows: &Rows, state: &mut ViewState, events: Vec<Event>) {
+            self.time += 0.016;
+            let raw = RawInput {
+                screen_rect: Some(Rect::from_min_size(pos2(0.0, 0.0), vec2(800.0, 500.0))),
+                events,
+                focused: true,
+                time: Some(self.time),
+                ..RawInput::default()
+            };
+            let _ = self.ctx.run_ui(raw, |ui| {
+                let rect = ui.max_rect();
+                let facts = Facts { tab, ..facts(None, Turn::Finished) };
+                let _ = show(ui, rect, rows, state, facts);
+            });
+        }
+
+        fn hidden(&mut self) {
+            self.time += 0.016;
+            let raw = RawInput {
+                screen_rect: Some(Rect::from_min_size(pos2(0.0, 0.0), vec2(800.0, 500.0))),
+                focused: true,
+                time: Some(self.time),
+                ..RawInput::default()
+            };
+            let _ = self.ctx.run_ui(raw, |_| {});
+        }
+
+        fn show(&mut self, tab: u64, rows: &Rows, state: &mut ViewState) {
+            for _ in 0..12 {
+                self.frame(tab, rows, state, vec![]);
+            }
+        }
+
+        fn scroll_up(&mut self, tab: u64, rows: &Rows, state: &mut ViewState) {
+            self.frame(tab, rows, state, vec![Event::PointerMoved(pos2(300.0, 200.0))]);
+            let wheel = Event::MouseWheel {
+                unit: egui::MouseWheelUnit::Point,
+                delta: vec2(0.0, 400.0),
+                phase: egui::TouchPhase::Move,
+                modifiers: Modifiers::NONE,
+            };
+            self.frame(tab, rows, state, vec![wheel]);
+            for _ in 0..4 {
+                self.show(tab, rows, state);
+            }
+            self.frame(tab, rows, state, vec![Event::PointerGone]);
+        }
+    }
+
+    fn at_bottom(state: &ViewState) -> bool {
+        let (offset, max) = state.settled_at;
+        max > 0.0 && (max - offset).abs() < 1.0
+    }
+
+    #[test]
+    fn a_tab_opens_at_its_newest_message_when_you_switch_to_it() {
+        let mut readers = Readers::new();
+        let (short, long) = (conversation(8, 40), conversation(30, 60));
+        let (mut a, mut b) = (ViewState::default(), ViewState::default());
+        readers.show(1, &short, &mut a);
+        readers.show(2, &long, &mut b);
+        assert!(at_bottom(&b), "{:?}", b.settled_at);
+        readers.show(1, &short, &mut a);
+        assert!(at_bottom(&a), "{:?}", a.settled_at);
+        readers.show(2, &long, &mut b);
+        assert!(at_bottom(&b), "{:?}", b.settled_at);
+        assert!(b.scroll.following());
+        readers.show(1, &short, &mut a);
+        assert!(at_bottom(&a), "{:?}", a.settled_at);
+    }
+
+    #[test]
+    fn a_tab_scrolled_up_keeps_its_place_when_you_switch_away_and_back() {
+        let mut readers = Readers::new();
+        let (first, second) = (conversation(30, 60), conversation(12, 50));
+        let (mut a, mut b) = (ViewState::default(), ViewState::default());
+        readers.show(1, &first, &mut a);
+        readers.scroll_up(1, &first, &mut a);
+        assert!(!a.scroll.following());
+        let (kept, max) = a.settled_at;
+        assert!(kept < max - 100.0, "{:?}", a.settled_at);
+        readers.show(2, &second, &mut b);
+        assert!(at_bottom(&b), "{:?}", b.settled_at);
+        readers.show(1, &first, &mut a);
+        assert!(!a.scroll.following());
+        assert_eq!(a.settled_at.0, kept);
+    }
+
+    #[test]
+    fn a_following_tab_is_at_the_bottom_after_the_reader_was_hidden_for_a_while() {
+        let mut readers = Readers::new();
+        let (rows, mut state) = (conversation(20, 60), ViewState::default());
+        readers.show(1, &rows, &mut state);
+        assert!(at_bottom(&state), "{:?}", state.settled_at);
+        for _ in 0..5 {
+            readers.hidden();
+        }
+        readers.frame(1, &rows, &mut state, vec![]);
+        assert!(at_bottom(&state), "{:?}", state.settled_at);
+        assert!(state.scroll.following());
     }
 }
