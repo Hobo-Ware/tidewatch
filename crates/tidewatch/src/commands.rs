@@ -2,6 +2,7 @@
 //! Key handling, the palette, the Shortcuts page and `docs/shortcuts.md` all read it.
 
 mod rows;
+mod terminal_keys;
 
 #[cfg(test)]
 mod tests;
@@ -11,6 +12,7 @@ use egui::{Key, Modifiers};
 #[cfg(test)]
 pub(crate) use rows::markdown;
 pub(crate) use rows::rows;
+pub(crate) use terminal_keys::terminal_keys;
 
 use crate::tabs::{Action, Step};
 
@@ -73,6 +75,7 @@ pub(crate) enum Command {
     PrevCommit,
     NextCommit,
     Settings,
+    Shortcuts,
     OpenRepo,
     Palette,
     ApproveDelivery,
@@ -102,6 +105,7 @@ impl Command {
             | Self::PrevCommit
             | Self::NextCommit
             | Self::Settings
+            | Self::Shortcuts
             | Self::OpenRepo
             | Self::Palette
             | Self::ApproveDelivery
@@ -242,6 +246,22 @@ impl Chord {
         parts.join("+")
     }
 
+    /// Shift turns `/` into `?` on most layouts, so that chord arrives as the other key.
+    fn keys(self) -> impl Iterator<Item = Key> {
+        let shifted = (self.has(SHIFT) && self.key == Key::Slash).then_some(Key::Questionmark);
+        std::iter::once(self.key).chain(shifted)
+    }
+
+    pub(crate) fn press_event(self, platform: Platform) -> egui::Event {
+        egui::Event::Key {
+            key: self.key,
+            physical_key: Some(self.key),
+            pressed: true,
+            repeat: false,
+            modifiers: self.held(platform),
+        }
+    }
+
     fn weight(self) -> usize {
         self.mods.count_ones() as usize
     }
@@ -296,7 +316,7 @@ const fn tab(id: &'static str, title: &'static str, index: usize, key: Key) -> E
     entry(id, title, Group::Tabs, Command::SelectTab(index), (cmd(key), alt(key)))
 }
 
-pub(crate) const TABLE: [Entry; 32] = [
+pub(crate) const TABLE: [Entry; 33] = [
     entry("new-tab", "New tab", Group::Tabs, Command::NewTab, (cmd(Key::T), ctrl(Key::T).shift())),
     entry(
         "close-tab",
@@ -414,6 +434,13 @@ pub(crate) const TABLE: [Entry; 32] = [
         (cmd(Key::Comma), ctrl(Key::Comma)),
     ),
     entry(
+        "shortcuts",
+        "Keyboard shortcuts",
+        Group::App,
+        Command::Shortcuts,
+        (cmd(Key::Slash), ctrl(Key::Slash).shift()),
+    ),
+    entry(
         "open-repo",
         "Open repo",
         Group::App,
@@ -467,7 +494,7 @@ pub(crate) fn consume(
             .into_iter()
             .filter(|(_, chord)| {
                 (chord.mods != 0 || !pressed_with_modifiers(input, chord.key))
-                    && input.consume_key(chord.modifiers(), chord.key)
+                    && chord.keys().any(|key| input.consume_key(chord.modifiers(), key))
             })
             .map(|(entry, _)| entry.command)
             .collect()
@@ -489,14 +516,7 @@ pub(crate) fn command_of(id: &str) -> Option<Command> {
 
 /// The key event a person pressing `command`'s chord produces here, for dev drivers and tests.
 pub(crate) fn press_event(command: Command) -> Option<egui::Event> {
-    let chord = entry_of(command)?.chord(Platform::CURRENT)?;
-    Some(egui::Event::Key {
-        key: chord.key,
-        physical_key: Some(chord.key),
-        pressed: true,
-        repeat: false,
-        modifiers: chord.held(Platform::CURRENT),
-    })
+    Some(entry_of(command)?.chord(Platform::CURRENT)?.press_event(Platform::CURRENT))
 }
 
 fn wanted(gate: Gate) -> impl Fn(Command) -> bool {
@@ -557,7 +577,7 @@ impl Gate {
         }
         let modal = self.modal_open();
         match command {
-            Command::Settings | Command::Overview | Command::Focus => {
+            Command::Settings | Command::Shortcuts | Command::Overview | Command::Focus => {
                 self.dialog != Dialog::TabChoice
             }
             Command::Reader | Command::CloseTab | Command::FileView | Command::ParkTab => {

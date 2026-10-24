@@ -36,6 +36,7 @@ On Linux a plain Ctrl chord would reach the shell, so Linux uses Ctrl+Shift or A
 | Command | macOS | Linux |
 | --- | --- | --- |
 | Settings | `Cmd+,` | `Ctrl+,` |
+| Keyboard shortcuts | `Cmd+/` | `Ctrl+Shift+/` |
 | Open repo | `Cmd+O` | `Ctrl+Shift+O` |
 | Command palette | `Cmd+Shift+P` | `Ctrl+Shift+P` |
 | Build workflow from this session | palette only | palette only |
@@ -47,3 +48,16 @@ On Linux a plain Ctrl chord would reach the shell, so Linux uses Ctrl+Shift or A
 | Command | macOS | Linux |
 | --- | --- | --- |
 | Push and open the pull request | `Cmd+Enter` | `Ctrl+Enter` |
+
+## In the terminal
+
+These are not commands: the terminal turns them into the bytes your shell reads, so they edit the line in zsh, bash and most prompts.
+
+| Key | macOS | Linux |
+| --- | --- | --- |
+| Back one word | `Alt+Left` | `Alt+Left` |
+| Forward one word | `Alt+Right` | `Alt+Right` |
+| Start of the line | `Cmd+Left` | `Home` |
+| End of the line | `Cmd+Right` | `End` |
+| Delete the previous word | `Alt+Backspace` | `Alt+Backspace` |
+| Delete to the start of the line | `Cmd+Backspace` | `Ctrl+U` |
