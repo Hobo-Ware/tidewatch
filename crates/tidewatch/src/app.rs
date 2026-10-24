@@ -13,6 +13,7 @@ mod done_check;
 mod draft;
 mod flow;
 mod frame;
+mod image_paste;
 mod keep_awake;
 mod meeseeks;
 mod open_link;
@@ -77,6 +78,7 @@ use crate::done_check_glue;
 use crate::due;
 use crate::flow::Flow;
 use crate::handoff;
+use crate::image_paste as picture_paste;
 use crate::job_glue;
 use crate::jobs::Jobs;
 use crate::keep_awake_glue;
@@ -196,6 +198,7 @@ pub(crate) struct Tidewatch {
     parking: parking::Parking,
     dev_keys: Option<DevKeys>,
     dev_paste: Option<DevPaste>,
+    image_paste: picture_paste::Host,
     dev_reader: DevReader,
     trust: Trust,
     saver: Saver,
@@ -363,6 +366,7 @@ impl Tidewatch {
             parking: parking::Parking::new(park_after),
             dev_keys: dev_view.keys,
             dev_paste: dev_view.paste,
+            image_paste: picture_paste::Host::new(&cc.egui_ctx),
             dev_reader: DevReader::from_env(),
             trust,
             saver,
@@ -454,6 +458,7 @@ impl eframe::App for Tidewatch {
         let now = ctx.input(|i| i.time);
         self.drive_background_work(&ctx, now);
         let mut intent = self.read_shortcuts(&ctx);
+        self.drive_image_paste(&ctx, now, &intent);
         self.show_tab_strip(ui, now, &mut intent);
         self.show_status_bar(ui, intent.active_id);
         self.show_central_panel(ui, &ctx, now, &mut intent);

@@ -61,6 +61,7 @@ mod handoff;
 mod history_pane;
 mod hotkey;
 mod house_style_view;
+mod image_paste;
 mod job_glue;
 mod job_model;
 mod job_view;

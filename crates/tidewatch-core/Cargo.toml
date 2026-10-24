@@ -12,6 +12,7 @@ kelp-core.workspace = true
 roxmltree.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+shell-words.workspace = true
 sha2.workspace = true
 tempfile.workspace = true
 toml.workspace = true

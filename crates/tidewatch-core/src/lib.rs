@@ -29,6 +29,7 @@ pub mod guard_shim;
 pub mod guards;
 pub mod history;
 pub mod house_style;
+pub mod image_paste;
 pub mod instance;
 pub mod job;
 pub mod job_bar;
