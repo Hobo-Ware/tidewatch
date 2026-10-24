@@ -58,18 +58,21 @@ pub(crate) struct RepoFacts {
     pub(crate) branches: Vec<String>,
     pub(crate) taken: HashSet<String>,
     pub(crate) test_command: Option<String>,
+    pub(crate) test_why: Option<String>,
 }
 
 impl RepoFacts {
     fn look(repo: &Path, paths: Option<&TidewatchPaths>) -> Self {
         let branches = local_branches(repo);
+        let tests = test_command::plan(repo);
         Self {
             checked_out: checked_out(repo),
             default_branch: pick_default_branch(origin_head(repo).as_deref(), &branches),
             remote_default: start_base::remote_default(repo),
             branches,
             taken: paths.map(|paths| taken_names(paths, repo)).unwrap_or_default(),
-            test_command: test_command::test_command(repo),
+            test_command: tests.as_ref().map(|plan| plan.command.clone()),
+            test_why: tests.map(|plan| plan.why),
         }
     }
 }

@@ -32,6 +32,7 @@ pub(crate) struct Opening {
     pub(crate) worktree: Worktree,
     pub(crate) base: String,
     pub(crate) test_command: Option<String>,
+    pub(crate) test_why: Option<String>,
     pub(crate) test_timeout: Duration,
 }
 
@@ -80,9 +81,11 @@ fn run_open(spec: &OpenSpec) -> Result<Opening, String> {
         }
         made
     };
+    let tests = test_command::plan(&spec.repo);
     Ok(Opening {
         base: detect_base(&spec.tools, &worktree.path).unwrap_or_else(|| FALLBACK_BASE.to_owned()),
-        test_command: test_command::test_command(&spec.repo),
+        test_command: tests.as_ref().map(|plan| plan.command.clone()),
+        test_why: tests.map(|plan| plan.why),
         test_timeout: test_command::timeout(&spec.repo),
         worktree,
     })

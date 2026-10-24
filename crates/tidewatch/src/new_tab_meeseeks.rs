@@ -6,6 +6,7 @@ use tidewatch_core::branch_name;
 use tidewatch_core::meeseeks::Criteria;
 use tidewatch_core::names;
 use tidewatch_core::profiles::Profile;
+use tidewatch_core::test_command;
 
 use crate::repo_base::RepoFacts;
 
@@ -46,6 +47,11 @@ impl TestsOffer {
             Some(facts) => facts.test_command.clone().map_or(Self::Missing, Self::Command),
         }
     }
+}
+
+pub(crate) fn tests_tip(facts: Option<&RepoFacts>) -> Option<String> {
+    let facts = facts?;
+    Some(test_command::tip(facts.test_command.as_deref()?, facts.test_why.as_deref()?))
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

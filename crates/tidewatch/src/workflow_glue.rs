@@ -270,8 +270,9 @@ impl Host {
             }
         };
         let stages_file = env.paths.stages_file(&worktree.repo, worktree.name());
-        let mut run =
-            TabRun::new(runner, Some(stages_file), opening.test_timeout).with_blurb(blurb);
+        let mut run = TabRun::new(runner, Some(stages_file), opening.test_timeout)
+            .with_blurb(blurb)
+            .with_test_why(opening.test_why);
         let execs = if resuming {
             run.resume()
         } else if run.awaiting_task() {

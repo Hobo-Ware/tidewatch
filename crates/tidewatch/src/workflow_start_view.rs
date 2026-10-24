@@ -2,6 +2,8 @@
 
 use egui::{Frame, Id, Key, Modifiers, Rect, RichText, TextEdit, Ui, UiBuilder, pos2, vec2};
 use tidewatch_core::runner::Runner;
+use tidewatch_core::test_command;
+use tidewatch_core::workflows::Gate;
 
 use crate::brand;
 use crate::commands::Command;
@@ -21,7 +23,19 @@ pub(crate) struct Card {
     pub(crate) tip: String,
 }
 
-pub(crate) fn cards(runner: &Runner) -> Vec<Card> {
+fn gate_tip(runner: &Runner, gate: Gate, why: Option<&str>) -> String {
+    let gate_line = format!("Gate: {}", gate.label());
+    if !gate.runs_tests() {
+        return gate_line;
+    }
+    match (runner.context().test_command.as_deref(), why) {
+        (Some(command), Some(why)) => format!("{gate_line}\n{}", test_command::tip(command, why)),
+        (None, _) => format!("{gate_line}\n{}", test_command::MISSING_TIP),
+        (Some(_), None) => gate_line,
+    }
+}
+
+pub(crate) fn cards(runner: &Runner, test_why: Option<&str>) -> Vec<Card> {
     (0..runner.stage_count())
         .filter_map(|index| {
             let stage = runner.stage(index)?;
@@ -31,7 +45,7 @@ pub(crate) fn cards(runner: &Runner) -> Vec<Card> {
             Some(Card {
                 title: stage.action.label(),
                 who,
-                tip: format!("Gate: {}", stage.gate.label()),
+                tip: gate_tip(runner, stage.gate, test_why),
             })
         })
         .collect()
@@ -67,7 +81,7 @@ pub(crate) fn show(ui: &mut Ui, area: Rect, run: &mut TabRun) -> Option<String> 
         focused && child.input_mut(|i| i.consume_key(Modifiers::COMMAND, Key::Enter));
     task_box(&mut child, run, id);
     child.add_space(18.0);
-    stage_cards(&mut child, &cards(run.runner()));
+    stage_cards(&mut child, &cards(run.runner(), run.test_why()));
     child.add_space(18.0);
     let mut start = command_enter;
     let hint = format!(

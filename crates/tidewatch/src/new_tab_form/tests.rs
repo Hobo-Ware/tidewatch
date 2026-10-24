@@ -329,6 +329,7 @@ fn the_start_button_starts_too_and_a_blocked_one_does_nothing() {
         branches: vec!["main".into()],
         taken: HashSet::new(),
         test_command: None,
+        test_why: None,
     });
     harness.state.type_name("has space");
     assert_eq!(harness.click_start(), None);
@@ -359,6 +360,7 @@ fn a_taken_name_blocks_cmd_enter() {
         branches: Vec::new(),
         taken: ["dup".to_owned()].into_iter().collect(),
         test_command: None,
+        test_why: None,
     });
     harness.state.type_name("dup");
     assert_eq!(harness.frame(vec![key_with(Key::Enter, Modifiers::COMMAND)]), None);
@@ -438,6 +440,7 @@ fn dup_facts() -> RepoFacts {
         branches: vec!["main".into()],
         taken: ["dup".to_owned()].into_iter().collect(),
         test_command: None,
+        test_why: None,
     }
 }
 
