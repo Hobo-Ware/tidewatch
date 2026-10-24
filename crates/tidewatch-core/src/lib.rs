@@ -1,6 +1,9 @@
 //! Core logic for Tidewatch: worktree layout, profiles and agent status. No UI.
 
 pub mod agents;
+pub mod amphetamine;
+pub mod amphetamine_lid;
+pub mod amphetamine_system;
 pub mod avatar;
 pub mod avatar_mcp;
 pub mod avatar_store;

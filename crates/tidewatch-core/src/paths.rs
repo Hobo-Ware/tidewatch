@@ -129,6 +129,18 @@ impl TidewatchPaths {
         self.root.join(".state")
     }
 
+    /// Whose Amphetamine session may have left lid-closed sleep off: written before the admin prompt.
+    #[must_use]
+    pub fn amphetamine_marker_file(&self) -> PathBuf {
+        self.state_dir().join("amphetamine.json")
+    }
+
+    /// The deadline the root helper reads; removing it tells the helper to restore sleep.
+    #[must_use]
+    pub fn amphetamine_token_file(&self) -> PathBuf {
+        self.state_dir().join("amphetamine.token")
+    }
+
     /// The scheduled items of every tab's ledger, for the Coming up list across tabs.
     #[must_use]
     pub fn schedule_file(&self) -> PathBuf {
