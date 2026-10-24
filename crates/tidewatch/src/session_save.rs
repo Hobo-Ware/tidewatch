@@ -117,6 +117,10 @@ fn agent_ref<'a>(
     }))
 }
 
+fn own_dir(agent: Option<&AgentTab>) -> Option<&Path> {
+    agent?.launched.as_ref()?.dir.as_deref()
+}
+
 fn tab_ref<'a, T>(tab: &'a Tab<Pane<T>>, window_dir: &'a Path) -> Option<TabRef<'a>> {
     if tab.pinned {
         return Some(TabRef::Main);
@@ -124,7 +128,7 @@ fn tab_ref<'a, T>(tab: &'a Tab<Pane<T>>, window_dir: &'a Path) -> Option<TabRef<
     let pane = &tab.pane;
     let (dir, branch) = match &pane.worktree {
         Some(worktree) => (worktree.path.as_path(), Some(worktree.branch.as_str())),
-        None => (window_dir, None),
+        None => (own_dir(pane.agent.as_ref()).unwrap_or(window_dir), None),
     };
     match &pane.body {
         Body::Creating | Body::Removing | Body::Draft(_) => None,
@@ -255,6 +259,7 @@ mod tests {
             level: Level::Edits,
             session_id: session.map(str::to_owned),
             remote: false,
+            dir: None,
         }
     }
 
@@ -434,6 +439,24 @@ mod tests {
         assert_eq!(saved.tabs[1], SavedTab::Shell { dir: PathBuf::from("/scratch"), branch: None });
         let SavedTab::Agent(agent) = &saved.tabs[2] else { panic!("an agent tab") };
         assert_eq!((agent.dir.as_path(), agent.branch.as_deref()), (Path::new("/scratch"), None));
+    }
+
+    #[test]
+    fn a_taken_over_agent_saves_the_folder_it_runs_in_with_no_branch_so_closing_it_removes_nothing()
+    {
+        let mut tabs = tabs();
+        let mut taken = agent(Some("abc"));
+        taken.launched.as_mut().unwrap().dir = Some(PathBuf::from("/work/web_TREE"));
+        tabs.push("Builder".into(), pane(Body::Shell(1), None, Some(taken)));
+        let saved = saved_window(&view(false), &tabs);
+        let SavedTab::Agent(agent) = &saved.tabs[1] else { panic!("an agent tab") };
+        assert_eq!(
+            (agent.dir.as_path(), agent.branch.as_deref()),
+            (Path::new("/work/web_TREE"), None)
+        );
+        assert_eq!(saved.dir, PathBuf::from(DIR));
+        assert_eq!(worktree_dirs(&saved), Vec::<PathBuf>::new());
+        assert_eq!(tabs.items()[1].pane.close_policy(), crate::pane::ClosePolicy::Now);
     }
 
     #[test]

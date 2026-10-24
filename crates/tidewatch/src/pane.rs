@@ -40,6 +40,10 @@ pub(crate) struct Launched {
     /// The agent was started with remote control on, and a restart starts it that way again.
     #[serde(default)]
     pub(crate) remote: bool,
+    /// The folder it runs in, which a tab without a worktree is saved with: a session taken over
+    /// from a sibling checkout stays there while its group is the main repo.
+    #[serde(default)]
+    pub(crate) dir: Option<PathBuf>,
 }
 
 /// Whether an agent tab still waits for its first message, which is typed in the tab, not in the
@@ -122,12 +126,13 @@ pub(crate) struct Started {
 }
 
 impl Started {
-    fn launched(&self) -> Launched {
+    fn launched(&self, dir: &Path) -> Launched {
         Launched {
             profile_id: self.profile_id.clone(),
             level: self.level,
             session_id: self.session_id.clone(),
             remote: self.prepared.remote.is_some(),
+            dir: Some(dir.to_path_buf()),
         }
     }
 }
@@ -249,7 +254,7 @@ pub(crate) fn finish_open<T>(
                         |agent| agent.run,
                     );
                     run.started(started.notes_file.clone(), now);
-                    let launched = started.launched();
+                    let launched = started.launched(&opened.dir);
                     let remote = started.prepared.remote.clone().map(RemoteSession::new);
                     let reader = Reader::for_agent(
                         &started.agent_id,
@@ -315,7 +320,7 @@ pub(crate) fn relaunch_stage<T>(
     }
     let Some(agent) = tab.pane.agent.as_mut() else { return Vec::new() };
     tab.pane.body = Body::Shell(spawn(dir, &started.prepared));
-    agent.launched = Some(started.launched());
+    agent.launched = Some(started.launched(dir));
     agent.remote = started.prepared.remote.clone().map(RemoteSession::new);
     agent.profile_name = started.profile_name;
     agent.run = AgentRun::setting_up(started.agent_id.clone(), now);

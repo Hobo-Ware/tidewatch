@@ -16,8 +16,9 @@ use tidewatch_core::paths::TidewatchPaths;
 use tidewatch_core::worktree::{self, BranchChoice, RemoveMode, Worktree};
 
 use crate::jobs::Jobs;
-use crate::repo::Workspace;
+use crate::repo::{Repo, Workspace};
 use crate::takeover::{MoveSpec, RECENT_PER_FOLDER, RECENT_ROWS, Scanned, order};
+use crate::takeover_group::{Ident, normalize_origin};
 
 pub(crate) enum Done {
     Scanned(Box<Scanned>),
@@ -43,6 +44,7 @@ pub(crate) struct ScanSpec {
     pub(crate) folders: Vec<PathBuf>,
     pub(crate) held: HashSet<String>,
     pub(crate) roots: HashMap<PathBuf, Option<PathBuf>>,
+    pub(crate) idents: HashMap<PathBuf, Option<Ident>>,
 }
 
 pub(crate) fn scan(jobs: &Jobs<Done>, ctx: &egui::Context, spec: ScanSpec) {
@@ -66,7 +68,20 @@ fn run_scan(system: &dyn System, env: &ScanEnv, spec: &ScanSpec) -> Done {
             roots.insert(session.cwd.clone(), system.git_root(&session.cwd));
         }
     }
-    Done::Scanned(Box::new(Scanned { sessions, roots }))
+    let mut idents = HashMap::new();
+    let wanted = sessions.iter().map(|session| &session.cwd).chain(&spec.folders);
+    for dir in wanted {
+        if !spec.idents.contains_key(dir) && !idents.contains_key(dir) {
+            idents.insert(dir.clone(), ident_of(dir));
+        }
+    }
+    Done::Scanned(Box::new(Scanned { sessions, roots, idents }))
+}
+
+fn ident_of(dir: &Path) -> Option<Ident> {
+    let repo = Repo::discover_main(dir)?;
+    let origin = repo.origin().map(|url| normalize_origin(&url));
+    Some(Ident { main: repo.root, origin })
 }
 
 pub(crate) struct MoveJob {
@@ -74,6 +89,7 @@ pub(crate) struct MoveJob {
     pub(crate) agents: AgentTable,
     pub(crate) paths: Option<TidewatchPaths>,
     pub(crate) root: Option<PathBuf>,
+    pub(crate) group: Option<PathBuf>,
     pub(crate) wait: Duration,
 }
 
@@ -93,7 +109,7 @@ fn refusal_text(refusal: Refusal) -> &'static str {
 }
 
 fn run_move(system: &dyn System, env: &ScanEnv, job: &MoveJob) -> Done {
-    let MoveJob { spec, agents, paths, root, wait } = job;
+    let MoveJob { spec, agents, paths, root, group, wait } = job;
     let session = &spec.session;
     let failed = |why: String| {
         Done::Failed(Failure { key: session.key(), name: session.display_name(now_ms()), why })
@@ -132,10 +148,14 @@ fn run_move(system: &dyn System, env: &ScanEnv, job: &MoveJob) -> Done {
             return failed(why);
         }
     }
-    let folder: &Path = made.as_ref().map_or(&session.cwd, |made| &made.repo);
+    let folder: &Path = match (group, &made) {
+        (Some(group), _) => group,
+        (None, Some(made)) => &made.repo,
+        (None, None) => &session.cwd,
+    };
     Done::Moved(Box::new(Landed {
         spec: spec.clone(),
-        workspace: Workspace::open(folder),
+        workspace: Workspace::open_in_main_repo(folder),
         worktree: made,
     }))
 }

@@ -80,6 +80,18 @@ impl Repo {
         Self::from_main_output(&String::from_utf8_lossy(&out.stdout))
     }
 
+    /// The `origin` remote of the repo, as git spells it; none for a repo without one.
+    pub(crate) fn origin(&self) -> Option<String> {
+        let out = Command::new("git")
+            .arg("-C")
+            .arg(&self.root)
+            .args(["config", "--get", "remote.origin.url"])
+            .output()
+            .ok()?;
+        let url = String::from_utf8_lossy(&out.stdout).trim().to_owned();
+        (out.status.success() && !url.is_empty()).then_some(url)
+    }
+
     fn from_main_output(output: &str) -> Option<Self> {
         let mut lines = output.lines();
         let toplevel = lines.next()?;
