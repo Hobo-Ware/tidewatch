@@ -5,9 +5,8 @@
 use std::path::PathBuf;
 
 use super::Tidewatch;
-use crate::from_stdusk::{self, Landing, Taken, Target};
+use crate::from_stdusk::{self, Landing, Place, Taken, Target};
 use crate::pane::Pane;
-use crate::single_instance::workspace_key;
 use crate::tabs::Action;
 
 pub(super) type Done = Result<Vec<Taken>, String>;
@@ -34,12 +33,12 @@ impl Tidewatch {
     fn place_from_stdusk(&mut self, taken: Vec<Taken>, ctx: &egui::Context) {
         let landings: Vec<Landing> = taken
             .iter()
-            .map(|pane| Landing { key: pane.key.clone(), focused: pane.focused })
+            .map(|pane| Landing { place: pane.place.clone(), focused: pane.focused })
             .collect();
-        let held: Vec<PathBuf> = if self.welcome.is_some() {
+        let held: Vec<Place> = if self.welcome.is_some() {
             Vec::new()
         } else {
-            self.workspaces.iter().map(|workspace| workspace_key(workspace.dir())).collect()
+            self.workspaces.iter().map(Place::of).collect()
         };
         let plan = from_stdusk::plan(&landings, &held);
         let replaces_welcome = self.welcome.is_some();

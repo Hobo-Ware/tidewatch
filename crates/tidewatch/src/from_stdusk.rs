@@ -1,5 +1,6 @@
 //! Moving tabs from stdusk: stdusk hands its live panes over a socket and each one becomes a shell
-//! tab here, in the group of the git repo its folder is in, still running what it ran.
+//! tab here, in the group of the git repo its folder is in (a linked worktree counts as its repo),
+//! or in the one Other group, still running what it ran.
 //! Until the ACK inside [`receive`] nothing changed: a failure adopts nothing and stdusk keeps its
 //! window.
 
@@ -24,7 +25,7 @@ pub(crate) struct Taken {
     pub(crate) focused: bool,
     /// The repo of its folder, or the folder when it is in none.
     pub(crate) workspace: Workspace,
-    pub(crate) key: PathBuf,
+    pub(crate) place: Place,
 }
 
 /// The tab title: what stdusk called the pane, else the name of its folder.
@@ -34,10 +35,27 @@ pub(crate) fn name_of(title: Option<&str>, cwd: Option<&Path>) -> String {
     title.map(str::to_owned).or(folder).unwrap_or_else(|| NAMELESS.to_owned())
 }
 
+/// Which group a pane or a group is for: the repo with this key, or the Other group, which the
+/// panes of every folder outside a repo share.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum Place {
+    Repo(PathBuf),
+    Other,
+}
+
+impl Place {
+    pub(crate) fn of(workspace: &Workspace) -> Self {
+        match workspace {
+            Workspace::Repo(repo) => Self::Repo(workspace_key(&repo.root)),
+            Workspace::Other { .. } => Self::Other,
+        }
+    }
+}
+
 /// What the placement needs to know of one pane.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct Landing {
-    pub(crate) key: PathBuf,
+    pub(crate) place: Place,
     pub(crate) focused: bool,
 }
 
@@ -60,18 +78,18 @@ pub(crate) struct Plan {
     pub(crate) focus: Option<usize>,
 }
 
-/// `held` is the key of every group the window has, in order; empty while it shows the welcome
+/// `held` is the place of every group the window has, in order; empty while it shows the welcome
 /// screen, which the first new group replaces.
-pub(crate) fn plan(panes: &[Landing], held: &[PathBuf]) -> Plan {
+pub(crate) fn plan(panes: &[Landing], held: &[Place]) -> Plan {
     let mut new_groups: Vec<usize> = Vec::new();
-    let mut made: Vec<&Path> = Vec::new();
+    let mut made: Vec<&Place> = Vec::new();
     let mut targets = Vec::with_capacity(panes.len());
     for (at, pane) in panes.iter().enumerate() {
-        let key = pane.key.as_path();
-        let target = match held.iter().position(|held| held == key) {
+        let place = &pane.place;
+        let target = match held.iter().position(|held| held == place) {
             Some(group) => Target::Existing(group),
-            None => Target::New(made.iter().position(|made| *made == key).unwrap_or_else(|| {
-                made.push(key);
+            None => Target::New(made.iter().position(|made| *made == place).unwrap_or_else(|| {
+                made.push(place);
                 new_groups.push(at);
                 made.len() - 1
             })),
@@ -99,10 +117,10 @@ pub(crate) fn receive(
         let dir = cwd.as_deref().filter(|cwd| cwd.is_dir()).unwrap_or(fallback);
         let term = pty::adopt(ctx, &meta, fd, dir)
             .map_err(|e| format!("a terminal of stdusk could not be taken over ({e})"))?;
-        let workspace = Workspace::open(dir);
-        let key = workspace_key(workspace.dir());
+        let workspace = Workspace::open_in_main_repo(dir);
+        let place = Place::of(&workspace);
         let name = name_of(entry.title.as_deref(), cwd.as_deref());
-        taken.push(Taken { term, name, focused: entry.focused, workspace, key });
+        taken.push(Taken { term, name, focused: entry.focused, workspace, place });
     }
     confirm_terms(&incoming, taken.iter_mut().map(|pane| &mut pane.term))
         .map_err(|e| format!("stdusk did not get the confirmation ({e})"))?;

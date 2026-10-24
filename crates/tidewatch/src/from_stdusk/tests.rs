@@ -10,36 +10,42 @@ use stdusk_core::terminal::SpawnOpts;
 
 use super::*;
 
-type Case<'a> = (&'a str, &'a [(&'a str, bool)], &'a [&'a str], Plan);
+type Case<'a> = (&'a str, &'a [(Place, bool)], Vec<Place>, Plan);
 
-fn landing(key: &str, focused: bool) -> Landing {
-    Landing { key: PathBuf::from(key), focused }
+fn repo(key: &str) -> Place {
+    Place::Repo(PathBuf::from(key))
 }
 
-fn held(keys: &[&str]) -> Vec<PathBuf> {
-    keys.iter().map(PathBuf::from).collect()
+fn landing(place: &Place, focused: bool) -> Landing {
+    Landing { place: place.clone(), focused }
 }
 
 #[test]
 fn panes_land_in_the_group_of_their_repo_or_in_a_new_one() {
+    let (web, api, cli) = (repo("/w/web"), repo("/w/api"), repo("/w/cli"));
     let cases: [Case; 6] = [
-        ("no panes", &[], &["/w/web"], Plan { new_groups: vec![], targets: vec![], focus: None }),
+        (
+            "no panes",
+            &[],
+            vec![web.clone()],
+            Plan { new_groups: vec![], targets: vec![], focus: None },
+        ),
         (
             "a repo the window holds",
-            &[("/w/web", false)],
-            &["/w/api", "/w/web"],
+            &[(web.clone(), false)],
+            vec![api.clone(), web.clone()],
             Plan { new_groups: vec![], targets: vec![Target::Existing(1)], focus: None },
         ),
         (
             "a repo it does not hold",
-            &[("/w/cli", false)],
-            &["/w/web"],
+            &[(cli.clone(), false)],
+            vec![web.clone()],
             Plan { new_groups: vec![0], targets: vec![Target::New(0)], focus: None },
         ),
         (
             "two panes of one new repo share its group",
-            &[("/w/cli", false), ("/w/cli", false)],
-            &["/w/web"],
+            &[(cli.clone(), false), (cli.clone(), false)],
+            vec![web.clone()],
             Plan {
                 new_groups: vec![0],
                 targets: vec![Target::New(0), Target::New(0)],
@@ -48,8 +54,13 @@ fn panes_land_in_the_group_of_their_repo_or_in_a_new_one() {
         ),
         (
             "a mix, groups made in the order the panes first need them",
-            &[("/w/web", false), ("/w/cli", false), ("/tmp/x", false), ("/w/cli", false)],
-            &["/w/web"],
+            &[
+                (web.clone(), false),
+                (cli.clone(), false),
+                (Place::Other, false),
+                (cli.clone(), false),
+            ],
+            vec![web.clone()],
             Plan {
                 new_groups: vec![1, 2],
                 targets: vec![Target::Existing(0), Target::New(0), Target::New(1), Target::New(0)],
@@ -58,8 +69,8 @@ fn panes_land_in_the_group_of_their_repo_or_in_a_new_one() {
         ),
         (
             "the welcome screen holds nothing, so everything is new",
-            &[("/w/web", false), ("/w/web", false)],
-            &[],
+            &[(web.clone(), false), (web.clone(), false)],
+            vec![],
             Plan {
                 new_groups: vec![0],
                 targets: vec![Target::New(0), Target::New(0)],
@@ -67,19 +78,60 @@ fn panes_land_in_the_group_of_their_repo_or_in_a_new_one() {
             },
         ),
     ];
-    for (name, panes, held_keys, want) in cases {
-        let panes: Vec<Landing> = panes.iter().map(|(key, f)| landing(key, *f)).collect();
-        assert_eq!(plan(&panes, &held(held_keys)), want, "{name}");
+    for (name, panes, held, want) in cases {
+        let panes: Vec<Landing> = panes.iter().map(|(place, f)| landing(place, *f)).collect();
+        assert_eq!(plan(&panes, &held), want, "{name}");
+    }
+}
+
+#[test]
+fn every_folder_outside_a_repo_shares_one_other_group() {
+    let (web, api) = (repo("/w/web"), repo("/w/api"));
+    let panes = |places: &[&Place]| -> Vec<Landing> {
+        places.iter().map(|place| landing(place, false)).collect()
+    };
+    let cases = [
+        (
+            "on the welcome screen",
+            panes(&[&web, &web, &web, &api, &Place::Other, &Place::Other]),
+            vec![],
+            Plan {
+                new_groups: vec![0, 3, 4],
+                targets: vec![
+                    Target::New(0),
+                    Target::New(0),
+                    Target::New(0),
+                    Target::New(1),
+                    Target::New(2),
+                    Target::New(2),
+                ],
+                focus: None,
+            },
+        ),
+        (
+            "next to an Other group the window already has",
+            panes(&[&Place::Other, &api, &Place::Other]),
+            vec![web.clone(), Place::Other],
+            Plan {
+                new_groups: vec![1],
+                targets: vec![Target::Existing(1), Target::New(0), Target::Existing(1)],
+                focus: None,
+            },
+        ),
+    ];
+    for (name, panes, held, want) in cases {
+        assert_eq!(plan(&panes, &held), want, "{name}");
     }
 }
 
 #[test]
 fn the_focused_pane_is_the_one_that_comes_to_the_front() {
-    let panes = [landing("/w/web", false), landing("/w/cli", true), landing("/w/web", false)];
-    assert_eq!(plan(&panes, &held(&["/w/web"])).focus, Some(1));
-    let none = [landing("/w/web", false)];
-    assert_eq!(plan(&none, &held(&["/w/web"])).focus, None);
-    let two = [landing("/a", true), landing("/b", true)];
+    let (web, cli) = (repo("/w/web"), repo("/w/cli"));
+    let panes = [landing(&web, false), landing(&cli, true), landing(&web, false)];
+    assert_eq!(plan(&panes, std::slice::from_ref(&web)).focus, Some(1));
+    let none = [landing(&web, false)];
+    assert_eq!(plan(&none, &[web]).focus, None);
+    let two = [landing(&repo("/a"), true), landing(&repo("/b"), true)];
     assert_eq!(plan(&two, &[]).focus, Some(0), "the first one wins if a sender sets two");
 }
 
@@ -214,11 +266,10 @@ fn live_ptys_from_stdusk_cross_a_real_socket_and_keep_answering_in_the_right_pla
         ["server", "loose", "web"]
     );
     assert_eq!(got.iter().map(|pane| pane.focused).collect::<Vec<_>>(), [false, true, false]);
-    let repo_key = workspace_key(&repo);
-    let loose_key = workspace_key(&loose);
+    let repo_place = Place::Repo(workspace_key(&repo));
     assert_eq!(
-        got.iter().map(|pane| pane.key.clone()).collect::<Vec<_>>(),
-        [repo_key.clone(), loose_key, repo_key]
+        got.iter().map(|pane| pane.place.clone()).collect::<Vec<_>>(),
+        [repo_place.clone(), Place::Other, repo_place]
     );
     assert!(matches!(got[0].workspace, Workspace::Repo(_)));
     assert!(matches!(got[1].workspace, Workspace::Other { .. }));
