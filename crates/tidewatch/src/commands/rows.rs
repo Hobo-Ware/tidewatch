@@ -3,6 +3,8 @@
 #[cfg(test)]
 use std::fmt::Write;
 
+#[cfg(test)]
+use super::terminal_keys;
 use super::{Chord, Command, Group, Platform, TABLE};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -76,6 +78,18 @@ pub(crate) fn markdown() -> String {
         for (m, l) in mac.iter().zip(&linux).filter(|(m, _)| m.group == group) {
             let _ = writeln!(out, "| {} | {} | {} |", m.title, cell(&m.keys), cell(&l.keys));
         }
+    }
+    let _ = write!(
+        out,
+        "\n## In the terminal\n\nThese are not commands: the terminal turns them into the bytes \
+         your shell reads, so they edit the line in zsh, bash and most prompts.\n\n\
+         | Key | {} | {} |\n| --- | --- | --- |\n",
+        Platform::Mac.name(),
+        Platform::Linux.name(),
+    );
+    for key in terminal_keys() {
+        let (mac, linux) = (key.keys_on(Platform::Mac), key.keys_on(Platform::Linux));
+        let _ = writeln!(out, "| {} | {} | {} |", key.title, cell(&mac), cell(&linux));
     }
     out
 }

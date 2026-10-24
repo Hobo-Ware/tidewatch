@@ -217,6 +217,7 @@ fn the_palette_lists_what_a_person_would_look_for() {
             "reader",
             "file-view",
             "settings",
+            "shortcuts",
             "build-workflow",
             "move-sessions",
             "amphetamine"
@@ -511,4 +512,20 @@ fn amphetamine_is_palette_only_and_known_by_its_other_name() {
     assert_eq!(Command::Amphetamine.alias(), Some("cocaine"));
     assert_eq!(Command::Settings.alias(), None);
     assert_eq!(press_event(Command::Amphetamine), None);
+}
+
+#[test]
+fn the_linux_shortcuts_chord_also_arrives_as_a_question_mark() {
+    let held = Modifiers { ctrl: true, shift: true, command: true, ..Modifiers::default() };
+    let key = |key| Event::Key {
+        key,
+        physical_key: Some(Key::Slash),
+        pressed: true,
+        repeat: false,
+        modifiers: held,
+    };
+    for pressed in [Key::Slash, Key::Questionmark] {
+        let got = pressed_with(Platform::Linux, vec![key(pressed)], |_| true);
+        assert_eq!(got, [Command::Shortcuts], "{pressed:?}");
+    }
 }

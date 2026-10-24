@@ -37,6 +37,11 @@ pub(crate) fn page(ui: &mut Ui) {
             }
         });
     }
+    section(ui, "In the terminal", |ui| {
+        for key in commands::terminal_keys() {
+            shortcut_row(ui, key.title, &key.keys_on(Platform::CURRENT));
+        }
+    });
     ui.add_space(22.0);
     note(
         ui,

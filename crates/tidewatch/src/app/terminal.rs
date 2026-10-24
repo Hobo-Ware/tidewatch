@@ -370,6 +370,7 @@ mod tests {
         clipboard: Vec<String>,
         grid: Option<egui::Id>,
         copy_on_select: bool,
+        commands: Vec<Command>,
     }
 
     impl Screen {
@@ -382,6 +383,7 @@ mod tests {
                 clipboard: Vec::new(),
                 grid: None,
                 copy_on_select: false,
+                commands: Vec::new(),
             }
         }
 
@@ -396,6 +398,8 @@ mod tests {
             let ctx = self.ctx.clone();
             let font = FontId::monospace(14.0);
             let full = ctx.run_ui(raw, |ui| {
+                self.commands =
+                    crate::commands::pressed(ui.ctx(), crate::commands::Gate::default());
                 egui::CentralPanel::default().show(ui, |ui| {
                     let out = TerminalView {
                         id_src: &[],
@@ -598,6 +602,137 @@ mod tests {
         let mut taken = true;
         let _ = ctx.run_ui(raw, |_| taken = esc_left_a_widget(&ctx, false));
         assert!(!taken);
+    }
+
+    fn raw_screen(setup: &str, len: usize) -> (Screen, std::path::PathBuf) {
+        static CALLS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+        let call = CALLS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let dir =
+            std::env::temp_dir().join(format!("tidewatch-keys-{}-{call}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let (ready, out) = (dir.join("ready"), dir.join("got"));
+        let script = format!(
+            "{setup}; stty raw -echo; : > {}; head -c {len} > {}; sleep 20",
+            ready.display(),
+            out.display()
+        );
+        let mut screen = Screen::new(&script);
+        wait_for(|| ready.exists());
+        screen.settle();
+        (screen, out)
+    }
+
+    fn received(out: &std::path::Path, len: usize) -> Vec<u8> {
+        wait_for(|| std::fs::read(out).is_ok_and(|got| got.len() >= len));
+        std::fs::read(out).unwrap()
+    }
+
+    fn click(screen: &mut Screen, pos: Pos2) {
+        let button = |pressed| Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: Modifiers::NONE,
+        };
+        screen.frame(vec![Event::PointerMoved(pos)], Modifiers::NONE);
+        screen.frame(vec![button(true)], Modifiers::NONE);
+        screen.frame(vec![button(false)], Modifiers::NONE);
+    }
+
+    fn at_cell(col: usize, row: usize) -> Pos2 {
+        Pos2::new(col as f32 * 8.0 + 4.0, 100.0 + row as f32 * 16.0 + 8.0)
+    }
+
+    #[test]
+    fn a_click_reaches_a_program_with_mouse_reporting_in_every_tracking_mode() {
+        for mode in ["1000", "1002", "1003"] {
+            let setup = format!("printf '\\033[?{mode}h\\033[?1006h'");
+            let (mut screen, out) = raw_screen(&setup, if mode == "1003" { 28 } else { 18 });
+            wait_for(|| screen.term.mouse_reporting().sgr);
+            screen.frame(vec![Event::PointerMoved(at_cell(3, 2))], Modifiers::NONE);
+            click(&mut screen, at_cell(3, 2));
+            let want: &[u8] = b"\x1b[<0;4;3M\x1b[<0;4;3m";
+            let got = if mode == "1003" { 28 } else { 18 };
+            let all = received(&out, got);
+            assert!(all.ends_with(want), "{mode} {:?}", String::from_utf8_lossy(&all));
+        }
+    }
+
+    #[test]
+    fn a_click_still_reaches_the_program_after_the_wheel_scrolled_it() {
+        let (mut screen, out) = raw_screen("printf '\\033[?1049h\\033[?1000h\\033[?1006h'", 28);
+        wait_for(|| screen.term.mouse_reporting().sgr);
+        screen.frame(vec![Event::PointerMoved(at_cell(3, 2))], Modifiers::NONE);
+        let wheel = Event::MouseWheel {
+            unit: egui::MouseWheelUnit::Line,
+            delta: egui::vec2(0.0, 1.0),
+            phase: egui::TouchPhase::Move,
+            modifiers: Modifiers::NONE,
+        };
+        screen.frame(vec![wheel], Modifiers::NONE);
+        click(&mut screen, at_cell(3, 2));
+        assert_eq!(received(&out, 28), b"\x1b[<64;4;3M\x1b[<0;4;3M\x1b[<0;4;3m");
+    }
+
+    #[test]
+    fn a_click_inside_one_frame_still_reports_press_then_release() {
+        let (mut screen, out) = raw_screen("printf '\\033[?1000h\\033[?1006h'", 18);
+        wait_for(|| screen.term.mouse_reporting().sgr);
+        let button = |pressed| Event::PointerButton {
+            pos: at_cell(0, 0),
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: Modifiers::NONE,
+        };
+        screen.frame(vec![button(true), button(false)], Modifiers::NONE);
+        assert_eq!(received(&out, 18), b"\x1b[<0;1;1M\x1b[<0;1;1m");
+    }
+
+    fn line_editing_bytes(title: &str, platform: crate::commands::Platform) -> &'static [u8] {
+        use crate::commands::Platform::{Linux, Mac};
+        match (title, platform) {
+            ("Back one word", _) => b"\x1bb",
+            ("Forward one word", _) => b"\x1bf",
+            ("Start of the line", Mac) => b"\x01",
+            ("Start of the line", Linux) => b"\x1b[H",
+            ("End of the line", Mac) => b"\x05",
+            ("End of the line", Linux) => b"\x1b[F",
+            ("Delete the previous word", _) => b"\x1b\x7f",
+            ("Delete to the start of the line", _) => b"\x15",
+            _ => b"unlisted",
+        }
+    }
+
+    fn press_in_the_terminal(event: Event) -> Screen {
+        let Event::Key { modifiers, .. } = event else { unreachable!("a key press") };
+        let mut screen = Screen::new("sleep 20");
+        screen.settle();
+        screen.frame(vec![event], modifiers);
+        screen
+    }
+
+    #[test]
+    fn every_chord_of_the_table_reaches_its_command_and_not_the_shell() {
+        let gate = crate::commands::Gate::default();
+        for entry in crate::commands::TABLE {
+            let Some(event) = crate::commands::press_event(entry.command) else { continue };
+            let screen = press_in_the_terminal(event);
+            let want: &[Command] = if gate.allows(entry.command) { &[entry.command] } else { &[] };
+            assert_eq!(screen.commands, want, "{}", entry.id);
+            if !want.is_empty() {
+                assert_eq!(screen.typed, b"", "{} leaked to the shell", entry.id);
+            }
+        }
+    }
+
+    #[test]
+    fn the_line_editing_keys_the_page_lists_reach_the_shell_as_their_bytes() {
+        let platform = crate::commands::Platform::CURRENT;
+        for key in crate::commands::terminal_keys() {
+            let screen = press_in_the_terminal(key.chord_on(platform).press_event(platform));
+            assert_eq!(screen.commands, [], "{} was taken by the app", key.title);
+            assert_eq!(screen.typed, line_editing_bytes(key.title, platform), "{}", key.title);
+        }
     }
 
     #[test]

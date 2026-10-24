@@ -201,6 +201,7 @@ impl Tidewatch {
             Command::PrevCommit => self.with_active_view(|view| view.step_commit(-1)),
             Command::NextCommit => self.with_active_view(|view| view.step_commit(1)),
             Command::Settings => self.toggle_settings(),
+            Command::Shortcuts => self.toggle_shortcuts_settings(),
             Command::OpenRepo => self.run_repo_command(RepoCommand::Open, ctx),
             Command::Palette => self.toggle_palette(),
             Command::BuildWorkflow => self.run_build_workflow(ctx),
