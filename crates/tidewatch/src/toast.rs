@@ -2,6 +2,7 @@
 //! fade is testable.
 
 use stdusk_egui::ui::toast_alpha;
+use tidewatch_core::amphetamine::Skill;
 
 pub(crate) const LIFETIME_S: f64 = 3.5;
 const FADE_WINDOW_S: f64 = 0.35;
@@ -10,12 +11,23 @@ const FRAME_S: f64 = 1.0 / 60.0;
 #[derive(Debug, PartialEq)]
 pub(crate) struct Toast {
     text: String,
+    lines: Vec<(Skill, String)>,
     expires: f64,
 }
 
 impl Toast {
     pub(crate) fn new(text: impl Into<String>, now: f64) -> Self {
-        Self { text: text.into(), expires: now + LIFETIME_S }
+        Self { text: text.into(), lines: Vec::new(), expires: now + LIFETIME_S }
+    }
+
+    /// A toast of lines that each open with a skill tag.
+    pub(crate) fn voice(lines: Vec<(Skill, String)>, now: f64) -> Self {
+        let text = lines.iter().map(|(_, line)| line.as_str()).collect::<Vec<_>>().join(" ");
+        Self { text, lines, expires: now + LIFETIME_S }
+    }
+
+    pub(crate) fn lines(&self) -> &[(Skill, String)] {
+        &self.lines
     }
 
     pub(crate) fn text(&self) -> &str {

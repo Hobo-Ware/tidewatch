@@ -146,6 +146,10 @@ pub(crate) fn keep_awake_card(ui: &mut Ui, on: bool) -> Option<bool> {
             "Stops it from going to sleep on its own while any agent is working, so a long turn is not frozen. The screen can still turn off and lock. It lets go two minutes after the last agent stops or waits for you.",
             on,
         );
+        settings_ui::caption(
+            ui,
+            "Amphetamine, the button at the right end of the tab strip, keeps it awake for a set time, lid closed included on a Mac.",
+        );
     });
     changed
 }

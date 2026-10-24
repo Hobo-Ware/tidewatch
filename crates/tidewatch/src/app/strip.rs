@@ -17,6 +17,7 @@ use super::{Tidewatch, wall_ms};
 use crate::agent_avatar::{self, Face};
 use crate::agent_frame;
 use crate::agent_run::progress_fraction;
+use crate::amphetamine_view;
 use crate::brand;
 use crate::commands::Command;
 use crate::job_model::{TabJob, tab_job};
@@ -124,7 +125,9 @@ impl Tidewatch {
                         - overview_view::BUTTON_W
                         - 22.0
                         - tail
-                        - controls;
+                        - controls
+                        - amphetamine_view::SLOT_W
+                        - STRIP_GAP;
                     self.parking.set_fits(Fits {
                         alone: layout::tab_capacity(room, STRIP_GAP),
                         with_pill: layout::tab_capacity(
@@ -139,13 +142,12 @@ impl Tidewatch {
                     );
                     self.draw_tabs(ui, width, now, &mut frame.actions);
                     ui.add_space(6.0);
-                    if icon_button(
+                    let plus = icon_button(
                         ui,
                         icons::PLUS,
                         &format!("New tab ({})", Command::NewTab.keys()),
-                    )
-                    .clicked()
-                    {
+                    );
+                    if plus.clicked() {
                         frame.actions.push(Action::New);
                     }
                     ui.add_space(
@@ -153,8 +155,15 @@ impl Tidewatch {
                             - stdusk_egui::widgets::ICON_BTN_W
                             - tail
                             - parked_tail
-                            - controls)
+                            - controls
+                            - amphetamine_view::SLOT_W
+                            - STRIP_GAP)
                             .max(0.0),
+                    );
+                    self.amphetamine_button(
+                        ui,
+                        ui.next_widget_position().x - plus.rect.right(),
+                        now,
                     );
                     if pill::wanted(ui.ctx(), rows.len()) {
                         let out = pill::show(ui, &rows, self.dev_parked_popover);
@@ -177,6 +186,24 @@ impl Tidewatch {
                     }
                 });
             });
+    }
+
+    fn amphetamine_button(&mut self, ui: &mut egui::Ui, gap: f32, now: f64) {
+        let wall = super::amphetamine::wall_secs();
+        let input = amphetamine_view::Input {
+            look: self.amphetamine.look(now),
+            session: self.amphetamine.state(),
+            wall,
+            total: self.amphetamine.total(),
+            lid: self.amphetamine.lid(),
+            gap,
+            force_short: self.amphetamine.short(),
+            pinned: self.amphetamine.pinned(),
+        };
+        let out = amphetamine_view::show(ui, &input, &mut self.amphetamine_view, now);
+        if let Some(action) = out.action {
+            self.apply_amphetamine(action, ui.ctx());
+        }
     }
 
     fn welcome_strip(ui: &mut egui::Ui, frame: &mut FrameIntent, controls: f32) {
