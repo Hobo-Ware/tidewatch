@@ -214,7 +214,7 @@ mod tests {
     #[test]
     fn a_zoomed_ui_still_parks_the_sliver_on_screen() {
         let screen = screen(1728.0, -323.0, 2560.0, 1440.0);
-        for zoom in [0.5_f32, 0.9, 1.0, 1.1, 2.0] {
+        for zoom in [0.5_f32, 0.8, 0.9, 1.0, 1.1, 1.25, 1.5, 2.0] {
             let sent = unzoom(hidden_pos(screen).to_vec2(), zoom);
             let landed = sent * zoom;
             assert!((landed.y - hidden_pos(screen).y).abs() < 0.01, "zoom {zoom}");

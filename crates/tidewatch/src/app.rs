@@ -240,6 +240,8 @@ impl Tidewatch {
         colors::set_chrome(brand::chrome());
         let prefs = paths.as_ref().map(Prefs::load).unwrap_or_default();
         let terminal_prefs = prefs.terminal.clone();
+        cc.egui_ctx.options_mut(|options| options.zoom_with_keyboard = false);
+        cc.egui_ctx.set_zoom_factor(prefs.window.ui_zoom);
         let terminal_font = terminal_font::Host::start(&cc.egui_ctx, prefs.terminal.font);
         apply_theme(&cc.egui_ctx);
         brand::tint_visuals(&cc.egui_ctx);

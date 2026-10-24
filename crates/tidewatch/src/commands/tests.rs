@@ -214,6 +214,9 @@ fn the_palette_lists_what_a_person_would_look_for() {
             "prev-repo",
             "overview",
             "focus",
+            "zoom-in",
+            "zoom-out",
+            "zoom-reset",
             "reader",
             "file-view",
             "settings",
@@ -547,6 +550,36 @@ fn an_alt_chord_does_not_also_type_its_key_into_the_terminal() {
 }
 
 #[test]
+fn the_zoom_chords_step_the_interface_and_leave_cmd_0_to_the_overview() {
+    let events = |key, modifiers| {
+        vec![Event::Key { key, physical_key: Some(key), pressed: true, repeat: false, modifiers }]
+    };
+    let cmd_mods = cmd(Key::T).held(Platform::Mac);
+    let cmd_shift = cmd(Key::T).shift().held(Platform::Mac);
+    let cases = [
+        (Key::Equals, cmd_mods, Command::ZoomIn),
+        (Key::Plus, cmd_mods, Command::ZoomIn),
+        (Key::Plus, cmd_shift, Command::ZoomIn),
+        (Key::Minus, cmd_mods, Command::ZoomOut),
+        (Key::Num0, cmd_shift, Command::ZoomReset),
+        (Key::Num0, cmd_mods, Command::Overview),
+    ];
+    for (key, modifiers, want) in cases {
+        let got = pressed_with(Platform::Mac, events(key, modifiers), |_| true);
+        assert_eq!(got, [want], "{key:?} {modifiers:?}");
+    }
+    let ctrl_shift = ctrl(Key::T).shift().held(Platform::Linux);
+    for (key, want) in [
+        (Key::Plus, Command::ZoomIn),
+        (Key::Equals, Command::ZoomIn),
+        (Key::Minus, Command::ZoomOut),
+    ] {
+        let got = pressed_with(Platform::Linux, events(key, ctrl_shift), |_| true);
+        assert_eq!(got, [want], "{key:?} on Linux");
+    }
+}
+
+#[test]
 fn a_chord_with_ctrl_or_cmd_leaves_the_text_of_other_keys_alone() {
     let chord = cmd(Key::T);
     let mut events = press(Platform::Mac, chord);
@@ -567,5 +600,21 @@ fn the_linux_shortcuts_chord_also_arrives_as_a_question_mark() {
     for pressed in [Key::Slash, Key::Questionmark] {
         let got = pressed_with(Platform::Linux, vec![key(pressed)], |_| true);
         assert_eq!(got, [Command::Shortcuts], "{pressed:?}");
+    }
+}
+
+#[test]
+fn the_zoom_chords_on_each_platform() {
+    let want = [
+        ("zoom-in", "Cmd+=", "Ctrl+Shift+="),
+        ("zoom-out", "Cmd+-", "Ctrl+Shift+-"),
+        ("zoom-reset", "Cmd+Shift+0", "Ctrl+Shift+0"),
+    ];
+    for (id, mac, linux) in want {
+        let entry = TABLE.iter().find(|entry| entry.id == id).unwrap();
+        assert_eq!(entry.chord(Platform::Mac).unwrap().label(), mac, "{id}");
+        assert_eq!(entry.chord(Platform::Linux).unwrap().label(), linux, "{id}");
+        assert!(entry.command.in_palette(), "{id}");
+        assert_eq!(entry.command.action(), None, "{id}");
     }
 }

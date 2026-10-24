@@ -5,8 +5,10 @@ use egui::{
     Align, CornerRadius, Event, Layout, RichText, Sense, Stroke, StrokeKind, Ui, UiBuilder, vec2,
 };
 use tidewatch_core::prefs::{Panels, QUAKE_HEIGHT_RANGE, WindowPrefs};
+use tidewatch_core::ui_zoom;
 
 use crate::hotkey;
+use crate::segmented;
 use crate::settings_ui::{
     self, Control, FAINT, FIELD_LINE, GROUND, RED, TEAL, TEAL_TEXT, key_cap, key_cap_width,
     row_with, switch_row,
@@ -56,6 +58,9 @@ pub(crate) fn section(ui: &mut Ui, editor: &mut Editor, view: &View) -> Option<W
         if let Some(panels) = panels_row(ui, editor.panels()) {
             applied = Some(editor.set_panels(panels));
         }
+        if let Some(zoom) = zoom_row(ui, editor.ui_zoom()) {
+            applied = Some(editor.set_ui_zoom(zoom));
+        }
         applied
     })
 }
@@ -76,6 +81,24 @@ fn height_row(ui: &mut Ui, editor: &mut Editor) -> Option<WindowPrefs> {
                 .inner;
             let settled = response.drag_stopped() || (response.changed() && !response.dragged());
             settled.then(|| editor.settle_height()).flatten()
+        },
+    )
+}
+
+fn zoom_row(ui: &mut Ui, current: f32) -> Option<f32> {
+    let labels = ui_zoom::STEPS.map(ui_zoom::label);
+    let labels: Vec<&str> = labels.iter().map(String::as_str).collect();
+    settings_ui::row(
+        ui,
+        "Interface size",
+        "Makes everything in the window bigger or smaller.",
+        Control::new(settings_ui::inline_width(ui, &labels), 28.0),
+        |ui| {
+            let id = ui.id().with("ui-zoom");
+            let active = ui_zoom::position(current).unwrap_or(usize::MAX);
+            segmented::inline(ui, id, &labels, active)
+                .map(|index| ui_zoom::STEPS[index])
+                .filter(|zoom| (zoom - current).abs() > f32::EPSILON)
         },
     )
 }

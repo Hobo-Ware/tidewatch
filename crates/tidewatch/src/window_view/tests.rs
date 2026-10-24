@@ -235,3 +235,28 @@ fn the_height_row_is_only_there_while_the_drop_down_is_on() {
     }
     assert!(heights[0] > heights[1] + 40.0, "{heights:?}");
 }
+
+#[test]
+fn a_click_on_an_interface_size_applies_it_at_once_and_keeps_the_rest() {
+    let mut page = registered();
+    page.section(vec![], true);
+    let mut applied = None;
+    'scan: for y in (20..600).step_by(6) {
+        for x in (300..690).step_by(6) {
+            let at = pos2(x as f32, y as f32);
+            page.section(vec![Event::PointerMoved(at)], true);
+            page.section(vec![button(at, true)], true);
+            let answer = page.section(vec![button(at, false)], true);
+            if answer.as_ref().is_some_and(|prefs| prefs.ui_zoom == 1.25) {
+                applied = answer;
+                break 'scan;
+            }
+            if answer.is_some() {
+                page = registered();
+            }
+        }
+    }
+    let applied = applied.expect("a click on 125% applies it");
+    assert_eq!(applied, WindowPrefs { ui_zoom: 1.25, ..WindowPrefs::default() });
+    assert_eq!(page.editor.ui_zoom(), 1.25);
+}

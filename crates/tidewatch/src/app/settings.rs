@@ -5,6 +5,7 @@ use tidewatch_core::prefs::{
     DoneCheckPrefs, KeepAwakePrefs, NewTabPrefs, Prefs, TabsPrefs, WindowPrefs,
 };
 use tidewatch_core::setup_recipe::{Recipe, Store};
+use tidewatch_core::ui_zoom::{self, Direction};
 
 use super::{Tidewatch, wall_ms};
 use crate::agent_jobs;
@@ -88,7 +89,18 @@ impl Tidewatch {
         }
     }
 
+    pub(super) fn step_zoom(&mut self, direction: Direction, ctx: &egui::Context) {
+        let zoom = ui_zoom::step(self.shell.prefs().ui_zoom, direction);
+        let prefs = WindowPrefs { ui_zoom: zoom, ..self.shell.prefs().clone() };
+        if let Some(settings) = &mut self.settings {
+            settings.window.set_ui_zoom(zoom);
+        }
+        self.set_window_prefs(prefs, ctx);
+        self.show_toast(format!("Interface size {}", ui_zoom::label(zoom)), ctx);
+    }
+
     fn set_window_prefs(&mut self, prefs: WindowPrefs, ctx: &egui::Context) {
+        ctx.set_zoom_factor(prefs.ui_zoom);
         if let Some(paths) = &self.paths {
             shell::save(paths.clone(), prefs.clone());
         }

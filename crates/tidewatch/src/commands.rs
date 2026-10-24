@@ -67,6 +67,9 @@ pub(crate) enum Command {
     PrevRepo,
     Overview,
     Focus,
+    ZoomIn,
+    ZoomOut,
+    ZoomReset,
     Reader,
     FileView,
     BackToTerminal,
@@ -97,6 +100,9 @@ impl Command {
             Self::PrevRepo => Some(Action::PrevGroup),
             Self::Overview
             | Self::Focus
+            | Self::ZoomIn
+            | Self::ZoomOut
+            | Self::ZoomReset
             | Self::Reader
             | Self::FileView
             | Self::BackToTerminal
@@ -246,10 +252,15 @@ impl Chord {
         parts.join("+")
     }
 
-    /// Shift turns `/` into `?` on most layouts, so that chord arrives as the other key.
+    /// Shift turns `/` into `?` and `=` into `+` on most layouts, so those chords also arrive as
+    /// the other key.
     fn keys(self) -> impl Iterator<Item = Key> {
-        let shifted = (self.has(SHIFT) && self.key == Key::Slash).then_some(Key::Questionmark);
-        std::iter::once(self.key).chain(shifted)
+        let other = match self.key {
+            Key::Slash if self.has(SHIFT) => Some(Key::Questionmark),
+            Key::Equals => Some(Key::Plus),
+            _ => None,
+        };
+        std::iter::once(self.key).chain(other)
     }
 
     /// egui-winit leaves the text of a press out only while Ctrl or Cmd is down, so an Alt chord
@@ -280,6 +291,7 @@ fn key_name(key: Key) -> &'static str {
         Key::ArrowDown => "Down",
         Key::ArrowLeft => "Left",
         Key::ArrowRight => "Right",
+        Key::Minus => "-",
         other => other.symbol_or_name(),
     }
 }
@@ -322,7 +334,7 @@ const fn tab(id: &'static str, title: &'static str, index: usize, key: Key) -> E
     entry(id, title, Group::Tabs, Command::SelectTab(index), (cmd(key), alt(key)))
 }
 
-pub(crate) const TABLE: [Entry; 33] = [
+pub(crate) const TABLE: [Entry; 36] = [
     entry("new-tab", "New tab", Group::Tabs, Command::NewTab, (cmd(Key::T), ctrl(Key::T).shift())),
     entry(
         "close-tab",
@@ -382,6 +394,27 @@ pub(crate) const TABLE: [Entry; 33] = [
         Group::View,
         Command::Focus,
         (cmd(Key::Period), ctrl(Key::Period)),
+    ),
+    entry(
+        "zoom-in",
+        "Interface bigger",
+        Group::View,
+        Command::ZoomIn,
+        (cmd(Key::Equals), ctrl(Key::Equals).shift()),
+    ),
+    entry(
+        "zoom-out",
+        "Interface smaller",
+        Group::View,
+        Command::ZoomOut,
+        (cmd(Key::Minus), ctrl(Key::Minus).shift()),
+    ),
+    entry(
+        "zoom-reset",
+        "Interface size 100%",
+        Group::View,
+        Command::ZoomReset,
+        (cmd(Key::Num0).shift(), ctrl(Key::Num0).shift()),
     ),
     entry(
         "reader",
@@ -590,9 +623,13 @@ impl Gate {
         }
         let modal = self.modal_open();
         match command {
-            Command::Settings | Command::Shortcuts | Command::Overview | Command::Focus => {
-                self.dialog != Dialog::TabChoice
-            }
+            Command::Settings
+            | Command::Shortcuts
+            | Command::Overview
+            | Command::Focus
+            | Command::ZoomIn
+            | Command::ZoomOut
+            | Command::ZoomReset => self.dialog != Dialog::TabChoice,
             Command::Reader | Command::CloseTab | Command::FileView | Command::ParkTab => {
                 !modal && !self.overview
             }
