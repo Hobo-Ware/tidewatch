@@ -1,5 +1,5 @@
-//! The quake drop-down: a window that falls from the top edge to the monitor's width and half its
-//! height, and goes away again on the hotkey or when you click elsewhere. State and geometry are
+//! The quake drop-down: a window that falls from the top edge to the monitor's width and the chosen
+//! fraction of its height, and goes away again on the hotkey or when you click elsewhere. State and geometry are
 //! pure; `present` turns a show or hide into viewport commands.
 //!
 //! Hiding is the delicate part, and it is the sibling's hard-won rule (`.agents/rules/platform.md`):
@@ -13,7 +13,6 @@ use egui::{Context, Pos2, Rect, Vec2, ViewportCommand, pos2, vec2};
 
 use crate::os::Os;
 
-pub(crate) const HEIGHT_PCT: f32 = 0.5;
 pub(crate) const HIDE_SLIVER: f32 = 2.0;
 pub(crate) const HIDDEN_WAKE: Duration = Duration::from_millis(120);
 
@@ -26,8 +25,8 @@ pub(crate) fn hidden_pos(screen: Rect) -> Pos2 {
     pos2(screen.min.x, screen.min.y + hidden_y(screen.height()))
 }
 
-pub(crate) fn shown_size(screen_w: f32, screen_h: f32) -> Vec2 {
-    vec2(screen_w, (screen_h * HEIGHT_PCT).round())
+pub(crate) fn shown_size(screen_w: f32, screen_h: f32, height_pct: f32) -> Vec2 {
+    vec2(screen_w, (screen_h * height_pct).round())
 }
 
 /// Window alpha: opaque when shown, transparent (not removed) when hidden.
@@ -120,8 +119,23 @@ impl Quake {
     }
 }
 
+/// Gives the shown window its new height at once; the top edge stays where it is.
+pub(crate) fn resize(ctx: &Context, os: &dyn Os, height_pct: f32) {
+    let screen = os.window_screen().or_else(|| os.primary_screen());
+    send_shown_size(ctx, screen, height_pct);
+}
+
+fn send_shown_size(ctx: &Context, screen: Option<Rect>, height_pct: f32) {
+    let monitor = ctx.input(|i| i.viewport().monitor_size);
+    let zoom = ctx.zoom_factor();
+    if let Some(size) = screen.map(|s| unzoom(s.size(), zoom)).or(monitor) {
+        let size = shown_size(size.x, size.y, height_pct);
+        ctx.send_viewport_cmd(ViewportCommand::InnerSize(size));
+    }
+}
+
 /// Shows (drops to the top edge of the screen under the cursor, focused) or hides the window.
-pub(crate) fn present(ctx: &Context, os: &mut dyn Os, visible: bool) {
+pub(crate) fn present(ctx: &Context, os: &mut dyn Os, visible: bool, height_pct: f32) {
     let monitor = ctx.input(|i| i.viewport().monitor_size);
     os.set_alpha(alpha(visible));
     let screen = if visible {
@@ -136,10 +150,7 @@ pub(crate) fn present(ctx: &Context, os: &mut dyn Os, visible: bool) {
         if !os.parks_when_hidden() {
             ctx.send_viewport_cmd(ViewportCommand::Visible(true));
         }
-        if let Some(size) = screen.map(|s| unzoom(s.size(), zoom)).or(monitor) {
-            let size = shown_size(size.x, size.y);
-            ctx.send_viewport_cmd(ViewportCommand::InnerSize(size));
-        }
+        send_shown_size(ctx, screen, height_pct);
         let origin = screen.map_or(Pos2::ZERO, |s| command_pos(s.min));
         ctx.send_viewport_cmd(ViewportCommand::OuterPosition(origin));
         ctx.send_viewport_cmd(ViewportCommand::Focus);
@@ -183,10 +194,13 @@ mod tests {
     }
 
     #[test]
-    fn the_shown_window_is_the_monitor_wide_and_half_as_tall_rounded() {
-        assert_eq!(shown_size(1440.0, 900.0), vec2(1440.0, 450.0));
-        assert_eq!(shown_size(1920.0, 1080.0), vec2(1920.0, 540.0));
-        assert_eq!(shown_size(2560.0, 1111.0), vec2(2560.0, 556.0));
+    fn the_shown_window_is_the_monitor_wide_and_the_chosen_fraction_tall_rounded() {
+        assert_eq!(shown_size(1440.0, 900.0, 0.5), vec2(1440.0, 450.0));
+        assert_eq!(shown_size(1920.0, 1080.0, 0.5), vec2(1920.0, 540.0));
+        assert_eq!(shown_size(2560.0, 1111.0, 0.5), vec2(2560.0, 556.0));
+        assert_eq!(shown_size(1440.0, 900.0, 0.505), vec2(1440.0, 455.0));
+        assert_eq!(shown_size(1440.0, 900.0, 0.9), vec2(1440.0, 810.0));
+        assert_eq!(shown_size(1440.0, 900.0, 0.2), vec2(1440.0, 180.0));
     }
 
     #[test]
@@ -297,7 +311,7 @@ mod tests {
         let ctx = Context::default();
         let mut os = mac(screen(0.0, 0.0, 1440.0, 900.0));
         os.cursor = Some(screen(1440.0, 0.0, 1920.0, 1080.0));
-        let sent = commands(&ctx, |ctx| present(ctx, &mut os, true));
+        let sent = commands(&ctx, |ctx| present(ctx, &mut os, true, 0.5));
         assert_eq!(
             sent,
             vec![
@@ -310,10 +324,28 @@ mod tests {
     }
 
     #[test]
+    fn showing_uses_the_chosen_height() {
+        let ctx = Context::default();
+        let mut os = mac(screen(0.0, 0.0, 1440.0, 900.0));
+        let sent = commands(&ctx, |ctx| present(ctx, &mut os, true, 0.8));
+        assert_eq!(sent.first(), Some(&ViewportCommand::InnerSize(vec2(1440.0, 720.0))));
+    }
+
+    #[test]
+    fn resizing_changes_only_the_height_of_the_screen_the_window_is_on() {
+        let ctx = Context::default();
+        let mut os = mac(screen(0.0, 0.0, 1440.0, 900.0));
+        os.window = Some(screen(1440.0, 0.0, 1920.0, 1080.0));
+        let sent = commands(&ctx, |ctx| resize(ctx, &os, 0.75));
+        assert_eq!(sent, vec![ViewportCommand::InnerSize(vec2(1920.0, 810.0))]);
+        assert_eq!(os.calls, vec![]);
+    }
+
+    #[test]
     fn hiding_on_macos_parks_the_sliver_on_screen_and_goes_transparent_never_unmapped() {
         let ctx = Context::default();
         let mut os = mac(screen(0.0, 0.0, 1440.0, 900.0));
-        let sent = commands(&ctx, |ctx| present(ctx, &mut os, false));
+        let sent = commands(&ctx, |ctx| present(ctx, &mut os, false, 0.5));
         assert_eq!(sent, vec![ViewportCommand::OuterPosition(pos2(0.0, 898.0))]);
         assert_eq!(os.calls, vec![Call::Alpha(0.0)]);
         assert!(!sent.iter().any(|c| matches!(c, ViewportCommand::Visible(_))));
@@ -323,9 +355,9 @@ mod tests {
     fn elsewhere_hiding_unmaps_and_showing_maps_again() {
         let ctx = Context::default();
         let mut os = Recorder::default();
-        let hide = commands(&ctx, |ctx| present(ctx, &mut os, false));
+        let hide = commands(&ctx, |ctx| present(ctx, &mut os, false, 0.5));
         assert_eq!(hide, vec![ViewportCommand::Visible(false)]);
-        let show = commands(&ctx, |ctx| present(ctx, &mut os, true));
+        let show = commands(&ctx, |ctx| present(ctx, &mut os, true, 0.5));
         assert_eq!(show.first(), Some(&ViewportCommand::Visible(true)));
         assert_eq!(show.last(), Some(&ViewportCommand::Focus));
         assert!(show.contains(&ViewportCommand::OuterPosition(Pos2::ZERO)));
@@ -339,7 +371,7 @@ mod tests {
             primary: Some(screen(0.0, 0.0, 1000.0, 800.0)),
             ..Recorder::default()
         };
-        let sent = commands(&ctx, |ctx| present(ctx, &mut os, false));
+        let sent = commands(&ctx, |ctx| present(ctx, &mut os, false, 0.5));
         assert_eq!(sent, vec![ViewportCommand::OuterPosition(pos2(0.0, 798.0))]);
     }
 }

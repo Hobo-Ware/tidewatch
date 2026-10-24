@@ -23,7 +23,10 @@ use crate::paths::TidewatchPaths;
 /// `QUAKE_HOTKEY_DEFAULT` (PLAN.md): stdusk keeps `Ctrl+Grave`, so both apps can run at once.
 pub const QUAKE_HOTKEY_DEFAULT: &str = "Ctrl+Alt+Grave";
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub const QUAKE_HEIGHT_DEFAULT: f32 = 0.5;
+pub const QUAKE_HEIGHT_RANGE: std::ops::RangeInclusive<f32> = 0.2..=0.9;
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Prefs {
     #[serde(default = "on")]
     pub restore_session: bool,
@@ -267,7 +270,7 @@ pub struct UpdatePrefs {
 }
 
 /// How the window behaves: a quake drop-down summoned by a global hotkey, or a plain window.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct WindowPrefs {
     /// Drop-down from the top edge, summoned by the hotkey. Off is a plain window.
     #[serde(default = "on")]
@@ -281,6 +284,9 @@ pub struct WindowPrefs {
     /// Where History and the diff sit around the terminal.
     #[serde(default)]
     pub panels: Panels,
+    /// The fraction of the screen the quake window drops down, within `QUAKE_HEIGHT_RANGE`.
+    #[serde(default = "default_height")]
+    pub height_pct: f32,
 }
 
 /// The tab layout: History beside the terminal, or the History and Diff panes under it.
@@ -294,6 +300,10 @@ pub enum Panels {
 
 fn on() -> bool {
     true
+}
+
+fn default_height() -> f32 {
+    QUAKE_HEIGHT_DEFAULT
 }
 
 fn default_hotkey() -> String {
@@ -326,7 +336,24 @@ impl Default for UpdatePrefs {
 
 impl Default for WindowPrefs {
     fn default() -> Self {
-        Self { quake: true, hotkey: default_hotkey(), menu_bar: true, panels: Panels::Side }
+        Self {
+            quake: true,
+            hotkey: default_hotkey(),
+            menu_bar: true,
+            panels: Panels::Side,
+            height_pct: QUAKE_HEIGHT_DEFAULT,
+        }
+    }
+}
+
+impl WindowPrefs {
+    /// The height pulled into `QUAKE_HEIGHT_RANGE`; a value that is not a number is the default.
+    #[must_use]
+    pub fn clamp_height(pct: f32) -> f32 {
+        if pct.is_nan() {
+            return QUAKE_HEIGHT_DEFAULT;
+        }
+        pct.clamp(*QUAKE_HEIGHT_RANGE.start(), *QUAKE_HEIGHT_RANGE.end())
     }
 }
 
@@ -346,10 +373,12 @@ impl Prefs {
                 return Self::default();
             }
         };
-        toml::from_str(&text).unwrap_or_else(|e| {
+        let mut prefs: Self = toml::from_str(&text).unwrap_or_else(|e| {
             eprintln!("tidewatch: settings.toml is invalid ({e}); using defaults");
             Self::default()
-        })
+        });
+        prefs.window.height_pct = WindowPrefs::clamp_height(prefs.window.height_pct);
+        prefs
     }
 
     pub fn save(&self, paths: &TidewatchPaths) -> std::io::Result<()> {
@@ -529,7 +558,8 @@ mod tests {
                 quake: false,
                 hotkey: "F13".to_owned(),
                 menu_bar: true,
-                panels: Panels::Side
+                panels: Panels::Side,
+                height_pct: QUAKE_HEIGHT_DEFAULT
             }
         );
     }
@@ -561,9 +591,40 @@ mod tests {
             hotkey: "Cmd+F12".to_owned(),
             menu_bar: false,
             panels: Panels::Below,
+            height_pct: 0.505,
         };
         Prefs { window: window.clone(), ..Prefs::default() }.save(&paths).unwrap();
         assert_eq!(Prefs::load(&paths).window, window);
+    }
+
+    #[test]
+    fn the_height_defaults_to_half_and_a_value_between_the_steps_survives_the_file() {
+        let (_home, paths) = paths();
+        assert_eq!(Prefs::default().window.height_pct, 0.5);
+        Prefs::update(&paths, |p| p.window.height_pct = 0.505).unwrap();
+        assert_eq!(Prefs::load(&paths).window.height_pct, 0.505);
+        let text = std::fs::read_to_string(paths.prefs_file()).unwrap();
+        assert!(text.contains("height_pct = 0.505\n"), "{text}");
+    }
+
+    #[test]
+    fn a_height_outside_the_range_is_pulled_in_when_the_file_is_read() {
+        let (_home, paths) = paths();
+        std::fs::create_dir_all(paths.config_dir()).unwrap();
+        let cases = [
+            ("0.05", 0.2),
+            ("0.2", 0.2),
+            ("0.75", 0.75),
+            ("0.9", 0.9),
+            ("3.0", 0.9),
+            ("-1.0", 0.2),
+            ("nan", 0.5),
+            ("inf", 0.9),
+        ];
+        for (text, want) in cases {
+            std::fs::write(paths.prefs_file(), format!("[window]\nheight_pct = {text}\n")).unwrap();
+            assert_eq!(Prefs::load(&paths).window.height_pct, want, "height_pct = {text}");
+        }
     }
 
     #[test]
