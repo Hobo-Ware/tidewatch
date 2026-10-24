@@ -363,7 +363,7 @@ fn rows_read_as_the_mockup_does() {
             (
                 "gemini · ended 14 min ago",
                 "~/code/acme",
-                "not running",
+                "ended 14 min ago",
                 "Auto edit",
                 false,
                 Status::NotRunning
@@ -665,4 +665,62 @@ fn a_reveal_is_asked_for_once_and_forces_a_scan() {
     assert!(takeover.begin_scan(true, 1.5));
     assert!(takeover.take_reveal());
     assert!(!takeover.take_reveal());
+}
+
+fn titled(id: &str, title: &str) -> Session {
+    Session { name: Some(title.to_owned()), ..stored(Cli::Claude, id) }
+}
+
+#[test]
+fn ended_sessions_are_listed_apart_from_the_running_ones_and_never_alone() {
+    let fixture = Fixture::new();
+    let env = fixture.env(&everything);
+    let mixed = takeover_with(vec![claude(1, Activity::Idle), stored(Cli::Claude, ID_B)]);
+    let rows = mixed.card_rows(&env).expect("something runs");
+    assert_eq!(rows.running.len(), 1);
+    assert_eq!(rows.ended.len(), 1);
+    assert_eq!(rows.ended[0].status, Status::NotRunning);
+    assert_eq!(rows.ended[0].offer, Offer::ResumeHere);
+
+    let only_ended = takeover_with(vec![stored(Cli::Claude, ID_B)]);
+    assert_eq!(only_ended.card_rows(&env), None);
+}
+
+#[test]
+fn an_ended_row_is_named_by_its_title_and_says_when_it_ended() {
+    let fixture = Fixture::new();
+    let env = fixture.env(&everything);
+    let takeover = takeover_with(vec![
+        claude(1, Activity::Idle),
+        Session { since_ms: Some(env.now_ms - 33 * 60_000), ..titled(ID_B, "Fix login redirect") },
+        Session { since_ms: Some(env.now_ms - 40 * 60_000), ..stored(Cli::Claude, ID) },
+    ]);
+    let ended = takeover.card_rows(&env).expect("something runs").ended;
+    let got: Vec<_> = ended.iter().map(|row| (row.name.as_str(), row.host.as_str())).collect();
+    assert_eq!(
+        got,
+        [
+            ("Fix login redirect", "ended 33 min ago"),
+            ("claude \u{b7} ended 40 min ago", "ended 40 min ago"),
+        ]
+    );
+}
+
+#[test]
+fn the_recent_list_opens_and_closes() {
+    let mut takeover = Takeover::default();
+    assert!(!takeover.recent_open());
+    takeover.toggle_recent();
+    assert!(takeover.recent_open());
+    takeover.toggle_recent();
+    assert!(!takeover.recent_open());
+}
+
+#[test]
+fn what_an_open_tab_held_stays_held_after_the_tab_is_gone() {
+    let mut takeover = Takeover::default();
+    takeover.note_open(Some(ID_B), Some(Path::new("/store/other.jsonl")));
+    takeover.note_open(None, None);
+    assert!(takeover.held().ids.contains(ID_B));
+    assert!(takeover.held().transcripts.contains(Path::new("/store/other.jsonl")));
 }

@@ -2,15 +2,15 @@
 //! (make the worktree if asked, end the session, look up the repo of its folder). The window places
 //! the tab when a move lands.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use tidewatch_core::agents::AgentTable;
 use tidewatch_core::elsewhere::Key;
 use tidewatch_core::elsewhere_scan::{
-    EndRequest, Ended, RealSystem, Refusal, ScanEnv, System, end_session, recent_sessions,
-    scan_running,
+    EndRequest, Ended, Held, RealSystem, Refusal, ScanEnv, System, TitleCache, end_session,
+    recent_sessions, scan_running,
 };
 use tidewatch_core::paths::TidewatchPaths;
 use tidewatch_core::worktree::{self, BranchChoice, RemoveMode, Worktree};
@@ -42,7 +42,8 @@ pub(crate) struct Failure {
 pub(crate) struct ScanSpec {
     pub(crate) agents: AgentTable,
     pub(crate) folders: Vec<PathBuf>,
-    pub(crate) held: HashSet<String>,
+    pub(crate) held: Held,
+    pub(crate) titles: TitleCache,
     pub(crate) roots: HashMap<PathBuf, Option<PathBuf>>,
     pub(crate) idents: HashMap<PathBuf, Option<Ident>>,
 }
@@ -54,9 +55,12 @@ pub(crate) fn scan(jobs: &Jobs<Done>, ctx: &egui::Context, spec: ScanSpec) {
 fn run_scan(system: &dyn System, env: &ScanEnv, spec: &ScanSpec) -> Done {
     let Some(found) = scan_running(system, env, &spec.agents) else { return Done::ScanFailed };
     let mut held = spec.held.clone();
-    held.extend(found.held_ids);
-    held.extend(found.sessions.iter().filter_map(|session| session.session_id.clone()));
-    let mut recent = recent_sessions(env, &spec.folders, &held, RECENT_PER_FOLDER);
+    for id in
+        found.held_ids.iter().chain(found.sessions.iter().filter_map(|s| s.session_id.as_ref()))
+    {
+        held.add_id(id);
+    }
+    let mut recent = recent_sessions(env, &spec.folders, &held, &spec.titles, RECENT_PER_FOLDER);
     order(&mut recent);
     recent.truncate(RECENT_ROWS);
     let mut sessions = found.sessions;

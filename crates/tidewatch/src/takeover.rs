@@ -5,7 +5,8 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use tidewatch_core::agents::{Agent, AgentTable, ArgList, Level, ResumeForm};
-use tidewatch_core::elsewhere::{Activity, Cli, Host, Key, Session};
+use tidewatch_core::elsewhere::{Activity, Cli, Host, Key, Session, age_text};
+use tidewatch_core::elsewhere_scan::{Held, TitleCache};
 use tidewatch_core::launch::LaunchCtx;
 use tidewatch_core::prefs::ResumeAgents;
 use tidewatch_core::profiles::{Profile, Profiles};
@@ -19,7 +20,7 @@ use crate::takeover_group::Ident;
 use crate::welcome::shown_path;
 
 pub(crate) const SCAN_EVERY_S: f64 = 5.0;
-pub(crate) const RECENT_PER_FOLDER: usize = 3;
+pub(crate) const RECENT_PER_FOLDER: usize = 1;
 pub(crate) const RECENT_ROWS: usize = 5;
 pub(crate) const END_WAIT_S: u64 = 5;
 
@@ -136,12 +137,20 @@ pub(crate) struct Scanned {
 pub(crate) enum CardAction {
     Press(Key),
     MoveAllIdle,
+    ToggleRecent,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Effect {
     None,
     StdduskHint,
+}
+
+#[derive(Clone, Copy, Default, PartialEq, Eq)]
+enum RecentList {
+    #[default]
+    Shut,
+    Open,
 }
 
 #[derive(Default)]
@@ -156,11 +165,51 @@ pub(crate) struct Takeover {
     armed: Vec<Armed>,
     moving: Vec<Key>,
     reveal: bool,
+    held: Held,
+    titles: TitleCache,
+    recent: RecentList,
 }
 
 impl Takeover {
+    pub(crate) fn with_recent_open(recent_open: bool) -> Self {
+        Self {
+            recent: if recent_open { RecentList::Open } else { RecentList::Shut },
+            ..Self::default()
+        }
+    }
+
     pub(crate) fn sessions(&self) -> &[Session] {
         &self.sessions
+    }
+
+    /// Remembers a session an open tab holds, for as long as this run lasts: a tab that closes
+    /// later leaves a session Tidewatch itself ran, which is not one running elsewhere.
+    pub(crate) fn note_open(&mut self, id: Option<&str>, transcript: Option<&Path>) {
+        if let Some(id) = id {
+            self.held.add_id(id);
+        }
+        if let Some(file) = transcript {
+            self.held.add_transcript(file);
+        }
+    }
+
+    pub(crate) fn held(&self) -> &Held {
+        &self.held
+    }
+
+    pub(crate) fn titles(&self) -> &TitleCache {
+        &self.titles
+    }
+
+    pub(crate) fn recent_open(&self) -> bool {
+        self.recent == RecentList::Open
+    }
+
+    pub(crate) fn toggle_recent(&mut self) {
+        self.recent = match self.recent {
+            RecentList::Shut => RecentList::Open,
+            RecentList::Open => RecentList::Shut,
+        };
     }
 
     pub(crate) fn dialog_open(&self) -> bool {
@@ -353,6 +402,12 @@ impl Takeover {
         self.moving.retain(|moving| moving != key);
     }
 
+    pub(crate) fn card_rows(&self, env: &Env) -> Option<CardRows> {
+        let (ended, running): (Vec<Row>, Vec<Row>) =
+            self.rows(env).into_iter().partition(|row| row.status == Status::NotRunning);
+        (!running.is_empty()).then_some(CardRows { running, ended })
+    }
+
     pub(crate) fn rows(&self, env: &Env) -> Vec<Row> {
         self.sessions
             .iter()
@@ -364,9 +419,10 @@ impl Takeover {
                     cli_id: session.cli.id().to_owned(),
                     name: session.display_name(env.now_ms),
                     folder: shown_path(&session.cwd, env.home),
-                    host: session
-                        .running()
-                        .map_or_else(|| "not running".to_owned(), |r| r.host.label().to_owned()),
+                    host: session.running().map_or_else(
+                        || ended_text(session, env.now_ms),
+                        |running| running.host.label().to_owned(),
+                    ),
                     level: level.label().to_owned(),
                     yolo: level == Level::Yolo,
                     status: status_of(session),
@@ -375,6 +431,18 @@ impl Takeover {
             })
             .collect()
     }
+}
+
+fn ended_text(session: &Session, now_ms: i64) -> String {
+    session
+        .since_ms
+        .map_or_else(|| "ended".to_owned(), |at| format!("ended {}", age_text(now_ms - at)))
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct CardRows {
+    pub(crate) running: Vec<Row>,
+    pub(crate) ended: Vec<Row>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

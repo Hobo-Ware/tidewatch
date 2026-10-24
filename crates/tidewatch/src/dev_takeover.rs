@@ -1,6 +1,7 @@
 //! `TIDEWATCH_DEV_TAKEOVER=<pid>` or `move:<pid>` presses Move on the running session with that pid
 //! once the first scan has it (`confirm:<pid>` stops at the open dialog, for a capture); a trailing
-//! `:worktree` ticks "Move it into a new worktree first". Read once.
+//! `:worktree` ticks "Move it into a new worktree first". `TIDEWATCH_DEV_RECENT=open` starts with the
+//! card's "Recent sessions" list open. Read once.
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct DevTakeover {
@@ -12,6 +13,10 @@ pub(crate) struct DevTakeover {
 impl DevTakeover {
     pub(crate) fn from_env() -> Option<Self> {
         Self::parse(std::env::var("TIDEWATCH_DEV_TAKEOVER").ok().as_deref())
+    }
+
+    pub(crate) fn recent_open_from_env() -> bool {
+        std::env::var("TIDEWATCH_DEV_RECENT").is_ok_and(|value| value == "open")
     }
 
     fn parse(value: Option<&str>) -> Option<Self> {

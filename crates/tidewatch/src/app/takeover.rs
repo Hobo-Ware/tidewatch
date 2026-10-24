@@ -14,7 +14,8 @@ use crate::catalog::Availability;
 use crate::pty::{spawn_agent, spawn_shell_noted, spawn_typed};
 use crate::restore_glue::Spawn;
 use crate::takeover::{
-    CardAction, END_WAIT_S, Effect, Env, MoveSpec, Scanned, Takeover, moved_text, window_plan,
+    CardAction, CardRows, END_WAIT_S, Effect, Env, MoveSpec, Scanned, Takeover, moved_text,
+    window_plan,
 };
 use crate::takeover_group::{Ident, group_roots};
 use crate::takeover_jobs::{self, Done, Landed, MoveJob, ScanSpec};
@@ -59,6 +60,7 @@ impl Tidewatch {
             self.apply_takeover_done(done, ctx);
         }
         self.drive_dev_takeover(ctx);
+        self.note_open_sessions();
         if self.paths.is_none() || !self.catalog.is_loaded() {
             return;
         }
@@ -71,22 +73,24 @@ impl Tidewatch {
         }
     }
 
+    fn note_open_sessions(&mut self) {
+        for agent in self.tabs.items().iter().filter_map(|tab| tab.pane.agent.as_ref()) {
+            let id = agent.launched.as_ref().and_then(|launched| launched.session_id.as_deref());
+            self.takeover.note_open(id, agent.reader.transcript());
+        }
+    }
+
     fn start_takeover_scan(&mut self, ctx: &egui::Context) {
         let folders = if self.welcome.is_some() {
             Vec::new()
         } else {
             self.workspaces.iter().map(|workspace| workspace.dir().to_path_buf()).collect()
         };
-        let held = self
-            .tabs
-            .items()
-            .iter()
-            .filter_map(|tab| tab.pane.agent.as_ref()?.launched.as_ref()?.session_id.clone())
-            .collect();
         let spec = ScanSpec {
             agents: self.agent_table(),
             folders,
-            held,
+            held: self.takeover.held().clone(),
+            titles: self.takeover.titles().clone(),
             roots: self.takeover.known_roots(),
             idents: self.takeover.known_idents(),
         };
@@ -143,6 +147,7 @@ impl Tidewatch {
         if let Some(key) = spec.session.key() {
             self.takeover.moved(&key);
         }
+        self.takeover.note_open(spec.session.session_id.as_deref(), None);
         let dir = workspace.dir().to_path_buf();
         let other = matches!(workspace, crate::repo::Workspace::Other { .. });
         let plan = window_plan(
@@ -196,16 +201,15 @@ impl Tidewatch {
 
     pub(super) fn takeover_card(&mut self) -> Option<Card> {
         self.with_takeover(|takeover, env| {
-            let rows = takeover.rows(env);
-            if rows.is_empty() {
-                return None;
-            }
+            let CardRows { running: rows, ended } = takeover.card_rows(env)?;
             let (running, idle) = takeover.counts();
             let noun = if running == 1 { "session" } else { "sessions" };
             Some(Card {
                 summary: format!("{running} {noun} \u{b7} {idle} idle"),
                 can_move_all: !takeover.idle_movable(env).is_empty(),
                 rows,
+                ended,
+                ended_open: takeover.recent_open(),
             })
         })
     }
@@ -220,6 +224,7 @@ impl Tidewatch {
                 }
             }
             CardAction::MoveAllIdle => self.open_batch(ctx),
+            CardAction::ToggleRecent => self.takeover.toggle_recent(),
         }
     }
 

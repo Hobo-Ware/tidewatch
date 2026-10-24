@@ -327,7 +327,7 @@ impl Tidewatch {
             pane_jobs: Jobs::new(),
             workspace_jobs: Jobs::new(),
             stdusk_jobs: Jobs::new(),
-            takeover: Takeover::default(),
+            takeover: Takeover::with_recent_open(DevTakeover::recent_open_from_env()),
             takeover_jobs: Jobs::new(),
             dev_takeover: DevTakeover::from_env(),
             picker: Picker::new(),

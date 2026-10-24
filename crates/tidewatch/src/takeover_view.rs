@@ -20,6 +20,7 @@ use crate::takeover::{CardAction, DialogView, Offer, Row, Status};
 
 const HEADER_H: f32 = 46.0;
 const ROW_H: f32 = 46.0;
+const DISCLOSURE_H: f32 = 38.0;
 const SIDE: f32 = 16.0;
 const BADGE: f32 = 26.0;
 const DIALOG_W: f32 = 560.0;
@@ -28,6 +29,18 @@ pub(crate) struct Card {
     pub(crate) summary: String,
     pub(crate) can_move_all: bool,
     pub(crate) rows: Vec<Row>,
+    pub(crate) ended: Vec<Row>,
+    pub(crate) ended_open: bool,
+}
+
+impl Card {
+    fn disclosure_h(&self) -> f32 {
+        if self.ended.is_empty() { 0.0 } else { DISCLOSURE_H }
+    }
+
+    fn ended_rows_h(&self) -> f32 {
+        if self.ended_open { self.ended.len() as f32 * ROW_H } else { 0.0 }
+    }
 }
 
 fn status_ink(status: Status) -> Color32 {
@@ -40,7 +53,8 @@ fn status_ink(status: Status) -> Color32 {
 
 pub(crate) fn card(ui: &mut Ui, data: &Card, reveal: bool) -> Option<CardAction> {
     let width = ui.available_width();
-    let height = HEADER_H + data.rows.len() as f32 * ROW_H;
+    let running_h = data.rows.len() as f32 * ROW_H;
+    let height = HEADER_H + running_h + data.disclosure_h() + data.ended_rows_h();
     let (rect, _) = ui.allocate_exact_size(vec2(width, height), Sense::hover());
     if reveal {
         ui.scroll_to_rect(rect, Some(Align::TOP));
@@ -58,7 +72,44 @@ pub(crate) fn card(ui: &mut Ui, data: &Card, reveal: bool) -> Option<CardAction>
         let row_rect = Rect::from_min_size(pos2(rect.left(), top), vec2(width, ROW_H));
         action = action.or(draw_row(ui, row_rect, row));
     }
+    if data.ended.is_empty() {
+        return action;
+    }
+    let top = rect.top() + HEADER_H + running_h;
+    let bar = Rect::from_min_size(pos2(rect.left(), top), vec2(width, DISCLOSURE_H));
+    action = action.or(disclosure(ui, bar, data));
+    if data.ended_open {
+        for (index, row) in data.ended.iter().enumerate() {
+            let row_top = bar.bottom() + index as f32 * ROW_H;
+            let row_rect = Rect::from_min_size(pos2(rect.left(), row_top), vec2(width, ROW_H));
+            action = action.or(draw_row(ui, row_rect, row));
+        }
+    }
     action
+}
+
+fn disclosure(ui: &mut Ui, rect: Rect, data: &Card) -> Option<CardAction> {
+    let response = ui.interact(rect, Id::new("takeover_recent"), Sense::click());
+    let painter = ui.painter_at(rect);
+    painter.hline(
+        (rect.left() + 12.0)..=(rect.right() - 12.0),
+        rect.top(),
+        Stroke::new(1.0, brand::CARD_LINE),
+    );
+    let chevron = if data.ended_open { "\u{25be}" } else { "\u{25b8}" };
+    let ink = if response.hovered() { brand::TEXT } else { brand::MUTED };
+    painter.text(
+        pos2(rect.left() + SIDE, rect.center().y),
+        Align2::LEFT_CENTER,
+        format!("{chevron}  Recent sessions ({})", data.ended.len()),
+        body(12.5),
+        ink,
+    );
+    response
+        .on_hover_cursor(egui::CursorIcon::PointingHand)
+        .on_hover_text("Sessions that ended and are not open in a tab")
+        .clicked()
+        .then_some(CardAction::ToggleRecent)
 }
 
 fn header(ui: &mut Ui, rect: Rect, data: &Card) -> Option<CardAction> {
