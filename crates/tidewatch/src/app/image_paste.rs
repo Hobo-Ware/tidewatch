@@ -8,7 +8,11 @@ use super::{Tidewatch, wall_ms};
 use crate::image_paste::{Delivery, Done};
 use crate::pane::Body;
 use crate::reader::Shown;
-use crate::{paste, reader_glue};
+use crate::reader_glue;
+use stdusk_core::paste::prepare;
+use stdusk_egui::terminal_view::paste_into;
+
+use super::terminal::PASTE_RULES;
 
 const PASTES_DIR: &str = "pastes";
 
@@ -81,9 +85,9 @@ impl Tidewatch {
             Delivery::Text(text) => match target {
                 Target::Terminal(_) => {
                     if let (Some(Body::Shell(term)), Some(text)) =
-                        (self.tab_body_mut(tab), paste::prepared(&text))
+                        (self.tab_body_mut(tab), prepare(&text, PASTE_RULES))
                     {
-                        paste::into_terminal(term, &text);
+                        paste_into(term, &text);
                     }
                 }
                 Target::TextField => self.insert_into_field(ctx, tab, active_id, text),

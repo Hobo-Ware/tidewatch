@@ -3,8 +3,7 @@
 //! clipboard sits behind a seam so the headless tests need no window.
 
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use stdusk_egui::macos_paste::{ImagePasteHook, post_cmd_v};
 
 use tidewatch_core::image_paste::{Action, Clip, Target, decide, path_text, shot_name};
 
@@ -75,7 +74,7 @@ pub(crate) struct Done {
 }
 
 pub(crate) struct Host {
-    requests: Arc<AtomicUsize>,
+    hook: ImagePasteHook,
     jobs: Jobs<Done>,
     dev_at: Option<f64>,
 }
@@ -86,10 +85,12 @@ fn dev_seconds(value: Option<&str>) -> Option<f64> {
 
 impl Host {
     pub(crate) fn new(ctx: &egui::Context) -> Self {
-        let requests = Arc::new(AtomicUsize::new(0));
-        crate::macos::install_cmd_v_image_monitor(ctx.clone(), Arc::clone(&requests));
+        let hook = ImagePasteHook::default();
+        hook.install_monitor(ctx, || {
+            crate::macos::clip_has_picture(&mut crate::macos::SystemClipboard)
+        });
         let dev_at = dev_seconds(std::env::var("TIDEWATCH_DEV_IMAGE_PASTE").ok().as_deref());
-        Self { requests, jobs: Jobs::new(), dev_at }
+        Self { hook, jobs: Jobs::new(), dev_at }
     }
 
     pub(crate) fn tick_dev(&mut self, now: f64, ctx: &egui::Context) {
@@ -99,18 +100,18 @@ impl Host {
             return;
         }
         self.dev_at = None;
-        if !crate::macos::post_cmd_v() {
+        if !post_cmd_v() {
             self.request();
         }
         ctx.request_repaint();
     }
 
     pub(crate) fn request(&self) {
-        self.requests.fetch_add(1, Ordering::SeqCst);
+        self.hook.request();
     }
 
     pub(crate) fn take_requests(&self) -> usize {
-        self.requests.swap(0, Ordering::SeqCst)
+        self.hook.take()
     }
 
     pub(crate) fn start(

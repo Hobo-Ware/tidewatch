@@ -5365,7 +5365,7 @@ checksum = "a2eb9349b6444b326872e140eb1cf5e7c522154d69e7a0ffb0fb81c06b37543f"
 [[package]]
 name = "stdusk-core"
 version = "1.9.1"
-source = "git+https://github.com/Hobo-Ware/stdusk?rev=b227a05a1f79e666e706021672a0f3d9a7965469#b227a05a1f79e666e706021672a0f3d9a7965469"
+source = "git+https://github.com/Hobo-Ware/stdusk?rev=d3ecf6e5a4a488a62c95bbf61bbae86aa24f87ea#d3ecf6e5a4a488a62c95bbf61bbae86aa24f87ea"
 dependencies = [
  "alacritty_terminal",
  "base64 0.22.1",
@@ -5384,10 +5384,14 @@ dependencies = [
 [[package]]
 name = "stdusk-egui"
 version = "1.9.1"
-source = "git+https://github.com/Hobo-Ware/stdusk?rev=b227a05a1f79e666e706021672a0f3d9a7965469#b227a05a1f79e666e706021672a0f3d9a7965469"
+source = "git+https://github.com/Hobo-Ware/stdusk?rev=d3ecf6e5a4a488a62c95bbf61bbae86aa24f87ea#d3ecf6e5a4a488a62c95bbf61bbae86aa24f87ea"
 dependencies = [
+ "block2 0.6.2",
  "egui",
  "font-kit",
+ "objc2 0.6.5",
+ "objc2-app-kit 0.3.2",
+ "objc2-foundation 0.3.2",
  "resvg",
  "stdusk-core",
 ]
@@ -5561,7 +5565,6 @@ version = "0.1.19"
 dependencies = [
  "anyhow",
  "arboard",
- "block2 0.6.2",
  "eframe",
  "egui",
  "egui_commonmark",
