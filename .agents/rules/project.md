@@ -180,6 +180,7 @@ crates/tidewatch/       the egui app
   src/app/overlays.rs   the toast and its pill, and the dialogs drawn over the frame (close, leftovers, delivery, trust, notice)
   src/app/dev.rs        the TIDEWATCH_DEV_* drivers that need the whole app: start an agent, resume, press keys, leftovers dialog, pick and note
   src/commands.rs       the one command table: id, title, group, the chord on macOS and on Linux (none for a palette-only command such as build-workflow or move-sessions), the Command it runs; consume (most specific chord first), press_event, Gate (which chord works over which screen); key handling, tooltips and hints read it
+  src/commands/terminal_keys.rs the line-editing keys the terminal turns into bytes (Option+arrows, Cmd+arrows, Backspace variants; Home, End and Ctrl+U on Linux), listed on the Shortcuts page and in docs/shortcuts.md; a headless test checks each against the real bytes
   src/commands/rows.rs  the table as rows for the Shortcuts page, and (tests only) the markdown that docs/shortcuts.md must equal
   src/commands/tests.rs distinct chords per platform, no shadowing, every Action with a chord is in the table, macOS chords as shipped, Linux never takes a bare Ctrl letter, the gate
   src/repo_close.rs     the close-repo sequence: which tab next, wait for a removal, stop when a tab stays (pure)
