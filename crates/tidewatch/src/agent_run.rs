@@ -148,6 +148,11 @@ impl AgentRun {
         self.started_at = now;
     }
 
+    /// The agent process resumed a saved session: it waits at its prompt, which reads as done.
+    pub(crate) fn resumed(&mut self, now: f64) {
+        self.tracker.agent_resumed(now);
+    }
+
     /// The tab never got an agent: it shows this error as its status.
     pub(crate) fn fail(&mut self, message: String) {
         self.failed = Some(message);
