@@ -252,6 +252,12 @@ impl Chord {
         std::iter::once(self.key).chain(shifted)
     }
 
+    /// egui-winit leaves the text of a press out only while Ctrl or Cmd is down, so an Alt chord
+    /// would type its key into the terminal as well.
+    fn types_its_key(self) -> bool {
+        self.has(ALT) && !self.has(CMD) && !self.has(CTRL)
+    }
+
     pub(crate) fn press_event(self, platform: Platform) -> egui::Event {
         egui::Event::Key {
             key: self.key,
@@ -493,8 +499,15 @@ pub(crate) fn consume(
         ordered
             .into_iter()
             .filter(|(_, chord)| {
-                (chord.mods != 0 || !pressed_with_modifiers(input, chord.key))
-                    && chord.keys().any(|key| input.consume_key(chord.modifiers(), key))
+                let taken = (chord.mods != 0 || !pressed_with_modifiers(input, chord.key))
+                    && chord.keys().any(|key| input.consume_key(chord.modifiers(), key));
+                if taken && chord.types_its_key() {
+                    let typed = chord.key.symbol_or_name();
+                    input
+                        .events
+                        .retain(|event| !matches!(event, egui::Event::Text(text) if text == typed));
+                }
+                taken
             })
             .map(|(entry, _)| entry.command)
             .collect()
