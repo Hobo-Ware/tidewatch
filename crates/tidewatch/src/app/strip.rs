@@ -15,7 +15,6 @@ use tidewatch_core::avatar::Avatar;
 
 use super::{Tidewatch, wall_ms};
 use crate::agent_avatar::{self, Face};
-use crate::agent_frame;
 use crate::agent_run::progress_fraction;
 use crate::amphetamine_view;
 use crate::brand;
@@ -31,6 +30,7 @@ use crate::{layout, overview_view, status_view};
 
 mod main_icon;
 pub(crate) mod pill;
+mod repo_chip;
 
 const STRIP_TOP_MARGIN: i8 = 6;
 const STRIP_SIDE_MARGIN: i8 = 8;
@@ -65,10 +65,20 @@ pub(crate) struct Mood {
 
 impl Tidewatch {
     pub(super) fn show_tab_strip(&mut self, ui: &mut egui::Ui, now: f64, frame: &mut FrameIntent) {
-        let needs_you = agent_frame::tones(&self.tabs)
-            .into_iter()
-            .filter(|tone| *tone == status_view::Tone::Needs)
-            .count();
+        let waiting_by_repo: Vec<(String, usize)> = self
+            .workspaces
+            .iter()
+            .enumerate()
+            .map(|(group, workspace)| {
+                let waiting = self
+                    .tabs
+                    .items()
+                    .iter()
+                    .filter(|tab| tab.group == group && needs_you(&tab.pane))
+                    .count();
+                (workspace.chip_label(), waiting)
+            })
+            .collect();
 
         let chrome = self.shell.chrome();
         let drawn = chrome == Chrome::Drawn;
@@ -104,7 +114,7 @@ impl Tidewatch {
                         }
                         return;
                     }
-                    if overview_view::button(ui, self.overview, needs_you).clicked() {
+                    if overview_view::button(ui, self.overview, &waiting_by_repo).clicked() {
                         frame.toggle_overview = true;
                     }
                     self.repo_chip(ui, frame);
@@ -228,15 +238,9 @@ impl Tidewatch {
         let group = self.tabs.active_group();
         let here = &self.workspaces[group];
         let several = self.workspaces.len() > 1;
-        let resp = chip(ui, &here.chip_label(), true);
-        let mut tip = here.dir().display().to_string();
+        let resp = repo_chip::show(ui, &here.chip_label());
+        let mut tip = format!("{}\n{}", here.chip_label(), here.dir().display());
         if several {
-            if self.tabs.items().iter().any(|tab| tab.group != group && needs_you(&tab.pane)) {
-                let dot = resp.rect.right_top() + egui::vec2(-2.0, 2.0);
-                let painter = ui.painter();
-                painter.circle_filled(dot, 5.5, brand::SIDEBAR);
-                painter.circle_filled(dot, 4.0, brand::NEEDS);
-            }
             tip = format!(
                 "{tip}\nSwitch repo ({} / {})",
                 Command::NextRepo.keys(),
