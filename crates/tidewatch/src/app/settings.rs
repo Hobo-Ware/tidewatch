@@ -57,6 +57,19 @@ impl Tidewatch {
         }
     }
 
+    pub(super) fn toggle_shortcuts_settings(&mut self) {
+        if self.settings.as_ref().is_some_and(|settings| settings.section == Section::Shortcuts) {
+            self.settings = None;
+            return;
+        }
+        if self.settings.is_none() {
+            self.toggle_settings();
+        }
+        if let Some(settings) = &mut self.settings {
+            settings.section = Section::Shortcuts;
+        }
+    }
+
     /// What another launch, the hotkey or the menu-bar item asked of the app itself.
     pub(super) fn shell_event(&mut self, event: &Event, ctx: &egui::Context) {
         if self.status_log {

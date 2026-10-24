@@ -322,6 +322,7 @@ mod tests {
                 "Reader or raw terminal",
                 "Terminal or last file",
                 "Settings",
+                "Keyboard shortcuts",
                 "Build workflow from this session",
                 "Move sessions to Tidewatch",
                 "Amphetamine",
@@ -373,10 +374,10 @@ mod tests {
         let linux = items(&sources(), Platform::Linux);
         assert_eq!(mac[0].keys, "Cmd+T");
         assert_eq!(linux[0].keys, "Ctrl+Shift+T");
-        assert_eq!(mac[13].keys, "Cmd+2");
-        assert_eq!(linux[13].keys, "Alt+2");
-        assert_eq!((mac[15].label.as_str(), mac[15].keys.as_str()), ("Open repo...", "Cmd+O"));
-        assert_eq!(linux[15].keys, "Ctrl+Shift+O");
+        assert_eq!(mac[14].keys, "Cmd+2");
+        assert_eq!(linux[14].keys, "Alt+2");
+        assert_eq!((mac[16].label.as_str(), mac[16].keys.as_str()), ("Open repo...", "Cmd+O"));
+        assert_eq!(linux[16].keys, "Ctrl+Shift+O");
     }
 
     #[test]
