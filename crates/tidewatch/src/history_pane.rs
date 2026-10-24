@@ -1,6 +1,6 @@
 //! The History pane: a header with the branch, how far it is ahead of the default branch and the
-//! scope switch and the Progress | Changes | History switch, then the side the tab shows: the
-//! Changes list, or Kelp's commit graph. Side by side it is a raised card.
+//! Progress | Changes | History switch, then the side the tab shows: the Changes list, or the
+//! commit search over Kelp's commit graph. Side by side it is a raised card.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -15,17 +15,18 @@ use kelp_core::history::History;
 use kelp_ui::avatars::AvatarStore;
 use kelp_ui::graph::Marks;
 use kelp_ui::graph::{
-    GraphAction, GraphColumns, GraphInput, GraphStyle, MenuFor, Preview, Selection, Wip,
+    GraphAction, GraphColumns, GraphInput, GraphStyle, Highlight, MenuFor, Preview, Selection, Wip,
 };
 use stdusk_egui::widgets::{menu_item, style_menu};
 use tidewatch_core::avatar::Avatar;
-use tidewatch_core::history::{BaseCompare, Scope};
+use tidewatch_core::history::BaseCompare;
 
 use crate::agent_avatar;
 use crate::brand;
 use crate::commit_files::{self, Spot};
 use crate::progress_view::{self, Side, TabState};
 use crate::screen_kit::{body, mono};
+use crate::search_bar;
 use crate::tab_view::TabView;
 use crate::waiting_notes::Waiting;
 use crate::{changes_view, layout, segmented};
@@ -39,8 +40,7 @@ const SWITCH_GAP: f32 = 8.0;
 const FACE: f32 = 24.0;
 const FACE_GAP: f32 = 8.0;
 const CORNER_STEPS: u32 = 8;
-
-pub(crate) const SCOPES: [&str; 2] = ["This branch", "Whole repo"];
+const MATCH_FILL: f32 = 0.25;
 
 /// A tab's ledger for the card: the panel's input and the tab's memory of its two choices.
 pub(crate) struct Face<'a> {
@@ -78,6 +78,7 @@ pub(crate) fn show(
     let header = Rect::from_min_max(rect.min, pos2(rect.right(), rect.top() + layout::CHROME_H));
     let first = progress.as_ref().map_or(Side::Progress, |input| input.first);
     let shown = progress_view::side_shown(state.chosen, progress.is_some(), first);
+    state.shown = Some(shown);
     if let Some(chose) =
         show_card_header(ui, header, view, (shown, progress.is_some()), face.as_ref())
     {
@@ -96,7 +97,10 @@ pub(crate) fn show(
         }
         _ => {}
     }
-    let body = Rect::from_min_max(below.min, rect.max).shrink2(vec2(BODY_PAD_X, BODY_PAD_Y));
+    let toolbar = Rect::from_min_size(below.min, vec2(below.width(), search_bar::HEIGHT));
+    search_bar::show(ui, toolbar, view);
+    let body = Rect::from_min_max(pos2(rect.left(), toolbar.bottom()), rect.max)
+        .shrink2(vec2(BODY_PAD_X, BODY_PAD_Y));
     let waiting = Waiting::of(&view.notes, agent);
     let mut action = None;
     ui.scope_builder(UiBuilder::new().id_salt("history-graph").max_rect(body), |ui| {
@@ -186,7 +190,7 @@ fn branch_title(branch: Option<&str>) -> &str {
 fn show_card_header(
     ui: &mut Ui,
     rect: Rect,
-    view: &mut TabView,
+    view: &TabView,
     (shown, has_progress): (Side, bool),
     face: Option<&Face<'_>>,
 ) -> Option<Side> {
@@ -202,7 +206,7 @@ fn show_card_header(
     let control =
         segmented::show_badged(ui, id, rect.right() - 10.0, center_y, (&labels, &badges), active);
     let chose = control.clicked.and_then(|index| sides.get(index).copied());
-    let mut right = control.left - SWITCH_GAP;
+    let right = control.left - SWITCH_GAP;
     let mut x = rect.left() + CARD_PAD;
     if let Some(face) = face {
         let place = Rect::from_center_size(pos2(x + FACE / 2.0, center_y), vec2(FACE, FACE));
@@ -212,15 +216,6 @@ fn show_card_header(
         }
         let click = ui.interact(place, ui.id().with(("history-face", face.tab)), Sense::click());
         agent_avatar::menu(&click, face.tab);
-    }
-    if shown == Side::History {
-        let id = ui.id().with("history-scope");
-        let active = usize::from(view.scope == Scope::Whole);
-        let switch = segmented::show(ui, id, right, center_y, &SCOPES, active);
-        if let Some(index) = switch.clicked {
-            view.set_scope(if index == 1 { Scope::Whole } else { Scope::Current });
-        }
-        right = switch.left - PILL_GAP;
     }
     let loaded = view.loaded.as_ref();
     let title = branch_title(loaded.and_then(|l| l.branch.as_deref()));
@@ -300,6 +295,13 @@ fn show_graph(
     };
     let history = &loaded.history;
     let summaries = &loaded.summaries;
+    let highlight = view.search.highlight().map(|needle| Highlight {
+        needle: needle.to_owned(),
+        fill: brand::TEAL.gamma_multiply(MATCH_FILL),
+    });
+    if view.graph.highlight != highlight {
+        view.graph.highlight = highlight;
+    }
     let changes = view.wip.as_deref().unwrap_or_default();
     let wip = (!changes.is_empty()).then(|| Wip {
         head_row: loaded.head_row.unwrap_or(0),
@@ -316,7 +318,7 @@ fn show_graph(
         selected,
         head_row: loaded.head_row,
         wip,
-        lit: None,
+        lit: view.search.lit(history.len()),
         descriptions: false,
         other_wips: &[],
         columns: GraphColumns { date: true, ..GraphColumns::default() },

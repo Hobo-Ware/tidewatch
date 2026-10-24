@@ -6,7 +6,8 @@ use tidewatch_core::ui_zoom::Direction;
 
 use super::Tidewatch;
 use super::repos::RepoCommand;
-use crate::commands::{self, Command, Dialog, Focus, Gate};
+use crate::commands::{self, Card, Command, Dialog, Focus, Gate};
+use crate::progress_view;
 use crate::reader_glue;
 use crate::settings_view;
 use crate::tab_view::TabView;
@@ -106,6 +107,7 @@ impl Tidewatch {
     pub(super) fn read_shortcuts(&mut self, ctx: &egui::Context) -> FrameIntent {
         let typing_in_a_panel = ctx.text_edit_focused();
         let active_id = self.tabs.items()[self.tabs.active()].id;
+        self.clear_search_on_escape(ctx, active_id);
         let gate = self.key_gate(active_id, typing_in_a_panel);
         if gate.focus == Focus::Terminal && !gate.modal_open() && !self.overview {
             crate::screen_kit::esc_left_a_widget(ctx, false);
@@ -155,6 +157,29 @@ impl Tidewatch {
         }
     }
 
+    /// Esc in the commit search field empties it. egui has already taken the keyboard from the
+    /// field by now, so the field's own state from the last frame says it was the one typed in.
+    fn clear_search_on_escape(&mut self, ctx: &egui::Context, active_id: u64) {
+        let Some(view) = self.views.get_mut(&active_id) else { return };
+        if view.search.was_focused(ctx.cumulative_frame_nr())
+            && ctx.input_mut(|i| i.consume_key(Modifiers::NONE, Key::Escape))
+        {
+            view.search.clear();
+            ctx.memory_mut(|memory| memory.surrender_focus(crate::search_bar::field_id(active_id)));
+        }
+    }
+
+    fn find_commit(&mut self, ctx: &egui::Context) {
+        if !self.panes_showing() {
+            return;
+        }
+        let active_id = self.tabs.items()[self.tabs.active()].id;
+        let Some(view) = self.views.get_mut(&active_id) else { return };
+        view.search.want_focus = Some(crate::commit_search::Focus::SelectAll);
+        self.progress_ui.tab(active_id).chosen = Some(progress_view::Side::History);
+        ctx.request_repaint();
+    }
+
     fn key_gate(&self, active_id: u64, typing: bool) -> Gate {
         let other = self.trust.dialog_open()
             || self.leftovers.is_open()
@@ -178,6 +203,13 @@ impl Tidewatch {
                 Focus::FileView
             } else {
                 Focus::Terminal
+            },
+            card: if self.panes_showing()
+                && self.progress_ui.shown(active_id) == Some(progress_view::Side::History)
+            {
+                Card::History
+            } else {
+                Card::Other
             },
         }
     }
@@ -208,6 +240,7 @@ impl Tidewatch {
             Command::NextFile => self.with_active_view(|view| view.step_file(1)),
             Command::PrevCommit => self.with_active_view(|view| view.step_commit(-1)),
             Command::NextCommit => self.with_active_view(|view| view.step_commit(1)),
+            Command::FindCommit => self.find_commit(ctx),
             Command::Settings => self.toggle_settings(),
             Command::Shortcuts => self.toggle_shortcuts_settings(),
             Command::OpenRepo => self.run_repo_command(RepoCommand::Open, ctx),

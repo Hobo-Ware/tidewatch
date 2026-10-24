@@ -33,6 +33,7 @@ On Linux a plain Ctrl chord would reach the shell, so Linux uses Ctrl+Shift or A
 | Next file | `Down` | `Down` |
 | Previous commit | `[` | `[` |
 | Next commit | `]` | `]` |
+| Find a commit | `Cmd+F` | `Ctrl+Shift+F` |
 
 ## App
 

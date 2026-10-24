@@ -89,6 +89,7 @@ pub(crate) fn side_shown(chosen: Option<Side>, has_ledger: bool, first: Side) ->
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) struct TabState {
     pub(crate) chosen: Option<Side>,
+    pub(crate) shown: Option<Side>,
     open: [bool; 3],
     all_rows: bool,
 }
@@ -119,6 +120,10 @@ pub(crate) struct Memory {
 impl Memory {
     pub(crate) fn tab(&mut self, id: u64) -> &mut TabState {
         self.tabs.entry(id).or_default()
+    }
+
+    pub(crate) fn shown(&self, id: u64) -> Option<Side> {
+        self.tabs.get(&id).and_then(|state| state.shown)
     }
 
     pub(crate) fn forget_except(&mut self, open: impl Fn(u64) -> bool) {

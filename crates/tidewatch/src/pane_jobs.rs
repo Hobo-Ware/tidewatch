@@ -7,6 +7,7 @@ use std::path::{Path, PathBuf};
 use std::sync::mpsc::Sender;
 use std::sync::{Mutex, PoisonError};
 
+use kelp_core::ObjectId;
 use kelp_core::commit::FileChange;
 use kelp_core::diff::FileDiff;
 use kelp_core::ops::Op;
@@ -24,6 +25,7 @@ pub(crate) enum Done {
     History { tab: u64, ticket: u64, scope: Scope, result: Result<Box<Loaded>, String> },
     Status { tab: u64, ticket: u64, result: Result<WorkingStatus, String> },
     Files { tab: u64, ticket: u64, source: Source, result: Result<Box<Files>, String> },
+    Search { tab: u64, ticket: u64, query: String, rows: Vec<usize> },
     Diff { tab: u64, ticket: u64, result: Result<Box<FileDiff>, String> },
     Notes { tab: u64, notes: Box<Notes> },
     Watching { tab: u64, result: Result<Watcher, String> },
@@ -36,6 +38,7 @@ impl Done {
             Self::History { tab, .. }
             | Self::Status { tab, .. }
             | Self::Files { tab, .. }
+            | Self::Search { tab, .. }
             | Self::Diff { tab, .. }
             | Self::Notes { tab, .. }
             | Self::Watching { tab, .. }
@@ -84,6 +87,21 @@ pub(crate) fn load_status(
         tab,
         ticket,
         result: history::working_status(&dir).map_err(|e| format!("{e:#}")),
+    });
+}
+
+pub(crate) fn search(
+    jobs: &Jobs<Done>,
+    ctx: &egui::Context,
+    tab: u64,
+    ticket: u64,
+    dir: PathBuf,
+    ids: Vec<ObjectId>,
+    query: String,
+) {
+    jobs.spawn(ctx, move || {
+        let rows = history::search(&dir, &ids, &query).unwrap_or_default();
+        Done::Search { tab, ticket, query, rows }
     });
 }
 

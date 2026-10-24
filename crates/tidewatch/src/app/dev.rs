@@ -4,6 +4,7 @@ use kelp_core::review::{Anchor, Comment, Side};
 use kelp_ui::graph::Selection;
 
 use super::Tidewatch;
+use crate::commit_search::Focus;
 use crate::dev_agent::{DevDraft, Mode as DevMode};
 use crate::dev_panes::{self, DevOpen};
 use crate::dev_session::LeftoverStep;
@@ -171,6 +172,16 @@ impl Tidewatch {
             if row < loaded.history.len() {
                 view.select(Selection::Commit(row));
             }
+        }
+        if let Some(text) = self.dev_panes.search.take_if(|_| view.loaded.is_some()) {
+            view.search.query = text;
+            view.search.edited(std::time::Instant::now());
+            view.search.want_focus = Some(Focus::Caret);
+            self.dev_panes.search_step = true;
+        }
+        if self.dev_panes.search_step && view.search.matches().is_some_and(|found| found > 0) {
+            view.step_match(1);
+            self.dev_panes.search_step = false;
         }
         if let Some(panel) = self.dev_panes.panel.take() {
             self.progress_ui.tab(view_id).chosen = Some(panel);
