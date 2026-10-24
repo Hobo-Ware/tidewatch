@@ -17,6 +17,7 @@ mod frame;
 mod image_paste;
 mod keep_awake;
 mod meeseeks;
+mod merge_groups;
 mod open_link;
 mod overlays;
 mod palette;
@@ -152,6 +153,7 @@ pub(crate) struct Tidewatch {
     views: HashMap<u64, TabView>,
     pane_jobs: Jobs<pane_jobs::Done>,
     workspace_jobs: Jobs<Workspace>,
+    group_merge: merge_groups::Host,
     stdusk_jobs: Jobs<stdusk::Done>,
     takeover: Takeover,
     takeover_jobs: Jobs<takeover_jobs::Done>,
@@ -330,6 +332,7 @@ impl Tidewatch {
             views: HashMap::new(),
             pane_jobs: Jobs::new(),
             workspace_jobs: Jobs::new(),
+            group_merge: merge_groups::Host::new(),
             stdusk_jobs: Jobs::new(),
             takeover: Takeover::with_recent_open(DevTakeover::recent_open_from_env()),
             takeover_jobs: Jobs::new(),

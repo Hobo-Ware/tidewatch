@@ -326,6 +326,74 @@ fn the_active_group_the_selected_tabs_and_the_pinned_mains_come_back() {
 }
 
 #[test]
+fn a_layout_with_a_group_per_linked_worktree_comes_back_as_one_group_of_the_main_repo() {
+    let mut tabs = Tabs::new(Pane::shell(100));
+    let fix = tabs.add_group(Pane::shell(200));
+    let nn = tabs.add_group(Pane::shell(300));
+    let other_main = tabs.add_group(Pane::shell(400));
+    let agent = tabs.push_in(fix, "otter".into(), agent_pane(201, "otter", "sess-1"));
+    tabs.push_in(0, "shell".into(), Pane::shell(101));
+    tabs.push_in(nn, "nn work".into(), Pane::shell(301));
+    tabs.push_in(other_main, "api work".into(), Pane::shell(401));
+    let sent = Window {
+        tabs,
+        workspaces: vec![repo("/w/web"), repo("/w/web-fix"), repo("/w/web-nn"), repo("/w/api")],
+        agent_tab: agent,
+    };
+    let (handover, _) = handover_of(&sent);
+    let mut adopt = |term: u32, _: &Path| Ok(term);
+    let rebuilt = rebuild(
+        &handover,
+        vec![100, 101, 200, 201, 300, 301, 400, 401],
+        0.0,
+        Ptys { adopt: &mut adopt, fresh: &fresh },
+    )
+    .unwrap();
+    assert_eq!(rebuilt.tabs.active_group(), 0);
+
+    let mut tabs = rebuilt.tabs;
+    let mut workspaces: Vec<Workspace> =
+        handover.groups.iter().map(|group| repo(&group.dir.to_string_lossy())).collect();
+    let main_of = |dir: &Path| {
+        let root = if dir.starts_with("/w/api") { "/w/api" } else { "/w/web" };
+        crate::repo::Repo { root: PathBuf::from(root), label: root.into() }
+    };
+    let mains = workspaces
+        .iter()
+        .map(|workspace| {
+            let repo = main_of(workspace.dir());
+            Some(crate::merge_groups::Main {
+                at_home: repo.root == workspace.dir(),
+                key: repo.root.clone(),
+                repo,
+            })
+        })
+        .collect();
+    let facts = crate::merge_groups::facts(mains, &tabs, |_| false);
+    let merges = crate::merge_groups::plan(&facts);
+    crate::merge_groups::apply(&mut tabs, &mut workspaces, &merges, |_| unreachable!());
+
+    assert_eq!(
+        workspaces.iter().map(Workspace::dir).collect::<Vec<_>>(),
+        [Path::new("/w/web"), Path::new("/w/api")]
+    );
+    assert_eq!(
+        terms(&tabs),
+        [
+            (0, "main".into(), 100),
+            (0, "shell".into(), 101),
+            (0, "otter".into(), 201),
+            (0, "nn work".into(), 301),
+            (1, "main".into(), 400),
+            (1, "api work".into(), 401),
+        ]
+    );
+    let otter = tabs.get_mut(tabs.items()[2].id).unwrap();
+    assert_eq!(otter.pane.worktree, Some(worktree("otter")));
+    assert!(otter.pane.agent.is_some(), "the agent runs on in the merged group");
+}
+
+#[test]
 fn parking_and_never_park_cross_the_handover_and_an_old_layout_has_neither() {
     let mut w = window();
     let (otter, shell) = (w.agent_tab, w.tabs.in_group(0).nth(2).map(|(_, tab)| tab.id).unwrap());
