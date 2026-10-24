@@ -23,6 +23,9 @@ On Linux a plain Ctrl chord would reach the shell, so Linux uses Ctrl+Shift or A
 | --- | --- | --- |
 | Overview | `Cmd+0` | `Alt+0` |
 | Focus mode | `Cmd+.` | `Ctrl+.` |
+| Interface bigger | `Cmd+=` | `Ctrl+Shift+=` |
+| Interface smaller | `Cmd+-` | `Ctrl+Shift+-` |
+| Interface size 100% | `Cmd+Shift+0` | `Ctrl+Shift+0` |
 | Reader or raw terminal | `Cmd+Shift+T` | `Ctrl+Shift+R` |
 | Terminal or last file | `Cmd+J` | `Ctrl+Shift+J` |
 | Back to the terminal | `Esc` | `Esc` |

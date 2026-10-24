@@ -319,6 +319,9 @@ mod tests {
                 "Park tab",
                 "Overview",
                 "Focus mode",
+                "Interface bigger",
+                "Interface smaller",
+                "Interface size 100%",
                 "Reader or raw terminal",
                 "Terminal or last file",
                 "Settings",
@@ -374,10 +377,10 @@ mod tests {
         let linux = items(&sources(), Platform::Linux);
         assert_eq!(mac[0].keys, "Cmd+T");
         assert_eq!(linux[0].keys, "Ctrl+Shift+T");
-        assert_eq!(mac[14].keys, "Cmd+2");
-        assert_eq!(linux[14].keys, "Alt+2");
-        assert_eq!((mac[16].label.as_str(), mac[16].keys.as_str()), ("Open repo...", "Cmd+O"));
-        assert_eq!(linux[16].keys, "Ctrl+Shift+O");
+        assert_eq!(mac[17].keys, "Cmd+2");
+        assert_eq!(linux[17].keys, "Alt+2");
+        assert_eq!((mac[19].label.as_str(), mac[19].keys.as_str()), ("Open repo...", "Cmd+O"));
+        assert_eq!(linux[19].keys, "Ctrl+Shift+O");
     }
 
     #[test]

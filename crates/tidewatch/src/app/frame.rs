@@ -2,6 +2,8 @@
 
 use egui::{Key, Modifiers};
 
+use tidewatch_core::ui_zoom::Direction;
+
 use super::Tidewatch;
 use super::repos::RepoCommand;
 use crate::commands::{self, Command, Dialog, Focus, Gate};
@@ -194,6 +196,9 @@ impl Tidewatch {
             }
             Command::Overview => self.toggle_overview(),
             Command::Focus => self.toggle_focus(ctx),
+            Command::ZoomIn => self.step_zoom(Direction::Bigger, ctx),
+            Command::ZoomOut => self.step_zoom(Direction::Smaller, ctx),
+            Command::ZoomReset => self.step_zoom(Direction::Reset, ctx),
             Command::Reader => self.toggle_reader(ctx),
             Command::FileView => self.toggle_file_view(ctx),
             Command::BackToTerminal => self.with_active_view(TabView::back_to_terminal),

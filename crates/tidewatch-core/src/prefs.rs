@@ -19,6 +19,7 @@ use crate::fsutil::write_atomic;
 use crate::guards::GuardPrefs;
 use crate::meeseeks::Criteria;
 use crate::paths::TidewatchPaths;
+use crate::ui_zoom;
 
 /// `QUAKE_HOTKEY_DEFAULT` (PLAN.md): stdusk keeps `Ctrl+Grave`, so both apps can run at once.
 pub const QUAKE_HOTKEY_DEFAULT: &str = "Ctrl+Alt+Grave";
@@ -287,6 +288,10 @@ pub struct WindowPrefs {
     /// The fraction of the screen the quake window drops down, within `QUAKE_HEIGHT_RANGE`.
     #[serde(default = "default_height")]
     pub height_pct: f32,
+    /// The interface size as a factor, `0.8` to `1.5`. Anything outside that is held to it, and a
+    /// value that is not a number is `1.0`.
+    #[serde(default = "default_ui_zoom", deserialize_with = "read_ui_zoom")]
+    pub ui_zoom: f32,
 }
 
 /// The tab layout: History beside the terminal, or the History and Diff panes under it.
@@ -304,6 +309,23 @@ fn on() -> bool {
 
 fn default_height() -> f32 {
     QUAKE_HEIGHT_DEFAULT
+}
+
+fn default_ui_zoom() -> f32 {
+    ui_zoom::DEFAULT
+}
+
+fn read_ui_zoom<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<f32, D::Error> {
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum Raw {
+        Number(f64),
+        Other(serde::de::IgnoredAny),
+    }
+    Ok(match Raw::deserialize(deserializer)? {
+        Raw::Number(value) => ui_zoom::sane(value as f32),
+        Raw::Other(_) => ui_zoom::DEFAULT,
+    })
 }
 
 fn default_hotkey() -> String {
@@ -342,6 +364,7 @@ impl Default for WindowPrefs {
             menu_bar: true,
             panels: Panels::Side,
             height_pct: QUAKE_HEIGHT_DEFAULT,
+            ui_zoom: ui_zoom::DEFAULT,
         }
     }
 }
@@ -559,7 +582,8 @@ mod tests {
                 hotkey: "F13".to_owned(),
                 menu_bar: true,
                 panels: Panels::Side,
-                height_pct: QUAKE_HEIGHT_DEFAULT
+                height_pct: QUAKE_HEIGHT_DEFAULT,
+                ui_zoom: 1.0
             }
         );
     }
@@ -592,6 +616,7 @@ mod tests {
             menu_bar: false,
             panels: Panels::Below,
             height_pct: 0.505,
+            ui_zoom: 1.25,
         };
         Prefs { window: window.clone(), ..Prefs::default() }.save(&paths).unwrap();
         assert_eq!(Prefs::load(&paths).window, window);
@@ -625,6 +650,29 @@ mod tests {
             std::fs::write(paths.prefs_file(), format!("[window]\nheight_pct = {text}\n")).unwrap();
             assert_eq!(Prefs::load(&paths).window.height_pct, want, "height_pct = {text}");
         }
+    }
+
+    #[test]
+    fn the_interface_size_defaults_to_one_and_is_held_to_its_range_on_load() {
+        let (_home, paths) = paths();
+        assert_eq!(Prefs::default().window.ui_zoom, 1.0);
+        std::fs::create_dir_all(paths.config_dir()).unwrap();
+        let cases = [
+            ("1.25", 1.25),
+            ("1", 1.0),
+            ("0.1", 0.8),
+            ("9.0", 1.5),
+            ("nan", 1.0),
+            ("\"big\"", 1.0),
+        ];
+        for (text, want) in cases {
+            std::fs::write(paths.prefs_file(), format!("[window]\nui_zoom = {text}\n")).unwrap();
+            let window = Prefs::load(&paths).window;
+            assert_eq!(window.ui_zoom, want, "{text}");
+            assert!(window.quake, "{text}: the rest of the table is kept");
+        }
+        std::fs::write(paths.prefs_file(), "[window]\nquake = false\n").unwrap();
+        assert_eq!(Prefs::load(&paths).window.ui_zoom, 1.0);
     }
 
     #[test]

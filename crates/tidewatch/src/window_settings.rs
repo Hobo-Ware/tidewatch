@@ -36,6 +36,10 @@ impl Editor {
         self.saved.panels
     }
 
+    pub(crate) fn ui_zoom(&self) -> f32 {
+        self.saved.ui_zoom
+    }
+
     /// What is wrong with the text in the field, if anything.
     pub(crate) fn problem(&self) -> Option<Problem> {
         hotkey::parse(&self.hotkey).err()
@@ -66,6 +70,11 @@ impl Editor {
         }
         self.saved.height_pct = height;
         Some(self.saved.clone())
+    }
+
+    pub(crate) fn set_ui_zoom(&mut self, zoom: f32) -> WindowPrefs {
+        self.saved.ui_zoom = tidewatch_core::ui_zoom::sane(zoom);
+        self.saved.clone()
     }
 
     pub(crate) fn record(&mut self, chord: String) -> Option<WindowPrefs> {
@@ -143,6 +152,17 @@ mod tests {
         let mut editor = editor();
         editor.height = 0.8;
         assert_eq!(editor.set_quake(false).height_pct, 0.5);
+    }
+
+    #[test]
+    fn the_interface_size_returns_the_whole_window_settings_held_to_its_range() {
+        let mut editor = editor();
+        assert_eq!(editor.ui_zoom(), 1.0);
+        let bigger = editor.set_ui_zoom(1.25);
+        assert_eq!(bigger, WindowPrefs { ui_zoom: 1.25, ..WindowPrefs::default() });
+        assert_eq!(editor.set_ui_zoom(9.0).ui_zoom, 1.5);
+        assert_eq!(editor.set_ui_zoom(f32::NAN).ui_zoom, 1.0);
+        assert_eq!(editor.ui_zoom(), 1.0);
     }
 
     #[test]
