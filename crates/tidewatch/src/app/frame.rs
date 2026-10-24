@@ -85,6 +85,7 @@ impl Tidewatch {
         self.drive_meeseeks(ctx, now);
         self.drive_done_check(ctx);
         self.drive_keep_awake(ctx, now);
+        self.drive_amphetamine(ctx, now);
         self.drive_checklist(ctx, now);
         self.drive_due(ctx);
         self.drive_dev_scheduled(ctx);
@@ -200,6 +201,7 @@ impl Tidewatch {
             Command::Palette => self.toggle_palette(),
             Command::BuildWorkflow => self.run_build_workflow(ctx),
             Command::MoveSessions => self.run_move_sessions(ctx),
+            Command::Amphetamine => self.run_amphetamine(ctx),
             Command::ApproveDelivery => {}
         }
     }

@@ -5,6 +5,7 @@ use std::time::Duration;
 use egui::{Color32, Rect, Stroke, StrokeKind, pos2};
 
 use super::{Closing, Tidewatch};
+use crate::amphetamine_view;
 use crate::brand;
 use crate::close_dialog;
 use crate::flow_glue;
@@ -56,7 +57,11 @@ impl Tidewatch {
             return;
         }
         let column = self.message_column(ui.max_rect());
-        draw_toast(ui, column, toast.text(), toast.fade(now));
+        if toast.lines().is_empty() {
+            draw_toast(ui, column, toast.text(), toast.fade(now));
+        } else {
+            amphetamine_view::toast(ui, column, toast.lines(), toast.fade(now));
+        }
         ui.ctx().request_repaint_after(Duration::from_secs_f64(toast.next_frame_in(now)));
     }
 
@@ -80,6 +85,11 @@ impl Tidewatch {
             && let Some(event) = trust_view::dialog(ctx, &self.trust.page())
         {
             self.trust.send(event, ctx);
+        }
+        if let Some(notice) = self.amphetamine.notice()
+            && amphetamine_view::notice(ctx, notice, self.message_column(ctx.content_rect()))
+        {
+            self.amphetamine.dismiss_notice();
         }
         if let Some(text) = &self.notice
             && notice::show(ctx, text, self.message_column(ctx.content_rect()))

@@ -128,23 +128,35 @@ fn list(
             if let Some(reason) = item.disabled {
                 response.on_hover_text(reason);
             }
-            paint_row(ui, rect, item, &hit.positions, row == selected);
+            paint_row(ui, rect, item, hit, row == selected);
         }
     });
     clicked
 }
 
-fn paint_row(ui: &egui::Ui, rect: Rect, item: &Item, positions: &[usize], selected: bool) {
+fn paint_row(ui: &egui::Ui, rect: Rect, item: &Item, hit: &Hit, selected: bool) {
     let painter = ui.painter_at(rect);
     selection_row(&painter, rect, selected, false);
     let ink = if item.disabled.is_some() { brand::MUTED } else { brand::TEXT };
     let mut job = LayoutJob::default();
+    let label_marks: &[usize] = if hit.alias.is_some() { &[] } else { &hit.positions };
     for (i, c) in item.label.chars().enumerate() {
-        let color =
-            if positions.contains(&i) && item.disabled.is_none() { brand::TEAL_TEXT } else { ink };
+        let color = if label_marks.contains(&i) && item.disabled.is_none() {
+            brand::TEAL_TEXT
+        } else {
+            ink
+        };
         job.append(&c.to_string(), 0.0, TextFormat::simple(FontId::proportional(14.0), color));
     }
     job.append(item.kind, 12.0, TextFormat::simple(FontId::proportional(11.0), brand::MUTED));
+    if let Some(alias) = hit.alias {
+        let muted = TextFormat::simple(FontId::proportional(11.0), brand::MUTED);
+        job.append("also called ", 8.0, muted);
+        for (i, c) in alias.chars().enumerate() {
+            let color = if hit.positions.contains(&i) { brand::TEAL_TEXT } else { brand::MUTED };
+            job.append(&c.to_string(), 0.0, TextFormat::simple(FontId::proportional(11.0), color));
+        }
+    }
     let side = item.disabled.unwrap_or(&item.keys);
     let keys_width = side.chars().count() as f32 * 7.0 + 24.0;
     job.wrap = TextWrapping::truncate_at_width((rect.width() - 20.0 - keys_width).max(40.0));

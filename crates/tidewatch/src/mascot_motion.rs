@@ -103,7 +103,7 @@ fn slot_of(seed: u32, time: f64, length: f64) -> (i64, f64) {
     (slot as i64, shifted - slot * length)
 }
 
-fn unit(seed: u32, slot: i64, salt: u32) -> f64 {
+pub(crate) fn unit(seed: u32, slot: i64, salt: u32) -> f64 {
     let mut z = (u64::from(seed) << 40) ^ (u64::from(salt) << 32) ^ (slot as u64);
     z = z.wrapping_add(0x9E37_79B9_7F4A_7C15);
     z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);

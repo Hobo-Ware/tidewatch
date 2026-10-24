@@ -40,6 +40,7 @@ On Linux a plain Ctrl chord would reach the shell, so Linux uses Ctrl+Shift or A
 | Command palette | `Cmd+Shift+P` | `Ctrl+Shift+P` |
 | Build workflow from this session | palette only | palette only |
 | Move sessions to Tidewatch | palette only | palette only |
+| Amphetamine | palette only | palette only |
 
 ## Dialogs
 

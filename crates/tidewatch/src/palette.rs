@@ -197,7 +197,9 @@ pub(crate) fn items(sources: &Sources, platform: Platform) -> Vec<Item> {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct Hit {
     pub(crate) item: usize,
+    /// The matched letters of the label, or of `alias` when that is what matched.
     pub(crate) positions: Vec<usize>,
+    pub(crate) alias: Option<&'static str>,
 }
 
 /// Everything for an empty query, in list order. Otherwise the matches, best first; ties keep list order.
@@ -206,7 +208,15 @@ pub(crate) fn filter(items: &[Item], query: &str) -> Vec<Hit> {
         .iter()
         .enumerate()
         .filter_map(|(item, entry)| {
-            fuzzy(query, &entry.label).map(|m| (m.score, Hit { item, positions: m.positions }))
+            if let Some(m) = fuzzy(query, &entry.label) {
+                return Some((m.score, Hit { item, positions: m.positions, alias: None }));
+            }
+            let alias = match entry.target {
+                Target::Command(command) => command.alias()?,
+                _ => return None,
+            };
+            let m = fuzzy(query, alias)?;
+            Some((m.score, Hit { item, positions: m.positions, alias: Some(alias) }))
         })
         .collect();
     if !query.trim().is_empty() {
@@ -314,6 +324,7 @@ mod tests {
                 "Settings",
                 "Build workflow from this session",
                 "Move sessions to Tidewatch",
+                "Amphetamine",
                 "Switch to tab 2: calm-comet",
                 "Switch to tab 3: brave-otter",
                 "Open repo...",
@@ -321,6 +332,22 @@ mod tests {
                 "Workflow: Ship a feature",
             ]
         );
+    }
+
+    #[test]
+    fn typing_cocaine_finds_amphetamine_and_names_the_alias_while_amph_does_not() {
+        let all = items(&sources(), Platform::Mac);
+        let row = all.iter().position(|item| item.label == "Amphetamine").unwrap();
+        let by_alias = filter(&all, "cocaine");
+        assert_eq!(by_alias.len(), 1);
+        assert_eq!(by_alias[0].item, row);
+        assert_eq!(by_alias[0].alias, Some("cocaine"));
+        assert_eq!(by_alias[0].positions, [0, 1, 2, 3, 4, 5, 6]);
+        let by_name = filter(&all, "amph");
+        assert_eq!(by_name[0].item, row);
+        assert_eq!(by_name[0].alias, None);
+        assert_eq!(filter(&all, "").iter().filter(|hit| hit.alias.is_some()).count(), 0);
+        assert!(filter(&all, "coca").iter().any(|hit| hit.item == row));
     }
 
     #[test]
@@ -346,10 +373,10 @@ mod tests {
         let linux = items(&sources(), Platform::Linux);
         assert_eq!(mac[0].keys, "Cmd+T");
         assert_eq!(linux[0].keys, "Ctrl+Shift+T");
-        assert_eq!(mac[12].keys, "Cmd+2");
-        assert_eq!(linux[12].keys, "Alt+2");
-        assert_eq!((mac[14].label.as_str(), mac[14].keys.as_str()), ("Open repo...", "Cmd+O"));
-        assert_eq!(linux[14].keys, "Ctrl+Shift+O");
+        assert_eq!(mac[13].keys, "Cmd+2");
+        assert_eq!(linux[13].keys, "Alt+2");
+        assert_eq!((mac[15].label.as_str(), mac[15].keys.as_str()), ("Open repo...", "Cmd+O"));
+        assert_eq!(linux[15].keys, "Ctrl+Shift+O");
     }
 
     #[test]

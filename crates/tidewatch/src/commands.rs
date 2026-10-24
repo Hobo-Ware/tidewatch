@@ -78,6 +78,7 @@ pub(crate) enum Command {
     ApproveDelivery,
     BuildWorkflow,
     MoveSessions,
+    Amphetamine,
 }
 
 impl Command {
@@ -105,12 +106,16 @@ impl Command {
             | Self::Palette
             | Self::ApproveDelivery
             | Self::BuildWorkflow
-            | Self::MoveSessions => None,
+            | Self::MoveSessions
+            | Self::Amphetamine => None,
         }
     }
 
     fn global(self) -> bool {
-        !matches!(self, Self::ApproveDelivery | Self::BuildWorkflow | Self::MoveSessions)
+        !matches!(
+            self,
+            Self::ApproveDelivery | Self::BuildWorkflow | Self::MoveSessions | Self::Amphetamine
+        )
     }
 
     /// A bare key the terminal and the text fields also want: it is only read, and so only taken
@@ -140,6 +145,11 @@ impl Command {
     pub(crate) fn in_palette(self) -> bool {
         !matches!(self, Self::SelectTab(_) | Self::OpenRepo | Self::Palette | Self::ApproveDelivery)
             && !self.in_file_view_only()
+    }
+
+    /// Another name the palette finds the command by, shown only when it was the match.
+    pub(crate) fn alias(self) -> Option<&'static str> {
+        matches!(self, Self::Amphetamine).then_some("cocaine")
     }
 
     pub(crate) fn id(self) -> &'static str {
@@ -286,7 +296,7 @@ const fn tab(id: &'static str, title: &'static str, index: usize, key: Key) -> E
     entry(id, title, Group::Tabs, Command::SelectTab(index), (cmd(key), alt(key)))
 }
 
-pub(crate) const TABLE: [Entry; 31] = [
+pub(crate) const TABLE: [Entry; 32] = [
     entry("new-tab", "New tab", Group::Tabs, Command::NewTab, (cmd(Key::T), ctrl(Key::T).shift())),
     entry(
         "close-tab",
@@ -431,6 +441,7 @@ pub(crate) const TABLE: [Entry; 31] = [
         Command::BuildWorkflow,
     ),
     unbound("move-sessions", "Move sessions to Tidewatch", Group::App, Command::MoveSessions),
+    unbound("amphetamine", "Amphetamine", Group::App, Command::Amphetamine),
 ];
 
 fn entry_of(command: Command) -> Option<&'static Entry> {
@@ -566,7 +577,10 @@ impl Gate {
             | Command::PrevRepo
             | Command::OpenRepo => !modal,
             Command::Palette => self.dialog == Dialog::None,
-            Command::ApproveDelivery | Command::BuildWorkflow | Command::MoveSessions => false,
+            Command::ApproveDelivery
+            | Command::BuildWorkflow
+            | Command::MoveSessions
+            | Command::Amphetamine => false,
         }
     }
 }

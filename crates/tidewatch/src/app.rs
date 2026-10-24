@@ -4,6 +4,7 @@
 //! the top of the next frame.
 
 mod agents;
+mod amphetamine;
 mod bar;
 mod build_workflow;
 mod central;
@@ -58,6 +59,8 @@ use self::open_link::LinkDone;
 use self::repos::Picker;
 use crate::agent_events::{self, Hooks};
 use crate::agent_jobs;
+use crate::amphetamine_glue;
+use crate::amphetamine_view;
 use crate::avatar_glue;
 use crate::brand;
 use crate::build_workflow::Asked;
@@ -82,6 +85,7 @@ use crate::image_paste as picture_paste;
 use crate::job_glue;
 use crate::jobs::Jobs;
 use crate::keep_awake_glue;
+use crate::keep_awake_hold::Hold;
 use crate::keep_awake_hold::RealHold;
 use crate::last_used::LastUsed;
 use crate::layout;
@@ -178,6 +182,8 @@ pub(crate) struct Tidewatch {
     meeseeks: meeseeks_glue::Host,
     done_check: done_check_glue::Host,
     keep_awake: keep_awake_glue::Host<RealHold>,
+    amphetamine: amphetamine_glue::Host<Box<dyn Hold>>,
+    amphetamine_view: amphetamine_view::Memory,
     progress_ui: progress_view::Memory,
     checklist: overview_checklist::Host,
     snoozes: due::Snoozes,
@@ -282,6 +288,12 @@ impl Tidewatch {
                     std::env::var("TIDEWATCH_DEV_KEEP_AWAKE").ok().as_deref(),
                 ),
         );
+        let amphetamine = amphetamine::host(
+            paths.as_ref(),
+            screenshot.is_some(),
+            shell.env.background,
+            &cc.egui_ctx,
+        );
         let dev_view = DevView::from_env();
         let trust = Trust::new(paths.as_ref(), cli_home);
         let dev_session = DevSession::from_env();
@@ -345,6 +357,8 @@ impl Tidewatch {
             meeseeks,
             done_check,
             keep_awake,
+            amphetamine,
+            amphetamine_view: amphetamine_view::Memory::from_env(),
             progress_ui: progress_view::Memory::default(),
             checklist: overview_checklist::Host::new(),
             snoozes: due::Snoozes::default(),
@@ -487,6 +501,7 @@ impl eframe::App for Tidewatch {
             workspaces::window_views(&self.workspaces, self.focus),
             &self.tabs,
         );
+        self.amphetamine.shutdown();
         if let Some(paths) = self.paths.as_ref().filter(|_| self.screenshot.is_none()) {
             run_marker::end(paths);
         }
