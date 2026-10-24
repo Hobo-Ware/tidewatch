@@ -1,10 +1,10 @@
-//! Draws the Window section of General: the quake switch, the hotkey recorder with its status, and
-//! the menu-bar switch. It returns the new window settings when something was applied.
+//! Draws the Window section of General: the quake switch, the hotkey recorder with its status, the
+//! drop-down height and the menu-bar switch. It returns the new window settings when something was applied.
 
 use egui::{
     Align, CornerRadius, Event, Layout, RichText, Sense, Stroke, StrokeKind, Ui, UiBuilder, vec2,
 };
-use tidewatch_core::prefs::{Panels, WindowPrefs};
+use tidewatch_core::prefs::{Panels, QUAKE_HEIGHT_RANGE, WindowPrefs};
 
 use crate::hotkey;
 use crate::settings_ui::{
@@ -18,6 +18,7 @@ const RECORDER_WIDTH: f32 = 230.0;
 const RECORDER_HEIGHT: f32 = 38.0;
 const MIN_RECORDER: f32 = 112.0;
 const CAP_GAP: f32 = 6.0;
+const HEIGHT_CONTROL_WIDTH: f32 = 152.0;
 
 /// What the section shows beside the editor's own state.
 pub(crate) struct View {
@@ -38,6 +39,7 @@ pub(crate) fn section(ui: &mut Ui, editor: &mut Editor, view: &View) -> Option<W
         }
         if editor.quake() {
             applied = hotkey_row(ui, editor, &view.status).or(applied);
+            applied = height_row(ui, editor).or(applied);
         }
         if view.menu_bar_available
             && let Some(on) = switch_row(
@@ -54,6 +56,33 @@ pub(crate) fn section(ui: &mut Ui, editor: &mut Editor, view: &View) -> Option<W
         }
         applied
     })
+}
+
+fn height_row(ui: &mut Ui, editor: &mut Editor) -> Option<WindowPrefs> {
+    settings_ui::row(
+        ui,
+        "Window height",
+        "Fraction of the screen the window drops down.",
+        Control::new(HEIGHT_CONTROL_WIDTH, 24.0),
+        |ui| {
+            let response = ui
+                .allocate_ui_with_layout(
+                    vec2(HEIGHT_CONTROL_WIDTH, 24.0),
+                    Layout::left_to_right(Align::Center),
+                    |ui| {
+                        stdusk_egui::widgets::slider(
+                            ui,
+                            &mut editor.height,
+                            QUAKE_HEIGHT_RANGE,
+                            |height| format!("{:.0}%", height * 100.0),
+                        )
+                    },
+                )
+                .inner;
+            let settled = response.drag_stopped() || (response.changed() && !response.dragged());
+            settled.then(|| editor.settle_height()).flatten()
+        },
+    )
 }
 
 fn panels_row(ui: &mut Ui, current: Panels) -> Option<Panels> {
