@@ -68,7 +68,8 @@ pub(crate) fn spawn_agent(ctx: &egui::Context, dir: &Path, prepared: &Prepared) 
 
 /// A plain interactive shell, with the agent's environment, that has the agent's command typed at
 /// its first prompt and waits for the user to press Enter. A shell that marks no prompt gets the
-/// fallback timer, which `PtyTerm::release_pending_after_wait` runs.
+/// fallback timer, which `PtyTerm::release_pending_after_wait` runs. A command too long to type
+/// safely (`Prepared::typed_line`) is not typed at all: the tab's Resume button runs it.
 pub(crate) fn spawn_typed(ctx: &egui::Context, dir: &Path, prepared: &Prepared) -> PtyTerm {
     let profile = ShellProfile {
         shell: Some(user_shell(std::env::var("SHELL").ok())),
@@ -77,15 +78,11 @@ pub(crate) fn spawn_typed(ctx: &egui::Context, dir: &Path, prepared: &Prepared) 
         env: prepared.env.iter().cloned().collect::<BTreeMap<_, _>>(),
     };
     let mut opts = spawn_opts(dir, Some(profile));
-    opts.agent_tracking = Some(AgentSetup {
-        pending_input: Some(typed_line(prepared)),
+    opts.agent_tracking = prepared.typed_line().map(|line| AgentSetup {
+        pending_input: Some(line.into_bytes()),
         fallback_delay: PROMPT_FALLBACK,
     });
     PtyTerm::spawn(INITIAL_COLS, INITIAL_ROWS, repaint_handle(ctx), &opts)
-}
-
-fn typed_line(prepared: &Prepared) -> Vec<u8> {
-    prepared.launch.shell_line().into_bytes()
 }
 
 fn spawn_opts(dir: &Path, profile: Option<ShellProfile>) -> SpawnOpts {
@@ -142,7 +139,7 @@ mod tests {
             notes: Vec::new(),
             remote: None,
         };
-        let line = String::from_utf8(typed_line(&prepared)).unwrap();
+        let line = prepared.typed_line().unwrap();
         assert_eq!(line, "claude --resume abc --settings '{\"a\": 1}'");
         assert!(!line.contains(['\r', '\n']));
     }

@@ -305,7 +305,7 @@ impl Tidewatch {
         let trust = Trust::new(paths.as_ref(), cli_home);
         let dev_session = DevSession::from_env();
         let saver = Saver::new(paths.as_ref(), screenshot.is_none(), dev_session.debounce());
-        let app_crashed =
+        let crash_loop =
             paths.as_ref().filter(|_| screenshot.is_none()).is_some_and(run_marker::begin);
         let last_used =
             LastUsed::new(paths.as_ref(), screenshot.is_none() && !shell.env.background);
@@ -398,7 +398,7 @@ impl Tidewatch {
             saver,
             last_used,
             dev_session,
-            restore: restore_glue::Host::new(no_restore, app_crashed, RealDisk::from_env()),
+            restore: restore_glue::Host::new(no_restore, crash_loop, RealDisk::from_env()),
             notice: handoff::notice(&notes, kept_agents, hooks_kept),
             updates,
             desktop: shell.desktop.clone(),

@@ -20,7 +20,7 @@ use crate::due::{Due, ask_blocked};
 use crate::due_view::{self, Facts as DueFacts};
 use crate::flow::Flow;
 use crate::note_send::ENTER_DELAY_SECS;
-use crate::pane::{Body, FirstPrompt, Pane};
+use crate::pane::{AgentTab, Body, FirstPrompt, Pane};
 use crate::pr_card_model::CardAction;
 use crate::pr_cards_view::Data as PrData;
 use crate::question_bulk;
@@ -152,6 +152,7 @@ pub(crate) fn draw(
         profile: &agent.profile_name,
         face: Some(&face),
         turn,
+        stopped: *agent.run.status() == AgentStatus::Stopped,
     };
     let reader = &mut agent.reader;
     if dev.take_open_turns(reader.rows.len()) {
@@ -249,12 +250,27 @@ pub(crate) fn apply(
                     agent.reader.set_wants_reader(false);
                 }
             }
+            Action::Resume => resume_agent(&mut found.pane),
             Action::Review(_) | Action::Pr(_) | Action::Due(_) => {}
             Action::Ask(seq, reply) => answer_question(&mut found.pane, seq, reply, now),
             Action::GoWithPicks => toast = go_with_picks(&mut found.pane, now),
         }
     }
     toast
+}
+
+/// Runs the resume command of a tab whose agent waits at its shell prompt. Ctrl+U first, so a
+/// command that was typed there is not run twice.
+pub(crate) fn resume_agent(pane: &mut Pane<PtyTerm>) {
+    if let (Body::Shell(term), Some(agent)) = (&mut pane.body, pane.agent.as_mut()) {
+        resume_in(term, agent);
+    }
+}
+
+pub(crate) fn resume_in(term: &mut PtyTerm, agent: &mut AgentTab) {
+    let Some(line) = agent.resume_line.as_deref() else { return };
+    term.send(format!("\u{15}{line}\r").as_bytes());
+    agent.resume_note = None;
 }
 
 /// Pasted text and the Enter that sends it, `lead` seconds from now.

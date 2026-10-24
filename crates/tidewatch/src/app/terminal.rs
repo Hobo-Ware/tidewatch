@@ -15,8 +15,10 @@ use crate::pane::{Body, Pane};
 use crate::reader::Shown;
 use crate::reader_view::Action;
 use crate::screen_kit::paint_pill_card;
+use crate::stopped_view;
 use crate::terminal_font::InUse;
 use crate::{layout, reader_glue};
+use tidewatch_core::status::AgentStatus;
 
 pub(super) const PASTE_RULES: PasteRules = PasteRules { newlines_to_spaces: false, trim: true };
 
@@ -127,12 +129,29 @@ impl Tidewatch {
                 }
                 if let (Some(name), Some(exit)) = (agent_name, term.exited()) {
                     exit_notice(ui, area, &exit_notice_text(name, exit.code));
-                } else if let Some(note) = agent
-                    .as_ref()
-                    .and_then(|agent| agent.resume_note.or(agent.base_note.as_deref()))
-                {
-                    let pill = pane_notice(ui, area, note);
-                    caught_above(ui, area, pill);
+                } else {
+                    let note = agent
+                        .as_ref()
+                        .and_then(|agent| agent.resume_note.or(agent.base_note.as_deref()));
+                    let pill = note.map(|note| pane_notice(ui, area, note));
+                    let mut above = pill;
+                    if let Some(agent) = agent
+                        .as_mut()
+                        .filter(|agent| !reader_on && *agent.run.status() == AgentStatus::Stopped)
+                    {
+                        let bottom = pill.map_or(area.bottom(), |pill| pill.top());
+                        let band = egui::Rect::from_min_max(
+                            egui::pos2(area.left(), bottom - stopped_view::HEIGHT),
+                            egui::pos2(area.right(), bottom),
+                        );
+                        if stopped_view::show(ui, band) {
+                            reader_glue::resume_in(term, agent);
+                        }
+                        above = Some(band);
+                    }
+                    if let Some(above) = above {
+                        caught_above(ui, area, above);
+                    }
                 }
             }
             Body::Draft(_) => {}

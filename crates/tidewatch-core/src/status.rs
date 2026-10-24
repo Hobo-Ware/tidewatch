@@ -60,6 +60,8 @@ pub enum AgentStatus {
     NeedsYou(Reason),
     Done,
     Failed(String),
+    /// An agent tab whose agent is not running: its resume command waits at a shell prompt.
+    Stopped,
     Shell,
 }
 

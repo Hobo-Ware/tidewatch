@@ -34,7 +34,7 @@ pub(crate) fn counts(tones: &[Tone]) -> Counts {
         match tone {
             Tone::Working => counts.working += 1,
             Tone::Needs => counts.needs += 1,
-            Tone::Setup | Tone::Done | Tone::Failed | Tone::Shell => {}
+            Tone::Setup | Tone::Done | Tone::Failed | Tone::Stopped | Tone::Shell => {}
         }
         counts
     })

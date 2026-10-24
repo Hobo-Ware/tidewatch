@@ -6,7 +6,7 @@
 use std::path::PathBuf;
 
 use stdusk_core::progress::Progress;
-use stdusk_core::terminal::PtyTerm;
+use stdusk_core::terminal::{CmdState, PtyTerm};
 use tidewatch_core::end_block::{self, EndBlock};
 use tidewatch_core::events::TabEvent;
 use tidewatch_core::resume_mode::exit_is_abnormal;
@@ -39,6 +39,8 @@ pub(crate) struct TermSnapshot {
     pub(crate) activity: bool,
     pub(crate) title: Option<String>,
     pub(crate) exit_code: Option<i32>,
+    /// The shell reports a command under way (OSC 133), so the agent typed at its prompt runs.
+    pub(crate) command_running: bool,
 }
 
 impl TermSnapshot {
@@ -49,6 +51,7 @@ impl TermSnapshot {
             activity: term.take_activity(),
             title: term.title_osc(),
             exit_code: term.exited().map(|exit| exit.code),
+            command_running: term.cmd_state() == CmdState::Running,
         }
     }
 }
@@ -88,6 +91,17 @@ pub(crate) struct AgentRun {
     /// The first question of an `ask_user` call the user has not answered: the agent is blocked on it.
     asking: Option<String>,
     exited_abnormally: bool,
+    host: Host,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Host {
+    Pty,
+    /// Started from a shell prompt (a resume command typed or waiting for the Resume button). Until
+    /// a hook speaks it is stopped whenever the shell runs no command.
+    Shell {
+        command_running: bool,
+    },
 }
 
 impl AgentRun {
@@ -110,7 +124,14 @@ impl AgentRun {
             held: None,
             asking: None,
             exited_abnormally: false,
+            host: Host::Pty,
         }
+    }
+
+    /// The agent runs from a shell prompt this tab hosts: it reads `Stopped` until the user (or the
+    /// Resume button) runs the command, and again when the command ends.
+    pub(crate) fn hosted_by_shell(&mut self) {
+        self.host = Host::Shell { command_running: false };
     }
 
     /// An `ask_user` call waits for the user (`Some(its first question)`) or does not any more.
@@ -183,6 +204,7 @@ impl AgentRun {
     pub(crate) fn on_event(&mut self, event: TabEvent, now: f64) {
         match event {
             TabEvent::Hook(hook) => {
+                self.host = Host::Pty;
                 match (&hook.kind, &hook.message) {
                     (HookKind::TurnStarted, _) => self.end_block = None,
                     (HookKind::TurnDone, Some(message)) => {
@@ -228,6 +250,9 @@ impl AgentRun {
 
     /// Feeds what the terminal showed this frame into the tracker.
     pub(crate) fn feed(&mut self, snapshot: TermSnapshot, now: f64) {
+        if let Host::Shell { command_running } = &mut self.host {
+            *command_running = snapshot.command_running;
+        }
         self.tracker.on_terminal(TerminalSignal::Progress(progress_signal(snapshot.progress)), now);
         if snapshot.title != self.title_seen {
             self.title_seen = snapshot.title;
@@ -247,11 +272,16 @@ impl AgentRun {
         }
     }
 
+    fn waits_at_the_prompt(&self) -> bool {
+        self.host == Host::Shell { command_running: false } && self.tracker.inputs().process.alive
+    }
+
     /// Recomputes the status at `now` and reports a change.
     pub(crate) fn refresh(&mut self, now: f64) -> Option<Change> {
         let next = match (&self.failed, &self.held) {
             (Some(message), _) => AgentStatus::Failed(message.clone()),
             (None, Some(held)) => held.clone(),
+            (None, None) if self.waits_at_the_prompt() => AgentStatus::Stopped,
             (None, None) => match self.tracker.status(now) {
                 AgentStatus::Working if self.asking.is_some() => {
                     AgentStatus::NeedsYou(Reason::Question)
@@ -380,6 +410,39 @@ mod tests {
         run.feed(TermSnapshot { bell: true, activity: true, ..Default::default() }, 3.0);
         run.feed(TermSnapshot::default(), 3.1);
         assert_eq!(run.refresh(3.2).unwrap().to, AgentStatus::NeedsYou(Reason::Attention));
+    }
+
+    #[test]
+    fn an_agent_waiting_at_a_shell_prompt_reads_stopped_until_its_command_runs() {
+        let mut run = running(0.0);
+        run.resumed(0.0);
+        run.hosted_by_shell();
+        run.feed(TermSnapshot::default(), 1.0);
+        assert_eq!(run.refresh(1.0).unwrap().to, AgentStatus::Stopped);
+        assert_eq!(run.refresh(3600.0), None, "it never decays into Needs you");
+        run.feed(TermSnapshot { command_running: true, ..Default::default() }, 5.0);
+        assert_eq!(run.refresh(5.0).unwrap().to, AgentStatus::Done);
+        run.feed(TermSnapshot::default(), 90.0);
+        assert_eq!(run.refresh(90.0).unwrap().to, AgentStatus::Stopped, "the command ended");
+    }
+
+    #[test]
+    fn a_hook_proves_the_agent_runs_so_a_shell_without_command_marks_cannot_stop_it() {
+        let mut run = running(0.0);
+        run.hosted_by_shell();
+        run.feed(TermSnapshot::default(), 1.0);
+        assert_eq!(run.refresh(1.0).unwrap().to, AgentStatus::Stopped);
+        run.on_event(hook(HookKind::TurnStarted, None), 2.0);
+        run.feed(TermSnapshot::default(), 2.5);
+        assert_eq!(run.refresh(2.5).unwrap().to, AgentStatus::Working);
+    }
+
+    #[test]
+    fn a_shell_that_exited_reads_as_its_exit_not_stopped() {
+        let mut run = running(0.0);
+        run.hosted_by_shell();
+        run.feed(TermSnapshot { exit_code: Some(0), ..Default::default() }, 4.0);
+        assert_eq!(run.refresh(4.0).unwrap().to, AgentStatus::Done);
     }
 
     #[test]

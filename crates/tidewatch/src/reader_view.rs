@@ -40,6 +40,7 @@ use crate::review::ReviewFacts;
 use crate::review_row_view;
 use crate::review_view::{self, ReviewAction};
 use crate::screen_kit::{Size, body, primary_button, quiet_button};
+use crate::stopped_view;
 
 /// The side inset every inline item of the left column keeps.
 pub(crate) const INSET: f32 = 14.0;
@@ -164,6 +165,7 @@ pub(crate) struct Facts<'a> {
     /// The tab's face, shown beside each of the agent's turns.
     pub(crate) face: Option<&'a Face>,
     pub(crate) turn: Turn,
+    pub(crate) stopped: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -182,6 +184,7 @@ pub(crate) enum Action {
     GoWithPicks,
     /// A click on the Due today card.
     Due(due_view::Action),
+    Resume,
 }
 
 /// The look of an inline item: a card on the window ground.
@@ -366,7 +369,17 @@ pub(crate) fn show(
         pos2(rect.left(), review_band.top() - due_h),
         pos2(rect.right(), review_band.top()),
     );
-    let body = Rect::from_min_max(rect.min, pos2(rect.right(), due_band.top()));
+    let stopped_h = if facts.stopped && composing.is_none() { stopped_view::HEIGHT } else { 0.0 };
+    let body = Rect::from_min_max(
+        pos2(rect.left(), rect.top() + stopped_h),
+        pos2(rect.right(), due_band.top()),
+    );
+    if stopped_h > 0.0 {
+        let band = Rect::from_min_size(rect.min, vec2(rect.width(), stopped_h));
+        if stopped_view::show(ui, band) {
+            actions.push(Action::Resume);
+        }
+    }
     if let Some(due) = facts.due.filter(|_| due_h > 0.0) {
         actions.extend(due_view::show(ui, due_band, due).map(Action::Due));
     }
@@ -1059,6 +1072,7 @@ mod tests {
                         profile: "Builder",
                         face: None,
                         turn: Turn::Finished,
+                        stopped: false,
                     },
                 );
             });
@@ -1115,6 +1129,7 @@ mod tests {
                     profile: "Builder",
                     face: None,
                     turn: Turn::Running,
+                    stopped: false,
                 };
                 let actions = show(ui, rect, &rows, &mut state, facts);
                 assert_eq!(actions, Vec::<Action>::new());
@@ -1191,6 +1206,7 @@ mod tests {
                         profile: "Builder",
                         face: None,
                         turn: Turn::Finished,
+                        stopped: false,
                     };
                     let rect = ui.max_rect();
                     actions = show(ui, rect, rows, &mut state, facts);
@@ -1271,6 +1287,63 @@ mod tests {
     }
 
     #[test]
+    fn a_stopped_agent_gets_a_bar_over_the_old_conversation_and_resume_reaches_the_caller() {
+        use tidewatch_core::transcript::{Entry, Role};
+
+        fn texts(shape: &egui::Shape, out: &mut Vec<(String, Rect)>) {
+            match shape {
+                egui::Shape::Text(text) => out.push((
+                    text.galley.text().to_owned(),
+                    text.galley.rect.translate(text.pos.to_vec2()),
+                )),
+                egui::Shape::Vec(shapes) => shapes.iter().for_each(|shape| texts(shape, out)),
+                _ => {}
+            }
+        }
+
+        let mut rows = Rows::default();
+        rows.push(Entry { role: Role::User, text: "old question".into(), tool: None, ts: None });
+        let ctx = crate::fonts::test_context();
+        let mut state = ViewState::default();
+        let mut run = |stopped: bool, events: Vec<egui::Event>| {
+            let raw = RawInput {
+                screen_rect: Some(Rect::from_min_size(pos2(0.0, 0.0), vec2(800.0, 700.0))),
+                events,
+                focused: true,
+                ..RawInput::default()
+            };
+            let mut actions = Vec::new();
+            let output = ctx.run_ui(raw, |ui| {
+                let rect = ui.max_rect();
+                let mut facts = facts(None, Turn::Finished);
+                facts.stopped = stopped;
+                actions = show(ui, rect, &rows, &mut state, facts);
+            });
+            let mut found = Vec::new();
+            output.shapes.iter().for_each(|clipped| texts(&clipped.shape, &mut found));
+            (actions, found)
+        };
+        run(false, vec![]);
+        let (_, running) = run(false, vec![]);
+        assert!(!running.iter().any(|(text, _)| text == "Agent is not running"));
+        run(true, vec![]);
+        let (_, found) = run(true, vec![]);
+        let at = |text: &str| found.iter().find(|(drawn, _)| drawn == text).unwrap().1;
+        assert!(at("Agent is not running").bottom() < at("old question").top());
+        let resume = at("Resume").center();
+        let button = |pressed| egui::Event::PointerButton {
+            pos: resume,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        };
+        run(true, vec![egui::Event::PointerMoved(resume)]);
+        run(true, vec![button(true)]);
+        let (actions, _) = run(true, vec![button(false)]);
+        assert_eq!(actions, vec![Action::Resume]);
+    }
+
+    #[test]
     fn a_pasted_review_is_drawn_as_a_card_and_its_raw_text_never_reaches_the_screen() {
         use kelp_core::review::{Anchor, Comment, Side};
         use tidewatch_core::notes::Notes;
@@ -1328,6 +1401,7 @@ mod tests {
                     profile: "Builder",
                     face: None,
                     turn: Turn::Finished,
+                    stopped: false,
                 };
                 let rect = ui.max_rect();
                 show(ui, rect, &rows, &mut state, facts);
@@ -1352,6 +1426,7 @@ mod tests {
             profile: "Builder",
             face: None,
             turn,
+            stopped: false,
         }
     }
 

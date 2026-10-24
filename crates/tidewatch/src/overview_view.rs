@@ -260,6 +260,9 @@ fn counts_row(counts: Counts) -> Vec<(String, Tone)> {
     parts.push((format!("{} need you", counts.needs), Tone::Needs));
     parts.push((format!("{} working", counts.working + counts.setup), Tone::Working));
     parts.push((format!("{} idle", counts.done), Tone::Done));
+    if counts.stopped > 0 {
+        parts.push((format!("{} stopped", counts.stopped), Tone::Stopped));
+    }
     parts
 }
 
@@ -677,12 +680,17 @@ mod tests {
 
     #[test]
     fn the_counts_row_always_names_need_you_working_and_idle() {
-        let counts = Counts { setup: 1, working: 2, needs: 1, done: 0, failed: 0 };
+        let counts = Counts { setup: 1, working: 2, needs: 1, ..Counts::default() };
         let texts: Vec<String> = counts_row(counts).into_iter().map(|(text, _)| text).collect();
         assert_eq!(texts, ["1 need you", "3 working", "0 idle"]);
         let failed = counts_row(Counts { failed: 2, ..Counts::default() });
         assert_eq!(failed[0].0, "2 failed");
         assert_eq!(failed.len(), 4);
+        let stopped = counts_row(Counts { stopped: 1, ..Counts::default() });
+        assert_eq!(
+            stopped.last().map(|(text, tone)| (text.as_str(), *tone)),
+            Some(("1 stopped", Tone::Stopped))
+        );
     }
 
     #[test]

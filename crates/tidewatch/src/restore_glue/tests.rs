@@ -7,13 +7,16 @@ use std::time::{Duration, Instant};
 use tidewatch_core::agents::Level;
 use tidewatch_core::prefs::ResumeAgents;
 use tidewatch_core::profiles::Profiles;
+use tidewatch_core::resume_mode::Why;
 use tidewatch_core::session::{SavedAgentTab, SavedWindow, Session};
 use tidewatch_core::tools::Tools;
 use tidewatch_core::transcript_locate::claude_project_dir_name;
 use tidewatch_core::worktree;
 
 use super::*;
+use crate::agent_run::TermSnapshot;
 use crate::tabs::Action;
+use tidewatch_core::status::AgentStatus;
 
 const SESSION_A: &str = "0c2cbc96-1111-4222-8333-444455556666";
 const SESSION_B: &str = "1d3dcd07-2222-4333-8444-555566667777";
@@ -611,12 +614,12 @@ struct ReopenedPane {
 fn reopen_one(
     mode: ResumeAgents,
     level: Level,
-    app_crashed: bool,
+    crash_loop: bool,
     agent_crashed: bool,
 ) -> (ReopenedPane, Worktree) {
     let mut f = Fixture::new(false);
     Prefs { resume_agents: mode, ..Prefs::default() }.save(&f.paths).unwrap();
-    f.host.app_crashed = app_crashed;
+    f.host.crash_loop = crash_loop;
     let brave = f.worktree_with_transcript(SESSION_A);
     f.save(1, false, vec![SavedTab::Main, crashed_agent(&brave, SESSION_A, level, agent_crashed)]);
     f.begin();
@@ -636,11 +639,11 @@ fn a_resumed_agent_runs_or_waits_typed_for_enter_by_setting_and_how_it_ended() {
     use ResumeAgents::{Auto, Prefill};
     let cases = [
         (Auto, false, false, None),
-        (Auto, true, false, Some(Why::AppCrashed)),
+        (Auto, true, false, Some(Why::CrashLoop)),
         (Auto, false, true, Some(Why::AgentCrashed)),
-        (Auto, true, true, Some(Why::AppCrashed)),
+        (Auto, true, true, Some(Why::CrashLoop)),
         (Prefill, false, false, Some(Why::Chosen)),
-        (Prefill, true, false, Some(Why::AppCrashed)),
+        (Prefill, true, false, Some(Why::CrashLoop)),
         (Prefill, false, true, Some(Why::AgentCrashed)),
     ];
     for (mode, app, agent, typed) in cases {
@@ -650,10 +653,54 @@ fn a_resumed_agent_runs_or_waits_typed_for_enter_by_setting_and_how_it_ended() {
         assert!(got.pane.starts_with(prefix), "{label}: {}", got.pane);
         assert!(got.pane.contains(&format!("claude --resume {SESSION_A}")), "{label}");
         assert!(got.pane.contains(&brave.path.display().to_string()), "{label}");
-        assert_eq!(got.note, typed.map(Why::note), "{label}");
+        assert_eq!(got.note, typed.map(|why| why.note(true)), "{label}");
         assert!(got.started, "{label}: it stays an agent tab, so the next save keeps its session");
         assert_eq!(got.notice, None, "{label}");
     }
+}
+
+fn refreshed_status(f: &mut Fixture) -> AgentStatus {
+    let agent = f.tabs.items_mut()[1].pane.agent.as_mut().expect("an agent tab");
+    agent.run.feed(TermSnapshot::default(), 2.0);
+    agent.run.refresh(2.0);
+    agent.run.status().clone()
+}
+
+#[test]
+fn a_waiting_resume_command_keeps_the_tab_stopped_and_a_run_one_does_not() {
+    for (mode, waits) in [(ResumeAgents::Auto, false), (ResumeAgents::Prefill, true)] {
+        let mut f = Fixture::new(false);
+        Prefs { resume_agents: mode, ..Prefs::default() }.save(&f.paths).unwrap();
+        let brave = f.worktree_with_transcript(SESSION_A);
+        f.save(1, false, vec![SavedTab::Main, agent(&brave, SESSION_A, Level::Edits)]);
+        f.begin();
+        f.until_settled();
+        let tab = f.tabs.items()[1].pane.agent.as_ref().unwrap();
+        assert_eq!(tab.resume_line.is_some(), waits, "{mode:?}");
+        let line = tab.resume_line.clone().unwrap_or_default();
+        assert!(line.is_empty() || line.starts_with(&format!("claude --resume {SESSION_A}")));
+        let want = if waits { AgentStatus::Stopped } else { AgentStatus::Done };
+        assert_eq!(refreshed_status(&mut f), want, "{mode:?}");
+    }
+}
+
+#[test]
+fn a_command_too_long_to_type_is_kept_for_the_resume_button_with_a_note_that_says_so() {
+    let mut f = Fixture::new(false);
+    let mut profiles = Profiles::seeded(&["claude".to_owned()]);
+    for profile in profiles.profile.values_mut() {
+        profile.extra_args = vec!["--add-dir".to_owned(), "d".repeat(1000)].into();
+    }
+    f.catalog.set_profiles(profiles);
+    Prefs { resume_agents: ResumeAgents::Prefill, ..Prefs::default() }.save(&f.paths).unwrap();
+    let brave = f.worktree_with_transcript(SESSION_A);
+    f.save(1, false, vec![SavedTab::Main, agent(&brave, SESSION_A, Level::Edits)]);
+    f.begin();
+    f.until_settled();
+    let tab = f.tabs.items()[1].pane.agent.as_ref().unwrap();
+    assert_eq!(tab.resume_note, Some(Why::Chosen.note(false)));
+    assert!(tab.resume_line.as_deref().is_some_and(|line| line.contains(&"d".repeat(1000))));
+    assert_eq!(refreshed_status(&mut f), AgentStatus::Stopped);
 }
 
 #[test]
@@ -677,7 +724,7 @@ fn yolo_is_typed_with_its_yolo_flags_in_every_mode_but_off_even_after_a_crash() 
             assert!(got.pane.contains(&format!("claude --resume {SESSION_A}")), "{label}");
             assert!(got.pane.contains("--dangerously-skip-permissions"), "{label}: {}", got.pane);
             assert!(got.pane.contains(&brave.path.display().to_string()), "{label}");
-            assert_eq!(got.note, Some(Why::Yolo.note()), "{label}");
+            assert_eq!(got.note, Some(Why::Yolo.note(true)), "{label}");
             assert!(got.started, "{label}");
         }
     }

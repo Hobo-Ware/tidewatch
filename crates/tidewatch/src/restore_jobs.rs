@@ -38,7 +38,7 @@ pub(crate) struct StartupSpec {
     pub(crate) other: bool,
     /// `--no-restore`: read nothing back, whatever the settings say.
     pub(crate) skip: bool,
-    pub(crate) app_crashed: bool,
+    pub(crate) crash_loop: bool,
     pub(crate) profiles: Profiles,
     pub(crate) path_var: OsString,
     pub(crate) disk: RealDisk,
@@ -85,7 +85,7 @@ fn run_startup(spec: &StartupSpec) -> Startup {
                 profiles: &spec.profiles,
                 installed: &installed,
                 resume: prefs.resume_agents,
-                app_crashed: spec.app_crashed,
+                crash_loop: spec.crash_loop,
             };
             plan_window(window, &env, &spec.disk)
         });

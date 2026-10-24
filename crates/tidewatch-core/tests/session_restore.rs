@@ -107,7 +107,7 @@ fn plan(f: &Fixture, window: &SavedWindow) -> restore::WindowPlan {
         profiles: &profiles,
         installed: &installed,
         resume: ResumeAgents::Auto,
-        app_crashed: false,
+        crash_loop: false,
     };
     plan_window(window, &env, &RealDisk::new(&f.home))
 }

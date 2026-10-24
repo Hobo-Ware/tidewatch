@@ -50,6 +50,7 @@ fn state_word(status: &AgentStatus) -> Option<&'static str> {
         AgentStatus::NeedsYou(_) => Some("needs you"),
         AgentStatus::Done => Some("ready"),
         AgentStatus::Failed(_) => Some("failed"),
+        AgentStatus::Stopped => Some("stopped"),
         AgentStatus::Shell => None,
     }
 }
