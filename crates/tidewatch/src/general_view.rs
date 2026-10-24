@@ -77,7 +77,10 @@ pub(crate) fn page(
         }
     });
     let window = window_view::section(ui, window, &general.window).map(Action::Window);
-    let terminal = font_view::section(ui, font, &general.terminal).map(Action::TerminalFont);
+    let terminal = font_view::section(ui, font, &general.terminal).map(|change| match change {
+        font_view::Change::Font(choice) => Action::TerminalFont(choice),
+        font_view::Change::CopyOnSelect(on) => Action::TerminalCopyOnSelect(on),
+    });
     let new_tab = new_tab_prefs_view::card(
         ui,
         &general.new_tab,

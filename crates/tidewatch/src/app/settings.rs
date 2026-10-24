@@ -139,6 +139,17 @@ impl Tidewatch {
         }
     }
 
+    fn set_copy_on_select(&mut self, enabled: bool) {
+        self.terminal_prefs.copy_on_select = enabled;
+        if let Some(paths) = self.paths.clone() {
+            std::thread::spawn(move || {
+                if let Err(e) = Prefs::update(&paths, |p| p.terminal.copy_on_select = enabled) {
+                    eprintln!("tidewatch: cannot save settings.toml: {e}");
+                }
+            });
+        }
+    }
+
     fn set_keep_awake(&mut self, enabled: bool) {
         self.keep_awake.set_enabled(enabled);
         if let Some(paths) = self.paths.clone() {
@@ -231,6 +242,7 @@ impl Tidewatch {
                 choice: self.terminal_font.choice().clone(),
                 status: self.terminal_font.status(),
                 families: crate::terminal_font::families(),
+                copy_on_select: self.terminal_prefs.copy_on_select,
             },
         };
         let probes: Probes = self
@@ -328,6 +340,7 @@ impl Tidewatch {
             Some(settings_view::Action::TerminalFont(choice)) => {
                 self.terminal_font.choose(ctx, self.paths.as_ref(), choice);
             }
+            Some(settings_view::Action::TerminalCopyOnSelect(on)) => self.set_copy_on_select(on),
             Some(settings_view::Action::LoginItem(click)) => self.apply_login_click(click, ctx),
             Some(settings_view::Action::OpenHouseStyle) => self.open_house_style(ctx),
             Some(settings_view::Action::ResetHouseStyle) => self.reset_house_style(ctx),

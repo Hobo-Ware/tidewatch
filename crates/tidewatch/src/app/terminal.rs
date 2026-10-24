@@ -33,13 +33,13 @@ pub(super) struct TerminalGrid {
     bold: Option<FontId>,
 }
 
-pub(super) fn view_options() -> TerminalOptions<'static> {
+pub(super) fn view_options(copy_on_select: bool) -> TerminalOptions<'static> {
     TerminalOptions {
         alt_is_meta: false,
         paste: PASTE_RULES,
         confirm_multiline_paste: false,
         ctrl_c_copies: true,
-        copy_on_select: false,
+        copy_on_select,
         app_link_modifier: "cmd",
         focus: Focus::Manage,
     }
@@ -90,6 +90,7 @@ impl Tidewatch {
         let poof = self.meeseeks.fade(active_id, now);
         let dev_wheel = if reader_on { Vec::new() } else { self.take_dev_wheel(ui.ctx(), now) };
         let mut copied = false;
+        let options = view_options(self.terminal_prefs.copy_on_select);
         let Pane { body, agent, .. } = self.tabs.active_pane_mut();
         match body {
             Body::Shell(term) => {
@@ -111,7 +112,7 @@ impl Tidewatch {
                             app_mouse: false,
                         },
                         search_marks: &[],
-                        options: view_options(),
+                        options,
                         gate: view_gate(keys_free, frame.keys.modal_open),
                         injected_wheel: &dev_wheel,
                     }
@@ -366,6 +367,7 @@ mod tests {
         copied: Option<String>,
         clipboard: Vec<String>,
         grid: Option<egui::Id>,
+        copy_on_select: bool,
     }
 
     impl Screen {
@@ -377,6 +379,7 @@ mod tests {
                 copied: None,
                 clipboard: Vec::new(),
                 grid: None,
+                copy_on_select: false,
             }
         }
 
@@ -416,7 +419,7 @@ mod tests {
                             app_mouse: false,
                         },
                         search_marks: &[],
-                        options: view_options(),
+                        options: view_options(self.copy_on_select),
                         gate: view_gate(true, false),
                         injected_wheel: &[],
                     }
@@ -438,6 +441,28 @@ mod tests {
             for _ in 0..3 {
                 self.frame(vec![], Modifiers::NONE);
             }
+        }
+
+        fn click(&mut self, pos: Pos2, pressed: bool) {
+            let button = Event::PointerButton {
+                pos,
+                button: egui::PointerButton::Primary,
+                pressed,
+                modifiers: Modifiers::NONE,
+            };
+            self.frame(vec![button], Modifiers::NONE);
+        }
+
+        fn drag(&mut self, from: Pos2, to: Pos2) {
+            self.frame(vec![Event::PointerMoved(from)], Modifiers::NONE);
+            self.click(from, true);
+            let steps = ((to.x - from.x).abs() / 3.0).ceil().max(1.0) as usize;
+            for step in 1..=steps {
+                let pos = from + (to - from) * (step as f32 / steps as f32);
+                self.frame(vec![Event::PointerMoved(pos)], Modifiers::NONE);
+            }
+            self.click(to, false);
+            self.frame(vec![], Modifiers::NONE);
         }
 
         fn with_text() -> Self {
@@ -485,6 +510,42 @@ mod tests {
         assert_eq!(screen.copied.as_deref(), Some("hello world"));
         assert_eq!(screen.clipboard, ["hello world"]);
         assert_eq!(screen.typed, b"");
+    }
+
+    fn cell(col: f32) -> Pos2 {
+        Pos2::new(col * 8.0 + 4.0, 108.0)
+    }
+
+    #[test]
+    fn a_finished_drag_is_copied_when_copy_on_select_is_on() {
+        let mut screen = Screen::with_text();
+        screen.term.clear_selection();
+        screen.copy_on_select = true;
+        screen.drag(cell(0.0), cell(10.0));
+        assert_eq!(screen.clipboard.len(), 1);
+        assert!(screen.clipboard[0].contains("llo wor"), "{:?}", screen.clipboard);
+    }
+
+    #[test]
+    fn a_finished_drag_is_not_copied_when_copy_on_select_is_off() {
+        let mut screen = Screen::with_text();
+        screen.term.clear_selection();
+        screen.drag(cell(0.0), cell(10.0));
+        assert!(screen.term.selection_text().is_some());
+        assert_eq!(screen.clipboard.len(), 0);
+    }
+
+    #[test]
+    fn a_double_click_on_a_word_is_copied_when_copy_on_select_is_on() {
+        let mut screen = Screen::with_text();
+        screen.term.clear_selection();
+        screen.copy_on_select = true;
+        screen.frame(vec![Event::PointerMoved(cell(7.0))], Modifiers::NONE);
+        for _ in 0..2 {
+            screen.click(cell(7.0), true);
+            screen.click(cell(7.0), false);
+        }
+        assert_eq!(screen.clipboard.last().map(String::as_str), Some("world"));
     }
 
     #[test]

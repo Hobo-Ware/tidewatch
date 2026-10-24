@@ -48,7 +48,7 @@ use stdusk_egui::ui::apply_theme;
 use tidewatch_core::guards::GuardPrefs;
 use tidewatch_core::notes::NotesWriter;
 use tidewatch_core::paths::TidewatchPaths;
-use tidewatch_core::prefs::{NewTabPrefs, Prefs};
+use tidewatch_core::prefs::{NewTabPrefs, Prefs, TerminalPrefs};
 use tidewatch_core::restore::RealDisk;
 use tidewatch_core::run_marker;
 use tidewatch_core::tools::Tools;
@@ -138,6 +138,7 @@ enum Closing {
 pub(crate) struct Tidewatch {
     workspaces: Vec<Workspace>,
     terminal_font: terminal_font::Host,
+    terminal_prefs: TerminalPrefs,
     paths: Option<TidewatchPaths>,
     tabs: Tabs<Pane<PtyTerm>>,
     jobs: Jobs<Done>,
@@ -236,6 +237,7 @@ impl Tidewatch {
         colors::init(brand::theme());
         colors::set_chrome(brand::chrome());
         let prefs = paths.as_ref().map(Prefs::load).unwrap_or_default();
+        let terminal_prefs = prefs.terminal.clone();
         let terminal_font = terminal_font::Host::start(&cc.egui_ctx, prefs.terminal.font);
         apply_theme(&cc.egui_ctx);
         brand::tint_visuals(&cc.egui_ctx);
@@ -313,6 +315,7 @@ impl Tidewatch {
         .with_fake_state(fake_state(std::env::var("TIDEWATCH_FAKE_UPDATE_STATE").ok().as_deref()));
         let mut app = Self {
             terminal_font,
+            terminal_prefs,
             tabs,
             jobs: Jobs::new(),
             closing: None,
