@@ -1,4 +1,4 @@
-//! Draws take-over: the "Running elsewhere" card at the top of the Overview, and the dialog that
+//! Draws take-over: the "Running elsewhere" card at the end of the Overview's rail, and the dialog that
 //! asks before a session is moved. Both are drawn from plain data (`takeover.rs`) and report what
 //! was clicked.
 
@@ -24,10 +24,11 @@ const DISCLOSURE_H: f32 = 38.0;
 const SIDE: f32 = 16.0;
 const BADGE: f32 = 26.0;
 const DIALOG_W: f32 = 560.0;
-const LINE_H: f32 = 40.0;
+const LINE_H: f32 = 60.0;
 const LINE_GAP: f32 = 8.0;
 const LINE_TAIL: f32 = 22.0;
 
+#[derive(Clone)]
 pub(crate) struct Card {
     pub(crate) summary: String,
     pub(crate) can_move_all: bool,
@@ -62,33 +63,44 @@ fn line_text(live: usize) -> String {
     }
 }
 
-/// The quiet line at the bottom of the Overview: how many sessions run in other terminals and a
-/// "Move here" at the right. A click folds out the card below it; `reveal` scrolls to both.
+/// The compact card at the end of the Overview's rail: how many sessions run in other terminals and
+/// a Move here button at the right. A click folds out the full card below it; `reveal` scrolls to
+/// both.
 pub(crate) fn line(ui: &mut Ui, data: &Card, open: bool, reveal: bool) -> Option<CardAction> {
     let width = ui.available_width();
-    let (rect, response) = ui.allocate_exact_size(vec2(width, LINE_H), Sense::click());
+    let (rect, _) = ui.allocate_exact_size(vec2(width, LINE_H), Sense::hover());
+    ui.painter().rect(
+        rect,
+        CornerRadius::same(14),
+        brand::CARD,
+        Stroke::new(1.0, brand::CARD_LINE),
+        StrokeKind::Inside,
+    );
     let painter = ui.painter_at(rect);
-    painter.hline(rect.x_range(), rect.top(), Stroke::new(1.0, brand::CARD_LINE));
-    let ink = if response.hovered() { brand::TEXT } else { brand::MUTED };
-    let label = if open { "Hide \u{2039}" } else { "Move here \u{203a}" };
     painter.text(
-        pos2(rect.left() + 4.0, rect.center().y),
+        pos2(rect.left() + 14.0, rect.center().y - 9.0),
+        Align2::LEFT_CENTER,
+        "Running elsewhere",
+        heading(15.0),
+        brand::TEXT,
+    );
+    painter.text(
+        pos2(rect.left() + 14.0, rect.center().y + 10.0),
         Align2::LEFT_CENTER,
         line_text(data.rows.len()),
-        body(12.5),
+        body(12.0),
         brand::MUTED,
     );
-    painter.text(
-        pos2(rect.right() - 4.0, rect.center().y),
-        Align2::RIGHT_CENTER,
-        label,
-        body(12.5),
-        ink,
+    let label = if open { "Hide" } else { "Move here" };
+    let button_w = crate::screen_kit::button_width(ui, label, Size::Compact);
+    let button = Rect::from_center_size(
+        pos2(rect.right() - 14.0 - button_w / 2.0, rect.center().y),
+        vec2(button_w, Size::Compact.height()),
     );
-    let mut action = response
-        .on_hover_cursor(egui::CursorIcon::PointingHand)
-        .clicked()
-        .then_some(CardAction::ToggleLine);
+    let toggled = crate::overview_view::in_rect(ui, button, |ui| {
+        primary_button(ui, label, true, Size::Compact).clicked()
+    });
+    let mut action = toggled.then_some(CardAction::ToggleLine);
     if open {
         ui.add_space(LINE_GAP);
         action = action.or(card(ui, data, false));

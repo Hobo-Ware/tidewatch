@@ -5,16 +5,64 @@ use std::path::Path;
 
 use egui::Color32;
 
+use tidewatch_core::agents::Level;
+use tidewatch_core::civil_date::Date;
 use tidewatch_core::end_block::EndBlock;
 use tidewatch_core::meeseeks::elapsed_text;
 use tidewatch_core::meeseeks_log::Poofed;
-use tidewatch_core::status::AgentStatus;
+use tidewatch_core::status::{AgentStatus, Reason};
 
-use crate::pane::Pane;
+use crate::coming_up::{Group, Row as Scheduled};
+use crate::pane::{AgentTab, Pane};
 use crate::progress_model::{CardTag, Look};
 use crate::progress_ring::tone_color;
 use crate::status_view::{Tone, color, label, tone};
 use crate::tabs::Tabs;
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum AgentKind {
+    Meeseeks,
+    Yolo,
+    Cli(String),
+}
+
+impl AgentKind {
+    pub(crate) fn of(agent: &AgentTab) -> Self {
+        if agent.meeseeks.is_some() {
+            Self::Meeseeks
+        } else if agent.launched.as_ref().is_some_and(|launched| launched.level == Level::Yolo) {
+            Self::Yolo
+        } else {
+            Self::Cli(agent.run.agent_id.clone())
+        }
+    }
+
+    pub(crate) fn label(&self) -> String {
+        match self {
+            Self::Meeseeks => "Meeseeks".to_owned(),
+            Self::Yolo => "YOLO".to_owned(),
+            Self::Cli(id) => crate::screen_kit::cli_short_name(id),
+        }
+    }
+
+    pub(crate) fn ink(&self) -> Color32 {
+        match self {
+            Self::Meeseeks => crate::brand::VIOLET_TEXT,
+            Self::Yolo => crate::brand::AMBER,
+            Self::Cli(id) if id == "claude" => crate::brand::TEAL_TEXT,
+            Self::Cli(id) if id == "codex" => crate::brand::BLUE_TEXT,
+            Self::Cli(_) => crate::brand::SOFT,
+        }
+    }
+}
+
+/// The next scheduled item of an agent's tab.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct Next {
+    pub(crate) date: Option<Date>,
+    pub(crate) days: Option<i64>,
+    pub(crate) what: String,
+}
 
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct Row {
@@ -40,6 +88,12 @@ pub(crate) struct Row {
     pub(crate) job_line: Option<String>,
     /// The picture the agent drew for the tab, shown at the card's corner.
     pub(crate) avatar: Option<std::sync::Arc<tidewatch_core::avatar::Avatar>>,
+    pub(crate) kind: AgentKind,
+    /// `Picks the recommended answer in 3:40`, while a question of an agent that runs on its own waits.
+    pub(crate) auto_pick: Option<String>,
+    /// Seconds since the status last changed.
+    pub(crate) idle_secs: f64,
+    pub(crate) next: Option<Next>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -64,12 +118,6 @@ pub(crate) struct Counts {
     pub(crate) done: usize,
     pub(crate) failed: usize,
     pub(crate) stopped: usize,
-}
-
-impl Counts {
-    pub(crate) fn total(self) -> usize {
-        self.setup + self.working + self.needs + self.done + self.failed + self.stopped
-    }
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -156,6 +204,10 @@ pub(crate) fn collect<T>(
                 look: None,
                 job_line: None,
                 avatar: None,
+                kind: AgentKind::of(agent),
+                auto_pick: auto_pick_line(agent, now),
+                idle_secs: agent.run.since_change(now),
+                next: None,
             })
         })
         .collect();
@@ -242,23 +294,206 @@ pub(crate) fn is_ticking(overview: &Overview) -> bool {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct PoofedRow {
+    /// Where the entry stood in the list it was made from.
+    pub(crate) index: usize,
     pub(crate) name: String,
-    pub(crate) detail: String,
+    /// `PR #213`, or `answered` when the Meeseeks opened no pull request.
+    pub(crate) outcome: String,
+    pub(crate) took: String,
     pub(crate) summary: String,
+    pub(crate) place: String,
+    pub(crate) secs: u64,
 }
 
-pub(crate) fn poofed_rows(entries: &[Poofed]) -> Vec<PoofedRow> {
+pub(crate) fn poofed_rows(
+    entries: &[Poofed],
+    place_of: impl Fn(&Path) -> String,
+) -> Vec<PoofedRow> {
     entries
         .iter()
-        .map(|entry| {
-            let took = elapsed_text(i64::try_from(entry.duration_secs).unwrap_or(0) * 1000);
-            let detail = match entry.pr_label() {
-                Some(pr) => format!("{pr} \u{b7} {took}"),
-                None => took,
-            };
-            PoofedRow { name: entry.name.clone(), detail, summary: entry.summary.clone() }
+        .enumerate()
+        .map(|(index, entry)| PoofedRow {
+            index,
+            name: entry.name.clone(),
+            outcome: entry.pr_label().unwrap_or_else(|| "answered".to_owned()),
+            took: elapsed_text(i64::try_from(entry.duration_secs).unwrap_or(0) * 1000),
+            summary: entry.summary.clone(),
+            place: place_of(&entry.repo),
+            secs: entry.duration_secs,
         })
         .collect()
+}
+
+/// `8 \u{b7} 1h 37m`: how many poofed today and the time they ran together.
+pub(crate) fn poofed_header(rows: &[PoofedRow]) -> String {
+    let total: u64 = rows.iter().map(|row| row.secs).sum();
+    format!("{} \u{b7} {}", rows.len(), elapsed_text(i64::try_from(total).unwrap_or(0) * 1000))
+}
+
+pub(crate) const WORKING_CAP: usize = 6;
+pub(crate) const POOFED_CAP: usize = 3;
+
+/// The first `cap` of `items` unless `all`, and how many that leaves out.
+pub(crate) fn capped<T>(items: &[T], cap: usize, all: bool) -> (&[T], usize) {
+    if all || items.len() <= cap { (items, 0) } else { (&items[..cap], items.len() - cap) }
+}
+
+/// A stable color for a repo: the same name always gets the same one of the palette.
+pub(crate) fn repo_ink(name: &str) -> Color32 {
+    let hash = name.bytes().fold(0xcbf2_9ce4_8422_2325_u64, |hash, byte| {
+        (hash ^ u64::from(byte)).wrapping_mul(0x100_0000_01b3)
+    });
+    crate::brand::REPO_INKS[(hash % crate::brand::REPO_INKS.len() as u64) as usize]
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct RepoChip {
+    pub(crate) label: String,
+    pub(crate) count: usize,
+}
+
+/// What the screen draws: three lists and the repo chips, narrowed to one repo when asked.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct Board {
+    pub(crate) needs: Vec<Row>,
+    pub(crate) working: Vec<Row>,
+    pub(crate) idle: Vec<Row>,
+    pub(crate) counts: Counts,
+    pub(crate) chips: Vec<RepoChip>,
+}
+
+impl Board {
+    pub(crate) fn total(&self) -> usize {
+        self.needs.len() + self.working.len() + self.idle.len()
+    }
+
+    /// `12 agents \u{b7} 3 need you \u{b7} 5 working \u{b7} 4 idle`.
+    pub(crate) fn summary(&self) -> String {
+        let total = self.total();
+        let agents = if total == 1 { "1 agent".to_owned() } else { format!("{total} agents") };
+        format!(
+            "{agents} \u{b7} {} need you \u{b7} {} working \u{b7} {} idle",
+            self.needs.len(),
+            self.working.len(),
+            self.idle.len()
+        )
+    }
+}
+
+impl Overview {
+    /// The lists of the screen for `repo` (a place label), or for every repo when `None`. A repo
+    /// the window no longer holds shows everything.
+    pub(crate) fn board(&self, repo: Option<&str>) -> Board {
+        let chips: Vec<RepoChip> = self
+            .places
+            .iter()
+            .map(|place| RepoChip {
+                label: place.label.clone(),
+                count: place.rows.len()
+                    + self.needs.iter().filter(|row| row.place == place.label).count(),
+            })
+            .filter(|chip| chip.count > 0)
+            .collect();
+        let repo = repo.filter(|repo| self.places.iter().any(|place| place.label == *repo));
+        let keep = |row: &&Row| repo.is_none_or(|repo| row.place == repo);
+        let needs: Vec<Row> = self.needs.iter().filter(keep).cloned().collect();
+        let rest = self.places.iter().flat_map(|place| &place.rows).filter(keep);
+        let (mut working, mut idle) = (Vec::new(), Vec::new());
+        let mut counts = Counts { needs: needs.len(), ..Counts::default() };
+        for row in rest {
+            match tone(&row.status) {
+                Tone::Setup => {
+                    counts.setup += 1;
+                    working.push(row.clone());
+                }
+                Tone::Working => {
+                    counts.working += 1;
+                    working.push(row.clone());
+                }
+                Tone::Failed | Tone::Done | Tone::Stopped | Tone::Needs | Tone::Shell => {
+                    match tone(&row.status) {
+                        Tone::Failed => counts.failed += 1,
+                        Tone::Stopped => counts.stopped += 1,
+                        _ => counts.done += 1,
+                    }
+                    idle.push(row.clone());
+                }
+            }
+        }
+        idle.sort_by_key(|row| rank(tone(&row.status)));
+        Board { needs, working, idle, counts, chips }
+    }
+}
+
+fn idle_text(secs: f64) -> String {
+    let secs = secs.max(0.0) as u64;
+    match secs {
+        0..3600 => format!("{}m", (secs / 60).max(1)),
+        3600..172_800 => format!("{}h", secs / 3600),
+        _ => format!("{}d", secs / 86_400),
+    }
+}
+
+fn day_text(date: Date) -> String {
+    format!("{} {}", date.weekday().short(), date.day())
+}
+
+/// The second line of an idle card: how long it has been idle and what it does next, or when it
+/// wakes when that is days away.
+pub(crate) fn idle_line(row: &Row) -> String {
+    let lead = match &row.status {
+        AgentStatus::Failed(why) => return format!("Failed \u{b7} {}", first_line(why)),
+        AgentStatus::Stopped => "Stopped".to_owned(),
+        _ => format!("Idle {}", idle_text(row.idle_secs)),
+    };
+    let Some(next) = &row.next else { return format!("{lead} \u{b7} nothing scheduled") };
+    match (next.days, next.date) {
+        (Some(days), Some(date)) if days >= 2 => format!("Waiting until {}", day_text(date)),
+        (Some(1), _) => format!("{lead} \u{b7} Next: tomorrow, {}", next.what),
+        (Some(_), _) => format!("{lead} \u{b7} Next: today, {}", next.what),
+        (None, _) => format!("{lead} \u{b7} Next: {}", next.what),
+    }
+}
+
+/// The next item of one tab: the first open one that is not parked and is not the owner's to decide.
+pub(crate) fn next_of<'a>(mut rows: impl Iterator<Item = &'a Scheduled>) -> Option<Next> {
+    rows.find(|row| !matches!(row.group, Group::Parked | Group::You)).map(|row| Next {
+        date: row.when.date(),
+        days: row.days,
+        what: row.what.clone(),
+    })
+}
+
+fn auto_pick_line(agent: &AgentTab, now: f64) -> Option<String> {
+    use crate::reader_rows::Kind;
+    if !agent.autonomous() {
+        return None;
+    }
+    let row = agent.reader.rows.pending_question()?;
+    let left = agent.reader.auto.left(row.seq, now, crate::dev_reader::autopick_wait())?;
+    let Kind::Question(question) = &row.kind else { return None };
+    Some(crate::question_auto::line(left, &question.questions))
+}
+
+/// What the card's bottom line says about a question or a permission.
+pub(crate) fn ask_tag(row: &Row, tag: &str) -> String {
+    match &row.status {
+        AgentStatus::NeedsYou(Reason::Permission) if row.look.is_none() => "permission".to_owned(),
+        AgentStatus::NeedsYou(Reason::Question) if row.look.is_none() => "question".to_owned(),
+        AgentStatus::NeedsYou(Reason::Input) if row.look.is_none() => "your message".to_owned(),
+        AgentStatus::NeedsYou(Reason::Attention) if row.look.is_none() => {
+            "rang the bell".to_owned()
+        }
+        _ => tag.to_owned(),
+    }
+}
+
+/// The button of a card that needs you.
+pub(crate) fn ask_button(row: &Row) -> &'static str {
+    match &row.status {
+        AgentStatus::NeedsYou(Reason::Permission) => "Review",
+        _ => "Answer",
+    }
 }
 
 #[cfg(test)]
@@ -268,7 +503,6 @@ mod tests {
     use crate::pane::{AgentTab, Body};
     use crate::workflow_run::TabRun;
     use std::path::PathBuf;
-    use tidewatch_core::status::Reason;
     use tidewatch_core::worktree::Worktree;
 
     fn row(id: u64, title: &str, status: AgentStatus) -> Row {
@@ -289,6 +523,10 @@ mod tests {
             look: None,
             job_line: None,
             avatar: None,
+            kind: AgentKind::Cli("claude".into()),
+            auto_pick: None,
+            idle_secs: 0.0,
+            next: None,
         }
     }
 
@@ -301,7 +539,7 @@ mod tests {
     }
 
     #[test]
-    fn tabs_that_need_you_come_first_and_the_rest_sort_by_urgency() {
+    fn tabs_that_need_you_come_first_and_a_quiet_one_is_idle_not_needing_you() {
         let overview = build(vec![place(
             "web",
             vec![
@@ -314,16 +552,15 @@ mod tests {
                 row(7, "stopped-a", AgentStatus::Stopped),
             ],
         )]);
-        assert_eq!(titles(&overview.needs), ["needs-a", "needs-b"]);
+        assert_eq!(titles(&overview.needs), ["needs-a"]);
         assert_eq!(
             titles(&overview.places[0].rows),
-            ["failed-a", "working-a", "setup-a", "done-a", "stopped-a"]
+            ["failed-a", "working-a", "setup-a", "done-a", "needs-b", "stopped-a"]
         );
         assert_eq!(
             overview.counts,
-            Counts { setup: 1, working: 1, needs: 2, done: 1, failed: 1, stopped: 1 }
+            Counts { setup: 1, working: 1, needs: 1, done: 2, failed: 1, stopped: 1 }
         );
-        assert_eq!(overview.counts.total(), 7);
     }
 
     #[test]
@@ -341,7 +578,7 @@ mod tests {
     #[test]
     fn a_plain_shell_is_not_listed() {
         let overview = build(vec![place("web", vec![row(1, "main", AgentStatus::Shell)])]);
-        assert_eq!(overview.counts.total(), 0);
+        assert_eq!(overview.counts, Counts::default());
         assert_eq!(overview.places[0].rows, []);
     }
 
@@ -365,9 +602,9 @@ mod tests {
     fn only_a_list_with_a_live_tab_ticks() {
         let live = build(vec![place("web", vec![row(1, "a", AgentStatus::Working)])]);
         assert!(is_ticking(&live));
-        let waiting =
-            build(vec![place("web", vec![row(1, "a", AgentStatus::NeedsYou(Reason::Quiet))])]);
-        assert!(is_ticking(&waiting));
+        let asking =
+            build(vec![place("web", vec![row(1, "a", AgentStatus::NeedsYou(Reason::Input))])]);
+        assert!(is_ticking(&asking));
         let finished = build(vec![place(
             "web",
             vec![row(1, "a", AgentStatus::Done), row(2, "b", AgentStatus::Failed("x".into()))],
@@ -534,5 +771,182 @@ mod tests {
         let view = card_view(&working);
         assert_eq!((view.line.as_str(), view.line_ink), ("21% \u{b7} 1h 52m", crate::brand::TEAL));
         assert_eq!((view.tag, view.fraction), (plain.tag, plain.fraction));
+    }
+
+    fn two_repos() -> Overview {
+        let mut web = vec![
+            row(1, "w1", AgentStatus::Working),
+            row(2, "w2", AgentStatus::NeedsYou(Reason::Quiet)),
+            row(3, "w3", AgentStatus::Done),
+        ];
+        let mut api = vec![
+            row(4, "a1", AgentStatus::Working),
+            row(5, "a2", AgentStatus::SettingUp),
+            row(6, "a3", AgentStatus::Failed("boom".into())),
+            row(7, "a4", AgentStatus::NeedsYou(Reason::Permission)),
+        ];
+        for r in &mut web {
+            r.place = "web".into();
+        }
+        for r in &mut api {
+            r.place = "api".into();
+        }
+        build(vec![place("web", web), place("api", api)])
+    }
+
+    #[test]
+    fn the_board_has_chips_with_counts_and_a_quiet_agent_in_idle() {
+        let board = two_repos().board(None);
+        assert_eq!(titles(&board.needs), ["a4"]);
+        assert_eq!(titles(&board.working), ["w1", "a1", "a2"]);
+        assert_eq!(titles(&board.idle), ["a3", "w2", "w3"]);
+        let chips: Vec<_> = board.chips.iter().map(|c| (c.label.as_str(), c.count)).collect();
+        assert_eq!(chips, [("web", 3), ("api", 4)]);
+        assert_eq!(board.total(), 7);
+        assert_eq!(board.summary(), "7 agents \u{b7} 1 need you \u{b7} 3 working \u{b7} 3 idle");
+    }
+
+    #[test]
+    fn a_repo_filter_narrows_every_list_and_the_summary_but_not_the_chips() {
+        let board = two_repos().board(Some("api"));
+        assert_eq!(titles(&board.needs), ["a4"]);
+        assert_eq!(titles(&board.working), ["a1", "a2"]);
+        assert_eq!(titles(&board.idle), ["a3"]);
+        assert_eq!(board.chips.len(), 2);
+        assert_eq!(board.summary(), "4 agents \u{b7} 1 need you \u{b7} 2 working \u{b7} 1 idle");
+        let web = two_repos().board(Some("web"));
+        assert_eq!(
+            (web.needs.len(), titles(&web.working), titles(&web.idle)),
+            (0, vec!["w1"], vec!["w2", "w3"])
+        );
+        assert_eq!(two_repos().board(Some("gone")), two_repos().board(None));
+    }
+
+    #[test]
+    fn working_shows_six_until_show_all() {
+        let rows: Vec<u32> = (0..8).collect();
+        assert_eq!(capped(&rows, WORKING_CAP, false), (&rows[..6], 2));
+        assert_eq!(capped(&rows, WORKING_CAP, true), (&rows[..], 0));
+        assert_eq!(capped(&rows[..6], WORKING_CAP, false), (&rows[..6], 0));
+        assert_eq!(capped(&rows, POOFED_CAP, false), (&rows[..3], 5));
+    }
+
+    #[test]
+    fn a_repo_gets_the_same_color_every_time_and_it_comes_from_the_palette() {
+        assert_eq!(repo_ink("acme-api"), repo_ink("acme-api"));
+        for name in ["acme-api", "acme-web", "acme-workers", "x", ""] {
+            assert!(crate::brand::REPO_INKS.contains(&repo_ink(name)), "{name}");
+        }
+        let used: std::collections::HashSet<_> =
+            (0..40).map(|n| repo_ink(&format!("repo-{n}"))).collect();
+        assert!(used.len() >= 4);
+    }
+
+    #[test]
+    fn an_idle_line_says_how_long_and_what_comes_next() {
+        let date = |d| Date::new(2026, 10, d).unwrap();
+        let next = |days: Option<i64>, day: Option<u8>, what: &str| {
+            Some(Next { date: day.map(date), days, what: what.into() })
+        };
+        let mut idle = row(1, "a", AgentStatus::NeedsYou(Reason::Quiet));
+        idle.idle_secs = 3.0 * 3600.0 + 120.0;
+        assert_eq!(idle_line(&idle), "Idle 3h \u{b7} nothing scheduled");
+        idle.next = next(Some(0), Some(26), "rerun the check");
+        assert_eq!(idle_line(&idle), "Idle 3h \u{b7} Next: today, rerun the check");
+        idle.next = next(Some(1), Some(27), "rerun the check");
+        assert_eq!(idle_line(&idle), "Idle 3h \u{b7} Next: tomorrow, rerun the check");
+        idle.next = next(Some(5), Some(31), "read back");
+        assert_eq!(idle_line(&idle), "Waiting until Sat 31");
+        idle.next = next(None, None, "after the deploy");
+        assert_eq!(idle_line(&idle), "Idle 3h \u{b7} Next: after the deploy");
+        idle.status = AgentStatus::Done;
+        idle.idle_secs = 12.0 * 60.0;
+        idle.next = None;
+        assert_eq!(idle_line(&idle), "Idle 12m \u{b7} nothing scheduled");
+        idle.status = AgentStatus::Failed("exited with code 2\nmore".into());
+        assert_eq!(idle_line(&idle), "Failed \u{b7} exited with code 2");
+        idle.status = AgentStatus::Stopped;
+        assert_eq!(idle_line(&idle), "Stopped \u{b7} nothing scheduled");
+    }
+
+    #[test]
+    fn idle_time_reads_in_minutes_hours_and_days() {
+        let cases = [
+            (5.0, "1m"),
+            (59.0 * 60.0, "59m"),
+            (3600.0, "1h"),
+            (47.0 * 3600.0, "47h"),
+            (3.0 * 86_400.0, "3d"),
+        ];
+        for (secs, want) in cases {
+            assert_eq!(idle_text(secs), want, "{secs}");
+        }
+    }
+
+    #[test]
+    fn the_next_item_skips_parked_and_owner_items() {
+        use crate::coming_up::coming_up;
+        use tidewatch_core::progress::Ledger;
+        use tidewatch_core::schedule::{Entry, Index, Owner, Presence};
+        let mut index = Index::default();
+        let owner = Owner {
+            repo: "/work/web".into(),
+            tab: "otter".into(),
+            session_id: None,
+            profile_id: None,
+        };
+        let ledger = Ledger::parse(
+            "# Goal\nG\n\n## Scheduled\n- [ ] you -- decide\n- [ ] parked: later -- parked one\n- [ ] 2026-10-30 -- dated\n",
+        );
+        index.set(Entry::of(owner, &ledger, Presence::Open));
+        let today = Date::new(2026, 10, 26).unwrap();
+        let rows = coming_up(today, &index);
+        let next = next_of(rows.iter()).unwrap();
+        assert_eq!((next.what.as_str(), next.days), ("dated", Some(4)));
+        assert_eq!(next_of(rows.iter().filter(|r| r.what != "dated")), None);
+    }
+
+    #[test]
+    fn the_poofed_header_counts_and_adds_up_the_time() {
+        let poofed = |secs: u64| PoofedRow {
+            index: 0,
+            name: "n".into(),
+            outcome: "answered".into(),
+            took: String::new(),
+            summary: String::new(),
+            place: "web".into(),
+            secs,
+        };
+        assert_eq!(poofed_header(&[poofed(3000), poofed(2820)]), "2 \u{b7} 1h 37m");
+        assert_eq!(poofed_header(&[]), "0 \u{b7} 0m");
+    }
+
+    #[test]
+    fn a_poofed_row_names_the_pull_request_or_says_answered() {
+        let mut with_pr = Poofed::bare(
+            "lint-fix",
+            "Did it.",
+            Some("https://x/pull/213"),
+            360,
+            Date::new(2026, 10, 26).unwrap(),
+        );
+        with_pr.repo = "/work/web".into();
+        let without = Poofed::bare("ask", "Answered.", None, 60, Date::new(2026, 10, 26).unwrap());
+        let rows = poofed_rows(&[with_pr, without], |repo| {
+            repo.file_name().map_or_else(String::new, |n| n.to_string_lossy().into_owned())
+        });
+        assert_eq!(
+            rows.iter()
+                .map(|r| (r.outcome.as_str(), r.took.as_str(), r.place.as_str()))
+                .collect::<Vec<_>>(),
+            [("PR #213", "6m", "web"), ("answered", "1m", "")]
+        );
+    }
+
+    #[test]
+    fn the_card_button_reviews_a_permission_and_answers_the_rest() {
+        assert_eq!(ask_button(&row(1, "a", AgentStatus::NeedsYou(Reason::Permission))), "Review");
+        assert_eq!(ask_button(&row(1, "a", AgentStatus::NeedsYou(Reason::Question))), "Answer");
+        assert_eq!(ask_button(&row(1, "a", AgentStatus::NeedsYou(Reason::Input))), "Answer");
     }
 }

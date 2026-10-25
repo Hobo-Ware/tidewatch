@@ -261,6 +261,7 @@ impl Tidewatch {
             }
             Workspace::Other { .. } => None,
         };
+        let checklist = self.checklist.of(self.workspace().dir()).cloned();
         let settings = self.settings.as_mut()?;
         let files = self
             .paths
@@ -310,6 +311,7 @@ impl Tidewatch {
                 copy_on_select: self.terminal_prefs.copy_on_select,
             },
             sync: self.settings_sync.view(wall_secs()),
+            checklist,
         };
         let probes: Probes = self
             .catalog
@@ -415,6 +417,7 @@ impl Tidewatch {
             Some(settings_view::Action::Sync(change)) => self.settings_sync.apply(change, ctx),
             Some(settings_view::Action::OpenHouseStyle) => self.open_house_style(ctx),
             Some(settings_view::Action::ResetHouseStyle) => self.reset_house_style(ctx),
+            Some(settings_view::Action::EditChecklist) => self.edit_checklist(ctx),
             Some(settings_view::Action::WorktreeSetup { repo, recipe }) => {
                 self.save_worktree_setup(repo, recipe);
             }

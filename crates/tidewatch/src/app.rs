@@ -198,6 +198,7 @@ pub(crate) struct Tidewatch {
     amphetamine_view: amphetamine_view::Memory,
     progress_ui: progress_view::Memory,
     checklist: overview_checklist::Host,
+    overview_state: crate::overview_view::State,
     slash: slash_glue::Host,
     snoozes: due::Snoozes,
     dev_open_scheduled: Option<String>,
@@ -399,6 +400,7 @@ impl Tidewatch {
             amphetamine_view: amphetamine_view::Memory::from_env(),
             progress_ui: progress_view::Memory::default(),
             checklist: overview_checklist::Host::new(),
+            overview_state: crate::overview_fake::initial_state(),
             slash: slash_glue::Host::new(),
             snoozes: due::Snoozes::default(),
             dev_open_scheduled: std::env::var("TIDEWATCH_DEV_OPEN_SCHEDULED")

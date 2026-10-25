@@ -74,6 +74,7 @@ fn general(restore: bool, resume: ResumeAgents, login_offered: bool) -> General 
             families: &[],
             copy_on_select: true,
         },
+        checklist: None,
     }
 }
 

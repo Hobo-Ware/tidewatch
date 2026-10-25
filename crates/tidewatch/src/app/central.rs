@@ -12,18 +12,19 @@ use super::Tidewatch;
 use super::frame::FrameIntent;
 use super::repos::RepoCommand;
 use super::terminal::TerminalGrid;
-use crate::coming_up::coming_up;
+use crate::coming_up::{Row as Scheduled, coming_up};
 use crate::commands::Command;
 use crate::delivery_card::Delivery;
 use crate::pane::FirstPrompt;
 use crate::progress_glue::today;
 use crate::reader::Shown;
+use crate::repo::Workspace;
 use crate::tab_view::TabView;
 use crate::tabs::Action;
 use crate::workflow_run::TabRun;
 use crate::{
-    agent_status_line, brand, delivery_view, layout, overview, overview_view, reader_glue,
-    stepper_view, takeover_view, timeline, welcome_view, workflow_start_view,
+    agenda, agent_status_line, brand, delivery_view, layout, overview, overview_fake,
+    overview_view, reader_glue, stepper_view, takeover_view, welcome_view, workflow_start_view,
 };
 
 const EMPTY_PANELS_H: f32 = 200.0;
@@ -43,6 +44,22 @@ impl Tidewatch {
         self.add_done_check_tags(&mut overview);
         self.add_looks(&mut overview, now);
         overview
+    }
+
+    fn place_label(&self, repo: &std::path::Path) -> String {
+        self.workspaces.iter().find(|workspace| workspace.dir() == repo).map_or_else(
+            || repo.file_name().map_or_else(String::new, |n| n.to_string_lossy().into_owned()),
+            Workspace::chip_label,
+        )
+    }
+
+    fn add_next(&self, overview: &mut overview::Overview, rows: &[Scheduled]) {
+        for row in overview.places.iter_mut().flat_map(|place| place.rows.iter_mut()) {
+            let id = row.tab_id;
+            row.next = overview::next_of(
+                rows.iter().filter(|due| self.open_tab_of(&due.repo, &due.tab) == Some(id)),
+            );
+        }
     }
 
     pub(super) fn toggle_overview(&mut self) {
@@ -149,36 +166,44 @@ impl Tidewatch {
         now: f64,
         frame: &mut FrameIntent,
     ) {
-        let data = self.overview_data(now);
+        let fake = overview_fake::requested().map(overview_fake::build);
+        let rows =
+            if fake.is_some() { Vec::new() } else { coming_up(today(), self.progress.index()) };
+        let mut data =
+            fake.as_ref().map_or_else(|| self.overview_data(now), |f| f.overview.clone());
+        if fake.is_none() {
+            self.add_next(&mut data, &rows);
+        }
         if overview::is_ticking(&data) {
             ctx.request_repaint_after(Duration::from_secs(1));
+        } else {
+            ctx.request_repaint_after(Duration::from_secs(30));
         }
-        let card = self.takeover_card();
+        let card = match &fake {
+            Some(fake) => Some(fake.takeover.clone()),
+            None => self.takeover_card(),
+        };
         let reveal = card.is_some() && self.takeover.take_reveal();
         let line_open = self.takeover.line_open();
         let mut clicked = None;
-        let repo = self.workspace().dir().to_path_buf();
-        let rows = coming_up(today(), self.progress.index());
-        let steps: Vec<_> = rows.iter().map(|row| self.steps_of(row)).collect();
-        let items: Vec<_> =
-            rows.iter().zip(steps).map(|(row, steps)| timeline::Item { row, steps }).collect();
-        let blocks = timeline::blocks(&items);
-        let entries = self.meeseeks.poofed_on(today());
-        let poofed = overview::poofed_rows(&entries);
-        let sections = overview_view::Sections {
-            coming_up: &blocks,
-            checklist: self.checklist.of(&repo),
-            poofed: &poofed,
+        let days = match &fake {
+            Some(fake) => fake.agenda.clone(),
+            None => agenda::days(&rows, today(), |repo| self.place_label(repo)),
         };
-        let out = overview_view::show(ui, area, &data, &sections, |ui| {
+        let entries = if fake.is_some() { Vec::new() } else { self.meeseeks.poofed_on(today()) };
+        let poofed = match &fake {
+            Some(fake) => fake.poofed.clone(),
+            None => overview::poofed_rows(&entries, |repo| self.place_label(repo)),
+        };
+        let sections = overview_view::Sections { agenda: &days, poofed: &poofed };
+        let mut state = std::mem::take(&mut self.overview_state);
+        let out = overview_view::show(ui, area, &data, &mut state, &sections, |ui| {
             if let Some(card) = &card {
                 clicked = takeover_view::line(ui, card, line_open, reveal);
             }
         });
-        if out.edit_checklist {
-            self.edit_checklist(ctx);
-        }
-        if let Some(row) = out.coming_up.and_then(|index| rows.get(index)) {
+        self.overview_state = state;
+        if let Some(row) = out.agenda.and_then(|index| rows.get(index)) {
             self.open_scheduled(row, ctx);
         }
         if let Some(record) = out.poofed.and_then(|index| entries.get(index)) {

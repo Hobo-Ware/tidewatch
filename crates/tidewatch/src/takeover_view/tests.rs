@@ -196,20 +196,15 @@ impl Screen {
 
     fn frame(&mut self, ctx: &egui::Context, events: Vec<Event>) -> Vec<(String, Rect)> {
         use crate::overview::{Counts, Overview};
-        use crate::overview_checklist::{Checklist, Chip, Source};
-        use crate::overview_view::{Sections, show};
+        use crate::overview_view::{Sections, State, show};
         let data = Overview { needs: vec![], places: vec![], counts: Counts::default() };
-        let list = Checklist {
-            chips: vec![Chip { number: Some(1), title: "One".into() }],
-            source: Source::Default,
-            file: "/cfg/checklist.md".into(),
-        };
-        let sections = Sections { checklist: Some(&list), ..Sections::default() };
+        let sections = Sections::default();
+        let mut state = State::default();
         let (open, reveal) = (self.takeover.line_open(), self.takeover.take_reveal());
         let mut clicked = None;
         let output = ctx.run_ui(raw(events), |ui| {
             let area = ui.max_rect();
-            show(ui, area, &data, &sections, |ui| {
+            show(ui, area, &data, &mut state, &sections, |ui| {
                 if let Some(card) = &self.card {
                     clicked = line(ui, card, open, reveal);
                 }
@@ -262,20 +257,19 @@ fn the_line_is_hidden_with_no_session_elsewhere() {
     let ctx = ready_context();
     let mut screen = Screen::new(None);
     let found = screen.frame(&ctx, vec![]);
-    assert!(has(&found, "Checklist"));
     assert!(!found.iter().any(|(text, _)| text.contains("other terminal")));
     assert!(!has(&found, "Running elsewhere"));
 }
 
 #[test]
-fn the_line_counts_the_live_sessions_and_sits_below_the_checklist() {
+fn the_card_counts_the_live_sessions_and_offers_move_here() {
     let ctx = ready_context();
     let rows = (0..3).map(|n| row(&n.to_string(), Status::Idle, Offer::MoveHere)).collect();
     let mut screen = Screen::new(Some(with_ended(card_data(true, rows), 2, false)));
     let found = screen.frame(&ctx, vec![]);
-    assert!(top_of(&found, "3 sessions in other terminals") > top_of(&found, "Checklist"));
-    assert!(has(&found, "Move here \u{203a}"));
-    assert!(!has(&found, "Running elsewhere"));
+    assert!(top_of(&found, "3 sessions in other terminals") > top_of(&found, "Running elsewhere"));
+    assert!(has(&found, "Move here"));
+    assert!(!has(&found, "Move all idle here"));
     let one = Screen::new(Some(card_data(true, vec![row("a", Status::Idle, Offer::MoveHere)])))
         .frame(&ctx, vec![]);
     assert!(has(&one, "1 session in another terminal"));
@@ -286,15 +280,15 @@ fn a_click_on_the_line_opens_the_list_below_it_and_a_second_folds_it() {
     let ctx = ready_context();
     let rows = (0..2).map(|n| row(&n.to_string(), Status::Idle, Offer::MoveHere)).collect();
     let mut screen = Screen::new(Some(card_data(true, rows)));
-    screen.click_on(&ctx, "Move here \u{203a}");
+    screen.click_on(&ctx, "Move here");
     assert!(screen.takeover.line_open());
     let open = screen.frame(&ctx, vec![]);
-    assert!(top_of(&open, "Running elsewhere") > top_of(&open, "2 sessions in other terminals"));
     assert!(has(&open, "Move all idle here"));
-    screen.click_on(&ctx, "Hide \u{2039}");
+    assert_eq!(open.iter().filter(|(text, _)| text == "Running elsewhere").count(), 2);
+    screen.click_on(&ctx, "Hide");
     assert!(!screen.takeover.line_open());
     let folded = screen.frame(&ctx, vec![]);
-    assert!(!has(&folded, "Running elsewhere"));
+    assert!(!has(&folded, "Move all idle here"));
 }
 
 fn view(yolo_note: Option<&str>) -> DialogView {

@@ -14,6 +14,8 @@ use crate::guards_view;
 use crate::login_item;
 use crate::macos::LoginItem;
 use crate::new_tab_prefs_view::{self, ProfileOption};
+use crate::overview_checklist::Checklist;
+use crate::screen_kit::{Size, quiet_button};
 use crate::segmented;
 use crate::settings_ui::{self, Control, footer_note, page_header, section, switch_row};
 use crate::settings_view::Action;
@@ -46,6 +48,8 @@ pub(crate) struct General {
     pub(crate) default_branch: Option<String>,
     pub(crate) terminal: font_view::View,
     pub(crate) sync: sync_view::View,
+    /// The must-do list of the repo on show, once it is read.
+    pub(crate) checklist: Option<Checklist>,
 }
 
 pub(crate) fn page(
@@ -106,6 +110,7 @@ pub(crate) fn page(
             KeepAwakeChange::TouchId(click) => Action::TouchId(click),
         },
     );
+    let checklist = checklist_card(ui, general.checklist.as_ref());
     let github = github_view::card(ui, general.github).map(Action::Github);
     let guards =
         guards_view::card(ui, &general.guards, general.guards_repo.as_ref()).map(Action::Guards);
@@ -122,6 +127,7 @@ pub(crate) fn page(
         .or(new_tab)
         .or(tabs)
         .or(done_check)
+        .or(checklist)
         .or(keep_awake)
         .or(github)
         .or(guards)
@@ -194,6 +200,40 @@ fn tabs_card(ui: &mut Ui, current: TabsPrefs) -> Option<TabsPrefs> {
     let park_after = picked.map_or(current.park_after, |index| ParkAfter::ALL[index]);
     let close_enter = enter.map_or(current.close_enter, |index| CloseEnter::ALL[index]);
     (picked.is_some() || enter.is_some()).then_some(TabsPrefs { park_after, close_enter })
+}
+
+fn checklist_card(ui: &mut Ui, list: Option<&Checklist>) -> Option<Action> {
+    let desc = list.map_or_else(
+        || "Reading the list.".to_owned(),
+        |list| {
+            let steps: Vec<&str> = list.chips.iter().map(|chip| chip.title.as_str()).collect();
+            format!(
+                "{}: {}. Agents keep these as steps in their progress ledger.",
+                list.source.caption(),
+                steps.join(", ")
+            )
+        },
+    );
+    let mut edit = false;
+    if std::env::var_os("TIDEWATCH_DEV_SCROLL_CHECKLIST").is_some() {
+        ui.scroll_to_cursor(Some(egui::Align::TOP));
+    }
+    section(ui, "Checklist", |ui| {
+        edit = settings_ui::row(
+            ui,
+            "Must-do steps",
+            &desc,
+            Control::button(ui, "Edit", Size::Compact),
+            |ui| {
+                let response = quiet_button(ui, "Edit", list.is_some(), Size::Compact);
+                if let Some(list) = list {
+                    response.clone().on_hover_text(list.file.display().to_string());
+                }
+                response.clicked()
+            },
+        );
+    });
+    edit.then_some(Action::EditChecklist)
 }
 
 pub(crate) fn done_check_card(ui: &mut Ui, on: bool) -> Option<bool> {
@@ -355,5 +395,81 @@ mod tests {
         }
         let keep = TabsPrefs { close_enter: CloseEnter::KeepBranch, ..current };
         assert!(found.contains(&keep), "{found:?}");
+    }
+}
+
+#[cfg(test)]
+mod checklist_tests {
+    use super::*;
+    use crate::overview_checklist::{Chip, Source};
+    use egui::{Event, PointerButton, RawInput, Rect, pos2, vec2};
+
+    fn walk(shape: &egui::Shape, found: &mut Vec<(String, Rect)>) {
+        match shape {
+            egui::Shape::Text(text) if !text.galley.text().trim().is_empty() => found.push((
+                text.galley.text().to_owned(),
+                text.galley.rect.translate(text.pos.to_vec2()),
+            )),
+            egui::Shape::Vec(shapes) => shapes.iter().for_each(|shape| walk(shape, found)),
+            _ => {}
+        }
+    }
+
+    fn frame(
+        ctx: &egui::Context,
+        list: Option<&Checklist>,
+        events: Vec<Event>,
+    ) -> (Option<Action>, Vec<(String, Rect)>) {
+        let raw = RawInput {
+            screen_rect: Some(Rect::from_min_size(pos2(0.0, 0.0), vec2(900.0, 500.0))),
+            events,
+            focused: true,
+            ..RawInput::default()
+        };
+        let mut action = None;
+        let output = ctx.run_ui(raw, |ui| action = checklist_card(ui, list));
+        let mut found = Vec::new();
+        for clipped in &output.shapes {
+            walk(&clipped.shape, &mut found);
+        }
+        (action, found)
+    }
+
+    #[test]
+    fn the_checklist_card_names_the_steps_and_edit_asks_to_open_the_file() {
+        let ctx = crate::fonts::test_context();
+        let list = Checklist {
+            chips: vec![
+                Chip { number: Some(1), title: "Understand".into() },
+                Chip { number: Some(2), title: "Build".into() },
+            ],
+            source: Source::Default,
+            file: "/cfg/checklist.md".into(),
+        };
+        frame(&ctx, Some(&list), vec![]);
+        let found = frame(&ctx, Some(&list), vec![]).1;
+        let has = |want: &str| found.iter().any(|(text, _)| text == want);
+        assert!(has("Checklist") && has("Must-do steps") && has("Edit"));
+        assert!(found.iter().any(|(text, _)| text.starts_with("Four stages \u{b7} default: Understand, Build.")));
+        let at = found.iter().find(|(text, _)| text == "Edit").unwrap().1.center();
+        let button = |pressed| Event::PointerButton {
+            pos: at,
+            button: PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        };
+        frame(&ctx, Some(&list), vec![Event::PointerMoved(at)]);
+        frame(&ctx, Some(&list), vec![button(true)]);
+        let (action, _) = frame(&ctx, Some(&list), vec![button(false)]);
+        assert!(matches!(action, Some(Action::EditChecklist)));
+    }
+
+    #[test]
+    fn before_the_list_is_read_the_card_says_so_and_offers_no_edit() {
+        let ctx = crate::fonts::test_context();
+        frame(&ctx, None, vec![]);
+        let (action, found) = frame(&ctx, None, vec![]);
+        assert!(action.is_none());
+        assert!(found.iter().any(|(text, _)| text == "Reading the list."));
     }
 }

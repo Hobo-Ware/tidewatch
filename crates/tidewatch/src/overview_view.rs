@@ -1,55 +1,64 @@
-//! The Overview screen (Cmd+0): it replaces the terminal area, like the profile editor, with one
-//! row per agent tab. A click on a row asks to jump to that tab. Also the icon button in the tab
-//! strip that opens it, with a badge counting the tabs that need you.
+//! The Overview screen (Cmd+0): it replaces the terminal area with a header (title, summary, repo
+//! chips), a main column of agent cards (Needs you, Working, Idle) and a right rail (Coming up,
+//! Poofed today, Running elsewhere). A click on a card asks to jump to its tab. Also the icon
+//! button in the tab strip that opens it, with a badge counting the tabs that need you.
 
 use egui::{
-    Align2, Color32, CornerRadius, FontId, Rect, ScrollArea, Sense, Shadow, Stroke, StrokeKind,
-    pos2, vec2,
+    Align, Align2, Color32, CornerRadius, FontId, Layout, Painter, Pos2, Rect, ScrollArea, Sense,
+    Stroke, StrokeKind, Ui, UiBuilder, pos2, vec2,
 };
 use stdusk_egui::colors;
-use stdusk_egui::ui::ellipsize;
 
+use crate::agenda::Day;
 use crate::agent_avatar::{self, Face};
 use crate::app::strip::{ICON_BOX, ICON_GLYPH};
 use crate::brand;
-use crate::coming_up_view;
 use crate::commands::Command;
 use crate::mascot::{self, Pose};
-use crate::overview::{Counts, Overview, PoofedRow, Row, card_view, fmt_elapsed};
-use crate::overview_checklist::{Checklist, Chip};
-use crate::pr_strip::tone_ink;
+use crate::overview::{
+    Board, Overview, PoofedRow, RepoChip, Row, WORKING_CAP, ask_button, ask_tag, capped, card_view,
+    fmt_elapsed, idle_line, repo_ink,
+};
+use crate::overview_rail;
 use crate::progress_ring;
 use crate::progress_view::flow;
 use crate::reader_view::ellipsized;
-use crate::screen_kit::{Size, button_width, heading, quiet_button};
+use crate::screen_kit::{Size, button_width, heading, primary_button};
 use crate::status_view::{self, Tone};
-use crate::timeline::Block;
 
 const BUTTON_H: f32 = ICON_BOX;
 const SIDE: f32 = crate::layout::EDGE;
-const SECTION_GAP: f32 = 22.0;
-const CARD_MIN_W: f32 = 300.0;
-const MAX_COLUMNS: usize = 4;
-const CARD_GAP: f32 = 14.0;
-const CARD_H: f32 = 166.0;
-const CARD_PAD: f32 = 20.0;
-const CARD_RADIUS: u8 = 14;
-const CARD_SHADOW: f32 = 36.0;
-const RING: f32 = 52.0;
-const RING_OUTER: f32 = 56.0;
-const TILE: f32 = 40.0;
-const DOT: f32 = 8.0;
-const COUNT_GAP: f32 = 18.0;
-const TAG_H: f32 = 22.0;
-const GROUP_HEAD_H: f32 = 34.0;
-const CHIP_H: f32 = 30.0;
+const RAIL_W: f32 = 380.0;
+const COLUMN_GAP: f32 = 16.0;
+const STACK_BELOW: f32 = 900.0;
+pub(crate) const SECTION_GAP: f32 = 16.0;
+pub(crate) const SECTION_PAD: f32 = 14.0;
+pub(crate) const SECTION_HEAD_H: f32 = 22.0;
+pub(crate) const HEAD_GAP: f32 = 12.0;
+pub(crate) const SECTION_RADIUS: u8 = 14;
+const CARD_GAP: f32 = 10.0;
+const CARD_PAD: f32 = 12.0;
+const CARD_RADIUS: u8 = 10;
+const ROW_H: f32 = 40.0;
+const FACE: f32 = 36.0;
+const FACE_IN_RING: f32 = 28.0;
+const RING: f32 = 40.0;
+const FACE_GAP: f32 = 10.0;
+const ASK_ROW_GAP: f32 = 8.0;
+const BAR_GAP: f32 = 10.0;
+const BAR_H: f32 = 3.0;
+const NEEDS_H: f32 = CARD_PAD * 2.0 + ROW_H + ASK_ROW_GAP + 26.0;
+const WORKING_H: f32 = CARD_PAD * 2.0 + ROW_H + BAR_GAP + BAR_H;
+const IDLE_H: f32 = CARD_PAD * 2.0 + ROW_H;
+pub(crate) const SWATCH: f32 = 7.0;
+const PILL_H: f32 = 18.0;
+const CHIP_H: f32 = 28.0;
 const CHIP_GAP: f32 = 8.0;
-const CHIP_PAD: f32 = 13.0;
-const CHIP_CHARS: usize = 24;
-const HEADER_H: f32 = 48.0;
-const GRID_ICON: &str = "\u{E464}";
-const BADGE_H: f32 = 16.0;
+const CHIP_CHARS: usize = 18;
+const TITLE_SIZE: f32 = 22.0;
 const MASCOT_H: f32 = 120.0;
+const BADGE_H: f32 = 16.0;
+const GRID_ICON: &str = "\u{E464}";
 
 pub(crate) const BUTTON_W: f32 = ICON_BOX;
 
@@ -121,11 +130,19 @@ fn paint_badge(ui: &egui::Ui, button: Rect, count: usize) {
     ui.painter().galley(badge.center() - galley.size() / 2.0, galley, colors::bg());
 }
 
-/// What the Overview shows below the agents.
+/// What the Overview keeps while the app runs, and forgets with it: nothing is saved.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(crate) struct State {
+    /// The repo chip picked, `None` for All.
+    pub(crate) repo: Option<String>,
+    pub(crate) working_all: bool,
+    pub(crate) poofed_all: bool,
+}
+
+/// What the rail lists.
 #[derive(Default)]
 pub(crate) struct Sections<'a> {
-    pub(crate) coming_up: &'a [Block],
-    pub(crate) checklist: Option<&'a Checklist>,
+    pub(crate) agenda: &'a [Day],
     pub(crate) poofed: &'a [PoofedRow],
 }
 
@@ -133,146 +150,177 @@ pub(crate) struct Sections<'a> {
 pub(crate) struct Out {
     /// The tab whose card was clicked.
     pub(crate) jump: Option<u64>,
-    /// The row of the Coming up card, or of its button, that was clicked.
-    pub(crate) coming_up: Option<usize>,
-    /// Edit on the checklist row.
-    pub(crate) edit_checklist: bool,
+    /// The row of Coming up that was clicked, or whose Decide was.
+    pub(crate) agenda: Option<usize>,
     /// The row of Poofed today that was clicked.
     pub(crate) poofed: Option<usize>,
 }
 
-/// Draws the Overview in `area` and returns what the user clicked. `below` draws last, inside the
-/// scrolling list.
+/// Draws the Overview in `area` and returns what the user clicked. `below` draws last in the rail.
 pub(crate) fn show(
-    ui: &mut egui::Ui,
+    ui: &mut Ui,
     area: Rect,
     overview: &Overview,
+    state: &mut State,
     sections: &Sections<'_>,
-    below: impl FnOnce(&mut egui::Ui),
+    below: impl FnOnce(&mut Ui),
 ) -> Out {
     ui.painter().rect_filled(area, 0.0, brand::GROUND);
-    header(ui, area, overview);
+    let board = overview.board(state.repo.as_deref());
+    let head_h = header(ui, area, &board, state);
+    let board = overview.board(state.repo.as_deref());
+    let agenda = crate::agenda::narrow(sections.agenda, state.repo.as_deref());
+    let poofed: Vec<PoofedRow> = sections
+        .poofed
+        .iter()
+        .filter(|row| state.repo.as_deref().is_none_or(|repo| row.place == repo))
+        .cloned()
+        .collect();
     let mut out = Out::default();
     let body = Rect::from_min_max(
-        pos2(area.left() + SIDE, area.top() + HEADER_H + 14.0),
+        pos2(area.left() + SIDE, area.top() + head_h),
         pos2(area.right() - SIDE, area.bottom() - 14.0),
     );
-    let mut content = ui.new_child(egui::UiBuilder::new().max_rect(body));
+    let mut content = ui.new_child(UiBuilder::new().max_rect(body));
     ScrollArea::vertical().auto_shrink([false, false]).show(&mut content, |ui| {
-        if overview.counts.total() == 0 {
-            empty(ui);
-        }
-        if !overview.needs.is_empty() {
-            let several = single_repo(overview).is_none();
-            out.jump = out.jump.or(group(ui, "Needs you", "", &overview.needs, (true, several)));
-            ui.add_space(SECTION_GAP);
-        }
-        for place in &overview.places {
-            if place.rows.is_empty() {
-                continue;
-            }
-            out.jump =
-                out.jump.or(group(ui, &place.label, &place.path, &place.rows, (false, false)));
-            ui.add_space(SECTION_GAP);
-        }
-        if !sections.poofed.is_empty() {
-            out.poofed = poofed_list(ui, sections.poofed);
-            ui.add_space(SECTION_GAP);
-        }
-        if !sections.coming_up.is_empty() {
-            out.coming_up = coming_up_view::show(ui, sections.coming_up);
-            ui.add_space(SECTION_GAP);
-        }
-        if let Some(checklist) = sections.checklist {
-            out.edit_checklist = checklist_row(ui, checklist);
-        }
-        ui.add_space(SECTION_GAP);
-        below(ui);
+        let width = ui.available_width();
+        let stacked = width < STACK_BELOW;
+        let main_w = if stacked { width } else { width - RAIL_W - COLUMN_GAP };
+        let top = ui.cursor().min;
+        let mut column = |at: Pos2, w: f32| {
+            let rect = Rect::from_min_size(at, vec2(w, 100_000.0));
+            let mut child =
+                ui.new_child(UiBuilder::new().max_rect(rect).layout(Layout::top_down(Align::Min)));
+            child.spacing_mut().item_spacing = vec2(0.0, 0.0);
+            child
+        };
+        let mut main = column(top, main_w);
+        main_column(&mut main, main_w, &board, state, &mut out);
+        let rail_at = if stacked {
+            pos2(top.x, main.min_rect().bottom() + SECTION_GAP)
+        } else {
+            pos2(top.x + main_w + COLUMN_GAP, top.y)
+        };
+        let rail_w = if stacked { width } else { RAIL_W };
+        let mut rail = column(rail_at, rail_w);
+        overview_rail::show(&mut rail, rail_w, &agenda, &poofed, state, &mut out);
+        let gap = if poofed.is_empty() && agenda.is_empty() { 0.0 } else { SECTION_GAP };
+        rail.add_space(gap);
+        below(&mut rail);
+        let used = main.min_rect().union(rail.min_rect());
+        ui.allocate_rect(used, Sense::hover());
     });
     out
 }
 
-fn header(ui: &egui::Ui, area: Rect, overview: &Overview) {
-    let rect = Rect::from_min_size(area.min, vec2(area.width(), HEADER_H));
-    let painter = ui.painter_at(rect);
-    let title = painter.text(
-        pos2(rect.left() + SIDE, rect.center().y),
-        Align2::LEFT_CENTER,
-        "Overview",
-        heading(16.0),
-        brand::TEXT,
+fn chip_width(ui: &Ui, chip: Option<&RepoChip>, active_all: usize) -> f32 {
+    let (label, count, swatch) = match chip {
+        Some(chip) => (chip_label(&chip.label), chip.count, SWATCH + 6.0),
+        None => ("All".to_owned(), active_all, 0.0),
+    };
+    let font = FontId::proportional(13.0);
+    let text = ui.painter().layout_no_wrap(label, font.clone(), brand::SOFT).size().x;
+    let count = ui.painter().layout_no_wrap(count.to_string(), font, brand::FAINT).size().x;
+    24.0 + swatch + text + 6.0 + count
+}
+
+fn chip_label(label: &str) -> String {
+    stdusk_egui::ui::ellipsize(label, CHIP_CHARS).0
+}
+
+fn header(ui: &mut Ui, area: Rect, board: &Board, state: &mut State) -> f32 {
+    let (left, right) = (area.left() + SIDE, area.right() - SIDE);
+    let painter = ui.painter().clone();
+    let title = painter.layout_no_wrap("Overview".to_owned(), heading(TITLE_SIZE), brand::TEXT);
+    let summary = painter.layout_no_wrap(board.summary(), FontId::proportional(13.0), brand::SOFT);
+    let all: usize = board.chips.iter().map(|chip| chip.count).sum();
+    let mut chips: Vec<Option<&RepoChip>> = vec![None];
+    chips.extend(board.chips.iter().map(Some));
+    let widths: Vec<f32> = chips.iter().map(|chip| chip_width(ui, *chip, all)).collect();
+    let total: f32 = widths.iter().sum::<f32>() + CHIP_GAP * widths.len().saturating_sub(1) as f32;
+    let row_top = area.top() + 16.0;
+    let mid = row_top + CHIP_H / 2.0;
+    let room = right - left - title.size().x - 14.0 - summary.size().x - 24.0;
+    let inline = total <= room;
+    painter.galley(pos2(left, mid - title.size().y / 2.0), title.clone(), brand::TEXT);
+    painter.galley(
+        pos2(left + title.size().x + 14.0, mid - summary.size().y / 2.0 + 2.0),
+        summary,
+        brand::SOFT,
     );
-    let mut left = title.right();
-    if let Some(repo) = single_repo(overview) {
-        let galley =
-            painter.layout_no_wrap(repo.to_owned(), FontId::proportional(13.0), brand::MUTED);
-        let at = pos2(left + 14.0, rect.center().y - galley.size().y / 2.0 + 1.0);
-        left = at.x + galley.size().x;
-        if left + COUNT_GAP < rect.right() - SIDE - COUNT_GAP {
-            painter.galley(at, galley, brand::MUTED);
+    let (places, height) = if inline {
+        let mut x = right - total;
+        let places: Vec<(f32, f32)> = widths
+            .iter()
+            .map(|width| {
+                let at = (x - left, 0.0);
+                x += width + CHIP_GAP;
+                at
+            })
+            .collect();
+        (places, CHIP_H)
+    } else {
+        flow(&widths, right - left, CHIP_H, CHIP_GAP)
+    };
+    let origin = if inline { pos2(left, row_top) } else { pos2(left, row_top + CHIP_H + 10.0) };
+    let active: Option<String> =
+        state.repo.clone().filter(|repo| board.chips.iter().any(|c| c.label == *repo));
+    for ((chip, width), (x, y)) in chips.iter().zip(&widths).zip(places) {
+        let rect = Rect::from_min_size(origin + vec2(x, y), vec2(*width, CHIP_H));
+        let selected = match chip {
+            Some(chip) => active.as_deref() == Some(chip.label.as_str()),
+            None => active.is_none(),
+        };
+        let id = ui.id().with(("overview-chip", chip.map(|c| c.label.as_str())));
+        let resp = ui.interact(rect, id, Sense::click());
+        let (line, ink) = if selected {
+            (brand::TEAL, brand::TEAL_TEXT)
+        } else if resp.hovered() {
+            (brand::FAINT, brand::TEXT)
         } else {
-            left = title.right();
+            (brand::ITEM_LINE, brand::SOFT)
+        };
+        painter.rect_stroke(
+            rect,
+            CornerRadius::same(255),
+            Stroke::new(1.0, line),
+            StrokeKind::Inside,
+        );
+        let mut x = rect.left() + 12.0;
+        let (label, count) = match chip {
+            Some(chip) => {
+                let swatch = Rect::from_center_size(
+                    pos2(x + SWATCH / 2.0, mid_of(rect)),
+                    vec2(SWATCH, SWATCH),
+                );
+                painter.rect_filled(swatch, CornerRadius::same(2), repo_ink(&chip.label));
+                x += SWATCH + 6.0;
+                (chip_label(&chip.label), chip.count)
+            }
+            None => ("All".to_owned(), all),
+        };
+        let font = FontId::proportional(13.0);
+        let text = painter.layout_no_wrap(label, font.clone(), ink);
+        let count = painter.layout_no_wrap(count.to_string(), font, brand::FAINT);
+        painter.galley(pos2(x, mid_of(rect) - text.size().y / 2.0), text.clone(), ink);
+        painter.galley(
+            pos2(x + text.size().x + 6.0, mid_of(rect) - count.size().y / 2.0),
+            count,
+            brand::FAINT,
+        );
+        if resp.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
+            state.repo = chip.map(|chip| chip.label.clone());
+            ui.ctx().request_repaint();
         }
     }
-    let counts: Vec<_> = counts_row(overview.counts)
-        .into_iter()
-        .map(|(text, tone)| {
-            let galley = painter.layout_no_wrap(text, FontId::proportional(13.0), brand::SOFT);
-            (galley, tone)
-        })
-        .collect();
-    let widths: Vec<f32> = counts.iter().map(|(galley, _)| galley.size().x + 8.0 + DOT).collect();
-    let room = rect.right() - SIDE - left - COUNT_GAP;
-    let kept = fitting(&widths, room);
-    let mut right = rect.right() - SIDE;
-    let shown: Vec<_> = counts.into_iter().zip(widths).take(kept).collect();
-    for ((galley, tone), width) in shown.into_iter().rev() {
-        let color = status_view::color(tone).unwrap_or(brand::MUTED);
-        let y = rect.center().y;
-        painter.galley(
-            pos2(right - width + 8.0 + DOT, y - galley.size().y / 2.0),
-            galley,
-            brand::SOFT,
-        );
-        painter.circle_filled(pos2(right - width + DOT / 2.0, y), DOT / 2.0, color);
-        right -= width + COUNT_GAP;
-    }
-    painter.hline(rect.x_range(), rect.bottom(), Stroke::new(1.0, brand::CARD_LINE));
+    16.0 + height + if inline { 0.0 } else { 10.0 } + 14.0
 }
 
-fn fitting(widths: &[f32], room: f32) -> usize {
-    let mut used = 0.0;
-    widths
-        .iter()
-        .take_while(|width| {
-            used += **width + COUNT_GAP;
-            used - COUNT_GAP <= room
-        })
-        .count()
+fn mid_of(rect: Rect) -> f32 {
+    rect.center().y
 }
 
-fn single_repo(overview: &Overview) -> Option<&str> {
-    match overview.places.as_slice() {
-        [place] => Some(&place.label),
-        _ => None,
-    }
-}
-
-fn counts_row(counts: Counts) -> Vec<(String, Tone)> {
-    let mut parts = Vec::new();
-    if counts.failed > 0 {
-        parts.push((format!("{} failed", counts.failed), Tone::Failed));
-    }
-    parts.push((format!("{} need you", counts.needs), Tone::Needs));
-    parts.push((format!("{} working", counts.working + counts.setup), Tone::Working));
-    parts.push((format!("{} idle", counts.done), Tone::Done));
-    if counts.stopped > 0 {
-        parts.push((format!("{} stopped", counts.stopped), Tone::Stopped));
-    }
-    parts
-}
-
-fn empty(ui: &mut egui::Ui) {
+fn empty(ui: &mut Ui) {
     ui.add_space(24.0);
     ui.vertical_centered(|ui| {
         let size = vec2(mascot::width_at(Pose::Asleep, MASCOT_H), MASCOT_H);
@@ -290,132 +338,277 @@ fn empty(ui: &mut egui::Ui) {
     });
 }
 
-fn columns(width: f32) -> usize {
-    (((width + CARD_GAP) / (CARD_MIN_W + CARD_GAP)).floor() as usize).clamp(1, MAX_COLUMNS)
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Lane {
+    Needs,
+    Working,
+    Idle,
 }
 
-fn group(
-    ui: &mut egui::Ui,
-    title: &str,
-    path: &str,
-    rows: &[Row],
-    (needs, name_the_repo): (bool, bool),
-) -> Option<u64> {
-    let width = ui.available_width();
-    let columns = columns(width);
-    let card_w = (width - CARD_GAP * (columns - 1) as f32) / columns as f32;
-    let lines = rows.len().div_ceil(columns);
-    let height = GROUP_HEAD_H + lines as f32 * CARD_H + lines.saturating_sub(1) as f32 * CARD_GAP;
-    let (rect, _) = ui.allocate_exact_size(vec2(width, height), Sense::hover());
-    let painter = ui.painter_at(rect);
-    let title_color =
-        if needs { status_view::color(Tone::Needs).unwrap_or(brand::TEXT) } else { brand::TEXT };
-    let galley = painter.layout_no_wrap(title.to_owned(), heading(14.0), title_color);
-    let title_w = galley.size().x;
-    let mid = rect.top() + (GROUP_HEAD_H - 10.0) / 2.0;
-    painter.galley(pos2(rect.left(), mid - galley.size().y / 2.0), galley, title_color);
-    if !path.is_empty() {
+impl Lane {
+    fn title(self) -> &'static str {
+        match self {
+            Self::Needs => "Needs you",
+            Self::Working => "Working",
+            Self::Idle => "Idle",
+        }
+    }
+
+    fn caption(self) -> &'static str {
+        match self {
+            Self::Idle => "nothing asked",
+            _ => "",
+        }
+    }
+
+    fn dot(self) -> Color32 {
+        match self {
+            Self::Needs => brand::NEEDS,
+            Self::Working => brand::WORKING,
+            Self::Idle => brand::FAINT,
+        }
+    }
+
+    fn card_h(self) -> f32 {
+        match self {
+            Self::Needs => NEEDS_H,
+            Self::Working => WORKING_H,
+            Self::Idle => IDLE_H,
+        }
+    }
+
+    fn columns(self, width: f32) -> usize {
+        let (min, max) = match self {
+            Self::Needs | Self::Working => (250.0, 3),
+            Self::Idle => (300.0, 2),
+        };
+        columns(width, min, max)
+    }
+}
+
+fn columns(width: f32, min: f32, max: usize) -> usize {
+    (((width + CARD_GAP) / (min + CARD_GAP)).floor() as usize).clamp(1, max)
+}
+
+fn main_column(ui: &mut Ui, width: f32, board: &Board, state: &mut State, out: &mut Out) {
+    if board.total() == 0 {
+        empty(ui);
+        return;
+    }
+    if !board.needs.is_empty() {
+        out.jump = out.jump.or(grid_section(
+            ui,
+            width,
+            Lane::Needs,
+            &board.needs,
+            board.needs.len(),
+            None,
+        )
+        .0);
+        ui.add_space(SECTION_GAP);
+    }
+    if !board.working.is_empty() {
+        let (shown, _) = capped(&board.working, WORKING_CAP, state.working_all);
+        let more = (board.working.len() > WORKING_CAP).then(|| {
+            if state.working_all {
+                "Show fewer".to_owned()
+            } else {
+                format!("Show all {}", board.working.len())
+            }
+        });
+        let (jump, toggled) =
+            grid_section(ui, width, Lane::Working, shown, board.working.len(), more.as_deref());
+        out.jump = out.jump.or(jump);
+        if toggled {
+            state.working_all = !state.working_all;
+        }
+        ui.add_space(SECTION_GAP);
+    }
+    if !board.idle.is_empty() {
+        out.jump =
+            out.jump.or(grid_section(ui, width, Lane::Idle, &board.idle, board.idle.len(), None).0);
+        ui.add_space(SECTION_GAP);
+    }
+}
+
+pub(crate) fn section_frame(painter: &Painter, rect: Rect, needs: bool) {
+    let (fill, line) = if needs {
+        (brand::NEEDS_FILL, brand::STRUGGLE_LINE)
+    } else {
+        (brand::CARD, brand::CARD_LINE)
+    };
+    painter.rect(
+        rect,
+        CornerRadius::same(SECTION_RADIUS),
+        fill,
+        Stroke::new(1.0, line),
+        StrokeKind::Inside,
+    );
+}
+
+pub(crate) struct Head<'a> {
+    pub(crate) title: &'a str,
+    pub(crate) caption: &'a str,
+    pub(crate) count: &'a str,
+    pub(crate) dot: Option<Color32>,
+    pub(crate) ink: Color32,
+}
+
+pub(crate) fn section_head(painter: &Painter, section: Rect, head: &Head<'_>) {
+    let mid = section.top() + SECTION_PAD + SECTION_HEAD_H / 2.0;
+    let mut x = section.left() + SECTION_PAD;
+    if let Some(dot) = head.dot {
+        painter.circle_filled(pos2(x + 4.0, mid), 4.0, dot);
+        x += 16.0;
+    }
+    let title =
+        painter.text(pos2(x, mid), Align2::LEFT_CENTER, head.title, heading(15.0), head.ink);
+    if !head.caption.is_empty() {
         painter.text(
-            pos2(rect.left() + title_w + 10.0, mid),
+            pos2(title.right() + 8.0, mid + 1.0),
             Align2::LEFT_CENTER,
-            path,
-            FontId::monospace(13.0),
+            head.caption,
+            FontId::proportional(12.0),
             brand::MUTED,
         );
     }
     painter.text(
-        pos2(rect.right(), mid),
+        pos2(section.right() - SECTION_PAD, mid),
         Align2::RIGHT_CENTER,
-        format!("{} tab{}", rows.len(), if rows.len() == 1 { "" } else { "s" }),
+        head.count,
         FontId::proportional(13.0),
         brand::MUTED,
     );
+}
+
+/// Draws `add` in `rect` without taking room in `ui`: a scope would pull its cursor back up.
+pub(crate) fn in_rect<R>(ui: &mut Ui, rect: Rect, add: impl FnOnce(&mut Ui) -> R) -> R {
+    let mut child = ui.new_child(UiBuilder::new().max_rect(rect));
+    add(&mut child)
+}
+
+/// A ghost button of `label` at the left of `rect`'s top; true when clicked.
+pub(crate) fn ghost(ui: &mut Ui, at: Pos2, label: &str) -> bool {
+    let width = button_width(ui, label, Size::Compact);
+    let rect = Rect::from_min_size(at, vec2(width, Size::Compact.height()));
+    in_rect(ui, rect, |ui| {
+        crate::screen_kit::quiet_button(ui, label, true, Size::Compact).clicked()
+    })
+}
+
+fn grid_section(
+    ui: &mut Ui,
+    width: f32,
+    lane: Lane,
+    rows: &[Row],
+    total: usize,
+    more: Option<&str>,
+) -> (Option<u64>, bool) {
+    let inner_w = width - SECTION_PAD * 2.0;
+    let columns = lane.columns(inner_w);
+    let card_w = (inner_w - CARD_GAP * (columns - 1) as f32) / columns as f32;
+    let lines = rows.len().div_ceil(columns);
+    let grid_h = lines as f32 * lane.card_h() + lines.saturating_sub(1) as f32 * CARD_GAP;
+    let more_h = if more.is_some() { CARD_GAP + Size::Compact.height() } else { 0.0 };
+    let height = SECTION_PAD * 2.0 + SECTION_HEAD_H + HEAD_GAP + grid_h + more_h;
+    let (rect, _) = ui.allocate_exact_size(vec2(width, height), Sense::hover());
+    let painter = ui.painter_at(rect);
+    section_frame(&painter, rect, lane == Lane::Needs);
+    let ink = if lane == Lane::Needs { brand::NEEDS } else { brand::TEXT };
+    section_head(
+        &painter,
+        rect,
+        &Head {
+            title: lane.title(),
+            caption: lane.caption(),
+            count: &total.to_string(),
+            dot: Some(lane.dot()),
+            ink,
+        },
+    );
+    let top = rect.top() + SECTION_PAD + SECTION_HEAD_H + HEAD_GAP;
     let mut jump = None;
     for (index, row) in rows.iter().enumerate() {
         let (line, column) = (index / columns, index % columns);
         let at = pos2(
-            rect.left() + column as f32 * (card_w + CARD_GAP),
-            rect.top() + GROUP_HEAD_H + line as f32 * (CARD_H + CARD_GAP),
+            rect.left() + SECTION_PAD + column as f32 * (card_w + CARD_GAP),
+            top + line as f32 * (lane.card_h() + CARD_GAP),
         );
-        if card(ui, Rect::from_min_size(at, vec2(card_w, CARD_H)), row, needs, name_the_repo) {
+        let card_rect = Rect::from_min_size(at, vec2(card_w, lane.card_h()));
+        if card(ui, card_rect, row, lane) {
             jump = Some(row.tab_id);
         }
     }
-    jump
+    let toggled = more.is_some_and(|label| {
+        ghost(ui, pos2(rect.left() + SECTION_PAD, top + grid_h + CARD_GAP), label)
+    });
+    (jump, toggled)
 }
 
-fn card(
-    ui: &mut egui::Ui,
-    rect: Rect,
-    row: &Row,
-    in_needs_group: bool,
-    name_the_repo: bool,
-) -> bool {
+/// An outline pill whose left edge is at `left`, centered on `mid`. Returns its right edge.
+fn kind_pill(painter: &Painter, left: f32, mid: f32, text: &str, ink: Color32) -> f32 {
+    let galley = painter.layout_no_wrap(text.to_owned(), FontId::proportional(11.0), ink);
+    let pill =
+        Rect::from_min_size(pos2(left, mid - PILL_H / 2.0), vec2(galley.size().x + 14.0, PILL_H));
+    painter.rect_stroke(
+        pill,
+        CornerRadius::same((PILL_H / 2.0) as u8),
+        Stroke::new(1.0, ink.gamma_multiply(0.33)),
+        StrokeKind::Inside,
+    );
+    painter.galley(pill.center() - galley.size() / 2.0, galley, ink);
+    pill.right()
+}
+
+/// The repo's square and name, its left edge at `left` and centered on `mid`. Returns the right edge.
+pub(crate) fn repo_label(painter: &Painter, left: f32, mid: f32, name: &str, max_w: f32) -> f32 {
+    let square = Rect::from_center_size(pos2(left + SWATCH / 2.0, mid), vec2(SWATCH, SWATCH));
+    painter.rect_filled(square, CornerRadius::same(2), repo_ink(name));
+    let text =
+        ellipsized(painter, name, FontId::proportional(12.0), brand::SOFT, max_w - SWATCH - 4.0);
+    let right = left + SWATCH + 4.0 + text.size().x;
+    painter.galley(pos2(left + SWATCH + 4.0, mid - text.size().y / 2.0), text, brand::SOFT);
+    right
+}
+
+fn card(ui: &mut Ui, rect: Rect, row: &Row, lane: Lane) -> bool {
     let resp = ui.interact(rect, ui.id().with(("overview_card", row.tab_id)), Sense::click());
     let view = card_view(row);
-    let painter = ui.painter_at(rect.expand(CARD_SHADOW));
-    painter.add(
-        Shadow { offset: [0, 8], blur: 24, spread: 0, color: Color32::from_black_alpha(64) }
-            .as_shape(rect, CornerRadius::same(CARD_RADIUS)),
-    );
-    let line = if resp.hovered() { brand::FIELD_LINE } else { brand::CARD_LINE };
+    let painter = ui.painter_at(rect);
+    let line = match (lane, resp.hovered()) {
+        (Lane::Needs, true) => brand::ORANGE_SOFT,
+        (Lane::Needs, false) => brand::STRUGGLE_LINE,
+        (_, true) => brand::FIELD_LINE,
+        (_, false) => brand::ITEM_LINE,
+    };
     painter.rect(
         rect,
         CornerRadius::same(CARD_RADIUS),
-        brand::CARD,
+        brand::ITEM,
         Stroke::new(1.0, line),
         StrokeKind::Inside,
     );
     let inner = rect.shrink(CARD_PAD);
-    let ring_center = pos2(inner.left() + RING / 2.0, inner.top() + RING / 2.0);
-    if row.look.is_some() && view.fraction > 0.0 {
-        progress_ring::paint(
-            &painter,
-            ring_center,
-            RING_OUTER,
-            view.fraction,
-            view.ring,
-            brand::CARD_LINE,
-        );
-    }
-    let text_x = inner.left() + RING + 14.0;
-    let room = (inner.right() - text_x).max(1.0);
-    let what = row.workflow.as_deref().unwrap_or(&row.profile);
-    let sub = if in_needs_group && name_the_repo {
-        format!("{} \u{b7} {what}", row.place)
-    } else {
-        what.to_owned()
-    };
-    let name = ellipsized(&painter, &row.title, heading(15.0), brand::TEXT, room);
-    let sub = ellipsized(&painter, &sub, FontId::proportional(13.0), brand::MUTED, room);
-    let block = name.size().y + 2.0 + sub.size().y;
-    let top = ring_center.y - block / 2.0;
-    let sub_top = top + name.size().y + 2.0;
-    painter.galley(pos2(text_x, top), name, brand::TEXT);
-    painter.galley(pos2(text_x, sub_top), sub, brand::MUTED);
-    let line_top = inner.top() + RING + 16.0;
-    let said =
-        ellipsized(&painter, &view.line, FontId::proportional(14.0), view.line_ink, inner.width());
-    painter.galley(pos2(inner.left(), line_top), said, view.line_ink);
-    let tag_mid = inner.bottom() - TAG_H / 2.0;
-    let tag_right = paint_pill(&painter, inner.left(), tag_mid, &view.tag, view.tag_ink);
-    let clock =
-        painter.layout_no_wrap(fmt_elapsed(row.elapsed), FontId::monospace(13.0), brand::MUTED);
-    let clock_left = inner.right() - clock.size().x;
-    let mut pill_right = tag_right;
-    let pills = row.pr.iter().map(|(tone, text)| (*tone, text.as_str())).chain(row.done_check);
-    for (tone, text) in pills {
-        let ink = tone_ink(tone);
-        let width =
-            painter.layout_no_wrap(text.to_owned(), FontId::proportional(13.0), ink).size().x
-                + 20.0;
-        if pill_right + 8.0 + width < clock_left - 8.0 {
-            pill_right = paint_pill(&painter, pill_right + 8.0, tag_mid, text, ink);
+    let center = pos2(inner.left() + RING / 2.0, inner.top() + ROW_H / 2.0);
+    let ringed = lane == Lane::Working;
+    if ringed {
+        let track = brand::ITEM_LINE;
+        if view.fraction > 0.0 {
+            progress_ring::paint(&painter, center, RING, view.fraction, brand::WORKING, track);
+        } else {
+            let radius = RING / 2.0 - progress_ring::stroke_of(RING) / 2.0;
+            painter.circle_stroke(
+                center,
+                radius,
+                Stroke::new(progress_ring::stroke_of(RING), track),
+            );
         }
     }
-    painter.galley(pos2(clock_left, tag_mid - clock.size().y / 2.0), clock, brand::MUTED);
+    let tile = Rect::from_center_size(
+        center,
+        vec2(if ringed { FACE_IN_RING } else { FACE }, if ringed { FACE_IN_RING } else { FACE }),
+    );
     let face = Face::of(&row.profile, &row.agent_id, row.avatar.clone());
-    let tile = Rect::from_center_size(ring_center, vec2(TILE, TILE));
     if agent_avatar::paint_face(ui.ctx(), &painter, tile, &face)
         && let Some(avatar) = face.avatar()
     {
@@ -424,153 +617,119 @@ fn card(
     if row.avatar.is_some() {
         agent_avatar::menu(&resp, row.tab_id);
     }
-    let tip = status_view::describe(&row.status);
-    resp.on_hover_cursor(egui::CursorIcon::PointingHand).on_hover_text(tip).clicked()
-}
-
-/// A tinted pill whose left edge is at `left`, centered on `mid`. Returns its right edge.
-fn paint_pill(painter: &egui::Painter, left: f32, mid: f32, text: &str, ink: Color32) -> f32 {
-    let galley = painter.layout_no_wrap(text.to_owned(), FontId::proportional(13.0), ink);
-    let size = vec2(galley.size().x + 20.0, TAG_H);
-    let pill = Rect::from_min_size(pos2(left, mid - TAG_H / 2.0), size);
-    painter.rect_filled(pill, CornerRadius::same(255), ink.gamma_multiply(0.12));
-    painter.galley(pill.center() - galley.size() / 2.0, galley, ink);
-    pill.right()
-}
-
-const POOFED_ROW_H: f32 = 26.0;
-
-fn poofed_list(ui: &mut egui::Ui, rows: &[PoofedRow]) -> Option<usize> {
-    let width = ui.available_width();
-    let (head, _) = ui.allocate_exact_size(vec2(width, 26.0), Sense::hover());
-    ui.painter_at(head).text(
-        head.left_center(),
-        Align2::LEFT_CENTER,
-        "Poofed today",
-        heading(16.0),
-        brand::TEXT,
-    );
-    ui.add_space(6.0);
-    let mut clicked = None;
-    for (index, row) in rows.iter().enumerate() {
-        let (rect, response) = ui.allocate_exact_size(vec2(width, POOFED_ROW_H), Sense::click());
-        let painter = ui.painter_at(rect);
-        if response.hovered() {
-            painter.rect_filled(rect, CornerRadius::same(6), brand::ITEM);
-        }
-        let detail =
-            painter.layout_no_wrap(row.detail.clone(), FontId::proportional(13.0), brand::MUTED);
-        let room = (width - detail.size().x - 14.0).max(1.0);
-        let name = ellipsized(&painter, &row.name, FontId::proportional(13.0), brand::SOFT, room);
-        painter.galley(pos2(rect.left(), rect.center().y - name.size().y / 2.0), name, brand::SOFT);
+    let text_x = inner.left() + RING + FACE_GAP;
+    let clock = (lane == Lane::Working).then(|| {
+        painter.layout_no_wrap(fmt_elapsed(row.elapsed), FontId::monospace(12.0), brand::MUTED)
+    });
+    let clock_w = clock.as_ref().map_or(0.0, |clock| clock.size().x + 8.0);
+    let full = (inner.right() - text_x).max(1.0);
+    let room = (full - clock_w).max(1.0);
+    let tag = row.kind.label();
+    let pill_w =
+        painter.layout_no_wrap(tag.clone(), FontId::proportional(11.0), brand::SOFT).size().x
+            + 14.0;
+    let name_ink = if lane == Lane::Idle { brand::SOFT } else { brand::TEXT };
+    let name =
+        ellipsized(&painter, &row.title, heading(14.0), name_ink, (room - pill_w - 6.0).max(20.0));
+    let top = center.y - 16.0;
+    let name_mid = top + 8.0;
+    let name_right = text_x + name.size().x;
+    painter.galley(pos2(text_x, name_mid - name.size().y / 2.0), name, name_ink);
+    if name_right + 6.0 + pill_w <= text_x + room + 1.0 {
+        kind_pill(&painter, name_right + 6.0, name_mid, &tag, row.kind.ink());
+    }
+    if let Some(clock) = clock {
         painter.galley(
-            pos2(rect.right() - detail.size().x, rect.center().y - detail.size().y / 2.0),
-            detail,
+            pos2(inner.right() - clock.size().x, name_mid - clock.size().y / 2.0),
+            clock,
             brand::MUTED,
         );
-        if response.clicked() {
-            clicked = Some(index);
-        }
-        response.on_hover_cursor(egui::CursorIcon::PointingHand).on_hover_text(&row.summary);
     }
-    clicked
-}
-
-fn chip_title(chip: &Chip) -> String {
-    let (short, _) = ellipsize(&chip.title, CHIP_CHARS);
-    short
-}
-
-fn checklist_row(ui: &mut egui::Ui, checklist: &Checklist) -> bool {
-    let width = ui.available_width();
-    let (head, _) = ui.allocate_exact_size(vec2(width, 26.0), Sense::hover());
-    let painter = ui.painter_at(head);
-    let title = painter.text(
-        head.left_center(),
-        Align2::LEFT_CENTER,
-        "Checklist",
-        heading(16.0),
-        brand::TEXT,
+    let line_mid = top + 8.0 + 8.0 + 8.0;
+    let (text, ink) = second_line(row, lane, &view);
+    let repo_right = repo_label(&painter, text_x, line_mid, &row.place, (full * 0.45).max(60.0));
+    let rest = ellipsized(
+        &painter,
+        &format!("\u{b7} {text}"),
+        FontId::proportional(12.0),
+        ink,
+        (inner.right() - repo_right - 6.0).max(1.0),
     );
-    painter.text(
-        pos2(title.right() + 14.0, head.center().y + 1.0),
-        Align2::LEFT_CENTER,
-        checklist.source.caption(),
-        FontId::proportional(13.0),
-        brand::MUTED,
-    );
-    ui.add_space(10.0);
-    let font = FontId::proportional(13.0);
-    let labels: Vec<(String, String)> = checklist
-        .chips
-        .iter()
-        .map(|chip| (chip.number.map_or_else(String::new, |n| n.to_string()), chip_title(chip)))
-        .collect();
-    let measure = ui.painter().clone();
-    let number_w = |text: &str| {
-        if text.is_empty() {
-            0.0
-        } else {
-            measure.layout_no_wrap(text.to_owned(), font.clone(), brand::FAINT).size().x + 6.0
-        }
-    };
-    let mut widths: Vec<f32> = labels
-        .iter()
-        .map(|(number, title)| {
-            let text = measure.layout_no_wrap(title.clone(), font.clone(), brand::TEXT);
-            (number_w(number) + text.size().x + 2.0 * CHIP_PAD).min(width)
-        })
-        .collect();
-    let edit_w = button_width(ui, "Edit", Size::Compact);
-    widths.push(edit_w);
-    let (places, height) = flow(&widths, width, CHIP_H, CHIP_GAP);
-    let (rect, _) = ui.allocate_exact_size(vec2(width, height), Sense::hover());
-    let painter = ui.painter_at(rect);
-    for (index, (number, title)) in labels.iter().enumerate() {
-        let (x, y) = places[index];
-        let chip = Rect::from_min_size(rect.min + vec2(x, y), vec2(widths[index], CHIP_H));
-        painter.rect_filled(chip, CornerRadius::same(255), brand::CARD);
-        let mut left = chip.left() + CHIP_PAD;
-        if !number.is_empty() {
-            let galley = painter.layout_no_wrap(number.clone(), font.clone(), brand::FAINT);
-            painter.galley(
-                pos2(left, chip.center().y - galley.size().y / 2.0),
-                galley,
-                brand::FAINT,
-            );
-            left += number_w(number);
-        }
-        let galley = painter.layout_no_wrap(title.clone(), font.clone(), brand::TEXT);
-        painter.galley(pos2(left, chip.center().y - galley.size().y / 2.0), galley, brand::TEXT);
-        let full = &checklist.chips[index].title;
-        if full != title {
-            ui.interact(chip, ui.id().with(("checklist-chip", index)), Sense::hover())
-                .on_hover_text(full);
-        }
-    }
-    let (x, y) = places[labels.len()];
-    let edit = Rect::from_min_size(
-        rect.min + vec2(x, y + (CHIP_H - Size::Compact.height()) / 2.0),
-        vec2(edit_w, Size::Compact.height()),
-    );
+    painter.galley(pos2(repo_right + 6.0, line_mid - rest.size().y / 2.0), rest, ink);
     let mut clicked = false;
-    ui.scope_builder(egui::UiBuilder::new().max_rect(edit), |ui| {
-        let response = quiet_button(ui, "Edit", true, Size::Compact);
-        clicked = response.clicked();
-        response.on_hover_text(checklist.file.display().to_string());
-    });
-    clicked
+    match lane {
+        Lane::Needs => clicked = ask_row(ui, &painter, inner, row, &view.tag),
+        Lane::Working => {
+            let bar = Rect::from_min_size(
+                pos2(inner.left(), inner.bottom() - BAR_H),
+                vec2(inner.width(), BAR_H),
+            );
+            painter.rect_filled(bar, CornerRadius::same(2), brand::ITEM_LINE);
+            if view.fraction > 0.0 {
+                let fill =
+                    Rect::from_min_size(bar.min, vec2(bar.width() * view.fraction.min(1.0), BAR_H));
+                painter.rect_filled(fill, CornerRadius::same(2), brand::WORKING);
+            }
+        }
+        Lane::Idle => {}
+    }
+    let tip = status_view::describe(&row.status);
+    clicked | resp.on_hover_cursor(egui::CursorIcon::PointingHand).on_hover_text(tip).clicked()
+}
+
+fn second_line(row: &Row, lane: Lane, view: &crate::overview::CardView) -> (String, Color32) {
+    match lane {
+        Lane::Needs => {
+            let ask = if view.line.is_empty() {
+                status_view::describe(&row.status)
+            } else {
+                view.line.clone()
+            };
+            (ask, brand::NEEDS)
+        }
+        Lane::Working => (view.line.clone(), brand::MUTED),
+        Lane::Idle => {
+            let failed = status_view::tone(&row.status) == Tone::Failed;
+            (idle_line(row), if failed { brand::RED } else { brand::MUTED })
+        }
+    }
+}
+
+fn ask_row(ui: &mut Ui, painter: &Painter, inner: Rect, row: &Row, tag: &str) -> bool {
+    let button = ask_button(row);
+    let width = button_width(ui, button, Size::Compact);
+    let rect = Rect::from_min_size(
+        pos2(inner.right() - width, inner.bottom() - Size::Compact.height()),
+        vec2(width, Size::Compact.height()),
+    );
+    let (text, ink) = match &row.auto_pick {
+        Some(line) => (line.clone(), brand::MUTED),
+        None => (ask_tag(row, tag), brand::SOFT),
+    };
+    let galley = ellipsized(
+        painter,
+        &text,
+        FontId::proportional(12.0),
+        ink,
+        (inner.width() - width - 8.0).max(1.0),
+    );
+    painter.galley(pos2(inner.left(), rect.center().y - galley.size().y / 2.0), galley, ink);
+    in_rect(ui, rect, |ui| primary_button(ui, button, true, Size::Compact).clicked())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::agenda::{Item, Mark};
+    use crate::overview::{AgentKind, PlaceInput};
+    use egui::{Event, PointerButton, RawInput};
+    use tidewatch_core::status::{AgentStatus, Reason};
 
     #[test]
     fn the_ring_clears_the_corners_of_the_avatar_tile() {
-        let corner = (TILE * 0.28).floor();
-        let corner_reach = (TILE / 2.0 - corner) * std::f32::consts::SQRT_2 + corner;
-        let inner_edge = RING_OUTER / 2.0 - progress_ring::stroke_of(RING_OUTER);
+        let corner = (FACE_IN_RING * 0.28).floor();
+        let corner_reach = (FACE_IN_RING / 2.0 - corner) * std::f32::consts::SQRT_2 + corner;
+        let inner_edge = RING / 2.0 - progress_ring::stroke_of(RING);
         assert!(
             inner_edge >= corner_reach,
             "ring starts at {inner_edge}, tile reaches {corner_reach}"
@@ -594,15 +753,12 @@ mod tests {
             assert_eq!(button_tip("K", &needs), want, "{needs:?}");
         }
     }
-    use crate::overview::{Place, Row};
-    use egui::{Event, PointerButton, RawInput, pos2};
-    use tidewatch_core::status::{AgentStatus, Reason};
 
-    fn row(id: u64, title: &str, status: AgentStatus) -> Row {
+    fn row(id: u64, title: &str, place: &str, status: AgentStatus) -> Row {
         Row {
             tab_id: id,
             title: title.into(),
-            place: "web".into(),
+            place: place.into(),
             profile: "Builder".into(),
             workflow: None,
             agent_id: "claude".into(),
@@ -616,131 +772,26 @@ mod tests {
             look: None,
             job_line: None,
             avatar: None,
+            kind: AgentKind::Cli("claude".into()),
+            auto_pick: None,
+            idle_secs: 600.0,
+            next: None,
         }
     }
 
     fn overview(rows: Vec<Row>) -> Overview {
-        let needs =
-            rows.iter().filter(|r| matches!(r.status, AgentStatus::NeedsYou(_))).cloned().collect();
-        let rest =
-            rows.into_iter().filter(|r| !matches!(r.status, AgentStatus::NeedsYou(_))).collect();
-        let counts = Counts { working: 1, needs: 1, ..Counts::default() };
-        Overview {
-            needs,
-            places: vec![Place { label: "web".into(), path: "/work/web".into(), rows: rest }],
-            counts,
-        }
-    }
-
-    fn frame(ctx: &egui::Context, data: &Overview, events: Vec<Event>) -> Option<u64> {
-        frame_with(ctx, data, &Sections::default(), events).jump
-    }
-
-    fn frame_with(
-        ctx: &egui::Context,
-        data: &Overview,
-        sections: &Sections<'_>,
-        events: Vec<Event>,
-    ) -> Out {
-        let raw = RawInput {
-            screen_rect: Some(Rect::from_min_size(pos2(0.0, 0.0), vec2(1000.0, 600.0))),
-            events,
-            focused: true,
-            ..RawInput::default()
-        };
-        let mut out = Out::default();
-        let _ = ctx.run_ui(raw, |ui| {
-            let area = ui.max_rect();
-            out = show(ui, area, data, sections, |_| {});
-        });
-        out
-    }
-
-    fn click_at(ctx: &egui::Context, data: &Overview, y: f32) -> Option<u64> {
-        let at = pos2(300.0, y);
-        let button = |pressed| Event::PointerButton {
-            pos: at,
-            button: PointerButton::Primary,
-            pressed,
-            modifiers: egui::Modifiers::NONE,
-        };
-        frame(ctx, data, vec![Event::PointerMoved(at)]);
-        frame(ctx, data, vec![button(true)]);
-        frame(ctx, data, vec![button(false)])
-    }
-
-    #[test]
-    fn clicking_a_row_asks_for_its_tab_and_nothing_else_does() {
-        let ctx = crate::fonts::test_context();
-        let data = overview(vec![
-            row(4, "needs-you", AgentStatus::NeedsYou(Reason::Permission)),
-            row(9, "busy", AgentStatus::Working),
-        ]);
-        frame(&ctx, &data, vec![]);
-        let mut hits = Vec::new();
-        let mut y = 20.0;
-        while y < 560.0 {
-            if let Some(tab) = click_at(&ctx, &data, y) {
-                hits.push(tab);
+        let mut places: Vec<PlaceInput> = Vec::new();
+        for row in rows {
+            match places.iter_mut().find(|place| place.label == row.place) {
+                Some(place) => place.rows.push(row),
+                None => places.push(PlaceInput {
+                    label: row.place.clone(),
+                    path: format!("/work/{}", row.place),
+                    rows: vec![row],
+                }),
             }
-            y += 6.0;
         }
-        hits.dedup();
-        assert_eq!(hits, [4, 9]);
-    }
-
-    #[test]
-    fn an_empty_overview_has_nothing_to_click() {
-        let ctx = crate::fonts::test_context();
-        let data = Overview {
-            needs: vec![],
-            places: vec![Place { label: "web".into(), path: "/work/web".into(), rows: vec![] }],
-            counts: Counts::default(),
-        };
-        frame(&ctx, &data, vec![]);
-        for y in [30.0, 100.0, 300.0] {
-            assert_eq!(click_at(&ctx, &data, y), None);
-        }
-    }
-
-    #[test]
-    fn the_counts_row_always_names_need_you_working_and_idle() {
-        let counts = Counts { setup: 1, working: 2, needs: 1, ..Counts::default() };
-        let texts: Vec<String> = counts_row(counts).into_iter().map(|(text, _)| text).collect();
-        assert_eq!(texts, ["1 need you", "3 working", "0 idle"]);
-        let failed = counts_row(Counts { failed: 2, ..Counts::default() });
-        assert_eq!(failed[0].0, "2 failed");
-        assert_eq!(failed.len(), 4);
-        let stopped = counts_row(Counts { stopped: 1, ..Counts::default() });
-        assert_eq!(
-            stopped.last().map(|(text, tone)| (text.as_str(), *tone)),
-            Some(("1 stopped", Tone::Stopped))
-        );
-    }
-
-    #[test]
-    fn the_repo_is_named_in_the_header_only_when_there_is_one() {
-        let place = |label: &str| Place { label: label.into(), path: String::new(), rows: vec![] };
-        let one = Overview { needs: vec![], places: vec![place("web")], counts: Counts::default() };
-        assert_eq!(single_repo(&one), Some("web"));
-        let two = Overview {
-            needs: vec![],
-            places: vec![place("web"), place("api")],
-            counts: Counts::default(),
-        };
-        assert_eq!(single_repo(&two), None);
-    }
-
-    fn chips(titles: &[&str]) -> Checklist {
-        Checklist {
-            chips: titles
-                .iter()
-                .enumerate()
-                .map(|(i, title)| Chip { number: Some(i as u32 + 1), title: (*title).into() })
-                .collect(),
-            source: crate::overview_checklist::Source::Default,
-            file: "/cfg/checklist.md".into(),
-        }
+        crate::overview::build(places)
     }
 
     fn walk(shape: &egui::Shape, found: &mut Vec<(String, Rect)>) {
@@ -754,113 +805,316 @@ mod tests {
         }
     }
 
-    fn texts(
-        ctx: &egui::Context,
-        data: &Overview,
-        sections: &Sections<'_>,
+    struct Screen {
+        ctx: egui::Context,
+        data: Overview,
+        state: State,
+        agenda: Vec<Day>,
+        poofed: Vec<PoofedRow>,
         width: f32,
-    ) -> Vec<(String, Rect)> {
-        let raw = RawInput {
-            screen_rect: Some(Rect::from_min_size(pos2(0.0, 0.0), vec2(width, 900.0))),
-            focused: true,
-            ..RawInput::default()
-        };
-        let mut found = Vec::new();
-        let output = ctx.run_ui(raw, |ui| {
-            let area = ui.max_rect();
-            show(ui, area, data, sections, |_| {});
-        });
-        for clipped in &output.shapes {
-            walk(&clipped.shape, &mut found);
-        }
-        found
     }
 
-    #[test]
-    fn a_click_on_a_poofed_row_names_that_row_and_a_click_elsewhere_names_none() {
-        let ctx = crate::fonts::test_context();
-        let data = overview(vec![row(9, "busy", AgentStatus::Working)]);
-        let rows = ["promo-test", "lint-fix"].map(|name| PoofedRow {
-            name: name.into(),
-            detail: "PR #213 \u{b7} 6m".into(),
-            summary: format!("Did {name}."),
-        });
-        let sections = Sections { poofed: &rows, ..Sections::default() };
-        frame_with(&ctx, &data, &sections, vec![]);
-        let found = texts(&ctx, &data, &sections, 1000.0);
-        let at = |name: &str| found.iter().find(|(text, _)| text == name).unwrap().1.center();
-        let click = |at: egui::Pos2| {
+    impl Screen {
+        fn new(data: Overview) -> Self {
+            Self {
+                ctx: crate::fonts::test_context(),
+                data,
+                state: State::default(),
+                agenda: Vec::new(),
+                poofed: Vec::new(),
+                width: 1200.0,
+            }
+        }
+
+        fn frame(&mut self, events: Vec<Event>) -> (Out, Vec<(String, Rect)>) {
+            let raw = RawInput {
+                screen_rect: Some(Rect::from_min_size(pos2(0.0, 0.0), vec2(self.width, 900.0))),
+                events,
+                focused: true,
+                ..RawInput::default()
+            };
+            let mut out = Out::default();
+            let sections = Sections { agenda: &self.agenda, poofed: &self.poofed };
+            let output = self.ctx.run_ui(raw, |ui| {
+                let area = ui.max_rect();
+                out = show(ui, area, &self.data, &mut self.state, &sections, |_| {});
+            });
+            let mut found = Vec::new();
+            for clipped in &output.shapes {
+                walk(&clipped.shape, &mut found);
+            }
+            (out, found)
+        }
+
+        fn texts(&mut self) -> Vec<String> {
+            self.frame(vec![]);
+            self.frame(vec![]).1.into_iter().map(|(text, _)| text).collect()
+        }
+
+        fn click(&mut self, label: &str) -> Out {
+            self.frame(vec![]);
+            let found = self.frame(vec![]).1;
+            let at = found.iter().find(|(text, _)| text == label).expect(label).1.center();
             let button = |pressed| Event::PointerButton {
                 pos: at,
                 button: PointerButton::Primary,
                 pressed,
                 modifiers: egui::Modifiers::NONE,
             };
-            frame_with(&ctx, &data, &sections, vec![Event::PointerMoved(at)]);
-            frame_with(&ctx, &data, &sections, vec![button(true)]);
-            frame_with(&ctx, &data, &sections, vec![button(false)]).poofed
+            self.frame(vec![Event::PointerMoved(at)]);
+            self.frame(vec![button(true)]);
+            self.frame(vec![button(false)]).0
+        }
+    }
+
+    fn has(texts: &[String], want: &str) -> bool {
+        texts.iter().any(|text| text == want)
+    }
+
+    fn two_repos() -> Overview {
+        overview(vec![
+            row(1, "web-working", "acme-web", AgentStatus::Working),
+            row(2, "web-asks", "acme-web", AgentStatus::NeedsYou(Reason::Question)),
+            row(3, "api-working", "acme-api", AgentStatus::Working),
+            row(4, "api-idle", "acme-api", AgentStatus::Done),
+        ])
+    }
+
+    #[test]
+    fn a_quiet_agent_is_listed_under_idle_and_nothing_needs_you() {
+        let mut screen = Screen::new(overview(vec![
+            row(1, "went-quiet", "acme-web", AgentStatus::NeedsYou(Reason::Quiet)),
+            row(2, "busy", "acme-web", AgentStatus::Working),
+        ]));
+        let texts = screen.texts();
+        assert!(has(&texts, "Idle"), "{texts:?}");
+        assert!(!has(&texts, "Needs you"), "{texts:?}");
+        assert!(has(&texts, "2 agents \u{b7} 0 need you \u{b7} 1 working \u{b7} 1 idle"));
+        assert!(has(&texts, "went-quiet"));
+    }
+
+    #[test]
+    fn a_repo_chip_narrows_every_card_and_all_brings_them_back() {
+        let mut screen = Screen::new(two_repos());
+        let texts = screen.texts();
+        for name in ["web-working", "web-asks", "api-working", "api-idle"] {
+            assert!(has(&texts, name), "{name}");
+        }
+        assert!(has(&texts, "All") && has(&texts, "acme-api") && has(&texts, "acme-web"));
+        screen.click("acme-api");
+        assert_eq!(screen.state.repo.as_deref(), Some("acme-api"));
+        let texts = screen.texts();
+        assert!(has(&texts, "api-working") && has(&texts, "api-idle"));
+        assert!(!has(&texts, "web-working") && !has(&texts, "web-asks"));
+        assert!(!has(&texts, "Needs you"));
+        assert!(has(&texts, "2 agents \u{b7} 0 need you \u{b7} 1 working \u{b7} 1 idle"));
+        screen.click("All");
+        assert_eq!(screen.state.repo, None);
+        assert!(has(&screen.texts(), "web-asks"));
+    }
+
+    #[test]
+    fn a_repo_chip_narrows_the_rail_too() {
+        let mut screen = Screen::new(two_repos());
+        let item = |row, what: &str, place: &str| Item {
+            row,
+            what: what.into(),
+            place: place.into(),
+            tab: "t".into(),
+            note: None,
+            mark: Mark::Plain,
+            tip: String::new(),
         };
-        assert_eq!(click(at("promo-test")), Some(0));
-        assert_eq!(click(at("lint-fix")), Some(1));
-        assert_eq!(click(at("Poofed today")), None);
+        screen.agenda = vec![Day {
+            label: "TODAY \u{b7} MON 26".into(),
+            today: true,
+            items: vec![item(0, "web chore", "acme-web"), item(1, "api chore", "acme-api")],
+        }];
+        let poofed = |index, name: &str, place: &str| PoofedRow {
+            index,
+            name: name.into(),
+            outcome: "answered".into(),
+            took: "2m".into(),
+            summary: String::new(),
+            place: place.into(),
+            secs: 120,
+        };
+        screen.poofed = vec![poofed(0, "web poof", "acme-web"), poofed(1, "api poof", "acme-api")];
+        let all = screen.texts();
+        assert!(has(&all, "web chore") && has(&all, "api chore") && has(&all, "2 scheduled"));
+        assert!(has(&all, "web poof") && has(&all, "api poof") && has(&all, "2 \u{b7} 4m"));
+        screen.click("acme-web");
+        let web = screen.texts();
+        assert!(has(&web, "web chore") && !has(&web, "api chore") && has(&web, "1 scheduled"));
+        assert!(has(&web, "web poof") && !has(&web, "api poof") && has(&web, "1 \u{b7} 2m"));
+    }
+
+    fn eight_working() -> Overview {
+        overview(
+            (0..8)
+                .map(|n| row(n, &format!("worker-{n}"), "acme-web", AgentStatus::Working))
+                .collect(),
+        )
     }
 
     #[test]
-    fn cards_flow_into_columns_by_width_up_to_four() {
-        let cases = [(250.0, 1), (300.0, 1), (614.0, 2), (928.0, 3), (1242.0, 4), (2000.0, 4)];
-        for (width, want) in cases {
-            assert_eq!(columns(width), want, "{width}");
-        }
+    fn working_shows_two_rows_then_show_all_expands_in_place() {
+        let mut screen = Screen::new(eight_working());
+        let texts = screen.texts();
+        let shown =
+            |texts: &[String]| (0..8).filter(|n| has(texts, &format!("worker-{n}"))).count();
+        assert_eq!(shown(&texts), 6);
+        assert!(has(&texts, "Show all 8"));
+        screen.click("Show all 8");
+        let texts = screen.texts();
+        assert_eq!(shown(&texts), 8);
+        assert!(has(&texts, "Show fewer") && !has(&texts, "Show all 8"));
+        screen.click("Show fewer");
+        assert_eq!(shown(&screen.texts()), 6);
     }
 
     #[test]
-    fn the_checklist_row_names_each_phase_and_edit_asks_to_open_the_file() {
-        let ctx = crate::fonts::test_context();
-        let data = overview(vec![row(9, "busy", AgentStatus::Working)]);
-        let list = chips(&["Understand", "Build", "A phase with a very long title indeed"]);
-        let sections = Sections { checklist: Some(&list), ..Sections::default() };
-        frame_with(&ctx, &data, &sections, vec![]);
-        let found = texts(&ctx, &data, &sections, 1000.0);
-        let names: Vec<&str> = found.iter().map(|(text, _)| text.as_str()).collect();
-        for want in ["Checklist", "Four stages \u{b7} default", "Understand", "Build", "Edit"] {
-            assert!(names.contains(&want), "{want} in {names:?}");
+    fn six_working_agents_have_no_show_all() {
+        let mut screen = Screen::new(overview(
+            (0..6)
+                .map(|n| row(n, &format!("worker-{n}"), "acme-web", AgentStatus::Working))
+                .collect(),
+        ));
+        assert!(!screen.texts().iter().any(|text| text.starts_with("Show")));
+    }
+
+    #[test]
+    fn poofed_today_shows_three_and_show_all_expands_in_place() {
+        let mut screen = Screen::new(two_repos());
+        screen.poofed = (0..5)
+            .map(|n| PoofedRow {
+                index: n,
+                name: format!("poof-{n}"),
+                outcome: "PR #1".into(),
+                took: "1m".into(),
+                summary: String::new(),
+                place: "acme-web".into(),
+                secs: 60,
+            })
+            .collect();
+        let texts = screen.texts();
+        assert_eq!((0..5).filter(|n| has(&texts, &format!("poof-{n}"))).count(), 3);
+        assert!(has(&texts, "Show all 5") && has(&texts, "5 \u{b7} 5m"));
+        screen.click("Show all 5");
+        let texts = screen.texts();
+        assert!((0..5).all(|n| has(&texts, &format!("poof-{n}"))));
+        assert_eq!(screen.click("poof-4").poofed, Some(4));
+    }
+
+    #[test]
+    fn a_needs_you_card_names_its_ask_and_its_button_opens_the_tab() {
+        let mut waiting =
+            row(7, "asks-a-thing", "acme-web", AgentStatus::NeedsYou(Reason::Permission));
+        waiting.kind = AgentKind::Meeseeks;
+        waiting.auto_pick = Some("Picks the recommended answer in 3:40".into());
+        let mut screen = Screen::new(overview(vec![waiting]));
+        let texts = screen.texts();
+        for want in [
+            "Needs you",
+            "asks-a-thing",
+            "Meeseeks",
+            "acme-web",
+            "Review",
+            "Picks the recommended answer in 3:40",
+        ] {
+            assert!(has(&texts, want), "{want} in {texts:?}");
         }
+        assert_eq!(screen.click("Review").jump, Some(7));
+    }
+
+    #[test]
+    fn an_idle_card_reads_its_idle_line() {
+        let mut idle = row(1, "wakes-later", "acme-web", AgentStatus::NeedsYou(Reason::Quiet));
+        idle.idle_secs = 3.0 * 3600.0;
+        let mut screen = Screen::new(overview(vec![idle]));
         assert!(
-            names
-                .iter()
-                .any(|text| text.starts_with("A phase with a very") && text.ends_with('\u{2026}'))
+            screen.texts().iter().any(|text| text == "\u{b7} Idle 3h \u{b7} nothing scheduled")
         );
-        let edit = found.iter().find(|(text, _)| text == "Edit").unwrap().1.center();
-        let button = |pressed| Event::PointerButton {
-            pos: edit,
-            button: PointerButton::Primary,
-            pressed,
-            modifiers: egui::Modifiers::NONE,
-        };
-        frame_with(&ctx, &data, &sections, vec![Event::PointerMoved(edit)]);
-        frame_with(&ctx, &data, &sections, vec![button(true)]);
-        let out = frame_with(&ctx, &data, &sections, vec![button(false)]);
-        assert!(out.edit_checklist);
-        assert_eq!(out.jump, None);
     }
 
     #[test]
-    fn no_card_text_overlaps_at_any_window_width() {
-        let ctx = crate::fonts::test_context();
-        let mut with_ledger =
-            row(4, "needs-you-with-a-long-name-here", AgentStatus::NeedsYou(Reason::Permission));
+    fn the_overview_has_no_checklist() {
+        let mut screen = Screen::new(two_repos());
+        let texts = screen.texts();
+        assert!(!texts.iter().any(|text| text.contains("Checklist") || text == "Edit"));
+        assert!(!texts.iter().any(|text| text.contains("Four stages")));
+    }
+
+    #[test]
+    fn a_decide_button_opens_the_row_of_its_item() {
+        let mut screen = Screen::new(two_repos());
+        screen.agenda = vec![Day {
+            label: "NO DATE".into(),
+            today: false,
+            items: vec![Item {
+                row: 3,
+                what: "Install the bot".into(),
+                place: "acme-web".into(),
+                tab: "heron".into(),
+                note: None,
+                mark: Mark::Decide,
+                tip: String::new(),
+            }],
+        }];
+        assert!(has(&screen.texts(), "NO DATE"));
+        let out = screen.click("Decide");
+        assert_eq!((out.agenda, out.jump), (Some(3), None));
+    }
+
+    #[test]
+    fn clicking_a_card_asks_for_its_tab_and_empty_space_asks_for_none() {
+        let mut screen = Screen::new(two_repos());
+        assert_eq!(screen.click("web-working").jump, Some(1));
+        assert_eq!(screen.click("Overview").jump, None);
+    }
+
+    #[test]
+    fn an_empty_overview_has_nothing_to_click() {
+        let mut screen = Screen::new(overview(vec![]));
+        assert_eq!(screen.click("Overview"), Out::default());
+    }
+
+    #[test]
+    fn no_text_overlaps_at_any_window_width() {
+        let mut with_ledger = row(
+            4,
+            "needs-you-with-a-long-name-here-that-goes-on",
+            "acme-web",
+            AgentStatus::NeedsYou(Reason::Permission),
+        );
         with_ledger.look = Some(crate::progress_model::look(
             &tidewatch_core::progress::Ledger::parse(
                 "# Goal\nx\n\n## Status\nphase: 2 Build\nstate: working\nnote: a rather long note about what is happening right now in the build\n\n## Checklist\n### 2. Build\n- [~] a\n\n## Needs you\n- Pick\n",
             ),
             false,
         ));
-        with_ledger.pr = Some((tidewatch_core::pr_status::Tone::Bad, "#42 checks failed".into()));
-        let data = overview(vec![with_ledger, row(9, "busy", AgentStatus::Working)]);
-        let list = chips(&["One", "Two", "Three"]);
+        let mut working = row(
+            9,
+            "busy-with-an-equally-long-name-for-the-working-lane",
+            "acme-api",
+            AgentStatus::Working,
+        );
+        working.elapsed = 7_300.0;
+        let idle = row(10, "quiet-one", "acme-api", AgentStatus::NeedsYou(Reason::Quiet));
+        let mut screen = Screen::new(overview(vec![with_ledger, working, idle]));
+        screen.poofed = vec![PoofedRow {
+            index: 0,
+            name: "a-long-poofed-name-that-needs-an-ellipsis-to-fit".into(),
+            outcome: "PR #2340".into(),
+            took: "1h 02m".into(),
+            summary: String::new(),
+            place: "acme-web".into(),
+            secs: 3720,
+        }];
         for width in [360.0, 700.0, 1000.0, 1440.0] {
-            let sections = Sections { checklist: Some(&list), ..Sections::default() };
-            let found = texts(&ctx, &data, &sections, width);
+            screen.width = width;
+            screen.frame(vec![]);
+            let found = screen.frame(vec![]).1;
             for (index, (a, a_rect)) in found.iter().enumerate() {
                 for (b, b_rect) in &found[index + 1..] {
                     assert!(
@@ -873,45 +1127,12 @@ mod tests {
     }
 
     #[test]
-    fn coming_up_sits_between_the_agents_and_the_checklist_and_hides_when_empty() {
-        use crate::timeline::{Button, Card, Label, Look};
-        let ctx = crate::fonts::test_context();
-        let data = overview(vec![row(9, "busy", AgentStatus::Working)]);
-        let list = chips(&["One"]);
-        let block = Block {
-            label: Label::Later,
-            cards: vec![Card {
-                row: 3,
-                title: "Install the bot".into(),
-                tab: "heron".into(),
-                steps: vec![],
-                look: Look::You,
-                button: Some(Button::Decide),
-                tip: String::new(),
-            }],
-        };
-        let blocks = [block];
-        let sections =
-            Sections { coming_up: &blocks, checklist: Some(&list), ..Sections::default() };
-        frame_with(&ctx, &data, &sections, vec![]);
-        let found = texts(&ctx, &data, &sections, 1000.0);
-        let y =
-            |text: &str| found.iter().find(|(drawn, _)| drawn == text).map(|(_, rect)| rect.top());
-        let (agents, coming, checklist) = (y("busy"), y("Coming up"), y("Checklist"));
-        assert!(agents < coming && coming < checklist, "{agents:?} {coming:?} {checklist:?}");
-        let at = found.iter().find(|(text, _)| text == "Decide").unwrap().1.center();
-        let button = |pressed| Event::PointerButton {
-            pos: at,
-            button: PointerButton::Primary,
-            pressed,
-            modifiers: egui::Modifiers::NONE,
-        };
-        frame_with(&ctx, &data, &sections, vec![Event::PointerMoved(at)]);
-        frame_with(&ctx, &data, &sections, vec![button(true)]);
-        let out = frame_with(&ctx, &data, &sections, vec![button(false)]);
-        assert_eq!((out.coming_up, out.jump), (Some(3), None));
-        let empty = Sections { coming_up: &[], checklist: Some(&list), ..Sections::default() };
-        let found = texts(&ctx, &data, &empty, 1000.0);
-        assert!(!found.iter().any(|(text, _)| text == "Coming up"));
+    fn cards_flow_into_columns_by_width() {
+        let cases = [(240.0, 1), (520.0, 2), (800.0, 3), (2000.0, 3)];
+        for (width, want) in cases {
+            assert_eq!(Lane::Working.columns(width), want, "{width}");
+        }
+        assert_eq!(Lane::Idle.columns(1000.0), 2);
+        assert_eq!(Lane::Idle.columns(400.0), 1);
     }
 }
