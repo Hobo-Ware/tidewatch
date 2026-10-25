@@ -19,6 +19,7 @@ struct Panel {
     size: egui::Vec2,
     texts: Vec<(String, Rect)>,
     action: Option<Action>,
+    opened: Vec<String>,
 }
 
 impl Panel {
@@ -31,6 +32,7 @@ impl Panel {
             size: vec2(width, 900.0),
             texts: Vec::new(),
             action: None,
+            opened: Vec::new(),
         };
         panel.frame(Vec::new());
         panel.frame(Vec::new());
@@ -60,6 +62,12 @@ impl Panel {
             };
             action = show(ui, Rect::from_min_size(pos2(0.0, 0.0), size), &input, state);
         });
+        self.opened.extend(output.platform_output.commands.iter().filter_map(
+            |command| match command {
+                egui::OutputCommand::OpenUrl(open) => Some(open.url.clone()),
+                _ => None,
+            },
+        ));
         self.texts.clear();
         for clipped in &output.shapes {
             collect(&clipped.shape, &mut self.texts);
@@ -268,4 +276,39 @@ fn no_text_overlaps_at_any_width_the_card_has() {
             }
         }
     }
+}
+
+const LINKED: &str = "# Goal\nShip the preview at localhost:5174 today\n\n## Status\nphase: 2 Build\nstate: waiting\n\n## Checklist\n### 2. Build\n- [x] Check http://localhost:8787/jobs -- see [the PR](https://github.com/o/r/pull/12)\n- [ ] Plain item\n\n## Verified\n- Opened https://claude.ai/artifact/abc and it loaded\n\n## Needs you\n- Which base should the preview use? Notes at https://example.com/notes\n";
+
+impl Panel {
+    fn opened_by_clicking_along(&mut self, text: &str, step: usize) -> Vec<String> {
+        let rect = self.texts.iter().find(|(drawn, _)| drawn.starts_with(text)).unwrap().1;
+        let before = self.opened.len();
+        let mut x = rect.left() + 1.0;
+        while x < rect.right() {
+            self.click(pos2(x, rect.center().y));
+            x += step as f32;
+        }
+        self.opened[before..].to_vec()
+    }
+}
+
+#[test]
+fn a_link_in_the_goal_a_row_a_note_and_the_question_opens_and_plain_text_does_not() {
+    let mut panel = Panel::new(LINKED, 640.0);
+    let at = panel.center_of("1 verified");
+    panel.click(at);
+    let cases = [
+        ("Ship the preview", "http://localhost:5174"),
+        ("Check http://localhost:8787/jobs", "http://localhost:8787/jobs"),
+        ("Opened https", "https://claude.ai/artifact/abc"),
+        ("Which base should", "https://example.com/notes"),
+    ];
+    for (text, url) in cases {
+        let opened = panel.opened_by_clicking_along(text, 3);
+        assert!(opened.iter().any(|u| u == url), "{text:?} opened {opened:?}");
+        assert!(opened.iter().all(|u| crate::links::is_web_url(u)), "{opened:?}");
+    }
+    let opened = panel.opened_by_clicking_along("Plain item", 3);
+    assert_eq!(opened.len(), 0);
 }
