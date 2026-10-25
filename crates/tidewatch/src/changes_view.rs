@@ -2,6 +2,7 @@
 //! New files), one fixed-height line each, and a footer with the totals. It only lists; a click
 //! opens the file's diff in the main area and nothing here stages, discards or commits.
 
+use std::borrow::Cow;
 use std::collections::HashMap;
 
 use egui::text::{LayoutJob, TextFormat};
@@ -9,6 +10,7 @@ use egui::{
     Align2, Color32, CornerRadius, FontId, Rect, ScrollArea, Sense, Ui, UiBuilder, pos2, vec2,
 };
 use kelp_core::commit::{ChangeKind, FileChange};
+use kelp_core::status::is_folder;
 use tidewatch_core::changes::Groups;
 use tidewatch_core::history::Source;
 
@@ -112,6 +114,7 @@ pub(crate) fn show(ui: &mut Ui, rect: Rect, view: &mut TabView, side: bool) {
         return;
     };
     let files = groups.files();
+    let diffable = files.saturating_sub(groups.folders.len());
     let picked = if files == 0 {
         message(ui, list, "No uncommitted changes");
         None
@@ -124,7 +127,7 @@ pub(crate) fn show(ui: &mut Ui, rect: Rect, view: &mut TabView, side: bool) {
         Some(path) => view.select_file(&path),
         None => {}
     }
-    paint_footer(ui, footer, &footer_text(files), work_tree_totals(view, files));
+    paint_footer(ui, footer, &footer_text(files), work_tree_totals(view, diffable));
 }
 
 fn message(ui: &Ui, area: Rect, text: &str) {
@@ -178,7 +181,8 @@ fn list_files(
                     Row::File { group, change } => {
                         let current = shown == Some(change.path.as_str());
                         let counted = counts.get(change.path.as_str()).copied();
-                        if file_row(ui, (group, change), counted, current) {
+                        let folder = groups.folder_files(&change.path);
+                        if file_row(ui, (group, change), (counted, folder), current) {
                             picked = Some(change.path.clone());
                         }
                     }
@@ -208,16 +212,16 @@ fn header_row(ui: &mut Ui, group: Group, count: usize) {
 fn file_row(
     ui: &mut Ui,
     (group, change): (Group, &FileChange),
-    counts: Option<LineCounts>,
+    (counts, folder): (Option<LineCounts>, Option<usize>),
     current: bool,
 ) -> bool {
-    let (slot, response) =
-        ui.allocate_exact_size(vec2(ui.available_width(), ROW_H), Sense::click());
+    let sense = if folder.is_some() { Sense::hover() } else { Sense::click() };
+    let (slot, response) = ui.allocate_exact_size(vec2(ui.available_width(), ROW_H), sense);
     let painter = ui.painter_at(slot);
     let rect = slot.shrink2(vec2(SIDE_PAD, 1.0));
     if current {
         painter.rect_filled(rect, CornerRadius::same(RADIUS), brand::SEGMENT_ON);
-    } else if response.hovered() {
+    } else if response.hovered() && folder.is_none() {
         painter.rect_filled(rect, CornerRadius::same(RADIUS), brand::ITEM);
     }
     let center_y = rect.center().y;
@@ -240,16 +244,37 @@ fn file_row(
             brand::GREEN,
         );
     }
+    if let Some(files) = folder {
+        painter.text(
+            pos2(right, center_y),
+            Align2::RIGHT_CENTER,
+            folder_count(files),
+            mono(12.0),
+            brand::FAINT,
+        );
+    }
     right -= DEL_W + COUNT_GAP + ADD_W + COUNT_GAP;
     paint_name(ui, &painter, &change.path, (rect.left() + ROW_PAD + LETTER_W, right), center_y);
-    response.on_hover_text(&change.path).clicked()
+    let tip = folder.map_or_else(
+        || change.path.clone(),
+        |files| format!("{} - {} untracked", change.path, folder_count(files)),
+    );
+    response.on_hover_text(tip).clicked()
+}
+
+fn folder_count(files: usize) -> String {
+    match files {
+        1 => "1 file".to_owned(),
+        n => format!("{n} files"),
+    }
 }
 
 fn paint_name(ui: &Ui, painter: &egui::Painter, path: &str, (left, right): (f32, f32), y: f32) {
-    let (dir, name) = split_dir(path);
+    let (dir, name) = split_dir(path.trim_end_matches('/'));
+    let name = if is_folder(path) { Cow::Owned(format!("{name}/")) } else { Cow::Borrowed(name) };
     let font: FontId = body(13.0);
     let room = (right - left).max(0.0);
-    let name_galley = ellipsized(painter, name, font.clone(), brand::TEXT, room);
+    let name_galley = ellipsized(painter, &name, font.clone(), brand::TEXT, room);
     let name_w = name_galley.size().x;
     painter.galley(pos2(left, y - name_galley.size().y / 2.0), name_galley, brand::TEXT);
     let dir_room = room - name_w - DIR_GAP;
@@ -439,6 +464,74 @@ mod tests {
         panel.click(row);
         assert_eq!(panel.view.file.as_deref(), Some("g.rs"));
         assert!(!panel.view.file_open());
+    }
+
+    const WITH_FOLDER: &str = "M  a.rs\0?? notes/\0?? deep/er/\0?? z.md\0";
+
+    fn folder_panel(side: bool) -> Panel {
+        let mut status = parse_porcelain(WITH_FOLDER);
+        status.folders[0].files = 300;
+        status.folders[1].files = 1;
+        let mut panel = Panel::new("", side);
+        panel.view.groups = Some(Groups::of(&status));
+        panel.frame(Vec::new());
+        panel.frame(Vec::new());
+        panel
+    }
+
+    #[test]
+    fn an_untracked_folder_is_one_row_among_the_new_files() {
+        let groups = Groups::of(&parse_porcelain(WITH_FOLDER));
+        assert_eq!(
+            describe(&rows(&groups)),
+            ["Staged 1", "Staged:a.rs", "New files 3", "New:deep/er/", "New:notes/", "New:z.md"]
+        );
+    }
+
+    #[test]
+    fn a_folder_row_shows_its_name_with_the_slash_and_how_many_files_it_holds() {
+        let panel = folder_panel(true);
+        assert!(panel.at("notes/").is_some(), "{:?}", panel.texts);
+        assert!(panel.at("er/").is_some(), "{:?}", panel.texts);
+        assert!(panel.at("deep").is_some(), "{:?}", panel.texts);
+        assert!(panel.at("300 files").is_some(), "{:?}", panel.texts);
+        assert!(panel.at("1 file").is_some(), "{:?}", panel.texts);
+    }
+
+    #[test]
+    fn the_footer_counts_a_folder_as_one_entry_like_git_status() {
+        let panel = folder_panel(true);
+        let says = panel
+            .texts
+            .iter()
+            .any(|(text, _)| text.starts_with("4 files changed since the last commit"));
+        assert!(says, "{:?}", panel.texts);
+    }
+
+    #[test]
+    fn the_footer_keeps_the_line_totals_of_the_real_files_beside_a_folder() {
+        let mut panel = folder_panel(true);
+        panel.view.files = ["a.rs", "z.md"]
+            .map(|path| FileChange { path: path.into(), kind: ChangeKind::Modified })
+            .to_vec();
+        panel.view.counts = vec![Some((2, 1)), Some((1, 0))];
+        panel.view.shown_source = Some(Source::WorkTree);
+        panel.frame(Vec::new());
+        let says = panel.texts.iter().any(|(text, _)| {
+            text.starts_with("4 files changed since the last commit") && text.ends_with("+3 -1")
+        });
+        assert!(says, "{:?}", panel.texts);
+    }
+
+    #[test]
+    fn a_click_on_a_folder_row_opens_nothing_in_either_layout() {
+        for side in [true, false] {
+            let mut panel = folder_panel(side);
+            let row = panel.at("notes/").unwrap();
+            panel.click(row);
+            assert_eq!(panel.view.file, None, "side {side}");
+            assert!(!panel.view.file_open(), "side {side}");
+        }
     }
 
     #[test]

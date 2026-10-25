@@ -4,13 +4,14 @@
 use std::collections::HashSet;
 
 use kelp_core::commit::{ChangeKind, FileChange};
-use kelp_core::status::WorkingStatus;
+use kelp_core::status::{UntrackedFolder, WorkingStatus, is_folder};
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Groups {
     pub staged: Vec<FileChange>,
     pub changed: Vec<FileChange>,
     pub new_files: Vec<FileChange>,
+    pub folders: Vec<UntrackedFolder>,
 }
 
 impl Groups {
@@ -36,17 +37,23 @@ impl Groups {
             .map(|path| FileChange { path: path.clone(), kind: ChangeKind::Added })
             .collect();
         new_files.sort_by(|a, b| a.path.cmp(&b.path));
-        Self { staged: status.staged.clone(), changed, new_files }
+        Self { staged: status.staged.clone(), changed, new_files, folders: status.folders.clone() }
     }
 
     #[must_use]
-    pub fn ordered(&self) -> Vec<FileChange> {
+    pub fn folder_files(&self, path: &str) -> Option<usize> {
+        self.folders.iter().find(|folder| folder.path == path).map(|folder| folder.files)
+    }
+
+    /// The files a diff can show, in the tab's order: an untracked folder is a row but has none.
+    #[must_use]
+    pub fn diffable(&self) -> Vec<FileChange> {
         let mut seen = HashSet::new();
         self.staged
             .iter()
             .chain(&self.changed)
             .chain(&self.new_files)
-            .filter(|change| seen.insert(change.path.as_str()))
+            .filter(|change| !is_folder(&change.path) && seen.insert(change.path.as_str()))
             .cloned()
             .collect()
     }
@@ -108,10 +115,10 @@ mod tests {
     }
 
     #[test]
-    fn the_ordered_list_follows_the_groups_and_names_each_file_once() {
+    fn the_diffable_list_follows_the_groups_and_names_each_file_once() {
         let groups = Groups::of(&parse_porcelain(OUT));
-        let ordered = groups.ordered();
-        let order: Vec<&str> = ordered.iter().map(|change| change.path.as_str()).collect();
+        let diffable = groups.diffable();
+        let order: Vec<&str> = diffable.iter().map(|change| change.path.as_str()).collect();
         assert_eq!(
             order,
             [
@@ -138,5 +145,29 @@ mod tests {
     fn the_count_matches_what_the_graph_row_counts() {
         let status = parse_porcelain(OUT);
         assert_eq!(Groups::of(&status).files(), status.all().len());
+    }
+
+    const WITH_FOLDER: &str = "M  staged.rs\0?? dir/\0?? notes.md\0";
+
+    #[test]
+    fn an_untracked_folder_is_one_new_entry_that_counts_once() {
+        let mut status = parse_porcelain(WITH_FOLDER);
+        status.folders[0].files = 300;
+        let groups = Groups::of(&status);
+        assert_eq!(
+            paths(&groups.new_files),
+            [("dir/", ChangeKind::Added), ("notes.md", ChangeKind::Added)]
+        );
+        assert_eq!(groups.files(), 3);
+        assert_eq!(groups.files(), status.all().len());
+        assert_eq!(groups.folder_files("dir/"), Some(300));
+        assert_eq!(groups.folder_files("notes.md"), None);
+    }
+
+    #[test]
+    fn the_diffable_list_leaves_the_folders_out() {
+        let diffable = Groups::of(&parse_porcelain(WITH_FOLDER)).diffable();
+        let order: Vec<&str> = diffable.iter().map(|change| change.path.as_str()).collect();
+        assert_eq!(order, ["staged.rs", "notes.md"]);
     }
 }

@@ -124,7 +124,7 @@ pub fn search(dir: &Path, ids: &[ObjectId], query: &str) -> anyhow::Result<Vec<u
 pub fn changed_files(dir: &Path, source: Source) -> anyhow::Result<Vec<FileChange>> {
     match source {
         Source::Commit(id) => Ok(commit::details(&gix::discover(dir)?, id)?.changes),
-        Source::WorkTree => Ok(Groups::of(&status::working_status(dir)?).ordered()),
+        Source::WorkTree => Ok(Groups::of(&status::working_status(dir)?).diffable()),
     }
 }
 
