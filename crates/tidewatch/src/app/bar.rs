@@ -8,11 +8,11 @@ use crate::commands::Platform;
 use crate::pane::Body;
 use crate::reader::Shown;
 use crate::status_bar::{self, Bar, Input, Screen, Workspace};
-use crate::{agent_frame, reader_glue};
+use crate::{agent_frame, reader_glue, reader_view};
 
 impl Tidewatch {
     pub(super) fn show_status_bar(&mut self, ui: &mut egui::Ui, active_id: u64) {
-        let bar = self.status_bar(active_id);
+        let bar = self.status_bar(ui.ctx(), active_id);
         let open_review = Panel::bottom("statusbar")
             .exact_size(status_bar::HEIGHT)
             .frame(Frame::new().fill(brand::SIDEBAR))
@@ -35,7 +35,7 @@ impl Tidewatch {
         }
     }
 
-    fn status_bar(&self, active_id: u64) -> Bar {
+    fn status_bar(&self, ctx: &egui::Context, active_id: u64) -> Bar {
         let counts = status_bar::counts(&agent_frame::tones(&self.tabs));
         let pane = &self.tabs.items()[self.tabs.active()].pane;
         let mut review = None;
@@ -46,12 +46,14 @@ impl Tidewatch {
         } else if self.overview {
             (Screen::Overview, None)
         } else {
+            let reader = reader_glue::shown(pane).map(|shown| shown == Shown::Reader);
+            let replying = reader == Some(true) && reader_view::reply_has_focus(ctx);
             let workspace = Workspace {
                 focus: self.focus,
                 history: self.side_layout() && self.panes_showing(),
                 file_open: self.file_view_showing(active_id),
-                reader: reader_glue::shown(pane).map(|shown| shown == Shown::Reader),
-                input: self.input_in_tab(),
+                reader,
+                input: self.input_in_tab().or(replying.then_some(Input::Prompt)),
             };
             review = self.review_chip(active_id);
             let place = match &pane.body {
