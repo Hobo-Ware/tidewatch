@@ -477,3 +477,29 @@ fn a_check_line_says_why_it_did_not_run() {
     said(&mut unchanged);
     assert_eq!(details(&unchanged), ["Nothing changed"; 4]);
 }
+
+#[test]
+fn a_read_only_answer_that_leaves_the_user_a_decision_is_held_once_and_told_to_ask() {
+    let mut meeseeks = Meeseeks::summon("can we use bun fmt", Criteria::default(), 0);
+    looked(&mut meeseeks, false);
+    let summary = "bun fmt can replace biome. Waiting on the user to decide.";
+    assert_eq!(meeseeks.apply(Event::Said(summary.into()), 0), Command::Paste(ASK_INSTEAD.into()));
+    assert_eq!((meeseeks.phase, meeseeks.summary.clone()), (Phase::Working, None));
+    let again = meeseeks.apply(Event::Said(summary.into()), 0);
+    assert_eq!(again, Command::Poof { summary: summary.into(), pr_url: None });
+}
+
+#[test]
+fn a_summary_waits_on_the_user_only_when_it_hands_back_a_choice() {
+    let cases = [
+        ("Waiting on the user to decide.", true),
+        ("Should we switch to bun fmt?", true),
+        ("Your call: keep Biome or switch.", true),
+        ("Let me know which one you want.", true),
+        ("It is an LRU over the disk.", false),
+        ("Renamed the helper and updated the callers.", false),
+    ];
+    for (summary, want) in cases {
+        assert_eq!(waits_on_user(summary), want, "{summary}");
+    }
+}
