@@ -9,7 +9,7 @@ use tidewatch_core::merged_branch::{self, Pr, Verdict};
 use tidewatch_core::pr_cards::{Cards, send_cap};
 use tidewatch_core::pr_gh::Polled;
 use tidewatch_core::pr_prompt::{self, Message, short_step};
-use tidewatch_core::pr_status::{Body, Seen, Summary, Tone as PrTone, Via};
+use tidewatch_core::pr_status::{Body, Seen, State, Summary, Tone as PrTone, Via};
 use tidewatch_core::prefs::{GithubPrefs, PrMode};
 use tidewatch_core::status::AgentStatus;
 use tidewatch_core::tools::GhError;
@@ -247,6 +247,10 @@ impl Watch {
         self.ended && self.cards.ended_merged()
     }
 
+    fn closed(&self) -> bool {
+        self.summary().is_some_and(|summary| summary.state == State::Closed)
+    }
+
     /// What a tab that runs on its own may do about its branch: it never delivers once the pull
     /// request merged. A tab that waits for the owner is never held back.
     pub(crate) fn verdict(&self) -> Verdict {
@@ -279,7 +283,7 @@ impl Watch {
 
     /// The commit card whose commits a tab that runs on its own should push now.
     pub(crate) fn push_fix_due(&self, default: GithubPrefs) -> Option<u64> {
-        if self.handling(default) == Handling::Owner {
+        if self.handling(default) == Handling::Owner || self.closed() {
             return None;
         }
         let cards = self.cards.cards();
@@ -327,7 +331,7 @@ impl Watch {
         let number = self.cards.number?;
         let due = self.ready()
             && !self.in_flight
-            && !self.ended
+            && (!self.ended || self.closed())
             && self.policy(default).mode != PrMode::Off
             && now >= self.due;
         due.then(|| Look { number, prev: self.cards.seen.clone() })
@@ -345,7 +349,7 @@ impl Watch {
     /// When the next look is due, for a wake-up; `None` when none will be.
     pub(crate) fn next_look(&self, default: GithubPrefs) -> Option<f64> {
         let watching = self.ready()
-            && !self.ended
+            && (!self.ended || self.closed())
             && self.cards.number.is_some()
             && self.policy(default).mode != PrMode::Off;
         (watching && !self.in_flight).then_some(self.due)
@@ -402,6 +406,7 @@ impl Watch {
         let policy = self.policy(default);
         let Some(message) = pr_prompt::message(body, number) else { return Vec::new() };
         if policy.mode != PrMode::Auto
+            || self.closed()
             || !pr_prompt::wanted(&policy, body)
             || self.cards.auto_sends >= self.cap()
         {
@@ -560,6 +565,10 @@ impl Watch {
 
     pub(crate) fn summary(&self) -> Option<&Summary> {
         self.cards.summary.as_ref()
+    }
+
+    pub(crate) fn strip_summary(&self) -> Option<&Summary> {
+        self.summary().filter(|summary| summary.state != State::Closed)
     }
 
     /// `#42 checks failed` for the Overview row, with its tone.
