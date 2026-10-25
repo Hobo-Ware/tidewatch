@@ -10,9 +10,9 @@ use std::sync::Arc;
 use egui::epaint::text::{LayoutJob, TextWrapping};
 use egui::style::ScrollAnimation;
 use egui::{
-    Align, Align2, Color32, CornerRadius, FontId, Frame, Galley, Key, Layout, Margin, Painter,
-    Rect, Response, RichText, ScrollArea, Sense, Stroke, StrokeKind, TextEdit, Ui, UiBuilder, pos2,
-    vec2,
+    Align, Align2, Color32, CornerRadius, FontId, Frame, Galley, Id, Key, KeyboardShortcut, Layout,
+    Margin, Modifiers, Painter, Rect, Response, RichText, ScrollArea, Sense, Stroke, StrokeKind,
+    TextEdit, Ui, UiBuilder, pos2, vec2,
 };
 use egui_commonmark::CommonMarkCache;
 use jiff::tz::TimeZone;
@@ -38,7 +38,7 @@ use crate::reader_turns::{self, Slot};
 use crate::review::ReviewFacts;
 use crate::review_row_view;
 use crate::review_view::{self, ReviewAction};
-use crate::screen_kit::{Size, body, primary_button, quiet_button};
+use crate::screen_kit::{Size, body, button_width, primary_button, quiet_button};
 use crate::stopped_view;
 
 /// The side inset every inline item of the left column keeps.
@@ -47,6 +47,11 @@ const CARD_RADIUS: u8 = 8;
 const OVERSCAN: f32 = 600.0;
 const INPUT_H: f32 = 60.0;
 const COMPOSER_RADIUS: u8 = 14;
+const REPLY_MARGIN_X: f32 = 14.0;
+const REPLY_MARGIN_Y: f32 = 8.0;
+const REPLY_STROKE: f32 = 1.0;
+const REPLY_TEXT_PAD: i8 = 3;
+const REPLY_GAP_Y: f32 = 8.0;
 const STRIP_H: f32 = 48.0;
 const BAR_W: f32 = 2.0;
 const BAR_INSET: f32 = 7.0;
@@ -54,6 +59,7 @@ const JUMP_W: f32 = 140.0;
 const JUMP_H: f32 = 30.0;
 const SCROLLBAR_GRAB_W: f32 = 16.0;
 const OUTPUT_MAX_LINES: usize = 40;
+const SEND: &str = "Send";
 
 pub(crate) struct ViewState {
     pub(crate) scroll: Autoscroll,
@@ -64,6 +70,7 @@ pub(crate) struct ViewState {
     review: review_view::CardState,
     focus_reply: bool,
     content_h: f32,
+    body_h: f32,
     seen_rows: u64,
     stick_pending: bool,
     last_pass: Option<u64>,
@@ -88,6 +95,7 @@ impl Default for ViewState {
             review: review_view::CardState::default(),
             focus_reply: true,
             content_h: 0.0,
+            body_h: 0.0,
             seen_rows: 0,
             stick_pending: true,
             last_pass: None,
@@ -362,8 +370,11 @@ pub(crate) fn show(
     sync_live(state, shown);
     let live_seq = state.live.as_ref().map(|live| live.seq);
     let composing = facts.ready.filter(|_| rows.len() == 0 && facts.prompt.is_none());
-    let input_h =
-        if composing.is_some() { agent_ready::height(ui, &state.reply, rect) } else { INPUT_H };
+    let input_h = if composing.is_some() {
+        agent_ready::height(ui, &state.reply, rect)
+    } else {
+        reply_height(ui, &state.reply, rect)
+    };
     let input = Rect::from_min_max(pos2(rect.left(), rect.bottom() - input_h), rect.max);
     let dock_h = dock_height(&facts, rows, state.live.as_ref());
     let review_h = facts
@@ -450,7 +461,8 @@ pub(crate) fn show(
     } else if let Some(prompt) = facts.prompt {
         actions.extend(prompt_strip(ui, strip, prompt, facts.source, rows, facts.root));
     }
-    let mut input_ui = ui.new_child(UiBuilder::new().max_rect(input.shrink2(vec2(INSET, 8.0))));
+    let mut input_ui =
+        ui.new_child(UiBuilder::new().max_rect(input.shrink2(vec2(INSET, REPLY_GAP_Y))));
     if let Some(text) =
         reply_box(&mut input_ui, &mut state.reply, &mut state.focus_reply, reply_enabled)
     {
@@ -496,6 +508,10 @@ fn transcript(
     let newest = rows.newest_seq().map_or(0, |seq| seq + 1);
     if newest != state.seen_rows {
         state.seen_rows = newest;
+        state.stick_pending = true;
+    }
+    if (body.height() - state.body_h).abs() > 0.5 {
+        state.body_h = body.height();
         state.stick_pending = true;
     }
     let follow = state.scroll.following();
@@ -872,8 +888,35 @@ pub(crate) fn prompt_text(prompt: Prompt, has_buttons: bool) -> &'static str {
     }
 }
 
-/// The reply row. Enter sends a non-empty text and clears it. Asks for focus once, the first
-/// time it is drawn, and again after a send. Off while `enabled` is false.
+fn reply_id() -> Id {
+    Id::new("reply-box")
+}
+
+pub(crate) fn reply_has_focus(ctx: &egui::Context) -> bool {
+    ctx.memory(|memory| memory.has_focus(reply_id()))
+}
+
+fn reply_font() -> FontId {
+    FontId::proportional(reader_chat_view::BODY_PX)
+}
+
+fn reply_wrap(ui: &Ui, width: f32) -> f32 {
+    width
+        - 2.0 * (INSET + REPLY_MARGIN_X)
+        - button_width(ui, SEND, Size::Compact)
+        - ui.spacing().item_spacing.x
+}
+
+/// The reply row's height: one row tall, growing with the text by the composer's rule.
+fn reply_height(ui: &Ui, text: &str, column: Rect) -> f32 {
+    let font = (reply_font(), reply_wrap(ui, column.width()));
+    agent_ready::grown_from(ui, text, font, INPUT_H, column.height())
+}
+
+/// The reply box. Enter sends a non-empty text and clears it, Shift+Enter starts a new line. Asks
+/// for focus once, the first time it is drawn, and again after a send. Off while `enabled` is
+/// false. `ui` is the room [`reply_height`] reserved: the box fills it, and its text scrolls inside
+/// with the cursor line in view once the box stops growing.
 pub(crate) fn reply_box(
     ui: &mut Ui,
     text: &mut String,
@@ -881,22 +924,57 @@ pub(crate) fn reply_box(
     enabled: bool,
 ) -> Option<String> {
     let mut sent = None;
+    let id = reply_id();
+    let enter = enabled
+        && ui.memory(|m| m.has_focus(id))
+        && ui.input(|i| i.events.iter().any(agent_ready::plain_enter));
     ui.add_enabled_ui(enabled, |ui| {
         let hint = if enabled { "Reply to the agent" } else { "Answer the prompt above first" };
         let mut clicked = false;
-        let look = (brand::CARD, COMPOSER_RADIUS, Margin::symmetric(14, 6));
+        let margin = Margin::symmetric(REPLY_MARGIN_X as i8, REPLY_MARGIN_Y as i8);
+        let look = (brand::CARD, COMPOSER_RADIUS, margin);
+        let shown = ui.max_rect().height() - 2.0 * (REPLY_MARGIN_Y + REPLY_STROKE);
+        let height_id = id.with("height");
+        let before = ui.data(|data| data.get_temp::<f32>(height_id));
+        ui.data_mut(|data| data.insert_temp(height_id, shown));
+        let resized = before.is_some_and(|before| (before - shown).abs() > 0.5);
         let field = field_frame_shaped(ui, look, true, |ui| {
-            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+            ui.set_height(shown);
+            ui.with_layout(Layout::right_to_left(Align::Max), |ui| {
                 clicked =
-                    primary_button(ui, "Send", !text.trim().is_empty(), Size::Compact).clicked();
-                ui.add(
-                    TextEdit::singleline(text)
-                        .frame(Frame::NONE)
-                        .hint_text(hint)
-                        .desired_width(f32::INFINITY)
-                        .font(FontId::proportional(reader_chat_view::BODY_PX))
-                        .text_color(brand::TEXT),
-                )
+                    primary_button(ui, SEND, !text.trim().is_empty(), Size::Compact).clicked();
+                ScrollArea::vertical()
+                    .id_salt("reply-box-scroll")
+                    .max_height(shown)
+                    .min_scrolled_height(shown)
+                    .auto_shrink([false, false])
+                    .show(ui, |ui| {
+                        ui.with_layout(Layout::top_down(Align::Min), |ui| {
+                            let edit = TextEdit::multiline(text)
+                                .id(id)
+                                .frame(
+                                    Frame::NONE.inner_margin(Margin::symmetric(0, REPLY_TEXT_PAD)),
+                                )
+                                .hint_text(hint)
+                                .desired_rows(1)
+                                .desired_width(f32::INFINITY)
+                                .font(reply_font())
+                                .text_color(brand::TEXT)
+                                .return_key(KeyboardShortcut::new(Modifiers::SHIFT, Key::Enter))
+                                .show(ui);
+                            if resized && let Some(range) = edit.cursor_range {
+                                let at =
+                                    edit.galley_pos.to_vec2() - vec2(edit.galley.rect.left(), 0.0);
+                                ui.scroll_to_rect(
+                                    edit.galley.pos_from_cursor(range.primary).translate(at),
+                                    None,
+                                );
+                            }
+                            edit.response.response
+                        })
+                        .inner
+                    })
+                    .inner
             })
             .inner
         });
@@ -904,7 +982,6 @@ pub(crate) fn reply_box(
             field.request_focus();
             *focus = false;
         }
-        let enter = field.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter));
         if (enter || clicked) && !text.trim().is_empty() {
             sent = Some(std::mem::take(text));
             *focus = true;
@@ -1986,5 +2063,302 @@ mod tests {
         readers.frame(1, &rows, &mut state, vec![]);
         assert!(at_bottom(&state), "{:?}", state.settled_at);
         assert!(state.scroll.following());
+    }
+
+    fn shift_enter() -> Event {
+        Event::Key {
+            key: Key::Enter,
+            physical_key: Some(Key::Enter),
+            pressed: true,
+            repeat: false,
+            modifiers: Modifiers { shift: true, ..Modifiers::NONE },
+        }
+    }
+
+    struct Seen {
+        column: Rect,
+        status_top: f32,
+        boxed: Option<Rect>,
+        marker: Option<(Rect, Rect)>,
+        newest: Option<Rect>,
+        send: Option<Rect>,
+        actions: Vec<Action>,
+    }
+
+    fn texts_in(shape: &egui::Shape, clip: Rect, out: &mut Vec<(Arc<Galley>, egui::Pos2, Rect)>) {
+        match shape {
+            egui::Shape::Text(text) => out.push((text.galley.clone(), text.pos, clip)),
+            egui::Shape::Vec(shapes) => shapes.iter().for_each(|s| texts_in(s, clip, out)),
+            _ => {}
+        }
+    }
+
+    fn long_chat() -> Rows {
+        use tidewatch_core::transcript::{Entry, Role};
+        let mut rows = Rows::default();
+        for n in 1..=14 {
+            let role = if n % 2 == 0 { Role::Assistant } else { Role::User };
+            let text = format!("message {n}: {}", "words ".repeat(30));
+            rows.push(Entry { role, text, tool: None, ts: None });
+        }
+        rows.push(Entry {
+            role: Role::Assistant,
+            text: "the newest message".into(),
+            tool: None,
+            ts: None,
+        });
+        rows
+    }
+
+    fn reply_column(
+        ctx: &egui::Context,
+        (rows, state): (&Rows, &mut ViewState),
+        events: Vec<Event>,
+        h: f32,
+    ) -> Seen {
+        let raw = RawInput {
+            screen_rect: Some(Rect::from_min_size(pos2(0.0, 0.0), vec2(800.0, h))),
+            events,
+            focused: true,
+            time: Some(ctx.cumulative_pass_nr() as f64 * 0.1),
+            ..RawInput::default()
+        };
+        let mut column = Rect::NOTHING;
+        let mut actions = Vec::new();
+        let out = ctx.run_ui(raw, |ui| {
+            egui::Panel::bottom("statusbar")
+                .exact_size(crate::status_bar::HEIGHT)
+                .frame(Frame::NONE)
+                .show(ui, |_| {});
+            egui::CentralPanel::default().frame(Frame::NONE).show(ui, |ui| {
+                column = ui.max_rect();
+                actions = show(ui, column, rows, state, facts(None, Turn::Finished));
+            });
+        });
+        let mut texts = Vec::new();
+        out.shapes
+            .iter()
+            .for_each(|clipped| texts_in(&clipped.shape, clipped.clip_rect, &mut texts));
+        let boxed = out
+            .shapes
+            .iter()
+            .filter_map(|clipped| match &clipped.shape {
+                egui::Shape::Rect(rect)
+                    if rect.fill == brand::CARD
+                        && (rect.rect.width() - (column.width() - 2.0 * INSET)).abs() < 4.0 =>
+                {
+                    Some(rect.rect)
+                }
+                _ => None,
+            })
+            .max_by(|a, b| a.bottom().total_cmp(&b.bottom()));
+        let marker = texts.iter().find(|(galley, ..)| galley.text().contains("END")).and_then(
+            |(galley, pos, clip)| {
+                let row = galley.rows.last()?.rect().translate(pos.to_vec2());
+                Some((row, *clip))
+            },
+        );
+        let rect_of = |(galley, pos, _): &(Arc<Galley>, egui::Pos2, Rect)| {
+            galley.rect.translate(pos.to_vec2())
+        };
+        let newest = texts.iter().find(|(g, ..)| g.text() == "the newest message").map(rect_of);
+        let send = texts.iter().find(|(g, ..)| g.text() == "Send").map(rect_of);
+        Seen {
+            column,
+            status_top: h - crate::status_bar::HEIGHT,
+            boxed,
+            marker,
+            newest,
+            send,
+            actions,
+        }
+    }
+
+    fn settled(
+        ctx: &egui::Context,
+        pair: (&Rows, &mut ViewState),
+        events: Vec<Event>,
+        h: f32,
+    ) -> Seen {
+        let (rows, state) = pair;
+        reply_column(ctx, (rows, &mut *state), events, h);
+        for _ in 0..5 {
+            reply_column(ctx, (rows, &mut *state), vec![], h);
+        }
+        reply_column(ctx, (rows, state), vec![], h)
+    }
+
+    fn assert_reply_box_in_place(seen: &Seen, what: &str) {
+        let boxed = seen.boxed.unwrap_or_else(|| panic!("{what}: the reply box is drawn"));
+        assert!(boxed.bottom() <= seen.status_top, "{what}: {boxed:?} below the status bar");
+        assert!(boxed.top() >= seen.column.top(), "{what}: {boxed:?} above the column");
+        assert!(
+            boxed.height() <= (seen.column.height() * 0.5).max(INPUT_H) + 0.5,
+            "{what}: {boxed:?} past half the column"
+        );
+        assert!(boxed.left() >= seen.column.left() && boxed.right() <= seen.column.right());
+        let newest = seen.newest.unwrap_or_else(|| panic!("{what}: the newest message is drawn"));
+        assert!(newest.bottom() <= boxed.top(), "{what}: {newest:?} under the box {boxed:?}");
+        let send = seen.send.unwrap_or_else(|| panic!("{what}: Send is drawn"));
+        assert!(boxed.contains_rect(send), "{what}: Send {send:?} outside {boxed:?}");
+        assert!(send.bottom() > boxed.bottom() - 26.0, "{what}: Send {send:?} not at the bottom");
+        assert!(send.right() > boxed.right() - 30.0, "{what}: Send {send:?} not at the right");
+    }
+
+    fn assert_cursor_row_visible(seen: &Seen, what: &str) {
+        let (row, clip) = seen.marker.unwrap_or_else(|| panic!("{what}: the text end is drawn"));
+        let boxed = seen.boxed.expect("the reply box is drawn");
+        assert!(clip.contains_rect(row.shrink(0.5)), "{what}: cursor row {row:?} outside {clip:?}");
+        assert!(boxed.contains_rect(clip), "{what}: visible {clip:?} outside the box {boxed:?}");
+    }
+
+    fn typing_in_the_reply_box(window_h: f32, lines: bool) {
+        let ctx = crate::fonts::test_context();
+        let rows = long_chat();
+        let mut state = ViewState::default();
+        let mut first = settled(&ctx, (&rows, &mut state), vec![], window_h);
+        assert_eq!(first.boxed.map(|b| b.height()), Some(INPUT_H - 2.0 * REPLY_GAP_Y));
+        let mut last_height = first.boxed.unwrap().height();
+        if lines {
+            for line in 1..=60 {
+                let typed = vec![Event::Text(format!("line {line}")), shift_enter()];
+                first = settled(&ctx, (&rows, &mut state), typed, window_h);
+                assert_reply_box_in_place(&first, &format!("line {line}"));
+                let height = first.boxed.unwrap().height();
+                assert!(height >= last_height - 0.5, "line {line}: the box shrank");
+                last_height = height;
+            }
+            assert!(state.reply.ends_with("line 60\n"), "every line was typed");
+            let end = vec![Event::Text("the END".into())];
+            first = settled(&ctx, (&rows, &mut state), end, window_h);
+        } else {
+            let long = format!("{}END", "a long reply that keeps going and going ".repeat(50));
+            assert!(long.len() > 2000);
+            first = settled(&ctx, (&rows, &mut state), vec![Event::Text(long)], window_h);
+            assert!(!state.reply.contains('\n'));
+        }
+        assert_reply_box_in_place(&first, "after typing");
+        assert_cursor_row_visible(&first, "after typing");
+        assert!(first.boxed.unwrap().height() > INPUT_H, "the box grew");
+        assert_eq!(first.actions.len(), 0);
+    }
+
+    #[test]
+    fn sixty_typed_lines_grow_the_reply_box_then_scroll_inside_it() {
+        typing_in_the_reply_box(600.0, true);
+    }
+
+    #[test]
+    fn sixty_typed_lines_in_a_short_window_keep_the_reply_box_above_the_status_bar() {
+        typing_in_the_reply_box(360.0, true);
+    }
+
+    #[test]
+    fn a_2000_character_line_wraps_in_the_reply_box() {
+        typing_in_the_reply_box(600.0, false);
+    }
+
+    #[test]
+    fn a_2000_character_line_wraps_in_a_short_window() {
+        typing_in_the_reply_box(360.0, false);
+    }
+
+    #[test]
+    fn enter_sends_the_reply_and_shift_enter_adds_a_line() {
+        let ctx = crate::fonts::test_context();
+        let rows = long_chat();
+        let mut state = ViewState::default();
+        settled(&ctx, (&rows, &mut state), vec![], 600.0);
+        settled(&ctx, (&rows, &mut state), vec![Event::Text("one".into())], 600.0);
+        let seen = settled(&ctx, (&rows, &mut state), vec![shift_enter()], 600.0);
+        assert_eq!(seen.actions, Vec::<Action>::new());
+        settled(&ctx, (&rows, &mut state), vec![Event::Text("two".into())], 600.0);
+        assert_eq!(state.reply, "one\ntwo");
+        let seen = reply_column(&ctx, (&rows, &mut state), vec![enter()], 600.0);
+        assert_eq!(seen.actions, vec![Action::Reply("one\ntwo".into())]);
+        assert_eq!(state.reply, "");
+        assert_eq!(
+            settled(&ctx, (&rows, &mut state), vec![], 600.0).boxed.map(|b| b.height()),
+            Some(INPUT_H - 2.0 * REPLY_GAP_Y)
+        );
+    }
+
+    #[test]
+    fn a_pasted_text_keeps_its_newlines() {
+        let ctx = crate::fonts::test_context();
+        let rows = long_chat();
+        let mut state = ViewState::default();
+        settled(&ctx, (&rows, &mut state), vec![], 600.0);
+        let pasted = Event::Paste("first\nsecond\n\nfourth".into());
+        let seen = settled(&ctx, (&rows, &mut state), vec![pasted], 600.0);
+        assert_eq!(state.reply, "first\nsecond\n\nfourth");
+        assert!(seen.boxed.unwrap().height() > INPUT_H, "four rows are taller than one");
+    }
+
+    #[test]
+    fn the_reply_box_is_one_row_tall_when_empty_and_grows_by_each_row() {
+        let ctx = crate::fonts::test_context();
+        let column = Rect::from_min_size(pos2(0.0, 0.0), vec2(800.0, 600.0));
+        let mut heights = Vec::new();
+        let _ = ctx.run_ui(RawInput::default(), |ui| {
+            for text in ["", "one", "one\ntwo", "one\ntwo\nthree", &"row\n".repeat(200)] {
+                heights.push(reply_height(ui, text, column));
+            }
+        });
+        assert_eq!(heights[0], INPUT_H);
+        assert_eq!(heights[1], INPUT_H);
+        let row = heights[2] - INPUT_H;
+        assert!(row > 10.0, "{heights:?}");
+        assert!((heights[3] - INPUT_H - 2.0 * row).abs() < 0.5, "{heights:?}");
+        assert_eq!(heights[4], 300.0);
+    }
+
+    #[test]
+    fn the_due_card_docks_above_a_grown_reply_box() {
+        use crate::due::Due;
+        use tidewatch_core::progress::Mark;
+
+        let due = Due {
+            what: "Switch off the old webhook".into(),
+            days: 0,
+            steps: vec![(Mark::Todo, "Merge the switch".into())],
+        };
+        let ctx = crate::fonts::test_context();
+        let rows = long_chat();
+        let mut state = ViewState { reply: "a\n".repeat(30), ..ViewState::default() };
+        let mut card_and_box = || {
+            let raw = RawInput {
+                screen_rect: Some(Rect::from_min_size(pos2(0.0, 0.0), vec2(800.0, 700.0))),
+                focused: true,
+                ..RawInput::default()
+            };
+            let out = ctx.run_ui(raw, |ui| {
+                let rect = ui.max_rect();
+                let mut facts = facts(None, Turn::Finished);
+                facts.due =
+                    Some(DueFacts { due: &due, more: 0, profile: "Builder", blocked: None });
+                show(ui, rect, &rows, &mut state, facts);
+            });
+            let mut texts = Vec::new();
+            out.shapes.iter().for_each(|c| texts_in(&c.shape, c.clip_rect, &mut texts));
+            let card = texts
+                .iter()
+                .find(|(g, ..)| g.text() == "Ask Builder to start")
+                .map(|(g, pos, _)| g.rect.translate(pos.to_vec2()));
+            let boxed = out.shapes.iter().find_map(|c| match &c.shape {
+                egui::Shape::Rect(rect)
+                    if rect.fill == brand::CARD && rect.rect.width() > 700.0 =>
+                {
+                    Some(rect.rect)
+                }
+                _ => None,
+            });
+            (card, boxed)
+        };
+        card_and_box();
+        let (card, boxed) = card_and_box();
+        let (card, boxed) = (card.expect("the card is drawn"), boxed.expect("the box is drawn"));
+        assert!(boxed.height() > INPUT_H);
+        assert!(card.bottom() <= boxed.top(), "{card:?} over {boxed:?}");
     }
 }

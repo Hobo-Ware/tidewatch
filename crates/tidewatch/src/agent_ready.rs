@@ -95,24 +95,39 @@ fn text_font() -> FontId {
     FontId::proportional(COMPOSER_FONT_PX)
 }
 
-fn text_heights(ui: &Ui, text: &str, width: f32) -> (f32, f32) {
-    let wrap = width - 2.0 * INSET - COMPOSER_PAD_X;
-    let typed = ui.painter().layout(text.to_owned(), text_font(), brand::TEXT, wrap).size().y;
-    let two_rows = ui.painter().layout("\n".to_owned(), text_font(), brand::TEXT, wrap).size().y;
-    (typed, two_rows)
+fn laid_out(ui: &Ui, text: &str, font: FontId, wrap: f32) -> f32 {
+    ui.painter().layout(text.to_owned(), font, brand::TEXT, wrap).size().y
 }
 
-fn grown_height(typed: f32, two_rows: f32, column_h: f32) -> f32 {
-    let cap = (column_h * COMPOSER_SHARE).max(COMPOSER_H);
-    (COMPOSER_H + (typed - two_rows).max(0.0)).min(cap)
+fn text_heights(ui: &Ui, text: &str, width: f32) -> (f32, f32) {
+    let wrap = width - 2.0 * INSET - COMPOSER_PAD_X;
+    (laid_out(ui, text, text_font(), wrap), laid_out(ui, "\n", text_font(), wrap))
+}
+
+fn grown_height(base: f32, typed: f32, floor: f32, column_h: f32) -> f32 {
+    let cap = (column_h * COMPOSER_SHARE).max(base);
+    (base + (typed - floor).max(0.0)).min(cap)
 }
 
 pub(crate) fn height(ui: &Ui, text: &str, column: Rect) -> f32 {
     let (typed, two_rows) = text_heights(ui, text, column.width());
-    grown_height(typed, two_rows, column.height())
+    grown_height(COMPOSER_H, typed, two_rows, column.height())
 }
 
-fn plain_enter(event: &egui::Event) -> bool {
+/// The height of a box that is `base` tall with one row of `font` and grows with `text` wrapped at
+/// `wrap`, by the composer's rule.
+pub(crate) fn grown_from(
+    ui: &Ui,
+    text: &str,
+    (font, wrap): (FontId, f32),
+    base: f32,
+    column_h: f32,
+) -> f32 {
+    let one_row = laid_out(ui, "", font.clone(), wrap);
+    grown_height(base, laid_out(ui, text, font, wrap), one_row, column_h)
+}
+
+pub(crate) fn plain_enter(event: &egui::Event) -> bool {
     matches!(
         event,
         egui::Event::Key { key: Key::Enter, pressed: true, modifiers, .. }
@@ -329,7 +344,11 @@ mod tests {
             (5_000.0, 200.0, COMPOSER_H),
         ];
         for (typed, column, want) in cases {
-            assert_eq!(grown_height(typed, two_rows, column), want, "{typed} in {column}");
+            assert_eq!(
+                grown_height(COMPOSER_H, typed, two_rows, column),
+                want,
+                "{typed} in {column}"
+            );
         }
     }
 
