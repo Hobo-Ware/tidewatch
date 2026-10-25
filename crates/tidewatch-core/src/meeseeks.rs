@@ -12,6 +12,17 @@ pub const MAX_TURNS: u32 = 40;
 pub const MAX_FAILURES: u32 = 3;
 pub const MAX_MINUTES: i64 = 60;
 const BLOCKED: &str = "blocked:";
+const WAITING_PHRASES: [&str; 8] = [
+    "waiting on the user",
+    "waiting for the user",
+    "waiting on you",
+    "waiting for you",
+    "user to decide",
+    "for you to decide",
+    "your call",
+    "let me know",
+];
+pub const ASK_INSTEAD: &str = "Your summary leaves a decision to the user, so Tidewatch did not end this session. Ask it with your question tool (options with the recommended one first; Tidewatch picks it after 5 minutes if nobody answers), then act on the answer and call meeseeks_done again.";
 const TAIL_LINES: usize = 12;
 const LINE_CHARS: usize = 200;
 
@@ -157,6 +168,8 @@ pub struct Meeseeks {
     pub unchanged: bool,
     #[serde(skip)]
     pub nothing_to_ship: bool,
+    #[serde(skip)]
+    pub told_to_ask: bool,
     #[serde(skip)]
     pub phase: Phase,
     #[serde(skip)]
@@ -325,6 +338,12 @@ impl Meeseeks {
                     "Tidewatch needs the summary of an edit on one line of at most {MAX_SUMMARY_CHARS} characters, because it becomes the pull request title. Shorten it, then call meeseeks_done again."
                 ))
             }
+            (Event::Said(summary), Phase::Working)
+                if !self.told_to_ask && waits_on_user(&summary) =>
+            {
+                self.told_to_ask = true;
+                Command::Paste(ASK_INSTEAD.to_owned())
+            }
             (Event::Said(summary), Phase::Working) => {
                 self.summary = Some(summary);
                 self.note = None;
@@ -356,6 +375,13 @@ pub fn blocked_reason_of(summary: &str) -> Option<&str> {
     let summary = summary.trim_start();
     let head = summary.get(..BLOCKED.len())?;
     head.eq_ignore_ascii_case(BLOCKED).then(|| summary[BLOCKED.len()..].trim())
+}
+
+/// A summary that hands a decision back to the user instead of finishing the task.
+#[must_use]
+pub fn waits_on_user(summary: &str) -> bool {
+    let text = summary.trim().to_lowercase();
+    text.ends_with('?') || WAITING_PHRASES.iter().any(|phrase| text.contains(phrase))
 }
 
 fn is_edit_summary(summary: &str) -> bool {
