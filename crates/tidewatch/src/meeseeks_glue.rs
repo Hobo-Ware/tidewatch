@@ -355,12 +355,46 @@ impl Host {
     }
 }
 
+fn fake_read_only() -> bool {
+    std::env::var("TIDEWATCH_FAKE_POOFED_READONLY").is_ok_and(|value| value == "1")
+}
+
 pub(crate) fn fake_branch() -> Branch {
-    Branch::Found(Found {
-        base: "main".to_owned(),
-        ahead: 2,
-        changed: Changed { files: 3, added: 42, removed: 7 },
-    })
+    let (ahead, changed) = if fake_read_only() {
+        (0, Changed { files: 0, added: 0, removed: 0 })
+    } else {
+        (2, Changed { files: 3, added: 42, removed: 7 })
+    };
+    Branch::Found(Found { base: "main".to_owned(), ahead, changed })
+}
+
+fn fake_read_only_poofed(mut record: Poofed) -> Poofed {
+    record.kind = Kind::ReadOnly;
+    "Why is the paraglide compile step so slow https://github.com/acme/web/pull/412 \
+        and did the dependency bump on 2026-10-11 cause it? Compare an English-only compile with \
+        the full locale set and tell me which step dominates."
+        .clone_into(&mut record.task);
+    "Compile is **2.6x slower** since the 2026-10-11 bump.\n\n\
+        - an English-only compile takes 17.5s against 105s locally, with identical types\n\
+        - the extra time is spent in the message formatter, not in type checking\n\
+        - pinning the previous minor brings it back to 40s\n\n\
+        See [the pull request](https://github.com/acme/web/pull/412) for the numbers."
+        .clone_into(&mut record.summary);
+    record.pr_url = None;
+    record.checks = Step::ALL
+        .iter()
+        .map(|&step| CheckLine {
+            step,
+            verdict: Verdict::Skipped,
+            detail: "Nothing changed".to_owned(),
+        })
+        .collect();
+    record.done = Vec::new();
+    record.next = Vec::new();
+    record.stages = [("Understand", 5), ("Build", 0), ("PR", 0), ("Done", 1)]
+        .map(|(name, total)| StageLine { name: name.to_owned(), done: total, total })
+        .to_vec();
+    record
 }
 
 pub(crate) fn fake_poofed(day: Date, now_ms: i64) -> Vec<Poofed> {
@@ -389,8 +423,9 @@ pub(crate) fn fake_poofed(day: Date, now_ms: i64) -> Vec<Poofed> {
             .to_vec();
         poofed
     };
+    let first = entry("promo-test", "Add a test for the promo banner", 213, 360);
     vec![
-        entry("promo-test", "Add a test for the promo banner", 213, 360),
+        if fake_read_only() { fake_read_only_poofed(first) } else { first },
         entry("lint-fix", "Fix the lint warnings in the billing module", 211, 180),
     ]
 }

@@ -1,5 +1,5 @@
-//! What a poofed Meeseeks' summary tab says, as plain data: the header, the four checks with their
-//! results, the agent's own summary, the pull request, the branch it left, the last turn and the
+//! What a poofed Meeseeks' summary tab says, as plain data: the header, the checks with their
+//! results (none, and one quiet line instead, when nothing changed), the agent's own summary, the pull request, the branch it left, the last turn and the
 //! ledger's final stages (pure, table-tested). The branch facts come from a git look at the branch,
 //! never from the removed folder, so they may still be on their way.
 
@@ -49,11 +49,19 @@ pub(crate) struct StageRow {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct Quiet {
+    pub(crate) text: String,
+    pub(crate) branch: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct Summary {
-    pub(crate) title: String,
+    pub(crate) prompt: Option<String>,
     pub(crate) meta: String,
     pub(crate) card: Card,
     pub(crate) checks: Vec<CheckRow>,
+    pub(crate) read_only: bool,
+    pub(crate) quiet: Option<Quiet>,
     pub(crate) said: Option<String>,
     pub(crate) pr: Option<PrLink>,
     pub(crate) branch: Option<BranchLine>,
@@ -113,6 +121,20 @@ fn files_line(changed: Changed) -> FilesLine {
 }
 
 /// `None` when the poof was logged without its branch. `facts` is `None` while git is being asked.
+fn touched(facts: Option<&Branch>) -> bool {
+    matches!(facts, Some(Branch::Found(found)) if found.ahead > 0 || found.changed.files > 0)
+}
+
+fn quiet_text(record: &Poofed) -> &'static str {
+    if record.kind == Kind::ReadOnly {
+        "Read-only \u{b7} nothing changed \u{b7} branch kept"
+    } else if blocked_reason_of(&record.summary).is_some() {
+        "Blocked \u{b7} nothing changed \u{b7} branch kept"
+    } else {
+        "Nothing changed \u{b7} branch kept"
+    }
+}
+
 fn branch_line(record: &Poofed, facts: Option<&Branch>) -> Option<BranchLine> {
     if record.branch.is_empty() || record.repo.as_os_str().is_empty() {
         return None;
@@ -167,25 +189,30 @@ pub(crate) fn summary(record: &Poofed, facts: Option<&Branch>, zone: &TimeZone) 
         struggling: None,
         shape: StageShape { kind: record.kind, no_diff: false },
     };
-    let title = if record.task.trim().is_empty() { &record.name } else { &record.task };
+    let quiet = none_ran && record.pr_url.is_none() && !touched(facts);
+    let prompt = Some(record.task.trim().to_owned()).filter(|task| !task.is_empty());
     let said = Some(record.summary.trim().to_owned()).filter(|text| !text.is_empty());
     let pr = record.pr_url.as_ref().map(|url| PrLink {
         label: record.pr_label().unwrap_or_else(|| url.clone()),
         url: url.clone(),
     });
     Summary {
-        title: title.clone(),
+        prompt,
         meta: meta_of(record, zone),
         card,
-        checks,
+        checks: if quiet { Vec::new() } else { checks },
+        read_only: record.kind == Kind::ReadOnly,
+        quiet: quiet
+            .then(|| Quiet { text: quiet_text(record).to_owned(), branch: record.branch.clone() }),
         said,
         pr,
-        branch: branch_line(record, facts),
+        branch: branch_line(record, facts).filter(|_| !quiet),
         done: record.done.clone(),
         next: record.next.clone(),
         stages: record
             .stages
             .iter()
+            .filter(|stage| stage.total > 0)
             .map(|stage| StageRow {
                 name: stage.name.clone(),
                 done: stage.done,

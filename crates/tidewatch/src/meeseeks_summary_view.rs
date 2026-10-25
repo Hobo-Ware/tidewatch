@@ -1,14 +1,17 @@
-//! Draws the summary tab of a poofed Meeseeks in the place of the terminal and the panels: the task
-//! and when it ended beside the Meeseeks face, the stage card (the Progress panel's look, all four
-//! bars), each check with its result and line, what the agent said, the pull request link, the
-//! branch it left, the last turn and the ledger's stages. Read-only: its one button is Close.
+//! Draws the summary tab of a poofed Meeseeks in the place of the terminal and the panels: how it
+//! ended beside the Meeseeks face, the whole prompt in a quiet card, the answer as the hero card
+//! (the Reader's markdown), then either one quiet line (nothing changed) or the checks in one card,
+//! the pull request link, the branch it left, the last turn and the ledger's stages. Read-only: its
+//! one button is Close.
 
 use egui::epaint::text::{LayoutJob, TextFormat, TextWrapping};
+
 use egui::{
-    Align, Color32, CornerRadius, Id, Layout, Rect, ScrollArea, Sense, Stroke, StrokeKind, Ui,
-    UiBuilder, pos2, vec2,
+    Align, Color32, CornerRadius, Frame, Id, Layout, Margin, Rect, ScrollArea, Sense, Stroke,
+    StrokeKind, Ui, UiBuilder, pos2, vec2,
 };
 use tidewatch_core::progress::Mark;
+use tidewatch_core::user_markup;
 
 use crate::agent_avatar;
 use crate::avatar_glue::meeseeks_avatar;
@@ -17,9 +20,9 @@ use crate::last_turn::LastTurn;
 use crate::last_turn_view;
 use crate::link_text::Text;
 use crate::meeseeks_model::Look;
-use crate::meeseeks_summary::{BranchLine, CheckRow, StageRow, Summary};
-use crate::meeseeks_view;
+use crate::meeseeks_summary::{BranchLine, Quiet, StageRow, Summary};
 use crate::progress_ring::paint_mark;
+use crate::reader_chat_view::{agent_markdown, chat_text};
 use crate::reader_view::ellipsized;
 use crate::screen_kit::{Size, body, button_width, heading, mono, quiet_button};
 use crate::selectable;
@@ -34,9 +37,14 @@ const CHECK_PAD: f32 = 16.0;
 const LABEL_W: f32 = 84.0;
 const RADIUS: u8 = 12;
 const STAGE_NAME_W: f32 = 150.0;
-const STAGE_COUNT_W: f32 = 64.0;
-const STAGE_ROW_H: f32 = 28.0;
+const STAGE_ROW_H: f32 = 24.0;
+const STAGE_BAR_H: f32 = 4.0;
+const STAGE_GAP: f32 = 14.0;
 const SAID_ROWS: usize = 24;
+const GUTTER: f32 = 16.0;
+const CARD_PAD: Margin = Margin { left: 18, right: 18, top: 14, bottom: 16 };
+const HERO_PAD: Margin = Margin { left: 22, right: 22, top: 16, bottom: 20 };
+const KICKER_GAP: f32 = 8.0;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Action {
@@ -45,8 +53,12 @@ pub(crate) enum Action {
 
 #[derive(Clone, Debug, Default, PartialEq)]
 pub(crate) struct Placed {
+    pub(crate) column: Option<Rect>,
     pub(crate) header: Option<Rect>,
     pub(crate) close: Option<Rect>,
+    pub(crate) prompt: Option<Rect>,
+    pub(crate) said: Option<Rect>,
+    pub(crate) quiet: Option<Rect>,
     pub(crate) card: Option<Rect>,
     pub(crate) checks: Vec<Rect>,
     pub(crate) pr: Option<Rect>,
@@ -64,23 +76,27 @@ pub(crate) fn show(ui: &mut Ui, area: Rect, summary: &Summary) -> Option<Action>
     let column =
         Rect::from_min_max(pos2(left, area.top() + PAD), pos2(left + width, area.bottom()));
     let mut content = ui.new_child(UiBuilder::new().max_rect(column));
-    let mut placed = Placed::default();
+    let mut placed = Placed { column: Some(column), ..Placed::default() };
     let mut action = None;
     ScrollArea::vertical().auto_shrink([false, false]).show(&mut content, |ui| {
+        ui.set_max_width((ui.available_width() - GUTTER).max(1.0));
         let width = ui.available_width();
         action = header(ui, width, summary, &mut placed);
-        ui.add_space(SECTION_GAP);
-        meeseeks_view::show(ui, width, &summary.card);
-        placed.card = ui.ctx().data(|data| {
-            data.get_temp::<meeseeks_view::Placed>(meeseeks_view::placed_id())
-                .and_then(|card| card.card)
-        });
-        ui.add_space(SECTION_GAP);
-        checks(ui, width, &summary.checks, &mut placed);
+        if let Some(task) = &summary.prompt {
+            ui.add_space(SECTION_GAP);
+            placed.prompt = Some(prompt(ui, width, task));
+        }
         if let Some(said) = &summary.said {
             ui.add_space(SECTION_GAP);
-            section_label(ui, "Summary");
-            linked(ui, width, said, None);
+            placed.said = Some(hero(ui, width, said, summary.read_only));
+        }
+        if let Some(quiet) = &summary.quiet {
+            ui.add_space(SECTION_GAP);
+            placed.quiet = Some(quiet_line(ui, width, quiet));
+        }
+        if !summary.checks.is_empty() {
+            ui.add_space(SECTION_GAP);
+            placed.card = Some(checks(ui, width, summary, &mut placed.checks));
         }
         if let Some(pr) = &summary.pr {
             ui.add_space(SECTION_GAP);
@@ -115,6 +131,71 @@ pub(crate) fn show(ui: &mut Ui, area: Rect, summary: &Summary) -> Option<Action>
     action
 }
 
+fn markdown_in(ui: &mut Ui, text: &str) {
+    chat_text(ui, |ui| agent_markdown(ui, text));
+}
+
+fn kicker(ui: &mut Ui, text: &str, ink: Color32) {
+    let galley = ui.painter().layout_no_wrap(text.to_owned(), heading(12.5), ink);
+    let (rect, _) = ui.allocate_exact_size(
+        vec2(ui.available_width(), galley.size().y + KICKER_GAP),
+        Sense::hover(),
+    );
+    ui.painter().galley(rect.left_top(), galley, ink);
+}
+
+fn prompt(ui: &mut Ui, width: f32, task: &str) -> Rect {
+    Frame::new()
+        .fill(brand::SUNKEN)
+        .stroke(Stroke::new(1.0, brand::ITEM_LINE))
+        .corner_radius(CornerRadius::same(RADIUS))
+        .inner_margin(CARD_PAD)
+        .show(ui, |ui| {
+            ui.set_width(width - f32::from(CARD_PAD.left + CARD_PAD.right) - 2.0);
+            kicker(ui, "Prompt", brand::FAINT);
+            ui.scope(|ui| {
+                ui.visuals_mut().override_text_color = Some(brand::SOFT);
+                ui.push_id("summary-prompt", |ui| {
+                    markdown_in(ui, &user_markup::chat_markdown(task));
+                });
+            });
+        })
+        .response
+        .rect
+}
+
+fn hero(ui: &mut Ui, width: f32, said: &str, read_only: bool) -> Rect {
+    Frame::new()
+        .fill(brand::ITEM)
+        .stroke(Stroke::new(1.0, brand::ITEM_LINE))
+        .corner_radius(CornerRadius::same(RADIUS))
+        .inner_margin(HERO_PAD)
+        .show(ui, |ui| {
+            ui.set_width(width - f32::from(HERO_PAD.left + HERO_PAD.right) - 2.0);
+            kicker(ui, if read_only { "Answer" } else { "Summary" }, brand::TEAL_TEXT);
+            ui.push_id("summary-said", |ui| markdown_in(ui, said));
+        })
+        .response
+        .rect
+}
+
+fn quiet_line(ui: &mut Ui, width: f32, quiet: &Quiet) -> Rect {
+    let mut job = LayoutJob::default();
+    job.append(&quiet.text, 0.0, TextFormat::simple(body(13.5), brand::MUTED));
+    if !quiet.branch.is_empty() {
+        job.append(
+            &format!("   {}", quiet.branch),
+            0.0,
+            TextFormat::simple(mono(12.5), brand::FAINT),
+        );
+    }
+    job.wrap = TextWrapping::wrap_at_width(width.max(1.0));
+    let galley = ui.painter().layout_job(job);
+    let (rect, _) = ui.allocate_exact_size(vec2(width, galley.size().y), Sense::hover());
+    ui.painter().galley(rect.min, galley, brand::MUTED);
+    rect
+}
+
 fn header(ui: &mut Ui, width: f32, summary: &Summary, placed: &mut Placed) -> Option<Action> {
     let (row, _) = ui.allocate_exact_size(vec2(width, FACE), Sense::hover());
     placed.header = Some(row);
@@ -124,13 +205,20 @@ fn header(ui: &mut Ui, width: f32, summary: &Summary, placed: &mut Placed) -> Op
     let button_w = button_width(ui, "Close", Size::Regular);
     let text_left = face.right() + FACE_GAP;
     let room = (row.right() - button_w - FACE_GAP - text_left).max(1.0);
-    let title = ellipsized(&painter, &summary.title, heading(18.0), brand::TEXT, room);
-    let meta = ellipsized(&painter, &summary.meta, body(13.5), brand::MUTED, room);
-    let block = title.size().y + 4.0 + meta.size().y;
-    let top = row.center().y - block / 2.0;
-    let meta_top = top + title.size().y + 4.0;
-    selectable::galley(ui, pos2(text_left, top), title, brand::TEXT);
-    selectable::galley(ui, pos2(text_left, meta_top), meta, brand::MUTED);
+    let (lead, rest) = summary.meta.split_once(" \u{b7} ").unwrap_or((&summary.meta, ""));
+    let mut job = LayoutJob::default();
+    job.append(lead, 0.0, TextFormat::simple(heading(20.0), brand::TEXT));
+    if !rest.is_empty() {
+        job.append(&format!("   {rest}"), 0.0, TextFormat::simple(body(14.5), brand::MUTED));
+    }
+    job.wrap = TextWrapping::truncate_at_width(room);
+    let status = painter.layout_job(job);
+    selectable::galley(
+        ui,
+        pos2(text_left, row.center().y - status.size().y / 2.0),
+        status,
+        brand::TEXT,
+    );
     let button_row =
         Rect::from_min_max(pos2(row.right() - button_w, row.top()), row.right_bottom());
     let mut action = None;
@@ -164,10 +252,12 @@ fn mark_of(look: Look) -> Mark {
     }
 }
 
-fn checks(ui: &mut Ui, width: f32, rows: &[CheckRow], placed: &mut Placed) {
-    section_label(ui, "Checks");
-    let (rect, _) =
-        ui.allocate_exact_size(vec2(width, CHECK_H * rows.len() as f32), Sense::hover());
+const CARD_HEAD_H: f32 = 40.0;
+
+fn checks(ui: &mut Ui, width: f32, summary: &Summary, lines: &mut Vec<Rect>) -> Rect {
+    let rows = &summary.checks;
+    let height = CARD_HEAD_H + CHECK_H * rows.len() as f32;
+    let (rect, _) = ui.allocate_exact_size(vec2(width, height), Sense::hover());
     let painter = ui.painter().clone();
     painter.rect(
         rect,
@@ -176,19 +266,30 @@ fn checks(ui: &mut Ui, width: f32, rows: &[CheckRow], placed: &mut Placed) {
         Stroke::new(1.0, brand::ITEM_LINE),
         StrokeKind::Inside,
     );
+    let head_mid = rect.top() + CARD_HEAD_H / 2.0;
+    let title = painter.layout_no_wrap(summary.card.title.clone(), heading(14.0), brand::TEXT);
+    painter.galley(
+        pos2(rect.left() + CHECK_PAD, head_mid - title.size().y / 2.0),
+        title,
+        brand::TEXT,
+    );
+    let meta = painter.layout_no_wrap(summary.card.meta.clone(), mono(12.0), brand::MUTED);
+    painter.galley(
+        pos2(rect.right() - CHECK_PAD - meta.size().x, head_mid - meta.size().y / 2.0),
+        meta,
+        brand::MUTED,
+    );
     for (index, row) in rows.iter().enumerate() {
         let line = Rect::from_min_size(
-            pos2(rect.left(), rect.top() + CHECK_H * index as f32),
+            pos2(rect.left(), rect.top() + CARD_HEAD_H + CHECK_H * index as f32),
             vec2(width, CHECK_H),
         );
-        placed.checks.push(line);
-        if index > 0 {
-            painter.hline(
-                (line.left() + CHECK_PAD)..=(line.right() - CHECK_PAD),
-                line.top(),
-                Stroke::new(1.0, brand::ITEM_LINE),
-            );
-        }
+        lines.push(line);
+        painter.hline(
+            (line.left() + CHECK_PAD)..=(line.right() - CHECK_PAD),
+            line.top(),
+            Stroke::new(1.0, brand::ITEM_LINE),
+        );
         let mid = line.center().y;
         paint_mark(
             &painter,
@@ -218,6 +319,7 @@ fn checks(ui: &mut Ui, width: f32, rows: &[CheckRow], placed: &mut Placed) {
             result_ink,
         );
     }
+    rect
 }
 
 /// Text with its web links clickable, with an optional muted `lead` before it. Returns where it sits.
@@ -272,22 +374,22 @@ fn stages(ui: &mut Ui, width: f32, rows: &[StageRow]) {
             mono(12.0),
             brand::MUTED,
         );
-        selectable::galley(
-            ui,
-            pos2(line.right() - count.size().x, mid - count.size().y / 2.0),
-            count,
-            brand::MUTED,
-        );
+        let count_left = line.right() - count.size().x;
+        selectable::galley(ui, pos2(count_left, mid - count.size().y / 2.0), count, brand::MUTED);
         let track = Rect::from_min_max(
-            pos2(line.left() + STAGE_NAME_W, mid - 3.0),
-            pos2(line.right() - STAGE_COUNT_W - 12.0, mid + 3.0),
+            pos2(line.left() + STAGE_NAME_W, mid - STAGE_BAR_H / 2.0),
+            pos2(
+                (count_left - STAGE_GAP).max(line.left() + STAGE_NAME_W + 1.0),
+                mid + STAGE_BAR_H / 2.0,
+            ),
         );
-        painter.rect_filled(track, CornerRadius::same(3), brand::ITEM_LINE);
-        let fraction = if row.total == 0 { 0.0 } else { row.done as f32 / row.total as f32 };
-        let fill =
-            Rect::from_min_size(track.min, vec2(track.width() * fraction.clamp(0.0, 1.0), 6.0));
-        let ink: Color32 = brand::TEAL;
-        painter.rect_filled(fill, CornerRadius::same(3), ink);
+        painter.rect_filled(track, CornerRadius::same(2), brand::ITEM_LINE);
+        let fraction = row.done as f32 / row.total.max(1) as f32;
+        let fill = Rect::from_min_size(
+            track.min,
+            vec2(track.width() * fraction.clamp(0.0, 1.0), STAGE_BAR_H),
+        );
+        painter.rect_filled(fill, CornerRadius::same(2), brand::TEAL);
     }
 }
 
