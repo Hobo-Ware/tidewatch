@@ -14,7 +14,6 @@ use egui::{
     Margin, Modifiers, Painter, Rect, Response, RichText, ScrollArea, Sense, Stroke, StrokeKind,
     TextEdit, Ui, UiBuilder, pos2, vec2,
 };
-use egui_commonmark::CommonMarkCache;
 use jiff::tz::TimeZone;
 use tidewatch_core::question::Reply;
 use tidewatch_core::transcript::Source;
@@ -71,7 +70,6 @@ pub(crate) struct ViewState {
     pub(crate) scroll: Autoscroll,
     pub(crate) heights: Heights,
     pr_heights: PrHeights,
-    cache: CommonMarkCache,
     pub(crate) reply: String,
     review: review_view::CardState,
     focus_reply: bool,
@@ -98,7 +96,6 @@ impl Default for ViewState {
             scroll: Autoscroll::default(),
             heights: Heights::default(),
             pr_heights: PrHeights::default(),
-            cache: CommonMarkCache::default(),
             reply: String::new(),
             review: review_view::CardState::default(),
             focus_reply: true,
@@ -544,7 +541,7 @@ fn transcript(
     let follow = state.scroll.following();
     let scroll_down = follow && std::mem::take(&mut state.stick_pending);
     state.refresh_turns(rows);
-    let ViewState { heights, cache, pr_heights, expanded, turns, zone, .. } = state;
+    let ViewState { heights, pr_heights, expanded, turns, zone, .. } = state;
     let (_, _, layout) = turns.as_ref()?;
     let scene = Scene { root, profile, face, zone, now_ms: now_ms(), running, waiting };
     let mut body_ui = ui.new_child(UiBuilder::new().max_rect(body));
@@ -613,7 +610,7 @@ fn transcript(
                                         &scene,
                                         &list,
                                         &layout.groups[n],
-                                        (expanded, cache),
+                                        expanded,
                                         width,
                                     ),
                                     _ if row.kind == Kind::User
@@ -633,7 +630,7 @@ fn transcript(
                                         row,
                                         stamps[index],
                                         scene.zone,
-                                        (width, &mut *cache),
+                                        width,
                                     ),
                                     _ => {
                                         let asked = draw_row(
@@ -689,7 +686,7 @@ fn transcript(
                             &queued.text,
                             u64::MAX - n as u64,
                             time,
-                            (width, &mut *cache),
+                            width,
                         );
                     });
                 });
