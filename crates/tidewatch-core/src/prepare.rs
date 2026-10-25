@@ -12,8 +12,10 @@ use std::process::Command;
 
 use crate::agents::{Agent, Wiring};
 use crate::checklist;
+use crate::claude_memory::memory_dir;
 use crate::fsutil::{write_atomic, write_private_atomic};
 use crate::guard_shim::{GuardCtx, ensure_shims};
+use crate::guards::Rule;
 use crate::house_style;
 use crate::launch::{
     GEMINI_SETTINGS_PATH, HookListener, Launch, LaunchCtx, LaunchError, claude_settings_json,
@@ -21,6 +23,7 @@ use crate::launch::{
     mcp_config_json,
 };
 use crate::paths::TidewatchPaths;
+use crate::prefs::Prefs;
 use crate::profiles::Profile;
 use crate::remote::session_name;
 use crate::restore::{ResumeError, resume_command};
@@ -239,6 +242,15 @@ fn context(
         hooks: input.listener.clone(),
         mcp_config,
         settings_file: None,
+        memory_dir: (input.worktree_tab && input.agent.wiring == Wiring::Claude)
+            .then(|| repo_memory_dir(input.paths, input.repo))
+            .flatten(),
+        trailers_guard: input.worktree_tab
+            && input.agent.wiring == Wiring::Claude
+            && Prefs::load_file(&input.paths.prefs_file())
+                .guards
+                .rules_for(input.repo)
+                .is_on(Rule::Trailers),
         house_style,
         copilot_instructions_dir,
         guard_bin_dir,
@@ -249,6 +261,13 @@ fn context(
             .map(|path| vec![("PATH".to_owned(), path.to_string_lossy().into_owned())])
             .unwrap_or_default(),
     }
+}
+
+/// The auto-memory folder of the repo's main checkout, named after the folder Claude Code resolves
+/// the checkout to (symlinks followed).
+fn repo_memory_dir(paths: &TidewatchPaths, repo: &Path) -> Option<PathBuf> {
+    let repo = repo.canonicalize().unwrap_or_else(|_| repo.to_path_buf());
+    memory_dir(paths.claude_dir(), &repo)
 }
 
 fn guard_ctx(paths: &TidewatchPaths, repo: &Path, tab: &str) -> Option<GuardCtx> {
@@ -1061,6 +1080,67 @@ mod tests {
             let mode = std::fs::metadata(&file).unwrap().permissions().mode();
             assert_eq!(mode & 0o777, 0o600);
         }
+    }
+
+    fn saved_claude_settings(fx: &Fixture) -> serde_json::Value {
+        let file = fx
+            .paths
+            .tab_state_dir(Path::new("/work/web"), "brave-otter")
+            .join(CLAUDE_SETTINGS_FILE);
+        serde_json::from_str(&std::fs::read_to_string(file).unwrap()).unwrap()
+    }
+
+    #[test]
+    fn a_claude_worktree_tab_shares_the_repos_memory_and_leaves_out_attribution() {
+        let fx = Fixture::new();
+        let claude = profile("claude", Level::Edits);
+        fx.run("claude", &claude, true, "", Some(listener())).unwrap();
+        let settings = saved_claude_settings(&fx);
+        let memory = fx.paths.claude_dir().join("projects").join("-work-web").join("memory");
+        assert_eq!(settings["autoMemoryDirectory"], memory.display().to_string());
+        assert_eq!(settings["attribution"]["commit"], "");
+        assert_eq!(settings["attribution"]["pr"], "");
+        assert!(!fx.paths.claude_dir().exists(), "nothing is written under the Claude folder");
+    }
+
+    #[test]
+    fn the_memory_folder_follows_claude_config_dir() {
+        let mut fx = Fixture::new();
+        fx.paths = fx.paths.clone().with_claude_dir("/elsewhere/claude".into());
+        fx.run("claude", &profile("claude", Level::Edits), true, "", None).unwrap();
+        assert_eq!(
+            saved_claude_settings(&fx)["autoMemoryDirectory"],
+            "/elsewhere/claude/projects/-work-web/memory"
+        );
+    }
+
+    #[test]
+    fn the_trailers_switch_decides_the_attribution_keys_for_the_repo() {
+        let fx = Fixture::new();
+        let claude = profile("claude", Level::Edits);
+        std::fs::create_dir_all(fx.paths.config_dir()).unwrap();
+        std::fs::write(fx.paths.prefs_file(), "[guards]\ntrailers = false\n").unwrap();
+        fx.run("claude", &claude, true, "", Some(listener())).unwrap();
+        let settings = saved_claude_settings(&fx);
+        assert!(settings["attribution"].is_null());
+        assert!(settings["autoMemoryDirectory"].is_string());
+        assert!(settings["hooks"]["PreToolUse"].is_null());
+    }
+
+    #[test]
+    fn only_a_claude_worktree_tab_gets_the_memory_folder_and_attribution_keys() {
+        let fx = Fixture::new();
+        let claude = profile("claude", Level::Edits);
+        fx.run("claude", &claude, false, "", None).unwrap();
+        assert!(
+            !fx.paths
+                .tab_state_dir(Path::new("/work/web"), "brave-otter")
+                .join(CLAUDE_SETTINGS_FILE)
+                .exists()
+        );
+        let codex =
+            fx.run("codex", &profile("codex", Level::Edits), true, "", Some(listener())).unwrap();
+        assert!(!codex.launch.shell_line().contains("autoMemoryDirectory"));
     }
 
     #[test]

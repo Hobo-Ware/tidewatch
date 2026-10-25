@@ -1273,6 +1273,8 @@ mod tests {
             }),
             mcp_config: Some("/state/tab/mcp.json".into()),
             settings_file: Some("/state/tab/claude-settings.json".into()),
+            memory_dir: None,
+            trailers_guard: false,
             house_style: Some("/cfg/house-style.md".into()),
             copilot_instructions_dir: Some("/cfg/copilot".into()),
             guard_bin_dir: Some("/state/guard-bin".into()),

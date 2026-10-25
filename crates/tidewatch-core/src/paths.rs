@@ -53,12 +53,30 @@ fn repo_key(repo: &Path) -> String {
 pub struct TidewatchPaths {
     root: PathBuf,
     config_dir: PathBuf,
+    claude_dir: PathBuf,
 }
 
 impl TidewatchPaths {
     #[must_use]
     pub fn new(home: &Path) -> Self {
-        Self { root: home.join(".tidewatch"), config_dir: home.join(".config").join("tidewatch") }
+        Self {
+            root: home.join(".tidewatch"),
+            config_dir: home.join(".config").join("tidewatch"),
+            claude_dir: home.join(".claude"),
+        }
+    }
+
+    /// Claude Code's config folder when it is not `~/.claude` (`CLAUDE_CONFIG_DIR`).
+    #[must_use]
+    pub fn with_claude_dir(mut self, dir: PathBuf) -> Self {
+        self.claude_dir = dir;
+        self
+    }
+
+    /// Where Claude Code keeps its projects and their memory. Tidewatch only reads the name.
+    #[must_use]
+    pub fn claude_dir(&self) -> &Path {
+        &self.claude_dir
     }
 
     #[must_use]
