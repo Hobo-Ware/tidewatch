@@ -127,6 +127,7 @@ pub(crate) fn show(
     rect: Rect,
     look: &Look,
     can_ask: Result<(), &'static str>,
+    owner_asks: bool,
 ) -> Option<Action> {
     let card_rect = rect.shrink2(vec2(INSET, 4.0));
     paint_item(ui.painter(), card_rect, false);
@@ -161,7 +162,7 @@ pub(crate) fn show(
         |ui| {
             ui.spacing_mut().item_spacing.x = BUTTONS_GAP;
             let start = ui.cursor().right();
-            if card.ask_fix {
+            if card.ask_fix && owner_asks {
                 let sent = primary_button(ui, "Ask agent to fix", can_ask.is_ok(), Size::Compact);
                 let sent = match can_ask {
                     Ok(()) => sent,

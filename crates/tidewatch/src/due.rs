@@ -135,6 +135,17 @@ impl Told {
     }
 }
 
+/// The first due item a tab that runs on its own has not been asked to start today, with its key.
+/// Several items start one at a time: the next waits until this one is marked in `started`.
+pub(crate) fn next_to_start<'a>(
+    today: Date,
+    dues: &'a [Due],
+    key_of: impl Fn(&Due) -> Key,
+    started: &Told,
+) -> Option<(Key, &'a Due)> {
+    dues.iter().map(|due| (key_of(due), due)).find(|(key, _)| !started.has(key, today))
+}
+
 /// The due items across every tab, open or closed, that the desktop has not been told about today
 /// and the user has not snoozed.
 fn to_tell<'a>(

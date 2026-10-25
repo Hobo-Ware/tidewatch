@@ -7,6 +7,8 @@
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
+use crate::agents::Level;
+use crate::autonomy::autonomous;
 use crate::fsutil::write_atomic;
 use crate::paths::TidewatchPaths;
 use crate::progress_prompt;
@@ -74,7 +76,36 @@ You are a Meeseeks with exactly one task: the one you were given. Do it, and not
 - You may push this branch. Do not push anything else, open a pull request or remove anything yourself. Tidewatch does that.
 - If Tidewatch pastes a failed check, fix it, commit, and call `meeseeks_done` again.
 - Do not call `set_avatar`: your face is fixed.
+- Decide and proceed on everything except product design and architecture choices. Never ask for confirmation to commit, push, rerun checks or fix CI. For a design or architecture choice, ask with your question tool and keep working on whatever does not depend on the answer.
 ";
+
+pub const AUTONOMOUS_GUIDANCE: &str = "\
+## You run autonomously
+
+This tab runs without hand holding. Decide and proceed on everything except product design and architecture choices.
+
+- Never ask for confirmation to commit, push, open or update a pull request, rerun checks, answer review bots or fix CI. Do it.
+- For a design or architecture choice, ask with your question tool and keep working on whatever does not depend on the answer.
+";
+
+/// Which extra block an agent's house style gets after the tool guidance.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Role {
+    Agent,
+    Autonomous,
+    Meeseeks,
+}
+
+impl Role {
+    #[must_use]
+    pub fn of(level: Level, is_meeseeks: bool) -> Self {
+        match (is_meeseeks, autonomous(level, is_meeseeks)) {
+            (true, _) => Self::Meeseeks,
+            (false, true) => Self::Autonomous,
+            (false, false) => Self::Agent,
+        }
+    }
+}
 
 /// Writes the default text over `house-style.md`, edits included. Returns its path.
 pub fn reset(paths: &TidewatchPaths) -> std::io::Result<PathBuf> {
@@ -107,12 +138,16 @@ pub fn copilot_instructions_md(house_style: &str) -> String {
 
 #[must_use]
 pub fn compose(house_style: &str, must_dos: Option<&str>) -> String {
-    compose_for(house_style, must_dos, false)
+    compose_for(house_style, must_dos, Role::Agent)
 }
 
 #[must_use]
-pub fn compose_for(house_style: &str, must_dos: Option<&str>, meeseeks: bool) -> String {
-    let one_task = if meeseeks { format!("{MEESEEKS_GUIDANCE}\n") } else { String::new() };
+pub fn compose_for(house_style: &str, must_dos: Option<&str>, role: Role) -> String {
+    let one_task = match role {
+        Role::Agent => String::new(),
+        Role::Autonomous => format!("{AUTONOMOUS_GUIDANCE}\n"),
+        Role::Meeseeks => format!("{MEESEEKS_GUIDANCE}\n"),
+    };
     format!(
         "{}\n\n{TOOL_GUIDANCE}\n{one_task}{}",
         house_style.trim_end(),
@@ -246,14 +281,54 @@ mod tests {
         let checklist = Some("- [ ] only this\n");
         let plain = compose("be brief", checklist);
         assert!(!plain.contains("Meeseeks") && !plain.contains("meeseeks_done"));
-        assert_eq!(compose_for("be brief", checklist, false), plain);
-        let text = compose_for("be brief", checklist, true);
+        assert_eq!(compose_for("be brief", checklist, Role::Agent), plain);
+        let text = compose_for("be brief", checklist, Role::Meeseeks);
         let guidance = text.find("## Tidewatch tool guidance").unwrap();
         let block = text.find("## You are a Meeseeks").unwrap();
         assert!(guidance < block && block < text.find("## Progress ledger format").unwrap());
         assert_eq!(text.matches("`meeseeks_done`").count(), 2);
         assert!(text.contains("You may push this branch. Do not push anything else"));
         assert!(text.contains("git push --force-with-lease"));
+    }
+
+    #[test]
+    fn only_yolo_and_meeseeks_agents_are_told_to_decide_and_proceed() {
+        let checklist = Some("- [ ] only this\n");
+        let cases = [
+            (Level::Plan, false, Role::Agent),
+            (Level::Ask, false, Role::Agent),
+            (Level::Edits, false, Role::Agent),
+            (Level::Auto, false, Role::Agent),
+            (Level::Yolo, false, Role::Autonomous),
+            (Level::Auto, true, Role::Meeseeks),
+            (Level::Yolo, true, Role::Meeseeks),
+        ];
+        for (level, is_meeseeks, role) in cases {
+            assert_eq!(Role::of(level, is_meeseeks), role, "{level:?} {is_meeseeks}");
+            let text = compose_for("be brief", checklist, role);
+            let told = text.contains("product design and architecture choices");
+            assert_eq!(told, role != Role::Agent, "{role:?}");
+            assert_eq!(text.contains("## You run autonomously"), role == Role::Autonomous);
+        }
+    }
+
+    #[test]
+    fn the_autonomous_block_is_short_and_keeps_design_questions_for_the_owner() {
+        assert!(AUTONOMOUS_GUIDANCE.lines().count() <= 8, "{AUTONOMOUS_GUIDANCE}");
+        for needle in [
+            "commit, push, open or update a pull request",
+            "rerun checks",
+            "review bots",
+            "fix CI",
+            "question tool",
+            "keep working",
+        ] {
+            assert!(AUTONOMOUS_GUIDANCE.contains(needle), "missing {needle}");
+        }
+        let text = compose_for("be brief", Some("- [ ] only this\n"), Role::Autonomous);
+        let guidance = text.find("## Tidewatch tool guidance").unwrap();
+        let block = text.find("## You run autonomously").unwrap();
+        assert!(guidance < block && block < text.find("## Progress ledger format").unwrap());
     }
 
     #[test]

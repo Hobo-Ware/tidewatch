@@ -59,6 +59,7 @@ pub(crate) fn facts<T>(
                 notes_file: agent.run.notes_file.clone(),
                 pending,
                 stage_summary,
+                auto_deliver: agent.autonomous() && agent.meeseeks.is_none(),
             })
         })
         .collect()

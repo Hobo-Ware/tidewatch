@@ -2,9 +2,13 @@ use super::*;
 use egui::{Context, Event, PointerButton, RawInput};
 use tidewatch_core::pr_cards::Cards;
 use tidewatch_core::pr_status::{Body, Job, ReviewComment, Seen, Summary, SummaryChecks, Via};
-use tidewatch_core::prefs::PrMode;
+use tidewatch_core::prefs::{GithubPrefs, PrMode};
 
-use crate::pr_watch::{Pause, Watch};
+use crate::pr_watch::{Handling, Pause, Watch};
+
+fn policy(mode: PrMode) -> GithubPrefs {
+    GithubPrefs { mode, ..GithubPrefs::default() }
+}
 
 fn job(name: &str, passed: bool) -> Job {
     Job {
@@ -103,7 +107,13 @@ fn run_frames(
 ) -> (Vec<(u64, f32)>, Vec<CardAction>) {
     let ctx = Context::default();
     crate::fonts::install(&ctx);
-    let data = Data { watch, profile: "Builder", mode: PrMode::Ask, now_ms: 10_000_000 };
+    let data = Data {
+        watch,
+        profile: "Builder",
+        handling: Handling::Owner,
+        policy: policy(PrMode::Ask),
+        now_ms: 10_000_000,
+    };
     let mut measured = Vec::new();
     let mut clicks = Vec::new();
     for batch in std::iter::once(Vec::new()).chain(events) {
@@ -153,7 +163,13 @@ fn every_kind_of_card_draws_headless_with_a_height() {
 fn a_click_on_the_primary_button_asks_for_that_card() {
     let watch = watch_with(vec![every_kind().remove(2)]);
     let id = watch.cards.cards()[0].id;
-    let data = Data { watch: &watch, profile: "Builder", mode: PrMode::Ask, now_ms: 0 };
+    let data = Data {
+        watch: &watch,
+        profile: "Builder",
+        handling: Handling::Owner,
+        policy: policy(PrMode::Ask),
+        now_ms: 0,
+    };
     let find = |ctx: &Context, events: Vec<Event>| {
         let raw = RawInput {
             screen_rect: Some(Rect::from_min_size(pos2(0.0, 0.0), vec2(900.0, 600.0))),
@@ -198,7 +214,13 @@ fn a_waiting_message_and_a_pause_draw_at_the_end_and_their_buttons_click() {
     watch.pause = Some(Pause::SignedOut);
     let (_, clicks) = run_frames(&watch, vec![vec![]], None);
     assert_eq!(clicks, []);
-    let data = Data { watch: &watch, profile: "Builder", mode: PrMode::Auto, now_ms: 0 };
+    let data = Data {
+        watch: &watch,
+        profile: "Builder",
+        handling: Handling::Owner,
+        policy: policy(PrMode::Auto),
+        now_ms: 0,
+    };
     assert!(data.has_tail());
 }
 
@@ -218,7 +240,37 @@ fn heights_are_kept_per_card_and_forgotten_when_the_width_changes() {
 #[test]
 fn a_timeline_with_nothing_to_draw_has_no_tail() {
     let watch = watch_with(vec![]);
-    let data = Data { watch: &watch, profile: "Builder", mode: PrMode::Ask, now_ms: 0 };
+    let data = Data {
+        watch: &watch,
+        profile: "Builder",
+        handling: Handling::Owner,
+        policy: policy(PrMode::Ask),
+        now_ms: 0,
+    };
     assert!(!data.has_tail());
     assert_eq!(data.cards().len(), 0);
+}
+
+#[test]
+fn a_paused_tab_on_its_own_has_a_tail_of_one_quiet_line_and_no_button() {
+    let watch = watch_with(vec![]);
+    let paused = Data {
+        watch: &watch,
+        profile: "Builder",
+        handling: Handling::Paused,
+        policy: policy(PrMode::Auto),
+        now_ms: 0,
+    };
+    assert!(paused.has_tail());
+    let ctx = with_fonts();
+    let raw = RawInput {
+        screen_rect: Some(Rect::from_min_size(pos2(0.0, 0.0), vec2(900.0, 600.0))),
+        focused: true,
+        ..RawInput::default()
+    };
+    let mut clicked = Some(CardAction::OpenNotes);
+    let _ = ctx.run_ui(raw, |ui| clicked = tail(ui, &paused));
+    assert_eq!(clicked, None);
+    let sending = Data { handling: Handling::Agent, ..paused };
+    assert!(!sending.has_tail());
 }

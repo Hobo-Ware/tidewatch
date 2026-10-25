@@ -14,7 +14,7 @@ use crate::brand;
 use crate::pr_card_model::{
     self as model, Block, Bubble, Button, CardAction, Context, Icon, Ink, JobLine, Look, Model,
 };
-use crate::pr_watch::Watch;
+use crate::pr_watch::{Handling, Watch, paused_note};
 use crate::reader_view::{ellipsized, item_frame};
 use crate::screen_kit::{Size, body, heading, mono, primary_button, quiet_button};
 
@@ -29,7 +29,8 @@ const BARS_GAP: f32 = 8.0;
 pub(crate) struct Data<'a> {
     pub(crate) watch: &'a Watch,
     pub(crate) profile: &'a str,
-    pub(crate) mode: tidewatch_core::prefs::PrMode,
+    pub(crate) handling: Handling,
+    pub(crate) policy: tidewatch_core::prefs::GithubPrefs,
     pub(crate) now_ms: i64,
 }
 
@@ -40,7 +41,9 @@ impl<'a> Data<'a> {
 
     /// Whether the timeline has anything to draw after the transcript's last row.
     pub(crate) fn has_tail(&self) -> bool {
-        !self.watch.pending.is_empty() || self.watch.pause.is_some()
+        !self.watch.pending.is_empty()
+            || self.watch.pause.is_some()
+            || self.handling == Handling::Paused
     }
 
     fn context(&self) -> Context<'_> {
@@ -48,7 +51,10 @@ impl<'a> Data<'a> {
         Context {
             cards: &self.watch.cards,
             profile: self.profile,
-            mode: self.mode,
+            mode: self.policy.mode,
+            handling: self.handling,
+            policy: self.policy,
+            pending: &self.watch.pending,
             url: summary.map_or("", |summary| summary.url.as_str()),
             checks_green: summary.is_some_and(|summary| summary.checks == SummaryChecks::Passed),
             cleanup: &self.watch.cleanup,
@@ -116,6 +122,10 @@ pub(crate) fn tail(ui: &mut Ui, data: &Data<'_>) -> Option<CardAction> {
         ui.add_space(14.0);
         let (text, fix) = model::paused_text(pause);
         paused_row(ui, &text, fix);
+    }
+    if data.handling == Handling::Paused {
+        ui.add_space(14.0);
+        paused_row(ui, &paused_note(), None);
     }
     clicked
 }

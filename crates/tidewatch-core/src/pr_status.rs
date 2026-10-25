@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::pr::PrThread;
+use crate::pr_noise::is_noise;
 use crate::rfc3339;
 
 pub const FIELDS: &str = "number,title,url,state,mergeable,mergeStateStatus,reviewDecision,statusCheckRollup,reviews,comments,headRefOid,baseRefName,headRefName,author,createdAt,mergedAt,closedAt";
@@ -320,7 +321,11 @@ impl Snapshot {
             url: self.url.clone(),
             state: self.state,
             checks,
-            comments: self.comments.iter().filter(|c| !c.own).count(),
+            comments: self
+                .comments
+                .iter()
+                .filter(|c| !c.own && !is_noise(&c.author, &c.body))
+                .count(),
             decision: self.decision,
             conflicting: self.conflicting,
         }
@@ -634,7 +639,9 @@ fn talk_events(before: &Seen, first: bool, snap: &Snapshot) -> Vec<Event> {
                 !first || latest_request.is_some_and(|l| l.id == review.id)
             }
             ReviewState::Approved => !first || latest_approval.is_some_and(|l| l.id == review.id),
-            ReviewState::Commented => !first && !review.body.trim().is_empty(),
+            ReviewState::Commented => {
+                !first && !review.body.trim().is_empty() && !is_noise(&review.author, &review.body)
+            }
             ReviewState::Other => false,
         };
         if !wanted {
@@ -655,8 +662,11 @@ fn talk_events(before: &Seen, first: bool, snap: &Snapshot) -> Vec<Event> {
         };
         events.push(Event { at_ms: review.at_ms, body });
     }
-    let new_comments: Vec<&Comment> =
-        snap.comments.iter().filter(|c| !before.comments.contains(&c.id) && !c.own).collect();
+    let new_comments: Vec<&Comment> = snap
+        .comments
+        .iter()
+        .filter(|c| !before.comments.contains(&c.id) && !c.own && !is_noise(&c.author, &c.body))
+        .collect();
     let skip = if first { new_comments.len().saturating_sub(FIRST_LOOK_COMMENTS) } else { 0 };
     for comment in new_comments.into_iter().skip(skip) {
         events.push(Event {

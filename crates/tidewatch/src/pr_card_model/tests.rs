@@ -1,5 +1,6 @@
 use super::*;
 use tidewatch_core::pr_status::Seen;
+use tidewatch_core::prefs::GithubPrefs;
 
 fn job(name: &str, passed: bool) -> Job {
     Job {
@@ -38,6 +39,9 @@ fn context(cards: &Cards, mode: PrMode) -> Context<'_> {
         cards,
         profile: "Builder",
         mode,
+        handling: Handling::Owner,
+        policy: GithubPrefs { mode, ..GithubPrefs::default() },
+        pending: &[],
         url: "https://github.com/acme/web/pull/42",
         checks_green: true,
     }
@@ -364,4 +368,93 @@ fn the_waiting_and_paused_rows_use_the_profile_and_the_reason() {
         paused_text(&Pause::SignedOut),
         ("PR status paused: gh is not signed in".to_owned(), Some("gh auth login"))
     );
+}
+
+fn handled(handling: Handling, bodies: Vec<Body>, pending: &[Pending]) -> Model {
+    let last = bodies.len() - 1;
+    let mut cards = cards_of(bodies);
+    cards.seen = Some(Seen { conflicting: true, ..Seen::default() });
+    let context = Context {
+        handling,
+        policy: GithubPrefs { mode: PrMode::Auto, ..GithubPrefs::default() },
+        pending,
+        ..context(&cards, PrMode::Auto)
+    };
+    match look(last, context).unwrap() {
+        Look::Card(model) => model,
+        Look::Bubble(bubble) => panic!("a bubble: {bubble:?}"),
+    }
+}
+
+fn commented() -> Body {
+    Body::Commented { author: "rev".into(), text: "why?".into(), url: String::new() }
+}
+
+fn changes_requested() -> Body {
+    Body::ChangesRequested { author: "rev".into(), body: "rename it".into(), comments: Vec::new() }
+}
+
+fn conflict() -> Body {
+    Body::Conflict { base: "main".into() }
+}
+
+#[test]
+fn a_tab_on_its_own_keeps_every_card_as_a_record_with_no_button_that_asks_the_owner() {
+    for body in [failed(), commented(), changes_requested(), conflict()] {
+        let model = handled(Handling::Agent, vec![body.clone()], &[]);
+        for button in &model.buttons {
+            assert!(
+                !button.label.starts_with("Ask ")
+                    && !matches!(button.action, CardAction::Ask(_) | CardAction::OpenNotes)
+                    && button.label != "Reply myself",
+                "{body:?}: {}",
+                button.label
+            );
+        }
+        assert_eq!(model.note.as_deref(), Some("Sent to Builder"), "{body:?}");
+    }
+}
+
+#[test]
+fn a_failed_check_of_a_tab_on_its_own_still_links_the_log_and_the_rerun() {
+    let model = handled(Handling::Agent, vec![failed()], &[]);
+    assert_eq!(labels(&model), [("Full log", false), ("Re-run", false)]);
+}
+
+#[test]
+fn a_message_still_waiting_for_an_idle_agent_reads_queued_and_a_paused_tab_says_so() {
+    let message = tidewatch_core::pr_prompt::message(&commented(), 42).unwrap();
+    let waiting = [Pending { id: 1, message }];
+    assert_eq!(
+        handled(Handling::Agent, vec![commented()], &waiting).note.as_deref(),
+        Some("Queued for Builder")
+    );
+    assert_eq!(
+        handled(Handling::Paused, vec![commented()], &[]).note.as_deref(),
+        Some("Auto-fix paused after 10 sends")
+    );
+    assert_eq!(handled(Handling::Paused, vec![failed()], &[]).buttons.len(), 2);
+}
+
+#[test]
+fn the_owner_taking_the_mode_back_brings_the_buttons_back_and_a_trigger_switched_off_keeps_them() {
+    let model = handled(Handling::Owner, vec![commented()], &[]);
+    assert_eq!(labels(&model), [("Ask Builder to answer", true), ("Reply myself", false)]);
+    let cards = cards_of(vec![commented()]);
+    let off = Context {
+        handling: Handling::Agent,
+        policy: GithubPrefs { mode: PrMode::Auto, reviews: false, ..GithubPrefs::default() },
+        ..context(&cards, PrMode::Auto)
+    };
+    let Some(Look::Card(model)) = look(0, off) else { panic!("no card") };
+    assert_eq!(model.buttons.len(), 2, "the owner switched Reviews off, so nothing is sent");
+}
+
+#[test]
+fn commits_left_unpushed_are_pushed_by_a_tab_on_its_own_and_offered_to_the_owner_otherwise() {
+    let body = Body::PushFix { commits: 2, head: "abc".into() };
+    assert_eq!(labels(&handled(Handling::Owner, vec![body.clone()], &[])).len(), 2);
+    let model = handled(Handling::Agent, vec![body], &[]);
+    assert_eq!(model.buttons, []);
+    assert_eq!(model.note.as_deref(), Some("Tidewatch pushes this on its own"));
 }

@@ -32,6 +32,15 @@ pub(crate) enum Delivery {
     Delivered(Delivered),
 }
 
+/// One step of the delivery a tab that runs on its own takes without a click.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Auto {
+    Wait,
+    Open,
+    Approve,
+    Close,
+}
+
 impl Delivery {
     pub(crate) fn probe_started(&mut self) {
         if matches!(self, Self::Hidden | Self::Ready { .. }) {
@@ -128,6 +137,18 @@ impl Delivery {
         match self {
             Self::Editing(form) => Some(form),
             _ => None,
+        }
+    }
+
+    /// What a tab that runs on its own does next, so the card never waits for a click: open the
+    /// ready card, approve the filled form, close the success dialog. A form with no title and every
+    /// failure stay with the owner.
+    pub(crate) fn auto_step(&self) -> Auto {
+        match self {
+            Self::Ready { .. } => Auto::Open,
+            Self::Editing(form) if !form.title.trim().is_empty() => Auto::Approve,
+            Self::Delivered(_) => Auto::Close,
+            _ => Auto::Wait,
         }
     }
 
@@ -284,6 +305,34 @@ mod tests {
         assert!(card.is_modal());
         card.close_success();
         assert_eq!(card, Delivery::Hidden);
+    }
+
+    #[test]
+    fn a_tab_on_its_own_opens_approves_and_closes_and_leaves_failures_to_the_owner() {
+        let mut card = Delivery::Hidden;
+        assert_eq!(card.auto_step(), Auto::Wait);
+        card.probe_started();
+        assert_eq!(card.auto_step(), Auto::Wait);
+        card.probe_done(Some(2));
+        assert_eq!(card.auto_step(), Auto::Open);
+        card.open();
+        assert_eq!(card.auto_step(), Auto::Wait, "building");
+        card.built(Ok(plan(2)));
+        assert_eq!(card.auto_step(), Auto::Approve);
+        card.form_mut().unwrap().title = " ".into();
+        assert_eq!(card.auto_step(), Auto::Wait, "no title, nothing to send");
+        card.form_mut().unwrap().title = "Add helper".into();
+        card.approve();
+        assert_eq!(card.auto_step(), Auto::Wait, "delivering");
+        card.delivered(Err(DeliveryError::GhNotAuthenticated));
+        assert_eq!(card.auto_step(), Auto::Wait, "a failure is the owner's");
+        card.back();
+        card.approve();
+        card.delivered(Ok(Delivered {
+            url: "https://github.com/o/r/pull/9".into(),
+            created: true,
+        }));
+        assert_eq!(card.auto_step(), Auto::Close);
     }
 
     #[test]

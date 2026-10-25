@@ -2,13 +2,13 @@
 //! title, the line under it, the blocks of its body and its buttons. `pr_cards_view` only draws a
 //! [`Model`], so the words and the rules about when a button shows are unit tests.
 
-use tidewatch_core::pr_cards::Cards;
-use tidewatch_core::pr_prompt::short_step;
+use tidewatch_core::pr_cards::{Cards, send_cap};
+use tidewatch_core::pr_prompt::{self, short_step};
 use tidewatch_core::pr_status::{Body, Job, ReviewComment, Via};
-use tidewatch_core::prefs::PrMode;
+use tidewatch_core::prefs::{GithubPrefs, PrMode};
 
 use crate::merge_cleanup::{self, Cleanup};
-use crate::pr_watch::{Pause, Pending};
+use crate::pr_watch::{Handling, Pause, Pending};
 
 /// Most bars drawn for running checks.
 const MOST_BARS: usize = 12;
@@ -125,6 +125,10 @@ pub(crate) struct Context<'a> {
     pub(crate) cards: &'a Cards,
     pub(crate) profile: &'a str,
     pub(crate) mode: PrMode,
+    pub(crate) handling: Handling,
+    pub(crate) policy: GithubPrefs,
+    /// The messages waiting for the agent to be idle.
+    pub(crate) pending: &'a [Pending],
     pub(crate) url: &'a str,
     /// The checks are green right now, for the line under Approved.
     pub(crate) checks_green: bool,
@@ -181,6 +185,8 @@ fn merged_buttons(cleanup: &Cleanup, card: u64) -> Vec<Button> {
 pub(crate) fn look(index: usize, context: Context<'_>) -> Option<Look> {
     let card = context.cards.cards().get(index)?;
     let current = context.cards.is_current(index);
+    let hands_off = context.hands_off(&card.body);
+    let asks = current && !hands_off;
     let model = |icon, ink, title: String, sub: String| Model {
         icon,
         ink,
@@ -238,14 +244,16 @@ pub(crate) fn look(index: usize, context: Context<'_>) -> Option<Look> {
                 m.body.push(Block::Log(job.log.clone()));
             }
             if current {
-                m.buttons.push(ask("fix"));
+                if asks {
+                    m.buttons.push(ask("fix"));
+                }
                 if let Some(url) = jobs.iter().find(|job| !job.passed).map(|job| &job.url) {
                     m.buttons.push(open("Full log", url));
                 }
                 if let Some(run) = jobs.iter().find(|job| !job.passed).and_then(|job| job.run_id) {
                     m.buttons.push(quiet("Re-run", CardAction::Rerun(run)));
                 }
-                m.note = Some(auto_note(context.mode).to_owned());
+                m.note = Some(note_of(&context, &card.body));
             }
             Look::Card(m)
         }
@@ -280,10 +288,12 @@ pub(crate) fn look(index: usize, context: Context<'_>) -> Option<Look> {
             if !comments.is_empty() {
                 m.body.push(Block::Comments(comments.iter().map(place_and_text).collect()));
             }
-            if current {
+            if asks {
                 m.buttons.push(ask("address"));
                 m.buttons.push(quiet("Open as notes", CardAction::OpenNotes));
-                m.note = Some(auto_note(context.mode).to_owned());
+            }
+            if current {
+                m.note = Some(note_of(&context, &card.body));
             }
             Look::Card(m)
         }
@@ -296,10 +306,12 @@ pub(crate) fn look(index: usize, context: Context<'_>) -> Option<Look> {
                 String::new(),
             );
             m.body = vec![Block::Text(text.trim().to_owned())];
-            if current {
+            if asks {
                 m.buttons.push(ask("answer"));
                 let page = if url.is_empty() { context.url } else { url };
                 m.buttons.push(open("Reply myself", page));
+            } else if current && hands_off {
+                m.note = Some(note_of(&context, &card.body));
             }
             Look::Card(m)
         }
@@ -310,9 +322,11 @@ pub(crate) fn look(index: usize, context: Context<'_>) -> Option<Look> {
                 format!("Conflicts with {base}"),
                 format!("{base} has moved on"),
             );
-            if current {
+            if asks {
                 m.buttons.push(ask("rebase"));
-                m.note = Some(auto_note(context.mode).to_owned());
+            }
+            if current {
+                m.note = Some(note_of(&context, &card.body));
             }
             Look::Card(m)
         }
@@ -357,13 +371,15 @@ pub(crate) fn look(index: usize, context: Context<'_>) -> Option<Look> {
                 format!("{} committed {commits} new {noun}", context.profile),
                 "Not on the pull request yet".to_owned(),
             );
-            if current {
+            if current && context.handling == Handling::Owner {
                 m.buttons.push(Button {
                     label: "Push fix".to_owned(),
                     primary: true,
                     action: CardAction::PushFix(card.id),
                 });
                 m.buttons.push(quiet("Not now", CardAction::NotNow(card.id)));
+            } else if current {
+                m.note = Some("Tidewatch pushes this on its own".to_owned());
             }
             Look::Card(m)
         }
@@ -380,6 +396,28 @@ pub(crate) fn look(index: usize, context: Context<'_>) -> Option<Look> {
             }),
         }),
     })
+}
+
+impl Context<'_> {
+    /// The agent answers this card on its own, so it offers the owner nothing to ask: the tab runs on
+    /// its own, Auto-fix is on, and the card's kind is one the tab's tick boxes hand over.
+    fn hands_off(&self, body: &Body) -> bool {
+        self.handling != Handling::Owner && pr_prompt::wanted(&self.policy, body)
+    }
+}
+
+/// The quiet line at the right of a card's buttons: what Auto-fix does with it.
+fn note_of(context: &Context<'_>, body: &Body) -> String {
+    if !context.hands_off(body) {
+        return auto_note(context.mode).to_owned();
+    }
+    if context.handling == Handling::Paused {
+        return format!("Auto-fix paused after {} sends", send_cap(true));
+    }
+    let queued = pr_prompt::ask_of(body)
+        .is_some_and(|(ask, _)| context.pending.iter().any(|p| p.message.ask.tag == ask.tag));
+    let verb = if queued { "Queued for" } else { "Sent to" };
+    format!("{verb} {}", context.profile)
 }
 
 fn auto_note(mode: PrMode) -> &'static str {

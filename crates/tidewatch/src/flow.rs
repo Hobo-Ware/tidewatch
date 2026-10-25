@@ -12,7 +12,7 @@ use tidewatch_core::pr::MergeReport;
 use tidewatch_core::status::AgentStatus;
 use tidewatch_core::tools::Tools;
 
-use crate::delivery_card::Delivery;
+use crate::delivery_card::{Auto, Delivery};
 use crate::flow_jobs::{self, Done, Which};
 use crate::jobs::Jobs;
 use crate::note_send::{AutoDelivery, EnterQueue, ReviewGate, gate, gate_reason, review_gate};
@@ -34,6 +34,9 @@ pub(crate) struct TabFacts {
     pub(crate) notes_file: Option<PathBuf>,
     pub(crate) pending: usize,
     pub(crate) stage_summary: Option<String>,
+    /// The tab runs on its own and delivers through the card itself (not a Meeseeks, which hands
+    /// off through its own check).
+    pub(crate) auto_deliver: bool,
 }
 
 /// What the app applies after a job finished.
@@ -52,6 +55,13 @@ pub(crate) enum Want {
     LoadPrLines,
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+enum Attempt {
+    #[default]
+    Untried,
+    Tried,
+}
+
 #[derive(Default)]
 pub(crate) struct TabFlow {
     /// Enabled while a review the user sent waits for the agent to be idle.
@@ -61,8 +71,26 @@ pub(crate) struct TabFlow {
     pub(crate) pr: PrState,
     target: Option<TabFacts>,
     was_done: bool,
+    /// The delivery card was opened for this stretch of work without a click; it is not opened again
+    /// by itself, so a failed push waits for the owner instead of looping.
+    auto_opened: Attempt,
     was_active: bool,
     lines_loading: bool,
+}
+
+impl TabFlow {
+    /// What a tab that runs on its own does with its delivery card now. It opens the card once per
+    /// stretch of work, so a push that failed waits for the owner instead of being retried in a loop.
+    pub(crate) fn next_auto_step(&mut self) -> Auto {
+        match self.delivery.auto_step() {
+            Auto::Open if self.auto_opened == Attempt::Tried => Auto::Wait,
+            step @ (Auto::Open | Auto::Approve) => {
+                self.auto_opened = Attempt::Tried;
+                step
+            }
+            step => step,
+        }
+    }
 }
 
 /// What to start for one tab this frame. Marks the state of everything it asks for as started, so
@@ -77,6 +105,7 @@ pub(crate) fn decide(flow: &mut TabFlow, facts: &TabFacts, now: f64) -> Vec<Want
     }
     if !done {
         flow.delivery.leave_done();
+        flow.auto_opened = Attempt::Untried;
     }
     flow.was_done = done;
     if facts.active && !flow.was_active && flow.pr.should_find(Why::Focus, now) {
@@ -175,8 +204,22 @@ impl Flow {
             for want in wants {
                 self.start(fact, want, ctx, unix);
             }
+            if fact.auto_deliver {
+                self.deliver_on_its_own(fact.id, ctx);
+            }
         }
         next
+    }
+
+    /// The next step of the delivery card of a tab that runs on its own.
+    fn deliver_on_its_own(&mut self, tab: u64, ctx: &egui::Context) {
+        let Some(state) = self.tabs.get_mut(&tab) else { return };
+        match state.next_auto_step() {
+            Auto::Open => self.open_card(tab, ctx),
+            Auto::Approve => self.approve_card(tab, ctx),
+            Auto::Close => state.delivery.close_success(),
+            Auto::Wait => {}
+        }
     }
 
     fn start(&self, facts: &TabFacts, want: Want, ctx: &egui::Context, unix: i64) {
@@ -548,6 +591,7 @@ mod tests {
             notes_file: Some(PathBuf::from("/s/notes.json")),
             pending: 0,
             stage_summary: None,
+            auto_deliver: false,
         }
     }
 
@@ -740,5 +784,39 @@ mod tests {
             pulled_text(MergeReport { new_threads: 2, new_comments: 3 }),
             "Pulled 3 PR comments (2 new threads) into your review"
         );
+    }
+
+    #[test]
+    fn a_tab_on_its_own_delivers_without_a_click_once_per_stretch_of_work() {
+        let mut flow = TabFlow::default();
+        let done = TabFacts { auto_deliver: true, ..facts(AgentStatus::Done) };
+        decide(&mut flow, &done, 0.0);
+        flow.delivery.probe_done(Some(2));
+        assert_eq!(flow.next_auto_step(), Auto::Open);
+        assert_eq!(flow.next_auto_step(), Auto::Wait, "opened once");
+        flow.delivery.open();
+        flow.delivery.built(Ok(tidewatch_core::delivery::DeliveryPlan {
+            dir: PathBuf::from("/w"),
+            branch: "agent/brave-otter".into(),
+            base: "main".into(),
+            commits: vec![tidewatch_core::delivery::CommitLine {
+                sha: "abc".into(),
+                subject: "add helper".into(),
+                body: String::new(),
+            }],
+            title: "Add helper".into(),
+            body: String::new(),
+        }));
+        assert_eq!(flow.next_auto_step(), Auto::Approve);
+        flow.delivery.approve();
+        flow.delivery.delivered(Err(tidewatch_core::delivery::DeliveryError::NoRemote));
+        flow.delivery.back();
+        flow.delivery.cancel();
+        assert_eq!(flow.delivery, Delivery::Ready { commits: 1 });
+        assert_eq!(flow.next_auto_step(), Auto::Wait, "a failure is not retried in a loop");
+        decide(&mut flow, &facts(AgentStatus::Working), 5.0);
+        decide(&mut flow, &done, 9.0);
+        flow.delivery.probe_done(Some(1));
+        assert_eq!(flow.next_auto_step(), Auto::Open, "new work, new try");
     }
 }

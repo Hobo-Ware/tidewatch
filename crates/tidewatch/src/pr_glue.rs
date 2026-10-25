@@ -92,6 +92,11 @@ impl Host {
         self.dev.popover
     }
 
+    /// The commit card a tab that runs on its own should push now, if any.
+    pub(crate) fn push_fix_due(&self, tab: u64) -> Option<u64> {
+        self.tabs.get(&tab)?.push_fix_due(self.default)
+    }
+
     pub(crate) fn watch(&self, tab: u64) -> Option<&Watch> {
         self.tabs.get(&tab)
     }
@@ -99,7 +104,13 @@ impl Host {
     /// What the Reader draws for the tab, `None` while there is nothing to draw.
     pub(crate) fn data<'a>(&'a self, tab: u64, profile: &'a str, now_ms: i64) -> Option<Data<'a>> {
         let watch = self.tabs.get(&tab)?;
-        let data = Data { watch, profile, mode: watch.policy(self.default).mode, now_ms };
+        let data = Data {
+            watch,
+            profile,
+            handling: watch.handling(self.default),
+            policy: watch.policy(self.default),
+            now_ms,
+        };
         (!watch.cards.cards().is_empty() || data.has_tail()).then_some(data)
     }
 
@@ -137,6 +148,7 @@ impl Host {
             if watch.title != fact.title {
                 fact.title.clone_into(&mut watch.title);
             }
+            watch.autonomous = fact.autonomous;
             if watch.take_load() {
                 pr_jobs::load(&self.jobs, ctx, fact.id, watch.file.clone());
             }

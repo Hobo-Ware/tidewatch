@@ -6,6 +6,7 @@ use std::path::Path;
 use serde::{Deserialize, Serialize};
 
 use crate::fsutil::write_atomic;
+use crate::pr_noise::is_noise;
 use crate::pr_status::{Body, Seen, Summary};
 use crate::prefs::GithubPrefs;
 
@@ -13,6 +14,14 @@ use crate::prefs::GithubPrefs;
 pub const MAX_CARDS: usize = 80;
 /// Auto-fix sends at most this many times per pull request, then the tab falls back to asking.
 pub const MAX_AUTO_SENDS: u32 = 3;
+/// A tab that runs on its own sends this many times per pull request, then pauses without asking.
+pub const MAX_AUTONOMOUS_SENDS: u32 = 10;
+
+/// The loop guard for a tab: how many auto-fix sends one pull request gets.
+#[must_use]
+pub fn send_cap(autonomous: bool) -> u32 {
+    if autonomous { MAX_AUTONOMOUS_SENDS } else { MAX_AUTO_SENDS }
+}
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Card {
@@ -129,6 +138,13 @@ impl Cards {
         self.items.retain(
             |card| !matches!(&card.body, Body::PushFix { head, .. } if head == remote_head),
         );
+    }
+
+    /// Drops comment cards saved before noise was filtered, such as a review bot's receipt.
+    pub fn drop_noise(&mut self) {
+        self.items.retain(|card| {
+            !matches!(&card.body, Body::Commented { author, text, .. } if is_noise(author, text))
+        });
     }
 
     pub fn remove(&mut self, id: u64) {
@@ -286,6 +302,27 @@ mod tests {
         cards.add(11, Body::PushFix { commits: 1, head: "x".into() });
         cards.add(20, Body::Merged { number: 1, base: "main".into() });
         assert_eq!(kinds(&cards), ["merged"]);
+    }
+
+    #[test]
+    fn a_tab_that_runs_on_its_own_gets_a_longer_loop_guard() {
+        assert_eq!(send_cap(false), MAX_AUTO_SENDS);
+        assert_eq!(send_cap(true), MAX_AUTONOMOUS_SENDS);
+    }
+
+    #[test]
+    fn saved_noise_cards_go_and_real_comments_stay() {
+        let mut cards = Cards::default();
+        let comment = |author: &str, text: &str| Body::Commented {
+            author: author.into(),
+            text: text.into(),
+            url: String::new(),
+        };
+        cards.add(10, comment("chatgpt-codex-connector", "<!-- codex-review-receipt:v1 -->"));
+        cards.add(20, comment("reviewer", "Please rename this."));
+        cards.add(30, failed());
+        cards.drop_noise();
+        assert_eq!(kinds(&cards), ["commented", "failed"]);
     }
 
     #[test]

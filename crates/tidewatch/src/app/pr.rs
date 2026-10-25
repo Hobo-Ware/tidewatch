@@ -8,6 +8,7 @@ use tidewatch_core::pr_status::{Body, Tone as PrTone};
 use tidewatch_core::prefs::{GithubPrefs, Prefs};
 
 use super::{Tidewatch, WAKE_SLACK_S, wall_ms};
+use crate::delivery_card::Delivery;
 use crate::note_send::ENTER_DELAY_SECS;
 use crate::notify::{self, Notification};
 use crate::overview::Overview;
@@ -49,13 +50,18 @@ impl Tidewatch {
                     repo: &worktree.repo,
                     name: worktree.name(),
                     pr,
+                    autonomous: agent.autonomous(),
                 })
             })
             .collect();
+        let on_their_own: Vec<u64> = facts.iter().filter(|f| f.autonomous).map(|f| f.id).collect();
         let ms = now_ms();
         let (mut applied, wake) = self.pr.tick(&facts, paths, ctx, now, ms);
         applied.extend(self.pr.drain(now, ms));
         self.apply_pr(applied, ctx, now);
+        for tab in on_their_own {
+            self.push_left_over_commits(tab, ctx);
+        }
         if let Some(at) = wake {
             ctx.request_repaint_after(Duration::from_secs_f64((at - now).max(0.0) + WAKE_SLACK_S));
         }
@@ -149,6 +155,19 @@ impl Tidewatch {
             self.show_toast(format!("Dev run: would open {url}"), ctx);
         } else if is_web_url(url) {
             ctx.open_url(egui::OpenUrl::new_tab(url));
+        }
+    }
+
+    /// The commits the agent made after a message and left unpushed, for a tab that runs on its own:
+    /// the delivery card takes them from here without a click.
+    fn push_left_over_commits(&mut self, tab: u64, ctx: &egui::Context) {
+        let Some(card) = self.pr.push_fix_due(tab) else { return };
+        let free = self.flow.tab(tab).is_some_and(|state| {
+            matches!(state.delivery, Delivery::Hidden | Delivery::Ready { .. })
+        });
+        if free {
+            self.push_fix(tab, card, ctx);
+            self.pr.dismiss(tab, card, false);
         }
     }
 
