@@ -2,7 +2,7 @@
 //! (separate lines in Claude's and Copilot's files) become one row; the oldest rows are dropped past
 //! a cap so a long session keeps the memory bounded. Pure data, no egui.
 
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 
 use tidewatch_core::note_paste;
 use tidewatch_core::question::{AskReply, Question};
@@ -132,6 +132,7 @@ pub(crate) struct Rows {
     dropped: usize,
     revision: u64,
     sent: Sent,
+    auto_picked: HashSet<u64>,
 }
 
 impl Rows {
@@ -189,6 +190,16 @@ impl Rows {
         self.sent.queue(text, at_ms);
         self.settle_sent();
         self.revision += 1;
+    }
+
+    /// Tidewatch answered the question in row `seq` because the user stayed away.
+    pub(crate) fn mark_auto_picked(&mut self, seq: u64) {
+        self.auto_picked.insert(seq);
+        self.revision += 1;
+    }
+
+    pub(crate) fn auto_picked(&self, seq: u64) -> bool {
+        self.auto_picked.contains(&seq)
     }
 
     pub(crate) fn said_for(&self, seq: u64) -> Option<&Said> {

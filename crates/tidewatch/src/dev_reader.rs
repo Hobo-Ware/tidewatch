@@ -11,6 +11,8 @@
 //! - `TIDEWATCH_DEV_QUESTION=<steps>`: drive the live question card, one step every 0.4 s once it
 //!   shows. Steps, comma separated: `pick<N>` (the number key), `next`, `back`, `space`, `down`,
 //!   `all` (Go with your picks), `type:<text>` ("Something else" with that text), `send`, `skip`.
+//! - `TIDEWATCH_DEV_AUTOPICK_SECS=<seconds>`: how long a question waits in a tab that runs on its own
+//!   before Tidewatch answers it (default five minutes).
 
 use std::collections::VecDeque;
 
@@ -24,6 +26,18 @@ use crate::reader_keys::Answer;
 use crate::reader_view::{Action, Prompt};
 
 const QUESTION_STEP_S: f64 = 0.4;
+
+/// How long an unanswered question waits in a tab that runs on its own, read once.
+pub(crate) fn autopick_wait() -> f64 {
+    static WAIT: std::sync::OnceLock<f64> = std::sync::OnceLock::new();
+    *WAIT.get_or_init(|| {
+        std::env::var("TIDEWATCH_DEV_AUTOPICK_SECS")
+            .ok()
+            .and_then(|secs| secs.parse::<f64>().ok())
+            .filter(|secs| *secs > 0.0)
+            .unwrap_or(crate::question_auto::WAIT_SECS)
+    })
+}
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum CardStep {

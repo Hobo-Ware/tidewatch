@@ -13,6 +13,7 @@ use egui::{
 use tidewatch_core::question::{Question, QuestionOption, Select};
 
 use crate::brand;
+use crate::question_auto;
 use crate::question_card::{Card, CardKey, Effect, MAX_KEYED, Row};
 use crate::quick_reply::Quick;
 use crate::reader_keys::Answer;
@@ -49,6 +50,8 @@ pub(crate) struct Live {
     pub(crate) card: Card,
     /// How many waiting questions of the tab the agent's picks answer, set before each draw.
     pub(crate) picks: usize,
+    /// What is left before Tidewatch answers for the user, in a tab that runs on its own.
+    pub(crate) auto_left: Option<f64>,
     height: f32,
     focus_other: bool,
     focused_once: bool,
@@ -64,6 +67,7 @@ impl Live {
             seq,
             card,
             picks: 0,
+            auto_left: None,
             height: ESTIMATED_H,
             focus_other: false,
             focused_once: false,
@@ -628,6 +632,18 @@ pub(crate) fn live_card(
             });
         ui.add_space(12.0);
         effect = footer(ui, live, profile);
+        if let Some(left) = live.auto_left {
+            ui.add_space(10.0);
+            ui.label(
+                egui::RichText::new(question_auto::line(
+                    left,
+                    std::slice::from_ref(live.card.question()),
+                ))
+                .font(body(12.0))
+                .color(brand::FAINT),
+            );
+            ui.ctx().request_repaint_after(std::time::Duration::from_millis(250));
+        }
     });
     let rect = inner.response.rect;
     if (rect.height() - live.height).abs() > 0.5 {
@@ -749,17 +765,23 @@ fn answer_row(ui: &mut Ui, answer: Option<&str>, note: &str, label: &str) {
 }
 
 /// The summary card: each question with its answer in its own row, or a waiting or skipped note.
-pub(crate) fn summary(ui: &mut Ui, row: &QuestionRow, profile: &str, time: Option<&str>) {
+pub(crate) fn summary(
+    ui: &mut Ui,
+    row: &QuestionRow,
+    profile: &str,
+    time: Option<&str>,
+    auto: bool,
+) {
     let (pairs, note, label): (Vec<(String, Option<String>)>, String, &str) = match &row.asked {
         Asked::Answered(pairs) => (
             pairs.iter().map(|(q, a)| (q.clone(), Some(a.clone()))).collect(),
             String::new(),
-            "Your answer",
+            if auto { "Picked by Tidewatch" } else { "Your answer" },
         ),
         Asked::Sent(pairs) => (
             pairs.iter().map(|(q, a)| (q.clone(), Some(a.clone()))).collect(),
             String::new(),
-            "Sending...",
+            if auto { "Picked by Tidewatch" } else { "Sending..." },
         ),
         Asked::Declined => (
             row.questions.iter().map(|q| (q.text.clone(), None)).collect(),
@@ -1251,7 +1273,7 @@ mod tests {
                 screen_rect: Some(Rect::from_min_size(pos2(0.0, 0.0), vec2(700.0, 400.0))),
                 ..RawInput::default()
             };
-            let out = ctx.run_ui(raw, |ui| summary(ui, &row, "Builder", Some("12:41")));
+            let out = ctx.run_ui(raw, |ui| summary(ui, &row, "Builder", Some("12:41"), false));
             texts = out
                 .shapes
                 .iter()
@@ -1265,5 +1287,38 @@ mod tests {
         let (question, answer) = (at("Which retry?").unwrap(), at("Backoff").unwrap());
         assert!(answer.y > question.y + 10.0, "the answer sits below the question");
         assert!(at("Question").is_some() && at("12:41").is_some() && at("Your answer").is_some());
+    }
+
+    fn drawn_texts(row: &QuestionRow, auto: bool) -> Vec<String> {
+        let ctx = crate::fonts::test_context();
+        let mut texts = Vec::new();
+        for _ in 0..2 {
+            let raw = RawInput {
+                screen_rect: Some(Rect::from_min_size(pos2(0.0, 0.0), vec2(700.0, 400.0))),
+                ..RawInput::default()
+            };
+            let out = ctx.run_ui(raw, |ui| summary(ui, row, "Builder", None, auto));
+            texts = out
+                .shapes
+                .iter()
+                .filter_map(|clipped| match &clipped.shape {
+                    Shape::Text(text) => Some(text.galley.text().to_owned()),
+                    _ => None,
+                })
+                .collect();
+        }
+        texts
+    }
+
+    #[test]
+    fn an_answer_tidewatch_picked_says_so() {
+        let row = QuestionRow {
+            questions: Vec::new(),
+            asked: Asked::Answered(vec![("Which retry?".into(), "Backoff".into())]),
+            origin: crate::reader_rows::Origin::Claude,
+        };
+        assert!(drawn_texts(&row, true).contains(&"Picked by Tidewatch".to_owned()));
+        assert!(!drawn_texts(&row, true).contains(&"Your answer".to_owned()));
+        assert!(drawn_texts(&row, false).contains(&"Your answer".to_owned()));
     }
 }
