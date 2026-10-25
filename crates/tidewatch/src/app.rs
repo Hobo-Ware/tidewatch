@@ -115,6 +115,7 @@ use crate::restore_glue::{self};
 use crate::session_glue::Saver;
 use crate::settings::Settings;
 use crate::shell::{self, Shell};
+use crate::slash_glue;
 use crate::sync_glue;
 use crate::tab_view::TabView;
 use crate::tabs::Tabs;
@@ -197,6 +198,7 @@ pub(crate) struct Tidewatch {
     amphetamine_view: amphetamine_view::Memory,
     progress_ui: progress_view::Memory,
     checklist: overview_checklist::Host,
+    slash: slash_glue::Host,
     snoozes: due::Snoozes,
     dev_open_scheduled: Option<String>,
     told: due::Told,
@@ -397,6 +399,7 @@ impl Tidewatch {
             amphetamine_view: amphetamine_view::Memory::from_env(),
             progress_ui: progress_view::Memory::default(),
             checklist: overview_checklist::Host::new(),
+            slash: slash_glue::Host::new(),
             snoozes: due::Snoozes::default(),
             dev_open_scheduled: std::env::var("TIDEWATCH_DEV_OPEN_SCHEDULED")
                 .ok()

@@ -41,6 +41,8 @@ use crate::review::ReviewFacts;
 use crate::review_row_view;
 use crate::review_view::{self, ReviewAction};
 use crate::screen_kit::{Size, body, button_width, primary_button, quiet_button};
+use crate::slash::Entry as SlashEntry;
+use crate::slash_view;
 use crate::stopped_view;
 
 /// The side inset every inline item of the left column keeps.
@@ -71,6 +73,7 @@ pub(crate) struct ViewState {
     pub(crate) reply: String,
     review: review_view::CardState,
     focus_reply: bool,
+    pub(crate) commands: Arc<Vec<SlashEntry>>,
     content_h: f32,
     body_h: f32,
     seen_rows: u64,
@@ -96,6 +99,7 @@ impl Default for ViewState {
             reply: String::new(),
             review: review_view::CardState::default(),
             focus_reply: true,
+            commands: Arc::default(),
             content_h: 0.0,
             body_h: 0.0,
             seen_rows: 0,
@@ -472,9 +476,13 @@ pub(crate) fn show(
     }
     let mut input_ui =
         ui.new_child(UiBuilder::new().max_rect(input.shrink2(vec2(INSET, REPLY_GAP_Y))));
-    if let Some(text) =
-        reply_box(&mut input_ui, &mut state.reply, &mut state.focus_reply, reply_enabled)
-    {
+    if let Some(text) = reply_box(
+        &mut input_ui,
+        &mut state.reply,
+        &mut state.focus_reply,
+        reply_enabled,
+        &state.commands,
+    ) {
         actions.push(Action::Reply(text));
     }
     actions
@@ -975,9 +983,19 @@ pub(crate) fn reply_box(
     text: &mut String,
     focus: &mut bool,
     enabled: bool,
+    commands: &[SlashEntry],
 ) -> Option<String> {
     let mut sent = None;
     let id = reply_id();
+    let row = ui.max_rect();
+    let mut menu = slash_view::load(ui, id);
+    if enabled {
+        let rows = menu.rows(text, commands);
+        slash_view::keys(ui, id, text, &mut menu, &rows);
+    }
+    let listing = enabled && (ui.memory(|m| m.has_focus(id)) || !ui.input(|i| i.focused));
+    let rows = if listing { menu.rows(text, commands) } else { Vec::new() };
+    menu.open = !rows.is_empty();
     let mut enter = enabled
         && ui.memory(|m| m.has_focus(id))
         && ui.input(|i| i.events.iter().any(agent_ready::plain_enter));
@@ -1055,11 +1073,21 @@ pub(crate) fn reply_box(
             field.request_focus();
             *focus = false;
         }
+        if !rows.is_empty() {
+            if ui.memory(|m| m.has_focus(id)) {
+                slash_view::hold_keys(ui, id);
+            }
+            let picked = menu.picked_in(rows.len());
+            if let Some(at) = slash_view::show(ui, id, row, &rows, picked) {
+                slash_view::complete_with_click(ui, id, text, rows[at]);
+            }
+        }
         if (enter || clicked) && !text.trim().is_empty() {
             sent = Some(std::mem::take(text));
             *focus = true;
         }
     });
+    slash_view::store(ui, id, menu);
     sent
 }
 
@@ -1074,6 +1102,16 @@ mod tests {
         text: &mut String,
         focus: &mut bool,
     ) -> Option<String> {
+        frame_with(ctx, events, text, focus, &[])
+    }
+
+    fn frame_with(
+        ctx: &egui::Context,
+        events: Vec<Event>,
+        text: &mut String,
+        focus: &mut bool,
+        commands: &[SlashEntry],
+    ) -> Option<String> {
         let raw = RawInput {
             screen_rect: Some(Rect::from_min_size(pos2(0.0, 0.0), vec2(600.0, 200.0))),
             events,
@@ -1082,7 +1120,7 @@ mod tests {
         };
         let mut sent = None;
         let _ = ctx.run_ui(raw, |ui| {
-            sent = reply_box(ui, text, focus, true);
+            sent = reply_box(ui, text, focus, true, commands);
         });
         sent
     }
@@ -1139,7 +1177,7 @@ mod tests {
             let out = ctx.run_ui(raw, |ui| {
                 let room = Rect::from_min_size(pos2(0.0, 0.0), vec2(600.0, height));
                 ui.scope_builder(UiBuilder::new().max_rect(room), |ui| {
-                    reply_box(ui, text, &mut focus, true);
+                    reply_box(ui, text, &mut focus, true, &[]);
                 });
             });
             shapes.clear();
@@ -1251,6 +1289,71 @@ mod tests {
         assert_eq!(sent.as_deref(), Some("* a\n- b\nplain"));
     }
 
+    fn key(key: Key) -> Event {
+        Event::Key {
+            key,
+            physical_key: Some(key),
+            pressed: true,
+            repeat: false,
+            modifiers: Modifiers::NONE,
+        }
+    }
+
+    fn slash_box(typed: &str) -> (egui::Context, String, bool) {
+        let ctx = egui::Context::default();
+        let (mut text, mut focus) = (String::new(), true);
+        let commands = crate::slash::builtins();
+        frame_with(&ctx, vec![], &mut text, &mut focus, &commands);
+        frame_with(&ctx, vec![Event::Text(typed.into())], &mut text, &mut focus, &commands);
+        frame_with(&ctx, vec![], &mut text, &mut focus, &commands);
+        (ctx, text, focus)
+    }
+
+    fn press(ctx: &egui::Context, text: &mut String, keys: &[Key]) -> Option<String> {
+        let commands = crate::slash::builtins();
+        let mut focus = false;
+        let mut sent = None;
+        for pressed in keys {
+            sent = frame_with(ctx, vec![key(*pressed)], text, &mut focus, &commands);
+        }
+        sent
+    }
+
+    #[test]
+    fn tab_completes_the_picked_command_and_down_moves_the_pick() {
+        let (ctx, mut text, _) = slash_box("/lo");
+        assert_eq!(press(&ctx, &mut text, &[Key::Tab]), None);
+        assert_eq!(text, "/login ");
+        let (ctx, mut text, _) = slash_box("/lo");
+        press(&ctx, &mut text, &[Key::ArrowDown, Key::Tab]);
+        assert_eq!(text, "/logout ");
+    }
+
+    #[test]
+    fn enter_completes_part_of_a_command_name_but_sends_a_whole_one() {
+        let (ctx, mut text, _) = slash_box("/lo");
+        assert_eq!(press(&ctx, &mut text, &[Key::Enter]), None);
+        assert_eq!(text, "/login ");
+        let (ctx, mut text, _) = slash_box("/login");
+        assert_eq!(press(&ctx, &mut text, &[Key::Enter]).as_deref(), Some("/login"));
+    }
+
+    #[test]
+    fn esc_closes_the_list_and_keeps_the_text_and_the_keyboard() {
+        let (ctx, mut text, _) = slash_box("/lo");
+        press(&ctx, &mut text, &[Key::Escape]);
+        assert_eq!(text, "/lo");
+        assert!(ctx.memory(|memory| memory.has_focus(reply_id())));
+        assert_eq!(press(&ctx, &mut text, &[Key::Tab]), None);
+        assert_eq!(text, "/lo");
+    }
+
+    #[test]
+    fn a_box_that_does_not_start_with_a_slash_has_no_list_and_keeps_its_keys() {
+        let (ctx, mut text, _) = slash_box("fix /lo");
+        assert_eq!(press(&ctx, &mut text, &[Key::Enter]).as_deref(), Some("fix /lo"));
+    }
+
     #[test]
     fn an_image_only_cmd_v_puts_the_saved_path_in_the_reply_box() {
         use crate::image_paste::testing::screenshot;
@@ -1272,7 +1375,7 @@ mod tests {
         };
         let _ = ctx.run_ui(raw, |ui| {
             crate::image_paste::inject_paste(ui.ctx(), path.clone());
-            reply_box(ui, &mut text, &mut focus, true);
+            reply_box(ui, &mut text, &mut focus, true, &[]);
         });
         assert_eq!(text, path);
     }

@@ -18,7 +18,7 @@ use crate::brand;
 use crate::commands::Command;
 use crate::mascot::{self, Pose};
 use crate::pane::{Body, Pane};
-use crate::reader::Shown;
+use crate::reader::{Note, Shown};
 use crate::reader_view::Action;
 use crate::screen_kit::paint_pill_card;
 use crate::stopped_view;
@@ -207,6 +207,18 @@ impl Tidewatch {
         }
     }
 
+    fn offer_slash_commands(&mut self, ctx: &egui::Context) {
+        let dir = self.workspace().dir().to_path_buf();
+        let claude_dir = self.paths.as_ref().map(|paths| paths.claude_dir().to_path_buf());
+        let pane = self.tabs.active_pane_mut();
+        let folder = pane.worktree.as_ref().map_or(dir, |worktree| worktree.path.clone());
+        let Some(agent) = pane.agent.as_mut() else { return };
+        if agent.run.agent_id != "claude" || !agent.reader.view.reply.starts_with('/') {
+            return;
+        }
+        agent.reader.view.commands = self.slash.entries(ctx, claude_dir.as_deref(), &folder);
+    }
+
     pub(super) fn show_reader(
         &mut self,
         ui: &mut egui::Ui,
@@ -219,6 +231,7 @@ impl Tidewatch {
     ) {
         match shown {
             Some(Shown::Reader) => {
+                self.offer_slash_commands(ctx);
                 let parts = self.review_parts(active_id);
                 let notes = self.views.get(&active_id).map(|view| &view.notes);
                 let review =
@@ -265,7 +278,25 @@ impl Tidewatch {
                 self.apply_pr_actions(active_id, clicks, ctx, now);
                 self.apply_due_clicks(active_id, due_clicks, ctx, now);
             }
-            Some(Shown::Terminal(Some(note))) => reader_glue::note(ui, terminal, note),
+            Some(Shown::Terminal(Some(note))) => {
+                let opened = self
+                    .tabs
+                    .active_pane_mut()
+                    .agent
+                    .as_ref()
+                    .and_then(|agent| agent.reader.opened().map(str::to_owned));
+                match opened {
+                    Some(command) if note == Note::ChosenRaw => {
+                        if reader_glue::opened_note(ui, terminal, &command)
+                            && let Some(agent) = self.tabs.active_pane_mut().agent.as_mut()
+                        {
+                            agent.reader.set_wants_reader(true);
+                            agent.reader.view.request_reply_focus();
+                        }
+                    }
+                    _ => reader_glue::note(ui, terminal, note),
+                }
+            }
             Some(Shown::Terminal(None)) | None => {}
         }
     }

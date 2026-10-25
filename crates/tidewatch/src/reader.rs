@@ -144,6 +144,7 @@ pub(crate) struct Reader {
     started_ms: i64,
     file: Option<PathBuf>,
     chosen: bool,
+    opened: Option<String>,
     link: Link,
     feed: Option<Feed>,
     last_poke: f64,
@@ -173,6 +174,7 @@ impl Reader {
             started_ms: unix_ms_now(),
             file: None,
             chosen: true,
+            opened: None,
             link,
             feed: None,
             last_poke: f64::NEG_INFINITY,
@@ -246,11 +248,23 @@ impl Reader {
 
     pub(crate) fn set_wants_reader(&mut self, wants: bool) {
         self.chosen = wants;
+        self.opened = None;
+    }
+
+    /// Shows the terminal because the slash command `command` opened a dialog in the CLI there.
+    pub(crate) fn open_in_terminal(&mut self, command: &str) {
+        self.chosen = false;
+        self.opened = Some(command.to_owned());
+    }
+
+    pub(crate) fn opened(&self) -> Option<&str> {
+        self.opened.as_deref()
     }
 
     /// The Reader chord. Returns what the tab shows afterwards.
     pub(crate) fn toggle(&mut self) -> Shown {
         self.chosen = !self.chosen;
+        self.opened = None;
         self.shown()
     }
 
@@ -435,6 +449,22 @@ mod tests {
         let mut claude = Reader::for_agent("claude", None, PathBuf::from("/w"));
         claude.file = Some(PathBuf::from(rollout));
         assert_eq!(claude.codex_session_id(), None);
+    }
+
+    #[test]
+    fn a_command_opened_in_the_terminal_shows_it_until_the_reader_is_asked_back() {
+        let mut reader = Reader::for_agent("claude", None, PathBuf::from("/w"));
+        reader.link = Link::Found;
+        assert_eq!(reader.shown(), Shown::Reader);
+        reader.open_in_terminal("login");
+        assert_eq!(reader.opened(), Some("login"));
+        assert_eq!(reader.shown(), Shown::Terminal(Some(Note::ChosenRaw)));
+        reader.set_wants_reader(true);
+        assert_eq!(reader.opened(), None);
+        assert_eq!(reader.shown(), Shown::Reader);
+        reader.open_in_terminal("usage");
+        assert_eq!(reader.toggle(), Shown::Reader);
+        assert_eq!(reader.opened(), None);
     }
 
     #[test]

@@ -10,6 +10,7 @@ use stdusk_core::terminal::PtyTerm;
 use tidewatch_core::avatar::Avatar;
 use tidewatch_core::question::{self, Reply};
 use tidewatch_core::status::{AgentStatus, Reason};
+use tidewatch_core::transcript::Source;
 
 use crate::agent_avatar::Face;
 use crate::agent_ready::Ready;
@@ -29,10 +30,14 @@ use crate::reader_keys;
 use crate::reader_rows::{Asked, Kind, Origin};
 use crate::reader_view::{self, Action, Facts, Prompt, Turn};
 use crate::review::ReviewFacts;
+use crate::screen_kit::{Size, button_width, quiet_button};
+use crate::slash;
 use crate::tabs::Tabs;
 
 const NOTE_H: f32 = 24.0;
 const NOTE_PAD: f32 = 8.0;
+const NOTE_MARGIN_X: f32 = 8.0;
+const NOTE_MARGIN_Y: f32 = 4.0;
 const WAKE_SLACK_S: f64 = 0.02;
 /// The pause between two key presses typed into an agent's menu.
 const KEY_GAP_S: f64 = ENTER_DELAY_SECS;
@@ -208,6 +213,33 @@ pub(crate) fn note(ui: &mut Ui, area: Rect, note: Note) {
     });
 }
 
+const BACK_TO_READER: &str = "Back to Reader";
+
+/// The note over the terminal after a slash command opened a dialog there. True when Back to
+/// Reader was clicked.
+pub(crate) fn opened_note(ui: &mut Ui, area: Rect, command: &str) -> bool {
+    let text = format!("/{command} opened in the terminal");
+    let galley =
+        ui.painter().layout_no_wrap(text.clone(), egui::FontId::proportional(12.0), brand::MUTED);
+    let button = button_width(ui, BACK_TO_READER, Size::Compact);
+    let width = galley.size().x + ui.spacing().item_spacing.x + button + 2.0 * NOTE_MARGIN_X;
+    let rect = Rect::from_min_size(
+        pos2(area.right() - width - NOTE_PAD, area.top() + NOTE_PAD),
+        vec2(width, Size::Compact.height() + 2.0 * NOTE_MARGIN_Y),
+    );
+    let mut child = ui.new_child(UiBuilder::new().max_rect(rect));
+    let mut back = false;
+    reader_view::item_frame()
+        .inner_margin(egui::Margin::symmetric(NOTE_MARGIN_X as i8, NOTE_MARGIN_Y as i8))
+        .show(&mut child, |ui| {
+            ui.horizontal(|ui| {
+                ui.label(RichText::new(text).size(12.0).color(brand::MUTED));
+                back = quiet_button(ui, BACK_TO_READER, true, Size::Compact).clicked();
+            });
+        });
+    back
+}
+
 /// Does what the Reader asked for in the tab `tab`. Returns a toast when nothing could be done.
 pub(crate) fn apply(
     actions: Vec<Action>,
@@ -234,6 +266,9 @@ pub(crate) fn apply(
                     ctx.request_repaint_after(Duration::from_secs_f64(
                         ENTER_DELAY_SECS + WAKE_SLACK_S,
                     ));
+                    if let Some(agent) = found.pane.agent.as_mut() {
+                        show_dialog_command(agent, source, &text);
+                    }
                 }
             }
             Action::Answer(answer) => {
@@ -259,6 +294,15 @@ pub(crate) fn apply(
         }
     }
     toast
+}
+
+/// Shows the terminal when `text`, just sent to the agent, opens a dialog in Claude Code's screen.
+fn show_dialog_command(agent: &mut AgentTab, source: Option<Source>, text: &str) {
+    if source == Some(Source::Claude)
+        && let Some(command) = slash::interactive(text)
+    {
+        agent.reader.open_in_terminal(command);
+    }
 }
 
 /// Runs the resume command of a tab whose agent waits at its shell prompt. Ctrl+U first, so a
@@ -399,6 +443,32 @@ mod tests {
         let seq = agent.reader.rows.push_question_row(row);
         let pane = Pane { body: crate::pane::Body::Shell(()), worktree: None, agent: Some(agent) };
         (pane, seq)
+    }
+
+    fn sent(source: Option<Source>, text: &str) -> Option<String> {
+        let mut agent = AgentTab::new("Builder".into(), AgentRun::setting_up("claude".into(), 0.0));
+        show_dialog_command(&mut agent, source, text);
+        agent.reader.opened().map(str::to_owned)
+    }
+
+    #[test]
+    fn a_sent_interactive_command_opens_the_terminal_and_an_output_command_does_not() {
+        let claude = Some(Source::Claude);
+        let cases = [
+            (claude, "/login", Some("login")),
+            (claude, "/usage", Some("usage")),
+            (claude, "/theme", Some("theme")),
+            (claude, "/model opus", None),
+            (claude, "/context", None),
+            (claude, "/compact", None),
+            (claude, "run the tests", None),
+            (Some(Source::Codex), "/login", None),
+            (Some(Source::Gemini), "/model", None),
+            (None, "/login", None),
+        ];
+        for (source, text, want) in cases {
+            assert_eq!(sent(source, text).as_deref(), want, "{source:?} {text:?}");
+        }
     }
 
     fn typed(pane: &mut Pane<()>) -> Vec<(f64, Step)> {
