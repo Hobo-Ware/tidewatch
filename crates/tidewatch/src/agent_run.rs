@@ -80,6 +80,7 @@ pub(crate) struct AgentRun {
     status: AgentStatus,
     started_at: f64,
     finished_at: Option<f64>,
+    changed_at: f64,
     title_seen: Option<String>,
     goal: Option<String>,
     detail: Option<String>,
@@ -115,6 +116,7 @@ impl AgentRun {
             status: AgentStatus::SettingUp,
             started_at: now,
             finished_at: None,
+            changed_at: now,
             title_seen: None,
             goal: None,
             detail: None,
@@ -200,6 +202,11 @@ impl AgentRun {
     /// Seconds since the agent started, frozen while it is done or failed.
     pub(crate) fn elapsed(&self, now: f64) -> f64 {
         (self.finished_at.unwrap_or(now) - self.started_at).max(0.0)
+    }
+
+    /// Seconds since the status last changed.
+    pub(crate) fn since_change(&self, now: f64) -> f64 {
+        (now - self.changed_at).max(0.0)
     }
 
     pub(crate) fn on_event(&mut self, event: TabEvent, now: f64) {
@@ -300,6 +307,7 @@ impl AgentRun {
         self.working_since = (next == AgentStatus::Working).then_some(now);
         let finished = matches!(next, AgentStatus::Done | AgentStatus::Failed(_));
         self.finished_at = finished.then_some(now);
+        self.changed_at = now;
         Some(Change { from, to: next })
     }
 
@@ -632,5 +640,17 @@ mod tests {
         assert_eq!((run.terminal_title(), run.goal()), (Some("Fixing tests"), Some("Ship it")));
         run.set_goal(None);
         assert_eq!(run.goal(), None);
+    }
+
+    #[test]
+    fn the_time_since_the_last_status_change_restarts_with_each_change() {
+        let mut run = running(0.0);
+        assert_eq!(run.refresh(0.5).unwrap().to, AgentStatus::Working);
+        assert_eq!(run.since_change(25.0), 24.5);
+        let quiet_at = 0.5 + tidewatch_core::status::STATUS_QUIET_SECS + 1.0;
+        run.feed(TermSnapshot { activity: true, ..Default::default() }, 0.5);
+        assert_eq!(run.refresh(quiet_at).unwrap().to, AgentStatus::NeedsYou(Reason::Quiet));
+        assert_eq!(run.since_change(quiet_at + 120.0), 120.0);
+        assert_eq!(run.since_change(quiet_at - 100.0), 0.0);
     }
 }

@@ -10,7 +10,7 @@ use super::WAKE_SLACK_S;
 use super::settings::open_in_editor;
 use super::{Tidewatch, wall_ms};
 use crate::agent_avatar;
-use crate::coming_up::{Row, coming_up};
+use crate::coming_up::coming_up;
 use crate::due::{
     Due, Key, ask_blocked, ask_text, due_items, next_to_start, secs_to_midnight, tell_all,
 };
@@ -26,7 +26,6 @@ use crate::progress_model::look;
 use crate::progress_stale::{Live, is_stale};
 use crate::progress_state::Facts;
 use crate::{due_view, flow_glue};
-use tidewatch_core::progress::Mark;
 use tidewatch_core::status::{AgentStatus, Reason};
 
 const REDRAW_ASK: &str = "Call set_avatar again with a fresh idea for this task.";
@@ -146,14 +145,6 @@ impl Tidewatch {
                 Duration::from_millis(wait) + Duration::from_secs_f64(WAKE_SLACK_S),
             );
         }
-    }
-
-    /// The marks of the steps of a scheduled item, when its tab is open and its ledger lists them.
-    pub(super) fn steps_of(&self, row: &Row) -> Vec<Mark> {
-        self.open_tab_of(&row.repo, &row.tab)
-            .and_then(|id| self.progress.ledger(id))
-            .and_then(|known| known.ledger.scheduled.iter().find(|item| item.what == row.what))
-            .map_or_else(Vec::new, |item| item.steps.iter().map(|step| step.mark).collect())
     }
 
     /// The items due in tab `id` that the Reader offers: open, dated today or before, not snoozed. A
@@ -329,7 +320,7 @@ impl Tidewatch {
     }
 
     pub(super) fn drive_checklist(&mut self, ctx: &egui::Context, now: f64) {
-        let shown = self.overview && self.settings.is_none() && self.welcome.is_none();
+        let shown = self.settings.is_some();
         let repo = self.workspace().dir().to_path_buf();
         self.checklist.tick(self.paths.as_ref(), &repo, shown, now, ctx);
     }

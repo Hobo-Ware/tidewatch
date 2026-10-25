@@ -35,6 +35,18 @@ pub(crate) const RED: Color32 = Color32::from_rgb(0xf8, 0x71, 0x71);
 pub(crate) const RED_LINE: Color32 = Color32::from_rgb(0x3a, 0x25, 0x30);
 pub(crate) const RED_FILL: Color32 = Color32::from_rgb(0x24, 0x17, 0x1e);
 
+pub(crate) const NEEDS_FILL: Color32 = Color32::from_rgb(0x16, 0x13, 0x0f);
+pub(crate) const VIOLET_TEXT: Color32 = Color32::from_rgb(0xc4, 0xb5, 0xfd);
+pub(crate) const REPO_INKS: [Color32; 7] = [
+    Color32::from_rgb(0xf4, 0x72, 0xb6),
+    BLUE,
+    Color32::from_rgb(0xa3, 0xe6, 0x35),
+    AMBER,
+    Color32::from_rgb(0xc0, 0x84, 0xfc),
+    Color32::from_rgb(0x22, 0xd3, 0xee),
+    Color32::from_rgb(0xfb, 0x71, 0x85),
+];
+
 pub(crate) const STRUGGLE_FILL: Color32 = Color32::from_rgb(0x1c, 0x16, 0x10);
 pub(crate) const STRUGGLE_LINE: Color32 = Color32::from_rgb(0x4a, 0x34, 0x18);
 pub(crate) const SUNKEN: Color32 = Color32::from_rgb(0x0f, 0x14, 0x1c);

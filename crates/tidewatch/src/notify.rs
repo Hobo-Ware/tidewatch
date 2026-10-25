@@ -8,7 +8,7 @@ use std::process::Command;
 
 use crate::agent_run::Change;
 use crate::status_view::{Tone, reason_label};
-use tidewatch_core::status::AgentStatus;
+use tidewatch_core::status::{AgentStatus, Reason};
 
 const APP_NAME: &str = "Tidewatch";
 pub(crate) const MIN_GAP_SECS: f64 = 60.0;
@@ -72,6 +72,7 @@ pub(crate) fn for_change(
         return None;
     }
     let what = match &change.to {
+        AgentStatus::NeedsYou(Reason::Quiet) => return None,
         AgentStatus::NeedsYou(reason) => format!("needs you ({})", reason_label(*reason)),
         AgentStatus::Done => "is done".to_owned(),
         AgentStatus::Failed(why) => format!("failed: {why}"),
@@ -240,7 +241,6 @@ pub(crate) fn post(notification: &Notification) {
 mod tests {
     use super::*;
     use std::sync::{Arc, Mutex};
-    use tidewatch_core::status::Reason;
 
     fn change(from: AgentStatus, to: AgentStatus) -> Change {
         Change { from, to }
@@ -305,6 +305,7 @@ mod tests {
             change(AgentStatus::NeedsYou(Reason::Permission), AgentStatus::Working),
             change(AgentStatus::NeedsYou(Reason::Permission), AgentStatus::NeedsYou(Reason::Quiet)),
             change(AgentStatus::Done, AgentStatus::Working),
+            change(AgentStatus::Working, AgentStatus::NeedsYou(Reason::Quiet)),
         ];
         for c in quiet {
             assert_eq!(for_change("t", &c, None), None, "{c:?}");

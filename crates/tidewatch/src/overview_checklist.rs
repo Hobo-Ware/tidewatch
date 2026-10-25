@@ -1,6 +1,6 @@
-//! The Overview's checklist row: the four stages, or the must-do items of the list in use when there
-//! is one, where the list comes from and the file Edit opens. Read on a job thread, again while the
-//! Overview shows.
+//! The checklist of Settings, General: the four stages, or the must-do items of the list in use when
+//! there is one, where the list comes from and the file Edit opens. Read on a job thread, again while
+//! Settings shows.
 
 use std::path::{Path, PathBuf};
 
@@ -96,7 +96,7 @@ impl Host {
         Self { jobs: Jobs::new(), current: None, asked: None }
     }
 
-    /// Asks for a fresh read when the Overview shows for a repo not read yet, or the last read is
+    /// Asks for a fresh read when Settings shows for a repo not read yet, or the last read is
     /// old, and takes what finished.
     pub(crate) fn tick(
         &mut self,

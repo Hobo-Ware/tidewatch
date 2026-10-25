@@ -21,12 +21,13 @@ pub(crate) enum Tone {
     Shell,
 }
 
+/// A quiet terminal asked for nothing, so it reads as `Done` (idle), never as `Needs`.
 pub(crate) fn tone(status: &AgentStatus) -> Tone {
     match status {
         AgentStatus::SettingUp => Tone::Setup,
         AgentStatus::Working => Tone::Working,
+        AgentStatus::NeedsYou(Reason::Quiet) | AgentStatus::Done => Tone::Done,
         AgentStatus::NeedsYou(_) => Tone::Needs,
-        AgentStatus::Done => Tone::Done,
         AgentStatus::Failed(_) => Tone::Failed,
         AgentStatus::Stopped => Tone::Stopped,
         AgentStatus::Shell => Tone::Shell,
@@ -59,6 +60,7 @@ pub(crate) fn reason_label(reason: Reason) -> &'static str {
 pub(crate) fn describe(status: &AgentStatus) -> String {
     let base = label(tone(status));
     match status {
+        AgentStatus::NeedsYou(Reason::Quiet) => format!("Idle - {}", reason_label(Reason::Quiet)),
         AgentStatus::NeedsYou(reason) => format!("{base} - {}", reason_label(*reason)),
         AgentStatus::Failed(why) => format!("{base} - {why}"),
         _ => base.to_owned(),
@@ -111,7 +113,7 @@ mod tests {
             (AgentStatus::SettingUp, Tone::Setup),
             (AgentStatus::Working, Tone::Working),
             (AgentStatus::NeedsYou(Reason::Permission), Tone::Needs),
-            (AgentStatus::NeedsYou(Reason::Quiet), Tone::Needs),
+            (AgentStatus::NeedsYou(Reason::Quiet), Tone::Done),
             (AgentStatus::Done, Tone::Done),
             (AgentStatus::Failed("exited with code 2".into()), Tone::Failed),
             (AgentStatus::Stopped, Tone::Stopped),
@@ -154,6 +156,7 @@ mod tests {
             "Failed - exited with code 2"
         );
         assert_eq!(describe(&AgentStatus::Stopped), "Stopped");
+        assert_eq!(describe(&AgentStatus::NeedsYou(Reason::Quiet)), "Idle - went quiet");
     }
 
     #[test]

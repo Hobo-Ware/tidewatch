@@ -63,6 +63,8 @@ pub(crate) enum Action {
     Sync(crate::sync_view::Change),
     OpenHouseStyle,
     ResetHouseStyle,
+    /// Edit on the Checklist card: open the list's file.
+    EditChecklist,
     /// The Worktree setup page changed a repo's recipe: all of it. Applies at once too.
     WorktreeSetup {
         repo: std::path::PathBuf,
