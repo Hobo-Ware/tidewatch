@@ -11,7 +11,7 @@ use tidewatch_core::prefs::WindowPrefs;
 
 use crate::hotkey::Chord;
 use crate::os::{Os, RealOs};
-use crate::quake::{self, Frame, Op, Quake};
+use crate::quake::{self, Frame, Op, Prompt, Quake};
 use crate::shell_plan::{Env, Hotkey, Plan};
 use crate::tray::Click;
 use crate::window_chrome::{Chrome, Desktop};
@@ -46,6 +46,7 @@ pub(crate) struct Shell<O: Os> {
     prefs: WindowPrefs,
     label: String,
     quake: Quake,
+    prompt: Prompt,
     inbox: Receiver<Command>,
     guard: Option<Guard>,
     registered: Option<Chord>,
@@ -72,6 +73,7 @@ impl<O: Os> Shell<O> {
             prefs,
             label,
             quake: Quake::new(),
+            prompt: Prompt::new(),
             inbox,
             guard,
             registered: None,
@@ -160,8 +162,9 @@ impl<O: Os> Shell<O> {
         ctx.send_viewport_cmd(ViewportCommand::Focus);
     }
 
-    /// Once per frame, before the UI draws.
-    pub(crate) fn tick(&mut self, ctx: &Context) -> Vec<Event> {
+    /// Once per frame, before the UI draws. `prompt_open` is true while a system prompt that
+    /// Tidewatch started (the Amphetamine password dialog or Touch ID sheet) is on screen.
+    pub(crate) fn tick(&mut self, ctx: &Context, prompt_open: bool) -> Vec<Event> {
         self.reconcile();
         let mut events = Vec::new();
         let commands: Vec<Command> = self.inbox.try_iter().collect();
@@ -195,18 +198,19 @@ impl<O: Os> Shell<O> {
                 Click::Quit => events.push(Event::Quit),
             }
         }
-        if self.plan.activates && self.plan.quake {
-            let frame = ctx.input(|i| {
-                let viewport = i.viewport();
-                Frame {
-                    monitor_known: viewport.monitor_size.is_some(),
-                    focused: viewport.focused.unwrap_or(true),
-                    app_active: false,
+        if self.plan.activates {
+            let (focused, now) = ctx.input(|i| (i.viewport().focused.unwrap_or(true), i.time));
+            let app_active = self.os.app_active();
+            let step = self.prompt.tick(prompt_open, app_active, focused, now);
+            if step.refocus && !(self.plan.quake && self.quake.hidden()) {
+                ctx.send_viewport_cmd(ViewportCommand::Focus);
+            }
+            if self.plan.quake {
+                let monitor_known = ctx.input(|i| i.viewport().monitor_size.is_some());
+                let frame = Frame { monitor_known, focused, app_active, prompt_hold: step.hold };
+                for op in self.quake.tick(&frame) {
+                    self.run(ctx, op);
                 }
-            });
-            let frame = Frame { app_active: self.os.app_active(), ..frame };
-            for op in self.quake.tick(&frame) {
-                self.run(ctx, op);
             }
         }
         events
@@ -403,12 +407,13 @@ mod tests {
         shell: Shell<Recorder>,
         ctx: Context,
         tx: Sender<Command>,
+        prompt_open: bool,
     }
 
     fn rig(env: Env, prefs: WindowPrefs) -> Rig {
         let (tx, rx) = channel();
         let shell = Shell::new(Recorder::default(), env, prefs, "web".to_owned(), rx, None);
-        Rig { shell, ctx: Context::default(), tx }
+        Rig { shell, ctx: Context::default(), tx, prompt_open: false }
     }
 
     fn windowed(monitor: bool, focused: bool) -> RawInput {
@@ -427,7 +432,8 @@ mod tests {
         fn frame(&mut self, input: RawInput) -> (Vec<Event>, Vec<ViewportCommand>) {
             let mut events = Vec::new();
             let shell = &mut self.shell;
-            let output = self.ctx.run_ui(input, |ui| events = shell.tick(ui.ctx()));
+            let prompt_open = self.prompt_open;
+            let output = self.ctx.run_ui(input, |ui| events = shell.tick(ui.ctx(), prompt_open));
             let commands = output
                 .viewport_output
                 .get(&ViewportId::ROOT)
@@ -726,6 +732,121 @@ mod tests {
         assert!(commands.contains(&ViewportCommand::Decorations(false)));
         assert!(commands.contains(&ViewportCommand::Resizable(true)));
         assert_eq!(rig.shell.chrome(), Chrome::Drawn);
+    }
+
+    fn focus_count(commands: &[ViewportCommand]) -> usize {
+        commands.iter().filter(|c| **c == ViewportCommand::Focus).count()
+    }
+
+    fn hides(commands: &[ViewportCommand]) -> bool {
+        commands.contains(&ViewportCommand::Visible(false))
+            || commands.iter().any(|c| matches!(c, ViewportCommand::OuterPosition(p) if p.y > 0.0))
+    }
+
+    #[test]
+    fn a_prompt_started_from_the_active_app_keeps_the_quake_window_up_and_brings_it_back_once() {
+        let mut rig = rig(X11, WindowPrefs::default());
+        rig.shell.os.parks = true;
+        rig.shell.os.active = true;
+        rig.settle();
+        rig.prompt_open = true;
+        rig.quiet_frame();
+        rig.shell.os.active = false;
+        for _ in 0..4 {
+            let (_, commands) = rig.frame(windowed(true, false));
+            assert!(!hides(&commands), "the prompt took the focus, the user did not");
+            assert_eq!(focus_count(&commands), 0);
+        }
+        rig.prompt_open = false;
+        let (_, back) = rig.frame(windowed(true, false));
+        assert_eq!(focus_count(&back), 1);
+        assert!(!hides(&back), "the window is held while the focus comes back");
+        let (_, waiting) = rig.frame(windowed(true, false));
+        assert_eq!((focus_count(&waiting), hides(&waiting)), (0, false));
+        rig.shell.os.active = true;
+        for _ in 0..3 {
+            let (_, quiet) = rig.frame(windowed(true, true));
+            assert_eq!(quiet, vec![]);
+        }
+    }
+
+    #[test]
+    fn the_focus_is_asked_for_exactly_once_however_many_frames_follow_the_prompt() {
+        let mut rig = rig(X11, WindowPrefs::default());
+        rig.shell.os.active = true;
+        rig.settle();
+        rig.prompt_open = true;
+        rig.quiet_frame();
+        rig.shell.os.active = false;
+        rig.frame(windowed(true, false));
+        rig.prompt_open = false;
+        let mut focuses = 0;
+        for _ in 0..6 {
+            let (_, commands) = rig.frame(windowed(true, false));
+            focuses += focus_count(&commands);
+        }
+        assert_eq!(focuses, 1);
+    }
+
+    #[test]
+    fn a_prompt_started_while_another_app_was_active_never_raises_the_window() {
+        let mut rig = rig(X11, WindowPrefs::default());
+        rig.shell.os.parks = true;
+        rig.settle();
+        rig.prompt_open = true;
+        for _ in 0..3 {
+            let (_, commands) = rig.frame(windowed(true, false));
+            assert_eq!(focus_count(&commands), 0);
+        }
+        rig.prompt_open = false;
+        let (_, after) = rig.frame(windowed(true, false));
+        assert_eq!(focus_count(&after), 0);
+    }
+
+    #[test]
+    fn a_window_hidden_while_the_prompt_was_open_stays_hidden_when_it_ends() {
+        let mut rig = rig(X11, WindowPrefs::default());
+        rig.shell.os.active = true;
+        rig.settle();
+        rig.prompt_open = true;
+        rig.quiet_frame();
+        rig.tx.send(Command::Toggle).unwrap();
+        let (_, hide) = rig.frame(windowed(true, false));
+        assert!(hide.contains(&ViewportCommand::Visible(false)));
+        rig.prompt_open = false;
+        let (_, after) = rig.frame(windowed(true, false));
+        assert_eq!(focus_count(&after), 0);
+    }
+
+    #[test]
+    fn on_a_plain_window_the_end_of_a_prompt_raises_it_once() {
+        let mut rig = rig(X11, prefs(false, "F13", true));
+        rig.shell.os.active = true;
+        rig.settle();
+        rig.prompt_open = true;
+        rig.quiet_frame();
+        rig.shell.os.active = false;
+        rig.prompt_open = false;
+        let (_, back) = rig.frame(windowed(true, false));
+        assert_eq!(back, vec![ViewportCommand::Focus]);
+        let (_, later) = rig.frame(windowed(true, true));
+        assert_eq!(later, vec![]);
+    }
+
+    #[test]
+    fn a_background_or_screenshot_run_never_raises_the_window_for_a_prompt() {
+        let mut rig = rig(BACKGROUND, WindowPrefs::default());
+        rig.shell.os.active = true;
+        rig.quiet_frame();
+        rig.prompt_open = true;
+        rig.quiet_frame();
+        rig.shell.os.active = false;
+        rig.prompt_open = false;
+        for _ in 0..3 {
+            let (_, commands) = rig.frame(windowed(true, false));
+            assert_eq!(commands, vec![]);
+        }
+        assert_eq!(rig.shell.os.calls, vec![]);
     }
 
     #[test]

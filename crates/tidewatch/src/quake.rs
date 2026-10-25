@@ -40,10 +40,66 @@ pub(crate) fn unzoom(v: Vec2, zoom: f32) -> Vec2 {
     if zoom > 0.0 { v / zoom } else { v }
 }
 
+#[allow(clippy::struct_excessive_bools)] // independent facts about one frame, not a mode
 pub(crate) struct Frame {
     pub(crate) monitor_known: bool,
     pub(crate) focused: bool,
     pub(crate) app_active: bool,
+    pub(crate) prompt_hold: bool,
+}
+
+/// How long the window may take to report focus after being brought back from a system prompt.
+pub(crate) const REFOCUS_GRACE_S: f64 = 1.0;
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum PromptState {
+    Idle { was_active: bool },
+    Open { owed: bool },
+    Returning { until: f64 },
+}
+
+/// What a system prompt (the password dialog, the Touch ID sheet) asks of the window this frame.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct PromptStep {
+    /// Do not hide on blur: the prompt, not the user, took the focus.
+    pub(crate) hold: bool,
+    /// The prompt just ended and Tidewatch was the active app when it opened: bring the window
+    /// back to the front, this once.
+    pub(crate) refocus: bool,
+}
+
+/// Follows one prompt from the frame it opens to the frame the window has its focus back.
+/// `active` is read every frame, but only the value from before the prompt opened counts: the
+/// prompt itself takes the app's activation away.
+pub(crate) struct Prompt {
+    state: PromptState,
+}
+
+impl Prompt {
+    pub(crate) fn new() -> Self {
+        Self { state: PromptState::Idle { was_active: false } }
+    }
+
+    pub(crate) fn tick(&mut self, open: bool, active: bool, focused: bool, now: f64) -> PromptStep {
+        let (state, hold, refocus) = match (self.state, open) {
+            (PromptState::Idle { was_active }, true) => {
+                (PromptState::Open { owed: was_active }, true, false)
+            }
+            (PromptState::Open { owed }, true) => (PromptState::Open { owed }, true, false),
+            (PromptState::Returning { .. }, true) => {
+                (PromptState::Open { owed: true }, true, false)
+            }
+            (PromptState::Open { owed: true }, false) => {
+                (PromptState::Returning { until: now + REFOCUS_GRACE_S }, true, true)
+            }
+            (PromptState::Returning { until }, false) if !focused && now < until => {
+                (PromptState::Returning { until }, true, false)
+            }
+            (_, false) => (PromptState::Idle { was_active: active }, false, false),
+        };
+        self.state = state;
+        PromptStep { hold, refocus }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -91,7 +147,11 @@ impl Quake {
     /// when the whole app is inactive, because a system panel (the emoji viewer) takes the
     /// window's focus while the app stays active.
     fn hides_on_blur(&self, frame: &Frame) -> bool {
-        self.visible && self.was_focused && !frame.focused && !frame.app_active
+        self.visible
+            && self.was_focused
+            && !frame.focused
+            && !frame.app_active
+            && !frame.prompt_hold
     }
 
     /// Full quake sizing waits for the monitor size, which is unknown on the first frame.
@@ -231,25 +291,26 @@ mod tests {
     #[test]
     fn blur_hides_only_on_a_real_deactivation_after_the_window_held_focus() {
         let cases = [
-            ((true, true, false, false), true),
-            ((true, true, false, true), false),
-            ((true, false, false, false), false),
-            ((true, true, true, false), false),
-            ((false, true, false, false), false),
+            ((true, true, false, false, false), true),
+            ((true, true, false, true, false), false),
+            ((true, false, false, false, false), false),
+            ((true, true, true, false, false), false),
+            ((false, true, false, false, false), false),
+            ((true, true, false, false, true), false),
         ];
-        for ((visible, was_focused, focused, app_active), want) in cases {
+        for ((visible, was_focused, focused, app_active, prompt_hold), want) in cases {
             let quake = Quake { visible, was_focused, sized: true };
-            let frame = Frame { monitor_known: true, focused, app_active };
+            let frame = Frame { monitor_known: true, focused, app_active, prompt_hold };
             assert_eq!(
                 quake.hides_on_blur(&frame),
                 want,
-                "visible={visible} was_focused={was_focused} focused={focused} app_active={app_active}"
+                "visible={visible} was_focused={was_focused} focused={focused} app_active={app_active} prompt_hold={prompt_hold}"
             );
         }
     }
 
     fn frame(monitor_known: bool, focused: bool, app_active: bool) -> Frame {
-        Frame { monitor_known, focused, app_active }
+        Frame { monitor_known, focused, app_active, prompt_hold: false }
     }
 
     #[test]
@@ -269,6 +330,81 @@ mod tests {
         }
         assert_eq!(quake.tick(&frame(true, true, true)), vec![]);
         assert_eq!(quake.tick(&frame(true, false, false)), vec![Op::Present(false)]);
+    }
+
+    #[test]
+    fn a_prompt_holds_the_window_up_and_the_hold_ends_with_the_prompt() {
+        let mut quake = Quake::new();
+        quake.tick(&frame(true, true, true));
+        let prompt = Frame { prompt_hold: true, ..frame(true, false, false) };
+        for _ in 0..3 {
+            assert_eq!(quake.tick(&prompt), vec![]);
+        }
+        assert!(!quake.hidden());
+        assert_eq!(quake.tick(&frame(true, false, false)), vec![Op::Present(false)]);
+    }
+
+    fn at(prompt: &mut Prompt, open: bool, active: bool, focused: bool, now: f64) -> (bool, bool) {
+        let step = prompt.tick(open, active, focused, now);
+        (step.hold, step.refocus)
+    }
+
+    #[test]
+    fn a_prompt_opened_from_the_active_app_brings_the_window_back_once_when_it_ends() {
+        let mut prompt = Prompt::new();
+        assert_eq!(at(&mut prompt, false, true, true, 0.0), (false, false));
+        assert_eq!(at(&mut prompt, true, true, true, 1.0), (true, false));
+        assert_eq!(at(&mut prompt, true, false, false, 2.0), (true, false));
+        assert_eq!(at(&mut prompt, true, false, false, 30.0), (true, false));
+        assert_eq!(at(&mut prompt, false, false, false, 31.0), (true, true));
+        assert_eq!(
+            at(&mut prompt, false, false, false, 31.2),
+            (true, false),
+            "held, not asked twice"
+        );
+        assert_eq!(at(&mut prompt, false, true, true, 31.4), (false, false));
+        assert_eq!(at(&mut prompt, false, true, true, 32.0), (false, false));
+    }
+
+    #[test]
+    fn a_prompt_opened_while_another_app_was_active_never_pulls_the_window_forward() {
+        let mut prompt = Prompt::new();
+        assert_eq!(at(&mut prompt, false, false, false, 0.0), (false, false));
+        assert_eq!(at(&mut prompt, true, false, false, 1.0), (true, false));
+        assert_eq!(at(&mut prompt, false, false, false, 2.0), (false, false));
+        assert_eq!(at(&mut prompt, false, false, false, 3.0), (false, false));
+    }
+
+    #[test]
+    fn the_activity_that_counts_is_the_one_from_before_the_prompt_opened() {
+        let mut prompt = Prompt::new();
+        at(&mut prompt, false, true, true, 0.0);
+        assert_eq!(at(&mut prompt, true, false, false, 1.0), (true, false), "already stolen");
+        assert_eq!(at(&mut prompt, false, false, false, 2.0), (true, true));
+    }
+
+    #[test]
+    fn the_hold_gives_up_when_focus_never_comes_back() {
+        let mut prompt = Prompt::new();
+        at(&mut prompt, false, true, true, 0.0);
+        at(&mut prompt, true, true, true, 1.0);
+        assert_eq!(at(&mut prompt, false, false, false, 2.0), (true, true));
+        assert_eq!(
+            at(&mut prompt, false, false, false, 2.0 + REFOCUS_GRACE_S - 0.1),
+            (true, false)
+        );
+        assert_eq!(at(&mut prompt, false, false, false, 2.0 + REFOCUS_GRACE_S), (false, false));
+    }
+
+    #[test]
+    fn a_second_prompt_is_a_new_round() {
+        let mut prompt = Prompt::new();
+        at(&mut prompt, false, true, true, 0.0);
+        at(&mut prompt, true, true, true, 1.0);
+        at(&mut prompt, false, false, false, 2.0);
+        at(&mut prompt, false, true, true, 2.5);
+        assert_eq!(at(&mut prompt, true, true, true, 3.0), (true, false));
+        assert_eq!(at(&mut prompt, false, false, false, 4.0), (true, true));
     }
 
     #[test]

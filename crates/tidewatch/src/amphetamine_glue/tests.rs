@@ -119,6 +119,43 @@ fn starting_writes_the_marker_and_token_first_then_asks_once_and_turns_on() {
 }
 
 #[test]
+fn a_prompt_is_open_from_the_click_until_the_start_answers_either_way() {
+    let mut rig =
+        Rig::with(FakeSystem::with_biometrics().holding(Duration::from_millis(150)), true);
+    assert!(!rig.host.prompt_open());
+    rig.pick(Choice::Hour);
+    assert!(rig.host.prompt_open());
+    rig.until(is_on);
+    assert!(!rig.host.prompt_open());
+
+    let mut refused = Rig::with(FakeSystem::refusing("the password prompt was cancelled"), true);
+    refused.pick(Choice::Hour);
+    assert!(refused.host.prompt_open());
+    refused.until(|host| host.state() == State::Off);
+    assert!(!refused.host.prompt_open());
+}
+
+#[test]
+fn the_touch_id_setup_and_removal_hold_a_prompt_open_while_they_run() {
+    let (mut rig, _, _) = gated_rig();
+    assert!(!rig.host.prompt_open());
+    rig.host.change_touch_id(Click::Remove, &rig.ctx);
+    assert!(rig.host.prompt_open());
+    rig.until(|host| host.touch_id() == Some(TouchId::Missing));
+    assert!(!rig.host.prompt_open());
+}
+
+#[test]
+fn a_background_host_never_has_a_prompt_open() {
+    let system = Arc::new(FakeSystem::new());
+    let mut host = Host::new(system, Recorder::default(), None, true, false);
+    let ctx = egui::Context::default();
+    host.pick(Choice::Hour, WALL, 0.0, &ctx);
+    host.change_touch_id(Click::SetUp, &ctx);
+    assert!(!host.prompt_open());
+}
+
+#[test]
 fn a_refused_prompt_leaves_nothing_behind_and_says_so() {
     let mut rig = Rig::with(FakeSystem::refusing("the password prompt was cancelled"), true);
     rig.pick(Choice::HalfHour);

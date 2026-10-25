@@ -262,6 +262,12 @@ impl<H: Hold> Host<H> {
         });
     }
 
+    /// A system prompt this host started may be on screen: the start is waiting for its answer, or
+    /// the Touch ID row's setup or removal is running.
+    pub(crate) fn prompt_open(&self) -> bool {
+        matches!(self.state, State::Starting { .. }) || self.touch_id_job.is_some()
+    }
+
     /// How the next start asks for permission, as last probed off the UI thread.
     pub(crate) fn route(&self) -> Route {
         self.route
