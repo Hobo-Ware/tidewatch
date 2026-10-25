@@ -16,7 +16,6 @@ use egui::{
 };
 use egui_commonmark::CommonMarkCache;
 use jiff::tz::TimeZone;
-use stdusk_egui::widgets::chip;
 use tidewatch_core::question::Reply;
 use tidewatch_core::transcript::Source;
 
@@ -117,15 +116,18 @@ impl ViewState {
         }
         self.turns = Some((stamp.0, stamp.1, reader_turns::layout(rows)));
         let first = rows.iter().next().map_or(0, |row| row.seq);
-        self.expanded.retain(|key| *key >= first);
+        self.expanded.retain(|key| key & !reader_turns::NOTES_BIT >= first);
     }
 
-    /// Opens the list of calls under every turn, as a click on a chip does.
-    pub(crate) fn open_turns(&mut self, rows: &Rows) {
+    /// Opens the list of calls and the folded updates under every turn, as a click on a chip does;
+    /// only the updates when `notes_only`.
+    pub(crate) fn open_turns(&mut self, rows: &Rows, notes_only: bool) {
         self.refresh_turns(rows);
         if let Some((_, _, layout)) = &self.turns {
-            let keys = layout.groups.iter().filter(|group| !group.calls.is_empty());
+            let keys = layout.groups.iter().filter(|group| !group.calls.is_empty() && !notes_only);
             self.expanded.extend(keys.map(|group| group.key));
+            let notes = layout.groups.iter().filter(|group| !group.notes().is_empty());
+            self.expanded.extend(notes.map(reader_turns::Group::notes_key));
         }
     }
 
@@ -535,7 +537,10 @@ fn transcript(
                                     turn_guess(
                                         &list,
                                         group,
-                                        expanded.contains(&group.key),
+                                        (
+                                            expanded.contains(&group.key),
+                                            expanded.contains(&group.notes_key()),
+                                        ),
                                         (running, w),
                                     )
                                 }),
@@ -653,8 +658,7 @@ fn transcript(
             pos2(body.center().x, body.bottom() - JUMP_H),
             vec2(JUMP_W, JUMP_H),
         );
-        let mut jump_ui = ui.new_child(UiBuilder::new().max_rect(slot));
-        if chip(&mut jump_ui, "Jump to latest", true).clicked() {
+        if reader_chat_view::jump_pill(ui, slot, "Jump to latest").clicked() {
             state.scroll.jump_to_latest();
             state.stick_pending = true;
             ui.ctx().request_repaint();
@@ -699,12 +703,20 @@ fn draw_row(
 fn turn_guess(
     list: &[&Row],
     group: &reader_turns::Group,
-    listing: bool,
+    (listing, notes_listing): (bool, bool),
     (running, width): (bool, f32),
 ) -> f32 {
-    let texts: Vec<&str> = group.texts.iter().map(|index| list[*index].text.as_str()).collect();
+    let text_of = |index: &usize| list[*index].text.as_str();
+    let answer: Vec<&str> = group.answer().iter().map(text_of).collect();
+    let notes: Vec<&str> = group.notes().iter().map(text_of).collect();
     let live = running && !group.closed;
-    reader_scroll::estimate_turn(&texts, group.calls.len(), (live, listing), width)
+    reader_scroll::estimate_turn(
+        &answer,
+        group.calls.len(),
+        (live, listing),
+        (&notes, notes_listing),
+        width,
+    )
 }
 
 fn now_ms() -> i64 {
@@ -1673,6 +1685,114 @@ mod tests {
         frames.click(&rows, again);
         assert!(frames.at("$ git status").is_none());
         assert_eq!(frames.state.expanded.len(), 0);
+    }
+
+    fn notes_turn(notes: &[&str], answer: &str, running: bool) -> Rows {
+        use tidewatch_core::transcript::{Entry, Role, ToolCall, ToolPhase};
+        let at = Some(1_700_000_000_000);
+        let say = |role, text: &str| Entry { role, text: text.into(), tool: None, ts: at };
+        let call = |id: &str, phase| Entry {
+            role: Role::Tool,
+            text: String::new(),
+            tool: Some(ToolCall {
+                name: "Read".into(),
+                summary: "src/auth.rs".into(),
+                id: Some(id.into()),
+                phase,
+                ask: None,
+            }),
+            ts: at,
+        };
+        let mut rows = Rows::default();
+        rows.push(say(Role::User, "tidy up"));
+        rows.push(call("start", ToolPhase::Call));
+        rows.push(call("start", ToolPhase::Result { error: false }));
+        for (n, note) in notes.iter().enumerate() {
+            rows.push(say(Role::Assistant, note));
+            rows.push(call(&format!("n{n}"), ToolPhase::Call));
+            rows.push(call(&format!("n{n}"), ToolPhase::Result { error: false }));
+        }
+        if running {
+            rows.push(call("last", ToolPhase::Call));
+        }
+        rows.push(say(Role::Assistant, answer));
+        if !running {
+            rows.push(say(Role::User, "thanks"));
+        }
+        rows
+    }
+
+    fn turn_height(frames: &Frames) -> f32 {
+        let (_, _, layout) = frames.state.turns.as_ref().unwrap();
+        frames.state.heights.measured(layout.groups[0].key).unwrap()
+    }
+
+    #[test]
+    fn a_finished_turn_draws_only_its_last_text_and_folds_the_notes_behind_one_chip() {
+        let notes = ["Reading the page.", "Wiring the table in now.", "Tests pass (154)."];
+        let long = notes_turn(&notes, "All tidy.", false);
+        let plain = notes_turn(&[], "All tidy.", false);
+        let (mut folded, mut single) = (Frames::new(), Frames::new());
+        for _ in 0..2 {
+            folded.run(&long, Turn::Finished, vec![]);
+            single.run(&plain, Turn::Finished, vec![]);
+        }
+        assert!(folded.at("All tidy.").is_some(), "{:?}", folded.shapes);
+        assert!(folded.at("3 updates").is_some());
+        assert!(single.shapes.iter().all(|(text, _)| !text.contains("update")));
+        for note in notes {
+            assert!(folded.at(note).is_none(), "{note} must stay folded");
+        }
+        let chip_row = reader_chat_view::CHIP_H + reader_chat_view::CHIP_GAP;
+        let extra = turn_height(&folded) - turn_height(&single);
+        assert!((extra - chip_row).abs() < 0.5, "the bubble is the last text only: {extra}");
+    }
+
+    #[test]
+    fn a_click_on_the_updates_chip_lists_the_notes_in_order_and_a_second_click_folds_them() {
+        let notes = ["Reading the page.", "Wiring the table in now."];
+        let rows = notes_turn(&notes, "All tidy.", false);
+        let mut frames = Frames::new();
+        frames.run(&rows, Turn::Finished, vec![]);
+        frames.run(&rows, Turn::Finished, vec![]);
+        let chip = frames.at("2 updates").unwrap();
+        frames.click(&rows, chip);
+        let (first, second) = (frames.at(notes[0]).unwrap(), frames.at(notes[1]).unwrap());
+        assert!(first.y < second.y);
+        assert!(frames.at("3 reads").is_some(), "the call chips are untouched");
+        assert!(frames.at("read  src/auth.rs").is_none());
+        let again = frames.at("2 updates").unwrap();
+        frames.click(&rows, again);
+        assert!(frames.at(notes[0]).is_none());
+        assert_eq!(frames.state.expanded.len(), 0);
+    }
+
+    #[test]
+    fn the_dev_switch_opens_the_updates_alone_or_with_the_calls() {
+        let rows = notes_turn(&["Reading the page."], "All tidy.", false);
+        let mut both = ViewState::default();
+        both.open_turns(&rows, false);
+        let mut notes = ViewState::default();
+        notes.open_turns(&rows, true);
+        assert_eq!((both.expanded.len(), notes.expanded.len()), (2, 1));
+        let (_, _, layout) = notes.turns.as_ref().unwrap();
+        assert!(notes.expanded.contains(&layout.groups[0].notes_key()));
+    }
+
+    #[test]
+    fn a_turn_in_progress_shows_its_latest_text_as_the_only_text_with_the_live_pill() {
+        let rows =
+            notes_turn(&["Reading the page.", "Wiring the table in now."], "Tests pass.", true);
+        let mut frames = Frames::new();
+        frames.run(&rows, Turn::Running, vec![]);
+        frames.run(&rows, Turn::Running, vec![]);
+        assert!(frames.at("Tests pass.").is_some(), "{:?}", frames.shapes);
+        assert!(frames.at("2 updates").is_some());
+        assert!(
+            frames.at("Reading the page.").is_none()
+                && frames.at("Wiring the table in now.").is_none()
+        );
+        assert!(frames.at("Reading").is_some());
     }
 
     #[test]

@@ -25,6 +25,7 @@ const TURN_CHIPS_H: f32 = 34.0;
 const TURN_LIVE_H: f32 = 40.0;
 const TURN_LIST_LINE_H: f32 = 22.0;
 const TURN_LIST_PAD_H: f32 = 22.0;
+const TURN_NOTES_LINE_H: f32 = 22.0;
 
 /// Whether the view sticks to the newest row. It follows until the user scrolls up, and follows again
 /// once they reach the bottom or press "jump to latest".
@@ -105,6 +106,11 @@ impl Heights {
     pub(crate) fn measured_count(&self) -> usize {
         self.measured.len()
     }
+
+    #[cfg(test)]
+    pub(crate) fn measured(&self, key: u64) -> Option<f32> {
+        self.measured.get(&key).copied()
+    }
 }
 
 /// A guess at a row's height: one line per wrapped line of text. Close enough to place the scroll
@@ -141,15 +147,25 @@ pub(crate) fn estimate_user(text: &str, width: f32) -> f32 {
     lines as f32 * CHAT_LINE_H + USER_CHROME_H
 }
 
-/// A guess at an agent turn: the wrapped lines of its text (none while it only runs tools), its
-/// chip row or live row, and its open list of `calls` lines.
+/// A guess at an agent turn: the wrapped lines of its answer (none while it only runs tools), its
+/// chip row or live row, its open list of `calls` lines, and the updates chip over the bubble when
+/// `notes` has texts (with their lines when that list is open).
 pub(crate) fn estimate_turn(
     texts: &[&str],
     calls: usize,
     (live, listing): (bool, bool),
+    (notes, notes_listing): (&[&str], bool),
     width: f32,
 ) -> f32 {
     let bubble_w = width * AGENT_SHARE - 44.0;
+    let notes_h = match (notes.is_empty(), notes_listing) {
+        (true, _) => 0.0,
+        (false, false) => TURN_CHIPS_H,
+        (false, true) => {
+            let lines = chat_lines(notes.iter().copied(), bubble_w);
+            TURN_CHIPS_H + lines as f32 * TURN_NOTES_LINE_H + TURN_LIST_PAD_H
+        }
+    };
     let text_h = if texts.is_empty() {
         0.0
     } else {
@@ -162,7 +178,7 @@ pub(crate) fn estimate_turn(
     };
     let list_h = if listing { calls as f32 * TURN_LIST_LINE_H + TURN_LIST_PAD_H } else { 0.0 };
     let chrome = if texts.is_empty() && live { 20.0 } else { TURN_CHROME_H };
-    text_h + under + list_h + chrome
+    text_h + under + list_h + notes_h + chrome
 }
 
 #[cfg(test)]
@@ -254,12 +270,22 @@ mod tests {
         let one = estimate_user("one", 800.0);
         let three = estimate_user("a\nb\nc", 800.0);
         assert_eq!(three - one, 2.0 * CHAT_LINE_H);
-        let closed = estimate_turn(&["done"], 6, (false, false), 800.0);
-        let open = estimate_turn(&["done"], 6, (false, true), 800.0);
+        let closed = estimate_turn(&["done"], 6, (false, false), (&[], false), 800.0);
+        let open = estimate_turn(&["done"], 6, (false, true), (&[], false), 800.0);
         assert_eq!(open - closed, 6.0 * TURN_LIST_LINE_H + TURN_LIST_PAD_H);
-        let bare = estimate_turn(&["done"], 0, (false, false), 800.0);
+        let bare = estimate_turn(&["done"], 0, (false, false), (&[], false), 800.0);
         assert_eq!(closed - bare, TURN_CHIPS_H);
-        assert!(estimate_turn(&[], 2, (true, false), 800.0) < closed);
+        assert!(estimate_turn(&[], 2, (true, false), (&[], false), 800.0) < closed);
+    }
+
+    #[test]
+    fn folded_updates_add_a_chip_row_and_their_lines_only_when_open() {
+        let notes = ["one", "two", "three"];
+        let none = estimate_turn(&["done"], 0, (false, false), (&[], false), 800.0);
+        let folded = estimate_turn(&["done"], 0, (false, false), (&notes, false), 800.0);
+        let open = estimate_turn(&["done"], 0, (false, false), (&notes, true), 800.0);
+        assert_eq!(folded - none, TURN_CHIPS_H);
+        assert_eq!(open - folded, 3.0 * TURN_NOTES_LINE_H + TURN_LIST_PAD_H);
     }
 
     #[test]

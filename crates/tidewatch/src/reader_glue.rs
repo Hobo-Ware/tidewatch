@@ -158,7 +158,7 @@ pub(crate) fn draw(
     };
     let reader = &mut agent.reader;
     if dev.take_open_turns(reader.rows.len()) {
-        reader.view.open_turns(&reader.rows);
+        reader.view.open_turns(&reader.rows, dev.notes_only());
     }
     let mut actions = reader_view::show(ui, area, &reader.rows, &mut reader.view, facts);
     actions.extend(dev.drive_card(now, reader.view.live_mut()));

@@ -6,8 +6,8 @@
 //! - `TIDEWATCH_DEV_ANSWER=allow|deny`: click that permission button once, when the Reader shows one.
 //! - `TIDEWATCH_DEV_REPLY=<text>` after `TIDEWATCH_DEV_REPLY_AFTER=<seconds>` (default 0): send a
 //!   reply from the Reader's box once, when it is enabled.
-//! - `TIDEWATCH_DEV_TURNS=open`: open the list of calls under every agent turn once, as a click on a
-//!   chip does.
+//! - `TIDEWATCH_DEV_TURNS=open`: open the list of calls and the folded updates under every agent turn
+//!   once, as a click on a chip does; `notes` opens only the folded updates.
 //! - `TIDEWATCH_DEV_QUESTION=<steps>`: drive the live question card, one step every 0.4 s once it
 //!   shows. Steps, comma separated: `pick<N>` (the number key), `next`, `back`, `space`, `down`,
 //!   `all` (Go with your picks), `type:<text>` ("Something else" with that text), `send`, `skip`.
@@ -64,12 +64,15 @@ pub(crate) struct DevReader {
     question: VecDeque<CardStep>,
     question_at: f64,
     open_turns: bool,
+    notes_only: bool,
 }
 
 impl DevReader {
     pub(crate) fn from_env() -> Self {
         let var = |name: &str| std::env::var(name).ok();
-        let open_turns = var("TIDEWATCH_DEV_TURNS").as_deref() == Some("open");
+        let turns = var("TIDEWATCH_DEV_TURNS");
+        let open_turns = matches!(turns.as_deref(), Some("open" | "notes"));
+        let notes_only = turns.as_deref() == Some("notes");
         let parsed = Self::parse(
             var("TIDEWATCH_DEV_READER").as_deref(),
             var("TIDEWATCH_DEV_READER_KEY").as_deref(),
@@ -78,7 +81,7 @@ impl DevReader {
             var("TIDEWATCH_DEV_REPLY_AFTER").as_deref(),
             var("TIDEWATCH_DEV_QUESTION").as_deref(),
         );
-        Self { open_turns, ..parsed }
+        Self { open_turns, notes_only, ..parsed }
     }
 
     fn parse(
@@ -93,6 +96,7 @@ impl DevReader {
             question: question.map(card_steps).unwrap_or_default(),
             question_at: 0.0,
             open_turns: false,
+            notes_only: false,
             raw: reader == Some("raw"),
             key_after: key.and_then(|s| s.parse().ok()),
             answer: match answer {
@@ -113,6 +117,11 @@ impl DevReader {
             && self.reply.is_none()
             && self.question.is_empty()
             && !self.open_turns
+    }
+
+    /// Whether the turns open only their folded updates, not their calls.
+    pub(crate) fn notes_only(&self) -> bool {
+        self.notes_only
     }
 
     /// True once, when turns should be opened and there are rows to open them on.

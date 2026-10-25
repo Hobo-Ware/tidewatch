@@ -1,7 +1,9 @@
 //! Draws the Reader's chat: the user's messages as right-aligned bubbles and each agent turn as one
-//! left bubble with the tab's face beside it, one row of counted chips under it and, on a click,
-//! one mono list of every call of the turn. A turn still running shows a live pill instead of a
-//! bubble until its text arrives. The grouping and the words are `reader_turns`.
+//! left bubble with the tab's face beside it, holding the last thing the agent wrote, a chip over it
+//! for the progress notes written before (`12 updates`, a muted list on a click), one row of counted
+//! chips under it and, on a click, one mono list of every call of the turn. A turn still running
+//! shows a live pill under its latest text, or instead of a bubble until its text arrives. The
+//! grouping and the words are `reader_turns`.
 
 use std::collections::HashSet;
 use std::path::Path;
@@ -9,7 +11,8 @@ use std::time::Duration;
 
 use egui::{
     Align, Color32, CornerRadius, FontId, Frame, Label, Layout, Margin, OutputCommand, Painter,
-    Pos2, Rect, Response, RichText, Sense, Shape, Stroke, StrokeKind, TextStyle, Ui, pos2, vec2,
+    Pos2, Rect, Response, RichText, Sense, Shadow, Shape, Stroke, StrokeKind, TextStyle, Ui, pos2,
+    vec2,
 };
 use egui_commonmark::{CommonMarkCache, CommonMarkViewer};
 use jiff::tz::TimeZone;
@@ -34,8 +37,8 @@ const AVATAR_GAP: f32 = 12.0;
 const META_H: f32 = 16.0;
 const META_GAP: f32 = 6.0;
 const OUTER: f32 = 10.0;
-const CHIP_H: f32 = 26.0;
-const CHIP_GAP: f32 = 8.0;
+pub(crate) const CHIP_H: f32 = 26.0;
+pub(crate) const CHIP_GAP: f32 = 8.0;
 const LIVE_H: f32 = 32.0;
 const LIST_LINE_H: f32 = 18.0;
 const LIST_GAP: f32 = 4.0;
@@ -49,6 +52,8 @@ const USER_CODE_FILL: Color32 = Color32::from_black_alpha(90);
 const LIST_SLACK: f32 = 32.0;
 const TEXT_SLACK: f32 = 8.0;
 const NOTE_GAP: f32 = 6.0;
+const JUMP_SHADOW: Shadow =
+    Shadow { offset: [0, 3], blur: 10, spread: 0, color: Color32::from_black_alpha(140) };
 const LIVE_FILL: Color32 = Color32::from_rgb(0x12, 0x20, 0x1f);
 
 /// What a drawn turn needs besides its rows.
@@ -62,6 +67,23 @@ pub(crate) struct Scene<'a> {
     pub(crate) running: bool,
     /// A tool call waits for the user's permission.
     pub(crate) waiting: bool,
+}
+
+/// The "Jump to latest" pill, drawn at the top left of `slot`: an opaque fill, a 1 px line and a
+/// small shadow, so the text scrolling under it does not bleed through.
+pub(crate) fn jump_pill(ui: &mut Ui, slot: Rect, label: &str) -> Response {
+    let galley = ui.painter().layout_no_wrap(label.to_owned(), body(13.0), brand::TEAL_TEXT);
+    let rect = Rect::from_min_size(slot.min, galley.size() + vec2(24.0, 12.0));
+    let response = ui.interact(rect, ui.id().with(("jump-pill", label)), Sense::click());
+    let fill = if response.hovered() { brand::ITEM } else { brand::CARD };
+    let line = if response.hovered() { brand::FIELD_LINE } else { brand::CARD_LINE };
+    let painter = ui.painter();
+    let radius = CornerRadius::same(8);
+    painter.add(JUMP_SHADOW.as_shape(rect, radius));
+    painter.rect_filled(rect, radius, fill);
+    painter.rect_stroke(rect, radius, Stroke::new(1.0, line), StrokeKind::Inside);
+    painter.galley(rect.center() - galley.size() / 2.0, galley, brand::TEAL_TEXT);
+    response.on_hover_cursor(egui::CursorIcon::PointingHand)
 }
 
 /// The width a user bubble may take of a column `width` wide.
@@ -195,8 +217,8 @@ pub(crate) fn command_output(ui: &mut Ui, text: &str) {
     ui.add_space(NOTE_GAP);
 }
 
-/// Draws turn `group` of `list`: header, bubble, chips and the open list. Flips `open` for the
-/// turn when a chip is clicked.
+/// Draws turn `group` of `list`: header, the updates chip, bubble, chips and the open lists. Flips
+/// `open` for the turn when a chip is clicked.
 pub(crate) fn turn(
     ui: &mut Ui,
     scene: &Scene<'_>,
@@ -208,8 +230,11 @@ pub(crate) fn turn(
     let live = scene.running && !group.closed;
     let has_text = !group.texts.is_empty();
     let listing = open.contains(&group.key) && !group.calls.is_empty();
+    let notes_label = group.notes_label();
+    let notes_listing = open.contains(&group.notes_key()) && notes_label.is_some();
     let column = agent_width(width);
     let mut toggled = false;
+    let mut notes_toggled = false;
     ui.add_space(OUTER);
     ui.horizontal_top(|ui| {
         ui.spacing_mut().item_spacing = vec2(0.0, 0.0);
@@ -232,6 +257,14 @@ pub(crate) fn turn(
                 meta(ui, &head, Align::Min);
                 ui.add_space(META_GAP);
             }
+            if let Some(label) = &notes_label {
+                notes_toggled |= notes_chip(ui, label, notes_listing);
+                if notes_listing {
+                    ui.add_space(CHIP_GAP);
+                    notes_list(ui, list, group, column);
+                }
+                ui.add_space(CHIP_GAP);
+            }
             if has_text {
                 bubble(ui, list, group, cache, column);
             }
@@ -253,6 +286,9 @@ pub(crate) fn turn(
     ui.add_space(OUTER);
     if toggled {
         reader_turns::toggle(open, group.key);
+    }
+    if notes_toggled {
+        reader_turns::toggle(open, group.notes_key());
     }
 }
 
@@ -285,6 +321,7 @@ fn face(ui: &mut Ui, scene: &Scene<'_>) {
 }
 
 fn bubble(ui: &mut Ui, list: &[&Row], group: &Group, cache: &mut CommonMarkCache, column: f32) {
+    let Some(index) = group.answer() else { return };
     Frame::new()
         .fill(brand::CARD)
         .stroke(Stroke::new(1.0, brand::CARD_LINE))
@@ -293,15 +330,10 @@ fn bubble(ui: &mut Ui, list: &[&Row], group: &Group, cache: &mut CommonMarkCache
         .show(ui, |ui| {
             ui.set_width(column - f32::from(BUBBLE_PAD.left + BUBBLE_PAD.right) - 2.0);
             chat_text(ui, |ui| {
-                for (n, index) in group.texts.iter().enumerate() {
-                    if n > 0 {
-                        ui.add_space(8.0);
-                    }
-                    let row = list[*index];
-                    ui.push_id(row.seq, |ui| {
-                        agent_markdown(ui, cache, &row.text);
-                    });
-                }
+                let row = list[index];
+                ui.push_id(row.seq, |ui| {
+                    agent_markdown(ui, cache, &row.text);
+                });
             });
         });
 }
@@ -329,9 +361,23 @@ fn duration(ui: &mut Ui, text: &str) {
 
 fn chip_pill(ui: &mut Ui, chip: &Chip, open: bool) -> Response {
     let failed = chip.failed > 0;
-    let label = chip.label();
+    let icon = |painter: &Painter, center, ink| paint_icon(painter, center, chip.kind, ink);
+    pill_chip(ui, &chip.label(), (failed, open), icon)
+}
+
+/// The progress notes the agent wrote before its answer, folded: a click opens them.
+fn notes_chip(ui: &mut Ui, label: &str, open: bool) -> bool {
+    ui.horizontal(|ui| pill_chip(ui, label, (false, open), paint_notes_icon).clicked()).inner
+}
+
+fn pill_chip(
+    ui: &mut Ui,
+    label: &str,
+    (failed, open): (bool, bool),
+    icon: impl FnOnce(&Painter, Pos2, Color32),
+) -> Response {
     let ink = if failed { brand::ORANGE } else { brand::SOFT };
-    let galley = ui.painter().layout_no_wrap(label, body(13.0), ink);
+    let galley = ui.painter().layout_no_wrap(label.to_owned(), body(13.0), ink);
     let icon_w = 14.0;
     let width = 12.0 + icon_w + 6.0 + galley.size().x + 12.0;
     let (rect, response) = ui.allocate_exact_size(vec2(width, CHIP_H), Sense::click());
@@ -348,12 +394,7 @@ fn chip_pill(ui: &mut Ui, chip: &Chip, open: bool) -> Response {
     }
     painter.rect_stroke(rect, radius, Stroke::new(1.0, line), StrokeKind::Inside);
     let icon_ink = if failed { brand::ORANGE } else { brand::MUTED };
-    paint_icon(
-        painter,
-        pos2(rect.left() + 12.0 + icon_w / 2.0, rect.center().y),
-        chip.kind,
-        icon_ink,
-    );
+    icon(painter, pos2(rect.left() + 12.0 + icon_w / 2.0, rect.center().y), icon_ink);
     let text_at = pos2(rect.left() + 12.0 + icon_w + 6.0, rect.center().y - galley.size().y / 2.0);
     painter.galley(text_at, galley, ink);
     response.on_hover_cursor(egui::CursorIcon::PointingHand)
@@ -362,6 +403,13 @@ fn chip_pill(ui: &mut Ui, chip: &Chip, open: bool) -> Response {
 fn icon_point(center: Pos2, x: f32, y: f32) -> Pos2 {
     let s = 14.0 / 24.0;
     center + vec2((x - 12.0) * s, (y - 12.0) * s)
+}
+
+fn paint_notes_icon(painter: &Painter, center: Pos2, ink: Color32) {
+    let stroke = Stroke::new(1.4, ink);
+    for (y, end) in [(7.0, 20.0), (12.0, 20.0), (17.0, 13.0)] {
+        painter.line_segment([icon_point(center, 4.0, y), icon_point(center, end, y)], stroke);
+    }
 }
 
 fn paint_icon(painter: &Painter, center: Pos2, kind: ToolKind, ink: Color32) {
@@ -493,6 +541,23 @@ fn pill(ui: &mut Ui, verb: &str, command: Option<&str>, waiting: bool, max_w: f3
     if let Some(galley) = command_galley {
         painter.galley(pos2(x, body_rect.center().y - galley.size().y / 2.0), galley, brand::SOFT);
     }
+}
+
+fn notes_list(ui: &mut Ui, list: &[&Row], group: &Group, column: f32) {
+    Frame::new()
+        .fill(brand::SUNKEN)
+        .stroke(Stroke::new(1.0, brand::SIDEBAR_LINE))
+        .corner_radius(CornerRadius::same(10))
+        .inner_margin(Margin::symmetric(12, 8))
+        .show(ui, |ui| {
+            ui.set_width(column - 26.0);
+            ui.spacing_mut().item_spacing.y = NOTE_GAP;
+            for index in group.notes() {
+                ui.add(Label::new(
+                    RichText::new(list[*index].text.trim()).font(body(14.0)).color(brand::MUTED),
+                ));
+            }
+        });
 }
 
 fn call_list(ui: &mut Ui, root: Option<&Path>, list: &[&Row], group: &Group, column: f32) {
@@ -648,5 +713,34 @@ mod tests {
         for (natural, indented, room, want) in cases {
             assert_eq!(user_text_width(natural, indented, room), want, "{natural} {indented}");
         }
+    }
+
+    #[test]
+    fn the_jump_pill_is_an_opaque_card_with_a_line_and_a_shadow_under_it() {
+        let ctx = crate::fonts::test_context();
+        let raw = egui::RawInput {
+            screen_rect: Some(Rect::from_min_size(pos2(0.0, 0.0), vec2(400.0, 200.0))),
+            ..egui::RawInput::default()
+        };
+        let slot = Rect::from_min_size(pos2(50.0, 50.0), vec2(140.0, 30.0));
+        let out = ctx.run_ui(raw, |ui| {
+            jump_pill(ui, slot, "Jump to latest");
+        });
+        let rects: Vec<_> = out
+            .shapes
+            .iter()
+            .filter_map(|clipped| match &clipped.shape {
+                Shape::Rect(rect) => Some(rect.clone()),
+                _ => None,
+            })
+            .collect();
+        let card = rects.iter().position(|rect| rect.fill == brand::CARD).unwrap();
+        assert_eq!(rects[card].fill.a(), 255);
+        assert!(
+            rects
+                .iter()
+                .any(|rect| rect.stroke.width == 1.0 && rect.stroke.color == brand::CARD_LINE)
+        );
+        assert!(rects[..card].iter().any(|rect| rect.fill.a() < 255), "the shadow is under it");
     }
 }
