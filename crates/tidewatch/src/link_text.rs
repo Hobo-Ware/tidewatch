@@ -120,11 +120,37 @@ impl Laid {
     /// Paints at `pos` and answers the pointer over its links; `id` must differ per line.
     pub(crate) fn paint(&self, ui: &Ui, id: Id, pos: Pos2, fallback: Color32) {
         let hovered = self.interact(ui, id, pos);
-        let galley = match hovered {
+        ui.painter().galley(pos, self.galley_for(ui, hovered), fallback);
+    }
+
+    /// `paint`, and the text can be selected and copied; a click on a link still opens it.
+    pub(crate) fn paint_selectable(
+        &self,
+        ui: &Ui,
+        id: Id,
+        pos: Pos2,
+        fallback: Color32,
+    ) -> Response {
+        let rect = Rect::from_min_size(pos, self.size());
+        let selection = ui.interact(rect, id, Sense::click_and_drag());
+        let hovered = self.interact(ui, id, pos);
+        let galley = self.galley_for(ui, hovered);
+        LabelSelectionState::label_text_selection(
+            ui,
+            &selection,
+            pos,
+            galley,
+            fallback,
+            Stroke::NONE,
+        );
+        selection
+    }
+
+    fn galley_for(&self, ui: &Ui, hovered: Option<usize>) -> Arc<Galley> {
+        match hovered {
             Some(index) => ui.painter().layout_job(self.underlined(index)),
             None => self.galley.clone(),
-        };
-        ui.painter().galley(pos, galley, fallback);
+        }
     }
 
     fn interact(&self, ui: &Ui, id: Id, pos: Pos2) -> Option<usize> {

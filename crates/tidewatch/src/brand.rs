@@ -87,7 +87,28 @@ pub(crate) fn tint_visuals(ctx: &egui::Context) {
         v.hyperlink_color = TEAL_TEXT;
         v.widgets.hovered.bg_stroke = Stroke::new(1.0, TEAL.gamma_multiply(0.5));
         v.widgets.active.bg_stroke = Stroke::new(1.0, TEAL);
+        style.spacing.scroll = scroll_style();
+        style.interaction.selectable_labels = true;
     });
+}
+
+pub(crate) const SCROLL_GAP: f32 = 12.0;
+const SCROLL_EDGE: f32 = 2.0;
+const SCROLL_BAR_W: f32 = 8.0;
+pub(crate) const SCROLL_ROOM: f32 = SCROLL_GAP + SCROLL_BAR_W + SCROLL_EDGE;
+
+fn scroll_style() -> egui::style::ScrollStyle {
+    egui::style::ScrollStyle {
+        bar_width: SCROLL_BAR_W,
+        bar_outer_margin: SCROLL_EDGE,
+        floating_width: 3.0,
+        floating_allocated_width: SCROLL_ROOM,
+        dormant_handle_opacity: 0.22,
+        active_handle_opacity: 0.5,
+        interact_handle_opacity: 0.8,
+        interact_background_opacity: 0.15,
+        ..egui::style::ScrollStyle::floating()
+    }
 }
 
 #[cfg(test)]
@@ -133,5 +154,44 @@ mod tests {
         assert_eq!(v.selection.stroke.color, TEAL);
         assert_eq!(v.hyperlink_color, TEAL_TEXT);
         assert_eq!(v.widgets.active.bg_stroke.color, TEAL);
+    }
+
+    #[test]
+    fn scroll_bars_leave_a_gap_and_take_their_own_room() {
+        let ctx = egui::Context::default();
+        tint_visuals(&ctx);
+        let scroll = ctx.global_style().spacing.scroll;
+        assert_eq!(scroll.allocated_width(), SCROLL_ROOM);
+        assert!(SCROLL_ROOM - SCROLL_EDGE - scroll.bar_width >= SCROLL_GAP);
+    }
+
+    #[test]
+    fn a_scroll_area_keeps_its_content_clear_of_the_bar() {
+        let ctx = egui::Context::default();
+        tint_visuals(&ctx);
+        let raw = egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(
+                egui::Pos2::ZERO,
+                egui::vec2(400.0, 200.0),
+            )),
+            ..egui::RawInput::default()
+        };
+        let mut widths = Vec::new();
+        for _ in 0..3 {
+            let _ = ctx.run_ui(raw.clone(), |ui| {
+                egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
+                    widths.push(ui.available_width());
+                    ui.allocate_space(egui::vec2(10.0, 1000.0));
+                });
+            });
+        }
+        assert_eq!(widths.last().copied(), Some(400.0 - SCROLL_ROOM));
+    }
+
+    #[test]
+    fn labels_are_selectable_by_default() {
+        let ctx = egui::Context::default();
+        tint_visuals(&ctx);
+        assert!(ctx.global_style().interaction.selectable_labels);
     }
 }

@@ -166,6 +166,12 @@ only for the thin slice that truly needs a widget tree (focus moving on tab swit
   Sample both BEFORE the modals run this frame (rule 3 in §5). A new modal that skips either
   expression ships a key-leak bug.
 
+## 7. Selectable text and scroll room
+
+- **Text is selectable by default.** `ui.label` already is (`selectable_labels` stays on in `brand::tint_visuals`). Text painted with `painter.galley` or `painter.text` is not: use `selectable::galley` / `selectable::text` (or `Laid::paint_selectable`) for static text, and leave `painter` for text inside anything clickable (buttons, tabs, chips, rows, cards). Terminal selection is stdusk's; do not touch it.
+- A selectable run senses click and drag, so it takes the hover from whatever is under it. Put the tooltip on the run's `Response`, never on a hover-only rect beneath it.
+- **Scroll room comes from the style, not the call site.** `brand::scroll_style` reserves `SCROLL_ROOM` beside every bar. A view that sizes content from an outer rect (not the scroll ui's `available_width`) subtracts `brand::SCROLL_ROOM` itself, as `new_tab_layout::SCROLL_GUTTER` does.
+
 ## Checklist for any UI change
 
 - [ ] State classed persistent / derived / ephemeral, in the right place.
@@ -180,3 +186,4 @@ only for the thin slice that truly needs a widget tree (focus moving on tab swit
       `text_field`, `action_button`, …) - no hand-rolled `Frame`/`TextEdit`/`Button` styling; a
       text field that captures the keyboard gates pty input + focus (`pty_input_captured` +
       `hard_modal`, §6).
+- [ ] Static painted text is selectable; clickable text is not. Scroll content leaves `SCROLL_ROOM` beside the bar.

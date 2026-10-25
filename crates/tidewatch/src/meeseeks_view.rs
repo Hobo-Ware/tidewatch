@@ -10,6 +10,7 @@ use crate::brand;
 use crate::meeseeks_model::{Card, Look, STRUGGLE_BODY, Span, Struggling};
 use crate::reader_view::ellipsized;
 use crate::screen_kit::{Size, body, heading, mono, quiet_button};
+use crate::selectable;
 
 const RADIUS: u8 = 12;
 const PAD: f32 = 16.0;
@@ -104,8 +105,9 @@ fn stage_card(ui: &mut Ui, width: f32, card: &Card, placed: &mut Placed) {
     frame(ui, rect, brand::ITEM, brand::ITEM_LINE);
     let (left, right) = (rect.left() + PAD, rect.right() - PAD);
     let mut y = rect.top() + PAD;
-    painter.galley(pos2(left, y + (head_h - title.size().y) / 2.0), title, brand::TEXT);
-    painter.galley(
+    selectable::galley(ui, pos2(left, y + (head_h - title.size().y) / 2.0), title, brand::TEXT);
+    selectable::galley(
+        ui,
         pos2(right - meta.size().x, y + (head_h - meta.size().y) / 2.0),
         meta,
         brand::MUTED,
@@ -127,14 +129,14 @@ fn stage_card(ui: &mut Ui, width: f32, card: &Card, placed: &mut Placed) {
         let mut x = left;
         for (galley, (_, look)) in labels.into_iter().zip(&card.bars) {
             let width = galley.size().x;
-            painter.galley(pos2(x, y), galley, label_ink(*look));
+            selectable::galley(ui, pos2(x, y), galley, label_ink(*look));
             x += width + space;
         }
         y += label_h + GAP;
     }
     let sunken = Rect::from_min_size(pos2(left, y), vec2(inner, box_h));
     painter.rect_filled(sunken, CornerRadius::same(8), brand::SUNKEN);
-    painter.galley(sunken.min + vec2(BOX_PAD_X, BOX_PAD_Y), status, brand::SOFT);
+    selectable::galley(ui, sunken.min + vec2(BOX_PAD_X, BOX_PAD_Y), status, brand::SOFT);
     placed.status = Some(sunken);
 }
 
@@ -164,19 +166,21 @@ fn struggle_card(
     let (left, right) = (rect.left() + PAD, rect.right() - PAD);
     let mut y = rect.top() + STRUGGLE_PAD_Y;
     painter.circle_filled(pos2(left + DOT / 2.0, y + head_h / 2.0), DOT / 2.0, brand::ORANGE);
-    painter.galley(
+    selectable::galley(
+        ui,
         pos2(left + DOT + 10.0, y + (head_h - title.size().y) / 2.0),
         title,
         brand::TEXT,
     );
-    painter.galley(
+    selectable::galley(
+        ui,
         pos2(right - reason.size().x, y + (head_h - reason.size().y) / 2.0),
         reason,
         brand::ORANGE_SOFT,
     );
     y += head_h + 10.0;
     let text_h = text.size().y;
-    painter.galley(pos2(left, y), text, brand::ORANGE_SOFT);
+    selectable::galley(ui, pos2(left, y), text, brand::ORANGE_SOFT);
     y += text_h + 10.0;
     let row = Rect::from_min_size(pos2(left, y), vec2(inner, button_h));
     let mut action = None;

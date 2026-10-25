@@ -178,6 +178,7 @@ mod review_view;
 mod screen_kit;
 mod search_bar;
 mod segmented;
+mod selectable;
 mod session_glue;
 mod session_save;
 mod session_writer;
