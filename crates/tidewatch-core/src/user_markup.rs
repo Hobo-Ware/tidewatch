@@ -56,7 +56,7 @@ pub fn classify(text: &str) -> Record {
 /// chip `Image 1`, and a single line break stays a line break instead of folding into a space.
 #[must_use]
 pub fn chat_markdown(text: &str) -> String {
-    keep_line_breaks(&image_chips(text))
+    keep_line_breaks(&image_chips(&crate::github_html::scrub(text)))
 }
 
 /// Whether some line of `text` opens a list item or a quote, which the bubble indents.
