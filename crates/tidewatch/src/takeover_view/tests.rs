@@ -297,7 +297,7 @@ fn a_click_on_the_line_opens_the_list_below_it_and_a_second_folds_it() {
     assert!(!has(&folded, "Running elsewhere"));
 }
 
-fn view(blocked: Option<&'static str>) -> DialogView {
+fn view(yolo_note: Option<&str>) -> DialogView {
     DialogView {
         title: "Move retry-stage-gates to Tidewatch?".to_owned(),
         lines: ["one".to_owned(), "two".to_owned(), "three".to_owned()],
@@ -309,7 +309,7 @@ fn view(blocked: Option<&'static str>) -> DialogView {
         notes: vec![],
         offer_worktree: true,
         worktree: false,
-        blocked,
+        yolo_note: yolo_note.map(str::to_owned),
         confirm: "Move".to_owned(),
     }
 }
@@ -353,15 +353,14 @@ fn enter_moves_and_escape_cancels() {
 }
 
 #[test]
-fn a_blocked_dialog_does_not_move_on_enter_but_still_cancels() {
+fn a_dialog_with_a_yolo_note_still_moves_on_enter() {
     let ctx = ready_context();
-    let blocked = view(Some("YOLO only runs in a worktree."));
-    dialog_frame_once(&ctx, &blocked, vec![]);
-    dialog_frame_once(&ctx, &blocked, vec![]);
-    assert!(dialog_frame_once(&ctx, &blocked, vec![key(egui::Key::Enter)]).is_none());
+    let noted = view(Some("This folder is not a git repo, so it keeps running YOLO here."));
+    dialog_frame_once(&ctx, &noted, vec![]);
+    dialog_frame_once(&ctx, &noted, vec![]);
     assert!(matches!(
-        dialog_frame_once(&ctx, &blocked, vec![key(egui::Key::Escape)]),
-        Some(DialogOutcome::Cancel)
+        dialog_frame_once(&ctx, &noted, vec![key(egui::Key::Enter)]),
+        Some(DialogOutcome::Accept)
     ));
 }
 

@@ -119,7 +119,7 @@ impl Prepared {
 }
 
 pub fn prepare(input: &PrepareInput) -> Result<Prepared, PrepareError> {
-    prepare_with(input, None)
+    prepare_with(input, None, false)
 }
 
 /// [`prepare`] for a restored tab: the same files, environment and wiring, but the agent reopens
@@ -127,14 +127,28 @@ pub fn prepare(input: &PrepareInput) -> Result<Prepared, PrepareError> {
 /// `input.task` are ignored. A Gemini tab's generated settings are rewritten, because they name
 /// the listener of the run that wrote them.
 pub fn prepare_resume(input: &PrepareInput, session_id: &str) -> Result<Prepared, PrepareError> {
-    prepare_with(input, Some(session_id))
+    prepare_with(input, Some(session_id), false)
 }
 
-fn prepare_with(input: &PrepareInput, resume: Option<&str>) -> Result<Prepared, PrepareError> {
+/// [`prepare_resume`] for a session moved out of a folder that is not a git repo: a YOLO profile
+/// keeps its flags there, since no checkout is at stake. Nothing is written into the folder.
+pub fn prepare_resume_in_folder(
+    input: &PrepareInput,
+    session_id: &str,
+) -> Result<Prepared, PrepareError> {
+    prepare_with(input, Some(session_id), true)
+}
+
+fn prepare_with(
+    input: &PrepareInput,
+    resume: Option<&str>,
+    yolo_in_folder: bool,
+) -> Result<Prepared, PrepareError> {
     let wanted_style = Profile { house_style: true, ..input.profile.clone() };
     let profile =
         if input.meeseeks && !input.profile.house_style { &wanted_style } else { input.profile };
-    let bare = LaunchCtx { worktree_tab: input.worktree_tab, ..LaunchCtx::default() };
+    let bare =
+        LaunchCtx { worktree_tab: input.worktree_tab, yolo_in_folder, ..LaunchCtx::default() };
     launch_command(input.agent, profile, &bare)?;
 
     let mut notes = Vec::new();
@@ -190,6 +204,7 @@ fn prepare_with(input: &PrepareInput, resume: Option<&str>) -> Result<Prepared, 
         .map(|file| (PROGRESS_ENV.to_owned(), file.display().to_string()));
 
     let mut ctx = context(input, house_style, copilot_instructions_dir, guard_bin_dir, mcp_config);
+    ctx.yolo_in_folder = yolo_in_folder;
     if wiring == Wiring::Claude
         && let Some(json) = claude_settings_json(&ctx)
     {
@@ -237,6 +252,7 @@ fn context(
     LaunchCtx {
         worktree: input.dir.to_path_buf(),
         worktree_tab: input.worktree_tab,
+        yolo_in_folder: false,
         session_id: input.session_id.clone(),
         remote: input.remote.then(|| remote_name(input)),
         hooks: input.listener.clone(),
@@ -1254,6 +1270,20 @@ mod tests {
             prepare_resume(&input, SESSION),
             Err(PrepareError::Launch(LaunchError::YoloOutsideWorktree))
         );
+    }
+
+    #[test]
+    fn resuming_yolo_in_a_plain_folder_keeps_its_flags_and_writes_nothing_there() {
+        let fx = Fixture::new();
+        let table = AgentTable::builtin();
+        let yolo = profile("claude", Level::Yolo);
+        let input = PrepareInput {
+            worktree_tab: false,
+            ..resume_input(&fx, &table, "claude", &yolo, None)
+        };
+        let prepared = prepare_resume_in_folder(&input, SESSION).unwrap();
+        assert!(prepared.launch.args.iter().any(|a| a == "--dangerously-skip-permissions"));
+        assert!(!prepared.env.iter().any(|(key, _)| key == PUSH_PROTECTED_ENV));
     }
 
     #[test]

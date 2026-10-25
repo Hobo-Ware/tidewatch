@@ -12,7 +12,7 @@ use tidewatch_core::listener::{Listener, TabRegistration};
 use tidewatch_core::meeseeks::Meeseeks;
 use tidewatch_core::paths::TidewatchPaths;
 use tidewatch_core::prefs::{Prefs, ResumeAgents};
-use tidewatch_core::prepare::{PrepareInput, prepare_resume};
+use tidewatch_core::prepare::{PrepareInput, prepare_resume, prepare_resume_in_folder};
 use tidewatch_core::profiles::{Profile, Profiles};
 use tidewatch_core::restore::{self, RealDisk, RestoreEnv, WindowPlan, plan_window};
 use tidewatch_core::resume_mode::Why;
@@ -173,7 +173,9 @@ fn run_reopen(spec: &ReopenSpec) -> Reopened {
             generation: 0,
         })
     });
-    let prepared = prepare_resume(
+    let outside_git = spec.worktree.is_none() && crate::repo::Repo::discover(&spec.dir).is_none();
+    let resume = if outside_git { prepare_resume_in_folder } else { prepare_resume };
+    let prepared = resume(
         &PrepareInput {
             paths: &spec.paths,
             agent: &spec.agent,

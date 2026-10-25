@@ -269,13 +269,10 @@ fn a_batch_never_moves_into_a_worktree() {
 }
 
 #[test]
-fn move_all_idle_takes_idle_sessions_outside_stdusk_that_are_not_yolo() {
+fn move_all_idle_takes_idle_sessions_outside_stdusk() {
     let fixture = Fixture::new();
     let env = fixture.env(&everything);
-    let yolo = Session {
-        flags: Flags { level: Some(Level::Yolo), ..Flags::default() },
-        ..claude(4, Activity::Idle)
-    };
+    let yolo = yolo_of(Cli::Claude, 4);
     let mut takeover = takeover_with(vec![
         claude(1, Activity::Idle),
         running(Cli::Claude, 2, Activity::Idle, Host::Stdusk),
@@ -287,13 +284,13 @@ fn move_all_idle_takes_idle_sessions_outside_stdusk_that_are_not_yolo() {
     ]);
     let pids: Vec<_> =
         takeover.idle_movable(&env).iter().filter_map(|s| s.running().map(|r| r.pid)).collect();
-    assert_eq!(pids, [1, 6]);
+    assert_eq!(pids, [1, 4, 6]);
     takeover.armed.push(Armed { session: claude(6, Activity::Working), worktree: false });
     let pids: Vec<_> =
         takeover.idle_movable(&env).iter().filter_map(|s| s.running().map(|r| r.pid)).collect();
-    assert_eq!(pids, [1], "one that is already waiting is left alone");
+    assert_eq!(pids, [1, 4], "one that is already waiting is left alone");
     assert!(takeover.open_batch(&env));
-    assert!(takeover.confirm.as_ref().is_some_and(|c| c.batch && c.sessions.len() == 1));
+    assert!(takeover.confirm.as_ref().is_some_and(|c| c.batch && c.sessions.len() == 2));
     let mut none = takeover_with(vec![claude(3, Activity::Working)]);
     assert!(!none.open_batch(&env));
 }
@@ -417,7 +414,7 @@ fn the_dialog_shows_the_command_a_person_would_type() {
         ..claude(1, Activity::Idle)
     };
     assert_eq!(
-        preview_command(&env, &session).as_deref(),
+        preview_command(&env, &session, false).as_deref(),
         Some(
             format!(
                 "claude --resume {ID} --permission-mode acceptEdits --model opus --add-dir /tmp"
@@ -432,12 +429,12 @@ fn the_dialog_shows_the_command_a_person_would_type() {
         ..claude(1, Activity::Idle)
     };
     assert_eq!(
-        preview_command(&env, &gemini).as_deref(),
+        preview_command(&env, &gemini, false).as_deref(),
         Some("gemini --resume latest --approval-mode default")
     );
     let codex = Session { cli: Cli::Codex, flags: Flags::default(), ..claude(1, Activity::Idle) };
     assert_eq!(
-        preview_command(&env, &codex).as_deref(),
+        preview_command(&env, &codex, false).as_deref(),
         Some(
             format!("codex resume {ID} --sandbox read-only --ask-for-approval on-request").as_str()
         )
@@ -564,7 +561,7 @@ fn the_dialog_says_what_will_happen_for_each_kind_of_row() {
         idle.lines[2],
         "The Reader shows the whole history, and hooks, notes and PR cards work from here on."
     );
-    assert_eq!((idle.notes.len(), idle.blocked), (0, None));
+    assert_eq!((idle.notes.len(), idle.yolo_note), (0, None));
     let busy = open(&mut takeover, claude(1, Activity::Working), false);
     assert_eq!(busy.title, "Move session-1 to Tidewatch when it is idle?");
     assert_eq!(busy.confirm, "Move when idle");
@@ -616,33 +613,102 @@ fn the_worktree_box_is_offered_for_claude_in_a_repo_and_changes_the_second_line(
     );
 }
 
-#[test]
-fn yolo_cannot_move_without_a_worktree() {
-    let fixture = Fixture::new();
-    let env = fixture.env(&everything);
-    let yolo = Session {
+const NOT_A_REPO: &str =
+    "This folder is not a git repo, so it keeps running YOLO here as it did before.";
+
+fn yolo_of(cli: Cli, pid: u32) -> Session {
+    Session {
         flags: Flags { level: Some(Level::Yolo), ..Flags::default() },
-        ..claude(1, Activity::Idle)
-    };
-    let mut takeover = Takeover::default();
-    let view = |takeover: &mut Takeover, session: &Session, worktree| {
-        takeover.confirm =
-            Some(Confirm { sessions: vec![session.clone()], worktree, batch: false });
-        takeover.dialog_view(&env).unwrap()
-    };
-    let no_repo = view(&mut takeover, &yolo, false);
-    assert!(no_repo.blocked.is_some_and(|text| text.contains("cannot be moved into one")));
-    let mut roots = HashMap::new();
-    roots.insert(yolo.cwd.clone(), Some(yolo.cwd.clone()));
-    takeover.roots = roots;
-    let off = view(&mut takeover, &yolo, false);
-    assert!(off.blocked.is_some_and(|text| text.contains("Tick the box")));
-    assert_eq!(view(&mut takeover, &yolo, true).blocked, None);
-    assert_eq!(view(&mut takeover, &claude(2, Activity::Idle), false).blocked, None);
+        ..running(cli, pid, Activity::Idle, Host::Terminal)
+    }
 }
 
 #[test]
-fn the_batch_dialog_lists_every_session_and_leaves_yolo_out() {
+fn a_yolo_session_always_has_a_way_to_move() {
+    let fixture = Fixture::new();
+    let env = fixture.env(&everything);
+    let claude_yolo = yolo_of(Cli::Claude, 1);
+    let gemini_yolo = yolo_of(Cli::Gemini, 2);
+    let cases = [
+        ("not a repo", claude_yolo.clone(), false, false, Some(NOT_A_REPO.to_owned())),
+        ("repo, box ticked", claude_yolo.clone(), true, true, None),
+        (
+            "repo, box unticked",
+            claude_yolo.clone(),
+            true,
+            false,
+            Some("YOLO only runs in a worktree, so it moves here as Auto.".to_owned()),
+        ),
+        (
+            "repo, no worktree for this CLI",
+            gemini_yolo,
+            true,
+            false,
+            Some("YOLO only runs in a worktree, so it moves here as Auto.".to_owned()),
+        ),
+        ("not yolo", claude(3, Activity::Idle), true, false, None),
+    ];
+    for (why, session, repo, worktree, want) in cases {
+        let mut takeover = Takeover::default();
+        if repo {
+            takeover.roots.insert(session.cwd.clone(), Some(session.cwd.clone()));
+        }
+        takeover.confirm =
+            Some(Confirm { sessions: vec![session.clone()], worktree, batch: false });
+        let view = takeover.dialog_view(&env).unwrap();
+        assert_eq!(view.yolo_note, want, "{why}");
+    }
+}
+
+#[test]
+fn pressing_move_on_a_yolo_session_ticks_the_worktree_box_only_where_one_can_be_made() {
+    let fixture = Fixture::new();
+    let env = fixture.env(&everything);
+    let cases = [
+        ("claude in a repo", yolo_of(Cli::Claude, 1), true, true),
+        ("claude not in a repo", yolo_of(Cli::Claude, 2), false, false),
+        ("gemini in a repo", yolo_of(Cli::Gemini, 3), true, false),
+        ("plain claude in a repo", claude(4, Activity::Idle), true, false),
+    ];
+    for (why, session, repo, ticked) in cases {
+        let mut takeover = takeover_with(vec![session.clone()]);
+        if repo {
+            takeover.roots.insert(session.cwd.clone(), Some(session.cwd.clone()));
+        }
+        takeover.press(&env, &key_of(&session));
+        assert_eq!(takeover.confirm.as_ref().map(|c| c.worktree), Some(ticked), "{why}");
+    }
+}
+
+#[test]
+fn a_lowered_yolo_preview_shows_the_level_it_will_run_at() {
+    let fixture = Fixture::new();
+    let env = fixture.env(&everything);
+    let session = yolo_of(Cli::Claude, 1);
+    let yolo = preview_command(&env, &session, false).unwrap();
+    let lowered = preview_command(&env, &session, true).unwrap();
+    assert!(yolo.contains("--dangerously-skip-permissions"), "{yolo}");
+    assert!(!lowered.contains("--dangerously-skip-permissions"), "{lowered}");
+}
+
+#[test]
+fn a_yolo_session_moves_as_it_was_in_a_plain_folder_and_one_level_down_in_a_repo() {
+    let fixture = Fixture::new();
+    let session = yolo_of(Cli::Claude, 1);
+    let spec = MoveSpec { session, worktree: false, allow_quiet: false };
+    let dir = Path::new("/Users/me/code/acme");
+    let level_of = |other: bool| {
+        let plan = window_plan(&fixture.agents, Some(&fixture.profiles), &spec, (dir, other), None)
+            .unwrap();
+        let SavedTab::Agent(saved) = &plan.tabs[0].saved else { panic!("expected an agent tab") };
+        saved.level
+    };
+    assert_eq!(level_of(true), Level::Yolo);
+    assert_eq!(level_of(false), Level::Auto);
+}
+
+#[test]
+fn the_batch_dialog_lists_every_session_and_takes_yolo_in() {
     let fixture = Fixture::new();
     let env = fixture.env(&everything);
     let mut takeover = takeover_with(vec![claude(1, Activity::Idle), claude(2, Activity::Idle)]);
@@ -652,7 +718,33 @@ fn the_batch_dialog_lists_every_session_and_leaves_yolo_out() {
     assert_eq!(view.confirm, "Move all");
     assert_eq!(view.items.len(), 2);
     assert!(!view.offer_worktree);
-    assert!(view.notes[0].contains("YOLO sessions are not included"));
+    assert_eq!(view.yolo_note, None);
+    assert!(view.notes[0].contains("A YOLO session moves into a new worktree"));
+}
+
+#[test]
+fn move_all_idle_puts_a_yolo_session_in_a_worktree_only_where_one_can_be_made() {
+    let fixture = Fixture::new();
+    let env = fixture.env(&everything);
+    let in_repo = yolo_of(Cli::Claude, 1);
+    let gemini = yolo_of(Cli::Gemini, 2);
+    let plain_dir = Session { cwd: PathBuf::from("/Users/me/notes"), ..yolo_of(Cli::Claude, 3) };
+    let mut takeover = Takeover::default();
+    let mut roots = HashMap::new();
+    roots.insert(in_repo.cwd.clone(), Some(in_repo.cwd.clone()));
+    roots.insert(plain_dir.cwd.clone(), None);
+    takeover.finish_scan(Scanned {
+        sessions: vec![in_repo, gemini, plain_dir, claude(4, Activity::Idle)],
+        roots,
+        idents: HashMap::new(),
+    });
+    assert!(takeover.open_batch(&env));
+    let worktrees: Vec<_> = takeover
+        .accept()
+        .iter()
+        .filter_map(|spec| spec.session.running().map(|r| (r.pid, spec.worktree)))
+        .collect();
+    assert_eq!(worktrees, [(1, true), (2, false), (3, false), (4, false)]);
 }
 
 #[test]

@@ -1283,6 +1283,7 @@ mod tests {
         LaunchCtx {
             worktree: "/root/web-ab12cd/a-claude".into(),
             worktree_tab: true,
+            yolo_in_folder: false,
             session_id: Some("99999999-8888-7777-6666-555555555555".into()),
             remote: None,
             hooks: Some(HookListener {

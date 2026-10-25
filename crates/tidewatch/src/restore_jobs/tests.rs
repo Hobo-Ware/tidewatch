@@ -389,11 +389,20 @@ fn without_consent_a_resume_touches_no_cli_file() {
 }
 
 #[test]
-fn an_agent_that_cannot_be_prepared_comes_back_as_a_shell_with_the_reason() {
+fn a_yolo_agent_in_a_repo_without_its_worktree_comes_back_as_a_shell_with_the_reason() {
     let f = fixture();
     let (listener, _inbox) = Listener::start(f.paths.clone(), Box::new(|| {})).unwrap();
     let folder = f.home.join("notes");
     std::fs::create_dir_all(&folder).unwrap();
+    assert!(
+        std::process::Command::new("git")
+            .arg("init")
+            .arg("-q")
+            .arg(&folder)
+            .status()
+            .unwrap()
+            .success()
+    );
     let mut spec = reopen_spec(&f, Level::Yolo, Some(Arc::new(listener)));
     spec.worktree = None;
     spec.dir = folder.clone();
@@ -404,6 +413,21 @@ fn an_agent_that_cannot_be_prepared_comes_back_as_a_shell_with_the_reason() {
     let opened = done.result.ok().expect("the folder still opens");
     assert!(opened.started.is_none());
     assert_eq!(opened.worktree, None);
+}
+
+#[test]
+fn a_yolo_agent_moved_from_a_folder_outside_git_resumes_there_with_yolo() {
+    let f = fixture();
+    let (listener, _inbox) = Listener::start(f.paths.clone(), Box::new(|| {})).unwrap();
+    let folder = f.home.join("notes");
+    std::fs::create_dir_all(&folder).unwrap();
+    let mut spec = reopen_spec(&f, Level::Yolo, Some(Arc::new(listener)));
+    spec.worktree = None;
+    spec.dir = folder.clone();
+    spec.repo = folder;
+    let done = reopened(spec);
+    assert_eq!(done.note, None);
+    assert!(done.result.ok().expect("the folder opens").started.is_some());
 }
 
 #[test]
