@@ -5,7 +5,7 @@
 
 use std::path::{Path, PathBuf};
 
-use tidewatch_core::pr_cards::{Cards, MAX_AUTO_SENDS};
+use tidewatch_core::pr_cards::{Cards, send_cap};
 use tidewatch_core::pr_gh::Polled;
 use tidewatch_core::pr_prompt::{self, Message, short_step};
 use tidewatch_core::pr_status::{Body, Seen, Summary, Tone as PrTone, Via};
@@ -105,6 +105,19 @@ pub(crate) struct Facts<'a> {
     pub(crate) name: &'a str,
     /// The pull request of the branch and its head, as the tab's lookup found them.
     pub(crate) pr: Option<(u64, &'a str)>,
+    /// A YOLO agent or a Meeseeks (`autonomy::autonomous`): the watch acts on its own.
+    pub(crate) autonomous: bool,
+}
+
+/// Who answers the pull request's news on a tab, for the cards' buttons and notes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Handling {
+    /// The owner: every card keeps its buttons.
+    Owner,
+    /// The agent, through Auto-fix: the cards are a record.
+    Agent,
+    /// The agent, but the loop guard stopped the sends: the cards stay a record and one line says so.
+    Paused,
 }
 
 /// What a look needs to start.
@@ -134,6 +147,7 @@ pub(crate) struct Watch {
     ended: bool,
     pub(crate) pause: Option<Pause>,
     pub(crate) pending: Vec<Pending>,
+    pub(crate) autonomous: bool,
     pub(crate) cleanup: Cleanup,
     hold_until: Option<f64>,
     next_pending: u64,
@@ -154,6 +168,7 @@ impl Watch {
             ended: false,
             pause: None,
             pending: Vec::new(),
+            autonomous: false,
             cleanup: Cleanup::default(),
             hold_until: None,
             next_pending: 0,
@@ -174,6 +189,7 @@ impl Watch {
     pub(crate) fn loaded(&mut self, cards: Cards, now: f64) {
         self.ended = cards.seen.as_ref().is_some_and(|seen| seen.ended);
         self.cards = cards;
+        self.cards.drop_noise();
         self.stage = Stage::Ready;
         self.due = now;
     }
@@ -182,8 +198,46 @@ impl Watch {
         self.stage == Stage::Ready
     }
 
+    /// The tab's choices: its own once the owner set them, else the default, and for a tab that
+    /// runs on its own Auto-fix whatever the default says.
     pub(crate) fn policy(&self, default: GithubPrefs) -> GithubPrefs {
-        self.cards.policy_or(default)
+        match self.cards.policy {
+            Some(own) => own,
+            None if self.autonomous => GithubPrefs { mode: PrMode::Auto, ..default },
+            None => default,
+        }
+    }
+
+    fn cap(&self) -> u32 {
+        send_cap(self.autonomous)
+    }
+
+    /// The loop guard stopped a tab that runs on its own: it sends nothing more on this pull request.
+    fn capped(&self, default: GithubPrefs) -> bool {
+        self.autonomous
+            && self.policy(default).mode == PrMode::Auto
+            && self.cards.auto_sends >= self.cap()
+    }
+
+    pub(crate) fn handling(&self, default: GithubPrefs) -> Handling {
+        if !self.autonomous || self.policy(default).mode != PrMode::Auto {
+            Handling::Owner
+        } else if self.capped(default) {
+            Handling::Paused
+        } else {
+            Handling::Agent
+        }
+    }
+
+    /// The commit card whose commits a tab that runs on its own should push now.
+    pub(crate) fn push_fix_due(&self, default: GithubPrefs) -> Option<u64> {
+        if self.handling(default) == Handling::Owner {
+            return None;
+        }
+        let cards = self.cards.cards();
+        (0..cards.len())
+            .find(|&at| matches!(cards[at].body, Body::PushFix { .. }) && self.cards.is_current(at))
+            .map(|at| cards[at].id)
     }
 
     /// The tab's lookup found a pull request: follow it, and look again soon when its head moved
@@ -298,7 +352,7 @@ impl Watch {
         let Some(message) = pr_prompt::message(body, number) else { return Vec::new() };
         if policy.mode != PrMode::Auto
             || !pr_prompt::wanted(&policy, body)
-            || self.cards.auto_sends >= MAX_AUTO_SENDS
+            || self.cards.auto_sends >= self.cap()
         {
             return Vec::new();
         }
@@ -315,7 +369,11 @@ impl Watch {
         if self.pending.is_empty() || self.policy(default).mode != PrMode::Auto {
             return outs;
         }
-        if self.cards.auto_sends >= MAX_AUTO_SENDS {
+        if self.cards.auto_sends >= self.cap() {
+            if self.autonomous {
+                self.pending.clear();
+                return outs;
+            }
             self.fall_back_to_asking(default);
             return vec![Out::Toast(fall_back_text()), Out::Save];
         }
@@ -327,7 +385,7 @@ impl Watch {
         let pending = self.pending.remove(0);
         self.cards.auto_sends += 1;
         outs.extend(self.send(pending.message, Via::Auto, now, now_ms));
-        if self.cards.auto_sends >= MAX_AUTO_SENDS {
+        if self.cards.auto_sends >= self.cap() && !self.autonomous {
             self.fall_back_to_asking(default);
             outs.push(Out::Toast(fall_back_text()));
         }
@@ -462,7 +520,12 @@ impl Watch {
 }
 
 fn fall_back_text() -> String {
-    format!("Auto-fix sent {MAX_AUTO_SENDS} times on this pull request. Back to Ask me")
+    format!("Auto-fix sent {} times on this pull request. Back to Ask me", send_cap(false))
+}
+
+/// The one line a paused tab shows at the end of its timeline.
+pub(crate) fn paused_note() -> String {
+    format!("Auto-fix paused after {} sends on this pull request", send_cap(true))
 }
 
 /// The notification for a new card, `None` for the quiet ones.

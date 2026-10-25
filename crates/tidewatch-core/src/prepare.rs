@@ -289,7 +289,7 @@ fn write_agent_style(input: &PrepareInput, shared: &Path) -> std::io::Result<Pat
     let text = house_style::compose_for(
         &std::fs::read_to_string(shared)?,
         checklist::for_repo(paths, input.repo).as_deref(),
-        input.meeseeks,
+        house_style::Role::of(input.profile.level, input.meeseeks),
     );
     let file = paths.tab_house_style_file(input.repo, input.tab);
     write_atomic(&file, &text)?;
@@ -698,6 +698,17 @@ mod tests {
         assert!(text.contains("### 4. Done"));
         assert!(!text.contains("Must-do steps"));
         assert!(fx.paths.checklist_file().is_file(), "checklist.md is installed on first launch");
+    }
+
+    #[test]
+    fn a_yolo_agent_reads_the_autonomous_block_and_an_ask_agent_does_not() {
+        let fx = Fixture::new();
+        fx.run("claude", &profile("claude", Level::Auto), true, "", None).unwrap();
+        assert!(!agent_style(&fx).contains("You run autonomously"));
+        fx.run("claude", &profile("claude", Level::Yolo), true, "", None).unwrap();
+        let text = agent_style(&fx);
+        assert!(text.contains("## You run autonomously"), "{text}");
+        assert!(text.contains("product design and architecture choices"));
     }
 
     #[test]

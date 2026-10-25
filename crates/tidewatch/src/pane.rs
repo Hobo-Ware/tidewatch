@@ -5,6 +5,7 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 use tidewatch_core::agents::Level;
+use tidewatch_core::autonomy::autonomous;
 use tidewatch_core::meeseeks::Meeseeks;
 use tidewatch_core::prepare::Prepared;
 use tidewatch_core::worktree::Worktree;
@@ -97,6 +98,12 @@ impl AgentTab {
             remote: None,
             meeseeks: None,
         }
+    }
+
+    /// A YOLO agent or a Meeseeks: its PR watch, done check, due items and delivery act on their own.
+    pub(crate) fn autonomous(&self) -> bool {
+        let yolo = self.launched.as_ref().map(|launched| launched.level);
+        autonomous(yolo.unwrap_or(Level::Plan), self.meeseeks.is_some())
     }
 }
 

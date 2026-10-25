@@ -193,3 +193,29 @@ fn the_desktop_is_offered_each_item_until_one_goes_and_then_never_again_that_day
     assert_eq!(offered.len(), 4);
     assert_eq!(offered[0], ("Due today".to_owned(), "A\nheron".to_owned()));
 }
+
+#[test]
+fn a_tab_on_its_own_starts_each_due_item_once_a_day_one_at_a_time() {
+    let dues = due_items(day(17), &ledger(), at(), &Snoozes::default());
+    let key = |due: &Due| Key::new(Path::new("/work/web"), "heron", &due.what);
+    let mut started = Told::default();
+    let (first_key, first) = next_to_start(day(17), &dues, key, &started).unwrap();
+    assert_eq!(first.what, "Switch off the old webhook");
+    started.mark(first_key, day(17));
+    let (second_key, second) = next_to_start(day(17), &dues, key, &started).unwrap();
+    assert_eq!(second.what, "Late about item");
+    started.mark(second_key, day(17));
+    assert!(next_to_start(day(17), &dues, key, &started).is_none(), "both were asked today");
+    assert!(next_to_start(day(18), &dues, key, &started).is_some(), "a new day asks again");
+    assert!(next_to_start(day(17), &[], key, &started).is_none());
+}
+
+#[test]
+fn a_snoozed_item_is_not_started_for_a_tab_on_its_own_either() {
+    let mut snoozes = Snoozes::default();
+    snoozes.snooze(Key::new(at().0, at().1, "Switch off the old webhook"), day(17));
+    let dues = due_items(day(17), &ledger(), at(), &snoozes);
+    let key = |due: &Due| Key::new(at().0, at().1, &due.what);
+    let (_, next) = next_to_start(day(17), &dues, key, &Told::default()).unwrap();
+    assert_eq!(next.what, "Late about item");
+}

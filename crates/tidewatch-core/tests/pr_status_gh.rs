@@ -80,8 +80,8 @@ fn the_first_look_opens_the_card_and_reads_the_failures_of_each_failed_job() {
             _ => "other",
         })
         .collect();
-    assert_eq!(kinds, ["opened", "commented", "failed"]);
-    let Body::ChecksFailed { jobs, .. } = &polled.events[2].body else { panic!("no failure card") };
+    assert_eq!(kinds, ["opened", "failed"], "the CI bot's greeting is no card");
+    let Body::ChecksFailed { jobs, .. } = &polled.events[1].body else { panic!("no failure card") };
     let ubuntu = jobs.iter().find(|j| j.name == "build (ubuntu-latest)").unwrap();
     assert_eq!(
         ubuntu.step.as_deref(),
@@ -93,7 +93,7 @@ fn the_first_look_opens_the_card_and_reads_the_failures_of_each_failed_job() {
     );
     assert!(ubuntu.log.len() <= 12);
     assert!(ubuntu.log.iter().all(|line| !line.contains('\u{1b}')), "{:?}", ubuntu.log);
-    assert!(polled.summary.comments == 1 && !polled.checks_pending && !polled.ended);
+    assert!(polled.summary.comments == 0 && !polled.checks_pending && !polled.ended);
     let calls = gh.calls();
     assert!(calls[0].starts_with("pr view 13788 --json "), "{calls:?}");
     assert!(calls[0].ends_with(",commits"), "the first look counts the commits");

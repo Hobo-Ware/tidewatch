@@ -94,6 +94,8 @@ enum Entry {
 struct Tab {
     trigger: Trigger,
     entry: Option<Entry>,
+    /// The fix note a tab that runs on its own sent without a click, so the same failure is sent once.
+    auto_sent: Option<String>,
 }
 
 pub(crate) struct Done {
@@ -205,6 +207,22 @@ impl Host {
         }
     }
 
+    /// The fix note a tab that runs on its own sends now: its check found something to fix, the
+    /// agent may be asked (`blocked` is `ask_blocked`), and that same failure was not sent before.
+    pub(crate) fn auto_fix(&mut self, tab: u64, blocked: Option<&str>) -> Option<String> {
+        let tab = self.tabs.get_mut(&tab)?;
+        let Some(Entry::Report(report)) = &tab.entry else { return None };
+        let Some(note) = report.fix_note() else {
+            tab.auto_sent = None;
+            return None;
+        };
+        if blocked.is_some() || tab.auto_sent.as_ref() == Some(&note) {
+            return None;
+        }
+        tab.auto_sent = Some(note.clone());
+        Some(note)
+    }
+
     pub(crate) fn asked(&mut self, tab: u64) {
         if let Some(tab) = self.tabs.get_mut(&tab) {
             tab.trigger.forget_claim();
@@ -253,6 +271,57 @@ mod tests {
                 Vec::<u64>::new()
             );
         }
+    }
+
+    fn blocked_report(detail: &str) -> Entry {
+        let line = Line { kind: Kind::Pushed, status: Status::Fail, detail: detail.into() };
+        Entry::Report(Box::new(Report {
+            head: "abc".into(),
+            lines: vec![line],
+            unverified: Vec::new(),
+        }))
+    }
+
+    #[test]
+    fn a_fixable_problem_is_sent_once_when_the_agent_may_be_asked_and_a_new_one_is_sent_again() {
+        let mut host = Host::new(true, Fake::Off);
+        assert_eq!(host.auto_fix(1, None), None, "no tab, nothing to send");
+        host.tabs.entry(1).or_default().entry = Some(blocked_report("2 commits not pushed"));
+        let busy = Some("The agent is busy. Ask when it is idle");
+        assert_eq!(host.auto_fix(1, busy), None, "busy: wait, and do not spend the one send");
+        let note = host.auto_fix(1, None).unwrap();
+        assert_eq!(
+            note,
+            "The done check found: 2 commits not pushed. Please fix that and tell me when it is done."
+        );
+        assert_eq!(host.auto_fix(1, None), None, "the same failure goes once");
+        host.tabs.get_mut(&1).unwrap().entry = Some(blocked_report("3 commits not pushed"));
+        assert!(host.auto_fix(1, None).unwrap().contains("3 commits not pushed"));
+    }
+
+    #[test]
+    fn nothing_is_sent_for_a_passing_or_unfinished_check() {
+        let mut host = Host::new(true, Fake::Off);
+        let tab = host.tabs.entry(1).or_default();
+        tab.entry = Some(Entry::Checking { job: 1 });
+        assert_eq!(host.auto_fix(1, None), None);
+        let passing = Report {
+            head: "abc".into(),
+            lines: vec![Line { kind: Kind::Pushed, status: Status::Pass, detail: "ok".into() }],
+            unverified: Vec::new(),
+        };
+        host.tabs.get_mut(&1).unwrap().entry = Some(Entry::Report(Box::new(passing)));
+        assert_eq!(host.auto_fix(1, None), None);
+        host.tabs.get_mut(&1).unwrap().entry = Some(blocked_report("2 commits not pushed"));
+        assert!(host.auto_fix(1, None).is_some());
+        host.tabs.get_mut(&1).unwrap().entry = Some(Entry::Report(Box::new(Report {
+            head: "abc".into(),
+            lines: Vec::new(),
+            unverified: Vec::new(),
+        })));
+        assert_eq!(host.auto_fix(1, None), None);
+        host.tabs.get_mut(&1).unwrap().entry = Some(blocked_report("2 commits not pushed"));
+        assert!(host.auto_fix(1, None).is_some(), "fixed in between, so a return is new");
     }
 
     #[test]

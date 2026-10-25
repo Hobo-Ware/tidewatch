@@ -3,6 +3,7 @@
 
 use tidewatch_core::progress::Ledger;
 
+use std::path::Path;
 use std::time::Duration;
 
 use super::WAKE_SLACK_S;
@@ -10,14 +11,16 @@ use super::settings::open_in_editor;
 use super::{Tidewatch, wall_ms};
 use crate::agent_avatar;
 use crate::coming_up::{Row, coming_up};
-use crate::due::{Due, Key, ask_blocked, due_items, secs_to_midnight, tell_all};
+use crate::due::{
+    Due, Key, ask_blocked, ask_text, due_items, next_to_start, secs_to_midnight, tell_all,
+};
 use crate::job_glue;
 use crate::job_model::lane_line;
 use crate::note_send::ENTER_DELAY_SECS;
 use crate::notify;
 use crate::overview::Overview;
 use crate::overview_checklist::Source;
-use crate::pane::Body;
+use crate::pane::{AgentTab, Body};
 use crate::progress_glue::today;
 use crate::progress_model::look;
 use crate::progress_stale::{Live, is_stale};
@@ -153,8 +156,13 @@ impl Tidewatch {
             .map_or_else(Vec::new, |item| item.steps.iter().map(|step| step.mark).collect())
     }
 
-    /// The items due in tab `id` that the Reader offers: open, dated today or before, not snoozed.
+    /// The items due in tab `id` that the Reader offers: open, dated today or before, not snoozed. A
+    /// tab that runs on its own offers none: it is asked to start them (`drive_due_start`).
     pub(super) fn due_of(&self, id: u64) -> Vec<Due> {
+        if self.is_autonomous(id) { Vec::new() } else { self.due_items_of(id) }
+    }
+
+    fn due_items_of(&self, id: u64) -> Vec<Due> {
         let tab = self.tabs.items().iter().find(|tab| tab.id == id);
         let (Some(worktree), Some(known)) =
             (tab.and_then(|tab| tab.pane.worktree.as_ref()), self.progress.ledger(id))
@@ -216,6 +224,49 @@ impl Tidewatch {
         self.flow.queue_enter(tab, now);
         ctx.request_repaint_after(Duration::from_secs_f64(ENTER_DELAY_SECS + WAKE_SLACK_S));
         true
+    }
+
+    /// Asks each tab that runs on its own to start its due items, one at a time, only while the agent
+    /// is idle and once per item per day.
+    pub(super) fn drive_due_start(&mut self, ctx: &egui::Context, now: f64) {
+        if self.screenshot.is_some() {
+            return;
+        }
+        let today = today();
+        let ids: Vec<u64> = self
+            .tabs
+            .items()
+            .iter()
+            .filter(|tab| matches!(tab.pane.body, Body::Shell(_)))
+            .filter(|tab| tab.pane.agent.as_ref().is_some_and(AgentTab::autonomous))
+            .map(|tab| tab.id)
+            .collect();
+        for id in ids {
+            let status = self
+                .tabs
+                .items()
+                .iter()
+                .find(|t| t.id == id)
+                .and_then(|t| t.pane.agent.as_ref())
+                .map(|agent| agent.run.status().clone());
+            if ask_blocked(status.as_ref()).is_some() {
+                continue;
+            }
+            let dues = self.due_items_of(id);
+            let Some((key, text)) =
+                next_to_start(today, &dues, |due| self.key_of(id, due), &self.started)
+                    .map(|(key, due)| (key, ask_text(due)))
+            else {
+                continue;
+            };
+            if self.ask_agent(id, &text, ctx, now) {
+                self.started.mark(key, today);
+            }
+        }
+    }
+
+    fn key_of(&self, tab: u64, due: &Due) -> Key {
+        self.due_key(tab, &due.what).unwrap_or_else(|| Key::new(Path::new(""), "", &due.what))
     }
 
     /// Tells the desktop about each item that turned due, once a day, while the window is away.

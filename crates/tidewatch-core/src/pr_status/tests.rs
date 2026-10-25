@@ -115,7 +115,11 @@ fn a_real_failing_pull_request_reads_its_failures_reviews_and_comments() {
     assert_eq!(snap.reviews[0].state, ReviewState::Commented);
     let own: Vec<bool> = snap.comments.iter().map(|c| c.own).collect();
     assert_eq!(own, [false, true]);
-    assert_eq!(snap.summary().comments, 1, "your own comments are not counted");
+    assert_eq!(
+        snap.summary().comments,
+        0,
+        "a CI bot's status post and your own comments are not counted"
+    );
     assert_eq!(snap.summary().headline(), Some((Tone::Bad, "checks failed")));
 }
 
@@ -310,6 +314,32 @@ fn new_comments_by_others_make_cards_and_yours_do_not() {
     let (events, seen) = diff(Some(&seen), &snap, 99_000);
     assert_eq!(kinds(&events), ["commented"]);
     assert_eq!(events[0].at_ms, 900);
+    assert_eq!(look(&seen, &snap).0, Vec::<&str>::new());
+}
+
+#[test]
+fn a_bot_receipt_is_no_card_and_no_comment_in_the_count_but_a_real_comment_is() {
+    let mut snap = snapshot();
+    let (_, seen) = diff(None, &snap, 0);
+    let mut receipt = comment("c1", "chatgpt-codex-connector", false, 900);
+    receipt.body = "<!-- codex-review-receipt:v1 -->\n### Codex Review\n\n<details><summary>About Codex in GitHub</summary>Reviews are triggered when you open a pull request.</details>".into();
+    let mut deploy = comment("c2", "vercel[bot]", false, 910);
+    deploy.body = "Preview deployed".into();
+    snap.comments = vec![receipt, deploy, comment("c3", "reviewer", false, 920)];
+    let (events, seen) = diff(Some(&seen), &snap, 99_000);
+    assert_eq!(kinds(&events), ["commented"]);
+    assert_eq!(events[0].at_ms, 920);
+    assert_eq!(snap.summary().comments, 1);
+    assert_eq!(look(&seen, &snap).0, Vec::<&str>::new(), "the noise is seen, so it never returns");
+}
+
+#[test]
+fn a_review_bot_comment_with_a_note_of_nothing_found_is_no_card() {
+    let mut snap = snapshot();
+    let (_, seen) = diff(None, &snap, 0);
+    let mut noted = review("r1", "chatgpt-codex-connector", ReviewState::Commented, 500);
+    noted.body = "Codex Review: Didn't find any major issues.".into();
+    snap.reviews = vec![noted];
     assert_eq!(look(&seen, &snap).0, Vec::<&str>::new());
 }
 

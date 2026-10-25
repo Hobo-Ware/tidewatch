@@ -64,6 +64,7 @@ impl Merged {
             repo: &self.worktree.repo,
             name: "brave-otter",
             pr: None,
+            autonomous: false,
         }];
         let _ = self.host.tick(&facts, &self.paths, &self.ctx, 0.0, 0);
     }

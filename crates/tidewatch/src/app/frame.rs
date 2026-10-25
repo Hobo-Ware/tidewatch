@@ -87,13 +87,14 @@ impl Tidewatch {
         self.drive_avatar_choice(ctx);
         self.drive_jobs(ctx);
         self.drive_meeseeks(ctx, now);
-        self.drive_done_check(ctx);
+        self.drive_done_check(ctx, now);
         self.drive_keep_awake(ctx, now);
         self.drive_autofetch(ctx);
         self.drive_amphetamine(ctx, now);
         self.drive_checklist(ctx, now);
         self.drive_settings_sync(ctx, now);
         self.drive_due(ctx);
+        self.drive_due_start(ctx, now);
         self.drive_dev_scheduled(ctx);
         self.drive_dev_draft(ctx, now);
         self.drive_restore(ctx, now, None);

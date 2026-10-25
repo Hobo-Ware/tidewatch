@@ -199,6 +199,7 @@ pub(crate) struct Tidewatch {
     snoozes: due::Snoozes,
     dev_open_scheduled: Option<String>,
     told: due::Told,
+    started: due::Told,
     runs: workflow_glue::Host,
     run_asks: Vec<(u64, Vec<Exec>)>,
     build_asks: Vec<Asked>,
@@ -397,6 +398,7 @@ impl Tidewatch {
                 .ok()
                 .filter(|name| !name.is_empty()),
             told: due::Told::default(),
+            started: due::Told::default(),
             runs: workflow_glue::Host::new(),
             run_asks: Vec::new(),
             build_asks: Vec::new(),

@@ -1,4 +1,5 @@
 use super::*;
+use tidewatch_core::pr_cards::{MAX_AUTO_SENDS, MAX_AUTONOMOUS_SENDS};
 use tidewatch_core::pr_status::{Decision, Event, Job, ReviewComment, State, SummaryChecks};
 use tidewatch_core::status::Reason;
 
@@ -492,4 +493,162 @@ fn only_a_clean_second_check_lets_the_removal_go() {
     assert_eq!(watch.cleanup, Cleanup::Checked(dirty));
     assert_eq!(watch.checked(true, Err("gone".into())), []);
     assert_eq!(watch.cleanup, Cleanup::Failed("gone".into()));
+}
+
+fn on_its_own() -> Watch {
+    let mut watch = ready(Some(42));
+    watch.autonomous = true;
+    watch
+}
+
+fn commented() -> Body {
+    Body::Commented { author: "rev".into(), text: "why?".into(), url: String::new() }
+}
+
+fn changes_requested() -> Body {
+    Body::ChangesRequested { author: "rev".into(), body: "rename it".into(), comments: Vec::new() }
+}
+
+#[test]
+fn a_tab_that_runs_on_its_own_is_auto_fix_whatever_the_default_and_the_owner_can_still_change_it() {
+    for mode in [PrMode::Ask, PrMode::Off, PrMode::Auto] {
+        let default = GithubPrefs { mode, reviews: false, ..GithubPrefs::default() };
+        let mut watch = on_its_own();
+        let policy = watch.policy(default);
+        assert_eq!(policy.mode, PrMode::Auto, "{mode:?}");
+        assert!(!policy.reviews, "the default's tick boxes still apply");
+        assert_eq!(ready(Some(42)).policy(default).mode, mode, "an ordinary tab keeps the default");
+        watch.set_policy(GithubPrefs { mode: PrMode::Ask, ..default }, 0.0);
+        assert_eq!(watch.policy(default).mode, PrMode::Ask, "the popover wins");
+    }
+}
+
+#[test]
+fn comments_review_changes_failed_checks_and_conflicts_go_to_an_idle_agent_without_a_click() {
+    let default = GithubPrefs::default();
+    let news = [
+        (commented(), "Comment"),
+        (changes_requested(), "Review"),
+        (failed(), "CI failure"),
+        (Body::Conflict { base: "main".into() }, "Conflict"),
+    ];
+    for (body, tag) in news {
+        let mut watch = on_its_own();
+        watch.observe(&AgentStatus::Done);
+        watch.look_started();
+        let outs = watch.polled(Ok(polled(vec![body], false, false)), default, "t", 5.0, 9_000);
+        assert_eq!(pasted(&outs).len(), 1, "{tag}");
+        assert_eq!(watch.cards.auto_sends, 1, "{tag}");
+        let Body::Sent { via, tag: sent, .. } = &watch.cards.cards().last().unwrap().body else {
+            panic!("{tag}: no record of the send")
+        };
+        assert_eq!((*via, sent.as_str()), (Via::Auto, tag));
+    }
+}
+
+#[test]
+fn a_busy_agent_gets_the_news_when_it_is_idle_and_not_before() {
+    let default = GithubPrefs::default();
+    let mut watch = on_its_own();
+    watch.observe(&AgentStatus::Working);
+    watch.look_started();
+    let outs = watch.polled(Ok(polled(vec![commented()], false, false)), default, "t", 5.0, 9_000);
+    assert_eq!(pasted(&outs), Vec::<&str>::new());
+    assert_eq!(watch.pending.len(), 1);
+    watch.observe(&AgentStatus::Done);
+    assert_eq!(pasted(&watch.flush(default, 7.0, 9_100)).len(), 1);
+}
+
+#[test]
+fn the_loop_guard_of_a_tab_on_its_own_is_ten_sends_and_then_it_pauses_without_asking() {
+    let default = GithubPrefs::default();
+    let mut watch = on_its_own();
+    for round in 0..MAX_AUTONOMOUS_SENDS {
+        watch.observe(&AgentStatus::Done);
+        watch.look_started();
+        let outs = watch.polled(
+            Ok(polled(vec![failed()], false, false)),
+            default,
+            "t",
+            f64::from(round) * 100.0,
+            0,
+        );
+        assert_eq!(pasted(&outs).len(), 1, "round {round}");
+        assert!(!outs.iter().any(|o| matches!(o, Out::Toast(_))), "no toast, round {round}");
+        watch.observe(&AgentStatus::Working);
+    }
+    assert_eq!(watch.cards.auto_sends, MAX_AUTONOMOUS_SENDS);
+    assert_eq!(watch.policy(default).mode, PrMode::Auto, "no fall back to Ask me");
+    assert_eq!(watch.handling(default), Handling::Paused);
+    watch.observe(&AgentStatus::Done);
+    watch.look_started();
+    let outs = watch.polled(Ok(polled(vec![failed()], false, false)), default, "t", 9_000.0, 0);
+    assert_eq!(pasted(&outs), Vec::<&str>::new(), "paused");
+    assert_eq!(watch.pending, [], "nothing waits for a button either");
+    assert!(!outs.iter().any(|o| matches!(o, Out::Toast(_))));
+    assert_eq!(paused_note(), "Auto-fix paused after 10 sends on this pull request");
+}
+
+#[test]
+fn a_new_pull_request_lifts_the_pause() {
+    let default = GithubPrefs::default();
+    let mut watch = on_its_own();
+    watch.cards.auto_sends = MAX_AUTONOMOUS_SENDS;
+    assert_eq!(watch.handling(default), Handling::Paused);
+    watch.learn(43, "h", 1.0);
+    assert_eq!(watch.handling(default), Handling::Agent);
+}
+
+#[test]
+fn who_handles_the_news_follows_the_tab_and_the_mode_the_owner_left_it_in() {
+    let default = GithubPrefs::default();
+    let cases = [
+        (false, None, Handling::Owner),
+        (false, Some(PrMode::Auto), Handling::Owner),
+        (true, None, Handling::Agent),
+        (true, Some(PrMode::Auto), Handling::Agent),
+        (true, Some(PrMode::Ask), Handling::Owner),
+        (true, Some(PrMode::Off), Handling::Owner),
+    ];
+    for (autonomous, mode, want) in cases {
+        let mut watch = ready(Some(42));
+        watch.autonomous = autonomous;
+        if let Some(mode) = mode {
+            watch.set_policy(GithubPrefs { mode, ..default }, 0.0);
+        }
+        assert_eq!(watch.handling(default), want, "{autonomous} {mode:?}");
+    }
+}
+
+#[test]
+fn commits_the_agent_made_after_a_message_are_pushed_by_a_tab_on_its_own_and_offered_to_others() {
+    let default = GithubPrefs::default();
+    let mut mine = on_its_own();
+    let mut other = ready(Some(42));
+    for watch in [&mut mine, &mut other] {
+        watch.committed(Some(("abc".into(), 2)), 5_000);
+    }
+    let id = mine.cards.cards().last().unwrap().id;
+    assert_eq!(mine.push_fix_due(default), Some(id));
+    assert_eq!(other.push_fix_due(default), None);
+    mine.cards.handle(id);
+    assert_eq!(mine.push_fix_due(default), None, "once, then it is handled");
+}
+
+#[test]
+fn a_review_bot_receipt_saved_by_an_older_version_is_not_loaded() {
+    let mut cards = Cards::default();
+    cards.add(
+        10,
+        Body::Commented {
+            author: "chatgpt-codex-connector".into(),
+            text: "<!-- codex-review-receipt:v1 -->".into(),
+            url: String::new(),
+        },
+    );
+    cards.add(20, commented());
+    let mut watch = Watch::new(PathBuf::from("/state/pr_cards.json"));
+    watch.take_load();
+    watch.loaded(cards, 0.0);
+    assert_eq!(watch.cards.cards().len(), 1);
 }
