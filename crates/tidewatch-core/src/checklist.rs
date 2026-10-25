@@ -1,5 +1,6 @@
-//! The checklist template every agent's progress ledger starts from: `checklist.md` in the settings
-//! folder (installed like `house-style.md`), or the file a repo's `.tidewatch.toml` names.
+//! The must-do items every agent is asked to include as steps in its progress ledger: `checklist.md`
+//! in the settings folder (installed like `house-style.md`), or the file a repo's `.tidewatch.toml`
+//! names. Optional: with neither, an agent plans its own steps under the four stages.
 
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -11,7 +12,16 @@ use crate::test_command::checklist_path;
 /// Largest template text that goes in front of an agent, in bytes.
 const MAX_TEMPLATE_BYTES: usize = 16 * 1024;
 
+/// What a new `checklist.md` holds: a note and no items, so the default asks for nothing extra.
 pub const DEFAULT_CHECKLIST: &str = "\
+<!-- Must-do steps for every task, one per line, for example:
+- [ ] Run the full test suite before the PR
+Tidewatch asks each agent to add them as steps where they fit. -->
+";
+
+/// The text older installs were given as `checklist.md`: the ten phases. A file that still holds
+/// exactly this is not a list the user wrote, so it counts as no file.
+const PREVIOUS_DEFAULT: &str = "\
 ### 1. Understand and decide
 - [ ] Restate the goal in one line and name any open decision (ask before building when it is the owner's call)
 - [ ] Read the code that owns the behavior, plus the repo rules for that area
@@ -74,23 +84,41 @@ pub fn ensure(paths: &TidewatchPaths) -> std::io::Result<PathBuf> {
     Ok(file)
 }
 
-fn usable(file: &Path) -> Option<String> {
+fn without_notes(text: &str) -> String {
+    let mut out = String::new();
+    let mut rest = text;
+    while let Some(open) = rest.find("<!--") {
+        out.push_str(&rest[..open]);
+        match rest[open..].find("-->") {
+            Some(close) => rest = &rest[open + close + "-->".len()..],
+            None => return out,
+        }
+    }
+    out.push_str(rest);
+    out
+}
+
+/// The must-do items in `file`, notes in `<!-- -->` left out. `None` when the file is missing,
+/// too large, holds nothing but notes and blanks, or still holds the previous default.
+#[must_use]
+pub fn must_dos(file: &Path) -> Option<String> {
     let text = std::fs::read_to_string(file).ok()?;
     if text.len() > MAX_TEMPLATE_BYTES {
         eprintln!("tidewatch: {} is over {MAX_TEMPLATE_BYTES} bytes; not using it", file.display());
         return None;
     }
-    (!text.trim().is_empty()).then(|| format!("{}\n", text.trim_end()))
+    let items = without_notes(&text);
+    let items = items.trim();
+    (!items.is_empty() && items != PREVIOUS_DEFAULT.trim()).then(|| format!("{items}\n"))
 }
 
-/// The template for `repo`: the file its `.tidewatch.toml` names, else `checklist.md`, else the
-/// default text. A file that is missing, empty or too large falls through to the next.
+/// The must-do items for `repo`: the file its `.tidewatch.toml` names, else `checklist.md`. A file
+/// that has none falls through to the next; `None` when neither has any.
 #[must_use]
-pub fn for_repo(paths: &TidewatchPaths, repo: &Path) -> String {
+pub fn for_repo(paths: &TidewatchPaths, repo: &Path) -> Option<String> {
     checklist_path(repo)
-        .and_then(|file| usable(&file))
-        .or_else(|| usable(&paths.checklist_file()))
-        .unwrap_or_else(|| DEFAULT_CHECKLIST.to_owned())
+        .and_then(|file| must_dos(&file))
+        .or_else(|| must_dos(&paths.checklist_file()))
 }
 
 #[cfg(test)]
@@ -115,38 +143,50 @@ mod tests {
     }
 
     #[test]
-    fn the_default_is_ten_phases_of_open_items_and_the_closing_rule() {
-        let phases = checklist_phases(DEFAULT_CHECKLIST);
-        let titles: Vec<_> = phases.iter().map(|p| (p.number, p.title.as_str())).collect();
-        assert_eq!(
-            titles,
-            [
-                (Some(1), "Understand and decide"),
-                (Some(2), "Build"),
-                (Some(3), "Gate"),
-                (Some(4), "Validate against production"),
-                (Some(5), "Preview"),
-                (Some(6), "PR"),
-                (Some(7), "Review"),
-                (Some(8), "Ship"),
-                (Some(9), "Verify live"),
-                (Some(10), "Close out"),
-            ]
-        );
-        let counts: Vec<_> = phases.iter().map(|p| p.items.len()).collect();
-        assert_eq!(counts, [4, 4, 3, 2, 2, 2, 4, 2, 3, 3]);
-        assert!(phases.iter().flat_map(|p| &p.items).all(|item| item.mark == Mark::Todo));
-        assert_eq!(
-            phases[9].text,
-            ["Phases that do not apply are marked skipped with a reason, never dropped."]
-        );
-        assert!(phases[..9].iter().all(|p| p.text.is_empty()));
+    fn the_default_asks_for_nothing_and_ships_as_plain_ascii_without_dashes() {
+        let (_home, paths) = paths();
+        std::fs::create_dir_all(paths.config_dir()).unwrap();
+        std::fs::write(paths.checklist_file(), DEFAULT_CHECKLIST).unwrap();
+        assert_eq!(must_dos(&paths.checklist_file()), None);
+        assert_eq!(for_repo(&paths, repo_with(&[]).path()), None);
+        assert!(DEFAULT_CHECKLIST.is_ascii());
+        assert!(!DEFAULT_CHECKLIST.contains(" -- "));
     }
 
     #[test]
-    fn the_default_ships_publicly_so_it_is_plain_ascii_without_dashes() {
-        assert!(DEFAULT_CHECKLIST.is_ascii());
-        assert!(!DEFAULT_CHECKLIST.contains(" -- "));
+    fn the_previous_default_is_the_ten_phases_and_counts_as_no_file() {
+        let phases = checklist_phases(PREVIOUS_DEFAULT);
+        assert_eq!(phases.len(), 10);
+        assert_eq!(phases[3].title, "Validate against production");
+        assert!(phases.iter().flat_map(|p| &p.items).all(|item| item.mark == Mark::Todo));
+        let (_home, paths) = paths();
+        std::fs::create_dir_all(paths.config_dir()).unwrap();
+        std::fs::write(paths.checklist_file(), PREVIOUS_DEFAULT).unwrap();
+        assert_eq!(for_repo(&paths, repo_with(&[]).path()), None);
+        let edited = PREVIOUS_DEFAULT.replace("Preview", "Look");
+        std::fs::write(paths.checklist_file(), &edited).unwrap();
+        assert_eq!(
+            for_repo(&paths, repo_with(&[]).path()),
+            Some(edited.trim_end().to_owned() + "\n")
+        );
+    }
+
+    #[test]
+    fn notes_are_left_out_of_the_items() {
+        let cases = [
+            ("<!-- note -->\n- [ ] a\n", Some("- [ ] a\n")),
+            ("- [ ] a\n<!-- one\ntwo -->\n- [ ] b\n", Some("- [ ] a\n\n- [ ] b\n")),
+            ("- [ ] a\n<!-- never closed\n- [ ] b\n", Some("- [ ] a\n")),
+            ("<!-- only a note -->\n\n", None),
+            ("  \n", None),
+            ("", None),
+        ];
+        for (text, want) in cases {
+            let (_home, paths) = paths();
+            std::fs::create_dir_all(paths.config_dir()).unwrap();
+            std::fs::write(paths.checklist_file(), text).unwrap();
+            assert_eq!(must_dos(&paths.checklist_file()).as_deref(), want, "{text:?}");
+        }
     }
 
     #[test]
@@ -155,7 +195,7 @@ mod tests {
         let file = ensure(&paths).unwrap();
         assert_eq!(file, paths.checklist_file());
         assert_eq!(std::fs::read_to_string(&file).unwrap(), DEFAULT_CHECKLIST);
-        for edited in ["### 1. Mine\n- [ ] x\n", ""] {
+        for edited in ["### 1. Mine\n- [ ] x\n", PREVIOUS_DEFAULT, ""] {
             std::fs::write(&file, edited).unwrap();
             ensure(&paths).unwrap();
             assert_eq!(std::fs::read_to_string(&file).unwrap(), edited);
@@ -172,34 +212,33 @@ mod tests {
     }
 
     #[test]
-    fn a_repo_without_an_override_gets_the_settings_file_or_else_the_default() {
+    fn a_repo_without_an_override_gets_the_settings_file_or_else_nothing() {
         let (_home, paths) = paths();
         let repo = repo_with(&[]);
-        assert_eq!(for_repo(&paths, repo.path()), DEFAULT_CHECKLIST);
+        assert_eq!(for_repo(&paths, repo.path()), None);
         std::fs::create_dir_all(paths.config_dir()).unwrap();
-        std::fs::write(paths.checklist_file(), "### 1. Mine\n- [ ] a\n\n\n").unwrap();
-        assert_eq!(for_repo(&paths, repo.path()), "### 1. Mine\n- [ ] a\n");
+        std::fs::write(paths.checklist_file(), "- [ ] a\n\n\n").unwrap();
+        assert_eq!(for_repo(&paths, repo.path()).as_deref(), Some("- [ ] a\n"));
         std::fs::write(paths.checklist_file(), "  \n").unwrap();
-        assert_eq!(for_repo(&paths, repo.path()), DEFAULT_CHECKLIST);
+        assert_eq!(for_repo(&paths, repo.path()), None);
     }
 
     #[test]
     fn the_repos_own_file_wins_and_a_bad_one_falls_back() {
         let (_home, paths) = paths();
         std::fs::create_dir_all(paths.config_dir()).unwrap();
-        std::fs::write(paths.checklist_file(), "### 1. Settings\n- [ ] s\n").unwrap();
+        std::fs::write(paths.checklist_file(), "- [ ] s\n").unwrap();
         let toml = "checklist = \"docs/steps.md\"\n";
-        let own =
-            repo_with(&[(".tidewatch.toml", toml), ("docs/steps.md", "### 1. Own\n- [ ] o\n")]);
-        assert_eq!(for_repo(&paths, own.path()), "### 1. Own\n- [ ] o\n");
+        let own = repo_with(&[(".tidewatch.toml", toml), ("docs/steps.md", "- [ ] o\n")]);
+        assert_eq!(for_repo(&paths, own.path()).as_deref(), Some("- [ ] o\n"));
         let missing = repo_with(&[(".tidewatch.toml", toml)]);
-        assert_eq!(for_repo(&paths, missing.path()), "### 1. Settings\n- [ ] s\n");
+        assert_eq!(for_repo(&paths, missing.path()).as_deref(), Some("- [ ] s\n"));
         let empty = repo_with(&[(".tidewatch.toml", toml), ("docs/steps.md", "\n")]);
-        assert_eq!(for_repo(&paths, empty.path()), "### 1. Settings\n- [ ] s\n");
+        assert_eq!(for_repo(&paths, empty.path()).as_deref(), Some("- [ ] s\n"));
         let huge = "x".repeat(MAX_TEMPLATE_BYTES + 1);
         let big = repo_with(&[(".tidewatch.toml", toml), ("docs/steps.md", &huge)]);
-        assert_eq!(for_repo(&paths, big.path()), "### 1. Settings\n- [ ] s\n");
+        assert_eq!(for_repo(&paths, big.path()).as_deref(), Some("- [ ] s\n"));
         let outside = repo_with(&[(".tidewatch.toml", "checklist = \"../steps.md\"\n")]);
-        assert_eq!(for_repo(&paths, outside.path()), "### 1. Settings\n- [ ] s\n");
+        assert_eq!(for_repo(&paths, outside.path()).as_deref(), Some("- [ ] s\n"));
     }
 }

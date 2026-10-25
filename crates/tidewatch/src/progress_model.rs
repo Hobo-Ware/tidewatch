@@ -1,6 +1,7 @@
 //! What the progress screens say about a ledger, as plain data: ring, bars, rows, tags (pure).
 
 use tidewatch_core::progress::{Entry, Ledger, Mark, Phase, PhaseState, State, real};
+use tidewatch_core::stages::{self, Group};
 
 use crate::progress_stale::fresh;
 
@@ -48,7 +49,7 @@ pub(crate) struct Ring {
     pub(crate) total: usize,
 }
 
-/// Where the work is: the current phase's place among the phases and its name.
+/// Where the work is: the current stage's place among the stages and its name.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct Step {
     pub(crate) number: usize,
@@ -56,12 +57,34 @@ pub(crate) struct Step {
     pub(crate) name: String,
 }
 
+/// The bars of a ledger and which one the work is in: the four stages, with the phases of an older
+/// ledger gathered under theirs, and any phase with another name as a bar of its own.
+fn grouped(ledger: &Ledger) -> (Vec<Group>, Option<usize>) {
+    let groups = stages::groups(&ledger.checklist);
+    let current = ledger
+        .current_phase_index()
+        .and_then(|phase| groups.iter().position(|group| group.phases.contains(&phase)));
+    (groups, current)
+}
+
+fn phases_of<'a>(ledger: &'a Ledger, group: &Group) -> Vec<&'a Phase> {
+    group.phases.iter().filter_map(|index| ledger.checklist.get(*index)).collect()
+}
+
+fn group_label(ledger: &Ledger, group: &Group) -> String {
+    group.stage.map_or_else(
+        || phases_of(ledger, group).first().map_or_else(String::new, |phase| phase_label(phase)),
+        |stage| stage.label().to_owned(),
+    )
+}
+
 pub(crate) fn step(ledger: &Ledger) -> Option<Step> {
-    let index = ledger.current_phase_index()?;
+    let (groups, current) = grouped(ledger);
+    let index = current?;
     Some(Step {
         number: index + 1,
-        of: ledger.checklist.len(),
-        name: phase_label(ledger.checklist.get(index)?),
+        of: groups.len(),
+        name: group_label(ledger, groups.get(index)?),
     })
 }
 
@@ -104,32 +127,38 @@ fn phase_label(phase: &Phase) -> String {
 }
 
 pub(crate) fn bars(ledger: &Ledger) -> Vec<Bar> {
-    let current = ledger.current_phase_index();
-    ledger
-        .checklist
+    let (groups, current) = grouped(ledger);
+    groups
         .iter()
         .enumerate()
-        .map(|(index, phase)| {
-            let counts = phase.counts();
-            let kind = if phase.state() == PhaseState::Skipped {
+        .map(|(index, group)| {
+            let phases = phases_of(ledger, group);
+            let (done, total) = phases
+                .iter()
+                .map(|phase| phase.counts())
+                .fold((0, 0), |(done, total), counts| (done + counts.done, total + counts.total));
+            let kind = if phases.iter().all(|phase| phase.state() == PhaseState::Skipped) {
                 BarKind::Skipped
             } else {
                 BarKind::Plain
             };
-            let under_way = phase.items.iter().filter(|item| item.mark == Mark::Doing).count();
-            let fill = if counts.total == 0 {
+            let under_way = phases
+                .iter()
+                .flat_map(|phase| &phase.items)
+                .filter(|item| item.mark == Mark::Doing)
+                .count();
+            let fill = if total == 0 {
                 0.0
             } else {
-                ((counts.done as f32 + 0.5 * under_way as f32) / counts.total as f32)
-                    .clamp(0.0, 1.0)
+                ((done as f32 + 0.5 * under_way as f32) / total as f32).clamp(0.0, 1.0)
             };
             Bar {
-                label: phase_label(phase),
+                label: group_label(ledger, group),
                 fill,
                 kind,
                 current: current == Some(index),
-                done: counts.done,
-                total: counts.total,
+                done,
+                total,
             }
         })
         .collect()
@@ -143,17 +172,17 @@ pub(crate) struct ItemRow<'a> {
 }
 
 pub(crate) fn item_rows(ledger: &Ledger) -> Vec<ItemRow<'_>> {
-    ledger.current_phase().map_or_else(Vec::new, |phase| {
-        phase
-            .items
-            .iter()
-            .map(|item| ItemRow {
-                mark: item.mark,
-                text: item.text.as_str(),
-                why: item.why.as_deref().map(str::trim).filter(|why| !why.is_empty()),
-            })
-            .collect()
-    })
+    let (groups, current) = grouped(ledger);
+    let Some(group) = current.and_then(|index| groups.get(index)) else { return Vec::new() };
+    phases_of(ledger, group)
+        .into_iter()
+        .flat_map(|phase| &phase.items)
+        .map(|item| ItemRow {
+            mark: item.mark,
+            text: item.text.as_str(),
+            why: item.why.as_deref().map(str::trim).filter(|why| !why.is_empty()),
+        })
+        .collect()
 }
 
 /// How many of `total` rows show, and how many hide behind "Show all".
@@ -231,16 +260,16 @@ pub(crate) fn updated(now_ms: i64, then_ms: Option<i64>, stale: bool) -> Option<
 }
 
 fn phase_name(ledger: &Ledger) -> String {
-    ledger.current_phase().map_or_else(
+    step(ledger).map_or_else(
         || {
             let said = ledger.status.phase.trim();
             said.strip_prefix("phase").map_or(said, str::trim).to_owned()
         },
-        phase_label,
+        |step| step.name,
     )
 }
 
-/// The tab ring's tooltip: the phase and how many items are done.
+/// The tab ring's tooltip: the stage and how many items are done.
 pub(crate) fn tab_tip(ledger: &Ledger) -> String {
     let counts = ledger.counts();
     let phase = phase_name(ledger);
@@ -342,7 +371,7 @@ mod tests {
         Ledger::parse(text)
     }
 
-    const MIDDLE: &str = "# Goal\nShip it\n\n## Status\nphase: 2\nstate: working\nnote: writing the validator\n\n## Checklist\n### 1. Understand\n- [x] Read\n- [x] Decide\n### 2. Build\n- [x] Skeleton\n- [~] Validator -- half done\n- [ ] Tests\n- [-] Docs -- not needed\n### 3. Gate\n- [-] Lint -- no config\n### 4. Close out\n- [ ] Commit\n";
+    const MIDDLE: &str = "# Goal\nShip it\n\n## Status\nphase: 2\nstate: working\nnote: writing the validator\n\n## Checklist\n### 1. Understand\n- [x] Read\n- [x] Decide\n### 2. Build\n- [x] Skeleton\n- [~] Validator -- half done\n- [ ] Tests\n- [-] Docs -- not needed\n### 3. PR\n- [-] Open the PR -- local only\n### 4. Done\n- [ ] Commit\n";
 
     #[test]
     fn the_tone_follows_the_state_and_blockers() {
@@ -392,8 +421,8 @@ mod tests {
     }
 
     #[test]
-    fn the_step_is_the_current_phase_among_the_phases() {
-        let first = "# Goal\nx\n\n## Status\nphase: 1 Understand\n\n## Checklist\n### 1. Understand\n- [~] a\n### 2. Build\n- [ ] b\n### 3. Gate\n- [ ] c\n### 4. Close out\n- [ ] d\n";
+    fn the_step_is_the_current_stage_among_the_four() {
+        let first = "# Goal\nx\n\n## Status\nphase: 1 Understand\n\n## Checklist\n### 1. Understand\n- [~] a\n### 2. Build\n- [ ] b\n### 3. PR\n- [ ] c\n### 4. Done\n- [ ] d\n";
         let want = Step { number: 1, of: 4, name: "Understand".to_owned() };
         assert_eq!(step(&ledger(first)), Some(want));
         assert_eq!(
@@ -401,6 +430,57 @@ mod tests {
             Some((2, "Build".to_owned()))
         );
         assert_eq!(step(&ledger("# Goal\nx\n")), None);
+    }
+
+    const OLD_TEN: &str = "# Goal\nShip it\n\n## Status\nphase: 4\nstate: working\nnote: timing the query\n\n## Checklist\n### 1. Understand and decide\n- [x] Restate\n### 2. Build\n- [x] Change\n- [x] Test\n### 3. Gate\n- [x] Lint\n### 4. Validate against production\n- [~] Time it -- twice\n- [ ] Compare counts\n### 5. Preview\n- [-] Stub -- no UI\n### 6. PR\n- [ ] Open\n### 7. Review\n- [ ] Wait for CI\n### 8. Ship\n- [ ] Merge\n### 9. Verify live\n- [ ] Errors\n### 10. Close out\n- [ ] Report\n";
+
+    #[test]
+    fn an_old_ten_phase_ledger_draws_as_the_four_stages_with_its_items_carried_along() {
+        let old = ledger(OLD_TEN);
+        assert_eq!(
+            step(&old),
+            Some(Step { number: 2, of: 4, name: "Build".to_owned() }),
+            "phase 4 is Validate against production"
+        );
+        let seen: Vec<_> = bars(&old)
+            .iter()
+            .map(|bar| (bar.label.clone(), bar.done, bar.total, bar.fill, bar.current))
+            .collect();
+        assert_eq!(
+            seen,
+            [
+                ("Understand".to_owned(), 1, 1, 1.0, false),
+                ("Build".to_owned(), 3, 5, 0.7, true),
+                ("PR".to_owned(), 0, 2, 0.0, false),
+                ("Done".to_owned(), 0, 3, 0.0, false),
+            ]
+        );
+        let rows: Vec<_> = item_rows(&old).iter().map(|row| row.text).collect();
+        assert_eq!(rows, ["Change", "Test", "Lint", "Time it", "Compare counts", "Stub"]);
+        assert_eq!(tab_tip(&old), "Build - 4/11 done");
+        assert_eq!(card_line(&old), "Build \u{b7} timing the query");
+        assert_eq!(ring(&old).total, 11, "the ring still counts every item");
+    }
+
+    #[test]
+    fn a_phase_with_another_name_is_a_bar_of_its_own_between_the_stages() {
+        let mixed = ledger(
+            "# Goal\nx\n\n## Status\nphase: 2 Deploy\n\n## Checklist\n### 1. Understand\n- [x] a\n### 2. Deploy\n- [~] b\n### 3. Build\n- [ ] c\n",
+        );
+        let labels: Vec<_> =
+            bars(&mixed).iter().map(|bar| (bar.label.clone(), bar.current)).collect();
+        assert_eq!(
+            labels,
+            [
+                ("Understand".to_owned(), false),
+                ("Deploy".to_owned(), true),
+                ("Build".to_owned(), false)
+            ]
+        );
+        assert_eq!(
+            step(&mixed).map(|step| (step.number, step.of, step.name)),
+            Some((2, 3, "Deploy".to_owned()))
+        );
     }
 
     #[test]
@@ -413,8 +493,8 @@ mod tests {
             [
                 ("Understand", 1.0, BarKind::Plain, false),
                 ("Build", 0.5, BarKind::Plain, true),
-                ("Gate", 0.0, BarKind::Skipped, false),
-                ("Close out", 0.0, BarKind::Plain, false),
+                ("PR", 0.0, BarKind::Skipped, false),
+                ("Done", 0.0, BarKind::Plain, false),
             ]
         );
     }

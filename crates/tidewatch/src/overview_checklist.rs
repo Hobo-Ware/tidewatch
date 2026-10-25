@@ -1,17 +1,20 @@
-//! The Overview's checklist row: the active template's phases, where the template comes from and
-//! the file Edit opens. The template is read on a job thread, again while the Overview shows.
+//! The Overview's checklist row: the four stages, or the must-do items of the list in use when there
+//! is one, where the list comes from and the file Edit opens. Read on a job thread, again while the
+//! Overview shows.
 
 use std::path::{Path, PathBuf};
 
 use tidewatch_core::checklist;
 use tidewatch_core::paths::TidewatchPaths;
 use tidewatch_core::progress::checklist_phases;
+use tidewatch_core::stages::Stage;
 use tidewatch_core::test_command::checklist_path;
 
 use crate::jobs::Jobs;
 
-const MAX_TEMPLATE_BYTES: u64 = 16 * 1024;
 const REFRESH_SECS: f64 = 3.0;
+/// Items shown as chips before the rest fold into one `+N more`.
+const MAX_ITEM_CHIPS: usize = 8;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Source {
@@ -23,7 +26,7 @@ pub(crate) enum Source {
 impl Source {
     pub(crate) fn caption(self) -> &'static str {
         match self {
-            Self::Default => "Task to done \u{b7} default",
+            Self::Default => "Four stages \u{b7} default",
             Self::Yours => "Your own list",
             Self::Repo => "This repo's list",
         }
@@ -44,28 +47,41 @@ pub(crate) struct Checklist {
     pub(crate) file: PathBuf,
 }
 
-fn usable(file: &Path) -> bool {
-    std::fs::metadata(file).is_ok_and(|meta| meta.len() <= MAX_TEMPLATE_BYTES)
-        && std::fs::read_to_string(file).is_ok_and(|text| !text.trim().is_empty())
+fn stage_chips() -> Vec<Chip> {
+    (1..)
+        .zip(Stage::ALL)
+        .map(|(number, stage)| Chip { number: Some(number), title: stage.label().to_owned() })
+        .collect()
 }
 
-fn is_the_default(file: &Path) -> bool {
-    std::fs::read_to_string(file)
-        .is_ok_and(|text| text.trim() == checklist::DEFAULT_CHECKLIST.trim())
+fn item_chips(text: &str) -> Vec<Chip> {
+    let items: Vec<String> = checklist_phases(text)
+        .into_iter()
+        .flat_map(|phase| phase.items)
+        .map(|item| item.text)
+        .collect();
+    let hidden = items.len().saturating_sub(MAX_ITEM_CHIPS);
+    let more = (hidden > 0).then(|| format!("+{hidden} more"));
+    items
+        .into_iter()
+        .take(MAX_ITEM_CHIPS)
+        .chain(more)
+        .map(|title| Chip { number: None, title })
+        .collect()
 }
 
 pub(crate) fn load(paths: &TidewatchPaths, repo: &Path) -> Checklist {
-    let own = checklist_path(repo).filter(|file| usable(file));
+    let own = checklist_path(repo).filter(|file| checklist::must_dos(file).is_some());
     let config = paths.checklist_file();
     let (source, file) = match own {
         Some(file) => (Source::Repo, file),
-        None if usable(&config) && !is_the_default(&config) => (Source::Yours, config),
+        None if checklist::must_dos(&config).is_some() => (Source::Yours, config),
         None => (Source::Default, config),
     };
-    let chips = checklist_phases(&checklist::for_repo(paths, repo))
-        .into_iter()
-        .map(|phase| Chip { number: phase.number, title: phase.title })
-        .collect();
+    let chips = checklist::for_repo(paths, repo)
+        .map(|text| item_chips(&text))
+        .filter(|chips| !chips.is_empty())
+        .unwrap_or_else(stage_chips);
     Checklist { chips, source, file }
 }
 
@@ -128,17 +144,18 @@ mod tests {
     }
 
     #[test]
-    fn with_no_file_the_default_template_shows_and_edit_opens_the_settings_file() {
+    fn with_no_file_the_four_stages_show_and_edit_opens_the_settings_file() {
         let (_home, paths) = home();
         let repo = tempfile::tempdir().unwrap();
         let list = load(&paths, repo.path());
         assert_eq!(list.source, Source::Default);
         assert_eq!(list.file, paths.checklist_file());
-        assert_eq!(list.chips.len(), 10);
+        assert_eq!(titles(&list), ["Understand", "Build", "PR", "Done"]);
         assert_eq!(
-            (list.chips[0].number, list.chips[0].title.as_str()),
-            (Some(1), "Understand and decide")
+            list.chips.iter().map(|chip| chip.number).collect::<Vec<_>>(),
+            [Some(1), Some(2), Some(3), Some(4)]
         );
+        assert_eq!(Source::Default.caption(), "Four stages \u{b7} default");
     }
 
     #[test]
@@ -148,6 +165,34 @@ mod tests {
         let repo = tempfile::tempdir().unwrap();
         let list = load(&paths, repo.path());
         assert_eq!((list.source, list.file), (Source::Default, paths.checklist_file()));
+        assert_eq!(list.chips.len(), 4);
+    }
+
+    #[test]
+    fn a_list_with_many_items_shows_eight_chips_and_a_count_of_the_rest() {
+        let (_home, paths) = home();
+        std::fs::create_dir_all(paths.config_dir()).unwrap();
+        let items = (1..=11).map(|n| format!("- [ ] step {n}\n")).collect::<Vec<_>>().concat();
+        std::fs::write(paths.checklist_file(), items).unwrap();
+        let repo = tempfile::tempdir().unwrap();
+        let list = load(&paths, repo.path());
+        let shown = titles(&list);
+        assert_eq!(shown.len(), 9);
+        assert_eq!(
+            (shown[0].as_str(), shown[7].as_str(), shown[8].as_str()),
+            ("step 1", "step 8", "+3 more")
+        );
+        assert!(list.chips.iter().all(|chip| chip.number.is_none()));
+    }
+
+    #[test]
+    fn a_list_without_items_still_shows_the_stages() {
+        let (_home, paths) = home();
+        std::fs::create_dir_all(paths.config_dir()).unwrap();
+        std::fs::write(paths.checklist_file(), "Always ask before deleting anything.\n").unwrap();
+        let repo = tempfile::tempdir().unwrap();
+        let list = load(&paths, repo.path());
+        assert_eq!((list.source, list.chips.len()), (Source::Yours, 4));
     }
 
     #[test]
@@ -160,7 +205,7 @@ mod tests {
         let yours = load(&paths, repo.path());
         assert_eq!(
             (yours.source, titles(&yours)),
-            (Source::Yours, vec!["Plan".into(), "Ship".into()])
+            (Source::Yours, vec!["a".to_owned(), "b".to_owned()])
         );
         assert_eq!(yours.file, paths.checklist_file());
 
@@ -169,7 +214,7 @@ mod tests {
         std::fs::create_dir_all(repo.path().join("docs")).unwrap();
         std::fs::write(repo.path().join("docs/list.md"), "### 1. Only\n- [ ] x\n").unwrap();
         let own = load(&paths, repo.path());
-        assert_eq!((own.source, titles(&own)), (Source::Repo, vec!["Only".to_owned()]));
+        assert_eq!((own.source, titles(&own)), (Source::Repo, vec!["x".to_owned()]));
         assert_eq!(own.file, repo.path().join("docs/list.md"));
     }
 
@@ -198,7 +243,7 @@ mod tests {
             host.tick(Some(&paths), repo.path(), true, 1.5, &ctx);
             std::thread::sleep(Duration::from_millis(5));
         }
-        assert_eq!(host.of(repo.path()).unwrap().chips.len(), 10);
+        assert_eq!(host.of(repo.path()).unwrap().chips.len(), 4);
         assert!(host.of(Path::new("/elsewhere")).is_none());
         assert_eq!(host.asked.as_ref().unwrap().1, 1.0, "the second tick did not ask again");
     }

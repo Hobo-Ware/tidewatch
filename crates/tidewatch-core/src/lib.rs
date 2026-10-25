@@ -87,6 +87,7 @@ pub mod session;
 pub mod session_id;
 pub mod settings_sync;
 pub mod setup_recipe;
+pub mod stages;
 pub mod start_base;
 pub mod status;
 pub mod test_command;

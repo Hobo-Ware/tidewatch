@@ -106,17 +106,17 @@ pub fn copilot_instructions_md(house_style: &str) -> String {
 }
 
 #[must_use]
-pub fn compose(house_style: &str, checklist: &str) -> String {
-    compose_for(house_style, checklist, false)
+pub fn compose(house_style: &str, must_dos: Option<&str>) -> String {
+    compose_for(house_style, must_dos, false)
 }
 
 #[must_use]
-pub fn compose_for(house_style: &str, checklist: &str, meeseeks: bool) -> String {
+pub fn compose_for(house_style: &str, must_dos: Option<&str>, meeseeks: bool) -> String {
     let one_task = if meeseeks { format!("{MEESEEKS_GUIDANCE}\n") } else { String::new() };
     format!(
         "{}\n\n{TOOL_GUIDANCE}\n{one_task}{}",
         house_style.trim_end(),
-        progress_prompt::section(checklist)
+        progress_prompt::section(must_dos)
     )
 }
 
@@ -212,12 +212,13 @@ mod tests {
 
     #[test]
     fn compose_appends_the_ledger_format_after_whatever_the_user_wrote() {
-        let checklist = "### 1. Mine\n- [ ] only this\n";
+        let checklist = Some("- [ ] only this\n");
         for mine in ["be brief\n", "be brief", "be brief\n\n\n", ""] {
             let text = compose(mine, checklist);
             assert!(text.starts_with(mine.trim_end()), "{mine:?}");
             assert!(text.contains("## Progress ledger format\n"), "{mine:?}");
-            assert!(text.contains("## Checklist\n### 1. Mine\n- [ ] only this\n\n## Decisions"));
+            assert!(text.contains("## Checklist\n### 1. Understand\n"));
+            assert!(text.ends_with("never stages:\n\n- [ ] only this\n"));
             assert!(text.ends_with('\n'));
         }
         assert!(compose(DEFAULT_HOUSE_STYLE, checklist).contains("`get_progress` first"));
@@ -227,7 +228,7 @@ mod tests {
     fn the_tool_guidance_reaches_agents_whatever_the_users_file_says() {
         let old_style =
             "# Tidewatch house style\n\nOld rules, written before the job lines existed.\n";
-        let checklist = "### 1. Mine\n- [ ] only this\n";
+        let checklist = Some("- [ ] only this\n");
         for mine in [old_style, "", DEFAULT_HOUSE_STYLE] {
             let text = compose(mine, checklist);
             assert_eq!(text.matches("report_job").count(), 1, "{mine:?}");
@@ -242,7 +243,7 @@ mod tests {
 
     #[test]
     fn a_meeseeks_gets_its_one_task_block_between_the_tool_guidance_and_the_ledger_format() {
-        let checklist = "### 1. Mine\n- [ ] only this\n";
+        let checklist = Some("- [ ] only this\n");
         let plain = compose("be brief", checklist);
         assert!(!plain.contains("Meeseeks") && !plain.contains("meeseeks_done"));
         assert_eq!(compose_for("be brief", checklist, false), plain);
