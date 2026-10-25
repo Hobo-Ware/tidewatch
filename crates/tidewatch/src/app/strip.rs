@@ -1,7 +1,7 @@
 //! The tab strip: overview button, repo chip (a menu of the repos, Open repo and Close repo), the repo's main checkout as an icon, leftovers chip, the agent tabs, new tab button, and at the right end the update chip and the settings button.
 
 use egui::layers::ShapeIdx;
-use egui::{CornerRadius, Frame, Margin, Shape, pos2, vec2};
+use egui::{CornerRadius, Frame, Margin, Shape, Stroke, StrokeKind, pos2, vec2};
 use stdusk_core::progress::Progress;
 use stdusk_core::terminal::{CmdState, PtyTerm};
 use stdusk_egui::ui::{TAB_PAD_X, TAB_SLOT_W, TabMetrics, draw_tab_sized, icons};
@@ -32,23 +32,21 @@ pub(crate) mod pill;
 mod repo_chip;
 
 pub(crate) const STRIP_H: f32 = 48.0;
-pub(crate) const TAB_H: f32 = 40.0;
-pub(crate) const ICON_BOX: f32 = 40.0;
-pub(crate) const ICON_GLYPH: f32 = 24.0;
-const ICON_GLYPH_SMALL: f32 = 22.0;
-const ICON_RADIUS: f32 = 8.0;
+pub(crate) const TAB_H: f32 = 36.0;
+pub(crate) const ICON_BOX: f32 = 36.0;
+pub(crate) const ICON_GLYPH: f32 = 22.0;
+const ROUND_RADIUS: f32 = 18.0;
 const TAB_FONT_PX: f32 = 14.0;
-const STRIP_VERTICAL_MARGIN: i8 = 4;
+const STRIP_VERTICAL_MARGIN: i8 = 6;
 const STRIP_SIDE_MARGIN: i8 = 8;
 const STRIP_GAP: f32 = 4.0;
 const STRIP_CORNER: u8 = 10;
-const TAB_RADIUS: u8 = 8;
-const TAB_UNDERLINE_H: f32 = 2.0;
-const TAB_UNDERLINE_INSET: f32 = 8.0;
-const TAB_BAR_W: f32 = 2.0;
-const TAB_BAR_INSET: f32 = 8.0;
-const AVATAR_SIZE: f32 = 26.0;
-const AVATAR_GAP: f32 = 10.0;
+const TAB_RADIUS: u8 = 18;
+const TAB_INSET: f32 = 14.0;
+const AVATAR_SIZE: f32 = 20.0;
+const AVATAR_GAP: f32 = 9.0;
+const SLASH_SIZE: f32 = 22.0;
+const SLASH_MARGIN: f32 = 6.0;
 const TITLE_DOT_GAP: f32 = 8.0;
 const PILL_DROP_SLACK: f32 = 6.0;
 const POOFED_VEIL: f32 = 0.6;
@@ -124,6 +122,7 @@ impl Tidewatch {
                         frame.toggle_overview = true;
                     }
                     self.repo_chip(ui, frame);
+                    slash(ui);
                     self.main_icon(ui, frame);
                     self.leftovers.chip(ui);
                     ui.add_space(8.0);
@@ -138,8 +137,7 @@ impl Tidewatch {
                     };
                     let room = ui.available_width()
                         - ICON_BOX * 2.0
-                        - overview_view::BUTTON_W
-                        - 22.0
+                        - 26.0
                         - tail
                         - controls
                         - amphetamine_view::SLOT_W
@@ -158,11 +156,11 @@ impl Tidewatch {
                     );
                     self.draw_tabs(ui, width, now, &mut frame.actions);
                     ui.add_space(6.0);
-                    let plus = icon_button_sized(
+                    let plus = strip_button(
                         ui,
                         icons::PLUS,
                         &format!("New tab ({})", Command::NewTab.keys()),
-                        strip_icon(),
+                        ROUND_RADIUS,
                     );
                     if plus.clicked() {
                         frame.actions.push(Action::New);
@@ -189,11 +187,11 @@ impl Tidewatch {
                         }
                     }
                     self.updates.pill(ui);
-                    if icon_button_sized(
+                    if strip_button(
                         ui,
                         icons::GEAR,
                         &format!("Profiles ({})", Command::Settings.keys()),
-                        strip_icon(),
+                        ROUND_RADIUS,
                     )
                     .clicked()
                     {
@@ -236,11 +234,11 @@ impl Tidewatch {
         });
         let gap = (ui.available_width() - ICON_BOX - controls).max(0.0);
         ui.add_space(gap);
-        if icon_button_sized(
+        if strip_button(
             ui,
             icons::GEAR,
             &format!("Profiles ({})", Command::Settings.keys()),
-            strip_icon(),
+            ROUND_RADIUS,
         )
         .clicked()
         {
@@ -436,10 +434,7 @@ fn tab_row<T>(
             Some(width),
             TabMetrics { height: TAB_H, font_px: TAB_FONT_PX },
         );
-        nav_look(&painter, under, resp.rect, i == tabs.active(), resp.hovered());
-        if mood.struggling {
-            paint_struggle(&painter, resp.rect);
-        }
+        tab_look(&painter, under, resp.rect, i == tabs.active(), resp.hovered(), mood.struggling);
         let text = match (&face, draft) {
             (Some(_), false) => label.clone(),
             _ => format!("{}  {}", position + 1, tab.title),
@@ -523,26 +518,17 @@ fn tab_row<T>(
             egui::Order::Middle,
             egui::Id::new("tab_drag_overlay"),
         ));
-        overlay.rect_filled(
+        overlay.rect_stroke(
             slots[from].rect,
             CornerRadius::same(TAB_RADIUS),
-            brand::TEAL.gamma_multiply(0.35),
+            Stroke::new(2.0, brand::TEAL),
+            StrokeKind::Inside,
         );
         if let Some(step) = drag_step(&slots, from, x).filter(|_| !over_pill) {
             actions.push(Action::Move(slots[from].index, step));
         }
     }
     slots.iter().map(|slot| slot.rect).collect()
-}
-
-fn paint_struggle(painter: &egui::Painter, tab: egui::Rect) {
-    let body = tab;
-    painter.rect_filled(body, CornerRadius::same(TAB_RADIUS), brand::ORANGE.gamma_multiply(0.16));
-    let bar = egui::Rect::from_min_size(
-        body.left_top() + vec2(0.0, TAB_BAR_INSET),
-        vec2(TAB_BAR_W, body.height() - 2.0 * TAB_BAR_INSET),
-    );
-    painter.rect_filled(bar, CornerRadius::same(1), brand::ORANGE);
 }
 
 fn tab_tip(label: &str, name: &str, number: usize, job: Option<&TabJob>) -> String {
@@ -596,7 +582,7 @@ fn tab_menu(
 
 fn face_rect(tab: egui::Rect) -> egui::Rect {
     egui::Rect::from_min_size(
-        pos2(tab.left() + TAB_PAD_X, tab.center().y - AVATAR_SIZE / 2.0),
+        pos2(tab.left() + TAB_INSET, tab.center().y - AVATAR_SIZE / 2.0),
         vec2(AVATAR_SIZE, AVATAR_SIZE),
     )
 }
@@ -608,9 +594,9 @@ fn paint_title(
     inset: f32,
     (active, draft): (bool, bool),
 ) {
-    let x = tab.left() + TAB_PAD_X + inset;
+    let x = tab.left() + TAB_INSET + inset;
     let (font, ink) = if active {
-        (crate::screen_kit::heading(TAB_FONT_PX), brand::TEXT)
+        (crate::screen_kit::heading(TAB_FONT_PX), brand::TEAL_TEXT)
     } else {
         (egui::FontId::proportional(TAB_FONT_PX), brand::SOFT)
     };
@@ -623,45 +609,57 @@ fn paint_title(
     painter.galley(pos2(x, tab.center().y - galley.size().y / 2.0), galley, ink);
 }
 
-/// Gives a tab the nav look: a teal tint, rounded, with a 2 px teal underline when active, a
-/// fainter tint when hovered. `draw_tab` fills the active tab with its own grey and has no
-/// styling, so that fill, the shape right after `under`, is swapped for the tint in place.
-fn nav_look(
+/// Gives a tab its round outline: teal when active, orange while the Meeseeks struggles, a
+/// brighter line when hovered. `draw_tab` fills the active tab with its own grey, the shape right
+/// after `under`; that fill is blanked in place, since no tab carries a colour fill.
+fn tab_look(
     painter: &egui::Painter,
     under: ShapeIdx,
     tab: egui::Rect,
     active: bool,
     hovered: bool,
+    struggling: bool,
 ) {
-    let rect = tab;
-    let radius = CornerRadius::same(TAB_RADIUS);
     if active {
         let fill = ShapeIdx(under.0 + 1);
         if is_fill_of(painter, fill, tab) {
-            painter.set(fill, Shape::rect_filled(rect, radius, brand::TEAL_NAV));
-        } else {
-            painter.rect_filled(rect, radius, brand::TEAL_NAV);
+            painter.set(fill, Shape::Noop);
         }
-        painter.rect_filled(underline_rect(rect), CornerRadius::same(1), brand::TEAL);
-    } else if hovered {
-        painter.set(under, Shape::rect_filled(rect, radius, brand::TEAL_NAV.gamma_multiply(0.6)));
     }
+    let line = if struggling {
+        brand::ORANGE
+    } else if active {
+        brand::TEAL
+    } else if hovered {
+        brand::FIELD_LINE
+    } else {
+        brand::ITEM_LINE
+    };
+    painter.rect_stroke(
+        tab,
+        CornerRadius::same(TAB_RADIUS),
+        Stroke::new(1.0, line),
+        StrokeKind::Inside,
+    );
 }
 
-pub(super) fn underline_rect(tab: egui::Rect) -> egui::Rect {
-    egui::Rect::from_min_max(
-        pos2(tab.left() + TAB_UNDERLINE_INSET, tab.bottom() - TAB_UNDERLINE_H),
-        pos2(tab.right() - TAB_UNDERLINE_INSET, tab.bottom()),
+fn strip_button(ui: &mut egui::Ui, icon: &str, tip: &str, radius: f32) -> egui::Response {
+    icon_button_sized(
+        ui,
+        icon,
+        tip,
+        IconButtonSize { width: ICON_BOX, height: ICON_BOX, glyph: ICON_GLYPH, radius },
     )
 }
 
-fn strip_icon() -> IconButtonSize {
-    IconButtonSize {
-        width: ICON_BOX,
-        height: ICON_BOX,
-        glyph: ICON_GLYPH_SMALL,
-        radius: ICON_RADIUS,
-    }
+fn slash(ui: &mut egui::Ui) {
+    let font = egui::FontId::proportional(SLASH_SIZE);
+    let galley = ui.painter().layout_no_wrap("/".to_owned(), font, brand::FIELD_LINE);
+    let (rect, _) = ui.allocate_exact_size(
+        vec2(galley.size().x + 2.0 * SLASH_MARGIN, TAB_H),
+        egui::Sense::hover(),
+    );
+    ui.painter().galley(rect.center() - galley.size() / 2.0, galley, brand::FIELD_LINE);
 }
 
 fn is_fill_of(painter: &egui::Painter, idx: ShapeIdx, tab: egui::Rect) -> bool {
