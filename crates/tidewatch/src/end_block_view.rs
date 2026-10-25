@@ -3,10 +3,11 @@
 //! segments say is plain data; the painters only draw it.
 
 use crate::brand;
+use crate::link_text::Text;
 use crate::reader_view::{INSET, paint_item};
 use crate::screen_kit::{body, mono};
-use egui::epaint::text::{LayoutJob, TextFormat, TextWrapping};
-use egui::{Align2, Color32, CornerRadius, Painter, Rect, Sense, Ui, pos2, vec2};
+use egui::epaint::text::TextFormat;
+use egui::{Align2, Color32, CornerRadius, Id, Painter, Pos2, Rect, Sense, Ui, pos2, vec2};
 use tidewatch_core::end_block::EndBlock;
 
 pub(crate) const BAND_H: f32 = 40.0;
@@ -93,10 +94,15 @@ pub(crate) fn show_card(ui: &mut Ui, rect: Rect, block: &EndBlock, expanded: boo
             let x = card.left() + CARD_PAD + column_w * i as f32;
             let column =
                 Rect::from_min_size(pos2(x, card.top()), vec2(column_w - 8.0, card.height()));
-            paint_column(&painter, column, segment);
+            paint_column(ui, &painter, column, segment);
         }
     } else {
-        paint_line(&painter, card.shrink2(vec2(CARD_PAD, 0.0)), block);
+        let id = ui.id().with("end-block-text");
+        let mut shown = 0;
+        paint_line(&painter, card.shrink2(vec2(CARD_PAD, 0.0)), block, |at, text, room| {
+            shown += 1;
+            linked_text(ui, id.with(shown), at, text, room);
+        });
     }
     let tip = if expanded { "Click to collapse" } else { "Click to expand the agent's summary" };
     response.on_hover_cursor(egui::CursorIcon::PointingHand).on_hover_text(tip).clicked()
@@ -115,16 +121,16 @@ fn paint_pill(painter: &Painter, x: f32, y: f32, segment: &Segment) -> f32 {
     rect.right()
 }
 
-/// The text of a summary item with its code spans in mono, cut with an ellipsis at `max_w`.
-fn paint_text(painter: &Painter, at: egui::Pos2, text: &str, size: f32, ink: Color32, max_w: f32) {
-    let mut job = LayoutJob::default();
+/// A summary item at 12 px with its code spans in mono and its links clickable: `at` is the left
+/// middle of the line, cut with an ellipsis at `max_w`.
+fn linked_text(ui: &Ui, id: Id, at: Pos2, text: &str, max_w: f32) {
+    let mut line = Text::new();
     for (span, code) in spans(text) {
-        let (font, ink) = if code { (mono(size - 0.5), brand::SOFT) } else { (body(size), ink) };
-        job.append(&span, 0.0, TextFormat::simple(font, ink));
+        let (font, ink) = if code { (mono(11.5), brand::SOFT) } else { (body(12.0), brand::TEXT) };
+        line.run(&span, &TextFormat::simple(font, ink));
     }
-    job.wrap = TextWrapping::truncate_at_width(max_w.max(1.0));
-    let galley = painter.layout_job(job);
-    painter.galley(pos2(at.x, at.y - galley.size().y / 2.0), galley, ink);
+    let laid = line.cut(max_w).lay_out(ui.painter());
+    laid.paint(ui, id, pos2(at.x, at.y - laid.size().y / 2.0), brand::TEXT);
 }
 
 /// Splits `text` at its backticks into spans, each flagged as code; the markers and bold go.
@@ -137,13 +143,14 @@ pub(crate) fn spans(text: &str) -> Vec<(String, bool)> {
         .collect()
 }
 
-fn paint_column(painter: &Painter, column: Rect, segment: &Segment) {
+fn paint_column(ui: &Ui, painter: &Painter, column: Rect, segment: &Segment) {
     paint_pill(painter, column.left(), column.top() + HEAD_H / 2.0 + 1.0, segment);
     let shown =
         if segment.items.is_empty() { vec![segment.text.clone()] } else { segment.items.clone() };
     for (i, item) in shown.iter().take(MAX_ITEMS).enumerate() {
         let y = column.top() + HEAD_H + LINE_H * i as f32 + LINE_H / 2.0;
-        paint_text(painter, pos2(column.left(), y), item, 12.0, brand::TEXT, column.width());
+        let id = ui.id().with(("end-block-item", segment.label, i));
+        linked_text(ui, id, pos2(column.left(), y), item, column.width());
     }
     if shown.len() > MAX_ITEMS {
         let y = column.top() + HEAD_H + LINE_H * MAX_ITEMS as f32 + LINE_H / 2.0;
@@ -153,21 +160,19 @@ fn paint_column(painter: &Painter, column: Rect, segment: &Segment) {
 }
 
 /// The three segments on one line inside `rect`, each given an equal share of the width.
-pub(crate) fn paint_line(painter: &Painter, rect: Rect, block: &EndBlock) {
+fn paint_line(
+    painter: &Painter,
+    rect: Rect,
+    block: &EndBlock,
+    mut text: impl FnMut(Pos2, &str, f32),
+) {
     let parts = segments(block);
     let share = (rect.width() - SEGMENT_GAP * 2.0) / 3.0;
     for (i, segment) in parts.iter().enumerate() {
         let x = rect.left() + (share + SEGMENT_GAP) * i as f32;
         let right = paint_pill(painter, x, rect.center().y, segment);
         let room = x + share - right - 6.0;
-        paint_text(
-            painter,
-            pos2(right + 6.0, rect.center().y),
-            &segment.text,
-            12.0,
-            brand::TEXT,
-            room,
-        );
+        text(pos2(right + 6.0, rect.center().y), &segment.text, room);
     }
 }
 
@@ -225,6 +230,61 @@ mod tests {
         let ctx = egui::Context::default();
         let _ = ctx.run_ui(egui::RawInput::default(), |_| {});
         assert!(!click(&ctx, &b, pos2(400.0, 20.0)));
+    }
+
+    fn press_at(
+        ctx: &egui::Context,
+        block: &EndBlock,
+        expanded: bool,
+        at: egui::Pos2,
+    ) -> (bool, Vec<String>) {
+        let button = |pressed| egui::Event::PointerButton {
+            pos: at,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        };
+        let (mut toggled, mut opened) = (false, Vec::new());
+        for events in [vec![egui::Event::PointerMoved(at)], vec![button(true)], vec![button(false)]]
+        {
+            let raw = egui::RawInput {
+                screen_rect: Some(Rect::from_min_size(pos2(0.0, 0.0), vec2(800.0, 200.0))),
+                events,
+                focused: true,
+                ..egui::RawInput::default()
+            };
+            let out = ctx.run_ui(raw, |ui| {
+                let rect =
+                    Rect::from_min_size(pos2(0.0, 100.0), vec2(800.0, height(block, expanded)));
+                toggled |= show_card(ui, rect, block, expanded);
+            });
+            opened.extend(out.platform_output.commands.into_iter().filter_map(|c| match c {
+                egui::OutputCommand::OpenUrl(open) => Some(open.url),
+                _ => None,
+            }));
+        }
+        (toggled, opened)
+    }
+
+    #[test]
+    fn a_link_in_the_card_opens_without_toggling_it_and_the_rest_of_the_card_still_toggles() {
+        let b =
+            block(&["Preview at localhost:5174 and `https://x.dev/docs`"], &["nothing"], &["go"]);
+        for expanded in [false, true] {
+            let ctx = egui::Context::default();
+            let _ = ctx.run_ui(egui::RawInput::default(), |_| {});
+            let y = if expanded { 100.0 + HEAD_H + LINE_H / 2.0 } else { 120.0 };
+            let (mut urls, mut toggles) = (Vec::new(), 0);
+            for x in (0..800).step_by(4) {
+                let (toggled, opened) = press_at(&ctx, &b, expanded, pos2(x as f32, y));
+                assert!(!toggled || opened.is_empty(), "x {x} both toggled and opened");
+                toggles += usize::from(toggled);
+                urls.extend(opened);
+            }
+            assert!(urls.iter().any(|u| u == "http://localhost:5174"), "{expanded} {urls:?}");
+            assert!(urls.iter().any(|u| u == "https://x.dev/docs"), "{expanded} {urls:?}");
+            assert!(toggles > 0);
+        }
     }
 
     #[test]

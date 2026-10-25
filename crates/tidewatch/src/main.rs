@@ -82,6 +82,8 @@ mod leftover_glue;
 mod leftover_jobs;
 mod leftover_view;
 mod leftovers;
+mod link_text;
+mod links;
 mod login_item;
 mod macos;
 mod mascot;

@@ -8,8 +8,8 @@ use std::path::Path;
 use std::time::Duration;
 
 use egui::{
-    Align, Color32, CornerRadius, FontId, Frame, Label, Layout, Margin, Painter, Pos2, Rect,
-    Response, RichText, Sense, Shape, Stroke, StrokeKind, TextStyle, Ui, pos2, vec2,
+    Align, Color32, CornerRadius, FontId, Frame, Label, Layout, Margin, OutputCommand, Painter,
+    Pos2, Rect, Response, RichText, Sense, Shape, Stroke, StrokeKind, TextStyle, Ui, pos2, vec2,
 };
 use egui_commonmark::{CommonMarkCache, CommonMarkViewer};
 use jiff::tz::TimeZone;
@@ -18,6 +18,7 @@ use tidewatch_core::user_markup;
 use crate::agent_avatar::{Face, paint_face};
 use crate::brand;
 use crate::job_model::clock_label;
+use crate::links;
 use crate::reader_rows::{Kind, Row, ToolKind};
 use crate::reader_turns::{self, Chip, Group};
 use crate::reader_view::{ellipsized, output_preview, split_label};
@@ -85,6 +86,26 @@ pub(crate) fn chat_text<R>(ui: &mut Ui, add: impl FnOnce(&mut Ui) -> R) -> R {
         add(ui)
     })
     .inner
+}
+
+/// An agent's message as markdown with every web link clickable (a bare URL, `localhost:5174`, a
+/// URL in inline code) and no other kind of link able to open: a click on a link of another
+/// scheme, whichever way it was written, is dropped before it leaves the frame.
+pub(crate) fn agent_markdown(ui: &mut Ui, cache: &mut CommonMarkCache, text: &str) {
+    ui.scope(|ui| {
+        let ink = ui.visuals().text_color();
+        let visuals = ui.visuals_mut();
+        visuals.override_text_color = None;
+        visuals.widgets.noninteractive.fg_stroke.color = ink;
+        visuals.hyperlink_color = brand::TEAL_TEXT;
+        ui.style_mut().url_in_tooltip = true;
+        CommonMarkViewer::new().show(ui, cache, &links::markdown(text));
+    });
+    ui.ctx().output_mut(|out| {
+        out.commands.retain(
+            |command| !matches!(command, OutputCommand::OpenUrl(open) if !links::is_web_url(&open.url)),
+        );
+    });
 }
 
 fn meta(ui: &mut Ui, text: &str, align: Align) {
@@ -278,7 +299,7 @@ fn bubble(ui: &mut Ui, list: &[&Row], group: &Group, cache: &mut CommonMarkCache
                     }
                     let row = list[*index];
                     ui.push_id(row.seq, |ui| {
-                        CommonMarkViewer::new().show(ui, cache, &row.text);
+                        agent_markdown(ui, cache, &row.text);
                     });
                 }
             });
@@ -514,6 +535,106 @@ fn call_list(ui: &mut Ui, root: Option<&Path>, list: &[&Row], group: &Group, col
 #[cfg(test)]
 mod tests {
     use super::*;
+    use egui::{Event, PointerButton, RawInput};
+
+    const TEXT: &str = "Preview at localhost:5174 now, [docs](https://x.dev/docs) and \
+        [bad](javascript:alert(1)) or <file:///etc/passwd> or [ref][r].\n\n[r]: javascript:alert(2)";
+
+    fn frame(ctx: &egui::Context, cache: &mut CommonMarkCache, events: Vec<Event>) -> Vec<String> {
+        let raw = RawInput {
+            screen_rect: Some(Rect::from_min_size(pos2(0.0, 0.0), vec2(700.0, 200.0))),
+            events,
+            focused: true,
+            ..RawInput::default()
+        };
+        let out = ctx.run_ui(raw, |ui| {
+            ui.set_width(600.0);
+            ui.visuals_mut().override_text_color = Some(Color32::WHITE);
+            chat_text(ui, |ui| agent_markdown(ui, cache, TEXT));
+        });
+        out.platform_output
+            .commands
+            .into_iter()
+            .filter_map(|c| match c {
+                OutputCommand::OpenUrl(open) => Some(open.url),
+                _ => None,
+            })
+            .collect()
+    }
+
+    fn click(ctx: &egui::Context, cache: &mut CommonMarkCache, at: Pos2) -> Vec<String> {
+        let button = |pressed| Event::PointerButton {
+            pos: at,
+            button: PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        };
+        let mut opened = Vec::new();
+        for events in [vec![Event::PointerMoved(at)], vec![button(true)], vec![button(false)]] {
+            opened.extend(frame(ctx, cache, events));
+        }
+        opened
+    }
+
+    fn every_click(y: f32) -> Vec<(f32, Vec<String>)> {
+        let ctx = egui::Context::default();
+        let mut cache = CommonMarkCache::default();
+        let _ = frame(&ctx, &mut cache, vec![]);
+        let _ = frame(&ctx, &mut cache, vec![]);
+        (0..640)
+            .step_by(4)
+            .map(|x| (x as f32, click(&ctx, &mut cache, pos2(x as f32, y))))
+            .collect()
+    }
+
+    #[test]
+    fn a_click_on_a_bare_address_opens_it_and_a_click_on_plain_text_does_not() {
+        let hits = every_click(14.0);
+        let opened: Vec<_> = hits.iter().filter(|(_, urls)| !urls.is_empty()).collect();
+        let urls: Vec<_> = opened.iter().flat_map(|(_, urls)| urls.iter().cloned()).collect();
+        assert!(urls.iter().any(|u| u == "http://localhost:5174"), "{urls:?}");
+        assert!(urls.iter().all(|u| links::is_web_url(u)), "{urls:?}");
+        assert_eq!(hits[1].1.len(), 0, "a click on the first word");
+        assert_eq!(hits[0].1.len(), 0);
+    }
+
+    #[test]
+    fn only_web_links_ever_open_whatever_is_clicked() {
+        let mut all = Vec::new();
+        for y in [14.0, 36.0, 58.0, 80.0] {
+            all.extend(every_click(y).into_iter().flat_map(|(_, urls)| urls));
+        }
+        assert!(all.iter().any(|url| url == "https://x.dev/docs"));
+        assert!(all.iter().all(|url| links::is_web_url(url)), "{all:?}");
+    }
+
+    #[test]
+    fn links_are_teal_and_other_text_keeps_the_ink_the_theme_gives_it() {
+        let ctx = egui::Context::default();
+        let mut cache = CommonMarkCache::default();
+        let mut inks = Vec::new();
+        for _ in 0..2 {
+            let out = ctx.run_ui(RawInput::default(), |ui| {
+                ui.visuals_mut().override_text_color = Some(Color32::WHITE);
+                chat_text(ui, |ui| agent_markdown(ui, &mut cache, "plain localhost:5174 end"));
+            });
+            inks = out
+                .shapes
+                .iter()
+                .filter_map(|c| match &c.shape {
+                    Shape::Text(t) => {
+                        Some((t.galley.text().to_owned(), t.fallback_color, t.override_text_color))
+                    }
+                    _ => None,
+                })
+                .collect();
+        }
+        let ink =
+            |word: &str| inks.iter().find(|(text, ..)| text.contains(word)).map(|i| (i.1, i.2));
+        assert_eq!(ink("localhost").map(|i| i.0), Some(brand::TEAL_TEXT));
+        let plain = ink("plain").unwrap();
+        assert_eq!(plain.1.unwrap_or(plain.0), Color32::WHITE);
+    }
 
     #[test]
     fn a_user_bubble_is_as_wide_as_its_text_and_never_past_the_room() {

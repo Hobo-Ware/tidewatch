@@ -15,6 +15,7 @@ use tidewatch_core::progress::{Entry, Ledger, Mark};
 use crate::brand;
 use crate::job_model::Card;
 use crate::job_view;
+use crate::link_text::Text;
 use crate::meeseeks_model::Card as MeeseeksCard;
 use crate::meeseeks_view;
 use crate::progress_model::{
@@ -241,7 +242,8 @@ fn header(
     let narrow = width < NARROW_BELOW - 2.0 * NARROW_PAD;
     let goal_size = if narrow { 14.0 } else { 16.0 };
     let painter = ui.painter().clone();
-    let goal = single_line(&painter, ledger.goal.trim(), heading(goal_size), brand::TEXT, width);
+    let goal =
+        Text::line(ledger.goal.trim(), heading(goal_size), brand::TEXT, width).lay_out(&painter);
     let step = model::step(ledger).map(|step| step_line(&painter, &step, width));
     let meta = meta_line(&painter, tone, (now_ms, updated_ms, stale), width);
     let rows = step.as_ref().map_or(2.0, |_| 3.0);
@@ -255,7 +257,8 @@ fn header(
         Sense::hover(),
     );
     hover.on_hover_text(ledger.goal.trim());
-    y += paint_row(&painter, rect.left(), y, goal);
+    goal.paint(ui, ui.id().with("progress-goal-text"), pos2(rect.left(), y), brand::MUTED);
+    y += goal.size().y + 4.0;
     if let Some(step) = step {
         y += paint_row(&painter, rect.left(), y, step);
     }
@@ -380,9 +383,9 @@ fn question_card(ui: &mut Ui, width: f32, asked: &[&Entry]) -> bool {
         width - 2.0 * PAD_X - GLYPH - SPACE * 2.0 - button_w
     }
     .max(40.0);
-    let mut job = LayoutJob::simple(first.text.trim().to_owned(), body(13.5), brand::TEXT, text_w);
-    job.wrap.max_rows = 2;
-    let galley = ui.painter().layout_job(job);
+    let mut question = Text::new();
+    question.run(first.text.trim(), &TextFormat::simple(body(13.5), brand::TEXT));
+    let galley = question.wrapped(text_w, 2).lay_out(ui.painter());
     let text_h = galley.size().y;
     let inner_h = if stacked {
         text_h.max(GLYPH) + SPACE + Size::Compact.height()
@@ -398,7 +401,7 @@ fn question_card(ui: &mut Ui, width: f32, asked: &[&Entry]) -> bool {
     painter.text(glyph.center(), Align2::CENTER_CENTER, "?", heading(15.0), brand::ORANGE);
     let text_x = glyph.right() + SPACE;
     let text_top = rect.top() + PAD_Y + (text_h.max(GLYPH) - text_h) / 2.0;
-    painter.galley(pos2(text_x, text_top), galley, brand::TEXT);
+    galley.paint(ui, ui.id().with("progress-question-text"), pos2(text_x, text_top), brand::TEXT);
     let button_rect = if stacked {
         let top = rect.top() + PAD_Y + text_h.max(GLYPH) + SPACE;
         Rect::from_min_size(pos2(text_x, top), vec2(button_w, Size::Compact.height()))
@@ -460,20 +463,15 @@ fn item_row(ui: &mut Ui, width: f32, row: &ItemRow<'_>, time: f64) {
     let ink = if muted { brand::FAINT } else { brand::TEXT };
     let room = (rect.right() - text_x).max(1.0);
     let why = row.why.map(|why| {
-        let galley = painter.layout_no_wrap(why.to_owned(), body(12.0), brand::FAINT);
-        let cap = (room * 0.42).max(40.0);
-        if galley.size().x > cap {
-            single_line(painter, why, body(12.0), brand::FAINT, cap)
-        } else {
-            galley
-        }
+        Text::line(why, body(12.0), brand::FAINT, (room * 0.42).max(40.0)).lay_out(painter)
     });
     let why_w = why.as_ref().map_or(0.0, |galley| galley.size().x + 12.0);
-    let label = single_line(painter, row.text, body(13.5), ink, (room - why_w).max(1.0));
-    painter.galley(pos2(text_x, rect.center().y - label.size().y / 2.0), label, ink);
+    let label = Text::line(row.text, body(13.5), ink, (room - why_w).max(1.0)).lay_out(painter);
+    let at = pos2(text_x, rect.center().y - label.size().y / 2.0);
+    label.paint(ui, response.id.with("label"), at, ink);
     if let Some(galley) = why {
         let at = pos2(rect.right() - galley.size().x, rect.center().y - galley.size().y / 2.0);
-        painter.galley(at, galley, brand::FAINT);
+        galley.paint(ui, response.id.with("why"), at, brand::FAINT);
     }
     let tip = match row.why {
         Some(why) => format!("{} - {why}", row.text),
@@ -586,14 +584,12 @@ fn entry_list(ui: &mut Ui, width: f32, tag: Tag, list: &[&Entry]) {
         .iter()
         .take(LIST_LIMIT)
         .map(|entry| {
-            let mut job = LayoutJob::default();
-            job.append(entry.text.trim(), 0.0, TextFormat::simple(body(12.5), brand::SOFT));
+            let mut text = Text::new();
+            text.run(entry.text.trim(), &TextFormat::simple(body(12.5), brand::SOFT));
             if let Some(why) = entry.why.as_deref().map(str::trim).filter(|why| !why.is_empty()) {
-                job.append(&format!("  {why}"), 0.0, TextFormat::simple(body(12.0), brand::FAINT));
+                text.run(&format!("  {why}"), &TextFormat::simple(body(12.0), brand::FAINT));
             }
-            job.wrap.max_width = text_w;
-            job.wrap.max_rows = 3;
-            painter.layout_job(job)
+            text.wrapped(text_w, 3).lay_out(&painter)
         })
         .collect();
     let more = list.len().saturating_sub(LIST_LIMIT);
@@ -613,7 +609,8 @@ fn entry_list(ui: &mut Ui, width: f32, tag: Tag, list: &[&Entry]) {
             }
         }
         let height = galley.size().y;
-        painter.galley(pos2(rect.left() + PAD + BULLET, y), galley, brand::SOFT);
+        let line_id = ui.id().with(("entry-text", tag.caption(), index));
+        galley.paint(ui, line_id, pos2(rect.left() + PAD + BULLET, y), brand::SOFT);
         y += height + if index + 1 < LIST_LIMIT { 8.0 } else { 0.0 };
     }
     if more > 0 {
