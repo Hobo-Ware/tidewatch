@@ -48,7 +48,7 @@ const CHIP_PAD: f32 = 13.0;
 const CHIP_CHARS: usize = 24;
 const HEADER_H: f32 = 48.0;
 const GRID_ICON: &str = "\u{E464}";
-const BADGE_H: f32 = 17.0;
+const BADGE_H: f32 = 16.0;
 const MASCOT_H: f32 = 120.0;
 
 pub(crate) const BUTTON_W: f32 = ICON_BOX;
@@ -60,7 +60,12 @@ pub(crate) fn button(ui: &mut egui::Ui, active: bool, needs: &[(String, usize)])
     let (rect, resp) = ui.allocate_exact_size(vec2(BUTTON_W, BUTTON_H), Sense::click());
     let hovered = resp.hovered();
     if active {
-        ui.painter().rect_filled(rect, 8.0, colors::selection());
+        ui.painter().rect_stroke(
+            rect,
+            CornerRadius::same(8),
+            Stroke::new(1.0, brand::TEAL),
+            StrokeKind::Inside,
+        );
     } else if hovered {
         ui.painter().rect_filled(rect, 8.0, colors::hover());
     }
@@ -108,10 +113,8 @@ fn paint_badge(ui: &egui::Ui, button: Rect, count: usize) {
     let font = FontId::monospace(11.0);
     let galley = ui.painter().layout_no_wrap(text, font, colors::bg());
     let width = (galley.size().x + 8.0).max(BADGE_H);
-    let badge = Rect::from_min_size(
-        pos2(button.right() - width + 4.0, button.top() - 2.0),
-        vec2(width, BADGE_H),
-    );
+    let badge =
+        Rect::from_min_size(pos2(button.right() - width, button.top() + 1.0), vec2(width, BADGE_H));
     let fill = status_view::color(Tone::Needs).unwrap_or(Color32::YELLOW);
     ui.painter().rect_filled(badge.expand(2.0), BADGE_H, colors::titlebar());
     ui.painter().rect_filled(badge, BADGE_H, fill);

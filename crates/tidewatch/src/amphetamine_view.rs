@@ -9,6 +9,8 @@ use egui::{
 use tidewatch_core::amphetamine::{Choice, Omen, State};
 use tidewatch_core::amphetamine_system::Route;
 
+use stdusk_egui::colors;
+
 use crate::amphetamine_icon;
 use crate::amphetamine_motion::{Look, STANDARD, bezier};
 use crate::amphetamine_pill::{
@@ -188,14 +190,8 @@ fn paint_button_frame(painter: &egui::Painter, slot: Rect, hovered: bool, open: 
         return;
     }
     if hovered || open {
-        let line = if open { brand::TEAL } else { brand::TEAL.gamma_multiply(0.5) };
-        painter.rect_filled(slot, CornerRadius::same(8), brand::ITEM);
-        painter.rect_stroke(
-            slot,
-            CornerRadius::same(8),
-            Stroke::new(1.0, line),
-            StrokeKind::Inside,
-        );
+        let tint = Rect::from_center_size(slot.center(), vec2(ICON_BOX, ICON_BOX));
+        painter.rect_filled(tint, CornerRadius::same(8), colors::hover());
     }
 }
 

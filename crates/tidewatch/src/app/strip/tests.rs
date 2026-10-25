@@ -278,21 +278,65 @@ fn filled_by(
     fills
 }
 
-#[test]
-fn the_active_tab_swaps_the_fill_draw_tab_painted_for_the_nav_tint_and_adds_a_bar() {
-    let tab = Rect::from_min_size(pos2(10.0, 0.0), vec2(120.0, TAB_H));
-    let fills = filled_by(|painter, under, tab| nav_look(painter, under, tab, true, false), tab);
-    assert_eq!(fills, [None, Some(brand::TEAL_NAV), Some(brand::TEAL)]);
+fn stroked_by(
+    look: impl FnOnce(&egui::Painter, ShapeIdx, Rect),
+    tab: Rect,
+) -> Vec<Option<egui::Color32>> {
+    let ctx = egui::Context::default();
+    let raw = RawInput {
+        screen_rect: Some(Rect::from_min_size(pos2(0.0, 0.0), vec2(400.0, 100.0))),
+        ..RawInput::default()
+    };
+    let mut lines = Vec::new();
+    let mut look = Some(look);
+    let _ = ctx.run_ui(raw, |ui| {
+        let painter = ui.painter().clone();
+        let under = painter.add(Shape::Noop);
+        painter.rect_filled(tab, 6.0, egui::Color32::GRAY);
+        if let Some(look) = look.take() {
+            look(&painter, under, tab);
+        }
+        lines = ctx.graphics(|graphics| {
+            graphics
+                .get(painter.layer_id())
+                .map(|list| {
+                    list.all_entries()
+                        .map(|clipped| match &clipped.shape {
+                            Shape::Rect(rect) if rect.stroke.width > 0.0 => Some(rect.stroke.color),
+                            _ => None,
+                        })
+                        .collect()
+                })
+                .unwrap_or_default()
+        });
+    });
+    lines
 }
 
 #[test]
-fn the_active_underline_is_two_points_along_the_floor_inside_the_corners() {
+fn the_active_tab_blanks_the_fill_draw_tab_painted_and_gets_a_teal_outline() {
     let tab = Rect::from_min_size(pos2(10.0, 0.0), vec2(120.0, TAB_H));
-    let line = underline_rect(tab);
-    assert_eq!(line.height(), 2.0);
-    assert_eq!(line.bottom(), tab.bottom());
-    assert_eq!(line.left(), tab.left() + TAB_UNDERLINE_INSET);
-    assert_eq!(line.right(), tab.right() - TAB_UNDERLINE_INSET);
+    let look =
+        |painter: &egui::Painter, under, tab| tab_look(painter, under, tab, true, false, false);
+    assert_eq!(filled_by(look, tab), [None, None, Some(egui::Color32::TRANSPARENT)]);
+    assert_eq!(stroked_by(look, tab), [None, None, Some(brand::TEAL)]);
+}
+
+#[test]
+fn a_tab_outline_is_item_line_at_rest_brighter_on_hover_and_orange_while_struggling() {
+    let tab = Rect::from_min_size(pos2(10.0, 0.0), vec2(120.0, TAB_H));
+    let line = |active, hovered, struggling| {
+        stroked_by(
+            move |painter, under, tab| tab_look(painter, under, tab, active, hovered, struggling),
+            tab,
+        )
+        .pop()
+        .flatten()
+    };
+    assert_eq!(line(false, false, false), Some(brand::ITEM_LINE));
+    assert_eq!(line(false, true, false), Some(brand::FIELD_LINE));
+    assert_eq!(line(true, true, false), Some(brand::TEAL));
+    assert_eq!(line(false, false, true), Some(brand::ORANGE));
 }
 
 #[test]
@@ -300,17 +344,30 @@ fn the_status_dot_sits_where_the_close_button_does_and_the_strip_is_forty_eight_
     let tab = Rect::from_min_size(pos2(10.0, 0.0), vec2(200.0, TAB_H));
     let dot = crate::status_view::dot_center(tab, STATUS_DOT_TRAILING);
     assert_eq!(dot, pos2(tab.right() - TAB_PAD_X - TAB_SLOT_W / 2.0, tab.center().y));
-    assert_eq!((STRIP_H, TAB_H, ICON_BOX), (48.0, 40.0, 40.0));
+    assert_eq!((STRIP_H, TAB_H, ICON_BOX), (48.0, 36.0, 36.0));
     assert_eq!(TAB_H + 2.0 * f32::from(STRIP_VERTICAL_MARGIN), STRIP_H);
 }
 
 #[test]
-fn a_hovered_inactive_tab_gets_a_fainter_tint_under_its_text_and_a_plain_one_nothing() {
-    let tab = Rect::from_min_size(pos2(10.0, 0.0), vec2(120.0, TAB_H));
-    let hovered = filled_by(|painter, under, tab| nav_look(painter, under, tab, false, true), tab);
-    assert_eq!(hovered[0], Some(brand::TEAL_NAV.gamma_multiply(0.6)));
-    let plain = filled_by(|painter, under, tab| nav_look(painter, under, tab, false, false), tab);
-    assert_eq!(plain[0], None);
+fn every_icon_box_is_thirty_six_square_and_no_tab_carries_a_colour_fill() {
+    let ctx = crate::fonts::test_context();
+    let mut sizes = Vec::new();
+    let raw = RawInput {
+        screen_rect: Some(Rect::from_min_size(pos2(0.0, 0.0), vec2(800.0, 200.0))),
+        focused: true,
+        ..RawInput::default()
+    };
+    let _ = ctx.run_ui(raw, |ui| {
+        ui.horizontal(|ui| {
+            sizes.push(overview_view::button(ui, false, &[("web".to_owned(), 3)]).rect.size());
+            sizes.push(strip_button(ui, icons::PLUS, "", ROUND_RADIUS).rect.size());
+            sizes.push(strip_button(ui, icons::GEAR, "", ROUND_RADIUS).rect.size());
+        });
+    });
+    assert_eq!(sizes, [vec2(36.0, 36.0); 3]);
+    assert_eq!(ICON_GLYPH, 22.0);
+    let (all, _) = strip_fills(Mood::default(), true);
+    assert!(all.iter().all(|fill| *fill == egui::Color32::TRANSPARENT), "{all:?}");
 }
 
 fn collect_text(shape: &Shape, out: &mut Vec<(String, Rect)>) {
@@ -400,7 +457,7 @@ fn an_agent_tab_shows_its_face_in_place_of_the_number_and_the_cli_logo() {
         assert!(texts.iter().all(|(text, _)| !text.starts_with("2 ")), "no number in {texts:?}");
         let face = face_rect(rects[0]);
         assert_eq!((face.width(), face.height()), (AVATAR_SIZE, AVATAR_SIZE));
-        assert_eq!(face.left(), rects[0].left() + TAB_PAD_X);
+        assert_eq!(face.left(), rects[0].left() + TAB_INSET);
         assert!((title.1.left() - (face.right() + AVATAR_GAP)).abs() < 1.0, "{title:?} {face:?}");
     }
 }
@@ -509,7 +566,7 @@ fn a_tab_title_is_the_proportional_ui_font_in_soft_not_mono() {
     }
     assert_eq!(found.len(), 2);
     assert_eq!(found[0], (egui::FontId::proportional(TAB_FONT_PX), brand::SOFT));
-    assert_eq!(found[1], (crate::screen_kit::heading(TAB_FONT_PX), brand::TEXT));
+    assert_eq!(found[1], (crate::screen_kit::heading(TAB_FONT_PX), brand::TEAL_TEXT));
 }
 
 #[test]
@@ -703,6 +760,7 @@ fn strip_fills(mood: Mood, locked: bool) -> (Vec<egui::Color32>, bool) {
     pane.agent = Some(AgentTab::new("Builder".into(), AgentRun::setting_up("claude".into(), 0.0)));
     let mut tabs = Tabs::new(Pane::shell(0));
     let id = tabs.push_in(0, "rename".into(), pane);
+    tabs.apply(Action::Select(1), || unreachable!());
     crate::agent_avatar::lock(&ctx, if locked { vec![id] } else { Vec::new() });
     let mut all = Vec::new();
     for _ in 0..2 {
@@ -713,25 +771,28 @@ fn strip_fills(mood: Mood, locked: bool) -> (Vec<egui::Color32>, bool) {
         };
         let mut actions = Vec::new();
         let output = ctx.run_ui(raw, |ui| {
-            egui::Panel::top("tabbar").exact_size(TAB_H + 6.0).show(ui, |ui| {
-                ui.horizontal(|ui| {
-                    tab_row(
-                        ui,
-                        &tabs,
-                        200.0,
-                        0.0,
-                        &mut actions,
-                        (
-                            |_: &Pane<u32>| (Progress::default(), CmdState::default()),
-                            |_| TabExtras {
-                                avatar: Some(crate::avatar_glue::meeseeks_avatar()),
-                                mood,
-                                ..TabExtras::default()
-                            },
-                        ),
-                    );
-                });
-            });
+            egui::Panel::top("tabbar").exact_size(TAB_H + 6.0).frame(egui::Frame::NONE).show(
+                ui,
+                |ui| {
+                    ui.horizontal(|ui| {
+                        tab_row(
+                            ui,
+                            &tabs,
+                            200.0,
+                            0.0,
+                            &mut actions,
+                            (
+                                |_: &Pane<u32>| (Progress::default(), CmdState::default()),
+                                |_| TabExtras {
+                                    avatar: Some(crate::avatar_glue::meeseeks_avatar()),
+                                    mood,
+                                    ..TabExtras::default()
+                                },
+                            ),
+                        );
+                    });
+                },
+            );
         });
         all.clear();
         for clipped in &output.shapes {
@@ -742,13 +803,13 @@ fn strip_fills(mood: Mood, locked: bool) -> (Vec<egui::Color32>, bool) {
 }
 
 #[test]
-fn a_struggling_tab_is_tinted_orange_and_a_calm_one_is_not() {
+fn a_struggling_tab_has_no_orange_tint_its_outline_says_it() {
     let orange = brand::ORANGE.gamma_multiply(0.16);
     let (calm, _) = strip_fills(Mood::default(), true);
     assert!(!calm.contains(&orange));
     let (struggling, _) = strip_fills(Mood { struggling: true }, true);
-    assert!(struggling.contains(&orange), "the tint over the tab");
-    assert!(struggling.contains(&brand::ORANGE), "the bar at its left");
+    assert!(!struggling.contains(&orange), "no tint over the tab");
+    assert!(struggling.iter().all(|fill| *fill == egui::Color32::TRANSPARENT));
 }
 
 fn circles(shape: &Shape, out: &mut usize) {
@@ -853,11 +914,11 @@ fn circle_fills(shape: &Shape, out: &mut Vec<egui::Color32>) {
 }
 
 #[test]
-fn the_main_icon_is_a_square_far_narrower_than_a_tab_and_sits_before_the_agent_tabs() {
+fn the_main_entry_is_a_round_pill_narrower_than_a_tab_and_sits_before_the_agent_tabs() {
     let strip = Strip::new();
-    assert_eq!(strip.rects[0].width(), main_icon::WIDTH);
     assert_eq!(strip.rects[0].height(), TAB_H);
-    assert!(strip.rects[0].width() < strip.rects[1].width() / 2.0);
+    assert!(strip.rects[0].width() > TAB_H);
+    assert!(strip.rects[0].width() < strip.rects[1].width());
     assert!(strip.rects[0].right() <= strip.rects[1].left());
     assert_eq!(strip.rects.len(), 4, "the icon and the three shells");
 }
@@ -890,11 +951,12 @@ fn cmd_1_selects_main_and_cmd_2_to_9_select_the_agent_tabs_in_order() {
 #[test]
 fn the_main_icon_has_the_active_tab_look_only_while_main_is_selected() {
     let (on, _, _) = main_icon_shapes(true, false, false);
-    assert!(on.contains(&brand::TEAL_NAV) && on.contains(&brand::TEAL), "{on:?}");
+    assert!(on.iter().all(|fill| *fill == egui::Color32::TRANSPARENT), "{on:?}");
+    assert_eq!(on.len(), 1, "the outline");
     let (off, _, _) = main_icon_shapes(false, false, false);
-    assert!(!off.contains(&brand::TEAL_NAV) && !off.contains(&brand::TEAL), "{off:?}");
+    assert_eq!(off.len(), 0);
     let (hovered, _, _) = main_icon_shapes(false, false, true);
-    assert!(hovered.contains(&brand::TEAL_NAV.gamma_multiply(0.6)), "{hovered:?}");
+    assert_eq!(hovered.len(), 1, "a hovered entry gets an outline");
 }
 
 #[test]
