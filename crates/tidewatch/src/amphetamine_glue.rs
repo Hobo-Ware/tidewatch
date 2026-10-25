@@ -11,7 +11,7 @@ use tidewatch_core::amphetamine::{ADD_S, Choice, Effect, Event, State, Voice, st
 use tidewatch_core::amphetamine_lid::{
     Marker, Recovery, read_marker, recovery, remove_marker, remove_token, write_marker, write_token,
 };
-use tidewatch_core::amphetamine_system::{System, begin_lid, end_lid};
+use tidewatch_core::amphetamine_system::{Route, System, begin_lid, end_lid, route_of};
 use tidewatch_core::paths::TidewatchPaths;
 
 use crate::amphetamine_motion::{DEACTIVATE_S, Look};
@@ -52,6 +52,8 @@ pub(crate) enum Dev {
     Toast(Voice),
     TouchId,
     Start,
+    Setup,
+    Pending,
 }
 
 impl Dev {
@@ -65,6 +67,8 @@ impl Dev {
             "notice" => Self::Notice,
             "touchid" => Self::TouchId,
             "start" => Self::Start,
+            "setup" => Self::Setup,
+            "pending" => Self::Pending,
             "toast" => Self::Toast(Voice::Start),
             "hour" => Self::Toast(Voice::HoursLeft(3)),
             "end" => Self::Toast(Voice::End),
@@ -147,6 +151,7 @@ enum Done {
     Recovered(Result<(), String>),
     TouchIdSet(Result<(), String>),
     TouchIdRemoved(Result<(), String>),
+    Routed(Route),
 }
 
 pub(crate) struct Host<H: Hold> {
@@ -167,6 +172,7 @@ pub(crate) struct Host<H: Hold> {
     fading_since: Option<f64>,
     touch_id_job: Option<Click>,
     autostart: Option<Choice>,
+    route: Route,
 }
 
 impl<H: Hold> Host<H> {
@@ -195,15 +201,18 @@ impl<H: Hold> Host<H> {
             fading_since: None,
             touch_id_job: None,
             autostart: None,
+            route: Route::Password,
         }
     }
 
     /// A host showing one state for a capture, with no machine behind it.
     pub(crate) fn dev(dev: &Dev, system: Arc<dyn System>, hold: H, lid: bool, wall: f64) -> Self {
+        let route = route_of(system.as_ref());
         let mut host = Self::new(system, hold, None, lid, true);
+        host.route = route;
         let on = |until: Option<f64>| State::On { until, told: 0 };
         match dev {
-            Dev::Off | Dev::TouchId => {}
+            Dev::Off | Dev::TouchId | Dev::Setup => {}
             Dev::On | Dev::Short | Dev::Activating => {
                 let left = if *dev == Dev::Short { DEV_SHORT_LEFT_S } else { DEV_LEFT_S };
                 host.state = on(Some(wall + left));
@@ -216,7 +225,7 @@ impl<H: Hold> Host<H> {
                 host.state = on(None);
                 host.pinned = Some(Pin { age: PINNED_ON_AGE, short: false });
             }
-            Dev::Start => host.autostart = Some(PALETTE_CHOICE),
+            Dev::Start | Dev::Pending => host.autostart = Some(PALETTE_CHOICE),
             Dev::Notice => host.notice = Some(notice_for(NoticeKind::Restored, "")),
             Dev::Toast(voice) => host.voices.push(voice.clone()),
         }
@@ -251,6 +260,11 @@ impl<H: Hold> Host<H> {
             Click::SetUp => Done::TouchIdSet(system.install_touch_id()),
             Click::Remove => Done::TouchIdRemoved(system.remove_touch_id()),
         });
+    }
+
+    /// How the next start asks for permission, as last probed off the UI thread.
+    pub(crate) fn route(&self) -> Route {
+        self.route
     }
 
     pub(crate) fn lid(&self) -> bool {
@@ -348,12 +362,18 @@ impl<H: Hold> Host<H> {
         if !self.allowed || !self.lid {
             return;
         }
+        self.probe_route(ctx);
         let (system, marker) = (Arc::clone(&self.system), self.files.marker.clone());
         self.jobs.spawn(ctx, move || {
             let found = read_marker(&marker);
             let alive = found.as_ref().and_then(|m| m.helper).is_some_and(|pid| system.alive(pid));
             Done::Checked(recovery(found.as_ref(), system.sleep_disabled(), alive))
         });
+    }
+
+    fn probe_route(&self, ctx: &egui::Context) {
+        let system = Arc::clone(&self.system);
+        self.jobs.spawn(ctx, move || Done::Routed(route_of(system.as_ref())));
     }
 
     fn event(&mut self, event: &Event, wall: f64, now: f64, ctx: &egui::Context) {
@@ -370,6 +390,7 @@ impl<H: Hold> Host<H> {
         if std::mem::discriminant(&state) != std::mem::discriminant(&self.state) {
             self.changed_at = now;
             self.epoch += 1;
+            ctx.request_repaint();
             if matches!((self.state, state), (State::On { .. }, State::Stopping)) {
                 self.fading_since = Some(now);
             }
@@ -450,6 +471,7 @@ impl<H: Hold> Host<H> {
                     );
                 }
                 self.event(&Event::Started, wall, now, ctx);
+                self.probe_route(ctx);
             }
             Done::Started(Err(why)) => {
                 remove_token(&self.files.token);
@@ -472,8 +494,10 @@ impl<H: Hold> Host<H> {
                 }
             }
             Done::Stopped(_) | Done::Confirmed { .. } => {}
+            Done::Routed(route) => self.route = route,
             Done::TouchIdSet(result) => {
                 self.touch_id_job = None;
+                self.probe_route(ctx);
                 self.voices.push(match result {
                     Ok(()) => Voice::TouchIdReady,
                     Err(why) => Voice::TouchIdFailed(why),
@@ -481,6 +505,7 @@ impl<H: Hold> Host<H> {
             }
             Done::TouchIdRemoved(result) => {
                 self.touch_id_job = None;
+                self.probe_route(ctx);
                 self.voices.push(match result {
                     Ok(()) => Voice::TouchIdGone,
                     Err(why) => Voice::TouchIdFailed(why),

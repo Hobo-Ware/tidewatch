@@ -277,6 +277,38 @@ fn the_install_command_is_a_script_the_shell_can_parse() {
     assert!(out.status.success());
 }
 
+fn first_run_command() -> String {
+    let token = PathBuf::from("/Users/vlad/.tidewatch/.state/amphetamine.token");
+    install_and_start_command("vlad", &token, 77, SYSTEM).unwrap()
+}
+
+#[test]
+fn the_first_run_command_is_one_script_that_installs_before_it_starts() {
+    let command = first_run_command();
+    let out = Command::new("/bin/sh").args(["-n", "-c", &command]).output().unwrap();
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    assert!(command.starts_with(&install_command("vlad", SYSTEM).unwrap()));
+    let install = install_command("vlad", SYSTEM).unwrap();
+    let start = &command[install.len()..];
+    assert!(install.ends_with(&format!(
+        "mv -f {}.new {}",
+        shell_quote(SUDOERS_PATH),
+        shell_quote(SUDOERS_PATH)
+    )));
+    assert!(start.contains("pmset -a disablesleep 1"), "the start follows the whole install");
+    assert!(command.contains("set -e"));
+    assert!(command.ends_with("echo $!"), "the helper's pid is the last thing it prints");
+    assert_eq!(command.matches("visudo -cf").count(), 1);
+}
+
+#[test]
+fn the_first_run_command_is_refused_for_an_account_a_sudoers_line_could_misread() {
+    let token = PathBuf::from("/Users/vlad/.tidewatch/.state/amphetamine.token");
+    for user in ["", "ALL", "a b", "root\nALL ALL=(ALL) NOPASSWD: ALL"] {
+        assert_eq!(install_and_start_command(user, &token, 1, SYSTEM), None, "{user:?}");
+    }
+}
+
 #[test]
 fn the_remove_command_removes_the_rule_before_the_helper() {
     let command = remove_command(SYSTEM);
@@ -304,7 +336,7 @@ fn the_helper_pid_is_read_from_its_output() {
 
 #[test]
 fn no_text_for_the_user_holds_a_dash() {
-    for text in [SETUP_PROMPT, REMOVE_PROMPT, TOUCH_ID_REASON] {
+    for text in [SETUP_PROMPT, SETUP_AND_START_PROMPT, REMOVE_PROMPT, TOUCH_ID_REASON] {
         assert!(!text.contains(['\u{2014}', '\u{2013}']), "{text}");
     }
 }

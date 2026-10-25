@@ -213,6 +213,7 @@ impl Tidewatch {
             wall,
             total: self.amphetamine.total(),
             lid: self.amphetamine.lid(),
+            route: self.amphetamine.route(),
             gap,
             force_short: self.amphetamine.short(),
             pinned: self.amphetamine.pinned(),

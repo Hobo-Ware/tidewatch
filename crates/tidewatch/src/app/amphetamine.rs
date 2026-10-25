@@ -27,7 +27,10 @@ impl Hold for NoHold {
 
 #[cfg(target_os = "macos")]
 fn real_system() -> Arc<dyn System> {
-    Arc::new(RealSystem::with_authenticator(crate::touch_id::authenticate))
+    Arc::new(RealSystem::with_authenticator(
+        crate::touch_id::authenticate,
+        crate::touch_id::biometrics_available,
+    ))
 }
 
 #[cfg(not(target_os = "macos"))]
@@ -50,10 +53,11 @@ pub(super) fn host(
     let dev = Dev::parse(std::env::var("TIDEWATCH_FAKE_AMPHETAMINE").ok().as_deref());
     let lid = cfg!(target_os = "macos");
     if let Some(dev) = dev {
-        let system = if matches!(dev, Dev::TouchId | Dev::Start) {
-            FakeSystem::with_touch_id()
-        } else {
-            FakeSystem::new()
+        let system = match dev {
+            Dev::TouchId | Dev::Start => FakeSystem::with_touch_id(),
+            Dev::Setup => FakeSystem::with_biometrics(),
+            Dev::Pending => FakeSystem::with_biometrics().holding(Duration::from_secs(3600)),
+            _ => FakeSystem::new(),
         };
         return Host::dev(&dev, Arc::new(system), Box::new(NoHold), lid, wall_secs());
     }

@@ -5,7 +5,7 @@
 
 use std::path::Path;
 
-use crate::amphetamine_lid::shell_quote;
+use crate::amphetamine_lid::{admin_command, shell_quote};
 
 pub const HELPER_PATH: &str = "/Library/PrivilegedHelperTools/tidewatch-amphetamine";
 pub const SUDOERS_PATH: &str = "/etc/sudoers.d/tidewatch-amphetamine";
@@ -13,6 +13,7 @@ pub const SUDO: &str = "/usr/bin/sudo";
 
 pub const SETUP_PROMPT: &str =
     "Tidewatch wants to install a small helper so Touch ID can keep this Mac awake.";
+pub const SETUP_AND_START_PROMPT: &str = "Tidewatch wants to keep this Mac awake with the lid closed. It also installs a small helper so Touch ID can do this from now on.";
 pub const REMOVE_PROMPT: &str = "Tidewatch wants to remove its Touch ID helper.";
 pub const TOUCH_ID_REASON: &str = "Tidewatch wants to keep this Mac awake with the lid closed.";
 
@@ -141,6 +142,23 @@ pub fn install_command(user: &str, search_path: &str) -> Option<String> {
         dir = shell_quote(&dir),
         helper_path = shell_quote(HELPER_PATH),
         sudoers_path = shell_quote(SUDOERS_PATH),
+    ))
+}
+
+/// First use on a Mac with a fingerprint reader: the install above, then the password-path start,
+/// in one admin script so one prompt does both. `set -e` stops the start if the install fails, and
+/// the pid the start prints is the last line.
+#[must_use]
+pub fn install_and_start_command(
+    user: &str,
+    token: &Path,
+    owner: u32,
+    search_path: &str,
+) -> Option<String> {
+    Some(format!(
+        "{}; {}",
+        install_command(user, search_path)?,
+        admin_command(token, owner, search_path)
     ))
 }
 

@@ -92,6 +92,113 @@ fn a_sudo_rule_that_stopped_working_falls_back_to_the_password() {
     );
 }
 
+fn setup() -> Call {
+    Call::InstallAndStart { token: token(), owner: 5 }
+}
+
+fn sudo() -> Call {
+    Call::SudoStart { token: token(), owner: 5 }
+}
+
+#[test]
+fn the_route_follows_the_helper_and_the_fingerprint_reader() {
+    let cases = [
+        (true, true, Route::Fingerprint),
+        (true, false, Route::Fingerprint),
+        (false, true, Route::SetUp),
+        (false, false, Route::Password),
+    ];
+    for (installed, biometrics, want) in cases {
+        assert_eq!(Route::of(installed, biometrics), want, "{installed} {biometrics}");
+    }
+}
+
+#[test]
+fn every_way_a_start_can_go_asks_for_the_right_things_in_the_right_order() {
+    let cancelled = PROMPT_CANCELLED.to_owned();
+    let denied = Auth::Denied("Touch ID was cancelled".to_owned());
+    let unavailable = Auth::Unavailable("no passcode".to_owned());
+    #[allow(clippy::type_complexity)]
+    let cases: Vec<(&str, FakeSystem, Result<u32, String>, Vec<Call>)> = vec![
+        (
+            "no helper, no reader: the password each time, nothing installed",
+            FakeSystem::new(),
+            Ok(4242),
+            vec![started(&token(), 5)],
+        ),
+        (
+            "no helper, a reader: one prompt installs and starts",
+            FakeSystem::with_biometrics(),
+            Ok(4242),
+            vec![setup()],
+        ),
+        (
+            "that prompt cancelled: stop, no second prompt",
+            FakeSystem::refusing(&cancelled).with_reader(),
+            Err(cancelled.clone()),
+            vec![setup()],
+        ),
+        (
+            "that setup failed: fall back to the password",
+            FakeSystem::with_biometrics().setup_refusing("visudo said no"),
+            Ok(4242),
+            vec![setup(), started(&token(), 5)],
+        ),
+        (
+            "helper, fingerprint ok: sudo",
+            FakeSystem::with_touch_id(),
+            Ok(4242),
+            vec![Call::Authenticate, sudo()],
+        ),
+        (
+            "helper and a reader, fingerprint ok: sudo, no reinstall",
+            FakeSystem::with_touch_id().with_reader(),
+            Ok(4242),
+            vec![Call::Authenticate, sudo()],
+        ),
+        (
+            "helper, fingerprint refused: stop",
+            FakeSystem::with_touch_id().answering(denied),
+            Err("Touch ID was cancelled".to_owned()),
+            vec![Call::Authenticate],
+        ),
+        (
+            "helper, no prompt on this Mac: the password",
+            FakeSystem::with_touch_id().answering(unavailable),
+            Ok(4242),
+            vec![Call::Authenticate, started(&token(), 5)],
+        ),
+        (
+            "helper, sudo rule gone: the password",
+            FakeSystem::with_touch_id().sudo_refusing("a password is required"),
+            Ok(4242),
+            vec![Call::Authenticate, sudo(), started(&token(), 5)],
+        ),
+    ];
+    for (what, fake, result, calls) in cases {
+        assert_eq!(begin_lid(&fake, &token(), 5), result, "{what}");
+        assert_eq!(fake.calls(), calls, "{what}");
+    }
+}
+
+#[test]
+fn the_first_run_leaves_the_helper_installed_so_the_next_start_asks_for_a_fingerprint() {
+    let fake = FakeSystem::with_biometrics();
+    assert_eq!(begin_lid(&fake, &token(), 5), Ok(4242));
+    assert!(fake.touch_id_installed());
+    assert_eq!(begin_lid(&fake, &token(), 5), Ok(4242));
+    assert_eq!(fake.calls(), [setup(), Call::Authenticate, sudo()]);
+}
+
+#[test]
+fn a_cancelled_or_missing_setup_installs_nothing() {
+    let cancelled = FakeSystem::refusing(PROMPT_CANCELLED).with_reader();
+    let _ = begin_lid(&cancelled, &token(), 5);
+    let plain = FakeSystem::new();
+    let _ = begin_lid(&plain, &token(), 5);
+    assert!(!cancelled.touch_id_installed() && !plain.touch_id_installed());
+}
+
 #[test]
 fn ending_asks_the_helper_only_when_it_is_installed_and_survives_a_refusal() {
     let plain = FakeSystem::new();

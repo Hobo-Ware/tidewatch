@@ -7,6 +7,7 @@ use egui::{
     Stroke, StrokeKind, Ui, pos2, vec2,
 };
 use tidewatch_core::amphetamine::{Choice, Omen, State};
+use tidewatch_core::amphetamine_system::Route;
 
 use crate::amphetamine_icon;
 use crate::amphetamine_motion::{Look, STANDARD, bezier};
@@ -48,6 +49,7 @@ pub(crate) struct Input {
     pub(crate) wall: f64,
     pub(crate) total: Option<f64>,
     pub(crate) lid: bool,
+    pub(crate) route: Route,
     pub(crate) gap: f32,
     pub(crate) force_short: bool,
     pub(crate) pinned: bool,
@@ -285,12 +287,22 @@ pub(crate) fn tip_text(input: &Input) -> (&'static str, String) {
     match input.session {
         State::Off if input.lid => (
             "Amphetamine",
-            "Keep this Mac awake, even with the lid closed on battery. Pick a timer.".to_owned(),
+            format!(
+                "Keep this Mac awake, even with the lid closed on battery. Pick a timer.{}",
+                match input.route {
+                    Route::SetUp => " Asks for your password once to set up Touch ID.",
+                    Route::Fingerprint => " Starts with Touch ID.",
+                    Route::Password => "",
+                }
+            ),
         ),
         State::Off => (
             "Amphetamine",
             "Keep this computer awake. Pick a timer. There is no lid mode on Linux.".to_owned(),
         ),
+        State::Starting { .. } if input.route == Route::Fingerprint => {
+            ("Amphetamine", "Waiting for Touch ID.".to_owned())
+        }
         State::Starting { .. } => ("Amphetamine", "Waiting for the password prompt.".to_owned()),
         State::Stopping => ("Amphetamine", "Turning off.".to_owned()),
         State::On { until, .. } => {
@@ -376,6 +388,21 @@ fn on_menu(ui: &mut Ui, input: &Input, until: Option<f64>) -> Option<Action> {
     action
 }
 
+fn menu_note(input: &Input) -> &'static str {
+    if !input.lid {
+        return "No lid mode on Linux. This keeps the computer awake with systemd-inhibit.";
+    }
+    match input.route {
+        Route::SetUp => {
+            "Asks for your password once to set up Touch ID. After that a fingerprint starts it."
+        }
+        Route::Fingerprint => "Lid closed on battery starts with Touch ID.",
+        Route::Password => {
+            "Lid closed on battery needs your password. macOS asks once when you start."
+        }
+    }
+}
+
 fn off_menu(ui: &mut Ui, input: &Input) -> Option<Action> {
     heading(ui, "AMPHETAMINE", "");
     ui.label(RichText::new("Keep awake for").color(brand::TEXT).size(14.0));
@@ -388,11 +415,7 @@ fn off_menu(ui: &mut Ui, input: &Input) -> Option<Action> {
     }
     ui.add_space(6.0);
     ui.separator();
-    let note = if input.lid {
-        "Lid closed on battery needs your password. macOS asks once when you start."
-    } else {
-        "No lid mode on Linux. This keeps the computer awake with systemd-inhibit."
-    };
+    let note = menu_note(input);
     note_row(ui, note);
     ui.add_space(6.0);
     let machine = if input.lid { "Mac" } else { "computer" };

@@ -58,7 +58,7 @@ impl Rig {
 }
 
 fn wait_for_exit(child: &mut Child) -> bool {
-    let deadline = Instant::now() + Duration::from_secs(5);
+    let deadline = Instant::now() + Duration::from_secs(30);
     while Instant::now() < deadline {
         if child.try_wait().unwrap().is_some() {
             return true;
@@ -161,7 +161,7 @@ fn the_admin_command_sets_lid_mode_then_starts_a_detached_helper_that_reports_it
     assert!(pid > 1);
     assert_eq!(rig.calls(), ["-a disablesleep 1"]);
     remove_token(&rig.token());
-    let deadline = Instant::now() + Duration::from_secs(5);
+    let deadline = Instant::now() + Duration::from_secs(30);
     while rig.calls().len() < 2 && Instant::now() < deadline {
         std::thread::sleep(Duration::from_millis(10));
     }

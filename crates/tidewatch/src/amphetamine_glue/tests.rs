@@ -6,7 +6,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use tidewatch_core::amphetamine_helper::Auth;
 use tidewatch_core::amphetamine_lid::read_marker;
-use tidewatch_core::amphetamine_system::{Call, FakeSystem};
+use tidewatch_core::amphetamine_system::{Call, FakeSystem, Route};
 
 use super::*;
 
@@ -323,6 +323,103 @@ fn the_tablet_follows_the_session() {
     assert_eq!(rig.host.look(stopped + 5.0), Look::Off);
 }
 
+fn repaints(ctx: &egui::Context) -> Arc<std::sync::atomic::AtomicUsize> {
+    let asked = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let counter = Arc::clone(&asked);
+    ctx.set_request_repaint_callback(move |_| {
+        counter.fetch_add(1, Ordering::SeqCst);
+    });
+    asked
+}
+
+#[test]
+fn a_click_shows_the_pending_look_and_asks_for_a_frame_before_anything_else_finishes() {
+    let mut rig = Rig::with(FakeSystem::with_biometrics().holding(Duration::from_secs(2)), true);
+    let asked = repaints(&rig.ctx);
+    rig.pick(Choice::Hour);
+    assert!(matches!(rig.host.state(), State::Starting { .. }));
+    assert_eq!(rig.host.look(0.0), Look::Pending);
+    assert!(asked.load(Ordering::SeqCst) >= 1, "nothing asked for the frame that shows it");
+}
+
+#[test]
+fn the_start_prompt_does_not_wait_behind_other_slow_jobs() {
+    let (mut rig, gate, inner) = gated_rig_over(FakeSystem::new());
+    for _ in 0..16 {
+        rig.host.check_last_run(&rig.ctx);
+    }
+    std::thread::sleep(Duration::from_millis(50));
+    let asked_at = Instant::now();
+    rig.pick(Choice::Hour);
+    let deadline = asked_at + Duration::from_secs(5);
+    while password_starts(&inner) == 0 && Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    let waited = asked_at.elapsed();
+    assert_eq!(password_starts(&inner), 1, "the prompt never ran");
+    assert!(!gate.load(Ordering::SeqCst), "the other jobs were meant to still be blocked");
+    assert!(waited < Duration::from_secs(2), "the prompt waited {waited:?} behind other jobs");
+    gate.store(true, Ordering::SeqCst);
+}
+
+fn setups(system: &FakeSystem) -> usize {
+    system.calls().iter().filter(|c| matches!(c, Call::InstallAndStart { .. })).count()
+}
+
+#[test]
+fn the_first_start_on_a_mac_with_a_reader_installs_and_starts_in_one_prompt() {
+    let mut rig = Rig::with(FakeSystem::with_biometrics(), true);
+    rig.host.check_last_run(&rig.ctx);
+    rig.until(|host| host.route() == Route::SetUp);
+    rig.pick(Choice::Hour);
+    rig.until(is_on);
+    assert_eq!(rig.host.take_voices(), [Voice::Start]);
+    assert_eq!(
+        (setups(&rig.system), password_starts(&rig.system), sudo_starts(&rig.system)),
+        (1, 0, 0)
+    );
+    assert_eq!(read_marker(&rig.files().marker).unwrap().helper, Some(4242));
+    assert_eq!(rig.host.touch_id(), Some(TouchId::Installed));
+    rig.until(|host| host.route() == Route::Fingerprint);
+    rig.turn_off();
+    rig.until(|host| host.state() == State::Off);
+    rig.pick(Choice::Hour);
+    rig.until(is_on);
+    assert_eq!(
+        (setups(&rig.system), password_starts(&rig.system), sudo_starts(&rig.system)),
+        (1, 0, 1)
+    );
+}
+
+#[test]
+fn a_cancelled_first_prompt_installs_nothing_and_asks_nothing_else() {
+    let fake = FakeSystem::refusing("the password prompt was cancelled").with_reader();
+    let mut rig = Rig::with(fake, true);
+    rig.pick(Choice::Hour);
+    rig.until(|host| host.state() == State::Off);
+    assert_eq!(
+        rig.host.take_voices(),
+        [Voice::NotStarted("the password prompt was cancelled".to_owned())]
+    );
+    assert_eq!((rig.token(), read_marker(&rig.files().marker)), (None, None));
+    assert_eq!(rig.host.touch_id(), Some(TouchId::Missing));
+    assert_eq!(
+        rig.system.calls(),
+        [Call::InstallAndStart { token: rig.files().token, owner: std::process::id() }]
+    );
+}
+
+#[test]
+fn a_mac_without_a_reader_keeps_asking_for_the_password_and_never_installs() {
+    let mut rig = Rig::with(FakeSystem::new(), true);
+    rig.host.check_last_run(&rig.ctx);
+    rig.pick(Choice::Hour);
+    rig.until(is_on);
+    assert_eq!(rig.host.route(), Route::Password);
+    assert_eq!((setups(&rig.system), password_starts(&rig.system)), (0, 1));
+    assert_eq!(rig.host.touch_id(), Some(TouchId::Missing));
+}
+
 #[test]
 fn each_dev_switch_value_shows_its_own_state_and_none_reaches_the_machine() {
     let cases = [
@@ -339,6 +436,11 @@ fn each_dev_switch_value_shows_its_own_state_and_none_reaches_the_machine() {
         assert_eq!((host.look(0.0), host.short()), (look, short), "{value}");
         assert_eq!(system.calls(), []);
     }
+    let setup = Dev::parse(Some("setup")).unwrap();
+    let system = Arc::new(FakeSystem::with_biometrics());
+    let host = Host::dev(&setup, system.clone(), Recorder::default(), true, WALL);
+    assert_eq!((host.look(0.0), host.route(), system.calls()), (Look::Off, Route::SetUp, vec![]));
+    assert_eq!(Dev::parse(Some("pending")), Some(Dev::Pending));
     assert_eq!(Dev::parse(Some("nonsense")), None);
     assert_eq!(Dev::parse(None), None);
     let forever =
@@ -424,6 +526,12 @@ impl System for Gated {
     fn touch_id_installed(&self) -> bool {
         self.inner.touch_id_installed()
     }
+    fn install_and_start_lid(&self, token: &Path, owner: u32) -> Result<u32, String> {
+        self.inner.install_and_start_lid(token, owner)
+    }
+    fn biometrics_available(&self) -> bool {
+        self.inner.biometrics_available()
+    }
     fn install_touch_id(&self) -> Result<(), String> {
         self.inner.install_touch_id()
     }
@@ -442,7 +550,11 @@ impl System for Gated {
 }
 
 fn gated_rig() -> (Rig, Arc<AtomicBool>, Arc<FakeSystem>) {
-    let inner = Arc::new(FakeSystem::with_touch_id());
+    gated_rig_over(FakeSystem::with_touch_id())
+}
+
+fn gated_rig_over(inner: FakeSystem) -> (Rig, Arc<AtomicBool>, Arc<FakeSystem>) {
+    let inner = Arc::new(inner);
     let open = Arc::new(AtomicBool::new(false));
     let home = tempfile::tempdir().unwrap();
     let files = Files::of(&TidewatchPaths::new(home.path()));
