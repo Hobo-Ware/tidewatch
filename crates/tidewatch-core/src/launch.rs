@@ -77,6 +77,7 @@ pub struct LaunchCtx {
     pub worktree: PathBuf,
     /// True for an agent worktree tab. False for the main checkout, Other and split panes.
     pub worktree_tab: bool,
+    pub yolo_in_folder: bool,
     pub session_id: Option<String>,
     /// The name of the remote session. Setting it turns remote control on for a CLI that has a flag
     /// for it (`Agent::remote_args`); the others ignore it.
@@ -164,7 +165,7 @@ pub fn launch_command(
     profile: &Profile,
     ctx: &LaunchCtx,
 ) -> Result<Launch, LaunchError> {
-    if profile.level == Level::Yolo && !ctx.worktree_tab {
+    if profile.level == Level::Yolo && !ctx.worktree_tab && !ctx.yolo_in_folder {
         return Err(LaunchError::YoloOutsideWorktree);
     }
     let level_args = agent.level_args(profile.level).ok_or_else(|| {

@@ -285,8 +285,8 @@ pub(crate) fn dialog(
         for note in &view.notes {
             ui.label(RichText::new(note).size(12.5).color(brand::ORANGE));
         }
-        if let Some(why) = view.blocked {
-            ui.label(RichText::new(why).size(12.5).color(brand::RED));
+        if let Some(note) = &view.yolo_note {
+            ui.label(RichText::new(note).size(12.5).color(brand::MUTED));
         }
         if view.offer_worktree {
             switch_line(ui, "Move it into a new worktree first", worktree);
@@ -295,10 +295,7 @@ pub(crate) fn dialog(
         outcome = buttons(ui, view);
         key_hint(ui, "Enter moves  -  Esc cancels");
     });
-    if outcome.is_none()
-        && view.blocked.is_none()
-        && ctx.input_mut(|i| i.consume_key(Modifiers::NONE, Key::Enter))
-    {
+    if outcome.is_none() && ctx.input_mut(|i| i.consume_key(Modifiers::NONE, Key::Enter)) {
         outcome = Some(DialogOutcome::Accept);
     }
     if outcome.is_none() && modal.should_close() {
@@ -347,7 +344,7 @@ fn commands(ui: &mut Ui, view: &DialogView) {
 fn buttons(ui: &mut Ui, view: &DialogView) -> Option<DialogOutcome> {
     let mut outcome = None;
     footer_row(ui, "", |ui| {
-        if primary_button(ui, &view.confirm, view.blocked.is_none(), Size::Regular).clicked() {
+        if primary_button(ui, &view.confirm, true, Size::Regular).clicked() {
             outcome = Some(DialogOutcome::Accept);
         }
         if quiet_button(ui, "Cancel", true, Size::Regular).clicked() {

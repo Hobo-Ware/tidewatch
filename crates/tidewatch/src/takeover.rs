@@ -332,6 +332,22 @@ impl Takeover {
         self.roots.get(&session.cwd).and_then(Option::as_deref)
     }
 
+    pub(crate) fn yolo_move(
+        &self,
+        agents: &AgentTable,
+        session: &Session,
+        worktree: bool,
+    ) -> Option<YoloMove> {
+        if !is_yolo(session) {
+            return None;
+        }
+        Some(match self.root_of(session) {
+            None => YoloMove::Folder,
+            Some(_) if worktree && can_use_worktree(self, session) => YoloMove::Worktree,
+            Some(_) => YoloMove::Lower(lowered_level(agents, session)),
+        })
+    }
+
     pub(crate) fn is_armed(&self, key: &Key) -> bool {
         self.armed.iter().any(|armed| armed.session.key().as_ref() == Some(key))
     }
@@ -362,7 +378,7 @@ impl Takeover {
     pub(crate) fn idle_movable(&self, env: &Env) -> Vec<Session> {
         self.sessions
             .iter()
-            .filter(|s| status_of(s) == Status::Idle && !is_yolo(s))
+            .filter(|s| status_of(s) == Status::Idle)
             .filter(|s| self.offer(env, s) == Offer::MoveHere)
             .cloned()
             .collect()
@@ -386,8 +402,8 @@ impl Takeover {
                 Effect::None
             }
             Offer::MoveHere | Offer::MoveWhenIdle | Offer::ResumeHere => {
-                self.confirm =
-                    Some(Confirm { sessions: vec![session], worktree: false, batch: false });
+                let worktree = is_yolo(&session) && can_use_worktree(self, &session);
+                self.confirm = Some(Confirm { sessions: vec![session], worktree, batch: false });
                 Effect::None
             }
             Offer::Moving | Offer::Blocked(_) => Effect::None,
@@ -413,7 +429,11 @@ impl Takeover {
         let mut start = Vec::new();
         for session in confirm.sessions {
             let Some(key) = session.key() else { continue };
-            let worktree = confirm.worktree && !confirm.batch;
+            let worktree = if confirm.batch {
+                is_yolo(&session) && can_use_worktree(self, &session)
+            } else {
+                confirm.worktree
+            };
             if status_of(&session) == Status::Working {
                 self.armed.push(Armed { session, worktree });
                 continue;
@@ -530,28 +550,49 @@ pub(crate) fn resolve_profile(
 
 /// The resume command as the dialog shows it: the CLI's resume arguments and the flags the session
 /// had. Tidewatch adds its hooks and notes wiring when it runs it.
-pub(crate) fn preview_command(env: &Env, session: &Session) -> Option<String> {
+pub(crate) fn preview_command(env: &Env, session: &Session, lower: bool) -> Option<String> {
     let agent = env.agents.get(session.cli.id())?;
-    let (_, profile) = resolve_profile(env.profiles, agent, session);
+    let (_, mut profile) = resolve_profile(env.profiles, agent, session);
+    if lower {
+        profile.level = lowered_level(env.agents, session);
+    }
     let id = session.session_id.as_deref().unwrap_or("latest");
     let ctx =
         LaunchCtx { worktree: session.cwd.clone(), worktree_tab: true, ..LaunchCtx::default() };
     resume_command(agent, &profile, id, &ctx).ok().map(|launch| launch.shell_line())
 }
 
-pub(crate) fn move_blocked(
-    session: &Session,
-    worktree: bool,
-    offer_worktree: bool,
-) -> Option<&'static str> {
-    if !is_yolo(session) || worktree {
-        return None;
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum YoloMove {
+    Folder,
+    Worktree,
+    Lower(Level),
+}
+
+pub(crate) fn lowered_level(agents: &AgentTable, session: &Session) -> Level {
+    agents
+        .get(session.cli.id())
+        .and_then(|agent| {
+            Level::ALL
+                .into_iter()
+                .rev()
+                .filter(|level| *level != Level::Yolo)
+                .find(|level| agent.level_args(*level).is_some())
+        })
+        .unwrap_or(Level::Ask)
+}
+
+pub(crate) fn yolo_note(kind: YoloMove) -> Option<String> {
+    match kind {
+        YoloMove::Worktree => None,
+        YoloMove::Folder => Some(
+            "This folder is not a git repo, so it keeps running YOLO here as it did before."
+                .to_owned(),
+        ),
+        YoloMove::Lower(level) => {
+            Some(format!("YOLO only runs in a worktree, so it moves here as {}.", level.label()))
+        }
     }
-    Some(if offer_worktree {
-        "YOLO only runs in a worktree. Tick the box below to move it into a new one."
-    } else {
-        "YOLO only runs in a worktree, and this session cannot be moved into one from here. Nothing is ended."
-    })
 }
 
 /// The box "Move it into a new worktree first" is offered for a Claude session in a git repo:
@@ -592,7 +633,10 @@ pub(crate) fn window_plan(
 ) -> Option<WindowPlan> {
     let session = &spec.session;
     let agent = agents.get(session.cli.id())?;
-    let (profile_id, profile) = resolve_profile(profiles, agent, session);
+    let (profile_id, mut profile) = resolve_profile(profiles, agent, session);
+    if is_yolo(session) && worktree.is_none() && !workspace.1 {
+        profile.level = lowered_level(agents, session);
+    }
     let session_id = session.session_id.clone().unwrap_or_else(|| "latest".to_owned());
     let dir = worktree.as_ref().map_or_else(|| session.cwd.clone(), |made| made.path.clone());
     let how = decide(ResumeAgents::Auto, Ended::Clean, profile.level).ok()?;
@@ -643,7 +687,7 @@ pub(crate) struct DialogView {
     pub(crate) notes: Vec<String>,
     pub(crate) offer_worktree: bool,
     pub(crate) worktree: bool,
-    pub(crate) blocked: Option<&'static str>,
+    pub(crate) yolo_note: Option<String>,
     pub(crate) confirm: String,
 }
 
@@ -651,13 +695,22 @@ impl Takeover {
     pub(crate) fn dialog_view(&self, env: &Env) -> Option<DialogView> {
         let confirm = self.confirm.as_ref()?;
         let first = confirm.sessions.first()?;
+        let worktree_for = |session: &Session| {
+            if confirm.batch { can_use_worktree(self, session) } else { confirm.worktree }
+        };
         let items: Vec<DialogItem> = confirm
             .sessions
             .iter()
-            .map(|session| DialogItem {
-                name: session.display_name(env.now_ms),
-                folder: shown_path(&session.cwd, env.home),
-                command: preview_command(env, session),
+            .map(|session| {
+                let lower = matches!(
+                    self.yolo_move(env.agents, session, worktree_for(session)),
+                    Some(YoloMove::Lower(_))
+                );
+                DialogItem {
+                    name: session.display_name(env.now_ms),
+                    folder: shown_path(&session.cwd, env.home),
+                    command: preview_command(env, session, lower),
+                }
             })
             .collect();
         let status = status_of(first);
@@ -690,12 +743,15 @@ impl Takeover {
         }
         if confirm.batch {
             notes.push(
-                "Each one is ended in the app it runs in. YOLO sessions are not included."
+                "Each one is ended in the app it runs in. A YOLO session moves into a new worktree, keeps YOLO in a folder that is not a git repo, or moves as the highest level below YOLO."
                     .to_owned(),
             );
         }
-        let blocked =
-            if confirm.batch { None } else { move_blocked(first, worktree, offer_worktree) };
+        let yolo_note = if confirm.batch {
+            None
+        } else {
+            self.yolo_move(env.agents, first, worktree).and_then(yolo_note)
+        };
         Some(DialogView {
             title,
             lines,
@@ -703,7 +759,7 @@ impl Takeover {
             notes,
             offer_worktree,
             worktree,
-            blocked,
+            yolo_note,
             confirm: confirm_label,
         })
     }
