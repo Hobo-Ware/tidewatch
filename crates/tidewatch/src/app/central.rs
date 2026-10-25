@@ -22,9 +22,8 @@ use crate::tab_view::TabView;
 use crate::tabs::Action;
 use crate::workflow_run::TabRun;
 use crate::{
-    agent_status_line, brand, delivery_view, done_check_view, end_block_view, layout, overview,
-    overview_view, reader_glue, stepper_view, takeover_view, timeline, welcome_view,
-    workflow_start_view,
+    agent_status_line, brand, delivery_view, layout, overview, overview_view, reader_glue,
+    stepper_view, takeover_view, timeline, welcome_view, workflow_start_view,
 };
 
 const EMPTY_PANELS_H: f32 = 200.0;
@@ -236,14 +235,6 @@ impl Tidewatch {
         self.show_status_line(ui, &mut areas.terminal);
         self.show_pr_strip(ui, &mut areas.terminal, ctx, active_id);
         self.show_comment_strip(ui, &mut areas.terminal, active_id);
-        let end = self.waiting_end_block();
-        let end_band = end.as_ref().map(|(block, open)| {
-            layout::band_below(&mut areas.terminal, end_block_view::height(block, *open))
-        });
-        let check = self.done_check_look(active_id);
-        let check_band = check
-            .as_ref()
-            .map(|look| layout::band_below(&mut areas.terminal, done_check_view::height(look)));
         let card = self.flow.tab(active_id).and_then(|state| {
             state
                 .delivery
@@ -263,15 +254,6 @@ impl Tidewatch {
         self.show_terminal(ui, &grid, agent_name.as_deref(), shown == Some(Shown::Reader), frame);
         self.show_reader(ui, areas.terminal, shown, ctx, now, active_id, !frame.keys.modal_open);
 
-        if let (Some((block, open)), Some(band)) = (&end, end_band)
-            && end_block_view::show_card(ui, band, block, *open)
-            && let Some(agent) = self.tabs.active_pane_mut().agent.as_mut()
-        {
-            agent.run.end_open = !agent.run.end_open;
-        }
-        if let (Some(look), Some(band)) = (&check, check_band) {
-            self.show_done_check(ui, band, look, active_id, ctx, now);
-        }
         if let (Some((commits, building)), Some(band)) = (card, band)
             && delivery_view::show_card(ui, band, commits, building).is_some()
         {
@@ -373,15 +355,11 @@ impl Tidewatch {
         }
     }
 
-    fn waiting_end_block(&self) -> Option<(EndBlock, bool)> {
+    pub(super) fn waiting_end_block(&self) -> Option<EndBlock> {
         self.tabs.items()[self.tabs.active()].pane.agent.as_ref().and_then(|agent| {
             let waiting =
                 matches!(agent.run.status(), AgentStatus::Done | AgentStatus::NeedsYou(_));
-            agent
-                .run
-                .end_block()
-                .filter(|_| waiting)
-                .map(|block| (block.clone(), agent.run.end_open))
+            agent.run.end_block().filter(|_| waiting).cloned()
         })
     }
 }

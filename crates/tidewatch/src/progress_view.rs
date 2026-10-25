@@ -1,5 +1,5 @@
-//! The Progress panel in the History card: ring and goal, a bar per phase, the question, the
-//! current phase's rows and the tags that open the lists. Which side a tab shows is kept here.
+//! The Progress panel in the History card: ring and goal, a bar per phase, the question, the last
+//! turn's summary, the current phase's rows and the tags that open the lists. Which side a tab shows is kept here.
 
 use std::collections::HashMap;
 use std::time::Duration;
@@ -15,6 +15,8 @@ use tidewatch_core::progress::{Entry, Ledger, Mark};
 use crate::brand;
 use crate::job_model::Card;
 use crate::job_view;
+use crate::last_turn::LastTurn;
+use crate::last_turn_view;
 use crate::link_text::Text;
 use crate::meeseeks_model::Card as MeeseeksCard;
 use crate::meeseeks_view;
@@ -92,6 +94,7 @@ pub(crate) fn side_shown(chosen: Option<Side>, has_ledger: bool, first: Side) ->
 pub(crate) struct TabState {
     pub(crate) chosen: Option<Side>,
     pub(crate) shown: Option<Side>,
+    seen: Option<u64>,
     open: [bool; 3],
     all_rows: bool,
 }
@@ -103,6 +106,11 @@ impl TabState {
 
     pub(crate) fn is_open(self, tag: Tag) -> bool {
         self.open[tag.index()]
+    }
+
+    /// Whether the last turn has Needs you items or a done check the panel has not shown yet.
+    pub(crate) fn unseen(self, attention: Option<u64>) -> bool {
+        attention.is_some() && self.seen != attention
     }
 
     pub(crate) fn show_all_rows(self) -> bool {
@@ -139,6 +147,7 @@ pub(crate) enum Action {
     Ask { job: u64, message: String },
     TakeOver,
     GiveUp,
+    DoneCheck(crate::done_check_view::Action),
 }
 
 pub(crate) struct Input<'a> {
@@ -153,6 +162,7 @@ pub(crate) struct Input<'a> {
     /// The side shown first once a ledger exists.
     pub(crate) first: Side,
     pub(crate) meeseeks: Option<&'a MeeseeksCard>,
+    pub(crate) last_turn: Option<LastTurn>,
 }
 
 fn pad_of(width: f32) -> f32 {
@@ -169,6 +179,7 @@ pub(crate) fn show(
     let mut child = ui.new_child(UiBuilder::new().max_rect(rect).id_salt("progress-panel"));
     child.set_clip_rect(rect.intersect(ui.clip_rect()));
     let pad = pad_of(rect.width()) as i8;
+    state.seen = input.last_turn.as_ref().and_then(LastTurn::attention);
     ScrollArea::vertical().auto_shrink([false, false]).show(&mut child, |ui| {
         Frame::new().inner_margin(Margin::symmetric(pad, pad)).show(ui, |ui| {
             ui.spacing_mut().item_spacing = vec2(0.0, 0.0);
@@ -186,14 +197,23 @@ fn content(ui: &mut Ui, input: &Input<'_>, state: &mut TabState) -> Option<Actio
             meeseeks_view::Action::TakeOver => Action::TakeOver,
             meeseeks_view::Action::GiveUp => Action::GiveUp,
         });
-        if !input.jobs.is_empty() || input.ledger.is_some() {
+        if !input.jobs.is_empty() || input.ledger.is_some() || input.last_turn.is_some() {
             ui.add_space(GAP);
         }
     }
     let asked =
         job_view::show(ui, width, input.jobs).map(|(job, message)| Action::Ask { job, message });
     action = action.or(asked);
-    let Some(known) = input.ledger else { return action };
+    let Some(known) = input.ledger else {
+        if let Some(turn) = &input.last_turn {
+            if !input.jobs.is_empty() {
+                ui.add_space(GAP);
+            }
+            let picked = last_turn_view::show(ui, width, turn, true);
+            action = action.or(picked);
+        }
+        return action;
+    };
     if !input.jobs.is_empty() {
         ui.add_space(GAP);
     }
@@ -208,6 +228,11 @@ fn content(ui: &mut Ui, input: &Input<'_>, state: &mut TabState) -> Option<Actio
         if question_card(ui, width, &asked) {
             action = Some(Action::Answer);
         }
+    }
+    if let Some(turn) = &input.last_turn {
+        ui.add_space(GAP);
+        let picked = last_turn_view::show(ui, width, turn, asked.is_empty());
+        action = picked.or(action);
     }
     let rows = item_rows(ledger);
     if !rows.is_empty() {

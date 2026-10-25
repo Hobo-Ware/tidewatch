@@ -113,23 +113,18 @@ impl Tidewatch {
         ask_blocked(status).map_or(Ok(()), Err)
     }
 
-    pub(super) fn show_done_check(
+    pub(super) fn apply_done_check(
         &mut self,
-        ui: &mut egui::Ui,
-        band: egui::Rect,
-        look: &Look,
         tab: u64,
+        action: Action,
         ctx: &egui::Context,
         now: f64,
     ) {
-        let can_ask = self.done_check_can_ask(tab);
-        let owner_asks = !self.is_autonomous(tab);
-        match done_check_view::show(ui, band, look, can_ask, owner_asks) {
-            Some(Action::CheckAgain) if !self.done_check.is_fake() => {
-                self.start_done_check(tab, ctx);
-            }
-            Some(Action::AskFix) => self.ask_fix(tab, look, ctx, now),
-            _ => {}
+        let Some(look) = self.done_check_look(tab) else { return };
+        match action {
+            Action::CheckAgain if !self.done_check.is_fake() => self.start_done_check(tab, ctx),
+            Action::CheckAgain => {}
+            Action::AskFix => self.ask_fix(tab, &look, ctx, now),
         }
     }
 

@@ -76,8 +76,6 @@ pub(crate) struct AgentRun {
     pub(crate) agent_id: String,
     pub(crate) notes_file: Option<PathBuf>,
     pub(crate) report: Report,
-    /// The end-block card on the tab is open.
-    pub(crate) end_open: bool,
     tracker: StatusTracker,
     status: AgentStatus,
     started_at: f64,
@@ -113,7 +111,6 @@ impl AgentRun {
             agent_id,
             notes_file: None,
             report: Report::default(),
-            end_open: false,
             tracker: StatusTracker::setting_up(now),
             status: AgentStatus::SettingUp,
             started_at: now,

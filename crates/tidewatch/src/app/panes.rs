@@ -10,6 +10,7 @@ use super::{Tidewatch, wall_ms};
 use crate::checkout::{self, Plan};
 use crate::diff_pane::{PaneAction, PaneOut};
 use crate::file_view::{self, TerminalChip};
+use crate::last_turn::LastTurn;
 use crate::repo::Workspace;
 use crate::tab_view::ViewSpec;
 use crate::{
@@ -89,6 +90,15 @@ impl Tidewatch {
         matches!(self.workspace(), Workspace::Repo(_))
     }
 
+    fn last_turn(&self, tab: u64) -> Option<LastTurn> {
+        LastTurn::of(
+            self.waiting_end_block().as_ref(),
+            self.done_check_look(tab),
+            self.done_check_can_ask(tab),
+        )
+        .map(|turn| LastTurn { owner_asks: !self.is_autonomous(tab), ..turn })
+    }
+
     pub(super) fn show_panes(
         &mut self,
         ui: &mut egui::Ui,
@@ -97,6 +107,7 @@ impl Tidewatch {
     ) {
         let active_id = self.tabs.items()[self.tabs.active()].id;
         let stale = self.ledger_stale(active_id, ctx.input(|i| i.time));
+        let last_turn = self.last_turn(active_id);
         let side = self.side_layout();
         let Some(view) = self.views.get_mut(&active_id) else {
             if side {
@@ -134,7 +145,8 @@ impl Tidewatch {
         });
         let progress = agent.and_then(|_| {
             let known = self.progress.ledger(active_id);
-            if known.is_none() && cards.is_empty() && meeseeks_card.is_none() {
+            if known.is_none() && cards.is_empty() && meeseeks_card.is_none() && last_turn.is_none()
+            {
                 return None;
             }
             let input = progress_view::Input {
@@ -150,6 +162,7 @@ impl Tidewatch {
                     self.new_tab_prefs.right_panel.into()
                 },
                 meeseeks: meeseeks_card.as_ref(),
+                last_turn,
             };
             Some(input)
         });
@@ -165,6 +178,10 @@ impl Tidewatch {
         let shown = history_pane::show(ui, areas.history, view, &mut self.avatars, side, panel);
         let graph_action = shown.graph;
         let answer = shown.progress == Some(progress_view::Action::Answer);
+        let done_check = match shown.progress {
+            Some(progress_view::Action::DoneCheck(action)) => Some(action),
+            _ => None,
+        };
         let meeseeks_choice = match shown.progress {
             Some(progress_view::Action::TakeOver) => Some(true),
             Some(progress_view::Action::GiveUp) => Some(false),
@@ -208,6 +225,9 @@ impl Tidewatch {
         }
         if answer {
             self.open_reply_box();
+        }
+        if let Some(action) = done_check {
+            self.apply_done_check(active_id, action, ctx, ctx.input(|i| i.time));
         }
         match meeseeks_choice {
             Some(true) => self.take_over_meeseeks(active_id, ctx),
