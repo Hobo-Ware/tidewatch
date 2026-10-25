@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 use tidewatch_core::agents::Level;
 use tidewatch_core::autonomy::autonomous;
 use tidewatch_core::meeseeks::Meeseeks;
+use tidewatch_core::meeseeks_log::Poofed;
 use tidewatch_core::prepare::Prepared;
 use tidewatch_core::worktree::Worktree;
 
@@ -28,6 +29,8 @@ pub(crate) enum Body<T> {
     Creating,
     Removing,
     Failed(String),
+    /// A Meeseeks that poofed: its summary, read-only. No process, no worktree.
+    Poofed(Box<Poofed>),
 }
 
 /// How an agent was started, which is what a restart needs to start it again.
@@ -200,7 +203,7 @@ impl<T> Pane<T> {
         match std::mem::replace(&mut self.body, Body::Removing) {
             Body::Shell(shell) => Some((Some(shell), worktree)),
             Body::Failed(_) => Some((None, worktree)),
-            other @ (Body::Creating | Body::Removing | Body::Draft(_)) => {
+            other @ (Body::Creating | Body::Removing | Body::Draft(_) | Body::Poofed(_)) => {
                 self.body = other;
                 None
             }
@@ -215,6 +218,11 @@ impl<T> Pane<T> {
 
     pub(crate) fn remove_failed(&mut self, message: String) {
         self.body = Body::Failed(message);
+    }
+
+    /// The tab of a Meeseeks that poofed keeps nothing of the agent: only its summary stays.
+    pub(crate) fn poofed(&mut self, record: Poofed) {
+        *self = Self { body: Body::Poofed(Box::new(record)), worktree: None, agent: None };
     }
 }
 
@@ -368,6 +376,28 @@ mod tests {
             path: PathBuf::from("/home/.tidewatch/web-abc123/brave-otter"),
             branch: "agent/brave-otter".into(),
         }
+    }
+
+    #[test]
+    fn a_poofed_tab_drops_the_agent_and_the_worktree_and_closes_without_asking() {
+        use tidewatch_core::civil_date::Date;
+        let mut pane = Pane::<u32> {
+            body: Body::Removing,
+            worktree: Some(worktree()),
+            agent: Some(AgentTab::new(
+                "Builder".into(),
+                AgentRun::setting_up("claude".into(), 0.0),
+            )),
+        };
+        assert_eq!(pane.close_policy(), ClosePolicy::Wait);
+        let record =
+            Poofed::bare("brave-otter", "Done.", None, 60, Date::new(2026, 10, 25).unwrap());
+        pane.poofed(record.clone());
+        assert!(matches!(&pane.body, Body::Poofed(shown) if **shown == record));
+        assert!(pane.agent.is_none() && pane.worktree.is_none());
+        assert_eq!(pane.close_policy(), ClosePolicy::Now);
+        assert_eq!(pane.begin_remove().map(|(_, wt)| wt), None);
+        assert!(matches!(pane.body, Body::Poofed(_)), "nothing to remove leaves the summary alone");
     }
 
     fn tabs_with_creating() -> (Tabs<Pane<u32>>, u64) {

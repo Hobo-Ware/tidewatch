@@ -134,6 +134,8 @@ pub(crate) struct Out {
     pub(crate) coming_up: Option<usize>,
     /// Edit on the checklist row.
     pub(crate) edit_checklist: bool,
+    /// The row of Poofed today that was clicked.
+    pub(crate) poofed: Option<usize>,
 }
 
 /// Draws the Overview in `area` and returns what the user clicked. `below` draws last, inside the
@@ -171,7 +173,7 @@ pub(crate) fn show(
             ui.add_space(SECTION_GAP);
         }
         if !sections.poofed.is_empty() {
-            poofed_list(ui, sections.poofed);
+            out.poofed = poofed_list(ui, sections.poofed);
             ui.add_space(SECTION_GAP);
         }
         if !sections.coming_up.is_empty() {
@@ -435,7 +437,7 @@ fn paint_pill(painter: &egui::Painter, left: f32, mid: f32, text: &str, ink: Col
 
 const POOFED_ROW_H: f32 = 26.0;
 
-fn poofed_list(ui: &mut egui::Ui, rows: &[PoofedRow]) {
+fn poofed_list(ui: &mut egui::Ui, rows: &[PoofedRow]) -> Option<usize> {
     let width = ui.available_width();
     let (head, _) = ui.allocate_exact_size(vec2(width, 26.0), Sense::hover());
     ui.painter_at(head).text(
@@ -446,9 +448,13 @@ fn poofed_list(ui: &mut egui::Ui, rows: &[PoofedRow]) {
         brand::TEXT,
     );
     ui.add_space(6.0);
-    for row in rows {
-        let (rect, response) = ui.allocate_exact_size(vec2(width, POOFED_ROW_H), Sense::hover());
+    let mut clicked = None;
+    for (index, row) in rows.iter().enumerate() {
+        let (rect, response) = ui.allocate_exact_size(vec2(width, POOFED_ROW_H), Sense::click());
         let painter = ui.painter_at(rect);
+        if response.hovered() {
+            painter.rect_filled(rect, CornerRadius::same(6), brand::ITEM);
+        }
         let detail =
             painter.layout_no_wrap(row.detail.clone(), FontId::proportional(13.0), brand::MUTED);
         let room = (width - detail.size().x - 14.0).max(1.0);
@@ -459,8 +465,12 @@ fn poofed_list(ui: &mut egui::Ui, rows: &[PoofedRow]) {
             detail,
             brand::MUTED,
         );
-        response.on_hover_text(&row.summary);
+        if response.clicked() {
+            clicked = Some(index);
+        }
+        response.on_hover_cursor(egui::CursorIcon::PointingHand).on_hover_text(&row.summary);
     }
+    clicked
 }
 
 fn chip_title(chip: &Chip) -> String {
@@ -761,6 +771,35 @@ mod tests {
             walk(&clipped.shape, &mut found);
         }
         found
+    }
+
+    #[test]
+    fn a_click_on_a_poofed_row_names_that_row_and_a_click_elsewhere_names_none() {
+        let ctx = crate::fonts::test_context();
+        let data = overview(vec![row(9, "busy", AgentStatus::Working)]);
+        let rows = ["promo-test", "lint-fix"].map(|name| PoofedRow {
+            name: name.into(),
+            detail: "PR #213 \u{b7} 6m".into(),
+            summary: format!("Did {name}."),
+        });
+        let sections = Sections { poofed: &rows, ..Sections::default() };
+        frame_with(&ctx, &data, &sections, vec![]);
+        let found = texts(&ctx, &data, &sections, 1000.0);
+        let at = |name: &str| found.iter().find(|(text, _)| text == name).unwrap().1.center();
+        let click = |at: egui::Pos2| {
+            let button = |pressed| Event::PointerButton {
+                pos: at,
+                button: PointerButton::Primary,
+                pressed,
+                modifiers: egui::Modifiers::NONE,
+            };
+            frame_with(&ctx, &data, &sections, vec![Event::PointerMoved(at)]);
+            frame_with(&ctx, &data, &sections, vec![button(true)]);
+            frame_with(&ctx, &data, &sections, vec![button(false)]).poofed
+        };
+        assert_eq!(click(at("promo-test")), Some(0));
+        assert_eq!(click(at("lint-fix")), Some(1));
+        assert_eq!(click(at("Poofed today")), None);
     }
 
     #[test]

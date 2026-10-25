@@ -320,6 +320,13 @@ impl Host {
                 );
                 id
             }
+            TabAction::Summary => {
+                let SavedTab::Poofed(record) = &tab.saved else {
+                    return push_shell(tabs, spawn, (plan, group), tab, None);
+                };
+                let pane = Pane { body: Body::Poofed(record.clone()), worktree: None, agent: None };
+                tabs.push_in(group, record.name.clone(), pane)
+            }
             TabAction::ResumeWorkflow { stages } => {
                 if let (Some((runner, _)), Some(worktree)) =
                     (restore_workflow(stages), tab.worktree.clone())

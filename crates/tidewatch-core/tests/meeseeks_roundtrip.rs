@@ -6,7 +6,7 @@ mod common;
 use std::path::PathBuf;
 
 use common::{FakeGh, commit_file, git_available, ok, remote_branches, reply, repos};
-use tidewatch_core::meeseeks_check::{change, hand_off, poof, proof, tests};
+use tidewatch_core::meeseeks_check::{Checked, change, hand_off, poof, proof, tests};
 use tidewatch_core::paths::TidewatchPaths;
 use tidewatch_core::tools::Tools;
 use tidewatch_core::worktree::{self, Worktree};
@@ -32,6 +32,10 @@ fn dir(fixture: &Fixture) -> PathBuf {
     fixture.worktree.path.clone()
 }
 
+fn said(result: Result<Checked, String>) -> String {
+    result.expect("the check passes").detail
+}
+
 #[test]
 fn a_branch_with_no_commit_ahead_of_the_base_fails_the_change_check_in_words() {
     if !git_available() {
@@ -53,8 +57,11 @@ fn loose_changes_fail_the_change_check_and_a_commit_clears_it() {
     assert_eq!(error, "1 file with uncommitted changes");
     ok(&dir(&f), &["add", "hello.txt"]);
     ok(&dir(&f), &["commit", "-q", "-m", "feat: add hello"]);
-    assert_eq!(change(&Tools::system(), &dir(&f), &f.worktree.branch), Ok(()));
-    assert_eq!(proof(&Tools::system(), &dir(&f)), Ok(()));
+    assert_eq!(
+        said(change(&Tools::system(), &dir(&f), &f.worktree.branch)),
+        "1 commit ahead of main"
+    );
+    assert_eq!(said(proof(&Tools::system(), &dir(&f))), "Worktree clean");
     std::fs::write(dir(&f).join("a.txt"), "x").unwrap();
     std::fs::write(dir(&f).join("b.txt"), "x").unwrap();
     assert_eq!(
@@ -70,9 +77,9 @@ fn the_tests_pass_fail_with_their_output_or_are_skipped_without_a_command() {
     }
     let f = fixture();
     let repo = f.repos.work.clone();
-    assert_eq!(tests(&repo, &dir(&f)), Ok(()), "no command to run");
+    assert_eq!(said(tests(&repo, &dir(&f))), "No test command for this repo");
     std::fs::write(repo.join(".tidewatch.toml"), "test = \"true\"\n").unwrap();
-    assert_eq!(tests(&repo, &dir(&f)), Ok(()));
+    assert_eq!(said(tests(&repo, &dir(&f))), "true passed");
     std::fs::write(repo.join(".tidewatch.toml"), "test = \"echo broken thing; exit 3\"\n").unwrap();
     let error = tests(&repo, &dir(&f)).unwrap_err();
     assert!(error.starts_with("exit 3 from `echo broken thing; exit 3`"), "{error}");
@@ -92,7 +99,9 @@ fn the_hand_off_pushes_the_branch_and_opens_the_pr_titled_with_the_summary() {
     ]);
     let tools = Tools::with_path(gh.path());
     let url = hand_off(&tools, &dir(&f), &f.worktree.branch, "Add hello.txt with a greeting");
-    assert_eq!(url.as_deref(), Ok(URL));
+    let opened = url.unwrap();
+    assert_eq!(opened.pr_url.as_deref(), Some(URL));
+    assert_eq!(opened.detail, "Opened PR #42 against main");
     assert!(remote_branches(&f.repos.remote).contains(&f.worktree.branch));
     let create = gh.calls_to("pr create");
     assert_eq!(create.len(), 1);

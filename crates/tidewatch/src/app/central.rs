@@ -61,7 +61,10 @@ impl Tidewatch {
     }
 
     pub(super) fn panes_showing(&self) -> bool {
-        self.workspace_has_panels() && !self.focus && !self.awaiting_workflow_task()
+        self.workspace_has_panels()
+            && !self.focus
+            && !self.awaiting_workflow_task()
+            && !self.active_is_poofed()
     }
 
     /// Whether the active tab draws a file's diff where its terminal would be.
@@ -160,7 +163,8 @@ impl Tidewatch {
         let items: Vec<_> =
             rows.iter().zip(steps).map(|(row, steps)| timeline::Item { row, steps }).collect();
         let blocks = timeline::blocks(&items);
-        let poofed = overview::poofed_rows(&self.meeseeks.poofed_on(today()));
+        let entries = self.meeseeks.poofed_on(today());
+        let poofed = overview::poofed_rows(&entries);
         let sections = overview_view::Sections {
             coming_up: &blocks,
             checklist: self.checklist.of(&repo),
@@ -176,6 +180,12 @@ impl Tidewatch {
         }
         if let Some(row) = out.coming_up.and_then(|index| rows.get(index)) {
             self.open_scheduled(row, ctx);
+        }
+        if let Some(record) = out.poofed.and_then(|index| entries.get(index)) {
+            let tab = self.open_poofed(record);
+            if let Some(index) = self.tabs.index_of(tab) {
+                frame.actions.push(Action::Select(index));
+            }
         }
         let jump = out.jump;
         if let Some(action) = clicked {
@@ -196,6 +206,11 @@ impl Tidewatch {
         now: f64,
         frame: &FrameIntent,
     ) {
+        if self.active_is_poofed() {
+            self.show_poofed(ui, area, ctx);
+            self.show_toast_pill(ui);
+            return;
+        }
         let active_id = frame.active_id;
         let awaiting_task = self.awaiting_workflow_task();
         let panels = self.panes_showing();

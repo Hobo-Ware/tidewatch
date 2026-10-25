@@ -114,7 +114,6 @@ impl Tidewatch {
         let area = grid.rect;
         let active_id = self.tabs.items()[self.tabs.active()].id;
         let now = ui.ctx().input(|i| i.time);
-        let poof = self.meeseeks.fade(active_id, now);
         let dev_wheel = if reader_on { Vec::new() } else { self.take_dev_wheel(ui.ctx(), now) };
         let mut copied = false;
         let mut mouse_pasted = None;
@@ -175,16 +174,11 @@ impl Tidewatch {
                     }
                 }
             }
-            Body::Draft(_) => {}
+            Body::Draft(_) | Body::Poofed(_) => {}
             Body::Creating => {
                 status_message(ui, area, "Creating worktree...", brand::MUTED);
             }
-            Body::Removing => match poof {
-                Some(fade) => {
-                    status_message(ui, area, "Poofed", brand::TEAL.gamma_multiply(1.0 - fade));
-                }
-                None => status_message(ui, area, "Removing worktree...", brand::MUTED),
-            },
+            Body::Removing => status_message(ui, area, "Removing worktree...", brand::MUTED),
             Body::Failed(message) => status_message(ui, area, message, brand::RED),
         }
         self.bell.paint(ui, area, now);

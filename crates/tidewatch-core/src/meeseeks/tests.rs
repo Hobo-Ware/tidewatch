@@ -11,7 +11,7 @@ fn said(meeseeks: &mut Meeseeks) -> Command {
 }
 
 fn pass(meeseeks: &mut Meeseeks, step: Step) -> Command {
-    meeseeks.apply(Event::Passed { step, pr_url: None }, 0)
+    meeseeks.apply(Event::Passed { step, pr_url: None, detail: String::new() }, 0)
 }
 
 #[test]
@@ -70,7 +70,10 @@ fn with_everything_ticked_the_checks_run_in_order_and_the_pr_url_reaches_the_poo
     assert_eq!(pass(&mut meeseeks, Step::Tests), Command::Check(Step::Proof));
     assert_eq!(pass(&mut meeseeks, Step::Proof), Command::Check(Step::HandOff));
     let url = Some("https://example.test/pull/7".to_owned());
-    let done = meeseeks.apply(Event::Passed { step: Step::HandOff, pr_url: url.clone() }, 0);
+    let done = meeseeks.apply(
+        Event::Passed { step: Step::HandOff, pr_url: url.clone(), detail: String::new() },
+        0,
+    );
     assert_eq!(done, Command::Poof { summary: "renamed it".into(), pr_url: url });
     assert_eq!(meeseeks.phase, Phase::Poofing);
 }
@@ -123,7 +126,7 @@ fn a_failed_check_pastes_the_fix_note_counts_once_and_the_next_done_starts_over(
 fn an_event_for_another_step_or_phase_changes_nothing() {
     let mut meeseeks = all_on();
     let stale = [
-        Event::Passed { step: Step::Change, pr_url: None },
+        Event::Passed { step: Step::Change, pr_url: None, detail: String::new() },
         Event::Failed { step: Step::Tests, detail: "x".into() },
         Event::PoofRefused("dirty".into()),
     ];
@@ -132,7 +135,7 @@ fn an_event_for_another_step_or_phase_changes_nothing() {
     }
     said(&mut meeseeks);
     let stale_while_checking = [
-        Event::Passed { step: Step::Tests, pr_url: None },
+        Event::Passed { step: Step::Tests, pr_url: None, detail: String::new() },
         Event::Failed { step: Step::Tests, detail: "x".into() },
         Event::PoofRefused("dirty".into()),
     ];
@@ -236,4 +239,62 @@ fn only_the_five_saved_facts_reach_the_file_and_an_old_file_loads_with_defaults(
     assert_eq!(back, Meeseeks { phase: Phase::Working, summary: None, note: None, ..meeseeks });
     let old: Meeseeks = toml::from_str("task = \"x\"").unwrap();
     assert_eq!((old.turns, old.failures, old.criteria), (0, 0, Criteria::default()));
+}
+
+fn run_through(meeseeks: &mut Meeseeks, steps: &[(Step, &str)]) {
+    said(meeseeks);
+    for (step, detail) in steps {
+        meeseeks
+            .apply(Event::Passed { step: *step, pr_url: None, detail: (*detail).to_owned() }, 0);
+    }
+}
+
+#[test]
+fn the_check_lines_keep_the_detail_each_check_said_and_the_latest_pass_wins() {
+    let mut meeseeks = all_on();
+    run_through(
+        &mut meeseeks,
+        &[
+            (Step::Change, "2 commits ahead of main"),
+            (Step::Tests, "`cargo test` passed"),
+            (Step::Proof, "Worktree clean"),
+            (Step::HandOff, "Opened PR #7"),
+        ],
+    );
+    let lines = meeseeks.check_lines();
+    let said: Vec<(Step, Verdict, &str)> =
+        lines.iter().map(|line| (line.step, line.verdict, line.detail.as_str())).collect();
+    assert_eq!(
+        said,
+        [
+            (Step::Change, Verdict::Passed, "2 commits ahead of main"),
+            (Step::Tests, Verdict::Passed, "`cargo test` passed"),
+            (Step::Proof, Verdict::Passed, "Worktree clean"),
+            (Step::HandOff, Verdict::Passed, "Opened PR #7"),
+        ]
+    );
+}
+
+#[test]
+fn a_check_that_passes_again_after_a_failure_keeps_only_its_latest_line() {
+    let mut meeseeks = all_on();
+    run_through(&mut meeseeks, &[(Step::Change, "old")]);
+    meeseeks.apply(Event::Failed { step: Step::Tests, detail: "red".into() }, 0);
+    run_through(&mut meeseeks, &[(Step::Change, "new")]);
+    assert_eq!(meeseeks.check_lines()[0].detail, "new");
+}
+
+#[test]
+fn unticked_checks_and_a_pull_request_nobody_asked_for_are_skipped() {
+    let cases = [
+        (Criteria { tests: false, committed: true, pr: true }, [false, true, false, false]),
+        (Criteria { tests: true, committed: false, pr: true }, [true, false, false, false]),
+        (Criteria { tests: true, committed: true, pr: false }, [false, false, false, true]),
+    ];
+    for (criteria, skipped) in cases {
+        let lines = Meeseeks::summon("x", criteria, 0).check_lines();
+        let got: Vec<bool> = lines.iter().map(|line| line.verdict == Verdict::Skipped).collect();
+        let skipped = skipped.to_vec();
+        assert_eq!(got, skipped, "{criteria:?}");
+    }
 }

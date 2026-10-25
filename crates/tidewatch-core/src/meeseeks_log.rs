@@ -1,18 +1,20 @@
-//! `.state/meeseeks.toml`: every Meeseeks that poofed, newest last, for the Overview's Poofed today.
+//! `.state/meeseeks.toml`: every Meeseeks that poofed, newest last, for the Overview's Poofed today
+//! and for the summary tab it leaves behind.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
 use serde::{Deserialize, Serialize};
 
 use crate::civil_date::Date;
 use crate::fsutil::write_atomic;
+use crate::meeseeks::CheckLine;
 
 const MAX_ENTRIES: usize = 500;
 
 static APPENDING: Mutex<()> = Mutex::new(());
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct Poofed {
     pub name: String,
     pub summary: String,
@@ -20,14 +22,76 @@ pub struct Poofed {
     pub pr_url: Option<String>,
     pub duration_secs: u64,
     pub date: Date,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub task: String,
+    /// The repo's main checkout, which holds the branch that outlives the worktree.
+    #[serde(default, skip_serializing_if = "path_is_empty")]
+    pub repo: PathBuf,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub branch: String,
+    #[serde(default)]
+    pub ended_ms: i64,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub checks: Vec<CheckLine>,
+    /// The Done and Next lines of the agent's last turn.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub done: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub next: Vec<String>,
+    /// The stages of the ledger the agent kept, as it left them.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub stages: Vec<StageLine>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct StageLine {
+    pub name: String,
+    pub done: u32,
+    pub total: u32,
+}
+
+fn path_is_empty(path: &Path) -> bool {
+    path.as_os_str().is_empty()
+}
+
+/// `PR #213` for a pull request address that ends in its number.
+#[must_use]
+pub fn pr_label_of(url: &str) -> Option<String> {
+    let number = url.rsplit('/').next()?;
+    (!number.is_empty() && number.bytes().all(|b| b.is_ascii_digit()))
+        .then(|| format!("PR #{number}"))
 }
 
 impl Poofed {
+    /// The five facts the Overview line needs; the rest of the summary is left empty.
+    #[must_use]
+    pub fn bare(
+        name: &str,
+        summary: &str,
+        pr_url: Option<&str>,
+        duration_secs: u64,
+        date: Date,
+    ) -> Self {
+        Self {
+            name: name.to_owned(),
+            summary: summary.to_owned(),
+            pr_url: pr_url.map(str::to_owned),
+            duration_secs,
+            date,
+            task: String::new(),
+            repo: PathBuf::new(),
+            branch: String::new(),
+            ended_ms: 0,
+            checks: Vec::new(),
+            done: Vec::new(),
+            next: Vec::new(),
+            stages: Vec::new(),
+        }
+    }
+
     #[must_use]
     pub fn pr_label(&self) -> Option<String> {
-        let number = self.pr_url.as_deref()?.rsplit('/').next()?;
-        (!number.is_empty() && number.bytes().all(|b| b.is_ascii_digit()))
-            .then(|| format!("PR #{number}"))
+        pr_label_of(self.pr_url.as_deref()?)
     }
 }
 
@@ -72,13 +136,7 @@ mod tests {
     }
 
     fn entry(name: &str, date: Date, url: Option<&str>) -> Poofed {
-        Poofed {
-            name: name.into(),
-            summary: format!("did {name}"),
-            pr_url: url.map(str::to_owned),
-            duration_secs: 360,
-            date,
-        }
+        Poofed::bare(name, &format!("did {name}"), url, 360, date)
     }
 
     #[test]
@@ -92,6 +150,40 @@ mod tests {
             assert!(text.contains(part), "{part} in {text}");
         }
         assert_eq!(Log::load(&file).entries, [first]);
+    }
+
+    #[test]
+    fn a_file_from_before_the_summary_tab_still_loads_with_the_new_facts_empty() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("meeseeks.toml");
+        std::fs::write(
+            &file,
+            "[[poofed]]\nname = \"old\"\nsummary = \"did old\"\nduration_secs = 60\ndate = \"2026-10-20\"\n",
+        )
+        .unwrap();
+        assert_eq!(Log::load(&file).entries, [Poofed::bare("old", "did old", None, 60, day(20))]);
+    }
+
+    #[test]
+    fn the_whole_summary_survives_the_file() {
+        use crate::meeseeks::{Step, Verdict};
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("meeseeks.toml");
+        let mut full = entry("promo-test", day(20), Some("https://github.com/acme/web/pull/213"));
+        full.task = "Add the promo test".into();
+        full.repo = PathBuf::from("/code/web");
+        full.branch = "agent/promo-test".into();
+        full.ended_ms = 1_790_000_000_000;
+        full.checks = vec![
+            CheckLine { step: Step::Change, verdict: Verdict::Passed, detail: "2 commits".into() },
+            CheckLine { step: Step::HandOff, verdict: Verdict::Skipped, detail: String::new() },
+        ];
+        full.done = vec!["Added `promo.test.ts`".into()];
+        full.next = vec!["Review it".into()];
+        full.stages = vec![StageLine { name: "Build".into(), done: 3, total: 3 }];
+        append(&file, entry("older", day(20), None)).unwrap();
+        append(&file, full.clone()).unwrap();
+        assert_eq!(Log::load(&file).entries[1], full);
     }
 
     #[test]

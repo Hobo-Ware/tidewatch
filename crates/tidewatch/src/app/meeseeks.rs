@@ -1,45 +1,92 @@
 //! The window's side of Meeseeks: what `meeseeks_done` starts, each check's answer, the pastes that
-//! wait for an idle agent, the poof and its fade, and Take over and Give up.
+//! wait for an idle agent, the poof and the summary tab it leaves, and Take over and Give up.
 
 use std::time::Duration;
 
 use tidewatch_core::meeseeks::{Command, Event};
-use tidewatch_core::meeseeks_log::Poofed;
+use tidewatch_core::meeseeks_log::{Poofed, StageLine};
 
 use super::WAKE_SLACK_S;
 use super::{Tidewatch, wall_ms};
 use crate::due::ask_blocked;
 use crate::flow_glue;
-use crate::meeseeks_glue::{CheckSpec, Done, Leaving};
+use crate::meeseeks_glue::{CheckSpec, Done, fake_poofed};
 use crate::note_send::ENTER_DELAY_SECS;
-use crate::pane::Body;
+use crate::pane::{Body, Pane};
 use crate::progress_glue::today;
+use crate::progress_model;
+use crate::{meeseeks_summary, meeseeks_summary_view};
 
 const CLOCK_TICK: Duration = Duration::from_secs(30);
-const FADE_FRAME: Duration = Duration::from_millis(16);
 
 impl Tidewatch {
     pub(super) fn drive_meeseeks(&mut self, ctx: &egui::Context, now: f64) {
         let now_ms = wall_ms() as i64;
         self.inject_fake_meeseeks(ctx, now_ms);
         for done in self.meeseeks.drain(ctx) {
-            self.meeseeks_done_with(done, ctx, now);
+            self.meeseeks_done_with(done, ctx);
         }
         self.paste_when_idle(ctx, now);
         self.watch_struggles(ctx, now_ms);
-        for tab in self.meeseeks.faded(now) {
-            self.tabs.remove_id(tab);
-            self.forget_tab(tab);
+        self.read_summary_branches(ctx);
+    }
+
+    pub(super) fn active_is_poofed(&self) -> bool {
+        matches!(self.tabs.items()[self.tabs.active()].pane.body, Body::Poofed(_))
+    }
+
+    pub(super) fn show_poofed(&mut self, ui: &mut egui::Ui, area: egui::Rect, ctx: &egui::Context) {
+        let index = self.tabs.active();
+        let tab = &self.tabs.items()[index];
+        let Body::Poofed(record) = &tab.pane.body else { return };
+        let facts = self.meeseeks.branch(tab.id);
+        let summary = meeseeks_summary::summary(record, facts, self.meeseeks.zone());
+        if meeseeks_summary_view::show(ui, area, &summary).is_some() {
+            self.close_tab(index, ctx);
         }
-        if self.meeseeks.fading() {
-            ctx.request_repaint_after(FADE_FRAME);
+    }
+
+    fn read_summary_branches(&mut self, ctx: &egui::Context) {
+        let tools = self.flow.tools();
+        for tab in self.tabs.items() {
+            if let Body::Poofed(record) = &tab.pane.body
+                && !record.branch.is_empty()
+                && !record.repo.as_os_str().is_empty()
+            {
+                self.meeseeks.read_branch(ctx, tab.id, tools.clone(), record);
+            }
         }
+    }
+
+    /// Opens the summary of a poofed Meeseeks: the tab that already shows it, else a new one in the
+    /// group of its repo (the group on show when the repo is not in the window).
+    pub(super) fn open_poofed(&mut self, record: &Poofed) -> u64 {
+        let open = self
+            .tabs
+            .items()
+            .iter()
+            .find(|tab| matches!(&tab.pane.body, Body::Poofed(shown) if **shown == *record));
+        if let Some(tab) = open {
+            return tab.id;
+        }
+        let group = self
+            .workspaces
+            .iter()
+            .position(|workspace| workspace.dir() == record.repo)
+            .unwrap_or_else(|| self.tabs.active_group());
+        let pane =
+            Pane { body: Body::Poofed(Box::new(record.clone())), worktree: None, agent: None };
+        self.tabs.push_in(group, record.name.clone(), pane)
     }
 
     fn inject_fake_meeseeks(&mut self, ctx: &egui::Context, now_ms: i64) {
         let fake = self.meeseeks.fake();
         if let Some(text) = self.meeseeks.fake_toast() {
             self.show_toast(text, ctx);
+        }
+        if fake == crate::meeseeks_glue::Fake::Poofed && self.meeseeks.first_fake_summary() {
+            let records = fake_poofed(today(), now_ms);
+            self.open_poofed(&records[0]);
         }
         if fake.state(now_ms).is_none() {
             return;
@@ -103,17 +150,18 @@ impl Tidewatch {
         &mut self,
         done: Done<stdusk_core::terminal::PtyTerm>,
         ctx: &egui::Context,
-        now: f64,
     ) {
         match done {
             Done::Checked { tab, step, result } => {
                 let event = match result {
-                    Ok(pr_url) => Event::Passed { step, pr_url },
+                    Ok(checked) => {
+                        Event::Passed { step, pr_url: checked.pr_url, detail: checked.detail }
+                    }
                     Err(detail) => Event::Failed { step, detail },
                 };
                 self.meeseeks_event(tab, event, ctx);
             }
-            Done::Poofed { tab } => self.finish_poof(tab, ctx, now),
+            Done::Poofed { tab } => self.finish_poof(tab, ctx),
             Done::Refused { tab, why, shell } => {
                 if let Some(pane) = self.tabs.get_mut(tab).map(|t| &mut t.pane) {
                     match shell {
@@ -124,7 +172,7 @@ impl Tidewatch {
                 self.meeseeks.leaving(tab);
                 self.meeseeks_event(tab, Event::PoofRefused(why), ctx);
             }
-            Done::Loaded(_) | Done::Logged => {}
+            Done::Loaded(_) | Done::Branch { .. } | Done::Logged => {}
         }
     }
 
@@ -153,7 +201,9 @@ impl Tidewatch {
             Command::Nothing => {}
             Command::Check(step) => self.start_check(tab, step, ctx),
             Command::Paste(text) => self.meeseeks.queue_paste(tab, text),
-            Command::Poof { summary, pr_url } => self.start_poof(tab, summary, pr_url, ctx),
+            Command::Poof { summary, pr_url } => {
+                self.start_poof(tab, &summary, pr_url.as_deref(), ctx);
+            }
         }
         ctx.request_repaint();
     }
@@ -176,13 +226,7 @@ impl Tidewatch {
         self.meeseeks.check(ctx, tab, step, spec, pr);
     }
 
-    fn start_poof(
-        &mut self,
-        tab: u64,
-        summary: String,
-        pr_url: Option<String>,
-        ctx: &egui::Context,
-    ) {
+    fn start_poof(&mut self, tab: u64, summary: &str, pr_url: Option<&str>, ctx: &egui::Context) {
         let (Some(paths), now_ms) = (self.paths.clone(), wall_ms() as i64) else {
             self.meeseeks_event(
                 tab,
@@ -192,39 +236,55 @@ impl Tidewatch {
             return;
         };
         let started = self.tabs.get_mut(tab).and_then(|t| {
-            let started = t.pane.agent.as_ref()?.meeseeks.as_ref()?.started_ms;
+            let agent = t.pane.agent.as_ref()?;
+            let meeseeks = agent.meeseeks.as_ref()?;
+            let end = agent.run.end_block().cloned().unwrap_or_default();
+            let leaving = Poofed {
+                task: meeseeks.task.clone(),
+                branch: t.pane.worktree.as_ref()?.branch.clone(),
+                repo: t.pane.worktree.as_ref()?.repo.clone(),
+                ended_ms: now_ms,
+                checks: meeseeks.check_lines(),
+                done: end.done,
+                next: end.next,
+                ..Poofed::bare(
+                    t.pane.worktree.as_ref()?.name(),
+                    summary,
+                    pr_url,
+                    ((now_ms - meeseeks.started_ms).max(0) / 1000) as u64,
+                    today(),
+                )
+            };
             let (shell, worktree) = t.pane.begin_remove()?;
-            Some((started, shell?, worktree))
+            Some((shell?, worktree, leaving))
         });
-        let Some((started_ms, shell, worktree)) = started else {
+        let Some((shell, worktree, mut leaving)) = started else {
             self.meeseeks_event(tab, Event::PoofRefused("the tab is busy".into()), ctx);
             return;
         };
-        let leaving = Leaving {
-            name: worktree.name().to_owned(),
-            summary,
-            pr_url,
-            duration_secs: ((now_ms - started_ms).max(0) / 1000) as u64,
-        };
+        leaving.stages = self.progress.ledger(tab).map_or_else(Vec::new, |known| {
+            progress_model::bars(&known.ledger)
+                .into_iter()
+                .map(|bar| StageLine {
+                    name: bar.label,
+                    done: u32::try_from(bar.done).unwrap_or(u32::MAX),
+                    total: u32::try_from(bar.total).unwrap_or(u32::MAX),
+                })
+                .collect()
+        });
         let trust = self.trust.grant();
         self.meeseeks.poof(ctx, paths, (tab, shell, worktree, trust), leaving);
     }
 
-    fn finish_poof(&mut self, tab: u64, ctx: &egui::Context, now: f64) {
-        let Some(leaving) = self.meeseeks.leaving(tab) else { return };
-        let name = leaving.name.clone();
-        self.meeseeks.record(
-            ctx,
-            Poofed {
-                name: leaving.name,
-                summary: leaving.summary,
-                pr_url: leaving.pr_url,
-                duration_secs: leaving.duration_secs,
-                date: today(),
-            },
-        );
-        self.show_toast(format!("{name} poofed"), ctx);
-        self.meeseeks.start_fade(tab, now);
+    fn finish_poof(&mut self, tab: u64, ctx: &egui::Context) {
+        let Some(poofed) = self.meeseeks.leaving(tab) else { return };
+        self.meeseeks.record(ctx, poofed.clone());
+        self.show_toast(format!("{} poofed", poofed.name), ctx);
+        self.forget_tab(tab);
+        self.views.remove(&tab);
+        if let Some(tab) = self.tabs.get_mut(tab) {
+            tab.pane.poofed(poofed);
+        }
         ctx.request_repaint();
     }
 

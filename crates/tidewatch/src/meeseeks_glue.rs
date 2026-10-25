@@ -1,22 +1,23 @@
-//! The app's side of Meeseeks: checks and poof as jobs, text held for an idle agent, the fade, the
-//! poofed list, and `TIDEWATCH_FAKE_MEESEEKS=on|struggling|poofed` for captures.
+//! The app's side of Meeseeks: checks and poof as jobs, text held for an idle agent, the poofed
+//! list, the branch facts of the summary tabs, and `TIDEWATCH_FAKE_MEESEEKS=on|struggling|poofed`
+//! for captures.
 
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 
+use jiff::tz::TimeZone;
 use stdusk_core::terminal::PtyTerm;
 use tidewatch_core::civil_date::Date;
-use tidewatch_core::meeseeks::{Criteria, MAX_FAILURES, Meeseeks, Phase, Step};
-use tidewatch_core::meeseeks_check as check;
-use tidewatch_core::meeseeks_log::{self, Log, Poofed};
+use tidewatch_core::meeseeks::{CheckLine, Criteria, MAX_FAILURES, Meeseeks, Phase, Step, Verdict};
+use tidewatch_core::meeseeks_branch::{self, Branch, Changed, Found};
+use tidewatch_core::meeseeks_check::{self as check, Checked};
+use tidewatch_core::meeseeks_log::{self, Log, Poofed, StageLine};
 use tidewatch_core::paths::TidewatchPaths;
 use tidewatch_core::tools::Tools;
 use tidewatch_core::trust_apply::Grant;
 use tidewatch_core::worktree::{self, Worktree};
 
 use crate::jobs::Jobs;
-
-pub(crate) const FADE_SECS: f64 = 0.6;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Fake {
@@ -57,16 +58,9 @@ impl Fake {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct Leaving {
-    pub(crate) name: String,
-    pub(crate) summary: String,
-    pub(crate) pr_url: Option<String>,
-    pub(crate) duration_secs: u64,
-}
-
 pub(crate) enum Done<T> {
-    Checked { tab: u64, step: Step, result: Result<Option<String>, String> },
+    Checked { tab: u64, step: Step, result: Result<Checked, String> },
+    Branch { tab: u64, branch: Branch },
     Poofed { tab: u64 },
     Refused { tab: u64, why: String, shell: Option<T> },
     Loaded(Log),
@@ -79,16 +73,14 @@ pub(crate) struct CheckSpec {
     pub(crate) summary: String,
 }
 
-pub(crate) fn run_check(step: Step, spec: &CheckSpec, pr: bool) -> Result<Option<String>, String> {
+pub(crate) fn run_check(step: Step, spec: &CheckSpec, pr: bool) -> Result<Checked, String> {
     let (tools, wt) = (&spec.tools, &spec.worktree);
     match step {
-        Step::Change => check::change(tools, &wt.path, &wt.branch).map(|()| None),
-        Step::Tests => check::tests(&wt.repo, &wt.path).map(|()| None),
-        Step::Proof => check::proof(tools, &wt.path).map(|()| None),
-        Step::HandOff if pr => {
-            check::hand_off(tools, &wt.path, &wt.branch, &spec.summary).map(Some)
-        }
-        Step::HandOff => Ok(None),
+        Step::Change => check::change(tools, &wt.path, &wt.branch),
+        Step::Tests => check::tests(&wt.repo, &wt.path),
+        Step::Proof => check::proof(tools, &wt.path),
+        Step::HandOff if pr => check::hand_off(tools, &wt.path, &wt.branch, &spec.summary),
+        Step::HandOff => Ok(Checked { detail: String::new(), pr_url: None }),
     }
 }
 
@@ -120,8 +112,8 @@ pub(crate) fn run_poof<T>(
 pub(crate) struct Host {
     jobs: Jobs<Done<PtyTerm>>,
     pending: HashMap<u64, String>,
-    leaving: HashMap<u64, Leaving>,
-    fading: HashMap<u64, f64>,
+    leaving: HashMap<u64, Poofed>,
+    branches: HashMap<u64, Option<Branch>>,
     struggled: HashSet<u64>,
     loaded: Vec<Poofed>,
     added: Vec<Poofed>,
@@ -129,7 +121,8 @@ pub(crate) struct Host {
     writable: bool,
     asked: bool,
     fake: Fake,
-    fake_toasted: bool,
+    fake_shown: HashSet<&'static str>,
+    zone: TimeZone,
 }
 
 impl Host {
@@ -138,7 +131,7 @@ impl Host {
             jobs: Jobs::new(),
             pending: HashMap::new(),
             leaving: HashMap::new(),
-            fading: HashMap::new(),
+            branches: HashMap::new(),
             struggled: HashSet::new(),
             loaded: Vec::new(),
             added: Vec::new(),
@@ -146,7 +139,8 @@ impl Host {
             writable: writable && !fake.is_on(),
             asked: false,
             fake,
-            fake_toasted: false,
+            fake_shown: HashSet::new(),
+            zone: TimeZone::system(),
         }
     }
 
@@ -169,6 +163,9 @@ impl Host {
         for done in self.jobs.drain() {
             match done {
                 Done::Loaded(log) => self.loaded = log.entries,
+                Done::Branch { tab, branch } => {
+                    self.branches.insert(tab, Some(branch));
+                }
                 Done::Logged => {}
                 other => finished.push(other),
             }
@@ -196,14 +193,14 @@ impl Host {
         ctx: &egui::Context,
         paths: TidewatchPaths,
         job: (u64, PtyTerm, Worktree, Option<Grant>),
-        leaving: Leaving,
+        leaving: Poofed,
     ) {
         let (tab, shell, worktree, trust) = job;
         self.leaving.insert(tab, leaving);
         self.jobs.spawn(ctx, move || run_poof(&paths, tab, shell, &worktree, trust.as_ref()));
     }
 
-    pub(crate) fn leaving(&mut self, tab: u64) -> Option<Leaving> {
+    pub(crate) fn leaving(&mut self, tab: u64) -> Option<Poofed> {
         self.leaving.remove(&tab)
     }
 
@@ -222,7 +219,7 @@ impl Host {
     pub(crate) fn forget(&mut self, tab: u64) {
         self.pending.remove(&tab);
         self.leaving.remove(&tab);
-        self.fading.remove(&tab);
+        self.branches.remove(&tab);
         self.struggled.remove(&tab);
     }
 
@@ -230,30 +227,32 @@ impl Host {
         self.struggled.insert(tab)
     }
 
-    pub(crate) fn start_fade(&mut self, tab: u64, now: f64) {
-        self.fading.insert(tab, now);
+    /// The branch of a summary tab: asked once, from the repo's main checkout, and kept until the
+    /// tab goes. `None` while git is still being asked.
+    pub(crate) fn branch(&self, tab: u64) -> Option<&Branch> {
+        self.branches.get(&tab)?.as_ref()
     }
 
-    pub(crate) fn fade(&self, tab: u64, now: f64) -> Option<f32> {
-        let started = self.fading.get(&tab)?;
-        Some(((now - started) / FADE_SECS).clamp(0.0, 1.0) as f32)
-    }
-
-    pub(crate) fn fading(&self) -> bool {
-        !self.fading.is_empty()
-    }
-
-    pub(crate) fn faded(&mut self, now: f64) -> Vec<u64> {
-        let done: Vec<u64> = self
-            .fading
-            .iter()
-            .filter(|(_, at)| now - **at >= FADE_SECS)
-            .map(|(tab, _)| *tab)
-            .collect();
-        for tab in &done {
-            self.fading.remove(tab);
+    pub(crate) fn read_branch(
+        &mut self,
+        ctx: &egui::Context,
+        tab: u64,
+        tools: Tools,
+        poofed: &Poofed,
+    ) {
+        if self.branches.contains_key(&tab) {
+            return;
         }
-        done
+        if self.fake == Fake::Poofed {
+            self.branches.insert(tab, Some(fake_branch()));
+            return;
+        }
+        self.branches.insert(tab, None);
+        let (repo, name) = (poofed.repo.clone(), poofed.branch.clone());
+        self.jobs.spawn(ctx, move || Done::Branch {
+            tab,
+            branch: meeseeks_branch::read(&tools, &repo, &name),
+        });
     }
 
     pub(crate) fn record(&mut self, ctx: &egui::Context, entry: Poofed) {
@@ -269,13 +268,20 @@ impl Host {
     }
 
     pub(crate) fn fake_toast(&mut self) -> Option<&'static str> {
-        (self.fake == Fake::Poofed && !std::mem::replace(&mut self.fake_toasted, true))
-            .then_some("vite-6-3 poofed")
+        (self.fake == Fake::Poofed && self.fake_shown.insert("toast")).then_some("vite-6-3 poofed")
+    }
+
+    pub(crate) fn zone(&self) -> &TimeZone {
+        &self.zone
+    }
+
+    pub(crate) fn first_fake_summary(&mut self) -> bool {
+        self.fake_shown.insert("summary")
     }
 
     pub(crate) fn poofed_on(&self, day: Date) -> Vec<Poofed> {
         if self.fake == Fake::Poofed {
-            return fake_poofed(day);
+            return fake_poofed(day, crate::flow_glue::unix_now() * 1000);
         }
         let added = self.added.iter().filter(|entry| !self.loaded.contains(entry));
         let all: Vec<&Poofed> = self.loaded.iter().chain(added).collect();
@@ -283,15 +289,44 @@ impl Host {
     }
 }
 
-fn fake_poofed(day: Date) -> Vec<Poofed> {
-    let entry = |name: &str, number: u32, secs: u64| Poofed {
-        name: name.to_owned(),
-        summary: format!("Did {name}."),
-        pr_url: Some(format!("https://github.com/acme/web/pull/{number}")),
-        duration_secs: secs,
-        date: day,
+pub(crate) fn fake_branch() -> Branch {
+    Branch::Found(Found {
+        base: "main".to_owned(),
+        ahead: 2,
+        changed: Changed { files: 3, added: 42, removed: 7 },
+    })
+}
+
+pub(crate) fn fake_poofed(day: Date, now_ms: i64) -> Vec<Poofed> {
+    let line = |step, detail: &str| CheckLine {
+        step,
+        verdict: Verdict::Passed,
+        detail: detail.to_owned(),
     };
-    vec![entry("promo-test", 213, 360), entry("lint-fix", 211, 180)]
+    let entry = |name: &str, task: &str, number: u32, secs: u64| {
+        let url = format!("https://github.com/acme/web/pull/{number}");
+        let mut poofed = Poofed::bare(name, &format!("Did {name}."), Some(&url), secs, day);
+        task.clone_into(&mut poofed.task);
+        poofed.repo = PathBuf::from("/code/web");
+        poofed.branch = format!("agent/{name}");
+        poofed.ended_ms = now_ms - 90_000;
+        poofed.checks = vec![
+            line(Step::Change, "2 commits ahead of main"),
+            line(Step::Tests, "cargo test passed"),
+            line(Step::Proof, "Worktree clean"),
+            line(Step::HandOff, &format!("Opened PR #{number} against main")),
+        ];
+        poofed.done = vec![format!("Finished `{name}` and opened PR #{number}")];
+        poofed.next = vec!["Review the pull request".to_owned()];
+        poofed.stages = ["Understand", "Build", "PR", "Done"]
+            .map(|name| StageLine { name: name.to_owned(), done: 2, total: 2 })
+            .to_vec();
+        poofed
+    };
+    vec![
+        entry("promo-test", "Add a test for the promo banner", 213, 360),
+        entry("lint-fix", "Fix the lint warnings in the billing module", 211, 180),
+    ]
 }
 
 #[cfg(test)]

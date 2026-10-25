@@ -38,7 +38,8 @@ impl Default for Criteria {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum Step {
     Change,
     Tests,
@@ -72,6 +73,22 @@ pub enum Phase {
     Poofing,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Verdict {
+    Passed,
+    Skipped,
+}
+
+/// One check as the poofed summary lists it: how it ended and the one line it said.
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct CheckLine {
+    pub step: Step,
+    pub verdict: Verdict,
+    #[serde(default)]
+    pub detail: String,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum StageMark {
     Done,
@@ -101,7 +118,7 @@ impl Struggle {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Event {
     Said(String),
-    Passed { step: Step, pr_url: Option<String> },
+    Passed { step: Step, pr_url: Option<String>, detail: String },
     Failed { step: Step, detail: String },
     PoofRefused(String),
 }
@@ -134,6 +151,8 @@ pub struct Meeseeks {
     pub pr_url: Option<String>,
     #[serde(skip)]
     pub note: Option<String>,
+    #[serde(skip)]
+    pub details: Vec<(Step, String)>,
 }
 
 impl Hash for Meeseeks {
@@ -199,6 +218,26 @@ impl Meeseeks {
         })
     }
 
+    /// The four checks as they ended: the ones asked for passed (a Meeseeks only poofs after they
+    /// do) with the line each said, the others were skipped.
+    #[must_use]
+    pub fn check_lines(&self) -> Vec<CheckLine> {
+        Step::ALL
+            .iter()
+            .map(|&step| {
+                let asked = self.runs(step) && (step != Step::HandOff || self.criteria.pr);
+                let detail = if asked {
+                    let said = self.details.iter().find(|(done, _)| *done == step);
+                    said.map(|(_, line)| line.clone()).unwrap_or_default()
+                } else {
+                    "Not asked for".to_owned()
+                };
+                let verdict = if asked { Verdict::Passed } else { Verdict::Skipped };
+                CheckLine { step, verdict, detail }
+            })
+            .collect()
+    }
+
     fn advance(&mut self, after: Option<Step>) -> Command {
         let from = after.map_or(0, |step| step.index() + 1);
         let next = Step::ALL[from..].iter().copied().find(|step| self.runs(*step));
@@ -238,7 +277,9 @@ impl Meeseeks {
                 self.note = None;
                 self.advance(None)
             }
-            (Event::Passed { step, pr_url }, Phase::Checking(at)) if step == at => {
+            (Event::Passed { step, pr_url, detail }, Phase::Checking(at)) if step == at => {
+                self.details.retain(|(done, _)| *done != step);
+                self.details.push((step, detail));
                 self.pr_url = pr_url.or_else(|| self.pr_url.take());
                 self.advance(Some(step))
             }

@@ -16,6 +16,7 @@ use tidewatch_core::avatar::Avatar;
 use super::{Tidewatch, wall_ms};
 use crate::agent_avatar::{self, Face};
 use crate::amphetamine_view;
+use crate::avatar_glue::meeseeks_avatar;
 use crate::brand;
 use crate::commands::Command;
 use crate::job_model::{TabJob, tab_job};
@@ -50,6 +51,7 @@ const AVATAR_SIZE: f32 = 26.0;
 const AVATAR_GAP: f32 = 10.0;
 const TITLE_DOT_GAP: f32 = 8.0;
 const PILL_DROP_SLACK: f32 = 6.0;
+const POOFED_VEIL: f32 = 0.6;
 const STATUS_DOT_TRAILING: f32 = TAB_PAD_X + TAB_SLOT_W / 2.0;
 
 /// What an agent tab keeps besides its title: the ledger's and the leading job's words for its tooltip.
@@ -65,7 +67,6 @@ pub(crate) struct TabExtras {
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub(crate) struct Mood {
     pub(crate) struggling: bool,
-    pub(crate) fade: Option<f32>,
 }
 
 impl Tidewatch {
@@ -309,10 +310,7 @@ impl Tidewatch {
                 .find(|tab| tab.id == id)
                 .and_then(|tab| tab.pane.agent.as_ref())
                 .and_then(|agent| agent.meeseeks.as_ref());
-            Mood {
-                struggling: meeseeks.is_some_and(|m| m.struggle(now_ms).is_some()),
-                fade: self.meeseeks.fade(id, now),
-            }
+            Mood { struggling: meeseeks.is_some_and(|m| m.struggle(now_ms).is_some()) }
         };
         let extras = |id| TabExtras {
             ring: self
@@ -340,6 +338,9 @@ impl Tidewatch {
                         &agent.run.agent_id,
                         self.avatar_live.get(tab.id).cloned(),
                     ),
+                    None if matches!(tab.pane.body, Body::Poofed(_)) => {
+                        Face::Picture(meeseeks_avatar())
+                    }
                     None => Face::of(&tab.title, "", None),
                 };
                 let line = self.parking.fake_line(tab.id).unwrap_or_else(|| {
@@ -413,9 +414,12 @@ fn tab_row<T>(
         let painter = ui.painter().clone();
         let under = painter.add(Shape::Noop);
         let draft = matches!(tab.pane.body, Body::Draft(_));
+        let poofed = matches!(tab.pane.body, Body::Poofed(_));
         let TabExtras { ring, job, avatar, can_draw, mood } =
             agent.map(|_| extras(tab.id)).unwrap_or_default();
-        let face = agent.map(|agent| Face::of(&agent.profile_name, &agent.run.agent_id, avatar));
+        let face = agent
+            .map(|agent| Face::of(&agent.profile_name, &agent.run.agent_id, avatar))
+            .or_else(|| poofed.then(|| Face::Picture(meeseeks_avatar())));
         let label = crate::tab_title::label(agent, &tab.title);
         let (resp, close) = draw_tab_sized(
             ui,
@@ -449,6 +453,10 @@ fn tab_row<T>(
             {
                 agent_avatar::hover(ui, rect, tab.id, avatar);
             }
+            if poofed {
+                let veil = CornerRadius::same((rect.width() * 0.28) as u8);
+                painter.rect_filled(rect, veil, brand::SIDEBAR.gamma_multiply(POOFED_VEIL));
+            }
         }
         let menu = MenuView {
             parking: if draft {
@@ -460,7 +468,7 @@ fn tab_row<T>(
             face: avatar_menu(
                 face.as_ref().is_some_and(|face| face.avatar().is_some()),
                 can_draw,
-                agent_avatar::is_locked(ui.ctx(), tab.id),
+                poofed || agent_avatar::is_locked(ui.ctx(), tab.id),
             ),
         };
         tab_menu(&resp, i, tab.id, &menu, actions);
@@ -470,6 +478,11 @@ fn tab_row<T>(
                 tip = format!("{tip}\n{}", ring.tip);
             }
             resp.on_hover_text(tip)
+        } else if poofed {
+            resp.on_hover_text(format!(
+                "{}\nPoofed",
+                tab_tip(&label, &tab.title, position + 1, None)
+            ))
         } else {
             resp
         };
@@ -499,13 +512,6 @@ fn tab_row<T>(
                 .is_some_and(|at| pill.expand(PILL_DROP_SLACK).contains(at))
         {
             actions.push(Action::Park(i));
-        }
-        if let Some(fade) = mood.fade {
-            painter.rect_filled(
-                resp.rect,
-                CornerRadius::same(TAB_RADIUS),
-                brand::SIDEBAR.gamma_multiply(fade),
-            );
         }
         slots.push(Slot { index: i, rect: resp.rect });
     }

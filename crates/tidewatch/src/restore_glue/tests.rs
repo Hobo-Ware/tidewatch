@@ -157,6 +157,7 @@ impl Fixture {
                 Body::Removing => "removing".into(),
                 Body::Draft(_) => "draft".into(),
                 Body::Failed(m) => format!("failed: {m}"),
+                Body::Poofed(record) => format!("poofed: {}", record.name),
             })
             .collect()
     }
@@ -183,6 +184,51 @@ fn agent(worktree: &Worktree, session: &str, level: Level) -> SavedTab {
 
 fn shell(worktree: &Worktree) -> SavedTab {
     SavedTab::Shell { dir: worktree.path.clone(), branch: Some(worktree.branch.clone()) }
+}
+
+#[test]
+fn a_poofed_summary_tab_comes_back_as_a_summary_with_its_park_mark_and_saves_again_unchanged() {
+    use crate::session_save::{WindowView, saved_window};
+    use tidewatch_core::civil_date::Date;
+    use tidewatch_core::meeseeks_log::Poofed;
+    use tidewatch_core::session::SavedPark;
+    let mut f = Fixture::new(false);
+    let calm = worktree::add(&f.paths, &f.repo).unwrap();
+    let mut record = Poofed::bare(
+        "promo-test",
+        "Added the promo test.",
+        Some("https://github.com/acme/web/pull/213"),
+        360,
+        Date::new(2026, 10, 25).unwrap(),
+    );
+    record.task = "Add a promo test".into();
+    record.branch = "agent/promo-test".into();
+    record.repo = f.repo.clone();
+    record.ended_ms = 1_790_000_000_000;
+    let poofed = SavedTab::Poofed(Box::new(record));
+    let window = SavedWindow {
+        dir: f.repo.clone(),
+        other: false,
+        active: 0,
+        focus_mode: false,
+        tabs: vec![SavedTab::Main, shell(&calm), poofed.clone()],
+        parked: vec![SavedPark {
+            tab: 2,
+            why: Some(crate::park::Why::Idle),
+            since_ms: 9,
+            keep: false,
+        }],
+    };
+    Session { windows: vec![window] }.save(&f.paths).unwrap();
+    f.begin();
+    f.until_settled();
+    assert_eq!(f.shells()[2], "poofed: promo-test");
+    assert_eq!(f.titles()[2], "promo-test");
+    let tab = &f.tabs.items()[2];
+    assert!(tab.pane.agent.is_none() && tab.pane.worktree.is_none());
+    assert_eq!(tab.park, Some(Park { why: crate::park::Why::Idle, since_ms: 9 }));
+    let view = WindowView { group: 0, dir: &f.repo, other: false, focus: false };
+    assert_eq!(saved_window(&view, &f.tabs).tabs[2], poofed);
 }
 
 #[test]
