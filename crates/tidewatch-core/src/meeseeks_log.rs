@@ -8,6 +8,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::civil_date::Date;
 use crate::fsutil::write_atomic;
+use crate::kind::Kind;
 use crate::meeseeks::CheckLine;
 
 const MAX_ENTRIES: usize = 500;
@@ -41,6 +42,9 @@ pub struct Poofed {
     /// The stages of the ledger the agent kept, as it left them.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub stages: Vec<StageLine>,
+    /// An old record has none and reads as an edit.
+    #[serde(default, skip_serializing_if = "is_edit")]
+    pub kind: Kind,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -48,6 +52,11 @@ pub struct StageLine {
     pub name: String,
     pub done: u32,
     pub total: u32,
+}
+
+#[expect(clippy::trivially_copy_pass_by_ref, reason = "serde passes a reference")]
+fn is_edit(kind: &Kind) -> bool {
+    *kind == Kind::Edit
 }
 
 fn path_is_empty(path: &Path) -> bool {
@@ -86,6 +95,7 @@ impl Poofed {
             done: Vec::new(),
             next: Vec::new(),
             stages: Vec::new(),
+            kind: Kind::Edit,
         }
     }
 

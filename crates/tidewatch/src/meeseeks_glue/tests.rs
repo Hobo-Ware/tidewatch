@@ -68,6 +68,8 @@ fn the_switch_reads_its_three_values_and_anything_else_is_off() {
         (Some("on"), Fake::On),
         (Some("struggling"), Fake::Struggling),
         (Some("poofed"), Fake::Poofed),
+        (Some("readonly"), Fake::ReadOnly),
+        (Some("promoted"), Fake::Promoted),
         (Some("yes"), Fake::Off),
         (Some(""), Fake::Off),
         (None, Fake::Off),
@@ -86,6 +88,9 @@ fn each_fake_state_shows_what_the_mockup_does() {
     let stuck = Fake::Struggling.state(now).unwrap();
     assert_eq!(stuck.struggle(now), Some(Struggle::FailedChecks));
     assert!(Fake::Poofed.state(now).is_none() && Fake::Off.state(now).is_none());
+    assert_eq!(on.kind, Kind::Edit);
+    assert_eq!(Fake::ReadOnly.state(now).unwrap().kind, Kind::ReadOnly);
+    assert_eq!(Fake::Promoted.state(now).unwrap().kind, Kind::Edit);
 }
 
 #[test]
@@ -269,4 +274,39 @@ fn the_poofed_switch_gives_a_summary_its_branch_without_asking_git() {
     let record = fake_poofed(day(20), 0).remove(0);
     host.read_branch(&ctx, 1, Tools::system(), &record);
     assert_eq!(host.branch(1), Some(&fake_branch()));
+}
+
+fn spec(repo: &Repo, started_at: Option<String>) -> LookSpec {
+    LookSpec { tools: Tools::system(), dir: repo.worktree.path.clone(), started_at }
+}
+
+#[test]
+fn a_worktree_counts_as_edited_once_a_file_changes_or_a_commit_lands_after_the_start() {
+    let repo = repo_with_worktree();
+    let dir = &repo.worktree.path;
+    let start = check::head(&Tools::system(), dir);
+    assert!(start.is_some());
+    assert_eq!(run_look(&spec(&repo, start.clone())), Ok(false));
+    std::fs::write(dir.join("notes.txt"), "x").unwrap();
+    assert_eq!(run_look(&spec(&repo, start.clone())), Ok(true));
+    git(dir, &["add", "notes.txt"]);
+    git(dir, &["commit", "-q", "-m", "notes"]);
+    assert_eq!(run_look(&spec(&repo, start)), Ok(true), "a clean tree with a new commit");
+    assert_eq!(run_look(&spec(&repo, None)), Ok(false), "no start to compare with");
+}
+
+#[test]
+fn a_look_releases_the_held_answer_only_for_the_latest_ticket() {
+    let repo = repo_with_worktree();
+    let ctx = egui::Context::default();
+    let mut host = Host::new(None, false, Fake::Off);
+    assert!(host.look_due(1, 0.0));
+    host.look(&ctx, 1, spec(&repo, None), 0.0);
+    assert!(!host.look_due(1, 10.0), "one look at a time");
+    host.say_after_look(1, "the answer".into());
+    host.look(&ctx, 1, spec(&repo, None), 1.0);
+    assert_eq!(host.looked(1, 1), None, "the older look does not release it");
+    assert_eq!(host.looked(1, 2).as_deref(), Some("the answer"));
+    assert!(!host.look_due(1, 2.0) && host.look_due(1, 1.0 + LOOK_EVERY_SECS));
+    assert_eq!(host.looked(1, 2), None);
 }

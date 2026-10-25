@@ -5,9 +5,13 @@ use std::hash::{Hash, Hasher};
 
 use serde::{Deserialize, Serialize};
 
+use crate::kind::Kind;
+
+pub const MAX_SUMMARY_CHARS: usize = 200;
 pub const MAX_TURNS: u32 = 40;
 pub const MAX_FAILURES: u32 = 3;
 pub const MAX_MINUTES: i64 = 60;
+const BLOCKED: &str = "blocked:";
 const TAIL_LINES: usize = 12;
 const LINE_CHARS: usize = 200;
 
@@ -118,6 +122,8 @@ impl Struggle {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Event {
     Said(String),
+    Declared(Kind),
+    Looked { edited: bool },
     Passed { step: Step, pr_url: Option<String>, detail: String },
     Failed { step: Step, detail: String },
     PoofRefused(String),
@@ -143,6 +149,14 @@ pub struct Meeseeks {
     pub failures: u32,
     #[serde(default)]
     pub started_ms: i64,
+    #[serde(default)]
+    pub kind: Kind,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub start_head: Option<String>,
+    #[serde(skip)]
+    pub unchanged: bool,
+    #[serde(skip)]
+    pub nothing_to_ship: bool,
     #[serde(skip)]
     pub phase: Phase,
     #[serde(skip)]
@@ -157,14 +171,21 @@ pub struct Meeseeks {
 
 impl Hash for Meeseeks {
     fn hash<H: Hasher>(&self, state: &mut H) {
-        (&self.task, self.criteria, self.turns, self.failures, self.started_ms).hash(state);
+        (&self.task, self.criteria, self.turns, self.failures, self.started_ms, self.kind)
+            .hash(state);
     }
 }
 
 impl Meeseeks {
     #[must_use]
     pub fn summon(task: &str, criteria: Criteria, now_ms: i64) -> Self {
-        Self { task: task.trim().to_owned(), criteria, started_ms: now_ms, ..Self::default() }
+        Self {
+            task: task.trim().to_owned(),
+            criteria,
+            started_ms: now_ms,
+            kind: Kind::ReadOnly,
+            ..Self::default()
+        }
     }
 
     pub fn turn(&mut self) {
@@ -189,7 +210,17 @@ impl Meeseeks {
         }
     }
 
+    /// The reason after a leading `Blocked:` in the summary: a Meeseeks that says it cannot go
+    /// further is not checked.
+    #[must_use]
+    pub fn blocked_reason(&self) -> Option<&str> {
+        blocked_reason_of(self.summary.as_deref()?)
+    }
+
     fn runs(&self, step: Step) -> bool {
+        if self.kind == Kind::ReadOnly || self.nothing_to_ship || self.blocked_reason().is_some() {
+            return false;
+        }
         match step {
             Step::Change => self.criteria.committed,
             Step::Tests => self.criteria.tests,
@@ -229,6 +260,12 @@ impl Meeseeks {
                 let detail = if asked {
                     let said = self.details.iter().find(|(done, _)| *done == step);
                     said.map(|(_, line)| line.clone()).unwrap_or_default()
+                } else if self.kind == Kind::ReadOnly {
+                    "Read-only, nothing to check".to_owned()
+                } else if self.nothing_to_ship {
+                    "Nothing changed".to_owned()
+                } else if self.blocked_reason().is_some() {
+                    "Blocked, not run".to_owned()
                 } else {
                     "Not asked for".to_owned()
                 };
@@ -268,13 +305,30 @@ impl Meeseeks {
 
     pub fn apply(&mut self, event: Event, now_ms: i64) -> Command {
         match (event, self.phase) {
+            (Event::Declared(kind), _) => {
+                self.kind = self.kind.promoted_by(kind);
+                Command::Nothing
+            }
+            (Event::Looked { edited }, Phase::Working) => {
+                self.kind = self.kind.promoted_by(if edited { Kind::Edit } else { Kind::ReadOnly });
+                self.unchanged = !edited;
+                Command::Nothing
+            }
             (Event::Said(_), Phase::Working) if self.struggle(now_ms).is_some() => {
                 self.note = Some("Says it is done. Waiting for you to decide.".to_owned());
                 Command::Nothing
             }
+            (Event::Said(summary), Phase::Working)
+                if self.kind == Kind::Edit && !is_edit_summary(&summary) =>
+            {
+                Command::Paste(format!(
+                    "Tidewatch needs the summary of an edit on one line of at most {MAX_SUMMARY_CHARS} characters, because it becomes the pull request title. Shorten it, then call meeseeks_done again."
+                ))
+            }
             (Event::Said(summary), Phase::Working) => {
                 self.summary = Some(summary);
                 self.note = None;
+                self.nothing_to_ship = self.kind == Kind::Edit && self.unchanged;
                 self.advance(None)
             }
             (Event::Passed { step, pr_url, detail }, Phase::Checking(at)) if step == at => {
@@ -294,6 +348,18 @@ impl Meeseeks {
             _ => Command::Nothing,
         }
     }
+}
+
+/// The reason after a leading `Blocked:` in `summary`.
+#[must_use]
+pub fn blocked_reason_of(summary: &str) -> Option<&str> {
+    let summary = summary.trim_start();
+    let head = summary.get(..BLOCKED.len())?;
+    head.eq_ignore_ascii_case(BLOCKED).then(|| summary[BLOCKED.len()..].trim())
+}
+
+fn is_edit_summary(summary: &str) -> bool {
+    !summary.contains(['\n', '\r']) && summary.chars().count() <= MAX_SUMMARY_CHARS
 }
 
 fn first_line(text: &str) -> &str {

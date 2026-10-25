@@ -149,3 +149,68 @@ fn the_poof_refuses_a_dirty_tree_and_leaves_everything_where_it_was() {
     assert!(dir(&f).join("loose.txt").exists());
     assert!(ok(&f.repos.work, &["worktree", "list"]).contains("rename-helper"));
 }
+
+#[test]
+fn commits_made_on_a_pr_branch_checked_out_in_the_worktree_pass_the_change_check() {
+    if !git_available() {
+        return;
+    }
+    let f = fixture();
+    ok(&dir(&f), &["switch", "-q", "-c", "fix/existing-pr"]);
+    commit_file(&dir(&f), "fix.txt", "fixed\n", "fix: address the review");
+    assert_eq!(
+        change(&Tools::system(), &dir(&f), &f.worktree.branch).map(|checked| checked.detail),
+        Ok("1 commit ahead of main".to_owned()),
+        "the agent branch has no commit, the branch in use has one"
+    );
+}
+
+#[test]
+fn a_push_to_a_branch_with_an_open_pr_hands_off_that_pr_and_opens_no_new_one() {
+    if !git_available() {
+        return;
+    }
+    let f = fixture();
+    commit_file(&dir(&f), "fix.txt", "fixed\n", "fix: address the review");
+    ok(&dir(&f), &["push", "-q", "origin", "HEAD:fix/existing-pr"]);
+    let sha = ok(&dir(&f), &["rev-parse", "HEAD"]);
+    let listed = format!(
+        "[{{\"url\":\"https://github.com/acme/web/pull/7\",\"headRefOid\":\"{}\"}},{{\"url\":\"{URL}\",\"headRefOid\":\"{}\"}}]\n",
+        "0".repeat(40),
+        sha.trim()
+    );
+    let gh = FakeGh::new(&[
+        reply("--version", 0, "gh version 2.98.0\n", ""),
+        reply("pr list", 0, Box::leak(listed.into_boxed_str()), ""),
+    ]);
+    let tools = Tools::with_path(gh.path());
+    let url = hand_off(&tools, &dir(&f), &f.worktree.branch, "Address the review");
+    let checked = url.unwrap();
+    assert_eq!(checked.pr_url.as_deref(), Some(URL));
+    assert_eq!(checked.detail, "Updated PR #42");
+    assert_eq!(gh.calls_to("pr create").len(), 0);
+    assert!(!remote_branches(&f.repos.remote).contains(&f.worktree.branch));
+}
+
+#[test]
+fn a_head_no_open_pr_points_at_still_opens_a_pull_request() {
+    if !git_available() {
+        return;
+    }
+    let f = fixture();
+    commit_file(&dir(&f), "hello.txt", "hi\n", "feat: add hello");
+    let gh = FakeGh::new(&[
+        reply("--version", 0, "gh version 2.98.0\n", ""),
+        reply(
+            "pr list",
+            0,
+            "[{\"url\":\"https://github.com/acme/web/pull/7\",\"headRefOid\":\"abc\"}]\n",
+            "",
+        ),
+        reply("pr create", 0, Box::leak(format!("{URL}\n").into_boxed_str()), ""),
+    ]);
+    let tools = Tools::with_path(gh.path());
+    let url = hand_off(&tools, &dir(&f), &f.worktree.branch, "Add hello");
+    assert_eq!(url.map(|checked| checked.pr_url), Ok(Some(URL.to_owned())));
+    assert_eq!(gh.calls_to("pr create").len(), 1);
+}

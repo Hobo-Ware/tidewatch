@@ -1,3 +1,4 @@
+use tidewatch_core::kind::Kind;
 use tidewatch_core::meeseeks::{Criteria, Event};
 
 use super::*;
@@ -5,7 +6,7 @@ use super::*;
 const MIN: i64 = 60_000;
 
 fn running() -> Meeseeks {
-    Meeseeks::summon("Bump vite to 6.3", Criteria::default(), 0)
+    Meeseeks { kind: Kind::Edit, ..Meeseeks::summon("Bump vite to 6.3", Criteria::default(), 0) }
 }
 
 fn text(card: &Card) -> String {
@@ -13,11 +14,37 @@ fn text(card: &Card) -> String {
 }
 
 #[test]
-fn the_meta_line_is_the_elapsed_time_and_never_a_turn_count() {
+fn the_meta_line_is_the_kind_and_the_elapsed_time_and_never_a_turn_count() {
     let mut meeseeks = running();
-    assert_eq!(card(&meeseeks, "vite", 12 * MIN, None).meta, "12m");
+    assert_eq!(card(&meeseeks, "vite", 12 * MIN, None).meta, "Edit \u{b7} 12m");
     meeseeks.turns = 8;
-    assert_eq!(card(&meeseeks, "vite", 70 * MIN, None).meta, "1h 10m");
+    assert_eq!(card(&meeseeks, "vite", 70 * MIN, None).meta, "Edit \u{b7} 1h 10m");
+    meeseeks.kind = Kind::ReadOnly;
+    assert_eq!(card(&meeseeks, "vite", 5 * MIN, None).meta, "Read-only \u{b7} 5m");
+}
+
+#[test]
+fn a_read_only_card_has_no_check_bars_and_says_it_poofs_with_its_answer() {
+    let mut meeseeks = Meeseeks { kind: Kind::ReadOnly, ..running() };
+    let working = card(&meeseeks, "x", 0, None);
+    assert_eq!(working.bars.len(), 0);
+    assert!(text(&working).starts_with("Read-only."));
+    assert_eq!(working.shape, StageShape { kind: Kind::ReadOnly, no_diff: false });
+    meeseeks.apply(Event::Said("It is a cache".into()), 0);
+    let poofing = card(&meeseeks, "x", 0, None);
+    assert_eq!(poofing.bars.len(), 0);
+    assert_eq!(text(&poofing), "Answered. Poofing...");
+}
+
+#[test]
+fn an_edit_with_nothing_to_ship_says_so_and_shapes_the_stage_bars() {
+    let mut meeseeks = running();
+    meeseeks.apply(Event::Looked { edited: false }, 0);
+    meeseeks.apply(Event::Said("nothing needed".into()), 0);
+    let shown = card(&meeseeks, "x", 0, None);
+    assert_eq!(shown.shape, StageShape { kind: Kind::Edit, no_diff: true });
+    assert_eq!(text(&shown), "Nothing changed. No checks to run. Poofing...");
+    assert!(shown.bars.iter().all(|(_, look)| *look == Look::Skipped));
 }
 
 #[test]
@@ -87,4 +114,14 @@ fn a_struggling_meeseeks_gets_the_card_with_its_reason_and_stops_saying_it_is_ch
     let slow = card(&meeseeks, "rename", 60 * MIN, None);
     assert_eq!(slow.struggling.unwrap().reason, "60 minutes");
     assert_eq!(STRUGGLE_BODY, "It can't finish alone. It won't poof until you decide.");
+}
+
+#[test]
+fn a_blocked_meeseeks_shows_the_reason_instead_of_running_checks() {
+    let mut meeseeks = running();
+    let command = meeseeks.apply(Event::Said("Blocked: the staging key is missing".into()), 0);
+    assert!(matches!(command, tidewatch_core::meeseeks::Command::Poof { .. }));
+    let shown = card(&meeseeks, "x", 0, None);
+    assert_eq!(text(&shown), "Blocked. the staging key is missing. Poofing...");
+    assert!(shown.bars.iter().all(|(_, look)| *look == Look::Skipped));
 }

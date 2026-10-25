@@ -2,8 +2,12 @@ use super::*;
 
 const MIN: i64 = 60_000;
 
+fn edit(task: &str, criteria: Criteria) -> Meeseeks {
+    Meeseeks { kind: Kind::Edit, ..Meeseeks::summon(task, criteria, 0) }
+}
+
 fn all_on() -> Meeseeks {
-    Meeseeks::summon("rename the helper", Criteria::default(), 0)
+    edit("rename the helper", Criteria::default())
 }
 
 fn said(meeseeks: &mut Meeseeks) -> Command {
@@ -96,7 +100,7 @@ fn an_unticked_check_is_skipped_and_the_proof_and_the_poof_always_stay() {
         (Criteria { tests: false, committed: false, pr: false }, vec![Step::Proof]),
     ];
     for (criteria, want) in cases {
-        let mut meeseeks = Meeseeks::summon("x", criteria, 0);
+        let mut meeseeks = edit("x", criteria);
         let mut ran = Vec::new();
         let mut command = said(&mut meeseeks);
         while let Command::Check(step) = command {
@@ -163,8 +167,7 @@ fn three_failed_checks_make_it_struggle_and_a_struggling_one_is_never_checked_ag
 
 #[test]
 fn a_refused_poof_stays_put_and_asks_the_agent_to_commit() {
-    let mut meeseeks =
-        Meeseeks::summon("x", Criteria { tests: false, committed: false, pr: false }, 0);
+    let mut meeseeks = edit("x", Criteria { tests: false, committed: false, pr: false });
     said(&mut meeseeks);
     let poof = pass(&mut meeseeks, Step::Proof);
     assert!(matches!(poof, Command::Poof { .. }));
@@ -222,7 +225,7 @@ fn elapsed_time_reads_in_minutes_then_hours() {
 }
 
 #[test]
-fn only_the_five_saved_facts_reach_the_file_and_an_old_file_loads_with_defaults() {
+fn only_the_saved_facts_reach_the_file_and_an_old_file_loads_with_defaults() {
     let mut meeseeks =
         Meeseeks::summon("rename it", Criteria { tests: false, committed: true, pr: true }, 42);
     meeseeks.turns = 9;
@@ -230,13 +233,30 @@ fn only_the_five_saved_facts_reach_the_file_and_an_old_file_loads_with_defaults(
     meeseeks.phase = Phase::Poofing;
     meeseeks.summary = Some("s".into());
     meeseeks.note = Some("n".into());
+    meeseeks.unchanged = true;
+    meeseeks.nothing_to_ship = true;
     let text = toml::to_string(&meeseeks).unwrap();
     assert!(
-        !text.contains("phase") && !text.contains("summary") && !text.contains("note"),
+        !text.contains("phase")
+            && !text.contains("summary")
+            && !text.contains("note")
+            && !text.contains("unchanged")
+            && !text.contains("nothing_to_ship"),
         "{text}"
     );
+    assert!(text.contains("kind = \"read-only\""), "{text}");
     let back: Meeseeks = toml::from_str(&text).unwrap();
-    assert_eq!(back, Meeseeks { phase: Phase::Working, summary: None, note: None, ..meeseeks });
+    assert_eq!(
+        back,
+        Meeseeks {
+            phase: Phase::Working,
+            summary: None,
+            note: None,
+            unchanged: false,
+            nothing_to_ship: false,
+            ..meeseeks
+        }
+    );
     let old: Meeseeks = toml::from_str("task = \"x\"").unwrap();
     assert_eq!((old.turns, old.failures, old.criteria), (0, 0, Criteria::default()));
 }
@@ -292,9 +312,168 @@ fn unticked_checks_and_a_pull_request_nobody_asked_for_are_skipped() {
         (Criteria { tests: true, committed: true, pr: false }, [false, false, false, true]),
     ];
     for (criteria, skipped) in cases {
-        let lines = Meeseeks::summon("x", criteria, 0).check_lines();
+        let lines = edit("x", criteria).check_lines();
         let got: Vec<bool> = lines.iter().map(|line| line.verdict == Verdict::Skipped).collect();
         let skipped = skipped.to_vec();
         assert_eq!(got, skipped, "{criteria:?}");
     }
+}
+
+fn looked(meeseeks: &mut Meeseeks, edited: bool) -> Command {
+    meeseeks.apply(Event::Looked { edited }, 0)
+}
+
+#[test]
+fn a_new_meeseeks_starts_read_only() {
+    let meeseeks = Meeseeks::summon("how does the cache work", Criteria::default(), 0);
+    assert_eq!(meeseeks.kind, Kind::ReadOnly);
+}
+
+#[test]
+fn an_old_file_without_a_kind_loads_as_an_edit_and_a_saved_kind_is_kept() {
+    let old: Meeseeks = toml::from_str("task = \"x\"\nturns = 3").unwrap();
+    assert_eq!(old.kind, Kind::Edit);
+    let saved = toml::to_string(&Meeseeks::summon("x", Criteria::default(), 0)).unwrap();
+    let back: Meeseeks = toml::from_str(&saved).unwrap();
+    assert_eq!(back.kind, Kind::ReadOnly);
+    let head = Meeseeks { start_head: Some("abc123".into()), ..back };
+    let again: Meeseeks = toml::from_str(&toml::to_string(&head).unwrap()).unwrap();
+    assert_eq!(again.start_head.as_deref(), Some("abc123"));
+    assert!(!saved.contains("start_head"), "{saved}");
+}
+
+#[test]
+fn declaring_an_edit_promotes_and_declaring_read_only_changes_nothing() {
+    let mut meeseeks = Meeseeks::summon("x", Criteria::default(), 0);
+    assert_eq!(meeseeks.apply(Event::Declared(Kind::ReadOnly), 0), Command::Nothing);
+    assert_eq!(meeseeks.kind, Kind::ReadOnly);
+    assert_eq!(meeseeks.apply(Event::Declared(Kind::Edit), 0), Command::Nothing);
+    assert_eq!(meeseeks.kind, Kind::Edit);
+}
+
+#[test]
+fn a_change_seen_in_the_worktree_promotes() {
+    let mut meeseeks = Meeseeks::summon("x", Criteria::default(), 0);
+    looked(&mut meeseeks, false);
+    assert_eq!(meeseeks.kind, Kind::ReadOnly);
+    looked(&mut meeseeks, true);
+    assert_eq!(meeseeks.kind, Kind::Edit);
+}
+
+#[test]
+fn a_promoted_meeseeks_never_goes_back_to_read_only() {
+    let mut meeseeks = Meeseeks::summon("x", Criteria::default(), 0);
+    looked(&mut meeseeks, true);
+    looked(&mut meeseeks, false);
+    meeseeks.apply(Event::Declared(Kind::ReadOnly), 0);
+    assert_eq!(meeseeks.kind, Kind::Edit);
+    assert_eq!(said(&mut meeseeks), Command::Poof { summary: "renamed it".into(), pr_url: None });
+}
+
+#[test]
+fn a_read_only_meeseeks_runs_no_check_and_poofs_with_its_answer() {
+    let mut meeseeks = Meeseeks::summon("how does the cache work", Criteria::default(), 0);
+    looked(&mut meeseeks, false);
+    let said = meeseeks.apply(Event::Said("It is an LRU over the disk".into()), 0);
+    assert_eq!(said, Command::Poof { summary: "It is an LRU over the disk".into(), pr_url: None });
+    assert_eq!(meeseeks.phase, Phase::Poofing);
+    assert_eq!(meeseeks.stages(), [StageMark::Skipped; 4]);
+}
+
+#[test]
+fn a_read_only_meeseeks_that_changed_files_is_checked_like_an_edit() {
+    let mut meeseeks = Meeseeks::summon("x", Criteria::default(), 0);
+    looked(&mut meeseeks, true);
+    assert_eq!(said(&mut meeseeks), Command::Check(Step::Change));
+    assert!(!meeseeks.nothing_to_ship);
+}
+
+#[test]
+fn an_edit_with_no_diff_skips_its_checks_instead_of_failing_them() {
+    let mut meeseeks = all_on();
+    looked(&mut meeseeks, false);
+    let done = said(&mut meeseeks);
+    assert_eq!(done, Command::Poof { summary: "renamed it".into(), pr_url: None });
+    assert!(meeseeks.nothing_to_ship);
+    assert_eq!((meeseeks.failures, meeseeks.phase), (0, Phase::Poofing));
+    assert_eq!(meeseeks.stages(), [StageMark::Skipped; 4]);
+}
+
+#[test]
+fn an_edit_that_was_not_looked_at_or_has_a_diff_is_checked_as_usual() {
+    let mut unknown = all_on();
+    assert_eq!(said(&mut unknown), Command::Check(Step::Change));
+    let mut changed = all_on();
+    looked(&mut changed, true);
+    assert_eq!(said(&mut changed), Command::Check(Step::Change));
+    assert!(!changed.nothing_to_ship);
+}
+
+#[test]
+fn a_blocked_summary_poofs_at_once_with_no_check_whatever_the_kind() {
+    let cases = [
+        ("Blocked: the staging key is missing", Some("the staging key is missing")),
+        ("  blocked:needs a human", Some("needs a human")),
+        ("BLOCKED:", Some("")),
+        ("Not blocked: all good", None),
+        ("Blocked on nothing", None),
+    ];
+    for kind in [Kind::Edit, Kind::ReadOnly] {
+        for (summary, reason) in cases {
+            let mut meeseeks = Meeseeks { kind, ..all_on() };
+            let command = meeseeks.apply(Event::Said(summary.into()), 0);
+            assert_eq!(meeseeks.blocked_reason(), reason, "{summary:?}");
+            let poofed = matches!(command, Command::Poof { .. });
+            assert_eq!(poofed, reason.is_some() || kind == Kind::ReadOnly, "{kind:?} {summary:?}");
+            if let Command::Poof { summary: said, .. } = command {
+                assert_eq!(said, summary);
+            }
+        }
+    }
+}
+
+#[test]
+fn a_blocked_summary_leaves_the_failure_count_alone() {
+    let mut meeseeks = all_on();
+    meeseeks.apply(Event::Said("Blocked: no access".into()), 0);
+    assert_eq!((meeseeks.failures, meeseeks.phase), (0, Phase::Poofing));
+}
+
+#[test]
+fn an_edit_summary_stays_one_line_of_at_most_200_characters_and_a_read_only_answer_does_not() {
+    let long = "x".repeat(MAX_SUMMARY_CHARS + 1);
+    let multi = "Line one\nline two".to_owned();
+    let fits = "y".repeat(MAX_SUMMARY_CHARS);
+    for text in [&long, &multi] {
+        let mut edit = all_on();
+        let held = edit.apply(Event::Said(text.clone()), 0);
+        let Command::Paste(note) = held else { panic!("{held:?}") };
+        assert!(note.contains("one line") && note.contains("meeseeks_done"));
+        assert_eq!((edit.failures, edit.phase, edit.summary.as_deref()), (0, Phase::Working, None));
+        let mut read_only = Meeseeks::summon("how does it work", Criteria::default(), 0);
+        let said = read_only.apply(Event::Said(text.clone()), 0);
+        assert_eq!(said, Command::Poof { summary: text.clone(), pr_url: None });
+    }
+    assert_eq!(said_with(&mut all_on(), &fits), Command::Check(Step::Change));
+}
+
+fn said_with(meeseeks: &mut Meeseeks, summary: &str) -> Command {
+    meeseeks.apply(Event::Said(summary.to_owned()), 0)
+}
+
+#[test]
+fn a_check_line_says_why_it_did_not_run() {
+    let mut read_only = Meeseeks::summon("x", Criteria::default(), 0);
+    said(&mut read_only);
+    let details = |meeseeks: &Meeseeks| {
+        meeseeks.check_lines().iter().map(|line| line.detail.clone()).collect::<Vec<_>>()
+    };
+    assert_eq!(details(&read_only), ["Read-only, nothing to check"; 4]);
+    let mut blocked = all_on();
+    said_with(&mut blocked, "Blocked: no access");
+    assert_eq!(details(&blocked), ["Blocked, not run"; 4]);
+    let mut unchanged = all_on();
+    looked(&mut unchanged, false);
+    said(&mut unchanged);
+    assert_eq!(details(&unchanged), ["Nothing changed"; 4]);
 }

@@ -19,7 +19,10 @@ fn card_of(meeseeks: &Meeseeks, now_ms: i64) -> Card {
 }
 
 fn running() -> Meeseeks {
-    let mut meeseeks = Meeseeks::summon("Bump vite to 6.3", Criteria::default(), 0);
+    let mut meeseeks = Meeseeks {
+        kind: tidewatch_core::kind::Kind::Edit,
+        ..Meeseeks::summon("Bump vite to 6.3", Criteria::default(), 0)
+    };
     meeseeks.turns = 8;
     meeseeks.phase = Phase::Checking(Step::Tests);
     meeseeks

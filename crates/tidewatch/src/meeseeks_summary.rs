@@ -4,12 +4,14 @@
 //! never from the removed folder, so they may still be on their way.
 
 use jiff::tz::TimeZone;
-use tidewatch_core::meeseeks::{CheckLine, Step, Verdict, elapsed_text};
+use tidewatch_core::kind::Kind;
+use tidewatch_core::meeseeks::{CheckLine, Step, Verdict, blocked_reason_of, elapsed_text};
 use tidewatch_core::meeseeks_branch::{Branch, Changed};
 use tidewatch_core::meeseeks_log::Poofed;
 
 use crate::job_model::clock_label;
 use crate::meeseeks_model::{Card, Look, Span};
+use crate::progress_model::StageShape;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct CheckRow {
@@ -140,15 +142,30 @@ pub(crate) fn summary(record: &Poofed, facts: Option<&Branch>, zone: &TimeZone) 
         })
         .collect();
     let passed = lines.iter().filter(|line| line.verdict == Verdict::Passed).count();
+    let none_ran = lines.iter().all(|line| line.verdict == Verdict::Skipped);
+    let title = if record.kind == Kind::ReadOnly {
+        "Answered"
+    } else if blocked_reason_of(&record.summary).is_some() {
+        "Blocked"
+    } else if none_ran {
+        "Nothing to check"
+    } else {
+        "Checks passed"
+    };
     let card = Card {
-        title: "Checks passed".to_owned(),
-        meta: format!("{passed} of {}", lines.len()),
+        title: title.to_owned(),
+        meta: if none_ran {
+            "no checks".to_owned()
+        } else {
+            format!("{passed} of {}", lines.len())
+        },
         bars: checks.iter().map(|check| (check.label, check.look)).collect(),
         status: vec![
             Span { text: "Poofed.".to_owned(), strong: true },
             Span { text: " The worktree is gone and the branch stays.".to_owned(), strong: false },
         ],
         struggling: None,
+        shape: StageShape { kind: record.kind, no_diff: false },
     };
     let title = if record.task.trim().is_empty() { &record.name } else { &record.task };
     let said = Some(record.summary.trim().to_owned()).filter(|text| !text.is_empty());

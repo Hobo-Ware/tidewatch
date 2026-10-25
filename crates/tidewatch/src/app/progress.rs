@@ -357,6 +357,9 @@ impl Tidewatch {
     }
 
     pub(super) fn progress_arrived(&mut self, tab: u64, ledger: Ledger, ctx: &egui::Context) {
+        if let Some(kind) = ledger.status.kind {
+            self.meeseeks_declared(tab, kind, ctx);
+        }
         self.progress.arrived(tab, ledger, wall_ms() as i64);
         if self.status_log
             && let Some(known) = self.progress.ledger(tab)
