@@ -39,13 +39,7 @@ impl Tidewatch {
         let Some(spec) = ViewSpec::of(workspace, self.paths.as_ref(), active) else { return };
         let dev_scope = self.dev_panes.scope;
         let side = self.side_layout();
-        let view = self.views.entry(active_id).or_insert_with(|| {
-            let mut view = spec.into_view();
-            if let Some(scope) = dev_scope {
-                view.set_scope(scope);
-            }
-            view
-        });
+        let view = spec.view_in(&mut self.views, dev_scope);
         if !view.is_active() {
             view.start();
         }

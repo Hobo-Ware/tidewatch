@@ -78,7 +78,7 @@ impl Tidewatch {
                 let tab = self.open_draft(ctx, state);
                 if dev.start {
                     match request {
-                        Ok(request) => self.start_draft(ctx, tab, request),
+                        Ok(request) => self.dev_form_start = Some((tab, request)),
                         Err(reason) => eprintln!("tidewatch: dev form not started: {reason}"),
                     }
                 }
@@ -92,6 +92,14 @@ impl Tidewatch {
                 }
                 Err(reason) => eprintln!("tidewatch: dev agent not started: {reason}"),
             },
+        }
+    }
+
+    pub(super) fn drive_dev_form_start(&mut self, ctx: &egui::Context) {
+        if self.dev_form_start.as_ref().is_some_and(|(tab, _)| self.views.contains_key(tab))
+            && let Some((tab, request)) = self.dev_form_start.take()
+        {
+            self.start_draft(ctx, tab, request);
         }
     }
 
