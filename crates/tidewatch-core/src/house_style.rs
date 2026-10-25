@@ -63,7 +63,7 @@ pub const TOOL_GUIDANCE: &str = "\
 - For any job you expect to run over a minute, call `report_job`, or have the script append JSON progress lines (`name`, `done`, `total`, `unit`, `phase`, `state`) to the file in `$TIDEWATCH_PROGRESS`.
 - Ask choices in plain words with two or three options, mark your top pick, and name the exact items and the count for anything that deletes. The user can answer every open question with your picks in one click.
 - Once you understand the task, call `set_avatar` once with a 64x64 flat icon about the task (2-3 colors, simple shapes) and a one-line reason.
-- You may push this worktree's own `agent/` branch, force included; after folding fixups use `git push --force-with-lease`. Any other branch, a delete or a tag is refused, and Tidewatch opens pull requests.
+- You may push any branch except the repo's default branch, force included; after folding fixups use `git push --force-with-lease`. The default branch and tags are refused, and Tidewatch opens pull requests.
 ";
 
 pub const MEESEEKS_GUIDANCE: &str = "\

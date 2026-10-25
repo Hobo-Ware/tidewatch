@@ -23,8 +23,9 @@ use crate::profiles::Profile;
 /// Name of the MCP server Tidewatch attaches to every agent.
 pub const MCP_SERVER_NAME: &str = "tidewatch";
 pub const NO_PUSH_HELPER_NAME: &str = "git-remote-tidewatch-no-push";
-pub const NO_PUSH_MESSAGE: &str = "Tidewatch: an agent tab may push only its own agent/ branch; Tidewatch pushes the rest after approval.";
-pub const PUSH_BRANCH_ENV: &str = "TIDEWATCH_PUSH_BRANCH";
+pub const NO_PUSH_MESSAGE: &str =
+    "Tidewatch: an agent tab may push any branch except the default branch";
+pub const PUSH_PROTECTED_ENV: &str = "TIDEWATCH_PUSH_PROTECTED";
 const NO_PUSH_URL_PREFIX: &str = "url.tidewatch-no-push://blocked/.pushInsteadOf";
 const CODEX_MCP_TOKEN_ENV: &str = "TIDEWATCH_MCP_TOKEN";
 /// How long a CLI waits for one Tidewatch tool call: the longest `ask_user` hold and five minutes
@@ -98,8 +99,8 @@ pub struct LaunchCtx {
     pub copilot_instructions_dir: Option<PathBuf>,
     /// Directory holding the never-push helper, see `ensure_no_push_helper`.
     pub guard_bin_dir: Option<PathBuf>,
-    /// The tab's own `agent/<name>` branch, the only ref the push guard lets through.
-    pub push_branch: Option<String>,
+    /// The repo's default branch, the one branch the push guard refuses besides `main` and `master`.
+    pub protected_branch: Option<String>,
     /// Wakes the `git` and `gh` shims in `guard_bin_dir`, see `guard_shim`.
     pub guards: Option<GuardCtx>,
     /// The environment the agent would otherwise get. Read for `GIT_CONFIG_COUNT` and `PATH`.
@@ -194,7 +195,11 @@ pub fn launch_command(
         Wiring::Custom => {}
     }
     if profile.never_push && ctx.worktree_tab {
-        env.extend(guard_env(&ctx.env, ctx.guard_bin_dir.as_deref(), ctx.push_branch.as_deref()));
+        env.extend(guard_env(
+            &ctx.env,
+            ctx.guard_bin_dir.as_deref(),
+            ctx.protected_branch.as_deref(),
+        ));
     }
     if ctx.worktree_tab
         && let (Some(guards), Some(dir)) = (&ctx.guards, ctx.guard_bin_dir.as_deref())
@@ -482,15 +487,16 @@ pub fn gemini_exclude_lines() -> [&'static str; 1] {
 /// Environment that routes every `git push` in the tab through the guard helper (D7).
 ///
 /// Appends one `url.tidewatch-no-push://blocked/.pushInsteadOf` entry (empty value, so it matches every
-/// remote) after any `GIT_CONFIG_COUNT` entries already in `base_env`, names the tab's own branch in
-/// `TIDEWATCH_PUSH_BRANCH`, and puts `guard_bin_dir` first on `PATH` so git finds the helper. The helper
-/// forwards a push of that branch alone and refuses everything else. Without a helper every push
-/// fails, with git's own "remote helper not found" error.
+/// remote) after any `GIT_CONFIG_COUNT` entries already in `base_env`, names the repo's default branch
+/// in `TIDEWATCH_PUSH_PROTECTED`, and puts `guard_bin_dir` first on `PATH` so git finds the helper. The
+/// helper forwards a push of any branch except that one (and `main` and `master`, named or not) and
+/// refuses tags and the rest. Without a helper every push fails, with git's own "remote helper not
+/// found" error.
 #[must_use]
 pub fn guard_env(
     base_env: &[(String, String)],
     guard_bin_dir: Option<&Path>,
-    push_branch: Option<&str>,
+    protected_branch: Option<&str>,
 ) -> Vec<(String, String)> {
     let var = |key: &str| base_env.iter().find(|(k, _)| k == key).map(|(_, v)| v.as_str());
     let count = var("GIT_CONFIG_COUNT").and_then(|c| c.trim().parse::<usize>().ok()).unwrap_or(0);
@@ -498,7 +504,7 @@ pub fn guard_env(
         ("GIT_CONFIG_COUNT".to_owned(), (count + 1).to_string()),
         (format!("GIT_CONFIG_KEY_{count}"), NO_PUSH_URL_PREFIX.to_owned()),
         (format!("GIT_CONFIG_VALUE_{count}"), String::new()),
-        (PUSH_BRANCH_ENV.to_owned(), push_branch.unwrap_or_default().to_owned()),
+        (PUSH_PROTECTED_ENV.to_owned(), protected_branch.unwrap_or_default().to_owned()),
     ];
     env.extend(guard_bin_dir.and_then(|dir| path_with_first(base_env, dir)));
     env
@@ -517,8 +523,9 @@ pub(crate) fn path_with_first(
 }
 
 /// Content of the `git-remote-tidewatch-no-push` helper, a git remote helper (`gitremote-helpers`):
-/// it lists the real remote's refs, and forwards a push batch to the real url only when every ref
-/// in it is `refs/heads/$TIDEWATCH_PUSH_BRANCH`. Deletes, tags and any other ref refuse the batch.
+/// it lists the real remote's refs, and forwards a push batch to the real url only when every ref in
+/// it is a branch other than `main`, `master` and `$TIDEWATCH_PUSH_PROTECTED`. Tags, any other ref and
+/// a delete of a protected branch refuse the whole batch. Deleting another branch goes through.
 #[must_use]
 pub fn no_push_helper_script() -> String {
     GUARD_HELPER_TEMPLATE
@@ -528,7 +535,7 @@ pub fn no_push_helper_script() -> String {
 
 const GUARD_HELPER_TEMPLATE: &str = r#"#!/bin/sh
 url="${2#tidewatch-no-push://blocked/}"
-own="${TIDEWATCH_PUSH_BRANCH:-}"
+protected="${TIDEWATCH_PUSH_PROTECTED:-}"
 i=0
 while [ "$i" -lt "${GIT_CONFIG_COUNT:-0}" ]; do
   eval "key=\${GIT_CONFIG_KEY_$i:-}"
@@ -553,20 +560,23 @@ finish() {
     plus=$force
     case "$src" in +*) plus=+; src="${src#+}" ;; esac
     case "$leases" in *"=$dst:"*) plus= ;; esac
-    if [ -z "$src" ]; then
+    name=
+    case "$dst" in refs/heads/*) name="${dst#refs/heads/}" ;; esac
+    if [ -z "$name" ]; then
       refused=yes
-      out="${out}error $dst deleting a branch is blocked in agent tabs$nl"
-    elif [ -z "$own" ] || [ "$dst" != "refs/heads/$own" ]; then
+      out="${out}error $dst only branches can be pushed from this tab$nl"
+    elif [ "$name" = main ] || [ "$name" = master ] || [ "$name" = "$protected" ]; then
       refused=yes
-      out="${out}error $dst only refs/heads/${own:-agent/<name>} can be pushed from this tab$nl"
+      out="${out}error $dst the default branch cannot be pushed from this tab$nl"
     else
       out="${out}ok $dst$nl"
+      if [ -z "$src" ]; then plus=; fi
       specs="$specs$plus$src:$dst$nl"
     fi
   done
   IFS=$old_ifs
   if [ -n "$refused" ]; then
-    echo "@MESSAGE@" >&2
+    echo "@MESSAGE@ (${protected:-main}), and no tags." >&2
     printf '%s' "$out" | sed 's/^ok \(.*\)$/error \1 refused with the rest of the push/'
   elif [ "$dry" = true ]; then
     printf '%s' "$out"
@@ -1199,14 +1209,14 @@ mod tests {
             ("GIT_CONFIG_KEY_1".to_owned(), "user.email".to_owned()),
             ("GIT_CONFIG_VALUE_1".to_owned(), "b".to_owned()),
         ];
-        let env = guard_env(&base, None, Some("agent/brave-otter"));
+        let env = guard_env(&base, None, Some("main"));
         assert_eq!(
             env,
             [
                 ("GIT_CONFIG_COUNT".to_owned(), "3".to_owned()),
                 ("GIT_CONFIG_KEY_2".to_owned(), NO_PUSH_URL_PREFIX.to_owned()),
                 ("GIT_CONFIG_VALUE_2".to_owned(), String::new()),
-                (PUSH_BRANCH_ENV.to_owned(), "agent/brave-otter".to_owned()),
+                (PUSH_PROTECTED_ENV.to_owned(), "main".to_owned()),
             ]
         );
     }

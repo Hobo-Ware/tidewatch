@@ -254,7 +254,10 @@ fn context(
         house_style,
         copilot_instructions_dir,
         guard_bin_dir,
-        push_branch: input.worktree_tab.then(|| checked_out_agent_branch(input.dir)).flatten(),
+        protected_branch: input
+            .worktree_tab
+            .then(|| crate::start_base::remote_default(input.repo))
+            .flatten(),
         guards: input.worktree_tab.then(|| guard_ctx(input.paths, input.repo, input.tab)).flatten(),
         env: input
             .path_var
@@ -278,20 +281,6 @@ fn guard_ctx(paths: &TidewatchPaths, repo: &Path, tab: &str) -> Option<GuardCtx>
         cache_dir: paths.guard_cache_dir(),
         tab_dir: paths.tab_state_dir(repo, tab),
     })
-}
-
-fn checked_out_agent_branch(dir: &Path) -> Option<String> {
-    let dot_git = dir.join(".git");
-    let git_dir = match std::fs::read_to_string(&dot_git) {
-        Ok(text) => {
-            let linked = PathBuf::from(text.trim().strip_prefix("gitdir:")?.trim());
-            if linked.is_absolute() { linked } else { dir.join(linked) }
-        }
-        Err(_) => dot_git,
-    };
-    let head = std::fs::read_to_string(git_dir.join("HEAD")).ok()?;
-    let branch = head.trim().strip_prefix("ref: refs/heads/")?;
-    branch.starts_with(crate::worktree::BRANCH_PREFIX).then(|| branch.to_owned())
 }
 
 fn remote_name(input: &PrepareInput) -> String {
@@ -456,7 +445,7 @@ pub fn shell_script(setup: &str, launch: &Launch, shell: &str) -> String {
 mod tests {
     use super::*;
     use crate::agents::{AgentTable, ArgList, Level};
-    use crate::launch::{NO_PUSH_MESSAGE, mcp_config_json};
+    use crate::launch::{NO_PUSH_MESSAGE, PUSH_PROTECTED_ENV, mcp_config_json};
     use crate::trust::is_trusted;
     use crate::trust_apply::ConfigFiles;
 
@@ -1394,7 +1383,7 @@ mod tests {
     }
 
     #[test]
-    fn a_push_through_the_prepared_environment_is_refused_with_the_tidewatch_message() {
+    fn the_default_branch_is_refused_through_the_prepared_environment_and_other_branches_go() {
         if !Command::new("git").arg("--version").output().is_ok_and(|o| o.status.success()) {
             return;
         }
@@ -1412,7 +1401,7 @@ mod tests {
             paths: &fx.paths,
             agent: table.get("claude").unwrap(),
             profile: &profile("claude", Level::Edits),
-            repo: Path::new("/work/web"),
+            repo: &clone,
             tab: "brave-otter",
             dir: &clone,
             worktree_tab: true,
@@ -1439,12 +1428,13 @@ mod tests {
         let refs = Command::new("git").arg("-C").arg(&remote).arg("for-each-ref").output().unwrap();
         assert_eq!(String::from_utf8_lossy(&refs.stdout), "");
 
+        git(&clone, &["branch", "other"]);
         git(&clone, &["checkout", "-q", "-b", "agent/brave-otter"]);
         let input = PrepareInput {
             paths: &fx.paths,
             agent: table.get("claude").unwrap(),
             profile: &profile("claude", Level::Edits),
-            repo: Path::new("/work/web"),
+            repo: &clone,
             tab: "brave-otter",
             dir: &clone,
             worktree_tab: true,
@@ -1457,39 +1447,100 @@ mod tests {
             trust: None,
         };
         let prepared = prepare(&input).unwrap();
-        let out = Command::new("/bin/sh")
-            .args(["-c", "git push -q origin agent/brave-otter"])
-            .current_dir(&clone)
-            .envs(prepared.env.iter().map(|(k, v)| (k, v)))
-            .output()
-            .unwrap();
-        assert!(
-            out.status.success(),
-            "its own branch goes: {}",
-            String::from_utf8_lossy(&out.stderr)
-        );
+        for branch in ["agent/brave-otter", "other"] {
+            let out = Command::new("/bin/sh")
+                .args(["-c", &format!("git push -q origin {branch}")])
+                .current_dir(&clone)
+                .envs(prepared.env.iter().map(|(k, v)| (k, v)))
+                .output()
+                .unwrap();
+            assert!(
+                out.status.success(),
+                "{branch} goes: {}",
+                String::from_utf8_lossy(&out.stderr)
+            );
+        }
         let refs = Command::new("git").arg("-C").arg(&remote).arg("for-each-ref").output().unwrap();
-        assert!(String::from_utf8_lossy(&refs.stdout).contains("refs/heads/agent/brave-otter"));
+        let refs = String::from_utf8_lossy(&refs.stdout);
+        assert!(refs.contains("refs/heads/agent/brave-otter") && refs.contains("refs/heads/other"));
+        assert!(!refs.contains("refs/heads/main"));
     }
 
     #[test]
-    fn the_push_branch_is_the_checked_out_agent_branch_of_a_linked_worktree_only() {
-        let dir = tempfile::tempdir().unwrap();
-        let linked = dir.path().join("wt");
-        let admin = dir.path().join("repo/.git/worktrees/wt");
-        std::fs::create_dir_all(&linked).unwrap();
-        std::fs::create_dir_all(&admin).unwrap();
-        std::fs::write(linked.join(".git"), format!("gitdir: {}\n", admin.display())).unwrap();
-        let cases = [
-            ("ref: refs/heads/agent/brave-otter\n", Some("agent/brave-otter")),
-            ("ref: refs/heads/main\n", None),
-            ("0123456789abcdef0123456789abcdef01234567\n", None),
-        ];
-        for (head, want) in cases {
-            std::fs::write(admin.join("HEAD"), head).unwrap();
-            assert_eq!(checked_out_agent_branch(&linked).as_deref(), want, "{head}");
+    fn the_prepared_environment_names_the_remotes_default_branch_and_refuses_it() {
+        if !Command::new("git").arg("--version").output().is_ok_and(|o| o.status.success()) {
+            return;
         }
-        assert_eq!(checked_out_agent_branch(&dir.path().join("missing")), None);
+        let fx = Fixture::new();
+        let base = fx.dir.parent().unwrap();
+        let remote = base.join("remote.git");
+        let seed = base.join("seed");
+        git(base, &["init", "-q", "--bare", "-b", "trunk", remote.to_str().unwrap()]);
+        git(base, &["init", "-q", "-b", "trunk", seed.to_str().unwrap()]);
+        git(&seed, &["commit", "-q", "--allow-empty", "-m", "one"]);
+        git(&seed, &["push", "-q", remote.to_str().unwrap(), "trunk"]);
+        let clone = base.join("clone");
+        git(base, &["clone", "-q", remote.to_str().unwrap(), clone.to_str().unwrap()]);
+        git(&clone, &["checkout", "-q", "-b", "agent/brave-otter"]);
+        git(&clone, &["commit", "-q", "--allow-empty", "-m", "work"]);
+        let path = std::env::var("PATH").unwrap();
+        let table = AgentTable::builtin();
+        let prepared = prepare(&PrepareInput {
+            paths: &fx.paths,
+            agent: table.get("claude").unwrap(),
+            profile: &profile("claude", Level::Edits),
+            repo: &clone,
+            tab: "brave-otter",
+            dir: &clone,
+            worktree_tab: true,
+            task: "",
+            session_id: None,
+            remote: false,
+            meeseeks: false,
+            path_var: Some(OsStr::new(&path)),
+            listener: None,
+            trust: None,
+        })
+        .unwrap();
+        let protected = prepared.env.iter().find(|(k, _)| k == PUSH_PROTECTED_ENV);
+        assert_eq!(protected.map(|(_, v)| v.as_str()), Some("trunk"));
+        let push = |spec: &str| {
+            Command::new("/bin/sh")
+                .args(["-c", &format!("git push -q origin {spec}")])
+                .current_dir(&clone)
+                .envs(prepared.env.iter().map(|(k, v)| (k, v)))
+                .output()
+                .unwrap()
+        };
+        let out = push("HEAD:trunk");
+        assert!(!out.status.success(), "the default branch is refused");
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(stderr.contains(NO_PUSH_MESSAGE) && stderr.contains("(trunk)"), "{stderr}");
+        assert!(push("HEAD:refs/heads/another-tabs-branch").status.success());
+    }
+
+    #[test]
+    fn only_a_worktree_tab_gets_a_protected_branch() {
+        let fx = Fixture::new();
+        let table = AgentTable::builtin();
+        let prepared = prepare(&PrepareInput {
+            paths: &fx.paths,
+            agent: table.get("claude").unwrap(),
+            profile: &profile("claude", Level::Edits),
+            repo: &fx.dir,
+            tab: "main",
+            dir: &fx.dir,
+            worktree_tab: false,
+            task: "",
+            session_id: None,
+            remote: false,
+            meeseeks: false,
+            path_var: None,
+            listener: None,
+            trust: None,
+        })
+        .unwrap();
+        assert!(prepared.env.iter().all(|(k, _)| k != PUSH_PROTECTED_ENV));
     }
 
     #[test]
