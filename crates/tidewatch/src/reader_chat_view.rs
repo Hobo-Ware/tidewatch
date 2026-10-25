@@ -16,11 +16,12 @@ use egui::{
 };
 use egui_commonmark::{CommonMarkCache, CommonMarkViewer};
 use jiff::tz::TimeZone;
-use tidewatch_core::user_markup;
+use tidewatch_core::{question, user_markup};
 
 use crate::agent_avatar::{Face, paint_face};
 use crate::brand;
 use crate::job_model::clock_label;
+use crate::link_text::{Laid, Text};
 use crate::links;
 use crate::reader_rows::{Kind, Row, ToolKind};
 use crate::reader_turns::{self, Chip, Group};
@@ -52,6 +53,10 @@ const USER_CODE_FILL: Color32 = Color32::from_black_alpha(90);
 const LIST_SLACK: f32 = 32.0;
 const TEXT_SLACK: f32 = 8.0;
 const NOTE_GAP: f32 = 6.0;
+const ANSWER_QUESTION_PX: f32 = 14.0;
+const ANSWER_HEAD_PX: f32 = 12.0;
+const ANSWER_PAIR_GAP: f32 = 10.0;
+const ANSWER_LINE_GAP: f32 = 2.0;
 const JUMP_SHADOW: Shadow =
     Shadow { offset: [0, 3], blur: 10, spread: 0, color: Color32::from_black_alpha(140) };
 const LIVE_FILL: Color32 = Color32::from_rgb(0x12, 0x20, 0x1f);
@@ -172,6 +177,10 @@ pub(crate) fn user(
                 .inner_margin(USER_PAD)
                 .show(ui, |ui| {
                     let room = max_w - f32::from(USER_PAD.left + USER_PAD.right) - 2.0;
+                    if let Some(pairs) = question::parse_answers(&row.text) {
+                        answers_block(ui, &pairs, room, row.seq);
+                        return;
+                    }
                     let natural = ui
                         .painter()
                         .layout(markdown.clone(), FontId::proportional(BODY_PX), brand::TEXT, room)
@@ -194,6 +203,44 @@ pub(crate) fn user(
         });
     });
     ui.add_space(OUTER);
+}
+
+fn answers_block(ui: &mut Ui, pairs: &[(String, String)], room: f32, seq: u64) {
+    let laid = |text: &str, font: FontId, ink: Color32| -> Laid {
+        let mut line = Text::new();
+        line.run(text, &egui::text::TextFormat::simple(font, ink));
+        line.wrapped(room, usize::MAX).lay_out(ui.painter())
+    };
+    let heading = laid("Your answers", body(ANSWER_HEAD_PX), brand::MUTED);
+    let lines: Vec<(Laid, Laid)> = pairs
+        .iter()
+        .map(|(question, answer)| {
+            (
+                laid(question, body(ANSWER_QUESTION_PX), brand::MUTED),
+                laid(answer, body(BODY_PX), brand::TEXT),
+            )
+        })
+        .collect();
+    let natural = lines
+        .iter()
+        .flat_map(|(question, answer)| [question.size().x, answer.size().x])
+        .fold(heading.size().x, f32::max);
+    ui.set_width((natural.ceil() + TEXT_SLACK).min(room).max(0.0));
+    ui.with_layout(Layout::top_down(Align::Min), |ui| {
+        ui.spacing_mut().item_spacing.y = 0.0;
+        let id = ui.id().with(("answers", seq));
+        let put = |ui: &mut Ui, laid: &Laid, name: (usize, u8), ink: Color32| {
+            let (rect, _) = ui.allocate_exact_size(laid.size(), Sense::hover());
+            laid.paint(ui, id.with(name), rect.min, ink);
+        };
+        put(ui, &heading, (0, 0), brand::MUTED);
+        for (index, (question, answer)) in lines.iter().enumerate() {
+            ui.add_space(ANSWER_PAIR_GAP);
+            put(ui, question, (index, 1), brand::MUTED);
+            ui.add_space(ANSWER_LINE_GAP);
+            put(ui, answer, (index, 2), brand::TEXT);
+        }
+    });
 }
 
 /// The width of a user bubble's text: what the text measured, with room for the bullets and
@@ -650,6 +697,60 @@ mod tests {
             .step_by(4)
             .map(|x| (x as f32, click(&ctx, &mut cache, pos2(x as f32, y))))
             .collect()
+    }
+
+    fn painted_text(text: &str) -> Vec<String> {
+        let ctx = egui::Context::default();
+        let mut cache = CommonMarkCache::default();
+        let row = Row { seq: 1, kind: Kind::User, text: text.to_owned() };
+        let zone = TimeZone::UTC;
+        let mut texts = Vec::new();
+        for _ in 0..2 {
+            let raw = RawInput {
+                screen_rect: Some(Rect::from_min_size(pos2(0.0, 0.0), vec2(900.0, 600.0))),
+                ..RawInput::default()
+            };
+            let out = ctx.run_ui(raw, |ui| {
+                user(ui, &row, None, &zone, (800.0, &mut cache));
+            });
+            texts = out
+                .shapes
+                .iter()
+                .filter_map(|clipped| match &clipped.shape {
+                    Shape::Text(text) => Some(text.galley.text().to_owned()),
+                    _ => None,
+                })
+                .collect();
+        }
+        texts
+    }
+
+    #[test]
+    fn the_bubble_draws_answers_as_a_heading_and_pairs_without_their_q_and_a_markers() {
+        let questions =
+            [("Where should the retry count live?", "On the stage"), ("Which?", "Unit")];
+        let message = format!(
+            "{}\n\n{}",
+            "My answers to your earlier questions:",
+            questions
+                .iter()
+                .map(|(q, a)| format!("Q: {q}\nA: {a}"))
+                .collect::<Vec<_>>()
+                .join("\n\n")
+        );
+        let drawn = painted_text(&message);
+        for want in ["Your answers", questions[0].0, questions[0].1, questions[1].0, questions[1].1]
+        {
+            assert!(drawn.iter().any(|text| text == want), "{want}: {drawn:?}");
+        }
+        assert!(drawn.iter().all(|text| !text.contains("Q:") && !text.contains("A:")), "{drawn:?}");
+    }
+
+    #[test]
+    fn a_message_that_only_mentions_q_in_prose_is_still_drawn_as_text() {
+        let drawn = painted_text("Is it fine? Q: where\nA: here, I think");
+        assert!(!drawn.iter().any(|text| text == "Your answers"), "{drawn:?}");
+        assert!(drawn.iter().any(|text| text.contains("Q: where")), "{drawn:?}");
     }
 
     #[test]

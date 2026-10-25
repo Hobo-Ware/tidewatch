@@ -14,6 +14,8 @@ use std::sync::mpsc::Sender;
 
 use serde_json::{Map, Value, json};
 
+use crate::user_markup::{self, Record};
+
 pub const TOOL_NAME: &str = "ask_user";
 pub const MAX_QUESTIONS: usize = 4;
 pub const MIN_OPTIONS: usize = 2;
@@ -25,6 +27,7 @@ const MAX_DESCRIPTION_CHARS: usize = 400;
 const MAX_DECISION_CHARS: usize = 200;
 const MAX_TRADEOFF_CHARS: usize = 160;
 const RECOMMENDED: &str = "(Recommended)";
+const LATE_INTRO: &str = "My answers to your earlier questions:";
 
 const QUESTION_KEYS: [&str; 6] =
     ["question", "header", "decision", "multi_select", "multiSelect", "options"];
@@ -188,7 +191,28 @@ pub fn answer_text(questions: &[Question], given: &[Given]) -> String {
 /// its client gave up), so a late answer still reaches it.
 #[must_use]
 pub fn late_answer_text(questions: &[Question], given: &[Given]) -> String {
-    format!("My answers to your earlier questions:\n\n{}", answer_text(questions, given))
+    format!("{LATE_INTRO}\n\n{}", answer_text(questions, given))
+}
+
+/// The questions and answers of a message `answer_text` or `late_answer_text` built, as
+/// `pairs` gave them, or `None` when the text is anything else. The paste wrapper Claude Code puts
+/// around a pasted message and the intro line are optional; the rest must be `Q: ...` / `A: ...`
+/// blocks from the first character, so a message that only mentions `Q:` in prose is not one.
+#[must_use]
+pub fn parse_answers(text: &str) -> Option<Vec<(String, String)>> {
+    let Record::Text(text) = user_markup::classify(text) else { return None };
+    let body = match text.strip_prefix(LATE_INTRO) {
+        Some(rest) => rest.strip_prefix("\n\n")?,
+        None => text.as_str(),
+    };
+    let blocks = body.strip_prefix("Q: ")?.split("\n\nQ: ");
+    blocks
+        .map(|block| {
+            let (question, answer) = block.split_once("\nA:")?;
+            let answer = answer.strip_prefix(' ').unwrap_or(answer);
+            (!question.trim().is_empty()).then(|| (question.to_owned(), answer.to_owned()))
+        })
+        .collect()
 }
 
 /// The reply channel of one held `ask_user` call. Sending fails once the call has ended.
@@ -628,6 +652,81 @@ mod tests {
                 .starts_with("My answers to your earlier questions:\n\nQ: Where")
         );
         assert_eq!(pairs(&questions, &given)[1].1, "Unit tests, Integration tests, doc tests");
+    }
+
+    type Case<'a> = (&'a str, &'a [&'a str], &'a [usize], Option<&'a str>);
+
+    fn answered(texts: &[Case]) -> (Vec<Question>, Vec<Given>) {
+        let questions = texts
+            .iter()
+            .map(|(text, labels, _, _)| question(text, Select::Multi, labels))
+            .collect();
+        let given = texts
+            .iter()
+            .map(|(_, _, picked, other)| Given {
+                picked: picked.to_vec(),
+                other: other.map(str::to_owned),
+            })
+            .collect();
+        (questions, given)
+    }
+
+    #[test]
+    fn what_answer_text_built_reads_back_as_its_pairs() {
+        let cases = [
+            vec![("Where?", &["Stage", "Run"][..], &[0][..], None)],
+            vec![
+                ("Where should the retry count live?", &["Stage", "Run"][..], &[1][..], None),
+                ("Which tests?", &["Unit", "Lints"][..], &[0, 1][..], Some("doc tests")),
+                ("Anything else?", &["No", "Yes"][..], &[][..], Some("see https://example.com/x")),
+            ],
+            vec![("Multi\nline question?", &["A"][..], &[0][..], None)],
+            vec![("Nothing picked?", &["A"][..], &[][..], None)],
+            vec![
+                ("Nothing picked?", &["A"][..], &[][..], None),
+                ("Why: because", &["A: b"][..], &[0][..], None),
+            ],
+        ];
+        for case in cases {
+            let (questions, given) = answered(&case);
+            let expected = pairs(&questions, &given);
+            assert_eq!(parse_answers(&answer_text(&questions, &given)), Some(expected.clone()));
+            assert_eq!(parse_answers(&late_answer_text(&questions, &given)), Some(expected));
+        }
+    }
+
+    #[test]
+    fn the_paste_wrapper_around_the_message_does_not_matter() {
+        let (questions, given) =
+            answered(&[("Where?", &["Stage", "Run"], &[0], None), ("How?", &["Fast"], &[0], None)]);
+        let expected = Some(pairs(&questions, &given));
+        let late = late_answer_text(&questions, &given);
+        for wrapped in [
+            format!("<pasted_content id=\"7\">{late}</pasted_content id=\"7\">"),
+            format!("<pasted_content id=\"7\">\n{late}\n</pasted_content id=\"7\">\n"),
+            format!("  \n{late}\n\n"),
+        ] {
+            assert_eq!(parse_answers(&wrapped), expected, "{wrapped}");
+        }
+    }
+
+    #[test]
+    fn a_message_that_only_mentions_q_in_prose_is_not_answers() {
+        for text in [
+            "",
+            "Q: only a question",
+            "Q:no space\nA: x",
+            "I have a Q: what is this?\nA: no idea",
+            "Please look at this.\n\nQ: Where?\nA: Stage",
+            "My answers to your earlier questions:",
+            "My answers to your earlier questions:\n\nthey are all fine",
+            "My answers to your earlier questions: Q: Where?\nA: Stage",
+            "Q: Where?\nA: Stage\n\nQ: no answer here",
+            "<command-name>/clear</command-name>",
+            "<system-reminder>Q: Where?\nA: Stage</system-reminder>",
+        ] {
+            assert_eq!(parse_answers(text), None, "{text}");
+        }
     }
 
     #[test]

@@ -569,6 +569,7 @@ fn claude_user_text(text: Option<&str>, ts: Option<i64>) -> Option<Entry> {
         Record::Hidden => None,
         Record::Command(line) => entry(Role::Command, Some(&line), ts),
         Record::Output(output) => entry(Role::CommandOutput, Some(&output), ts),
+        Record::Background(note) => entry(Role::CommandOutput, Some(&note), ts),
         Record::Compacted => entry(Role::Compacted, Some(COMPACTED_TEXT), ts),
         Record::Text(_) if trimmed.starts_with("[Request interrupted") => {
             entry(Role::System, Some(trimmed), ts)
@@ -1026,6 +1027,8 @@ mod tests {
             r#"{"type":"user","message":{"role":"user","content":"<local-command-stdout></local-command-stdout>"}}"#,
             r#"{"type":"user","message":{"role":"user","content":[{"type":"text","text":"<pasted_content id=\"e482\">\n1. one\n2. two\n</pasted_content id=\"e482\">"},{"type":"text","text":"[Image #1]"}]}}"#,
             r#"{"type":"user","message":{"role":"user","content":"why does <command-name> show up here?"}}"#,
+            r#"{"type":"user","origin":{"kind":"task-notification"},"message":{"role":"user","content":"<task-notification>\n<task-id>b1</task-id>\n<summary>Monitor event: \"pull\"</summary>\n<event>33% 104/314</event>\n</task-notification>"}}"#,
+            r#"{"type":"user","message":{"role":"user","content":"why does <task-notification> show up here?"}}"#,
         ];
         let mut parser = Parser::new(Source::Claude);
         let entries: Vec<Entry> = lines.iter().flat_map(|l| parser.feed_line(l)).collect();
@@ -1041,6 +1044,12 @@ mod tests {
                 (Role::User, "1. one\n2. two".into(), None),
                 (Role::User, "[Image #1]".into(), None),
                 (Role::User, "why does <command-name> show up here?".into(), None),
+                (
+                    Role::CommandOutput,
+                    "Background task - Monitor event: \"pull\"\n33% 104/314".into(),
+                    None
+                ),
+                (Role::User, "why does <task-notification> show up here?".into(), None),
             ]
         );
     }
