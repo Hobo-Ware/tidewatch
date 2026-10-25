@@ -5581,6 +5581,7 @@ dependencies = [
  "eframe",
  "egui",
  "egui_commonmark",
+ "egui_extras",
  "global-hotkey",
  "image",
  "jiff",

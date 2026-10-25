@@ -14,15 +14,17 @@ use egui::{
     Pos2, Rect, Response, RichText, Sense, Shadow, Shape, Stroke, StrokeKind, TextStyle, Ui, pos2,
     vec2,
 };
-use egui_commonmark::{CommonMarkCache, CommonMarkViewer};
+use egui_commonmark::CommonMarkCache;
 use jiff::tz::TimeZone;
 use tidewatch_core::{question, user_markup};
 
 use crate::agent_avatar::{Face, paint_face};
 use crate::brand;
+use crate::code_block::{self, Look};
 use crate::job_model::clock_label;
 use crate::link_text::{Laid, Text};
 use crate::links;
+use crate::reader_markdown::{self, Piece};
 use crate::reader_rows::{Kind, Row, ToolKind};
 use crate::reader_turns::{self, Chip, Group};
 use crate::reader_view::{ellipsized, output_preview, split_label};
@@ -126,7 +128,7 @@ pub(crate) fn agent_markdown(ui: &mut Ui, cache: &mut CommonMarkCache, text: &st
         visuals.widgets.noninteractive.fg_stroke.color = ink;
         visuals.hyperlink_color = brand::TEAL_TEXT;
         ui.style_mut().url_in_tooltip = true;
-        CommonMarkViewer::new().show(ui, cache, &links::markdown(text));
+        reader_markdown::show(ui, cache, &links::markdown(text), true, Look::AGENT);
     });
     ui.ctx().output_mut(|out| {
         out.commands.retain(
@@ -186,16 +188,24 @@ pub(crate) fn user(
                         .layout(markdown.clone(), FontId::proportional(BODY_PX), brand::TEXT, room)
                         .size()
                         .x;
-                    ui.set_width(user_text_width(
-                        natural,
-                        user_markup::has_indented_block(&row.text),
-                        room,
-                    ));
+                    let code = reader_markdown::pieces(&markdown, false)
+                        .iter()
+                        .filter_map(|piece| match piece {
+                            Piece::Code { text, .. } => {
+                                Some(code_block::natural_width(ui.painter(), text))
+                            }
+                            _ => None,
+                        })
+                        .fold(0.0, f32::max);
+                    ui.set_width(
+                        user_text_width(natural, user_markup::has_indented_block(&row.text), room)
+                            .max(code.min(room)),
+                    );
                     ui.with_layout(Layout::top_down(Align::Min), |ui| {
                         chat_text(ui, |ui| {
                             ui.visuals_mut().code_bg_color = USER_CODE_FILL;
                             ui.push_id(row.seq, |ui| {
-                                CommonMarkViewer::new().show(ui, cache, &markdown);
+                                reader_markdown::show(ui, cache, &markdown, false, Look::USER);
                             });
                         });
                     });

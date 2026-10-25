@@ -75,14 +75,8 @@ fn bullet(line: &str) -> Option<&str> {
 #[must_use]
 pub fn parse(message: &str) -> Option<EndBlock> {
     let lines: Vec<&str> = message.lines().collect();
-    let heads: Vec<(usize, Section, &str)> = lines
-        .iter()
-        .enumerate()
-        .filter_map(|(i, line)| heading(line).map(|(section, rest)| (i, section, rest)))
-        .collect();
-    let start = heads.windows(3).rposition(|w| {
-        w[0].1 == Section::Done && w[1].1 == Section::NeedsYou && w[2].1 == Section::Next
-    })?;
+    let heads = heads(&lines);
+    let start = last_block(&heads)?;
     let mut block = EndBlock::default();
     for (n, (index, section, rest)) in heads[start..start + 3].iter().enumerate() {
         let end = heads.get(start + n + 1).map_or(lines.len(), |next| next.0);
@@ -94,6 +88,43 @@ pub fn parse(message: &str) -> Option<EndBlock> {
         }
     }
     Some(block)
+}
+
+fn heads<'a>(lines: &[&'a str]) -> Vec<(usize, Section, &'a str)> {
+    lines
+        .iter()
+        .enumerate()
+        .filter_map(|(i, line)| heading(line).map(|(section, rest)| (i, section, rest)))
+        .collect()
+}
+
+fn last_block(heads: &[(usize, Section, &str)]) -> Option<usize> {
+    heads.windows(3).rposition(|w| {
+        w[0].1 == Section::Done && w[1].1 == Section::NeedsYou && w[2].1 == Section::Next
+    })
+}
+
+/// The lines of the last complete block that are only a heading (`**Done**`, `## Needs you`,
+/// `Next:`), by line index with the caption each one shows. A heading with text after it on the
+/// same line, a lone `Done` with no `Needs you` and `Next` after it, and a sentence that merely
+/// starts with one of the words are not listed.
+#[must_use]
+pub fn caption_lines(message: &str) -> Vec<(usize, &'static str)> {
+    let lines: Vec<&str> = message.lines().collect();
+    let heads = heads(&lines);
+    let Some(start) = last_block(&heads) else { return Vec::new() };
+    heads[start..start + 3]
+        .iter()
+        .filter(|(_, _, rest)| rest.is_empty())
+        .map(|(index, section, _)| {
+            let caption = match section {
+                Section::Done => "Done",
+                Section::NeedsYou => "Needs you",
+                Section::Next => "Next",
+            };
+            (*index, caption)
+        })
+        .collect()
 }
 
 fn items(same_line: &str, body: &[&str]) -> Vec<String> {
@@ -206,5 +237,34 @@ mod tests {
     fn a_sentence_that_starts_with_a_label_word_is_not_a_heading() {
         let text = "Done well, thanks.\nNeeds you to look.\nNext time.";
         assert_eq!(parse(text), None);
+    }
+
+    #[test]
+    fn heading_only_lines_of_the_last_block_are_captions() {
+        let cases: [(&str, Vec<(usize, &str)>); 7] = [
+            (HOUSE, vec![(2, "Done"), (6, "Needs you"), (9, "Next")]),
+            (
+                "## Done\n- x\n### Needs you\n- y\nNext:\n- z",
+                vec![(0, "Done"), (2, "Needs you"), (4, "Next")],
+            ),
+            (
+                "**Done:** x\n**Needs you:**\n- a\n**Next**\n- b",
+                vec![(1, "Needs you"), (3, "Next")],
+            ),
+            ("Done with the refactor.\nNeeds you to look.\nNext steps below.", vec![]),
+            ("**Done**\n- x\n**Next**\n- y", vec![]),
+            ("**Done**\n**Needs you**\n", vec![]),
+            ("", vec![]),
+        ];
+        for (input, want) in cases {
+            assert_eq!(caption_lines(input), want, "input {input:?}");
+        }
+    }
+
+    #[test]
+    fn only_the_last_complete_block_is_captioned() {
+        let text = "**Done**\n- a\n**Needs you**\n- b\n**Next**\n- c\n\nMore.\n\n**Done**\n- d\n**Needs you**\n- e\n**Next**\n- f";
+        let lines: Vec<usize> = caption_lines(text).iter().map(|(i, _)| *i).collect();
+        assert_eq!(lines, [9, 11, 13]);
     }
 }
