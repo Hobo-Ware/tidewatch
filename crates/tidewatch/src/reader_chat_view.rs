@@ -9,6 +9,7 @@ use std::collections::HashSet;
 use std::path::Path;
 use std::time::Duration;
 
+use egui::epaint::text::{LayoutJob, TextFormat};
 use egui::{
     Align, Color32, CornerRadius, FontId, Frame, Label, Layout, Margin, OutputCommand, Painter,
     Pos2, Rect, Response, RichText, Sense, Shadow, Shape, Stroke, StrokeKind, TextStyle, Ui, pos2,
@@ -16,7 +17,8 @@ use egui::{
 };
 use egui_commonmark::CommonMarkCache;
 use jiff::tz::TimeZone;
-use tidewatch_core::{question, user_markup};
+use tidewatch_core::question;
+use tidewatch_core::user_markup::{self, TaskResult};
 
 use crate::agent_avatar::{Face, paint_face};
 use crate::brand;
@@ -26,7 +28,7 @@ use crate::link_text::{Laid, Text};
 use crate::links;
 use crate::reader_markdown::{self, Piece};
 use crate::reader_rows::{Kind, Row, ToolKind};
-use crate::reader_turns::{self, Chip, Group};
+use crate::reader_turns::{self, Body, Call, Group, Section};
 use crate::reader_view::{ellipsized, output_preview, split_label};
 use crate::screen_kit::{body, mono};
 
@@ -42,23 +44,24 @@ const META_GAP: f32 = 6.0;
 const OUTER: f32 = 10.0;
 pub(crate) const CHIP_H: f32 = 26.0;
 pub(crate) const CHIP_GAP: f32 = 8.0;
+const TOGGLE_H: f32 = 28.0;
 const LIVE_H: f32 = 32.0;
-const LIST_LINE_H: f32 = 18.0;
-const LIST_GAP: f32 = 4.0;
 const BUBBLE_PAD: Margin = Margin { left: 16, right: 16, top: 12, bottom: 12 };
 const USER_PAD: Margin = Margin { left: 16, right: 16, top: 10, bottom: 10 };
 const USER_RADIUS: CornerRadius = CornerRadius { nw: 16, ne: 16, se: 4, sw: 16 };
 const AGENT_RADIUS: CornerRadius = CornerRadius { nw: 4, ne: 16, se: 16, sw: 16 };
 const USER_FILL: Color32 = brand::TEAL_NAV;
-const USER_LINE: Color32 = Color32::from_rgb(0x1f, 0x3a, 0x3a);
+pub(crate) const USER_LINE: Color32 = Color32::from_rgb(0x1f, 0x3a, 0x3a);
 const USER_CODE_FILL: Color32 = Color32::from_black_alpha(90);
 const LIST_SLACK: f32 = 32.0;
 const TEXT_SLACK: f32 = 8.0;
 const NOTE_GAP: f32 = 6.0;
 const ANSWER_QUESTION_PX: f32 = 14.0;
 const ANSWER_HEAD_PX: f32 = 12.0;
-const ANSWER_PAIR_GAP: f32 = 10.0;
-const ANSWER_LINE_GAP: f32 = 2.0;
+const ANSWER_PX: f32 = 15.0;
+const ANSWER_LEAD: f32 = 22.0;
+const ANSWER_PAIR_GAP: f32 = 12.0;
+const ANSWER_LINE_GAP: f32 = 6.0;
 const JUMP_SHADOW: Shadow =
     Shadow { offset: [0, 3], blur: 10, spread: 0, color: Color32::from_black_alpha(140) };
 const LIVE_FILL: Color32 = Color32::from_rgb(0x12, 0x20, 0x1f);
@@ -216,39 +219,59 @@ pub(crate) fn user(
 }
 
 fn answers_block(ui: &mut Ui, pairs: &[(String, String)], room: f32, seq: u64) {
-    let laid = |text: &str, font: FontId, ink: Color32| -> Laid {
+    let laid = |text: &str, font: FontId, ink: Color32, width: f32| -> Laid {
         let mut line = Text::new();
         line.run(text, &egui::text::TextFormat::simple(font, ink));
-        line.wrapped(room, usize::MAX).lay_out(ui.painter())
+        line.wrapped(width, usize::MAX).lay_out(ui.painter())
     };
-    let heading = laid("Your answers", body(ANSWER_HEAD_PX), brand::MUTED);
+    let heading_laid = laid("Your answers", body(ANSWER_HEAD_PX), brand::MUTED, room);
     let lines: Vec<(Laid, Laid)> = pairs
         .iter()
         .map(|(question, answer)| {
             (
-                laid(question, body(ANSWER_QUESTION_PX), brand::MUTED),
-                laid(answer, body(BODY_PX), brand::TEXT),
+                laid(question, body(ANSWER_QUESTION_PX), brand::SOFT, room),
+                laid(
+                    answer,
+                    crate::screen_kit::heading(ANSWER_PX),
+                    brand::TEXT,
+                    room - ANSWER_LEAD,
+                ),
             )
         })
         .collect();
     let natural = lines
         .iter()
-        .flat_map(|(question, answer)| [question.size().x, answer.size().x])
-        .fold(heading.size().x, f32::max);
+        .flat_map(|(question, answer)| [question.size().x, answer.size().x + ANSWER_LEAD])
+        .fold(heading_laid.size().x, f32::max);
     ui.set_width((natural.ceil() + TEXT_SLACK).min(room).max(0.0));
     ui.with_layout(Layout::top_down(Align::Min), |ui| {
         ui.spacing_mut().item_spacing.y = 0.0;
         let id = ui.id().with(("answers", seq));
-        let put = |ui: &mut Ui, laid: &Laid, name: (usize, u8), ink: Color32| {
+        let put = |ui: &mut Ui, laid: &Laid, name: (usize, u8), ink: Color32| -> Rect {
             let (rect, _) = ui.allocate_exact_size(laid.size(), Sense::hover());
             laid.paint(ui, id.with(name), rect.min, ink);
+            rect
         };
-        put(ui, &heading, (0, 0), brand::MUTED);
+        put(ui, &heading_laid, (0, 0), brand::MUTED);
         for (index, (question, answer)) in lines.iter().enumerate() {
             ui.add_space(ANSWER_PAIR_GAP);
-            put(ui, question, (index, 1), brand::MUTED);
+            if index > 0 {
+                let (line, _) =
+                    ui.allocate_exact_size(vec2(ui.available_width(), 1.0), Sense::hover());
+                ui.painter().rect_filled(line, CornerRadius::ZERO, USER_LINE);
+                ui.add_space(ANSWER_PAIR_GAP);
+            }
+            put(ui, question, (index, 1), brand::SOFT);
             ui.add_space(ANSWER_LINE_GAP);
-            put(ui, answer, (index, 2), brand::TEXT);
+            ui.horizontal_top(|ui| {
+                ui.spacing_mut().item_spacing.x = 0.0;
+                let (tick, _) = ui.allocate_exact_size(vec2(ANSWER_LEAD, 18.0), Sense::hover());
+                let c = tick.left_center() + vec2(6.0, 0.0);
+                let stroke = Stroke::new(2.0, brand::TEAL);
+                ui.painter().line_segment([c + vec2(-3.5, 0.2), c + vec2(-1.0, 3.0)], stroke);
+                ui.painter().line_segment([c + vec2(-1.0, 3.0), c + vec2(3.8, -3.0)], stroke);
+                put(ui, answer, (index, 2), brand::TEXT);
+            });
         }
     });
 }
@@ -260,18 +283,97 @@ pub(crate) fn user_text_width(natural: f32, indented: bool, room: f32) -> f32 {
     (natural.ceil() + slack).min(room).max(0.0)
 }
 
-/// A slash command the user ran, as a muted mono line.
-pub(crate) fn slash_command(ui: &mut Ui, text: &str) {
+/// A slash command the user ran, as a small teal-outline chip with when.
+pub(crate) fn slash_command(ui: &mut Ui, text: &str, time: Option<&str>) {
     ui.add_space(NOTE_GAP);
-    ui.add(Label::new(RichText::new(text).font(mono(13.0)).color(brand::MUTED)).truncate());
+    ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing.x = 10.0;
+        let galley = ui.painter().layout_no_wrap(text.to_owned(), mono(13.0), brand::TEAL_TEXT);
+        let (rect, _) = ui.allocate_exact_size(galley.size() + vec2(18.0, 8.0), Sense::hover());
+        ui.painter().rect_stroke(
+            rect,
+            CornerRadius::same(6),
+            Stroke::new(1.0, USER_LINE),
+            StrokeKind::Inside,
+        );
+        ui.painter().galley(rect.min + vec2(9.0, 4.0), galley, brand::TEAL_TEXT);
+        let said = match time {
+            Some(time) => format!("You ran a command \u{b7} {time}"),
+            None => "You ran a command".to_owned(),
+        };
+        ui.label(RichText::new(said).size(12.0).color(brand::FAINT));
+    });
     ui.add_space(NOTE_GAP);
 }
 
-/// What a local command printed, as a muted note.
+/// What a local command printed, in a sunken panel; a background task's note is its own slim card.
 pub(crate) fn command_output(ui: &mut Ui, text: &str) {
     ui.add_space(NOTE_GAP);
-    ui.add(Label::new(RichText::new(text).font(body(13.0)).color(brand::MUTED)));
+    if let Some((name, result)) = user_markup::background_card(text) {
+        background_row(ui, &name, &result);
+    } else {
+        Frame::new()
+            .fill(brand::SUNKEN)
+            .stroke(Stroke::new(1.0, brand::ITEM_LINE))
+            .corner_radius(CornerRadius::same(10))
+            .inner_margin(Margin::symmetric(14, 10))
+            .show(ui, |ui| {
+                ui.set_width(ui.available_width());
+                ui.add(Label::new(RichText::new(text).font(body(13.0)).color(brand::STEP_TEXT)));
+            });
+    }
     ui.add_space(NOTE_GAP);
+}
+
+fn background_row(ui: &mut Ui, name: &str, result: &TaskResult) {
+    Frame::new()
+        .fill(brand::CARD)
+        .stroke(Stroke::new(1.0, brand::CARD_LINE))
+        .corner_radius(CornerRadius::same(12))
+        .inner_margin(Margin::symmetric(14, 10))
+        .show(ui, |ui| {
+            let (rect, _) =
+                ui.allocate_exact_size(vec2(ui.available_width(), 20.0), Sense::hover());
+            let painter = ui.painter();
+            let mid = rect.center().y;
+            paint_icon(painter, pos2(rect.left() + 8.0, mid), ToolKind::Command, brand::MUTED);
+            let tag = painter.layout_no_wrap("background".to_owned(), body(12.0), brand::FAINT);
+            let tag_x = rect.right() - tag.size().x;
+            painter.galley(pos2(tag_x, mid - tag.size().y / 2.0), tag, brand::FAINT);
+            let (ink, text, mark) = match result {
+                TaskResult::Done(text) => (brand::GREEN, text.as_str(), Some(true)),
+                TaskResult::Failed(text) => (brand::RED, text.as_str(), Some(false)),
+                TaskResult::Stopped => (brand::MUTED, "Stopped", None),
+            };
+            let said = painter.layout_no_wrap(text.to_owned(), body(13.0), ink);
+            let lead = if mark.is_some() { 19.0 } else { 0.0 };
+            let said_w = said.size().x + lead;
+            let said_x = tag_x - 16.0 - said_w;
+            let room = said_x - 12.0 - (rect.left() + 28.0);
+            let title = ellipsized(painter, name, body(14.0), brand::TEXT, room.max(40.0));
+            let title_w = title.size().x;
+            painter.galley(
+                pos2(rect.left() + 28.0, mid - title.size().y / 2.0),
+                title,
+                brand::TEXT,
+            );
+            let at = (rect.left() + 28.0 + title_w + 12.0).min(said_x);
+            let stroke = Stroke::new(1.6, ink);
+            match mark {
+                Some(true) => {
+                    let c = pos2(at + 6.5, mid);
+                    painter.line_segment([c + vec2(-3.5, 0.2), c + vec2(-1.0, 3.0)], stroke);
+                    painter.line_segment([c + vec2(-1.0, 3.0), c + vec2(3.8, -3.0)], stroke);
+                }
+                Some(false) => {
+                    let c = pos2(at + 6.5, mid);
+                    painter.line_segment([c + vec2(-3.0, -3.0), c + vec2(3.0, 3.0)], stroke);
+                    painter.line_segment([c + vec2(3.0, -3.0), c + vec2(-3.0, 3.0)], stroke);
+                }
+                None => {}
+            }
+            painter.galley(pos2(at + lead, mid - said.size().y / 2.0), said, ink);
+        });
 }
 
 /// Draws turn `group` of `list`: header, the updates chip, bubble, chips and the open lists. Flips
@@ -332,7 +434,7 @@ pub(crate) fn turn(
                 toggled |= live_row(ui, scene, list, group, column);
             } else if !group.chips.is_empty() {
                 ui.add_space(CHIP_GAP);
-                toggled |= chips(ui, group, listing);
+                toggled |= summary_row(ui, group, listing, column);
             }
             if listing {
                 ui.add_space(CHIP_GAP);
@@ -395,31 +497,49 @@ fn bubble(ui: &mut Ui, list: &[&Row], group: &Group, cache: &mut CommonMarkCache
         });
 }
 
-fn chips(ui: &mut Ui, group: &Group, open: bool) -> bool {
-    let mut clicked = false;
-    ui.horizontal_wrapped(|ui| {
-        ui.spacing_mut().item_spacing = vec2(CHIP_GAP, CHIP_GAP);
-        for chip in &group.chips {
-            clicked |= chip_pill(ui, chip, open).clicked();
-        }
-        if let Some(took) = group.elapsed_ms() {
-            duration(ui, &reader_turns::duration_label(took));
-        }
+fn summary_row(ui: &mut Ui, group: &Group, open: bool, column: f32) -> bool {
+    let (rect, _) = ui.allocate_exact_size(vec2(column, TOGGLE_H), Sense::hover());
+    let painter = ui.painter().clone();
+    let label = painter.layout_no_wrap(group.steps_label(), body(12.0), brand::SOFT);
+    let chip =
+        Rect::from_min_size(rect.min, vec2(11.0 + 12.0 + 6.0 + label.size().x + 11.0, TOGGLE_H));
+    let response = ui.interact(chip, ui.id().with(("steps", group.key)), Sense::click());
+    let hot = open || response.hovered();
+    let (line, ink) =
+        if hot { (brand::TEAL, brand::TEAL_TEXT) } else { (brand::FIELD_LINE, brand::SOFT) };
+    painter.rect_stroke(chip, CornerRadius::same(255), Stroke::new(1.0, line), StrokeKind::Inside);
+    let at = pos2(chip.left() + 11.0 + 6.0, chip.center().y);
+    let tip = if open { -3.0 } else { 3.0 };
+    let stroke = Stroke::new(1.4, ink);
+    painter.line_segment([at + vec2(-4.0, -tip / 2.0), at + vec2(0.0, tip / 2.0)], stroke);
+    painter.line_segment([at + vec2(0.0, tip / 2.0), at + vec2(4.0, -tip / 2.0)], stroke);
+    painter.galley(
+        pos2(chip.left() + 11.0 + 12.0 + 6.0, chip.center().y - label.size().y / 2.0),
+        label,
+        ink,
+    );
+    let mut right = rect.right();
+    if let Some(took) = group.elapsed_ms() {
+        let galley =
+            painter.layout_no_wrap(reader_turns::duration_label(took), body(12.0), brand::FAINT);
+        right -= galley.size().x;
+        painter.galley(pos2(right, rect.center().y - galley.size().y / 2.0), galley, brand::FAINT);
+        right -= 10.0;
+    }
+    let mut x = chip.right() + 10.0;
+    let failed = group.failed();
+    let tail = (failed > 0).then(|| {
+        painter.layout_no_wrap(format!("\u{b7} {failed} failed"), body(12.0), brand::ORANGE)
     });
-    clicked
-}
-
-fn duration(ui: &mut Ui, text: &str) {
-    let galley = ui.painter().layout_no_wrap(text.to_owned(), body(13.0), brand::FAINT);
-    let (rect, _) = ui.allocate_exact_size(vec2(galley.size().x + 8.0, CHIP_H), Sense::hover());
-    let at = pos2(rect.left() + 4.0, rect.center().y - galley.size().y / 2.0);
-    ui.painter().galley(at, galley, brand::FAINT);
-}
-
-fn chip_pill(ui: &mut Ui, chip: &Chip, open: bool) -> Response {
-    let failed = chip.failed > 0;
-    let icon = |painter: &Painter, center, ink| paint_icon(painter, center, chip.kind, ink);
-    pill_chip(ui, &chip.label(), (failed, open), icon)
+    let room = right - x - tail.as_ref().map_or(0.0, |galley| galley.size().x + 6.0);
+    let galley = ellipsized(&painter, &group.summary(), body(12.0), brand::MUTED, room.max(0.0));
+    let width = galley.size().x;
+    painter.galley(pos2(x, rect.center().y - galley.size().y / 2.0), galley, brand::MUTED);
+    x += width + 6.0;
+    if let Some(galley) = tail {
+        painter.galley(pos2(x, rect.center().y - galley.size().y / 2.0), galley, brand::ORANGE);
+    }
+    response.on_hover_cursor(egui::CursorIcon::PointingHand).clicked()
 }
 
 /// The progress notes the agent wrote before its answer, folded: a click opens them.
@@ -537,7 +657,7 @@ fn live_row(ui: &mut Ui, scene: &Scene<'_>, list: &[&Row], group: &Group, column
     let elapsed = group.started_ms.map(|from| (scene.now_ms - from).max(0));
     let so_far = match (group.so_far(), elapsed) {
         (Some(count), Some(took)) => {
-            Some(format!("{count} \u{b7} {}", reader_turns::duration_label(took)))
+            Some(format!("{} \u{b7} {count}", reader_turns::duration_label(took)))
         }
         (Some(count), None) => Some(count),
         (None, Some(took)) => Some(reader_turns::duration_label(took)),
@@ -618,40 +738,123 @@ fn notes_list(ui: &mut Ui, list: &[&Row], group: &Group, column: f32) {
 }
 
 fn call_list(ui: &mut Ui, root: Option<&Path>, list: &[&Row], group: &Group, column: f32) {
+    let calls: Vec<Call<'_>> = group
+        .calls
+        .iter()
+        .filter_map(|index| match &list[*index].kind {
+            Kind::Tool(tool) => {
+                let line = split_label(&tool.label, root);
+                Some(Call { tool, name: line.name, argument: format!("{}{}", line.dir, line.leaf) })
+            }
+            _ => None,
+        })
+        .collect();
+    let sections = reader_turns::sections(&calls);
     Frame::new()
         .fill(brand::SUNKEN)
-        .stroke(Stroke::new(1.0, brand::SIDEBAR_LINE))
-        .corner_radius(CornerRadius::same(10))
-        .inner_margin(Margin::symmetric(12, 8))
+        .stroke(Stroke::new(1.0, brand::ITEM_LINE))
+        .corner_radius(CornerRadius::same(12))
+        .inner_margin(Margin::symmetric(0, 6))
         .show(ui, |ui| {
-            ui.set_width(column - 26.0);
-            ui.spacing_mut().item_spacing.y = LIST_GAP;
-            for index in &group.calls {
-                let Kind::Tool(tool) = &list[*index].kind else { continue };
-                let line = split_label(&tool.label, root);
-                let text =
-                    reader_turns::list_line(tool, line.name, &format!("{}{}", line.dir, line.leaf));
-                let ink = if tool.error { brand::RED } else { brand::SOFT };
-                let (rect, response) =
-                    ui.allocate_exact_size(vec2(ui.available_width(), LIST_LINE_H), Sense::hover());
-                let galley = ellipsized(ui.painter(), &text, mono(12.0), ink, rect.width());
-                ui.painter().galley(
-                    pos2(rect.left(), rect.center().y - galley.size().y / 2.0),
-                    galley,
-                    ink,
-                );
-                response.on_hover_ui(|ui| {
+            ui.set_width(column - 2.0);
+            for (position, section) in sections.iter().enumerate() {
+                let shown = Frame::new().inner_margin(Margin::symmetric(16, 12)).show(ui, |ui| {
+                    ui.set_width(ui.available_width());
+                    ui.spacing_mut().item_spacing.y = 6.0;
+                    section_head(ui, section);
+                    ui.horizontal_top(|ui| {
+                        ui.add_space(21.0);
+                        ui.vertical(|ui| {
+                            ui.set_width(ui.available_width());
+                            ui.spacing_mut().item_spacing = vec2(18.0, 5.0);
+                            section_body(ui, section, &calls);
+                        });
+                    });
+                });
+                if position + 1 < sections.len() {
+                    let rect = shown.response.rect;
+                    ui.painter().hline(
+                        rect.x_range(),
+                        rect.bottom(),
+                        Stroke::new(1.0, brand::SIDEBAR_LINE),
+                    );
+                }
+            }
+        });
+}
+
+fn section_head(ui: &mut Ui, section: &Section) {
+    let (rect, _) = ui.allocate_exact_size(vec2(ui.available_width(), 16.0), Sense::hover());
+    paint_icon(ui.painter(), pos2(rect.left() + 6.5, rect.center().y), section.kind, brand::MUTED);
+    let galley = ui.painter().layout_no_wrap(section.head.clone(), body(12.0), brand::MUTED);
+    ui.painter().galley(
+        pos2(rect.left() + 21.0, rect.center().y - galley.size().y / 2.0),
+        galley,
+        brand::MUTED,
+    );
+}
+
+fn mono_job(parts: &[(&str, Color32)]) -> LayoutJob {
+    let mut job = LayoutJob::default();
+    for (text, ink) in parts {
+        job.append(text, 0.0, TextFormat::simple(mono(12.0), *ink));
+    }
+    job
+}
+
+fn section_body(ui: &mut Ui, section: &Section, calls: &[Call<'_>]) {
+    match &section.body {
+        Body::Files(files) => {
+            ui.horizontal_wrapped(|ui| {
+                ui.spacing_mut().item_spacing = vec2(18.0, 4.0);
+                for file in files {
+                    let at = file.rfind('/').map_or(0, |at| at + 1);
+                    let (dir, leaf) = file.split_at(at);
+                    ui.add(Label::new(mono_job(&[(dir, brand::FAINT), (leaf, brand::STEP_TEXT)])));
+                }
+            });
+        }
+        Body::Lines(indices) => {
+            for index in indices {
+                let call = &calls[*index];
+                let ink = if call.tool.error { brand::RED } else { brand::STEP_TEXT };
+                let job = if call.tool.kind == ToolKind::Command {
+                    mono_job(&[("$ ", brand::FAINT), (&call.argument, ink)])
+                } else {
+                    let text = reader_turns::list_line(call.tool, call.name, &call.argument);
+                    mono_job(&[(&text, ink)])
+                };
+                ui.add(Label::new(job).truncate()).on_hover_ui(|ui| {
                     ui.set_max_width(480.0);
-                    ui.label(RichText::new(&tool.label).font(mono(12.0)).color(brand::TEXT));
-                    if !tool.output.is_empty() {
-                        let ink = if tool.error { brand::RED } else { brand::MUTED };
+                    ui.label(RichText::new(&call.tool.label).font(mono(12.0)).color(brand::TEXT));
+                    if !call.tool.output.is_empty() {
+                        let ink = if call.tool.error { brand::RED } else { brand::MUTED };
                         ui.label(
-                            RichText::new(output_preview(&tool.output)).font(mono(11.5)).color(ink),
+                            RichText::new(output_preview(&call.tool.output))
+                                .font(mono(11.5))
+                                .color(ink),
                         );
                     }
                 });
             }
-        });
+        }
+        Body::Servers(servers) => {
+            for (server, tools) in servers {
+                let mut job = LayoutJob::default();
+                if tools.is_empty() {
+                    job.append(server, 0.0, TextFormat::simple(body(12.0), brand::STEP_TEXT));
+                } else {
+                    job.append(server, 0.0, TextFormat::simple(body(12.0), brand::MUTED));
+                    job.append(
+                        &format!(" {}", tools.join(", ")),
+                        0.0,
+                        TextFormat::simple(body(12.0), brand::STEP_TEXT),
+                    );
+                }
+                ui.add(Label::new(job));
+            }
+        }
+    }
 }
 
 #[cfg(test)]
@@ -710,7 +913,7 @@ mod tests {
     }
 
     fn painted_text(text: &str) -> Vec<String> {
-        let ctx = egui::Context::default();
+        let ctx = crate::fonts::test_context();
         let mut cache = CommonMarkCache::default();
         let row = Row { seq: 1, kind: Kind::User, text: text.to_owned() };
         let zone = TimeZone::UTC;

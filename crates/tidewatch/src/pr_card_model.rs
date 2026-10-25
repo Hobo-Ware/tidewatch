@@ -93,7 +93,6 @@ pub(crate) enum Block {
 pub(crate) struct Model {
     pub(crate) icon: Icon,
     pub(crate) ink: Ink,
-    pub(crate) red_line: bool,
     pub(crate) title: String,
     pub(crate) sub: String,
     /// In place of the age on the right of the header.
@@ -191,7 +190,6 @@ pub(crate) fn look(index: usize, context: Context<'_>) -> Option<Look> {
     let model = |icon, ink, title: String, sub: String| Model {
         icon,
         ink,
-        red_line: false,
         title,
         sub,
         live: false,
@@ -237,10 +235,14 @@ pub(crate) fn look(index: usize, context: Context<'_>) -> Option<Look> {
                 Icon::Failed,
                 Ink::Red,
                 "Checks failed".to_owned(),
-                format!("{failed} of {} failed", jobs.len()),
+                if failed < jobs.len() {
+                    format!("{failed} of {} \u{b7} {} passed", jobs.len(), jobs.len() - failed)
+                } else {
+                    format!("{failed} of {}", jobs.len())
+                },
             );
-            m.red_line = true;
-            m.body = vec![Block::Jobs(jobs.iter().map(job_line).collect())];
+            m.body =
+                vec![Block::Jobs(jobs.iter().filter(|job| !job.passed).map(job_line).collect())];
             if let Some(job) = jobs.iter().find(|job| !job.passed && !job.log.is_empty()) {
                 m.body.push(Block::Log(job.log.clone()));
             }

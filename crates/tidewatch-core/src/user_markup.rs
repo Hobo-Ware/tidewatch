@@ -72,6 +72,43 @@ pub fn has_indented_block(text: &str) -> bool {
     })
 }
 
+const BACKGROUND_PREFIX: &str = "Background task - ";
+
+/// How a background task ended, as the slim card in the Reader says it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum TaskResult {
+    Done(String),
+    Failed(String),
+    Stopped,
+}
+
+/// A background task note (`Background task - <summary>`, the first event line under it) read back
+/// into the task's name and how it ended. `None` for any other text.
+#[must_use]
+pub fn background_card(note: &str) -> Option<(String, TaskResult)> {
+    let rest = note.strip_prefix(BACKGROUND_PREFIX)?;
+    let (summary, event) = rest.split_once('\n').unwrap_or((rest, ""));
+    let name = match summary.split_once('"').and_then(|(_, tail)| tail.split_once('"')) {
+        Some((quoted, _)) if !quoted.is_empty() => quoted.to_owned(),
+        _ => summary.to_owned(),
+    };
+    let code = summary
+        .split_once("exit code ")
+        .and_then(|(_, tail)| tail.split(|c: char| !c.is_ascii_digit()).next())
+        .and_then(|digits| digits.parse::<u32>().ok());
+    let result = match code {
+        Some(0) | None if event.contains("passed") => TaskResult::Done(cut(event.trim(), 24)),
+        Some(0) => TaskResult::Done("Done".to_owned()),
+        Some(code) => TaskResult::Failed(format!("Failed, exit {code}")),
+        None if summary.contains("was stopped") || summary.contains("killed") => {
+            TaskResult::Stopped
+        }
+        None if summary.contains("failed") => TaskResult::Failed("Failed".to_owned()),
+        None => TaskResult::Done("Done".to_owned()),
+    };
+    Some((name, result))
+}
+
 fn background(text: &str) -> Option<String> {
     let open = format!("<{TASK_TAG}>");
     let close = format!("</{TASK_TAG}>");
@@ -85,7 +122,7 @@ fn background(text: &str) -> Option<String> {
     if summary.is_empty() {
         return None;
     }
-    let mut note = format!("Background task - {summary}");
+    let mut note = format!("{BACKGROUND_PREFIX}{summary}");
     let event =
         child(inner, "event").and_then(|event| event.lines().find(|l| !l.trim().is_empty()));
     if let Some(event) = event {
@@ -449,6 +486,35 @@ mod tests {
         ];
         for (input, want) in cases {
             assert_eq!(has_indented_block(input), want, "input {input:?}");
+        }
+    }
+
+    #[test]
+    fn a_background_note_reads_back_as_a_name_and_a_result() {
+        let done = |text: &str| TaskResult::Done(text.to_owned());
+        let cases = [
+            (
+                "Background task - Background command \"Run the importer tests\" completed (exit code 0)",
+                Some(("Run the importer tests", done("Done"))),
+            ),
+            (
+                "Background task - Background command \"Build it\" failed with exit code 101",
+                Some(("Build it", TaskResult::Failed("Failed, exit 101".to_owned()))),
+            ),
+            (
+                "Background task - Background command \"Start dev server\" was stopped",
+                Some(("Start dev server", TaskResult::Stopped)),
+            ),
+            (
+                "Background task - Monitor event: \"tests\"\n41 passed, 0 failed",
+                Some(("tests", done("41 passed, 0 failed"))),
+            ),
+            ("Background task - Agent finished", Some(("Agent finished", done("Done")))),
+            ("Context usage: 42k", None),
+        ];
+        for (note, want) in cases {
+            let want = want.map(|(name, result)| (name.to_owned(), result));
+            assert_eq!(background_card(note), want, "note {note:?}");
         }
     }
 }

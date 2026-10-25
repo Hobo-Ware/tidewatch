@@ -221,9 +221,9 @@ impl SentReview {
         self.notes.iter().filter(|note| note.standing.is_answered()).count()
     }
 
-    /// `Review · 3 notes`.
-    pub(crate) fn tag(&self) -> String {
-        format!("Review \u{b7} {}", plural(self.sent, "note"))
+    /// `3 notes`.
+    pub(crate) fn notes_label(&self) -> String {
+        plural(self.sent, "note")
     }
 
     /// `2 of 3 answered`.
@@ -405,7 +405,7 @@ mod tests {
         assert_eq!(working.notes[0].reply.as_deref(), Some("moved it"));
         assert_eq!(working.notes[1].reply, None);
         assert_eq!(working.progress(), "1 of 3 answered");
-        assert_eq!(working.tag(), "Review \u{b7} 3 notes");
+        assert_eq!(working.notes_label(), "3 notes");
         let idle = SentReview::of(&ids, &notes, "claude", false);
         let standing: Vec<_> = idle.notes.iter().map(|n| n.standing).collect();
         assert_eq!(standing, [Standing::Answered, Standing::Waiting, Standing::Waiting]);
@@ -433,7 +433,7 @@ mod tests {
         let review = SentReview::of(&ids, &notes, "claude", false);
         assert_eq!(review.notes.len(), 1);
         assert_eq!(review.first_open().map(|n| n.id), Some(ids[1]));
-        assert_eq!(review.tag(), "Review \u{b7} 2 notes");
+        assert_eq!(review.notes_label(), "2 notes");
         let both = SentReview::of(&[ids[0], 77], &notes, "claude", false);
         assert_eq!((both.notes.len(), both.first_open()), (0, None));
         assert_eq!(both.progress(), "0 of 0 answered");

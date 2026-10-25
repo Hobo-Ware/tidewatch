@@ -18,14 +18,9 @@ pub(crate) struct Chip {
 }
 
 impl Chip {
-    /// `6 commands`, `1 edit`, `2 other tools`, and `6 commands · 1 failed` when a call failed.
-    pub(crate) fn label(&self) -> String {
-        let noun = noun(self.kind, self.count);
-        if self.failed == 0 {
-            format!("{} {noun}", self.count)
-        } else {
-            format!("{} {noun} \u{b7} {} failed", self.count, self.failed)
-        }
+    /// `6 commands`, `1 edit`: the count and its noun, failures left out.
+    pub(crate) fn counted(&self) -> String {
+        format!("{} {}", self.count, noun(self.kind, self.count))
     }
 }
 
@@ -93,6 +88,22 @@ impl Group {
     /// The key of the folded updates in the set of open lists.
     pub(crate) fn notes_key(&self) -> u64 {
         self.key | NOTES_BIT
+    }
+
+    /// `18 steps`, `1 step`: what the toggle chip says.
+    pub(crate) fn steps_label(&self) -> String {
+        let steps = self.calls.len();
+        format!("{steps} {}", if steps == 1 { "step" } else { "steps" })
+    }
+
+    /// `5 commands · 2 edits · 3 reads`: the kinds of call in the turn, in the chip order.
+    pub(crate) fn summary(&self) -> String {
+        let parts: Vec<String> = self.chips.iter().map(Chip::counted).collect();
+        parts.join(" \u{b7} ")
+    }
+
+    pub(crate) fn failed(&self) -> usize {
+        self.chips.iter().map(|chip| chip.failed).sum()
     }
 
     fn count(&self, kind: ToolKind) -> usize {
@@ -238,6 +249,18 @@ pub(crate) fn span_label(start: Option<i64>, end: Option<i64>, zone: &TimeZone) 
     }
 }
 
+/// What the permission card says a call asks for, in plain words.
+pub(crate) fn permission_words(kind: ToolKind) -> &'static str {
+    match kind {
+        ToolKind::Command => "Run a command",
+        ToolKind::Edit => "Change a file",
+        ToolKind::Read => "Read a file",
+        ToolKind::Search => "Search",
+        ToolKind::Agent => "Start a helper agent",
+        ToolKind::Other => "Use a tool",
+    }
+}
+
 /// What the live pill says before the command: `Running`, `Reading`...
 pub(crate) fn live_verb(kind: ToolKind) -> &'static str {
     match kind {
@@ -259,6 +282,124 @@ pub(crate) fn list_line(tool: &Tool, name: &str, argument: &str) -> String {
         ToolKind::Other => name,
     };
     if argument.is_empty() { verb.to_owned() } else { format!("{verb}  {argument}") }
+}
+
+/// One call of a turn as the open list reads it: its row, the tool, and the label split into the
+/// tool's name and its argument (paths already shortened to the worktree).
+pub(crate) struct Call<'a> {
+    pub(crate) tool: &'a Tool,
+    pub(crate) name: &'a str,
+    pub(crate) argument: String,
+}
+
+/// What a section of the open list shows.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum Body {
+    /// Each file once, in the order first met.
+    Files(Vec<String>),
+    /// The calls, one line each, as indices into the turn's calls.
+    Lines(Vec<usize>),
+    /// Other tools, one entry per server: its tools, each once with a count when repeated.
+    Servers(Vec<(String, Vec<String>)>),
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) struct Section {
+    pub(crate) kind: ToolKind,
+    pub(crate) head: String,
+    pub(crate) body: Body,
+}
+
+fn plural(count: usize, one: &str, many: &str) -> String {
+    format!("{count} {}", if count == 1 { one } else { many })
+}
+
+/// The open list of a turn: a section per kind of call, in the order Read, Edit, Command, Search,
+/// Agent, Other, each with a head such as `Read 3 files`.
+pub(crate) fn sections(calls: &[Call<'_>]) -> Vec<Section> {
+    let order = [
+        ToolKind::Read,
+        ToolKind::Edit,
+        ToolKind::Command,
+        ToolKind::Search,
+        ToolKind::Agent,
+        ToolKind::Other,
+    ];
+    let mut out = Vec::new();
+    for kind in order {
+        let of_kind: Vec<usize> =
+            (0..calls.len()).filter(|index| calls[*index].tool.kind == kind).collect();
+        if of_kind.is_empty() {
+            continue;
+        }
+        let (head, body) = match kind {
+            ToolKind::Read | ToolKind::Edit => {
+                let mut files: Vec<String> = Vec::new();
+                for index in &of_kind {
+                    let path = &calls[*index].argument;
+                    if !path.is_empty() && !files.contains(path) {
+                        files.push(path.clone());
+                    }
+                }
+                let verb = if kind == ToolKind::Read { "Read" } else { "Edited" };
+                (
+                    format!("{verb} {}", plural(files.len().max(1), "file", "files")),
+                    Body::Files(files),
+                )
+            }
+            ToolKind::Command => (
+                format!("Ran {}", plural(of_kind.len(), "command", "commands")),
+                Body::Lines(of_kind),
+            ),
+            ToolKind::Search => (
+                format!("Ran {}", plural(of_kind.len(), "search", "searches")),
+                Body::Lines(of_kind),
+            ),
+            ToolKind::Agent => (
+                format!("Started {}", plural(of_kind.len(), "agent", "agents")),
+                Body::Lines(of_kind),
+            ),
+            ToolKind::Other => (
+                format!("Used {}", plural(of_kind.len(), "other tool", "other tools")),
+                servers(calls, &of_kind),
+            ),
+        };
+        out.push(Section { kind, head, body });
+    }
+    out
+}
+
+fn servers(calls: &[Call<'_>], of_kind: &[usize]) -> Body {
+    let mut list: Vec<(String, Vec<(String, usize)>)> = Vec::new();
+    for index in of_kind {
+        let name = calls[*index].name;
+        let (server, tool) = name.split_once(':').unwrap_or((name, ""));
+        let at = if let Some(at) = list.iter().position(|(known, _)| known == server) {
+            at
+        } else {
+            list.push((server.to_owned(), Vec::new()));
+            list.len() - 1
+        };
+        if tool.is_empty() {
+            continue;
+        }
+        let tool = tool.replace('_', " ");
+        match list[at].1.iter_mut().find(|(known, _)| *known == tool) {
+            Some((_, count)) => *count += 1,
+            None => list[at].1.push((tool, 1)),
+        }
+    }
+    Body::Servers(
+        list.into_iter()
+            .map(|(server, tools)| {
+                let tools = tools
+                    .into_iter()
+                    .map(|(tool, count)| if count > 1 { format!("{tool} x{count}") } else { tool })
+                    .collect();
+                (server, tools)
+            })
+            .collect(),
+    )
 }
 
 #[cfg(test)]
@@ -356,7 +497,9 @@ mod tests {
         let layout = layout(&rows_of(entries));
         let group = &layout.groups[0];
         assert_eq!(chips(group), [(ToolKind::Command, 2, 1), (ToolKind::Read, 1, 0)]);
-        assert_eq!(group.chips[0].label(), "2 commands \u{b7} 1 failed");
+        assert_eq!(group.failed(), 1);
+        assert_eq!(group.summary(), "2 commands \u{b7} 1 read");
+        assert_eq!(group.steps_label(), "3 steps");
     }
 
     #[test]
@@ -504,7 +647,7 @@ mod tests {
 
     #[test]
     fn the_chip_words_follow_the_count() {
-        let chip = |kind, count, failed| Chip { kind, count, failed }.label();
+        let chip = |kind, count, failed| Chip { kind, count, failed }.counted();
         let cases = [
             (chip(ToolKind::Command, 6, 0), "6 commands"),
             (chip(ToolKind::Command, 1, 0), "1 command"),
@@ -514,7 +657,6 @@ mod tests {
             (chip(ToolKind::Search, 1, 0), "1 search"),
             (chip(ToolKind::Agent, 1, 0), "1 agent"),
             (chip(ToolKind::Other, 2, 0), "2 other tools"),
-            (chip(ToolKind::Edit, 3, 2), "3 edits \u{b7} 2 failed"),
         ];
         for (got, want) in cases {
             assert_eq!(got, want);
@@ -660,5 +802,57 @@ mod tests {
         toggle(&mut open, 5);
         toggle(&mut open, 3);
         assert_eq!(open.into_iter().collect::<Vec<_>>(), [5]);
+    }
+
+    fn tool(kind: ToolKind, label: &str, error: bool) -> Tool {
+        Tool { kind, label: label.to_owned(), output: String::new(), error, done: true }
+    }
+
+    #[test]
+    fn the_open_list_groups_calls_by_kind_files_once_and_other_tools_by_server() {
+        let tools = [
+            (tool(ToolKind::Command, "Bash  cargo fmt", false), "Bash", "cargo fmt"),
+            (tool(ToolKind::Read, "Read  src/a.rs", false), "Read", "src/a.rs"),
+            (tool(ToolKind::Read, "Read  src/a.rs", false), "Read", "src/a.rs"),
+            (tool(ToolKind::Read, "Read  src/b.rs", false), "Read", "src/b.rs"),
+            (tool(ToolKind::Edit, "Edit  src/a.rs", false), "Edit", "src/a.rs"),
+            (tool(ToolKind::Other, "x", false), "github:get_issue", ""),
+            (tool(ToolKind::Other, "x", false), "github:list_comments", ""),
+            (tool(ToolKind::Other, "x", false), "github:get_issue", ""),
+            (tool(ToolKind::Other, "x", false), "docs:search", ""),
+            (tool(ToolKind::Other, "x", false), "TodoWrite", ""),
+        ];
+        let calls: Vec<Call<'_>> = tools
+            .iter()
+            .map(|(tool, name, argument)| Call { tool, name, argument: (*argument).to_owned() })
+            .collect();
+        let got: Vec<(String, Body)> =
+            sections(&calls).into_iter().map(|section| (section.head, section.body)).collect();
+        let want = vec![
+            (
+                "Read 2 files".to_owned(),
+                Body::Files(vec!["src/a.rs".to_owned(), "src/b.rs".to_owned()]),
+            ),
+            ("Edited 1 file".to_owned(), Body::Files(vec!["src/a.rs".to_owned()])),
+            ("Ran 1 command".to_owned(), Body::Lines(vec![0])),
+            (
+                "Used 5 other tools".to_owned(),
+                Body::Servers(vec![
+                    (
+                        "github".to_owned(),
+                        vec!["get issue x2".to_owned(), "list comments".to_owned()],
+                    ),
+                    ("docs".to_owned(), vec!["search".to_owned()]),
+                    ("TodoWrite".to_owned(), vec![]),
+                ]),
+            ),
+        ];
+        assert_eq!(got, want);
+    }
+
+    #[test]
+    fn the_permission_words_name_the_kind_of_call() {
+        assert_eq!(permission_words(ToolKind::Command), "Run a command");
+        assert_eq!(permission_words(ToolKind::of("mcp:tool")), "Use a tool");
     }
 }
