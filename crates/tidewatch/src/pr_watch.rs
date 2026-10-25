@@ -5,6 +5,7 @@
 
 use std::path::{Path, PathBuf};
 
+use tidewatch_core::merged_branch::{self, Pr, Verdict};
 use tidewatch_core::pr_cards::{Cards, send_cap};
 use tidewatch_core::pr_gh::Polled;
 use tidewatch_core::pr_prompt::{self, Message, short_step};
@@ -120,6 +121,13 @@ pub(crate) enum Handling {
     Paused,
 }
 
+/// Whether the commits left after a merge are to be counted at the next chance.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Recount {
+    Idle,
+    Due,
+}
+
 /// What a look needs to start.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct Look {
@@ -153,6 +161,7 @@ pub(crate) struct Watch {
     next_pending: u64,
     status: AgentStatus,
     head: Option<String>,
+    recount: Recount,
 }
 
 impl Watch {
@@ -174,6 +183,7 @@ impl Watch {
             next_pending: 0,
             status: AgentStatus::SettingUp,
             head: None,
+            recount: Recount::Idle,
         }
     }
 
@@ -229,6 +239,44 @@ impl Watch {
         }
     }
 
+    fn delivery_open(&self) -> bool {
+        !self.autonomous || (self.ready() && self.verdict().deliver)
+    }
+
+    fn merged(&self) -> bool {
+        self.ended && self.cards.ended_merged()
+    }
+
+    /// What a tab that runs on its own may do about its branch: it never delivers once the pull
+    /// request merged. A tab that waits for the owner is never held back.
+    pub(crate) fn verdict(&self) -> Verdict {
+        let pr = if !self.autonomous || self.cards.number.is_none() {
+            Pr::None
+        } else if self.merged() {
+            Pr::Merged
+        } else {
+            Pr::Open
+        };
+        merged_branch::verdict(pr, self.cards.after_merge)
+    }
+
+    /// The merged pull request's head, once per idle moment, for counting the commits left after it.
+    pub(crate) fn take_recount(&mut self) -> Option<String> {
+        if !self.autonomous || !self.ready() || !self.merged() {
+            return None;
+        }
+        let head = self.pr_head()?;
+        (std::mem::replace(&mut self.recount, Recount::Idle) == Recount::Due).then_some(head)
+    }
+
+    /// The commits found beyond the merged head. True when the cards changed and should be saved.
+    pub(crate) fn counted(&mut self, found: Option<usize>) -> bool {
+        let Some(commits) = found else { return false };
+        let changed = self.cards.after_merge != commits;
+        self.cards.after_merge = commits;
+        changed
+    }
+
     /// The commit card whose commits a tab that runs on its own should push now.
     pub(crate) fn push_fix_due(&self, default: GithubPrefs) -> Option<u64> {
         if self.handling(default) == Handling::Owner {
@@ -267,6 +315,9 @@ impl Watch {
             self.hold_until = None;
         }
         let became_idle = *status == AgentStatus::Done && self.status != AgentStatus::Done;
+        if became_idle {
+            self.recount = Recount::Due;
+        }
         self.status = status.clone();
         became_idle && self.cards.fixing && self.cards.seen.is_some()
     }
@@ -517,6 +568,13 @@ impl Watch {
         let (tone, word) = summary.headline()?;
         Some((tone, format!("#{} {word}", summary.number)))
     }
+}
+
+/// Whether a tab's delivery stays shut: it runs on its own and its pull request merged, or its
+/// watch is not there or has not read the saved cards yet, so an agent that finishes first cannot
+/// open a pull request on a branch that already merged. A tab that waits for the owner is never held.
+pub(crate) fn delivery_shut(watch: Option<&Watch>, autonomous: bool) -> bool {
+    watch.map_or(autonomous, |watch| !watch.delivery_open())
 }
 
 fn fall_back_text() -> String {

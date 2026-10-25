@@ -2,6 +2,7 @@
 //! title, the line under it, the blocks of its body and its buttons. `pr_cards_view` only draws a
 //! [`Model`], so the words and the rules about when a button shows are unit tests.
 
+use tidewatch_core::merged_branch;
 use tidewatch_core::pr_cards::{Cards, send_cap};
 use tidewatch_core::pr_prompt::{self, short_step};
 use tidewatch_core::pr_status::{Body, Job, ReviewComment, Via};
@@ -348,6 +349,7 @@ pub(crate) fn look(index: usize, context: Context<'_>) -> Option<Look> {
             let mut m =
                 model(Icon::Merged, Ink::Teal, format!("Merged into {base}"), format!("#{number}"));
             m.body = merged_body(context.cleanup);
+            m.note = merged_branch::note(context.cards.after_merge);
             if current {
                 m.buttons = merged_buttons(context.cleanup, card.id);
             }

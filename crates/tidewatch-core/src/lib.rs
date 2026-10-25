@@ -55,6 +55,7 @@ pub mod meeseeks;
 pub mod meeseeks_check;
 pub mod meeseeks_log;
 pub mod meeseeks_mcp;
+pub mod merged_branch;
 pub mod names;
 pub mod note_paste;
 pub mod notes;
