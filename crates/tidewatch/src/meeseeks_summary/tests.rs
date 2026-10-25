@@ -44,9 +44,9 @@ fn found(ahead: usize, files: usize, added: u64, removed: u64) -> Branch {
 }
 
 #[test]
-fn the_header_names_the_task_how_long_it_took_and_when_it_ended() {
+fn the_header_says_how_long_it_took_and_when_it_ended_and_the_prompt_is_kept_whole() {
     let summary = summary(&full(), None, &TimeZone::UTC);
-    assert_eq!(summary.title, "Add the promo test");
+    assert_eq!(summary.prompt.as_deref(), Some("Add the promo test"));
     assert_eq!(summary.meta, "Poofed \u{b7} 6m \u{b7} 11:42");
     let plus_three = TimeZone::fixed(jiff::tz::offset(3));
     assert_eq!(super::summary(&full(), None, &plus_three).meta, "Poofed \u{b7} 6m \u{b7} 14:42");
@@ -55,7 +55,7 @@ fn the_header_names_the_task_how_long_it_took_and_when_it_ended() {
 #[test]
 fn a_poof_logged_before_the_summary_existed_still_reads() {
     let summary = summary(&bare(), None, &TimeZone::UTC);
-    assert_eq!(summary.title, "promo-test");
+    assert_eq!(summary.prompt, None);
     assert_eq!(summary.meta, "Poofed \u{b7} 6m");
     let rows: Vec<_> =
         summary.checks.iter().map(|c| (c.label, c.look, c.result, c.detail.as_str())).collect();
@@ -176,4 +176,64 @@ fn the_card_says_answered_blocked_or_nothing_to_check_when_no_check_ran() {
         assert_eq!(shown.said.as_deref(), Some(said));
     }
     assert_eq!(summary(&full(), None, &TimeZone::UTC).card.title, "Checks passed");
+}
+
+fn read_only() -> Poofed {
+    let mut record = full();
+    record.kind = Kind::ReadOnly;
+    record.pr_url = None;
+    record.summary = "It is an LRU over the disk".into();
+    record.checks = Step::ALL
+        .iter()
+        .map(|&step| CheckLine {
+            step,
+            verdict: Verdict::Skipped,
+            detail: "Nothing changed".into(),
+        })
+        .collect();
+    record
+}
+
+#[test]
+fn a_read_only_poof_says_it_changed_nothing_in_one_line_and_hides_checks_and_branch() {
+    let shown = summary(&read_only(), Some(&found(0, 0, 0, 0)), &TimeZone::UTC);
+    let quiet = shown.quiet.expect("one quiet line");
+    assert_eq!(quiet.text, "Read-only \u{b7} nothing changed \u{b7} branch kept");
+    assert_eq!(quiet.branch, "agent/promo-test");
+    assert_eq!((shown.checks.len(), shown.branch), (0, None));
+    assert_eq!(shown.said.as_deref(), Some("It is an LRU over the disk"));
+    assert!(shown.read_only);
+}
+
+#[test]
+fn an_edit_poof_keeps_its_checks_branch_and_pull_request_and_has_no_quiet_line() {
+    let shown = summary(&full(), Some(&found(2, 3, 42, 7)), &TimeZone::UTC);
+    assert_eq!(shown.quiet, None);
+    assert_eq!(shown.checks.len(), 4);
+    assert!(shown.branch.is_some() && shown.pr.is_some());
+}
+
+#[test]
+fn an_edit_that_did_nothing_is_quiet_unless_the_branch_holds_commits() {
+    let mut record = read_only();
+    record.kind = Kind::Edit;
+    record.summary = "Nothing needed doing".into();
+    let quiet = summary(&record, Some(&found(0, 0, 0, 0)), &TimeZone::UTC).quiet;
+    assert_eq!(quiet.map(|q| q.text), Some("Nothing changed \u{b7} branch kept".to_owned()));
+    let kept = summary(&record, Some(&found(1, 1, 3, 0)), &TimeZone::UTC);
+    assert_eq!(kept.quiet, None);
+    assert!(kept.branch.is_some());
+}
+
+#[test]
+fn the_prompt_is_kept_whole_and_stages_without_steps_are_left_out() {
+    let mut record = full();
+    record.task = "Why is the compile step so slow? ".repeat(30);
+    record.stages = vec![
+        StageLine { name: "Understand".into(), done: 5, total: 5 },
+        StageLine { name: "Build".into(), done: 0, total: 0 },
+    ];
+    let shown = summary(&record, None, &TimeZone::UTC);
+    assert_eq!(shown.prompt.as_deref(), Some(record.task.trim()));
+    assert_eq!(shown.stages, [StageRow { name: "Understand".into(), done: 5, total: 5 }]);
 }

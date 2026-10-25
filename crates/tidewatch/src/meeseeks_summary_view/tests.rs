@@ -117,7 +117,7 @@ fn the_header_holds_the_face_the_task_and_one_close_button_at_the_right() {
     let (header, close) = (placed.header.unwrap(), placed.close.unwrap());
     assert!(header.contains_rect(close));
     assert_eq!(close.right(), header.right());
-    assert!(placed.card.unwrap().top() > header.bottom());
+    assert!(placed.prompt.unwrap().top() > header.bottom());
 }
 
 #[test]
@@ -128,18 +128,20 @@ fn close_is_a_click_that_says_so_only_on_release() {
 }
 
 #[test]
-fn the_four_checks_stack_under_the_stage_card_inside_the_column() {
+fn the_four_checks_sit_in_one_card_under_the_answer() {
     let harness = harness(900.0);
     let placed = harness.placed();
     let card = placed.card.unwrap();
     assert_eq!(placed.checks.len(), 4);
-    assert!(placed.checks[0].top() > card.bottom());
+    assert!(card.top() > placed.said.unwrap().bottom());
+    assert!(card.contains_rect(placed.checks[0]) && card.contains_rect(placed.checks[3]));
     for pair in placed.checks.windows(2) {
         assert_eq!(pair[0].bottom(), pair[1].top());
     }
     for check in &placed.checks {
         assert_eq!((check.left(), check.right()), (card.left(), card.right()));
     }
+    assert_eq!(placed.quiet, None);
 }
 
 #[test]
@@ -166,7 +168,7 @@ fn an_old_poof_with_nothing_but_five_facts_draws_the_checks_and_no_extra_section
     let harness = Harness::new(summary(&old, None, &TimeZone::UTC), 900.0);
     let placed = harness.placed();
     assert_eq!(placed.checks.len(), 4);
-    assert_eq!((placed.pr, placed.branch), (None, None));
+    assert_eq!((placed.pr, placed.branch, placed.prompt), (None, None, None));
 }
 
 #[test]
@@ -178,5 +180,59 @@ fn nothing_leaves_the_window_from_a_narrow_one_up() {
         assert!(inside(placed.header.unwrap()), "{width}");
         assert!(placed.checks.iter().all(|rect| inside(*rect)), "{width}");
         assert!(inside(placed.close.unwrap()), "{width}");
+    }
+}
+
+fn read_only_record() -> Poofed {
+    let mut record = record();
+    record.kind = tidewatch_core::kind::Kind::ReadOnly;
+    record.pr_url = None;
+    record.summary = "- the cache is an LRU\n- it lives on disk".into();
+    record.checks = Step::ALL
+        .iter()
+        .map(|&step| CheckLine {
+            step,
+            verdict: Verdict::Skipped,
+            detail: "Nothing changed".into(),
+        })
+        .collect();
+    record
+}
+
+#[test]
+fn a_read_only_poof_draws_the_answer_and_one_quiet_line_and_no_checks_card_or_branch() {
+    let none = Branch::Found(Found {
+        base: "main".into(),
+        ahead: 0,
+        changed: Changed { files: 0, added: 0, removed: 0 },
+    });
+    let harness = Harness::new(summary(&read_only_record(), Some(&none), &TimeZone::UTC), 900.0);
+    let placed = harness.placed();
+    assert_eq!((placed.card, placed.branch, placed.pr), (None, None, None));
+    assert_eq!(placed.checks.len(), 0);
+    assert!(placed.quiet.unwrap().top() > placed.said.unwrap().bottom());
+}
+
+#[test]
+fn a_long_prompt_wraps_whole_in_its_card_instead_of_being_cut_to_one_line() {
+    let mut long = record();
+    long.task = "Why is the compile step so slow? https://github.com/acme/web/pull/1 ".repeat(12);
+    let harness = Harness::new(summary(&long, Some(&facts()), &TimeZone::UTC), 900.0);
+    let one_line = Harness::new(summary(&record(), Some(&facts()), &TimeZone::UTC), 900.0);
+    let (tall, short) = (harness.placed().prompt.unwrap(), one_line.placed().prompt.unwrap());
+    assert!(tall.height() > short.height() + 60.0, "{} vs {}", tall.height(), short.height());
+    assert!(harness.placed().said.unwrap().top() > tall.bottom());
+}
+
+#[test]
+fn content_keeps_twelve_pixels_clear_of_the_scrollbar_edge() {
+    for width in [320.0, 600.0, 900.0, 1400.0] {
+        let harness = harness(width);
+        let placed = harness.placed();
+        let edge = placed.column.unwrap().right() - 12.0;
+        let rects = [placed.header, placed.close, placed.prompt, placed.said, placed.card];
+        for rect in rects.into_iter().flatten().chain(placed.checks.iter().copied()) {
+            assert!(rect.right() <= edge, "{width}: {rect:?} past {edge}");
+        }
     }
 }
