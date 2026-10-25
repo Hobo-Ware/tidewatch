@@ -5,7 +5,7 @@
 //! background jobs, and `apply` takes their answers back, dropping any that a newer request has
 //! overtaken. Nothing here blocks: git and disk work all runs through `pane_jobs`.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::mpsc::{Receiver, Sender, channel};
 use std::time::Instant;
@@ -100,6 +100,25 @@ impl ViewSpec {
 
     pub(crate) fn into_view(self) -> TabView {
         TabView::new(self.id, self.dir, self.is_main, self.notes_file)
+    }
+
+    /// The tab's view in `views`. A draft's view reads the repo root; the tab keeps its id when it
+    /// becomes a worktree tab, so a view over another folder is dropped for one over this folder.
+    pub(crate) fn view_in(
+        self,
+        views: &mut HashMap<u64, TabView>,
+        scope: Option<Scope>,
+    ) -> &mut TabView {
+        if views.get(&self.id).is_some_and(|view| view.dir != self.dir) {
+            views.remove(&self.id);
+        }
+        views.entry(self.id).or_insert_with(|| {
+            let mut view = self.into_view();
+            if let Some(scope) = scope {
+                view.set_scope(scope);
+            }
+            view
+        })
     }
 }
 
@@ -786,6 +805,40 @@ mod tests {
             ViewSpec::of(&repo_workspace(), Some(&paths), &tab(false, Pane::draft(form))).unwrap();
         assert_eq!(spec.dir, std::path::Path::new("/work/web"));
         assert_eq!((spec.is_main, spec.notes_file), (false, None));
+    }
+
+    #[test]
+    fn a_draft_that_becomes_a_worktree_tab_swaps_its_view_for_one_over_the_worktree() {
+        let paths = TidewatchPaths::new(std::path::Path::new("/home"));
+        let form = crate::new_tab::NewTab::open(
+            crate::new_tab::Group::Repo,
+            "web".into(),
+            "/work/web".into(),
+            Vec::new(),
+            None,
+            1,
+        );
+        let mut views = HashMap::new();
+        let draft = ViewSpec::of(&repo_workspace(), Some(&paths), &tab(false, Pane::draft(form)));
+        assert_eq!(draft.unwrap().view_in(&mut views, None).dir, PathBuf::from("/work/web"));
+        let pane = Pane { body: Body::Shell(0), worktree: Some(worktree()), agent: None };
+        let spec = ViewSpec::of(&repo_workspace(), Some(&paths), &tab(false, pane)).unwrap();
+        let notes = spec.notes_file.clone();
+        let view = spec.view_in(&mut views, None);
+        assert_eq!(view.dir, worktree().path);
+        assert_eq!(view.notes_file().cloned(), notes);
+        assert_eq!(views.len(), 1);
+    }
+
+    #[test]
+    fn a_view_over_the_right_folder_is_kept() {
+        let paths = TidewatchPaths::new(std::path::Path::new("/home"));
+        let pane = || Pane { body: Body::Shell(0), worktree: Some(worktree()), agent: None };
+        let mut views = HashMap::new();
+        let first = ViewSpec::of(&repo_workspace(), Some(&paths), &tab(false, pane())).unwrap();
+        first.view_in(&mut views, None).start();
+        let again = ViewSpec::of(&repo_workspace(), Some(&paths), &tab(false, pane())).unwrap();
+        assert!(again.view_in(&mut views, None).is_active());
     }
 
     #[test]
