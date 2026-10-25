@@ -32,7 +32,7 @@ use crate::tab_view::TabView;
 use crate::waiting_notes::Waiting;
 use crate::{changes_view, layout, segmented};
 
-const CARD_PAD: f32 = 18.0;
+pub(crate) const CARD_PAD: f32 = 18.0;
 pub(crate) const CARD_RADIUS: u8 = 12;
 const BODY_PAD_X: f32 = 8.0;
 const BODY_PAD_Y: f32 = 6.0;

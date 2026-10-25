@@ -1,26 +1,26 @@
 //! The row above the History graph: the commit search field (magnifier, the typed text, the place
-//! among the matches on the right) and the This branch / Whole repo switch beside it. The field
-//! and the count keep their size whatever is typed or found.
+//! among the matches) with the This branch / Whole repo menu at its right end. The field, the
+//! count and the menu chip keep their size whatever is typed or found.
 
 use std::time::Instant;
 
 use egui::text::{CCursor, CCursorRange};
 use egui::text_edit::TextEditState;
 use egui::{
-    Align2, CornerRadius, Id, Key, Modifiers, Rect, Sense, Stroke, StrokeKind, TextEdit, Ui,
-    UiBuilder, pos2, vec2,
+    Align2, CornerRadius, Id, Key, Modifiers, Rect, RichText, Sense, Stroke, StrokeKind, TextEdit,
+    Ui, UiBuilder, pos2, vec2,
 };
 use tidewatch_core::history::Scope;
 
 use crate::brand;
 use crate::commit_search::{self, Focus};
+use crate::history_pane::CARD_PAD;
 use crate::screen_kit::body;
 use crate::segmented;
 use crate::tab_view::TabView;
 
 pub(crate) const HEIGHT: f32 = 44.0;
 const SIDE_PAD: f32 = 10.0;
-const GAP: f32 = 8.0;
 const FIELD_H: f32 = segmented::HEIGHT;
 const ICON_PAD: f32 = 10.0;
 const ICON_R: f32 = 4.5;
@@ -30,7 +30,16 @@ const COUNT_PAD: f32 = 10.0;
 const TEXT_H: f32 = 18.0;
 const FONT: f32 = 12.5;
 const COUNT_FONT: f32 = 11.5;
-const CORNER: u8 = 8;
+const CORNER: u8 = 7;
+const CHIP_H: f32 = 20.0;
+const CHIP_INSET: f32 = 4.0;
+const CHIP_CORNER: u8 = 5;
+const CHIP_PAD: f32 = 8.0;
+const CHIP_FONT: f32 = 11.5;
+const CHEVRON_W: f32 = 7.0;
+const CHEVRON_H: f32 = 4.0;
+const CHEVRON_GAP: f32 = 6.0;
+const MENU_W: f32 = 120.0;
 const HINT: &str = "Search commits";
 const SCOPES: [&str; 2] = ["This branch", "Whole repo"];
 
@@ -38,33 +47,89 @@ pub(crate) fn field_id(tab: u64) -> Id {
     Id::new(("commit-search", tab))
 }
 
+fn field_rect(row: Rect) -> Rect {
+    Rect::from_min_max(
+        pos2(row.left() + CARD_PAD, row.center().y - FIELD_H / 2.0),
+        pos2(row.right() - SIDE_PAD, row.center().y + FIELD_H / 2.0),
+    )
+}
+
 pub(crate) fn show(ui: &mut Ui, rect: Rect, view: &mut TabView) {
-    let center_y = rect.center().y;
-    let switch_id = ui.id().with("history-scope");
+    show_field(ui, field_rect(rect), view);
+}
+
+fn chip_rect(ui: &Ui, field: Rect) -> Rect {
+    let widest = SCOPES
+        .iter()
+        .map(|label| {
+            ui.painter().layout_no_wrap((*label).to_owned(), body(CHIP_FONT), brand::MUTED)
+        })
+        .map(|galley| galley.size().x)
+        .fold(0.0, f32::max);
+    let width = CHIP_PAD + widest + CHEVRON_GAP + CHEVRON_W + CHIP_PAD;
+    Rect::from_center_size(
+        pos2(field.right() - CHIP_INSET - width / 2.0, field.center().y),
+        vec2(width, CHIP_H),
+    )
+}
+
+fn show_scope(ui: &mut Ui, chip: Rect, view: &mut TabView) {
+    let response = ui
+        .interact(chip, ui.id().with("history-scope"), Sense::click())
+        .on_hover_cursor(egui::CursorIcon::PointingHand);
+    let open = egui::Popup::is_id_open(ui.ctx(), egui::Popup::default_response_id(&response));
+    let lit = response.hovered() || open;
+    let (ink, line) =
+        if lit { (brand::TEXT, brand::FIELD_LINE) } else { (brand::MUTED, brand::SEGMENT_LINE) };
     let active = usize::from(view.scope == Scope::Whole);
-    let right = rect.right() - SIDE_PAD;
-    let switch = segmented::show(ui, switch_id, right, center_y, &SCOPES, active);
-    if let Some(index) = switch.clicked {
+    let painter = ui.painter();
+    painter.rect_stroke(
+        chip,
+        CornerRadius::same(CHIP_CORNER),
+        Stroke::new(1.0, line),
+        StrokeKind::Inside,
+    );
+    painter.text(
+        pos2(chip.left() + CHIP_PAD, chip.center().y),
+        Align2::LEFT_CENTER,
+        SCOPES[active],
+        body(CHIP_FONT),
+        ink,
+    );
+    let tip =
+        pos2(chip.right() - CHIP_PAD - CHEVRON_W / 2.0, chip.center().y + CHEVRON_H / 2.0 - 0.5);
+    let wing = vec2(CHEVRON_W / 2.0, -CHEVRON_H);
+    let stroke = Stroke::new(1.3, ink);
+    painter.line_segment([tip, tip + wing], stroke);
+    painter.line_segment([tip, tip + vec2(-wing.x, wing.y)], stroke);
+    let mut picked = None;
+    egui::Popup::menu(&response).show(|ui| {
+        ui.set_width(MENU_W);
+        for (index, label) in SCOPES.iter().enumerate() {
+            let tint = if index == active { brand::TEAL_TEXT } else { brand::TEXT };
+            let row = egui::Button::new(RichText::new(*label).size(CHIP_FONT + 1.0).color(tint))
+                .frame(false)
+                .min_size(vec2(ui.available_width(), 0.0));
+            if ui.add(row).on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
+                picked = Some(index);
+            }
+        }
+    });
+    if let Some(index) = picked {
         view.set_scope(if index == 1 { Scope::Whole } else { Scope::Current });
     }
-    let field = Rect::from_min_max(
-        pos2(rect.left() + SIDE_PAD, center_y - FIELD_H / 2.0),
-        pos2(switch.left - GAP, center_y + FIELD_H / 2.0),
-    );
-    show_field(ui, field, view);
 }
 
 fn show_field(ui: &mut Ui, field: Rect, view: &mut TabView) {
     let id = field_id(view.id());
+    let chip = chip_rect(ui, field);
+    let count_right = chip.left() - COUNT_PAD;
     let area = ui.interact(field, id.with("field"), Sense::click());
     let focused = ui.memory(|memory| memory.has_focus(id));
     let step = if focused { enter_step(ui) } else { None };
     let text_rect = Rect::from_min_max(
         pos2(field.left() + TEXT_X, field.center().y - TEXT_H / 2.0),
-        pos2(
-            (field.right() - COUNT_W - COUNT_PAD).max(field.left() + TEXT_X),
-            field.center().y + TEXT_H / 2.0,
-        ),
+        pos2((count_right - COUNT_W).max(field.left() + TEXT_X), field.center().y + TEXT_H / 2.0),
     );
     let focus = view.search.want_focus.take();
     if focus.is_some() || area.clicked() {
@@ -115,12 +180,13 @@ fn show_field(ui: &mut Ui, field: Rect, view: &mut TabView) {
     let count = commit_search::count_text(view.search.matches(), view.search.position(selected));
     let tint = if view.search.matches() == Some(0) { brand::RED } else { brand::MUTED };
     ui.painter().text(
-        pos2(field.right() - COUNT_PAD, field.center().y),
+        pos2(count_right, field.center().y),
         Align2::RIGHT_CENTER,
         count,
         body(COUNT_FONT),
         tint,
     );
+    show_scope(ui, chip, view);
     if let Some(delta) = step {
         view.step_match(delta);
         response.request_focus();
@@ -238,14 +304,62 @@ mod tests {
         }
     }
 
+    impl Bar {
+        fn click(&mut self, at: egui::Pos2) {
+            let button = |pressed| Event::PointerButton {
+                pos: at,
+                button: egui::PointerButton::Primary,
+                pressed,
+                modifiers: Modifiers::NONE,
+            };
+            self.frame(vec![Event::PointerMoved(at)]);
+            self.frame(vec![button(true)]);
+            self.frame(vec![button(false)]);
+            self.frame(Vec::new());
+        }
+    }
+
     #[test]
-    fn the_field_hints_what_it_searches_and_the_scope_switch_sits_beside_it() {
+    fn the_field_hints_what_it_searches_and_the_scope_chip_sits_inside_its_right_end() {
         let bar = Bar::new(420.0);
         assert!(bar.drawn(HINT).is_some());
         let branch = bar.drawn("This branch").unwrap();
-        let whole = bar.drawn("Whole repo").unwrap();
-        assert!(branch.right() < whole.left());
+        assert_eq!(bar.drawn("Whole repo"), None);
         assert!(bar.drawn(HINT).unwrap().right() < branch.left());
+        assert!(branch.right() < 420.0 - SIDE_PAD);
+    }
+
+    #[test]
+    fn the_field_lines_up_with_the_header_row_and_is_as_tall_as_its_segment() {
+        let field = field_rect(Rect::from_min_size(pos2(0.0, 0.0), vec2(420.0, HEIGHT)));
+        assert_eq!(field.left(), CARD_PAD);
+        assert_eq!(field.right(), 420.0 - SIDE_PAD);
+        assert_eq!(field.height(), segmented::HEIGHT);
+    }
+
+    #[test]
+    fn the_chip_opens_a_two_item_menu_and_picking_whole_repo_changes_the_scope() {
+        let mut bar = Bar::new(420.0);
+        assert_eq!(bar.view.scope, Scope::Current);
+        let chip = bar.drawn("This branch").unwrap().center();
+        bar.click(chip);
+        let whole = bar.drawn("Whole repo").unwrap().center();
+        assert_eq!(bar.texts.iter().filter(|(text, _)| text == "This branch").count(), 2);
+        bar.click(whole);
+        assert_eq!(bar.view.scope, Scope::Whole);
+        assert!(bar.drawn("Whole repo").is_some());
+        assert_eq!(bar.drawn("This branch"), None);
+    }
+
+    #[test]
+    fn the_chip_keeps_its_size_and_place_whichever_scope_it_names() {
+        let mut bar = Bar::new(420.0);
+        let before = bar.drawn("This branch").unwrap();
+        bar.view.set_scope(Scope::Whole);
+        bar.frame(Vec::new());
+        let after = bar.drawn("Whole repo").unwrap();
+        assert_eq!(before.left(), after.left());
+        assert_eq!(before.center().y, after.center().y);
     }
 
     #[test]
