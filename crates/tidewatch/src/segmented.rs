@@ -103,29 +103,29 @@ fn paint_segments(
             (false, false, true) => brand::TEXT,
             (false, false, false) => tone.unwrap_or(brand::SOFT),
         };
-        match (badges.get(index).copied().flatten(), keys.get(index)) {
-            (Some(count), _) => {
-                let at = pos2(rect.left() + SEGMENT_PAD, rect.center().y);
-                painter.text(at, Align2::LEFT_CENTER, *label, body(FONT), ink);
-                if count > 0 {
-                    paint_badge(&painter, rect, count);
-                }
-            }
-            (None, Some(key)) => {
-                let at = pos2(rect.left() + SEGMENT_PAD, rect.center().y);
-                painter.text(at, Align2::LEFT_CENTER, *label, body(FONT), ink);
-                let at = pos2(rect.right() - SEGMENT_PAD, rect.center().y);
-                painter.text(at, Align2::RIGHT_CENTER, *key, mono(KEY_FONT), brand::FAINT);
-            }
-            (None, None) => {
-                painter.text(rect.center(), Align2::CENTER_CENTER, *label, body(FONT), ink);
-            }
+        let count = badges.get(index).copied().flatten().filter(|&count| count > 0);
+        let key = keys.get(index);
+        let (at, align) = label_anchor(rect, count.is_some() || key.is_some());
+        painter.text(at, align, *label, body(FONT), ink);
+        if let Some(count) = count {
+            paint_badge(&painter, rect, count);
+        } else if let Some(key) = key {
+            let at = pos2(rect.right() - SEGMENT_PAD, rect.center().y);
+            painter.text(at, Align2::RIGHT_CENTER, *key, mono(KEY_FONT), brand::FAINT);
         }
         if pointer_over(response, reason).clicked() && !on {
             clicked = Some(index);
         }
     }
     clicked
+}
+
+fn label_anchor(rect: Rect, shares: bool) -> (egui::Pos2, Align2) {
+    if shares {
+        (pos2(rect.left() + SEGMENT_PAD, rect.center().y), Align2::LEFT_CENTER)
+    } else {
+        (rect.center(), Align2::CENTER_CENTER)
+    }
 }
 
 fn badge_label(count: usize) -> String {
@@ -418,6 +418,13 @@ mod tests {
         for (count, want) in cases {
             assert_eq!(badge_label(count), want, "{count}");
         }
+    }
+
+    #[test]
+    fn a_segment_with_no_count_centres_its_label() {
+        let rect = Rect::from_min_size(pos2(100.0, 0.0), vec2(120.0, 28.0));
+        assert_eq!(label_anchor(rect, false), (rect.center(), Align2::CENTER_CENTER));
+        assert_eq!(label_anchor(rect, true).1, Align2::LEFT_CENTER);
     }
 
     #[test]
