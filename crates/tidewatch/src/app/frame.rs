@@ -51,7 +51,7 @@ impl Tidewatch {
         self.drain_picked(ctx);
         self.drain_link_jobs(ctx);
         self.bases.drain();
-        for event in self.shell.tick(ctx) {
+        for event in self.shell.tick(ctx, self.amphetamine.prompt_open()) {
             self.shell_event(&event, ctx);
         }
         self.updates.tick();
