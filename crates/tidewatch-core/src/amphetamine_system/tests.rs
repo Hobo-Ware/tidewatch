@@ -140,13 +140,18 @@ fn the_route_follows_the_helper_its_version_and_the_fingerprint_reader() {
 }
 
 #[test]
-fn an_outdated_helper_is_routed_as_outdated_and_starts_with_the_password() {
+fn an_outdated_helper_is_replaced_by_the_start_so_the_next_one_asks_for_a_fingerprint() {
     let fake = FakeSystem::with_outdated_helper();
     assert!(fake.touch_id_installed());
     assert!(!fake.touch_id_current());
     assert_eq!(route_of(&fake), Route::Outdated);
-    assert_eq!(begin_lid(&fake, &token(), &fifo(), 5), Ok(watching()));
-    assert_eq!(fake.calls(), [started(&token(), 5)]);
+    assert_eq!(begin_lid(&fake, &token(), &fifo(), 5), Ok(serving()));
+    assert_eq!(route_of(&fake), Route::Fingerprint);
+    assert_eq!(begin_lid(&fake, &token(), &fifo(), 5), Ok(serving()));
+    assert_eq!(
+        fake.calls(),
+        [Call::MakeFifo(fifo()), setup(), Call::Authenticate, Call::MakeFifo(fifo()), sudo()]
+    );
 }
 
 #[test]
@@ -211,10 +216,10 @@ fn every_way_a_start_can_go_asks_for_the_right_things_in_the_right_order() {
             vec![Call::Authenticate, Call::MakeFifo(fifo()), sudo(), started(&token(), 5)],
         ),
         (
-            "helper older than this build: the password, and setup is asked again",
+            "helper older than this build: one password prompt replaces it and serves",
             FakeSystem::with_outdated_helper(),
-            Ok(watching()),
-            vec![started(&token(), 5)],
+            Ok(serving()),
+            vec![Call::MakeFifo(fifo()), setup()],
         ),
     ];
     for (what, fake, result, calls) in cases {

@@ -585,16 +585,16 @@ fn a_helper_gone_before_the_next_activation_asks_for_the_fingerprint_again() {
 }
 
 #[test]
-fn an_outdated_helper_starts_with_the_password_and_asks_for_setup_again() {
+fn an_outdated_helper_is_replaced_by_the_first_start_with_no_notice() {
     let mut rig = Rig::with(FakeSystem::with_outdated_helper(), true);
     rig.host.check_last_run(&rig.ctx);
     rig.until(|host| host.route() == Route::Outdated);
     assert_eq!(rig.host.touch_id(), Some(TouchId::Outdated));
     rig.pick(Choice::Hour);
     rig.until(is_on);
-    assert_eq!(rig.host.notice().map(|notice| notice.kind), Some(NoticeKind::Outdated));
-    assert_eq!((authentications(&rig.system), sudo_starts(&rig.system)), (0, 0));
-    assert_eq!(password_starts(&rig.system), 1);
+    rig.until(|host| host.route() == Route::Fingerprint);
+    assert_eq!(rig.host.notice(), None);
+    assert_eq!((setups(&rig.system), password_starts(&rig.system)), (1, 0));
 }
 
 struct Gated {

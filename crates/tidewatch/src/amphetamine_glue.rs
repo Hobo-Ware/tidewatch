@@ -115,7 +115,6 @@ pub(crate) enum NoticeKind {
     Restoring,
     Restored,
     Failed,
-    Outdated,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -146,10 +145,6 @@ pub(crate) fn notice_for(kind: NoticeKind, why: &str) -> Notice {
         NoticeKind::Failed => (
             "Sleep is still off",
             format!("Tidewatch could not turn it back on ({why}). Run sudo pmset -a disablesleep 0 in a terminal."),
-        ),
-        NoticeKind::Outdated => (
-            "Touch ID helper is out of date",
-            "This start asked for your password. Set up Touch ID again under Keep awake in General settings, so later starts need only your fingerprint.".to_owned(),
         ),
     };
     Notice { kind, title, body, foot: FOOT }
@@ -445,9 +440,6 @@ impl<H: Hold> Host<H> {
                         &self.files.marker,
                         &Marker { pid: std::process::id(), helper: None },
                     );
-                }
-                if self.route == Route::Outdated {
-                    self.notice = Some(notice_for(NoticeKind::Outdated, ""));
                 }
                 if self.serving.is_none() {
                     self.write_token(until);
