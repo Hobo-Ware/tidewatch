@@ -5,11 +5,13 @@
 
 use std::path::Path;
 
-use crate::amphetamine_lid::{admin_command, shell_quote};
+use crate::amphetamine_lid::{shell_quote, token_text};
 
 pub const HELPER_PATH: &str = "/Library/PrivilegedHelperTools/tidewatch-amphetamine";
 pub const SUDOERS_PATH: &str = "/etc/sudoers.d/tidewatch-amphetamine";
 pub const SUDO: &str = "/usr/bin/sudo";
+const MKFIFO: &str = "/usr/bin/mkfifo";
+const FIFO_TAIL: &str = ".state/amphetamine.serve";
 
 pub const SETUP_PROMPT: &str =
     "Tidewatch wants to install a small helper so Touch ID can keep this Mac awake.";
@@ -71,6 +73,61 @@ watch() {{
   pmset -a disablesleep 0
 }}
 
+valid_fifo() {{
+  [ "${{1#/}}" != "$1" ] || return 1
+  [ -z "$(printf %s "$1" | tr -d 'A-Za-z0-9._/@+-')" ] || return 1
+  [ "${{1#*..}}" = "$1" ] || return 1
+  [ "${{1%/{fifo_tail}}}" != "$1" ]
+}}
+
+reader() {{
+  token=$1
+  while IFS= read -r line <&3; do
+    case $line in
+      'on '*)
+        deadline=${{line#on }}
+        case $deadline in ''|*[!0-9]*) continue;; esac
+        pmset -a disablesleep 1 && printf %s "$deadline" > "$token"
+        ;;
+      off) pmset -a disablesleep 0 && printf off > "$token";;
+    esac
+  done
+}}
+
+serve_loop() {{
+  token=$1
+  owner=$2
+  ( trap '' HUP; reader "$token" ) >/dev/null 2>&1 </dev/null &
+  reader_pid=$!
+  trap 'kill "$reader_pid" 2>/dev/null; pmset -a disablesleep 0; exit 0' TERM INT
+  while :; do
+    kill -0 "$owner" 2>/dev/null || break
+    state=$(cat "$token" 2>/dev/null) || break
+    case $state in
+      ''|off) ;;
+      *[!0-9]*) break;;
+      *)
+        if [ "$state" -gt 0 ] && [ "$(date +%s)" -ge "$state" ]; then
+          pmset -a disablesleep 0
+          printf off > "$token"
+        fi
+        ;;
+    esac
+    sleep 2
+  done
+  kill "$reader_pid" 2>/dev/null
+  pmset -a disablesleep 0
+}}
+
+serve() {{
+  valid_token "${{2:-}}" && valid_pid "${{3:-}}" && valid_fifo "${{4:-}}" || exit 2
+  [ -p "$4" ] && [ ! -L "$4" ] || exit 1
+  exec 3<>"$4" || exit 1
+  pmset -a disablesleep 1 || exit 1
+  ( trap '' HUP; serve_loop "$2" "$3" ) >/dev/null 2>&1 </dev/null &
+  echo $!
+}}
+
 main() {{
   case ${{1:-}} in
     start)
@@ -79,6 +136,7 @@ main() {{
       ( trap '' HUP; watch "$2" "$3" ) >/dev/null 2>&1 </dev/null &
       echo $!
       ;;
+    serve) serve "$@";;
     stop) pmset -a disablesleep 0;;
     uninstall) rm -f "$SUDOERS" "$SELF";;
     *) exit 2;;
@@ -90,6 +148,7 @@ main "$@"
         self_path = shell_quote(HELPER_PATH),
         sudoers_path = shell_quote(SUDOERS_PATH),
         tail = TOKEN_TAIL,
+        fifo_tail = FIFO_TAIL,
     )
 }
 
@@ -145,21 +204,63 @@ pub fn install_command(user: &str, search_path: &str) -> Option<String> {
     ))
 }
 
-/// First use on a Mac with a fingerprint reader: the install above, then the password-path start,
-/// in one admin script so one prompt does both. `set -e` stops the start if the install fails, and
-/// the pid the start prints is the last line.
 #[must_use]
-pub fn install_and_start_command(
+pub fn install_and_serve_command(
     user: &str,
     token: &Path,
     owner: u32,
+    fifo: &Path,
     search_path: &str,
 ) -> Option<String> {
     Some(format!(
         "{}; {}",
         install_command(user, search_path)?,
-        admin_command(token, owner, search_path)
+        serve_args_text(token, owner, fifo),
     ))
+}
+
+fn serve_args_text(token: &Path, owner: u32, fifo: &Path) -> String {
+    format!(
+        "{} serve {} {} {}",
+        shell_quote(HELPER_PATH),
+        shell_quote(&token.to_string_lossy()),
+        owner,
+        shell_quote(&fifo.to_string_lossy()),
+    )
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Serve {
+    On(Option<f64>),
+    Off,
+}
+
+impl Serve {
+    #[must_use]
+    pub fn line(self) -> String {
+        match self {
+            Self::On(until) => format!("on {}", token_text(until)),
+            Self::Off => "off".to_owned(),
+        }
+    }
+
+    #[must_use]
+    pub fn answer(self) -> String {
+        match self {
+            Self::On(until) => token_text(until),
+            Self::Off => "off".to_owned(),
+        }
+    }
+}
+
+pub fn make_command_fifo(path: &Path) -> std::io::Result<()> {
+    let _ = std::fs::remove_file(path);
+    let status = std::process::Command::new(MKFIFO).arg("-m").arg("600").arg(path).status()?;
+    if status.success() {
+        Ok(())
+    } else {
+        Err(std::io::Error::other("mkfifo did not make the command pipe"))
+    }
 }
 
 #[must_use]
@@ -173,13 +274,14 @@ pub fn remove_command(search_path: &str) -> String {
 }
 
 #[must_use]
-pub fn sudo_start_args(token: &Path, owner: u32) -> Vec<String> {
+pub fn sudo_serve_args(token: &Path, owner: u32, fifo: &Path) -> Vec<String> {
     vec![
         "-n".to_owned(),
         HELPER_PATH.to_owned(),
-        "start".to_owned(),
+        "serve".to_owned(),
         token.to_string_lossy().into_owned(),
         owner.to_string(),
+        fifo.to_string_lossy().into_owned(),
     ]
 }
 

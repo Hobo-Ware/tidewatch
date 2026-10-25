@@ -277,27 +277,32 @@ fn the_install_command_is_a_script_the_shell_can_parse() {
     assert!(out.status.success());
 }
 
+const FIFO: &str = "/Users/vlad/.tidewatch/.state/amphetamine.serve";
+
 fn first_run_command() -> String {
     let token = PathBuf::from("/Users/vlad/.tidewatch/.state/amphetamine.token");
-    install_and_start_command("vlad", &token, 77, SYSTEM).unwrap()
+    install_and_serve_command("vlad", &token, 77, &PathBuf::from(FIFO), SYSTEM).unwrap()
 }
 
 #[test]
-fn the_first_run_command_is_one_script_that_installs_before_it_starts() {
+fn the_first_run_command_is_one_script_that_installs_before_it_serves() {
     let command = first_run_command();
     let out = Command::new("/bin/sh").args(["-n", "-c", &command]).output().unwrap();
     assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
-    assert!(command.starts_with(&install_command("vlad", SYSTEM).unwrap()));
     let install = install_command("vlad", SYSTEM).unwrap();
-    let start = &command[install.len()..];
+    assert!(command.starts_with(&install));
+    let serve = &command[install.len()..];
     assert!(install.ends_with(&format!(
         "mv -f {}.new {}",
         shell_quote(SUDOERS_PATH),
         shell_quote(SUDOERS_PATH)
     )));
-    assert!(start.contains("pmset -a disablesleep 1"), "the start follows the whole install");
+    assert!(
+        serve.starts_with(&format!("; {} serve ", shell_quote(HELPER_PATH))),
+        "the serve follows the whole install"
+    );
     assert!(command.contains("set -e"));
-    assert!(command.ends_with("echo $!"), "the helper's pid is the last thing it prints");
+    assert!(command.ends_with(&shell_quote(FIFO)));
     assert_eq!(command.matches("visudo -cf").count(), 1);
 }
 
@@ -305,8 +310,38 @@ fn the_first_run_command_is_one_script_that_installs_before_it_starts() {
 fn the_first_run_command_is_refused_for_an_account_a_sudoers_line_could_misread() {
     let token = PathBuf::from("/Users/vlad/.tidewatch/.state/amphetamine.token");
     for user in ["", "ALL", "a b", "root\nALL ALL=(ALL) NOPASSWD: ALL"] {
-        assert_eq!(install_and_start_command(user, &token, 1, SYSTEM), None, "{user:?}");
+        let fifo = PathBuf::from(FIFO);
+        assert_eq!(install_and_serve_command(user, &token, 1, &fifo, SYSTEM), None, "{user:?}");
     }
+}
+
+#[test]
+fn the_helper_script_is_a_script_the_shell_can_parse() {
+    let out = Command::new("/bin/sh").args(["-n", "-c", &helper_script()]).output().unwrap();
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+}
+
+#[test]
+fn the_serve_lines_name_a_deadline_or_an_off() {
+    assert_eq!(Serve::On(Some(1_729_000_000.0)).line(), "on 1729000000");
+    assert_eq!(Serve::On(None).line(), "on 0");
+    assert_eq!(Serve::On(None).answer(), "0");
+    assert_eq!(Serve::Off.line(), "off");
+    assert_eq!(Serve::Off.answer(), "off");
+}
+
+#[test]
+fn the_command_pipe_is_made_private_to_the_owner() {
+    use std::os::unix::fs::{FileTypeExt, PermissionsExt};
+    let dir = std::env::temp_dir().join(format!("tidewatch-pipe-test-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let fifo = dir.join("amphetamine.serve");
+    make_command_fifo(&fifo).unwrap();
+    make_command_fifo(&fifo).unwrap();
+    let meta = std::fs::metadata(&fifo).unwrap();
+    assert!(meta.file_type().is_fifo());
+    assert_eq!(meta.permissions().mode() & 0o777, 0o600);
+    std::fs::remove_dir_all(&dir).unwrap();
 }
 
 #[test]
@@ -320,8 +355,8 @@ fn the_remove_command_removes_the_rule_before_the_helper() {
 fn the_sudo_arguments_never_prompt_and_name_the_helper_by_its_full_path() {
     let token = PathBuf::from("/Users/vlad/.tidewatch/.state/amphetamine.token");
     assert_eq!(
-        sudo_start_args(&token, 77),
-        ["-n", HELPER_PATH, "start", "/Users/vlad/.tidewatch/.state/amphetamine.token", "77"]
+        sudo_serve_args(&token, 77, &PathBuf::from(FIFO)),
+        ["-n", HELPER_PATH, "serve", "/Users/vlad/.tidewatch/.state/amphetamine.token", "77", FIFO]
     );
     assert_eq!(sudo_verb_args("stop"), ["-n", HELPER_PATH, "stop"]);
     assert_eq!(sudo_verb_args("uninstall"), ["-n", HELPER_PATH, "uninstall"]);
@@ -332,6 +367,156 @@ fn the_helper_pid_is_read_from_its_output() {
     assert_eq!(parse_pid("4242\n"), Ok(4242));
     assert!(parse_pid("").is_err());
     assert!(parse_pid("sudo: a password is required").is_err());
+}
+
+fn pipe_of(rig: &Rig) -> PathBuf {
+    rig.dir.path().join(".state/amphetamine.serve")
+}
+
+fn now_secs() -> u64 {
+    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs()
+}
+
+fn send(pipe: &Path, line: &str) {
+    use std::io::Write as _;
+    let mut writer = std::fs::OpenOptions::new().read(true).write(true).open(pipe).unwrap();
+    writeln!(writer, "{line}").unwrap();
+}
+
+fn wait_until(what: impl Fn() -> bool) -> bool {
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while Instant::now() < deadline {
+        if what() {
+            return true;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    false
+}
+
+fn token_says(rig: &Rig, want: &str) -> bool {
+    std::fs::read_to_string(rig.token()).is_ok_and(|text| text.trim() == want)
+}
+
+fn gone(pid: u32) -> bool {
+    wait_until(|| {
+        let out = Command::new("/bin/ps")
+            .args(["-o", "stat=", "-p", &pid.to_string()])
+            .stderr(Stdio::null())
+            .output()
+            .unwrap();
+        let state = String::from_utf8_lossy(&out.stdout).trim().to_owned();
+        state.is_empty() || state.starts_with('Z')
+    })
+}
+
+fn owner_child() -> std::process::Child {
+    Command::new("/bin/sleep").arg("60").stdin(Stdio::null()).spawn().unwrap()
+}
+
+fn serve_under(rig: &Rig, owner: u32) -> u32 {
+    std::fs::write(rig.token(), "0").unwrap();
+    make_command_fifo(&pipe_of(rig)).unwrap();
+    let out = rig.run(&[
+        "serve",
+        &rig.token().to_string_lossy(),
+        &owner.to_string(),
+        &pipe_of(rig).to_string_lossy(),
+    ]);
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    parse_pid(&String::from_utf8_lossy(&out.stdout)).unwrap()
+}
+
+fn finish(owner: &mut std::process::Child, helper: u32) {
+    owner.kill().unwrap();
+    owner.wait().unwrap();
+    assert!(gone(helper), "the helper exits with its owner");
+}
+
+#[test]
+fn serve_takes_on_and_off_from_its_pipe_and_writes_each_answer() {
+    let rig = Rig::new();
+    let mut owner = owner_child();
+    let helper = serve_under(&rig, owner.id());
+    assert_eq!(rig.calls(), ["-a disablesleep 1"]);
+    let until = now_secs() + 3600;
+    send(&pipe_of(&rig), &format!("on {until}"));
+    assert!(wait_until(|| token_says(&rig, &until.to_string())));
+    assert_eq!(rig.calls(), ["-a disablesleep 1", "-a disablesleep 1"]);
+    send(&pipe_of(&rig), "off");
+    assert!(wait_until(|| token_says(&rig, "off")));
+    assert_eq!(rig.calls().last().map(String::as_str), Some("-a disablesleep 0"));
+    finish(&mut owner, helper);
+}
+
+#[test]
+fn serve_ignores_every_line_but_on_with_a_number_and_off() {
+    let rig = Rig::new();
+    let mut owner = owner_child();
+    let helper = serve_under(&rig, owner.id());
+    for line in ["on soon", "on 12;id", "on", "on $(id)", "reboot"] {
+        send(&pipe_of(&rig), line);
+    }
+    send(&pipe_of(&rig), "off");
+    assert!(wait_until(|| token_says(&rig, "off")));
+    assert_eq!(rig.calls(), ["-a disablesleep 1", "-a disablesleep 0"]);
+    finish(&mut owner, helper);
+}
+
+#[test]
+fn serve_restores_sleep_at_the_deadline_and_keeps_serving() {
+    let rig = Rig::new();
+    let mut owner = owner_child();
+    let helper = serve_under(&rig, owner.id());
+    send(&pipe_of(&rig), &format!("on {}", now_secs() + 1));
+    assert!(wait_until(|| token_says(&rig, "off")));
+    assert_eq!(rig.calls().last().map(String::as_str), Some("-a disablesleep 0"));
+    send(&pipe_of(&rig), "on 0");
+    assert!(wait_until(|| rig.calls().len() == 4));
+    assert_eq!(rig.calls().last().map(String::as_str), Some("-a disablesleep 1"));
+    finish(&mut owner, helper);
+}
+
+#[test]
+fn serve_restores_sleep_and_exits_when_the_app_is_gone() {
+    let rig = Rig::new();
+    let mut owner = owner_child();
+    let helper = serve_under(&rig, owner.id());
+    send(&pipe_of(&rig), "on 0");
+    assert!(wait_until(|| rig.calls().len() == 2));
+    owner.kill().unwrap();
+    owner.wait().unwrap();
+    assert!(wait_until(|| rig.calls().last().map(String::as_str) == Some("-a disablesleep 0")));
+    assert!(gone(helper));
+}
+
+#[test]
+fn serve_restores_sleep_and_exits_when_its_token_is_removed() {
+    let rig = Rig::new();
+    let mut owner = owner_child();
+    let helper = serve_under(&rig, owner.id());
+    std::fs::remove_file(rig.token()).unwrap();
+    assert!(wait_until(|| rig.calls().last().map(String::as_str) == Some("-a disablesleep 0")));
+    assert!(gone(helper));
+    finish(&mut owner, helper);
+}
+
+#[test]
+fn serve_refuses_a_pipe_outside_the_state_folder_or_a_link_to_one_before_pmset() {
+    let rig = Rig::new();
+    std::fs::write(rig.token(), "0").unwrap();
+    make_command_fifo(&pipe_of(&rig)).unwrap();
+    let owner = std::process::id().to_string();
+    let token = rig.token().to_string_lossy().into_owned();
+    let linked_dir = rig.dir.path().join("linked/.state");
+    std::fs::create_dir_all(&linked_dir).unwrap();
+    let link = linked_dir.join("amphetamine.serve");
+    std::os::unix::fs::symlink(pipe_of(&rig), &link).unwrap();
+    for pipe in ["/etc/amphetamine.serve".to_owned(), link.to_string_lossy().into_owned()] {
+        let out = rig.run(&["serve", &token, &owner, &pipe]);
+        assert!(!out.status.success(), "{pipe}");
+    }
+    assert_eq!(rig.calls().len(), 0);
 }
 
 #[test]
