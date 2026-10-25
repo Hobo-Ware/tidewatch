@@ -114,7 +114,7 @@ pub(crate) fn markdown(md: &str) -> Cow<'_, str> {
     if out == md { Cow::Borrowed(md) } else { Cow::Owned(out) }
 }
 
-fn fence_of(line: &str) -> Option<(char, usize, &str)> {
+pub(crate) fn fence_of(line: &str) -> Option<(char, usize, &str)> {
     let trimmed = line.trim_start_matches(' ');
     if line.len() - trimmed.len() > 3 {
         return None;
@@ -124,11 +124,11 @@ fn fence_of(line: &str) -> Option<(char, usize, &str)> {
     (run >= 3).then(|| (mark, run, &trimmed[run..]))
 }
 
-fn opens_fence(line: &str) -> Option<(char, usize)> {
+pub(crate) fn opens_fence(line: &str) -> Option<(char, usize)> {
     fence_of(line).map(|(mark, run, _)| (mark, run))
 }
 
-fn closes_fence(line: &str, (mark, run): (char, usize)) -> bool {
+pub(crate) fn closes_fence(line: &str, (mark, run): (char, usize)) -> bool {
     fence_of(line).is_some_and(|(m, r, rest)| m == mark && r >= run && rest.trim().is_empty())
 }
 

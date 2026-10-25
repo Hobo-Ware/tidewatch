@@ -31,6 +31,7 @@ tempfile = "3.27.0"
 toml = "1.1.8"
 uuid = { version = "1.28.0", default-features = false, features = ["v4"] }
 egui_commonmark = { version = "0.24.0", default-features = false, features = ["pulldown_cmark"] }
+egui_extras = { version = "0.35.0", default-features = false }
 
 [workspace.lints.rust]
 unsafe_code = "deny" # justified local #[allow]s only: main's edition-2024 set_var + terminal's killpg FFI
