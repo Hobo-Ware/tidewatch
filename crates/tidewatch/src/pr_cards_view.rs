@@ -15,12 +15,13 @@ use crate::pr_card_model::{
     self as model, Block, Bubble, Button, CardAction, Context, Icon, Ink, JobLine, Look, Model,
 };
 use crate::pr_watch::{Handling, Watch, paused_note};
-use crate::reader_view::{ellipsized, item_frame};
+use crate::reader_view::ellipsized;
 use crate::screen_kit::{Size, body, heading, mono, primary_button, quiet_button};
 
 const MAX_CARD_W: f32 = 760.0;
 const MAX_BUBBLE_W: f32 = 560.0;
-const ICON_BOX: f32 = 28.0;
+const ICON_BOX: f32 = 16.0;
+const INDENT: f32 = 26.0;
 const GUESS_H: f32 = 110.0;
 const BARS_GAP: f32 = 8.0;
 
@@ -136,33 +137,41 @@ fn card_width(ui: &Ui) -> f32 {
 
 fn draw_card(ui: &mut Ui, card: &Model, age: &str) -> Option<CardAction> {
     let width = card_width(ui);
-    let mut frame = item_frame().inner_margin(Margin::symmetric(14, 12));
-    if card.red_line {
-        frame = frame.stroke(Stroke::new(1.0, brand::RED_LINE));
-    }
+    let frame = Frame::new()
+        .fill(brand::CARD)
+        .stroke(Stroke::new(1.0, brand::CARD_LINE))
+        .corner_radius(CornerRadius::same(14))
+        .inner_margin(Margin::symmetric(20, 16));
     let mut clicked = None;
     frame.show(ui, |ui| {
-        ui.set_width(width - 30.0);
-        ui.spacing_mut().item_spacing.y = 10.0;
+        ui.set_width(width - 42.0);
+        ui.spacing_mut().item_spacing.y = 12.0;
         header(ui, card, age);
         for block in &card.body {
-            draw_block(ui, block);
+            indented(ui, |ui| draw_block(ui, block));
         }
         if !card.buttons.is_empty() || card.note.is_some() {
-            clicked = button_row(ui, &card.buttons, card.note.as_deref());
+            indented(ui, |ui| clicked = button_row(ui, &card.buttons, card.note.as_deref()));
         }
     });
     clicked
 }
 
+fn indented(ui: &mut Ui, add: impl FnOnce(&mut Ui)) {
+    ui.horizontal_top(|ui| {
+        ui.add_space(INDENT);
+        ui.vertical(|ui| {
+            ui.set_width(ui.available_width());
+            add(ui);
+        });
+    });
+}
+
 fn header(ui: &mut Ui, card: &Model, age: &str) {
-    let (rect, _) = ui.allocate_exact_size(vec2(ui.available_width(), ICON_BOX), Sense::hover());
+    let (rect, _) = ui.allocate_exact_size(vec2(ui.available_width(), 20.0), Sense::hover());
     let painter = ui.painter();
     let ink = ink_color(card.ink);
-    let boxed = Rect::from_min_size(rect.min, vec2(ICON_BOX, ICON_BOX));
-    let fill = if card.ink == Ink::Quiet { brand::BUTTON } else { ink.gamma_multiply(0.14) };
-    painter.rect_filled(boxed, CornerRadius::same(8), fill);
-    paint_icon(painter, boxed.center(), card.icon, ink);
+    paint_icon(painter, pos2(rect.left() + ICON_BOX / 2.0, rect.center().y), card.icon, ink);
     let right = if card.live { "live" } else { age };
     let right_galley = painter.layout_no_wrap(right.to_owned(), body(12.0), brand::FAINT);
     let right_x = rect.right() - right_galley.size().x;
@@ -171,16 +180,16 @@ fn header(ui: &mut Ui, card: &Model, age: &str) {
         right_galley,
         brand::FAINT,
     );
-    let title = painter.layout_no_wrap(card.title.clone(), heading(14.0), brand::TEXT);
+    let title = painter.layout_no_wrap(card.title.clone(), heading(15.0), brand::TEXT);
     let title_w = title.size().x;
-    let x = boxed.right() + 10.0;
+    let x = rect.left() + INDENT;
     painter.galley(pos2(x, rect.center().y - title.size().y / 2.0), title, brand::TEXT);
     if !card.sub.is_empty() {
         let sub_x = x + title_w + 10.0;
         let room = right_x - 12.0 - sub_x;
         if room > 24.0 {
-            let sub = ellipsized(painter, &card.sub, body(12.5), brand::FAINT, room);
-            painter.galley(pos2(sub_x, rect.center().y - sub.size().y / 2.0), sub, brand::FAINT);
+            let sub = ellipsized(painter, &card.sub, body(12.0), brand::MUTED, room);
+            painter.galley(pos2(sub_x, rect.center().y - sub.size().y / 2.0), sub, brand::MUTED);
         }
     }
 }
@@ -188,49 +197,35 @@ fn header(ui: &mut Ui, card: &Model, age: &str) {
 fn draw_block(ui: &mut Ui, block: &Block) {
     match block {
         Block::Mono(text) => {
-            ui.label(RichText::new(text).monospace().size(12.5).color(brand::SOFT));
+            ui.label(RichText::new(text).monospace().size(13.0).color(brand::STEP_TEXT));
         }
         Block::Text(text) => {
-            ui.label(RichText::new(text).size(13.0).color(brand::SOFT));
+            ui.label(RichText::new(text).size(14.0).color(brand::STEP_TEXT));
         }
         Block::Jobs(jobs) => {
-            ui.scope(|ui| {
-                ui.spacing_mut().item_spacing.y = 6.0;
-                for job in jobs {
-                    job_row(ui, job);
-                }
-            });
+            Frame::new()
+                .fill(brand::SUNKEN)
+                .stroke(Stroke::new(1.0, brand::ITEM_LINE))
+                .corner_radius(CornerRadius::same(10))
+                .inner_margin(Margin::symmetric(12, 6))
+                .show(ui, |ui| {
+                    ui.set_width(ui.available_width());
+                    for job in jobs {
+                        job_row(ui, job);
+                    }
+                });
         }
         Block::Log(lines) => log_box(ui, lines),
-        Block::Comments(comments) => {
-            ui.scope(|ui| {
-                ui.spacing_mut().item_spacing.y = 8.0;
-                for (place, text) in comments {
-                    comment_box(ui, place, text);
-                }
-            });
-        }
+        Block::Comments(comments) => comment_list(ui, comments),
         Block::Bars { done, total } => bars(ui, *done, *total),
     }
 }
 
 fn job_row(ui: &mut Ui, job: &JobLine) {
-    let (rect, _) = ui.allocate_exact_size(vec2(ui.available_width(), 20.0), Sense::hover());
+    let (rect, _) = ui.allocate_exact_size(vec2(ui.available_width(), 26.0), Sense::hover());
     let painter = ui.painter();
-    let (ink, name_ink) =
-        if job.passed { (brand::GREEN, brand::SOFT) } else { (brand::RED, brand::TEXT) };
-    let mark = pos2(rect.left() + 7.0, rect.center().y);
-    if job.passed {
-        painter.add(Shape::line(
-            vec![mark + vec2(-3.5, 0.5), mark + vec2(-1.0, 3.0), mark + vec2(3.5, -3.0)],
-            Stroke::new(1.6, ink),
-        ));
-    } else {
-        let stroke = Stroke::new(1.6, ink);
-        painter.line_segment([mark + vec2(-3.0, -3.0), mark + vec2(3.0, 3.0)], stroke);
-        painter.line_segment([mark + vec2(3.0, -3.0), mark + vec2(-3.0, 3.0)], stroke);
-    }
-    let mut x = rect.left() + 24.0;
+    let name_ink = if job.passed { brand::SOFT } else { brand::TEXT };
+    let mut x = rect.left();
     let took_w = job.took.as_ref().map_or(0.0, |took| {
         let galley = painter.layout_no_wrap(took.clone(), body(12.0), brand::FAINT);
         let width = galley.size().x;
@@ -242,17 +237,17 @@ fn job_row(ui: &mut Ui, job: &JobLine) {
         width + 12.0
     });
     let limit = rect.right() - took_w;
-    let name = painter.layout_no_wrap(job.name.clone(), mono(12.5), name_ink);
+    let name = painter.layout_no_wrap(job.name.clone(), mono(13.0), name_ink);
     let name_w = name.size().x;
     painter.galley(pos2(x, rect.center().y - name.size().y / 2.0), name, name_ink);
     x += name_w + 10.0;
     if let Some(at) = &job.at {
-        let said = painter.layout_no_wrap("failed at".to_owned(), body(13.0), brand::SOFT);
+        let said = painter.layout_no_wrap("failed at".to_owned(), body(13.0), brand::MUTED);
         let said_w = said.size().x;
-        painter.galley(pos2(x, rect.center().y - said.size().y / 2.0), said, brand::SOFT);
+        painter.galley(pos2(x, rect.center().y - said.size().y / 2.0), said, brand::MUTED);
         x += said_w + 8.0;
         if limit - x > 20.0 {
-            let step = ellipsized(painter, at, mono(12.5), brand::RED, limit - x);
+            let step = ellipsized(painter, at, mono(13.0), brand::RED, limit - x);
             painter.galley(pos2(x, rect.center().y - step.size().y / 2.0), step, brand::RED);
         }
     }
@@ -260,9 +255,9 @@ fn job_row(ui: &mut Ui, job: &JobLine) {
 
 fn log_box(ui: &mut Ui, lines: &[String]) {
     Frame::new()
-        .fill(brand::SEGMENT)
-        .stroke(Stroke::new(1.0, brand::CARD_LINE))
-        .corner_radius(CornerRadius::same(8))
+        .fill(brand::SUNKEN)
+        .stroke(Stroke::new(1.0, brand::ITEM_LINE))
+        .corner_radius(CornerRadius::same(10))
         .inner_margin(Margin::symmetric(12, 8))
         .show(ui, |ui| {
             ui.set_width(ui.available_width());
@@ -280,17 +275,27 @@ fn log_box(ui: &mut Ui, lines: &[String]) {
         });
 }
 
-fn comment_box(ui: &mut Ui, place: &str, text: &str) {
+fn comment_list(ui: &mut Ui, comments: &[(String, String)]) {
     Frame::new()
-        .fill(brand::SEGMENT)
-        .stroke(Stroke::new(1.0, brand::CARD_LINE))
-        .corner_radius(CornerRadius::same(8))
-        .inner_margin(Margin::symmetric(12, 8))
+        .fill(brand::SUNKEN)
+        .stroke(Stroke::new(1.0, brand::ITEM_LINE))
+        .corner_radius(CornerRadius::same(10))
         .show(ui, |ui| {
             ui.set_width(ui.available_width());
-            ui.spacing_mut().item_spacing.y = 2.0;
-            ui.label(RichText::new(place).monospace().size(12.0).color(brand::MUTED));
-            ui.label(RichText::new(text).size(13.0).color(brand::TEXT));
+            ui.spacing_mut().item_spacing.y = 0.0;
+            for (index, (place, text)) in comments.iter().enumerate() {
+                if index > 0 {
+                    let (line, _) =
+                        ui.allocate_exact_size(vec2(ui.available_width(), 1.0), Sense::hover());
+                    ui.painter().rect_filled(line, CornerRadius::ZERO, brand::SIDEBAR_LINE);
+                }
+                Frame::new().inner_margin(Margin::symmetric(12, 10)).show(ui, |ui| {
+                    ui.set_width(ui.available_width());
+                    ui.spacing_mut().item_spacing.y = 3.0;
+                    ui.label(RichText::new(place).monospace().size(12.0).color(brand::MUTED));
+                    ui.label(RichText::new(text).size(14.0).color(brand::TEXT));
+                });
+            }
         });
 }
 

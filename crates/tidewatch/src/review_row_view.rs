@@ -4,18 +4,19 @@
 //! the bottom.
 
 use egui::{
-    Align, Color32, CornerRadius, Frame, Layout, Margin, Rect, RichText, Sense, Stroke, Ui, pos2,
-    vec2,
+    Align, Color32, CornerRadius, Frame, Layout, Margin, Rect, RichText, Sense, Shape, Stroke, Ui,
+    pos2, vec2,
 };
 
 use crate::brand;
-use crate::reader_view::item_frame;
+use crate::reader_chat_view::USER_LINE;
 use crate::review::{ReviewFacts, SentNote, SentReview, Standing};
 use crate::review_view::ReviewAction;
-use crate::screen_kit::{Size, body, mono, quiet_button};
+use crate::screen_kit::{Size, body, heading, mono, quiet_button};
 
-const RADIUS: CornerRadius = CornerRadius { nw: 12, ne: 12, se: 4, sw: 12 };
-const NOTE_RADIUS: u8 = 8;
+const RADIUS: CornerRadius = CornerRadius { nw: 14, ne: 14, se: 4, sw: 14 };
+const NOTE_RADIUS: u8 = 10;
+const INDENT: f32 = 26.0;
 const BAR_W: f32 = 2.0;
 const RING: f32 = 4.0;
 
@@ -47,79 +48,126 @@ pub(crate) fn show(
         SentReview::of(ids, facts.notes, facts.agent_id, facts.working)
     });
     let profile = facts.map_or("The agent", |facts| facts.profile);
-    item_frame().corner_radius(RADIUS).inner_margin(Margin::symmetric(14, 12)).show(ui, |ui| {
-        ui.set_width(ui.available_width());
-        ui.spacing_mut().item_spacing.y = 10.0;
-        header(ui, &review);
-        if !message.is_empty() {
-            ui.label(RichText::new(message).size(13.5).color(brand::TEXT));
-        }
-        for note in &review.notes {
-            if let Some(path) = note_block(ui, note, profile) {
-                actions.push(ReviewAction::OpenFile(path));
+    Frame::new()
+        .fill(brand::TEAL_NAV)
+        .stroke(Stroke::new(1.0, USER_LINE))
+        .corner_radius(RADIUS)
+        .inner_margin(Margin::symmetric(18, 16))
+        .show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            ui.spacing_mut().item_spacing.y = 12.0;
+            header(ui, &review);
+            if !message.is_empty() {
+                indented(ui, |ui| {
+                    ui.label(RichText::new(message).size(14.0).color(brand::STEP_TEXT));
+                });
             }
-        }
-        if !review.notes.is_empty() {
-            buttons(ui, &review, &mut actions);
-        }
-    });
+            if !review.notes.is_empty() {
+                indented(ui, |ui| {
+                    Frame::new()
+                        .fill(brand::SUNKEN)
+                        .stroke(Stroke::new(1.0, brand::ITEM_LINE))
+                        .corner_radius(CornerRadius::same(NOTE_RADIUS))
+                        .show(ui, |ui| {
+                            ui.set_width(ui.available_width());
+                            ui.spacing_mut().item_spacing.y = 0.0;
+                            for (index, note) in review.notes.iter().enumerate() {
+                                if index > 0 {
+                                    let (line, _) = ui.allocate_exact_size(
+                                        vec2(ui.available_width(), 1.0),
+                                        Sense::hover(),
+                                    );
+                                    ui.painter().rect_filled(
+                                        line,
+                                        CornerRadius::ZERO,
+                                        brand::SIDEBAR_LINE,
+                                    );
+                                }
+                                if let Some(path) = note_block(ui, note, profile) {
+                                    actions.push(ReviewAction::OpenFile(path));
+                                }
+                            }
+                        });
+                });
+                indented(ui, |ui| buttons(ui, &review, &mut actions));
+            }
+        });
     actions
 }
 
-fn header(ui: &mut Ui, review: &SentReview) {
-    ui.horizontal(|ui| {
-        ui.label(RichText::new("You").size(12.0).color(brand::MUTED));
-        tag(ui, &review.tag());
-        if !review.notes.is_empty() {
-            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                ui.label(RichText::new(review.progress()).size(12.0).color(brand::FAINT));
-            });
-        }
+fn indented(ui: &mut Ui, add: impl FnOnce(&mut Ui)) {
+    ui.horizontal_top(|ui| {
+        ui.add_space(INDENT);
+        ui.vertical(|ui| {
+            ui.set_width(ui.available_width());
+            add(ui);
+        });
     });
 }
 
-fn tag(ui: &mut Ui, text: &str) {
-    let galley = ui.painter().layout_no_wrap(text.to_owned(), body(11.5), brand::TEAL_TEXT);
-    let (rect, _) = ui.allocate_exact_size(galley.size() + vec2(18.0, 3.0), Sense::hover());
-    ui.painter().rect_filled(rect, CornerRadius::same(255), brand::TEAL.gamma_multiply(0.1));
-    ui.painter().galley(rect.center() - galley.size() / 2.0, galley, brand::TEAL_TEXT);
+fn header(ui: &mut Ui, review: &SentReview) {
+    let (rect, _) = ui.allocate_exact_size(vec2(ui.available_width(), 20.0), Sense::hover());
+    let painter = ui.painter();
+    let stroke = Stroke::new(1.4, brand::TEAL_TEXT);
+    let p = |x: f32, y: f32| {
+        rect.left_center() + vec2((x - 12.0) * 16.0 / 24.0 + 8.0, (y - 12.0) * 16.0 / 24.0)
+    };
+    painter.add(Shape::closed_line(
+        vec![p(4.0, 5.0), p(20.0, 5.0), p(20.0, 16.0), p(9.0, 16.0), p(4.0, 20.0)],
+        stroke,
+    ));
+    painter.line_segment([p(8.0, 10.0), p(16.0, 10.0)], stroke);
+    let title = painter.layout_no_wrap("Review sent".to_owned(), heading(15.0), brand::TEXT);
+    let title_w = title.size().x;
+    painter.galley(
+        pos2(rect.left() + 26.0, rect.center().y - title.size().y / 2.0),
+        title,
+        brand::TEXT,
+    );
+    let sub = painter.layout_no_wrap(review.notes_label(), body(12.0), brand::MUTED);
+    painter.galley(
+        pos2(rect.left() + 26.0 + title_w + 10.0, rect.center().y - sub.size().y / 2.0),
+        sub,
+        brand::MUTED,
+    );
+    if !review.notes.is_empty() {
+        let progress = painter.layout_no_wrap(review.progress(), body(12.0), brand::FAINT);
+        painter.galley(
+            pos2(rect.right() - progress.size().x, rect.center().y - progress.size().y / 2.0),
+            progress,
+            brand::FAINT,
+        );
+    }
 }
 
 /// One note. Returns the file when its place was clicked.
 fn note_block(ui: &mut Ui, note: &SentNote, profile: &str) -> Option<String> {
     let mut open = None;
-    Frame::new()
-        .fill(brand::SEGMENT)
-        .stroke(Stroke::new(1.0, brand::CARD_LINE))
-        .corner_radius(CornerRadius::same(NOTE_RADIUS))
-        .inner_margin(Margin::symmetric(12, 8))
-        .show(ui, |ui| {
-            ui.set_width(ui.available_width());
-            ui.spacing_mut().item_spacing.y = 4.0;
-            ui.horizontal(|ui| {
-                let label = RichText::new(place(note)).font(mono(12.0)).color(brand::MUTED);
-                let link = ui.add(egui::Label::new(label).sense(Sense::click()));
-                if link
-                    .on_hover_cursor(egui::CursorIcon::PointingHand)
-                    .on_hover_text("Open this file in the file view")
-                    .clicked()
-                {
-                    open = Some(note.path.clone());
-                }
-                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                    ui.label(
-                        RichText::new(note.standing.label()).size(11.5).color(ink(note.standing)),
-                    );
-                    if note.standing == Standing::Working {
-                        ring(ui, ink(note.standing));
-                    }
-                });
-            });
-            ui.label(RichText::new(&note.text).size(13.5).color(brand::TEXT));
-            if let Some(reply) = &note.reply {
-                reply_line(ui, profile, reply);
+    Frame::new().inner_margin(Margin::symmetric(12, 10)).show(ui, |ui| {
+        ui.set_width(ui.available_width());
+        ui.spacing_mut().item_spacing.y = 3.0;
+        ui.horizontal(|ui| {
+            let label = RichText::new(place(note)).font(mono(12.0)).color(brand::MUTED);
+            let link = ui.add(egui::Label::new(label).sense(Sense::click()));
+            if link
+                .on_hover_cursor(egui::CursorIcon::PointingHand)
+                .on_hover_text("Open this file in the file view")
+                .clicked()
+            {
+                open = Some(note.path.clone());
             }
+            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                ui.label(RichText::new(note.standing.label()).size(12.0).color(ink(note.standing)));
+                if note.standing == Standing::Working {
+                    ring(ui, ink(note.standing));
+                }
+            });
         });
+        ui.label(RichText::new(&note.text).size(14.0).color(brand::TEXT));
+        if let Some(reply) = &note.reply {
+            reply_line(ui, profile, reply);
+        }
+    });
     open
 }
 
@@ -149,8 +197,9 @@ fn buttons(ui: &mut Ui, review: &SentReview, actions: &mut Vec<ReviewAction>) {
             actions.push(ReviewAction::OpenFile(note.path.clone()));
         }
         let resolvable = review.resolvable();
-        let button = quiet_button(ui, "Resolve answered", !resolvable.is_empty(), Size::Compact);
-        if button.clicked() {
+        if !resolvable.is_empty()
+            && quiet_button(ui, "Resolve answered", true, Size::Compact).clicked()
+        {
             actions.push(ReviewAction::ResolveAnswered(resolvable));
         }
     });

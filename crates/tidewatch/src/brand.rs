@@ -19,6 +19,7 @@ pub(crate) const BUTTON: Color32 = Color32::from_rgb(0x1d, 0x22, 0x30);
 pub(crate) const KEY_EDGE: Color32 = Color32::from_rgb(0x0b, 0x0e, 0x13);
 pub(crate) const TEXT: Color32 = Color32::from_rgb(0xe6, 0xe8, 0xec);
 pub(crate) const SOFT: Color32 = Color32::from_rgb(0xa7, 0xb0, 0xbf);
+pub(crate) const STEP_TEXT: Color32 = Color32::from_rgb(0xc4, 0xca, 0xd4);
 pub(crate) const MUTED: Color32 = Color32::from_rgb(0x8b, 0x93, 0xa3);
 pub(crate) const FAINT: Color32 = Color32::from_rgb(0x6b, 0x73, 0x83);
 pub(crate) const TEAL: Color32 = Color32::from_rgb(0x2d, 0xd4, 0xbf);

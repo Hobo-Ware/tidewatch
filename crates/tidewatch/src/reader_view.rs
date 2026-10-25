@@ -23,6 +23,7 @@ use crate::agent_avatar::Face;
 use crate::agent_ready::{self, Ready};
 use crate::brand;
 use crate::due_view::{self, Facts as DueFacts};
+use crate::job_model::clock_label;
 use crate::pr_card_model::CardAction;
 use crate::pr_cards_view::{self, Data as PrData, Heights as PrHeights};
 use crate::pr_timeline::{self, Place};
@@ -459,7 +460,14 @@ pub(crate) fn show(
             Effect::Nothing | Effect::TypeOther => {}
         }
     } else if let Some(prompt) = facts.prompt {
-        actions.extend(prompt_strip(ui, strip, prompt, facts.source, rows, facts.root));
+        actions.extend(prompt_strip(
+            ui,
+            strip,
+            prompt,
+            facts.source,
+            rows,
+            (facts.root, &state.zone),
+        ));
     }
     let mut input_ui =
         ui.new_child(UiBuilder::new().max_rect(input.shrink2(vec2(INSET, REPLY_GAP_Y))));
@@ -597,7 +605,13 @@ fn transcript(
                                         (width, &mut *cache),
                                     ),
                                     _ => {
-                                        let asked = draw_row(ui, row, review, live_seq, profile);
+                                        let asked = draw_row(
+                                            ui,
+                                            row,
+                                            review,
+                                            live_seq,
+                                            (profile, stamps[index], scene.zone),
+                                        );
                                         actions.extend(asked.into_iter().map(Action::Review));
                                     }
                                 }
@@ -688,18 +702,26 @@ fn draw_row(
     row: &Row,
     review: Option<&ReviewFacts<'_>>,
     live_seq: Option<u64>,
-    profile: &str,
+    (profile, stamp, zone): (&str, Option<i64>, &TimeZone),
 ) -> Vec<ReviewAction> {
     match &row.kind {
         Kind::Review(ids) => return review_row_view::show(ui, ids, &row.text, review),
         Kind::Question(question) => {
             if live_seq != Some(row.seq) {
-                question_view::summary(ui, question, profile);
+                let time = stamp.and_then(|at| clock_label(at, zone));
+                question_view::summary(ui, question, profile, time.as_deref());
             }
         }
         Kind::User | Kind::Assistant | Kind::Tool(_) => {}
-        Kind::Divider | Kind::Compacted => draw_divider(ui, &row.text),
-        Kind::SlashCommand => reader_chat_view::slash_command(ui, &row.text),
+        Kind::Divider => draw_divider(ui, &row.text),
+        Kind::Compacted => {
+            let time = stamp.and_then(|at| clock_label(at, zone));
+            draw_compaction(ui, time.as_deref());
+        }
+        Kind::SlashCommand => {
+            let time = stamp.and_then(|at| clock_label(at, zone));
+            reader_chat_view::slash_command(ui, &row.text, time.as_deref());
+        }
         Kind::CommandOutput => reader_chat_view::command_output(ui, &row.text),
         Kind::Notice => {
             Frame::new()
@@ -739,6 +761,29 @@ fn now_ms() -> i64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(0, |since| i64::try_from(since.as_millis()).unwrap_or(0))
+}
+
+fn draw_compaction(ui: &mut Ui, time: Option<&str>) {
+    ui.add_space(10.0);
+    let (rect, _) = ui.allocate_exact_size(vec2(ui.available_width(), 18.0), Sense::hover());
+    let painter = ui.painter();
+    let text = match time {
+        Some(time) => format!("Earlier messages summarised to free up room \u{b7} {time}"),
+        None => "Earlier messages summarised to free up room".to_owned(),
+    };
+    let galley = painter.layout_no_wrap(text, body(12.0), brand::MUTED);
+    let width = 13.0 + 8.0 + galley.size().x;
+    let left = rect.center().x - width / 2.0;
+    let mid = rect.center().y;
+    let line = Stroke::new(1.0, brand::ITEM_LINE);
+    painter.hline(rect.left()..=(left - 14.0).max(rect.left()), mid, line);
+    painter.hline((left + width + 14.0).min(rect.right())..=rect.right(), mid, line);
+    let icon = Stroke::new(1.3, brand::MUTED);
+    for (y, from, to) in [(-4.5, 0.0, 13.0), (0.0, 2.0, 11.0), (4.5, 4.0, 9.0)] {
+        painter.line_segment([pos2(left + from, mid + y), pos2(left + to, mid + y)], icon);
+    }
+    painter.galley(pos2(left + 21.0, mid - galley.size().y / 2.0), galley, brand::MUTED);
+    ui.add_space(10.0);
 }
 
 fn draw_divider(ui: &mut Ui, text: &str) {
@@ -821,7 +866,7 @@ fn prompt_strip(
     prompt: Prompt,
     source: Option<Source>,
     rows: &Rows,
-    root: Option<&Path>,
+    (root, zone): (Option<&Path>, &TimeZone),
 ) -> Vec<Action> {
     let mut actions = Vec::new();
     if prompt == Prompt::Permission {
@@ -830,7 +875,8 @@ fn prompt_strip(
         let tool = permission_tool(rows, root);
         let tool = tool.as_ref().map(|(name, command)| (name.as_str(), command.as_str()));
         let strip = strip.shrink2(vec2(0.0, 4.0));
-        match question_view::permission_card(ui, strip, tool, &answers) {
+        let time = rows.stamped().last().and_then(|(_, at)| clock_label(at?, zone));
+        match question_view::permission_card(ui, strip, tool, time.as_deref(), &answers) {
             Some(PermissionClick::Answer(answer)) => actions.push(Action::Answer(answer)),
             Some(PermissionClick::SwitchToTerminal) => actions.push(Action::SwitchToTerminal),
             None => {}
@@ -1739,7 +1785,7 @@ mod tests {
         let mut frames = Frames::new();
         frames.run(&rows, Turn::Finished, vec![]);
         frames.run(&rows, Turn::Finished, vec![]);
-        for want in ["All tidy.", "2 commands \u{b7} 1 failed", "1 read", "1m"] {
+        for want in ["All tidy.", "3 steps", "2 commands \u{b7} 1 read", "\u{b7} 1 failed", "1m"] {
             assert!(frames.at(want).is_some(), "{want}: {:?}", frames.shapes);
         }
         assert!(frames.shapes.iter().all(|(text, _)| !text.contains("git status")));
@@ -1753,12 +1799,12 @@ mod tests {
         let mut frames = Frames::new();
         frames.run(&rows, Turn::Finished, vec![]);
         frames.run(&rows, Turn::Finished, vec![]);
-        let chip = frames.at("1 read").unwrap();
+        let chip = frames.at("3 steps").unwrap();
         frames.click(&rows, chip);
-        for want in ["$ git status", "$ bun test", "read  src/auth.rs"] {
+        for want in ["$ git status", "$ bun test", "Read 1 file", "src/auth.rs"] {
             assert!(frames.at(want).is_some(), "{want}: {:?}", frames.shapes);
         }
-        let again = frames.at("1 read").unwrap();
+        let again = frames.at("3 steps").unwrap();
         frames.click(&rows, again);
         assert!(frames.at("$ git status").is_none());
         assert_eq!(frames.state.expanded.len(), 0);
@@ -1899,7 +1945,7 @@ mod tests {
         frames.run(&rows, Turn::Running, vec![]);
         assert!(frames.at("Running").is_some(), "{:?}", frames.shapes);
         assert!(frames.at("bun test e2e/auth").is_some());
-        assert!(frames.shapes.iter().any(|(text, _)| text.starts_with("1 command so far")));
+        assert!(frames.shapes.iter().any(|(text, _)| text.ends_with("1 command so far")));
         assert!(
             frames
                 .state

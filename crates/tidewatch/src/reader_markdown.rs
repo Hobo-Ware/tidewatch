@@ -1,39 +1,60 @@
 //! A chat message cut into the pieces the Reader draws itself: fenced code blocks (with their own
-//! copy button) and, in an agent's message, the `Done` / `Needs you` / `Next` heading lines as
-//! captions. Everything between them stays markdown for the renderer. Pure.
+//! copy button), top-level blockquotes (a quiet panel with a quote mark) and, in an agent's
+//! message, the `Done` / `Needs you` / `Next` heading lines as captions. Everything between them
+//! stays markdown for the renderer. Pure.
 
-use egui::Ui;
+use egui::epaint::CubicBezierShape;
+use egui::{
+    Color32, CornerRadius, Frame, Margin, Pos2, Rect, Sense, Shape, Stroke, StrokeKind, Ui, pos2,
+    vec2,
+};
 use egui_commonmark::{CommonMarkCache, CommonMarkViewer};
 use tidewatch_core::end_block;
 
 use crate::brand;
 use crate::code_block::{self, Look};
 use crate::links::{closes_fence, fence_of};
-use crate::screen_kit::heading;
+use crate::screen_kit::{body, heading};
 
 const PIECE_GAP: f32 = 8.0;
 const CAPTION_PX: f32 = 13.0;
 const CAPTION_ABOVE: f32 = 10.0;
 const CAPTION_BELOW: f32 = 2.0;
+const QUOTE_RADIUS: u8 = 10;
+const THUMB_W: f32 = 44.0;
+const THUMB_H: f32 = 32.0;
+const IMAGE_CHIP_LINE: Color32 = Color32::from_rgb(0x2f, 0x4a, 0x4a);
+const QUOTE_PAD: Margin = Margin { left: 16, right: 16, top: 14, bottom: 14 };
+const QUOTE_GAP: f32 = 12.0;
+const QUOTE_MARK: f32 = 18.0;
 
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) enum Piece<'a> {
     Markdown(&'a str),
     Code { lang: Option<&'a str>, text: String },
+    Quote(String),
+    Image(String),
     Caption(&'static str),
 }
 
-/// Cuts `md` at its top-level fences (up to 3 spaces of indent; a fence inside a quote or deeper
-/// in a list stays with the renderer) and, with `captions`, at the end block's heading-only lines.
-/// A fence the message never closes runs to its end, as in CommonMark.
+/// Cuts `md` at its top-level fences and quotes (up to 3 spaces of indent; a fence inside a quote
+/// or deeper in a list stays with the renderer, and so does a quote in a list) and, with
+/// `captions`, at the end block's heading-only lines. A fence the message never closes runs to its
+/// end, as in CommonMark.
 pub(crate) fn pieces(md: &str, captions: bool) -> Vec<Piece<'_>> {
     let heads = if captions { end_block::caption_lines(&outside_fences(md)) } else { Vec::new() };
     let mut out = Vec::new();
     let mut prose = 0..0;
     let mut open: Option<Open<'_>> = None;
+    let mut quote: Vec<&str> = Vec::new();
     let mut at = 0;
     for (index, line) in md.split_inclusive('\n').enumerate() {
         let end = at + line.len();
+        let quoted = open.is_none() && quote_text(line).is_some();
+        if !quoted && !quote.is_empty() {
+            out.push(Piece::Quote(std::mem::take(&mut quote).join("\n")));
+            prose = at..at;
+        }
         if let Some(fence) = &mut open {
             if closes_fence(line, (fence.mark, fence.run)) {
                 out.push(open.take().expect("checked open").finish());
@@ -41,6 +62,17 @@ pub(crate) fn pieces(md: &str, captions: bool) -> Vec<Piece<'_>> {
             } else {
                 fence.lines.push(line);
             }
+        } else if let Some(text) = quote_text(line) {
+            if quote.is_empty() {
+                push_prose(&mut out, &md[prose.clone()]);
+            }
+            quote.push(text);
+            prose = end..end;
+        } else if let Some((lead, label)) = image_label(line) {
+            prose.end = at + lead;
+            push_prose(&mut out, &md[prose.clone()]);
+            out.push(Piece::Image(label));
+            prose = end..end;
         } else if let Some(fence) = opens(line) {
             push_prose(&mut out, &md[prose.clone()]);
             open = Some(fence);
@@ -53,12 +85,34 @@ pub(crate) fn pieces(md: &str, captions: bool) -> Vec<Piece<'_>> {
         }
         at = end;
     }
-    if let Some(fence) = open {
+    if !quote.is_empty() {
+        out.push(Piece::Quote(quote.join("\n")));
+    } else if let Some(fence) = open {
         out.push(fence.finish());
     } else {
         push_prose(&mut out, &md[prose]);
     }
     out
+}
+
+/// The `Image 1` chip a line ends with (the code chip the user bubble makes of `[Image #1]`) and
+/// how many bytes of the line come before it.
+fn image_label(line: &str) -> Option<(usize, String)> {
+    let line = line.trim_end();
+    let body = line.strip_suffix('`')?;
+    let start = body.rfind('`')?;
+    let label = &body[start + 1..];
+    let number = label.strip_prefix("Image ")?;
+    (!number.is_empty() && number.bytes().all(|b| b.is_ascii_digit()))
+        .then(|| (start, label.to_owned()))
+}
+
+/// A quote line without its `>` marker and the one space after it; `None` for any other line.
+fn quote_text(line: &str) -> Option<&str> {
+    let line = line.trim_end_matches(['\n', '\r']);
+    let indent = line.len() - line.trim_start_matches(' ').len();
+    let rest = line[indent..].strip_prefix('>').filter(|_| indent <= 3)?;
+    Some(rest.strip_prefix(' ').unwrap_or(rest))
 }
 
 /// `md` with the lines of its fenced blocks blanked, so a heading inside code is not a heading.
@@ -143,8 +197,94 @@ pub(crate) fn show(ui: &mut Ui, cache: &mut CommonMarkCache, md: &str, captions:
             Piece::Code { lang, text } => {
                 code_block::show(ui, *lang, text, look);
             }
+            Piece::Quote(text) => quote(ui, cache, text),
+            Piece::Image(label) => image_chip(ui, label),
             Piece::Caption(text) => caption(ui, text),
         });
+    }
+}
+
+fn quote(ui: &mut Ui, cache: &mut CommonMarkCache, md: &str) {
+    Frame::new()
+        .fill(brand::SUNKEN)
+        .stroke(Stroke::new(1.0, brand::ITEM_LINE))
+        .corner_radius(CornerRadius::same(QUOTE_RADIUS))
+        .inner_margin(QUOTE_PAD)
+        .show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            ui.horizontal_top(|ui| {
+                ui.spacing_mut().item_spacing.x = QUOTE_GAP;
+                let (rect, _) =
+                    ui.allocate_exact_size(vec2(QUOTE_MARK, QUOTE_MARK), Sense::hover());
+                paint_quote_mark(ui, rect.translate(vec2(0.0, 2.0)));
+                ui.vertical(|ui| {
+                    ui.set_width(ui.available_width());
+                    ui.visuals_mut().override_text_color = Some(brand::STEP_TEXT);
+                    CommonMarkViewer::new().show(ui, cache, md);
+                });
+            });
+        });
+}
+
+fn image_chip(ui: &mut Ui, label: &str) {
+    ui.horizontal(|ui| {
+        let galley = ui.painter().layout_no_wrap(label.to_owned(), body(13.0), brand::STEP_TEXT);
+        let size = vec2(6.0 + THUMB_W + 10.0 + galley.size().x + 12.0, THUMB_H + 12.0);
+        let (rect, _) = ui.allocate_exact_size(size, Sense::hover());
+        let painter = ui.painter();
+        painter.rect_stroke(
+            rect,
+            CornerRadius::same(10),
+            Stroke::new(1.0, IMAGE_CHIP_LINE),
+            StrokeKind::Inside,
+        );
+        let thumb = Rect::from_min_size(rect.min + vec2(6.0, 6.0), vec2(THUMB_W, THUMB_H));
+        painter.rect(
+            thumb,
+            CornerRadius::same(6),
+            brand::SUNKEN,
+            Stroke::new(1.0, brand::ITEM_LINE),
+            StrokeKind::Inside,
+        );
+        paint_image_glyph(painter, thumb.center());
+        painter.galley(
+            pos2(thumb.right() + 10.0, rect.center().y - galley.size().y / 2.0),
+            galley,
+            brand::STEP_TEXT,
+        );
+    });
+}
+
+fn paint_image_glyph(painter: &egui::Painter, center: Pos2) {
+    let at = |x: f32, y: f32| center + vec2(x - 12.0, y - 12.0) * (16.0 / 24.0);
+    let stroke = Stroke::new(1.3, brand::FAINT);
+    painter.add(Shape::closed_line(
+        vec![at(3.0, 5.0), at(21.0, 5.0), at(21.0, 19.0), at(3.0, 19.0)],
+        stroke,
+    ));
+    painter.circle_stroke(at(9.0, 10.0), 1.6 * 16.0 / 24.0, stroke);
+    painter.add(Shape::line(vec![at(21.0, 16.0), at(16.0, 11.0), at(8.0, 19.0)], stroke));
+}
+
+fn paint_quote_mark(ui: &Ui, rect: Rect) {
+    let at = |x: f32, y: f32| -> Pos2 { rect.min + vec2(x, y) * (QUOTE_MARK / 24.0) };
+    let stroke = Stroke::new(1.5, brand::FAINT);
+    for shift in [0.0, 8.0] {
+        ui.painter().add(Shape::line(
+            vec![at(7.0 + shift, 7.0), at(11.0 + shift, 7.0), at(11.0 + shift, 11.0)],
+            stroke,
+        ));
+        ui.painter().add(CubicBezierShape::from_points_stroke(
+            [
+                at(11.0 + shift, 11.0),
+                at(11.0 + shift, 14.0),
+                at(9.5 + shift, 16.0),
+                at(7.0 + shift, 17.0),
+            ],
+            false,
+            Color32::TRANSPARENT,
+            stroke,
+        ));
     }
 }
 
@@ -301,5 +441,42 @@ mod tests {
         assert!(seen.iter().any(|text| text == "cargo test"), "{seen:?}");
         assert!(seen.contains(&"Copy".to_owned()));
         assert!(seen.contains(&"sh".to_owned()));
+    }
+
+    #[test]
+    fn a_top_level_quote_is_one_piece_with_its_markers_taken_off() {
+        let cases: [(&str, Vec<Piece>); 5] = [
+            (
+                "Before:\n\n> one\n> two\n\nAfter.",
+                vec![
+                    Piece::Markdown("Before:\n\n"),
+                    Piece::Quote("one\ntwo".to_owned()),
+                    Piece::Markdown("\nAfter."),
+                ],
+            ),
+            ("> only", vec![Piece::Quote("only".to_owned())]),
+            ("   >tight\n>\n> after a gap", vec![Piece::Quote("tight\n\nafter a gap".to_owned())]),
+            ("- item\n    > deep in a list", vec![Piece::Markdown("- item\n    > deep in a list")]),
+            ("```\n> in code\n```", vec![code(None, "> in code")]),
+        ];
+        for (input, want) in cases {
+            assert_eq!(pieces(input, false), want, "input {input:?}");
+        }
+    }
+
+    #[test]
+    fn a_line_that_ends_in_an_image_chip_gives_the_chip_its_own_piece() {
+        assert_eq!(
+            pieces("See:\n\n`Image 1`\n", false),
+            vec![Piece::Markdown("See:\n\n"), Piece::Image("Image 1".to_owned())],
+        );
+        assert_eq!(
+            pieces("See the run: `Image 2`", false),
+            vec![Piece::Markdown("See the run: "), Piece::Image("Image 2".to_owned())],
+        );
+        assert_eq!(
+            pieces("use `Image 1` here", false),
+            vec![Piece::Markdown("use `Image 1` here")]
+        );
     }
 }

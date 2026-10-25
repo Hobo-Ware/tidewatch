@@ -61,27 +61,22 @@ fn labels(model: &Model) -> Vec<(&str, bool)> {
 }
 
 #[test]
-fn a_failed_check_lists_its_jobs_the_log_and_three_buttons() {
+fn a_failed_check_lists_only_the_failing_jobs_the_log_and_three_buttons() {
     let model = card(vec![failed()], PrMode::Ask);
-    assert_eq!((model.icon, model.ink, model.red_line), (Icon::Failed, Ink::Red, true));
-    assert_eq!((model.title.as_str(), model.sub.as_str()), ("Checks failed", "1 of 2 failed"));
+    assert_eq!((model.icon, model.ink), (Icon::Failed, Ink::Red));
+    assert_eq!(
+        (model.title.as_str(), model.sub.as_str()),
+        ("Checks failed", "1 of 2 \u{b7} 1 passed")
+    );
     assert_eq!(
         model.body,
         [
-            Block::Jobs(vec![
-                JobLine {
-                    passed: true,
-                    name: "check (macos-14)".into(),
-                    at: None,
-                    took: Some("2m 11s".into())
-                },
-                JobLine {
-                    passed: false,
-                    name: "check (ubuntu-latest)".into(),
-                    at: Some("clippy".into()),
-                    took: Some("1m 48s".into()),
-                },
-            ]),
+            Block::Jobs(vec![JobLine {
+                passed: false,
+                name: "check (ubuntu-latest)".into(),
+                at: Some("clippy".into()),
+                took: Some("1m 48s".into()),
+            },]),
             Block::Log(vec!["error: unused import".into()]),
         ]
     );
