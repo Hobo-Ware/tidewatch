@@ -51,7 +51,7 @@ use stdusk_egui::ui::{BellFlash, apply_theme};
 use tidewatch_core::guards::GuardPrefs;
 use tidewatch_core::notes::NotesWriter;
 use tidewatch_core::paths::TidewatchPaths;
-use tidewatch_core::prefs::{NewTabPrefs, Prefs, TerminalPrefs};
+use tidewatch_core::prefs::{CloseEnter, NewTabPrefs, Prefs, TerminalPrefs};
 use tidewatch_core::restore::RealDisk;
 use tidewatch_core::run_marker;
 use tidewatch_core::tools::Tools;
@@ -213,6 +213,7 @@ pub(crate) struct Tidewatch {
     dev_remote_popover: Popover,
     dev_parked_popover: Popover,
     parking: parking::Parking,
+    close_enter: CloseEnter,
     dev_keys: Option<DevKeys>,
     dev_paste: Option<DevPaste>,
     image_paste: picture_paste::Host,
@@ -279,7 +280,8 @@ impl Tidewatch {
         }
         let restored = hooks_port.is_some();
         let loaded = paths.as_ref().map(Prefs::load).unwrap_or_default();
-        let (new_tab_prefs, park_after) = (loaded.new_tab, loaded.tabs.park_after);
+        let (new_tab_prefs, park_after, close_enter) =
+            (loaded.new_tab, loaded.tabs.park_after, loaded.tabs.close_enter);
         let guards = loaded.guards;
         let dev_flow = DevFlow::from_env();
         let flow = Flow::new(Tools::with_path(dev_flow.tool_path(agent_path.clone())));
@@ -412,6 +414,7 @@ impl Tidewatch {
             dev_remote_popover: dev_view.remote_popover,
             dev_parked_popover: dev_view.parked_popover,
             parking: parking::Parking::new(park_after),
+            close_enter,
             dev_keys: dev_view.keys,
             dev_paste: dev_view.paste,
             image_paste: picture_paste::Host::new(&cc.egui_ctx),

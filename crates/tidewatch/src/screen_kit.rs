@@ -151,37 +151,28 @@ struct Paint {
     cap: Color32,
 }
 
-fn teal_dark(amount: f32) -> Color32 {
-    brand::TEAL.lerp_to_gamma(brand::KEY_EDGE, amount)
+fn teal(alpha: f32) -> Color32 {
+    brand::TEAL.gamma_multiply(alpha)
 }
 
 fn paint_of(look: Look, state: State) -> Paint {
     let clear = Color32::TRANSPARENT;
     let dim = |color: Color32| color.gamma_multiply(DISABLED_INK);
     match (look, state) {
-        (Look::Primary, State::Rest) => Paint {
-            fill: brand::TEAL,
-            line: brand::TEAL,
-            ink: brand::KEY_EDGE,
-            cap: teal_dark(0.3),
-        },
-        (Look::Primary, State::Hover) => Paint {
-            fill: brand::TEAL_TEXT,
-            line: brand::TEAL_TEXT,
-            ink: brand::KEY_EDGE,
-            cap: teal_dark(0.3),
-        },
-        (Look::Primary, State::Pressed) => Paint {
-            fill: teal_dark(0.15),
-            line: teal_dark(0.15),
-            ink: brand::KEY_EDGE,
-            cap: teal_dark(0.4),
-        },
+        (Look::Primary, State::Rest) => {
+            Paint { fill: clear, line: brand::TEAL, ink: brand::TEAL_TEXT, cap: teal(0.16) }
+        }
+        (Look::Primary, State::Hover) => {
+            Paint { fill: teal(0.1), line: brand::TEAL, ink: brand::TEAL_TEXT, cap: teal(0.24) }
+        }
+        (Look::Primary, State::Pressed) => {
+            Paint { fill: teal(0.2), line: brand::TEAL, ink: brand::TEAL_TEXT, cap: teal(0.3) }
+        }
         (Look::Primary, State::Disabled) => Paint {
-            fill: brand::BUTTON,
-            line: brand::SEGMENT_LINE,
-            ink: dim(brand::TEXT),
-            cap: brand::SEGMENT,
+            fill: clear,
+            line: dim(brand::TEAL),
+            ink: dim(brand::TEAL_TEXT),
+            cap: teal(0.08),
         },
         (Look::Quiet, State::Rest) => {
             Paint { fill: clear, line: brand::FIELD_LINE, ink: brand::TEXT, cap: brand::BUTTON }
@@ -198,9 +189,12 @@ fn paint_of(look: Look, state: State) -> Paint {
             ink: dim(brand::TEXT),
             cap: brand::BUTTON,
         },
-        (Look::Danger, State::Rest) => {
-            Paint { fill: clear, line: brand::RED_LINE, ink: brand::RED, cap: brand::RED_FILL }
-        }
+        (Look::Danger, State::Rest) => Paint {
+            fill: clear,
+            line: brand::RED.gamma_multiply(0.6),
+            ink: brand::RED,
+            cap: brand::RED_FILL,
+        },
         (Look::Danger, State::Hover) => Paint {
             fill: brand::RED_FILL,
             line: brand::RED.gamma_multiply(0.5),
@@ -305,7 +299,7 @@ pub(crate) fn danger_button(ui: &mut Ui, label: &str, size: Size) -> Response {
     plain(ui, label, true, size, Look::Danger)
 }
 
-/// The one filled button of a view or dialog.
+/// The button of the main action of a view or dialog: a teal line and teal text, no fill.
 pub(crate) fn primary_button(ui: &mut Ui, label: &str, enabled: bool, size: Size) -> Response {
     plain(ui, label, enabled, size, Look::Primary)
 }
@@ -513,10 +507,14 @@ mod tests {
             (Color32::TRANSPARENT, brand::FIELD_LINE, brand::TEXT)
         );
         let primary = paint_of(Look::Primary, State::Rest);
-        assert_eq!((primary.fill, primary.ink), (brand::TEAL, brand::KEY_EDGE));
+        assert_eq!(
+            (primary.fill, primary.line, primary.ink),
+            (Color32::TRANSPARENT, brand::TEAL, brand::TEAL_TEXT)
+        );
         assert_ne!(primary.cap, primary.fill);
+        assert_eq!(paint_of(Look::Danger, State::Rest).fill, Color32::TRANSPARENT);
         let danger = paint_of(Look::Danger, State::Rest);
-        assert_eq!((danger.ink, danger.line), (brand::RED, brand::RED_LINE));
+        assert_eq!((danger.ink, danger.line), (brand::RED, brand::RED.gamma_multiply(0.6)));
         assert_eq!(paint_of(Look::Danger, State::Hover).fill, brand::RED_FILL);
         for look in [Look::Quiet, Look::Primary, Look::Danger] {
             assert_ne!(paint_of(look, State::Rest), paint_of(look, State::Hover), "{look:?} hover");

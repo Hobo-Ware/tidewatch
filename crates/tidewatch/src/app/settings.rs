@@ -133,6 +133,7 @@ impl Tidewatch {
         self.updates.reload(prefs.updates);
         self.new_tab_prefs = prefs.new_tab;
         self.parking.set_after(prefs.tabs.park_after);
+        self.close_enter = prefs.tabs.close_enter;
         self.done_check.set_enabled(prefs.done_check.enabled);
         self.keep_awake.set_enabled(prefs.keep_awake.enabled);
         self.guards = prefs.guards;
@@ -179,6 +180,7 @@ impl Tidewatch {
 
     fn set_tabs_prefs(&mut self, prefs: TabsPrefs) {
         self.parking.set_after(prefs.park_after);
+        self.close_enter = prefs.close_enter;
         if let Some(paths) = self.paths.clone() {
             std::thread::spawn(move || {
                 if let Err(e) = Prefs::update(&paths, |p| p.tabs = prefs) {
@@ -283,7 +285,7 @@ impl Tidewatch {
             },
             github: self.pr.default_prefs(),
             new_tab: self.new_tab_prefs.clone(),
-            tabs: TabsPrefs { park_after: self.parking.after() },
+            tabs: TabsPrefs { park_after: self.parking.after(), close_enter: self.close_enter },
             git: self.autofetch.prefs(),
             guards: self.guards.clone(),
             guards_repo,

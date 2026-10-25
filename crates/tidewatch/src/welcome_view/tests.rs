@@ -58,12 +58,15 @@ fn the_open_button_is_in_the_middle_and_a_recent_row_opens_its_repo() {
     frame(&ctx, &repos(), vec![]);
     frame(&ctx, &repos(), vec![]);
     let total =
-        MASCOT_H + 26.0 + 90.0 + 26.0 + 48.0 + 26.0 + 22.0 + 2.0 * (ROW_H + 4.0) + 26.0 + 20.0;
+        MASCOT_H + 26.0 + 90.0 + 26.0 + OPEN_SLOT + 26.0 + 22.0 + 2.0 * (ROW_H + 4.0) + 26.0 + 20.0;
     let top = 350.0 - total / 2.0;
-    let button_y = top + MASCOT_H + 26.0 + 90.0 + 26.0 + 23.0;
-    let first = frame(&ctx, &repos(), click(pos2(500.0, button_y)));
-    assert!(matches!(first, Some(Action::Open)), "the button was not where the layout says");
-    let row_y = top + MASCOT_H + 26.0 + 90.0 + 26.0 + 48.0 + 26.0 + 22.0 + ROW_H / 2.0;
+    let button_y = top + MASCOT_H + 26.0 + 90.0 + 26.0 + 16.0;
+    let opened = (-12..=12).step_by(2).any(|dy| {
+        let got = frame(&ctx, &repos(), click(pos2(500.0, button_y + dy as f32)));
+        matches!(got, Some(Action::Open))
+    });
+    assert!(opened, "the button was not near where the layout says");
+    let row_y = top + MASCOT_H + 26.0 + 90.0 + 26.0 + OPEN_SLOT + 26.0 + 22.0 + ROW_H / 2.0;
     let second = frame(&ctx, &repos(), click(pos2(500.0, row_y)));
     assert!(matches!(second, Some(Action::Recent(dir)) if dir == Path::new("/code/web")));
 }
@@ -87,7 +90,7 @@ fn sessions_found_elsewhere_get_a_line_under_the_open_button_with_its_own_button
         + 26.0
         + 90.0
         + 26.0
-        + 48.0
+        + OPEN_SLOT
         + SESSIONS_H
         + SESSIONS_GAP
         + 26.0
@@ -96,7 +99,7 @@ fn sessions_found_elsewhere_get_a_line_under_the_open_button_with_its_own_button
         + 26.0
         + 20.0;
     let top = 350.0 - total / 2.0;
-    let line_y = top + MASCOT_H + 26.0 + 90.0 + 26.0 + 48.0 + 26.0 + SESSIONS_H / 2.0;
+    let line_y = top + MASCOT_H + 26.0 + 90.0 + 26.0 + OPEN_SLOT + 26.0 + SESSIONS_H / 2.0;
     let x = 1000.0 / 2.0 + 560.0 / 2.0 - 60.0;
     let hit = (-14..=14).step_by(2).any(|dy| {
         let got = frame_with(&ctx, &repos(), click(pos2(x, line_y + dy as f32)), found);
@@ -112,9 +115,9 @@ fn the_line_button_is_off_when_no_found_session_is_idle() {
     let found = Some((1, 0));
     frame_with(&ctx, &[], vec![], found);
     frame_with(&ctx, &[], vec![], found);
-    let total = MASCOT_H + 26.0 + 90.0 + 26.0 + 48.0 + SESSIONS_H + SESSIONS_GAP + 26.0 + 20.0;
+    let total = MASCOT_H + 26.0 + 90.0 + 26.0 + OPEN_SLOT + SESSIONS_H + SESSIONS_GAP + 26.0 + 20.0;
     let top = 350.0 - total / 2.0;
-    let line_y = top + MASCOT_H + 26.0 + 90.0 + 26.0 + 48.0 + 26.0 + SESSIONS_H / 2.0;
+    let line_y = top + MASCOT_H + 26.0 + 90.0 + 26.0 + OPEN_SLOT + 26.0 + SESSIONS_H / 2.0;
     let x = 1000.0 / 2.0 + 560.0 / 2.0 - 60.0;
     let any = (-14..=14)
         .step_by(2)

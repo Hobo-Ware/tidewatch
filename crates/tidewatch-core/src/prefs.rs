@@ -168,6 +168,31 @@ impl ParkAfter {
 pub struct TabsPrefs {
     #[serde(default)]
     pub park_after: ParkAfter,
+    #[serde(default)]
+    pub close_enter: CloseEnter,
+}
+
+/// Which button Enter presses in the dialog that asks about a closing worktree tab. The dialog
+/// itself always opens.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum CloseEnter {
+    #[default]
+    #[serde(rename = "delete")]
+    DeleteBranch,
+    #[serde(rename = "keep")]
+    KeepBranch,
+}
+
+impl CloseEnter {
+    pub const ALL: [Self; 2] = [Self::DeleteBranch, Self::KeepBranch];
+
+    #[must_use]
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::DeleteBranch => "Deletes the branch",
+            Self::KeepBranch => "Keeps the branch",
+        }
+    }
 }
 
 /// Where a new tab's worktree is cut from.
@@ -1024,6 +1049,34 @@ mod tests {
         assert_eq!(Prefs::load(&paths).tabs.park_after, ParkAfter::FourHours);
         write_prefs(&paths, "restore_session = false\n");
         assert_eq!(Prefs::load(&paths).tabs, TabsPrefs::default());
+    }
+
+    #[test]
+    fn enter_on_close_deletes_the_branch_until_a_choice_and_old_files_get_that() {
+        let (_home, paths) = paths();
+        assert_eq!(Prefs::load(&paths).tabs.close_enter, CloseEnter::DeleteBranch);
+        write_prefs(&paths, "[tabs]\npark_after = \"1h\"\n");
+        assert_eq!(Prefs::load(&paths).tabs.close_enter, CloseEnter::DeleteBranch);
+    }
+
+    #[test]
+    fn enter_on_close_reads_from_the_file_and_survives_a_save() {
+        let (_home, paths) = paths();
+        for (word, want) in [("delete", CloseEnter::DeleteBranch), ("keep", CloseEnter::KeepBranch)]
+        {
+            write_prefs(&paths, &format!("[tabs]\nclose_enter = \"{word}\"\n"));
+            assert_eq!(Prefs::load(&paths).tabs.close_enter, want, "{word}");
+            Prefs::update(&paths, |prefs| prefs.restore_session = false).unwrap();
+            assert_eq!(Prefs::load(&paths).tabs.close_enter, want, "{word} after a save");
+        }
+        let mut prefs = Prefs::default();
+        prefs.tabs.close_enter = CloseEnter::KeepBranch;
+        prefs.save(&paths).unwrap();
+        assert_eq!(Prefs::load(&paths).tabs.close_enter, CloseEnter::KeepBranch);
+        assert_eq!(
+            CloseEnter::ALL.map(CloseEnter::label),
+            ["Deletes the branch", "Keeps the branch"]
+        );
     }
 
     #[test]

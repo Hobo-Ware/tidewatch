@@ -10,7 +10,8 @@ use egui::{
 use crate::brand;
 use crate::mascot::{self, Pose};
 use crate::screen_kit::{
-    Size, body, clickable, heading, mono, paint_pill_card, quiet_button, selection_row,
+    Size, body, button_width, clickable, heading, mono, paint_pill_card, primary_button,
+    quiet_button, selection_row,
 };
 use crate::welcome::{Recent, shown_path};
 
@@ -19,6 +20,8 @@ const MASCOT_H: f32 = 132.0;
 const ROW_H: f32 = 46.0;
 const SESSIONS_H: f32 = 44.0;
 const SESSIONS_GAP: f32 = 18.0;
+const OPEN_LABEL: &str = "Open repo...";
+const OPEN_SLOT: f32 = Size::Regular.height() + 2.0;
 
 pub(crate) enum Action {
     Open,
@@ -40,7 +43,7 @@ pub(crate) fn show(
     let rows = recent.len() as f32;
     let list_h = if recent.is_empty() { 0.0 } else { 26.0 + 22.0 + rows * (ROW_H + 4.0) };
     let sessions_h = elsewhere.map_or(0.0, |_| SESSIONS_H + SESSIONS_GAP);
-    let total = MASCOT_H + 26.0 + 90.0 + 26.0 + 48.0 + sessions_h + list_h + 26.0 + 20.0;
+    let total = MASCOT_H + 26.0 + 90.0 + 26.0 + OPEN_SLOT + sessions_h + list_h + 26.0 + 20.0;
     let cx = area.center().x;
     let mut y = (area.center().y - total / 2.0).max(area.top() + 16.0);
     let mut action = None;
@@ -70,7 +73,7 @@ pub(crate) fn show(
     if button.clicked() {
         action = Some(Action::Open);
     }
-    y += 48.0 + 26.0;
+    y += OPEN_SLOT + 26.0;
     if let Some((running, idle)) = elsewhere {
         let line = Rect::from_min_size(pos2(cx - width / 2.0, y), vec2(width, SESSIONS_H));
         if sessions_line(ui, line, running, idle) {
@@ -159,16 +162,13 @@ fn sessions_line(ui: &mut Ui, rect: Rect, running: usize, idle: usize) -> bool {
 }
 
 fn open_button(ui: &mut Ui, top_center: Pos2) -> egui::Response {
-    let label =
-        ui.painter().layout_no_wrap("Open repo...".to_owned(), heading(15.0), brand::KEY_EDGE);
-    let size = vec2(label.size().x + 44.0, 46.0);
-    let rect = Rect::from_min_size(top_center - vec2(size.x / 2.0, 0.0), size);
-    let response = clickable(ui, rect, "open-repo");
-    let fill = if response.hovered() { brand::TEAL_TEXT } else { brand::TEAL };
-    let painter = ui.painter();
-    painter.rect_filled(rect, 12.0, fill);
-    painter.galley(rect.center() - label.size() / 2.0, label, brand::KEY_EDGE);
-    response
+    let width = button_width(ui, OPEN_LABEL, Size::Regular);
+    let rect = Rect::from_min_size(
+        top_center - vec2(width / 2.0, 0.0),
+        vec2(width, Size::Regular.height()),
+    );
+    let mut inner = ui.new_child(UiBuilder::new().id_salt("open-repo").max_rect(rect));
+    primary_button(&mut inner, OPEN_LABEL, true, Size::Regular)
 }
 
 fn hint(ui: &Ui, top_center: Pos2) {

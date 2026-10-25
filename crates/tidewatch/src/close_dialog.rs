@@ -7,6 +7,7 @@ use crate::screen_kit::{
     Size, danger_button, dialog_frame, footer_row, primary_button, quiet_button,
 };
 use egui::{Id, Key, Modifiers, RichText};
+use tidewatch_core::prefs::CloseEnter;
 use tidewatch_core::worktree::{BranchChoice, Inspection, RemoveMode, Worktree};
 
 const DIALOG_WIDTH: f32 = 540.0;
@@ -75,15 +76,20 @@ pub(crate) fn warnings(inspection: &Inspection) -> Vec<String> {
     lines
 }
 
-/// Enter takes the safe default, but only when nothing would be thrown away.
-pub(crate) fn enter_choice(inspection: &Inspection) -> Option<Choice> {
-    (inspection.changed == 0).then(|| choices(inspection)[0])
+/// The button Enter presses, but only when no uncommitted change would be thrown away.
+pub(crate) fn enter_choice(inspection: &Inspection, enter: CloseEnter) -> Option<Choice> {
+    let index = match enter {
+        CloseEnter::KeepBranch => 0,
+        CloseEnter::DeleteBranch => 1,
+    };
+    (inspection.changed == 0).then(|| choices(inspection)[index])
 }
 
 pub(crate) fn show(
     ctx: &egui::Context,
     worktree: &Worktree,
     inspection: &Inspection,
+    enter: CloseEnter,
 ) -> Option<Answer> {
     let mut answer = None;
     let modal =
@@ -94,19 +100,18 @@ pub(crate) fn show(
                     .color(brand::MUTED),
             );
             for line in warnings(inspection) {
-                ui.label(RichText::new(line).color(brand::RED));
+                ui.label(RichText::new(line).color(brand::RED.gamma_multiply(0.8)));
             }
             ui.add_space(6.0);
             footer_row(ui, "", |ui| {
-                for (i, choice) in choices(inspection).into_iter().enumerate().rev() {
+                let keyed = enter_choice(inspection, enter);
+                for choice in choices(inspection).into_iter().rev() {
                     let text = label(choice);
                     let response = match choice {
                         Choice::Remove { branch: BranchChoice::Delete, .. } => {
                             danger_button(ui, text, Size::Regular)
                         }
-                        _ if i == 0 && inspection.changed == 0 => {
-                            primary_button(ui, text, true, Size::Regular)
-                        }
+                        _ if keyed == Some(choice) => primary_button(ui, text, true, Size::Regular),
                         _ => quiet_button(ui, text, true, Size::Regular),
                     };
                     if response.clicked() {
@@ -119,15 +124,17 @@ pub(crate) fn show(
             });
             key_hint(
                 ui,
-                if enter_choice(inspection).is_some() {
-                    "Enter keeps the branch  -  Esc cancels"
-                } else {
-                    "Esc cancels  -  nothing is discarded until you pick it"
+                match enter_choice(inspection, enter) {
+                    Some(Choice::Remove { branch: BranchChoice::Delete, .. }) => {
+                        "Enter deletes the branch  -  Esc cancels"
+                    }
+                    Some(_) => "Enter keeps the branch  -  Esc cancels",
+                    None => "Esc cancels  -  nothing is discarded until you pick it",
                 },
             );
         });
     if answer.is_none()
-        && let Some(choice) = enter_choice(inspection)
+        && let Some(choice) = enter_choice(inspection, enter)
         && ctx.input_mut(|i| i.consume_key(Modifiers::NONE, Key::Enter))
     {
         answer = Some(Answer::Pick(choice));
@@ -141,6 +148,7 @@ pub(crate) fn show(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use egui::Event;
 
     fn clean() -> Inspection {
         Inspection { changed: 0, unmerged: 0 }
@@ -181,12 +189,67 @@ mod tests {
     }
 
     #[test]
-    fn enter_is_the_safe_default_only_when_nothing_is_lost() {
+    fn enter_presses_the_button_the_setting_names_only_when_no_change_is_lost() {
+        let remove = |branch| Choice::Remove { branch, mode: RemoveMode::Safe };
         assert_eq!(
-            enter_choice(&clean()),
-            Some(Choice::Remove { branch: BranchChoice::Keep, mode: RemoveMode::Safe })
+            enter_choice(&clean(), CloseEnter::DeleteBranch),
+            Some(remove(BranchChoice::Delete))
         );
-        assert_eq!(enter_choice(&dirty()), None);
+        assert_eq!(
+            enter_choice(&clean(), CloseEnter::KeepBranch),
+            Some(remove(BranchChoice::Keep))
+        );
+        for enter in CloseEnter::ALL {
+            assert_eq!(enter_choice(&dirty(), enter), None);
+        }
+    }
+
+    fn shown(inspection: &Inspection, enter: CloseEnter, press_enter: bool) -> Option<Answer> {
+        let worktree =
+            Worktree { repo: "/r".into(), path: "/w".into(), branch: "agent/brave-otter".into() };
+        let key = Event::Key {
+            key: Key::Enter,
+            physical_key: Some(Key::Enter),
+            pressed: true,
+            repeat: false,
+            modifiers: Modifiers::NONE,
+        };
+        let ctx = egui::Context::default();
+        crate::fonts::install(&ctx);
+        let mut answer = None;
+        for events in [vec![], if press_enter { vec![key] } else { vec![] }] {
+            let raw = egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::pos2(0.0, 0.0),
+                    egui::vec2(900.0, 600.0),
+                )),
+                events,
+                focused: true,
+                ..egui::RawInput::default()
+            };
+            let _ = ctx.run_ui(raw, |_| answer = show(&ctx, &worktree, inspection, enter));
+        }
+        answer
+    }
+
+    #[test]
+    fn the_dialog_opens_and_waits_whatever_enter_is_set_to_press() {
+        for enter in CloseEnter::ALL {
+            assert_eq!(shown(&clean(), enter, false), None);
+        }
+    }
+
+    #[test]
+    fn enter_answers_with_the_button_the_setting_names() {
+        let remove = |branch| Answer::Pick(Choice::Remove { branch, mode: RemoveMode::Safe });
+        assert_eq!(
+            shown(&clean(), CloseEnter::DeleteBranch, true),
+            Some(remove(BranchChoice::Delete))
+        );
+        assert_eq!(shown(&clean(), CloseEnter::KeepBranch, true), Some(remove(BranchChoice::Keep)));
+        for enter in CloseEnter::ALL {
+            assert_eq!(shown(&dirty(), enter, true), None);
+        }
     }
 
     #[test]
