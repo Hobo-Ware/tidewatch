@@ -4,8 +4,8 @@
 use egui::Ui;
 use tidewatch_core::guards::GuardPrefs;
 use tidewatch_core::prefs::{
-    DoneCheckPrefs, FETCH_MINUTES, GitPrefs, GithubPrefs, KeepAwakePrefs, NewTabPrefs, ParkAfter,
-    ResumeAgents, TabsPrefs,
+    CloseEnter, DoneCheckPrefs, FETCH_MINUTES, GitPrefs, GithubPrefs, KeepAwakePrefs, NewTabPrefs,
+    ParkAfter, ResumeAgents, TabsPrefs,
 };
 
 use crate::font_view;
@@ -171,7 +171,10 @@ fn fetch_every_row(ui: &mut Ui, current: GitPrefs) -> Option<u32> {
 fn tabs_card(ui: &mut Ui, current: TabsPrefs) -> Option<TabsPrefs> {
     let labels = ParkAfter::ALL.map(ParkAfter::label);
     let active = ParkAfter::ALL.iter().position(|after| *after == current.park_after);
+    let enter_labels = CloseEnter::ALL.map(CloseEnter::label);
+    let enter_active = CloseEnter::ALL.iter().position(|enter| *enter == current.close_enter);
     let mut picked = None;
+    let mut enter = None;
     section(ui, "Tabs", |ui| {
         picked = settings_ui::row(
             ui,
@@ -180,8 +183,17 @@ fn tabs_card(ui: &mut Ui, current: TabsPrefs) -> Option<TabsPrefs> {
             Control::new(settings_ui::inline_width(ui, &labels), 28.0),
             |ui| settings_ui::pick(ui, "park-after", &labels, active),
         );
+        enter = settings_ui::row(
+            ui,
+            "When closing a tab, Enter",
+            "The close dialog always opens. This picks the button Enter presses in it, unless the worktree has uncommitted changes.",
+            Control::new(settings_ui::inline_width(ui, &enter_labels), 28.0),
+            |ui| settings_ui::pick(ui, "close-enter", &enter_labels, enter_active),
+        );
     });
-    picked.map(|index| TabsPrefs { park_after: ParkAfter::ALL[index] })
+    let park_after = picked.map_or(current.park_after, |index| ParkAfter::ALL[index]);
+    let close_enter = enter.map_or(current.close_enter, |index| CloseEnter::ALL[index]);
+    (picked.is_some() || enter.is_some()).then_some(TabsPrefs { park_after, close_enter })
 }
 
 pub(crate) fn done_check_card(ui: &mut Ui, on: bool) -> Option<bool> {
@@ -312,5 +324,36 @@ mod tests {
         let found = every_click(off);
         assert!(found.contains(&GitPrefs { background_fetch: true, ..off }));
         assert!(found.iter().all(|git| git.fetch_minutes == off.fetch_minutes), "{found:?}");
+    }
+
+    #[test]
+    fn the_tabs_card_picks_what_enter_does_on_close_and_keeps_the_park_time() {
+        let current =
+            TabsPrefs { park_after: ParkAfter::Day, close_enter: CloseEnter::DeleteBranch };
+        let ctx = egui::Context::default();
+        ctx.set_fonts(crate::fonts::definitions());
+        let frame = |events: Vec<Event>| {
+            let mut answer = None;
+            let raw = RawInput {
+                screen_rect: Some(Rect::from_min_size(pos2(0.0, 0.0), Vec2::new(900.0, 400.0))),
+                focused: true,
+                events,
+                ..RawInput::default()
+            };
+            let _ = ctx.run_ui(raw, |ui| answer = tabs_card(ui, current));
+            answer
+        };
+        frame(vec![]);
+        let mut found = Vec::new();
+        for y in (0..260).step_by(6) {
+            for x in (0..900).step_by(6) {
+                let at = pos2(x as f32, y as f32);
+                frame(vec![Event::PointerMoved(at)]);
+                frame(vec![press(at, true)]);
+                found.extend(frame(vec![press(at, false)]));
+            }
+        }
+        let keep = TabsPrefs { close_enter: CloseEnter::KeepBranch, ..current };
+        assert!(found.contains(&keep), "{found:?}");
     }
 }

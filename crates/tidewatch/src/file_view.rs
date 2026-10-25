@@ -175,7 +175,11 @@ fn pill(ui: &mut Ui, id: Id, right: f32, center_y: f32, pill: &Pill) -> (Respons
     let response = ui.interact(rect, id, sense);
     let hot = pill.enabled && response.hovered();
     let (fill, line, ink) = match pill.look {
-        Look::Primary => (brand::TEAL, brand::TEAL, brand::KEY_EDGE),
+        Look::Primary => (
+            if hot { brand::TEAL.gamma_multiply(0.1) } else { Color32::TRANSPARENT },
+            brand::TEAL,
+            brand::TEAL_TEXT,
+        ),
         Look::On => (brand::SEGMENT_ON, brand::SEGMENT_LINE, brand::TEAL_TEXT),
         Look::Plain => (
             if hot { brand::BUTTON } else { brand::SEGMENT },
