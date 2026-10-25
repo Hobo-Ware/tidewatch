@@ -19,6 +19,7 @@ mod autofetch_glue;
 mod avatar_glue;
 mod brand;
 mod build_workflow;
+mod bullets;
 mod catalog;
 mod changes_view;
 mod checkout;

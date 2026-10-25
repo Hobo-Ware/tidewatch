@@ -22,6 +22,7 @@ use tidewatch_core::transcript::Source;
 use crate::agent_avatar::Face;
 use crate::agent_ready::{self, Ready};
 use crate::brand;
+use crate::bullets;
 use crate::due_view::{self, Facts as DueFacts};
 use crate::job_model::clock_label;
 use crate::pr_card_model::CardAction;
@@ -955,11 +956,17 @@ fn reply_wrap(ui: &Ui, width: f32) -> f32 {
 
 /// The reply row's height: one row tall, growing with the text by the composer's rule.
 fn reply_height(ui: &Ui, text: &str, column: Rect) -> f32 {
-    let font = (reply_font(), reply_wrap(ui, column.width()));
-    agent_ready::grown_from(ui, text, font, INPUT_H, column.height())
+    let wrap = bullets::wrap_for(ui, text, &reply_font(), reply_wrap(ui, column.width()));
+    agent_ready::grown_from(ui, text, (reply_font(), wrap), INPUT_H, column.height())
 }
 
-/// The reply box. Enter sends a non-empty text and clears it, Shift+Enter starts a new line. Asks
+fn collapsed_cursor(ui: &Ui, id: Id) -> Option<usize> {
+    let range = TextEdit::load_state(ui.ctx(), id)?.cursor.char_range()?;
+    (range.primary == range.secondary).then_some(range.primary.index.0)
+}
+
+/// The reply box. Enter sends a non-empty text and clears it, Shift+Enter starts a new line, and on
+/// a bullet line Enter starts the next bullet instead (an empty bullet ends the list). Asks
 /// for focus once, the first time it is drawn, and again after a send. Off while `enabled` is
 /// false. `ui` is the room [`reply_height`] reserved: the box fills it, and its text scrolls inside
 /// with the cursor line in view once the box stops growing.
@@ -971,9 +978,16 @@ pub(crate) fn reply_box(
 ) -> Option<String> {
     let mut sent = None;
     let id = reply_id();
-    let enter = enabled
+    let mut enter = enabled
         && ui.memory(|m| m.has_focus(id))
         && ui.input(|i| i.events.iter().any(agent_ready::plain_enter));
+    if enter && let Some(cursor) = collapsed_cursor(ui, id) {
+        let (outcome, at) = bullets::enter(text, cursor);
+        if outcome != bullets::Enter::Plain {
+            bullets::place_cursor(ui, id, at);
+            enter = false;
+        }
+    }
     ui.add_enabled_ui(enabled, |ui| {
         let hint = if enabled { "Reply to the agent" } else { "Answer the prompt above first" };
         let mut clicked = false;
@@ -984,9 +998,20 @@ pub(crate) fn reply_box(
         let before = ui.data(|data| data.get_temp::<f32>(height_id));
         ui.data_mut(|data| data.insert_temp(height_id, shown));
         let resized = before.is_some_and(|before| (before - shown).abs() > 0.5);
+        let mut layouter = |ui: &Ui, buf: &dyn egui::TextBuffer, wrap: f32| {
+            bullets::layout(ui, buf.as_str(), &reply_font(), (brand::TEXT, brand::MUTED), wrap)
+        };
+        let typed = layouter(ui, text, reply_wrap(ui, ui.max_rect().width() + 2.0 * INSET));
+        let one_line = typed.rows.len() <= 1;
+        let centred = if one_line {
+            ((shown - typed.size().y - 2.0 * f32::from(REPLY_TEXT_PAD)) / 2.0).max(0.0)
+        } else {
+            0.0
+        };
+        let button_align = if one_line { Align::Center } else { Align::Max };
         let field = field_frame_shaped(ui, look, true, |ui| {
             ui.set_height(shown);
-            ui.with_layout(Layout::right_to_left(Align::Max), |ui| {
+            ui.with_layout(Layout::right_to_left(button_align), |ui| {
                 clicked =
                     primary_button(ui, SEND, !text.trim().is_empty(), Size::Compact).clicked();
                 ScrollArea::vertical()
@@ -996,6 +1021,7 @@ pub(crate) fn reply_box(
                     .auto_shrink([false, false])
                     .show(ui, |ui| {
                         ui.with_layout(Layout::top_down(Align::Min), |ui| {
+                            ui.add_space(centred);
                             let edit = TextEdit::multiline(text)
                                 .id(id)
                                 .frame(
@@ -1006,6 +1032,7 @@ pub(crate) fn reply_box(
                                 .desired_width(f32::INFINITY)
                                 .font(reply_font())
                                 .text_color(brand::TEXT)
+                                .layouter(&mut layouter)
                                 .return_key(KeyboardShortcut::new(Modifiers::SHIFT, Key::Enter))
                                 .show(ui);
                             if resized && let Some(range) = edit.cursor_range {
@@ -1083,6 +1110,145 @@ mod tests {
         let sent = frame(&ctx, vec![enter()], &mut text, &mut focus);
         assert_eq!(sent.as_deref(), Some("run the tests"));
         assert_eq!(text, "");
+    }
+
+    fn flat(shape: &egui::Shape, out: &mut Vec<egui::Shape>) {
+        match shape {
+            egui::Shape::Vec(inner) => inner.iter().for_each(|shape| flat(shape, out)),
+            other => out.push(other.clone()),
+        }
+    }
+
+    struct Painted {
+        boxed: Rect,
+        text: Rect,
+        send: Rect,
+    }
+
+    fn painted_reply(text: &mut String, height: f32) -> Painted {
+        let ctx = egui::Context::default();
+        let mut focus = true;
+        let mut shapes = Vec::new();
+        for events in [vec![], vec![]] {
+            let raw = RawInput {
+                screen_rect: Some(Rect::from_min_size(pos2(0.0, 0.0), vec2(600.0, 400.0))),
+                events,
+                focused: true,
+                ..RawInput::default()
+            };
+            let out = ctx.run_ui(raw, |ui| {
+                let room = Rect::from_min_size(pos2(0.0, 0.0), vec2(600.0, height));
+                ui.scope_builder(UiBuilder::new().max_rect(room), |ui| {
+                    reply_box(ui, text, &mut focus, true);
+                });
+            });
+            shapes.clear();
+            out.shapes.iter().for_each(|clipped| flat(&clipped.shape, &mut shapes));
+        }
+        let rect_of = |wanted: &dyn Fn(&egui::Shape) -> Option<Rect>| {
+            shapes.iter().find_map(wanted).expect("the shape was painted")
+        };
+        let text_rect = |shown: &str| {
+            rect_of(&|shape| match shape {
+                egui::Shape::Text(t) if t.galley.text() == shown => {
+                    Some(t.galley.rows[0].rect().translate(t.pos.to_vec2()))
+                }
+                _ => None,
+            })
+        };
+        Painted {
+            boxed: rect_of(&|shape| match shape {
+                egui::Shape::Rect(r) if r.fill == brand::CARD => Some(r.rect),
+                _ => None,
+            }),
+            text: text_rect(&bullets_drawn(text)),
+            send: text_rect(SEND),
+        }
+    }
+
+    fn bullets_drawn(text: &str) -> String {
+        text.lines()
+            .map(|line| match bullets::marker_of(line) {
+                Some(_) => format!("\u{2022}{}", &line[1..]),
+                None => line.to_owned(),
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    #[test]
+    fn one_line_of_text_is_centred_in_the_box_like_the_send_button() {
+        let mut text = "/login".to_owned();
+        let painted = painted_reply(&mut text, INPUT_H);
+        let middle = painted.boxed.center().y;
+        assert!(
+            (painted.text.center().y - middle).abs() < 0.6,
+            "text {painted:?}",
+            painted = (painted.text, painted.boxed)
+        );
+        assert!((painted.send.center().y - middle).abs() < 0.6, "send");
+    }
+
+    #[test]
+    fn one_line_is_centred_in_the_row_the_reader_gives_the_box() {
+        let mut text = "/login".to_owned();
+        let painted = painted_reply(&mut text, INPUT_H - 2.0 * REPLY_GAP_Y);
+        let middle = painted.boxed.center().y;
+        assert!((painted.text.center().y - middle).abs() < 0.6);
+        assert!((painted.send.center().y - middle).abs() < 0.6);
+    }
+
+    #[test]
+    fn several_lines_keep_growing_from_the_top() {
+        let mut text = "one\ntwo\nthree".to_owned();
+        let painted = painted_reply(&mut text, INPUT_H + 40.0);
+        let first_row_gap = painted.text.top() - painted.boxed.top();
+        assert!(first_row_gap < 14.0, "the first row sits at the top, not at {first_row_gap}");
+    }
+
+    fn typed_into(ctx: &egui::Context, typed: &str) -> (String, bool) {
+        let (mut text, mut focus) = (String::new(), true);
+        frame(ctx, vec![], &mut text, &mut focus);
+        frame(ctx, vec![Event::Text(typed.into())], &mut text, &mut focus);
+        (text, focus)
+    }
+
+    #[test]
+    fn enter_on_a_bullet_line_continues_the_list_and_sends_nothing() {
+        let ctx = egui::Context::default();
+        let (mut text, mut focus) = typed_into(&ctx, "- one");
+        assert_eq!(frame(&ctx, vec![enter()], &mut text, &mut focus), None);
+        assert_eq!(text, "- one\n- ");
+        frame(&ctx, vec![Event::Text("two".into())], &mut text, &mut focus);
+        assert_eq!(text, "- one\n- two");
+    }
+
+    #[test]
+    fn enter_on_an_empty_bullet_ends_the_list_and_the_next_enter_sends_what_was_typed() {
+        let ctx = egui::Context::default();
+        let (mut text, mut focus) = typed_into(&ctx, "- one");
+        frame(&ctx, vec![enter()], &mut text, &mut focus);
+        assert_eq!(frame(&ctx, vec![enter()], &mut text, &mut focus), None);
+        assert_eq!(text, "- one\n");
+        let sent = frame(&ctx, vec![enter()], &mut text, &mut focus);
+        assert_eq!(sent.as_deref(), Some("- one\n"));
+        assert_eq!(text, "");
+    }
+
+    #[test]
+    fn shift_enter_on_a_bullet_line_is_a_plain_new_line() {
+        let ctx = egui::Context::default();
+        let (mut text, mut focus) = typed_into(&ctx, "* one");
+        assert_eq!(frame(&ctx, vec![shift_enter()], &mut text, &mut focus), None);
+        assert_eq!(text, "* one\n");
+    }
+
+    #[test]
+    fn the_text_sent_with_the_send_button_is_the_typed_markers_untouched() {
+        let ctx = egui::Context::default();
+        let (mut text, mut focus) = typed_into(&ctx, "* a\n- b\nplain");
+        let sent = frame(&ctx, vec![enter()], &mut text, &mut focus);
+        assert_eq!(sent.as_deref(), Some("* a\n- b\nplain"));
     }
 
     #[test]
