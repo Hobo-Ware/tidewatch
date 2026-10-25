@@ -47,6 +47,9 @@ fn noun(kind: ToolKind, count: usize) -> &'static str {
     }
 }
 
+/// Set on the key of a turn to get the key of its folded updates in the set of open lists.
+pub(crate) const NOTES_BIT: u64 = 1 << 63;
+
 /// One turn of the agent: the rows it wrote, as the indices into the Reader's rows.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct Group {
@@ -69,6 +72,27 @@ impl Group {
     /// How long the turn took, from its first line to its last.
     pub(crate) fn elapsed_ms(&self) -> Option<i64> {
         Some((self.ended_ms? - self.started_ms?).max(0))
+    }
+
+    /// The text the bubble shows: the last one the agent wrote, finished turn or not.
+    pub(crate) fn answer(&self) -> Option<usize> {
+        self.texts.last().copied()
+    }
+
+    /// The texts before the answer, in order: the progress notes the agent wrote between calls.
+    pub(crate) fn notes(&self) -> &[usize] {
+        self.texts.split_last().map_or(&[], |(_, notes)| notes)
+    }
+
+    /// `12 updates`, `1 update`; `None` when the turn has no note to fold.
+    pub(crate) fn notes_label(&self) -> Option<String> {
+        let count = self.notes().len();
+        (count > 0).then(|| format!("{count} {}", if count == 1 { "update" } else { "updates" }))
+    }
+
+    /// The key of the folded updates in the set of open lists.
+    pub(crate) fn notes_key(&self) -> u64 {
+        self.key | NOTES_BIT
     }
 
     fn count(&self, kind: ToolKind) -> usize {
@@ -564,6 +588,68 @@ mod tests {
         assert_eq!(list_line(&tool(ToolKind::Command), "Bash", "git status"), "$ git status");
         assert_eq!(list_line(&tool(ToolKind::Edit), "Edit", "src/a.rs"), "edit  src/a.rs");
         assert_eq!(list_line(&tool(ToolKind::Other), "TodoWrite", ""), "TodoWrite");
+    }
+
+    fn texts_turn(notes: usize, running: bool) -> (Rows, Group) {
+        let mut entries = vec![text(Role::User, "go", 1)];
+        for n in 0..notes {
+            entries.push(text(Role::Assistant, &format!("note {n}"), 2 + n as i64));
+            finished_call(&mut entries, &format!("c{n}"), "Bash", false, 2 + n as i64);
+        }
+        entries.push(text(Role::Assistant, "# Answer", 90));
+        if !running {
+            entries.push(text(Role::User, "thanks", 99));
+        }
+        let rows = rows_of(entries);
+        let group = layout(&rows).groups[0].clone();
+        (rows, group)
+    }
+
+    #[test]
+    fn a_turn_shows_its_last_text_and_folds_the_rest_whether_it_is_finished_or_running() {
+        let cases = [
+            (0, false, None, None),
+            (0, true, None, None),
+            (1, false, Some("1 update"), Some(1)),
+            (1, true, Some("1 update"), Some(1)),
+            (12, false, Some("12 updates"), Some(12)),
+            (12, true, Some("12 updates"), Some(12)),
+        ];
+        for (notes, running, label, folded) in cases {
+            let (rows, group) = texts_turn(notes, running);
+            assert_eq!(group.closed, !running, "{notes} notes");
+            assert_eq!(group.texts.len(), notes + 1, "{notes} notes");
+            let list: Vec<&Row> = rows.iter().collect();
+            assert_eq!(list[group.answer().unwrap()].text, "# Answer", "{notes} notes");
+            assert_eq!(group.notes_label().as_deref(), label, "{notes} notes");
+            assert_eq!(Some(group.notes().len()).filter(|n| *n > 0), folded, "{notes} notes");
+            let order: Vec<&str> = group.notes().iter().map(|i| list[*i].text.as_str()).collect();
+            let want: Vec<String> = (0..notes).map(|n| format!("note {n}")).collect();
+            assert_eq!(order, want);
+        }
+    }
+
+    #[test]
+    fn a_turn_with_one_text_has_nothing_to_fold_and_one_with_none_has_no_answer() {
+        let (_, group) = texts_turn(0, false);
+        assert_eq!((group.answer(), group.notes().len(), group.notes_label()), (Some(1), 0, None));
+        let mut entries = vec![text(Role::User, "go", 1)];
+        finished_call(&mut entries, "a", "Bash", false, 2);
+        let layout = layout(&rows_of(entries));
+        let group = &layout.groups[0];
+        assert_eq!((group.answer(), group.notes().len(), group.notes_label()), (None, 0, None));
+    }
+
+    #[test]
+    fn the_folded_updates_open_on_their_own_key_apart_from_the_calls() {
+        let (_, group) = texts_turn(3, false);
+        assert_ne!(group.notes_key(), group.key);
+        assert_eq!(group.notes_key() & !NOTES_BIT, group.key);
+        let mut open = HashSet::new();
+        toggle(&mut open, group.notes_key());
+        assert!(open.contains(&group.notes_key()) && !open.contains(&group.key));
+        toggle(&mut open, group.notes_key());
+        assert_eq!(open.len(), 0);
     }
 
     #[test]
