@@ -5,7 +5,7 @@ use tidewatch_core::progress::Ledger;
 
 use super::*;
 
-const LONG: &str = "# Goal\nAdd a slugify(text) function to lib.py that turns spaces and punctuation into single hyphens, with unit tests, and commit it\n\n## Status\nphase: 2 Build\nstate: working\nnote: writing the validator\n\n## Checklist\n### 1. Understand and decide\n- [x] Restate the goal in one line\n- [x] Read the code that owns the behavior\n### 2. Build\n- [x] Smallest change that does the job -- reused two helpers\n- [~] Pure logic in its own small function with a unit test\n- [ ] Remove anything the change left unused\n- [-] Format, type check and lint on the touched files -- no formatter or linter config in this repo at all\n- [!] Wait for the database\n- [ ] Item six\n- [ ] Item seven\n- [ ] Item eight\n- [ ] Item nine\n- [ ] Item ten\n### 3. Gate\n- [-] Lint -- no config\n### 4. Validate against production\n- [ ] Compare timings\n### 5. Close out\n- [ ] Report\n\n## Decisions\n- Follow the unittest style of the repo -- match existing code\n- Keep accented letters\n\n## Verified\n- Ran 8 tests, OK -- python3 -m unittest -v\n- Only two files changed\n\n## Not verified\n- No formatter run\n\n## Needs you\n- Decide if accented letters should become ASCII (cafe). Current code keeps them -- it changes the output\n";
+const LONG: &str = "# Goal\nAdd a slugify(text) function to lib.py that turns spaces and punctuation into single hyphens, with unit tests, and commit it\n\n## Status\nphase: 2 Build\nstate: working\nnote: writing the validator\n\n## Checklist\n### 1. Understand\n- [x] Restate the goal in one line\n- [x] Read the code that owns the behavior\n### 2. Build\n- [x] Smallest change that does the job -- reused two helpers\n- [~] Pure logic in its own small function with a unit test\n- [ ] Remove anything the change left unused\n- [-] Format, type check and lint on the touched files -- no formatter or linter config in this repo at all\n- [!] Wait for the database\n- [ ] Item six\n- [ ] Item seven\n- [ ] Item eight\n- [ ] Item nine\n- [ ] Item ten\n### 3. PR\n- [ ] Open the PR\n### 4. Done\n- [ ] Report\n\n## Decisions\n- Follow the unittest style of the repo -- match existing code\n- Keep accented letters\n\n## Verified\n- Ran 8 tests, OK -- python3 -m unittest -v\n- Only two files changed\n\n## Not verified\n- No formatter run\n\n## Needs you\n- Decide if accented letters should become ASCII (cafe). Current code keeps them -- it changes the output\n";
 
 fn known(text: &str) -> TabLedger {
     TabLedger { ledger: Ledger::parse(text), updated_ms: Some(0) }
@@ -230,12 +230,21 @@ fn a_tag_with_nothing_behind_it_is_not_drawn() {
 #[test]
 fn the_header_names_the_step_never_a_ring_count_and_the_meta_line_says_state_and_age() {
     let panel = Panel::new(LONG, 420.0);
-    assert!(panel.drawn("Step 2 of 5 \u{b7} Build"), "{:?}", panel.texts);
+    assert!(panel.drawn("Step 2 of 4 \u{b7} Build"), "{:?}", panel.texts);
     assert!(!panel.texts.iter().any(|(text, _)| text == "3/13" || text.starts_with("0/")));
     assert!(
         panel.drawn("\u{25cf} Blocked \u{b7} updated 4 min ago"),
         "a blocked item makes it blocked"
     );
+}
+
+#[test]
+fn an_old_ten_phase_ledger_still_reads_as_four_steps() {
+    let text = "# Goal\nShip it\n\n## Status\nphase: 7 Review\nstate: waiting\n\n## Checklist\n### 1. Understand and decide\n- [x] a\n### 2. Build\n- [x] b\n### 3. Gate\n- [x] c\n### 4. Validate against production\n- [x] d\n### 5. Preview\n- [x] e\n### 6. PR\n- [x] Open it\n### 7. Review\n- [~] Wait for CI\n### 8. Ship\n- [ ] Merge\n### 9. Verify live\n- [ ] Errors\n### 10. Close out\n- [ ] Report\n";
+    let panel = Panel::new(text, 420.0);
+    assert!(panel.drawn("Step 3 of 4 \u{b7} PR"), "{:?}", panel.texts);
+    assert!(panel.drawn("Open it") && panel.drawn("Wait for CI"));
+    assert!(!panel.drawn("Merge") && !panel.drawn("Gate"));
 }
 
 #[test]

@@ -775,15 +775,12 @@ mod tests {
     fn the_checklist_row_names_each_phase_and_edit_asks_to_open_the_file() {
         let ctx = crate::fonts::test_context();
         let data = overview(vec![row(9, "busy", AgentStatus::Working)]);
-        let list =
-            chips(&["Understand and decide", "Build", "A phase with a very long title indeed"]);
+        let list = chips(&["Understand", "Build", "A phase with a very long title indeed"]);
         let sections = Sections { checklist: Some(&list), ..Sections::default() };
         frame_with(&ctx, &data, &sections, vec![]);
         let found = texts(&ctx, &data, &sections, 1000.0);
         let names: Vec<&str> = found.iter().map(|(text, _)| text.as_str()).collect();
-        for want in
-            ["Checklist", "Task to done \u{b7} default", "Understand and decide", "Build", "Edit"]
-        {
+        for want in ["Checklist", "Four stages \u{b7} default", "Understand", "Build", "Edit"] {
             assert!(names.contains(&want), "{want} in {names:?}");
         }
         assert!(

@@ -282,13 +282,13 @@ fn remote_name(input: &PrepareInput) -> String {
 }
 
 /// The house style this agent reads: the user's file with the ledger format and the repo's
-/// checklist appended, in the tab's state folder. The user's file is not changed.
+/// must-do steps appended, in the tab's state folder. The user's file is not changed.
 fn write_agent_style(input: &PrepareInput, shared: &Path) -> std::io::Result<PathBuf> {
     let paths = input.paths;
     let _ = checklist::ensure(paths);
     let text = house_style::compose_for(
         &std::fs::read_to_string(shared)?,
-        &checklist::for_repo(paths, input.repo),
+        checklist::for_repo(paths, input.repo).as_deref(),
         input.meeseeks,
     );
     let file = paths.tab_house_style_file(input.repo, input.tab);
@@ -689,13 +689,14 @@ mod tests {
     }
 
     #[test]
-    fn the_agent_is_given_the_house_style_with_the_ledger_format_and_the_default_checklist() {
+    fn the_agent_is_given_the_house_style_with_the_ledger_format_and_the_four_stages() {
         let fx = Fixture::new();
         fx.run("claude", &profile("claude", Level::Edits), true, "", None).unwrap();
         let text = agent_style(&fx);
         assert!(text.starts_with(house_style::DEFAULT_HOUSE_STYLE.trim_end()));
         assert!(text.contains("## Progress ledger format"));
-        assert!(text.contains("### 10. Close out"));
+        assert!(text.contains("### 4. Done"));
+        assert!(!text.contains("Must-do steps"));
         assert!(fx.paths.checklist_file().is_file(), "checklist.md is installed on first launch");
     }
 
@@ -711,8 +712,8 @@ mod tests {
         assert!(text.contains("`report_job`") && text.contains("`$TIDEWATCH_PROGRESS`"));
         assert!(text.contains("`set_avatar`"));
         assert!(text.contains("\n\n## Progress ledger format"), "{text}");
-        assert!(text.contains("### 1. Mine\n- [ ] my item\n"));
-        assert!(!text.contains("Close out"));
+        assert!(text.contains("### 4. Done\n"));
+        assert!(text.ends_with("never stages:\n\n### 1. Mine\n- [ ] my item\n"), "{text}");
         assert_eq!(std::fs::read_to_string(fx.paths.house_style_file()).unwrap(), "my own style\n");
         assert_eq!(
             std::fs::read_to_string(fx.paths.checklist_file()).unwrap(),
@@ -721,7 +722,7 @@ mod tests {
     }
 
     #[test]
-    fn a_repos_checklist_file_replaces_the_template_for_its_tabs() {
+    fn a_repos_checklist_file_replaces_the_must_dos_for_its_tabs() {
         let fx = Fixture::new();
         let repo = tempfile::tempdir().unwrap();
         std::fs::write(repo.path().join(".tidewatch.toml"), "checklist = \"steps.md\"\n").unwrap();
@@ -748,8 +749,7 @@ mod tests {
         let text =
             std::fs::read_to_string(fx.paths.tab_house_style_file(repo.path(), "brave-otter"))
                 .unwrap();
-        assert!(text.contains("### 1. Repo way\n- [ ] repo item\n"));
-        assert!(!text.contains("Close out"));
+        assert!(text.ends_with("never stages:\n\n### 1. Repo way\n- [ ] repo item\n"));
     }
 
     #[test]
