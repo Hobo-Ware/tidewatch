@@ -29,6 +29,7 @@ pub mod end_block;
 pub mod events;
 mod fsutil;
 pub mod github_clone;
+pub mod github_html;
 pub mod github_link;
 pub mod guard_args;
 pub mod guard_bash;

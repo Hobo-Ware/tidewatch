@@ -9,7 +9,7 @@ use egui::{
     vec2,
 };
 use egui_commonmark::{CommonMarkCache, CommonMarkViewer};
-use tidewatch_core::end_block;
+use tidewatch_core::{end_block, github_html};
 
 use crate::brand;
 use crate::code_block::{self, Look};
@@ -182,7 +182,10 @@ fn opens(line: &str) -> Option<Open<'_>> {
 /// Draws `md` as a chat message: markdown where the renderer is good, and the pieces above where
 /// the Reader draws its own. `look` is what the code blocks sit on.
 pub(crate) fn show(ui: &mut Ui, cache: &mut CommonMarkCache, md: &str, captions: bool, look: Look) {
-    let parts = pieces(md, captions);
+    let md = github_html::scrub(md);
+    let parts = pieces(&md, captions);
+    let column = ui.max_rect().x_range();
+    ui.shrink_clip_rect(Rect::from_x_y_ranges(column, ui.clip_rect().y_range()));
     for (index, piece) in parts.iter().enumerate() {
         if index > 0
             && !matches!(piece, Piece::Caption(_))
@@ -191,9 +194,7 @@ pub(crate) fn show(ui: &mut Ui, cache: &mut CommonMarkCache, md: &str, captions:
             ui.add_space(PIECE_GAP);
         }
         ui.push_id(index, |ui| match piece {
-            Piece::Markdown(chunk) => {
-                CommonMarkViewer::new().show(ui, cache, chunk);
-            }
+            Piece::Markdown(chunk) => markdown(ui, cache, chunk),
             Piece::Code { lang, text } => {
                 code_block::show(ui, *lang, text, look);
             }
@@ -220,10 +221,72 @@ fn quote(ui: &mut Ui, cache: &mut CommonMarkCache, md: &str) {
                 ui.vertical(|ui| {
                     ui.set_width(ui.available_width());
                     ui.visuals_mut().override_text_color = Some(brand::STEP_TEXT);
-                    CommonMarkViewer::new().show(ui, cache, md);
+                    markdown(ui, cache, md);
                 });
             });
         });
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum Chunk<'a> {
+    Prose(&'a str),
+    Table(&'a str),
+}
+
+fn is_table_divider(line: &str) -> bool {
+    let line = line.trim();
+    line.contains('-')
+        && line.contains('|')
+        && line.chars().all(|c| matches!(c, '|' | '-' | ':' | ' ' | '\t'))
+}
+
+/// Cuts `md` at its tables: a header line, a divider line and the rows under them.
+fn table_chunks(md: &str) -> Vec<Chunk<'_>> {
+    let lines: Vec<&str> = md.split_inclusive('\n').collect();
+    let mut out = Vec::new();
+    let mut prose_from = 0;
+    let mut index = 0;
+    let offset = |line: usize| lines[..line].iter().map(|l| l.len()).sum::<usize>();
+    while index < lines.len() {
+        let table = lines[index].contains('|')
+            && lines.get(index + 1).is_some_and(|next| is_table_divider(next));
+        if !table {
+            index += 1;
+            continue;
+        }
+        let end = (index + 2..lines.len())
+            .find(|row| !lines[*row].contains('|') || lines[*row].trim().is_empty())
+            .unwrap_or(lines.len());
+        let (from, to) = (offset(index), offset(end));
+        if from > prose_from {
+            out.push(Chunk::Prose(&md[prose_from..from]));
+        }
+        out.push(Chunk::Table(&md[from..to]));
+        prose_from = to;
+        index = end;
+    }
+    if prose_from < md.len() {
+        out.push(Chunk::Prose(&md[prose_from..]));
+    }
+    out
+}
+
+fn markdown(ui: &mut Ui, cache: &mut CommonMarkCache, md: &str) {
+    for (index, chunk) in table_chunks(md).into_iter().enumerate() {
+        ui.push_id(index, |ui| match chunk {
+            Chunk::Prose(text) => {
+                CommonMarkViewer::new().show(ui, cache, text);
+            }
+            Chunk::Table(text) => {
+                ui.scope(|ui| {
+                    ui.spacing_mut().scroll = egui::style::ScrollStyle::solid();
+                    egui::ScrollArea::horizontal().auto_shrink([false, true]).show(ui, |ui| {
+                        CommonMarkViewer::new().show(ui, cache, text);
+                    });
+                });
+            }
+        });
+    }
 }
 
 fn image_chip(ui: &mut Ui, label: &str) {
@@ -478,5 +541,63 @@ mod tests {
             pieces("use `Image 1` here", false),
             vec![Piece::Markdown("use `Image 1` here")]
         );
+    }
+
+    #[test]
+    fn tables_are_cut_out_of_their_prose() {
+        let md = "Before\n\n| a | b |\n|---|:-:|\n| 1 | 2 |\n| 3 | 4 |\n\nAfter";
+        assert_eq!(
+            table_chunks(md),
+            [
+                Chunk::Prose("Before\n\n"),
+                Chunk::Table("| a | b |\n|---|:-:|\n| 1 | 2 |\n| 3 | 4 |\n"),
+                Chunk::Prose("\nAfter"),
+            ]
+        );
+        assert_eq!(table_chunks("a | b\nno divider"), [Chunk::Prose("a | b\nno divider")]);
+        assert_eq!(table_chunks("| a |\n|---|"), [Chunk::Table("| a |\n|---|")]);
+    }
+
+    fn widest(md: &str, width: f32) -> f32 {
+        let ctx = crate::fonts::test_context();
+        let mut cache = CommonMarkCache::default();
+        let mut widest = 0.0_f32;
+        for _ in 0..2 {
+            let raw = RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(pos2(0.0, 0.0), vec2(1400.0, 900.0))),
+                ..RawInput::default()
+            };
+            let _ = ctx.run_ui(raw, |ui| {
+                ui.set_max_width(width);
+                let shown = ui.scope(|ui| show(ui, &mut cache, md, false, Look::AGENT));
+                widest = shown.response.rect.width();
+            });
+        }
+        widest
+    }
+
+    #[test]
+    fn a_wide_table_scrolls_inside_the_column_and_never_widens_it() {
+        let cell = "a very long cell that would never fit in a narrow pane at all";
+        let md = format!("| one | two | three |\n|---|---|---|\n| {cell} | {cell} | {cell} |\n");
+        assert!(widest(&md, 360.0) <= 360.5);
+        let quoted = md
+            .lines()
+            .collect::<Vec<_>>()
+            .iter()
+            .map(|line| format!("> {line}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(widest(&quoted, 360.0) <= 360.5);
+    }
+
+    #[test]
+    fn github_markup_in_a_message_never_reaches_the_screen() {
+        let md = "<!-- codex-review-state:v1 {\"a\":1} -->\n<details><summary>More</summary>\n\nat <relative-time datetime=\"2026-10-25T10:00:00Z\">Oct 25</relative-time><br/>done\n</details>";
+        let seen: String = galleys(&draw(md, false)).iter().map(|g| g.text().to_owned()).collect();
+        assert!(seen.contains("More") && seen.contains("Oct 25") && seen.contains("done"));
+        for raw in ["<!--", "<details", "<summary", "<br", "relative-time", "datetime"] {
+            assert!(!seen.contains(raw), "{raw} showed in {seen:?}");
+        }
     }
 }
