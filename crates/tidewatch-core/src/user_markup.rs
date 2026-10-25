@@ -1,11 +1,13 @@
 //! The tagged records Claude Code writes into user lines besides the user's words (checked on real
 //! 2.1.3xx transcripts): slash commands, local command output, caveats, `<pasted_content id>` wrappers
-//! and `[Image #1]` markers. Pure text functions.
+//! `<task-notification>` records and `[Image #1]` markers. Pure text functions.
 
 const COMMAND_TAGS: [&str; 3] = ["command-name", "command-message", "command-args"];
 const OUTPUT_TAGS: [&str; 2] = ["local-command-stdout", "local-command-stderr"];
 const HIDDEN_PREFIXES: [&str; 2] = ["<local-command-caveat>", "<system-reminder>"];
 const PASTE_TAG: &str = "pasted_content";
+const TASK_TAG: &str = "task-notification";
+const TASK_EVENT_CHARS: usize = 140;
 const IMAGE_MARKER: &str = "[Image #";
 const COMPACTED_OPENING: &str = "This session is being continued from a previous conversation";
 
@@ -18,6 +20,9 @@ pub enum Record {
     Output(String),
     /// The user's own words, the paste wrapper removed.
     Text(String),
+    /// A background task Claude Code reports on, as `Background task - <summary>` and, when the
+    /// task sent one, the first line of its event under it.
+    Background(String),
     /// The summary Claude Code writes after compacting the conversation.
     Compacted,
     /// Bookkeeping that carries nothing to show.
@@ -34,6 +39,9 @@ pub fn classify(text: &str) -> Record {
     }
     if text.starts_with(COMPACTED_OPENING) {
         return Record::Compacted;
+    }
+    if let Some(note) = background(text) {
+        return Record::Background(note);
     }
     if let Some(parts) = tag_sequence(text, &COMMAND_TAGS) {
         return command(&parts);
@@ -62,6 +70,42 @@ pub fn has_indented_block(text: &str) -> bool {
             || line.starts_with("+ ")
             || list_number_len(line).is_some()
     })
+}
+
+fn background(text: &str) -> Option<String> {
+    let open = format!("<{TASK_TAG}>");
+    let close = format!("</{TASK_TAG}>");
+    let inner = text.strip_prefix(open.as_str())?;
+    let (inner, after) = inner.split_once(close.as_str())?;
+    let after = after.trim();
+    if !after.is_empty() && !after.starts_with("<system-reminder>") {
+        return None;
+    }
+    let summary = one_line(child(inner, "summary")?);
+    if summary.is_empty() {
+        return None;
+    }
+    let mut note = format!("Background task - {summary}");
+    let event =
+        child(inner, "event").and_then(|event| event.lines().find(|l| !l.trim().is_empty()));
+    if let Some(event) = event {
+        note.push('\n');
+        note.push_str(&cut(&one_line(event), TASK_EVENT_CHARS));
+    }
+    Some(note)
+}
+
+fn child<'a>(inner: &'a str, tag: &str) -> Option<&'a str> {
+    let (_, rest) = inner.split_once(format!("<{tag}>").as_str())?;
+    Some(rest.split_once(format!("</{tag}>").as_str())?.0)
+}
+
+fn cut(text: &str, chars: usize) -> String {
+    if text.chars().count() <= chars {
+        return text.to_owned();
+    }
+    let kept: String = text.chars().take(chars).collect();
+    format!("{}\u{2026}", kept.trim_end())
 }
 
 fn command(parts: &[(&str, &str)]) -> Record {
@@ -262,6 +306,52 @@ mod tests {
         ];
         for (input, want) in cases {
             assert_eq!(classify(input), want, "input {input:?}");
+        }
+    }
+
+    #[test]
+    fn a_task_notification_is_a_background_line_with_its_event() {
+        let cases = [
+            (
+                "<task-notification>\n<task-id>bs6</task-id>\n<tool-use-id>toolu_01</tool-use-id>\n<output-file>/tmp/x.output</output-file>\n<status>killed</status>\n<summary>Background command \"Start v2 dev server\" was stopped</summary>\n</task-notification>",
+                "Background task - Background command \"Start v2 dev server\" was stopped",
+            ),
+            (
+                "<task-notification>\n<task-id>bq6</task-id>\n<summary>Monitor event: \"R2 corpus pull\"</summary>\n<event>[####-----] 33% 104/314</event>\n</task-notification>",
+                "Background task - Monitor event: \"R2 corpus pull\"\n[####-----] 33% 104/314",
+            ),
+            (
+                "<task-notification><summary>Agent  finished</summary><event>\n\nfirst\nsecond</event><note>fires again</note></task-notification>\n<system-reminder>Goal check-in</system-reminder>",
+                "Background task - Agent finished\nfirst",
+            ),
+        ];
+        for (input, want) in cases {
+            assert_eq!(classify(input), Record::Background(want.into()), "input {input:?}");
+        }
+        let long = format!(
+            "<task-notification><summary>s</summary><event>{}</event></task-notification>",
+            "w".repeat(200)
+        );
+        let Record::Background(note) = classify(&long) else { panic!("not a note") };
+        assert_eq!(
+            note.lines().nth(1).map(|line| line.chars().count()),
+            Some(TASK_EVENT_CHARS + 1)
+        );
+        assert!(note.ends_with('\u{2026}'));
+    }
+
+    #[test]
+    fn a_message_that_mentions_the_task_tag_stays_a_message() {
+        let cases = [
+            "why does <task-notification> show up in my chat?",
+            "<task-notification> is what I typed, please explain",
+            "<task-notification><summary>x</summary></task-notification> what is this?",
+            "<task-notification>done</task-notification>",
+            "<task-notification><summary>  </summary></task-notification>",
+            "see\n<task-notification><summary>x</summary></task-notification>",
+        ];
+        for input in cases {
+            assert_eq!(classify(input), text(input), "input {input:?}");
         }
     }
 
