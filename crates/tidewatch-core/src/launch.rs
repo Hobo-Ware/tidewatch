@@ -87,6 +87,12 @@ pub struct LaunchCtx {
     /// The file holding `claude_settings_json` (Claude): the command line names the file, never the
     /// JSON, so no hook token is printed and the line stays short enough to type.
     pub settings_file: Option<PathBuf>,
+    /// The repo's own auto-memory folder (Claude). A worktree tab files its memory there, through
+    /// `autoMemoryDirectory` in the settings file, instead of in a folder named after the worktree.
+    pub memory_dir: Option<PathBuf>,
+    /// The Trailers guard is on for this tab's repo (Claude): the settings file turns off Claude
+    /// Code's own commit and PR attribution and adds the hook that checks `gh` text.
+    pub trailers_guard: bool,
     pub house_style: Option<PathBuf>,
     /// Directory holding `tidewatch.instructions.md` (Copilot), see `house_style::sync_copilot_instructions`.
     pub copilot_instructions_dir: Option<PathBuf>,
@@ -312,13 +318,19 @@ fn curl_hook_command(url: &str, bearer: &str) -> String {
     )
 }
 
-/// The JSON the Claude tab's `--settings` file holds, for the hooks and the comment guard that
-/// `ctx` asks for. `None` when neither applies, and then `ctx.settings_file` stays unset.
+/// The JSON the Claude tab's `--settings` file holds, for the hooks, the comment guard, the shared
+/// memory folder and the trailers guard that `ctx` asks for. `None` when none applies, and then
+/// `ctx.settings_file` stays unset.
 #[must_use]
 pub fn claude_settings_json(ctx: &LaunchCtx) -> Option<String> {
-    let comment_guard =
+    let guard_bin =
         ctx.guards.as_ref().filter(|_| ctx.worktree_tab).map(|guards| guards.bin.as_path());
-    claude_settings(ctx.hooks.as_ref(), comment_guard)
+    let extras = Extras {
+        trailer_hook: guard_bin.filter(|_| ctx.trailers_guard),
+        no_attribution: ctx.trailers_guard,
+        memory_dir: ctx.memory_dir.as_deref().filter(|_| ctx.worktree_tab),
+    };
+    claude_settings_with(ctx.hooks.as_ref(), guard_bin, &extras)
 }
 
 /// The settings JSON for Claude: http hooks for the events the status layer reads (D5).
@@ -336,6 +348,25 @@ pub fn claude_settings(
     listener: Option<&HookListener>,
     comment_guard: Option<&Path>,
 ) -> Option<String> {
+    claude_settings_with(listener, comment_guard, &Extras::default())
+}
+
+#[derive(Default)]
+struct Extras<'a> {
+    /// The Tidewatch binary, for the PreToolUse hook that checks `gh` text.
+    trailer_hook: Option<&'a Path>,
+    memory_dir: Option<&'a Path>,
+    /// Empty `attribution.commit` and `attribution.pr`, and no session link: the Claude Code keys
+    /// that hide the Co-Authored-By trailer and the PR footer (`includeCoAuthoredBy` is deprecated).
+    no_attribution: bool,
+}
+
+fn claude_settings_with(
+    listener: Option<&HookListener>,
+    comment_guard: Option<&Path>,
+    extras: &Extras,
+) -> Option<String> {
+    let mut settings = serde_json::Map::new();
     let mut hooks = serde_json::Map::new();
     if let Some(listener) = listener {
         let hook = json!({
@@ -347,18 +378,34 @@ pub fn claude_settings(
             hooks.insert(event.to_owned(), json!([{ "hooks": [hook.clone()] }]));
         }
     }
+    let command = |bin: &Path, tail: &str| json!({ "type": "command", "command": format!("{} --guard {tail}", shell_quote(&bin.display().to_string())) });
+    let mut push = |event: &str, group: Value| {
+        let slot = hooks.entry(event.to_owned()).or_insert_with(|| json!([]));
+        if let Some(groups) = slot.as_array_mut() {
+            groups.push(group);
+        }
+    };
     if let Some(bin) = comment_guard {
-        let command = |tail: &str| json!({ "type": "command", "command": format!("{} --guard comments{tail}", shell_quote(&bin.display().to_string())) });
-        let mut push = |event: &str, group: Value| {
-            let slot = hooks.entry(event.to_owned()).or_insert_with(|| json!([]));
-            if let Some(groups) = slot.as_array_mut() {
-                groups.push(group);
-            }
-        };
-        push("PostToolUse", json!({ "matcher": "Write|Edit|MultiEdit", "hooks": [command("")] }));
-        push("Stop", json!({ "hooks": [command(" --stop")] }));
+        push(
+            "PostToolUse",
+            json!({ "matcher": "Write|Edit|MultiEdit", "hooks": [command(bin, "comments")] }),
+        );
+        push("Stop", json!({ "hooks": [command(bin, "comments --stop")] }));
     }
-    (!hooks.is_empty()).then(|| json!({ "hooks": hooks }).to_string())
+    if let Some(bin) = extras.trailer_hook {
+        push("PreToolUse", json!({ "matcher": "Bash", "hooks": [command(bin, "trailers")] }));
+    }
+    if !hooks.is_empty() {
+        settings.insert("hooks".into(), Value::Object(hooks));
+    }
+    if let Some(dir) = extras.memory_dir {
+        settings.insert("autoMemoryDirectory".into(), json!(dir.display().to_string()));
+    }
+    if extras.no_attribution {
+        settings
+            .insert("attribution".into(), json!({ "commit": "", "pr": "", "sessionUrl": false }));
+    }
+    (!settings.is_empty()).then(|| Value::Object(settings).to_string())
 }
 
 /// The MCP config file content for the CLIs that read one (Claude, Copilot). `None` for the others.
@@ -1077,6 +1124,48 @@ mod tests {
         assert!(claude_settings_json(&ctx).is_some());
         let bare = LaunchCtx { hooks: None, guards: None, ..full_ctx() };
         assert_eq!(claude_settings_json(&bare), None);
+    }
+
+    fn settings_of(ctx: &LaunchCtx) -> Value {
+        serde_json::from_str(&claude_settings_json(ctx).unwrap()).unwrap()
+    }
+
+    #[test]
+    fn the_trailers_guard_hides_claude_codes_own_attribution_and_checks_gh_text() {
+        let on = LaunchCtx { guards: Some(guard_ctx()), trailers_guard: true, ..full_ctx() };
+        let settings = settings_of(&on);
+        assert_eq!(settings["attribution"], json!({ "commit": "", "pr": "", "sessionUrl": false }));
+        assert!(settings["includeCoAuthoredBy"].is_null());
+        let pre = settings["hooks"]["PreToolUse"].as_array().unwrap();
+        assert_eq!(pre.len(), 1);
+        assert_eq!(pre[0]["matcher"], "Bash");
+        assert_eq!(pre[0]["hooks"][0]["type"], "command");
+        assert_eq!(pre[0]["hooks"][0]["command"], "/app/tidewatch --guard trailers");
+
+        let off = LaunchCtx { trailers_guard: false, ..on.clone() };
+        let settings = settings_of(&off);
+        assert!(settings["attribution"].is_null());
+        assert!(settings["hooks"]["PreToolUse"].is_null());
+
+        let main_tab = LaunchCtx { worktree_tab: false, ..on };
+        let settings = settings_of(&main_tab);
+        assert!(settings["hooks"]["PreToolUse"].is_null());
+        assert_eq!(settings["attribution"]["commit"], "");
+    }
+
+    #[test]
+    fn a_worktree_tab_files_its_memory_in_the_repos_folder() {
+        let ctx = LaunchCtx {
+            memory_dir: Some("/c/projects/-work-web/memory".into()),
+            hooks: None,
+            ..worktree_ctx()
+        };
+        let settings = settings_of(&ctx);
+        assert_eq!(settings["autoMemoryDirectory"], "/c/projects/-work-web/memory");
+        assert_eq!(settings.as_object().unwrap().len(), 1);
+
+        let main_tab = LaunchCtx { worktree_tab: false, ..ctx };
+        assert_eq!(claude_settings_json(&main_tab), None);
     }
 
     #[test]

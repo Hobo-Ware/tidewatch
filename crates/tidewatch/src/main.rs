@@ -231,6 +231,7 @@ use repo::{Repo, Workspace};
 use shell::{Setup, WINDOW_SIZE};
 use shell_plan::{Env, Launch, Plan};
 use single_instance::{Run, Start};
+use tidewatch_core::claude_memory;
 use tidewatch_core::instance::Command;
 use tidewatch_core::last_workspace;
 use tidewatch_core::path_env;
@@ -255,7 +256,16 @@ fn main() -> eframe::Result<()> {
     let home = std::env::var_os("HOME").map(PathBuf::from);
     let isolated = std::env::var_os("TIDEWATCH_HOME").is_some();
     let data_home = std::env::var_os("TIDEWATCH_HOME").map(PathBuf::from).or_else(|| home.clone());
-    let paths = data_home.map(|home| TidewatchPaths::new(&home));
+    let claude_dir = home
+        .as_deref()
+        .map(|home| claude_memory::config_dir(home, std::env::var_os("CLAUDE_CONFIG_DIR")));
+    let paths = data_home.map(|data| {
+        let paths = TidewatchPaths::new(&data);
+        match claude_dir {
+            Some(dir) => paths.with_claude_dir(dir),
+            None => paths,
+        }
+    });
     if args.toggle {
         std::process::exit(single_instance::toggle_running(paths.as_ref()));
     }
