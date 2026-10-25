@@ -5,6 +5,7 @@ fn each_state_offers_the_one_action_it_can_take() {
     let cases = [
         (TouchId::Missing, "Set up", Some(Click::SetUp)),
         (TouchId::Installed, "Remove", Some(Click::Remove)),
+        (TouchId::Outdated, "Set up again", Some(Click::SetUp)),
         (TouchId::Working, "Working...", None),
     ];
     for (state, button, click) in cases {

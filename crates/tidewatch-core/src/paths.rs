@@ -171,6 +171,11 @@ impl TidewatchPaths {
         self.state_dir().join("amphetamine.token")
     }
 
+    #[must_use]
+    pub fn amphetamine_serve_file(&self) -> PathBuf {
+        self.state_dir().join("amphetamine.serve")
+    }
+
     /// The scheduled items of every tab's ledger, for the Coming up list across tabs.
     #[must_use]
     pub fn schedule_file(&self) -> PathBuf {

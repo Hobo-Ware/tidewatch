@@ -8,8 +8,8 @@ use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::time::Duration;
 
-use crate::amphetamine_helper::{Auth, TOUCH_ID_REASON};
-use crate::amphetamine_lid::PROMPT_CANCELLED;
+use crate::amphetamine_helper::{Auth, Serve, TOUCH_ID_REASON};
+use crate::amphetamine_lid::{PROMPT_CANCELLED, remove_token, write_token};
 
 pub trait System: Send + Sync {
     /// Asks for the password once, sets lid mode and starts the helper; the helper's pid.
@@ -17,11 +17,12 @@ pub trait System: Send + Sync {
     fn restore_lid(&self) -> Result<(), String>;
     fn sleep_disabled(&self) -> Option<bool>;
     fn alive(&self, pid: u32) -> bool;
-    /// Asks for the password once, installs the Touch ID helper and its drop-in, sets lid mode and
-    /// starts the helper; the helper's pid. Only for a Mac that has a fingerprint reader.
-    fn install_and_start_lid(&self, token: &Path, owner: u32) -> Result<u32, String>;
+    fn install_and_start_lid(&self, token: &Path, owner: u32, fifo: &Path) -> Result<u32, String>;
     /// Both the root-owned helper and its sudoers drop-in are in place.
     fn touch_id_installed(&self) -> bool;
+    fn touch_id_current(&self) -> bool;
+    fn make_fifo(&self, fifo: &Path) -> Result<(), String>;
+    fn send_serve(&self, token: &Path, fifo: &Path, command: Serve) -> Result<(), String>;
     /// This Mac has a fingerprint reader with a finger enrolled.
     fn biometrics_available(&self) -> bool;
     /// Asks for the password once and installs the helper and the drop-in.
@@ -30,8 +31,7 @@ pub trait System: Send + Sync {
     fn remove_touch_id(&self) -> Result<(), String>;
     /// Touch ID, or the login password when this Mac has no fingerprint.
     fn authenticate(&self, reason: &str) -> Auth;
-    /// Starts lid mode through the installed helper with no prompt; the helper's pid.
-    fn sudo_start(&self, token: &Path, owner: u32) -> Result<u32, String>;
+    fn sudo_serve(&self, token: &Path, owner: u32, fifo: &Path) -> Result<u32, String>;
     /// Turns sleep back on through the installed helper with no prompt.
     fn sudo_stop(&self) -> Result<(), String>;
 }
@@ -39,8 +39,9 @@ pub trait System: Send + Sync {
 /// How a start asks for permission on this Mac.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Route {
-    /// The helper is installed: a fingerprint, then `sudo -n`.
+    /// The helper is installed and current: a fingerprint, then `sudo -n`.
     Fingerprint,
+    Outdated,
     /// No helper yet but a fingerprint reader: one password prompt installs it and starts.
     SetUp,
     /// No helper and no fingerprint reader: the password prompt each time, nothing installed.
@@ -49,11 +50,12 @@ pub enum Route {
 
 impl Route {
     #[must_use]
-    pub fn of(installed: bool, biometrics: bool) -> Self {
-        match (installed, biometrics) {
-            (true, _) => Self::Fingerprint,
-            (false, true) => Self::SetUp,
-            (false, false) => Self::Password,
+    pub fn of(installed: bool, current: bool, biometrics: bool) -> Self {
+        match (installed, current, biometrics) {
+            (true, true, _) => Self::Fingerprint,
+            (true, false, _) => Self::Outdated,
+            (false, _, true) => Self::SetUp,
+            (false, _, false) => Self::Password,
         }
     }
 }
@@ -62,17 +64,32 @@ impl Route {
 #[must_use]
 pub fn route_of(system: &dyn System) -> Route {
     let installed = system.touch_id_installed();
-    Route::of(installed, !installed && system.biometrics_available())
+    Route::of(
+        installed,
+        installed && system.touch_id_current(),
+        !installed && system.biometrics_available(),
+    )
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Started {
+    pub helper: u32,
+    pub serving: bool,
 }
 
 /// Starts lid mode the way this Mac allows. Only a refused fingerprint or a cancelled password
 /// prompt stops the start; a missing helper, a sudo rule that no longer works, a failed setup or a
 /// Mac without biometrics falls back to the plain password prompt.
-pub fn begin_lid(system: &dyn System, token: &Path, owner: u32) -> Result<u32, String> {
+pub fn begin_lid(
+    system: &dyn System,
+    token: &Path,
+    fifo: &Path,
+    owner: u32,
+) -> Result<Started, String> {
     match route_of(system) {
         Route::Fingerprint => match system.authenticate(TOUCH_ID_REASON) {
-            Auth::Approved => match system.sudo_start(token, owner) {
-                Ok(pid) => return Ok(pid),
+            Auth::Approved => match serve_with_sudo(system, token, fifo, owner) {
+                Ok(helper) => return Ok(Started { helper, serving: true }),
                 Err(why) => {
                     eprintln!(
                         "tidewatch: the Touch ID helper failed ({why}); asking for the password"
@@ -84,16 +101,91 @@ pub fn begin_lid(system: &dyn System, token: &Path, owner: u32) -> Result<u32, S
                 eprintln!("tidewatch: Touch ID is unavailable ({why}); asking for the password");
             }
         },
-        Route::SetUp => match system.install_and_start_lid(token, owner) {
-            Ok(pid) => return Ok(pid),
-            Err(why) if why == PROMPT_CANCELLED => return Err(why),
-            Err(why) => {
-                eprintln!("tidewatch: Touch ID setup failed ({why}); asking for the password");
+        Route::SetUp => {
+            let setup = system
+                .make_fifo(fifo)
+                .and_then(|()| system.install_and_start_lid(token, owner, fifo));
+            match setup {
+                Ok(helper) => return Ok(Started { helper, serving: true }),
+                Err(why) if why == PROMPT_CANCELLED => return Err(why),
+                Err(why) => {
+                    eprintln!("tidewatch: Touch ID setup failed ({why}); asking for the password");
+                }
             }
-        },
-        Route::Password => {}
+        }
+        Route::Outdated | Route::Password => {}
     }
-    system.start_lid(token, owner)
+    system.start_lid(token, owner).map(|helper| Started { helper, serving: false })
+}
+
+fn serve_with_sudo(
+    system: &dyn System,
+    token: &Path,
+    fifo: &Path,
+    owner: u32,
+) -> Result<u32, String> {
+    system.make_fifo(fifo)?;
+    system.sudo_serve(token, owner, fifo)
+}
+
+fn live_helper(system: &dyn System, serving: Option<u32>) -> Option<u32> {
+    serving.filter(|&helper| system.alive(helper))
+}
+
+/// Starts lid mode, or, while a helper serves this run, sends it the deadline with no prompt. A
+/// serving helper that does not answer is replaced by the prompting start.
+pub fn start_lid_or_serve(
+    system: &dyn System,
+    serving: Option<u32>,
+    token: &Path,
+    fifo: &Path,
+    owner: u32,
+    until: Option<f64>,
+) -> Result<Started, String> {
+    if let Some(helper) = live_helper(system, serving) {
+        match system.send_serve(token, fifo, Serve::On(until)) {
+            Ok(()) => return Ok(Started { helper, serving: true }),
+            Err(why) => {
+                eprintln!("tidewatch: the serving helper did not answer ({why}); starting again");
+            }
+        }
+    }
+    write_token(token, until).map_err(|why| why.to_string())?;
+    begin_lid(system, token, fifo, owner)
+}
+
+/// Moves the deadline of a running session. The serving helper also watches the token, so the token
+/// is written when the command cannot be sent.
+pub fn set_deadline(
+    system: &dyn System,
+    serving: Option<u32>,
+    token: &Path,
+    fifo: &Path,
+    until: Option<f64>,
+) -> Result<(), String> {
+    if live_helper(system, serving).is_some()
+        && system.send_serve(token, fifo, Serve::On(until)).is_ok()
+    {
+        return Ok(());
+    }
+    write_token(token, until).map_err(|why| why.to_string())
+}
+
+/// Turns sleep back on. A serving helper is told so and keeps serving for the next start of this
+/// run; otherwise the token goes, which the watching helper answers by restoring sleep.
+pub fn stop_lid(system: &dyn System, serving: Option<u32>, token: &Path, fifo: &Path) {
+    if live_helper(system, serving).is_some() {
+        match system.send_serve(token, fifo, Serve::Off) {
+            Ok(()) => return,
+            Err(why) => {
+                eprintln!(
+                    "tidewatch: the serving helper did not turn sleep off ({why}); stopping it"
+                );
+            }
+        }
+    }
+    remove_token(token);
+    end_lid(system);
 }
 
 /// Turns sleep back on at once when the helper is installed. The root loop of a session started
@@ -106,26 +198,30 @@ pub fn end_lid(system: &dyn System) {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum Call {
     StartLid { token: PathBuf, owner: u32 },
-    InstallAndStart { token: PathBuf, owner: u32 },
+    InstallAndStart { token: PathBuf, owner: u32, fifo: PathBuf },
     RestoreLid,
     SleepDisabled,
     Alive(u32),
     InstallTouchId,
     RemoveTouchId,
     Authenticate,
-    SudoStart { token: PathBuf, owner: u32 },
+    SudoServe { token: PathBuf, owner: u32, fifo: PathBuf },
     SudoStop,
+    MakeFifo(PathBuf),
+    SendServe { fifo: PathBuf, command: Serve },
 }
 
+#[allow(clippy::struct_excessive_bools)] // independent switches of a test double, not a mode
 #[derive(Debug, Default)]
 struct Fake {
     calls: Vec<Call>,
     token: Option<PathBuf>,
     disabled: bool,
     helper_alive: bool,
+    serving: bool,
     refuse: Option<String>,
     installed: bool,
     hold_for: Option<Duration>,
@@ -135,11 +231,14 @@ struct Fake {
     quirks: Quirks,
 }
 
+#[allow(clippy::struct_excessive_bools)] // independent switches of a test double, not a mode
 #[derive(Debug, Default)]
 struct Quirks {
     sleep_stays_on: bool,
     helper_ignores_token: bool,
     biometrics: bool,
+    outdated: bool,
+    serve_deaf: bool,
 }
 
 #[derive(Debug, Default)]
@@ -166,6 +265,30 @@ impl FakeSystem {
         let fake = Self::new();
         fake.state().installed = true;
         fake
+    }
+
+    #[must_use]
+    pub fn with_outdated_helper() -> Self {
+        let fake = Self::new();
+        {
+            let mut state = fake.state();
+            state.installed = true;
+            state.quirks.outdated = true;
+        }
+        fake
+    }
+
+    #[must_use]
+    pub fn serve_not_answering(self) -> Self {
+        self.state().quirks.serve_deaf = true;
+        self
+    }
+
+    pub fn owner_exits(&self) {
+        let mut state = self.state();
+        state.disabled = false;
+        state.helper_alive = false;
+        state.serving = false;
     }
 
     /// A Mac with a fingerprint reader and no helper yet.
@@ -251,10 +374,11 @@ impl FakeSystem {
         }
     }
 
-    fn begin(state: &mut Fake, token: &Path) -> u32 {
+    fn begin(state: &mut Fake, token: &Path, serving: bool) -> u32 {
         state.token = Some(token.to_owned());
         state.disabled = !state.quirks.sleep_stays_on;
         state.helper_alive = true;
+        state.serving = serving;
         4242
     }
 }
@@ -267,18 +391,44 @@ impl System for FakeSystem {
         if let Some(why) = state.refuse.clone() {
             return Err(why);
         }
-        Ok(Self::begin(&mut state, token))
+        Ok(Self::begin(&mut state, token, false))
     }
 
-    fn install_and_start_lid(&self, token: &Path, owner: u32) -> Result<u32, String> {
-        self.state().calls.push(Call::InstallAndStart { token: token.to_owned(), owner });
+    fn install_and_start_lid(&self, token: &Path, owner: u32, fifo: &Path) -> Result<u32, String> {
+        self.state().calls.push(Call::InstallAndStart {
+            token: token.to_owned(),
+            owner,
+            fifo: fifo.to_owned(),
+        });
         self.wait();
         let mut state = self.state();
         if let Some(why) = state.refuse.clone().or_else(|| state.setup_refuse.clone()) {
             return Err(why);
         }
         state.installed = true;
-        Ok(Self::begin(&mut state, token))
+        Ok(Self::begin(&mut state, token, true))
+    }
+
+    fn touch_id_current(&self) -> bool {
+        let state = self.state();
+        state.installed && !state.quirks.outdated
+    }
+
+    fn make_fifo(&self, fifo: &Path) -> Result<(), String> {
+        self.state().calls.push(Call::MakeFifo(fifo.to_owned()));
+        Ok(())
+    }
+
+    fn send_serve(&self, token: &Path, fifo: &Path, command: Serve) -> Result<(), String> {
+        let mut state = self.state();
+        state.calls.push(Call::SendServe { fifo: fifo.to_owned(), command });
+        if !state.helper_alive || !state.serving || state.quirks.serve_deaf {
+            return Err("the helper did not answer".to_owned());
+        }
+        state.token = Some(token.to_owned());
+        state.disabled = matches!(command, Serve::On(_));
+        let _ = std::fs::write(token, command.answer());
+        Ok(())
     }
 
     fn restore_lid(&self) -> Result<(), String> {
@@ -293,6 +443,7 @@ impl System for FakeSystem {
         let mut state = self.state();
         state.calls.push(Call::SleepDisabled);
         if !state.quirks.helper_ignores_token
+            && !state.serving
             && state.token.as_ref().is_some_and(|token| !token.exists())
         {
             state.token = None;
@@ -342,13 +493,13 @@ impl System for FakeSystem {
         state.auth.clone().unwrap_or(Auth::Approved)
     }
 
-    fn sudo_start(&self, token: &Path, owner: u32) -> Result<u32, String> {
+    fn sudo_serve(&self, token: &Path, owner: u32, fifo: &Path) -> Result<u32, String> {
         let mut state = self.state();
-        state.calls.push(Call::SudoStart { token: token.to_owned(), owner });
+        state.calls.push(Call::SudoServe { token: token.to_owned(), owner, fifo: fifo.to_owned() });
         if let Some(why) = state.sudo_refuse.clone() {
             return Err(why);
         }
-        Ok(Self::begin(&mut state, token))
+        Ok(Self::begin(&mut state, token, true))
     }
 
     fn sudo_stop(&self) -> Result<(), String> {
@@ -373,16 +524,22 @@ mod mac {
     use std::path::Path;
     use std::process::{Command, Stdio};
 
+    use std::io::Write;
+    use std::time::Duration;
+
     use super::System;
     use crate::amphetamine_helper::{
         Auth, HELPER_PATH, REMOVE_PROMPT, SETUP_AND_START_PROMPT, SETUP_PROMPT, SUDO, SUDOERS_PATH,
-        install_and_start_command, install_command, parse_pid, remove_command, sudo_start_args,
-        sudo_verb_args, valid_user,
+        Serve, helper_script, install_and_serve_command, install_command, make_command_fifo,
+        parse_pid, remove_command, sudo_serve_args, sudo_verb_args, valid_user,
     };
     use crate::amphetamine_lid::{
         PROMPT, PROMPT_CANCELLED, RESTORE_PROMPT, SYSTEM_PATH, admin_command, osascript_args,
         parse_sleep_disabled, restore_command,
     };
+
+    const ANSWER_TRIES: u32 = 30;
+    const ANSWER_STEP: Duration = Duration::from_millis(100);
 
     /// Asks the system for the fingerprint (or the password); supplied by the app, which owns the
     /// Objective-C bindings, so this crate stays free of `unsafe`.
@@ -451,8 +608,13 @@ mod mac {
             pid.parse().map_err(|_| format!("the helper did not report its pid ({pid})"))
         }
 
-        fn install_and_start_lid(&self, token: &Path, owner: u32) -> Result<u32, String> {
-            let command = install_and_start_command(&account()?, token, owner, SYSTEM_PATH)
+        fn install_and_start_lid(
+            &self,
+            token: &Path,
+            owner: u32,
+            fifo: &Path,
+        ) -> Result<u32, String> {
+            let command = install_and_serve_command(&account()?, token, owner, fifo, SYSTEM_PATH)
                 .ok_or_else(|| "cannot use this account name".to_owned())?;
             let printed = admin(&command, SETUP_AND_START_PROMPT)?;
             parse_pid(printed.rsplit(['\r', '\n']).next().unwrap_or_default())
@@ -483,6 +645,32 @@ mod mac {
             Path::new(HELPER_PATH).exists() && Path::new(SUDOERS_PATH).exists()
         }
 
+        fn touch_id_current(&self) -> bool {
+            std::fs::read_to_string(HELPER_PATH).is_ok_and(|text| text == helper_script())
+        }
+
+        fn make_fifo(&self, fifo: &Path) -> Result<(), String> {
+            make_command_fifo(fifo).map_err(|why| why.to_string())
+        }
+
+        fn send_serve(&self, token: &Path, fifo: &Path, command: Serve) -> Result<(), String> {
+            let mut pipe = std::fs::OpenOptions::new()
+                .read(true)
+                .write(true)
+                .open(fifo)
+                .map_err(|why| why.to_string())?;
+            writeln!(pipe, "{}", command.line()).map_err(|why| why.to_string())?;
+            drop(pipe);
+            let answer = command.answer();
+            for _ in 0..ANSWER_TRIES {
+                if std::fs::read_to_string(token).is_ok_and(|text| text.trim() == answer) {
+                    return Ok(());
+                }
+                std::thread::sleep(ANSWER_STEP);
+            }
+            Err("the helper did not answer".to_owned())
+        }
+
         fn biometrics_available(&self) -> bool {
             self.biometrics.is_some_and(|ask| ask())
         }
@@ -507,8 +695,8 @@ mod mac {
             )
         }
 
-        fn sudo_start(&self, token: &Path, owner: u32) -> Result<u32, String> {
-            parse_pid(&sudo(&sudo_start_args(token, owner))?)
+        fn sudo_serve(&self, token: &Path, owner: u32, fifo: &Path) -> Result<u32, String> {
+            parse_pid(&sudo(&sudo_serve_args(token, owner, fifo))?)
         }
 
         fn sudo_stop(&self) -> Result<(), String> {
@@ -522,7 +710,7 @@ mod other {
     use std::path::Path;
 
     use super::System;
-    use crate::amphetamine_helper::Auth;
+    use crate::amphetamine_helper::{Auth, Serve};
 
     #[derive(Default)]
     pub struct RealSystem;
@@ -532,7 +720,12 @@ mod other {
             Err("lid-closed mode is only on macOS".to_owned())
         }
 
-        fn install_and_start_lid(&self, _token: &Path, _owner: u32) -> Result<u32, String> {
+        fn install_and_start_lid(
+            &self,
+            _token: &Path,
+            _owner: u32,
+            _fifo: &Path,
+        ) -> Result<u32, String> {
             Err("lid-closed mode is only on macOS".to_owned())
         }
 
@@ -552,6 +745,18 @@ mod other {
             false
         }
 
+        fn touch_id_current(&self) -> bool {
+            false
+        }
+
+        fn make_fifo(&self, _fifo: &Path) -> Result<(), String> {
+            Err("lid-closed mode is only on macOS".to_owned())
+        }
+
+        fn send_serve(&self, _token: &Path, _fifo: &Path, _command: Serve) -> Result<(), String> {
+            Err("lid-closed mode is only on macOS".to_owned())
+        }
+
         fn biometrics_available(&self) -> bool {
             false
         }
@@ -568,7 +773,7 @@ mod other {
             Auth::Unavailable("only on macOS".to_owned())
         }
 
-        fn sudo_start(&self, _token: &Path, _owner: u32) -> Result<u32, String> {
+        fn sudo_serve(&self, _token: &Path, _owner: u32, _fifo: &Path) -> Result<u32, String> {
             Err("lid-closed mode is only on macOS".to_owned())
         }
 

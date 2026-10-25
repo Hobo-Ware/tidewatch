@@ -9,6 +9,7 @@ use crate::settings_ui::{self, Control, Tone};
 pub(crate) enum TouchId {
     Missing,
     Installed,
+    Outdated,
     Working,
 }
 
@@ -36,6 +37,11 @@ pub(crate) fn look(state: TouchId) -> Look {
             desc: "Amphetamine asks for your fingerprint, or your login password on a Mac without Touch ID. Remove deletes the helper and its sudo rule.",
             button: "Remove",
             click: Some(Click::Remove),
+        },
+        TouchId::Outdated => Look {
+            desc: "The helper is from an older Tidewatch, so Amphetamine asks for your password until you set it up again. Setting it up asks for your password once.",
+            button: "Set up again",
+            click: Some(Click::SetUp),
         },
         TouchId::Working => {
             Look { desc: "Waiting for macOS to finish.", button: "Working...", click: None }

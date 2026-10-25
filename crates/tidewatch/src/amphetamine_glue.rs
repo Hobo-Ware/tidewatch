@@ -11,7 +11,9 @@ use tidewatch_core::amphetamine::{ADD_S, Choice, Effect, Event, State, Voice, st
 use tidewatch_core::amphetamine_lid::{
     Marker, Recovery, read_marker, recovery, remove_marker, remove_token, write_marker, write_token,
 };
-use tidewatch_core::amphetamine_system::{Route, System, begin_lid, end_lid, route_of};
+use tidewatch_core::amphetamine_system::{
+    Route, Started, System, route_of, set_deadline, start_lid_or_serve, stop_lid,
+};
 use tidewatch_core::paths::TidewatchPaths;
 
 use crate::amphetamine_motion::{DEACTIVATE_S, Look};
@@ -82,17 +84,22 @@ impl Dev {
 pub(crate) struct Files {
     token: PathBuf,
     marker: PathBuf,
+    serve: PathBuf,
 }
 
 impl Files {
     pub(crate) fn of(paths: &TidewatchPaths) -> Self {
-        Self { token: paths.amphetamine_token_file(), marker: paths.amphetamine_marker_file() }
+        Self {
+            token: paths.amphetamine_token_file(),
+            marker: paths.amphetamine_marker_file(),
+            serve: paths.amphetamine_serve_file(),
+        }
     }
 
     fn nowhere() -> Self {
         let dir =
             std::env::temp_dir().join(format!("tidewatch-amphetamine-{}", std::process::id()));
-        Self { token: dir.join("token"), marker: dir.join("marker") }
+        Self { token: dir.join("token"), marker: dir.join("marker"), serve: dir.join("serve") }
     }
 }
 
@@ -108,6 +115,7 @@ pub(crate) enum NoticeKind {
     Restoring,
     Restored,
     Failed,
+    Outdated,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -139,12 +147,17 @@ pub(crate) fn notice_for(kind: NoticeKind, why: &str) -> Notice {
             "Sleep is still off",
             format!("Tidewatch could not turn it back on ({why}). Run sudo pmset -a disablesleep 0 in a terminal."),
         ),
+        NoticeKind::Outdated => (
+            "Touch ID helper is out of date",
+            "This start asked for your password. Set up Touch ID again under Keep awake in General settings, so later starts need only your fingerprint.".to_owned(),
+        ),
     };
     Notice { kind, title, body, foot: FOOT }
 }
 
 enum Done {
-    Started(Result<u32, String>),
+    Started(Result<Started, String>),
+    Deadline(Result<(), String>),
     Stopped(u64),
     Confirmed { epoch: u64, on: bool, ok: bool },
     Checked(Recovery),
@@ -173,6 +186,7 @@ pub(crate) struct Host<H: Hold> {
     touch_id_job: Option<Click>,
     autostart: Option<Choice>,
     route: Route,
+    serving: Option<u32>,
 }
 
 impl<H: Hold> Host<H> {
@@ -202,6 +216,7 @@ impl<H: Hold> Host<H> {
             touch_id_job: None,
             autostart: None,
             route: Route::Password,
+            serving: None,
         }
     }
 
@@ -244,7 +259,7 @@ impl<H: Hold> Host<H> {
         Some(if self.touch_id_job.is_some() {
             TouchId::Working
         } else if self.system.touch_id_installed() {
-            TouchId::Installed
+            if self.system.touch_id_current() { TouchId::Installed } else { TouchId::Outdated }
         } else {
             TouchId::Missing
         })
@@ -416,7 +431,14 @@ impl<H: Hold> Host<H> {
             }
             Effect::ReleaseHold => self.hold.release(),
             Effect::Say(voice) => self.voices.push(voice),
-            Effect::WriteDeadline(until) => self.write_token(until),
+            Effect::WriteDeadline(until) if self.serving.is_none() => self.write_token(until),
+            Effect::WriteDeadline(until) => {
+                let (system, serving) = (Arc::clone(&self.system), self.serving);
+                let (token, fifo) = (self.files.token.clone(), self.files.serve.clone());
+                self.jobs.spawn(ctx, move || {
+                    Done::Deadline(set_deadline(system.as_ref(), serving, &token, &fifo, until))
+                });
+            }
             Effect::StartLid { until } => {
                 if self.wrote {
                     write_marker(
@@ -424,10 +446,23 @@ impl<H: Hold> Host<H> {
                         &Marker { pid: std::process::id(), helper: None },
                     );
                 }
-                self.write_token(until);
-                let (system, token) = (Arc::clone(&self.system), self.files.token.clone());
+                if self.route == Route::Outdated {
+                    self.notice = Some(notice_for(NoticeKind::Outdated, ""));
+                }
+                if self.serving.is_none() {
+                    self.write_token(until);
+                }
+                let (system, serving) = (Arc::clone(&self.system), self.serving);
+                let (token, fifo) = (self.files.token.clone(), self.files.serve.clone());
                 self.jobs.spawn(ctx, move || {
-                    Done::Started(begin_lid(system.as_ref(), &token, std::process::id()))
+                    Done::Started(start_lid_or_serve(
+                        system.as_ref(),
+                        serving,
+                        &token,
+                        &fifo,
+                        std::process::id(),
+                        until,
+                    ))
                 });
             }
             Effect::ConfirmOn => {
@@ -443,10 +478,13 @@ impl<H: Hold> Host<H> {
                 remove_marker(&self.files.marker);
             }
             Effect::StopLid => {
-                remove_token(&self.files.token);
-                let (system, epoch) = (Arc::clone(&self.system), self.epoch);
+                if self.serving.is_none() {
+                    remove_token(&self.files.token);
+                }
+                let (system, epoch, serving) = (Arc::clone(&self.system), self.epoch, self.serving);
+                let (token, fifo) = (self.files.token.clone(), self.files.serve.clone());
                 self.jobs.spawn(ctx, move || {
-                    end_lid(system.as_ref());
+                    stop_lid(system.as_ref(), serving, &token, &fifo);
                     Done::Stopped(epoch)
                 });
             }
@@ -469,13 +507,17 @@ impl<H: Hold> Host<H> {
 
     fn apply_done(&mut self, done: Done, wall: f64, now: f64, ctx: &egui::Context) {
         match done {
-            Done::Started(Ok(helper)) => {
+            Done::Deadline(Err(why)) => {
+                eprintln!("tidewatch: the Amphetamine deadline did not reach the helper ({why})");
+            }
+            Done::Started(Ok(started)) => {
                 if self.wrote {
                     write_marker(
                         &self.files.marker,
-                        &Marker { pid: std::process::id(), helper: Some(helper) },
+                        &Marker { pid: std::process::id(), helper: Some(started.helper) },
                     );
                 }
+                self.serving = started.serving.then_some(started.helper);
                 self.event(&Event::Started, wall, now, ctx);
                 self.probe_route(ctx);
             }
@@ -499,7 +541,7 @@ impl<H: Hold> Host<H> {
                     self.event(&Event::Settled(ok), wall, now, ctx);
                 }
             }
-            Done::Stopped(_) | Done::Confirmed { .. } => {}
+            Done::Stopped(_) | Done::Confirmed { .. } | Done::Deadline(Ok(())) => {}
             Done::Routed(route) => self.route = route,
             Done::TouchIdSet(result) => {
                 self.touch_id_job = None;

@@ -4,7 +4,7 @@ use std::time::{Duration, Instant};
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use tidewatch_core::amphetamine_helper::Auth;
+use tidewatch_core::amphetamine_helper::{Auth, Serve};
 use tidewatch_core::amphetamine_lid::read_marker;
 use tidewatch_core::amphetamine_system::{Call, FakeSystem, Route};
 
@@ -424,8 +424,9 @@ fn the_first_start_on_a_mac_with_a_reader_installs_and_starts_in_one_prompt() {
     rig.until(is_on);
     assert_eq!(
         (setups(&rig.system), password_starts(&rig.system), sudo_starts(&rig.system)),
-        (1, 0, 1)
+        (1, 0, 0)
     );
+    assert_eq!(authentications(&rig.system), 0);
 }
 
 #[test]
@@ -442,7 +443,14 @@ fn a_cancelled_first_prompt_installs_nothing_and_asks_nothing_else() {
     assert_eq!(rig.host.touch_id(), Some(TouchId::Missing));
     assert_eq!(
         rig.system.calls(),
-        [Call::InstallAndStart { token: rig.files().token, owner: std::process::id() }]
+        [
+            Call::MakeFifo(rig.files().serve.clone()),
+            Call::InstallAndStart {
+                token: rig.files().token,
+                owner: std::process::id(),
+                fifo: rig.files().serve,
+            }
+        ]
     );
 }
 
@@ -488,7 +496,7 @@ fn each_dev_switch_value_shows_its_own_state_and_none_reaches_the_machine() {
 }
 
 fn sudo_starts(system: &FakeSystem) -> usize {
-    system.calls().iter().filter(|c| matches!(c, Call::SudoStart { .. })).count()
+    system.calls().iter().filter(|c| matches!(c, Call::SudoServe { .. })).count()
 }
 
 fn password_starts(system: &FakeSystem) -> usize {
@@ -534,8 +542,59 @@ fn turning_off_with_the_helper_installed_asks_it_to_restore_sleep_at_once() {
     rig.until(is_on);
     rig.turn_off();
     rig.until(|host| host.state() == State::Off);
-    assert!(rig.system.calls().contains(&Call::SudoStop));
+    assert!(
+        rig.system.calls().iter().any(|c| matches!(c, Call::SendServe { command: Serve::Off, .. }))
+    );
+    assert!(!rig.system.calls().contains(&Call::SudoStop));
     assert!(!rig.system.calls().contains(&Call::RestoreLid));
+}
+
+fn authentications(system: &FakeSystem) -> usize {
+    system.calls().iter().filter(|c| **c == Call::Authenticate).count()
+}
+
+#[test]
+fn a_second_activation_in_the_same_run_asks_nothing_and_sends_the_helper_a_command() {
+    let mut rig = Rig::with(FakeSystem::with_touch_id(), true);
+    rig.pick(Choice::Hour);
+    rig.until(is_on);
+    rig.turn_off();
+    rig.until(|host| host.state() == State::Off);
+    rig.pick(Choice::Hour);
+    rig.until(is_on);
+    assert_eq!((authentications(&rig.system), sudo_starts(&rig.system)), (1, 1));
+    assert!(
+        rig.system
+            .calls()
+            .iter()
+            .any(|c| matches!(c, Call::SendServe { command: Serve::On(_), .. }))
+    );
+}
+
+#[test]
+fn a_helper_gone_before_the_next_activation_asks_for_the_fingerprint_again() {
+    let mut rig = Rig::with(FakeSystem::with_touch_id(), true);
+    rig.pick(Choice::Hour);
+    rig.until(is_on);
+    rig.system.owner_exits();
+    rig.turn_off();
+    rig.until(|host| host.state() == State::Off);
+    rig.pick(Choice::Hour);
+    rig.until(is_on);
+    assert_eq!((authentications(&rig.system), sudo_starts(&rig.system)), (2, 2));
+}
+
+#[test]
+fn an_outdated_helper_starts_with_the_password_and_asks_for_setup_again() {
+    let mut rig = Rig::with(FakeSystem::with_outdated_helper(), true);
+    rig.host.check_last_run(&rig.ctx);
+    rig.until(|host| host.route() == Route::Outdated);
+    assert_eq!(rig.host.touch_id(), Some(TouchId::Outdated));
+    rig.pick(Choice::Hour);
+    rig.until(is_on);
+    assert_eq!(rig.host.notice().map(|notice| notice.kind), Some(NoticeKind::Outdated));
+    assert_eq!((authentications(&rig.system), sudo_starts(&rig.system)), (0, 0));
+    assert_eq!(password_starts(&rig.system), 1);
 }
 
 struct Gated {
@@ -563,8 +622,17 @@ impl System for Gated {
     fn touch_id_installed(&self) -> bool {
         self.inner.touch_id_installed()
     }
-    fn install_and_start_lid(&self, token: &Path, owner: u32) -> Result<u32, String> {
-        self.inner.install_and_start_lid(token, owner)
+    fn install_and_start_lid(&self, token: &Path, owner: u32, fifo: &Path) -> Result<u32, String> {
+        self.inner.install_and_start_lid(token, owner, fifo)
+    }
+    fn touch_id_current(&self) -> bool {
+        self.inner.touch_id_current()
+    }
+    fn make_fifo(&self, fifo: &Path) -> Result<(), String> {
+        self.inner.make_fifo(fifo)
+    }
+    fn send_serve(&self, token: &Path, fifo: &Path, command: Serve) -> Result<(), String> {
+        self.inner.send_serve(token, fifo, command)
     }
     fn biometrics_available(&self) -> bool {
         self.inner.biometrics_available()
@@ -578,8 +646,8 @@ impl System for Gated {
     fn authenticate(&self, reason: &str) -> Auth {
         self.inner.authenticate(reason)
     }
-    fn sudo_start(&self, token: &Path, owner: u32) -> Result<u32, String> {
-        self.inner.sudo_start(token, owner)
+    fn sudo_serve(&self, token: &Path, owner: u32, fifo: &Path) -> Result<u32, String> {
+        self.inner.sudo_serve(token, owner, fifo)
     }
     fn sudo_stop(&self) -> Result<(), String> {
         self.inner.sudo_stop()
@@ -633,7 +701,7 @@ fn the_button_is_off_as_soon_as_the_stop_returns_and_the_check_runs_after() {
     rig.turn_off();
     rig.until(|host| host.state() == State::Off);
     assert_eq!(rig.host.take_voices(), [Voice::End]);
-    assert!(inner.calls().contains(&Call::SudoStop));
+    assert!(inner.calls().iter().any(|c| matches!(c, Call::SendServe { command: Serve::Off, .. })));
     assert!(
         read_marker(&rig.files().marker).is_some(),
         "the marker stays until sleep is confirmed"
