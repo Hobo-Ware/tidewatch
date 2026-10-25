@@ -54,7 +54,7 @@ fn ref_lines(remote: &Path, env: &[(String, String)]) -> Vec<String> {
 fn guarded_env(
     base: &[(String, String)],
     helper_dir: Option<&Path>,
-    push_branch: Option<&str>,
+    protected: Option<&str>,
 ) -> Vec<(String, String)> {
     let table = AgentTable::builtin();
     let profile = Profile {
@@ -71,7 +71,7 @@ fn guarded_env(
     let ctx = LaunchCtx {
         worktree_tab: true,
         guard_bin_dir: helper_dir.map(Path::to_path_buf),
-        push_branch: push_branch.map(str::to_owned),
+        protected_branch: protected.map(str::to_owned),
         env: base.to_vec(),
         ..LaunchCtx::default()
     };
@@ -83,6 +83,7 @@ fn guarded_env(
 }
 
 const OWN: &str = "agent/brave-otter";
+const THEIRS: &str = "agent/investigate-fix-season";
 
 struct Repo {
     _root: tempfile::TempDir,
@@ -113,7 +114,7 @@ impl Repo {
     }
 
     fn guarded(&self) -> Vec<(String, String)> {
-        guarded_env(&self.normal, Some(&self.helper_dir), Some(OWN))
+        guarded_env(&self.normal, Some(&self.helper_dir), Some("main"))
     }
 
     fn remote_refs(&self) -> Vec<String> {
@@ -135,7 +136,7 @@ impl Repo {
 }
 
 #[test]
-fn an_agent_pushes_its_own_branch_in_every_form_including_force() {
+fn an_agent_pushes_any_branch_but_the_default_in_every_form_including_force() {
     if !git_available() {
         eprintln!("git not found; skipping");
         return;
@@ -182,7 +183,64 @@ fn an_agent_pushes_its_own_branch_in_every_form_including_force() {
 }
 
 #[test]
-fn every_other_push_is_refused_with_the_tidewatch_message_and_fetch_still_works() {
+fn an_agent_pushes_and_deletes_a_branch_another_tab_made() {
+    if !git_available() {
+        eprintln!("git not found; skipping");
+        return;
+    }
+    let repo = Repo::new();
+    let env = repo.guarded();
+    let main_before = repo.remote_sha("main");
+    let url = repo.remote.to_str().unwrap().to_owned();
+    let theirs_ref = format!("refs/heads/{THEIRS}");
+    ok(&repo.work, &repo.normal, &["push", "-q", "origin", &format!("origin/main:{theirs_ref}")]);
+    ok(&repo.work, &repo.normal, &["checkout", "-q", "-b", THEIRS, "origin/main"]);
+    let lease =
+        format!("--force-with-lease={theirs_ref}:{}", repo.remote_sha(&theirs_ref).unwrap());
+    let plus = format!("+{THEIRS}");
+    let to_url = format!("HEAD:{theirs_ref}");
+    let steps: [(&str, Vec<&str>, bool); 8] = [
+        ("push --force-with-lease=ref:sha", vec!["push", &lease, "origin", THEIRS], false),
+        ("plain push", vec!["push", "origin", THEIRS], false),
+        ("push -u", vec!["push", "-u", "origin", THEIRS], false),
+        ("push HEAD", vec!["push", "origin", "HEAD"], false),
+        ("push to the explicit url", vec!["push", &url, &to_url], false),
+        ("push --force after a fold", vec!["push", "--force", "origin", THEIRS], true),
+        (
+            "push --force-with-lease after a fold",
+            vec!["push", "--force-with-lease", "origin", THEIRS],
+            true,
+        ),
+        ("push +refspec after a fold", vec!["push", "origin", &plus], true),
+    ];
+    for (label, args, fold) in steps {
+        if fold {
+            repo.rewrite_head();
+        } else {
+            ok(&repo.work, &repo.normal, &["commit", "-q", "--allow-empty", "-m", label]);
+        }
+        let out = git(&repo.work, &env, &args);
+        assert!(out.status.success(), "{label}: {}", String::from_utf8_lossy(&out.stderr));
+        assert_eq!(repo.remote_sha(&theirs_ref), Some(repo.head()), "{label} moved the branch");
+    }
+    ok(&repo.work, &repo.normal, &["commit", "-q", "--allow-empty", "-m", "by sha"]);
+    let by_sha = format!("{}:{theirs_ref}", repo.head());
+    let out = git(&repo.work, &env, &["push", "origin", &by_sha]);
+    assert!(out.status.success(), "push by sha: {}", String::from_utf8_lossy(&out.stderr));
+    assert_eq!(repo.remote_sha(&theirs_ref), Some(repo.head()));
+
+    let out = git(&repo.work, &env, &["push", "origin", "--delete", THEIRS]);
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    assert_eq!(
+        repo.remote_sha(&theirs_ref),
+        None,
+        "a branch other than the default can be deleted"
+    );
+    assert_eq!(repo.remote_sha("main"), main_before, "main never moved");
+}
+
+#[test]
+fn the_default_branch_tags_and_mixed_batches_are_refused_and_fetch_still_works() {
     if !git_available() {
         eprintln!("git not found; skipping");
         return;
@@ -192,27 +250,37 @@ fn every_other_push_is_refused_with_the_tidewatch_message_and_fetch_still_works(
     ok(&repo.work, &env, &["push", "-q", "origin", OWN]);
     ok(&repo.work, &repo.normal, &["tag", "v1"]);
     ok(&repo.work, &repo.normal, &["commit", "-q", "--allow-empty", "-m", "two"]);
+    ok(&repo.work, &repo.normal, &["branch", "-f", "main", "HEAD"]);
     let before = repo.remote_refs();
     let url = repo.remote.to_str().unwrap().to_owned();
-    let delete_own = format!(":{OWN}");
-    let attempts: [(&str, Vec<&str>); 15] = [
+    let main_sha = repo.remote_sha("main").unwrap();
+    let lease_main = format!("--force-with-lease=main:{main_sha}");
+    let attempts: [(&str, Vec<&str>); 20] = [
         ("push to main", vec!["push", "origin", "HEAD:main"]),
+        ("push to refs/heads/main", vec!["push", "origin", "HEAD:refs/heads/main"]),
+        ("push -u to main", vec!["push", "-u", "origin", "HEAD:main"]),
         ("push --no-verify to main", vec!["push", "--no-verify", "origin", "HEAD:main"]),
         ("push --force to main", vec!["push", "--force", "origin", "HEAD:main"]),
         (
             "push --force-with-lease to main",
             vec!["push", "--force-with-lease", "origin", "HEAD:main"],
         ),
+        (
+            "push --force-with-lease=main:sha to main",
+            vec!["push", &lease_main, "origin", "HEAD:main"],
+        ),
         ("push +refspec to main", vec!["push", "origin", "+HEAD:main"]),
-        ("push another branch", vec!["push", "origin", "other"]),
-        ("push a new branch", vec!["push", "origin", "HEAD:refs/heads/new-one"]),
-        ("push to the explicit url", vec!["push", &url, "HEAD:refs/heads/explicit"]),
-        ("push --delete own branch", vec!["push", "origin", "--delete", OWN]),
-        ("push :own branch", vec!["push", "origin", &delete_own]),
+        ("push the local main", vec!["push", "origin", "main"]),
+        ("push to main by explicit url", vec!["push", &url, "HEAD:refs/heads/main"]),
+        ("push --delete main", vec!["push", "origin", "--delete", "main"]),
+        ("push :main", vec!["push", "origin", ":main"]),
+        ("push :refs/heads/main by explicit url", vec!["push", &url, ":refs/heads/main"]),
         ("push a tag", vec!["push", "origin", "v1"]),
+        ("push a new tag by refspec", vec!["push", "origin", "HEAD:refs/tags/v2"]),
         ("push --tags", vec!["push", "origin", "--tags"]),
         ("push --all", vec!["push", "--all", "origin"]),
         ("push --mirror", vec!["push", "--mirror", "origin"]),
+        ("push own branch with main in the batch", vec!["push", "origin", OWN, "HEAD:main"]),
         ("push own branch with a tag in the batch", vec!["push", "origin", OWN, "v1"]),
     ];
     for (label, args) in attempts {
@@ -221,6 +289,7 @@ fn every_other_push_is_refused_with_the_tidewatch_message_and_fetch_still_works(
         println!("{label}: exit {:?}: {}", out.status.code(), stderr.trim().replace('\n', " | "));
         assert!(!out.status.success(), "{label} must fail");
         assert!(stderr.contains(NO_PUSH_MESSAGE), "{label} shows the Tidewatch message: {stderr}");
+        assert!(stderr.contains("(main)"), "{label} names the default branch: {stderr}");
         assert_eq!(repo.remote_refs(), before, "{label} changed nothing on the remote");
     }
     let fetch = git(&repo.work, &env, &["fetch", "origin"]);
@@ -228,7 +297,29 @@ fn every_other_push_is_refused_with_the_tidewatch_message_and_fetch_still_works(
 }
 
 #[test]
-fn without_a_branch_or_a_helper_nothing_can_be_pushed_and_a_normal_shell_still_pushes() {
+fn a_default_branch_that_is_not_main_is_refused_by_name_and_main_stays_refused() {
+    if !git_available() {
+        eprintln!("git not found; skipping");
+        return;
+    }
+    let repo = Repo::new();
+    ok(&repo.work, &repo.normal, &["push", "-q", "origin", "HEAD:refs/heads/trunk"]);
+    ok(&repo.work, &repo.normal, &["commit", "-q", "--allow-empty", "-m", "two"]);
+    let env = guarded_env(&repo.normal, Some(&repo.helper_dir), Some("trunk"));
+    let before = repo.remote_refs();
+    for target in ["trunk", "main", "master"] {
+        let out = git(&repo.work, &env, &["push", "--force", "origin", &format!("HEAD:{target}")]);
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(!out.status.success(), "{target} must be refused");
+        assert!(stderr.contains("(trunk)"), "{target} names the default branch: {stderr}");
+        assert_eq!(repo.remote_refs(), before, "{target} changed nothing");
+    }
+    let out = git(&repo.work, &env, &["push", "origin", &format!("HEAD:{THEIRS}")]);
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+}
+
+#[test]
+fn without_a_resolved_default_main_and_master_stay_refused_and_without_a_helper_nothing_goes() {
     if !git_available() {
         eprintln!("git not found; skipping");
         return;
@@ -236,11 +327,18 @@ fn without_a_branch_or_a_helper_nothing_can_be_pushed_and_a_normal_shell_still_p
     let repo = Repo::new();
     ok(&repo.work, &repo.normal, &["commit", "-q", "--allow-empty", "-m", "two"]);
     let before = repo.remote_refs();
-    let no_branch = guarded_env(&repo.normal, Some(&repo.helper_dir), None);
-    let out = git(&repo.work, &no_branch, &["push", "origin", OWN]);
-    assert!(!out.status.success(), "with no branch named, even an agent/ branch is refused");
-    let no_helper = guarded_env(&repo.normal, None, Some(OWN));
-    let out = git(&repo.work, &no_helper, &["push", "origin", OWN]);
+    let unresolved = guarded_env(&repo.normal, Some(&repo.helper_dir), None);
+    for target in ["main", "master"] {
+        let out = git(&repo.work, &unresolved, &["push", "origin", &format!("HEAD:{target}")]);
+        assert!(!out.status.success(), "{target} is refused with no default resolved");
+    }
+    assert_eq!(repo.remote_refs(), before);
+    let out = git(&repo.work, &unresolved, &["push", "origin", OWN]);
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+
+    let no_helper = guarded_env(&repo.normal, None, Some("main"));
+    let before = repo.remote_refs();
+    let out = git(&repo.work, &no_helper, &["push", "origin", THEIRS]);
     assert!(!out.status.success(), "the guard holds even when the helper script is missing");
     assert_eq!(repo.remote_refs(), before);
 

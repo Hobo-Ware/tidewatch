@@ -291,7 +291,7 @@ fn form(ui: &mut Ui, draft: &mut Draft, agents: &[(String, String)]) -> bool {
             );
             ui.add_space(2.0);
             changed |=
-                switch_line(ui, "Only let this agent push its own branch", &mut draft.never_push);
+                switch_line(ui, "Keep this agent off the default branch", &mut draft.never_push);
             changed |= switch_line(ui, "Add the Tidewatch house style", &mut draft.house_style);
         },
     );

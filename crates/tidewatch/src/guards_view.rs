@@ -76,7 +76,7 @@ pub(crate) fn card(ui: &mut Ui, prefs: &GuardPrefs, repo: Option<&Repo>) -> Opti
         }
         row(
             ui,
-            "Agents push only their own branch",
+            "Agents never push the default branch",
             "A profile setting, under Agents and profiles. Tidewatch opens the pull request itself.",
             Control::NONE,
             |_| {},

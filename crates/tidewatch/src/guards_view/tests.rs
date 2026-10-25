@@ -61,7 +61,7 @@ fn the_card_lists_every_rule_with_its_title_and_its_reason() {
         assert!(shown.contains(rule.title()), "{} missing", rule.title());
         assert!(shown.contains(rule.reason()), "{} missing", rule.reason());
     }
-    assert!(shown.contains("Agents push only their own branch"));
+    assert!(shown.contains("Agents never push the default branch"));
 }
 
 #[test]
