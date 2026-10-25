@@ -24,6 +24,7 @@ use tidewatch_core::history::BaseCompare;
 use crate::agent_avatar;
 use crate::brand;
 use crate::commit_files::{self, Spot};
+use crate::last_turn::LastTurn;
 use crate::progress_view::{self, Side, TabState};
 use crate::screen_kit::{body, mono};
 use crate::search_bar;
@@ -37,6 +38,7 @@ const BODY_PAD_X: f32 = 8.0;
 const BODY_PAD_Y: f32 = 6.0;
 const PILL_GAP: f32 = 10.0;
 const SWITCH_GAP: f32 = 8.0;
+const DOT_R: f32 = 3.0;
 const FACE: f32 = 24.0;
 const FACE_GAP: f32 = 8.0;
 const CORNER_STEPS: u32 = 8;
@@ -79,8 +81,11 @@ pub(crate) fn show(
     let first = progress.as_ref().map_or(Side::Progress, |input| input.first);
     let shown = progress_view::side_shown(state.chosen, progress.is_some(), first);
     state.shown = Some(shown);
+    let attention =
+        progress.as_ref().and_then(|input| input.last_turn.as_ref()).and_then(LastTurn::attention);
+    let dot = shown != Side::Progress && state.unseen(attention);
     if let Some(chose) =
-        show_card_header(ui, header, view, (shown, progress.is_some()), face.as_ref())
+        show_card_header(ui, header, view, (shown, progress.is_some(), dot), face.as_ref())
     {
         state.chosen = Some(chose);
     }
@@ -191,7 +196,7 @@ fn show_card_header(
     ui: &mut Ui,
     rect: Rect,
     view: &TabView,
-    (shown, has_progress): (Side, bool),
+    (shown, has_progress, dot): (Side, bool, bool),
     face: Option<&Face<'_>>,
 ) -> Option<Side> {
     let painter = ui.painter().clone();
@@ -206,6 +211,10 @@ fn show_card_header(
     let control =
         segmented::show_badged(ui, id, rect.right() - 10.0, center_y, (&labels, &badges), active);
     let chose = control.clicked.and_then(|index| sides.get(index).copied());
+    if dot && let Some(segment) = sides.iter().position(|side| *side == Side::Progress) {
+        let at = control.segments[segment].right_top() + vec2(-6.0, 6.0);
+        painter.circle_filled(at, DOT_R, brand::NEEDS);
+    }
     let right = control.left - SWITCH_GAP;
     let mut x = rect.left() + CARD_PAD;
     if let Some(face) = face {
@@ -407,6 +416,8 @@ mod tests {
         with_ledger: bool,
         stale: bool,
         face: Option<Arc<Avatar>>,
+        last_turn: Option<LastTurn>,
+        shapes: Vec<egui::epaint::ClippedShape>,
         texts: Vec<(String, egui::Rect)>,
         out: Out,
     }
@@ -434,6 +445,8 @@ mod tests {
                 with_ledger,
                 stale: false,
                 face: None,
+                last_turn: None,
+                shapes: Vec::new(),
                 texts: Vec::new(),
                 out: Out::default(),
             };
@@ -453,6 +466,7 @@ mod tests {
                 (&mut self.view, &mut self.avatars, &self.ledger, &mut self.state);
             let (with_ledger, stale) = (self.with_ledger, self.stale);
             let face = self.face.clone();
+            let last_turn = self.last_turn.clone();
             let mut out = Out::default();
             let output = self.ctx.run_ui(raw, |ui| {
                 let progress = with_ledger.then_some(progress_view::Input {
@@ -464,6 +478,7 @@ mod tests {
                     animate: false,
                     first: Side::Progress,
                     meeseeks: None,
+                    last_turn: last_turn.clone(),
                 });
                 let rect = Rect::from_min_size(pos2(0.0, 0.0), vec2(420.0, 600.0));
                 let face = face.as_ref().map(|avatar| Face { tab: 1, avatar });
@@ -471,6 +486,7 @@ mod tests {
                 out = show(ui, rect, view, avatars, true, panel);
             });
             self.out = out;
+            self.shapes.clone_from(&output.shapes);
             self.texts.clear();
             for clipped in &output.shapes {
                 collect(&clipped.shape, &mut self.texts);
@@ -534,6 +550,69 @@ mod tests {
         let card = Card::new(false);
         assert!(card.at("Progress").is_none());
         assert!(card.at("This branch").is_some());
+    }
+
+    fn asking() -> LastTurn {
+        let block = tidewatch_core::end_block::EndBlock {
+            done: vec!["Did it".into()],
+            needs_you: vec!["Which base?".into()],
+            next: Vec::new(),
+        };
+        LastTurn::of(Some(&block), None, Ok(())).unwrap()
+    }
+
+    fn dot_pixels(card: &Card) -> usize {
+        let on = card.at("Progress").unwrap();
+        let mut found = 0;
+        for clipped in &card.shapes {
+            count_dots(&clipped.shape, on, &mut found);
+        }
+        found
+    }
+
+    fn count_dots(shape: &Shape, near: Pos2, found: &mut usize) {
+        match shape {
+            Shape::Circle(circle)
+                if circle.fill == brand::NEEDS && (circle.center - near).length() < 40.0 =>
+            {
+                *found += 1;
+            }
+            Shape::Vec(shapes) => shapes.iter().for_each(|shape| count_dots(shape, near, found)),
+            _ => {}
+        }
+    }
+
+    #[test]
+    fn a_new_needs_you_item_puts_a_dot_on_progress_while_another_side_shows_and_showing_it_clears_it()
+     {
+        let mut card = Card::new(true);
+        card.last_turn = Some(asking());
+        card.state.chosen = Some(Side::History);
+        card.frame(Vec::new());
+        assert_eq!(dot_pixels(&card), 1);
+        let progress = card.at("Progress").unwrap();
+        card.click(progress);
+        assert_eq!(card.state.shown, Some(Side::Progress));
+        assert!(card.at("Which base?").is_some());
+        let history = card.at("History").unwrap();
+        card.click(history);
+        assert_eq!(card.state.shown, Some(Side::History));
+        assert_eq!(dot_pixels(&card), 0, "what Progress showed is not new again");
+        card.last_turn = Some(LastTurn { needs: vec!["Another?".into()], ..asking() });
+        card.frame(Vec::new());
+        assert_eq!(dot_pixels(&card), 1, "a different question is new");
+    }
+
+    #[test]
+    fn no_dot_without_a_needs_you_item_or_a_check() {
+        let mut card = Card::new(true);
+        card.state.chosen = Some(Side::History);
+        card.last_turn = Some(LastTurn { needs: Vec::new(), ..asking() });
+        card.frame(Vec::new());
+        assert_eq!(dot_pixels(&card), 0);
+        card.last_turn = None;
+        card.frame(Vec::new());
+        assert_eq!(dot_pixels(&card), 0);
     }
 
     #[test]

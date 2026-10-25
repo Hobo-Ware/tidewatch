@@ -1,21 +1,11 @@
-//! The done check card: a band on the agent tab with the outcome, what passed and one line for each
-//! check that failed, could not run or does not apply. [`card_of`] is the data; `show` draws it.
+//! The done check card as data: the outcome, what passed and one line for each check that failed,
+//! could not run or does not apply. [`card_of`] is the data; the Progress panel's Last turn section
+//! (`last_turn_view.rs`) draws it.
 
-use egui::{Align, Align2, Layout, Rect, Ui, UiBuilder, pos2, vec2};
 use tidewatch_core::done_check::{Kind, Outcome, Report, Status};
 use tidewatch_core::pr_status::Tone;
 
-use crate::brand;
-use crate::done_check_glue::Look;
-use crate::pr_strip::tone_ink;
-use crate::reader_view::{INSET, ellipsized, paint_item};
-use crate::screen_kit::{Size, body, primary_button, quiet_button};
-
-pub(crate) const BAND_H: f32 = 40.0;
-const ROW_H: f32 = 18.0;
-const ROWS_PAD: f32 = 8.0;
 const MAX_ITEMS: usize = 3;
-const BUTTONS_GAP: f32 = 8.0;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct Row {
@@ -106,91 +96,10 @@ pub(crate) fn card_of(report: &Report) -> Card {
     }
 }
 
-pub(crate) fn height(look: &Look) -> f32 {
-    match look {
-        Look::Checking => BAND_H,
-        Look::Report(report) => {
-            let rows = card_of(report).rows.len();
-            if rows == 0 { BAND_H } else { BAND_H + ROWS_PAD + ROW_H * rows as f32 }
-        }
-    }
-}
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Action {
     AskFix,
     CheckAgain,
-}
-
-pub(crate) fn show(
-    ui: &mut Ui,
-    rect: Rect,
-    look: &Look,
-    can_ask: Result<(), &'static str>,
-    owner_asks: bool,
-) -> Option<Action> {
-    let card_rect = rect.shrink2(vec2(INSET, 4.0));
-    paint_item(ui.painter(), card_rect, false);
-    let mid = card_rect.top() + (BAND_H - 8.0) / 2.0;
-    let dot_x = card_rect.left() + 16.0;
-    let text_x = card_rect.left() + 32.0;
-    let Look::Report(report) = look else {
-        ui.painter().circle_filled(pos2(dot_x, mid), 4.5, brand::MUTED);
-        ui.painter().text(
-            pos2(text_x, mid),
-            Align2::LEFT_CENTER,
-            "Checking that the work landed...",
-            body(13.0),
-            brand::MUTED,
-        );
-        return None;
-    };
-    let card = card_of(report);
-    let ink = tone_ink(card.tone);
-    ui.painter().circle_filled(pos2(dot_x, mid), 4.5, ink);
-    let title = ui.painter().layout_no_wrap(card.title.to_owned(), body(13.0), ink);
-    let title_w = title.size().x;
-    ui.painter().galley(pos2(text_x, mid - title.size().y / 2.0), title, ink);
-
-    let header = Rect::from_min_size(card_rect.min, vec2(card_rect.width(), BAND_H - 8.0));
-    let mut action = None;
-    let mut buttons_w = 0.0;
-    ui.scope_builder(
-        UiBuilder::new()
-            .max_rect(header.shrink2(vec2(10.0, 0.0)))
-            .layout(Layout::right_to_left(Align::Center)),
-        |ui| {
-            ui.spacing_mut().item_spacing.x = BUTTONS_GAP;
-            let start = ui.cursor().right();
-            if card.ask_fix && owner_asks {
-                let sent = primary_button(ui, "Ask agent to fix", can_ask.is_ok(), Size::Compact);
-                let sent = match can_ask {
-                    Ok(()) => sent,
-                    Err(why) => sent.on_hover_text(why),
-                };
-                if sent.clicked() {
-                    action = Some(Action::AskFix);
-                }
-            }
-            if card.check_again && quiet_button(ui, "Check again", true, Size::Compact).clicked() {
-                action = Some(Action::CheckAgain);
-            }
-            buttons_w = start - ui.cursor().right();
-        },
-    );
-    let room = (card_rect.width() - 32.0 - title_w - 16.0 - buttons_w - 20.0).max(0.0);
-    let summary = ellipsized(ui.painter(), &card.summary, body(12.5), brand::MUTED, room);
-    let summary_x = text_x + title_w + 12.0;
-    ui.painter().galley(pos2(summary_x, mid - summary.size().y / 2.0), summary, brand::MUTED);
-
-    let row_room = card_rect.width() - 32.0 - 16.0;
-    for (i, row) in card.rows.iter().enumerate() {
-        let y = card_rect.top() + BAND_H - 8.0 + ROWS_PAD / 2.0 + ROW_H * (i as f32 + 0.5);
-        let ink = if row.tone == Tone::Quiet { brand::MUTED } else { tone_ink(row.tone) };
-        let galley = ellipsized(ui.painter(), &row.text, body(12.5), ink, row_room);
-        ui.painter().galley(pos2(text_x, y - galley.size().y / 2.0), galley, ink);
-    }
-    action
 }
 
 #[cfg(test)]
@@ -287,17 +196,5 @@ mod tests {
         assert_eq!(card.title, "Done");
         assert_eq!(texts(&card), ["Pull request: not checked, no pull request for this branch"]);
         assert_eq!(card.rows[0].tone, Tone::Quiet);
-    }
-
-    #[test]
-    fn the_band_grows_with_its_rows() {
-        let none = Look::Report(report(vec![line(Kind::Pushed, Status::Pass, "ok")], &[]));
-        let two = Look::Report(report(
-            vec![line(Kind::Pushed, Status::Fail, "x"), line(Kind::Committed, Status::Fail, "y")],
-            &[],
-        ));
-        assert_eq!(height(&Look::Checking), BAND_H);
-        assert_eq!(height(&none), BAND_H);
-        assert_eq!(height(&two), BAND_H + ROWS_PAD + 2.0 * ROW_H);
     }
 }

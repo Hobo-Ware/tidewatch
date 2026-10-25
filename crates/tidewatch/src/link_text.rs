@@ -1,6 +1,6 @@
 //! Painted text with clickable web links: the links of `links::plain` in teal, an underline and a
 //! pointing hand under the pointer, the full address as a tooltip, and a click that opens it in
-//! the browser. The Progress panel and the end block card lay their lines out through `Text`.
+//! the browser. The Progress panel lays its lines out through `Text`.
 
 use std::ops::Range;
 use std::sync::Arc;

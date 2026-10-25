@@ -1,7 +1,12 @@
 //! The panel: pure choices, and headless frames for the clicks and for text that never overlaps.
 
 use egui::{Event, Modifiers, PointerButton, Pos2, RawInput, Rect, Shape, pos2, vec2};
+use tidewatch_core::done_check::{Kind, Line, Report, Status};
+use tidewatch_core::end_block::EndBlock;
 use tidewatch_core::progress::Ledger;
+
+use crate::done_check_glue::Look;
+use crate::done_check_view;
 
 use super::*;
 
@@ -15,6 +20,7 @@ struct Panel {
     ctx: egui::Context,
     ledger: Option<TabLedger>,
     jobs: Vec<Card>,
+    last_turn: Option<LastTurn>,
     state: TabState,
     size: egui::Vec2,
     texts: Vec<(String, Rect)>,
@@ -28,6 +34,7 @@ impl Panel {
             ctx: crate::fonts::test_context(),
             ledger: Some(known(text)),
             jobs: Vec::new(),
+            last_turn: None,
             state: TabState::default(),
             size: vec2(width, 900.0),
             texts: Vec::new(),
@@ -49,6 +56,7 @@ impl Panel {
         let mut action = None;
         let (ledger, jobs, state, size) =
             (self.ledger.as_ref(), &self.jobs, &mut self.state, self.size);
+        let last_turn = self.last_turn.clone();
         let output = self.ctx.run_ui(raw, |ui| {
             let input = Input {
                 ledger,
@@ -59,6 +67,7 @@ impl Panel {
                 animate: false,
                 first: Side::Progress,
                 meeseeks: None,
+                last_turn: last_turn.clone(),
             };
             action = show(ui, Rect::from_min_size(pos2(0.0, 0.0), size), &input, state);
         });
@@ -311,4 +320,163 @@ fn a_link_in_the_goal_a_row_a_note_and_the_question_opens_and_plain_text_does_no
     }
     let opened = panel.opened_by_clicking_along("Plain item", 3);
     assert_eq!(opened.len(), 0);
+}
+
+fn turn(check: Option<Look>, can_ask: Result<(), &'static str>) -> LastTurn {
+    let own = |items: &[&str]| items.iter().map(|s| (*s).to_owned()).collect();
+    let block = EndBlock {
+        done: own(&["Added `FilterBar` to the board", "Kept the filters in the URL"]),
+        needs_you: own(&["Should the filters apply to the archived column?"]),
+        next: own(&["Add keyboard shortcuts"]),
+    };
+    LastTurn::of(Some(&block), check, can_ask).unwrap()
+}
+
+fn blocked() -> Look {
+    let line = |kind, status, detail: &str| Line { kind, status, detail: detail.to_owned() };
+    Look::Report(Report {
+        head: String::new(),
+        lines: vec![
+            line(Kind::Pushed, Status::Fail, "2 commits not pushed"),
+            line(Kind::Unverified, Status::Unknown, "1 item the agent did not verify"),
+        ],
+        unverified: vec!["the Safari layout".to_owned()],
+    })
+}
+
+const SMALL: &str = "# Goal\nx\n\n## Status\nphase: 2 Build\nstate: working\n";
+
+fn tall(text: &str, width: f32, last_turn: LastTurn) -> Panel {
+    let mut panel = Panel::new(text, width);
+    panel.size = vec2(width, 2400.0);
+    panel.last_turn = Some(last_turn);
+    panel.frame(Vec::new());
+    panel.frame(Vec::new());
+    panel
+}
+
+#[test]
+fn the_last_turn_lists_done_needs_you_and_next_with_the_check_as_rows() {
+    let panel = tall(SMALL, 420.0, turn(Some(blocked()), Ok(())));
+    for text in [
+        "Last turn",
+        "Done",
+        "Needs you",
+        "Next",
+        "Checks",
+        "Kept the filters in the URL",
+        "Should the filters apply to the archived column?",
+        "Add keyboard shortcuts",
+        "Blocked",
+        "Pushed: 2 commits not pushed",
+        "Answer",
+        "Ask agent to fix",
+        "Check again",
+    ] {
+        assert!(panel.drawn(text), "{text:?} not drawn in {:?}", panel.texts);
+    }
+    let top = |text: &str| panel.texts.iter().find(|(t, _)| t == text).unwrap().1.top();
+    assert!(top("Last turn") < top("Done") && top("Done") < top("Needs you"));
+    assert!(top("Needs you") < top("Next") && top("Next") < top("Checks"));
+}
+
+#[test]
+fn a_tab_that_runs_on_its_own_gets_no_ask_agent_to_fix_button() {
+    let own = LastTurn { owner_asks: false, ..turn(Some(blocked()), Ok(())) };
+    let panel = tall(SMALL, 420.0, own);
+    assert!(!panel.drawn("Ask agent to fix"), "{:?}", panel.texts);
+    assert!(panel.drawn("Check again"));
+}
+
+#[test]
+fn the_last_turn_sits_under_the_stages_and_above_the_checklist() {
+    let text = format!("{SMALL}\n## Checklist\n### 2. Build\n- [~] Wire the list\n");
+    let panel = tall(&text, 420.0, turn(None, Ok(())));
+    let top = |text: &str| panel.texts.iter().find(|(t, _)| t == text).unwrap().1.top();
+    assert!(top("Build") < top("Last turn") && top("Last turn") < top("Wire the list"));
+}
+
+#[test]
+fn a_summary_that_asks_nothing_has_no_needs_you_and_no_answer() {
+    let own = |items: &[&str]| items.iter().map(|s| (*s).to_owned()).collect();
+    let block =
+        EndBlock { done: own(&["Did it"]), needs_you: own(&["nothing"]), next: own(&["Ship"]) };
+    let panel = tall(SMALL, 420.0, LastTurn::of(Some(&block), None, Ok(())).unwrap());
+    assert!(panel.drawn("Done") && panel.drawn("Next"));
+    assert!(!panel.drawn("Needs you") && !panel.drawn("Answer") && !panel.drawn("Checks"));
+}
+
+#[test]
+fn the_buttons_of_the_last_turn_send_the_same_asks_the_panel_always_did() {
+    let mut panel = tall(SMALL, 420.0, turn(Some(blocked()), Ok(())));
+    let at = panel.center_of("Answer");
+    assert_eq!(panel.click(at), Some(Action::Answer));
+    let at = panel.center_of("Check again");
+    assert_eq!(panel.click(at), Some(Action::DoneCheck(done_check_view::Action::CheckAgain)));
+    let at = panel.center_of("Ask agent to fix");
+    assert_eq!(panel.click(at), Some(Action::DoneCheck(done_check_view::Action::AskFix)));
+}
+
+#[test]
+fn ask_agent_to_fix_does_nothing_while_the_agent_is_busy() {
+    let mut panel = tall(SMALL, 420.0, turn(Some(blocked()), Err("The agent is working")));
+    let at = panel.center_of("Ask agent to fix");
+    assert_eq!(panel.click(at), None);
+}
+
+#[test]
+fn a_ledger_question_keeps_the_one_answer_button_and_the_last_turn_adds_none() {
+    let mut panel = tall(LONG, 420.0, turn(None, Ok(())));
+    assert_eq!(panel.texts.iter().filter(|(text, _)| text == "Answer").count(), 1);
+    let at = panel.center_of("Answer");
+    assert_eq!(panel.click(at), Some(Action::Answer));
+}
+
+#[test]
+fn a_tab_with_no_ledger_still_shows_its_last_turn() {
+    let mut panel = Panel::new(SMALL, 420.0);
+    panel.ledger = None;
+    panel.last_turn = Some(turn(Some(Look::Checking), Ok(())));
+    panel.size = vec2(420.0, 1200.0);
+    panel.frame(Vec::new());
+    panel.frame(Vec::new());
+    assert!(panel.drawn("Last turn") && panel.drawn("Kept the filters in the URL"));
+    assert!(panel.drawn("Checking that the work landed..."));
+    assert!(!panel.drawn("Check again"));
+}
+
+#[test]
+fn showing_the_section_clears_the_new_items_and_a_changed_check_makes_them_new_again() {
+    let mut panel = Panel::new(SMALL, 420.0);
+    assert_eq!(panel.state, TabState::default());
+    let first = turn(Some(blocked()), Ok(()));
+    let attention = first.attention();
+    assert!(panel.state.unseen(attention));
+    panel.last_turn = Some(first);
+    panel.frame(Vec::new());
+    assert!(!panel.state.unseen(attention));
+    let changed = turn(None, Ok(())).attention();
+    assert!(panel.state.unseen(changed), "another question is new");
+    panel.last_turn = None;
+    panel.frame(Vec::new());
+    assert!(panel.state.unseen(attention), "a gone turn forgets what was seen");
+}
+
+#[test]
+fn no_last_turn_text_overlaps_or_leaves_the_card_at_any_width() {
+    for width in [200.0, 240.0, 300.0, 420.0, 640.0] {
+        let long = "Pick a default owner filter: me or everyone, and say whether the archived column follows it or keeps its own filters";
+        let mut last = turn(Some(blocked()), Ok(()));
+        last.needs.push(long.to_owned());
+        let panel = tall(SMALL, width, last);
+        for (index, (a, a_rect)) in panel.texts.iter().enumerate() {
+            assert!(a_rect.right() <= width + 0.5, "{a:?} runs past the card at {width}");
+            for (b, b_rect) in &panel.texts[index + 1..] {
+                assert!(
+                    !a_rect.shrink(0.5).intersects(b_rect.shrink(0.5)),
+                    "{a:?} {a_rect:?} overlaps {b:?} {b_rect:?} at {width}"
+                );
+            }
+        }
+    }
 }
