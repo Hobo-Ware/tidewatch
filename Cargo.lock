@@ -1266,29 +1266,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "egui_commonmark"
-version = "0.24.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c833127228cc61cef806166adadc23572431fe2ea4cf753e60f654f82a2b3270"
-dependencies = [
- "egui",
- "egui_commonmark_backend",
- "egui_extras",
- "pulldown-cmark",
-]
-
-[[package]]
-name = "egui_commonmark_backend"
-version = "0.24.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5758a1110eb8259743c9b220241c30ff014b2dec53c1a2b861d464e41fa3483e"
-dependencies = [
- "egui",
- "egui_extras",
- "pulldown-cmark",
-]
-
-[[package]]
 name = "egui_extras"
 version = "0.35.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5580,7 +5557,6 @@ dependencies = [
  "block2 0.6.2",
  "eframe",
  "egui",
- "egui_commonmark",
  "egui_extras",
  "global-hotkey",
  "image",
@@ -5594,6 +5570,7 @@ dependencies = [
  "objc2-io-kit",
  "objc2-local-authentication",
  "objc2-service-management",
+ "pulldown-cmark",
  "resvg",
  "rfd",
  "serde",

@@ -6,9 +6,10 @@ use std::ops::Range;
 use std::sync::Arc;
 
 use egui::epaint::text::{LayoutJob, TextFormat, TextWrapping};
+use egui::text_selection::LabelSelectionState;
 use egui::{
-    Color32, CursorIcon, FontId, Galley, Id, OpenUrl, Painter, Pos2, Rect, Sense, Stroke, Ui, Vec2,
-    pos2,
+    Color32, CursorIcon, FontId, Galley, Id, Label, OpenUrl, Painter, Pos2, Rect, Response, Sense,
+    Stroke, TextWrapMode, Ui, Vec2, pos2,
 };
 
 use crate::brand;
@@ -57,6 +58,34 @@ impl Text {
         self.push(&found.text[last..], format);
     }
 
+    pub(crate) fn raw(&mut self, text: &str, format: &TextFormat) {
+        self.push(text, format);
+    }
+
+    pub(crate) fn linked(&mut self, text: &str, format: &TextFormat, url: &str) {
+        let start = self.job.text.len();
+        self.push(text, format);
+        self.spans.push(Span { bytes: start..self.job.text.len(), url: url.to_owned() });
+    }
+
+    pub(crate) fn show(self, ui: &mut Ui, id: Id, ink: Color32, wrap: TextWrapMode) -> Response {
+        let Self { job, spans } = self;
+        let label = Label::new(job.clone()).selectable(true).wrap_mode(wrap);
+        let (pos, galley, response) = label.layout_in_ui(ui);
+        if ui.is_rect_visible(response.rect) {
+            LabelSelectionState::label_text_selection(
+                ui,
+                &response,
+                pos,
+                galley.clone(),
+                ink,
+                Stroke::NONE,
+            );
+        }
+        Laid { galley, job, spans }.interact(ui, id, pos);
+        response
+    }
+
     fn push(&mut self, text: &str, format: &TextFormat) {
         if !text.is_empty() {
             self.job.append(text, 0.0, format.clone());
@@ -90,6 +119,15 @@ impl Laid {
 
     /// Paints at `pos` and answers the pointer over its links; `id` must differ per line.
     pub(crate) fn paint(&self, ui: &Ui, id: Id, pos: Pos2, fallback: Color32) {
+        let hovered = self.interact(ui, id, pos);
+        let galley = match hovered {
+            Some(index) => ui.painter().layout_job(self.underlined(index)),
+            None => self.galley.clone(),
+        };
+        ui.painter().galley(pos, galley, fallback);
+    }
+
+    fn interact(&self, ui: &Ui, id: Id, pos: Pos2) -> Option<usize> {
         let mut hovered = None;
         for (n, (index, rect)) in self.link_rects(pos).into_iter().enumerate() {
             let url = &self.spans[index].url;
@@ -102,11 +140,7 @@ impl Laid {
             }
             response.on_hover_cursor(CursorIcon::PointingHand).on_hover_text(url);
         }
-        let galley = match hovered {
-            Some(index) => ui.painter().layout_job(self.underlined(index)),
-            None => self.galley.clone(),
-        };
-        ui.painter().galley(pos, galley, fallback);
+        hovered
     }
 
     fn underlined(&self, index: usize) -> LayoutJob {

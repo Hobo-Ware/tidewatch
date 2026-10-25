@@ -8,12 +8,13 @@ use egui::{
     Color32, CornerRadius, Frame, Margin, Pos2, Rect, Sense, Shape, Stroke, StrokeKind, Ui, pos2,
     vec2,
 };
-use egui_commonmark::{CommonMarkCache, CommonMarkViewer};
 use tidewatch_core::{end_block, github_html};
 
 use crate::brand;
 use crate::code_block::{self, Look};
 use crate::links::{closes_fence, fence_of};
+use crate::md_blocks;
+use crate::md_view;
 use crate::screen_kit::{body, heading};
 
 const PIECE_GAP: f32 = 8.0;
@@ -38,7 +39,7 @@ pub(crate) enum Piece<'a> {
 }
 
 /// Cuts `md` at its top-level fences and quotes (up to 3 spaces of indent; a fence inside a quote
-/// or deeper in a list stays with the renderer, and so does a quote in a list) and, with
+/// stays with the renderer, and so do a fence or a quote inside a list item, wherever they sit) and, with
 /// `captions`, at the end block's heading-only lines. A fence the message never closes runs to its
 /// end, as in CommonMark.
 pub(crate) fn pieces(md: &str, captions: bool) -> Vec<Piece<'_>> {
@@ -47,10 +48,12 @@ pub(crate) fn pieces(md: &str, captions: bool) -> Vec<Piece<'_>> {
     let mut prose = 0..0;
     let mut open: Option<Open<'_>> = None;
     let mut quote: Vec<&str> = Vec::new();
+    let lists = md_blocks::list_spans(md);
     let mut at = 0;
     for (index, line) in md.split_inclusive('\n').enumerate() {
         let end = at + line.len();
-        let quoted = open.is_none() && quote_text(line).is_some();
+        let inside = open.is_none() && lists.iter().any(|span| span.contains(&at));
+        let quoted = open.is_none() && !inside && quote_text(line).is_some();
         if !quoted && !quote.is_empty() {
             out.push(Piece::Quote(std::mem::take(&mut quote).join("\n")));
             prose = at..at;
@@ -62,6 +65,8 @@ pub(crate) fn pieces(md: &str, captions: bool) -> Vec<Piece<'_>> {
             } else {
                 fence.lines.push(line);
             }
+        } else if inside {
+            prose.end = end;
         } else if let Some(text) = quote_text(line) {
             if quote.is_empty() {
                 push_prose(&mut out, &md[prose.clone()]);
@@ -181,7 +186,7 @@ fn opens(line: &str) -> Option<Open<'_>> {
 
 /// Draws `md` as a chat message: markdown where the renderer is good, and the pieces above where
 /// the Reader draws its own. `look` is what the code blocks sit on.
-pub(crate) fn show(ui: &mut Ui, cache: &mut CommonMarkCache, md: &str, captions: bool, look: Look) {
+pub(crate) fn show(ui: &mut Ui, md: &str, captions: bool, look: Look) {
     let md = github_html::scrub(md);
     let parts = pieces(&md, captions);
     let column = ui.max_rect().x_range();
@@ -194,18 +199,18 @@ pub(crate) fn show(ui: &mut Ui, cache: &mut CommonMarkCache, md: &str, captions:
             ui.add_space(PIECE_GAP);
         }
         ui.push_id(index, |ui| match piece {
-            Piece::Markdown(chunk) => markdown(ui, cache, chunk),
+            Piece::Markdown(chunk) => markdown(ui, chunk, look),
             Piece::Code { lang, text } => {
                 code_block::show(ui, *lang, text, look);
             }
-            Piece::Quote(text) => quote(ui, cache, text),
+            Piece::Quote(text) => quote(ui, text, look),
             Piece::Image(label) => image_chip(ui, label),
             Piece::Caption(text) => caption(ui, text),
         });
     }
 }
 
-fn quote(ui: &mut Ui, cache: &mut CommonMarkCache, md: &str) {
+fn quote(ui: &mut Ui, md: &str, look: Look) {
     Frame::new()
         .fill(brand::SUNKEN)
         .stroke(Stroke::new(1.0, brand::ITEM_LINE))
@@ -221,72 +226,14 @@ fn quote(ui: &mut Ui, cache: &mut CommonMarkCache, md: &str) {
                 ui.vertical(|ui| {
                     ui.set_width(ui.available_width());
                     ui.visuals_mut().override_text_color = Some(brand::STEP_TEXT);
-                    markdown(ui, cache, md);
+                    markdown(ui, md, look);
                 });
             });
         });
 }
 
-#[derive(Debug, PartialEq, Eq)]
-enum Chunk<'a> {
-    Prose(&'a str),
-    Table(&'a str),
-}
-
-fn is_table_divider(line: &str) -> bool {
-    let line = line.trim();
-    line.contains('-')
-        && line.contains('|')
-        && line.chars().all(|c| matches!(c, '|' | '-' | ':' | ' ' | '\t'))
-}
-
-/// Cuts `md` at its tables: a header line, a divider line and the rows under them.
-fn table_chunks(md: &str) -> Vec<Chunk<'_>> {
-    let lines: Vec<&str> = md.split_inclusive('\n').collect();
-    let mut out = Vec::new();
-    let mut prose_from = 0;
-    let mut index = 0;
-    let offset = |line: usize| lines[..line].iter().map(|l| l.len()).sum::<usize>();
-    while index < lines.len() {
-        let table = lines[index].contains('|')
-            && lines.get(index + 1).is_some_and(|next| is_table_divider(next));
-        if !table {
-            index += 1;
-            continue;
-        }
-        let end = (index + 2..lines.len())
-            .find(|row| !lines[*row].contains('|') || lines[*row].trim().is_empty())
-            .unwrap_or(lines.len());
-        let (from, to) = (offset(index), offset(end));
-        if from > prose_from {
-            out.push(Chunk::Prose(&md[prose_from..from]));
-        }
-        out.push(Chunk::Table(&md[from..to]));
-        prose_from = to;
-        index = end;
-    }
-    if prose_from < md.len() {
-        out.push(Chunk::Prose(&md[prose_from..]));
-    }
-    out
-}
-
-fn markdown(ui: &mut Ui, cache: &mut CommonMarkCache, md: &str) {
-    for (index, chunk) in table_chunks(md).into_iter().enumerate() {
-        ui.push_id(index, |ui| match chunk {
-            Chunk::Prose(text) => {
-                CommonMarkViewer::new().show(ui, cache, text);
-            }
-            Chunk::Table(text) => {
-                ui.scope(|ui| {
-                    ui.spacing_mut().scroll = egui::style::ScrollStyle::solid();
-                    egui::ScrollArea::horizontal().auto_shrink([false, true]).show(ui, |ui| {
-                        CommonMarkViewer::new().show(ui, cache, text);
-                    });
-                });
-            }
-        });
-    }
+fn markdown(ui: &mut Ui, md: &str, look: Look) {
+    md_view::show(ui, md, look);
 }
 
 fn image_chip(ui: &mut Ui, label: &str) {
@@ -400,6 +347,22 @@ mod tests {
     }
 
     #[test]
+    fn a_fence_or_a_quote_inside_a_list_item_stays_in_the_item_whatever_its_indent() {
+        let cases = [
+            "- item\n\n  ```sh\n  cargo test\n  ```\n- next",
+            "- item\n  > quoted in the item",
+            "1. step\n\n   ```\n   code\n   ```",
+        ];
+        for input in cases {
+            assert_eq!(pieces(input, false), [Piece::Markdown(input)], "input {input:?}");
+        }
+        assert_eq!(
+            pieces("- a\n\n```\nafter\n```", false),
+            [Piece::Markdown("- a\n\n"), code(None, "after")]
+        );
+    }
+
+    #[test]
     fn the_end_block_headings_become_captions_only_for_the_agent() {
         let text = "Shipped it.\n\n**Done**\n- a\n\n**Needs you**\n- nothing\n\n**Next**\n- b\n";
         let with = pieces(text, true);
@@ -435,7 +398,6 @@ mod tests {
 
     fn draw(md: &str, captions: bool) -> FullOutput {
         let ctx = crate::fonts::test_context();
-        let mut cache = CommonMarkCache::default();
         let mut out = None;
         for _ in 0..2 {
             let raw = RawInput {
@@ -444,7 +406,7 @@ mod tests {
             };
             out = Some(ctx.run_ui(raw, |ui| {
                 ui.set_width(500.0);
-                show(ui, &mut cache, md, captions, Look::AGENT);
+                crate::reader_chat_view::chat_text(ui, |ui| show(ui, md, captions, Look::AGENT));
             }));
         }
         out.expect("two frames ran")
@@ -543,24 +505,8 @@ mod tests {
         );
     }
 
-    #[test]
-    fn tables_are_cut_out_of_their_prose() {
-        let md = "Before\n\n| a | b |\n|---|:-:|\n| 1 | 2 |\n| 3 | 4 |\n\nAfter";
-        assert_eq!(
-            table_chunks(md),
-            [
-                Chunk::Prose("Before\n\n"),
-                Chunk::Table("| a | b |\n|---|:-:|\n| 1 | 2 |\n| 3 | 4 |\n"),
-                Chunk::Prose("\nAfter"),
-            ]
-        );
-        assert_eq!(table_chunks("a | b\nno divider"), [Chunk::Prose("a | b\nno divider")]);
-        assert_eq!(table_chunks("| a |\n|---|"), [Chunk::Table("| a |\n|---|")]);
-    }
-
     fn widest(md: &str, width: f32) -> f32 {
         let ctx = crate::fonts::test_context();
-        let mut cache = CommonMarkCache::default();
         let mut widest = 0.0_f32;
         for _ in 0..2 {
             let raw = RawInput {
@@ -569,7 +515,7 @@ mod tests {
             };
             let _ = ctx.run_ui(raw, |ui| {
                 ui.set_max_width(width);
-                let shown = ui.scope(|ui| show(ui, &mut cache, md, false, Look::AGENT));
+                let shown = ui.scope(|ui| show(ui, md, false, Look::AGENT));
                 widest = shown.response.rect.width();
             });
         }

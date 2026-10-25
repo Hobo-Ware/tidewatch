@@ -15,7 +15,6 @@ use egui::{
     Pos2, Rect, Response, RichText, Sense, Shadow, Shape, Stroke, StrokeKind, TextStyle, Ui, pos2,
     vec2,
 };
-use egui_commonmark::CommonMarkCache;
 use jiff::tz::TimeZone;
 use tidewatch_core::question;
 use tidewatch_core::user_markup::{self, TaskResult};
@@ -127,7 +126,7 @@ pub(crate) fn chat_text<R>(ui: &mut Ui, add: impl FnOnce(&mut Ui) -> R) -> R {
 /// An agent's message as markdown with every web link clickable (a bare URL, `localhost:5174`, a
 /// URL in inline code) and no other kind of link able to open: a click on a link of another
 /// scheme, whichever way it was written, is dropped before it leaves the frame.
-pub(crate) fn agent_markdown(ui: &mut Ui, cache: &mut CommonMarkCache, text: &str) {
+pub(crate) fn agent_markdown(ui: &mut Ui, text: &str) {
     ui.scope(|ui| {
         let ink = ui.visuals().text_color();
         let visuals = ui.visuals_mut();
@@ -135,7 +134,7 @@ pub(crate) fn agent_markdown(ui: &mut Ui, cache: &mut CommonMarkCache, text: &st
         visuals.widgets.noninteractive.fg_stroke.color = ink;
         visuals.hyperlink_color = brand::TEAL_TEXT;
         ui.style_mut().url_in_tooltip = true;
-        reader_markdown::show(ui, cache, &links::markdown(text), true, Look::AGENT);
+        reader_markdown::show(ui, &links::markdown(text), true, Look::AGENT);
     });
     ui.ctx().output_mut(|out| {
         out.commands.retain(
@@ -165,27 +164,15 @@ fn stamped(who: &str, at_ms: Option<i64>, zone: &TimeZone) -> String {
 
 /// A user message: a bubble at the right, `You · 16:02` over it. The text inside is markdown,
 /// left-aligned, in a bubble as wide as its text up to the user share of the column.
-pub(crate) fn user(
-    ui: &mut Ui,
-    row: &Row,
-    at_ms: Option<i64>,
-    zone: &TimeZone,
-    sizing: (f32, &mut CommonMarkCache),
-) {
-    user_bubble(ui, row, Meta::Stamp(at_ms, zone), sizing);
+pub(crate) fn user(ui: &mut Ui, row: &Row, at_ms: Option<i64>, zone: &TimeZone, width: f32) {
+    user_bubble(ui, row, Meta::Stamp(at_ms, zone), width);
 }
 
 /// A message the user sent while the agent was busy: the same bubble, dimmed, with a small spinner
 /// and `Queued` over it, until the transcript has the message.
-pub(crate) fn queued(
-    ui: &mut Ui,
-    text: &str,
-    key: u64,
-    time: f64,
-    sizing: (f32, &mut CommonMarkCache),
-) {
+pub(crate) fn queued(ui: &mut Ui, text: &str, key: u64, time: f64, width: f32) {
     let row = Row { seq: key, kind: Kind::User, text: text.to_owned() };
-    user_bubble(ui, &row, Meta::Queued(time), sizing);
+    user_bubble(ui, &row, Meta::Queued(time), width);
 }
 
 #[derive(Clone, Copy)]
@@ -211,12 +198,7 @@ fn queued_meta(ui: &mut Ui, time: f64) {
     );
 }
 
-fn user_bubble(
-    ui: &mut Ui,
-    row: &Row,
-    meta_line: Meta<'_>,
-    (width, cache): (f32, &mut CommonMarkCache),
-) {
+fn user_bubble(ui: &mut Ui, row: &Row, meta_line: Meta<'_>, width: f32) {
     ui.add_space(OUTER);
     let max_w = user_width(width);
     let markdown = user_markup::chat_markdown(&row.text);
@@ -267,7 +249,7 @@ fn user_bubble(
                         chat_text(ui, |ui| {
                             ui.visuals_mut().code_bg_color = USER_CODE_FILL;
                             ui.push_id(row.seq, |ui| {
-                                reader_markdown::show(ui, cache, &markdown, false, Look::USER);
+                                reader_markdown::show(ui, &markdown, false, Look::USER);
                             });
                         });
                     });
@@ -442,7 +424,7 @@ pub(crate) fn turn(
     scene: &Scene<'_>,
     list: &[&Row],
     group: &Group,
-    (open, cache): (&mut HashSet<u64>, &mut CommonMarkCache),
+    open: &mut HashSet<u64>,
     width: f32,
 ) {
     let live = scene.running && !group.closed;
@@ -484,7 +466,7 @@ pub(crate) fn turn(
                 ui.add_space(CHIP_GAP);
             }
             if has_text {
-                bubble(ui, list, group, cache, column);
+                bubble(ui, list, group, column);
             }
             if live {
                 if has_text {
@@ -538,7 +520,7 @@ fn face(ui: &mut Ui, scene: &Scene<'_>) {
     paint_face(ui.ctx(), ui.painter(), rect, face);
 }
 
-fn bubble(ui: &mut Ui, list: &[&Row], group: &Group, cache: &mut CommonMarkCache, column: f32) {
+fn bubble(ui: &mut Ui, list: &[&Row], group: &Group, column: f32) {
     let Some(index) = group.answer() else { return };
     Frame::new()
         .fill(brand::CARD)
@@ -550,7 +532,7 @@ fn bubble(ui: &mut Ui, list: &[&Row], group: &Group, cache: &mut CommonMarkCache
             chat_text(ui, |ui| {
                 let row = list[index];
                 ui.push_id(row.seq, |ui| {
-                    agent_markdown(ui, cache, &row.text);
+                    agent_markdown(ui, &row.text);
                 });
             });
         });
@@ -924,7 +906,7 @@ mod tests {
     const TEXT: &str = "Preview at localhost:5174 now, [docs](https://x.dev/docs) and \
         [bad](javascript:alert(1)) or <file:///etc/passwd> or [ref][r].\n\n[r]: javascript:alert(2)";
 
-    fn frame(ctx: &egui::Context, cache: &mut CommonMarkCache, events: Vec<Event>) -> Vec<String> {
+    fn frame(ctx: &egui::Context, events: Vec<Event>) -> Vec<String> {
         let raw = RawInput {
             screen_rect: Some(Rect::from_min_size(pos2(0.0, 0.0), vec2(700.0, 200.0))),
             events,
@@ -934,7 +916,7 @@ mod tests {
         let out = ctx.run_ui(raw, |ui| {
             ui.set_width(600.0);
             ui.visuals_mut().override_text_color = Some(Color32::WHITE);
-            chat_text(ui, |ui| agent_markdown(ui, cache, TEXT));
+            chat_text(ui, |ui| agent_markdown(ui, TEXT));
         });
         out.platform_output
             .commands
@@ -946,7 +928,7 @@ mod tests {
             .collect()
     }
 
-    fn click(ctx: &egui::Context, cache: &mut CommonMarkCache, at: Pos2) -> Vec<String> {
+    fn click(ctx: &egui::Context, at: Pos2) -> Vec<String> {
         let button = |pressed| Event::PointerButton {
             pos: at,
             button: PointerButton::Primary,
@@ -955,25 +937,20 @@ mod tests {
         };
         let mut opened = Vec::new();
         for events in [vec![Event::PointerMoved(at)], vec![button(true)], vec![button(false)]] {
-            opened.extend(frame(ctx, cache, events));
+            opened.extend(frame(ctx, events));
         }
         opened
     }
 
     fn every_click(y: f32) -> Vec<(f32, Vec<String>)> {
         let ctx = egui::Context::default();
-        let mut cache = CommonMarkCache::default();
-        let _ = frame(&ctx, &mut cache, vec![]);
-        let _ = frame(&ctx, &mut cache, vec![]);
-        (0..640)
-            .step_by(4)
-            .map(|x| (x as f32, click(&ctx, &mut cache, pos2(x as f32, y))))
-            .collect()
+        let _ = frame(&ctx, vec![]);
+        let _ = frame(&ctx, vec![]);
+        (0..640).step_by(4).map(|x| (x as f32, click(&ctx, pos2(x as f32, y)))).collect()
     }
 
     fn painted_text(text: &str) -> Vec<String> {
         let ctx = crate::fonts::test_context();
-        let mut cache = CommonMarkCache::default();
         let row = Row { seq: 1, kind: Kind::User, text: text.to_owned() };
         let zone = TimeZone::UTC;
         let mut texts = Vec::new();
@@ -983,7 +960,7 @@ mod tests {
                 ..RawInput::default()
             };
             let out = ctx.run_ui(raw, |ui| {
-                user(ui, &row, None, &zone, (800.0, &mut cache));
+                user(ui, &row, None, &zone, 800.0);
             });
             texts = out
                 .shapes
@@ -1049,29 +1026,41 @@ mod tests {
     #[test]
     fn links_are_teal_and_other_text_keeps_the_ink_the_theme_gives_it() {
         let ctx = egui::Context::default();
-        let mut cache = CommonMarkCache::default();
         let mut inks = Vec::new();
         for _ in 0..2 {
             let out = ctx.run_ui(RawInput::default(), |ui| {
                 ui.visuals_mut().override_text_color = Some(Color32::WHITE);
-                chat_text(ui, |ui| agent_markdown(ui, &mut cache, "plain localhost:5174 end"));
+                chat_text(ui, |ui| agent_markdown(ui, "plain localhost:5174 end"));
             });
             inks = out
                 .shapes
                 .iter()
                 .filter_map(|c| match &c.shape {
-                    Shape::Text(t) => {
-                        Some((t.galley.text().to_owned(), t.fallback_color, t.override_text_color))
-                    }
+                    Shape::Text(t) => Some((
+                        t.galley.text().to_owned(),
+                        t.fallback_color,
+                        t.override_text_color,
+                        t.galley.clone(),
+                    )),
                     _ => None,
                 })
                 .collect();
         }
-        let ink =
-            |word: &str| inks.iter().find(|(text, ..)| text.contains(word)).map(|i| (i.1, i.2));
-        assert_eq!(ink("localhost").map(|i| i.0), Some(brand::TEAL_TEXT));
-        let plain = ink("plain").unwrap();
-        assert_eq!(plain.1.unwrap_or(plain.0), Color32::WHITE);
+        let ink = |word: &str| {
+            let galley = &inks.iter().find(|(text, ..)| text.contains("plain")).expect("text").3;
+            galley
+                .job
+                .sections
+                .iter()
+                .find(|section| {
+                    let range =
+                        usize::from(section.byte_range.start)..usize::from(section.byte_range.end);
+                    galley.job.text[range].contains(word)
+                })
+                .map(|section| section.format.color)
+        };
+        assert_eq!(ink("localhost"), Some(brand::TEAL_TEXT));
+        assert_eq!(ink("plain"), Some(Color32::WHITE));
     }
 
     #[test]

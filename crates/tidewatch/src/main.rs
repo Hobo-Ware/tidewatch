@@ -91,6 +91,8 @@ mod login_item;
 mod macos;
 mod mascot;
 mod mascot_motion;
+mod md_blocks;
+mod md_view;
 mod meeseeks_glue;
 mod meeseeks_model;
 mod meeseeks_summary;

@@ -30,7 +30,7 @@ shell-words = "1.1.1"
 tempfile = "3.27.0"
 toml = "1.1.8"
 uuid = { version = "1.28.0", default-features = false, features = ["v4"] }
-egui_commonmark = { version = "0.24.0", default-features = false, features = ["pulldown_cmark"] }
+pulldown-cmark = { version = "0.13.4", default-features = false }
 egui_extras = { version = "0.35.0", default-features = false }
 
 [workspace.lints.rust]
