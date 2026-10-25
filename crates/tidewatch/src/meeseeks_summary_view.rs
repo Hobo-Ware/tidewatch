@@ -22,6 +22,7 @@ use crate::meeseeks_view;
 use crate::progress_ring::paint_mark;
 use crate::reader_view::ellipsized;
 use crate::screen_kit::{Size, body, button_width, heading, mono, quiet_button};
+use crate::selectable;
 
 const COLUMN_W: f32 = 760.0;
 const PAD: f32 = 24.0;
@@ -128,8 +129,8 @@ fn header(ui: &mut Ui, width: f32, summary: &Summary, placed: &mut Placed) -> Op
     let block = title.size().y + 4.0 + meta.size().y;
     let top = row.center().y - block / 2.0;
     let meta_top = top + title.size().y + 4.0;
-    painter.galley(pos2(text_left, top), title, brand::TEXT);
-    painter.galley(pos2(text_left, meta_top), meta, brand::MUTED);
+    selectable::galley(ui, pos2(text_left, top), title, brand::TEXT);
+    selectable::galley(ui, pos2(text_left, meta_top), meta, brand::MUTED);
     let button_row =
         Rect::from_min_max(pos2(row.right() - button_w, row.top()), row.right_bottom());
     let mut action = None;
@@ -153,7 +154,7 @@ fn section_label(ui: &mut Ui, text: &str) {
     let galley = ui.painter().layout_no_wrap(text.to_owned(), heading(13.0), brand::MUTED);
     let (rect, _) =
         ui.allocate_exact_size(vec2(ui.available_width(), galley.size().y + 6.0), Sense::hover());
-    ui.painter().galley(rect.left_top(), galley, brand::MUTED);
+    selectable::galley(ui, rect.left_top(), galley, brand::MUTED);
 }
 
 fn mark_of(look: Look) -> Mark {
@@ -202,10 +203,16 @@ fn checks(ui: &mut Ui, width: f32, rows: &[CheckRow], placed: &mut Placed) {
         let detail_left = label_left + LABEL_W;
         let room = (line.right() - CHECK_PAD - result.size().x - 12.0 - detail_left).max(1.0);
         let label = painter.layout_no_wrap(row.label.to_owned(), heading(14.0), brand::TEXT);
-        painter.galley(pos2(label_left, mid - label.size().y / 2.0), label, brand::TEXT);
+        selectable::galley(ui, pos2(label_left, mid - label.size().y / 2.0), label, brand::TEXT);
         let detail = ellipsized(&painter, &row.detail, body(13.0), brand::MUTED, room);
-        painter.galley(pos2(detail_left, mid - detail.size().y / 2.0), detail, brand::MUTED);
-        painter.galley(
+        selectable::galley(
+            ui,
+            pos2(detail_left, mid - detail.size().y / 2.0),
+            detail,
+            brand::MUTED,
+        );
+        selectable::galley(
+            ui,
             pos2(line.right() - CHECK_PAD - result.size().x, mid - result.size().y / 2.0),
             result,
             result_ink,
@@ -223,7 +230,7 @@ fn linked(ui: &mut Ui, width: f32, text: &str, lead: Option<&str>) -> Rect {
     line.run(text, &TextFormat::simple(body(14.5), brand::TEXT));
     let laid = line.wrapped(width, SAID_ROWS).lay_out(&painter);
     let (rect, _) = ui.allocate_exact_size(vec2(width, laid.size().y), Sense::hover());
-    laid.paint(ui, ui.id().with(("summary-text", text)), rect.min, brand::TEXT);
+    laid.paint_selectable(ui, ui.id().with(("summary-text", text)), rect.min, brand::TEXT);
     rect
 }
 
@@ -249,7 +256,7 @@ fn branch_rows(ui: &mut Ui, width: f32, branch: &BranchLine) -> Rect {
     job.wrap = TextWrapping::wrap_at_width(width.max(1.0));
     let galley = painter.layout_job(job);
     let (rect, _) = ui.allocate_exact_size(vec2(width, galley.size().y), Sense::hover());
-    painter.galley(rect.min, galley, brand::SOFT);
+    selectable::galley(ui, rect.min, galley, brand::SOFT);
     rect
 }
 
@@ -259,13 +266,14 @@ fn stages(ui: &mut Ui, width: f32, rows: &[StageRow]) {
         let (line, _) = ui.allocate_exact_size(vec2(width, STAGE_ROW_H), Sense::hover());
         let mid = line.center().y;
         let name = ellipsized(&painter, &row.name, body(13.5), brand::SOFT, STAGE_NAME_W - 12.0);
-        painter.galley(pos2(line.left(), mid - name.size().y / 2.0), name, brand::SOFT);
+        selectable::galley(ui, pos2(line.left(), mid - name.size().y / 2.0), name, brand::SOFT);
         let count = painter.layout_no_wrap(
             format!("{} of {}", row.done, row.total),
             mono(12.0),
             brand::MUTED,
         );
-        painter.galley(
+        selectable::galley(
+            ui,
             pos2(line.right() - count.size().x, mid - count.size().y / 2.0),
             count,
             brand::MUTED,

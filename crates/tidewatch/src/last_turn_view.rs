@@ -15,6 +15,7 @@ use crate::pr_strip::tone_ink;
 use crate::progress_view::Action;
 use crate::reader_view::ellipsized;
 use crate::screen_kit::{Size, body, heading, mono, primary_button, quiet_button};
+use crate::selectable;
 
 const ITEM_FONT: f32 = 14.0;
 const CODE_FONT: f32 = 13.0;
@@ -82,7 +83,7 @@ fn label(ui: &mut Ui, text: &str, font: FontId, ink: Color32) {
     let galley = ui.painter().layout_no_wrap(text.to_owned(), font, ink);
     let (rect, _) =
         ui.allocate_exact_size(vec2(ui.available_width(), galley.size().y + 4.0), Sense::hover());
-    ui.painter().galley(rect.left_top(), galley, ink);
+    selectable::galley(ui, rect.left_top(), galley, ink);
 }
 
 fn button_row(ui: &mut Ui, add: impl FnOnce(&mut Ui)) {
@@ -110,7 +111,12 @@ fn items(ui: &mut Ui, width: f32, salt: &str, list: &[String], ink: Color32, bul
             ui.allocate_exact_size(vec2(width, laid.size().y + ITEM_GAP), Sense::hover());
         let dot = pos2(rect.left() + 4.0, rect.top() + ITEM_FONT / 2.0 + 1.0);
         painter.circle_filled(dot, 2.5, bullet);
-        laid.paint(ui, ui.id().with((salt, index)), pos2(rect.left() + BULLET_W, rect.top()), ink);
+        laid.paint_selectable(
+            ui,
+            ui.id().with((salt, index)),
+            pos2(rect.left() + BULLET_W, rect.top()),
+            ink,
+        );
     }
     let more = list.len().saturating_sub(MAX_ITEMS);
     if more > 0 {
@@ -139,7 +145,7 @@ fn check(
             4.0,
             brand::MUTED,
         );
-        painter.galley(pos2(rect.left() + BULLET_W, rect.top()), galley, brand::MUTED);
+        selectable::galley(ui, pos2(rect.left() + BULLET_W, rect.top()), galley, brand::MUTED);
         return None;
     };
     let card = done_check_view::card_of(report);
@@ -153,8 +159,8 @@ fn check(
         rect.left() + BULLET_W + title.size().x + 10.0,
         rect.top() + (title.size().y - summary.size().y) / 2.0,
     );
-    painter.galley(pos2(rect.left() + BULLET_W, rect.top()), title, ink);
-    painter.galley(summary_at, summary, brand::MUTED);
+    selectable::galley(ui, pos2(rect.left() + BULLET_W, rect.top()), title, ink);
+    selectable::galley(ui, summary_at, summary, brand::MUTED);
     for (index, row) in card.rows.iter().enumerate() {
         let sub = row.text.starts_with("    ");
         let indent = if sub { BULLET_W } else { 0.0 };
@@ -170,7 +176,7 @@ fn check(
             painter.circle_filled(dot, 2.5, ink);
         }
         let at = pos2(rect.left() + BULLET_W + indent, rect.top());
-        laid.paint(ui, ui.id().with(("check-row", index)), at, ink);
+        laid.paint_selectable(ui, ui.id().with(("check-row", index)), at, ink);
     }
     let mut picked = None;
     let ask_fix = card.ask_fix && owner_asks;

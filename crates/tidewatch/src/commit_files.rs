@@ -16,6 +16,7 @@ use crate::brand;
 use crate::diff_pane::{kind_color, kind_letter};
 use crate::pane_jobs::LineCounts;
 use crate::screen_kit::{body, mono, selection_row};
+use crate::selectable;
 use crate::tab_view::TabView;
 use crate::waiting_notes::Waiting;
 
@@ -151,7 +152,8 @@ pub(crate) fn show(ui: &mut Ui, view: &mut TabView, spot: Spot, waiting: &Waitin
     let text_x = card.left() + inset;
     let meta_y = gap.top() + META_H / 2.0;
     if loading {
-        painter.text(
+        selectable::text(
+            ui,
             pos2(text_x, meta_y),
             Align2::LEFT_CENTER,
             "Loading files...",
@@ -161,7 +163,7 @@ pub(crate) fn show(ui: &mut Ui, view: &mut TabView, spot: Spot, waiting: &Waitin
         return;
     }
     let galley = painter.layout_job(meta_job(view, files));
-    painter.galley(pos2(text_x, meta_y - galley.size().y / 2.0), galley, brand::MUTED);
+    selectable::galley(ui, pos2(text_x, meta_y - galley.size().y / 2.0), galley, brand::MUTED);
     if files == 0 {
         painter.text(
             pos2(text_x + ROW_PAD, gap.top() + META_H + FILE_ROW_H / 2.0),

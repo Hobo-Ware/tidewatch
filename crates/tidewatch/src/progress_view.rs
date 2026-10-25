@@ -30,6 +30,7 @@ use crate::progress_stale::fresh;
 use crate::progress_state::TabLedger;
 use crate::reader_view::{ellipsized, paint_item};
 use crate::screen_kit::{Size, body, heading, mono, primary_button};
+use crate::selectable;
 
 const WIDE_PAD: f32 = 22.0;
 const NARROW_PAD: f32 = 14.0;
@@ -279,23 +280,23 @@ fn header(
     let block = goal.size().y + step_h + meta.size().y + 4.0 * (rows - 1.0);
     let (rect, _) = ui.allocate_exact_size(vec2(width, block), Sense::hover());
     let mut y = rect.top();
-    let hover = ui.interact(
-        Rect::from_min_size(rect.min, vec2(width, goal.size().y)),
-        ui.id().with("progress-goal"),
-        Sense::hover(),
-    );
-    hover.on_hover_text(ledger.goal.trim());
-    goal.paint(ui, ui.id().with("progress-goal-text"), pos2(rect.left(), y), brand::MUTED);
+    goal.paint_selectable(
+        ui,
+        ui.id().with("progress-goal-text"),
+        pos2(rect.left(), y),
+        brand::MUTED,
+    )
+    .on_hover_text(ledger.goal.trim());
     y += goal.size().y + 4.0;
     if let Some(step) = step {
-        y += paint_row(&painter, rect.left(), y, step);
+        y += paint_row(ui, rect.left(), y, step);
     }
-    paint_row(&painter, rect.left(), y, meta);
+    paint_row(ui, rect.left(), y, meta);
 }
 
-fn paint_row(painter: &egui::Painter, x: f32, y: f32, galley: std::sync::Arc<egui::Galley>) -> f32 {
+fn paint_row(ui: &Ui, x: f32, y: f32, galley: std::sync::Arc<egui::Galley>) -> f32 {
     let height = galley.size().y;
-    painter.galley(pos2(x, y), galley, brand::MUTED);
+    selectable::galley(ui, pos2(x, y), galley, brand::MUTED);
     height + 4.0
 }
 
@@ -429,7 +430,12 @@ fn question_card(ui: &mut Ui, width: f32, asked: &[&Entry]) -> bool {
     painter.text(glyph.center(), Align2::CENTER_CENTER, "?", heading(15.0), brand::ORANGE);
     let text_x = glyph.right() + SPACE;
     let text_top = rect.top() + PAD_Y + (text_h.max(GLYPH) - text_h) / 2.0;
-    galley.paint(ui, ui.id().with("progress-question-text"), pos2(text_x, text_top), brand::TEXT);
+    galley.paint_selectable(
+        ui,
+        ui.id().with("progress-question-text"),
+        pos2(text_x, text_top),
+        brand::TEXT,
+    );
     let button_rect = if stacked {
         let top = rect.top() + PAD_Y + text_h.max(GLYPH) + SPACE;
         Rect::from_min_size(pos2(text_x, top), vec2(button_w, Size::Compact.height()))
@@ -496,15 +502,15 @@ fn item_row(ui: &mut Ui, width: f32, row: &ItemRow<'_>, time: f64) {
     let why_w = why.as_ref().map_or(0.0, |galley| galley.size().x + 12.0);
     let label = Text::line(row.text, body(13.5), ink, (room - why_w).max(1.0)).lay_out(painter);
     let at = pos2(text_x, rect.center().y - label.size().y / 2.0);
-    label.paint(ui, response.id.with("label"), at, ink);
-    if let Some(galley) = why {
-        let at = pos2(rect.right() - galley.size().x, rect.center().y - galley.size().y / 2.0);
-        galley.paint(ui, response.id.with("why"), at, brand::FAINT);
-    }
     let tip = match row.why {
         Some(why) => format!("{} - {why}", row.text),
         None => row.text.to_owned(),
     };
+    label.paint_selectable(ui, response.id.with("label"), at, ink).on_hover_text(&tip);
+    if let Some(galley) = why {
+        let at = pos2(rect.right() - galley.size().x, rect.center().y - galley.size().y / 2.0);
+        galley.paint_selectable(ui, response.id.with("why"), at, brand::FAINT).on_hover_text(&tip);
+    }
     response.on_hover_text(tip);
 }
 
@@ -606,7 +612,7 @@ fn entry_list(ui: &mut Ui, width: f32, tag: Tag, list: &[&Entry]) {
     let painter = ui.painter().clone();
     let caption = painter.layout_no_wrap(tag.caption().to_owned(), body(11.5), brand::FAINT);
     let (cap_rect, _) = ui.allocate_exact_size(vec2(width, caption.size().y + 6.0), Sense::hover());
-    painter.galley(cap_rect.left_top(), caption, brand::FAINT);
+    selectable::galley(ui, cap_rect.left_top(), caption, brand::FAINT);
     let text_w = (width - 2.0 * PAD - BULLET).max(40.0);
     let galleys: Vec<_> = list
         .iter()
@@ -638,7 +644,7 @@ fn entry_list(ui: &mut Ui, width: f32, tag: Tag, list: &[&Entry]) {
         }
         let height = galley.size().y;
         let line_id = ui.id().with(("entry-text", tag.caption(), index));
-        galley.paint(ui, line_id, pos2(rect.left() + PAD + BULLET, y), brand::SOFT);
+        galley.paint_selectable(ui, line_id, pos2(rect.left() + PAD + BULLET, y), brand::SOFT);
         y += height + if index + 1 < LIST_LIMIT { 8.0 } else { 0.0 };
     }
     if more > 0 {

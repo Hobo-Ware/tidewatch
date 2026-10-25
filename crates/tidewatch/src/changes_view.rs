@@ -20,6 +20,7 @@ use crate::diff_pane::{kind_color, kind_letter};
 use crate::pane_jobs::LineCounts;
 use crate::reader_view::ellipsized;
 use crate::screen_kit::{body, mono};
+use crate::selectable;
 use crate::tab_view::TabView;
 
 pub(crate) const ROW_H: f32 = 30.0;
@@ -131,7 +132,8 @@ pub(crate) fn show(ui: &mut Ui, rect: Rect, view: &mut TabView, side: bool) {
 }
 
 fn message(ui: &Ui, area: Rect, text: &str) {
-    ui.painter().text(
+    selectable::text(
+        ui,
         pos2(area.center().x, area.top() + 40.0),
         Align2::CENTER_CENTER,
         text,
@@ -153,7 +155,7 @@ fn paint_footer(ui: &Ui, footer: Rect, text: &str, counts: Option<LineCounts>) {
     }
     let galley = painter.layout_job(job);
     let at = pos2(footer.left() + SIDE_PAD + ROW_PAD, footer.center().y - galley.size().y / 2.0);
-    painter.galley(at, galley, brand::MUTED);
+    selectable::galley(ui, at, galley, brand::MUTED);
 }
 
 fn list_files(
@@ -199,11 +201,17 @@ fn header_row(ui: &mut Ui, group: Group, count: usize) {
     let left = slot.left() + SIDE_PAD + ROW_PAD;
     let title = painter.layout_no_wrap(group.title().to_owned(), body(12.0), brand::SOFT);
     let width = title.size().x;
-    painter.galley(pos2(left, slot.center().y - title.size().y / 2.0 + 1.0), title, brand::SOFT);
-    painter.text(
+    selectable::galley(
+        ui,
+        pos2(left, slot.center().y - title.size().y / 2.0 + 1.0),
+        title,
+        brand::SOFT,
+    );
+    selectable::text(
+        ui,
         pos2(left + width + 6.0, slot.center().y + 1.0),
         Align2::LEFT_CENTER,
-        count.to_string(),
+        &count.to_string(),
         mono(11.5),
         brand::FAINT,
     );

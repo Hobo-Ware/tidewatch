@@ -28,6 +28,7 @@ use crate::last_turn::LastTurn;
 use crate::progress_view::{self, Side, TabState};
 use crate::screen_kit::{body, mono};
 use crate::search_bar;
+use crate::selectable;
 use crate::tab_view::TabView;
 use crate::waiting_notes::Waiting;
 use crate::{changes_view, layout, segmented};
@@ -234,7 +235,7 @@ fn show_card_header(
     job.wrap.break_anywhere = true;
     let galley = painter.layout_job(job);
     let width = galley.size().x;
-    painter.galley(pos2(x, center_y - galley.size().y / 2.0), galley, brand::TEXT);
+    selectable::galley(ui, pos2(x, center_y - galley.size().y / 2.0), galley, brand::TEXT);
     if shown == Side::Progress {
         return chose;
     }
