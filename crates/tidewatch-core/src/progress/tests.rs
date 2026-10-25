@@ -613,3 +613,22 @@ fn odd_bytes_never_panic() {
     assert_eq!(windows.goal, "windows");
     assert_eq!(texts(&windows.next), ["a"]);
 }
+
+#[test]
+fn a_kind_line_in_status_reads_back_and_is_written_again() {
+    let cases = [
+        ("kind: read-only", Some(Kind::ReadOnly)),
+        ("kind: Edit", Some(Kind::Edit)),
+        ("- kind: read only", Some(Kind::ReadOnly)),
+        ("kind: guess", None),
+    ];
+    for (line, want) in cases {
+        let l = Ledger::parse(&format!("# Goal\nx\n\n## Status\nphase: 1\n{line}\n"));
+        assert_eq!(l.status.kind, want, "{line}");
+        assert_eq!(l.status.other.len(), usize::from(want.is_none()), "{line}");
+        assert_eq!(Ledger::parse(&l.to_markdown()), l, "{line}");
+    }
+    let plain = Ledger::parse("# Goal\nx\n\n## Status\nphase: 1\n");
+    assert_eq!(plain.status.kind, None);
+    assert!(!plain.to_markdown().contains("kind"));
+}

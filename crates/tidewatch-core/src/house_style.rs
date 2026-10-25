@@ -72,7 +72,8 @@ pub const MEESEEKS_GUIDANCE: &str = "\
 You are a Meeseeks with exactly one task: the one you were given. Do it, and nothing else.
 
 - Work only in this worktree and commit your work on this branch as you go.
-- When the task is done and committed, call `meeseeks_done` once with a one-line summary of what you did. Tidewatch then checks the work and ends this session itself.
+- Say `kind: read-only` in your ledger's Status for a question or an investigation (stages Understand, Answer, Done; your final summary is the answer), and `kind: edit` as soon as you will change files.
+- When you believe you are done or cannot go further, call `meeseeks_done` once with a one-line summary (a read-only task puts its whole answer there). If you are blocked, start it with `Blocked:` and the reason. Tidewatch decides what to check and ends this session itself.
 - You may push this branch. Do not push anything else, open a pull request or remove anything yourself. Tidewatch does that.
 - If Tidewatch pastes a failed check, fix it, commit, and call `meeseeks_done` again.
 - Do not call `set_avatar`: your face is fixed.
@@ -289,6 +290,10 @@ mod tests {
         assert_eq!(text.matches("`meeseeks_done`").count(), 2);
         assert!(text.contains("You may push this branch. Do not push anything else"));
         assert!(text.contains("git push --force-with-lease"));
+        assert!(text.contains("`kind: read-only`") && text.contains("`kind: edit`"));
+        assert!(text.contains("start it with `Blocked:`"));
+        assert!(!text.contains("done and committed"));
+        assert!(!compose("be brief", checklist).contains("kind: read-only"));
     }
 
     #[test]

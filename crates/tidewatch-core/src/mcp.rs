@@ -708,7 +708,7 @@ mod tests {
         let events = h.events.borrow();
         assert_eq!(*events, [TabEvent::MeeseeksDone { summary: "Renamed the helper".into() }]);
         drop(events);
-        for bad in [json!({}), json!({"summary": "a\nb"}), json!({"summary": "x", "pr": 1})] {
+        for bad in [json!({}), json!({"summary": 4}), json!({"summary": "x", "pr": 1})] {
             let reply = h.call("meeseeks_done", &bad);
             assert_eq!(reply["result"]["isError"], true, "{bad}");
         }

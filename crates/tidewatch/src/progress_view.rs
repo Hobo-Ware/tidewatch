@@ -10,6 +10,7 @@ use egui::{
     Align2, Color32, CornerRadius, Frame, Margin, Rect, ScrollArea, Sense, Shape, Stroke,
     StrokeKind, Ui, UiBuilder, pos2, vec2,
 };
+use tidewatch_core::kind::Kind;
 use tidewatch_core::progress::{Entry, Ledger, Mark};
 
 use crate::brand;
@@ -21,8 +22,8 @@ use crate::link_text::Text;
 use crate::meeseeks_model::Card as MeeseeksCard;
 use crate::meeseeks_view;
 use crate::progress_model::{
-    self as model, Bar, BarKind, ItemRow, TAGS, Tag, Tone, entries, item_rows, questions,
-    rows_shown,
+    self as model, Bar, BarKind, ItemRow, StageShape, TAGS, Tag, Tone, entries, item_rows,
+    questions, rows_shown,
 };
 use crate::progress_ring::{paint_mark, tone_color};
 use crate::progress_stale::fresh;
@@ -218,10 +219,11 @@ fn content(ui: &mut Ui, input: &Input<'_>, state: &mut TabState) -> Option<Actio
         ui.add_space(GAP);
     }
     let ledger = &*fresh(&known.ledger, input.stale);
+    let shape = input.meeseeks.map_or_else(StageShape::default, |card| card.shape);
     let tone = model::tone(ledger);
-    header(ui, width, ledger, tone, input.now_ms, (known.updated_ms, input.stale));
+    header(ui, width, ledger, tone, input.now_ms, (known.updated_ms, input.stale), shape.kind);
     ui.add_space(GAP);
-    phase_bars(ui, width, ledger, tone);
+    phase_bars(ui, width, ledger, tone, shape);
     let asked = questions(ledger);
     if !asked.is_empty() {
         ui.add_space(GAP);
@@ -234,7 +236,7 @@ fn content(ui: &mut Ui, input: &Input<'_>, state: &mut TabState) -> Option<Actio
         let picked = last_turn_view::show(ui, width, turn, asked.is_empty());
         action = picked.or(action);
     }
-    let rows = item_rows(ledger);
+    let rows = item_rows(ledger, shape.kind);
     if !rows.is_empty() {
         ui.add_space(GAP);
         item_rows_block(ui, width, &rows, input, state);
@@ -263,13 +265,14 @@ fn header(
     tone: Tone,
     now_ms: i64,
     (updated_ms, stale): (Option<i64>, bool),
+    kind: Kind,
 ) {
     let narrow = width < NARROW_BELOW - 2.0 * NARROW_PAD;
     let goal_size = if narrow { 14.0 } else { 16.0 };
     let painter = ui.painter().clone();
     let goal =
         Text::line(ledger.goal.trim(), heading(goal_size), brand::TEXT, width).lay_out(&painter);
-    let step = model::step(ledger).map(|step| step_line(&painter, &step, width));
+    let step = model::step(ledger, kind).map(|step| step_line(&painter, &step, width));
     let meta = meta_line(&painter, tone, (now_ms, updated_ms, stale), width);
     let rows = step.as_ref().map_or(2.0, |_| 3.0);
     let step_h = step.as_ref().map_or(0.0, |galley| galley.size().y);
@@ -336,8 +339,8 @@ pub(crate) fn bar_columns(width: f32, count: usize) -> usize {
     fit.clamp(1, count.max(1))
 }
 
-fn phase_bars(ui: &mut Ui, width: f32, ledger: &Ledger, tone: Tone) {
-    let bars = model::bars(ledger);
+fn phase_bars(ui: &mut Ui, width: f32, ledger: &Ledger, tone: Tone, shape: StageShape) {
+    let bars = model::bars(ledger, shape);
     if bars.is_empty() {
         return;
     }

@@ -8,6 +8,7 @@ use std::path::PathBuf;
 use jiff::tz::TimeZone;
 use stdusk_core::terminal::PtyTerm;
 use tidewatch_core::civil_date::Date;
+use tidewatch_core::kind::Kind;
 use tidewatch_core::meeseeks::{CheckLine, Criteria, MAX_FAILURES, Meeseeks, Phase, Step, Verdict};
 use tidewatch_core::meeseeks_branch::{self, Branch, Changed, Found};
 use tidewatch_core::meeseeks_check::{self as check, Checked};
@@ -19,12 +20,16 @@ use tidewatch_core::worktree::{self, Worktree};
 
 use crate::jobs::Jobs;
 
+pub(crate) const LOOK_EVERY_SECS: f64 = 3.0;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Fake {
     Off,
     On,
     Struggling,
     Poofed,
+    ReadOnly,
+    Promoted,
 }
 
 impl Fake {
@@ -33,6 +38,8 @@ impl Fake {
             Some("on") => Self::On,
             Some("struggling") => Self::Struggling,
             Some("poofed") => Self::Poofed,
+            Some("readonly") => Self::ReadOnly,
+            Some("promoted") => Self::Promoted,
             _ => Self::Off,
         }
     }
@@ -42,10 +49,21 @@ impl Fake {
     }
 
     pub(crate) fn state(self, now_ms: i64) -> Option<Meeseeks> {
-        let (minutes, turns, failures, phase, task) = match self {
-            Self::On => (12, 8, 0, Phase::Checking(Step::Tests), "Bump vite to 6.3"),
-            Self::Struggling => {
-                (38, 12, MAX_FAILURES, Phase::Working, "Rename getUserData to loadProfile")
+        let (minutes, turns, failures, phase, task, kind) = match self {
+            Self::On => (12, 8, 0, Phase::Checking(Step::Tests), "Bump vite to 6.3", Kind::Edit),
+            Self::Struggling => (
+                38,
+                12,
+                MAX_FAILURES,
+                Phase::Working,
+                "Rename getUserData to loadProfile",
+                Kind::Edit,
+            ),
+            Self::ReadOnly => {
+                (4, 3, 0, Phase::Working, "Explain how the cache layer works", Kind::ReadOnly)
+            }
+            Self::Promoted => {
+                (9, 7, 0, Phase::Working, "Explain how the cache layer works", Kind::Edit)
             }
             Self::Off | Self::Poofed => return None,
         };
@@ -53,6 +71,7 @@ impl Fake {
             turns,
             failures,
             phase,
+            kind,
             ..Meeseeks::summon(task, Criteria::default(), now_ms - minutes * 60_000)
         })
     }
@@ -62,6 +81,7 @@ pub(crate) enum Done<T> {
     Checked { tab: u64, step: Step, result: Result<Checked, String> },
     Branch { tab: u64, branch: Branch },
     Poofed { tab: u64 },
+    Looked { tab: u64, ticket: u64, edited: Result<bool, String> },
     Refused { tab: u64, why: String, shell: Option<T> },
     Loaded(Log),
     Logged,
@@ -71,6 +91,16 @@ pub(crate) struct CheckSpec {
     pub(crate) tools: Tools,
     pub(crate) worktree: Worktree,
     pub(crate) summary: String,
+}
+
+pub(crate) struct LookSpec {
+    pub(crate) tools: Tools,
+    pub(crate) dir: PathBuf,
+    pub(crate) started_at: Option<String>,
+}
+
+pub(crate) fn run_look(spec: &LookSpec) -> Result<bool, String> {
+    check::edited(&spec.tools, &spec.dir, spec.started_at.as_deref())
 }
 
 pub(crate) fn run_check(step: Step, spec: &CheckSpec, pr: bool) -> Result<Checked, String> {
@@ -114,6 +144,10 @@ pub(crate) struct Host {
     pending: HashMap<u64, String>,
     leaving: HashMap<u64, Poofed>,
     branches: HashMap<u64, Option<Branch>>,
+    saying: HashMap<u64, String>,
+    looking: HashMap<u64, u64>,
+    looked_at: HashMap<u64, f64>,
+    next_ticket: u64,
     struggled: HashSet<u64>,
     loaded: Vec<Poofed>,
     added: Vec<Poofed>,
@@ -130,6 +164,10 @@ impl Host {
         Self {
             jobs: Jobs::new(),
             pending: HashMap::new(),
+            saying: HashMap::new(),
+            looking: HashMap::new(),
+            looked_at: HashMap::new(),
+            next_ticket: 0,
             leaving: HashMap::new(),
             branches: HashMap::new(),
             struggled: HashSet::new(),
@@ -188,6 +226,31 @@ impl Host {
         });
     }
 
+    pub(crate) fn look(&mut self, ctx: &egui::Context, tab: u64, spec: LookSpec, now: f64) {
+        self.next_ticket += 1;
+        let ticket = self.next_ticket;
+        self.looking.insert(tab, ticket);
+        self.looked_at.insert(tab, now);
+        self.jobs.spawn(ctx, move || Done::Looked { tab, ticket, edited: run_look(&spec) });
+    }
+
+    pub(crate) fn look_due(&self, tab: u64, now: f64) -> bool {
+        !self.looking.contains_key(&tab)
+            && self.looked_at.get(&tab).is_none_or(|at| now - at >= LOOK_EVERY_SECS)
+    }
+
+    pub(crate) fn say_after_look(&mut self, tab: u64, summary: String) {
+        self.saying.insert(tab, summary);
+    }
+
+    pub(crate) fn looked(&mut self, tab: u64, ticket: u64) -> Option<String> {
+        if self.looking.get(&tab) != Some(&ticket) {
+            return None;
+        }
+        self.looking.remove(&tab);
+        self.saying.remove(&tab)
+    }
+
     pub(crate) fn poof(
         &mut self,
         ctx: &egui::Context,
@@ -220,6 +283,9 @@ impl Host {
         self.pending.remove(&tab);
         self.leaving.remove(&tab);
         self.branches.remove(&tab);
+        self.saying.remove(&tab);
+        self.looking.remove(&tab);
+        self.looked_at.remove(&tab);
         self.struggled.remove(&tab);
     }
 

@@ -1,7 +1,8 @@
 //! What the progress screens say about a ledger, as plain data: ring, bars, rows, tags (pure).
 
+use tidewatch_core::kind::Kind;
 use tidewatch_core::progress::{Entry, Ledger, Mark, Phase, PhaseState, State, real};
-use tidewatch_core::stages::{self, Group};
+use tidewatch_core::stages::{self, Group, Stage};
 
 use crate::progress_stale::fresh;
 
@@ -57,10 +58,18 @@ pub(crate) struct Step {
     pub(crate) name: String,
 }
 
-/// The bars of a ledger and which one the work is in: the four stages, with the phases of an older
-/// ledger gathered under theirs, and any phase with another name as a bar of its own.
-fn grouped(ledger: &Ledger) -> (Vec<Group>, Option<usize>) {
-    let groups = stages::groups(&ledger.checklist);
+/// How a Meeseeks changes the stage bars: its kind picks the stages, and an edit that changed
+/// nothing shows Build and PR as skipped. Every other tab is an edit with a diff.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct StageShape {
+    pub(crate) kind: Kind,
+    pub(crate) no_diff: bool,
+}
+
+/// The bars of a ledger and which one the work is in: the stages of `kind`, with the phases of an
+/// older ledger gathered under theirs, and any phase with another name as a bar of its own.
+fn grouped(ledger: &Ledger, kind: Kind) -> (Vec<Group>, Option<usize>) {
+    let groups = stages::groups(&ledger.checklist, kind);
     let current = ledger
         .current_phase_index()
         .and_then(|phase| groups.iter().position(|group| group.phases.contains(&phase)));
@@ -78,8 +87,8 @@ fn group_label(ledger: &Ledger, group: &Group) -> String {
     )
 }
 
-pub(crate) fn step(ledger: &Ledger) -> Option<Step> {
-    let (groups, current) = grouped(ledger);
+pub(crate) fn step(ledger: &Ledger, kind: Kind) -> Option<Step> {
+    let (groups, current) = grouped(ledger, kind);
     let index = current?;
     Some(Step {
         number: index + 1,
@@ -126,8 +135,8 @@ fn phase_label(phase: &Phase) -> String {
     }
 }
 
-pub(crate) fn bars(ledger: &Ledger) -> Vec<Bar> {
-    let (groups, current) = grouped(ledger);
+pub(crate) fn bars(ledger: &Ledger, shape: StageShape) -> Vec<Bar> {
+    let (groups, current) = grouped(ledger, shape.kind);
     groups
         .iter()
         .enumerate()
@@ -137,11 +146,13 @@ pub(crate) fn bars(ledger: &Ledger) -> Vec<Bar> {
                 .iter()
                 .map(|phase| phase.counts())
                 .fold((0, 0), |(done, total), counts| (done + counts.done, total + counts.total));
-            let kind = if phases.iter().all(|phase| phase.state() == PhaseState::Skipped) {
-                BarKind::Skipped
-            } else {
-                BarKind::Plain
-            };
+            let shipless = shape.no_diff && matches!(group.stage, Some(Stage::Build | Stage::Pr));
+            let kind =
+                if shipless || phases.iter().all(|phase| phase.state() == PhaseState::Skipped) {
+                    BarKind::Skipped
+                } else {
+                    BarKind::Plain
+                };
             let under_way = phases
                 .iter()
                 .flat_map(|phase| &phase.items)
@@ -171,8 +182,8 @@ pub(crate) struct ItemRow<'a> {
     pub(crate) why: Option<&'a str>,
 }
 
-pub(crate) fn item_rows(ledger: &Ledger) -> Vec<ItemRow<'_>> {
-    let (groups, current) = grouped(ledger);
+pub(crate) fn item_rows(ledger: &Ledger, kind: Kind) -> Vec<ItemRow<'_>> {
+    let (groups, current) = grouped(ledger, kind);
     let Some(group) = current.and_then(|index| groups.get(index)) else { return Vec::new() };
     phases_of(ledger, group)
         .into_iter()
@@ -260,7 +271,7 @@ pub(crate) fn updated(now_ms: i64, then_ms: Option<i64>, stale: bool) -> Option<
 }
 
 fn phase_name(ledger: &Ledger) -> String {
-    step(ledger).map_or_else(
+    step(ledger, ledger.status.kind.unwrap_or_default()).map_or_else(
         || {
             let said = ledger.status.phase.trim();
             said.strip_prefix("phase").map_or(said, str::trim).to_owned()
@@ -424,12 +435,12 @@ mod tests {
     fn the_step_is_the_current_stage_among_the_four() {
         let first = "# Goal\nx\n\n## Status\nphase: 1 Understand\n\n## Checklist\n### 1. Understand\n- [~] a\n### 2. Build\n- [ ] b\n### 3. PR\n- [ ] c\n### 4. Done\n- [ ] d\n";
         let want = Step { number: 1, of: 4, name: "Understand".to_owned() };
-        assert_eq!(step(&ledger(first)), Some(want));
+        assert_eq!(step(&ledger(first), Kind::Edit), Some(want));
         assert_eq!(
-            step(&ledger(MIDDLE)).map(|step| (step.number, step.name)),
+            step(&ledger(MIDDLE), Kind::Edit).map(|step| (step.number, step.name)),
             Some((2, "Build".to_owned()))
         );
-        assert_eq!(step(&ledger("# Goal\nx\n")), None);
+        assert_eq!(step(&ledger("# Goal\nx\n"), Kind::Edit), None);
     }
 
     const OLD_TEN: &str = "# Goal\nShip it\n\n## Status\nphase: 4\nstate: working\nnote: timing the query\n\n## Checklist\n### 1. Understand and decide\n- [x] Restate\n### 2. Build\n- [x] Change\n- [x] Test\n### 3. Gate\n- [x] Lint\n### 4. Validate against production\n- [~] Time it -- twice\n- [ ] Compare counts\n### 5. Preview\n- [-] Stub -- no UI\n### 6. PR\n- [ ] Open\n### 7. Review\n- [ ] Wait for CI\n### 8. Ship\n- [ ] Merge\n### 9. Verify live\n- [ ] Errors\n### 10. Close out\n- [ ] Report\n";
@@ -438,11 +449,11 @@ mod tests {
     fn an_old_ten_phase_ledger_draws_as_the_four_stages_with_its_items_carried_along() {
         let old = ledger(OLD_TEN);
         assert_eq!(
-            step(&old),
+            step(&old, Kind::Edit),
             Some(Step { number: 2, of: 4, name: "Build".to_owned() }),
             "phase 4 is Validate against production"
         );
-        let seen: Vec<_> = bars(&old)
+        let seen: Vec<_> = bars(&old, StageShape::default())
             .iter()
             .map(|bar| (bar.label.clone(), bar.done, bar.total, bar.fill, bar.current))
             .collect();
@@ -455,7 +466,7 @@ mod tests {
                 ("Done".to_owned(), 0, 3, 0.0, false),
             ]
         );
-        let rows: Vec<_> = item_rows(&old).iter().map(|row| row.text).collect();
+        let rows: Vec<_> = item_rows(&old, Kind::Edit).iter().map(|row| row.text).collect();
         assert_eq!(rows, ["Change", "Test", "Lint", "Time it", "Compare counts", "Stub"]);
         assert_eq!(tab_tip(&old), "Build - 4/11 done");
         assert_eq!(card_line(&old), "Build \u{b7} timing the query");
@@ -467,8 +478,10 @@ mod tests {
         let mixed = ledger(
             "# Goal\nx\n\n## Status\nphase: 2 Deploy\n\n## Checklist\n### 1. Understand\n- [x] a\n### 2. Deploy\n- [~] b\n### 3. Build\n- [ ] c\n",
         );
-        let labels: Vec<_> =
-            bars(&mixed).iter().map(|bar| (bar.label.clone(), bar.current)).collect();
+        let labels: Vec<_> = bars(&mixed, StageShape::default())
+            .iter()
+            .map(|bar| (bar.label.clone(), bar.current))
+            .collect();
         assert_eq!(
             labels,
             [
@@ -478,14 +491,14 @@ mod tests {
             ]
         );
         assert_eq!(
-            step(&mixed).map(|step| (step.number, step.of, step.name)),
+            step(&mixed, Kind::Edit).map(|step| (step.number, step.of, step.name)),
             Some((2, 3, "Deploy".to_owned()))
         );
     }
 
     #[test]
     fn a_bar_fills_by_its_done_share_and_the_current_phase_is_marked() {
-        let bars = bars(&ledger(MIDDLE));
+        let bars = bars(&ledger(MIDDLE), StageShape::default());
         let seen: Vec<_> =
             bars.iter().map(|bar| (bar.label.as_str(), bar.fill, bar.kind, bar.current)).collect();
         assert_eq!(
@@ -501,9 +514,12 @@ mod tests {
 
     #[test]
     fn an_item_under_way_fills_its_own_phase_and_no_other() {
-        let bars = bars(&ledger(
-            "# Goal\nx\n\n## Status\nphase: 1 Understand\n\n## Checklist\n### 1. Understand\n- [~] Read\n- [ ] Decide\n### 2. Build\n- [ ] Change\n",
-        ));
+        let bars = bars(
+            &ledger(
+                "# Goal\nx\n\n## Status\nphase: 1 Understand\n\n## Checklist\n### 1. Understand\n- [~] Read\n- [ ] Decide\n### 2. Build\n- [ ] Change\n",
+            ),
+            StageShape::default(),
+        );
         let fills: Vec<_> =
             bars.iter().map(|bar| (bar.label.as_str(), bar.fill, bar.current)).collect();
         assert_eq!(fills, [("Understand", 0.25, true), ("Build", 0.0, false)]);
@@ -511,14 +527,52 @@ mod tests {
 
     #[test]
     fn a_phase_without_a_title_is_called_by_its_number() {
-        let bars = bars(&ledger("# Goal\nx\n\n## Checklist\n### 3.\n- [ ] a\n"));
+        let bars =
+            bars(&ledger("# Goal\nx\n\n## Checklist\n### 3.\n- [ ] a\n"), StageShape::default());
         assert_eq!(bars[0].label, "Phase 3");
+    }
+
+    const ANSWERING: &str = "# Goal\nx\n\n## Status\nphase: 2\nkind: read-only\n\n## Checklist\n### 1. Understand\n- [x] Read\n### 2. Answer\n- [~] Explain\n### 3. Done\n- [ ] Say it\n";
+
+    fn labels(bars: &[Bar]) -> Vec<(&str, bool)> {
+        bars.iter().map(|bar| (bar.label.as_str(), bar.current)).collect()
+    }
+
+    #[test]
+    fn a_read_only_task_shows_understand_answer_and_done() {
+        let read_only = StageShape { kind: Kind::ReadOnly, no_diff: false };
+        let seen = bars(&ledger(ANSWERING), read_only);
+        assert_eq!(labels(&seen), [("Understand", false), ("Answer", true), ("Done", false)]);
+        let step = step(&ledger(ANSWERING), Kind::ReadOnly).unwrap();
+        assert_eq!((step.number, step.of, step.name.as_str()), (2, 3, "Answer"));
+    }
+
+    #[test]
+    fn after_promotion_the_answer_is_the_build_and_understand_stays_done() {
+        let promoted = bars(&ledger(ANSWERING), StageShape::default());
+        assert_eq!(labels(&promoted), [("Understand", false), ("Build", true), ("Done", false)]);
+        assert_eq!((promoted[0].done, promoted[0].total), (1, 1));
+        let answering = ledger(ANSWERING);
+        let rows: Vec<_> = item_rows(&answering, Kind::Edit).iter().map(|row| row.text).collect();
+        assert_eq!(rows, ["Explain"]);
+    }
+
+    #[test]
+    fn an_edit_with_no_diff_shows_build_and_pr_as_skipped() {
+        let text = "# Goal\nx\n\n## Checklist\n### 1. Understand\n- [x] a\n### 2. Build\n- [x] b\n### 3. PR\n- [x] c\n### 4. Done\n- [x] d\n";
+        let kinds =
+            |shape| bars(&ledger(text), shape).iter().map(|bar| bar.kind).collect::<Vec<_>>();
+        assert_eq!(kinds(StageShape::default()), [BarKind::Plain; 4]);
+        assert_eq!(
+            kinds(StageShape { kind: Kind::Edit, no_diff: true }),
+            [BarKind::Plain, BarKind::Skipped, BarKind::Skipped, BarKind::Plain]
+        );
     }
 
     #[test]
     fn the_rows_are_the_current_phases_items_with_their_reasons() {
         let ledger = ledger(MIDDLE);
-        let rows = item_rows(&ledger);
+        let rows = item_rows(&ledger, Kind::Edit);
         let seen: Vec<_> = rows.iter().map(|row| (row.mark, row.text, row.why)).collect();
         assert_eq!(
             seen,
@@ -529,7 +583,7 @@ mod tests {
                 (Mark::Skipped, "Docs", Some("not needed")),
             ]
         );
-        assert_eq!(item_rows(&Ledger::parse("# Goal\nx\n")), []);
+        assert_eq!(item_rows(&Ledger::parse("# Goal\nx\n"), Kind::Edit), []);
     }
 
     #[test]

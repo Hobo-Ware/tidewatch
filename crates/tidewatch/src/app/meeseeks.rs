@@ -3,18 +3,19 @@
 
 use std::time::Duration;
 
-use tidewatch_core::meeseeks::{Command, Event};
+use tidewatch_core::kind::Kind;
+use tidewatch_core::meeseeks::{Command, Event, Phase};
 use tidewatch_core::meeseeks_log::{Poofed, StageLine};
 
 use super::WAKE_SLACK_S;
 use super::{Tidewatch, wall_ms};
 use crate::due::ask_blocked;
 use crate::flow_glue;
-use crate::meeseeks_glue::{CheckSpec, Done, fake_poofed};
+use crate::meeseeks_glue::{CheckSpec, Done, LOOK_EVERY_SECS, LookSpec, fake_poofed};
 use crate::note_send::ENTER_DELAY_SECS;
 use crate::pane::{Body, Pane};
 use crate::progress_glue::today;
-use crate::progress_model;
+use crate::progress_model::{self, StageShape};
 use crate::{meeseeks_summary, meeseeks_summary_view};
 
 const CLOCK_TICK: Duration = Duration::from_secs(30);
@@ -27,6 +28,7 @@ impl Tidewatch {
             self.meeseeks_done_with(done, ctx);
         }
         self.paste_when_idle(ctx, now);
+        self.watch_worktrees(ctx, now);
         self.watch_struggles(ctx, now_ms);
         self.read_summary_branches(ctx);
     }
@@ -98,6 +100,41 @@ impl Tidewatch {
         }
     }
 
+    fn look_spec(&self, tab: u64) -> Option<LookSpec> {
+        let found = self.tabs.items().iter().find(|t| t.id == tab)?;
+        let meeseeks = found.pane.agent.as_ref()?.meeseeks.as_ref()?;
+        Some(LookSpec {
+            tools: self.flow.tools(),
+            dir: found.pane.worktree.as_ref()?.path.clone(),
+            started_at: meeseeks.start_head.clone(),
+        })
+    }
+
+    fn watch_worktrees(&mut self, ctx: &egui::Context, now: f64) {
+        if self.meeseeks.fake().is_on() {
+            return;
+        }
+        let waiting: Vec<u64> = self
+            .tabs
+            .items()
+            .iter()
+            .filter(|tab| {
+                tab.pane.agent.as_ref().and_then(|agent| agent.meeseeks.as_ref()).is_some_and(
+                    |meeseeks| meeseeks.kind == Kind::ReadOnly && meeseeks.phase == Phase::Working,
+                )
+            })
+            .map(|tab| tab.id)
+            .collect();
+        for tab in waiting {
+            if self.meeseeks.look_due(tab, now)
+                && let Some(spec) = self.look_spec(tab)
+            {
+                self.meeseeks.look(ctx, tab, spec, now);
+            }
+            ctx.request_repaint_after(Duration::from_secs_f64(LOOK_EVERY_SECS));
+        }
+    }
+
     fn watch_struggles(&mut self, ctx: &egui::Context, now_ms: i64) {
         let mut soonest: Option<i64> = None;
         let mut told = Vec::new();
@@ -162,6 +199,14 @@ impl Tidewatch {
                 self.meeseeks_event(tab, event, ctx);
             }
             Done::Poofed { tab } => self.finish_poof(tab, ctx),
+            Done::Looked { tab, ticket, edited } => {
+                if let Ok(edited) = edited {
+                    self.meeseeks_event(tab, Event::Looked { edited }, ctx);
+                }
+                if let Some(summary) = self.meeseeks.looked(tab, ticket) {
+                    self.meeseeks_event(tab, Event::Said(summary), ctx);
+                }
+            }
             Done::Refused { tab, why, shell } => {
                 if let Some(pane) = self.tabs.get_mut(tab).map(|t| &mut t.pane) {
                     match shell {
@@ -177,9 +222,20 @@ impl Tidewatch {
     }
 
     pub(super) fn meeseeks_said(&mut self, tab: u64, summary: String, ctx: &egui::Context) {
-        if !self.meeseeks.fake().is_on() {
-            self.meeseeks_event(tab, Event::Said(summary), ctx);
+        if self.meeseeks.fake().is_on() {
+            return;
         }
+        match self.look_spec(tab) {
+            Some(spec) => {
+                self.meeseeks.say_after_look(tab, summary);
+                self.meeseeks.look(ctx, tab, spec, ctx.input(|input| input.time));
+            }
+            None => self.meeseeks_event(tab, Event::Said(summary), ctx),
+        }
+    }
+
+    pub(super) fn meeseeks_declared(&mut self, tab: u64, kind: Kind, ctx: &egui::Context) {
+        self.meeseeks_event(tab, Event::Declared(kind), ctx);
     }
 
     fn meeseeks_event(&mut self, tab: u64, event: Event, ctx: &egui::Context) {
@@ -245,6 +301,7 @@ impl Tidewatch {
                 repo: t.pane.worktree.as_ref()?.repo.clone(),
                 ended_ms: now_ms,
                 checks: meeseeks.check_lines(),
+                kind: meeseeks.kind,
                 done: end.done,
                 next: end.next,
                 ..Poofed::bare(
@@ -262,8 +319,9 @@ impl Tidewatch {
             self.meeseeks_event(tab, Event::PoofRefused("the tab is busy".into()), ctx);
             return;
         };
+        let kind = leaving.kind;
         leaving.stages = self.progress.ledger(tab).map_or_else(Vec::new, |known| {
-            progress_model::bars(&known.ledger)
+            progress_model::bars(&known.ledger, StageShape { kind, no_diff: false })
                 .into_iter()
                 .map(|bar| StageLine {
                     name: bar.label,

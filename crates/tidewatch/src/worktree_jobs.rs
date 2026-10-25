@@ -7,11 +7,13 @@ use std::sync::Arc;
 
 use tidewatch_core::listener::{Listener, TabRegistration};
 use tidewatch_core::meeseeks::Meeseeks;
+use tidewatch_core::meeseeks_check;
 use tidewatch_core::paths::TidewatchPaths;
 use tidewatch_core::prepare::{PrepareInput, prepare};
 use tidewatch_core::session_id;
 use tidewatch_core::setup_recipe::{self, Recipe};
 use tidewatch_core::start_base;
+use tidewatch_core::tools::Tools;
 use tidewatch_core::trust_apply::Grant;
 use tidewatch_core::worktree::{
     self, BranchChoice, BranchOutcome, Inspection, Leftover, RemoveMode, Worktree,
@@ -92,8 +94,12 @@ fn run_open(spec: &OpenSpec) -> Result<Opened, OpenFailure> {
         })
     });
     let session_id = request.agent.session_id_flag.is_some().then(session_id::new);
-    let meeseeks =
-        request.meeseeks.map(|criteria| Meeseeks::summon(&request.task, criteria, unix_ms()));
+    let meeseeks = request.meeseeks.map(|criteria| Meeseeks {
+        start_head: worktree
+            .as_ref()
+            .and_then(|made| meeseeks_check::head(&Tools::system(), &made.path)),
+        ..Meeseeks::summon(&request.task, criteria, unix_ms())
+    });
     let prepared = prepare(&PrepareInput {
         paths: &spec.paths,
         agent: &request.agent,

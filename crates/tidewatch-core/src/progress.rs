@@ -10,6 +10,7 @@ use std::fmt::{self, Write as _};
 use serde::{Deserialize, Serialize};
 
 use crate::civil_date::Date;
+use crate::kind::Kind;
 
 /// The longest ledger `update_progress` accepts, in bytes.
 pub const MAX_LEDGER_BYTES: usize = 32 * 1024;
@@ -57,7 +58,8 @@ pub struct Status {
     pub phase: String,
     pub state: Option<State>,
     pub note: String,
-    /// Lines of the section that are none of the three keys.
+    pub kind: Option<Kind>,
+    /// Lines of the section that are none of the keys.
     pub other: Vec<String>,
 }
 
@@ -545,6 +547,7 @@ impl Ledger {
         let lines: Vec<String> = [
             (!status.phase.is_empty()).then(|| format!("phase: {}", status.phase)),
             status.state.map(|state| format!("state: {}", state.word())),
+            status.kind.map(|kind| format!("kind: {}", kind.word())),
             (!status.note.is_empty()).then(|| format!("note: {}", status.note)),
         ]
         .into_iter()
@@ -612,6 +615,7 @@ impl Status {
                 "phase" => self.phase = value,
                 "state" => self.state = State::parse(&value),
                 "note" => self.note = value,
+                "kind" if Kind::parse(&value).is_some() => self.kind = Kind::parse(&value),
                 _ => self.other.push(raw.trim_end().to_owned()),
             }
         }

@@ -2,11 +2,13 @@
 //! (pure). An agent writes its own steps under the four stage headings; a ledger from before that
 //! (the old ten phases) is read under the same four.
 
+use crate::kind::Kind;
 use crate::progress::Phase;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Stage {
     Understand,
+    Answer,
     Build,
     Pr,
     Done,
@@ -14,11 +16,21 @@ pub enum Stage {
 
 impl Stage {
     pub const ALL: [Self; 4] = [Self::Understand, Self::Build, Self::Pr, Self::Done];
+    pub const READ_ONLY: [Self; 3] = [Self::Understand, Self::Answer, Self::Done];
+
+    #[must_use]
+    pub fn of_kind(kind: Kind) -> &'static [Self] {
+        match kind {
+            Kind::ReadOnly => &Self::READ_ONLY,
+            Kind::Edit => &Self::ALL,
+        }
+    }
 
     #[must_use]
     pub fn label(self) -> &'static str {
         match self {
             Self::Understand => "Understand",
+            Self::Answer => "Answer",
             Self::Build => "Build",
             Self::Pr => "PR",
             Self::Done => "Done",
@@ -32,10 +44,22 @@ impl Stage {
 pub fn stage_of(title: &str) -> Option<Stage> {
     match title.trim().to_lowercase().as_str() {
         "understand" | "understand and decide" => Some(Stage::Understand),
+        "answer" => Some(Stage::Answer),
         "build" | "gate" | "validate against production" | "preview" => Some(Stage::Build),
         "pr" | "review" => Some(Stage::Pr),
         "done" | "ship" | "verify live" | "close out" => Some(Stage::Done),
         _ => None,
+    }
+}
+
+/// The stage a phase counts under for a task of `kind`: a read-only task has no Build or PR (that
+/// work is its answer) and an edit has no Answer (that work is its build).
+#[must_use]
+pub fn stage_in(title: &str, kind: Kind) -> Option<Stage> {
+    match (stage_of(title)?, kind) {
+        (Stage::Build | Stage::Pr, Kind::ReadOnly) => Some(Stage::Answer),
+        (Stage::Answer, Kind::Edit) => Some(Stage::Build),
+        (stage, _) => Some(stage),
     }
 }
 
@@ -50,10 +74,10 @@ pub struct Group {
 
 /// The bars of a checklist, in the order their first phase appears.
 #[must_use]
-pub fn groups(checklist: &[Phase]) -> Vec<Group> {
+pub fn groups(checklist: &[Phase], kind: Kind) -> Vec<Group> {
     let mut groups: Vec<Group> = Vec::new();
     for (index, phase) in checklist.iter().enumerate() {
-        let stage = stage_of(&phase.title);
+        let stage = stage_in(&phase.title, kind);
         match groups.iter_mut().find(|group| stage.is_some() && group.stage == stage) {
             Some(group) => group.phases.push(index),
             None => groups.push(Group { stage, phases: vec![index] }),
@@ -101,7 +125,10 @@ mod tests {
     }
 
     fn shape(text: &str) -> Vec<(Option<Stage>, Vec<usize>)> {
-        groups(&checklist_phases(text)).into_iter().map(|g| (g.stage, g.phases)).collect()
+        groups(&checklist_phases(text), Kind::Edit)
+            .into_iter()
+            .map(|g| (g.stage, g.phases))
+            .collect()
     }
 
     #[test]
@@ -145,6 +172,41 @@ mod tests {
                 (Some(Stage::Build), vec![1, 2, 3, 4]),
                 (Some(Stage::Pr), vec![5, 6]),
                 (Some(Stage::Done), vec![7, 8, 9]),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_read_only_task_has_understand_answer_and_done_and_an_edit_the_four() {
+        let labels =
+            |kind| Stage::of_kind(kind).iter().map(|stage| stage.label()).collect::<Vec<_>>();
+        assert_eq!(labels(Kind::ReadOnly), ["Understand", "Answer", "Done"]);
+        assert_eq!(labels(Kind::Edit), ["Understand", "Build", "PR", "Done"]);
+        assert_eq!(stage_of("answer"), Some(Stage::Answer));
+    }
+
+    #[test]
+    fn phases_fall_under_the_stages_of_the_kind_they_are_read_as() {
+        let text = "### 1. Understand\n- [x] a\n### 2. Answer\n- [ ] b\n### 3. Build\n- [ ] c\n### 4. PR\n- [ ] d\n### 5. Done\n- [ ] e\n";
+        let phases = checklist_phases(text);
+        let shape = |kind| {
+            groups(&phases, kind).into_iter().map(|g| (g.stage, g.phases)).collect::<Vec<_>>()
+        };
+        assert_eq!(
+            shape(Kind::ReadOnly),
+            [
+                (Some(Stage::Understand), vec![0]),
+                (Some(Stage::Answer), vec![1, 2, 3]),
+                (Some(Stage::Done), vec![4]),
+            ]
+        );
+        assert_eq!(
+            shape(Kind::Edit),
+            [
+                (Some(Stage::Understand), vec![0]),
+                (Some(Stage::Build), vec![1, 2]),
+                (Some(Stage::Pr), vec![3]),
+                (Some(Stage::Done), vec![4]),
             ]
         );
     }

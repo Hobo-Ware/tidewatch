@@ -155,3 +155,25 @@ fn an_empty_summary_from_the_agent_is_left_out() {
     record.summary = "  ".into();
     assert_eq!(summary(&record, None, &TimeZone::UTC).said, None);
 }
+
+#[test]
+fn the_card_says_answered_blocked_or_nothing_to_check_when_no_check_ran() {
+    let skipped = |detail: &str| {
+        Step::ALL
+            .iter()
+            .map(|&step| CheckLine { step, verdict: Verdict::Skipped, detail: detail.into() })
+            .collect::<Vec<_>>()
+    };
+    let cases = [
+        (Kind::ReadOnly, "It is an LRU over the disk", "Answered"),
+        (Kind::Edit, "Blocked: the staging key is missing", "Blocked"),
+        (Kind::Edit, "Nothing needed doing", "Nothing to check"),
+    ];
+    for (kind, said, title) in cases {
+        let record = Poofed { kind, summary: said.into(), checks: skipped("Not run"), ..bare() };
+        let shown = summary(&record, None, &TimeZone::UTC);
+        assert_eq!((shown.card.title.as_str(), shown.card.meta.as_str()), (title, "no checks"));
+        assert_eq!(shown.said.as_deref(), Some(said));
+    }
+    assert_eq!(summary(&full(), None, &TimeZone::UTC).card.title, "Checks passed");
+}
