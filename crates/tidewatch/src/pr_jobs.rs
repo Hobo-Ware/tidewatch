@@ -31,6 +31,10 @@ pub(crate) enum Done {
         tab: u64,
         found: Option<(String, usize)>,
     },
+    AfterMerge {
+        tab: u64,
+        commits: Option<usize>,
+    },
     Reran {
         tab: u64,
         result: Result<(), GhError>,
@@ -74,6 +78,21 @@ pub(crate) fn committed(
     jobs.spawn(ctx, move || Done::Committed {
         tab,
         found: pr_gh::unpushed(&tools, &dir, &remote_head),
+    });
+}
+
+/// How many commits the worktree has beyond the head its pull request merged with.
+pub(crate) fn after_merge(
+    jobs: &Jobs<Done>,
+    ctx: &egui::Context,
+    tab: u64,
+    tools: Tools,
+    dir: PathBuf,
+    merged_head: String,
+) {
+    jobs.spawn(ctx, move || Done::AfterMerge {
+        tab,
+        commits: pr_gh::unpushed(&tools, &dir, &merged_head).map(|(_, commits)| commits),
     });
 }
 

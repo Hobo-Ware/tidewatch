@@ -50,6 +50,9 @@ pub struct Cards {
     pub auto_sends: u32,
     #[serde(default)]
     pub fixing: bool,
+    /// Commits a tab that runs on its own left on the branch after its pull request merged.
+    #[serde(default)]
+    pub after_merge: usize,
 }
 
 impl Cards {
@@ -96,6 +99,17 @@ impl Cards {
         self.summary = None;
         self.auto_sends = 0;
         self.fixing = false;
+        self.after_merge = 0;
+    }
+
+    /// The latest card that ended a pull request says it merged, not that it was closed.
+    #[must_use]
+    pub fn ended_merged(&self) -> bool {
+        self.items
+            .iter()
+            .rev()
+            .find(|card| matches!(card.body, Body::Merged { .. } | Body::Closed { .. }))
+            .is_some_and(|card| matches!(card.body, Body::Merged { .. }))
     }
 
     pub fn add(&mut self, at_ms: i64, body: Body) -> u64 {

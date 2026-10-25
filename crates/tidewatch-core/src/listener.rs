@@ -414,7 +414,7 @@ fn hook_route(shared: &Shared, entry: &Entry, agent: &str, request: &Request) ->
 }
 
 /// The answer to a prompt: extra context that asks a tab with no avatar, never asked, to draw
-/// one, and one that asks a tab whose ledger waits on the owner to refresh it. Both ride the one
+/// one, and one that asks a tab whose ledger holds open items to refresh it. Both ride the one
 /// answer when both apply. The avatar marker is written first, so a tab whose state folder cannot
 /// be written is not asked on every prompt.
 fn prompt_reply(
@@ -430,14 +430,14 @@ fn prompt_reply(
     }
     let mut contexts = Vec::new();
     if avatar_due(shared, entry, on_prompt) {
-        contexts.push(avatar_ask::CONTEXT);
+        contexts.push(avatar_ask::CONTEXT.to_owned());
     }
-    if progress_store::load(&progress_file_beside(&entry.notes_file))
-        .is_some_and(|ledger| ledger.awaits_owner())
+    if let Some(line) = progress_store::load(&progress_file_beside(&entry.notes_file))
+        .and_then(|ledger| prompt_answer::ledger_context(&ledger))
     {
-        contexts.push(prompt_answer::LEDGER_CONTEXT);
+        contexts.push(line);
     }
-    prompt_answer::answer(&contexts)
+    prompt_answer::answer(&contexts.iter().map(String::as_str).collect::<Vec<_>>())
 }
 
 fn avatar_due(shared: &Shared, entry: &Entry, on_prompt: bool) -> bool {
@@ -941,6 +941,30 @@ mod tests {
         save_ledger(&f, &token, "# Goal\nShip\n\n## Status\nstate: working\n");
         let third = f.send("POST", "/hook/claude", Some(&token), PROMPT);
         assert_eq!(third.body, "{}", "the agent refreshed its ledger, nothing more to say");
+    }
+
+    #[test]
+    fn a_prompt_to_a_tab_whose_ledger_holds_open_items_is_answered_with_the_open_line() {
+        let open =
+            "# Goal\nShip\n\n## Status\nstate: working\n\n## Not verified\n- Verified live\n";
+        let f = fixture();
+        let token = f.register(1, "a");
+        avatar_store::mark_asked(&avatar_asked_file_beside(&notes_of(&f, &token))).unwrap();
+        save_ledger(&f, &token, open);
+        for _ in 0..2 {
+            let response = f.send("POST", "/hook/claude", Some(&token), PROMPT);
+            let context = context_of(&response);
+            assert!(context.contains("\"Verified live\""), "{context}");
+            assert!(context.contains("update_progress"), "{context}");
+            assert_eq!(context.lines().count(), 1, "{context}");
+        }
+        save_ledger(
+            &f,
+            &token,
+            "# Goal\nShip\n\n## Status\nstate: working\n\n## Not verified\n- Nothing\n",
+        );
+        let closed = f.send("POST", "/hook/claude", Some(&token), PROMPT);
+        assert_eq!(closed.body, "{}", "nothing open, nothing said");
     }
 
     #[test]

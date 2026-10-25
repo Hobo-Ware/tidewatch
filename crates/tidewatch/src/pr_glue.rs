@@ -97,6 +97,11 @@ impl Host {
         self.tabs.get(&tab)?.push_fix_due(self.default)
     }
 
+    /// Whether the delivery of a tab stays shut (see `pr_watch::delivery_shut`).
+    pub(crate) fn delivery_shut(&self, tab: u64, autonomous: bool) -> bool {
+        crate::pr_watch::delivery_shut(self.tabs.get(&tab), autonomous)
+    }
+
     pub(crate) fn watch(&self, tab: u64) -> Option<&Watch> {
         self.tabs.get(&tab)
     }
@@ -163,6 +168,16 @@ impl Host {
                 && let Some(head) = watch.cards.seen.as_ref().map(|seen| seen.head.clone())
             {
                 pr_jobs::committed(
+                    &self.jobs,
+                    ctx,
+                    fact.id,
+                    self.tools.clone(),
+                    fact.dir.to_path_buf(),
+                    head,
+                );
+            }
+            if let Some(head) = watch.take_recount() {
+                pr_jobs::after_merge(
                     &self.jobs,
                     ctx,
                     fact.id,
@@ -239,6 +254,11 @@ impl Host {
                     let Some(watch) = self.tabs.get_mut(&tab) else { continue };
                     let outs =
                         if watch.committed(found, now_ms) { vec![Out::Save] } else { vec![] };
+                    (tab, outs)
+                }
+                Done::AfterMerge { tab, commits } => {
+                    let Some(watch) = self.tabs.get_mut(&tab) else { continue };
+                    let outs = if watch.counted(commits) { vec![Out::Save] } else { vec![] };
                     (tab, outs)
                 }
                 Done::Checked { tab, remove, result } => {

@@ -37,6 +37,16 @@ pub(crate) struct TabFacts {
     /// The tab runs on its own and delivers through the card itself (not a Meeseeks, which hands
     /// off through its own check).
     pub(crate) auto_deliver: bool,
+    pub(crate) gate: Gate,
+}
+
+/// Whether the tab may deliver: shut once its pull request merged (`merged_branch`), so no card
+/// opens and no pull request follows.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) enum Gate {
+    #[default]
+    Open,
+    Shut,
 }
 
 /// What the app applies after a job finished.
@@ -98,7 +108,7 @@ impl TabFlow {
 pub(crate) fn decide(flow: &mut TabFlow, facts: &TabFacts, now: f64) -> Vec<Want> {
     let mut wants = Vec::new();
     flow.auto.observe(&facts.status);
-    let done = facts.deliverable;
+    let done = facts.deliverable && facts.gate == Gate::Open;
     if done && !flow.was_done && flow.pr.pr().is_none() {
         flow.delivery.probe_started();
         wants.push(Want::Probe);
@@ -592,6 +602,7 @@ mod tests {
             pending: 0,
             stage_summary: None,
             auto_deliver: false,
+            gate: Gate::Open,
         }
     }
 
@@ -618,6 +629,20 @@ mod tests {
             .found(Ok(Some(PullRequest { number: 1, url: "u".into(), head_sha: "h".into() })), 0.0);
         flow.lines_loading = true;
         assert_eq!(decide(&mut flow, &facts(AgentStatus::Done), 1.0), []);
+    }
+
+    #[test]
+    fn a_tab_whose_pull_request_merged_is_not_probed_and_loses_its_card() {
+        let mut flow = flow_with(false);
+        decide(&mut flow, &facts(AgentStatus::Done), 0.0);
+        flow.delivery.probe_done(Some(1));
+        assert_eq!(flow.delivery, Delivery::Ready { commits: 1 });
+        let shut = TabFacts { gate: Gate::Shut, ..facts(AgentStatus::Done) };
+        assert_eq!(decide(&mut flow, &shut, 1.0), []);
+        assert_eq!(flow.delivery, Delivery::Hidden);
+        decide(&mut flow, &facts(AgentStatus::Working), 2.0);
+        assert_eq!(decide(&mut flow, &shut, 3.0), [], "a new idle moment asks for nothing");
+        assert_eq!(flow.next_auto_step(), Auto::Wait);
     }
 
     #[test]

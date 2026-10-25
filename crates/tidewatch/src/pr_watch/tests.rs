@@ -652,3 +652,111 @@ fn a_review_bot_receipt_saved_by_an_older_version_is_not_loaded() {
     watch.loaded(cards, 0.0);
     assert_eq!(watch.cards.cards().len(), 1);
 }
+
+fn merged_watch(autonomous: bool, left: usize) -> Watch {
+    let default = GithubPrefs::default();
+    let mut watch = ready(Some(42));
+    watch.autonomous = autonomous;
+    watch.look_started();
+    let merged = Body::Merged { number: 42, base: "main".into() };
+    watch.polled(Ok(polled(vec![merged], false, true)), default, "tab", 5.0, 0);
+    watch.cards.after_merge = left;
+    if let Some(seen) = &mut watch.cards.seen {
+        seen.head = "head-1".into();
+    }
+    watch
+}
+
+#[test]
+fn a_tab_on_its_own_whose_pull_request_merged_never_delivers_and_notes_what_was_left() {
+    let cases = [
+        (
+            "merged, a commit left",
+            merged_watch(true, 1),
+            false,
+            Some("1 commit after merge, not delivered"),
+        ),
+        (
+            "merged, two left",
+            merged_watch(true, 2),
+            false,
+            Some("2 commits after merge, not delivered"),
+        ),
+        ("merged, nothing left", merged_watch(true, 0), false, None),
+        ("merged but the owner decides", merged_watch(false, 1), true, None),
+        ("open", ready(Some(42)), true, None),
+        ("no pull request", ready(None), true, None),
+    ];
+    for (what, mut watch, deliver, note) in cases {
+        if what == "open" || what == "no pull request" {
+            watch.autonomous = true;
+            watch.cards.after_merge = 1;
+        }
+        let verdict = watch.verdict();
+        assert_eq!(verdict.deliver, deliver, "{what}");
+        assert_eq!(verdict.note.as_deref(), note, "{what}");
+    }
+}
+
+#[test]
+fn a_closed_pull_request_is_not_a_merged_one() {
+    let default = GithubPrefs::default();
+    let mut watch = ready(Some(42));
+    watch.autonomous = true;
+    watch.look_started();
+    watch.polled(
+        Ok(polled(vec![Body::Closed { number: 42 }], false, true)),
+        default,
+        "tab",
+        5.0,
+        0,
+    );
+    assert!(watch.verdict().deliver);
+}
+
+#[test]
+fn a_new_pull_request_on_the_same_branch_delivers_again() {
+    let mut watch = merged_watch(true, 1);
+    assert!(!watch.verdict().deliver);
+    assert!(watch.learn(43, "head-9", 10.0));
+    let verdict = watch.verdict();
+    assert!(verdict.deliver);
+    assert_eq!(verdict.note, None);
+}
+
+#[test]
+fn the_commits_after_the_merge_are_counted_once_per_idle_moment_for_a_tab_on_its_own() {
+    let mut watch = merged_watch(true, 0);
+    assert_eq!(watch.take_recount(), None, "not idle yet");
+    watch.observe(&AgentStatus::Working);
+    watch.observe(&AgentStatus::Done);
+    assert_eq!(watch.take_recount().as_deref(), Some("head-1"));
+    assert_eq!(watch.take_recount(), None, "once");
+    assert!(watch.counted(Some(1)));
+    assert!(!watch.counted(Some(1)), "nothing new to save");
+    assert!(!watch.counted(None), "git could not say");
+    assert_eq!(watch.cards.after_merge, 1);
+
+    let mut owner = merged_watch(false, 0);
+    owner.observe(&AgentStatus::Done);
+    assert_eq!(owner.take_recount(), None);
+    let mut open = ready(Some(42));
+    open.autonomous = true;
+    open.observe(&AgentStatus::Done);
+    assert_eq!(open.take_recount(), None);
+}
+
+#[test]
+fn a_tab_on_its_own_does_not_deliver_before_its_saved_cards_are_read() {
+    let mut unread = Watch::new(PathBuf::from("/state/pr_cards.json"));
+    unread.autonomous = true;
+    assert!(delivery_shut(Some(&unread), true), "cards not read");
+    assert!(delivery_shut(None, true), "no watch yet");
+    assert!(!delivery_shut(None, false), "a tab that waits for the owner is never held");
+    assert!(!delivery_shut(Some(&Watch::new(PathBuf::from("/x"))), false));
+    unread.take_load();
+    unread.loaded(Cards::default(), 0.0);
+    assert!(!delivery_shut(Some(&unread), true), "no pull request");
+    assert!(delivery_shut(Some(&merged_watch(true, 0)), true));
+    assert!(!delivery_shut(Some(&merged_watch(false, 0)), false));
+}

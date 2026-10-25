@@ -8,6 +8,7 @@ use tidewatch_core::restore::WindowPlan;
 use tidewatch_core::worktree::Worktree;
 
 use super::{Tidewatch, WAKE_SLACK_S};
+use crate::flow::Gate;
 use crate::flow_glue;
 use crate::pty::{spawn_agent, spawn_shell, spawn_shell_noted, spawn_typed};
 use crate::repo::Workspace;
@@ -122,7 +123,12 @@ impl Tidewatch {
             flow_glue::press_enter(&mut self.tabs, tab);
         }
         let active = self.tabs.items()[self.tabs.active()].id;
-        let facts = flow_glue::facts(&self.tabs, &self.views, active);
+        let mut facts = flow_glue::facts(&self.tabs, &self.views, active);
+        for fact in &mut facts {
+            if self.pr.delivery_shut(fact.id, fact.auto_deliver) {
+                fact.gate = Gate::Shut;
+            }
+        }
         if let Some(at) = self.flow.tick(&facts, ctx, now, unix) {
             ctx.request_repaint_after(Duration::from_secs_f64((at - now).max(0.0) + WAKE_SLACK_S));
         }

@@ -11,7 +11,7 @@ use crate::delivery_card::Delivery;
 use crate::delivery_view::{self, DialogAction};
 use crate::dev_flow::{DevFlow, Fact, Ready, SendMode, Step};
 use crate::diff_pane::PaneAction;
-use crate::flow::{Flow, Out, TabFacts};
+use crate::flow::{Flow, Gate, Out, TabFacts};
 use crate::flow_jobs::Which;
 use crate::notes_strip::StripAction;
 use crate::pane::{Body, Pane};
@@ -60,6 +60,7 @@ pub(crate) fn facts<T>(
                 pending,
                 stage_summary,
                 auto_deliver: agent.autonomous() && agent.meeseeks.is_none(),
+                gate: Gate::Open,
             })
         })
         .collect()

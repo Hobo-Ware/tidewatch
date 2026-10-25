@@ -263,6 +263,27 @@ fn keep_it_hides_the_merged_buttons() {
 }
 
 #[test]
+fn commits_left_after_the_merge_are_a_quiet_note_and_never_a_button() {
+    let (_, plain) = merged_with(&Cleanup::Checked(report(&[])));
+    assert_eq!(plain.note, None);
+    for (left, note) in [
+        (0, None),
+        (1, Some("1 commit after merge, not delivered")),
+        (2, Some("2 commits after merge, not delivered")),
+    ] {
+        let mut cards = cards_of(vec![Body::Merged { number: 42, base: "main".into() }]);
+        cards.after_merge = left;
+        let cleanup = Cleanup::Checked(report(&[]));
+        let context = Context { cleanup: &cleanup, ..context(&cards, PrMode::Ask) };
+        let Some(Look::Card(model)) = look(0, context) else { panic!() };
+        assert_eq!(model.note.as_deref(), note, "{left} left");
+        assert_eq!(model.buttons, plain.buttons, "the note adds no button");
+        assert_eq!(model.ink, plain.ink, "and no color");
+        assert_eq!(model.body, plain.body);
+    }
+}
+
+#[test]
 fn closed_can_only_be_reopened_on_github() {
     let model = card(vec![Body::Closed { number: 42 }], PrMode::Ask);
     assert_eq!(labels(&model), [("Reopen on GitHub", false)]);
