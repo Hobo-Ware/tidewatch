@@ -172,6 +172,8 @@ pub enum TabAction {
     ResumeAgent { agent: String, profile: Box<Profile>, session_id: String, how: Resume },
     /// `restore_workflow(stages)` gives the runner and the command it was waiting on.
     ResumeWorkflow { stages: PathBuf },
+    /// A poofed Meeseeks: its summary tab comes back, with no process to start.
+    Summary,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -353,6 +355,7 @@ fn plan_tab(
     let action = match tab {
         SavedTab::Main | SavedTab::Shell { .. } => TabAction::Shell,
         SavedTab::Agent(agent) => plan_agent(agent, env, disk, claims),
+        SavedTab::Poofed(_) => TabAction::Summary,
     };
     Ok(TabPlan { saved: tab.clone(), dir, worktree, action, park: None })
 }
@@ -1232,6 +1235,21 @@ mod tests {
             "Could not reopen 1 tab: b-gemini (worktree folder gone). \
              Reopened 1 tab as a shell: d-codex (`codex` is not installed)"
         );
+    }
+
+    #[test]
+    fn a_poofed_tab_comes_back_as_its_summary_with_nothing_to_start() {
+        use crate::civil_date::Date;
+        use crate::meeseeks_log::Poofed;
+        let record =
+            Poofed::bare("promo-test", "Done.", None, 60, Date::new(2026, 10, 25).unwrap());
+        let saved = window(vec![SavedTab::Main, SavedTab::Poofed(Box::new(record.clone()))]);
+        let plan = plan_with(&saved, &[], &FakeDisk::with_dirs(&[REPO]));
+        assert_eq!(plan.tabs.len(), 2);
+        assert_eq!(plan.tabs[1].action, TabAction::Summary);
+        assert_eq!(plan.tabs[1].saved, SavedTab::Poofed(Box::new(record)));
+        assert_eq!(plan.tabs[1].worktree, None);
+        assert_eq!(plan.skipped, Vec::new());
     }
 
     #[test]

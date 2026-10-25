@@ -12,6 +12,7 @@ use std::path::{Path, PathBuf};
 
 use tidewatch_core::agents::Level;
 use tidewatch_core::meeseeks::Meeseeks;
+use tidewatch_core::meeseeks_log::Poofed;
 use tidewatch_core::session::{SavedAgentTab, SavedPark, SavedTab, SavedWindow};
 
 use crate::pane::{AgentTab, Body, Pane};
@@ -45,6 +46,7 @@ enum TabRef<'a> {
     Main,
     Shell { dir: &'a Path, branch: Option<&'a str> },
     Agent(AgentRef<'a>),
+    Poofed(&'a Poofed),
 }
 
 #[derive(Hash)]
@@ -68,6 +70,7 @@ impl TabRef<'_> {
             TabRef::Shell { dir, branch } => {
                 SavedTab::Shell { dir: dir.to_path_buf(), branch: branch.map(str::to_owned) }
             }
+            TabRef::Poofed(record) => SavedTab::Poofed(Box::new(record.clone())),
             TabRef::Agent(a) => SavedTab::Agent(SavedAgentTab {
                 dir: a.dir.to_path_buf(),
                 branch: a.branch.map(str::to_owned),
@@ -131,6 +134,7 @@ fn tab_ref<'a, T>(tab: &'a Tab<Pane<T>>, window_dir: &'a Path) -> Option<TabRef<
         None => (own_dir(pane.agent.as_ref()).unwrap_or(window_dir), None),
     };
     match &pane.body {
+        Body::Poofed(record) => Some(TabRef::Poofed(record)),
         Body::Creating | Body::Removing | Body::Draft(_) => None,
         Body::Failed(_) => pane.worktree.as_ref().map(|_| TabRef::Shell { dir, branch }),
         Body::Shell(_) => Some(

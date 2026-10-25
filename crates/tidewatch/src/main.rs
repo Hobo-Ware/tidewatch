@@ -91,6 +91,8 @@ mod mascot;
 mod mascot_motion;
 mod meeseeks_glue;
 mod meeseeks_model;
+mod meeseeks_summary;
+mod meeseeks_summary_view;
 mod meeseeks_view;
 mod merge_cleanup;
 mod merge_groups;

@@ -22,6 +22,7 @@ use stdusk_core::handoff::{Fallback, Layout, PaneMeta, capture_pane, fallback};
 use stdusk_core::terminal::PtyTerm;
 use tidewatch_core::listener::Credential;
 use tidewatch_core::meeseeks::{Meeseeks, Phase};
+use tidewatch_core::meeseeks_log::Poofed;
 use tidewatch_core::runner::Runner;
 use tidewatch_core::worktree::Worktree;
 
@@ -130,6 +131,9 @@ pub(crate) struct TabEntry {
     pub(crate) park: Option<Park>,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub(crate) keep: bool,
+    /// A poofed Meeseeks' summary: nothing travels with it but the record.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) summary: Option<Box<Poofed>>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -177,7 +181,7 @@ impl Layout for Handover {
 
 fn keeps<T>(tab: &Tab<Pane<T>>) -> bool {
     match &tab.pane.body {
-        Body::Shell(_) => true,
+        Body::Shell(_) | Body::Poofed(_) => true,
         Body::Failed(_) => tab.pane.worktree.is_some(),
         Body::Creating | Body::Removing | Body::Draft(_) => false,
     }
@@ -244,6 +248,10 @@ pub(crate) fn plan<T>(
                         agent: agent.map(|agent| agent_entry(agent, credential(tab.id))),
                         park: tab.park,
                         keep: tab.keep,
+                        summary: match &tab.pane.body {
+                            Body::Poofed(record) => Some(record.clone()),
+                            _ => None,
+                        },
                     }
                 })
                 .collect();
@@ -311,13 +319,16 @@ pub(crate) fn rebuild<P, T>(
         for entry in &group.tabs {
             let dir = entry.worktree.as_ref().map_or(group.dir.as_path(), |w| w.path.as_path());
             let received = entry.live.then(|| panes.next()).flatten();
-            let pane = match received.map(|pane| adopt(pane, dir)) {
-                Some(Ok(term)) => Pane {
+            let pane = match (entry.summary.as_ref(), received.map(|pane| adopt(pane, dir))) {
+                (Some(record), _) => {
+                    Pane { body: Body::Poofed(record.clone()), worktree: None, agent: None }
+                }
+                (None, Some(Ok(term))) => Pane {
                     body: Body::Shell(term),
                     worktree: entry.worktree.clone(),
                     agent: entry.agent.as_ref().map(|agent| agent_tab(agent, dir, now, &mut notes)),
                 },
-                Some(Err(_)) => {
+                (None, Some(Err(_))) => {
                     notes.push(LOST_TERMINAL.to_owned());
                     Pane {
                         body: Body::Shell(fresh(dir, Some(LOST_TERMINAL))),
@@ -325,7 +336,7 @@ pub(crate) fn rebuild<P, T>(
                         agent: None,
                     }
                 }
-                None => Pane {
+                (None, None) => Pane {
                     body: Body::Shell(fresh(dir, None)),
                     worktree: entry.worktree.clone(),
                     agent: None,

@@ -746,20 +746,66 @@ fn a_struggling_tab_is_tinted_orange_and_a_calm_one_is_not() {
     let orange = brand::ORANGE.gamma_multiply(0.16);
     let (calm, _) = strip_fills(Mood::default(), true);
     assert!(!calm.contains(&orange));
-    let (struggling, _) = strip_fills(Mood { struggling: true, fade: None }, true);
+    let (struggling, _) = strip_fills(Mood { struggling: true }, true);
     assert!(struggling.contains(&orange), "the tint over the tab");
     assert!(struggling.contains(&brand::ORANGE), "the bar at its left");
 }
 
-#[test]
-fn a_fading_tab_is_veiled_in_the_strips_own_color_more_as_the_fade_goes_on() {
-    let veil = |fade: f32| brand::SIDEBAR.gamma_multiply(fade);
-    let (plain, _) = strip_fills(Mood::default(), true);
-    assert!(!plain.contains(&veil(0.5)));
-    for fade in [0.25, 0.5, 1.0] {
-        let (shown, _) = strip_fills(Mood { struggling: false, fade: Some(fade) }, true);
-        assert!(shown.contains(&veil(fade)), "{fade}");
+fn circles(shape: &Shape, out: &mut usize) {
+    match shape {
+        Shape::Circle(_) => *out += 1,
+        Shape::Vec(shapes) => shapes.iter().for_each(|shape| circles(shape, out)),
+        _ => {}
     }
+}
+
+#[test]
+fn a_poofed_tab_keeps_its_title_under_a_dimmed_face_and_has_no_status_dot() {
+    use tidewatch_core::civil_date::Date;
+    use tidewatch_core::meeseeks_log::Poofed;
+    let ctx = crate::fonts::test_context();
+    let record = Poofed::bare("promo-test", "Done.", None, 60, Date::new(2026, 10, 25).unwrap());
+    let poofed = Pane::<u32> { body: Body::Poofed(Box::new(record)), worktree: None, agent: None };
+    let mut tabs = Tabs::new(Pane::shell(0));
+    tabs.push_in(0, "promo-test".into(), poofed);
+    let (mut fills_seen, mut dots, mut texts) = (Vec::new(), 0, Vec::new());
+    for _ in 0..2 {
+        let raw = RawInput {
+            screen_rect: Some(Rect::from_min_size(pos2(0.0, 0.0), vec2(800.0, 200.0))),
+            focused: true,
+            ..RawInput::default()
+        };
+        let mut actions = Vec::new();
+        let output = ctx.run_ui(raw, |ui| {
+            egui::Panel::top("tabbar").exact_size(TAB_H + 6.0).show(ui, |ui| {
+                ui.horizontal(|ui| {
+                    tab_row(
+                        ui,
+                        &tabs,
+                        200.0,
+                        0.0,
+                        &mut actions,
+                        (
+                            |_: &Pane<u32>| (Progress::default(), CmdState::default()),
+                            |_| TabExtras::default(),
+                        ),
+                    );
+                });
+            });
+        });
+        (fills_seen, dots, texts) = (Vec::new(), 0, Vec::new());
+        for clipped in &output.shapes {
+            fills(&clipped.shape, &mut fills_seen);
+            circles(&clipped.shape, &mut dots);
+            collect_text(&clipped.shape, &mut texts);
+        }
+    }
+    assert!(fills_seen.contains(&brand::SIDEBAR.gamma_multiply(POOFED_VEIL)), "the dimmed face");
+    assert_eq!(dots, 0, "no status dot");
+    assert!(
+        texts.iter().any(|(text, _)| text == "promo-test"),
+        "the title without a number: {texts:?}"
+    );
 }
 
 fn main_icon_shapes(

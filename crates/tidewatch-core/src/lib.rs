@@ -52,6 +52,7 @@ pub mod launch;
 pub mod listener;
 pub mod mcp;
 pub mod meeseeks;
+pub mod meeseeks_branch;
 pub mod meeseeks_check;
 pub mod meeseeks_log;
 pub mod meeseeks_mcp;

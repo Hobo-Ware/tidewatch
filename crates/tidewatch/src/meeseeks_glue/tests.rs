@@ -50,13 +50,7 @@ impl Drop for Shell {
 }
 
 fn entry(name: &str, date: Date) -> Poofed {
-    Poofed {
-        name: name.into(),
-        summary: format!("did {name}"),
-        pr_url: None,
-        duration_secs: 60,
-        date,
-    }
+    Poofed::bare(name, &format!("did {name}"), None, 60, date)
 }
 
 fn wait(host: &mut Host, ctx: &egui::Context, ready: impl Fn(&Host) -> bool) {
@@ -134,9 +128,15 @@ fn the_checks_dispatch_to_their_step_and_a_hand_off_without_a_pr_is_nothing_to_d
         summary: "Did it".into(),
     };
     assert_eq!(run_check(Step::Change, &spec, true), Err("no commit ahead of main".to_owned()));
-    assert_eq!(run_check(Step::Proof, &spec, true), Ok(None));
-    assert_eq!(run_check(Step::Tests, &spec, true), Ok(None), "no test command is a pass");
-    assert_eq!(run_check(Step::HandOff, &spec, false), Ok(None));
+    let said =
+        |step, pr| run_check(step, &spec, pr).map(|checked| (checked.detail, checked.pr_url));
+    assert_eq!(said(Step::Proof, true), Ok(("Worktree clean".to_owned(), None)));
+    assert_eq!(
+        said(Step::Tests, true),
+        Ok(("No test command for this repo".to_owned(), None)),
+        "no test command is a pass"
+    );
+    assert_eq!(said(Step::HandOff, false), Ok((String::new(), None)));
 }
 
 #[test]
@@ -162,23 +162,6 @@ fn a_struggle_is_told_once_per_tab() {
     assert!(host.first_struggle(2));
     host.forget(1);
     assert!(host.first_struggle(1));
-}
-
-#[test]
-fn a_fade_takes_six_hundred_milliseconds_and_ends_exactly_once() {
-    let mut host = Host::new(None, false, Fake::Off);
-    assert_eq!(host.fade(1, 10.0), None);
-    assert!(!host.fading());
-    host.start_fade(1, 10.0);
-    assert!(host.fading());
-    assert_eq!(host.fade(1, 10.0), Some(0.0));
-    let half = host.fade(1, 10.3).unwrap();
-    assert!((half - 0.5).abs() < 1e-6, "{half}");
-    assert_eq!(host.fade(1, 12.0), Some(1.0));
-    assert_eq!(host.faded(10.5).len(), 0);
-    assert_eq!(host.faded(10.61), [1]);
-    assert_eq!(host.faded(11.0).len(), 0);
-    assert!(!host.fading());
 }
 
 #[test]
@@ -240,4 +223,50 @@ fn the_poofed_switch_lists_two_poofs_toasts_once_and_never_touches_the_disk() {
     std::thread::sleep(Duration::from_millis(60));
     let _ = host.drain(&ctx);
     assert!(!file.exists());
+}
+
+fn left_behind(repo: &Repo) -> Poofed {
+    let mut poofed = Poofed::bare("rename-helper", "Renamed it.", None, 60, day(20));
+    poofed.repo = repo.worktree.repo.clone();
+    poofed.branch = repo.worktree.branch.clone();
+    poofed
+}
+
+#[test]
+fn the_branch_of_a_poofed_tab_is_read_from_the_repo_after_its_folder_is_gone() {
+    let repo = repo_with_worktree();
+    git(&repo.worktree.path, &["commit", "-q", "--allow-empty", "-m", "feat: the work"]);
+    let done =
+        run_poof(&repo.paths, 7, Shell(Arc::new(AtomicBool::new(false))), &repo.worktree, None);
+    assert!(matches!(done, Done::Poofed { .. }) && !repo.worktree.path.exists());
+    let ctx = egui::Context::default();
+    let mut host = Host::new(None, false, Fake::Off);
+    assert_eq!(host.branch(7), None, "nothing asked yet");
+    host.read_branch(&ctx, 7, Tools::system(), &left_behind(&repo));
+    assert_eq!(host.branch(7), None, "git is being asked");
+    wait(&mut host, &ctx, |host| host.branch(7).is_some());
+    let Some(Branch::Found(found)) = host.branch(7) else { panic!("{:?}", host.branch(7)) };
+    assert_eq!((found.base.as_str(), found.ahead), ("main", 1));
+}
+
+#[test]
+fn a_branch_deleted_since_the_poof_says_so_and_is_asked_once() {
+    let repo = repo_with_worktree();
+    let gone = Poofed { branch: "agent/never-was".into(), ..left_behind(&repo) };
+    let ctx = egui::Context::default();
+    let mut host = Host::new(None, false, Fake::Off);
+    host.read_branch(&ctx, 3, Tools::system(), &gone);
+    wait(&mut host, &ctx, |host| host.branch(3).is_some());
+    assert_eq!(host.branch(3), Some(&Branch::Missing));
+    host.forget(3);
+    assert_eq!(host.branch(3), None);
+}
+
+#[test]
+fn the_poofed_switch_gives_a_summary_its_branch_without_asking_git() {
+    let ctx = egui::Context::default();
+    let mut host = Host::new(None, false, Fake::Poofed);
+    let record = fake_poofed(day(20), 0).remove(0);
+    host.read_branch(&ctx, 1, Tools::system(), &record);
+    assert_eq!(host.branch(1), Some(&fake_branch()));
 }

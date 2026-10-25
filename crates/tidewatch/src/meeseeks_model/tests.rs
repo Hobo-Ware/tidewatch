@@ -38,7 +38,7 @@ fn a_working_meeseeks_shows_no_stage_bars_and_a_checking_one_shows_the_four_in_o
 fn while_a_check_runs_the_status_box_names_it_and_the_bars_move_on() {
     let mut meeseeks = running();
     meeseeks.apply(Event::Said("done".into()), 0);
-    meeseeks.apply(Event::Passed { step: Step::Change, pr_url: None }, 0);
+    meeseeks.apply(Event::Passed { step: Step::Change, pr_url: None, detail: String::new() }, 0);
     let shown = card(&meeseeks, "vite", 0, Some("npm test"));
     assert_eq!(text(&shown), "Says it's done. Tidewatch is checking: npm test running...");
     assert_eq!(shown.status[1], Span { text: "npm test".into(), strong: true });

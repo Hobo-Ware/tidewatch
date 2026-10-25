@@ -11,6 +11,7 @@ use serde::{Deserialize, Serialize};
 use crate::agents::Level;
 use crate::fsutil::write_atomic;
 use crate::meeseeks::Meeseeks;
+use crate::meeseeks_log::Poofed;
 use crate::paths::TidewatchPaths;
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -71,6 +72,8 @@ pub enum SavedTab {
         branch: Option<String>,
     },
     Agent(SavedAgentTab),
+    /// A Meeseeks that poofed: a read-only summary tab with no process and no folder of its own.
+    Poofed(Box<Poofed>),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -105,7 +108,7 @@ impl SavedTab {
     #[must_use]
     pub fn dir<'a>(&'a self, window_dir: &'a Path) -> &'a Path {
         match self {
-            Self::Main => window_dir,
+            Self::Main | Self::Poofed(_) => window_dir,
             Self::Shell { dir, .. } => dir,
             Self::Agent(tab) => &tab.dir,
         }
@@ -114,7 +117,7 @@ impl SavedTab {
     #[must_use]
     pub fn branch(&self) -> Option<&str> {
         match self {
-            Self::Main => None,
+            Self::Main | Self::Poofed(_) => None,
             Self::Shell { branch, .. } => branch.as_deref(),
             Self::Agent(tab) => tab.branch.as_deref(),
         }
@@ -125,6 +128,9 @@ impl SavedTab {
     pub fn label(&self, window_dir: &Path) -> String {
         if matches!(self, Self::Main) {
             return "main".to_owned();
+        }
+        if let Self::Poofed(poofed) = self {
+            return poofed.name.clone();
         }
         if let Some(branch) = self.branch() {
             return branch
@@ -443,6 +449,40 @@ mod tests {
         assert_eq!(Session::load(&paths), session);
         let plain = toml::to_string(&Session { windows: vec![window()] }).unwrap();
         assert!(!plain.contains("meeseeks"), "{plain}");
+    }
+
+    #[test]
+    fn a_poofed_summary_tab_keeps_its_whole_record_through_the_file() {
+        use crate::civil_date::Date;
+        use crate::meeseeks::{CheckLine, Step, Verdict};
+        use crate::meeseeks_log::{Poofed, StageLine};
+        let home = tempfile::tempdir().unwrap();
+        let paths = TidewatchPaths::new(home.path());
+        let mut record = Poofed::bare(
+            "promo-test",
+            "Added the promo test.",
+            Some("https://github.com/acme/web/pull/213"),
+            360,
+            Date::new(2026, 10, 25).unwrap(),
+        );
+        record.task = "Add the promo test".into();
+        record.branch = "agent/promo-test".into();
+        record.ended_ms = 1_790_000_000_000;
+        record.checks = vec![CheckLine {
+            step: Step::Tests,
+            verdict: Verdict::Passed,
+            detail: "`cargo test` passed".into(),
+        }];
+        record.stages = vec![StageLine { name: "Build".into(), done: 2, total: 2 }];
+        let mut one = window();
+        one.tabs.push(SavedTab::Poofed(Box::new(record.clone())));
+        let session = Session { windows: vec![one] };
+        session.save(&paths).unwrap();
+        let loaded = Session::load(&paths);
+        assert_eq!(loaded, session);
+        let tab = loaded.windows[0].tabs.last().unwrap();
+        assert_eq!(tab.label(Path::new("/work/web")), "promo-test");
+        assert_eq!(tab.branch(), None);
     }
 
     #[test]

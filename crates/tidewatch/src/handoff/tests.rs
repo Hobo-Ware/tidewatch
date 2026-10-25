@@ -163,6 +163,33 @@ fn a_tab_that_failed_in_a_worktree_stays_without_a_pty_and_one_without_a_worktre
 }
 
 #[test]
+fn a_poofed_summary_travels_as_its_record_with_no_pty_and_comes_back_a_summary() {
+    use tidewatch_core::civil_date::Date;
+    use tidewatch_core::meeseeks_log::Poofed;
+    let record = Poofed::bare("promo-test", "Done.", None, 60, Date::new(2026, 10, 25).unwrap());
+    let mut w = window();
+    let poofed =
+        Pane::<u32> { body: Body::Poofed(Box::new(record.clone())), worktree: None, agent: None };
+    w.tabs.push_in(0, "promo-test".into(), poofed);
+    let (handover, order) = plan(&w.tabs, &facts(&w.workspaces, None), &no_credentials);
+    let entry = handover.groups[0].tabs.last().unwrap();
+    assert_eq!((entry.title.as_str(), entry.live), ("promo-test", false));
+    assert_eq!(handover.pane_count(), 5, "the summary sends no pty");
+    assert_eq!(order.len(), 5);
+    let mut adopt = |term: u32, _: &Path| Ok(term);
+    let rebuilt = rebuild(
+        &handover,
+        vec![100, 101, 102, 200, 201],
+        0.0,
+        Ptys { adopt: &mut adopt, fresh: &fresh },
+    )
+    .unwrap();
+    let back = rebuilt.tabs.in_group(0).last().map(|(_, tab)| tab).unwrap();
+    assert!(matches!(&back.pane.body, Body::Poofed(shown) if **shown == record));
+    assert!(back.pane.agent.is_none() && back.pane.worktree.is_none());
+}
+
+#[test]
 fn the_selected_tab_of_a_group_follows_the_tabs_that_are_kept() {
     let mut w = window();
     let failed = w.tabs.push_in(
