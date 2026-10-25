@@ -41,6 +41,7 @@ pub trait System: Send + Sync {
 pub enum Route {
     /// The helper is installed and current: a fingerprint, then `sudo -n`.
     Fingerprint,
+    /// A helper from an older build: one password prompt replaces it and starts.
     Outdated,
     /// No helper yet but a fingerprint reader: one password prompt installs it and starts.
     SetUp,
@@ -101,7 +102,7 @@ pub fn begin_lid(
                 eprintln!("tidewatch: Touch ID is unavailable ({why}); asking for the password");
             }
         },
-        Route::SetUp => {
+        Route::SetUp | Route::Outdated => {
             let setup = system
                 .make_fifo(fifo)
                 .and_then(|()| system.install_and_start_lid(token, owner, fifo));
@@ -113,7 +114,7 @@ pub fn begin_lid(
                 }
             }
         }
-        Route::Outdated | Route::Password => {}
+        Route::Password => {}
     }
     system.start_lid(token, owner).map(|helper| Started { helper, serving: false })
 }
@@ -406,6 +407,7 @@ impl System for FakeSystem {
             return Err(why);
         }
         state.installed = true;
+        state.quirks.outdated = false;
         Ok(Self::begin(&mut state, token, true))
     }
 

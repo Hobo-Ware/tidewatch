@@ -292,8 +292,7 @@ pub(crate) fn tip_text(input: &Input) -> (&'static str, String) {
                 match input.route {
                     Route::SetUp => " Asks for your password once to set up Touch ID.",
                     Route::Fingerprint => " Starts with Touch ID.",
-                    Route::Outdated =>
-                        " Asks for your password. Set up Touch ID again to use your fingerprint.",
+                    Route::Outdated => " Asks for your password once to update Touch ID.",
                     Route::Password => "",
                 }
             ),
@@ -400,7 +399,7 @@ fn menu_note(input: &Input) -> &'static str {
         }
         Route::Fingerprint => "Lid closed on battery starts with Touch ID.",
         Route::Outdated => {
-            "The Touch ID helper is out of date. Set it up again to start with a fingerprint. Until then this asks for your password."
+            "Touch ID needs an update. The next start asks for your password once, then a fingerprint starts it."
         }
         Route::Password => {
             "Lid closed on battery needs your password. macOS asks once when you start."
