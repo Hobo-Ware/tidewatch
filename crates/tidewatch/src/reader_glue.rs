@@ -24,6 +24,7 @@ use crate::note_send::ENTER_DELAY_SECS;
 use crate::pane::{AgentTab, Body, FirstPrompt, Pane};
 use crate::pr_card_model::CardAction;
 use crate::pr_cards_view::Data as PrData;
+use crate::question_auto::Poll;
 use crate::question_bulk;
 use crate::reader::{Note, Shown, Step};
 use crate::reader_keys;
@@ -79,6 +80,9 @@ pub(crate) fn drain(tabs: &mut Tabs<Pane<PtyTerm>>, ctx: &Context, now: f64) {
         }
         if let Some(agent) = tab.pane.agent.as_mut() {
             agent.reader.drain();
+        }
+        pick_for_the_absent(&mut tab.pane, ctx, now);
+        if let Some(agent) = tab.pane.agent.as_mut() {
             if agent.first_prompt != FirstPrompt::NotNeeded && agent.reader.rows.len() > 0 {
                 agent.first_prompt = FirstPrompt::NotNeeded;
             }
@@ -86,6 +90,44 @@ pub(crate) fn drain(tabs: &mut Tabs<Pane<PtyTerm>>, ctx: &Context, now: f64) {
                 && launched.session_id.is_none()
             {
                 launched.session_id = agent.reader.codex_session_id();
+            }
+        }
+    }
+}
+
+fn waiting_question<T>(pane: &Pane<T>) -> Option<u64> {
+    let agent = pane.agent.as_ref()?;
+    let running = matches!(agent.run.status(), AgentStatus::Working | AgentStatus::NeedsYou(_));
+    agent
+        .reader
+        .rows
+        .pending_question()
+        .filter(|row| match &row.kind {
+            Kind::Question(q) => matches!(q.origin, Origin::Tidewatch(_)) || running,
+            _ => false,
+        })
+        .map(|row| row.seq)
+}
+
+/// In a tab that runs on its own, answers the question the user left alone for the wait with the
+/// agent's recommended option, else the first, and wakes the app for the moment it is due.
+fn pick_for_the_absent<T>(pane: &mut Pane<T>, ctx: &Context, now: f64) {
+    let wait = crate::dev_reader::autopick_wait();
+    let waiting = waiting_question(pane);
+    let Some(agent) = pane.agent.as_mut() else { return };
+    let autonomous = agent.autonomous();
+    let poll = agent.reader.auto.poll(waiting.filter(|_| autonomous), now, wait);
+    match poll {
+        Poll::Idle => {}
+        Poll::Counting { left } => {
+            ctx.request_repaint_after(Duration::from_secs_f64(left.clamp(0.0, 1.0) + WAKE_SLACK_S));
+        }
+        Poll::Due(seq) => {
+            let Some(asked) = agent.reader.rows.question_of(seq) else { return };
+            let given = question::auto_picks(&asked.questions);
+            answer_question(pane, seq, Reply::Answered(given), now);
+            if let Some(agent) = pane.agent.as_mut() {
+                agent.reader.rows.mark_auto_picked(seq);
             }
         }
     }
@@ -162,6 +204,13 @@ pub(crate) fn draw(
         stopped: *agent.run.status() == AgentStatus::Stopped,
     };
     let reader = &mut agent.reader;
+    let auto_left = reader.rows.pending_question().and_then(|row| {
+        reader
+            .auto
+            .left(row.seq, now, crate::dev_reader::autopick_wait())
+            .map(|left| (row.seq, left))
+    });
+    reader.view.set_auto_left(auto_left);
     if dev.take_open_turns(reader.rows.len()) {
         reader.view.open_turns(&reader.rows, dev.notes_only());
     }
@@ -637,5 +686,86 @@ mod tests {
         assert!(queues_behind_work(&AgentStatus::Working, "do more"));
         assert!(!queues_behind_work(&AgentStatus::Working, "  /login"));
         assert!(!queues_behind_work(&AgentStatus::Done, "do more"));
+    }
+
+    fn on_its_own(pane: &mut Pane<()>, level: tidewatch_core::agents::Level) {
+        pane.agent.as_mut().unwrap().launched = Some(crate::pane::Launched {
+            profile_id: "builder".into(),
+            level,
+            session_id: None,
+            remote: false,
+            dir: None,
+        });
+    }
+
+    fn ask_with_recommended(pane: &mut Pane<()>) -> (u64, std::sync::mpsc::Receiver<Reply>) {
+        let (sender, receiver) = channel();
+        let row = QuestionRow {
+            questions: vec![question::Question {
+                text: "Which?".into(),
+                header: None,
+                decision: None,
+                select: Select::Single,
+                options: vec![
+                    QuestionOption::new("Stage"),
+                    QuestionOption::new("Run (Recommended)"),
+                ],
+            }],
+            asked: Asked::Pending,
+            origin: Origin::Tidewatch(AskReply::new(sender)),
+        };
+        let seq = pane.agent.as_mut().unwrap().reader.rows.push_question_row(row);
+        (seq, receiver)
+    }
+
+    fn pane_without_questions() -> Pane<()> {
+        let agent = AgentTab::new("Builder".into(), AgentRun::setting_up("claude".into(), 0.0));
+        Pane { body: crate::pane::Body::Shell(()), worktree: None, agent: Some(agent) }
+    }
+
+    #[test]
+    fn a_yolo_tab_answers_a_question_nobody_touched_with_the_recommended_option() {
+        let ctx = Context::default();
+        let mut pane = pane_without_questions();
+        on_its_own(&mut pane, tidewatch_core::agents::Level::Yolo);
+        let (seq, receiver) = ask_with_recommended(&mut pane);
+        pick_for_the_absent(&mut pane, &ctx, 1_000.0);
+        pick_for_the_absent(&mut pane, &ctx, 1_000.0 + crate::question_auto::WAIT_SECS - 1.0);
+        assert!(receiver.try_recv().is_err());
+        assert!(matches!(asked_of(&pane, seq), Asked::Pending));
+        pick_for_the_absent(&mut pane, &ctx, 1_000.0 + crate::question_auto::WAIT_SECS);
+        let picked = Given { picked: vec![1], other: None };
+        assert_eq!(receiver.recv().unwrap(), Reply::Answered(vec![picked]));
+        assert!(matches!(asked_of(&pane, seq), Asked::Answered(_)));
+        assert!(pane.agent.as_ref().unwrap().reader.rows.auto_picked(seq));
+    }
+
+    #[test]
+    fn a_plain_tab_keeps_its_question_for_as_long_as_it_takes() {
+        let ctx = Context::default();
+        let mut pane = pane_without_questions();
+        on_its_own(&mut pane, tidewatch_core::agents::Level::Edits);
+        let (seq, receiver) = ask_with_recommended(&mut pane);
+        for at in [0.0, 400.0, 4_000.0, 400_000.0] {
+            pick_for_the_absent(&mut pane, &ctx, at);
+        }
+        assert!(receiver.try_recv().is_err());
+        assert!(matches!(asked_of(&pane, seq), Asked::Pending));
+        assert!(!pane.agent.as_ref().unwrap().reader.rows.auto_picked(seq));
+    }
+
+    #[test]
+    fn an_answer_given_before_the_wait_ends_is_never_overridden() {
+        let ctx = Context::default();
+        let mut pane = pane_without_questions();
+        on_its_own(&mut pane, tidewatch_core::agents::Level::Yolo);
+        let (seq, receiver) = ask_with_recommended(&mut pane);
+        pick_for_the_absent(&mut pane, &ctx, 0.0);
+        let mine = Given { picked: vec![0], other: None };
+        answer_question(&mut pane, seq, Reply::Answered(vec![mine.clone()]), 10.0);
+        pick_for_the_absent(&mut pane, &ctx, crate::question_auto::WAIT_SECS + 50.0);
+        assert_eq!(receiver.recv().unwrap(), Reply::Answered(vec![mine]));
+        assert!(receiver.try_recv().is_err());
+        assert!(!pane.agent.as_ref().unwrap().reader.rows.auto_picked(seq));
     }
 }

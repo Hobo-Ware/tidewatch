@@ -120,6 +120,16 @@ impl Question {
         (!picked.is_empty()).then_some(Given { picked, other: None })
     }
 
+    /// The answer Tidewatch gives for a user who stayed away: the agent's picks, else the first option.
+    #[must_use]
+    pub fn auto_pick(&self) -> Given {
+        let picked = self.picks();
+        if picked.is_empty() && !self.options.is_empty() {
+            return Given { picked: vec![0], other: None };
+        }
+        Given { picked, other: None }
+    }
+
     /// A short name for the question in a list: its header, else its text cut to 60 characters.
     #[must_use]
     pub fn name(&self) -> String {
@@ -137,6 +147,12 @@ impl Question {
 #[must_use]
 pub fn all_picks(questions: &[Question]) -> Option<Vec<Given>> {
     questions.iter().map(Question::pick_given).collect()
+}
+
+/// The answers Tidewatch gives for a user who stayed away, one per question.
+#[must_use]
+pub fn auto_picks(questions: &[Question]) -> Vec<Given> {
+    questions.iter().map(Question::auto_pick).collect()
 }
 
 /// What the user gave for one question: the options picked (by index) and a typed answer.
@@ -531,6 +547,20 @@ mod tests {
 
     fn args(value: &Value) -> Map<String, Value> {
         value.as_object().unwrap().clone()
+    }
+
+    #[test]
+    fn a_user_who_stayed_away_gets_the_recommended_option_else_the_first() {
+        let recommended = question("Which?", Select::Single, &["A", "B (Recommended)", "C"]);
+        assert_eq!(recommended.auto_pick(), Given { picked: vec![1], other: None });
+        let none = question("Which?", Select::Single, &["A", "B"]);
+        assert_eq!(none.auto_pick(), Given { picked: vec![0], other: None });
+        let multi = question("Which?", Select::Multi, &["A (Recommended)", "B", "C (Recommended)"]);
+        assert_eq!(multi.auto_pick().picked, [0, 2]);
+        let multi_none = question("Which?", Select::Multi, &["A", "B"]);
+        assert_eq!(multi_none.auto_pick().picked, [0]);
+        let all = auto_picks(&[recommended, none]);
+        assert_eq!(all.iter().map(|given| given.picked.clone()).collect::<Vec<_>>(), [[1], [0]]);
     }
 
     #[test]

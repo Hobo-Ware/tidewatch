@@ -144,6 +144,7 @@ mod progress_state;
 mod progress_view;
 mod pty;
 mod quake;
+mod question_auto;
 mod question_bulk;
 mod question_card;
 mod question_view;

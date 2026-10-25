@@ -12,6 +12,7 @@ use tidewatch_core::transcript::{Entry, Role, Source};
 use tidewatch_core::transcript_locate::Locator;
 
 use crate::commands::Command;
+use crate::question_auto::Countdown;
 use crate::reader_feed::{Feed, Message};
 use crate::reader_rows::Rows;
 use crate::reader_view::ViewState;
@@ -150,6 +151,7 @@ pub(crate) struct Reader {
     last_poke: f64,
     answered: bool,
     typing: Typing,
+    pub(crate) auto: Countdown,
     session_title: Option<String>,
     first_message: Option<String>,
     pub(crate) rows: Rows,
@@ -180,6 +182,7 @@ impl Reader {
             last_poke: f64::NEG_INFINITY,
             answered: false,
             typing: Typing::default(),
+            auto: Countdown::default(),
             session_title: None,
             first_message: None,
             rows: Rows::default(),
