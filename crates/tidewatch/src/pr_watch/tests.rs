@@ -110,12 +110,14 @@ fn looks_come_every_20_seconds_while_checks_run_and_every_2_minutes_otherwise() 
 }
 
 #[test]
-fn a_merged_or_closed_pull_request_is_never_looked_at_again() {
+fn a_merged_pull_request_is_never_looked_at_again() {
     let default = GithubPrefs::default();
     let mut watch = ready(Some(42));
     watch.look_started();
     let merged = Body::Merged { number: 42, base: "main".into() };
-    watch.polled(Ok(polled(vec![merged], false, true)), default, "tab", 5.0, 0);
+    let mut poll = polled(vec![merged], false, true);
+    poll.summary.state = State::Merged;
+    watch.polled(Ok(poll), default, "tab", 5.0, 0);
     assert_eq!(watch.should_look(default, 1e9), None);
     assert_eq!(watch.next_look(default), None);
     let mut cards = Cards::default();
@@ -126,6 +128,57 @@ fn a_merged_or_closed_pull_request_is_never_looked_at_again() {
     restarted.loaded(cards, 0.0);
     assert!(!restarted.learn(42, "h", 0.0));
     assert_eq!(restarted.should_look(default, 1e9), None, "it ended before the restart");
+}
+
+fn closed_poll() -> Polled {
+    let mut poll = polled(vec![Body::Closed { number: 42 }], false, true);
+    poll.summary.state = State::Closed;
+    poll
+}
+
+#[test]
+fn the_strip_shows_for_open_and_merged_pull_requests_and_not_for_a_closed_one() {
+    let default = GithubPrefs::default();
+    let mut watch = ready(Some(42));
+    assert!(watch.strip_summary().is_none(), "nothing read yet");
+    for (state, shown) in [(State::Open, true), (State::Merged, true), (State::Closed, false)] {
+        let mut poll = polled(vec![], false, state != State::Open);
+        poll.summary.state = state;
+        watch.polled(Ok(poll), default, "tab", 5.0, 0);
+        assert_eq!(watch.strip_summary().is_some(), shown, "{state:?}");
+    }
+}
+
+#[test]
+fn a_closed_pull_request_is_looked_at_again_so_a_reopen_brings_the_strip_back() {
+    let default = GithubPrefs::default();
+    let mut watch = ready(Some(42));
+    watch.look_started();
+    watch.polled(Ok(closed_poll()), default, "tab", 5.0, 0);
+    assert_eq!(watch.strip_summary(), None);
+    assert_eq!(watch.next_look(default), Some(5.0 + SLOW_SECS));
+    assert!(watch.should_look(default, 5.0 + SLOW_SECS).is_some());
+    watch.look_started();
+    watch.polled(Ok(polled(vec![], false, false)), default, "tab", 130.0, 0);
+    assert_eq!(watch.strip_summary().map(|summary| summary.state), Some(State::Open));
+}
+
+#[test]
+fn auto_fix_does_nothing_for_a_closed_pull_request() {
+    let default = GithubPrefs { mode: PrMode::Auto, ..GithubPrefs::default() };
+    let mut watch = ready(Some(42));
+    watch.autonomous = true;
+    watch.cards.add(1_000, Body::PushFix { commits: 1, head: "h".into() });
+    assert!(watch.push_fix_due(default).is_some(), "open: the left-over commits go out");
+    watch.look_started();
+    watch.polled(Ok(closed_poll()), default, "tab", 5.0, 0);
+    assert_eq!(watch.push_fix_due(default), None);
+    watch.look_started();
+    let mut poll = closed_poll();
+    poll.events.push(Event { at_ms: 2_000, body: failed() });
+    let outs = watch.polled(Ok(poll), default, "tab", 6.0, 0);
+    assert_eq!(pasted(&outs).len(), 0);
+    assert_eq!(watch.pending.len(), 0);
 }
 
 #[test]
