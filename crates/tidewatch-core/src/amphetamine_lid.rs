@@ -12,6 +12,7 @@ pub const POLL_SECS: u32 = 2;
 
 pub const PROMPT: &str = "Tidewatch wants to keep this Mac awake with the lid closed.";
 pub const RESTORE_PROMPT: &str = "Tidewatch wants to turn sleep back on.";
+pub const PROMPT_CANCELLED: &str = "the password prompt was cancelled";
 
 const HELPER: &str = r#"token=$1
 owner=$2

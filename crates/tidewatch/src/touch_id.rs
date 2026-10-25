@@ -60,5 +60,16 @@ pub(crate) fn authenticate(reason: &str) -> Auth {
     receiver.recv().unwrap_or_else(|_| Auth::Unavailable("no answer".to_owned()))
 }
 
+/// A fingerprint reader with a finger enrolled; the login password alone does not count.
+#[cfg(target_os = "macos")]
+#[allow(unsafe_code)]
+pub(crate) fn biometrics_available() -> bool {
+    use objc2_local_authentication::{LAContext, LAPolicy};
+
+    let context = unsafe { LAContext::new() };
+    unsafe { context.canEvaluatePolicy_error(LAPolicy::DeviceOwnerAuthenticationWithBiometrics) }
+        .is_ok()
+}
+
 #[cfg(test)]
 mod tests;

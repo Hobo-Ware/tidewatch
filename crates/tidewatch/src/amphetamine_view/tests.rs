@@ -8,6 +8,7 @@ fn the_tooltip_matches_the_board_for_each_state() {
         wall: 1000.0,
         total: None,
         lid,
+        route: Route::Password,
         gap: 100.0,
         force_short: false,
         pinned: false,
@@ -30,6 +31,47 @@ fn the_tooltip_matches_the_board_for_each_state() {
     assert!(
         text.contains("no lid mode on Linux") || text.contains("There is no lid mode on Linux")
     );
+}
+
+#[test]
+fn the_copy_says_what_the_first_start_will_ask_for() {
+    let input = |session, route| Input {
+        look: Look::Off,
+        session,
+        wall: 1000.0,
+        total: None,
+        lid: true,
+        route,
+        gap: 100.0,
+        force_short: false,
+        pinned: false,
+    };
+    let starting = State::Starting { choice: Choice::Hour };
+    let cases = [
+        (
+            Route::SetUp,
+            "Asks for your password once to set up Touch ID.",
+            "Waiting for the password prompt.",
+        ),
+        (Route::Fingerprint, "Starts with Touch ID.", "Waiting for Touch ID."),
+        (Route::Password, "Pick a timer.", "Waiting for the password prompt."),
+    ];
+    for (route, off, waiting) in cases {
+        let (_, text) = tip_text(&input(State::Off, route));
+        assert!(text.ends_with(off), "{route:?}: {text}");
+        let (_, text) = tip_text(&input(starting, route));
+        assert_eq!(text, waiting, "{route:?}");
+    }
+    assert!(menu_note(&input(State::Off, Route::SetUp)).starts_with("Asks for your password once"));
+    assert_eq!(
+        menu_note(&input(State::Off, Route::Fingerprint)),
+        "Lid closed on battery starts with Touch ID."
+    );
+    assert!(menu_note(&input(State::Off, Route::Password)).contains("needs your password"));
+    for route in [Route::SetUp, Route::Fingerprint, Route::Password] {
+        let text = menu_note(&input(State::Off, route));
+        assert!(!text.contains(['\u{2014}', '\u{2013}']), "{text}");
+    }
 }
 
 #[test]
@@ -58,6 +100,7 @@ mod frames {
             wall: WALL,
             total: Some(3600.0),
             lid: true,
+            route: Route::Password,
             gap,
             force_short: false,
             pinned: false,
