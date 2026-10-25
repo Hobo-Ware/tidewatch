@@ -1186,6 +1186,36 @@ mod tests {
     }
 
     #[test]
+    fn an_untracked_folder_is_a_row_with_no_diff_and_the_file_walk_skips_it() {
+        let (_dir, repo) = repo();
+        std::fs::write(repo.join("a.txt"), "one\nTWO\nthree\n").unwrap();
+        std::fs::create_dir(repo.join("docs")).unwrap();
+        for name in ["x.md", "y.md", "z.md"] {
+            std::fs::write(repo.join("docs").join(name), "doc\n").unwrap();
+        }
+        std::fs::write(repo.join("zz.txt"), "new\n").unwrap();
+        let jobs = Jobs::new();
+        let mut view = started_view(&repo, repo.join("notes.json"), &jobs);
+        let ctx = egui::Context::default();
+        pump(&mut view, &jobs, &ctx, |v| v.shown_source == Some(Source::WorkTree));
+        let groups = view.groups.clone().unwrap();
+        let paths = |list: &[FileChange]| list.iter().map(|c| c.path.clone()).collect::<Vec<_>>();
+        assert_eq!(paths(&groups.new_files), ["docs/", "zz.txt"]);
+        assert_eq!(groups.folder_files("docs/"), Some(3));
+        assert_eq!(groups.files(), 3);
+        assert_eq!(view.changes().len(), 3);
+        assert_eq!(paths(&view.files), ["a.txt", "zz.txt"]);
+        assert_eq!(view.counts, [Some((1, 1)), Some((1, 0))]);
+        view.select_file("a.txt");
+        view.step_file(1);
+        assert_eq!(view.file.as_deref(), Some("zz.txt"));
+        view.step_file(1);
+        assert_eq!(view.file.as_deref(), Some("zz.txt"));
+        view.step_file(-1);
+        assert_eq!(view.file.as_deref(), Some("a.txt"));
+    }
+
+    #[test]
     fn showing_the_changes_after_a_commit_was_picked_goes_back_to_the_working_tree() {
         let (_dir, repo) = dirty_repo();
         let jobs = Jobs::new();

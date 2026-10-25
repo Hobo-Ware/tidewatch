@@ -9,8 +9,8 @@ license = "MIT"
 
 [workspace.dependencies]
 tidewatch-core = { path = "crates/tidewatch-core" }
-kelp-core = { git = "https://github.com/Hobo-Ware/kelp", rev = "edf3eaae1f49e5c286fae17b4cd8004e74be274e" }
-kelp-ui = { git = "https://github.com/Hobo-Ware/kelp", rev = "edf3eaae1f49e5c286fae17b4cd8004e74be274e" }
+kelp-core = { git = "https://github.com/Hobo-Ware/kelp", rev = "3d846f091bb777ff0427482b27b7291e4ea299b6" }
+kelp-ui = { git = "https://github.com/Hobo-Ware/kelp", rev = "3d846f091bb777ff0427482b27b7291e4ea299b6" }
 stdusk-core = { git = "https://github.com/Hobo-Ware/stdusk", rev = "bf197c174fa70bafdf2282071d07dd04584bdbbf" }
 stdusk-egui = { git = "https://github.com/Hobo-Ware/stdusk", rev = "bf197c174fa70bafdf2282071d07dd04584bdbbf" }
 anyhow = "1.0.104"
