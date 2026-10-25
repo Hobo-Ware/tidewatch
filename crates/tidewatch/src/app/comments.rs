@@ -42,7 +42,12 @@ impl Tidewatch {
             .collect();
         let pastes = self.comments.tick(&facts, paths, &self.guards, ctx, now);
         for paste in pastes {
-            flow_glue::paste(&mut self.tabs, paste.tab, &paste.text);
+            flow_glue::paste_from_tidewatch(
+                &mut self.tabs,
+                paste.tab,
+                &paste.text,
+                "Comment guard",
+            );
             self.flow.queue_enter(paste.tab, now);
             ctx.request_repaint_after(Duration::from_secs_f64(ENTER_DELAY_SECS + WAKE_SLACK_S));
         }

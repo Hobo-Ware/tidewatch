@@ -36,6 +36,7 @@ use crate::reader_chat_view::{self, Scene};
 use crate::reader_keys::{self, Answer};
 use crate::reader_rows::{Kind, Origin, Row, Rows};
 use crate::reader_scroll::{self, Autoscroll, Heights};
+use crate::reader_sent;
 use crate::reader_turns::{self, Slot};
 use crate::review::ReviewFacts;
 use crate::review_row_view;
@@ -49,6 +50,7 @@ use crate::stopped_view;
 pub(crate) const INSET: f32 = 14.0;
 const CARD_RADIUS: u8 = 8;
 const OVERSCAN: f32 = 600.0;
+const QUEUED_FRAME: std::time::Duration = std::time::Duration::from_millis(33);
 const INPUT_H: f32 = 60.0;
 const COMPOSER_RADIUS: u8 = 14;
 const REPLY_MARGIN_X: f32 = 14.0;
@@ -522,7 +524,7 @@ fn transcript(
     let width = body.width() - 2.0 * INSET;
     state.heights.for_width(width);
     state.pr_heights.for_width(width);
-    let newest = rows.newest_seq().map_or(0, |seq| seq + 1);
+    let newest = rows.newest_seq().map_or(0, |seq| seq + 1) + rows.queued_len(now_ms()) as u64;
     if newest != state.seen_rows {
         state.seen_rows = newest;
         state.stick_pending = true;
@@ -606,6 +608,18 @@ fn transcript(
                                         (expanded, cache),
                                         width,
                                     ),
+                                    _ if row.kind == Kind::User
+                                        && rows.said_for(row.seq).is_some() =>
+                                    {
+                                        ui.add_space(6.0);
+                                        if let Some(said) = rows.said_for(row.seq) {
+                                            pr_cards_view::draw_bubble(
+                                                ui,
+                                                &reader_sent::bubble_of(said),
+                                            );
+                                        }
+                                        ui.add_space(6.0);
+                                    }
                                     _ if row.kind == Kind::User => reader_chat_view::user(
                                         ui,
                                         row,
@@ -650,6 +664,23 @@ fn transcript(
                     }
                     (Place::Card(_), None) => {}
                 }
+            }
+            let time = ui.input(|i| i.time);
+            for (n, queued) in rows.queued(now_ms()).enumerate() {
+                ui.horizontal(|ui| {
+                    ui.add_space(INSET);
+                    ui.vertical(|ui| {
+                        ui.set_width(width);
+                        reader_chat_view::queued(
+                            ui,
+                            &queued.text,
+                            u64::MAX - n as u64,
+                            time,
+                            (width, &mut *cache),
+                        );
+                    });
+                });
+                ui.ctx().request_repaint_after(QUEUED_FRAME);
             }
             if running && layout.awaiting {
                 ui.horizontal(|ui| {
@@ -2675,5 +2706,67 @@ mod tests {
         let (card, boxed) = (card.expect("the card is drawn"), boxed.expect("the box is drawn"));
         assert!(boxed.height() > INPUT_H);
         assert!(card.bottom() <= boxed.top(), "{card:?} over {boxed:?}");
+    }
+
+    fn drawn_texts(rows: &Rows, width: f32) -> Vec<String> {
+        fn texts(shape: &egui::Shape, out: &mut Vec<String>) {
+            match shape {
+                egui::Shape::Text(text) => out.push(text.galley.text().to_owned()),
+                egui::Shape::Vec(shapes) => shapes.iter().for_each(|shape| texts(shape, out)),
+                _ => {}
+            }
+        }
+        let ctx = crate::fonts::test_context();
+        let mut state = ViewState::default();
+        let mut found = Vec::new();
+        for _ in 0..3 {
+            let raw = RawInput {
+                screen_rect: Some(Rect::from_min_size(pos2(0.0, 0.0), vec2(width, 700.0))),
+                focused: true,
+                ..RawInput::default()
+            };
+            let output = ctx.run_ui(raw, |ui| {
+                let rect = ui.max_rect();
+                show(ui, rect, rows, &mut state, facts(None, Turn::Running));
+            });
+            found.clear();
+            output.shapes.iter().for_each(|clipped| texts(&clipped.shape, &mut found));
+        }
+        found
+    }
+
+    #[test]
+    fn a_message_tidewatch_typed_is_one_quiet_card_and_never_a_you_bubble() {
+        use tidewatch_core::transcript::{Entry, Role};
+        let prompt = "@codex commented on PR #7. Answer it.\n\n> <!-- codex-review-state:v1 -->\n> | a | b |\n> |---|---|\n> <details>";
+        let mut rows = Rows::default();
+        rows.tidewatch_said(prompt, "Pull request", 0);
+        rows.push(Entry { role: Role::User, text: prompt.into(), tool: None, ts: Some(5_000) });
+        let found = drawn_texts(&rows, 900.0);
+        assert!(found.iter().any(|text| text.starts_with("TidewatchPull request")), "{found:?}");
+        assert!(found.iter().any(|text| text.starts_with("@codex commented")), "{found:?}");
+        assert!(found.iter().all(|text| !text.starts_with("You")), "{found:?}");
+        assert!(found.iter().all(|text| !text.contains("codex-review-state")), "{found:?}");
+    }
+
+    #[test]
+    fn a_message_sent_while_the_agent_is_busy_shows_queued_until_the_transcript_has_it() {
+        use tidewatch_core::transcript::{Entry, Role};
+        let now = now_ms();
+        let mut rows = Rows::default();
+        rows.push(Entry { role: Role::User, text: "start".into(), tool: None, ts: Some(now) });
+        rows.queue_user("then also this", now);
+        let found = drawn_texts(&rows, 900.0);
+        assert!(found.iter().any(|text| text == "Queued"), "{found:?}");
+        assert!(found.iter().any(|text| text == "then also this"), "{found:?}");
+        rows.push(Entry {
+            role: Role::User,
+            text: "then also this".into(),
+            tool: None,
+            ts: Some(now + 1),
+        });
+        let found = drawn_texts(&rows, 900.0);
+        assert!(found.iter().all(|text| text != "Queued"), "{found:?}");
+        assert_eq!(found.iter().filter(|text| *text == "then also this").count(), 1, "{found:?}");
     }
 }

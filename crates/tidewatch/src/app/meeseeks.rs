@@ -176,7 +176,7 @@ impl Tidewatch {
                 continue;
             }
             if let Some(text) = self.meeseeks.take_paste(tab) {
-                flow_glue::paste(&mut self.tabs, tab, &text);
+                flow_glue::paste_from_tidewatch(&mut self.tabs, tab, &text, "Meeseeks");
                 self.flow.queue_enter(tab, now);
                 ctx.request_repaint_after(Duration::from_secs_f64(ENTER_DELAY_SECS + WAKE_SLACK_S));
             }

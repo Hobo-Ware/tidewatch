@@ -6,10 +6,11 @@ use tidewatch_core::pr_cards::Card;
 use tidewatch_core::pr_status::Body;
 
 use crate::reader_rows::{Kind, Rows};
+use crate::reader_sent;
 
 /// How far before a card the transcript's copy of its message may be stamped (the clocks of two
 /// processes).
-const SLACK_MS: i64 = 5_000;
+const SLACK_MS: i64 = 60_000;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Place {
@@ -52,7 +53,7 @@ fn copies_of_sent(rows: &[RowInfo<'_>], cards: &[Card]) -> Vec<bool> {
         let Body::Sent { text, .. } = &card.body else { continue };
         let found = rows.iter().enumerate().find(|(index, row)| {
             !hidden[*index]
-                && row.user_text.is_some_and(|said| said.trim() == text.trim())
+                && row.user_text.is_some_and(|said| reader_sent::same_paste(text, said))
                 && row.at_ms.is_none_or(|at| at >= card.at_ms - SLACK_MS)
         });
         if let Some((index, _)) = found {
@@ -103,7 +104,7 @@ mod tests {
         RowInfo { at_ms, user_text: None }
     }
 
-    fn user(at_ms: i64, text: &'static str) -> RowInfo<'static> {
+    fn user(at_ms: i64, text: &str) -> RowInfo<'_> {
         RowInfo { at_ms: Some(at_ms), user_text: Some(text) }
     }
 
@@ -146,9 +147,20 @@ mod tests {
 
     #[test]
     fn only_the_copy_after_the_card_and_only_one_per_card_is_left_out() {
-        let rows = [user(100, "fix it"), user(21_000, "fix it"), user(22_000, "fix it")];
-        let places = merge(&rows, &[sent(1, 20_000, "fix it")]);
+        let rows = [user(100, "fix it"), user(201_000, "fix it"), user(202_000, "fix it")];
+        let places = merge(&rows, &[sent(1, 200_000, "fix it")]);
         assert_eq!(places, [Place::Row(0), Place::Card(0), Place::Row(2)]);
+    }
+
+    #[test]
+    fn a_copy_the_agent_respaced_or_cut_is_still_the_same_message() {
+        let text = "PR #7 has a review. Answer it.\n\n> a very long quoted comment line that goes on and on and on and on and on and on and on and on";
+        let respaced = text.replace('\n', "\r\n");
+        let rows = [user(1_100, &respaced)];
+        let places = merge(&rows, &[sent(1, 1_000, text)]);
+        assert_eq!(places, [Place::Card(0)]);
+        let rows = [user(1_100, "[Pasted text #1 +3 lines]")];
+        assert_eq!(merge(&rows, &[sent(1, 1_000, text)]), [Place::Card(0)]);
     }
 
     #[test]

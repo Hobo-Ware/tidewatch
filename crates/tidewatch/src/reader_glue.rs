@@ -262,6 +262,11 @@ pub(crate) fn apply(
                 }
                 if let Body::Shell(term) = &mut found.pane.body {
                     term.paste(&text);
+                    if let Some(agent) = found.pane.agent.as_mut()
+                        && queues_behind_work(agent.run.status(), &text)
+                    {
+                        agent.reader.queue_user(&text);
+                    }
                     flow.queue_enter(tab, now);
                     ctx.request_repaint_after(Duration::from_secs_f64(
                         ENTER_DELAY_SECS + WAKE_SLACK_S,
@@ -294,6 +299,12 @@ pub(crate) fn apply(
         }
     }
     toast
+}
+
+/// Whether a reply sent now waits behind the agent's turn: it is working and the text is a message,
+/// not a slash command.
+fn queues_behind_work(status: &AgentStatus, text: &str) -> bool {
+    *status == AgentStatus::Working && !text.trim_start().starts_with('/')
 }
 
 /// Shows the terminal when `text`, just sent to the agent, opens a dialog in Claude Code's screen.
@@ -619,5 +630,12 @@ mod tests {
         let (mut pane, seq) = pane(Origin::Claude);
         answer_question(&mut pane, seq + 50, Reply::Skipped, 100.0);
         assert_eq!(typed(&mut pane), Vec::new());
+    }
+
+    #[test]
+    fn only_a_message_sent_to_a_working_agent_queues() {
+        assert!(queues_behind_work(&AgentStatus::Working, "do more"));
+        assert!(!queues_behind_work(&AgentStatus::Working, "  /login"));
+        assert!(!queues_behind_work(&AgentStatus::Done, "do more"));
     }
 }

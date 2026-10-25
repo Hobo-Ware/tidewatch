@@ -345,7 +345,7 @@ fn button_row(ui: &mut Ui, buttons: &[Button], note: Option<&str>) -> Option<Car
     clicked
 }
 
-fn draw_bubble(ui: &mut Ui, bubble: &Bubble) {
+pub(crate) fn draw_bubble(ui: &mut Ui, bubble: &Bubble) {
     ui.with_layout(Layout::top_down(Align::Max), |ui| {
         Frame::new()
             .fill(brand::ITEM)
