@@ -72,6 +72,18 @@ pub(crate) fn paste(tabs: &mut Tabs<Pane<PtyTerm>>, tab: u64, text: &str) {
     }
 }
 
+pub(crate) fn paste_from_tidewatch(
+    tabs: &mut Tabs<Pane<PtyTerm>>,
+    tab: u64,
+    text: &str,
+    label: &str,
+) {
+    paste(tabs, tab, text);
+    if let Some(agent) = tabs.get_mut(tab).and_then(|t| t.pane.agent.as_mut()) {
+        agent.reader.tidewatch_said(text, label);
+    }
+}
+
 pub(crate) fn press_enter(tabs: &mut Tabs<Pane<PtyTerm>>, tab: u64) {
     if let Some(Body::Shell(term)) = tabs.get_mut(tab).map(|t| &mut t.pane.body) {
         term.send(b"\r");
@@ -87,7 +99,7 @@ pub(crate) fn apply_outs(
     let mut toasts = Vec::new();
     for out in outs {
         match out {
-            Out::Paste { tab, text } => paste(tabs, tab, &text),
+            Out::Paste { tab, text } => paste_from_tidewatch(tabs, tab, &text, "Review notes"),
             Out::Notes { tab, notes } => {
                 if let Some(view) = views.get_mut(&tab) {
                     view.set_notes(*notes);

@@ -139,7 +139,7 @@ impl Tidewatch {
     }
 
     fn send_fix(&mut self, tab: u64, note: &str, ctx: &egui::Context, now: f64) {
-        flow_glue::paste(&mut self.tabs, tab, note);
+        flow_glue::paste_from_tidewatch(&mut self.tabs, tab, note, "Done check");
         self.flow.queue_enter(tab, now);
         self.done_check.asked(tab);
         ctx.request_repaint_after(Duration::from_secs_f64(ENTER_DELAY_SECS + WAKE_SLACK_S));

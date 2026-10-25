@@ -314,6 +314,16 @@ impl Reader {
         self.rows.push_ask(questions, reply);
     }
 
+    /// Tidewatch typed `text` into the agent for the user: the transcript's copy is not a "You" bubble.
+    pub(crate) fn tidewatch_said(&mut self, text: &str, label: &str) {
+        self.rows.tidewatch_said(text, label, unix_ms_now());
+    }
+
+    /// The user sent `text` while the agent was busy: it shows as queued until the transcript has it.
+    pub(crate) fn queue_user(&mut self, text: &str) {
+        self.rows.queue_user(text, unix_ms_now());
+    }
+
     /// Types `steps` into the agent one after the other, starting at `now`.
     pub(crate) fn type_steps(&mut self, steps: Vec<(f64, Step)>, now: f64) {
         self.typing.queue(steps, now);

@@ -38,7 +38,9 @@ impl Tidewatch {
         let (Body::Shell(term), Some(agent)) = (&mut tab.pane.body, tab.pane.agent.as_mut()) else {
             return;
         };
-        term.paste(&propose::prompt());
+        let prompt = propose::prompt();
+        term.paste(&prompt);
+        agent.reader.tidewatch_said(&prompt, "Workflow");
         if agent.first_prompt == FirstPrompt::Awaiting {
             agent.first_prompt = FirstPrompt::Sent;
         }

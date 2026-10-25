@@ -26,6 +26,7 @@ use crate::code_block::{self, Look};
 use crate::job_model::clock_label;
 use crate::link_text::{Laid, Text};
 use crate::links;
+use crate::progress_ring::paint_spinner;
 use crate::reader_markdown::{self, Piece};
 use crate::reader_rows::{Kind, Row, ToolKind};
 use crate::reader_turns::{self, Body, Call, Group, Section};
@@ -40,6 +41,9 @@ const AGENT_SHARE: f32 = 0.82;
 const AVATAR: f32 = 32.0;
 const AVATAR_GAP: f32 = 12.0;
 const META_H: f32 = 16.0;
+const QUEUED_OPACITY: f32 = 0.55;
+const QUEUED_SPIN: f32 = 11.0;
+const QUEUED_GAP: f32 = 6.0;
 const META_GAP: f32 = 6.0;
 const OUTER: f32 = 10.0;
 pub(crate) const CHIP_H: f32 = 26.0;
@@ -166,6 +170,51 @@ pub(crate) fn user(
     row: &Row,
     at_ms: Option<i64>,
     zone: &TimeZone,
+    sizing: (f32, &mut CommonMarkCache),
+) {
+    user_bubble(ui, row, Meta::Stamp(at_ms, zone), sizing);
+}
+
+/// A message the user sent while the agent was busy: the same bubble, dimmed, with a small spinner
+/// and `Queued` over it, until the transcript has the message.
+pub(crate) fn queued(
+    ui: &mut Ui,
+    text: &str,
+    key: u64,
+    time: f64,
+    sizing: (f32, &mut CommonMarkCache),
+) {
+    let row = Row { seq: key, kind: Kind::User, text: text.to_owned() };
+    user_bubble(ui, &row, Meta::Queued(time), sizing);
+}
+
+#[derive(Clone, Copy)]
+enum Meta<'a> {
+    Stamp(Option<i64>, &'a TimeZone),
+    Queued(f64),
+}
+
+fn queued_meta(ui: &mut Ui, time: f64) {
+    let width = ui.available_width();
+    let (rect, _) = ui.allocate_exact_size(vec2(width, META_H), Sense::hover());
+    let painter = ui.painter();
+    let galley = painter.layout_no_wrap("Queued".to_owned(), body(12.0), brand::FAINT);
+    let x = rect.right() - galley.size().x;
+    let y = rect.center().y;
+    painter.galley(pos2(x, y - galley.size().y / 2.0), galley, brand::FAINT);
+    paint_spinner(
+        painter,
+        pos2(x - QUEUED_GAP - QUEUED_SPIN / 2.0, y),
+        QUEUED_SPIN,
+        time,
+        brand::TEAL,
+    );
+}
+
+fn user_bubble(
+    ui: &mut Ui,
+    row: &Row,
+    meta_line: Meta<'_>,
     (width, cache): (f32, &mut CommonMarkCache),
 ) {
     ui.add_space(OUTER);
@@ -174,7 +223,17 @@ pub(crate) fn user(
     ui.with_layout(Layout::right_to_left(Align::Min), |ui| {
         ui.allocate_ui_with_layout(vec2(max_w, 0.0), Layout::top_down(Align::Max), |ui| {
             ui.spacing_mut().item_spacing.y = 4.0;
-            meta(ui, &stamped("You", at_ms, zone), Align::Max);
+            let dim = match meta_line {
+                Meta::Stamp(at_ms, zone) => {
+                    meta(ui, &stamped("You", at_ms, zone), Align::Max);
+                    1.0
+                }
+                Meta::Queued(time) => {
+                    queued_meta(ui, time);
+                    QUEUED_OPACITY
+                }
+            };
+            ui.set_opacity(dim);
             Frame::new()
                 .fill(USER_FILL)
                 .stroke(Stroke::new(1.0, USER_LINE))

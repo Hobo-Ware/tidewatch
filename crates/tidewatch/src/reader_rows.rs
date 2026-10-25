@@ -8,6 +8,8 @@ use tidewatch_core::note_paste;
 use tidewatch_core::question::{AskReply, Question};
 use tidewatch_core::transcript::{AskPart, Entry, Role, ToolPhase};
 
+use crate::reader_sent::{Said, Sent};
+
 pub(crate) const MAX_ROWS: usize = 400;
 const MCP_PREFIX: &str = "mcp__";
 
@@ -129,6 +131,7 @@ pub(crate) struct Rows {
     calls: HashMap<String, u64>,
     dropped: usize,
     revision: u64,
+    sent: Sent,
 }
 
 impl Rows {
@@ -141,14 +144,14 @@ impl Rows {
     pub(crate) fn push(&mut self, entry: Entry) {
         self.stamp = entry.ts;
         match entry.role {
-            Role::User => match note_paste::parse(&entry.text) {
-                Some(review) => {
+            Role::User => {
+                if let Some(review) = note_paste::parse(&entry.text) {
                     self.add(Kind::Review(review.ids), review.message);
-                }
-                None => {
+                } else {
                     self.add(Kind::User, entry.text);
+                    self.settle_sent();
                 }
-            },
+            }
             Role::Assistant => {
                 self.add(Kind::Assistant, entry.text);
             }
@@ -172,6 +175,46 @@ impl Rows {
             self.dropped += 1;
             self.revision += 1;
         }
+    }
+
+    /// Tidewatch typed `text` into the agent on the user's behalf.
+    pub(crate) fn tidewatch_said(&mut self, text: &str, label: &str, at_ms: i64) {
+        self.sent.said(text, label, at_ms);
+        self.settle_sent();
+        self.revision += 1;
+    }
+
+    /// The user sent `text` while the agent was busy; it shows as queued until the transcript has it.
+    pub(crate) fn queue_user(&mut self, text: &str, at_ms: i64) {
+        self.sent.queue(text, at_ms);
+        self.settle_sent();
+        self.revision += 1;
+    }
+
+    pub(crate) fn said_for(&self, seq: u64) -> Option<&Said> {
+        self.sent.said_for(seq)
+    }
+
+    pub(crate) fn queued(&self, now_ms: i64) -> impl Iterator<Item = &crate::reader_sent::Queued> {
+        self.sent.waiting(now_ms)
+    }
+
+    pub(crate) fn queued_len(&self, now_ms: i64) -> usize {
+        self.sent.waiting_len(now_ms)
+    }
+
+    fn settle_sent(&mut self) {
+        if self.sent.is_empty() {
+            return;
+        }
+        let lines: Vec<_> = self
+            .list
+            .iter()
+            .zip(self.stamps.iter())
+            .filter(|(row, _)| row.kind == Kind::User)
+            .map(|(row, at)| (row.seq, row.text.as_str(), *at))
+            .collect();
+        self.sent.settle(&lines);
     }
 
     /// Questions from an `ask_user` call: a row that waits for the user.

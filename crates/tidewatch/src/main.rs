@@ -156,6 +156,7 @@ mod reader_keys;
 mod reader_markdown;
 mod reader_rows;
 mod reader_scroll;
+mod reader_sent;
 mod reader_turns;
 mod reader_view;
 mod remote_pill;
