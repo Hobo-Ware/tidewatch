@@ -382,7 +382,7 @@ mod tests {
     fn hand_sends_and_sends_with_their_own_cap_are_not_counted() {
         let mut outbox = Outbox::default();
         let by_hand = Send::by_hand("x", Reason::DoneCheck, "you asked");
-        let own = Send::auto("x", Reason::AutoFix, "auto-fix is on").with_cap(Cap { n: 1, max: 3 });
+        let own = Send::auto("x", Reason::AutoFix, "Auto is on").with_cap(Cap { n: 1, max: 3 });
         for turn in 0..5 {
             let now = f64::from(turn) * 100.0;
             outbox.sent(TAB, &by_hand, now);

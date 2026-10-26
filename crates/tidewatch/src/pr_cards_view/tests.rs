@@ -35,6 +35,7 @@ fn every_kind() -> Vec<Body> {
             base: "main".into(),
             branch: "agent/x".into(),
             commits: Some(3),
+            draft: true,
         },
         Body::ChecksRunning { head: "h".into(), done: 1, total: 3 },
         Body::ChecksFailed {

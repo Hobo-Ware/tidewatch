@@ -24,6 +24,7 @@ fn snapshot() -> Snapshot {
         title: "Retry a stage".into(),
         url: "https://github.com/acme/web/pull/42".into(),
         state: State::Open,
+        draft: false,
         conflicting: false,
         decision: Decision::None,
         head: "aaa".into(),
@@ -533,6 +534,7 @@ fn cards_survive_a_round_trip_through_json() {
             base: "main".into(),
             branch: "b".into(),
             commits: None,
+            draft: true,
         },
         Body::ChecksFailed {
             head: "h".into(),
@@ -560,4 +562,18 @@ fn cards_survive_a_round_trip_through_json() {
         let json = serde_json::to_string(&body).unwrap();
         assert_eq!(serde_json::from_str::<Body>(&json).unwrap(), body, "{json}");
     }
+}
+
+#[test]
+fn a_draft_reads_from_is_draft_and_the_opened_card_carries_it() {
+    for (json_flag, want) in [("true", true), ("false", false)] {
+        let text = format!(
+            r#"{{"number":42,"state":"OPEN","isDraft":{json_flag},"headRefName":"agent/x","baseRefName":"main"}}"#
+        );
+        let snap = parse_snapshot(&text).unwrap();
+        assert_eq!(snap.draft, want);
+        let (events, _) = diff(None, &snap, 5);
+        assert!(matches!(events[0].body, Body::Opened { draft, .. } if draft == want));
+    }
+    assert!(!parse_snapshot(r#"{"number":1,"state":"OPEN"}"#).unwrap().draft);
 }

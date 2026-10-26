@@ -340,7 +340,7 @@ fn after_three_automatic_sends_the_tab_asks_again() {
     assert_eq!(watch.policy(GithubPrefs::default()).mode, PrMode::Ask);
     assert_eq!(
         toasts,
-        [Out::Toast("Auto-fix sent 3 times on this pull request. Back to Ask me".into())]
+        [Out::Toast("Auto sent 3 times on this pull request. Back to Ask me".into())]
     );
     watch.observe(&AgentStatus::Done);
     watch.look_started();
@@ -633,7 +633,8 @@ fn changes_requested() -> Body {
 }
 
 #[test]
-fn a_tab_that_runs_on_its_own_is_auto_fix_whatever_the_default_and_the_owner_can_still_change_it() {
+fn a_tab_that_runs_on_its_own_is_auto_for_the_fixes_whatever_the_default_and_the_owner_can_still_change_it()
+ {
     for mode in [PrMode::Ask, PrMode::Off, PrMode::Auto] {
         let default = GithubPrefs { mode, reviews: false, ..GithubPrefs::default() };
         let mut watch = on_its_own();
@@ -741,7 +742,7 @@ fn the_loop_guard_of_a_tab_on_its_own_is_ten_sends_and_then_it_pauses_without_as
     assert_eq!(pasted(&outs), Vec::<&str>::new(), "paused");
     assert_eq!(watch.pending, [], "nothing waits for a button either");
     assert!(!outs.iter().any(|o| matches!(o, Out::Toast(_))));
-    assert_eq!(paused_note(), "Auto-fix paused after 10 sends on this pull request");
+    assert_eq!(paused_note(), "Auto paused after 10 sends on this pull request");
 }
 
 #[test]
@@ -851,61 +852,116 @@ fn merged_watch(autonomous: bool, left: usize) -> Watch {
     watch
 }
 
+fn pushing() -> GithubPrefs {
+    GithubPrefs { mode: PrMode::Auto, push: true, ..GithubPrefs::default() }
+}
+
+fn loaded(autonomous: bool) -> Watch {
+    let mut watch = Watch::new(PathBuf::from("/state/pr_cards.json"));
+    watch.take_load();
+    watch.loaded(Cards::default(), 0.0);
+    watch.autonomous = autonomous;
+    watch
+}
+
 #[test]
-fn a_tab_on_its_own_whose_pull_request_merged_never_delivers_and_notes_what_was_left() {
+fn the_push_tick_is_never_forced_on_a_tab_that_runs_on_its_own() {
+    let off = GithubPrefs { push: false, ..pushing() };
     let cases = [
+        ("tick on", pushing(), false, true),
+        ("tick off", off, false, false),
         (
-            "merged, a commit left",
-            merged_watch(true, 1),
+            "mode Ask is still Auto for a tab on its own",
+            GithubPrefs { mode: PrMode::Ask, ..pushing() },
             false,
-            Some("1 commit after merge, not delivered"),
+            true,
         ),
-        (
-            "merged, two left",
-            merged_watch(true, 2),
-            false,
-            Some("2 commits after merge, not delivered"),
-        ),
-        ("merged, nothing left", merged_watch(true, 0), false, None),
-        ("merged but the owner decides", merged_watch(false, 1), true, None),
-        ("open", ready(Some(42)), true, None),
-        ("no pull request", ready(None), true, None),
+        ("a Meeseeks hands off by itself", pushing(), true, false),
     ];
-    for (what, mut watch, deliver, note) in cases {
-        if what == "open" || what == "no pull request" {
-            watch.autonomous = true;
-            watch.cards.after_merge = 1;
-        }
-        let verdict = watch.verdict();
-        assert_eq!(verdict.deliver, deliver, "{what}");
-        assert_eq!(verdict.note.as_deref(), note, "{what}");
+    for (what, default, meeseeks, auto) in cases {
+        let watch = loaded(true);
+        assert_eq!(push_of(Some(&watch), default, true, meeseeks).auto, auto, "{what}");
+    }
+    let ordinary = loaded(false);
+    for mode in [PrMode::Ask, PrMode::Off] {
+        let default = GithubPrefs { mode, ..pushing() };
+        assert!(!push_of(Some(&ordinary), default, false, false).auto, "{mode:?}");
     }
 }
 
 #[test]
-fn a_closed_pull_request_is_not_a_merged_one() {
-    let default = GithubPrefs::default();
-    let mut watch = ready(Some(42));
-    watch.autonomous = true;
+fn a_yolo_tab_with_settings_on_ask_me_auto_sends_the_fixes_and_pushes_nothing() {
+    let default = GithubPrefs { mode: PrMode::Ask, push: false, ..GithubPrefs::default() };
+    let mut watch = on_its_own();
+    watch.observe(&AgentStatus::Done);
     watch.look_started();
-    watch.polled(
-        Ok(polled(vec![Body::Closed { number: 42 }], false, true)),
-        default,
-        "tab",
-        5.0,
-        0,
-    );
-    assert!(watch.verdict().deliver);
+    let outs = watch.polled(Ok(polled(vec![failed()], false, false)), default, "t", 5.0, 9_000);
+    assert_eq!(pasted(&outs).len(), 1, "the fix goes to the idle agent");
+    assert_eq!(watch.cards.auto_sends, 1);
+    let push = push_of(Some(&watch), default, true, false);
+    assert!(!push.auto, "nothing is pushed");
 }
 
 #[test]
-fn a_new_pull_request_on_the_same_branch_delivers_again() {
-    let mut watch = merged_watch(true, 1);
-    assert!(!watch.verdict().deliver);
-    assert!(watch.learn(43, "head-9", 10.0));
-    let verdict = watch.verdict();
-    assert!(verdict.deliver);
-    assert_eq!(verdict.note, None);
+fn a_tabs_own_choice_beats_the_settings_default() {
+    let mut watch = loaded(true);
+    assert!(!push_of(Some(&watch), GithubPrefs::default(), true, false).auto);
+    watch.set_policy(pushing(), 0.0);
+    assert!(push_of(Some(&watch), GithubPrefs::default(), true, false).auto);
+    watch.set_policy(GithubPrefs { push: false, ..pushing() }, 0.0);
+    assert!(!push_of(Some(&watch), pushing(), true, false).auto);
+}
+
+#[test]
+fn a_tab_that_would_push_waits_for_its_saved_cards_and_is_never_shut_otherwise() {
+    let mut unread = Watch::new(PathBuf::from("/state/pr_cards.json"));
+    let shut = |watch: Option<&Watch>, default| {
+        let push = push_of(watch, default, false, false);
+        (push.shut, push.auto)
+    };
+    assert_eq!(shut(Some(&unread), pushing()), (true, false), "cards not read");
+    assert_eq!(shut(None, pushing()), (true, false), "no watch yet");
+    assert_eq!(shut(None, GithubPrefs::default()), (false, false), "push is off");
+    unread.take_load();
+    unread.loaded(Cards::default(), 0.0);
+    assert_eq!(shut(Some(&unread), pushing()), (false, true));
+}
+
+#[test]
+fn a_merged_pull_request_hands_its_head_to_the_delivery_whoever_drives_the_tab() {
+    for autonomous in [true, false] {
+        let watch = merged_watch(autonomous, 1);
+        let push = push_of(Some(&watch), pushing(), autonomous, false);
+        assert_eq!(push.merged_head.as_deref(), Some("head-1"), "{autonomous}");
+        assert!(push.auto && !push.shut, "{autonomous}");
+    }
+    let open = ready(Some(42));
+    assert_eq!(push_of(Some(&open), pushing(), false, false).merged_head, None);
+}
+
+#[test]
+fn a_merged_pull_request_with_no_known_head_shuts_the_delivery_for_every_tab() {
+    let mut watch = merged_watch(false, 1);
+    if let Some(seen) = &mut watch.cards.seen {
+        seen.head.clear();
+    }
+    let push = push_of(Some(&watch), GithubPrefs::default(), false, false);
+    assert!(push.shut && !push.auto);
+}
+
+#[test]
+fn a_closed_pull_request_is_not_a_merged_one_and_does_not_push() {
+    let default = pushing();
+    let mut watch = ready(Some(42));
+    watch.autonomous = true;
+    watch.look_started();
+    let mut closed = polled(vec![Body::Closed { number: 42 }], false, true);
+    closed.summary.state = State::Closed;
+    watch.polled(Ok(closed), default, "tab", 5.0, 0);
+    assert!(watch.closed());
+    let push = push_of(Some(&watch), default, true, false);
+    assert_eq!(push.merged_head, None);
+    assert!(!push.auto);
 }
 
 #[test]
@@ -928,19 +984,4 @@ fn the_commits_after_the_merge_are_counted_once_per_idle_moment_for_a_tab_on_its
     open.autonomous = true;
     open.observe(&AgentStatus::Done);
     assert_eq!(open.take_recount(), None);
-}
-
-#[test]
-fn a_tab_on_its_own_does_not_deliver_before_its_saved_cards_are_read() {
-    let mut unread = Watch::new(PathBuf::from("/state/pr_cards.json"));
-    unread.autonomous = true;
-    assert!(delivery_shut(Some(&unread), true), "cards not read");
-    assert!(delivery_shut(None, true), "no watch yet");
-    assert!(!delivery_shut(None, false), "a tab that waits for the owner is never held");
-    assert!(!delivery_shut(Some(&Watch::new(PathBuf::from("/x"))), false));
-    unread.take_load();
-    unread.loaded(Cards::default(), 0.0);
-    assert!(!delivery_shut(Some(&unread), true), "no pull request");
-    assert!(delivery_shut(Some(&merged_watch(true, 0)), true));
-    assert!(!delivery_shut(Some(&merged_watch(false, 0)), false));
 }

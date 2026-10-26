@@ -1,11 +1,10 @@
 //! What one agent tab does about its pull request (PLAN.md, D4 follow-up), as plain data: when to
 //! look at GitHub again, how a look turns into cards, whether a message goes to the agent now, later
-//! or only when the user presses the button, and the cap on auto-fix. Nothing here starts a thread or
+//! or only when the user presses the button, and the cap on Auto. Nothing here starts a thread or
 //! touches a terminal, so every rule is a unit test; `pr_glue` carries the decisions out.
 
 use std::path::{Path, PathBuf};
 
-use tidewatch_core::merged_branch::{self, Pr, Verdict};
 use tidewatch_core::pr_cards::{Cards, send_cap};
 use tidewatch_core::pr_gh::Polled;
 use tidewatch_core::pr_prompt::{self, Message, short_step};
@@ -70,7 +69,7 @@ impl Pause {
     }
 }
 
-/// A message auto-fix would send as soon as the agent is idle.
+/// A message Auto would send as soon as the agent is idle.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct Pending {
     pub(crate) id: u64,
@@ -88,7 +87,7 @@ pub(crate) struct Notice {
 /// What the watch asks the app to do.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum Out {
-    /// The next `Paste` is an auto-fix, the `n`-th of `max` on this pull request.
+    /// The next `Paste` is an Auto send, the `n`-th of `max` on this pull request.
     Told {
         n: u32,
         max: u32,
@@ -125,10 +124,10 @@ pub(crate) struct Facts<'a> {
 pub(crate) enum Handling {
     /// The owner: every card keeps its buttons.
     Owner,
-    /// Auto-fix answers the cards on a tab the owner drives: the cards are a record, but the commits
+    /// Auto answers the cards on a tab the owner drives: the cards are a record, but the commits
     /// it leaves are still the owner's to push.
     Answers,
-    /// The agent, through Auto-fix, on a tab that runs on its own: the cards are a record and it
+    /// The agent, through Auto, on a tab that runs on its own: the cards are a record and it
     /// pushes its own commits.
     Agent,
     /// The agent, but the loop guard stopped the sends: the cards stay a record and one line says so.
@@ -227,7 +226,8 @@ impl Watch {
     }
 
     /// The tab's choices: its own once the owner set them, else the default, and for a tab that
-    /// runs on its own Auto-fix whatever the default says.
+    /// runs on its own Auto for the fix jobs whatever the default says. Its push tick is never
+    /// forced: it stays what the tab or the default says.
     pub(crate) fn policy(&self, default: GithubPrefs) -> GithubPrefs {
         match self.cards.policy {
             Some(own) => own,
@@ -259,29 +259,12 @@ impl Watch {
         }
     }
 
-    fn delivery_open(&self) -> bool {
-        !self.autonomous || (self.ready() && self.verdict().deliver)
-    }
-
-    fn merged(&self) -> bool {
+    pub(crate) fn merged(&self) -> bool {
         self.ended && self.cards.ended_merged()
     }
 
-    fn closed(&self) -> bool {
+    pub(crate) fn closed(&self) -> bool {
         self.summary().is_some_and(|summary| summary.state == State::Closed)
-    }
-
-    /// What a tab that runs on its own may do about its branch: it never delivers once the pull
-    /// request merged. A tab that waits for the owner is never held back.
-    pub(crate) fn verdict(&self) -> Verdict {
-        let pr = if !self.autonomous || self.cards.number.is_none() {
-            Pr::None
-        } else if self.merged() {
-            Pr::Merged
-        } else {
-            Pr::Open
-        };
-        merged_branch::verdict(pr, self.cards.after_merge)
     }
 
     /// The merged pull request's head, once per idle moment, for counting the commits left after it.
@@ -414,7 +397,7 @@ impl Watch {
         outs
     }
 
-    /// Auto-fix on a new card: send now when the agent is idle, else wait for it.
+    /// Auto on a new card: send now when the agent is idle, else wait for it.
     fn react(
         &mut self,
         body: &Body,
@@ -627,20 +610,52 @@ impl Watch {
     }
 }
 
-/// Whether a tab's delivery stays shut: it runs on its own and its pull request merged, or its
-/// watch is not there or has not read the saved cards yet, so an agent that finishes first cannot
-/// open a pull request on a branch that already merged. A tab that waits for the owner is never held.
-pub(crate) fn delivery_shut(watch: Option<&Watch>, autonomous: bool) -> bool {
-    watch.map_or(autonomous, |watch| !watch.delivery_open())
+/// What a tab's delivery may do now (see `push_of`).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(crate) struct Push {
+    /// Auto may push and open the pull request on its own: the tab's mode is Auto with the push
+    /// tick on, its saved cards are read and its pull request is not closed.
+    pub(crate) auto: bool,
+    /// The delivery stays shut: Auto would push but the saved cards are not read yet, or the pull
+    /// request merged and its head is not known, so the branch could still be the merged one.
+    pub(crate) shut: bool,
+    /// The head the tab's pull request merged with: what comes after it goes to a new branch.
+    pub(crate) merged_head: Option<String>,
+}
+
+/// The tab's delivery rules from its watch. A Meeseeks hands off through its own check and never
+/// pushes through Auto. A tab that waits for the owner is never held back by `shut`.
+pub(crate) fn push_of(
+    watch: Option<&Watch>,
+    default: GithubPrefs,
+    autonomous: bool,
+    meeseeks: bool,
+) -> Push {
+    let policy = match watch {
+        Some(watch) => watch.policy(default),
+        None if autonomous => GithubPrefs { mode: PrMode::Auto, ..default },
+        None => default,
+    };
+    let wants = !meeseeks && policy.pushes_on_its_own();
+    let ready = watch.is_some_and(Watch::ready);
+    let merged = watch.is_some_and(Watch::merged);
+    let merged_head = watch.filter(|watch| watch.merged()).and_then(Watch::pr_head);
+    let head_unknown = merged && merged_head.is_none();
+    let closed = watch.is_some_and(Watch::closed);
+    Push {
+        auto: wants && ready && !closed && !head_unknown,
+        shut: (wants && !ready) || head_unknown,
+        merged_head,
+    }
 }
 
 fn fall_back_text() -> String {
-    format!("Auto-fix sent {} times on this pull request. Back to Ask me", send_cap(false))
+    format!("Auto sent {} times on this pull request. Back to Ask me", send_cap(false))
 }
 
 /// The one line a paused tab shows at the end of its timeline.
 pub(crate) fn paused_note() -> String {
-    format!("Auto-fix paused after {} sends on this pull request", send_cap(true))
+    format!("Auto paused after {} sends on this pull request", send_cap(true))
 }
 
 /// The notification for a new card, `None` for the quiet ones.

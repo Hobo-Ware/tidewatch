@@ -53,7 +53,7 @@ pub(crate) fn tag_colors(reason: Reason) -> (Color32, Color32) {
         Reason::MeeseeksCheck => (brand::VIOLET_TEXT, VIOLET_LINE),
         Reason::DueToday | Reason::StuckJob | Reason::BackgroundJob => (brand::AMBER, AMBER_LINE),
         Reason::CommentGuard => (brand::ORANGE_SOFT, ORANGE_LINE),
-        Reason::Avatar => (brand::TEAL_TEXT, TEAL_LINE),
+        Reason::AutoPush | Reason::Avatar => (brand::TEAL_TEXT, TEAL_LINE),
         Reason::Workflow => (brand::SOFT, brand::FIELD_LINE),
         Reason::Resume => (brand::MUTED, brand::ITEM_LINE),
     }

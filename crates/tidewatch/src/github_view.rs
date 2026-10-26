@@ -2,12 +2,27 @@
 //! `[github]` table of `settings.toml`). A tab keeps its own choice from the PR strip.
 
 use egui::Ui;
-use tidewatch_core::prefs::{GithubPrefs, PrMode};
+use tidewatch_core::prefs::{AutoJob, GithubPrefs, PrMode};
 
 use crate::settings_ui::{self, Control, section, switch_row};
 
 const MODES: [(PrMode, &str); 3] =
-    [(PrMode::Ask, "Ask me"), (PrMode::Auto, "Auto-fix when idle"), (PrMode::Off, "Off")];
+    [(PrMode::Ask, "Ask me"), (PrMode::Auto, "Auto"), (PrMode::Off, "Off")];
+
+const SWITCHES: [(AutoJob, &str, &str); 4] = [
+    (AutoJob::FailedChecks, "Fix failed checks", "With the failing log lines."),
+    (
+        AutoJob::Reviews,
+        "Answer review comments and requested changes",
+        "Comments on the pull request and in a review.",
+    ),
+    (AutoJob::Conflicts, "Fix merge conflicts", "With the base branch."),
+    (
+        AutoJob::Push,
+        "Push and open the pull request",
+        "When the agent is done and has commits. Opens a draft. Commits made after a merge go to a new branch and a new pull request.",
+    ),
+];
 
 /// The card. Returns the whole table when something changed.
 pub(crate) fn card(ui: &mut Ui, github: GithubPrefs) -> Option<GithubPrefs> {
@@ -18,30 +33,17 @@ pub(crate) fn card(ui: &mut Ui, github: GithubPrefs) -> Option<GithubPrefs> {
         let picked = settings_ui::row(
             ui,
             "When a pull request changes",
-            "Ask me shows a card with one button. Auto-fix sends the same message itself, only when the agent is idle, at most 3 times per PR. A tab can change it from its PR strip.",
+            "Ask me shows a card with one button. Auto does the jobs switched on below by itself, only when the agent is idle, and tells the agent. A tab can change it from its PR strip.",
             Control::new(settings_ui::inline_width(ui, &labels), 28.0),
             |ui| settings_ui::pick(ui, "github-mode", &labels, active),
         );
         if let Some(index) = picked {
             changed = Some(GithubPrefs { mode: MODES[index].0, ..github });
         }
-        if let Some(on) =
-            switch_row(ui, "Failed checks", "With the failing log lines.", github.failed_checks)
-        {
-            changed = Some(GithubPrefs { failed_checks: on, ..github });
-        }
-        if let Some(on) = switch_row(
-            ui,
-            "Review comments and requested changes",
-            "Comments on the pull request and in a review.",
-            github.reviews,
-        ) {
-            changed = Some(GithubPrefs { reviews: on, ..github });
-        }
-        if let Some(on) =
-            switch_row(ui, "Merge conflicts", "With the base branch.", github.conflicts)
-        {
-            changed = Some(GithubPrefs { conflicts: on, ..github });
+        for (job, title, caption) in SWITCHES {
+            if let Some(on) = switch_row(ui, title, caption, github.allows(job)) {
+                changed = Some(github.with(job, on));
+            }
         }
     });
     changed

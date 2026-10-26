@@ -5,7 +5,7 @@
 mod common;
 
 use common::{FakeGh, commit_file, git_available, ok, remote_branches, reply, repos};
-use tidewatch_core::delivery::{DeliveryPlan, deliver};
+use tidewatch_core::delivery::{DeliveryPlan, Opens, deliver};
 use tidewatch_core::guard_shim::shims;
 use tidewatch_core::tools::Tools;
 
@@ -31,7 +31,7 @@ fn delivery_goes_through_with_the_guard_shims_on_the_path() {
 
     let title = "Refresh tokens \u{2014} early";
     let body = "Body\n\nCo-Authored-By: Someone <a@b.c>";
-    let delivered = deliver(&tools, &plan, title, body).unwrap();
+    let delivered = deliver(&tools, &plan, title, body, Opens::Ready).unwrap();
 
     assert!(delivered.created);
     assert_eq!(remote_branches(&r.remote), [BRANCH, "main"]);

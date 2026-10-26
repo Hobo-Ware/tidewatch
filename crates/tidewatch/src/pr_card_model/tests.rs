@@ -89,15 +89,15 @@ fn a_failed_check_lists_only_the_failing_jobs_the_log_and_three_buttons() {
     assert!(
         matches!(&model.buttons[1].action, CardAction::Open(url) if url.contains("/actions/runs/7/"))
     );
-    assert_eq!(model.note.as_deref(), Some("Auto-fix is off for this tab"));
+    assert_eq!(model.note.as_deref(), Some("Auto is off for this tab"));
 }
 
 #[test]
 fn the_quiet_line_follows_the_tabs_mode() {
     for (mode, want) in [
-        (PrMode::Ask, "Auto-fix is off for this tab"),
-        (PrMode::Off, "Auto-fix is off for this tab"),
-        (PrMode::Auto, "Auto-fix is on for this tab"),
+        (PrMode::Ask, "Auto is off for this tab"),
+        (PrMode::Off, "Auto is off for this tab"),
+        (PrMode::Auto, "Auto is on for this tab"),
     ] {
         assert_eq!(card(vec![failed()], mode).note.as_deref(), Some(want), "{mode:?}");
     }
@@ -336,6 +336,24 @@ fn keep_it_hides_the_merged_buttons() {
 }
 
 #[test]
+fn commits_left_after_the_merge_are_not_called_undelivered_when_auto_pushes_them() {
+    let mut cards = cards_of(vec![Body::Merged { number: 42, base: "main".into() }]);
+    cards.after_merge = 2;
+    let cleanup = Cleanup::Checked(report(&[]));
+    for (policy, note) in [
+        (GithubPrefs { mode: PrMode::Auto, push: true, ..GithubPrefs::default() }, None),
+        (
+            GithubPrefs { mode: PrMode::Auto, push: false, ..GithubPrefs::default() },
+            Some("2 commits after merge, not delivered"),
+        ),
+    ] {
+        let context = Context { cleanup: &cleanup, policy, ..context(&cards, PrMode::Auto) };
+        let Some(Look::Card(model)) = look(0, context) else { panic!() };
+        assert_eq!(model.note.as_deref(), note, "{policy:?}");
+    }
+}
+
+#[test]
 fn commits_left_after_the_merge_are_a_quiet_note_and_never_a_button() {
     let (_, plain) = merged_with(&Cleanup::Checked(report(&[])));
     assert_eq!(plain.note, None);
@@ -385,7 +403,7 @@ fn a_sent_message_is_a_bubble_labelled_by_who_started_it() {
     assert_eq!((you.who, you.tag.as_str()), ("You, via Tidewatch", "CI failure"));
     assert_eq!(you.more.as_deref(), Some("+ 12 log lines"));
     let Some(Look::Bubble(auto)) = look(1, context(&cards, PrMode::Ask)) else { panic!() };
-    assert_eq!(auto.who, "Tidewatch, auto-fix");
+    assert_eq!(auto.who, "Tidewatch, auto");
     assert_eq!(auto.more, None);
     assert_eq!(look(9, context(&cards, PrMode::Ask)), None);
 }
@@ -398,11 +416,35 @@ fn opened_names_the_branches_and_the_commits() {
         base: "main".into(),
         branch: "agent/lively-lantern".into(),
         commits: Some(3),
+        draft: false,
     };
     let model = card(vec![body], PrMode::Ask);
     assert_eq!(model.title, "Pull request #42 opened");
     assert_eq!(model.sub, "by Tidewatch \u{b7} 3 commits pushed");
     assert_eq!(model.body, [Block::Mono("agent/lively-lantern \u{2192} main".into())]);
+}
+
+#[test]
+fn a_draft_opened_by_auto_says_so_and_leaves_marking_it_ready_to_the_owner() {
+    let body = Body::Opened {
+        number: 42,
+        title: "t".into(),
+        base: "main".into(),
+        branch: "agent/jolly-dolphin".into(),
+        commits: Some(2),
+        draft: true,
+    };
+    let model = card(vec![body], PrMode::Auto);
+    assert_eq!(model.title, "Draft opened");
+    assert_eq!(model.sub, "#42");
+    assert_eq!(
+        model.body,
+        [
+            Block::Mono("agent/jolly-dolphin \u{2192} main".into()),
+            Block::Text("Mark it ready on GitHub when you're happy with it.".into()),
+        ]
+    );
+    assert_eq!(model.buttons, []);
 }
 
 #[test]
@@ -573,7 +615,7 @@ fn an_ordinary_tab_in_auto_fix_keeps_the_buttons_for_what_auto_fix_leaves_to_the
     };
     let Some(Look::Card(model)) = look(0, off) else { panic!("no card") };
     assert_eq!(model.buttons.len(), 2, "the owner switched Reviews off, so nothing is sent");
-    assert_eq!(model.note.as_deref(), Some("Auto-fix is on for this tab"));
+    assert_eq!(model.note.as_deref(), Some("Auto is on for this tab"));
 }
 
 #[test]
@@ -599,7 +641,7 @@ fn a_message_still_waiting_for_an_idle_agent_reads_queued_and_a_paused_tab_says_
     );
     assert_eq!(
         handled(Handling::Paused, vec![commented()], &[]).note.as_deref(),
-        Some("Auto-fix paused after 10 sends")
+        Some("Auto paused after 10 sends")
     );
     assert_eq!(handled(Handling::Paused, vec![failed()], &[]).buttons.len(), 2);
 }

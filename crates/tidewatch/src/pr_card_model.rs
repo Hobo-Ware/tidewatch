@@ -214,17 +214,29 @@ pub(crate) fn look(index: usize, context: Context<'_>) -> Option<Look> {
     let quiet = |label: &str, action| Button { label: label.to_owned(), primary: false, action };
     let open = |label: &str, url: &str| quiet(label, CardAction::Open(url.to_owned()));
     Some(match &card.body {
-        Body::Opened { number, base, branch, commits, .. } => {
+        Body::Opened { number, base, branch, commits, draft, .. } => {
             let pushed = commits.map_or_else(String::new, |n| {
                 format!(" \u{b7} {n} {} pushed", if n == 1 { "commit" } else { "commits" })
             });
-            let mut m = model(
-                Icon::Opened,
-                Ink::Teal,
-                format!("Pull request #{number} opened"),
-                format!("by Tidewatch{pushed}"),
-            );
-            m.body = vec![Block::Mono(format!("{branch} \u{2192} {base}"))];
+            let route = Block::Mono(format!("{branch} \u{2192} {base}"));
+            let m = if *draft {
+                let mut m =
+                    model(Icon::Opened, Ink::Teal, "Draft opened".to_owned(), format!("#{number}"));
+                m.body = vec![
+                    route,
+                    Block::Text("Mark it ready on GitHub when you're happy with it.".to_owned()),
+                ];
+                m
+            } else {
+                let mut m = model(
+                    Icon::Opened,
+                    Ink::Teal,
+                    format!("Pull request #{number} opened"),
+                    format!("by Tidewatch{pushed}"),
+                );
+                m.body = vec![route];
+                m
+            };
             Look::Card(m)
         }
         Body::ChecksRunning { done, total, .. } => {
@@ -361,7 +373,9 @@ pub(crate) fn look(index: usize, context: Context<'_>) -> Option<Look> {
             let mut m =
                 model(Icon::Merged, Ink::Teal, format!("Merged into {base}"), format!("#{number}"));
             m.body = merged_body(context.cleanup, context.busy);
-            m.note = merged_branch::note(context.cards.after_merge);
+            if !context.policy.pushes_on_its_own() {
+                m.note = merged_branch::note(context.cards.after_merge);
+            }
             if current {
                 m.buttons = merged_buttons(context.cleanup, context.busy, card.id);
             }
@@ -400,7 +414,7 @@ pub(crate) fn look(index: usize, context: Context<'_>) -> Option<Look> {
         Body::Sent { via, tag, headline, extra_lines, .. } => Look::Bubble(Bubble {
             who: match via {
                 Via::You => "You, via Tidewatch",
-                Via::Auto => "Tidewatch, auto-fix",
+                Via::Auto => "Tidewatch, auto",
             },
             tag: tag.clone(),
             headline: headline.clone(),
@@ -413,14 +427,14 @@ pub(crate) fn look(index: usize, context: Context<'_>) -> Option<Look> {
 }
 
 impl Context<'_> {
-    /// The agent answers this card on its own, so it offers the owner nothing to ask: Auto-fix is on
+    /// The agent answers this card on its own, so it offers the owner nothing to ask: Auto is on
     /// and has sends left, and the card's kind is one the tab's tick boxes hand over.
     fn hands_off(&self, body: &Body) -> bool {
         self.handling != Handling::Owner && pr_prompt::wanted(&self.policy, body)
     }
 }
 
-/// The quiet line at the right of a card's buttons: what Auto-fix does with it.
+/// The quiet line at the right of a card's buttons: what Auto does with it.
 fn note_of(context: &Context<'_>, body: &Body) -> String {
     if withheld(context, body) {
         return UNTRUSTED_NOTE.to_owned();
@@ -429,7 +443,7 @@ fn note_of(context: &Context<'_>, body: &Body) -> String {
         return auto_note(context.mode).to_owned();
     }
     if context.handling == Handling::Paused {
-        return format!("Auto-fix paused after {} sends", send_cap(true));
+        return format!("Auto paused after {} sends", send_cap(true));
     }
     let queued = pr_prompt::ask_of(body)
         .is_some_and(|(ask, _)| context.pending.iter().any(|p| p.message.ask.tag == ask.tag));
@@ -441,12 +455,12 @@ fn withheld(context: &Context<'_>, body: &Body) -> bool {
     context.mode == PrMode::Auto && pr_prompt::untrusted(body)
 }
 
-const UNTRUSTED_NOTE: &str = "Not from a collaborator: Auto-fix leaves it to you";
+const UNTRUSTED_NOTE: &str = "Not from a collaborator: Auto leaves it to you";
 
 fn auto_note(mode: PrMode) -> &'static str {
     match mode {
-        PrMode::Auto => "Auto-fix is on for this tab",
-        PrMode::Ask | PrMode::Off => "Auto-fix is off for this tab",
+        PrMode::Auto => "Auto is on for this tab",
+        PrMode::Ask | PrMode::Off => "Auto is off for this tab",
     }
 }
 

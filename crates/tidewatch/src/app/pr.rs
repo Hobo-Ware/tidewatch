@@ -220,6 +220,7 @@ impl Tidewatch {
         if let Some(state) = self.flow.tab_mut(tab) {
             state.delivery.probe_started();
             state.delivery.probe_done(Some(commits));
+            state.mark_fix_push();
         }
         self.flow.open_card(tab, ctx);
     }

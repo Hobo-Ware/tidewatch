@@ -3,13 +3,14 @@
 //! the commits, the user edits the title and text, and approving pushes and opens the pull request.
 //! Everything here is plain data; the git and gh work runs in `flow_jobs`.
 
-use tidewatch_core::delivery::{Delivered, DeliveryError, DeliveryPlan};
+use tidewatch_core::delivery::{Delivered, DeliveryError, DeliveryPlan, Opens};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct Form {
     pub(crate) plan: DeliveryPlan,
     pub(crate) title: String,
     pub(crate) body: String,
+    pub(crate) opens: Opens,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -23,6 +24,10 @@ pub(crate) enum Delivery {
     Building {
         commits: usize,
     },
+    /// Auto reads the commits, pushes and opens the draft with no dialog. The agent was told first.
+    Working {
+        commits: usize,
+    },
     Editing(Form),
     Delivering(Form),
     Failed {
@@ -32,11 +37,10 @@ pub(crate) enum Delivery {
     Delivered(Delivered),
 }
 
-/// One step of the delivery a tab that runs on its own takes without a click.
+/// One step of the delivery of a fix a tab that runs on its own takes without a click.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Auto {
     Wait,
-    Open,
     Approve,
     Close,
 }
@@ -60,6 +64,24 @@ impl Delivery {
         };
     }
 
+    /// Auto starts on the ready card: the card is out of the way while the push runs.
+    pub(crate) fn start_auto(&mut self) {
+        if let Self::Ready { commits } = *self {
+            *self = Self::Working { commits };
+        }
+    }
+
+    /// Auto's push finished. A failure keeps what was about to be sent, in the dialog that waits for
+    /// the owner. A success leaves the pull request to the chat.
+    pub(crate) fn auto_finished(&mut self, result: Result<(), (Option<Form>, DeliveryError)>) {
+        let Self::Working { commits } = *self else { return };
+        *self = match result {
+            Ok(()) => Self::Hidden,
+            Err((Some(form), error)) => Self::Failed { form, error },
+            Err((None, _)) => Self::Ready { commits },
+        };
+    }
+
     /// The user opened the card. True when the plan should now be built.
     pub(crate) fn open(&mut self) -> bool {
         if let Self::Ready { commits } = *self {
@@ -73,9 +95,12 @@ impl Delivery {
         let Self::Building { commits } = *self else { return };
         *self = match result {
             Ok(plan) if plan.commits.is_empty() => Self::Hidden,
-            Ok(plan) => {
-                Self::Editing(Form { title: plan.title.clone(), body: plan.body.clone(), plan })
-            }
+            Ok(plan) => Self::Editing(Form {
+                title: plan.title.clone(),
+                body: plan.body.clone(),
+                plan,
+                opens: Opens::Ready,
+            }),
             Err(_) => Self::Ready { commits },
         };
     }
@@ -140,12 +165,11 @@ impl Delivery {
         }
     }
 
-    /// What a tab that runs on its own does next, so the card never waits for a click: open the
-    /// ready card, approve the filled form, close the success dialog. A form with no title and every
+    /// What a tab that runs on its own does next with the card of a fix it pushes, so it never waits
+    /// for a click: approve the filled form, close the success dialog. A form with no title and every
     /// failure stay with the owner.
     pub(crate) fn auto_step(&self) -> Auto {
         match self {
-            Self::Ready { .. } => Auto::Open,
             Self::Editing(form) if !form.title.trim().is_empty() => Auto::Approve,
             Self::Delivered(_) => Auto::Close,
             _ => Auto::Wait,
@@ -211,6 +235,7 @@ mod tests {
             dir: PathBuf::from("/w"),
             branch: "agent/brave-otter".into(),
             base: "main".into(),
+            head: "agent/brave-otter".into(),
             commits: (0..commits)
                 .map(|n| CommitLine {
                     sha: format!("abc{n}"),
@@ -299,7 +324,11 @@ mod tests {
         card.open();
         card.built(Ok(plan(1)));
         card.approve();
-        let done = Delivered { url: "https://github.com/o/r/pull/9".into(), created: true };
+        let done = Delivered {
+            url: "https://github.com/o/r/pull/9".into(),
+            head: "agent/brave-otter".into(),
+            created: true,
+        };
         card.delivered(Ok(done.clone()));
         assert_eq!(card, Delivery::Delivered(done));
         assert!(card.is_modal());
@@ -308,13 +337,13 @@ mod tests {
     }
 
     #[test]
-    fn a_tab_on_its_own_opens_approves_and_closes_and_leaves_failures_to_the_owner() {
+    fn the_card_of_a_fix_is_approved_and_closed_and_failures_are_left_to_the_owner() {
         let mut card = Delivery::Hidden;
         assert_eq!(card.auto_step(), Auto::Wait);
         card.probe_started();
         assert_eq!(card.auto_step(), Auto::Wait);
         card.probe_done(Some(2));
-        assert_eq!(card.auto_step(), Auto::Open);
+        assert_eq!(card.auto_step(), Auto::Wait, "a ready card is opened by a click or by Auto");
         card.open();
         assert_eq!(card.auto_step(), Auto::Wait, "building");
         card.built(Ok(plan(2)));
@@ -330,9 +359,49 @@ mod tests {
         card.approve();
         card.delivered(Ok(Delivered {
             url: "https://github.com/o/r/pull/9".into(),
+            head: "agent/brave-otter".into(),
             created: true,
         }));
         assert_eq!(card.auto_step(), Auto::Close);
+    }
+
+    #[test]
+    fn auto_pushes_with_no_dialog_and_a_failure_waits_for_the_owner_with_its_text() {
+        let mut card = ready(2);
+        card.start_auto();
+        assert_eq!(card, Delivery::Working { commits: 2 });
+        assert_eq!(card.card_commits(), None, "the bar is out of the way while it pushes");
+        assert!(!card.is_modal(), "no dialog for a push Auto does");
+        card.leave_done();
+        assert_eq!(
+            card,
+            Delivery::Working { commits: 2 },
+            "the agent working again does not end it"
+        );
+        let form = Form {
+            title: "Add helper".into(),
+            body: "text".into(),
+            plan: plan(2),
+            opens: Opens::Draft,
+        };
+        card.auto_finished(Err((Some(form.clone()), DeliveryError::GhNotAuthenticated)));
+        assert_eq!(card, Delivery::Failed { form, error: DeliveryError::GhNotAuthenticated });
+        assert!(card.is_modal());
+
+        let mut done = ready(1);
+        done.start_auto();
+        done.auto_finished(Ok(()));
+        assert_eq!(done, Delivery::Hidden);
+
+        let mut unread = ready(3);
+        unread.start_auto();
+        unread.auto_finished(Err((None, DeliveryError::NoBase)));
+        assert_eq!(unread, Delivery::Ready { commits: 3 }, "the bar comes back");
+
+        let mut idle = Delivery::Hidden;
+        idle.start_auto();
+        idle.auto_finished(Ok(()));
+        assert_eq!(idle, Delivery::Hidden, "only a ready card starts");
     }
 
     #[test]
@@ -353,7 +422,7 @@ mod tests {
     fn answers_for_a_card_that_is_not_waiting_for_them_change_nothing() {
         let mut card = Delivery::Hidden;
         card.built(Ok(plan(1)));
-        card.delivered(Ok(Delivered { url: "u".into(), created: true }));
+        card.delivered(Ok(Delivered { url: "u".into(), head: "b".into(), created: true }));
         card.back();
         card.close_success();
         assert_eq!(card.approve(), None);
