@@ -15,14 +15,8 @@
 //!   for `STATUS_QUIET_SECS` becomes `NeedsYou(Quiet)` (the agent may be waiting on something no hook
 //!   reported), and a permission or question prompt flips back to `Working` once the terminal is
 //!   printing again (no hook reports the answer).
-//! - Claude reports which tool call a permission belongs to (`PermissionRequest`) and when a call
-//!   ends (`PostToolUse`), so that permission does not decay: the terminal keeps printing behind a
-//!   prompt while other parallel calls run. It holds until its own call ends, the Reader answers it,
-//!   or the turn moves on.
-//! - A tool call that starts (`PreToolUse`) while the hook state is `Done` or `Failed` reads
-//!   `Working` again: a Stop guard sent the agent back to work with no new prompt. A call's end
-//!   does the same only when its `tool_use_id` was not seen starting this turn; the end of a call
-//!   that began before the Stop (it can arrive after it) never reopens the turn.
+//! - A permission holds until its own tool call ends; one that names no call waits on those in flight.
+//! - A call that starts while the state is `Done` or `Failed` reads `Working`; a late end never does.
 //! - An idle notice (`Notification` `idle_prompt`) means "at the prompt", so it reads `Done`; only a
 //!   permission prompt, a question or an explicit ask reads `NeedsYou`.
 //! - With no hook state, progress, bell, title activity and quiet time decide.
@@ -30,7 +24,6 @@
 //! Claude's `SessionStart` http hook never fired in `claude` 2.1.296 (interactive or `-p`), so the
 //! first Claude status comes from `UserPromptSubmit` or from the lower layers.
 
-use std::collections::HashSet;
 use std::path::PathBuf;
 
 use serde_json::Value;
@@ -81,9 +74,11 @@ pub enum HookKind {
     PermissionNeeded,
     /// A permission prompt for one identified tool call (the key from [`tool_key`]).
     ToolPermission(String),
-    /// A tool call started (`PreToolUse`), named by Claude's `tool_use_id`.
-    ToolStarted(String),
-    /// A tool call ended: `key` is the one its permission prompt had, `id` Claude's `tool_use_id`.
+    /// `id` is the CLI's `tool_use_id` when it sends one; `key` is what the prompt and the end carry.
+    ToolStarted {
+        key: String,
+        id: Option<String>,
+    },
     ToolFinished {
         key: String,
         id: Option<String>,
@@ -115,11 +110,7 @@ impl HookEvent {
 /// Turns one hook payload into a [`HookEvent`]. `None` for events that carry no status (tool hooks,
 /// `auth_success` notifications) and for payloads that are not objects.
 ///
-/// Every CLI names the event in `hook_event_name`. Copilot does too when its hooks are configured
-/// with PascalCase event names (see `launch::copilot_plugin_files`); a payload without it is read as
-/// one of its `events.jsonl` lines (`{"type": "...", "data": {...}}`) instead. Checked against claude
-/// 2.1.296, gemini 0.46.0 and copilot 1.0.103 (live, with a stand-in model); Codex's names and fields
-/// come from the hook schemas inside codex 0.162.1 (`docs/research/phase-0-spikes.md`).
+/// A Copilot payload without `hook_event_name` is one of its `events.jsonl` lines.
 #[must_use]
 pub fn parse_hook(agent: &str, payload: &Value) -> Option<HookEvent> {
     let object = payload.as_object()?;
@@ -141,11 +132,19 @@ fn parse_named_event(agent: &str, object: &serde_json::Map<String, Value>) -> Op
         "SessionStart" => (HookKind::SessionStart, None),
         "UserPromptSubmit" | "BeforeAgent" => (HookKind::TurnStarted, None),
         "PermissionRequest" => match tool_key(object) {
-            Some(key) if agent == "claude" => (HookKind::ToolPermission(key), tool_summary(object)),
+            Some(key) if matches!(agent, "claude" | "codex") => {
+                (HookKind::ToolPermission(key), tool_summary(object))
+            }
             _ => (HookKind::PermissionNeeded, tool_summary(object)),
         },
-        "PreToolUse" => (HookKind::ToolStarted(text(object.get("tool_use_id"))?), None),
-        "PostToolUse" | "PostToolUseFailure" => {
+        "PreToolUse" | "BeforeTool" => {
+            let started = HookKind::ToolStarted {
+                key: tool_key(object)?,
+                id: text(object.get("tool_use_id")),
+            };
+            (started, None)
+        }
+        "PostToolUse" | "PostToolUseFailure" | "AfterTool" => {
             let finished = HookKind::ToolFinished {
                 key: tool_key(object)?,
                 id: text(object.get("tool_use_id")),
@@ -224,12 +223,15 @@ fn parse_copilot_event(object: &serde_json::Map<String, Value>) -> Option<HookEv
     Some(event)
 }
 
-/// Names one tool call the same way on its permission prompt and on its end: the tool and its whole
-/// input, so parallel calls of one tool stay apart.
+/// A shell call is keyed by its command alone: Codex's prompt carries a description its `PostToolUse` lacks.
 fn tool_key(object: &serde_json::Map<String, Value>) -> Option<String> {
     let tool = text(object.get("tool_name"))?;
     let input = object.get("tool_input").unwrap_or(&Value::Null);
-    Some(format!("{tool}\n{input}"))
+    let call = input
+        .get("command")
+        .and_then(Value::as_str)
+        .map_or_else(|| input.to_string(), str::to_owned);
+    Some(format!("{tool}\n{call}"))
 }
 
 fn tool_summary(object: &serde_json::Map<String, Value>) -> Option<String> {
@@ -333,8 +335,7 @@ enum HookStatus {
 pub struct HookState {
     status: HookStatus,
     at: f64,
-    /// The tool call a permission prompt belongs to, when the agent names it.
-    pending: Option<String>,
+    pending: Vec<String>,
 }
 
 impl HookState {
@@ -352,18 +353,18 @@ impl HookState {
             HookKind::TurnFailed(reason) => HookStatus::Failed(reason.clone()),
             HookKind::SessionStart
             | HookKind::SessionEnd
-            | HookKind::ToolStarted(_)
+            | HookKind::ToolStarted { .. }
             | HookKind::ToolFinished { .. } => return None,
         };
         let pending = match &event.kind {
-            HookKind::ToolPermission(key) => Some(key.clone()),
-            _ => None,
+            HookKind::ToolPermission(key) => vec![key.clone()],
+            _ => Vec::new(),
         };
         Some(Self { status, at: now, pending })
     }
 
     fn holds_permission(&self) -> bool {
-        self.status == HookStatus::NeedsYou(Reason::Permission) && self.pending.is_some()
+        self.status == HookStatus::NeedsYou(Reason::Permission) && !self.pending.is_empty()
     }
 
     /// An idle notice (a minute after a turn, or after one the agent never reported finishing, such
@@ -526,11 +527,17 @@ pub fn next_change(inputs: &StatusInputs, now: f64) -> Option<f64> {
     marks.into_iter().filter(|mark| *mark > now).min_by(f64::total_cmp)
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct OpenCall {
+    call: String,
+    key: String,
+}
+
 /// Keeps one tab's [`StatusInputs`] current. Every method takes the time it happened.
 #[derive(Clone, Debug, PartialEq)]
 pub struct StatusTracker {
     inputs: StatusInputs,
-    open_tools: HashSet<String>,
+    open_tools: Vec<OpenCall>,
 }
 
 impl StatusTracker {
@@ -560,7 +567,7 @@ impl StatusTracker {
                 terminal: TerminalState::default(),
                 process: ProcessFacts::started(now),
             },
-            open_tools: HashSet::new(),
+            open_tools: Vec::new(),
         }
     }
 
@@ -578,32 +585,27 @@ impl StatusTracker {
     /// quiet decay would call it `NeedsYou` for good.
     pub fn agent_resumed(&mut self, now: f64) {
         self.agent_started(now);
-        self.inputs.hook = Some(HookState { status: HookStatus::Done, at: now, pending: None });
+        self.inputs.hook =
+            Some(HookState { status: HookStatus::Done, at: now, pending: Vec::new() });
     }
 
     pub fn on_hook(&mut self, event: &HookEvent, now: f64) {
         match &event.kind {
-            HookKind::ToolStarted(id) => {
-                self.open_tools.insert(id.clone());
-                self.resume_after_finished_turn(now);
-                return;
-            }
+            HookKind::ToolStarted { key, id } => return self.tool_started(key, id.as_deref(), now),
             HookKind::ToolFinished { key, id } => {
-                self.settle_permission(|pending| pending == Some(key.as_str()), now);
-                let began_before = id.as_ref().is_none_or(|id| self.open_tools.remove(id));
-                if !began_before {
-                    self.resume_after_finished_turn(now);
-                }
-                return;
+                return self.tool_finished(key, id.as_deref(), now);
             }
             HookKind::TurnStarted => self.open_tools.clear(),
             _ => {}
         }
-        let Some(state) = HookState::from_event(event, now) else { return };
+        let Some(mut state) = HookState::from_event(event, now) else { return };
         let previous = self.inputs.hook.as_ref();
         self.inputs.hook = Some(match event.kind {
             HookKind::IdleWaiting => state.after_idle(previous),
-            HookKind::PermissionNeeded => state.after_notice(previous),
+            HookKind::PermissionNeeded => {
+                state.pending = self.open_tools.iter().map(|open| open.key.clone()).collect();
+                state.after_notice(previous)
+            }
             _ => state,
         });
     }
@@ -613,23 +615,56 @@ impl StatusTracker {
             && matches!(hook.status, HookStatus::Done | HookStatus::Failed(_))
         {
             self.inputs.hook =
-                Some(HookState { status: HookStatus::Working, at: now, pending: None });
+                Some(HookState { status: HookStatus::Working, at: now, pending: Vec::new() });
+        }
+    }
+
+    fn tool_started(&mut self, key: &str, id: Option<&str>, now: f64) {
+        self.open_tools.push(OpenCall { call: id.unwrap_or(key).to_owned(), key: key.to_owned() });
+        self.resume_after_finished_turn(now);
+        let moved_on = self.inputs.hook.as_ref().is_some_and(|hook| {
+            hook.holds_permission()
+                && !hook.pending.iter().any(|pending| pending == key)
+                && now - hook.at >= HOOK_SETTLE_SECS
+        });
+        if moved_on {
+            self.settle_permission(now);
+        }
+    }
+
+    fn tool_finished(&mut self, key: &str, id: Option<&str>, now: f64) {
+        let call = id.unwrap_or(key);
+        let began = self.open_tools.iter().position(|open| open.call == call);
+        if let Some(at) = began {
+            self.open_tools.remove(at);
+        }
+        if id.is_some() && began.is_none() {
+            self.resume_after_finished_turn(now);
+        }
+        let Some(hook) = self.inputs.hook.as_mut().filter(|hook| hook.holds_permission()) else {
+            return;
+        };
+        if let Some(at) = hook.pending.iter().position(|call| call == key) {
+            hook.pending.remove(at);
+            if hook.pending.is_empty() {
+                self.settle_permission(now);
+            }
         }
     }
 
     /// The user answered the pending permission prompt (no hook reports a denial).
     pub fn on_permission_answered(&mut self, now: f64) {
-        self.settle_permission(|_| true, now);
+        if self.inputs.hook.as_ref().is_some_and(HookState::holds_permission) {
+            self.settle_permission(now);
+        }
     }
 
-    fn settle_permission(&mut self, answered: impl Fn(Option<&str>) -> bool, now: f64) {
-        if let Some(hook) = &self.inputs.hook
-            && hook.holds_permission()
-            && answered(hook.pending.as_deref())
-        {
-            self.inputs.hook =
-                Some(HookState { status: HookStatus::Working, at: now, pending: None });
+    fn settle_permission(&mut self, now: f64) {
+        if let Some(hook) = &self.inputs.hook {
+            self.open_tools.retain(|open| !hook.pending.contains(&open.key));
         }
+        self.inputs.hook =
+            Some(HookState { status: HookStatus::Working, at: now, pending: Vec::new() });
     }
 
     pub fn on_terminal(&mut self, signal: TerminalSignal, now: f64) {
@@ -690,9 +725,7 @@ mod tests {
                     "tool_name": "Bash", "tool_input": {"command": "touch zz.txt", "description": "Create empty file"},
                     "permission_suggestions": [{"type": "addDirectories"}]}),
                 Some((
-                    HookKind::ToolPermission(
-                        "Bash\n{\"command\":\"touch zz.txt\",\"description\":\"Create empty file\"}".into(),
-                    ),
+                    HookKind::ToolPermission("Bash\ntouch zz.txt".into()),
                     Some("Bash: touch zz.txt".into()),
                 )),
             ),
@@ -740,12 +773,15 @@ mod tests {
             ),
             (
                 json!({"session_id": sid, "hook_event_name": "PreToolUse", "tool_name": "Bash"}),
-                None,
+                Some((HookKind::ToolStarted { key: "Bash\nnull".into(), id: None }, None)),
             ),
             (
                 json!({"session_id": sid, "hook_event_name": "PreToolUse", "tool_name": "Bash",
                     "tool_use_id": "toolu_9"}),
-                Some((HookKind::ToolStarted("toolu_9".into()), None)),
+                Some((
+                    HookKind::ToolStarted { key: "Bash\nnull".into(), id: Some("toolu_9".into()) },
+                    None,
+                )),
             ),
         ];
         for (payload, want) in cases {
@@ -846,6 +882,8 @@ mod tests {
         }
     }
 
+    const GEMINI_HOOKS: &str = include_str!("../tests/fixtures/gemini_hooks.jsonl");
+    const CODEX_HOOKS: &str = include_str!("../tests/fixtures/codex_hooks.jsonl");
     const COPILOT_HOOKS: &str = include_str!("../tests/fixtures/copilot_hooks.jsonl");
 
     fn copilot_turn() -> Vec<Value> {
@@ -857,14 +895,14 @@ mod tests {
         let want = [
             Some((HookKind::SessionStart, None)),
             Some((HookKind::TurnStarted, None)),
-            None,
+            Some((
+                HookKind::ToolStarted { key: "Bash\ntouch zz-probe.txt".into(), id: None },
+                None,
+            )),
             None,
             Some((HookKind::PermissionNeeded, Some("Run command: touch zz-probe.txt".into()))),
             Some((
-                HookKind::ToolFinished(
-                    "Bash\n{\"command\":\"touch zz-probe.txt\",\"description\":\"Create the file\",\"mode\":\"sync\"}"
-                        .into(),
-                ),
+                HookKind::ToolFinished { key: "Bash\ntouch zz-probe.txt".into(), id: None },
                 None,
             )),
             Some((HookKind::TurnDone, None)),
@@ -888,6 +926,129 @@ mod tests {
             at += 1.0;
         }
         assert_eq!(tracker.status(at + 30.0), AgentStatus::Done);
+    }
+
+    #[test]
+    fn real_gemini_hook_payloads_map_to_hook_kinds() {
+        let call = "run_shell_command\ntouch zz-probe.txt";
+        let want = [
+            Some((HookKind::SessionStart, None)),
+            Some((HookKind::TurnStarted, None)),
+            Some((HookKind::ToolStarted { key: call.into(), id: None }, None)),
+            Some((
+                HookKind::PermissionNeeded,
+                Some("Tool Confirm Shell Command requires execution".into()),
+            )),
+            Some((HookKind::ToolFinished { key: call.into(), id: None }, None)),
+            Some((HookKind::TurnDone, Some("All done.".into()))),
+        ];
+        let turn = payloads(GEMINI_HOOKS);
+        assert_eq!(turn.len(), want.len());
+        for (payload, want) in turn.iter().zip(want) {
+            assert_eq!(parse("gemini", payload), want, "payload {payload}");
+        }
+    }
+
+    #[test]
+    fn real_codex_hook_payloads_map_to_hook_kinds() {
+        let call = "Bash\ntouch zz-probe.txt";
+        let want = [
+            Some((HookKind::SessionStart, None)),
+            Some((HookKind::TurnStarted, None)),
+            Some((HookKind::ToolStarted { key: call.into(), id: Some("call_1".into()) }, None)),
+            Some((HookKind::ToolPermission(call.into()), Some("Bash: touch zz-probe.txt".into()))),
+            Some((HookKind::ToolFinished { key: call.into(), id: Some("call_1".into()) }, None)),
+            Some((HookKind::TurnDone, Some("All done.".into()))),
+        ];
+        let turn = payloads(CODEX_HOOKS);
+        assert_eq!(turn.len(), want.len());
+        for (payload, want) in turn.iter().zip(want) {
+            assert_eq!(parse("codex", payload), want, "payload {payload}");
+        }
+    }
+
+    fn payloads(fixture: &str) -> Vec<Value> {
+        fixture.lines().map(|line| serde_json::from_str(line).unwrap()).collect()
+    }
+
+    #[test]
+    fn a_permission_holds_until_its_call_ends_for_codex_gemini_and_copilot() {
+        let walks = [("codex", CODEX_HOOKS), ("gemini", GEMINI_HOOKS), ("copilot", COPILOT_HOOKS)];
+        for (agent, fixture) in walks {
+            let events: Vec<HookEvent> =
+                payloads(fixture).iter().filter_map(|p| parse_hook(agent, p)).collect();
+            let at = |is: fn(&HookKind) -> bool| events.iter().position(|e| is(&e.kind)).unwrap();
+            let asked =
+                at(|k| matches!(k, HookKind::PermissionNeeded | HookKind::ToolPermission(_)));
+            let ended = at(|k| matches!(k, HookKind::ToolFinished { .. }));
+            let stopped = at(|k| matches!(k, HookKind::TurnDone));
+            let mut tracker = StatusTracker::agent(0.0);
+            for (second, event) in events[..=asked].iter().enumerate() {
+                tracker.on_hook(event, 1.0 + second as f64);
+            }
+            for second in 10..70 {
+                tracker.on_output(f64::from(second));
+            }
+            let needs = AgentStatus::NeedsYou(Reason::Permission);
+            assert_eq!(tracker.status(70.5), needs, "{agent}: a spinner behind the prompt");
+            assert_eq!(tracker.next_change_at(70.5), None, "{agent}");
+            for event in &events[asked + 1..ended] {
+                tracker.on_hook(event, 71.0);
+            }
+            tracker.on_hook(&events[ended], 72.0);
+            assert_eq!(tracker.status(72.1), AgentStatus::Working, "{agent}: its call ended");
+            tracker.on_hook(&events[stopped], 73.0);
+            assert_eq!(tracker.status(73.1), AgentStatus::Done, "{agent}");
+        }
+    }
+
+    #[test]
+    fn a_prompt_for_a_call_that_began_before_it_waits_on_every_call_in_flight() {
+        let started =
+            |key: &str| HookEvent::bare(HookKind::ToolStarted { key: key.into(), id: None });
+        let ended =
+            |key: &str| HookEvent::bare(HookKind::ToolFinished { key: key.into(), id: None });
+        let mut tracker = StatusTracker::agent(0.0);
+        tracker.on_hook(&HookEvent::bare(HookKind::TurnStarted), 1.0);
+        tracker.on_hook(&started("read\na.rs"), 2.0);
+        tracker.on_hook(&started("write\nb.rs"), 2.0);
+        tracker.on_hook(&HookEvent::bare(HookKind::PermissionNeeded), 2.1);
+        tracker.on_hook(&HookEvent::bare(HookKind::PermissionNeeded), 2.2);
+        tracker.on_output(10.0);
+        let needs = AgentStatus::NeedsYou(Reason::Permission);
+        assert_eq!(tracker.status(10.1), needs);
+        tracker.on_hook(&ended("read\na.rs"), 11.0);
+        tracker.on_output(11.0);
+        assert_eq!(tracker.status(11.1), needs, "one of two calls is still open");
+        tracker.on_hook(&ended("write\nb.rs"), 12.0);
+        assert_eq!(tracker.status(12.1), AgentStatus::Working);
+    }
+
+    #[test]
+    fn a_new_call_two_seconds_after_the_prompt_means_it_was_answered() {
+        let started =
+            |key: &str| HookEvent::bare(HookKind::ToolStarted { key: key.into(), id: None });
+        let prompted = || {
+            let mut tracker = StatusTracker::agent(0.0);
+            tracker.on_hook(&HookEvent::bare(HookKind::TurnStarted), 1.0);
+            tracker.on_hook(&started("shell\nrm x"), 2.0);
+            tracker.on_hook(&HookEvent::bare(HookKind::PermissionNeeded), 2.1);
+            tracker
+        };
+        let needs = AgentStatus::NeedsYou(Reason::Permission);
+        let mut racing = prompted();
+        racing.on_hook(&started("shell\nls"), 2.3);
+        racing.on_output(5.0);
+        assert_eq!(racing.status(5.1), needs, "a call of the same batch, begun right after");
+        let mut denied = prompted();
+        denied.on_hook(&started("shell\nls"), 9.0);
+        denied.on_output(9.0);
+        assert_eq!(denied.status(9.1), AgentStatus::Working, "the agent went on after a denial");
+        denied.on_hook(
+            &HookEvent::bare(HookKind::ToolFinished { key: "shell\nrm x".into(), id: None }),
+            9.5,
+        );
+        assert_eq!(denied.status(9.6), AgentStatus::Working);
     }
 
     #[test]
@@ -1314,6 +1475,52 @@ mod tests {
             }
             tracker.on_output(10.0);
             assert_eq!(tracker.status(10.1), want, "{name}");
+        }
+    }
+
+    fn named(all: &[Value], names: &[&str]) -> Vec<Value> {
+        names
+            .iter()
+            .map(|name| {
+                all.iter()
+                    .find(|p| p["hook_event_name"] == *name)
+                    .unwrap_or_else(|| panic!("{name}"))
+                    .clone()
+            })
+            .collect()
+    }
+
+    #[test]
+    fn on_every_cli_a_late_tool_end_never_reopens_a_finished_turn_but_a_new_call_does() {
+        let claude = vec![
+            json!({"hook_event_name": "UserPromptSubmit", "session_id": "s"}),
+            json!({"hook_event_name": "PreToolUse", "tool_name": "Bash", "tool_use_id": "toolu_1",
+                "tool_input": {"command": "ls"}}),
+            json!({"hook_event_name": "Stop", "session_id": "s"}),
+            json!({"hook_event_name": "PostToolUse", "tool_name": "Bash", "tool_use_id": "toolu_1",
+                "tool_input": {"command": "ls"}}),
+        ];
+        let begins = ["UserPromptSubmit", "PreToolUse", "Stop", "PostToolUse"];
+        let gemini = ["BeforeAgent", "BeforeTool", "AfterAgent", "AfterTool"];
+        let rows = [
+            ("claude", claude, begins),
+            ("codex", payloads(CODEX_HOOKS), begins),
+            ("gemini", payloads(GEMINI_HOOKS), gemini),
+            ("copilot", payloads(COPILOT_HOOKS), begins),
+        ];
+        for (agent, all, [begin, start, stop, end]) in rows {
+            let events: Vec<HookEvent> = named(&all, &[begin, start, stop, end])
+                .iter()
+                .map(|p| parse_hook(agent, p).unwrap_or_else(|| panic!("{agent} {p}")))
+                .collect();
+            let mut tracker = StatusTracker::agent(0.0);
+            for (at, event) in events.iter().enumerate() {
+                tracker.on_hook(event, 1.0 + at as f64);
+            }
+            tracker.on_output(10.0);
+            assert_eq!(tracker.status(10.1), AgentStatus::Done, "{agent}: the late end");
+            tracker.on_hook(&events[1], 11.0);
+            assert_eq!(tracker.status(11.1), AgentStatus::Working, "{agent}: a new call");
         }
     }
 

@@ -8,8 +8,7 @@
 //! and `docs/research/phase-0-spikes.md`). Codex's hooks, MCP server and never-push guard were run
 //! live: `-c` overrides carry the hooks and the MCP server, and the MCP server needs
 //! `default_tools_approval_mode="approve"`, otherwise Codex rejects its tools under approval `never`.
-//! Copilot's `--plugin-dir` hooks were run live on copilot 1.0.103 against a stand-in model
-//! (`COPILOT_PROVIDER_BASE_URL`), through a turn with a permission prompt.
+//! Tool hooks were run live against stand-in models; the payloads are `tests/fixtures/*_hooks.jsonl`.
 //! `Launch::experimental` is left for custom agents.
 
 use std::fmt;
@@ -44,12 +43,27 @@ const CLAUDE_HOOK_EVENTS: [&str; 9] = [
     "Stop",
     "StopFailure",
 ];
-const GEMINI_HOOK_EVENTS: [&str; 5] =
-    ["SessionStart", "BeforeAgent", "Notification", "AfterAgent", "SessionEnd"];
-const CODEX_HOOK_EVENTS: [&str; 4] =
-    ["SessionStart", "UserPromptSubmit", "PermissionRequest", "Stop"];
-const COPILOT_HOOK_EVENTS: [&str; 5] =
-    ["SessionStart", "UserPromptSubmit", "Notification", "Stop", "SessionEnd"];
+const GEMINI_HOOK_EVENTS: [&str; 7] = [
+    "SessionStart",
+    "BeforeAgent",
+    "BeforeTool",
+    "Notification",
+    "AfterTool",
+    "AfterAgent",
+    "SessionEnd",
+];
+const CODEX_HOOK_EVENTS: [&str; 6] =
+    ["SessionStart", "UserPromptSubmit", "PreToolUse", "PermissionRequest", "PostToolUse", "Stop"];
+const COPILOT_HOOK_EVENTS: [&str; 8] = [
+    "SessionStart",
+    "UserPromptSubmit",
+    "PreToolUse",
+    "Notification",
+    "PostToolUse",
+    "PostToolUseFailure",
+    "Stop",
+    "SessionEnd",
+];
 const COPILOT_PLUGIN_MANIFEST: &str = "plugin.json";
 const COPILOT_PLUGIN_HOOKS: &str = "hooks/hooks.json";
 /// Where the generated Gemini settings go, relative to the worktree.
