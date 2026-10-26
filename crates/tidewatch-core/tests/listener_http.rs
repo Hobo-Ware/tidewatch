@@ -427,7 +427,9 @@ fn a_ledger_is_saved_in_the_tab_folder_reaches_the_app_and_is_read_back_by_a_new
         &call(1, "update_progress", &json!({ "ledger": ledger })),
     );
     assert_eq!(reply.status, 200);
-    assert_eq!(reply.json()["result"]["content"][0]["text"], "saved: phase 1 Plan, 0/2 done");
+    let text = reply.json()["result"]["content"][0]["text"].as_str().unwrap().to_owned();
+    assert_eq!(text.lines().next(), Some("saved: phase 1 Plan, 0/2 done"));
+    assert!(text.contains("Typed fields are preferred"), "{text}");
     let message = h.next_event();
     assert_eq!((message.tab_id, message.generation), (5, 0));
     let TabEvent::Progress { ledger: sent } = message.event else { panic!("not a ledger") };
@@ -450,7 +452,11 @@ fn a_ledger_is_saved_in_the_tab_folder_reaches_the_app_and_is_read_back_by_a_new
         Some(&credential.token),
         &call(2, "get_progress", &json!({})),
     );
-    assert_eq!(read.json()["result"]["content"][0]["text"], ledger);
+    let report: serde_json::Value =
+        serde_json::from_str(read.json()["result"]["content"][0]["text"].as_str().unwrap())
+            .unwrap();
+    assert_eq!(report["goal"], "Add search");
+    assert_eq!(report["stages"][0]["name"], "Plan");
 }
 
 #[test]

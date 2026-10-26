@@ -521,6 +521,8 @@ fn unix_now() -> i64 {
 mod tests {
     use super::*;
     use crate::progress::{self, Ledger};
+    use crate::progress_report::ProgressReport;
+    use crate::progress_store;
     use kelp_core::review::{Anchor, Side};
     use std::cell::RefCell;
 
@@ -690,7 +692,7 @@ mod tests {
                 vec!["id", "text"],
                 vec!["name", "stages"],
                 vec!["questions"],
-                vec!["ledger"],
+                vec!["state", "now", "stages"],
                 vec![],
                 vec!["name"],
                 vec!["svg", "reason"],
@@ -816,13 +818,148 @@ mod tests {
         let h = Harness::new();
         let reply = h.call("update_progress", &json!({ "ledger": LEDGER }));
         assert_eq!(reply["result"]["isError"], false, "{reply}");
-        assert_eq!(text_of(&reply), "saved: phase 2 Build, 2/4 done, 1 scheduled");
+        let lines: Vec<&str> = text_of(&reply).lines().collect();
+        assert_eq!(lines[0], "saved: phase 2 Build, 2/4 done, 1 scheduled");
+        assert_eq!(lines.len(), 2, "{lines:?}");
+        assert!(lines[1].starts_with("Typed fields are preferred"), "{lines:?}");
         let saved = std::fs::read_to_string(h.progress_file()).unwrap();
         assert_eq!(saved, Ledger::parse(LEDGER).to_markdown());
-        assert_eq!(
-            *h.events.borrow(),
-            [TabEvent::Progress { ledger: Box::new(Ledger::parse(LEDGER)) }]
+        let mapped = ProgressReport::from_ledger(&Ledger::parse(LEDGER)).to_ledger();
+        assert_eq!(*h.events.borrow(), [TabEvent::Progress { ledger: Box::new(mapped) }]);
+    }
+
+    #[test]
+    fn the_typed_fields_are_preferred_line_comes_once_per_tab() {
+        let h = Harness::new();
+        let first = h.call("update_progress", &json!({ "ledger": LEDGER }));
+        assert!(text_of(&first).contains("Typed fields are preferred"));
+        let second = h.call("update_progress", &json!({ "ledger": LEDGER }));
+        assert!(!text_of(&second).contains("Typed fields are preferred"), "{second}");
+        let other = Harness::new();
+        let reply = other.call("update_progress", &json!({ "ledger": LEDGER }));
+        assert!(text_of(&reply).contains("Typed fields are preferred"), "another tab is told");
+    }
+
+    fn typed() -> Value {
+        json!({
+            "goal": "Fix the retry",
+            "state": "needs_you",
+            "now": "Waiting for the cap",
+            "stages": [
+                { "name": "Build", "kind": "build", "status": "active" },
+                { "name": "Ship", "kind": "ship", "status": "todo" }
+            ],
+            "steps": [{ "stage": "Build", "text": "Add backoff", "status": "active" }],
+            "needs_you": { "question": "Cap?", "options": ["30s", "60s"], "recommended": 1 }
+        })
+    }
+
+    #[test]
+    fn update_progress_takes_the_typed_fields_stores_the_report_and_shows_the_ledger() {
+        let h = Harness::new();
+        let reply = h.call("update_progress", &typed());
+        assert_eq!(reply["result"]["isError"], false, "{reply}");
+        assert_eq!(text_of(&reply), "saved: phase 1 Build, 0/1 done");
+        let stored = progress_store::load_report(&h.progress_file()).unwrap();
+        assert_eq!(stored.state, progress::State::NeedsYou);
+        assert!(h.progress_file().with_file_name("progress.json").exists());
+        let events = h.events.borrow();
+        let [TabEvent::Progress { ledger }] = events.as_slice() else { panic!("{events:?}") };
+        assert_eq!(**ledger, stored.to_ledger());
+        assert!(ledger.has_question());
+    }
+
+    #[test]
+    fn a_typed_report_that_breaks_a_rule_is_refused_with_each_fix_and_saves_nothing() {
+        let h = Harness::new();
+        let mut bad = typed();
+        bad["now"] = json!("x".repeat(130));
+        bad["stages"][0]["kind"] = json!("deploy");
+        bad["needs_you"]["recommended"] = json!(5);
+        let reply = h.call("update_progress", &bad);
+        assert!(reply.get("error").is_none(), "a rule failure is not a protocol error: {reply}");
+        assert_eq!(reply["result"]["isError"], true);
+        let text = text_of(&reply);
+        assert!(
+            text.starts_with(
+                "The report was not saved. Fix these and call update_progress again:\n- "
+            ),
+            "{text}"
         );
+        assert_eq!(text.lines().count(), 4, "{text}");
+        assert!(!h.progress_file().exists());
+        assert!(!h.progress_file().with_file_name("progress.json").exists());
+        assert_eq!(*h.events.borrow(), Vec::<TabEvent>::new());
+    }
+
+    #[test]
+    fn typed_fields_and_a_markdown_ledger_together_are_refused() {
+        let h = Harness::new();
+        let mut both = typed();
+        both["ledger"] = json!(LEDGER);
+        let reply = h.call("update_progress", &both);
+        assert_eq!(reply["result"]["isError"], true);
+        assert!(text_of(&reply).contains("send the typed fields or ledger, not both"));
+    }
+
+    #[test]
+    fn the_second_typed_report_may_leave_the_goal_out_and_keeps_it() {
+        let h = Harness::new();
+        h.call("update_progress", &typed());
+        let mut later = typed();
+        later.as_object_mut().unwrap().remove("goal");
+        later["state"] = json!("working");
+        later.as_object_mut().unwrap().remove("needs_you");
+        let reply = h.call("update_progress", &later);
+        assert_eq!(reply["result"]["isError"], false, "{reply}");
+        let stored = progress_store::load_report(&h.progress_file()).unwrap();
+        assert_eq!(stored.goal, "Fix the retry");
+        assert_eq!(stored.state, progress::State::Working);
+    }
+
+    #[test]
+    fn the_update_progress_schema_lists_every_typed_field_and_the_words_of_each_enum() {
+        let [update, _] = progress_mcp::tool_definitions();
+        let schema = &update["inputSchema"];
+        let props = schema["properties"].as_object().unwrap();
+        for key in [
+            "goal",
+            "title",
+            "state",
+            "now",
+            "kind",
+            "stages",
+            "steps",
+            "needs_you",
+            "waiting_on",
+            "scheduled",
+            "verified",
+            "not_verified",
+            "decisions",
+            "ledger",
+        ] {
+            assert!(props.contains_key(key), "{key}");
+        }
+        assert_eq!(schema["required"], json!(["state", "now", "stages"]));
+        assert_eq!(
+            props["state"]["enum"],
+            json!(["working", "needs_you", "waiting", "blocked", "done"])
+        );
+        let stage = &props["stages"]["items"]["properties"];
+        assert_eq!(
+            stage["kind"]["enum"],
+            json!(["understand", "build", "ship", "verify", "research"])
+        );
+        assert_eq!(stage["status"]["enum"], json!(["todo", "active", "done", "skipped"]));
+        assert_eq!(
+            props["steps"]["items"]["properties"]["status"]["enum"],
+            json!(["todo", "active", "done", "skipped", "blocked"])
+        );
+        assert_eq!(props["now"]["maxLength"], 120);
+        assert_eq!(props["stages"]["minItems"], 2);
+        assert_eq!(props["stages"]["maxItems"], 5);
+        assert_eq!(props["needs_you"]["properties"]["options"]["minItems"], 2);
+        assert_eq!(props["needs_you"]["properties"]["options"]["maxItems"], 4);
     }
 
     #[test]
@@ -849,6 +986,8 @@ mod tests {
             assert_eq!(reply["result"]["isError"], false, "{state} {next}");
             let text = text_of(&reply);
             let lines: Vec<&str> = text.lines().collect();
+            let lines: Vec<&str> =
+                lines.into_iter().filter(|line| !line.starts_with("Typed fields")).collect();
             assert_eq!(lines.len(), if nudged { 2 } else { 1 }, "{state} {next}: {text}");
             assert!(lines[0].starts_with("saved"), "{text}");
             if nudged {
@@ -925,10 +1064,29 @@ mod tests {
         let h = Harness::new();
         let reply = h.call("get_progress", &json!({}));
         assert_eq!(reply["result"]["isError"], false);
-        assert!(text_of(&reply).starts_with("No ledger has been saved"), "{reply}");
+        assert!(text_of(&reply).starts_with("No report has been saved"), "{reply}");
         h.call("update_progress", &json!({ "ledger": LEDGER }));
         let reply = h.call("get_progress", &json!({}));
-        assert_eq!(text_of(&reply), Ledger::parse(LEDGER).to_markdown());
+        assert_eq!(text_of(&reply), ProgressReport::from_ledger(&Ledger::parse(LEDGER)).to_json());
+        h.call("update_progress", &typed());
+        let reply = h.call("get_progress", &json!({}));
+        let back: Value = serde_json::from_str(text_of(&reply)).unwrap();
+        assert_eq!(back["state"], "needs_you");
+        assert_eq!(back["needs_you"]["recommended"], 1);
+    }
+
+    #[test]
+    fn get_progress_maps_a_markdown_only_file_from_an_older_version_to_the_typed_report() {
+        let h = Harness::new();
+        std::fs::create_dir_all(h.progress_file().parent().unwrap()).unwrap();
+        std::fs::write(h.progress_file(), LEDGER).unwrap();
+        let reply = h.call("get_progress", &json!({}));
+        let back: Value = serde_json::from_str(text_of(&reply)).unwrap();
+        assert_eq!(
+            back["stages"].as_array().map(Vec::len),
+            Some(Ledger::parse(LEDGER).checklist.len())
+        );
+        assert!(back["now"].is_string());
     }
 
     #[test]
@@ -939,7 +1097,7 @@ mod tests {
             (json!({ "ledger": "## Status\nphase: 1\n" }), "The ledger has no goal"),
             (json!({ "ledger": "" }), "The ledger has no goal"),
             (json!({ "ledger": "# Goal\n   \n" }), "The ledger has no goal"),
-            (json!({}), "ledger must be a string"),
+            (json!({}), "state is required"),
             (json!({ "ledger": 5 }), "ledger must be a string"),
             (json!({ "ledger": big }), "over the 32 KB limit"),
             (json!({ "ledger": "# Goal\nx", "extra": 1 }), "unknown argument \"extra\""),
@@ -954,7 +1112,7 @@ mod tests {
             let text = text_of(&reply);
             assert!(
                 text.starts_with(
-                    "The ledger was not saved. Fix these and call update_progress again:\n- "
+                    "The report was not saved. Fix these and call update_progress again:\n- "
                 ),
                 "{text}"
             );
@@ -980,7 +1138,7 @@ mod tests {
             assert_eq!(text_of(&reply).lines().next(), Some(want), "{ledger:?}");
         }
         let reply = h.call("get_progress", &json!({}));
-        assert!(text_of(&reply).contains("## Weird\n!!! text"));
+        assert!(text_of(&reply).contains("unreadable when"));
         assert_eq!(h.events.borrow().len(), 3);
     }
 

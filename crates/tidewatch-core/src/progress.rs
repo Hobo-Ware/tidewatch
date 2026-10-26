@@ -11,24 +11,31 @@ use serde::{Deserialize, Serialize};
 
 use crate::civil_date::Date;
 use crate::kind::Kind;
+use crate::progress_report::{StageKind, StageStatus, WaitingOn};
 
 /// The longest ledger `update_progress` accepts, in bytes.
 pub const MAX_LEDGER_BYTES: usize = 32 * 1024;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum State {
     Working,
+    NeedsYou,
     Waiting,
     Blocked,
     Done,
 }
 
 impl State {
+    pub const ALL: [Self; 5] =
+        [Self::Working, Self::NeedsYou, Self::Waiting, Self::Blocked, Self::Done];
+
     #[must_use]
     pub fn parse(text: &str) -> Option<Self> {
         let text = text.trim().to_lowercase();
         [
             ("work", Self::Working),
+            ("needs", Self::NeedsYou),
             ("in progress", Self::Working),
             ("running", Self::Working),
             ("wait", Self::Waiting),
@@ -45,6 +52,7 @@ impl State {
     pub fn word(self) -> &'static str {
         match self {
             Self::Working => "working",
+            Self::NeedsYou => "needs_you",
             Self::Waiting => "waiting",
             Self::Blocked => "blocked",
             Self::Done => "done",
@@ -90,6 +98,17 @@ impl Mark {
             '-' => Self::Skipped,
             '!' => Self::Blocked,
             _ => Self::Todo,
+        }
+    }
+
+    #[must_use]
+    pub fn word(self) -> &'static str {
+        match self {
+            Self::Todo => "todo",
+            Self::Doing => "active",
+            Self::Done => "done",
+            Self::Skipped => "skipped",
+            Self::Blocked => "blocked",
         }
     }
 
@@ -191,6 +210,10 @@ pub enum PhaseState {
 pub struct Phase {
     pub number: Option<u32>,
     pub title: String,
+    /// What the agent named the stage's kind, from a typed report.
+    pub kind: Option<StageKind>,
+    /// What the agent said of the stage itself, from a typed report. It beats what the steps say.
+    pub stated: Option<StageStatus>,
     pub items: Vec<Item>,
     /// Lines under the heading that are not checklist items.
     pub text: Vec<String>,
@@ -206,6 +229,14 @@ impl Phase {
     pub fn state(&self) -> PhaseState {
         let counts = self.counts();
         let any = |mark| self.items.iter().any(|item| item.mark == mark);
+        match self.stated {
+            Some(StageStatus::Done) => return PhaseState::Done,
+            Some(StageStatus::Skipped) => return PhaseState::Skipped,
+            Some(StageStatus::Todo) => return PhaseState::Todo,
+            Some(StageStatus::Active) if any(Mark::Blocked) => return PhaseState::Blocked,
+            Some(StageStatus::Active) => return PhaseState::Doing,
+            None => {}
+        }
         if any(Mark::Blocked) {
             PhaseState::Blocked
         } else if counts.total == 0 && counts.skipped > 0 {
@@ -344,7 +375,11 @@ pub struct Extra {
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Ledger {
     pub goal: String,
+    /// The short name for the panel's heading, when the agent gave one.
+    pub title: String,
     pub status: Status,
+    /// What the agent waits on, from a typed report.
+    pub waiting_on: Option<WaitingOn>,
     pub checklist: Vec<Phase>,
     pub decisions: Vec<Entry>,
     pub verified: Vec<Entry>,
@@ -472,21 +507,26 @@ impl Ledger {
         real(&self.needs_you).next().is_some()
     }
 
-    /// The work is not done and the ledger holds it back on the owner: a question, or a state of
-    /// waiting or blocked.
+    /// The work is not done and the ledger holds it back on the owner: a question, a state of
+    /// needs you or blocked, or a wait that names nothing but the owner.
     #[must_use]
     pub fn awaits_owner(&self) -> bool {
-        self.status.state != Some(State::Done)
-            && (self.has_question()
-                || matches!(self.status.state, Some(State::Waiting | State::Blocked)))
+        match self.status.state {
+            Some(State::Done) => false,
+            Some(State::NeedsYou | State::Blocked) => true,
+            Some(State::Waiting) => self.has_question() || self.waiting_on.is_none(),
+            Some(State::Working) | None => self.has_question(),
+        }
     }
 
     /// The Next entries of a ledger that stopped (waiting, blocked or done) with nothing open in
     /// Scheduled: work that was meant to happen later but sits where only this turn belongs.
     #[must_use]
     pub fn stranded_next(&self) -> Vec<&Entry> {
-        let stopped =
-            matches!(self.status.state, Some(State::Waiting | State::Blocked | State::Done));
+        let stopped = matches!(
+            self.status.state,
+            Some(State::NeedsYou | State::Waiting | State::Blocked | State::Done)
+        );
         let open_scheduled =
             self.scheduled.iter().any(|item| !matches!(item.mark, Mark::Done | Mark::Skipped));
         if !stopped || open_scheduled {

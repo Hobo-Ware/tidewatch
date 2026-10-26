@@ -72,12 +72,13 @@ pub struct Group {
     pub phases: Vec<usize>,
 }
 
-/// The bars of a checklist, in the order their first phase appears.
+/// The bars of a checklist, in the order their first phase appears. A stage the agent named and
+/// gave a kind keeps its own name and bar, so an agent's `Ship` is never read as the stage `Done`.
 #[must_use]
 pub fn groups(checklist: &[Phase], kind: Kind) -> Vec<Group> {
     let mut groups: Vec<Group> = Vec::new();
     for (index, phase) in checklist.iter().enumerate() {
-        let stage = stage_in(&phase.title, kind);
+        let stage = if phase.kind.is_some() { None } else { stage_in(&phase.title, kind) };
         match groups.iter_mut().find(|group| stage.is_some() && group.stage == stage) {
             Some(group) => group.phases.push(index),
             None => groups.push(Group { stage, phases: vec![index] }),
@@ -143,6 +144,21 @@ mod tests {
                 (Some(Stage::Done), vec![3]),
             ]
         );
+    }
+
+    #[test]
+    fn a_phase_with_a_kind_is_never_read_as_one_of_the_four_stages() {
+        use crate::progress_report::StageKind;
+        let mut phases =
+            checklist_phases("### 1. Build\n- [ ] a\n### 2. Ship\n- [ ] b\n### 3. Done\n- [ ] c\n");
+        let plain: Vec<_> = groups(&phases, Kind::Edit).into_iter().map(|g| g.stage).collect();
+        assert_eq!(plain, [Some(Stage::Build), Some(Stage::Done)], "Ship folds into Done");
+        for phase in &mut phases {
+            phase.kind = Some(StageKind::Ship);
+        }
+        let typed: Vec<_> =
+            groups(&phases, Kind::Edit).into_iter().map(|g| (g.stage, g.phases)).collect();
+        assert_eq!(typed, [(None, vec![0]), (None, vec![1]), (None, vec![2])]);
     }
 
     #[test]

@@ -84,6 +84,7 @@ pub mod profiles;
 pub mod progress;
 pub mod progress_mcp;
 pub mod progress_prompt;
+pub mod progress_report;
 pub mod progress_store;
 pub mod prompt;
 pub mod prompt_answer;

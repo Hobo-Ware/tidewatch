@@ -1384,7 +1384,9 @@ mod tests {
         let file = f.paths.progress_file(Path::new("/work/web"), "a");
         assert_eq!(std::fs::read_to_string(file).unwrap(), "# Goal\nFor a\n");
         let read = post(&one, "get_progress", json!({}));
-        assert_eq!(read["result"]["content"][0]["text"], "# Goal\nFor a\n");
+        let report: Value =
+            serde_json::from_str(read["result"]["content"][0]["text"].as_str().unwrap()).unwrap();
+        assert_eq!(report["goal"], "For a");
         let events = f.events();
         assert_eq!(events.len(), 2);
         assert!(
