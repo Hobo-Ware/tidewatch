@@ -9,6 +9,7 @@ const HASH_HEX_LEN: usize = 6;
 const NOTES_FILE: &str = "notes.json";
 const STAGES_FILE: &str = "stages.json";
 const PR_CARDS_FILE: &str = "pr_cards.json";
+const DUE_ASKED_FILE: &str = "due-asked.json";
 const PROGRESS_FILE: &str = "progress.md";
 const HOUSE_STYLE_FILE: &str = "house-style.md";
 const JOBS_FILE: &str = "jobs.json";
@@ -255,6 +256,12 @@ impl TidewatchPaths {
     #[must_use]
     pub fn pr_cards_file(&self, repo: &Path, tab: &str) -> PathBuf {
         self.tab_state_dir(repo, tab).join(PR_CARDS_FILE)
+    }
+
+    /// The due items a tab that runs on its own was already asked to start today.
+    #[must_use]
+    pub fn due_asked_file(&self, repo: &Path, tab: &str) -> PathBuf {
+        self.tab_state_dir(repo, tab).join(DUE_ASKED_FILE)
     }
 
     /// A tab's progress ledger, as the agent last sent it.

@@ -39,7 +39,7 @@ mod takeover;
 mod terminal;
 mod workspaces;
 
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 
@@ -204,6 +204,7 @@ pub(crate) struct Tidewatch {
     dev_open_scheduled: Option<String>,
     told: due::Told,
     started: due::Told,
+    started_loaded: HashSet<u64>,
     runs: workflow_glue::Host,
     run_asks: Vec<(u64, Vec<Exec>)>,
     build_asks: Vec<Asked>,
@@ -408,6 +409,7 @@ impl Tidewatch {
                 .filter(|name| !name.is_empty()),
             told: due::Told::default(),
             started: due::Told::default(),
+            started_loaded: HashSet::new(),
             runs: workflow_glue::Host::new(),
             run_asks: Vec::new(),
             build_asks: Vec::new(),

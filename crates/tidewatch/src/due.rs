@@ -5,6 +5,7 @@ use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 use tidewatch_core::civil_date::Date;
+use tidewatch_core::due_asked;
 use tidewatch_core::progress::{Ledger, Mark};
 use tidewatch_core::status::AgentStatus;
 
@@ -132,6 +133,28 @@ impl Told {
     pub(crate) fn mark(&mut self, key: Key, today: Date) {
         self.sent.retain(|(_, day)| *day == today);
         self.sent.insert((key, today));
+    }
+
+    pub(crate) fn restore(&mut self, file: &Path, (repo, tab): (&Path, &str), today: Date) {
+        for what in due_asked::load(file, today) {
+            self.mark(Key::new(repo, tab, &what), today);
+        }
+    }
+
+    pub(crate) fn persist(
+        &self,
+        file: &Path,
+        (repo, tab): (&Path, &str),
+        today: Date,
+    ) -> std::io::Result<()> {
+        let mut asked: Vec<String> = self
+            .sent
+            .iter()
+            .filter(|(key, day)| *day == today && key.repo == repo && key.tab == tab)
+            .map(|(key, _)| key.what.clone())
+            .collect();
+        asked.sort();
+        due_asked::save(file, today, &asked)
     }
 }
 
