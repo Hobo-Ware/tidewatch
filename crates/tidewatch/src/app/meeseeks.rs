@@ -4,7 +4,7 @@
 use std::time::Duration;
 
 use tidewatch_core::kind::Kind;
-use tidewatch_core::meeseeks::{Command, Event, Phase};
+use tidewatch_core::meeseeks::{Command, Criteria, Event, Meeseeks, Phase};
 use tidewatch_core::meeseeks_log::{Poofed, StageLine};
 use tidewatch_core::sent::{Reason, because};
 
@@ -12,7 +12,7 @@ use super::WAKE_SLACK_S;
 use super::{Tidewatch, wall_ms};
 use crate::due::ask_blocked;
 use crate::flow_glue;
-use crate::meeseeks_glue::{CheckSpec, Done, LOOK_EVERY_SECS, LookSpec, fake_poofed};
+use crate::meeseeks_glue::{CheckSpec, Done, FAKE_NAMED, LOOK_EVERY_SECS, LookSpec, fake_poofed};
 use crate::outbox::{Offer, Send};
 use crate::pane::{Body, Pane};
 use crate::progress_glue::today;
@@ -92,12 +92,30 @@ impl Tidewatch {
             let records = fake_poofed(today(), now_ms);
             self.open_poofed(&records[0]);
         }
+        if fake == crate::meeseeks_glue::Fake::Named {
+            self.inject_named_meeseeks(now_ms);
+            return;
+        }
         if fake.state(now_ms).is_none() {
             return;
         }
         for tab in self.tabs.items_mut() {
             if let Some(agent) = tab.pane.agent.as_mut().filter(|agent| agent.meeseeks.is_none()) {
                 agent.meeseeks = fake.state(now_ms);
+            }
+        }
+    }
+
+    fn inject_named_meeseeks(&mut self, now_ms: i64) {
+        let agents = self.tabs.items_mut().iter_mut().filter_map(|tab| tab.pane.agent.as_mut());
+        for (agent, fake) in agents.zip(FAKE_NAMED.iter().cycle()) {
+            if agent.meeseeks.is_none() {
+                agent.meeseeks = Some(Meeseeks {
+                    kind: Kind::Edit,
+                    name: fake.chosen.map(str::to_owned),
+                    ..Meeseeks::summon(fake.task, Criteria::default(), now_ms - 6 * 60_000)
+                });
+                agent.reader.fake_session_title(fake.session_title);
             }
         }
     }
@@ -301,17 +319,19 @@ impl Tidewatch {
             let agent = t.pane.agent.as_ref()?;
             let meeseeks = agent.meeseeks.as_ref()?;
             let end = agent.run.end_block().cloned().unwrap_or_default();
+            let worktree = t.pane.worktree.as_ref()?;
+            let name = meeseeks.shown_name().unwrap_or_else(|| worktree.name().to_owned());
             let leaving = Poofed {
                 task: meeseeks.task.clone(),
-                branch: t.pane.worktree.as_ref()?.branch.clone(),
-                repo: t.pane.worktree.as_ref()?.repo.clone(),
+                branch: worktree.branch.clone(),
+                repo: worktree.repo.clone(),
                 ended_ms: now_ms,
                 checks: meeseeks.check_lines(),
                 kind: meeseeks.kind,
                 done: end.done,
                 next: end.next,
                 ..Poofed::bare(
-                    t.pane.worktree.as_ref()?.name(),
+                    &name,
                     summary,
                     pr_url,
                     ((now_ms - meeseeks.started_ms).max(0) / 1000) as u64,

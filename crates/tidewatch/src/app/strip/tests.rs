@@ -1051,6 +1051,30 @@ fn an_agent_tab_is_labelled_by_its_work_and_not_by_the_worktree_name() {
 }
 
 #[test]
+fn a_meeseeks_tab_is_labelled_by_its_chosen_name_then_a_slug_of_its_task_and_never_its_title() {
+    use tidewatch_core::meeseeks::{Criteria, Meeseeks};
+    let meeseeks = |name: Option<&str>| {
+        Some(Meeseeks {
+            name: name.map(str::to_owned),
+            ..Meeseeks::summon("Open a PR to fix https validation", Criteria::default(), 0)
+        })
+    };
+    let (texts, label) = titled_strip(|agent| {
+        agent.run.set_goal(Some("Fix the https validation sentence"));
+        agent.meeseeks = meeseeks(Some("fix-https-validation"));
+    });
+    assert_eq!(label, "fix-https-validation");
+    assert!(texts.iter().any(|(text, _)| text.contains("fix-https-validation")), "{texts:?}");
+    assert!(texts.iter().all(|(text, _)| !text.contains("sentence")), "{texts:?}");
+    let (texts, label) = titled_strip(|agent| {
+        agent.run.set_goal(Some("Fix the https validation sentence"));
+        agent.meeseeks = meeseeks(None);
+    });
+    assert_eq!(label, "fix-https-validation");
+    assert!(texts.iter().any(|(text, _)| text.contains("fix-https-validation")), "{texts:?}");
+}
+
+#[test]
 fn the_tooltip_names_the_worktree_under_the_work() {
     let got = tab_tip("Fix login", "brave-otter", 12, None);
     assert_eq!(got, "Fix login\nbrave-otter\nTab 12");

@@ -224,6 +224,7 @@ pub(crate) struct Tidewatch {
     dev_paste: Option<DevPaste>,
     image_paste: picture_paste::Host,
     dev_scroll: Option<DevScroll>,
+    dev_hover: Option<egui::Pos2>,
     dev_copy: Option<DevCopy>,
     dev_reader: DevReader,
     trust: Trust,
@@ -435,6 +436,7 @@ impl Tidewatch {
             dev_paste: dev_view.paste,
             image_paste: picture_paste::Host::new(&cc.egui_ctx),
             dev_scroll: dev_view.scroll,
+            dev_hover: dev_view.hover,
             dev_copy: dev_view.copy,
             dev_reader: DevReader::from_env(),
             trust,
@@ -539,6 +541,13 @@ impl eframe::App for Tidewatch {
             window_chrome::edges(&ctx);
         }
         self.finish_frame(&ctx, now);
+    }
+
+    fn raw_input_hook(&mut self, ctx: &egui::Context, raw_input: &mut egui::RawInput) {
+        if let Some(at) = self.dev_hover.take() {
+            raw_input.events.push(egui::Event::PointerMoved(at));
+            ctx.request_repaint();
+        }
     }
 
     fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {

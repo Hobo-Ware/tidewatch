@@ -30,7 +30,32 @@ pub(crate) enum Fake {
     Poofed,
     ReadOnly,
     Promoted,
+    Named,
 }
+
+pub(crate) struct FakeNamed {
+    pub(crate) task: &'static str,
+    pub(crate) chosen: Option<&'static str>,
+    pub(crate) session_title: &'static str,
+}
+
+pub(crate) const FAKE_NAMED: [FakeNamed; 3] = [
+    FakeNamed {
+        task: "Open a PR to fix https validation for the billing workers, see issue 2333",
+        chosen: Some("fix-https-validation"),
+        session_title: "Billing workers issue 2333 validation",
+    },
+    FakeNamed {
+        task: "Add retry with backoff to the nightly sync job",
+        chosen: None,
+        session_title: "Add retry with backoff to the nightly sync job",
+    },
+    FakeNamed {
+        task: "Rename getUserData to loadProfile",
+        chosen: Some("rename-load-profile"),
+        session_title: "Rename getUserData",
+    },
+];
 
 impl Fake {
     pub(crate) fn parse(value: Option<&str>) -> Self {
@@ -40,6 +65,7 @@ impl Fake {
             Some("poofed") => Self::Poofed,
             Some("readonly") => Self::ReadOnly,
             Some("promoted") => Self::Promoted,
+            Some("named") => Self::Named,
             _ => Self::Off,
         }
     }
@@ -65,7 +91,7 @@ impl Fake {
             Self::Promoted => {
                 (9, 7, 0, Phase::Working, "Explain how the cache layer works", Kind::Edit)
             }
-            Self::Off | Self::Poofed => return None,
+            Self::Off | Self::Poofed | Self::Named => return None,
         };
         Some(Meeseeks {
             turns,

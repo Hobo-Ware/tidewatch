@@ -12,6 +12,8 @@
 //!   look at a view in a shorter or wider window.
 //! - `TIDEWATCH_DEV_REMOTE_POPOVER=1`: the Remote pill's popover is open on an agent tab that has one.
 //! - `TIDEWATCH_DEV_PARKED_POPOVER=1`: the Parked pill's list is open (with `TIDEWATCH_FAKE_PARKED=1`).
+//! - `TIDEWATCH_DEV_HOVER=<x>,<y>`: move the pointer to that point (in points) on the first frame and
+//!   leave it there, to open a tooltip in a capture (use `TIDEWATCH_SCREENSHOT_WAIT=4`).
 //! - `TIDEWATCH_DEV_KEYS=<text>` after `TIDEWATCH_DEV_KEYS_AFTER=<seconds>` (default 8): type the text
 //!   into the newest agent tab once, to answer a prompt a check cannot avoid (`\r`, `\n`, `\e` and
 //!   `\\` are escapes; `\e[B\r` is Down then Enter).
@@ -58,6 +60,7 @@ pub(crate) struct DevView {
     pub(crate) scroll: Option<DevScroll>,
     pub(crate) copy: Option<DevCopy>,
     pub(crate) side: Option<f32>,
+    pub(crate) hover: Option<egui::Pos2>,
     pub(crate) remote_popover: Popover,
     pub(crate) parked_popover: Popover,
 }
@@ -100,6 +103,16 @@ impl DevView {
             var("TIDEWATCH_DEV_SCROLL_AFTER").as_deref(),
         )
         .with_copy(var("TIDEWATCH_DEV_COPY").as_deref())
+        .with_hover(var("TIDEWATCH_DEV_HOVER").as_deref())
+    }
+
+    fn with_hover(self, value: Option<&str>) -> Self {
+        let hover = value.and_then(|text| {
+            let (x, y) = text.split_once(',')?;
+            let at = egui::pos2(x.trim().parse().ok()?, y.trim().parse().ok()?);
+            (at.x.is_finite() && at.y.is_finite()).then_some(at)
+        });
+        Self { hover, ..self }
     }
 
     fn with_copy(self, after: Option<&str>) -> Self {
@@ -163,6 +176,7 @@ impl DevView {
             scroll: None,
             copy: None,
             side: None,
+            hover: None,
             remote_popover: Popover::OnClick,
             parked_popover: Popover::OnClick,
         }
@@ -197,6 +211,21 @@ fn unescape(text: &str) -> Vec<u8> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_hover_point_is_two_numbers_and_anything_else_is_ignored() {
+        let cases = [
+            (Some("400,22"), Some(egui::pos2(400.0, 22.0))),
+            (Some(" 400.5 , 22 "), Some(egui::pos2(400.5, 22.0))),
+            (Some("400"), None),
+            (Some("a,b"), None),
+            (Some("inf,3"), None),
+            (None, None),
+        ];
+        for (value, want) in cases {
+            assert_eq!(DevView::default().with_hover(value).hover, want, "{value:?}");
+        }
+    }
 
     #[test]
     fn a_switch_is_on_for_any_value_but_empty_or_zero() {

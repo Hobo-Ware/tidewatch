@@ -5,42 +5,102 @@ const MAX_WORDS: usize = 4;
 const MAX_CHARS: usize = 30;
 
 const STOP_WORDS: &[&str] = &[
-    "an", "and", "are", "as", "at", "be", "but", "by", "can", "could", "do", "does", "for", "from",
-    "had", "has", "have", "how", "if", "in", "into", "is", "it", "its", "just", "may", "me", "my",
-    "not", "of", "on", "or", "our", "please", "should", "so", "than", "that", "the", "their",
-    "then", "there", "these", "this", "those", "to", "us", "was", "we", "were", "what", "when",
-    "where", "which", "while", "who",
+    "about", "all", "also", "an", "and", "any", "are", "as", "at", "be", "but", "by", "can",
+    "could", "do", "does", "for", "from", "get", "had", "has", "have", "help", "how", "if", "in",
+    "into", "is", "it", "its", "just", "let", "lets", "like", "make", "may", "me", "my", "need",
+    "needs", "not", "now", "of", "on", "open", "or", "our", "please", "should", "so", "some",
+    "sure", "than", "thanks", "that", "the", "their", "then", "there", "these", "this", "those",
+    "to", "us", "want", "wants", "was", "we", "were", "what", "when", "where", "which", "while",
+    "who", "will", "with", "would", "you", "your",
 ];
+
+const NOUNS_NEEDING_A_NUMBER: &[&str] = &["issue", "issues", "pr", "prs"];
+const MIN_BARE_NUMBER_DIGITS: usize = 3;
 
 const FORBIDDEN: [char; 8] = ['~', '^', ':', '?', '*', '[', '\\', '/'];
 
 /// Lowercase ascii words of `text` joined with `-`: stop words and one-letter words dropped,
-/// apostrophes removed, at most 4 words and 30 characters. Empty when no word is left.
+/// apostrophes removed, at most 4 words and 30 characters. A number is kept when it has 3 digits or
+/// follows `issue` or `PR` (a version such as `6.3` is not), and `issue` and `PR` only when a number
+/// follows. A pull request link, an issue link or `#12` becomes `pr 12` or `issue 12`, any other
+/// link is dropped. Empty when no word is left.
 #[must_use]
 pub fn slug(text: &str) -> String {
+    let words = words_of(text);
     let mut slug = String::new();
-    let mut words = 0;
-    let separators = |c: char| !(c.is_ascii_alphanumeric() || c == '\'' || c == '\u{2019}');
-    for raw in text.split(separators) {
-        let word: String = raw
-            .chars()
-            .filter(char::is_ascii_alphanumeric)
-            .map(|c| c.to_ascii_lowercase())
-            .collect();
-        if word.len() < 2 || STOP_WORDS.contains(&word.as_str()) {
+    let mut count = 0;
+    for (at, word) in words.iter().enumerate() {
+        let before = at.checked_sub(1).map(|before| words[before].as_str());
+        if skipped(word, before, words.get(at + 1)) {
             continue;
         }
-        if words == 0 {
+        if count == 0 {
             slug.extend(word.chars().take(MAX_CHARS));
-        } else if words == MAX_WORDS || slug.len() + 1 + word.len() > MAX_CHARS {
+        } else if count == MAX_WORDS || slug.len() + 1 + word.len() > MAX_CHARS {
             break;
         } else {
             slug.push('-');
-            slug.push_str(&word);
+            slug.push_str(word);
         }
-        words += 1;
+        count += 1;
     }
     slug
+}
+
+fn is_number(text: &str) -> bool {
+    !text.is_empty() && text.bytes().all(|b| b.is_ascii_digit())
+}
+
+fn skipped(word: &str, before: Option<&str>, next: Option<&String>) -> bool {
+    if NOUNS_NEEDING_A_NUMBER.contains(&word) {
+        return !next.is_some_and(|next| is_number(next));
+    }
+    if is_number(word) {
+        return word.len() < MIN_BARE_NUMBER_DIGITS
+            && !before.is_some_and(|before| NOUNS_NEEDING_A_NUMBER.contains(&before));
+    }
+    word.len() < 2 || STOP_WORDS.contains(&word)
+}
+
+fn words_of(text: &str) -> Vec<String> {
+    let separators = |c: char| !(c.is_ascii_alphanumeric() || c == '\'' || c == '\u{2019}');
+    let mut words = Vec::new();
+    for chunk in text.split_whitespace() {
+        if chunk.contains("://") {
+            words.extend(link_words(chunk));
+            continue;
+        }
+        if let Some(number) = chunk.strip_prefix('#').filter(|rest| is_number(rest)) {
+            if !words.last().is_some_and(|last| NOUNS_NEEDING_A_NUMBER.contains(&last.as_str())) {
+                words.push("issue".to_owned());
+            }
+            words.push(number.to_owned());
+            continue;
+        }
+        words.extend(chunk.split(separators).map(|raw| {
+            raw.chars()
+                .filter(char::is_ascii_alphanumeric)
+                .map(|c| c.to_ascii_lowercase())
+                .collect::<String>()
+        }));
+    }
+    words.retain(|word| !word.is_empty());
+    words
+}
+
+fn link_words(link: &str) -> Vec<String> {
+    let segments: Vec<&str> = link.split(['/', '?', '#']).collect();
+    segments
+        .windows(2)
+        .find_map(|pair| {
+            let named = match pair[0] {
+                "issues" => "issue",
+                "pull" => "pr",
+                _ => return None,
+            };
+            is_number(pair[1]).then(|| vec![named.to_owned(), pair[1].to_owned()])
+        })
+        .unwrap_or_default()
 }
 
 /// What is wrong with a worktree name, by git's rules for a branch name (`git check-ref-format`)
@@ -144,6 +204,35 @@ mod tests {
             ("a b c d e", ""),
             ("don't panic", "dont-panic"),
             ("REFACTOR   THE\tWORKTREE\nNAMES", "refactor-worktree-names"),
+        ];
+        for (text, want) in cases {
+            assert_eq!(slug(text), want, "{text:?}");
+        }
+    }
+
+    #[test]
+    fn a_slug_of_a_real_task_keeps_its_issue_number_and_its_nouns() {
+        let cases = [
+            ("billing-workers issue 2333 validation", "billing-workers-issue-2333"),
+            ("Open a PR to fix https validation", "fix-https-validation"),
+            (
+                "Open a PR to fix https://github.com/acme/web/issues/2333 validation",
+                "fix-issue-2333-validation",
+            ),
+            ("Review https://github.com/acme/web/pull/213/files", "review-pr-213"),
+            ("Look at https://example.com/docs and fix the typo", "look-fix-typo"),
+            ("Fix PR 213 review comments", "fix-pr-213-review"),
+            ("Investigate the issue with login redirects", "investigate-login-redirects"),
+            ("Make sure the importer handles empty files", "importer-handles-empty-files"),
+            ("I need you to add retry to the sync job, please", "add-retry-sync-job"),
+            ("Fix #2333 validation", "fix-issue-2333-validation"),
+            ("Fix PR #213 review comments", "fix-pr-213-review"),
+            ("Look at issue 7 and issue", "look-issue-7"),
+            ("Bump vite to 6.3", "bump-vite"),
+            ("Rename getUserData to loadProfile", "rename-getuserdata-loadprofile"),
+            ("Upgrade to node 22 and update the CI image", "upgrade-node-update-ci"),
+            ("Fix the 2026 tax report", "fix-2026-tax-report"),
+            ("Step 2 of the migration", "step-migration"),
         ];
         for (text, want) in cases {
             assert_eq!(slug(text), want, "{text:?}");

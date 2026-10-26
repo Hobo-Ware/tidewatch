@@ -86,6 +86,7 @@ pub const MEESEEKS_GUIDANCE: &str = "\
 
 You are a Meeseeks with exactly one task: the one you were given. Do it, and nothing else.
 
+- First thing, call `set_name` once with a short kebab-case name for your task: 2 to 4 lowercase words, at most 30 characters, such as `fix-https-validation` or `my-super-feature`. It is what Tidewatch shows on your tab.
 - Work only in this worktree and commit your work on this branch as you go.
 - Say `kind: read-only` in your ledger's Status for a question or an investigation (stages Understand, Answer, Done; your final summary is the answer), and `kind: edit` as soon as you will change files.
 - When you believe you are done or cannot go further, call `meeseeks_done` once with a one-line summary (a read-only task puts its whole answer there). If you are blocked, start it with `Blocked:` and the reason. Tidewatch decides what to check and ends this session itself.
@@ -310,6 +311,7 @@ mod tests {
         let checklist = Some("- [ ] only this\n");
         let plain = compose("be brief", checklist);
         assert!(!plain.contains("Meeseeks") && !plain.contains("meeseeks_done"));
+        assert!(!plain.contains("set_name"));
         assert_eq!(compose_for("be brief", checklist, Role::Agent), plain);
         let text = compose_for("be brief", checklist, Role::Meeseeks);
         let guidance = text.find("## Tidewatch tool guidance").unwrap();
@@ -319,6 +321,11 @@ mod tests {
         assert!(text.contains("You may push this branch; after folding fixups use `git push --force-with-lease`. Do not push anything else"));
         assert!(text.contains("`kind: read-only`") && text.contains("`kind: edit`"));
         assert!(text.contains("start it with `Blocked:`"));
+        assert!(text.contains("First thing, call `set_name` once"));
+        assert!(text.contains("`fix-https-validation` or `my-super-feature`"));
+        assert!(
+            text.find("`set_name`").unwrap() < text.find("Work only in this worktree").unwrap()
+        );
         assert!(!text.contains("done and committed"));
         assert!(!compose("be brief", checklist).contains("kind: read-only"));
     }

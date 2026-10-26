@@ -53,6 +53,10 @@ pub enum TabEvent {
     MeeseeksDone {
         summary: String,
     },
+    /// The Meeseeks called `set_name`; the name is already checked.
+    MeeseeksName {
+        name: String,
+    },
     /// The agent called `ask_user` and its call is held until `reply` is used.
     Ask {
         questions: Vec<Question>,

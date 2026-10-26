@@ -503,3 +503,27 @@ fn a_summary_waits_on_the_user_only_when_it_hands_back_a_choice() {
         assert_eq!(waits_on_user(summary), want, "{summary}");
     }
 }
+
+#[test]
+fn the_shown_name_is_the_chosen_one_else_a_slug_of_the_task_else_nothing() {
+    let mut meeseeks =
+        Meeseeks::summon("Fix the https validation on signup", Criteria::default(), 0);
+    assert_eq!(meeseeks.shown_name().as_deref(), Some("fix-https-validation-signup"));
+    meeseeks.name = Some("signup-https".into());
+    assert_eq!(meeseeks.shown_name().as_deref(), Some("signup-https"));
+    let wordless = Meeseeks::summon("?! ...", Criteria::default(), 0);
+    assert_eq!(wordless.shown_name(), None);
+}
+
+#[test]
+fn a_chosen_name_changes_the_hash_the_session_signature_reads() {
+    let hash = |meeseeks: &Meeseeks| {
+        let mut hasher = std::hash::DefaultHasher::new();
+        meeseeks.hash(&mut hasher);
+        hasher.finish()
+    };
+    let plain = all_on();
+    let named = Meeseeks { name: Some("rename-helper".into()), ..all_on() };
+    assert_ne!(hash(&plain), hash(&named));
+    assert_eq!(hash(&named), hash(&Meeseeks { name: Some("rename-helper".into()), ..all_on() }));
+}

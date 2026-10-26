@@ -62,6 +62,7 @@ pub mod meeseeks_branch;
 pub mod meeseeks_check;
 pub mod meeseeks_log;
 pub mod meeseeks_mcp;
+pub mod meeseeks_name;
 pub mod merged_branch;
 pub mod names;
 pub mod note_paste;

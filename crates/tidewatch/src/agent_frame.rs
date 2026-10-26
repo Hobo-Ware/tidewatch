@@ -127,6 +127,12 @@ pub(crate) fn route<T>(tabs: &mut Tabs<Pane<T>>, message: TabMessage, now: f64) 
             .meeseeks
             .is_some()
             .then(|| Follow::MeeseeksDone { tab: message.tab_id, summary: summary.clone() }),
+        TabEvent::MeeseeksName { name } => {
+            if let Some(meeseeks) = agent.meeseeks.as_mut() {
+                meeseeks.name = Some(name.clone());
+            }
+            None
+        }
         TabEvent::Hook(_) | TabEvent::StageDone { .. } => None,
     };
     if let TabEvent::Hook(hook) = &message.event {
@@ -641,6 +647,27 @@ mod tests {
             generation: 0,
             event: TabEvent::MeeseeksDone { summary: "renamed it".into() },
         }
+    }
+
+    #[test]
+    fn a_chosen_name_is_kept_on_a_meeseeks_and_ignored_by_any_other_tab() {
+        let named = |tab| TabMessage {
+            tab_id: tab,
+            generation: 0,
+            event: TabEvent::MeeseeksName { name: "fix-https-validation".into() },
+        };
+        let (mut tabs, id) = meeseeks_tab();
+        assert_eq!(route(&mut tabs, named(id), 1.0), None);
+        let chosen = |tabs: &Tabs<Pane<u32>>, id| {
+            tabs.items()
+                .iter()
+                .find(|tab| tab.id == id)
+                .and_then(|tab| tab.pane.agent.as_ref()?.meeseeks.as_ref()?.name.clone())
+        };
+        assert_eq!(chosen(&tabs, id).as_deref(), Some("fix-https-validation"));
+        let (mut plain, plain_id) = tabs_with_agent();
+        assert_eq!(route(&mut plain, named(plain_id), 1.0), None);
+        assert_eq!(chosen(&plain, plain_id), None);
     }
 
     #[test]

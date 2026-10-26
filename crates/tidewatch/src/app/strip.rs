@@ -468,16 +468,16 @@ fn tab_row<T>(
         };
         tab_menu(&resp, i, tab.id, &menu, actions);
         let resp = if agent.is_some() {
-            let mut tip = tab_tip(&label, &tab.title, position + 1, job.as_ref());
+            let second = crate::tab_title::subtitle(agent, &tab.title);
+            let mut tip = tab_tip(&label, &second, position + 1, job.as_ref());
             if let Some(ring) = &ring {
                 tip = format!("{tip}\n{}", ring.tip);
             }
             resp.on_hover_text(tip)
-        } else if poofed {
-            resp.on_hover_text(format!(
-                "{}\nPoofed",
-                tab_tip(&label, &tab.title, position + 1, None)
-            ))
+        } else if let Body::Poofed(record) = &tab.pane.body {
+            let second =
+                crate::tab_title::task_line(&record.task).unwrap_or_else(|| tab.title.clone());
+            resp.on_hover_text(format!("{}\nPoofed", tab_tip(&label, &second, position + 1, None)))
         } else {
             resp
         };

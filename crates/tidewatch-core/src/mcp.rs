@@ -4,9 +4,9 @@
 //! [`handle_post`] takes the raw request body of an authenticated `/mcp` POST and returns the reply.
 //! It speaks `initialize`, `ping`, `tools/list` and `tools/call` and swallows notifications. The
 //! tools are `stage_done`, `report_finding`, `list_notes`, `reply_to_note`, `propose_workflow`,
-//! `ask_user`, `update_progress`, `get_progress`, `report_job`, `set_avatar` and `meeseeks_done`.
-//! A tab is offered the ones its [`TabRole`] can use (`stage_done` only to a workflow stage,
-//! `meeseeks_done` only to a Meeseeks, `report_finding` to neither a Meeseeks); a call to one it is
+//! `ask_user`, `update_progress`, `get_progress`, `report_job`, `set_avatar`, `meeseeks_done` and
+//! `set_name`. A tab is offered the ones its [`TabRole`] can use (`stage_done` only to a workflow stage,
+//! `meeseeks_done` and `set_name` only to a Meeseeks, `report_finding` to neither a Meeseeks); a call to one it is
 //! not offered is answered with a tool error that says where it works. Calls that matter to the app become [`TabEvent`]s through `emit`; the note tools read
 //! and write the tab's `notes.json` through `notes.rs`. `ask_user` holds its reply until the user
 //! answers (or [`AskWait::timeout`] runs out, or the client hangs up): the listener serves each
@@ -32,6 +32,7 @@ use crate::events::TabEvent;
 use crate::job_mcp;
 use crate::launch::MCP_SERVER_NAME;
 use crate::meeseeks_mcp;
+use crate::meeseeks_name;
 use crate::notes::Notes;
 use crate::progress_mcp;
 use crate::propose;
@@ -75,7 +76,7 @@ impl TabRole {
     fn offers(self, tool: &str) -> bool {
         match tool {
             "stage_done" => self == Self::Workflow,
-            meeseeks_mcp::DONE_TOOL => self == Self::Meeseeks,
+            meeseeks_mcp::DONE_TOOL | meeseeks_name::SET_TOOL => self == Self::Meeseeks,
             "report_finding" => self != Self::Meeseeks,
             _ => true,
         }
@@ -85,6 +86,7 @@ impl TabRole {
         match tool {
             "stage_done" => "`stage_done` is not offered in this tab: only the agent of a workflow stage can call it. Finish with your end-of-turn block.".to_owned(),
             meeseeks_mcp::DONE_TOOL => "`meeseeks_done` is not offered in this tab: only a Meeseeks can call it. Finish with your end-of-turn block.".to_owned(),
+            meeseeks_name::SET_TOOL => "`set_name` is not offered in this tab: only a Meeseeks can call it. This tab keeps the name it has.".to_owned(),
             _ => format!("`{tool}` is not offered to a Meeseeks: nobody reads a finding in a tab that ends with its task. Put what you found in the summary of `meeseeks_done`."),
         }
     }
@@ -282,6 +284,7 @@ pub fn tool_definitions() -> Value {
         job_mcp::tool_definition(),
         avatar_mcp::tool_definition(),
         meeseeks_mcp::tool_definition(),
+        meeseeks_name::tool_definition(),
     ])
 }
 
@@ -324,6 +327,10 @@ fn call_tool(
     }
     if name == meeseeks_mcp::DONE_TOOL {
         let (text, is_error) = meeseeks_mcp::done(args, emit);
+        return Ok(tool_result(&text, is_error));
+    }
+    if name == meeseeks_name::SET_TOOL {
+        let (text, is_error) = meeseeks_name::set(args, emit);
         return Ok(tool_result(&text, is_error));
     }
     if name == job_mcp::REPORT_TOOL {
@@ -644,7 +651,7 @@ mod tests {
     }
 
     #[test]
-    fn the_server_has_eleven_tools_with_object_schemas_and_required_fields() {
+    fn the_server_has_twelve_tools_with_object_schemas_and_required_fields() {
         let all = tool_definitions();
         let tools = all.as_array().unwrap();
         let names: Vec<&str> = tools.iter().map(|t| t["name"].as_str().unwrap()).collect();
@@ -661,7 +668,8 @@ mod tests {
                 "get_progress",
                 "report_job",
                 "set_avatar",
-                "meeseeks_done"
+                "meeseeks_done",
+                "set_name"
             ]
         );
         let required: Vec<Vec<&str>> = tools
@@ -687,6 +695,7 @@ mod tests {
                 vec!["name"],
                 vec!["svg", "reason"],
                 vec!["summary"],
+                vec!["name"],
             ]
         );
         for tool in tools {
@@ -727,7 +736,7 @@ mod tests {
         };
         assert_eq!(sorted(TabRole::Agent), with(&["report_finding"]));
         assert_eq!(sorted(TabRole::Workflow), with(&["stage_done", "report_finding"]));
-        assert_eq!(sorted(TabRole::Meeseeks), with(&["meeseeks_done"]));
+        assert_eq!(sorted(TabRole::Meeseeks), with(&["meeseeks_done", "set_name"]));
     }
 
     #[test]
@@ -747,6 +756,8 @@ mod tests {
             ),
             (TabRole::Agent, "meeseeks_done", json!({"summary": "x"}), "only a Meeseeks"),
             (TabRole::Workflow, "meeseeks_done", json!({"summary": "x"}), "only a Meeseeks"),
+            (TabRole::Agent, "set_name", json!({"name": "fix-login"}), "only a Meeseeks"),
+            (TabRole::Workflow, "set_name", json!({"name": "fix-login"}), "only a Meeseeks"),
             (
                 TabRole::Meeseeks,
                 "report_finding",
@@ -875,6 +886,21 @@ mod tests {
         drop(events);
         for bad in [json!({}), json!({"summary": 4}), json!({"summary": "x", "pr": 1})] {
             let reply = h.call("meeseeks_done", &bad);
+            assert_eq!(reply["result"]["isError"], true, "{bad}");
+        }
+        assert_eq!(h.events.borrow().len(), 1);
+    }
+
+    #[test]
+    fn set_name_over_rpc_tells_the_tab_and_a_bad_name_is_a_tool_error() {
+        let h = Harness::of(TabRole::Meeseeks);
+        let reply = h.call("set_name", &json!({"name": "fix-https-validation"}));
+        assert_eq!(reply["result"]["isError"], false, "{reply}");
+        let events = h.events.borrow();
+        assert_eq!(*events, [TabEvent::MeeseeksName { name: "fix-https-validation".into() }]);
+        drop(events);
+        for bad in [json!({}), json!({"name": "Fix Login"}), json!({"name": "login"})] {
+            let reply = h.call("set_name", &bad);
             assert_eq!(reply["result"]["isError"], true, "{bad}");
         }
         assert_eq!(h.events.borrow().len(), 1);
