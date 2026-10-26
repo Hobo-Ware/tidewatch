@@ -12,7 +12,7 @@ use tidewatch_core::meeseeks::elapsed_text;
 use tidewatch_core::meeseeks_log::Poofed;
 use tidewatch_core::status::{AgentStatus, Reason};
 
-use crate::coming_up::{Group, Row as Scheduled};
+use crate::coming_up::{Group, Row as Scheduled, Source};
 use crate::pane::{AgentTab, Pane};
 use crate::progress_model::{CardTag, Look};
 use crate::progress_ring::tone_color;
@@ -457,11 +457,10 @@ pub(crate) fn idle_line(row: &Row) -> String {
 
 /// The next item of one tab: the first open one that is not parked and is not the owner's to decide.
 pub(crate) fn next_of<'a>(mut rows: impl Iterator<Item = &'a Scheduled>) -> Option<Next> {
-    rows.find(|row| !matches!(row.group, Group::Parked | Group::You)).map(|row| Next {
-        date: row.when.date(),
-        days: row.days,
-        what: row.what.clone(),
+    rows.find(|row| {
+        row.source == Source::Scheduled && !matches!(row.group, Group::Parked | Group::You)
     })
+    .map(|row| Next { date: row.when.date(), days: row.days, what: row.what.clone() })
 }
 
 fn auto_pick_line(agent: &AgentTab, now: f64) -> Option<String> {

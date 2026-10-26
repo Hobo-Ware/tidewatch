@@ -60,6 +60,8 @@ How to fill it in:
 - Checklist marks: `[ ]` to do, `[~]` in progress, `[x]` done, `[-]` skipped, `[!]` blocked. After ` -- ` give the reason for a skipped or blocked item.
 - Separate a line from its reason or evidence with ` -- ` (two hyphens between spaces). Never use a dash character.
 - Needs you holds only what the user must answer or approve. Write `nothing` when there is none.
+- Next holds only what you do in this same turn, right after the call. Work that waits for something goes in Scheduled, never in Next: a merge, an approval, a deploy, a date, or the user. Give it the `<when>` that says what it waits for, for example `on: #1999 merges` or `on: the owner approves #1999`. Work meant for later today gets today's date.
+- Before you set state to waiting, blocked or done, move every Next item that is not happening right now into Scheduled. Tidewatch lists only Scheduled in Coming up, so work left in Next is easy to forget.
 - Scheduled holds open work that is not for now. Leave the section out when there is none. `<when>` is one of these five, with an example of each:
   - an exact date: `- [ ] 2026-11-01 -- Switch off the old webhook -- the main remaining milestone`
   - an about date, for \"in a few weeks\" and the like (work out a concrete date from today): `- [ ] ~2026-11-07 -- Count which apps still send the old field -- needed before it is dropped`
@@ -160,6 +162,16 @@ mod tests {
         assert!(matches!(kinds[3], When::Parked(_)), "{kinds:?}");
         assert_eq!(kinds[4], When::You);
         assert_eq!(kinds.len(), 5);
+    }
+
+    #[test]
+    fn next_is_this_turn_only_and_waiting_work_moves_to_scheduled_before_a_stop() {
+        let text = section(None);
+        assert!(text.contains("Next holds only what you do in this same turn"));
+        assert!(text.contains("Work meant for later today gets today's date"));
+        assert!(text.contains(
+            "Before you set state to waiting, blocked or done, move every Next item that is not happening right now into Scheduled"
+        ));
     }
 
     #[test]

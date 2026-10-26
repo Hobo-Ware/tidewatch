@@ -3,8 +3,8 @@
 use std::path::PathBuf;
 
 use tidewatch_core::civil_date::Date;
-use tidewatch_core::progress::When;
-use tidewatch_core::schedule::{Index, Presence};
+use tidewatch_core::progress::{Ledger, When};
+use tidewatch_core::schedule::{Index, Owner, Presence};
 
 /// Which part of the list a row sits in; the list is sorted by it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -34,9 +34,18 @@ impl Group {
     }
 }
 
+/// Where a row came from. `Next` rows are the Next entries of a ledger that stopped with nothing
+/// scheduled; they are never written to the index.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub(crate) enum Source {
+    Scheduled,
+    Next,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct Row {
     pub(crate) group: Group,
+    pub(crate) source: Source,
     pub(crate) when: When,
     /// Days from today to the date, negative when overdue; `None` for `On`, `Parked`, `You`.
     pub(crate) days: Option<i64>,
@@ -61,6 +70,7 @@ pub(crate) fn coming_up(today: Date, index: &Index) -> Vec<Row> {
         .flat_map(|entry| {
             entry.items.iter().map(move |item| Row {
                 group: Group::of(&item.when, today),
+                source: Source::Scheduled,
                 days: item.when.days_until(today),
                 when: item.when.clone(),
                 what: item.what.clone(),
@@ -74,7 +84,44 @@ pub(crate) fn coming_up(today: Date, index: &Index) -> Vec<Row> {
             })
         })
         .collect();
-    rows.sort_by_key(|row| (row.group, row.when.date().map(Date::day_number)));
+    rows.sort_by_key(sort_key);
+    rows
+}
+
+fn sort_key(row: &Row) -> (Group, Source, Option<i64>) {
+    (row.group, row.source, row.when.date().map(Date::day_number))
+}
+
+/// The Next entries of a ledger that stopped with nothing open in Scheduled, each as a row in the
+/// due group: they were meant to happen next.
+pub(crate) fn next_rows(owner: &Owner, ledger: &Ledger) -> Vec<Row> {
+    ledger
+        .stranded_next()
+        .into_iter()
+        .map(|entry| Row {
+            group: Group::Due,
+            source: Source::Next,
+            when: When::Unknown(NEXT_STEP.to_owned()),
+            days: None,
+            what: entry.text.clone(),
+            why: entry.why.clone(),
+            repo: owner.repo.clone(),
+            tab: owner.tab.clone(),
+            goal: ledger.goal.clone(),
+            session_id: owner.session_id.clone(),
+            profile_id: owner.profile_id.clone(),
+            presence: Presence::Open,
+        })
+        .collect()
+}
+
+pub(crate) const NEXT_STEP: &str = "next step";
+
+/// `rows` with the `extra` ones placed where their group and source put them; the order inside a
+/// group and source is kept.
+pub(crate) fn with_extra(mut rows: Vec<Row>, extra: Vec<Row>) -> Vec<Row> {
+    rows.extend(extra);
+    rows.sort_by_key(sort_key);
     rows
 }
 
@@ -208,5 +255,67 @@ mod tests {
             .map(|day| coming_up(Date::new(2026, 10, day).unwrap(), &index)[0].group)
             .collect();
         assert_eq!(groups, [Group::Dated, Group::Due, Group::Due]);
+    }
+
+    fn owner() -> Owner {
+        Owner {
+            repo: "/work/api".into(),
+            tab: "pkce".into(),
+            session_id: Some("s1".into()),
+            profile_id: Some("builder".into()),
+        }
+    }
+
+    fn ledger(state: &str, next: &str, scheduled: &str) -> Ledger {
+        Ledger::parse(&format!(
+            "# Goal\nShip pkce\n\n## Status\nstate: {state}\n\n## Next\n{next}\n## Scheduled\n{scheduled}"
+        ))
+    }
+
+    #[test]
+    fn next_entries_of_a_stopped_ledger_with_nothing_scheduled_become_due_rows() {
+        let cases = [
+            ("blocked", "- After approval: merge -- ci is green\n- Watch deploy\n", "", 2),
+            ("waiting", "- Watch deploy\n", "", 1),
+            ("done", "- Check logs\n", "", 1),
+            ("working", "- Write the test\n", "", 0),
+            ("blocked", "- nothing\n", "", 0),
+            ("blocked", "- Watch deploy\n", "- [ ] on: merge -- Deploy\n", 0),
+            ("blocked", "- Watch deploy\n", "- [x] 2026-10-01 -- Old\n", 1),
+        ];
+        for (state, next, scheduled, want) in cases {
+            let rows = next_rows(&owner(), &ledger(state, next, scheduled));
+            assert_eq!(rows.len(), want, "{state} {next} {scheduled}");
+            for row in &rows {
+                assert_eq!((row.group, row.source), (Group::Due, Source::Next));
+                assert_eq!((row.repo.as_path(), row.tab.as_str()), ("/work/api".as_ref(), "pkce"));
+                assert_eq!(row.goal, "Ship pkce");
+                assert_eq!(row.days, None);
+                assert_eq!(row.presence, Presence::Open);
+            }
+        }
+        let rows = next_rows(&owner(), &ledger("blocked", "- Merge -- ci is green\n", ""));
+        assert_eq!(rows[0].what, "Merge");
+        assert_eq!(rows[0].why.as_deref(), Some("ci is green"));
+    }
+
+    #[test]
+    fn next_rows_sit_after_the_scheduled_rows_of_the_due_group_and_before_dated_ones() {
+        let rows = with_extra(
+            coming_up(
+                today(),
+                &index(&[(
+                    "otter",
+                    Presence::Open,
+                    "- [ ] 2026-10-18 -- dated\n- [ ] 2026-10-17 -- due today\n- [ ] on: x -- on one\n",
+                )]),
+            ),
+            next_rows(&owner(), &ledger("blocked", "- first next\n- second next\n", "")),
+        );
+        assert_eq!(whats(&rows), ["due today", "first next", "second next", "dated", "on one"]);
+        assert_eq!(
+            rows.iter().map(|row| row.source).collect::<Vec<_>>(),
+            [Source::Scheduled, Source::Next, Source::Next, Source::Scheduled, Source::Scheduled]
+        );
     }
 }

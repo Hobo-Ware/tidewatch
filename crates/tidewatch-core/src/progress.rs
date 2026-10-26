@@ -463,6 +463,20 @@ impl Ledger {
                 || matches!(self.status.state, Some(State::Waiting | State::Blocked)))
     }
 
+    /// The Next entries of a ledger that stopped (waiting, blocked or done) with nothing open in
+    /// Scheduled: work that was meant to happen later but sits where only this turn belongs.
+    #[must_use]
+    pub fn stranded_next(&self) -> Vec<&Entry> {
+        let stopped =
+            matches!(self.status.state, Some(State::Waiting | State::Blocked | State::Done));
+        let open_scheduled =
+            self.scheduled.iter().any(|item| !matches!(item.mark, Mark::Done | Mark::Skipped));
+        if !stopped || open_scheduled {
+            return Vec::new();
+        }
+        real(&self.next).collect()
+    }
+
     /// The agent says it is blocked, or an item is, and it is not done.
     #[must_use]
     pub fn is_blocked(&self) -> bool {

@@ -12,7 +12,7 @@ use super::Tidewatch;
 use super::frame::FrameIntent;
 use super::repos::RepoCommand;
 use super::terminal::TerminalGrid;
-use crate::coming_up::{Row as Scheduled, coming_up};
+use crate::coming_up::{Row as Scheduled, coming_up, with_extra};
 use crate::commands::Command;
 use crate::delivery_card::Delivery;
 use crate::pane::FirstPrompt;
@@ -167,8 +167,11 @@ impl Tidewatch {
         frame: &mut FrameIntent,
     ) {
         let fake = overview_fake::requested().map(overview_fake::build);
-        let rows =
-            if fake.is_some() { Vec::new() } else { coming_up(today(), self.progress.index()) };
+        let rows = if fake.is_some() {
+            Vec::new()
+        } else {
+            with_extra(coming_up(today(), self.progress.index()), self.progress.next_rows())
+        };
         let mut data =
             fake.as_ref().map_or_else(|| self.overview_data(now), |f| f.overview.clone());
         if fake.is_none() {
