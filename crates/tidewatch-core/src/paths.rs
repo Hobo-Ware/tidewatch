@@ -294,6 +294,12 @@ impl TidewatchPaths {
         self.tab_state_dir(repo, tab).join("copilot")
     }
 
+    /// The plugin that carries a Copilot tab's status hooks (it holds the tab's hook token).
+    #[must_use]
+    pub fn tab_copilot_plugin_dir(&self, repo: &Path, tab: &str) -> PathBuf {
+        self.tab_state_dir(repo, tab).join("copilot-plugin")
+    }
+
     /// A tab's workflow run: stage states, summaries and findings, enough to resume after a restart.
     #[must_use]
     pub fn stages_file(&self, repo: &Path, tab: &str) -> PathBuf {
@@ -426,6 +432,9 @@ mod tests {
             paths
                 .tab_copilot_instructions_dir(repo, "brave-otter")
                 .starts_with(notes.parent().unwrap())
+        );
+        assert!(
+            paths.tab_copilot_plugin_dir(repo, "brave-otter").starts_with(notes.parent().unwrap())
         );
         assert_ne!(paths.progress_file(repo, "main"), paths.progress_file(repo, "brave-otter"));
         assert_eq!(progress_file_beside(&notes), paths.progress_file(repo, "brave-otter"));

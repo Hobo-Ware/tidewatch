@@ -19,8 +19,8 @@ use crate::guards::Rule;
 use crate::house_style;
 use crate::launch::{
     GEMINI_SETTINGS_PATH, HookListener, Launch, LaunchCtx, LaunchError, claude_settings_json,
-    ensure_no_push_helper, gemini_exclude_lines, gemini_project_settings, launch_command,
-    mcp_config_json,
+    copilot_plugin_files, ensure_no_push_helper, gemini_exclude_lines, gemini_project_settings,
+    launch_command, mcp_config_json,
 };
 use crate::paths::TidewatchPaths;
 use crate::prefs::Prefs;
@@ -201,11 +201,18 @@ fn prepare_with(
             None => Some(mcp_path.clone()),
         });
 
+    let copilot_plugin_dir =
+        input.listener.as_ref().filter(|_| wiring == Wiring::Copilot).and_then(|listener| {
+            let dir = paths.tab_copilot_plugin_dir(input.repo, input.tab);
+            soft("Copilot hooks", write_copilot_plugin(&dir, listener))
+        });
+
     let feed = paths.progress_feed_file(input.repo, input.tab);
     let feed_env = soft("progress feed", touch(&feed).map(|()| feed.clone()))
         .map(|file| (PROGRESS_ENV.to_owned(), file.display().to_string()));
 
     let mut ctx = context(input, house_style, copilot_instructions_dir, guard_bin_dir, mcp_config);
+    ctx.copilot_plugin_dir = copilot_plugin_dir;
     ctx.yolo_in_folder = yolo_in_folder;
     if wiring == Wiring::Claude
         && let Some(json) = claude_settings_json(&ctx)
@@ -271,6 +278,7 @@ fn context(
                 .is_on(Rule::Trailers),
         house_style,
         copilot_instructions_dir,
+        copilot_plugin_dir: None,
         guard_bin_dir,
         protected_branch: input
             .worktree_tab
@@ -337,6 +345,8 @@ pub fn preview(input: &PrepareInput) -> Result<Launch, LaunchError> {
         .as_ref()
         .map(|_| paths.tab_state_dir(input.repo, input.tab).join(MCP_CONFIG_FILE));
     let mut ctx = context(input, house_style, copilot_dir, guard, mcp);
+    ctx.copilot_plugin_dir = (wiring == Wiring::Copilot && input.listener.is_some())
+        .then(|| paths.tab_copilot_plugin_dir(input.repo, input.tab));
     ctx.settings_file = (wiring == Wiring::Claude && claude_settings_json(&ctx).is_some())
         .then(|| paths.tab_state_dir(input.repo, input.tab).join(CLAUDE_SETTINGS_FILE));
     let mut launch = launch_command(input.agent, input.profile, &ctx)?;
@@ -360,6 +370,13 @@ pub fn task_args(wiring: Wiring, task: &str) -> Vec<String> {
         Wiring::Copilot => vec!["-i".to_owned(), task],
         Wiring::Custom => vec![task],
     }
+}
+
+fn write_copilot_plugin(dir: &Path, listener: &HookListener) -> std::io::Result<PathBuf> {
+    for (name, text) in copilot_plugin_files(listener) {
+        write_private_atomic(&dir.join(name), &text)?;
+    }
+    Ok(dir.to_path_buf())
 }
 
 fn touch(file: &Path) -> std::io::Result<()> {
@@ -787,6 +804,27 @@ mod tests {
             std::fs::read_to_string(fx.paths.tab_house_style_file(repo.path(), "brave-otter"))
                 .unwrap();
         assert!(text.ends_with("not stages:\n\n- Repo way\n- [ ] repo item\n"));
+    }
+
+    #[test]
+    fn a_copilot_tab_with_a_listener_gets_a_private_status_plugin_and_never_touches_the_worktree() {
+        use std::os::unix::fs::PermissionsExt as _;
+        let fx = Fixture::new();
+        let prepared = fx
+            .run("copilot", &profile("copilot", Level::Edits), true, "", Some(listener()))
+            .unwrap();
+        let dir = fx.paths.tab_copilot_plugin_dir(Path::new("/work/web"), "brave-otter");
+        let at = prepared.launch.args.iter().position(|a| a == "--plugin-dir").unwrap();
+        assert_eq!(prepared.launch.args[at + 1], dir.display().to_string());
+        let hooks = dir.join("hooks/hooks.json");
+        assert!(std::fs::read_to_string(&hooks).unwrap().contains("/hook/copilot"));
+        assert!(dir.join("plugin.json").is_file());
+        assert_eq!(std::fs::metadata(&hooks).unwrap().permissions().mode() & 0o777, 0o600);
+        assert_eq!(std::fs::read_dir(&fx.dir).unwrap().count(), 0);
+        assert_eq!(prepared.notes, Vec::<String>::new());
+
+        let without = fx.run("copilot", &profile("copilot", Level::Edits), true, "", None).unwrap();
+        assert!(!without.launch.args.iter().any(|a| a == "--plugin-dir"));
     }
 
     #[test]
