@@ -8,6 +8,7 @@ use serde_json::Value;
 
 use crate::pr::PrThread;
 use crate::pr_noise::is_noise;
+use crate::pr_trust::is_trusted;
 use crate::rfc3339;
 
 pub const FIELDS: &str = "number,title,url,state,mergeable,mergeStateStatus,reviewDecision,statusCheckRollup,reviews,comments,headRefOid,baseRefName,headRefName,author,createdAt,mergedAt,closedAt";
@@ -63,6 +64,7 @@ pub enum ReviewState {
 pub struct Review {
     pub id: String,
     pub author: String,
+    pub association: String,
     pub state: ReviewState,
     pub body: String,
     pub at_ms: i64,
@@ -72,6 +74,7 @@ pub struct Review {
 pub struct Comment {
     pub id: String,
     pub author: String,
+    pub association: String,
     pub body: String,
     pub url: String,
     pub at_ms: i64,
@@ -190,12 +193,16 @@ pub enum Body {
         body: String,
         #[serde(default)]
         comments: Vec<ReviewComment>,
+        #[serde(default = "trusted_by_default")]
+        trusted: bool,
     },
     Commented {
         author: String,
         text: String,
         #[serde(default)]
         url: String,
+        #[serde(default = "trusted_by_default")]
+        trusted: bool,
     },
     Conflict {
         base: String,
@@ -221,6 +228,10 @@ pub enum Body {
         extra_lines: usize,
         text: String,
     },
+}
+
+fn trusted_by_default() -> bool {
+    true
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -396,6 +407,7 @@ fn review(value: &Value) -> Option<Review> {
     Some(Review {
         id: value["id"].as_str()?.to_owned(),
         author: value["author"]["login"].as_str().unwrap_or_default().to_owned(),
+        association: value["authorAssociation"].as_str().unwrap_or_default().to_owned(),
         state: match value["state"].as_str() {
             Some("APPROVED") => ReviewState::Approved,
             Some("CHANGES_REQUESTED") => ReviewState::ChangesRequested,
@@ -411,6 +423,7 @@ fn comment(value: &Value) -> Option<Comment> {
     Some(Comment {
         id: value["id"].as_str()?.to_owned(),
         author: value["author"]["login"].as_str().unwrap_or_default().to_owned(),
+        association: value["authorAssociation"].as_str().unwrap_or_default().to_owned(),
         body: value["body"].as_str().unwrap_or_default().to_owned(),
         url: value["url"].as_str().unwrap_or_default().to_owned(),
         at_ms: value["createdAt"].as_str().and_then(real_time).unwrap_or_default(),
@@ -652,12 +665,14 @@ fn talk_events(before: &Seen, first: bool, snap: &Snapshot) -> Vec<Event> {
                 author: review.author.clone(),
                 body: review.body.clone(),
                 comments: Vec::new(),
+                trusted: is_trusted(&review.author, &review.association),
             },
             ReviewState::Approved => Body::Approved { author: review.author.clone() },
             ReviewState::Commented | ReviewState::Other => Body::Commented {
                 author: review.author.clone(),
                 text: review.body.clone(),
                 url: String::new(),
+                trusted: is_trusted(&review.author, &review.association),
             },
         };
         events.push(Event { at_ms: review.at_ms, body });
@@ -675,6 +690,7 @@ fn talk_events(before: &Seen, first: bool, snap: &Snapshot) -> Vec<Event> {
                 author: comment.author.clone(),
                 text: comment.body.clone(),
                 url: comment.url.clone(),
+                trusted: is_trusted(&comment.author, &comment.association),
             },
         });
     }

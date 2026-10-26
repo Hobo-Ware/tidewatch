@@ -274,7 +274,7 @@ pub(crate) fn look(index: usize, context: Context<'_>) -> Option<Look> {
             ))];
             Look::Card(m)
         }
-        Body::ChangesRequested { author, body, comments } => {
+        Body::ChangesRequested { author, body, comments, .. } => {
             let count = comments.len();
             let mut m = model(
                 Icon::Review,
@@ -300,7 +300,7 @@ pub(crate) fn look(index: usize, context: Context<'_>) -> Option<Look> {
             }
             Look::Card(m)
         }
-        Body::Commented { author, text, url } => {
+        Body::Commented { author, text, url, .. } => {
             let initial = author.chars().next().map_or('?', |c| c.to_ascii_uppercase());
             let mut m = model(
                 Icon::Comment(initial),
@@ -313,7 +313,8 @@ pub(crate) fn look(index: usize, context: Context<'_>) -> Option<Look> {
                 m.buttons.push(ask("answer"));
                 let page = if url.is_empty() { context.url } else { url };
                 m.buttons.push(open("Reply myself", page));
-            } else if current && hands_off {
+            }
+            if current && (hands_off || (asks && withheld(&context, &card.body))) {
                 m.note = Some(note_of(&context, &card.body));
             }
             Look::Card(m)
@@ -412,6 +413,9 @@ impl Context<'_> {
 
 /// The quiet line at the right of a card's buttons: what Auto-fix does with it.
 fn note_of(context: &Context<'_>, body: &Body) -> String {
+    if withheld(context, body) {
+        return UNTRUSTED_NOTE.to_owned();
+    }
     if !context.hands_off(body) {
         return auto_note(context.mode).to_owned();
     }
@@ -423,6 +427,12 @@ fn note_of(context: &Context<'_>, body: &Body) -> String {
     let verb = if queued { "Queued for" } else { "Sent to" };
     format!("{verb} {}", context.profile)
 }
+
+fn withheld(context: &Context<'_>, body: &Body) -> bool {
+    context.mode == PrMode::Auto && pr_prompt::untrusted(body)
+}
+
+const UNTRUSTED_NOTE: &str = "Not from a collaborator: Auto-fix leaves it to you";
 
 fn auto_note(mode: PrMode) -> &'static str {
     match mode {

@@ -40,11 +40,19 @@ fn snapshot() -> Snapshot {
 }
 
 fn review(id: &str, author: &str, state: ReviewState, at_ms: i64) -> Review {
-    Review { id: id.into(), author: author.into(), state, body: String::new(), at_ms }
+    Review {
+        association: String::new(),
+        id: id.into(),
+        author: author.into(),
+        state,
+        body: String::new(),
+        at_ms,
+    }
 }
 
 fn comment(id: &str, author: &str, own: bool, at_ms: i64) -> Comment {
     Comment {
+        association: String::new(),
         id: id.into(),
         author: author.into(),
         body: format!("text {id}"),
@@ -315,6 +323,44 @@ fn new_comments_by_others_make_cards_and_yours_do_not() {
     assert_eq!(kinds(&events), ["commented"]);
     assert_eq!(events[0].at_ms, 900);
     assert_eq!(look(&seen, &snap).0, Vec::<&str>::new());
+}
+
+#[test]
+fn a_comment_or_review_is_trusted_for_collaborators_and_listed_bots_and_for_nobody_else() {
+    let mut snap = snapshot();
+    let (_, seen) = diff(None, &snap, 0);
+    let mut member = comment("c1", "teammate", false, 900);
+    member.association = "MEMBER".into();
+    let mut stranger = comment("c2", "drive-by", false, 910);
+    stranger.association = "NONE".into();
+    let mut bot = comment("c3", "gemini-code-assist[bot]", false, 920);
+    bot.association = "NONE".into();
+    let mut asks = review("r1", "outsider", ReviewState::ChangesRequested, 930);
+    asks.association = "CONTRIBUTOR".into();
+    snap.comments = vec![member, stranger, bot];
+    snap.reviews = vec![asks];
+    snap.decision = Decision::ChangesRequested;
+    let (events, _) = diff(Some(&seen), &snap, 99_000);
+    let trusted: Vec<(i64, bool)> = events
+        .iter()
+        .map(|event| match &event.body {
+            Body::Commented { trusted, .. } | Body::ChangesRequested { trusted, .. } => {
+                (event.at_ms, *trusted)
+            }
+            other => panic!("{other:?}"),
+        })
+        .collect();
+    assert_eq!(trusted, [(900, true), (910, false), (920, true), (930, false)]);
+}
+
+#[test]
+fn gh_says_who_wrote_each_comment_and_review_and_the_snapshot_keeps_it() {
+    let snap = parse_snapshot(include_str!("../../tests/fixtures/pr_view_failing.json")).unwrap();
+    assert_eq!(
+        snap.comments.iter().map(|c| c.association.as_str()).collect::<Vec<_>>(),
+        ["CONTRIBUTOR", "CONTRIBUTOR"]
+    );
+    assert_eq!(snap.reviews[0].association, "NONE");
 }
 
 #[test]
