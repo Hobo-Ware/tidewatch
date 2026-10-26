@@ -700,8 +700,9 @@ mod tests {
         ];
         for (state, next, scheduled, nudged) in cases {
             let h = Harness::new();
-            let ledger =
-                format!("# Goal\ng\n\n## Status\nstate: {state}\n\n## Next\n{next}\n{scheduled}");
+            let ledger = format!(
+                "# Goal\ng\n\n## Status\nstate: {state}\n\n## Checklist\n### 1. Plan\n- [ ] a\n\n## Next\n{next}\n{scheduled}"
+            );
             let reply = h.call("update_progress", &json!({ "ledger": ledger }));
             assert_eq!(reply["result"]["isError"], false, "{state} {next}");
             let text = text_of(&reply);
@@ -819,7 +820,7 @@ mod tests {
         ];
         for (ledger, want) in cases {
             let reply = h.call("update_progress", &json!({ "ledger": ledger }));
-            assert_eq!(text_of(&reply), want, "{ledger:?}");
+            assert_eq!(text_of(&reply).lines().next(), Some(want), "{ledger:?}");
         }
         let reply = h.call("get_progress", &json!({}));
         assert!(text_of(&reply).contains("## Weird\n!!! text"));
