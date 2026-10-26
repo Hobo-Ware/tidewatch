@@ -474,6 +474,62 @@ fn a_tab_on_its_own_keeps_every_card_as_a_record_with_no_button_that_asks_the_ow
 }
 
 #[test]
+fn an_ordinary_tab_in_auto_fix_shows_the_same_record_look_as_one_on_its_own() {
+    for body in [failed(), commented(), changes_requested(), conflict()] {
+        let own = handled(Handling::Agent, vec![body.clone()], &[]);
+        let ordinary = handled(Handling::Answers, vec![body.clone()], &[]);
+        assert_eq!(ordinary, own, "{body:?}");
+        assert_eq!(ordinary.note.as_deref(), Some("Sent to Builder"), "{body:?}");
+        for button in &ordinary.buttons {
+            assert!(
+                !matches!(button.action, CardAction::Ask(_) | CardAction::OpenNotes)
+                    && button.label != "Reply myself",
+                "{body:?}: {}",
+                button.label
+            );
+        }
+    }
+}
+
+#[test]
+fn an_ordinary_tab_in_auto_fix_queues_a_message_for_a_busy_agent_and_says_so() {
+    let message = tidewatch_core::pr_prompt::message(&commented(), 42).unwrap();
+    let waiting = [Pending { id: 1, message }];
+    let model = handled(Handling::Answers, vec![commented()], &waiting);
+    assert_eq!(model.buttons, []);
+    assert_eq!(model.note.as_deref(), Some("Queued for Builder"));
+}
+
+#[test]
+fn an_ordinary_tab_in_auto_fix_keeps_the_buttons_for_what_auto_fix_leaves_to_the_owner() {
+    let stranger = Body::Commented {
+        trusted: false,
+        author: "drive-by".into(),
+        text: "hi".into(),
+        url: String::new(),
+    };
+    let model = handled(Handling::Answers, vec![stranger], &[]);
+    assert_eq!(labels(&model), [("Ask Builder to answer", true), ("Reply myself", false)]);
+    assert_eq!(model.note.as_deref(), Some(UNTRUSTED_NOTE));
+    let cards = cards_of(vec![changes_requested()]);
+    let off = Context {
+        handling: Handling::Answers,
+        policy: GithubPrefs { mode: PrMode::Auto, reviews: false, ..GithubPrefs::default() },
+        ..context(&cards, PrMode::Auto)
+    };
+    let Some(Look::Card(model)) = look(0, off) else { panic!("no card") };
+    assert_eq!(model.buttons.len(), 2, "the owner switched Reviews off, so nothing is sent");
+    assert_eq!(model.note.as_deref(), Some("Auto-fix is on for this tab"));
+}
+
+#[test]
+fn an_ordinary_tab_still_offers_its_commits_to_the_owner() {
+    let body = Body::PushFix { commits: 2, head: "abc".into() };
+    let model = handled(Handling::Answers, vec![body], &[]);
+    assert_eq!(labels(&model), [("Push fix", true), ("Not now", false)]);
+}
+
+#[test]
 fn a_failed_check_of_a_tab_on_its_own_still_links_the_log_and_the_rerun() {
     let model = handled(Handling::Agent, vec![failed()], &[]);
     assert_eq!(labels(&model), [("Full log", false), ("Re-run", false)]);

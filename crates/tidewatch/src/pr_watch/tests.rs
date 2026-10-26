@@ -706,7 +706,9 @@ fn who_handles_the_news_follows_the_tab_and_the_mode_the_owner_left_it_in() {
     let default = GithubPrefs::default();
     let cases = [
         (false, None, Handling::Owner),
-        (false, Some(PrMode::Auto), Handling::Owner),
+        (false, Some(PrMode::Auto), Handling::Answers),
+        (false, Some(PrMode::Ask), Handling::Owner),
+        (false, Some(PrMode::Off), Handling::Owner),
         (true, None, Handling::Agent),
         (true, Some(PrMode::Auto), Handling::Agent),
         (true, Some(PrMode::Ask), Handling::Owner),
@@ -720,6 +722,26 @@ fn who_handles_the_news_follows_the_tab_and_the_mode_the_owner_left_it_in() {
         }
         assert_eq!(watch.handling(default), want, "{autonomous} {mode:?}");
     }
+}
+
+#[test]
+fn an_ordinary_tab_in_auto_fix_answers_its_cards_until_the_loop_guard_hands_them_back() {
+    let default = GithubPrefs::default();
+    let mut watch = ready(Some(42));
+    watch.set_policy(auto(), 0.0);
+    assert_eq!(watch.handling(default), Handling::Answers);
+    watch.cards.auto_sends = MAX_AUTO_SENDS;
+    assert_eq!(watch.handling(default), Handling::Owner, "the sends are used up");
+    watch.cards.auto_sends = 0;
+    assert_eq!(watch.handling(default), Handling::Answers, "a new pull request lifts it");
+}
+
+#[test]
+fn an_ordinary_tab_in_auto_fix_never_pushes_for_the_owner() {
+    let mut watch = ready(Some(42));
+    watch.set_policy(auto(), 0.0);
+    watch.committed(Some(("abc".into(), 2)), 5_000);
+    assert_eq!(watch.push_fix_due(auto()), None);
 }
 
 #[test]
