@@ -331,6 +331,7 @@ pub(crate) fn apply(
                         term.send(keys);
                         if let Some(agent) = found.pane.agent.as_mut() {
                             agent.reader.mark_answered();
+                            agent.run.permission_answered(now);
                         }
                     }
                     _ => toast = Some("That answer is not known for this agent".to_owned()),
