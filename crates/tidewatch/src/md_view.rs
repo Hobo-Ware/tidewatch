@@ -151,7 +151,7 @@ fn format_of(ui: &Ui, run: &Run, size: f32, semibold: bool, color: Color32) -> T
     }
     if linked {
         format.color = brand::TEAL_TEXT;
-        format.underline = Stroke::new(1.0, brand::TEAL_TEXT.gamma_multiply(0.55));
+        format.underline = Stroke::new(1.0, brand::link_rest());
     }
     format
 }

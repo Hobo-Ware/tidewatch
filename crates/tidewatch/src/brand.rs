@@ -67,6 +67,10 @@ pub(crate) const NEEDS: Color32 = ORANGE;
 pub(crate) const DONE: Color32 = Color32::from_rgb(0xb2, 0xe6, 0x8a);
 pub(crate) const FAILED: Color32 = Color32::from_rgb(0xef, 0x44, 0x44);
 
+pub(crate) fn link_rest() -> Color32 {
+    TEAL_TEXT.gamma_multiply(0.55)
+}
+
 pub(crate) fn theme() -> Theme {
     let mut theme = colors::one_half_dark();
     theme.bg = GROUND;
