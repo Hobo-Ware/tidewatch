@@ -331,7 +331,6 @@ impl Tidewatch {
                 AgentStatus::NeedsYou(Reason::Permission | Reason::Question)
             ),
             turn_started_ms: agent.run.turn_started_at().map(wall),
-            working_since_ms: agent.run.working_since().map(wall),
         };
         is_stale(&known.ledger, known.updated_ms, live)
     }
