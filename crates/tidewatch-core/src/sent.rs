@@ -30,10 +30,11 @@ pub mod because {
     pub const COMMENTS: &str = "the branch has new comments the comment guard flags";
     pub const MEESEEKS: &str = "a check of this Meeseeks' work did not pass";
     pub const BUILD_WORKFLOW: &str = "you ran Build workflow from this session";
+    pub const BACKGROUND_JOB: &str = "a background job has reported no progress";
 
     pub const NAMED: [&str; 1] = ["Auto-fix"];
 
-    pub const ALL: [&str; 16] = [
+    pub const ALL: [&str; 17] = [
         AUTO_FIX,
         LEDGER_STOP,
         LEDGER_FINAL,
@@ -50,6 +51,7 @@ pub mod because {
         COMMENTS,
         MEESEEKS,
         BUILD_WORKFLOW,
+        BACKGROUND_JOB,
     ];
 }
 
@@ -66,6 +68,7 @@ pub enum Reason {
     Workflow,
     Resume,
     StuckJob,
+    BackgroundJob,
 }
 
 impl Reason {
@@ -82,6 +85,7 @@ impl Reason {
             Self::Workflow => "workflow",
             Self::Resume => "resume",
             Self::StuckJob => "stuck job",
+            Self::BackgroundJob => "background job",
         }
     }
 

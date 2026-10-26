@@ -255,6 +255,35 @@ fn the_lane_line_is_percent_then_eta_and_never_empty() {
 }
 
 #[test]
+fn a_silent_background_launch_is_a_quiet_line_before_the_finished_ones() {
+    let mut board = orders();
+    board.report(
+        &Report { state: Some(tidewatch_core::job::JobState::Done), ..Report::named("tests") },
+        NOON,
+    );
+    let mut all = cards(&board, NOON);
+    let mut watch = tidewatch_core::background::Watch::default();
+    let signal = tidewatch_core::background::Signal::Started {
+        tool_use_id: "toolu_1".into(),
+        command: "./import.sh".into(),
+    };
+    watch.on_signal(signal, NOON - 125 * MIN);
+    let silent: Vec<Launch> = watch.silent(None, NOON).into_iter().cloned().collect();
+    add_background(&mut all, &silent, NOON);
+    let Some(Card::Quiet(line)) = all.iter().find(|card| matches!(card, Card::Quiet(_))) else {
+        panic!("no quiet line");
+    };
+    assert_eq!(line.name, "./import.sh running in the background, no progress reported");
+    assert_eq!(line.elapsed, "2h 5m");
+    let line_at = all.iter().position(|card| matches!(card, Card::Quiet(_))).unwrap();
+    let first_finished = all.iter().position(|card| matches!(card, Card::Finished(_))).unwrap();
+    assert!(line_at < first_finished);
+    let mut none = Vec::new();
+    add_background(&mut none, &[], NOON);
+    assert_eq!(none.len(), 0);
+}
+
+#[test]
 fn the_clock_label_follows_the_zone() {
     let zone = TimeZone::fixed(jiff::tz::offset(3));
     assert_eq!(clock_label(NOON, &TimeZone::UTC).as_deref(), Some("12:00"));

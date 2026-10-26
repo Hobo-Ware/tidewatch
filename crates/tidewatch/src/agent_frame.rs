@@ -6,6 +6,7 @@
 use std::path::PathBuf;
 
 use tidewatch_core::avatar::Avatar;
+use tidewatch_core::background::Signal;
 use tidewatch_core::events::{TabEvent, TabMessage};
 use tidewatch_core::job::Report;
 use tidewatch_core::progress::Ledger;
@@ -71,6 +72,11 @@ pub(crate) enum Follow {
         tab: u64,
         avatar: Box<Avatar>,
     },
+    /// A background call of the agent started or ended.
+    Background {
+        tab: u64,
+        signal: Signal,
+    },
     MeeseeksDone {
         tab: u64,
         summary: String,
@@ -110,6 +116,9 @@ pub(crate) fn route<T>(tabs: &mut Tabs<Pane<T>>, message: TabMessage, now: f64) 
         }
         TabEvent::Job { report } => {
             Some(Follow::Job { tab: message.tab_id, report: Box::new(report.clone()) })
+        }
+        TabEvent::Background(signal) => {
+            Some(Follow::Background { tab: message.tab_id, signal: signal.clone() })
         }
         TabEvent::Avatar { avatar } => {
             Some(Follow::Avatar { tab: message.tab_id, avatar: Box::new(avatar.clone()) })

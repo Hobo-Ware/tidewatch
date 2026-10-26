@@ -271,3 +271,88 @@ fn screen_rows_cut_trailing_blanks_and_skip_the_spacers_of_wide_glyphs() {
     };
     assert_eq!(screen_rows(&snap), ["ab \u{4e2d}", "cd"]);
 }
+
+fn launch(host: &mut Host, id: &str, at: i64) {
+    let signal = Signal::Started { tool_use_id: id.into(), command: "./import.sh".into() };
+    host.background(1, signal, at);
+}
+
+#[test]
+fn a_background_launch_with_no_line_or_report_is_due_once_after_ninety_seconds() {
+    let fx = Fx::new();
+    let mut host = Host::new(true, false);
+    fx.until_loaded(&mut host, 1, NOW);
+    launch(&mut host, "a", NOW);
+    let late = NOW + 90_000;
+    assert_eq!(host.background_due(1, true, late - 1), None);
+    assert_eq!(host.background_silent(1, late - 1).len(), 0);
+    let due = host.background_due(1, true, late).unwrap();
+    assert_eq!(due.command, "./import.sh");
+    assert_eq!(host.background_silent(1, late).len(), 1);
+    assert_eq!(host.background_due(1, false, late), None, "not while the agent works");
+    host.background_nudged(1, &due.tool_use_id);
+    assert_eq!(host.background_due(1, true, late + 3_600_000), None);
+}
+
+#[test]
+fn a_line_in_the_progress_file_after_the_launch_means_no_nudge() {
+    let fx = Fx::new();
+    let mut host = Host::new(true, false);
+    fx.until_loaded(&mut host, 1, NOW);
+    launch(&mut host, "a", NOW);
+    fx.append("{\"name\":\"import\",\"done\":1,\"total\":9}\n");
+    fx.tick(&mut host, &[1], NOW + 30_000);
+    assert_eq!(host.background_due(1, true, NOW + 120_000), None);
+    assert_eq!(host.background_silent(1, NOW + 120_000).len(), 0);
+}
+
+#[test]
+fn a_bad_line_in_the_progress_file_is_not_progress() {
+    let fx = Fx::new();
+    let mut host = Host::new(true, false);
+    fx.until_loaded(&mut host, 1, NOW);
+    launch(&mut host, "a", NOW);
+    fx.append("not json\n");
+    fx.tick(&mut host, &[1], NOW + 30_000);
+    assert!(host.background_due(1, true, NOW + 120_000).is_some());
+}
+
+#[test]
+fn a_report_job_call_after_the_launch_means_no_nudge() {
+    let fx = Fx::new();
+    let mut host = Host::new(true, false);
+    fx.until_loaded(&mut host, 1, NOW);
+    launch(&mut host, "a", NOW);
+    host.report(1, reading("import", 1.0, 9.0), NOW + 40_000);
+    assert_eq!(host.background_due(1, true, NOW + 120_000), None);
+}
+
+#[test]
+fn a_report_from_before_the_launch_does_not_count() {
+    let fx = Fx::new();
+    let mut host = Host::new(true, false);
+    fx.until_loaded(&mut host, 1, NOW);
+    host.report(1, reading("older", 1.0, 9.0), NOW - 1_000);
+    launch(&mut host, "a", NOW);
+    assert!(host.background_due(1, true, NOW + 120_000).is_some());
+}
+
+#[test]
+fn a_task_that_ended_is_never_nudged() {
+    let fx = Fx::new();
+    let mut host = Host::new(true, false);
+    fx.until_loaded(&mut host, 1, NOW);
+    launch(&mut host, "a", NOW);
+    host.background(1, Signal::Ended { tool_use_id: "a".into() }, NOW + 20_000);
+    assert_eq!(host.background_due(1, true, NOW + 120_000), None);
+    assert_eq!(host.background_silent(1, NOW + 120_000).len(), 0);
+}
+
+#[test]
+fn a_launch_wakes_the_frame_when_it_turns_quiet() {
+    let fx = Fx::new();
+    let mut host = Host::new(true, false);
+    fx.until_loaded(&mut host, 1, NOW);
+    launch(&mut host, "a", NOW);
+    assert_eq!(fx.tick(&mut host, &[1], NOW + 1_000), Some(NOW + 90_000));
+}

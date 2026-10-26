@@ -6,6 +6,7 @@ use std::hash::{DefaultHasher, Hash, Hasher};
 use std::path::{Path, PathBuf};
 
 use stdusk_core::terminal::GridSnap;
+use tidewatch_core::background::{Launch, Signal, Watch};
 use tidewatch_core::job::{JobBoard, JobState, Report};
 use tidewatch_core::job_bar;
 use tidewatch_core::job_feed::Feed;
@@ -55,6 +56,8 @@ struct Tab {
     dirty: bool,
     saved_ms: i64,
     scan: Scan,
+    watch: Watch,
+    last_report_ms: Option<i64>,
 }
 
 pub(crate) struct Host {
@@ -81,11 +84,34 @@ impl Host {
 
     pub(crate) fn report(&mut self, tab: u64, report: Report, now_ms: i64) {
         let Some(tab) = self.tabs.get_mut(&tab) else { return };
+        tab.last_report_ms = Some(now_ms);
         if tab.loaded {
             tab.dirty |= tab.board.report(&report, now_ms);
         } else {
             tab.pending.push(report);
         }
+    }
+
+    pub(crate) fn background(&mut self, tab: u64, signal: Signal, now_ms: i64) {
+        if let Some(tab) = self.tabs.get_mut(&tab) {
+            tab.watch.on_signal(signal, now_ms);
+        }
+    }
+
+    pub(crate) fn background_due(&self, tab: u64, idle: bool, now_ms: i64) -> Option<Launch> {
+        let tab = self.tabs.get(&tab)?;
+        tab.watch.due(tab.last_report_ms, idle, now_ms).cloned()
+    }
+
+    pub(crate) fn background_nudged(&mut self, tab: u64, tool_use_id: &str) {
+        if let Some(tab) = self.tabs.get_mut(&tab) {
+            tab.watch.nudged(tool_use_id);
+        }
+    }
+
+    pub(crate) fn background_silent(&self, tab: u64, now_ms: i64) -> Vec<Launch> {
+        let Some(tab) = self.tabs.get(&tab) else { return Vec::new() };
+        tab.watch.silent(tab.last_report_ms, now_ms).into_iter().cloned().collect()
     }
 
     pub(crate) fn tick(
@@ -116,6 +142,7 @@ impl Host {
             {
                 tab.polled_ms = now_ms;
                 for report in tab.feed.poll(&files.feed) {
+                    tab.last_report_ms = Some(now_ms);
                     tab.dirty |= tab.board.report(&report, now_ms);
                 }
             }
@@ -124,6 +151,9 @@ impl Host {
                 soonest(now_ms + RUNNING_POLL_MS);
             }
             if let Some(at) = tab.board.next_change_at() {
+                soonest(at);
+            }
+            if let Some(at) = tab.watch.next_change_ms(tab.last_report_ms, now_ms) {
                 soonest(at);
             }
             if tab.dirty && self.writable {

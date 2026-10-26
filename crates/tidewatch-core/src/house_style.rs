@@ -57,7 +57,7 @@ When you need the user to choose between options, ask a multiple-choice question
 
 const TOOL_GUIDANCE_HEADING: &str = "## Tidewatch tool guidance\n\n";
 
-const JOBS_LINE: &str = "- For any job you expect to run over a minute, call `report_job`, or have the script append JSON progress lines (`name`, `done`, `total`, `unit`, `phase`, `state`) to the file in `$TIDEWATCH_PROGRESS`.\n";
+const JOBS_LINE: &str = "- Call `report_job` only for work you drive turn by turn. Anything you run in the background, or that takes more than a few minutes, must write JSON lines (`name`, `done`, `total`, `unit`, `phase`, `state`) to `$TIDEWATCH_PROGRESS` itself, because you cannot call a tool while you wait. For example: `printf '{\"name\":\"import\",\"done\":%s,\"total\":%s,\"unit\":\"rows\",\"phase\":\"load\"}\\n' \"$n\" \"$total\" >> \"$TIDEWATCH_PROGRESS\"`. Before you say the job is running, tail that file and check the first line landed.\n";
 
 const CHOICES_LINE: &str = "- Ask choices in plain words with two or three options, mark your top pick, and name the exact items and the count for anything that deletes. The user can answer every open question with your picks in one click.\n";
 
@@ -392,6 +392,16 @@ mod tests {
         let guidance = text.find("## Tidewatch tool guidance").unwrap();
         let block = text.find("## You run autonomously").unwrap();
         assert!(guidance < block && block < text.find("## Progress ledger format").unwrap());
+    }
+
+    #[test]
+    fn the_job_guidance_keeps_report_job_for_turn_by_turn_work_and_gives_the_one_liner() {
+        let line = tool_guidance(Role::Agent);
+        assert!(line.contains("`report_job` only for work you drive turn by turn"));
+        assert!(line.contains("in the background"));
+        assert!(line.contains(crate::background::PROGRESS_EXAMPLE));
+        assert!(line.contains("tail that file and check the first line landed"));
+        assert!(!line.contains('\u{2014}') && !line.contains('\u{2013}'));
     }
 
     #[test]

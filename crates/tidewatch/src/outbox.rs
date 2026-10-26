@@ -73,7 +73,10 @@ impl Send {
                 tell.cap.is_none()
                     && matches!(
                         tell.reason,
-                        Reason::DoneCheck | Reason::CommentGuard | Reason::LedgerGuard
+                        Reason::DoneCheck
+                            | Reason::CommentGuard
+                            | Reason::LedgerGuard
+                            | Reason::BackgroundJob
                     )
             })
     }
@@ -360,6 +363,19 @@ mod tests {
         assert_eq!(offer(&mut outbox, &reminder, &AgentStatus::Done, 500.0), Offer::Paused);
         outbox.user_spoke(TAB);
         assert_eq!(offer(&mut outbox, &reminder, &AgentStatus::Done, 500.0), Offer::Go);
+    }
+
+    #[test]
+    fn background_nudges_share_the_automatic_cap() {
+        let mut outbox = Outbox::default();
+        let nudge = Send::auto("x", Reason::BackgroundJob, "a background job has no progress");
+        let sweep = sweep();
+        outbox.sent(TAB, &nudge, 0.0);
+        outbox.sent(TAB, &sweep, 100.0);
+        assert_eq!(outbox.cap_for(TAB, &nudge), Some(Cap { n: 3, max: MAX_AUTO_SENDS }));
+        outbox.sent(TAB, &nudge, 200.0);
+        assert_eq!(offer(&mut outbox, &nudge, &AgentStatus::Done, 500.0), Offer::Paused);
+        assert_eq!(offer(&mut outbox, &sweep, &AgentStatus::Done, 500.0), Offer::Paused);
     }
 
     #[test]

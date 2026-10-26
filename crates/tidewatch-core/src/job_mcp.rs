@@ -12,7 +12,7 @@ pub const REPORT_TOOL: &str = "report_job";
 pub fn tool_definition() -> Value {
     json!({
         "name": REPORT_TOOL,
-        "description": "Report a job that will run over a minute (CI checks, a deploy, a loop, a long script) so Tidewatch shows its progress. Call it when the job starts, when it moves and when it ends. Jobs merge by name, so send the same name each time and only the fields that changed.",
+        "description": "Report a job you drive turn by turn (CI checks you poll, a deploy you watch) so Tidewatch shows its progress. Call it when the job starts, when it moves and when it ends. Not for a script you run in the background: that script appends JSON lines to $TIDEWATCH_PROGRESS itself. Jobs merge by name, so send the same name each time and only the fields that changed.",
         "inputSchema": {
             "type": "object",
             "properties": {

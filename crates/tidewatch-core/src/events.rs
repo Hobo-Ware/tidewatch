@@ -1,6 +1,7 @@
 //! What the listener tells the app: one [`TabMessage`] per hook payload or MCP tool call.
 
 use crate::avatar::Avatar;
+use crate::background::Signal;
 use crate::job::Report;
 use crate::progress::Ledger;
 use crate::question::{AskReply, Question};
@@ -47,6 +48,8 @@ pub enum TabEvent {
     Job {
         report: Report,
     },
+    /// A background Bash call started or ended (see `background::from_hook`).
+    Background(Signal),
     MeeseeksDone {
         summary: String,
     },

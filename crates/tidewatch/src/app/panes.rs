@@ -124,10 +124,14 @@ impl Tidewatch {
             .and_then(|status| self.flow.extras(active_id, &view.notes, status));
         let agent_id = agent.map_or("", |agent| agent.run.agent_id.as_str());
         let now_ms = wall_ms() as i64;
-        let cards = agent
+        let mut cards = agent
             .and_then(|_| self.job_live.board(active_id))
             .map(|board| job_model::cards(board, now_ms))
             .unwrap_or_default();
+        if agent.is_some() {
+            let silent = self.job_live.background_silent(active_id, now_ms);
+            job_model::add_background(&mut cards, &silent, now_ms);
+        }
         let active_tab = &self.tabs.items()[self.tabs.active()];
         let meeseeks_card = agent.and_then(|agent| {
             let meeseeks = agent.meeseeks.as_ref()?;
