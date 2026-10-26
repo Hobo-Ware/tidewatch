@@ -1129,7 +1129,8 @@ mod tests {
         let settings = saved_claude_settings(&fx);
         assert!(settings["attribution"].is_null());
         assert!(settings["autoMemoryDirectory"].is_string());
-        assert!(settings["hooks"]["PreToolUse"].is_null());
+        let pre = settings["hooks"]["PreToolUse"].as_array().unwrap();
+        assert!(pre.iter().all(|group| group["hooks"][0]["type"] == "http"), "{pre:?}");
     }
 
     #[test]

@@ -32,7 +32,13 @@ fn hook(payload: &Value, trailers_on: bool) -> Output {
         ..LaunchCtx::default()
     };
     let settings: Value = serde_json::from_str(&claude_settings_json(&ctx).unwrap()).unwrap();
-    let command = settings["hooks"]["PreToolUse"][0]["hooks"][0]["command"].as_str().unwrap();
+    let command = settings["hooks"]["PreToolUse"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|group| group["matcher"] == "Bash")
+        .and_then(|group| group["hooks"][0]["command"].as_str())
+        .unwrap();
     let mut child = Command::new("sh")
         .arg("-c")
         .arg(command)
