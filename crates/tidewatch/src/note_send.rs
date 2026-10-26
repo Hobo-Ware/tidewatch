@@ -116,30 +116,75 @@ impl AutoDelivery {
     }
 }
 
+/// How long the terminal must stay silent after a paste before its Enter goes: a big paste is
+/// still being echoed when the first pause is over.
+pub(crate) const ENTER_QUIET_SECS: f64 = 0.12;
+/// The longest an Enter waits for the terminal to go quiet.
+pub(crate) const ENTER_MAX_WAIT_SECS: f64 = 3.0;
+
+#[derive(Debug)]
+struct Waiting {
+    tab: u64,
+    due: f64,
+    deadline: f64,
+    seen: Option<(u64, f64)>,
+}
+
 /// Enters still to send, one per paste.
 #[derive(Debug, Default)]
 pub(crate) struct EnterQueue {
-    due: Vec<(u64, f64)>,
+    waiting: Vec<Waiting>,
 }
 
 impl EnterQueue {
     pub(crate) fn push(&mut self, tab: u64, now: f64) {
-        self.due.push((tab, now + ENTER_DELAY_SECS));
+        self.waiting.push(Waiting {
+            tab,
+            due: now + ENTER_DELAY_SECS,
+            deadline: now + ENTER_MAX_WAIT_SECS,
+            seen: None,
+        });
     }
 
-    /// The tabs whose Enter is due, removed from the queue.
-    pub(crate) fn take_due(&mut self, now: f64) -> Vec<u64> {
-        let (due, later): (Vec<_>, Vec<_>) = self.due.drain(..).partition(|(_, at)| *at <= now);
-        self.due = later;
-        due.into_iter().map(|(tab, _)| tab).collect()
+    /// The tabs whose Enter may go, removed from the queue: the pause is over and the terminal's
+    /// output count (`output`, none when it is not known) has stood still for `ENTER_QUIET_SECS`,
+    /// or the longest wait ran out.
+    pub(crate) fn take_due(&mut self, now: f64, output: impl Fn(u64) -> Option<u64>) -> Vec<u64> {
+        let mut due = Vec::new();
+        self.waiting.retain_mut(|waiting| {
+            if now < waiting.due {
+                return true;
+            }
+            let fire = match (now >= waiting.deadline, output(waiting.tab), waiting.seen) {
+                (true, _, _) | (_, None, _) => true,
+                (false, Some(count), Some((seen, since))) if seen == count => {
+                    now - since >= ENTER_QUIET_SECS
+                }
+                (false, Some(count), _) => {
+                    waiting.seen = Some((count, now));
+                    false
+                }
+            };
+            if fire {
+                due.push(waiting.tab);
+            }
+            !fire
+        });
+        due
     }
 
     pub(crate) fn next_due(&self) -> Option<f64> {
-        self.due.iter().map(|(_, at)| *at).reduce(f64::min)
+        self.waiting
+            .iter()
+            .map(|waiting| match waiting.seen {
+                Some((_, since)) => (since + ENTER_QUIET_SECS).min(waiting.deadline),
+                None => waiting.due,
+            })
+            .reduce(f64::min)
     }
 
     pub(crate) fn forget(&mut self, tab: u64) {
-        self.due.retain(|(id, _)| *id != tab);
+        self.waiting.retain(|waiting| waiting.tab != tab);
     }
 }
 
@@ -248,16 +293,45 @@ mod tests {
     }
 
     #[test]
-    fn an_enter_comes_due_after_the_pause_and_only_once() {
+    fn an_enter_comes_due_after_the_pause_a_quiet_terminal_and_only_once() {
         let mut queue = EnterQueue::default();
         queue.push(3, 10.0);
         queue.push(4, 10.2);
-        assert_eq!(queue.take_due(10.1), Vec::<u64>::new());
+        let quiet = |_: u64| Some(7);
+        assert_eq!(queue.take_due(10.1, quiet), Vec::<u64>::new());
         assert_eq!(queue.next_due(), Some(10.0 + ENTER_DELAY_SECS));
-        assert_eq!(queue.take_due(10.35), [3]);
-        assert_eq!(queue.take_due(10.35), Vec::<u64>::new());
-        assert_eq!(queue.take_due(11.0), [4]);
+        assert_eq!(queue.take_due(10.35, quiet), Vec::<u64>::new());
+        assert_eq!(queue.next_due(), Some(10.35 + ENTER_QUIET_SECS));
+        assert_eq!(queue.take_due(10.5, quiet), [3]);
+        assert_eq!(queue.take_due(10.5, quiet), Vec::<u64>::new());
+        assert_eq!(queue.take_due(11.0, quiet), [4]);
         assert_eq!(queue.next_due(), None);
+    }
+
+    #[test]
+    fn a_terminal_still_printing_the_paste_holds_the_enter_back() {
+        let mut queue = EnterQueue::default();
+        queue.push(3, 0.0);
+        let count = std::cell::Cell::new(1_u64);
+        let output = |_: u64| Some(count.get());
+        assert_eq!(queue.take_due(0.4, output), Vec::<u64>::new());
+        count.set(2);
+        assert_eq!(queue.take_due(0.4 + ENTER_QUIET_SECS, output), Vec::<u64>::new());
+        count.set(3);
+        assert_eq!(queue.take_due(0.4 + 2.0 * ENTER_QUIET_SECS, output), Vec::<u64>::new());
+        assert_eq!(queue.take_due(0.4 + 3.0 * ENTER_QUIET_SECS, output), [3]);
+    }
+
+    #[test]
+    fn a_terminal_that_never_goes_quiet_or_is_unknown_does_not_block_the_enter() {
+        let mut queue = EnterQueue::default();
+        queue.push(3, 0.0);
+        queue.push(4, 0.0);
+        let count = std::cell::Cell::new(0_u64);
+        let output = |tab: u64| (tab == 3).then(|| count.replace(count.get() + 1));
+        assert_eq!(queue.take_due(0.4, output), [4]);
+        assert_eq!(queue.take_due(1.0, output), Vec::<u64>::new());
+        assert_eq!(queue.take_due(ENTER_MAX_WAIT_SECS, output), [3]);
     }
 
     #[test]
@@ -265,6 +339,6 @@ mod tests {
         let mut queue = EnterQueue::default();
         queue.push(3, 0.0);
         queue.forget(3);
-        assert_eq!(queue.take_due(5.0), Vec::<u64>::new());
+        assert_eq!(queue.take_due(5.0, |_| Some(1)), Vec::<u64>::new());
     }
 }

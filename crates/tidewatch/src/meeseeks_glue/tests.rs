@@ -145,7 +145,7 @@ fn the_checks_dispatch_to_their_step_and_a_hand_off_without_a_pr_is_nothing_to_d
 }
 
 #[test]
-fn text_for_the_agent_waits_in_the_host_once_and_a_closed_tab_forgets_it() {
+fn a_second_note_for_an_agent_waits_behind_the_first_and_a_closed_tab_forgets_them() {
     let mut host = Host::new(None, false, Fake::Off);
     host.queue_paste(3, "fix it".into());
     host.queue_paste(4, "and this".into());
@@ -153,6 +153,9 @@ fn text_for_the_agent_waits_in_the_host_once_and_a_closed_tab_forgets_it() {
     let mut tabs = host.pending_tabs();
     tabs.sort_unstable();
     assert_eq!(tabs, [3, 4]);
+    assert_eq!(host.take_paste(3).as_deref(), Some("fix it"));
+    host.put_back_paste(3, "fix it".into());
+    assert_eq!(host.take_paste(3).as_deref(), Some("fix it"));
     assert_eq!(host.take_paste(3).as_deref(), Some("fix it better"));
     assert_eq!(host.take_paste(3), None);
     host.forget(4);

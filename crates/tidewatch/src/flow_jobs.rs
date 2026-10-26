@@ -29,11 +29,13 @@ pub(crate) struct SentOut {
     /// The text to paste, `None` when there was nothing to send.
     pub(crate) text: Option<String>,
     pub(crate) count: usize,
+    pub(crate) ids: Vec<u64>,
     pub(crate) notes: Box<Notes>,
 }
 
 pub(crate) enum Done {
     Sent { tab: u64, auto: bool, result: Result<SentOut, String> },
+    Unsent { tab: u64, result: Result<Box<Notes>, String> },
     Probed { tab: u64, commits: Option<usize> },
     Built { tab: u64, result: Result<Box<DeliveryPlan>, DeliveryError> },
     Delivered { tab: u64, result: Result<Delivered, DeliveryError> },
@@ -81,8 +83,27 @@ pub(crate) fn send_notes(
         Done::Sent {
             tab,
             auto,
-            result: Ok(SentOut { text, count: ids.len(), notes: Box::new(notes) }),
+            result: Ok(SentOut { text, count: ids.len(), ids, notes: Box::new(notes) }),
         }
+    });
+}
+
+pub(crate) fn unsend_notes(
+    jobs: &Jobs<Done>,
+    ctx: &egui::Context,
+    tab: u64,
+    file: PathBuf,
+    ids: Vec<u64>,
+) {
+    jobs.spawn(ctx, move || {
+        let _turn = NOTES_TURN.lock().unwrap_or_else(PoisonError::into_inner);
+        let mut notes = Notes::load(&file);
+        notes.unmark_sent(&ids);
+        let result = notes
+            .save(&file)
+            .map(|()| Box::new(notes))
+            .map_err(|e| format!("could not save {}: {e}", file.display()));
+        Done::Unsent { tab, result }
     });
 }
 
@@ -299,6 +320,24 @@ mod tests {
         assert_eq!(saved.sent(a).map(|s| s.at), Some(500));
         assert_eq!(saved.pending("claude"), Vec::<u64>::new());
         assert_eq!(*out.notes, saved);
+    }
+
+    #[test]
+    fn a_review_that_never_reached_the_agent_gives_its_notes_back_to_the_draft() {
+        let (_dir, file, [a, b, _]) = file_with_notes();
+        let jobs = Jobs::new();
+        let ctx = egui::Context::default();
+        let review = Which::Review(String::new());
+        send_notes(&jobs, &ctx, 1, true, file.clone(), review, "claude".into(), 500);
+        let out = sent(wait(&jobs));
+        assert_eq!(out.ids, [a, b]);
+        assert_eq!(Notes::load(&file).pending("claude"), Vec::<u64>::new());
+
+        unsend_notes(&jobs, &ctx, 1, file.clone(), out.ids);
+        let Done::Unsent { result, .. } = wait(&jobs) else { panic!("not an unsend answer") };
+        let notes = result.unwrap();
+        assert_eq!(notes.pending("claude"), [a, b]);
+        assert_eq!(*notes, Notes::load(&file));
     }
 
     #[test]

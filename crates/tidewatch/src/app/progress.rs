@@ -17,8 +17,8 @@ use crate::due::{
 };
 use crate::job_glue;
 use crate::job_model::lane_line;
-use crate::note_send::ENTER_DELAY_SECS;
 use crate::notify;
+use crate::outbox::{Offer, Origin, Send};
 use crate::overview::Overview;
 use crate::overview_checklist::Source;
 use crate::pane::{AgentTab, Body};
@@ -27,6 +27,7 @@ use crate::progress_model::look;
 use crate::progress_stale::{Live, answered_since_save, is_stale};
 use crate::progress_state::Facts;
 use crate::{due_view, flow_glue, reader_glue, reader_view};
+use tidewatch_core::sent::{Reason as Said, because};
 use tidewatch_core::status::{AgentStatus, Reason};
 
 const REDRAW_ASK: &str = "Call set_avatar again with a fresh idea for this task.";
@@ -82,11 +83,13 @@ impl Tidewatch {
         match choice {
             agent_avatar::Choice::Redraw => {
                 let now = ctx.input(|i| i.time);
-                self.ask_agent(tab, REDRAW_ASK, ctx, now);
+                let send = Send::by_hand(REDRAW_ASK, Said::Avatar, because::AVATAR_REDRAW);
+                self.ask_agent(tab, &send, ctx, now);
             }
             agent_avatar::Choice::Draw => {
                 let now = ctx.input(|i| i.time);
-                if self.ask_agent(tab, DRAW_ASK, ctx, now) {
+                let send = Send::by_hand(DRAW_ASK, Said::Avatar, because::AVATAR_DRAW);
+                if self.ask_agent(tab, &send, ctx, now) {
                     self.remember_avatar_ask(tab, ctx);
                 }
             }
@@ -180,7 +183,8 @@ impl Tidewatch {
         for click in clicks {
             match click {
                 due_view::Action::Ask(text) => {
-                    self.ask_agent(tab, &text, ctx, now);
+                    let send = Send::by_hand(&text, Said::DueToday, because::DUE_CLICK);
+                    self.ask_agent(tab, &send, ctx, now);
                 }
                 due_view::Action::Snooze(what) => {
                     let key = self.due_key(tab, &what);
@@ -198,11 +202,12 @@ impl Tidewatch {
         Some(Key::new(&worktree.repo, worktree.name(), what))
     }
 
-    /// Pastes the message and presses Enter, only while the agent is idle.
+    /// Types the message and presses Enter, only while the agent is idle and no other message
+    /// just went in. False when it did not go.
     pub(super) fn ask_agent(
         &mut self,
         tab: u64,
-        text: &str,
+        send: &Send,
         ctx: &egui::Context,
         now: f64,
     ) -> bool {
@@ -217,10 +222,20 @@ impl Tidewatch {
             self.show_toast(reason, ctx);
             return false;
         }
-        flow_glue::paste_from_tidewatch(&mut self.tabs, tab, text, "Ask");
-        self.flow.queue_enter(tab, now);
-        ctx.request_repaint_after(Duration::from_secs_f64(ENTER_DELAY_SECS + WAKE_SLACK_S));
-        true
+        match flow_glue::offer_to_agent(&mut self.tabs, &mut self.flow, tab, send, ctx, now) {
+            Offer::Go => true,
+            Offer::Wait => {
+                if send.origin == Origin::Hand {
+                    self.show_toast("A message just went to the agent. Ask again in a moment", ctx);
+                }
+                false
+            }
+            Offer::Paused => false,
+            Offer::Refuse(reason) => {
+                self.show_toast(reason, ctx);
+                false
+            }
+        }
     }
 
     /// Asks each tab that runs on its own to start its due items, one at a time, only while the agent
@@ -257,7 +272,8 @@ impl Tidewatch {
             else {
                 continue;
             };
-            if self.ask_agent(id, &text, ctx, now) {
+            let send = Send::auto(&text, Said::DueToday, because::DUE_OWN);
+            if self.ask_agent(id, &send, ctx, now) {
                 self.started.mark(key, today);
                 self.save_asked(id, today);
             }

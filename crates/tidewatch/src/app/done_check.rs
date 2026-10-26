@@ -2,18 +2,17 @@
 //! each turn that ended with a claim, and the card's two buttons (Ask agent to fix goes through the
 //! same paste-and-Enter queue as every other message, only while the agent is idle).
 
-use std::time::Duration;
-
 use tidewatch_core::done_check::PrFact;
 use tidewatch_core::progress::{State, real};
+use tidewatch_core::sent::{Reason, because};
 
-use super::{Tidewatch, WAKE_SLACK_S};
+use super::Tidewatch;
 use crate::done_check_glue::{Facts, Look, Request};
 use crate::done_check_trigger::{Claim, claim};
 use crate::done_check_view::{self, Action};
 use crate::due::ask_blocked;
 use crate::flow_glue;
-use crate::note_send::ENTER_DELAY_SECS;
+use crate::outbox::{Offer, Origin, Send};
 use crate::overview::Overview;
 use crate::pane::{AgentTab, Body};
 use crate::pr_state::Lookup;
@@ -62,7 +61,7 @@ impl Tidewatch {
             if !self.done_check.is_fake()
                 && let Some(note) = self.done_check.auto_fix(tab, blocked)
             {
-                self.send_fix(tab, &note, ctx, now);
+                self.send_fix(tab, &note, Origin::Auto, ctx, now);
             }
         }
     }
@@ -135,14 +134,19 @@ impl Tidewatch {
             self.show_toast("Dev run: would ask the agent to fix", ctx);
             return;
         }
-        self.send_fix(tab, &note, ctx, now);
+        self.send_fix(tab, &note, Origin::Hand, ctx, now);
     }
 
-    fn send_fix(&mut self, tab: u64, note: &str, ctx: &egui::Context, now: f64) {
-        flow_glue::paste_from_tidewatch(&mut self.tabs, tab, note, "Done check");
-        self.flow.queue_enter(tab, now);
-        self.done_check.asked(tab);
-        ctx.request_repaint_after(Duration::from_secs_f64(ENTER_DELAY_SECS + WAKE_SLACK_S));
+    fn send_fix(&mut self, tab: u64, note: &str, origin: Origin, ctx: &egui::Context, now: f64) {
+        let send = match origin {
+            Origin::Auto => Send::auto(note, Reason::DoneCheck, because::DONE_CHECK_OWN),
+            Origin::Hand => Send::by_hand(note, Reason::DoneCheck, because::DONE_CHECK_CLICK),
+        };
+        match flow_glue::send_or_queue(&mut self.tabs, &mut self.flow, tab, send, ctx, now) {
+            Offer::Refuse(reason) => self.show_toast(reason, ctx),
+            Offer::Paused if origin == Origin::Auto => {}
+            Offer::Paused | Offer::Go | Offer::Wait => self.done_check.asked(tab),
+        }
     }
 
     pub(super) fn is_autonomous(&self, tab: u64) -> bool {

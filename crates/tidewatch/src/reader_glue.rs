@@ -8,6 +8,7 @@ use std::time::Duration;
 use egui::{Context, Rect, RichText, Ui, UiBuilder, pos2, vec2};
 use stdusk_core::terminal::PtyTerm;
 use tidewatch_core::avatar::Avatar;
+use tidewatch_core::paths::sent_file_beside;
 use tidewatch_core::question::{self, Reply};
 use tidewatch_core::status::{AgentStatus, Reason};
 use tidewatch_core::transcript::Source;
@@ -80,6 +81,12 @@ pub(crate) fn drain(tabs: &mut Tabs<Pane<PtyTerm>>, ctx: &Context, now: f64) {
             }
         }
         if let Some(agent) = tab.pane.agent.as_mut() {
+            if !agent.reader.has_sent_file()
+                && let Some(notes) = &agent.run.notes_file
+            {
+                agent.reader.attach_sent(sent_file_beside(notes));
+            }
+            agent.reader.poll_sent(now);
             agent.reader.drain();
         }
         pick_for_the_absent(&mut tab.pane, ctx, now);
@@ -350,6 +357,7 @@ pub(crate) fn apply(
                 {
                     agent.first_prompt = FirstPrompt::Sent;
                 }
+                flow.outbox.user_spoke(tab);
                 if let Body::Shell(term) = &mut found.pane.body {
                     term.paste(&text);
                     if let Some(agent) = found.pane.agent.as_mut()

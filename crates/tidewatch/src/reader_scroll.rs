@@ -20,6 +20,9 @@ const USER_SHARE: f32 = 0.62;
 const AGENT_SHARE: f32 = 0.82;
 const BUBBLE_PAD: f32 = 34.0;
 const USER_CHROME_H: f32 = 64.0;
+const TIDEWATCH_SHARE: f32 = 0.7;
+const TIDEWATCH_FOLDED_H: f32 = 150.0;
+const TIDEWATCH_CHROME_H: f32 = 124.0;
 const TURN_CHROME_H: f32 = 70.0;
 const TURN_CHIPS_H: f32 = 34.0;
 const TURN_LIVE_H: f32 = 40.0;
@@ -125,6 +128,9 @@ pub(crate) fn estimate(row: &Row, width: f32) -> f32 {
     if matches!(row.kind, Kind::User) {
         return estimate_user(&row.text, width);
     }
+    if matches!(row.kind, Kind::Tidewatch(_)) {
+        return estimate_tidewatch(&row.text, width, false);
+    }
     let columns = ((width / CHAR_W) as usize).max(MIN_COLUMNS);
     let lines: usize =
         row.text.lines().map(|line| line.chars().count().div_ceil(columns).max(1)).sum();
@@ -145,6 +151,14 @@ fn chat_lines<'a>(texts: impl IntoIterator<Item = &'a str>, bubble_w: f32) -> us
 pub(crate) fn estimate_user(text: &str, width: f32) -> f32 {
     let lines = chat_lines([text], width * USER_SHARE).max(1);
     lines as f32 * CHAT_LINE_H + USER_CHROME_H
+}
+
+pub(crate) fn estimate_tidewatch(text: &str, width: f32, open: bool) -> f32 {
+    if !open {
+        return TIDEWATCH_FOLDED_H;
+    }
+    let lines = chat_lines([text], width * TIDEWATCH_SHARE).max(1);
+    lines as f32 * CHAT_LINE_H + TIDEWATCH_CHROME_H
 }
 
 /// A guess at an agent turn: the wrapped lines of its answer (none while it only runs tools), its
@@ -286,6 +300,19 @@ mod tests {
         let open = estimate_turn(&["done"], 0, (false, false), (&notes, true), 800.0);
         assert_eq!(folded - none, TURN_CHIPS_H);
         assert_eq!(open - folded, 3.0 * TURN_NOTES_LINE_H + TURN_LIST_PAD_H);
+    }
+
+    #[test]
+    fn a_tidewatch_card_is_two_lines_folded_and_grows_with_its_lines_open() {
+        let long = "word ".repeat(400);
+        assert_eq!(
+            estimate_tidewatch(&long, 800.0, false),
+            estimate_tidewatch("one", 800.0, false)
+        );
+        assert!(estimate_tidewatch(&long, 800.0, true) > estimate_tidewatch(&long, 800.0, false));
+        let one = estimate_tidewatch("one", 800.0, true);
+        let three = estimate_tidewatch("a\nb\nc", 800.0, true);
+        assert_eq!(three - one, 2.0 * CHAT_LINE_H);
     }
 
     #[test]

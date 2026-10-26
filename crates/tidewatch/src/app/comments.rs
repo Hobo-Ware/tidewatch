@@ -4,11 +4,12 @@
 use std::time::Duration;
 
 use egui::{Rect, Ui};
+use tidewatch_core::sent::{Reason, because};
 
-use super::{Tidewatch, WAKE_SLACK_S};
+use super::Tidewatch;
 use crate::comment_glue::Facts;
 use crate::comment_strip;
-use crate::note_send::ENTER_DELAY_SECS;
+use crate::outbox::Send;
 use crate::pane::Body;
 use crate::{flow_glue, layout};
 
@@ -42,14 +43,8 @@ impl Tidewatch {
             .collect();
         let pastes = self.comments.tick(&facts, paths, &self.guards, ctx, now);
         for paste in pastes {
-            flow_glue::paste_from_tidewatch(
-                &mut self.tabs,
-                paste.tab,
-                &paste.text,
-                "Comment guard",
-            );
-            self.flow.queue_enter(paste.tab, now);
-            ctx.request_repaint_after(Duration::from_secs_f64(ENTER_DELAY_SECS + WAKE_SLACK_S));
+            let send = Send::auto(&paste.text, Reason::CommentGuard, because::COMMENTS);
+            flow_glue::send_or_queue(&mut self.tabs, &mut self.flow, paste.tab, send, ctx, now);
         }
         if working {
             ctx.request_repaint_after(Duration::from_secs_f64(WORKING_LOOK_S));

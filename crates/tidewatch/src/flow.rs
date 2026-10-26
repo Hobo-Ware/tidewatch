@@ -17,6 +17,7 @@ use crate::flow_jobs::{self, Done, Which};
 use crate::jobs::Jobs;
 use crate::note_send::{AutoDelivery, EnterQueue, ReviewGate, gate, gate_reason, review_gate};
 use crate::notes_strip::{self, NoteRow};
+use crate::outbox::Outbox;
 use crate::post_confirm::{Phase, Plan, PostConfirm};
 use crate::pr_state::{Chip, PrState, Why, repo_of};
 
@@ -52,8 +53,18 @@ pub(crate) enum Gate {
 /// What the app applies after a job finished.
 #[derive(Debug)]
 pub(crate) enum Out {
-    Paste { tab: u64, text: String },
-    Notes { tab: u64, notes: Box<Notes> },
+    /// A review to type into the agent; `ids` are the notes marked sent for it, `auto` that it was
+    /// held for an idle agent.
+    Paste {
+        tab: u64,
+        text: String,
+        ids: Vec<u64>,
+        auto: bool,
+    },
+    Notes {
+        tab: u64,
+        notes: Box<Notes>,
+    },
     Toast(String),
 }
 
@@ -141,6 +152,7 @@ pub(crate) struct Flow {
     jobs: Jobs<Done>,
     tabs: HashMap<u64, TabFlow>,
     enters: EnterQueue,
+    pub(crate) outbox: Outbox,
     tools: Tools,
     pub(crate) confirm: Option<PostConfirm>,
 }
@@ -162,6 +174,7 @@ impl Flow {
             jobs: Jobs::new(),
             tabs: HashMap::new(),
             enters: EnterQueue::default(),
+            outbox: Outbox::default(),
             tools,
             confirm: None,
         }
@@ -182,6 +195,7 @@ impl Flow {
     pub(crate) fn forget(&mut self, tab: u64) {
         self.tabs.remove(&tab);
         self.enters.forget(tab);
+        self.outbox.forget(tab);
         if self.confirm.as_ref().is_some_and(|c| c.tab == tab) {
             self.confirm = None;
         }
@@ -204,6 +218,9 @@ impl Flow {
         let open: Vec<u64> = facts.iter().map(|f| f.id).collect();
         self.tabs.retain(|id, _| open.contains(id));
         let mut next: Option<f64> = self.enters.next_due();
+        if let Some(at) = self.outbox.next_check(now) {
+            next = Some(next.map_or(at, |soonest| soonest.min(at)));
+        }
         for fact in facts {
             let state = self.tabs.entry(fact.id).or_default();
             state.target = Some(fact.clone());
@@ -434,18 +451,29 @@ impl Flow {
         outs
     }
 
+    pub(crate) fn unsend(&mut self, tab: u64, ids: Vec<u64>, ctx: &egui::Context) {
+        let file = self.tabs.get(&tab).and_then(|state| state.target.as_ref()?.notes_file.clone());
+        if let Some(file) = file {
+            flow_jobs::unsend_notes(&self.jobs, ctx, tab, file, ids);
+        }
+    }
+
     /// Presses Enter in the tab's terminal once the paste before it has landed.
     pub(crate) fn queue_enter(&mut self, tab: u64, now: f64) {
         self.enters.push(tab, now);
     }
 
-    pub(crate) fn due_enters(&mut self, now: f64) -> Vec<u64> {
-        self.enters.take_due(now)
+    pub(crate) fn due_enters(&mut self, now: f64, output: impl Fn(u64) -> Option<u64>) -> Vec<u64> {
+        self.enters.take_due(now, output)
     }
 
     fn apply(&mut self, done: Done, ctx: &egui::Context, now: f64, outs: &mut Vec<Out>) {
         match done {
             Done::Sent { tab, auto, result } => self.sent(tab, auto, result, now, outs),
+            Done::Unsent { tab, result } => outs.push(match result {
+                Ok(notes) => Out::Notes { tab, notes },
+                Err(message) => Out::Toast(format!("Could not take notes back: {message}")),
+            }),
             Done::Probed { tab, commits } => {
                 if let Some(state) = self.tabs.get_mut(&tab) {
                     state.delivery.probe_done(commits);
@@ -543,8 +571,7 @@ impl Flow {
                 outs.push(Out::Notes { tab, notes: out.notes });
                 match out.text {
                     Some(text) => {
-                        self.enters.push(tab, now);
-                        outs.push(Out::Paste { tab, text });
+                        outs.push(Out::Paste { tab, text, ids: out.ids, auto });
                         outs.push(Out::Toast(sent_text(out.count, auto)));
                     }
                     None if !auto => outs.push(Out::Toast("Nothing new to send".to_owned())),

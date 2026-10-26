@@ -8,7 +8,9 @@ use tidewatch_core::note_paste;
 use tidewatch_core::question::{AskReply, Question};
 use tidewatch_core::transcript::{AskPart, Entry, Role, ToolPhase};
 
-use crate::reader_sent::{Said, Sent};
+use tidewatch_core::sent::{Reason, Record};
+
+use crate::reader_sent::Sent;
 
 pub(crate) const MAX_ROWS: usize = 400;
 const MCP_PREFIX: &str = "mcp__";
@@ -16,6 +18,8 @@ const MCP_PREFIX: &str = "mcp__";
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum Kind {
     User,
+    /// A user turn Tidewatch sent, matched to its record; `said_for` has the record.
+    Tidewatch(Reason),
     Assistant,
     Tool(Tool),
     /// An error or notice the CLI wrote itself.
@@ -132,6 +136,7 @@ pub(crate) struct Rows {
     dropped: usize,
     revision: u64,
     sent: Sent,
+    auto_paused: bool,
     auto_picked: HashSet<u64>,
 }
 
@@ -178,11 +183,28 @@ impl Rows {
         }
     }
 
-    /// Tidewatch typed `text` into the agent on the user's behalf.
-    pub(crate) fn tidewatch_said(&mut self, text: &str, label: &str, at_ms: i64) {
-        self.sent.said(text, label, at_ms);
+    pub(crate) fn tidewatch_said(&mut self, records: Vec<Record>) {
+        for record in records {
+            self.sent.said(record);
+        }
         self.settle_sent();
         self.revision += 1;
+    }
+
+    pub(crate) fn set_auto_paused(&mut self, paused: bool) {
+        self.auto_paused = paused;
+    }
+
+    pub(crate) fn auto_paused(&self) -> bool {
+        self.auto_paused
+    }
+
+    pub(crate) fn take_new_claims(&mut self) -> Vec<(u64, u64)> {
+        self.sent.take_fresh()
+    }
+
+    pub(crate) fn timed(&self) -> Vec<&Record> {
+        self.sent.timed().collect()
     }
 
     /// The user sent `text` while the agent was busy; it shows as queued until the transcript has it.
@@ -202,8 +224,16 @@ impl Rows {
         self.auto_picked.contains(&seq)
     }
 
-    pub(crate) fn said_for(&self, seq: u64) -> Option<&Said> {
+    pub(crate) fn said_for(&self, seq: u64) -> Option<&Record> {
         self.sent.said_for(seq)
+    }
+
+    pub(crate) fn told_ids(&self) -> Vec<u64> {
+        self.sent.ids().collect()
+    }
+
+    pub(crate) fn told_auto_fix(&self, text: &str) -> bool {
+        self.sent.told_auto_fix(text)
     }
 
     pub(crate) fn queued(&self, now_ms: i64) -> impl Iterator<Item = &crate::reader_sent::Queued> {
@@ -222,10 +252,25 @@ impl Rows {
             .list
             .iter()
             .zip(self.stamps.iter())
-            .filter(|(row, _)| row.kind == Kind::User)
+            .filter(|(row, _)| matches!(row.kind, Kind::User | Kind::Tidewatch(_)))
             .map(|(row, at)| (row.seq, row.text.as_str(), *at))
             .collect();
         self.sent.settle(&lines);
+        let mut changed = false;
+        for row in &mut self.list {
+            if !matches!(row.kind, Kind::User | Kind::Tidewatch(_)) {
+                continue;
+            }
+            let kind =
+                self.sent.said_for(row.seq).map_or(Kind::User, |said| Kind::Tidewatch(said.reason));
+            if row.kind != kind {
+                row.kind = kind;
+                changed = true;
+            }
+        }
+        if changed {
+            self.revision += 1;
+        }
     }
 
     /// Questions from an `ask_user` call: a row that waits for the user.

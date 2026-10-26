@@ -5,12 +5,14 @@ use std::collections::HashSet;
 use kelp_core::refs::RefLabel;
 use kelp_ui::graph::GraphAction;
 use kelp_ui::theme as kelp_theme;
+use tidewatch_core::sent::{Reason, because};
 
 use super::{Tidewatch, wall_ms};
 use crate::checkout::{self, Plan};
 use crate::diff_pane::{PaneAction, PaneOut};
 use crate::file_view::{self, TerminalChip};
 use crate::last_turn::LastTurn;
+use crate::outbox::Send;
 use crate::repo::Workspace;
 use crate::tab_view::ViewSpec;
 use crate::{
@@ -236,7 +238,8 @@ impl Tidewatch {
             None => {}
         }
         if let Some(message) = ask {
-            self.ask_agent(active_id, &message, ctx, ctx.input(|i| i.time));
+            let send = Send::by_hand(&message, Reason::StuckJob, because::STUCK_JOB);
+            self.ask_agent(active_id, &send, ctx, ctx.input(|i| i.time));
         }
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)

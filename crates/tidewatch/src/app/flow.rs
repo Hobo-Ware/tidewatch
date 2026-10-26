@@ -116,10 +116,14 @@ impl Tidewatch {
     pub(super) fn drive_flow(&mut self, ctx: &egui::Context, now: f64) {
         let unix = flow_glue::unix_now();
         let outs = self.flow.drain(ctx, now);
-        for text in flow_glue::apply_outs(outs, &mut self.tabs, &mut self.views) {
+        let toasts =
+            flow_glue::apply_outs(outs, &mut self.tabs, &mut self.views, &mut self.flow, ctx, now);
+        for text in toasts {
             self.show_toast(text, ctx);
         }
-        for tab in self.flow.due_enters(now) {
+        flow_glue::drain_outbox(&mut self.tabs, &mut self.flow, ctx, now);
+        let tabs = &self.tabs;
+        for tab in self.flow.due_enters(now, |id| flow_glue::output_of(tabs, id)) {
             flow_glue::press_enter(&mut self.tabs, tab);
         }
         let active = self.tabs.items()[self.tabs.active()].id;

@@ -123,6 +123,7 @@ mod notify;
 mod open_link;
 mod open_link_view;
 mod os;
+mod outbox;
 mod overview;
 mod overview_checklist;
 mod overview_fake;
@@ -217,6 +218,7 @@ mod takeover_view;
 mod terminal_font;
 #[cfg(all(test, unix))]
 mod test_exec;
+mod tidewatch_view;
 mod toast;
 mod touch_id;
 mod touch_id_view;

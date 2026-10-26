@@ -35,7 +35,6 @@ use crate::reader_chat_view::{self, Scene};
 use crate::reader_keys::{self, Answer};
 use crate::reader_rows::{Kind, Origin, Row, Rows};
 use crate::reader_scroll::{self, Autoscroll, Heights};
-use crate::reader_sent;
 use crate::reader_turns::{self, Slot};
 use crate::review::ReviewFacts;
 use crate::review_row_view;
@@ -43,6 +42,7 @@ use crate::review_view::{self, ReviewAction};
 use crate::screen_kit::{Size, body, primary_button, quiet_button};
 use crate::slash::Entry as SlashEntry;
 use crate::stopped_view;
+use crate::tidewatch_view;
 
 /// The side inset every inline item of the left column keeps.
 pub(crate) const INSET: f32 = 14.0;
@@ -79,6 +79,7 @@ pub(crate) struct ViewState {
     quick: Option<(u64, Vec<Quick>)>,
     quick_used: Option<u64>,
     expanded: HashSet<u64>,
+    tidewatch_open: HashSet<u64>,
     turns: Option<(u64, usize, reader_turns::Layout)>,
     zone: TimeZone,
 }
@@ -107,6 +108,7 @@ impl Default for ViewState {
             quick: None,
             quick_used: None,
             expanded: HashSet::new(),
+            tidewatch_open: HashSet::new(),
             turns: None,
             zone: TimeZone::system(),
         }
@@ -134,8 +136,8 @@ impl ViewState {
         self.expanded.retain(|key| key & !reader_turns::NOTES_BIT >= first);
     }
 
-    /// Opens the list of calls and the folded updates under every turn, as a click on a chip does;
-    /// only the updates when `notes_only`.
+    /// Opens the list of calls and the folded updates under every turn, and every Tidewatch message,
+    /// as a click on a chip does; only the updates when `notes_only`.
     pub(crate) fn open_turns(&mut self, rows: &Rows, notes_only: bool) {
         self.refresh_turns(rows);
         if let Some((_, _, layout)) = &self.turns {
@@ -143,6 +145,9 @@ impl ViewState {
             self.expanded.extend(keys.map(|group| group.key));
             let notes = layout.groups.iter().filter(|group| !group.notes().is_empty());
             self.expanded.extend(notes.map(reader_turns::Group::notes_key));
+        }
+        if !notes_only {
+            self.tidewatch_open.extend(rows.told_ids());
         }
     }
 
@@ -565,7 +570,7 @@ fn transcript(
     let follow = state.scroll.following();
     let scroll_down = follow && std::mem::take(&mut state.stick_pending);
     state.refresh_turns(rows);
-    let ViewState { heights, pr_heights, expanded, turns, zone, .. } = state;
+    let ViewState { heights, pr_heights, expanded, tidewatch_open, turns, zone, .. } = state;
     let (_, _, layout) = turns.as_ref()?;
     let scene = Scene { root, profile, face, zone, now_ms: now_ms(), running, waiting };
     let mut body_ui = ui.new_child(UiBuilder::new().max_rect(body));
@@ -584,6 +589,7 @@ fn transcript(
             let clip = ui.clip_rect();
             let (list, stamps): (Vec<&Row>, Vec<Option<i64>>) = rows.stamped().unzip();
             let cards = pr.map_or(&[][..], |pr| pr.cards());
+            let told = rows.timed();
             for place in pr_timeline::places(rows, cards) {
                 if let Place::Row(index) = place
                     && layout.slots[index] == Slot::Hidden
@@ -615,6 +621,7 @@ fn transcript(
                     Place::Card(index) => {
                         (Some(cards[index].id), pr_heights.height(cards[index].id))
                     }
+                    Place::Said(index) => (Some(told[index].id), pr_heights.height(told[index].id)),
                 };
                 if top + height < clip.top() - OVERSCAN || top > clip.bottom() + OVERSCAN {
                     ui.allocate_space(vec2(width, height));
@@ -637,17 +644,18 @@ fn transcript(
                                         expanded,
                                         width,
                                     ),
-                                    _ if row.kind == Kind::User
-                                        && rows.said_for(row.seq).is_some() =>
-                                    {
-                                        ui.add_space(6.0);
-                                        if let Some(said) = rows.said_for(row.seq) {
-                                            pr_cards_view::draw_bubble(
-                                                ui,
-                                                &reader_sent::bubble_of(said),
-                                            );
+                                    _ if matches!(row.kind, Kind::Tidewatch(_)) => {
+                                        if let Some(record) = rows.said_for(row.seq) {
+                                            let shown = tidewatch_view::Shown {
+                                                record,
+                                                stamp: stamps[index],
+                                                zone: scene.zone,
+                                                open: tidewatch_open.contains(&record.id),
+                                            };
+                                            if tidewatch_view::show(ui, &shown) {
+                                                reader_turns::toggle(tidewatch_open, record.id);
+                                            }
                                         }
-                                        ui.add_space(6.0);
                                     }
                                     _ if row.kind == Kind::User => reader_chat_view::user(
                                         ui,
@@ -697,6 +705,28 @@ fn transcript(
                         actions.extend(drawn.inner.inner.map(Action::Pr));
                     }
                     (Place::Card(_), None) => {}
+                    (Place::Said(index), _) => {
+                        let record = told[index];
+                        let drawn = ui.horizontal(|ui| {
+                            ui.add_space(INSET);
+                            ui.vertical(|ui| {
+                                ui.set_width(width);
+                                let shown = tidewatch_view::Shown {
+                                    record,
+                                    stamp: Some(record.at_ms),
+                                    zone: scene.zone,
+                                    open: tidewatch_open.contains(&record.id),
+                                };
+                                tidewatch_view::show(ui, &shown)
+                            })
+                        });
+                        if let Some(id) = key {
+                            pr_heights.record(id, drawn.response.rect.height());
+                        }
+                        if drawn.inner.inner {
+                            reader_turns::toggle(tidewatch_open, record.id);
+                        }
+                    }
                 }
             }
             let time = ui.input(|i| i.time);
@@ -715,6 +745,9 @@ fn transcript(
                     });
                 });
                 ui.ctx().request_repaint_after(QUEUED_FRAME);
+            }
+            if rows.auto_paused() {
+                tidewatch_view::paused_line(ui, width);
             }
             if running && layout.awaiting {
                 ui.horizontal(|ui| {
@@ -786,7 +819,7 @@ fn draw_row(
                 question_view::summary(ui, question, profile, time.as_deref(), auto);
             }
         }
-        Kind::User | Kind::Assistant | Kind::Tool(_) => {}
+        Kind::User | Kind::Tidewatch(_) | Kind::Assistant | Kind::Tool(_) => {}
         Kind::Divider => draw_divider(ui, &row.text),
         Kind::Compacted => {
             let time = stamp.and_then(|at| clock_label(at, zone));
@@ -2777,18 +2810,48 @@ mod tests {
         found
     }
 
+    fn auto_fix_record(text: &str, at_ms: i64) -> tidewatch_core::sent::Record {
+        use tidewatch_core::sent::{Cap, Reason, Record};
+        Record {
+            at_ms,
+            ..Record::new(
+                Reason::AutoFix,
+                "Auto-fix when idle is on for this PR",
+                text,
+                Some(Cap { n: 1, max: 3 }),
+            )
+        }
+    }
+
     #[test]
-    fn a_message_tidewatch_typed_is_one_quiet_card_and_never_a_you_bubble() {
+    fn a_message_tidewatch_typed_is_its_own_speaker_and_never_a_you_bubble() {
         use tidewatch_core::transcript::{Entry, Role};
         let prompt = "@codex commented on PR #7. Answer it.\n\n> <!-- codex-review-state:v1 -->\n> | a | b |\n> |---|---|\n> <details>";
         let mut rows = Rows::default();
-        rows.tidewatch_said(prompt, "Pull request", 0);
+        rows.tidewatch_said(vec![auto_fix_record(prompt, 0)]);
         rows.push(Entry { role: Role::User, text: prompt.into(), tool: None, ts: Some(5_000) });
         let found = drawn_texts(&rows, 900.0);
-        assert!(found.iter().any(|text| text.starts_with("TidewatchPull request")), "{found:?}");
+        assert!(found.iter().any(|text| text == "Tidewatch"), "{found:?}");
+        assert!(found.iter().any(|text| text == "auto-fix"), "{found:?}");
         assert!(found.iter().any(|text| text.starts_with("@codex commented")), "{found:?}");
+        assert!(
+            found.iter().any(|text| text
+                == "Sent because Auto-fix when idle is on for this PR \u{b7} 1 of 3 auto-fixes"),
+            "{found:?}"
+        );
         assert!(found.iter().all(|text| !text.starts_with("You")), "{found:?}");
         assert!(found.iter().all(|text| !text.contains("codex-review-state")), "{found:?}");
+    }
+
+    #[test]
+    fn a_long_tidewatch_message_offers_show_all() {
+        use tidewatch_core::transcript::{Entry, Role};
+        let long = "Fix the failing check. ".repeat(40);
+        let mut rows = Rows::default();
+        rows.tidewatch_said(vec![auto_fix_record(&long, 0)]);
+        rows.push(Entry { role: Role::User, text: long.clone(), tool: None, ts: Some(5_000) });
+        let found = drawn_texts(&rows, 900.0);
+        assert!(found.iter().any(|text| text == "Show all"), "{found:?}");
     }
 
     #[test]

@@ -8,6 +8,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use tidewatch_core::question::{AskReply, Question};
 use tidewatch_core::restore::codex_session_id;
+use tidewatch_core::sent::{self, Record};
 use tidewatch_core::transcript::{Entry, Role, Source};
 use tidewatch_core::transcript_locate::Locator;
 
@@ -18,7 +19,12 @@ use crate::reader_rows::Rows;
 use crate::reader_view::ViewState;
 
 const POKE_GAP_S: f64 = 0.3;
+const SENT_LOOK_S: f64 = 1.0;
 const ROLLOUT_START_SLACK: Duration = Duration::from_secs(5);
+
+fn file_len(file: &Path) -> u64 {
+    std::fs::metadata(file).map_or(0, |meta| meta.len())
+}
 
 fn unix_ms_now() -> i64 {
     SystemTime::now()
@@ -156,6 +162,9 @@ pub(crate) struct Reader {
     first_message: Option<String>,
     pub(crate) rows: Rows,
     pub(crate) view: ViewState,
+    sent_file: Option<PathBuf>,
+    sent_len: u64,
+    sent_looked: f64,
 }
 
 impl Reader {
@@ -187,6 +196,9 @@ impl Reader {
             first_message: None,
             rows: Rows::default(),
             view: ViewState::default(),
+            sent_file: None,
+            sent_len: 0,
+            sent_looked: f64::NEG_INFINITY,
         }
     }
 
@@ -317,9 +329,55 @@ impl Reader {
         self.rows.push_ask(questions, reply);
     }
 
-    /// Tidewatch typed `text` into the agent for the user: the transcript's copy is not a "You" bubble.
-    pub(crate) fn tidewatch_said(&mut self, text: &str, label: &str) {
-        self.rows.tidewatch_said(text, label, unix_ms_now());
+    pub(crate) fn attach_sent(&mut self, file: PathBuf) {
+        if self.sent_file.is_none() {
+            self.sent_file = Some(file);
+            self.refresh_sent();
+        }
+    }
+
+    pub(crate) fn poll_sent(&mut self, now: f64) {
+        if now - self.sent_looked >= SENT_LOOK_S {
+            self.sent_looked = now;
+            self.refresh_sent();
+        }
+    }
+
+    pub(crate) fn has_sent_file(&self) -> bool {
+        self.sent_file.is_some()
+    }
+
+    pub(crate) fn tidewatch_said(&mut self, record: Record) {
+        self.rows.tidewatch_said(vec![record]);
+        self.save_claims();
+    }
+
+    fn refresh_sent(&mut self) {
+        let Some(file) = &self.sent_file else { return };
+        let len = file_len(file);
+        if len == self.sent_len {
+            return;
+        }
+        self.sent_len = len;
+        self.rows.tidewatch_said(sent::load(file));
+        self.save_claims();
+    }
+
+    /// Writes the claims the rows made to the record file. The file counts as read only when
+    /// nothing but these lines was added to it since it was loaded.
+    fn save_claims(&mut self) {
+        let Some(file) = &self.sent_file else { return };
+        let claims = self.rows.take_new_claims();
+        if claims.is_empty() {
+            return;
+        }
+        let unread = file_len(file) != self.sent_len;
+        for (id, seq) in claims {
+            let _ = sent::append_claim(file, id, seq);
+        }
+        if !unread {
+            self.sent_len = file_len(file);
+        }
     }
 
     /// The user sent `text` while the agent was busy: it shows as queued until the transcript has it.
@@ -345,6 +403,7 @@ impl Reader {
     /// A hook always pokes, and may tell where the file is.
     pub(crate) fn hook(&mut self, transcript_path: Option<PathBuf>) {
         self.answered = false;
+        self.refresh_sent();
         if let Some(feed) = &self.feed {
             if let Some(path) = transcript_path {
                 feed.hint(path);
@@ -366,7 +425,10 @@ impl Reader {
                 }
                 Message::Missing if self.link == Link::Searching => self.link = Link::Missing,
                 Message::Missing => {}
-                Message::Entries(entries) => self.add(entries),
+                Message::Entries(entries) => {
+                    self.add(entries);
+                    self.refresh_sent();
+                }
                 Message::Title(title) => self.session_title = Some(title),
             }
         }
@@ -381,6 +443,7 @@ impl Reader {
                 .map(|entry| entry.text.clone());
         }
         self.rows.push_all(entries);
+        self.save_claims();
         if let Some(first) = self.rows.iter().next() {
             self.view.heights.keep_from(first.seq);
         }
