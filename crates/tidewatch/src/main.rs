@@ -146,6 +146,7 @@ mod progress_ring;
 mod progress_stale;
 mod progress_state;
 mod progress_view;
+mod prompt_ghost;
 mod pty;
 mod quake;
 mod question_auto;

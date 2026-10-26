@@ -153,6 +153,14 @@ pub(crate) fn toggle_text(shown: Shown) -> String {
     }
 }
 
+fn waits_for_input(status: &AgentStatus) -> bool {
+    matches!(
+        status,
+        AgentStatus::Done
+            | AgentStatus::NeedsYou(Reason::Input | Reason::Attention | Reason::Quiet)
+    )
+}
+
 fn prompt_of(status: &AgentStatus) -> Option<Prompt> {
     match status {
         AgentStatus::NeedsYou(Reason::Permission) => Some(Prompt::Permission),
@@ -204,6 +212,16 @@ pub(crate) fn draw(
         stopped: *agent.run.status() == AgentStatus::Stopped,
     };
     let reader = &mut agent.reader;
+    let reads_screen = reader.source() == Some(Source::Claude)
+        && prompt.is_none()
+        && waits_for_input(agent.run.status())
+        && reader.rows.len() > 0;
+    match (&pane.body, reads_screen) {
+        (Body::Shell(term), true) => {
+            reader.view.ghost.refresh(term.output_gen(), || term.grid_snapshot());
+        }
+        _ => reader.view.ghost.clear(),
+    }
     let auto_left = reader.rows.pending_question().and_then(|row| {
         reader
             .auto
@@ -470,6 +488,26 @@ mod tests {
     use tidewatch_core::question::{AskReply, Given, QuestionOption, Select};
 
     use crate::agent_run::AgentRun;
+
+    #[test]
+    fn the_suggestion_is_read_only_while_the_agent_waits_for_the_next_message() {
+        let cases = [
+            (AgentStatus::Done, true),
+            (AgentStatus::NeedsYou(Reason::Input), true),
+            (AgentStatus::NeedsYou(Reason::Quiet), true),
+            (AgentStatus::NeedsYou(Reason::Attention), true),
+            (AgentStatus::Working, false),
+            (AgentStatus::NeedsYou(Reason::Permission), false),
+            (AgentStatus::NeedsYou(Reason::Question), false),
+            (AgentStatus::Stopped, false),
+            (AgentStatus::Failed("x".into()), false),
+            (AgentStatus::Shell, false),
+            (AgentStatus::SettingUp, false),
+        ];
+        for (status, want) in cases {
+            assert_eq!(waits_for_input(&status), want, "{status:?}");
+        }
+    }
     use crate::pane::AgentTab;
     use crate::reader_rows::QuestionRow;
 
