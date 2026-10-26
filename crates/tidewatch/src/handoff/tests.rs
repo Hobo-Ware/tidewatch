@@ -459,6 +459,34 @@ fn parking_and_never_park_cross_the_handover_and_an_old_layout_has_neither() {
 }
 
 #[test]
+fn a_window_from_before_the_prompt_flag_cannot_say_where_its_agents_are_so_they_wait_for_a_hook() {
+    let mut w = window();
+    let agent = w.tabs.get_mut(w.agent_tab).unwrap().pane.agent.as_mut().unwrap();
+    agent.run.hold(Some(AgentStatus::Done), None);
+    agent.run.refresh(2.0);
+    let (handover, _) = handover_of(&w);
+    let mut text = serde_json::to_value(&handover).unwrap();
+    let mut stripped = 0;
+    for group in text["groups"].as_array_mut().unwrap() {
+        for tab in group["tab"].as_array_mut().unwrap() {
+            if let Some(agent) = tab["agent"].as_object_mut() {
+                assert_eq!(agent.remove("at_prompt"), Some(serde_json::Value::Bool(true)));
+                stripped += 1;
+            }
+        }
+    }
+    assert_eq!(stripped, 1);
+    let old: Handover = serde_json::from_value(text).unwrap();
+    let mut adopt = |term: u32, _: &Path| Ok(term);
+    let ptys = Ptys { adopt: &mut adopt, fresh: &fresh };
+    let mut rebuilt = rebuild(&old, vec![100, 101, 102, 200, 201], 5.0, ptys).unwrap();
+    let id = rebuilt.tabs.items().iter().find(|tab| tab.title == "otter").unwrap().id;
+    let run = &mut rebuilt.tabs.get_mut(id).unwrap().pane.agent.as_mut().unwrap().run;
+    run.refresh(600.0);
+    assert_eq!((*run.status() == AgentStatus::Done, run.unreported()), (false, true));
+}
+
+#[test]
 fn an_agent_tab_comes_back_running_with_its_reader_session_and_credential_under_a_new_id() {
     let w = window();
     let (handover, _) = handover_of(&w);
