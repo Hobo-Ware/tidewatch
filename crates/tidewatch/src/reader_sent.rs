@@ -101,7 +101,7 @@ impl Sent {
         self.claims.clear();
         let mut taken: HashSet<u64> = HashSet::new();
         for (index, record) in self.records.iter_mut().enumerate() {
-            if record.reason.timed() {
+            if record.timed() {
                 continue;
             }
             let found = match record.claimed_seq {
@@ -159,7 +159,7 @@ impl Sent {
     }
 
     pub(crate) fn timed(&self) -> impl Iterator<Item = &Record> {
-        self.records.iter().filter(|record| record.reason.timed())
+        self.records.iter().filter(|record| record.timed())
     }
 
     /// The messages the transcript does not have yet, oldest first.
@@ -305,6 +305,19 @@ mod tests {
         assert_eq!(sent.said_for(0), None);
         let timed: Vec<Reason> = sent.timed().map(|record| record.reason).collect();
         assert_eq!(timed, [Reason::LedgerGuard]);
+    }
+
+    #[test]
+    fn a_ledger_reminder_typed_into_the_terminal_claims_its_transcript_line() {
+        let typed = Record {
+            at_ms: 1_000,
+            typed: true,
+            ..Record::new(Reason::LedgerGuard, "the ledger was not updated", "update it", None)
+        };
+        let mut sent = sent_with(vec![typed]);
+        sent.settle(&lines(&[("update it", Some(1_100))]));
+        assert_eq!(sent.said_for(0).map(|record| record.reason), Some(Reason::LedgerGuard));
+        assert_eq!(sent.timed().count(), 0);
     }
 
     #[test]

@@ -93,6 +93,7 @@ pub(crate) struct AgentRun {
     host: Host,
     turn_started_at: Option<f64>,
     unreported: bool,
+    tools_this_turn: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -128,6 +129,7 @@ impl AgentRun {
             host: Host::Pty,
             turn_started_at: None,
             unreported: false,
+            tools_this_turn: false,
         }
     }
 
@@ -235,7 +237,14 @@ impl AgentRun {
                     (HookKind::TurnStarted, _) => {
                         self.end_block = None;
                         self.turn_started_at = Some(now);
+                        self.tools_this_turn = false;
                     }
+                    (
+                        HookKind::ToolStarted { .. }
+                        | HookKind::ToolPermission(_)
+                        | HookKind::ToolFinished { .. },
+                        _,
+                    ) => self.tools_this_turn = true,
                     (HookKind::TurnDone, Some(message)) => {
                         self.end_block = end_block::parse(message);
                     }
@@ -333,6 +342,11 @@ impl AgentRun {
         self.turn_started_at
     }
 
+    /// Whether a hook reported a tool call since the last turn started.
+    pub(crate) fn used_tools_this_turn(&self) -> bool {
+        self.tools_this_turn
+    }
+
     /// When the status next changes with no new input, in the egui clock.
     pub(crate) fn next_change_at(&self, now: f64) -> Option<f64> {
         self.tracker.next_change_at(now)
@@ -357,6 +371,27 @@ mod tests {
         let mut run = AgentRun::setting_up("claude".into(), 0.0);
         run.started(None, now);
         run
+    }
+
+    #[test]
+    fn a_turn_used_tools_once_a_hook_reports_a_call_and_the_next_turn_starts_clean() {
+        let mut run = running(1.0);
+        run.on_event(hook(HookKind::TurnStarted, None), 2.0);
+        assert!(!run.used_tools_this_turn());
+        for kind in [
+            HookKind::ToolStarted { key: "shell\nls".into(), id: None },
+            HookKind::ToolPermission("shell\nls".into()),
+            HookKind::ToolFinished { key: "shell\nls".into(), id: None },
+        ] {
+            let mut turn = running(1.0);
+            turn.on_event(hook(HookKind::TurnStarted, None), 2.0);
+            turn.on_event(hook(kind.clone(), None), 3.0);
+            assert!(turn.used_tools_this_turn(), "{kind:?}");
+            turn.on_event(hook(HookKind::TurnDone, None), 4.0);
+            assert!(turn.used_tools_this_turn(), "a finished turn still says what it did");
+            turn.on_event(hook(HookKind::TurnStarted, None), 5.0);
+            assert!(!turn.used_tools_this_turn(), "{kind:?}");
+        }
     }
 
     #[test]

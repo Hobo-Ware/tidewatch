@@ -1,6 +1,7 @@
 //! The window's side of the comment guard: each agent tab's flags read from its state folder (the
 //! hook process appends them), the per-tab off switch, and, for the CLIs with no hook of their own,
-//! the branch sweep at the end of a turn and the note pasted to the idle agent.
+//! the branch sweep at the end of a turn and the note pasted to the idle agent. The same path pastes
+//! the ledger guard's line to such an agent when a turn that used tools ended with no ledger saved.
 //!
 //! `TIDEWATCH_FAKE_COMMENTS=1` gives every agent tab three stand-in flags and writes nothing;
 //! `TIDEWATCH_DEV_COMMENT_POPOVER=1` keeps the chip's list open.
@@ -11,8 +12,10 @@ use std::path::Path;
 use tidewatch_core::comment_flags::{Origin, Record, TabFiles};
 use tidewatch_core::comment_sweep::{self, FileFlags};
 use tidewatch_core::guard_comments::{digest, records};
+use tidewatch_core::guard_ledger::{Ask, Reminders, ledger_says_working, modified_ms};
 use tidewatch_core::guards::{GuardPrefs, Rule};
 use tidewatch_core::paths::TidewatchPaths;
+use tidewatch_core::sent::{Reason, because};
 use tidewatch_core::status::AgentStatus;
 
 use crate::comment_model::{Turn, needs_idle_sweep, paste_note};
@@ -27,6 +30,9 @@ pub(crate) struct Facts<'a> {
     pub(crate) dir: &'a Path,
     pub(crate) repo: &'a Path,
     pub(crate) name: &'a str,
+    /// When the last turn started, in the egui clock.
+    pub(crate) turn_started_at: Option<f64>,
+    pub(crate) used_tools: bool,
 }
 
 /// A note to paste into a tab's idle agent.
@@ -34,6 +40,8 @@ pub(crate) struct Facts<'a> {
 pub(crate) struct Paste {
     pub(crate) tab: u64,
     pub(crate) text: String,
+    pub(crate) reason: Reason,
+    pub(crate) because: &'static str,
 }
 
 struct Swept {
@@ -47,6 +55,7 @@ struct TabState {
     flags_len: u64,
     off: bool,
     turn: Turn,
+    reminders: Reminders,
     sweeping: bool,
     looked: f64,
 }
@@ -56,6 +65,7 @@ pub(crate) struct Host {
     jobs: Jobs<Swept>,
     fake: bool,
     popover: bool,
+    wall_ms: fn() -> u64,
 }
 
 /// What the strip draws.
@@ -86,7 +96,7 @@ impl Host {
             std::env::var_os("TIDEWATCH_FAKE_COMMENTS").is_some_and(|v| !v.is_empty() && v != "0");
         let popover =
             std::env::var("TIDEWATCH_DEV_COMMENT_POPOVER").is_ok_and(|v| !v.is_empty() && v != "0");
-        Self { tabs: HashMap::new(), jobs: Jobs::new(), fake, popover }
+        Self { tabs: HashMap::new(), jobs: Jobs::new(), fake, popover, wall_ms }
     }
 
     pub(crate) fn open_popover(&self) -> bool {
@@ -138,6 +148,7 @@ impl Host {
                 flags_len: 0,
                 off: false,
                 turn: Turn::default(),
+                reminders: Reminders::default(),
                 sweeping: false,
                 looked: f64::NEG_INFINITY,
             });
@@ -145,6 +156,9 @@ impl Host {
                 state.look(now);
             }
             let turn_ended = state.turn.ended(fact.status);
+            if turn_ended && needs_idle_sweep(fact.agent_id) && !self.fake {
+                pastes.extend(state.ledger_reminder(fact, paths, now, (self.wall_ms)()));
+            }
             let rule_on = guards.rules_for(fact.repo).is_on(Rule::Comments);
             if turn_ended
                 && rule_on
@@ -181,7 +195,12 @@ impl Host {
             .flat_map(|file| records(Origin::Sweep, &file.path, &file.flags, at))
             .collect();
         let _ = state.files.append(&all);
-        Some(Paste { tab: swept.tab, text: note })
+        Some(Paste {
+            tab: swept.tab,
+            text: note,
+            reason: Reason::CommentGuard,
+            because: because::COMMENTS,
+        })
     }
 }
 
@@ -192,6 +211,36 @@ fn wall_ms() -> u64 {
 }
 
 impl TabState {
+    fn ledger_reminder(
+        &mut self,
+        fact: &Facts<'_>,
+        paths: &TidewatchPaths,
+        now: f64,
+        at: u64,
+    ) -> Option<Paste> {
+        let started = fact
+            .turn_started_at
+            .map(|began| at.saturating_sub(((now - began).max(0.0) * 1000.0) as u64));
+        let ledger = paths.progress_file(fact.repo, fact.name);
+        let ask = self.reminders.at_turn_end(
+            fact.used_tools,
+            modified_ms(&ledger),
+            ledger_says_working(&ledger),
+            started,
+            at,
+        )?;
+        let because = match ask {
+            Ask::Ledger => because::LEDGER_STOP,
+            Ask::FinalState => because::LEDGER_FINAL,
+        };
+        Some(Paste {
+            tab: fact.id,
+            text: ask.message().to_owned(),
+            reason: Reason::LedgerGuard,
+            because,
+        })
+    }
+
     fn look(&mut self, now: f64) {
         self.looked = now;
         self.off = self.files.is_off();

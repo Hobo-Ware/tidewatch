@@ -1,10 +1,10 @@
 //! The app's side of the comment guard: each agent tab's facts to the host, the notes it pastes to an
-//! idle agent, the strip under the status line and its off switch.
+//! idle agent (the comment guard's, and the ledger guard's for a CLI with no stop hook), the strip
+//! under the status line and its off switch.
 
 use std::time::Duration;
 
 use egui::{Rect, Ui};
-use tidewatch_core::sent::{Reason, because};
 
 use super::Tidewatch;
 use crate::comment_glue::Facts;
@@ -38,12 +38,14 @@ impl Tidewatch {
                     dir: &worktree.path,
                     repo: &worktree.repo,
                     name: worktree.name(),
+                    turn_started_at: agent.run.turn_started_at(),
+                    used_tools: agent.run.used_tools_this_turn(),
                 })
             })
             .collect();
         let pastes = self.comments.tick(&facts, paths, &self.guards, ctx, now);
         for paste in pastes {
-            let send = Send::auto(&paste.text, Reason::CommentGuard, because::COMMENTS);
+            let send = Send::auto(&paste.text, paste.reason, paste.because);
             flow_glue::send_or_queue(&mut self.tabs, &mut self.flow, paste.tab, send, ctx, now);
         }
         if working {

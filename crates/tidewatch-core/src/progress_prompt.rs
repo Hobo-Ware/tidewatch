@@ -2,12 +2,14 @@
 //! with the four stages, the user's must-do steps when there are any, and one example for every
 //! kind of `<when>` (pure).
 
+use crate::agents::Wiring;
+
 const LEDGER_FORMAT: &str = "\
 ## Progress ledger format
 
 Tidewatch shows the user a live progress view of your task. It is built from a ledger you keep with the `update_progress` tool of the `tidewatch` MCP server.
 
-- This ledger is required. A ledger or notes file of your own, a plan in the chat or a memory entry never replaces it: only `update_progress` shows it to the user and lists your later work in Coming up. Every date or later step you tell the user in chat must also be in Scheduled. A turn that ends with no ledger saved in it is sent back to write one.
+- This ledger is required. A ledger or notes file of your own, a plan in the chat or a memory entry never replaces it: only `update_progress` shows it to the user and lists your later work in Coming up. Every date or later step you tell the user in chat must also be in Scheduled. {turn_end}
 - Write the ledger first, before any other work: call `update_progress` with the whole ledger: the goal in one line, your plan as steps under the four stages below, and the stage you start in.
 - Call `update_progress` again at every milestone: a decision made, an item finished, a check run, a blocker, a change of stage. Each call replaces the ledger, so always send all of it.
 - After a context reset, or when you resume a session, call `get_progress` first and carry on from what it returns. Never start the ledger over.
@@ -77,14 +79,39 @@ const MUST_DOS_INTRO: &str = "\
 Must-do steps from the user or this repo. Add each as a step under the stage where it fits. They are a flat list, not stages:
 ";
 
+/// Who answers a turn that ends with no ledger saved: Claude's Stop hook, or a pasted reminder.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TurnEnd {
+    SentBack,
+    Reminded,
+}
+
+impl TurnEnd {
+    #[must_use]
+    pub fn of(wiring: Wiring) -> Self {
+        if wiring == Wiring::Claude { Self::SentBack } else { Self::Reminded }
+    }
+
+    fn sentence(self) -> &'static str {
+        match self {
+            Self::SentBack => {
+                "A turn that ends with no ledger saved in it is sent back to write one."
+            }
+            Self::Reminded => {
+                "A turn that ends with no ledger saved in it gets a reminder pasted to you, to write one."
+            }
+        }
+    }
+}
+
 /// The ledger section of an agent's house style. `must_dos` is the user's or the repo's list of
 /// steps every task includes, when there is one.
 #[must_use]
-pub fn section(must_dos: Option<&str>) -> String {
+pub fn section(must_dos: Option<&str>, turn_end: TurnEnd) -> String {
     let must_dos = must_dos.map_or_else(String::new, |text| {
         format!("\n{MUST_DOS_INTRO}\n{}\n", flatten_headings(text.trim_end_matches('\n')))
     });
-    format!("{LEDGER_FORMAT}{must_dos}")
+    format!("{}{must_dos}", LEDGER_FORMAT.replace("{turn_end}", turn_end.sentence()))
 }
 
 /// A heading in a must-do list (`### 1. Understand`) becomes a plain bullet, so an agent that
@@ -130,7 +157,7 @@ mod tests {
 
     #[test]
     fn the_format_block_is_a_ledger_with_the_four_stages_under_its_checklist() {
-        let text = section(None);
+        let text = section(None, TurnEnd::SentBack);
         let ledger = Ledger::parse(format_block(&text));
         assert_eq!(ledger.goal, "<the goal in one line>");
         let titles: Vec<_> =
@@ -150,7 +177,7 @@ mod tests {
 
     #[test]
     fn every_needs_you_line_is_told_to_carry_two_to_four_clickable_options() {
-        let text = section(None);
+        let text = section(None, TurnEnd::SentBack);
         assert!(text.contains("Every line ends with `-- options: A | B* | C`"));
         assert!(text.contains("2 to 4 short answers"));
         assert!(text.contains("the one you recommend starred"));
@@ -158,7 +185,7 @@ mod tests {
 
     #[test]
     fn the_prompt_names_the_four_stages_and_tells_the_agent_the_steps_are_its_own() {
-        let text = section(None);
+        let text = section(None, TurnEnd::SentBack);
         for stage in Stage::ALL {
             assert!(text.contains(&format!(". {}\n", stage.label())), "{stage:?}");
         }
@@ -171,7 +198,7 @@ mod tests {
 
     #[test]
     fn a_list_of_must_dos_comes_after_the_format_and_never_inside_it() {
-        let text = section(Some("- [ ] only this\n"));
+        let text = section(Some("- [ ] only this\n"), TurnEnd::SentBack);
         let at = text.find("Must-do steps from the user or this repo").unwrap();
         assert!(at > text.rfind("```").unwrap());
         assert!(text.ends_with("- [ ] only this\n"), "{text}");
@@ -202,14 +229,14 @@ mod tests {
             assert_eq!(flatten_headings(input), want, "{name}");
         }
         let ten_phases = "### 1. Phase\n- [ ] x\n".repeat(10);
-        let text = section(Some(&ten_phases));
+        let text = section(Some(&ten_phases), TurnEnd::SentBack);
         let after = &text[text.find("Must-do steps").unwrap()..];
         assert!(!after.contains('#'), "{after}");
     }
 
     #[test]
     fn every_when_has_an_example_that_reads_back_as_that_kind() {
-        let text = section(None);
+        let text = section(None, TurnEnd::SentBack);
         let examples: Vec<&str> = text
             .lines()
             .filter_map(|line| line.trim_start().strip_prefix("- ")?.split_once(": `- [ ] "))
@@ -235,7 +262,7 @@ mod tests {
 
     #[test]
     fn next_is_this_turn_only_and_waiting_work_moves_to_scheduled_before_a_stop() {
-        let text = section(None);
+        let text = section(None, TurnEnd::SentBack);
         assert!(text.contains("Next holds only what you do in this same turn"));
         assert!(text.contains("Work meant for later today gets today's date"));
         assert!(text.contains(
@@ -245,7 +272,7 @@ mod tests {
 
     #[test]
     fn the_ledger_is_required_and_dates_told_to_the_user_belong_in_scheduled() {
-        let text = section(None);
+        let text = section(None, TurnEnd::SentBack);
         assert!(text.contains("This ledger is required."));
         assert!(text.contains("A ledger or notes file of your own"));
         assert!(text.contains(
@@ -254,8 +281,25 @@ mod tests {
     }
 
     #[test]
+    fn what_happens_to_a_turn_with_no_ledger_is_told_per_cli_and_is_true_of_it() {
+        let sent_back = section(None, TurnEnd::of(Wiring::Claude));
+        assert!(sent_back.contains("is sent back to write one."));
+        assert!(!sent_back.contains("reminder"));
+        for wiring in [Wiring::Codex, Wiring::Gemini, Wiring::Copilot] {
+            let text = section(None, TurnEnd::of(wiring));
+            assert!(text.contains("gets a reminder pasted to you, to write one."), "{wiring:?}");
+            assert!(!text.contains("sent back"), "{wiring:?}");
+        }
+        for turn_end in [TurnEnd::SentBack, TurnEnd::Reminded] {
+            assert!(!section(None, turn_end).contains("{turn_end}"));
+        }
+    }
+
+    #[test]
     fn it_is_plain_ascii_and_names_both_tools() {
-        for text in [section(None), section(Some("- [ ] a\n"))] {
+        for text in
+            [section(None, TurnEnd::SentBack), section(Some("- [ ] a\n"), TurnEnd::Reminded)]
+        {
             assert!(text.is_ascii());
             assert!(text.contains("update_progress"));
             assert!(text.contains("get_progress"));
