@@ -66,8 +66,15 @@ const COPILOT_HOOK_EVENTS: [&str; 8] = [
 ];
 const COPILOT_PLUGIN_MANIFEST: &str = "plugin.json";
 const COPILOT_PLUGIN_HOOKS: &str = "hooks/hooks.json";
-/// Where the generated Gemini settings go, relative to the worktree.
-pub const GEMINI_SETTINGS_PATH: &str = ".gemini/settings.json";
+pub const GEMINI_SYSTEM_SETTINGS_ENV: &str = "GEMINI_CLI_SYSTEM_SETTINGS_PATH";
+pub const GEMINI_SYSTEM_DEFAULTS_ENV: &str = "GEMINI_CLI_SYSTEM_DEFAULTS_PATH";
+
+/// `defaults` keeps the system defaults file where Gemini read it before the settings moved.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct GeminiSettingsFiles {
+    pub settings: PathBuf,
+    pub defaults: PathBuf,
+}
 
 /// The local Tidewatch listener an agent reports to: hooks at `/hook/<agent>`, MCP at `/mcp`.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -123,6 +130,7 @@ pub struct LaunchCtx {
     pub copilot_instructions_dir: Option<PathBuf>,
     /// The plugin directory holding the tab's status hooks (Copilot), see `copilot_plugin_files`.
     pub copilot_plugin_dir: Option<PathBuf>,
+    pub gemini_settings: Option<GeminiSettingsFiles>,
     /// Directory holding the never-push helper, see `ensure_no_push_helper`.
     pub guard_bin_dir: Option<PathBuf>,
     /// The repo's default branch, the one branch the push guard refuses besides `main` and `master`.
@@ -216,7 +224,7 @@ pub fn launch_command(
     match agent.wiring {
         Wiring::Claude => claude_wiring(ctx, house_style, &mut args),
         Wiring::Codex => codex_wiring(agent, ctx, house_style, &mut args, &mut env),
-        Wiring::Gemini => gemini_wiring(house_style, &mut args, &mut env),
+        Wiring::Gemini => gemini_wiring(ctx, house_style, &mut args, &mut env),
         Wiring::Copilot => copilot_wiring(ctx, house_style, &mut args, &mut env),
         Wiring::Custom => {}
     }
@@ -264,11 +272,16 @@ fn claude_wiring(ctx: &LaunchCtx, house_style: Option<&Path>, args: &mut Vec<Str
 }
 
 fn gemini_wiring(
+    ctx: &LaunchCtx,
     house_style: Option<&Path>,
     args: &mut Vec<String>,
     env: &mut Vec<(String, String)>,
 ) {
     env.push(("GEMINI_CLI_TRUST_WORKSPACE".into(), "true".into()));
+    if let Some(files) = &ctx.gemini_settings {
+        env.push((GEMINI_SYSTEM_SETTINGS_ENV.into(), files.settings.display().to_string()));
+        env.push((GEMINI_SYSTEM_DEFAULTS_ENV.into(), files.defaults.display().to_string()));
+    }
     if let Some(dir) = house_style.and_then(Path::parent) {
         args.push(format!("--include-directories={}", dir.display()));
     }
@@ -486,15 +499,14 @@ pub fn copilot_plugin_files(listener: &HookListener) -> [(&'static str, String);
     ]
 }
 
-/// The project `.gemini/settings.json` for a Gemini tab: command hooks, the Tidewatch MCP server with
-/// `trust`, and a `context.fileName` list that keeps `GEMINI.md` and `AGENTS.md` next to the house
-/// style. `None` when the context asks for none of them.
-///
-/// The caller writes it into the worktree and adds `gemini_exclude_lines()` to the worktree's
-/// `info/exclude`. A repo that tracks its own `.gemini/settings.json` needs a merge instead.
+/// Gemini merges this system file over the repo's settings, so `base` (the system file already in place) is kept inside it.
 #[must_use]
-pub fn gemini_project_settings(profile: &Profile, ctx: &LaunchCtx) -> Option<String> {
-    let mut settings = serde_json::Map::new();
+pub fn gemini_system_settings(
+    profile: &Profile,
+    ctx: &LaunchCtx,
+    base: Option<&Value>,
+) -> Option<String> {
+    let mut ours = serde_json::Map::new();
     if let Some(listener) = &ctx.hooks {
         let command = curl_hook_command(&listener.hook_url("gemini"), &listener.bearer());
         let hook = json!({ "type": "command", "command": command });
@@ -502,9 +514,9 @@ pub fn gemini_project_settings(profile: &Profile, ctx: &LaunchCtx) -> Option<Str
             .iter()
             .map(|event| ((*event).to_owned(), json!([{ "hooks": [hook.clone()] }])))
             .collect();
-        settings.insert("hooks".into(), Value::Object(hooks));
+        ours.insert("hooks".into(), Value::Object(hooks));
         if ctx.mcp_config.is_some() {
-            settings.insert(
+            ours.insert(
                 "mcpServers".into(),
                 json!({ MCP_SERVER_NAME: {
                     "httpUrl": listener.mcp_url(),
@@ -522,7 +534,7 @@ pub fn gemini_project_settings(profile: &Profile, ctx: &LaunchCtx) -> Option<Str
         .map(|name| name.to_string_lossy().into_owned())
         .filter(|_| profile.house_style);
     if let Some(name) = house_name {
-        settings.insert(
+        ours.insert(
             "context".into(),
             json!({
                 "fileName": ["GEMINI.md", "AGENTS.md", name],
@@ -530,13 +542,34 @@ pub fn gemini_project_settings(profile: &Profile, ctx: &LaunchCtx) -> Option<Str
             }),
         );
     }
-    (!settings.is_empty()).then(|| Value::Object(settings).to_string())
+    if ours.is_empty() {
+        return None;
+    }
+    let mut merged = base.and_then(Value::as_object).cloned().unwrap_or_default();
+    for (key, mine) in ours {
+        let theirs = merged.remove(&key);
+        merged.insert(key, merge_gemini_section(theirs, mine));
+    }
+    Some(Value::Object(merged).to_string())
 }
 
-/// Lines for the worktree's `info/exclude` so the generated Gemini settings are never committed.
-#[must_use]
-pub fn gemini_exclude_lines() -> [&'static str; 1] {
-    ["/.gemini/settings.json"]
+fn merge_gemini_section(theirs: Option<Value>, mine: Value) -> Value {
+    let (Some(Value::Object(mut theirs)), Value::Object(mine)) = (theirs, mine.clone()) else {
+        return mine;
+    };
+    for (key, value) in mine {
+        let merged = match (theirs.remove(&key), value) {
+            (Some(Value::Array(mut before)), Value::Array(after)) => {
+                let fresh: Vec<Value> =
+                    after.into_iter().filter(|item| !before.contains(item)).collect();
+                before.extend(fresh);
+                Value::Array(before)
+            }
+            (_, value) => value,
+        };
+        theirs.insert(key, merged);
+    }
+    Value::Object(theirs)
 }
 
 /// Environment that routes every `git push` in the tab through the guard helper (D7).
@@ -722,6 +755,10 @@ mod tests {
             house_style: Some("/cfg/house-style.md".into()),
             copilot_instructions_dir: Some("/cfg/copilot".into()),
             copilot_plugin_dir: Some("/state/tab/copilot-plugin".into()),
+            gemini_settings: Some(GeminiSettingsFiles {
+                settings: "/state/tab/gemini-settings.json".into(),
+                defaults: "/etc/gemini-cli/system-defaults.json".into(),
+            }),
             guard_bin_dir: Some("/state/guard-bin".into()),
             env: vec![("PATH".into(), "/usr/bin:/bin".into())],
             ..worktree_ctx()
@@ -1062,9 +1099,26 @@ mod tests {
     }
 
     #[test]
+    fn gemini_reads_its_generated_settings_as_the_system_file_and_keeps_the_defaults_where_they_were()
+     {
+        let launch = run("gemini", &profile("gemini", Level::Plan), &full_ctx());
+        assert_eq!(
+            env_of(&launch, GEMINI_SYSTEM_SETTINGS_ENV),
+            Some("/state/tab/gemini-settings.json")
+        );
+        assert_eq!(
+            env_of(&launch, GEMINI_SYSTEM_DEFAULTS_ENV),
+            Some("/etc/gemini-cli/system-defaults.json")
+        );
+        let none = run("gemini", &profile("gemini", Level::Plan), &worktree_ctx());
+        assert_eq!(env_of(&none, GEMINI_SYSTEM_SETTINGS_ENV), None);
+        assert_eq!(env_of(&none, GEMINI_SYSTEM_DEFAULTS_ENV), None);
+    }
+
+    #[test]
     fn gemini_settings_carry_hooks_trusted_mcp_and_the_context_file_list() {
         let json: Value = serde_json::from_str(
-            &gemini_project_settings(&profile("gemini", Level::Plan), &full_ctx()).unwrap(),
+            &gemini_system_settings(&profile("gemini", Level::Plan), &full_ctx(), None).unwrap(),
         )
         .unwrap();
         for event in GEMINI_HOOK_EVENTS {
@@ -1088,20 +1142,51 @@ mod tests {
     #[test]
     fn gemini_settings_are_gated_and_empty_means_nothing_to_write() {
         let bare = worktree_ctx();
-        assert_eq!(gemini_project_settings(&profile("gemini", Level::Plan), &bare), None);
+        assert_eq!(gemini_system_settings(&profile("gemini", Level::Plan), &bare, None), None);
         let hooks_only = LaunchCtx { hooks: Some(listener()), ..worktree_ctx() };
         let json: Value = serde_json::from_str(
-            &gemini_project_settings(&profile("gemini", Level::Plan), &hooks_only).unwrap(),
+            &gemini_system_settings(&profile("gemini", Level::Plan), &hooks_only, None).unwrap(),
         )
         .unwrap();
         assert!(json.get("mcpServers").is_none());
         assert!(json.get("context").is_none());
         let mut style_off_profile = profile("gemini", Level::Plan);
         style_off_profile.house_style = false;
-        let style_off = gemini_project_settings(&style_off_profile, &full_ctx()).unwrap();
+        let style_off = gemini_system_settings(&style_off_profile, &full_ctx(), None).unwrap();
         assert!(!style_off.contains("fileName"));
-        assert_eq!(gemini_exclude_lines(), ["/.gemini/settings.json"]);
-        assert_eq!(GEMINI_SETTINGS_PATH, ".gemini/settings.json");
+    }
+
+    #[test]
+    fn gemini_settings_merge_into_the_system_file_that_was_in_place_and_keep_what_it_says() {
+        let base = json!({
+            "hooks": {
+                "BeforeTool": [{ "hooks": [{ "type": "command", "command": "audit" }] }],
+                "PreCompress": [{ "hooks": [{ "type": "command", "command": "keep" }] }],
+            },
+            "mcpServers": { "corp": { "httpUrl": "https://corp.example/mcp" } },
+            "context": { "fileName": ["CORP.md", "AGENTS.md"] },
+            "security": { "auth": { "selectedType": "oauth-personal" } },
+        });
+        let merged: Value = serde_json::from_str(
+            &gemini_system_settings(&profile("gemini", Level::Plan), &full_ctx(), Some(&base))
+                .unwrap(),
+        )
+        .unwrap();
+        let before_tool = merged["hooks"]["BeforeTool"].as_array().unwrap();
+        assert_eq!(before_tool.len(), 2);
+        assert_eq!(before_tool[0]["hooks"][0]["command"], "audit");
+        assert!(
+            before_tool[1]["hooks"][0]["command"].as_str().unwrap().contains("/hook/gemini"),
+            "{before_tool:?}"
+        );
+        assert_eq!(merged["hooks"]["PreCompress"], base["hooks"]["PreCompress"]);
+        assert_eq!(merged["mcpServers"]["corp"], base["mcpServers"]["corp"]);
+        assert_eq!(merged["mcpServers"]["tidewatch"]["trust"], true);
+        assert_eq!(
+            merged["context"]["fileName"],
+            json!(["CORP.md", "AGENTS.md", "GEMINI.md", "house-style.md"])
+        );
+        assert_eq!(merged["security"], base["security"]);
     }
 
     #[test]

@@ -9,7 +9,7 @@
 //! `CODEX_HOME` at a throwaway folder. Use a throwaway repo: the agent may write files in it.
 
 use std::io::Write as _;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::process::{Command, Stdio};
 use std::sync::mpsc::RecvTimeoutError;
 use std::time::{Duration, Instant};
@@ -17,7 +17,8 @@ use std::time::{Duration, Instant};
 use tidewatch_core::agents::{AgentTable, ArgList, Level, Wiring};
 use tidewatch_core::events::TabEvent;
 use tidewatch_core::launch::{
-    LaunchCtx, ensure_no_push_helper, gemini_project_settings, launch_command, mcp_config_json,
+    GeminiSettingsFiles, LaunchCtx, copilot_plugin_files, ensure_no_push_helper,
+    gemini_system_settings, launch_command, mcp_config_json,
 };
 use tidewatch_core::listener::{Listener, TabRegistration};
 use tidewatch_core::paths::TidewatchPaths;
@@ -68,7 +69,7 @@ fn main() {
     let guard_dir = home.path().join("guard");
     std::fs::create_dir_all(&guard_dir).expect("create the guard dir");
     ensure_no_push_helper(&guard_dir).expect("write the no-push helper");
-    let ctx = LaunchCtx {
+    let mut ctx = LaunchCtx {
         worktree: repo.clone(),
         guard_bin_dir: Some(guard_dir),
         worktree_tab: true,
@@ -78,9 +79,22 @@ fn main() {
         ..LaunchCtx::default()
     };
     if agent.wiring == Wiring::Gemini {
-        let settings = gemini_project_settings(&profile, &ctx).expect("gemini settings");
-        std::fs::create_dir_all(repo.join(".gemini")).expect("create .gemini");
-        std::fs::write(repo.join(".gemini/settings.json"), settings).expect("write settings");
+        let settings = gemini_system_settings(&profile, &ctx, None).expect("gemini settings");
+        let file = home.path().join("gemini-settings.json");
+        std::fs::write(&file, settings).expect("write settings");
+        ctx.gemini_settings = Some(GeminiSettingsFiles {
+            settings: file,
+            defaults: home.path().join("system-defaults.json"),
+        });
+    }
+    if agent.wiring == Wiring::Copilot {
+        let plugin = home.path().join("copilot-plugin");
+        for (name, text) in copilot_plugin_files(&hook) {
+            let file = plugin.join(name);
+            std::fs::create_dir_all(file.parent().expect("a parent")).expect("create the plugin");
+            std::fs::write(file, text).expect("write the plugin");
+        }
+        ctx.copilot_plugin_dir = Some(plugin);
     }
 
     let launch = launch_command(agent, &profile, &ctx).expect("a launch");
@@ -136,7 +150,6 @@ fn main() {
         seen.iter().any(|e| matches!(e, TabEvent::StageDone { summary } if summary == "hello"));
     println!("RESULT hook events: {hooks}, stage_done hello: {stage_done}");
     let _ = std::io::stdout().flush();
-    cleanup(&repo);
 }
 
 fn codex_exec_args(launch_args: &[String], prompt: &str) -> Vec<String> {
@@ -181,8 +194,4 @@ fn drain(
             Err(RecvTimeoutError::Timeout | RecvTimeoutError::Disconnected) => return,
         }
     }
-}
-
-fn cleanup(repo: &Path) {
-    let _ = std::fs::remove_file(repo.join(".gemini/settings.json"));
 }

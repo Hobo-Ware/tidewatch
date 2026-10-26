@@ -529,7 +529,7 @@ mod tests {
 
     use super::*;
     use crate::agents::{AgentOverride, ArgList};
-    use crate::launch::HookListener;
+    use crate::launch::{GeminiSettingsFiles, HookListener};
     use crate::resume_mode::Why;
 
     const ID_C: &str = "0c2cbc96-1111-4222-8333-444455556666";
@@ -1297,6 +1297,10 @@ mod tests {
             house_style: Some("/cfg/house-style.md".into()),
             copilot_instructions_dir: Some("/cfg/copilot".into()),
             copilot_plugin_dir: Some("/state/tab/copilot-plugin".into()),
+            gemini_settings: Some(GeminiSettingsFiles {
+                settings: "/state/tab/gemini-settings.json".into(),
+                defaults: "/etc/gemini-cli/system-defaults.json".into(),
+            }),
             guard_bin_dir: Some("/state/guard-bin".into()),
             protected_branch: Some("main".into()),
             guards: None,
