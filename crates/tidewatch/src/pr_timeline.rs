@@ -235,7 +235,7 @@ mod tests {
         };
         rows.tidewatch_said(vec![Record::new(
             Reason::AutoFix,
-            "auto-fix is on",
+            "Auto is on",
             "fix the build",
             None,
         )]);

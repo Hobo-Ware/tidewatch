@@ -6,7 +6,9 @@
 use std::path::PathBuf;
 use std::sync::PoisonError;
 
-use tidewatch_core::delivery::{Delivered, DeliveryError, DeliveryPlan, deliver};
+use tidewatch_core::delivery::{
+    Delivered, DeliveryError, DeliveryPlan, Opens, agent_body, deliver, pushed_as,
+};
 use tidewatch_core::note_paste;
 use tidewatch_core::notes::Notes;
 use tidewatch_core::pr::{self, MergeReport, NewNote, Posted, PullRequest};
@@ -14,6 +16,7 @@ use tidewatch_core::pr_lines::PrDiffLines;
 use tidewatch_core::tools::{GhError, Tools};
 
 use crate::delivery_card::Form;
+use crate::flow::LedgerNote;
 use crate::jobs::Jobs;
 use crate::pane_jobs::NOTES_TURN;
 use crate::post_confirm::{Kind, Plan};
@@ -39,10 +42,18 @@ pub(crate) enum Done {
     Probed { tab: u64, commits: Option<usize> },
     Built { tab: u64, result: Result<Box<DeliveryPlan>, DeliveryError> },
     Delivered { tab: u64, result: Result<Delivered, DeliveryError> },
+    AutoDelivered { tab: u64, result: Result<Delivered, Box<AutoFailed>> },
     PrFound { tab: u64, result: Result<Option<PullRequest>, GhError> },
     PrLines { tab: u64, lines: Option<Box<PrDiffLines>> },
     Pulled { tab: u64, result: Result<(Box<Notes>, MergeReport), GhError> },
     Posted { tab: u64, result: Result<(Posted, Box<Notes>), GhError> },
+}
+
+/// Auto could not push and open the draft: what it was about to send, when it got that far.
+#[derive(Debug)]
+pub(crate) struct AutoFailed {
+    pub(crate) form: Option<Form>,
+    pub(crate) error: DeliveryError,
 }
 
 /// Marks the chosen threads sent in the notes file and answers with the paste text. `agent` is the
@@ -116,11 +127,18 @@ pub(crate) fn probe(
     dir: PathBuf,
     branch: String,
     summary: Option<String>,
+    merged_head: Option<String>,
 ) {
     jobs.spawn(ctx, move || {
-        let commits = DeliveryPlan::build(&tools, &dir, &branch, summary.as_deref())
-            .ok()
-            .map(|plan| plan.commits.len());
+        let commits = DeliveryPlan::build_after(
+            &tools,
+            &dir,
+            &branch,
+            summary.as_deref(),
+            merged_head.as_deref(),
+        )
+        .ok()
+        .map(|plan| plan.commits.len());
         Done::Probed { tab, commits }
     });
 }
@@ -133,10 +151,18 @@ pub(crate) fn build_plan(
     dir: PathBuf,
     branch: String,
     summary: Option<String>,
+    merged_head: Option<String>,
 ) {
     jobs.spawn(ctx, move || Done::Built {
         tab,
-        result: DeliveryPlan::build(&tools, &dir, &branch, summary.as_deref()).map(Box::new),
+        result: DeliveryPlan::build_after(
+            &tools,
+            &dir,
+            &branch,
+            summary.as_deref(),
+            merged_head.as_deref(),
+        )
+        .map(Box::new),
     });
 }
 
@@ -149,8 +175,49 @@ pub(crate) fn deliver_plan(
 ) {
     jobs.spawn(ctx, move || Done::Delivered {
         tab,
-        result: deliver(&tools, &form.plan, &form.title, &form.body),
+        result: deliver(&tools, &form.plan, &form.title, &form.body, form.opens),
     });
+}
+
+/// What Auto needs to push the branch and open the draft: where, the agent's own summary when it
+/// wrote one, and what its ledger says to fall back on for the body.
+pub(crate) struct AutoPush {
+    pub(crate) dir: PathBuf,
+    pub(crate) branch: String,
+    pub(crate) summary: Option<String>,
+    pub(crate) ledger: Option<LedgerNote>,
+    pub(crate) merged_head: Option<String>,
+}
+
+pub(crate) fn auto_deliver(
+    jobs: &Jobs<Done>,
+    ctx: &egui::Context,
+    tab: u64,
+    tools: Tools,
+    push: AutoPush,
+) {
+    jobs.spawn(ctx, move || Done::AutoDelivered { tab, result: auto_run(&tools, &push) });
+}
+
+fn auto_run(tools: &Tools, push: &AutoPush) -> Result<Delivered, Box<AutoFailed>> {
+    let failed = |form, error| Box::new(AutoFailed { form, error });
+    let plan = DeliveryPlan::build_after(
+        tools,
+        &push.dir,
+        &push.branch,
+        push.summary.as_deref(),
+        push.merged_head.as_deref(),
+    )
+    .map_err(|error| failed(None, error))?;
+    let wrote_it = push.summary.is_some() && !plan.body.trim().is_empty();
+    let body = match (&push.ledger, wrote_it) {
+        (_, true) => plan.body.clone(),
+        (Some(note), false) => agent_body(&note.goal, &note.verified, &plan.commits),
+        (None, false) => agent_body("", &[], &plan.commits),
+    };
+    let form = Form { title: plan.title.clone(), body, plan, opens: Opens::Draft };
+    deliver(tools, &form.plan, &form.title, &form.body, form.opens)
+        .map_err(|error| failed(Some(form), error))
 }
 
 pub(crate) fn find_pr(
@@ -161,7 +228,10 @@ pub(crate) fn find_pr(
     dir: PathBuf,
     branch: String,
 ) {
-    jobs.spawn(ctx, move || Done::PrFound { tab, result: pr::find_open(&tools, &dir, &branch) });
+    jobs.spawn(ctx, move || {
+        let head = pushed_as(&tools, &dir, &branch);
+        Done::PrFound { tab, result: pr::find_open(&tools, &dir, &head) }
+    });
 }
 
 pub(crate) fn load_pr_lines(
@@ -250,6 +320,7 @@ mod tests {
     use super::*;
     use kelp_core::review::{Anchor, Comment, Side};
     use std::time::{Duration, Instant};
+    use tidewatch_core::delivery::Opens;
 
     fn wait(jobs: &Jobs<Done>) -> Done {
         let deadline = Instant::now() + Duration::from_secs(10);
@@ -521,5 +592,161 @@ mod tests {
         let error = result.err().unwrap().to_string();
         assert!(error.contains("line must be part of the diff"), "{error}");
         assert_eq!(Notes::load(&file), before);
+    }
+
+    #[cfg(unix)]
+    fn git(dir: &std::path::Path, args: &[&str]) -> String {
+        let out = std::process::Command::new("git")
+            .current_dir(dir)
+            .env("GIT_CONFIG_GLOBAL", "/dev/null")
+            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .env("GIT_AUTHOR_NAME", "t")
+            .env("GIT_AUTHOR_EMAIL", "t@example.com")
+            .env("GIT_COMMITTER_NAME", "t")
+            .env("GIT_COMMITTER_EMAIL", "t@example.com")
+            .args(args)
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "git {args:?}: {}", String::from_utf8_lossy(&out.stderr));
+        String::from_utf8_lossy(&out.stdout).into_owned()
+    }
+
+    #[cfg(unix)]
+    fn commit(dir: &std::path::Path, name: &str, subject: &str) {
+        std::fs::write(dir.join(name), subject).unwrap();
+        git(dir, &["add", name]);
+        git(dir, &["commit", "-q", "-m", subject]);
+    }
+
+    #[cfg(unix)]
+    struct Pushing {
+        _root: tempfile::TempDir,
+        work: PathBuf,
+        remote: PathBuf,
+        gh: PathBuf,
+        tools: Tools,
+    }
+
+    #[cfg(unix)]
+    fn pushing() -> Pushing {
+        let root = tempfile::tempdir().unwrap();
+        let remote = root.path().join("remote.git");
+        let work = root.path().join("work");
+        let gh = root.path().join("gh-bin");
+        for dir in [&remote, &work, &gh] {
+            std::fs::create_dir_all(dir).unwrap();
+        }
+        git(&remote, &["init", "-q", "--bare", "-b", "main"]);
+        git(&work, &["init", "-q", "-b", "main"]);
+        git(&work, &["remote", "add", "origin", remote.to_str().unwrap()]);
+        commit(&work, "readme.md", "chore: init");
+        git(&work, &["push", "-q", "-u", "origin", "main"]);
+        git(&work, &["remote", "set-head", "origin", "main"]);
+        git(&work, &["switch", "-q", "-c", "agent/jolly-dolphin"]);
+        let log = root.path().join("gh.log");
+        let tools = fake_gh(
+            &gh,
+            &format!(
+                "[ \"$1\" = '--version' ] && exit 0\n\
+                 echo \"$@\" >> '{log}'\n\
+                 prev=''\n\
+                 for a in \"$@\"; do [ \"$prev\" = '--body-file' ] && cat \"$a\" > '{log}.body'; prev=\"$a\"; done\n\
+                 echo https://github.com/o/r/pull/42",
+                log = log.display()
+            ),
+        );
+        Pushing { _root: root, work, remote, gh: log, tools }
+    }
+
+    #[cfg(unix)]
+    fn push_of(rig: &Pushing, summary: Option<&str>, merged_head: Option<String>) -> AutoPush {
+        AutoPush {
+            dir: rig.work.clone(),
+            branch: "agent/jolly-dolphin".into(),
+            summary: summary.map(str::to_owned),
+            ledger: Some(LedgerNote {
+                goal: "Add the harbor tide table".into(),
+                verified: vec!["tests pass".into()],
+            }),
+            merged_head,
+        }
+    }
+
+    #[cfg(unix)]
+    fn auto_done(rig: &Pushing, push: AutoPush) -> Result<Delivered, Box<AutoFailed>> {
+        let jobs = Jobs::new();
+        auto_deliver(&jobs, &egui::Context::default(), 1, rig.tools.clone(), push);
+        let Done::AutoDelivered { result, .. } = wait(&jobs) else { panic!("not an Auto answer") };
+        result
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn auto_opens_a_draft_with_a_body_from_the_ledger_after_pushing_the_branch() {
+        let rig = pushing();
+        commit(&rig.work, "tide.rs", "feat: add the tide table");
+        let delivered = auto_done(&rig, push_of(&rig, None, None)).unwrap();
+        assert_eq!(delivered.url, "https://github.com/o/r/pull/42");
+        let calls = std::fs::read_to_string(&rig.gh).unwrap();
+        assert!(calls.starts_with("pr create "), "{calls}");
+        assert!(calls.contains("--draft"), "{calls}");
+        assert!(calls.contains("--head agent/jolly-dolphin"), "{calls}");
+        let body = std::fs::read_to_string(format!("{}.body", rig.gh.display())).unwrap();
+        assert_eq!(
+            body,
+            "Add the harbor tide table\n\n## Verified\n\n- tests pass\n\n## Changes\n\n- feat: add the tide table"
+        );
+        assert!(git(&rig.remote, &["branch", "--list", "agent/jolly-dolphin"]).contains("jolly"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn auto_uses_the_agents_own_summary_for_the_body_when_it_wrote_one() {
+        let rig = pushing();
+        commit(&rig.work, "tide.rs", "feat: add the tide table");
+        auto_done(&rig, push_of(&rig, Some("Tide table\n\nThe harbor now lists tides."), None))
+            .unwrap();
+        let body = std::fs::read_to_string(format!("{}.body", rig.gh.display())).unwrap();
+        assert_eq!(body, "The harbor now lists tides.");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn auto_never_opens_a_pull_request_with_an_empty_body() {
+        let rig = pushing();
+        commit(&rig.work, "tide.rs", "feat: add the tide table");
+        let bare = AutoPush { ledger: None, ..push_of(&rig, None, None) };
+        auto_done(&rig, bare).unwrap();
+        let body = std::fs::read_to_string(format!("{}.body", rig.gh.display())).unwrap();
+        assert_eq!(body, "## Changes\n\n- feat: add the tide table");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn auto_sends_what_came_after_a_merge_to_a_new_branch_never_the_merged_one() {
+        let rig = pushing();
+        commit(&rig.work, "tide.rs", "feat: add the tide table");
+        git(&rig.work, &["push", "-q", "-u", "origin", "agent/jolly-dolphin"]);
+        let merged = git(&rig.work, &["rev-parse", "HEAD"]).trim().to_owned();
+        commit(&rig.work, "later.rs", "fix: after the merge");
+        auto_done(&rig, push_of(&rig, None, Some(merged.clone()))).unwrap();
+        let calls = std::fs::read_to_string(&rig.gh).unwrap();
+        assert!(calls.contains("--head agent/jolly-dolphin-2"), "{calls}");
+        assert!(calls.contains("--draft"), "{calls}");
+        assert_eq!(git(&rig.remote, &["rev-parse", "agent/jolly-dolphin"]).trim(), merged);
+        assert!(git(&rig.remote, &["branch", "--list", "agent/jolly-dolphin-2"]).contains("-2"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_failed_push_keeps_the_text_for_the_dialog_that_waits_for_the_owner() {
+        let rig = pushing();
+        commit(&rig.work, "tide.rs", "feat: add the tide table");
+        git(&rig.work, &["remote", "set-url", "origin", "/nowhere/at/all.git"]);
+        let failed = auto_done(&rig, push_of(&rig, None, None)).unwrap_err();
+        let form = failed.form.expect("the text it was about to send");
+        assert_eq!(form.opens, Opens::Draft);
+        assert_ne!(form.body.len(), 0);
+        assert!(matches!(failed.error, DeliveryError::PushFailed(_)), "{:?}", failed.error);
     }
 }

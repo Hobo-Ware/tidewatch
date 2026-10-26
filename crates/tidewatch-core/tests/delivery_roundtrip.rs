@@ -6,7 +6,9 @@ mod common;
 use common::{
     FakeGh, commit_file, git_available, ok, path_with_only_git, remote_branches, reply, repos,
 };
-use tidewatch_core::delivery::{Delivered, DeliveryError, DeliveryPlan, deliver, detect_base};
+use tidewatch_core::delivery::{
+    Delivered, DeliveryError, DeliveryPlan, Opens, deliver, detect_base,
+};
 use tidewatch_core::tools::Tools;
 
 const BRANCH: &str = "agent/brave-otter";
@@ -97,9 +99,10 @@ fn deliver_pushes_the_branch_then_opens_the_pull_request() {
     let tools = Tools::with_path(gh.path());
     let plan = DeliveryPlan::build(&tools, &r.work, BRANCH, None).unwrap();
 
-    let delivered = deliver(&tools, &plan, "Refresh tokens early", "Body\n\n- tested").unwrap();
+    let delivered =
+        deliver(&tools, &plan, "Refresh tokens early", "Body\n\n- tested", Opens::Ready).unwrap();
 
-    assert_eq!(delivered, Delivered { url: URL.into(), created: true });
+    assert_eq!(delivered, Delivered { url: URL.into(), head: BRANCH.into(), created: true });
     assert_eq!(remote_branches(&r.remote), [BRANCH, "main"]);
     assert_eq!(
         ok(&r.work, &["rev-parse", "--abbrev-ref", &format!("{BRANCH}@{{upstream}}")]).trim(),
@@ -138,7 +141,7 @@ fn deliver_sends_the_approved_text_not_the_proposal() {
     let tools = Tools::with_path(gh.path());
     let plan = DeliveryPlan::build(&tools, &r.work, BRANCH, None).unwrap();
     assert_ne!(plan.title, "My own title");
-    deliver(&tools, &plan, "  My own title  ", "").unwrap();
+    deliver(&tools, &plan, "  My own title  ", "", Opens::Ready).unwrap();
     assert_eq!(gh.calls_to("pr create")[0][7], "My own title");
     assert_eq!(gh.body_file_text().as_deref(), Some(""));
 }
@@ -154,7 +157,7 @@ fn a_repo_without_origin_is_no_remote_and_nothing_is_created() {
     let tools = Tools::with_path(gh.path());
     let plan = DeliveryPlan::build(&tools, &r.work, BRANCH, None).unwrap();
     ok(&r.work, &["remote", "remove", "origin"]);
-    assert_eq!(deliver(&tools, &plan, "t", "b"), Err(DeliveryError::NoRemote));
+    assert_eq!(deliver(&tools, &plan, "t", "b", Opens::Ready), Err(DeliveryError::NoRemote));
     assert_eq!(gh.calls_to("pr create"), Vec::<Vec<String>>::new());
 }
 
@@ -168,7 +171,7 @@ fn a_missing_gh_fails_before_anything_is_pushed() {
     let (_keep, path) = path_with_only_git();
     let tools = Tools::with_path(path);
     let plan = DeliveryPlan::build(&tools, &r.work, BRANCH, None).unwrap();
-    assert_eq!(deliver(&tools, &plan, "t", "b"), Err(DeliveryError::GhMissing));
+    assert_eq!(deliver(&tools, &plan, "t", "b", Opens::Ready), Err(DeliveryError::GhMissing));
     assert_eq!(remote_branches(&r.remote), ["main"]);
 }
 
@@ -187,7 +190,10 @@ fn a_gh_without_a_login_is_reported_after_the_push() {
     )]);
     let tools = Tools::with_path(gh.path());
     let plan = DeliveryPlan::build(&tools, &r.work, BRANCH, None).unwrap();
-    assert_eq!(deliver(&tools, &plan, "t", "b"), Err(DeliveryError::GhNotAuthenticated));
+    assert_eq!(
+        deliver(&tools, &plan, "t", "b", Opens::Ready),
+        Err(DeliveryError::GhNotAuthenticated)
+    );
     assert_eq!(remote_branches(&r.remote), [BRANCH, "main"]);
 }
 
@@ -207,7 +213,7 @@ fn a_rejected_push_stops_before_gh_creates_anything() {
     let gh = FakeGh::new(&[created(URL)]);
     let tools = Tools::with_path(gh.path());
     let plan = DeliveryPlan::build(&tools, &r.work, BRANCH, None).unwrap();
-    match deliver(&tools, &plan, "t", "b") {
+    match deliver(&tools, &plan, "t", "b", Opens::Ready) {
         Err(DeliveryError::PushRejected(message)) => assert!(message.contains("rejected")),
         other => panic!("expected a rejected push, got {other:?}"),
     }
@@ -230,8 +236,12 @@ fn an_existing_pull_request_is_updated_by_the_push_and_returned() {
     let tools = Tools::with_path(gh.path());
     let plan = DeliveryPlan::build(&tools, &r.work, BRANCH, None).unwrap();
     assert_eq!(
-        deliver(&tools, &plan, "t", "b"),
-        Ok(Delivered { url: "https://github.com/acme/web/pull/7".into(), created: false })
+        deliver(&tools, &plan, "t", "b", Opens::Ready),
+        Ok(Delivered {
+            url: "https://github.com/acme/web/pull/7".into(),
+            head: BRANCH.into(),
+            created: false,
+        })
     );
 }
 
@@ -250,7 +260,7 @@ fn a_remote_that_is_not_github_is_its_own_error() {
     )]);
     let tools = Tools::with_path(gh.path());
     let plan = DeliveryPlan::build(&tools, &r.work, BRANCH, None).unwrap();
-    assert_eq!(deliver(&tools, &plan, "t", "b"), Err(DeliveryError::NoGithubRemote));
+    assert_eq!(deliver(&tools, &plan, "t", "b", Opens::Ready), Err(DeliveryError::NoGithubRemote));
 }
 
 #[test]
@@ -264,7 +274,7 @@ fn another_gh_failure_keeps_ghs_message() {
     let tools = Tools::with_path(gh.path());
     let plan = DeliveryPlan::build(&tools, &r.work, BRANCH, None).unwrap();
     assert_eq!(
-        deliver(&tools, &plan, "t", "b"),
+        deliver(&tools, &plan, "t", "b", Opens::Ready),
         Err(DeliveryError::PrFailed("GraphQL: Base ref must be a branch".into()))
     );
 }
@@ -280,10 +290,91 @@ fn an_empty_title_and_an_empty_branch_are_refused_without_running_anything() {
     let tools = Tools::with_path(gh.path());
     let plan = DeliveryPlan::build(&tools, &r.work, BRANCH, None).unwrap();
     assert_eq!(plan.commits, []);
-    assert_eq!(deliver(&tools, &plan, "x", "y"), Err(DeliveryError::NothingToDeliver));
+    assert_eq!(
+        deliver(&tools, &plan, "x", "y", Opens::Ready),
+        Err(DeliveryError::NothingToDeliver)
+    );
     commit_file(&r.work, "a.rs", "a\n", "feat: a");
     let plan = DeliveryPlan::build(&tools, &r.work, BRANCH, None).unwrap();
-    assert_eq!(deliver(&tools, &plan, "   ", "y"), Err(DeliveryError::EmptyTitle));
+    assert_eq!(deliver(&tools, &plan, "   ", "y", Opens::Ready), Err(DeliveryError::EmptyTitle));
     assert_eq!(gh.calls(), Vec::<Vec<String>>::new());
     assert_eq!(remote_branches(&r.remote), ["main"]);
+}
+
+#[test]
+fn a_draft_is_asked_for_with_the_draft_flag_and_a_ready_pull_request_is_not() {
+    if !git_available() {
+        return;
+    }
+    for (opens, flag) in [(Opens::Draft, true), (Opens::Ready, false)] {
+        let r = repos();
+        branch_with_two_commits(&r.work);
+        let gh = FakeGh::new(&[created(URL)]);
+        let tools = Tools::with_path(gh.path());
+        let plan = DeliveryPlan::build(&tools, &r.work, BRANCH, None).unwrap();
+        deliver(&tools, &plan, "Title", "Body", opens).unwrap();
+        let create = gh.calls_to("pr create");
+        assert_eq!(create[0].iter().any(|arg| arg == "--draft"), flag, "{opens:?}");
+    }
+}
+
+#[test]
+fn a_branch_whose_pull_request_merged_goes_to_the_next_free_branch_name() {
+    if !git_available() {
+        return;
+    }
+    let r = repos();
+    branch_with_two_commits(&r.work);
+    ok(&r.work, &["push", "-q", "-u", "origin", BRANCH]);
+    let merged_head = ok(&r.work, &["rev-parse", "HEAD"]).trim().to_owned();
+    commit_file(&r.work, "later.rs", "fn later() {}\n", "fix: after the merge");
+    ok(&r.work, &["branch", &format!("{BRANCH}-2")]);
+    let gh = FakeGh::new(&[created(URL)]);
+    let tools = Tools::with_path(gh.path());
+
+    let plan =
+        DeliveryPlan::build_after(&tools, &r.work, BRANCH, None, Some(&merged_head)).unwrap();
+
+    assert_eq!(plan.branch, BRANCH);
+    assert_eq!(plan.head, format!("{BRANCH}-3"), "-2 is taken locally");
+    let subjects: Vec<_> = plan.commits.iter().map(|c| c.subject.as_str()).collect();
+    assert_eq!(subjects, ["fix: after the merge"], "only what came after the merge");
+
+    deliver(&tools, &plan, "Fix later", "Body", Opens::Draft).unwrap();
+
+    assert_eq!(remote_branches(&r.remote), [BRANCH, &format!("{BRANCH}-3"), "main"]);
+    let remote_old = ok(&r.remote, &["rev-parse", BRANCH]).trim().to_owned();
+    assert_eq!(remote_old, merged_head, "the merged branch is not moved");
+    let create = gh.calls_to("pr create");
+    let head = create[0].iter().position(|arg| arg == "--head").unwrap();
+    assert_eq!(create[0][head + 1], format!("{BRANCH}-3"));
+    assert_eq!(pushed_as_in(&tools, &r.work), format!("{BRANCH}-3"));
+}
+
+fn pushed_as_in(tools: &Tools, dir: &std::path::Path) -> String {
+    tidewatch_core::delivery::pushed_as(tools, dir, BRANCH)
+}
+
+#[test]
+fn a_branch_that_tracks_something_else_is_still_pushed_as_itself() {
+    if !git_available() {
+        return;
+    }
+    let r = repos();
+    ok(&r.work, &["switch", "-q", "-c", BRANCH, "origin/main"]);
+    ok(&r.work, &["branch", "-q", "--set-upstream-to=origin/main", BRANCH]);
+    assert_eq!(pushed_as_in(&Tools::system(), &r.work), BRANCH);
+}
+
+#[test]
+fn a_single_commit_with_no_body_still_gives_the_pull_request_a_body() {
+    if !git_available() {
+        return;
+    }
+    let r = repos();
+    ok(&r.work, &["switch", "-q", "-c", BRANCH]);
+    commit_file(&r.work, "a.rs", "a\n", "feat: only change");
+    let plan = DeliveryPlan::build(&Tools::system(), &r.work, BRANCH, None).unwrap();
+    assert_eq!(plan.title, "feat: only change");
+    assert_eq!(plan.body, "## Changes\n\n- feat: only change");
 }

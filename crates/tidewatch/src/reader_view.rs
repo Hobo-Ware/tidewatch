@@ -2872,7 +2872,7 @@ mod tests {
             at_ms,
             ..Record::new(
                 Reason::AutoFix,
-                "Auto-fix when idle is on for this PR",
+                "Auto is on for this PR",
                 text,
                 Some(Cap { n: 1, max: 3 }),
             )
@@ -2888,11 +2888,12 @@ mod tests {
         rows.push(Entry { role: Role::User, text: prompt.into(), tool: None, ts: Some(5_000) });
         let found = drawn_texts(&rows, 900.0);
         assert!(found.iter().any(|text| text == "Tidewatch"), "{found:?}");
-        assert!(found.iter().any(|text| text == "auto-fix"), "{found:?}");
+        assert!(found.iter().any(|text| text == "auto"), "{found:?}");
         assert!(found.iter().any(|text| text.starts_with("@codex commented")), "{found:?}");
         assert!(
-            found.iter().any(|text| text
-                == "Sent because Auto-fix when idle is on for this PR \u{b7} 1 of 3 auto-fixes"),
+            found
+                .iter()
+                .any(|text| text == "Sent because Auto is on for this PR \u{b7} 1 of 3 auto-fixes"),
             "{found:?}"
         );
         assert!(found.iter().all(|text| !text.starts_with("You")), "{found:?}");

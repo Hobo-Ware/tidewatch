@@ -14,6 +14,7 @@ use std::path::{Path, PathBuf};
 use crate::tools::{Finished, GhError, Tools, classify_gh, finish, run_gh};
 
 const REMOTE: &str = "origin";
+const FRESH_TRIES: u32 = 50;
 const FIELD_SEPARATOR: char = '\u{1f}';
 const RECORD_SEPARATOR: char = '\u{1e}';
 
@@ -32,15 +33,25 @@ pub struct DeliveryPlan {
     pub branch: String,
     /// The branch the pull request targets, without a remote name (`main`).
     pub base: String,
+    /// The branch the pull request is opened from on the remote: `branch` itself, or a fresh name
+    /// when the branch's last pull request already merged.
+    pub head: String,
     /// Commits on `branch` that `base` does not have, oldest first.
     pub commits: Vec<CommitLine>,
     pub title: String,
     pub body: String,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Opens {
+    Ready,
+    Draft,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Delivered {
     pub url: String,
+    pub head: String,
     /// False when the branch already had an open pull request: the push updated it.
     pub created: bool,
 }
@@ -111,13 +122,78 @@ impl DeliveryPlan {
         branch: &str,
         stage_summary: Option<&str>,
     ) -> Result<Self, DeliveryError> {
+        Self::build_after(tools, dir, branch, stage_summary, None)
+    }
+
+    /// `build`, for a branch whose pull request already merged at `merged_head`: only the commits
+    /// made after it count, and the pull request opens from a fresh branch name, never the merged one.
+    pub fn build_after(
+        tools: &Tools,
+        dir: &Path,
+        branch: &str,
+        stage_summary: Option<&str>,
+        merged_head: Option<&str>,
+    ) -> Result<Self, DeliveryError> {
         check_branch(branch)?;
         let base = detect_base(tools, dir).ok_or(DeliveryError::NoBase)?;
-        let range_start = compare_ref(tools, dir, &base);
+        let (range_start, head) = match merged_head {
+            Some(sha) => {
+                check_branch(sha)?;
+                (sha.to_owned(), fresh_branch(tools, dir, branch))
+            }
+            None => (compare_ref(tools, dir, &base), pushed_as(tools, dir, branch)),
+        };
         let commits = commits_between(tools, dir, &range_start, branch)?;
         let (title, body) = propose(branch, &commits, stage_summary);
-        Ok(Self { dir: dir.to_path_buf(), branch: branch.to_owned(), base, commits, title, body })
+        Ok(Self {
+            dir: dir.to_path_buf(),
+            branch: branch.to_owned(),
+            base,
+            head,
+            commits,
+            title,
+            body,
+        })
     }
+}
+
+/// The name a branch that was moved to a fresh remote branch is pushed as: the one it tracks, when
+/// that is `<branch>-<number>`. Anything else tracked (a branch started from `origin/main`) is not
+/// a place Tidewatch pushes to.
+#[must_use]
+pub fn pushed_as(tools: &Tools, dir: &Path, branch: &str) -> String {
+    let key = format!("branch.{branch}.merge");
+    let tracked = git_output(tools, dir, &["config", "--get", &key])
+        .ok()
+        .filter(|out| out.success)
+        .and_then(|out| out.stdout.trim().strip_prefix("refs/heads/").map(str::to_owned));
+    tracked
+        .filter(|name| {
+            name.strip_prefix(branch).and_then(|rest| rest.strip_prefix('-')).is_some_and(
+                |digits| !digits.is_empty() && digits.bytes().all(|b| b.is_ascii_digit()),
+            )
+        })
+        .unwrap_or_else(|| branch.to_owned())
+}
+
+/// `<branch>-2`, or the next number that no local branch, remote-tracking branch or branch on the
+/// remote has. Blocks on git, and on the network for the remote's own list.
+#[must_use]
+pub fn fresh_branch(tools: &Tools, dir: &Path, branch: &str) -> String {
+    let local = |name: &str| {
+        ["refs/heads", "refs/remotes/origin"].iter().any(|ns| {
+            git_succeeds(tools, dir, &["show-ref", "--verify", "--quiet", &format!("{ns}/{name}")])
+        })
+    };
+    let remote = |name: &str| {
+        git_output(tools, dir, &["ls-remote", "--exit-code", "--heads", REMOTE, name])
+            .is_ok_and(|out| out.success)
+    };
+    let tries = std::cell::Cell::new(0);
+    crate::branch_name::next_free(branch, |name| {
+        tries.set(tries.get() + 1);
+        tries.get() <= FRESH_TRIES && (local(name) || remote(name))
+    })
 }
 
 fn check_branch(branch: &str) -> Result<(), DeliveryError> {
@@ -244,7 +320,7 @@ fn strip_label<'a>(line: &'a str, label: &str) -> &'a str {
 fn commit_text(branch: &str, commits: &[CommitLine]) -> (String, String) {
     match commits {
         [] => (humanize_branch(branch), String::new()),
-        [only] => (only.subject.clone(), only.body.clone()),
+        [only] if !only.body.is_empty() => (only.subject.clone(), only.body.clone()),
         [first, ..] => {
             let list: Vec<String> = commits.iter().map(|c| format!("- {}", c.subject)).collect();
             (first.subject.clone(), format!("## Changes\n\n{}", list.join("\n")))
@@ -258,9 +334,29 @@ fn humanize_branch(branch: &str) -> String {
     chars.next().map_or_else(String::new, |first| first.to_uppercase().chain(chars).collect())
 }
 
-/// Pushes `plan.branch` with `git push -u origin <branch>`, then opens the pull request with
-/// `gh pr create --base <base> --head <branch> --title <title> --body-file <tmp>`. Blocks on the
-/// network. `title` and `body` are what the user approved.
+/// The pull request body Auto writes when the agent left no summary of its own: the ledger's goal,
+/// what it verified and the commits, never empty while there are commits.
+#[must_use]
+pub fn agent_body(goal: &str, verified: &[String], commits: &[CommitLine]) -> String {
+    let mut parts = Vec::new();
+    if !goal.trim().is_empty() {
+        parts.push(goal.trim().to_owned());
+    }
+    if !verified.is_empty() {
+        let list: Vec<String> = verified.iter().map(|item| format!("- {}", item.trim())).collect();
+        parts.push(format!("## Verified\n\n{}", list.join("\n")));
+    }
+    if !commits.is_empty() {
+        let list: Vec<String> = commits.iter().map(|c| format!("- {}", c.subject)).collect();
+        parts.push(format!("## Changes\n\n{}", list.join("\n")));
+    }
+    parts.join("\n\n")
+}
+
+/// Pushes `plan.branch` with `git push -u origin <branch>` (as `plan.head` when that differs), then
+/// opens the pull request with `gh pr create --base <base> --head <head> --title <title>
+/// --body-file <tmp>`, as a draft when `opens` says so. Blocks on the network. `title` and `body`
+/// are what the user approved.
 ///
 /// A branch that already has an open pull request is pushed and answers `created: false` with that
 /// pull request's URL.
@@ -269,6 +365,7 @@ pub fn deliver(
     plan: &DeliveryPlan,
     title: &str,
     body: &str,
+    opens: Opens,
 ) -> Result<Delivered, DeliveryError> {
     let title = title.trim();
     if title.is_empty() {
@@ -278,16 +375,23 @@ pub fn deliver(
         return Err(DeliveryError::NothingToDeliver);
     }
     check_branch(&plan.branch)?;
+    check_branch(&plan.head)?;
     run_gh(tools, &plan.dir, &["--version"])?;
     if !git_succeeds(tools, &plan.dir, &["remote", "get-url", REMOTE]) {
         return Err(DeliveryError::NoRemote);
     }
-    push(tools, &plan.dir, &plan.branch)?;
-    create_pull_request(tools, plan, title, body)
+    push(tools, &plan.dir, &plan.branch, &plan.head)?;
+    create_pull_request(tools, plan, title, body, opens)
 }
 
-fn push(tools: &Tools, dir: &Path, branch: &str) -> Result<(), DeliveryError> {
-    let out = git_output(tools, dir, &["push", "-u", REMOTE, branch])?;
+fn push(tools: &Tools, dir: &Path, branch: &str, head: &str) -> Result<(), DeliveryError> {
+    let refspec = format!("{branch}:refs/heads/{head}");
+    let args: &[&str] = if head == branch {
+        &["push", "-u", REMOTE, branch]
+    } else {
+        &["push", "-u", REMOTE, &refspec]
+    };
+    let out = git_output(tools, dir, args)?;
     if out.success {
         return Ok(());
     }
@@ -305,6 +409,7 @@ fn create_pull_request(
     plan: &DeliveryPlan,
     title: &str,
     body: &str,
+    opens: Opens,
 ) -> Result<Delivered, DeliveryError> {
     let mut body_file =
         tempfile::Builder::new().prefix("tidewatch-pr-").suffix(".md").tempfile().map_err(|e| {
@@ -316,22 +421,27 @@ fn create_pull_request(
         .map_err(|e| DeliveryError::PrFailed(format!("cannot write the pull request text: {e}")))?;
     let mut command = tools.gh(&plan.dir);
     command
-        .args(["pr", "create", "--base", &plan.base, "--head", &plan.branch, "--title", title])
+        .args(["pr", "create", "--base", &plan.base, "--head", &plan.head, "--title", title])
         .arg("--body-file")
         .arg(body_file.path());
+    if opens == Opens::Draft {
+        command.arg("--draft");
+    }
     let finished = finish(command).map_err(|e| match e.kind() {
         std::io::ErrorKind::NotFound => DeliveryError::GhMissing,
         _ => DeliveryError::PrFailed(format!("cannot run gh: {e}")),
     })?;
     if finished.success {
-        return last_url(&finished.stdout).map(|url| Delivered { url, created: true }).ok_or_else(
-            || DeliveryError::PrFailed("gh did not print the pull request URL".into()),
-        );
+        return last_url(&finished.stdout)
+            .map(|url| Delivered { url, head: plan.head.clone(), created: true })
+            .ok_or_else(|| {
+                DeliveryError::PrFailed("gh did not print the pull request URL".into())
+            });
     }
     if finished.stderr.contains("already exists")
         && let Some(url) = first_url(&finished.stderr)
     {
-        return Ok(Delivered { url, created: false });
+        return Ok(Delivered { url, head: plan.head.clone(), created: false });
     }
     Err(classify_gh(&finished).into())
 }
@@ -378,6 +488,25 @@ mod tests {
             propose("agent/brave-otter", &commits, None),
             ("feat: add refresh".into(), "Refresh tokens five minutes early.".into())
         );
+    }
+
+    #[test]
+    fn a_single_commit_without_a_body_gets_the_list_so_the_pull_request_is_never_empty() {
+        let (title, body) = propose("agent/x", &[commit("feat: add refresh", "")], None);
+        assert_eq!(title, "feat: add refresh");
+        assert_eq!(body, "## Changes\n\n- feat: add refresh");
+    }
+
+    #[test]
+    fn the_agent_body_says_the_goal_what_was_verified_and_the_commits() {
+        let commits = [commit("feat: a", ""), commit("fix: b", "")];
+        let verified = ["tests pass".to_owned(), " clippy clean ".to_owned()];
+        assert_eq!(
+            agent_body("Add the tide table", &verified, &commits),
+            "Add the tide table\n\n## Verified\n\n- tests pass\n- clippy clean\n\n## Changes\n\n- feat: a\n- fix: b"
+        );
+        assert_eq!(agent_body("", &[], &commits), "## Changes\n\n- feat: a\n- fix: b");
+        assert_eq!(agent_body("  ", &[], &[]), "");
     }
 
     #[test]

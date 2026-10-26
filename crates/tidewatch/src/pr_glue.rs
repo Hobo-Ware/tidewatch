@@ -15,7 +15,7 @@ use crate::jobs::Jobs;
 use crate::merge_cleanup::{Busy, Cleanup};
 use crate::pr_cards_view::Data;
 use crate::pr_jobs::{self, Done, Saver};
-use crate::pr_watch::{Facts, Out, STAYS, Watch};
+use crate::pr_watch::{Facts, Out, Push, STAYS, Watch, push_of};
 
 /// What the app must do for a tab.
 #[derive(Debug, PartialEq, Eq)]
@@ -97,9 +97,9 @@ impl Host {
         self.tabs.get(&tab)?.push_fix_due(self.default)
     }
 
-    /// Whether the delivery of a tab stays shut (see `pr_watch::delivery_shut`).
-    pub(crate) fn delivery_shut(&self, tab: u64, autonomous: bool) -> bool {
-        crate::pr_watch::delivery_shut(self.tabs.get(&tab), autonomous)
+    /// What the tab's delivery may do now (see `pr_watch::push_of`).
+    pub(crate) fn push(&self, tab: u64, autonomous: bool, meeseeks: bool) -> Push {
+        push_of(self.tabs.get(&tab), self.default, autonomous, meeseeks)
     }
 
     pub(crate) fn watch(&self, tab: u64) -> Option<&Watch> {

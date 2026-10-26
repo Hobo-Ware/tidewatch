@@ -6,7 +6,7 @@ use egui::{
     Ui, pos2, vec2,
 };
 use tidewatch_core::pr_status::{Decision, State, Summary, SummaryChecks, Tone};
-use tidewatch_core::prefs::{GithubPrefs, PrMode};
+use tidewatch_core::prefs::{AutoJob, GithubPrefs, PrMode};
 
 use crate::brand;
 use crate::pr_card_model::Icon;
@@ -20,7 +20,7 @@ const CARD_H: f32 = 36.0;
 const TITLE_MAX_W: f32 = 300.0;
 const PILL_H: f32 = 22.0;
 const GAP: f32 = 8.0;
-const POPOVER_W: f32 = 340.0;
+const POPOVER_W: f32 = 420.0;
 
 pub(crate) struct Strip<'a> {
     pub(crate) summary: &'a Summary,
@@ -68,7 +68,7 @@ pub(crate) fn pills(summary: &Summary) -> Vec<Pill> {
 pub(crate) fn mode_label(mode: PrMode) -> &'static str {
     match mode {
         PrMode::Ask => "Ask me",
-        PrMode::Auto => "Auto-fix",
+        PrMode::Auto => "Auto",
         PrMode::Off => "Off",
     }
 }
@@ -82,14 +82,45 @@ pub(crate) fn tone_ink(tone: Tone) -> Color32 {
     }
 }
 
+pub(crate) struct JobRow {
+    pub(crate) which: AutoJob,
+    pub(crate) label: &'static str,
+    pub(crate) caption: Option<&'static str>,
+}
+
+pub(crate) const JOBS: [JobRow; 4] = [
+    JobRow {
+        which: AutoJob::FailedChecks,
+        label: "Fix failed checks, with the failing log lines",
+        caption: None,
+    },
+    JobRow {
+        which: AutoJob::Reviews,
+        label: "Answer review comments and requested changes",
+        caption: None,
+    },
+    JobRow {
+        which: AutoJob::Conflicts,
+        label: "Fix merge conflicts with the base branch",
+        caption: None,
+    },
+    JobRow {
+        which: AutoJob::Push,
+        label: "Push and open the pull request",
+        caption: Some(
+            "When the agent is done and has commits. Opens a draft with the agent's summary as the body. The agent is told first.",
+        ),
+    },
+];
+
 const MODES: [(PrMode, &str); 3] =
-    [(PrMode::Ask, "Ask me"), (PrMode::Auto, "Auto-fix when idle"), (PrMode::Off, "Off")];
+    [(PrMode::Ask, "Ask me"), (PrMode::Auto, "Auto"), (PrMode::Off, "Off")];
 
 fn mode_help(mode: PrMode) -> &'static str {
     match mode {
         PrMode::Ask => "Ask me shows a card with one button.",
         PrMode::Auto => {
-            "Auto-fix sends the same message itself, only when the agent is idle, at most 3 times per PR."
+            "Auto does the ticked jobs by itself, only when the agent is idle, at most 3 times per PR. It tells the agent each time."
         }
         PrMode::Off => "Off stops looking at this pull request.",
     }
@@ -208,19 +239,16 @@ fn popover(chip: &Response, number: u64, policy: GithubPrefs) -> Option<GithubPr
                 changed = Some(GithubPrefs { mode: MODES[index].0, ..policy });
             }
             ui.label(egui::RichText::new(mode_help(policy.mode)).size(13.0).color(brand::SOFT));
-            let ticks = [
-                ("Failed checks, with the failing log lines", policy.failed_checks),
-                ("Review comments and requested changes", policy.reviews),
-                ("Merge conflicts with the base branch", policy.conflicts),
-            ];
-            for (index, (label, on)) in ticks.into_iter().enumerate() {
-                if tick(ui, label, on) {
-                    let flipped = !on;
-                    changed = Some(match index {
-                        0 => GithubPrefs { failed_checks: flipped, ..policy },
-                        1 => GithubPrefs { reviews: flipped, ..policy },
-                        _ => GithubPrefs { conflicts: flipped, ..policy },
-                    });
+            ui.label(
+                egui::RichText::new("AUTO MAY")
+                    .size(11.5)
+                    .extra_letter_spacing(0.8)
+                    .color(brand::FAINT),
+            );
+            for job in JOBS {
+                let on = policy.allows(job.which);
+                if tick(ui, job.label, job.caption, on) {
+                    changed = Some(policy.with(job.which, !on));
                 }
             }
             ui.label(
@@ -236,7 +264,25 @@ fn popover(chip: &Response, number: u64, policy: GithubPrefs) -> Option<GithubPr
     changed
 }
 
-fn tick(ui: &mut Ui, label: &str, on: bool) -> bool {
+fn tick(ui: &mut Ui, label: &str, caption: Option<&str>, on: bool) -> bool {
+    ui.scope(|ui| {
+        ui.spacing_mut().item_spacing.y = 2.0;
+        let clicked = tick_row(ui, label, on);
+        if let Some(text) = caption {
+            egui::Frame::new().inner_margin(egui::Margin { left: 26, ..egui::Margin::ZERO }).show(
+                ui,
+                |ui| {
+                    ui.set_width(ui.available_width());
+                    ui.label(egui::RichText::new(text).size(13.0).color(brand::MUTED));
+                },
+            );
+        }
+        clicked
+    })
+    .inner
+}
+
+fn tick_row(ui: &mut Ui, label: &str, on: bool) -> bool {
     let (rect, response) = ui.allocate_exact_size(vec2(ui.available_width(), 22.0), Sense::click());
     let boxed = Rect::from_min_size(pos2(rect.left(), rect.center().y - 8.0), vec2(16.0, 16.0));
     let painter = ui.painter();

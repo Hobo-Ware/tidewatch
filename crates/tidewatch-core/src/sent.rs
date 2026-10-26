@@ -14,7 +14,8 @@ const KEPT: usize = 200;
 /// The `because` of each sender: a clause that reads after "Sent because". It starts in lower case,
 /// except for a feature name listed in `NAMED`.
 pub mod because {
-    pub const AUTO_FIX: &str = "Auto-fix when idle is on for this PR";
+    pub const AUTO_FIX: &str = "Auto is on for this PR";
+    pub const AUTO_PUSH: &str = "Auto may push and open the pull request on this tab";
     pub const LEDGER_STOP: &str = "the ledger was not updated this turn";
     pub const LEDGER_FINAL: &str = "the ledger still said working at the end of the turn";
     pub const LEDGER_MISSING: &str = "this tab has not saved a ledger yet";
@@ -32,10 +33,11 @@ pub mod because {
     pub const BUILD_WORKFLOW: &str = "you ran Build workflow from this session";
     pub const BACKGROUND_JOB: &str = "a background job has reported no progress";
 
-    pub const NAMED: [&str; 1] = ["Auto-fix"];
+    pub const NAMED: [&str; 1] = ["Auto"];
 
-    pub const ALL: [&str; 17] = [
+    pub const ALL: [&str; 18] = [
         AUTO_FIX,
+        AUTO_PUSH,
         LEDGER_STOP,
         LEDGER_FINAL,
         LEDGER_MISSING,
@@ -59,6 +61,7 @@ pub mod because {
 #[serde(rename_all = "snake_case")]
 pub enum Reason {
     AutoFix,
+    AutoPush,
     MeeseeksCheck,
     DueToday,
     LedgerGuard,
@@ -75,7 +78,7 @@ impl Reason {
     #[must_use]
     pub fn tag(self) -> &'static str {
         match self {
-            Self::AutoFix => "auto-fix",
+            Self::AutoFix | Self::AutoPush => "auto",
             Self::MeeseeksCheck => "Meeseeks check",
             Self::DueToday => "due today",
             Self::LedgerGuard => "ledger check",
@@ -153,7 +156,7 @@ impl Record {
         self.reason.timed() && !self.typed
     }
 
-    /// `Sent because Auto-fix when idle is on for this PR · 1 of 3 auto-fixes`.
+    /// `Sent because Auto is on for this PR · 1 of 3 auto-fixes`.
     #[must_use]
     pub fn footer(&self) -> String {
         match self.cap {
@@ -283,14 +286,11 @@ mod tests {
         let plain = record(Reason::DueToday, "x", 0);
         assert_eq!(plain.footer(), "Sent because a rule fired");
         let capped = Record {
-            because: "Auto-fix when idle is on for this PR".into(),
+            because: "Auto is on for this PR".into(),
             cap: Some(Cap { n: 1, max: 3 }),
             ..record(Reason::AutoFix, "x", 0)
         };
-        assert_eq!(
-            capped.footer(),
-            "Sent because Auto-fix when idle is on for this PR \u{b7} 1 of 3 auto-fixes"
-        );
+        assert_eq!(capped.footer(), "Sent because Auto is on for this PR \u{b7} 1 of 3 auto-fixes");
         let sweep =
             Record { cap: Some(Cap { n: 2, max: 3 }), ..record(Reason::CommentGuard, "x", 0) };
         assert!(sweep.footer().ends_with("2 of 3 auto-sends"));

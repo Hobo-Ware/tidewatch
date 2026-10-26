@@ -230,13 +230,14 @@ mod tests {
     use egui::{Event, RawInput};
     use egui::{Key, Modifiers};
     use std::path::PathBuf;
-    use tidewatch_core::delivery::{CommitLine, Delivered, DeliveryPlan};
+    use tidewatch_core::delivery::{CommitLine, Delivered, DeliveryPlan, Opens};
 
     fn plan() -> DeliveryPlan {
         DeliveryPlan {
             dir: PathBuf::from("/w"),
             branch: "agent/brave-otter".into(),
             base: "main".into(),
+            head: "agent/brave-otter".into(),
             commits: vec![CommitLine {
                 sha: "abc1234".into(),
                 subject: "feat: x".into(),
@@ -248,7 +249,12 @@ mod tests {
     }
 
     fn editing() -> Delivery {
-        Delivery::Editing(Form { title: "Add x".into(), body: "text".into(), plan: plan() })
+        Delivery::Editing(Form {
+            title: "Add x".into(),
+            body: "text".into(),
+            plan: plan(),
+            opens: Opens::Ready,
+        })
     }
 
     fn context() -> egui::Context {
@@ -308,7 +314,12 @@ mod tests {
     #[test]
     fn escape_on_a_failure_goes_back_and_on_success_closes() {
         let mut failed = Delivery::Failed {
-            form: Form { title: "t".into(), body: String::new(), plan: plan() },
+            form: Form {
+                title: "t".into(),
+                body: String::new(),
+                plan: plan(),
+                opens: Opens::Ready,
+            },
             error: DeliveryError::GhMissing,
         };
         let ctx = context();
@@ -319,6 +330,7 @@ mod tests {
         );
         let mut done = Delivery::Delivered(Delivered {
             url: "https://github.com/o/r/pull/1".into(),
+            head: "agent/brave-otter".into(),
             created: true,
         });
         let ctx = context();
@@ -331,8 +343,12 @@ mod tests {
 
     #[test]
     fn a_delivery_in_flight_cannot_be_dismissed() {
-        let mut d =
-            Delivery::Delivering(Form { title: "t".into(), body: String::new(), plan: plan() });
+        let mut d = Delivery::Delivering(Form {
+            title: "t".into(),
+            body: String::new(),
+            plan: plan(),
+            opens: Opens::Ready,
+        });
         let ctx = context();
         frame(&ctx, &mut d, vec![]);
         assert_eq!(frame(&ctx, &mut d, vec![key(Key::Escape, Modifiers::NONE)]), None);

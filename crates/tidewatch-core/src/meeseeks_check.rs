@@ -115,7 +115,7 @@ pub fn hand_off(tools: &Tools, dir: &Path, branch: &str, summary: &str) -> Resul
         return Ok(Checked { detail, pr_url: Some(url) });
     }
     let plan = DeliveryPlan::build(tools, dir, branch, Some(summary)).map_err(|e| e.to_string())?;
-    let url = delivery::deliver(tools, &plan, &plan.title, &plan.body)
+    let url = delivery::deliver(tools, &plan, &plan.title, &plan.body, delivery::Opens::Ready)
         .map(|delivered| delivered.url)
         .map_err(|e| e.to_string())?;
     let detail = pr_label_of(&url).map_or_else(

@@ -50,7 +50,7 @@ fn the_pills_follow_the_checks_the_review_conflicts_and_comments() {
 #[test]
 fn the_chip_names_the_mode_in_few_words() {
     assert_eq!(mode_label(PrMode::Ask), "Ask me");
-    assert_eq!(mode_label(PrMode::Auto), "Auto-fix");
+    assert_eq!(mode_label(PrMode::Auto), "Auto");
     assert_eq!(mode_label(PrMode::Off), "Off");
     for (mode, _) in MODES {
         assert_ne!(mode_help(mode), "");
@@ -120,4 +120,23 @@ fn the_strip_draws_for_a_merged_closed_and_long_titled_pull_request() {
         let (seen, _) = frames(vec![vec![], vec![]], &strip);
         assert!(seen.iter().all(Option::is_none), "{state:?}");
     }
+}
+
+#[test]
+fn the_popover_says_auto_and_lists_the_four_jobs_with_push_last_and_explained() {
+    let labels: Vec<&str> = MODES.iter().map(|(_, label)| *label).collect();
+    assert_eq!(labels, ["Ask me", "Auto", "Off"]);
+    assert!(mode_help(PrMode::Auto).starts_with("Auto does the ticked jobs by itself"));
+    let jobs: Vec<&str> = JOBS.iter().map(|job| job.label).collect();
+    assert_eq!(
+        jobs,
+        [
+            "Fix failed checks, with the failing log lines",
+            "Answer review comments and requested changes",
+            "Fix merge conflicts with the base branch",
+            "Push and open the pull request",
+        ]
+    );
+    assert_eq!(JOBS.iter().filter(|job| job.caption.is_some()).count(), 1);
+    assert_eq!(JOBS[3].which, AutoJob::Push);
 }

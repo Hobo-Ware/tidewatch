@@ -11,8 +11,8 @@ use crate::pr_noise::is_noise;
 use crate::pr_trust::is_trusted;
 use crate::rfc3339;
 
-pub const FIELDS: &str = "number,title,url,state,mergeable,mergeStateStatus,reviewDecision,statusCheckRollup,reviews,comments,headRefOid,baseRefName,headRefName,author,createdAt,mergedAt,closedAt";
-pub const FIELDS_FIRST: &str = "number,title,url,state,mergeable,mergeStateStatus,reviewDecision,statusCheckRollup,reviews,comments,headRefOid,baseRefName,headRefName,author,createdAt,mergedAt,closedAt,commits";
+pub const FIELDS: &str = "number,title,url,state,mergeable,mergeStateStatus,reviewDecision,statusCheckRollup,reviews,comments,headRefOid,baseRefName,headRefName,author,createdAt,mergedAt,closedAt,isDraft";
+pub const FIELDS_FIRST: &str = "number,title,url,state,mergeable,mergeStateStatus,reviewDecision,statusCheckRollup,reviews,comments,headRefOid,baseRefName,headRefName,author,createdAt,mergedAt,closedAt,isDraft,commits";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -87,6 +87,7 @@ pub struct Snapshot {
     pub title: String,
     pub url: String,
     pub state: State,
+    pub draft: bool,
     pub conflicting: bool,
     pub decision: Decision,
     pub head: String,
@@ -172,6 +173,8 @@ pub enum Body {
         branch: String,
         #[serde(default)]
         commits: Option<usize>,
+        #[serde(default)]
+        draft: bool,
     },
     ChecksRunning {
         head: String,
@@ -367,6 +370,7 @@ pub fn parse_snapshot(json: &str) -> Result<Snapshot, String> {
         title: text("title"),
         url: text("url"),
         state,
+        draft: value["isDraft"].as_bool().unwrap_or(false),
         conflicting: value["mergeable"].as_str() == Some("CONFLICTING")
             || value["mergeStateStatus"].as_str() == Some("DIRTY"),
         decision: match value["reviewDecision"].as_str() {
@@ -524,6 +528,7 @@ pub fn diff(prev: Option<&Seen>, snap: &Snapshot, now_ms: i64) -> (Vec<Event>, S
                 base: snap.base.clone(),
                 branch: snap.branch.clone(),
                 commits: snap.commits,
+                draft: snap.draft,
             },
         });
     }

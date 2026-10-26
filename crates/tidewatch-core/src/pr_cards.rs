@@ -266,6 +266,7 @@ mod tests {
             base: "main".into(),
             branch: "b".into(),
             commits: None,
+            draft: false,
         }
     }
 

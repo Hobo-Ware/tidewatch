@@ -151,7 +151,7 @@ impl Sent {
         self.records.iter().map(|record| record.id)
     }
 
-    /// Whether an auto-fix record holds `text`, a message an older PR card also drew.
+    /// Whether an Auto record holds `text`, a message an older PR card also drew.
     pub(crate) fn told_auto_fix(&self, text: &str) -> bool {
         self.records
             .iter()

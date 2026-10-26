@@ -8,14 +8,15 @@ use std::time::Duration;
 use egui::Context;
 use stdusk_core::terminal::PtyTerm;
 use tidewatch_core::paths::sent_file_beside;
-use tidewatch_core::sent::{self, Record};
+use tidewatch_core::progress;
+use tidewatch_core::sent::{self, Reason, Record, because};
 use tidewatch_core::transcript::Source;
 
 use crate::delivery_card::Delivery;
 use crate::delivery_view::{self, DialogAction};
 use crate::dev_flow::{DevFlow, Fact, Ready, SendMode, Step};
 use crate::diff_pane::PaneAction;
-use crate::flow::{Flow, Gate, Out, TabFacts};
+use crate::flow::{Flow, Gate, LedgerNote, Out, TabFacts};
 use crate::flow_jobs::Which;
 use crate::note_send::ENTER_DELAY_SECS;
 use crate::notes_strip::StripAction;
@@ -25,6 +26,7 @@ use crate::post_confirm::{self, Answer, Plan};
 use crate::prompt_ghost;
 use crate::tab_view::TabView;
 use crate::tabs::Tabs;
+use crate::{pr_glue, progress_glue};
 use tidewatch_core::status::AgentStatus;
 
 pub(crate) fn unix_now() -> i64 {
@@ -37,6 +39,8 @@ pub(crate) fn unix_now() -> i64 {
 pub(crate) fn facts<T>(
     tabs: &Tabs<Pane<T>>,
     views: &HashMap<u64, TabView>,
+    pr: &pr_glue::Host,
+    progress: &progress_glue::Host,
     active: u64,
 ) -> Vec<TabFacts> {
     tabs.items()
@@ -55,6 +59,14 @@ pub(crate) fn facts<T>(
                 }
             };
             let pending = views.get(&tab.id).map_or(0, |view| view.notes.pending(&agent_id).len());
+            let meeseeks = agent.meeseeks.is_some();
+            let push = pr.push(tab.id, agent.autonomous(), meeseeks);
+            let ledger = progress.ledger(tab.id).map(|found| LedgerNote {
+                goal: found.ledger.goal.clone(),
+                verified: progress::real(&found.ledger.verified)
+                    .map(|entry| entry.text.clone())
+                    .collect(),
+            });
             Some(TabFacts {
                 id: tab.id,
                 active: tab.id == active,
@@ -66,8 +78,11 @@ pub(crate) fn facts<T>(
                 notes_file: agent.run.notes_file.clone(),
                 pending,
                 stage_summary,
-                auto_deliver: agent.autonomous() && agent.meeseeks.is_none(),
-                gate: Gate::Open,
+                ledger,
+                auto_push: push.auto,
+                fixes_push: agent.autonomous() && !meeseeks,
+                merged_head: push.merged_head,
+                gate: if push.shut { Gate::Shut } else { Gate::Open },
             })
         })
         .collect()
@@ -159,6 +174,25 @@ pub(crate) fn send_or_queue(
         ctx.request_repaint_after(Duration::from_secs_f64(0.5));
     }
     offer
+}
+
+/// Auto tells each agent it is about to be pushed before anything leaves the machine: the message
+/// goes through the one send gate, and only once it went does the branch get pushed. An agent that
+/// cannot be told at all leaves the bar for the owner.
+pub(crate) fn tell_agents(
+    tabs: &mut Tabs<Pane<PtyTerm>>,
+    flow: &mut Flow,
+    ctx: &Context,
+    now: f64,
+) {
+    for tell in flow.telling() {
+        let send = Send::auto(&tell.text(), Reason::AutoPush, because::AUTO_PUSH);
+        match offer_to_agent(tabs, flow, tell.tab, &send, ctx, now) {
+            Offer::Go => flow.told(tell.tab, ctx),
+            Offer::Wait => ctx.request_repaint_after(Duration::from_secs_f64(0.5)),
+            Offer::Paused | Offer::Refuse(_) => flow.not_told(tell.tab),
+        }
+    }
 }
 
 pub(crate) fn drain_outbox(
@@ -387,6 +421,38 @@ mod tests {
         assert_eq!(toasts.len(), 1);
         assert!(toasts[0].starts_with("Could not send the review: There is no running agent"));
         assert!(toasts[0].ends_with("Its notes are back in your draft"));
+        assert_eq!(flow.outbox.waiting_tabs(), Vec::<u64>::new());
+    }
+
+    fn done_facts(tab: u64) -> TabFacts {
+        TabFacts {
+            id: tab,
+            active: true,
+            status: AgentStatus::Done,
+            deliverable: true,
+            agent_id: "claude".into(),
+            dir: std::path::PathBuf::from("/w"),
+            branch: "agent/brave-otter".into(),
+            notes_file: None,
+            pending: 0,
+            stage_summary: None,
+            ledger: None,
+            auto_push: true,
+            fixes_push: true,
+            merged_head: None,
+            gate: Gate::Open,
+        }
+    }
+
+    #[test]
+    fn an_agent_that_cannot_be_told_is_not_pushed_and_its_bar_stays() {
+        let (mut tabs, id) = lone_agent_tab();
+        let mut flow = Flow::new(Tools::default());
+        flow.ready_for_push(&done_facts(id), 2);
+        tell_agents(&mut tabs, &mut flow, &Context::default(), 1.0);
+        let (push, delivery) = flow.push_state(id).unwrap();
+        assert_eq!(push, crate::flow::AutoPush::Spent);
+        assert_eq!(delivery, Delivery::Ready { commits: 2 });
         assert_eq!(flow.outbox.waiting_tabs(), Vec::<u64>::new());
     }
 
