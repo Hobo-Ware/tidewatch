@@ -63,6 +63,7 @@ impl<'a> Data<'a> {
             url: summary.map_or("", |summary| summary.url.as_str()),
             checks_green: summary.is_some_and(|summary| summary.checks == SummaryChecks::Passed),
             cleanup: &self.watch.cleanup,
+            busy: self.watch.busy,
         }
     }
 }

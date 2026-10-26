@@ -506,6 +506,17 @@ impl Ledger {
         }
     }
 
+    /// The agent has not said it is done and something is still open: a step, a question, or a
+    /// state of working, waiting or blocked.
+    #[must_use]
+    pub fn is_open(&self) -> bool {
+        if self.status.state == Some(State::Done) {
+            return false;
+        }
+        let counts = self.counts();
+        self.has_question() || self.status.state.is_some() || counts.done < counts.total
+    }
+
     fn phase_label(&self) -> Option<String> {
         let label = match self.current_phase() {
             Some(phase) => {
