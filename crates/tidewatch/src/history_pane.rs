@@ -517,16 +517,16 @@ mod tests {
         let mut card = Card::new(true);
         assert!(card.at("Progress").is_some() && card.at("History").is_some());
         assert!(card.at("This branch").is_none(), "Progress hides the scope switch");
-        assert!(card.at("Answer").is_some());
+        assert!(card.at("Something else").is_some());
         let history = card.at("History").unwrap();
         card.click(history);
         assert_eq!(card.state.chosen, Some(Side::History));
         assert!(card.at("This branch").is_some(), "History brings its own header back");
-        assert!(card.at("Answer").is_none());
+        assert!(card.at("Something else").is_none());
         let progress = card.at("Progress").unwrap();
         card.click(progress);
         assert_eq!(card.state.chosen, Some(Side::Progress));
-        assert!(card.at("Answer").is_some());
+        assert!(card.at("Something else").is_some());
     }
 
     #[test]
@@ -534,10 +534,10 @@ mod tests {
         let mut card = Card::new(true);
         card.ledger.updated_ms = Some(-480_000);
         card.frame(Vec::new());
-        assert!(card.at("Answer").is_some());
+        assert!(card.at("Something else").is_some());
         card.stale = true;
         card.frame(Vec::new());
-        assert!(card.at("Answer").is_none());
+        assert!(card.at("Something else").is_none());
         assert!(card.at("Pick one").is_none());
         let line = card.texts.iter().map(|(drawn, _)| drawn.as_str());
         assert!(
@@ -617,9 +617,9 @@ mod tests {
     }
 
     #[test]
-    fn answer_in_the_card_reaches_the_caller() {
+    fn something_else_in_the_card_reaches_the_caller() {
         let mut card = Card::new(true);
-        let answer = card.at("Answer").unwrap();
+        let answer = card.at("Something else").unwrap();
         let button = |pressed| Event::PointerButton {
             pos: answer,
             button: PointerButton::Primary,

@@ -1,7 +1,7 @@
 //! What the progress screens say about a ledger, as plain data: ring, bars, rows, tags (pure).
 
 use tidewatch_core::kind::Kind;
-use tidewatch_core::progress::{Entry, Ledger, Mark, Phase, PhaseState, State, real};
+use tidewatch_core::progress::{Choice, Entry, Ledger, Mark, Phase, PhaseState, State, real};
 use tidewatch_core::stages::{self, Group, Stage};
 
 use crate::progress_stale::fresh;
@@ -362,6 +362,28 @@ pub(crate) struct Look {
     pub(crate) line: String,
     pub(crate) tag: CardTag,
     pub(crate) questions: usize,
+    pub(crate) ask: Option<Ask>,
+}
+
+/// The one question a card can answer with a click: its text, why it matters and the agent's options.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct Ask {
+    pub(crate) text: String,
+    pub(crate) why: Option<String>,
+    pub(crate) options: Vec<Choice>,
+}
+
+/// The question to put answer chips on: only when exactly one waits, since a chip's text carries no
+/// question with it.
+pub(crate) fn ask_of(ledger: &Ledger) -> Option<Ask> {
+    match questions(ledger).as_slice() {
+        [only] => Some(Ask {
+            text: only.text.trim().to_owned(),
+            why: only.why.clone().filter(|why| !why.trim().is_empty()),
+            options: only.options.clone(),
+        }),
+        _ => None,
+    }
 }
 
 pub(crate) fn look(ledger: &Ledger, stale: bool) -> Look {
@@ -371,6 +393,7 @@ pub(crate) fn look(ledger: &Ledger, stale: bool) -> Look {
         line: card_line(ledger),
         tag: card_tag(ledger),
         questions: questions(ledger).len(),
+        ask: ask_of(ledger),
     }
 }
 

@@ -43,6 +43,18 @@ fn ledger_look(phase: &str, note: &str, done: usize, total: usize) -> crate::pro
     )
 }
 
+fn ask_look(question: &str, why: &str, options: &str) -> crate::progress_model::Look {
+    let why = if why.is_empty() { String::new() } else { format!(" -- {why}") };
+    let options =
+        if options.is_empty() { String::new() } else { format!(" -- options: {options}") };
+    look(
+        &Ledger::parse(&format!(
+            "# Goal\nx\n\n## Status\nstate: waiting\n\n## Needs you\n- {question}{why}{options}\n"
+        )),
+        false,
+    )
+}
+
 struct Spec {
     title: &'static str,
     place: &'static str,
@@ -213,6 +225,12 @@ pub(crate) fn build(working: usize) -> Fake {
         Some(Next { date: date(31), days: Some(5), what: "read back the 33 people".into() });
     let mut needs_rows: Vec<Row> =
         needs.iter().enumerate().map(|(n, s)| row(10 + n as u64, s)).collect();
+    needs_rows[0].look = Some(ask_look(
+        "Which loss should the recommendation model keep?",
+        "Run 14 beat the others on held-out data",
+        "Keep the new loss* | Keep the old loss | Blend both | Rerun the benchmark",
+    ));
+    needs_rows[2].look = Some(ask_look("Keep the old URLs as redirects?", "", ""));
     needs_rows[2].auto_pick = Some("Picks the recommended answer in 3:40".to_owned());
     let mut by_place: Vec<(&str, Vec<Row>)> =
         vec![("acme-api", vec![]), ("acme-web", vec![]), ("acme-workers", vec![])];

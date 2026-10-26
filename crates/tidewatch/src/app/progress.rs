@@ -24,9 +24,9 @@ use crate::overview_checklist::Source;
 use crate::pane::{AgentTab, Body};
 use crate::progress_glue::today;
 use crate::progress_model::look;
-use crate::progress_stale::{Live, is_stale};
+use crate::progress_stale::{Live, answered_since_save, is_stale};
 use crate::progress_state::Facts;
-use crate::{due_view, flow_glue};
+use crate::{due_view, flow_glue, reader_glue, reader_view};
 use tidewatch_core::status::{AgentStatus, Reason};
 
 const REDRAW_ASK: &str = "Call set_avatar again with a fresh idea for this task.";
@@ -314,6 +314,9 @@ impl Tidewatch {
     /// Whether the tab's ledger still asks the owner something the agent has moved on from.
     pub(super) fn ledger_stale(&self, tab: u64, now: f64) -> bool {
         let Some(known) = self.progress.ledger(tab) else { return false };
+        if answered_since_save(self.answered_asks.get(&tab), known.updated_ms) {
+            return true;
+        }
         let Some(agent) = self
             .tabs
             .items()
@@ -368,11 +371,44 @@ impl Tidewatch {
 
     /// The Answer button: the Reader in front, its reply box asking for the keyboard.
     pub(super) fn open_reply_box(&mut self) {
-        if let Some(agent) = self.tabs.active_pane_mut().agent.as_mut() {
+        let active = self.tabs.items()[self.tabs.active()].id;
+        self.open_reply_box_of(active);
+    }
+
+    pub(super) fn open_reply_box_of(&mut self, tab: u64) {
+        if let Some(agent) = self.tabs.get_mut(tab).and_then(|found| found.pane.agent.as_mut()) {
             agent.reader.set_wants_reader(true);
             agent.reader.view.request_reply_focus();
         }
-        self.with_active_view(crate::tab_view::TabView::back_to_terminal);
+        if let Some(view) = self.views.get_mut(&tab) {
+            view.back_to_terminal();
+        }
+    }
+
+    /// A ready answer chip: the exact text goes to the agent as the reply box would send it, unless
+    /// the reply box is shut. The ledger's question clears until the agent saves a new ledger.
+    pub(super) fn send_answer(&mut self, tab: u64, text: String, ctx: &egui::Context, now: f64) {
+        let shut = self
+            .tabs
+            .items()
+            .iter()
+            .find(|found| found.id == tab)
+            .and_then(|found| found.pane.agent.as_ref())
+            .and_then(reader_glue::answer_blocked);
+        if let Some(reason) = shut {
+            self.show_toast(reason, ctx);
+            return;
+        }
+        let saved = self.progress.ledger(tab).map(|known| known.updated_ms);
+        let sent = vec![reader_view::Action::Reply(text)];
+        if let Some(toast) = reader_glue::apply(sent, &mut self.tabs, tab, &mut self.flow, ctx, now)
+        {
+            self.show_toast(toast, ctx);
+        }
+        if let Some(saved) = saved {
+            self.answered_asks.insert(tab, saved);
+        }
+        ctx.request_repaint();
     }
 
     pub(super) fn progress_arrived(&mut self, tab: u64, ledger: Ledger, ctx: &egui::Context) {

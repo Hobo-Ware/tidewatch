@@ -11,6 +11,7 @@ pub(crate) const CARD_LINE: Color32 = Color32::from_rgb(0x22, 0x29, 0x37);
 pub(crate) const ITEM: Color32 = Color32::from_rgb(0x1a, 0x20, 0x29);
 pub(crate) const ITEM_LINE: Color32 = Color32::from_rgb(0x26, 0x2e, 0x3b);
 pub(crate) const BAR: Color32 = Color32::from_rgb(0x12, 0x16, 0x1e);
+pub(crate) const ANSWER_LINE: Color32 = Color32::from_rgb(0x33, 0x3c, 0x4b);
 pub(crate) const FIELD_LINE: Color32 = Color32::from_rgb(0x2f, 0x37, 0x47);
 pub(crate) const SEGMENT: Color32 = Color32::from_rgb(0x0f, 0x12, 0x19);
 pub(crate) const SEGMENT_LINE: Color32 = Color32::from_rgb(0x26, 0x2d, 0x39);

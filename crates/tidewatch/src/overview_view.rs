@@ -11,6 +11,7 @@ use stdusk_egui::colors;
 
 use crate::agenda::Day;
 use crate::agent_avatar::{self, Face};
+use crate::answer_chips::{self, Pick};
 use crate::app::strip::{ICON_BOX, ICON_GLYPH};
 use crate::brand;
 use crate::commands::Command;
@@ -20,6 +21,7 @@ use crate::overview::{
     fmt_elapsed, idle_line, repo_ink,
 };
 use crate::overview_rail;
+use crate::progress_model::Ask;
 use crate::progress_ring;
 use crate::progress_view::flow;
 use crate::reader_view::ellipsized;
@@ -45,6 +47,8 @@ const FACE_IN_RING: f32 = 28.0;
 const RING: f32 = 40.0;
 const FACE_GAP: f32 = 10.0;
 const ASK_ROW_GAP: f32 = 8.0;
+const WHY_H: f32 = 18.0;
+const ASK_CARD_MIN_W: f32 = 420.0;
 const BAR_GAP: f32 = 10.0;
 const BAR_H: f32 = 3.0;
 const NEEDS_H: f32 = CARD_PAD * 2.0 + ROW_H + ASK_ROW_GAP + 26.0;
@@ -154,6 +158,8 @@ pub(crate) struct Out {
     pub(crate) agenda: Option<usize>,
     /// The row of Poofed today that was clicked.
     pub(crate) poofed: Option<usize>,
+    /// The tab whose Needs you card had a ready answer chosen, and the choice.
+    pub(crate) answer: Option<(u64, Pick)>,
 }
 
 /// Draws the Overview in `area` and returns what the user clicked. `below` draws last in the rail.
@@ -369,7 +375,7 @@ impl Lane {
         }
     }
 
-    fn card_h(self) -> f32 {
+    fn min_h(self) -> f32 {
         match self {
             Self::Needs => NEEDS_H,
             Self::Working => WORKING_H,
@@ -377,8 +383,18 @@ impl Lane {
         }
     }
 
-    fn columns(self, width: f32) -> usize {
+    fn card_h(self, painter: &Painter, row: &Row, card_w: f32) -> f32 {
+        match (self, ask_of(row)) {
+            (Self::Needs, Some(ask)) => {
+                AskLayout::new(painter, ask, row.auto_pick.is_some(), card_w).card_h
+            }
+            _ => self.min_h(),
+        }
+    }
+
+    fn columns(self, width: f32, answering: bool) -> usize {
         let (min, max) = match self {
+            Self::Needs if answering => (ASK_CARD_MIN_W, 3),
             Self::Needs | Self::Working => (250.0, 3),
             Self::Idle => (300.0, 2),
         };
@@ -396,15 +412,9 @@ fn main_column(ui: &mut Ui, width: f32, board: &Board, state: &mut State, out: &
         return;
     }
     if !board.needs.is_empty() {
-        out.jump = out.jump.or(grid_section(
-            ui,
-            width,
-            Lane::Needs,
-            &board.needs,
-            board.needs.len(),
-            None,
-        )
-        .0);
+        let drawn = grid_section(ui, width, Lane::Needs, &board.needs, board.needs.len(), None);
+        out.jump = out.jump.or(drawn.jump);
+        out.answer = out.answer.take().or(drawn.answer);
         ui.add_space(SECTION_GAP);
     }
     if !board.working.is_empty() {
@@ -416,17 +426,17 @@ fn main_column(ui: &mut Ui, width: f32, board: &Board, state: &mut State, out: &
                 format!("Show all {}", board.working.len())
             }
         });
-        let (jump, toggled) =
+        let drawn =
             grid_section(ui, width, Lane::Working, shown, board.working.len(), more.as_deref());
-        out.jump = out.jump.or(jump);
-        if toggled {
+        out.jump = out.jump.or(drawn.jump);
+        if drawn.toggled {
             state.working_all = !state.working_all;
         }
         ui.add_space(SECTION_GAP);
     }
     if !board.idle.is_empty() {
-        out.jump =
-            out.jump.or(grid_section(ui, width, Lane::Idle, &board.idle, board.idle.len(), None).0);
+        let drawn = grid_section(ui, width, Lane::Idle, &board.idle, board.idle.len(), None);
+        out.jump = out.jump.or(drawn.jump);
         ui.add_space(SECTION_GAP);
     }
 }
@@ -496,6 +506,13 @@ pub(crate) fn ghost(ui: &mut Ui, at: Pos2, label: &str) -> bool {
     })
 }
 
+#[derive(Default)]
+struct GridOut {
+    jump: Option<u64>,
+    toggled: bool,
+    answer: Option<(u64, Pick)>,
+}
+
 fn grid_section(
     ui: &mut Ui,
     width: f32,
@@ -503,12 +520,20 @@ fn grid_section(
     rows: &[Row],
     total: usize,
     more: Option<&str>,
-) -> (Option<u64>, bool) {
+) -> GridOut {
     let inner_w = width - SECTION_PAD * 2.0;
-    let columns = lane.columns(inner_w);
+    let answering = lane == Lane::Needs && rows.iter().any(|row| ask_of(row).is_some());
+    let columns = lane.columns(inner_w, answering);
     let card_w = (inner_w - CARD_GAP * (columns - 1) as f32) / columns as f32;
-    let lines = rows.len().div_ceil(columns);
-    let grid_h = lines as f32 * lane.card_h() + lines.saturating_sub(1) as f32 * CARD_GAP;
+    let painter = ui.painter().clone();
+    let line_heights: Vec<f32> = rows
+        .chunks(columns)
+        .map(|line| {
+            line.iter().map(|row| lane.card_h(&painter, row, card_w)).fold(lane.min_h(), f32::max)
+        })
+        .collect();
+    let grid_h =
+        line_heights.iter().sum::<f32>() + line_heights.len().saturating_sub(1) as f32 * CARD_GAP;
     let more_h = if more.is_some() { CARD_GAP + Size::Compact.height() } else { 0.0 };
     let height = SECTION_PAD * 2.0 + SECTION_HEAD_H + HEAD_GAP + grid_h + more_h;
     let (rect, _) = ui.allocate_exact_size(vec2(width, height), Sense::hover());
@@ -527,22 +552,28 @@ fn grid_section(
         },
     );
     let top = rect.top() + SECTION_PAD + SECTION_HEAD_H + HEAD_GAP;
-    let mut jump = None;
-    for (index, row) in rows.iter().enumerate() {
-        let (line, column) = (index / columns, index % columns);
-        let at = pos2(
-            rect.left() + SECTION_PAD + column as f32 * (card_w + CARD_GAP),
-            top + line as f32 * (lane.card_h() + CARD_GAP),
-        );
-        let card_rect = Rect::from_min_size(at, vec2(card_w, lane.card_h()));
-        if card(ui, card_rect, row, lane) {
-            jump = Some(row.tab_id);
+    let mut out = GridOut::default();
+    let mut line_top = top;
+    for (line, cards) in rows.chunks(columns).enumerate() {
+        for (column, row) in cards.iter().enumerate() {
+            let at =
+                pos2(rect.left() + SECTION_PAD + column as f32 * (card_w + CARD_GAP), line_top);
+            let own_h = lane.card_h(&painter, row, card_w);
+            let card_rect = Rect::from_min_size(at, vec2(card_w, own_h));
+            let drawn = card(ui, card_rect, row, lane);
+            if drawn.clicked {
+                out.jump = Some(row.tab_id);
+            }
+            if out.answer.is_none() {
+                out.answer = drawn.answer.map(|pick| (row.tab_id, pick));
+            }
         }
+        line_top += line_heights[line] + CARD_GAP;
     }
-    let toggled = more.is_some_and(|label| {
+    out.toggled = more.is_some_and(|label| {
         ghost(ui, pos2(rect.left() + SECTION_PAD, top + grid_h + CARD_GAP), label)
     });
-    (jump, toggled)
+    out
 }
 
 /// An outline pill whose left edge is at `left`, centered on `mid`. Returns its right edge.
@@ -571,7 +602,38 @@ pub(crate) fn repo_label(painter: &Painter, left: f32, mid: f32, name: &str, max
     right
 }
 
-fn card(ui: &mut Ui, rect: Rect, row: &Row, lane: Lane) -> bool {
+#[derive(Default)]
+struct CardOut {
+    clicked: bool,
+    answer: Option<Pick>,
+}
+
+fn ask_of(row: &Row) -> Option<&Ask> {
+    row.look.as_ref()?.ask.as_ref()
+}
+
+/// Where the why line and the answer chips of a Needs you card sit, below its first two lines.
+struct AskLayout {
+    chips: Vec<answer_chips::Chip>,
+    row: answer_chips::Row,
+    chips_top: f32,
+    room: f32,
+    card_h: f32,
+}
+
+impl AskLayout {
+    fn new(painter: &Painter, ask: &Ask, counting: bool, card_w: f32) -> Self {
+        let room = (card_w - CARD_PAD * 2.0 - RING - FACE_GAP).max(40.0);
+        let chips = answer_chips::chips(&ask.options);
+        let row = answer_chips::Row::new(painter, &chips, room);
+        let lines = usize::from(ask.why.is_some()) + usize::from(counting);
+        let chips_top = CARD_PAD + ROW_H + WHY_H * lines as f32 + ASK_ROW_GAP;
+        let card_h = chips_top + row.height() + CARD_PAD;
+        Self { chips, row, chips_top, room, card_h }
+    }
+}
+
+fn card(ui: &mut Ui, rect: Rect, row: &Row, lane: Lane) -> CardOut {
     let resp = ui.interact(rect, ui.id().with(("overview_card", row.tab_id)), Sense::click());
     let view = card_view(row);
     let painter = ui.painter_at(rect);
@@ -646,7 +708,11 @@ fn card(ui: &mut Ui, rect: Rect, row: &Row, lane: Lane) -> bool {
         );
     }
     let line_mid = top + 8.0 + 8.0 + 8.0;
-    let (text, ink) = second_line(row, lane, &view);
+    let ask = ask_of(row).filter(|_| lane == Lane::Needs);
+    let (text, ink) = match ask {
+        Some(ask) => (ask.text.clone(), brand::NEEDS),
+        None => second_line(row, lane, &view),
+    };
     let repo_right = repo_label(&painter, text_x, line_mid, &row.place, (full * 0.45).max(60.0));
     let rest = ellipsized(
         &painter,
@@ -656,9 +722,12 @@ fn card(ui: &mut Ui, rect: Rect, row: &Row, lane: Lane) -> bool {
         (inner.right() - repo_right - 6.0).max(1.0),
     );
     painter.galley(pos2(repo_right + 6.0, line_mid - rest.size().y / 2.0), rest, ink);
-    let mut clicked = false;
+    let mut out = CardOut::default();
     match lane {
-        Lane::Needs => clicked = ask_row(ui, &painter, inner, row, &view.tag),
+        Lane::Needs => match ask {
+            Some(ask) => out.answer = ask_chips(ui, &painter, rect, &resp, (ask, row)),
+            None => out.clicked = ask_row(ui, &painter, inner, row, &view.tag),
+        },
         Lane::Working => {
             let bar = Rect::from_min_size(
                 pos2(inner.left(), inner.bottom() - BAR_H),
@@ -673,8 +742,41 @@ fn card(ui: &mut Ui, rect: Rect, row: &Row, lane: Lane) -> bool {
         }
         Lane::Idle => {}
     }
-    let tip = status_view::describe(&row.status);
-    clicked | resp.on_hover_cursor(egui::CursorIcon::PointingHand).on_hover_text(tip).clicked()
+    let tip = match ask {
+        Some(ask) => ask.why.as_deref().map_or_else(
+            || ask.text.clone(),
+            |why| format!("{}\n{}", ask.text, answer_chips::sentence(why)),
+        ),
+        None => status_view::describe(&row.status),
+    };
+    let card_clicked =
+        resp.on_hover_cursor(egui::CursorIcon::PointingHand).on_hover_text(tip).clicked();
+    out.clicked |= card_clicked || out.answer == Some(Pick::Other);
+    out
+}
+
+fn ask_chips(
+    ui: &mut Ui,
+    painter: &Painter,
+    rect: Rect,
+    resp: &egui::Response,
+    (ask, row): (&Ask, &Row),
+) -> Option<Pick> {
+    let layout = AskLayout::new(painter, ask, row.auto_pick.is_some(), rect.width());
+    let text_x = rect.left() + CARD_PAD + RING + FACE_GAP;
+    let why = ask.why.as_deref().map(answer_chips::sentence);
+    let lines = why.iter().chain(row.auto_pick.iter());
+    for (index, line) in lines.enumerate() {
+        let galley =
+            ellipsized(painter, line, FontId::proportional(12.5), brand::MUTED, layout.room);
+        let at = pos2(text_x, rect.top() + CARD_PAD + ROW_H + 1.0 + WHY_H * index as f32);
+        painter.galley(at, galley, brand::MUTED);
+    }
+    let origin = pos2(text_x, rect.top() + layout.chips_top);
+    let clicked = layout.row.show(ui, resp.id, origin, &layout.chips);
+    let card = answer_chips::Card { id: resp.id, rect, terminal_hidden: true };
+    let picked = clicked.or_else(|| answer_chips::key_pick(ui, &card, &layout.chips))?;
+    answer_chips::pick_of(&layout.chips, picked)
 }
 
 fn second_line(row: &Row, lane: Lane, view: &crate::overview::CardView) -> (String, Color32) {
@@ -1126,13 +1228,134 @@ mod tests {
         }
     }
 
+    const ASKING: &str = "# Goal\nx\n\n## Status\nstate: waiting\n\n## Needs you\n- Post the Slack follow-up -- the owner wanted it out today -- options: Post it | Skip it* | Draft only | Ask Sam\n";
+    const ASKING_PLAIN: &str = "# Goal\nx\n\n## Status\nstate: waiting\n\n## Needs you\n- Should the filters apply to archived items?\n";
+
+    fn asking(id: u64, ledger: &str) -> Row {
+        let mut asking = row(id, "asker", "acme-web", AgentStatus::NeedsYou(Reason::Question));
+        asking.look = Some(crate::progress_model::look(
+            &tidewatch_core::progress::Ledger::parse(ledger),
+            false,
+        ));
+        asking
+    }
+
+    fn key(number: egui::Key) -> Event {
+        Event::Key {
+            key: number,
+            physical_key: Some(number),
+            pressed: true,
+            repeat: false,
+            modifiers: egui::Modifiers::NONE,
+        }
+    }
+
+    #[test]
+    fn a_needs_you_question_draws_the_question_the_why_and_its_chips_in_place_of_answer() {
+        let mut screen = Screen::new(overview(vec![asking(7, ASKING)]));
+        let texts = screen.texts();
+        for want in ["Post it", "Skip it", "Draft only", "Ask Sam", "Something else", "1", "4"] {
+            assert!(has(&texts, want), "{want:?} in {texts:?}");
+        }
+        assert!(texts.iter().any(|text| text.contains("Post the Slack follow-up")), "{texts:?}");
+        assert!(has(&texts, "The owner wanted it out today"), "{texts:?}");
+        assert!(!has(&texts, "Answer"));
+    }
+
+    #[test]
+    fn a_question_with_no_options_offers_done_not_now_and_something_else() {
+        let mut screen = Screen::new(overview(vec![asking(7, ASKING_PLAIN)]));
+        let texts = screen.texts();
+        for want in ["Done", "Not now", "Something else"] {
+            assert!(has(&texts, want), "{want:?} in {texts:?}");
+        }
+    }
+
+    #[test]
+    fn clicking_an_option_answers_that_tab_with_its_exact_text_and_does_not_open_it() {
+        let mut screen = Screen::new(overview(vec![asking(7, ASKING)]));
+        let out = screen.click("Skip it");
+        assert_eq!(out.answer, Some((7, Pick::Answer("Skip it".to_owned()))));
+        assert_eq!(out.jump, None);
+    }
+
+    #[test]
+    fn something_else_opens_the_tab_and_asks_for_its_reply_box() {
+        let mut screen = Screen::new(overview(vec![asking(7, ASKING)]));
+        let out = screen.click("Something else");
+        assert_eq!((out.answer, out.jump), (Some((7, Pick::Other)), Some(7)));
+    }
+
+    #[test]
+    fn a_digit_answers_the_card_under_the_pointer_and_only_that_one() {
+        let mut screen = Screen::new(overview(vec![asking(7, ASKING), asking(8, ASKING_PLAIN)]));
+        screen.frame(vec![]);
+        let found = screen.frame(vec![]).1;
+        let rects: Vec<Rect> = found
+            .iter()
+            .filter(|(text, _)| text == "Something else")
+            .map(|(_, rect)| *rect)
+            .collect();
+        assert_eq!(rects.len(), 2);
+        let (first, second) = (rects[0].center(), rects[1].center());
+        let mut hits = Vec::new();
+        for over in [first, second] {
+            screen.frame(vec![Event::PointerMoved(over)]);
+            hits.push(screen.frame(vec![key(egui::Key::Num2)]).0.answer);
+        }
+        let want = |tab: u64, text: &str| Some((tab, Pick::Answer(text.to_owned())));
+        let mut expected = vec![want(7, "Skip it"), want(8, "Not now")];
+        expected.sort_by_key(|hit| hit.as_ref().map(|(tab, _)| *tab));
+        hits.sort_by_key(|hit| hit.as_ref().map(|(tab, _)| *tab));
+        assert_eq!(hits, expected);
+        screen.frame(vec![Event::PointerMoved(pos2(1.0, 890.0))]);
+        assert_eq!(screen.frame(vec![key(egui::Key::Num1)]).0.answer, None, "pointer over no card");
+    }
+
+    #[test]
+    fn a_question_card_keeps_the_auto_pick_countdown_of_an_agent_that_runs_on_its_own() {
+        let mut meeseeks = asking(7, ASKING);
+        meeseeks.auto_pick = Some("Picks the recommended answer in 3:40".to_owned());
+        let mut screen = Screen::new(overview(vec![meeseeks]));
+        let texts = screen.texts();
+        assert!(has(&texts, "Picks the recommended answer in 3:40"), "{texts:?}");
+        assert!(has(&texts, "The owner wanted it out today"));
+    }
+
+    #[test]
+    fn a_working_agent_never_shows_chips() {
+        let mut working = row(3, "busy", "acme-web", AgentStatus::Working);
+        working.look = asking(3, ASKING).look;
+        let mut screen = Screen::new(overview(vec![working]));
+        let texts = screen.texts();
+        assert!(!has(&texts, "Something else") && !has(&texts, "Skip it"), "{texts:?}");
+    }
+
+    #[test]
+    fn no_text_overlaps_in_a_question_card_at_any_window_width() {
+        let mut screen = Screen::new(overview(vec![asking(7, ASKING), asking(8, ASKING_PLAIN)]));
+        for width in [360.0, 700.0, 1000.0, 1440.0] {
+            screen.width = width;
+            screen.frame(vec![]);
+            let found = screen.frame(vec![]).1;
+            for (index, (a, a_rect)) in found.iter().enumerate() {
+                for (b, b_rect) in &found[index + 1..] {
+                    assert!(
+                        !a_rect.shrink(0.5).intersects(b_rect.shrink(0.5)),
+                        "{a:?} {a_rect:?} overlaps {b:?} {b_rect:?} at {width}"
+                    );
+                }
+            }
+        }
+    }
+
     #[test]
     fn cards_flow_into_columns_by_width() {
         let cases = [(240.0, 1), (520.0, 2), (800.0, 3), (2000.0, 3)];
         for (width, want) in cases {
-            assert_eq!(Lane::Working.columns(width), want, "{width}");
+            assert_eq!(Lane::Working.columns(width, false), want, "{width}");
         }
-        assert_eq!(Lane::Idle.columns(1000.0), 2);
-        assert_eq!(Lane::Idle.columns(400.0), 1);
+        assert_eq!(Lane::Idle.columns(1000.0, false), 2);
+        assert_eq!(Lane::Idle.columns(400.0, false), 1);
     }
 }

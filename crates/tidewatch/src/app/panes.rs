@@ -172,6 +172,10 @@ impl Tidewatch {
         let shown = history_pane::show(ui, areas.history, view, &mut self.avatars, side, panel);
         let graph_action = shown.graph;
         let answer = shown.progress == Some(progress_view::Action::Answer);
+        let picked = match &shown.progress {
+            Some(progress_view::Action::Pick(text)) => Some(text.clone()),
+            _ => None,
+        };
         let done_check = match shown.progress {
             Some(progress_view::Action::DoneCheck(action)) => Some(action),
             _ => None,
@@ -219,6 +223,9 @@ impl Tidewatch {
         }
         if answer {
             self.open_reply_box();
+        }
+        if let Some(text) = picked {
+            self.send_answer(active_id, text, ctx, ctx.input(|i| i.time));
         }
         if let Some(action) = done_check {
             self.apply_done_check(active_id, action, ctx, ctx.input(|i| i.time));

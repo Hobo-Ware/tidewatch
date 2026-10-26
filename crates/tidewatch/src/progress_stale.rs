@@ -29,6 +29,15 @@ pub(crate) fn is_stale(ledger: &Ledger, updated_ms: Option<i64>, live: Live) -> 
     live.turn_started_ms.is_some_and(|started| started > updated)
 }
 
+/// Whether the owner answered the ledger's question with a ready answer and the agent has not saved
+/// a ledger since: `answered_at` is the save time the ledger had then.
+pub(crate) fn answered_since_save(
+    answered_at: Option<&Option<i64>>,
+    updated_ms: Option<i64>,
+) -> bool {
+    answered_at == Some(&updated_ms)
+}
+
 /// The ledger as the screens should read it: unchanged, or with the question and the wait taken
 /// out while `stale`.
 pub(crate) fn fresh(ledger: &Ledger, stale: bool) -> Cow<'_, Ledger> {
@@ -59,6 +68,20 @@ mod tests {
 
     fn turn(at: i64) -> Live {
         Live { turn_started_ms: Some(at), ..Live::default() }
+    }
+
+    #[test]
+    fn a_ready_answer_hides_the_question_until_the_agent_saves_a_new_ledger() {
+        let cases = [
+            ("answered, same save", Some(&Some(SAVED)), Some(SAVED), true),
+            ("answered, saved again since", Some(&Some(SAVED)), Some(SAVED + 5), false),
+            ("never answered", None, Some(SAVED), false),
+            ("answered with no known save time, still none", Some(&None), None, true),
+            ("no known save time then, one now", Some(&None), Some(SAVED), false),
+        ];
+        for (name, answered, updated, want) in cases {
+            assert_eq!(answered_since_save(answered, updated), want, "{name}");
+        }
     }
 
     #[test]

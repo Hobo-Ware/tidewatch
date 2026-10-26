@@ -1,6 +1,6 @@
 //! The panel: pure choices, and headless frames for the clicks and for text that never overlaps.
 
-use egui::{Event, Modifiers, PointerButton, Pos2, RawInput, Rect, Shape, pos2, vec2};
+use egui::{Event, Modifiers, PointerButton, Pos2, RawInput, Rect, Sense, Shape, pos2, vec2};
 use tidewatch_core::done_check::{Kind, Line, Report, Status};
 use tidewatch_core::end_block::EndBlock;
 use tidewatch_core::progress::Ledger;
@@ -23,6 +23,7 @@ struct Panel {
     last_turn: Option<LastTurn>,
     state: TabState,
     size: egui::Vec2,
+    holds_keys: bool,
     texts: Vec<(String, Rect)>,
     action: Option<Action>,
     opened: Vec<String>,
@@ -37,6 +38,7 @@ impl Panel {
             last_turn: None,
             state: TabState::default(),
             size: vec2(width, 900.0),
+            holds_keys: false,
             texts: Vec::new(),
             action: None,
             opened: Vec::new(),
@@ -57,7 +59,13 @@ impl Panel {
         let (ledger, jobs, state, size) =
             (self.ledger.as_ref(), &self.jobs, &mut self.state, self.size);
         let last_turn = self.last_turn.clone();
+        let holds_keys = self.holds_keys;
         let output = self.ctx.run_ui(raw, |ui| {
+            if holds_keys {
+                let at = Rect::from_min_size(pos2(0.0, 880.0), vec2(10.0, 10.0));
+                let other = ui.interact(at, egui::Id::new("terminal-grid"), Sense::click());
+                other.request_focus();
+            }
             let input = Input {
                 ledger,
                 stale: false,
@@ -192,10 +200,10 @@ fn tags_flow_into_rows_and_a_row_break_never_leaves_the_edge() {
 }
 
 #[test]
-fn the_answer_button_asks_to_answer_and_nothing_else_does() {
+fn something_else_asks_for_the_reply_box_and_nothing_else_does() {
     let mut panel = Panel::new(LONG, 420.0);
     assert_eq!(panel.action, None);
-    let at = panel.center_of("Answer");
+    let at = panel.center_of("Something else");
     assert_eq!(panel.click(at), Some(Action::Answer));
 }
 
@@ -203,7 +211,7 @@ fn the_answer_button_asks_to_answer_and_nothing_else_does() {
 fn no_question_means_no_card_and_no_button() {
     let text = LONG.replace("## Needs you\n- Decide if accented letters should become ASCII (cafe). Current code keeps them -- it changes the output\n", "## Needs you\n- Nothing needs you.\n");
     let panel = Panel::new(&text, 420.0);
-    assert!(!panel.drawn("Answer") && !panel.drawn("?"));
+    assert!(!panel.drawn("Something else") && !panel.drawn("?"));
 }
 
 #[test]
@@ -425,10 +433,11 @@ fn ask_agent_to_fix_does_nothing_while_the_agent_is_busy() {
 }
 
 #[test]
-fn a_ledger_question_keeps_the_one_answer_button_and_the_last_turn_adds_none() {
+fn a_ledger_question_keeps_its_one_set_of_answers_and_the_last_turn_adds_none() {
     let mut panel = tall(LONG, 420.0, turn(None, Ok(())));
-    assert_eq!(panel.texts.iter().filter(|(text, _)| text == "Answer").count(), 1);
-    let at = panel.center_of("Answer");
+    assert_eq!(panel.texts.iter().filter(|(text, _)| text == "Something else").count(), 1);
+    assert!(!panel.drawn("Answer"));
+    let at = panel.center_of("Something else");
     assert_eq!(panel.click(at), Some(Action::Answer));
 }
 
@@ -469,6 +478,141 @@ fn no_last_turn_text_overlaps_or_leaves_the_card_at_any_width() {
         let mut last = turn(Some(blocked()), Ok(()));
         last.needs.push(long.to_owned());
         let panel = tall(SMALL, width, last);
+        for (index, (a, a_rect)) in panel.texts.iter().enumerate() {
+            assert!(a_rect.right() <= width + 0.5, "{a:?} runs past the card at {width}");
+            for (b, b_rect) in &panel.texts[index + 1..] {
+                assert!(
+                    !a_rect.shrink(0.5).intersects(b_rect.shrink(0.5)),
+                    "{a:?} {a_rect:?} overlaps {b:?} {b_rect:?} at {width}"
+                );
+            }
+        }
+    }
+}
+
+const ASKING: &str = "# Goal\nShip it\n\n## Status\nstate: waiting\n\n## Needs you\n- Post the Slack follow-up -- the owner wanted it out today -- options: Post it | Skip it* | Draft only | Ask Sam | Later\n";
+
+fn key(number: egui::Key) -> Event {
+    Event::Key {
+        key: number,
+        physical_key: Some(number),
+        pressed: true,
+        repeat: false,
+        modifiers: Modifiers::NONE,
+    }
+}
+
+#[test]
+fn a_question_with_options_draws_the_title_the_why_numbered_chips_and_something_else() {
+    let panel = Panel::new(ASKING, 420.0);
+    for text in [
+        "Post the Slack follow-up",
+        "The owner wanted it out today",
+        "Post it",
+        "Skip it",
+        "Draft only",
+        "Ask Sam",
+        "Later",
+        "Something else",
+        "1",
+        "2",
+        "3",
+        "4",
+    ] {
+        assert!(panel.drawn(text), "{text:?} not drawn in {:?}", panel.texts);
+    }
+    assert!(!panel.drawn("5") && !panel.drawn("Answer") && !panel.drawn("Done"));
+}
+
+#[test]
+fn the_chips_sit_under_the_title_text_and_the_first_one_lines_up_with_it() {
+    let panel = Panel::new(ASKING, 420.0);
+    let title = panel.texts.iter().find(|(text, _)| text == "Post the Slack follow-up").unwrap().1;
+    let why = panel.texts.iter().find(|(text, _)| text.starts_with("The owner")).unwrap().1;
+    let number = panel.texts.iter().find(|(text, _)| text == "1").unwrap().1;
+    assert!(title.bottom() <= why.top() + 0.5 && why.bottom() <= number.top());
+    assert_eq!(title.left(), why.left());
+    let chip_left = number.left() - 12.0;
+    assert!(
+        (chip_left - title.left()).abs() < 0.6,
+        "chip at {chip_left}, title at {}",
+        title.left()
+    );
+}
+
+#[test]
+fn clicking_an_option_sends_its_exact_text_and_something_else_asks_for_the_reply_box() {
+    for (label, want) in [
+        ("Post it", Action::Pick("Post it".to_owned())),
+        ("Skip it", Action::Pick("Skip it".to_owned())),
+        ("Later", Action::Pick("Later".to_owned())),
+        ("Something else", Action::Answer),
+    ] {
+        let mut panel = Panel::new(ASKING, 420.0);
+        let at = panel.center_of(label);
+        assert_eq!(panel.click(at), Some(want), "{label}");
+    }
+}
+
+#[test]
+fn a_question_with_no_options_offers_done_not_now_and_something_else() {
+    let mut panel = Panel::new(LONG, 420.0);
+    for text in ["Done", "Not now", "Something else", "1", "2"] {
+        assert!(panel.drawn(text), "{text:?} not drawn in {:?}", panel.texts);
+    }
+    let at = panel.center_of("Not now");
+    assert_eq!(panel.click(at), Some(Action::Pick("Not now".to_owned())));
+}
+
+#[test]
+fn two_waiting_questions_keep_the_plain_answer_button() {
+    let text = format!("{ASKING}- Another one -- options: A | B\n");
+    let mut panel = Panel::new(&text, 420.0);
+    assert!(panel.drawn("Answer") && !panel.drawn("Something else"));
+    let at = panel.center_of("Answer");
+    assert_eq!(panel.click(at), Some(Action::Answer));
+}
+
+#[test]
+fn a_digit_picks_while_the_pointer_is_over_the_card_and_nothing_else_holds_the_keys() {
+    let mut panel = Panel::new(ASKING, 420.0);
+    let over = panel.center_of("Post the Slack follow-up");
+    panel.frame(vec![Event::PointerMoved(over)]);
+    assert_eq!(panel.frame(vec![key(egui::Key::Num2)]), Some(Action::Pick("Skip it".to_owned())));
+    assert_eq!(panel.frame(vec![key(egui::Key::Num1)]), Some(Action::Pick("Post it".to_owned())));
+    assert_eq!(panel.frame(vec![key(egui::Key::Num5)]), None, "there is no fifth key");
+}
+
+#[test]
+fn a_digit_does_nothing_off_the_card_or_while_the_terminal_or_a_text_box_holds_the_keys() {
+    let mut off = Panel::new(ASKING, 420.0);
+    off.frame(vec![Event::PointerMoved(pos2(1.0, 890.0))]);
+    assert_eq!(off.frame(vec![key(egui::Key::Num1)]), None, "pointer away");
+
+    let mut terminal = Panel::new(ASKING, 420.0);
+    let over = terminal.center_of("Post the Slack follow-up");
+    terminal.holds_keys = true;
+    terminal.frame(Vec::new());
+    terminal.frame(vec![Event::PointerMoved(over)]);
+    assert_eq!(terminal.frame(vec![key(egui::Key::Num1)]), None, "something else holds the keys");
+}
+
+#[test]
+fn a_clicked_card_takes_the_digits_even_with_the_pointer_away() {
+    let mut panel = Panel::new(ASKING, 420.0);
+    let blank = pos2(385.0, panel.center_of("Post the Slack follow-up").y);
+    panel.click(blank);
+    panel.frame(vec![Event::PointerMoved(pos2(1.0, 890.0))]);
+    assert_eq!(
+        panel.frame(vec![key(egui::Key::Num3)]),
+        Some(Action::Pick("Draft only".to_owned()))
+    );
+}
+
+#[test]
+fn no_answer_chip_text_overlaps_or_leaves_the_card_at_any_width() {
+    for width in [200.0, 240.0, 300.0, 420.0, 640.0] {
+        let panel = Panel::new(ASKING, width);
         for (index, (a, a_rect)) in panel.texts.iter().enumerate() {
             assert!(a_rect.right() <= width + 0.5, "{a:?} runs past the card at {width}");
             for (b, b_rect) in &panel.texts[index + 1..] {
