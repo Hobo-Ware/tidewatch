@@ -79,9 +79,11 @@ pub(crate) struct JobLine {
 pub(crate) enum Block {
     Mono(String),
     Text(String),
+    /// What someone wrote on GitHub, drawn as markdown.
+    Markdown(String),
     Jobs(Vec<JobLine>),
     Log(Vec<String>),
-    /// `runner.rs:212` over the comment.
+    /// `runner.rs:212` over the comment, which is markdown.
     Comments(Vec<(String, String)>),
     Bars {
         done: usize,
@@ -286,7 +288,7 @@ pub(crate) fn look(index: usize, context: Context<'_>) -> Option<Look> {
                 ),
             );
             if !body.trim().is_empty() {
-                m.body.push(Block::Text(body.trim().to_owned()));
+                m.body.push(Block::Markdown(body.trim().to_owned()));
             }
             if !comments.is_empty() {
                 m.body.push(Block::Comments(comments.iter().map(place_and_text).collect()));
@@ -308,7 +310,7 @@ pub(crate) fn look(index: usize, context: Context<'_>) -> Option<Look> {
                 format!("@{author} commented"),
                 String::new(),
             );
-            m.body = vec![Block::Text(text.trim().to_owned())];
+            m.body = vec![Block::Markdown(text.trim().to_owned())];
             if asks {
                 m.buttons.push(ask("answer"));
                 let page = if url.is_empty() { context.url } else { url };

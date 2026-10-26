@@ -128,6 +128,12 @@ pub(crate) fn chat_text<R>(ui: &mut Ui, add: impl FnOnce(&mut Ui) -> R) -> R {
 /// URL in inline code) and no other kind of link able to open: a click on a link of another
 /// scheme, whichever way it was written, is dropped before it leaves the frame.
 pub(crate) fn agent_markdown(ui: &mut Ui, text: &str) {
+    web_markdown(ui, text, true);
+}
+
+/// `agent_markdown` for text that is not the agent's: `captions` turns the end block's headings into
+/// captions, which only an agent's message has.
+pub(crate) fn web_markdown(ui: &mut Ui, text: &str, captions: bool) {
     ui.scope(|ui| {
         let ink = ui.visuals().text_color();
         let visuals = ui.visuals_mut();
@@ -135,7 +141,7 @@ pub(crate) fn agent_markdown(ui: &mut Ui, text: &str) {
         visuals.widgets.noninteractive.fg_stroke.color = ink;
         visuals.hyperlink_color = brand::TEAL_TEXT;
         ui.style_mut().url_in_tooltip = true;
-        reader_markdown::show(ui, &links::markdown(text), true, Look::AGENT);
+        reader_markdown::show(ui, &links::markdown(text), captions, Look::AGENT);
     });
     ui.ctx().output_mut(|out| {
         out.commands.retain(

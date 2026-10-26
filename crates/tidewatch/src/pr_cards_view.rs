@@ -5,9 +5,10 @@ use std::collections::HashMap;
 
 use egui::{
     Align, Align2, Color32, CornerRadius, FontId, Frame, Layout, Margin, Painter, Pos2, Rect,
-    RichText, Sense, Shape, Stroke, StrokeKind, Ui, UiBuilder, epaint::text::LayoutJob,
+    RichText, Sense, Shape, Stroke, StrokeKind, TextStyle, Ui, UiBuilder, epaint::text::LayoutJob,
     epaint::text::TextFormat, pos2, vec2,
 };
+use tidewatch_core::pr_cards::Card;
 use tidewatch_core::pr_status::SummaryChecks;
 
 use crate::brand;
@@ -15,6 +16,7 @@ use crate::pr_card_model::{
     self as model, Block, Bubble, Button, CardAction, Context, Icon, Ink, JobLine, Look, Model,
 };
 use crate::pr_watch::{Handling, Watch, paused_note};
+use crate::reader_chat_view;
 use crate::reader_view::ellipsized;
 use crate::screen_kit::{Size, body, heading, mono, primary_button, quiet_button};
 
@@ -24,6 +26,8 @@ const ICON_BOX: f32 = 16.0;
 const INDENT: f32 = 26.0;
 const GUESS_H: f32 = 110.0;
 const BARS_GAP: f32 = 8.0;
+const TEXT_PX: f32 = 14.0;
+const CODE_PX: f32 = 12.5;
 
 /// What the cards of a tab are drawn from.
 #[derive(Clone, Copy, Debug)]
@@ -100,9 +104,11 @@ fn ink_color(ink: Ink) -> Color32 {
 
 /// Draws the card at `index` of the timeline and returns the click it got.
 pub(crate) fn card(ui: &mut Ui, data: &Data<'_>, index: usize) -> Option<CardAction> {
-    let at_ms = data.cards().get(index)?.at_ms;
+    let Card { id, at_ms, .. } = data.cards().get(index)?;
     match model::look(index, data.context())? {
-        Look::Card(card) => draw_card(ui, &card, &model::age(data.now_ms, at_ms)),
+        Look::Card(card) => {
+            ui.push_id(id, |ui| draw_card(ui, &card, &model::age(data.now_ms, *at_ms))).inner
+        }
         Look::Bubble(bubble) => {
             draw_bubble(ui, &bubble);
             None
@@ -202,6 +208,7 @@ fn draw_block(ui: &mut Ui, block: &Block) {
         Block::Text(text) => {
             ui.label(RichText::new(text).size(14.0).color(brand::STEP_TEXT));
         }
+        Block::Markdown(text) => github_markdown(ui, text),
         Block::Jobs(jobs) => {
             Frame::new()
                 .fill(brand::SUNKEN)
@@ -219,6 +226,16 @@ fn draw_block(ui: &mut Ui, block: &Block) {
         Block::Comments(comments) => comment_list(ui, comments),
         Block::Bars { done, total } => bars(ui, *done, *total),
     }
+}
+
+fn github_markdown(ui: &mut Ui, md: &str) {
+    ui.scope(|ui| {
+        let styles = &mut ui.style_mut().text_styles;
+        styles.insert(TextStyle::Body, FontId::proportional(TEXT_PX));
+        styles.insert(TextStyle::Monospace, FontId::monospace(CODE_PX));
+        ui.visuals_mut().override_text_color = Some(brand::STEP_TEXT);
+        reader_chat_view::web_markdown(ui, md, false);
+    });
 }
 
 fn job_row(ui: &mut Ui, job: &JobLine) {
@@ -293,7 +310,7 @@ fn comment_list(ui: &mut Ui, comments: &[(String, String)]) {
                     ui.set_width(ui.available_width());
                     ui.spacing_mut().item_spacing.y = 3.0;
                     ui.label(RichText::new(place).monospace().size(12.0).color(brand::MUTED));
-                    ui.label(RichText::new(text).size(14.0).color(brand::TEXT));
+                    github_markdown(ui, text);
                 });
             }
         });
