@@ -95,6 +95,7 @@ mod rfc3339;
 pub mod run_marker;
 pub mod runner;
 pub mod schedule;
+pub mod sent;
 pub mod session;
 pub mod session_id;
 pub mod settings_sync;

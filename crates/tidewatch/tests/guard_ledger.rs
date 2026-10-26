@@ -186,3 +186,37 @@ fn a_ledger_written_this_turn_that_still_says_working_is_asked_for_its_final_sta
     std::fs::write(lab.ledger(), "# Goal\ng\n\n## Status\nstate: waiting\n").unwrap();
     assert_eq!(lab.stop(&transcript, false).status.code(), Some(0), "a stopped state ends it");
 }
+
+#[test]
+fn the_guard_leaves_one_record_per_ask_for_the_reader() {
+    let lab = Lab::new();
+    lab.start_turn();
+    let transcript = lab.transcript(&[USER, CALL, RESULT, SAY]);
+    let file = lab.tab_dir().join("tidewatch-sent.jsonl");
+    assert_eq!(tidewatch_core::sent::load(&file), []);
+
+    assert_eq!(lab.stop(&transcript, false).status.code(), Some(2));
+    assert_eq!(lab.stop(&transcript, false).status.code(), Some(0));
+
+    let records = tidewatch_core::sent::load(&file);
+    assert_eq!(records.len(), 1);
+    assert_eq!(records[0].reason, tidewatch_core::sent::Reason::LedgerGuard);
+    assert!(records[0].text.starts_with("LEDGER GUARD - "), "{}", records[0].text);
+    assert_eq!(records[0].text, tidewatch_core::guard_ledger::MESSAGE);
+}
+
+#[test]
+fn the_final_state_ask_leaves_its_own_record() {
+    let lab = Lab::new();
+    lab.start_turn();
+    std::fs::write(lab.ledger(), "# Goal\ng\n\n## Status\nstate: working\n").unwrap();
+    let transcript = lab.transcript(&[USER, CALL, RESULT, SAY]);
+    assert_eq!(lab.stop(&transcript, false).status.code(), Some(2));
+    assert_eq!(lab.stop(&transcript, false).status.code(), Some(0));
+
+    let records = tidewatch_core::sent::load(&lab.tab_dir().join("tidewatch-sent.jsonl"));
+    assert_eq!(records.len(), 1);
+    assert_eq!(records[0].reason, tidewatch_core::sent::Reason::LedgerGuard);
+    assert_eq!(records[0].because, tidewatch_core::sent::because::LEDGER_FINAL);
+    assert_eq!(records[0].text, tidewatch_core::guard_ledger::FINAL_STATE_MESSAGE);
+}

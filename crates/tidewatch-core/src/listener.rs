@@ -34,7 +34,9 @@ use crate::launch::HookListener;
 use crate::mcp::{AskWait, McpReply, ToolCtx, handle_post};
 use crate::paths::{
     TidewatchPaths, avatar_asked_file_beside, avatar_file_beside, progress_file_beside,
+    sent_file_beside,
 };
+use crate::sent::{self, Reason, Record, because};
 use crate::status::parse_hook;
 use crate::{progress_store, prompt_answer};
 
@@ -431,13 +433,44 @@ fn prompt_reply(
     let mut contexts = Vec::new();
     if avatar_due(shared, entry, on_prompt) {
         contexts.push(avatar_ask::CONTEXT.to_owned());
+        tell(entry, Reason::Avatar, because::AVATAR_ASK, avatar_ask::CONTEXT);
     }
     let ledger_line = match progress_store::load(&progress_file_beside(&entry.notes_file)) {
         Some(ledger) => prompt_answer::ledger_context(&ledger),
         None => Some(prompt_answer::MISSING_LEDGER_CONTEXT.to_owned()),
     };
-    contexts.extend(ledger_line);
+    if let Some(line) = ledger_line {
+        let one_off = match line.as_str() {
+            prompt_answer::LEDGER_CONTEXT => Some(because::LEDGER_NUDGE),
+            prompt_answer::MISSING_LEDGER_CONTEXT => Some(because::LEDGER_MISSING),
+            _ => None,
+        };
+        if let Some(why) = one_off
+            && !told_since_last_save(entry, &line)
+        {
+            tell(entry, Reason::LedgerGuard, why, &line);
+        }
+        contexts.push(line);
+    }
     prompt_answer::answer(&contexts.iter().map(String::as_str).collect::<Vec<_>>())
+}
+
+fn told_since_last_save(entry: &Entry, text: &str) -> bool {
+    let saved = std::fs::metadata(progress_file_beside(&entry.notes_file))
+        .and_then(|meta| meta.modified())
+        .ok()
+        .and_then(|at| at.duration_since(UNIX_EPOCH).ok())
+        .map_or(0, |since| i64::try_from(since.as_millis()).unwrap_or(i64::MAX));
+    sent::load(&sent_file_beside(&entry.notes_file))
+        .iter()
+        .rev()
+        .find(|record| record.reason == Reason::LedgerGuard && record.text == text)
+        .is_some_and(|last| last.at_ms >= saved)
+}
+
+fn tell(entry: &Entry, reason: Reason, because: &str, text: &str) {
+    let record = Record::new(reason, because, text, None);
+    let _ = sent::append(&sent_file_beside(&entry.notes_file), &record);
 }
 
 fn avatar_due(shared: &Shared, entry: &Entry, on_prompt: bool) -> bool {
@@ -999,6 +1032,64 @@ mod tests {
         );
         let closed = f.send("POST", "/hook/claude", Some(&token), PROMPT);
         assert_eq!(closed.body, "{}", "nothing open, nothing said");
+        let told = sent::load(&sent_file_beside(&notes_of(&f, &token)));
+        assert_eq!(told, [], "a line that rides every prompt leaves no record");
+    }
+
+    #[test]
+    fn only_the_one_off_prompt_context_leaves_a_record() {
+        let f = fixture();
+        let token = f.register(1, "a");
+        let file = sent_file_beside(&notes_of(&f, &token));
+        save_ledger(&f, &token, QUESTION);
+        for _ in 0..3 {
+            f.send("POST", "/hook/claude", Some(&token), PROMPT);
+        }
+        let told = sent::load(&file);
+        let reasons: Vec<Reason> = told.iter().map(|record| record.reason).collect();
+        assert_eq!(reasons, [Reason::Avatar, Reason::LedgerGuard]);
+        assert_eq!(told[0].text, avatar_ask::CONTEXT);
+        assert_eq!(told[0].because, because::AVATAR_ASK);
+        assert_eq!(told[1].text, prompt_answer::LEDGER_CONTEXT);
+        assert_eq!(told[1].because, because::LEDGER_NUDGE);
+    }
+
+    #[test]
+    fn the_missing_ledger_ask_leaves_one_record_until_a_ledger_is_saved() {
+        let f = fixture();
+        let token = f.register(1, "a");
+        avatar_store::mark_asked(&avatar_asked_file_beside(&notes_of(&f, &token))).unwrap();
+        let file = sent_file_beside(&notes_of(&f, &token));
+        for _ in 0..3 {
+            let response = f.send("POST", "/hook/claude", Some(&token), PROMPT);
+            assert_eq!(context_of(&response), prompt_answer::MISSING_LEDGER_CONTEXT);
+        }
+        let told = sent::load(&file);
+        assert_eq!(told.len(), 1);
+        assert_eq!(told[0].reason, Reason::LedgerGuard);
+        assert_eq!(told[0].text, prompt_answer::MISSING_LEDGER_CONTEXT);
+        assert_eq!(told[0].because, because::LEDGER_MISSING);
+    }
+
+    #[test]
+    fn a_new_stretch_of_waiting_after_a_ledger_save_leaves_one_more_nudge_record() {
+        let f = fixture();
+        let token = f.register(1, "a");
+        avatar_store::mark_asked(&avatar_asked_file_beside(&notes_of(&f, &token))).unwrap();
+        let file = sent_file_beside(&notes_of(&f, &token));
+        save_ledger(&f, &token, QUESTION);
+        f.send("POST", "/hook/claude", Some(&token), PROMPT);
+        f.send("POST", "/hook/claude", Some(&token), PROMPT);
+        assert_eq!(sent::load(&file).len(), 1);
+        std::thread::sleep(Duration::from_millis(30));
+        save_ledger(&f, &token, "# Goal\nShip\n\n## Status\nstate: working\n");
+        f.send("POST", "/hook/claude", Some(&token), PROMPT);
+        assert_eq!(sent::load(&file).len(), 1, "a working ledger is not nudged");
+        std::thread::sleep(Duration::from_millis(30));
+        save_ledger(&f, &token, QUESTION);
+        f.send("POST", "/hook/claude", Some(&token), PROMPT);
+        f.send("POST", "/hook/claude", Some(&token), PROMPT);
+        assert_eq!(sent::load(&file).len(), 2);
     }
 
     #[test]
