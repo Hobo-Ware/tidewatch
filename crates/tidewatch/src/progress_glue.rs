@@ -56,6 +56,7 @@ pub(crate) struct Host {
     jobs: Jobs<Done>,
     /// Where the index lives and the thread that writes it; none when nothing may be written.
     store: Option<(PathBuf, Writer)>,
+    paths: Option<TidewatchPaths>,
     index_asked: bool,
     dev: Dev,
 }
@@ -63,7 +64,14 @@ pub(crate) struct Host {
 impl Host {
     pub(crate) fn new(paths: Option<&TidewatchPaths>, dev: Dev) -> Self {
         let store = paths.map(|paths| (paths.schedule_file(), Writer::new(paths.schedule_file())));
-        Self { state: State::default(), jobs: Jobs::new(), store, index_asked: false, dev }
+        Self {
+            state: State::default(),
+            jobs: Jobs::new(),
+            store,
+            paths: paths.cloned(),
+            index_asked: false,
+            dev,
+        }
     }
 
     /// A tab's ledger, once it was read or the agent sent one.
@@ -95,18 +103,30 @@ impl Host {
     pub(crate) fn tick(&mut self, tabs: &[Facts<'_>], ctx: &egui::Context) {
         if !self.index_asked {
             self.index_asked = true;
-            if let Some((file, _)) = &self.store {
+            if let (Some((file, writer)), Some(paths)) = (&self.store, &self.paths) {
                 let file = file.clone();
-                self.jobs.spawn(ctx, move || Done::Index(Index::load(&file)));
+                writer.prune(worktree_exists(paths.clone()));
+                let exists = worktree_exists(paths.clone());
+                self.jobs.spawn(ctx, move || {
+                    let mut index = Index::load(&file);
+                    index.prune(exists);
+                    Done::Index(index)
+                });
             }
         }
-        let wants = self.state.look(tabs);
+        let paths = self.paths.clone();
+        let wants = self.state.look(tabs, |repo, tab| {
+            paths.as_ref().is_none_or(|paths| paths.worktree_dir(repo, tab).exists())
+        });
         for (tab, file) in wants.load {
             self.jobs.spawn(ctx, move || Done::Ledger { tab, found: read(&file).map(Box::new) });
         }
         if let Some((_, writer)) = &self.store {
             for (repo, tab) in wants.closed {
                 writer.close(repo, tab);
+            }
+            for (repo, tab) in wants.removed {
+                writer.remove(repo, tab);
             }
             for entry in wants.write {
                 writer.set(entry);
@@ -130,6 +150,10 @@ impl Host {
             }
         }
     }
+}
+
+fn worktree_exists(paths: TidewatchPaths) -> impl Fn(&Path, &str) -> bool + Send + 'static {
+    move |repo, tab| paths.worktree_dir(repo, tab).exists()
 }
 
 fn read(file: &Path) -> Option<TabLedger> {
@@ -158,6 +182,7 @@ mod tests {
         let home = tempfile::tempdir().unwrap();
         let paths = TidewatchPaths::new(home.path());
         let notes = paths.notes_file(Path::new("/work/web"), "otter");
+        std::fs::create_dir_all(paths.worktree_dir(Path::new("/work/web"), "otter")).unwrap();
         Fixture { _home: home, paths, notes }
     }
 
@@ -168,6 +193,7 @@ mod tests {
             worktree: Some((Path::new("/work/web"), "otter")),
             profile_id: Some("builder"),
             session_id: Some("sess"),
+            fallback: None,
         }
     }
 

@@ -115,11 +115,25 @@ impl Index {
         }
     }
 
-    /// The tab was closed: its items stay.
+    /// The tab was closed: its dated items stay, so the session can be reopened on the day. Items
+    /// that wait for an event, a pause or the owner, and unreadable ones, go with the session.
     pub fn close(&mut self, repo: &Path, tab: &str) {
         for entry in self.tabs.iter_mut().filter(|entry| entry.is(repo, tab)) {
             entry.presence = Presence::Closed;
+            entry.items.retain(|item| item.when.date().is_some());
         }
+        self.tabs.retain(|entry| !entry.items.is_empty());
+    }
+
+    /// Forgets what cannot come back: an entry whose worktree folder is gone, and the undated items
+    /// of a closed tab. Open tabs with a folder are left as they are. `folder_exists` is told the
+    /// repo and the tab name.
+    pub fn prune(&mut self, folder_exists: impl Fn(&Path, &str) -> bool) {
+        self.tabs.retain(|entry| folder_exists(&entry.repo, &entry.tab));
+        for entry in self.tabs.iter_mut().filter(|entry| entry.presence == Presence::Closed) {
+            entry.items.retain(|item| item.when.date().is_some());
+        }
+        self.tabs.retain(|entry| !entry.items.is_empty());
     }
 
     pub fn remove(&mut self, repo: &Path, tab: &str) {
@@ -127,7 +141,10 @@ impl Index {
     }
 }
 
+type Exists = Box<dyn Fn(&Path, &str) -> bool + Send>;
+
 enum Change {
+    Prune(Exists),
     Set(Entry),
     Close { repo: PathBuf, tab: String },
     Remove { repo: PathBuf, tab: String },
@@ -160,6 +177,10 @@ impl Writer {
         self.send(Change::Remove { repo, tab });
     }
 
+    pub fn prune(&self, folder_exists: impl Fn(&Path, &str) -> bool + Send + 'static) {
+        self.send(Change::Prune(Box::new(folder_exists)));
+    }
+
     fn send(&self, change: Change) {
         if let Some(sender) = &self.sender {
             let _ = sender.send(change);
@@ -179,12 +200,17 @@ impl Drop for Writer {
 fn apply_all(file: &Path, receiver: &Receiver<Change>) {
     while let Ok(first) = receiver.recv() {
         let mut index = Index::load(file);
+        let before = index.clone();
         for change in std::iter::once(first).chain(receiver.try_iter()) {
             match change {
+                Change::Prune(exists) => index.prune(exists),
                 Change::Set(entry) => index.set(entry),
                 Change::Close { repo, tab } => index.close(&repo, &tab),
                 Change::Remove { repo, tab } => index.remove(&repo, &tab),
             }
+        }
+        if index == before {
+            continue;
         }
         if let Err(e) = index.save(file) {
             eprintln!("tidewatch: could not save {}: {e}", file.display());
@@ -276,18 +302,80 @@ mod tests {
     }
 
     #[test]
-    fn closing_keeps_the_items_and_marks_the_tab_closed() {
+    fn closing_marks_the_tab_closed_and_keeps_only_its_dated_items() {
         let mut index = Index::default();
         index.set(entry("otter", TWO));
         index.close(Path::new("/work/web"), "otter");
         index.close(Path::new("/work/web"), "nobody");
         index.close(Path::new("/other"), "otter");
         assert_eq!(index.tabs[0].presence, Presence::Closed);
-        assert_eq!(index.tabs[0].items.len(), 2);
+        assert_eq!(index.tabs[0].items.len(), 1);
+        assert_eq!(index.tabs[0].items[0].what, "Switch it off");
         index.set(entry("otter", TWO));
         assert_eq!(index.tabs[0].presence, Presence::Open, "a tab opened again is open");
         index.remove(Path::new("/work/web"), "otter");
         assert_eq!(index, Index::default());
+    }
+
+    const MIXED: &str = "- [ ] 2026-11-01 -- dated\n- [ ] ~2026-11-08 -- about\n- [ ] on: x -- event\n- [ ] parked: y -- parked\n- [ ] you -- mine\n- [ ] someday -- unreadable\n";
+
+    fn whats(index: &Index, tab: &str) -> Vec<String> {
+        index
+            .tabs
+            .iter()
+            .find(|entry| entry.tab == tab)
+            .map_or_else(Vec::new, |entry| entry.items.iter().map(|i| i.what.clone()).collect())
+    }
+
+    #[test]
+    fn closing_a_tab_with_only_undated_items_removes_its_entry() {
+        let mut index = Index::default();
+        index.set(entry("otter", "- [ ] on: x -- event\n- [ ] you -- mine\n"));
+        index.set(entry("heron", MIXED));
+        index.close(Path::new("/work/web"), "otter");
+        assert_eq!(index.tabs.iter().map(|e| e.tab.as_str()).collect::<Vec<_>>(), ["heron"]);
+        assert_eq!(whats(&index, "heron").len(), 6, "an open tab is untouched");
+    }
+
+    #[test]
+    fn pruning_drops_entries_without_a_folder_and_trims_the_closed_ones() {
+        let cases: [(&str, Presence, bool, &[&str]); 5] = [
+            (
+                "open-here",
+                Presence::Open,
+                true,
+                &["dated", "about", "event", "parked", "mine", "unreadable"],
+            ),
+            ("open-gone", Presence::Open, false, &[]),
+            ("closed-here", Presence::Closed, true, &["dated", "about"]),
+            ("closed-gone", Presence::Closed, false, &[]),
+            ("closed-undated", Presence::Closed, true, &[]),
+        ];
+        let mut index = Index::default();
+        for (tab, presence, _, _) in cases {
+            let scheduled = if tab == "closed-undated" { "- [ ] on: x -- event\n" } else { MIXED };
+            index.tabs.push(Entry::of(owner(tab), &ledger(scheduled), presence));
+        }
+        let here: Vec<&str> =
+            cases.iter().filter(|(_, _, here, _)| *here).map(|(tab, ..)| *tab).collect();
+        index.prune(|repo, tab| repo == Path::new("/work/web") && here.contains(&tab));
+        for (tab, _, _, want) in cases {
+            assert_eq!(whats(&index, tab), want, "{tab}");
+        }
+        assert_eq!(index.tabs.len(), 2);
+    }
+
+    #[test]
+    fn the_writer_prunes_the_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("schedule.toml");
+        let writer = Writer::new(file.clone());
+        writer.set(entry("otter", TWO));
+        writer.set(entry("heron", TWO));
+        writer.prune(|_, tab| tab == "heron");
+        drop(writer);
+        let index = Index::load(&file);
+        assert_eq!(index.tabs.iter().map(|e| e.tab.as_str()).collect::<Vec<_>>(), ["heron"]);
     }
 
     #[test]
@@ -303,8 +391,8 @@ mod tests {
         let index = Index::load(&file);
         assert_eq!(index.tabs.len(), 1);
         assert_eq!(
-            (index.tabs[0].tab.as_str(), index.tabs[0].presence),
-            ("otter", Presence::Closed)
+            (index.tabs[0].tab.as_str(), index.tabs[0].presence, index.tabs[0].items.len()),
+            ("otter", Presence::Closed, 1)
         );
     }
 }

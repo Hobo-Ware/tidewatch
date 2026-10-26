@@ -56,6 +56,11 @@ impl Tidewatch {
                         .launched
                         .as_ref()
                         .and_then(|launched| launched.session_id.as_deref()),
+                    fallback: agent
+                        .launched
+                        .as_ref()
+                        .and_then(|launched| launched.dir.as_deref())
+                        .map(|dir| (dir, tab.title.as_str())),
                 })
             })
             .collect();

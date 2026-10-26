@@ -34,6 +34,7 @@ pub mod github_link;
 pub mod guard_args;
 pub mod guard_bash;
 pub mod guard_comments;
+pub mod guard_ledger;
 pub mod guard_run;
 pub mod guard_shim;
 pub mod guards;
