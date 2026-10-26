@@ -48,7 +48,7 @@ const IDLE_TIMEOUT: Duration = Duration::from_secs(75);
 const WRITE_TIMEOUT: Duration = Duration::from_secs(10);
 const TOKEN_BYTES: usize = 16;
 const PORT_RETRY: Duration = Duration::from_millis(50);
-/// How long a held `ask_user` call waits for the user before the agent is told to use its judgment.
+/// How long a held `ask_user` call waits for the user before the agent is told to take the reversible or recommended option and list it in Needs you.
 pub const ASK_TIMEOUT: Duration = Duration::from_mins(30);
 const ASK_POLL: Duration = Duration::from_millis(500);
 
