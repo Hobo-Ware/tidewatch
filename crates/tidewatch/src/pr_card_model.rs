@@ -378,7 +378,7 @@ pub(crate) fn look(index: usize, context: Context<'_>) -> Option<Look> {
                 format!("{} committed {commits} new {noun}", context.profile),
                 "Not on the pull request yet".to_owned(),
             );
-            if current && context.handling == Handling::Owner {
+            if current && matches!(context.handling, Handling::Owner | Handling::Answers) {
                 m.buttons.push(Button {
                     label: "Push fix".to_owned(),
                     primary: true,
@@ -406,8 +406,8 @@ pub(crate) fn look(index: usize, context: Context<'_>) -> Option<Look> {
 }
 
 impl Context<'_> {
-    /// The agent answers this card on its own, so it offers the owner nothing to ask: the tab runs on
-    /// its own, Auto-fix is on, and the card's kind is one the tab's tick boxes hand over.
+    /// The agent answers this card on its own, so it offers the owner nothing to ask: Auto-fix is on
+    /// and has sends left, and the card's kind is one the tab's tick boxes hand over.
     fn hands_off(&self, body: &Body) -> bool {
         self.handling != Handling::Owner && pr_prompt::wanted(&self.policy, body)
     }

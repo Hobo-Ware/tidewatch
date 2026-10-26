@@ -120,7 +120,11 @@ pub(crate) struct Facts<'a> {
 pub(crate) enum Handling {
     /// The owner: every card keeps its buttons.
     Owner,
-    /// The agent, through Auto-fix: the cards are a record.
+    /// Auto-fix answers the cards on a tab the owner drives: the cards are a record, but the commits
+    /// it leaves are still the owner's to push.
+    Answers,
+    /// The agent, through Auto-fix, on a tab that runs on its own: the cards are a record and it
+    /// pushes its own commits.
     Agent,
     /// The agent, but the loop guard stopped the sends: the cards stay a record and one line says so.
     Paused,
@@ -235,8 +239,10 @@ impl Watch {
     }
 
     pub(crate) fn handling(&self, default: GithubPrefs) -> Handling {
-        if !self.autonomous || self.policy(default).mode != PrMode::Auto {
+        if self.policy(default).mode != PrMode::Auto {
             Handling::Owner
+        } else if !self.autonomous {
+            if self.cards.auto_sends >= self.cap() { Handling::Owner } else { Handling::Answers }
         } else if self.capped(default) {
             Handling::Paused
         } else {
@@ -288,7 +294,7 @@ impl Watch {
 
     /// The commit card whose commits a tab that runs on its own should push now.
     pub(crate) fn push_fix_due(&self, default: GithubPrefs) -> Option<u64> {
-        if self.handling(default) == Handling::Owner || self.closed() {
+        if !matches!(self.handling(default), Handling::Agent | Handling::Paused) || self.closed() {
             return None;
         }
         let cards = self.cards.cards();
