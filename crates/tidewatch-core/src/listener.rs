@@ -414,8 +414,8 @@ fn hook_route(shared: &Shared, entry: &Entry, agent: &str, request: &Request) ->
 }
 
 /// The answer to a prompt: extra context that asks a tab with no avatar, never asked, to draw
-/// one, and one that asks a tab whose ledger holds open items to refresh it. Both ride the one
-/// answer when both apply. The avatar marker is written first, so a tab whose state folder cannot
+/// one, and one that asks a tab with no ledger to write it or a tab whose ledger holds open items
+/// to refresh it. Both ride the one answer when both apply. The avatar marker is written first, so a tab whose state folder cannot
 /// be written is not asked on every prompt.
 fn prompt_reply(
     shared: &Shared,
@@ -432,11 +432,11 @@ fn prompt_reply(
     if avatar_due(shared, entry, on_prompt) {
         contexts.push(avatar_ask::CONTEXT.to_owned());
     }
-    if let Some(line) = progress_store::load(&progress_file_beside(&entry.notes_file))
-        .and_then(|ledger| prompt_answer::ledger_context(&ledger))
-    {
-        contexts.push(line);
-    }
+    let ledger_line = match progress_store::load(&progress_file_beside(&entry.notes_file)) {
+        Some(ledger) => prompt_answer::ledger_context(&ledger),
+        None => Some(prompt_answer::MISSING_LEDGER_CONTEXT.to_owned()),
+    };
+    contexts.extend(ledger_line);
     prompt_answer::answer(&contexts.iter().map(String::as_str).collect::<Vec<_>>())
 }
 
@@ -818,10 +818,13 @@ mod tests {
         f.shared.entry(token).unwrap().notes_file.clone()
     }
 
+    const CALM: &str = "# Goal\nShip\n\n## Status\nstate: working\n";
+
     #[test]
     fn the_first_prompt_of_a_tab_with_no_avatar_is_answered_with_the_ask_and_only_the_first() {
         let f = fixture();
         let token = f.register(1, "a");
+        save_ledger(&f, &token, CALM);
         let marker = avatar_asked_file_beside(&notes_of(&f, &token));
         let first = f.send("POST", "/hook/claude", Some(&token), PROMPT);
         assert!(asks_for_an_avatar(&first), "{}", first.body);
@@ -849,6 +852,7 @@ mod tests {
         let listener_exempt = [3];
         f.shared.avatar_ask_exempt.lock().unwrap().extend(listener_exempt);
         for (what, token) in [("asked", &asked), ("drawn", &drawn), ("fixed", &fixed)] {
+            save_ledger(&f, token, CALM);
             let response = f.send("POST", "/hook/claude", Some(token), PROMPT);
             assert_eq!(response.body, "{}", "{what}");
         }
@@ -883,7 +887,7 @@ mod tests {
         std::fs::create_dir_all(state_dir.parent().unwrap()).unwrap();
         std::fs::write(state_dir, "not a folder").unwrap();
         let response = f.send("POST", "/hook/claude", Some(&token), PROMPT);
-        assert_eq!(response.body, "{}");
+        assert!(!asks_for_an_avatar(&response), "{}", response.body);
     }
 
     fn context_of(response: &Response) -> String {
@@ -924,6 +928,36 @@ mod tests {
             } else {
                 assert_eq!(response.body, "{}", "{what}");
             }
+        }
+    }
+
+    #[test]
+    fn a_prompt_to_a_tab_that_never_saved_a_ledger_asks_for_the_whole_ledger_this_turn() {
+        let f = fixture();
+        let token = f.register(1, "a");
+        avatar_store::mark_asked(&avatar_asked_file_beside(&notes_of(&f, &token))).unwrap();
+        for _ in 0..2 {
+            let response = f.send("POST", "/hook/claude", Some(&token), PROMPT);
+            assert_eq!(context_of(&response), prompt_answer::MISSING_LEDGER_CONTEXT);
+        }
+        save_ledger(&f, &token, CALM);
+        let saved = f.send("POST", "/hook/claude", Some(&token), PROMPT);
+        assert_eq!(saved.body, "{}", "a saved ledger ends the asking");
+    }
+
+    #[test]
+    fn the_missing_ledger_ask_shares_the_answer_with_the_avatar_ask_and_rides_only_a_claude_prompt()
+    {
+        let f = fixture();
+        let token = f.register(1, "a");
+        let first = f.send("POST", "/hook/claude", Some(&token), PROMPT);
+        let context = context_of(&first);
+        assert!(context.contains(avatar_ask::CONTEXT), "{context}");
+        assert!(context.contains(prompt_answer::MISSING_LEDGER_CONTEXT), "{context}");
+        for (path, body) in
+            [("/hook/claude", STOP), ("/hook/copilot", PROMPT), ("/hook/codex", PROMPT)]
+        {
+            assert_eq!(f.send("POST", path, Some(&token), body).body, "{}", "{path}");
         }
     }
 

@@ -7,6 +7,10 @@ use crate::progress_mcp::UPDATE_TOOL;
 /// Asks the agent to refresh its ledger after the owner replied to a question or a wait.
 pub const LEDGER_CONTEXT: &str = "The user answered; call update_progress so your ledger shows the new status before you continue.";
 
+/// Asks a tab that never saved a ledger to write one, which also reaches a tab whose settings file
+/// predates the Stop guard.
+pub const MISSING_LEDGER_CONTEXT: &str = "Tidewatch has no progress ledger for this task yet. Call update_progress with the whole ledger this turn, before other work.";
+
 const NAMED_ITEMS: usize = 3;
 const NAME_CHARS: usize = 60;
 
@@ -183,5 +187,12 @@ mod tests {
         assert_eq!(line.lines().count(), 1);
         assert!(line.is_ascii());
         assert!(line.contains(UPDATE_TOOL));
+    }
+
+    #[test]
+    fn the_missing_ledger_line_names_the_tool_and_asks_for_the_whole_ledger() {
+        assert!(MISSING_LEDGER_CONTEXT.contains(UPDATE_TOOL));
+        assert!(MISSING_LEDGER_CONTEXT.contains("whole ledger this turn"));
+        assert!(MISSING_LEDGER_CONTEXT.is_ascii());
     }
 }
