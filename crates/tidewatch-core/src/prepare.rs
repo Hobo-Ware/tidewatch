@@ -5,7 +5,7 @@
 //! guard helper, Gemini settings) never stop a launch; each one adds a note the UI can show. Only
 //! what `launch_command` refuses stops it.
 
-use std::ffi::OsStr;
+use std::ffi::{OsStr, OsString};
 use std::fmt;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -18,9 +18,9 @@ use crate::guard_shim::{GuardCtx, ensure_shims};
 use crate::guards::Rule;
 use crate::house_style;
 use crate::launch::{
-    GEMINI_SETTINGS_PATH, HookListener, Launch, LaunchCtx, LaunchError, claude_settings_json,
-    copilot_plugin_files, ensure_no_push_helper, gemini_exclude_lines, gemini_project_settings,
-    launch_command, mcp_config_json,
+    GEMINI_SYSTEM_DEFAULTS_ENV, GEMINI_SYSTEM_SETTINGS_ENV, GeminiSettingsFiles, HookListener,
+    Launch, LaunchCtx, LaunchError, claude_settings_json, copilot_plugin_files,
+    ensure_no_push_helper, gemini_system_settings, launch_command, mcp_config_json,
 };
 use crate::paths::TidewatchPaths;
 use crate::prefs::Prefs;
@@ -32,6 +32,12 @@ use crate::trust_apply::{Grant, Outcome};
 
 const MCP_CONFIG_FILE: &str = "mcp.json";
 const CLAUDE_SETTINGS_FILE: &str = "claude-settings.json";
+const GEMINI_SETTINGS_FILE: &str = "gemini-settings.json";
+const GEMINI_PROJECT_SETTINGS: &str = ".gemini/settings.json";
+#[cfg(target_os = "macos")]
+const GEMINI_SYSTEM_SETTINGS_DEFAULT: &str = "/Library/Application Support/GeminiCli/settings.json";
+#[cfg(not(target_os = "macos"))]
+const GEMINI_SYSTEM_SETTINGS_DEFAULT: &str = "/etc/gemini-cli/settings.json";
 pub const PROGRESS_ENV: &str = "TIDEWATCH_PROGRESS";
 const FALLBACK_NOTICE: &str =
     "Tidewatch: setup failed or the agent could not start. Here is a shell.";
@@ -221,17 +227,35 @@ fn prepare_with(
         ctx.settings_file =
             soft("Claude settings", write_private_atomic(&file, &json).map(|()| file));
     }
+    let mut gemini_note = None;
+    if wiring == Wiring::Gemini && input.worktree_tab {
+        let (system, defaults) = gemini_system_files(&|key| std::env::var_os(key));
+        match read_json_object(&system) {
+            Ok(base) => {
+                if let Some(json) = gemini_system_settings(profile, &ctx, base.as_ref()) {
+                    let file =
+                        paths.tab_state_dir(input.repo, input.tab).join(GEMINI_SETTINGS_FILE);
+                    ctx.gemini_settings =
+                        soft("Gemini settings", write_private_atomic(&file, &json).map(|()| file))
+                            .map(|settings| GeminiSettingsFiles { settings, defaults });
+                }
+            }
+            Err(why) => {
+                gemini_note = Some(format!(
+                    "Gemini settings: the system settings file {} {why}, so this tab has no hooks or MCP",
+                    system.display()
+                ));
+            }
+        }
+    }
     let mut launch = match resume {
         Some(id) => resume_command(input.agent, profile, id, &ctx)?,
         None => launch_command(input.agent, profile, &ctx)?,
     };
 
-    if wiring == Wiring::Gemini
-        && input.worktree_tab
-        && let Some(settings) = gemini_project_settings(profile, &ctx)
-        && let Some(note) = write_gemini_settings(input.dir, &settings, resume.is_some())
-    {
-        notes.push(note);
+    if wiring == Wiring::Gemini && input.worktree_tab {
+        notes.extend(gemini_note);
+        remove_generated_gemini_project_settings(input.dir);
     }
 
     if resume.is_none() {
@@ -279,6 +303,7 @@ fn context(
         house_style,
         copilot_instructions_dir,
         copilot_plugin_dir: None,
+        gemini_settings: None,
         guard_bin_dir,
         protected_branch: input
             .worktree_tab
@@ -347,6 +372,13 @@ pub fn preview(input: &PrepareInput) -> Result<Launch, LaunchError> {
     let mut ctx = context(input, house_style, copilot_dir, guard, mcp);
     ctx.copilot_plugin_dir = (wiring == Wiring::Copilot && input.listener.is_some())
         .then(|| paths.tab_copilot_plugin_dir(input.repo, input.tab));
+    ctx.gemini_settings = (wiring == Wiring::Gemini
+        && input.worktree_tab
+        && gemini_system_settings(input.profile, &ctx, None).is_some())
+    .then(|| GeminiSettingsFiles {
+        settings: paths.tab_state_dir(input.repo, input.tab).join(GEMINI_SETTINGS_FILE),
+        defaults: gemini_system_files(&|key| std::env::var_os(key)).1,
+    });
     ctx.settings_file = (wiring == Wiring::Claude && claude_settings_json(&ctx).is_some())
         .then(|| paths.tab_state_dir(input.repo, input.tab).join(CLAUDE_SETTINGS_FILE));
     let mut launch = launch_command(input.agent, input.profile, &ctx)?;
@@ -393,18 +425,37 @@ fn merge_env(base: &[(String, String)], over: &[(String, String)]) -> Vec<(Strin
     env
 }
 
-fn write_gemini_settings(dir: &Path, settings: &str, refresh_generated: bool) -> Option<String> {
-    let file = dir.join(GEMINI_SETTINGS_PATH);
-    let ours = refresh_generated && !is_tracked(dir, GEMINI_SETTINGS_PATH);
-    if file.exists() && !ours {
-        return Some(format!(
-            "{GEMINI_SETTINGS_PATH} already exists in this repo; Gemini keeps its own settings"
-        ));
+/// The system settings and system defaults files Gemini reads: its two variables, else the platform place.
+fn gemini_system_files(env: &dyn Fn(&str) -> Option<OsString>) -> (PathBuf, PathBuf) {
+    let settings = env(GEMINI_SYSTEM_SETTINGS_ENV)
+        .map_or_else(|| PathBuf::from(GEMINI_SYSTEM_SETTINGS_DEFAULT), PathBuf::from);
+    let defaults = env(GEMINI_SYSTEM_DEFAULTS_ENV)
+        .map_or_else(|| settings.with_file_name("system-defaults.json"), PathBuf::from);
+    (settings, defaults)
+}
+
+/// The JSON object in the file, `None` when there is none, the reason when it holds anything else.
+fn read_json_object(file: &Path) -> Result<Option<serde_json::Value>, String> {
+    let text = match std::fs::read_to_string(file) {
+        Ok(text) => text,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(e) => return Err(format!("could not be read ({e})")),
+    };
+    match serde_json::from_str::<serde_json::Value>(&text) {
+        Ok(value) if value.is_object() => Ok(Some(value)),
+        Ok(_) => Err("is not a JSON object".to_owned()),
+        Err(e) => Err(format!("is not plain JSON ({e})")),
     }
-    if let Err(e) = write_atomic(&file, settings) {
-        return Some(format!("Gemini settings: {e}"));
+}
+
+/// Older versions wrote the tab's settings into the worktree; a resumed tab drops them unless the repo owns the file.
+fn remove_generated_gemini_project_settings(dir: &Path) {
+    let file = dir.join(GEMINI_PROJECT_SETTINGS);
+    let generated = std::fs::read_to_string(&file)
+        .is_ok_and(|text| text.contains("/hook/gemini") && text.contains("Authorization"));
+    if generated && !is_tracked(dir, GEMINI_PROJECT_SETTINGS) {
+        let _ = std::fs::remove_file(file);
     }
-    exclude_from_git(dir, &gemini_exclude_lines()).err().map(|e| format!("git exclude: {e}"))
 }
 
 fn is_tracked(dir: &Path, file: &str) -> bool {
@@ -946,16 +997,21 @@ mod tests {
     }
 
     #[test]
-    fn gemini_settings_are_written_once_and_excluded_from_git() {
+    fn a_gemini_tab_reads_its_generated_settings_from_its_state_folder_and_the_worktree_stays_clean()
+     {
         let fx = Fixture::new();
         let worktree = git_worktree(&fx);
         let fx = Fixture { dir: worktree.clone(), ..fx };
-        let first = fx.run("gemini", &profile("gemini", Level::Edits), true, "", None).unwrap();
-        assert_eq!(first.notes, Vec::<String>::new());
-        let settings = std::fs::read_to_string(worktree.join(".gemini/settings.json")).unwrap();
+        let prepared = fx.run("gemini", &profile("gemini", Level::Edits), true, "", None).unwrap();
+        assert_eq!(prepared.notes, Vec::<String>::new());
+        let file = gemini_state_file(&fx);
+        let settings = std::fs::read_to_string(&file).unwrap();
         assert!(settings.contains("house-style.md"), "{settings}");
-        assert_eq!(env_of(&first, "GEMINI_CLI_TRUST_WORKSPACE"), Some("true"));
-
+        assert_eq!(env_of(&prepared, GEMINI_SYSTEM_SETTINGS_ENV), file.to_str());
+        let defaults = gemini_system_files(&|_| None).0.with_file_name("system-defaults.json");
+        assert_eq!(env_of(&prepared, GEMINI_SYSTEM_DEFAULTS_ENV), defaults.to_str());
+        assert_eq!(env_of(&prepared, "GEMINI_CLI_TRUST_WORKSPACE"), Some("true"));
+        assert!(!worktree.join(".gemini").exists());
         let status = Command::new("git")
             .arg("-C")
             .arg(&worktree)
@@ -963,34 +1019,60 @@ mod tests {
             .output()
             .unwrap();
         assert_eq!(String::from_utf8_lossy(&status.stdout), "");
+    }
 
-        std::fs::remove_file(worktree.join(".gemini/settings.json")).unwrap();
-        fx.run("gemini", &profile("gemini", Level::Edits), true, "", None).unwrap();
-        let exclude = Command::new("git")
-            .arg("-C")
-            .arg(&worktree)
-            .args(["rev-parse", "--git-path", "info/exclude"])
-            .output()
-            .unwrap();
-        let exclude = String::from_utf8_lossy(&exclude.stdout).trim().to_owned();
-        let text = std::fs::read_to_string(exclude).unwrap();
-        assert_eq!(text.lines().filter(|l| *l == "/.gemini/settings.json").count(), 1);
+    fn gemini_state_file(fx: &Fixture) -> PathBuf {
+        fx.paths.tab_state_dir(Path::new("/work/web"), "brave-otter").join("gemini-settings.json")
     }
 
     #[test]
-    fn a_repo_that_has_its_own_gemini_settings_keeps_them() {
+    fn a_repo_that_has_its_own_gemini_settings_keeps_them_and_the_tab_still_gets_its_hooks() {
         let fx = Fixture::new();
         let worktree = git_worktree(&fx);
         let fx = Fixture { dir: worktree.clone(), ..fx };
         std::fs::create_dir_all(worktree.join(".gemini")).unwrap();
         std::fs::write(worktree.join(".gemini/settings.json"), "{\"theirs\":true}").unwrap();
-        let prepared = fx.run("gemini", &profile("gemini", Level::Edits), true, "", None).unwrap();
+        git(&worktree, &["add", ".gemini/settings.json"]);
+        git(&worktree, &["commit", "-q", "-m", "settings"]);
+        let prepared =
+            fx.run("gemini", &profile("gemini", Level::Edits), true, "", Some(listener())).unwrap();
         assert_eq!(
             std::fs::read_to_string(worktree.join(".gemini/settings.json")).unwrap(),
             "{\"theirs\":true}"
         );
-        assert_eq!(prepared.notes.len(), 1);
-        assert!(prepared.notes[0].contains("already exists"));
+        assert_eq!(prepared.notes, Vec::<String>::new());
+        let settings = std::fs::read_to_string(gemini_state_file(&fx)).unwrap();
+        assert!(settings.contains("/hook/gemini") && settings.contains("/mcp"), "{settings}");
+    }
+
+    #[test]
+    fn the_gemini_system_files_come_from_its_variables_else_from_the_platform_place() {
+        let env = |pairs: &'static [(&'static str, &'static str)]| {
+            move |key: &str| pairs.iter().find(|(k, _)| *k == key).map(|(_, v)| OsString::from(*v))
+        };
+        let (settings, defaults) = gemini_system_files(&env(&[]));
+        assert_eq!(settings, PathBuf::from(GEMINI_SYSTEM_SETTINGS_DEFAULT));
+        assert_eq!(defaults, settings.with_file_name("system-defaults.json"));
+        let (settings, defaults) =
+            gemini_system_files(&env(&[(GEMINI_SYSTEM_SETTINGS_ENV, "/corp/s.json")]));
+        assert_eq!(settings, PathBuf::from("/corp/s.json"));
+        assert_eq!(defaults, PathBuf::from("/corp/system-defaults.json"));
+        let (_, defaults) =
+            gemini_system_files(&env(&[(GEMINI_SYSTEM_DEFAULTS_ENV, "/corp/d.json")]));
+        assert_eq!(defaults, PathBuf::from("/corp/d.json"));
+    }
+
+    #[test]
+    fn a_system_settings_file_is_read_as_one_json_object_or_refused_with_the_reason() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("settings.json");
+        assert_eq!(read_json_object(&file), Ok(None));
+        std::fs::write(&file, "{\"a\":1}").unwrap();
+        assert_eq!(read_json_object(&file), Ok(Some(serde_json::json!({"a": 1}))));
+        std::fs::write(&file, "[1]").unwrap();
+        assert_eq!(read_json_object(&file), Err("is not a JSON object".to_owned()));
+        std::fs::write(&file, "{ not json }").unwrap();
+        assert!(read_json_object(&file).unwrap_err().starts_with("is not plain JSON"));
     }
 
     #[test]
@@ -1376,33 +1458,58 @@ mod tests {
             prepare_resume(&resume_input(&fx, &table, "gemini", &gemini, Some(newer)), SESSION)
                 .unwrap();
         assert_eq!(resumed.notes, Vec::<String>::new());
-        let settings = std::fs::read_to_string(worktree.join(".gemini/settings.json")).unwrap();
+        let settings = std::fs::read_to_string(gemini_state_file(&fx)).unwrap();
         assert!(settings.contains("6666") && settings.contains("newtok"), "{settings}");
         assert!(!settings.contains("5555"), "{settings}");
         assert_eq!(&resumed.launch.args[..2], ["--resume", "latest"]);
     }
 
     #[test]
-    fn a_resumed_gemini_tab_never_overwrites_a_settings_file_the_repo_tracks() {
+    fn a_resumed_gemini_tab_drops_the_settings_older_versions_wrote_into_its_worktree() {
         let fx = Fixture::new();
         let worktree = git_worktree(&fx);
         let fx = Fixture { dir: worktree.clone(), ..fx };
-        std::fs::create_dir_all(worktree.join(".gemini")).unwrap();
-        std::fs::write(worktree.join(".gemini/settings.json"), "{\"theirs\":true}").unwrap();
-        git(&worktree, &["add", ".gemini/settings.json"]);
-        git(&worktree, &["commit", "-q", "-m", "settings"]);
         let table = AgentTable::builtin();
         let gemini = profile("gemini", Level::Edits);
-        let resumed = prepare_resume(
-            &resume_input(&fx, &table, "gemini", &gemini, Some(listener())),
-            SESSION,
+        let old = worktree.join(".gemini/settings.json");
+        std::fs::create_dir_all(old.parent().unwrap()).unwrap();
+        let generated = gemini_system_settings(
+            &gemini,
+            &LaunchCtx { hooks: Some(listener()), ..LaunchCtx::default() },
+            None,
         )
         .unwrap();
-        assert_eq!(
-            std::fs::read_to_string(worktree.join(".gemini/settings.json")).unwrap(),
-            "{\"theirs\":true}"
-        );
-        assert_eq!(resumed.notes.len(), 1);
+        std::fs::write(&old, generated).unwrap();
+        prepare_resume(&resume_input(&fx, &table, "gemini", &gemini, Some(listener())), SESSION)
+            .unwrap();
+        assert!(!old.exists());
+    }
+
+    #[test]
+    fn a_resumed_gemini_tab_never_removes_a_settings_file_the_repo_tracks_or_wrote() {
+        let table = AgentTable::builtin();
+        let gemini = profile("gemini", Level::Edits);
+        let hooked = "{\"hooks\":\"curl -H 'Authorization: x' http://h/hook/gemini\"}";
+        for (name, text, tracked) in
+            [("tracked", hooked, true), ("the repo's own", "{\"theirs\":true}", false)]
+        {
+            let fx = Fixture::new();
+            let worktree = git_worktree(&fx);
+            let fx = Fixture { dir: worktree.clone(), ..fx };
+            let file = worktree.join(".gemini/settings.json");
+            std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+            std::fs::write(&file, text).unwrap();
+            if tracked {
+                git(&worktree, &["add", ".gemini/settings.json"]);
+                git(&worktree, &["commit", "-q", "-m", "settings"]);
+            }
+            prepare_resume(
+                &resume_input(&fx, &table, "gemini", &gemini, Some(listener())),
+                SESSION,
+            )
+            .unwrap();
+            assert_eq!(std::fs::read_to_string(&file).unwrap(), text, "{name}");
+        }
     }
 
     #[test]
