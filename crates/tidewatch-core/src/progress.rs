@@ -57,6 +57,8 @@ pub struct Status {
     /// As written: `2`, `2 Build`, `1 (switch off the old webhook)`.
     pub phase: String,
     pub state: Option<State>,
+    /// What `state:` said when no state could be read from it.
+    pub unknown_state: Option<String>,
     pub note: String,
     pub kind: Option<Kind>,
     /// Lines of the section that are none of the keys.
@@ -636,7 +638,11 @@ impl Status {
             let value = value.trim().to_owned();
             match key.trim().to_lowercase().as_str() {
                 "phase" => self.phase = value,
-                "state" => self.state = State::parse(&value),
+                "state" => {
+                    self.state = State::parse(&value);
+                    self.unknown_state =
+                        Some(value).filter(|word| self.state.is_none() && !word.is_empty());
+                }
                 "note" => self.note = value,
                 "kind" if Kind::parse(&value).is_some() => self.kind = Kind::parse(&value),
                 _ => self.other.push(raw.trim_end().to_owned()),

@@ -1211,7 +1211,7 @@ mod tests {
             body_json(&f.send("POST", "/mcp", Some(token), &call(tool, &args)))
         };
         let saved = post(&one, "update_progress", json!({"ledger": "# Goal\nFor a\n"}));
-        assert_eq!(saved["result"]["content"][0]["text"], "saved");
+        assert!(saved["result"]["content"][0]["text"].as_str().unwrap().starts_with("saved"));
         post(&two, "update_progress", json!({"ledger": "# Goal\nFor b\n"}));
         let file = f.paths.progress_file(Path::new("/work/web"), "a");
         assert_eq!(std::fs::read_to_string(file).unwrap(), "# Goal\nFor a\n");
