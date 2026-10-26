@@ -15,20 +15,18 @@ pub(crate) struct Live {
     pub(crate) asking: bool,
     /// When the last turn started, which is when the owner's reply reached the agent.
     pub(crate) turn_started_ms: Option<i64>,
-    /// When the status last became Working, for a run that never saw a turn start.
-    pub(crate) working_since_ms: Option<i64>,
 }
 
 /// Whether the ledger's question or wait is older than the agent's work. A ledger saved after the
 /// turn started is the agent's latest word and stands; so does any ledger while a hook says the
-/// agent is asking, and one with no known save time.
+/// agent is asking, and one with no known save time. Only a turn start counts: the status turning
+/// Working again inside the same turn (a permission answered) is not the owner's reply.
 pub(crate) fn is_stale(ledger: &Ledger, updated_ms: Option<i64>, live: Live) -> bool {
     if !ledger.awaits_owner() || live.asking {
         return false;
     }
     let Some(updated) = updated_ms else { return false };
-    let since = live.turn_started_ms.into_iter().chain(live.working_since_ms).max();
-    since.is_some_and(|since| since > updated)
+    live.turn_started_ms.is_some_and(|started| started > updated)
 }
 
 /// The ledger as the screens should read it: unchanged, or with the question and the wait taken
@@ -63,21 +61,15 @@ mod tests {
         Live { turn_started_ms: Some(at), ..Live::default() }
     }
 
-    fn working(at: i64) -> Live {
-        Live { working_since_ms: Some(at), ..Live::default() }
-    }
-
     #[test]
     fn a_question_saved_before_the_turn_that_followed_it_is_stale() {
         assert!(is_stale(&asks(), Some(SAVED), turn(SAVED + 1)));
-        assert!(is_stale(&asks(), Some(SAVED), working(SAVED + 480_000)));
     }
 
     #[test]
     fn a_question_saved_after_the_turn_started_still_shows() {
         assert!(!is_stale(&asks(), Some(SAVED), turn(SAVED - 1)));
         assert!(!is_stale(&asks(), Some(SAVED), turn(SAVED)));
-        assert!(!is_stale(&asks(), Some(SAVED), working(SAVED - 5_000)));
     }
 
     #[test]
@@ -93,19 +85,9 @@ mod tests {
     }
 
     #[test]
-    fn the_later_of_the_turn_start_and_the_working_start_decides() {
-        let live = Live {
-            turn_started_ms: Some(SAVED - 1),
-            working_since_ms: Some(SAVED + 1),
-            ..Live::default()
-        };
-        assert!(is_stale(&asks(), Some(SAVED), live));
-        let live = Live {
-            turn_started_ms: Some(SAVED + 1),
-            working_since_ms: Some(SAVED - 1),
-            ..Live::default()
-        };
-        assert!(is_stale(&asks(), Some(SAVED), live));
+    fn the_status_turning_working_inside_the_turn_leaves_the_question_standing() {
+        let live = Live { turn_started_ms: Some(SAVED - 1), ..Live::default() };
+        assert!(!is_stale(&asks(), Some(SAVED), live));
     }
 
     #[test]
