@@ -29,6 +29,7 @@ use sha2::{Digest, Sha256};
 
 use crate::avatar_ask::{self, Face};
 use crate::avatar_store;
+use crate::background;
 use crate::events::{Repaint, TabEvent, TabMessage};
 use crate::launch::HookListener;
 use crate::mcp::{AskWait, McpReply, TabRole, ToolCtx, handle_post};
@@ -418,6 +419,9 @@ fn hook_route(shared: &Shared, entry: &Entry, agent: &str, request: &Request) ->
     let Ok(payload) = serde_json::from_slice::<serde_json::Value>(&request.body) else {
         return Response::error(400, "the body is not JSON");
     };
+    if let Some(signal) = background::from_hook(agent, &payload) {
+        shared.emit(entry, TabEvent::Background(signal));
+    }
     if let Some(event) = parse_hook(agent, &payload) {
         shared.emit(entry, TabEvent::Hook(event));
     }

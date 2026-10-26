@@ -86,6 +86,7 @@ impl Tidewatch {
         self.drive_group_merge(ctx);
         self.drive_avatar_choice(ctx);
         self.drive_jobs(ctx);
+        self.drive_background(ctx, now);
         self.drive_meeseeks(ctx, now);
         self.drive_done_check(ctx, now);
         self.drive_keep_awake(ctx, now);

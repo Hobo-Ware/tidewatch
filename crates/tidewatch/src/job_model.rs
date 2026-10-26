@@ -2,6 +2,7 @@
 //! tab's bar and percent, the line under the agent's name (pure).
 
 use jiff::tz::TimeZone;
+use tidewatch_core::background::Launch;
 use tidewatch_core::job::{Job, JobBoard, JobState};
 
 #[derive(Clone, Debug, PartialEq)]
@@ -289,6 +290,19 @@ pub(crate) fn cards(board: &JobBoard, now_ms: i64) -> Vec<Card> {
         .chain(stalled)
         .chain(finished.into_iter().map(|job| Card::Finished(finished_line(job, now_ms))))
         .collect()
+}
+
+/// A quiet line for each background launch that reported nothing, before the finished ones.
+pub(crate) fn add_background(cards: &mut Vec<Card>, launches: &[Launch], now_ms: i64) {
+    let at = cards.iter().position(|card| matches!(card, Card::Finished(_))).unwrap_or(cards.len());
+    let lines = launches.iter().map(|launch| {
+        Card::Quiet(QuietLine {
+            id: 0,
+            name: format!("{} running in the background, no progress reported", launch.command),
+            elapsed: ms_text(now_ms - launch.at_ms),
+        })
+    });
+    cards.splice(at..at, lines);
 }
 
 /// The leading job's bar for the tab. `None` when no job has a total to measure by.

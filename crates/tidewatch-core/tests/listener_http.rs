@@ -232,6 +232,34 @@ fn claude_hook_payloads_arrive_as_events_with_a_repaint() {
 }
 
 #[test]
+fn a_background_launch_and_its_task_notification_arrive_as_background_events() {
+    use tidewatch_core::background::Signal;
+    let h = Harness::start();
+    let hook = h.register(7, "a");
+    let mut client = h.client();
+    let launch = json!({"session_id": "s", "hook_event_name": "PreToolUse", "tool_name": "Bash",
+        "tool_input": {"command": "./run.sh", "run_in_background": true}, "tool_use_id": "toolu_9"})
+    .to_string();
+    client.request("POST", "/hook/claude", Some(&hook.token), &launch);
+    let message = h.next_event();
+    assert_eq!(
+        message.event,
+        TabEvent::Background(Signal::Started {
+            tool_use_id: "toolu_9".into(),
+            command: "./run.sh".into()
+        })
+    );
+    assert!(matches!(h.next_event().event, TabEvent::Hook(_)));
+    let notice = json!({"hook_event_name": "UserPromptSubmit", "prompt": "<task-notification>\n<tool-use-id>toolu_9</tool-use-id>\n<status>completed</status>\n<summary>done</summary>\n</task-notification>"})
+    .to_string();
+    client.request("POST", "/hook/claude", Some(&hook.token), &notice);
+    assert_eq!(
+        h.next_event().event,
+        TabEvent::Background(Signal::Ended { tool_use_id: "toolu_9".into() })
+    );
+}
+
+#[test]
 fn a_curl_style_hook_post_with_expect_continue_works() {
     let h = Harness::start();
     let hook = h.register(1, "a");

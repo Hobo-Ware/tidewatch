@@ -1,6 +1,7 @@
 //! The app's side of the progress ledgers: the agent tabs' facts go to the host each frame, and a
 //! ledger an agent sends is stored and logged.
 
+use tidewatch_core::background;
 use tidewatch_core::civil_date::Date;
 use tidewatch_core::progress::Ledger;
 
@@ -153,6 +154,33 @@ impl Tidewatch {
             ctx.request_repaint_after(
                 Duration::from_millis(wait) + Duration::from_secs_f64(WAKE_SLACK_S),
             );
+        }
+    }
+
+    pub(super) fn drive_background(&mut self, ctx: &egui::Context, now: f64) {
+        let now_ms = wall_ms() as i64;
+        let idle: Vec<u64> = self
+            .tabs
+            .items()
+            .iter()
+            .filter(|tab| {
+                tab.pane
+                    .agent
+                    .as_ref()
+                    .is_some_and(|agent| *agent.run.status() == AgentStatus::Done)
+            })
+            .map(|tab| tab.id)
+            .collect();
+        for tab in idle {
+            let Some(launch) = self.job_live.background_due(tab, true, now_ms) else { continue };
+            let text = background::nudge_text(&launch.command);
+            let send = Send::auto(&text, Said::BackgroundJob, because::BACKGROUND_JOB);
+            match flow_glue::send_or_queue(&mut self.tabs, &mut self.flow, tab, send, ctx, now) {
+                Offer::Go | Offer::Wait => {
+                    self.job_live.background_nudged(tab, &launch.tool_use_id);
+                }
+                Offer::Paused | Offer::Refuse(_) => {}
+            }
         }
     }
 

@@ -120,6 +120,10 @@ impl Tidewatch {
                 self.avatar_live.arrived(tab, *avatar);
                 ctx.request_repaint();
             }
+            Follow::Background { tab, signal } => {
+                self.job_live.background(tab, signal, wall_ms() as i64);
+                ctx.request_repaint();
+            }
             Follow::Job { tab, report } => {
                 self.job_live.report(tab, *report, wall_ms() as i64);
                 ctx.request_repaint();
