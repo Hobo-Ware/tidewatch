@@ -110,7 +110,7 @@ pub(crate) fn shown_before_first_message(wants_reader: bool, link: Link) -> Show
 pub(crate) enum Step {
     /// Raw key bytes, one press.
     Keys(Vec<u8>),
-    /// Text pasted into the input.
+    /// A message pasted into the input and submitted: the Enter follows through the Enter queue.
     Paste(String),
 }
 

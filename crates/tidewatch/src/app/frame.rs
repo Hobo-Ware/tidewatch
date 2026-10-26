@@ -76,7 +76,7 @@ impl Tidewatch {
             self.run_command(command, ctx);
         }
         reader_glue::start(&mut self.tabs, ctx, &self.dev_reader);
-        reader_glue::drain(&mut self.tabs, ctx, now);
+        reader_glue::drain(&mut self.tabs, &mut self.flow, ctx, now);
         self.drive_agents(ctx, now);
         self.drive_flow(ctx, now);
         self.drive_pr(ctx, now);
