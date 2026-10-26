@@ -7,6 +7,7 @@ const LEDGER_FORMAT: &str = "\
 
 Tidewatch shows the user a live progress view of your task. It is built from a ledger you keep with the `update_progress` tool of the `tidewatch` MCP server.
 
+- This ledger is required. A ledger or notes file of your own, a plan in the chat or a memory entry never replaces it: only `update_progress` shows it to the user and lists your later work in Coming up. Every date or later step you tell the user in chat must also be in Scheduled. A turn that ends with no ledger saved in it is sent back to write one.
 - Write the ledger first, before any other work: call `update_progress` with the whole ledger: the goal in one line, your plan as steps under the four stages below, and the stage you start in.
 - Call `update_progress` again at every milestone: a decision made, an item finished, a check run, a blocker, a change of stage. Each call replaces the ledger, so always send all of it.
 - After a context reset, or when you resume a session, call `get_progress` first and carry on from what it returns. Never start the ledger over.
@@ -171,6 +172,16 @@ mod tests {
         assert!(text.contains("Work meant for later today gets today's date"));
         assert!(text.contains(
             "Before you set state to waiting, blocked or done, move every Next item that is not happening right now into Scheduled"
+        ));
+    }
+
+    #[test]
+    fn the_ledger_is_required_and_dates_told_to_the_user_belong_in_scheduled() {
+        let text = section(None);
+        assert!(text.contains("This ledger is required."));
+        assert!(text.contains("A ledger or notes file of your own"));
+        assert!(text.contains(
+            "Every date or later step you tell the user in chat must also be in Scheduled"
         ));
     }
 

@@ -346,8 +346,9 @@ pub fn claude_hook_settings(listener: &HookListener) -> String {
 }
 
 /// The settings JSON for Claude: the http hooks of the status layer when there is a `listener`,
-/// and, when `comment_guard` names the Tidewatch binary, the comment guard's command hooks beside
-/// them: PostToolUse after Write, Edit and MultiEdit, and a Stop sweep of the branch diff. `None`
+/// and, when `comment_guard` names the Tidewatch binary, the guards' command hooks beside them: the
+/// comment guard's PostToolUse after Write, Edit and MultiEdit and Stop sweep of the branch diff, and
+/// the ledger guard's UserPromptSubmit note and Stop check. `None`
 /// when neither applies.
 #[must_use]
 pub fn claude_settings(
@@ -397,6 +398,8 @@ fn claude_settings_with(
             json!({ "matcher": "Write|Edit|MultiEdit", "hooks": [command(bin, "comments")] }),
         );
         push("Stop", json!({ "hooks": [command(bin, "comments --stop")] }));
+        push("UserPromptSubmit", json!({ "hooks": [command(bin, "ledger")] }));
+        push("Stop", json!({ "hooks": [command(bin, "ledger --stop")] }));
     }
     if let Some(bin) = extras.trailer_hook {
         push("PreToolUse", json!({ "matcher": "Bash", "hooks": [command(bin, "trailers")] }));
@@ -1107,9 +1110,14 @@ mod tests {
         assert_eq!(post[0]["hooks"][0]["type"], "command");
         assert_eq!(post[0]["hooks"][0]["command"], "/app/tidewatch --guard comments");
         let stop = settings["hooks"]["Stop"].as_array().unwrap();
-        assert_eq!(stop.len(), 2);
+        assert_eq!(stop.len(), 3);
         assert_eq!(stop[0]["hooks"][0]["type"], "http");
         assert_eq!(stop[1]["hooks"][0]["command"], "/app/tidewatch --guard comments --stop");
+        assert_eq!(stop[2]["hooks"][0]["command"], "/app/tidewatch --guard ledger --stop");
+        let prompt = settings["hooks"]["UserPromptSubmit"].as_array().unwrap();
+        assert_eq!(prompt.len(), 2);
+        assert_eq!(prompt[0]["hooks"][0]["type"], "http");
+        assert_eq!(prompt[1]["hooks"][0]["command"], "/app/tidewatch --guard ledger");
         assert!(settings["hooks"]["SessionStart"][0]["hooks"][0]["url"].is_string());
 
         let main_tab = LaunchCtx { worktree_tab: false, ..ctx.clone() };
@@ -1117,6 +1125,7 @@ mod tests {
             serde_json::from_str(&claude_settings_json(&main_tab).unwrap()).unwrap();
         assert!(settings["hooks"]["PostToolUse"].is_null());
         assert_eq!(settings["hooks"]["Stop"].as_array().unwrap().len(), 1);
+        assert_eq!(settings["hooks"]["UserPromptSubmit"].as_array().unwrap().len(), 1);
     }
 
     #[test]
@@ -1129,7 +1138,7 @@ mod tests {
             parsed["hooks"]["Stop"][0]["hooks"][0]["command"],
             "'/Applications/Tide watch.app/tidewatch' --guard comments --stop"
         );
-        assert_eq!(parsed["hooks"].as_object().unwrap().len(), 2);
+        assert_eq!(parsed["hooks"].as_object().unwrap().len(), 3);
         assert_eq!(claude_settings(None, None), None);
         let ctx = LaunchCtx { hooks: None, guards: Some(guard_ctx()), ..full_ctx() };
         assert!(claude_settings_json(&ctx).is_some());
