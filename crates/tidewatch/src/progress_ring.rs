@@ -14,8 +14,9 @@ const STEPS_PER_TURN: f32 = 72.0;
 pub(crate) fn tone_color(tone: Tone) -> Color32 {
     match tone {
         Tone::Working => brand::WORKING,
-        Tone::Waiting => brand::AMBER,
-        Tone::Blocked => brand::RED,
+        Tone::NeedsYou => brand::NEEDS,
+        Tone::Waiting => brand::WAITING,
+        Tone::Blocked => brand::BLOCKED,
         Tone::Done => brand::DONE,
     }
 }
@@ -100,7 +101,7 @@ pub(crate) fn paint_mark(painter: &Painter, center: Pos2, size: f32, mark: Mark,
             painter.line_segment([center - half, center + half], Stroke::new(1.5, brand::FAINT));
         }
         Mark::Blocked => {
-            painter.text(center, Align2::CENTER_CENTER, "!", heading(size), brand::RED);
+            painter.text(center, Align2::CENTER_CENTER, "!", heading(size), brand::NEEDS);
         }
         Mark::Todo => {
             painter.circle_stroke(center, size * 0.3, Stroke::new(1.3, brand::FAINT));

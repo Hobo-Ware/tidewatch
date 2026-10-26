@@ -9,6 +9,7 @@ use stdusk_core::progress::Progress;
 use stdusk_core::terminal::{CmdState, PtyTerm};
 use tidewatch_core::end_block::{self, EndBlock};
 use tidewatch_core::events::TabEvent;
+use tidewatch_core::progress::State;
 use tidewatch_core::resume_mode::exit_is_abnormal;
 use tidewatch_core::status::{
     AgentStatus, HookKind, ProgressSignal, Reason, StatusTracker, TerminalSignal,
@@ -83,6 +84,7 @@ pub(crate) struct AgentRun {
     changed_at: f64,
     title_seen: Option<String>,
     goal: Option<String>,
+    reported: Option<State>,
     detail: Option<String>,
     end_block: Option<EndBlock>,
     failed: Option<String>,
@@ -120,6 +122,7 @@ impl AgentRun {
             changed_at: now,
             title_seen: None,
             goal: None,
+            reported: None,
             detail: None,
             end_block: None,
             failed: None,
@@ -280,6 +283,20 @@ impl AgentRun {
 
     pub(crate) fn goal(&self) -> Option<&str> {
         self.goal.as_deref()
+    }
+
+    /// The state the agent's report stands for right now, `None` when it made no report.
+    pub(crate) fn set_reported(&mut self, reported: Option<State>) {
+        self.reported = reported;
+    }
+
+    pub(crate) fn reported(&self) -> Option<State> {
+        self.reported
+    }
+
+    /// The one tone every screen shows for this tab.
+    pub(crate) fn shown_tone(&self) -> crate::status_view::Tone {
+        crate::status_view::shown(&self.status, self.reported)
     }
 
     pub(crate) fn set_goal(&mut self, goal: Option<&str>) {
@@ -623,6 +640,23 @@ mod tests {
             run.report.finding,
             Some(Finding { file: "src/b.rs".into(), line: 9, blocking: false, text: "y".into() })
         );
+    }
+
+    #[test]
+    fn a_tab_shows_one_tone_the_reported_one_unless_a_process_fact_says_more() {
+        use crate::status_view::Tone;
+        let mut run = AgentRun::setting_up("claude".into(), 0.0);
+        assert_eq!(run.shown_tone(), Tone::Setup);
+        run.set_reported(Some(State::Waiting));
+        assert_eq!(run.shown_tone(), Tone::Setup, "setting up is Tidewatch's own fact");
+        run.status = AgentStatus::Done;
+        assert_eq!(run.shown_tone(), Tone::Waiting);
+        assert_eq!(run.reported(), Some(State::Waiting));
+        run.status = AgentStatus::NeedsYou(Reason::Permission);
+        assert_eq!(run.shown_tone(), Tone::Needs);
+        run.set_reported(None);
+        run.status = AgentStatus::Done;
+        assert_eq!(run.shown_tone(), Tone::Done);
     }
 
     #[test]

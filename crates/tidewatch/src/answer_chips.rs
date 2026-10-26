@@ -37,6 +37,14 @@ pub(crate) struct Chip {
     pub(crate) label: String,
     pub(crate) tone: Tone,
     pub(crate) number: Option<usize>,
+    /// Says `(recommended)` after the label, on a card that names the agent's pick in words.
+    pub(crate) marked: bool,
+}
+
+impl Chip {
+    pub(crate) fn shown(&self) -> String {
+        if self.marked { format!("{} (recommended)", self.label) } else { self.label.clone() }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -46,6 +54,15 @@ pub(crate) enum Pick {
 }
 
 pub(crate) fn chips(options: &[Choice]) -> Vec<Chip> {
+    build(options, false)
+}
+
+/// The chips of a card that writes `(recommended)` after the agent's pick.
+pub(crate) fn chips_marked(options: &[Choice]) -> Vec<Chip> {
+    build(options, true)
+}
+
+fn build(options: &[Choice], mark: bool) -> Vec<Chip> {
     let answers: Vec<(String, bool)> = if options.is_empty() {
         FALLBACK.iter().map(|label| ((*label).to_owned(), false)).collect()
     } else {
@@ -58,9 +75,10 @@ pub(crate) fn chips(options: &[Choice]) -> Vec<Chip> {
             label,
             tone: if recommended { Tone::Recommended } else { Tone::Plain },
             number: (index < KEYED).then_some(index + 1),
+            marked: mark && recommended,
         })
         .collect();
-    chips.push(Chip { label: OTHER.to_owned(), tone: Tone::Other, number: None });
+    chips.push(Chip { label: OTHER.to_owned(), tone: Tone::Other, number: None, marked: false });
     chips
 }
 
@@ -168,13 +186,13 @@ impl Row {
                 let room = (width - 2.0 * PAD_X - lead).max(20.0);
                 let label = crate::reader_view::ellipsized(
                     painter,
-                    &chip.label,
+                    &chip.shown(),
                     body(LABEL_FONT),
                     ink(chip.tone),
                     room,
                 );
                 let chip_w = 2.0 * PAD_X + lead + label.size().x;
-                Laid { number, label, full: chip.label.clone(), width: chip_w }
+                Laid { number, label, full: chip.shown(), width: chip_w }
             })
             .collect();
         let widths: Vec<f32> = laid.iter().map(|chip| chip.width).collect();

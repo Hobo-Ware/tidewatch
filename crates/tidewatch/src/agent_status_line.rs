@@ -58,8 +58,8 @@ pub(crate) fn line_of<T>(
     (cli_name, remote_app): (&str, Option<&'static str>),
 ) -> Option<Line> {
     let agent = pane.agent.as_ref().filter(|agent| agent.workflow.is_none())?;
-    let tone = status_view::tone(agent.run.status());
-    let ready = is_ready(agent.first_prompt, tone);
+    let ready = is_ready(agent.first_prompt, status_view::tone(agent.run.status()));
+    let tone = agent.run.shown_tone();
     let level = agent.launched.as_ref().map(|launched| launched.level.label());
     let who = [Some(agent.profile_name.as_str()), Some(cli_name), level]
         .into_iter()

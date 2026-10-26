@@ -38,6 +38,20 @@ pub(crate) fn answered_since_save(
     answered_at == Some(&updated_ms)
 }
 
+/// The state a report stands for on every screen. A report older than the turn that now runs no
+/// longer holds while the agent works, so the tab reads Working until it reports again.
+pub(crate) fn standing(
+    ledger: &Ledger,
+    updated_ms: Option<i64>,
+    live: Live,
+    (stale, working): (bool, bool),
+) -> State {
+    let state = fresh(ledger, stale).shown_state();
+    let older =
+        updated_ms.zip(live.turn_started_ms).is_some_and(|(saved, started)| started > saved);
+    if working && older { State::Working } else { state }
+}
+
 /// The ledger as the screens should read it: unchanged, or with the question and the wait taken
 /// out while `stale`.
 pub(crate) fn fresh(ledger: &Ledger, stale: bool) -> Cow<'_, Ledger> {
@@ -125,6 +139,37 @@ mod tests {
         for (what, ledger, want) in cases {
             assert_eq!(is_stale(&ledger, Some(SAVED), turn(SAVED + 1)), want, "{what}");
         }
+    }
+
+    fn typed(state: &str, extra: &str) -> Ledger {
+        let mut ledger = Ledger::parse(&format!("# Goal\nx\n\n## Status\nstate: {state}\n"));
+        if !extra.is_empty() {
+            ledger.waiting_on = Some(tidewatch_core::progress_report::WaitingOn::Pr(7));
+        }
+        ledger
+    }
+
+    #[test]
+    fn a_report_older_than_the_turn_that_runs_now_no_longer_holds_while_the_agent_works() {
+        let cases = [
+            ("done", "", true, SAVED + 1, State::Working),
+            ("waiting", "pr", true, SAVED + 1, State::Working),
+            ("blocked", "", true, SAVED + 1, State::Working),
+            ("done", "", false, SAVED + 1, State::Done),
+            ("done", "", true, SAVED - 1, State::Done),
+            ("waiting", "pr", false, SAVED + 1, State::Waiting),
+            ("working", "", true, SAVED + 1, State::Working),
+        ];
+        for (state, extra, working, turn_at, want) in cases {
+            let got = standing(&typed(state, extra), Some(SAVED), turn(turn_at), (false, working));
+            assert_eq!(got, want, "{state} working={working} turn at {turn_at}");
+        }
+        let owner_answered = standing(&asks(), Some(SAVED), turn(SAVED - 1), (true, false));
+        assert_eq!(owner_answered, State::Working, "an answered question stops asking");
+        assert_eq!(
+            standing(&asks(), Some(SAVED), turn(SAVED - 1), (false, false)),
+            State::NeedsYou
+        );
     }
 
     #[test]

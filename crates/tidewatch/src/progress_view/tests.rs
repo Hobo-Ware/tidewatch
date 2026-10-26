@@ -24,6 +24,7 @@ struct Panel {
     state: TabState,
     size: egui::Vec2,
     holds_keys: bool,
+    shown: Option<tidewatch_core::progress::State>,
     texts: Vec<(String, Rect)>,
     action: Option<Action>,
     opened: Vec<String>,
@@ -39,6 +40,7 @@ impl Panel {
             state: TabState::default(),
             size: vec2(width, 900.0),
             holds_keys: false,
+            shown: None,
             texts: Vec::new(),
             action: None,
             opened: Vec::new(),
@@ -60,6 +62,7 @@ impl Panel {
             (self.ledger.as_ref(), &self.jobs, &mut self.state, self.size);
         let last_turn = self.last_turn.clone();
         let holds_keys = self.holds_keys;
+        let shown = self.shown;
         let output = self.ctx.run_ui(raw, |ui| {
             if holds_keys {
                 let at = Rect::from_min_size(pos2(0.0, 880.0), vec2(10.0, 10.0));
@@ -76,6 +79,7 @@ impl Panel {
                 first: Side::Progress,
                 meeseeks: None,
                 last_turn: last_turn.clone(),
+                shown,
             };
             action = show(ui, Rect::from_min_size(pos2(0.0, 0.0), size), &input, state);
         });
@@ -215,17 +219,18 @@ fn no_question_means_no_card_and_no_button() {
 }
 
 #[test]
-fn more_than_eight_rows_hide_behind_show_all_and_it_toggles() {
+fn a_finished_stage_hides_behind_a_link_and_it_toggles() {
     let mut panel = Panel::new(LONG, 420.0);
-    assert!(panel.drawn("Show all 10"));
-    assert!(!panel.drawn("Item nine") && !panel.drawn("Item ten"));
-    let at = panel.center_of("Show all 10");
+    assert!(panel.drawn("Show 1 finished stage"), "{:?}", panel.texts);
+    assert!(panel.drawn("Item ten") && panel.drawn("Open the PR"), "open stages show every step");
+    assert!(!panel.drawn("Restate the goal in one line"));
+    let at = panel.center_of("Show 1 finished stage");
     panel.click(at);
     assert!(panel.state.show_all_rows());
-    assert!(panel.drawn("Item ten") && panel.drawn("Show less"));
+    assert!(panel.drawn("Restate the goal in one line") && panel.drawn("Show less"));
     let at = panel.center_of("Show less");
     panel.click(at);
-    assert!(!panel.drawn("Item ten"));
+    assert!(!panel.drawn("Restate the goal in one line"));
 }
 
 #[test]
@@ -253,23 +258,26 @@ fn a_tag_with_nothing_behind_it_is_not_drawn() {
 }
 
 #[test]
-fn the_header_names_the_step_never_a_ring_count_and_the_meta_line_says_state_and_age() {
+fn the_header_says_the_goal_never_a_ring_count_and_the_meta_line_says_the_reported_state_and_age() {
     let panel = Panel::new(LONG, 420.0);
-    assert!(panel.drawn("Step 2 of 4 \u{b7} Build"), "{:?}", panel.texts);
+    assert!(!panel.texts.iter().any(|(text, _)| text.starts_with("Step ")), "{:?}", panel.texts);
     assert!(!panel.texts.iter().any(|(text, _)| text == "3/13" || text.starts_with("0/")));
     assert!(
-        panel.drawn("\u{25cf} Blocked \u{b7} updated 4 min ago"),
-        "a blocked item makes it blocked"
+        panel.drawn("\u{25cf} Needs you \u{b7} updated 4 min ago"),
+        "a question the agent holds makes it needs you, a blocked step does not make it blocked"
     );
 }
 
 #[test]
-fn an_old_ten_phase_ledger_still_reads_as_four_steps() {
+fn an_old_ten_phase_ledger_still_reads_as_four_stages() {
     let text = "# Goal\nShip it\n\n## Status\nphase: 7 Review\nstate: waiting\n\n## Checklist\n### 1. Understand and decide\n- [x] a\n### 2. Build\n- [x] b\n### 3. Gate\n- [x] c\n### 4. Validate against production\n- [x] d\n### 5. Preview\n- [x] e\n### 6. PR\n- [x] Open it\n### 7. Review\n- [~] Wait for CI\n### 8. Ship\n- [ ] Merge\n### 9. Verify live\n- [ ] Errors\n### 10. Close out\n- [ ] Report\n";
     let panel = Panel::new(text, 420.0);
-    assert!(panel.drawn("Step 3 of 4 \u{b7} PR"), "{:?}", panel.texts);
-    assert!(panel.drawn("Open it") && panel.drawn("Wait for CI"));
-    assert!(!panel.drawn("Merge") && !panel.drawn("Gate"));
+    for bar in ["Understand", "Build", "PR", "Done"] {
+        assert!(panel.drawn(bar), "{bar:?} in {:?}", panel.texts);
+    }
+    assert!(panel.drawn("Open it") && panel.drawn("Wait for CI") && panel.drawn("Merge"));
+    assert!(panel.drawn("Show 2 finished stages"), "{:?}", panel.texts);
+    assert!(!panel.drawn("Gate") && !panel.drawn("c"));
 }
 
 #[test]
@@ -281,7 +289,7 @@ fn no_text_overlaps_at_any_width_the_card_has() {
                 .center_of(&tag.label(entries(&panel.ledger.as_ref().unwrap().ledger, tag).len()));
             panel.click(at);
         }
-        let at = panel.center_of("Show all 10");
+        let at = panel.center_of("Show 1 finished stage");
         panel.click(at);
         for (index, (a, a_rect)) in panel.texts.iter().enumerate() {
             assert!(a_rect.right() <= width + 0.5, "{a:?} runs past the card at {width}");
@@ -400,7 +408,7 @@ fn a_tab_that_runs_on_its_own_gets_no_ask_agent_to_fix_button() {
 fn the_last_turn_sits_under_the_stages_and_above_the_checklist() {
     let text = format!("{SMALL}\n## Checklist\n### 2. Build\n- [~] Wire the list\n");
     let panel = tall(&text, 420.0, turn(None, Ok(())));
-    let top = |text: &str| panel.texts.iter().find(|(t, _)| t == text).unwrap().1.top();
+    let top = |text: &str| panel.texts.iter().rfind(|(t, _)| t == text).unwrap().1.top();
     assert!(top("Build") < top("Last turn") && top("Last turn") < top("Wire the list"));
 }
 
@@ -508,8 +516,9 @@ fn a_question_with_options_draws_the_title_the_why_numbered_chips_and_something_
     for text in [
         "Post the Slack follow-up",
         "The owner wanted it out today",
+        "NEEDS YOU",
         "Post it",
-        "Skip it",
+        "Skip it (recommended)",
         "Draft only",
         "Ask Sam",
         "Later",
@@ -528,10 +537,13 @@ fn a_question_with_options_draws_the_title_the_why_numbered_chips_and_something_
 fn the_chips_sit_under_the_title_text_and_the_first_one_lines_up_with_it() {
     let panel = Panel::new(ASKING, 420.0);
     let title = panel.texts.iter().find(|(text, _)| text == "Post the Slack follow-up").unwrap().1;
+    let label = panel.texts.iter().find(|(text, _)| text == "NEEDS YOU").unwrap().1;
     let why = panel.texts.iter().find(|(text, _)| text.starts_with("The owner")).unwrap().1;
     let number = panel.texts.iter().find(|(text, _)| text == "1").unwrap().1;
-    assert!(title.bottom() <= why.top() + 0.5 && why.bottom() <= number.top());
-    assert_eq!(title.left(), why.left());
+    assert!(label.bottom() <= title.top() + 0.5 && title.bottom() <= number.top());
+    assert!(why.left() > label.right(), "the why sits right of the label on the same row");
+    assert!((why.center().y - label.center().y).abs() < 2.0);
+    assert_eq!(title.left(), label.left());
     let chip_left = number.left() - 12.0;
     assert!(
         (chip_left - title.left()).abs() < 0.6,
@@ -544,7 +556,7 @@ fn the_chips_sit_under_the_title_text_and_the_first_one_lines_up_with_it() {
 fn clicking_an_option_sends_its_exact_text_and_something_else_asks_for_the_reply_box() {
     for (label, want) in [
         ("Post it", Action::Pick("Post it".to_owned())),
-        ("Skip it", Action::Pick("Skip it".to_owned())),
+        ("Skip it (recommended)", Action::Pick("Skip it".to_owned())),
         ("Later", Action::Pick("Later".to_owned())),
         ("Something else", Action::Answer),
     ] {
@@ -613,6 +625,184 @@ fn a_clicked_card_takes_the_digits_even_with_the_pointer_away() {
 fn no_answer_chip_text_overlaps_or_leaves_the_card_at_any_width() {
     for width in [200.0, 240.0, 300.0, 420.0, 640.0] {
         let panel = Panel::new(ASKING, width);
+        for (index, (a, a_rect)) in panel.texts.iter().enumerate() {
+            assert!(a_rect.right() <= width + 0.5, "{a:?} runs past the card at {width}");
+            for (b, b_rect) in &panel.texts[index + 1..] {
+                assert!(
+                    !a_rect.shrink(0.5).intersects(b_rect.shrink(0.5)),
+                    "{a:?} {a_rect:?} overlaps {b:?} {b_rect:?} at {width}"
+                );
+            }
+        }
+    }
+}
+
+fn recap_report(state: &str) -> Ledger {
+    let done = state == "done";
+    let stage = |name: &str, kind: &str, status: &str| serde_json::json!({ "name": name, "kind": kind, "status": if done { "done" } else { status } });
+    let step = |stage: &str, text: &str, status: &str, extra: serde_json::Value| {
+        let mut step = serde_json::json!({
+            "stage": stage, "text": text, "status": if done { "done" } else { status }
+        });
+        step.as_object_mut().unwrap().extend(extra.as_object().unwrap().clone());
+        step
+    };
+    let mut args = serde_json::json!({
+        "goal": "Link each season recap line to the cast it names, and backfill old rows",
+        "title": "Link each recap line to its cast, and backfill old rows",
+        "state": state,
+        "now": "Backfill step 2 is running",
+        "stages": [
+            stage("Build", "build", "done"),
+            stage("Ship", "ship", "done"),
+            stage("Backfill", "ship", "active"),
+            stage("Verify", "verify", "todo")
+        ],
+        "steps": [
+            step("Backfill", "Live season route serves the new line format", "done", serde_json::json!({ "evidence": "200, people empty" })),
+            step("Backfill", "Check links against each season's cast", "active", serde_json::json!({})),
+            step("Backfill", "Guarded backfill writes", "blocked", serde_json::json!({ "reason": "waits on your answer" })),
+            step("Verify", "Check one linked row on the live route", "todo", serde_json::json!({}))
+        ],
+        "verified": [{ "text": "Unit tests" }],
+        "not_verified": [{ "text": "Live row" }],
+        "decisions": [{ "text": "Batches of 500" }]
+    });
+    if state == "needs_you" {
+        args.as_object_mut().unwrap().extend(
+            serde_json::json!({
+                "needs_you": {
+                    "question": "When should step 3 run?",
+                    "options": ["Pause after step 2", "Let it all run now", "Pause right now"],
+                    "recommended": 0,
+                    "why": "step 2 keeps running until you answer"
+                },
+                "waiting_on": { "job": "recap-people-backfill" }
+            })
+            .as_object()
+            .unwrap()
+            .clone(),
+        );
+    }
+    tidewatch_core::progress_report::ProgressReport::check(args.as_object().unwrap(), None)
+        .unwrap_or_else(|problems| panic!("{problems:?}"))
+        .to_ledger()
+}
+
+fn backfill_job() -> Card {
+    Card::Bar(crate::job_model::BarCard {
+        id: 3,
+        name: "recap-people-backfill".to_owned(),
+        right: Some("4%".to_owned()),
+        fraction: 0.04,
+        detail: "people \u{b7} 2,246 of 58,650 rows \u{b7} about 9h 46m left".to_owned(),
+    })
+}
+
+fn recap_panel(state: &str, width: f32) -> Panel {
+    let mut panel = Panel::new("# Goal\nx\n", width);
+    panel.ledger = Some(TabLedger { ledger: recap_report(state), updated_ms: Some(0) });
+    panel.jobs = vec![backfill_job()];
+    panel.frame(Vec::new());
+    panel.frame(Vec::new());
+    panel
+}
+
+#[test]
+fn the_needs_you_report_draws_the_board_top_to_bottom() {
+    let panel = recap_panel("needs_you", 520.0);
+    let at = |text: &str| {
+        panel
+            .texts
+            .iter()
+            .find(|(drawn, _)| drawn == text)
+            .unwrap_or_else(|| panic!("{text:?} not drawn in {:?}", panel.texts))
+            .1
+            .top()
+    };
+    let order = [
+        "Link each recap line to its cast, and backfill old rows",
+        "\u{25cf} Needs you \u{b7} updated 4 min ago",
+        "NEEDS YOU",
+        "When should step 3 run?",
+        "Pause after step 2 (recommended)",
+        "Now",
+        "Backfill step 2 is running",
+        "Build",
+        "BACKFILL",
+        "Check links against each season's cast",
+        "VERIFY",
+        "Check one linked row on the live route",
+        "1 verified",
+    ];
+    let tops: Vec<f32> = order.iter().map(|text| at(text)).collect();
+    assert!(tops.windows(2).all(|pair| pair[0] <= pair[1] + 0.5), "{order:?} {tops:?}");
+    for text in [
+        "Let it all run now",
+        "Pause right now",
+        "Something else",
+        "waits on your answer",
+        "200, people empty",
+    ] {
+        assert!(panel.drawn(text), "{text:?} in {:?}", panel.texts);
+    }
+    assert!(panel.drawn("4% \u{b7} about 9h 46m left"), "{:?}", panel.texts);
+    assert!(panel.drawn("Step 2 keeps running until you answer"));
+    assert!(!panel.drawn("recap-people-backfill"), "the Now line took the job, no second card");
+    for stage in ["Build", "Ship", "Backfill", "Verify"] {
+        assert!(panel.drawn(stage), "{stage:?} bar");
+    }
+    assert!(!panel.drawn("Step 3 of 4"));
+}
+
+#[test]
+fn the_board_options_answer_with_their_exact_text() {
+    let mut panel = recap_panel("needs_you", 520.0);
+    let at = panel.center_of("Pause after step 2 (recommended)");
+    assert_eq!(panel.click(at), Some(Action::Pick("Pause after step 2".to_owned())));
+    let at = panel.center_of("Let it all run now");
+    assert_eq!(panel.click(at), Some(Action::Pick("Let it all run now".to_owned())));
+}
+
+#[test]
+fn a_working_report_has_no_question_card_and_a_done_one_reads_as_a_summary_with_every_stage() {
+    let working = recap_panel("working", 520.0);
+    assert!(!working.drawn("NEEDS YOU") && working.drawn("Now"));
+    assert!(working.drawn("\u{25cf} Working \u{b7} updated 4 min ago"));
+    let mut done = recap_panel("done", 520.0);
+    done.jobs.clear();
+    done.frame(Vec::new());
+    assert!(done.drawn("Summary") && !done.drawn("Now"), "{:?}", done.texts);
+    assert!(done.drawn("\u{25cf} Done \u{b7} updated 4 min ago"));
+    assert!(done.drawn("BUILD") || done.drawn("BACKFILL"));
+    assert!(!done.drawn("Show 1 finished stage"), "all stages are over, so all of them show");
+}
+
+#[test]
+fn a_wait_with_no_job_shows_what_it_waits_on_at_the_right_of_the_now_line() {
+    let mut panel = recap_panel("working", 520.0);
+    panel.jobs.clear();
+    let mut ledger = recap_report("working");
+    ledger.status.state = Some(tidewatch_core::progress::State::Waiting);
+    ledger.waiting_on = Some(tidewatch_core::progress_report::WaitingOn::Pr(2340));
+    panel.ledger = Some(TabLedger { ledger, updated_ms: Some(0) });
+    panel.frame(Vec::new());
+    assert!(panel.drawn("PR #2340"), "{:?}", panel.texts);
+    assert!(panel.drawn("\u{25cf} Waiting \u{b7} updated 4 min ago"));
+}
+
+#[test]
+fn the_state_the_tab_shows_decides_the_word_even_when_the_report_says_otherwise() {
+    let mut panel = recap_panel("done", 520.0);
+    panel.shown = Some(tidewatch_core::progress::State::Working);
+    panel.frame(Vec::new());
+    assert!(panel.drawn("\u{25cf} Working \u{b7} updated 4 min ago"), "{:?}", panel.texts);
+}
+
+#[test]
+fn no_board_text_overlaps_or_leaves_the_card_at_any_width() {
+    for width in [200.0, 240.0, 300.0, 420.0, 640.0] {
+        let panel = recap_panel("needs_you", width);
         for (index, (a, a_rect)) in panel.texts.iter().enumerate() {
             assert!(a_rect.right() <= width + 0.5, "{a:?} runs past the card at {width}");
             for (b, b_rect) in &panel.texts[index + 1..] {

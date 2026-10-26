@@ -34,8 +34,13 @@ pub(crate) fn counts(tones: &[Tone]) -> Counts {
     tones.iter().fold(Counts::default(), |mut counts, tone| {
         match tone {
             Tone::Working => counts.working += 1,
-            Tone::Needs => counts.needs += 1,
-            Tone::Setup | Tone::Done | Tone::Failed | Tone::Stopped | Tone::Shell => {}
+            Tone::Needs | Tone::Blocked => counts.needs += 1,
+            Tone::Setup
+            | Tone::Waiting
+            | Tone::Done
+            | Tone::Failed
+            | Tone::Stopped
+            | Tone::Shell => {}
         }
         counts
     })
@@ -337,6 +342,10 @@ mod tests {
             (
                 vec![Tone::Working, Tone::Working, Tone::Needs, Tone::Done],
                 Counts { working: 2, needs: 1 },
+            ),
+            (
+                vec![Tone::Blocked, Tone::Needs, Tone::Waiting, Tone::Working],
+                Counts { working: 1, needs: 2 },
             ),
         ];
         for (tones, expected) in cases {

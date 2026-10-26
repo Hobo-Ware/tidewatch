@@ -163,6 +163,7 @@ impl Tidewatch {
                 },
                 meeseeks: meeseeks_card.as_ref(),
                 last_turn,
+                shown: agent.and_then(|agent| agent.run.reported()),
             };
             Some(input)
         });
