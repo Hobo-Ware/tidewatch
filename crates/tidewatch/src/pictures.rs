@@ -56,6 +56,11 @@ pub(crate) fn meta_text(size: Option<(u32, u32)>, bytes: u64) -> String {
     }
 }
 
+/// The width of one chip in a block `width` wide: its own width, or the block's when that is narrower.
+pub(crate) fn chip_width(width: f32, removable: bool) -> f32 {
+    (if removable { REMOVABLE_W } else { PLAIN_W }).min(width)
+}
+
 /// How many rows `count` chips take in a row `width` wide.
 pub(crate) fn chip_rows(count: usize, width: f32, chip_w: f32) -> usize {
     if count == 0 {
@@ -202,9 +207,15 @@ pub(crate) struct Outcome {
     pub(crate) removed: bool,
 }
 
-fn truncated(ui: &Ui, text: &str, font: FontId, ink: Color32) -> std::sync::Arc<egui::Galley> {
+fn truncated(
+    ui: &Ui,
+    text: &str,
+    font: FontId,
+    ink: Color32,
+    width: f32,
+) -> std::sync::Arc<egui::Galley> {
     let mut job = LayoutJob::simple_singleline(text.to_owned(), font, ink);
-    job.wrap = TextWrapping::truncate_at_width(TEXT_W);
+    job.wrap = TextWrapping::truncate_at_width(width);
     ui.painter().layout_job(job)
 }
 
@@ -272,13 +283,15 @@ pub(crate) fn paint(ui: &mut Ui, rect: Rect, picture: (&Path, usize), removable:
         vec2(THUMB_W, THUMB_H),
     );
     paint_thumb(ui, thumb, loaded.as_ref().and_then(|loaded| loaded.small.as_ref()));
-    let name = truncated(ui, &label(path, n), FontId::proportional(14.0), brand::TEXT);
+    let nominal = if removable { REMOVABLE_W } else { PLAIN_W };
+    let text_w = (TEXT_W - (nominal - rect.width()).max(0.0)).max(0.0);
+    let name = truncated(ui, &label(path, n), FontId::proportional(14.0), brand::TEXT, text_w);
     let detail_text = match &look {
         Look::Ready(loaded) => meta_text(loaded.size, loaded.bytes),
         Look::Loading => String::new(),
         Look::Missing => "File not found".to_owned(),
     };
-    let detail = truncated(ui, &detail_text, FontId::proportional(12.0), brand::MUTED);
+    let detail = truncated(ui, &detail_text, FontId::proportional(12.0), brand::MUTED, text_w);
     let block = name.size().y + detail.size().y;
     let x = thumb.right() + TEXT_GAP;
     let top = rect.center().y - block / 2.0;
@@ -330,7 +343,7 @@ pub(crate) fn paint_block(
     pictures: &[PathBuf],
     removable: bool,
 ) -> Option<usize> {
-    let chip_w = if removable { REMOVABLE_W } else { PLAIN_W };
+    let chip_w = chip_width(width, removable);
     let mut removed = None;
     for (index, path) in pictures.iter().enumerate() {
         let rect = chip_rect(origin, index, width, chip_w);
@@ -363,6 +376,20 @@ mod tests {
         ];
         for (path, n, want) in cases {
             assert_eq!(label(Path::new(path), n), want, "{path}");
+        }
+    }
+
+    #[test]
+    fn a_chip_is_never_wider_than_the_block_it_sits_in() {
+        let cases = [
+            (600.0, false, PLAIN_W),
+            (206.0, false, 206.0),
+            (150.0, false, 150.0),
+            (600.0, true, REMOVABLE_W),
+            (180.0, true, 180.0),
+        ];
+        for (width, removable, want) in cases {
+            assert_eq!(chip_width(width, removable), want, "{width} {removable}");
         }
     }
 
