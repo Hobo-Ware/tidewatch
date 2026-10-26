@@ -785,13 +785,13 @@ mod tests {
     }
 
     #[test]
-    fn the_agent_is_given_the_house_style_with_the_ledger_format_and_the_four_stages() {
+    fn the_agent_is_given_the_house_style_with_the_report_format_and_the_stage_kinds() {
         let fx = Fixture::new();
         fx.run("claude", &profile("claude", Level::Edits), true, "", None).unwrap();
         let text = agent_style(&fx);
         assert!(text.starts_with(house_style::DEFAULT_HOUSE_STYLE.trim_end()));
-        assert!(text.contains("## Progress ledger format"));
-        assert!(text.contains("### 4. Done"));
+        assert!(text.contains("## Progress report"));
+        assert!(text.contains("`research`"));
         assert!(!text.contains("Must-do steps"));
         assert!(fx.paths.checklist_file().is_file(), "checklist.md is installed on first launch");
     }
@@ -818,8 +818,7 @@ mod tests {
         assert!(text.starts_with("my own style\n\n## Tidewatch tool guidance"), "{text}");
         assert!(text.contains("`report_job`") && text.contains("`$TIDEWATCH_PROGRESS`"));
         assert!(text.contains("`set_avatar`"));
-        assert!(text.contains("\n\n## Progress ledger format"), "{text}");
-        assert!(text.contains("### 4. Done\n"));
+        assert!(text.contains("\n\n## Progress report"), "{text}");
         assert!(text.ends_with("not stages:\n\n- Mine\n- [ ] my item\n"), "{text}");
         assert_eq!(std::fs::read_to_string(fx.paths.house_style_file()).unwrap(), "my own style\n");
         assert_eq!(
@@ -881,7 +880,7 @@ mod tests {
     }
 
     #[test]
-    fn the_ledger_text_promises_only_what_the_clis_enforcement_does() {
+    fn the_report_text_promises_only_what_the_clis_enforcement_does() {
         let fx = Fixture::new();
         for (id, want, not) in [
             ("claude", "is sent back to write one", "reminder"),
@@ -896,7 +895,7 @@ mod tests {
     }
 
     #[test]
-    fn every_cli_is_pointed_at_the_text_with_the_ledger_format() {
+    fn every_cli_is_pointed_at_the_text_with_the_report_format() {
         let fx = Fixture::new();
         let tab_dir = fx.paths.tab_state_dir(Path::new("/work/web"), "brave-otter");
         let claude = fx.run("claude", &profile("claude", Level::Edits), true, "", None).unwrap();

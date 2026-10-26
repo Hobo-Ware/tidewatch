@@ -127,7 +127,12 @@ fn a_turn_with_tools_and_no_ledger_is_sent_back_once_and_the_ledger_ends_the_ask
     assert_eq!(first.status.code(), Some(2));
     let stderr = text(&first.stderr);
     assert!(stderr.starts_with("LEDGER GUARD - "), "{stderr}");
-    assert!(stderr.contains("update_progress") && stderr.contains("on: <event>"), "{stderr}");
+    assert!(
+        stderr.contains("update_progress")
+            && stderr.contains("needs_you")
+            && stderr.contains("waiting_on"),
+        "{stderr}"
+    );
     assert_eq!(text(&first.stdout), "");
 
     assert_eq!(lab.stop(&transcript, false).status.code(), Some(0), "never twice for a turn");
