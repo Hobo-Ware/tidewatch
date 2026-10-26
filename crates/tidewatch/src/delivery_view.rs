@@ -243,6 +243,7 @@ mod tests {
                 subject: "feat: x".into(),
                 body: String::new(),
             }],
+            rebase: false,
             title: "Add x".into(),
             body: "text".into(),
         }

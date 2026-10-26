@@ -20,6 +20,42 @@ fn branch_with_two_commits(work: &std::path::Path) {
     commit_file(work, "auth_test.rs", "#[test] fn t() {}\n", "test: cover expiry");
 }
 
+#[derive(Clone, Copy)]
+enum Merge {
+    Rebase,
+    Squash,
+}
+
+fn merge_into_main(r: &common::Repos, how: Merge) -> String {
+    let tip = ok(&r.work, &["rev-parse", "HEAD"]).trim().to_owned();
+    ok(&r.work, &["push", "-q", "-u", "origin", BRANCH]);
+    ok(&r.work, &["switch", "-q", "-c", "merging", "origin/main"]);
+    commit_file(&r.work, "other.md", "someone else\n", "docs: someone else");
+    match how {
+        Merge::Rebase => {
+            ok(&r.work, &["cherry-pick", &format!("origin/main..{tip}")]);
+        }
+        Merge::Squash => {
+            ok(&r.work, &["merge", "--squash", &tip]);
+            ok(&r.work, &["commit", "-q", "-m", "feat: token refresh (#1)"]);
+        }
+    }
+    ok(&r.work, &["push", "-q", "origin", "merging:main"]);
+    ok(&r.work, &["fetch", "-q", "origin"]);
+    ok(&r.work, &["switch", "-q", BRANCH]);
+    ok(&r.work, &["branch", "-q", "-D", "merging"]);
+    ok(&r.work, &["config", "user.name", "t"]);
+    ok(&r.work, &["config", "user.email", "t@example.com"]);
+    tip
+}
+
+fn left_after(r: &common::Repos, merged_head: &str) -> Vec<String> {
+    let plan =
+        DeliveryPlan::build_after(&Tools::system(), &r.work, BRANCH, None, Some(merged_head))
+            .unwrap();
+    plan.commits.into_iter().map(|c| c.subject).collect()
+}
+
 fn created(url: &str) -> common::Reply {
     reply("pr create", 0, Box::leak(format!("{url}\n").into_boxed_str()), "")
 }
@@ -328,6 +364,8 @@ fn a_branch_whose_pull_request_merged_goes_to_the_next_free_branch_name() {
     ok(&r.work, &["push", "-q", "-u", "origin", BRANCH]);
     let merged_head = ok(&r.work, &["rev-parse", "HEAD"]).trim().to_owned();
     commit_file(&r.work, "later.rs", "fn later() {}\n", "fix: after the merge");
+    ok(&r.work, &["config", "user.name", "t"]);
+    ok(&r.work, &["config", "user.email", "t@example.com"]);
     ok(&r.work, &["branch", &format!("{BRANCH}-2")]);
     let gh = FakeGh::new(&[created(URL)]);
     let tools = Tools::with_path(gh.path());
@@ -377,4 +415,97 @@ fn a_single_commit_with_no_body_still_gives_the_pull_request_a_body() {
     let plan = DeliveryPlan::build(&Tools::system(), &r.work, BRANCH, None).unwrap();
     assert_eq!(plan.title, "feat: only change");
     assert_eq!(plan.body, "## Changes\n\n- feat: only change");
+}
+
+#[test]
+fn a_merged_pull_request_leaves_nothing_to_deliver_however_it_merged() {
+    if !git_available() {
+        return;
+    }
+    for how in [Merge::Rebase, Merge::Squash] {
+        let r = repos();
+        branch_with_two_commits(&r.work);
+        let tip = merge_into_main(&r, how);
+        assert_eq!(left_after(&r, &tip), Vec::<String>::new());
+    }
+}
+
+#[test]
+fn only_the_commits_made_after_the_merge_are_ready_however_it_merged() {
+    if !git_available() {
+        return;
+    }
+    for how in [Merge::Rebase, Merge::Squash] {
+        let r = repos();
+        branch_with_two_commits(&r.work);
+        let tip = merge_into_main(&r, how);
+        commit_file(&r.work, "later.rs", "fn later() {}\n", "fix: after the merge");
+        assert_eq!(left_after(&r, &tip), ["fix: after the merge"]);
+    }
+}
+
+#[test]
+fn a_merged_head_the_checkout_does_not_have_falls_back_to_what_the_base_already_holds() {
+    if !git_available() {
+        return;
+    }
+    let unknown = "0123456789abcdef0123456789abcdef01234567";
+    let r = repos();
+    branch_with_two_commits(&r.work);
+    merge_into_main(&r, Merge::Rebase);
+    assert_eq!(left_after(&r, unknown), Vec::<String>::new());
+    commit_file(&r.work, "later.rs", "fn later() {}\n", "fix: after the merge");
+    assert_eq!(left_after(&r, unknown), ["fix: after the merge"]);
+}
+
+#[test]
+fn the_pull_request_after_a_merge_carries_only_the_new_commits() {
+    if !git_available() {
+        return;
+    }
+    let r = repos();
+    branch_with_two_commits(&r.work);
+    let tip = merge_into_main(&r, Merge::Rebase);
+    commit_file(&r.work, "later.rs", "fn later() {}\n", "fix: after the merge");
+    let gh = FakeGh::new(&[created(URL)]);
+    let tools = Tools::with_path(gh.path());
+    let plan = DeliveryPlan::build_after(&tools, &r.work, BRANCH, None, Some(&tip)).unwrap();
+
+    deliver(&tools, &plan, "Fix later", "Body", Opens::Draft).unwrap();
+
+    let new_branch = format!("{BRANCH}-2");
+    assert_eq!(ok(&r.remote, &["rev-list", "--count", &format!("main..{new_branch}")]).trim(), "1");
+    assert_eq!(ok(&r.work, &["rev-list", "--count", "origin/main..HEAD"]).trim(), "1");
+    assert_eq!(ok(&r.work, &["log", "-1", "--format=%s"]).trim(), "fix: after the merge");
+}
+
+#[test]
+fn a_new_commit_that_cannot_move_onto_the_base_leaves_the_branch_as_it_was() {
+    if !git_available() {
+        return;
+    }
+    let r = repos();
+    branch_with_two_commits(&r.work);
+    let tip = merge_into_main(&r, Merge::Rebase);
+    commit_file(&r.work, "auth.rs", "fn refresh_again() {}\n", "fix: change it again");
+    let before = ok(&r.work, &["rev-parse", "HEAD"]);
+    ok(&r.work, &["switch", "-q", "main"]);
+    ok(&r.work, &["reset", "-q", "--hard", "origin/main"]);
+    commit_file(&r.work, "auth.rs", "fn other() {}\n", "feat: someone else");
+    ok(&r.work, &["push", "-q", "origin", "main"]);
+    ok(&r.work, &["fetch", "-q", "origin"]);
+    ok(&r.work, &["switch", "-q", BRANCH]);
+    let gh = FakeGh::new(&[created(URL)]);
+    let tools = Tools::with_path(gh.path());
+    let plan = DeliveryPlan::build_after(&tools, &r.work, BRANCH, None, Some(&tip)).unwrap();
+
+    let Err(DeliveryError::PushFailed(message)) =
+        deliver(&tools, &plan, "Fix", "Body", Opens::Draft)
+    else {
+        panic!("the commit conflicts with main");
+    };
+
+    assert!(message.contains("cannot move the new commits onto main"), "{message}");
+    assert_eq!(ok(&r.work, &["rev-parse", "HEAD"]), before);
+    assert_eq!(remote_branches(&r.remote), [BRANCH, "main"]);
 }

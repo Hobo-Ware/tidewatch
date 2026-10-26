@@ -638,6 +638,8 @@ mod tests {
         }
         git(&remote, &["init", "-q", "--bare", "-b", "main"]);
         git(&work, &["init", "-q", "-b", "main"]);
+        git(&work, &["config", "user.name", "t"]);
+        git(&work, &["config", "user.email", "t@example.com"]);
         git(&work, &["remote", "add", "origin", remote.to_str().unwrap()]);
         commit(&work, "readme.md", "chore: init");
         git(&work, &["push", "-q", "-u", "origin", "main"]);

@@ -243,6 +243,7 @@ mod tests {
                     body: String::new(),
                 })
                 .collect(),
+            rebase: false,
             title: "Add helper".into(),
             body: "## Changes".into(),
         }
