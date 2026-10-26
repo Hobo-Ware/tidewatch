@@ -199,6 +199,7 @@ pub(crate) struct Tidewatch {
     progress_ui: progress_view::Memory,
     checklist: overview_checklist::Host,
     overview_state: crate::overview_view::State,
+    answered_asks: HashMap<u64, Option<i64>>,
     slash: slash_glue::Host,
     snoozes: due::Snoozes,
     dev_open_scheduled: Option<String>,
@@ -407,6 +408,7 @@ impl Tidewatch {
             progress_ui: progress_view::Memory::default(),
             checklist: overview_checklist::Host::new(),
             overview_state: crate::overview_fake::initial_state(),
+            answered_asks: HashMap::new(),
             slash: slash_glue::Host::new(),
             snoozes: due::Snoozes::default(),
             dev_open_scheduled: std::env::var("TIDEWATCH_DEV_OPEN_SCHEDULED")

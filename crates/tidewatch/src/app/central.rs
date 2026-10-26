@@ -12,6 +12,7 @@ use super::Tidewatch;
 use super::frame::FrameIntent;
 use super::repos::RepoCommand;
 use super::terminal::TerminalGrid;
+use crate::answer_chips::Pick;
 use crate::coming_up::{Row as Scheduled, coming_up, with_extra};
 use crate::commands::Command;
 use crate::delivery_card::Delivery;
@@ -215,7 +216,17 @@ impl Tidewatch {
                 frame.actions.push(Action::Select(index));
             }
         }
-        let jump = out.jump;
+        let mut jump = out.jump;
+        match out.answer {
+            Some((tab, Pick::Answer(text))) => {
+                self.send_answer(tab, text, ctx, ctx.input(|i| i.time));
+            }
+            Some((tab, Pick::Other)) => {
+                self.open_reply_box_of(tab);
+                jump = Some(tab);
+            }
+            None => {}
+        }
         if let Some(action) = clicked {
             self.takeover_click(action, ctx);
         }

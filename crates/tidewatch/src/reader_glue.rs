@@ -170,6 +170,22 @@ fn prompt_of(status: &AgentStatus) -> Option<Prompt> {
     }
 }
 
+fn prompt_waiting(agent: &AgentTab) -> Option<Prompt> {
+    prompt_of(agent.run.status()).filter(|_| !agent.reader.prompt_answered())
+}
+
+/// Why a ready answer cannot go to the agent now, or `None`: the reply box's own gate, which also
+/// shuts while a permission or question prompt waits for its answer.
+pub(crate) fn answer_blocked(agent: &AgentTab) -> Option<&'static str> {
+    reply_blocked(agent)
+        .map(Blocked::hint)
+        .or_else(|| blocked_by_prompt(agent.run.status(), agent.reader.prompt_answered()))
+}
+
+fn blocked_by_prompt(status: &AgentStatus, answered: bool) -> Option<&'static str> {
+    prompt_of(status).filter(|_| !answered).map(|_| reader_view::REPLY_BLOCKED)
+}
+
 /// Draws the Reader of the tab in `area`, and returns what the user (or a dev switch) asked for.
 pub(crate) fn draw(
     ui: &mut Ui,
@@ -183,7 +199,7 @@ pub(crate) fn draw(
     avatar: Option<Arc<Avatar>>,
 ) -> Vec<Action> {
     let Some(agent) = pane.agent.as_mut() else { return Vec::new() };
-    let prompt = prompt_of(agent.run.status()).filter(|_| !agent.reader.prompt_answered());
+    let prompt = prompt_waiting(agent);
     let ready = (agent.first_prompt == FirstPrompt::Awaiting)
         .then_some(Ready { profile: &agent.profile_name, agent_id: &agent.run.agent_id });
     let root = pane.worktree.as_ref().map(|worktree| worktree.path.as_path());
@@ -541,6 +557,27 @@ mod tests {
             assert_eq!(waits_for_input(&status), want, "{status:?}");
         }
     }
+    #[test]
+    fn a_ready_answer_is_shut_while_a_prompt_waits_unanswered_and_otherwise_open() {
+        let shut = Some(reader_view::REPLY_BLOCKED);
+        let cases = [
+            (AgentStatus::NeedsYou(Reason::Permission), false, shut),
+            (AgentStatus::NeedsYou(Reason::Question), false, shut),
+            (AgentStatus::NeedsYou(Reason::Permission), true, None),
+            (AgentStatus::NeedsYou(Reason::Input), false, None),
+            (AgentStatus::NeedsYou(Reason::Attention), false, None),
+            (AgentStatus::Done, false, None),
+            (AgentStatus::Working, false, None),
+        ];
+        for (status, answered, want) in cases {
+            assert_eq!(
+                blocked_by_prompt(&status, answered),
+                want,
+                "{status:?} answered {answered}"
+            );
+        }
+    }
+
     use crate::pane::AgentTab;
     use crate::reader_rows::QuestionRow;
 

@@ -13,6 +13,7 @@ use egui::{
 use tidewatch_core::kind::Kind;
 use tidewatch_core::progress::{Entry, Ledger, Mark};
 
+use crate::answer_chips;
 use crate::brand;
 use crate::job_model::Card;
 use crate::job_view;
@@ -146,6 +147,7 @@ impl Memory {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum Action {
     Answer,
+    Pick(String),
     Ask { job: u64, message: String },
     TakeOver,
     GiveUp,
@@ -228,8 +230,8 @@ fn content(ui: &mut Ui, input: &Input<'_>, state: &mut TabState) -> Option<Actio
     let asked = questions(ledger);
     if !asked.is_empty() {
         ui.add_space(GAP);
-        if question_card(ui, width, &asked) {
-            action = Some(Action::Answer);
+        if let Some(picked) = question_card(ui, width, &asked) {
+            action = Some(picked);
         }
     }
     if let Some(turn) = &input.last_turn {
@@ -398,7 +400,81 @@ fn paint_bar(ui: &mut Ui, column: Rect, bar: &Bar, tone: Tone, index: usize) {
     ui.interact(area, ui.id().with(("progress-bar", index)), Sense::hover()).on_hover_text(tip);
 }
 
-fn question_card(ui: &mut Ui, width: f32, asked: &[&Entry]) -> bool {
+fn question_card(ui: &mut Ui, width: f32, asked: &[&Entry]) -> Option<Action> {
+    match asked {
+        [only] => answer_card(ui, width, only),
+        _ => plain_question_card(ui, width, asked).then_some(Action::Answer),
+    }
+}
+
+fn answer_card(ui: &mut Ui, width: f32, entry: &Entry) -> Option<Action> {
+    const PAD_X: f32 = 14.0;
+    const PAD_Y: f32 = 14.0;
+    const GLYPH: f32 = 28.0;
+    const SPACE: f32 = 12.0;
+    const WHY_GAP: f32 = 4.0;
+    const CHIPS_GAP: f32 = 12.0;
+    let text_w = (width - PAD_X * 2.0 - GLYPH - SPACE).max(40.0);
+    let painter = ui.painter().clone();
+    let mut question = Text::new();
+    question.run(entry.text.trim(), &TextFormat::simple(body(13.5), brand::TEXT));
+    let title = question.wrapped(text_w, 3).lay_out(&painter);
+    let why = entry.why.as_deref().map(str::trim).filter(|why| !why.is_empty()).map(|why| {
+        let mut text = Text::new();
+        text.run(&answer_chips::sentence(why), &TextFormat::simple(body(13.0), brand::MUTED));
+        text.wrapped(text_w, 2).lay_out(&painter)
+    });
+    let why_h = why.as_ref().map_or(0.0, |why| WHY_GAP + why.size().y);
+    let chips = answer_chips::chips(&entry.options);
+    let row = answer_chips::Row::new(&painter, &chips, text_w);
+    let head_h = (title.size().y + why_h).max(GLYPH);
+    let height = PAD_Y * 2.0 + head_h + CHIPS_GAP + row.height();
+    let (rect, response) = ui.allocate_exact_size(vec2(width, height), Sense::click());
+    let pressed_in = ui.input(|i| i.pointer.any_pressed())
+        && ui.input(|i| i.pointer.interact_pos()).is_some_and(|at| rect.contains(at));
+    if pressed_in {
+        response.request_focus();
+    }
+    let focused = ui.memory(|memory| memory.has_focus(response.id));
+    let edge = if focused { brand::TEAL.gamma_multiply(0.5) } else { Color32::TRANSPARENT };
+    painter.rect(
+        rect,
+        CornerRadius::same(10),
+        brand::ORANGE.gamma_multiply(0.08),
+        Stroke::new(1.0, edge),
+        StrokeKind::Inside,
+    );
+    let glyph =
+        Rect::from_min_size(pos2(rect.left() + PAD_X, rect.top() + PAD_Y), vec2(GLYPH, GLYPH));
+    painter.rect_filled(glyph, CornerRadius::same(8), brand::ORANGE.gamma_multiply(0.16));
+    painter.text(glyph.center(), Align2::CENTER_CENTER, "?", heading(15.0), brand::ORANGE);
+    let text_x = glyph.right() + SPACE;
+    let title_h = title.size().y;
+    title.paint_selectable(
+        ui,
+        ui.id().with("progress-question-text"),
+        pos2(text_x, rect.top() + PAD_Y),
+        brand::TEXT,
+    );
+    if let Some(why) = why {
+        why.paint(
+            ui,
+            ui.id().with("progress-why-text"),
+            pos2(text_x, rect.top() + PAD_Y + title_h + WHY_GAP),
+            brand::MUTED,
+        );
+    }
+    let chips_at = pos2(text_x, rect.top() + PAD_Y + head_h + CHIPS_GAP);
+    let clicked = row.show(ui, response.id, chips_at, &chips);
+    let card = answer_chips::Card { id: response.id, rect, terminal_hidden: false };
+    let picked = clicked.or_else(|| answer_chips::key_pick(ui, &card, &chips))?;
+    Some(match answer_chips::pick_of(&chips, picked)? {
+        answer_chips::Pick::Answer(text) => Action::Pick(text),
+        answer_chips::Pick::Other => Action::Answer,
+    })
+}
+
+fn plain_question_card(ui: &mut Ui, width: f32, asked: &[&Entry]) -> bool {
     const PAD_X: f32 = 14.0;
     const PAD_Y: f32 = 12.0;
     const GLYPH: f32 = 28.0;

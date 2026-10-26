@@ -1016,6 +1016,8 @@ pub(crate) fn reply_has_focus(ctx: &egui::Context) -> bool {
     ctx.memory(|memory| memory.has_focus(reply_id()))
 }
 
+pub(crate) const REPLY_BLOCKED: &str = "Answer the prompt above first";
+
 /// The reply box: the shared composer with the Reader's hint.
 pub(crate) fn reply_box(
     ui: &mut Ui,
@@ -1027,7 +1029,7 @@ pub(crate) fn reply_box(
     let hint = match (enabled, blocked) {
         (_, Some(blocked)) => blocked.hint(),
         (true, None) => "Reply to the agent",
-        (false, None) => "Answer the prompt above first",
+        (false, None) => REPLY_BLOCKED,
     };
     composer::show(ui, draft, &Spec { id: reply_id(), hint, enabled, commands, ghost })
 }
