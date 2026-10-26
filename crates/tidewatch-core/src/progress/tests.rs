@@ -255,6 +255,92 @@ fn dashes_of_any_kind_cut_a_why_but_not_inside_backticks() {
     }
 }
 
+fn choice(text: &str, recommended: bool) -> Choice {
+    Choice { text: text.to_owned(), recommended }
+}
+
+fn needs(lines: &str) -> Vec<Entry> {
+    Ledger::parse(&format!("# Goal\ng\n\n## Needs you\n{lines}\n")).needs_you
+}
+
+#[test]
+fn real_needs_you_lines_without_options_read_as_before() {
+    let cases = [
+        "Post the Slack follow-up",
+        "Pick a fix: A, or B, or leave it",
+        "Whether to do the switch",
+        "Approve #1999 (or allow the trakt-bot approval) so auto-merge can land it",
+    ];
+    for line in cases {
+        let entries = needs(&format!("- {line}"));
+        assert_eq!(entries.len(), 1, "{line}");
+        assert_eq!(entries[0].text, line);
+        assert_eq!(entries[0].why, None, "{line}");
+        assert_eq!(entries[0].options, Vec::new(), "{line}");
+    }
+}
+
+#[test]
+fn needs_you_options_are_read_from_the_tail_with_the_recommended_one_starred() {
+    let cases = [
+        (
+            "- Post the Slack follow-up -- options: Post it | Skip it*",
+            "Post the Slack follow-up",
+            None,
+            vec![choice("Post it", false), choice("Skip it", true)],
+        ),
+        (
+            "- Pick a fix: A, or B, or leave it -- the retry loop is flaky -- options: A | B* | Leave it",
+            "Pick a fix: A, or B, or leave it",
+            Some("the retry loop is flaky"),
+            vec![choice("A", false), choice("B", true), choice("Leave it", false)],
+        ),
+        (
+            "- Whether to do the switch -- why -- extra why -- OPTIONS: Yes* | No",
+            "Whether to do the switch",
+            Some("why -- extra why"),
+            vec![choice("Yes", true), choice("No", false)],
+        ),
+        (
+            "- Approve #1999 (or allow the trakt-bot approval) so auto-merge can land it -- options: Approve* | Allow the bot | Wait",
+            "Approve #1999 (or allow the trakt-bot approval) so auto-merge can land it",
+            None,
+            vec![choice("Approve", true), choice("Allow the bot", false), choice("Wait", false)],
+        ),
+        ("- Q -- options:", "Q", None, vec![]),
+        ("- Q -- options: | ** | A", "Q", None, vec![choice("A", false)]),
+        ("- options: A | B", "options: A | B", None, vec![]),
+        (
+            "- Q -- `a | b` is a pipe -- options: One | Two*",
+            "Q",
+            Some("`a | b` is a pipe"),
+            vec![choice("One", false), choice("Two", true)],
+        ),
+    ];
+    for (line, text, why, options) in cases {
+        let entries = needs(line);
+        assert_eq!(entries.len(), 1, "{line}");
+        assert_eq!(entries[0].text, text, "{line}");
+        assert_eq!(entries[0].why.as_deref(), why, "{line}");
+        assert_eq!(entries[0].options, options, "{line}");
+    }
+}
+
+#[test]
+fn options_are_written_back_as_the_line_they_were_read_from() {
+    let lines = [
+        "- Post the Slack follow-up -- options: Post it | Skip it*",
+        "- Pick a fix -- the retry loop is flaky -- options: A | B* | Leave it",
+        "- Whether to do the switch",
+    ];
+    let ledger = Ledger::parse(&format!("# Goal\ng\n\n## Needs you\n{}\n", lines.join("\n")));
+    let written = ledger.to_markdown();
+    for line in lines {
+        assert!(written.contains(&format!("{line}\n")), "{line}\n{written}");
+    }
+    assert_eq!(Ledger::parse(&written), ledger);
+}
+
 #[test]
 fn when_reads_each_kind_and_keeps_what_it_cannot_read() {
     let cases = [

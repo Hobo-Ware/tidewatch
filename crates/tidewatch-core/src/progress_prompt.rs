@@ -47,7 +47,7 @@ note: <one short line on what is happening now>
 - <next step>
 
 ## Needs you
-- <a question or approval only the user can give, or nothing>
+- <a question or approval only the user can give> -- <why you need it> -- options: <short option> | <short option>* | <short option>
 
 ## Scheduled
 - [ ] <when> -- <what> -- <why>
@@ -60,7 +60,7 @@ How to fill it in:
 - The steps are yours. Under each stage write the concrete steps of this task (`Read the retry code`, `Add a test for a 429`), not generic ones. Add, split, reword and drop steps as the work changes, and mark them as you go. A stage that does not apply keeps its heading with one step marked skipped and a reason.
 - Checklist marks: `[ ]` to do, `[~]` in progress, `[x]` done, `[-]` skipped, `[!]` blocked. After ` -- ` give the reason for a skipped or blocked item.
 - Separate a line from its reason or evidence with ` -- ` (two hyphens between spaces). Never use a dash character.
-- Needs you holds only what the user must answer or approve. Write `nothing` when there is none.
+- Needs you holds only what the user must answer or approve. Every line ends with `-- options: A | B* | C`: 2 to 4 short answers the user can click, the one you recommend starred. Write `nothing` when there is none.
 - Next holds only what you do in this same turn, right after the call. Work that waits for something goes in Scheduled, never in Next: a merge, an approval, a deploy, a date, or the user. Give it the `<when>` that says what it waits for, for example `on: #1999 merges` or `on: the owner approves #1999`. Work meant for later today gets today's date.
 - Before you set state to waiting, blocked or done, move every Next item that is not happening right now into Scheduled. Tidewatch lists only Scheduled in Coming up, so work left in Next is easy to forget.
 - Scheduled holds open work that is not for now. Leave the section out when there is none. `<when>` is one of these five, with an example of each:
@@ -143,6 +143,17 @@ mod tests {
         assert_eq!(ledger.scheduled.len(), 1);
         assert_eq!(ledger.scheduled[0].steps.len(), 1);
         assert_eq!(ledger.needs_you.len(), 1);
+        let options = &ledger.needs_you[0].options;
+        assert_eq!(options.len(), 3);
+        assert_eq!(options.iter().filter(|choice| choice.recommended).count(), 1);
+    }
+
+    #[test]
+    fn every_needs_you_line_is_told_to_carry_two_to_four_clickable_options() {
+        let text = section(None);
+        assert!(text.contains("Every line ends with `-- options: A | B* | C`"));
+        assert!(text.contains("2 to 4 short answers"));
+        assert!(text.contains("the one you recommend starred"));
     }
 
     #[test]

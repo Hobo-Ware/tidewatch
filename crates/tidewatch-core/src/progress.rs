@@ -111,11 +111,20 @@ pub struct Item {
     pub why: Option<String>,
 }
 
-/// One list line of Decisions, Verified, Not verified, Next or Needs you: `- text -- why`.
+/// One ready answer on a Needs you line: `B*` is the recommended option `B`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Choice {
+    pub text: String,
+    pub recommended: bool,
+}
+
+/// One list line of Decisions, Verified, Not verified, Next or Needs you: `- text -- why`, and on a
+/// Needs you line `- text -- why -- options: A | B* | C`.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Entry {
     pub text: String,
     pub why: Option<String>,
+    pub options: Vec<Choice>,
 }
 
 impl Entry {
@@ -541,7 +550,7 @@ impl Ledger {
             if !entries.is_empty() {
                 let _ = writeln!(out, "## {name}");
                 for entry in entries {
-                    let _ = writeln!(out, "- {}", with_why(&entry.text, entry.why.as_deref()));
+                    let _ = writeln!(out, "- {}", entry_line(entry));
                 }
                 out.push('\n');
             }
@@ -652,6 +661,19 @@ fn push_lines(out: &mut String, lines: &[String]) {
 
 fn item_line(item: &Item) -> String {
     format!("- [{}] {}", item.mark.as_char(), with_why(&item.text, item.why.as_deref()))
+}
+
+fn entry_line(entry: &Entry) -> String {
+    let line = with_why(&entry.text, entry.why.as_deref());
+    if entry.options.is_empty() {
+        return line;
+    }
+    let options: Vec<String> = entry
+        .options
+        .iter()
+        .map(|choice| format!("{}{}", choice.text, if choice.recommended { "*" } else { "" }))
+        .collect();
+    format!("{line} -- {OPTIONS_LABEL} {}", options.join(" | "))
 }
 
 fn with_why(text: &str, why: Option<&str>) -> String {
@@ -768,6 +790,39 @@ fn split_why(text: &str) -> (String, Option<String>) {
     (first, parts.next().filter(|why| !why.is_empty()))
 }
 
+const OPTIONS_LABEL: &str = "options:";
+
+fn parse_choices(list: &str) -> Vec<Choice> {
+    list.split('|')
+        .filter_map(|part| {
+            let part = part.trim();
+            let text = part.trim_end_matches('*').trim_end();
+            let recommended = text.len() < part.len();
+            (!text.is_empty()).then(|| Choice { text: text.to_owned(), recommended })
+        })
+        .collect()
+}
+
+/// The text, the why and the answer choices of an entry line. The choices are a last part that
+/// starts with `options:`.
+fn split_entry(text: &str) -> (String, Option<String>, Vec<Choice>) {
+    let mut parts = split_parts(text, usize::MAX);
+    let tail = parts.len() > 1
+        && parts.last().is_some_and(|last| {
+            last.get(..OPTIONS_LABEL.len())
+                .is_some_and(|head| head.eq_ignore_ascii_case(OPTIONS_LABEL))
+        });
+    if !tail {
+        let (text, why) = split_why(text);
+        return (text, why, Vec::new());
+    }
+    let options = parts.pop().map(|last| parse_choices(&last[OPTIONS_LABEL.len()..]));
+    let mut rest = parts.into_iter();
+    let first = rest.next().unwrap_or_default();
+    let why = rest.collect::<Vec<_>>().join(" -- ");
+    (first, Some(why).filter(|why| !why.is_empty()), options.unwrap_or_default())
+}
+
 fn item(mark: Mark, text: &str) -> Item {
     let (text, why) = split_why(text);
     Item { mark, text, why }
@@ -800,8 +855,8 @@ fn parse_entries(lines: &[&str]) -> Vec<Entry> {
     }
     raw.iter()
         .map(|text| {
-            let (text, why) = split_why(text);
-            Entry { text, why }
+            let (text, why, options) = split_entry(text);
+            Entry { text, why, options }
         })
         .collect()
 }
