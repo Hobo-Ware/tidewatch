@@ -258,6 +258,9 @@ pub(crate) fn draw(
         reader.view.open_turns(&reader.rows, dev.notes_only());
     }
     crate::pictures::attach(&mut reader.view.pictures, dev.take_pictures());
+    if let Some(pixels) = dev.take_scroll_up(now) {
+        reader.view.scroll_up_by(pixels);
+    }
     let mut actions = reader_view::show(ui, area, &reader.rows, &mut reader.view, facts);
     actions.extend(dev.drive_card(now, reader.view.live_mut()));
     actions.extend(dev.actions(now, facts.prompt));

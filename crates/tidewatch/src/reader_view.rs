@@ -54,6 +54,7 @@ const BAR_W: f32 = 2.0;
 const BAR_INSET: f32 = 7.0;
 const JUMP_W: f32 = 140.0;
 const JUMP_H: f32 = 30.0;
+const JUMP_STRIP: f32 = JUMP_H + 12.0;
 const SCROLLBAR_GRAB_W: f32 = 16.0;
 const OUTPUT_MAX_LINES: usize = 40;
 
@@ -68,6 +69,11 @@ pub(crate) struct ViewState {
     focus_reply: bool,
     pub(crate) commands: Arc<Vec<SlashEntry>>,
     content_h: f32,
+    dev_up: Option<f32>,
+    dev_hold: bool,
+    strip_h: f32,
+    strip_shift: f32,
+    scroll_id: Option<Id>,
     body_h: f32,
     seen_rows: u64,
     stick_pending: bool,
@@ -97,6 +103,11 @@ impl Default for ViewState {
             focus_reply: true,
             commands: Arc::default(),
             content_h: 0.0,
+            dev_up: None,
+            dev_hold: false,
+            strip_h: 0.0,
+            strip_shift: 0.0,
+            scroll_id: None,
             body_h: 0.0,
             seen_rows: 0,
             stick_pending: true,
@@ -149,6 +160,11 @@ impl ViewState {
         if !notes_only {
             self.tidewatch_open.extend(rows.told_ids());
         }
+    }
+
+    /// Scrolls up from the bottom by `pixels` at the next draw, for captures.
+    pub(crate) fn scroll_up_by(&mut self, pixels: f32) {
+        self.dev_up = Some(pixels);
     }
 
     /// The reply box takes the keyboard the next time it is drawn.
@@ -524,6 +540,26 @@ pub(crate) fn show(
     actions
 }
 
+/// The part of `body` the rows scroll in and, while the view is not following, the slot of the
+/// "Jump to latest" pill. The pill gets a strip of its own under the rows, so it never covers the
+/// last row; a body too short to spare the strip lets the pill float over it.
+fn jump_split(body: Rect, following: bool) -> (Rect, Option<Rect>) {
+    if following {
+        return (body, None);
+    }
+    let strip = if body.height() >= 4.0 * JUMP_STRIP { JUMP_STRIP } else { JUMP_H };
+    let slot = Rect::from_center_size(
+        pos2(body.center().x, body.bottom() - strip / 2.0),
+        vec2(JUMP_W, JUMP_H),
+    );
+    let rows = if strip == JUMP_STRIP {
+        Rect::from_min_max(body.min, pos2(body.right(), body.bottom() - strip))
+    } else {
+        body
+    };
+    (rows, Some(slot))
+}
+
 #[allow(clippy::too_many_arguments)]
 fn transcript(
     ui: &mut Ui,
@@ -555,7 +591,18 @@ fn transcript(
     if scrolled_up || grabbing_bar {
         state.scroll.release();
     }
-    let width = body.width() - 2.0 * INSET;
+    let dev_up = if state.content_h > 0.0 { state.dev_up.take() } else { None };
+    state.dev_hold |= dev_up.is_some();
+    if state.dev_hold {
+        state.scroll.release();
+    }
+    let (view, jump) = jump_split(body, state.scroll.following());
+    let strip_h = body.height() - view.height();
+    let shift = std::mem::take(&mut state.strip_shift);
+    if std::mem::replace(&mut state.strip_h, strip_h) < strip_h {
+        state.strip_shift = strip_h;
+    }
+    let width = view.width() - 2.0 * INSET;
     state.heights.for_width(width);
     state.pr_heights.for_width(width);
     let newest = rows.newest_seq().map_or(0, |seq| seq + 1) + rows.queued_len(now_ms()) as u64;
@@ -563,8 +610,8 @@ fn transcript(
         state.seen_rows = newest;
         state.stick_pending = true;
     }
-    if (body.height() - state.body_h).abs() > 0.5 {
-        state.body_h = body.height();
+    if (view.height() - state.body_h).abs() > 0.5 {
+        state.body_h = view.height();
         state.stick_pending = true;
     }
     let follow = state.scroll.following();
@@ -573,11 +620,20 @@ fn transcript(
     let ViewState { heights, pr_heights, expanded, tidewatch_open, turns, zone, .. } = state;
     let (_, _, layout) = turns.as_ref()?;
     let scene = Scene { root, profile, face, zone, now_ms: now_ms(), running, waiting };
-    let mut body_ui = ui.new_child(UiBuilder::new().max_rect(body));
+    let mut body_ui = ui.new_child(UiBuilder::new().max_rect(view));
+    if let Some(id) = state.scroll_id.filter(|_| shift > 0.0)
+        && let Some(mut saved) = egui::scroll_area::State::load(ui.ctx(), id)
+    {
+        saved.offset.y += shift;
+        saved.store(ui.ctx(), id);
+    }
     let out = ScrollArea::vertical()
         .id_salt(("reader-scroll", tab))
         .auto_shrink([false, false])
         .show(&mut body_ui, |ui| {
+            if let Some(pixels) = dev_up {
+                ui.scroll_with_delta(vec2(0.0, pixels));
+            }
             ui.add_space(8.0);
             if rows.dropped() > 0 {
                 let text = format!("{} earlier entries are not shown", rows.dropped());
@@ -781,6 +837,10 @@ fn transcript(
         });
     let max_offset = (out.content_size.y - out.inner_rect.height()).max(0.0);
     state.scroll.settle(out.state.offset.y, max_offset);
+    state.scroll_id = Some(out.id);
+    if state.dev_hold {
+        state.scroll.release();
+    }
     #[cfg(test)]
     {
         state.settled_at = (out.state.offset.y, max_offset);
@@ -790,16 +850,12 @@ fn transcript(
         state.stick_pending = true;
         ui.ctx().request_repaint();
     }
-    if !state.scroll.following() {
-        let slot = Rect::from_center_size(
-            pos2(body.center().x, body.bottom() - JUMP_H),
-            vec2(JUMP_W, JUMP_H),
-        );
-        if reader_chat_view::jump_pill(ui, slot, "Jump to latest").clicked() {
-            state.scroll.jump_to_latest();
-            state.stick_pending = true;
-            ui.ctx().request_repaint();
-        }
+    if let Some(slot) = jump.filter(|_| !state.scroll.following())
+        && reader_chat_view::jump_pill(ui, slot, "Jump to latest").clicked()
+    {
+        state.scroll.jump_to_latest();
+        state.stick_pending = true;
+        ui.ctx().request_repaint();
     }
     chip_click
 }
@@ -2873,5 +2929,111 @@ mod tests {
         let found = drawn_texts(&rows, 900.0);
         assert!(found.iter().all(|text| text != "Queued"), "{found:?}");
         assert_eq!(found.iter().filter(|text| *text == "then also this").count(), 1, "{found:?}");
+    }
+    #[test]
+    fn the_jump_pill_gets_a_strip_of_its_own_and_never_covers_a_row() {
+        let body = Rect::from_min_size(pos2(0.0, 0.0), vec2(800.0, 400.0));
+        assert_eq!(jump_split(body, true), (body, None));
+        let (rows, slot) = jump_split(body, false);
+        let slot = slot.unwrap();
+        assert!(body.contains_rect(rows) && body.contains_rect(slot));
+        assert!(!rows.intersects(slot), "{rows:?} {slot:?}");
+        assert_eq!(rows.top(), body.top());
+        let short = Rect::from_min_size(pos2(0.0, 0.0), vec2(800.0, 90.0));
+        assert_eq!(jump_split(short, false).0, short, "no room to spare, so it floats");
+    }
+
+    fn visible_texts(output: &egui::FullOutput) -> Vec<(String, Rect)> {
+        let mut out = Vec::new();
+        for clipped in &output.shapes {
+            let mut found = Vec::new();
+            shape_texts(&clipped.shape, &mut found);
+            for (text, rect) in found {
+                let seen = rect.intersect(clipped.clip_rect);
+                if seen.is_positive() {
+                    out.push((text, seen));
+                }
+            }
+        }
+        out
+    }
+
+    #[test]
+    fn the_waiting_row_is_whole_above_the_reply_box_and_the_jump_pill_does_not_cover_it() {
+        use crate::pr_watch::{Pending, Watch};
+        use tidewatch_core::pr_cards::Cards;
+        use tidewatch_core::pr_status::Body;
+        use tidewatch_core::prefs::{GithubPrefs, PrMode};
+        let comment = Body::Commented {
+            trusted: true,
+            author: "rev".into(),
+            text: "why?".into(),
+            url: String::new(),
+        };
+        let mut watch = Watch::new(std::path::PathBuf::from("/x"));
+        watch.take_load();
+        watch.loaded(Cards::default(), 0.0);
+        let message = tidewatch_core::pr_prompt::message(&comment, 42).unwrap();
+        watch.pending.push(Pending { id: 1, message });
+        let rows = conversation(20, 40);
+        let ctx = crate::fonts::test_context();
+        let mut state = ViewState::default();
+        let mut time = 0.0;
+        let mut frame = |events: Vec<Event>| {
+            time += 0.016;
+            let raw = RawInput {
+                screen_rect: Some(Rect::from_min_size(pos2(0.0, 0.0), vec2(800.0, 500.0))),
+                events,
+                focused: true,
+                time: Some(time),
+                ..RawInput::default()
+            };
+            let pr = PrData {
+                watch: &watch,
+                profile: "Builder",
+                handling: crate::pr_watch::Handling::Answers,
+                policy: GithubPrefs { mode: PrMode::Auto, ..GithubPrefs::default() },
+                now_ms: 0,
+            };
+            let output = ctx.run_ui(raw, |ui| {
+                let rect = ui.max_rect();
+                let facts = Facts { pr: Some(pr), ..facts(None, Turn::Running) };
+                let _ = show(ui, rect, &rows, &mut state, facts);
+            });
+            visible_texts(&output)
+        };
+        let row = "Will ask Builder to answer the comment when it finishes this turn";
+        let mut texts = Vec::new();
+        for _ in 0..12 {
+            texts = frame(vec![]);
+        }
+        let find = |texts: &[(String, Rect)], want: &str| {
+            texts.iter().find(|(text, _)| text == want).map(|(_, rect)| *rect)
+        };
+        let waiting = find(&texts, row).expect("the waiting row shows at the bottom");
+        let reply = find(&texts, "Reply to the agent").expect("the reply box shows");
+        assert!(waiting.bottom() < reply.top(), "{waiting:?} above {reply:?}");
+        assert_eq!(find(&texts, "Jump to latest"), None, "following: no pill");
+        frame(vec![Event::PointerMoved(pos2(300.0, 200.0))]);
+        let wheel = Event::MouseWheel {
+            unit: egui::MouseWheelUnit::Point,
+            delta: vec2(0.0, 25.0),
+            phase: egui::TouchPhase::Move,
+            modifiers: Modifiers::NONE,
+        };
+        frame(vec![wheel]);
+        for _ in 0..4 {
+            texts = frame(vec![]);
+        }
+        let still =
+            find(&texts, row).expect("the pill's strip takes room from the top, not the row");
+        assert_eq!(still.height(), waiting.height(), "the row is whole, not cut at the strip");
+        let pill = find(&texts, "Jump to latest").expect("scrolled up: the pill shows");
+        let covered = pill.expand2(vec2(12.0, 6.0));
+        for (text, rect) in &texts {
+            if text != "Jump to latest" {
+                assert!(!rect.intersects(covered), "{text:?} {rect:?} is under the pill {pill:?}");
+            }
+        }
     }
 }

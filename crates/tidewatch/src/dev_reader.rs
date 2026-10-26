@@ -10,6 +10,8 @@
 //!   screenshots does.
 //! - `TIDEWATCH_DEV_TURNS=open`: open the list of calls and the folded updates under every agent turn
 //!   once, as a click on a chip does; `notes` opens only the folded updates.
+//! - `TIDEWATCH_DEV_READER_SCROLL=<pixels>@<seconds>`: once, that long after startup, scroll the
+//!   transcript up from its bottom by that many pixels, as a wheel does (the jump pill shows).
 //! - `TIDEWATCH_DEV_QUESTION=<steps>`: drive the live question card, one step every 0.4 s once it
 //!   shows. Steps, comma separated: `pick<N>` (the number key), `next`, `back`, `space`, `down`,
 //!   `all` (Go with your picks), `type:<text>` ("Something else" with that text), `send`, `skip`.
@@ -51,6 +53,11 @@ enum CardStep {
     Skip,
 }
 
+fn scroll_of(text: &str) -> Option<(f32, f64)> {
+    let (pixels, after) = text.split_once('@').unwrap_or((text, "0"));
+    Some((pixels.parse().ok()?, after.parse().ok()?))
+}
+
 fn card_steps(text: &str) -> VecDeque<CardStep> {
     text.split(',')
         .filter_map(|step| {
@@ -83,6 +90,7 @@ pub(crate) struct DevReader {
     question_at: f64,
     open_turns: bool,
     notes_only: bool,
+    scroll_up: Option<(f32, f64)>,
 }
 
 impl DevReader {
@@ -102,7 +110,8 @@ impl DevReader {
         let pictures = var("TIDEWATCH_DEV_PICTURES")
             .map(|paths| paths.split(':').filter(|p| !p.is_empty()).map(PathBuf::from).collect())
             .unwrap_or_default();
-        Self { pictures, open_turns, notes_only, ..parsed }
+        let scroll_up = var("TIDEWATCH_DEV_READER_SCROLL").and_then(|text| scroll_of(&text));
+        Self { pictures, open_turns, notes_only, scroll_up, ..parsed }
     }
 
     fn parse(
@@ -119,6 +128,7 @@ impl DevReader {
             question_at: 0.0,
             open_turns: false,
             notes_only: false,
+            scroll_up: None,
             raw: reader == Some("raw"),
             key_after: key.and_then(|s| s.parse().ok()),
             answer: match answer {
@@ -140,6 +150,7 @@ impl DevReader {
             && self.pictures.is_empty()
             && self.question.is_empty()
             && !self.open_turns
+            && self.scroll_up.is_none()
     }
 
     pub(crate) fn take_pictures(&mut self) -> Vec<PathBuf> {
@@ -158,6 +169,15 @@ impl DevReader {
             self.open_turns = false;
         }
         now
+    }
+
+    /// The pixels to scroll up from the bottom, once, when their time has come.
+    pub(crate) fn take_scroll_up(&mut self, now: f64) -> Option<f32> {
+        let (pixels, after) = self.scroll_up?;
+        (now >= after).then(|| {
+            self.scroll_up = None;
+            pixels
+        })
     }
 
     /// Queues the Reader chord's key event for this frame once its time has come.
@@ -264,6 +284,17 @@ mod tests {
         assert_eq!(dev.actions(1.0, Some(Prompt::Permission)), Vec::<Action>::new());
         assert_eq!(dev.actions(1.0, None), [Action::Reply("go".into())]);
         assert!(dev.is_idle());
+    }
+
+    #[test]
+    fn the_scroll_switch_reads_pixels_and_a_delay_and_fires_once() {
+        assert_eq!(scroll_of("40@6"), Some((40.0, 6.0)));
+        assert_eq!(scroll_of("40"), Some((40.0, 0.0)));
+        assert_eq!(scroll_of("up"), None);
+        let mut dev = DevReader { scroll_up: scroll_of("40@6"), ..DevReader::default() };
+        assert_eq!(dev.take_scroll_up(5.0), None);
+        assert_eq!(dev.take_scroll_up(6.0), Some(40.0));
+        assert_eq!(dev.take_scroll_up(7.0), None);
     }
 
     #[test]
