@@ -106,6 +106,12 @@ impl TidewatchPaths {
         self.config_dir.join("workflows.offered")
     }
 
+    /// The files whose seeded efforts were already moved to the per-model defaults, one per line.
+    #[must_use]
+    pub fn effort_migrated_file(&self) -> PathBuf {
+        self.config_dir.join("effort-defaults.migrated")
+    }
+
     /// The answer to the D14 folder-trust question and the entries Tidewatch added to the CLIs' files.
     #[must_use]
     pub fn trust_file(&self) -> PathBuf {

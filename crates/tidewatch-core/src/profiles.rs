@@ -10,6 +10,7 @@ use std::path::Path;
 use serde::{Deserialize, Serialize};
 
 use crate::agents::{Agent, AgentOverride, AgentTable, ArgList, Level};
+use crate::effort_migration;
 use crate::fsutil::write_atomic;
 use crate::paths::TidewatchPaths;
 
@@ -48,6 +49,13 @@ pub struct Profile {
 impl Profile {
     /// The profile id a tab saves when its CLI ran on `defaults_for`, which `profiles.toml` has no key for.
     pub const DEFAULTS_ID: &'static str = "default";
+
+    /// The effort a launch passes: the profile's own, else the model's default, else none.
+    #[must_use]
+    pub fn effective_effort(&self) -> Option<&str> {
+        let own = self.effort.as_deref().filter(|effort| !effort.is_empty());
+        own.or_else(|| default_effort_for(&self.agent, self.model.as_deref().unwrap_or_default()))
+    }
 
     /// What a CLI runs with when no profile names it: its own model and effort, no setup.
     #[must_use]
@@ -118,6 +126,7 @@ impl Profiles {
     pub fn load_or_seed(paths: &TidewatchPaths, path_var: Option<&OsStr>) -> Self {
         let file = paths.profiles_file();
         if file.exists() {
+            Self::migrate_saved_effort(paths);
             let mut profiles = Self::load(&file);
             if !profiles.drop_seeded_yolo().is_empty()
                 && let Err(e) = profiles.save(&file)
@@ -128,10 +137,48 @@ impl Profiles {
         }
         let found = AgentTable::builtin().found_on_path(path_var);
         let seeded = Self::seeded(&found);
-        if let Err(e) = seeded.save(&file) {
-            eprintln!("tidewatch: cannot write {} ({e})", file.display());
+        match seeded.save(&file) {
+            Ok(()) => effort_migration::mark(paths, effort_migration::PROFILES),
+            Err(e) => eprintln!("tidewatch: cannot write {} ({e})", file.display()),
         }
         seeded
+    }
+
+    /// Once per machine: the claude Builder an older version seeded at opus and `high` moves to the
+    /// opus default. Any other profile, and a Builder the user changed, stays. A file that cannot
+    /// be read or parsed is left alone and not marked.
+    fn migrate_saved_effort(paths: &TidewatchPaths) {
+        if effort_migration::is_done(paths, effort_migration::PROFILES) {
+            return;
+        }
+        let file = paths.profiles_file();
+        let Some(mut profiles) =
+            std::fs::read_to_string(&file).ok().and_then(|text| Self::parse(&text).ok())
+        else {
+            return;
+        };
+        if profiles.migrate_seeded_effort()
+            && let Err(e) = profiles.save(&file)
+        {
+            eprintln!("tidewatch: cannot write {} ({e})", file.display());
+            return;
+        }
+        effort_migration::mark(paths, effort_migration::PROFILES);
+    }
+
+    fn migrate_seeded_effort(&mut self) -> bool {
+        let mut changed = false;
+        for id in ["builder", "claude-builder"] {
+            let Some(profile) = self.profile.get_mut(id) else { continue };
+            let seeded = profile.agent == "claude"
+                && profile.model.as_deref() == Some("opus")
+                && profile.effort.as_deref() == Some("high");
+            if seeded {
+                profile.effort = default_effort("opus").map(str::to_owned);
+                changed = true;
+            }
+        }
+        changed
     }
 
     /// Builder (Auto edit) and Reviewer (Read only) for each agent in `found`. The best default agent
@@ -180,6 +227,22 @@ impl Profiles {
     }
 }
 
+/// The effort a Claude model runs at when nobody picked one: opus medium, sonnet high, haiku xhigh.
+/// Matches the model family anywhere in the name, ignoring case; any other model has no default.
+#[must_use]
+pub fn default_effort(model: &str) -> Option<&'static str> {
+    let model = model.to_ascii_lowercase();
+    [("opus", "medium"), ("sonnet", "high"), ("haiku", "xhigh")]
+        .into_iter()
+        .find_map(|(family, effort)| model.contains(family).then_some(effort))
+}
+
+/// `default_effort` for what an agent runs: only Claude's own models have one.
+#[must_use]
+pub fn default_effort_for(agent: &str, model: &str) -> Option<&'static str> {
+    (agent == "claude").then(|| default_effort(model)).flatten()
+}
+
 fn seed_profile(
     agent: &Agent,
     plain: bool,
@@ -205,8 +268,9 @@ fn seed_profile(
         house_style: true,
     };
     if agent.id == "claude" {
-        seeded.model = Some(if level == Level::Plan { "sonnet" } else { "opus" }.into());
-        seeded.effort = (level != Level::Plan).then(|| "high".to_owned());
+        let model = if level == Level::Plan { "sonnet" } else { "opus" };
+        seeded.effort = default_effort(model).map(str::to_owned);
+        seeded.model = Some(model.into());
     }
     (format!("{id_prefix}{suffix}"), seeded)
 }
@@ -219,7 +283,12 @@ fn legacy_yolo_seeds() -> Vec<(String, Profile)> {
         .filter(|agent| agent.verified)
         .flat_map(|agent| {
             [true, false].map(|plain| {
-                seed_profile(agent, plain, "builder-yolo", "Builder YOLO", Level::Yolo, false)
+                let (id, mut seed) =
+                    seed_profile(agent, plain, "builder-yolo", "Builder YOLO", Level::Yolo, false);
+                if agent.id == "claude" {
+                    seed.effort = Some("high".to_owned());
+                }
+                (id, seed)
             })
         })
         .collect()
@@ -261,14 +330,40 @@ mod tests {
         let claude_builder = &seeded.profile["builder"];
         assert_eq!(
             (claude_builder.model.as_deref(), claude_builder.effort.as_deref()),
-            (Some("opus"), Some("high"))
+            (Some("opus"), Some("medium"))
         );
         let claude_reviewer = &seeded.profile["reviewer"];
         assert_eq!(
             (claude_reviewer.model.as_deref(), claude_reviewer.effort.as_deref()),
-            (Some("sonnet"), None)
+            (Some("sonnet"), Some("high"))
         );
         assert_eq!(seeded.profile["gemini-builder"].model, None);
+    }
+
+    #[test]
+    fn the_default_effort_follows_the_model_family() {
+        let cases = [
+            ("opus", Some("medium")),
+            ("claude-opus-5-5", Some("medium")),
+            ("OPUS", Some("medium")),
+            ("sonnet", Some("high")),
+            ("sonnet[1m]", Some("high")),
+            ("claude-sonnet-5-5", Some("high")),
+            ("haiku", Some("xhigh")),
+            ("Claude-Haiku-4-5", Some("xhigh")),
+            ("gpt-5", None),
+            ("gemini-2.5-pro", None),
+            ("", None),
+        ];
+        for (model, want) in cases {
+            assert_eq!(default_effort(model), want, "model {model:?}");
+        }
+    }
+
+    #[test]
+    fn only_claude_gets_a_default_effort() {
+        assert_eq!(default_effort_for("claude", "haiku"), Some("xhigh"));
+        assert_eq!(default_effort_for("copilot", "claude-haiku-4.5"), None);
     }
 
     #[test]
@@ -517,6 +612,74 @@ mod tests {
         edited.save(&paths.profiles_file()).unwrap();
         let (_other_dir, other_path) = path_with(&["claude", "gemini", "codex"]);
         assert_eq!(Profiles::load_or_seed(&paths, Some(&other_path)), edited);
+    }
+
+    const OLD_SEED: &str = "[profile.builder]\nname = \"Builder\"\nagent = \"claude\"\nmodel = \"opus\"\n\
+                            effort = \"high\"\npermissions = \"edits\"\n\
+                            [profile.reviewer]\nname = \"Reviewer\"\nagent = \"claude\"\n\
+                            model = \"sonnet\"\npermissions = \"plan\"\n";
+
+    fn saved(text: &str) -> (tempfile::TempDir, TidewatchPaths) {
+        let home = tempfile::tempdir().unwrap();
+        let paths = TidewatchPaths::new(home.path());
+        std::fs::create_dir_all(paths.config_dir()).unwrap();
+        std::fs::write(paths.profiles_file(), text).unwrap();
+        (home, paths)
+    }
+
+    #[test]
+    fn a_builder_seeded_at_opus_high_moves_to_medium_once() {
+        let (_home, paths) = saved(OLD_SEED);
+        let first = Profiles::load_or_seed(&paths, Some(std::ffi::OsStr::new("")));
+        assert_eq!(first.profile["builder"].effort.as_deref(), Some("medium"));
+        assert_eq!(first.profile["reviewer"].effort, None);
+        assert_eq!(Profiles::load(&paths.profiles_file()), first);
+
+        let mut by_hand = first.clone();
+        by_hand.profile.get_mut("builder").unwrap().effort = Some("high".into());
+        by_hand.save(&paths.profiles_file()).unwrap();
+        let second = Profiles::load_or_seed(&paths, Some(std::ffi::OsStr::new("")));
+        assert_eq!(second, by_hand);
+    }
+
+    #[test]
+    fn a_builder_the_user_changed_keeps_its_effort() {
+        let cases = [
+            OLD_SEED.replace("opus", "sonnet"),
+            OLD_SEED.replace("effort = \"high\"", "effort = \"max\""),
+            OLD_SEED.replace(
+                "agent = \"claude\"\nmodel = \"opus\"",
+                "agent = \"gemini\"\nmodel = \"opus\"",
+            ),
+            OLD_SEED.replace("[profile.builder]", "[profile.mine]"),
+        ];
+        for text in cases {
+            let (_home, paths) = saved(&text);
+            let before = Profiles::parse(&text).unwrap();
+            assert_eq!(Profiles::load_or_seed(&paths, Some(std::ffi::OsStr::new(""))), before);
+            assert_eq!(std::fs::read_to_string(paths.profiles_file()).unwrap(), text);
+        }
+    }
+
+    #[test]
+    fn a_bad_file_is_not_marked_so_fixing_it_still_migrates() {
+        let (_home, paths) = saved("[[[");
+        let _ = Profiles::load_or_seed(&paths, Some(std::ffi::OsStr::new("")));
+        assert!(!effort_migration::is_done(&paths, effort_migration::PROFILES));
+        std::fs::write(paths.profiles_file(), OLD_SEED).unwrap();
+        let fixed = Profiles::load_or_seed(&paths, Some(std::ffi::OsStr::new("")));
+        assert_eq!(fixed.profile["builder"].effort.as_deref(), Some("medium"));
+    }
+
+    #[test]
+    fn a_fresh_seed_is_marked_so_a_later_high_stays() {
+        let home = tempfile::tempdir().unwrap();
+        let paths = TidewatchPaths::new(home.path());
+        let (_bin_dir, path) = path_with(&["claude"]);
+        let mut seeded = Profiles::load_or_seed(&paths, Some(&path));
+        seeded.profile.get_mut("builder").unwrap().effort = Some("high".into());
+        seeded.save(&paths.profiles_file()).unwrap();
+        assert_eq!(Profiles::load_or_seed(&paths, Some(&path)), seeded);
     }
 
     #[test]

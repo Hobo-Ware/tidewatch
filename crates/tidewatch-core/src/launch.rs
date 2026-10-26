@@ -178,7 +178,7 @@ pub fn launch_command(
     if let (Some(flag), Some(model)) = (&agent.model_flag, non_empty(profile.model.as_deref())) {
         args.extend([flag.clone(), model.to_owned()]);
     }
-    if let (Some(effort), Some(value)) = (&agent.effort, non_empty(profile.effort.as_deref())) {
+    if let (Some(effort), Some(value)) = (&agent.effort, profile.effective_effort()) {
         args.extend([effort.flag.clone(), format!("{}{value}", effort.value_prefix)]);
     }
     if let (Some(flag), Some(id)) = (&agent.session_id_flag, ctx.session_id.as_deref()) {
@@ -868,6 +868,36 @@ mod tests {
         assert_eq!(
             run("gemini", &gemini, &ctx).args,
             ["--approval-mode", "plan", "--session-id", "sid"]
+        );
+    }
+
+    #[test]
+    fn an_unset_effort_launches_with_the_default_of_the_model() {
+        let ctx = worktree_ctx();
+        let cases = [
+            (Some("sonnet"), None, Some("high")),
+            (Some("claude-haiku-4-5"), Some(""), Some("xhigh")),
+            (Some("opus"), None, Some("medium")),
+            (Some("sonnet"), Some("max"), Some("max")),
+            (Some("some-future-model"), None, None),
+            (None, None, None),
+        ];
+        for (model, effort, want) in cases {
+            let mut p = profile("claude", Level::Plan);
+            p.model = model.map(str::to_owned);
+            p.effort = effort.map(str::to_owned);
+            let args = run("claude", &p, &ctx).args;
+            let passed = args.iter().position(|a| a == "--effort").map(|at| args[at + 1].as_str());
+            assert_eq!(passed, want, "{model:?} {effort:?}");
+        }
+    }
+
+    #[test]
+    fn another_agent_never_gets_a_claude_default() {
+        let mut p = profile("copilot", Level::Plan);
+        p.model = Some("claude-haiku-4.5".into());
+        assert!(
+            !run("copilot", &p, &worktree_ctx()).args.iter().any(|a| a == "--reasoning-effort")
         );
     }
 

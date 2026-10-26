@@ -206,12 +206,16 @@ fn every_level_has_its_note_and_effort_keeps_a_custom_value_visible() {
     for level in Level::ALL {
         assert!(level_note(level).len() > 8, "{level:?}");
     }
-    let usual: Vec<String> = effort_choices("high").into_iter().map(|(value, _)| value).collect();
+    let usual: Vec<String> =
+        effort_choices("high", None).into_iter().map(|(value, _)| value).collect();
     assert_eq!(usual, ["", "low", "medium", "high", "xhigh", "max"]);
-    let custom = effort_choices(" ultra ");
+    let custom = effort_choices(" ultra ", None);
     assert_eq!(custom.last(), Some(&("ultra".to_owned(), "ultra".to_owned())));
     assert_eq!(custom.len(), 7);
-    assert_eq!(effort_choices("").len(), 6);
+    assert_eq!(effort_choices("", None).len(), 6);
+    let labelled = effort_choices("", Some("high"));
+    assert_eq!(labelled[0], (String::new(), "Default (high)".to_owned()));
+    assert_eq!(effort_choices("", None)[0].1, "Default");
 }
 
 #[test]

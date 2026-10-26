@@ -7,6 +7,7 @@ use egui::{
     UiBuilder, pos2, vec2,
 };
 use tidewatch_core::agents::Level;
+use tidewatch_core::profiles::default_effort_for;
 
 use crate::catalog::Availability;
 use crate::profile_editor::{Draft, Editor, Group};
@@ -70,9 +71,12 @@ fn summary(draft: &Draft, agent: &str) -> String {
     parts.join(" \u{b7} ")
 }
 
-fn effort_choices(current: &str) -> Vec<(String, String)> {
+fn effort_choices(current: &str, default: Option<&str>) -> Vec<(String, String)> {
     let mut choices: Vec<(String, String)> =
         EFFORTS.iter().map(|(value, label)| ((*value).to_owned(), (*label).to_owned())).collect();
+    if let Some(default) = default {
+        choices[0].1 = format!("Default ({default})");
+    }
     let current = current.trim();
     if !current.is_empty() && !EFFORTS.iter().any(|(value, _)| *value == current) {
         choices.push((current.to_owned(), current.to_owned()));
@@ -240,10 +244,14 @@ fn form(ui: &mut Ui, draft: &mut Draft, agents: &[(String, String)]) -> bool {
     let mut changed = false;
     let width = ui.available_width();
     ui.spacing_mut().item_spacing.x = 20.0;
+    let previous_model = draft.model.clone();
     ui.columns(2, |columns| {
         changed |= field(&mut columns[0], "Name", &mut draft.name, "Builder");
         changed |= field(&mut columns[1], "Model", &mut draft.model, "empty: the agent's default");
     });
+    if draft.model != previous_model {
+        draft.follow_model(&previous_model);
+    }
     ui.spacing_mut().item_spacing = vec2(6.0, 6.0);
     ui.add_space(12.0);
     caption(ui, "Agent");
@@ -257,7 +265,7 @@ fn form(ui: &mut Ui, draft: &mut Draft, agents: &[(String, String)]) -> bool {
     ui.add_space(12.0);
     caption(ui, "Effort");
     ui.add_space(2.0);
-    let efforts = effort_choices(&draft.effort);
+    let efforts = effort_choices(&draft.effort, default_effort_for(&draft.agent, &draft.model));
     let labels: Vec<&str> = efforts.iter().map(|(_, label)| label.as_str()).collect();
     let current = draft.effort.trim();
     let active = efforts.iter().position(|(value, _)| value == current);

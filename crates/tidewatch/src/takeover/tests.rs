@@ -417,7 +417,7 @@ fn the_dialog_shows_the_command_a_person_would_type() {
         preview_command(&env, &session, false).as_deref(),
         Some(
             format!(
-                "claude --resume {ID} --permission-mode acceptEdits --model opus --add-dir /tmp"
+                "claude --resume {ID} --permission-mode acceptEdits --model opus --effort medium --add-dir /tmp"
             )
             .as_str()
         )
