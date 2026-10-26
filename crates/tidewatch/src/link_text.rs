@@ -15,6 +15,14 @@ use egui::{
 use crate::brand;
 use crate::links;
 
+fn link_format(format: &TextFormat) -> TextFormat {
+    TextFormat {
+        color: brand::TEAL_TEXT,
+        underline: Stroke::new(1.0, brand::link_rest()),
+        ..format.clone()
+    }
+}
+
 struct Span {
     bytes: Range<usize>,
     url: String,
@@ -49,7 +57,7 @@ impl Text {
         let mut last = 0;
         for link in found.links {
             self.push(&found.text[last..link.range.start], format);
-            let linked = TextFormat { color: brand::TEAL_TEXT, ..format.clone() };
+            let linked = link_format(format);
             let start = self.job.text.len();
             self.push(&found.text[link.range.clone()], &linked);
             self.spans.push(Span { bytes: start..self.job.text.len(), url: link.url });
@@ -143,6 +151,9 @@ impl Laid {
             fallback,
             Stroke::NONE,
         );
+        if hovered.is_some() {
+            ui.ctx().set_cursor_icon(CursorIcon::PointingHand);
+        }
         selection
     }
 
