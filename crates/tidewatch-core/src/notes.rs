@@ -155,6 +155,12 @@ impl Notes {
         }
     }
 
+    pub fn unmark_sent(&mut self, ids: &[u64]) {
+        for id in ids {
+            self.sent.remove(id);
+        }
+    }
+
     #[must_use]
     pub fn sent(&self, id: u64) -> Option<Sent> {
         self.sent.get(&id).copied()
@@ -502,6 +508,20 @@ mod tests {
         assert_eq!(notes.pending("claude"), Vec::<u64>::new());
         notes.reply(id, comment("and add a test"));
         assert_eq!(thread_state(&notes, id), NoteState::Queued);
+    }
+
+    #[test]
+    fn taking_the_sent_mark_back_queues_the_note_again() {
+        let mut notes = Notes::default();
+        let (a, b) = (
+            notes.add("a.rs", None, anchor(1), comment("rename")),
+            notes.add("b.rs", None, anchor(2), comment("split")),
+        );
+        notes.mark_sent(&[a, b], 5);
+        assert_eq!(notes.pending("claude"), Vec::<u64>::new());
+        notes.unmark_sent(&[a, 99]);
+        assert_eq!(notes.pending("claude"), [a]);
+        assert_eq!(thread_state(&notes, b), NoteState::Sent(5));
     }
 
     #[test]

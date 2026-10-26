@@ -16,6 +16,7 @@ const JOBS_FILE: &str = "jobs.json";
 const AVATAR_FILE: &str = "avatar.json";
 const AVATAR_ASKED_FILE: &str = "avatar-asked";
 const PROGRESS_FEED_FILE: &str = "progress-feed.jsonl";
+const SENT_FILE: &str = "tidewatch-sent.jsonl";
 
 /// The ledger file that sits next to a tab's `notes.json`.
 #[must_use]
@@ -41,6 +42,11 @@ pub fn avatar_asked_file_beside(notes_file: &Path) -> PathBuf {
 #[must_use]
 pub fn progress_feed_file_beside(notes_file: &Path) -> PathBuf {
     notes_file.with_file_name(PROGRESS_FEED_FILE)
+}
+
+#[must_use]
+pub fn sent_file_beside(notes_file: &Path) -> PathBuf {
+    notes_file.with_file_name(SENT_FILE)
 }
 
 fn repo_key(repo: &Path) -> String {
@@ -438,6 +444,8 @@ mod tests {
         assert!(avatar_file_beside(&notes).ends_with("brave-otter/avatar.json"));
         assert!(avatar_asked_file_beside(&notes).ends_with("brave-otter/avatar-asked"));
         assert_ne!(feed, paths.progress_feed_file(repo, "main"));
+        assert_eq!(sent_file_beside(&notes).parent(), notes.parent());
+        assert!(sent_file_beside(&notes).ends_with("brave-otter/tidewatch-sent.jsonl"));
     }
 
     #[test]

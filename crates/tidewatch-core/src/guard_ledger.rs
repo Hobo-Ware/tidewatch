@@ -8,8 +8,9 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use serde_json::Value;
 
 use crate::guard_run::GuardEnv;
-use crate::paths::progress_file_beside;
+use crate::paths::{progress_file_beside, sent_file_beside};
 use crate::progress::{Ledger, State};
+use crate::sent::{self, Reason, Record, because};
 
 const TURN_FILE: &str = "ledger-turn";
 const ASKED_FILE: &str = "ledger-asked";
@@ -165,6 +166,12 @@ pub fn run(stop: bool, stdin: &str, env: &GuardEnv) -> i32 {
     let Some(facts) = facts_of(stdin, tab) else { return 0 };
     let Some(ask) = should_ask(&facts) else { return 0 };
     let _ = std::fs::write(tab.join(ASKED_FILE), facts.turn_key().to_string());
+    let told_because = match ask {
+        Ask::Ledger => because::LEDGER_STOP,
+        Ask::FinalState => because::LEDGER_FINAL,
+    };
+    let told = Record::new(Reason::LedgerGuard, told_because, ask.message(), None);
+    let _ = sent::append(&sent_file_beside(&tab.join(NOTES_FILE)), &told);
     eprintln!("{}", ask.message());
     2
 }
