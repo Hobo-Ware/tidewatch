@@ -29,7 +29,7 @@ use crate::question_bulk;
 use crate::reader::{Note, Shown, Step};
 use crate::reader_keys;
 use crate::reader_rows::{Asked, Kind, Origin};
-use crate::reader_view::{self, Action, Facts, Prompt, Turn};
+use crate::reader_view::{self, Action, Blocked, Facts, Prompt, Turn};
 use crate::review::ReviewFacts;
 use crate::screen_kit::{Size, button_width, quiet_button};
 use crate::slash;
@@ -44,6 +44,7 @@ const WAKE_SLACK_S: f64 = 0.02;
 const KEY_GAP_S: f64 = ENTER_DELAY_SECS;
 /// How long a menu needs to close after Esc before text can follow.
 const MENU_CLOSE_S: f64 = 0.8;
+const RESUME_DEBOUNCE_S: f64 = 3.0;
 
 /// Starts the feed of every agent tab that has an agent running and none yet.
 pub(crate) fn start(tabs: &mut Tabs<Pane<PtyTerm>>, ctx: &Context, dev: &DevReader) {
@@ -210,6 +211,7 @@ pub(crate) fn draw(
         face: Some(&face),
         turn,
         stopped: *agent.run.status() == AgentStatus::Stopped,
+        reply_blocked: reply_blocked(agent),
     };
     let reader = &mut agent.reader;
     let reads_screen = reader.source() == Some(Source::Claude)
@@ -323,6 +325,10 @@ pub(crate) fn apply(
         let source = found.pane.agent.as_ref().and_then(|agent| agent.reader.source());
         match action {
             Action::Reply(text) => {
+                if let Some(blocked) = found.pane.agent.as_ref().and_then(reply_blocked) {
+                    toast = Some(blocked.hint().to_owned());
+                    continue;
+                }
                 if let Some(agent) = found.pane.agent.as_mut()
                     && agent.first_prompt == FirstPrompt::Awaiting
                 {
@@ -361,13 +367,28 @@ pub(crate) fn apply(
                     agent.reader.set_wants_reader(false);
                 }
             }
-            Action::Resume => resume_agent(&mut found.pane),
+            Action::Resume => resume_agent(&mut found.pane, now),
             Action::Review(_) | Action::Pr(_) | Action::Due(_) => {}
             Action::Ask(seq, reply) => answer_question(&mut found.pane, seq, reply, now),
             Action::GoWithPicks => toast = go_with_picks(&mut found.pane, now),
         }
     }
     toast
+}
+
+/// Why a reply typed now would not reach the agent: its pane is not at the agent's prompt, so the
+/// text would run in a shell. None while the agent can take it, and before its first message.
+pub(crate) fn reply_blocked(agent: &AgentTab) -> Option<Blocked> {
+    if agent.first_prompt == FirstPrompt::Awaiting {
+        return None;
+    }
+    match agent.run.status() {
+        AgentStatus::Stopped => Some(Blocked::Stopped),
+        AgentStatus::Failed(_) => Some(Blocked::Failed),
+        AgentStatus::SettingUp => Some(Blocked::SettingUp),
+        AgentStatus::Shell => Some(Blocked::Shell),
+        AgentStatus::Working | AgentStatus::Done | AgentStatus::NeedsYou(_) => None,
+    }
 }
 
 /// Whether a reply sent now waits behind the agent's turn: it is working and the text is a message,
@@ -387,16 +408,27 @@ fn show_dialog_command(agent: &mut AgentTab, source: Option<Source>, text: &str)
 
 /// Runs the resume command of a tab whose agent waits at its shell prompt. Ctrl+U first, so a
 /// command that was typed there is not run twice.
-pub(crate) fn resume_agent(pane: &mut Pane<PtyTerm>) {
+pub(crate) fn resume_agent(pane: &mut Pane<PtyTerm>, now: f64) {
     if let (Body::Shell(term), Some(agent)) = (&mut pane.body, pane.agent.as_mut()) {
-        resume_in(term, agent);
+        resume_in(term, agent, now);
     }
 }
 
-pub(crate) fn resume_in(term: &mut PtyTerm, agent: &mut AgentTab) {
-    let Some(line) = agent.resume_line.as_deref() else { return };
-    term.send(format!("\u{15}{line}\r").as_bytes());
+pub(crate) fn resume_in(term: &mut PtyTerm, agent: &mut AgentTab, now: f64) {
+    if let Some(keys) = resume_keys(agent, now) {
+        term.send(&keys);
+    }
+}
+
+fn resume_keys(agent: &mut AgentTab, now: f64) -> Option<Vec<u8>> {
+    let line = agent.resume_line.as_deref()?;
+    if agent.resume_sent_at.is_some_and(|at| now - at < RESUME_DEBOUNCE_S) {
+        return None;
+    }
+    let keys = format!("\u{15}{line}\r").into_bytes();
+    agent.resume_sent_at = Some(now);
     agent.resume_note = None;
+    Some(keys)
 }
 
 /// Pasted text and the Enter that sends it, `lead` seconds from now.
@@ -511,6 +543,44 @@ mod tests {
     }
     use crate::pane::AgentTab;
     use crate::reader_rows::QuestionRow;
+
+    fn reading(status: AgentStatus, first: FirstPrompt) -> Option<Blocked> {
+        let mut agent = AgentTab::new("Builder".into(), AgentRun::setting_up("claude".into(), 0.0));
+        agent.first_prompt = first;
+        agent.run.hold(Some(status), None);
+        agent.run.refresh(1.0);
+        reply_blocked(&agent)
+    }
+
+    #[test]
+    fn a_second_click_on_resume_right_after_the_first_sends_nothing() {
+        let mut agent = AgentTab::new("Builder".into(), AgentRun::setting_up("claude".into(), 0.0));
+        agent.resume_line = Some("claude --resume abc".into());
+        assert_eq!(resume_keys(&mut agent, 10.0), Some(b"\x15claude --resume abc\r".to_vec()));
+        assert_eq!(resume_keys(&mut agent, 10.2), None);
+        assert_eq!(resume_keys(&mut agent, 13.5), Some(b"\x15claude --resume abc\r".to_vec()));
+    }
+
+    #[test]
+    fn a_reply_only_reaches_an_agent_that_is_at_its_prompt_and_never_a_shell() {
+        let open = FirstPrompt::NotNeeded;
+        let cases = [
+            (AgentStatus::Working, None),
+            (AgentStatus::Done, None),
+            (AgentStatus::NeedsYou(Reason::Input), None),
+            (AgentStatus::NeedsYou(Reason::Attention), None),
+            (AgentStatus::NeedsYou(Reason::Quiet), None),
+            (AgentStatus::NeedsYou(Reason::Permission), None),
+            (AgentStatus::Stopped, Some(Blocked::Stopped)),
+            (AgentStatus::Failed("x".into()), Some(Blocked::Failed)),
+            (AgentStatus::SettingUp, Some(Blocked::SettingUp)),
+            (AgentStatus::Shell, Some(Blocked::Shell)),
+        ];
+        for (status, want) in cases {
+            assert_eq!(reading(status.clone(), open), want, "{status:?}");
+        }
+        assert_eq!(reading(AgentStatus::SettingUp, FirstPrompt::Awaiting), None);
+    }
 
     fn questions() -> Vec<question::Question> {
         let option = |label: &str| QuestionOption::new(label);

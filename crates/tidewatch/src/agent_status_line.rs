@@ -2,10 +2,11 @@
 
 use egui::{Color32, Rect, Ui, pos2};
 use stdusk_egui::colors;
+use tidewatch_core::status::{AgentStatus, Reason};
 
 use crate::brand;
 use crate::layout::CHROME_H;
-use crate::pane::{FirstPrompt, Pane};
+use crate::pane::{AgentTab, FirstPrompt, Pane};
 use crate::reader::Shown;
 use crate::remote_pill::{self, Pill, Popover};
 use crate::screen_kit::body;
@@ -67,7 +68,7 @@ pub(crate) fn line_of<T>(
         .collect::<Vec<_>>()
         .join(" \u{b7} ");
     Some(Line {
-        label: if ready { "Ready" } else { status_view::label(tone) },
+        label: label_of(agent, ready, tone),
         tone,
         ready,
         who,
@@ -80,6 +81,19 @@ pub(crate) fn line_of<T>(
             saved_on: agent.launched.as_ref().is_some_and(|launched| launched.remote),
         }),
     })
+}
+
+const UNREPORTED: &str = "Not reporting, auto-sends paused";
+
+fn label_of(agent: &AgentTab, ready: bool, tone: Tone) -> &'static str {
+    if ready {
+        "Ready"
+    } else if agent.run.unreported() && *agent.run.status() == AgentStatus::NeedsYou(Reason::Quiet)
+    {
+        UNREPORTED
+    } else {
+        status_view::label(tone)
+    }
 }
 
 fn dot_color(line: &Line) -> Color32 {
@@ -182,6 +196,22 @@ mod tests {
         let line = line_of(&pane, Shown::Terminal(None), false, ("Claude Code", None)).unwrap();
         assert_eq!((line.label, line.ready), ("Setting up", false));
         assert!(!line.reader_on && !line.reader_available);
+    }
+
+    #[test]
+    fn a_handed_over_agent_nothing_has_spoken_for_says_why_its_auto_sends_wait() {
+        let mut pane = pane(FirstPrompt::NotNeeded, true);
+        let run = &mut pane.agent.as_mut().unwrap().run;
+        run.started(None, 0.0);
+        run.await_report();
+        run.refresh(600.0);
+        let line = line_of(&pane, Shown::Reader, true, ("Claude Code", None)).unwrap();
+        assert_eq!(line.label, "Not reporting, auto-sends paused");
+        let run = &mut pane.agent.as_mut().unwrap().run;
+        run.hold(Some(AgentStatus::Done), None);
+        run.refresh(601.0);
+        let line = line_of(&pane, Shown::Reader, true, ("Claude Code", None)).unwrap();
+        assert_eq!(line.label, "Done");
     }
 
     #[test]

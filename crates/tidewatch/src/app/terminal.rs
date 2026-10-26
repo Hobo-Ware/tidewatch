@@ -165,7 +165,7 @@ impl Tidewatch {
                             egui::pos2(area.right(), bottom),
                         );
                         if stopped_view::show(ui, band) {
-                            reader_glue::resume_in(term, agent);
+                            reader_glue::resume_in(term, agent, now);
                         }
                         above = Some(band);
                     }
