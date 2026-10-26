@@ -257,7 +257,12 @@ impl When {
         for (prefix, build) in [("on:", Self::On as fn(String) -> Self), ("parked:", Self::Parked)]
         {
             if text.get(..prefix.len()).is_some_and(|head| head.eq_ignore_ascii_case(prefix)) {
-                return build(text[prefix.len()..].trim().to_owned());
+                let rest = text[prefix.len()..].trim();
+                let dated = Self::parse(rest);
+                if prefix == "on:" && dated.date().is_some() {
+                    return dated;
+                }
+                return build(rest.to_owned());
             }
         }
         Self::Unknown(text.to_owned())
