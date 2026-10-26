@@ -240,6 +240,9 @@ fn user_bubble(ui: &mut Ui, row: &Row, meta_line: Meta<'_>, width: f32) {
                             Piece::Code { text, .. } => {
                                 Some(code_block::natural_width(ui.painter(), text))
                             }
+                            Piece::Image(label) => {
+                                Some(reader_markdown::image_chip_width(ui.painter(), label))
+                            }
                             _ => None,
                         })
                         .fold(0.0, f32::max);
@@ -260,7 +263,7 @@ fn user_bubble(ui: &mut Ui, row: &Row, meta_line: Meta<'_>, width: f32) {
                                 });
                             });
                         }
-                        sent_pictures(ui, &pictures);
+                        sent_pictures(ui, &pictures, !said.trim().is_empty());
                     });
                 });
         });
@@ -268,13 +271,15 @@ fn user_bubble(ui: &mut Ui, row: &Row, meta_line: Meta<'_>, width: f32) {
     ui.add_space(OUTER);
 }
 
-fn sent_pictures(ui: &mut Ui, pictures: &[std::path::PathBuf]) {
+fn sent_pictures(ui: &mut Ui, pictures: &[std::path::PathBuf], after_text: bool) {
     if pictures.is_empty() {
         return;
     }
-    ui.add_space(8.0);
+    if after_text {
+        ui.add_space(8.0);
+    }
     let width = ui.available_width();
-    let rows = pictures::chip_rows(pictures.len(), width, pictures::PLAIN_W);
+    let rows = pictures::chip_rows(pictures.len(), width, pictures::chip_width(width, false));
     let (rect, _) =
         ui.allocate_exact_size(vec2(width, pictures::chips_height(rows)), Sense::hover());
     pictures::paint_block(ui, rect.min, width, pictures, false);
@@ -1092,6 +1097,119 @@ mod tests {
         assert!(texts.iter().any(|text| text == "Screenshot 1"), "{texts:?}");
         assert!(texts.iter().any(|text| text == "Screenshot 2"), "{texts:?}");
         assert!(!texts.iter().any(|text| text.contains("/nope/")), "{texts:?}");
+    }
+
+    fn bubble_and_chips(text: &str, pane: f32) -> (Rect, Vec<Rect>, Vec<Rect>, Vec<String>) {
+        let ctx = crate::fonts::test_context();
+        let row = Row { seq: 1, kind: Kind::User, text: text.to_owned() };
+        let zone = TimeZone::UTC;
+        let mut shapes = Vec::new();
+        for _ in 0..2 {
+            let raw = RawInput {
+                screen_rect: Some(Rect::from_min_size(pos2(0.0, 0.0), vec2(pane + 100.0, 600.0))),
+                ..RawInput::default()
+            };
+            let out = ctx.run_ui(raw, |ui| {
+                ui.set_max_width(pane);
+                user(ui, &row, None, &zone, pane);
+            });
+            shapes = out.shapes.into_iter().map(|clipped| clipped.shape).collect();
+        }
+        let bubble = shapes
+            .iter()
+            .find_map(|shape| match shape {
+                Shape::Rect(rect) if rect.fill == USER_FILL => Some(rect.rect),
+                _ => None,
+            })
+            .expect("bubble");
+        let chips = shapes
+            .iter()
+            .filter_map(|shape| match shape {
+                Shape::Rect(rect) if rect.fill == brand::ITEM => Some(rect.rect),
+                _ => None,
+            })
+            .collect();
+        let inside = shapes
+            .iter()
+            .map(Shape::visual_bounding_rect)
+            .filter(|rect| rect.top() > bubble.top() && rect.bottom() < bubble.bottom())
+            .collect();
+        let rows = shapes
+            .iter()
+            .filter_map(|shape| match shape {
+                Shape::Text(text) => Some(text.galley.rows.iter().map(|row| row.text()).collect()),
+                _ => None,
+            })
+            .collect::<Vec<Vec<String>>>()
+            .concat();
+        (bubble, chips, inside, rows)
+    }
+
+    #[test]
+    fn a_bubble_with_pictures_stays_inside_the_pane_with_even_padding() {
+        let pad = f32::from(USER_PAD.left);
+        let cases = [
+            ("/nope/shot-1.png", 600.0),
+            ("/nope/shot-1.png", 340.0),
+            ("/nope/shot-1.png\n/nope/shot-2.png", 600.0),
+            ("/nope/shot-1.png\n/nope/shot-2.png", 340.0),
+            ("look at this\n/nope/shot-1.png", 600.0),
+            ("look at this\n/nope/shot-1.png\n/nope/shot-2.png", 300.0),
+        ];
+        for (text, pane) in cases {
+            let (bubble, chips, ..) = bubble_and_chips(text, pane);
+            assert!(bubble.right() <= pane, "{text:?} at {pane}: bubble {bubble:?}");
+            for chip in &chips {
+                assert!(
+                    chip.right() <= bubble.right() - pad,
+                    "{text:?} at {pane}: chip {chip:?} in bubble {bubble:?}"
+                );
+            }
+            let last = chips.iter().map(Rect::right).reduce(f32::max).expect("chips");
+            assert_eq!(
+                (bubble.right() - last).round(),
+                pad + 1.0,
+                "{text:?} at {pane}: right padding"
+            );
+            let bottom = chips.iter().map(Rect::bottom).reduce(f32::max).expect("chips");
+            assert_eq!(
+                (bubble.bottom() - bottom).round(),
+                f32::from(USER_PAD.bottom) + 1.0,
+                "{text:?} at {pane}: bottom padding"
+            );
+            if !text.starts_with("look") {
+                let top = chips.iter().map(Rect::top).reduce(f32::min).expect("chips");
+                assert_eq!(
+                    (top - bubble.top()).round(),
+                    f32::from(USER_PAD.top) + 1.0,
+                    "{text:?} at {pane}: top padding"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn a_bubble_with_an_image_marker_is_as_wide_as_its_chip_and_ends_where_a_text_bubble_does() {
+        let pad = f32::from(USER_PAD.left);
+        for pane in [830.0, 340.0, 300.0] {
+            let (plain, ..) = bubble_and_chips("hi", pane);
+            let cases = [
+                ("[Image #105]", "Image 105"),
+                ("look at this\n\n[Image #7]", "Image 7"),
+                ("[Image #1]\n\n[Image #22]", "Image 22"),
+            ];
+            for (text, label) in cases {
+                let (bubble, _, inside, rows) = bubble_and_chips(text, pane);
+                assert!(rows.iter().any(|row| row == label), "{text:?} at {pane}: {rows:?}");
+                assert_eq!(bubble.right(), plain.right(), "{text:?} at {pane}: right edge");
+                assert!(bubble.left() >= 0.0, "{text:?} at {pane}: bubble {bubble:?}");
+                let right = inside.iter().map(Rect::right).fold(0.0, f32::max);
+                assert!(
+                    right <= bubble.right() - pad,
+                    "{text:?} at {pane}: content ends at {right}, bubble {bubble:?}"
+                );
+            }
+        }
     }
 
     #[test]

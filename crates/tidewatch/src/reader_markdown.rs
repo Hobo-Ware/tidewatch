@@ -4,6 +4,7 @@
 //! stays markdown for the renderer. Pure.
 
 use egui::epaint::CubicBezierShape;
+use egui::epaint::text::{LayoutJob, TextWrapping};
 use egui::{
     Color32, CornerRadius, Frame, Margin, Pos2, Rect, Sense, Shape, Stroke, StrokeKind, Ui, pos2,
     vec2,
@@ -236,10 +237,27 @@ fn markdown(ui: &mut Ui, md: &str, look: Look) {
     md_view::show(ui, md, look);
 }
 
+const CHIP_FRAME_W: f32 = 6.0 + THUMB_W + 10.0 + 12.0;
+
+fn image_chip_galley(
+    painter: &egui::Painter,
+    label: &str,
+    room: f32,
+) -> std::sync::Arc<egui::Galley> {
+    let mut job = LayoutJob::simple_singleline(label.to_owned(), body(13.0), brand::STEP_TEXT);
+    job.wrap = TextWrapping::truncate_at_width((room - CHIP_FRAME_W).max(0.0));
+    painter.layout_job(job)
+}
+
+/// How wide the image chip for `label` draws: the chip a bubble has to make room for.
+pub(crate) fn image_chip_width(painter: &egui::Painter, label: &str) -> f32 {
+    CHIP_FRAME_W + image_chip_galley(painter, label, f32::INFINITY).size().x
+}
+
 fn image_chip(ui: &mut Ui, label: &str) {
     ui.horizontal(|ui| {
-        let galley = ui.painter().layout_no_wrap(label.to_owned(), body(13.0), brand::STEP_TEXT);
-        let size = vec2(6.0 + THUMB_W + 10.0 + galley.size().x + 12.0, THUMB_H + 12.0);
+        let galley = image_chip_galley(ui.painter(), label, ui.available_width());
+        let size = vec2(CHIP_FRAME_W + galley.size().x, THUMB_H + 12.0);
         let (rect, _) = ui.allocate_exact_size(size, Sense::hover());
         let painter = ui.painter();
         painter.rect_stroke(
