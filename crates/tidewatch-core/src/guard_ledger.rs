@@ -1,4 +1,5 @@
-//! The ledger guard: asks the agent to call `update_progress` when a turn ends with no ledger saved in it.
+//! The ledger guard: asks the agent to call `update_progress` when a turn ends with no ledger saved
+//! in it, or with a ledger saved in it that still says `state: working`.
 
 use std::io::{Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
@@ -8,6 +9,7 @@ use serde_json::Value;
 
 use crate::guard_run::GuardEnv;
 use crate::paths::progress_file_beside;
+use crate::progress::{Ledger, State};
 
 const TURN_FILE: &str = "ledger-turn";
 const ASKED_FILE: &str = "ledger-asked";
@@ -15,6 +17,25 @@ const NOTES_FILE: &str = "notes.json";
 const TAIL_BYTES: u64 = 512 * 1024;
 
 pub const MESSAGE: &str = "LEDGER GUARD - the Tidewatch ledger is missing or was not updated this turn. Call `update_progress` now with the whole ledger, and put every dated or later item in Scheduled (`YYYY-MM-DD`, `~YYYY-MM-DD`, `on: <event>`, `parked: <until what>`, `you`). A ledger file of your own does not count.";
+
+pub const FINAL_STATE_MESSAGE: &str = "LEDGER GUARD - the turn is ending but your Tidewatch ledger still says `state: working`. Call `update_progress` once more with the final state: `waiting` (for the user or an event), `blocked` or `done`, and move every Next item that is not happening now into Scheduled.";
+
+/// What the guard asks of the agent at the end of a turn.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Ask {
+    Ledger,
+    FinalState,
+}
+
+impl Ask {
+    #[must_use]
+    pub fn message(self) -> &'static str {
+        match self {
+            Self::Ledger => MESSAGE,
+            Self::FinalState => FINAL_STATE_MESSAGE,
+        }
+    }
+}
 
 /// What the Stop decision needs to know, read once.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -24,6 +45,8 @@ pub struct Facts {
     pub used_tools: Option<bool>,
     /// Unix milliseconds the tab's `progress.md` was last written; `None` when there is none.
     pub ledger_written_ms: Option<u64>,
+    /// The saved ledger's `state:` is `working`.
+    pub ledger_working: bool,
     /// Unix milliseconds the turn began, when it was noted.
     pub turn_started_ms: Option<u64>,
     /// The turn the agent was already asked about.
@@ -36,19 +59,20 @@ impl Facts {
     }
 }
 
-/// Whether to send the agent back to the ledger.
+/// What to send the agent back to the ledger for, if anything.
 #[must_use]
-pub fn should_ask(facts: &Facts) -> bool {
+pub fn should_ask(facts: &Facts) -> Option<Ask> {
     if facts.stop_hook_active
         || facts.used_tools == Some(false)
         || facts.asked_turn_ms == Some(facts.turn_key())
     {
-        return false;
+        return None;
     }
     match (facts.ledger_written_ms, facts.turn_started_ms) {
-        (None, _) => true,
-        (Some(written), Some(started)) => written < started,
-        (Some(_), None) => false,
+        (None, _) => Some(Ask::Ledger),
+        (Some(written), Some(started)) if written < started => Some(Ask::Ledger),
+        (Some(_), Some(_)) => facts.ledger_working.then_some(Ask::FinalState),
+        (Some(_), None) => None,
     }
 }
 
@@ -81,6 +105,11 @@ pub fn used_tools(tail: &str) -> Option<bool> {
 
 fn now_ms() -> u64 {
     SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_millis() as u64)
+}
+
+fn ledger_says_working(file: &Path) -> bool {
+    std::fs::read_to_string(file)
+        .is_ok_and(|text| Ledger::parse(&text).status.state == Some(State::Working))
 }
 
 fn read_ms(file: &Path) -> Option<u64> {
@@ -118,6 +147,7 @@ fn facts_of(stdin: &str, tab: &Path) -> Option<Facts> {
         stop_hook_active: payload.get("stop_hook_active").and_then(Value::as_bool) == Some(true),
         used_tools: transcript.and_then(|path| used_tools(&tail_of(Path::new(path))?)),
         ledger_written_ms: modified_ms(&ledger_file(tab)),
+        ledger_working: ledger_says_working(&ledger_file(tab)),
         turn_started_ms: read_ms(&tab.join(TURN_FILE)),
         asked_turn_ms: read_ms(&tab.join(ASKED_FILE)),
     })
@@ -133,11 +163,9 @@ pub fn run(stop: bool, stdin: &str, env: &GuardEnv) -> i32 {
         return 0;
     }
     let Some(facts) = facts_of(stdin, tab) else { return 0 };
-    if !should_ask(&facts) {
-        return 0;
-    }
+    let Some(ask) = should_ask(&facts) else { return 0 };
     let _ = std::fs::write(tab.join(ASKED_FILE), facts.turn_key().to_string());
-    eprintln!("{MESSAGE}");
+    eprintln!("{}", ask.message());
     2
 }
 
@@ -150,11 +178,20 @@ mod tests {
             stop_hook_active: false,
             used_tools: Some(true),
             ledger_written_ms: Some(100),
+            ledger_working: false,
             turn_started_ms: Some(200),
             asked_turn_ms: None,
         };
         change(&mut facts);
         facts
+    }
+
+    fn working(change: impl FnOnce(&mut Facts)) -> Facts {
+        facts(|f| {
+            f.ledger_written_ms = Some(300);
+            f.ledger_working = true;
+            change(f);
+        })
     }
 
     impl Facts {
@@ -164,20 +201,34 @@ mod tests {
     }
 
     #[test]
-    fn the_agent_is_asked_when_the_ledger_is_missing_or_older_than_the_turn() {
+    fn the_agent_is_asked_when_the_ledger_is_missing_older_than_the_turn_or_still_working() {
+        use Ask::{FinalState, Ledger};
         let cases = [
-            (facts(|_| {}), true),
-            (facts(|f| f.ledger_written_ms = None), true),
-            (facts(|f| f.ledger_written_ms = Some(200)), false),
-            (facts(|f| f.ledger_written_ms = Some(300)), false),
-            (facts(|f| f.used_tools = None), true),
-            (facts(|f| f.used_tools = Some(false)), false),
-            (facts(|f| f.stop_hook_active = true), false),
-            (facts(|f| f.asked_turn_ms = Some(200)), false),
-            (facts(|f| f.asked_turn_ms = Some(150)), true),
-            (facts(|f| f.turn_started_ms = None), false),
-            (facts(|f| (f.turn_started_ms, f.ledger_written_ms) = (None, None)), true),
-            (facts(|f| f.asked_turn_ms = Some(0)).with_no_turn_or_ledger(), false),
+            (facts(|_| {}), Some(Ledger)),
+            (facts(|f| f.ledger_written_ms = None), Some(Ledger)),
+            (facts(|f| f.ledger_written_ms = Some(200)), None),
+            (facts(|f| f.ledger_written_ms = Some(300)), None),
+            (facts(|f| f.used_tools = None), Some(Ledger)),
+            (facts(|f| f.used_tools = Some(false)), None),
+            (facts(|f| f.stop_hook_active = true), None),
+            (facts(|f| f.asked_turn_ms = Some(200)), None),
+            (facts(|f| f.asked_turn_ms = Some(150)), Some(Ledger)),
+            (facts(|f| f.turn_started_ms = None), None),
+            (facts(|f| (f.turn_started_ms, f.ledger_written_ms) = (None, None)), Some(Ledger)),
+            (facts(|f| f.asked_turn_ms = Some(0)).with_no_turn_or_ledger(), None),
+            (
+                facts(|f| (f.ledger_written_ms, f.ledger_working) = (Some(300), true)),
+                Some(FinalState),
+            ),
+            (
+                facts(|f| (f.ledger_written_ms, f.ledger_working) = (Some(200), true)),
+                Some(FinalState),
+            ),
+            (facts(|f| f.ledger_working = true), Some(Ledger)),
+            (facts(|f| (f.ledger_written_ms, f.ledger_working) = (Some(300), false)), None),
+            (working(|f| f.stop_hook_active = true), None),
+            (working(|f| f.asked_turn_ms = Some(200)), None),
+            (working(|f| f.used_tools = Some(false)), None),
         ];
         for (facts, want) in cases {
             assert_eq!(should_ask(&facts), want, "{facts:?}");
@@ -207,6 +258,34 @@ mod tests {
         for (lines, want) in cases {
             assert_eq!(used_tools(&lines.join("\n")), want, "{lines:?}");
         }
+    }
+
+    #[test]
+    fn the_final_state_ask_names_the_tool_and_the_three_states() {
+        assert!(FINAL_STATE_MESSAGE.is_ascii() && !FINAL_STATE_MESSAGE.contains('\n'));
+        for needle in
+            ["update_progress", "state: working", "waiting", "blocked", "done", "Scheduled"]
+        {
+            assert!(FINAL_STATE_MESSAGE.contains(needle), "{needle}");
+        }
+        assert_eq!(Ask::FinalState.message(), FINAL_STATE_MESSAGE);
+    }
+
+    #[test]
+    fn the_ledger_file_decides_whether_it_still_says_working() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("progress.md");
+        let cases = [
+            ("# Goal\ng\n\n## Status\nstate: working\n", true),
+            ("# Goal\ng\n\n## Status\nstate: waiting\n", false),
+            ("# Goal\ng\n\n## Status\nstate: done\n", false),
+            ("# Goal\ng\n", false),
+        ];
+        for (text, want) in cases {
+            std::fs::write(&file, text).unwrap();
+            assert_eq!(ledger_says_working(&file), want, "{text:?}");
+        }
+        assert!(!ledger_says_working(&dir.path().join("none.md")));
     }
 
     #[test]

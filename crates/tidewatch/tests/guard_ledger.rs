@@ -166,3 +166,23 @@ fn a_turn_without_tool_calls_and_a_tab_without_the_environment_are_left_alone() 
         assert_eq!(output.status.code(), Some(0));
     }
 }
+
+#[test]
+fn a_ledger_written_this_turn_that_still_says_working_is_asked_for_its_final_state_once() {
+    let lab = Lab::new();
+    lab.start_turn();
+    std::fs::write(lab.ledger(), "# Goal\ng\n\n## Status\nstate: working\n").unwrap();
+    let transcript = lab.transcript(&[USER, CALL, RESULT, SAY]);
+
+    let first = lab.stop(&transcript, false);
+    assert_eq!(first.status.code(), Some(2));
+    let stderr = text(&first.stderr);
+    assert!(stderr.starts_with("LEDGER GUARD - ") && stderr.contains("final state"), "{stderr}");
+
+    assert_eq!(lab.stop(&transcript, false).status.code(), Some(0), "never twice for a turn");
+    assert_eq!(lab.stop(&transcript, true).status.code(), Some(0));
+
+    lab.start_turn();
+    std::fs::write(lab.ledger(), "# Goal\ng\n\n## Status\nstate: waiting\n").unwrap();
+    assert_eq!(lab.stop(&transcript, false).status.code(), Some(0), "a stopped state ends it");
+}
