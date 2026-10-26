@@ -137,6 +137,11 @@ impl AgentRun {
         self.host = Host::Shell { command_running: false };
     }
 
+    /// The Reader sent the user's answer to a permission prompt.
+    pub(crate) fn permission_answered(&mut self, now: f64) {
+        self.tracker.on_permission_answered(now);
+    }
+
     /// An `ask_user` call waits for the user (`Some(its first question)`) or does not any more.
     /// While it waits, a working agent shows as needing the user.
     pub(crate) fn set_asking(&mut self, question: Option<String>) {

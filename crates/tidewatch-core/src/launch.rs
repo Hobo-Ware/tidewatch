@@ -31,11 +31,13 @@ const CODEX_MCP_TOKEN_ENV: &str = "TIDEWATCH_MCP_TOKEN";
 /// How long a CLI waits for one Tidewatch tool call: the longest `ask_user` hold and five minutes
 /// more, so the CLI never gives up first. Codex defaults to 60 s and Gemini to 600 s.
 const MCP_TOOL_TIMEOUT_SECS: u64 = ASK_TIMEOUT.as_secs() + 5 * 60;
-const CLAUDE_HOOK_EVENTS: [&str; 6] = [
+const CLAUDE_HOOK_EVENTS: [&str; 8] = [
     "SessionStart",
     "UserPromptSubmit",
     "Notification",
     "PermissionRequest",
+    "PostToolUse",
+    "PostToolUseFailure",
     "Stop",
     "StopFailure",
 ];
@@ -1105,10 +1107,11 @@ mod tests {
         let ctx = LaunchCtx { guards: Some(guard_ctx()), ..full_ctx() };
         let settings: Value = serde_json::from_str(&claude_settings_json(&ctx).unwrap()).unwrap();
         let post = &settings["hooks"]["PostToolUse"];
-        assert_eq!(post.as_array().unwrap().len(), 1);
-        assert_eq!(post[0]["matcher"], "Write|Edit|MultiEdit");
-        assert_eq!(post[0]["hooks"][0]["type"], "command");
-        assert_eq!(post[0]["hooks"][0]["command"], "/app/tidewatch --guard comments");
+        assert_eq!(post.as_array().unwrap().len(), 2);
+        assert_eq!(post[0]["hooks"][0]["type"], "http");
+        assert_eq!(post[1]["matcher"], "Write|Edit|MultiEdit");
+        assert_eq!(post[1]["hooks"][0]["type"], "command");
+        assert_eq!(post[1]["hooks"][0]["command"], "/app/tidewatch --guard comments");
         let stop = settings["hooks"]["Stop"].as_array().unwrap();
         assert_eq!(stop.len(), 3);
         assert_eq!(stop[0]["hooks"][0]["type"], "http");
@@ -1123,7 +1126,7 @@ mod tests {
         let main_tab = LaunchCtx { worktree_tab: false, ..ctx.clone() };
         let settings: Value =
             serde_json::from_str(&claude_settings_json(&main_tab).unwrap()).unwrap();
-        assert!(settings["hooks"]["PostToolUse"].is_null());
+        assert_eq!(settings["hooks"]["PostToolUse"].as_array().unwrap().len(), 1);
         assert_eq!(settings["hooks"]["Stop"].as_array().unwrap().len(), 1);
         assert_eq!(settings["hooks"]["UserPromptSubmit"].as_array().unwrap().len(), 1);
     }

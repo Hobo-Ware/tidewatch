@@ -15,6 +15,10 @@
 //!   for `STATUS_QUIET_SECS` becomes `NeedsYou(Quiet)` (the agent may be waiting on something no hook
 //!   reported), and a permission or question prompt flips back to `Working` once the terminal is
 //!   printing again (no hook reports the answer).
+//! - Claude reports which tool call a permission belongs to (`PermissionRequest`) and when a call
+//!   ends (`PostToolUse`), so that permission does not decay: the terminal keeps printing behind a
+//!   prompt while other parallel calls run. It holds until its own call ends, the Reader answers it,
+//!   or the turn moves on.
 //! - An idle notice (`Notification` `idle_prompt`) means "at the prompt", so it reads `Done`; only a
 //!   permission prompt, a question or an explicit ask reads `NeedsYou`.
 //! - With no hook state, progress, bell, title activity and quiet time decide.
@@ -70,6 +74,10 @@ pub enum HookKind {
     SessionStart,
     TurnStarted,
     PermissionNeeded,
+    /// A permission prompt for one identified tool call (the key from [`tool_key`]).
+    ToolPermission(String),
+    /// A tool call ended, with the same key its permission prompt had.
+    ToolFinished(String),
     QuestionAsked,
     IdleWaiting,
     TurnDone,
@@ -104,21 +112,28 @@ impl HookEvent {
 #[must_use]
 pub fn parse_hook(agent: &str, payload: &Value) -> Option<HookEvent> {
     let object = payload.as_object()?;
-    let mut event =
-        if agent == "copilot" { parse_copilot_event(object)? } else { parse_named_event(object)? };
+    let mut event = if agent == "copilot" {
+        parse_copilot_event(object)?
+    } else {
+        parse_named_event(agent, object)?
+    };
     event.session_id = event.session_id.or_else(|| text(object.get("session_id")));
     event.transcript_path =
         event.transcript_path.or_else(|| text(object.get("transcript_path")).map(PathBuf::from));
     Some(event)
 }
 
-fn parse_named_event(object: &serde_json::Map<String, Value>) -> Option<HookEvent> {
+fn parse_named_event(agent: &str, object: &serde_json::Map<String, Value>) -> Option<HookEvent> {
     let name = object.get("hook_event_name")?.as_str()?;
     let message = |key: &str| text(object.get(key)).map(|m| clip_to(&m, TURN_MESSAGE_MAX_CHARS));
     let (kind, message) = match name {
         "SessionStart" => (HookKind::SessionStart, None),
         "UserPromptSubmit" | "BeforeAgent" => (HookKind::TurnStarted, None),
-        "PermissionRequest" => (HookKind::PermissionNeeded, tool_summary(object)),
+        "PermissionRequest" => match tool_key(object) {
+            Some(key) if agent == "claude" => (HookKind::ToolPermission(key), tool_summary(object)),
+            _ => (HookKind::PermissionNeeded, tool_summary(object)),
+        },
+        "PostToolUse" | "PostToolUseFailure" => (HookKind::ToolFinished(tool_key(object)?), None),
         "Notification" => match object.get("notification_type").and_then(Value::as_str)? {
             "permission_prompt" | "ToolPermission" => {
                 (HookKind::PermissionNeeded, message("message"))
@@ -189,6 +204,14 @@ fn parse_copilot_event(object: &serde_json::Map<String, Value>) -> Option<HookEv
         _ => return None,
     };
     Some(event)
+}
+
+/// Names one tool call the same way on its permission prompt and on its end: the tool and its whole
+/// input, so parallel calls of one tool stay apart.
+fn tool_key(object: &serde_json::Map<String, Value>) -> Option<String> {
+    let tool = text(object.get("tool_name"))?;
+    let input = object.get("tool_input").unwrap_or(&Value::Null);
+    Some(format!("{tool}\n{input}"))
 }
 
 fn tool_summary(object: &serde_json::Map<String, Value>) -> Option<String> {
@@ -283,6 +306,8 @@ enum HookStatus {
 pub struct HookState {
     status: HookStatus,
     at: f64,
+    /// The tool call a permission prompt belongs to, when the agent names it.
+    pending: Option<String>,
 }
 
 impl HookState {
@@ -292,21 +317,47 @@ impl HookState {
     pub fn from_event(event: &HookEvent, now: f64) -> Option<Self> {
         let status = match &event.kind {
             HookKind::TurnStarted => HookStatus::Working,
-            HookKind::PermissionNeeded => HookStatus::NeedsYou(Reason::Permission),
+            HookKind::PermissionNeeded | HookKind::ToolPermission(_) => {
+                HookStatus::NeedsYou(Reason::Permission)
+            }
             HookKind::QuestionAsked => HookStatus::NeedsYou(Reason::Question),
             HookKind::TurnDone | HookKind::IdleWaiting => HookStatus::Done,
             HookKind::TurnFailed(reason) => HookStatus::Failed(reason.clone()),
-            HookKind::SessionStart | HookKind::SessionEnd => return None,
+            HookKind::SessionStart | HookKind::SessionEnd | HookKind::ToolFinished(_) => {
+                return None;
+            }
         };
-        Some(Self { status, at: now })
+        let pending = match &event.kind {
+            HookKind::ToolPermission(key) => Some(key.clone()),
+            _ => None,
+        };
+        Some(Self { status, at: now, pending })
+    }
+
+    fn holds_permission(&self) -> bool {
+        self.status == HookStatus::NeedsYou(Reason::Permission) && self.pending.is_some()
     }
 
     /// An idle notice (a minute after a turn, or after one the agent never reported finishing, such
     /// as an interrupted one) says the agent is at its prompt. It only ever settles a turn that is
-    /// still `Working`: a finished, failed or prompting state is the better report.
+    /// still `Working`: a finished, failed or prompting state is the better report. A held permission
+    /// is the exception: an agent at its prompt is not waiting on a tool call.
     fn after_idle(self, previous: Option<&Self>) -> Self {
         match previous {
-            Some(previous) if previous.status != HookStatus::Working => previous.clone(),
+            Some(previous)
+                if previous.status != HookStatus::Working && !previous.holds_permission() =>
+            {
+                previous.clone()
+            }
+            _ => self,
+        }
+    }
+
+    /// A permission notice that follows the prompt it announces adds nothing, and must not drop the
+    /// tool call the prompt named.
+    fn after_notice(self, previous: Option<&Self>) -> Self {
+        match previous {
+            Some(previous) if previous.holds_permission() => previous.clone(),
             _ => self,
         }
     }
@@ -372,6 +423,9 @@ fn from_hook(hook: &HookState, inputs: &StatusInputs, now: f64) -> AgentStatus {
                 AgentStatus::Working
             }
         }
+        HookStatus::NeedsYou(Reason::Permission) if hook.holds_permission() => {
+            AgentStatus::NeedsYou(Reason::Permission)
+        }
         HookStatus::NeedsYou(reason @ (Reason::Permission | Reason::Question)) => {
             let moved_on =
                 now - hook.at >= HOOK_SETTLE_SECS && process.printing_since(hook.at, now);
@@ -415,16 +469,18 @@ pub fn next_change(inputs: &StatusInputs, now: f64) -> Option<f64> {
     }
     let (process, terminal) = (&inputs.process, &inputs.terminal);
     let marks: Vec<f64> = match &inputs.hook {
-        Some(HookState { status: HookStatus::Working, at }) => {
+        Some(HookState { status: HookStatus::Working, at, .. }) => {
             if terminal.progress == ProgressSignal::Working {
                 Vec::new()
             } else {
                 vec![process.last_output_at.unwrap_or(*at).max(*at) + STATUS_QUIET_SECS]
             }
         }
+        Some(hook) if hook.holds_permission() => Vec::new(),
         Some(HookState {
             status: HookStatus::NeedsYou(Reason::Permission | Reason::Question),
             at,
+            ..
         }) => {
             let mut marks = vec![at + HOOK_SETTLE_SECS];
             marks.extend(process.last_output_at.map(|t| t + ACTIVE_WINDOW_SECS));
@@ -491,15 +547,36 @@ impl StatusTracker {
     /// quiet decay would call it `NeedsYou` for good.
     pub fn agent_resumed(&mut self, now: f64) {
         self.agent_started(now);
-        self.inputs.hook = Some(HookState { status: HookStatus::Done, at: now });
+        self.inputs.hook = Some(HookState { status: HookStatus::Done, at: now, pending: None });
     }
 
     pub fn on_hook(&mut self, event: &HookEvent, now: f64) {
+        if let HookKind::ToolFinished(key) = &event.kind {
+            self.settle_permission(|pending| pending == Some(key.as_str()), now);
+            return;
+        }
         let Some(state) = HookState::from_event(event, now) else { return };
+        let previous = self.inputs.hook.as_ref();
         self.inputs.hook = Some(match event.kind {
-            HookKind::IdleWaiting => state.after_idle(self.inputs.hook.as_ref()),
+            HookKind::IdleWaiting => state.after_idle(previous),
+            HookKind::PermissionNeeded => state.after_notice(previous),
             _ => state,
         });
+    }
+
+    /// The user answered the pending permission prompt (no hook reports a denial).
+    pub fn on_permission_answered(&mut self, now: f64) {
+        self.settle_permission(|_| true, now);
+    }
+
+    fn settle_permission(&mut self, answered: impl Fn(Option<&str>) -> bool, now: f64) {
+        if let Some(hook) = &self.inputs.hook
+            && hook.holds_permission()
+            && answered(hook.pending.as_deref())
+        {
+            self.inputs.hook =
+                Some(HookState { status: HookStatus::Working, at: now, pending: None });
+        }
     }
 
     pub fn on_terminal(&mut self, signal: TerminalSignal, now: f64) {
@@ -559,7 +636,12 @@ mod tests {
                 json!({"session_id": sid, "permission_mode": "default", "hook_event_name": "PermissionRequest",
                     "tool_name": "Bash", "tool_input": {"command": "touch zz.txt", "description": "Create empty file"},
                     "permission_suggestions": [{"type": "addDirectories"}]}),
-                Some((HookKind::PermissionNeeded, Some("Bash: touch zz.txt".into()))),
+                Some((
+                    HookKind::ToolPermission(
+                        "Bash\n{\"command\":\"touch zz.txt\",\"description\":\"Create empty file\"}".into(),
+                    ),
+                    Some("Bash: touch zz.txt".into()),
+                )),
             ),
             (
                 json!({"session_id": sid, "hook_event_name": "Notification",
@@ -1051,6 +1133,115 @@ mod tests {
         assert_eq!(tracker.status(101.0), AgentStatus::Working);
         tracker.on_exit(Some(0));
         assert_eq!(tracker.status(102.0), AgentStatus::Done);
+    }
+
+    fn claude_hook(payload: &Value) -> HookEvent {
+        parse_hook("claude", payload).unwrap()
+    }
+
+    fn permission_for_bash() -> Vec<HookEvent> {
+        let command = "git status --short --branch; ls -la ~/.claude/ledgers/";
+        vec![
+            claude_hook(&json!({"hook_event_name": "PermissionRequest", "tool_name": "Bash",
+                "tool_input": {"command": command, "description": "Check state"}})),
+            claude_hook(
+                &json!({"hook_event_name": "Notification", "notification_type": "permission_prompt",
+                "message": "Claude needs your permission to use Bash"}),
+            ),
+        ]
+    }
+
+    fn bash_finished() -> HookEvent {
+        claude_hook(&json!({"hook_event_name": "PostToolUse", "tool_name": "Bash",
+            "tool_use_id": "toolu_1", "tool_response": {"stdout": ""},
+            "tool_input": {"command": "git status --short --branch; ls -la ~/.claude/ledgers/",
+                "description": "Check state"}}))
+    }
+
+    fn tidewatch_call_finished(tool: &str) -> HookEvent {
+        claude_hook(&json!({"hook_event_name": "PostToolUse", "tool_name": tool,
+            "tool_input": {"note": "x"}, "tool_response": {"ok": true}}))
+    }
+
+    fn tracker_at_a_bash_permission() -> StatusTracker {
+        let mut tracker = StatusTracker::agent(0.0);
+        tracker.on_hook(&HookEvent::bare(HookKind::TurnStarted), 1.0);
+        for event in permission_for_bash() {
+            tracker.on_hook(&event, 5.0);
+        }
+        tracker
+    }
+
+    #[test]
+    fn a_permission_holds_while_parallel_tool_calls_finish_and_the_terminal_prints() {
+        let mut tracker = tracker_at_a_bash_permission();
+        let needs = AgentStatus::NeedsYou(Reason::Permission);
+        assert_eq!(tracker.status(5.5), needs);
+        for (tool, at) in [("mcp__tidewatch__progress", 8.0), ("mcp__tidewatch__note", 9.0)] {
+            tracker.on_output(at - 0.1);
+            tracker.on_hook(&tidewatch_call_finished(tool), at);
+            tracker.on_output(at);
+            assert_eq!(tracker.status(at + 0.5), needs, "{tool}");
+        }
+        for second in 10..120 {
+            tracker.on_output(f64::from(second));
+        }
+        assert_eq!(tracker.status(120.5), needs, "a spinner behind the prompt is not an answer");
+        assert_eq!(tracker.next_change_at(120.5), None);
+        tracker.on_hook(&bash_finished(), 121.0);
+        assert_eq!(tracker.status(121.1), AgentStatus::Working);
+    }
+
+    #[test]
+    fn a_held_permission_ends_when_it_is_answered_or_the_turn_moves_on() {
+        use AgentStatus::{Done, NeedsYou, Working};
+        let other_bash =
+            claude_hook(&json!({"hook_event_name": "PostToolUse", "tool_name": "Bash",
+            "tool_input": {"command": "ls"}}));
+        let cases: Vec<(&str, Vec<HookEvent>, bool, AgentStatus)> = vec![
+            ("another Bash call ending", vec![other_bash], false, NeedsYou(Reason::Permission)),
+            (
+                "its own call failing",
+                vec![claude_hook(&json!({"hook_event_name": "PostToolUseFailure",
+                "tool_name": "Bash", "tool_input": {"command": "git status --short --branch; ls -la ~/.claude/ledgers/",
+                "description": "Check state"}}))],
+                false,
+                Working,
+            ),
+            ("the Reader answering", vec![], true, Working),
+            ("the turn stopping", vec![HookEvent::bare(HookKind::TurnDone)], false, Done),
+            ("the next prompt", vec![HookEvent::bare(HookKind::TurnStarted)], false, Working),
+            ("an idle notice", vec![HookEvent::bare(HookKind::IdleWaiting)], false, Done),
+        ];
+        for (name, events, answered, want) in cases {
+            let mut tracker = tracker_at_a_bash_permission();
+            for event in &events {
+                tracker.on_hook(event, 20.0);
+            }
+            if answered {
+                tracker.on_permission_answered(20.0);
+            }
+            tracker.on_output(20.1);
+            assert_eq!(tracker.status(20.2), want, "{name}");
+        }
+    }
+
+    #[test]
+    fn a_late_tool_end_never_turns_a_finished_turn_back_into_work() {
+        let mut tracker = StatusTracker::agent(0.0);
+        tracker.on_hook(&HookEvent::bare(HookKind::TurnDone), 2.0);
+        tracker.on_hook(&bash_finished(), 3.0);
+        assert_eq!(tracker.status(3.1), AgentStatus::Done);
+    }
+
+    #[test]
+    fn a_permission_without_a_named_tool_call_still_decays_when_the_terminal_prints() {
+        let mut tracker = StatusTracker::agent(0.0);
+        tracker.on_hook(&HookEvent::bare(HookKind::PermissionNeeded), 4.0);
+        tracker.on_hook(&bash_finished(), 5.0);
+        assert_eq!(tracker.status(5.0), AgentStatus::NeedsYou(Reason::Permission));
+        tracker.on_output(30.0);
+        assert_eq!(tracker.status(30.1), AgentStatus::Working);
     }
 
     #[test]
