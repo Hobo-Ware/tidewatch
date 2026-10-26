@@ -5,7 +5,7 @@ use std::path::Path;
 use tidewatch_core::civil_date::Date;
 use tidewatch_core::progress::When;
 
-use crate::coming_up::{Group, Row};
+use crate::coming_up::{Group, NEXT_STEP, Row, Source};
 
 const MONTHS: [&str; 12] =
     ["JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"];
@@ -78,6 +78,7 @@ fn label_of(slot: Slot, today: Date) -> String {
 
 fn note_of(row: &Row) -> Option<String> {
     match (&row.when, row.days) {
+        _ if row.source == Source::Next => Some(NEXT_STEP.to_owned()),
         (When::Parked(_), _) => Some("parked".to_owned()),
         (When::On(event), _) => Some(format!("on: {event}")),
         (_, Some(days)) if days < 0 => Some(format!("{} d late", -days)),
@@ -252,5 +253,28 @@ mod tests {
     #[test]
     fn no_rows_make_no_days() {
         assert_eq!(days(&[], today(), place), []);
+    }
+
+    #[test]
+    fn a_next_row_sits_under_today_with_a_next_step_note() {
+        use crate::coming_up::{next_rows, with_extra};
+        let owner = Owner {
+            repo: "/work/api".into(),
+            tab: "pkce".into(),
+            session_id: None,
+            profile_id: None,
+        };
+        let stopped = Ledger::parse(
+            "# Goal\nG\n\n## Status\nstate: blocked\n\n## Next\n- After approval: merge\n",
+        );
+        let rows = with_extra(rows(), next_rows(&owner, &stopped));
+        let all = days(&rows, today(), place);
+        assert_eq!(
+            all[0].items.iter().map(|item| item.what.as_str()).collect::<Vec<_>>(),
+            ["overdue one", "rerun check", "After approval: merge"]
+        );
+        let item = &all[0].items[2];
+        assert_eq!((item.note.as_deref(), item.mark), (Some("next step"), Mark::Plain));
+        assert_eq!(rows[item.row].tab, "pkce");
     }
 }

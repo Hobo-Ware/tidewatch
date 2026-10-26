@@ -12,6 +12,7 @@ use crate::progress_store;
 pub const UPDATE_TOOL: &str = "update_progress";
 pub const GET_TOOL: &str = "get_progress";
 const LEDGER_KEY: &str = "ledger";
+const MOVE_TO_SCHEDULED: &str = "Next holds only what you do in this same turn. Move later work from Next to Scheduled with a `when`, such as `- [ ] on: the pull request merges -- Watch the deploy -- it ships after the merge`, and call update_progress again.";
 
 /// The tools' entries for `tools/list`.
 #[must_use]
@@ -55,7 +56,8 @@ fn not_saved(problems: &[String]) -> (String, bool) {
 }
 
 /// Saves the ledger to `file` and tells the tab. A ledger without a goal is a tool error with what
-/// to fix, so the agent calls again; anything else is saved. The reply is a one-line summary.
+/// to fix, so the agent calls again; anything else is saved. The reply is a one-line summary, with a second line when the ledger
+/// stopped and left its later work in Next.
 pub fn update(args: &Map<String, Value>, file: &Path, emit: &dyn Fn(TabEvent)) -> (String, bool) {
     let mut problems: Vec<String> = args
         .keys()
@@ -82,9 +84,13 @@ pub fn update(args: &Map<String, Value>, file: &Path, emit: &dyn Fn(TabEvent)) -
     if let Err(e) = progress_store::save(file, &ledger) {
         return (format!("The ledger could not be saved ({e}). Call {UPDATE_TOOL} again."), true);
     }
-    let summary = ledger.summary();
+    let mut reply = ledger.summary();
+    if !ledger.stranded_next().is_empty() {
+        reply.push('\n');
+        reply.push_str(MOVE_TO_SCHEDULED);
+    }
     emit(TabEvent::Progress { ledger: Box::new(ledger) });
-    (summary, false)
+    (reply, false)
 }
 
 /// The saved text, or a line saying there is none yet.

@@ -632,3 +632,22 @@ fn a_kind_line_in_status_reads_back_and_is_written_again() {
     assert_eq!(plain.status.kind, None);
     assert!(!plain.to_markdown().contains("kind"));
 }
+
+#[test]
+fn next_is_stranded_only_when_the_ledger_stopped_with_nothing_open_in_scheduled() {
+    let cases = [
+        ("working", "- a\n", "", 0),
+        ("waiting", "- a\n- b\n", "", 2),
+        ("blocked", "- a\n", "", 1),
+        ("done", "- a\n", "", 1),
+        ("blocked", "- nothing\n", "", 0),
+        ("blocked", "", "", 0),
+        ("blocked", "- a\n", "## Scheduled\n- [ ] on: x -- later\n", 0),
+        ("blocked", "- a\n", "## Scheduled\n- [x] on: x -- later\n- [-] you -- skip\n", 1),
+    ];
+    for (state, next, scheduled, want) in cases {
+        let text =
+            format!("# Goal\ng\n\n## Status\nstate: {state}\n\n## Next\n{next}\n{scheduled}");
+        assert_eq!(Ledger::parse(&text).stranded_next().len(), want, "{state} {next} {scheduled}");
+    }
+}

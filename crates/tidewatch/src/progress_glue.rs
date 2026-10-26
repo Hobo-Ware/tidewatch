@@ -13,6 +13,7 @@ use tidewatch_core::progress::Ledger;
 use tidewatch_core::progress_store;
 use tidewatch_core::schedule::{Index, Writer};
 
+use crate::coming_up::Row;
 use crate::jobs::Jobs;
 use crate::progress_state::{Facts, State, TabLedger};
 
@@ -73,6 +74,11 @@ impl Host {
     /// The scheduled items of every tab, closed ones included.
     pub(crate) fn index(&self) -> &Index {
         self.state.index()
+    }
+
+    /// The Next entries of open tabs that stopped with nothing scheduled.
+    pub(crate) fn next_rows(&self) -> Vec<Row> {
+        self.state.next_rows()
     }
 
     /// The agent sent a ledger (it is saved already).

@@ -8,6 +8,8 @@ use tidewatch_core::paths::progress_file_beside;
 use tidewatch_core::progress::Ledger;
 use tidewatch_core::schedule::{Entry, Index, Owner, Presence};
 
+use crate::coming_up::{self, Row};
+
 /// A tab's ledger and when it last changed.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct TabLedger {
@@ -70,6 +72,18 @@ impl State {
 
     pub(crate) fn index(&self) -> &Index {
         &self.index
+    }
+
+    /// The Next entries of the open tabs whose ledger stopped with nothing scheduled, in memory
+    /// only, ordered by repo and tab.
+    pub(crate) fn next_rows(&self) -> Vec<Row> {
+        let mut owners: Vec<(&Owner, &Ledger)> = self
+            .owners
+            .iter()
+            .filter_map(|(id, owner)| Some((owner, &self.ledgers.get(id)?.ledger)))
+            .collect();
+        owners.sort_by(|(a, _), (b, _)| (&a.repo, &a.tab).cmp(&(&b.repo, &b.tab)));
+        owners.into_iter().flat_map(|(owner, ledger)| coming_up::next_rows(owner, ledger)).collect()
     }
 
     /// The tabs to read and the ones that closed. `tabs` is every agent tab now open.
@@ -291,5 +305,24 @@ mod tests {
             .map(|entry| (entry.tab.as_str(), entry.items[0].what.as_str()))
             .collect();
         assert_eq!(whats, [("otter", "live"), ("heron", "closed one")]);
+    }
+
+    #[test]
+    fn next_rows_come_from_open_tabs_in_memory_and_never_reach_the_index() {
+        let mut state = State::default();
+        state.look(&[facts(1, true, None), facts(2, false, None)]);
+        let stopped =
+            "# Goal\nShip it\n\n## Status\nstate: blocked\n\n## Next\n- Merge after approval\n";
+        state.arrived(1, Ledger::parse(stopped), 1);
+        state.arrived(2, Ledger::parse(stopped), 1);
+        let rows = state.next_rows();
+        assert_eq!(rows.len(), 1, "a tab with no worktree has no owner");
+        assert_eq!(
+            (rows[0].tab.as_str(), rows[0].what.as_str()),
+            ("otter", "Merge after approval")
+        );
+        assert_eq!(state.index(), &Index::default());
+        state.look(&[]);
+        assert_eq!(state.next_rows(), Vec::new(), "a closed tab keeps nothing in memory");
     }
 }

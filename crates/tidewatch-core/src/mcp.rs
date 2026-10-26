@@ -684,6 +684,39 @@ mod tests {
     }
 
     #[test]
+    fn update_progress_nudges_a_stopped_ledger_that_leaves_later_work_in_next() {
+        let cases = [
+            ("blocked", "- After approval: merge\n", "", true),
+            ("waiting", "- Watch the deploy\n", "", true),
+            ("done", "- Check logs tomorrow\n", "", true),
+            ("working", "- Write the test\n", "", false),
+            ("blocked", "- nothing\n", "", false),
+            (
+                "blocked",
+                "- After approval: merge\n",
+                "## Scheduled\n- [ ] on: approval -- Merge\n",
+                false,
+            ),
+        ];
+        for (state, next, scheduled, nudged) in cases {
+            let h = Harness::new();
+            let ledger =
+                format!("# Goal\ng\n\n## Status\nstate: {state}\n\n## Next\n{next}\n{scheduled}");
+            let reply = h.call("update_progress", &json!({ "ledger": ledger }));
+            assert_eq!(reply["result"]["isError"], false, "{state} {next}");
+            let text = text_of(&reply);
+            let lines: Vec<&str> = text.lines().collect();
+            assert_eq!(lines.len(), if nudged { 2 } else { 1 }, "{state} {next}: {text}");
+            assert!(lines[0].starts_with("saved"), "{text}");
+            if nudged {
+                assert!(lines[1].contains("Move later work from Next to Scheduled"), "{text}");
+            }
+            assert_eq!(h.events.borrow().len(), 1);
+            assert!(h.progress_file().exists());
+        }
+    }
+
+    #[test]
     fn set_avatar_over_rpc_saves_beside_the_notes_and_shows_it_without_the_script() {
         let h = Harness::new();
         let svg = "<svg viewBox=\"0 0 64 64\"><circle cx=\"32\" cy=\"32\" r=\"20\" fill=\"#2dd4bf\"/><script>1</script></svg>";
