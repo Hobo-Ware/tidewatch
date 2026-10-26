@@ -27,6 +27,7 @@ use crate::pr_card_model::CardAction;
 use crate::pr_cards_view::Data as PrData;
 use crate::question_auto::Poll;
 use crate::question_bulk;
+use crate::question_screen::{Look, ShowsScreen, menu_look};
 use crate::reader::{Note, Shown, Step};
 use crate::reader_keys;
 use crate::reader_rows::{Asked, Kind, Origin};
@@ -46,6 +47,8 @@ const KEY_GAP_S: f64 = ENTER_DELAY_SECS;
 /// How long a menu needs to close after Esc before text can follow.
 const MENU_CLOSE_S: f64 = 0.8;
 const RESUME_DEBOUNCE_S: f64 = 3.0;
+const MENU_GONE: &str =
+    "The agent's question is no longer on its screen. Nothing was typed. Check the terminal";
 
 /// Starts the feed of every agent tab that has an agent running and none yet.
 pub(crate) fn start(tabs: &mut Tabs<Pane<PtyTerm>>, ctx: &Context, dev: &DevReader) {
@@ -64,14 +67,21 @@ pub(crate) fn start(tabs: &mut Tabs<Pane<PtyTerm>>, ctx: &Context, dev: &DevRead
 }
 
 /// Takes what every feed read since the last frame, and types what is due into the tabs that were
-/// answering a question.
-pub(crate) fn drain(tabs: &mut Tabs<Pane<PtyTerm>>, ctx: &Context, now: f64) {
+/// answering a question. A pasted message gets its Enter from the flow's Enter queue.
+pub(crate) fn drain(tabs: &mut Tabs<Pane<PtyTerm>>, flow: &mut Flow, ctx: &Context, now: f64) {
     for tab in tabs.items_mut() {
+        let id = tab.id;
         if let Pane { body: Body::Shell(term), agent: Some(agent), .. } = &mut tab.pane {
             while let Some(step) = agent.reader.take_due_step(now) {
                 match step {
                     Step::Keys(bytes) => term.send(&bytes),
-                    Step::Paste(text) => term.paste(&text),
+                    Step::Paste(text) => {
+                        term.paste(&text);
+                        flow.queue_enter(id, now);
+                        ctx.request_repaint_after(Duration::from_secs_f64(
+                            ENTER_DELAY_SECS + WAKE_SLACK_S,
+                        ));
+                    }
                 }
             }
             if let Some(due) = agent.reader.next_step_due() {
@@ -119,7 +129,7 @@ fn waiting_question<T>(pane: &Pane<T>) -> Option<u64> {
 
 /// In a tab that runs on its own, answers the question the user left alone for the wait with the
 /// agent's recommended option, else the first, and wakes the app for the moment it is due.
-fn pick_for_the_absent<T>(pane: &mut Pane<T>, ctx: &Context, now: f64) {
+fn pick_for_the_absent<T: ShowsScreen>(pane: &mut Pane<T>, ctx: &Context, now: f64) {
     let wait = crate::dev_reader::autopick_wait();
     let waiting = waiting_question(pane);
     let Some(agent) = pane.agent.as_mut() else { return };
@@ -133,8 +143,9 @@ fn pick_for_the_absent<T>(pane: &mut Pane<T>, ctx: &Context, now: f64) {
         Poll::Due(seq) => {
             let Some(asked) = agent.reader.rows.question_of(seq) else { return };
             let given = question::auto_picks(&asked.questions);
-            answer_question(pane, seq, Reply::Answered(given), now);
-            if let Some(agent) = pane.agent.as_mut() {
+            if answer_question(pane, seq, Reply::Answered(given), now).is_none()
+                && let Some(agent) = pane.agent.as_mut()
+            {
                 agent.reader.rows.mark_auto_picked(seq);
             }
         }
@@ -396,7 +407,11 @@ pub(crate) fn apply(
             }
             Action::Resume => resume_agent(&mut found.pane, now),
             Action::Review(_) | Action::Pr(_) | Action::Due(_) => {}
-            Action::Ask(seq, reply) => answer_question(&mut found.pane, seq, reply, now),
+            Action::Ask(seq, reply) => {
+                if let Some(why) = answer_question(&mut found.pane, seq, reply, now) {
+                    toast = Some(why.to_owned());
+                }
+            }
             Action::GoWithPicks => toast = go_with_picks(&mut found.pane, now),
         }
     }
@@ -458,9 +473,9 @@ fn resume_keys(agent: &mut AgentTab, now: f64) -> Option<Vec<u8>> {
     Some(keys)
 }
 
-/// Pasted text and the Enter that sends it, `lead` seconds from now.
+/// Pasted text, `lead` seconds from now; its Enter is queued when it is pasted.
 fn reply_steps(text: String, lead: f64) -> Vec<(f64, Step)> {
-    vec![(lead, Step::Paste(text)), (ENTER_DELAY_SECS, Step::Keys(b"\r".to_vec()))]
+    vec![(lead, Step::Paste(text))]
 }
 
 /// The steps that give `given` to Claude's menu: its key presses, or when the menu cannot take them
@@ -483,21 +498,37 @@ fn claude_menu_steps(
 
 /// Answers every waiting question that has a pick with it, and says which were answered and which
 /// stay open.
-fn go_with_picks<T>(pane: &mut Pane<T>, now: f64) -> Option<String> {
+fn go_with_picks<T: ShowsScreen>(pane: &mut Pane<T>, now: f64) -> Option<String> {
     let bulk = question_bulk::plan(&pane.agent.as_ref()?.reader.rows);
     let text = question_bulk::toast(&bulk);
+    let mut refused = None;
     for answer in bulk.answers {
-        answer_question(pane, answer.seq, Reply::Answered(answer.given), now);
+        refused = answer_question(pane, answer.seq, Reply::Answered(answer.given), now).or(refused);
     }
-    Some(text)
+    Some(match refused {
+        Some(why) => format!("{text} {why}"),
+        None => text,
+    })
 }
 
 /// Gives the user's answer to the questions in row `seq`. A held `ask_user` call takes it through
 /// its channel, or as a typed message when the call already ended. Claude's menu takes key presses,
-/// one a gap apart; a skip closes the menu with Esc and then says so.
-fn answer_question<T>(pane: &mut Pane<T>, seq: u64, reply: Reply, now: f64) {
-    let Some(agent) = pane.agent.as_mut() else { return };
-    let Some(asked) = agent.reader.rows.question_of(seq).cloned() else { return };
+/// one a gap apart; a skip closes the menu with Esc and then says so. Nothing is typed into a Claude
+/// menu the screen shows is gone (an unreadable screen counts as open); the reason comes back.
+fn answer_question<T: ShowsScreen>(
+    pane: &mut Pane<T>,
+    seq: u64,
+    reply: Reply,
+    now: f64,
+) -> Option<&'static str> {
+    let agent = pane.agent.as_ref()?;
+    let asked = agent.reader.rows.question_of(seq).cloned()?;
+    let gone =
+        matches!(&pane.body, Body::Shell(term) if menu_look(term, &asked.questions) == Look::Gone);
+    if matches!(asked.origin, Origin::Claude) && gone {
+        return Some(MENU_GONE);
+    }
+    let agent = pane.agent.as_mut()?;
     let (steps, state) = match (&asked.origin, reply) {
         (Origin::Tidewatch(held), Reply::Answered(given)) => {
             let pairs = question::pairs(&asked.questions, &given);
@@ -539,6 +570,7 @@ fn answer_question<T>(pane: &mut Pane<T>, seq: u64, reply: Reply, now: f64) {
     if matches!(asked.origin, Origin::Claude) {
         agent.reader.mark_answered();
     }
+    None
 }
 
 #[cfg(test)]
@@ -548,6 +580,19 @@ mod tests {
     use tidewatch_core::question::{AskReply, Given, QuestionOption, Select};
 
     use crate::agent_run::AgentRun;
+
+    #[derive(Default)]
+    struct Fake(Vec<String>);
+
+    impl ShowsScreen for Fake {
+        fn rows(&self) -> Vec<String> {
+            self.0.clone()
+        }
+    }
+
+    fn menu_rows() -> Fake {
+        Fake(vec!["Where?".into(), "\u{276f} 1. Stage".into(), "  2. Run".into()])
+    }
 
     #[test]
     fn the_suggestion_is_read_only_while_the_agent_waits_for_the_next_message() {
@@ -654,12 +699,16 @@ mod tests {
         vec![Given { picked: vec![1], other: None }, Given { picked: vec![0, 1], other: None }]
     }
 
-    fn pane(origin: Origin) -> (Pane<()>, u64) {
+    fn pane(origin: Origin) -> (Pane<Fake>, u64) {
         let mut agent = AgentTab::new("Builder".into(), AgentRun::setting_up("claude".into(), 0.0));
         let row = QuestionRow { questions: questions(), asked: Asked::Pending, origin };
         agent.reader.rows.push_all(Vec::new());
         let seq = agent.reader.rows.push_question_row(row);
-        let pane = Pane { body: crate::pane::Body::Shell(()), worktree: None, agent: Some(agent) };
+        let pane = Pane {
+            body: crate::pane::Body::Shell(menu_rows()),
+            worktree: None,
+            agent: Some(agent),
+        };
         (pane, seq)
     }
 
@@ -689,7 +738,7 @@ mod tests {
         }
     }
 
-    fn typed(pane: &mut Pane<()>) -> Vec<(f64, Step)> {
+    fn typed(pane: &mut Pane<Fake>) -> Vec<(f64, Step)> {
         let reader = &mut pane.agent.as_mut().unwrap().reader;
         let mut out = Vec::new();
         while let Some(due) = reader.next_step_due() {
@@ -706,7 +755,7 @@ mod tests {
         typed.into_iter().map(|(_, step)| step).collect()
     }
 
-    fn asked_of(pane: &Pane<()>, seq: u64) -> Asked {
+    fn asked_of(pane: &Pane<Fake>, seq: u64) -> Asked {
         pane.agent.as_ref().unwrap().reader.rows.question_of(seq).unwrap().asked.clone()
     }
 
@@ -731,7 +780,7 @@ mod tests {
         assert!(
             matches!(&steps[1], Step::Paste(text) if text.starts_with("My answers to your earlier questions"))
         );
-        assert_eq!(steps[2], Step::Keys(b"\r".to_vec()));
+        assert_eq!(steps.len(), 2);
     }
 
     #[test]
@@ -742,6 +791,7 @@ mod tests {
         assert_eq!(typed[0], (0.0, Step::Keys(b"\x1b".to_vec())));
         assert_eq!(typed[1].1, Step::Paste(question::SKIP_REPLY.into()));
         assert!(typed[1].0 >= MENU_CLOSE_S - 0.001);
+        assert_eq!(typed.len(), 2);
         assert_eq!(asked_of(&pane, seq), Asked::Declined);
     }
 
@@ -764,7 +814,7 @@ mod tests {
         let steps = steps_only(typed(&mut pane));
         let Step::Paste(text) = &steps[0] else { panic!("{steps:?}") };
         assert!(text.contains("Q: Where?\nA: Run"), "{text}");
-        assert_eq!(steps[1], Step::Keys(b"\r".to_vec()));
+        assert_eq!(steps.len(), 1);
         assert!(matches!(asked_of(&pane, seq), Asked::Answered(_)));
     }
 
@@ -779,11 +829,11 @@ mod tests {
         drop(receiver);
         let (mut dead, seq) = pane(Origin::Tidewatch(AskReply::new(sender)));
         answer_question(&mut dead, seq, Reply::Skipped, 100.0);
-        assert_eq!(steps_only(typed(&mut dead))[0], Step::Paste(question::SKIP_REPLY.into()));
+        assert_eq!(steps_only(typed(&mut dead)), [Step::Paste(question::SKIP_REPLY.into())]);
         assert_eq!(asked_of(&dead, seq), Asked::Declined);
     }
 
-    fn ask(pane: &mut Pane<()>, labels: &[&str]) -> std::sync::mpsc::Receiver<Reply> {
+    fn ask(pane: &mut Pane<Fake>, labels: &[&str]) -> std::sync::mpsc::Receiver<Reply> {
         let (sender, receiver) = channel();
         let question = question::Question {
             text: format!("Pick one of {labels:?}?"),
@@ -800,8 +850,11 @@ mod tests {
     fn go_with_picks_answers_the_rows_that_have_one_and_names_the_others() {
         let mut agent = AgentTab::new("Builder".into(), AgentRun::setting_up("claude".into(), 0.0));
         agent.reader.rows.push_all(Vec::new());
-        let mut pane =
-            Pane { body: crate::pane::Body::Shell(()), worktree: None, agent: Some(agent) };
+        let mut pane = Pane {
+            body: crate::pane::Body::Shell(Fake::default()),
+            worktree: None,
+            agent: Some(agent),
+        };
         let first = ask(&mut pane, &["Stage (Recommended)", "Run"]);
         let open = ask(&mut pane, &["Fast", "Slow"]);
         let last = ask(&mut pane, &["Unit", "Lints (Recommended)"]);
@@ -846,7 +899,7 @@ mod tests {
         assert!(!queues_behind_work(&AgentStatus::Done, "do more"));
     }
 
-    fn on_its_own(pane: &mut Pane<()>, level: tidewatch_core::agents::Level) {
+    fn on_its_own(pane: &mut Pane<Fake>, level: tidewatch_core::agents::Level) {
         pane.agent.as_mut().unwrap().launched = Some(crate::pane::Launched {
             profile_id: "builder".into(),
             level,
@@ -856,7 +909,7 @@ mod tests {
         });
     }
 
-    fn ask_with_recommended(pane: &mut Pane<()>) -> (u64, std::sync::mpsc::Receiver<Reply>) {
+    fn ask_with_recommended(pane: &mut Pane<Fake>) -> (u64, std::sync::mpsc::Receiver<Reply>) {
         let (sender, receiver) = channel();
         let row = QuestionRow {
             questions: vec![question::Question {
@@ -876,9 +929,9 @@ mod tests {
         (seq, receiver)
     }
 
-    fn pane_without_questions() -> Pane<()> {
+    fn pane_without_questions() -> Pane<Fake> {
         let agent = AgentTab::new("Builder".into(), AgentRun::setting_up("claude".into(), 0.0));
-        Pane { body: crate::pane::Body::Shell(()), worktree: None, agent: Some(agent) }
+        Pane { body: crate::pane::Body::Shell(Fake::default()), worktree: None, agent: Some(agent) }
     }
 
     #[test]
@@ -925,5 +978,158 @@ mod tests {
         assert_eq!(receiver.recv().unwrap(), Reply::Answered(vec![mine]));
         assert!(receiver.try_recv().is_err());
         assert!(!pane.agent.as_ref().unwrap().reader.rows.auto_picked(seq));
+    }
+
+    fn with_screen(pane: &mut Pane<Fake>, rows: &[&str]) {
+        pane.body =
+            crate::pane::Body::Shell(Fake(rows.iter().map(|row| (*row).to_owned()).collect()));
+    }
+
+    #[test]
+    fn nothing_is_typed_into_a_claude_menu_the_screen_shows_is_gone() {
+        let gone: [(&str, &[&str]); 2] = [
+            ("the answer echo", &["User answered Claude's questions:", "Where? -> Run"]),
+            ("the input box", &["> ", "Where? is what I asked"]),
+        ];
+        let replies = [
+            ("answers the menu takes by keys", Reply::Answered(answered())),
+            (
+                "answers it cannot take by keys",
+                Reply::Answered(vec![answered().remove(0), Given::default()]),
+            ),
+            ("a skip", Reply::Skipped),
+        ];
+        for (screen, rows) in gone {
+            for (what, reply) in &replies {
+                let (mut pane, seq) = pane(Origin::Claude);
+                with_screen(&mut pane, rows);
+                let refused = answer_question(&mut pane, seq, reply.clone(), 100.0);
+                assert_eq!(refused, Some(MENU_GONE), "{what} on {screen}");
+                assert_eq!(typed(&mut pane), Vec::new(), "{what} on {screen}");
+                assert_eq!(asked_of(&pane, seq), Asked::Pending, "{what} on {screen}");
+            }
+        }
+    }
+
+    #[test]
+    fn an_empty_or_blank_screen_is_no_proof_and_the_answer_is_typed() {
+        for rows in [&[][..], &["", "  "][..]] {
+            let (mut pane, seq) = pane(Origin::Claude);
+            with_screen(&mut pane, rows);
+            assert_eq!(answer_question(&mut pane, seq, Reply::Answered(answered()), 100.0), None);
+            assert_eq!(typed(&mut pane).len(), 5, "{rows:?}");
+        }
+    }
+
+    #[test]
+    fn a_claude_menu_that_is_on_the_terminal_is_answered_and_nothing_is_refused() {
+        let (mut pane, seq) = pane(Origin::Claude);
+        assert_eq!(answer_question(&mut pane, seq, Reply::Answered(answered()), 100.0), None);
+        assert_eq!(typed(&mut pane).len(), 5);
+    }
+
+    #[test]
+    fn a_held_ask_user_call_needs_no_menu_on_the_terminal() {
+        let (sender, receiver) = channel();
+        let (mut pane, seq) = pane(Origin::Tidewatch(AskReply::new(sender)));
+        with_screen(&mut pane, &[]);
+        assert_eq!(answer_question(&mut pane, seq, Reply::Answered(answered()), 100.0), None);
+        assert_eq!(receiver.recv().unwrap(), Reply::Answered(answered()));
+    }
+
+    #[test]
+    fn go_with_picks_says_when_a_claude_menu_was_gone_and_types_nothing_into_it() {
+        let mut agent = AgentTab::new("Builder".into(), AgentRun::setting_up("claude".into(), 0.0));
+        agent.reader.rows.push_all(Vec::new());
+        let row = QuestionRow {
+            questions: vec![question::Question {
+                text: "Where?".into(),
+                header: None,
+                decision: None,
+                select: Select::Single,
+                options: vec![
+                    QuestionOption::new("Stage (Recommended)"),
+                    QuestionOption::new("Run"),
+                ],
+            }],
+            asked: Asked::Pending,
+            origin: Origin::Claude,
+        };
+        let seq = agent.reader.rows.push_question_row(row);
+        let mut pane = Pane {
+            body: crate::pane::Body::Shell(Fake(vec!["> ".into()])),
+            worktree: None,
+            agent: Some(agent),
+        };
+        let toast = go_with_picks(&mut pane, 100.0).unwrap();
+        assert_eq!(toast, format!("Went with the picks for 1: Stage. {MENU_GONE}"));
+        assert_eq!(typed(&mut pane), Vec::new());
+        assert_eq!(asked_of(&pane, seq), Asked::Pending);
+    }
+
+    #[test]
+    fn a_yolo_tab_does_not_count_a_pick_it_could_not_type_into_a_gone_menu() {
+        let ctx = Context::default();
+        let (mut pane, seq) = pane(Origin::Claude);
+        with_screen(&mut pane, &["> "]);
+        on_its_own(&mut pane, tidewatch_core::agents::Level::Yolo);
+        let agent = pane.agent.as_mut().unwrap();
+        agent.run.hold(Some(AgentStatus::Working), None);
+        agent.run.refresh(1.0);
+        pick_for_the_absent(&mut pane, &ctx, 0.0);
+        pick_for_the_absent(&mut pane, &ctx, crate::question_auto::WAIT_SECS);
+        assert_eq!(typed(&mut pane), Vec::new());
+        assert_eq!(asked_of(&pane, seq), Asked::Pending);
+        assert!(!pane.agent.as_ref().unwrap().reader.rows.auto_picked(seq));
+    }
+
+    fn idle_pty() -> PtyTerm {
+        use std::collections::BTreeMap;
+        use stdusk_core::repaint::Repaint;
+        use stdusk_core::shell::ShellProfile;
+        use stdusk_core::terminal::SpawnOpts;
+        let opts = SpawnOpts {
+            detect_progress: false,
+            shell_integration: false,
+            autosuggestions: false,
+            scrollback_lines: 100,
+            word_separators: " ".into(),
+            bold_bright: false,
+            agent_tracking: None,
+            cwd: None,
+            profile: Some(ShellProfile {
+                shell: Some("/bin/sh".into()),
+                args: vec!["-c".into(), "sleep 20".into()],
+                cwd: None,
+                env: BTreeMap::new(),
+            }),
+        };
+        PtyTerm::spawn(75, 25, Repaint::none(), &opts)
+    }
+
+    #[test]
+    fn a_message_typed_for_an_answer_gets_its_enter_from_the_enter_queue_after_the_quiet_wait() {
+        let mut tabs = Tabs::new(Pane::creating());
+        let agent = AgentTab::new("Builder".into(), AgentRun::setting_up("claude".into(), 0.0));
+        let pane = Pane { body: Body::Shell(idle_pty()), worktree: None, agent: Some(agent) };
+        let id = tabs.push("agent".into(), pane);
+        let mut flow = Flow::new(tidewatch_core::tools::Tools::default());
+        let ctx = Context::default();
+        let (sender, receiver) = channel();
+        drop(receiver);
+        let row = QuestionRow {
+            questions: questions(),
+            asked: Asked::Pending,
+            origin: Origin::Tidewatch(AskReply::new(sender)),
+        };
+        let found = tabs.get_mut(id).unwrap();
+        let seq = found.pane.agent.as_mut().unwrap().reader.rows.push_question_row(row);
+        answer_question(&mut found.pane, seq, Reply::Answered(answered()), 10.0);
+        drain(&mut tabs, &mut flow, &ctx, 10.0);
+        let busy = |_: u64| Some(1);
+        assert_eq!(flow.due_enters(10.0, busy), Vec::<u64>::new());
+        assert_eq!(flow.due_enters(10.0 + ENTER_DELAY_SECS, busy), Vec::<u64>::new());
+        let settled = 10.0 + ENTER_DELAY_SECS + crate::note_send::ENTER_QUIET_SECS + 0.01;
+        assert_eq!(flow.due_enters(settled, busy), [id]);
     }
 }
