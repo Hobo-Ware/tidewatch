@@ -48,6 +48,31 @@ fn the_pills_follow_the_checks_the_review_conflicts_and_comments() {
 }
 
 #[test]
+fn a_merged_pull_request_leads_with_merged_and_claims_no_open_checks_or_review() {
+    let mut s = summary();
+    s.state = State::Merged;
+    s.checks = SummaryChecks::Passed;
+    s.decision = Decision::Approved;
+    s.conflicting = true;
+    assert_eq!(
+        texts(&s),
+        [("Merged".to_owned(), Tone::Good), ("1 comment".to_owned(), Tone::Quiet)]
+    );
+    assert!(pills(&s)[0].outlined);
+    assert!(!pills(&s)[1].outlined);
+}
+
+#[test]
+fn a_closed_pull_request_leads_with_closed_and_claims_no_open_checks_or_review() {
+    let mut s = summary();
+    s.state = State::Closed;
+    s.checks = SummaryChecks::Failed;
+    s.decision = Decision::ChangesRequested;
+    s.comments = 0;
+    assert_eq!(texts(&s), [("Closed".to_owned(), Tone::Bad)]);
+}
+
+#[test]
 fn the_chip_names_the_mode_in_few_words() {
     assert_eq!(mode_label(PrMode::Ask), "Ask me");
     assert_eq!(mode_label(PrMode::Auto), "Auto");

@@ -123,6 +123,7 @@ fn a_merged_pull_request_is_never_looked_at_again() {
     let mut cards = Cards::default();
     cards.follow(42);
     cards.seen = Some(Seen { ended: true, ..Seen::default() });
+    cards.summary = Some(Summary { state: State::Merged, ..summary(SummaryChecks::Passed) });
     let mut restarted = Watch::new(PathBuf::from("/x"));
     restarted.take_load();
     restarted.loaded(cards, 0.0);
@@ -137,16 +138,85 @@ fn closed_poll() -> Polled {
 }
 
 #[test]
-fn the_strip_shows_for_open_and_merged_pull_requests_and_not_for_a_closed_one() {
+fn the_strip_shows_for_every_state_of_the_pull_request() {
     let default = GithubPrefs::default();
-    let mut watch = ready(Some(42));
-    assert!(watch.strip_summary().is_none(), "nothing read yet");
-    for (state, shown) in [(State::Open, true), (State::Merged, true), (State::Closed, false)] {
+    assert!(ready(Some(42)).summary().is_none(), "nothing read yet");
+    for state in [State::Open, State::Merged, State::Closed] {
+        let mut watch = ready(Some(42));
         let mut poll = polled(vec![], false, state != State::Open);
         poll.summary.state = state;
         watch.polled(Ok(poll), default, "tab", 5.0, 0);
-        assert_eq!(watch.strip_summary().is_some(), shown, "{state:?}");
+        assert_eq!(watch.summary().map(|summary| summary.state), Some(state));
     }
+}
+
+fn merged_poll() -> Polled {
+    let merged = Body::Merged { number: 42, base: "main".into() };
+    let mut poll = polled(vec![merged], false, true);
+    poll.seen.ended = true;
+    poll.summary.state = State::Merged;
+    poll.summary.checks = SummaryChecks::Passed;
+    poll.summary.decision = Decision::Approved;
+    poll
+}
+
+fn reloaded(watch: &Watch) -> Watch {
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("pr_cards.json");
+    watch.cards.save(&file).unwrap();
+    let mut restarted = Watch::new(file.clone());
+    assert!(restarted.take_load());
+    restarted.loaded(Cards::load(&file), 0.0);
+    restarted
+}
+
+#[test]
+fn a_merged_pull_request_still_reads_merged_in_the_strip_after_a_restart() {
+    let default = GithubPrefs::default();
+    let mut watch = ready(Some(42));
+    watch.look_started();
+    watch.polled(Ok(merged_poll()), default, "tab", 5.0, 0);
+    let restarted = reloaded(&watch);
+    let summary = restarted.summary().expect("the saved summary is kept");
+    assert_eq!(summary.state, State::Merged);
+    let pills = crate::pr_strip::pills(summary);
+    assert_eq!(pills.first().map(|pill| pill.text.as_str()), Some("Merged"));
+    assert!(pills.iter().all(|pill| !matches!(pill.text.as_str(), "Approved" | "Checks passed")));
+    assert_eq!(restarted.should_look(default, 1e9), None);
+}
+
+#[test]
+fn a_later_poll_that_does_not_say_merged_never_flips_a_merged_pull_request_back() {
+    let default = GithubPrefs::default();
+    let mut watch = ready(Some(42));
+    watch.look_started();
+    watch.polled(Ok(merged_poll()), default, "tab", 5.0, 0);
+    for state in [State::Open, State::Closed] {
+        let mut stale = polled(vec![], true, state != State::Open);
+        stale.summary.state = state;
+        watch.look_started();
+        let outs = watch.polled(Ok(stale), default, "tab", 50.0, 0);
+        assert_eq!(outs, vec![], "{state:?}");
+        assert_eq!(watch.summary().map(|summary| summary.state), Some(State::Merged), "{state:?}");
+        assert!(watch.merged(), "{state:?}");
+    }
+}
+
+#[test]
+fn an_ended_pull_request_saved_without_a_summary_is_read_once_so_the_strip_can_say_so() {
+    let default = GithubPrefs::default();
+    let mut cards = Cards::default();
+    cards.follow(42);
+    cards.add(1_000, Body::Merged { number: 42, base: "main".into() });
+    cards.seen = Some(Seen { ended: true, ..Seen::default() });
+    let mut watch = Watch::new(PathBuf::from("/x"));
+    watch.take_load();
+    watch.loaded(cards, 0.0);
+    assert!(watch.should_look(default, 1.0).is_some());
+    watch.look_started();
+    watch.polled(Ok(merged_poll()), default, "tab", 1.0, 0);
+    assert_eq!(watch.summary().map(|summary| summary.state), Some(State::Merged));
+    assert_eq!(watch.should_look(default, 1e9), None);
 }
 
 #[test]
@@ -155,12 +225,12 @@ fn a_closed_pull_request_is_looked_at_again_so_a_reopen_brings_the_strip_back() 
     let mut watch = ready(Some(42));
     watch.look_started();
     watch.polled(Ok(closed_poll()), default, "tab", 5.0, 0);
-    assert_eq!(watch.strip_summary(), None);
+    assert_eq!(watch.summary().map(|summary| summary.state), Some(State::Closed));
     assert_eq!(watch.next_look(default), Some(5.0 + SLOW_SECS));
     assert!(watch.should_look(default, 5.0 + SLOW_SECS).is_some());
     watch.look_started();
     watch.polled(Ok(polled(vec![], false, false)), default, "tab", 130.0, 0);
-    assert_eq!(watch.strip_summary().map(|summary| summary.state), Some(State::Open));
+    assert_eq!(watch.summary().map(|summary| summary.state), Some(State::Open));
 }
 
 #[test]

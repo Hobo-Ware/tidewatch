@@ -232,7 +232,7 @@ impl Tidewatch {
         ctx: &egui::Context,
         active_id: u64,
     ) {
-        let Some(summary) = self.pr.watch(active_id).and_then(Watch::strip_summary) else {
+        let Some(summary) = self.pr.watch(active_id).and_then(Watch::summary) else {
             return;
         };
         let strip = pr_strip::Strip {
