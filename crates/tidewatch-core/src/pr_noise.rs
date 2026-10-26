@@ -1,8 +1,12 @@
 //! Comments on a pull request that have nothing to act on, so they never become a card: a review bot's
-//! receipt ("I looked, nothing to say") and the status posts of deploy, coverage and CI bots. A bot
-//! comment that carries a suggestion is not noise. Pure.
+//! receipt ("I looked, nothing to say"), the status post Codex keeps up to date while it reviews, and
+//! the status posts of deploy, coverage and CI bots. A bot comment that carries a suggestion is not
+//! noise. Pure.
 
-const RECEIPT_MARKER: &str = "codex-review-receipt";
+/// The hidden markers of Codex's own posts that only report progress: the receipt of a review that
+/// found nothing, and the summary comment it edits as a review starts, runs and ends.
+const STATUS_MARKERS: [&str; 3] =
+    ["codex-review-receipt", "codex-pull-request-review-summary", "codex-review-state"];
 const CODEX_FOOTER: &str = "About Codex in GitHub";
 const SUGGESTION_FENCE: &str = "```suggestion";
 
@@ -32,7 +36,7 @@ pub fn is_noise(author: &str, body: &str) -> bool {
     if body.contains(SUGGESTION_FENCE) {
         return false;
     }
-    if body.contains(RECEIPT_MARKER) {
+    if STATUS_MARKERS.iter().any(|marker| body.contains(marker)) {
         return true;
     }
     if author.to_ascii_lowercase().contains("codex") || body.contains(CODEX_FOOTER) {
@@ -91,6 +95,8 @@ mod tests {
 
     const FOOTER: &str = "<details> <summary>ℹ️ About Codex in GitHub</summary>\n<br/>\n\nYour team has set up Codex to review pull requests in this repo. Reviews are triggered when you open a pull request for review, mark a draft as ready, or comment \"@codex review\". If Codex has suggestions, it will comment; otherwise it will react with 👍.\n\n</details>";
 
+    const SUMMARY: &str = "<!-- codex-pull-request-review-summary -->\n<!-- codex-review-state:v1 {\"code_review\":{\"commit_sha\":\"0123456789abcdef0123456789abcdef01234567\",\"has_any_findings\":null,\"has_unresolved_findings\":null,\"status\":\"running\"},\"security_review\":{\"commit_sha\":null,\"has_any_findings\":null,\"has_unresolved_findings\":null,\"status\":null}} -->\n\n## Codex Review Summary\n\nThis comment shows the latest Codex review activity on this pull request.\n\n| Review | Status | Commit | Review trigger |\n| --- | --- | --- | --- |\n| \u{1f4dd} **Code Review** | \u{1f504} **Running** since <relative-time datetime=\"2026-10-26T16:09:23.961331Z\">2026-10-26T16:09:23.961331Z</relative-time> | `0123456` | Manual request |\n\n\n\n<details> <summary>\u{2139}\u{fe0f} About Codex in GitHub</summary>\n<br/>\n\n[Your team has set up Codex to review pull requests in this repo](https://chatgpt.com/codex/cloud/settings/general). Reviews are triggered when you\n- Open a pull request for review\n- Mark a draft as ready\n- Comment \"@codex review\" or \"@codex security review\".\n\nCodex reacts with \u{1f440} while any review is running, comments if it has suggestions, and reacts with \u{1f44d} once all reviews finish with no findings.\n\n</details>";
+
     fn receipt() -> String {
         format!("<!-- codex-review-receipt:v1 -->\n### 💡 Codex Review\n\n{FOOTER}")
     }
@@ -111,6 +117,32 @@ mod tests {
         for (author, body) in cases {
             assert!(is_noise(author, &body), "{author}: {body}");
         }
+    }
+
+    #[test]
+    fn codex_status_post_is_noise_in_every_state_it_is_edited_through() {
+        let finished = SUMMARY
+            .replace("\"status\":\"running\"", "\"status\":\"completed\"")
+            .replace("\"has_any_findings\":null", "\"has_any_findings\":true");
+        let state_only =
+            "<!-- codex-review-state:v1 {\"code_review\":{\"status\":\"running\"}} -->";
+        let summary_only = "<!-- codex-pull-request-review-summary -->\n## Codex Review Summary";
+        let cases = [
+            ("chatgpt-codex-connector", SUMMARY.to_owned()),
+            ("chatgpt-codex-connector[bot]", finished),
+            ("someone-else", SUMMARY.to_owned()),
+            ("chatgpt-codex-connector", state_only.to_owned()),
+            ("chatgpt-codex-connector", summary_only.to_owned()),
+        ];
+        for (author, body) in cases {
+            assert!(is_noise(author, &body), "{author}: {body}");
+        }
+    }
+
+    #[test]
+    fn a_status_post_that_carries_a_suggestion_stays() {
+        let fenced = format!("{SUMMARY}\n```suggestion\nlet total = 0;\n```");
+        assert!(!is_noise("chatgpt-codex-connector", &fenced));
     }
 
     #[test]
