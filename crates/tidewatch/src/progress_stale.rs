@@ -46,7 +46,7 @@ pub(crate) fn fresh(ledger: &Ledger, stale: bool) -> Cow<'_, Ledger> {
     }
     let mut working = ledger.clone();
     working.needs_you.clear();
-    if matches!(working.status.state, Some(State::Waiting | State::Blocked)) {
+    if matches!(working.status.state, Some(State::NeedsYou | State::Waiting | State::Blocked)) {
         working.status.state = Some(State::Working);
     }
     Cow::Owned(working)

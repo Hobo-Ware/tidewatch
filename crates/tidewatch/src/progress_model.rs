@@ -35,7 +35,7 @@ pub(crate) fn tone(ledger: &Ledger) -> Tone {
     let counts = ledger.counts();
     match ledger.status.state {
         Some(State::Done) => Tone::Done,
-        Some(State::Waiting) => Tone::Waiting,
+        Some(State::Waiting | State::NeedsYou) => Tone::Waiting,
         None if counts.total > 0 && counts.done == counts.total => Tone::Done,
         Some(State::Working | State::Blocked) | None => Tone::Working,
     }
@@ -158,7 +158,10 @@ pub(crate) fn bars(ledger: &Ledger, shape: StageShape) -> Vec<Bar> {
                 .flat_map(|phase| &phase.items)
                 .filter(|item| item.mark == Mark::Doing)
                 .count();
-            let fill = if total == 0 {
+            let over = phases.iter().all(|phase| phase.state() == PhaseState::Done);
+            let fill = if over {
+                1.0
+            } else if total == 0 {
                 0.0
             } else {
                 ((done as f32 + 0.5 * under_way as f32) / total as f32).clamp(0.0, 1.0)
@@ -553,6 +556,50 @@ mod tests {
         let bars =
             bars(&ledger("# Goal\nx\n\n## Checklist\n### 3.\n- [ ] a\n"), StageShape::default());
         assert_eq!(bars[0].label, "Phase 3");
+    }
+
+    fn typed_recap() -> Ledger {
+        let args = serde_json::json!({
+            "goal": "Link recap lines and backfill",
+            "state": "working",
+            "now": "Backfill is running",
+            "stages": [
+                { "name": "Build", "kind": "build", "status": "done" },
+                { "name": "Ship", "kind": "ship", "status": "done" },
+                { "name": "Backfill", "kind": "ship", "status": "active" },
+                { "name": "Verify", "kind": "verify", "status": "todo" }
+            ],
+            "steps": [
+                { "stage": "Backfill", "text": "Check links", "status": "done" },
+                { "stage": "Backfill", "text": "Write rows", "status": "active" }
+            ]
+        });
+        tidewatch_core::progress_report::ProgressReport::check(args.as_object().unwrap(), None)
+            .unwrap()
+            .to_ledger()
+    }
+
+    #[test]
+    fn a_stage_the_agent_named_keeps_its_own_name_and_bar() {
+        let typed = typed_recap();
+        let bars = bars(&typed, StageShape::default());
+        let seen: Vec<_> =
+            bars.iter().map(|bar| (bar.label.as_str(), bar.fill, bar.current)).collect();
+        assert_eq!(
+            seen,
+            [
+                ("Build", 1.0, false),
+                ("Ship", 1.0, false),
+                ("Backfill", 0.75, true),
+                ("Verify", 0.0, false)
+            ],
+            "an agent's Ship is not the stage Done, and a finished stage with no steps is full"
+        );
+        assert_eq!(
+            step(&typed, Kind::Edit).map(|step| (step.number, step.of, step.name)),
+            Some((3, 4, "Backfill".to_owned()))
+        );
+        assert_eq!(phase_name(&typed), "Backfill");
     }
 
     const ANSWERING: &str = "# Goal\nx\n\n## Status\nphase: 2\nkind: read-only\n\n## Checklist\n### 1. Understand\n- [x] Read\n### 2. Answer\n- [~] Explain\n### 3. Done\n- [ ] Say it\n";

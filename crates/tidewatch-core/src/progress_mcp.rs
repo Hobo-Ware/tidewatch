@@ -1,17 +1,38 @@
-//! The two ledger tools of the Tidewatch MCP server: `update_progress` saves the ledger an agent
-//! sends and shows it in the tab, `get_progress` gives the saved text back after a context reset.
+//! The two report tools of the Tidewatch MCP server: `update_progress` checks the typed report an
+//! agent sends, saves it and shows it in the tab, `get_progress` gives the saved report back after
+//! a context reset. The old markdown `ledger` argument is still taken and mapped onto the report.
 
 use std::path::Path;
 
 use serde_json::{Map, Value, json};
 
 use crate::events::TabEvent;
-use crate::progress::{Ledger, MAX_LEDGER_BYTES, Mark, When, real};
+use crate::progress::{Ledger, MAX_LEDGER_BYTES, Mark, State, When, real};
+use crate::progress_report::{
+    MAX_NOW_CHARS, MAX_OPTIONS, MAX_STAGES, MIN_OPTIONS, MIN_STAGES, ProgressReport, StageKind,
+    StageStatus, StepStatus,
+};
 use crate::progress_store;
 
 pub const UPDATE_TOOL: &str = "update_progress";
 pub const GET_TOOL: &str = "get_progress";
 const LEDGER_KEY: &str = "ledger";
+const TYPED_KEYS: [&str; 13] = [
+    "goal",
+    "title",
+    "state",
+    "now",
+    "kind",
+    "stages",
+    "steps",
+    "needs_you",
+    "waiting_on",
+    "scheduled",
+    "verified",
+    "not_verified",
+    "decisions",
+];
+const PREFER_TYPED: &str = "Typed fields are preferred: next time call update_progress with state, now and stages (and steps, needs_you, waiting_on and scheduled when they apply) instead of a markdown ledger.";
 const MAX_WARNINGS: usize = 3;
 const MAX_WHEN_FIXES: usize = 5;
 const WARNING_TEXT_CHARS: usize = 60;
@@ -28,11 +49,11 @@ fn shortened(text: &str) -> String {
 pub fn warnings(ledger: &Ledger) -> Vec<String> {
     let state = match (&ledger.status.unknown_state, ledger.status.state) {
         (Some(word), _) => Some(format!(
-            "Warning: state `{}` is not one of working, waiting, blocked or done.",
+            "Warning: state `{}` is not one of working, needs_you, waiting, blocked or done.",
             shortened(word)
         )),
         (None, None) => Some(
-            "Warning: Status has no `state:` line. Set it to working, waiting, blocked or done."
+            "Warning: Status has no `state:` line. Set it to working, needs_you, waiting, blocked or done."
                 .to_owned(),
         ),
         (None, Some(_)) => None,
@@ -99,28 +120,134 @@ pub fn when_fixes(ledger: &Ledger) -> Vec<String> {
     fixes
 }
 
+fn words<T: Copy>(all: &[T], word: fn(T) -> &'static str) -> Vec<&'static str> {
+    all.iter().copied().map(word).collect()
+}
+
+fn note_schema(what: &str) -> Value {
+    json!({
+        "type": "array",
+        "description": what,
+        "items": {
+            "type": "object",
+            "properties": {
+                "text": { "type": "string" },
+                "why": { "type": "string" },
+            },
+            "required": ["text"],
+        },
+    })
+}
+
+fn input_schema() -> Value {
+    json!({
+        "type": "object",
+        "properties": {
+            "goal": { "type": "string", "description": "The task in one line. Required on the first report; later reports may leave it out." },
+            "title": { "type": "string", "description": "A short heading for the task, when the goal is long." },
+            "state": {
+                "type": "string",
+                "enum": words(&State::ALL, State::word),
+                "description": "working: you are on it. needs_you: only the user can unblock it, and needs_you holds the question. waiting: a job, PR, date or event you named in waiting_on has to happen first. blocked: something outside your control stops you. done: the whole task is finished, nothing is open.",
+            },
+            "now": { "type": "string", "maxLength": MAX_NOW_CHARS, "description": format!("One plain sentence on what is happening right now, at most {MAX_NOW_CHARS} characters.") },
+            "kind": { "type": "string", "enum": ["read-only", "edit"], "description": "Only to say the task is a read-only question or investigation, or that it now edits files." },
+            "stages": {
+                "type": "array",
+                "minItems": MIN_STAGES,
+                "maxItems": MAX_STAGES,
+                "description": format!("{MIN_STAGES} to {MAX_STAGES} stages, named to fit this task, in order. Work after a merge, such as a deploy, a backfill or a live check, is its own stage."),
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "name": { "type": "string" },
+                        "kind": { "type": "string", "enum": words(StageKind::ALL, StageKind::word), "description": "What the stage is for, whatever you called it." },
+                        "status": { "type": "string", "enum": words(StageStatus::ALL, StageStatus::word) },
+                    },
+                    "required": ["name", "kind", "status"],
+                },
+            },
+            "steps": {
+                "type": "array",
+                "description": "The concrete steps of this task, each under one of your stages.",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "stage": { "type": "string", "description": "The name of one of your stages." },
+                        "text": { "type": "string" },
+                        "status": { "type": "string", "enum": words(StepStatus::ALL, StepStatus::word) },
+                        "evidence": { "type": "string", "description": "For a done step: what shows it is done." },
+                        "reason": { "type": "string", "description": "For a blocked or skipped step: why." },
+                    },
+                    "required": ["stage", "text", "status"],
+                },
+            },
+            "needs_you": {
+                "type": "object",
+                "description": "A question only the user can answer. Required when state is needs_you, and only then. A question that sits only in your chat message is never seen here.",
+                "properties": {
+                    "question": { "type": "string" },
+                    "options": { "type": "array", "minItems": MIN_OPTIONS, "maxItems": MAX_OPTIONS, "items": { "type": "string" }, "description": "Short answers the user can click." },
+                    "recommended": { "type": "integer", "minimum": 0, "description": "The index of the option you recommend." },
+                    "why": { "type": "string", "description": "Why you need the answer." },
+                },
+                "required": ["question", "options", "recommended"],
+            },
+            "waiting_on": {
+                "type": "object",
+                "description": "What you wait for, exactly one of job, pr, date or event. Required when state is waiting.",
+                "properties": {
+                    "job": { "type": "string", "description": "A job name, as you report it with report_job." },
+                    "pr": { "type": "integer", "minimum": 1, "description": "A pull request number." },
+                    "date": { "type": "string", "description": "YYYY-MM-DD." },
+                    "event": { "type": "string" },
+                },
+            },
+            "scheduled": {
+                "type": "array",
+                "description": "Later work that is not for this turn. Everything you tell the user about later belongs here.",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "when": {
+                            "type": "object",
+                            "description": "Exactly one of date (YYYY-MM-DD), about (YYYY-MM-DD, a guess), event (waits for something to happen), parked (set aside until what) or you (only the user can decide it, written as {\"you\": true}).",
+                            "properties": {
+                                "date": { "type": "string" },
+                                "about": { "type": "string" },
+                                "event": { "type": "string" },
+                                "parked": { "type": "string" },
+                                "you": { "type": "boolean" },
+                            },
+                        },
+                        "text": { "type": "string" },
+                        "why": { "type": "string" },
+                    },
+                    "required": ["when", "text"],
+                },
+            },
+            "verified": note_schema("What you checked, with the command and its result as why."),
+            "not_verified": note_schema("What you could not check, with the blocker as why."),
+            "decisions": note_schema("Decisions made, with the reason as why."),
+            LEDGER_KEY: { "type": "string", "description": format!("The old format, still accepted: the whole ledger as markdown, at most {} KB. Prefer the typed fields; send one or the other.", MAX_LEDGER_BYTES / 1024) },
+        },
+        "required": ["state", "now", "stages"],
+        "additionalProperties": false,
+    })
+}
+
 /// The tools' entries for `tools/list`.
 #[must_use]
 pub fn tool_definitions() -> [Value; 2] {
     [
         json!({
             "name": UPDATE_TOOL,
-            "description": "Save the progress ledger of this task. Tidewatch shows it to the user live. Send the whole ledger, in the format the house style gives, first thing and again at every milestone. Returns what to fix when the ledger is not usable, so call it again with the fix.",
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    LEDGER_KEY: {
-                        "type": "string",
-                        "description": format!("The whole ledger as markdown, at most {} KB.", MAX_LEDGER_BYTES / 1024),
-                    },
-                },
-                "required": [LEDGER_KEY],
-                "additionalProperties": false,
-            },
+            "description": "Report the progress of this task. Tidewatch shows it to the user live and maps your state, stages, question and waits onto its screens. Send the whole report first thing and again at every milestone: each call replaces the last. Name 2 to 5 stages that fit this task. Work after a merge, such as a deploy or a backfill, is its own stage. Report done only when the whole task is finished and no step is open. A question for the user goes in needs_you, never only in chat. A job, PR, date or event you wait on goes in waiting_on. If a rule is broken the report is not saved and the reply lists each fix: call again with them.",
+            "inputSchema": input_schema(),
         }),
         json!({
             "name": GET_TOOL,
-            "description": "Read back the progress ledger last saved for this task. Call it first after a context reset or when you resume a session, then carry on from it.",
+            "description": "Read back the progress report last saved for this task. Call it first after a context reset or when you resume a session, then carry on from it.",
             "inputSchema": {
                 "type": "object",
                 "properties": {},
@@ -133,21 +260,76 @@ pub fn tool_definitions() -> [Value; 2] {
 fn not_saved(problems: &[String]) -> (String, bool) {
     (
         format!(
-            "The ledger was not saved. Fix these and call {UPDATE_TOOL} again:\n- {}",
+            "The report was not saved. Fix these and call {UPDATE_TOOL} again:\n- {}",
             problems.join("\n- ")
         ),
         true,
     )
 }
 
-/// Saves the ledger to `file` and tells the tab. A ledger without a goal is a tool error with what
-/// to fix, so the agent calls again; anything else is saved. The reply is a one-line summary, then up
-/// to three warning lines, then a line for each Scheduled item with a `when` to fix, then a line when the ledger stopped and left its later work in Next.
+fn save_failed(e: &std::io::Error) -> (String, bool) {
+    (format!("The report could not be saved ({e}). Call {UPDATE_TOOL} again."), true)
+}
+
+/// Saves what an agent sent and tells the tab. A report that breaks a rule is a tool error that
+/// lists each fix and saves nothing. The reply is a one-line summary, then up to three warning lines.
+/// The old markdown `ledger` argument is still taken: it is mapped onto the report and saved the same
+/// way, and its reply also carries the old warnings and a line that the typed fields are preferred.
 pub fn update(args: &Map<String, Value>, file: &Path, emit: &dyn Fn(TabEvent)) -> (String, bool) {
+    let typed = TYPED_KEYS.iter().any(|key| args.contains_key(*key));
+    if args.contains_key(LEDGER_KEY) && !typed {
+        return update_markdown(args, file, emit);
+    }
+    update_typed(args, file, emit)
+}
+
+fn update_typed(args: &Map<String, Value>, file: &Path, emit: &dyn Fn(TabEvent)) -> (String, bool) {
+    let mut args = args.clone();
+    let both = args.remove(LEDGER_KEY).is_some();
+    let size = Value::Object(args.clone()).to_string().len();
+    let mut problems = Vec::new();
+    if both {
+        problems.push(format!("send the typed fields or {LEDGER_KEY}, not both"));
+    }
+    if size > MAX_LEDGER_BYTES {
+        problems.push(format!(
+            "the report is {size} bytes, over the {} KB limit: shorten the entries and drop what is finished and no longer needed",
+            MAX_LEDGER_BYTES / 1024
+        ));
+    }
+    let saved = progress_store::load_report(file);
+    let report = match ProgressReport::check(&args, saved.as_ref()) {
+        Ok(report) => Some(report),
+        Err(found) => {
+            problems.extend(found);
+            None
+        }
+    };
+    let Some(report) = report.filter(|_| problems.is_empty()) else {
+        return not_saved(&problems);
+    };
+    if let Err(e) = progress_store::save_report(file, &report) {
+        return save_failed(&e);
+    }
+    let ledger = report.to_ledger();
+    let mut reply = ledger.summary();
+    for warning in report.warnings() {
+        reply.push('\n');
+        reply.push_str(&warning);
+    }
+    emit(TabEvent::Progress { ledger: Box::new(ledger) });
+    (reply, false)
+}
+
+fn update_markdown(
+    args: &Map<String, Value>,
+    file: &Path,
+    emit: &dyn Fn(TabEvent),
+) -> (String, bool) {
     let mut problems: Vec<String> = args
         .keys()
         .filter(|key| key.as_str() != LEDGER_KEY)
-        .map(|key| format!("unknown argument \"{key}\", the only argument is {LEDGER_KEY}"))
+        .map(|key| format!("unknown argument \"{key}\""))
         .collect();
     let Some(text) = args.get(LEDGER_KEY).and_then(Value::as_str) else {
         problems
@@ -167,7 +349,7 @@ pub fn update(args: &Map<String, Value>, file: &Path, emit: &dyn Fn(TabEvent)) -
         return not_saved(&problems);
     }
     if let Err(e) = progress_store::save(file, &ledger) {
-        return (format!("The ledger could not be saved ({e}). Call {UPDATE_TOOL} again."), true);
+        return save_failed(&e);
     }
     let mut reply = ledger.summary();
     for warning in warnings(&ledger) {
@@ -182,16 +364,22 @@ pub fn update(args: &Map<String, Value>, file: &Path, emit: &dyn Fn(TabEvent)) -
         reply.push('\n');
         reply.push_str(MOVE_TO_SCHEDULED);
     }
-    emit(TabEvent::Progress { ledger: Box::new(ledger) });
+    if !progress_store::markdown_was_told(file) && progress_store::mark_markdown_told(file).is_ok()
+    {
+        reply.push('\n');
+        reply.push_str(PREFER_TYPED);
+    }
+    emit(TabEvent::Progress { ledger: Box::new(ProgressReport::from_ledger(&ledger).to_ledger()) });
     (reply, false)
 }
 
-/// The saved text, or a line saying there is none yet.
+/// The saved report as JSON, or a line saying there is none.
 #[must_use]
 pub fn get(file: &Path) -> (String, bool) {
-    let text = progress_store::read_text(file).unwrap_or_else(|| {
-        format!("No ledger has been saved for this task yet. Write one with {UPDATE_TOOL}.")
-    });
+    let text = progress_store::load_report(file).map_or_else(
+        || format!("No report has been saved for this task yet. Write one with {UPDATE_TOOL}."),
+        |report| report.to_json(),
+    );
     (text, false)
 }
 
@@ -228,7 +416,7 @@ mod tests {
             (
                 "an unknown state word",
                 format!("# Goal\ng\n\n## Status\nstate: asleep\n\n{STEPS}"),
-                "state `asleep` is not one of working, waiting, blocked or done",
+                "state `asleep` is not one of working, needs_you, waiting, blocked or done",
             ),
             (
                 "an empty checklist",
@@ -279,7 +467,7 @@ mod tests {
     fn a_long_unknown_word_or_question_is_cut_in_the_warning() {
         let long = "x".repeat(200);
         let lines = warned(&format!("# Goal\ng\n\n## Status\nstate: {long}\n\n{STEPS}"));
-        assert!(lines[0].len() < 140, "{lines:?}");
+        assert!(lines[0].len() < 150, "{lines:?}");
         assert!(lines[0].contains("..."));
     }
 
@@ -292,7 +480,8 @@ mod tests {
         assert!(!is_error);
         let lines: Vec<&str> = reply.lines().collect();
         assert_eq!(lines[0], "saved");
-        assert_eq!(lines.len(), 3, "{reply}");
+        assert_eq!(lines.len(), 4, "{reply}");
+        assert!(lines[3].starts_with("Typed fields are preferred"), "{reply}");
         assert!(file.exists(), "a warning never stops the save");
     }
 
@@ -305,7 +494,7 @@ mod tests {
         let (reply, is_error) = update(args.as_object().unwrap(), &file, &|_| {});
         assert!(!is_error);
         assert!(file.exists(), "a bad when never stops the save");
-        reply
+        reply.lines().filter(|line| *line != PREFER_TYPED).collect::<Vec<_>>().join("\n")
     }
 
     #[test]
