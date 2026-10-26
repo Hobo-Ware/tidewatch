@@ -6,13 +6,14 @@ use std::path::Path;
 use serde_json::{Map, Value, json};
 
 use crate::events::TabEvent;
-use crate::progress::{Ledger, MAX_LEDGER_BYTES, real};
+use crate::progress::{Ledger, MAX_LEDGER_BYTES, Mark, When, real};
 use crate::progress_store;
 
 pub const UPDATE_TOOL: &str = "update_progress";
 pub const GET_TOOL: &str = "get_progress";
 const LEDGER_KEY: &str = "ledger";
 const MAX_WARNINGS: usize = 3;
+const MAX_WHEN_FIXES: usize = 5;
 const WARNING_TEXT_CHARS: usize = 60;
 const MOVE_TO_SCHEDULED: &str = "Next holds only what you do in this same turn. Move later work from Next to Scheduled with a `when`, such as `- [ ] on: the pull request merges -- Watch the deploy -- it ships after the merge`, and call update_progress again.";
 
@@ -60,6 +61,44 @@ pub fn warnings(ledger: &Ledger) -> Vec<String> {
         .collect()
 }
 
+/// One line for each open Scheduled item whose `<when>` is a date written after `on:` or cannot be
+/// read, read from the text as written so it holds whatever the parser makes of it.
+#[must_use]
+pub fn when_fixes(ledger: &Ledger) -> Vec<String> {
+    let mut fixes: Vec<String> = ledger
+        .scheduled
+        .iter()
+        .filter(|item| !matches!(item.mark, Mark::Done | Mark::Skipped))
+        .filter_map(|item| {
+            let written = item.when_text.trim();
+            let what = shortened(&item.what);
+            let after_on = written
+                .get(..3)
+                .filter(|head| head.eq_ignore_ascii_case("on:"))
+                .map(|_| written[3..].trim())
+                .filter(|date| When::parse(date).date().is_some());
+            if let Some(date) = after_on {
+                return Some(format!(
+                    "fix next save: \"{}\" is a date, write \"{date}\" -- {what}",
+                    shortened(written)
+                ));
+            }
+            matches!(item.when, When::Unknown(_)).then(|| {
+                format!(
+                    "fix next save: \"{}\" is not a when; use YYYY-MM-DD, ~YYYY-MM-DD, on: <event>, parked: <until what> or you -- {what}",
+                    shortened(written)
+                )
+            })
+        })
+        .collect();
+    if fixes.len() > MAX_WHEN_FIXES {
+        let more = fixes.len() - MAX_WHEN_FIXES;
+        fixes.truncate(MAX_WHEN_FIXES);
+        fixes.push(format!("fix next save: {more} more Scheduled items have a when to fix"));
+    }
+    fixes
+}
+
 /// The tools' entries for `tools/list`.
 #[must_use]
 pub fn tool_definitions() -> [Value; 2] {
@@ -103,7 +142,7 @@ fn not_saved(problems: &[String]) -> (String, bool) {
 
 /// Saves the ledger to `file` and tells the tab. A ledger without a goal is a tool error with what
 /// to fix, so the agent calls again; anything else is saved. The reply is a one-line summary, then up
-/// to three warning lines, then a line when the ledger stopped and left its later work in Next.
+/// to three warning lines, then a line for each Scheduled item with a `when` to fix, then a line when the ledger stopped and left its later work in Next.
 pub fn update(args: &Map<String, Value>, file: &Path, emit: &dyn Fn(TabEvent)) -> (String, bool) {
     let mut problems: Vec<String> = args
         .keys()
@@ -134,6 +173,10 @@ pub fn update(args: &Map<String, Value>, file: &Path, emit: &dyn Fn(TabEvent)) -
     for warning in warnings(&ledger) {
         reply.push('\n');
         reply.push_str(&warning);
+    }
+    for fix in when_fixes(&ledger) {
+        reply.push('\n');
+        reply.push_str(&fix);
     }
     if !ledger.stranded_next().is_empty() {
         reply.push('\n');
@@ -251,5 +294,52 @@ mod tests {
         assert_eq!(lines[0], "saved");
         assert_eq!(lines.len(), 3, "{reply}");
         assert!(file.exists(), "a warning never stops the save");
+    }
+
+    fn saved_with(scheduled: &str) -> String {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("progress.md");
+        let ledger =
+            format!("# Goal\ng\n\n## Status\nstate: working\n\n{STEPS}\n## Scheduled\n{scheduled}");
+        let args = serde_json::json!({ "ledger": ledger });
+        let (reply, is_error) = update(args.as_object().unwrap(), &file, &|_| {});
+        assert!(!is_error);
+        assert!(file.exists(), "a bad when never stops the save");
+        reply
+    }
+
+    #[test]
+    fn the_save_reply_names_a_date_after_on_and_a_when_it_cannot_read() {
+        let reply = saved_with(
+            "- [ ] on: 2026-11-01 -- Drop beta tracking\n- [ ] On: ~2026-11-07 -- Count old apps\n- [ ] someday -- Tidy up\n- [ ] 2026-13-45 -- Fix the date\n",
+        );
+        let lines: Vec<&str> = reply.lines().collect();
+        assert_eq!(lines[0], "saved: phase 1 Understand, 0/1 done, 4 scheduled", "{reply}");
+        assert_eq!(
+            lines[1..],
+            [
+                "fix next save: \"on: 2026-11-01\" is a date, write \"2026-11-01\" -- Drop beta tracking",
+                "fix next save: \"On: ~2026-11-07\" is a date, write \"~2026-11-07\" -- Count old apps",
+                "fix next save: \"someday\" is not a when; use YYYY-MM-DD, ~YYYY-MM-DD, on: <event>, parked: <until what> or you -- Tidy up",
+                "fix next save: \"2026-13-45\" is not a when; use YYYY-MM-DD, ~YYYY-MM-DD, on: <event>, parked: <until what> or you -- Fix the date",
+            ]
+        );
+        assert!(reply.is_ascii());
+    }
+
+    #[test]
+    fn a_clean_scheduled_section_gets_only_the_saved_line() {
+        let reply = saved_with(
+            "- [ ] 2026-11-01 -- a\n- [ ] ~2026-11-07 -- b\n- [ ] on: 2026-11-01 ships -- c\n- [ ] on: the partner replies -- d\n- [ ] parked: until the rewrite -- e\n- [ ] you -- f\n- [x] someday -- g\n",
+        );
+        assert_eq!(reply.lines().count(), 1, "{reply}");
+    }
+
+    #[test]
+    fn many_bad_whens_are_cut_to_five_and_a_count() {
+        let items = "- [ ] soon -- an item\n".repeat(8);
+        let lines: Vec<String> = saved_with(&items).lines().map(str::to_owned).collect();
+        assert_eq!(lines.len(), 1 + MAX_WHEN_FIXES + 1);
+        assert_eq!(lines[6], "fix next save: 3 more Scheduled items have a when to fix");
     }
 }
