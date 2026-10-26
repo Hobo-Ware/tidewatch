@@ -341,6 +341,35 @@ mod tests {
     }
 
     #[test]
+    fn a_saved_codex_status_card_goes_on_load_whoever_it_was_saved_for() {
+        let status = "<!-- codex-pull-request-review-summary -->\n<!-- codex-review-state:v1 {\"code_review\":{\"status\":\"running\"}} -->\n\n## Codex Review Summary\n\n| Review | Status |\n| --- | --- |\n| Code Review | Running |";
+        let mut cards = Cards::default();
+        for (n, author) in ["chatgpt-codex-connector", "someone"].into_iter().enumerate() {
+            cards.add(
+                n as i64,
+                Body::Commented {
+                    trusted: true,
+                    author: author.into(),
+                    text: status.into(),
+                    url: String::new(),
+                },
+            );
+        }
+        cards.add(
+            5,
+            Body::Commented {
+                trusted: true,
+                author: "chatgpt-codex-connector".into(),
+                text: "The retry loop never resets its counter.".into(),
+                url: String::new(),
+            },
+        );
+        cards.drop_noise();
+        assert_eq!(kinds(&cards), ["commented"]);
+        assert_eq!(cards.cards()[0].at_ms, 5);
+    }
+
+    #[test]
     fn the_oldest_cards_are_dropped_past_the_cap() {
         let mut cards = Cards::default();
         for n in 0..(MAX_CARDS + 5) {

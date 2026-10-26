@@ -738,22 +738,28 @@ fn commits_the_agent_made_after_a_message_are_pushed_by_a_tab_on_its_own_and_off
 }
 
 #[test]
-fn a_review_bot_receipt_saved_by_an_older_version_is_not_loaded() {
-    let mut cards = Cards::default();
-    cards.add(
-        10,
-        Body::Commented {
-            trusted: true,
-            author: "chatgpt-codex-connector".into(),
-            text: "<!-- codex-review-receipt:v1 -->".into(),
-            url: String::new(),
-        },
-    );
-    cards.add(20, commented());
-    let mut watch = Watch::new(PathBuf::from("/state/pr_cards.json"));
-    watch.take_load();
-    watch.loaded(cards, 0.0);
-    assert_eq!(watch.cards.cards().len(), 1);
+fn a_review_bot_receipt_or_status_post_saved_by_an_older_version_is_not_loaded() {
+    let saved = [
+        "<!-- codex-review-receipt:v1 -->",
+        "<!-- codex-pull-request-review-summary -->\n<!-- codex-review-state:v1 {\"code_review\":{\"status\":\"running\"}} -->\n\n## Codex Review Summary",
+    ];
+    for text in saved {
+        let mut cards = Cards::default();
+        cards.add(
+            10,
+            Body::Commented {
+                trusted: true,
+                author: "chatgpt-codex-connector".into(),
+                text: text.into(),
+                url: String::new(),
+            },
+        );
+        cards.add(20, commented());
+        let mut watch = Watch::new(PathBuf::from("/state/pr_cards.json"));
+        watch.take_load();
+        watch.loaded(cards, 0.0);
+        assert_eq!(watch.cards.cards().len(), 1, "{text}");
+    }
 }
 
 fn merged_watch(autonomous: bool, left: usize) -> Watch {
