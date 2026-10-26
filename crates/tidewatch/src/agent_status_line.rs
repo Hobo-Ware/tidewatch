@@ -83,7 +83,7 @@ pub(crate) fn line_of<T>(
     })
 }
 
-const UNREPORTED: &str = "Not reporting, auto-sends paused";
+const UNREPORTED: &str = "Quiet since the restart, auto-sends wait";
 
 fn label_of(agent: &AgentTab, ready: bool, tone: Tone) -> &'static str {
     if ready {
@@ -206,7 +206,7 @@ mod tests {
         run.await_report();
         run.refresh(600.0);
         let line = line_of(&pane, Shown::Reader, true, ("Claude Code", None)).unwrap();
-        assert_eq!(line.label, "Not reporting, auto-sends paused");
+        assert_eq!(line.label, "Quiet since the restart, auto-sends wait");
         let run = &mut pane.agent.as_mut().unwrap().run;
         run.hold(Some(AgentStatus::Done), None);
         run.refresh(601.0);
