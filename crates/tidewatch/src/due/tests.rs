@@ -219,3 +219,26 @@ fn a_snoozed_item_is_not_started_for_a_tab_on_its_own_either() {
     let (_, next) = next_to_start(day(17), &dues, key, &Told::default()).unwrap();
     assert_eq!(next.what, "Late about item");
 }
+
+#[test]
+fn a_restart_does_not_ask_again_for_an_item_asked_today() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("heron").join("due-asked.json");
+    let place = at();
+    let key_of = |due: &Due| Key::new(place.0, place.1, &due.what);
+    let dues = due_items(day(17), &ledger(), place, &Snoozes::default());
+
+    let mut before = Told::default();
+    before.mark(key_of(&dues[0]), day(17));
+    before.persist(&file, place, day(17)).unwrap();
+
+    let mut after = Told::default();
+    after.restore(&file, place, day(17));
+    let (_, next) = next_to_start(day(17), &dues, key_of, &after).unwrap();
+    assert_eq!(next.what, "Late about item");
+
+    let mut tomorrow = Told::default();
+    tomorrow.restore(&file, place, day(18));
+    let (_, first) = next_to_start(day(18), &dues, key_of, &tomorrow).unwrap();
+    assert_eq!(first.what, "Switch off the old webhook");
+}

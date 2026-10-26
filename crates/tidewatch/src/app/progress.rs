@@ -1,9 +1,10 @@
 //! The app's side of the progress ledgers: the agent tabs' facts go to the host each frame, and a
 //! ledger an agent sends is stored and logged.
 
+use tidewatch_core::civil_date::Date;
 use tidewatch_core::progress::Ledger;
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use super::WAKE_SLACK_S;
@@ -248,6 +249,7 @@ impl Tidewatch {
             if ask_blocked(status.as_ref()).is_some() {
                 continue;
             }
+            self.load_asked(id, today);
             let dues = self.due_items_of(id);
             let Some((key, text)) =
                 next_to_start(today, &dues, |due| self.key_of(id, due), &self.started)
@@ -257,7 +259,29 @@ impl Tidewatch {
             };
             if self.ask_agent(id, &text, ctx, now) {
                 self.started.mark(key, today);
+                self.save_asked(id, today);
             }
+        }
+    }
+
+    fn asked_file(&self, tab: u64) -> Option<(PathBuf, Key)> {
+        let key = self.due_key(tab, "")?;
+        let file = self.paths.as_ref()?.due_asked_file(&key.repo, &key.tab);
+        Some((file, key))
+    }
+
+    fn load_asked(&mut self, tab: u64, today: Date) {
+        if !self.started_loaded.insert(tab) {
+            return;
+        }
+        let Some((file, key)) = self.asked_file(tab) else { return };
+        self.started.restore(&file, (&key.repo, &key.tab), today);
+    }
+
+    fn save_asked(&self, tab: u64, today: Date) {
+        let Some((file, key)) = self.asked_file(tab) else { return };
+        if let Err(e) = self.started.persist(&file, (&key.repo, &key.tab), today) {
+            eprintln!("tidewatch: could not save {}: {e}", file.display());
         }
     }
 

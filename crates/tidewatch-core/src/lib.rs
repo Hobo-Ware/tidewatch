@@ -22,6 +22,7 @@ pub mod comments;
 pub mod consent;
 pub mod delivery;
 pub mod done_check;
+pub mod due_asked;
 mod effort_migration;
 pub mod elsewhere;
 pub mod elsewhere_flags;
