@@ -6,6 +6,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use tidewatch_core::listener::{Listener, TabRegistration};
+use tidewatch_core::mcp::TabRole;
 use tidewatch_core::meeseeks::Meeseeks;
 use tidewatch_core::meeseeks_check;
 use tidewatch_core::paths::TidewatchPaths;
@@ -88,6 +89,7 @@ fn run_open(spec: &OpenSpec) -> Result<Opened, OpenFailure> {
         listener.register_tab(TabRegistration {
             tab_id: spec.tab,
             agent: request.agent.id.clone(),
+            role: if request.meeseeks.is_some() { TabRole::Meeseeks } else { TabRole::Agent },
             repo: repo.clone(),
             tab: tab_key.clone(),
             generation: 0,

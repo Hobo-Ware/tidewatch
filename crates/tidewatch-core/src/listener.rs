@@ -31,7 +31,7 @@ use crate::avatar_ask::{self, Face};
 use crate::avatar_store;
 use crate::events::{Repaint, TabEvent, TabMessage};
 use crate::launch::HookListener;
-use crate::mcp::{AskWait, McpReply, ToolCtx, handle_post};
+use crate::mcp::{AskWait, McpReply, TabRole, ToolCtx, handle_post};
 use crate::paths::{
     TidewatchPaths, avatar_asked_file_beside, avatar_file_beside, progress_file_beside,
     sent_file_beside,
@@ -61,6 +61,8 @@ pub struct TabRegistration {
     pub tab_id: u64,
     /// The agent id (`claude`, `gemini`, ...). Signs the agent's replies in the notes.
     pub agent: String,
+    /// Which Tidewatch tools the tab is offered.
+    pub role: TabRole,
     /// The repository the tab belongs to, and the tab's state name: together they pick `notes.json`.
     pub repo: PathBuf,
     pub tab: String,
@@ -78,6 +80,9 @@ pub struct Credential {
     pub token: String,
     pub generation: u64,
     pub agent: String,
+    /// Missing in a credential an older version saved: such a tab is offered the plain agent's tools.
+    #[serde(default)]
+    pub role: TabRole,
     pub notes_file: PathBuf,
 }
 
@@ -85,6 +90,7 @@ struct Entry {
     tab_id: u64,
     generation: u64,
     agent: String,
+    role: TabRole,
     notes_file: PathBuf,
 }
 
@@ -216,6 +222,7 @@ impl Listener {
             tab_id: registration.tab_id,
             generation: registration.generation,
             agent: registration.agent,
+            role: registration.role,
             notes_file: self.paths.notes_file(&registration.repo, &registration.tab),
         });
         let mut tabs = self.shared.tabs.lock().unwrap_or_else(PoisonError::into_inner);
@@ -232,6 +239,7 @@ impl Listener {
             token: token.clone(),
             generation: entry.generation,
             agent: entry.agent.clone(),
+            role: entry.role,
             notes_file: entry.notes_file.clone(),
         })
     }
@@ -243,6 +251,7 @@ impl Listener {
             tab_id,
             generation: credential.generation,
             agent: credential.agent.clone(),
+            role: credential.role,
             notes_file: credential.notes_file.clone(),
         });
         let mut tabs = self.shared.tabs.lock().unwrap_or_else(PoisonError::into_inner);
@@ -520,6 +529,7 @@ fn mcp_route(shared: &Shared, entry: &Entry, request: &Request, stream: &TcpStre
     let progress_file = progress_file_beside(&entry.notes_file);
     let ctx = ToolCtx {
         agent: &entry.agent,
+        role: entry.role,
         notes_file: &entry.notes_file,
         notes_lock: &shared.notes_lock,
         progress_file: &progress_file,
@@ -807,6 +817,7 @@ mod tests {
                 tab_id,
                 generation: 0,
                 agent: "claude".into(),
+                role: TabRole::default(),
                 notes_file: self.paths.notes_file(Path::new("/work/web"), tab),
             });
             self.shared.tabs.lock().unwrap().insert(token.clone(), entry);
@@ -852,6 +863,18 @@ mod tests {
     }
 
     const CALM: &str = "# Goal\nShip\n\n## Status\nstate: working\n";
+
+    #[test]
+    fn a_credential_saved_before_roles_existed_reads_as_a_plain_agent() {
+        let old = r#"{"token":"t","generation":1,"agent":"claude","notes_file":"/n.json"}"#;
+        let credential: Credential = serde_json::from_str(old).unwrap();
+        assert_eq!(credential.role, TabRole::Agent);
+        let kept: Credential = serde_json::from_str(
+            &serde_json::to_string(&Credential { role: TabRole::Meeseeks, ..credential }).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(kept.role, TabRole::Meeseeks);
+    }
 
     #[test]
     fn the_first_prompt_of_a_tab_with_no_avatar_is_answered_with_the_ask_and_only_the_first() {
@@ -1248,7 +1271,15 @@ mod tests {
         let f = fixture();
         let one = f.register(1, "a");
         let two = f.register(2, "b");
-        f.send("POST", "/mcp", Some(&one), &call("stage_done", &json!({"summary": "from one"})));
+        f.send(
+            "POST",
+            "/mcp",
+            Some(&one),
+            &call(
+                "report_finding",
+                &json!({"file": "a.rs", "line": 1, "blocking": true, "text": "from one"}),
+            ),
+        );
         f.send(
             "POST",
             "/mcp",
@@ -1262,7 +1293,15 @@ mod tests {
         assert_eq!(
             events,
             [
-                (1, TabEvent::StageDone { summary: "from one".into() }),
+                (
+                    1,
+                    TabEvent::Finding {
+                        file: "a.rs".into(),
+                        line: 1,
+                        blocking: true,
+                        text: "from one".into(),
+                    },
+                ),
                 (
                     2,
                     TabEvent::Finding {

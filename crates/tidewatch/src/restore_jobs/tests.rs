@@ -359,7 +359,7 @@ fn a_resumed_tab_registers_with_the_listener_and_its_token_works() {
     let text = std::fs::read_to_string(mcp).expect("the MCP config is written for the resume");
     let (_, after) = text.split_once("Bearer ").expect("it carries the token");
     let token = after.split('"').next().unwrap();
-    let body = r#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"stage_done","arguments":{"summary":"ok"}}}"#;
+    let body = r#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"report_finding","arguments":{"file":"a.rs","line":1,"blocking":false,"text":"ok"}}}"#;
     assert!(post(&listener.base_url(), token, body).contains("200"));
     let message = inbox.recv_timeout(Duration::from_secs(5)).unwrap();
     assert_eq!((message.tab_id, message.generation), (9, 0));

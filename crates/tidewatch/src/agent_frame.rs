@@ -495,6 +495,7 @@ mod tests {
                 .register_tab(TabRegistration {
                     tab_id: id,
                     agent: "claude".into(),
+                    role: tidewatch_core::mcp::TabRole::Agent,
                     repo: home.path().join("web"),
                     tab: "brave-otter".into(),
                     generation: 0,
@@ -525,6 +526,7 @@ mod tests {
                 .register_tab(TabRegistration {
                     tab_id: id,
                     agent: "claude".into(),
+                    role: tidewatch_core::mcp::TabRole::Agent,
                     repo: home.path().join("web"),
                     tab: "brave-otter".into(),
                     generation: 0,

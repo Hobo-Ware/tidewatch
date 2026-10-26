@@ -9,6 +9,7 @@ use std::sync::Arc;
 
 use tidewatch_core::agents::Agent;
 use tidewatch_core::listener::{Listener, TabRegistration};
+use tidewatch_core::mcp::TabRole;
 use tidewatch_core::meeseeks::Meeseeks;
 use tidewatch_core::paths::TidewatchPaths;
 use tidewatch_core::prefs::{Prefs, ResumeAgents};
@@ -168,6 +169,7 @@ fn run_reopen(spec: &ReopenSpec) -> Reopened {
         listener.register_tab(TabRegistration {
             tab_id: spec.tab,
             agent: spec.agent.id.clone(),
+            role: if spec.meeseeks.is_some() { TabRole::Meeseeks } else { TabRole::Agent },
             repo: spec.repo.clone(),
             tab: tab_key.clone(),
             generation: 0,

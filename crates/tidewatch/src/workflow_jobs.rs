@@ -11,6 +11,7 @@ use std::time::Duration;
 use tidewatch_core::agents::Agent;
 use tidewatch_core::delivery::detect_base;
 use tidewatch_core::listener::{Listener, TabRegistration};
+use tidewatch_core::mcp::TabRole;
 use tidewatch_core::paths::TidewatchPaths;
 use tidewatch_core::prepare::{PrepareInput, banner_line, prepare};
 use tidewatch_core::session_id;
@@ -123,6 +124,7 @@ fn run_stage(spec: &StageSpec) -> Result<Started, String> {
         listener.register_tab(TabRegistration {
             tab_id: spec.tab,
             agent: spec.agent.id.clone(),
+            role: TabRole::Workflow,
             repo: repo.clone(),
             tab: tab_key.clone(),
             generation: launch.generation,
