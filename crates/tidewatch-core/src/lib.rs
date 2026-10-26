@@ -74,6 +74,7 @@ pub mod pr_log;
 pub mod pr_noise;
 pub mod pr_prompt;
 pub mod pr_status;
+pub mod pr_trust;
 pub mod prefs;
 pub mod prepare;
 pub mod profiles;

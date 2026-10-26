@@ -43,6 +43,7 @@ fn every_kind() -> Vec<Body> {
         },
         Body::ChecksPassed { total: 2, secs: Some(182) },
         Body::ChangesRequested {
+            trusted: true,
             author: "reviewer".into(),
             body: "Two things.".into(),
             comments: vec![ReviewComment {
@@ -52,6 +53,7 @@ fn every_kind() -> Vec<Body> {
             }],
         },
         Body::Commented {
+            trusted: true,
             author: "reviewer".into(),
             text: "Does it work?".into(),
             url: String::new(),

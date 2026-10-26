@@ -328,6 +328,7 @@ mod tests {
     fn saved_noise_cards_go_and_real_comments_stay() {
         let mut cards = Cards::default();
         let comment = |author: &str, text: &str| Body::Commented {
+            trusted: true,
             author: author.into(),
             text: text.into(),
             url: String::new(),
@@ -345,7 +346,12 @@ mod tests {
         for n in 0..(MAX_CARDS + 5) {
             cards.add(
                 n as i64,
-                Body::Commented { author: "a".into(), text: n.to_string(), url: String::new() },
+                Body::Commented {
+                    trusted: true,
+                    author: "a".into(),
+                    text: n.to_string(),
+                    url: String::new(),
+                },
             );
         }
         assert_eq!(cards.cards().len(), MAX_CARDS);
@@ -361,7 +367,12 @@ mod tests {
         assert!(!cards.is_current(0), "a new run overtakes the old failure");
         cards.add(
             30,
-            Body::ChangesRequested { author: "r".into(), body: String::new(), comments: vec![] },
+            Body::ChangesRequested {
+                trusted: true,
+                author: "r".into(),
+                body: String::new(),
+                comments: vec![],
+            },
         );
         assert!(cards.is_current(2));
         cards.add(40, Body::Approved { author: "r".into() });

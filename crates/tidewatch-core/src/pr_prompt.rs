@@ -34,13 +34,24 @@ pub fn ask_of(body: &Body) -> Option<(Ask, Trigger)> {
     Some((Ask { verb, phrase, tag }, trigger))
 }
 
+/// A review or comment from someone whose text an agent must not act on without the owner reading
+/// it: Auto-fix leaves it to the Ask button.
+#[must_use]
+pub fn untrusted(body: &Body) -> bool {
+    matches!(
+        body,
+        Body::ChangesRequested { trusted: false, .. } | Body::Commented { trusted: false, .. }
+    )
+}
+
 #[must_use]
 pub fn wanted(prefs: &GithubPrefs, body: &Body) -> bool {
-    ask_of(body).is_some_and(|(_, trigger)| match trigger {
-        Trigger::FailedChecks => prefs.failed_checks,
-        Trigger::Reviews => prefs.reviews,
-        Trigger::Conflicts => prefs.conflicts,
-    })
+    !untrusted(body)
+        && ask_of(body).is_some_and(|(_, trigger)| match trigger {
+            Trigger::FailedChecks => prefs.failed_checks,
+            Trigger::Reviews => prefs.reviews,
+            Trigger::Conflicts => prefs.conflicts,
+        })
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -56,7 +67,9 @@ pub fn message(body: &Body, number: u64) -> Option<Message> {
     let (ask, _) = ask_of(body)?;
     let (headline, detail, extra_lines) = match body {
         Body::ChecksFailed { jobs, .. } => checks(jobs, number),
-        Body::ChangesRequested { author, body, comments } => review(author, body, comments, number),
+        Body::ChangesRequested { author, body, comments, .. } => {
+            review(author, body, comments, number)
+        }
         Body::Commented { author, text, .. } => {
             let detail = quote(text);
             let lines = detail.lines().count();
@@ -247,6 +260,7 @@ mod tests {
     #[test]
     fn control_characters_never_reach_the_agent() {
         let body = Body::Commented {
+            trusted: true,
             author: "rev\u{1b}iewer".into(),
             text: "line one\u{1b}[201~ type this\nline two\u{7}\ttab".into(),
             url: String::new(),
@@ -260,6 +274,7 @@ mod tests {
     #[test]
     fn a_review_lists_each_comment_with_its_place() {
         let body = Body::ChangesRequested {
+            trusted: true,
             author: "reviewer".into(),
             body: "Two things.".into(),
             comments: vec![
@@ -306,8 +321,12 @@ mod tests {
 
     #[test]
     fn an_enormous_comment_is_cut() {
-        let body =
-            Body::Commented { author: "a".into(), text: "x".repeat(20_000), url: String::new() };
+        let body = Body::Commented {
+            trusted: true,
+            author: "a".into(),
+            text: "x".repeat(20_000),
+            url: String::new(),
+        };
         let text = message(&body, 1).unwrap().text;
         assert!(text.chars().count() < MAX_CHARS + 10);
         assert!(text.ends_with("\n..."));
@@ -319,8 +338,18 @@ mod tests {
         let none = GithubPrefs { failed_checks: false, reviews: false, conflicts: false, ..all };
         let bodies = [
             failed(vec![]),
-            Body::ChangesRequested { author: "a".into(), body: String::new(), comments: vec![] },
-            Body::Commented { author: "a".into(), text: String::new(), url: String::new() },
+            Body::ChangesRequested {
+                trusted: true,
+                author: "a".into(),
+                body: String::new(),
+                comments: vec![],
+            },
+            Body::Commented {
+                trusted: true,
+                author: "a".into(),
+                text: String::new(),
+                url: String::new(),
+            },
             Body::Conflict { base: "main".into() },
         ];
         for body in &bodies {
