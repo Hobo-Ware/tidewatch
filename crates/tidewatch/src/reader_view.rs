@@ -191,6 +191,27 @@ pub(crate) struct Facts<'a> {
     pub(crate) face: Option<&'a Face>,
     pub(crate) turn: Turn,
     pub(crate) stopped: bool,
+    /// Why the reply box is shut because the agent is not at its prompt.
+    pub(crate) reply_blocked: Option<Blocked>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Blocked {
+    Stopped,
+    Failed,
+    SettingUp,
+    Shell,
+}
+
+impl Blocked {
+    pub(crate) fn hint(self) -> &'static str {
+        match self {
+            Self::Stopped => "Resume first",
+            Self::Failed => "The agent failed, resume first",
+            Self::SettingUp => "The agent is starting up",
+            Self::Shell => "No agent is running here",
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -453,12 +474,12 @@ pub(crate) fn show(
         Some(ChipClick::Reply) => state.focus_reply = true,
         None => {}
     }
-    let mut reply_enabled = facts.prompt.is_none();
+    let mut reply_enabled = facts.prompt.is_none() && facts.reply_blocked.is_none();
     if let Some(live) = state.live.as_mut() {
         let tidewatch = shown.is_some_and(|row| {
             matches!(&row.kind, Kind::Question(q) if matches!(q.origin, Origin::Tidewatch(_)))
         });
-        reply_enabled = tidewatch;
+        reply_enabled = tidewatch && facts.reply_blocked.is_none();
         let grab = state.reply.trim().is_empty();
         live.picks = question_bulk::plan(rows).count();
         live.auto_left = state.auto_left.filter(|(seq, _)| *seq == live.seq).map(|(_, left)| left);
@@ -486,9 +507,13 @@ pub(crate) fn show(
         pictures: &mut state.pictures,
         focus: &mut state.focus_reply,
     };
-    if let Some(text) =
-        reply_box(&mut input_ui, draft, reply_enabled, &state.commands, state.ghost.text())
-    {
+    if let Some(text) = reply_box(
+        &mut input_ui,
+        draft,
+        (reply_enabled, facts.reply_blocked),
+        &state.commands,
+        state.ghost.text(),
+    ) {
         actions.push(Action::Reply(text));
     }
     actions
@@ -995,11 +1020,15 @@ pub(crate) fn reply_has_focus(ctx: &egui::Context) -> bool {
 pub(crate) fn reply_box(
     ui: &mut Ui,
     draft: Draft<'_>,
-    enabled: bool,
+    (enabled, blocked): (bool, Option<Blocked>),
     commands: &[SlashEntry],
     ghost: Option<&str>,
 ) -> Option<String> {
-    let hint = if enabled { "Reply to the agent" } else { "Answer the prompt above first" };
+    let hint = match (enabled, blocked) {
+        (_, Some(blocked)) => blocked.hint(),
+        (true, None) => "Reply to the agent",
+        (false, None) => "Answer the prompt above first",
+    };
     composer::show(ui, draft, &Spec { id: reply_id(), hint, enabled, commands, ghost })
 }
 
@@ -1022,7 +1051,7 @@ mod tests {
         ghost: Option<&str>,
     ) -> Option<String> {
         let draft = Draft { text, pictures: &mut Vec::new(), focus };
-        super::reply_box(ui, draft, enabled, commands, ghost)
+        super::reply_box(ui, draft, (enabled, None), commands, ghost)
     }
 
     fn frame(
@@ -1495,6 +1524,7 @@ mod tests {
                         face: None,
                         turn: Turn::Finished,
                         stopped: false,
+                        reply_blocked: None,
                     },
                 );
             });
@@ -1553,6 +1583,7 @@ mod tests {
                     face: None,
                     turn: Turn::Running,
                     stopped: false,
+                    reply_blocked: None,
                 };
                 let actions = show(ui, rect, &rows, &mut state, facts);
                 assert_eq!(actions, Vec::<Action>::new());
@@ -1631,6 +1662,7 @@ mod tests {
                         face: None,
                         turn: Turn::Finished,
                         stopped: false,
+                        reply_blocked: None,
                     };
                     let rect = ui.max_rect();
                     actions = show(ui, rect, rows, &mut state, facts);
@@ -1708,6 +1740,46 @@ mod tests {
             panic!("{actions:?}")
         };
         assert!(text.starts_with("Due today: Switch off the old webhook."));
+    }
+
+    #[test]
+    fn a_reply_box_of_an_agent_that_is_not_at_its_prompt_says_why_and_takes_no_text() {
+        use tidewatch_core::transcript::{Entry, Role};
+
+        fn texts(shape: &egui::Shape, out: &mut Vec<String>) {
+            match shape {
+                egui::Shape::Text(text) => out.push(text.galley.text().to_owned()),
+                egui::Shape::Vec(shapes) => shapes.iter().for_each(|shape| texts(shape, out)),
+                _ => {}
+            }
+        }
+
+        let mut rows = Rows::default();
+        rows.push(Entry { role: Role::User, text: "old question".into(), tool: None, ts: None });
+        let ctx = crate::fonts::test_context();
+        let mut state = ViewState::default();
+        let mut hint = |blocked: Option<Blocked>| {
+            let raw = RawInput {
+                screen_rect: Some(Rect::from_min_size(pos2(0.0, 0.0), vec2(800.0, 700.0))),
+                focused: true,
+                ..RawInput::default()
+            };
+            let output = ctx.run_ui(raw, |ui| {
+                let rect = ui.max_rect();
+                let mut facts = facts(None, Turn::Finished);
+                facts.reply_blocked = blocked;
+                show(ui, rect, &rows, &mut state, facts);
+            });
+            let mut found = Vec::new();
+            output.shapes.iter().for_each(|clipped| texts(&clipped.shape, &mut found));
+            found
+        };
+        hint(None);
+        assert!(hint(None).contains(&"Reply to the agent".to_owned()));
+        hint(Some(Blocked::Stopped));
+        let blocked = hint(Some(Blocked::Stopped));
+        assert!(blocked.contains(&"Resume first".to_owned()));
+        assert!(!blocked.contains(&"Reply to the agent".to_owned()));
     }
 
     #[test]
@@ -1827,6 +1899,7 @@ mod tests {
                     face: None,
                     turn: Turn::Finished,
                     stopped: false,
+                    reply_blocked: None,
                 };
                 let rect = ui.max_rect();
                 show(ui, rect, &rows, &mut state, facts);
@@ -1853,6 +1926,7 @@ mod tests {
             face: None,
             turn,
             stopped: false,
+            reply_blocked: None,
         }
     }
 

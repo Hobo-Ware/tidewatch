@@ -24,6 +24,7 @@ use tidewatch_core::listener::Credential;
 use tidewatch_core::meeseeks::{Meeseeks, Phase};
 use tidewatch_core::meeseeks_log::Poofed;
 use tidewatch_core::runner::Runner;
+use tidewatch_core::status::{AgentStatus, Reason};
 use tidewatch_core::worktree::Worktree;
 
 use crate::agent_run::AgentRun;
@@ -156,6 +157,10 @@ pub(crate) struct AgentEntry {
     pub(crate) remote: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) meeseeks: Option<Meeseeks>,
+    /// The old window saw the agent done or waiting at its prompt: no hook will say so again until
+    /// its next turn.
+    #[serde(default)]
+    pub(crate) at_prompt: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -205,6 +210,10 @@ fn agent_entry(tab: &AgentTab, credential: Option<Credential>) -> AgentEntry {
         }),
         remote: tab.remote.as_ref().map(|session| session.name.clone()),
         meeseeks: tab.meeseeks.clone(),
+        at_prompt: matches!(
+            tab.run.status(),
+            AgentStatus::Done | AgentStatus::NeedsYou(Reason::Input | Reason::Attention)
+        ),
     }
 }
 
@@ -385,6 +394,13 @@ pub(crate) fn rebuild<P, T>(
 fn agent_tab(entry: &AgentEntry, dir: &Path, now: f64, notes: &mut Vec<String>) -> AgentTab {
     let mut run = AgentRun::setting_up(entry.agent_id.clone(), now);
     run.started(entry.notes_file.clone(), now);
+    if entry.credential.is_some() {
+        if entry.at_prompt {
+            run.resumed(now);
+        } else {
+            run.await_report();
+        }
+    }
     let session_id = entry.launched.as_ref().and_then(|launched| launched.session_id.clone());
     let workflow = entry.workflow.as_ref().and_then(|saved| {
         let Some(runner) = Runner::load(&saved.stages) else {
@@ -410,6 +426,7 @@ fn agent_tab(entry: &AgentEntry, dir: &Path, now: f64, notes: &mut Vec<String>) 
         first_prompt: entry.first_prompt,
         resume_note: None,
         resume_line: None,
+        resume_sent_at: None,
         base_note: None,
         remote: entry.remote.clone().map(RemoteSession::new),
         meeseeks: entry.meeseeks.clone(),

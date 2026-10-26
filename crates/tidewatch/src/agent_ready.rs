@@ -344,6 +344,7 @@ mod tests {
                     face: None,
                     turn: Turn::Finished,
                     stopped: false,
+                    reply_blocked: None,
                 };
                 crate::reader_view::show(
                     ui,

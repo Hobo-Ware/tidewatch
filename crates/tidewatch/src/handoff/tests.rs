@@ -482,6 +482,52 @@ fn an_agent_tab_comes_back_running_with_its_reader_session_and_credential_under_
     assert_eq!(rebuilt.credentials, [(tab.id, credential("tok-a"))]);
 }
 
+fn rebuilt_run(w: &Window, at: f64) -> AgentRun {
+    let (handover, _) = handover_of(w);
+    let mut adopt = |term: u32, _: &Path| Ok(term);
+    let ptys = Ptys { adopt: &mut adopt, fresh: &fresh };
+    let mut rebuilt = rebuild(&handover, vec![100, 101, 102, 200, 201], 5.0, ptys).unwrap();
+    let id = rebuilt.tabs.items().iter().find(|tab| tab.title == "otter").unwrap().id;
+    let mut agent = rebuilt.tabs.get_mut(id).unwrap().pane.agent.take().unwrap();
+    agent.run.refresh(at);
+    agent.run
+}
+
+#[test]
+fn an_agent_that_was_done_comes_back_done_and_one_that_was_busy_waits_for_its_first_word() {
+    let mut w = window();
+    for (held, done, unreported) in [
+        (AgentStatus::Done, true, false),
+        (AgentStatus::NeedsYou(Reason::Input), true, false),
+        (AgentStatus::Working, false, true),
+        (AgentStatus::NeedsYou(Reason::Permission), false, true),
+        (AgentStatus::NeedsYou(Reason::Quiet), false, true),
+    ] {
+        let agent = w.tabs.get_mut(w.agent_tab).unwrap().pane.agent.as_mut().unwrap();
+        agent.run.hold(Some(held.clone()), None);
+        agent.run.refresh(2.0);
+        let run = rebuilt_run(&w, 600.0);
+        assert_eq!(*run.status() == AgentStatus::Done, done, "{held:?}");
+        assert_eq!(run.unreported(), unreported, "{held:?}");
+    }
+}
+
+#[test]
+fn an_agent_that_does_not_report_by_hooks_keeps_reading_its_terminal_after_a_handover() {
+    let mut w = window();
+    let agent = w.tabs.get_mut(w.agent_tab).unwrap().pane.agent.as_mut().unwrap();
+    agent.run.hold(Some(AgentStatus::Done), None);
+    agent.run.refresh(2.0);
+    let (handover, _) = plan(&w.tabs, &facts(&w.workspaces, None), &no_credentials);
+    let mut adopt = |term: u32, _: &Path| Ok(term);
+    let ptys = Ptys { adopt: &mut adopt, fresh: &fresh };
+    let mut rebuilt = rebuild(&handover, vec![100, 101, 102, 200, 201], 5.0, ptys).unwrap();
+    let id = rebuilt.tabs.items().iter().find(|tab| tab.title == "otter").unwrap().id;
+    let run = &mut rebuilt.tabs.get_mut(id).unwrap().pane.agent.as_mut().unwrap().run;
+    run.refresh(600.0);
+    assert_eq!((*run.status() == AgentStatus::Done, run.unreported()), (false, false));
+}
+
 #[test]
 fn an_agent_with_remote_control_comes_back_with_its_session_and_the_saved_setting() {
     let mut w = window();

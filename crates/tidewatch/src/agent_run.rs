@@ -93,6 +93,7 @@ pub(crate) struct AgentRun {
     host: Host,
     turn_started_at: Option<f64>,
     working_since: Option<f64>,
+    unreported: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -128,6 +129,7 @@ impl AgentRun {
             host: Host::Pty,
             turn_started_at: None,
             working_since: None,
+            unreported: false,
         }
     }
 
@@ -167,6 +169,18 @@ impl AgentRun {
         self.notes_file = notes_file;
         self.tracker.agent_started(now);
         self.started_at = now;
+    }
+
+    /// The agent came over a handover while it was not at its prompt, or the old window could not
+    /// tell: its next hook says where it is.
+    pub(crate) fn await_report(&mut self) {
+        self.unreported = true;
+    }
+
+    /// True while the agent reports by hooks, came over a handover not known to wait at its prompt,
+    /// and no hook has spoken since.
+    pub(crate) fn unreported(&self) -> bool {
+        self.unreported
     }
 
     /// The agent process resumed a saved session: it waits at its prompt, which reads as done.
@@ -218,6 +232,7 @@ impl AgentRun {
         match event {
             TabEvent::Hook(hook) => {
                 self.host = Host::Pty;
+                self.unreported = false;
                 match (&hook.kind, &hook.message) {
                     (HookKind::TurnStarted, _) => {
                         self.end_block = None;
