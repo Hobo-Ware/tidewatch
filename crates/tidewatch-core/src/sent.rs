@@ -32,10 +32,13 @@ pub mod because {
     pub const MEESEEKS: &str = "a check of this Meeseeks' work did not pass";
     pub const BUILD_WORKFLOW: &str = "you ran Build workflow from this session";
     pub const BACKGROUND_JOB: &str = "a background job has reported no progress";
+    pub const REPORT_STALE: &str = "the report said working and nothing was reported for an hour";
+    pub const REPORT_QUESTION: &str =
+        "the agent's last message asks something and its report has no needs_you";
 
     pub const NAMED: [&str; 1] = ["Auto"];
 
-    pub const ALL: [&str; 18] = [
+    pub const ALL: [&str; 20] = [
         AUTO_FIX,
         AUTO_PUSH,
         LEDGER_STOP,
@@ -54,6 +57,8 @@ pub mod because {
         MEESEEKS,
         BUILD_WORKFLOW,
         BACKGROUND_JOB,
+        REPORT_STALE,
+        REPORT_QUESTION,
     ];
 }
 

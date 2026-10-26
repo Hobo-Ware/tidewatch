@@ -25,6 +25,7 @@ use crate::overview_checklist::Source;
 use crate::pane::{AgentTab, Body};
 use crate::progress_glue::today;
 use crate::progress_model::look;
+use crate::progress_nudge as nudge;
 use crate::progress_stale::{Live, answered_since_save, is_stale};
 use crate::progress_state::Facts;
 use crate::{due_view, flow_glue, reader_glue, reader_view};
@@ -77,6 +78,7 @@ impl Tidewatch {
         let tabs: std::collections::HashSet<u64> =
             self.tabs.items().iter().map(|tab| tab.id).collect();
         self.progress_ui.forget_except(|id| tabs.contains(&id));
+        self.report_nudges.forget_except(|id| tabs.contains(&id));
     }
 
     pub(super) fn drive_avatar_choice(&mut self, ctx: &egui::Context) {
@@ -181,6 +183,50 @@ impl Tidewatch {
                 }
                 Offer::Paused | Offer::Refuse(_) => {}
             }
+        }
+    }
+
+    /// Tells an idle agent whose report went stale, or whose last message holds a question the
+    /// report lacks, once per saved report, through the one send gate.
+    pub(super) fn drive_report_nudges(&mut self, ctx: &egui::Context, now: f64) {
+        if self.screenshot.is_some() {
+            return;
+        }
+        let now_ms = wall_ms() as i64;
+        let mut due = Vec::new();
+        let mut wake: Option<i64> = None;
+        for tab in self.tabs.items() {
+            let Some(agent) =
+                tab.pane.agent.as_ref().filter(|_| matches!(tab.pane.body, Body::Shell(_)))
+            else {
+                continue;
+            };
+            let known = self.progress.ledger(tab.id);
+            let facts = nudge::Facts {
+                idle: *agent.run.status() == AgentStatus::Done,
+                ledger: known.map(|known| &known.ledger),
+                saved_ms: known.and_then(|known| known.updated_ms),
+                block: agent.run.end_block(),
+                now_ms,
+            };
+            let told = self.report_nudges.told(tab.id);
+            if let Some(found) = nudge::due(&facts, &told) {
+                due.push((tab.id, found, facts.saved_ms));
+            }
+            wake = wake.into_iter().chain(nudge::wait_ms(&facts, &told)).min();
+        }
+        for (tab, found, saved) in due {
+            let send = Send::auto(found.text(), Said::LedgerGuard, found.because());
+            match flow_glue::send_or_queue(&mut self.tabs, &mut self.flow, tab, send, ctx, now) {
+                Offer::Go | Offer::Wait => self.report_nudges.mark(tab, found, saved),
+                Offer::Paused | Offer::Refuse(_) => {}
+            }
+        }
+        if let Some(wait) = wake {
+            let wait = u64::try_from(wait).unwrap_or(0);
+            ctx.request_repaint_after(
+                Duration::from_millis(wait) + Duration::from_secs_f64(WAKE_SLACK_S),
+            );
         }
     }
 
