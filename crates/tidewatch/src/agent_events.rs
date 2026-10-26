@@ -261,6 +261,7 @@ mod tests {
             old.listener().unwrap().register_tab(tidewatch_core::listener::TabRegistration {
                 tab_id: 4,
                 agent: "claude".into(),
+                role: tidewatch_core::mcp::TabRole::Agent,
                 repo: "/work/web".into(),
                 tab: "otter".into(),
                 generation: 2,

@@ -21,6 +21,7 @@ use tidewatch_core::launch::{
     gemini_system_settings, launch_command, mcp_config_json,
 };
 use tidewatch_core::listener::{Listener, TabRegistration};
+use tidewatch_core::mcp::TabRole;
 use tidewatch_core::paths::TidewatchPaths;
 use tidewatch_core::profiles::Profile;
 
@@ -42,6 +43,7 @@ fn main() {
     let hook = listener.register_tab(TabRegistration {
         tab_id: 1,
         agent: agent_id.clone(),
+        role: TabRole::Workflow,
         repo: repo.clone(),
         tab: "live".into(),
         generation: 0,

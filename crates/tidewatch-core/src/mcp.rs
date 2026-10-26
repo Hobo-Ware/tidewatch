@@ -4,7 +4,10 @@
 //! [`handle_post`] takes the raw request body of an authenticated `/mcp` POST and returns the reply.
 //! It speaks `initialize`, `ping`, `tools/list` and `tools/call` and swallows notifications. The
 //! tools are `stage_done`, `report_finding`, `list_notes`, `reply_to_note`, `propose_workflow`,
-//! `ask_user`, `update_progress`, `get_progress`, `report_job`, `set_avatar` and `meeseeks_done`. Calls that matter to the app become [`TabEvent`]s through `emit`; the note tools read
+//! `ask_user`, `update_progress`, `get_progress`, `report_job`, `set_avatar` and `meeseeks_done`.
+//! A tab is offered the ones its [`TabRole`] can use (`stage_done` only to a workflow stage,
+//! `meeseeks_done` only to a Meeseeks, `report_finding` to neither a Meeseeks); a call to one it is
+//! not offered is answered with a tool error that says where it works. Calls that matter to the app become [`TabEvent`]s through `emit`; the note tools read
 //! and write the tab's `notes.json` through `notes.rs`. `ask_user` holds its reply until the user
 //! answers (or [`AskWait::timeout`] runs out, or the client hangs up): the listener serves each
 //! connection on its own thread, so a held call blocks nothing else.
@@ -21,6 +24,7 @@ use std::sync::{Mutex, PoisonError};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use kelp_core::review::Comment;
+use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 
 use crate::avatar_mcp;
@@ -55,10 +59,42 @@ pub struct AskWait<'a> {
     pub alive: &'a dyn Fn() -> bool,
 }
 
+/// What a tab is, which decides the tools `tools/list` offers it.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum TabRole {
+    /// An agent in a tab of its own.
+    #[default]
+    Agent,
+    /// The agent of a workflow stage: the run waits for its `stage_done` and reads its findings.
+    Workflow,
+    /// A Meeseeks: it ends with `meeseeks_done`, and nobody reads findings in a tab that poofs.
+    Meeseeks,
+}
+
+impl TabRole {
+    fn offers(self, tool: &str) -> bool {
+        match tool {
+            "stage_done" => self == Self::Workflow,
+            meeseeks_mcp::DONE_TOOL => self == Self::Meeseeks,
+            "report_finding" => self != Self::Meeseeks,
+            _ => true,
+        }
+    }
+
+    fn refusal(tool: &str) -> String {
+        match tool {
+            "stage_done" => "`stage_done` is not offered in this tab: only the agent of a workflow stage can call it. Finish with your end-of-turn block.".to_owned(),
+            meeseeks_mcp::DONE_TOOL => "`meeseeks_done` is not offered in this tab: only a Meeseeks can call it. Finish with your end-of-turn block.".to_owned(),
+            _ => format!("`{tool}` is not offered to a Meeseeks: nobody reads a finding in a tab that ends with its task. Put what you found in the summary of `meeseeks_done`."),
+        }
+    }
+}
+
 /// What one tab's tools act on.
 pub struct ToolCtx<'a> {
     /// The agent id (`claude`, `gemini`, ...). It signs replies in the notes.
     pub agent: &'a str,
+    pub role: TabRole,
     pub notes_file: &'a Path,
     /// Serializes read-modify-write of `notes_file` between concurrent calls.
     pub notes_lock: &'a Mutex<()>,
@@ -145,7 +181,7 @@ fn handle_message(message: &Value, ctx: &ToolCtx<'_>, emit: &dyn Fn(TabEvent)) -
     let outcome = match method {
         "initialize" => Ok(initialize_result(params)),
         "ping" => Ok(json!({})),
-        "tools/list" => Ok(json!({ "tools": tool_definitions() })),
+        "tools/list" => Ok(json!({ "tools": tool_definitions_for(ctx.role) })),
         "tools/call" => call_tool(params, ctx, emit),
         other => Err(RpcError::new(METHOD_NOT_FOUND, format!("method not found: {other}"))),
     };
@@ -170,6 +206,20 @@ fn initialize_result(params: Option<&Value>) -> Value {
     })
 }
 
+/// The tools a tab of `role` is offered.
+#[must_use]
+pub fn tool_definitions_for(role: TabRole) -> Value {
+    let offered: Vec<Value> = tool_definitions()
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter(|tool| tool["name"].as_str().is_some_and(|name| role.offers(name)))
+        .cloned()
+        .collect();
+    Value::Array(offered)
+}
+
+/// Every tool the server has, for any role.
 #[must_use]
 pub fn tool_definitions() -> Value {
     let [update_progress, get_progress] = progress_mcp::tool_definitions();
@@ -253,6 +303,9 @@ fn call_tool(
         Some(Value::Object(args)) => args,
         Some(_) => return Err(RpcError::params("arguments must be an object")),
     };
+    if !ctx.role.offers(name) {
+        return Ok(tool_result(&TabRole::refusal(name), true));
+    }
     if name == propose::TOOL_NAME {
         let (text, is_error) = propose_workflow(args, ctx, emit);
         return Ok(tool_result(&text, is_error));
@@ -472,14 +525,20 @@ mod tests {
         dir: tempfile::TempDir,
         lock: Mutex<()>,
         events: RefCell<Vec<TabEvent>>,
+        role: TabRole,
     }
 
     impl Harness {
         fn new() -> Self {
+            Self::of(TabRole::Agent)
+        }
+
+        fn of(role: TabRole) -> Self {
             Self {
                 dir: tempfile::tempdir().unwrap(),
                 lock: Mutex::new(()),
                 events: RefCell::new(vec![]),
+                role,
             }
         }
 
@@ -497,6 +556,7 @@ mod tests {
             let progress_file = self.progress_file();
             let ctx = ToolCtx {
                 agent: "claude",
+                role: self.role,
                 notes_file: &notes_file,
                 notes_lock: &self.lock,
                 progress_file: &progress_file,
@@ -584,10 +644,9 @@ mod tests {
     }
 
     #[test]
-    fn tools_list_has_eleven_tools_with_object_schemas_and_required_fields() {
-        let reply =
-            Harness::new().json(&json!({"jsonrpc": "2.0", "id": 2, "method": "tools/list"}));
-        let tools = reply["result"]["tools"].as_array().unwrap();
+    fn the_server_has_eleven_tools_with_object_schemas_and_required_fields() {
+        let all = tool_definitions();
+        let tools = all.as_array().unwrap();
         let names: Vec<&str> = tools.iter().map(|t| t["name"].as_str().unwrap()).collect();
         assert_eq!(
             names,
@@ -633,6 +692,78 @@ mod tests {
         for tool in tools {
             assert_eq!(tool["inputSchema"]["type"], "object", "{}", tool["name"]);
             assert!(tool["description"].as_str().unwrap().len() > 20, "{}", tool["name"]);
+        }
+    }
+
+    fn offered(role: TabRole) -> Vec<String> {
+        let reply =
+            Harness::of(role).json(&json!({"jsonrpc": "2.0", "id": 2, "method": "tools/list"}));
+        let tools = reply["result"]["tools"].as_array().unwrap();
+        tools.iter().map(|t| t["name"].as_str().unwrap().to_owned()).collect()
+    }
+
+    #[test]
+    fn a_tab_is_offered_only_the_tools_its_role_can_use() {
+        let shared = [
+            "list_notes",
+            "reply_to_note",
+            "propose_workflow",
+            "ask_user",
+            "update_progress",
+            "get_progress",
+            "report_job",
+            "set_avatar",
+        ];
+        let with = |extra: &[&str]| -> Vec<String> {
+            let mut names: Vec<String> = extra.iter().map(|s| (*s).to_owned()).collect();
+            names.extend(shared.iter().map(|s| (*s).to_owned()));
+            names.sort();
+            names
+        };
+        let sorted = |role| {
+            let mut names = offered(role);
+            names.sort();
+            names
+        };
+        assert_eq!(sorted(TabRole::Agent), with(&["report_finding"]));
+        assert_eq!(sorted(TabRole::Workflow), with(&["stage_done", "report_finding"]));
+        assert_eq!(sorted(TabRole::Meeseeks), with(&["meeseeks_done"]));
+    }
+
+    #[test]
+    fn a_call_to_a_tool_the_tab_is_not_offered_is_a_tool_error_that_says_where_it_works() {
+        let cases = [
+            (
+                TabRole::Agent,
+                "stage_done",
+                json!({"summary": "x"}),
+                "only the agent of a workflow stage",
+            ),
+            (
+                TabRole::Meeseeks,
+                "stage_done",
+                json!({"summary": "x"}),
+                "only the agent of a workflow stage",
+            ),
+            (TabRole::Agent, "meeseeks_done", json!({"summary": "x"}), "only a Meeseeks"),
+            (TabRole::Workflow, "meeseeks_done", json!({"summary": "x"}), "only a Meeseeks"),
+            (
+                TabRole::Meeseeks,
+                "report_finding",
+                json!({"file": "a", "line": 1, "blocking": false, "text": "t"}),
+                "not offered to a Meeseeks",
+            ),
+        ];
+        for (role, tool, args, says) in cases {
+            let h = Harness::of(role);
+            let reply = h.call(tool, &args);
+            assert_eq!(reply["result"]["isError"], true, "{role:?} {tool}");
+            let text = reply["result"]["content"][0]["text"].as_str().unwrap();
+            assert!(
+                text.contains(&format!("`{tool}` is not offered")) && text.contains(says),
+                "{text}"
+            );
+            assert_eq!(h.events.borrow().len(), 0, "{role:?} {tool}");
         }
     }
 
@@ -736,7 +867,7 @@ mod tests {
 
     #[test]
     fn meeseeks_done_over_rpc_tells_the_tab_and_a_bad_call_is_a_tool_error() {
-        let h = Harness::new();
+        let h = Harness::of(TabRole::Meeseeks);
         let reply = h.call("meeseeks_done", &json!({"summary": "Renamed the helper"}));
         assert_eq!(reply["result"]["isError"], false, "{reply}");
         let events = h.events.borrow();
@@ -880,6 +1011,7 @@ mod tests {
         let notes_file = h.notes_file();
         let ctx = ToolCtx {
             agent: "codex",
+            role: TabRole::Agent,
             notes_file: &notes_file,
             notes_lock: &h.lock,
             progress_file: Path::new("/none/progress.md"),
@@ -959,6 +1091,7 @@ mod tests {
         let alive = || true;
         let ctx = ToolCtx {
             agent: "codex",
+            role: TabRole::Agent,
             notes_file: &notes_file,
             notes_lock: &h.lock,
             progress_file: Path::new("/none/progress.md"),
@@ -991,7 +1124,7 @@ mod tests {
 
     #[test]
     fn stage_done_emits_the_summary_and_returns_text_content() {
-        let h = Harness::new();
+        let h = Harness::of(TabRole::Workflow);
         let reply = h.call("stage_done", &json!({"summary": "  hello  "}));
         assert_eq!(reply["result"]["isError"], false);
         assert_eq!(reply["result"]["content"][0]["type"], "text");
@@ -1019,7 +1152,7 @@ mod tests {
 
     #[test]
     fn bad_arguments_are_invalid_params_and_emit_nothing() {
-        let h = Harness::new();
+        let h = Harness::of(TabRole::Workflow);
         let long = "x".repeat(MAX_TEXT_CHARS + 1);
         let cases: Vec<(&str, Value)> = vec![
             ("stage_done", json!({})),
@@ -1187,6 +1320,7 @@ mod tests {
             b"\xff\xfe\x00",
             &ToolCtx {
                 agent: "a",
+                role: TabRole::Agent,
                 notes_file: Path::new("/none"),
                 notes_lock: &h.lock,
                 progress_file: Path::new("/none/progress.md"),
@@ -1228,6 +1362,7 @@ mod tests {
                     let alive = || true;
                     let ctx = ToolCtx {
                         agent: "claude",
+                        role: TabRole::Agent,
                         notes_file,
                         notes_lock: lock,
                         progress_file: Path::new("/none/progress.md"),

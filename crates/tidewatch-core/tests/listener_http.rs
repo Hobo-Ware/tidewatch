@@ -13,6 +13,7 @@ use serde_json::{Value, json};
 use tidewatch_core::events::{TabEvent, TabMessage};
 use tidewatch_core::launch::HookListener;
 use tidewatch_core::listener::{Listener, TabRegistration};
+use tidewatch_core::mcp::TabRole;
 use tidewatch_core::paths::TidewatchPaths;
 use tidewatch_core::status::HookKind;
 
@@ -142,9 +143,14 @@ impl Harness {
     }
 
     fn register_generation(&self, tab_id: u64, tab: &str, generation: u64) -> HookListener {
+        self.register_as(tab_id, tab, generation, TabRole::Workflow)
+    }
+
+    fn register_as(&self, tab_id: u64, tab: &str, generation: u64, role: TabRole) -> HookListener {
         self.listener.register_tab(TabRegistration {
             tab_id,
             agent: "claude".into(),
+            role,
             repo: PathBuf::from(REPO),
             tab: tab.into(),
             generation,
@@ -270,7 +276,7 @@ fn mcp_over_http_runs_the_handshake_and_both_event_tools() {
     assert_eq!((note.status, note.body.as_str()), (202, ""));
 
     let list = client.request("POST", "/mcp", token, &rpc(2, "tools/list", &json!({})));
-    assert_eq!(list.json()["result"]["tools"].as_array().unwrap().len(), 11);
+    assert_eq!(list.json()["result"]["tools"].as_array().unwrap().len(), 10);
 
     let done =
         client.request("POST", "/mcp", token, &call(3, "stage_done", &json!({"summary": "hello"})));
@@ -743,6 +749,7 @@ fn adopting_a_credential_replaces_the_tabs_earlier_token() {
         token: "feedface".into(),
         generation: 0,
         agent: "claude".into(),
+        role: TabRole::Agent,
         notes_file: h.notes_file("a"),
     };
     h.listener.adopt_tab(1, &credential);
@@ -840,4 +847,42 @@ fn an_ask_user_call_whose_client_hung_up_stops_waiting() {
     drop(client);
     std::thread::sleep(Duration::from_millis(1500));
     assert!(!reply.send(Answer::Skipped), "the listener never noticed the hang-up");
+}
+
+#[test]
+fn each_roles_token_lists_its_own_tools_and_a_hidden_call_says_where_it_works() {
+    let h = Harness::start();
+    let mut client = h.client();
+    let mut tools = |token: &str| -> Vec<String> {
+        let list = client.request("POST", "/mcp", Some(token), &rpc(1, "tools/list", &json!({})));
+        let reply = list.json();
+        let mut names: Vec<String> = reply["result"]["tools"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|tool| tool["name"].as_str().unwrap().to_owned())
+            .collect();
+        names.sort();
+        names
+    };
+    let plain = h.register_as(1, "plain", 0, TabRole::Agent).token;
+    let stage = h.register_as(2, "stage", 0, TabRole::Workflow).token;
+    let meeseeks = h.register_as(3, "mee", 0, TabRole::Meeseeks).token;
+    let has = |names: &[String], tool: &str| names.iter().any(|name| name == tool);
+    let (plain_tools, stage_tools, meeseeks_tools) =
+        (tools(&plain), tools(&stage), tools(&meeseeks));
+    assert!(!has(&plain_tools, "stage_done") && !has(&plain_tools, "meeseeks_done"));
+    assert!(has(&plain_tools, "report_finding") && has(&plain_tools, "update_progress"));
+    assert!(has(&stage_tools, "stage_done") && !has(&stage_tools, "meeseeks_done"));
+    assert!(has(&meeseeks_tools, "meeseeks_done") && !has(&meeseeks_tools, "report_finding"));
+
+    let refused = client.request(
+        "POST",
+        "/mcp",
+        Some(&plain),
+        &call(2, "stage_done", &json!({"summary": "done"})),
+    );
+    assert_eq!(refused.status, 200);
+    assert_eq!(refused.json()["result"]["isError"], true);
+    assert!(refused.body.contains("only the agent of a workflow stage"), "{}", refused.body);
 }

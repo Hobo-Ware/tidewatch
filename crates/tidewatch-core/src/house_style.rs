@@ -43,7 +43,7 @@ Finish with exactly this block:
 
 When the `tidewatch` MCP tools are available:
 
-- Call `stage_done` with a short summary when the task or stage you were given is finished.
+- If a `stage_done` tool is offered, call it with a short summary when the stage you were given is finished.
 - Call `reply_to_note` to answer a review note (`list_notes` shows them) instead of answering it only in chat.
 
 ## Progress ledger
