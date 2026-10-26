@@ -38,25 +38,38 @@ pub(crate) enum Action {
 pub(crate) struct Pill {
     pub(crate) text: String,
     pub(crate) tone: Tone,
+    pub(crate) outlined: bool,
+}
+
+fn state_pill(state: State) -> Option<Pill> {
+    let (text, tone) = match state {
+        State::Open => return None,
+        State::Merged => ("Merged", Tone::Good),
+        State::Closed => ("Closed", Tone::Bad),
+    };
+    Some(Pill { text: text.to_owned(), tone, outlined: true })
 }
 
 /// The pills of a pull request, most important first.
 pub(crate) fn pills(summary: &Summary) -> Vec<Pill> {
-    let mut pills = Vec::new();
-    let mut add = |text: &str, tone| pills.push(Pill { text: text.to_owned(), tone });
-    match summary.checks {
-        SummaryChecks::Running => add("Checks running", Tone::Warn),
-        SummaryChecks::Failed => add("Checks failed", Tone::Bad),
-        SummaryChecks::Passed => add("Checks passed", Tone::Good),
-        SummaryChecks::None => {}
-    }
-    match summary.decision {
-        Decision::ChangesRequested => add("Changes requested", Tone::Warn),
-        Decision::Approved => add("Approved", Tone::Good),
-        Decision::None | Decision::ReviewRequired => {}
-    }
-    if summary.conflicting {
-        add("Conflicts", Tone::Warn);
+    let mut pills: Vec<Pill> = state_pill(summary.state).into_iter().collect();
+    let mut add =
+        |text: &str, tone| pills.push(Pill { text: text.to_owned(), tone, outlined: false });
+    if summary.state == State::Open {
+        match summary.checks {
+            SummaryChecks::Running => add("Checks running", Tone::Warn),
+            SummaryChecks::Failed => add("Checks failed", Tone::Bad),
+            SummaryChecks::Passed => add("Checks passed", Tone::Good),
+            SummaryChecks::None => {}
+        }
+        match summary.decision {
+            Decision::ChangesRequested => add("Changes requested", Tone::Warn),
+            Decision::Approved => add("Approved", Tone::Good),
+            Decision::None | Decision::ReviewRequired => {}
+        }
+        if summary.conflicting {
+            add("Conflicts", Tone::Warn);
+        }
     }
     if summary.comments > 0 {
         let noun = if summary.comments == 1 { "comment" } else { "comments" };
@@ -180,7 +193,16 @@ pub(crate) fn show(ui: &mut Ui, band: Rect, strip: &Strip<'_>) -> Option<Action>
         }
         right -= width;
         let rect = Rect::from_min_size(pos2(right, y - PILL_H / 2.0), vec2(width, PILL_H));
-        painter.rect_filled(rect, CornerRadius::same(255), ink.gamma_multiply(0.12));
+        if pill.outlined {
+            painter.rect_stroke(
+                rect,
+                CornerRadius::same(255),
+                Stroke::new(1.0, ink.gamma_multiply(0.6)),
+                StrokeKind::Inside,
+            );
+        } else {
+            painter.rect_filled(rect, CornerRadius::same(255), ink.gamma_multiply(0.12));
+        }
         painter.galley(rect.center() - galley.size() / 2.0, galley, ink);
         right -= GAP;
     }

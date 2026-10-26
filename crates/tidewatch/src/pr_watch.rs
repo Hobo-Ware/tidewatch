@@ -263,6 +263,15 @@ impl Watch {
         self.ended && self.cards.ended_merged()
     }
 
+    fn merged_for_good(&self, polled: &Polled) -> bool {
+        self.summary().is_some_and(|summary| summary.state == State::Merged)
+            && polled.summary.state != State::Merged
+    }
+
+    fn worth_a_look(&self) -> bool {
+        !self.ended || self.closed() || self.cards.summary.is_none()
+    }
+
     pub(crate) fn closed(&self) -> bool {
         self.summary().is_some_and(|summary| summary.state == State::Closed)
     }
@@ -334,7 +343,7 @@ impl Watch {
         let number = self.cards.number?;
         let due = self.ready()
             && !self.in_flight
-            && (!self.ended || self.closed())
+            && self.worth_a_look()
             && self.policy(default).mode != PrMode::Off
             && now >= self.due;
         due.then(|| Look { number, prev: self.cards.seen.clone() })
@@ -352,7 +361,7 @@ impl Watch {
     /// When the next look is due, for a wake-up; `None` when none will be.
     pub(crate) fn next_look(&self, default: GithubPrefs) -> Option<f64> {
         let watching = self.ready()
-            && (!self.ended || self.closed())
+            && self.worth_a_look()
             && self.cards.number.is_some()
             && self.policy(default).mode != PrMode::Off;
         (watching && !self.in_flight).then_some(self.due)
@@ -377,6 +386,9 @@ impl Watch {
         };
         self.pause = None;
         self.due = now + if polled.checks_pending { FAST_SECS } else { SLOW_SECS };
+        if self.merged_for_good(&polled) {
+            return Vec::new();
+        }
         self.ended = polled.ended;
         self.cards.seen = Some(polled.seen);
         self.cards.summary = Some(polled.summary);
@@ -596,10 +608,6 @@ impl Watch {
 
     pub(crate) fn summary(&self) -> Option<&Summary> {
         self.cards.summary.as_ref()
-    }
-
-    pub(crate) fn strip_summary(&self) -> Option<&Summary> {
-        self.summary().filter(|summary| summary.state != State::Closed)
     }
 
     /// `#42 checks failed` for the Overview row, with its tone.
