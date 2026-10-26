@@ -10,13 +10,14 @@ use tidewatch_core::civil_date::Date;
 use tidewatch_core::end_block::EndBlock;
 use tidewatch_core::meeseeks::elapsed_text;
 use tidewatch_core::meeseeks_log::Poofed;
+use tidewatch_core::progress_report::StageKind;
 use tidewatch_core::status::{AgentStatus, Reason};
 
 use crate::coming_up::{Group, Row as Scheduled, Source};
 use crate::pane::{AgentTab, Pane};
-use crate::progress_model::{CardTag, Look};
+use crate::progress_model::{CardTag, Look, Tone as ProgressTone};
 use crate::progress_ring::tone_color;
-use crate::status_view::{Tone, color, label, tone};
+use crate::status_view::{Tone, color, label};
 use crate::tabs::Tabs;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -75,6 +76,8 @@ pub(crate) struct Row {
     pub(crate) agent_id: String,
     pub(crate) branch: String,
     pub(crate) status: AgentStatus,
+    /// The one tone every screen shows for the tab: the agent's report, or the facts Tidewatch owns.
+    pub(crate) tone: Tone,
     pub(crate) detail: Option<String>,
     pub(crate) end_block: Option<EndBlock>,
     pub(crate) elapsed: f64,
@@ -115,6 +118,7 @@ pub(crate) struct Counts {
     pub(crate) setup: usize,
     pub(crate) working: usize,
     pub(crate) needs: usize,
+    pub(crate) waiting: usize,
     pub(crate) done: usize,
     pub(crate) failed: usize,
     pub(crate) stopped: usize,
@@ -131,11 +135,17 @@ fn rank(tone: Tone) -> u8 {
     match tone {
         Tone::Failed => 0,
         Tone::Working => 1,
-        Tone::Setup => 2,
-        Tone::Done => 3,
-        Tone::Stopped => 4,
-        Tone::Needs | Tone::Shell => 5,
+        Tone::Waiting => 2,
+        Tone::Setup => 3,
+        Tone::Done => 4,
+        Tone::Stopped => 5,
+        Tone::Needs | Tone::Blocked | Tone::Shell => 6,
     }
+}
+
+/// Whether a card goes in the Needs you section: a question, a permission, or a blocker.
+fn asks_for_you(tone: Tone) -> bool {
+    matches!(tone, Tone::Needs | Tone::Blocked)
 }
 
 /// Groups the rows: tabs that need you first (oldest tab first, as opened), then each place with
@@ -147,22 +157,23 @@ pub(crate) fn build(places: Vec<PlaceInput>) -> Overview {
     for place in places {
         let mut rows = Vec::new();
         for row in place.rows {
-            match tone(&row.status) {
+            match row.tone {
                 Tone::Setup => counts.setup += 1,
                 Tone::Working => counts.working += 1,
-                Tone::Needs => counts.needs += 1,
+                Tone::Needs | Tone::Blocked => counts.needs += 1,
+                Tone::Waiting => counts.waiting += 1,
                 Tone::Done => counts.done += 1,
                 Tone::Failed => counts.failed += 1,
                 Tone::Stopped => counts.stopped += 1,
                 Tone::Shell => continue,
             }
-            if tone(&row.status) == Tone::Needs {
+            if asks_for_you(row.tone) {
                 needs.push(row);
             } else {
                 rows.push(row);
             }
         }
-        rows.sort_by_key(|row| rank(tone(&row.status)));
+        rows.sort_by_key(|row| rank(row.tone));
         grouped.push(Place { label: place.label, path: place.path, rows });
     }
     Overview { needs, places: grouped, counts }
@@ -196,6 +207,7 @@ pub(crate) fn collect<T>(
                 agent_id: agent.run.agent_id.clone(),
                 branch,
                 status: agent.run.status().clone(),
+                tone: agent.run.shown_tone(),
                 detail: agent.run.detail().map(str::to_owned),
                 end_block: agent.run.end_block().cloned(),
                 elapsed: agent.run.elapsed(now),
@@ -241,21 +253,30 @@ pub(crate) fn card_view(row: &Row) -> CardView {
 }
 
 fn card_view_of(row: &Row) -> CardView {
-    if let Some(look) = &row.look {
+    let reported = !matches!(row.tone, Tone::Setup | Tone::Failed | Tone::Stopped | Tone::Shell);
+    if let Some(look) = row.look.as_ref().filter(|_| reported) {
         let tag_ink = match look.tag {
             CardTag::Question => crate::brand::NEEDS,
             _ => tone_color(look.ring.tone),
         };
+        let named_like_kind = |kind: StageKind| look.line.to_lowercase().starts_with(kind.word());
+        let line = match look
+            .kind
+            .filter(|kind| look.tone == ProgressTone::Working && !named_like_kind(*kind))
+        {
+            Some(kind) => format!("{} \u{b7} {}", kind.word(), look.line),
+            None => look.line.clone(),
+        };
         return CardView {
             fraction: look.ring.fraction,
             ring: tone_color(look.ring.tone),
-            line: look.line.clone(),
+            line,
             line_ink: crate::brand::SOFT,
             tag: look.tag.label(look.questions),
             tag_ink,
         };
     }
-    let status_tone = tone(&row.status);
+    let status_tone = row.tone;
     let ink = color(status_tone).unwrap_or(crate::brand::MUTED);
     CardView {
         fraction: if status_tone == Tone::Done { 1.0 } else { 0.0 },
@@ -289,7 +310,7 @@ pub(crate) fn is_ticking(overview: &Overview) -> bool {
         .needs
         .iter()
         .chain(overview.places.iter().flat_map(|place| &place.rows))
-        .any(|row| !matches!(tone(&row.status), Tone::Done | Tone::Failed))
+        .any(|row| !matches!(row.tone, Tone::Done | Tone::Failed))
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -357,6 +378,7 @@ pub(crate) struct RepoChip {
 pub(crate) struct Board {
     pub(crate) needs: Vec<Row>,
     pub(crate) working: Vec<Row>,
+    pub(crate) waiting: Vec<Row>,
     pub(crate) idle: Vec<Row>,
     pub(crate) counts: Counts,
     pub(crate) chips: Vec<RepoChip>,
@@ -364,15 +386,20 @@ pub(crate) struct Board {
 
 impl Board {
     pub(crate) fn total(&self) -> usize {
-        self.needs.len() + self.working.len() + self.idle.len()
+        self.needs.len() + self.working.len() + self.waiting.len() + self.idle.len()
     }
 
-    /// `12 agents \u{b7} 3 need you \u{b7} 5 working \u{b7} 4 idle`.
+    /// `12 agents \u{b7} 3 need you \u{b7} 5 working \u{b7} 2 waiting \u{b7} 4 idle`; the waiting
+    /// part only while an agent waits.
     pub(crate) fn summary(&self) -> String {
         let total = self.total();
         let agents = if total == 1 { "1 agent".to_owned() } else { format!("{total} agents") };
+        let waiting = match self.waiting.len() {
+            0 => String::new(),
+            count => format!(" \u{b7} {count} waiting"),
+        };
         format!(
-            "{agents} \u{b7} {} need you \u{b7} {} working \u{b7} {} idle",
+            "{agents} \u{b7} {} need you \u{b7} {} working{waiting} \u{b7} {} idle",
             self.needs.len(),
             self.working.len(),
             self.idle.len()
@@ -398,10 +425,10 @@ impl Overview {
         let keep = |row: &&Row| repo.is_none_or(|repo| row.place == repo);
         let needs: Vec<Row> = self.needs.iter().filter(keep).cloned().collect();
         let rest = self.places.iter().flat_map(|place| &place.rows).filter(keep);
-        let (mut working, mut idle) = (Vec::new(), Vec::new());
+        let (mut working, mut waiting, mut idle) = (Vec::new(), Vec::new(), Vec::new());
         let mut counts = Counts { needs: needs.len(), ..Counts::default() };
         for row in rest {
-            match tone(&row.status) {
+            match row.tone {
                 Tone::Setup => {
                     counts.setup += 1;
                     working.push(row.clone());
@@ -410,8 +437,17 @@ impl Overview {
                     counts.working += 1;
                     working.push(row.clone());
                 }
-                Tone::Failed | Tone::Done | Tone::Stopped | Tone::Needs | Tone::Shell => {
-                    match tone(&row.status) {
+                Tone::Waiting => {
+                    counts.waiting += 1;
+                    waiting.push(row.clone());
+                }
+                Tone::Failed
+                | Tone::Done
+                | Tone::Stopped
+                | Tone::Needs
+                | Tone::Blocked
+                | Tone::Shell => {
+                    match row.tone {
                         Tone::Failed => counts.failed += 1,
                         Tone::Stopped => counts.stopped += 1,
                         _ => counts.done += 1,
@@ -420,9 +456,25 @@ impl Overview {
                 }
             }
         }
-        idle.sort_by_key(|row| rank(tone(&row.status)));
-        Board { needs, working, idle, counts, chips }
+        idle.sort_by_key(|row| rank(row.tone));
+        working.sort_by_key(stage_order);
+        waiting.sort_by_key(soonest);
+        Board { needs, working, waiting, idle, counts, chips }
     }
+}
+
+fn stage_order(row: &Row) -> usize {
+    row.look
+        .as_ref()
+        .and_then(|look| look.kind)
+        .and_then(|kind| StageKind::ALL.iter().position(|each| *each == kind))
+        .unwrap_or(StageKind::ALL.len())
+}
+
+/// Waiting agents, the one that falls due first on top: dated waits by date, the rest after them.
+fn soonest(row: &Row) -> (bool, Option<Date>) {
+    let date = row.look.as_ref().and_then(|look| look.waiting.as_ref()).and_then(|wait| wait.date);
+    (date.is_none(), date)
 }
 
 fn idle_text(secs: f64) -> String {
@@ -452,6 +504,17 @@ pub(crate) fn idle_line(row: &Row) -> String {
         (Some(1), _) => format!("{lead} \u{b7} Next: tomorrow, {}", next.what),
         (Some(_), _) => format!("{lead} \u{b7} Next: today, {}", next.what),
         (None, _) => format!("{lead} \u{b7} Next: {}", next.what),
+    }
+}
+
+/// The second line of a waiting card: what it waits on, or the note when it names nothing.
+pub(crate) fn waiting_line(row: &Row, note: &str) -> String {
+    let Some(waiting) = row.look.as_ref().and_then(|look| look.waiting.as_ref()) else {
+        return note.to_owned();
+    };
+    match waiting.date {
+        Some(date) => format!("Waiting until {}", day_text(date)),
+        None => format!("Waiting on {}", waiting.label),
     }
 }
 
@@ -491,6 +554,7 @@ pub(crate) fn ask_tag(row: &Row, tag: &str) -> String {
 pub(crate) fn ask_button(row: &Row) -> &'static str {
     match &row.status {
         AgentStatus::NeedsYou(Reason::Permission) => "Review",
+        _ if row.tone == Tone::Blocked => "Review",
         _ => "Answer",
     }
 }
@@ -513,6 +577,7 @@ mod tests {
             workflow: None,
             agent_id: "claude".into(),
             branch: format!("agent/{title}"),
+            tone: crate::status_view::tone(&status),
             status,
             detail: None,
             end_block: None,
@@ -558,8 +623,186 @@ mod tests {
         );
         assert_eq!(
             overview.counts,
-            Counts { setup: 1, working: 1, needs: 1, done: 2, failed: 1, stopped: 1 }
+            Counts { setup: 1, working: 1, needs: 1, waiting: 0, done: 2, failed: 1, stopped: 1 }
         );
+    }
+
+    fn reported(
+        id: u64,
+        title: &str,
+        state: &str,
+        extra: &serde_json::Value,
+        stage_kind: &str,
+    ) -> Row {
+        let mut args = serde_json::json!({
+            "goal": "g", "state": state, "now": "doing it",
+            "stages": [
+                { "name": "Main", "kind": stage_kind, "status": "active" },
+                { "name": "Verify", "kind": "verify", "status": "todo" }
+            ],
+            "steps": [{ "stage": "Main", "text": "a step", "status": "active" }]
+        });
+        args.as_object_mut().unwrap().extend(extra.as_object().unwrap().clone());
+        if state == "done" {
+            args["stages"][0]["status"] = serde_json::json!("done");
+            args["steps"][0]["status"] = serde_json::json!("done");
+        }
+        let ledger =
+            tidewatch_core::progress_report::ProgressReport::check(args.as_object().unwrap(), None)
+                .unwrap()
+                .to_ledger();
+        let mut row = row(id, title, AgentStatus::Done);
+        let reported = ledger.shown_state();
+        row.tone = crate::status_view::shown(&row.status, Some(reported));
+        row.look = Some(crate::progress_model::look_as(&ledger, false, reported));
+        row
+    }
+
+    fn ask() -> serde_json::Value {
+        serde_json::json!({ "needs_you": { "question": "Which?", "options": ["A", "B"], "recommended": 0 } })
+    }
+
+    #[test]
+    fn the_reported_state_files_each_tab_in_its_own_bucket() {
+        let overview = build(vec![place(
+            "web",
+            vec![
+                reported(1, "asks", "needs_you", &ask(), "build"),
+                reported(2, "blocked", "blocked", &serde_json::json!({}), "build"),
+                reported(3, "works", "working", &serde_json::json!({}), "build"),
+                reported(
+                    4,
+                    "waits",
+                    "waiting",
+                    &serde_json::json!({ "waiting_on": { "pr": 7 } }),
+                    "ship",
+                ),
+                reported(5, "finished", "done", &serde_json::json!({}), "verify"),
+            ],
+        )]);
+        assert_eq!(titles(&overview.needs), ["asks", "blocked"]);
+        let board = overview.board(None);
+        assert_eq!(titles(&board.working), ["works"]);
+        assert_eq!(titles(&board.waiting), ["waits"]);
+        assert_eq!(titles(&board.idle), ["finished"]);
+        assert_eq!(
+            board.summary(),
+            "5 agents \u{b7} 2 need you \u{b7} 1 working \u{b7} 1 waiting \u{b7} 1 idle"
+        );
+        assert_eq!((board.counts.needs, board.counts.waiting, board.counts.working), (2, 1, 1));
+    }
+
+    #[test]
+    fn the_summary_names_waiting_only_while_an_agent_waits() {
+        let overview = build(vec![place("web", vec![row(1, "a", AgentStatus::Working)])]);
+        assert_eq!(
+            overview.board(None).summary(),
+            "1 agent \u{b7} 0 need you \u{b7} 1 working \u{b7} 0 idle"
+        );
+    }
+
+    #[test]
+    fn waiting_agents_list_the_soonest_date_first_and_undated_waits_after_them() {
+        let dated = |date: &str| serde_json::json!({ "waiting_on": { "date": date } });
+        let overview = build(vec![place(
+            "web",
+            vec![
+                reported(
+                    1,
+                    "event",
+                    "waiting",
+                    &serde_json::json!({ "waiting_on": { "event": "x" } }),
+                    "ship",
+                ),
+                reported(2, "later", "waiting", &dated("2026-11-05"), "ship"),
+                reported(3, "sooner", "waiting", &dated("2026-10-28"), "ship"),
+            ],
+        )]);
+        assert_eq!(titles(&overview.board(None).waiting), ["sooner", "later", "event"]);
+    }
+
+    #[test]
+    fn working_agents_group_by_the_kind_of_their_stage() {
+        let overview = build(vec![place(
+            "web",
+            vec![
+                reported(1, "verifying", "working", &serde_json::json!({}), "verify"),
+                reported(2, "shipping", "working", &serde_json::json!({}), "ship"),
+                reported(3, "reading", "working", &serde_json::json!({}), "understand"),
+                reported(4, "building", "working", &serde_json::json!({}), "build"),
+                row(5, "unreported", AgentStatus::Working),
+            ],
+        )]);
+        assert_eq!(
+            titles(&overview.board(None).working),
+            ["reading", "building", "shipping", "verifying", "unreported"]
+        );
+        let shipping = overview.places[0].rows.iter().find(|r| r.title == "shipping").unwrap();
+        assert_eq!(card_view(shipping).line, "ship \u{b7} Main \u{b7} doing it");
+    }
+
+    #[test]
+    fn a_stage_named_like_its_kind_is_not_said_twice_on_the_card() {
+        let args = serde_json::json!({
+            "goal": "g", "state": "working", "now": "running tests",
+            "stages": [
+                { "name": "Build", "kind": "build", "status": "active" },
+                { "name": "Ship", "kind": "ship", "status": "todo" }
+            ],
+            "steps": [{ "stage": "Build", "text": "a step", "status": "active" }]
+        });
+        let ledger =
+            tidewatch_core::progress_report::ProgressReport::check(args.as_object().unwrap(), None)
+                .unwrap()
+                .to_ledger();
+        let mut row = row(1, "x", AgentStatus::Working);
+        row.look = Some(crate::progress_model::look(&ledger, false));
+        assert_eq!(card_view(&row).line, "Build \u{b7} running tests");
+    }
+
+    #[test]
+    fn a_waiting_card_says_what_it_waits_on_and_a_blocked_one_offers_review() {
+        let pr = reported(
+            1,
+            "a",
+            "waiting",
+            &serde_json::json!({ "waiting_on": { "pr": 2340 } }),
+            "ship",
+        );
+        assert_eq!(waiting_line(&pr, "note"), "Waiting on PR #2340");
+        let job = reported(
+            2,
+            "b",
+            "waiting",
+            &serde_json::json!({ "waiting_on": { "job": "backfill" } }),
+            "ship",
+        );
+        assert_eq!(waiting_line(&job, "note"), "Waiting on backfill");
+        let dated = reported(
+            3,
+            "c",
+            "waiting",
+            &serde_json::json!({ "waiting_on": { "date": "2026-10-28" } }),
+            "ship",
+        );
+        assert_eq!(waiting_line(&dated, "note"), "Waiting until Wed 28");
+        assert_eq!(waiting_line(&row(4, "d", AgentStatus::Done), "note"), "note");
+        let blocked = reported(5, "e", "blocked", &serde_json::json!({}), "build");
+        assert_eq!(ask_button(&blocked), "Review");
+        assert_eq!(card_view(&blocked).tag, "Blocked");
+        assert_eq!(card_view(&blocked).tag_ink, crate::brand::BLOCKED);
+    }
+
+    #[test]
+    fn a_process_fact_beats_the_report_on_the_card() {
+        let mut failed = reported(1, "a", "working", &serde_json::json!({}), "build");
+        failed.status = AgentStatus::Failed("exited".into());
+        failed.tone = crate::status_view::shown(
+            &failed.status,
+            Some(tidewatch_core::progress::State::Working),
+        );
+        assert_eq!(card_view(&failed).tag, "Failed");
+        assert_eq!(build(vec![place("web", vec![failed])]).counts.failed, 1);
     }
 
     #[test]

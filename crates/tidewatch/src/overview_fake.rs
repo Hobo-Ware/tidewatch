@@ -4,13 +4,15 @@
 
 use tidewatch_core::civil_date::Date;
 use tidewatch_core::elsewhere::{Cli, Key};
-use tidewatch_core::progress::Ledger;
+use tidewatch_core::progress::{Ledger, State as Reported};
+use tidewatch_core::progress_report::ProgressReport;
 use tidewatch_core::status::{AgentStatus, Reason};
 
 use crate::agenda::{Day, Item, Mark};
 use crate::overview::{self, AgentKind, Next, Overview, PlaceInput, PoofedRow, Row};
 use crate::overview_view::State;
-use crate::progress_model::look;
+use crate::progress_model::{look, look_as};
+use crate::status_view::shown;
 use crate::takeover::{Offer, Status};
 use crate::takeover_view::Card;
 
@@ -30,17 +32,48 @@ pub(crate) fn initial_state() -> State {
     State { repo: std::env::var("TIDEWATCH_FAKE_OVERVIEW_REPO").ok(), ..State::default() }
 }
 
+fn kind_of(phase: &str) -> &'static str {
+    match phase {
+        "Understand" => "understand",
+        "PR" => "ship",
+        _ => "build",
+    }
+}
+
+fn report(state: &str, now: &str, stage: (&str, &str), extra: &serde_json::Value) -> Ledger {
+    let mut args = serde_json::json!({
+        "goal": "x",
+        "state": state,
+        "now": now,
+        "stages": [
+            { "name": stage.0, "kind": stage.1, "status": "active" },
+            { "name": "Wrap up", "kind": "verify", "status": "todo" }
+        ],
+        "steps": [{ "stage": stage.0, "text": "step", "status": "active" }],
+    });
+    if let (Some(args), Some(extra)) = (args.as_object_mut(), extra.as_object()) {
+        args.extend(extra.clone());
+    }
+    if state == "done" {
+        args["stages"][0]["status"] = serde_json::json!("done");
+        args["steps"][0]["status"] = serde_json::json!("done");
+    }
+    ProgressReport::check(args.as_object().expect("the stand-in report is an object"), None)
+        .map(|report| report.to_ledger())
+        .expect("the stand-in report follows the contract")
+}
+
 fn ledger_look(phase: &str, note: &str, done: usize, total: usize) -> crate::progress_model::Look {
-    let items: String = (0..total)
-        .map(|n| format!("- [{}] step {n}\n", if n < done { "x" } else { " " }))
-        .collect::<Vec<String>>()
-        .concat();
-    look(
-        &Ledger::parse(&format!(
-            "# Goal\nx\n\n## Status\nphase: {phase}\nstate: working\nnote: {note}\n\n## Checklist\n### 1. {phase}\n{items}"
-        )),
-        false,
-    )
+    let steps: Vec<serde_json::Value> = (0..total)
+        .map(|n| {
+            let status = if n < done { "done" } else { "todo" };
+            serde_json::json!({ "stage": phase, "text": format!("step {n}"), "status": status })
+        })
+        .collect();
+    let mut ledger =
+        report("working", note, (phase, kind_of(phase)), &serde_json::json!({ "steps": steps }));
+    note.clone_into(&mut ledger.status.note);
+    look(&ledger, false)
 }
 
 fn ask_look(question: &str, why: &str, options: &str) -> crate::progress_model::Look {
@@ -53,6 +86,14 @@ fn ask_look(question: &str, why: &str, options: &str) -> crate::progress_model::
         )),
         false,
     )
+}
+
+/// A row whose agent reported `state`: its tone follows the report, as on every other screen.
+fn reported_row(id: u64, spec: &Spec, state: Reported, ledger: &Ledger) -> Row {
+    let mut r = row(id, spec);
+    r.look = Some(look_as(ledger, false, state));
+    r.tone = shown(&spec.status, Some(state));
+    r
 }
 
 struct Spec {
@@ -77,6 +118,7 @@ fn row(id: u64, spec: &Spec) -> Row {
         },
         branch: String::new(),
         status: spec.status.clone(),
+        tone: crate::status_view::tone(&spec.status),
         detail: Some(spec.line.to_owned()),
         end_block: None,
         elapsed: spec.mins * 60.0,
@@ -232,6 +274,52 @@ pub(crate) fn build(working: usize) -> Fake {
     ));
     needs_rows[2].look = Some(ask_look("Keep the old URLs as redirects?", "", ""));
     needs_rows[2].auto_pick = Some("Picks the recommended answer in 3:40".to_owned());
+    let waits = [
+        (
+            "recap-backfill",
+            "acme-web",
+            cli("claude"),
+            "Backfill",
+            "Backfill batch 2 is running",
+            serde_json::json!({ "waiting_on": { "date": "2026-10-29" } }),
+            42.0,
+        ),
+        (
+            "deploy-season-links",
+            "acme-api",
+            cli("codex"),
+            "Deploy",
+            "Deploy is queued behind the freeze",
+            serde_json::json!({ "waiting_on": { "date": "2026-10-27" } }),
+            130.0,
+        ),
+        (
+            "partner-feed-switch",
+            "acme-workers",
+            AgentKind::Yolo,
+            "Cutover",
+            "Waiting for the partner to confirm the new feed",
+            serde_json::json!({ "waiting_on": { "event": "the partner confirms" } }),
+            75.0,
+        ),
+    ];
+    for (n, (title, place, kind, stage, note, extra, mins)) in waits.into_iter().enumerate() {
+        let spec = spec(title, place, kind, Done, "", mins);
+        let ledger = report("waiting", note, (stage, "ship"), &extra);
+        idle_rows.push(reported_row(300 + n as u64, &spec, Reported::Waiting, &ledger));
+    }
+    let blocked = spec("rebuild-people-index", "acme-workers", cli("claude"), Done, "", 95.0);
+    let stuck = report(
+        "blocked",
+        "The staging database refuses writes",
+        ("Build", "build"),
+        &serde_json::json!({}),
+    );
+    needs_rows.push(reported_row(20, &blocked, Reported::Blocked, &stuck));
+    let finished = spec("season-recap-links", "acme-web", cli("claude"), Done, "", 8.0);
+    let summary =
+        report("done", "Shipped and checked live", ("Verify", "verify"), &serde_json::json!({}));
+    idle_rows.push(reported_row(310, &finished, Reported::Done, &summary));
     let mut by_place: Vec<(&str, Vec<Row>)> =
         vec![("acme-api", vec![]), ("acme-web", vec![]), ("acme-workers", vec![])];
     for r in needs_rows.drain(..).chain(working_rows.drain(..)).chain(idle_rows.drain(..)) {

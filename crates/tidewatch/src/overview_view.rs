@@ -18,7 +18,7 @@ use crate::commands::Command;
 use crate::mascot::{self, Pose};
 use crate::overview::{
     Board, Overview, PoofedRow, RepoChip, Row, WORKING_CAP, ask_button, ask_tag, capped, card_view,
-    fmt_elapsed, idle_line, repo_ink,
+    fmt_elapsed, idle_line, repo_ink, waiting_line,
 };
 use crate::overview_rail;
 use crate::progress_model::Ask;
@@ -348,6 +348,7 @@ fn empty(ui: &mut Ui) {
 enum Lane {
     Needs,
     Working,
+    Waiting,
     Idle,
 }
 
@@ -356,12 +357,14 @@ impl Lane {
         match self {
             Self::Needs => "Needs you",
             Self::Working => "Working",
+            Self::Waiting => "Waiting",
             Self::Idle => "Idle",
         }
     }
 
     fn caption(self) -> &'static str {
         match self {
+            Self::Waiting => "soonest first",
             Self::Idle => "nothing asked",
             _ => "",
         }
@@ -371,6 +374,7 @@ impl Lane {
         match self {
             Self::Needs => brand::NEEDS,
             Self::Working => brand::WORKING,
+            Self::Waiting => brand::WAITING,
             Self::Idle => brand::FAINT,
         }
     }
@@ -379,7 +383,7 @@ impl Lane {
         match self {
             Self::Needs => NEEDS_H,
             Self::Working => WORKING_H,
-            Self::Idle => IDLE_H,
+            Self::Waiting | Self::Idle => IDLE_H,
         }
     }
 
@@ -395,7 +399,7 @@ impl Lane {
     fn columns(self, width: f32, answering: bool) -> usize {
         let (min, max) = match self {
             Self::Needs if answering => (ASK_CARD_MIN_W, 3),
-            Self::Needs | Self::Working => (250.0, 3),
+            Self::Needs | Self::Working | Self::Waiting => (250.0, 3),
             Self::Idle => (300.0, 2),
         };
         columns(width, min, max)
@@ -432,6 +436,12 @@ fn main_column(ui: &mut Ui, width: f32, board: &Board, state: &mut State, out: &
         if drawn.toggled {
             state.working_all = !state.working_all;
         }
+        ui.add_space(SECTION_GAP);
+    }
+    if !board.waiting.is_empty() {
+        let drawn =
+            grid_section(ui, width, Lane::Waiting, &board.waiting, board.waiting.len(), None);
+        out.jump = out.jump.or(drawn.jump);
         ui.add_space(SECTION_GAP);
     }
     if !board.idle.is_empty() {
@@ -740,7 +750,7 @@ fn card(ui: &mut Ui, rect: Rect, row: &Row, lane: Lane) -> CardOut {
                 painter.rect_filled(fill, CornerRadius::same(2), brand::WORKING);
             }
         }
-        Lane::Idle => {}
+        Lane::Waiting | Lane::Idle => {}
     }
     let tip = match ask {
         Some(ask) => ask.why.as_deref().map_or_else(
@@ -790,8 +800,9 @@ fn second_line(row: &Row, lane: Lane, view: &crate::overview::CardView) -> (Stri
             (ask, brand::NEEDS)
         }
         Lane::Working => (view.line.clone(), brand::MUTED),
+        Lane::Waiting => (waiting_line(row, &view.line), brand::WAITING),
         Lane::Idle => {
-            let failed = status_view::tone(&row.status) == Tone::Failed;
+            let failed = row.tone == Tone::Failed;
             (idle_line(row), if failed { brand::RED } else { brand::MUTED })
         }
     }
@@ -865,6 +876,7 @@ mod tests {
             workflow: None,
             agent_id: "claude".into(),
             branch: format!("agent/{title}"),
+            tone: crate::status_view::tone(&status),
             status,
             detail: Some("Bash: touch hello.txt".into()),
             end_block: None,
@@ -993,6 +1005,66 @@ mod tests {
         assert!(!has(&texts, "Needs you"), "{texts:?}");
         assert!(has(&texts, "2 agents \u{b7} 0 need you \u{b7} 1 working \u{b7} 1 idle"));
         assert!(has(&texts, "went-quiet"));
+    }
+
+    fn reported_row(id: u64, title: &str, state: &str, extra: &serde_json::Value) -> Row {
+        let mut args = serde_json::json!({
+            "goal": "g", "state": state, "now": "doing it",
+            "stages": [
+                { "name": "Main", "kind": "ship", "status": "active" },
+                { "name": "Verify", "kind": "verify", "status": "todo" }
+            ],
+            "steps": [{ "stage": "Main", "text": "a step", "status": "active" }]
+        });
+        args.as_object_mut().unwrap().extend(extra.as_object().unwrap().clone());
+        let ledger =
+            tidewatch_core::progress_report::ProgressReport::check(args.as_object().unwrap(), None)
+                .unwrap()
+                .to_ledger();
+        let mut row = row(id, title, "acme-web", AgentStatus::Done);
+        let reported = ledger.shown_state();
+        row.tone = crate::status_view::shown(&row.status, Some(reported));
+        row.look = Some(crate::progress_model::look_as(&ledger, false, reported));
+        row
+    }
+
+    #[test]
+    fn waiting_agents_have_their_own_section_and_blocked_ones_sit_with_what_needs_you() {
+        let mut screen = Screen::new(overview(vec![
+            reported_row(
+                1,
+                "waits-on-pr",
+                "waiting",
+                &serde_json::json!({ "waiting_on": { "pr": 2340 } }),
+            ),
+            reported_row(
+                2,
+                "waits-on-date",
+                "waiting",
+                &serde_json::json!({ "waiting_on": { "date": "2026-10-28" } }),
+            ),
+            reported_row(3, "is-stuck", "blocked", &serde_json::json!({})),
+            row(4, "busy", "acme-web", AgentStatus::Working),
+        ]));
+        let texts = screen.texts();
+        for want in [
+            "Waiting",
+            "soonest first",
+            "\u{b7} Waiting on PR #2340",
+            "\u{b7} Waiting until Wed 28",
+            "Needs you",
+            "is-stuck",
+            "Review",
+        ] {
+            assert!(has(&texts, want), "{want:?} not drawn in {texts:?}");
+        }
+        assert!(has(
+            &texts,
+            "4 agents \u{b7} 1 need you \u{b7} 1 working \u{b7} 2 waiting \u{b7} 0 idle"
+        ));
+        let order = |name: &str| texts.iter().position(|text| text == name).unwrap();
+        assert!(order("waits-on-date") < order("waits-on-pr"), "the dated wait is soonest");
+        assert_eq!(screen.click("is-stuck").jump, Some(3));
     }
 
     #[test]

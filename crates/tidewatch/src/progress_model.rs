@@ -1,17 +1,18 @@
 //! What the progress screens say about a ledger, as plain data: ring, bars, rows, tags (pure).
 
+use tidewatch_core::civil_date::Date;
 use tidewatch_core::kind::Kind;
 use tidewatch_core::progress::{Choice, Entry, Ledger, Mark, Phase, PhaseState, State, real};
+use tidewatch_core::progress_report::{StageKind, WaitingOn};
 use tidewatch_core::stages::{self, Group, Stage};
 
+use crate::job_model::{BarCard, Card};
 use crate::progress_stale::fresh;
-
-/// How many checklist rows show before "Show all".
-pub(crate) const ROW_LIMIT: usize = 8;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Tone {
     Working,
+    NeedsYou,
     Waiting,
     Blocked,
     Done,
@@ -21,6 +22,7 @@ impl Tone {
     pub(crate) fn word(self) -> &'static str {
         match self {
             Self::Working => "Working",
+            Self::NeedsYou => "Needs you",
             Self::Waiting => "Waiting",
             Self::Blocked => "Blocked",
             Self::Done => "Done",
@@ -29,15 +31,16 @@ impl Tone {
 }
 
 pub(crate) fn tone(ledger: &Ledger) -> Tone {
-    if ledger.is_blocked() {
-        return Tone::Blocked;
-    }
-    let counts = ledger.counts();
-    match ledger.status.state {
-        Some(State::Done) => Tone::Done,
-        Some(State::Waiting | State::NeedsYou) => Tone::Waiting,
-        None if counts.total > 0 && counts.done == counts.total => Tone::Done,
-        Some(State::Working | State::Blocked) | None => Tone::Working,
+    tone_of(ledger.shown_state())
+}
+
+pub(crate) fn tone_of(state: State) -> Tone {
+    match state {
+        State::Working => Tone::Working,
+        State::NeedsYou => Tone::NeedsYou,
+        State::Waiting => Tone::Waiting,
+        State::Blocked => Tone::Blocked,
+        State::Done => Tone::Done,
     }
 }
 
@@ -98,8 +101,11 @@ pub(crate) fn step(ledger: &Ledger, kind: Kind) -> Option<Step> {
 }
 
 pub(crate) fn ring(ledger: &Ledger) -> Ring {
+    ring_as(ledger, tone(ledger))
+}
+
+pub(crate) fn ring_as(ledger: &Ledger, tone: Tone) -> Ring {
     let counts = ledger.counts();
-    let tone = tone(ledger);
     let fraction = if counts.total > 0 {
         (counts.done as f32 / counts.total as f32).clamp(0.0, 1.0)
     } else if tone == Tone::Done {
@@ -185,23 +191,119 @@ pub(crate) struct ItemRow<'a> {
     pub(crate) why: Option<&'a str>,
 }
 
-pub(crate) fn item_rows(ledger: &Ledger, kind: Kind) -> Vec<ItemRow<'_>> {
+/// The steps of one stage, under the stage's name. A finished stage is `over`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct StageRows<'a> {
+    pub(crate) title: String,
+    pub(crate) over: bool,
+    pub(crate) current: bool,
+    pub(crate) rows: Vec<ItemRow<'a>>,
+}
+
+/// Every stage that has steps, in order, with its steps.
+pub(crate) fn stage_rows(ledger: &Ledger, kind: Kind) -> Vec<StageRows<'_>> {
     let (groups, current) = grouped(ledger, kind);
-    let Some(group) = current.and_then(|index| groups.get(index)) else { return Vec::new() };
-    phases_of(ledger, group)
-        .into_iter()
-        .flat_map(|phase| &phase.items)
-        .map(|item| ItemRow {
-            mark: item.mark,
-            text: item.text.as_str(),
-            why: item.why.as_deref().map(str::trim).filter(|why| !why.is_empty()),
+    groups
+        .iter()
+        .enumerate()
+        .filter_map(|(index, group)| {
+            let phases = phases_of(ledger, group);
+            let rows: Vec<ItemRow<'_>> = phases
+                .iter()
+                .flat_map(|phase| &phase.items)
+                .map(|item| ItemRow {
+                    mark: item.mark,
+                    text: item.text.as_str(),
+                    why: item.why.as_deref().map(str::trim).filter(|why| !why.is_empty()),
+                })
+                .collect();
+            let over = phases
+                .iter()
+                .all(|phase| matches!(phase.state(), PhaseState::Done | PhaseState::Skipped));
+            (!rows.is_empty()).then(|| StageRows {
+                title: group_label(ledger, group),
+                over,
+                current: current == Some(index),
+                rows,
+            })
         })
         .collect()
 }
 
-/// How many of `total` rows show, and how many hide behind "Show all".
-pub(crate) fn rows_shown(total: usize, expanded: bool) -> (usize, usize) {
-    if expanded || total <= ROW_LIMIT { (total, 0) } else { (ROW_LIMIT, total - ROW_LIMIT) }
+/// The stages to draw: all of them when asked or when every one is over, else those still open.
+pub(crate) fn stages_shown<'a, 'b>(
+    stages: &'b [StageRows<'a>],
+    all: bool,
+) -> Vec<&'b StageRows<'a>> {
+    let everything = all || stages.iter().all(|stage| stage.over);
+    stages.iter().filter(|stage| everything || !stage.over).collect()
+}
+
+/// The Now line of the panel: what is happening, and the job or the wait it is tied to.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct Now {
+    pub(crate) label: &'static str,
+    pub(crate) text: String,
+    pub(crate) right: Option<String>,
+    pub(crate) fraction: Option<f32>,
+    /// The job this line took over, so the job list does not draw it twice.
+    pub(crate) job: Option<u64>,
+}
+
+fn lead_bar<'a>(ledger: &Ledger, jobs: &'a [Card]) -> Option<&'a BarCard> {
+    let mut bars = jobs.iter().filter_map(|card| match card {
+        Card::Bar(bar) => Some(bar),
+        _ => None,
+    });
+    let named = match &ledger.waiting_on {
+        Some(WaitingOn::Job(name)) => Some(name.as_str()),
+        _ => None,
+    };
+    let first = bars.clone().next();
+    named.and_then(|name| bars.find(|bar| bar.name.eq_ignore_ascii_case(name))).or(first)
+}
+
+fn eta_of(bar: &BarCard) -> Option<&str> {
+    bar.detail.split(" \u{b7} ").find(|part| part.starts_with("about "))
+}
+
+fn wait_text(waiting: &WaitingOn) -> String {
+    match waiting {
+        WaitingOn::Date(date) => format!("until {date}"),
+        other => other.label(),
+    }
+}
+
+/// The Now line: the agent's note, with the running job's percent and time left, or what it waits on.
+pub(crate) fn now_line(ledger: &Ledger, tone: Tone, jobs: &[Card]) -> Option<Now> {
+    let note = ledger.status.note.trim();
+    let step = || {
+        ledger
+            .current_phase()
+            .and_then(|phase| phase.items.iter().find(|item| item.mark == Mark::Doing))
+            .map(|item| item.text.trim())
+    };
+    let text = if note.is_empty() { step().unwrap_or_default() } else { note };
+    let label = if tone == Tone::Done { "Summary" } else { "Now" };
+    let bar = lead_bar(ledger, jobs).filter(|_| tone != Tone::Done);
+    let right = match bar {
+        Some(bar) => {
+            let parts: Vec<&str> =
+                [bar.right.as_deref(), eta_of(bar)].into_iter().flatten().collect();
+            (!parts.is_empty()).then(|| parts.join(" \u{b7} "))
+        }
+        None => ledger.waiting_on.as_ref().filter(|_| tone != Tone::Done).map(wait_text),
+    };
+    if text.is_empty() && right.is_none() {
+        return None;
+    }
+    Some(Now {
+        label,
+        text: text.to_owned(),
+        right,
+        fraction: bar.map(|bar| bar.fraction.clamp(0.0, 1.0)),
+        job: bar.map(|bar| bar.id),
+    })
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -311,6 +413,7 @@ pub(crate) fn tab_ring(ledger: &Ledger, stale: bool) -> TabRing {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum CardTag {
     Question,
+    NeedsYou,
     Blocked,
     Done,
     Waiting,
@@ -324,6 +427,7 @@ impl CardTag {
             Self::Question => {
                 format!("{questions} question{}", if questions == 1 { "" } else { "s" })
             }
+            Self::NeedsYou => "Needs you".to_owned(),
             Self::Blocked => "Blocked".to_owned(),
             Self::Done => "Done".to_owned(),
             Self::Waiting => "Waiting".to_owned(),
@@ -332,11 +436,12 @@ impl CardTag {
     }
 }
 
-pub(crate) fn card_tag(ledger: &Ledger) -> CardTag {
-    if ledger.has_question() {
+pub(crate) fn card_tag(ledger: &Ledger, tone: Tone) -> CardTag {
+    if matches!(tone, Tone::NeedsYou | Tone::Done) && ledger.has_question() {
         return CardTag::Question;
     }
-    match tone(ledger) {
+    match tone {
+        Tone::NeedsYou => CardTag::NeedsYou,
         Tone::Blocked => CardTag::Blocked,
         Tone::Done => CardTag::Done,
         Tone::Waiting => CardTag::Waiting,
@@ -345,9 +450,9 @@ pub(crate) fn card_tag(ledger: &Ledger) -> CardTag {
 }
 
 /// The Overview card's one line: the status note, with the phase before it while work goes on.
-pub(crate) fn card_line(ledger: &Ledger) -> String {
+pub(crate) fn card_line(ledger: &Ledger, tone: Tone) -> String {
     let note = ledger.status.note.trim();
-    if tone(ledger) == Tone::Done {
+    if tone == Tone::Done {
         return note.to_owned();
     }
     let phase = phase_name(ledger);
@@ -361,8 +466,12 @@ pub(crate) fn card_line(ledger: &Ledger) -> String {
 /// What an Overview card says about a ledger.
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct Look {
+    pub(crate) tone: Tone,
     pub(crate) ring: Ring,
     pub(crate) line: String,
+    /// What the current stage is for, when the agent said.
+    pub(crate) kind: Option<StageKind>,
+    pub(crate) waiting: Option<Waiting>,
     pub(crate) tag: CardTag,
     pub(crate) questions: usize,
     pub(crate) ask: Option<Ask>,
@@ -389,12 +498,36 @@ pub(crate) fn ask_of(ledger: &Ledger) -> Option<Ask> {
     }
 }
 
+/// What a card says of the thing the agent waits on, and when it falls due.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct Waiting {
+    pub(crate) label: String,
+    pub(crate) date: Option<Date>,
+}
+
 pub(crate) fn look(ledger: &Ledger, stale: bool) -> Look {
+    let state = fresh(ledger, stale).shown_state();
+    look_as(ledger, stale, state)
+}
+
+/// The look of a ledger whose tab shows `state`, which may differ from what the ledger says while
+/// the agent works on past an older report.
+pub(crate) fn look_as(ledger: &Ledger, stale: bool, state: State) -> Look {
     let ledger = &*fresh(ledger, stale);
+    let tone = tone_of(state);
     Look {
-        ring: ring(ledger),
-        line: card_line(ledger),
-        tag: card_tag(ledger),
+        tone,
+        ring: ring_as(ledger, tone),
+        line: card_line(ledger, tone),
+        kind: ledger.current_phase().and_then(|phase| phase.kind),
+        waiting: ledger.waiting_on.as_ref().map(|waiting| Waiting {
+            label: waiting.label(),
+            date: match waiting {
+                WaitingOn::Date(date) => Some(*date),
+                _ => None,
+            },
+        }),
+        tag: card_tag(ledger, tone),
         questions: questions(ledger).len(),
         ask: ask_of(ledger),
     }
@@ -414,7 +547,8 @@ mod tests {
     fn the_tone_follows_the_state_and_blockers() {
         let cases = [
             ("state: working", Tone::Working),
-            ("state: waiting", Tone::Waiting),
+            ("state: needs_you", Tone::NeedsYou),
+            ("state: waiting", Tone::NeedsYou),
             ("state: done", Tone::Done),
             ("state: blocked", Tone::Blocked),
             ("note: nothing said", Tone::Working),
@@ -427,7 +561,13 @@ mod tests {
         }
         let blocked_item =
             "# Goal\nx\n\n## Status\nstate: working\n\n## Checklist\n### 1. A\n- [!] a\n";
-        assert_eq!(tone(&ledger(blocked_item)), Tone::Blocked);
+        assert_eq!(tone(&ledger(blocked_item)), Tone::Working, "what the agent said wins");
+        let no_state = "# Goal\nx\n\n## Checklist\n### 1. A\n- [!] a\n";
+        assert_eq!(
+            tone(&ledger(no_state)),
+            Tone::Blocked,
+            "an old ledger with no state reads its steps"
+        );
         let done_with_blocked =
             "# Goal\nx\n\n## Status\nstate: done\n\n## Checklist\n### 1. A\n- [!] a\n";
         assert_eq!(tone(&ledger(done_with_blocked)), Tone::Done);
@@ -492,10 +632,15 @@ mod tests {
                 ("Done".to_owned(), 0, 3, 0.0, false),
             ]
         );
-        let rows: Vec<_> = item_rows(&old, Kind::Edit).iter().map(|row| row.text).collect();
+        let stages = stage_rows(&old, Kind::Edit);
+        let rows: Vec<_> = stages
+            .iter()
+            .find(|stage| stage.current)
+            .map(|stage| stage.rows.iter().map(|row| row.text).collect())
+            .unwrap_or_default();
         assert_eq!(rows, ["Change", "Test", "Lint", "Time it", "Compare counts", "Stub"]);
         assert_eq!(tab_tip(&old), "Build - 4/11 done");
-        assert_eq!(card_line(&old), "Build \u{b7} timing the query");
+        assert_eq!(card_line(&old, tone(&old)), "Build \u{b7} timing the query");
         assert_eq!(ring(&old).total, 11, "the ring still counts every item");
     }
 
@@ -623,8 +768,11 @@ mod tests {
         assert_eq!(labels(&promoted), [("Understand", false), ("Build", true), ("Done", false)]);
         assert_eq!((promoted[0].done, promoted[0].total), (1, 1));
         let answering = ledger(ANSWERING);
-        let rows: Vec<_> = item_rows(&answering, Kind::Edit).iter().map(|row| row.text).collect();
-        assert_eq!(rows, ["Explain"]);
+        let stages = stage_rows(&answering, Kind::Edit);
+        let current: Vec<_> = stages.iter().filter(|stage| stage.current).collect();
+        assert_eq!(current.len(), 1);
+        assert_eq!(current[0].title, "Build");
+        assert_eq!(current[0].rows.iter().map(|row| row.text).collect::<Vec<_>>(), ["Explain"]);
     }
 
     #[test]
@@ -640,34 +788,122 @@ mod tests {
     }
 
     #[test]
-    fn the_rows_are_the_current_phases_items_with_their_reasons() {
+    fn every_stage_with_steps_lists_them_with_their_reasons_and_the_open_ones_show_first() {
         let ledger = ledger(MIDDLE);
-        let rows = item_rows(&ledger, Kind::Edit);
-        let seen: Vec<_> = rows.iter().map(|row| (row.mark, row.text, row.why)).collect();
+        let stages = stage_rows(&ledger, Kind::Edit);
+        let seen: Vec<_> = stages
+            .iter()
+            .map(|stage| {
+                (
+                    stage.title.as_str(),
+                    stage.over,
+                    stage.current,
+                    stage.rows.iter().map(|row| (row.mark, row.text, row.why)).collect::<Vec<_>>(),
+                )
+            })
+            .collect();
         assert_eq!(
             seen,
             [
-                (Mark::Done, "Skeleton", None),
-                (Mark::Doing, "Validator", Some("half done")),
-                (Mark::Todo, "Tests", None),
-                (Mark::Skipped, "Docs", Some("not needed")),
+                (
+                    "Understand",
+                    true,
+                    false,
+                    vec![(Mark::Done, "Read", None), (Mark::Done, "Decide", None)]
+                ),
+                (
+                    "Build",
+                    false,
+                    true,
+                    vec![
+                        (Mark::Done, "Skeleton", None),
+                        (Mark::Doing, "Validator", Some("half done")),
+                        (Mark::Todo, "Tests", None),
+                        (Mark::Skipped, "Docs", Some("not needed")),
+                    ]
+                ),
+                ("PR", true, false, vec![(Mark::Skipped, "Open the PR", Some("local only"))]),
+                ("Done", false, false, vec![(Mark::Todo, "Commit", None)]),
             ]
         );
-        assert_eq!(item_rows(&Ledger::parse("# Goal\nx\n"), Kind::Edit), []);
+        assert_eq!(stage_rows(&Ledger::parse("# Goal\nx\n"), Kind::Edit), []);
+        let open: Vec<_> =
+            stages_shown(&stages, false).iter().map(|stage| stage.title.as_str()).collect();
+        assert_eq!(open, ["Build", "Done"]);
+        assert_eq!(stages_shown(&stages, true).len(), 4);
+    }
+
+    fn bar(id: u64, name: &str, right: &str, fraction: f32, detail: &str) -> Card {
+        Card::Bar(BarCard {
+            id,
+            name: name.to_owned(),
+            right: Some(right.to_owned()),
+            fraction,
+            detail: detail.to_owned(),
+        })
+    }
+
+    fn waiting_on(job: &str) -> Ledger {
+        let mut ledger =
+            ledger("# Goal\nx\n\n## Status\nstate: waiting\nnote: Backfill step 2 is running\n");
+        ledger.waiting_on = Some(WaitingOn::Job(job.to_owned()));
+        ledger
     }
 
     #[test]
-    fn at_most_eight_rows_show_until_all_are_asked_for() {
-        let cases = [
-            (0, false, (0, 0)),
-            (8, false, (8, 0)),
-            (9, false, (8, 1)),
-            (30, false, (8, 22)),
-            (30, true, (30, 0)),
+    fn the_now_line_takes_the_job_the_report_waits_on_with_its_percent_and_time_left() {
+        let jobs = [
+            bar(1, "checks", "50%", 0.5, "3 of 5"),
+            bar(2, "Recap-Backfill", "4%", 0.04, "12 of 300 rows \u{b7} about 9h 46m left"),
         ];
-        for (total, expanded, want) in cases {
-            assert_eq!(rows_shown(total, expanded), want, "{total} {expanded}");
+        let now = now_line(&waiting_on("recap-backfill"), Tone::Waiting, &jobs).unwrap();
+        assert_eq!(now.label, "Now");
+        assert_eq!(now.text, "Backfill step 2 is running");
+        assert_eq!(now.right.as_deref(), Some("4% \u{b7} about 9h 46m left"));
+        assert_eq!((now.fraction, now.job), (Some(0.04), Some(2)));
+    }
+
+    #[test]
+    fn with_no_named_job_the_first_running_job_leads_and_with_no_job_the_wait_is_the_right_text() {
+        let jobs = [bar(7, "import", "20%", 0.2, "")];
+        let working = ledger("# Goal\nx\n\n## Status\nstate: working\nnote: Importing\n");
+        let now = now_line(&working, Tone::Working, &jobs).unwrap();
+        assert_eq!((now.right.as_deref(), now.job), (Some("20%"), Some(7)));
+        let cases = [
+            (WaitingOn::Pr(2340), "PR #2340"),
+            (WaitingOn::Date(Date::parse("2026-11-01").unwrap()), "until 2026-11-01"),
+            (WaitingOn::Event("the partner replies".into()), "the partner replies"),
+            (WaitingOn::Job("missing".into()), "missing"),
+        ];
+        for (waiting, want) in cases {
+            let mut ledger = ledger("# Goal\nx\n\n## Status\nstate: waiting\nnote: Waiting\n");
+            ledger.waiting_on = Some(waiting);
+            let now = now_line(&ledger, Tone::Waiting, &[]).unwrap();
+            assert_eq!((now.right.as_deref(), now.fraction, now.job), (Some(want), None, None));
         }
+    }
+
+    #[test]
+    fn a_done_report_reads_as_a_summary_with_no_job_and_a_quiet_one_has_no_line() {
+        let jobs = [bar(1, "x", "9%", 0.09, "")];
+        let done = ledger("# Goal\nx\n\n## Status\nstate: done\nnote: Shipped it\n");
+        let now = now_line(&done, Tone::Done, &jobs).unwrap();
+        assert_eq!((now.label, now.right, now.job), ("Summary", None, None));
+        assert_eq!(now_line(&ledger("# Goal\nx\n"), Tone::Working, &[]), None);
+    }
+
+    #[test]
+    fn with_no_note_the_step_in_progress_is_the_now_text() {
+        let ledger =
+            ledger("# Goal\nx\n\n## Checklist\n### 1. Build\n- [x] a\n- [~] Write the test\n");
+        assert_eq!(now_line(&ledger, Tone::Working, &[]).unwrap().text, "Write the test");
+    }
+
+    #[test]
+    fn when_every_stage_is_over_all_of_them_show() {
+        let done = ledger("# Goal\nx\n\n## Checklist\n### 1. A\n- [x] a\n### 2. B\n- [x] b\n");
+        let stages = stage_rows(&done, Kind::Edit);
+        assert_eq!(stages_shown(&stages, false).len(), 2);
     }
 
     #[test]
@@ -716,7 +952,7 @@ mod tests {
     #[test]
     fn a_stale_wait_gives_the_tab_ring_the_working_tone() {
         let waiting = ledger("# Goal\nx\n\n## Status\nstate: waiting\n\n## Needs you\n- Yes?\n");
-        assert_eq!(tab_ring(&waiting, false).ring.tone, Tone::Waiting);
+        assert_eq!(tab_ring(&waiting, false).ring.tone, Tone::NeedsYou);
         assert_eq!(tab_ring(&waiting, true).ring.tone, Tone::Working);
     }
 
@@ -736,12 +972,14 @@ mod tests {
             ("state: done\n\n## Needs you\n- Decide", CardTag::Question),
             ("state: blocked", CardTag::Blocked),
             ("state: done", CardTag::Done),
-            ("state: waiting", CardTag::Waiting),
+            ("state: waiting", CardTag::NeedsYou),
+            ("state: needs_you", CardTag::NeedsYou),
             ("state: working", CardTag::Working),
         ];
         for (rest, want) in cases {
             let text = format!("# Goal\nx\n\n## Status\n{rest}\n");
-            assert_eq!(card_tag(&ledger(&text)), want, "{rest}");
+            let parsed = ledger(&text);
+            assert_eq!(card_tag(&parsed, tone(&parsed)), want, "{rest}");
         }
         for rest in ["state: waiting\n\n## Needs you\n- Yes or changes?", "state: blocked"] {
             let text = format!("# Goal\nx\n\n## Status\n{rest}\n");
@@ -755,20 +993,43 @@ mod tests {
     }
 
     #[test]
+    fn a_wait_that_names_a_job_is_waiting_not_needs_you_and_a_blocked_step_does_not_change_it() {
+        let args = serde_json::json!({
+            "goal": "g", "state": "waiting", "now": "Backfill runs",
+            "stages": [
+                { "name": "Backfill", "kind": "ship", "status": "active" },
+                { "name": "Verify", "kind": "verify", "status": "todo" }
+            ],
+            "steps": [{ "stage": "Backfill", "text": "Write rows", "status": "blocked" }],
+            "waiting_on": { "date": "2026-11-01" }
+        });
+        let ledger =
+            tidewatch_core::progress_report::ProgressReport::check(args.as_object().unwrap(), None)
+                .unwrap()
+                .to_ledger();
+        assert_eq!(tone(&ledger), Tone::Waiting);
+        let look = look(&ledger, false);
+        assert_eq!(look.tag, CardTag::Waiting);
+        assert_eq!(look.kind, Some(StageKind::Ship));
+        assert_eq!(look.waiting.map(|wait| wait.label), Some("2026-11-01".to_owned()));
+    }
+
+    #[test]
     fn a_cards_line_is_the_note_after_the_phase_and_only_the_note_when_done() {
         let working = ledger(
             "# Goal\nx\n\n## Status\nphase: 2 Build\nstate: working\nnote: writing the validator\n\n## Checklist\n### 1. Understand\n- [x] a\n### 2. Build\n- [~] b\n",
         );
-        assert_eq!(card_line(&working), "Build \u{b7} writing the validator");
+        assert_eq!(card_line(&working, tone(&working)), "Build \u{b7} writing the validator");
         let done = ledger(
             "# Goal\nx\n\n## Status\nphase: 4\nstate: done\nnote: Committed ec84557\n\n## Checklist\n### 4. Close out\n- [x] a\n",
         );
-        assert_eq!(card_line(&done), "Committed ec84557");
+        assert_eq!(card_line(&done, tone(&done)), "Committed ec84557");
         let no_note = ledger(
             "# Goal\nx\n\n## Status\nphase: 2\nstate: working\n\n## Checklist\n### 1. A\n- [x] a\n### 2. Build\n- [~] b\n",
         );
-        assert_eq!(card_line(&no_note), "Build");
-        assert_eq!(card_line(&ledger("# Goal\nx\n\n## Status\nnote: only this\n")), "only this");
+        assert_eq!(card_line(&no_note, tone(&no_note)), "Build");
+        let only = ledger("# Goal\nx\n\n## Status\nnote: only this\n");
+        assert_eq!(card_line(&only, tone(&only)), "only this");
     }
 
     #[test]

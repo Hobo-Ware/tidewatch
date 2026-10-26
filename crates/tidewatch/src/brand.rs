@@ -63,7 +63,9 @@ pub(crate) const COPILOT_BADGE: (Color32, Color32) =
 /// Agent status inks. They differ in lightness as well as hue, darkest to lightest failed, needs
 /// you, working, done, so a color-blind reader still tells them apart.
 pub(crate) const WORKING: Color32 = TEAL;
-pub(crate) const NEEDS: Color32 = ORANGE;
+pub(crate) const NEEDS: Color32 = AMBER;
+pub(crate) const WAITING: Color32 = BLUE;
+pub(crate) const BLOCKED: Color32 = RED;
 pub(crate) const DONE: Color32 = Color32::from_rgb(0xb2, 0xe6, 0x8a);
 pub(crate) const FAILED: Color32 = Color32::from_rgb(0xef, 0x44, 0x44);
 
@@ -133,14 +135,43 @@ mod tests {
         a.max(b) / a.min(b)
     }
 
+    fn hue(ink: Color32) -> f32 {
+        let (red, green, blue) = (f32::from(ink.r()), f32::from(ink.g()), f32::from(ink.b()));
+        let (top, bottom) = (red.max(green).max(blue), red.min(green).min(blue));
+        let spread = top - bottom;
+        let sector = if top == red {
+            ((green - blue) / spread).rem_euclid(6.0)
+        } else if top == green {
+            (blue - red) / spread + 2.0
+        } else {
+            (red - green) / spread + 4.0
+        };
+        sector * 60.0
+    }
+
+    fn apart(a: Color32, b: Color32) -> f32 {
+        let d = (hue(a) - hue(b)).abs();
+        d.min(360.0 - d)
+    }
+
     #[test]
     fn status_inks_differ_in_lightness_and_read_on_the_ground() {
-        let ramp = [FAILED, NEEDS, WORKING, DONE];
+        let ramp = [FAILED, WORKING, DONE];
         for pair in ramp.windows(2) {
             assert!(contrast(pair[0], pair[1]) >= 1.2, "{:?} against {:?}", pair[0], pair[1]);
         }
-        for ink in ramp {
+        for ink in [FAILED, NEEDS, WAITING, BLOCKED, WORKING, DONE] {
             assert!(contrast(ink, GROUND) >= 4.5, "{ink:?} on the ground");
+        }
+    }
+
+    #[test]
+    fn the_five_state_inks_are_told_apart_by_hue() {
+        let inks = [WORKING, NEEDS, WAITING, BLOCKED, DONE];
+        for (i, a) in inks.iter().enumerate() {
+            for b in &inks[i + 1..] {
+                assert!(apart(*a, *b) >= 25.0, "{a:?} and {b:?}");
+            }
         }
     }
 

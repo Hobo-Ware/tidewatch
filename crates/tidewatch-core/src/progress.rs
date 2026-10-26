@@ -535,6 +535,33 @@ impl Ledger {
         real(&self.next).collect()
     }
 
+    /// The one state the screens show. It is the state the agent reported, except that a question
+    /// or a wait that names only the owner makes it needs you, and a ledger with no state at all
+    /// reads from its steps.
+    #[must_use]
+    pub fn shown_state(&self) -> State {
+        match self.status.state {
+            Some(State::Done) => State::Done,
+            Some(State::Blocked) => State::Blocked,
+            _ if self.awaits_owner() => State::NeedsYou,
+            Some(state) => state,
+            None => {
+                let counts = self.counts();
+                let blocked = self
+                    .checklist
+                    .iter()
+                    .any(|phase| phase.items.iter().any(|item| item.mark == Mark::Blocked));
+                if blocked {
+                    State::Blocked
+                } else if counts.total > 0 && counts.done == counts.total {
+                    State::Done
+                } else {
+                    State::Working
+                }
+            }
+        }
+    }
+
     /// The agent says it is blocked, or an item is, and it is not done.
     #[must_use]
     pub fn is_blocked(&self) -> bool {

@@ -484,7 +484,7 @@ fn tab_row<T>(
         if let Some(agent) = agent
             && !resp.contains_pointer()
         {
-            let tone = status_view::tone(agent.run.status());
+            let tone = agent.run.shown_tone();
             let center = status_view::dot_center(resp.rect, STATUS_DOT_TRAILING);
             status_view::paint_dot(ui, center, tone, now);
         }
@@ -686,9 +686,9 @@ fn drag_step(slots: &[Slot], from: usize, pointer_x: f32) -> Option<Step> {
 }
 
 pub(super) fn needs_you<T>(pane: &Pane<T>) -> bool {
-    pane.agent
-        .as_ref()
-        .is_some_and(|agent| status_view::tone(agent.run.status()) == status_view::Tone::Needs)
+    pane.agent.as_ref().is_some_and(|agent| {
+        matches!(agent.run.shown_tone(), status_view::Tone::Needs | status_view::Tone::Blocked)
+    })
 }
 
 fn tab_signals(pane: &Pane<PtyTerm>) -> (Progress, CmdState) {

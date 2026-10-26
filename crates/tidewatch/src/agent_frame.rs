@@ -172,7 +172,7 @@ pub(crate) fn poll<T>(
             notifier.offer(tab.id, &label, &change, agent.run.detail(), away, now);
             changes.push((tab.id, change));
         }
-        if status_view::is_animated(status_view::tone(agent.run.status())) {
+        if status_view::is_animated(agent.run.shown_tone()) {
             wake.animate = true;
         }
         if let Some(at) = agent.run.next_change_at(now) {
@@ -222,7 +222,7 @@ pub(crate) fn tones<T>(tabs: &Tabs<Pane<T>>) -> Vec<Tone> {
     tabs.items()
         .iter()
         .filter_map(|tab| tab.pane.agent.as_ref())
-        .map(|agent| status_view::tone(agent.run.status()))
+        .map(|agent| agent.run.shown_tone())
         .collect()
 }
 

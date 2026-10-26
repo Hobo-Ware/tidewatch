@@ -10,8 +10,7 @@ use egui::{
     Align2, Color32, CornerRadius, Frame, Margin, Rect, ScrollArea, Sense, Shape, Stroke,
     StrokeKind, Ui, UiBuilder, pos2, vec2,
 };
-use tidewatch_core::kind::Kind;
-use tidewatch_core::progress::{Entry, Ledger, Mark};
+use tidewatch_core::progress::{Entry, Ledger, Mark, State};
 
 use crate::answer_chips;
 use crate::brand;
@@ -23,8 +22,8 @@ use crate::link_text::Text;
 use crate::meeseeks_model::Card as MeeseeksCard;
 use crate::meeseeks_view;
 use crate::progress_model::{
-    self as model, Bar, BarKind, ItemRow, StageShape, TAGS, Tag, Tone, entries, item_rows,
-    questions, rows_shown,
+    self as model, Bar, BarKind, ItemRow, Now, StageRows, StageShape, TAGS, Tag, Tone, entries,
+    questions, stage_rows, stages_shown,
 };
 use crate::progress_ring::{paint_mark, tone_color};
 use crate::progress_stale::fresh;
@@ -39,7 +38,7 @@ const NARROW_BELOW: f32 = 330.0;
 const GAP: f32 = 22.0;
 const ROW_H: f32 = 30.0;
 const MARK_W: f32 = 18.0;
-const BAR_H: f32 = 6.0;
+const BAR_H: f32 = 5.0;
 const BAR_MIN_W: f32 = 52.0;
 const BAR_GAP: f32 = 6.0;
 const TAG_H: f32 = 26.0;
@@ -167,6 +166,8 @@ pub(crate) struct Input<'a> {
     pub(crate) first: Side,
     pub(crate) meeseeks: Option<&'a MeeseeksCard>,
     pub(crate) last_turn: Option<LastTurn>,
+    /// The state the tab shows everywhere, when the agent reported one that still stands.
+    pub(crate) shown: Option<State>,
 }
 
 fn pad_of(width: f32) -> f32 {
@@ -205,10 +206,10 @@ fn content(ui: &mut Ui, input: &Input<'_>, state: &mut TabState) -> Option<Actio
             ui.add_space(GAP);
         }
     }
-    let asked =
-        job_view::show(ui, width, input.jobs).map(|(job, message)| Action::Ask { job, message });
-    action = action.or(asked);
     let Some(known) = input.ledger else {
+        let asked = job_view::show(ui, width, input.jobs)
+            .map(|(job, message)| Action::Ask { job, message });
+        action = action.or(asked);
         if let Some(turn) = &input.last_turn {
             if !input.jobs.is_empty() {
                 ui.add_space(GAP);
@@ -218,15 +219,10 @@ fn content(ui: &mut Ui, input: &Input<'_>, state: &mut TabState) -> Option<Actio
         }
         return action;
     };
-    if !input.jobs.is_empty() {
-        ui.add_space(GAP);
-    }
     let ledger = &*fresh(&known.ledger, input.stale);
     let shape = input.meeseeks.map_or_else(StageShape::default, |card| card.shape);
-    let tone = model::tone(ledger);
-    header(ui, width, ledger, tone, input.now_ms, (known.updated_ms, input.stale), shape.kind);
-    ui.add_space(GAP);
-    phase_bars(ui, width, ledger, tone, shape);
+    let tone = input.shown.map_or_else(|| model::tone(ledger), model::tone_of);
+    header(ui, width, ledger, tone, input.now_ms, (known.updated_ms, input.stale));
     let asked = questions(ledger);
     if !asked.is_empty() {
         ui.add_space(GAP);
@@ -234,15 +230,34 @@ fn content(ui: &mut Ui, input: &Input<'_>, state: &mut TabState) -> Option<Actio
             action = Some(picked);
         }
     }
+    let now = model::now_line(ledger, tone, input.jobs);
+    if let Some(now) = &now {
+        ui.add_space(GAP);
+        now_block(ui, width, now);
+    }
+    let rest: Vec<Card> = input
+        .jobs
+        .iter()
+        .filter(|card| !matches!(card, Card::Bar(bar) if now.as_ref().and_then(|now| now.job) == Some(bar.id)))
+        .cloned()
+        .collect();
+    if !rest.is_empty() {
+        ui.add_space(GAP);
+        let picked =
+            job_view::show(ui, width, &rest).map(|(job, message)| Action::Ask { job, message });
+        action = action.or(picked);
+    }
+    ui.add_space(GAP);
+    phase_bars(ui, width, ledger, tone, shape);
     if let Some(turn) = &input.last_turn {
         ui.add_space(GAP);
         let picked = last_turn_view::show(ui, width, turn, asked.is_empty());
         action = picked.or(action);
     }
-    let rows = item_rows(ledger, shape.kind);
-    if !rows.is_empty() {
+    let stages = stage_rows(ledger, shape.kind);
+    if !stages.is_empty() {
         ui.add_space(GAP);
-        item_rows_block(ui, width, &rows, input, state);
+        steps_block(ui, width, &stages, input, state);
     }
     if TAGS.iter().any(|tag| !entries(ledger, *tag).is_empty()) {
         ui.add_space(GAP);
@@ -268,54 +283,31 @@ fn header(
     tone: Tone,
     now_ms: i64,
     (updated_ms, stale): (Option<i64>, bool),
-    kind: Kind,
 ) {
     let narrow = width < NARROW_BELOW - 2.0 * NARROW_PAD;
-    let goal_size = if narrow { 14.0 } else { 16.0 };
+    let title_size = if narrow { 15.0 } else { 17.0 };
     let painter = ui.painter().clone();
-    let goal =
-        Text::line(ledger.goal.trim(), heading(goal_size), brand::TEXT, width).lay_out(&painter);
-    let step = model::step(ledger, kind).map(|step| step_line(&painter, &step, width));
+    let title =
+        if ledger.title.trim().is_empty() { ledger.goal.trim() } else { ledger.title.trim() };
+    let title = Text::line(title, heading(title_size), brand::TEXT, width).lay_out(&painter);
     let meta = meta_line(&painter, tone, (now_ms, updated_ms, stale), width);
-    let rows = step.as_ref().map_or(2.0, |_| 3.0);
-    let step_h = step.as_ref().map_or(0.0, |galley| galley.size().y);
-    let block = goal.size().y + step_h + meta.size().y + 4.0 * (rows - 1.0);
+    let block = title.size().y + meta.size().y + 4.0;
     let (rect, _) = ui.allocate_exact_size(vec2(width, block), Sense::hover());
-    let mut y = rect.top();
-    goal.paint_selectable(
-        ui,
-        ui.id().with("progress-goal-text"),
-        pos2(rect.left(), y),
-        brand::MUTED,
-    )
-    .on_hover_text(ledger.goal.trim());
-    y += goal.size().y + 4.0;
-    if let Some(step) = step {
-        y += paint_row(ui, rect.left(), y, step);
-    }
-    paint_row(ui, rect.left(), y, meta);
+    title
+        .paint_selectable(
+            ui,
+            ui.id().with("progress-goal-text"),
+            pos2(rect.left(), rect.top()),
+            brand::MUTED,
+        )
+        .on_hover_text(ledger.goal.trim());
+    paint_row(ui, rect.left(), rect.top() + title.size().y + 4.0, meta);
 }
 
 fn paint_row(ui: &Ui, x: f32, y: f32, galley: std::sync::Arc<egui::Galley>) -> f32 {
     let height = galley.size().y;
     selectable::galley(ui, pos2(x, y), galley, brand::MUTED);
     height + 4.0
-}
-
-fn step_line(
-    painter: &egui::Painter,
-    step: &model::Step,
-    room: f32,
-) -> std::sync::Arc<egui::Galley> {
-    let mut job = LayoutJob::default();
-    job.append(
-        &format!("Step {} of {} \u{b7} ", step.number, step.of),
-        0.0,
-        TextFormat::simple(body(12.5), brand::MUTED),
-    );
-    job.append(&step.name, 0.0, TextFormat::simple(body(12.5), brand::TEAL_TEXT));
-    job.wrap = TextWrapping::truncate_at_width(room.max(1.0));
-    painter.layout_job(job)
 }
 
 fn meta_line(
@@ -408,63 +400,60 @@ fn question_card(ui: &mut Ui, width: f32, asked: &[&Entry]) -> Option<Action> {
 }
 
 fn answer_card(ui: &mut Ui, width: f32, entry: &Entry) -> Option<Action> {
-    const PAD_X: f32 = 14.0;
-    const PAD_Y: f32 = 14.0;
-    const GLYPH: f32 = 28.0;
-    const SPACE: f32 = 12.0;
-    const WHY_GAP: f32 = 4.0;
-    const CHIPS_GAP: f32 = 12.0;
-    let text_w = (width - PAD_X * 2.0 - GLYPH - SPACE).max(40.0);
+    const PAD: f32 = 16.0;
+    const NARROW_PAD_IN: f32 = 12.0;
+    const LABEL_GAP: f32 = 8.0;
+    const BLOCK_GAP: f32 = 12.0;
+    let pad = if width < NARROW_BELOW { NARROW_PAD_IN } else { PAD };
+    let inner_w = (width - pad * 2.0).max(40.0);
     let painter = ui.painter().clone();
-    let mut question = Text::new();
-    question.run(entry.text.trim(), &TextFormat::simple(body(13.5), brand::TEXT));
-    let title = question.wrapped(text_w, 3).lay_out(&painter);
+    let label = painter.layout_no_wrap("NEEDS YOU".to_owned(), body(12.0), brand::NEEDS);
     let why = entry.why.as_deref().map(str::trim).filter(|why| !why.is_empty()).map(|why| {
-        let mut text = Text::new();
-        text.run(&answer_chips::sentence(why), &TextFormat::simple(body(13.0), brand::MUTED));
-        text.wrapped(text_w, 2).lay_out(&painter)
+        ellipsized(
+            &painter,
+            &answer_chips::sentence(why),
+            body(13.0),
+            brand::MUTED,
+            (inner_w - label.size().x - LABEL_GAP).max(40.0),
+        )
     });
-    let why_h = why.as_ref().map_or(0.0, |why| WHY_GAP + why.size().y);
-    let chips = answer_chips::chips(&entry.options);
-    let row = answer_chips::Row::new(&painter, &chips, text_w);
-    let head_h = (title.size().y + why_h).max(GLYPH);
-    let height = PAD_Y * 2.0 + head_h + CHIPS_GAP + row.height();
+    let mut question = Text::new();
+    question.run(entry.text.trim(), &TextFormat::simple(body(16.0), brand::TEXT));
+    let title = question.wrapped(inner_w, 3).lay_out(&painter);
+    let chips = answer_chips::chips_marked(&entry.options);
+    let row = answer_chips::Row::new(&painter, &chips, inner_w);
+    let height = pad * 2.0 + label.size().y + BLOCK_GAP + title.size().y + BLOCK_GAP + row.height();
     let (rect, response) = ui.allocate_exact_size(vec2(width, height), Sense::click());
     let pressed_in = ui.input(|i| i.pointer.any_pressed())
         && ui.input(|i| i.pointer.interact_pos()).is_some_and(|at| rect.contains(at));
     if pressed_in {
         response.request_focus();
     }
-    let focused = ui.memory(|memory| memory.has_focus(response.id));
-    let edge = if focused { brand::TEAL.gamma_multiply(0.5) } else { Color32::TRANSPARENT };
     painter.rect(
         rect,
         CornerRadius::same(10),
-        brand::ORANGE.gamma_multiply(0.08),
-        Stroke::new(1.0, edge),
+        Color32::TRANSPARENT,
+        Stroke::new(1.0, brand::NEEDS),
         StrokeKind::Inside,
     );
-    let glyph =
-        Rect::from_min_size(pos2(rect.left() + PAD_X, rect.top() + PAD_Y), vec2(GLYPH, GLYPH));
-    painter.rect_filled(glyph, CornerRadius::same(8), brand::ORANGE.gamma_multiply(0.16));
-    painter.text(glyph.center(), Align2::CENTER_CENTER, "?", heading(15.0), brand::ORANGE);
-    let text_x = glyph.right() + SPACE;
+    let left = rect.left() + pad;
+    let top = rect.top() + pad;
+    let label_h = label.size().y;
+    let label_w = label.size().x;
+    painter.galley(pos2(left, top), label, brand::NEEDS);
+    if let Some(why) = why {
+        let at = pos2(left + label_w + LABEL_GAP, top + (label_h - why.size().y) / 2.0);
+        painter.galley(at, why, brand::MUTED);
+    }
+    let title_top = top + label_h + BLOCK_GAP;
     let title_h = title.size().y;
     title.paint_selectable(
         ui,
         ui.id().with("progress-question-text"),
-        pos2(text_x, rect.top() + PAD_Y),
+        pos2(left, title_top),
         brand::TEXT,
     );
-    if let Some(why) = why {
-        why.paint(
-            ui,
-            ui.id().with("progress-why-text"),
-            pos2(text_x, rect.top() + PAD_Y + title_h + WHY_GAP),
-            brand::MUTED,
-        );
-    }
-    let chips_at = pos2(text_x, rect.top() + PAD_Y + head_h + CHIPS_GAP);
+    let chips_at = pos2(left, title_top + title_h + BLOCK_GAP);
     let clicked = row.show(ui, response.id, chips_at, &chips);
     let card = answer_chips::Card { id: response.id, rect, terminal_hidden: false };
     let picked = clicked.or_else(|| answer_chips::key_pick(ui, &card, &chips))?;
@@ -499,11 +488,11 @@ fn plain_question_card(ui: &mut Ui, width: f32, asked: &[&Entry]) -> bool {
     };
     let (rect, _) = ui.allocate_exact_size(vec2(width, inner_h + 2.0 * PAD_Y), Sense::hover());
     let painter = ui.painter();
-    painter.rect_filled(rect, CornerRadius::same(10), brand::ORANGE.gamma_multiply(0.08));
+    painter.rect_filled(rect, CornerRadius::same(10), brand::NEEDS.gamma_multiply(0.08));
     let glyph_top = rect.top() + PAD_Y + (text_h.max(GLYPH) - GLYPH) / 2.0;
     let glyph = Rect::from_min_size(pos2(rect.left() + PAD_X, glyph_top), vec2(GLYPH, GLYPH));
-    painter.rect_filled(glyph, CornerRadius::same(8), brand::ORANGE.gamma_multiply(0.16));
-    painter.text(glyph.center(), Align2::CENTER_CENTER, "?", heading(15.0), brand::ORANGE);
+    painter.rect_filled(glyph, CornerRadius::same(8), brand::NEEDS.gamma_multiply(0.16));
+    painter.text(glyph.center(), Align2::CENTER_CENTER, "?", heading(15.0), brand::NEEDS);
     let text_x = glyph.right() + SPACE;
     let text_top = rect.top() + PAD_Y + (text_h.max(GLYPH) - text_h) / 2.0;
     galley.paint_selectable(
@@ -535,18 +524,76 @@ fn plain_question_card(ui: &mut Ui, width: f32, asked: &[&Entry]) -> bool {
     clicked
 }
 
-fn item_rows_block(
+fn now_block(ui: &mut Ui, width: f32, now: &Now) {
+    const LINE_H: f32 = 22.0;
+    const BAR_GAP: f32 = 6.0;
+    const BAR_HEIGHT: f32 = 6.0;
+    const MIN_TEXT_W: f32 = 90.0;
+    let painter = ui.painter().clone();
+    let label = painter.layout_no_wrap(now.label.to_owned(), body(14.0), brand::MUTED);
+    let right = now
+        .right
+        .as_ref()
+        .map(|text| painter.layout_no_wrap(text.clone(), body(14.0), brand::MUTED));
+    let right_w = right.as_ref().map_or(0.0, |galley| galley.size().x + 12.0);
+    let text_x = label.size().x + 8.0;
+    let stacked = right.is_some() && width - text_x - right_w < MIN_TEXT_W;
+    let text_room = if stacked { width - text_x } else { width - text_x - right_w };
+    let text = ellipsized(&painter, &now.text, body(14.0), brand::TEXT, text_room.max(20.0));
+    let lines = if stacked { 2.0 } else { 1.0 };
+    let bar_h = if now.fraction.is_some() { BAR_GAP + BAR_HEIGHT } else { 0.0 };
+    let (rect, _) = ui.allocate_exact_size(vec2(width, LINE_H * lines + bar_h), Sense::hover());
+    let mid = rect.top() + LINE_H / 2.0;
+    painter.galley(pos2(rect.left(), mid - label.size().y / 2.0), label, brand::MUTED);
+    selectable::galley(
+        ui,
+        pos2(rect.left() + text_x, mid - text.size().y / 2.0),
+        text,
+        brand::TEXT,
+    );
+    if let (Some(right), Some(full)) = (right, now.right.as_deref()) {
+        if stacked {
+            let fitted = ellipsized(&painter, full, body(14.0), brand::MUTED, width);
+            let at = pos2(rect.left(), mid + LINE_H - fitted.size().y / 2.0);
+            painter.galley(at, fitted, brand::MUTED);
+        } else {
+            let at = pos2(rect.right() - right.size().x, mid - right.size().y / 2.0);
+            painter.galley(at, right, brand::MUTED);
+        }
+    }
+    if let Some(fraction) = now.fraction {
+        let track = Rect::from_min_size(
+            pos2(rect.left(), rect.top() + LINE_H * lines + BAR_GAP),
+            vec2(rect.width(), BAR_HEIGHT),
+        );
+        let radius = CornerRadius::same(3);
+        painter.rect_filled(track, radius, brand::ITEM_LINE);
+        if fraction > 0.0 {
+            let fill = Rect::from_min_size(track.min, vec2(track.width() * fraction, BAR_HEIGHT));
+            painter.rect_filled(fill, radius, brand::TEAL);
+        }
+    }
+}
+
+fn steps_block(
     ui: &mut Ui,
     width: f32,
-    rows: &[ItemRow<'_>],
+    stages: &[StageRows<'_>],
     input: &Input<'_>,
     state: &mut TabState,
 ) {
-    let (shown, hidden) = rows_shown(rows.len(), state.show_all_rows());
+    let shown = stages_shown(stages, state.show_all_rows());
+    let hidden = stages.len() - shown.len();
     let mut spinning = false;
-    for row in &rows[..shown] {
-        spinning |= row.mark == Mark::Doing;
-        item_row(ui, width, row, input.time);
+    for (index, stage) in shown.iter().enumerate() {
+        if index > 0 {
+            ui.add_space(12.0);
+        }
+        stage_heading(ui, width, &stage.title);
+        for row in &stage.rows {
+            spinning |= row.mark == Mark::Doing;
+            item_row(ui, width, row, input.time);
+        }
     }
     if spinning && input.animate {
         ui.ctx().request_repaint_after(SPIN_EVERY);
@@ -555,13 +602,20 @@ fn item_rows_block(
         let text = if state.show_all_rows() {
             "Show less".to_owned()
         } else {
-            format!("Show all {}", rows.len())
+            format!("Show {hidden} finished stage{}", if hidden == 1 { "" } else { "s" })
         };
         ui.add_space(4.0);
         if link(ui, &text) {
             state.toggle_rows();
         }
     }
+}
+
+fn stage_heading(ui: &mut Ui, width: f32, title: &str) {
+    let painter = ui.painter().clone();
+    let galley = ellipsized(&painter, &title.to_uppercase(), body(12.0), brand::MUTED, width);
+    let (rect, _) = ui.allocate_exact_size(vec2(width, galley.size().y + 8.0), Sense::hover());
+    selectable::galley(ui, pos2(rect.left(), rect.top()), galley, brand::MUTED);
 }
 
 fn item_row(ui: &mut Ui, width: f32, row: &ItemRow<'_>, time: f64) {
@@ -572,9 +626,10 @@ fn item_row(ui: &mut Ui, width: f32, row: &ItemRow<'_>, time: f64) {
     let muted = matches!(row.mark, Mark::Skipped);
     let ink = if muted { brand::FAINT } else { brand::TEXT };
     let room = (rect.right() - text_x).max(1.0);
-    let why = row.why.map(|why| {
-        Text::line(why, body(12.0), brand::FAINT, (room * 0.42).max(40.0)).lay_out(painter)
-    });
+    let why_ink = if row.mark == Mark::Blocked { brand::NEEDS } else { brand::FAINT };
+    let why = row
+        .why
+        .map(|why| Text::line(why, body(12.5), why_ink, (room * 0.42).max(40.0)).lay_out(painter));
     let why_w = why.as_ref().map_or(0.0, |galley| galley.size().x + 12.0);
     let label = Text::line(row.text, body(13.5), ink, (room - why_w).max(1.0)).lay_out(painter);
     let at = pos2(text_x, rect.center().y - label.size().y / 2.0);
@@ -585,7 +640,7 @@ fn item_row(ui: &mut Ui, width: f32, row: &ItemRow<'_>, time: f64) {
     label.paint_selectable(ui, response.id.with("label"), at, ink).on_hover_text(&tip);
     if let Some(galley) = why {
         let at = pos2(rect.right() - galley.size().x, rect.center().y - galley.size().y / 2.0);
-        galley.paint_selectable(ui, response.id.with("why"), at, brand::FAINT).on_hover_text(&tip);
+        galley.paint_selectable(ui, response.id.with("why"), at, why_ink).on_hover_text(&tip);
     }
     response.on_hover_text(tip);
 }

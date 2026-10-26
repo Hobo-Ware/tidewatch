@@ -3,7 +3,7 @@
 
 use tidewatch_core::background;
 use tidewatch_core::civil_date::Date;
-use tidewatch_core::progress::Ledger;
+use tidewatch_core::progress::{Ledger, State};
 
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -24,10 +24,11 @@ use crate::overview::Overview;
 use crate::overview_checklist::Source;
 use crate::pane::{AgentTab, Body};
 use crate::progress_glue::today;
-use crate::progress_model::look;
+use crate::progress_model::{look, look_as};
 use crate::progress_nudge as nudge;
-use crate::progress_stale::{Live, answered_since_save, is_stale};
+use crate::progress_stale::{Live, answered_since_save, is_stale, standing};
 use crate::progress_state::Facts;
+use crate::status_view::state_of;
 use crate::{due_view, flow_glue, reader_glue, reader_view};
 use tidewatch_core::sent::{Reason as Said, because};
 use tidewatch_core::status::{AgentStatus, Reason};
@@ -79,6 +80,7 @@ impl Tidewatch {
             self.tabs.items().iter().map(|tab| tab.id).collect();
         self.progress_ui.forget_except(|id| tabs.contains(&id));
         self.report_nudges.forget_except(|id| tabs.contains(&id));
+        self.drive_reported_states(ctx.input(|input| input.time));
     }
 
     pub(super) fn drive_avatar_choice(&mut self, ctx: &egui::Context) {
@@ -401,6 +403,18 @@ impl Tidewatch {
         ctx.request_repaint_after(Duration::from_secs(secs_to_midnight(secs) + 1));
     }
 
+    fn live_of(agent: &AgentTab, now: f64) -> Live {
+        let now_ms = wall_ms() as i64;
+        let wall = |at: f64| now_ms - ((now - at) * 1000.0) as i64;
+        Live {
+            asking: matches!(
+                agent.run.status(),
+                AgentStatus::NeedsYou(Reason::Permission | Reason::Question)
+            ),
+            turn_started_ms: agent.run.turn_started_at().map(wall),
+        }
+    }
+
     /// Whether the tab's ledger still asks the owner something the agent has moved on from.
     pub(super) fn ledger_stale(&self, tab: u64, now: f64) -> bool {
         let Some(known) = self.progress.ledger(tab) else { return false };
@@ -416,16 +430,35 @@ impl Tidewatch {
         else {
             return false;
         };
-        let now_ms = wall_ms() as i64;
-        let wall = |at: f64| now_ms - ((now - at) * 1000.0) as i64;
-        let live = Live {
-            asking: matches!(
-                agent.run.status(),
-                AgentStatus::NeedsYou(Reason::Permission | Reason::Question)
-            ),
-            turn_started_ms: agent.run.turn_started_at().map(wall),
-        };
-        is_stale(&known.ledger, known.updated_ms, live)
+        is_stale(&known.ledger, known.updated_ms, Self::live_of(agent, now))
+    }
+
+    /// Hands each agent tab the state its report stands for, so every screen shows one word.
+    fn drive_reported_states(&mut self, now: f64) {
+        let states: Vec<(u64, Option<State>)> = self
+            .tabs
+            .items()
+            .iter()
+            .filter_map(|tab| {
+                let agent = tab.pane.agent.as_ref()?;
+                let state = self.progress.ledger(tab.id).map(|known| {
+                    let stale = self.ledger_stale(tab.id, now);
+                    let working = *agent.run.status() == AgentStatus::Working;
+                    standing(
+                        &known.ledger,
+                        known.updated_ms,
+                        Self::live_of(agent, now),
+                        (stale, working),
+                    )
+                });
+                Some((tab.id, state))
+            })
+            .collect();
+        for (id, state) in states {
+            if let Some(agent) = self.tabs.get_mut(id).and_then(|tab| tab.pane.agent.as_mut()) {
+                agent.run.set_reported(state);
+            }
+        }
     }
 
     pub(super) fn add_looks(&self, overview: &mut Overview, now: f64) {
@@ -433,7 +466,10 @@ impl Tidewatch {
         let places = overview.places.iter_mut().flat_map(|place| place.rows.iter_mut());
         for row in overview.needs.iter_mut().chain(places) {
             let stale = self.ledger_stale(row.tab_id, now);
-            row.look = self.progress.ledger(row.tab_id).map(|known| look(&known.ledger, stale));
+            row.look = self.progress.ledger(row.tab_id).map(|known| match state_of(row.tone) {
+                Some(state) => look_as(&known.ledger, stale, state),
+                None => look(&known.ledger, stale),
+            });
             row.avatar = self.avatar_live.get(row.tab_id).cloned();
             row.job_line =
                 self.job_live.board(row.tab_id).and_then(|board| lane_line(board, now_ms));
