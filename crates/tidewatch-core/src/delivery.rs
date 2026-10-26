@@ -38,6 +38,9 @@ pub struct DeliveryPlan {
     pub head: String,
     /// Commits on `branch` that `base` does not have, oldest first.
     pub commits: Vec<CommitLine>,
+    /// The branch's pull request already merged: `deliver` first moves `commits` onto `base`, so the
+    /// new pull request carries only them.
+    pub rebase: bool,
     pub title: String,
     pub body: String,
 }
@@ -136,14 +139,16 @@ impl DeliveryPlan {
     ) -> Result<Self, DeliveryError> {
         check_branch(branch)?;
         let base = detect_base(tools, dir).ok_or(DeliveryError::NoBase)?;
-        let (range_start, head) = match merged_head {
+        let onto = compare_ref(tools, dir, &base);
+        let (commits, head) = match merged_head {
             Some(sha) => {
                 check_branch(sha)?;
-                (sha.to_owned(), fresh_branch(tools, dir, branch))
+                let start = if is_commit(tools, dir, sha) { sha } else { &onto };
+                let after = commits_between(tools, dir, start, branch)?;
+                (not_in_base(tools, dir, &onto, branch, after), fresh_branch(tools, dir, branch))
             }
-            None => (compare_ref(tools, dir, &base), pushed_as(tools, dir, branch)),
+            None => (commits_between(tools, dir, &onto, branch)?, pushed_as(tools, dir, branch)),
         };
-        let commits = commits_between(tools, dir, &range_start, branch)?;
         let (title, body) = propose(branch, &commits, stage_summary);
         Ok(Self {
             dir: dir.to_path_buf(),
@@ -151,6 +156,7 @@ impl DeliveryPlan {
             base,
             head,
             commits,
+            rebase: merged_head.is_some(),
             title,
             body,
         })
@@ -194,6 +200,47 @@ pub fn fresh_branch(tools: &Tools, dir: &Path, branch: &str) -> String {
         tries.set(tries.get() + 1);
         tries.get() <= FRESH_TRIES && (local(name) || remote(name))
     })
+}
+
+fn is_commit(tools: &Tools, dir: &Path, sha: &str) -> bool {
+    git_succeeds(tools, dir, &["cat-file", "-e", &format!("{sha}^{{commit}}")])
+}
+
+/// `commits` without those whose patch `base_ref` already has (a rebase or cherry-pick merge gave
+/// them other hashes). Left as it is when `git cherry` cannot say.
+fn not_in_base(
+    tools: &Tools,
+    dir: &Path,
+    base_ref: &str,
+    branch: &str,
+    commits: Vec<CommitLine>,
+) -> Vec<CommitLine> {
+    let Ok(out) = git_output(tools, dir, &["cherry", base_ref, branch]) else { return commits };
+    if !out.success {
+        return commits;
+    }
+    let applied: Vec<&str> =
+        out.stdout.lines().filter_map(|line| line.strip_prefix("- ")).map(str::trim).collect();
+    commits.into_iter().filter(|c| !applied.iter().any(|full| full.starts_with(&c.sha))).collect()
+}
+
+/// Replays `plan.commits` on top of the base, so a pull request made after a merge carries only
+/// them. An unfinished rebase is aborted and the branch left as it was.
+fn move_onto_base(tools: &Tools, plan: &DeliveryPlan) -> Result<(), DeliveryError> {
+    let Some(first) = plan.commits.first() else { return Ok(()) };
+    let onto = compare_ref(tools, &plan.dir, &plan.base);
+    let parent = format!("{}^", first.sha);
+    let out = git_output(tools, &plan.dir, &["rebase", "--onto", &onto, &parent, &plan.branch])?;
+    if out.success {
+        return Ok(());
+    }
+    git_succeeds(tools, &plan.dir, &["rebase", "--abort"]);
+    let why = out.stderr.lines().rev().find(|line| !line.trim().is_empty()).unwrap_or_default();
+    Err(DeliveryError::PushFailed(format!(
+        "cannot move the new commits onto {}: {}",
+        plan.base,
+        why.trim()
+    )))
 }
 
 fn check_branch(branch: &str) -> Result<(), DeliveryError> {
@@ -379,6 +426,9 @@ pub fn deliver(
     run_gh(tools, &plan.dir, &["--version"])?;
     if !git_succeeds(tools, &plan.dir, &["remote", "get-url", REMOTE]) {
         return Err(DeliveryError::NoRemote);
+    }
+    if plan.rebase {
+        move_onto_base(tools, plan)?;
     }
     push(tools, &plan.dir, &plan.branch, &plan.head)?;
     create_pull_request(tools, plan, title, body, opens)

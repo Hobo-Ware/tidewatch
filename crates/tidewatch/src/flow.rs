@@ -128,6 +128,7 @@ pub(crate) struct TabFlow {
     pub(crate) pr: PrState,
     target: Option<TabFacts>,
     was_done: bool,
+    probed_after: Option<String>,
     pub(crate) push: AutoPush,
     /// The card in front is the push of a fix the agent was told to make: a tab that runs on its own
     /// approves it itself, once.
@@ -152,7 +153,9 @@ pub(crate) fn decide(flow: &mut TabFlow, facts: &TabFacts, now: f64) -> Vec<Want
     let mut wants = Vec::new();
     flow.auto.observe(&facts.status);
     let done = facts.deliverable && facts.gate == Gate::Open;
-    if done && !flow.was_done && flow.pr.pr().is_none() {
+    let merge_news = flow.was_done && flow.probed_after != facts.merged_head;
+    if done && (!flow.was_done || merge_news) && flow.pr.pr().is_none() {
+        flow.probed_after.clone_from(&facts.merged_head);
         flow.delivery.probe_started();
         wants.push(Want::Probe);
     }
@@ -768,6 +771,19 @@ mod tests {
     }
 
     #[test]
+    fn a_tab_probed_before_its_merge_was_known_is_probed_again_with_the_merged_head() {
+        let mut flow = flow_with(false);
+        assert_eq!(decide(&mut flow, &facts(AgentStatus::Done), 1.0), [Want::Probe]);
+        flow.delivery.probe_done(Some(2));
+        assert_eq!(flow.delivery, Delivery::Ready { commits: 2 });
+        let merged = TabFacts { merged_head: Some("e3dba69".into()), ..facts(AgentStatus::Done) };
+        assert_eq!(decide(&mut flow, &merged, 2.0), [Want::Probe]);
+        flow.delivery.probe_done(Some(0));
+        assert_eq!(flow.delivery, Delivery::Hidden);
+        assert_eq!(decide(&mut flow, &merged, 3.0), [], "the same head is not asked twice");
+    }
+
+    #[test]
     fn a_tab_with_an_open_pull_request_is_not_probed_for_delivery() {
         let mut flow = flow_with(false);
         flow.pr
@@ -1053,6 +1069,7 @@ mod tests {
                 subject: "add helper".into(),
                 body: String::new(),
             }],
+            rebase: false,
             title: "Add helper".into(),
             body: String::new(),
         }));
