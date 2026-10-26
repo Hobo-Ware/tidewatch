@@ -43,19 +43,21 @@ pub(crate) enum Entry {
     Row(Row),
 }
 
-/// `opus · high`, `opus`, or `default model`; `not installed` when the CLI is missing.
+/// `opus · medium`, `sonnet · default (high)`, `opus`, or `default model`; `not installed` when the CLI is missing.
 pub(crate) fn subtitle(profile: &Profile, availability: &Availability) -> String {
     if *availability == Availability::Missing {
         return "not installed".to_owned();
     }
     let model = profile.model.as_deref().unwrap_or("default model");
-    match profile.effort.as_deref() {
-        Some(effort) => format!("{model} \u{b7} {effort}"),
-        None => model.to_owned(),
+    let chosen = profile.effort.as_deref().is_some_and(|effort| !effort.is_empty());
+    match (chosen, profile.effective_effort()) {
+        (true, Some(effort)) => format!("{model} \u{b7} {effort}"),
+        (false, Some(default)) => format!("{model} \u{b7} default ({default})"),
+        (_, None) => model.to_owned(),
     }
 }
 
-/// `Builder · opus · high` for the profile a Meeseeks on this CLI will use (the CLI's own name
+/// `Builder · opus · medium` for the profile a Meeseeks on this CLI will use (the CLI's own name
 /// left off the profile's), `default model` when the CLI has no profile; `not installed` when the
 /// CLI is missing.
 pub(crate) fn meeseeks_subtitle(

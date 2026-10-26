@@ -40,10 +40,12 @@ fn the_subtitle_is_the_model_and_effort_or_says_the_cli_is_missing() {
     let profiles = Profiles::seeded(&["claude".to_owned(), "codex".to_owned()]).profile;
     let codex = profiles.values().find(|profile| profile.agent == "codex").unwrap();
     let found = Availability::Found(None);
+    let unset = Profile { effort: None, ..profiles["reviewer"].clone() };
     let cases = [
-        (&profiles["builder"], Availability::Found(None), "opus \u{b7} high"),
-        (&profiles["builder"], Availability::Probing, "opus \u{b7} high"),
-        (&profiles["reviewer"], found.clone(), "sonnet"),
+        (&unset, found.clone(), "sonnet \u{b7} default (high)"),
+        (&profiles["builder"], Availability::Found(None), "opus \u{b7} medium"),
+        (&profiles["builder"], Availability::Probing, "opus \u{b7} medium"),
+        (&profiles["reviewer"], found.clone(), "sonnet \u{b7} high"),
         (codex, found, "default model"),
         (&profiles["builder"], Availability::Missing, "not installed"),
     ];
@@ -143,7 +145,7 @@ fn a_meeseeks_lane_lists_each_cli_once_with_its_builder_or_defaults_and_dims_the
         })
         .collect();
     let want = [
-        (0, "Claude Code", "Builder \u{b7} opus \u{b7} high", "claude", false),
+        (0, "Claude Code", "Builder \u{b7} opus \u{b7} medium", "claude", false),
         (1, "Codex", "not installed", "codex", true),
         (2, "Gemini CLI", "Builder \u{b7} default model", "gemini", false),
         (3, "Copilot CLI", "default model", "copilot", false),
@@ -157,8 +159,8 @@ fn the_meeseeks_subtitle_names_the_profile_unless_the_cli_runs_on_defaults() {
         Profile { model: Some("opus".into()), ..Profile::defaults_for("claude", Level::Yolo) };
     let found = Availability::Found(None);
     let cases = [
-        ("Claude Code", "builder", &found, "Default \u{b7} opus"),
-        ("Claude Code", Profile::DEFAULTS_ID, &found, "opus"),
+        ("Claude Code", "builder", &found, "Default \u{b7} opus \u{b7} default (medium)"),
+        ("Claude Code", Profile::DEFAULTS_ID, &found, "opus \u{b7} default (medium)"),
         ("Claude Code", "builder", &Availability::Missing, "not installed"),
         ("Claude Code", Profile::DEFAULTS_ID, &Availability::Missing, "not installed"),
     ];
@@ -173,6 +175,6 @@ fn the_meeseeks_subtitle_names_the_profile_unless_the_cli_runs_on_defaults() {
     let found = Availability::Found(None);
     assert_eq!(
         meeseeks_subtitle("Claude Code", "claude-builder", &prefixed, &found),
-        "Builder \u{b7} opus"
+        "Builder \u{b7} opus \u{b7} default (medium)"
     );
 }

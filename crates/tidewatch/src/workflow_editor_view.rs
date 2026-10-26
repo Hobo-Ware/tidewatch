@@ -2,6 +2,7 @@
 
 use egui::{Align, Align2, CornerRadius, FontId, Layout, Margin, Rect, ScrollArea, Ui, UiBuilder};
 use tidewatch_core::agents::Level;
+use tidewatch_core::profiles::default_effort_for;
 use tidewatch_core::workflows::{Action, Gate};
 
 use crate::screen_kit::Size;
@@ -303,6 +304,10 @@ impl Form<'_> {
         }
         ui.add_space(12.0);
         ui.spacing_mut().item_spacing.x = 20.0;
+        let effort_hint = default_effort_for(&stage.agent, &stage.model).map_or_else(
+            || "empty: the agent's or profile's default".to_owned(),
+            |default| format!("empty: {default}, the default for this model"),
+        );
         ui.columns(2, |columns| {
             changed |= field(
                 &mut columns[0],
@@ -310,12 +315,7 @@ impl Form<'_> {
                 &mut stage.model,
                 "empty: the agent's or profile's default",
             );
-            changed |= field(
-                &mut columns[1],
-                "Effort",
-                &mut stage.effort,
-                "empty: the agent's or profile's default",
-            );
+            changed |= field(&mut columns[1], "Effort", &mut stage.effort, &effort_hint);
         });
         ui.spacing_mut().item_spacing = egui::vec2(6.0, 6.0);
         ui.add_space(12.0);

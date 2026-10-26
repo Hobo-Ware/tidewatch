@@ -7,7 +7,7 @@
 use std::collections::BTreeMap;
 
 use tidewatch_core::agents::{ArgList, Level};
-use tidewatch_core::profiles::{Profile, Profiles};
+use tidewatch_core::profiles::{Profile, Profiles, default_effort};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct Draft {
@@ -36,6 +36,13 @@ impl Draft {
             extra_args: shell_words::join(profile.extra_args.iter()),
             never_push: profile.never_push,
             house_style: profile.house_style,
+        }
+    }
+
+    pub(crate) fn follow_model(&mut self, previous_model: &str) {
+        let followed = default_effort(previous_model).unwrap_or_default();
+        if self.effort.trim() == followed {
+            self.effort = default_effort(&self.model).unwrap_or_default().to_owned();
         }
     }
 
@@ -232,6 +239,22 @@ mod tests {
         let ids: Vec<&str> = editor.drafts.iter().map(|d| d.id.as_str()).collect();
         assert_eq!(ids, ["builder", "reviewer"]);
         assert_eq!(editor.build().unwrap(), profiles);
+    }
+
+    #[test]
+    fn an_effort_nobody_chose_follows_the_model_and_a_chosen_one_stays() {
+        let mut draft = editor().drafts[1].clone();
+        assert_eq!((draft.model.as_str(), draft.effort.as_str()), ("sonnet", "high"));
+        let steps = [("opus", "medium"), ("haiku", "xhigh"), ("gpt-5", ""), ("opus", "medium")];
+        for (model, want) in steps {
+            let previous = std::mem::replace(&mut draft.model, model.to_owned());
+            draft.follow_model(&previous);
+            assert_eq!(draft.effort, want, "model {model}");
+        }
+        draft.effort = "max".into();
+        let previous = std::mem::replace(&mut draft.model, "sonnet".to_owned());
+        draft.follow_model(&previous);
+        assert_eq!(draft.effort, "max");
     }
 
     #[test]

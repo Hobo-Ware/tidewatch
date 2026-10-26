@@ -13,7 +13,7 @@ pub(crate) const RELEASE: &str = "release";
 pub(crate) const REFACTOR: &str = "refactor";
 
 fn stage(action: Action, agent: &str, model: Option<&str>, level: Level, prompt: &str) -> Stage {
-    Stage { prompt: Some(prompt.to_owned()), ..default_stage(action, agent, model, None, level) }
+    Stage { prompt: Some(prompt.to_owned()), ..default_stage(action, agent, model, level) }
 }
 
 fn review(prompt: &str, on_fail: usize) -> Stage {

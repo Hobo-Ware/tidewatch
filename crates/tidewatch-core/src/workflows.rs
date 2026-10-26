@@ -18,9 +18,10 @@ use serde::{Deserialize, Serialize, Serializer};
 
 use crate::agents::{AgentTable, ArgList, Level};
 use crate::builtin_workflows;
+use crate::effort_migration;
 use crate::fsutil::write_atomic;
 use crate::paths::TidewatchPaths;
-use crate::profiles::Profile;
+use crate::profiles::{Profile, default_effort};
 use crate::prompt;
 use crate::workflow_upgrade;
 
@@ -407,7 +408,6 @@ pub(crate) fn default_stage(
     action: Action,
     agent: &str,
     model: Option<&str>,
-    effort: Option<&str>,
     level: Level,
 ) -> Stage {
     Stage {
@@ -415,7 +415,7 @@ pub(crate) fn default_stage(
             profile: None,
             agent: Some(agent.to_owned()),
             model: model.map(str::to_owned),
-            effort: effort.map(str::to_owned),
+            effort: model.and_then(default_effort).map(str::to_owned),
             level: Some(level),
         },
         ..Stage::new(action)
@@ -444,15 +444,15 @@ impl Workflows {
             name: "Ship a feature".into(),
             description: "Build, get a second opinion, tidy up, hand off.".into(),
             stages: vec![
-                default_stage(Action::Work, "claude", Some("opus"), Some("high"), Level::Edits),
+                default_stage(Action::Work, "claude", Some("opus"), Level::Edits),
                 Stage {
                     on_fail: Some(0),
-                    ..default_stage(Action::Review, "gemini", None, None, Level::Plan)
+                    ..default_stage(Action::Review, "gemini", None, Level::Plan)
                 },
-                default_stage(Action::Refactor, "claude", Some("sonnet"), None, Level::Edits),
+                default_stage(Action::Refactor, "claude", Some("sonnet"), Level::Edits),
                 Stage {
                     approve: true,
-                    ..default_stage(Action::Handoff, "claude", Some("haiku"), None, Level::Plan)
+                    ..default_stage(Action::Handoff, "claude", Some("haiku"), Level::Plan)
                 },
             ],
         };
@@ -461,11 +461,11 @@ impl Workflows {
             name: "Fix a bug".into(),
             description: "Prove the bug with a test, fix it, check the fix.".into(),
             stages: vec![
-                default_stage(Action::Reproduce, "codex", None, None, Level::Auto),
-                default_stage(Action::Fix, "codex", None, None, Level::Auto),
+                default_stage(Action::Reproduce, "codex", None, Level::Auto),
+                default_stage(Action::Fix, "codex", None, Level::Auto),
                 Stage {
                     on_fail: Some(1),
-                    ..default_stage(Action::Review, "claude", Some("sonnet"), None, Level::Plan)
+                    ..default_stage(Action::Review, "claude", Some("sonnet"), Level::Plan)
                 },
             ],
         };
@@ -474,9 +474,9 @@ impl Workflows {
             name: "Review a PR".into(),
             description: "Two models review, one writes the summary.".into(),
             stages: vec![
-                default_stage(Action::Review, "claude", Some("sonnet"), None, Level::Plan),
-                default_stage(Action::Review, "gemini", None, None, Level::Plan),
-                default_stage(Action::Handoff, "claude", Some("haiku"), None, Level::Plan),
+                default_stage(Action::Review, "claude", Some("sonnet"), Level::Plan),
+                default_stage(Action::Review, "gemini", None, Level::Plan),
+                default_stage(Action::Handoff, "claude", Some("haiku"), Level::Plan),
             ],
         };
         let workflow = [ship, fix, pr]
@@ -549,13 +549,56 @@ impl Workflows {
     pub fn load_or_seed(paths: &TidewatchPaths, path_var: Option<&OsStr>) -> Self {
         let file = paths.workflows_file();
         if file.exists() {
+            Self::migrate_saved_effort(paths);
             workflow_upgrade::add_new_built_ins(paths, path_var);
             return Self::load(&file);
         }
         let seeded = Self::seeded(&AgentTable::builtin().found_on_path(path_var));
         match seeded.save(&file) {
-            Ok(()) => workflow_upgrade::record_all_offered(paths),
+            Ok(()) => {
+                workflow_upgrade::record_all_offered(paths);
+                effort_migration::mark(paths, effort_migration::WORKFLOWS);
+            }
             Err(e) => eprintln!("tidewatch: cannot write {} ({e})", file.display()),
+        }
+        seeded
+    }
+
+    /// Once per machine: Ship a feature's Work stage that an older version seeded at opus and
+    /// `high` moves to the opus default. Any other stage, and a Work stage the user changed, stays.
+    /// A file that cannot be read or parsed is left alone and not marked.
+    fn migrate_saved_effort(paths: &TidewatchPaths) {
+        if effort_migration::is_done(paths, effort_migration::WORKFLOWS) {
+            return;
+        }
+        let file = paths.workflows_file();
+        let Some(mut workflows) =
+            std::fs::read_to_string(&file).ok().and_then(|text| Self::parse(&text).ok())
+        else {
+            return;
+        };
+        if workflows.migrate_seeded_effort()
+            && let Err(e) = workflows.save(&file)
+        {
+            eprintln!("tidewatch: cannot write {} ({e})", file.display());
+            return;
+        }
+        effort_migration::mark(paths, effort_migration::WORKFLOWS);
+    }
+
+    fn migrate_seeded_effort(&mut self) -> bool {
+        let Some(work) = self.workflow.get_mut("ship").and_then(|ship| ship.stages.first_mut())
+        else {
+            return false;
+        };
+        let run = &mut work.run;
+        let seeded = work.action == Action::Work
+            && run.profile.is_none()
+            && run.agent.as_deref() == Some("claude")
+            && run.model.as_deref() == Some("opus")
+            && run.effort.as_deref() == Some("high");
+        if seeded {
+            run.effort = default_effort("opus").map(str::to_owned);
         }
         seeded
     }
@@ -580,6 +623,25 @@ mod tests {
 
     fn named(profile: &str) -> StageRun {
         StageRun { profile: Some(profile.into()), ..StageRun::default() }
+    }
+
+    #[test]
+    fn default_stages_take_the_effort_of_their_model() {
+        let defaults = Workflows::defaults();
+        let efforts: Vec<_> = defaults.workflow["ship"]
+            .stages
+            .iter()
+            .map(|s| (s.run.model.as_deref(), s.run.effort.as_deref()))
+            .collect();
+        assert_eq!(
+            efforts,
+            [
+                (Some("opus"), Some("medium")),
+                (None, None),
+                (Some("sonnet"), Some("high")),
+                (Some("haiku"), Some("xhigh")),
+            ]
+        );
     }
 
     #[test]
@@ -685,7 +747,7 @@ mod tests {
             prompt: Some("Check {base}..HEAD\n\"quoted\" {task}".into()),
             ..Stage::new(Action::Review)
         };
-        let first = default_stage(Action::Work, "claude", None, None, Level::Auto);
+        let first = default_stage(Action::Work, "claude", None, Level::Auto);
         let mine = Workflow {
             id: "mine".into(),
             name: "Mine".into(),
@@ -821,6 +883,59 @@ gate = "tests"
         std::fs::write(paths.workflows_file(), edited).unwrap();
         let after_edit = Workflows::load_or_seed(&paths, Some(&path));
         assert_eq!(after_edit.workflow.keys().collect::<Vec<_>>(), ["mine"]);
+    }
+
+    fn saved_ship(effort: &str, model: &str) -> (tempfile::TempDir, TidewatchPaths) {
+        let home = tempfile::tempdir().unwrap();
+        let paths = TidewatchPaths::new(home.path());
+        let mut old = Workflows::defaults();
+        let work = &mut old.workflow.get_mut("ship").unwrap().stages[0].run;
+        work.model = Some(model.into());
+        work.effort = Some(effort.into());
+        old.save(&paths.workflows_file()).unwrap();
+        workflow_upgrade::record_all_offered(&paths);
+        (home, paths)
+    }
+
+    fn ship_work_effort(paths: &TidewatchPaths) -> Option<String> {
+        Workflows::load(&paths.workflows_file()).workflow["ship"].stages[0].run.effort.clone()
+    }
+
+    #[test]
+    fn a_ship_stage_seeded_at_opus_high_moves_to_medium_once() {
+        let (_home, paths) = saved_ship("high", "opus");
+        let nothing = std::ffi::OsString::new();
+        let _ = Workflows::load_or_seed(&paths, Some(&nothing));
+        assert_eq!(ship_work_effort(&paths).as_deref(), Some("medium"));
+
+        let mut by_hand = Workflows::load(&paths.workflows_file());
+        by_hand.workflow.get_mut("ship").unwrap().stages[0].run.effort = Some("high".into());
+        by_hand.save(&paths.workflows_file()).unwrap();
+        let _ = Workflows::load_or_seed(&paths, Some(&nothing));
+        assert_eq!(ship_work_effort(&paths).as_deref(), Some("high"));
+    }
+
+    #[test]
+    fn a_ship_stage_the_user_changed_keeps_its_effort() {
+        let nothing = std::ffi::OsString::new();
+        for (effort, model) in [("max", "opus"), ("high", "sonnet")] {
+            let (_home, paths) = saved_ship(effort, model);
+            let _ = Workflows::load_or_seed(&paths, Some(&nothing));
+            assert_eq!(ship_work_effort(&paths).as_deref(), Some(effort), "{model}");
+        }
+    }
+
+    #[test]
+    fn a_fresh_seed_is_marked_so_a_later_high_stays() {
+        let home = tempfile::tempdir().unwrap();
+        let paths = TidewatchPaths::new(home.path());
+        let nothing = std::ffi::OsString::new();
+        let _ = Workflows::load_or_seed(&paths, Some(&nothing));
+        let mut by_hand = Workflows::load(&paths.workflows_file());
+        by_hand.workflow.get_mut("ship").unwrap().stages[0].run.effort = Some("high".into());
+        by_hand.save(&paths.workflows_file()).unwrap();
+        let _ = Workflows::load_or_seed(&paths, Some(&nothing));
+        assert_eq!(ship_work_effort(&paths).as_deref(), Some("high"));
     }
 
     #[test]
