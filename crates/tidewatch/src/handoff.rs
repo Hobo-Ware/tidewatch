@@ -433,7 +433,7 @@ fn agent_tab(entry: &AgentEntry, dir: &Path, now: f64, notes: &mut Vec<String>) 
     }
 }
 
-const HOOKS_LOST: &str = "Agents that kept running could not reconnect to Tidewatch, so their status comes from the terminal and they cannot report findings.";
+const HOOKS_LOST: &str = "Agents that kept running could not reconnect to Tidewatch, so their status comes from the terminal and their progress, questions, findings and Meeseeks reports are lost.";
 
 /// What the new window tells the user about the handover: what came back as something else, and
 /// whether the agents that kept running still reach Tidewatch. `hooked` is how many of them reported

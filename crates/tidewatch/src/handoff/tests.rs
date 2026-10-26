@@ -927,6 +927,13 @@ fn the_new_window_speaks_up_only_about_what_did_not_come_back_as_it_was() {
     assert_eq!(notice(&lost, 1, false), Some(format!("{LOST_TERMINAL}\n{HOOKS_LOST}")));
 }
 
+#[test]
+fn the_lost_hooks_notice_names_everything_that_stops_reaching_tidewatch() {
+    for word in ["progress", "questions", "findings", "Meeseeks"] {
+        assert!(HOOKS_LOST.contains(word), "{word}");
+    }
+}
+
 fn a_meeseeks() -> tidewatch_core::meeseeks::Meeseeks {
     let mut meeseeks = tidewatch_core::meeseeks::Meeseeks::summon(
         "rename the helper",

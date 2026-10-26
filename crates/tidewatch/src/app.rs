@@ -283,6 +283,11 @@ impl Tidewatch {
         for (tab, credential) in credentials.iter().filter(|_| hooks_kept) {
             hooks.adopt(*tab, credential);
         }
+        let notice =
+            [handoff::notice(&notes, kept_agents, hooks_kept), hooks.problem().map(str::to_owned)]
+                .into_iter()
+                .flatten()
+                .reduce(|first, second| format!("{first}\n{second}"));
         let restored = hooks_port.is_some();
         let loaded = paths.as_ref().map(Prefs::load).unwrap_or_default();
         let (new_tab_prefs, park_after, close_enter) =
@@ -435,7 +440,7 @@ impl Tidewatch {
             last_used,
             dev_session,
             restore: restore_glue::Host::new(no_restore, crash_loop, RealDisk::from_env()),
-            notice: handoff::notice(&notes, kept_agents, hooks_kept),
+            notice,
             updates,
             settings_sync,
             desktop: shell.desktop.clone(),

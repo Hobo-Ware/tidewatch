@@ -21,11 +21,31 @@ pub(crate) const PORT_PATIENCE: Duration = Duration::from_secs(5);
 pub(crate) struct Hooks {
     listener: Option<Arc<Listener>>,
     inbox: Option<Receiver<TabMessage>>,
+    problem: Option<String>,
 }
 
 impl Hooks {
     pub(crate) fn off() -> Self {
-        Self { listener: None, inbox: None }
+        Self { listener: None, inbox: None, problem: None }
+    }
+
+    fn failed(error: impl std::fmt::Display) -> Self {
+        eprintln!(
+            "tidewatch: the hook listener could not start ({error}); agent status will use \
+             terminal and process signals only"
+        );
+        Self {
+            problem: Some(format!(
+                "Tidewatch could not start its agent listener ({error}). Agents will not report \
+                 status, progress, questions, findings or Meeseeks results until you restart it."
+            )),
+            ..Self::off()
+        }
+    }
+
+    /// What the user is told when the listener could not start.
+    pub(crate) fn problem(&self) -> Option<&str> {
+        self.problem.as_deref()
     }
 
     /// Starts the listener, waking the UI on every message. A bind failure is logged once.
@@ -34,15 +54,9 @@ impl Hooks {
         let wake = ctx.clone();
         match Listener::start(paths.clone(), Box::new(move || wake.request_repaint())) {
             Ok((listener, inbox)) => {
-                Self { listener: Some(Arc::new(listener)), inbox: Some(inbox) }
+                Self { listener: Some(Arc::new(listener)), inbox: Some(inbox), problem: None }
             }
-            Err(e) => {
-                eprintln!(
-                    "tidewatch: the hook listener could not start ({e}); agent status will use \
-                     terminal and process signals only"
-                );
-                Self::off()
-            }
+            Err(e) => Self::failed(e),
         }
     }
 
@@ -59,9 +73,10 @@ impl Hooks {
         let wake = ctx.clone();
         let repaint = Box::new(move || wake.request_repaint());
         match Listener::start_on_port(port, paths.clone(), repaint, patience) {
-            Ok((listener, inbox)) => {
-                (Self { listener: Some(Arc::new(listener)), inbox: Some(inbox) }, true)
-            }
+            Ok((listener, inbox)) => (
+                Self { listener: Some(Arc::new(listener)), inbox: Some(inbox), problem: None },
+                true,
+            ),
             Err(e) => {
                 eprintln!("tidewatch: the hook port {port} stayed busy ({e}); starting on another");
                 (Self::start(Some(paths), ctx), false)
@@ -210,6 +225,16 @@ mod tests {
         for (file, want) in cases {
             assert_eq!(stays_inside(file), want, "{file}");
         }
+    }
+
+    #[test]
+    fn a_listener_that_could_not_start_says_so_in_words_for_the_user() {
+        let hooks = Hooks::failed("address in use");
+        assert!(hooks.listener().is_none());
+        let problem = hooks.problem().unwrap();
+        assert!(problem.contains("address in use"), "{problem}");
+        assert!(problem.contains("progress") && problem.contains("Meeseeks"), "{problem}");
+        assert_eq!(Hooks::off().problem(), None);
     }
 
     #[test]

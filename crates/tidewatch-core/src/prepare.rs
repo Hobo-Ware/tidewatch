@@ -192,12 +192,14 @@ fn prepare_with(
         .flatten();
 
     let mcp_path = paths.tab_state_dir(input.repo, input.tab).join(MCP_CONFIG_FILE);
-    let mcp_config = input.listener.as_ref().map(|listener| {
-        if let Some(json) = mcp_config_json(wiring, listener) {
-            soft("MCP config", write_private_atomic(&mcp_path, &json).map(|()| mcp_path.clone()));
-        }
-        mcp_path.clone()
-    });
+    let mcp_config =
+        input.listener.as_ref().and_then(|listener| match mcp_config_json(wiring, listener) {
+            Some(json) => soft(
+                "MCP config, so this agent cannot report to Tidewatch",
+                write_private_atomic(&mcp_path, &json).map(|()| mcp_path.clone()),
+            ),
+            None => Some(mcp_path.clone()),
+        });
 
     let feed = paths.progress_feed_file(input.repo, input.tab);
     let feed_env = soft("progress feed", touch(&feed).map(|()| feed.clone()))
@@ -1147,6 +1149,25 @@ mod tests {
         let codex =
             fx.run("codex", &profile("codex", Level::Edits), true, "", Some(listener())).unwrap();
         assert!(!codex.launch.shell_line().contains("autoMemoryDirectory"));
+    }
+
+    #[test]
+    fn an_mcp_config_that_could_not_be_written_is_not_passed_to_the_agent() {
+        let fx = Fixture::new();
+        let table = AgentTable::builtin();
+        let claude = profile("claude", Level::Edits);
+        let input = resume_input(&fx, &table, "claude", &claude, Some(listener()));
+        let mcp = fx.paths.tab_state_dir(input.repo, input.tab).join("mcp.json");
+        std::fs::create_dir_all(&mcp).unwrap();
+        let prepared = prepare_resume(&input, SESSION).unwrap();
+        let args = prepared.launch.args.join(" ");
+        assert!(!args.contains("--mcp-config"), "{args}");
+        assert!(!args.contains("--allowedTools=mcp__tidewatch__"), "{args}");
+        assert!(
+            prepared.notes.iter().any(|note| note.starts_with("MCP config")),
+            "{:?}",
+            prepared.notes
+        );
     }
 
     #[test]
