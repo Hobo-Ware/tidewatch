@@ -1,5 +1,5 @@
 use super::*;
-use egui::{Context, Event, PointerButton, RawInput};
+use egui::{Context, Event, PointerButton, RawInput, Shape};
 use tidewatch_core::pr_cards::Cards;
 use tidewatch_core::pr_status::{Body, Job, ReviewComment, Seen, Summary, SummaryChecks, Via};
 use tidewatch_core::prefs::{GithubPrefs, PrMode};
@@ -275,4 +275,83 @@ fn a_paused_tab_on_its_own_has_a_tail_of_one_quiet_line_and_no_button() {
     assert_eq!(clicked, None);
     let sending = Data { handling: Handling::Agent, ..paused };
     assert!(!sending.has_tail());
+}
+
+fn painted_text(watch: &Watch) -> Vec<String> {
+    let ctx = with_fonts();
+    let data = Data {
+        watch,
+        profile: "Builder",
+        handling: Handling::Owner,
+        policy: policy(PrMode::Ask),
+        now_ms: 10_000_000,
+    };
+    let mut texts = Vec::new();
+    for batch in [vec![], vec![]] {
+        let raw = RawInput {
+            screen_rect: Some(Rect::from_min_size(pos2(0.0, 0.0), vec2(900.0, 3000.0))),
+            events: batch,
+            focused: true,
+            ..RawInput::default()
+        };
+        let output = ctx.run_ui(raw, |ui| {
+            ui.set_width(820.0);
+            for index in 0..data.cards().len() {
+                card(ui, &data, index);
+            }
+        });
+        texts.clear();
+        for clipped in &output.shapes {
+            if let Shape::Text(text) = &clipped.shape {
+                texts.push(text.galley.text().to_owned());
+            }
+        }
+    }
+    texts
+}
+
+const MARKUP: &str = "<!-- codex-note -->\n**P1 Badge** The retry loop never resets its counter.\n\n| Check | Result |\n| --- | --- |\n| retry | <relative-time datetime=\"2026-10-26T16:09:23Z\">just now</relative-time> |\n\n<details><summary>About this review</summary>\nIt was run by a bot.\n</details>";
+
+#[test]
+fn what_someone_wrote_on_github_is_drawn_as_markdown_never_as_raw_text() {
+    let comment = Body::Commented {
+        trusted: true,
+        author: "reviewer".into(),
+        text: MARKUP.into(),
+        url: String::new(),
+    };
+    let review = Body::ChangesRequested {
+        trusted: true,
+        author: "reviewer".into(),
+        body: MARKUP.into(),
+        comments: vec![ReviewComment {
+            path: "src/retry.rs".into(),
+            line: Some(12),
+            text: MARKUP.into(),
+        }],
+    };
+    for (name, body) in [("comment", comment), ("review", review)] {
+        let texts = painted_text(&watch_with(vec![body]));
+        let all = texts.join("\n");
+        assert!(all.contains("The retry loop never resets its counter."), "{name}: {all}");
+        assert!(all.contains("About this review"), "{name}: {all}");
+        for raw in ["<!--", "<details", "<summary", "</", "<relative-time", "**P1"] {
+            assert!(!all.contains(raw), "{name} shows raw {raw:?}: {all}");
+        }
+    }
+}
+
+#[test]
+fn two_cards_with_a_table_each_do_not_share_widget_ids() {
+    let table = "| Stage | Counter |\n| --- | --- |\n| first | 0 |";
+    let comment = |text: &str| Body::Commented {
+        trusted: true,
+        author: "reviewer".into(),
+        text: text.into(),
+        url: String::new(),
+    };
+    let watch = watch_with(vec![comment(table), comment(table)]);
+    let all = painted_text(&watch).join("\n");
+    assert!(!all.contains("Second use"), "{all}");
+    assert!(all.contains("Counter"), "{all}");
 }

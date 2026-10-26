@@ -151,6 +151,23 @@ fn changes_requested_list_each_comment_and_offer_the_notes() {
 }
 
 #[test]
+fn the_words_of_a_review_are_markdown_and_the_words_of_the_card_are_plain() {
+    let body = Body::ChangesRequested {
+        trusted: true,
+        author: "reviewer".into(),
+        body: " **Two** things. ".into(),
+        comments: Vec::new(),
+    };
+    let model = card(vec![body], PrMode::Ask);
+    assert_eq!(model.body, [Block::Markdown("**Two** things.".into())]);
+    let merged = card(vec![Body::Merged { number: 42, base: "main".into() }], PrMode::Ask);
+    assert_eq!(
+        merged.body,
+        [Block::Text("PR merged. Checking whether the worktree can go.".into())]
+    );
+}
+
+#[test]
 fn a_comment_can_be_answered_by_the_agent_or_in_the_browser() {
     let own = Body::Commented {
         trusted: true,
@@ -161,7 +178,7 @@ fn a_comment_can_be_answered_by_the_agent_or_in_the_browser() {
     let model = card(vec![own], PrMode::Ask);
     assert_eq!(model.icon, Icon::Comment('R'));
     assert_eq!(model.title, "@rev commented");
-    assert_eq!(model.body, [Block::Text("Does it work?".into())]);
+    assert_eq!(model.body, [Block::Markdown("Does it work?".into())]);
     assert_eq!(labels(&model), [("Ask Builder to answer", true), ("Reply myself", false)]);
     assert_eq!(
         model.buttons[1].action,
