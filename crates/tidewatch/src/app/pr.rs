@@ -6,11 +6,12 @@ use std::time::Duration;
 use egui::{Rect, Ui};
 use tidewatch_core::pr_status::{Body, Tone as PrTone};
 use tidewatch_core::prefs::{GithubPrefs, Prefs};
+use tidewatch_core::sent::{Cap, Reason, because};
 
 use super::{Tidewatch, WAKE_SLACK_S, wall_ms};
 use crate::delivery_card::Delivery;
-use crate::note_send::ENTER_DELAY_SECS;
 use crate::notify::{self, Notification};
+use crate::outbox::{Offer, Origin, Send};
 use crate::overview::Overview;
 use crate::pane::Body as PaneBody;
 use crate::pr_card_model::{CardAction, is_web_url};
@@ -68,14 +69,27 @@ impl Tidewatch {
     }
 
     fn apply_pr(&mut self, applied: Vec<Applied>, ctx: &egui::Context, now: f64) {
+        let mut told: Option<Cap> = None;
         for Applied { tab, out } in applied {
             match out {
+                Out::Told { n, max } => told = Some(Cap { n, max }),
                 Out::Paste(text) => {
-                    flow_glue::paste(&mut self.tabs, tab, &text);
-                    self.flow.queue_enter(tab, now);
-                    ctx.request_repaint_after(Duration::from_secs_f64(
-                        ENTER_DELAY_SECS + WAKE_SLACK_S,
-                    ));
+                    let send = match told.take() {
+                        Some(cap) => {
+                            Send::auto(&text, Reason::AutoFix, because::AUTO_FIX).with_cap(cap)
+                        }
+                        None => Send::untold(&text, Origin::Hand),
+                    };
+                    if let Offer::Refuse(reason) = flow_glue::send_or_queue(
+                        &mut self.tabs,
+                        &mut self.flow,
+                        tab,
+                        send,
+                        ctx,
+                        now,
+                    ) {
+                        self.show_toast(reason, ctx);
+                    }
                 }
                 Out::Toast(text) => self.show_toast(text, ctx),
                 Out::Notify(notice) => {

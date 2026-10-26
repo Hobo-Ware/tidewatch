@@ -5,12 +5,14 @@
 use std::time::Duration;
 
 use tidewatch_core::propose;
+use tidewatch_core::sent::{Reason, because};
 use tidewatch_core::workflows::Workflow;
 
 use super::Tidewatch;
-use crate::build_workflow::{self, Asked, Step, availability};
-use crate::note_send::ENTER_DELAY_SECS;
-use crate::pane::{Body, FirstPrompt};
+use crate::build_workflow::{self, Asked, Blocked, Step, availability};
+use crate::flow_glue;
+use crate::outbox::Send;
+use crate::pane::FirstPrompt;
 use crate::settings::Section;
 
 const WAKE_SLACK_S: f64 = 0.05;
@@ -33,20 +35,24 @@ impl Tidewatch {
         }
         let now = ctx.input(|i| i.time);
         let active = self.tabs.active();
-        let Some(tab) = self.tabs.items_mut().get_mut(active) else { return };
+        let Some(tab) = self.tabs.items().get(active) else { return };
         let (id, title) = (tab.id, tab.title.clone());
-        let (Body::Shell(term), Some(agent)) = (&mut tab.pane.body, tab.pane.agent.as_mut()) else {
+        let prompt = propose::prompt();
+        let send = Send::by_hand(&prompt, Reason::Workflow, because::BUILD_WORKFLOW);
+        if !flow_glue::deliver(&mut self.tabs, &mut self.flow, id, &send, ctx, now) {
+            self.show_toast(
+                format!("Cannot build a workflow: {}", Blocked::NotRunning.reason()),
+                ctx,
+            );
+            return;
+        }
+        let Some(agent) = self.tabs.get_mut(id).and_then(|found| found.pane.agent.as_mut()) else {
             return;
         };
-        let prompt = propose::prompt();
-        term.paste(&prompt);
-        agent.reader.tidewatch_said(&prompt, "Workflow");
         if agent.first_prompt == FirstPrompt::Awaiting {
             agent.first_prompt = FirstPrompt::Sent;
         }
         self.build_asks.push(Asked::new(id, agent.reader.rows.newest_seq(), now));
-        self.flow.queue_enter(id, now);
-        ctx.request_repaint_after(Duration::from_secs_f64(ENTER_DELAY_SECS + WAKE_SLACK_S));
         self.show_toast(format!("Asked {title} for a workflow"), ctx);
     }
 

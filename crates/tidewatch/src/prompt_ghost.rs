@@ -7,6 +7,8 @@
 
 use stdusk_core::terminal::{CellSnap, GridSnap};
 
+use crate::outbox::Screen;
+
 const PROMPTS: [char; 3] = ['>', '\u{276f}', '\u{203a}'];
 const RULES: [char; 3] = ['\u{2500}', '\u{2501}', '\u{2550}'];
 const RULE_STARTS: [char; 7] =
@@ -39,6 +41,31 @@ pub(crate) fn read(snap: &GridSnap) -> Option<String> {
     }
     let text = parts.join(" ");
     (closed && !text.is_empty() && text.chars().count() <= MAX_CHARS).then_some(text)
+}
+
+/// Whether Claude Code's input box is free to take a message: `Free` when it is empty or holds only
+/// its suggestion, `Typed` when something loud sits in it (a draft the user began), `NoBox` when the
+/// screen shows no input box (a dialog such as `/model` is open over it).
+pub(crate) fn screen_of(snap: &GridSnap) -> Screen {
+    let cols = snap.cols;
+    if cols == 0 || snap.cells.len() < cols * 2 {
+        return Screen::NoBox;
+    }
+    let rows: Vec<&[CellSnap]> = snap.cells.chunks(cols).collect();
+    let found = (1..rows.len())
+        .rev()
+        .find_map(|at| is_rule(rows[at - 1]).then(|| prompt_start(rows[at]).map(|s| (at, s)))?);
+    let Some((at, start)) = found else { return Screen::NoBox };
+    let Some(close) = (at + 1..rows.len()).find(|row| is_rule(rows[*row])) else {
+        return Screen::NoBox;
+    };
+    let first = faint_text(&rows[at][start..], true);
+    let more = rows[at + 1..close].iter().map(|row| faint_text(row, false));
+    if first.is_none() || more.into_iter().any(|row| row.is_none()) {
+        Screen::Typed
+    } else {
+        Screen::Free
+    }
 }
 
 fn text_of(row: &[CellSnap]) -> impl Iterator<Item = &CellSnap> {
@@ -237,6 +264,51 @@ mod tests {
         ];
         for (name, line, want) in cases {
             assert_eq!(suggestion(line).as_deref(), want, "{name}");
+        }
+    }
+
+    #[test]
+    fn the_input_box_is_free_typed_or_covered() {
+        let cases = [
+            ("an empty box", boxed(row(&[("> ", Ink::Plain), (" ", Ink::Cursor)])), Screen::Free),
+            (
+                "only its suggestion",
+                boxed(row(&[("> ", Ink::Plain), ("r", Ink::Cursor), ("un it", Ink::Faint)])),
+                Screen::Free,
+            ),
+            (
+                "a draft the user began",
+                boxed(row(&[("> ", Ink::Plain), ("fix the", Ink::Plain), (" ", Ink::Cursor)])),
+                Screen::Typed,
+            ),
+            (
+                "one typed letter under the cursor",
+                boxed(row(&[("> ", Ink::Plain), ("r", Ink::Cursor)])),
+                Screen::Typed,
+            ),
+            (
+                "a draft on the second line",
+                screen(&[
+                    rule(),
+                    row(&[("> ", Ink::Plain), ("run the", Ink::Faint)]),
+                    row(&[("  ", Ink::Plain), ("suite", Ink::Plain)]),
+                    rule(),
+                ]),
+                Screen::Typed,
+            ),
+            (
+                "a menu instead of the box",
+                screen(&[
+                    row(&[("Select model", Ink::Plain)]),
+                    row(&[("  1. Default", Ink::Plain)]),
+                    row(&[("  2. Opus", Ink::Plain)]),
+                ]),
+                Screen::NoBox,
+            ),
+            ("a screen with nothing on it", screen(&[]), Screen::NoBox),
+        ];
+        for (name, snap, want) in cases {
+            assert_eq!(screen_of(&snap), want, "{name}");
         }
     }
 

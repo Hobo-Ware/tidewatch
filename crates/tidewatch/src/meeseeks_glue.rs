@@ -2,7 +2,7 @@
 //! list, the branch facts of the summary tabs, and `TIDEWATCH_FAKE_MEESEEKS=on|struggling|poofed`
 //! for captures.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::PathBuf;
 
 use jiff::tz::TimeZone;
@@ -141,7 +141,7 @@ pub(crate) fn run_poof<T>(
 
 pub(crate) struct Host {
     jobs: Jobs<Done<PtyTerm>>,
-    pending: HashMap<u64, String>,
+    pending: HashMap<u64, VecDeque<String>>,
     leaving: HashMap<u64, Poofed>,
     branches: HashMap<u64, Option<Branch>>,
     saying: HashMap<u64, String>,
@@ -268,7 +268,7 @@ impl Host {
     }
 
     pub(crate) fn queue_paste(&mut self, tab: u64, text: String) {
-        self.pending.insert(tab, text);
+        self.pending.entry(tab).or_default().push_back(text);
     }
 
     pub(crate) fn pending_tabs(&self) -> Vec<u64> {
@@ -276,7 +276,16 @@ impl Host {
     }
 
     pub(crate) fn take_paste(&mut self, tab: u64) -> Option<String> {
-        self.pending.remove(&tab)
+        let line = self.pending.get_mut(&tab)?;
+        let text = line.pop_front();
+        if line.is_empty() {
+            self.pending.remove(&tab);
+        }
+        text
+    }
+
+    pub(crate) fn put_back_paste(&mut self, tab: u64, text: String) {
+        self.pending.entry(tab).or_default().push_front(text);
     }
 
     pub(crate) fn forget(&mut self, tab: u64) {

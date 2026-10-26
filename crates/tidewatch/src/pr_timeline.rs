@@ -3,7 +3,7 @@
 //! the transcript's copy of the same text is left out. Pure.
 
 use tidewatch_core::pr_cards::Card;
-use tidewatch_core::pr_status::Body;
+use tidewatch_core::pr_status::{Body, Via};
 
 use crate::reader_rows::{Kind, Rows};
 use crate::reader_sent;
@@ -18,6 +18,7 @@ pub(crate) enum Place {
     Row(usize),
     /// The n-th card of the timeline.
     Card(usize),
+    Said(usize),
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -27,29 +28,49 @@ pub(crate) struct RowInfo<'a> {
 }
 
 /// The order to draw `rows` and `cards` in. `cards` are sorted by time.
+#[cfg(test)]
 pub(crate) fn merge(rows: &[RowInfo<'_>], cards: &[Card]) -> Vec<Place> {
-    let hidden = copies_of_sent(rows, cards);
-    let mut places = Vec::with_capacity(rows.len() + cards.len());
-    let mut next_card = 0;
+    merge_with(rows, cards, &[], &vec![false; cards.len()])
+}
+
+/// `merge` with the times of the messages a hook sent, sorted, placed like cards, and the cards
+/// to leave out because Tidewatch's own record of the same message draws instead.
+pub(crate) fn merge_with(
+    rows: &[RowInfo<'_>],
+    cards: &[Card],
+    told: &[i64],
+    shadowed: &[bool],
+) -> Vec<Place> {
+    let hidden = copies_of_sent(rows, cards, shadowed);
+    let mut timeline: Vec<(i64, Place)> = cards
+        .iter()
+        .enumerate()
+        .filter(|(n, _)| !shadowed[*n])
+        .map(|(n, card)| (card.at_ms, Place::Card(n)))
+        .chain(told.iter().enumerate().map(|(n, at)| (*at, Place::Said(n))))
+        .collect();
+    timeline.sort_by_key(|(at, _)| *at);
+    let mut places = Vec::with_capacity(rows.len() + timeline.len());
+    let mut next = 0;
     let mut stamp = i64::MIN;
     for (index, row) in rows.iter().enumerate() {
         stamp = row.at_ms.unwrap_or(stamp);
-        while next_card < cards.len() && cards[next_card].at_ms < stamp {
-            places.push(Place::Card(next_card));
-            next_card += 1;
+        while next < timeline.len() && timeline[next].0 < stamp {
+            places.push(timeline[next].1);
+            next += 1;
         }
         if !hidden[index] {
             places.push(Place::Row(index));
         }
     }
-    places.extend((next_card..cards.len()).map(Place::Card));
+    places.extend(timeline[next..].iter().map(|(_, place)| *place));
     places
 }
 
 /// The rows to leave out: for each sent message, the first user row after it with the same text.
-fn copies_of_sent(rows: &[RowInfo<'_>], cards: &[Card]) -> Vec<bool> {
+fn copies_of_sent(rows: &[RowInfo<'_>], cards: &[Card], shadowed: &[bool]) -> Vec<bool> {
     let mut hidden = vec![false; rows.len()];
-    for card in cards {
+    for (card, _) in cards.iter().zip(shadowed).filter(|(_, shadowed)| !**shadowed) {
         let Body::Sent { text, .. } = &card.body else { continue };
         let found = rows.iter().enumerate().find(|(index, row)| {
             !hidden[*index]
@@ -72,7 +93,15 @@ pub(crate) fn places(rows: &Rows, cards: &[Card]) -> Vec<Place> {
             user_text: matches!(row.kind, Kind::User).then_some(row.text.as_str()),
         })
         .collect();
-    merge(&infos, cards)
+    let told: Vec<i64> = rows.timed().iter().map(|record| record.at_ms).collect();
+    let shadowed: Vec<bool> = cards
+        .iter()
+        .map(|card| match &card.body {
+            Body::Sent { via: Via::Auto, text, .. } => rows.told_auto_fix(text),
+            _ => false,
+        })
+        .collect();
+    merge_with(&infos, cards, &told, &shadowed)
 }
 
 #[cfg(test)]
@@ -161,6 +190,57 @@ mod tests {
         assert_eq!(places, [Place::Card(0)]);
         let rows = [user(1_100, "[Pasted text #1 +3 lines]")];
         assert_eq!(merge(&rows, &[sent(1, 1_000, text)]), [Place::Card(0)]);
+    }
+
+    #[test]
+    fn a_message_a_hook_sent_sits_among_the_rows_by_its_time() {
+        let rows = [row(Some(100)), row(Some(300))];
+        let places = merge_with(&rows, &[card(1, 250)], &[200, 900], &[false]);
+        assert_eq!(
+            places,
+            [Place::Row(0), Place::Said(0), Place::Card(0), Place::Row(1), Place::Said(1)]
+        );
+    }
+
+    #[test]
+    fn an_auto_fix_card_that_tidewatch_has_a_record_of_leaves_its_transcript_copy_to_the_record() {
+        let rows = [user(1_100, "fix it please")];
+        let auto = Card {
+            body: Body::Sent {
+                via: Via::Auto,
+                tag: "CI failure".into(),
+                headline: "fix it please".into(),
+                extra_lines: 0,
+                text: "fix it please".into(),
+            },
+            ..card(1, 1_000)
+        };
+        let places = merge_with(&rows, &[auto], &[], &[true]);
+        assert_eq!(places, [Place::Row(0)]);
+    }
+
+    #[test]
+    fn the_readers_rows_say_which_auto_fix_cards_their_records_replace() {
+        use tidewatch_core::sent::{Reason, Record};
+        let mut rows = Rows::default();
+        let auto = |text: &str| Card {
+            body: Body::Sent {
+                via: Via::Auto,
+                tag: "CI failure".into(),
+                headline: text.into(),
+                extra_lines: 0,
+                text: text.into(),
+            },
+            ..card(1, 1_000)
+        };
+        rows.tidewatch_said(vec![Record::new(
+            Reason::AutoFix,
+            "auto-fix is on",
+            "fix the build",
+            None,
+        )]);
+        assert_eq!(places(&rows, &[auto("fix the build")]), []);
+        assert_eq!(places(&rows, &[auto("fix the docs")]), [Place::Card(0)]);
     }
 
     #[test]

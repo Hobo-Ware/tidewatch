@@ -148,7 +148,7 @@ pub(crate) fn layout(rows: &Rows) -> Layout {
     let mut last_boundary = false;
     for (index, (row, at)) in rows.stamped().enumerate() {
         match &row.kind {
-            Kind::User | Kind::Review(_) | Kind::Divider => {
+            Kind::User | Kind::Tidewatch(_) | Kind::Review(_) | Kind::Divider => {
                 if let Some(group) = open.take() {
                     out.groups[group].closed = true;
                 }

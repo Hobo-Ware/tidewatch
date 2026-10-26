@@ -6,19 +6,21 @@ use std::time::Duration;
 use tidewatch_core::kind::Kind;
 use tidewatch_core::meeseeks::{Command, Event, Phase};
 use tidewatch_core::meeseeks_log::{Poofed, StageLine};
+use tidewatch_core::sent::{Reason, because};
 
 use super::WAKE_SLACK_S;
 use super::{Tidewatch, wall_ms};
 use crate::due::ask_blocked;
 use crate::flow_glue;
 use crate::meeseeks_glue::{CheckSpec, Done, LOOK_EVERY_SECS, LookSpec, fake_poofed};
-use crate::note_send::ENTER_DELAY_SECS;
+use crate::outbox::{Offer, Send};
 use crate::pane::{Body, Pane};
 use crate::progress_glue::today;
 use crate::progress_model::{self, StageShape};
 use crate::{meeseeks_summary, meeseeks_summary_view};
 
 const CLOCK_TICK: Duration = Duration::from_secs(30);
+const HOLD_LOOK_S: f64 = 0.5;
 
 impl Tidewatch {
     pub(super) fn drive_meeseeks(&mut self, ctx: &egui::Context, now: f64) {
@@ -175,10 +177,14 @@ impl Tidewatch {
             if !alive || ask_blocked(status.as_ref()).is_some() {
                 continue;
             }
-            if let Some(text) = self.meeseeks.take_paste(tab) {
-                flow_glue::paste_from_tidewatch(&mut self.tabs, tab, &text, "Meeseeks");
-                self.flow.queue_enter(tab, now);
-                ctx.request_repaint_after(Duration::from_secs_f64(ENTER_DELAY_SECS + WAKE_SLACK_S));
+            let Some(text) = self.meeseeks.take_paste(tab) else { continue };
+            let send = Send::auto(&text, Reason::MeeseeksCheck, because::MEESEEKS);
+            match flow_glue::offer_to_agent(&mut self.tabs, &mut self.flow, tab, &send, ctx, now) {
+                Offer::Go | Offer::Refuse(_) => {}
+                Offer::Wait | Offer::Paused => {
+                    self.meeseeks.put_back_paste(tab, text);
+                    ctx.request_repaint_after(Duration::from_secs_f64(HOLD_LOOK_S));
+                }
             }
         }
     }

@@ -85,6 +85,11 @@ pub(crate) struct Notice {
 /// What the watch asks the app to do.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum Out {
+    /// The next `Paste` is an auto-fix, the `n`-th of `max` on this pull request.
+    Told {
+        n: u32,
+        max: u32,
+    },
     Paste(String),
     Toast(String),
     Notify(Notice),
@@ -506,7 +511,9 @@ impl Watch {
         );
         self.cards.fixing = true;
         self.hold_until = Some(now + HOLD_SECS);
-        vec![Out::Paste(message.text), Out::Save]
+        let told =
+            (via == Via::Auto).then_some(Out::Told { n: self.cards.auto_sends, max: self.cap() });
+        told.into_iter().chain([Out::Paste(message.text), Out::Save]).collect()
     }
 
     /// The agent finished after a message: `Some((head, commits))` is what it committed.
