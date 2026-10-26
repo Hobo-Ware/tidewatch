@@ -1,19 +1,12 @@
 //! The empty state and composer of an agent tab before its first message.
 
-use egui::{
-    Align2, FontId, Frame, Id, Key, KeyboardShortcut, Margin, Modifiers, Rect, RichText,
-    ScrollArea, Stroke, TextEdit, Ui, UiBuilder, pos2, vec2,
-};
+use egui::{Align2, Id, Key, Rect, Ui, UiBuilder, pos2, vec2};
 
 use crate::brand;
-use crate::commands::Command;
+use crate::composer::{self, Draft, Spec};
 use crate::reader_view::INSET;
-use crate::screen_kit::{Size, body, footer_row, heading, paint_cli_badge, primary_button};
+use crate::screen_kit::{body, heading, paint_cli_badge};
 
-const COMPOSER_H: f32 = 164.0;
-const COMPOSER_SHARE: f32 = 0.5;
-const COMPOSER_PAD_X: f32 = 32.0;
-const COMPOSER_FONT_PX: f32 = 16.0;
 const BADGE: f32 = 52.0;
 const TITLE_H: f32 = 30.0;
 const HEADER_GAP: f32 = 16.0;
@@ -91,40 +84,8 @@ pub(crate) fn empty_state(ui: &Ui, area: Rect, ready: Ready) {
     }
 }
 
-fn text_font() -> FontId {
-    FontId::proportional(COMPOSER_FONT_PX)
-}
-
-fn laid_out(ui: &Ui, text: &str, font: FontId, wrap: f32) -> f32 {
-    ui.painter().layout(text.to_owned(), font, brand::TEXT, wrap).size().y
-}
-
-fn text_heights(ui: &Ui, text: &str, width: f32) -> (f32, f32) {
-    let wrap = width - 2.0 * INSET - COMPOSER_PAD_X;
-    (laid_out(ui, text, text_font(), wrap), laid_out(ui, "\n", text_font(), wrap))
-}
-
-fn grown_height(base: f32, typed: f32, floor: f32, column_h: f32) -> f32 {
-    let cap = (column_h * COMPOSER_SHARE).max(base);
-    (base + (typed - floor).max(0.0)).min(cap)
-}
-
-pub(crate) fn height(ui: &Ui, text: &str, column: Rect) -> f32 {
-    let (typed, two_rows) = text_heights(ui, text, column.width());
-    grown_height(COMPOSER_H, typed, two_rows, column.height())
-}
-
-/// The height of a box that is `base` tall with one row of `font` and grows with `text` wrapped at
-/// `wrap`, by the composer's rule.
-pub(crate) fn grown_from(
-    ui: &Ui,
-    text: &str,
-    (font, wrap): (FontId, f32),
-    base: f32,
-    column_h: f32,
-) -> f32 {
-    let one_row = laid_out(ui, "", font.clone(), wrap);
-    grown_height(base, laid_out(ui, text, font, wrap), one_row, column_h)
+pub(crate) fn height(ui: &Ui, text: &str, pictures: usize, column: Rect) -> f32 {
+    composer::height(ui, text, pictures, column)
 }
 
 pub(crate) fn plain_enter(event: &egui::Event) -> bool {
@@ -135,73 +96,28 @@ pub(crate) fn plain_enter(event: &egui::Event) -> bool {
     )
 }
 
-pub(crate) fn composer(
-    ui: &mut Ui,
-    rect: Rect,
-    text: &mut String,
-    focus: &mut bool,
-    ready: Ready,
-) -> Option<String> {
-    let outer = rect.shrink2(vec2(INSET, 0.0)).with_max_y(rect.bottom() - 18.0);
-    let mut child = ui.new_child(UiBuilder::new().max_rect(outer));
-    let id = Id::new("agent-composer");
-    let was_focused = child.memory(|m| m.has_focus(id));
-    let enter = was_focused && child.input(|i| i.events.iter().any(plain_enter));
-    let mut clicked = false;
-    let mut prepared = Frame::new()
-        .fill(brand::ITEM)
-        .corner_radius(12)
-        .inner_margin(Margin::symmetric(16, 12))
-        .begin(&mut child);
-    let ui = &mut prepared.content_ui;
-    ui.set_width(ui.available_width());
-    ui.spacing_mut().item_spacing.y = 8.0;
-    ui.label(RichText::new(label(ready.profile)).size(12.5).color(brand::MUTED));
-    let (_, two_rows) = text_heights(ui, "", rect.width());
-    let shown = (rect.height() - COMPOSER_H + two_rows).max(two_rows);
-    let field = ScrollArea::vertical()
-        .id_salt("agent-composer-scroll")
-        .max_height(shown)
-        .min_scrolled_height(shown)
-        .auto_shrink([false, false])
-        .show(ui, |ui| {
-            ui.add(
-                TextEdit::multiline(text)
-                    .id(id)
-                    .frame(egui::Frame::NONE)
-                    .min_size(vec2(0.0, shown))
-                    .desired_width(f32::INFINITY)
-                    .font(text_font())
-                    .text_color(brand::TEXT)
-                    .return_key(KeyboardShortcut::new(Modifiers::SHIFT, Key::Enter)),
-            )
-        })
-        .inner;
-    if field.changed() {
-        ui.ctx().request_repaint();
-    }
-    if std::mem::take(focus) {
-        field.request_focus();
-    }
-    let hint =
-        format!("Enter sends  -  Shift+Enter new line  -  {} terminal", Command::Reader.keys());
-    footer_row(ui, &hint, |ui| {
-        clicked = primary_button(ui, "Send", !text.trim().is_empty(), Size::Regular).clicked();
-    });
-    let line = if field.has_focus() { brand::TEAL } else { brand::FIELD_LINE };
-    prepared.frame.stroke = Stroke::new(1.0, line);
-    prepared.end(&mut child);
-    ((enter || clicked) && !text.trim().is_empty()).then(|| {
-        *focus = true;
-        std::mem::take(text)
-    })
+fn composer_id() -> Id {
+    Id::new("agent-composer")
+}
+
+pub(crate) fn composer_has_focus(ctx: &egui::Context) -> bool {
+    ctx.memory(|memory| memory.has_focus(composer_id()))
+}
+
+/// The first message box: the Reader's composer, asking what the agent should do.
+pub(crate) fn composer(ui: &mut Ui, rect: Rect, draft: Draft<'_>, ready: Ready) -> Option<String> {
+    let mut child =
+        ui.new_child(UiBuilder::new().max_rect(rect.shrink2(vec2(INSET, composer::GAP_Y))));
+    let hint = label(ready.profile);
+    let spec = Spec { id: composer_id(), hint: &hint, enabled: true, commands: &[], ghost: None };
+    composer::show(&mut child, draft, &spec)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::reader_view::ViewState;
-    use egui::{Event, RawInput};
+    use egui::{Event, Frame, Modifiers, RawInput};
 
     fn ready() -> Ready<'static> {
         Ready { profile: "Builder", agent_id: "claude" }
@@ -221,8 +137,9 @@ mod tests {
         };
         let mut sent = None;
         let _ = ctx.run_ui(raw, |ui| {
-            let rect = Rect::from_min_size(pos2(0.0, 200.0), vec2(800.0, COMPOSER_H));
-            sent = composer(ui, rect, text, focus, ready());
+            let rect = Rect::from_min_size(pos2(0.0, 200.0), vec2(800.0, 64.0));
+            let draft = Draft { text, pictures: &mut Vec::new(), focus };
+            sent = composer(ui, rect, draft, ready());
         });
         sent
     }
@@ -278,21 +195,8 @@ mod tests {
         assert_eq!(frame(&ctx, vec![enter(false)], &mut text, &mut focus), None);
     }
 
-    fn frame_with_paste(ctx: &egui::Context, pasted: &str, text: &mut String, focus: &mut bool) {
-        let raw = RawInput {
-            screen_rect: Some(Rect::from_min_size(pos2(0.0, 0.0), vec2(800.0, 400.0))),
-            focused: true,
-            ..RawInput::default()
-        };
-        let _ = ctx.run_ui(raw, |ui| {
-            crate::image_paste::inject_paste(ui.ctx(), pasted.to_owned());
-            let rect = Rect::from_min_size(pos2(0.0, 200.0), vec2(800.0, COMPOSER_H));
-            composer(ui, rect, text, focus, ready());
-        });
-    }
-
     #[test]
-    fn an_image_only_cmd_v_puts_the_saved_path_in_the_composer() {
+    fn an_image_only_cmd_v_becomes_a_chip_and_leaves_the_text_clean() {
         use crate::image_paste::testing::screenshot;
         use crate::image_paste::{Delivery, resolve};
         use tidewatch_core::image_paste::Target;
@@ -300,13 +204,32 @@ mod tests {
         let (ctx, mut text, mut focus) = started();
         frame(&ctx, vec![Event::Text("see ".into())], &mut text, &mut focus);
         let dir = tempfile::tempdir().unwrap();
-        let Delivery::Text(path) = resolve(&mut screenshot(), Target::TextField, dir.path(), 3)
+        let Delivery::Pictures(paths) =
+            resolve(&mut screenshot(), Target::TextField, dir.path(), 3)
         else {
-            panic!("an image-only clipboard in a text field must give a path");
+            panic!("an image-only clipboard in a text field must give pictures");
         };
-        frame_with_paste(&ctx, &path, &mut text, &mut focus);
-        assert_eq!(text, format!("see {path}"));
-        assert!(std::path::Path::new(&path).is_file());
+        assert!(paths[0].is_file());
+        let mut pictures = Vec::new();
+        crate::pictures::attach(&mut pictures, paths.clone());
+        let raw = RawInput {
+            screen_rect: Some(Rect::from_min_size(pos2(0.0, 0.0), vec2(800.0, 400.0))),
+            focused: true,
+            ..RawInput::default()
+        };
+        let mut chip_h = 0.0;
+        let out = ctx.run_ui(raw, |ui| {
+            let rect = Rect::from_min_size(pos2(0.0, 200.0), vec2(800.0, 130.0));
+            let draft = Draft { text: &mut text, pictures: &mut pictures, focus: &mut focus };
+            composer(ui, rect, draft, ready());
+            chip_h = crate::pictures::CHIP_H;
+        });
+        let chips = out
+            .shapes
+            .iter()
+            .filter(|clipped| matches!(&clipped.shape, egui::Shape::Rect(r) if r.fill == brand::ITEM && r.rect.height() == chip_h))
+            .count();
+        assert_eq!((text.as_str(), chips), ("see ", 1));
     }
 
     #[test]
@@ -326,30 +249,31 @@ mod tests {
             ..RawInput::default()
         };
         let _ = ctx.run_ui(raw, |ui| {
-            let rect = Rect::from_min_size(pos2(0.0, 200.0), vec2(800.0, COMPOSER_H));
-            composer(ui, rect, &mut text, &mut focus, ready());
+            let rect = Rect::from_min_size(pos2(0.0, 200.0), vec2(800.0, 64.0));
+            let draft = Draft { text: &mut text, pictures: &mut Vec::new(), focus: &mut focus };
+            composer(ui, rect, draft, ready());
         });
         assert_eq!(text, "copied words");
         assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 0);
     }
 
     #[test]
-    fn the_composer_grows_with_its_text_up_to_half_the_column() {
-        let two_rows = 38.0;
-        let cases = [
-            (0.0, 600.0, COMPOSER_H),
-            (two_rows, 600.0, COMPOSER_H),
-            (two_rows + 20.0, 600.0, COMPOSER_H + 20.0),
-            (5_000.0, 600.0, 300.0),
-            (5_000.0, 200.0, COMPOSER_H),
-        ];
-        for (typed, column, want) in cases {
-            assert_eq!(
-                grown_height(COMPOSER_H, typed, two_rows, column),
-                want,
-                "{typed} in {column}"
-            );
-        }
+    fn the_box_asks_what_the_agent_should_do() {
+        let (ctx, mut text, mut focus) = started();
+        let raw = RawInput {
+            screen_rect: Some(Rect::from_min_size(pos2(0.0, 0.0), vec2(800.0, 400.0))),
+            focused: true,
+            ..RawInput::default()
+        };
+        let out = ctx.run_ui(raw, |ui| {
+            let rect = Rect::from_min_size(pos2(0.0, 200.0), vec2(800.0, 64.0));
+            let draft = Draft { text: &mut text, pictures: &mut Vec::new(), focus: &mut focus };
+            composer(ui, rect, draft, ready());
+        });
+        let asked = out.shapes.iter().any(|clipped| {
+            matches!(&clipped.shape, egui::Shape::Text(t) if t.galley.text() == "What should Builder do?")
+        });
+        assert!(asked);
     }
 
     #[test]
@@ -431,7 +355,7 @@ mod tests {
             });
         });
         let boxed = out.shapes.iter().find_map(|clipped| match &clipped.shape {
-            egui::Shape::Rect(rect) if rect.fill == brand::ITEM => Some(rect.rect),
+            egui::Shape::Rect(rect) if rect.fill == brand::CARD => Some(rect.rect),
             _ => None,
         });
         let header = text_with(&out.shapes, "is ready")
@@ -464,7 +388,8 @@ mod tests {
             );
             assert!(boxed.top() >= seen.column.top(), "line {line}: {boxed:?} above the column");
             assert!(
-                boxed.height() <= (seen.column.height() * COMPOSER_SHARE).max(COMPOSER_H) + 0.5,
+                boxed.height()
+                    <= (seen.column.height() * composer::SHARE).max(composer::BOX_H) + 0.5,
                 "line {line}: {boxed:?} past half the column"
             );
             if let Some(header) = seen.header {

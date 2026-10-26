@@ -16,6 +16,10 @@ use super::terminal::paste_rules;
 
 const PASTES_DIR: &str = "pastes";
 
+fn composer_focused(ctx: &egui::Context) -> bool {
+    crate::reader_view::reply_has_focus(ctx) || crate::agent_ready::composer_has_focus(ctx)
+}
+
 pub(crate) fn appended(reply: &str, text: &str) -> String {
     if reply.is_empty() || reply.ends_with(char::is_whitespace) {
         format!("{reply}{text}")
@@ -93,6 +97,7 @@ impl Tidewatch {
                 }
                 Target::TextField => self.insert_into_field(ctx, tab, active_id, text),
             },
+            Delivery::Pictures(paths) => self.attach_pictures(ctx, tab, active_id, paths),
         }
     }
 
@@ -104,6 +109,27 @@ impl Tidewatch {
         let agent = self.tabs.get_mut(tab).and_then(|tab| tab.pane.agent.as_mut());
         if let Some(agent) = agent {
             agent.reader.view.reply = appended(&agent.reader.view.reply, &text);
+            agent.reader.view.request_reply_focus();
+            ctx.request_repaint();
+        }
+    }
+
+    fn attach_pictures(
+        &mut self,
+        ctx: &egui::Context,
+        tab: u64,
+        active_id: u64,
+        paths: Vec<std::path::PathBuf>,
+    ) {
+        let other_field_focused =
+            tab == active_id && ctx.text_edit_focused() && !composer_focused(ctx);
+        if other_field_focused {
+            crate::image_paste::inject_paste(ctx, tidewatch_core::image_paste::path_text(&paths));
+            return;
+        }
+        let agent = self.tabs.get_mut(tab).and_then(|tab| tab.pane.agent.as_mut());
+        if let Some(agent) = agent {
+            crate::pictures::attach(&mut agent.reader.view.pictures, paths);
             agent.reader.view.request_reply_focus();
             ctx.request_repaint();
         }

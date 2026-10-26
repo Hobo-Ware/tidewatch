@@ -3,6 +3,7 @@
 //! and edited is exactly what was typed. The bullet replaces the marker's first character one for
 //! one, so every cursor position of the real text is a valid position in the drawn one.
 
+use std::ops::Range;
 use std::sync::Arc;
 
 use egui::epaint::text::{LayoutJob, TextFormat};
@@ -20,12 +21,42 @@ pub(crate) fn has_bullets(text: &str) -> bool {
     text.split('\n').any(|line| marker_of(line).is_some())
 }
 
-/// The job for `text`: a section per bullet glyph in `bullet`, the rest in `ink`.
+/// A run of the text, as byte positions of the real text, drawn in another colour.
+pub(crate) type Tint = Option<(Range<usize>, Color32)>;
+
+fn append_tinted(
+    job: &mut LayoutJob,
+    (text, start): (&str, usize),
+    tail: &str,
+    look: (&TextFormat, &Tint),
+) {
+    let (plain, tint) = look;
+    let inside = tint.as_ref().and_then(|(range, color)| {
+        let (lo, hi) = (
+            range.start.max(start) - start,
+            range.end.min(start + text.len()).saturating_sub(start),
+        );
+        (lo < hi && text.is_char_boundary(lo) && text.is_char_boundary(hi))
+            .then_some((lo, hi, *color))
+    });
+    match inside {
+        Some((lo, hi, color)) => {
+            job.append(&text[..lo], 0.0, plain.clone());
+            job.append(&text[lo..hi], 0.0, TextFormat { color, ..plain.clone() });
+            job.append(&format!("{}{tail}", &text[hi..]), 0.0, plain.clone());
+        }
+        None => job.append(&format!("{text}{tail}"), 0.0, plain.clone()),
+    }
+}
+
+/// The job for `text`: a section per bullet glyph in `bullet`, the rest in `ink`, a `tint`ed run
+/// in its own colour.
 pub(crate) fn job(
     text: &str,
     font: &FontId,
     (ink, bullet): (Color32, Color32),
     wrap: f32,
+    tint: &Tint,
 ) -> LayoutJob {
     let plain = TextFormat::simple(font.clone(), ink);
     let marked = TextFormat::simple(font.clone(), bullet);
@@ -33,15 +64,17 @@ pub(crate) fn job(
     job.wrap.max_width = wrap;
     let lines: Vec<&str> = text.split('\n').collect();
     let last = lines.len() - 1;
+    let mut start = 0;
     for (at, line) in lines.iter().enumerate() {
         let newline = if at < last { "\n" } else { "" };
         match marker_of(line) {
             Some(_) => {
                 job.append(&BULLET.to_string(), 0.0, marked.clone());
-                job.append(&format!("{}{newline}", &line[1..]), 0.0, plain.clone());
+                append_tinted(&mut job, (&line[1..], start + 1), newline, (&plain, tint));
             }
-            None => job.append(&format!("{line}{newline}"), 0.0, plain.clone()),
+            None => append_tinted(&mut job, (line, start), newline, (&plain, tint)),
         }
+        start += line.len() + 1;
     }
     job
 }
@@ -54,11 +87,6 @@ pub(crate) fn indent(ui: &Ui, font: &FontId) -> f32 {
     width(&format!("{BULLET} x")) - width("x")
 }
 
-/// The wrap width the box reserves for text: a box with bullets leaves room for the indent.
-pub(crate) fn wrap_for(ui: &Ui, text: &str, font: &FontId, wrap: f32) -> f32 {
-    if has_bullets(text) { wrap - indent(ui, font) } else { wrap }
-}
-
 /// Lays `text` out with bullets drawn and wrapped rows of a bullet line hung under its text.
 pub(crate) fn layout(
     ui: &Ui,
@@ -66,12 +94,13 @@ pub(crate) fn layout(
     font: &FontId,
     inks: (Color32, Color32),
     wrap: f32,
+    tint: &Tint,
 ) -> Arc<Galley> {
     if !has_bullets(text) {
-        return ui.painter().layout_job(job(text, font, inks, wrap));
+        return ui.painter().layout_job(job(text, font, inks, wrap, tint));
     }
     let hang = indent(ui, font);
-    let galley = ui.painter().layout_job(job(text, font, inks, wrap - hang));
+    let galley = ui.painter().layout_job(job(text, font, inks, wrap - hang, tint));
     let in_bullet: Vec<bool> = text.split('\n').map(|line| marker_of(line).is_some()).collect();
     let mut hung = (*galley).clone();
     let (mut line, mut first_row) = (0, true);
@@ -167,7 +196,7 @@ mod tests {
     #[test]
     fn the_drawn_text_swaps_one_char_per_marker_and_keeps_the_length() {
         let text = "intro\n- one\n* two\nnot - a bullet\n- ";
-        let shown = job(text, &font(), (INK, DOT), 300.0).text;
+        let shown = job(text, &font(), (INK, DOT), 300.0, &None).text;
         assert_eq!(shown, "intro\n\u{2022} one\n\u{2022} two\nnot - a bullet\n\u{2022} ");
         assert_eq!(shown.chars().count(), text.chars().count());
     }
@@ -175,7 +204,7 @@ mod tests {
     #[test]
     fn each_bullet_line_gets_a_bullet_section_of_its_own() {
         let text = "intro\n- one\n- two";
-        let built = job(text, &font(), (INK, DOT), 300.0);
+        let built = job(text, &font(), (INK, DOT), 300.0, &None);
         assert_eq!(built.text, "intro\n\u{2022} one\n\u{2022} two");
         let bullets: Vec<&str> = built
             .sections
@@ -193,8 +222,36 @@ mod tests {
     }
 
     #[test]
+    fn a_tinted_run_is_its_own_section_in_text_and_in_bullet_lines() {
+        let cases = [
+            ("go :smi now", 3..7, ":smi"),
+            ("a\n- go :smi", 7..11, ":smi"),
+            (":smi", 0..4, ":smi"),
+        ];
+        for (text, range, want) in cases {
+            let tint = Some((range, DOT));
+            let built = job(text, &font(), (INK, Color32::RED), 300.0, &tint);
+            let tinted: Vec<&str> = built
+                .sections
+                .iter()
+                .filter(|section| section.format.color == DOT)
+                .map(|section| &built.text[section.byte_range.start.0..section.byte_range.end.0])
+                .collect();
+            assert_eq!(tinted, vec![want], "{text:?}");
+            assert_eq!(built.text.chars().count(), text.chars().count());
+        }
+    }
+
+    #[test]
+    fn a_tint_outside_the_text_changes_nothing() {
+        let tint = Some((40..50, DOT));
+        let built = job("short", &font(), (INK, Color32::RED), 300.0, &tint);
+        assert_eq!(built.sections.len(), 1);
+    }
+
+    #[test]
     fn text_without_bullets_lays_out_as_one_plain_section() {
-        let built = job("hello\nworld", &font(), (INK, DOT), 300.0);
+        let built = job("hello\nworld", &font(), (INK, DOT), 300.0, &None);
         assert_eq!(built.sections.len(), 1);
         assert_eq!(built.text, "hello\nworld");
     }
@@ -203,7 +260,7 @@ mod tests {
     fn a_wrapped_bullet_line_hangs_under_its_text() {
         with_ui(|ui| {
             let text = "- one two three four five six seven eight nine ten eleven twelve";
-            let galley = layout(ui, text, &font(), (INK, DOT), 140.0);
+            let galley = layout(ui, text, &font(), (INK, DOT), 140.0, &None);
             assert!(galley.rows.len() > 2, "the line wraps");
             let hang = indent(ui, &font());
             assert!(hang > 4.0);
@@ -218,7 +275,7 @@ mod tests {
     #[test]
     fn a_plain_line_after_a_bullet_line_is_not_indented() {
         with_ui(|ui| {
-            let galley = layout(ui, "- one\nplain", &font(), (INK, DOT), 300.0);
+            let galley = layout(ui, "- one\nplain", &font(), (INK, DOT), 300.0, &None);
             assert_eq!(galley.rows.len(), 2);
             assert_eq!(galley.rows[1].pos.x, 0.0);
         });
@@ -228,7 +285,7 @@ mod tests {
     fn the_drawn_galley_has_a_cursor_position_for_every_char_of_the_real_text() {
         with_ui(|ui| {
             let text = "- ab\n- cd";
-            let galley = layout(ui, text, &font(), (INK, DOT), 300.0);
+            let galley = layout(ui, text, &font(), (INK, DOT), 300.0, &None);
             assert_eq!(galley.text().chars().count(), text.chars().count());
             let end = galley.end();
             assert_eq!(end.index.0, text.chars().count());

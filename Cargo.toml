@@ -16,6 +16,7 @@ stdusk-egui = { git = "https://github.com/Hobo-Ware/stdusk", rev = "bf197c174fa7
 anyhow = "1.0.104"
 eframe = { version = "0.35.0", features = ["glow", "__screenshot"] }
 egui = "0.35.0"
+emojis = "0.9.1"
 global-hotkey = "0.8.0"
 gix = { version = "0.88.0", default-features = false, features = ["sha1"] }
 httparse = "1.10.1"

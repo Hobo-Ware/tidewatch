@@ -6,6 +6,8 @@
 //! - `TIDEWATCH_DEV_ANSWER=allow|deny`: click that permission button once, when the Reader shows one.
 //! - `TIDEWATCH_DEV_REPLY=<text>` after `TIDEWATCH_DEV_REPLY_AFTER=<seconds>` (default 0): send a
 //!   reply from the Reader's box once, when it is enabled.
+//! - `TIDEWATCH_DEV_PICTURES=<path>:<path>`: attach those pictures to the message box once, as a paste of
+//!   screenshots does.
 //! - `TIDEWATCH_DEV_TURNS=open`: open the list of calls and the folded updates under every agent turn
 //!   once, as a click on a chip does; `notes` opens only the folded updates.
 //! - `TIDEWATCH_DEV_QUESTION=<steps>`: drive the live question card, one step every 0.4 s once it
@@ -15,6 +17,7 @@
 //!   before Tidewatch answers it (default five minutes).
 
 use std::collections::VecDeque;
+use std::path::PathBuf;
 
 use egui::Context;
 use tidewatch_core::question::Reply;
@@ -75,6 +78,7 @@ pub(crate) struct DevReader {
     key_after: Option<f64>,
     answer: Option<Answer>,
     reply: Option<(String, f64)>,
+    pictures: Vec<PathBuf>,
     question: VecDeque<CardStep>,
     question_at: f64,
     open_turns: bool,
@@ -95,7 +99,10 @@ impl DevReader {
             var("TIDEWATCH_DEV_REPLY_AFTER").as_deref(),
             var("TIDEWATCH_DEV_QUESTION").as_deref(),
         );
-        Self { open_turns, notes_only, ..parsed }
+        let pictures = var("TIDEWATCH_DEV_PICTURES")
+            .map(|paths| paths.split(':').filter(|p| !p.is_empty()).map(PathBuf::from).collect())
+            .unwrap_or_default();
+        Self { pictures, open_turns, notes_only, ..parsed }
     }
 
     fn parse(
@@ -108,6 +115,7 @@ impl DevReader {
     ) -> Self {
         Self {
             question: question.map(card_steps).unwrap_or_default(),
+            pictures: Vec::new(),
             question_at: 0.0,
             open_turns: false,
             notes_only: false,
@@ -129,8 +137,13 @@ impl DevReader {
         self.key_after.is_none()
             && self.answer.is_none()
             && self.reply.is_none()
+            && self.pictures.is_empty()
             && self.question.is_empty()
             && !self.open_turns
+    }
+
+    pub(crate) fn take_pictures(&mut self) -> Vec<PathBuf> {
+        std::mem::take(&mut self.pictures)
     }
 
     /// Whether the turns open only their folded updates, not their calls.

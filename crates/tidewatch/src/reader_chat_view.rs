@@ -25,6 +25,7 @@ use crate::code_block::{self, Look};
 use crate::job_model::clock_label;
 use crate::link_text::{Laid, Text};
 use crate::links;
+use crate::pictures;
 use crate::progress_ring::paint_spinner;
 use crate::reader_markdown::{self, Piece};
 use crate::reader_rows::{Kind, Row, ToolKind};
@@ -201,7 +202,8 @@ fn queued_meta(ui: &mut Ui, time: f64) {
 fn user_bubble(ui: &mut Ui, row: &Row, meta_line: Meta<'_>, width: f32) {
     ui.add_space(OUTER);
     let max_w = user_width(width);
-    let markdown = user_markup::chat_markdown(&row.text);
+    let (said, pictures) = pictures::split_trailing(&row.text);
+    let markdown = user_markup::chat_markdown(&said);
     ui.with_layout(Layout::right_to_left(Align::Min), |ui| {
         ui.allocate_ui_with_layout(vec2(max_w, 0.0), Layout::top_down(Align::Max), |ui| {
             ui.spacing_mut().item_spacing.y = 4.0;
@@ -241,22 +243,41 @@ fn user_bubble(ui: &mut Ui, row: &Row, meta_line: Meta<'_>, width: f32) {
                             _ => None,
                         })
                         .fold(0.0, f32::max);
-                    ui.set_width(
-                        user_text_width(natural, user_markup::has_indented_block(&row.text), room)
-                            .max(code.min(room)),
-                    );
+                    let text_w =
+                        user_text_width(natural, user_markup::has_indented_block(&said), room)
+                            .max(code.min(room));
+                    let chips_w =
+                        if pictures.is_empty() { 0.0 } else { pictures::PLAIN_W.min(room) };
+                    let shown_w =
+                        if said.trim().is_empty() { chips_w } else { text_w.max(chips_w) };
+                    ui.set_width(shown_w.min(room));
                     ui.with_layout(Layout::top_down(Align::Min), |ui| {
-                        chat_text(ui, |ui| {
-                            ui.visuals_mut().code_bg_color = USER_CODE_FILL;
-                            ui.push_id(row.seq, |ui| {
-                                reader_markdown::show(ui, &markdown, false, Look::USER);
+                        if !said.trim().is_empty() {
+                            chat_text(ui, |ui| {
+                                ui.visuals_mut().code_bg_color = USER_CODE_FILL;
+                                ui.push_id(row.seq, |ui| {
+                                    reader_markdown::show(ui, &markdown, false, Look::USER);
+                                });
                             });
-                        });
+                        }
+                        sent_pictures(ui, &pictures);
                     });
                 });
         });
     });
     ui.add_space(OUTER);
+}
+
+fn sent_pictures(ui: &mut Ui, pictures: &[std::path::PathBuf]) {
+    if pictures.is_empty() {
+        return;
+    }
+    ui.add_space(8.0);
+    let width = ui.available_width();
+    let rows = pictures::chip_rows(pictures.len(), width, pictures::PLAIN_W);
+    let (rect, _) =
+        ui.allocate_exact_size(vec2(width, pictures::chips_height(rows)), Sense::hover());
+    pictures::paint_block(ui, rect.min, width, pictures, false);
 }
 
 fn answers_block(ui: &mut Ui, pairs: &[(String, String)], room: f32, seq: u64) {
@@ -1061,6 +1082,25 @@ mod tests {
         };
         assert_eq!(ink("localhost"), Some(brand::TEAL_TEXT));
         assert_eq!(ink("plain"), Some(Color32::WHITE));
+    }
+
+    #[test]
+    fn a_sent_message_with_pictures_shows_chips_and_never_the_raw_paths() {
+        let message = "look at these\n/nope/shot-1793011211356.png\n/nope/shot-1793011218705.png";
+        let texts = painted_text(message);
+        assert!(texts.iter().any(|text| text == "look at these"), "{texts:?}");
+        assert!(texts.iter().any(|text| text == "Screenshot 1"), "{texts:?}");
+        assert!(texts.iter().any(|text| text == "Screenshot 2"), "{texts:?}");
+        assert!(!texts.iter().any(|text| text.contains("/nope/")), "{texts:?}");
+    }
+
+    #[test]
+    fn a_message_of_only_pictures_has_no_empty_text_and_a_path_in_a_sentence_stays_text() {
+        let only = painted_text("/nope/shot-1.png");
+        assert!(only.iter().any(|text| text == "Screenshot 1"), "{only:?}");
+        let inline = painted_text("open /nope/shot-1.png please");
+        assert!(inline.iter().any(|text| text.contains("/nope/shot-1.png")), "{inline:?}");
+        assert!(!inline.iter().any(|text| text == "Screenshot 1"), "{inline:?}");
     }
 
     #[test]
