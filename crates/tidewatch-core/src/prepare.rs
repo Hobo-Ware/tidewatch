@@ -25,6 +25,7 @@ use crate::launch::{
 use crate::paths::TidewatchPaths;
 use crate::prefs::Prefs;
 use crate::profiles::Profile;
+use crate::progress_prompt::TurnEnd;
 use crate::remote::session_name;
 use crate::restore::{ResumeError, resume_command};
 use crate::trust::TrustCli;
@@ -345,10 +346,11 @@ fn remote_name(input: &PrepareInput) -> String {
 fn write_agent_style(input: &PrepareInput, shared: &Path) -> std::io::Result<PathBuf> {
     let paths = input.paths;
     let _ = checklist::ensure(paths);
-    let text = house_style::compose_for(
+    let text = house_style::compose_for_cli(
         &std::fs::read_to_string(shared)?,
         checklist::for_repo(paths, input.repo).as_deref(),
         house_style::Role::of(input.profile.level, input.meeseeks),
+        TurnEnd::of(input.agent.wiring),
     );
     let file = paths.tab_house_style_file(input.repo, input.tab);
     write_atomic(&file, &text)?;
@@ -876,6 +878,21 @@ mod tests {
 
         let without = fx.run("copilot", &profile("copilot", Level::Edits), true, "", None).unwrap();
         assert!(!without.launch.args.iter().any(|a| a == "--plugin-dir"));
+    }
+
+    #[test]
+    fn the_ledger_text_promises_only_what_the_clis_enforcement_does() {
+        let fx = Fixture::new();
+        for (id, want, not) in [
+            ("claude", "is sent back to write one", "reminder"),
+            ("codex", "gets a reminder pasted to you", "sent back"),
+            ("gemini", "gets a reminder pasted to you", "sent back"),
+            ("copilot", "gets a reminder pasted to you", "sent back"),
+        ] {
+            fx.run(id, &profile(id, Level::Edits), true, "", None).unwrap();
+            let text = agent_style(&fx);
+            assert!(text.contains(want) && !text.contains(not), "{id}");
+        }
     }
 
     #[test]

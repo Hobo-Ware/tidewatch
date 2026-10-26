@@ -108,7 +108,9 @@ fn now_ms() -> u64 {
     SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_millis() as u64)
 }
 
-fn ledger_says_working(file: &Path) -> bool {
+/// Whether the ledger saved in `file` still reads `state: working`.
+#[must_use]
+pub fn ledger_says_working(file: &Path) -> bool {
     std::fs::read_to_string(file)
         .is_ok_and(|text| Ledger::parse(&text).status.state == Some(State::Working))
 }
@@ -117,7 +119,9 @@ fn read_ms(file: &Path) -> Option<u64> {
     std::fs::read_to_string(file).ok()?.trim().parse().ok()
 }
 
-fn modified_ms(file: &Path) -> Option<u64> {
+/// Unix milliseconds `file` was last written.
+#[must_use]
+pub fn modified_ms(file: &Path) -> Option<u64> {
     let since = file.metadata().ok()?.modified().ok()?.duration_since(UNIX_EPOCH).ok()?;
     Some(since.as_millis() as u64)
 }
@@ -133,6 +137,40 @@ fn tail_of(file: &Path) -> Option<String> {
 
 fn ledger_file(tab: &Path) -> PathBuf {
     progress_file_beside(&tab.join(NOTES_FILE))
+}
+
+/// What the window remembers per tab to remind an agent with no stop hook, once per turn.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Reminders {
+    asked_turn_ms: Option<u64>,
+    reminded_ms: Option<u64>,
+}
+
+impl Reminders {
+    /// `Some` is what to paste to an idle agent whose turn just ended.
+    pub fn at_turn_end(
+        &mut self,
+        used_tools: bool,
+        ledger_written_ms: Option<u64>,
+        ledger_working: bool,
+        turn_started_ms: Option<u64>,
+        now_ms: u64,
+    ) -> Option<Ask> {
+        let reminded = self.reminded_ms.take();
+        let answers_reminder = reminded.zip(turn_started_ms).is_some_and(|(at, began)| began >= at);
+        let facts = Facts {
+            stop_hook_active: answers_reminder,
+            used_tools: Some(used_tools),
+            ledger_written_ms,
+            ledger_working,
+            turn_started_ms,
+            asked_turn_ms: self.asked_turn_ms,
+        };
+        let ask = should_ask(&facts)?;
+        self.asked_turn_ms = Some(facts.turn_key());
+        self.reminded_ms = Some(now_ms);
+        Some(ask)
+    }
 }
 
 /// Notes that a turn began now.
@@ -293,6 +331,56 @@ mod tests {
             assert_eq!(ledger_says_working(&file), want, "{text:?}");
         }
         assert!(!ledger_says_working(&dir.path().join("none.md")));
+    }
+
+    #[test]
+    fn an_idle_agent_is_reminded_once_per_turn_and_the_turn_that_answers_is_left_alone() {
+        let mut reminders = Reminders::default();
+        let at = |reminders: &mut Reminders, ledger, turn, now| {
+            reminders.at_turn_end(true, ledger, false, turn, now)
+        };
+        assert_eq!(at(&mut reminders, Some(100), Some(200), 300), Some(Ask::Ledger));
+        assert_eq!(
+            at(&mut reminders, Some(100), Some(200), 310),
+            None,
+            "the same turn ending twice"
+        );
+        let mut reminders = Reminders::default();
+        assert_eq!(at(&mut reminders, None, Some(200), 300), Some(Ask::Ledger));
+        assert_eq!(
+            at(&mut reminders, Some(100), Some(320), 400),
+            None,
+            "the agent answered the reminder with a turn that saved no ledger"
+        );
+        assert_eq!(
+            at(&mut reminders, Some(100), Some(500), 600),
+            Some(Ask::Ledger),
+            "the next turn the user starts is checked again"
+        );
+    }
+
+    #[test]
+    fn an_idle_agent_whose_saved_ledger_still_says_working_is_asked_for_the_final_state() {
+        let mut reminders = Reminders::default();
+        let said = reminders.at_turn_end(true, Some(300), true, Some(200), 400);
+        assert_eq!(said, Some(Ask::FinalState));
+    }
+
+    #[test]
+    fn no_reminder_for_a_turn_that_saved_a_ledger_called_no_tool_or_has_no_known_start() {
+        let cases = [
+            (true, Some(250), Some(200), false),
+            (true, Some(200), Some(200), false),
+            (false, Some(100), Some(200), false),
+            (false, None, Some(200), false),
+            (true, Some(100), None, false),
+            (true, None, None, true),
+            (true, Some(100), Some(200), true),
+        ];
+        for (tools, ledger, turn, want) in cases {
+            let said = Reminders::default().at_turn_end(tools, ledger, false, turn, 300);
+            assert_eq!(said.is_some(), want, "{tools} {ledger:?} {turn:?}");
+        }
     }
 
     #[test]

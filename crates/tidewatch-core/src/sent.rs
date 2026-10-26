@@ -117,6 +117,8 @@ pub struct Record {
     pub cap: Option<Cap>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub claimed_seq: Option<u64>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub typed: bool,
 }
 
 #[derive(Deserialize)]
@@ -137,7 +139,14 @@ impl Record {
             text: text.to_owned(),
             cap,
             claimed_seq: None,
+            typed: false,
         }
+    }
+
+    /// A hook told it and nothing was typed.
+    #[must_use]
+    pub fn timed(&self) -> bool {
+        self.reason.timed() && !self.typed
     }
 
     /// `Sent because Auto-fix when idle is on for this PR · 1 of 3 auto-fixes`.
@@ -295,6 +304,17 @@ mod tests {
             Record::new(Reason::LedgerGuard, because::LEDGER_STOP, "x", None).footer(),
             "Sent because the ledger was not updated this turn"
         );
+    }
+
+    #[test]
+    fn a_hook_told_reason_typed_into_the_terminal_has_a_user_turn() {
+        let told = Record::new(Reason::LedgerGuard, because::LEDGER_STOP, "x", None);
+        assert!(told.timed());
+        let typed = Record { typed: true, ..told.clone() };
+        assert!(!typed.timed());
+        assert!(!serde_json::to_string(&told).unwrap().contains("typed"));
+        let back: Record = serde_json::from_str(&serde_json::to_string(&typed).unwrap()).unwrap();
+        assert!(back.typed);
     }
 
     #[test]

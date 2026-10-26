@@ -5,6 +5,14 @@ use tidewatch_core::comment_flags::TabFiles;
 
 use super::*;
 
+thread_local! {
+    static CLOCK_MS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+}
+
+fn simulated_wall_ms() -> u64 {
+    CLOCK_MS.with(std::cell::Cell::get)
+}
+
 struct Lab {
     _root: tempfile::TempDir,
     paths: TidewatchPaths,
@@ -47,6 +55,16 @@ impl Lab {
     }
 
     fn facts<'a>(&'a self, agent: &'a str, status: &'a AgentStatus) -> Vec<Facts<'a>> {
+        self.facts_of_a_turn(agent, status, None, false)
+    }
+
+    fn facts_of_a_turn<'a>(
+        &'a self,
+        agent: &'a str,
+        status: &'a AgentStatus,
+        turn_started_at: Option<f64>,
+        used_tools: bool,
+    ) -> Vec<Facts<'a>> {
         vec![Facts {
             id: 1,
             agent_id: agent,
@@ -54,12 +72,40 @@ impl Lab {
             dir: &self.repo,
             repo: &self.repo,
             name: "work",
+            turn_started_at,
+            used_tools,
         }]
+    }
+
+    fn turn_with_tools(
+        &self,
+        clock: &mut (Host, u64),
+        agent: &str,
+        (began, ended): (f64, f64),
+        during: impl FnOnce(),
+    ) -> Vec<Paste> {
+        let ctx = egui::Context::default();
+        let guards = GuardPrefs::default();
+        let (host, start) = clock;
+        let set = |seconds: f64| CLOCK_MS.with(|c| c.set(*start + (seconds * 1000.0) as u64));
+        set(began);
+        let working = self.facts_of_a_turn(agent, &AgentStatus::Working, Some(began), true);
+        host.tick(&working, &self.paths, &guards, &ctx, began);
+        during();
+        set(ended);
+        let done = self.facts_of_a_turn(agent, &AgentStatus::Done, Some(began), true);
+        host.tick(&done, &self.paths, &guards, &ctx, ended)
     }
 }
 
 fn host() -> Host {
-    Host { tabs: HashMap::new(), jobs: Jobs::new(), fake: false, popover: false }
+    Host { tabs: HashMap::new(), jobs: Jobs::new(), fake: false, popover: false, wall_ms }
+}
+
+fn host_on_a_simulated_clock() -> (Host, u64) {
+    let start = wall_ms();
+    CLOCK_MS.with(|clock| clock.set(start));
+    (Host { wall_ms: simulated_wall_ms, ..host() }, start)
 }
 
 fn wait_for_pastes(
@@ -157,6 +203,7 @@ fn another_cli_at_the_end_of_a_turn_is_swept_and_its_idle_agent_gets_one_note() 
     let pastes = wait_for_pastes(&mut host, &lab, "codex", &ctx, &mut now);
     assert_eq!(pastes.len(), 1);
     assert_eq!(pastes[0].tab, 1);
+    assert_eq!((pastes[0].reason, pastes[0].because), (Reason::CommentGuard, because::COMMENTS));
     assert!(pastes[0].text.starts_with("Comment guard: 1 comment(s) you added fail the keep-list.\n- a.rs:1 [narration] loop over the items"), "{}", pastes[0].text);
     assert_eq!(lab.tab_files().load().len(), 1);
 
@@ -222,4 +269,70 @@ fn the_fake_switch_gives_a_tab_three_flags_and_writes_nothing() {
     host.set_off(1, true);
     assert!(host.view(1).unwrap().off);
     assert!(!lab.tab_files().is_off());
+}
+
+#[test]
+fn a_turn_with_tools_and_no_ledger_gets_one_reminder_and_its_answering_turn_none() {
+    let lab = Lab::new();
+    let mut clock = host_on_a_simulated_clock();
+    let pastes = lab.turn_with_tools(&mut clock, "gemini", (0.0, 2.0), || {});
+    assert_eq!(
+        pastes,
+        vec![Paste {
+            tab: 1,
+            text: tidewatch_core::guard_ledger::MESSAGE.to_owned(),
+            reason: Reason::LedgerGuard,
+            because: because::LEDGER_STOP,
+        }]
+    );
+    let answer = lab.turn_with_tools(&mut clock, "gemini", (4.0, 6.0), || {});
+    assert_eq!(answer, vec![], "the turn that answers the reminder is not asked about again");
+    let next = lab.turn_with_tools(&mut clock, "gemini", (30.0, 32.0), || {});
+    assert_eq!(next.len(), 1, "a turn the user starts is checked again");
+}
+
+#[test]
+fn no_ledger_reminder_for_claude_a_saved_ledger_or_a_turn_with_no_tools() {
+    let lab = Lab::new();
+    let mut clock = host_on_a_simulated_clock();
+    assert_eq!(lab.turn_with_tools(&mut clock, "claude", (0.0, 2.0), || {}), vec![], "claude");
+
+    let lab = Lab::new();
+    let mut clock = host_on_a_simulated_clock();
+    let ledger = lab.paths.progress_file(&lab.repo, "work");
+    let save = || {
+        std::fs::create_dir_all(ledger.parent().unwrap()).unwrap();
+        std::fs::write(&ledger, "# Goal\nx\n").unwrap();
+    };
+    assert_eq!(lab.turn_with_tools(&mut clock, "codex", (-5.0, 2.0), save), vec![], "saved");
+
+    let lab = Lab::new();
+    let ctx = egui::Context::default();
+    let guards = GuardPrefs::default();
+    let mut quiet = host();
+    let working = lab.facts_of_a_turn("codex", &AgentStatus::Working, Some(0.0), false);
+    quiet.tick(&working, &lab.paths, &guards, &ctx, 0.0);
+    let done = lab.facts_of_a_turn("codex", &AgentStatus::Done, Some(0.0), false);
+    assert_eq!(quiet.tick(&done, &lab.paths, &guards, &ctx, 2.0), vec![], "no tools");
+}
+
+#[test]
+fn a_saved_ledger_that_still_says_working_is_asked_for_its_final_state() {
+    let lab = Lab::new();
+    let mut clock = host_on_a_simulated_clock();
+    let ledger = lab.paths.progress_file(&lab.repo, "work");
+    let save = || {
+        std::fs::create_dir_all(ledger.parent().unwrap()).unwrap();
+        std::fs::write(&ledger, "# Goal\nx\n\n## Status\nstate: working\n").unwrap();
+    };
+    let pastes = lab.turn_with_tools(&mut clock, "codex", (-5.0, 2.0), save);
+    assert_eq!(pastes.len(), 1);
+    assert_eq!(
+        (pastes[0].reason, pastes[0].because, pastes[0].text.as_str()),
+        (
+            Reason::LedgerGuard,
+            because::LEDGER_FINAL,
+            tidewatch_core::guard_ledger::FINAL_STATE_MESSAGE
+        )
+    );
 }

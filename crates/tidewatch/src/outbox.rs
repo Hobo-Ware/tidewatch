@@ -71,7 +71,10 @@ impl Send {
         self.origin == Origin::Auto
             && self.tell.as_ref().is_some_and(|tell| {
                 tell.cap.is_none()
-                    && matches!(tell.reason, Reason::DoneCheck | Reason::CommentGuard)
+                    && matches!(
+                        tell.reason,
+                        Reason::DoneCheck | Reason::CommentGuard | Reason::LedgerGuard
+                    )
             })
     }
 }
@@ -337,6 +340,26 @@ mod tests {
         outbox.user_spoke(TAB);
         assert!(!outbox.paused(TAB));
         assert_eq!(offer(&mut outbox, &send, &AgentStatus::Done, 500.0), Offer::Go);
+    }
+
+    #[test]
+    fn ledger_reminders_and_comment_notes_share_the_three_automatic_sends() {
+        let mut outbox = Outbox::default();
+        let reminder = Send::auto("ledger", Reason::LedgerGuard, "the ledger was not updated");
+        let sends = [sweep(), reminder.clone(), sweep()];
+        for (turn, send) in sends.iter().enumerate() {
+            let now = turn as f64 * 100.0;
+            assert_eq!(offer(&mut outbox, send, &AgentStatus::Done, now), Offer::Go);
+            outbox.sent(TAB, send, now);
+        }
+        assert_eq!(
+            outbox.cap_for(TAB, &reminder),
+            Some(Cap { n: 4, max: 3 }),
+            "the reminder is the fourth automatic send"
+        );
+        assert_eq!(offer(&mut outbox, &reminder, &AgentStatus::Done, 500.0), Offer::Paused);
+        outbox.user_spoke(TAB);
+        assert_eq!(offer(&mut outbox, &reminder, &AgentStatus::Done, 500.0), Offer::Go);
     }
 
     #[test]

@@ -11,7 +11,7 @@ use crate::agents::Level;
 use crate::autonomy::autonomous;
 use crate::fsutil::write_atomic;
 use crate::paths::TidewatchPaths;
-use crate::progress_prompt;
+use crate::progress_prompt::{self, TurnEnd};
 
 pub const DEFAULT_HOUSE_STYLE: &str = "\
 # Tidewatch house style
@@ -161,6 +161,16 @@ pub fn compose(house_style: &str, must_dos: Option<&str>) -> String {
 
 #[must_use]
 pub fn compose_for(house_style: &str, must_dos: Option<&str>, role: Role) -> String {
+    compose_for_cli(house_style, must_dos, role, TurnEnd::SentBack)
+}
+
+#[must_use]
+pub fn compose_for_cli(
+    house_style: &str,
+    must_dos: Option<&str>,
+    role: Role,
+    turn_end: TurnEnd,
+) -> String {
     let one_task = match role {
         Role::Agent => String::new(),
         Role::Autonomous => format!("{AUTONOMOUS_GUIDANCE}\n"),
@@ -170,7 +180,7 @@ pub fn compose_for(house_style: &str, must_dos: Option<&str>, role: Role) -> Str
         "{}\n\n{}\n{one_task}{}",
         house_style.trim_end(),
         tool_guidance(role),
-        progress_prompt::section(must_dos)
+        progress_prompt::section(must_dos, turn_end)
     )
 }
 
