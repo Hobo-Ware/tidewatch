@@ -5,6 +5,7 @@ use std::hash::{Hash, Hasher};
 
 use serde::{Deserialize, Serialize};
 
+use crate::branch_name;
 use crate::kind::Kind;
 
 pub const MAX_SUMMARY_CHARS: usize = 200;
@@ -164,6 +165,10 @@ pub struct Meeseeks {
     pub kind: Kind,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub start_head: Option<String>,
+    /// What the Meeseeks called itself with `set_name`; the label of its tab until then is a slug of
+    /// its task.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
     #[serde(skip)]
     pub unchanged: bool,
     #[serde(skip)]
@@ -186,6 +191,7 @@ impl Hash for Meeseeks {
     fn hash<H: Hasher>(&self, state: &mut H) {
         (&self.task, self.criteria, self.turns, self.failures, self.started_ms, self.kind)
             .hash(state);
+        self.name.hash(state);
     }
 }
 
@@ -199,6 +205,15 @@ impl Meeseeks {
             kind: Kind::ReadOnly,
             ..Self::default()
         }
+    }
+
+    /// The name its tab shows: the one it chose, else a slug of its task, none when no word of the
+    /// task is left for one.
+    #[must_use]
+    pub fn shown_name(&self) -> Option<String> {
+        self.name
+            .clone()
+            .or_else(|| Some(branch_name::slug(&self.task)).filter(|slug| !slug.is_empty()))
     }
 
     pub fn turn(&mut self) {

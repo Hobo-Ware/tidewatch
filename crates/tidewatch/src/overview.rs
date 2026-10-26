@@ -655,6 +655,29 @@ mod tests {
     }
 
     #[test]
+    fn a_meeseeks_row_carries_its_chosen_name_over_the_goal_and_a_task_slug_before_it() {
+        use tidewatch_core::meeseeks::{Criteria, Meeseeks};
+        let row_title = |name: Option<&str>| {
+            let mut agent =
+                AgentTab::new("Builder".into(), AgentRun::setting_up("claude".into(), 0.0));
+            agent.run.set_goal(Some("Fix the login redirect"));
+            agent.meeseeks = Some(Meeseeks {
+                name: name.map(str::to_owned),
+                ..Meeseeks::summon("Fix the login redirect on signup", Criteria::default(), 0)
+            });
+            let mut tabs: Tabs<Pane<u32>> = Tabs::new(Pane::shell(0));
+            tabs.push(
+                "brave-otter".into(),
+                Pane { body: Body::Shell(1), worktree: None, agent: Some(agent) },
+            );
+            let input = collect("web", Path::new("/work/web"), 0, &tabs, 0.0);
+            input.rows.iter().map(|row| row.title.clone()).collect::<Vec<_>>()
+        };
+        assert_eq!(row_title(Some("signup-redirect")), ["signup-redirect"]);
+        assert_eq!(row_title(None), ["fix-login-redirect-signup"]);
+    }
+
+    #[test]
     fn each_repo_of_the_window_is_a_place_with_its_own_agent_tabs() {
         let agent = |name: &str| {
             Some(AgentTab::new(name.into(), AgentRun::setting_up("claude".into(), 0.0)))

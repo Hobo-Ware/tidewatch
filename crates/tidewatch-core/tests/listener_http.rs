@@ -903,6 +903,8 @@ fn each_roles_token_lists_its_own_tools_and_a_hidden_call_says_where_it_works() 
     assert!(has(&plain_tools, "report_finding") && has(&plain_tools, "update_progress"));
     assert!(has(&stage_tools, "stage_done") && !has(&stage_tools, "meeseeks_done"));
     assert!(has(&meeseeks_tools, "meeseeks_done") && !has(&meeseeks_tools, "report_finding"));
+    assert!(has(&meeseeks_tools, "set_name"));
+    assert!(!has(&plain_tools, "set_name") && !has(&stage_tools, "set_name"));
 
     let refused = client.request(
         "POST",

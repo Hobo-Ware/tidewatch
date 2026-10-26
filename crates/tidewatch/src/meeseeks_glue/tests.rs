@@ -70,6 +70,7 @@ fn the_switch_reads_its_three_values_and_anything_else_is_off() {
         (Some("poofed"), Fake::Poofed),
         (Some("readonly"), Fake::ReadOnly),
         (Some("promoted"), Fake::Promoted),
+        (Some("named"), Fake::Named),
         (Some("yes"), Fake::Off),
         (Some(""), Fake::Off),
         (None, Fake::Off),

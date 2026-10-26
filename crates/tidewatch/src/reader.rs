@@ -224,6 +224,10 @@ impl Reader {
         self.session_title.as_deref()
     }
 
+    pub(crate) fn fake_session_title(&mut self, title: &str) {
+        self.session_title = Some(title.to_owned());
+    }
+
     pub(crate) fn first_message(&self) -> Option<&str> {
         self.first_message.as_deref()
     }

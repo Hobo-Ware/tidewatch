@@ -435,6 +435,7 @@ mod tests {
         );
         saved.turns = 9;
         saved.failures = 2;
+        saved.name = Some("rename-helper".into());
         let mut one = window();
         if let SavedTab::Agent(tab) = &mut one.tabs[2] {
             tab.meeseeks = Some(Box::new(saved.clone()));
@@ -442,13 +443,28 @@ mod tests {
         let session = Session { windows: vec![one] };
         session.save(&paths).unwrap();
         let text = std::fs::read_to_string(paths.session_file()).unwrap();
-        for part in ["turns = 9", "failures = 2", "started_ms = 1760000000000", "tests = false"] {
+        for part in [
+            "turns = 9",
+            "failures = 2",
+            "started_ms = 1760000000000",
+            "tests = false",
+            "name = \"rename-helper\"",
+        ] {
             assert!(text.contains(part), "{part} in {text}");
         }
         assert_eq!(text.matches("meeseeks").count(), 2, "{text}");
         assert_eq!(Session::load(&paths), session);
         let plain = toml::to_string(&Session { windows: vec![window()] }).unwrap();
         assert!(!plain.contains("meeseeks"), "{plain}");
+    }
+
+    #[test]
+    fn a_saved_meeseeks_without_a_name_loads_unnamed_and_saves_no_name() {
+        use crate::meeseeks::Meeseeks;
+        let old = "task = \"rename the helper\"\nturns = 3\n";
+        let loaded: Meeseeks = toml::from_str(old).unwrap();
+        assert_eq!((loaded.name.as_deref(), loaded.turns), (None, 3));
+        assert!(!toml::to_string(&loaded).unwrap().contains("\nname"));
     }
 
     #[test]

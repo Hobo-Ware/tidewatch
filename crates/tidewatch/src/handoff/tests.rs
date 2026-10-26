@@ -971,6 +971,7 @@ fn a_meeseeks() -> tidewatch_core::meeseeks::Meeseeks {
     );
     meeseeks.turns = 9;
     meeseeks.failures = 2;
+    meeseeks.name = Some("rename-helper".into());
     meeseeks
 }
 

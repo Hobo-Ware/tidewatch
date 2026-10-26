@@ -117,6 +117,7 @@ impl RunEvent {
             | TabEvent::Background(_)
             | TabEvent::Avatar { .. }
             | TabEvent::MeeseeksDone { .. }
+            | TabEvent::MeeseeksName { .. }
             | TabEvent::Ask { .. } => None,
         }
     }
