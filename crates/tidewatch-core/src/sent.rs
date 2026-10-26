@@ -16,10 +16,10 @@ const KEPT: usize = 200;
 pub mod because {
     pub const AUTO_FIX: &str = "Auto is on for this PR";
     pub const AUTO_PUSH: &str = "Auto may push and open the pull request on this tab";
-    pub const LEDGER_STOP: &str = "the ledger was not updated this turn";
-    pub const LEDGER_FINAL: &str = "the ledger still said working at the end of the turn";
-    pub const LEDGER_MISSING: &str = "this tab has not saved a ledger yet";
-    pub const LEDGER_NUDGE: &str = "you answered and the ledger should show it";
+    pub const LEDGER_STOP: &str = "the progress report was not updated this turn";
+    pub const LEDGER_FINAL: &str = "the progress report still said working at the end of the turn";
+    pub const LEDGER_MISSING: &str = "this tab has not saved a progress report yet";
+    pub const LEDGER_NUDGE: &str = "you answered and the progress report should show it";
     pub const AVATAR_ASK: &str = "this tab has no avatar yet";
     pub const AVATAR_DRAW: &str = "you asked for an avatar";
     pub const AVATAR_REDRAW: &str = "you asked for a new avatar";
@@ -86,7 +86,7 @@ impl Reason {
             Self::AutoFix | Self::AutoPush => "auto",
             Self::MeeseeksCheck => "Meeseeks check",
             Self::DueToday => "due today",
-            Self::LedgerGuard => "ledger check",
+            Self::LedgerGuard => "report check",
             Self::CommentGuard => "comment guard",
             Self::DoneCheck => "done check",
             Self::Avatar => "avatar",
@@ -311,8 +311,30 @@ mod tests {
         }
         assert_eq!(
             Record::new(Reason::LedgerGuard, because::LEDGER_STOP, "x", None).footer(),
-            "Sent because the ledger was not updated this turn"
+            "Sent because the progress report was not updated this turn"
         );
+    }
+
+    #[test]
+    fn what_the_reader_shows_never_uses_the_internal_word_ledger() {
+        let tags = [
+            Reason::AutoFix,
+            Reason::AutoPush,
+            Reason::MeeseeksCheck,
+            Reason::DueToday,
+            Reason::LedgerGuard,
+            Reason::CommentGuard,
+            Reason::DoneCheck,
+            Reason::Avatar,
+            Reason::Workflow,
+            Reason::Resume,
+            Reason::StuckJob,
+            Reason::BackgroundJob,
+        ]
+        .map(Reason::tag);
+        for shown in because::ALL.into_iter().chain(tags) {
+            assert!(!shown.to_lowercase().contains("ledger"), "{shown}");
+        }
     }
 
     #[test]

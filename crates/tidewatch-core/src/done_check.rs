@@ -250,7 +250,7 @@ pub fn pull_request_status(snapshot: &Snapshot, local_head: &str) -> (Status, St
 #[must_use]
 pub fn unverified_status(items: Option<&[String]>) -> (Status, String) {
     match items {
-        None => (Status::Skipped, "the agent keeps no progress ledger".to_owned()),
+        None => (Status::Skipped, "the agent keeps no progress report".to_owned()),
         Some([]) => (Status::Pass, "nothing left unverified".to_owned()),
         Some(items) => (
             Status::Unknown,

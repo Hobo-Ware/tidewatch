@@ -126,7 +126,7 @@ fn a_turn_with_tools_and_no_ledger_is_sent_back_once_and_the_ledger_ends_the_ask
     let first = lab.stop(&transcript, false);
     assert_eq!(first.status.code(), Some(2));
     let stderr = text(&first.stderr);
-    assert!(stderr.starts_with("LEDGER GUARD - "), "{stderr}");
+    assert!(stderr.starts_with("REPORT GUARD - "), "{stderr}");
     assert!(
         stderr.contains("update_progress")
             && stderr.contains("needs_you")
@@ -182,7 +182,7 @@ fn a_ledger_written_this_turn_that_still_says_working_is_asked_for_its_final_sta
     let first = lab.stop(&transcript, false);
     assert_eq!(first.status.code(), Some(2));
     let stderr = text(&first.stderr);
-    assert!(stderr.starts_with("LEDGER GUARD - ") && stderr.contains("final state"), "{stderr}");
+    assert!(stderr.starts_with("REPORT GUARD - ") && stderr.contains("final state"), "{stderr}");
 
     assert_eq!(lab.stop(&transcript, false).status.code(), Some(0), "never twice for a turn");
     assert_eq!(lab.stop(&transcript, true).status.code(), Some(0));
@@ -206,7 +206,7 @@ fn the_guard_leaves_one_record_per_ask_for_the_reader() {
     let records = tidewatch_core::sent::load(&file);
     assert_eq!(records.len(), 1);
     assert_eq!(records[0].reason, tidewatch_core::sent::Reason::LedgerGuard);
-    assert!(records[0].text.starts_with("LEDGER GUARD - "), "{}", records[0].text);
+    assert!(records[0].text.starts_with("REPORT GUARD - "), "{}", records[0].text);
     assert_eq!(records[0].text, tidewatch_core::guard_ledger::MESSAGE);
 }
 

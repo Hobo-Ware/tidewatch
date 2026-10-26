@@ -178,7 +178,7 @@ fn prepare_with(
 
     let house_style =
         profile.house_style.then(|| soft("house style", house_style::ensure(paths))).flatten().map(
-            |shared| soft("progress ledger", write_agent_style(input, &shared)).unwrap_or(shared),
+            |shared| soft("progress report", write_agent_style(input, &shared)).unwrap_or(shared),
         );
     let copilot_instructions_dir =
         house_style.as_ref().filter(|_| wiring == Wiring::Copilot).and_then(|file| {

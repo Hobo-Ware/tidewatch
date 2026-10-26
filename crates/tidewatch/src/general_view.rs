@@ -208,7 +208,7 @@ fn checklist_card(ui: &mut Ui, list: Option<&Checklist>) -> Option<Action> {
         |list| {
             let steps: Vec<&str> = list.chips.iter().map(|chip| chip.title.as_str()).collect();
             format!(
-                "{}: {}. Agents keep these as steps in their progress ledger.",
+                "{}: {}. Agents keep these as steps in their progress report.",
                 list.source.caption(),
                 steps.join(", ")
             )

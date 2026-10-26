@@ -1094,9 +1094,9 @@ mod tests {
         let h = Harness::new();
         let big = format!("# Goal\nx\n\n## Notes\n{}", "y".repeat(progress::MAX_LEDGER_BYTES));
         let cases = [
-            (json!({ "ledger": "## Status\nphase: 1\n" }), "The ledger has no goal"),
-            (json!({ "ledger": "" }), "The ledger has no goal"),
-            (json!({ "ledger": "# Goal\n   \n" }), "The ledger has no goal"),
+            (json!({ "ledger": "## Status\nphase: 1\n" }), "The progress report has no goal"),
+            (json!({ "ledger": "" }), "The progress report has no goal"),
+            (json!({ "ledger": "# Goal\n   \n" }), "The progress report has no goal"),
             (json!({}), "state is required"),
             (json!({ "ledger": 5 }), "ledger must be a string"),
             (json!({ "ledger": big }), "over the 32 KB limit"),

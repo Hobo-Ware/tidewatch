@@ -32,7 +32,7 @@ const TYPED_KEYS: [&str; 13] = [
     "not_verified",
     "decisions",
 ];
-const PREFER_TYPED: &str = "Typed fields are preferred: next time call update_progress with state, now and stages (and steps, needs_you, waiting_on and scheduled when they apply) instead of a markdown ledger.";
+const PREFER_TYPED: &str = "Typed fields are preferred: next time call update_progress with state, now and stages (and steps, needs_you, waiting_on and scheduled when they apply) instead of the markdown format.";
 const MAX_WARNINGS: usize = 3;
 const MAX_WHEN_FIXES: usize = 5;
 const WARNING_TEXT_CHARS: usize = 60;
@@ -229,7 +229,7 @@ fn input_schema() -> Value {
             "verified": note_schema("What you checked, with the command and its result as why."),
             "not_verified": note_schema("What you could not check, with the blocker as why."),
             "decisions": note_schema("Decisions made, with the reason as why."),
-            LEDGER_KEY: { "type": "string", "description": format!("The old format, still accepted: the whole ledger as markdown, at most {} KB. Prefer the typed fields; send one or the other.", MAX_LEDGER_BYTES / 1024) },
+            LEDGER_KEY: { "type": "string", "description": format!("The old format, still accepted: the whole progress report as markdown, at most {} KB. Prefer the typed fields; send one or the other.", MAX_LEDGER_BYTES / 1024) },
         },
         "required": ["state", "now", "stages"],
         "additionalProperties": false,
@@ -332,13 +332,14 @@ fn update_markdown(
         .map(|key| format!("unknown argument \"{key}\""))
         .collect();
     let Some(text) = args.get(LEDGER_KEY).and_then(Value::as_str) else {
-        problems
-            .push(format!("{LEDGER_KEY} must be a string holding the whole ledger as markdown"));
+        problems.push(format!(
+            "{LEDGER_KEY} must be a string holding the whole progress report as markdown"
+        ));
         return not_saved(&problems);
     };
     if text.len() > MAX_LEDGER_BYTES {
         problems.push(format!(
-            "the ledger is {} bytes, over the {} KB limit: shorten the entries and drop what is finished and no longer needed",
+            "the report is {} bytes, over the {} KB limit: shorten the entries and drop what is finished and no longer needed",
             text.len(),
             MAX_LEDGER_BYTES / 1024
         ));

@@ -294,7 +294,7 @@ fn a_merged_card_offers_no_removal_while_the_agent_still_needs_the_worktree() {
         (
             Busy { open_ledger: true, ..Busy::default() },
             &safe,
-            "PR merged. Cleanup waits: its ledger still has open steps.",
+            "PR merged. Cleanup waits: its progress report still has open steps.",
         ),
         (
             Busy { job: true, ..Busy::default() },
