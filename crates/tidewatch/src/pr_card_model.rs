@@ -8,7 +8,7 @@ use tidewatch_core::pr_prompt::{self, short_step};
 use tidewatch_core::pr_status::{Body, Job, ReviewComment, Via};
 use tidewatch_core::prefs::{GithubPrefs, PrMode};
 
-use crate::merge_cleanup::{self, Cleanup};
+use crate::merge_cleanup::{self, Busy, Cleanup};
 use crate::pr_watch::{Handling, Pause, Pending};
 
 /// Most bars drawn for running checks.
@@ -135,9 +135,13 @@ pub(crate) struct Context<'a> {
     /// The checks are green right now, for the line under Approved.
     pub(crate) checks_green: bool,
     pub(crate) cleanup: &'a Cleanup,
+    pub(crate) busy: Busy,
 }
 
-fn merged_body(cleanup: &Cleanup) -> Vec<Block> {
+fn merged_body(cleanup: &Cleanup, busy: Busy) -> Vec<Block> {
+    if let Some(line) = merge_cleanup::wait_line(busy, cleanup) {
+        return vec![Block::Text(line)];
+    }
     match cleanup {
         Cleanup::Unchecked | Cleanup::Checking => {
             vec![Block::Text("PR merged. Checking whether the worktree can go.".to_owned())]
@@ -162,7 +166,10 @@ fn merged_body(cleanup: &Cleanup) -> Vec<Block> {
     }
 }
 
-fn merged_buttons(cleanup: &Cleanup, card: u64) -> Vec<Button> {
+fn merged_buttons(cleanup: &Cleanup, busy: Busy, card: u64) -> Vec<Button> {
+    if busy.any() {
+        return Vec::new();
+    }
     let keep =
         Button { label: "Keep it".to_owned(), primary: false, action: CardAction::KeepIt(card) };
     let close = Button {
@@ -353,10 +360,10 @@ pub(crate) fn look(index: usize, context: Context<'_>) -> Option<Look> {
         Body::Merged { number, base } => {
             let mut m =
                 model(Icon::Merged, Ink::Teal, format!("Merged into {base}"), format!("#{number}"));
-            m.body = merged_body(context.cleanup);
+            m.body = merged_body(context.cleanup, context.busy);
             m.note = merged_branch::note(context.cards.after_merge);
             if current {
-                m.buttons = merged_buttons(context.cleanup, card.id);
+                m.buttons = merged_buttons(context.cleanup, context.busy, card.id);
             }
             Look::Card(m)
         }

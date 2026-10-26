@@ -31,6 +31,7 @@ struct Merged {
     worktree: Worktree,
     host: Host,
     ctx: egui::Context,
+    busy: Busy,
 }
 
 fn merged_tab() -> Merged {
@@ -50,7 +51,14 @@ fn merged_tab() -> Merged {
     cards.add(10, Body::Merged { number: 42, base: "main".into() });
     cards.save(&paths.pr_cards_file(&repo, "brave-otter")).unwrap();
     let host = Host::new(Tools::with_path("/nonexistent"), GithubPrefs::default(), Dev::default());
-    Merged { _home: home, paths, worktree, host, ctx: egui::Context::default() }
+    Merged {
+        _home: home,
+        paths,
+        worktree,
+        host,
+        ctx: egui::Context::default(),
+        busy: Busy::default(),
+    }
 }
 
 impl Merged {
@@ -65,6 +73,7 @@ impl Merged {
             name: "brave-otter",
             pr: None,
             autonomous: false,
+            busy: self.busy,
         }];
         let _ = self.host.tick(&facts, &self.paths, &self.ctx, 0.0, 0);
     }
@@ -103,7 +112,7 @@ fn removal_is_checked_again_and_refused_when_something_appeared_since() {
     tab.until(settled);
     std::fs::write(tab.worktree.path.join("idea.md"), "unsaved\n").unwrap();
     let ctx = tab.ctx.clone();
-    tab.host.check_before_removal(1, tab.worktree.clone(), &tab.paths, &ctx);
+    tab.host.check_before_removal(1, tab.worktree.clone(), Busy::default(), &tab.paths, &ctx);
     let applied = tab.until(settled);
     assert!(applied.iter().all(|a| a.out != Out::Remove), "{applied:?}");
     assert!(applied.iter().any(|a| matches!(a.out, Out::Toast(_))), "{applied:?}");
@@ -116,7 +125,7 @@ fn removal_goes_ahead_once_the_second_check_is_clean() {
     let mut tab = merged_tab();
     tab.until(settled);
     let ctx = tab.ctx.clone();
-    tab.host.check_before_removal(1, tab.worktree.clone(), &tab.paths, &ctx);
+    tab.host.check_before_removal(1, tab.worktree.clone(), Busy::default(), &tab.paths, &ctx);
     let applied = tab.until(settled);
     assert_eq!(applied.iter().filter(|a| a.out == Out::Remove).count(), 1, "{applied:?}");
 }
@@ -131,4 +140,61 @@ fn a_kept_card_is_not_checked_again() {
         tab.tick();
     }
     assert_eq!(tab.host.watch(1).unwrap().cleanup, Cleanup::Unchecked);
+}
+
+fn click_remove(tab: &mut Merged, busy: Busy) -> Vec<Applied> {
+    let ctx = tab.ctx.clone();
+    let mut applied =
+        tab.host.check_before_removal(1, tab.worktree.clone(), busy, &tab.paths, &ctx);
+    if applied.is_empty() {
+        applied = tab.until(settled);
+    }
+    applied
+}
+
+fn refused(applied: &[Applied]) -> bool {
+    applied.iter().all(|a| a.out != Out::Remove)
+        && applied.iter().any(|a| matches!(a.out, Out::Toast(_)))
+}
+
+#[test]
+fn a_click_on_a_stale_offer_is_refused_for_every_reason_the_agent_still_needs_the_worktree() {
+    let reasons = [
+        Busy { working: true, ..Busy::default() },
+        Busy { open_ledger: true, ..Busy::default() },
+        Busy { job: true, ..Busy::default() },
+    ];
+    for busy in reasons {
+        let mut tab = merged_tab();
+        tab.until(settled);
+        let applied = click_remove(&mut tab, busy);
+        assert!(refused(&applied), "{busy:?}: {applied:?}");
+        assert_eq!(applied.iter().filter(|a| a.out == Out::Toast(STAYS.into())).count(), 1);
+    }
+}
+
+#[test]
+fn a_commit_made_after_the_merge_refuses_a_click_on_the_offer_that_was_safe() {
+    let mut tab = merged_tab();
+    tab.until(settled);
+    git(&tab.worktree.path, &["commit", "-q", "--allow-empty", "-m", "feat: after the merge"]);
+    let applied = click_remove(&mut tab, Busy::default());
+    assert!(refused(&applied), "{applied:?}");
+    let Cleanup::Checked(report) = &tab.host.watch(1).unwrap().cleanup else { panic!("checked") };
+    assert_eq!(report.local_commits, Some(1));
+}
+
+#[test]
+fn the_offer_returns_after_the_agent_lets_go_and_the_removal_then_goes_ahead() {
+    let mut tab = merged_tab();
+    tab.until(settled);
+    tab.busy = Busy { working: true, open_ledger: true, job: true };
+    tab.tick();
+    assert_eq!(tab.host.watch(1).unwrap().busy, tab.busy);
+    tab.busy = Busy::default();
+    tab.tick();
+    assert_eq!(tab.host.watch(1).unwrap().cleanup, Cleanup::Checking);
+    tab.until(settled);
+    let applied = click_remove(&mut tab, Busy::default());
+    assert_eq!(applied.iter().filter(|a| a.out == Out::Remove).count(), 1, "{applied:?}");
 }

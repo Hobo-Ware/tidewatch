@@ -560,6 +560,59 @@ fn only_a_clean_second_check_lets_the_removal_go() {
     assert_eq!(watch.cleanup, Cleanup::Failed("gone".into()));
 }
 
+fn merged_offer() -> Watch {
+    let default = GithubPrefs::default();
+    let mut watch = ready(Some(42));
+    watch.look_started();
+    let merged = Body::Merged { number: 42, base: "main".into() };
+    watch.polled(Ok(polled(vec![merged], false, true)), default, "tab", 5.0, 0);
+    watch
+}
+
+fn safe_report() -> tidewatch_core::worktree_cleanup::Report {
+    tidewatch_core::worktree_cleanup::Report {
+        local_commits: Some(0),
+        ..tidewatch_core::worktree_cleanup::Report::default()
+    }
+}
+
+#[test]
+fn a_removal_is_refused_while_the_agent_still_needs_the_worktree_whatever_the_check_found() {
+    let busy = [
+        Busy { working: true, ..Busy::default() },
+        Busy { open_ledger: true, ..Busy::default() },
+        Busy { job: true, ..Busy::default() },
+    ];
+    for reason in busy {
+        let mut watch = merged_offer();
+        watch.see_busy(reason, 6.0);
+        let outs = watch.checked(true, Ok(safe_report()));
+        assert_eq!(outs, [Out::Toast(STAYS.into())], "{reason:?}");
+    }
+    let mut watch = merged_offer();
+    watch.see_busy(Busy::default(), 6.0);
+    assert_eq!(watch.checked(true, Ok(safe_report())), [Out::Remove]);
+}
+
+#[test]
+fn a_merged_worktree_is_looked_at_again_when_the_agent_lets_go_and_every_few_seconds_while_it_works()
+ {
+    let mut watch = merged_offer();
+    watch.start_check(10.0);
+    watch.checked(false, Ok(safe_report()));
+    let working = Busy { working: true, ..Busy::default() };
+    watch.see_busy(working, 11.0);
+    assert!(matches!(watch.cleanup, Cleanup::Checked(_)), "too soon to look again");
+    assert_eq!(watch.next_recheck(), Some(25.0));
+    watch.see_busy(working, 25.0);
+    assert_eq!(watch.cleanup, Cleanup::Unchecked, "a fresh count of the commits");
+    watch.start_check(25.0);
+    watch.checked(false, Ok(safe_report()));
+    watch.see_busy(Busy::default(), 26.0);
+    assert_eq!(watch.cleanup, Cleanup::Unchecked, "the offer never rests on the old look");
+    assert_eq!(watch.next_recheck(), None);
+}
+
 fn on_its_own() -> Watch {
     let mut watch = ready(Some(42));
     watch.autonomous = true;

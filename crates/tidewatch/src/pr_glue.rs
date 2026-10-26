@@ -12,10 +12,10 @@ use tidewatch_core::tools::Tools;
 use tidewatch_core::worktree::{BRANCH_PREFIX, Worktree};
 
 use crate::jobs::Jobs;
-use crate::merge_cleanup::Cleanup;
+use crate::merge_cleanup::{Busy, Cleanup};
 use crate::pr_cards_view::Data;
 use crate::pr_jobs::{self, Done, Saver};
-use crate::pr_watch::{Facts, Out, Watch};
+use crate::pr_watch::{Facts, Out, STAYS, Watch};
 
 /// What the app must do for a tab.
 #[derive(Debug, PartialEq, Eq)]
@@ -154,6 +154,7 @@ impl Host {
                 fact.title.clone_into(&mut watch.title);
             }
             watch.autonomous = fact.autonomous;
+            watch.see_busy(fact.busy, now);
             if watch.take_load() {
                 pr_jobs::load(&self.jobs, ctx, fact.id, watch.file.clone());
             }
@@ -188,7 +189,7 @@ impl Host {
             }
             outs.extend(watch.flush(default, now, now_ms));
             if watch.cleanup.wants_check() && watch.merge_offered() {
-                watch.cleanup = Cleanup::Checking;
+                watch.start_check(now);
                 let worktree = Worktree {
                     repo: fact.repo.to_path_buf(),
                     path: fact.dir.to_path_buf(),
@@ -221,6 +222,7 @@ impl Host {
             let soonest = [
                 if self.dev.outside_reachable() { watch.next_look(default) } else { None },
                 watch.next_flush(now),
+                watch.next_recheck(),
             ]
             .into_iter()
             .flatten()
@@ -332,15 +334,21 @@ impl Host {
         self.saver.save(&watch.file, watch.cards.clone());
     }
 
-    /// Looks at the merged tab's worktree once more before it is removed.
+    /// Looks at the merged tab's worktree once more before it is removed. Nothing is looked at, and
+    /// nothing removed, while the agent still needs the worktree.
     pub(crate) fn check_before_removal(
         &mut self,
         tab: u64,
         worktree: Worktree,
+        busy: Busy,
         paths: &TidewatchPaths,
         ctx: &egui::Context,
-    ) {
-        let Some(watch) = self.tabs.get_mut(&tab) else { return };
+    ) -> Vec<Applied> {
+        let Some(watch) = self.tabs.get_mut(&tab) else { return Vec::new() };
+        watch.busy = busy;
+        if busy.any() {
+            return vec![Applied { tab, out: Out::Toast(STAYS.into()) }];
+        }
         watch.cleanup = Cleanup::Checking;
         pr_jobs::check_cleanup(
             &self.jobs,
@@ -351,6 +359,7 @@ impl Host {
             watch.pr_head(),
             true,
         );
+        Vec::new()
     }
 
     /// The body of a card, for the app to act on (the failed run to re-run, the commits to push).

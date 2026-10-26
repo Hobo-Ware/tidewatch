@@ -4,19 +4,21 @@
 use std::time::Duration;
 
 use egui::{Rect, Ui};
+use tidewatch_core::job::JobBoard;
 use tidewatch_core::pr_status::{Body, Tone as PrTone};
 use tidewatch_core::prefs::{GithubPrefs, Prefs};
 use tidewatch_core::sent::{Cap, Reason, because};
 
 use super::{Tidewatch, WAKE_SLACK_S, wall_ms};
 use crate::delivery_card::Delivery;
+use crate::merge_cleanup::Busy;
 use crate::notify::{self, Notification};
 use crate::outbox::{Offer, Origin, Send};
 use crate::overview::Overview;
 use crate::pane::Body as PaneBody;
 use crate::pr_card_model::{CardAction, is_web_url};
 use crate::pr_glue::Applied;
-use crate::pr_watch::{Facts, Out, Watch};
+use crate::pr_watch::{Facts, Out, STAYS, Watch};
 use crate::worktree_jobs;
 use crate::{flow_glue, layout, pr_strip};
 use tidewatch_core::worktree::{BranchChoice, RemoveMode};
@@ -52,6 +54,11 @@ impl Tidewatch {
                     name: worktree.name(),
                     pr,
                     autonomous: agent.autonomous(),
+                    busy: Busy::of(
+                        agent.run.status(),
+                        self.progress.ledger(tab.id).map(|known| &known.ledger),
+                        self.job_live.board(tab.id).is_some_and(JobBoard::has_running),
+                    ),
                 })
             })
             .collect();
@@ -125,7 +132,7 @@ impl Tidewatch {
                         self.close_tab(index, ctx);
                     }
                 }
-                CardAction::Cleanup => self.begin_cleanup(tab, ctx),
+                CardAction::Cleanup => self.begin_cleanup(tab, ctx, now),
                 CardAction::KeepIt(card) => self.pr.dismiss(tab, card, false),
                 CardAction::NotNow(card) => self.pr.dismiss(tab, card, true),
                 CardAction::PushFix(card) => self.push_fix(tab, card, ctx),
@@ -136,15 +143,38 @@ impl Tidewatch {
         self.apply_pr(applied, ctx, now);
     }
 
-    fn begin_cleanup(&mut self, tab: u64, ctx: &egui::Context) {
+    fn busy_now(&self, tab: u64) -> Busy {
+        let Some(agent) = self
+            .tabs
+            .items()
+            .iter()
+            .find(|candidate| candidate.id == tab)
+            .and_then(|candidate| candidate.pane.agent.as_ref())
+        else {
+            return Busy::default();
+        };
+        Busy::of(
+            agent.run.status(),
+            self.progress.ledger(tab).map(|known| &known.ledger),
+            self.job_live.board(tab).is_some_and(JobBoard::has_running),
+        )
+    }
+
+    fn begin_cleanup(&mut self, tab: u64, ctx: &egui::Context, now: f64) {
         let Some(paths) = self.paths.clone() else { return };
         let Some(worktree) = self.tabs.get_mut(tab).and_then(|t| t.pane.worktree.clone()) else {
             return;
         };
-        self.pr.check_before_removal(tab, worktree, &paths, ctx);
+        let busy = self.busy_now(tab);
+        let refused = self.pr.check_before_removal(tab, worktree, busy, &paths, ctx);
+        self.apply_pr(refused, ctx, now);
     }
 
     fn remove_merged(&mut self, tab: u64, ctx: &egui::Context) {
+        if self.busy_now(tab).any() {
+            self.show_toast(STAYS, ctx);
+            return;
+        }
         let Some(paths) = self.paths.clone() else { return };
         let Some((shell, worktree)) = self.tabs.get_mut(tab).and_then(|t| t.pane.begin_remove())
         else {

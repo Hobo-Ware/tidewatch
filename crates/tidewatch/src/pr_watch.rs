@@ -15,7 +15,7 @@ use tidewatch_core::status::AgentStatus;
 use tidewatch_core::tools::GhError;
 use tidewatch_core::worktree_cleanup::Report;
 
-use crate::merge_cleanup::Cleanup;
+use crate::merge_cleanup::{Busy, Cleanup};
 use crate::note_send::{HOLD_SECS, gate, gate_reason};
 use crate::status_view::Tone;
 
@@ -25,6 +25,9 @@ pub(crate) const FAST_SECS: f64 = 20.0;
 pub(crate) const SLOW_SECS: f64 = 120.0;
 /// How soon to look after the user re-ran the checks.
 const RERUN_LOOK_SECS: f64 = 5.0;
+/// How soon to look at a merged worktree again while its agent still works in it.
+const RECHECK_SECS: f64 = 15.0;
+pub(crate) const STAYS: &str = "The agent still needs the worktree, so it stays";
 
 /// Why the status is not being read, in the words the timeline uses.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -113,6 +116,8 @@ pub(crate) struct Facts<'a> {
     pub(crate) pr: Option<(u64, &'a str)>,
     /// A YOLO agent or a Meeseeks (`autonomy::autonomous`): the watch acts on its own.
     pub(crate) autonomous: bool,
+    /// Whether the agent still needs the worktree.
+    pub(crate) busy: Busy,
 }
 
 /// Who answers the pull request's news on a tab, for the cards' buttons and notes.
@@ -166,6 +171,8 @@ pub(crate) struct Watch {
     pub(crate) pending: Vec<Pending>,
     pub(crate) autonomous: bool,
     pub(crate) cleanup: Cleanup,
+    pub(crate) busy: Busy,
+    check_started: f64,
     hold_until: Option<f64>,
     next_pending: u64,
     status: AgentStatus,
@@ -188,6 +195,8 @@ impl Watch {
             pending: Vec::new(),
             autonomous: false,
             cleanup: Cleanup::default(),
+            busy: Busy::default(),
+            check_started: 0.0,
             hold_until: None,
             next_pending: 0,
             status: AgentStatus::SettingUp,
@@ -558,9 +567,35 @@ impl Watch {
         self.cards.seen.as_ref().map(|seen| seen.head.clone()).filter(|head| !head.is_empty())
     }
 
-    /// A safety check finished. With `remove` set and the worktree safe, the removal goes ahead.
+    pub(crate) fn start_check(&mut self, now: f64) {
+        self.cleanup = Cleanup::Checking;
+        self.check_started = now;
+    }
+
+    /// What the agent needs of the worktree this frame. The last look is thrown away when the agent
+    /// lets go, and every few seconds while it works, so the card never rests on an old count.
+    pub(crate) fn see_busy(&mut self, busy: Busy, now: f64) {
+        let let_go = self.busy.any() && !busy.any();
+        self.busy = busy;
+        if let_go || self.next_recheck().is_some_and(|at| at <= now) {
+            self.cleanup = Cleanup::Unchecked;
+        }
+    }
+
+    pub(crate) fn next_recheck(&self) -> Option<f64> {
+        (self.busy.any()
+            && self.merge_offered()
+            && matches!(self.cleanup, Cleanup::Checked(_) | Cleanup::Failed(_)))
+        .then_some(self.check_started + RECHECK_SECS)
+    }
+
+    /// A safety check finished. With `remove` set, the worktree safe and its agent done with it, the
+    /// removal goes ahead.
     pub(crate) fn checked(&mut self, remove: bool, result: Result<Report, String>) -> Vec<Out> {
         let outs = match &result {
+            Ok(_) if remove && self.busy.any() => {
+                vec![Out::Toast(STAYS.into())]
+            }
             Ok(report) if remove && report.is_safe() => vec![Out::Remove],
             Ok(_) if remove => {
                 vec![Out::Toast("The worktree changed since the check, so it stays".into())]

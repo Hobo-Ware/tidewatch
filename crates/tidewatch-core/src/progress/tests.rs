@@ -520,6 +520,27 @@ fn blocked_means_the_agent_says_so_or_an_item_is_and_the_work_is_not_done() {
 }
 
 #[test]
+fn a_ledger_is_open_until_the_agent_says_done_or_every_step_is_closed() {
+    let cases = [
+        ("state: working", "- [x] a\n- [x] b", "- Nothing", true),
+        ("state: waiting", "- [x] a", "- Nothing", true),
+        ("state: done", "- [ ] a", "- Pick one", false),
+        ("", "- [x] a\n- [~] b", "- Nothing", true),
+        ("", "- [x] a\n- [ ] b", "- Nothing", true),
+        ("", "- [x] a\n- [-] b", "- Nothing", false),
+        ("", "- [x] a", "- Pick one", true),
+        ("", "- [x] a", "- Nothing", false),
+    ];
+    for (status, items, needs, want) in cases {
+        let l = Ledger::parse(&format!(
+            "# Goal\ng\n\n## Status\n{status}\n\n## Checklist\n### 1. P\n{items}\n\n## Needs you\n{needs}\n"
+        ));
+        assert_eq!(l.is_open(), want, "{status:?} {items:?} {needs:?}");
+    }
+    assert!(!Ledger::default().is_open());
+}
+
+#[test]
 fn the_state_word_is_read_loosely() {
     let cases = [
         ("working", Some(State::Working)),

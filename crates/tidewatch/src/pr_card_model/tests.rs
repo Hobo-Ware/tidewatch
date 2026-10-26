@@ -36,6 +36,7 @@ static UNCHECKED: Cleanup = Cleanup::Unchecked;
 fn context(cards: &Cards, mode: PrMode) -> Context<'_> {
     Context {
         cleanup: &UNCHECKED,
+        busy: Busy::default(),
         cards,
         profile: "Builder",
         mode,
@@ -268,6 +269,59 @@ fn a_merged_worktree_with_unsaved_work_is_not_offered_for_removal() {
     assert_eq!(lines, &["1 untracked file", "  untracked  idea.md"]);
     let (_, failed) = merged_with(&Cleanup::Failed("no such folder".into()));
     assert_eq!(labels(&failed), [("Close tab and clean up", false), ("Keep it", false)]);
+}
+
+fn merged_busy(cleanup: &Cleanup, busy: Busy) -> Model {
+    let cards = cards_of(vec![Body::Merged { number: 42, base: "main".into() }]);
+    let context = Context { cleanup, busy, ..context(&cards, PrMode::Ask) };
+    let Some(Look::Card(model)) = look(0, context) else { panic!() };
+    model
+}
+
+#[test]
+fn a_merged_card_offers_no_removal_while_the_agent_still_needs_the_worktree() {
+    let safe = Cleanup::Checked(report(&[]));
+    let ahead = Cleanup::Checked(tidewatch_core::worktree_cleanup::Report {
+        local_commits: Some(2),
+        ..Default::default()
+    });
+    let cases = [
+        (
+            Busy { working: true, ..Busy::default() },
+            &safe,
+            "PR merged. Cleanup waits: the agent is still working.",
+        ),
+        (
+            Busy { open_ledger: true, ..Busy::default() },
+            &safe,
+            "PR merged. Cleanup waits: its ledger still has open steps.",
+        ),
+        (
+            Busy { job: true, ..Busy::default() },
+            &safe,
+            "PR merged. Cleanup waits: a job is still running.",
+        ),
+        (
+            Busy { working: true, ..Busy::default() },
+            &ahead,
+            "PR merged. Cleanup waits: the agent is still working and 2 commits are not in the PR.",
+        ),
+    ];
+    for (busy, cleanup, line) in cases {
+        let model = merged_busy(cleanup, busy);
+        assert_eq!(model.buttons, [], "{busy:?}");
+        assert_eq!(model.body, [Block::Text(line.into())]);
+    }
+}
+
+#[test]
+fn the_removal_offer_comes_back_once_every_reason_has_cleared() {
+    let safe = Cleanup::Checked(report(&[]));
+    let waiting = merged_busy(&safe, Busy { working: true, open_ledger: true, job: true });
+    assert_eq!(waiting.buttons, []);
+    let clear = merged_busy(&safe, Busy::default());
+    assert_eq!(labels(&clear), [("Remove worktree and branch", true), ("Keep it", false)]);
+    assert_eq!(clear.body, [Block::Text("PR merged. Remove worktree and branch?".into())]);
 }
 
 #[test]
