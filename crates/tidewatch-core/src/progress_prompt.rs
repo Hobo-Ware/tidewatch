@@ -71,8 +71,9 @@ How to fill it in:
   - `on: <event>` when it waits for something to happen: `- [ ] on: the partner confirms the new feed -- Delete the legacy endpoint -- the partner still reads it`
   - `parked: <until what>` when it is set aside: `- [ ] parked: until the billing rewrite lands -- Drop the invoice columns -- the old billing code reads them`
   - `you` when only the user can decide it. Never write `on: <event>` for the user's call: `- [ ] you -- Choose whether audit rows are kept for 30 or 90 days -- a product call`
+- A date is its own `<when>`. Never put a date after `on:`: write `2026-11-01`, not `on: 2026-11-01`. `on:` is only for an event.
 - Dates are `YYYY-MM-DD`. Take today's date from your environment, or run `date +%F`.
-- The tool answers with one line such as `saved: phase 2 Build, 3/9 done, 1 scheduled`. Do not paste the ledger into the chat.
+- The tool answers with one line such as `saved: phase 2 Build, 3/9 done, 1 scheduled`. Lines after it, such as `fix next save: ...`, name something to correct in your next call. Do not paste the ledger into the chat.
 ";
 
 const MUST_DOS_INTRO: &str = "\
@@ -232,6 +233,15 @@ mod tests {
         let text = section(Some(&ten_phases), TurnEnd::SentBack);
         let after = &text[text.find("Must-do steps").unwrap()..];
         assert!(!after.contains('#'), "{after}");
+    }
+
+    #[test]
+    fn the_prompt_says_a_date_is_its_own_when_and_never_follows_on() {
+        let text = section(None, TurnEnd::SentBack);
+        assert!(text.contains("A date is its own `<when>`."));
+        assert!(text.contains("write `2026-11-01`, not `on: 2026-11-01`"));
+        assert!(text.contains("`on:` is only for an event"));
+        assert!(text.contains("`fix next save: ...`"));
     }
 
     #[test]

@@ -320,6 +320,8 @@ impl<'de> Deserialize<'de> for When {
 pub struct Scheduled {
     pub mark: Mark,
     pub when: When,
+    /// The first column as the agent wrote it.
+    pub when_text: String,
     pub what: String,
     pub why: Option<String>,
     pub steps: Vec<Item>,
@@ -857,10 +859,11 @@ fn starts_like_when(text: &str) -> bool {
 
 fn scheduled(mark: Mark, text: &str) -> Scheduled {
     let mut parts = split_parts(text, 3).into_iter();
-    let when = When::parse(&parts.next().unwrap_or_default());
+    let when_text = parts.next().unwrap_or_default();
+    let when = When::parse(&when_text);
     let what = parts.next().unwrap_or_default();
     let why = parts.next().filter(|why| !why.is_empty());
-    Scheduled { mark, when, what, why, steps: Vec::new() }
+    Scheduled { mark, when, when_text, what, why, steps: Vec::new() }
 }
 
 fn parse_entries(lines: &[&str]) -> Vec<Entry> {
