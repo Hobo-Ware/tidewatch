@@ -55,16 +55,31 @@ Keep a progress ledger for the task with the `update_progress` tool of the `tide
 When you need the user to choose between options, ask a multiple-choice question instead of describing the options in prose. Use your own question tool if you have one (for example `AskUserQuestion`), otherwise call the `ask_user` tool of the `tidewatch` MCP server. Write the question for someone who has not followed your work: plain words, no jargon. Give two or three options, put the one you recommend first and end its label with (Recommended). With `ask_user`, also give the question a one-sentence `decision` and each option a one-line `tradeoff`, and set `recommended` on your top pick. An option that deletes anything names the exact items and how many.
 ";
 
-/// Tool guidance Tidewatch always puts after the house style, so an older or edited `house-style.md`
-/// reaches agents with it too.
-pub const TOOL_GUIDANCE: &str = "\
-## Tidewatch tool guidance
+const TOOL_GUIDANCE_HEADING: &str = "## Tidewatch tool guidance\n\n";
 
-- For any job you expect to run over a minute, call `report_job`, or have the script append JSON progress lines (`name`, `done`, `total`, `unit`, `phase`, `state`) to the file in `$TIDEWATCH_PROGRESS`.
-- Ask choices in plain words with two or three options, mark your top pick, and name the exact items and the count for anything that deletes. The user can answer every open question with your picks in one click.
-- Once you understand the task, call `set_avatar` once with a 64x64 flat icon about the task (2-3 colors, simple shapes) and a one-line reason.
-- You may push any branch except the repo's default branch, force included; after folding fixups use `git push --force-with-lease`. The default branch and tags are refused, and Tidewatch opens pull requests.
-";
+const JOBS_LINE: &str = "- For any job you expect to run over a minute, call `report_job`, or have the script append JSON progress lines (`name`, `done`, `total`, `unit`, `phase`, `state`) to the file in `$TIDEWATCH_PROGRESS`.\n";
+
+const CHOICES_LINE: &str = "- Ask choices in plain words with two or three options, mark your top pick, and name the exact items and the count for anything that deletes. The user can answer every open question with your picks in one click.\n";
+
+const RECOVERY_LINE: &str = "- If `update_progress` is not available, look for `mcp__tidewatch__update_progress` with tool search once. If it is still missing, tell the user that Tidewatch reporting is down.\n";
+
+const AVATAR_LINE: &str = "- Once you understand the task, call `set_avatar` once with a 64x64 flat icon about the task (2-3 colors, simple shapes) and a one-line reason.\n";
+
+const PUSH_LINE: &str = "- You may push any branch except the repo's default branch, force included; after folding fixups use `git push --force-with-lease`. The default branch and tags are refused, and Tidewatch opens pull requests.\n";
+
+/// Tool guidance Tidewatch always puts after the house style, so an older or edited `house-style.md`
+/// reaches agents with it too. A Meeseeks gets only the lines its own block does not contradict:
+/// its face is fixed and it may push only its own branch.
+#[must_use]
+pub fn tool_guidance(role: Role) -> String {
+    let lines: &[&str] = match role {
+        Role::Meeseeks => &[JOBS_LINE, CHOICES_LINE, RECOVERY_LINE],
+        Role::Agent | Role::Autonomous => {
+            &[JOBS_LINE, CHOICES_LINE, RECOVERY_LINE, AVATAR_LINE, PUSH_LINE]
+        }
+    };
+    format!("{TOOL_GUIDANCE_HEADING}{}", lines.concat())
+}
 
 pub const MEESEEKS_GUIDANCE: &str = "\
 ## You are a Meeseeks
@@ -75,7 +90,8 @@ You are a Meeseeks with exactly one task: the one you were given. Do it, and not
 - Say `kind: read-only` in your ledger's Status for a question or an investigation (stages Understand, Answer, Done; your final summary is the answer), and `kind: edit` as soon as you will change files.
 - When you believe you are done or cannot go further, call `meeseeks_done` once with a one-line summary (a read-only task puts its whole answer there). If you are blocked, start it with `Blocked:` and the reason. Tidewatch decides what to check and ends this session itself.
 - Never end with a decision for the user. If your answer leaves a choice (switch or not, which option), ask it with your question tool, the recommended option first, and act on the answer before you finish.
-- You may push this branch. Do not push anything else, open a pull request or remove anything yourself. Tidewatch does that.
+- You may push this branch; after folding fixups use `git push --force-with-lease`. Do not push anything else, open a pull request or remove anything yourself. Tidewatch does that.
+- Do not call `stage_done`: `meeseeks_done` ends your task. Your end block's Needs you says `nothing`.
 - If Tidewatch pastes a failed check, fix it, commit, and call `meeseeks_done` again.
 - Do not call `set_avatar`: your face is fixed.
 - Decide and proceed on everything except product design and architecture choices. Never ask for confirmation to commit, push, rerun checks or fix CI. For a design or architecture choice, ask with your question tool and keep working on whatever does not depend on the answer.
@@ -151,8 +167,9 @@ pub fn compose_for(house_style: &str, must_dos: Option<&str>, role: Role) -> Str
         Role::Meeseeks => format!("{MEESEEKS_GUIDANCE}\n"),
     };
     format!(
-        "{}\n\n{TOOL_GUIDANCE}\n{one_task}{}",
+        "{}\n\n{}\n{one_task}{}",
         house_style.trim_end(),
+        tool_guidance(role),
         progress_prompt::section(must_dos)
     )
 }
@@ -288,13 +305,43 @@ mod tests {
         let guidance = text.find("## Tidewatch tool guidance").unwrap();
         let block = text.find("## You are a Meeseeks").unwrap();
         assert!(guidance < block && block < text.find("## Progress ledger format").unwrap());
-        assert_eq!(text.matches("`meeseeks_done`").count(), 2);
-        assert!(text.contains("You may push this branch. Do not push anything else"));
-        assert!(text.contains("git push --force-with-lease"));
+        assert_eq!(text.matches("`meeseeks_done`").count(), 3);
+        assert!(text.contains("You may push this branch; after folding fixups use `git push --force-with-lease`. Do not push anything else"));
         assert!(text.contains("`kind: read-only`") && text.contains("`kind: edit`"));
         assert!(text.contains("start it with `Blocked:`"));
         assert!(!text.contains("done and committed"));
         assert!(!compose("be brief", checklist).contains("kind: read-only"));
+    }
+
+    #[test]
+    fn a_meeseeks_never_gets_a_tool_line_its_own_block_contradicts() {
+        let text = compose_for("be brief", Some("- [ ] only this\n"), Role::Meeseeks);
+        for line in [AVATAR_LINE, PUSH_LINE] {
+            assert!(!text.contains(line.trim()), "{line}");
+        }
+        assert!(!text.contains("You may push any branch"));
+        assert!(!text.contains("call `set_avatar` once"));
+        assert_eq!(text.matches("git push --force-with-lease").count(), 1);
+        assert!(text.contains("Do not call `stage_done`"));
+        for role in [Role::Agent, Role::Autonomous] {
+            let other = compose_for("be brief", Some("- [ ] only this\n"), role);
+            assert!(
+                other.contains(AVATAR_LINE.trim()) && other.contains(PUSH_LINE.trim()),
+                "{role:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn every_role_can_recover_when_the_reporting_tools_are_missing() {
+        for role in [Role::Agent, Role::Autonomous, Role::Meeseeks] {
+            let text = compose_for("be brief", None, role);
+            assert!(
+                text.contains("`mcp__tidewatch__update_progress` with tool search once"),
+                "{role:?}"
+            );
+            assert!(text.contains("Tidewatch reporting is down"), "{role:?}");
+        }
     }
 
     #[test]
