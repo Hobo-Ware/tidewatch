@@ -10,9 +10,9 @@ use std::sync::Arc;
 use egui::epaint::text::{LayoutJob, TextWrapping};
 use egui::style::ScrollAnimation;
 use egui::{
-    Align, Align2, Color32, CornerRadius, FontId, Frame, Galley, Id, Key, KeyboardShortcut, Layout,
-    Margin, Modifiers, Painter, Rect, Response, RichText, ScrollArea, Sense, Stroke, StrokeKind,
-    TextEdit, Ui, UiBuilder, pos2, vec2,
+    Align, Align2, Color32, CornerRadius, EventFilter, FontId, Frame, Galley, Id, Key,
+    KeyboardShortcut, Layout, Margin, Modifiers, Painter, Rect, Response, RichText, ScrollArea,
+    Sense, Stroke, StrokeKind, TextEdit, Ui, UiBuilder, pos2, vec2,
 };
 use jiff::tz::TimeZone;
 use tidewatch_core::question::Reply;
@@ -27,6 +27,7 @@ use crate::job_model::clock_label;
 use crate::pr_card_model::CardAction;
 use crate::pr_cards_view::{self, Data as PrData, Heights as PrHeights};
 use crate::pr_timeline::{self, Place};
+use crate::prompt_ghost::Ghost;
 use crate::question_bulk;
 use crate::question_card::{Card, Effect};
 use crate::question_view::{self, ChipClick, Live, PermissionClick};
@@ -71,6 +72,7 @@ pub(crate) struct ViewState {
     pub(crate) heights: Heights,
     pr_heights: PrHeights,
     pub(crate) reply: String,
+    pub(crate) ghost: Ghost,
     review: review_view::CardState,
     focus_reply: bool,
     pub(crate) commands: Arc<Vec<SlashEntry>>,
@@ -97,6 +99,7 @@ impl Default for ViewState {
             heights: Heights::default(),
             pr_heights: PrHeights::default(),
             reply: String::new(),
+            ghost: Ghost::default(),
             review: review_view::CardState::default(),
             focus_reply: true,
             commands: Arc::default(),
@@ -489,6 +492,7 @@ pub(crate) fn show(
         &mut state.focus_reply,
         reply_enabled,
         &state.commands,
+        state.ghost.text(),
     ) {
         actions.push(Action::Reply(text));
     }
@@ -1025,6 +1029,7 @@ pub(crate) fn reply_box(
     focus: &mut bool,
     enabled: bool,
     commands: &[SlashEntry],
+    ghost: Option<&str>,
 ) -> Option<String> {
     let mut sent = None;
     let id = reply_id();
@@ -1034,6 +1039,15 @@ pub(crate) fn reply_box(
         let rows = menu.rows(text, commands);
         slash_view::keys(ui, id, text, &mut menu, &rows);
     }
+    let ghost = ghost.filter(|_| enabled && text.is_empty());
+    if let Some(ghost) = ghost
+        && ui.memory(|m| m.has_focus(id))
+        && ui.input_mut(|input| input.consume_key(Modifiers::NONE, Key::Tab))
+    {
+        *text = ghost.to_owned();
+        bullets::place_cursor(ui, id, text.chars().count());
+    }
+    let ghost = ghost.filter(|_| text.is_empty());
     let listing = enabled && (ui.memory(|m| m.has_focus(id)) || !ui.input(|i| i.focused));
     let rows = if listing { menu.rows(text, commands) } else { Vec::new() };
     menu.open = !rows.is_empty();
@@ -1049,6 +1063,10 @@ pub(crate) fn reply_box(
     }
     ui.add_enabled_ui(enabled, |ui| {
         let hint = if enabled { "Reply to the agent" } else { "Answer the prompt above first" };
+        let hint = ghost.unwrap_or(hint);
+        if ghost.is_some() {
+            ui.visuals_mut().weak_text_color = Some(brand::MUTED);
+        }
         let mut clicked = false;
         let margin = Margin::symmetric(REPLY_MARGIN_X as i8, REPLY_MARGIN_Y as i8);
         let look = (brand::CARD, COMPOSER_RADIUS, margin);
@@ -1114,6 +1132,15 @@ pub(crate) fn reply_box(
             field.request_focus();
             *focus = false;
         }
+        if ghost.is_some() && ui.memory(|m| m.has_focus(id)) {
+            let filter = EventFilter {
+                tab: true,
+                horizontal_arrows: true,
+                vertical_arrows: true,
+                ..EventFilter::default()
+            };
+            ui.memory_mut(|memory| memory.set_focus_lock_filter(id, filter));
+        }
         if !rows.is_empty() {
             if ui.memory(|m| m.has_focus(id)) {
                 slash_view::hold_keys(ui, id);
@@ -1161,7 +1188,7 @@ mod tests {
         };
         let mut sent = None;
         let _ = ctx.run_ui(raw, |ui| {
-            sent = reply_box(ui, text, focus, true, commands);
+            sent = reply_box(ui, text, focus, true, commands, None);
         });
         sent
     }
@@ -1218,7 +1245,7 @@ mod tests {
             let out = ctx.run_ui(raw, |ui| {
                 let room = Rect::from_min_size(pos2(0.0, 0.0), vec2(600.0, height));
                 ui.scope_builder(UiBuilder::new().max_rect(room), |ui| {
-                    reply_box(ui, text, &mut focus, true, &[]);
+                    reply_box(ui, text, &mut focus, true, &[], None);
                 });
             });
             shapes.clear();
@@ -1416,7 +1443,7 @@ mod tests {
         };
         let _ = ctx.run_ui(raw, |ui| {
             crate::image_paste::inject_paste(ui.ctx(), path.clone());
-            reply_box(ui, &mut text, &mut focus, true, &[]);
+            reply_box(ui, &mut text, &mut focus, true, &[], None);
         });
         assert_eq!(text, path);
     }
@@ -1428,6 +1455,100 @@ mod tests {
         frame(&ctx, vec![], &mut text, &mut focus);
         frame(&ctx, vec![Event::Text("   ".into())], &mut text, &mut focus);
         assert_eq!(frame(&ctx, vec![enter()], &mut text, &mut focus), None);
+    }
+
+    const GHOST: &str = "run the whole test suite";
+
+    fn ghost_frame(
+        ctx: &egui::Context,
+        events: Vec<Event>,
+        text: &mut String,
+        focus: &mut bool,
+        ghost: Option<&str>,
+    ) -> (Option<String>, Vec<(String, Color32)>) {
+        let raw = RawInput {
+            screen_rect: Some(Rect::from_min_size(pos2(0.0, 0.0), vec2(600.0, 200.0))),
+            events,
+            focused: true,
+            ..RawInput::default()
+        };
+        let mut sent = None;
+        let out = ctx.run_ui(raw, |ui| {
+            sent = reply_box(ui, text, focus, true, &[], ghost);
+        });
+        let mut shapes = Vec::new();
+        out.shapes.iter().for_each(|clipped| flat(&clipped.shape, &mut shapes));
+        let painted = shapes
+            .iter()
+            .filter_map(|shape| match shape {
+                egui::Shape::Text(t) => Some((
+                    t.galley.text().to_owned(),
+                    t.galley.job.sections.first().map_or(Color32::TRANSPARENT, |s| s.format.color),
+                )),
+                _ => None,
+            })
+            .collect();
+        (sent, painted)
+    }
+
+    fn ghost_box() -> (egui::Context, String, bool) {
+        let ctx = egui::Context::default();
+        let (mut text, mut focus) = (String::new(), true);
+        ghost_frame(&ctx, vec![], &mut text, &mut focus, Some(GHOST));
+        ghost_frame(&ctx, vec![], &mut text, &mut focus, Some(GHOST));
+        (ctx, text, focus)
+    }
+
+    #[test]
+    fn the_suggestion_shows_grey_in_an_empty_box_and_not_in_a_typed_one() {
+        let (ctx, mut text, mut focus) = ghost_box();
+        let (_, painted) = ghost_frame(&ctx, vec![], &mut text, &mut focus, Some(GHOST));
+        assert_eq!(
+            painted.iter().find(|(shown, _)| shown == GHOST).map(|(_, ink)| *ink),
+            Some(brand::MUTED)
+        );
+        let (_, none) = ghost_frame(&ctx, vec![], &mut text, &mut focus, None);
+        assert_eq!(none.iter().filter(|(shown, _)| shown == GHOST).count(), 0);
+        ghost_frame(&ctx, vec![Event::Text("x".into())], &mut text, &mut focus, Some(GHOST));
+        let (_, typed) = ghost_frame(&ctx, vec![], &mut text, &mut focus, Some(GHOST));
+        assert_eq!(text, "x");
+        assert_eq!(typed.iter().filter(|(shown, _)| shown == GHOST).count(), 0);
+    }
+
+    #[test]
+    fn tab_turns_the_suggestion_into_real_text_and_sends_nothing() {
+        let (ctx, mut text, mut focus) = ghost_box();
+        let (sent, _) = ghost_frame(&ctx, vec![key(Key::Tab)], &mut text, &mut focus, Some(GHOST));
+        assert_eq!((sent, text.as_str()), (None, GHOST));
+        let (_, painted) = ghost_frame(&ctx, vec![], &mut text, &mut focus, Some(GHOST));
+        assert_eq!(painted.iter().filter(|(shown, _)| shown == GHOST).count(), 1);
+        let at = TextEdit::load_state(&ctx, reply_id()).and_then(|s| s.cursor.char_range());
+        assert_eq!(at.map(|range| range.primary.index.0), Some(GHOST.chars().count()));
+    }
+
+    #[test]
+    fn typing_then_tab_keeps_the_typed_text() {
+        let (ctx, mut text, mut focus) = ghost_box();
+        ghost_frame(&ctx, vec![Event::Text("go".into())], &mut text, &mut focus, Some(GHOST));
+        ghost_frame(&ctx, vec![key(Key::Tab)], &mut text, &mut focus, Some(GHOST));
+        assert_eq!(text, "go");
+    }
+
+    #[test]
+    fn enter_on_an_empty_box_never_sends_the_suggestion() {
+        let (ctx, mut text, mut focus) = ghost_box();
+        let (sent, _) = ghost_frame(&ctx, vec![enter()], &mut text, &mut focus, Some(GHOST));
+        assert_eq!((sent, text.as_str()), (None, ""));
+    }
+
+    #[test]
+    fn tab_without_a_suggestion_moves_focus_as_before() {
+        let ctx = egui::Context::default();
+        let (mut text, mut focus) = (String::new(), true);
+        ghost_frame(&ctx, vec![], &mut text, &mut focus, None);
+        ghost_frame(&ctx, vec![], &mut text, &mut focus, None);
+        ghost_frame(&ctx, vec![key(Key::Tab)], &mut text, &mut focus, None);
+        assert_eq!(text, "");
     }
 
     #[test]
