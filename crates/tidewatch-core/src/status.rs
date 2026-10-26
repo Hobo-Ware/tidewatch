@@ -19,6 +19,10 @@
 //!   ends (`PostToolUse`), so that permission does not decay: the terminal keeps printing behind a
 //!   prompt while other parallel calls run. It holds until its own call ends, the Reader answers it,
 //!   or the turn moves on.
+//! - A tool call that starts (`PreToolUse`) while the hook state is `Done` or `Failed` reads
+//!   `Working` again: a Stop guard sent the agent back to work with no new prompt. A call's end
+//!   does the same only when its `tool_use_id` was not seen starting this turn; the end of a call
+//!   that began before the Stop (it can arrive after it) never reopens the turn.
 //! - An idle notice (`Notification` `idle_prompt`) means "at the prompt", so it reads `Done`; only a
 //!   permission prompt, a question or an explicit ask reads `NeedsYou`.
 //! - With no hook state, progress, bell, title activity and quiet time decide.
@@ -26,6 +30,7 @@
 //! Claude's `SessionStart` http hook never fired in `claude` 2.1.296 (interactive or `-p`), so the
 //! first Claude status comes from `UserPromptSubmit` or from the lower layers.
 
+use std::collections::HashSet;
 use std::path::PathBuf;
 
 use serde_json::Value;
@@ -76,8 +81,13 @@ pub enum HookKind {
     PermissionNeeded,
     /// A permission prompt for one identified tool call (the key from [`tool_key`]).
     ToolPermission(String),
-    /// A tool call ended, with the same key its permission prompt had.
-    ToolFinished(String),
+    /// A tool call started (`PreToolUse`), named by Claude's `tool_use_id`.
+    ToolStarted(String),
+    /// A tool call ended: `key` is the one its permission prompt had, `id` Claude's `tool_use_id`.
+    ToolFinished {
+        key: String,
+        id: Option<String>,
+    },
     QuestionAsked,
     IdleWaiting,
     TurnDone,
@@ -125,7 +135,7 @@ pub fn parse_hook(agent: &str, payload: &Value) -> Option<HookEvent> {
 
 fn parse_named_event(agent: &str, object: &serde_json::Map<String, Value>) -> Option<HookEvent> {
     let name = object.get("hook_event_name")?.as_str()?;
-    let message = |key: &str| text(object.get(key)).map(|m| clip_to(&m, TURN_MESSAGE_MAX_CHARS));
+    let message = |key: &str| text(object.get(key)).map(|m| clip_tail(&m, TURN_MESSAGE_MAX_CHARS));
     let (kind, message) = match name {
         "SessionStart" => (HookKind::SessionStart, None),
         "UserPromptSubmit" | "BeforeAgent" => (HookKind::TurnStarted, None),
@@ -133,7 +143,14 @@ fn parse_named_event(agent: &str, object: &serde_json::Map<String, Value>) -> Op
             Some(key) if agent == "claude" => (HookKind::ToolPermission(key), tool_summary(object)),
             _ => (HookKind::PermissionNeeded, tool_summary(object)),
         },
-        "PostToolUse" | "PostToolUseFailure" => (HookKind::ToolFinished(tool_key(object)?), None),
+        "PreToolUse" => (HookKind::ToolStarted(text(object.get("tool_use_id"))?), None),
+        "PostToolUse" | "PostToolUseFailure" => {
+            let finished = HookKind::ToolFinished {
+                key: tool_key(object)?,
+                id: text(object.get("tool_use_id")),
+            };
+            (finished, None)
+        }
         "Notification" => match object.get("notification_type").and_then(Value::as_str)? {
             "permission_prompt" | "ToolPermission" => {
                 (HookKind::PermissionNeeded, message("message"))
@@ -243,6 +260,15 @@ fn clip_to(message: &str, max: usize) -> String {
     clipped
 }
 
+fn clip_tail(message: &str, max: usize) -> String {
+    let count = message.chars().count();
+    if count <= max {
+        return message.to_owned();
+    }
+    let tail: String = message.chars().skip(count - max).collect();
+    format!("...{tail}")
+}
+
 /// OSC 9;4 progress as the status layer needs it. The app maps its terminal's progress onto this.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum ProgressSignal {
@@ -323,9 +349,10 @@ impl HookState {
             HookKind::QuestionAsked => HookStatus::NeedsYou(Reason::Question),
             HookKind::TurnDone | HookKind::IdleWaiting => HookStatus::Done,
             HookKind::TurnFailed(reason) => HookStatus::Failed(reason.clone()),
-            HookKind::SessionStart | HookKind::SessionEnd | HookKind::ToolFinished(_) => {
-                return None;
-            }
+            HookKind::SessionStart
+            | HookKind::SessionEnd
+            | HookKind::ToolStarted(_)
+            | HookKind::ToolFinished { .. } => return None,
         };
         let pending = match &event.kind {
             HookKind::ToolPermission(key) => Some(key.clone()),
@@ -502,6 +529,7 @@ pub fn next_change(inputs: &StatusInputs, now: f64) -> Option<f64> {
 #[derive(Clone, Debug, PartialEq)]
 pub struct StatusTracker {
     inputs: StatusInputs,
+    open_tools: HashSet<String>,
 }
 
 impl StatusTracker {
@@ -531,6 +559,7 @@ impl StatusTracker {
                 terminal: TerminalState::default(),
                 process: ProcessFacts::started(now),
             },
+            open_tools: HashSet::new(),
         }
     }
 
@@ -540,6 +569,7 @@ impl StatusTracker {
         self.inputs.process = ProcessFacts::started(now);
         self.inputs.hook = None;
         self.inputs.terminal = TerminalState::default();
+        self.open_tools.clear();
     }
 
     /// The agent process was resumed from a saved session: it waits at its prompt, which reads as
@@ -551,9 +581,22 @@ impl StatusTracker {
     }
 
     pub fn on_hook(&mut self, event: &HookEvent, now: f64) {
-        if let HookKind::ToolFinished(key) = &event.kind {
-            self.settle_permission(|pending| pending == Some(key.as_str()), now);
-            return;
+        match &event.kind {
+            HookKind::ToolStarted(id) => {
+                self.open_tools.insert(id.clone());
+                self.resume_after_finished_turn(now);
+                return;
+            }
+            HookKind::ToolFinished { key, id } => {
+                self.settle_permission(|pending| pending == Some(key.as_str()), now);
+                let began_before = id.as_ref().is_none_or(|id| self.open_tools.remove(id));
+                if !began_before {
+                    self.resume_after_finished_turn(now);
+                }
+                return;
+            }
+            HookKind::TurnStarted => self.open_tools.clear(),
+            _ => {}
         }
         let Some(state) = HookState::from_event(event, now) else { return };
         let previous = self.inputs.hook.as_ref();
@@ -562,6 +605,15 @@ impl StatusTracker {
             HookKind::PermissionNeeded => state.after_notice(previous),
             _ => state,
         });
+    }
+
+    fn resume_after_finished_turn(&mut self, now: f64) {
+        if let Some(hook) = &self.inputs.hook
+            && matches!(hook.status, HookStatus::Done | HookStatus::Failed(_))
+        {
+            self.inputs.hook =
+                Some(HookState { status: HookStatus::Working, at: now, pending: None });
+        }
     }
 
     /// The user answered the pending permission prompt (no hook reports a denial).
@@ -688,6 +740,11 @@ mod tests {
             (
                 json!({"session_id": sid, "hook_event_name": "PreToolUse", "tool_name": "Bash"}),
                 None,
+            ),
+            (
+                json!({"session_id": sid, "hook_event_name": "PreToolUse", "tool_name": "Bash",
+                    "tool_use_id": "toolu_9"}),
+                Some((HookKind::ToolStarted("toolu_9".into()), None)),
             ),
         ];
         for (payload, want) in cases {
@@ -841,7 +898,7 @@ mod tests {
 
     #[test]
     fn long_messages_are_clipped() {
-        let long = "x".repeat(TURN_MESSAGE_MAX_CHARS * 2);
+        let long = format!("{}\n\nDone\n- shipped", "x".repeat(TURN_MESSAGE_MAX_CHARS * 2));
         let event = parse_hook(
             "claude",
             &json!({"hook_event_name": "Stop", "last_assistant_message": long}),
@@ -849,7 +906,8 @@ mod tests {
         .unwrap();
         let message = event.message.unwrap();
         assert_eq!(message.chars().count(), TURN_MESSAGE_MAX_CHARS + 3);
-        assert!(message.ends_with("..."));
+        assert!(message.starts_with("..."));
+        assert!(message.ends_with("\n\nDone\n- shipped"));
     }
 
     fn agent_inputs() -> StatusInputs {
@@ -1135,6 +1193,85 @@ mod tests {
         assert_eq!(tracker.status(102.0), AgentStatus::Done);
     }
 
+    fn tool_started(id: &str) -> HookEvent {
+        claude_hook(&json!({"hook_event_name": "PreToolUse", "tool_name": "Bash",
+            "tool_use_id": id, "tool_input": {"command": "ls"}}))
+    }
+
+    fn tool_finished(id: &str) -> HookEvent {
+        claude_hook(&json!({"hook_event_name": "PostToolUse", "tool_name": "Bash",
+            "tool_use_id": id, "tool_input": {"command": "ls"}, "tool_response": {}}))
+    }
+
+    #[test]
+    fn a_tool_that_began_after_stop_reopens_the_turn_and_one_that_began_before_never_does() {
+        let turn_started = || HookEvent::bare(HookKind::TurnStarted);
+        let stop = || HookEvent::bare(HookKind::TurnDone);
+        let failed = || HookEvent::bare(HookKind::TurnFailed("rate_limit".into()));
+        let cases = [
+            (
+                "a Stop guard sends the agent back: the next tool starts",
+                vec![
+                    turn_started(),
+                    tool_started("a"),
+                    tool_finished("a"),
+                    stop(),
+                    tool_started("b"),
+                ],
+                AgentStatus::Working,
+            ),
+            (
+                "the same, seen only by its end (a tab with no start hook)",
+                vec![turn_started(), tool_finished("a"), stop(), tool_finished("b")],
+                AgentStatus::Working,
+            ),
+            (
+                "after a failed turn",
+                vec![turn_started(), failed(), tool_started("b")],
+                AgentStatus::Working,
+            ),
+            (
+                "the last tool's end arrives after the Stop",
+                vec![turn_started(), tool_started("a"), stop(), tool_finished("a")],
+                AgentStatus::Done,
+            ),
+            (
+                "two parallel tools, both ends arrive after the Stop",
+                vec![
+                    turn_started(),
+                    tool_started("a"),
+                    tool_started("b"),
+                    stop(),
+                    tool_finished("b"),
+                    tool_finished("a"),
+                ],
+                AgentStatus::Done,
+            ),
+            (
+                "an end with no id says nothing about where it began",
+                vec![
+                    turn_started(),
+                    stop(),
+                    HookEvent::bare(HookKind::ToolFinished { key: "Bash\n{}".into(), id: None }),
+                ],
+                AgentStatus::Done,
+            ),
+            (
+                "a continuation that stops again",
+                vec![turn_started(), stop(), tool_started("b"), tool_finished("b"), stop()],
+                AgentStatus::Done,
+            ),
+        ];
+        for (name, events, want) in cases {
+            let mut tracker = StatusTracker::agent(0.0);
+            for (at, event) in events.iter().enumerate() {
+                tracker.on_hook(event, 1.0 + at as f64);
+            }
+            tracker.on_output(10.0);
+            assert_eq!(tracker.status(10.1), want, "{name}");
+        }
+    }
+
     fn claude_hook(payload: &Value) -> HookEvent {
         parse_hook("claude", payload).unwrap()
     }
@@ -1224,14 +1361,6 @@ mod tests {
             tracker.on_output(20.1);
             assert_eq!(tracker.status(20.2), want, "{name}");
         }
-    }
-
-    #[test]
-    fn a_late_tool_end_never_turns_a_finished_turn_back_into_work() {
-        let mut tracker = StatusTracker::agent(0.0);
-        tracker.on_hook(&HookEvent::bare(HookKind::TurnDone), 2.0);
-        tracker.on_hook(&bash_finished(), 3.0);
-        assert_eq!(tracker.status(3.1), AgentStatus::Done);
     }
 
     #[test]

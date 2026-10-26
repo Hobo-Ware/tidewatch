@@ -31,11 +31,12 @@ const CODEX_MCP_TOKEN_ENV: &str = "TIDEWATCH_MCP_TOKEN";
 /// How long a CLI waits for one Tidewatch tool call: the longest `ask_user` hold and five minutes
 /// more, so the CLI never gives up first. Codex defaults to 60 s and Gemini to 600 s.
 const MCP_TOOL_TIMEOUT_SECS: u64 = ASK_TIMEOUT.as_secs() + 5 * 60;
-const CLAUDE_HOOK_EVENTS: [&str; 8] = [
+const CLAUDE_HOOK_EVENTS: [&str; 9] = [
     "SessionStart",
     "UserPromptSubmit",
     "Notification",
     "PermissionRequest",
+    "PreToolUse",
     "PostToolUse",
     "PostToolUseFailure",
     "Stop",
@@ -1190,19 +1191,20 @@ mod tests {
         assert_eq!(settings["attribution"], json!({ "commit": "", "pr": "", "sessionUrl": false }));
         assert!(settings["includeCoAuthoredBy"].is_null());
         let pre = settings["hooks"]["PreToolUse"].as_array().unwrap();
-        assert_eq!(pre.len(), 1);
-        assert_eq!(pre[0]["matcher"], "Bash");
-        assert_eq!(pre[0]["hooks"][0]["type"], "command");
-        assert_eq!(pre[0]["hooks"][0]["command"], "/app/tidewatch --guard trailers");
+        assert_eq!(pre.len(), 2);
+        assert_eq!(pre[0]["hooks"][0]["type"], "http");
+        assert_eq!(pre[1]["matcher"], "Bash");
+        assert_eq!(pre[1]["hooks"][0]["type"], "command");
+        assert_eq!(pre[1]["hooks"][0]["command"], "/app/tidewatch --guard trailers");
 
         let off = LaunchCtx { trailers_guard: false, ..on.clone() };
         let settings = settings_of(&off);
         assert!(settings["attribution"].is_null());
-        assert!(settings["hooks"]["PreToolUse"].is_null());
+        assert_eq!(settings["hooks"]["PreToolUse"].as_array().unwrap().len(), 1);
 
         let main_tab = LaunchCtx { worktree_tab: false, ..on };
         let settings = settings_of(&main_tab);
-        assert!(settings["hooks"]["PreToolUse"].is_null());
+        assert_eq!(settings["hooks"]["PreToolUse"].as_array().unwrap().len(), 1);
         assert_eq!(settings["attribution"]["commit"], "");
     }
 
