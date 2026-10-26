@@ -1,7 +1,7 @@
 //! The house-style file (D13): one Tidewatch-owned markdown file added to every agent session.
 //!
 //! `ensure` creates it with the default text and never touches it again, so edits survive. Each agent
-//! gets that text with the progress ledger format (`compose`) appended. Copilot only reads
+//! gets that text with the progress report format (`compose`) appended. Copilot only reads
 //! `*.instructions.md` files with `applyTo` front matter, so a derived copy is rendered for it.
 
 use std::io::Write;
@@ -46,9 +46,9 @@ When the `tidewatch` MCP tools are available:
 - If a `stage_done` tool is offered, call it with a short summary when the stage you were given is finished.
 - Call `reply_to_note` to answer a review note (`list_notes` shows them) instead of answering it only in chat.
 
-## Progress ledger
+## Reporting progress
 
-Keep a progress ledger for the task with the `update_progress` tool of the `tidewatch` MCP server: write it before any other work, update it at every milestone, and call `get_progress` first after a context reset.
+Report your progress on the task with the `update_progress` tool of the `tidewatch` MCP server: report before any other work, again at every milestone, and call `get_progress` first after a context reset. A question for the user goes in the report's `needs_you`, never only in your reply.
 
 ## Questions
 
@@ -88,7 +88,7 @@ You are a Meeseeks with exactly one task: the one you were given. Do it, and not
 
 - First thing, call `set_name` once with a short kebab-case name for your task: 2 to 4 lowercase words, at most 30 characters, such as `fix-https-validation` or `my-super-feature`. It is what Tidewatch shows on your tab.
 - Work only in this worktree and commit your work on this branch as you go.
-- Say `kind: read-only` in your ledger's Status for a question or an investigation (stages Understand, Answer, Done; your final summary is the answer), and `kind: edit` as soon as you will change files.
+- Set `kind` to `read-only` in your progress report for a question or an investigation (your final summary is the answer), and to `edit` as soon as you will change files.
 - When you believe you are done or cannot go further, call `meeseeks_done` once with a one-line summary (a read-only task puts its whole answer there). If you are blocked, start it with `Blocked:` and the reason. Tidewatch decides what to check and ends this session itself.
 - Never end with a decision for the user. If your answer leaves a choice (switch or not, which option), ask it with your question tool, the recommended option first, and act on the answer before you finish.
 - You may push this branch; after folding fixups use `git push --force-with-lease`. Do not push anything else, open a pull request or remove anything yourself. Tidewatch does that.
@@ -276,13 +276,12 @@ mod tests {
     }
 
     #[test]
-    fn compose_appends_the_ledger_format_after_whatever_the_user_wrote() {
+    fn compose_appends_the_report_format_after_whatever_the_user_wrote() {
         let checklist = Some("- [ ] only this\n");
         for mine in ["be brief\n", "be brief", "be brief\n\n\n", ""] {
             let text = compose(mine, checklist);
             assert!(text.starts_with(mine.trim_end()), "{mine:?}");
-            assert!(text.contains("## Progress ledger format\n"), "{mine:?}");
-            assert!(text.contains("## Checklist\n### 1. Understand\n"));
+            assert!(text.contains("## Progress report\n"), "{mine:?}");
             assert!(text.ends_with("not stages:\n\n- [ ] only this\n"));
             assert!(text.ends_with('\n'));
         }
@@ -302,12 +301,12 @@ mod tests {
             let guidance = text.find("## Tidewatch tool guidance").unwrap();
             assert!(text.starts_with(mine.trim_end()));
             assert!(guidance >= mine.trim_end().len());
-            assert!(guidance < text.find("## Progress ledger format").unwrap());
+            assert!(guidance < text.find("## Progress report").unwrap());
         }
     }
 
     #[test]
-    fn a_meeseeks_gets_its_one_task_block_between_the_tool_guidance_and_the_ledger_format() {
+    fn a_meeseeks_gets_its_one_task_block_between_the_tool_guidance_and_the_report_format() {
         let checklist = Some("- [ ] only this\n");
         let plain = compose("be brief", checklist);
         assert!(!plain.contains("Meeseeks") && !plain.contains("meeseeks_done"));
@@ -316,10 +315,10 @@ mod tests {
         let text = compose_for("be brief", checklist, Role::Meeseeks);
         let guidance = text.find("## Tidewatch tool guidance").unwrap();
         let block = text.find("## You are a Meeseeks").unwrap();
-        assert!(guidance < block && block < text.find("## Progress ledger format").unwrap());
+        assert!(guidance < block && block < text.find("## Progress report").unwrap());
         assert_eq!(text.matches("`meeseeks_done`").count(), 3);
         assert!(text.contains("You may push this branch; after folding fixups use `git push --force-with-lease`. Do not push anything else"));
-        assert!(text.contains("`kind: read-only`") && text.contains("`kind: edit`"));
+        assert!(text.contains("`kind` to `read-only`") && text.contains("`edit`"));
         assert!(text.contains("start it with `Blocked:`"));
         assert!(text.contains("First thing, call `set_name` once"));
         assert!(text.contains("`fix-https-validation` or `my-super-feature`"));
@@ -398,7 +397,7 @@ mod tests {
         let text = compose_for("be brief", Some("- [ ] only this\n"), Role::Autonomous);
         let guidance = text.find("## Tidewatch tool guidance").unwrap();
         let block = text.find("## You run autonomously").unwrap();
-        assert!(guidance < block && block < text.find("## Progress ledger format").unwrap());
+        assert!(guidance < block && block < text.find("## Progress report").unwrap());
     }
 
     #[test]

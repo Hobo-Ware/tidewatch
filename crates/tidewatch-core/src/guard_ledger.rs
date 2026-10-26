@@ -9,7 +9,8 @@ use serde_json::Value;
 
 use crate::guard_run::GuardEnv;
 use crate::paths::{progress_file_beside, sent_file_beside};
-use crate::progress::{Ledger, State};
+use crate::progress::State;
+use crate::progress_store;
 use crate::sent::{self, Reason, Record, because};
 
 const TURN_FILE: &str = "ledger-turn";
@@ -17,9 +18,9 @@ const ASKED_FILE: &str = "ledger-asked";
 const NOTES_FILE: &str = "notes.json";
 const TAIL_BYTES: u64 = 512 * 1024;
 
-pub const MESSAGE: &str = "LEDGER GUARD - the Tidewatch ledger is missing or was not updated this turn. Call `update_progress` now with the whole ledger, and put every dated or later item in Scheduled (`YYYY-MM-DD`, `~YYYY-MM-DD`, `on: <event>`, `parked: <until what>`, `you`). A ledger file of your own does not count.";
+pub const MESSAGE: &str = "LEDGER GUARD - the Tidewatch progress report is missing or was not updated this turn. Call `update_progress` now with the whole report: state, now, your stages and steps. A question for the user goes in needs_you, what you wait on in waiting_on, and every later item in scheduled. A notes file of your own does not count.";
 
-pub const FINAL_STATE_MESSAGE: &str = "LEDGER GUARD - the turn is ending but your Tidewatch ledger still says `state: working`. Call `update_progress` once more with the final state: `waiting` (for the user or an event), `blocked` or `done`, and move every Next item that is not happening now into Scheduled.";
+pub const FINAL_STATE_MESSAGE: &str = "LEDGER GUARD - the turn is ending but your Tidewatch report still says state `working`. Call `update_progress` once more with the final state: `needs_you` (a question for the user, with its options), `waiting` (name the job, PR, date or event in waiting_on), `blocked` or `done` (only when the whole task is finished), and move every later item into scheduled.";
 
 /// What the guard asks of the agent at the end of a turn.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -108,11 +109,10 @@ fn now_ms() -> u64 {
     SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_millis() as u64)
 }
 
-/// Whether the ledger saved in `file` still reads `state: working`.
+/// Whether the report saved beside `file` still says `working`.
 #[must_use]
 pub fn ledger_says_working(file: &Path) -> bool {
-    std::fs::read_to_string(file)
-        .is_ok_and(|text| Ledger::parse(&text).status.state == Some(State::Working))
+    progress_store::load(file).is_some_and(|ledger| ledger.status.state == Some(State::Working))
 }
 
 fn read_ms(file: &Path) -> Option<u64> {
@@ -308,9 +308,15 @@ mod tests {
     #[test]
     fn the_final_state_ask_names_the_tool_and_the_three_states() {
         assert!(FINAL_STATE_MESSAGE.is_ascii() && !FINAL_STATE_MESSAGE.contains('\n'));
-        for needle in
-            ["update_progress", "state: working", "waiting", "blocked", "done", "Scheduled"]
-        {
+        for needle in [
+            "update_progress",
+            "state `working`",
+            "needs_you",
+            "waiting_on",
+            "blocked",
+            "done",
+            "scheduled",
+        ] {
             assert!(FINAL_STATE_MESSAGE.contains(needle), "{needle}");
         }
         assert_eq!(Ask::FinalState.message(), FINAL_STATE_MESSAGE);
@@ -384,17 +390,9 @@ mod tests {
     }
 
     #[test]
-    fn the_message_is_one_ascii_line_that_names_the_tool_and_every_when() {
+    fn the_message_is_one_ascii_line_that_names_the_tool_and_where_each_kind_of_fact_goes() {
         assert!(MESSAGE.is_ascii() && !MESSAGE.contains('\n'));
-        for needle in [
-            "update_progress",
-            "Scheduled",
-            "YYYY-MM-DD",
-            "~YYYY-MM-DD",
-            "on: <event>",
-            "parked:",
-            "you",
-        ] {
+        for needle in ["update_progress", "state, now", "needs_you", "waiting_on", "scheduled"] {
             assert!(MESSAGE.contains(needle), "{needle}");
         }
     }

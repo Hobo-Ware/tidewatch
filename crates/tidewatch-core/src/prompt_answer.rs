@@ -5,11 +5,11 @@ use crate::progress::{Ledger, Mark, real};
 use crate::progress_mcp::UPDATE_TOOL;
 
 /// Asks the agent to refresh its ledger after the owner replied to a question or a wait.
-pub const LEDGER_CONTEXT: &str = "The user answered; call update_progress so your ledger shows the new status before you continue.";
+pub const LEDGER_CONTEXT: &str = "The user answered; call update_progress so your report shows the new state before you continue.";
 
 /// Asks a tab that never saved a ledger to write one, which also reaches a tab whose settings file
 /// predates the Stop guard.
-pub const MISSING_LEDGER_CONTEXT: &str = "Tidewatch has no progress ledger for this task yet. Call update_progress with the whole ledger this turn, before other work.";
+pub const MISSING_LEDGER_CONTEXT: &str = "Tidewatch has no progress report for this task yet. Call update_progress with the whole report (state, now, your stages and steps) this turn, before other work.";
 
 const NAMED_ITEMS: usize = 3;
 const NAME_CHARS: usize = 60;
@@ -51,7 +51,7 @@ pub fn ledger_context(ledger: &Ledger) -> Option<String> {
     let more = open.len().saturating_sub(NAMED_ITEMS);
     let more = if more > 0 { format!(" (+{more} more)") } else { String::new() };
     Some(format!(
-        "Open in your ledger: {}{more}. If this message changes any of them, call {UPDATE_TOOL}.",
+        "Open in your report: {}{more}. If this message changes any of them, call {UPDATE_TOOL}.",
         named.join("; ")
     ))
 }
@@ -124,49 +124,49 @@ mod tests {
                 "a pending check",
                 ledger("working", "- [x] Build", "- Verified live"),
                 Some(
-                    "Open in your ledger: \"Verified live\". If this message changes any of them, call update_progress.",
+                    "Open in your report: \"Verified live\". If this message changes any of them, call update_progress.",
                 ),
             ),
             (
                 "a pending check on a finished ledger",
                 ledger("done", "- [x] Build", "- Verified live"),
                 Some(
-                    "Open in your ledger: \"Verified live\". If this message changes any of them, call update_progress.",
+                    "Open in your report: \"Verified live\". If this message changes any of them, call update_progress.",
                 ),
             ),
             (
                 "an unchecked step",
                 ledger("working", "- [x] Build\n- [ ] Add tests", "- Nothing"),
                 Some(
-                    "Open in your ledger: \"Add tests\". If this message changes any of them, call update_progress.",
+                    "Open in your report: \"Add tests\". If this message changes any of them, call update_progress.",
                 ),
             ),
             (
                 "doing and blocked steps count, skipped ones do not",
                 ledger("working", "- [~] Wire it\n- [!] Ship\n- [-] Skip me", "- Nothing"),
                 Some(
-                    "Open in your ledger: \"Wire it\"; \"Ship\". If this message changes any of them, call update_progress.",
+                    "Open in your report: \"Wire it\"; \"Ship\". If this message changes any of them, call update_progress.",
                 ),
             ),
             (
                 "checks come before steps",
                 ledger("working", "- [ ] Add tests", "- Verified live"),
                 Some(
-                    "Open in your ledger: \"Verified live\"; \"Add tests\". If this message changes any of them, call update_progress.",
+                    "Open in your report: \"Verified live\"; \"Add tests\". If this message changes any of them, call update_progress.",
                 ),
             ),
             (
                 "more than three names three",
                 ledger("working", "- [ ] a\n- [ ] b\n- [ ] c", "- d\n- e"),
                 Some(
-                    "Open in your ledger: \"d\"; \"e\"; \"a\" (+2 more). If this message changes any of them, call update_progress.",
+                    "Open in your report: \"d\"; \"e\"; \"a\" (+2 more). If this message changes any of them, call update_progress.",
                 ),
             ),
             (
                 "a long name is cut",
                 ledger("working", "- [x] Build", &format!("- {long}")),
                 Some(&format!(
-                    "Open in your ledger: \"{}...\". If this message changes any of them, call update_progress.",
+                    "Open in your report: \"{}...\". If this message changes any of them, call update_progress.",
                     "x".repeat(57)
                 )),
             ),
@@ -190,9 +190,12 @@ mod tests {
     }
 
     #[test]
-    fn the_missing_ledger_line_names_the_tool_and_asks_for_the_whole_ledger() {
+    fn the_missing_ledger_line_names_the_tool_and_asks_for_the_whole_report() {
         assert!(MISSING_LEDGER_CONTEXT.contains(UPDATE_TOOL));
-        assert!(MISSING_LEDGER_CONTEXT.contains("whole ledger this turn"));
+        assert!(
+            MISSING_LEDGER_CONTEXT
+                .contains("whole report (state, now, your stages and steps) this turn")
+        );
         assert!(MISSING_LEDGER_CONTEXT.is_ascii());
     }
 }
