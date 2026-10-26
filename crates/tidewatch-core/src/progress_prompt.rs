@@ -74,7 +74,7 @@ How to fill it in:
 ";
 
 const MUST_DOS_INTRO: &str = "\
-Must-do steps from the user or this repo. Add each as a step under the stage where it fits; any headings in them are only hints, never stages:
+Must-do steps from the user or this repo. Add each as a step under the stage where it fits. They are a flat list, not stages:
 ";
 
 /// The ledger section of an agent's house style. `must_dos` is the user's or the repo's list of
@@ -82,9 +82,38 @@ Must-do steps from the user or this repo. Add each as a step under the stage whe
 #[must_use]
 pub fn section(must_dos: Option<&str>) -> String {
     let must_dos = must_dos.map_or_else(String::new, |text| {
-        format!("\n{MUST_DOS_INTRO}\n{}\n", text.trim_end_matches('\n'))
+        format!("\n{MUST_DOS_INTRO}\n{}\n", flatten_headings(text.trim_end_matches('\n')))
     });
     format!("{LEDGER_FORMAT}{must_dos}")
+}
+
+/// A heading in a must-do list (`### 1. Understand`) becomes a plain bullet, so an agent that
+/// copies the list never grows a stage of its own. Fenced code is left alone.
+fn flatten_headings(text: &str) -> String {
+    let mut fenced = false;
+    let lines: Vec<String> = text
+        .lines()
+        .filter_map(|line| {
+            if line.trim_start().starts_with("```") {
+                fenced = !fenced;
+            }
+            match line.trim_start().strip_prefix('#') {
+                Some(heading) if !fenced => {
+                    let title = without_number(heading.trim_start_matches('#').trim());
+                    (!title.is_empty()).then(|| format!("- {title}"))
+                }
+                _ => Some(line.to_owned()),
+            }
+        })
+        .collect();
+    lines.join("\n")
+}
+
+fn without_number(title: &str) -> &str {
+    title
+        .split_once(['.', ')'])
+        .filter(|(number, _)| !number.is_empty() && number.chars().all(|c| c.is_ascii_digit()))
+        .map_or(title, |(_, rest)| rest.trim())
 }
 
 #[cfg(test)]
@@ -131,12 +160,40 @@ mod tests {
 
     #[test]
     fn a_list_of_must_dos_comes_after_the_format_and_never_inside_it() {
-        let text = section(Some("### 1. Mine\n- [ ] only this\n"));
+        let text = section(Some("- [ ] only this\n"));
         let at = text.find("Must-do steps from the user or this repo").unwrap();
         assert!(at > text.rfind("```").unwrap());
-        assert!(text.ends_with("### 1. Mine\n- [ ] only this\n"), "{text}");
+        assert!(text.ends_with("- [ ] only this\n"), "{text}");
         let ledger = Ledger::parse(format_block(&text));
         assert_eq!(ledger.checklist.len(), 4);
+    }
+
+    #[test]
+    fn must_do_headings_become_plain_bullets_and_never_look_like_stages() {
+        let cases = [
+            (
+                "a numbered heading",
+                "### 1. Understand\n- [ ] read it",
+                "- Understand\n- [ ] read it",
+            ),
+            (
+                "a bare heading",
+                "## Before merge\n- [ ] run tests",
+                "- Before merge\n- [ ] run tests",
+            ),
+            ("a paren number", "# 2) Ship", "- Ship"),
+            ("an empty heading", "###\n- [ ] a", "- [ ] a"),
+            ("a title with a dot inside", "### Fix v1.2 notes", "- Fix v1.2 notes"),
+            ("code is left alone", "```sh\n# a comment\n```", "```sh\n# a comment\n```"),
+            ("plain bullets", "- [ ] a\n- [ ] b", "- [ ] a\n- [ ] b"),
+        ];
+        for (name, input, want) in cases {
+            assert_eq!(flatten_headings(input), want, "{name}");
+        }
+        let ten_phases = "### 1. Phase\n- [ ] x\n".repeat(10);
+        let text = section(Some(&ten_phases));
+        let after = &text[text.find("Must-do steps").unwrap()..];
+        assert!(!after.contains('#'), "{after}");
     }
 
     #[test]

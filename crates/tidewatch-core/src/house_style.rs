@@ -255,7 +255,7 @@ mod tests {
             assert!(text.starts_with(mine.trim_end()), "{mine:?}");
             assert!(text.contains("## Progress ledger format\n"), "{mine:?}");
             assert!(text.contains("## Checklist\n### 1. Understand\n"));
-            assert!(text.ends_with("never stages:\n\n- [ ] only this\n"));
+            assert!(text.ends_with("not stages:\n\n- [ ] only this\n"));
             assert!(text.ends_with('\n'));
         }
         assert!(compose(DEFAULT_HOUSE_STYLE, checklist).contains("`get_progress` first"));
