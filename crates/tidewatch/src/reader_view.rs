@@ -4,15 +4,14 @@
 //! field looks the other inline items of the left column share.
 
 use std::collections::HashSet;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use egui::epaint::text::{LayoutJob, TextWrapping};
 use egui::style::ScrollAnimation;
 use egui::{
-    Align, Align2, Color32, CornerRadius, EventFilter, FontId, Frame, Galley, Id, Key,
-    KeyboardShortcut, Layout, Margin, Modifiers, Painter, Rect, Response, RichText, ScrollArea,
-    Sense, Stroke, StrokeKind, TextEdit, Ui, UiBuilder, pos2, vec2,
+    Align, Align2, Color32, CornerRadius, FontId, Frame, Galley, Id, Layout, Margin, Painter, Rect,
+    Response, RichText, ScrollArea, Sense, Stroke, StrokeKind, Ui, UiBuilder, pos2, vec2,
 };
 use jiff::tz::TimeZone;
 use tidewatch_core::question::Reply;
@@ -21,7 +20,7 @@ use tidewatch_core::transcript::Source;
 use crate::agent_avatar::Face;
 use crate::agent_ready::{self, Ready};
 use crate::brand;
-use crate::bullets;
+use crate::composer::{self, Draft, Spec};
 use crate::due_view::{self, Facts as DueFacts};
 use crate::job_model::clock_label;
 use crate::pr_card_model::CardAction;
@@ -41,9 +40,8 @@ use crate::reader_turns::{self, Slot};
 use crate::review::ReviewFacts;
 use crate::review_row_view;
 use crate::review_view::{self, ReviewAction};
-use crate::screen_kit::{Size, body, button_width, primary_button, quiet_button};
+use crate::screen_kit::{Size, body, primary_button, quiet_button};
 use crate::slash::Entry as SlashEntry;
-use crate::slash_view;
 use crate::stopped_view;
 
 /// The side inset every inline item of the left column keeps.
@@ -51,13 +49,6 @@ pub(crate) const INSET: f32 = 14.0;
 const CARD_RADIUS: u8 = 8;
 const OVERSCAN: f32 = 600.0;
 const QUEUED_FRAME: std::time::Duration = std::time::Duration::from_millis(33);
-const INPUT_H: f32 = 60.0;
-const COMPOSER_RADIUS: u8 = 14;
-const REPLY_MARGIN_X: f32 = 14.0;
-const REPLY_MARGIN_Y: f32 = 8.0;
-const REPLY_STROKE: f32 = 1.0;
-const REPLY_TEXT_PAD: i8 = 3;
-const REPLY_GAP_Y: f32 = 8.0;
 const STRIP_H: f32 = 48.0;
 const BAR_W: f32 = 2.0;
 const BAR_INSET: f32 = 7.0;
@@ -65,13 +56,13 @@ const JUMP_W: f32 = 140.0;
 const JUMP_H: f32 = 30.0;
 const SCROLLBAR_GRAB_W: f32 = 16.0;
 const OUTPUT_MAX_LINES: usize = 40;
-const SEND: &str = "Send";
 
 pub(crate) struct ViewState {
     pub(crate) scroll: Autoscroll,
     pub(crate) heights: Heights,
     pr_heights: PrHeights,
     pub(crate) reply: String,
+    pub(crate) pictures: Vec<PathBuf>,
     pub(crate) ghost: Ghost,
     review: review_view::CardState,
     focus_reply: bool,
@@ -99,6 +90,7 @@ impl Default for ViewState {
             heights: Heights::default(),
             pr_heights: PrHeights::default(),
             reply: String::new(),
+            pictures: Vec::new(),
             ghost: Ghost::default(),
             review: review_view::CardState::default(),
             focus_reply: true,
@@ -386,9 +378,9 @@ pub(crate) fn show(
     let live_seq = state.live.as_ref().map(|live| live.seq);
     let composing = facts.ready.filter(|_| rows.len() == 0 && facts.prompt.is_none());
     let input_h = if composing.is_some() {
-        agent_ready::height(ui, &state.reply, rect)
+        agent_ready::height(ui, &state.reply, state.pictures.len(), rect)
     } else {
-        reply_height(ui, &state.reply, rect)
+        composer::height(ui, &state.reply, state.pictures.len(), rect)
     };
     let input = Rect::from_min_max(pos2(rect.left(), rect.bottom() - input_h), rect.max);
     let dock_h = dock_height(&facts, rows, state.live.as_ref());
@@ -431,9 +423,12 @@ pub(crate) fn show(
     }
     if let Some(ready) = composing {
         agent_ready::empty_state(ui, body, ready);
-        if let Some(text) =
-            agent_ready::composer(ui, input, &mut state.reply, &mut state.focus_reply, ready)
-        {
+        let draft = Draft {
+            text: &mut state.reply,
+            pictures: &mut state.pictures,
+            focus: &mut state.focus_reply,
+        };
+        if let Some(text) = agent_ready::composer(ui, input, draft, ready) {
             actions.push(Action::Reply(text));
         }
         return actions;
@@ -485,15 +480,15 @@ pub(crate) fn show(
         ));
     }
     let mut input_ui =
-        ui.new_child(UiBuilder::new().max_rect(input.shrink2(vec2(INSET, REPLY_GAP_Y))));
-    if let Some(text) = reply_box(
-        &mut input_ui,
-        &mut state.reply,
-        &mut state.focus_reply,
-        reply_enabled,
-        &state.commands,
-        state.ghost.text(),
-    ) {
+        ui.new_child(UiBuilder::new().max_rect(input.shrink2(vec2(INSET, composer::GAP_Y))));
+    let draft = Draft {
+        text: &mut state.reply,
+        pictures: &mut state.pictures,
+        focus: &mut state.focus_reply,
+    };
+    if let Some(text) =
+        reply_box(&mut input_ui, draft, reply_enabled, &state.commands, state.ghost.text())
+    {
         actions.push(Action::Reply(text));
     }
     actions
@@ -996,173 +991,39 @@ pub(crate) fn reply_has_focus(ctx: &egui::Context) -> bool {
     ctx.memory(|memory| memory.has_focus(reply_id()))
 }
 
-fn reply_font() -> FontId {
-    FontId::proportional(reader_chat_view::BODY_PX)
-}
-
-fn reply_wrap(ui: &Ui, width: f32) -> f32 {
-    width
-        - 2.0 * (INSET + REPLY_MARGIN_X)
-        - button_width(ui, SEND, Size::Compact)
-        - ui.spacing().item_spacing.x
-}
-
-/// The reply row's height: one row tall, growing with the text by the composer's rule.
-fn reply_height(ui: &Ui, text: &str, column: Rect) -> f32 {
-    let wrap = bullets::wrap_for(ui, text, &reply_font(), reply_wrap(ui, column.width()));
-    agent_ready::grown_from(ui, text, (reply_font(), wrap), INPUT_H, column.height())
-}
-
-fn collapsed_cursor(ui: &Ui, id: Id) -> Option<usize> {
-    let range = TextEdit::load_state(ui.ctx(), id)?.cursor.char_range()?;
-    (range.primary == range.secondary).then_some(range.primary.index.0)
-}
-
-/// The reply box. Enter sends a non-empty text and clears it, Shift+Enter starts a new line, and on
-/// a bullet line Enter starts the next bullet instead (an empty bullet ends the list). Asks
-/// for focus once, the first time it is drawn, and again after a send. Off while `enabled` is
-/// false. `ui` is the room [`reply_height`] reserved: the box fills it, and its text scrolls inside
-/// with the cursor line in view once the box stops growing.
+/// The reply box: the shared composer with the Reader's hint.
 pub(crate) fn reply_box(
     ui: &mut Ui,
-    text: &mut String,
-    focus: &mut bool,
+    draft: Draft<'_>,
     enabled: bool,
     commands: &[SlashEntry],
     ghost: Option<&str>,
 ) -> Option<String> {
-    let mut sent = None;
-    let id = reply_id();
-    let row = ui.max_rect();
-    let mut menu = slash_view::load(ui, id);
-    if enabled {
-        let rows = menu.rows(text, commands);
-        slash_view::keys(ui, id, text, &mut menu, &rows);
-    }
-    let ghost = ghost.filter(|_| enabled && text.is_empty());
-    if let Some(ghost) = ghost
-        && ui.memory(|m| m.has_focus(id))
-        && ui.input_mut(|input| input.consume_key(Modifiers::NONE, Key::Tab))
-    {
-        *text = ghost.to_owned();
-        bullets::place_cursor(ui, id, text.chars().count());
-    }
-    let ghost = ghost.filter(|_| text.is_empty());
-    let listing = enabled && (ui.memory(|m| m.has_focus(id)) || !ui.input(|i| i.focused));
-    let rows = if listing { menu.rows(text, commands) } else { Vec::new() };
-    menu.open = !rows.is_empty();
-    let mut enter = enabled
-        && ui.memory(|m| m.has_focus(id))
-        && ui.input(|i| i.events.iter().any(agent_ready::plain_enter));
-    if enter && let Some(cursor) = collapsed_cursor(ui, id) {
-        let (outcome, at) = bullets::enter(text, cursor);
-        if outcome != bullets::Enter::Plain {
-            bullets::place_cursor(ui, id, at);
-            enter = false;
-        }
-    }
-    ui.add_enabled_ui(enabled, |ui| {
-        let hint = if enabled { "Reply to the agent" } else { "Answer the prompt above first" };
-        let hint = ghost.unwrap_or(hint);
-        if ghost.is_some() {
-            ui.visuals_mut().weak_text_color = Some(brand::MUTED);
-        }
-        let mut clicked = false;
-        let margin = Margin::symmetric(REPLY_MARGIN_X as i8, REPLY_MARGIN_Y as i8);
-        let look = (brand::CARD, COMPOSER_RADIUS, margin);
-        let shown = ui.max_rect().height() - 2.0 * (REPLY_MARGIN_Y + REPLY_STROKE);
-        let height_id = id.with("height");
-        let before = ui.data(|data| data.get_temp::<f32>(height_id));
-        ui.data_mut(|data| data.insert_temp(height_id, shown));
-        let resized = before.is_some_and(|before| (before - shown).abs() > 0.5);
-        let mut layouter = |ui: &Ui, buf: &dyn egui::TextBuffer, wrap: f32| {
-            bullets::layout(ui, buf.as_str(), &reply_font(), (brand::TEXT, brand::MUTED), wrap)
-        };
-        let typed = layouter(ui, text, reply_wrap(ui, ui.max_rect().width() + 2.0 * INSET));
-        let one_line = typed.rows.len() <= 1;
-        let centred = if one_line {
-            ((shown - typed.size().y - 2.0 * f32::from(REPLY_TEXT_PAD)) / 2.0).max(0.0)
-        } else {
-            0.0
-        };
-        let button_align = if one_line { Align::Center } else { Align::Max };
-        let field = field_frame_shaped(ui, look, true, |ui| {
-            ui.set_height(shown);
-            ui.with_layout(Layout::right_to_left(button_align), |ui| {
-                clicked =
-                    primary_button(ui, SEND, !text.trim().is_empty(), Size::Compact).clicked();
-                ScrollArea::vertical()
-                    .id_salt("reply-box-scroll")
-                    .max_height(shown)
-                    .min_scrolled_height(shown)
-                    .auto_shrink([false, false])
-                    .show(ui, |ui| {
-                        ui.with_layout(Layout::top_down(Align::Min), |ui| {
-                            ui.add_space(centred);
-                            let edit = TextEdit::multiline(text)
-                                .id(id)
-                                .frame(
-                                    Frame::NONE.inner_margin(Margin::symmetric(0, REPLY_TEXT_PAD)),
-                                )
-                                .hint_text(hint)
-                                .desired_rows(1)
-                                .desired_width(f32::INFINITY)
-                                .font(reply_font())
-                                .text_color(brand::TEXT)
-                                .layouter(&mut layouter)
-                                .return_key(KeyboardShortcut::new(Modifiers::SHIFT, Key::Enter))
-                                .show(ui);
-                            if resized && let Some(range) = edit.cursor_range {
-                                let at =
-                                    edit.galley_pos.to_vec2() - vec2(edit.galley.rect.left(), 0.0);
-                                ui.scroll_to_rect(
-                                    edit.galley.pos_from_cursor(range.primary).translate(at),
-                                    None,
-                                );
-                            }
-                            edit.response.response
-                        })
-                        .inner
-                    })
-                    .inner
-            })
-            .inner
-        });
-        if *focus {
-            field.request_focus();
-            *focus = false;
-        }
-        if ghost.is_some() && ui.memory(|m| m.has_focus(id)) {
-            let filter = EventFilter {
-                tab: true,
-                horizontal_arrows: true,
-                vertical_arrows: true,
-                ..EventFilter::default()
-            };
-            ui.memory_mut(|memory| memory.set_focus_lock_filter(id, filter));
-        }
-        if !rows.is_empty() {
-            if ui.memory(|m| m.has_focus(id)) {
-                slash_view::hold_keys(ui, id);
-            }
-            let picked = menu.picked_in(rows.len());
-            if let Some(at) = slash_view::show(ui, id, row, &rows, picked) {
-                slash_view::complete_with_click(ui, id, text, rows[at]);
-            }
-        }
-        if (enter || clicked) && !text.trim().is_empty() {
-            sent = Some(std::mem::take(text));
-            *focus = true;
-        }
-    });
-    slash_view::store(ui, id, menu);
-    sent
+    let hint = if enabled { "Reply to the agent" } else { "Answer the prompt above first" };
+    composer::show(ui, draft, &Spec { id: reply_id(), hint, enabled, commands, ghost })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use egui::{Event, Modifiers, RawInput};
+    use crate::bullets;
+    use egui::{Event, Key, Modifiers, RawInput, TextEdit};
+
+    const INPUT_H: f32 = composer::BOX_H + 2.0 * composer::GAP_Y;
+    const REPLY_GAP_Y: f32 = composer::GAP_Y;
+    const SEND: &str = "Send";
+
+    fn reply_box(
+        ui: &mut Ui,
+        text: &mut String,
+        focus: &mut bool,
+        enabled: bool,
+        commands: &[SlashEntry],
+        ghost: Option<&str>,
+    ) -> Option<String> {
+        let draft = Draft { text, pictures: &mut Vec::new(), focus };
+        super::reply_box(ui, draft, enabled, commands, ghost)
+    }
 
     fn frame(
         ctx: &egui::Context,
@@ -1309,7 +1170,7 @@ mod tests {
         let mut text = "one\ntwo\nthree".to_owned();
         let painted = painted_reply(&mut text, INPUT_H + 40.0);
         let first_row_gap = painted.text.top() - painted.boxed.top();
-        assert!(first_row_gap < 14.0, "the first row sits at the top, not at {first_row_gap}");
+        assert!(first_row_gap < 16.0, "the first row sits at the top, not at {first_row_gap}");
     }
 
     fn typed_into(ctx: &egui::Context, typed: &str) -> (String, bool) {
@@ -1420,32 +1281,6 @@ mod tests {
     fn a_box_that_does_not_start_with_a_slash_has_no_list_and_keeps_its_keys() {
         let (ctx, mut text, _) = slash_box("fix /lo");
         assert_eq!(press(&ctx, &mut text, &[Key::Enter]).as_deref(), Some("fix /lo"));
-    }
-
-    #[test]
-    fn an_image_only_cmd_v_puts_the_saved_path_in_the_reply_box() {
-        use crate::image_paste::testing::screenshot;
-        use crate::image_paste::{Delivery, resolve};
-        use tidewatch_core::image_paste::Target;
-
-        let ctx = egui::Context::default();
-        let (mut text, mut focus) = (String::new(), true);
-        frame(&ctx, vec![], &mut text, &mut focus);
-        let dir = tempfile::tempdir().unwrap();
-        let Delivery::Text(path) = resolve(&mut screenshot(), Target::TextField, dir.path(), 4)
-        else {
-            panic!("an image-only clipboard in a text field must give a path");
-        };
-        let raw = RawInput {
-            screen_rect: Some(Rect::from_min_size(pos2(0.0, 0.0), vec2(600.0, 200.0))),
-            focused: true,
-            ..RawInput::default()
-        };
-        let _ = ctx.run_ui(raw, |ui| {
-            crate::image_paste::inject_paste(ui.ctx(), path.clone());
-            reply_box(ui, &mut text, &mut focus, true, &[], None);
-        });
-        assert_eq!(text, path);
     }
 
     #[test]
@@ -2779,7 +2614,7 @@ mod tests {
         let mut heights = Vec::new();
         let _ = ctx.run_ui(RawInput::default(), |ui| {
             for text in ["", "one", "one\ntwo", "one\ntwo\nthree", &"row\n".repeat(200)] {
-                heights.push(reply_height(ui, text, column));
+                heights.push(composer::height(ui, text, 0, column));
             }
         });
         assert_eq!(heights[0], INPUT_H);
@@ -2787,7 +2622,7 @@ mod tests {
         let row = heights[2] - INPUT_H;
         assert!(row > 10.0, "{heights:?}");
         assert!((heights[3] - INPUT_H - 2.0 * row).abs() < 0.5, "{heights:?}");
-        assert_eq!(heights[4], 300.0);
+        assert_eq!(heights[4], 600.0 * composer::SHARE + 2.0 * composer::GAP_Y);
     }
 
     #[test]

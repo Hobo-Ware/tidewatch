@@ -26,6 +26,7 @@ pub(crate) enum Delivery {
     Nothing,
     CtrlV,
     Text(String),
+    Pictures(Vec<PathBuf>),
     Failed(String),
 }
 
@@ -35,12 +36,16 @@ pub(crate) fn resolve(
     dir: &Path,
     now_ms: u128,
 ) -> Delivery {
+    let delivered = |paths: Vec<PathBuf>| match target {
+        Target::TextField => Delivery::Pictures(paths),
+        Target::Terminal(_) => Delivery::Text(path_text(&paths)),
+    };
     match decide(clipboard.clip(), target) {
         Action::Leave => Delivery::Nothing,
         Action::CtrlV => Delivery::CtrlV,
-        Action::PasteFilePaths => Delivery::Text(path_text(&clipboard.image_files())),
+        Action::PasteFilePaths => delivered(clipboard.image_files()),
         Action::SaveAndPastePath => match save(clipboard, dir, now_ms) {
-            Ok(path) => Delivery::Text(path_text(&[path])),
+            Ok(path) => delivered(vec![path]),
             Err(message) => Delivery::Failed(message),
         },
     }
@@ -187,7 +192,11 @@ mod tests {
             let pastes = dir.path().join("pastes");
             let got = resolve(&mut screenshot(), target, &pastes, 7);
             let path = pastes.join("shot-7.png");
-            assert_eq!(got, Delivery::Text(path.to_string_lossy().into_owned()), "{target:?}");
+            let want = match target {
+                Target::TextField => Delivery::Pictures(vec![path.clone()]),
+                Target::Terminal(_) => Delivery::Text(path.to_string_lossy().into_owned()),
+            };
+            assert_eq!(got, want, "{target:?}");
             let decoded = image::open(&path).unwrap().to_rgba8();
             assert_eq!(decoded.dimensions(), (2, 2));
             assert_eq!(decoded.get_pixel(1, 1).0, [10, 20, 30, 255]);
@@ -200,10 +209,7 @@ mod tests {
         let pastes = dir.path().to_path_buf();
         resolve(&mut screenshot(), Target::TextField, &pastes, 9);
         let second = resolve(&mut screenshot(), Target::TextField, &pastes, 9);
-        assert_eq!(
-            second,
-            Delivery::Text(pastes.join("shot-9-2.png").to_string_lossy().into_owned())
-        );
+        assert_eq!(second, Delivery::Pictures(vec![pastes.join("shot-9-2.png")]));
     }
 
     #[test]
@@ -214,10 +220,13 @@ mod tests {
         for target in [Target::TextField, Target::Terminal(Some(Wiring::Claude))] {
             let mut finder = Fake { clip: Clip::ImageFiles, picture: None, files: files.clone() };
             let got = resolve(&mut finder, target, dir.path(), 1);
-            assert_eq!(
-                got,
-                Delivery::Text("/Users/x/Desktop/a.png '/Users/x/My Pics/b.png'".into())
-            );
+            let want = match target {
+                Target::TextField => Delivery::Pictures(files.clone()),
+                Target::Terminal(_) => {
+                    Delivery::Text("/Users/x/Desktop/a.png '/Users/x/My Pics/b.png'".into())
+                }
+            };
+            assert_eq!(got, want);
         }
         assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 0);
     }

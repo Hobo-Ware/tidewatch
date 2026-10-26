@@ -232,6 +232,7 @@ pub(crate) fn draw(
     if dev.take_open_turns(reader.rows.len()) {
         reader.view.open_turns(&reader.rows, dev.notes_only());
     }
+    crate::pictures::attach(&mut reader.view.pictures, dev.take_pictures());
     let mut actions = reader_view::show(ui, area, &reader.rows, &mut reader.view, facts);
     actions.extend(dev.drive_card(now, reader.view.live_mut()));
     actions.extend(dev.actions(now, facts.prompt));
