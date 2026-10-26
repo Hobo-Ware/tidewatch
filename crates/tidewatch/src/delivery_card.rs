@@ -193,9 +193,13 @@ impl Delivery {
     }
 }
 
-pub(crate) fn card_text(commits: usize) -> String {
+pub(crate) fn card_text(commits: usize, after_merge: bool) -> String {
     let noun = if commits == 1 { "commit" } else { "commits" };
-    format!("{commits} {noun} ready")
+    if after_merge {
+        format!("{commits} {noun} after the merge")
+    } else {
+        format!("{commits} {noun} ready")
+    }
 }
 
 /// A plain fix for what went wrong, or `None` when the error text says enough.
@@ -432,8 +436,10 @@ mod tests {
 
     #[test]
     fn the_card_text_counts_commits() {
-        assert_eq!(card_text(1), "1 commit ready");
-        assert_eq!(card_text(3), "3 commits ready");
+        assert_eq!(card_text(1, false), "1 commit ready");
+        assert_eq!(card_text(3, false), "3 commits ready");
+        assert_eq!(card_text(1, true), "1 commit after the merge");
+        assert_eq!(card_text(2, true), "2 commits after the merge");
     }
 
     #[test]

@@ -138,6 +138,11 @@ pub(crate) struct TabFlow {
 }
 
 impl TabFlow {
+    /// The commits the card offers came after the branch's pull request merged.
+    pub(crate) fn after_merge(&self) -> bool {
+        self.target.as_ref().is_some_and(|facts| facts.merged_head.is_some())
+    }
+
     pub(crate) fn next_fix_step(&self) -> Auto {
         if self.fix_push { self.delivery.auto_step() } else { Auto::Wait }
     }
@@ -803,6 +808,17 @@ mod tests {
         assert_eq!(flow.delivery, Delivery::Hidden);
         decide(&mut flow, &facts(AgentStatus::Working), 2.0);
         assert_eq!(decide(&mut flow, &shut, 3.0), [], "a new idle moment asks for nothing");
+    }
+
+    #[test]
+    fn the_card_says_after_the_merge_only_for_commits_past_a_merged_head() {
+        let flow = flow_with(false);
+        assert!(!flow.after_merge(), "nothing is known before the first look");
+        let plain = TabFlow { target: Some(facts(AgentStatus::Done)), ..TabFlow::default() };
+        assert!(!plain.after_merge());
+        let merged = TabFacts { merged_head: Some("abc".into()), ..facts(AgentStatus::Done) };
+        let after = TabFlow { target: Some(merged), ..TabFlow::default() };
+        assert!(after.after_merge());
     }
 
     #[test]
