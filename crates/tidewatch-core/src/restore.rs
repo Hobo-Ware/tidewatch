@@ -1296,6 +1296,7 @@ mod tests {
             trailers_guard: false,
             house_style: Some("/cfg/house-style.md".into()),
             copilot_instructions_dir: Some("/cfg/copilot".into()),
+            copilot_plugin_dir: Some("/state/tab/copilot-plugin".into()),
             guard_bin_dir: Some("/state/guard-bin".into()),
             protected_branch: Some("main".into()),
             guards: None,

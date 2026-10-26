@@ -8,6 +8,8 @@
 //! and `docs/research/phase-0-spikes.md`). Codex's hooks, MCP server and never-push guard were run
 //! live: `-c` overrides carry the hooks and the MCP server, and the MCP server needs
 //! `default_tools_approval_mode="approve"`, otherwise Codex rejects its tools under approval `never`.
+//! Copilot's `--plugin-dir` hooks were run live on copilot 1.0.103 against a stand-in model
+//! (`COPILOT_PROVIDER_BASE_URL`), through a turn with a permission prompt.
 //! `Launch::experimental` is left for custom agents.
 
 use std::fmt;
@@ -46,6 +48,10 @@ const GEMINI_HOOK_EVENTS: [&str; 5] =
     ["SessionStart", "BeforeAgent", "Notification", "AfterAgent", "SessionEnd"];
 const CODEX_HOOK_EVENTS: [&str; 4] =
     ["SessionStart", "UserPromptSubmit", "PermissionRequest", "Stop"];
+const COPILOT_HOOK_EVENTS: [&str; 5] =
+    ["SessionStart", "UserPromptSubmit", "Notification", "Stop", "SessionEnd"];
+const COPILOT_PLUGIN_MANIFEST: &str = "plugin.json";
+const COPILOT_PLUGIN_HOOKS: &str = "hooks/hooks.json";
 /// Where the generated Gemini settings go, relative to the worktree.
 pub const GEMINI_SETTINGS_PATH: &str = ".gemini/settings.json";
 
@@ -101,6 +107,8 @@ pub struct LaunchCtx {
     pub house_style: Option<PathBuf>,
     /// Directory holding `tidewatch.instructions.md` (Copilot), see `house_style::sync_copilot_instructions`.
     pub copilot_instructions_dir: Option<PathBuf>,
+    /// The plugin directory holding the tab's status hooks (Copilot), see `copilot_plugin_files`.
+    pub copilot_plugin_dir: Option<PathBuf>,
     /// Directory holding the never-push helper, see `ensure_no_push_helper`.
     pub guard_bin_dir: Option<PathBuf>,
     /// The repo's default branch, the one branch the push guard refuses besides `main` and `master`.
@@ -264,6 +272,9 @@ fn copilot_wiring(
     }
     if let (Some(_), Some(dir)) = (house_style, &ctx.copilot_instructions_dir) {
         env.push(("COPILOT_CUSTOM_INSTRUCTIONS_DIRS".into(), dir.display().to_string()));
+    }
+    if let Some(dir) = &ctx.copilot_plugin_dir {
+        args.extend(["--plugin-dir".to_owned(), dir.display().to_string()]);
     }
 }
 
@@ -432,10 +443,33 @@ pub fn mcp_config_json(wiring: Wiring, listener: &HookListener) -> Option<String
         // Claude 2.1.310 hides MCP tools behind its ToolSearch tool unless the server asks to be
         // always loaded, and an agent that never searches never sees `set_avatar`.
         Wiring::Claude => server["alwaysLoad"] = json!(true),
-        Wiring::Copilot => server["tools"] = json!(["*"]),
+        Wiring::Copilot => {
+            server["tools"] = json!(["*"]);
+            server["timeout"] = json!(MCP_TOOL_TIMEOUT_SECS * 1000);
+        }
         Wiring::Codex | Wiring::Gemini | Wiring::Custom => return None,
     }
     Some(json!({ "mcpServers": { MCP_SERVER_NAME: server } }).to_string())
+}
+
+/// Copilot takes hooks for one session only from a plugin; PascalCase event names make it send Claude-shaped payloads.
+#[must_use]
+pub fn copilot_plugin_files(listener: &HookListener) -> [(&'static str, String); 2] {
+    let command = curl_hook_command(&listener.hook_url("copilot"), &listener.bearer());
+    let hook = json!({ "type": "command", "command": command });
+    let hooks: serde_json::Map<String, Value> = COPILOT_HOOK_EVENTS
+        .iter()
+        .map(|event| ((*event).to_owned(), json!([hook.clone()])))
+        .collect();
+    let manifest = json!({
+        "name": "tidewatch-status",
+        "version": "0.0.0",
+        "description": "Reports this tab's turns to Tidewatch",
+    });
+    [
+        (COPILOT_PLUGIN_MANIFEST, manifest.to_string()),
+        (COPILOT_PLUGIN_HOOKS, json!({ "hooks": hooks }).to_string()),
+    ]
 }
 
 /// The project `.gemini/settings.json` for a Gemini tab: command hooks, the Tidewatch MCP server with
@@ -673,6 +707,7 @@ mod tests {
             settings_file: Some("/state/tab/claude-settings.json".into()),
             house_style: Some("/cfg/house-style.md".into()),
             copilot_instructions_dir: Some("/cfg/copilot".into()),
+            copilot_plugin_dir: Some("/state/tab/copilot-plugin".into()),
             guard_bin_dir: Some("/state/guard-bin".into()),
             env: vec![("PATH".into(), "/usr/bin:/bin".into())],
             ..worktree_ctx()
@@ -974,9 +1009,32 @@ mod tests {
         assert!(launch.args.contains(&"--allow-tool=tidewatch".to_owned()));
         assert!(launch.args.contains(&"--allow-tool=write".to_owned()));
         assert_eq!(env_of(&launch, "COPILOT_CUSTOM_INSTRUCTIONS_DIRS"), Some("/cfg/copilot"));
+        let at = launch.args.iter().position(|a| a == "--plugin-dir").unwrap();
+        assert_eq!(launch.args[at + 1], "/state/tab/copilot-plugin");
+        let no_plugin = LaunchCtx { copilot_plugin_dir: None, ..full_ctx() };
+        let launch = run("copilot", &profile("copilot", Level::Plan), &no_plugin);
+        assert!(!launch.args.iter().any(|a| a == "--plugin-dir"));
         let no_dir = LaunchCtx { copilot_instructions_dir: None, ..full_ctx() };
         let launch = run("copilot", &profile("copilot", Level::Plan), &no_dir);
         assert_eq!(env_of(&launch, "COPILOT_CUSTOM_INSTRUCTIONS_DIRS"), None);
+    }
+
+    #[test]
+    fn the_copilot_plugin_posts_every_status_event_to_the_tabs_hook_url() {
+        let [(manifest, manifest_text), (hooks, hooks_text)] = copilot_plugin_files(&listener());
+        assert_eq!(manifest, "plugin.json");
+        let manifest: Value = serde_json::from_str(&manifest_text).unwrap();
+        assert_eq!(manifest["name"], "tidewatch-status");
+        assert_eq!(hooks, "hooks/hooks.json");
+        let json: Value = serde_json::from_str(&hooks_text).unwrap();
+        for event in COPILOT_HOOK_EVENTS {
+            let hook = &json["hooks"][event][0];
+            assert_eq!(hook["type"], "command", "{event}");
+            let command = hook["command"].as_str().unwrap();
+            assert!(command.contains("http://127.0.0.1:5555/hook/copilot"), "{event}");
+            assert!(command.contains("Authorization: Bearer tok123"), "{event}");
+        }
+        assert_eq!(json["hooks"].as_object().unwrap().len(), COPILOT_HOOK_EVENTS.len());
     }
 
     #[test]
@@ -1317,6 +1375,7 @@ mod tests {
         let copilot: Value =
             serde_json::from_str(&mcp_config_json(Wiring::Copilot, &listener()).unwrap()).unwrap();
         assert_eq!(copilot["mcpServers"]["tidewatch"]["tools"], json!(["*"]));
+        assert_eq!(copilot["mcpServers"]["tidewatch"]["timeout"], 2_100_000);
         assert!(copilot["mcpServers"]["tidewatch"].get("alwaysLoad").is_none());
         for wiring in [Wiring::Gemini, Wiring::Codex, Wiring::Custom] {
             assert_eq!(mcp_config_json(wiring, &listener()), None);

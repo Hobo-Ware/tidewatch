@@ -115,14 +115,15 @@ impl HookEvent {
 /// Turns one hook payload into a [`HookEvent`]. `None` for events that carry no status (tool hooks,
 /// `auth_success` notifications) and for payloads that are not objects.
 ///
-/// Claude, Codex and Gemini name the event in `hook_event_name`. Copilot has no hook wiring in v0;
-/// its `events.jsonl` lines (`{"type": "...", "data": {...}}`) go through here instead, which is how
-/// the spikes found its status. Checked against claude 2.1.296, gemini 0.46.0 and copilot 1.0.91;
-/// Codex is assumed to follow Claude's names (`docs/research/phase-0-spikes.md`).
+/// Every CLI names the event in `hook_event_name`. Copilot does too when its hooks are configured
+/// with PascalCase event names (see `launch::copilot_plugin_files`); a payload without it is read as
+/// one of its `events.jsonl` lines (`{"type": "...", "data": {...}}`) instead. Checked against claude
+/// 2.1.296, gemini 0.46.0 and copilot 1.0.103 (live, with a stand-in model); Codex's names and fields
+/// come from the hook schemas inside codex 0.162.1 (`docs/research/phase-0-spikes.md`).
 #[must_use]
 pub fn parse_hook(agent: &str, payload: &Value) -> Option<HookEvent> {
     let object = payload.as_object()?;
-    let mut event = if agent == "copilot" {
+    let mut event = if agent == "copilot" && !object.contains_key("hook_event_name") {
         parse_copilot_event(object)?
     } else {
         parse_named_event(agent, object)?
@@ -843,6 +844,50 @@ mod tests {
         for (payload, want) in cases {
             assert_eq!(parse("copilot", &payload), want, "payload {payload}");
         }
+    }
+
+    const COPILOT_HOOKS: &str = include_str!("../tests/fixtures/copilot_hooks.jsonl");
+
+    fn copilot_turn() -> Vec<Value> {
+        COPILOT_HOOKS.lines().map(|line| serde_json::from_str(line).unwrap()).collect()
+    }
+
+    #[test]
+    fn real_copilot_hook_payloads_map_to_hook_kinds() {
+        let want = [
+            Some((HookKind::SessionStart, None)),
+            Some((HookKind::TurnStarted, None)),
+            None,
+            None,
+            Some((HookKind::PermissionNeeded, Some("Run command: touch zz-probe.txt".into()))),
+            Some((
+                HookKind::ToolFinished(
+                    "Bash\n{\"command\":\"touch zz-probe.txt\",\"description\":\"Create the file\",\"mode\":\"sync\"}"
+                        .into(),
+                ),
+                None,
+            )),
+            Some((HookKind::TurnDone, None)),
+            Some((HookKind::SessionEnd, None)),
+        ];
+        let turn = copilot_turn();
+        assert_eq!(turn.len(), want.len());
+        for (payload, want) in turn.iter().zip(want) {
+            assert_eq!(parse("copilot", payload), want, "payload {payload}");
+        }
+    }
+
+    #[test]
+    fn a_copilot_turn_that_stops_reads_done_instead_of_waiting_for_you() {
+        let mut tracker = StatusTracker::agent(0.0);
+        let mut at = 1.0;
+        for payload in copilot_turn() {
+            if let Some(event) = parse_hook("copilot", &payload) {
+                tracker.on_hook(&event, at);
+            }
+            at += 1.0;
+        }
+        assert_eq!(tracker.status(at + 30.0), AgentStatus::Done);
     }
 
     #[test]
