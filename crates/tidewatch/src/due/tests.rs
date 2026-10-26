@@ -91,12 +91,12 @@ fn the_message_names_the_item_and_its_open_steps_and_asks_for_the_first() {
     };
     assert_eq!(
         ask_text(&due),
-        "Due today: Switch off the old webhook (#42). Steps: Merge the switch; A week of traffic then remove. Start with the first open step and update the ledger."
+        "Due today: Switch off the old webhook (#42). Steps: Merge the switch; A week of traffic then remove. Start with the first open step and update the progress report."
     );
     let bare = Due { what: "Ship it.".into(), days: 0, steps: Vec::new() };
     assert_eq!(
         ask_text(&bare),
-        "Due today: Ship it. Start with the first open step and update the ledger."
+        "Due today: Ship it. Start with the first open step and update the progress report."
     );
     let long = Due { what: "x".repeat(400), days: 0, steps: Vec::new() };
     assert!(ask_text(&long).contains(&format!("{}...", "x".repeat(137))));

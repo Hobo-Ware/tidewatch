@@ -36,7 +36,7 @@ const OPTION_KEYS: [&str; 4] = ["label", "description", "tradeoff", "recommended
 /// What the tool result says when the user chose to leave the choice to the agent.
 pub const SKIPPED_TEXT: &str = "The user skipped your questions and left the choice to you. Use your best judgment and carry on.";
 /// What the tool result says when nobody answered in time.
-pub const TIMED_OUT_TEXT: &str = "The user did not answer in time. Take the reversible or recommended option, write it under Decisions in your ledger, and list it in Needs you so the user can reverse it. Then carry on.";
+pub const TIMED_OUT_TEXT: &str = "The user did not answer in time. Take the reversible or recommended option, write it under Decisions in your progress report, and list it in Needs you so the user can reverse it. Then carry on.";
 /// What the tool result says when the question went away unanswered (the tab was closed).
 pub const CLOSED_TEXT: &str = "The question could not be answered because its tab was closed. Proceed with your best judgment.";
 /// What a skip types into an agent that asked with its own tool, after the menu is dismissed.

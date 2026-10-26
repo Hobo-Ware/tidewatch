@@ -122,7 +122,7 @@ pub(crate) fn show(ui: &mut Ui, area: Rect, summary: &Summary) -> Option<Action>
         }
         if !summary.stages.is_empty() {
             ui.add_space(SECTION_GAP);
-            section_label(ui, "Ledger");
+            section_label(ui, "Progress report");
             stages(ui, width, &summary.stages);
         }
         ui.add_space(PAD);

@@ -54,7 +54,7 @@ impl Busy {
     fn reasons(self) -> Vec<String> {
         [
             (self.working, "the agent is still working"),
-            (self.open_ledger, "its ledger still has open steps"),
+            (self.open_ledger, "its progress report still has open steps"),
             (self.job, "a job is still running"),
         ]
         .into_iter()
@@ -218,7 +218,7 @@ mod tests {
             (
                 Busy { open_ledger: true, ..Busy::default() },
                 &Cleanup::Checking,
-                "PR merged. Cleanup waits: its ledger still has open steps.",
+                "PR merged. Cleanup waits: its progress report still has open steps.",
             ),
             (
                 Busy { job: true, ..Busy::default() },
@@ -228,7 +228,7 @@ mod tests {
             (
                 all,
                 &dirty,
-                "PR merged. Cleanup waits: the agent is still working, its ledger still has open steps, a job is still running, 1 commit is not in the PR and 2 files not committed.",
+                "PR merged. Cleanup waits: the agent is still working, its progress report still has open steps, a job is still running, 1 commit is not in the PR and 2 files not committed.",
             ),
         ];
         for (busy, cleanup, want) in cases {

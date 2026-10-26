@@ -18,9 +18,9 @@ const ASKED_FILE: &str = "ledger-asked";
 const NOTES_FILE: &str = "notes.json";
 const TAIL_BYTES: u64 = 512 * 1024;
 
-pub const MESSAGE: &str = "LEDGER GUARD - the Tidewatch progress report is missing or was not updated this turn. Call `update_progress` now with the whole report: state, now, your stages and steps. A question for the user goes in needs_you, what you wait on in waiting_on, and every later item in scheduled. A notes file of your own does not count.";
+pub const MESSAGE: &str = "REPORT GUARD - the Tidewatch progress report is missing or was not updated this turn. Call `update_progress` now with the whole report: state, now, your stages and steps. A question for the user goes in needs_you, what you wait on in waiting_on, and every later item in scheduled. A notes file of your own does not count.";
 
-pub const FINAL_STATE_MESSAGE: &str = "LEDGER GUARD - the turn is ending but your Tidewatch report still says state `working`. Call `update_progress` once more with the final state: `needs_you` (a question for the user, with its options), `waiting` (name the job, PR, date or event in waiting_on), `blocked` or `done` (only when the whole task is finished), and move every later item into scheduled.";
+pub const FINAL_STATE_MESSAGE: &str = "REPORT GUARD - the turn is ending but your Tidewatch report still says state `working`. Call `update_progress` once more with the final state: `needs_you` (a question for the user, with its options), `waiting` (name the job, PR, date or event in waiting_on), `blocked` or `done` (only when the whole task is finished), and move every later item into scheduled.";
 
 /// What the guard asks of the agent at the end of a turn.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -356,7 +356,7 @@ mod tests {
         assert_eq!(
             at(&mut reminders, Some(100), Some(320), 400),
             None,
-            "the agent answered the reminder with a turn that saved no ledger"
+            "the agent answered the reminder with a turn that saved no report"
         );
         assert_eq!(
             at(&mut reminders, Some(100), Some(500), 600),

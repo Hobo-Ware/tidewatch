@@ -459,7 +459,7 @@ impl Ledger {
     pub fn problems(&self) -> Vec<String> {
         if self.goal.trim().is_empty() {
             vec![
-                "The ledger has no goal. Start it with `# Goal` and the goal in one line below."
+                "The progress report has no goal. Start it with `# Goal` and the goal in one line below."
                     .to_owned(),
             ]
         } else {
