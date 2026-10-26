@@ -290,10 +290,9 @@ impl Tidewatch {
         self.show_pr_strip(ui, &mut areas.terminal, ctx, active_id);
         self.show_comment_strip(ui, &mut areas.terminal, active_id);
         let card = self.flow.tab(active_id).and_then(|state| {
-            state
-                .delivery
-                .card_commits()
-                .map(|n| (n, matches!(state.delivery, Delivery::Building { .. })))
+            state.delivery.card_commits().map(|n| {
+                (n, matches!(state.delivery, Delivery::Building { .. }), state.after_merge())
+            })
         });
         let band = card.map(|_| layout::band_below(&mut areas.terminal, delivery_view::BAND_H));
         let agent_name = self.tabs.items()[self.tabs.active()]
@@ -308,8 +307,8 @@ impl Tidewatch {
         self.show_terminal(ui, &grid, agent_name.as_deref(), shown == Some(Shown::Reader), frame);
         self.show_reader(ui, areas.terminal, shown, ctx, now, active_id, !frame.keys.modal_open);
 
-        if let (Some((commits, building)), Some(band)) = (card, band)
-            && delivery_view::show_card(ui, band, commits, building).is_some()
+        if let (Some(facts), Some(band)) = (card, band)
+            && delivery_view::show_card(ui, band, facts).is_some()
         {
             self.flow.open_card(active_id, ctx);
         }

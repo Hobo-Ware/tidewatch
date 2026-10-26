@@ -39,8 +39,7 @@ pub(crate) enum DialogAction {
 pub(crate) fn show_card(
     ui: &mut Ui,
     rect: Rect,
-    commits: usize,
-    building: bool,
+    (commits, building, after_merge): (usize, bool, bool),
 ) -> Option<CardAction> {
     let card = rect.shrink2(vec2(INSET, 4.0));
     paint_item(ui.painter(), card, false);
@@ -48,12 +47,16 @@ pub(crate) fn show_card(
     ui.painter().text(
         pos2(card.left() + 32.0, card.center().y),
         Align2::LEFT_CENTER,
-        card_text(commits),
+        card_text(commits, after_merge),
         body(13.0),
         brand::TEXT,
     );
     let button_rect = card.shrink2(vec2(10.0, 0.0));
-    let label = if building { "Reading commits..." } else { "Push and open PR" };
+    let label = match (building, after_merge) {
+        (true, _) => "Reading commits...",
+        (false, true) => "Push to a new PR",
+        (false, false) => "Push and open PR",
+    };
     let mut action = None;
     ui.scope_builder(
         UiBuilder::new().max_rect(button_rect).layout(Layout::right_to_left(Align::Center)),
@@ -284,6 +287,45 @@ mod tests {
 
     fn key(key: Key, modifiers: Modifiers) -> Event {
         Event::Key { key, physical_key: Some(key), pressed: true, repeat: false, modifiers }
+    }
+
+    fn card_texts(facts: (usize, bool, bool)) -> Vec<String> {
+        fn collect(shape: &egui::Shape, out: &mut Vec<String>) {
+            match shape {
+                egui::Shape::Text(text) => out.push(text.galley.text().to_owned()),
+                egui::Shape::Vec(shapes) => shapes.iter().for_each(|shape| collect(shape, out)),
+                _ => {}
+            }
+        }
+        let ctx = context();
+        let raw = RawInput {
+            screen_rect: Some(Rect::from_min_size(pos2(0.0, 0.0), vec2(600.0, 200.0))),
+            focused: true,
+            ..RawInput::default()
+        };
+        let _ = ctx.run_ui(raw.clone(), |ui| {
+            show_card(ui, Rect::from_min_size(pos2(0.0, 0.0), vec2(600.0, BAND_H)), facts);
+        });
+        let output = ctx.run_ui(raw, |ui| {
+            show_card(ui, Rect::from_min_size(pos2(0.0, 0.0), vec2(600.0, BAND_H)), facts);
+        });
+        let mut texts = Vec::new();
+        for clipped in &output.shapes {
+            collect(&clipped.shape, &mut texts);
+        }
+        texts
+    }
+
+    #[test]
+    fn the_bar_after_a_merge_counts_commits_after_the_merge_and_pushes_to_a_new_pr() {
+        let after = card_texts((2, false, true));
+        assert!(after.contains(&"2 commits after the merge".to_owned()), "{after:?}");
+        assert!(after.contains(&"Push to a new PR".to_owned()), "{after:?}");
+        let before = card_texts((2, false, false));
+        assert!(before.contains(&"2 commits ready".to_owned()), "{before:?}");
+        assert!(before.contains(&"Push and open PR".to_owned()), "{before:?}");
+        let reading = card_texts((2, true, true));
+        assert!(reading.contains(&"Reading commits...".to_owned()), "{reading:?}");
     }
 
     #[test]
