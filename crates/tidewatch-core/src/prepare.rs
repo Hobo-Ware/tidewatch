@@ -748,7 +748,7 @@ mod tests {
         assert!(text.contains("`set_avatar`"));
         assert!(text.contains("\n\n## Progress ledger format"), "{text}");
         assert!(text.contains("### 4. Done\n"));
-        assert!(text.ends_with("never stages:\n\n### 1. Mine\n- [ ] my item\n"), "{text}");
+        assert!(text.ends_with("not stages:\n\n- Mine\n- [ ] my item\n"), "{text}");
         assert_eq!(std::fs::read_to_string(fx.paths.house_style_file()).unwrap(), "my own style\n");
         assert_eq!(
             std::fs::read_to_string(fx.paths.checklist_file()).unwrap(),
@@ -784,7 +784,7 @@ mod tests {
         let text =
             std::fs::read_to_string(fx.paths.tab_house_style_file(repo.path(), "brave-otter"))
                 .unwrap();
-        assert!(text.ends_with("never stages:\n\n### 1. Repo way\n- [ ] repo item\n"));
+        assert!(text.ends_with("not stages:\n\n- Repo way\n- [ ] repo item\n"));
     }
 
     #[test]
