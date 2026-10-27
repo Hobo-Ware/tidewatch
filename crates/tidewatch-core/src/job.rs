@@ -26,7 +26,6 @@ pub enum Agent {
     Done,
 }
 
-/// Why the board closed a job that never sent a final line.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Ended {
@@ -243,8 +242,6 @@ impl Job {
         Some(at_ms + i64::try_from(secs).ok()? * 1000)
     }
 
-    /// How long past its expected end a running timed job is. `None` for any other job, and while
-    /// there is time left.
     #[must_use]
     pub fn overdue_ms(&self, now_ms: i64) -> Option<i64> {
         if self.state != JobState::Running || !self.is_timed() {
@@ -364,11 +361,8 @@ impl JobBoard {
         self.jobs.len() - 1
     }
 
-    /// Moves each job along as `now_ms` passes, and drops the ones that are gone. A job whose `done`
-    /// reached its `total` is finished. A job that never sent a final line is closed as ended once
-    /// it is quiet: after five minutes when the agent is done, after thirty when the agent is not
-    /// working. Otherwise a running job with a total whose `done` has stood still for five minutes
-    /// is marked stalled. Returns whether anything changed.
+    /// Agents forget the final line, so a quiet job closes once its agent stops working; only a
+    /// working agent's quiet job is called stalled.
     pub fn tick(&mut self, now_ms: i64, agent: Agent) -> bool {
         let mut changed = false;
         for job in &mut self.jobs {
