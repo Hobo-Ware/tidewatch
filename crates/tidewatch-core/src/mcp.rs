@@ -4,7 +4,8 @@
 //! [`handle_post`] takes the raw request body of an authenticated `/mcp` POST and returns the reply.
 //! It speaks `initialize`, `ping`, `tools/list` and `tools/call` and swallows notifications. The
 //! tools are `report_finding`, `list_notes`, `reply_to_note`, `ask_user`, `update_progress`,
-//! `get_progress`, `report_job`, `set_avatar`, `meeseeks_done` and `set_name`. A tab is offered the
+//! `get_progress`, `report_job`, `set_avatar`, `meeseeks_done` and `set_name`, plus the repo service
+//! tools of `services_mcp.rs`. A tab is offered the
 //! ones its [`TabRole`] can use (`meeseeks_done` and `set_name` only to a Meeseeks, `report_finding`
 //! to neither a Meeseeks); a call to one it is not offered is answered with a tool error that says
 //! where it works. Calls that matter to the app become [`TabEvent`]s through `emit`; the note tools
@@ -36,6 +37,7 @@ use crate::meeseeks_name;
 use crate::notes::Notes;
 use crate::progress_mcp;
 use crate::question::{self, AskReply, Reply};
+use crate::services_mcp;
 
 /// The protocol revision Tidewatch answers with when the client asks for one it does not know.
 pub const PROTOCOL_VERSION: &str = "2025-06-18";
@@ -222,7 +224,7 @@ pub fn tool_definitions_for(role: TabRole) -> Value {
 #[must_use]
 pub fn tool_definitions() -> Value {
     let [update_progress, get_progress] = progress_mcp::tool_definitions();
-    json!([
+    let mut tools = json!([
         {
             "name": "report_finding",
             "description": "Report one problem you found in the code under review. It appears as a note on that line in the user's diff.",
@@ -269,7 +271,11 @@ pub fn tool_definitions() -> Value {
         avatar_mcp::tool_definition(),
         meeseeks_mcp::tool_definition(),
         meeseeks_name::tool_definition(),
-    ])
+    ]);
+    if let Some(list) = tools.as_array_mut() {
+        list.extend(services_mcp::tool_definitions());
+    }
+    tools
 }
 
 fn call_tool(
@@ -319,6 +325,10 @@ fn call_tool(
     }
     if name == question::TOOL_NAME {
         let (text, is_error) = ask_user(args, &ctx.ask, emit);
+        return Ok(tool_result(&text, is_error));
+    }
+    if services_mcp::is_tool(name) {
+        let (text, is_error) = services_mcp::call(name, args, emit);
         return Ok(tool_result(&text, is_error));
     }
     let text = match name {
@@ -594,7 +604,7 @@ mod tests {
     }
 
     #[test]
-    fn the_server_has_ten_tools_with_object_schemas_and_required_fields() {
+    fn the_server_has_fifteen_tools_with_object_schemas_and_required_fields() {
         let all = tool_definitions();
         let tools = all.as_array().unwrap();
         let names: Vec<&str> = tools.iter().map(|t| t["name"].as_str().unwrap()).collect();
@@ -610,7 +620,12 @@ mod tests {
                 "report_job",
                 "set_avatar",
                 "meeseeks_done",
-                "set_name"
+                "set_name",
+                "list_services",
+                "add_service",
+                "restart_service",
+                "stop_service",
+                "service_log"
             ]
         );
         let required: Vec<Vec<&str>> = tools
@@ -634,6 +649,11 @@ mod tests {
                 vec!["name"],
                 vec!["svg", "reason"],
                 vec!["summary"],
+                vec!["name"],
+                vec![],
+                vec!["name", "command"],
+                vec!["name"],
+                vec!["name"],
                 vec!["name"],
             ]
         );
@@ -660,6 +680,11 @@ mod tests {
             "get_progress",
             "report_job",
             "set_avatar",
+            "list_services",
+            "add_service",
+            "restart_service",
+            "stop_service",
+            "service_log",
         ];
         let with = |extra: &[&str]| -> Vec<String> {
             let mut names: Vec<String> = extra.iter().map(|s| (*s).to_owned()).collect();
@@ -907,6 +932,43 @@ mod tests {
         let bad = h.call("set_avatar", &json!({"svg": "<svg><script/></svg>", "reason": "x"}));
         assert_eq!(bad["result"]["isError"], true);
         assert_eq!(h.events.borrow().len(), 1);
+    }
+
+    #[test]
+    fn a_service_tool_over_rpc_is_answered_by_the_app_and_a_bad_call_never_reaches_it() {
+        let h = Harness::new();
+        let notes_file = h.notes_file();
+        let progress_file = h.progress_file();
+        let alive = || true;
+        let ctx = ToolCtx {
+            agent: "claude",
+            role: TabRole::Agent,
+            notes_file: &notes_file,
+            notes_lock: &h.lock,
+            progress_file: &progress_file,
+            ask: test_wait(&alive),
+        };
+        let asked = RefCell::new(Vec::new());
+        let emit = |event: TabEvent| {
+            let TabEvent::Services(call) = event else { panic!("a service event") };
+            asked.borrow_mut().push(call.call.clone());
+            assert!(call.reply.send(Ok("Stopped db.".into())));
+        };
+        let post = |tool: &str, args: Value| {
+            let body = json!({"jsonrpc": "2.0", "id": 1, "method": "tools/call",
+                "params": {"name": tool, "arguments": args}});
+            let McpReply::Json(text) = handle_post(body.to_string().as_bytes(), &ctx, &emit) else {
+                panic!("a JSON reply")
+            };
+            serde_json::from_str::<Value>(&text).unwrap()
+        };
+        let reply = post("stop_service", json!({"name": "db"}));
+        assert_eq!(reply["result"]["isError"], false, "{reply}");
+        assert_eq!(text_of(&reply), "Stopped db.");
+        let bad = post("stop_service", json!({}));
+        assert_eq!(bad["result"]["isError"], true);
+        assert!(text_of(&bad).contains("name is required"), "{bad}");
+        assert_eq!(*asked.borrow(), [services_mcp::Call::Stop("db".into())]);
     }
 
     #[test]

@@ -30,6 +30,7 @@ use crate::remote::session_name;
 use crate::restore::{ResumeError, resume_command};
 use crate::trust::TrustCli;
 use crate::trust_apply::{Grant, Outcome};
+use crate::{services, services_mcp};
 
 const MCP_CONFIG_FILE: &str = "mcp.json";
 const CLAUDE_SETTINGS_FILE: &str = "claude-settings.json";
@@ -346,12 +347,16 @@ fn remote_name(input: &PrepareInput) -> String {
 fn write_agent_style(input: &PrepareInput, shared: &Path) -> std::io::Result<PathBuf> {
     let paths = input.paths;
     let _ = checklist::ensure(paths);
-    let text = house_style::compose_for_cli(
+    let mut text = house_style::compose_for_cli(
         &std::fs::read_to_string(shared)?,
         checklist::for_repo(paths, input.repo).as_deref(),
         house_style::Role::of(input.profile.level, input.meeseeks),
         TurnEnd::of(input.agent.wiring),
     );
+    if let Some(block) = services_mcp::house_block(&services::services_for(paths, input.repo)) {
+        text.push('\n');
+        text.push_str(&block);
+    }
     let file = paths.tab_house_style_file(input.repo, input.tab);
     write_atomic(&file, &text)?;
     Ok(file)
@@ -805,6 +810,24 @@ mod tests {
         let text = agent_style(&fx);
         assert!(text.contains("## You run autonomously"), "{text}");
         assert!(text.contains("product design and architecture choices"));
+    }
+
+    #[test]
+    fn the_agent_is_told_what_services_its_repo_runs_and_which_tools_manage_them() {
+        let fx = Fixture::new();
+        fx.run("claude", &profile("claude", Level::Edits), true, "", None).unwrap();
+        assert!(!agent_style(&fx).contains("## Repo services"));
+        let db =
+            services::Service::new("db", "pscale connect shop main --port 3309", Some(3309), true);
+        services::Store::update(&fx.paths, |store| store.add(Path::new("/work/web"), &db)).unwrap();
+        fx.run("claude", &profile("claude", Level::Edits), true, "", None).unwrap();
+        let text = agent_style(&fx);
+        assert!(
+            text.contains("- `db`: `pscale connect shop main --port 3309`, port 3309"),
+            "{text}"
+        );
+        assert!(text.contains("`service_log`") && text.contains("`restart_service`"));
+        assert!(text.find("## Progress report") < text.find("## Repo services"));
     }
 
     #[test]

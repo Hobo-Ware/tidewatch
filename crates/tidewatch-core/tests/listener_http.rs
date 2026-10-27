@@ -312,7 +312,7 @@ fn mcp_over_http_runs_the_handshake_and_the_event_tools() {
     assert_eq!((note.status, note.body.as_str()), (202, ""));
 
     let list = client.request("POST", "/mcp", token, &rpc(2, "tools/list", &json!({})));
-    assert_eq!(list.json()["result"]["tools"].as_array().unwrap().len(), 8);
+    assert_eq!(list.json()["result"]["tools"].as_array().unwrap().len(), 13);
 
     let finding = client.request(
         "POST",
