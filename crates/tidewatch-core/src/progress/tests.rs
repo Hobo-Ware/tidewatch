@@ -481,10 +481,10 @@ fn a_question_is_anything_in_needs_you_that_is_not_a_placeholder() {
 }
 
 #[test]
-fn the_owner_is_awaited_by_a_question_or_a_waiting_or_blocked_state_unless_the_work_is_done() {
+fn the_owner_is_awaited_by_a_question_or_a_needs_you_or_blocked_state_unless_the_work_is_done() {
     let cases = [
         ("state: waiting", "- Pick one", true),
-        ("state: waiting", "- Nothing", true),
+        ("state: waiting", "- Nothing", false),
         ("state: blocked", "- Nothing", true),
         ("state: working", "- Pick one", true),
         ("", "- Pick one", true),
@@ -520,7 +520,7 @@ fn blocked_means_the_agent_says_so_or_an_item_is_and_the_work_is_not_done() {
 }
 
 #[test]
-fn the_shown_state_is_what_the_agent_said_with_a_question_or_an_owner_wait_making_it_needs_you() {
+fn the_shown_state_is_what_the_agent_said_with_a_question_making_it_needs_you() {
     use crate::progress_report::WaitingOn;
     let ledger = |status: &str, items: &str, needs: &str| {
         Ledger::parse(&format!(
@@ -532,7 +532,8 @@ fn the_shown_state_is_what_the_agent_said_with_a_question_or_an_owner_wait_makin
         ("state: working", "- [!] a", "- nothing", State::Working),
         ("state: working", "- [~] a", "- Pick one", State::NeedsYou),
         ("state: needs_you", "- [~] a", "- nothing", State::NeedsYou),
-        ("state: waiting", "- [~] a", "- nothing", State::NeedsYou),
+        ("state: waiting", "- [~] a", "- nothing", State::Waiting),
+        ("state: waiting", "- [~] a", "- Pick one", State::NeedsYou),
         ("state: blocked", "- [~] a", "- Pick one", State::Blocked),
         ("state: done", "- [x] a", "- nothing", State::Done),
         ("state: done", "- [x] a", "- Merge it", State::Done),

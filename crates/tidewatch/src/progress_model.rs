@@ -2,7 +2,7 @@
 
 use tidewatch_core::civil_date::Date;
 use tidewatch_core::kind::Kind;
-use tidewatch_core::progress::{Choice, Entry, Ledger, Mark, Phase, PhaseState, State, real};
+use tidewatch_core::progress::{Choice, Entry, Ledger, Mark, Phase, PhaseState, State, When, real};
 use tidewatch_core::progress_report::{StageKind, WaitingOn};
 use tidewatch_core::stages::{self, Group, Stage};
 
@@ -505,6 +505,28 @@ pub(crate) struct Waiting {
     pub(crate) date: Option<Date>,
 }
 
+/// What a waiting ledger waits on: the typed `waiting_on`, or for a ledger written in markdown
+/// the soonest open dated item of its Scheduled list, else its first open `on:` item.
+fn waiting_of(ledger: &Ledger) -> Option<Waiting> {
+    if let Some(waiting) = &ledger.waiting_on {
+        let date = match waiting {
+            WaitingOn::Date(date) => Some(*date),
+            _ => None,
+        };
+        return Some(Waiting { label: waiting.label(), date });
+    }
+    let open =
+        || ledger.scheduled.iter().filter(|item| !matches!(item.mark, Mark::Done | Mark::Skipped));
+    let dated = open().filter_map(|item| item.when.date()).min();
+    if let Some(date) = dated {
+        return Some(Waiting { label: date.to_string(), date: Some(date) });
+    }
+    open().find_map(|item| match &item.when {
+        When::On(event) => Some(Waiting { label: event.clone(), date: None }),
+        _ => None,
+    })
+}
+
 pub(crate) fn look(ledger: &Ledger, stale: bool) -> Look {
     let state = fresh(ledger, stale).shown_state();
     look_as(ledger, stale, state)
@@ -520,13 +542,7 @@ pub(crate) fn look_as(ledger: &Ledger, stale: bool, state: State) -> Look {
         ring: ring_as(ledger, tone),
         line: card_line(ledger, tone),
         kind: ledger.current_phase().and_then(|phase| phase.kind),
-        waiting: ledger.waiting_on.as_ref().map(|waiting| Waiting {
-            label: waiting.label(),
-            date: match waiting {
-                WaitingOn::Date(date) => Some(*date),
-                _ => None,
-            },
-        }),
+        waiting: waiting_of(ledger).filter(|_| tone == Tone::Waiting),
         tag: card_tag(ledger, tone),
         questions: questions(ledger).len(),
         ask: ask_of(ledger),
@@ -548,7 +564,8 @@ mod tests {
         let cases = [
             ("state: working", Tone::Working),
             ("state: needs_you", Tone::NeedsYou),
-            ("state: waiting", Tone::NeedsYou),
+            ("state: waiting", Tone::Waiting),
+            ("state: waiting\n\n## Needs you\n- Pick one", Tone::NeedsYou),
             ("state: done", Tone::Done),
             ("state: blocked", Tone::Blocked),
             ("note: nothing said", Tone::Working),
@@ -967,12 +984,39 @@ mod tests {
     }
 
     #[test]
+    fn a_markdown_wait_reads_the_soonest_open_dated_item_else_the_first_event() {
+        let wait = |scheduled: &str| {
+            let text =
+                format!("# Goal\nx\n\n## Status\nstate: waiting\n\n## Scheduled\n{scheduled}\n");
+            look(&ledger(&text), false).waiting.map(|wait| (wait.label, wait.date.is_some()))
+        };
+        let cases = [
+            ("- [ ] 2026-11-08 -- b\n- [ ] 2026-11-01 -- a", Some(("2026-11-01", true))),
+            ("- [x] 2026-10-20 -- done\n- [ ] 2026-11-03 -- a", Some(("2026-11-03", true))),
+            (
+                "- [ ] on: the partner replies -- a\n- [ ] you -- b",
+                Some(("the partner replies", false)),
+            ),
+            ("- [ ] parked: later -- a\n- [ ] you -- b", None),
+            ("", None),
+        ];
+        for (scheduled, want) in cases {
+            let want = want.map(|(label, dated)| (label.to_owned(), dated));
+            assert_eq!(wait(scheduled), want, "{scheduled}");
+        }
+        let working =
+            "# Goal\nx\n\n## Status\nstate: working\n\n## Scheduled\n- [ ] 2026-11-01 -- a\n";
+        assert_eq!(look(&ledger(working), false).waiting, None);
+    }
+
+    #[test]
     fn a_card_says_question_before_anything_else() {
         let cases = [
             ("state: done\n\n## Needs you\n- Decide", CardTag::Question),
             ("state: blocked", CardTag::Blocked),
             ("state: done", CardTag::Done),
-            ("state: waiting", CardTag::NeedsYou),
+            ("state: waiting", CardTag::Waiting),
+            ("state: waiting\n\n## Needs you\n- Decide", CardTag::Question),
             ("state: needs_you", CardTag::NeedsYou),
             ("state: working", CardTag::Working),
         ];

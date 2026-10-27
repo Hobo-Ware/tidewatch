@@ -507,15 +507,15 @@ impl Ledger {
         real(&self.needs_you).next().is_some()
     }
 
-    /// The work is not done and the ledger holds it back on the owner: a question, a state of
-    /// needs you or blocked, or a wait that names nothing but the owner.
+    /// The work is not done and the ledger holds it back on the owner: a question, or a state of
+    /// needs you or blocked. A waiting state is its own word: it asks nothing of the owner unless
+    /// a question stands with it, whether or not it names what it waits on.
     #[must_use]
     pub fn awaits_owner(&self) -> bool {
         match self.status.state {
             Some(State::Done) => false,
             Some(State::NeedsYou | State::Blocked) => true,
-            Some(State::Waiting) => self.has_question() || self.waiting_on.is_none(),
-            Some(State::Working) | None => self.has_question(),
+            Some(State::Waiting | State::Working) | None => self.has_question(),
         }
     }
 
@@ -536,8 +536,7 @@ impl Ledger {
     }
 
     /// The one state the screens show. It is the state the agent reported, except that a question
-    /// or a wait that names only the owner makes it needs you, and a ledger with no state at all
-    /// reads from its steps.
+    /// makes it needs you, and a ledger with no state at all reads from its steps.
     #[must_use]
     pub fn shown_state(&self) -> State {
         match self.status.state {

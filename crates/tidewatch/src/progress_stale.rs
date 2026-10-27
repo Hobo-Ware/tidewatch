@@ -131,7 +131,8 @@ mod tests {
     fn only_a_ledger_that_awaits_the_owner_can_be_stale() {
         let cases = [
             ("a question", ledger("state: working", "- Pick one"), true),
-            ("waiting", ledger("state: waiting", "- Nothing"), true),
+            ("waiting with a question", ledger("state: waiting", "- Pick one"), true),
+            ("waiting", ledger("state: waiting", "- Nothing"), false),
             ("blocked", ledger("state: blocked", "- Nothing"), true),
             ("working", ledger("state: working", "- Nothing"), false),
             ("done with a hand-off", ledger("state: done", "- Merge it"), false),

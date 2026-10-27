@@ -516,7 +516,7 @@ fn a_step_finds_its_stage_whatever_the_case_of_the_name() {
 }
 
 #[test]
-fn a_wait_on_a_job_is_not_a_wait_on_the_owner() {
+fn a_wait_is_not_a_wait_on_the_owner_unless_a_question_stands_with_it() {
     let value = with(|v| {
         v["state"] = json!("waiting");
         v["waiting_on"] = json!({ "pr": 2340 });
@@ -524,7 +524,10 @@ fn a_wait_on_a_job_is_not_a_wait_on_the_owner() {
     let ledger = ProgressReport::check(&args(&value), None).unwrap().to_ledger();
     assert!(!ledger.awaits_owner());
     let old = Ledger::parse("# Goal\ng\n\n## Status\nstate: waiting\n");
-    assert!(old.awaits_owner(), "an old waiting ledger still holds the owner");
+    assert!(!old.awaits_owner(), "an old waiting ledger that asks nothing is still a wait");
+    let asking =
+        Ledger::parse("# Goal\ng\n\n## Status\nstate: waiting\n\n## Needs you\n- Pick one\n");
+    assert!(asking.awaits_owner());
 }
 
 const OLD: &str = "# Goal\nShip the retry fix\n\n## Status\nphase: 2 Build\nstate: working\nnote: writing the 429 test\n\n## Checklist\n### 1. Understand\n- [x] Read the retry code -- found the loop\n### 2. Build\n- [x] Add backoff\n- [~] Add a test for a 429\n- [ ] Wire the config\n### 3. PR\n- [ ] Open the PR\n### 4. Done\n- [!] Verify live -- waits on the deploy\n\n## Decisions\n- Use jitter -- avoids a thundering herd\n\n## Verified\n- Unit tests -- cargo test\n\n## Not verified\n- Live route -- needs the deploy\n\n## Needs you\n- Which backoff cap? -- it changes the worst case -- options: 30s | 60s* | 5m\n\n## Scheduled\n- [ ] 2026-11-01 -- Drop the flag -- nothing reads it\n- [ ] on: the partner confirms -- Delete the endpoint\n- [x] 2026-10-01 -- Old item\n";

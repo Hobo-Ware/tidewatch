@@ -1,7 +1,7 @@
 //! The answer to Claude's `UserPromptSubmit` hook: extra context the model reads with the prompt,
 //! so what Tidewatch needs to say never touches the input box (pure).
 
-use crate::progress::{Ledger, Mark, real};
+use crate::progress::{Ledger, Mark, State, real};
 use crate::progress_mcp::UPDATE_TOOL;
 
 /// Asks the agent to refresh its ledger after the owner replied to a question or a wait.
@@ -36,11 +36,12 @@ fn short_name(text: &str) -> String {
 }
 
 /// The one line that tells the agent what its ledger still holds open, so a message that settles
-/// one of them reaches `update_progress`. A ledger that waits on the owner gets `LEDGER_CONTEXT`
-/// instead; `None` when nothing is open.
+/// one of them reaches `update_progress`. A ledger that waits on the owner, or waits and names
+/// nothing, gets `LEDGER_CONTEXT` instead; `None` when nothing is open.
 #[must_use]
 pub fn ledger_context(ledger: &Ledger) -> Option<String> {
-    if ledger.awaits_owner() {
+    let unnamed_wait = ledger.status.state == Some(State::Waiting) && ledger.waiting_on.is_none();
+    if ledger.awaits_owner() || unnamed_wait {
         return Some(LEDGER_CONTEXT.to_owned());
     }
     let open = open_items(ledger);
