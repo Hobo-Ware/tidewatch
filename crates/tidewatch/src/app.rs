@@ -229,6 +229,7 @@ pub(crate) struct Tidewatch {
     image_paste: picture_paste::Host,
     dev_scroll: Option<DevScroll>,
     dev_hover: Option<egui::Pos2>,
+    dev_hover_files: Option<std::path::PathBuf>,
     dev_copy: Option<DevCopy>,
     dev_reader: DevReader,
     trust: Trust,
@@ -444,6 +445,7 @@ impl Tidewatch {
             image_paste: picture_paste::Host::new(&cc.egui_ctx),
             dev_scroll: dev_view.scroll,
             dev_hover: dev_view.hover,
+            dev_hover_files: dev_view.hover_files.clone(),
             dev_copy: dev_view.copy,
             dev_reader: DevReader::from_env(),
             trust,
@@ -538,6 +540,7 @@ impl eframe::App for Tidewatch {
         self.drive_background_work(&ctx, now);
         let mut intent = self.read_shortcuts(&ctx);
         self.drive_image_paste(&ctx, now, &intent);
+        self.drive_file_drop(&ctx, &intent);
         self.show_tab_strip(ui, now, &mut intent);
         self.show_status_bar(ui, intent.active_id);
         self.show_central_panel(ui, &ctx, now, &mut intent);
@@ -554,6 +557,12 @@ impl eframe::App for Tidewatch {
         if let Some(at) = self.dev_hover.take() {
             raw_input.events.push(egui::Event::PointerMoved(at));
             ctx.request_repaint();
+        }
+        if let Some(path) = &self.dev_hover_files {
+            raw_input.hovered_files = vec![egui::HoveredFile {
+                path: Some(path.clone()),
+                ..egui::HoveredFile::default()
+            }];
         }
     }
 

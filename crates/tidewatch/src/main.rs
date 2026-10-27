@@ -57,6 +57,7 @@ mod due;
 mod due_view;
 mod emoji_pick;
 mod emoji_view;
+mod file_drop;
 mod file_nav;
 mod file_view;
 mod fix_dialog;

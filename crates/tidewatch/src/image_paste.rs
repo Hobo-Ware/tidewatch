@@ -5,7 +5,9 @@
 use std::path::{Path, PathBuf};
 use stdusk_egui::macos_paste::{ImagePasteHook, post_cmd_v};
 
-use tidewatch_core::image_paste::{Action, Clip, Target, decide, path_text, shot_name};
+use tidewatch_core::image_paste::{
+    Action, Clip, Target, decide, is_image_file, path_text, shot_name,
+};
 
 use crate::jobs::Jobs;
 
@@ -48,6 +50,23 @@ pub(crate) fn resolve(
             Ok(path) => delivered(vec![path]),
             Err(message) => Delivery::Failed(message),
         },
+    }
+}
+
+/// What files dropped from Finder become: into a text field, pictures turn into chips and the rest
+/// into path text; into a terminal, every file is typed as path text and a space follows the last,
+/// the way stdusk does.
+pub(crate) fn dropped(paths: &[PathBuf], target: Target) -> Vec<Delivery> {
+    match target {
+        Target::Terminal(_) if paths.is_empty() => Vec::new(),
+        Target::Terminal(_) => vec![Delivery::Text(format!("{} ", path_text(paths)))],
+        Target::TextField => {
+            let (pictures, others): (Vec<_>, Vec<_>) =
+                paths.iter().cloned().partition(|path| is_image_file(path));
+            let text = (!others.is_empty()).then(|| Delivery::Text(path_text(&others)));
+            let chips = (!pictures.is_empty()).then_some(Delivery::Pictures(pictures));
+            text.into_iter().chain(chips).collect()
+        }
     }
 }
 
