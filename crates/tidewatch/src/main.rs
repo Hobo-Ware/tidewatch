@@ -196,6 +196,8 @@ mod screen_kit;
 mod search_bar;
 mod segmented;
 mod selectable;
+mod services_glue;
+mod services_view;
 mod session_glue;
 mod session_save;
 mod session_writer;

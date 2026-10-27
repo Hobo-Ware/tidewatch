@@ -22,6 +22,7 @@ use stdusk_core::terminal::PtyTerm;
 use tidewatch_core::listener::Credential;
 use tidewatch_core::meeseeks::{Meeseeks, Phase};
 use tidewatch_core::meeseeks_log::Poofed;
+use tidewatch_core::service_supervisor::Carry;
 use tidewatch_core::status::{AgentStatus, Reason};
 use tidewatch_core::worktree::Worktree;
 
@@ -84,6 +85,19 @@ pub(crate) struct Handover {
     /// replacement serves the same one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) hook_port: Option<u16>,
+    /// The repo services, after every tab: the ptys of the live ones travel behind the tabs' own.
+    #[serde(default, rename = "service", skip_serializing_if = "Vec::is_empty")]
+    pub(crate) services: Vec<ServiceEntry>,
+}
+
+/// One repo service as the old window left it: where it stood, and whether a pty travels with it.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub(crate) struct ServiceEntry {
+    pub(crate) repo: PathBuf,
+    pub(crate) name: String,
+    #[serde(default)]
+    pub(crate) live: bool,
+    pub(crate) carry: Carry,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -158,7 +172,7 @@ impl Handover {
 
 impl Layout for Handover {
     fn pane_count(&self) -> usize {
-        self.live().count()
+        self.live().count() + self.services.iter().filter(|service| service.live).count()
     }
 }
 
@@ -249,6 +263,7 @@ pub(crate) fn plan<T>(
         focus: facts.focus,
         welcome: facts.welcome,
         hook_port: facts.hook_port,
+        services: Vec::new(),
     };
     (handover, order)
 }
@@ -260,6 +275,13 @@ pub(crate) struct Rebuilt<T> {
     pub(crate) credentials: Vec<(u64, Credential)>,
     /// What did not come back as it was, for the window to say.
     pub(crate) notes: Vec<String>,
+    /// Each repo service with its pty, `None` when none travelled or it could not be taken.
+    pub(crate) services: Vec<ResumedService<T>>,
+}
+
+pub(crate) struct ResumedService<T> {
+    pub(crate) entry: ServiceEntry,
+    pub(crate) term: Option<T>,
 }
 
 /// How a received terminal becomes a live one, and how a tab with none gets a shell.
@@ -352,6 +374,7 @@ pub(crate) fn rebuild<P, T>(
         ids.push(group_ids);
     }
     let mut tabs = tabs.ok_or("the layout has no tabs")?;
+    let services = resume_services(handover, &mut panes, adopt, &mut notes);
     for (group, group_ids) in handover.groups.iter().zip(&ids) {
         if let Some(id) = group_ids.get(group.selected).or(group_ids.first()) {
             tabs.select_id(*id);
@@ -359,7 +382,29 @@ pub(crate) fn rebuild<P, T>(
     }
     let front = handover.active_group.min(handover.groups.len() - 1);
     tabs.apply(Action::ShowGroup(front), || unreachable!("showing a group opens no tab"));
-    Ok(Rebuilt { tabs, credentials, notes })
+    Ok(Rebuilt { tabs, credentials, notes, services })
+}
+
+fn resume_services<P, T>(
+    handover: &Handover,
+    panes: &mut impl Iterator<Item = P>,
+    adopt: &mut dyn FnMut(P, &Path) -> std::io::Result<T>,
+    notes: &mut Vec<String>,
+) -> Vec<ResumedService<T>> {
+    handover
+        .services
+        .iter()
+        .map(|entry| {
+            let term = entry.live.then(|| panes.next()).flatten().and_then(|pane| {
+                adopt(pane, &entry.repo)
+                    .inspect_err(|_| {
+                        notes.push(format!("The service {} was started again.", entry.name));
+                    })
+                    .ok()
+            });
+            ResumedService { entry: entry.clone(), term }
+        })
+        .collect()
 }
 
 fn agent_tab(entry: &AgentEntry, dir: &Path, now: f64, notes: &mut Vec<String>) -> AgentTab {
@@ -506,12 +551,16 @@ pub(crate) fn adopt(
 
 /// Tells the old window it may let go, and only then takes the terminals' shells as this window's
 /// to stop. Everything must be live before this: nothing can be undone after it.
-pub(crate) fn confirm(incoming: &Incoming, tabs: &mut Tabs<Pane<PtyTerm>>) -> std::io::Result<()> {
-    let terms = tabs.items_mut().iter_mut().filter_map(|tab| match &mut tab.pane.body {
+pub(crate) fn confirm(
+    incoming: &Incoming,
+    tabs: &mut Tabs<Pane<PtyTerm>>,
+    services: &mut [ResumedService<PtyTerm>],
+) -> std::io::Result<()> {
+    let tab_terms = tabs.items_mut().iter_mut().filter_map(|tab| match &mut tab.pane.body {
         Body::Shell(term) => Some(term),
         _ => None,
     });
-    confirm_terms(incoming, terms)
+    confirm_terms(incoming, tab_terms.chain(services.iter_mut().filter_map(|s| s.term.as_mut())))
 }
 
 /// [`confirm`] for terminals that are not in tabs yet, over any layout that was received.

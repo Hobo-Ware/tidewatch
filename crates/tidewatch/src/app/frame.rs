@@ -80,6 +80,7 @@ impl Tidewatch {
         }
         reader_glue::start(&mut self.tabs, ctx, &self.dev_reader);
         reader_glue::drain(&mut self.tabs, &mut self.flow, ctx, now);
+        self.drive_services(ctx);
         self.drive_agents(ctx, now);
         self.drive_flow(ctx, now);
         self.drive_pr(ctx, now);
@@ -193,7 +194,8 @@ impl Tidewatch {
             || self.leftovers.is_open()
             || self.open_link.is_some()
             || !self.pending_pastes.is_empty()
-            || self.flow.modal_open();
+            || self.flow.modal_open()
+            || self.services_ui.dialog_open();
         let dialog = if self.closing.is_some() || self.takeover.dialog_open() {
             Dialog::TabChoice
         } else if other {

@@ -58,7 +58,7 @@ pub(super) fn view_gate(keys_free: bool, modal_open: bool) -> Gate {
     }
 }
 
-fn show_shell(
+pub(super) fn show_shell(
     ui: &mut egui::Ui,
     term: &mut PtyTerm,
     grid: &TerminalGrid,
@@ -83,6 +83,10 @@ fn show_shell(
 }
 
 impl TerminalGrid {
+    pub(super) fn resize(&self, term: &mut PtyTerm) {
+        term.resize(self.cols, self.rows);
+    }
+
     fn geom(&self) -> GridGeom {
         GridGeom {
             rect: self.rect,

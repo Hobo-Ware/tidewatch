@@ -12,6 +12,7 @@ use crate::session_save::{WindowView, saved_window};
 pub(super) enum RepoCommand {
     Open,
     Close,
+    AddService,
 }
 
 /// The folder dialog, on a job thread so the window keeps drawing; one at a time.
@@ -44,6 +45,7 @@ impl Tidewatch {
         match command {
             RepoCommand::Open => self.open_repo_dialog(""),
             RepoCommand::Close => self.begin_close_repo(ctx),
+            RepoCommand::AddService => self.open_add_service(ctx),
         }
     }
 

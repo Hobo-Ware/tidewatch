@@ -11,6 +11,7 @@ use tidewatch_core::events::{TabEvent, TabMessage};
 use tidewatch_core::job::Report;
 use tidewatch_core::link_board::Link;
 use tidewatch_core::progress::Ledger;
+use tidewatch_core::services_mcp::ServiceCall;
 use tidewatch_core::status::HookKind;
 
 use crate::agent_run::{Change, Finding, TermSnapshot};
@@ -81,6 +82,11 @@ pub(crate) enum Follow {
         tab: u64,
         summary: String,
     },
+    /// The agent called a repo service tool; its call waits for the app's answer.
+    Services {
+        tab: u64,
+        call: ServiceCall,
+    },
 }
 
 /// Hands one listener message to its tab. A message for a closed tab is dropped.
@@ -132,6 +138,9 @@ pub(crate) fn route<T>(tabs: &mut Tabs<Pane<T>>, message: TabMessage, now: f64) 
                 meeseeks.name = Some(name.clone());
             }
             None
+        }
+        TabEvent::Services(call) => {
+            Some(Follow::Services { tab: message.tab_id, call: call.clone() })
         }
         TabEvent::Hook(_) => None,
     };
