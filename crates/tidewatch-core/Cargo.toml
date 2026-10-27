@@ -10,6 +10,7 @@ base64.workspace = true
 gix.workspace = true
 httparse.workspace = true
 kelp-core.workspace = true
+resvg.workspace = true
 roxmltree.workspace = true
 serde.workspace = true
 serde_json.workspace = true
