@@ -16,6 +16,8 @@ const CODE_PX: f32 = 14.0;
 const HEADER_H: f32 = Size::Compact.height() + 8.0;
 const HEADER_PAD: f32 = 10.0;
 const BUTTON_H: f32 = Size::Compact.height();
+const BORDER: f32 = 1.0;
+pub(crate) const BUTTON_INSET: f32 = HEADER_PAD;
 const BUTTON_PAD: f32 = Size::Compact.pad();
 const ICON: f32 = 12.0;
 const ICON_GAP: f32 = 6.0;
@@ -98,14 +100,20 @@ fn strip(ui: &mut Ui, id: Id, lang: Option<&str>, text: &str) -> (Rect, Rect) {
             brand::MUTED,
         );
     }
+    let rect = copy_button(ui, id, header.right_center() - vec2(BUTTON_INSET, 0.0), text);
+    (header, rect)
+}
+
+pub(crate) fn corner_anchor(panel: Rect) -> Pos2 {
+    Pos2::new(panel.right() - BORDER - BUTTON_INSET, panel.top() + BORDER + HEADER_H / 2.0)
+}
+
+pub(crate) fn copy_button(ui: &mut Ui, id: Id, right_center: Pos2, text: &str) -> Rect {
     let now = ui.input(|input| input.time);
     let until = ui.data(|data| data.get_temp::<f64>(id)).unwrap_or(0.0);
     let copied = now < until;
-    let width = button_width(ui);
-    let rect = Rect::from_center_size(
-        header.right_center() - vec2(HEADER_PAD + width / 2.0, 0.0),
-        vec2(width, BUTTON_H),
-    );
+    let width = button_width(ui.painter());
+    let rect = Rect::from_center_size(right_center - vec2(width / 2.0, 0.0), vec2(width, BUTTON_H));
     let response = ui.interact(rect, id.with("copy"), Sense::click());
     paint_button(ui.painter(), rect, copied, &response);
     let response = response.on_hover_cursor(egui::CursorIcon::PointingHand);
@@ -117,18 +125,15 @@ fn strip(ui: &mut Ui, id: Id, lang: Option<&str>, text: &str) -> (Rect, Rect) {
     } else if copied {
         ui.ctx().request_repaint_after(std::time::Duration::from_secs_f64(until - now));
     }
-    (header, rect)
+    rect
 }
 
-fn label_width(ui: &Ui, text: &str) -> f32 {
-    ui.painter()
-        .layout_no_wrap(text.to_owned(), body(Size::Compact.font()), Color32::WHITE)
-        .size()
-        .x
+fn label_width(painter: &Painter, text: &str) -> f32 {
+    painter.layout_no_wrap(text.to_owned(), body(Size::Compact.font()), Color32::WHITE).size().x
 }
 
-fn button_width(ui: &Ui) -> f32 {
-    let text = label_width(ui, "Copy").max(label_width(ui, "Copied"));
+pub(crate) fn button_width(painter: &Painter) -> f32 {
+    let text = label_width(painter, "Copy").max(label_width(painter, "Copied"));
     2.0 * BUTTON_PAD + ICON + ICON_GAP + text.ceil()
 }
 

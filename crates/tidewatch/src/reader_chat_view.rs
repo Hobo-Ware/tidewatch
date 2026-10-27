@@ -287,7 +287,7 @@ fn user_bubble(
                             .layout_job(emoji_text::slot_job(ui.ctx(), measured))
                             .size()
                             .x;
-                        let code = reader_markdown::pieces(&markdown, false)
+                        let blocks = reader_markdown::pieces(&markdown, false)
                             .iter()
                             .filter_map(|piece| match piece {
                                 Piece::Code { text, .. } => {
@@ -296,12 +296,15 @@ fn user_bubble(
                                 Piece::Image(label) => {
                                     Some(reader_markdown::image_chip_width(ui.painter(), label))
                                 }
+                                Piece::Quote(text) => {
+                                    Some(reader_markdown::quote_width(ui.painter(), text))
+                                }
                                 _ => None,
                             })
                             .fold(0.0, f32::max);
                         let text_w =
                             user_text_width(natural, user_markup::has_indented_block(&said), room)
-                                .max(code.min(room));
+                                .max(blocks.min(room));
                         let chips_w = pictures::block_width(pictures.len(), room);
                         let shown_w = if has_text { text_w.max(chips_w) } else { chips_w };
                         ui.set_width(shown_w.min(room));
