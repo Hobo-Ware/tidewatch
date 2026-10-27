@@ -8,6 +8,7 @@ fn link(url: &str, title: &str, seen: i64, from: TitleFrom) -> Link {
         note: None,
         first_seen_ms: seen,
         title_from: from,
+        state: crate::link_board::LinkState::Unknown,
     }
 }
 

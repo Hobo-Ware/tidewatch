@@ -3,7 +3,7 @@
 use egui::{Event, Modifiers, PointerButton, Pos2, RawInput, Rect, Sense, Shape, pos2, vec2};
 use tidewatch_core::done_check::{Kind, Line, Report, Status};
 use tidewatch_core::end_block::EndBlock;
-use tidewatch_core::link_board::{Link, LinkBoard, TitleFrom};
+use tidewatch_core::link_board::{Link, LinkBoard, LinkState, TitleFrom};
 use tidewatch_core::progress::Ledger;
 
 use crate::done_check_glue::Look;
@@ -831,6 +831,7 @@ fn shared(url: &str, title: &str, note: Option<&str>, ago_min: i64) -> Link {
         note: note.map(str::to_owned),
         first_seen_ms: AT - ago_min * MIN,
         title_from: TitleFrom::Agent,
+        state: LinkState::Unknown,
     }
 }
 
@@ -1037,4 +1038,109 @@ fn a_links_card_with_a_long_title_and_meta_is_cut_not_overlapped() {
         let panel = with_links(ASKING, width, board.clone());
         assert_clean(&panel, width);
     }
+}
+
+fn archived(url: &str, title: &str, ago_min: i64, state: LinkState) -> Link {
+    Link { state, ..shared(url, title, None, ago_min) }
+}
+
+fn with_archive() -> LinkBoard {
+    let mut board = five_links();
+    board.absorb(&archived(
+        "https://github.com/o/r/pull/9",
+        "#9 fix: round totals",
+        700,
+        LinkState::Merged,
+    ));
+    board.absorb(&archived(
+        "https://github.com/o/r/issues/7",
+        "#7 Export fails",
+        900,
+        LinkState::Closed,
+    ));
+    board
+}
+
+#[test]
+fn merged_and_closed_links_sit_in_a_folded_group_at_the_bottom_and_stay_out_of_the_count() {
+    let panel = with_links(ASKING, 520.0, with_archive());
+    assert!(panel.drawn("Merged and closed (2)"));
+    for hidden in ["#9 fix: round totals", "#7 Export fails", "Merged", "Closed"] {
+        assert!(!panel.drawn(hidden), "{hidden}");
+    }
+    assert!(panel.drawn("5"), "the header counts the main list only");
+    assert!(!panel.drawn("7"));
+    assert!(panel.drawn("Show all 5"));
+    assert!(top_of(&panel, "Show all 5") < top_of(&panel, "Merged and closed (2)"));
+}
+
+#[test]
+fn a_click_on_the_group_header_opens_it_and_a_second_click_folds_it_again() {
+    let mut panel = with_links(ASKING, 520.0, with_archive());
+    let before = top_of(&panel, "NEEDS YOU");
+    let at = panel.center_of("Merged and closed (2)");
+    panel.click(at);
+    assert!(panel.state.archive_links);
+    for shown in ["#9 fix: round totals", "#7 Export fails", "Merged", "Closed"] {
+        assert!(panel.drawn(shown), "{shown}");
+    }
+    assert!(top_of(&panel, "NEEDS YOU") > before + 80.0, "the rows pushed the question down");
+    assert!(top_of(&panel, "Merged and closed (2)") < top_of(&panel, "#9 fix: round totals"));
+    assert_clean(&panel, 520.0);
+    let at = panel.center_of("Merged and closed (2)");
+    panel.click(at);
+    assert!(!panel.state.archive_links && !panel.drawn("#9 fix: round totals"));
+}
+
+#[test]
+fn an_archived_row_opens_and_copies_like_any_other_row() {
+    let mut panel = with_links(ASKING, 520.0, with_archive());
+    let at = panel.center_of("Merged and closed (2)");
+    panel.click(at);
+    let at = panel.center_of("#9 fix: round totals");
+    assert_eq!(panel.click(at), None);
+    assert_eq!(panel.opened, ["https://github.com/o/r/pull/9"]);
+    let copies: Vec<Rect> = panel
+        .texts
+        .iter()
+        .filter(|(text, _)| text == stdusk_egui::ui::icons::COPY)
+        .map(|(_, rect)| *rect)
+        .collect();
+    assert_eq!(copies.len(), 5, "one copy button per drawn row: three main and two archived");
+    let last = copies.iter().max_by(|a, b| a.top().total_cmp(&b.top())).unwrap();
+    assert_eq!(
+        panel.click(last.center()),
+        Some(Action::CopyLink("https://github.com/o/r/issues/7".to_owned()))
+    );
+}
+
+#[test]
+fn no_card_text_overlaps_or_leaves_the_card_with_the_group_folded_or_open_at_any_width() {
+    for width in [200.0, 240.0, 300.0, 420.0, 640.0] {
+        let mut panel = with_links(ASKING, width, with_archive());
+        assert_clean(&panel, width);
+        let at = panel.center_of("Merged and closed (2)");
+        panel.click(at);
+        assert_clean(&panel, width);
+    }
+}
+
+#[test]
+fn a_board_with_nothing_merged_or_closed_has_no_group() {
+    let panel = with_links(ASKING, 520.0, five_links());
+    assert!(!panel.texts.iter().any(|(text, _)| text.starts_with("Merged and closed")));
+}
+
+#[test]
+fn a_board_of_only_merged_links_still_shows_the_card_with_the_group() {
+    let mut board = LinkBoard::default();
+    board.absorb(&archived(
+        "https://github.com/o/r/pull/9",
+        "#9 fix: round totals",
+        70,
+        LinkState::Merged,
+    ));
+    let panel = with_links(ASKING, 420.0, board);
+    assert!(panel.drawn("LINKS") && panel.drawn("Merged and closed (1)"));
+    assert!(!panel.drawn("#9 fix: round totals"));
 }

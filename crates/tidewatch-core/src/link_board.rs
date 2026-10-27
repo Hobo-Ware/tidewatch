@@ -31,6 +31,11 @@ pub enum Kind {
 }
 
 impl Kind {
+    #[must_use]
+    pub fn has_state(self) -> bool {
+        matches!(self, Self::Pr | Self::Issue)
+    }
+
     pub const ALL: [Self; 5] = [Self::Artifact, Self::Pr, Self::Issue, Self::Doc, Self::Web];
 
     #[must_use]
@@ -41,6 +46,41 @@ impl Kind {
             Self::Issue => "Issue",
             Self::Doc => "Doc",
             Self::Web => "Web",
+        }
+    }
+}
+
+/// Where a pull request or issue stands, as far as Tidewatch has looked. A link of any other kind
+/// stays `Unknown`.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LinkState {
+    #[default]
+    Unknown,
+    Open,
+    Merged,
+    Closed,
+}
+
+impl LinkState {
+    #[must_use]
+    pub fn is_unknown(&self) -> bool {
+        *self == Self::Unknown
+    }
+
+    /// Merged or closed: nothing more will come of the link, so it is not looked up again.
+    #[must_use]
+    pub fn archived(self) -> bool {
+        matches!(self, Self::Merged | Self::Closed)
+    }
+
+    #[must_use]
+    pub fn from_gh(word: &str) -> Self {
+        match word.trim().to_ascii_uppercase().as_str() {
+            "OPEN" => Self::Open,
+            "MERGED" => Self::Merged,
+            "CLOSED" => Self::Closed,
+            _ => Self::Unknown,
         }
     }
 }
@@ -56,6 +96,8 @@ pub struct Link {
     pub first_seen_ms: i64,
     #[serde(default)]
     pub title_from: TitleFrom,
+    #[serde(default, skip_serializing_if = "LinkState::is_unknown")]
+    pub state: LinkState,
 }
 
 /// A link as an agent reports it, checked.
@@ -75,6 +117,7 @@ impl LinkReport {
             note: self.note,
             first_seen_ms: now_ms,
             title_from: TitleFrom::Agent,
+            state: LinkState::Unknown,
         }
     }
 }
@@ -195,7 +238,8 @@ impl LinkBoard {
     }
 
     /// Takes one link in. A known URL keeps its first-seen time; a non-empty title from the same or
-    /// a higher source and a non-empty `for` replace the old ones. Returns whether anything changed.
+    /// a higher source, a non-empty `for` and a known state replace the old ones. Returns whether
+    /// anything changed.
     pub fn absorb(&mut self, incoming: &Link) -> bool {
         let key = incoming.key();
         let Some(known) = self.links.iter_mut().find(|link| link.key() == key) else {
@@ -208,6 +252,9 @@ impl LinkBoard {
         if has_title && (known.title.trim().is_empty() || incoming.title_from >= known.title_from) {
             known.title.clone_from(&incoming.title);
             known.title_from = incoming.title_from;
+        }
+        if !incoming.state.is_unknown() {
+            known.state = incoming.state;
         }
         if let Some(note) = incoming.note.as_ref().filter(|note| !note.trim().is_empty()) {
             known.note = Some(note.clone());

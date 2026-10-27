@@ -22,39 +22,46 @@ const FOLD_H: f32 = 36.0;
 const PAD_X: f32 = 12.0;
 const GAP: f32 = 10.0;
 const ICON_PX: f32 = 14.0;
+const CHEVRON: f32 = 14.0;
 const MIN_TEXT_W: f32 = 24.0;
+const MIN_TITLE_BESIDE_TAG: f32 = 80.0;
 pub(crate) const READ_FIRST_H: f32 = 22.0;
 pub(crate) const READ_FIRST_MAX: usize = 2;
 
-/// The card: a header, the listed rows and the fold under them. Returns the URL whose copy button
-/// was pressed. `all` is whether the fold is open; a press on it flips it.
 pub(crate) fn show(
     ui: &mut Ui,
     width: f32,
     board: &LinkBoard,
     now_ms: i64,
-    all: &mut bool,
+    (all, archive): (&mut bool, &mut bool),
 ) -> Option<String> {
-    let rows = listed(board, *all);
-    let count = board.len();
-    let fold = link_model::fold_label(count, *all);
-    let height = HEAD_H + ROW_H * rows.len() as f32 + fold.as_ref().map_or(0.0, |_| FOLD_H);
+    let (main, archived) = link_model::split(board);
+    let rows = listed(&main, *all);
+    let fold = link_model::fold_label(main.len(), *all);
+    let group = link_model::archive_label(archived.len());
+    let archived_rows = if *archive { archived.as_slice() } else { &[] };
+    let height = HEAD_H
+        + ROW_H * (rows.len() + archived_rows.len()) as f32
+        + FOLD_H * (usize::from(fold.is_some()) + usize::from(group.is_some())) as f32;
     let (rect, _) = ui.allocate_exact_size(vec2(width, height), Sense::hover());
     let painter = ui.painter().clone();
     paint_item(&painter, rect, false);
-    head(ui, rect, count);
+    head(ui, rect, main.len());
     let tag_col = tag_width(&painter, "Artifact");
     let mut copied = None;
-    for (index, link) in rows.iter().enumerate() {
-        let top = rect.top() + HEAD_H + ROW_H * index as f32;
-        let row = Rect::from_min_size(pos2(rect.left(), top), vec2(width, ROW_H));
-        painter.hline(row.x_range(), row.top(), Stroke::new(1.0, brand::ITEM_LINE));
-        if row_of(ui, row, link, (index, tag_col), now_ms) {
-            copied = Some(link.url.clone());
+    let mut top = rect.top() + HEAD_H;
+    let mut place = |ui: &mut Ui, links: &[&Link], first: usize, top: &mut f32| {
+        for (at, link) in links.iter().enumerate() {
+            let row = Rect::from_min_size(pos2(rect.left(), *top), vec2(width, ROW_H));
+            painter.hline(row.x_range(), row.top(), Stroke::new(1.0, brand::ITEM_LINE));
+            if row_of(ui, row, link, (first + at, tag_col), now_ms) {
+                copied = Some(link.url.clone());
+            }
+            *top += ROW_H;
         }
-    }
+    };
+    place(ui, rows, 0, &mut top);
     if let Some(label) = fold {
-        let top = rect.top() + HEAD_H + ROW_H * rows.len() as f32;
         let area = Rect::from_min_size(pos2(rect.left(), top), vec2(width, FOLD_H));
         painter.hline(area.x_range(), area.top(), Stroke::new(1.0, brand::ITEM_LINE));
         let galley = painter.layout_no_wrap(label, body(TEXT_SECONDARY), brand::TEAL_TEXT);
@@ -68,8 +75,47 @@ pub(crate) fn show(
         if response.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
             *all = !*all;
         }
+        top += FOLD_H;
     }
+    if let Some(label) = group {
+        let area = Rect::from_min_size(pos2(rect.left(), top), vec2(width, FOLD_H));
+        painter.hline(area.x_range(), area.top(), Stroke::new(1.0, brand::ITEM_LINE));
+        if archive_header(ui, area, &label, *archive) {
+            *archive = !*archive;
+        }
+        top += FOLD_H;
+    }
+    place(ui, archived_rows, rows.len(), &mut top);
     copied
+}
+
+fn archive_header(ui: &Ui, area: Rect, label: &str, open: bool) -> bool {
+    let painter = ui.painter();
+    let response = ui.interact(area, ui.id().with("links-archive"), Sense::click());
+    let ink = if response.hovered() { brand::TEXT } else { brand::SOFT };
+    let mid = area.center().y;
+    let caret = pos2(area.left() + PAD_X + CHEVRON / 2.0, mid);
+    let stroke = Stroke::new(1.5, ink);
+    let half = CHEVRON / 3.0;
+    let points = if open {
+        [
+            caret + vec2(-half, -half / 2.0),
+            caret + vec2(0.0, half / 2.0),
+            caret + vec2(half, -half / 2.0),
+        ]
+    } else {
+        [
+            caret + vec2(-half / 2.0, -half),
+            caret + vec2(half / 2.0, 0.0),
+            caret + vec2(-half / 2.0, half),
+        ]
+    };
+    painter.line_segment([points[0], points[1]], stroke);
+    painter.line_segment([points[1], points[2]], stroke);
+    let galley = painter.layout_no_wrap(label.to_owned(), body(TEXT_SECONDARY), ink);
+    let left = area.left() + PAD_X + CHEVRON + 6.0;
+    painter.galley(pos2(left, mid - galley.size().y / 2.0), galley, ink);
+    response.on_hover_cursor(egui::CursorIcon::PointingHand).clicked()
 }
 
 fn head(ui: &Ui, rect: Rect, count: usize) {
@@ -114,9 +160,19 @@ fn row_of(
     let button = Size::Compact.height();
     let text_left = row.left() + PAD_X + tag_col + GAP;
     let button_left = row.right() - PAD_X - button;
-    let text_w = (button_left - GAP - text_left).max(MIN_TEXT_W);
-    let meta =
-        ellipsized(&painter, &link_model::meta(link, now_ms), body(TEXT_TAG), brand::MUTED, text_w);
+    let mut text_right = button_left - GAP;
+    let mut meta = link_model::meta(link, now_ms);
+    if let Some(word) = link_model::state_tag(link) {
+        let left = text_right - tag_width(&painter, word);
+        if left - GAP - text_left >= MIN_TITLE_BESIDE_TAG {
+            paint_tag(&painter, (left, mid), word, brand::MUTED, TagFill::Line(brand::ITEM_LINE));
+            text_right = left - GAP;
+        } else {
+            meta = format!("{word} \u{b7} {meta}");
+        }
+    }
+    let text_w = (text_right - text_left).max(MIN_TEXT_W);
+    let meta = ellipsized(&painter, &meta, body(TEXT_TAG), brand::MUTED, text_w);
     let probe = ellipsized(&painter, &link.title, body(TEXT_BODY), brand::TEXT, text_w);
     let block = probe.size().y + meta.size().y + 1.0;
     let top = mid - block / 2.0;
