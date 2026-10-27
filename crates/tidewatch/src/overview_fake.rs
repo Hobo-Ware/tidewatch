@@ -126,7 +126,9 @@ fn row(id: u64, spec: &Spec) -> Row {
         done_check: None,
         look: None,
         job_line: None,
-        avatar: None,
+        avatar: crate::avatar_glue::fake_requested()
+            .then(|| crate::avatar_glue::fake_face(id as usize))
+            .flatten(),
         kind: spec.kind.clone(),
         auto_pick: None,
         idle_secs: spec.mins * 60.0,

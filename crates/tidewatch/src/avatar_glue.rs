@@ -1,46 +1,65 @@
 //! The app's side of agent avatars: each agent tab's avatar is read from `avatar.json` when the tab
 //! appears, replaced when the agent calls `set_avatar`, and cleared by Use letter.
 //!
-//! `TIDEWATCH_FAKE_AVATARS=1` gives the agent tabs the six mockup icons in turn and writes nothing.
+//! An avatar that fails the readability check when it loads (see `avatar_check.rs`) shows the letter,
+//! its file is removed and the tab is queued once for a Redraw ask.
+//!
+//! `TIDEWATCH_FAKE_AVATARS=1` gives the agent tabs the mockup icons in turn, one of them too dark to
+//! read so its tab shows the letter, and writes nothing.
 
 use std::collections::HashMap;
 use std::sync::Arc;
 
 use tidewatch_core::avatar::{Avatar, clean};
+use tidewatch_core::avatar_check;
 use tidewatch_core::avatar_store;
 use tidewatch_core::paths::{avatar_asked_file_beside, avatar_file_beside};
 
 use crate::job_glue::Facts;
 use crate::jobs::Jobs;
 
-pub(crate) const FAKE: [(&str, &str); 6] = [
+pub(crate) const FAKE: [(&str, &str); 7] = [
     (
-        r##"<svg viewBox="0 0 64 64"><rect width="64" height="64" rx="16" fill="#123b38"/><ellipse cx="32" cy="20" rx="16" ry="6" fill="none" stroke="#2dd4bf" stroke-width="3"/><path d="M16 20v24c0 3.3 7.2 6 16 6s16-2.7 16-6V20" fill="none" stroke="#2dd4bf" stroke-width="3"/><path d="M16 36c5 4 11-4 16 0s11 4 16 0" fill="none" stroke="#99f6e4" stroke-width="3"/></svg>"##,
-        "Filling 58k old orders: a table slowly filling with water.",
+        r##"<svg viewBox="0 0 24 24"><path d="M7 11V8a5 5 0 0 1 10 0v3h-2V8a3 3 0 0 0-6 0v3z" fill="#e6e8ec"/><path d="M6 11h12v9H6z M12 13.5a1.6 1.6 0 1 0 0.01 0z" fill="#ff6b6b"/></svg>"##,
+        "Securing the login flow: a lock.",
     ),
     (
-        r##"<svg viewBox="0 0 64 64"><rect width="64" height="64" rx="16" fill="#3a2a14"/><circle cx="32" cy="32" r="10" fill="none" stroke="#fb923c" stroke-width="3"/><path d="M32 12v7M32 45v7M12 32h7M45 32h7M18 18l5 5M41 41l5 5M18 46l5-5M41 23l5-5" stroke="#fb923c" stroke-width="3" stroke-linecap="round"/></svg>"##,
-        "Fixing the build: a gear that needs a turn.",
+        r##"<svg viewBox="0 0 24 24"><path d="M5 7h11a2 2 0 0 1 2 2v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V9a2 2 0 0 1 2-2z" fill="#f2b84b"/><path d="M9 9.5l5 2.5-5 2.5z" fill="#141413"/></svg>"##,
+        "Syncing the media library: a video.",
     ),
     (
-        r##"<svg viewBox="0 0 64 64"><rect width="64" height="64" rx="16" fill="#2a2140"/><circle cx="28" cy="28" r="11" fill="none" stroke="#c4b5fd" stroke-width="3"/><path d="M36 36l12 12" stroke="#c4b5fd" stroke-width="4" stroke-linecap="round"/></svg>"##,
-        "Reviewing the login code: a magnifier.",
+        r##"<svg viewBox="0 0 24 24"><path d="M7 11V8a5 5 0 0 1 10 0v3h1v10H6V11z" fill="#2a2f3a"/><circle cx="12" cy="15" r="1.6" fill="#8a1c1c"/></svg>"##,
+        "Locking down the vault: a dark lock nobody can read.",
     ),
     (
-        r##"<svg viewBox="0 0 64 64"><rect width="64" height="64" rx="16" fill="#3a1830"/><rect x="12" y="22" width="14" height="14" rx="3" fill="none" stroke="#f472b6" stroke-width="3"/><rect x="38" y="28" width="14" height="14" rx="3" fill="#f472b6"/><path d="M28 29h8M33 25l4 4-4 4" stroke="#f472b6" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" fill="none"/></svg>"##,
-        "Moving the billing tables: a box going across.",
+        r##"<svg viewBox="0 0 24 24"><path d="M4 6h4v4H4z M10 6h4v4h-4z" fill="#b49cff"/><path d="M16 6h4v4h-4z M4 17l5-3 4 2 7-4v2l-7 4-4-2-5 3z" fill="#f2b84b"/></svg>"##,
+        "Tuning the recommendations: tiles and a rising line.",
     ),
     (
-        r##"<svg viewBox="0 0 64 64"><rect width="64" height="64" rx="16" fill="#16301f"/><path d="M26 14h12M28 14v14L18 46c-1.5 3 .5 5 3.5 5h21c3 0 5-2 3.5-5L36 28V14" fill="none" stroke="#4ade80" stroke-width="3" stroke-linejoin="round"/><path d="M22 40h20" stroke="#86efac" stroke-width="3"/></svg>"##,
-        "Chasing a flaky test: a flask.",
+        r##"<svg viewBox="0 0 24 24"><path d="M4 6h7v9H4z" fill="#ff6b6b"/><path d="M13 7h7v1.6h-7z M13 10.2h7v1.6h-7z M13 13.4h5v1.6h-5z M4 17.5h16v1.5H4z" fill="#e6e8ec"/></svg>"##,
+        "Writing the season recap: a poster and its lines.",
     ),
     (
-        r##"<svg viewBox="0 0 64 64"><rect width="64" height="64" rx="16" fill="#16263f"/><path d="M20 12h18l8 8v32H20z" fill="none" stroke="#60a5fa" stroke-width="3" stroke-linejoin="round"/><path d="M26 30h14M26 37h14M26 44h9" stroke="#93c5fd" stroke-width="3" stroke-linecap="round"/></svg>"##,
-        "Sweeping the docs: a page.",
+        r##"<svg viewBox="0 0 24 24"><path d="M4 20V14h3v6z M10 20V11h3v9z M16 20V8h3v12z" fill="#4cd27a"/><path d="M4 10l5-4 4 3 6-5 1 1.4-7 5.6-4-3-4.2 3.4z" fill="#e6e8ec"/></svg>"##,
+        "Charting profit and spend: bars and a trend line.",
+    ),
+    (
+        r##"<svg viewBox="0 0 24 24"><path d="M4 5h16v11H10l-4 3v-3H4z" fill="#ff6b6b"/><path d="M8 10.5l1.4-1.4 2 2 4.2-4.2 1.4 1.4-5.6 5.6z" fill="#ffffff"/></svg>"##,
+        "Checking the farewell worker: a speech bubble with a tick.",
     ),
 ];
 
-const MEESEEKS_SVG: &str = include_str!("../../../assets/meeseeks.svg");
+pub(crate) fn fake_requested() -> bool {
+    std::env::var_os("TIDEWATCH_FAKE_AVATARS").is_some_and(|v| !v.is_empty() && v != "0")
+}
+
+/// The `n`th mockup icon through the same checks a real avatar passes: `None` for the dark one.
+pub(crate) fn fake_face(n: usize) -> Option<Arc<Avatar>> {
+    let (svg, reason) = FAKE[n % FAKE.len()];
+    clean(svg, reason).ok().filter(|avatar| avatar_check::check(&avatar.svg).is_ok()).map(Arc::new)
+}
+
+pub(crate) const MEESEEKS_SVG: &str = include_str!("../../../assets/meeseeks.svg");
 
 pub(crate) fn meeseeks_avatar() -> Arc<Avatar> {
     static FACE: std::sync::OnceLock<Arc<Avatar>> = std::sync::OnceLock::new();
@@ -55,6 +74,7 @@ pub(crate) fn meeseeks_avatar() -> Arc<Avatar> {
 
 pub(crate) enum Done {
     Loaded { tab: u64, avatar: Option<Box<Avatar>> },
+    Unreadable { tab: u64 },
     Marked,
     Cleared,
 }
@@ -71,6 +91,7 @@ pub(crate) struct Host {
     fake: bool,
     fake_next: usize,
     fixed: Vec<u64>,
+    unreadable: Vec<u64>,
 }
 
 impl Host {
@@ -82,13 +103,12 @@ impl Host {
             fake,
             fake_next: 0,
             fixed: Vec::new(),
+            unreadable: Vec::new(),
         }
     }
 
     pub(crate) fn from_env(writable: bool) -> Self {
-        let fake =
-            std::env::var_os("TIDEWATCH_FAKE_AVATARS").is_some_and(|v| !v.is_empty() && v != "0");
-        Self::new(writable, fake)
+        Self::new(writable, fake_requested())
     }
 
     pub(crate) fn get(&self, tab: u64) -> Option<&Arc<Avatar>> {
@@ -115,10 +135,19 @@ impl Host {
     pub(crate) fn tick(&mut self, tabs: &[Facts<'_>], ctx: &egui::Context) {
         self.tabs.retain(|id, _| tabs.iter().any(|facts| facts.id == *id));
         for done in self.jobs.drain() {
-            if let Done::Loaded { tab, avatar } = done
-                && matches!(self.tabs.get(&tab), Some(Slot::Loading))
-            {
-                self.tabs.insert(tab, Slot::Known(avatar.map(|avatar| Arc::new(*avatar))));
+            match done {
+                Done::Loaded { tab, avatar }
+                    if matches!(self.tabs.get(&tab), Some(Slot::Loading)) =>
+                {
+                    self.tabs.insert(tab, Slot::Known(avatar.map(|avatar| Arc::new(*avatar))));
+                }
+                Done::Unreadable { tab } if matches!(self.tabs.get(&tab), Some(Slot::Loading)) => {
+                    self.tabs.insert(tab, Slot::Known(None));
+                    if self.writable {
+                        self.unreadable.push(tab);
+                    }
+                }
+                _ => {}
             }
         }
         for facts in tabs {
@@ -126,19 +155,31 @@ impl Host {
                 continue;
             }
             if self.fake {
-                let (svg, reason) = FAKE[self.fake_next % FAKE.len()];
+                let avatar = fake_face(self.fake_next);
                 self.fake_next += 1;
-                let avatar = clean(svg, reason).ok().map(Arc::new);
                 self.tabs.insert(facts.id, Slot::Known(avatar));
             } else {
-                let (id, file) = (facts.id, avatar_file_beside(facts.notes_file));
-                self.jobs.spawn(ctx, move || Done::Loaded {
-                    tab: id,
-                    avatar: avatar_store::load(&file).map(Box::new),
+                let (id, notes, writable) = (facts.id, facts.notes_file, self.writable);
+                let (file, marker) = (avatar_file_beside(notes), avatar_asked_file_beside(notes));
+                self.jobs.spawn(ctx, move || match avatar_store::load(&file) {
+                    Some(avatar) if avatar_check::check(&avatar.svg).is_err() => {
+                        if writable {
+                            let _ = avatar_store::clear(&file);
+                            let _ = avatar_store::mark_asked(&marker);
+                        }
+                        Done::Unreadable { tab: id }
+                    }
+                    found => Done::Loaded { tab: id, avatar: found.map(Box::new) },
                 });
                 self.tabs.insert(facts.id, Slot::Loading);
             }
         }
+    }
+
+    /// The tabs whose saved avatar failed the check since the last call, each once: they show the
+    /// letter and are to be asked to redraw.
+    pub(crate) fn take_unreadable(&mut self) -> Vec<u64> {
+        std::mem::take(&mut self.unreadable)
     }
 
     /// The agent called `set_avatar`; the file is saved already.

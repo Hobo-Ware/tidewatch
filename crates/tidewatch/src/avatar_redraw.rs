@@ -1,6 +1,7 @@
 //! Redraw: the avatar ask goes to the tab's agent through the one send gate. An agent that is busy
 //! is not refused: the ask is held and typed once the agent is idle, and only then does the owner
-//! hear that it went.
+//! hear that it went. An avatar saved before the readability check that fails it is queued here once
+//! when it loads.
 
 use std::time::Duration;
 
@@ -44,6 +45,13 @@ impl Waiting {
     pub(crate) fn add(&mut self, tab: u64) {
         if !self.tabs.contains(&tab) {
             self.tabs.push(tab);
+        }
+    }
+
+    /// Queues the tabs whose saved avatar failed the readability check, so each is asked once when idle.
+    pub(crate) fn queue_unreadable(&mut self, host: &mut crate::avatar_glue::Host) {
+        for tab in host.take_unreadable() {
+            self.add(tab);
         }
     }
 

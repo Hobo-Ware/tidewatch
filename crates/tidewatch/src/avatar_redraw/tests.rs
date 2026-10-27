@@ -55,16 +55,21 @@ fn set_status(tabs: &mut Tabs<Pane<PtyTerm>>, status: AgentStatus) {
 fn screen(tabs: &Tabs<Pane<PtyTerm>>) -> String {
     match &tabs.items()[0].pane.body {
         crate::pane::Body::Shell(term) => {
-            crate::job_glue::screen_rows(&term.grid_snapshot()).join("\n")
+            let rows = crate::job_glue::screen_rows(&term.grid_snapshot());
+            rows.concat().split_whitespace().collect()
         }
         _ => String::new(),
     }
 }
 
+fn asked() -> String {
+    ASK.split_whitespace().collect()
+}
+
 fn typed_within_a_while(tabs: &Tabs<Pane<PtyTerm>>) -> bool {
     let started = Instant::now();
     while started.elapsed() < Duration::from_secs(5) {
-        if screen(tabs).contains(ASK) {
+        if screen(tabs).contains(&asked()) {
             return true;
         }
         std::thread::sleep(Duration::from_millis(20));
@@ -95,13 +100,13 @@ fn a_busy_agent_is_asked_nothing_until_it_is_idle_and_then_once() {
         assert!(waiting.holds(TAB), "the ask is held while the agent works");
     }
     std::thread::sleep(Duration::from_millis(300));
-    assert!(!screen(&tabs).contains(ASK), "nothing was typed into a working agent");
+    assert!(!screen(&tabs).contains(&asked()), "nothing was typed into a working agent");
     set_status(&mut tabs, AgentStatus::Done);
     let toasts = waiting.drive(&mut tabs, &mut flow, &ctx, 4.0);
     assert!(typed_within_a_while(&tabs), "{}", screen(&tabs));
     assert_eq!(toasts, ["Asked main to redraw its icon"]);
     assert_eq!(waiting.drive(&mut tabs, &mut flow, &ctx, 5.0), Vec::<String>::new());
-    assert_eq!(screen(&tabs).matches(ASK).count(), 1, "asked once");
+    assert_eq!(screen(&tabs).matches(&asked()).count(), 1, "asked once");
 }
 
 #[test]
@@ -136,4 +141,42 @@ fn asking_twice_while_it_waits_holds_one_ask() {
     waiting.add(TAB);
     waiting.add(TAB);
     assert_eq!(waiting.tabs, [TAB]);
+}
+
+#[test]
+fn a_saved_avatar_that_fails_the_check_shows_the_letter_and_asks_its_idle_agent_to_redraw_once() {
+    use std::path::PathBuf;
+    use tidewatch_core::avatar::clean;
+    use tidewatch_core::avatar_store;
+    use tidewatch_core::paths::avatar_file_beside;
+
+    use crate::avatar_glue::Host;
+    use crate::job_glue::Facts;
+
+    let dir = tempfile::tempdir().unwrap();
+    let notes: PathBuf = dir.path().join("notes.json");
+    let dark =
+        "<svg viewBox=\"0 0 64 64\"><circle cx=\"32\" cy=\"32\" r=\"20\" fill=\"#2a2f3a\"/></svg>";
+    avatar_store::save(&avatar_file_beside(&notes), &clean(dark, "old").unwrap()).unwrap();
+    let (ctx, mut host) = (Context::default(), Host::new(true, false));
+    let mut waiting = Waiting::default();
+    let started = Instant::now();
+    while !waiting.holds(TAB) && started.elapsed() < Duration::from_secs(5) {
+        host.tick(&[Facts { id: TAB, notes_file: &notes }], &ctx);
+        waiting.queue_unreadable(&mut host);
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    assert!(host.get(TAB).is_none(), "the tab shows the letter");
+    assert!(waiting.holds(TAB), "one redraw ask is queued");
+
+    let mut tabs = agent_in(AgentStatus::Working);
+    let mut flow = Flow::new(Tools::default());
+    assert_eq!(waiting.drive(&mut tabs, &mut flow, &ctx, 1.0), Vec::<String>::new());
+    set_status(&mut tabs, AgentStatus::Done);
+    assert_eq!(waiting.drive(&mut tabs, &mut flow, &ctx, 2.0), ["Asked main to redraw its icon"]);
+    assert!(typed_within_a_while(&tabs), "{}", screen(&tabs));
+    host.tick(&[Facts { id: TAB, notes_file: &notes }], &ctx);
+    waiting.queue_unreadable(&mut host);
+    assert_eq!(waiting.drive(&mut tabs, &mut flow, &ctx, 3.0), Vec::<String>::new());
+    assert_eq!(screen(&tabs).matches(&asked()).count(), 1, "asked once");
 }

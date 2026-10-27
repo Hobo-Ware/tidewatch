@@ -128,7 +128,7 @@ pub(crate) fn show(ui: &mut Ui, rows: &[Row], popover: Popover) -> Output {
     for (n, row) in rows.iter().take(MOST_FACES).enumerate() {
         let at = pos2(rect.left() + PAD_LEFT + FACE_STEP * n as f32, rect.center().y - FACE / 2.0);
         let face = Rect::from_min_size(at, vec2(FACE, FACE));
-        painter.rect_filled(face.expand(1.5), CornerRadius::same(7), fill);
+        painter.circle_filled(face.center(), FACE / 2.0 + 1.5, fill);
         agent_avatar::paint_face(ui.ctx(), &painter, face, &row.face);
     }
     let stack = FACE + FACE_STEP * (count.clamp(1, MOST_FACES) - 1) as f32;
