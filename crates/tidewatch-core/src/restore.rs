@@ -9,6 +9,8 @@
 //!   it for the user to run, and a plain shell (`resume_mode::decide`). A YOLO tab is always typed,
 //!   never run on its own. Workflow tabs go through the runner instead; a YOLO workflow run is
 //!   not resumed and reopens as a plain shell with a note.
+//! - An agent tab resumes at the level its Claude session file says it last ran at, else at its
+//!   saved level (`Disk::running_level`).
 //! - An agent tab resumes only when its agent is installed, its profile still runs that agent, it
 //!   has a session id, the CLI's session file exists, and no earlier tab claimed the same session.
 //!   Anything else reopens as a plain shell in the worktree, with the reason as a note.
@@ -25,6 +27,7 @@ use std::path::{Path, PathBuf};
 use crate::agents::{Agent, AgentTable, Level, ResumeForm};
 use crate::launch::{Launch, LaunchCtx, LaunchError, launch_command};
 use crate::paths::TidewatchPaths;
+use crate::permission_mode::last_claude_level;
 use crate::prefs::ResumeAgents;
 use crate::profiles::{Profile, Profiles};
 use crate::resume_mode::{Ended, Resume, decide};
@@ -87,6 +90,8 @@ pub trait Disk {
     fn worktree_usable(&self, path: &Path) -> bool;
     /// The CLI's session file for `session_id` exists, looked up from the tab's folder.
     fn transcript_exists(&self, agent: &str, dir: &Path, session_id: &str) -> bool;
+    /// The level the agent was last running at, when its session file records one.
+    fn running_level(&self, agent: &str, dir: &Path, session_id: &str) -> Option<Level>;
     /// The workflow run at `stages` loads and can be resumed.
     fn workflow_runnable(&self, stages: &Path) -> bool;
 }
@@ -142,6 +147,15 @@ impl Disk for RealDisk {
         locator.copilot_home.clone_from(&self.copilot_home);
         locator.codex_home.clone_from(&self.codex_home);
         locator.locate(source).is_some()
+    }
+
+    fn running_level(&self, agent: &str, dir: &Path, session_id: &str) -> Option<Level> {
+        if Source::from_agent_id(agent) != Some(Source::Claude) {
+            return None;
+        }
+        let mut locator = Locator::new(&self.home, dir);
+        locator.session_id = Some(session_id.to_owned());
+        last_claude_level(&locator.locate(Source::Claude)?)
     }
 
     fn workflow_runnable(&self, stages: &Path) -> bool {
@@ -354,7 +368,7 @@ fn plan_tab(
     }
     let action = match tab {
         SavedTab::Main | SavedTab::Shell { .. } => TabAction::Shell,
-        SavedTab::Agent(agent) => plan_agent(agent, env, disk, claims),
+        SavedTab::Agent(agent) => plan_agent(agent, worktree.is_some(), env, disk, claims),
         SavedTab::Poofed(_) => TabAction::Summary,
     };
     Ok(TabPlan { saved: tab.clone(), dir, worktree, action, park: None })
@@ -362,18 +376,38 @@ fn plan_tab(
 
 fn plan_agent(
     tab: &SavedAgentTab,
+    in_worktree: bool,
     env: &RestoreEnv,
     disk: &dyn Disk,
     claims: &mut Claims,
 ) -> TabAction {
-    match agent_resume(tab, env, disk, claims) {
+    match agent_resume(tab, in_worktree, env, disk, claims) {
         Ok(action) => action,
         Err(reason) => TabAction::ShellInstead(reason),
     }
 }
 
+/// The level a tab resumes at: the one its session file says it last ran at (the person may have
+/// switched mode inside the agent since the launch), else the one it was saved with. YOLO is only
+/// taken from a session file for a tab that is in a worktree or was already saved at YOLO.
+fn resumed_level(
+    tab: &SavedAgentTab,
+    agent: &Agent,
+    in_worktree: bool,
+    seen: Option<Level>,
+) -> Level {
+    match seen {
+        Some(Level::Yolo) if !in_worktree && tab.level != Level::Yolo => {
+            agent.highest_level_below_yolo().unwrap_or(tab.level)
+        }
+        Some(level) => level,
+        None => tab.level,
+    }
+}
+
 fn agent_resume(
     tab: &SavedAgentTab,
+    in_worktree: bool,
     env: &RestoreEnv,
     disk: &dyn Disk,
     claims: &mut Claims,
@@ -388,7 +422,9 @@ fn agent_resume(
             Err(Reason::WorkflowUnreadable)
         };
     }
-    let how = decide(env.resume, Ended::of(env.crash_loop, tab.crashed), tab.level)?;
+    if env.resume == ResumeAgents::Off {
+        return Err(Reason::ResumeOff);
+    }
     let agent =
         env.agents.get(&tab.agent).ok_or_else(|| Reason::AgentUnknown(tab.agent.clone()))?;
     if !env.installed.contains(&tab.agent) {
@@ -413,6 +449,9 @@ fn agent_resume(
     if !disk.transcript_exists(&tab.agent, &tab.dir, id) {
         return Err(Reason::TranscriptMissing);
     }
+    let level =
+        resumed_level(tab, agent, in_worktree, disk.running_level(&tab.agent, &tab.dir, id));
+    let how = decide(env.resume, Ended::of(env.crash_loop, tab.crashed), level)?;
     let claim = match form {
         ResumeForm::FlagLatest(_) => (tab.agent.clone(), tab.dir.display().to_string()),
         _ => (tab.agent.clone(), id.to_owned()),
@@ -422,7 +461,7 @@ fn agent_resume(
     }
     Ok(TabAction::ResumeAgent {
         agent: tab.agent.clone(),
-        profile: Box::new(Profile { level: tab.level, ..profile.clone() }),
+        profile: Box::new(Profile { level, ..profile.clone() }),
         session_id: id.to_owned(),
         how,
     })
@@ -584,6 +623,7 @@ mod tests {
         dirs: Vec<String>,
         broken: Vec<String>,
         transcripts: Vec<(String, String)>,
+        running: Vec<(String, String, Level)>,
         workflows: Vec<String>,
     }
 
@@ -601,6 +641,11 @@ mod tests {
             self.transcripts.push((agent.to_owned(), id.to_owned()));
             self
         }
+
+        fn running_at(mut self, agent: &str, id: &str, level: Level) -> Self {
+            self.running.push((agent.to_owned(), id.to_owned(), level));
+            self
+        }
     }
 
     impl Disk for FakeDisk {
@@ -614,6 +659,10 @@ mod tests {
 
         fn transcript_exists(&self, agent: &str, _dir: &Path, session_id: &str) -> bool {
             self.transcripts.iter().any(|(a, id)| a == agent && id == session_id)
+        }
+
+        fn running_level(&self, agent: &str, _dir: &Path, session_id: &str) -> Option<Level> {
+            self.running.iter().find(|(a, id, _)| a == agent && id == session_id).map(|r| r.2)
         }
 
         fn workflow_runnable(&self, stages: &Path) -> bool {
@@ -842,6 +891,77 @@ mod tests {
         assert_eq!(profile.level, Level::Yolo);
         assert_eq!(*how, Resume::TypeOnly(Why::Yolo));
         assert_eq!(plan.tabs[0].note().as_deref(), Some(Why::Yolo.note(true)));
+    }
+
+    fn folder_tab(level: Level) -> SavedTab {
+        SavedTab::Agent(SavedAgentTab {
+            dir: PathBuf::from(REPO),
+            branch: None,
+            agent: "claude".into(),
+            profile: "builder".into(),
+            level,
+            session_id: Some(ID_C.into()),
+            stages: None,
+            crashed: false,
+            remote: false,
+            meeseeks: None,
+        })
+    }
+
+    #[test]
+    fn a_tab_resumes_at_the_level_its_session_file_says_it_last_ran_at() {
+        let in_worktree = |level| agent_tab("a-claude", "claude", "builder", level, Some(ID_C));
+        let cases = [
+            ("switched up", in_worktree(Level::Plan), Some(Level::Auto), Level::Auto, Resume::Run),
+            ("nothing recorded", in_worktree(Level::Auto), None, Level::Auto, Resume::Run),
+            (
+                "switched down from YOLO",
+                in_worktree(Level::Yolo),
+                Some(Level::Auto),
+                Level::Auto,
+                Resume::Run,
+            ),
+            (
+                "same as saved",
+                in_worktree(Level::Edits),
+                Some(Level::Edits),
+                Level::Edits,
+                Resume::Run,
+            ),
+            (
+                "switched up to YOLO in a worktree",
+                in_worktree(Level::Ask),
+                Some(Level::Yolo),
+                Level::Yolo,
+                Resume::TypeOnly(Why::Yolo),
+            ),
+            (
+                "YOLO outside a worktree is held at Auto",
+                folder_tab(Level::Ask),
+                Some(Level::Yolo),
+                Level::Auto,
+                Resume::Run,
+            ),
+            (
+                "YOLO saved outside a worktree stays YOLO",
+                folder_tab(Level::Yolo),
+                Some(Level::Yolo),
+                Level::Yolo,
+                Resume::TypeOnly(Why::Yolo),
+            ),
+        ];
+        for (what, tab, seen, level, how) in cases {
+            let mut disk = disk_for_all();
+            if let Some(seen) = seen {
+                disk = disk.running_at("claude", ID_C, seen);
+            }
+            let plan = plan_with(&window(vec![tab]), &everything_installed(), &disk);
+            let acted = actions(&plan);
+            let [TabAction::ResumeAgent { profile, how: got, .. }] = acted.as_slice() else {
+                panic!("{what}: {:?}", plan.tabs[0].action)
+            };
+            assert_eq!((profile.level, *got), (level, how), "{what}");
+        }
     }
 
     #[test]

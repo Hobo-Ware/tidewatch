@@ -135,6 +135,54 @@ fn a_session_saved_and_loaded_restores_every_tab_when_nothing_changed() {
     assert_eq!(plan.active, 1);
 }
 
+fn write_transcript(f: &Fixture, folder: &Path, text: &str) {
+    let dir = f.home.join(".claude").join("projects").join(claude_project_dir_name(folder));
+    fs::create_dir_all(&dir).unwrap();
+    fs::write(dir.join(format!("{SESSION_ID}.jsonl")), text).unwrap();
+}
+
+fn resumed_level(plan: &restore::WindowPlan) -> Level {
+    match &plan.tabs[1].action {
+        TabAction::ResumeAgent { profile, .. } => profile.level,
+        other => panic!("{other:?}"),
+    }
+}
+
+#[test]
+fn a_tab_resumes_at_the_mode_its_transcript_ends_in_even_when_the_file_sits_in_the_main_folder() {
+    let f = fixture();
+    let session = session_for(&f.repo, &f.worktree);
+    let moved_in = [
+        ("{\"type\":\"permission-mode\",\"permissionMode\":\"auto\"}\n", Level::Auto),
+        ("{\"type\":\"permission-mode\",\"permissionMode\":\"plan\"}\n", Level::Plan),
+        ("{\"type\":\"user\",\"permissionMode\":\"default\"}\n", Level::Ask),
+        ("{\"type\":\"mode\",\"mode\":\"normal\"}\n", Level::Edits),
+    ];
+    for (text, want) in moved_in {
+        let own = f.home.join(".claude/projects").join(claude_project_dir_name(&f.worktree.path));
+        let _ = fs::remove_dir_all(own);
+        write_transcript(&f, &f.repo, text);
+        assert_eq!(resumed_level(&plan(&f, &session.windows[0])), want, "{text}");
+    }
+}
+
+#[test]
+fn a_tab_saved_at_yolo_that_was_switched_down_resumes_without_yolo() {
+    let f = fixture();
+    let mut session = session_for(&f.repo, &f.worktree);
+    let SavedTab::Agent(tab) = &mut session.windows[0].tabs[1] else { panic!() };
+    tab.level = Level::Yolo;
+    write_transcript(
+        &f,
+        &f.worktree.path,
+        "{\"type\":\"permission-mode\",\"permissionMode\":\"bypassPermissions\"}\n\
+         {\"type\":\"permission-mode\",\"permissionMode\":\"auto\"}\n",
+    );
+    let plan = plan(&f, &session.windows[0]);
+    let TabAction::ResumeAgent { profile, how, .. } = &plan.tabs[1].action else { panic!() };
+    assert_eq!((profile.level, *how), (Level::Auto, tidewatch_core::resume_mode::Resume::Run));
+}
+
 #[test]
 fn a_moved_repo_is_repaired_and_its_agent_tab_resumes_in_the_same_folder() {
     let f = fixture();

@@ -136,6 +136,16 @@ impl Agent {
         self.levels[level.index()].as_deref()
     }
 
+    /// The most permissive level this agent has flags for, short of YOLO.
+    #[must_use]
+    pub fn highest_level_below_yolo(&self) -> Option<Level> {
+        Level::ALL
+            .into_iter()
+            .rev()
+            .filter(|level| *level != Level::Yolo)
+            .find(|level| self.level_args(*level).is_some())
+    }
+
     #[must_use]
     pub fn remote_args(&self, name: &str) -> Vec<String> {
         match self.remote {

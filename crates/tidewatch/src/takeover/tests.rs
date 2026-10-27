@@ -681,6 +681,41 @@ fn pressing_move_on_a_yolo_session_ticks_the_worktree_box_only_where_one_can_be_
 }
 
 #[test]
+fn an_ended_yolo_session_resumes_into_a_worktree_at_yolo_or_one_level_down_never_at_ask() {
+    let fixture = Fixture::new();
+    let env = fixture.env(&everything);
+    let ended = Session {
+        flags: Flags { level: Some(Level::Yolo), ..Flags::default() },
+        ..stored(Cli::Claude, ID)
+    };
+    let mut takeover = takeover_with(vec![ended.clone()]);
+    takeover.roots.insert(ended.cwd.clone(), Some(ended.cwd.clone()));
+    assert_eq!(takeover.offer(&env, &ended), Offer::ResumeHere);
+    takeover.press(&env, &key_of(&ended));
+    assert_eq!(takeover.confirm.as_ref().map(|c| c.worktree), Some(true));
+    let specs = takeover.accept();
+    let dir = Path::new("/Users/me/code/acme");
+    let made = Worktree {
+        repo: dir.to_path_buf(),
+        path: PathBuf::from("/Users/me/.tidewatch/acme-ab12cd/swift-badger"),
+        branch: "agent/swift-badger".into(),
+    };
+    let levels = [(Some(made), Level::Yolo), (None, Level::Auto)];
+    for (worktree, want) in levels {
+        let plan = window_plan(
+            &fixture.agents,
+            Some(&fixture.profiles),
+            &specs[0],
+            (dir, false),
+            worktree,
+        )
+        .unwrap();
+        let SavedTab::Agent(saved) = &plan.tabs[0].saved else { panic!("expected an agent tab") };
+        assert_eq!(saved.level, want);
+    }
+}
+
+#[test]
 fn a_lowered_yolo_preview_shows_the_level_it_will_run_at() {
     let fixture = Fixture::new();
     let env = fixture.env(&everything);

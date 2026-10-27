@@ -315,6 +315,27 @@ fn saved_tabs_come_back_in_order_a_shell_in_its_worktree_an_agent_resumed_the_ac
 }
 
 #[test]
+fn an_agent_comes_back_at_the_mode_it_was_last_in_and_the_tab_says_so() {
+    let mut f = Fixture::new(false);
+    let brave = f.worktree_with_transcript(SESSION_A);
+    let folder = f
+        .home
+        .join(".claude")
+        .join("projects")
+        .join(claude_project_dir_name(&brave.path))
+        .join(format!("{SESSION_A}.jsonl"));
+    std::fs::write(folder, "{\"type\":\"permission-mode\",\"permissionMode\":\"auto\"}\n").unwrap();
+    f.save(1, false, vec![SavedTab::Main, agent(&brave, SESSION_A, Level::Plan)]);
+    f.begin();
+    f.until_settled();
+    let resumed = f.tabs.items()[1].pane.agent.as_ref().expect("an agent tab");
+    assert_eq!(resumed.launched.as_ref().map(|l| l.level), Some(Level::Auto));
+    let shell = &f.shells()[1];
+    assert!(shell.contains("--permission-mode auto"), "{shell}");
+    assert!(!shell.contains("dontAsk"), "{shell}");
+}
+
+#[test]
 fn the_active_tab_is_the_saved_one_not_the_last() {
     let mut f = Fixture::new(false);
     let a = worktree::add(&f.paths, &f.repo).unwrap();
