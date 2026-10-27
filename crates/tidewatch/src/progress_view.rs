@@ -105,6 +105,7 @@ pub(crate) struct TabState {
     open: [bool; 3],
     all_rows: bool,
     all_links: bool,
+    archive_links: bool,
 }
 
 impl TabState {
@@ -297,7 +298,13 @@ fn link_card(
     input: &Input<'_>,
     state: &mut TabState,
 ) -> Option<Action> {
-    let copied = link_view::show(ui, width, board, input.now_ms, &mut state.all_links);
+    let copied = link_view::show(
+        ui,
+        width,
+        board,
+        input.now_ms,
+        (&mut state.all_links, &mut state.archive_links),
+    );
     copied.map(Action::CopyLink)
 }
 

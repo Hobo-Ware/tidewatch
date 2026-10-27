@@ -57,6 +57,7 @@ pub mod kind;
 pub mod last_workspace;
 pub mod launch;
 pub mod link_board;
+pub mod link_check;
 pub mod link_scan;
 pub mod link_store;
 pub mod listener;

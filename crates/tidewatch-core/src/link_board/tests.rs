@@ -7,6 +7,7 @@ fn link(url: &str, title: &str, note: Option<&str>, seen: i64, from: TitleFrom) 
         note: note.map(str::to_owned),
         first_seen_ms: seen,
         title_from: from,
+        state: LinkState::Unknown,
     }
 }
 
@@ -188,4 +189,45 @@ fn a_report_becomes_an_agent_link_stamped_with_the_time() {
         LinkReport { url: "https://a.dev/x".into(), title: "A".into(), note: Some("n".into()) };
     let made = report.into_link(77);
     assert_eq!((made.first_seen_ms, made.title_from), (77, TitleFrom::Agent));
+}
+
+#[test]
+fn a_known_state_is_kept_and_unknown_never_replaces_it() {
+    let mut board = LinkBoard::default();
+    let mut open = link("https://github.com/o/r/pull/1", "PR", None, 1, TitleFrom::Seen);
+    open.state = LinkState::Open;
+    assert!(board.absorb(&open));
+    let bare = link("https://github.com/o/r/pull/1", "PR", None, 2, TitleFrom::Seen);
+    assert!(!board.absorb(&bare));
+    assert_eq!(board.links[0].state, LinkState::Open);
+    let mut merged = bare.clone();
+    merged.state = LinkState::Merged;
+    assert!(board.absorb(&merged));
+    assert_eq!(board.links[0].state, LinkState::Merged);
+}
+
+#[test]
+fn the_state_is_saved_only_when_known_and_an_old_file_loads_as_unknown() {
+    let mut board = LinkBoard::default();
+    board.absorb(&link("https://a.dev/1", "One", None, 1, TitleFrom::Agent));
+    let mut merged = link("https://github.com/o/r/pull/2", "Two", None, 2, TitleFrom::Agent);
+    merged.state = LinkState::Merged;
+    board.absorb(&merged);
+    let text = serde_json::to_string(&board).unwrap();
+    assert_eq!(text.matches("\"state\"").count(), 1, "{text}");
+    assert!(text.contains(r#""state":"merged""#));
+    assert_eq!(serde_json::from_str::<LinkBoard>(&text).unwrap(), board);
+    let old = r#"{"links":[{"url":"https://a.dev/1","title":"One","first_seen_ms":1}]}"#;
+    assert_eq!(serde_json::from_str::<LinkBoard>(old).unwrap().links[0].state, LinkState::Unknown);
+}
+
+#[test]
+fn only_merged_and_closed_are_archived_and_gh_words_map_to_states() {
+    let archived: Vec<bool> =
+        [LinkState::Unknown, LinkState::Open, LinkState::Merged, LinkState::Closed]
+            .map(LinkState::archived)
+            .into();
+    assert_eq!(archived, [false, false, true, true]);
+    let kinds: Vec<bool> = Kind::ALL.map(Kind::has_state).into();
+    assert_eq!(kinds, [false, true, true, false, false]);
 }

@@ -211,7 +211,7 @@ impl Tidewatch {
             let summary = self.pr.watch(tab.id).and_then(crate::pr_watch::Watch::summary);
             let lookup = self.flow.tab(tab.id).and_then(|state| state.pr.pr());
             if let Some(pr) = crate::link_model::own_pr(summary, lookup) {
-                self.link_live.own_pr(tab.id, pr, now_ms, ctx);
+                self.link_live.own_pr(tab.id, &pr, now_ms, ctx);
             }
         }
     }
