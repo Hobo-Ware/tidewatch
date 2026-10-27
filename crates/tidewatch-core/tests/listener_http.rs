@@ -922,3 +922,55 @@ fn each_roles_token_lists_its_own_tools_and_a_hidden_call_says_where_it_works() 
     assert_eq!(refused.json()["result"]["isError"], true);
     assert!(refused.body.contains("only the agent of a workflow stage"), "{}", refused.body);
 }
+
+#[test]
+fn links_sent_with_a_report_are_saved_in_the_tab_folder_and_reach_the_app() {
+    use tidewatch_core::link_store;
+    use tidewatch_core::paths::links_file_beside;
+    let h = Harness::start();
+    let hook = h.register(6, "tab-l");
+    let token = Some(hook.token.as_str());
+    let mut client = h.client();
+    let report = |links: serde_json::Value| {
+        json!({
+            "goal": "Pick a split",
+            "state": "working",
+            "now": "Comparing",
+            "stages": [
+                { "name": "Compare", "kind": "research", "status": "active" },
+                { "name": "Build", "kind": "build", "status": "todo" }
+            ],
+            "steps": [{ "stage": "Compare", "text": "Read", "status": "active" }],
+            "links": links,
+        })
+    };
+    let first = report(json!([
+        { "url": "https://claude.ai/artifact/abc", "title": "Split options", "for": "the pick" },
+        { "url": "https://github.com/o/r/pull/42", "title": "#42 dashboard" },
+    ]));
+    let reply = client.request("POST", "/mcp", token, &call(1, "update_progress", &first));
+    assert_eq!(reply.json()["result"]["isError"], false, "{}", reply.json());
+    let TabEvent::Links { links } = h.next_event().event else { panic!("not links") };
+    assert_eq!(links.len(), 2);
+    assert!(matches!(h.next_event().event, TabEvent::Progress { .. }));
+
+    let file = links_file_beside(&h.paths.progress_file(Path::new(REPO), "tab-l"));
+    let saved = link_store::load(&file).unwrap();
+    assert_eq!(saved.links[0].url, "https://claude.ai/artifact/abc");
+    assert_eq!(saved.links[0].note.as_deref(), Some("the pick"));
+
+    let second =
+        report(json!([{ "url": "https://docs.google.com/document/d/1", "title": "Export" }]));
+    client.request("POST", "/mcp", token, &call(2, "update_progress", &second));
+    assert_eq!(link_store::load(&file).unwrap().len(), 3, "a later report drops nothing");
+
+    let bad = report(json!([{ "url": "javascript:alert(1)", "title": "x" }]));
+    let reply = client.request("POST", "/mcp", token, &call(3, "update_progress", &bad));
+    assert_eq!(reply.json()["result"]["isError"], true);
+    let text = reply.json()["result"]["content"][0]["text"].as_str().unwrap().to_owned();
+    assert!(
+        text.contains("links[0].url \"javascript:alert(1)\" must be an http or https link"),
+        "{text}"
+    );
+    assert_eq!(link_store::load(&file).unwrap().len(), 3);
+}

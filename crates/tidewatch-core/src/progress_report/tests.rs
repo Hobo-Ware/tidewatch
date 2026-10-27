@@ -622,3 +622,177 @@ fn a_report_loaded_back_reads_the_same_as_the_ledger_it_was_saved_from() {
     let again = ProgressReport::from_ledger(&ledger).to_ledger();
     assert_eq!(again, ledger);
 }
+
+fn link(url: &str, title: &str) -> Value {
+    json!({ "url": url, "title": title })
+}
+
+fn link_problems(links: &Value) -> Vec<String> {
+    problems(&with(|v| v["links"] = links.clone()))
+}
+
+#[test]
+fn a_report_without_links_has_none_and_a_good_one_keeps_each_field() {
+    let checked = ProgressReport::check_with_links(&args(&good()), None).unwrap();
+    assert_eq!(checked.links, Vec::new());
+    let value = with(|v| {
+        v["links"] = json!([
+            { "url": " https://claude.ai/artifact/abc ", "title": " Split options ", "for": "the split question" },
+            { "url": "http://localhost:3000/", "title": "Preview" },
+        ]);
+    });
+    let checked = ProgressReport::check_with_links(&args(&value), None).unwrap();
+    assert_eq!(
+        checked.links,
+        [
+            LinkReport {
+                url: "https://claude.ai/artifact/abc".into(),
+                title: "Split options".into(),
+                note: Some("the split question".into()),
+            },
+            LinkReport {
+                url: "http://localhost:3000/".into(),
+                title: "Preview".into(),
+                note: None
+            },
+        ]
+    );
+}
+
+#[test]
+fn each_broken_link_rule_is_one_fix_naming_the_field() {
+    let long_title = "t".repeat(121);
+    let long_for = "f".repeat(121);
+    let cases: Vec<(&str, Value, &str)> = vec![
+        ("no url", json!([{ "title": "A" }]), "links[0].url is required"),
+        ("an empty url", json!([link("  ", "A")]), "links[0].url is required"),
+        (
+            "an ftp url",
+            json!([link("ftp://a.dev/x", "A")]),
+            "links[0].url \"ftp://a.dev/x\" must be an http or https link",
+        ),
+        (
+            "a script url",
+            json!([link("javascript:alert(1)", "A")]),
+            "links[0].url \"javascript:alert(1)\" must be an http or https link",
+        ),
+        (
+            "a url with no host",
+            json!([link("https://", "A")]),
+            "links[0].url \"https://\" must be an http or https link",
+        ),
+        (
+            "a url with a space",
+            json!([link("https://a.dev/a b", "A")]),
+            "must be an http or https link",
+        ),
+        ("no title", json!([{ "url": "https://a.dev" }]), "links[0].title is required"),
+        ("a blank title", json!([link("https://a.dev", " ")]), "links[0].title is required"),
+        (
+            "a two line title",
+            json!([link("https://a.dev", "one\ntwo")]),
+            "links[0].title must be one line",
+        ),
+        (
+            "a title of 121 characters",
+            json!([link("https://a.dev", &long_title)]),
+            "links[0].title is 121 characters, over the 120 limit",
+        ),
+        (
+            "a two line for",
+            json!([{ "url": "https://a.dev", "title": "A", "for": "a\nb" }]),
+            "links[0].for must be one line",
+        ),
+        (
+            "a for of 121 characters",
+            json!([{ "url": "https://a.dev", "title": "A", "for": long_for }]),
+            "links[0].for is 121 characters, over the 120 limit",
+        ),
+        (
+            "the second link broken",
+            json!([link("https://a.dev", "A"), link("nope", "B")]),
+            "links[1].url \"nope\" must be an http or https link",
+        ),
+    ];
+    for (name, links, want) in cases {
+        let found = link_problems(&links);
+        assert!(found.iter().any(|problem| problem.contains(want)), "{name}: {found:?}");
+        assert_eq!(found.len(), 1, "{name}: {found:?}");
+    }
+}
+
+#[test]
+fn a_title_of_exactly_120_characters_is_accepted() {
+    let value = with(|v| v["links"] = json!([link("https://a.dev", &"t".repeat(120))]));
+    assert_eq!(ProgressReport::check_with_links(&args(&value), None).unwrap().links.len(), 1);
+}
+
+#[test]
+fn a_call_takes_at_most_twenty_links() {
+    let many = |count: usize| {
+        Value::Array((0..count).map(|n| link(&format!("https://a.dev/{n}"), "A")).collect())
+    };
+    let twenty = with(|v| v["links"] = many(20));
+    assert_eq!(ProgressReport::check_with_links(&args(&twenty), None).unwrap().links.len(), 20);
+    let found = link_problems(&many(21));
+    assert_eq!(found.len(), 1, "{found:?}");
+    assert!(found[0].contains("hold 21 links together: send at most 20"), "{found:?}");
+    let split = with(|v| {
+        v["state"] = json!("needs_you");
+        v["links"] = many(11);
+        v["needs_you"] = json!({ "question": "Which?", "options": ["A", "B"], "recommended": 0, "links": many(10) });
+    });
+    let found = problems(&split);
+    assert!(found.iter().any(|problem| problem.contains("hold 21 links together")), "{found:?}");
+}
+
+#[test]
+fn links_sent_with_a_question_are_stored_for_that_question() {
+    let value = with(|v| {
+        v["state"] = json!("needs_you");
+        v["links"] = json!([{ "url": "https://a.dev/1", "title": "Own", "for": "own use" }]);
+        v["needs_you"] = json!({
+            "question": "Which split?",
+            "options": ["A", "B"],
+            "recommended": 0,
+            "links": [{ "url": "https://a.dev/2", "title": "Options", "for": "ignored" }, link("https://a.dev/3", "Costs")],
+        });
+    });
+    let checked = ProgressReport::check_with_links(&args(&value), None).unwrap();
+    let notes: Vec<_> =
+        checked.links.iter().map(|link| (link.title.as_str(), link.note.as_deref())).collect();
+    assert_eq!(
+        notes,
+        [
+            ("Own", Some("own use")),
+            ("Options", Some("Which split?")),
+            ("Costs", Some("Which split?"))
+        ]
+    );
+    assert_eq!(checked.report.needs_you.unwrap().question, "Which split?");
+}
+
+#[test]
+fn a_broken_link_in_needs_you_is_named_with_its_path_and_every_rule_is_listed_back() {
+    let value = with(|v| {
+        v["state"] = json!("needs_you");
+        v["links"] = json!([link("nope", "A")]);
+        v["needs_you"] = json!({
+            "question": "Which?",
+            "options": ["A", "B"],
+            "recommended": 0,
+            "links": [{ "url": "https://a.dev" }],
+        });
+    });
+    let found = problems(&value);
+    assert_eq!(found.len(), 2, "{found:?}");
+    assert!(found.iter().any(|p| p.contains("links[0].url \"nope\"")), "{found:?}");
+    assert!(found.iter().any(|p| p.contains("needs_you.links[0].title is required")), "{found:?}");
+}
+
+#[test]
+fn links_are_not_part_of_the_saved_report_json() {
+    let value = with(|v| v["links"] = json!([link("https://a.dev", "A")]));
+    let report = ProgressReport::check(&args(&value), None).unwrap();
+    assert!(!report.to_json().contains("\"links\""));
+}

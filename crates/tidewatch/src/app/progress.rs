@@ -161,6 +161,36 @@ impl Tidewatch {
         }
     }
 
+    pub(super) fn drive_links(&mut self, ctx: &egui::Context) {
+        let now_ms = wall_ms() as i64;
+        let facts: Vec<job_glue::Facts<'_>> = self
+            .tabs
+            .items()
+            .iter()
+            .filter_map(|tab| {
+                let notes_file = tab.pane.agent.as_ref()?.run.notes_file.as_deref()?;
+                Some(job_glue::Facts { id: tab.id, notes_file })
+            })
+            .collect();
+        self.link_live.tick(&facts, ctx, now_ms);
+        for tab in self.tabs.items_mut() {
+            let id = tab.id;
+            if let Some(agent) = tab.pane.agent.as_mut() {
+                self.link_live.found(id, agent.reader.take_links(), ctx);
+            }
+        }
+        for tab in self.tabs.items() {
+            if tab.pane.agent.is_none() {
+                continue;
+            }
+            let summary = self.pr.watch(tab.id).and_then(crate::pr_watch::Watch::summary);
+            let lookup = self.flow.tab(tab.id).and_then(|state| state.pr.pr());
+            if let Some(pr) = crate::link_model::own_pr(summary, lookup) {
+                self.link_live.own_pr(tab.id, pr, now_ms, ctx);
+            }
+        }
+    }
+
     pub(super) fn drive_background(&mut self, ctx: &egui::Context, now: f64) {
         let now_ms = wall_ms() as i64;
         let idle: Vec<u64> = self

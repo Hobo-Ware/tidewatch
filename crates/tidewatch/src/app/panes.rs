@@ -145,7 +145,12 @@ impl Tidewatch {
         });
         let progress = agent.and_then(|_| {
             let known = self.progress.ledger(active_id);
-            if known.is_none() && cards.is_empty() && meeseeks_card.is_none() && last_turn.is_none()
+            let links = self.link_live.board(active_id);
+            if known.is_none()
+                && cards.is_empty()
+                && meeseeks_card.is_none()
+                && last_turn.is_none()
+                && links.is_none()
             {
                 return None;
             }
@@ -164,6 +169,7 @@ impl Tidewatch {
                 meeseeks: meeseeks_card.as_ref(),
                 last_turn,
                 shown: agent.and_then(|agent| agent.run.reported()),
+                links,
             };
             Some(input)
         });
@@ -185,6 +191,10 @@ impl Tidewatch {
         };
         let done_check = match shown.progress {
             Some(progress_view::Action::DoneCheck(action)) => Some(action),
+            _ => None,
+        };
+        let copied = match &shown.progress {
+            Some(progress_view::Action::CopyLink(url)) => Some(url.clone()),
             _ => None,
         };
         let meeseeks_choice = match shown.progress {
@@ -230,6 +240,10 @@ impl Tidewatch {
         }
         if answer {
             self.open_reply_box();
+        }
+        if let Some(url) = copied {
+            ctx.copy_text(url);
+            self.show_toast("Link copied", ctx);
         }
         if let Some(text) = picked {
             self.send_answer(active_id, text, ctx, ctx.input(|i| i.time));

@@ -7,6 +7,9 @@ use serde_json::{Map, Value};
 
 use crate::civil_date::Date;
 use crate::kind::Kind;
+use crate::link_board::{
+    LinkReport, MAX_LINKS_PER_CALL, MAX_NOTE_CHARS, MAX_TITLE_CHARS, checked_url,
+};
 use crate::progress::{
     Choice, Entry, Item, Ledger, Mark, Phase, PhaseState, Scheduled, State, When,
 };
@@ -536,6 +539,7 @@ struct RawReport {
     stages: Option<Vec<RawStage>>,
     steps: Option<Vec<RawStep>>,
     needs_you: Option<RawAsk>,
+    links: Option<Vec<RawLink>>,
     waiting_on: Option<Map<String, Value>>,
     scheduled: Option<Vec<RawScheduled>>,
     verified: Option<Vec<RawNote>>,
@@ -567,6 +571,15 @@ struct RawAsk {
     options: Option<Vec<String>>,
     recommended: Option<i64>,
     why: Option<String>,
+    links: Option<Vec<RawLink>>,
+}
+
+#[derive(Deserialize)]
+struct RawLink {
+    url: Option<String>,
+    title: Option<String>,
+    #[serde(rename = "for")]
+    note: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -816,6 +829,63 @@ fn check_ask(raw: RawAsk, problems: &mut Vec<String>) -> Option<ReportAsk> {
     })
 }
 
+fn one_line_of(what: &str, text: &str, max: usize, problems: &mut Vec<String>) -> Option<String> {
+    if text.contains(['\n', '\r']) {
+        problems.push(format!("{what} must be one line"));
+        return None;
+    }
+    let chars = text.chars().count();
+    if chars > max {
+        problems.push(format!(
+            "{what} is {chars} characters, over the {max} limit: say it in a short line"
+        ));
+        return None;
+    }
+    Some(text.to_owned())
+}
+
+fn check_links(
+    what: &str,
+    raw: Option<Vec<RawLink>>,
+    problems: &mut Vec<String>,
+) -> Vec<LinkReport> {
+    raw.into_iter()
+        .flatten()
+        .enumerate()
+        .filter_map(|(at, link)| {
+            let url = match filled(link.url) {
+                None => {
+                    problems.push(format!("{what}[{at}].url is required: the address of the link"));
+                    None
+                }
+                Some(url) => {
+                    let checked = checked_url(&url);
+                    if checked.is_none() {
+                        problems.push(format!(
+                            "{what}[{at}].url \"{}\" must be an http or https link",
+                            shortened(&url)
+                        ));
+                    }
+                    checked
+                }
+            };
+            let title = match filled(link.title) {
+                None => {
+                    problems.push(format!("{what}[{at}].title is required: what the link is"));
+                    None
+                }
+                Some(title) => {
+                    one_line_of(&format!("{what}[{at}].title"), &title, MAX_TITLE_CHARS, problems)
+                }
+            };
+            let note = filled(link.note).and_then(|note| {
+                one_line_of(&format!("{what}[{at}].for"), &note, MAX_NOTE_CHARS, problems)
+            });
+            Some(LinkReport { url: url?, title: title?, note })
+        })
+        .collect()
+}
+
 fn check_scheduled(
     raw: Option<Vec<RawScheduled>>,
     problems: &mut Vec<String>,
@@ -840,10 +910,26 @@ fn check_scheduled(
         .collect()
 }
 
+/// A report that passed every rule, and the links that came with it: its own `links`, then the
+/// ones sent with the question, which are for that question.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Checked {
+    pub report: ProgressReport,
+    pub links: Vec<LinkReport>,
+}
+
 impl ProgressReport {
-    /// Every rule an `update_progress` call breaks, as one fix per sentence; `saved` lends the goal and title a report leaves out.
+    /// [`Self::check_with_links`] for a caller that has no use for the links.
     pub fn check(args: &Map<String, Value>, saved: Option<&Self>) -> Result<Self, Vec<String>> {
-        let raw: RawReport = match serde_json::from_value(Value::Object(args.clone())) {
+        Self::check_with_links(args, saved).map(|checked| checked.report)
+    }
+
+    /// Every rule an `update_progress` call breaks, as one fix per sentence; `saved` lends the goal and title a report leaves out.
+    pub fn check_with_links(
+        args: &Map<String, Value>,
+        saved: Option<&Self>,
+    ) -> Result<Checked, Vec<String>> {
+        let mut raw: RawReport = match serde_json::from_value(Value::Object(args.clone())) {
             Ok(raw) => raw,
             Err(e) => return Err(vec![format!("the arguments do not match the schema: {e}")]),
         };
@@ -882,7 +968,21 @@ impl ProgressReport {
             raw.stages.iter().flatten().filter_map(|stage| filled(stage.name.clone())).collect();
         let stages = check_stages(raw.stages, &mut problems);
         let steps = check_steps(raw.steps, &names, &mut problems);
+        let ask_links = raw.needs_you.as_mut().and_then(|ask| ask.links.take());
         let needs_you = raw.needs_you.and_then(|ask| check_ask(ask, &mut problems));
+        let sent = raw.links.iter().chain(&ask_links).map(Vec::len).sum::<usize>();
+        if sent > MAX_LINKS_PER_CALL {
+            problems.push(format!(
+                "links and needs_you.links hold {sent} links together: send at most {MAX_LINKS_PER_CALL}, the ones worth coming back to"
+            ));
+        }
+        let mut links = check_links("links", raw.links, &mut problems);
+        let question = needs_you.as_ref().map(|ask| ask.question.clone());
+        links.extend(
+            check_links("needs_you.links", ask_links, &mut problems)
+                .into_iter()
+                .map(|link| LinkReport { note: question.clone().or(link.note), ..link }),
+        );
         let asked =
             needs_you.is_some() || problems.iter().any(|problem| problem.starts_with("needs_you"));
         let waiting_on = raw.waiting_on.and_then(|map| check_waiting(&map, &mut problems));
@@ -940,7 +1040,7 @@ impl ProgressReport {
         }
         if problems.is_empty() {
             report.steps.shrink_to_fit();
-            Ok(report)
+            Ok(Checked { report, links })
         } else {
             Err(problems)
         }

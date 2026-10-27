@@ -3,6 +3,7 @@
 use crate::avatar::Avatar;
 use crate::background::Signal;
 use crate::job::Report;
+use crate::link_board::Link;
 use crate::progress::Ledger;
 use crate::question::{AskReply, Question};
 use crate::status::HookEvent;
@@ -39,6 +40,10 @@ pub enum TabEvent {
     /// The agent called `update_progress`; the ledger is already saved in the tab's `progress.md`.
     Progress {
         ledger: Box<Ledger>,
+    },
+    /// The agent called `update_progress` with links; they are already saved in the tab's `links.json`.
+    Links {
+        links: Vec<Link>,
     },
     /// The agent called `set_avatar`; the cleaned avatar is already saved in the tab's state folder.
     Avatar {

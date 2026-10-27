@@ -351,6 +351,34 @@ pub(crate) fn quiet_button(ui: &mut Ui, label: &str, enabled: bool, size: Size) 
     plain(ui, label, enabled, size, Look::Quiet)
 }
 
+/// A quiet button that holds one glyph instead of a label: as tall as `size` and as wide, no fill
+/// at rest.
+pub(crate) fn icon_button(ui: &mut Ui, glyph: &str, tip: &str, size: Size) -> Response {
+    let (rect, response) =
+        ui.allocate_exact_size(vec2(size.height(), size.height()), Sense::click());
+    let paint = paint_of(
+        Look::Quiet,
+        State::pick(true, response.is_pointer_button_down_on(), response.hovered()),
+    );
+    let painter = ui.painter();
+    painter.rect(
+        rect,
+        CornerRadius::same(size.radius()),
+        paint.fill,
+        Stroke::new(1.0, paint.line),
+        StrokeKind::Inside,
+    );
+    painter.text(
+        rect.center(),
+        Align2::CENTER_CENTER,
+        glyph,
+        FontId::proportional(size.font() + 2.0),
+        paint.ink,
+    );
+    kelp_ui::widgets::focus_ring(ui, &response, f32::from(size.radius()));
+    response.on_hover_cursor(egui::CursorIcon::PointingHand).on_hover_text(tip)
+}
+
 /// A quiet button in red for an action that destroys something.
 pub(crate) fn danger_button(ui: &mut Ui, label: &str, size: Size) -> Response {
     plain(ui, label, true, size, Look::Danger)
@@ -519,6 +547,31 @@ mod tests {
             assert_eq!(rect.y, size.height(), "{size:?}");
         }
         assert!(sizes[1].1.x > sizes[0].1.x);
+    }
+
+    #[test]
+    fn an_icon_button_is_a_square_as_tall_as_its_size_with_no_fill_at_rest() {
+        let mut rects = Vec::new();
+        let mut fills = 0;
+        let input = egui::RawInput {
+            screen_rect: Some(Rect::from_min_size(egui::pos2(0.0, 0.0), vec2(200.0, 100.0))),
+            ..egui::RawInput::default()
+        };
+        let output = Context::default().run_ui(input, |ui| {
+            rects.clear();
+            for size in [Size::Tag, Size::Compact, Size::Regular] {
+                rects.push((size, icon_button(ui, "x", "tip", size).rect.size()));
+            }
+        });
+        for (size, rect) in &rects {
+            assert_eq!((rect.x, rect.y), (size.height(), size.height()), "{size:?}");
+        }
+        for clipped in &output.shapes {
+            if let egui::Shape::Rect(rect) = &clipped.shape {
+                fills += usize::from(rect.fill != Color32::TRANSPARENT);
+            }
+        }
+        assert_eq!(fills, 0, "an icon button rests without a fill");
     }
 
     #[test]
