@@ -136,8 +136,13 @@ fn format_of(ui: &Ui, run: &Run, size: f32, semibold: bool, color: Color32) -> T
         return format;
     }
     if run.kind == Kind::Code {
-        format.font_id = mono(size * CODE_EM);
+        let around = if run.style.bold || semibold { heading(size) } else { body(size) };
+        let code = mono(size * CODE_EM);
+        let lift = ascent(ui, around) - ascent(ui, code.clone());
+        format.font_id = code;
         format.background = ui.visuals().code_bg_color;
+        format.line_height = Some(size * LINE - lift);
+        format.valign = Align::BOTTOM;
     } else if run.style.bold || semibold {
         format.font_id = heading(size);
     }
@@ -154,6 +159,13 @@ fn format_of(ui: &Ui, run: &Run, size: f32, semibold: bool, color: Color32) -> T
         format.underline = Stroke::new(1.0, brand::link_rest());
     }
     format
+}
+
+/// Where a font puts its baseline below the top of its row. epaint places each glyph at its own
+/// font's ascent, so a smaller code face would sit higher than the words beside it.
+fn ascent(ui: &Ui, font: egui::FontId) -> f32 {
+    let galley = ui.painter().layout_no_wrap("x".to_owned(), font, Color32::WHITE);
+    galley.rows.first().and_then(|row| row.glyphs.first()).map_or(0.0, |glyph| glyph.pos.y)
 }
 
 fn heading_block(ui: &mut Ui, level: u8, runs: &Inline) {
@@ -408,6 +420,39 @@ mod tests {
             .find(|(shown, ..)| shown.starts_with(text))
             .unwrap_or_else(|| panic!("{text} not drawn"))
             .1
+    }
+
+    fn baselines(out: &FullOutput, needle: &str) -> Vec<(bool, f32)> {
+        let text = out
+            .shapes
+            .iter()
+            .find_map(|clipped| match &clipped.shape {
+                Shape::Text(text) if text.galley.text().contains(needle) => Some(text.clone()),
+                _ => None,
+            })
+            .unwrap_or_else(|| panic!("{needle} not drawn"));
+        let row = &text.galley.rows[0];
+        let smallest =
+            row.glyphs.iter().map(|glyph| glyph.font_height).fold(f32::INFINITY, f32::min);
+        row.glyphs
+            .iter()
+            .filter(|glyph| !glyph.chr.is_whitespace())
+            .map(|glyph| ((glyph.font_height - smallest).abs() < 0.01, row.pos.y + glyph.pos.y))
+            .collect()
+    }
+
+    #[test]
+    fn inline_code_sits_on_the_same_baseline_as_the_words_around_it() {
+        for md in ["Pushed `feat/jellyfin` back to origin", "**Done: `feat/x` is back on origin**"]
+        {
+            let found = baselines(&draw(md), "back");
+            let code: Vec<f32> = found.iter().filter(|g| g.0).map(|g| g.1).collect();
+            let words: Vec<f32> = found.iter().filter(|g| !g.0).map(|g| g.1).collect();
+            assert!(!code.is_empty() && !words.is_empty(), "{md}: {found:?}");
+            for y in &code {
+                assert!((y - words[0]).abs() <= 1.0, "{md}: code at {y}, words at {}", words[0]);
+            }
+        }
     }
 
     #[test]
