@@ -128,11 +128,7 @@ fn a_dirty_tree_refuses_the_poof_before_the_agent_is_touched_and_hands_the_shell
 #[test]
 fn the_checks_dispatch_to_their_step_and_a_hand_off_without_a_pr_is_nothing_to_do() {
     let repo = repo_with_worktree();
-    let spec = CheckSpec {
-        tools: Tools::system(),
-        worktree: repo.worktree.clone(),
-        summary: "Did it".into(),
-    };
+    let spec = CheckSpec { tools: Tools::system(), worktree: repo.worktree.clone() };
     assert_eq!(run_check(Step::Change, &spec, true), Err("no commit ahead of main".to_owned()));
     let said =
         |step, pr| run_check(step, &spec, pr).map(|checked| (checked.detail, checked.pr_url));

@@ -307,11 +307,6 @@ impl TabRun {
         *self.runner.phase() == Phase::Finished
     }
 
-    /// The summary of the last stage that reported one: what the delivery card starts from.
-    pub(crate) fn last_summary(&self) -> Option<&str> {
-        (0..self.runner.stage_count()).rev().find_map(|index| self.runner.summary(index))
-    }
-
     pub(crate) fn position(&self) -> String {
         match self.runner.phase() {
             Phase::Finished => format!("{}: finished", self.runner.workflow_name()),

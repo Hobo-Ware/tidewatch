@@ -91,10 +91,7 @@ pub(crate) fn show(ui: &mut Ui, area: Rect, run: &mut TabRun) -> Option<String> 
     stage_cards(&mut child, &cards);
     child.add_space(18.0);
     let mut start = command_enter;
-    let hint = format!(
-        "{} starts  -  edit stages in Settings, Workflows",
-        Command::ApproveDelivery.keys()
-    );
+    let hint = format!("{} starts  -  edit stages in Settings, Workflows", Command::Confirm.keys());
     footer_row(&mut child, &hint, |ui| {
         let ready = !run.ui.task.trim().is_empty();
         start |= primary_button(ui, "Start run", ready, Size::Regular).clicked();

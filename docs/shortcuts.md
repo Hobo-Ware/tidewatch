@@ -51,7 +51,7 @@ On Linux a plain Ctrl chord would reach the shell, so Linux uses Ctrl+Shift or A
 
 | Command | macOS | Linux |
 | --- | --- | --- |
-| Push and open the pull request | `Cmd+Enter` | `Ctrl+Enter` |
+| Confirm the dialog | `Cmd+Enter` | `Ctrl+Enter` |
 
 ## In the terminal
 

@@ -65,7 +65,7 @@ impl Tidewatch {
         ui.ctx().request_repaint_after(Duration::from_secs_f64(toast.next_frame_in(now)));
     }
 
-    pub(super) fn show_dialogs(&mut self, ctx: &egui::Context, active_id: u64) {
+    pub(super) fn show_dialogs(&mut self, ctx: &egui::Context) {
         let answer = match &self.closing {
             Some(Closing::Asking { worktree, safety, .. }) => {
                 close_dialog::show(ctx, worktree, safety, self.close_enter)
@@ -81,7 +81,7 @@ impl Tidewatch {
         self.show_paste_confirm(ctx);
         self.show_takeover_dialog(ctx);
         self.leftovers.show(ctx, self.paths.as_ref(), self.trust.grant().as_ref());
-        flow_glue::dialogs(ctx, &mut self.flow, active_id);
+        flow_glue::dialogs(ctx, &mut self.flow);
         if self.trust.dialog_open()
             && let Some(event) = trust_view::dialog(ctx, &self.trust.page())
         {

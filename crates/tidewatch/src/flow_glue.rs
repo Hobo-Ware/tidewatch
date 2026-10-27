@@ -8,25 +8,23 @@ use std::time::Duration;
 use egui::Context;
 use stdusk_core::terminal::PtyTerm;
 use tidewatch_core::paths::sent_file_beside;
-use tidewatch_core::progress;
 use tidewatch_core::sent::{self, Reason, Record, because};
 use tidewatch_core::transcript::Source;
 
 use crate::delivery_card::Delivery;
-use crate::delivery_view::{self, DialogAction};
 use crate::dev_flow::{DevFlow, Fact, Ready, SendMode, Step};
 use crate::diff_pane::PaneAction;
-use crate::flow::{Flow, Gate, LedgerNote, Out, TabFacts};
+use crate::flow::{Asker, Flow, Gate, Out, TabFacts};
 use crate::flow_jobs::Which;
 use crate::note_send::ENTER_DELAY_SECS;
 use crate::notes_strip::StripAction;
 use crate::outbox::{NO_AGENT, Offer, Origin, Screen, Send};
 use crate::pane::{Body, Pane};
 use crate::post_confirm::{self, Answer, Plan};
+use crate::pr_glue;
 use crate::prompt_ghost;
 use crate::tab_view::TabView;
 use crate::tabs::Tabs;
-use crate::{pr_glue, progress_glue};
 use tidewatch_core::status::AgentStatus;
 
 pub(crate) fn unix_now() -> i64 {
@@ -40,7 +38,6 @@ pub(crate) fn facts<T>(
     tabs: &Tabs<Pane<T>>,
     views: &HashMap<u64, TabView>,
     pr: &pr_glue::Host,
-    progress: &progress_glue::Host,
     active: u64,
 ) -> Vec<TabFacts> {
     tabs.items()
@@ -52,21 +49,13 @@ pub(crate) fn facts<T>(
                 return None;
             }
             let agent_id = agent.run.agent_id.clone();
-            let (deliverable, stage_summary) = match &agent.workflow {
-                Some(run) => (run.finished(), run.last_summary().map(str::to_owned)),
-                None => {
-                    (*agent.run.status() == AgentStatus::Done, agent.run.report.stage_done.clone())
-                }
+            let deliverable = match &agent.workflow {
+                Some(run) => run.finished(),
+                None => *agent.run.status() == AgentStatus::Done,
             };
             let pending = views.get(&tab.id).map_or(0, |view| view.notes.pending(&agent_id).len());
             let meeseeks = agent.meeseeks.is_some();
             let push = pr.push(tab.id, agent.autonomous(), meeseeks);
-            let ledger = progress.ledger(tab.id).map(|found| LedgerNote {
-                goal: found.ledger.goal.clone(),
-                verified: progress::real(&found.ledger.verified)
-                    .map(|entry| entry.text.clone())
-                    .collect(),
-            });
             Some(TabFacts {
                 id: tab.id,
                 active: tab.id == active,
@@ -77,10 +66,7 @@ pub(crate) fn facts<T>(
                 branch: worktree.branch.clone(),
                 notes_file: agent.run.notes_file.clone(),
                 pending,
-                stage_summary,
-                ledger,
                 auto_push: push.auto,
-                fixes_push: agent.autonomous() && !meeseeks,
                 merged_head: push.merged_head,
                 gate: if push.shut { Gate::Shut } else { Gate::Open },
             })
@@ -176,23 +162,34 @@ pub(crate) fn send_or_queue(
     offer
 }
 
-/// Auto tells each agent it is about to be pushed before anything leaves the machine: the message
-/// goes through the one send gate, and only once it went does the branch get pushed. An agent that
-/// cannot be told at all leaves the bar for the owner.
-pub(crate) fn tell_agents(
+/// Each agent that is to open a pull request is asked through the one send gate. Only once the
+/// message went does the card say the agent was asked. An agent that cannot take it leaves the
+/// card's button for the owner. Returns the toasts for the owner's refused asks.
+pub(crate) fn ask_agents(
     tabs: &mut Tabs<Pane<PtyTerm>>,
     flow: &mut Flow,
     ctx: &Context,
     now: f64,
-) {
-    for tell in flow.telling() {
-        let send = Send::auto(&tell.text(), Reason::AutoPush, because::AUTO_PUSH);
-        match offer_to_agent(tabs, flow, tell.tab, &send, ctx, now) {
-            Offer::Go => flow.told(tell.tab, ctx),
+) -> Vec<String> {
+    let mut toasts = Vec::new();
+    for ask in flow.asking() {
+        let send = match ask.by {
+            Asker::Auto => Send::auto(&ask.text, Reason::AutoPush, because::AUTO_PUSH),
+            Asker::Owner => Send::by_hand(&ask.text, Reason::PullRequest, because::ASK_PR_CLICK),
+        };
+        match offer_to_agent(tabs, flow, ask.tab, &send, ctx, now) {
+            Offer::Go => flow.asked(ask.tab, now),
             Offer::Wait => ctx.request_repaint_after(Duration::from_secs_f64(0.5)),
-            Offer::Paused | Offer::Refuse(_) => flow.not_told(tell.tab),
+            Offer::Paused => flow.not_asked(ask.tab),
+            Offer::Refuse(reason) => {
+                flow.not_asked(ask.tab);
+                if ask.by == Asker::Owner {
+                    toasts.push(reason.to_owned());
+                }
+            }
         }
     }
+    toasts
 }
 
 pub(crate) fn drain_outbox(
@@ -308,46 +305,13 @@ pub(crate) fn pane_actions(
     toasts
 }
 
-/// The flow's dialogs for the active tab: the delivery dialog and the post confirm.
-pub(crate) fn dialogs(ctx: &Context, flow: &mut Flow, active: u64) {
-    if let Some(confirm) = &flow.confirm {
-        match post_confirm::show(ctx, confirm) {
-            Some(Answer::Post) => flow.approve_post(ctx),
-            Some(Answer::Cancel) => flow.cancel_post(),
-            None => {}
-        }
-        return;
-    }
-    let Some(answer) = flow.tab_mut(active).and_then(|state| {
-        state.delivery.is_modal().then(|| delivery_view::show_dialog(ctx, &mut state.delivery))
-    }) else {
-        return;
-    };
-    let Some(answer) = answer else { return };
-    match answer {
-        DialogAction::Approve => flow.approve_card(active, ctx),
-        DialogAction::Cancel => {
-            if let Some(state) = flow.tab_mut(active) {
-                state.delivery.cancel();
-            }
-        }
-        DialogAction::Back => {
-            if let Some(state) = flow.tab_mut(active) {
-                state.delivery.back();
-            }
-        }
-        DialogAction::Close => {
-            if let Some(state) = flow.tab_mut(active) {
-                state.delivery.close_success();
-            }
-        }
-        DialogAction::OpenUrl => {
-            if let Some(state) = flow.tab_mut(active)
-                && let Delivery::Delivered(done) = &state.delivery
-            {
-                ctx.open_url(egui::OpenUrl::new_tab(done.url.clone()));
-            }
-        }
+/// The flow's dialog for the active tab: the post confirm.
+pub(crate) fn dialogs(ctx: &Context, flow: &mut Flow) {
+    let Some(confirm) = &flow.confirm else { return };
+    match post_confirm::show(ctx, confirm) {
+        Some(Answer::Post) => flow.approve_post(ctx),
+        Some(Answer::Cancel) => flow.cancel_post(),
+        None => {}
     }
 }
 
@@ -363,7 +327,6 @@ pub(crate) fn dev_drive(
     let checks = [
         (Fact::Notes, view.is_some_and(|v| v.notes_ready && !v.notes.threads.is_empty())),
         (Fact::Card, matches!(state.delivery, Delivery::Ready { .. })),
-        (Fact::Form, matches!(state.delivery, Delivery::Editing(_))),
         (Fact::Pr, state.pr.pr().is_some()),
         (Fact::Lines, state.pr.lines_known()),
         (Fact::Confirm, flow.confirm.is_some()),
@@ -384,8 +347,9 @@ pub(crate) fn dev_drive(
                     eprintln!("tidewatch: dev send refused: {reason}");
                 }
             }
-            Step::OpenCard => flow.open_card(tab, ctx),
-            Step::ApproveCard => flow.approve_card(tab, ctx),
+            Step::AskCard => flow.ask_to_open(tab),
+            Step::ShowAsked => flow.show_asked(tab, ctx.input(|i| i.time)),
+            Step::ShowMissing => flow.show_missing(tab),
             Step::Pull => flow.pull_comments(tab, ctx),
             Step::AskPost => {
                 let plan = view.and_then(|v| {
@@ -435,25 +399,36 @@ mod tests {
             branch: "agent/brave-otter".into(),
             notes_file: None,
             pending: 0,
-            stage_summary: None,
-            ledger: None,
             auto_push: true,
-            fixes_push: true,
             merged_head: None,
             gate: Gate::Open,
         }
     }
 
     #[test]
-    fn an_agent_that_cannot_be_told_is_not_pushed_and_its_bar_stays() {
+    fn an_agent_that_cannot_be_asked_is_not_asked_and_its_button_stays() {
         let (mut tabs, id) = lone_agent_tab();
         let mut flow = Flow::new(Tools::default());
-        flow.ready_for_push(&done_facts(id), 2);
-        tell_agents(&mut tabs, &mut flow, &Context::default(), 1.0);
+        flow.ready_for_ask(&done_facts(id), 2);
+        flow.ask_on_its_own(&done_facts(id));
+        let toasts = ask_agents(&mut tabs, &mut flow, &Context::default(), 1.0);
+        assert_eq!(toasts, Vec::<String>::new(), "Auto says nothing");
         let (push, delivery) = flow.push_state(id).unwrap();
         assert_eq!(push, crate::flow::AutoPush::Spent);
         assert_eq!(delivery, Delivery::Ready { commits: 2 });
         assert_eq!(flow.outbox.waiting_tabs(), Vec::<u64>::new());
+    }
+
+    #[test]
+    fn a_refused_click_says_why_and_the_button_stays() {
+        let (mut tabs, id) = lone_agent_tab();
+        let mut flow = Flow::new(Tools::default());
+        flow.ready_for_ask(&done_facts(id), 2);
+        flow.ask_to_open(id);
+        let toasts = ask_agents(&mut tabs, &mut flow, &Context::default(), 1.0);
+        assert_eq!(toasts, [NO_AGENT.to_owned()]);
+        assert_eq!(flow.push_state(id).unwrap().1, Delivery::Ready { commits: 2 });
+        assert_eq!(flow.asking(), []);
     }
 
     #[test]

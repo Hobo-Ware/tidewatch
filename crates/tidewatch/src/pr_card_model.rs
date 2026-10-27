@@ -401,13 +401,13 @@ pub(crate) fn look(index: usize, context: Context<'_>) -> Option<Look> {
             );
             if current && matches!(context.handling, Handling::Owner | Handling::Answers) {
                 m.buttons.push(Button {
-                    label: "Push fix".to_owned(),
+                    label: format!("Ask {} to push", context.profile),
                     primary: true,
                     action: CardAction::PushFix(card.id),
                 });
                 m.buttons.push(quiet("Not now", CardAction::NotNow(card.id)));
             } else if current {
-                m.note = Some("Tidewatch pushes this on its own".to_owned());
+                m.note = Some("Tidewatch asks the agent to push this on its own".to_owned());
             }
             Look::Card(m)
         }

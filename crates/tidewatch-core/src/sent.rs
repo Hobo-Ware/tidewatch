@@ -15,7 +15,11 @@ const KEPT: usize = 200;
 /// except for a feature name listed in `NAMED`.
 pub mod because {
     pub const AUTO_FIX: &str = "Auto is on for this PR";
-    pub const AUTO_PUSH: &str = "Auto may push and open the pull request on this tab";
+    pub const AUTO_PUSH: &str = "Auto may ask the agent to open the pull request on this tab";
+    pub const ASK_PR_CLICK: &str = "you asked the agent to open the pull request";
+    pub const ASK_PUSH_OWN: &str =
+        "this tab runs on its own and has commits the pull request does not have";
+    pub const ASK_PUSH_CLICK: &str = "you asked the agent to push its new commits";
     pub const LEDGER_STOP: &str = "the progress report was not updated this turn";
     pub const LEDGER_FINAL: &str = "the progress report still said working at the end of the turn";
     pub const LEDGER_MISSING: &str = "this tab has not saved a progress report yet";
@@ -38,9 +42,12 @@ pub mod because {
 
     pub const NAMED: [&str; 1] = ["Auto"];
 
-    pub const ALL: [&str; 20] = [
+    pub const ALL: [&str; 23] = [
         AUTO_FIX,
         AUTO_PUSH,
+        ASK_PR_CLICK,
+        ASK_PUSH_OWN,
+        ASK_PUSH_CLICK,
         LEDGER_STOP,
         LEDGER_FINAL,
         LEDGER_MISSING,
@@ -67,6 +74,7 @@ pub mod because {
 pub enum Reason {
     AutoFix,
     AutoPush,
+    PullRequest,
     MeeseeksCheck,
     DueToday,
     LedgerGuard,
@@ -84,6 +92,7 @@ impl Reason {
     pub fn tag(self) -> &'static str {
         match self {
             Self::AutoFix | Self::AutoPush => "auto",
+            Self::PullRequest => "pull request",
             Self::MeeseeksCheck => "Meeseeks check",
             Self::DueToday => "due today",
             Self::LedgerGuard => "report check",
@@ -320,6 +329,7 @@ mod tests {
         let tags = [
             Reason::AutoFix,
             Reason::AutoPush,
+            Reason::PullRequest,
             Reason::MeeseeksCheck,
             Reason::DueToday,
             Reason::LedgerGuard,

@@ -136,7 +136,7 @@ fn macos_chords_are_the_ones_the_app_shipped_with() {
         ("reader", "Cmd+Shift+T"),
         ("settings", "Cmd+,"),
         ("open-repo", "Cmd+O"),
-        ("approve-delivery", "Cmd+Enter"),
+        ("confirm", "Cmd+Enter"),
     ];
     for (id, keys) in shipped {
         let entry = TABLE.iter().find(|entry| entry.id == id).unwrap();
@@ -167,12 +167,12 @@ fn a_real_ctrl_press_on_macos_is_not_a_command_chord() {
 
 #[test]
 fn a_filtered_command_leaves_its_press_for_whoever_reads_it_next() {
-    let enter = TABLE.iter().find(|entry| entry.command == Command::ApproveDelivery).unwrap();
+    let enter = TABLE.iter().find(|entry| entry.command == Command::Confirm).unwrap();
     for platform in PLATFORMS {
         let events = press(platform, enter.chord(platform).unwrap());
         assert_eq!(pressed_with(platform, events.clone(), Command::global), Vec::<Command>::new());
-        let only = |command| command == Command::ApproveDelivery;
-        assert_eq!(pressed_with(platform, events, only), [Command::ApproveDelivery]);
+        let only = |command| command == Command::Confirm;
+        assert_eq!(pressed_with(platform, events, only), [Command::Confirm]);
     }
 }
 

@@ -1,6 +1,6 @@
 //! What a tab knows about its branch's pull request (PLAN.md, D4): whether one is open, the lines of
 //! its diff that take a comment, and whether a note may be posted to it. The lookup is cheap but
-//! still a network call, so it runs on tab focus and after a delivery, never every frame.
+//! still a network call, so it runs on tab focus and when an agent that was asked to open one goes idle, never every frame.
 
 use kelp_core::review::{Side, Thread};
 use tidewatch_core::pr::PullRequest;
@@ -23,7 +23,7 @@ pub(crate) enum Lookup {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Why {
     Focus,
-    Delivered,
+    Asked,
 }
 
 #[derive(Debug, Default)]
@@ -60,13 +60,13 @@ impl PrState {
         Some(Chip { text: format!("PR #{} open", pr.number), url: pr.url.clone() })
     }
 
-    /// Whether to look now. After a delivery always; on focus when the last answer is stale.
+    /// Whether to look now. For an agent that was asked to open one always; on focus when the last answer is stale.
     pub(crate) fn should_find(&self, why: Why, now: f64) -> bool {
         if matches!(self.lookup, Lookup::Checking) {
             return false;
         }
         match why {
-            Why::Delivered => true,
+            Why::Asked => true,
             Why::Focus => self.checked_at.is_none_or(|at| now - at >= REFRESH_SECS),
         }
     }
@@ -203,11 +203,11 @@ mod tests {
         assert!(state.should_find(Why::Focus, 5.0));
         state.find_started();
         assert!(!state.should_find(Why::Focus, 6.0));
-        assert!(!state.should_find(Why::Delivered, 6.0));
+        assert!(!state.should_find(Why::Asked, 6.0));
         state.found(Ok(None), 10.0);
         assert!(!state.should_find(Why::Focus, 10.0 + REFRESH_SECS - 1.0));
         assert!(state.should_find(Why::Focus, 10.0 + REFRESH_SECS));
-        assert!(state.should_find(Why::Delivered, 11.0));
+        assert!(state.should_find(Why::Asked, 11.0));
     }
 
     #[test]

@@ -15,7 +15,6 @@ use super::terminal::TerminalGrid;
 use crate::answer_chips::Pick;
 use crate::coming_up::{Row as Scheduled, coming_up, with_extra};
 use crate::commands::Command;
-use crate::delivery_card::Delivery;
 use crate::pane::FirstPrompt;
 use crate::progress_glue::today;
 use crate::reader::Shown;
@@ -289,17 +288,17 @@ impl Tidewatch {
         self.show_status_line(ui, &mut areas.terminal);
         self.show_pr_strip(ui, &mut areas.terminal, ctx, active_id);
         self.show_comment_strip(ui, &mut areas.terminal, active_id);
-        let card = self.flow.tab(active_id).and_then(|state| {
-            state.delivery.card_commits().map(|n| {
-                (n, matches!(state.delivery, Delivery::Building { .. }), state.after_merge())
-            })
-        });
-        let band = card.map(|_| layout::band_below(&mut areas.terminal, delivery_view::BAND_H));
         let agent_name = self.tabs.items()[self.tabs.active()]
             .pane
             .agent
             .as_ref()
             .map(|agent| agent.profile_name.clone());
+        let card = agent_name.as_deref().and_then(|name| {
+            let state = self.flow.tab(active_id)?;
+            state.delivery.card(state.after_merge(), name)
+        });
+        let band =
+            card.as_ref().map(|_| layout::band_below(&mut areas.terminal, delivery_view::BAND_H));
         let grid_area =
             if agent_name.is_some() { layout::agent_grid(areas.terminal) } else { areas.terminal };
         let grid = TerminalGrid::measure(ui, grid_area, self.terminal_font.in_use());
@@ -307,10 +306,10 @@ impl Tidewatch {
         self.show_terminal(ui, &grid, agent_name.as_deref(), shown == Some(Shown::Reader), frame);
         self.show_reader(ui, areas.terminal, shown, ctx, now, active_id, !frame.keys.modal_open);
 
-        if let (Some(facts), Some(band)) = (card, band)
-            && delivery_view::show_card(ui, band, facts).is_some()
+        if let (Some(view), Some(band)) = (&card, band)
+            && delivery_view::show_card(ui, band, view).is_some()
         {
-            self.flow.open_card(active_id, ctx);
+            self.flow.ask_to_open(active_id);
         }
         if panels {
             self.show_panes(ui, &areas, ctx);

@@ -5,12 +5,12 @@ use std::time::Duration;
 
 use egui::{Rect, Ui};
 use tidewatch_core::job::JobBoard;
+use tidewatch_core::pr_ask;
 use tidewatch_core::pr_status::{Body, Tone as PrTone};
 use tidewatch_core::prefs::{GithubPrefs, Prefs};
 use tidewatch_core::sent::{Cap, Reason, because};
 
 use super::{Tidewatch, WAKE_SLACK_S, wall_ms};
-use crate::delivery_card::Delivery;
 use crate::merge_cleanup::Busy;
 use crate::notify::{self, Notification};
 use crate::outbox::{Offer, Origin, Send};
@@ -69,7 +69,7 @@ impl Tidewatch {
         applied.extend(self.pr.drain(now, ms));
         self.apply_pr(applied, ctx, now);
         for tab in on_their_own {
-            self.push_left_over_commits(tab, ctx);
+            self.push_left_over_commits(tab, ctx, now);
         }
         if let Some(at) = wake {
             ctx.request_repaint_after(Duration::from_secs_f64((at - now).max(0.0) + WAKE_SLACK_S));
@@ -136,7 +136,7 @@ impl Tidewatch {
                 CardAction::Cleanup => self.begin_cleanup(tab, ctx, now),
                 CardAction::KeepIt(card) => self.pr.dismiss(tab, card, false),
                 CardAction::NotNow(card) => self.pr.dismiss(tab, card, true),
-                CardAction::PushFix(card) => self.push_fix(tab, card, ctx),
+                CardAction::PushFix(card) => self.ask_to_push(tab, card, false, ctx, now),
                 CardAction::SendNow(id) => applied.extend(self.pr.send_now(tab, id, now, ms)),
                 CardAction::Cancel(id) => self.pr.cancel(tab, id),
             }
@@ -198,26 +198,43 @@ impl Tidewatch {
     }
 
     /// The commits the agent made after a message and left unpushed, for a tab that runs on its own:
-    /// the delivery card takes them from here without a click.
-    fn push_left_over_commits(&mut self, tab: u64, ctx: &egui::Context) {
+    /// the agent is asked to push them, once.
+    fn push_left_over_commits(&mut self, tab: u64, ctx: &egui::Context, now: f64) {
         let Some(card) = self.pr.push_fix_due(tab) else { return };
-        let free = self.flow.tab(tab).is_some_and(|state| {
-            matches!(state.delivery, Delivery::Hidden | Delivery::Ready { .. })
-        });
-        if free {
-            self.push_fix(tab, card, ctx);
-            self.pr.dismiss(tab, card, false);
-        }
+        self.ask_to_push(tab, card, true, ctx, now);
+        self.pr.dismiss(tab, card, false);
     }
 
-    fn push_fix(&mut self, tab: u64, card: u64, ctx: &egui::Context) {
+    fn ask_to_push(
+        &mut self,
+        tab: u64,
+        card: u64,
+        on_its_own: bool,
+        ctx: &egui::Context,
+        now: f64,
+    ) {
         let Some(Body::PushFix { commits, .. }) = self.pr.body(tab, card) else { return };
-        if let Some(state) = self.flow.tab_mut(tab) {
-            state.delivery.probe_started();
-            state.delivery.probe_done(Some(commits));
-            state.mark_fix_push();
+        let Some(branch) = self
+            .tabs
+            .items()
+            .iter()
+            .find(|candidate| candidate.id == tab)
+            .and_then(|candidate| candidate.pane.worktree.as_ref())
+            .map(|worktree| worktree.branch.clone())
+        else {
+            return;
+        };
+        let text = pr_ask::push_commits(&branch, commits);
+        let send = if on_its_own {
+            Send::auto(&text, Reason::AutoPush, because::ASK_PUSH_OWN)
+        } else {
+            Send::by_hand(&text, Reason::PullRequest, because::ASK_PUSH_CLICK)
+        };
+        if let Offer::Refuse(reason) =
+            flow_glue::send_or_queue(&mut self.tabs, &mut self.flow, tab, send, ctx, now)
+        {
+            self.show_toast(reason, ctx);
         }
-        self.flow.open_card(tab, ctx);
     }
 
     pub(super) fn show_pr_strip(

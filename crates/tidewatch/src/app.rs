@@ -556,9 +556,8 @@ impl eframe::App for Tidewatch {
         self.show_tab_strip(ui, now, &mut intent);
         self.show_status_bar(ui, intent.active_id);
         self.show_central_panel(ui, &ctx, now, &mut intent);
-        let active_id = intent.active_id;
         self.apply_frame_intent(&ctx, intent);
-        self.show_dialogs(&ctx, active_id);
+        self.show_dialogs(&ctx);
         if self.shell.chrome() == window_chrome::Chrome::Drawn {
             window_chrome::edges(&ctx);
         }

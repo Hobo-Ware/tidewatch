@@ -191,7 +191,7 @@ impl Tidewatch {
             || self.leftovers.is_open()
             || self.open_link.is_some()
             || !self.pending_pastes.is_empty()
-            || self.flow.modal_open(active_id);
+            || self.flow.modal_open();
         let dialog = if self.closing.is_some() || self.takeover.dialog_open() {
             Dialog::TabChoice
         } else if other {
@@ -255,7 +255,7 @@ impl Tidewatch {
             Command::BuildWorkflow => self.run_build_workflow(ctx),
             Command::MoveSessions => self.run_move_sessions(ctx),
             Command::Amphetamine => self.run_amphetamine(ctx),
-            Command::ApproveDelivery => {}
+            Command::Confirm => {}
         }
     }
 

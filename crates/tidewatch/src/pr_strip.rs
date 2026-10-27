@@ -121,9 +121,9 @@ pub(crate) const JOBS: [JobRow; 4] = [
     },
     JobRow {
         which: AutoJob::Push,
-        label: "Push and open the pull request",
+        label: "Ask the agent to open the pull request",
         caption: Some(
-            "When the agent is done and has commits. Opens a draft with the agent's summary as the body. The agent is told first.",
+            "When the agent is done and has commits. The agent pushes and opens a draft, writing its own title and body.",
         ),
     },
 ];

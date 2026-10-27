@@ -621,8 +621,8 @@ impl Watch {
 /// What a tab's delivery may do now (see `push_of`).
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(crate) struct Push {
-    /// Auto may push and open the pull request on its own: the tab's mode is Auto with the push
-    /// tick on, its saved cards are read and its pull request is not closed.
+    /// Auto may ask the agent to push and open the pull request: the tab's mode is Auto with the
+    /// push tick on, its saved cards are read and its pull request is not closed.
     pub(crate) auto: bool,
     /// The delivery stays shut: Auto would push but the saved cards are not read yet, or the pull
     /// request merged and its head is not known, so the branch could still be the merged one.

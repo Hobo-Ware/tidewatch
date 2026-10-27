@@ -19,8 +19,8 @@ const SWITCHES: [(AutoJob, &str, &str); 4] = [
     (AutoJob::Conflicts, "Fix merge conflicts", "With the base branch."),
     (
         AutoJob::Push,
-        "Push and open the pull request",
-        "When the agent is done and has commits. Opens a draft. Commits made after a merge go to a new branch and a new pull request.",
+        "Ask the agent to open the pull request",
+        "When the agent is done and has commits. The agent pushes and opens a draft with a title and body it writes. Commits made after a merge go to a new branch and a new pull request.",
     ),
 ];
 

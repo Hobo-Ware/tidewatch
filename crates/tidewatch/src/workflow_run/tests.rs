@@ -302,15 +302,6 @@ fn a_run_that_cannot_be_saved_says_so() {
     assert_eq!(fine.save_error, None);
 }
 
-#[test]
-fn the_last_summary_is_the_last_stage_that_reported_one() {
-    let mut run = ship_run(Some("t"), None);
-    assert_eq!(run.last_summary(), None);
-    run.start();
-    run.message(&done(1, "built"));
-    assert_eq!(run.last_summary(), Some("built"));
-}
-
 #[derive(Default)]
 struct Fake {
     launches: Vec<(usize, u8, u64)>,
@@ -388,7 +379,6 @@ fn ship_a_feature_through_the_app_glue_loops_once_and_waits_at_hand_off() {
     );
     assert_eq!(run.runner().summary(1), Some("Nothing blocking"), "stale summaries never landed");
     assert_eq!(run.runner().summary(3), Some("feat: retry the token refresh"));
-    assert_eq!(run.last_summary(), Some("feat: retry the token refresh"));
     assert_eq!(fake.dividers[2], "--- Stage 1: Work (claude opus, Auto edit, round 2) ---");
     assert_eq!(fake.dividers[1], "--- Stage 2: Review (gemini, Read only) ---");
     assert!(fake.prompts[2].contains("src/auth.ts:12 the timer keeps running after sign-out"));

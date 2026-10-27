@@ -86,8 +86,36 @@ fn the_tests_pass_fail_with_their_output_or_are_skipped_without_a_command() {
     assert!(error.contains("broken thing"), "{error}");
 }
 
+fn open_prs_listing(sha: &str) -> &'static str {
+    let listed = format!(
+        "[{{\"url\":\"https://github.com/acme/web/pull/7\",\"headRefOid\":\"{}\"}},{{\"url\":\"{URL}\",\"headRefOid\":\"{sha}\"}}]\n",
+        "0".repeat(40)
+    );
+    Box::leak(listed.into_boxed_str())
+}
+
 #[test]
-fn the_hand_off_pushes_the_branch_and_opens_the_pr_titled_with_the_summary() {
+fn the_hand_off_is_the_pr_the_agent_opened_at_its_head_and_tidewatch_creates_nothing() {
+    if !git_available() {
+        return;
+    }
+    let f = fixture();
+    commit_file(&dir(&f), "hello.txt", "hi\n", "feat: add hello");
+    ok(&dir(&f), &["push", "-q", "origin", &format!("HEAD:{}", f.worktree.branch)]);
+    let sha = ok(&dir(&f), &["rev-parse", "HEAD"]);
+    let gh = FakeGh::new(&[
+        reply("--version", 0, "gh version 2.98.0\n", ""),
+        reply("pr list", 0, open_prs_listing(sha.trim()), ""),
+    ]);
+    let tools = Tools::with_path(gh.path());
+    let checked = hand_off(&tools, &dir(&f), &f.worktree.branch).unwrap();
+    assert_eq!(checked.pr_url.as_deref(), Some(URL));
+    assert_eq!(checked.detail, "Found PR #42");
+    assert_eq!(gh.calls_to("pr create").len(), 0);
+}
+
+#[test]
+fn a_hand_off_with_no_pr_fails_with_the_fix_note_and_pushes_and_creates_nothing() {
     if !git_available() {
         return;
     }
@@ -95,30 +123,49 @@ fn the_hand_off_pushes_the_branch_and_opens_the_pr_titled_with_the_summary() {
     commit_file(&dir(&f), "hello.txt", "hi\n", "feat: add hello");
     let gh = FakeGh::new(&[
         reply("--version", 0, "gh version 2.98.0\n", ""),
-        reply("pr create", 0, Box::leak(format!("{URL}\n").into_boxed_str()), ""),
+        reply("pr list", 0, "[]\n", ""),
     ]);
     let tools = Tools::with_path(gh.path());
-    let url = hand_off(&tools, &dir(&f), &f.worktree.branch, "Add hello.txt with a greeting");
-    let opened = url.unwrap();
-    assert_eq!(opened.pr_url.as_deref(), Some(URL));
-    assert_eq!(opened.detail, "Opened PR #42 against main");
-    assert!(remote_branches(&f.repos.remote).contains(&f.worktree.branch));
-    let create = gh.calls_to("pr create");
-    assert_eq!(create.len(), 1);
-    assert!(create[0].windows(2).any(|pair| pair == ["--title", "Add hello.txt with a greeting"]));
+    let error = hand_off(&tools, &dir(&f), &f.worktree.branch).unwrap_err();
+    assert!(error.contains("gh pr create --draft --base main"), "{error}");
+    assert!(error.contains("yourself") && error.contains("meeseeks_done"), "{error}");
+    assert!(error.contains(&f.worktree.branch), "{error}");
+    assert_eq!(gh.calls_to("pr create").len(), 0, "Tidewatch never opens it");
+    assert!(!remote_branches(&f.repos.remote).contains(&f.worktree.branch), "nor pushes");
 }
 
 #[test]
-fn a_failed_hand_off_says_why_and_a_missing_gh_is_not_a_panic() {
+fn a_head_no_open_pr_points_at_fails_the_hand_off_instead_of_opening_one() {
+    if !git_available() {
+        return;
+    }
+    let f = fixture();
+    commit_file(&dir(&f), "hello.txt", "hi\n", "feat: add hello");
+    let gh = FakeGh::new(&[
+        reply("--version", 0, "gh version 2.98.0\n", ""),
+        reply(
+            "pr list",
+            0,
+            "[{\"url\":\"https://github.com/acme/web/pull/7\",\"headRefOid\":\"abc\"}]\n",
+            "",
+        ),
+    ]);
+    let tools = Tools::with_path(gh.path());
+    let error = hand_off(&tools, &dir(&f), &f.worktree.branch).unwrap_err();
+    assert!(error.contains("push the latest commits"), "{error}");
+    assert_eq!(gh.calls_to("pr create").len(), 0);
+}
+
+#[test]
+fn a_missing_gh_fails_the_hand_off_with_the_fix_note_and_is_not_a_panic() {
     if !git_available() {
         return;
     }
     let f = fixture();
     commit_file(&dir(&f), "hello.txt", "hi\n", "feat: add hello");
     let (_keep, only_git) = common::path_with_only_git();
-    let error =
-        hand_off(&Tools::with_path(only_git), &dir(&f), &f.worktree.branch, "x").unwrap_err();
-    assert!(error.to_lowercase().contains("gh"), "{error}");
+    let error = hand_off(&Tools::with_path(only_git), &dir(&f), &f.worktree.branch).unwrap_err();
+    assert!(error.contains("gh pr create --draft"), "{error}");
     assert!(!remote_branches(&f.repos.remote).contains(&f.worktree.branch));
 }
 
@@ -163,54 +210,4 @@ fn commits_made_on_a_pr_branch_checked_out_in_the_worktree_pass_the_change_check
         Ok("1 commit ahead of main".to_owned()),
         "the agent branch has no commit, the branch in use has one"
     );
-}
-
-#[test]
-fn a_push_to_a_branch_with_an_open_pr_hands_off_that_pr_and_opens_no_new_one() {
-    if !git_available() {
-        return;
-    }
-    let f = fixture();
-    commit_file(&dir(&f), "fix.txt", "fixed\n", "fix: address the review");
-    ok(&dir(&f), &["push", "-q", "origin", "HEAD:fix/existing-pr"]);
-    let sha = ok(&dir(&f), &["rev-parse", "HEAD"]);
-    let listed = format!(
-        "[{{\"url\":\"https://github.com/acme/web/pull/7\",\"headRefOid\":\"{}\"}},{{\"url\":\"{URL}\",\"headRefOid\":\"{}\"}}]\n",
-        "0".repeat(40),
-        sha.trim()
-    );
-    let gh = FakeGh::new(&[
-        reply("--version", 0, "gh version 2.98.0\n", ""),
-        reply("pr list", 0, Box::leak(listed.into_boxed_str()), ""),
-    ]);
-    let tools = Tools::with_path(gh.path());
-    let url = hand_off(&tools, &dir(&f), &f.worktree.branch, "Address the review");
-    let checked = url.unwrap();
-    assert_eq!(checked.pr_url.as_deref(), Some(URL));
-    assert_eq!(checked.detail, "Updated PR #42");
-    assert_eq!(gh.calls_to("pr create").len(), 0);
-    assert!(!remote_branches(&f.repos.remote).contains(&f.worktree.branch));
-}
-
-#[test]
-fn a_head_no_open_pr_points_at_still_opens_a_pull_request() {
-    if !git_available() {
-        return;
-    }
-    let f = fixture();
-    commit_file(&dir(&f), "hello.txt", "hi\n", "feat: add hello");
-    let gh = FakeGh::new(&[
-        reply("--version", 0, "gh version 2.98.0\n", ""),
-        reply(
-            "pr list",
-            0,
-            "[{\"url\":\"https://github.com/acme/web/pull/7\",\"headRefOid\":\"abc\"}]\n",
-            "",
-        ),
-        reply("pr create", 0, Box::leak(format!("{URL}\n").into_boxed_str()), ""),
-    ]);
-    let tools = Tools::with_path(gh.path());
-    let url = hand_off(&tools, &dir(&f), &f.worktree.branch, "Add hello");
-    assert_eq!(url.map(|checked| checked.pr_url), Ok(Some(URL.to_owned())));
-    assert_eq!(gh.calls_to("pr create").len(), 1);
 }

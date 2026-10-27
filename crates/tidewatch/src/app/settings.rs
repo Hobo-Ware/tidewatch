@@ -169,11 +169,10 @@ impl Tidewatch {
     }
 
     fn settings_owns_escape(&self) -> bool {
-        let active_id = self.tabs.items()[self.tabs.active()].id;
         !self.trust.dialog_open()
             && !self.leftovers.is_open()
             && !self.updates.dialog_open()
-            && !self.flow.modal_open(active_id)
+            && !self.flow.modal_open()
             && self.palette.is_none()
             && self.closing.is_none()
     }
