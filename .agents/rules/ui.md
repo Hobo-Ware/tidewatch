@@ -32,6 +32,7 @@ Current primitives (`widgets.rs`):
   elevated fill, hairline border, `corner_radius 12`, soft shadow, `Margin::symmetric(12,8)`.
 - `text_field(ui, &mut String, hint, width, color) -> Response` - the one text input: uniform
   15pt font, theme-colored field bg, `Margin::symmetric(8,6)`. `color` tints typed text.
+- `screen_kit::Size` (`Tag` 20 px, `Compact` 28 px, `Regular` 32 px) and the `TEXT_*` scale (12, 13, 14, 16, 22): the one place that defines a control's height, text size, padding and corner radius; a button, chip, tag or pill takes its size from it and never sets its own (`paint_tag` for read-only labels).
 - `action_button(ui, label, primary) -> Response` - dialog buttons; `primary` fills accent.
 - `icon_button(ui, icon, tip)` / `icon_toggle(ui, icon, active, tip)` - tab-bar/toolbar icons
   (fixed `ICON_BTN_W`, glyph painted centered).

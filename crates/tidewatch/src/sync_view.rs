@@ -7,6 +7,7 @@ use jiff::tz::TimeZone;
 use tidewatch_core::settings_sync::remote_url;
 
 use crate::screen_kit::Size;
+use crate::screen_kit::TEXT_BODY;
 use crate::settings_ui::{
     self, Control, MUTED, ORANGE, TEXT, Tone, button, row, row_with, section, switch_row,
     text_input,
@@ -140,7 +141,7 @@ fn repo_row(ui: &mut Ui, editor: &mut Editor) -> Option<String> {
         .inner_margin(Margin::symmetric(18, 14))
         .show(ui, |ui| {
             ui.spacing_mut().item_spacing.y = 6.0;
-            ui.label(RichText::new("Repo").size(15.0).color(TEXT));
+            ui.label(RichText::new("Repo").size(TEXT_BODY).color(TEXT));
             let hint = "A private repo you own, such as you/tidewatch-settings.";
             ui.label(RichText::new(hint).size(13.0).color(MUTED));
             let response = text_input(ui, &mut editor.repo, "you/tidewatch-settings");

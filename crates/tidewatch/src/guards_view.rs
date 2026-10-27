@@ -7,11 +7,12 @@ use std::path::PathBuf;
 use egui::{Id, Margin, Ui};
 use tidewatch_core::guards::{GuardPrefs, Rule, parse_private_repos};
 
+use crate::screen_kit::Size;
 use crate::settings_ui::{self, Control, note, row, section, switch_row, text_area};
 
 const SCOPE: &str = "guards-scope";
 const NAMES: &str = "guards-private-names";
-const SEGMENT_H: f32 = 28.0;
+const SEGMENT_H: f32 = Size::Compact.height();
 
 /// The repo on show, which a rule can be set for on its own.
 #[derive(Clone, Debug, PartialEq, Eq)]

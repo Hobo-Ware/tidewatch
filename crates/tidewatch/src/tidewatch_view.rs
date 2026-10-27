@@ -16,11 +16,12 @@ use crate::code_block::Look;
 use crate::job_model::clock_label;
 use crate::reader_markdown;
 use crate::screen_kit::{Size, body, heading, quiet_button};
+use crate::screen_kit::{TEXT_BODY, TEXT_SECONDARY, TEXT_TAG};
 
 const CARD_SHARE: f32 = 0.7;
 const CARD_RADIUS: f32 = 16.0;
 const CARD_PAD: Margin = Margin { left: 18, right: 18, top: 14, bottom: 14 };
-const BODY_PX: f32 = 15.0;
+const BODY_PX: f32 = TEXT_BODY;
 const CODE_EM: f32 = 0.88;
 const FOLDED_ROWS: usize = 2;
 const HEADER_H: f32 = 24.0;
@@ -84,14 +85,17 @@ pub(crate) fn show(ui: &mut Ui, shown: &Shown<'_>) -> bool {
 
 fn header(ui: &mut Ui, column: f32, shown: &Shown<'_>) {
     let painter = ui.painter().clone();
-    let name = painter.layout_no_wrap("Tidewatch".to_owned(), heading(13.5), NAME_INK);
-    let at =
-        shown.stamp.or(Some(shown.record.at_ms)).and_then(|at| clock_label(at, shown.zone)).map(
-            |clock| painter.layout_no_wrap(format!("\u{b7} {clock}"), body(12.5), brand::MUTED),
-        );
+    let name = painter.layout_no_wrap("Tidewatch".to_owned(), heading(TEXT_BODY), NAME_INK);
+    let at = shown
+        .stamp
+        .or(Some(shown.record.at_ms))
+        .and_then(|at| clock_label(at, shown.zone))
+        .map(|clock| {
+            painter.layout_no_wrap(format!("\u{b7} {clock}"), body(TEXT_SECONDARY), brand::MUTED)
+        });
     let reason = shown.record.reason;
     let (ink, line) = tag_colors(reason);
-    let tag = painter.layout_no_wrap(reason.tag().to_owned(), body(11.5), ink);
+    let tag = painter.layout_no_wrap(reason.tag().to_owned(), body(TEXT_TAG), ink);
     let pill = tag.size() + vec2(16.0, 4.0);
     let gap = 7.0;
     let total = MARK_W

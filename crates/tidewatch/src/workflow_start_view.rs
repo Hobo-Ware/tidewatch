@@ -10,6 +10,7 @@ use tidewatch_core::workflows::Gate;
 use crate::brand;
 use crate::commands::Command;
 use crate::reader_view::{field_frame, paint_item};
+use crate::screen_kit::TEXT_SECONDARY;
 use crate::screen_kit::{Size, body, cli_short_name, footer_row, heading, primary_button};
 use crate::workflow_run::TabRun;
 
@@ -107,7 +108,7 @@ fn below_task(cards: usize) -> f32 {
 }
 
 fn task_box(ui: &mut Ui, run: &mut TabRun, id: Id, below: f32) {
-    ui.label(RichText::new("Task").size(12.5).color(brand::MUTED));
+    ui.label(RichText::new("Task").size(TEXT_SECONDARY).color(brand::MUTED));
     ui.add_space(6.0);
     let font = egui::FontId::proportional(16.0);
     let rows = "\n".repeat(TASK_ROWS - 1);

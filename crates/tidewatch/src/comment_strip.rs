@@ -9,11 +9,12 @@ use egui::{
 use crate::brand;
 use crate::comment_model::{self, Line, Tone, chip_text, kind_tone};
 use crate::reader_view::INSET;
-use crate::screen_kit::{body, mono};
+use crate::screen_kit::TEXT_SECONDARY;
+use crate::screen_kit::{Size, body, mono};
 
 pub(crate) const HEIGHT: f32 = 44.0;
 const CARD_H: f32 = 36.0;
-const CHIP_H: f32 = 24.0;
+const CHIP_H: f32 = Size::Compact.height();
 const POPOVER_W: f32 = 460.0;
 const LINES_SHOWN: usize = 12;
 
@@ -42,7 +43,8 @@ pub(crate) fn show(ui: &mut Ui, band: Rect, strip: &Strip<'_>) -> Option<Action>
     let mut action = None;
 
     let toggle_label = if strip.off { "Turn on for this tab" } else { "Turn off for this tab" };
-    let toggle = painter.layout_no_wrap(toggle_label.to_owned(), body(12.5), brand::TEAL_TEXT);
+    let toggle =
+        painter.layout_no_wrap(toggle_label.to_owned(), body(TEXT_SECONDARY), brand::TEAL_TEXT);
     let right = card.right() - 14.0 - toggle.size().x;
     let toggle_rect = Rect::from_min_size(pos2(right, y - 11.0), vec2(toggle.size().x, 22.0));
     let toggle_response =
@@ -66,8 +68,13 @@ pub(crate) fn show(ui: &mut Ui, band: Rect, strip: &Strip<'_>) -> Option<Action>
         let room = right - left - 16.0;
         if room > 60.0 {
             let text = format!("{}  {}", last.place, last.kind);
-            let galley =
-                crate::reader_view::ellipsized(&painter, &text, mono(12.5), brand::SOFT, room);
+            let galley = crate::reader_view::ellipsized(
+                &painter,
+                &text,
+                mono(TEXT_SECONDARY),
+                brand::SOFT,
+                room,
+            );
             painter.galley(pos2(left, y - galley.size().y / 2.0), galley, brand::SOFT);
         }
     }
@@ -82,12 +89,12 @@ fn chip(
     y: f32,
     ink: egui::Color32,
 ) -> Response {
-    let galley = painter.layout_no_wrap(text.to_owned(), body(12.5), ink);
+    let galley = painter.layout_no_wrap(text.to_owned(), body(TEXT_SECONDARY), ink);
     let width = galley.size().x + 28.0;
     let rect = Rect::from_min_size(pos2(left, y - CHIP_H / 2.0), vec2(width, CHIP_H));
     let response = ui.interact(rect, ui.id().with("comment-strip-chip"), Sense::click());
     let fill = ink.gamma_multiply(if response.hovered() { 0.2 } else { 0.12 });
-    painter.rect_filled(rect, CornerRadius::same(255), fill);
+    painter.rect_filled(rect, CornerRadius::same(Size::Compact.radius()), fill);
     painter.circle_filled(pos2(rect.left() + 12.0, y), 3.0, ink);
     painter.galley(pos2(rect.left() + 21.0, y - galley.size().y / 2.0), galley, ink);
     response
@@ -134,7 +141,7 @@ fn line_row(ui: &mut Ui, line: &Line) {
         pos2(rect.left(), rect.center().y),
         Align2::LEFT_CENTER,
         &line.place,
-        mono(12.5),
+        mono(TEXT_SECONDARY),
         brand::TEXT,
     );
     let kind = painter.text(

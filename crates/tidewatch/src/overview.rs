@@ -547,19 +547,6 @@ fn prompt_reason(row: &Row) -> Option<Reason> {
     }
 }
 
-/// What the card's bottom line says about a question or a permission. A prompt names itself
-/// unless the report holds questions of its own, which the tag counts.
-pub(crate) fn ask_tag(row: &Row, tag: &str) -> String {
-    let counted = row.look.as_ref().is_some_and(|look| look.questions > 0);
-    match prompt_reason(row) {
-        Some(Reason::Permission) if !counted => "permission".to_owned(),
-        Some(Reason::Question) if !counted => "question".to_owned(),
-        Some(Reason::Input) if !counted => "your message".to_owned(),
-        Some(Reason::Attention) if !counted => "rang the bell".to_owned(),
-        _ => tag.to_owned(),
-    }
-}
-
 /// The second line of a card in the Needs you section: what is asked. The report's own line when
 /// it has one and no prompt stands, else the prompt (`Wants permission`), else a plain ask, so a
 /// card never reads as a bare label.
@@ -1313,13 +1300,6 @@ mod tests {
             let row = from_markdown("card", status, markdown, None);
             assert_eq!(needs_line(&row, &card_view(&row).line), want);
         }
-        let row = from_markdown(
-            "card",
-            AgentStatus::NeedsYou(Reason::Permission),
-            WAITS_ON_NOTHING,
-            None,
-        );
-        assert_eq!(ask_tag(&row, &card_view(&row).tag), "permission");
     }
 
     #[test]

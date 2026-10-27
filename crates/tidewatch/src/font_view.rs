@@ -5,6 +5,7 @@ use egui::{Align2, FontId, Margin, RichText, Sense, Ui, vec2};
 use stdusk_egui::ui::icons;
 use tidewatch_core::prefs::FontChoice;
 
+use crate::screen_kit::TEXT_BODY;
 use crate::screen_kit::{Size, selection_row};
 use crate::settings_ui::{self, Control, FAINT, MUTED, ORANGE, TEXT, Tone, row_with, text_input};
 use crate::terminal_font::{self, Status};
@@ -76,7 +77,7 @@ fn font_rows(ui: &mut Ui, picker: &mut Picker, view: &View) -> Option<FontChoice
         Control::button(ui, &label, Size::Compact),
         |ui| {
             ui.spacing_mut().item_spacing.y = 3.0;
-            ui.label(RichText::new("Font").size(15.0).color(TEXT));
+            ui.label(RichText::new("Font").size(TEXT_BODY).color(TEXT));
             settings_ui::note(
                 ui,
                 "The terminal only: the rest of the window keeps its own fonts.",
@@ -149,7 +150,7 @@ fn font_row(ui: &mut Ui, choice: &FontChoice, selected: bool) -> bool {
         rect.left_center() + vec2(12.0, 0.0),
         Align2::LEFT_CENTER,
         terminal_font::label(choice),
-        FontId::proportional(13.5),
+        FontId::proportional(TEXT_BODY),
         TEXT,
     );
     response.on_hover_cursor(egui::CursorIcon::PointingHand).clicked()

@@ -9,6 +9,7 @@ use egui::{
 
 use crate::brand;
 use crate::emoji_pick::Hit;
+use crate::screen_kit::{TEXT_BODY, TEXT_TITLE};
 use crate::screen_kit::{heading, selection_row};
 
 pub(crate) const ROW_H: f32 = 38.0;
@@ -32,8 +33,8 @@ pub(crate) fn shown_name(hit: &Hit) -> (String, std::ops::Range<usize>) {
 
 fn name_job(hit: &Hit) -> LayoutJob {
     let (name, lit) = shown_name(hit);
-    let plain = TextFormat::simple(FontId::proportional(15.0), brand::TEXT);
-    let bold = TextFormat::simple(heading(15.0), brand::TEAL_TEXT);
+    let plain = TextFormat::simple(FontId::proportional(TEXT_BODY), brand::TEXT);
+    let bold = TextFormat::simple(heading(TEXT_TITLE), brand::TEAL_TEXT);
     let mut job = LayoutJob::default();
     job.append(&name[..lit.start], 0.0, plain.clone());
     job.append(&name[lit.clone()], 0.0, bold);

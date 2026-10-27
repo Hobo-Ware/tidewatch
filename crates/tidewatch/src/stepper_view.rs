@@ -13,13 +13,14 @@ use crate::brand;
 use crate::layout::band_above;
 use crate::reader_view::{INSET, ellipsized, field_frame, paint_bar, paint_item};
 use crate::screen_kit::{Size, body, heading, primary_button, quiet_button};
+use crate::screen_kit::{TEXT_BODY, TEXT_SECONDARY, TEXT_TAG};
 use crate::stepper::{self, Detail, Model, Pill};
 use crate::workflow_ask::{Ask, Choice};
 use crate::workflow_run::{Exec, RunUi, TabRun};
 
 const STEPPER_H: f32 = 48.0;
-const PILL_H: f32 = 28.0;
-const PILL_RADIUS: u8 = 8;
+const PILL_H: f32 = Size::Compact.height();
+const PILL_RADIUS: u8 = Size::Compact.radius();
 const CONNECTOR_W: f32 = 10.0;
 const CARD_PAD: f32 = 12.0;
 const OUTER_Y: f32 = 4.0;
@@ -129,11 +130,14 @@ fn pills(
     let mut clicked = None;
     for (index, pill) in model.pills.iter().enumerate() {
         let color = state_color(pill.state);
-        let label =
-            ui.painter().layout_no_wrap(pill_text(pill), FontId::proportional(12.5), brand::TEXT);
+        let label = ui.painter().layout_no_wrap(
+            pill_text(pill),
+            FontId::proportional(TEXT_SECONDARY),
+            brand::TEXT,
+        );
         let agent = ui.painter().layout_no_wrap(
             pill.agent_id.clone(),
-            FontId::proportional(11.0),
+            FontId::proportional(TEXT_TAG),
             brand::MUTED,
         );
         let width = 10.0 + 14.0 + label.size().x + 8.0 + agent.size().x + 10.0;
@@ -223,10 +227,10 @@ fn detail_band(ui: &mut Ui, rect: Rect, detail: &Detail) {
     );
     match &detail.summary {
         Some(summary) => {
-            child.label(RichText::new(plain_text(summary)).size(12.5).color(brand::SOFT));
+            child.label(RichText::new(plain_text(summary)).size(TEXT_SECONDARY).color(brand::SOFT));
         }
         None => {
-            child.label(RichText::new("No summary yet").size(12.5).color(brand::MUTED));
+            child.label(RichText::new("No summary yet").size(TEXT_SECONDARY).color(brand::MUTED));
         }
     }
     if !detail.findings.is_empty() {
@@ -235,8 +239,12 @@ fn detail_band(ui: &mut Ui, rect: Rect, detail: &Detail) {
             let (mark, color) =
                 if finding.blocking { ("blocking", brand::RED) } else { ("nit", brand::MUTED) };
             child.horizontal_wrapped(|ui| {
-                ui.label(RichText::new(mark).monospace().size(11.5).color(color));
-                ui.label(RichText::new(plain_line(&finding.text)).size(12.5).color(brand::SOFT));
+                ui.label(RichText::new(mark).monospace().size(TEXT_TAG).color(color));
+                ui.label(
+                    RichText::new(plain_line(&finding.text))
+                        .size(TEXT_SECONDARY)
+                        .color(brand::SOFT),
+                );
             });
         }
     }
@@ -271,7 +279,7 @@ fn ask_card(ui: &mut Ui, rect: Rect, ask: &Ask, state: &mut RunUi) -> Option<Pre
     let mut child =
         ui.new_child(UiBuilder::new().max_rect(inner).layout(Layout::top_down(Align::Min)));
     child.spacing_mut().item_spacing = vec2(8.0, 4.0);
-    child.label(RichText::new(plain_line(&ask.title)).size(13.5).strong().color(brand::TEXT));
+    child.label(RichText::new(plain_line(&ask.title)).size(TEXT_BODY).strong().color(brand::TEXT));
     if let Some(detail) = &ask.detail {
         let lines: Vec<&str> = compact_lines(detail).take(MAX_DETAIL_LINES).collect();
         child.label(RichText::new(plain_text(&lines.join("\n"))).size(12.0).color(brand::SOFT));

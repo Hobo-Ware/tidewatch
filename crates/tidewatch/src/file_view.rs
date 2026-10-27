@@ -19,22 +19,22 @@ use crate::diff_pane::{PaneAction, PaneOut, SHORT_ID, message, set_layout, show_
 use crate::flow::PaneExtras;
 use crate::history_pane;
 use crate::layout::{CARD_MARGIN, CHROME_H};
-use crate::screen_kit::{body, mono};
+use crate::screen_kit::{Size, body, mono};
 use crate::tab_view::TabView;
 use crate::{file_nav, notes_strip, review, segmented};
 
-pub(crate) const BUTTON_H: f32 = 26.0;
-const BUTTON_RADIUS: u8 = 7;
+pub(crate) const BUTTON_H: f32 = Size::Compact.height();
+const BUTTON_RADIUS: u8 = Size::Compact.radius();
 pub(crate) const ARROW_W: f32 = 26.0;
 const ARROW_RADIUS: u8 = 6;
 const PAD_LEFT: f32 = 8.0;
 const PAD_RIGHT: f32 = 10.0;
 pub(crate) const GAP: f32 = 10.0;
 const COUNT_GAP: f32 = 4.0;
-const PILL_PAD: f32 = 10.0;
+const PILL_PAD: f32 = Size::Compact.pad();
 const MIN_PATH_W: f32 = 100.0;
 const MIN_SHOWN_PATH_W: f32 = 40.0;
-const FONT: f32 = 12.5;
+const FONT: f32 = Size::Compact.font();
 const LAYOUTS: [&str; 2] = ["Unified", "Split"];
 
 /// What the Terminal chip says about the agent behind the terminal: its profile and state.

@@ -11,6 +11,7 @@ use crate::brand;
 use crate::new_tab_fields::section_label;
 use crate::notice::key_hint;
 use crate::open_link::{Cloning, OpenLink, Phase, Verdict, fraction_of};
+use crate::screen_kit::TEXT_SECONDARY;
 use crate::screen_kit::{
     Size, body, dialog_frame, footer_row, mono, paint_pill_card, primary_button_keyed, quiet_button,
 };
@@ -135,7 +136,7 @@ fn form_body(
 fn failed_body(ui: &mut Ui, message: &str) -> Option<Outcome> {
     let mut outcome = None;
     ui.label(RichText::new("The clone did not finish.").font(body(14.0)).color(brand::TEXT));
-    ui.label(RichText::new(message).font(mono(12.5)).color(brand::RED));
+    ui.label(RichText::new(message).font(mono(TEXT_SECONDARY)).color(brand::RED));
     ui.add_space(6.0);
     footer_row(ui, "", |ui| {
         if quiet_button(ui, "Back", true, Size::Regular).clicked() {
@@ -159,7 +160,7 @@ fn cloning_body(ui: &mut Ui, cloning: &Cloning, home: Option<&Path>) -> Option<O
         inner.left_top(),
         Align2::LEFT_TOP,
         format!("Cloning {}", cloning.repo.slug()),
-        crate::screen_kit::heading(15.0),
+        crate::screen_kit::heading(crate::screen_kit::TEXT_TITLE),
         brand::TEXT,
     );
     painter.text(
@@ -174,7 +175,7 @@ fn cloning_body(ui: &mut Ui, cloning: &Cloning, home: Option<&Path>) -> Option<O
         inner.left_top() + vec2(0.0, 42.0),
         Align2::LEFT_TOP,
         shown.clone(),
-        mono(12.5),
+        mono(TEXT_SECONDARY),
         brand::SOFT,
     );
     let track = Rect::from_min_size(

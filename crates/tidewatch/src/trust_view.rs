@@ -7,6 +7,8 @@ use tidewatch_core::trust::{CliTrust, Status, TrustCli, TrustState};
 
 use crate::brand;
 use crate::notice::key_hint;
+use crate::screen_kit::TEXT_BODY;
+use crate::screen_kit::TEXT_TAG;
 use crate::screen_kit::{Size, dialog_frame, footer_row, primary_button, quiet_button};
 use crate::settings_ui::{
     self, Control, FAINT, MUTED, SOFT, TEXT, button, button_width, footer_note, note, page_header,
@@ -117,13 +119,13 @@ fn draw_rows(ui: &mut egui::Ui, rows: &[Row]) {
                     });
                 });
                 if let Some(file) = &row.file {
-                    ui.label(RichText::new(file).monospace().size(11.5).color(brand::MUTED));
+                    ui.label(RichText::new(file).monospace().size(TEXT_TAG).color(brand::MUTED));
                 }
                 if let Some(line) = &row.line {
                     ui.label(
                         RichText::new(format!("adds  {line}"))
                             .monospace()
-                            .size(11.5)
+                            .size(TEXT_TAG)
                             .color(brand::SOFT),
                     );
                 }
@@ -202,13 +204,13 @@ pub(crate) fn settings_page(ui: &mut egui::Ui, page: &Page, file: &str) -> Optio
             Control::new(width, 34.0),
             |ui| {
                 ui.spacing_mut().item_spacing.y = 3.0;
-                ui.label(RichText::new("Skip the trust prompts").size(15.0).color(TEXT));
+                ui.label(RichText::new("Skip the trust prompts").size(TEXT_BODY).color(TEXT));
                 note(
                     ui,
                     "Answer \"do you trust this folder?\" once for the folders Tidewatch creates.",
                     MUTED,
                 );
-                ui.label(RichText::new(page.root).monospace().size(11.5).color(FAINT));
+                ui.label(RichText::new(page.root).monospace().size(TEXT_TAG).color(FAINT));
                 if page.added > 0 {
                     note(ui, &format!("{} entries added by Tidewatch", page.added), MUTED);
                 }
@@ -267,16 +269,18 @@ fn cli_row(ui: &mut egui::Ui, cli: &Row) {
             ui.spacing_mut().item_spacing.y = 3.0;
             ui.horizontal(|ui| {
                 ui.spacing_mut().item_spacing.x = 8.0;
-                ui.label(RichText::new(cli.name).size(15.0).color(TEXT));
+                ui.label(RichText::new(cli.name).size(TEXT_BODY).color(TEXT));
                 let (text, ink) = pill_of(cli.tone);
                 pill(ui, text, ink);
             });
             note(ui, &cli.note, MUTED);
             if let Some(file) = &cli.file {
-                ui.label(RichText::new(file).monospace().size(11.5).color(FAINT));
+                ui.label(RichText::new(file).monospace().size(TEXT_TAG).color(FAINT));
             }
             if let Some(line) = &cli.line {
-                ui.label(RichText::new(format!("adds  {line}")).monospace().size(11.5).color(SOFT));
+                ui.label(
+                    RichText::new(format!("adds  {line}")).monospace().size(TEXT_TAG).color(SOFT),
+                );
             }
         },
         |_| {},

@@ -10,6 +10,7 @@ use crate::job_model::{
     BarCard, Card, FinishedLine, QuietLine, Segment, SegmentsCard, StalledCard,
 };
 use crate::reader_view::ellipsized;
+use crate::screen_kit::TEXT_TITLE;
 use crate::screen_kit::{Size, body, button_width, heading, mono, quiet_button};
 
 pub(crate) const GAP: f32 = 12.0;
@@ -60,7 +61,7 @@ fn card_frame(painter: &egui::Painter, rect: Rect, fill: Color32, line: Color32)
 fn name_row(painter: &egui::Painter, row: Rect, name: &str, right: &str) {
     let right_galley = painter.layout_no_wrap(right.to_owned(), mono(13.0), brand::MUTED);
     let room = (row.width() - right_galley.size().x - 10.0).max(1.0);
-    let name = ellipsized(painter, name, heading(15.0), brand::TEXT, room);
+    let name = ellipsized(painter, name, heading(TEXT_TITLE), brand::TEXT, room);
     painter.galley(pos2(row.left(), row.center().y - name.size().y / 2.0), name, brand::TEXT);
     painter.galley(
         pos2(row.right() - right_galley.size().x, row.center().y - right_galley.size().y / 2.0),

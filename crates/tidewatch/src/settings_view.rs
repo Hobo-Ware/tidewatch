@@ -12,6 +12,7 @@ use crate::house_style_view;
 use crate::login_item;
 use crate::macos::LoginItem;
 use crate::profiles_view::{self, Probes};
+use crate::screen_kit::TEXT_BODY;
 use crate::screen_kit::selection_row;
 use crate::settings::{Section, Settings};
 use crate::settings_icons;
@@ -261,7 +262,7 @@ fn item(
         pos2(rect.left() + 44.0, rect.center().y),
         Align2::LEFT_CENTER,
         label,
-        FontId::proportional(15.0),
+        FontId::proportional(TEXT_BODY),
         text,
     );
     if unsaved {

@@ -7,10 +7,11 @@ use egui::{
 };
 
 use crate::brand;
+use crate::screen_kit::TEXT_SECONDARY;
 use crate::screen_kit::{Size, body, primary_button, quiet_button};
 
-const PILL_H: f32 = 22.0;
-const PILL_PAD: f32 = 10.0;
+const PILL_H: f32 = Size::Compact.height();
+const PILL_PAD: f32 = Size::Compact.pad();
 const GLYPH: f32 = 13.0;
 const GLYPH_GAP: f32 = 6.0;
 const POPOVER_W: f32 = 290.0;
@@ -109,14 +110,14 @@ pub(crate) fn show(
 ) -> Output {
     let ink = pill_ink(pill.saved_on);
     let painter = ui.painter().clone();
-    let label = painter.layout_no_wrap("Remote".to_owned(), body(12.5), ink);
+    let label = painter.layout_no_wrap("Remote".to_owned(), body(TEXT_SECONDARY), ink);
     let width = PILL_PAD + GLYPH + GLYPH_GAP + label.size().x + PILL_PAD;
     let rect =
         Rect::from_min_size(pos2(right - width, center_y - PILL_H / 2.0), vec2(width, PILL_H));
     let response = ui.interact(rect, ui.id().with("remote-pill"), Sense::click());
     let fill = if pill.saved_on { brand::TEAL.gamma_multiply(0.10) } else { brand::ITEM };
     let fill = if response.hovered() { fill.gamma_multiply(1.6) } else { fill };
-    painter.rect_filled(rect, CornerRadius::same(255), fill);
+    painter.rect_filled(rect, CornerRadius::same(Size::Compact.radius()), fill);
     paint_phone(&painter, pos2(rect.left() + PILL_PAD + GLYPH / 2.0, center_y), GLYPH, ink);
     painter.galley(
         pos2(rect.left() + PILL_PAD + GLYPH + GLYPH_GAP, center_y - label.size().y / 2.0),
@@ -140,7 +141,7 @@ fn popover_menu(response: &Response, pill: &Pill, placed: &mut Placed) -> Option
             ui.set_width(POPOVER_W);
             ui.spacing_mut().item_spacing = vec2(8.0, 10.0);
             ui.label(RichText::new(&pill.name).size(14.0).color(brand::TEXT));
-            ui.label(RichText::new(subline(pill)).size(12.5).color(brand::MUTED));
+            ui.label(RichText::new(subline(pill)).size(TEXT_SECONDARY).color(brand::MUTED));
             ui.horizontal(|ui| {
                 let copy = primary_button(ui, copy_label(pill), true, Size::Compact);
                 placed.copy = Some(copy.rect);

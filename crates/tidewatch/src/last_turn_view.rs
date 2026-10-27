@@ -14,13 +14,14 @@ use crate::link_text::Text;
 use crate::pr_strip::tone_ink;
 use crate::progress_view::Action;
 use crate::reader_view::ellipsized;
+use crate::screen_kit::TEXT_SECONDARY;
 use crate::screen_kit::{Size, body, heading, mono, primary_button, quiet_button};
 use crate::selectable;
 
 const ITEM_FONT: f32 = 14.0;
 const CODE_FONT: f32 = 13.0;
 const ROW_FONT: f32 = 13.0;
-const NOTE_FONT: f32 = 12.5;
+const NOTE_FONT: f32 = TEXT_SECONDARY;
 const BULLET_W: f32 = 16.0;
 const ITEM_GAP: f32 = 6.0;
 const GROUP_GAP: f32 = 14.0;

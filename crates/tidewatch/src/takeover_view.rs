@@ -11,10 +11,12 @@ use tidewatch_core::elsewhere::Key as SessionKey;
 use crate::brand;
 use crate::notice::key_hint;
 use crate::reader_view::ellipsized;
+use crate::screen_kit::TEXT_TITLE;
 use crate::screen_kit::{
     Size, body, dialog_frame, footer_row, heading, mono, paint_cli_badge, primary_button,
     quiet_button,
 };
+use crate::screen_kit::{TEXT_BODY, TEXT_SECONDARY, TEXT_TAG};
 use crate::settings_ui::{pill, switch_line};
 use crate::takeover::{CardAction, DialogView, Offer, Row, Status};
 
@@ -81,7 +83,7 @@ pub(crate) fn line(ui: &mut Ui, data: &Card, open: bool, reveal: bool) -> Option
         pos2(rect.left() + 14.0, rect.center().y - 9.0),
         Align2::LEFT_CENTER,
         "Running elsewhere",
-        heading(15.0),
+        heading(TEXT_TITLE),
         brand::TEXT,
     );
     painter.text(
@@ -164,7 +166,7 @@ fn disclosure(ui: &mut Ui, rect: Rect, data: &Card) -> Option<CardAction> {
         pos2(rect.left() + SIDE, rect.center().y),
         Align2::LEFT_CENTER,
         format!("{chevron}  Recent sessions ({})", data.ended.len()),
-        body(12.5),
+        body(TEXT_SECONDARY),
         ink,
     );
     response
@@ -188,7 +190,7 @@ fn header(ui: &mut Ui, rect: Rect, data: &Card) -> Option<CardAction> {
         pos2(title.right() + 12.0, area.center().y),
         Align2::LEFT_CENTER,
         &data.summary,
-        body(12.5),
+        body(TEXT_SECONDARY),
         brand::MUTED,
     );
     painter.hline(area.x_range(), area.bottom(), Stroke::new(1.0, brand::CARD_LINE));
@@ -240,11 +242,11 @@ fn draw_row(ui: &mut Ui, rect: Rect, row: &Row) -> Option<CardAction> {
     }
     let level_ink = if row.yolo { brand::RED } else { brand::SOFT };
     pill(&mut cluster, &row.level, level_ink);
-    cluster.label(RichText::new(&row.host).size(12.5).color(brand::MUTED));
+    cluster.label(RichText::new(&row.host).size(TEXT_SECONDARY).color(brand::MUTED));
     let text_x = rect.left() + SIDE + BADGE + 12.0;
     let room = (cluster.min_rect().left() - text_x - 12.0).max(40.0);
     let name = ellipsized(&painter, &row.name, body(13.0), brand::TEXT, room);
-    let folder = ellipsized(&painter, &row.folder, mono(11.0), brand::FAINT, room);
+    let folder = ellipsized(&painter, &row.folder, mono(TEXT_TAG), brand::FAINT, room);
     painter.galley(pos2(text_x, rect.center().y - 15.0), name, brand::TEXT);
     painter.galley(pos2(text_x, rect.center().y + 3.0), folder, brand::FAINT);
     action
@@ -290,15 +292,17 @@ pub(crate) fn dialog(
                 ui.label(
                     RichText::new((number + 1).to_string()).font(mono(13.0)).color(brand::TEAL),
                 );
-                ui.add(egui::Label::new(RichText::new(line).size(13.5).color(brand::SOFT)).wrap());
+                ui.add(
+                    egui::Label::new(RichText::new(line).size(TEXT_BODY).color(brand::SOFT)).wrap(),
+                );
             });
         }
         commands(ui, view);
         for note in &view.notes {
-            ui.label(RichText::new(note).size(12.5).color(brand::ORANGE));
+            ui.label(RichText::new(note).size(TEXT_SECONDARY).color(brand::ORANGE));
         }
         if let Some(note) = &view.yolo_note {
-            ui.label(RichText::new(note).size(12.5).color(brand::MUTED));
+            ui.label(RichText::new(note).size(TEXT_SECONDARY).color(brand::MUTED));
         }
         if view.offer_worktree {
             switch_line(ui, "Move it into a new worktree first", worktree);
@@ -331,7 +335,7 @@ fn commands(ui: &mut Ui, view: &DialogView) {
                     if !single {
                         ui.label(
                             RichText::new(format!("{}  {}", item.name, item.folder))
-                                .size(12.5)
+                                .size(TEXT_SECONDARY)
                                 .color(brand::TEXT),
                         );
                     }

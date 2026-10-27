@@ -22,6 +22,7 @@ use crate::history_pane;
 use crate::layout::CHROME_H;
 use crate::note_actions;
 use crate::notes_strip::{self, StripAction};
+use crate::screen_kit::{TEXT_SECONDARY, TEXT_TAG};
 use crate::screen_kit::{body, heading, mono, selection_row};
 use crate::segmented;
 use crate::tab_view::TabView;
@@ -211,7 +212,7 @@ fn show_title(ui: &Ui, area: Rect, view: &TabView) {
     let plain = |font: FontId, color| TextFormat { font_id: font, color, ..TextFormat::default() };
     let heading_job = LayoutJob::simple_singleline(title, heading(14.0), brand::TEXT);
     let mut meta = LayoutJob::default();
-    meta.append(&what, 0.0, plain(mono(11.5), brand::SOFT));
+    meta.append(&what, 0.0, plain(mono(TEXT_TAG), brand::SOFT));
     meta.append(&format!(" · {who}"), 0.0, plain(body(12.0), brand::MUTED));
     if let Some(open) = &view.open {
         meta.append(&format!("  +{}", open.diff.added), 0.0, plain(body(12.0), brand::GREEN));
@@ -244,7 +245,7 @@ pub(crate) fn message(ui: &mut Ui, rect: Rect, error: Option<&str>, idle: &str) 
         rect.center(),
         egui::Align2::CENTER_CENTER,
         text,
-        FontId::proportional(12.5),
+        FontId::proportional(TEXT_SECONDARY),
         color,
     );
 }
@@ -307,7 +308,7 @@ fn file_row(ui: &mut Ui, change: &FileChange, selected: bool) -> bool {
         pos2(row.left() + ROW_PAD, row.center().y),
         Align2::LEFT_CENTER,
         kind_letter(change.kind),
-        mono(11.5),
+        mono(TEXT_TAG),
         kind_color(change.kind),
     );
     let ink = if selected { brand::TEXT } else { brand::SOFT };

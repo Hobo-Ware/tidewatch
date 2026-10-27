@@ -13,9 +13,12 @@ use crate::screen_kit::{
     Size, body, button_width, clickable, heading, mono, paint_pill_card, primary_button,
     quiet_button, selection_row,
 };
+use crate::screen_kit::{TEXT_BODY, TEXT_TITLE};
+use crate::screen_kit::{TEXT_SECONDARY, TEXT_TAG};
 use crate::welcome::{Recent, shown_path};
 
 const COLUMN_W: f32 = 560.0;
+const INTRO_H: f32 = 65.0;
 const MASCOT_H: f32 = 132.0;
 const ROW_H: f32 = 46.0;
 const SESSIONS_H: f32 = 44.0;
@@ -43,7 +46,7 @@ pub(crate) fn show(
     let rows = recent.len() as f32;
     let list_h = if recent.is_empty() { 0.0 } else { 26.0 + 22.0 + rows * (ROW_H + 4.0) };
     let sessions_h = elsewhere.map_or(0.0, |_| SESSIONS_H + SESSIONS_GAP);
-    let total = MASCOT_H + 26.0 + 90.0 + 26.0 + OPEN_SLOT + sessions_h + list_h + 26.0 + 20.0;
+    let total = MASCOT_H + 26.0 + INTRO_H + 26.0 + OPEN_SLOT + sessions_h + list_h + 26.0 + 20.0;
     let cx = area.center().x;
     let mut y = (area.center().y - total / 2.0).max(area.top() + 16.0);
     let mut action = None;
@@ -61,7 +64,7 @@ pub(crate) fn show(
     let text = painter.layout(
         "Every tab is a worktree of the repo you open, with an agent or a workflow in it."
             .to_owned(),
-        body(15.0),
+        body(TEXT_BODY),
         brand::MUTED,
         width,
     );
@@ -86,7 +89,7 @@ pub(crate) fn show(
             pos2(cx - width / 2.0 + 12.0, y),
             Align2::LEFT_TOP,
             "RECENT",
-            body(11.5),
+            body(TEXT_TAG),
             brand::MUTED,
         );
         y += 22.0;
@@ -105,14 +108,14 @@ pub(crate) fn show(
                 row.left_center() + vec2(12.0, 0.0),
                 Align2::LEFT_CENTER,
                 &repo.name,
-                heading(15.0),
+                heading(TEXT_TITLE),
                 brand::TEXT,
             );
             painter.text(
                 pos2(name.right() + 12.0, row.center().y),
                 Align2::LEFT_CENTER,
                 shown_path(&repo.dir, home),
-                mono(12.5),
+                mono(TEXT_SECONDARY),
                 brand::MUTED,
             );
             painter.text(
@@ -174,8 +177,11 @@ fn open_button(ui: &mut Ui, top_center: Pos2) -> egui::Response {
 fn hint(ui: &Ui, top_center: Pos2) {
     let painter = ui.painter();
     let lead = painter.layout_no_wrap("or from a terminal: ".to_owned(), body(13.0), brand::MUTED);
-    let command =
-        painter.layout_no_wrap("tidewatch ~/code/my-repo".to_owned(), mono(12.5), brand::SOFT);
+    let command = painter.layout_no_wrap(
+        "tidewatch ~/code/my-repo".to_owned(),
+        mono(TEXT_SECONDARY),
+        brand::SOFT,
+    );
     let x = top_center.x - f32::midpoint(lead.size().x, command.size().x);
     let command_x = x + lead.size().x;
     painter.galley(pos2(x, top_center.y), lead, brand::MUTED);

@@ -15,6 +15,7 @@ use kelp_ui::icons::{self, Icon};
 use crate::brand;
 use crate::diff_pane::{kind_color, kind_letter};
 use crate::pane_jobs::LineCounts;
+use crate::screen_kit::TEXT_TAG;
 use crate::screen_kit::{body, mono, selection_row};
 use crate::selectable;
 use crate::tab_view::TabView;
@@ -101,7 +102,7 @@ fn meta_job(view: &TabView, files: usize) -> LayoutJob {
     let mut job = LayoutJob::default();
     let plain = |font: FontId, color| TextFormat { font_id: font, color, ..TextFormat::default() };
     if let Some(id) = short_id(view) {
-        job.append(&id, 0.0, plain(mono(11.5), brand::SOFT));
+        job.append(&id, 0.0, plain(mono(TEXT_TAG), brand::SOFT));
     }
     let author = view.summary.as_ref().map(|(_, summary)| summary.author.as_str());
     let tail = format!(" · {}", meta_tail(author, files));
@@ -266,7 +267,7 @@ fn file_row(
         pos2(rect.left() + ROW_PAD, center_y),
         Align2::LEFT_CENTER,
         kind_letter(change.kind),
-        mono(11.5),
+        mono(TEXT_TAG),
         kind_color(change.kind),
     );
     let mut right = rect.right() - ROW_PAD;
@@ -304,7 +305,7 @@ fn notes_label(count: usize) -> String {
 /// A speech bubble and `count` (`99+` past 99) in teal with the badge's right edge at `right`.
 /// Returns the badge's width.
 fn paint_notes_badge(painter: &Painter, right: f32, mid: f32, count: usize) -> f32 {
-    let galley = painter.layout_no_wrap(notes_label(count), body(11.5), brand::TEAL);
+    let galley = painter.layout_no_wrap(notes_label(count), body(TEXT_TAG), brand::TEAL);
     let width = NOTES_ICON + NOTES_ICON_GAP + galley.size().x;
     let left = right - width;
     let spot =

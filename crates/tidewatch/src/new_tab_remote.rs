@@ -5,6 +5,7 @@ use egui::{CornerRadius, Rect, Sense, Stroke, StrokeKind, Ui, UiBuilder, pos2, v
 use crate::brand;
 use crate::new_tab::RemoteOffer;
 use crate::remote_pill::paint_phone;
+use crate::screen_kit::TEXT_SECONDARY;
 use crate::screen_kit::{body, heading};
 use crate::settings_ui::switch;
 
@@ -57,8 +58,13 @@ pub(crate) fn show(ui: &mut Ui, offer: &RemoteOffer, on: bool) -> Shown {
     let room = (switch_rect.left() - TEXT_GAP - text_left).max(1.0);
     let title_ink = if enabled { brand::TEXT } else { brand::MUTED };
     let title = painter.layout_no_wrap("Remote control".to_owned(), heading(14.0), title_ink);
-    let sub =
-        crate::reader_view::ellipsized(&painter, offer.line(), body(12.5), brand::MUTED, room);
+    let sub = crate::reader_view::ellipsized(
+        &painter,
+        offer.line(),
+        body(TEXT_SECONDARY),
+        brand::MUTED,
+        room,
+    );
     let stack = title.size().y + 2.0 + sub.size().y;
     let top = rect.center().y - stack / 2.0;
     let sub_at = pos2(text_left, top + title.size().y + 2.0);

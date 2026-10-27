@@ -4,14 +4,14 @@ use egui::{CornerRadius, Response, Sense, Stroke, StrokeKind, Ui, pos2, vec2};
 use kelp_ui::update::Status;
 
 use crate::brand;
-use crate::screen_kit::body;
+use crate::screen_kit::{Size, body};
 
-pub(crate) const HEIGHT: f32 = 26.0;
+pub(crate) const HEIGHT: f32 = Size::Compact.height();
 const PAD_LEFT: f32 = 10.0;
 const PAD_RIGHT: f32 = 12.0;
 const DOT: f32 = 7.0;
 const GAP: f32 = 8.0;
-const FONT: f32 = 13.0;
+const FONT: f32 = Size::Compact.font();
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Click {
@@ -121,7 +121,7 @@ pub(crate) fn show(ui: &mut Ui, spec: &Spec) -> Response {
     let line = if hovered { spec.tone.dot().gamma_multiply(0.5) } else { brand::FIELD_LINE };
     painter.rect(
         rect,
-        CornerRadius::same(255),
+        CornerRadius::same(Size::Compact.radius()),
         brand::CARD,
         Stroke::new(1.0, line),
         StrokeKind::Inside,

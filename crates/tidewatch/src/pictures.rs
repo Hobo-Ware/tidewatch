@@ -16,6 +16,7 @@ use image::imageops::FilterType;
 use tidewatch_core::image_paste::{is_image_file, path_text};
 
 use crate::brand;
+use crate::screen_kit::Size;
 
 pub(crate) const CHIP_H: f32 = 48.0;
 pub(crate) const CHIP_GAP: f32 = 8.0;
@@ -26,7 +27,7 @@ const THUMB_H: f32 = 36.0;
 const EDGE: f32 = 6.0;
 const TEXT_GAP: f32 = 10.0;
 const TEXT_W: f32 = 128.0;
-const BUTTON: f32 = 26.0;
+const BUTTON: f32 = Size::Compact.height();
 const BUTTON_EDGE: f32 = 8.0;
 const SMALL_PX: u32 = 104;
 const SMALL_PY: u32 = 72;
@@ -249,9 +250,14 @@ fn paint_remove(ui: &Ui, rect: Rect, hovered: bool) {
     let painter = ui.painter();
     let line = if hovered { brand::FAINT } else { brand::FIELD_LINE };
     if hovered {
-        painter.rect_filled(rect, CornerRadius::same(7), brand::BUTTON);
+        painter.rect_filled(rect, CornerRadius::same(Size::Compact.radius()), brand::BUTTON);
     }
-    painter.rect_stroke(rect, CornerRadius::same(7), Stroke::new(1.0, line), StrokeKind::Inside);
+    painter.rect_stroke(
+        rect,
+        CornerRadius::same(Size::Compact.radius()),
+        Stroke::new(1.0, line),
+        StrokeKind::Inside,
+    );
     let c = rect.center();
     let ink = Stroke::new(1.5, brand::SOFT);
     painter.line_segment([c + vec2(-3.5, -3.5), c + vec2(3.5, 3.5)], ink);

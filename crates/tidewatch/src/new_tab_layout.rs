@@ -1,5 +1,6 @@
 //! The new-tab form's geometry as pure functions of the rect it gets: header, lane, pane and footer.
 
+use crate::screen_kit::Size;
 use egui::{Rect, pos2, vec2};
 
 pub(crate) const SIDE_PAD: f32 = 26.0;
@@ -12,7 +13,7 @@ const LANE_TARGET_SHARE: f32 = 0.30;
 const LANE_MAX_SHARE: f32 = 0.38;
 const LANE_MIN_W: f32 = 240.0;
 const LANE_MAX_W: f32 = 280.0;
-pub(crate) const FILTER_H: f32 = 28.0;
+pub(crate) const FILTER_H: f32 = Size::Compact.height();
 const LANE_LIST_GAP: f32 = 8.0;
 
 pub(crate) const ROW_H: f32 = 46.0;
@@ -23,12 +24,12 @@ const GROUP_GAP: f32 = 8.0;
 pub(crate) const SECTION_GAP: f32 = 16.0;
 pub(crate) const LABEL_H: f32 = 14.0;
 pub(crate) const LABEL_GAP: f32 = 6.0;
-pub(crate) const FIELD_H: f32 = 34.0;
+pub(crate) const FIELD_H: f32 = Size::Regular.height();
 pub(crate) const PROBLEM_H: f32 = 24.0;
 pub(crate) const FIELDS_GAP: f32 = 12.0;
 const STACK_BELOW: f32 = 380.0;
 pub(crate) const MESSAGE_MIN_H: f32 = 96.0;
-pub(crate) const FOOTER_H: f32 = 32.0;
+pub(crate) const FOOTER_H: f32 = Size::Regular.height();
 const FOOTER_GAP: f32 = 12.0;
 const BOTTOM_PAD: f32 = 14.0;
 pub(crate) const SCROLL_GUTTER: f32 = crate::brand::SCROLL_ROOM;

@@ -13,6 +13,7 @@ use crate::new_tab_layout::{self as layout, Slot};
 use crate::new_tab_meeseeks;
 use crate::new_tab_workflow;
 use crate::reader_view::{ellipsized, field_frame_on};
+use crate::screen_kit::{TEXT_BODY, TEXT_SECONDARY, TEXT_TAG};
 use crate::screen_kit::{body, clickable, heading, mono, paint_cli_badge, selection_row};
 use crate::settings_ui::fade_edges;
 
@@ -164,7 +165,13 @@ fn top_row(ui: &mut Ui, rect: Rect, state: &NewTab) -> Option<String> {
         Kind::Meeseeks => Some("AGENT"),
         Kind::Agent | Kind::Shell => None,
     } {
-        ui.painter().text(rect.left_center(), Align2::LEFT_CENTER, title, body(11.5), brand::MUTED);
+        ui.painter().text(
+            rect.left_center(),
+            Align2::LEFT_CENTER,
+            title,
+            body(TEXT_TAG),
+            brand::MUTED,
+        );
         return None;
     }
     let current = state.filter();
@@ -176,7 +183,7 @@ fn top_row(ui: &mut Ui, rect: Rect, state: &NewTab) -> Option<String> {
                 .id(Id::new("new-tab-filter"))
                 .frame(egui::Frame::NONE)
                 .margin(egui::Margin::ZERO)
-                .font(body(12.5))
+                .font(body(TEXT_SECONDARY))
                 .text_color(brand::TEXT)
                 .hint_text(RichText::new("Filter").color(brand::FAINT))
                 .desired_width(ui.available_width()),
@@ -213,16 +220,16 @@ fn paint_row(ui: &mut Ui, rect: Rect, row: &Row, selected: bool) -> bool {
     let painter = ui.painter();
     let text_x = badge.right() + 10.0;
     let room = rect.right() - PAD - 16.0 - text_x;
-    let title = ellipsized(painter, &row.title, heading(13.5), brand::TEXT, room);
+    let title = ellipsized(painter, &row.title, heading(TEXT_BODY), brand::TEXT, room);
     painter.galley(pos2(text_x, rect.top() + 6.0), title, brand::TEXT);
-    let sub = ellipsized(painter, &row.subtitle, body(11.5), brand::MUTED, room);
+    let sub = ellipsized(painter, &row.subtitle, body(TEXT_TAG), brand::MUTED, room);
     painter.galley(pos2(text_x, rect.top() + 25.0), sub, brand::MUTED);
     if row.index < 9 {
         painter.text(
             pos2(rect.right() - PAD, rect.center().y),
             Align2::RIGHT_CENTER,
             (row.index + 1).to_string(),
-            mono(11.0),
+            mono(TEXT_TAG),
             brand::FAINT,
         );
     }
@@ -269,7 +276,7 @@ pub(crate) fn show(
                             pos2(rect.left() + 4.0, rect.bottom() - 4.0),
                             Align2::LEFT_BOTTOM,
                             label.to_uppercase(),
-                            body(11.0),
+                            body(TEXT_TAG),
                             brand::FAINT,
                         );
                     }

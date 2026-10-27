@@ -9,6 +9,7 @@ use super::{
     BAR, CARD, CARD_LINE, HEADER_H, ITEM, ITEM_LINE, MUTED, ORANGE, RED, RED_FILL, RED_LINE, SOFT,
     TEAL, TEAL_TEXT, TEXT, Tone, badge, button, button_width, font_semibold, heading, lerp_color,
 };
+use crate::screen_kit::TEXT_BODY;
 use crate::screen_kit::{Size, selection_row};
 
 const CARD_PAD: f32 = 10.0;
@@ -188,7 +189,7 @@ pub(crate) fn list_item(ui: &mut Ui, item: &Item) -> Response {
             pos2(name_x, rect.center().y),
             Align2::LEFT_CENTER,
             item.name,
-            FontId::proportional(15.0),
+            FontId::proportional(TEXT_BODY),
             TEXT,
         );
         painter.text(
