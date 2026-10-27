@@ -479,6 +479,7 @@ mod tests {
                     meeseeks: None,
                     last_turn: last_turn.clone(),
                     shown: None,
+                    links: None,
                 });
                 let rect = Rect::from_min_size(pos2(0.0, 0.0), vec2(420.0, 600.0));
                 let face = face.as_ref().map(|avatar| Face { tab: 1, avatar });

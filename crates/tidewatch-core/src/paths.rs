@@ -13,6 +13,7 @@ const DUE_ASKED_FILE: &str = "due-asked.json";
 const PROGRESS_FILE: &str = "progress.md";
 const HOUSE_STYLE_FILE: &str = "house-style.md";
 const JOBS_FILE: &str = "jobs.json";
+const LINKS_FILE: &str = "links.json";
 const AVATAR_FILE: &str = "avatar.json";
 const AVATAR_ASKED_FILE: &str = "avatar-asked";
 const PROGRESS_FEED_FILE: &str = "progress-feed.jsonl";
@@ -27,6 +28,11 @@ pub fn progress_file_beside(notes_file: &Path) -> PathBuf {
 #[must_use]
 pub fn jobs_file_beside(notes_file: &Path) -> PathBuf {
     notes_file.with_file_name(JOBS_FILE)
+}
+
+#[must_use]
+pub fn links_file_beside(notes_file: &Path) -> PathBuf {
+    notes_file.with_file_name(LINKS_FILE)
 }
 
 #[must_use]
@@ -456,6 +462,8 @@ mod tests {
         assert!(feed.ends_with("brave-otter/progress-feed.jsonl"));
         assert_eq!(progress_feed_file_beside(&notes), feed);
         assert!(jobs_file_beside(&notes).ends_with("brave-otter/jobs.json"));
+        assert!(links_file_beside(&notes).ends_with("brave-otter/links.json"));
+        assert_eq!(links_file_beside(&progress_file_beside(&notes)), links_file_beside(&notes));
         assert!(avatar_file_beside(&notes).ends_with("brave-otter/avatar.json"));
         assert!(avatar_asked_file_beside(&notes).ends_with("brave-otter/avatar-asked"));
         assert_ne!(feed, paths.progress_feed_file(repo, "main"));

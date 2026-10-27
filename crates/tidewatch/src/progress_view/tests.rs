@@ -3,6 +3,7 @@
 use egui::{Event, Modifiers, PointerButton, Pos2, RawInput, Rect, Sense, Shape, pos2, vec2};
 use tidewatch_core::done_check::{Kind, Line, Report, Status};
 use tidewatch_core::end_block::EndBlock;
+use tidewatch_core::link_board::{Link, LinkBoard, TitleFrom};
 use tidewatch_core::progress::Ledger;
 
 use crate::done_check_glue::Look;
@@ -25,6 +26,7 @@ struct Panel {
     size: egui::Vec2,
     holds_keys: bool,
     shown: Option<tidewatch_core::progress::State>,
+    links: Option<LinkBoard>,
     texts: Vec<(String, Rect)>,
     action: Option<Action>,
     opened: Vec<String>,
@@ -41,6 +43,7 @@ impl Panel {
             size: vec2(width, 900.0),
             holds_keys: false,
             shown: None,
+            links: None,
             texts: Vec::new(),
             action: None,
             opened: Vec::new(),
@@ -63,6 +66,7 @@ impl Panel {
         let last_turn = self.last_turn.clone();
         let holds_keys = self.holds_keys;
         let shown = self.shown;
+        let links = self.links.as_ref();
         let output = self.ctx.run_ui(raw, |ui| {
             if holds_keys {
                 let at = Rect::from_min_size(pos2(0.0, 880.0), vec2(10.0, 10.0));
@@ -80,6 +84,7 @@ impl Panel {
                 meeseeks: None,
                 last_turn: last_turn.clone(),
                 shown,
+                links,
             };
             action = show(ui, Rect::from_min_size(pos2(0.0, 0.0), size), &input, state);
         });
@@ -812,5 +817,224 @@ fn no_board_text_overlaps_or_leaves_the_card_at_any_width() {
                 );
             }
         }
+    }
+}
+
+const AT: i64 = 240_000;
+const MIN: i64 = 60_000;
+const QUESTION: &str = "Post the Slack follow-up";
+
+fn shared(url: &str, title: &str, note: Option<&str>, ago_min: i64) -> Link {
+    Link {
+        url: url.to_owned(),
+        title: title.to_owned(),
+        note: note.map(str::to_owned),
+        first_seen_ms: AT - ago_min * MIN,
+        title_from: TitleFrom::Agent,
+    }
+}
+
+fn five_links() -> LinkBoard {
+    let mut board = LinkBoard::default();
+    for link in [
+        shared("https://example.com/notes", "Notes on bonus pools in other teams", None, 300),
+        shared("https://github.com/o/r/issues/38", "#38 Spend page loads slowly", None, 180),
+        shared("https://docs.google.com/document/d/1", "Mercury spend export, October", None, 60),
+        shared("https://github.com/o/r/pull/42", "#42 feat: profit and spend dashboard", None, 40),
+        shared("https://claude.ai/artifact/abc", "Split options compared", Some(QUESTION), 12),
+    ] {
+        board.absorb(&link);
+    }
+    board
+}
+
+fn with_links(text: &str, width: f32, board: LinkBoard) -> Panel {
+    let mut panel = Panel::new(text, width);
+    panel.links = Some(board);
+    panel.frame(Vec::new());
+    panel.frame(Vec::new());
+    panel
+}
+
+fn top_of(panel: &Panel, text: &str) -> f32 {
+    panel
+        .texts
+        .iter()
+        .find(|(drawn, _)| drawn == text)
+        .unwrap_or_else(|| panic!("{text:?} not drawn in {:?}", panel.texts))
+        .1
+        .top()
+}
+
+fn assert_clean(panel: &Panel, width: f32) {
+    for (index, (a, a_rect)) in panel.texts.iter().enumerate() {
+        assert!(a_rect.right() <= width + 0.5, "{a:?} runs past the card at {width}");
+        for (b, b_rect) in &panel.texts[index + 1..] {
+            assert!(
+                !a_rect.shrink(0.5).intersects(b_rect.shrink(0.5)),
+                "{a:?} {a_rect:?} overlaps {b:?} {b_rect:?} at {width}"
+            );
+        }
+    }
+}
+
+#[test]
+fn the_links_card_sits_under_the_title_and_above_the_needs_you_card() {
+    let panel = with_links(ASKING, 420.0, five_links());
+    let goal = top_of(&panel, "Ship it");
+    let links = top_of(&panel, "LINKS");
+    let needs = top_of(&panel, "NEEDS YOU");
+    assert!(goal < links && links < needs, "{goal} < {links} < {needs}");
+    let fold = panel.texts.iter().find(|(text, _)| text == "Show all 5").unwrap().1;
+    assert!(needs - fold.bottom() > 40.0, "the card ends well above the question card");
+    assert!(panel.drawn("5"), "the count tag");
+}
+
+#[test]
+fn without_links_there_is_no_card() {
+    let none = Panel::new(ASKING, 420.0);
+    assert!(!none.drawn("LINKS"));
+    let empty = with_links(ASKING, 420.0, LinkBoard::default());
+    assert!(!empty.drawn("LINKS"));
+}
+
+#[test]
+fn the_card_lists_the_newest_three_with_kind_tags_and_meta_then_show_all_expands_in_place() {
+    let mut panel = with_links(ASKING, 520.0, five_links());
+    for shown in [
+        "Split options compared",
+        "#42 feat: profit and spend dashboard",
+        "Mercury spend export, October",
+    ] {
+        assert!(panel.drawn(shown), "{shown}");
+    }
+    for hidden in ["#38 Spend page loads slowly", "Notes on bonus pools in other teams"] {
+        assert!(!panel.drawn(hidden), "{hidden}");
+    }
+    for tag in ["Artifact", "PR", "Doc"] {
+        assert!(panel.drawn(tag), "{tag}");
+    }
+    assert!(panel.drawn(&format!("claude.ai \u{b7} for: {QUESTION} \u{b7} 12m ago")));
+    assert!(panel.drawn("github.com \u{b7} 40m ago"));
+    let after = top_of(&panel, "NEEDS YOU");
+    let at = panel.center_of("Show all 5");
+    panel.click(at);
+    assert!(panel.state.all_links);
+    for shown in ["#38 Spend page loads slowly", "Notes on bonus pools in other teams"] {
+        assert!(panel.drawn(shown), "{shown}");
+    }
+    assert!(panel.drawn("Issue") && panel.drawn("Web"));
+    assert!(top_of(&panel, "NEEDS YOU") > after + 80.0, "the rows pushed the question down");
+    assert!(!panel.drawn("Show all 5") && panel.drawn("Show less"));
+    let at = panel.center_of("Show less");
+    panel.click(at);
+    assert!(!panel.state.all_links && !panel.drawn("#38 Spend page loads slowly"));
+}
+
+#[test]
+fn three_links_or_fewer_have_no_fold() {
+    let mut board = LinkBoard::default();
+    for n in 0..3 {
+        board.absorb(&shared(&format!("https://a.dev/{n}"), &format!("Link {n}"), None, n));
+    }
+    let panel = with_links(ASKING, 420.0, board);
+    assert!(!panel.drawn("Show all 3") && !panel.drawn("Show less"));
+    assert!(panel.drawn("Link 0") && panel.drawn("Link 2"));
+}
+
+#[test]
+fn no_links_card_text_overlaps_or_leaves_the_card_at_any_width_collapsed_or_open() {
+    for width in [200.0, 240.0, 300.0, 420.0, 640.0] {
+        let mut panel = with_links(ASKING, width, five_links());
+        assert_clean(&panel, width);
+        let at = panel.center_of("Show all 5");
+        panel.click(at);
+        assert_clean(&panel, width);
+    }
+}
+
+#[test]
+fn no_links_card_text_overlaps_with_no_ledger_either() {
+    for width in [200.0, 300.0, 520.0] {
+        let mut panel = Panel::new(ASKING, width);
+        panel.ledger = None;
+        panel.links = Some(five_links());
+        panel.frame(Vec::new());
+        panel.frame(Vec::new());
+        assert!(panel.drawn("LINKS") && panel.drawn("Split options compared"), "{width}");
+        assert_clean(&panel, width);
+    }
+}
+
+#[test]
+fn a_tab_with_links_and_no_ledger_still_shows_the_card() {
+    let mut panel = Panel::new(ASKING, 420.0);
+    panel.ledger = None;
+    panel.links = Some(five_links());
+    panel.frame(Vec::new());
+    panel.frame(Vec::new());
+    assert!(panel.drawn("LINKS"));
+    assert!(!panel.drawn("NEEDS YOU"));
+}
+
+#[test]
+fn a_click_on_a_title_opens_the_link_and_the_copy_button_asks_for_the_address_to_be_copied() {
+    let mut panel = with_links(ASKING, 520.0, five_links());
+    let at = panel.center_of("Split options compared");
+    assert_eq!(panel.click(at), None);
+    assert_eq!(panel.opened, ["https://claude.ai/artifact/abc"]);
+    let copy = panel.center_of(stdusk_egui::ui::icons::COPY);
+    assert_eq!(
+        panel.click(copy),
+        Some(Action::CopyLink("https://claude.ai/artifact/abc".to_owned()))
+    );
+    assert_eq!(panel.opened.len(), 1, "copying does not open");
+}
+
+#[test]
+fn the_needs_you_card_says_read_first_for_the_link_sent_with_its_question_only() {
+    let mut panel = with_links(ASKING, 520.0, five_links());
+    let label = panel.texts.iter().find(|(text, _)| text == "Read first:").unwrap().1;
+    let title = panel
+        .texts
+        .iter()
+        .filter(|(text, _)| text == "Split options compared")
+        .map(|(_, rect)| *rect)
+        .nth(1)
+        .expect("the title in the question card too");
+    assert!(title.left() > label.right() && (title.center().y - label.center().y).abs() < 2.0);
+    assert!(label.top() > top_of(&panel, "NEEDS YOU"));
+    panel.opened.clear();
+    panel.click(title.center());
+    assert_eq!(panel.opened, ["https://claude.ai/artifact/abc"]);
+
+    let mut other = LinkBoard::default();
+    other.absorb(&shared("https://a.dev/1", "For something else", Some("Another question?"), 5));
+    other.absorb(&shared("https://a.dev/2", "For nobody", None, 4));
+    let panel = with_links(ASKING, 520.0, other);
+    assert!(!panel.drawn("Read first:"));
+}
+
+#[test]
+fn the_read_first_line_never_overlaps_at_any_width() {
+    for width in [200.0, 240.0, 300.0, 420.0, 640.0] {
+        let panel = with_links(ASKING, width, five_links());
+        assert!(panel.drawn("Read first:"), "{width}");
+        assert_clean(&panel, width);
+    }
+}
+
+#[test]
+fn a_links_card_with_a_long_title_and_meta_is_cut_not_overlapped() {
+    let mut board = LinkBoard::default();
+    board.absorb(&shared(
+        "https://a-very-long-host-name.example.com/a/very/long/path",
+        &"A title that goes on and on ".repeat(4),
+        Some(&"a note that explains and explains ".repeat(4)),
+        3,
+    ));
+    for width in [200.0, 300.0, 640.0] {
+        let panel = with_links(ASKING, width, board.clone());
+        assert_clean(&panel, width);
     }
 }

@@ -268,6 +268,7 @@ impl AgentRun {
             TabEvent::NoteReply { .. }
             | TabEvent::Proposal { .. }
             | TabEvent::Progress { .. }
+            | TabEvent::Links { .. }
             | TabEvent::Job { .. }
             | TabEvent::Background(_)
             | TabEvent::Avatar { .. }

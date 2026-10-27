@@ -10,6 +10,7 @@ use egui::{
     Align2, Color32, CornerRadius, Frame, Margin, Rect, ScrollArea, Sense, Shape, Stroke,
     StrokeKind, Ui, UiBuilder, pos2, vec2,
 };
+use tidewatch_core::link_board::LinkBoard;
 use tidewatch_core::progress::{Entry, Ledger, Mark, State};
 
 use crate::answer_chips;
@@ -18,7 +19,9 @@ use crate::job_model::Card;
 use crate::job_view;
 use crate::last_turn::LastTurn;
 use crate::last_turn_view;
+use crate::link_model;
 use crate::link_text::Text;
+use crate::link_view;
 use crate::meeseeks_model::Card as MeeseeksCard;
 use crate::meeseeks_view;
 use crate::progress_model::{
@@ -101,6 +104,7 @@ pub(crate) struct TabState {
     seen: Option<u64>,
     open: [bool; 3],
     all_rows: bool,
+    all_links: bool,
 }
 
 impl TabState {
@@ -153,6 +157,7 @@ pub(crate) enum Action {
     TakeOver,
     GiveUp,
     DoneCheck(crate::done_check_view::Action),
+    CopyLink(String),
 }
 
 pub(crate) struct Input<'a> {
@@ -170,6 +175,8 @@ pub(crate) struct Input<'a> {
     pub(crate) last_turn: Option<LastTurn>,
     /// The state the tab shows everywhere, when the agent reported one that still stands.
     pub(crate) shown: Option<State>,
+    /// What the agent shared and Tidewatch found, kept for the life of the tab.
+    pub(crate) links: Option<&'a LinkBoard>,
 }
 
 fn pad_of(width: f32) -> f32 {
@@ -199,16 +206,27 @@ pub(crate) fn show(
 fn content(ui: &mut Ui, input: &Input<'_>, state: &mut TabState) -> Option<Action> {
     let width = ui.available_width();
     let mut action = None;
+    let links = input.links.filter(|board| !board.is_empty());
     if let Some(card) = input.meeseeks {
         action = meeseeks_view::show(ui, width, card).map(|clicked| match clicked {
             meeseeks_view::Action::TakeOver => Action::TakeOver,
             meeseeks_view::Action::GiveUp => Action::GiveUp,
         });
-        if !input.jobs.is_empty() || input.ledger.is_some() || input.last_turn.is_some() {
+        if !input.jobs.is_empty()
+            || input.ledger.is_some()
+            || input.last_turn.is_some()
+            || links.is_some()
+        {
             ui.add_space(GAP);
         }
     }
     let Some(known) = input.ledger else {
+        if let Some(board) = links {
+            action = link_card(ui, width, board, input, state).or(action);
+            if !input.jobs.is_empty() || input.last_turn.is_some() {
+                ui.add_space(GAP);
+            }
+        }
         let asked = job_view::show(ui, width, input.jobs)
             .map(|(job, message)| Action::Ask { job, message });
         action = action.or(asked);
@@ -225,10 +243,14 @@ fn content(ui: &mut Ui, input: &Input<'_>, state: &mut TabState) -> Option<Actio
     let shape = input.meeseeks.map_or_else(StageShape::default, |card| card.shape);
     let tone = input.shown.map_or_else(|| model::tone(ledger), model::tone_of);
     header(ui, width, ledger, tone, input.now_ms, (known.updated_ms, input.stale));
+    if let Some(board) = links {
+        ui.add_space(GAP);
+        action = link_card(ui, width, board, input, state).or(action);
+    }
     let asked = questions(ledger);
     if !asked.is_empty() {
         ui.add_space(GAP);
-        if let Some(picked) = question_card(ui, width, &asked) {
+        if let Some(picked) = question_card(ui, width, &asked, links) {
             action = Some(picked);
         }
     }
@@ -266,6 +288,17 @@ fn content(ui: &mut Ui, input: &Input<'_>, state: &mut TabState) -> Option<Actio
         tags(ui, width, ledger, state);
     }
     action
+}
+
+fn link_card(
+    ui: &mut Ui,
+    width: f32,
+    board: &LinkBoard,
+    input: &Input<'_>,
+    state: &mut TabState,
+) -> Option<Action> {
+    let copied = link_view::show(ui, width, board, input.now_ms, &mut state.all_links);
+    copied.map(Action::CopyLink)
 }
 
 fn single_line(
@@ -394,14 +427,24 @@ fn paint_bar(ui: &mut Ui, column: Rect, bar: &Bar, tone: Tone, index: usize) {
     ui.interact(area, ui.id().with(("progress-bar", index)), Sense::hover()).on_hover_text(tip);
 }
 
-fn question_card(ui: &mut Ui, width: f32, asked: &[&Entry]) -> Option<Action> {
+fn question_card(
+    ui: &mut Ui,
+    width: f32,
+    asked: &[&Entry],
+    links: Option<&LinkBoard>,
+) -> Option<Action> {
     match asked {
-        [only] => answer_card(ui, width, only),
+        [only] => answer_card(ui, width, only, links),
         _ => plain_question_card(ui, width, asked).then_some(Action::Answer),
     }
 }
 
-fn answer_card(ui: &mut Ui, width: f32, entry: &Entry) -> Option<Action> {
+fn answer_card(
+    ui: &mut Ui,
+    width: f32,
+    entry: &Entry,
+    links: Option<&LinkBoard>,
+) -> Option<Action> {
     const PAD: f32 = 16.0;
     const NARROW_PAD_IN: f32 = 12.0;
     const LABEL_GAP: f32 = 8.0;
@@ -424,7 +467,11 @@ fn answer_card(ui: &mut Ui, width: f32, entry: &Entry) -> Option<Action> {
     let title = question.wrapped(inner_w, 3).lay_out(&painter);
     let chips = answer_chips::chips_marked(&entry.options);
     let row = answer_chips::Row::new(&painter, &chips, inner_w);
-    let height = pad * 2.0 + label.size().y + BLOCK_GAP + title.size().y + BLOCK_GAP + row.height();
+    let read = links.map_or_else(Vec::new, |board| link_model::read_first(board, &entry.text));
+    let read_h =
+        if read.is_empty() { 0.0 } else { link_view::read_first_height(read.len()) + BLOCK_GAP };
+    let height =
+        pad * 2.0 + label.size().y + BLOCK_GAP + title.size().y + BLOCK_GAP + read_h + row.height();
     let (rect, response) = ui.allocate_exact_size(vec2(width, height), Sense::click());
     let pressed_in = ui.input(|i| i.pointer.any_pressed())
         && ui.input(|i| i.pointer.interact_pos()).is_some_and(|at| rect.contains(at));
@@ -455,7 +502,9 @@ fn answer_card(ui: &mut Ui, width: f32, entry: &Entry) -> Option<Action> {
         pos2(left, title_top),
         brand::TEXT,
     );
-    let chips_at = pos2(left, title_top + title_h + BLOCK_GAP);
+    let read_top = title_top + title_h + BLOCK_GAP;
+    link_view::paint_read_first(ui, pos2(left, read_top), inner_w, &read);
+    let chips_at = pos2(left, read_top + read_h);
     let clicked = row.show(ui, response.id, chips_at, &chips);
     let card = answer_chips::Card { id: response.id, rect, terminal_hidden: false };
     let picked = clicked.or_else(|| answer_chips::key_pick(ui, &card, &chips))?;

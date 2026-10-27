@@ -39,6 +39,9 @@ The arguments of `update_progress`:
     \"options\": [\"Pause after batch 2\", \"Let it all run now\", \"Pause right now\"],
     \"recommended\": 0
   },
+  \"links\": [
+    { \"url\": \"https://claude.ai/artifact/4JqXyaNvpN1W289NyzXiT9\", \"title\": \"Batch sizes compared\", \"for\": \"the batch 3 question\" }
+  ],
   \"waiting_on\": { \"job\": \"recap-backfill\" },
   \"scheduled\": [
     { \"when\": { \"date\": \"2026-11-01\" }, \"text\": \"Drop the old column\", \"why\": \"nothing reads it after the backfill\" }
@@ -58,6 +61,7 @@ How to fill it in:
 - `done` means the whole task is finished: no step is todo, active or blocked, and no stage is open. A report that says done with an open step is refused. If anything is left, the state is working, waiting, blocked or needs_you.
 - A question for the user goes in `needs_you`: the `question`, 2 to 4 short `options` the user can click, and `recommended`, the index of the one you recommend. Then `state` is `needs_you`. Never leave a question only in your chat message: Tidewatch shows `needs_you` as a card with buttons, and a question that sits only in the chat is missed. When the user answers, report again.
 - When you wait on something, `state` is `waiting` and `waiting_on` names exactly one of `job` (the name of a job you report to Tidewatch), `pr` (a pull request number), `date` (`YYYY-MM-DD`) or `event` (words). A job you run keeps its progress bar next to your `now` line while it runs.
+- `links` are the links you share with the user: artifacts, boards, pull requests, docs. Report each one with a `title` (one line, at most 120 characters) and `for`, a short note on what it is for. Tidewatch keeps them in a Links card for the life of the task, so the user can find them again after answering. A link the user should read before answering goes in `needs_you.links`, which has the same shape and ties the link to that question. Only `http` and `https` addresses, at most 20 links per call. A link you already sent stays, so send it again only to correct its title or `for`.
 - `scheduled` holds later work that is not for this turn. Its `when` is exactly one of `{\"date\": \"YYYY-MM-DD\"}`, `{\"about\": \"YYYY-MM-DD\"}` for a guess, `{\"event\": \"words\"}` when it waits for something to happen, `{\"parked\": \"until what\"}` when it is set aside, or `{\"you\": true}` when only the user can decide it. Every date or later step you tell the user in chat must also be in `scheduled`. Dates are `YYYY-MM-DD`: take today's from your environment, or run `date +%F`.
 - `verified` and `not_verified` are separate lists: name the check and its result, or what you could not check and why. `decisions` hold what you decided and why.
 - Send `goal` on the first report. Later reports may leave `goal` and `title` out.
@@ -159,6 +163,17 @@ mod tests {
         assert!(report.waiting_on.is_some());
         assert_eq!(report.scheduled.len(), 1);
         assert!(report.now.chars().count() <= 120);
+    }
+
+    #[test]
+    fn the_example_shares_a_link_and_the_text_says_where_a_link_for_a_question_goes() {
+        let text = section(None, TurnEnd::SentBack);
+        let checked = ProgressReport::check_with_links(&example_args(&text), None).unwrap();
+        assert_eq!(checked.links.len(), 1);
+        assert_eq!(checked.links[0].note.as_deref(), Some("the batch 3 question"));
+        assert!(text.contains("`links` are the links you share with the user"));
+        assert!(text.contains("goes in `needs_you.links`"));
+        assert!(text.contains("at most 20 links per call"));
     }
 
     #[test]

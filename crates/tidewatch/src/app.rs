@@ -95,6 +95,7 @@ use crate::keep_awake_hold::RealHold;
 use crate::last_used::LastUsed;
 use crate::layout;
 use crate::leftover_glue;
+use crate::link_glue;
 use crate::meeseeks_glue;
 use crate::new_tab::Request;
 use crate::notify::Notifier;
@@ -190,6 +191,7 @@ pub(crate) struct Tidewatch {
     comments: comment_glue::Host,
     progress: progress_glue::Host,
     job_live: job_glue::Host,
+    link_live: link_glue::Host,
     avatar_live: avatar_glue::Host,
     meeseeks: meeseeks_glue::Host,
     done_check: done_check_glue::Host,
@@ -309,6 +311,7 @@ impl Tidewatch {
             progress_glue::Dev::from_env(),
         );
         let job_live = job_glue::Host::from_env(paths.is_some() && screenshot.is_none());
+        let link_live = link_glue::Host::from_env(paths.is_some() && screenshot.is_none());
         let avatar_live = avatar_glue::Host::from_env(paths.is_some() && screenshot.is_none());
         let meeseeks = meeseeks_glue::Host::from_env(paths.as_ref(), screenshot.is_none());
         let done_check = done_check_glue::Host::from_env(loaded.done_check.enabled);
@@ -401,6 +404,7 @@ impl Tidewatch {
             comments: comment_glue::Host::new(),
             progress,
             job_live,
+            link_live,
             avatar_live,
             meeseeks,
             done_check,

@@ -9,6 +9,7 @@ use tidewatch_core::avatar::Avatar;
 use tidewatch_core::background::Signal;
 use tidewatch_core::events::{TabEvent, TabMessage};
 use tidewatch_core::job::Report;
+use tidewatch_core::link_board::Link;
 use tidewatch_core::progress::Ledger;
 use tidewatch_core::status::HookKind;
 use tidewatch_core::workflows::Workflow;
@@ -62,6 +63,11 @@ pub(crate) enum Follow {
         tab: u64,
         ledger: Box<Ledger>,
     },
+    /// The agent reported links; they are already saved in the tab's state folder.
+    Links {
+        tab: u64,
+        links: Vec<Link>,
+    },
     /// The agent reported a job; the tab's board takes it.
     Job {
         tab: u64,
@@ -108,6 +114,9 @@ pub(crate) fn route<T>(tabs: &mut Tabs<Pane<T>>, message: TabMessage, now: f64) 
         }
         TabEvent::Progress { ledger } => {
             Some(Follow::Progress { tab: message.tab_id, ledger: ledger.clone() })
+        }
+        TabEvent::Links { links } => {
+            Some(Follow::Links { tab: message.tab_id, links: links.clone() })
         }
         TabEvent::Ask { questions, reply } => {
             agent.run.set_asking(questions.first().map(|question| question.text.clone()));

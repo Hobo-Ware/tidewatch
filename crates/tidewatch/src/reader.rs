@@ -6,6 +6,8 @@ use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+use tidewatch_core::link_board::Link as Shared;
+use tidewatch_core::link_scan;
 use tidewatch_core::question::{AskReply, Question};
 use tidewatch_core::restore::codex_session_id;
 use tidewatch_core::sent::{self, Record};
@@ -165,6 +167,7 @@ pub(crate) struct Reader {
     sent_file: Option<PathBuf>,
     sent_len: u64,
     sent_looked: f64,
+    found_links: Vec<Shared>,
 }
 
 impl Reader {
@@ -199,6 +202,7 @@ impl Reader {
             sent_file: None,
             sent_len: 0,
             sent_looked: f64::NEG_INFINITY,
+            found_links: Vec::new(),
         }
     }
 
@@ -446,11 +450,17 @@ impl Reader {
                 .find(|entry| entry.role == Role::User)
                 .map(|entry| entry.text.clone());
         }
+        self.found_links.extend(link_scan::found(&entries, unix_ms_now()));
         self.rows.push_all(entries);
         self.save_claims();
         if let Some(first) = self.rows.iter().next() {
             self.view.heights.keep_from(first.seq);
         }
+    }
+
+    /// The artifact and GitHub links the agent wrote in the entries read since the last call.
+    pub(crate) fn take_links(&mut self) -> Vec<Shared> {
+        std::mem::take(&mut self.found_links)
     }
 
     #[cfg(test)]
@@ -661,5 +671,20 @@ mod tests {
         reader.relaunch("claude", None, "--- Stage 2 ---".into());
         assert_eq!(reader.session_title(), None);
         assert_eq!(reader.first_message(), Some("Fix the login redirect"));
+    }
+
+    #[test]
+    fn the_agents_own_links_are_taken_once_and_the_users_never() {
+        let mut reader = Reader::for_agent("claude", None, PathBuf::from("/w"));
+        let said =
+            |role, text: &str| Entry { role, text: text.to_owned(), tool: None, ts: Some(5) };
+        reader.add(vec![
+            said(Role::User, "look at https://claude.ai/artifact/mine"),
+            said(Role::Assistant, "board: https://claude.ai/artifact/abc"),
+        ]);
+        let links = reader.take_links();
+        assert_eq!(links.len(), 1);
+        assert_eq!(links[0].url, "https://claude.ai/artifact/abc");
+        assert_eq!(reader.take_links().len(), 0, "taken once");
     }
 }

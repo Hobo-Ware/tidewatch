@@ -7,17 +7,20 @@ use std::path::Path;
 use serde_json::{Map, Value, json};
 
 use crate::events::TabEvent;
+use crate::link_board::{Link, MAX_LINKS_PER_CALL, MAX_NOTE_CHARS, MAX_TITLE_CHARS};
+use crate::link_store;
+use crate::paths::links_file_beside;
 use crate::progress::{Ledger, MAX_LEDGER_BYTES, Mark, State, When, real};
 use crate::progress_report::{
-    MAX_NOW_CHARS, MAX_OPTIONS, MAX_STAGES, MIN_OPTIONS, MIN_STAGES, ProgressReport, StageKind,
-    StageStatus, StepStatus,
+    Checked, MAX_NOW_CHARS, MAX_OPTIONS, MAX_STAGES, MIN_OPTIONS, MIN_STAGES, ProgressReport,
+    StageKind, StageStatus, StepStatus,
 };
 use crate::progress_store;
 
 pub const UPDATE_TOOL: &str = "update_progress";
 pub const GET_TOOL: &str = "get_progress";
 const LEDGER_KEY: &str = "ledger";
-const TYPED_KEYS: [&str; 13] = [
+const TYPED_KEYS: [&str; 14] = [
     "goal",
     "title",
     "state",
@@ -26,6 +29,7 @@ const TYPED_KEYS: [&str; 13] = [
     "stages",
     "steps",
     "needs_you",
+    "links",
     "waiting_on",
     "scheduled",
     "verified",
@@ -139,6 +143,26 @@ fn note_schema(what: &str) -> Value {
     })
 }
 
+fn links_schema(what: &str, with_for: bool) -> Value {
+    let mut properties = json!({
+        "url": { "type": "string", "description": "An http or https address." },
+        "title": { "type": "string", "maxLength": MAX_TITLE_CHARS, "description": format!("What the link is, in one line of at most {MAX_TITLE_CHARS} characters.") },
+    });
+    if with_for {
+        properties["for"] = json!({ "type": "string", "maxLength": MAX_NOTE_CHARS, "description": "A short note on what the link is for." });
+    }
+    json!({
+        "type": "array",
+        "maxItems": MAX_LINKS_PER_CALL,
+        "description": what,
+        "items": {
+            "type": "object",
+            "properties": properties,
+            "required": ["url", "title"],
+        },
+    })
+}
+
 fn input_schema() -> Value {
     json!({
         "type": "object",
@@ -190,9 +214,11 @@ fn input_schema() -> Value {
                     "options": { "type": "array", "minItems": MIN_OPTIONS, "maxItems": MAX_OPTIONS, "items": { "type": "string" }, "description": "Short answers the user can click." },
                     "recommended": { "type": "integer", "minimum": 0, "description": "The index of the option you recommend." },
                     "why": { "type": "string", "description": "Why you need the answer." },
+                    "links": links_schema("Links the user should read before answering, such as an artifact or a pull request. They stay tied to this question.", false),
                 },
                 "required": ["question", "options", "recommended"],
             },
+            "links": links_schema(&format!("Links you share with the user: artifacts, pull requests, docs. Tidewatch keeps every link for the life of the task, so send each one once, with a title and what it is for. At most {MAX_LINKS_PER_CALL} per call."), true),
             "waiting_on": {
                 "type": "object",
                 "description": "What you wait for, exactly one of job, pr, date or event. Required when state is waiting.",
@@ -257,6 +283,14 @@ pub fn tool_definitions() -> [Value; 2] {
     ]
 }
 
+fn now_ms() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .ok()
+        .and_then(|since| i64::try_from(since.as_millis()).ok())
+        .unwrap_or_default()
+}
+
 fn not_saved(problems: &[String]) -> (String, bool) {
     (
         format!(
@@ -298,18 +332,25 @@ fn update_typed(args: &Map<String, Value>, file: &Path, emit: &dyn Fn(TabEvent))
         ));
     }
     let saved = progress_store::load_report(file);
-    let report = match ProgressReport::check(&args, saved.as_ref()) {
-        Ok(report) => Some(report),
+    let checked = match ProgressReport::check_with_links(&args, saved.as_ref()) {
+        Ok(checked) => Some(checked),
         Err(found) => {
             problems.extend(found);
             None
         }
     };
-    let Some(report) = report.filter(|_| problems.is_empty()) else {
+    let Some(Checked { report, links }) = checked.filter(|_| problems.is_empty()) else {
         return not_saved(&problems);
     };
     if let Err(e) = progress_store::save_report(file, &report) {
         return save_failed(&e);
+    }
+    let links: Vec<Link> = links.into_iter().map(|link| link.into_link(now_ms())).collect();
+    if !links.is_empty() {
+        if let Err(e) = link_store::merge(&links_file_beside(file), &links) {
+            return save_failed(&e);
+        }
+        emit(TabEvent::Links { links });
     }
     let ledger = report.to_ledger();
     let mut reply = ledger.summary();
@@ -531,5 +572,107 @@ mod tests {
         let lines: Vec<String> = saved_with(&items).lines().map(str::to_owned).collect();
         assert_eq!(lines.len(), 1 + MAX_WHEN_FIXES + 1);
         assert_eq!(lines[6], "fix next save: 3 more Scheduled items have a when to fix");
+    }
+
+    fn typed(extra: &serde_json::Value) -> serde_json::Map<String, serde_json::Value> {
+        let mut args = serde_json::json!({
+            "goal": "Ship it",
+            "state": "working",
+            "now": "Writing",
+            "stages": [
+                { "name": "Build", "kind": "build", "status": "active" },
+                { "name": "Ship", "kind": "ship", "status": "todo" }
+            ],
+            "steps": [{ "stage": "Build", "text": "Write", "status": "active" }],
+        });
+        args.as_object_mut().unwrap().extend(extra.as_object().unwrap().clone());
+        args.as_object().unwrap().clone()
+    }
+
+    fn run(
+        args: &serde_json::Map<String, serde_json::Value>,
+        file: &Path,
+    ) -> (String, bool, usize) {
+        let events = std::cell::RefCell::new(Vec::new());
+        let (reply, is_error) = update(args, file, &|event| events.borrow_mut().push(event));
+        let links = events
+            .borrow()
+            .iter()
+            .map(|event| match event {
+                TabEvent::Links { links } => links.len(),
+                _ => 0,
+            })
+            .sum();
+        (reply, is_error, links)
+    }
+
+    #[test]
+    fn reported_links_are_kept_beside_the_report_and_announced_to_the_app() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("progress.md");
+        let args = typed(&serde_json::json!({ "links": [
+            { "url": "https://claude.ai/artifact/abc", "title": "Board", "for": "the pick" },
+        ]}));
+        let (reply, is_error, announced) = run(&args, &file);
+        assert!(!is_error, "{reply}");
+        assert_eq!(announced, 1);
+        let board = link_store::load(&links_file_beside(&file)).unwrap();
+        assert_eq!(board.links[0].title, "Board");
+        assert_eq!(board.links[0].note.as_deref(), Some("the pick"));
+        assert!(board.links[0].first_seen_ms > 0);
+    }
+
+    #[test]
+    fn a_later_report_never_drops_a_link_and_a_report_without_links_touches_none() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("progress.md");
+        let first = typed(&serde_json::json!({ "links": [
+            { "url": "https://a.dev/1", "title": "One" },
+            { "url": "https://a.dev/2", "title": "Two" },
+        ]}));
+        run(&first, &file);
+        let (_, _, announced) = run(&typed(&serde_json::json!({})), &file);
+        assert_eq!(announced, 0, "no links, no event");
+        let again = typed(&serde_json::json!({ "links": [
+            { "url": "https://a.dev/1", "title": "One, renamed", "for": "now with a reason" },
+            { "url": "https://a.dev/3", "title": "Three" },
+        ]}));
+        run(&again, &file);
+        let board = link_store::load(&links_file_beside(&file)).unwrap();
+        let titles: Vec<&str> = board.links.iter().map(|link| link.title.as_str()).collect();
+        assert_eq!(titles, ["One, renamed", "Two", "Three"]);
+        assert_eq!(board.links[0].note.as_deref(), Some("now with a reason"));
+    }
+
+    #[test]
+    fn a_bad_link_refuses_the_whole_report_and_saves_no_link() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("progress.md");
+        let args = typed(&serde_json::json!({ "links": [
+            { "url": "https://a.dev/1", "title": "Fine" },
+            { "url": "ftp://a.dev/2", "title": "Bad" },
+        ]}));
+        let (reply, is_error, announced) = run(&args, &file);
+        assert!(is_error && announced == 0);
+        assert!(reply.starts_with("The report was not saved."), "{reply}");
+        assert!(
+            reply.contains("links[1].url \"ftp://a.dev/2\" must be an http or https link"),
+            "{reply}"
+        );
+        assert!(!links_file_beside(&file).exists());
+        assert!(!file.exists());
+    }
+
+    #[test]
+    fn the_tool_schema_describes_links_with_their_limits_and_the_question_links() {
+        let [update, _] = tool_definitions();
+        let schema = &update["inputSchema"]["properties"];
+        assert_eq!(schema["links"]["maxItems"], 20);
+        assert_eq!(schema["links"]["items"]["properties"]["title"]["maxLength"], 120);
+        assert_eq!(schema["links"]["items"]["required"], serde_json::json!(["url", "title"]));
+        assert!(schema["links"]["items"]["properties"]["for"].is_object());
+        let ask = &schema["needs_you"]["properties"]["links"];
+        assert_eq!(ask["maxItems"], 20);
+        assert!(ask["items"]["properties"]["for"].is_null());
     }
 }
