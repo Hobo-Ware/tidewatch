@@ -17,7 +17,7 @@ pub const SET_TOOL: &str = "set_avatar";
 pub fn tool_definition() -> Value {
     json!({
         "name": SET_TOOL,
-        "description": "Once you understand the task, call this once to give the tab an icon: a round icon, a 64x64 flat SVG about the task, bright colors on a dark background, nothing near the edge. It is shown in a dark circle, so keep the drawing inside the middle circle of the viewBox, draw no background tile and use only colors that are at least 3:1 against #222937. 2 to 3 colors, simple shapes (rect, circle, ellipse, line, polyline, polygon, path). Anything else in the SVG is dropped. An icon that is too dark or runs past the circle is refused with what to fix. Call it again only when asked to redraw.",
+        "description": "Once you understand the task, call this once to give the tab an icon: a round icon, a 64x64 flat SVG about the task, bright colors, nothing near the edge. Tidewatch draws the dark circular plate and its ring, so draw no ring, frame, border or background tile of your own: only the art itself, which is scaled to fill the plate. Keep the drawing inside the middle circle of the viewBox and use only colors that are at least 3:1 against #222937. 2 to 3 colors, simple shapes (rect, circle, ellipse, line, polyline, polygon, path). Anything else in the SVG is dropped. An icon that is too dark or runs past the circle is refused with what to fix. Call it again only when asked to redraw.",
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -158,9 +158,13 @@ mod tests {
     #[test]
     fn the_tool_text_asks_for_a_round_bright_icon_with_nothing_near_the_edge() {
         let text = tool_definition()["description"].as_str().unwrap().to_owned();
-        for want in
-            ["round icon", "bright colors on a dark background", "nothing near the edge", "3:1"]
-        {
+        for want in [
+            "round icon",
+            "bright colors",
+            "nothing near the edge",
+            "no ring, frame, border or background tile",
+            "3:1",
+        ] {
             assert!(text.contains(want), "{want}");
         }
         assert!(text.contains(&crate::avatar_check::hex(crate::avatar_check::PLATE)));

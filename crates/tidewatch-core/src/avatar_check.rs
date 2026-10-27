@@ -17,6 +17,14 @@ const PAINTED_ALPHA: u8 = 128;
 const MAX_DARK_SHARE: f64 = 0.5;
 const MAX_SPILL_SHARE: f64 = 0.02;
 const MIN_PAINTED_SHARE: f64 = 0.01;
+const FRAME_SHAPES: [&str; 3] = ["rect", "circle", "ellipse"];
+const DRAWN: [&str; 7] = ["rect", "circle", "ellipse", "line", "polyline", "polygon", "path"];
+const FRAME_MIN_SPAN: f32 = 0.6;
+const FRAME_MAX_OFFSET: f32 = 0.12;
+const FRAME_MAX_CONTRAST: f64 = 2.0;
+const FRAME_MAX_FILL_OPACITY: f32 = 0.1;
+const FRAME_MIN_STROKE_OPACITY: f32 = 0.1;
+const MAX_FRAMES: usize = 3;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Unreadable {
@@ -70,11 +78,85 @@ pub fn rasterize(svg: &str, px: u32, inset: f32) -> Option<Pixmap> {
 
 const PROBE_PX: u32 = 96;
 
+fn leaf_paths<'a>(group: &'a usvg::Group, out: &mut Vec<&'a usvg::Path>) {
+    for node in group.children() {
+        match node {
+            usvg::Node::Group(inner) => leaf_paths(inner, out),
+            usvg::Node::Path(path) => out.push(path),
+            _ => {}
+        }
+    }
+}
+
+fn blended_with_plate(color: usvg::Color, opacity: f32) -> [u8; 3] {
+    let mix = |ink: u8, plate: u8| {
+        (f32::from(ink) * opacity + f32::from(plate) * (1.0 - opacity)).round() as u8
+    };
+    [mix(color.red, PLATE[0]), mix(color.green, PLATE[1]), mix(color.blue, PLATE[2])]
+}
+
+fn is_frame(tag: &str, path: &usvg::Path, canvas: usvg::Size) -> bool {
+    let bounds = path.abs_bounding_box();
+    let off_center = (bounds.x() + bounds.width() / 2.0 - canvas.width() / 2.0).abs()
+        > canvas.width() * FRAME_MAX_OFFSET
+        || (bounds.y() + bounds.height() / 2.0 - canvas.height() / 2.0).abs()
+            > canvas.height() * FRAME_MAX_OFFSET;
+    let small = bounds.width() < canvas.width() * FRAME_MIN_SPAN
+        || bounds.height() < canvas.height() * FRAME_MIN_SPAN;
+    if !FRAME_SHAPES.contains(&tag) || off_center || small {
+        return false;
+    }
+    let outline = tag != "rect"
+        && path.stroke().is_some_and(|s| s.opacity().get() >= FRAME_MIN_STROKE_OPACITY)
+        && path.fill().is_none_or(|f| f.opacity().get() <= FRAME_MAX_FILL_OPACITY);
+    let backdrop = path.fill().is_some_and(|fill| match fill.paint() {
+        usvg::Paint::Color(color) => {
+            contrast(blended_with_plate(*color, fill.opacity().get()), PLATE) < FRAME_MAX_CONTRAST
+        }
+        _ => false,
+    });
+    outline || backdrop
+}
+
+fn without_leading_frame(svg: &str) -> Option<String> {
+    let tree = usvg::Tree::from_str(svg, &usvg::Options::default()).ok()?;
+    let mut leaves = Vec::new();
+    leaf_paths(tree.root(), &mut leaves);
+    if leaves.len() < 2 {
+        return None;
+    }
+    let doc = roxmltree::Document::parse(svg).ok()?;
+    let element =
+        doc.descendants().find(|n| n.is_element() && DRAWN.contains(&n.tag_name().name()))?;
+    if !is_frame(element.tag_name().name(), leaves[0], tree.size()) {
+        return None;
+    }
+    let mut next = svg.to_owned();
+    next.replace_range(element.range(), "");
+    let rest = usvg::Tree::from_str(&next, &usvg::Options::default()).ok()?;
+    let mut remaining = Vec::new();
+    leaf_paths(rest.root(), &mut remaining);
+    (remaining.len() + 1 == leaves.len()).then_some(next)
+}
+
+/// Tidewatch draws the plate, so a frame the agent drew round its art would only keep the art small.
+#[must_use]
+pub fn without_frame(svg: &str) -> String {
+    let mut current = svg.to_owned();
+    for _ in 0..MAX_FRAMES {
+        let Some(next) = without_leading_frame(&current) else { break };
+        current = next;
+    }
+    current
+}
+
 /// The picture scaled and moved so what it paints, not its viewBox, is centered and reaches
 /// `fill` of the square's half width at its farthest painted pixel, so nothing is cut by the
-/// circle and small art is not left tiny. `None` when it cannot be drawn or paints nothing.
+/// circle and small art is not left tiny. A frame drawn round the art is left out first (see
+/// `without_frame`). `None` when it cannot be drawn or paints nothing.
 #[must_use]
 pub fn rasterize_fitted(svg: &str, px: u32, fill: f32) -> Option<Pixmap> {
+    let svg = &without_frame(svg);
     let tree = usvg::Tree::from_str(svg, &usvg::Options::default()).ok()?;
     let probe = rasterize(svg, PROBE_PX, 1.0)?;
     let painted: Vec<(f32, f32)> = probe
