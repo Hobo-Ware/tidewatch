@@ -65,7 +65,7 @@ const RECOVERY_LINE: &str = "- If `update_progress` is not available, look for `
 
 const AVATAR_LINE: &str = "- Once you understand the task, call `set_avatar` once with a 64x64 flat round icon about the task (2-3 bright colors on a dark background, simple shapes, nothing near the edge) and a one-line reason.\n";
 
-const PUSH_LINE: &str = "- You may push any branch except the repo's default branch, force included; after folding fixups use `git push --force-with-lease`. The default branch and tags are refused, and Tidewatch opens pull requests.\n";
+const PUSH_LINE: &str = "- You may push any branch except the repo's default branch, force included; after folding fixups use `git push --force-with-lease`. The default branch and tags are refused. When Tidewatch asks you to open a pull request, push the branch and run `gh pr create --draft` yourself, writing the title (Conventional Commits style, what changed for the user) and the body (what changed and why, how you verified it, what you did not verify; short) in the house style.\n";
 
 /// Tool guidance Tidewatch always puts after the house style, so an older or edited `house-style.md`
 /// reaches agents with it too. A Meeseeks gets only the lines its own block does not contradict:
@@ -91,7 +91,8 @@ You are a Meeseeks with exactly one task: the one you were given. Do it, and not
 - Set `kind` to `read-only` in your progress report for a question or an investigation (your final summary is the answer), and to `edit` as soon as you will change files.
 - When you believe you are done or cannot go further, call `meeseeks_done` once with a one-line summary (a read-only task puts its whole answer there). If you are blocked, start it with `Blocked:` and the reason. Tidewatch decides what to check and ends this session itself.
 - Never end with a decision for the user. If your answer leaves a choice (switch or not, which option), ask it with your question tool, the recommended option first, and act on the answer before you finish.
-- You may push this branch; after folding fixups use `git push --force-with-lease`. Do not push anything else, open a pull request or remove anything yourself. Tidewatch does that.
+- You may push this branch; after folding fixups use `git push --force-with-lease`. Do not push anything else or remove anything yourself.
+- Before `meeseeks_done`, a task that changed files pushes its branch and opens its own draft pull request with `gh pr create --draft`. Write the title (Conventional Commits style, what changed for the user) and the body (what changed and why, how you verified it, what you did not verify; short). No em or en dashes, no Co-Authored-By trailer, no \"generated with\" footer, no private repository names on a public repo. Tidewatch does not open it for you, and the hand-off check fails until it exists. A read-only task opens none.
 - Do not call `stage_done`: `meeseeks_done` ends your task. Your end block's Needs you says `nothing`.
 - If Tidewatch pastes a failed check, fix it, commit, and call `meeseeks_done` again.
 - Do not call `set_avatar`: your face is fixed.
@@ -316,8 +317,18 @@ mod tests {
         let guidance = text.find("## Tidewatch tool guidance").unwrap();
         let block = text.find("## You are a Meeseeks").unwrap();
         assert!(guidance < block && block < text.find("## Progress report").unwrap());
-        assert_eq!(text.matches("`meeseeks_done`").count(), 3);
+        assert_eq!(text.matches("`meeseeks_done`").count(), 4);
         assert!(text.contains("You may push this branch; after folding fixups use `git push --force-with-lease`. Do not push anything else"));
+        for needle in [
+            "Before `meeseeks_done`, a task that changed files pushes its branch and opens its own draft pull request with `gh pr create --draft`",
+            "Conventional Commits style",
+            "how you verified it, what you did not verify",
+            "No em or en dashes, no Co-Authored-By trailer, no \"generated with\" footer",
+            "Tidewatch does not open it for you",
+        ] {
+            assert!(text.contains(needle), "missing {needle}");
+        }
+        assert!(!text.contains("Tidewatch does that"));
         assert!(text.contains("`kind` to `read-only`") && text.contains("`edit`"));
         assert!(text.contains("start it with `Blocked:`"));
         assert!(text.contains("First thing, call `set_name` once"));

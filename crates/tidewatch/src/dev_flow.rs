@@ -8,8 +8,9 @@
 //!   notes are loaded; it goes out the moment the agent is Done.
 //! - `TIDEWATCH_DEV_SEND=one|all`: send the first note, or the whole review, to the agent;
 //!   `TIDEWATCH_DEV_SEND_MESSAGE=<text>` is the message the review goes with.
-//! - `TIDEWATCH_DEV_DELIVER=open|approve`: open the delivery card's dialog, and with `approve` also
-//!   press Push and open PR.
+//! - `TIDEWATCH_DEV_DELIVER=ask|asked|missing`: press the delivery card's Ask button once, or show
+//!   the card as `Asked <Profile> to open the pull request` or as `No pull request yet`, without
+//!   waiting for an agent.
 //! - `TIDEWATCH_DEV_PR=pull|ask|post`: pull the PR's comments; open the post confirm for the first
 //!   note; or open it and confirm.
 
@@ -24,8 +25,9 @@ pub(crate) enum SendMode {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum DeliverMode {
-    Open,
-    Approve,
+    Ask,
+    Asked,
+    Missing,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -51,7 +53,6 @@ pub(crate) struct DevFlow {
 pub(crate) enum Fact {
     Notes,
     Card,
-    Form,
     Pr,
     Lines,
     Confirm,
@@ -70,8 +71,9 @@ impl Ready {
 pub(crate) enum Step {
     EnableAuto,
     Send(SendMode),
-    OpenCard,
-    ApproveCard,
+    AskCard,
+    ShowAsked,
+    ShowMissing,
     Pull,
     AskPost,
     ApprovePost,
@@ -109,8 +111,9 @@ impl DevFlow {
                 _ => None,
             },
             deliver: match deliver {
-                Some("open") => Some(DeliverMode::Open),
-                Some("approve") => Some(DeliverMode::Approve),
+                Some("ask") => Some(DeliverMode::Ask),
+                Some("asked") => Some(DeliverMode::Asked),
+                Some("missing") => Some(DeliverMode::Missing),
                 _ => None,
             },
             pr: match pr {
@@ -148,14 +151,17 @@ impl DevFlow {
             self.send = None;
             steps.push(Step::Send(mode));
         }
-        if self.deliver.is_some() && ready.has(Fact::Card) && self.once(Step::OpenCard) {
-            steps.push(Step::OpenCard);
-        }
-        if self.deliver == Some(DeliverMode::Approve)
-            && ready.has(Fact::Form)
-            && self.once(Step::ApproveCard)
+        if let Some(mode) = self.deliver
+            && ready.has(Fact::Card)
         {
-            steps.push(Step::ApproveCard);
+            let step = match mode {
+                DeliverMode::Ask => Step::AskCard,
+                DeliverMode::Asked => Step::ShowAsked,
+                DeliverMode::Missing => Step::ShowMissing,
+            };
+            if self.once(step) {
+                steps.push(step);
+            }
         }
         let pr = self.pr;
         match pr {
@@ -217,15 +223,16 @@ mod tests {
     }
 
     #[test]
-    fn delivery_opens_the_card_then_approves_the_form_each_once() {
-        let mut flow = dev(None, Some("approve"), None);
-        assert_eq!(flow.steps(&r(&[Fact::Card])), [Step::OpenCard]);
-        assert_eq!(flow.steps(&r(&[Fact::Card])), []);
-        assert_eq!(flow.steps(&r(&[Fact::Form])), [Step::ApproveCard]);
-        assert_eq!(flow.steps(&r(&[Fact::Form])), []);
-        let mut open_only = dev(None, Some("open"), None);
-        open_only.steps(&r(&[Fact::Card]));
-        assert_eq!(open_only.steps(&r(&[Fact::Form])), []);
+    fn each_delivery_switch_takes_its_one_step_once_the_card_is_ready() {
+        let table =
+            [("ask", Step::AskCard), ("asked", Step::ShowAsked), ("missing", Step::ShowMissing)];
+        for (value, step) in table {
+            let mut flow = dev(None, Some(value), None);
+            assert_eq!(flow.steps(&Ready::default()), [], "{value}: no card yet");
+            assert_eq!(flow.steps(&r(&[Fact::Card])), [step], "{value}");
+            assert_eq!(flow.steps(&r(&[Fact::Card])), [], "{value}: once");
+        }
+        assert!(dev(None, Some("open"), None).is_idle(), "the old dialog switch is gone");
     }
 
     #[test]

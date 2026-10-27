@@ -159,7 +159,7 @@ fn the_popover_says_auto_and_lists_the_four_jobs_with_push_last_and_explained() 
             "Fix failed checks, with the failing log lines",
             "Answer review comments and requested changes",
             "Fix merge conflicts with the base branch",
-            "Push and open the pull request",
+            "Ask the agent to open the pull request",
         ]
     );
     assert_eq!(JOBS.iter().filter(|job| job.caption.is_some()).count(), 1);

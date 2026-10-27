@@ -4,10 +4,11 @@
 
 use std::path::Path;
 
-use crate::delivery::{self, DeliveryPlan};
+use crate::delivery::{self, Ahead};
 use crate::history;
 use crate::meeseeks_log::pr_label_of;
 use crate::paths::TidewatchPaths;
+use crate::pr_ask;
 use crate::test_command;
 use crate::tools::{Tools, finish, run_gh};
 use crate::worktree::{self, BranchChoice, RemoveMode, Terms, Why, Worktree};
@@ -31,7 +32,7 @@ fn clean(tools: &Tools, dir: &Path) -> Result<(), String> {
     }
 }
 
-/// A check that passed: the one line it says, and the pull request it opened when it was the hand off.
+/// A check that passed: the one line it says, and the pull request it found when it was the hand off.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Checked {
     pub detail: String,
@@ -61,11 +62,9 @@ fn said(detail: impl Into<String>) -> Checked {
 
 pub fn change(tools: &Tools, dir: &Path, branch: &str) -> Result<Checked, String> {
     clean(tools, dir)?;
-    let plan = DeliveryPlan::build(tools, dir, branch, None).map_err(|e| e.to_string())?;
+    let plan = Ahead::build(tools, dir, branch).map_err(|e| e.to_string())?;
     let ahead = match plan.commits.len() {
-        0 => {
-            DeliveryPlan::build(tools, dir, "HEAD", None).map_err(|e| e.to_string())?.commits.len()
-        }
+        0 => Ahead::build(tools, dir, "HEAD").map_err(|e| e.to_string())?.commits.len(),
         n => n,
     };
     match ahead {
@@ -90,8 +89,8 @@ pub fn proof(tools: &Tools, dir: &Path) -> Result<Checked, String> {
     clean(tools, dir).map(|()| said("Worktree clean"))
 }
 
-/// The open pull request whose head is the commit this worktree is on: the work was pushed to a
-/// branch that already has one, so handing off means that pull request was updated.
+/// The open pull request whose head is the commit this worktree is on: the agent pushed its work
+/// and opened it.
 fn pull_request_at_head(tools: &Tools, dir: &Path) -> Option<String> {
     let sha = head(tools, dir)?;
     let json = run_gh(
@@ -107,22 +106,12 @@ fn pull_request_at_head(tools: &Tools, dir: &Path) -> Option<String> {
         .map(str::to_owned)
 }
 
-pub fn hand_off(tools: &Tools, dir: &Path, branch: &str, summary: &str) -> Result<Checked, String> {
-    if let Some(url) = pull_request_at_head(tools, dir) {
-        let detail = pr_label_of(&url).map_or_else(
-            || "Updated the pull request".to_owned(),
-            |label| format!("Updated {label}"),
-        );
-        return Ok(Checked { detail, pr_url: Some(url) });
-    }
-    let plan = DeliveryPlan::build(tools, dir, branch, Some(summary)).map_err(|e| e.to_string())?;
-    let url = delivery::deliver(tools, &plan, &plan.title, &plan.body, delivery::Opens::Ready)
-        .map(|delivered| delivered.url)
-        .map_err(|e| e.to_string())?;
-    let detail = pr_label_of(&url).map_or_else(
-        || "Opened the pull request".to_owned(),
-        |label| format!("Opened {label} against {}", plan.base),
-    );
+pub fn hand_off(tools: &Tools, dir: &Path, branch: &str) -> Result<Checked, String> {
+    let Some(url) = pull_request_at_head(tools, dir) else {
+        return Err(pr_ask::meeseeks_fix(branch, delivery::detect_base(tools, dir).as_deref()));
+    };
+    let detail = pr_label_of(&url)
+        .map_or_else(|| "Found the pull request".to_owned(), |label| format!("Found {label}"));
     Ok(Checked { detail, pr_url: Some(url) })
 }
 

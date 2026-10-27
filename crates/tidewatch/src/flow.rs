@@ -9,10 +9,11 @@ use std::path::PathBuf;
 
 use tidewatch_core::notes::Notes;
 use tidewatch_core::pr::MergeReport;
+use tidewatch_core::pr_ask::{self, Opening};
 use tidewatch_core::status::AgentStatus;
 use tidewatch_core::tools::Tools;
 
-use crate::delivery_card::{Auto, Delivery};
+use crate::delivery_card::Delivery;
 use crate::flow_jobs::{self, Done, Which};
 use crate::jobs::Jobs;
 use crate::note_send::{AutoDelivery, EnterQueue, ReviewGate, gate, gate_reason, review_gate};
@@ -35,22 +36,11 @@ pub(crate) struct TabFacts {
     pub(crate) branch: String,
     pub(crate) notes_file: Option<PathBuf>,
     pub(crate) pending: usize,
-    pub(crate) stage_summary: Option<String>,
-    pub(crate) ledger: Option<LedgerNote>,
-    /// Auto may push the branch and open a draft pull request on its own for this tab.
+    /// Auto may ask the agent to push the branch and open a draft pull request for this tab.
     pub(crate) auto_push: bool,
-    /// The tab runs on its own and approves the card of a fix it was told to make (not a Meeseeks,
-    /// which hands off through its own check).
-    pub(crate) fixes_push: bool,
     /// The head the branch's pull request merged with: what came after it goes to a new branch.
     pub(crate) merged_head: Option<String>,
     pub(crate) gate: Gate,
-}
-
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub(crate) struct LedgerNote {
-    pub(crate) goal: String,
-    pub(crate) verified: Vec<String>,
 }
 
 /// Whether the tab may deliver: shut once its pull request merged (`merged_branch`), so no card
@@ -88,34 +78,29 @@ pub(crate) enum Want {
     LoadPrLines,
 }
 
-/// Where Auto is with pushing a tab's finished work. One go per stretch of work, so a push that
-/// failed waits for the owner instead of being retried in a loop.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Asker {
+    Auto,
+    Owner,
+}
+
+/// Where the ask for a tab's finished work is. One go per stretch of work, so an ask that was
+/// refused waits for the owner instead of being retried in a loop.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) enum AutoPush {
     #[default]
     Idle,
-    Telling {
-        commits: usize,
+    Asking {
+        by: Asker,
     },
-    Running,
     Spent,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct Tell {
+pub(crate) struct Ask {
     pub(crate) tab: u64,
-    pub(crate) commits: usize,
-    pub(crate) branch: String,
-}
-
-impl Tell {
-    pub(crate) fn text(&self) -> String {
-        let noun = if self.commits == 1 { "commit" } else { "commits" };
-        format!(
-            "You're done and have {} {noun}. Tidewatch is pushing {} and opening a draft pull request with your summary. Don't push or open one yourself.",
-            self.commits, self.branch
-        )
-    }
+    pub(crate) by: Asker,
+    pub(crate) text: String,
 }
 
 #[derive(Default)]
@@ -125,14 +110,12 @@ pub(crate) struct TabFlow {
     pub(crate) auto: AutoDelivery,
     held_message: String,
     pub(crate) delivery: Delivery,
+    base: Option<String>,
     pub(crate) pr: PrState,
     target: Option<TabFacts>,
     was_done: bool,
     probed_after: Option<String>,
     pub(crate) push: AutoPush,
-    /// The card in front is the push of a fix the agent was told to make: a tab that runs on its own
-    /// approves it itself, once.
-    fix_push: bool,
     was_active: bool,
     lines_loading: bool,
 }
@@ -143,12 +126,23 @@ impl TabFlow {
         self.target.as_ref().is_some_and(|facts| facts.merged_head.is_some())
     }
 
-    pub(crate) fn next_fix_step(&self) -> Auto {
-        if self.fix_push { self.delivery.auto_step() } else { Auto::Wait }
+    fn begin_ask(&mut self, by: Asker) {
+        if self.delivery.ask_started() {
+            self.push = AutoPush::Asking { by };
+        }
     }
 
-    pub(crate) fn mark_fix_push(&mut self) {
-        self.fix_push = true;
+    fn ask_text(&self) -> Option<String> {
+        let facts = self.target.as_ref()?;
+        let (Delivery::Asked { commits, .. }, Some(base)) = (&self.delivery, &self.base) else {
+            return None;
+        };
+        Some(pr_ask::open_pull_request(&Opening {
+            branch: &facts.branch,
+            base,
+            commits: *commits,
+            merged_head: facts.merged_head.as_deref(),
+        }))
     }
 }
 
@@ -159,18 +153,28 @@ pub(crate) fn decide(flow: &mut TabFlow, facts: &TabFacts, now: f64) -> Vec<Want
     flow.auto.observe(&facts.status);
     let done = facts.deliverable && facts.gate == Gate::Open;
     let merge_news = flow.was_done && flow.probed_after != facts.merged_head;
-    if done && (!flow.was_done || merge_news) && flow.pr.pr().is_none() {
+    if done && (!flow.was_done || merge_news) && flow.pr.pr().is_none() && !flow.delivery.is_asked()
+    {
         flow.probed_after.clone_from(&facts.merged_head);
         flow.delivery.probe_started();
         wants.push(Want::Probe);
     }
+    if facts.gate == Gate::Shut || flow.pr.pr().is_some() {
+        flow.delivery.hide();
+    }
     if !done {
         flow.delivery.leave_done();
-        if flow.push != AutoPush::Running {
+        if !flow.delivery.is_asked() {
             flow.push = AutoPush::Idle;
         }
     }
     flow.was_done = done;
+    if flow.delivery.watch(facts.status == AgentStatus::Done, now)
+        && flow.pr.should_find(Why::Asked, now)
+    {
+        flow.pr.find_started();
+        wants.push(Want::FindPr(Why::Asked));
+    }
     if facts.active && !flow.was_active && flow.pr.should_find(Why::Focus, now) {
         flow.pr.find_started();
         wants.push(Want::FindPr(Why::Focus));
@@ -230,10 +234,6 @@ impl Flow {
         self.tabs.get(&id)
     }
 
-    pub(crate) fn tab_mut(&mut self, id: u64) -> Option<&mut TabFlow> {
-        self.tabs.get_mut(&id)
-    }
-
     pub(crate) fn forget(&mut self, tab: u64) {
         self.tabs.remove(&tab);
         self.enters.forget(tab);
@@ -244,8 +244,8 @@ impl Flow {
     }
 
     /// A dialog of the flow is open over the window.
-    pub(crate) fn modal_open(&self, active: u64) -> bool {
-        self.confirm.is_some() || self.tabs.get(&active).is_some_and(|t| t.delivery.is_modal())
+    pub(crate) fn modal_open(&self) -> bool {
+        self.confirm.is_some()
     }
 
     /// Looks at every agent worktree tab and starts what each needs. Returns the next time a frame is
@@ -267,58 +267,68 @@ impl Flow {
             let state = self.tabs.entry(fact.id).or_default();
             state.target = Some(fact.clone());
             let wants = decide(state, fact, now);
-            if let Some(at) = state.auto.next_check(now) {
+            let wakes = [state.auto.next_check(now), state.delivery.next_wake()];
+            for at in wakes.into_iter().flatten() {
                 next = Some(next.map_or(at, |soonest| soonest.min(at)));
             }
             for want in wants {
                 self.start(fact, want, ctx, unix);
             }
-            self.deliver_on_its_own(fact, ctx);
+            self.ask_on_its_own(fact);
         }
         next
     }
 
-    /// Auto's next step for a tab: ready to be told, or the next step of a fix's card.
-    fn deliver_on_its_own(&mut self, facts: &TabFacts, ctx: &egui::Context) {
-        let tab = facts.id;
-        let Some(state) = self.tabs.get_mut(&tab) else { return };
-        if facts.auto_push
-            && state.push == AutoPush::Idle
-            && let Delivery::Ready { commits } = state.delivery
-        {
-            state.push = AutoPush::Telling { commits };
-        }
-        if !facts.fixes_push {
-            return;
-        }
-        match state.next_fix_step() {
-            Auto::Approve => self.approve_card(tab, ctx),
-            Auto::Close => {
-                state.delivery.close_success();
-                state.fix_push = false;
-            }
-            Auto::Wait => {}
+    pub(crate) fn ask_on_its_own(&mut self, facts: &TabFacts) {
+        let Some(state) = self.tabs.get_mut(&facts.id) else { return };
+        if facts.auto_push && state.push == AutoPush::Idle {
+            state.begin_ask(Asker::Auto);
         }
     }
 
-    /// The tabs whose agent Auto has to tell before it pushes, with what to say.
-    pub(crate) fn telling(&self) -> Vec<Tell> {
+    pub(crate) fn ask_to_open(&mut self, tab: u64) {
+        if let Some(state) = self.tabs.get_mut(&tab) {
+            state.begin_ask(Asker::Owner);
+        }
+    }
+
+    pub(crate) fn show_asked(&mut self, tab: u64, now: f64) {
+        if let Some(state) = self.tabs.get_mut(&tab)
+            && state.delivery.ask_started()
+        {
+            state.push = AutoPush::Spent;
+            state.delivery.asked(now);
+        }
+    }
+
+    pub(crate) fn show_missing(&mut self, tab: u64) {
+        if let Some(state) = self.tabs.get_mut(&tab)
+            && let Delivery::Ready { commits } = state.delivery
+        {
+            state.push = AutoPush::Spent;
+            state.delivery = Delivery::Missing { commits };
+        }
+    }
+
+    pub(crate) fn asking(&self) -> Vec<Ask> {
         self.tabs
             .iter()
             .filter_map(|(tab, state)| {
-                let AutoPush::Telling { commits } = state.push else { return None };
-                let branch = state.target.as_ref()?.branch.clone();
-                Some(Tell { tab: *tab, commits, branch })
+                let AutoPush::Asking { by } = state.push else { return None };
+                Some(Ask { tab: *tab, by, text: state.ask_text()? })
             })
             .collect()
     }
 
     #[cfg(test)]
-    pub(crate) fn ready_for_push(&mut self, facts: &TabFacts, commits: usize) {
-        let mut state = TabFlow { target: Some(facts.clone()), ..TabFlow::default() };
+    pub(crate) fn ready_for_ask(&mut self, facts: &TabFacts, commits: usize) {
+        let mut state = TabFlow {
+            target: Some(facts.clone()),
+            base: Some("main".to_owned()),
+            ..TabFlow::default()
+        };
         state.delivery.probe_started();
         state.delivery.probe_done(Some(commits));
-        state.push = AutoPush::Telling { commits };
         self.tabs.insert(facts.id, state);
     }
 
@@ -327,28 +337,19 @@ impl Flow {
         self.tabs.get(&tab).map(|state| (state.push, state.delivery.clone()))
     }
 
-    /// The agent was told. Now the branch is pushed and the draft opened.
-    pub(crate) fn told(&mut self, tab: u64, ctx: &egui::Context) {
-        let Some(state) = self.tabs.get_mut(&tab) else { return };
-        let (AutoPush::Telling { .. }, Some(facts)) = (state.push, state.target.clone()) else {
-            return;
-        };
-        state.push = AutoPush::Running;
-        state.delivery.start_auto();
-        let push = flow_jobs::AutoPush {
-            dir: facts.dir,
-            branch: facts.branch,
-            summary: facts.stage_summary,
-            ledger: facts.ledger,
-            merged_head: facts.merged_head,
-        };
-        flow_jobs::auto_deliver(&self.jobs, ctx, tab, self.tools.clone(), push);
-    }
-
-    /// The agent cannot be told, so nothing leaves the machine: the bar stays for the owner.
-    pub(crate) fn not_told(&mut self, tab: u64) {
+    /// The ask went through the send gate and was typed: the agent has the whole job from here.
+    pub(crate) fn asked(&mut self, tab: u64, now: f64) {
         if let Some(state) = self.tabs.get_mut(&tab) {
             state.push = AutoPush::Spent;
+            state.delivery.asked(now);
+        }
+    }
+
+    /// The agent cannot take the ask: the card offers it again and Auto does not retry.
+    pub(crate) fn not_asked(&mut self, tab: u64) {
+        if let Some(state) = self.tabs.get_mut(&tab) {
+            state.push = AutoPush::Spent;
+            state.delivery.not_asked();
         }
     }
 
@@ -358,16 +359,17 @@ impl Flow {
         let dir = facts.dir.clone();
         let branch = facts.branch.clone();
         match want {
-            Want::Probe => flow_jobs::probe(
-                &self.jobs,
-                ctx,
-                tab,
-                tools,
-                dir,
-                branch,
-                facts.stage_summary.clone(),
-                facts.merged_head.clone(),
-            ),
+            Want::Probe => {
+                flow_jobs::probe(
+                    &self.jobs,
+                    ctx,
+                    tab,
+                    tools,
+                    dir,
+                    branch,
+                    facts.merged_head.clone(),
+                );
+            }
             Want::FindPr(_) => flow_jobs::find_pr(&self.jobs, ctx, tab, tools, dir, branch),
             Want::LoadPrLines => {
                 let head = self
@@ -441,30 +443,6 @@ impl Flow {
         if let Some(state) = self.tabs.get_mut(&tab) {
             state.auto.enabled = false;
             state.held_message.clear();
-        }
-    }
-
-    pub(crate) fn open_card(&mut self, tab: u64, ctx: &egui::Context) {
-        let Some(state) = self.tabs.get_mut(&tab) else { return };
-        let Some(facts) = state.target.clone() else { return };
-        if state.delivery.open() {
-            flow_jobs::build_plan(
-                &self.jobs,
-                ctx,
-                tab,
-                self.tools.clone(),
-                facts.dir,
-                facts.branch,
-                facts.stage_summary,
-                facts.merged_head,
-            );
-        }
-    }
-
-    pub(crate) fn approve_card(&mut self, tab: u64, ctx: &egui::Context) {
-        let Some(state) = self.tabs.get_mut(&tab) else { return };
-        if let Some(form) = state.delivery.approve() {
-            flow_jobs::deliver_plan(&self.jobs, ctx, tab, self.tools.clone(), form);
         }
     }
 
@@ -548,10 +526,10 @@ impl Flow {
     }
 
     /// Applies finished jobs to the flow's state and says what the app must do about them.
-    pub(crate) fn drain(&mut self, ctx: &egui::Context, now: f64) -> Vec<Out> {
+    pub(crate) fn drain(&mut self, now: f64) -> Vec<Out> {
         let mut outs = Vec::new();
         for done in self.jobs.drain() {
-            self.apply(done, ctx, now, &mut outs);
+            self.apply(done, now, &mut outs);
         }
         outs
     }
@@ -572,57 +550,23 @@ impl Flow {
         self.enters.take_due(now, output)
     }
 
-    fn apply(&mut self, done: Done, ctx: &egui::Context, now: f64, outs: &mut Vec<Out>) {
+    fn apply(&mut self, done: Done, now: f64, outs: &mut Vec<Out>) {
         match done {
             Done::Sent { tab, auto, result } => self.sent(tab, auto, result, now, outs),
             Done::Unsent { tab, result } => outs.push(match result {
                 Ok(notes) => Out::Notes { tab, notes },
                 Err(message) => Out::Toast(format!("Could not take notes back: {message}")),
             }),
-            Done::Probed { tab, commits } => {
+            Done::Probed { tab, found } => {
                 if let Some(state) = self.tabs.get_mut(&tab) {
-                    state.delivery.probe_done(commits);
+                    state.base = found.as_ref().map(|probe| probe.base.clone());
+                    state.delivery.probe_done(found.map(|probe| probe.commits));
                 }
-            }
-            Done::Built { tab, result } => {
-                if let Some(state) = self.tabs.get_mut(&tab) {
-                    if let Err(error) = &result {
-                        outs.push(Out::Toast(format!("Cannot read the commits: {error}")));
-                    }
-                    state.delivery.built(result.map(|plan| *plan));
-                }
-            }
-            Done::Delivered { tab, result } => {
-                let head = result.as_ref().ok().map(|done| done.head.clone());
-                if let Some(state) = self.tabs.get_mut(&tab) {
-                    state.fix_push = false;
-                    state.delivery.delivered(result);
-                }
-                self.find_after_delivery(tab, head.is_some(), ctx, now);
-            }
-            Done::AutoDelivered { tab, result } => {
-                let found = result.is_ok();
-                if let Some(state) = self.tabs.get_mut(&tab) {
-                    state.push = AutoPush::Spent;
-                    match result {
-                        Ok(_) => state.delivery.auto_finished(Ok(())),
-                        Err(failed) => {
-                            let failed = *failed;
-                            if failed.form.is_none() {
-                                outs.push(Out::Toast(format!(
-                                    "Cannot read the commits: {}",
-                                    failed.error
-                                )));
-                            }
-                            state.delivery.auto_finished(Err((failed.form, failed.error)));
-                        }
-                    }
-                }
-                self.find_after_delivery(tab, found, ctx, now);
             }
             Done::PrFound { tab, result } => {
                 if let Some(state) = self.tabs.get_mut(&tab) {
                     state.pr.found(result, now);
+                    state.delivery.answered(state.pr.pr().is_some());
                     state.lines_loading = false;
                 }
             }
@@ -658,17 +602,6 @@ impl Flow {
                     }
                 }
             },
-        }
-    }
-
-    fn find_after_delivery(&mut self, tab: u64, delivered: bool, ctx: &egui::Context, now: f64) {
-        let Some(state) = self.tabs.get_mut(&tab) else { return };
-        if !delivered || !state.pr.should_find(Why::Delivered, now) {
-            return;
-        }
-        state.pr.find_started();
-        if let Some(facts) = state.target.clone() {
-            flow_jobs::find_pr(&self.jobs, ctx, tab, self.tools.clone(), facts.dir, facts.branch);
         }
     }
 
@@ -738,6 +671,7 @@ mod tests {
     use super::*;
     use tidewatch_core::pr::PullRequest;
     use tidewatch_core::status::Reason;
+    use tidewatch_core::tools::GhError;
 
     fn facts(status: AgentStatus) -> TabFacts {
         TabFacts {
@@ -750,10 +684,7 @@ mod tests {
             branch: "agent/brave-otter".into(),
             notes_file: Some(PathBuf::from("/s/notes.json")),
             pending: 0,
-            stage_summary: None,
-            ledger: None,
             auto_push: false,
-            fixes_push: false,
             merged_head: None,
             gate: Gate::Open,
         }
@@ -987,110 +918,227 @@ mod tests {
         );
     }
 
-    fn ready_tab(facts: TabFacts, commits: usize) -> Flow {
+    fn ready_tab(facts: &TabFacts, commits: usize) -> Flow {
         let mut flow = Flow::new(Tools::default());
-        let mut state = TabFlow { target: Some(facts), ..TabFlow::default() };
-        state.delivery.probe_started();
-        state.delivery.probe_done(Some(commits));
-        flow.tabs.insert(7, state);
+        flow.ready_for_ask(facts, commits);
         flow
     }
 
     fn push_on() -> TabFacts {
-        TabFacts { auto_push: true, fixes_push: true, ..facts(AgentStatus::Done) }
+        TabFacts { auto_push: true, ..facts(AgentStatus::Done) }
     }
 
     #[test]
-    fn auto_tells_the_agent_first_and_pushes_nothing_until_it_was_told() {
-        let ctx = egui::Context::default();
-        let mut flow = ready_tab(push_on(), 2);
-        flow.deliver_on_its_own(&push_on(), &ctx);
-        let tells = flow.telling();
-        assert_eq!(tells.len(), 1);
+    fn auto_asks_the_agent_to_open_the_pull_request_and_pushes_and_opens_nothing_itself() {
+        let mut flow = ready_tab(&push_on(), 2);
+        flow.ask_on_its_own(&push_on());
+        let asks = flow.asking();
+        assert_eq!(asks.len(), 1);
+        assert_eq!(asks[0].by, Asker::Auto);
+        for needle in [
+            "2 commits on `agent/brave-otter`",
+            "gh pr create --draft --base main",
+            "Write the title and body yourself",
+            "no em or en dashes",
+        ] {
+            assert!(asks[0].text.contains(needle), "missing {needle:?} in {}", asks[0].text);
+        }
         assert_eq!(
-            tells[0].text(),
-            "You're done and have 2 commits. Tidewatch is pushing agent/brave-otter and opening a draft pull request with your summary. Don't push or open one yourself."
+            flow.tabs[&7].delivery,
+            Delivery::Asked { commits: 2, wait: crate::delivery_card::Wait::Queued }
         );
-        assert_eq!(flow.tabs[&7].delivery, Delivery::Ready { commits: 2 }, "nothing is pushed yet");
-        flow.deliver_on_its_own(&push_on(), &ctx);
-        assert_eq!(flow.telling().len(), 1, "asked for once");
+        flow.ask_on_its_own(&push_on());
+        assert_eq!(flow.asking().len(), 1, "asked for once");
 
-        flow.told(7, &ctx);
-        assert_eq!(flow.tabs[&7].delivery, Delivery::Working { commits: 2 });
-        assert_eq!(flow.tabs[&7].push, AutoPush::Running);
-        assert_eq!(flow.telling(), []);
-        flow.deliver_on_its_own(&push_on(), &ctx);
-        assert_eq!(flow.telling(), [], "told once per stretch of work");
+        flow.asked(7, 5.0);
+        assert_eq!(
+            flow.tabs[&7].delivery,
+            Delivery::Asked { commits: 2, wait: crate::delivery_card::Wait::Typed { at: 5.0 } }
+        );
+        assert_eq!(flow.asking(), []);
+        flow.ask_on_its_own(&push_on());
+        assert_eq!(flow.asking(), [], "asked once per stretch of work");
     }
 
     #[test]
-    fn the_message_counts_one_commit_in_the_singular() {
-        let tell = Tell { tab: 1, commits: 1, branch: "agent/x".into() };
-        assert!(
-            tell.text().starts_with("You're done and have 1 commit. Tidewatch is pushing agent/x")
-        );
+    fn the_ask_names_the_base_branch_the_repo_really_has() {
+        let mut flow = ready_tab(&push_on(), 1);
+        flow.tabs.get_mut(&7).unwrap().base = Some("develop".into());
+        flow.ask_on_its_own(&push_on());
+        let text = &flow.asking()[0].text;
+        assert!(text.contains("into `develop`") && text.contains("--base develop"), "{text}");
+        assert!(text.starts_with("You have 1 commit on"), "{text}");
     }
 
     #[test]
-    fn with_the_push_tick_off_a_tab_on_its_own_pushes_nothing_and_keeps_the_bar() {
-        let ctx = egui::Context::default();
-        let off = TabFacts { auto_push: false, fixes_push: true, ..facts(AgentStatus::Done) };
-        let mut flow = ready_tab(off.clone(), 2);
-        flow.deliver_on_its_own(&off, &ctx);
-        assert_eq!(flow.telling(), []);
+    fn a_commit_set_after_a_merge_is_asked_for_on_a_new_branch() {
+        let merged = TabFacts { merged_head: Some("e3dba69".into()), ..push_on() };
+        let mut flow = ready_tab(&merged, 1);
+        flow.ask_on_its_own(&merged);
+        let text = &flow.asking()[0].text;
+        assert!(text.contains("merged at `e3dba69`"), "{text}");
+        assert!(text.contains("--head agent/brave-otter-2"), "{text}");
+    }
+
+    #[test]
+    fn with_the_push_tick_off_nothing_is_asked_and_the_card_waits_for_the_owner() {
+        let off = TabFacts { auto_push: false, ..facts(AgentStatus::Done) };
+        let mut flow = ready_tab(&off, 2);
+        flow.ask_on_its_own(&off);
+        assert_eq!(flow.asking(), []);
         assert_eq!(flow.tabs[&7].delivery, Delivery::Ready { commits: 2 });
-        assert_eq!(flow.tabs[&7].delivery.card_commits(), Some(2), "the bar stays as it was");
         assert_eq!(flow.tabs[&7].push, AutoPush::Idle);
     }
 
     #[test]
-    fn an_agent_that_cannot_be_told_leaves_the_bar_for_the_owner_and_is_not_asked_again() {
-        let ctx = egui::Context::default();
-        let mut flow = ready_tab(push_on(), 2);
-        flow.deliver_on_its_own(&push_on(), &ctx);
-        flow.not_told(7);
-        flow.deliver_on_its_own(&push_on(), &ctx);
-        assert_eq!(flow.telling(), []);
-        assert_eq!(flow.tabs[&7].delivery, Delivery::Ready { commits: 2 });
+    fn the_owners_click_asks_from_a_ready_card_and_again_from_a_missing_one() {
+        let off = TabFacts { auto_push: false, ..facts(AgentStatus::Done) };
+        let mut flow = ready_tab(&off, 2);
+        flow.ask_to_open(7);
+        let asks = flow.asking();
+        assert_eq!((asks.len(), asks[0].by), (1, Asker::Owner));
+        flow.asked(7, 1.0);
+        flow.ask_to_open(7);
+        assert_eq!(flow.asking(), [], "nothing to ask again while it is being asked");
+        flow.tabs.get_mut(&7).unwrap().delivery = Delivery::Missing { commits: 2 };
+        flow.ask_to_open(7);
+        assert_eq!(flow.asking().len(), 1, "Ask again");
+        let mut none = Flow::new(Tools::default());
+        none.ask_to_open(99);
+        assert_eq!(none.asking(), []);
     }
 
     #[test]
-    fn a_new_stretch_of_work_may_push_again_but_a_push_under_way_is_not_cut_off() {
+    fn an_agent_that_cannot_take_the_ask_leaves_the_button_for_the_owner_and_auto_does_not_retry() {
+        let mut flow = ready_tab(&push_on(), 2);
+        flow.ask_on_its_own(&push_on());
+        flow.not_asked(7);
+        flow.ask_on_its_own(&push_on());
+        assert_eq!(flow.asking(), []);
+        assert_eq!(flow.tabs[&7].delivery, Delivery::Ready { commits: 2 });
+        flow.ask_to_open(7);
+        assert_eq!(flow.asking().len(), 1, "the owner may still ask");
+    }
+
+    #[test]
+    fn a_new_stretch_of_work_may_ask_again_but_an_ask_under_way_is_not_cut_off() {
         let mut flow = TabFlow::default();
         let working = facts(AgentStatus::Working);
         flow.push = AutoPush::Spent;
         decide(&mut flow, &working, 1.0);
         assert_eq!(flow.push, AutoPush::Idle);
-        flow.push = AutoPush::Telling { commits: 2 };
+        flow.push = AutoPush::Asking { by: Asker::Auto };
         decide(&mut flow, &working, 2.0);
-        assert_eq!(flow.push, AutoPush::Idle, "an agent that went back to work is not told");
-        flow.push = AutoPush::Running;
+        assert_eq!(flow.push, AutoPush::Idle, "an agent that went back to work is not asked");
+        flow.delivery = Delivery::Asked { commits: 1, wait: crate::delivery_card::Wait::Working };
+        flow.push = AutoPush::Spent;
         decide(&mut flow, &working, 3.0);
-        assert_eq!(flow.push, AutoPush::Running);
+        assert_eq!(flow.push, AutoPush::Spent, "the ask under way keeps its mark");
+    }
+
+    fn asked_flow() -> Flow {
+        let mut flow = ready_tab(&push_on(), 2);
+        flow.ask_on_its_own(&push_on());
+        flow.asked(7, 10.0);
+        flow
+    }
+
+    fn tick(flow: &mut Flow, status: AgentStatus, now: f64) -> Vec<Want> {
+        let facts = TabFacts { auto_push: true, ..facts(status) };
+        let state = flow.tabs.get_mut(&7).unwrap();
+        state.target = Some(facts.clone());
+        decide(state, &facts, now)
+    }
+
+    fn answer(flow: &mut Flow, result: Result<Option<PullRequest>, GhError>, now: f64) {
+        flow.apply(Done::PrFound { tab: 7, result }, now, &mut Vec::new());
     }
 
     #[test]
-    fn the_card_of_a_fix_is_approved_without_a_click_only_when_the_fix_opened_it() {
-        let mut flow = TabFlow::default();
-        flow.delivery.probe_started();
-        flow.delivery.probe_done(Some(1));
-        flow.delivery.open();
-        flow.delivery.built(Ok(tidewatch_core::delivery::DeliveryPlan {
-            dir: PathBuf::from("/w"),
-            branch: "agent/brave-otter".into(),
-            base: "main".into(),
-            head: "agent/brave-otter".into(),
-            commits: vec![tidewatch_core::delivery::CommitLine {
-                sha: "abc".into(),
-                subject: "add helper".into(),
-                body: String::new(),
-            }],
-            rebase: false,
-            title: "Add helper".into(),
-            body: String::new(),
-        }));
-        assert_eq!(flow.next_fix_step(), Auto::Wait, "a card the owner opened waits for the owner");
-        flow.mark_fix_push();
-        assert_eq!(flow.next_fix_step(), Auto::Approve);
+    fn the_card_says_asked_while_the_agent_works_and_looks_for_the_pr_when_it_goes_idle() {
+        let mut flow = asked_flow();
+        assert_eq!(tick(&mut flow, AgentStatus::Working, 11.0), []);
+        assert_eq!(tick(&mut flow, AgentStatus::Working, 40.0), []);
+        assert!(flow.tabs[&7].delivery.is_asked());
+        assert_eq!(tick(&mut flow, AgentStatus::Done, 50.0), [Want::FindPr(Why::Asked)]);
+        assert_eq!(tick(&mut flow, AgentStatus::Done, 51.0), [], "one lookup, its answer awaited");
+    }
+
+    #[test]
+    fn no_pr_after_the_second_lookup_leaves_no_pull_request_yet_and_ask_again_works() {
+        let mut flow = asked_flow();
+        tick(&mut flow, AgentStatus::Working, 11.0);
+        assert_eq!(tick(&mut flow, AgentStatus::Done, 50.0), [Want::FindPr(Why::Asked)]);
+        answer(&mut flow, Ok(None), 50.5);
+        assert_eq!(tick(&mut flow, AgentStatus::Done, 100.0), []);
+        assert_eq!(tick(&mut flow, AgentStatus::Done, 170.0), [Want::FindPr(Why::Asked)]);
+        answer(&mut flow, Ok(None), 170.5);
+        assert_eq!(flow.tabs[&7].delivery, Delivery::Missing { commits: 2 });
+        assert_eq!(tick(&mut flow, AgentStatus::Done, 400.0), [], "no third lookup");
+        assert_eq!(flow.asking(), [], "Auto never asks again by itself");
+        flow.ask_to_open(7);
+        assert_eq!(flow.asking().len(), 1);
+        assert_eq!(flow.asking()[0].by, Asker::Owner);
+    }
+
+    #[test]
+    fn a_pr_found_by_the_first_lookup_ends_the_wait_and_hands_the_card_to_the_pr_strip() {
+        let mut flow = asked_flow();
+        tick(&mut flow, AgentStatus::Working, 11.0);
+        tick(&mut flow, AgentStatus::Done, 50.0);
+        let pr = PullRequest {
+            number: 9,
+            url: "https://github.com/o/r/pull/9".into(),
+            head_sha: "h".into(),
+        };
+        answer(&mut flow, Ok(Some(pr)), 50.5);
+        assert_eq!(flow.tabs[&7].delivery, Delivery::Hidden);
+        assert_eq!(flow.tabs[&7].delivery.card(false, "Builder"), None);
+        assert_eq!(flow.tabs[&7].pr.chip().map(|chip| chip.text), Some("PR #9 open".to_owned()));
+    }
+
+    #[test]
+    fn a_pr_that_appears_while_the_agent_still_works_also_ends_the_wait() {
+        let mut flow = asked_flow();
+        tick(&mut flow, AgentStatus::Working, 11.0);
+        let pr = PullRequest { number: 9, url: "u".into(), head_sha: "h".into() };
+        flow.tabs.get_mut(&7).unwrap().pr.found(Ok(Some(pr)), 20.0);
+        tick(&mut flow, AgentStatus::Working, 21.0);
+        assert_eq!(flow.tabs[&7].delivery, Delivery::Hidden);
+    }
+
+    #[test]
+    fn a_merged_branch_shuts_the_card_whatever_it_was_waiting_for() {
+        let mut flow = asked_flow();
+        let shut = TabFacts { gate: Gate::Shut, ..facts(AgentStatus::Done) };
+        let state = flow.tabs.get_mut(&7).unwrap();
+        decide(state, &shut, 20.0);
+        assert_eq!(state.delivery, Delivery::Hidden);
+    }
+
+    #[test]
+    fn the_wake_up_is_when_the_next_lookup_is_due() {
+        let mut flow = asked_flow();
+        let ctx = egui::Context::default();
+        let wake = flow.tick(&[push_on()], &ctx, 11.0, 0);
+        assert_eq!(wake, Some(10.0 + crate::delivery_card::TYPED_GRACE_SECS));
+    }
+
+    #[test]
+    fn the_dev_switches_show_the_asked_and_missing_cards_without_an_agent() {
+        let mut flow = ready_tab(&push_on(), 3);
+        flow.show_asked(7, 1.0);
+        assert_eq!(
+            flow.tabs[&7].delivery.card(false, "Builder").map(|card| card.text),
+            Some("Asked Builder to open the pull request".to_owned())
+        );
+        let mut missing = ready_tab(&push_on(), 3);
+        missing.show_missing(7);
+        let card = missing.tabs[&7].delivery.card(false, "Builder").unwrap();
+        assert_eq!(
+            (card.text.as_str(), card.button.as_deref()),
+            ("No pull request yet", Some("Ask again"))
+        );
+        assert_eq!(missing.asking(), [], "forcing a card sends nothing");
     }
 }

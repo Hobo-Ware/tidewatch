@@ -268,7 +268,6 @@ fn ship_a_feature_through_the_glue_loops_once_and_waits_at_hand_off() {
         [StageState::Done, StageState::Done, StageState::Done, StageState::NeedsYou]
     );
     assert_eq!(run.runner().summary(1), Some("Nothing blocking"), "stale summaries never landed");
-    assert_eq!(run.last_summary(), Some("feat: retry the token refresh"));
     assert!(matches!(run.runner().phase(), Phase::Asking(AskReason::Approve)));
     assert_eq!(run.runner().context().branch, worktree.branch);
     assert_eq!(run.runner().context().base, "main");

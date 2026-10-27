@@ -1,20 +1,11 @@
-//! Delivery (PLAN.md, D7): Tidewatch pushes the branch and opens the pull request, never the agent.
-//!
-//! [`DeliveryPlan::build`] reads the commits a worktree branch has on top of its base and proposes a
-//! title and text for the "push and open a PR?" card. [`deliver`] runs `git push -u origin <branch>`
-//! and then `gh pr create`, after the user approved the (possibly edited) title and text.
-//!
-//! [`DeliveryPlan::build`] and [`deliver`] run `git` and `gh` and block: call them off the UI thread.
-//! [`propose`] is pure.
+//! What a worktree branch has ahead of its base (D7). Tidewatch only reads; the agent opens the pull request.
 
 use std::fmt;
-use std::io::Write as _;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
-use crate::tools::{Finished, GhError, Tools, classify_gh, finish, run_gh};
+use crate::tools::{Finished, Tools, finish};
 
 const REMOTE: &str = "origin";
-const FRESH_TRIES: u32 = 50;
 const FIELD_SEPARATOR: char = '\u{1f}';
 const RECORD_SEPARATOR: char = '\u{1e}';
 
@@ -25,147 +16,64 @@ pub struct CommitLine {
     pub body: String,
 }
 
-/// What would be delivered: the commits and the proposed pull request text. The title and body are
-/// the proposal; what [`deliver`] sends is whatever the user approved.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct DeliveryPlan {
-    pub dir: PathBuf,
-    pub branch: String,
-    /// The branch the pull request targets, without a remote name (`main`).
+pub struct Ahead {
     pub base: String,
-    /// The branch the pull request is opened from on the remote: `branch` itself, or a fresh name
-    /// when the branch's last pull request already merged.
-    pub head: String,
-    /// Commits on `branch` that `base` does not have, oldest first.
     pub commits: Vec<CommitLine>,
-    /// The branch's pull request already merged: `deliver` first moves `commits` onto `base`, so the
-    /// new pull request carries only them.
-    pub rebase: bool,
-    pub title: String,
-    pub body: String,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Opens {
-    Ready,
-    Draft,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Delivered {
-    pub url: String,
-    pub head: String,
-    /// False when the branch already had an open pull request: the push updated it.
-    pub created: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum DeliveryError {
-    /// The repository has no `origin` remote to push to.
-    NoRemote,
-    /// No `origin` remote points at GitHub.
-    NoGithubRemote,
-    /// Neither `origin/HEAD`, `main` nor `master` could be found to compare against.
     NoBase,
-    NothingToDeliver,
-    EmptyTitle,
-    /// The branch name could be read as an option by git.
     BadBranch(String),
-    /// The remote refused the push (rejected, non-fast-forward, a server hook).
-    PushRejected(String),
-    /// The push failed for another reason (network, credentials).
-    PushFailed(String),
-    GhMissing,
-    GhNotAuthenticated,
-    PrFailed(String),
-    /// A git command that reads the repository failed.
     Git(String),
 }
 
 impl fmt::Display for DeliveryError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::NoRemote => f.write_str("this repository has no \"origin\" remote to push to"),
-            Self::NoGithubRemote => f.write_str("the \"origin\" remote does not point at GitHub"),
             Self::NoBase => {
                 f.write_str("cannot tell which branch to open the pull request against")
             }
-            Self::NothingToDeliver => f.write_str("the branch has no commits on top of its base"),
-            Self::EmptyTitle => f.write_str("the pull request needs a title"),
             Self::BadBranch(branch) => write!(f, "{branch:?} is not a usable branch name"),
-            Self::PushRejected(message) => write!(f, "the push was rejected: {message}"),
-            Self::PushFailed(message) => write!(f, "the push failed: {message}"),
-            Self::GhMissing => fmt::Display::fmt(&GhError::Missing, f),
-            Self::GhNotAuthenticated => fmt::Display::fmt(&GhError::NotAuthenticated, f),
-            Self::PrFailed(message) | Self::Git(message) => f.write_str(message),
+            Self::Git(message) => f.write_str(message),
         }
     }
 }
 
 impl std::error::Error for DeliveryError {}
 
-impl From<GhError> for DeliveryError {
-    fn from(error: GhError) -> Self {
-        match error {
-            GhError::Missing => Self::GhMissing,
-            GhError::NotAuthenticated => Self::GhNotAuthenticated,
-            GhError::NoGithubRemote => Self::NoGithubRemote,
-            GhError::Failed(message) => Self::PrFailed(message),
-        }
-    }
-}
-
-impl DeliveryPlan {
-    /// Reads `git log <base>..<branch>` in `dir` and proposes the pull request text. `stage_summary`
-    /// is the last stage's `stage_done` summary (the Hand off stage asks for a title and text).
-    /// Blocks on git.
-    pub fn build(
-        tools: &Tools,
-        dir: &Path,
-        branch: &str,
-        stage_summary: Option<&str>,
-    ) -> Result<Self, DeliveryError> {
-        Self::build_after(tools, dir, branch, stage_summary, None)
+impl Ahead {
+    pub fn build(tools: &Tools, dir: &Path, branch: &str) -> Result<Self, DeliveryError> {
+        Self::build_after(tools, dir, branch, None)
     }
 
-    /// `build`, for a branch whose pull request already merged at `merged_head`: only the commits
-    /// made after it count, and the pull request opens from a fresh branch name, never the merged one.
+    /// Only the commits made after `merged_head`, the head its pull request merged with.
     pub fn build_after(
         tools: &Tools,
         dir: &Path,
         branch: &str,
-        stage_summary: Option<&str>,
         merged_head: Option<&str>,
     ) -> Result<Self, DeliveryError> {
         check_branch(branch)?;
         let base = detect_base(tools, dir).ok_or(DeliveryError::NoBase)?;
         let onto = compare_ref(tools, dir, &base);
-        let (commits, head) = match merged_head {
+        let commits = match merged_head {
             Some(sha) => {
                 check_branch(sha)?;
                 let start = if is_commit(tools, dir, sha) { sha } else { &onto };
                 let after = commits_between(tools, dir, start, branch)?;
-                (not_in_base(tools, dir, &onto, branch, after), fresh_branch(tools, dir, branch))
+                not_in_base(tools, dir, &onto, branch, after)
             }
-            None => (commits_between(tools, dir, &onto, branch)?, pushed_as(tools, dir, branch)),
+            None => commits_between(tools, dir, &onto, branch)?,
         };
-        let (title, body) = propose(branch, &commits, stage_summary);
-        Ok(Self {
-            dir: dir.to_path_buf(),
-            branch: branch.to_owned(),
-            base,
-            head,
-            commits,
-            rebase: merged_head.is_some(),
-            title,
-            body,
-        })
+        Ok(Self { base, commits })
     }
 }
 
 /// The name a branch that was moved to a fresh remote branch is pushed as: the one it tracks, when
 /// that is `<branch>-<number>`. Anything else tracked (a branch started from `origin/main`) is not
-/// a place Tidewatch pushes to.
+/// a place Tidewatch looks for a pull request.
 #[must_use]
 pub fn pushed_as(tools: &Tools, dir: &Path, branch: &str) -> String {
     let key = format!("branch.{branch}.merge");
@@ -180,26 +88,6 @@ pub fn pushed_as(tools: &Tools, dir: &Path, branch: &str) -> String {
             )
         })
         .unwrap_or_else(|| branch.to_owned())
-}
-
-/// `<branch>-2`, or the next number that no local branch, remote-tracking branch or branch on the
-/// remote has. Blocks on git, and on the network for the remote's own list.
-#[must_use]
-pub fn fresh_branch(tools: &Tools, dir: &Path, branch: &str) -> String {
-    let local = |name: &str| {
-        ["refs/heads", "refs/remotes/origin"].iter().any(|ns| {
-            git_succeeds(tools, dir, &["show-ref", "--verify", "--quiet", &format!("{ns}/{name}")])
-        })
-    };
-    let remote = |name: &str| {
-        git_output(tools, dir, &["ls-remote", "--exit-code", "--heads", REMOTE, name])
-            .is_ok_and(|out| out.success)
-    };
-    let tries = std::cell::Cell::new(0);
-    crate::branch_name::next_free(branch, |name| {
-        tries.set(tries.get() + 1);
-        tries.get() <= FRESH_TRIES && (local(name) || remote(name))
-    })
 }
 
 fn is_commit(tools: &Tools, dir: &Path, sha: &str) -> bool {
@@ -222,25 +110,6 @@ fn not_in_base(
     let applied: Vec<&str> =
         out.stdout.lines().filter_map(|line| line.strip_prefix("- ")).map(str::trim).collect();
     commits.into_iter().filter(|c| !applied.iter().any(|full| full.starts_with(&c.sha))).collect()
-}
-
-/// Replays `plan.commits` on top of the base, so a pull request made after a merge carries only
-/// them. An unfinished rebase is aborted and the branch left as it was.
-fn move_onto_base(tools: &Tools, plan: &DeliveryPlan) -> Result<(), DeliveryError> {
-    let Some(first) = plan.commits.first() else { return Ok(()) };
-    let onto = compare_ref(tools, &plan.dir, &plan.base);
-    let parent = format!("{}^", first.sha);
-    let out = git_output(tools, &plan.dir, &["rebase", "--onto", &onto, &parent, &plan.branch])?;
-    if out.success {
-        return Ok(());
-    }
-    git_succeeds(tools, &plan.dir, &["rebase", "--abort"]);
-    let why = out.stderr.lines().rev().find(|line| !line.trim().is_empty()).unwrap_or_default();
-    Err(DeliveryError::PushFailed(format!(
-        "cannot move the new commits onto {}: {}",
-        plan.base,
-        why.trim()
-    )))
 }
 
 fn check_branch(branch: &str) -> Result<(), DeliveryError> {
@@ -324,193 +193,9 @@ fn parse_log(text: &str) -> Vec<CommitLine> {
         .collect()
 }
 
-/// The proposed title and body. A stage summary wins: its first line is the title, the rest the body
-/// (the Hand off stage prompt asks for exactly that). Without one, a single commit gives its own
-/// subject and body, and several give the oldest subject over a list of all of them.
-#[must_use]
-pub fn propose(
-    branch: &str,
-    commits: &[CommitLine],
-    stage_summary: Option<&str>,
-) -> (String, String) {
-    let from_summary = stage_summary.and_then(split_summary);
-    let from_commits = || commit_text(branch, commits);
-    match from_summary {
-        Some((title, body)) if !body.is_empty() => (title, body),
-        Some((title, _)) => (title, from_commits().1),
-        None => from_commits(),
-    }
-}
-
-fn split_summary(summary: &str) -> Option<(String, String)> {
-    let mut lines = summary.trim().lines();
-    let title = lines.by_ref().map(clean_title).find(|line| !line.is_empty())?;
-    let body = lines.collect::<Vec<_>>().join("\n");
-    Some((title, body.trim().to_owned()))
-}
-
-fn clean_title(line: &str) -> String {
-    let line = line.trim().trim_start_matches('#').trim();
-    let line = line.strip_prefix("- ").or_else(|| line.strip_prefix("* ")).unwrap_or(line);
-    let line = strip_label(line.trim(), "title:");
-    let line = line.trim().trim_matches(|c| matches!(c, '*' | '`' | '"' | '\''));
-    line.trim().to_owned()
-}
-
-fn strip_label<'a>(line: &'a str, label: &str) -> &'a str {
-    match line.get(..label.len()) {
-        Some(head) if head.eq_ignore_ascii_case(label) => &line[label.len()..],
-        _ => line,
-    }
-}
-
-fn commit_text(branch: &str, commits: &[CommitLine]) -> (String, String) {
-    match commits {
-        [] => (humanize_branch(branch), String::new()),
-        [only] if !only.body.is_empty() => (only.subject.clone(), only.body.clone()),
-        [first, ..] => {
-            let list: Vec<String> = commits.iter().map(|c| format!("- {}", c.subject)).collect();
-            (first.subject.clone(), format!("## Changes\n\n{}", list.join("\n")))
-        }
-    }
-}
-
-fn humanize_branch(branch: &str) -> String {
-    let name = branch.rsplit('/').next().unwrap_or(branch).replace(['-', '_'], " ");
-    let mut chars = name.chars();
-    chars.next().map_or_else(String::new, |first| first.to_uppercase().chain(chars).collect())
-}
-
-/// The pull request body Auto writes when the agent left no summary of its own: the ledger's goal,
-/// what it verified and the commits, never empty while there are commits.
-#[must_use]
-pub fn agent_body(goal: &str, verified: &[String], commits: &[CommitLine]) -> String {
-    let mut parts = Vec::new();
-    if !goal.trim().is_empty() {
-        parts.push(goal.trim().to_owned());
-    }
-    if !verified.is_empty() {
-        let list: Vec<String> = verified.iter().map(|item| format!("- {}", item.trim())).collect();
-        parts.push(format!("## Verified\n\n{}", list.join("\n")));
-    }
-    if !commits.is_empty() {
-        let list: Vec<String> = commits.iter().map(|c| format!("- {}", c.subject)).collect();
-        parts.push(format!("## Changes\n\n{}", list.join("\n")));
-    }
-    parts.join("\n\n")
-}
-
-/// Pushes `plan.branch` with `git push -u origin <branch>` (as `plan.head` when that differs), then
-/// opens the pull request with `gh pr create --base <base> --head <head> --title <title>
-/// --body-file <tmp>`, as a draft when `opens` says so. Blocks on the network. `title` and `body`
-/// are what the user approved.
-///
-/// A branch that already has an open pull request is pushed and answers `created: false` with that
-/// pull request's URL.
-pub fn deliver(
-    tools: &Tools,
-    plan: &DeliveryPlan,
-    title: &str,
-    body: &str,
-    opens: Opens,
-) -> Result<Delivered, DeliveryError> {
-    let title = title.trim();
-    if title.is_empty() {
-        return Err(DeliveryError::EmptyTitle);
-    }
-    if plan.commits.is_empty() {
-        return Err(DeliveryError::NothingToDeliver);
-    }
-    check_branch(&plan.branch)?;
-    check_branch(&plan.head)?;
-    run_gh(tools, &plan.dir, &["--version"])?;
-    if !git_succeeds(tools, &plan.dir, &["remote", "get-url", REMOTE]) {
-        return Err(DeliveryError::NoRemote);
-    }
-    if plan.rebase {
-        move_onto_base(tools, plan)?;
-    }
-    push(tools, &plan.dir, &plan.branch, &plan.head)?;
-    create_pull_request(tools, plan, title, body, opens)
-}
-
-fn push(tools: &Tools, dir: &Path, branch: &str, head: &str) -> Result<(), DeliveryError> {
-    let refspec = format!("{branch}:refs/heads/{head}");
-    let args: &[&str] = if head == branch {
-        &["push", "-u", REMOTE, branch]
-    } else {
-        &["push", "-u", REMOTE, &refspec]
-    };
-    let out = git_output(tools, dir, args)?;
-    if out.success {
-        return Ok(());
-    }
-    let message = out.stderr.trim().to_owned();
-    let rejected = ["[rejected]", "[remote rejected]", "non-fast-forward", "declined"];
-    if rejected.iter().any(|marker| message.contains(marker)) {
-        Err(DeliveryError::PushRejected(message))
-    } else {
-        Err(DeliveryError::PushFailed(message))
-    }
-}
-
-fn create_pull_request(
-    tools: &Tools,
-    plan: &DeliveryPlan,
-    title: &str,
-    body: &str,
-    opens: Opens,
-) -> Result<Delivered, DeliveryError> {
-    let mut body_file =
-        tempfile::Builder::new().prefix("tidewatch-pr-").suffix(".md").tempfile().map_err(|e| {
-            DeliveryError::PrFailed(format!("cannot write the pull request text: {e}"))
-        })?;
-    body_file
-        .write_all(body.as_bytes())
-        .and_then(|()| body_file.flush())
-        .map_err(|e| DeliveryError::PrFailed(format!("cannot write the pull request text: {e}")))?;
-    let mut command = tools.gh(&plan.dir);
-    command
-        .args(["pr", "create", "--base", &plan.base, "--head", &plan.head, "--title", title])
-        .arg("--body-file")
-        .arg(body_file.path());
-    if opens == Opens::Draft {
-        command.arg("--draft");
-    }
-    let finished = finish(command).map_err(|e| match e.kind() {
-        std::io::ErrorKind::NotFound => DeliveryError::GhMissing,
-        _ => DeliveryError::PrFailed(format!("cannot run gh: {e}")),
-    })?;
-    if finished.success {
-        return last_url(&finished.stdout)
-            .map(|url| Delivered { url, head: plan.head.clone(), created: true })
-            .ok_or_else(|| {
-                DeliveryError::PrFailed("gh did not print the pull request URL".into())
-            });
-    }
-    if finished.stderr.contains("already exists")
-        && let Some(url) = first_url(&finished.stderr)
-    {
-        return Ok(Delivered { url, head: plan.head.clone(), created: false });
-    }
-    Err(classify_gh(&finished).into())
-}
-
-fn last_url(text: &str) -> Option<String> {
-    text.lines().rev().map(str::trim).find(|line| line.starts_with("http")).map(str::to_owned)
-}
-
-fn first_url(text: &str) -> Option<String> {
-    text.split_whitespace().find(|word| word.starts_with("http")).map(str::to_owned)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    fn commit(subject: &str, body: &str) -> CommitLine {
-        CommitLine { sha: "abc1234".into(), subject: subject.into(), body: body.into() }
-    }
 
     #[test]
     fn log_records_split_into_subject_and_body() {
@@ -529,85 +214,6 @@ mod tests {
             ]
         );
         assert_eq!(parse_log(""), []);
-    }
-
-    #[test]
-    fn a_single_commit_gives_its_own_text() {
-        let commits = [commit("feat: add refresh", "Refresh tokens five minutes early.")];
-        assert_eq!(
-            propose("agent/brave-otter", &commits, None),
-            ("feat: add refresh".into(), "Refresh tokens five minutes early.".into())
-        );
-    }
-
-    #[test]
-    fn a_single_commit_without_a_body_gets_the_list_so_the_pull_request_is_never_empty() {
-        let (title, body) = propose("agent/x", &[commit("feat: add refresh", "")], None);
-        assert_eq!(title, "feat: add refresh");
-        assert_eq!(body, "## Changes\n\n- feat: add refresh");
-    }
-
-    #[test]
-    fn the_agent_body_says_the_goal_what_was_verified_and_the_commits() {
-        let commits = [commit("feat: a", ""), commit("fix: b", "")];
-        let verified = ["tests pass".to_owned(), " clippy clean ".to_owned()];
-        assert_eq!(
-            agent_body("Add the tide table", &verified, &commits),
-            "Add the tide table\n\n## Verified\n\n- tests pass\n- clippy clean\n\n## Changes\n\n- feat: a\n- fix: b"
-        );
-        assert_eq!(agent_body("", &[], &commits), "## Changes\n\n- feat: a\n- fix: b");
-        assert_eq!(agent_body("  ", &[], &[]), "");
-    }
-
-    #[test]
-    fn several_commits_give_the_oldest_subject_over_a_list() {
-        let commits = [commit("feat: add refresh", ""), commit("test: cover expiry", "")];
-        let (title, body) = propose("agent/brave-otter", &commits, None);
-        assert_eq!(title, "feat: add refresh");
-        assert_eq!(body, "## Changes\n\n- feat: add refresh\n- test: cover expiry");
-    }
-
-    #[test]
-    fn no_commits_falls_back_to_the_branch_name() {
-        assert_eq!(propose("agent/brave-otter", &[], None), ("Brave otter".into(), String::new()));
-    }
-
-    #[test]
-    fn the_stage_summary_wins_first_line_is_the_title() {
-        let commits = [commit("wip", "")];
-        let summary = "## Title: **Refresh tokens early**\n\nTokens refresh 5 minutes before expiry.\n\n- tested";
-        let (title, body) = propose("agent/x", &commits, Some(summary));
-        assert_eq!(title, "Refresh tokens early");
-        assert_eq!(body, "Tokens refresh 5 minutes before expiry.\n\n- tested");
-    }
-
-    #[test]
-    fn a_one_line_summary_keeps_the_commit_body() {
-        let commits = [commit("wip", "details"), commit("more", "")];
-        let (title, body) = propose("agent/x", &commits, Some("Add token refresh"));
-        assert_eq!(title, "Add token refresh");
-        assert_eq!(body, "## Changes\n\n- wip\n- more");
-    }
-
-    #[test]
-    fn a_blank_summary_is_ignored() {
-        let commits = [commit("feat: a", "")];
-        assert_eq!(propose("agent/x", &commits, Some("  \n ")), propose("agent/x", &commits, None));
-    }
-
-    #[test]
-    fn urls_are_found_in_gh_output() {
-        assert_eq!(
-            last_url("Warning: 1 uncommitted change\nhttps://github.com/o/r/pull/12\n"),
-            Some("https://github.com/o/r/pull/12".into())
-        );
-        assert_eq!(last_url("nothing here"), None);
-        assert_eq!(
-            first_url(
-                "a pull request for branch \"x\" into branch \"main\" already exists:\nhttps://github.com/o/r/pull/7\n"
-            ),
-            Some("https://github.com/o/r/pull/7".into())
-        );
     }
 
     #[test]

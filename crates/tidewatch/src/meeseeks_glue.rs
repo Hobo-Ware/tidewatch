@@ -117,7 +117,6 @@ pub(crate) enum Done<T> {
 pub(crate) struct CheckSpec {
     pub(crate) tools: Tools,
     pub(crate) worktree: Worktree,
-    pub(crate) summary: String,
 }
 
 pub(crate) struct LookSpec {
@@ -136,7 +135,7 @@ pub(crate) fn run_check(step: Step, spec: &CheckSpec, pr: bool) -> Result<Checke
         Step::Change => check::change(tools, &wt.path, &wt.branch),
         Step::Tests => check::tests(&wt.repo, &wt.path),
         Step::Proof => check::proof(tools, &wt.path),
-        Step::HandOff if pr => check::hand_off(tools, &wt.path, &wt.branch, &spec.summary),
+        Step::HandOff if pr => check::hand_off(tools, &wt.path, &wt.branch),
         Step::HandOff => Ok(Checked { detail: String::new(), pr_url: None }),
     }
 }

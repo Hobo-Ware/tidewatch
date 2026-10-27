@@ -76,6 +76,7 @@ pub mod path_env;
 pub mod paths;
 pub mod permission_mode;
 pub mod pr;
+pub mod pr_ask;
 pub mod pr_cards;
 pub mod pr_gh;
 pub mod pr_lines;

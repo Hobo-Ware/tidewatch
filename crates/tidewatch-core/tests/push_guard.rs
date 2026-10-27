@@ -183,6 +183,23 @@ fn an_agent_pushes_any_branch_but_the_default_in_every_form_including_force() {
 }
 
 #[test]
+fn an_agent_pushes_its_branch_under_a_new_numbered_name_for_a_pull_request_after_a_merge() {
+    if !git_available() {
+        eprintln!("git not found; skipping");
+        return;
+    }
+    let repo = Repo::new();
+    let env = repo.guarded();
+    let main_before = repo.remote_sha("main");
+    let refspec = format!("{OWN}:{OWN}-2");
+    let out = git(&repo.work, &env, &["push", "-u", "origin", &refspec]);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(out.status.success(), "the ask's push must work: {stderr}");
+    assert_eq!(repo.remote_sha(&format!("refs/heads/{OWN}-2")), Some(repo.head()));
+    assert_eq!(repo.remote_sha("main"), main_before, "main never moved");
+}
+
+#[test]
 fn an_agent_pushes_and_deletes_a_branch_another_tab_made() {
     if !git_available() {
         eprintln!("git not found; skipping");

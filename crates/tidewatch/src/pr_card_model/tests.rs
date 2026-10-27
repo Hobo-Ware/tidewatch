@@ -384,7 +384,7 @@ fn closed_can_only_be_reopened_on_github() {
 fn a_push_fix_offer_names_the_commits_and_pushes_through_the_delivery_flow() {
     let model = card(vec![Body::PushFix { commits: 2, head: "abc".into() }], PrMode::Ask);
     assert_eq!(model.title, "Builder committed 2 new commits");
-    assert_eq!(labels(&model), [("Push fix", true), ("Not now", false)]);
+    assert_eq!(labels(&model), [("Ask Builder to push", true), ("Not now", false)]);
     let one = card(vec![Body::PushFix { commits: 1, head: "abc".into() }], PrMode::Ask);
     assert_eq!(one.title, "Builder committed 1 new commit");
 }
@@ -622,7 +622,7 @@ fn an_ordinary_tab_in_auto_fix_keeps_the_buttons_for_what_auto_fix_leaves_to_the
 fn an_ordinary_tab_still_offers_its_commits_to_the_owner() {
     let body = Body::PushFix { commits: 2, head: "abc".into() };
     let model = handled(Handling::Answers, vec![body], &[]);
-    assert_eq!(labels(&model), [("Push fix", true), ("Not now", false)]);
+    assert_eq!(labels(&model), [("Ask Builder to push", true), ("Not now", false)]);
 }
 
 #[test]
@@ -666,5 +666,5 @@ fn commits_left_unpushed_are_pushed_by_a_tab_on_its_own_and_offered_to_the_owner
     assert_eq!(labels(&handled(Handling::Owner, vec![body.clone()], &[])).len(), 2);
     let model = handled(Handling::Agent, vec![body], &[]);
     assert_eq!(model.buttons, []);
-    assert_eq!(model.note.as_deref(), Some("Tidewatch pushes this on its own"));
+    assert_eq!(model.note.as_deref(), Some("Tidewatch asks the agent to push this on its own"));
 }

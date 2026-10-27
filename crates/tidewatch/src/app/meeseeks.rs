@@ -290,10 +290,10 @@ impl Tidewatch {
 
     fn start_check(&mut self, tab: u64, step: tidewatch_core::meeseeks::Step, ctx: &egui::Context) {
         let found = self.tabs.get_mut(tab);
-        let Some((worktree, summary, pr)) = found.and_then(|t| {
+        let Some((worktree, pr)) = found.and_then(|t| {
             let agent = t.pane.agent.as_ref()?;
             let meeseeks = agent.meeseeks.as_ref()?;
-            Some((t.pane.worktree.clone()?, meeseeks.summary.clone()?, meeseeks.criteria.pr))
+            Some((t.pane.worktree.clone()?, meeseeks.criteria.pr))
         }) else {
             self.meeseeks_event(
                 tab,
@@ -302,7 +302,7 @@ impl Tidewatch {
             );
             return;
         };
-        let spec = CheckSpec { tools: self.flow.tools(), worktree, summary };
+        let spec = CheckSpec { tools: self.flow.tools(), worktree };
         self.meeseeks.check(ctx, tab, step, spec, pr);
     }
 

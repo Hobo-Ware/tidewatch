@@ -82,7 +82,7 @@ pub(crate) enum Command {
     Shortcuts,
     OpenRepo,
     Palette,
-    ApproveDelivery,
+    Confirm,
     BuildWorkflow,
     MoveSessions,
     Amphetamine,
@@ -116,7 +116,7 @@ impl Command {
             | Self::Shortcuts
             | Self::OpenRepo
             | Self::Palette
-            | Self::ApproveDelivery
+            | Self::Confirm
             | Self::BuildWorkflow
             | Self::MoveSessions
             | Self::Amphetamine => None,
@@ -126,7 +126,7 @@ impl Command {
     fn global(self) -> bool {
         !matches!(
             self,
-            Self::ApproveDelivery | Self::BuildWorkflow | Self::MoveSessions | Self::Amphetamine
+            Self::Confirm | Self::BuildWorkflow | Self::MoveSessions | Self::Amphetamine
         )
     }
 
@@ -159,7 +159,7 @@ impl Command {
     }
 
     pub(crate) fn in_palette(self) -> bool {
-        !matches!(self, Self::SelectTab(_) | Self::OpenRepo | Self::Palette | Self::ApproveDelivery)
+        !matches!(self, Self::SelectTab(_) | Self::OpenRepo | Self::Palette | Self::Confirm)
             && !self.in_file_view_only()
     }
 
@@ -507,10 +507,10 @@ pub(crate) const TABLE: [Entry; 37] = [
         (cmd(Key::P).shift(), ctrl(Key::P).shift()),
     ),
     entry(
-        "approve-delivery",
-        "Push and open the pull request",
+        "confirm",
+        "Confirm the dialog",
         Group::Dialogs,
-        Command::ApproveDelivery,
+        Command::Confirm,
         (cmd(Key::Enter), ctrl(Key::Enter)),
     ),
     unbound(
@@ -592,10 +592,6 @@ pub(crate) fn pressed(ctx: &egui::Context, gate: Gate) -> Vec<Command> {
     consume(ctx, Platform::CURRENT, wanted(gate))
 }
 
-pub(crate) fn approve_delivery_pressed(ctx: &egui::Context) -> bool {
-    !consume(ctx, Platform::CURRENT, |command| command == Command::ApproveDelivery).is_empty()
-}
-
 /// The dialog over the window, if any. The close and take-over dialogs are the ones that also
 /// refuse the Settings, Overview and Focus chords.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -671,7 +667,7 @@ impl Gate {
             | Command::OpenRepo => !modal,
             Command::FindCommit => !modal && !self.overview && self.card == Card::History,
             Command::Palette => self.dialog == Dialog::None,
-            Command::ApproveDelivery
+            Command::Confirm
             | Command::BuildWorkflow
             | Command::MoveSessions
             | Command::Amphetamine => false,

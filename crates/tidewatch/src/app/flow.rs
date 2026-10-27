@@ -114,7 +114,7 @@ impl Tidewatch {
     /// Enter that follows a paste.
     pub(super) fn drive_flow(&mut self, ctx: &egui::Context, now: f64) {
         let unix = flow_glue::unix_now();
-        let outs = self.flow.drain(ctx, now);
+        let outs = self.flow.drain(now);
         let toasts =
             flow_glue::apply_outs(outs, &mut self.tabs, &mut self.views, &mut self.flow, ctx, now);
         for text in toasts {
@@ -126,11 +126,13 @@ impl Tidewatch {
             flow_glue::press_enter(&mut self.tabs, tab);
         }
         let active = self.tabs.items()[self.tabs.active()].id;
-        let facts = flow_glue::facts(&self.tabs, &self.views, &self.pr, &self.progress, active);
+        let facts = flow_glue::facts(&self.tabs, &self.views, &self.pr, active);
         if let Some(at) = self.flow.tick(&facts, ctx, now, unix) {
             ctx.request_repaint_after(Duration::from_secs_f64((at - now).max(0.0) + WAKE_SLACK_S));
         }
-        flow_glue::tell_agents(&mut self.tabs, &mut self.flow, ctx, now);
+        for text in flow_glue::ask_agents(&mut self.tabs, &mut self.flow, ctx, now) {
+            self.show_toast(text, ctx);
+        }
         if !self.dev_flow.is_idle() {
             let view = self.views.get(&active);
             flow_glue::dev_drive(&mut self.dev_flow, &mut self.flow, view, active, ctx);
