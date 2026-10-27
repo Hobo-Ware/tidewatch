@@ -320,6 +320,7 @@ impl Tidewatch {
             Action::New => self.new_tab(ctx),
             Action::CloseActive => self.close_tab(self.tabs.active(), ctx),
             Action::Close(index) => self.close_tab(index, ctx),
+            Action::Change(index) => self.open_change_index(index, ctx),
             Action::Select(_)
             | Action::Move(..)
             | Action::MoveActive(_)

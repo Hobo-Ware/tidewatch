@@ -308,6 +308,7 @@ impl Host {
                         profile_id: saved.profile.clone(),
                         profile: (**profile).clone(),
                         session_id: session_id.clone(),
+                        fresh: false,
                         remote: saved.remote,
                         meeseeks: saved.meeseeks.as_deref().cloned(),
                         typed: match how {
@@ -367,7 +368,7 @@ fn push_shell<T>(
 }
 
 /// A reopened agent starts in its tab, or the tab becomes the plain shell the job asked for.
-fn reopened<T>(
+pub(crate) fn reopened<T>(
     done: Reopened,
     tabs: &mut Tabs<Pane<T>>,
     spawn: &Spawn<T>,
