@@ -63,7 +63,7 @@ const CHOICES_LINE: &str = "- Ask choices in plain words with two or three optio
 
 const RECOVERY_LINE: &str = "- If `update_progress` is not available, look for `mcp__tidewatch__update_progress` with tool search once. If it is still missing, tell the user that Tidewatch reporting is down.\n";
 
-const AVATAR_LINE: &str = "- Once you understand the task, call `set_avatar` once with a 64x64 flat round icon about the task (2-3 bright colors on a dark background, simple shapes, nothing near the edge) and a one-line reason.\n";
+const AVATAR_LINE: &str = "- Once you understand the task, call `set_avatar` once with a 64x64 flat round icon about the task (2-3 bright colors, simple shapes, nothing near the edge, and no ring, frame or background because Tidewatch draws the dark plate) and a one-line reason.\n";
 
 const PUSH_LINE: &str = "- You may push any branch except the repo's default branch, force included; after folding fixups use `git push --force-with-lease`. The default branch and tags are refused. When Tidewatch asks you to open a pull request, push the branch and run `gh pr create --draft` yourself, writing the title (Conventional Commits style, what changed for the user) and the body (what changed and why, how you verified it, what you did not verify; short) in the house style.\n";
 

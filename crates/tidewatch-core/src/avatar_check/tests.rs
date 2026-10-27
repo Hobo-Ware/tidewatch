@@ -208,6 +208,117 @@ fn a_square_tile_is_fitted_corners_inside_the_circle() {
     assert!(reach <= FACE_FILL + 0.02, "{reach}");
 }
 
+const ART: &str = r##"<path d="M24 24h16v16h-16z" fill="#ffffff"/>"##;
+
+fn framed(frame: &str) -> String {
+    format!(r#"<svg viewBox="0 0 64 64">{frame}{ART}</svg>"#)
+}
+
+#[test]
+fn a_leading_frame_is_dropped_and_art_is_kept() {
+    let ring =
+        r##"<circle cx="32" cy="32" r="24" fill="none" stroke="#7c6cff" stroke-width="3"/>"##;
+    let thick =
+        r##"<circle cx="32" cy="32" r="22" fill="none" stroke="#00c8ff" stroke-width="4"/>"##;
+    let clear =
+        r##"<circle cx="32" cy="32" r="24" fill="#ffffff" fill-opacity="0" stroke="#7c6cff"/>"##;
+    let ellipse = r##"<ellipse cx="32" cy="32" rx="26" ry="20" fill="none" stroke="#7c6cff"/>"##;
+    let backdrop = r##"<rect width="64" height="64" rx="12" fill="#1e1f24"/>"##;
+    let dark_disc = r##"<circle cx="32" cy="32" r="30" fill="#1e1f24"/>"##;
+    let faint = r##"<rect width="64" height="64" fill="#ffffff" fill-opacity="0.04"/>"##;
+    for (what, frame, gone) in [
+        ("an outline ring", ring, true),
+        ("a thick outline ring", thick, true),
+        ("a ring filled with nothing", clear, true),
+        ("an outline ellipse", ellipse, true),
+        ("a dark full-canvas backdrop", backdrop, true),
+        ("a dark disc", dark_disc, true),
+        ("a nearly invisible white backdrop", faint, true),
+        (
+            "a coloured disc, the tennis ball",
+            r##"<circle cx="32" cy="32" r="20" fill="#d4ff3a"/>"##,
+            false,
+        ),
+        ("a big coloured disc", r##"<circle cx="32" cy="32" r="28" fill="#2dd4bf"/>"##, false),
+        (
+            "a small outline ring that is the art",
+            r##"<circle cx="32" cy="32" r="9" fill="none" stroke="#7c6cff" stroke-width="3"/>"##,
+            false,
+        ),
+        (
+            "an outline ring off to one side",
+            r##"<circle cx="14" cy="14" r="20" fill="none" stroke="#7c6cff" stroke-width="3"/>"##,
+            false,
+        ),
+        ("a bright rect backdrop", r##"<rect width="64" height="64" fill="#2dd4bf"/>"##, false),
+    ] {
+        let svg = framed(frame);
+        let kept = without_frame(&svg);
+        assert_eq!(kept == ART_ONLY, gone, "{what}: {kept}");
+        assert!(gone || kept == svg, "{what}");
+    }
+}
+
+const ART_ONLY: &str =
+    r##"<svg viewBox="0 0 64 64"><path d="M24 24h16v16h-16z" fill="#ffffff"/></svg>"##;
+
+#[test]
+fn art_alone_is_unchanged() {
+    for svg in [ART_ONLY, LOCK, BRIGHT_DISC, BRIGHT_TILE] {
+        assert_eq!(without_frame(svg), svg);
+    }
+}
+
+#[test]
+fn a_ring_that_is_all_there_is_stays() {
+    let ring = r##"<svg viewBox="0 0 64 64"><circle cx="32" cy="32" r="24" fill="none" stroke="#7c6cff" stroke-width="3"/></svg>"##;
+    assert_eq!(without_frame(ring), ring);
+}
+
+#[test]
+fn a_backdrop_and_a_ring_are_both_dropped() {
+    let svg = format!(
+        r##"<svg viewBox="0 0 64 64"><rect width="64" height="64" fill="#1e1f24"/><circle cx="32" cy="32" r="24" fill="none" stroke="#7c6cff" stroke-width="3"/>{ART}</svg>"##
+    );
+    assert_eq!(without_frame(&svg), ART_ONLY);
+}
+
+#[test]
+fn a_frame_in_a_scaled_viewbox_is_found_by_its_size_on_the_canvas() {
+    let svg = r##"<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9" fill="none" stroke="#7c6cff" stroke-width="1"/><path d="M9 9h6v6h-6z" fill="#ffffff"/></svg>"##;
+    assert!(!without_frame(svg).contains("<circle"));
+}
+
+fn reach_of_white(pixmap: &Pixmap) -> f32 {
+    let px = pixmap.width();
+    let half = px as f32 / 2.0;
+    pixmap
+        .pixels()
+        .iter()
+        .enumerate()
+        .filter(|(_, p)| {
+            let ink = p.demultiply();
+            p.alpha() >= PAINTED_ALPHA && ink.red() > 240 && ink.green() > 240 && ink.blue() > 240
+        })
+        .map(|(i, _)| {
+            ((i as u32 % px) as f32 + 0.5 - half).hypot((i as u32 / px) as f32 + 0.5 - half)
+        })
+        .fold(0.0, f32::max)
+        / half
+}
+
+#[test]
+fn art_inside_a_dropped_ring_reaches_the_fill() {
+    let ring =
+        r##"<circle cx="32" cy="32" r="24" fill="none" stroke="#7c6cff" stroke-width="3"/>"##;
+    let backdrop = r##"<rect width="64" height="64" rx="12" fill="#1e1f24"/>"##;
+    for (what, frame) in [("ring", ring), ("backdrop", backdrop)] {
+        let fitted = rasterize_fitted(&framed(frame), 96, FACE_FILL).unwrap();
+        let reach = reach_of_white(&fitted);
+        assert!((reach - FACE_FILL).abs() < 0.05, "{what}: {reach}");
+    }
+}
+
 #[test]
 fn a_fit_of_nothing_painted_is_none() {
     let empty = r#"<svg viewBox="0 0 64 64"><circle cx="32" cy="32" r="20" fill="none"/></svg>"#;
