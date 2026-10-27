@@ -29,6 +29,9 @@ const IMAGE_CHIP_LINE: Color32 = Color32::from_rgb(0x2f, 0x4a, 0x4a);
 const QUOTE_PAD: Margin = Margin { left: 16, right: 16, top: 14, bottom: 14 };
 const QUOTE_GAP: f32 = 12.0;
 const QUOTE_MARK: f32 = 18.0;
+const QUOTE_TEXT_PX: f32 = 16.0;
+const QUOTE_MIN_TEXT: f32 = 80.0;
+const BORDER: f32 = 1.0;
 
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) enum Piece<'a> {
@@ -54,7 +57,8 @@ pub(crate) fn pieces(md: &str, captions: bool) -> Vec<Piece<'_>> {
     for (index, line) in md.split_inclusive('\n').enumerate() {
         let end = at + line.len();
         let inside = open.is_none() && lists.iter().any(|span| span.contains(&at));
-        let quoted = open.is_none() && !inside && quote_text(line).is_some();
+        let lazy = open.is_none() && !inside && continues_quote(&quote, line);
+        let quoted = open.is_none() && !inside && (quote_text(line).is_some() || lazy);
         if !quoted && !quote.is_empty() {
             out.push(Piece::Quote(std::mem::take(&mut quote).join("\n")));
             prose = at..at;
@@ -68,7 +72,9 @@ pub(crate) fn pieces(md: &str, captions: bool) -> Vec<Piece<'_>> {
             }
         } else if inside {
             prose.end = end;
-        } else if let Some(text) = quote_text(line) {
+        } else if let Some(text) =
+            quote_text(line).or(lazy.then(|| line.trim_end_matches(['\n', '\r'])))
+        {
             if quote.is_empty() {
                 push_prose(&mut out, &md[prose.clone()]);
             }
@@ -119,6 +125,38 @@ fn quote_text(line: &str) -> Option<&str> {
     let indent = line.len() - line.trim_start_matches(' ').len();
     let rest = line[indent..].strip_prefix('>').filter(|_| indent <= 3)?;
     Some(rest.strip_prefix(' ').unwrap_or(rest))
+}
+
+/// Whether `line`, with no `>` of its own, carries on the paragraph the quote so far ends in:
+/// CommonMark's lazy continuation. A blank line, a line that starts another block and a quote
+/// that ends in a heading, a rule or an open fence do not continue.
+fn continues_quote(quote: &[&str], line: &str) -> bool {
+    let Some(last) = quote.last() else { return false };
+    let text = line.trim();
+    let starts_block = text.is_empty()
+        || text.starts_with(['#', '>', '|', '<', '-', '*', '+', '_', '=', '`', '~'])
+        || line.starts_with("    ")
+        || text
+            .split_once(['.', ')'])
+            .is_some_and(|(n, _)| !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()));
+    let tail = last.trim();
+    let closed_paragraph = tail.is_empty()
+        || tail.starts_with(['#', '`', '~'])
+        || tail.chars().all(|c| matches!(c, '-' | '*' | '_' | '='))
+        || fence_open(quote);
+    !starts_block && !closed_paragraph
+}
+
+fn fence_open(quote: &[&str]) -> bool {
+    let mut open: Option<(char, usize)> = None;
+    for line in quote {
+        match open {
+            Some(fence) if closes_fence(line, fence) => open = None,
+            Some(_) => {}
+            None => open = opens(line).map(|fence| (fence.mark, fence.run)),
+        }
+    }
+    open.is_some()
 }
 
 /// `md` with the lines of its fenced blocks blanked, so a heading inside code is not a heading.
@@ -211,10 +249,51 @@ pub(crate) fn show(ui: &mut Ui, md: &str, captions: bool, look: Look) {
     }
 }
 
+#[cfg(test)]
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct QuoteShown {
+    pub(crate) panel: Rect,
+    pub(crate) copy: Rect,
+}
+
+fn button_reserve(painter: &egui::Painter) -> f32 {
+    let button = code_block::button_width(painter);
+    (code_block::BUTTON_INSET + button + QUOTE_GAP - f32::from(QUOTE_PAD.right)).max(0.0)
+}
+
+pub(crate) fn quote_width(painter: &egui::Painter, text: &str) -> f32 {
+    let widest = text
+        .lines()
+        .map(|line| {
+            painter.layout_no_wrap(line.to_owned(), body(QUOTE_TEXT_PX), Color32::WHITE).size().x
+        })
+        .fold(0.0, f32::max);
+    widest.ceil()
+        + button_reserve(painter)
+        + QUOTE_MARK
+        + QUOTE_GAP
+        + f32::from(QUOTE_PAD.left + QUOTE_PAD.right)
+        + 2.0 * BORDER
+}
+
+/// A quote's markdown as written in the message, without the `>` markers and without the blank
+/// lines around it: the text to paste into another place that renders markdown.
+pub(crate) fn quote_source(text: &str) -> String {
+    let lines: Vec<&str> = text.lines().collect();
+    let first = lines.iter().position(|line| !line.trim().is_empty());
+    let last = lines.iter().rposition(|line| !line.trim().is_empty());
+    match first.zip(last) {
+        Some((first, last)) => lines[first..=last].join("\n"),
+        None => String::new(),
+    }
+}
+
 fn quote(ui: &mut Ui, md: &str, look: Look) {
-    Frame::new()
+    let id = ui.id().with("quote-copy");
+    let reserve = button_reserve(ui.painter());
+    let framed = Frame::new()
         .fill(brand::SUNKEN)
-        .stroke(Stroke::new(1.0, brand::ITEM_LINE))
+        .stroke(Stroke::new(BORDER, brand::ITEM_LINE))
         .corner_radius(CornerRadius::same(QUOTE_RADIUS))
         .inner_margin(QUOTE_PAD)
         .show(ui, |ui| {
@@ -225,12 +304,18 @@ fn quote(ui: &mut Ui, md: &str, look: Look) {
                     ui.allocate_exact_size(vec2(QUOTE_MARK, QUOTE_MARK), Sense::hover());
                 paint_quote_mark(ui, rect.translate(vec2(0.0, 2.0)));
                 ui.vertical(|ui| {
-                    ui.set_width(ui.available_width());
+                    ui.set_width((ui.available_width() - reserve).max(QUOTE_MIN_TEXT));
                     ui.visuals_mut().override_text_color = Some(brand::STEP_TEXT);
                     markdown(ui, md, look);
                 });
             });
         });
+    let panel = framed.response.rect;
+    let copy = code_block::copy_button(ui, id, code_block::corner_anchor(panel), &quote_source(md));
+    #[cfg(test)]
+    ui.data_mut(|data| data.insert_temp(egui::Id::new("quote-shown"), QuoteShown { panel, copy }));
+    #[cfg(not(test))]
+    let _ = copy;
 }
 
 fn markdown(ui: &mut Ui, md: &str, look: Look) {
@@ -563,5 +648,266 @@ mod tests {
         for raw in ["<!--", "<details", "<summary", "<br", "relative-time", "datetime"] {
             assert!(!seen.contains(raw), "{raw} showed in {seen:?}");
         }
+    }
+
+    const DRAFT: &str = "> @Sam the sign-in change is in: `acme://auth` now opens the app from a cold start, \
+        and the token is kept across restarts.\n>\n> Two things left on my side: the **retry** path and \
+        the [rollout notes](https://example.com/notes).\n>\n> I will ping you once `acme://auth/callback` \
+        is verified on a clean install.";
+
+    fn quote_of(md: &str) -> String {
+        let parts = pieces(md, false);
+        let quotes: Vec<String> = parts
+            .iter()
+            .filter_map(|piece| match piece {
+                Piece::Quote(text) => Some(quote_source(text)),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(quotes.len(), 1, "one quote in {md:?}: {parts:?}");
+        quotes.into_iter().next().expect("one quote")
+    }
+
+    #[test]
+    fn the_copied_quote_is_its_markdown_without_the_markers() {
+        let cases = [
+            ("> a\n>\n> b", "a\n\nb"),
+            (
+                "> use `acme://auth` and **bold** [l](https://x.dev)",
+                "use `acme://auth` and **bold** [l](https://x.dev)",
+            ),
+            ("> - a\n>   - b\n> - c\n>\n> 1. one\n> 2. two", "- a\n  - b\n- c\n\n1. one\n2. two"),
+            ("> first\nlazy second\n\nafter", "first\nlazy second"),
+            ("> ```sh\n> a > b\n> echo \"> c\"\n> ```", "```sh\na > b\necho \"> c\"\n```"),
+            ("> outer\n> > inner", "outer\n> inner"),
+            (">\n> padded\n>\n", "padded"),
+            ("   >tight\n>  two spaces kept", "tight\n two spaces kept"),
+            ("> a\r\n> b\r\n", "a\nb"),
+            ("> keeps \u{2014} and \u{2013} as written", "keeps \u{2014} and \u{2013} as written"),
+        ];
+        for (input, want) in cases {
+            assert_eq!(quote_of(input), want, "input {input:?}");
+        }
+    }
+
+    #[test]
+    fn a_lazy_line_joins_the_quote_only_while_a_paragraph_is_open() {
+        let stays_out = [
+            "> a\n\nb",
+            "> a\n- b",
+            "> a\n# b",
+            "> a\n```\nb",
+            "> # head\nb",
+            "> ---\nb",
+            "> ```\n> code\n> ```\nb",
+            "> a\n1. b",
+            "> a\n    b",
+        ];
+        for input in stays_out {
+            let parts = pieces(input, false);
+            assert!(
+                matches!(&parts[0], Piece::Quote(text) if !text.contains('b')),
+                "input {input:?}: {parts:?}"
+            );
+        }
+        assert_eq!(pieces("> a\nb\nc\n> d", false), [Piece::Quote("a\nb\nc\nd".to_owned())]);
+        assert_eq!(pieces("plain\nlines", false), [Piece::Markdown("plain\nlines")]);
+    }
+
+    const SCREEN: f32 = 1000.0;
+
+    fn quote_frame(
+        ctx: &egui::Context,
+        (width, md): (f32, &str),
+        events: Vec<egui::Event>,
+        time: f64,
+    ) -> (FullOutput, QuoteShown) {
+        let raw = RawInput {
+            screen_rect: Some(Rect::from_min_size(pos2(0.0, 0.0), vec2(SCREEN, 900.0))),
+            events,
+            focused: true,
+            time: Some(time),
+            ..RawInput::default()
+        };
+        let mut shown = None;
+        let out = ctx.run_ui(raw, |ui| {
+            ui.set_width(width);
+            show(ui, md, false, Look::AGENT);
+            shown = ui.data(|data| data.get_temp::<QuoteShown>(egui::Id::new("quote-shown")));
+        });
+        (out, shown.expect("the quote recorded where it drew"))
+    }
+
+    fn quote_settled(ctx: &egui::Context, quote: (f32, &str), time: f64) -> QuoteShown {
+        let _ = quote_frame(ctx, quote, vec![], time);
+        quote_frame(ctx, quote, vec![], time).1
+    }
+
+    fn rows(out: &FullOutput) -> Vec<(String, Rect)> {
+        out.shapes
+            .iter()
+            .filter_map(|clipped| match &clipped.shape {
+                Shape::Text(text) => Some((text.galley.text().to_owned(), text.pos, &text.galley)),
+                _ => None,
+            })
+            .flat_map(|(label, pos, galley)| {
+                galley
+                    .rows
+                    .iter()
+                    .map(move |row| (label.clone(), row.rect().translate(pos.to_vec2())))
+                    .collect::<Vec<_>>()
+            })
+            .collect()
+    }
+
+    #[test]
+    fn the_copy_button_sits_in_the_quote_corner_like_the_code_blocks_and_no_text_runs_under_it() {
+        let ctx = crate::fonts::test_context();
+        for width in [240.0, 320.0, 480.0, 720.0] {
+            for md in [
+                DRAFT,
+                "> short",
+                "> one\n>\n> two",
+                "> `acme://auth`",
+                "> a very long unbroken word: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            ] {
+                let shown = quote_settled(&ctx, (width, md), 1.0);
+                let (out, _) = quote_frame(&ctx, (width, md), vec![], 1.0);
+                let room = format!("width {width}, {md:?}: {shown:?}");
+                assert!((shown.panel.width() - width).abs() < 0.5, "{room}");
+                assert_eq!(
+                    shown.panel.right() - shown.copy.right(),
+                    BORDER + code_block::BUTTON_INSET,
+                    "{room}"
+                );
+                assert_eq!(shown.copy.top() - shown.panel.top(), BORDER + 4.0, "{room}");
+                assert!(shown.copy.bottom() <= shown.panel.bottom(), "{room}");
+                for (label, rect) in rows(&out) {
+                    if label == "Copy" || label == "Copied" {
+                        continue;
+                    }
+                    assert!(
+                        !rect.intersects(shown.copy),
+                        "{label:?} {rect:?} runs under the button, {room}"
+                    );
+                }
+            }
+        }
+    }
+
+    fn code_block_corner(ctx: &egui::Context, block: (f32, &str)) -> (Rect, Rect) {
+        let raw = |time| RawInput {
+            screen_rect: Some(Rect::from_min_size(pos2(0.0, 0.0), vec2(SCREEN, 900.0))),
+            focused: true,
+            time: Some(time),
+            ..RawInput::default()
+        };
+        let mut shown = None;
+        for _ in 0..2 {
+            let _ = ctx.run_ui(raw(1.0), |ui| {
+                ui.set_width(block.0);
+                code_block::show(ui, Some("sh"), block.1, Look::AGENT);
+                shown = ui.data(|data| {
+                    data.get_temp::<code_block::Shown>(ui.id().with("code-block").with("shown"))
+                });
+            });
+        }
+        let shown = shown.expect("the code block recorded where it drew");
+        (shown.frame, shown.copy)
+    }
+
+    fn press(at: Pos2, pressed: bool) -> egui::Event {
+        egui::Event::PointerButton {
+            pos: at,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        }
+    }
+
+    fn click(ctx: &egui::Context, quote: (f32, &str), at: Pos2, time: f64) -> Vec<String> {
+        let steps =
+            [vec![egui::Event::PointerMoved(at)], vec![press(at, true)], vec![press(at, false)]];
+        let mut copied = Vec::new();
+        for (step, events) in steps.into_iter().enumerate() {
+            let (out, _) = quote_frame(ctx, quote, events, time + step as f64 * 0.01);
+            copied.extend(out.platform_output.commands.into_iter().filter_map(|command| {
+                match command {
+                    egui::OutputCommand::CopyText(text) => Some(text),
+                    _ => None,
+                }
+            }));
+        }
+        copied
+    }
+
+    fn labels(out: &FullOutput) -> Vec<String> {
+        rows(out).into_iter().map(|(label, _)| label).collect()
+    }
+
+    #[test]
+    fn a_click_copies_the_quote_source_and_reads_copied_for_a_moment() {
+        let ctx = crate::fonts::test_context();
+        let quote = (480.0, DRAFT);
+        let shown = quote_settled(&ctx, quote, 1.0);
+        assert!(labels(&quote_frame(&ctx, quote, vec![], 1.0).0).contains(&"Copy".to_owned()));
+        let copied = click(&ctx, quote, shown.copy.center(), 1.0);
+        let want = quote_of(DRAFT);
+        assert!(want.contains("\n\n") && want.contains("`acme://auth`") && !want.contains("> "));
+        assert_eq!(copied, [want]);
+        let during = labels(&quote_frame(&ctx, quote, vec![], 1.2).0);
+        assert!(during.contains(&"Copied".to_owned()) && !during.contains(&"Copy".to_owned()));
+        let later = labels(&quote_frame(&ctx, quote, vec![], 3.0).0);
+        assert!(later.contains(&"Copy".to_owned()) && !later.contains(&"Copied".to_owned()));
+        assert_eq!(quote_frame(&ctx, quote, vec![], 3.0).1.copy, shown.copy);
+    }
+
+    #[test]
+    fn a_click_on_the_quote_text_copies_nothing() {
+        let ctx = crate::fonts::test_context();
+        let quote = (480.0, DRAFT);
+        let shown = quote_settled(&ctx, quote, 1.0);
+        let at = pos2(shown.panel.left() + 60.0, shown.panel.center().y);
+        assert_eq!(click(&ctx, quote, at, 1.0), Vec::<String>::new());
+    }
+
+    #[test]
+    fn a_quote_in_the_users_bubble_gets_the_button_too() {
+        let ctx = crate::fonts::test_context();
+        let raw = RawInput {
+            screen_rect: Some(Rect::from_min_size(pos2(0.0, 0.0), vec2(SCREEN, 900.0))),
+            ..RawInput::default()
+        };
+        let mut seen = Vec::new();
+        for _ in 0..2 {
+            let out = ctx.run_ui(raw.clone(), |ui| {
+                ui.set_width(400.0);
+                show(ui, "> from me", false, Look::USER);
+            });
+            seen = labels(&out);
+        }
+        assert!(seen.contains(&"Copy".to_owned()), "{seen:?}");
+    }
+
+    #[test]
+    fn a_quote_is_as_wide_as_its_text_plus_the_mark_and_the_button() {
+        let ctx = crate::fonts::test_context();
+        let width = ctx.run_ui(RawInput::default(), |ui| {
+            let wide = quote_width(ui.painter(), "a much longer line than the other\nshort");
+            let narrow = quote_width(ui.painter(), "short");
+            assert!(wide > narrow);
+            assert!(narrow > code_block::button_width(ui.painter()) + QUOTE_MARK);
+        });
+        drop(width);
+    }
+
+    #[test]
+    fn the_quote_button_has_the_same_inset_and_size_as_the_code_blocks() {
+        let ctx = crate::fonts::test_context();
+        let (frame, copy) = code_block_corner(&ctx, (400.0, "x"));
+        let shown = quote_settled(&ctx, (400.0, "> x"), 1.0);
+        assert_eq!(shown.copy.size(), copy.size());
+        assert_eq!(shown.panel.right() - shown.copy.right(), frame.right() - copy.right());
+        assert_eq!(shown.copy.top() - shown.panel.top(), copy.top() - frame.top());
     }
 }

@@ -59,11 +59,14 @@ pub(crate) enum Block {
 
 pub(crate) fn list_spans(md: &str) -> Vec<std::ops::Range<usize>> {
     let mut depth = 0_usize;
+    let mut quoted = 0_usize;
     let mut spans = Vec::new();
     for (event, range) in Parser::new_ext(md, options()).into_offset_iter() {
         match event {
+            Event::Start(Tag::BlockQuote(_)) => quoted += 1,
+            Event::End(TagEnd::BlockQuote(_)) => quoted = quoted.saturating_sub(1),
             Event::Start(Tag::List(_)) => {
-                if depth == 0 {
+                if depth == 0 && quoted == 0 {
                     spans.push(range);
                 }
                 depth += 1;
