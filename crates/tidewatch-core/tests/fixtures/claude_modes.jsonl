@@ -1,0 +1,7 @@
+{"type":"mode","mode":"normal","sessionId":"00000000-0000-4000-8000-000000000001"}
+{"type":"permission-mode","permissionMode":"bypassPermissions","sessionId":"00000000-0000-4000-8000-000000000001"}
+{"parentUuid":null,"isSidechain":false,"type":"user","message":{"role":"user","content":"first"},"uuid":"u1","timestamp":"2026-10-17T20:31:48.272Z","permissionMode":"bypassPermissions","cwd":"/work/web","sessionId":"00000000-0000-4000-8000-000000000001"}
+{"parentUuid":"u1","isSidechain":false,"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"mentions \"permissionMode\":\"plan\" in prose"}]},"uuid":"a1","timestamp":"2026-10-17T20:31:50.452Z","cwd":"/work/web","sessionId":"00000000-0000-4000-8000-000000000001"}
+{"type":"permission-mode","permissionMode":"auto","sessionId":"00000000-0000-4000-8000-000000000001"}
+{"parentUuid":"a1","isSidechain":true,"type":"user","message":{"role":"user","content":"subagent"},"uuid":"u2","timestamp":"2026-10-24T21:55:52.705Z","permissionMode":"plan","cwd":"/work/web","sessionId":"00000000-0000-4000-8000-000000000001"}
+{"parentUuid":"a1","isSidechain":false,"type":"attachment","attachment":{"type":"hook"},"uuid":"t1","timestamp":"2026-10-24T21:55:53.000Z","cwd":"/work/web","sessionId":"00000000-0000-4000-8000-000000000001"}

@@ -15,6 +15,7 @@ use crate::elsewhere::{
     Activity, Candidate, Cli, Presence, ProcessTable, RegistryEntry, Running, Session,
     claude_sessions, is_session_id, other_candidates, parse_ps, parse_registry_entry, registry_pid,
 };
+use crate::permission_mode::last_claude_level;
 use crate::restore::codex_session_id;
 use crate::tools::Tools;
 use crate::transcript::{Parser, Role, Source, parse_all};
@@ -144,6 +145,13 @@ impl ScanEnv {
             .join("session-state")
     }
 
+    fn claude_file(&self, cwd: &Path, id: &str) -> PathBuf {
+        self.claude_dir
+            .join("projects")
+            .join(claude_project_dir_name(cwd))
+            .join(format!("{id}.jsonl"))
+    }
+
     fn locator(&self, cwd: &Path) -> Locator {
         let mut locator = Locator::new(&self.home, cwd);
         locator.codex_home.clone_from(&self.codex_home);
@@ -190,6 +198,11 @@ pub fn scan_running(system: &dyn System, env: &ScanEnv, agents: &AgentTable) -> 
         .map(|entry| entry.session_id.clone())
         .collect();
     let mut sessions = claude_sessions(&entries, &table, env.own_pid, agents);
+    for session in &mut sessions {
+        let file = session.session_id.as_deref().map(|id| env.claude_file(&session.cwd, id));
+        session.flags.level =
+            file.and_then(|file| last_claude_level(&file)).or(session.flags.level);
+    }
     for candidate in other_candidates(&table, env.own_pid, agents) {
         if let Some(cwd) = system.cwd_of(candidate.pid) {
             sessions.push(session_of(candidate, cwd, env));
@@ -380,7 +393,10 @@ pub fn recent_sessions(
         for recent in newest_unheld(all, &held.ids, &files, oldest, per_folder) {
             let title = recent.file.as_deref().filter(|_| recent.cli == Cli::Claude);
             let name = title.and_then(|file| titles.title_of(file));
-            found.push(Session { name, ..stored(recent.cli, recent.id, folder, recent.at) });
+            let level = title.and_then(last_claude_level);
+            let mut session = Session { name, ..stored(recent.cli, recent.id, folder, recent.at) };
+            session.flags.level = level;
+            found.push(session);
         }
     }
     found

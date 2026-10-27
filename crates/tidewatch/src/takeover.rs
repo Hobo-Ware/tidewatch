@@ -570,16 +570,7 @@ pub(crate) enum YoloMove {
 }
 
 pub(crate) fn lowered_level(agents: &AgentTable, session: &Session) -> Level {
-    agents
-        .get(session.cli.id())
-        .and_then(|agent| {
-            Level::ALL
-                .into_iter()
-                .rev()
-                .filter(|level| *level != Level::Yolo)
-                .find(|level| agent.level_args(*level).is_some())
-        })
-        .unwrap_or(Level::Ask)
+    agents.get(session.cli.id()).and_then(Agent::highest_level_below_yolo).unwrap_or(Level::Ask)
 }
 
 pub(crate) fn yolo_note(kind: YoloMove) -> Option<String> {

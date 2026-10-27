@@ -69,6 +69,7 @@ pub mod note_paste;
 pub mod notes;
 pub mod path_env;
 pub mod paths;
+pub mod permission_mode;
 pub mod pr;
 pub mod pr_cards;
 pub mod pr_gh;

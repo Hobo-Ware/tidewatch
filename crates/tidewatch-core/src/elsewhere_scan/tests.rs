@@ -291,6 +291,57 @@ fn recent_sessions_of_a_folder_come_newest_first_without_the_ones_held() {
     assert!(got[0].since_ms > got[1].since_ms);
 }
 
+fn claude_file(home: &Path, id: &str) -> PathBuf {
+    home.join(".claude/projects")
+        .join(claude_project_dir_name(Path::new("/work/acme")))
+        .join(format!("{id}.jsonl"))
+}
+
+fn mode_record(mode: &str) -> String {
+    format!("{{\"type\":\"permission-mode\",\"permissionMode\":\"{mode}\"}}\n")
+}
+
+#[test]
+fn an_ended_claude_session_reads_the_level_it_last_ran_at_from_its_transcript() {
+    let cases = [
+        (mode_record("bypassPermissions"), Some(Level::Yolo)),
+        (format!("{}{}", mode_record("bypassPermissions"), mode_record("auto")), Some(Level::Auto)),
+        (mode_record("default"), Some(Level::Ask)),
+        ("{}\n".to_owned(), None),
+    ];
+    for (text, want) in cases {
+        let home = tempfile::tempdir().unwrap();
+        write(&claude_file(home.path(), ID_A), &text);
+        let got = recent_sessions(
+            &env(home.path()),
+            &[PathBuf::from("/work/acme")],
+            &Held::default(),
+            &TitleCache::default(),
+            1,
+        );
+        assert_eq!(got[0].flags.level, want, "{text}");
+    }
+}
+
+#[test]
+fn a_running_claude_session_takes_its_level_from_its_transcript_over_its_launch_flags() {
+    let cases = [
+        ("claude --permission-mode bypassPermissions", mode_record("auto"), Some(Level::Auto)),
+        ("claude", mode_record("bypassPermissions"), Some(Level::Yolo)),
+        ("claude --permission-mode acceptEdits", "{}\n".to_owned(), Some(Level::Edits)),
+        ("claude", "{}\n".to_owned(), None),
+    ];
+    for (command, transcript, want) in cases {
+        let home = tempfile::tempdir().unwrap();
+        registry(home.path(), 19821, ID_A, START, "idle");
+        write(&claude_file(home.path(), ID_A), &transcript);
+        let ps = format!("19821 1 {START} {command}\n");
+        let scan =
+            scan_running(&Fake::new(&ps), &env(home.path()), &AgentTable::builtin()).unwrap();
+        assert_eq!(scan.sessions[0].flags.level, want, "{command} {transcript}");
+    }
+}
+
 #[test]
 fn recent_codex_gemini_and_copilot_sessions_are_matched_to_the_folder() {
     let home = tempfile::tempdir().unwrap();
