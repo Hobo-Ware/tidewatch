@@ -386,18 +386,23 @@ fn plan_agent(
 /// The level a tab resumes at: the one its session file says it last ran at (the person may have
 /// switched mode inside the agent since the launch), else the one it was saved with. YOLO is only
 /// taken from a session file for a tab that is in a worktree or was already saved at YOLO.
-fn resumed_level(
-    tab: &SavedAgentTab,
-    agent: &Agent,
+#[must_use]
+pub fn resumed_level(saved: Level, agent: &Agent, in_worktree: bool, seen: Option<Level>) -> Level {
+    resumed_level_below(saved, agent.highest_level_below_yolo(), in_worktree, seen)
+}
+
+/// [`resumed_level`] with the agent's highest level below YOLO already looked up.
+#[must_use]
+pub fn resumed_level_below(
+    saved: Level,
+    below_yolo: Option<Level>,
     in_worktree: bool,
     seen: Option<Level>,
 ) -> Level {
     match seen {
-        Some(Level::Yolo) if !in_worktree && tab.level != Level::Yolo => {
-            agent.highest_level_below_yolo().unwrap_or(tab.level)
-        }
+        Some(Level::Yolo) if !in_worktree && saved != Level::Yolo => below_yolo.unwrap_or(saved),
         Some(level) => level,
-        None => tab.level,
+        None => saved,
     }
 }
 
@@ -439,7 +444,7 @@ fn agent_resume(
         return Err(Reason::TranscriptMissing);
     }
     let level =
-        resumed_level(tab, agent, in_worktree, disk.running_level(&tab.agent, &tab.dir, id));
+        resumed_level(tab.level, agent, in_worktree, disk.running_level(&tab.agent, &tab.dir, id));
     let how = decide(env.resume, Ended::of(env.crash_loop, tab.crashed), level)?;
     let claim = match form {
         ResumeForm::FlagLatest(_) => (tab.agent.clone(), tab.dir.display().to_string()),

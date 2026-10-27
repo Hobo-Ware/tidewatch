@@ -209,6 +209,26 @@ pub fn is_ours(table: &ProcessTable, row: &ProcessRow, own_pid: u32) -> bool {
             .any(|word| word.contains("/.tidewatch/") || word.contains("mcp__tidewatch__"))
 }
 
+/// Which processes a scan looks at: the ones outside Tidewatch, or the ones inside given shells
+/// (a shell, a process it started at any depth, or the shell's own process after an `exec`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Scope<'a> {
+    Elsewhere { own_pid: u32 },
+    Inside(&'a [u32]),
+}
+
+impl Scope<'_> {
+    #[must_use]
+    pub fn admits(self, table: &ProcessTable, row: &ProcessRow) -> bool {
+        match self {
+            Scope::Elsewhere { own_pid } => !is_ours(table, row, own_pid),
+            Scope::Inside(shells) => {
+                shells.iter().any(|shell| row.pid == *shell || table.descends_from(row.pid, *shell))
+            }
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Activity {
     Idle,
@@ -391,16 +411,30 @@ pub fn claude_sessions(
     own_pid: u32,
     agents: &AgentTable,
 ) -> Vec<Session> {
+    claude_sessions_in(entries, table, Scope::Elsewhere { own_pid }, agents)
+}
+
+/// [`claude_sessions`] for any [`Scope`]. A `claude -p` run is never a session to take.
+#[must_use]
+pub fn claude_sessions_in(
+    entries: &[RegistryEntry],
+    table: &ProcessTable,
+    scope: Scope,
+    agents: &AgentTable,
+) -> Vec<Session> {
     let Some(agent) = agents.get(Cli::Claude.id()) else { return Vec::new() };
     let mut sessions: Vec<Session> = entries
         .iter()
         .filter(|entry| entry.kind.as_deref().is_none_or(|kind| kind == "interactive"))
         .filter_map(|entry| {
             let row = table.get(entry.pid).filter(|row| row.started == entry.proc_start)?;
-            if is_ours(table, row, own_pid) {
+            if !scope.admits(table, row) {
                 return None;
             }
             let parsed = parse_command_line(Cli::Claude, agent, &row.argv);
+            if parsed.non_interactive {
+                return None;
+            }
             Some(Session {
                 cli: Cli::Claude,
                 session_id: Some(entry.session_id.clone()),
@@ -446,12 +480,22 @@ pub fn program_cli(argv: &[String]) -> Option<Cli> {
 /// wrapper and the binary it starts count once, the outer one.
 #[must_use]
 pub fn other_candidates(table: &ProcessTable, own_pid: u32, agents: &AgentTable) -> Vec<Candidate> {
+    other_candidates_in(table, Scope::Elsewhere { own_pid }, agents)
+}
+
+/// [`other_candidates`] for any [`Scope`].
+#[must_use]
+pub fn other_candidates_in(
+    table: &ProcessTable,
+    scope: Scope,
+    agents: &AgentTable,
+) -> Vec<Candidate> {
     let mut found: Vec<Candidate> = table
         .iter()
         .filter_map(|row| {
             let cli = program_cli(&row.argv)?;
             let agent = agents.get(cli.id())?;
-            if is_ours(table, row, own_pid) {
+            if !scope.admits(table, row) {
                 return None;
             }
             let parsed = parse_command_line(cli, agent, &row.argv);

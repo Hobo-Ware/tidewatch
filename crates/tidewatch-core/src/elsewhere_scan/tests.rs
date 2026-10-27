@@ -506,6 +506,7 @@ fn request() -> EndRequest {
         proc_start: START.to_owned(),
         session_id: Some(ID_A.to_owned()),
         allow_quiet: false,
+        allow_working: false,
     }
 }
 
@@ -590,6 +591,7 @@ fn a_session_of_unknown_status_needs_the_person_to_have_agreed() {
         proc_start: "Fri Oct 16 15:09:00 2026".into(),
         session_id: None,
         allow_quiet: false,
+        allow_working: false,
     };
     assert_eq!(end(home.path(), &system, &base), Ended::Refused(Refusal::NotConfirmed));
     assert_eq!(*system.sent.borrow(), Vec::<u32>::new());
@@ -659,4 +661,90 @@ fn lsof_output_gives_every_process_whose_cwd_is_in_the_folder_once() {
     assert_eq!(parse_lsof_holders(out, &forms), [100, 200, 500]);
     assert_eq!(parse_lsof_holders("", &forms), Vec::<u32>::new());
     assert_eq!(parse_lsof_holders("n/work/web\n", &forms), Vec::<u32>::new());
+}
+
+const TAB_PS: &str = "  PID  PPID STARTED                      ARGS
+  900     1 Wed Oct  7 09:29:20 2026     /Applications/stdusk.app/Contents/MacOS/stdusk
+  910   900 Wed Oct  7 09:30:00 2026     /Applications/Tidewatch.app/Contents/MacOS/tidewatch
+  920   910 Fri Oct 16 13:20:00 2026     /bin/zsh -l -i
+  921   920 Fri Oct 16 13:23:31 2026     claude --permission-mode acceptEdits
+  930   910 Fri Oct 16 13:21:00 2026     /bin/zsh -l -i
+  931   930 Fri Oct 16 13:22:00 2026     vim notes.md
+  940   910 Fri Oct 16 13:21:30 2026     /bin/zsh -c exec claude --resume x
+";
+
+#[test]
+fn a_scan_inside_shells_names_the_shell_each_session_runs_in() {
+    let home = tempfile::tempdir().unwrap();
+    registry(home.path(), 921, ID_A, START, "idle");
+    registry(home.path(), 940, ID_B, "Fri Oct 16 13:21:30 2026", "busy");
+    let found = scan_in_shells(
+        &Fake::new(TAB_PS),
+        &env(home.path()),
+        &AgentTable::builtin(),
+        &[920, 930, 940],
+    )
+    .unwrap();
+    let got: Vec<(u32, u32, Option<&str>)> = found
+        .iter()
+        .map(|(shell, s)| (*shell, s.running().unwrap().pid, s.session_id.as_deref()))
+        .collect();
+    assert_eq!(got, [(920, 921, Some(ID_A)), (940, 940, Some(ID_B))]);
+}
+
+#[test]
+fn a_shell_with_nothing_agent_like_in_it_finds_nothing() {
+    let home = tempfile::tempdir().unwrap();
+    registry(home.path(), 921, ID_A, START, "idle");
+    let found =
+        scan_in_shells(&Fake::new(TAB_PS), &env(home.path()), &AgentTable::builtin(), &[930])
+            .unwrap();
+    assert_eq!(found, []);
+}
+
+fn end_inside(home: &Path, system: &Fake, shells: &[u32], request: &EndRequest) -> Ended {
+    end_session_in(
+        Scope::Inside(shells),
+        system,
+        &env(home),
+        &AgentTable::builtin(),
+        request,
+        Duration::from_millis(400),
+    )
+}
+
+#[test]
+fn a_session_in_a_tab_ends_with_sigterm_to_its_pid_only_even_under_stdusk() {
+    let home = tempfile::tempdir().unwrap();
+    registry(home.path(), 921, ID_A, START, "idle");
+    let system = Fake::new(TAB_PS);
+    let request = EndRequest { pid: 921, ..request() };
+    assert_eq!(end_inside(home.path(), &system, &[920], &request), Ended::Exited);
+    assert_eq!(*system.sent.borrow(), [921]);
+}
+
+#[test]
+fn a_session_of_another_tab_is_not_ended_through_this_one() {
+    let home = tempfile::tempdir().unwrap();
+    registry(home.path(), 921, ID_A, START, "idle");
+    let system = Fake::new(TAB_PS);
+    let request = EndRequest { pid: 921, ..request() };
+    assert_eq!(end_inside(home.path(), &system, &[930], &request), Ended::Refused(Refusal::Gone));
+    assert_eq!(*system.sent.borrow(), Vec::<u32>::new());
+}
+
+#[test]
+fn a_working_session_is_ended_only_when_the_request_allows_it() {
+    let home = tempfile::tempdir().unwrap();
+    registry(home.path(), 921, ID_A, START, "busy");
+    let system = Fake::new(TAB_PS);
+    let request = EndRequest { pid: 921, ..request() };
+    assert_eq!(
+        end_inside(home.path(), &system, &[920], &request),
+        Ended::Refused(Refusal::Working)
+    );
+    assert_eq!(*system.sent.borrow(), Vec::<u32>::new());
+    let cut = EndRequest { allow_working: true, ..request };
+    assert_eq!(end_inside(home.path(), &system, &[920], &cut), Ended::Exited);
+    assert_eq!(*system.sent.borrow(), [921]);
 }
