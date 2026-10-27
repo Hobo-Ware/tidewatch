@@ -22,6 +22,7 @@ use tidewatch_core::user_markup::{self, TaskResult};
 use crate::agent_avatar::{Face, paint_face};
 use crate::brand;
 use crate::code_block::{self, Look};
+use crate::emoji_text;
 use crate::job_model::clock_label;
 use crate::link_text::{Laid, Text};
 use crate::links;
@@ -260,14 +261,15 @@ fn user_bubble(ui: &mut Ui, row: &Row, meta_line: Meta<'_>, width: f32, pastes: 
                             answers_block(ui, &pairs, room, row.seq);
                             return;
                         }
+                        let measured = LayoutJob::simple(
+                            markdown.clone(),
+                            FontId::proportional(BODY_PX),
+                            brand::TEXT,
+                            room,
+                        );
                         let natural = ui
                             .painter()
-                            .layout(
-                                markdown.clone(),
-                                FontId::proportional(BODY_PX),
-                                brand::TEXT,
-                                room,
-                            )
+                            .layout_job(emoji_text::slot_job(ui.ctx(), measured))
                             .size()
                             .x;
                         let code = reader_markdown::pieces(&markdown, false)
