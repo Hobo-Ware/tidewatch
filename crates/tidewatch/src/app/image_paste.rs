@@ -29,14 +29,6 @@ pub(crate) fn appended(reply: &str, text: &str) -> String {
     }
 }
 
-pub(crate) fn fill_reply(reply: &mut String, pictures: &mut Vec<PathBuf>, delivery: Delivery) {
-    match delivery {
-        Delivery::Text(text) => *reply = appended(reply, &text),
-        Delivery::Pictures(paths) => crate::pictures::attach(pictures, paths),
-        Delivery::Nothing | Delivery::CtrlV | Delivery::Failed(_) => {}
-    }
-}
-
 fn type_dropped(term: &mut PtyTerm, paths: &[PathBuf]) {
     for delivery in dropped(paths, Target::Terminal(None)) {
         if let Delivery::Text(text) = delivery {
@@ -47,21 +39,22 @@ fn type_dropped(term: &mut PtyTerm, paths: &[PathBuf]) {
 
 impl Tidewatch {
     pub(super) fn drive_file_drop(&mut self, ctx: &egui::Context, intent: &FrameIntent) {
-        let paths = crate::file_drop::dropped(ctx);
+        let mut paths = crate::file_drop::dropped(ctx);
         let screen_free = !self.overview && self.settings.is_none() && self.welcome.is_none();
-        if paths.is_empty() || intent.keys.modal_open || !screen_free {
+        if intent.keys.modal_open || !screen_free {
             return;
         }
         let pane = self.tabs.active_pane_mut();
-        if matches!(reader_glue::shown(pane), Some(Shown::Reader)) {
-            if let Some(agent) = pane.agent.as_mut() {
-                let view = &mut agent.reader.view;
-                for delivery in dropped(&paths, Target::TextField) {
-                    fill_reply(&mut view.reply, &mut view.pictures, delivery);
-                }
-                view.request_reply_focus();
-                ctx.request_repaint();
-            }
+        let reader =
+            matches!(reader_glue::shown(pane), Some(Shown::Reader)) && pane.agent.is_some();
+        if reader && paths.is_empty() {
+            paths = self.image_paste.take_dev_drop();
+        }
+        if paths.is_empty() {
+            return;
+        }
+        if reader {
+            self.attach_files(ctx, intent.active_id, paths);
         } else if let Body::Shell(term) = &mut pane.body {
             type_dropped(term, &paths);
         }
@@ -106,12 +99,40 @@ impl Tidewatch {
         } else {
             return;
         };
-        let state = self.paths.as_ref().map(tidewatch_core::paths::TidewatchPaths::state_dir);
-        let Some(dir) = tab_dir.or(state).map(|dir| dir.join(crate::pictures::PASTES_DIR)) else {
+        let Some(dir) = self.pastes_dir(tab_dir) else {
             self.show_toast("No place to save the picture", ctx);
             return;
         };
         self.image_paste.start(ctx, (intent.active_id, target), dir, wall_ms());
+    }
+
+    fn pastes_dir(&self, tab_dir: Option<PathBuf>) -> Option<PathBuf> {
+        let state = self.paths.as_ref().map(tidewatch_core::paths::TidewatchPaths::state_dir);
+        tab_dir.or(state).map(|dir| dir.join(crate::pictures::PASTES_DIR))
+    }
+
+    fn attach_files(&mut self, ctx: &egui::Context, tab: u64, paths: Vec<PathBuf>) {
+        let tab_dir = self
+            .tabs
+            .get_mut(tab)
+            .and_then(|tab| tab.pane.agent.as_ref())
+            .and_then(|agent| agent.run.notes_file.as_deref())
+            .and_then(std::path::Path::parent)
+            .map(std::path::Path::to_path_buf);
+        let copies = paths.iter().any(|path| !tidewatch_core::image_paste::is_image_file(path));
+        match self.pastes_dir(tab_dir).filter(|_| copies) {
+            Some(dir) => self.image_paste.stage(ctx, tab, dir, paths),
+            None => self.attach_to_reader(ctx, tab, paths),
+        }
+    }
+
+    fn attach_to_reader(&mut self, ctx: &egui::Context, tab: u64, paths: Vec<PathBuf>) {
+        let agent = self.tabs.get_mut(tab).and_then(|tab| tab.pane.agent.as_mut());
+        if let Some(agent) = agent {
+            crate::pictures::attach(&mut agent.reader.view.pictures, paths);
+            agent.reader.view.request_reply_focus();
+            ctx.request_repaint();
+        }
     }
 
     fn deliver_picture(&mut self, done: Done, ctx: &egui::Context, active_id: u64) {
@@ -136,6 +157,12 @@ impl Tidewatch {
                 Target::TextField => self.insert_into_field(ctx, tab, active_id, text),
             },
             Delivery::Pictures(paths) => self.attach_pictures(ctx, tab, active_id, paths),
+            Delivery::Files(staged) => {
+                if !staged.notes.is_empty() {
+                    self.show_toast(staged.notes.join(". "), ctx);
+                }
+                self.attach_to_reader(ctx, tab, staged.paths);
+            }
         }
     }
 
@@ -165,12 +192,7 @@ impl Tidewatch {
             crate::image_paste::inject_paste(ctx, tidewatch_core::image_paste::path_text(&paths));
             return;
         }
-        let agent = self.tabs.get_mut(tab).and_then(|tab| tab.pane.agent.as_mut());
-        if let Some(agent) = agent {
-            crate::pictures::attach(&mut agent.reader.view.pictures, paths);
-            agent.reader.view.request_reply_focus();
-            ctx.request_repaint();
-        }
+        self.attach_files(ctx, tab, paths);
     }
 
     fn tab_body_mut(&mut self, tab: u64) -> Option<&mut Body<PtyTerm>> {
@@ -203,16 +225,43 @@ mod tests {
         reply: String,
         pictures: Vec<PathBuf>,
         focus: bool,
+        pastes: tempfile::TempDir,
+    }
+
+    struct Seen {
+        rings: Vec<f32>,
+        chips: Vec<Rect>,
+        sent: Option<String>,
+    }
+
+    fn key(pressed: egui::Key) -> egui::Event {
+        egui::Event::Key {
+            key: pressed,
+            physical_key: Some(pressed),
+            pressed: true,
+            repeat: false,
+            modifiers: egui::Modifiers::NONE,
+        }
     }
 
     impl Window {
         fn new() -> Self {
             let ctx = Context::default();
             crate::fonts::install(&ctx);
-            Self { ctx, reply: String::new(), pictures: Vec::new(), focus: false }
+            Self {
+                ctx,
+                reply: String::new(),
+                pictures: Vec::new(),
+                focus: true,
+                pastes: tempfile::tempdir().unwrap(),
+            }
         }
 
         fn frame(&mut self, hovered: &[&str], drops: &[&str]) -> Vec<f32> {
+            self.run(hovered, drops, Vec::new()).rings
+        }
+
+        fn run(&mut self, hovered: &[&str], drops: &[&str], events: Vec<egui::Event>) -> Seen {
             let files =
                 |names: &[&str]| -> Vec<PathBuf> { names.iter().map(PathBuf::from).collect() };
             let raw = RawInput {
@@ -225,18 +274,20 @@ mod tests {
                     .into_iter()
                     .map(|path| DroppedFile { path: Some(path), ..DroppedFile::default() })
                     .collect(),
+                events,
                 focused: true,
                 ..RawInput::default()
             };
-            let mut rings = Vec::new();
+            let mut sent = None;
             let out = self.ctx.run_ui(raw, |ui| {
                 let paths = crate::file_drop::dropped(ui.ctx());
-                for delivery in dropped(&paths, Target::TextField) {
-                    fill_reply(&mut self.reply, &mut self.pictures, delivery);
+                if !paths.is_empty() {
+                    let staged = crate::attachments::stage(&paths, self.pastes.path());
+                    crate::pictures::attach(&mut self.pictures, staged.paths);
                 }
                 let mut child = ui.new_child(
                     UiBuilder::new()
-                        .max_rect(Rect::from_min_size(pos2(8.0, 300.0), vec2(580.0, 90.0))),
+                        .max_rect(Rect::from_min_size(pos2(8.0, 200.0), vec2(580.0, 190.0))),
                 );
                 let draft = Draft {
                     text: &mut self.reply,
@@ -250,12 +301,23 @@ mod tests {
                     commands: &[],
                     ghost: None,
                 };
-                composer::show(&mut child, draft, &spec);
+                sent = composer::show(&mut child, draft, &spec);
             });
+            let mut rings = Vec::new();
+            let mut chips = Vec::new();
             for clipped in &out.shapes {
                 collect_rings(&clipped.shape, &mut rings);
+                collect_chips(&clipped.shape, &mut chips);
             }
-            rings
+            Seen { rings, chips, sent }
+        }
+    }
+
+    fn collect_chips(shape: &egui::Shape, out: &mut Vec<Rect>) {
+        match shape {
+            egui::Shape::Vec(inner) => inner.iter().for_each(|shape| collect_chips(shape, out)),
+            egui::Shape::Rect(rect) if rect.fill == crate::brand::ITEM => out.push(rect.rect),
+            _ => {}
         }
     }
 
@@ -271,16 +333,89 @@ mod tests {
         }
     }
 
+    fn made_file(dir: &std::path::Path, name: &str, bytes: &[u8]) -> PathBuf {
+        let path = dir.join(name);
+        std::fs::write(&path, bytes).unwrap();
+        path
+    }
+
     #[test]
-    fn dropped_files_fill_the_reply_box_paths_and_picture_chips() {
+    fn dropped_files_all_become_chips_and_the_text_stays_clean() {
         let mut window = Window::new();
+        let from = tempfile::tempdir().unwrap();
+        let notes = made_file(from.path(), "notes.txt", b"hello");
+        let spaced = made_file(from.path(), "a b.md", b"# hi");
+        let note = notes.to_string_lossy().into_owned();
+        let spaced_name = spaced.to_string_lossy().into_owned();
         window.frame(&[], &[]);
-        window.frame(&[], &["/work/notes.txt", "/work/My Docs/a b.md", "/work/shot.png"]);
-        assert_eq!(window.reply, "/work/notes.txt '/work/My Docs/a b.md'");
-        assert_eq!(window.pictures, [PathBuf::from("/work/shot.png")]);
-        window.frame(&[], &["/work/more.rs", "/work/shot.png"]);
-        assert_eq!(window.reply, "/work/notes.txt '/work/My Docs/a b.md' /work/more.rs");
-        assert_eq!(window.pictures, [PathBuf::from("/work/shot.png")], "one chip per picture");
+        window.frame(&[], &[&note, &spaced_name, "/work/shot.png"]);
+        let pastes = window.pastes.path();
+        assert_eq!(window.reply, "");
+        assert_eq!(
+            window.pictures,
+            [pastes.join("notes.txt"), pastes.join("a b.md"), PathBuf::from("/work/shot.png")]
+        );
+        window.frame(&[], &["/work/shot.png"]);
+        assert_eq!(window.pictures.len(), 3, "one chip per path");
+    }
+
+    #[test]
+    fn a_dropped_csv_is_a_chip_as_tall_as_a_picture_chip_and_goes_to_the_agent_as_a_path() {
+        let mut window = Window::new();
+        let from = tempfile::tempdir().unwrap();
+        let csv = made_file(from.path(), "sales q3.csv", b"a,b\n1,2\n");
+        let csv_name = csv.to_string_lossy().into_owned();
+        window.frame(&[], &[]);
+        window.run(&[], &[&csv_name, "/work/shot.png"], Vec::new());
+        let seen = window.run(&[], &[], Vec::new());
+        assert_eq!(window.reply, "", "a drop never lands in the text");
+        let copy = window.pastes.path().join("sales q3.csv");
+        assert_eq!(std::fs::read(&copy).unwrap(), b"a,b\n1,2\n");
+        assert_eq!(seen.chips.len(), 2);
+        let (file_chip, picture_chip) = (seen.chips[0], seen.chips[1]);
+        assert_eq!(file_chip.size(), picture_chip.size());
+        assert_eq!(file_chip.height(), crate::pictures::CHIP_H);
+        assert_eq!(file_chip.top(), picture_chip.top());
+        assert_eq!(picture_chip.left() - file_chip.right(), crate::pictures::CHIP_GAP);
+
+        window.reply = "look at these".into();
+        window.run(&[], &[], Vec::new());
+        let sent = window.run(&[], &[], vec![key(egui::Key::Enter)]).sent.unwrap();
+        let line = format!(
+            "Attached: {}",
+            tidewatch_core::image_paste::path_text(std::slice::from_ref(&copy))
+        );
+        assert_eq!(sent, format!("look at these\n{line}\n/work/shot.png"));
+        assert!(window.pictures.is_empty() && window.reply.is_empty());
+        let (said, chips) = crate::pictures::split_trailing(&sent);
+        assert_eq!(
+            (said.as_str(), chips),
+            ("look at these", vec![copy, PathBuf::from("/work/shot.png")])
+        );
+    }
+
+    #[test]
+    fn the_x_of_a_dropped_file_chip_takes_it_away() {
+        let mut window = Window::new();
+        let from = tempfile::tempdir().unwrap();
+        let csv = made_file(from.path(), "sales.csv", b"a,b");
+        window.frame(&[], &[]);
+        window.run(&[], &[&csv.to_string_lossy()], Vec::new());
+        let chip = window.run(&[], &[], Vec::new()).chips[0];
+        let at = pos2(chip.right() - 8.0 - 14.0, chip.center().y);
+        let button = |pressed| egui::Event::PointerButton {
+            pos: at,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        };
+        window.run(&[], &[], vec![egui::Event::PointerMoved(at)]);
+        window.run(&[], &[], vec![button(true)]);
+        window.run(&[], &[], vec![button(false)]);
+        let after = window.run(&[], &[], Vec::new());
+        assert_eq!(window.pictures, Vec::<PathBuf>::new());
+        assert_eq!(after.chips.len(), 0);
+        assert!(window.pastes.path().join("sales.csv").is_file(), "the copy stays");
     }
 
     #[test]

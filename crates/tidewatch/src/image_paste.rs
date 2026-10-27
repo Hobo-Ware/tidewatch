@@ -5,10 +5,9 @@
 use std::path::{Path, PathBuf};
 use stdusk_egui::macos_paste::{ImagePasteHook, post_cmd_v};
 
-use tidewatch_core::image_paste::{
-    Action, Clip, Target, decide, is_image_file, path_text, shot_name,
-};
+use tidewatch_core::image_paste::{Action, Clip, Target, decide, path_text, shot_name};
 
+use crate::attachments::{self, Staged};
 use crate::jobs::Jobs;
 
 pub(crate) struct Picture {
@@ -20,7 +19,7 @@ pub(crate) struct Picture {
 pub(crate) trait Clipboard {
     fn clip(&mut self) -> Clip;
     fn picture(&mut self) -> Option<Picture>;
-    fn image_files(&mut self) -> Vec<PathBuf>;
+    fn files(&mut self) -> Vec<PathBuf>;
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -29,6 +28,7 @@ pub(crate) enum Delivery {
     CtrlV,
     Text(String),
     Pictures(Vec<PathBuf>),
+    Files(Staged),
     Failed(String),
 }
 
@@ -45,7 +45,7 @@ pub(crate) fn resolve(
     match decide(clipboard.clip(), target) {
         Action::Leave => Delivery::Nothing,
         Action::CtrlV => Delivery::CtrlV,
-        Action::PasteFilePaths => delivered(clipboard.image_files()),
+        Action::PasteFilePaths => delivered(clipboard.files()),
         Action::SaveAndPastePath => match save(clipboard, dir, now_ms) {
             Ok(path) => delivered(vec![path]),
             Err(message) => Delivery::Failed(message),
@@ -53,20 +53,14 @@ pub(crate) fn resolve(
     }
 }
 
-/// What files dropped from Finder become: into a text field, pictures turn into chips and the rest
-/// into path text; into a terminal, every file is typed as path text and a space follows the last,
-/// the way stdusk does.
+/// What files dropped from Finder become: into a text field, every one a chip (`Delivery::Pictures`,
+/// which the window then copies or references); into a terminal, every file is typed as path text and
+/// a space follows the last, the way stdusk does.
 pub(crate) fn dropped(paths: &[PathBuf], target: Target) -> Vec<Delivery> {
     match target {
-        Target::Terminal(_) if paths.is_empty() => Vec::new(),
+        _ if paths.is_empty() => Vec::new(),
         Target::Terminal(_) => vec![Delivery::Text(format!("{} ", path_text(paths)))],
-        Target::TextField => {
-            let (pictures, others): (Vec<_>, Vec<_>) =
-                paths.iter().cloned().partition(|path| is_image_file(path));
-            let text = (!others.is_empty()).then(|| Delivery::Text(path_text(&others)));
-            let chips = (!pictures.is_empty()).then_some(Delivery::Pictures(pictures));
-            text.into_iter().chain(chips).collect()
-        }
+        Target::TextField => vec![Delivery::Pictures(paths.to_vec())],
     }
 }
 
@@ -101,6 +95,7 @@ pub(crate) struct Host {
     hook: ImagePasteHook,
     jobs: Jobs<Done>,
     dev_at: Option<f64>,
+    dev_drop: Vec<PathBuf>,
 }
 
 fn dev_seconds(value: Option<&str>) -> Option<f64> {
@@ -114,7 +109,12 @@ impl Host {
             crate::macos::clip_has_picture(&mut crate::macos::SystemClipboard)
         });
         let dev_at = dev_seconds(std::env::var("TIDEWATCH_DEV_IMAGE_PASTE").ok().as_deref());
-        Self { hook, jobs: Jobs::new(), dev_at }
+        let dev_drop = std::env::var("TIDEWATCH_DEV_DROP")
+            .map(|value| {
+                value.split(':').filter(|part| !part.is_empty()).map(PathBuf::from).collect()
+            })
+            .unwrap_or_default();
+        Self { hook, jobs: Jobs::new(), dev_at, dev_drop }
     }
 
     pub(crate) fn tick_dev(&mut self, now: f64, ctx: &egui::Context) {
@@ -128,6 +128,10 @@ impl Host {
             self.request();
         }
         ctx.request_repaint();
+    }
+
+    pub(crate) fn take_dev_drop(&mut self) -> Vec<PathBuf> {
+        std::mem::take(&mut self.dev_drop)
     }
 
     pub(crate) fn request(&self) {
@@ -148,6 +152,14 @@ impl Host {
         self.jobs.spawn(ctx, move || {
             let delivery = resolve(&mut crate::macos::SystemClipboard, target, &dir, now_ms);
             Done { tab, target, delivery }
+        });
+    }
+
+    pub(crate) fn stage(&self, ctx: &egui::Context, tab: u64, dir: PathBuf, paths: Vec<PathBuf>) {
+        self.jobs.spawn(ctx, move || Done {
+            tab,
+            target: Target::TextField,
+            delivery: Delivery::Files(attachments::stage(&paths, &dir)),
         });
     }
 
@@ -173,7 +185,7 @@ pub(crate) mod testing {
         fn picture(&mut self) -> Option<Picture> {
             self.picture.take()
         }
-        fn image_files(&mut self) -> Vec<PathBuf> {
+        fn files(&mut self) -> Vec<PathBuf> {
             self.files.clone()
         }
     }
@@ -232,17 +244,23 @@ mod tests {
     }
 
     #[test]
-    fn copied_files_are_pasted_by_their_own_paths_whatever_the_target() {
+    fn copied_files_of_any_kind_are_pasted_by_their_own_paths_whatever_the_target() {
         let dir = tempfile::tempdir().unwrap();
-        let files =
-            vec![PathBuf::from("/Users/x/Desktop/a.png"), PathBuf::from("/Users/x/My Pics/b.png")];
+        let files = vec![
+            PathBuf::from("/Users/x/Desktop/a.png"),
+            PathBuf::from("/Users/x/My Pics/b.png"),
+            PathBuf::from("/Users/x/Downloads/sales q3.csv"),
+        ];
         for target in [Target::TextField, Target::Terminal(Some(Wiring::Claude))] {
-            let mut finder = Fake { clip: Clip::ImageFiles, picture: None, files: files.clone() };
+            let mut finder = Fake { clip: Clip::Files, picture: None, files: files.clone() };
             let got = resolve(&mut finder, target, dir.path(), 1);
             let want = match target {
                 Target::TextField => Delivery::Pictures(files.clone()),
                 Target::Terminal(_) => {
-                    Delivery::Text("/Users/x/Desktop/a.png '/Users/x/My Pics/b.png'".into())
+                    Delivery::Text(
+                    "/Users/x/Desktop/a.png '/Users/x/My Pics/b.png' '/Users/x/Downloads/sales q3.csv'"
+                        .into(),
+                )
                 }
             };
             assert_eq!(got, want);
