@@ -77,7 +77,7 @@ fn the_face_is_cut_to_a_circle_whatever_the_art_does() {
 }
 
 #[test]
-fn a_cut_that_is_the_whole_of_a_big_square_leaves_the_art_inside_the_plate_ring() {
+fn the_art_fills_most_of_the_plate_and_stays_inside_its_ring() {
     let image = render(&avatar(0).svg, 100).unwrap();
     let half = 50.0_f32;
     let reach = image
@@ -89,7 +89,11 @@ fn a_cut_that_is_the_whole_of_a_big_square_leaves_the_art_inside_the_plate_ring(
             ((index % 100) as f32 + 0.5 - half).hypot((index / 100) as f32 + 0.5 - half)
         })
         .fold(0.0_f32, f32::max);
-    assert!(reach < half * 0.7, "the art reaches {reach} of {half}");
+    let fill = tidewatch_core::avatar_check::FACE_FILL;
+    assert!(
+        reach > half * (fill - 0.05) && reach < half * (fill + 0.05),
+        "the art reaches {reach} of {half}"
+    );
 }
 
 struct Painted {

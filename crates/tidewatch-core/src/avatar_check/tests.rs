@@ -141,7 +141,7 @@ fn the_three_to_one_line_sits_where_it_should_on_the_plate() {
 fn the_fit_is_centered_and_the_inset_shrinks_it() {
     let full = rasterize(BRIGHT_TILE, 40, 1.0).unwrap();
     assert!(full.pixels().iter().all(|p| p.alpha() == 255));
-    let inset = rasterize(BRIGHT_TILE, 40, FACE_INSET).unwrap();
+    let inset = rasterize(BRIGHT_TILE, 40, 0.6).unwrap();
     let at = |x: u32, y: u32| inset.pixels()[(y * 40 + x) as usize].alpha();
     assert_eq!((at(0, 0), at(39, 39), at(20, 20)), (0, 0, 255));
     assert_eq!((at(7, 20), at(8, 20), at(31, 20), at(32, 20)), (0, 255, 255, 0));
@@ -161,4 +161,56 @@ fn the_fit_is_centered_and_the_inset_shrinks_it() {
 #[test]
 fn the_plate_hex_reads_back_as_the_hex_in_the_message() {
     assert_eq!(hex(PLATE), "#222937");
+}
+
+fn reach_of(pixmap: &Pixmap) -> (f32, (f32, f32)) {
+    let px = pixmap.width();
+    let painted: Vec<(f32, f32)> = pixmap
+        .pixels()
+        .iter()
+        .enumerate()
+        .filter(|(_, p)| p.alpha() >= PAINTED_ALPHA)
+        .map(|(i, _)| ((i as u32 % px) as f32 + 0.5, (i as u32 / px) as f32 + 0.5))
+        .collect();
+    let n = painted.len() as f32;
+    let center = (
+        painted.iter().map(|p| p.0).sum::<f32>() / n,
+        painted.iter().map(|p| p.1).sum::<f32>() / n,
+    );
+    let half = px as f32 / 2.0;
+    let reach = painted.iter().map(|&(x, y)| (x - half).hypot(y - half)).fold(0.0, f32::max);
+    (reach / half, center)
+}
+
+#[test]
+fn a_small_centered_disc_is_grown_to_the_fill() {
+    let disc =
+        r##"<svg viewBox="0 0 64 64"><circle cx="32" cy="32" r="20" fill="#38e1a0"/></svg>"##;
+    let fitted = rasterize_fitted(disc, 96, FACE_FILL).unwrap();
+    let (reach, _) = reach_of(&fitted);
+    assert!((reach - FACE_FILL).abs() < 0.04, "{reach}");
+}
+
+#[test]
+fn art_drawn_off_center_is_moved_to_the_middle() {
+    let corner =
+        r##"<svg viewBox="0 0 64 64"><circle cx="16" cy="16" r="8" fill="#ffffff"/></svg>"##;
+    let fitted = rasterize_fitted(corner, 96, FACE_FILL).unwrap();
+    let (reach, (x, y)) = reach_of(&fitted);
+    assert!((x - 48.0).abs() < 1.0 && (y - 48.0).abs() < 1.0, "{x},{y}");
+    assert!(reach <= FACE_FILL + 0.02, "{reach}");
+}
+
+#[test]
+fn a_square_tile_is_fitted_corners_inside_the_circle() {
+    let fitted = rasterize_fitted(BRIGHT_TILE, 96, FACE_FILL).unwrap();
+    let (reach, _) = reach_of(&fitted);
+    assert!(reach <= FACE_FILL + 0.02, "{reach}");
+}
+
+#[test]
+fn a_fit_of_nothing_painted_is_none() {
+    let empty = r#"<svg viewBox="0 0 64 64"><circle cx="32" cy="32" r="20" fill="none"/></svg>"#;
+    assert!(rasterize_fitted(empty, 48, FACE_FILL).is_none());
+    assert!(rasterize_fitted("<svg", 48, FACE_FILL).is_none());
 }

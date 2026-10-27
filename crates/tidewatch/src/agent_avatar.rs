@@ -1,5 +1,5 @@
 //! Draws an agent's face: always a circle. A dark plate with a 1 px ring, and on it the cleaned SVG
-//! rasterized once per picture and pixel size (resvg, inset and cut to the circle, the texture kept
+//! rasterized once per picture and pixel size (resvg, fitted to what it paints and cut to the circle, the texture kept
 //! in egui's memory). A letter face is a circle too. The reason shows on hover, Redraw or Use
 //! letter on right-click; a click on the menu is left in egui's memory for `take_choice`.
 
@@ -13,7 +13,7 @@ use egui::{
 use resvg::tiny_skia::{FillRule, Mask, PathBuilder, Transform};
 use stdusk_egui::widgets::{menu_item, style_menu};
 use tidewatch_core::avatar::Avatar;
-use tidewatch_core::avatar_check::{FACE_INSET, rasterize};
+use tidewatch_core::avatar_check::{FACE_FILL, rasterize, rasterize_fitted};
 
 use crate::brand;
 use crate::screen_kit::{badge_colors, badge_letter, heading};
@@ -35,8 +35,11 @@ fn key_of(avatar: &Avatar) -> u64 {
 }
 
 fn render(svg: &str, px: u32) -> Option<ColorImage> {
-    let inset = if svg == crate::avatar_glue::MEESEEKS_SVG { 1.0 } else { FACE_INSET };
-    let mut pixmap = rasterize(svg, px, inset)?;
+    let mut pixmap = if svg == crate::avatar_glue::MEESEEKS_SVG {
+        rasterize(svg, px, 1.0)?
+    } else {
+        rasterize_fitted(svg, px, FACE_FILL)?
+    };
     let half = px as f32 / 2.0;
     let circle = PathBuilder::from_circle(half, half, (half - 1.0).max(0.5))?;
     let mut mask = Mask::new(px, px)?;
