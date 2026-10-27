@@ -1,4 +1,4 @@
-//! The Parked pill at the strip's right end and the list it opens.
+//! The Parked pill, right after the strip's `/` and before the main tab, and the list it opens.
 
 use egui::{
     Align2, Color32, CornerRadius, Id, Margin, Pos2, Rect, RectAlign, Sense, Stroke, StrokeKind,
@@ -30,6 +30,7 @@ const ROW_GAP: f32 = 12.0;
 const PLACED: &str = "parked-pill-placed";
 const HOT: &str = "parked-pill-hot";
 const DRAGGING: &str = "parked-pill-dragging";
+const GHOST: &str = "parked-pill-drop-place";
 const GHOST_LABEL: &str = "Drop to park";
 
 #[derive(Clone)]
@@ -54,6 +55,10 @@ pub(crate) fn rect(ctx: &egui::Context) -> Option<Rect> {
     ctx.data(|data| data.get_temp::<Placed>(placed_id())).and_then(|placed| placed.pill)
 }
 
+pub(crate) fn forget(ctx: &egui::Context) {
+    ctx.data_mut(|data| data.remove::<Placed>(placed_id()));
+}
+
 pub(crate) fn set_hot(ctx: &egui::Context, hot: bool) {
     ctx.data_mut(|data| data.insert_temp(Id::new(HOT), hot));
 }
@@ -62,8 +67,8 @@ pub(crate) fn set_dragging(ctx: &egui::Context, dragging: bool) {
     ctx.data_mut(|data| data.insert_temp(Id::new(DRAGGING), dragging));
 }
 
-pub(crate) fn wanted(ctx: &egui::Context, count: usize) -> bool {
-    count > 0 || ctx.data(|data| data.get_temp::<bool>(Id::new(DRAGGING))).unwrap_or(false)
+fn dragging(ctx: &egui::Context) -> bool {
+    ctx.data(|data| data.get_temp::<bool>(Id::new(DRAGGING))).unwrap_or(false)
 }
 
 fn hot(ctx: &egui::Context) -> bool {
@@ -112,13 +117,6 @@ pub(crate) fn show(ui: &mut Ui, rows: &[Row], popover: Popover) -> Output {
     let count = rows.len();
     let (rect, _) = ui.allocate_exact_size(vec2(width(ui, count), PILL_H), Sense::hover());
     let dropping = hot(ui.ctx());
-    if count == 0 {
-        paint_ghost(ui, rect, dropping);
-        ui.ctx().data_mut(|data| {
-            data.insert_temp(placed_id(), Placed { pill: Some(rect), rows: Vec::new() });
-        });
-        return Output { picked: None };
-    }
     let response = ui.interact(rect, ui.id().with("parked-pill"), Sense::click());
     let painter = ui.painter().clone();
     let fill = if response.hovered() || dropping { brand::ITEM } else { brand::BAR };
@@ -151,8 +149,21 @@ pub(crate) fn show(ui: &mut Ui, rows: &[Row], popover: Popover) -> Output {
     Output { picked }
 }
 
-fn paint_ghost(ui: &Ui, rect: Rect, dropping: bool) {
-    let painter = ui.painter();
+pub(crate) fn drop_place(ui: &Ui, at: Pos2) {
+    if !dragging(ui.ctx()) {
+        forget(ui.ctx());
+        return;
+    }
+    let rect = Rect::from_min_size(pos2(at.x, at.y - PILL_H / 2.0), vec2(width(ui, 0), PILL_H));
+    let painter =
+        ui.ctx().layer_painter(egui::LayerId::new(egui::Order::Foreground, Id::new(GHOST)));
+    paint_ghost(&painter, rect, hot(ui.ctx()));
+    ui.ctx().data_mut(|data| {
+        data.insert_temp(placed_id(), Placed { pill: Some(rect), rows: Vec::new() });
+    });
+}
+
+fn paint_ghost(painter: &egui::Painter, rect: Rect, dropping: bool) {
     let line = if dropping { brand::TEAL } else { brand::FIELD_LINE };
     let ink = if dropping { brand::TEAL_TEXT } else { brand::MUTED };
     painter.rect_filled(
@@ -178,7 +189,7 @@ fn list(response: &egui::Response, rows: &[Row], placed: &mut Placed) -> Option<
         })
         .inner_margin(Margin::same(8));
     egui::Popup::menu(response)
-        .align(RectAlign::BOTTOM_END)
+        .align(RectAlign::BOTTOM_START)
         .gap(6.0)
         .frame(frame)
         .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
