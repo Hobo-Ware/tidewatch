@@ -259,8 +259,7 @@ pub(crate) struct SystemClipboard;
 impl Clipboard for SystemClipboard {
     fn clip(&mut self) -> Clip {
         let types = pasteboard_types();
-        let files =
-            if has_any(&types, &["public.file-url"]) { self.image_files().len() } else { 0 };
+        let files = if has_any(&types, &["public.file-url"]) { self.files().len() } else { 0 };
         let text = has_any(&types, &["public.utf8-plain-text", "NSStringPboardType"]);
         let image = has_any(&types, &["public.png", "public.tiff", "public.jpeg"]);
         clip_of(text, image, files)
@@ -275,12 +274,12 @@ impl Clipboard for SystemClipboard {
         })
     }
 
-    fn image_files(&mut self) -> Vec<PathBuf> {
+    fn files(&mut self) -> Vec<PathBuf> {
         let Ok(files) = arboard::Clipboard::new().and_then(|mut board| board.get().file_list())
         else {
             return Vec::new();
         };
-        files.into_iter().filter(|path| tidewatch_core::image_paste::is_image_file(path)).collect()
+        files
     }
 }
 
@@ -294,13 +293,13 @@ impl Clipboard for SystemClipboard {
         None
     }
 
-    fn image_files(&mut self) -> Vec<PathBuf> {
+    fn files(&mut self) -> Vec<PathBuf> {
         Vec::new()
     }
 }
 
 pub(crate) fn clip_has_picture(clipboard: &mut dyn Clipboard) -> bool {
-    matches!(clipboard.clip(), Clip::Image | Clip::ImageFiles)
+    matches!(clipboard.clip(), Clip::Image | Clip::Files)
 }
 
 #[cfg(test)]

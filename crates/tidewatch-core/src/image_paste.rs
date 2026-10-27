@@ -14,8 +14,8 @@ pub enum Clip {
     Text,
     Image,
     TextAndImage,
-    /// Finder adds the file name as text and the icon as a picture; neither is used.
-    ImageFiles,
+    /// Finder adds the file name as text and the icon as a picture; neither is used, the files are.
+    Files,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -34,9 +34,9 @@ pub enum Action {
 }
 
 #[must_use]
-pub fn clip_of(has_text: bool, has_image: bool, image_files: usize) -> Clip {
-    match (image_files > 0, has_text, has_image) {
-        (true, _, _) => Clip::ImageFiles,
+pub fn clip_of(has_text: bool, has_image: bool, files: usize) -> Clip {
+    match (files > 0, has_text, has_image) {
+        (true, _, _) => Clip::Files,
         (false, true, true) => Clip::TextAndImage,
         (false, true, false) => Clip::Text,
         (false, false, true) => Clip::Image,
@@ -64,7 +64,7 @@ pub fn reads_clipboard_on_ctrl_v(wiring: Wiring) -> bool {
 pub fn decide(clip: Clip, target: Target) -> Action {
     match (clip, target) {
         (Clip::Empty | Clip::Text | Clip::TextAndImage, _) => Action::Leave,
-        (Clip::ImageFiles, _) => Action::PasteFilePaths,
+        (Clip::Files, _) => Action::PasteFilePaths,
         (Clip::Image, Target::Terminal(Some(wiring))) if reads_clipboard_on_ctrl_v(wiring) => {
             Action::CtrlV
         }
@@ -114,9 +114,9 @@ mod tests {
             ((true, false, 0), Clip::Text),
             ((false, true, 0), Clip::Image),
             ((true, true, 0), Clip::TextAndImage),
-            ((false, false, 1), Clip::ImageFiles),
-            ((true, true, 2), Clip::ImageFiles),
-            ((true, false, 1), Clip::ImageFiles),
+            ((false, false, 1), Clip::Files),
+            ((true, true, 2), Clip::Files),
+            ((true, false, 1), Clip::Files),
         ];
         for ((text, image, files), want) in cases {
             assert_eq!(clip_of(text, image, files), want, "{text} {image} {files}");
@@ -134,9 +134,9 @@ mod tests {
             (Clip::Image, terminal(Some(Wiring::Custom)), Action::SaveAndPastePath),
             (Clip::Image, terminal(None), Action::SaveAndPastePath),
             (Clip::Image, Target::TextField, Action::SaveAndPastePath),
-            (Clip::ImageFiles, terminal(Some(Wiring::Claude)), Action::PasteFilePaths),
-            (Clip::ImageFiles, terminal(None), Action::PasteFilePaths),
-            (Clip::ImageFiles, Target::TextField, Action::PasteFilePaths),
+            (Clip::Files, terminal(Some(Wiring::Claude)), Action::PasteFilePaths),
+            (Clip::Files, terminal(None), Action::PasteFilePaths),
+            (Clip::Files, Target::TextField, Action::PasteFilePaths),
             (Clip::TextAndImage, terminal(Some(Wiring::Claude)), Action::Leave),
             (Clip::TextAndImage, terminal(None), Action::Leave),
             (Clip::TextAndImage, Target::TextField, Action::Leave),
@@ -161,7 +161,7 @@ mod tests {
     #[test]
     fn the_key_is_taken_from_egui_only_when_a_picture_is_to_be_handled() {
         assert!(takes_the_key(Clip::Image, Target::TextField));
-        assert!(takes_the_key(Clip::ImageFiles, Target::Terminal(None)));
+        assert!(takes_the_key(Clip::Files, Target::Terminal(None)));
         assert!(!takes_the_key(Clip::TextAndImage, Target::TextField));
         assert!(!takes_the_key(Clip::Text, Target::Terminal(Some(Wiring::Claude))));
     }

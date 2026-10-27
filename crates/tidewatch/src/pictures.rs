@@ -18,6 +18,7 @@ use image::imageops::FilterType;
 use tidewatch_core::image_paste::{is_image_file, path_text};
 use tidewatch_core::transcript_image::Picture;
 
+use crate::attachments;
 use crate::brand;
 use crate::jobs::Jobs;
 use crate::screen_kit::Size;
@@ -139,9 +140,20 @@ pub(crate) fn chip_rect(origin: Pos2, index: usize, width: f32, chip_w: f32) -> 
     Rect::from_min_size(at, vec2(chip_w, CHIP_H))
 }
 
+const ATTACHED: &str = "Attached: ";
+
+fn is_absolute_path(token: &str) -> bool {
+    Path::new(token).is_absolute()
+}
+
 fn is_picture_path(token: &str) -> bool {
-    let path = Path::new(token);
-    path.is_absolute() && is_image_file(path)
+    is_absolute_path(token) && is_image_file(Path::new(token))
+}
+
+fn attachment_line(line: &str) -> Option<Vec<PathBuf>> {
+    let tokens = shell_words::split(line.trim().strip_prefix(ATTACHED)?).ok()?;
+    (!tokens.is_empty() && tokens.iter().all(|token| is_absolute_path(token)))
+        .then(|| tokens.into_iter().map(PathBuf::from).collect())
 }
 
 fn picture_line(line: &str) -> Option<Vec<PathBuf>> {
@@ -150,25 +162,35 @@ fn picture_line(line: &str) -> Option<Vec<PathBuf>> {
         .then(|| tokens.into_iter().map(PathBuf::from).collect())
 }
 
-/// The message to send: `text`, then the paths of `pictures` on lines of their own.
+fn trailing_line(line: &str) -> Option<Vec<PathBuf>> {
+    attachment_line(line).or_else(|| picture_line(line))
+}
+
+fn path_line(path: &Path) -> String {
+    let quoted = path_text(std::slice::from_ref(&path.to_owned()));
+    if is_image_file(path) { quoted } else { format!("{ATTACHED}{quoted}") }
+}
+
+/// The message to send: `text`, then the paths of `pictures` on lines of their own. A picture's line
+/// is its bare path; any other file or folder is `Attached: <path>`, so a path typed as text never
+/// reads back as a chip.
 pub(crate) fn message(text: &str, pictures: &[PathBuf]) -> String {
     if pictures.is_empty() {
         return text.to_owned();
     }
     let body = text.trim_end();
-    let paths: Vec<String> =
-        pictures.iter().map(|path| path_text(std::slice::from_ref(path))).collect();
+    let paths: Vec<String> = pictures.iter().map(|path| path_line(path)).collect();
     if body.is_empty() { paths.join("\n") } else { format!("{body}\n{}", paths.join("\n")) }
 }
 
 /// A sent message taken apart again: the text without the closing lines that are only picture
-/// paths, and those pictures in order. A path in the middle of a sentence stays text.
+/// paths or `Attached:` paths, and those chips in order. A path in the middle of a sentence stays text.
 pub(crate) fn split_trailing(text: &str) -> (String, Vec<PathBuf>) {
     let lines: Vec<&str> = text.trim_end().split('\n').collect();
     let mut keep = lines.len();
     let mut found: Vec<Vec<PathBuf>> = Vec::new();
     while keep > 0 {
-        let Some(paths) = picture_line(lines[keep - 1]) else { break };
+        let Some(paths) = trailing_line(lines[keep - 1]) else { break };
         found.push(paths);
         keep -= 1;
     }
@@ -190,6 +212,7 @@ pub(crate) fn attach(pictures: &mut Vec<PathBuf>, paths: impl IntoIterator<Item 
 pub(crate) struct Loaded {
     pub(crate) size: Option<(u32, u32)>,
     pub(crate) bytes: u64,
+    pub(crate) dir: bool,
     small: Option<TextureHandle>,
     large: Option<(TextureHandle, [f32; 2])>,
 }
@@ -253,11 +276,20 @@ fn thumbnails(
         let shown = [fitted.width() as f32, fitted.height() as f32];
         (texture(ctx, format!("{name}#large"), &fitted), shown)
     });
-    Look::Ready(Arc::new(Loaded { size, bytes, small, large }))
+    Look::Ready(Arc::new(Loaded { size, bytes, dir: false, small, large }))
 }
 
 fn load_file(ctx: &egui::Context, path: &Path) -> Look {
     let Ok(meta) = std::fs::metadata(path) else { return Look::Missing };
+    if meta.is_dir() || !is_image_file(path) {
+        return Look::Ready(Arc::new(Loaded {
+            size: None,
+            bytes: meta.len(),
+            dir: meta.is_dir(),
+            small: None,
+            large: None,
+        }));
+    }
     thumbnails(ctx, &path.display().to_string(), meta.len(), image::open(path).ok().as_ref())
 }
 
@@ -365,6 +397,44 @@ fn paint_thumb(ui: &Ui, rect: Rect, small: Option<&TextureHandle>) {
     painter.rect_stroke(rect, radius, Stroke::new(1.0, brand::FIELD_LINE), StrokeKind::Inside);
 }
 
+fn paint_file_glyph(ui: &Ui, rect: Rect, path: &Path, dir: bool) {
+    let painter = ui.painter();
+    let radius = CornerRadius::same(6);
+    painter.rect_filled(rect, radius, brand::SUNKEN);
+    painter.rect_stroke(rect, radius, Stroke::new(1.0, brand::FIELD_LINE), StrokeKind::Inside);
+    let ink = Stroke::new(1.5, brand::SOFT);
+    if dir {
+        let body = Rect::from_center_size(rect.center() + vec2(0.0, 2.0), vec2(26.0, 18.0));
+        let tab = Rect::from_min_size(body.left_top() - vec2(0.0, 4.0), vec2(10.0, 4.0));
+        painter.rect_stroke(body, CornerRadius::same(3), ink, StrokeKind::Inside);
+        painter.rect_stroke(tab, CornerRadius::same(2), ink, StrokeKind::Inside);
+        return;
+    }
+    let fold = 11.0;
+    let (right, top) = (rect.right(), rect.top());
+    painter.add(egui::Shape::convex_polygon(
+        vec![Pos2::new(right - fold, top), Pos2::new(right, top), Pos2::new(right, top + fold)],
+        brand::ITEM,
+        Stroke::NONE,
+    ));
+    painter.add(egui::Shape::convex_polygon(
+        vec![
+            Pos2::new(right - fold, top),
+            Pos2::new(right - fold, top + fold),
+            Pos2::new(right, top + fold),
+        ],
+        brand::FIELD_LINE,
+        Stroke::NONE,
+    ));
+    painter.text(
+        rect.center() + vec2(0.0, 2.0),
+        egui::Align2::CENTER_CENTER,
+        attachments::ext_label(path),
+        FontId::proportional(12.0),
+        brand::SOFT,
+    );
+}
+
 fn paint_remove(ui: &Ui, rect: Rect, hovered: bool) {
     let painter = ui.painter();
     let line = if hovered { brand::FAINT } else { brand::FIELD_LINE };
@@ -412,11 +482,28 @@ pub(crate) fn paint(
         rect.left_top() + vec2(EDGE, (CHIP_H - THUMB_H) / 2.0),
         vec2(THUMB_W, THUMB_H),
     );
-    paint_thumb(ui, thumb, loaded.as_ref().and_then(|loaded| loaded.small.as_ref()));
+    let file = match source {
+        Source::File(path) if !is_image_file(path) => Some(path),
+        _ => None,
+    };
+    match file {
+        Some(path) => paint_file_glyph(ui, thumb, path, loaded.as_ref().is_some_and(|l| l.dir)),
+        None => paint_thumb(ui, thumb, loaded.as_ref().and_then(|loaded| loaded.small.as_ref())),
+    }
     let nominal = if removable { REMOVABLE_W } else { PLAIN_W };
     let text_w = (TEXT_W - (nominal - rect.width()).max(0.0)).max(0.0);
-    let name = truncated(ui, &source.label(n), FontId::proportional(14.0), brand::TEXT, text_w);
+    let name_font = FontId::proportional(14.0);
+    let label = source.label(n);
+    let shown = match file {
+        Some(_) => attachments::fit_middle(&label, |text| {
+            ui.painter().layout_no_wrap(text.to_owned(), name_font.clone(), brand::TEXT).size().x
+                <= text_w
+        }),
+        None => label,
+    };
+    let name = truncated(ui, &shown, name_font, brand::TEXT, text_w);
     let detail_text = match &look {
+        Look::Ready(loaded) if loaded.dir => "Folder".to_owned(),
         Look::Ready(loaded) => meta_text(loaded.size, loaded.bytes),
         Look::Loading => String::new(),
         Look::Missing => source.gone().to_owned(),
@@ -443,7 +530,10 @@ pub(crate) fn paint(
     } else {
         outcome.opened = body.clicked();
     }
-    let body = body.on_hover_cursor(egui::CursorIcon::PointingHand);
+    let mut body = body.on_hover_cursor(egui::CursorIcon::PointingHand);
+    if let Some(path) = file {
+        body = body.on_hover_text(path.display().to_string());
+    }
     if let Some(loaded) = loaded
         && let Some((texture, size)) = &loaded.large
     {
@@ -462,6 +552,29 @@ pub(crate) fn open_picture(path: &Path) {
     let program = if cfg!(target_os = "macos") { "open" } else { "xdg-open" };
     if let Err(error) = std::process::Command::new(program).arg(path).spawn() {
         eprintln!("tidewatch: cannot open {}: {error}", path.display());
+    }
+}
+
+/// Shows a file in Finder (the file manager's folder elsewhere), so that clicking a chip never runs
+/// a program.
+pub(crate) fn reveal(path: &Path) {
+    let mut command =
+        std::process::Command::new(if cfg!(target_os = "macos") { "open" } else { "xdg-open" });
+    if cfg!(target_os = "macos") {
+        command.arg("-R").arg(path);
+    } else {
+        command.arg(path.parent().unwrap_or(path));
+    }
+    if let Err(error) = command.spawn() {
+        eprintln!("tidewatch: cannot show {}: {error}", path.display());
+    }
+}
+
+fn open_chip(path: &Path) {
+    if is_image_file(path) || path.is_dir() {
+        open_picture(path);
+    } else {
+        reveal(path);
     }
 }
 
@@ -507,7 +620,7 @@ pub(crate) fn paint_block<'a>(
         let outcome = paint(ui, rect, (source, index + 1), removable);
         if outcome.opened {
             match source {
-                Source::File(path) => open_picture(path),
+                Source::File(path) => open_chip(path),
                 Source::Pasted(picture) => open_pasted(picture, pastes),
             }
         }
@@ -669,6 +782,28 @@ mod tests {
         let (text, back) = split_trailing(&sent);
         assert_eq!(text, "fix the header\n\n- one\n- two");
         assert_eq!(back, pictures);
+    }
+
+    #[test]
+    fn other_files_go_out_as_attached_lines_and_only_those_come_back_as_chips() {
+        let mixed = [p("/s/shot-1.png"), p("/s/pastes/sales q3.csv"), p("/s/exports")];
+        let sent = message("look", &mixed);
+        assert_eq!(
+            sent,
+            "look\n/s/shot-1.png\nAttached: '/s/pastes/sales q3.csv'\nAttached: /s/exports"
+        );
+        assert_eq!(split_trailing(&sent), ("look".to_owned(), mixed.to_vec()));
+        assert_eq!(message("", &mixed[1..2]), "Attached: '/s/pastes/sales q3.csv'");
+        let typed = [
+            "see\n/s/pastes/sales.csv",
+            "see\nAttached: relative/sales.csv",
+            "see\nAttached:",
+            "see\nAttached: '/s/unbalanced",
+            "see /s/a.csv\nAttached: /s/a.csv in a sentence",
+        ];
+        for text in typed {
+            assert_eq!(split_trailing(text), (text.to_owned(), Vec::new()), "{text:?}");
+        }
     }
 
     #[test]
@@ -859,5 +994,62 @@ mod tests {
         }
         assert!(texts.iter().any(|text| text == "Image 4"), "{texts:?}");
         assert!(texts.iter().any(|text| text.starts_with("640 \u{d7} 400")), "{texts:?}");
+    }
+
+    fn chip_texts(path: &Path) -> Vec<String> {
+        let ctx = egui::Context::default();
+        crate::fonts::install(&ctx);
+        wait_ready(&ctx, Source::File(path));
+        let raw = egui::RawInput {
+            screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(600.0, 200.0))),
+            ..egui::RawInput::default()
+        };
+        let mut texts = Vec::new();
+        for _ in 0..2 {
+            let out = ctx.run_ui(raw.clone(), |ui| {
+                let rect = Rect::from_min_size(Pos2::new(20.0, 20.0), vec2(REMOVABLE_W, CHIP_H));
+                paint(ui, rect, (Source::File(path), 1), true);
+            });
+            texts = out
+                .shapes
+                .iter()
+                .filter_map(|clipped| match &clipped.shape {
+                    egui::Shape::Text(text) => Some(text.galley.text().to_owned()),
+                    _ => None,
+                })
+                .collect();
+        }
+        texts
+    }
+
+    #[test]
+    fn a_file_chip_reads_its_extension_a_middle_cut_name_and_its_size() {
+        let dir = tempfile::tempdir().unwrap();
+        let long = dir.path().join("quarterly-revenue-by-region-2026-final.csv");
+        std::fs::write(&long, vec![b'x'; 12_345]).unwrap();
+        let texts = chip_texts(&long);
+        assert!(texts.iter().any(|text| text == "CSV"), "{texts:?}");
+        assert!(texts.iter().any(|text| text == "12 KB"), "{texts:?}");
+        let name = texts.iter().find(|text| text.contains('\u{2026}')).expect("a cut name");
+        assert!(name.starts_with("quar") && name.contains(".csv"), "{name}");
+        let short = dir.path().join("a.pdf");
+        std::fs::write(&short, b"%PDF").unwrap();
+        let texts = chip_texts(&short);
+        assert!(
+            ["PDF", "a.pdf", "4 B"].iter().all(|want| texts.iter().any(|t| t == want)),
+            "{texts:?}"
+        );
+    }
+
+    #[test]
+    fn a_folder_chip_says_folder_and_a_missing_file_says_so() {
+        let dir = tempfile::tempdir().unwrap();
+        let folder = dir.path().join("exports");
+        std::fs::create_dir(&folder).unwrap();
+        let texts = chip_texts(&folder);
+        assert!(texts.iter().any(|text| text == "exports") && texts.iter().any(|t| t == "Folder"));
+        assert!(!texts.iter().any(|text| text == "FILE"), "{texts:?}");
+        let texts = chip_texts(&dir.path().join("gone.zip"));
+        assert!(texts.iter().any(|text| text == "File not found"), "{texts:?}");
     }
 }
