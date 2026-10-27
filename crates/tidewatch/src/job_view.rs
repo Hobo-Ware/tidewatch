@@ -184,9 +184,16 @@ fn stalled_row(ui: &mut Ui, width: f32, card: &StalledCard) -> bool {
 fn finished_line(ui: &mut Ui, width: f32, line: &FinishedLine) {
     let (rect, _) = ui.allocate_exact_size(vec2(width, FINISHED_H), Sense::hover());
     let painter = ui.painter();
-    let ink = if line.failed { brand::RED } else { brand::GREEN };
+    let ink = match (line.failed, line.ended) {
+        (true, _) => brand::RED,
+        (false, true) => brand::FAINT,
+        (false, false) => brand::GREEN,
+    };
     let mark = pos2(rect.left() + 11.0, rect.center().y);
-    if line.failed {
+    if line.ended {
+        painter
+            .line_segment([mark + vec2(-4.0, 0.0), mark + vec2(4.0, 0.0)], Stroke::new(2.0, ink));
+    } else if line.failed {
         let arm = 4.0;
         for (a, b) in [(vec2(-arm, -arm), vec2(arm, arm)), (vec2(-arm, arm), vec2(arm, -arm))] {
             painter.line_segment([mark + a, mark + b], Stroke::new(2.0, ink));

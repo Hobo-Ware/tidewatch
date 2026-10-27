@@ -109,18 +109,18 @@ fn a_repeated_reading_adds_no_sample_and_keeps_the_stall_clock() {
 fn a_running_job_stalls_after_five_quiet_minutes_and_wakes_when_done_moves() {
     let mut board = JobBoard::default();
     steady(&mut board, "orders", 1000.0, &[(0, 10.0), (MIN, 20.0)]);
-    assert!(!board.tick(MIN + 5 * MIN - 1));
+    assert!(!board.tick(MIN + 5 * MIN - 1, Agent::Working));
     assert_eq!(job(&board).state, JobState::Running);
-    assert_eq!(board.next_change_at(), Some(6 * MIN));
-    assert!(board.tick(6 * MIN));
+    assert_eq!(board.next_change_at(Agent::Working), Some(6 * MIN));
+    assert!(board.tick(6 * MIN, Agent::Working));
     assert_eq!(job(&board).state, JobState::Stalled);
     assert_eq!(job(&board).quiet_ms(7 * MIN), 6 * MIN);
-    assert!(!board.tick(8 * MIN));
+    assert!(!board.tick(8 * MIN, Agent::Working));
     board.report(&with("orders", 20.0, 1000.0), 8 * MIN);
     assert_eq!(job(&board).state, JobState::Stalled, "a heartbeat is not progress");
     board.report(&with("orders", 21.0, 1000.0), 9 * MIN);
     assert_eq!(job(&board).state, JobState::Running);
-    assert_eq!(board.next_change_at(), Some(14 * MIN));
+    assert_eq!(board.next_change_at(Agent::Working), Some(14 * MIN));
 }
 
 #[test]
@@ -128,11 +128,11 @@ fn finished_jobs_never_stall_and_keep_their_duration() {
     let mut board = JobBoard::default();
     steady(&mut board, "orders", 10.0, &[(0, 4.0)]);
     board.report(&Report { state: Some(JobState::Done), ..Report::named("orders") }, 3 * MIN);
-    assert!(!board.tick(12 * MIN));
+    assert!(!board.tick(12 * MIN, Agent::Working));
     assert_eq!(job(&board).state, JobState::Done);
     assert_eq!(job(&board).elapsed_ms(60 * MIN), 3 * MIN);
     assert_eq!(job(&board).eta_left(3 * MIN), None);
-    assert_eq!(board.next_change_at(), Some(13 * MIN));
+    assert_eq!(board.next_change_at(Agent::Working), Some(13 * MIN));
     assert!(board.lead().is_none());
 }
 
@@ -215,7 +215,7 @@ fn percent_clamps_and_a_segment_total_is_small_and_whole() {
     board.report(&with("over", 58_650.0, 58_649.0), 0);
     assert_eq!(board.jobs[0].percent(), Some(100.0));
     assert_eq!(board.jobs[0].eta_s, None);
-    assert_eq!(board.jobs[0].state, JobState::Running);
+    assert_eq!(board.jobs[0].state, JobState::Done);
     let cases = [
         (Some(5.0), true),
         (Some(12.0), true),
@@ -306,9 +306,9 @@ fn a_finished_job_is_dropped_ten_minutes_after_it_finished() {
     let mut board = JobBoard::default();
     steady(&mut board, "orders", 10.0, &[(0, 4.0)]);
     board.report(&Report { state: Some(JobState::Done), ..Report::named("orders") }, 3 * MIN);
-    assert!(!board.tick(13 * MIN - 1));
+    assert!(!board.tick(13 * MIN - 1, Agent::Working));
     assert_eq!(board.jobs.len(), 1);
-    assert!(board.tick(13 * MIN));
+    assert!(board.tick(13 * MIN, Agent::Working));
     assert!(board.is_empty());
 }
 
@@ -316,12 +316,12 @@ fn a_finished_job_is_dropped_ten_minutes_after_it_finished() {
 fn a_job_with_no_total_is_dropped_after_five_quiet_minutes_and_never_stalls() {
     let mut board = JobBoard::default();
     board.report(&Report::named("setup"), 0);
-    assert!(!board.tick(5 * MIN - 1));
+    assert!(!board.tick(5 * MIN - 1, Agent::Working));
     assert_eq!(job(&board).state, JobState::Running);
     board.report(&Report::named("setup"), 2 * MIN);
-    assert!(!board.tick(7 * MIN - 1), "a heartbeat keeps it");
-    assert_eq!(board.next_change_at(), Some(7 * MIN));
-    assert!(board.tick(7 * MIN));
+    assert!(!board.tick(7 * MIN - 1, Agent::Working), "a heartbeat keeps it");
+    assert_eq!(board.next_change_at(Agent::Working), Some(7 * MIN));
+    assert!(board.tick(7 * MIN, Agent::Working));
     assert!(board.is_empty());
 }
 
@@ -329,7 +329,7 @@ fn a_job_with_no_total_is_dropped_after_five_quiet_minutes_and_never_stalls() {
 fn a_job_with_a_total_is_never_dropped_for_being_quiet() {
     let mut board = JobBoard::default();
     steady(&mut board, "orders", 1000.0, &[(0, 10.0), (MIN, 20.0)]);
-    board.tick(100 * MIN);
+    board.tick(100 * MIN, Agent::Working);
     assert_eq!(board.jobs.len(), 1);
     assert_eq!(job(&board).state, JobState::Stalled);
 }
@@ -343,8 +343,8 @@ fn a_timed_job_runs_its_clock_and_leaves_five_minutes_after_the_expected_end() {
     assert_eq!(job(&board).time_fraction(0), Some(0.0));
     assert_eq!(job(&board).time_fraction(5 * MIN), Some(0.5));
     assert_eq!(job(&board).time_fraction(30 * MIN), Some(1.0));
-    assert!(!board.tick(15 * MIN - 1));
-    assert!(board.tick(15 * MIN));
+    assert!(!board.tick(15 * MIN - 1, Agent::Working));
+    assert!(board.tick(15 * MIN, Agent::Working));
 }
 
 #[test]
@@ -366,4 +366,142 @@ fn a_terminal_line_only_updates_a_job_that_is_already_there() {
     board.report(&Report { state: Some(JobState::Done), ..Report::named("orders") }, 2 * MIN);
     assert!(!board.report_known(&with("orders", 1.0, 10.0), 3 * MIN));
     assert_eq!(job(&board).state, JobState::Done);
+}
+
+#[test]
+fn reaching_the_total_finishes_a_job_whatever_state_the_line_named() {
+    let cases = [
+        ("no state", None, 100.0, JobState::Done),
+        ("running", Some(JobState::Running), 100.0, JobState::Done),
+        ("stalled", Some(JobState::Stalled), 100.0, JobState::Done),
+        ("done", Some(JobState::Done), 100.0, JobState::Done),
+        ("failed", Some(JobState::Failed), 100.0, JobState::Failed),
+        ("running, past the total", Some(JobState::Running), 104.0, JobState::Done),
+        ("running, short of the total", Some(JobState::Running), 99.0, JobState::Running),
+    ];
+    for (what, state, done, want) in cases {
+        let mut board = JobBoard::default();
+        board.report(&with("deploy api", 10.0, 100.0), 0);
+        board.report(&Report { state, ..with("deploy api", done, 100.0) }, MIN);
+        assert_eq!(job(&board).state, want, "{what}");
+        assert!(!job(&board).ended, "{what}");
+        assert_eq!(job(&board).finished_ms.is_some(), want != JobState::Running, "{what}");
+    }
+}
+
+#[test]
+fn a_job_that_reached_its_total_before_the_board_looked_finishes_on_the_next_tick() {
+    let mut board = JobBoard::default();
+    board.report(&with("deploy api", 10.0, 100.0), 0);
+    board.jobs[0].done = 100.0;
+    board.jobs[0].state = JobState::Stalled;
+    assert!(board.tick(7 * MIN, Agent::Working));
+    assert_eq!(job(&board).state, JobState::Done);
+    assert_eq!(job(&board).finished_ms, Some(7 * MIN));
+    assert!(!job(&board).ended);
+}
+
+#[test]
+fn a_done_agent_closes_the_jobs_that_went_quiet_and_leaves_the_live_ones() {
+    let mut board = JobBoard::default();
+    board.report(&with("deploy api", 40.0, 100.0), 0);
+    board.report(&Report { eta_s: Some(3_600), ..Report::named("late review") }, 0);
+    board.report(&Report::named("warm cache"), 4 * MIN);
+    board.report(&with("copy files", 10.0, 100.0), 0);
+    board.report(&with("copy files", 11.0, 100.0), 4 * MIN);
+    assert!(!board.tick(5 * MIN - 1, Agent::Done));
+    assert!(board.tick(5 * MIN, Agent::Done));
+    let ended: Vec<(&str, JobState, bool)> =
+        board.jobs.iter().map(|job| (job.name.as_str(), job.state, job.ended)).collect();
+    assert_eq!(
+        ended,
+        [
+            ("deploy api", JobState::Done, true),
+            ("late review", JobState::Done, true),
+            ("warm cache", JobState::Running, false),
+            ("copy files", JobState::Running, false),
+        ]
+    );
+    assert_eq!(job(&board).finished_ms, Some(5 * MIN));
+    assert_eq!(job(&board).eta_left(5 * MIN), None);
+    assert!(board.tick(9 * MIN, Agent::Done));
+    assert!(board.jobs.iter().all(|job| job.ended));
+    assert!(!board.has_running());
+}
+
+#[test]
+fn a_stalled_job_of_a_done_agent_closes_at_once() {
+    let mut board = JobBoard::default();
+    board.report(&with("deploy api", 40.0, 100.0), 0);
+    assert!(board.tick(6 * MIN, Agent::Working));
+    assert_eq!(job(&board).state, JobState::Stalled);
+    assert!(board.tick(6 * MIN + 1, Agent::Done));
+    assert_eq!((job(&board).state, job(&board).ended), (JobState::Done, true));
+}
+
+#[test]
+fn a_working_agent_never_has_its_jobs_closed_for_it() {
+    let mut board = JobBoard::default();
+    board.report(&with("deploy api", 40.0, 100.0), 0);
+    board.report(&Report::named("warm cache"), 0);
+    board.tick(4 * MIN + 59_000, Agent::Working);
+    board.tick(60 * MIN, Agent::Working);
+    assert_eq!(job(&board).state, JobState::Stalled);
+    assert_eq!(board.jobs.len(), 1, "the loose job is dropped as before");
+    assert!(!job(&board).ended);
+}
+
+#[test]
+fn a_job_that_reports_again_after_it_was_ended_runs_again_and_a_late_final_line_is_a_plain_finish()
+{
+    let mut board = JobBoard::default();
+    board.report(&with("deploy api", 40.0, 100.0), 0);
+    board.tick(5 * MIN, Agent::Done);
+    assert!(job(&board).ended);
+    board.report(&with("deploy api", 60.0, 100.0), 6 * MIN);
+    assert_eq!((job(&board).state, job(&board).ended), (JobState::Running, false));
+    assert_eq!(job(&board).finished_ms, None);
+    assert!(!board.tick(7 * MIN, Agent::Done), "fresh news keeps it running");
+    board.tick(12 * MIN, Agent::Done);
+    assert!(job(&board).ended);
+    board.report(&Report { state: Some(JobState::Done), ..Report::named("deploy api") }, 13 * MIN);
+    assert_eq!((job(&board).state, job(&board).ended), (JobState::Done, false));
+}
+
+#[test]
+fn the_next_change_of_a_done_agent_is_when_its_quiet_jobs_close() {
+    let mut board = JobBoard::default();
+    board.report(&Report::named("warm cache"), 2 * MIN);
+    board.report(&with("deploy api", 40.0, 100.0), MIN);
+    assert_eq!(board.next_change_at(Agent::Done), Some(6 * MIN));
+    assert_eq!(board.next_change_at(Agent::Working), Some(6 * MIN));
+    board.tick(6 * MIN, Agent::Done);
+    assert_eq!(board.next_change_at(Agent::Done), Some(7 * MIN));
+    board.tick(7 * MIN, Agent::Done);
+    assert_eq!(board.next_change_at(Agent::Done), Some(16 * MIN));
+}
+
+#[test]
+fn a_timed_job_past_its_time_is_overdue_while_the_agent_works_and_closed_when_it_is_done() {
+    let mut board = JobBoard::default();
+    board.report(&Report { eta_s: Some(600), ..Report::named("late review") }, 0);
+    assert_eq!(job(&board).overdue_ms(10 * MIN), None);
+    assert_eq!(job(&board).overdue_ms(12 * MIN), Some(2 * MIN));
+    let mut done = board.clone();
+    board.tick(12 * MIN, Agent::Working);
+    assert_eq!(job(&board).state, JobState::Running);
+    assert_eq!(job(&board).overdue_ms(14 * MIN), Some(4 * MIN));
+    done.tick(12 * MIN, Agent::Done);
+    assert_eq!((job(&done).state, job(&done).ended), (JobState::Done, true));
+    assert_eq!(job(&done).overdue_ms(14 * MIN), None);
+}
+
+#[test]
+fn an_ended_flag_missing_from_an_old_file_reads_as_not_ended() {
+    let mut board = JobBoard::default();
+    board.report(&with("deploy api", 40.0, 100.0), 0);
+    let mut value = serde_json::to_value(&board).unwrap();
+    value["jobs"][0].as_object_mut().unwrap().remove("ended");
+    let back: JobBoard = serde_json::from_value(value).unwrap();
+    assert!(!back.jobs[0].ended);
 }

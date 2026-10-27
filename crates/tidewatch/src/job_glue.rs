@@ -1,5 +1,6 @@
 //! The app's side of long jobs: per-tab boards fed by the progress file, `report_job` and the terminal.
-//! `TIDEWATCH_FAKE_JOBS=1` gives every agent tab six fake jobs and writes nothing.
+//! `TIDEWATCH_FAKE_JOBS=1` gives every agent tab six fake jobs and writes nothing; `done` also treats
+//! every agent as done.
 
 use std::collections::{HashMap, HashSet};
 use std::hash::{DefaultHasher, Hash, Hasher};
@@ -7,7 +8,7 @@ use std::path::{Path, PathBuf};
 
 use stdusk_core::terminal::GridSnap;
 use tidewatch_core::background::{Launch, Signal, Watch};
-use tidewatch_core::job::{JobBoard, JobState, Report};
+use tidewatch_core::job::{Agent, JobBoard, JobState, Report};
 use tidewatch_core::job_bar;
 use tidewatch_core::job_feed::Feed;
 use tidewatch_core::job_store;
@@ -65,17 +66,26 @@ pub(crate) struct Host {
     jobs: Jobs<Done>,
     writable: bool,
     fake: bool,
+    fake_done: bool,
 }
 
 impl Host {
     pub(crate) fn new(writable: bool, fake: bool) -> Self {
-        Self { tabs: HashMap::new(), jobs: Jobs::new(), writable: writable && !fake, fake }
+        Self {
+            tabs: HashMap::new(),
+            jobs: Jobs::new(),
+            writable: writable && !fake,
+            fake,
+            fake_done: false,
+        }
     }
 
     pub(crate) fn from_env(writable: bool) -> Self {
         let fake =
             std::env::var_os("TIDEWATCH_FAKE_JOBS").is_some_and(|v| !v.is_empty() && v != "0");
-        Self::new(writable, fake)
+        let mut host = Self::new(writable, fake);
+        host.fake_done = std::env::var_os("TIDEWATCH_FAKE_JOBS").is_some_and(|v| v == "done");
+        host
     }
 
     pub(crate) fn board(&self, tab: u64) -> Option<&JobBoard> {
@@ -117,6 +127,7 @@ impl Host {
     pub(crate) fn tick(
         &mut self,
         tabs: &[Facts<'_>],
+        done: &[u64],
         ctx: &egui::Context,
         now_ms: i64,
     ) -> Option<i64> {
@@ -133,7 +144,8 @@ impl Host {
         }
         let mut wake: Option<i64> = None;
         let mut soonest = |at: i64| wake = Some(wake.map_or(at, |first| first.min(at)));
-        for tab in self.tabs.values_mut() {
+        let fake_done = self.fake_done;
+        for (id, tab) in &mut self.tabs {
             if !tab.loaded {
                 continue;
             }
@@ -146,11 +158,12 @@ impl Host {
                     tab.dirty |= tab.board.report(&report, now_ms);
                 }
             }
-            tab.dirty |= tab.board.tick(now_ms);
+            let agent = if fake_done || done.contains(id) { Agent::Done } else { Agent::Working };
+            tab.dirty |= tab.board.tick(now_ms, agent);
             if tab.board.has_running() {
                 soonest(now_ms + RUNNING_POLL_MS);
             }
-            if let Some(at) = tab.board.next_change_at() {
+            if let Some(at) = tab.board.next_change_at(agent) {
                 soonest(at);
             }
             if let Some(at) = tab.watch.next_change_ms(tab.last_report_ms, now_ms) {
@@ -310,7 +323,7 @@ pub(crate) fn fake_board(now_ms: i64) -> JobBoard {
         &Report { done: Some(2_246.0), state: Some(JobState::Done), ..Report::named("cargo test") },
         now_ms,
     );
-    board.tick(now_ms);
+    board.tick(now_ms, Agent::Working);
     board
 }
 

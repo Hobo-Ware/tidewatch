@@ -16,6 +16,13 @@ const MAX_ETA_SECS: f64 = 100.0 * 86_400.0;
 const MIN_RATE_SPAN_MS: i64 = 1_000;
 const SEGMENT_MAX_TOTAL: f64 = 12.0;
 
+/// What the tab's agent is doing right now, as far as the board cares.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Agent {
+    Working,
+    Done,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum JobState {
@@ -121,6 +128,9 @@ pub struct Job {
     /// When `done` last moved: the clock the stall rule reads.
     pub changed_ms: i64,
     pub finished_ms: Option<i64>,
+    /// Closed by the board because the agent was done and the job never sent a final line.
+    #[serde(default)]
+    pub ended: bool,
     pub rate_per_min: Option<f64>,
     /// Seconds left as of the last sample, from the rate. Read it through [`Job::eta_left`].
     pub eta_s: Option<u64>,
@@ -143,6 +153,7 @@ impl Job {
             updated_ms: now_ms,
             changed_ms: now_ms,
             finished_ms: None,
+            ended: false,
             rate_per_min: None,
             eta_s: None,
             eta_hint: None,
@@ -214,11 +225,22 @@ impl Job {
         if self.total.is_some() {
             return None;
         }
-        let expected_end = self
-            .eta_hint
-            .and_then(|(at_ms, secs)| Some(at_ms + i64::try_from(secs).ok()? * 1000))
-            .unwrap_or(0);
-        Some(self.updated_ms.max(expected_end) + QUIET_GONE_AFTER_MS)
+        Some(self.updated_ms.max(self.expected_end_ms().unwrap_or(0)) + QUIET_GONE_AFTER_MS)
+    }
+
+    fn expected_end_ms(&self) -> Option<i64> {
+        let (at_ms, secs) = self.eta_hint?;
+        Some(at_ms + i64::try_from(secs).ok()? * 1000)
+    }
+
+    /// How long past its expected end a running timed job is. `None` for any other job, and while
+    /// there is time left.
+    #[must_use]
+    pub fn overdue_ms(&self, now_ms: i64) -> Option<i64> {
+        if self.state != JobState::Running || !self.is_timed() {
+            return None;
+        }
+        Some(now_ms - self.expected_end_ms()?).filter(|late| *late > 0)
     }
 
     /// How long `done` has stood still.
@@ -227,10 +249,23 @@ impl Job {
         (now_ms - self.changed_ms).max(0)
     }
 
+    fn alive_ms(&self) -> i64 {
+        if self.total.is_some() { self.changed_ms } else { self.updated_ms }
+    }
+
+    fn reached_total(&self) -> bool {
+        self.total.is_some_and(|total| self.done >= total)
+    }
+
     /// How long the job ran or has run so far.
     #[must_use]
     pub fn elapsed_ms(&self, now_ms: i64) -> i64 {
         (self.finished_ms.unwrap_or(now_ms) - self.started_ms).max(0)
+    }
+
+    fn clear_estimates(&mut self) {
+        self.eta_s = None;
+        self.eta_hint = None;
     }
 
     fn refresh_rate(&mut self) {
@@ -316,34 +351,54 @@ impl JobBoard {
         self.jobs.len() - 1
     }
 
-    /// Drops the jobs that are gone by `now_ms` and marks a running job with a total whose `done`
-    /// has stood still for five minutes as stalled. Returns whether anything changed.
-    pub fn tick(&mut self, now_ms: i64) -> bool {
-        let before = self.jobs.len();
-        self.jobs.retain(|job| job.gone_at().is_none_or(|at| at > now_ms));
-        let mut changed = self.jobs.len() != before;
+    /// Moves each job along as `now_ms` passes, and drops the ones that are gone. A job whose `done`
+    /// reached its `total` is finished. When the agent is done, a job quiet for five minutes is
+    /// closed as ended instead of waiting for a final line that is not coming. Otherwise a running
+    /// job with a total whose `done` has stood still for five minutes is marked stalled. Returns
+    /// whether anything changed.
+    pub fn tick(&mut self, now_ms: i64, agent: Agent) -> bool {
+        let mut changed = false;
         for job in &mut self.jobs {
-            if job.state == JobState::Running
+            if job.state.is_finished() {
+                continue;
+            }
+            if job.reached_total() {
+                finish(job, Some(JobState::Done), now_ms);
+                job.clear_estimates();
+            } else if agent == Agent::Done && now_ms - job.alive_ms() >= STALL_AFTER_MS {
+                finish(job, Some(JobState::Done), now_ms);
+                job.clear_estimates();
+                job.ended = true;
+            } else if job.state == JobState::Running
                 && job.total.is_some()
                 && job.quiet_ms(now_ms) >= STALL_AFTER_MS
             {
                 job.state = JobState::Stalled;
-                changed = true;
+            } else {
+                continue;
             }
+            changed = true;
         }
-        changed
+        let before = self.jobs.len();
+        self.jobs.retain(|job| job.gone_at().is_none_or(|at| at > now_ms));
+        changed || self.jobs.len() != before
     }
 
     /// The next moment `tick` changes something if nothing is reported: a running job with a
-    /// total turning stalled, or a job going away.
+    /// total turning stalled, a job closing for a done agent, or a job going away.
     #[must_use]
-    pub fn next_change_at(&self) -> Option<i64> {
+    pub fn next_change_at(&self, agent: Agent) -> Option<i64> {
         let stalls = self
             .jobs
             .iter()
             .filter(|job| job.state == JobState::Running && job.total.is_some())
             .map(|job| job.changed_ms + STALL_AFTER_MS);
-        stalls.chain(self.jobs.iter().filter_map(Job::gone_at)).min()
+        let ends = self
+            .jobs
+            .iter()
+            .filter(|job| agent == Agent::Done && !job.state.is_finished())
+            .map(|job| job.alive_ms() + STALL_AFTER_MS);
+        stalls.chain(ends).chain(self.jobs.iter().filter_map(Job::gone_at)).min()
     }
 
     #[must_use]
@@ -375,6 +430,7 @@ fn apply(job: &mut Job, report: &Report, now_ms: i64) {
         job.started_ms = now_ms;
         job.changed_ms = now_ms;
         job.finished_ms = None;
+        job.ended = false;
         job.eta_hint = None;
         if report.done.is_none() {
             job.done = 0.0;
@@ -415,18 +471,18 @@ fn apply(job: &mut Job, report: &Report, now_ms: i64) {
         Some(JobState::Stalled) => job.state = JobState::Stalled,
         Some(JobState::Running) | None => {}
     }
-    if report.state.is_none() && job.state == JobState::Running && job.total == Some(job.done) {
+    if !job.state.is_finished() && job.reached_total() {
         finish(job, Some(JobState::Done), now_ms);
     }
     job.refresh_rate();
     if job.state.is_finished() {
-        job.eta_s = None;
-        job.eta_hint = None;
+        job.clear_estimates();
     }
 }
 
 fn finish(job: &mut Job, state: Option<JobState>, now_ms: i64) {
     job.state = state.unwrap_or(JobState::Done);
+    job.ended = false;
     job.finished_ms.get_or_insert(now_ms);
 }
 
