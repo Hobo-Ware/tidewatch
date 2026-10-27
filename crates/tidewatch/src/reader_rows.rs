@@ -7,6 +7,7 @@ use std::collections::{HashMap, HashSet, VecDeque};
 use tidewatch_core::note_paste;
 use tidewatch_core::question::{AskReply, Question};
 use tidewatch_core::transcript::{AskPart, Entry, Role, ToolPhase};
+use tidewatch_core::transcript_image::Picture;
 
 use tidewatch_core::sent::{Reason, Record};
 
@@ -123,6 +124,8 @@ pub(crate) struct Row {
     pub(crate) kind: Kind,
     /// Markdown for `User` and `Assistant`, plain text for `Notice`, empty for `Tool`.
     pub(crate) text: String,
+    /// The pictures the user pasted into a `User` row, in order.
+    pub(crate) pictures: Vec<Picture>,
 }
 
 #[derive(Debug, Default)]
@@ -154,7 +157,12 @@ impl Rows {
                 if let Some(review) = note_paste::parse(&entry.text) {
                     self.add(Kind::Review(review.ids), review.message);
                 } else {
-                    self.add(Kind::User, entry.text);
+                    let seq = self.add(Kind::User, entry.text);
+                    if !entry.images.is_empty()
+                        && let Some(row) = self.row_mut(seq)
+                    {
+                        row.pictures = entry.images;
+                    }
                     self.settle_sent();
                 }
             }
@@ -387,7 +395,7 @@ impl Rows {
         let seq = self.next_seq;
         self.next_seq += 1;
         self.revision += 1;
-        self.list.push_back(Row { seq, kind, text });
+        self.list.push_back(Row { seq, kind, text, pictures: Vec::new() });
         self.stamps.push_back(self.stamp);
         seq
     }
@@ -503,7 +511,7 @@ mod tests {
     use tidewatch_core::transcript::ToolCall;
 
     fn text(role: Role, body: &str) -> Entry {
-        Entry { role, text: body.into(), tool: None, ts: None }
+        Entry { role, text: body.into(), tool: None, ts: None, images: Vec::new() }
     }
 
     fn call(id: &str, name: &str, summary: &str) -> Entry {
@@ -518,6 +526,7 @@ mod tests {
                 ask: None,
             }),
             ts: None,
+            images: Vec::new(),
         }
     }
 
@@ -533,6 +542,7 @@ mod tests {
                 ask: None,
             }),
             ts: None,
+            images: Vec::new(),
         }
     }
 
@@ -685,6 +695,7 @@ mod tests {
                 ask: Some(part),
             }),
             ts: None,
+            images: Vec::new(),
         }
     }
 
@@ -784,7 +795,7 @@ mod tests {
     #[test]
     fn a_row_remembers_when_its_line_was_written_and_a_divider_does_not() {
         let mut rows = Rows::default();
-        let entry = |role, ts| Entry { role, text: "x".into(), tool: None, ts };
+        let entry = |role, ts| Entry { role, text: "x".into(), tool: None, ts, images: Vec::new() };
         rows.push(entry(Role::User, Some(1_000)));
         rows.push(entry(Role::Assistant, None));
         rows.divider("--- Stage 2 ---".into());
@@ -801,6 +812,7 @@ mod tests {
                 text: n.to_string(),
                 tool: None,
                 ts: Some(n as i64),
+                images: Vec::new(),
             });
         }
         let (row, at) = rows.stamped().next().unwrap();

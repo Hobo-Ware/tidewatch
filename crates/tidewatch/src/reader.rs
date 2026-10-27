@@ -635,6 +635,7 @@ mod tests {
             text: "built it".into(),
             tool: None,
             ts: None,
+            images: Vec::new(),
         }]);
         reader.relaunch("gemini", Some("second".into()), "--- Stage 2: Review ---".into());
         assert_eq!(reader.link(), Link::Idle);
@@ -656,7 +657,7 @@ mod tests {
     }
 
     fn user(text: &str) -> Entry {
-        Entry { role: Role::User, text: text.into(), tool: None, ts: None }
+        Entry { role: Role::User, text: text.into(), tool: None, ts: None, images: Vec::new() }
     }
 
     #[test]
@@ -676,8 +677,13 @@ mod tests {
     #[test]
     fn the_agents_own_links_are_taken_once_and_the_users_never() {
         let mut reader = Reader::for_agent("claude", None, PathBuf::from("/w"));
-        let said =
-            |role, text: &str| Entry { role, text: text.to_owned(), tool: None, ts: Some(5) };
+        let said = |role, text: &str| Entry {
+            role,
+            text: text.to_owned(),
+            tool: None,
+            ts: Some(5),
+            images: Vec::new(),
+        };
         reader.add(vec![
             said(Role::User, "look at https://claude.ai/artifact/mine"),
             said(Role::Assistant, "board: https://claude.ai/artifact/abc"),

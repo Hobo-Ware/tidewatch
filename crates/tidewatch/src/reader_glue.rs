@@ -1,7 +1,7 @@
 //! The seams between the Reader and the rest of the app: starting each agent tab's feed, toggling
 //! the view, drawing it in the terminal area and typing what the user chose into the pty.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -232,6 +232,12 @@ pub(crate) fn draw(
         blocked: ask_blocked(Some(agent.run.status())),
     });
     let face = Face::of(&agent.profile_name, &agent.run.agent_id, avatar);
+    agent.reader.view.pastes = agent
+        .run
+        .notes_file
+        .as_deref()
+        .and_then(Path::parent)
+        .map(|dir| dir.join(crate::pictures::PASTES_DIR));
     let facts = Facts {
         tab,
         source: agent.reader.source(),

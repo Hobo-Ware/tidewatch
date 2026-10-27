@@ -272,8 +272,13 @@ pub(crate) fn show(ui: &mut Ui, draft: Draft<'_>, spec: &Spec<'_>) -> Option<Str
             vec2(measured.send_w, Size::Regular.height()),
         );
         let chips_origin = pos2(boxed.left() + PAD_X, boxed.top() + BORDER + CHIP_TOP);
-        let removed =
-            pictures::paint_block(ui, chips_origin, boxed.width() - 2.0 * PAD_X, pictures, true);
+        let removed = pictures::paint_block(
+            ui,
+            chips_origin,
+            boxed.width() - 2.0 * PAD_X,
+            pictures.iter().map(|path| pictures::Source::File(path)),
+            (true, None),
+        );
         if let Some(at) = removed {
             pictures.remove(at);
         }

@@ -157,7 +157,7 @@ fn prompt(ui: &mut Ui, width: f32, task: &str) -> Rect {
             ui.scope(|ui| {
                 ui.visuals_mut().override_text_color = Some(brand::SOFT);
                 ui.push_id("summary-prompt", |ui| {
-                    markdown_in(ui, &user_markup::chat_markdown(task));
+                    markdown_in(ui, &user_markup::chat_markdown(task, &[]));
                 });
             });
         })

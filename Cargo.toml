@@ -14,6 +14,7 @@ kelp-ui = { git = "https://github.com/Hobo-Ware/kelp", rev = "3d846f091bb777ff04
 stdusk-core = { git = "https://github.com/Hobo-Ware/stdusk", rev = "bf197c174fa70bafdf2282071d07dd04584bdbbf" }
 stdusk-egui = { git = "https://github.com/Hobo-Ware/stdusk", rev = "bf197c174fa70bafdf2282071d07dd04584bdbbf" }
 anyhow = "1.0.104"
+base64 = "0.22.1"
 eframe = { version = "0.35.0", features = ["glow", "__screenshot"] }
 egui = "0.35.0"
 emojis = "0.9.1"
@@ -21,7 +22,7 @@ global-hotkey = "0.8.0"
 gix = { version = "0.88.0", default-features = false, features = ["sha1"] }
 httparse = "1.10.1"
 jiff = "0.2.38"
-image = { version = "0.25.10", default-features = false, features = ["png"] }
+image = { version = "0.25.10", default-features = false, features = ["png", "jpeg"] }
 resvg = { version = "0.45.1", default-features = false }
 roxmltree = "0.20.0"
 serde = { version = "1.0.229", features = ["derive"] }

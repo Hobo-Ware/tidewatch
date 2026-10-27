@@ -1,7 +1,7 @@
 use super::*;
 
 fn said(role: Role, text: &str, ts: Option<i64>) -> Entry {
-    Entry { role, text: text.to_owned(), tool: None, ts }
+    Entry { role, text: text.to_owned(), tool: None, ts, images: Vec::new() }
 }
 
 fn agent(text: &str) -> Vec<Entry> {

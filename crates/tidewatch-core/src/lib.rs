@@ -114,6 +114,7 @@ pub mod status;
 pub mod test_command;
 pub mod tools;
 pub mod transcript;
+pub mod transcript_image;
 pub mod transcript_locate;
 pub mod trust;
 pub mod trust_apply;

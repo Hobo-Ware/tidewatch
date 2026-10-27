@@ -53,10 +53,19 @@ pub fn classify(text: &str) -> Record {
 }
 
 /// Turns a user text into the markdown the chat bubble draws: `[Image #1]` becomes a small code
-/// chip `Image 1`, and a single line break stays a line break instead of folding into a space.
+/// chip `Image 1` with a space after it, unless its number is in `shown` (the bubble draws that
+/// picture itself), when the marker and the space beside it go. A single line break stays a line
+/// break instead of folding into a space.
 #[must_use]
-pub fn chat_markdown(text: &str) -> String {
-    keep_line_breaks(&image_chips(&crate::github_html::scrub(text)))
+pub fn chat_markdown(text: &str, shown: &[u32]) -> String {
+    keep_line_breaks(&image_chips(&crate::github_html::scrub(text), shown))
+}
+
+/// `text` with every `[Image #N]` marker taken out and the spacing around each one tidied, for a
+/// label that has no room for a picture.
+#[must_use]
+pub fn without_image_markers(text: &str) -> String {
+    image_chips(text, &image_numbers(text))
 }
 
 /// Whether some line of `text` opens a list item or a quote, which the bubble indents.
@@ -245,25 +254,62 @@ fn unwrap_pasted(text: &str) -> String {
     out.trim().to_owned()
 }
 
-fn image_chips(text: &str) -> String {
-    let mut out = String::with_capacity(text.len());
-    let mut rest = text;
-    while let Some(at) = rest.find(IMAGE_MARKER) {
-        let digits = &rest[at + IMAGE_MARKER.len()..];
+fn markers(text: &str) -> Vec<(std::ops::Range<usize>, u32)> {
+    let mut found = Vec::new();
+    let mut from = 0;
+    while let Some(at) = text[from..].find(IMAGE_MARKER).map(|at| at + from) {
+        let digits = &text[at + IMAGE_MARKER.len()..];
         let len = digits.bytes().take_while(u8::is_ascii_digit).count();
         if len == 0 || !digits[len..].starts_with(']') {
-            out.push_str(&rest[..at + IMAGE_MARKER.len()]);
-            rest = digits;
+            from = at + IMAGE_MARKER.len();
             continue;
         }
-        out.push_str(&rest[..at]);
-        out.push_str("`Image ");
-        out.push_str(&digits[..len]);
-        out.push('`');
-        rest = &digits[len + 1..];
+        let end = at + IMAGE_MARKER.len() + len + 1;
+        if let Ok(number) = digits[..len].parse() {
+            found.push((at..end, number));
+        }
+        from = end;
     }
-    out.push_str(rest);
-    out
+    found
+}
+
+/// The numbers of the `[Image #N]` markers of `text`, in the order they appear.
+#[must_use]
+pub fn image_numbers(text: &str) -> Vec<u32> {
+    markers(text).into_iter().map(|(_, number)| number).collect()
+}
+
+fn image_chips(text: &str, shown: &[u32]) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut last = 0;
+    let mut removed = false;
+    for (range, number) in markers(text) {
+        out.push_str(&text[last..range.start]);
+        let after = &text[range.end..];
+        if shown.contains(&number) {
+            removed = true;
+            let own_place = out.is_empty() || out.ends_with([' ', '\t', '\n']);
+            let skipped = if own_place {
+                after.len() - after.trim_start_matches([' ', '\t']).len()
+            } else {
+                0
+            };
+            if after[skipped..].starts_with(['.', ',', ';', ':', '!', '?', ')']) {
+                out.truncate(out.trim_end_matches([' ', '\t']).len());
+            }
+            last = range.end + skipped;
+        } else {
+            out.push_str("`Image ");
+            out.push_str(&number.to_string());
+            out.push('`');
+            if after.chars().next().is_some_and(|next| !next.is_whitespace()) {
+                out.push(' ');
+            }
+            last = range.end;
+        }
+    }
+    out.push_str(&text[last..]);
+    if removed { out.trim().to_owned() } else { out }
 }
 
 fn keep_line_breaks(text: &str) -> String {
@@ -454,8 +500,62 @@ mod tests {
             ("[Image] stays", "[Image] stays"),
         ];
         for (input, want) in cases {
-            assert_eq!(image_chips(input), want, "input {input:?}");
+            assert_eq!(image_chips(input, &[]), want, "input {input:?}");
         }
+    }
+
+    #[test]
+    fn a_chip_never_runs_into_the_text_after_it() {
+        let cases = [
+            ("[Image #2]Also this", "`Image 2` Also this"),
+            ("[Image #2]\nAlso this", "`Image 2`\nAlso this"),
+            ("[Image #2] Also this", "`Image 2` Also this"),
+            ("see [Image #1].", "see `Image 1` ."),
+            ("[Image #1][Image #2]x", "`Image 1` `Image 2` x"),
+        ];
+        for (input, want) in cases {
+            assert_eq!(image_chips(input, &[]), want, "input {input:?}");
+        }
+    }
+
+    #[test]
+    fn a_marker_whose_picture_is_drawn_goes_and_one_without_stays_a_chip() {
+        let cases = [
+            ("[Image #2]Also this", &[2][..], "Also this"),
+            ("[Image #2] Also this", &[2], "Also this"),
+            ("[Image #1]\n\nwhat is this", &[1], "what is this"),
+            ("see [Image #1] here", &[1], "see here"),
+            ("[Image #1]", &[1], ""),
+            ("[Image #1][Image #2] both", &[1, 2], "both"),
+            ("[Image #1] and [Image #2] x", &[1], "and `Image 2` x"),
+            ("[Image #1] and [Image #2] x", &[2], "`Image 1` and x"),
+            ("[Image #3] x", &[1, 2], "`Image 3` x"),
+            ("What is [Image #5]?", &[5], "What is?"),
+        ];
+        for (input, shown, want) in cases {
+            assert_eq!(image_chips(input, shown), want, "input {input:?} shown {shown:?}");
+        }
+    }
+
+    #[test]
+    fn a_label_text_loses_every_marker_and_keeps_its_words() {
+        let cases = [
+            ("[Image #2]Also this should just be costs", "Also this should just be costs"),
+            ("[Image #1] [Image #2] compare", "compare"),
+            ("see [Image #3] now", "see now"),
+            ("[Image #1]", ""),
+            ("[Image #1]\n\n[Image #2]", ""),
+            ("no markers [Image] here", "no markers [Image] here"),
+        ];
+        for (input, want) in cases {
+            assert_eq!(without_image_markers(input), want, "input {input:?}");
+        }
+    }
+
+    #[test]
+    fn the_marker_numbers_come_in_reading_order() {
+        assert_eq!(image_numbers("[Image #9] a [Image #x] b [Image #10]"), [9, 10]);
+        assert_eq!(image_numbers("none"), Vec::<u32>::new());
     }
 
     #[test]
@@ -469,7 +569,7 @@ mod tests {
             ("[Image #1]\nwhat is this", "`Image 1`  \nwhat is this"),
         ];
         for (input, want) in cases {
-            assert_eq!(chat_markdown(input), want, "input {input:?}");
+            assert_eq!(chat_markdown(input, &[]), want, "input {input:?}");
         }
     }
 

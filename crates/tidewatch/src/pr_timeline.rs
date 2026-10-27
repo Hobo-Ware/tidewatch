@@ -253,7 +253,13 @@ mod tests {
     #[test]
     fn the_readers_rows_carry_their_entry_times() {
         let mut rows = Rows::default();
-        let entry = |role, text: &str, ts| Entry { role, text: text.into(), tool: None, ts };
+        let entry = |role, text: &str, ts| Entry {
+            role,
+            text: text.into(),
+            tool: None,
+            ts,
+            images: Vec::new(),
+        };
         rows.push_all(vec![
             entry(Role::Assistant, "before", Some(100)),
             entry(Role::User, "fix it", Some(1_100)),
