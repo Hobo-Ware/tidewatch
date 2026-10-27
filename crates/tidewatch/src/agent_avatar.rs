@@ -61,11 +61,11 @@ pub(crate) fn texture(ctx: &Context, avatar: &Avatar, px: u32) -> Option<Texture
     made
 }
 
-fn plate(painter: &egui::Painter, rect: Rect, fill: Color32) {
+pub(crate) fn plate(painter: &egui::Painter, rect: Rect, fill: Color32) {
     painter.circle_filled(rect.center(), rect.width().min(rect.height()) / 2.0, fill);
 }
 
-fn ring(painter: &egui::Painter, rect: Rect) {
+pub(crate) fn ring(painter: &egui::Painter, rect: Rect) {
     let radius = rect.width().min(rect.height()) / 2.0 - 0.5;
     painter.circle_stroke(rect.center(), radius, Stroke::new(1.0, brand::FACE_RING));
 }
