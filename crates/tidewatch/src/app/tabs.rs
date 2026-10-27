@@ -3,7 +3,8 @@
 use std::hash::{BuildHasher, Hasher, RandomState};
 
 use stdusk_core::terminal::PtyTerm;
-use tidewatch_core::worktree::BranchOutcome;
+use tidewatch_core::worktree::{BranchOutcome, Terms, Why};
+use tidewatch_core::worktree_safety::Owner;
 
 use super::{Closing, Tidewatch};
 use crate::close_dialog::{self, Answer, Choice};
@@ -191,9 +192,11 @@ impl Tidewatch {
             }
             ClosePolicy::Wait => {}
             ClosePolicy::Confirm(worktree) => {
-                if self.closing.is_none() {
+                if self.closing.is_none()
+                    && let Some(paths) = self.paths.clone()
+                {
                     self.closing = Some(Closing::Inspecting(id));
-                    worktree_jobs::inspect(&self.jobs, ctx, id, worktree);
+                    worktree_jobs::inspect(&self.jobs, ctx, paths, id, worktree);
                 }
             }
         }
@@ -227,9 +230,8 @@ impl Tidewatch {
                     return;
                 };
                 let trust = self.trust.grant();
-                worktree_jobs::remove(
-                    &self.jobs, ctx, paths, tab, shell, worktree, branch, mode, trust,
-                );
+                let terms = Terms::new(branch, mode).why(Why::ClosedTab).owner(Owner::ThisWindow);
+                worktree_jobs::remove(&self.jobs, ctx, paths, tab, shell, worktree, terms, trust);
             }
         }
     }
@@ -261,13 +263,14 @@ impl Tidewatch {
                     self.close_tab(index, ctx);
                 }
             }
-            Done::Inspected { tab, worktree, inspection } => {
+            Done::Inspected { tab, worktree, safety } => {
                 if !matches!(self.closing, Some(Closing::Inspecting(id)) if id == tab) {
                     return;
                 }
-                self.closing = Some(Closing::Asking { tab, worktree, inspection });
+                let dev_choice = close_dialog::choices(&safety).get(1).copied();
+                self.closing = Some(Closing::Asking { tab, worktree, safety });
                 if self.dev.is_some_and(DevWorktree::answers_the_dialog)
-                    && let Some(choice) = close_dialog::choices(&inspection).get(1).copied()
+                    && let Some(choice) = dev_choice
                 {
                     self.answer_close(Answer::Pick(choice), ctx);
                 }
@@ -276,8 +279,20 @@ impl Tidewatch {
                 Ok(outcome) => {
                     self.tabs.remove_id(tab);
                     self.forget_tab(tab);
-                    if let BranchOutcome::DeleteFailed(message) = outcome {
-                        eprintln!("tidewatch: worktree removed, branch kept: {message}");
+                    match outcome {
+                        BranchOutcome::Kept | BranchOutcome::Deleted { restore: None } => {}
+                        BranchOutcome::Deleted { restore: Some(command) } => {
+                            self.show_toast(
+                                format!("Branch deleted. To bring it back: {command}"),
+                                ctx,
+                            );
+                        }
+                        BranchOutcome::DeleteFailed(message) => {
+                            self.show_toast(
+                                format!("Worktree removed, branch kept: {message}"),
+                                ctx,
+                            );
+                        }
                     }
                 }
                 Err(message) => {

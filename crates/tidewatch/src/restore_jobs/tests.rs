@@ -258,6 +258,24 @@ fn a_removed_worktree_is_skipped_and_an_uninstalled_agent_falls_back_to_a_shell(
 }
 
 #[test]
+fn a_saved_tab_whose_worktree_git_cannot_read_stays_owned_and_comes_back_as_a_shell() {
+    let f = fixture();
+    save(&f, vec![window(&f.repo, vec![SavedTab::Main, shell_tab(&f.worktree)])]);
+    std::fs::write(f.worktree.path.join(".git"), "gitdir: /nowhere/at/all\n").unwrap();
+
+    let started = run(&spec(&f, false));
+
+    assert_eq!(started.leftovers, [], "a saved tab's worktree is never offered as a leftover");
+    let plan = started.plan.expect("the window is planned");
+    assert_eq!(plan.skipped, []);
+    assert_eq!(plan.tabs.len(), 2);
+    assert_eq!(plan.tabs[1].action, TabAction::ShellInstead(Reason::WorktreeBroken));
+    assert_eq!(plan.tabs[1].worktree.as_ref(), Some(&f.worktree));
+    assert!(plan.tabs[1].note().is_some());
+    assert!(f.worktree.path.exists());
+}
+
+#[test]
 fn a_moved_repo_is_repaired_and_its_window_is_saved_under_the_new_folder() {
     let f = fixture();
     let old = f.repo.clone();

@@ -21,7 +21,8 @@ use crate::pr_glue::Applied;
 use crate::pr_watch::{Facts, Out, STAYS, Watch};
 use crate::worktree_jobs;
 use crate::{flow_glue, layout, pr_strip};
-use tidewatch_core::worktree::{BranchChoice, RemoveMode};
+use tidewatch_core::worktree::{BranchChoice, RemoveMode, Terms, Why};
+use tidewatch_core::worktree_safety::Owner;
 
 fn now_ms() -> i64 {
     wall_ms() as i64
@@ -181,17 +182,11 @@ impl Tidewatch {
             return;
         };
         let trust = self.trust.grant();
-        worktree_jobs::remove(
-            &self.jobs,
-            ctx,
-            paths,
-            tab,
-            shell,
-            worktree,
-            BranchChoice::Delete,
-            RemoveMode::Safe,
-            trust,
-        );
+        let terms = Terms::new(BranchChoice::Delete, RemoveMode::Safe)
+            .why(Why::MergedTab)
+            .owner(Owner::ThisWindow)
+            .delivered(self.pr.watch(tab).and_then(crate::pr_watch::Watch::pr_head));
+        worktree_jobs::remove(&self.jobs, ctx, paths, tab, shell, worktree, terms, trust);
     }
 
     fn open_pr_page(&mut self, url: &str, ctx: &egui::Context) {

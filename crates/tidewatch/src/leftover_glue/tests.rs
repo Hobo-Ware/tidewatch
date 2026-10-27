@@ -2,7 +2,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{Duration, Instant};
 
-use tidewatch_core::worktree::{self, Worktree};
+use tidewatch_core::worktree::{self, BranchChoice, Worktree};
 
 use super::*;
 
@@ -38,7 +38,7 @@ impl Fixture {
         git(&repo, &["commit", "-q", "--allow-empty", "-m", "init"]);
         Self {
             paths: TidewatchPaths::new(&home),
-            host: Host::new(),
+            host: Host::new(Some(TidewatchPaths::new(&home))),
             ctx: egui::Context::default(),
             toasts: Vec::new(),
             repo,
@@ -77,16 +77,22 @@ fn commit(wt: &Worktree, file: &str) {
     git(&wt.path, &["commit", "-q", "-m", file]);
 }
 
+fn branch_exists(f: &Fixture, wt: &Worktree) -> bool {
+    git(&f.repo, &["branch", "--list", &wt.branch]).contains(&wt.branch)
+}
+
 #[test]
-fn clean_up_removes_the_clean_ones_keeps_a_branch_with_commits_and_leaves_the_dirty_one() {
+fn clean_up_removes_only_the_worktrees_proven_safe_and_leaves_the_rest_whole() {
     let mut f = Fixture::new();
     let clean = f.worktree();
     let committed = f.worktree();
     commit(&committed, "work.txt");
     let dirty = f.worktree();
     std::fs::write(dirty.path.join("precious.txt"), "keep").unwrap();
+    let broken = f.worktree();
+    std::fs::write(broken.path.join(".git"), "gitdir: /nowhere/at/all\n").unwrap();
     f.scan();
-    assert_eq!(f.host.leftovers.len(), 3);
+    assert_eq!(f.host.leftovers.len(), 4);
 
     f.host.open(&f.ctx);
     assert!(f.host.is_open());
@@ -94,23 +100,47 @@ fn clean_up_removes_the_clean_ones_keeps_a_branch_with_commits_and_leaves_the_di
     f.answer(&Answer::CleanUp);
     f.settle();
 
-    assert!(!clean.path.exists() && !committed.path.exists());
-    assert_eq!(git(&f.repo, &["branch", "--list", &clean.branch]).trim(), "", "empty branch went");
-    assert!(
-        git(&f.repo, &["branch", "--list", &committed.branch]).contains(&committed.branch),
-        "the branch with a commit stayed"
-    );
+    assert!(!clean.path.exists());
+    assert!(!branch_exists(&f, &clean), "the proven-safe branch went");
+    assert!(committed.path.exists(), "unpushed commits keep the whole worktree");
+    assert!(branch_exists(&f, &committed));
     assert_eq!(std::fs::read_to_string(dirty.path.join("precious.txt")).unwrap(), "keep");
+    assert!(broken.path.exists(), "a worktree git cannot read is never removed");
+    assert!(branch_exists(&f, &broken));
+    assert_eq!(f.host.leftovers.len(), 3);
+    assert_eq!(f.toasts.len(), 1);
+    assert!(
+        f.toasts[0]
+            .starts_with("Removed 1 leftover worktree. To bring the branch back: git branch ")
+    );
+    assert!(f.toasts[0].contains(&clean.branch), "{:?}", f.toasts);
+}
+
+#[cfg(unix)]
+#[test]
+fn a_process_running_in_a_leftover_keeps_it_out_of_clean_up() {
+    let mut f = Fixture::new();
+    let live = f.worktree();
+    let mut child = Command::new("sleep").arg("30").current_dir(&live.path).spawn().unwrap();
+    f.scan();
+    f.host.open(&f.ctx);
+    f.settle();
+    f.answer(&Answer::CleanUp);
+    f.settle();
+    let removed = !live.path.exists();
+    child.kill().unwrap();
+    child.wait().unwrap();
+    assert!(!removed, "a running agent's folder is never cleaned up from under it");
     assert_eq!(f.host.leftovers.len(), 1);
-    assert_eq!(f.host.leftovers[0].path, dirty.path);
-    assert_eq!(f.toasts, ["Removed 2 leftover worktrees"]);
 }
 
 #[test]
-fn a_dirty_worktree_goes_only_through_its_own_discard() {
+fn a_worktree_that_is_not_safe_goes_only_through_its_own_discard_and_the_removal_is_logged() {
     let mut f = Fixture::new();
     let dirty = f.worktree();
     std::fs::write(dirty.path.join("scratch.txt"), "x").unwrap();
+    commit(&dirty, "work.txt");
+    std::fs::write(dirty.path.join("scratch.txt"), "y").unwrap();
     f.scan();
     f.host.open(&f.ctx);
     f.settle();
@@ -119,21 +149,41 @@ fn a_dirty_worktree_goes_only_through_its_own_discard() {
     assert!(dirty.path.exists(), "Clean up never discards");
     assert_eq!(f.toasts, Vec::<String>::new());
 
-    f.answer(&Answer::Discard(dirty.path.clone()));
+    f.answer(&Answer::Discard(dirty.path.clone(), BranchChoice::Delete));
     f.settle();
     assert!(!dirty.path.exists());
+    assert!(!branch_exists(&f, &dirty));
     assert_eq!(f.host.leftovers.len(), 0);
-    assert_eq!(f.toasts, ["Removed 1 leftover worktree"]);
+    let logged = tidewatch_core::removal_log::load(&f.paths);
+    assert_eq!(logged.len(), 1);
+    assert_eq!(logged[0].branch, dirty.branch);
+    assert!(logged[0].sha.is_some());
+    assert_eq!(f.toasts.len(), 1);
+    assert!(f.toasts[0].contains("git branch"), "{:?}", f.toasts);
 }
 
 #[test]
-fn discard_does_nothing_for_a_clean_worktree_and_close_ends_the_dialog() {
+fn a_discard_that_keeps_the_branch_leaves_it_in_the_repo() {
+    let mut f = Fixture::new();
+    let wt = f.worktree();
+    commit(&wt, "work.txt");
+    f.scan();
+    f.host.open(&f.ctx);
+    f.settle();
+    f.answer(&Answer::Discard(wt.path.clone(), BranchChoice::Keep));
+    f.settle();
+    assert!(!wt.path.exists());
+    assert!(branch_exists(&f, &wt));
+}
+
+#[test]
+fn discard_does_nothing_for_a_worktree_proven_safe_and_close_ends_the_dialog() {
     let mut f = Fixture::new();
     let clean = f.worktree();
     f.scan();
     f.host.open(&f.ctx);
     f.settle();
-    f.answer(&Answer::Discard(clean.path.clone()));
+    f.answer(&Answer::Discard(clean.path.clone(), BranchChoice::Delete));
     f.settle();
     assert!(clean.path.exists());
     f.answer(&Answer::Close);

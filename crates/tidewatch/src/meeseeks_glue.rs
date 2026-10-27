@@ -17,6 +17,7 @@ use tidewatch_core::paths::TidewatchPaths;
 use tidewatch_core::tools::Tools;
 use tidewatch_core::trust_apply::Grant;
 use tidewatch_core::worktree::{self, Worktree};
+use tidewatch_core::worktree_safety::Owner;
 
 use crate::jobs::Jobs;
 
@@ -147,10 +148,9 @@ pub(crate) fn run_poof<T>(
     worktree: &Worktree,
     trust: Option<&Grant>,
 ) -> Done<T> {
-    let changed = worktree::inspect(worktree).changed;
-    if changed > 0 {
-        let files = if changed == 1 { "file" } else { "files" };
-        let why = format!("{changed} {files} with uncommitted changes");
+    let safety = worktree::inspect(paths, worktree, Owner::ThisWindow);
+    if !safety.folder_is_safe() {
+        let why = safety.reasons().join(", ");
         return Done::Refused { tab, why, shell: Some(shell) };
     }
     drop(shell);

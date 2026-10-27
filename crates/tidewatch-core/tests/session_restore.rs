@@ -218,11 +218,9 @@ fn without_the_repair_a_moved_repo_cuts_its_worktree_tabs_off() {
 
     session.windows[0].dir = moved;
     let unrepaired = plan(&f, &session.windows[0]);
-    assert_eq!(
-        unrepaired.skipped,
-        [restore::Skipped { label: f.worktree.name().to_owned(), reason: Reason::WorktreeBroken }]
-    );
-    assert_eq!(unrepaired.tabs.len(), 1, "the main tab still opens");
+    assert_eq!(unrepaired.skipped, []);
+    assert_eq!(unrepaired.tabs.len(), 2, "the broken worktree's tab comes back as a shell");
+    assert_eq!(unrepaired.tabs[1].action, TabAction::ShellInstead(Reason::WorktreeBroken));
 }
 
 #[test]
@@ -242,7 +240,7 @@ fn repair_moved_leaves_other_repos_and_known_windows_alone() {
 fn a_removed_worktree_is_skipped_as_gone() {
     let f = fixture();
     let session = session_for(&f.repo, &f.worktree);
-    worktree::remove(&f.paths, &f.worktree, BranchChoice::Keep, RemoveMode::Safe).unwrap();
+    worktree::remove(&f.paths, &f.worktree, BranchChoice::Keep, RemoveMode::Discard).unwrap();
 
     let plan = plan(&f, &session.windows[0]);
 

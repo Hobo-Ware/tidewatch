@@ -15,6 +15,8 @@ use serde::{Deserialize, Serialize};
 use crate::names;
 use crate::paths::TidewatchPaths;
 use crate::registry;
+use crate::removal_log;
+use crate::worktree_safety::{Facts, Owner, Safety, Watch, assess, with_machine};
 
 pub const BRANCH_PREFIX: &str = "agent/";
 const LOCK_REASON: &str = "tidewatch";
@@ -39,8 +41,8 @@ impl Worktree {
 pub enum WorktreeError {
     /// git refused; carries its message.
     Git(String),
-    /// Uncommitted changes, and the caller did not pass an explicit discard.
-    Dirty { changed: usize },
+    /// Removal was not proven safe, and the caller did not pass an explicit discard.
+    Unsafe(Safety),
     /// The target folder already holds something.
     PathTaken(PathBuf),
     /// git could not be started, or the disk refused.
@@ -51,19 +53,13 @@ impl fmt::Display for WorktreeError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Git(message) | Self::Io(message) => f.write_str(message),
-            Self::Dirty { changed } => {
-                write!(f, "{changed} file{} with uncommitted changes", plural(*changed))
-            }
+            Self::Unsafe(safety) => write!(f, "not removed: {}", safety.reasons().join(", ")),
             Self::PathTaken(path) => write!(f, "{} already exists", path.display()),
         }
     }
 }
 
 impl std::error::Error for WorktreeError {}
-
-fn plural(n: usize) -> &'static str {
-    if n == 1 { "" } else { "s" }
-}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum BranchChoice {
@@ -73,26 +69,82 @@ pub enum BranchChoice {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum RemoveMode {
-    /// Refuse a worktree with uncommitted changes.
+    /// Remove only what is proven safe to lose nothing.
     Safe,
-    /// The caller asked explicitly: uncommitted changes are thrown away.
+    /// The caller asked explicitly, with the loss in front of them: whatever the check found is
+    /// thrown away.
     Discard,
+}
+
+/// Why a worktree is being removed, for the removal log.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Why {
+    ClosedTab,
+    MergedTab,
+    Poofed,
+    Leftover,
+    Rollback,
+    Other,
+}
+
+impl Why {
+    #[must_use]
+    pub fn text(self) -> &'static str {
+        match self {
+            Self::ClosedTab => "closed tab",
+            Self::MergedTab => "merged pull request",
+            Self::Poofed => "meeseeks poofed",
+            Self::Leftover => "leftover worktree",
+            Self::Rollback => "failed move rolled back",
+            Self::Other => "removed",
+        }
+    }
+}
+
+/// How a removal is asked for. The defaults are the strictest: nobody owns the worktree and no
+/// commits are known to be delivered.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Terms {
+    pub branch: BranchChoice,
+    pub mode: RemoveMode,
+    pub why: Why,
+    pub owner: Owner,
+    /// A commit, such as a merged pull request's head, that holds what the branch had: commits it
+    /// reaches are delivered even when no branch or remote has them.
+    pub delivered: Option<String>,
+}
+
+impl Terms {
+    #[must_use]
+    pub fn new(branch: BranchChoice, mode: RemoveMode) -> Self {
+        Self { branch, mode, why: Why::Other, owner: Owner::Nobody, delivered: None }
+    }
+
+    #[must_use]
+    pub fn why(self, why: Why) -> Self {
+        Self { why, ..self }
+    }
+
+    #[must_use]
+    pub fn owner(self, owner: Owner) -> Self {
+        Self { owner, ..self }
+    }
+
+    #[must_use]
+    pub fn delivered(self, delivered: Option<String>) -> Self {
+        Self { delivered, ..self }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum BranchOutcome {
     Kept,
-    Deleted,
+    /// The branch is gone; `restore` is the command that brings it back.
+    Deleted {
+        restore: Option<String>,
+    },
     /// The worktree is gone but git would not delete the branch.
     DeleteFailed(String),
-}
-
-/// What closing a worktree would throw away.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct Inspection {
-    pub changed: usize,
-    /// Commits on the branch that no other branch or remote has.
-    pub unmerged: usize,
 }
 
 /// One entry of `git worktree list`.
@@ -296,49 +348,134 @@ fn relock(worktree: &Worktree) {
     let _ = command.output();
 }
 
-/// Counts what closing the worktree would lose, for the close dialog.
+/// Whether the worktree can go without losing work. Anything git or the machine cannot answer
+/// is `Unknown`, never zero.
 #[must_use]
-pub fn inspect(worktree: &Worktree) -> Inspection {
-    Inspection { changed: changed_files(&worktree.path), unmerged: unmerged_commits(worktree) }
+pub fn inspect(paths: &TidewatchPaths, worktree: &Worktree, owner: Owner) -> Safety {
+    with_machine(paths, owner, |watch| inspect_watched(worktree, None, watch))
 }
 
-fn changed_files(path: &Path) -> usize {
-    if !path.exists() {
-        return 0;
+#[must_use]
+pub fn inspect_watched(worktree: &Worktree, delivered: Option<&str>, watch: &dyn Watch) -> Safety {
+    let path = &worktree.path;
+    let there = path.exists();
+    assess(Facts {
+        changed: changed_files(worktree),
+        unmerged: unmerged_commits(worktree, delivered),
+        holders: if there { watch.holders(path) } else { Ok(Vec::new()) },
+        session_age: if there { watch.session_age(path) } else { None },
+    })
+}
+
+fn confirm_worktree(worktree: &Worktree) -> Result<(), String> {
+    if !worktree.path.exists() {
+        return Ok(());
     }
-    let mut command = git(path);
-    command.args(["status", "--porcelain"]);
-    run(command).map_or(0, |out| out.lines().filter(|l| !l.trim().is_empty()).count())
+    if !worktree.path.join(".git").is_file() {
+        return Err("the folder is not a git worktree".to_owned());
+    }
+    if belongs_to(&worktree.repo, &worktree.path) {
+        Ok(())
+    } else {
+        Err("the folder no longer belongs to its repository".to_owned())
+    }
 }
 
-fn unmerged_commits(worktree: &Worktree) -> usize {
-    let mut command = git(&worktree.repo);
-    command
+fn changed_files(worktree: &Worktree) -> Result<usize, String> {
+    confirm_worktree(worktree)?;
+    if !worktree.path.exists() {
+        return Ok(0);
+    }
+    let mut command = git(&worktree.path);
+    command.args(["status", "--porcelain"]);
+    let out = run(command).map_err(|e| format!("git status failed: {e}"))?;
+    Ok(out.lines().filter(|l| !l.trim().is_empty()).count())
+}
+
+fn count_of(command: Command, what: &str) -> Result<usize, String> {
+    let out = run(command).map_err(|e| format!("could not count {what}: {e}"))?;
+    out.trim().parse().map_err(|_| format!("could not count {what}: unexpected output"))
+}
+
+fn object_exists(repo: &Path, id: &str) -> bool {
+    let mut command = git(repo);
+    command.args(["cat-file", "-e"]).arg(format!("{id}^{{commit}}"));
+    succeeds(command)
+}
+
+/// Commits that live on the branch, or on the worktree's own HEAD, and nowhere else.
+fn unmerged_commits(worktree: &Worktree, delivered: Option<&str>) -> Result<usize, String> {
+    let delivered = delivered.filter(|id| object_exists(&worktree.repo, id));
+    let mut on_branch = git(&worktree.repo);
+    on_branch
         .args(["rev-list", "--count", &worktree.branch, "--not"])
         .arg(format!("--exclude={}", worktree.branch))
-        .args(["--branches", "--remotes", "--tags"]);
-    run(command).ok().and_then(|out| out.trim().parse().ok()).unwrap_or(0)
+        .args(["--branches", "--remotes", "--tags"])
+        .args(delivered);
+    let mut total = count_of(on_branch, "the commits on its branch")?;
+    if worktree.path.exists() && confirm_worktree(worktree).is_ok() {
+        let mut on_head = git(&worktree.path);
+        on_head
+            .args(["rev-list", "--count", "HEAD", "--not", "--branches", "--remotes", "--tags"])
+            .args(delivered);
+        total += count_of(on_head, "the commits on its HEAD")?;
+    }
+    Ok(total)
 }
 
-/// Removes the worktree folder and its git registration, then keeps or deletes the branch.
-/// `Safe` refuses uncommitted changes; `Discard` is the caller's explicit choice to lose them.
-/// A failed removal puts the lock back so the worktree stays protected.
+fn rev_of(dir: &Path, rev: &str) -> Option<String> {
+    let mut command = git(dir);
+    command.args(["rev-parse", "--verify", "--quiet", rev]);
+    run(command).ok().map(|out| out.trim().to_owned()).filter(|id| !id.is_empty())
+}
+
+fn allowed(safety: &Safety, branch: BranchChoice) -> bool {
+    match branch {
+        BranchChoice::Keep => safety.folder_is_safe(),
+        BranchChoice::Delete => safety.is_safe(),
+    }
+}
+
+/// [`remove_with`] on the strictest terms: nobody owns the worktree.
 pub fn remove(
     paths: &TidewatchPaths,
     worktree: &Worktree,
     branch: BranchChoice,
     mode: RemoveMode,
 ) -> Result<BranchOutcome, WorktreeError> {
-    if mode == RemoveMode::Safe {
-        let changed = changed_files(&worktree.path);
-        if changed > 0 {
-            return Err(WorktreeError::Dirty { changed });
-        }
+    remove_with(paths, worktree, &Terms::new(branch, mode))
+}
+
+pub fn remove_with(
+    paths: &TidewatchPaths,
+    worktree: &Worktree,
+    terms: &Terms,
+) -> Result<BranchOutcome, WorktreeError> {
+    with_machine(paths, terms.owner, |watch| remove_watched(paths, worktree, terms, watch))
+}
+
+/// Removes the worktree folder and its git registration, then keeps or deletes the branch.
+/// `Safe` goes ahead only when the check proves nothing is lost: a clean tree, every commit also
+/// somewhere else, no process in the folder, no recent agent session. A branch that is deleted goes
+/// with `git branch -d`, except after a discard or for commits `terms.delivered` holds. The branch
+/// and its commit are written to the removal log first; a failed removal puts the lock back.
+pub fn remove_watched(
+    paths: &TidewatchPaths,
+    worktree: &Worktree,
+    terms: &Terms,
+    watch: &dyn Watch,
+) -> Result<BranchOutcome, WorktreeError> {
+    let safety = inspect_watched(worktree, terms.delivered.as_deref(), watch);
+    if terms.mode == RemoveMode::Safe && !allowed(&safety, terms.branch) {
+        return Err(WorktreeError::Unsafe(safety));
     }
+    let entry = removal_entry(worktree, terms, &safety);
+    removal_log::append(paths, &entry)
+        .map_err(|e| WorktreeError::Io(format!("cannot write the removal log: {e}")))?;
     unlock(worktree);
     let mut command = git(&worktree.repo);
     command.args(["worktree", "remove"]);
-    if mode == RemoveMode::Discard || !worktree.path.exists() {
+    if terms.mode == RemoveMode::Discard || !worktree.path.exists() {
         command.arg("--force");
     }
     command.arg(&worktree.path);
@@ -346,9 +483,12 @@ pub fn remove(
         relock(worktree);
         return Err(error);
     }
-    let outcome = match branch {
+    let outcome = match terms.branch {
         BranchChoice::Keep => BranchOutcome::Kept,
-        BranchChoice::Delete => delete_branch(worktree),
+        BranchChoice::Delete => {
+            let force = terms.mode == RemoveMode::Discard || terms.delivered.is_some();
+            delete_branch(worktree, force, entry.restore_command())
+        }
     };
     if let Err(e) = registry::forget(paths, &worktree.path) {
         eprintln!("tidewatch: cannot update the worktree registry: {e}");
@@ -361,11 +501,42 @@ pub fn remove(
     Ok(outcome)
 }
 
-fn delete_branch(worktree: &Worktree) -> BranchOutcome {
+fn removal_entry(worktree: &Worktree, terms: &Terms, safety: &Safety) -> removal_log::Entry {
+    let loses_branch = terms.branch == BranchChoice::Delete;
+    let mut lost: Vec<String> = match safety {
+        Safety::Unsafe(risks) => risks
+            .iter()
+            .filter(|risk| risk.is_in_folder() || loses_branch)
+            .map(crate::worktree_safety::Risk::text)
+            .collect(),
+        other => other.reasons(),
+    };
+    if terms.mode == RemoveMode::Safe {
+        lost.clear();
+    }
+    removal_log::Entry {
+        at: removal_log::Entry::now(),
+        why: terms.why.text().to_owned(),
+        path: worktree.path.clone(),
+        repo: worktree.repo.clone(),
+        branch: worktree.branch.clone(),
+        sha: rev_of(&worktree.repo, &format!("refs/heads/{}", worktree.branch)),
+        head: worktree.path.exists().then(|| rev_of(&worktree.path, "HEAD")).flatten(),
+        mode: match terms.mode {
+            RemoveMode::Safe => "safe",
+            RemoveMode::Discard => "discard",
+        }
+        .to_owned(),
+        branch_kept: terms.branch == BranchChoice::Keep,
+        lost,
+    }
+}
+
+fn delete_branch(worktree: &Worktree, force: bool, restore: Option<String>) -> BranchOutcome {
     let mut command = git(&worktree.repo);
-    command.args(["branch", "-D", &worktree.branch]);
+    command.args(["branch", if force { "-D" } else { "-d" }, &worktree.branch]);
     match run(command) {
-        Ok(_) => BranchOutcome::Deleted,
+        Ok(_) => BranchOutcome::Deleted { restore },
         Err(error) => BranchOutcome::DeleteFailed(error.to_string()),
     }
 }
@@ -514,14 +685,14 @@ mod tests {
     }
 
     #[test]
-    fn dirty_error_counts_files() {
+    fn an_unsafe_error_lists_every_reason() {
+        let error = WorktreeError::Unsafe(Safety::Unsafe(vec![
+            crate::worktree_safety::Risk::Uncommitted { files: 1 },
+            crate::worktree_safety::Risk::Unpushed { commits: 3 },
+        ]));
         assert_eq!(
-            WorktreeError::Dirty { changed: 1 }.to_string(),
-            "1 file with uncommitted changes"
-        );
-        assert_eq!(
-            WorktreeError::Dirty { changed: 3 }.to_string(),
-            "3 files with uncommitted changes"
+            error.to_string(),
+            "not removed: 1 file with uncommitted changes, 3 commits found nowhere else (on no remote branch, not merged)"
         );
     }
 

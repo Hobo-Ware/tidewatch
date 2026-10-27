@@ -4,7 +4,7 @@
 
 use tidewatch_core::paths::TidewatchPaths;
 use tidewatch_core::trust_apply::Grant;
-use tidewatch_core::worktree::Leftover;
+use tidewatch_core::worktree::{BranchOutcome, Leftover};
 
 use crate::jobs::Jobs;
 use crate::leftover_jobs::{self, Done};
@@ -22,15 +22,24 @@ pub(crate) fn merge(known: &mut Vec<Leftover>, found: Vec<Leftover>) {
 }
 
 pub(crate) struct Host {
+    paths: Option<TidewatchPaths>,
     leftovers: Vec<Leftover>,
     jobs: Jobs<Done>,
     dialog: Option<Cleanup>,
     removed: usize,
+    restores: Vec<String>,
 }
 
 impl Host {
-    pub(crate) fn new() -> Self {
-        Self { leftovers: Vec::new(), jobs: Jobs::new(), dialog: None, removed: 0 }
+    pub(crate) fn new(paths: Option<TidewatchPaths>) -> Self {
+        Self {
+            paths,
+            leftovers: Vec::new(),
+            jobs: Jobs::new(),
+            dialog: None,
+            removed: 0,
+            restores: Vec::new(),
+        }
     }
 
     /// Adds what a startup scan found. Each repo of the window scans, and every scan sees the
@@ -64,10 +73,13 @@ impl Host {
             return;
         }
         let (cleanup, to_inspect) = Cleanup::open(&self.leftovers);
-        for worktree in to_inspect {
-            leftover_jobs::inspect(&self.jobs, ctx, worktree);
+        if let Some(paths) = &self.paths {
+            for worktree in to_inspect {
+                leftover_jobs::inspect(&self.jobs, ctx, paths.clone(), worktree);
+            }
         }
         self.removed = 0;
+        self.restores.clear();
         self.dialog = Some(cleanup);
     }
 
@@ -76,13 +88,16 @@ impl Host {
         let mut finished_removal = false;
         for done in self.jobs.drain() {
             match done {
-                Done::Inspected { path, inspection } => {
+                Done::Inspected { path, safety } => {
                     if let Some(dialog) = &mut self.dialog {
-                        dialog.inspected(&path, inspection);
+                        dialog.inspected(&path, safety);
                     }
                 }
                 Done::Removed { path, result } => {
                     finished_removal = true;
+                    if let Ok(BranchOutcome::Deleted { restore: Some(command) }) = &result {
+                        self.restores.push(command.clone());
+                    }
                     let gone = match &mut self.dialog {
                         Some(dialog) => dialog.removed(&path, result),
                         None => result.is_ok(),
@@ -97,7 +112,14 @@ impl Host {
         let settled = self.dialog.as_ref().is_none_or(|dialog| !dialog.busy());
         (finished_removal && settled && self.removed > 0).then(|| {
             let n = std::mem::take(&mut self.removed);
-            format!("Removed {n} leftover worktree{}", if n == 1 { "" } else { "s" })
+            let removed = format!("Removed {n} leftover worktree{}", if n == 1 { "" } else { "s" });
+            match std::mem::take(&mut self.restores).as_slice() {
+                [] => removed,
+                [command] => format!("{removed}. To bring the branch back: {command}"),
+                _ => format!(
+                    "{removed}. To bring a branch back, take its name and commit from .state/removals.log: git branch <name> <sha>"
+                ),
+            }
         })
     }
 
@@ -143,7 +165,9 @@ impl Host {
                 return;
             }
             Answer::CleanUp => dialog.clean_removals(),
-            Answer::Discard(path) => dialog.discard_removal(path).into_iter().collect(),
+            Answer::Discard(path, branch) => {
+                dialog.discard_removal(path, *branch).into_iter().collect()
+            }
         };
         let Some(paths) = paths else { return };
         for removal in removals {

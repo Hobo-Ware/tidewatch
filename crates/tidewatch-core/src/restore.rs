@@ -4,7 +4,9 @@
 //! [`plan`] is pure: it reads the saved [`Session`], the agent table, the profiles and a [`Disk`]
 //! that answers what exists now. [`RealDisk`] is the real answer; tests use a fake. The rules:
 //!
-//! - A tab whose repo, folder or worktree is gone is skipped: nothing is left to open it in.
+//! - A tab whose repo, folder or worktree is gone is skipped: nothing is left to open it in. A
+//!   worktree that is there but that git cannot read reopens as a shell in its folder, so it stays
+//!   owned and is never offered as a leftover.
 //! - `resume_agents` and how the agent last ended pick between running the resume command, typing
 //!   it for the user to run, and a plain shell (`resume_mode::decide`). A YOLO tab is always typed,
 //!   never run on its own. Workflow tabs go through the runner instead; a YOLO workflow run is
@@ -65,7 +67,7 @@ impl Reason {
             Self::RepoMissing => "repository folder missing".into(),
             Self::FolderMissing => "folder missing".into(),
             Self::WorktreeGone => "worktree folder gone".into(),
-            Self::WorktreeBroken => "worktree no longer belongs to its repository".into(),
+            Self::WorktreeBroken => "git could not read its worktree".into(),
             Self::Yolo => "YOLO workflow runs are never resumed automatically".into(),
             Self::ResumeOff => "resuming agents is turned off in Settings".into(),
             Self::AgentUnknown(id) => format!("agent `{id}` is not configured"),
@@ -212,6 +214,10 @@ impl TabPlan {
             }
             TabAction::ShellInstead(Reason::Yolo) => Some(
                 "This tab ran at YOLO, so Tidewatch did not restart its agent. Start it again yourself."
+                    .to_owned(),
+            ),
+            TabAction::ShellInstead(Reason::WorktreeBroken) => Some(
+                "Git could not read this worktree, so Tidewatch opened a shell in its folder and left everything in it alone."
                     .to_owned(),
             ),
             TabAction::ShellInstead(reason) => {
@@ -361,7 +367,13 @@ fn plan_tab(
             return Err(Reason::WorktreeGone);
         }
         if !disk.worktree_usable(&dir) {
-            return Err(Reason::WorktreeBroken);
+            return Ok(TabPlan {
+                saved: tab.clone(),
+                dir,
+                worktree,
+                action: TabAction::ShellInstead(Reason::WorktreeBroken),
+                park: None,
+            });
         }
     } else if !disk.dir_exists(&dir) {
         return Err(Reason::FolderMissing);
@@ -812,7 +824,7 @@ mod tests {
     }
 
     #[test]
-    fn a_gone_or_broken_worktree_is_skipped_and_the_active_tab_moves_to_a_kept_one() {
+    fn a_gone_worktree_is_skipped_and_a_broken_one_comes_back_as_a_shell() {
         let mut disk = disk_for_all();
         disk.dirs.retain(|d| d != &wt("b-gemini"));
         disk.broken.push(wt("c-copilot"));
@@ -821,16 +833,19 @@ mod tests {
         let plan = plan_with(&saved, &everything_installed(), &disk);
         assert_eq!(
             plan.skipped,
-            [
-                Skipped { label: "b-gemini".into(), reason: Reason::WorktreeGone },
-                Skipped { label: "c-copilot".into(), reason: Reason::WorktreeBroken },
-            ]
+            [Skipped { label: "b-gemini".into(), reason: Reason::WorktreeGone }]
         );
-        assert_eq!(plan.tabs.len(), 3);
-        assert_eq!(plan.active, 1, "the nearest kept tab before the skipped active one");
+        assert_eq!(plan.tabs.len(), 4);
+        let broken = &plan.tabs[2];
+        assert_eq!(broken.action, TabAction::ShellInstead(Reason::WorktreeBroken));
+        let owned = broken.worktree.as_ref().expect("it keeps its worktree");
+        assert_eq!(owned.path, std::path::PathBuf::from(wt("c-copilot")));
+        assert_eq!(owned.branch, "agent/c-copilot");
+        assert!(broken.note().unwrap().contains("left everything in it alone"));
+        assert_eq!(plan.active, 2, "the saved active tab is kept, counted among the kept ones");
         let toast = plan.toast().unwrap();
         assert!(
-            toast.starts_with("Could not reopen 2 tabs: b-gemini (worktree folder gone)"),
+            toast.starts_with("Could not reopen 1 tab: b-gemini (worktree folder gone)"),
             "{toast}"
         );
     }

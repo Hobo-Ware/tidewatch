@@ -10,7 +10,8 @@ use crate::meeseeks_log::pr_label_of;
 use crate::paths::TidewatchPaths;
 use crate::test_command;
 use crate::tools::{Tools, finish, run_gh};
-use crate::worktree::{self, BranchChoice, RemoveMode, Worktree};
+use crate::worktree::{self, BranchChoice, RemoveMode, Terms, Why, Worktree};
+use crate::worktree_safety::Owner;
 
 fn changed_files(tools: &Tools, dir: &Path) -> Result<usize, String> {
     let mut command = tools.git(dir);
@@ -126,7 +127,7 @@ pub fn hand_off(tools: &Tools, dir: &Path, branch: &str, summary: &str) -> Resul
 }
 
 pub fn poof(paths: &TidewatchPaths, worktree: &Worktree) -> Result<(), String> {
-    worktree::remove(paths, worktree, BranchChoice::Keep, RemoveMode::Safe)
-        .map(|_| ())
-        .map_err(|e| e.to_string())
+    let terms =
+        Terms::new(BranchChoice::Keep, RemoveMode::Safe).why(Why::Poofed).owner(Owner::ThisWindow);
+    worktree::remove_with(paths, worktree, &terms).map(|_| ()).map_err(|e| e.to_string())
 }

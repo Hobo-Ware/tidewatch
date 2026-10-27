@@ -3,6 +3,7 @@ use std::process::Command;
 use std::time::{Duration, Instant};
 
 use tidewatch_core::worktree::{BranchChoice, RemoveMode};
+use tidewatch_core::worktree_safety::Risk;
 
 use super::*;
 
@@ -59,17 +60,20 @@ fn removal(worktree: &Worktree, branch: BranchChoice, mode: RemoveMode) -> Remov
 }
 
 #[test]
-fn inspecting_counts_uncommitted_files_and_commits_found_nowhere_else() {
+fn inspecting_names_uncommitted_files_and_commits_found_nowhere_else() {
     let f = fixture();
     let wt = worktree::add(&f.paths, &f.repo).unwrap();
     std::fs::write(wt.path.join("a.txt"), "a").unwrap();
     git(&wt.path, &["add", "a.txt"]);
     git(&wt.path, &["commit", "-q", "-m", "work"]);
     std::fs::write(wt.path.join("b.txt"), "b").unwrap();
-    inspect(&f.jobs, &f.ctx, wt.clone());
-    let Done::Inspected { path, inspection } = next(&f.jobs) else { panic!("expected Inspected") };
+    inspect(&f.jobs, &f.ctx, f.paths.clone(), wt.clone());
+    let Done::Inspected { path, safety } = next(&f.jobs) else { panic!("expected Inspected") };
     assert_eq!(path, wt.path);
-    assert_eq!(inspection, Inspection { changed: 1, unmerged: 1 });
+    assert_eq!(
+        safety,
+        Safety::Unsafe(vec![Risk::Uncommitted { files: 1 }, Risk::Unpushed { commits: 1 }])
+    );
 }
 
 #[test]
@@ -84,7 +88,8 @@ fn a_clean_worktree_is_removed_with_its_empty_branch() {
         None,
     );
     let Done::Removed { path, result } = next(&f.jobs) else { panic!("expected Removed") };
-    assert_eq!((path.as_path(), result), (wt.path.as_path(), Ok(BranchOutcome::Deleted)));
+    assert_eq!(path, wt.path);
+    assert!(matches!(result, Ok(BranchOutcome::Deleted { .. })), "{result:?}");
     assert!(!wt.path.exists());
     assert_eq!(git(&f.repo, &["branch", "--list", &wt.branch]).trim(), "");
 }
@@ -102,7 +107,7 @@ fn a_dirty_worktree_is_refused_unless_the_discard_is_explicit_and_nothing_is_los
         None,
     );
     let Done::Removed { result, .. } = next(&f.jobs) else { panic!("expected Removed") };
-    assert_eq!(result, Err("1 file with uncommitted changes".to_owned()));
+    assert_eq!(result, Err("not removed: 1 file with uncommitted changes".to_owned()));
     assert_eq!(std::fs::read_to_string(wt.path.join("keep-me.txt")).unwrap(), "precious");
 
     remove(
@@ -162,4 +167,24 @@ fn removing_a_leftover_takes_its_folder_trust_entry_away_too() {
     let Done::Removed { result, .. } = next(&f.jobs) else { panic!("expected Removed") };
     assert!(result.is_ok());
     assert_eq!(std::fs::read_to_string(&claude_json).unwrap(), "{\n  \"numStartups\": 1\n}\n");
+}
+
+#[test]
+fn a_leftover_with_commits_found_nowhere_else_is_refused_when_its_branch_would_go() {
+    let f = fixture();
+    let wt = worktree::add(&f.paths, &f.repo).unwrap();
+    std::fs::write(wt.path.join("a.txt"), "a").unwrap();
+    git(&wt.path, &["add", "a.txt"]);
+    git(&wt.path, &["commit", "-q", "-m", "work"]);
+    remove(
+        &f.jobs,
+        &f.ctx,
+        f.paths.clone(),
+        removal(&wt, BranchChoice::Delete, RemoveMode::Safe),
+        None,
+    );
+    let Done::Removed { result, .. } = next(&f.jobs) else { panic!("expected Removed") };
+    assert!(result.is_err(), "{result:?}");
+    assert!(wt.path.exists());
+    assert_eq!(git(&f.repo, &["log", "--oneline", &wt.branch]).lines().count(), 2);
 }
