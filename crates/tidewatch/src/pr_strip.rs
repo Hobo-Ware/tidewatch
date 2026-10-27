@@ -94,6 +94,7 @@ pub(crate) fn tone_ink(tone: Tone) -> Color32 {
         Tone::Warn => brand::AMBER,
         Tone::Good => brand::GREEN,
         Tone::Quiet => brand::SOFT,
+        Tone::Waiting => brand::BLUE,
     }
 }
 

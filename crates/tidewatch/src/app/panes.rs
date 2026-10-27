@@ -92,6 +92,7 @@ impl Tidewatch {
             self.waiting_end_block().as_ref(),
             self.done_check_look(tab),
             self.done_check_can_ask(tab),
+            crate::progress_glue::today(),
         )
         .map(|turn| LastTurn { owner_asks: !self.is_autonomous(tab), ..turn })
     }

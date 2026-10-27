@@ -118,6 +118,7 @@ pub(crate) fn show(ui: &mut Ui, area: Rect, summary: &Summary) -> Option<Action>
                 check: None,
                 can_ask: Ok(()),
                 owner_asks: false,
+                today: crate::progress_glue::today(),
             };
             last_turn_view::show(ui, width, &turn, false);
         }

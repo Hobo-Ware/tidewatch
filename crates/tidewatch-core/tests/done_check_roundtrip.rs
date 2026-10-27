@@ -6,7 +6,8 @@ mod common;
 use std::path::Path;
 
 use common::{FakeGh, commit_file, git_available, ok, path_with_only_git, reply, repos};
-use tidewatch_core::done_check::{Input, Kind, Outcome, PrFact, Report, Status, run};
+use tidewatch_core::civil_date::Date;
+use tidewatch_core::done_check::{Input, Kind, Outcome, PrFact, Report, Status, Unverified, run};
 use tidewatch_core::tools::Tools;
 
 const BRANCH: &str = "agent/rename-helper";
@@ -30,8 +31,9 @@ fn open_pr(head: &str, checks: &str) -> &'static str {
 const FAILED_RUN: &str = r#"{"__typename":"CheckRun","name":"build","workflowName":"CI","status":"COMPLETED","conclusion":"FAILURE","detailsUrl":"https://github.com/acme/web/actions/runs/1/job/2","startedAt":"2026-01-01T00:00:00Z","completedAt":"2026-01-01T00:01:00Z"}"#;
 const PASSED_RUN: &str = r#"{"__typename":"CheckRun","name":"build","workflowName":"CI","status":"COMPLETED","conclusion":"SUCCESS","detailsUrl":"https://github.com/acme/web/actions/runs/1/job/2","startedAt":"2026-01-01T00:00:00Z","completedAt":"2026-01-01T00:01:00Z"}"#;
 
-fn check(tools: &Tools, dir: &Path, pr: PrFact, unverified: Option<Vec<String>>) -> Report {
-    run(&Input { tools, dir, branch: BRANCH, pr, unverified })
+fn check(tools: &Tools, dir: &Path, pr: PrFact, unverified: Option<Vec<Unverified>>) -> Report {
+    let today = Date::parse("2026-10-27").unwrap();
+    run(&Input { tools, dir, branch: BRANCH, pr, unverified, today })
 }
 
 fn status_of(report: &Report, kind: Kind) -> (Status, &str) {
@@ -144,7 +146,7 @@ fn a_green_pull_request_by_branch_name_is_done_and_unverified_ledger_items_make_
     let green = check(&tools, &r.work, PrFact::Unknown, Some(Vec::new()));
     assert_eq!(green.outcome(), Outcome::Done);
     assert_eq!(gh.calls()[0][..3], ["pr", "view", BRANCH]);
-    let items = vec!["the staging migration".to_owned()];
+    let items = vec![Unverified::new("the staging migration")];
     let unverified = check(&tools, &r.work, PrFact::Number(42), Some(items.clone()));
     assert_eq!(unverified.outcome(), Outcome::NotVerified);
     assert_eq!(unverified.unverified, items);
@@ -198,4 +200,24 @@ fn a_missing_gh_leaves_the_pull_request_unchecked_with_the_reason() {
         (Status::Unknown, "the GitHub CLI (gh) is not installed")
     );
     assert_eq!(report.outcome(), Outcome::NotVerified);
+}
+
+#[test]
+fn an_unverified_item_the_ledger_schedules_for_tomorrow_makes_the_check_wait() {
+    if !git_available() {
+        return;
+    }
+    let r = repos();
+    work_branch(&r.work);
+    ok(&r.work, &["push", "-q", "-u", "origin", BRANCH]);
+    let gh = FakeGh::new(&[]);
+    let tomorrow = Date::parse("2026-10-28").unwrap();
+    let items = vec![Unverified::until("Live list across a day boundary", tomorrow)];
+    let report = check(&Tools::with_path(gh.path()), &r.work, PrFact::None, Some(items));
+    assert_eq!(report.outcome(), Outcome::Waiting);
+    assert_eq!(
+        status_of(&report, Kind::Unverified),
+        (Status::Waiting, "1 item waiting until 2026-10-28")
+    );
+    assert_eq!(report.outcome_on(tomorrow), Outcome::NotVerified);
 }

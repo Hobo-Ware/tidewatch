@@ -1,15 +1,17 @@
 //! The app's side of the done check: one trigger and one card state per agent tab, the check as a
-//! `Jobs` thread, and `TIDEWATCH_FAKE_DONE_CHECK=done|blocked|unverified|checking` for captures.
+//! `Jobs` thread, and `TIDEWATCH_FAKE_DONE_CHECK=done|blocked|unverified|waiting|rechecked|rechecking|checking` for captures.
 
 use std::collections::HashMap;
 use std::path::PathBuf;
 
-use tidewatch_core::done_check::{self, Input, Kind, Line, PrFact, Report, Status};
+use tidewatch_core::civil_date::Date;
+use tidewatch_core::done_check::{self, Input, Kind, Line, PrFact, Report, Status, Unverified};
 use tidewatch_core::status::AgentStatus;
 use tidewatch_core::tools::Tools;
 
 use crate::done_check_trigger::{Claim, Trigger};
 use crate::jobs::Jobs;
+use crate::progress_glue::today;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Fake {
@@ -17,6 +19,9 @@ pub(crate) enum Fake {
     Done,
     Blocked,
     Unverified,
+    Waiting,
+    Rechecked,
+    Rechecking,
     Checking,
 }
 
@@ -26,6 +31,9 @@ impl Fake {
             Some("done") => Self::Done,
             Some("blocked") => Self::Blocked,
             Some("unverified") => Self::Unverified,
+            Some("waiting") => Self::Waiting,
+            Some("rechecked") => Self::Rechecked,
+            Some("rechecking") => Self::Rechecking,
             Some("checking") => Self::Checking,
             _ => Self::Off,
         }
@@ -36,13 +44,15 @@ impl Fake {
         let report = |lines: Vec<Line>, unverified: &[&str]| Report {
             head: "3f9a1c2".to_owned(),
             lines,
-            unverified: unverified.iter().map(|item| (*item).to_owned()).collect(),
+            unverified: unverified.iter().map(|item| Unverified::new(*item)).collect(),
         };
         let committed = line(Kind::Committed, Status::Pass, "clean tree, 2 commits ahead of main");
         let pushed = line(Kind::Pushed, Status::Pass, "origin has 3f9a1c2");
-        Some(Look::Report(match self {
+        let same = self == Self::Rechecked;
+        let checked = Checked { at: now_secs(), same };
+        let found = match self {
             Self::Off => return None,
-            Self::Checking => return Some(Look::Checking),
+            Self::Checking => return Some(Look::Checking(None)),
             Self::Done => report(
                 vec![
                     committed,
@@ -61,7 +71,22 @@ impl Fake {
                 ],
                 &[],
             ),
-            Self::Unverified => report(
+            Self::Waiting => {
+                let tomorrow = today().plus_days(1);
+                let mut waiting = report(
+                    vec![
+                        line(Kind::Committed, Status::Pass, "nothing left uncommitted"),
+                        line(Kind::Pushed, Status::Pass, "the pull request is merged"),
+                        line(Kind::PullRequest, Status::Pass, "PR #2359 merged"),
+                        line(Kind::Unverified, Status::Waiting, "1 item waiting"),
+                    ],
+                    &[],
+                );
+                waiting.unverified =
+                    vec![Unverified::until("Live list across a day boundary", tomorrow)];
+                waiting
+            }
+            Self::Unverified | Self::Rechecked | Self::Rechecking => report(
                 vec![
                     committed,
                     pushed,
@@ -74,20 +99,46 @@ impl Fake {
                 ],
                 &["the migration on staging", "the Safari layout"],
             ),
-        }))
+        };
+        Some(if self == Self::Rechecking {
+            Look::Checking(Some(found))
+        } else {
+            Look::Report(found, checked)
+        })
     }
+}
+
+/// When a report was made, and whether it says what the one before it said.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct Checked {
+    pub(crate) at: i64,
+    pub(crate) same: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum Look {
-    Checking,
-    Report(Report),
+    /// A check is running; the report it replaces, if there was one, stays on the card.
+    Checking(Option<Report>),
+    Report(Report, Checked),
 }
 
 #[derive(Debug)]
 enum Entry {
-    Checking { job: u64 },
-    Report(Box<Report>),
+    Checking { job: u64, before: Option<Box<Report>> },
+    Report { report: Box<Report>, checked: Checked },
+}
+
+fn before_of(entry: Option<Entry>) -> Option<Box<Report>> {
+    match entry? {
+        Entry::Report { report, .. } => Some(report),
+        Entry::Checking { before, .. } => before,
+    }
+}
+
+fn now_secs() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| i64::try_from(d.as_secs()).unwrap_or(0))
 }
 
 #[derive(Debug, Default)]
@@ -102,6 +153,7 @@ pub(crate) struct Done {
     tab: u64,
     job: u64,
     report: Box<Report>,
+    at: i64,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -117,7 +169,8 @@ pub(crate) struct Request {
     pub(crate) dir: PathBuf,
     pub(crate) branch: String,
     pub(crate) pr: PrFact,
-    pub(crate) unverified: Option<Vec<String>>,
+    pub(crate) unverified: Option<Vec<Unverified>>,
+    pub(crate) today: Date,
 }
 
 pub(crate) struct Host {
@@ -156,12 +209,14 @@ impl Host {
 
     pub(crate) fn tick(&mut self, facts: &[Facts<'_>]) -> Vec<u64> {
         for done in self.jobs.drain() {
-            let waiting = self.tabs.get_mut(&done.tab).filter(
-                |tab| matches!(tab.entry, Some(Entry::Checking { job }) if job == done.job),
-            );
-            if let Some(tab) = waiting {
-                tab.entry = Some(Entry::Report(done.report));
+            let Some(tab) = self.tabs.get_mut(&done.tab) else { continue };
+            let Some(Entry::Checking { job, before }) = &tab.entry else { continue };
+            if *job != done.job {
+                continue;
             }
+            let same = before.as_deref() == Some(&*done.report);
+            tab.entry =
+                Some(Entry::Report { report: done.report, checked: Checked { at: done.at, same } });
         }
         let mut fire = Vec::new();
         for fact in facts {
@@ -183,7 +238,9 @@ impl Host {
     pub(crate) fn start(&mut self, ctx: &egui::Context, tools: &Tools, tab: u64, request: Request) {
         self.next_job += 1;
         let job = self.next_job;
-        self.tabs.entry(tab).or_default().entry = Some(Entry::Checking { job });
+        let state = self.tabs.entry(tab).or_default();
+        let before = before_of(state.entry.take());
+        state.entry = Some(Entry::Checking { job, before });
         let tools = tools.clone();
         self.jobs.spawn(ctx, move || {
             let input = Input {
@@ -192,8 +249,10 @@ impl Host {
                 branch: &request.branch,
                 pr: request.pr,
                 unverified: request.unverified,
+                today: request.today,
             };
-            Done { tab, job, report: Box::new(done_check::run(&input)) }
+            let report = Box::new(done_check::run(&input));
+            Done { tab, job, report, at: now_secs() }
         });
     }
 
@@ -202,8 +261,8 @@ impl Host {
             return self.fake.look();
         }
         match self.tabs.get(&tab)?.entry.as_ref()? {
-            Entry::Checking { .. } => Some(Look::Checking),
-            Entry::Report(report) => Some(Look::Report((**report).clone())),
+            Entry::Checking { before, .. } => Some(Look::Checking(before.as_deref().cloned())),
+            Entry::Report { report, checked } => Some(Look::Report((**report).clone(), *checked)),
         }
     }
 
@@ -211,7 +270,7 @@ impl Host {
     /// agent may be asked (`blocked` is `ask_blocked`), and that same failure was not sent before.
     pub(crate) fn auto_fix(&mut self, tab: u64, blocked: Option<&str>) -> Option<String> {
         let tab = self.tabs.get_mut(&tab)?;
-        let Some(Entry::Report(report)) = &tab.entry else { return None };
+        let Some(Entry::Report { report, .. }) = &tab.entry else { return None };
         let Some(note) = report.fix_note() else {
             tab.auto_sent = None;
             return None;
@@ -240,6 +299,8 @@ mod tests {
     use crate::done_check_trigger::claim;
     use tidewatch_core::done_check::Outcome;
 
+    const STAMP: Checked = Checked { at: 0, same: false };
+
     fn facts<'a>(status: &'a AgentStatus, claim: Option<&'a Claim>, eligible: bool) -> Facts<'a> {
         Facts { id: 1, status, eligible, claim }
     }
@@ -254,8 +315,8 @@ mod tests {
             host.tick(&[facts(&AgentStatus::Done, claim.as_ref(), true)]),
             Vec::<u64>::new()
         );
-        host.tabs.get_mut(&1).unwrap().entry = Some(Entry::Checking { job: 1 });
-        assert_eq!(host.look(1), Some(Look::Checking));
+        host.tabs.get_mut(&1).unwrap().entry = Some(Entry::Checking { job: 1, before: None });
+        assert_eq!(host.look(1), Some(Look::Checking(None)));
         host.tick(&[facts(&AgentStatus::Working, None, true)]);
         assert_eq!(host.look(1), None);
     }
@@ -275,11 +336,14 @@ mod tests {
 
     fn blocked_report(detail: &str) -> Entry {
         let line = Line { kind: Kind::Pushed, status: Status::Fail, detail: detail.into() };
-        Entry::Report(Box::new(Report {
-            head: "abc".into(),
-            lines: vec![line],
-            unverified: Vec::new(),
-        }))
+        Entry::Report {
+            report: Box::new(Report {
+                head: "abc".into(),
+                lines: vec![line],
+                unverified: Vec::new(),
+            }),
+            checked: STAMP,
+        }
     }
 
     #[test]
@@ -303,22 +367,26 @@ mod tests {
     fn nothing_is_sent_for_a_passing_or_unfinished_check() {
         let mut host = Host::new(true, Fake::Off);
         let tab = host.tabs.entry(1).or_default();
-        tab.entry = Some(Entry::Checking { job: 1 });
+        tab.entry = Some(Entry::Checking { job: 1, before: None });
         assert_eq!(host.auto_fix(1, None), None);
         let passing = Report {
             head: "abc".into(),
             lines: vec![Line { kind: Kind::Pushed, status: Status::Pass, detail: "ok".into() }],
             unverified: Vec::new(),
         };
-        host.tabs.get_mut(&1).unwrap().entry = Some(Entry::Report(Box::new(passing)));
+        host.tabs.get_mut(&1).unwrap().entry =
+            Some(Entry::Report { report: Box::new(passing), checked: STAMP });
         assert_eq!(host.auto_fix(1, None), None);
         host.tabs.get_mut(&1).unwrap().entry = Some(blocked_report("2 commits not pushed"));
         assert!(host.auto_fix(1, None).is_some());
-        host.tabs.get_mut(&1).unwrap().entry = Some(Entry::Report(Box::new(Report {
-            head: "abc".into(),
-            lines: Vec::new(),
-            unverified: Vec::new(),
-        })));
+        host.tabs.get_mut(&1).unwrap().entry = Some(Entry::Report {
+            report: Box::new(Report {
+                head: "abc".into(),
+                lines: Vec::new(),
+                unverified: Vec::new(),
+            }),
+            checked: STAMP,
+        });
         assert_eq!(host.auto_fix(1, None), None);
         host.tabs.get_mut(&1).unwrap().entry = Some(blocked_report("2 commits not pushed"));
         assert!(host.auto_fix(1, None).is_some(), "fixed in between, so a return is new");
@@ -327,7 +395,7 @@ mod tests {
     #[test]
     fn switching_it_off_drops_every_card() {
         let mut host = Host::new(true, Fake::Off);
-        host.tabs.entry(1).or_default().entry = Some(Entry::Checking { job: 1 });
+        host.tabs.entry(1).or_default().entry = Some(Entry::Checking { job: 1, before: None });
         host.set_enabled(false);
         assert_eq!(host.look(1), None);
     }
@@ -335,27 +403,77 @@ mod tests {
     #[test]
     fn a_late_answer_for_an_old_check_is_dropped() {
         let mut host = Host::new(true, Fake::Off);
-        host.tabs.entry(1).or_default().entry = Some(Entry::Checking { job: 2 });
+        host.tabs.entry(1).or_default().entry = Some(Entry::Checking { job: 2, before: None });
         let report =
             Box::new(Report { head: String::new(), lines: Vec::new(), unverified: Vec::new() });
-        host.jobs.spawn(&egui::Context::default(), move || Done { tab: 1, job: 1, report });
+        host.jobs.spawn(&egui::Context::default(), move || Done { tab: 1, job: 1, report, at: 0 });
         std::thread::sleep(std::time::Duration::from_millis(100));
         host.tick(&[]);
-        assert_eq!(host.look(1), Some(Look::Checking));
+        assert_eq!(host.look(1), Some(Look::Checking(None)));
     }
 
     #[test]
     fn the_fake_shows_each_card_state_on_any_tab() {
-        let outcomes: Vec<_> = [Fake::Done, Fake::Blocked, Fake::Unverified]
-            .into_iter()
-            .map(|fake| match Host::new(true, fake).look(9) {
-                Some(Look::Report(report)) => report.outcome(),
-                other => panic!("{other:?}"),
-            })
-            .collect();
+        let outcomes: Vec<_> =
+            [Fake::Done, Fake::Blocked, Fake::Unverified, Fake::Waiting, Fake::Rechecked]
+                .into_iter()
+                .map(|fake| match Host::new(true, fake).look(9) {
+                    Some(Look::Report(report, _)) => report.outcome(),
+                    other => panic!("{other:?}"),
+                })
+                .collect();
         let (done, blocked, unverified) = (Outcome::Done, Outcome::Blocked, Outcome::NotVerified);
-        assert_eq!(outcomes, [done, blocked, unverified]);
-        assert_eq!(Host::new(true, Fake::Checking).look(9), Some(Look::Checking));
+        assert_eq!(outcomes, [done, blocked, unverified, Outcome::Waiting, unverified]);
+        assert_eq!(Host::new(true, Fake::Checking).look(9), Some(Look::Checking(None)));
         assert_eq!(Host::new(true, Fake::Off).look(9), None);
+    }
+
+    fn answer(host: &mut Host, job: u64, report: Report, at: i64) {
+        host.jobs.spawn(&egui::Context::default(), move || Done {
+            tab: 1,
+            job,
+            report: Box::new(report),
+            at,
+        });
+        std::thread::sleep(std::time::Duration::from_millis(100));
+        host.tick(&[]);
+    }
+
+    fn report_saying(detail: &str) -> Report {
+        let line = Line { kind: Kind::Unverified, status: Status::Unknown, detail: detail.into() };
+        Report { head: "abc".into(), lines: vec![line], unverified: Vec::new() }
+    }
+
+    #[test]
+    fn a_check_again_keeps_the_old_card_while_it_runs_and_stamps_the_answer() {
+        let mut host = Host::new(true, Fake::Off);
+        let first = report_saying("1 item the agent did not verify");
+        host.tabs.entry(1).or_default().entry = Some(Entry::Checking { job: 1, before: None });
+        answer(&mut host, 1, first.clone(), 100);
+        assert_eq!(
+            host.look(1),
+            Some(Look::Report(first.clone(), Checked { at: 100, same: false })),
+            "the first answer has nothing to be the same as"
+        );
+        let again = host.tabs.get_mut(&1).unwrap();
+        let before = before_of(again.entry.take());
+        again.entry = Some(Entry::Checking { job: 2, before });
+        assert_eq!(host.look(1), Some(Look::Checking(Some(first.clone()))));
+        answer(&mut host, 2, first.clone(), 160);
+        assert_eq!(host.look(1), Some(Look::Report(first, Checked { at: 160, same: true })));
+    }
+
+    #[test]
+    fn a_changed_answer_is_not_the_same_result_and_a_new_turn_forgets_both() {
+        let mut host = Host::new(true, Fake::Off);
+        host.tabs.entry(1).or_default().entry = Some(Entry::Checking {
+            job: 3,
+            before: Some(Box::new(report_saying("2 items the agent did not verify"))),
+        });
+        let next = report_saying("1 item the agent did not verify");
+        answer(&mut host, 3, next.clone(), 200);
+        assert_eq!(host.look(1), Some(Look::Report(next, Checked { at: 200, same: false })));
+        host.tick(&[facts(&AgentStatus::Working, None, true)]);
+        assert_eq!(host.look(1), None);
     }
 }

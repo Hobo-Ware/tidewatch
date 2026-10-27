@@ -287,7 +287,7 @@ fn idle_text(ms: u64) -> String {
     }
 }
 
-fn date_text(date: Date) -> String {
+pub(crate) fn date_text(date: Date) -> String {
     let month = MONTHS[usize::from(date.month().clamp(1, 12)) - 1];
     format!("{} {} {month}", date.weekday().short(), date.day())
 }
