@@ -33,7 +33,6 @@ use crate::{due_view, flow_glue, reader_glue, reader_view};
 use tidewatch_core::sent::{Reason as Said, because};
 use tidewatch_core::status::{AgentStatus, Reason};
 
-const REDRAW_ASK: &str = "Call set_avatar again with a fresh idea for this task.";
 const DRAW_ASK: &str = tidewatch_core::avatar_ask::ASK;
 
 impl Tidewatch {
@@ -84,13 +83,23 @@ impl Tidewatch {
     }
 
     pub(super) fn drive_avatar_choice(&mut self, ctx: &egui::Context) {
-        let Some((tab, choice)) = agent_avatar::take_choice(ctx) else { return };
+        let now = ctx.input(|i| i.time);
+        let choice = agent_avatar::take_choice(ctx);
+        if let Some((tab, agent_avatar::Choice::Redraw)) = choice {
+            self.avatar_redraws.add(tab);
+        }
+        let mut toasts = self.avatar_redraws.drive(&mut self.tabs, &mut self.flow, ctx, now);
+        if let Some((tab, agent_avatar::Choice::Redraw)) = choice
+            && self.avatar_redraws.holds(tab)
+        {
+            toasts.push("The agent is busy. It will be asked to redraw when it is idle".to_owned());
+        }
+        for text in toasts {
+            self.show_toast(text, ctx);
+        }
+        let Some((tab, choice)) = choice else { return };
         match choice {
-            agent_avatar::Choice::Redraw => {
-                let now = ctx.input(|i| i.time);
-                let send = Send::by_hand(REDRAW_ASK, Said::Avatar, because::AVATAR_REDRAW);
-                self.ask_agent(tab, &send, ctx, now);
-            }
+            agent_avatar::Choice::Redraw => {}
             agent_avatar::Choice::Draw => {
                 let now = ctx.input(|i| i.time);
                 let send = Send::by_hand(DRAW_ASK, Said::Avatar, because::AVATAR_DRAW);

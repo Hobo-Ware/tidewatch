@@ -19,6 +19,7 @@ mod answer_chips;
 mod app;
 mod autofetch_glue;
 mod avatar_glue;
+mod avatar_redraw;
 mod brand;
 mod build_workflow;
 mod bullets;
