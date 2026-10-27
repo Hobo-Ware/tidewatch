@@ -1,4 +1,4 @@
-use tidewatch_core::job::Report;
+use tidewatch_core::job::{Agent, Report};
 
 use super::*;
 
@@ -132,7 +132,7 @@ fn a_timed_job_fills_by_the_clock_and_says_about_how_long_is_left() {
     assert_eq!(card.detail, "about 15m left");
     let past = super::cards(&board, NOON + 25 * MIN);
     let [Card::Bar(card)] = past.as_slice() else { panic!("{past:?}") };
-    assert_eq!((card.fraction, card.detail.as_str()), (1.0, ""));
+    assert_eq!((card.fraction, card.detail.as_str()), (1.0, "overdue by 5m"));
 }
 
 #[test]
@@ -162,7 +162,7 @@ fn a_stalled_job_says_where_it_stuck_and_carries_the_message_to_send() {
     let mut board = JobBoard::default();
     running(&mut board, "Import users", 21_940.0, &[(0, 10_000.0), (MIN, 21_370.0)]);
     let now = NOON + 7 * MIN;
-    assert!(board.tick(now));
+    assert!(board.tick(now, Agent::Working));
     let cards = cards(&board, now);
     let [Card::Stalled(card)] = cards.as_slice() else { panic!("{cards:?}") };
     assert_eq!(card.line, "Import users stuck at 97% for 6m");
@@ -202,7 +202,7 @@ fn cards_run_running_then_stalled_then_finished() {
     running(&mut board, "Import users", 21_940.0, &[(-20 * MIN, 5.0), (-19 * MIN, 21_370.0)]);
     board.report(&Report { state: Some(JobState::Done), ..Report::named("old") }, NOON);
     running(&mut board, "PR checks", 5.0, &[(0, 3.0)]);
-    assert!(board.tick(NOON + 4 * MIN));
+    assert!(board.tick(NOON + 4 * MIN, Agent::Working));
     let kinds: Vec<&str> = cards(&board, NOON + 4 * MIN)
         .iter()
         .map(|card| match card {
@@ -233,7 +233,7 @@ fn the_tab_gets_a_fraction_a_rounded_label_and_a_tip_while_the_lead_job_runs() {
 fn a_stalled_lead_turns_the_tab_bar_orange_and_names_the_wait() {
     let mut board = orders();
     let now = NOON + 8 * MIN;
-    board.tick(now);
+    board.tick(now, Agent::Working);
     let tab = tab_job(&board, now).unwrap();
     assert!(tab.stalled);
     assert!(tab.tip.ends_with("stuck for 8m"), "{}", tab.tip);
@@ -249,7 +249,7 @@ fn the_lane_line_is_percent_then_eta_and_never_empty() {
     loose.report(&Report::named("deploy"), NOON);
     assert_eq!(lane_line(&loose, NOON).as_deref(), Some("deploy"));
     let mut stuck = orders();
-    stuck.tick(NOON + 9 * MIN);
+    stuck.tick(NOON + 9 * MIN, Agent::Working);
     assert_eq!(lane_line(&stuck, NOON + 9 * MIN).as_deref(), Some("21% \u{b7} stuck 9m"));
     assert_eq!(lane_line(&JobBoard::default(), NOON), None);
 }
@@ -289,4 +289,87 @@ fn the_clock_label_follows_the_zone() {
     assert_eq!(clock_label(NOON, &TimeZone::UTC).as_deref(), Some("12:00"));
     assert_eq!(clock_label(NOON, &zone).as_deref(), Some("15:00"));
     assert_eq!(clock_label(i64::MAX, &TimeZone::UTC), None);
+}
+
+fn wait_script(board: &mut JobBoard, name: &str, readings: &[(i64, f64)], state: JobState) {
+    for (at, done) in readings {
+        let report = Report {
+            done: Some(*done),
+            total: Some(100.0),
+            state: Some(state),
+            ..Report::named(name)
+        };
+        board.report(&report, NOON + at);
+    }
+}
+
+fn card_words(cards: &[Card]) -> Vec<String> {
+    cards
+        .iter()
+        .map(|card| match card {
+            Card::Finished(line) => {
+                format!("finished {} | {} | ended {}", line.name, line.detail, line.ended)
+            }
+            Card::Stalled(card) => format!("stalled {}", card.line),
+            other => format!("{other:?}"),
+        })
+        .collect()
+}
+
+#[test]
+fn two_wait_scripts_that_never_said_finished_are_no_orange_cards_once_the_agent_is_done() {
+    let mut board = JobBoard::default();
+    let running = JobState::Running;
+    wait_script(&mut board, "deploy api", &[(0, 20.0), (60 * MIN, 100.0)], running);
+    wait_script(&mut board, "codex late review", &[(0, 10.0), (60 * MIN, 100.0)], running);
+    let want = [
+        "finished deploy api | done \u{b7} 1h | ended false",
+        "finished codex late review | done \u{b7} 1h | ended false",
+    ];
+    for agent in [Agent::Done, Agent::Working] {
+        let mut board = board.clone();
+        let soon = NOON + 61 * MIN;
+        board.tick(soon, agent);
+        assert_eq!(card_words(&cards(&board, soon)), want, "{agent:?}");
+        let later = NOON + 6 * 60 * MIN + 6 * MIN;
+        board.tick(later, agent);
+        assert_eq!(card_words(&cards(&board, later)), Vec::<String>::new(), "{agent:?}");
+    }
+}
+
+#[test]
+fn a_job_the_agent_left_unfinished_is_a_muted_ended_line_for_a_done_agent_and_orange_for_a_working_one()
+ {
+    let build = || {
+        let mut board = JobBoard::default();
+        wait_script(&mut board, "deploy api", &[(0, 20.0), (MIN, 97.0)], JobState::Running);
+        board
+    };
+    let now = NOON + 6 * 60 * MIN + 7 * MIN;
+    let (mut working, mut done) = (build(), build());
+    working.tick(now, Agent::Working);
+    done.tick(now, Agent::Done);
+    assert_eq!(card_words(&cards(&working, now)), ["stalled deploy api stuck at 97% for 6h 6m"]);
+    assert_eq!(
+        card_words(&cards(&done, now)),
+        ["finished deploy api | ended, no final report \u{b7} 6h 7m | ended true"]
+    );
+}
+
+#[test]
+fn a_timed_job_past_its_time_says_overdue_and_a_done_agent_gets_an_ended_line_instead() {
+    let mut board = JobBoard::default();
+    board.report(&Report { eta_s: Some(600), ..Report::named("late review") }, NOON);
+    let now = NOON + 12 * MIN;
+    let late = cards(&board, now);
+    let [Card::Bar(card)] = late.as_slice() else { panic!("{late:?}") };
+    assert_eq!((card.fraction, card.detail.as_str()), (1.0, "overdue by 2m"));
+    let early = cards(&board, NOON + 9 * MIN);
+    let [Card::Bar(card)] = early.as_slice() else { panic!("{early:?}") };
+    assert_eq!(card.detail, "about 1m left");
+    board.tick(now, Agent::Done);
+    assert_eq!(
+        card_words(&cards(&board, now)),
+        ["finished late review | ended, no final report \u{b7} 12m | ended true"]
+    );
 }

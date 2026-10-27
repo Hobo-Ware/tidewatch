@@ -1,4 +1,4 @@
-use tidewatch_core::job::Report;
+use tidewatch_core::job::{Agent, Report};
 
 use super::*;
 
@@ -295,7 +295,7 @@ fn a_job_is_long_by_its_eta_or_by_how_long_it_has_run() {
 fn a_stalled_job_is_not_work_that_keeps_a_tab_parked() {
     let now = 10_000_000_i64;
     let mut stalled = board(Some(7200), None, 1);
-    stalled.tick(now + 6 * 60_000);
+    stalled.tick(now + 6 * 60_000, Agent::Working);
     assert_eq!(work_of(Some(&stalled), now + 6 * 60_000), Work::None);
 }
 

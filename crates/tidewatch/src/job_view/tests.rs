@@ -193,3 +193,14 @@ fn the_card_after_the_stalled_one_starts_below_it() {
     let finished = frame.texts.iter().find(|(text, _)| text == "cargo test").unwrap().1;
     assert!(finished.top() > ask.bottom() + 8.0, "{finished:?} under {ask:?}");
 }
+
+#[test]
+fn a_done_agents_board_has_no_orange_card_and_no_ask_button() {
+    let mut board = fake_board(NOW);
+    board.tick(NOW, tidewatch_core::job::Agent::Done);
+    let frame = Frame::new(cards(&board, NOW), 400.0);
+    let texts: Vec<_> = frame.texts.iter().map(|(text, _)| text.as_str()).collect();
+    assert!(!texts.contains(&"Ask agent"), "{texts:?}");
+    assert!(texts.iter().all(|text| !text.contains("stuck")), "{texts:?}");
+    assert!(texts.contains(&"ended, no final report \u{b7} 20m"), "{texts:?}");
+}

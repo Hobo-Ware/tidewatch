@@ -32,10 +32,14 @@ impl Fx {
     }
 
     fn tick(&self, host: &mut Host, ids: &[u64], now: i64) -> Option<i64> {
+        self.tick_done(host, ids, &[], now)
+    }
+
+    fn tick_done(&self, host: &mut Host, ids: &[u64], done: &[u64], now: i64) -> Option<i64> {
         let notes = self.notes();
         let facts: Vec<Facts<'_>> =
             ids.iter().map(|id| Facts { id: *id, notes_file: &notes }).collect();
-        host.tick(&facts, &self.ctx, now)
+        host.tick(&facts, done, &self.ctx, now)
     }
 
     fn until_loaded(&self, host: &mut Host, id: u64, now: i64) {
@@ -123,6 +127,31 @@ fn five_quiet_minutes_stall_the_job() {
     host.report(1, reading("orders", 5.0, 10.0), NOW);
     fx.tick(&mut host, &[1], NOW + 5 * MIN_MS);
     assert_eq!(host.board(1).unwrap().jobs[0].state, JobState::Stalled);
+}
+
+#[test]
+fn only_the_tab_whose_agent_is_done_has_its_quiet_jobs_closed() {
+    let fx = Fx::new();
+    let mut host = Host::new(true, false);
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while !(host.tabs.len() == 2 && host.tabs.values().all(|tab| tab.loaded))
+        && Instant::now() < deadline
+    {
+        fx.tick(&mut host, &[1, 2], NOW);
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    for id in [1, 2] {
+        host.report(id, reading("deploy api", 5.0, 10.0), NOW);
+    }
+    fx.tick_done(&mut host, &[1, 2], &[2], NOW + MIN_MS);
+    assert_eq!(host.board(2).unwrap().jobs[0].state, JobState::Running);
+    fx.tick_done(&mut host, &[1, 2], &[2], NOW + 5 * MIN_MS);
+    let ended = |id| {
+        let job = &host.board(id).unwrap().jobs[0];
+        (job.state, job.ended)
+    };
+    assert_eq!(ended(1), (JobState::Stalled, false));
+    assert_eq!(ended(2), (JobState::Done, true));
 }
 
 #[test]

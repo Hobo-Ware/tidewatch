@@ -28,7 +28,7 @@ use crate::progress_model::{look, look_as};
 use crate::progress_nudge as nudge;
 use crate::progress_stale::{Live, answered_since_save, is_stale, standing};
 use crate::progress_state::Facts;
-use crate::status_view::state_of;
+use crate::status_view::{Tone, state_of};
 use crate::{due_view, flow_glue, reader_glue, reader_view};
 use tidewatch_core::sent::{Cap, Reason as Said, because};
 use tidewatch_core::status::{AgentStatus, Reason};
@@ -155,7 +155,16 @@ impl Tidewatch {
         if let Some(listener) = self.hooks.listener() {
             listener.exempt_from_avatar_ask(&self.avatar_live.exempt_from_ask(&facts));
         }
-        let mut wake = self.job_live.tick(&facts, ctx, now_ms);
+        let done: Vec<u64> = self
+            .tabs
+            .items()
+            .iter()
+            .filter(|tab| {
+                tab.pane.agent.as_ref().is_some_and(|agent| agent.run.shown_tone() == Tone::Done)
+            })
+            .map(|tab| tab.id)
+            .collect();
+        let mut wake = self.job_live.tick(&facts, &done, ctx, now_ms);
         for tab in self.tabs.items() {
             let (Body::Shell(term), Some(_)) = (&tab.pane.body, &tab.pane.agent) else { continue };
             let later = self.job_live.scan(tab.id, term.output_gen(), now_ms, || {

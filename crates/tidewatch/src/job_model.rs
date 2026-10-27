@@ -60,6 +60,7 @@ pub(crate) struct FinishedLine {
     pub(crate) id: u64,
     pub(crate) name: String,
     pub(crate) failed: bool,
+    pub(crate) ended: bool,
     pub(crate) detail: String,
 }
 
@@ -182,6 +183,7 @@ fn timed_detail(job: &Job, now_ms: i64) -> String {
         parts.push(job.phase.clone());
     }
     parts.extend(job.eta_left(now_ms).map(left_text));
+    parts.extend(job.overdue_ms(now_ms).map(|late| format!("overdue by {}", ms_text(late))));
     parts.join(" \u{b7} ")
 }
 
@@ -242,6 +244,8 @@ fn finished_line(job: &Job, now_ms: i64) -> FinishedLine {
     let failed = job.state == JobState::Failed;
     let result = if failed {
         "failed".to_owned()
+    } else if job.ended {
+        "ended, no final report".to_owned()
     } else if job.done > 0.0 && !job.unit.is_empty() && job.unit != "%" {
         format!("{} {}", count_text(job.done), job.unit)
     } else {
@@ -251,6 +255,7 @@ fn finished_line(job: &Job, now_ms: i64) -> FinishedLine {
         id: job.id,
         name: job.name.clone(),
         failed,
+        ended: job.ended,
         detail: format!("{result} \u{b7} {}", ms_text(job.elapsed_ms(now_ms))),
     }
 }
