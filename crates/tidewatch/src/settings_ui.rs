@@ -7,7 +7,10 @@ use egui::{
 };
 use kelp_ui::theme::semibold;
 
+use crate::screen_kit::TEXT_BODY;
+use crate::screen_kit::TEXT_SECONDARY;
 use crate::screen_kit::{self, Size, danger_button, primary_button, quiet_button};
+use crate::screen_kit::{TagFill, paint_tag, tag_width};
 use crate::segmented;
 
 pub(crate) mod editor;
@@ -123,7 +126,7 @@ pub(crate) fn row<R>(
         control,
         |ui| {
             ui.spacing_mut().item_spacing.y = 3.0;
-            ui.label(RichText::new(title).size(15.0).color(TEXT));
+            ui.label(RichText::new(title).size(TEXT_BODY).color(TEXT));
             if !desc.is_empty() {
                 ui.label(RichText::new(desc).size(13.0).color(MUTED));
             }
@@ -266,10 +269,15 @@ pub(crate) fn pick(ui: &mut Ui, id: &str, labels: &[&str], active: Option<usize>
 
 /// A small rounded label in `ink`, for a state such as clean or dirty.
 pub(crate) fn pill(ui: &mut Ui, text: &str, ink: Color32) {
-    let galley = ui.painter().layout_no_wrap(text.to_owned(), FontId::proportional(11.5), ink);
-    let (rect, _) = ui.allocate_exact_size(galley.size() + vec2(16.0, 6.0), Sense::hover());
-    ui.painter().rect_filled(rect, CornerRadius::same(255), ink.gamma_multiply(0.14));
-    ui.painter().galley(rect.center() - galley.size() / 2.0, galley, ink);
+    let width = tag_width(ui.painter(), text);
+    let (rect, _) = ui.allocate_exact_size(vec2(width, Size::Tag.height()), Sense::hover());
+    paint_tag(
+        ui.painter(),
+        (rect.left(), rect.center().y),
+        text,
+        ink,
+        TagFill::Tint(ink.gamma_multiply(0.14)),
+    );
 }
 
 const FADE_H: f32 = 28.0;
@@ -353,7 +361,7 @@ pub(crate) fn text_area(ui: &mut Ui, value: &mut String, hint: &str, rows: usize
         ] {
             widget.corner_radius = CornerRadius::same(9);
         }
-        ui.style_mut().override_font_id = Some(FontId::monospace(12.5));
+        ui.style_mut().override_font_id = Some(FontId::monospace(TEXT_SECONDARY));
         ui.add(
             egui::TextEdit::multiline(value)
                 .desired_width(ui.available_width())

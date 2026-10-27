@@ -8,7 +8,7 @@ use crate::settings_ui::{self, Control, Tone};
 
 const REFRESH_SECONDS: f64 = 1.0;
 const CONTROL_GAP: f32 = 10.0;
-const CONTROL_HEIGHT: f32 = 34.0;
+const CONTROL_HEIGHT: f32 = Size::Regular.height();
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct Look {

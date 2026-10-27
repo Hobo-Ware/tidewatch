@@ -31,6 +31,7 @@ use crate::reader_markdown::{self, Piece};
 use crate::reader_rows::{Kind, Row, ToolKind};
 use crate::reader_turns::{self, Body, Call, Group, Section};
 use crate::reader_view::{ellipsized, output_preview, split_label};
+use crate::screen_kit::TEXT_TAG;
 use crate::screen_kit::{body, mono};
 
 pub(crate) const BODY_PX: f32 = 16.0;
@@ -46,9 +47,9 @@ const QUEUED_SPIN: f32 = 11.0;
 const QUEUED_GAP: f32 = 6.0;
 const META_GAP: f32 = 6.0;
 const OUTER: f32 = 10.0;
-pub(crate) const CHIP_H: f32 = 26.0;
+pub(crate) const CHIP_H: f32 = crate::screen_kit::Size::Compact.height();
 pub(crate) const CHIP_GAP: f32 = 8.0;
-const TOGGLE_H: f32 = 28.0;
+const TOGGLE_H: f32 = crate::screen_kit::Size::Compact.height();
 const LIVE_H: f32 = 32.0;
 const BUBBLE_PAD: Margin = Margin { left: 16, right: 16, top: 12, bottom: 12 };
 const USER_PAD: Margin = Margin { left: 16, right: 16, top: 10, bottom: 10 };
@@ -62,7 +63,7 @@ const TEXT_SLACK: f32 = 8.0;
 const NOTE_GAP: f32 = 6.0;
 const ANSWER_QUESTION_PX: f32 = 14.0;
 const ANSWER_HEAD_PX: f32 = 12.0;
-const ANSWER_PX: f32 = 15.0;
+const ANSWER_PX: f32 = crate::screen_kit::TEXT_TITLE;
 const ANSWER_LEAD: f32 = 22.0;
 const ANSWER_PAIR_GAP: f32 = 12.0;
 const ANSWER_LINE_GAP: f32 = 6.0;
@@ -86,13 +87,15 @@ pub(crate) struct Scene<'a> {
 /// The "Jump to latest" pill, drawn at the top left of `slot`: an opaque fill, a 1 px line and a
 /// small shadow, so the text scrolling under it does not bleed through.
 pub(crate) fn jump_pill(ui: &mut Ui, slot: Rect, label: &str) -> Response {
-    let galley = ui.painter().layout_no_wrap(label.to_owned(), body(13.0), brand::TEAL_TEXT);
-    let rect = Rect::from_min_size(slot.min, galley.size() + vec2(24.0, 12.0));
+    let size = crate::screen_kit::Size::Compact;
+    let galley = ui.painter().layout_no_wrap(label.to_owned(), body(size.font()), brand::TEAL_TEXT);
+    let rect =
+        Rect::from_min_size(slot.min, vec2(galley.size().x + 2.0 * size.pad(), size.height()));
     let response = ui.interact(rect, ui.id().with(("jump-pill", label)), Sense::click());
     let fill = if response.hovered() { brand::ITEM } else { brand::CARD };
     let line = if response.hovered() { brand::FIELD_LINE } else { brand::CARD_LINE };
     let painter = ui.painter();
-    let radius = CornerRadius::same(8);
+    let radius = CornerRadius::same(size.radius());
     painter.add(JUMP_SHADOW.as_shape(rect, radius));
     painter.rect_filled(rect, radius, fill);
     painter.rect_stroke(rect, radius, Stroke::new(1.0, line), StrokeKind::Inside);
@@ -580,7 +583,12 @@ fn summary_row(ui: &mut Ui, group: &Group, open: bool, column: f32) -> bool {
     let hot = open || response.hovered();
     let (line, ink) =
         if hot { (brand::TEAL, brand::TEAL_TEXT) } else { (brand::FIELD_LINE, brand::SOFT) };
-    painter.rect_stroke(chip, CornerRadius::same(255), Stroke::new(1.0, line), StrokeKind::Inside);
+    painter.rect_stroke(
+        chip,
+        CornerRadius::same(crate::screen_kit::Size::Compact.radius()),
+        Stroke::new(1.0, line),
+        StrokeKind::Inside,
+    );
     let at = pos2(chip.left() + 11.0 + 6.0, chip.center().y);
     let tip = if open { -3.0 } else { 3.0 };
     let stroke = Stroke::new(1.4, ink);
@@ -638,7 +646,7 @@ fn pill_chip(
         (false, false) => brand::CARD_LINE,
     };
     let painter = ui.painter();
-    let radius = CornerRadius::same(255);
+    let radius = CornerRadius::same(crate::screen_kit::Size::Compact.radius());
     if failed {
         painter.rect_filled(rect, radius, brand::ORANGE.gamma_multiply(0.08));
     }
@@ -766,7 +774,7 @@ fn pill(ui: &mut Ui, verb: &str, command: Option<&str>, waiting: bool, max_w: f3
     } else {
         (brand::TEAL_TEXT, LIVE_FILL, USER_LINE)
     };
-    let verb_galley = ui.painter().layout_no_wrap(verb.to_owned(), body(13.0), ink);
+    let verb_galley = ui.painter().layout_no_wrap(verb.to_owned(), body(TEXT_TAG), ink);
     let lead = 12.0 + 8.0 + 8.0;
     let room = (max_w - lead - verb_galley.size().x - 8.0 - 12.0).max(0.0);
     let command_galley = command
@@ -775,9 +783,10 @@ fn pill(ui: &mut Ui, verb: &str, command: Option<&str>, waiting: bool, max_w: f3
     let command_w = command_galley.as_ref().map_or(0.0, |galley| galley.size().x + 8.0);
     let width = lead + verb_galley.size().x + command_w + 12.0;
     let (rect, _) = ui.allocate_exact_size(vec2(width, LIVE_H), Sense::hover());
-    let body_rect = Rect::from_center_size(rect.center(), vec2(width, CHIP_H));
+    let body_rect =
+        Rect::from_center_size(rect.center(), vec2(width, crate::screen_kit::Size::Tag.height()));
     let painter = ui.painter();
-    let radius = CornerRadius::same(255);
+    let radius = CornerRadius::same(crate::screen_kit::Size::Tag.radius());
     painter.rect_filled(body_rect, radius, fill);
     painter.rect_stroke(body_rect, radius, Stroke::new(1.0, line), StrokeKind::Inside);
     painter.circle_filled(pos2(body_rect.left() + 12.0 + 4.0, body_rect.center().y), 4.0, ink);
@@ -904,7 +913,7 @@ fn section_body(ui: &mut Ui, section: &Section, calls: &[Call<'_>]) {
                         let ink = if call.tool.error { brand::RED } else { brand::MUTED };
                         ui.label(
                             RichText::new(output_preview(&call.tool.output))
-                                .font(mono(11.5))
+                                .font(mono(TEXT_TAG))
                                 .color(ink),
                         );
                     }

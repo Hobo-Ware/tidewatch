@@ -5,6 +5,7 @@ use egui::{Align2, FontId, Rect, Ui, UiBuilder, pos2, vec2};
 
 use crate::brand;
 use crate::reader_view::{INSET, paint_item};
+use crate::screen_kit::TEXT_BODY;
 use crate::screen_kit::{Size, button_width, primary_button};
 
 const BAR_H: f32 = 40.0;
@@ -29,7 +30,7 @@ pub(crate) fn show(ui: &mut Ui, band: Rect) -> bool {
         pos2(dot.x + DOT / 2.0 + 8.0, card.center().y),
         Align2::LEFT_CENTER,
         LABEL,
-        FontId::proportional(13.5),
+        FontId::proportional(TEXT_BODY),
         brand::TEXT,
     );
     let width = button_width(ui, BUTTON, Size::Compact);

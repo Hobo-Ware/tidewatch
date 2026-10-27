@@ -3,6 +3,7 @@
 use egui::{RichText, Ui};
 
 use crate::commands::{self, Group, Platform};
+use crate::screen_kit::TEXT_TAG;
 use crate::settings_ui::{Control, FAINT, TEXT, key_cap, note, padded_row, page_header, section};
 
 const KEYS_WIDTH: f32 = 230.0;
@@ -70,7 +71,7 @@ fn shortcut_row(ui: &mut Ui, title: &str, keys: &str) {
                         key_cap(ui, text, 12.0);
                     }
                     Cap::To => {
-                        ui.label(RichText::new("to").size(11.5).color(FAINT));
+                        ui.label(RichText::new("to").size(TEXT_TAG).color(FAINT));
                     }
                 }
             }

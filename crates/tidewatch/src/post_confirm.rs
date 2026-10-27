@@ -4,6 +4,7 @@
 
 use crate::brand;
 use crate::reader_view::item_frame;
+use crate::screen_kit::TEXT_SECONDARY;
 use crate::screen_kit::{Size, body, dialog_frame, footer_row, mono, primary_button, quiet_button};
 use egui::epaint::text::{LayoutJob, TextFormat};
 use egui::{Id, Key, Margin, Modifiers, RichText};
@@ -96,7 +97,7 @@ pub(crate) fn location(plan: &Plan) -> Option<String> {
 fn detail_job(plan: &Plan) -> LayoutJob {
     let text = detail(plan);
     let mut job = LayoutJob::default();
-    let prose = |ink| TextFormat::simple(body(12.5), ink);
+    let prose = |ink| TextFormat::simple(body(TEXT_SECONDARY), ink);
     match location(plan)
         .and_then(|place| text.split_once(&place).map(|(a, b)| (a.to_owned(), place, b.to_owned())))
     {

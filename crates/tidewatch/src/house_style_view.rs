@@ -3,6 +3,7 @@
 use egui::{Align, Layout, RichText, Ui};
 
 use crate::screen_kit::Size;
+use crate::screen_kit::TEXT_BODY;
 use crate::settings_ui::{
     Control, FAINT, MUTED, TEXT, Tone, button, caption, page_header, row_with, section,
 };
@@ -19,7 +20,7 @@ pub(crate) fn page(ui: &mut Ui, file: &str) -> Option<Action> {
             Control::button(ui, "Open in editor", Size::Compact),
             |ui| {
                 ui.spacing_mut().item_spacing.y = 3.0;
-                ui.label(RichText::new("house-style.md").size(15.0).color(TEXT));
+                ui.label(RichText::new("house-style.md").size(TEXT_BODY).color(TEXT));
                 ui.label(RichText::new(file).monospace().size(12.0).color(FAINT));
             },
             |ui| {
@@ -44,7 +45,7 @@ pub(crate) fn page(ui: &mut Ui, file: &str) -> Option<Action> {
             Control::button(ui, ARMED, Size::Compact),
             |ui| {
                 ui.spacing_mut().item_spacing.y = 3.0;
-                ui.label(RichText::new("Tidewatch's own text").size(15.0).color(TEXT));
+                ui.label(RichText::new("Tidewatch's own text").size(TEXT_BODY).color(TEXT));
                 ui.label(
                     RichText::new(
                         "Replaces the file with the text Tidewatch ships. Your edits are lost.",

@@ -40,7 +40,7 @@ pub(crate) fn text_font() -> FontId {
 }
 
 fn send_edge() -> f32 {
-    (BOX_H - Size::Compact.height()) / 2.0
+    (BOX_H - Size::Regular.height()) / 2.0
 }
 
 /// The sizes of a box, worked out from the height of one text row so the space above and below
@@ -78,7 +78,7 @@ fn row_height(ui: &Ui) -> f32 {
 }
 
 fn measure(ui: &Ui, text: &str, pictures: usize, box_w: f32, cap: f32) -> Measure {
-    let send_w = button_width(ui, SEND, Size::Compact);
+    let send_w = button_width(ui, SEND, Size::Regular);
     let wrap = box_w - PAD_X - send_edge() - send_w - SEND_GAP;
     let typed = bullets::layout(ui, text, &text_font(), (brand::TEXT, brand::MUTED), wrap, &None);
     let rows = pictures::chip_rows(pictures, box_w - 2.0 * PAD_X, pictures::REMOVABLE_W);
@@ -264,9 +264,9 @@ pub(crate) fn show(ui: &mut Ui, draft: Draft<'_>, spec: &Spec<'_>) -> Option<Str
         let send = Rect::from_min_size(
             pos2(
                 boxed.right() - edge - measured.send_w,
-                boxed.bottom() - edge - Size::Compact.height(),
+                boxed.bottom() - edge - Size::Regular.height(),
             ),
-            vec2(measured.send_w, Size::Compact.height()),
+            vec2(measured.send_w, Size::Regular.height()),
         );
         let chips_origin = pos2(boxed.left() + PAD_X, boxed.top() + BORDER + CHIP_TOP);
         let removed =
@@ -338,7 +338,7 @@ pub(crate) fn show(ui: &mut Ui, draft: Draft<'_>, spec: &Spec<'_>) -> Option<Str
         let can_send = !text.trim().is_empty() || !pictures.is_empty();
         let mut clicked = false;
         ui.scope_builder(UiBuilder::new().max_rect(send), |ui| {
-            clicked = primary_button(ui, SEND, can_send, Size::Compact).clicked();
+            clicked = primary_button(ui, SEND, can_send, Size::Regular).clicked();
         });
         if whole.clicked() || std::mem::take(focus) {
             ui.memory_mut(|memory| memory.request_focus(id));

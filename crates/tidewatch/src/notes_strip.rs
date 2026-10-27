@@ -16,7 +16,8 @@ use crate::brand;
 use crate::commit_files::{split_dir, tail_fit};
 use crate::note_send::{Gate, gate_reason};
 use crate::pr_state::{PostAbility, PrState};
-use crate::screen_kit::{Size, body, mono, quiet_button};
+use crate::screen_kit::TEXT_TAG;
+use crate::screen_kit::{Size, TagFill, body, mono, paint_tag, quiet_button, tag_width};
 
 pub(crate) const MAX_ROWS: usize = 3;
 const CARD_H: f32 = 36.0;
@@ -27,13 +28,11 @@ const RADIUS: u8 = 8;
 const BUTTON_GAP: f32 = 6.0;
 const TEXT_GAP: f32 = 10.0;
 const SNIPPET_MAX: usize = 90;
-const PLACE_FONT: f32 = 11.5;
+const PLACE_FONT: f32 = TEXT_TAG;
 const PLACE_SHARE: f32 = 0.42;
 const MIN_PLACE_W: f32 = 40.0;
 const SNIPPET_FONT: f32 = 12.0;
 const MIN_SNIPPET_W: f32 = 20.0;
-const PILL_FONT: f32 = 11.5;
-const PILL_PAD: f32 = 8.0;
 const MENU_W: f32 = 220.0;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -183,12 +182,15 @@ fn place_job(parts: (&str, &str, &str), hot: bool) -> LayoutJob {
 }
 
 fn state_pill(ui: &mut Ui, label: &str, tone: Color32) -> egui::Response {
-    let galley = ui.painter().layout_no_wrap(label.to_owned(), body(PILL_FONT), tone);
-    let (rect, response) =
-        ui.allocate_exact_size(galley.size() + vec2(2.0 * PILL_PAD, 4.0), Sense::hover());
-    let painter = ui.painter();
-    painter.rect_filled(rect, CornerRadius::same(255), tone.gamma_multiply(0.12));
-    painter.galley(rect.center() - galley.size() / 2.0, galley, tone);
+    let width = tag_width(ui.painter(), label);
+    let (rect, response) = ui.allocate_exact_size(vec2(width, Size::Tag.height()), Sense::hover());
+    paint_tag(
+        ui.painter(),
+        (rect.left(), rect.center().y),
+        label,
+        tone,
+        TagFill::Tint(tone.gamma_multiply(0.12)),
+    );
     response
 }
 

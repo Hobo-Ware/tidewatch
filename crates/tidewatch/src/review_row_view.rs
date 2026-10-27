@@ -12,6 +12,7 @@ use crate::brand;
 use crate::reader_chat_view::USER_LINE;
 use crate::review::{ReviewFacts, SentNote, SentReview, Standing};
 use crate::review_view::ReviewAction;
+use crate::screen_kit::TEXT_TITLE;
 use crate::screen_kit::{Size, body, heading, mono, quiet_button};
 
 const RADIUS: CornerRadius = CornerRadius { nw: 14, ne: 14, se: 4, sw: 14 };
@@ -117,7 +118,7 @@ fn header(ui: &mut Ui, review: &SentReview) {
         stroke,
     ));
     painter.line_segment([p(8.0, 10.0), p(16.0, 10.0)], stroke);
-    let title = painter.layout_no_wrap("Review sent".to_owned(), heading(15.0), brand::TEXT);
+    let title = painter.layout_no_wrap("Review sent".to_owned(), heading(TEXT_TITLE), brand::TEXT);
     let title_w = title.size().x;
     painter.galley(
         pos2(rect.left() + 26.0, rect.center().y - title.size().y / 2.0),

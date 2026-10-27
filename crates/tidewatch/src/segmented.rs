@@ -5,21 +5,21 @@ use egui::{
 };
 
 use crate::brand;
-use crate::screen_kit::{body, mono};
+use crate::screen_kit::{Size, TEXT_TAG, body, mono};
 
-pub(crate) const HEIGHT: f32 = 28.0;
+pub(crate) const HEIGHT: f32 = Size::Compact.height();
 const EDGE: f32 = 3.0;
 const GAP: f32 = 2.0;
 const SEGMENT_PAD: f32 = 10.0;
-const FONT: f32 = 12.5;
+const FONT: f32 = Size::Compact.font();
 const CHIP_GAP: f32 = 6.0;
 const GAP_ROWS: f32 = 6.0;
 const KEY_GAP: f32 = 8.0;
-const KEY_FONT: f32 = 11.0;
+const KEY_FONT: f32 = TEXT_TAG;
 const BADGE_W: f32 = 24.0;
-const BADGE_H: f32 = 16.0;
+const BADGE_H: f32 = Size::Tag.height();
 const BADGE_GAP: f32 = 6.0;
-const BADGE_FONT: f32 = 11.0;
+const BADGE_FONT: f32 = TEXT_TAG;
 const BADGE_MOST: usize = 99;
 
 /// The container and then each segment, for text widths `text` and the control's right edge.
@@ -83,7 +83,7 @@ fn paint_segments(
     let painter = ui.painter().clone();
     painter.rect(
         container,
-        CornerRadius::same(7),
+        CornerRadius::same(Size::Compact.radius()),
         brand::SEGMENT,
         Stroke::new(1.0, brand::SEGMENT_LINE),
         StrokeKind::Inside,
@@ -355,7 +355,13 @@ fn chips(
         } else {
             (brand::SEGMENT, brand::SEGMENT_LINE)
         };
-        painter.rect(rect, CornerRadius::same(7), fill, Stroke::new(1.0, line), StrokeKind::Inside);
+        painter.rect(
+            rect,
+            CornerRadius::same(Size::Compact.radius()),
+            fill,
+            Stroke::new(1.0, line),
+            StrokeKind::Inside,
+        );
         let reason = refusal(refused, index);
         let tone = tones.get(index).copied().flatten();
         let ink = match (on, reason.is_some(), response.hovered()) {
@@ -387,6 +393,14 @@ mod tests {
         assert_eq!(segments[1].left() - segments[0].right(), GAP);
         assert_eq!(segments[1].right() + EDGE, container.right());
         assert_eq!(segments[0].left() - EDGE, container.left());
+    }
+
+    #[test]
+    fn the_control_is_compact_tall_in_compact_text_and_its_count_pill_is_a_tag() {
+        assert_eq!(HEIGHT, Size::Compact.height());
+        assert_eq!(FONT, Size::Compact.font());
+        assert_eq!(BADGE_H, Size::Tag.height());
+        assert_eq!(BADGE_FONT, Size::Tag.font());
     }
 
     #[test]

@@ -7,15 +7,16 @@ use tidewatch_core::prefs::{NewTabPrefs, RightPanel, StartFrom};
 use tidewatch_core::start_base;
 
 use crate::brand;
+use crate::screen_kit::Size;
 use crate::screen_kit::{body, paint_cli_badge};
 use crate::segmented;
 use crate::settings_ui::{self, Control, note, section};
 
 const FIELD_W: f32 = 240.0;
-const FIELD_H: f32 = 34.0;
+const FIELD_H: f32 = Size::Regular.height();
 const BADGE: f32 = 22.0;
 const LAST_USED: &str = "Last used";
-const SEGMENT_H: f32 = 28.0;
+const SEGMENT_H: f32 = Size::Compact.height();
 const AGENT_ID: &str = "new-tab-prefs-agent";
 const PLACED: &str = "new-tab-prefs-placed";
 const OPTIONS: &str = "new-tab-prefs-options";

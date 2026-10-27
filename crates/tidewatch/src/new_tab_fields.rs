@@ -10,6 +10,7 @@ use crate::new_tab::{Kind, NameCheck, NewTab};
 use crate::new_tab_layout::{FIELD_H, LABEL_GAP, LABEL_H, PROBLEM_H};
 use crate::reader_view::{ellipsized, field_frame_on};
 use crate::repo_base::RepoFacts;
+use crate::screen_kit::TEXT_TAG;
 use crate::screen_kit::{Size, body, mono, quiet_button};
 
 const PREFIX: &str = "agent/";
@@ -28,7 +29,7 @@ pub(crate) fn text_id() -> Id {
 pub(crate) fn section_label(ui: &mut Ui, text: &str) {
     let (rect, _) = ui.allocate_exact_size(vec2(ui.available_width(), LABEL_H), Sense::hover());
     let galley =
-        ellipsized(ui.painter(), &text.to_uppercase(), body(11.5), brand::MUTED, rect.width());
+        ellipsized(ui.painter(), &text.to_uppercase(), body(TEXT_TAG), brand::MUTED, rect.width());
     ui.painter().galley(
         rect.left_center() - vec2(0.0, galley.size().y / 2.0),
         galley,
@@ -76,7 +77,7 @@ pub(crate) fn name_field(ui: &mut Ui, state: &NewTab, facts: Option<&RepoFacts>)
         let room = ui.max_rect().width() - label_w;
         if text_width(ui, note, 11.5) + NOTE_GAP <= room {
             let at = pos2(ui.max_rect().right(), top + LABEL_H / 2.0);
-            ui.painter().text(at, Align2::RIGHT_CENTER, note, body(11.5), brand::FAINT);
+            ui.painter().text(at, Align2::RIGHT_CENTER, note, body(TEXT_TAG), brand::FAINT);
         }
     }
     ui.add_space(LABEL_GAP);

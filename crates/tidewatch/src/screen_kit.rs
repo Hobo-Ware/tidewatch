@@ -11,7 +11,7 @@ use kelp_ui::theme::semibold;
 
 const BUTTON_RADIUS: u8 = 8;
 const DISABLED_INK: f32 = 0.4;
-const CAP_FONT: f32 = 11.5;
+const CAP_FONT: f32 = TEXT_TAG;
 const CAP_PAD: f32 = 6.0;
 const CAP_MIN_W: f32 = 22.0;
 const CAP_GAP: f32 = 8.0;
@@ -81,40 +81,97 @@ pub(crate) fn clickable(
         .on_hover_cursor(egui::CursorIcon::PointingHand)
 }
 
+pub(crate) const TEXT_TAG: f32 = 12.0;
+pub(crate) const TEXT_SECONDARY: f32 = 13.0;
+pub(crate) const TEXT_BODY: f32 = 14.0;
+pub(crate) const TEXT_TITLE: f32 = 16.0;
+pub(crate) const TEXT_PAGE: f32 = 22.0;
+
+/// The three control sizes, one per job: `Tag` for a label you read, `Compact` for a button inside
+/// a card, row, strip or panel, `Regular` for forms, dialogs and Settings.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Size {
-    Regular,
+    Tag,
     Compact,
+    Regular,
 }
 
 impl Size {
     pub(crate) const fn height(self) -> f32 {
         match self {
+            Self::Tag => 20.0,
+            Self::Compact => 28.0,
             Self::Regular => 32.0,
-            Self::Compact => 26.0,
         }
     }
 
-    const fn pad(self) -> f32 {
+    pub(crate) const fn pad(self) -> f32 {
         match self {
-            Self::Regular => 14.0,
+            Self::Tag => 8.0,
             Self::Compact => 12.0,
+            Self::Regular => 14.0,
         }
     }
 
-    const fn font(self) -> f32 {
+    pub(crate) const fn font(self) -> f32 {
         match self {
-            Self::Regular => 13.5,
-            Self::Compact => 13.0,
+            Self::Tag => TEXT_TAG,
+            Self::Compact => TEXT_SECONDARY,
+            Self::Regular => TEXT_BODY,
+        }
+    }
+
+    pub(crate) const fn radius(self) -> u8 {
+        match self {
+            Self::Tag => (self.height() / 2.0) as u8,
+            Self::Compact | Self::Regular => BUTTON_RADIUS,
         }
     }
 
     const fn cap_h(self) -> f32 {
         match self {
-            Self::Regular => 20.0,
+            Self::Tag => 16.0,
             Self::Compact => 18.0,
+            Self::Regular => 20.0,
         }
     }
+}
+
+/// How a tag is drawn: an outline in a color, or a tint of it.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) enum TagFill {
+    Line(Color32),
+    Tint(Color32),
+}
+
+pub(crate) fn tag_width(painter: &Painter, text: &str) -> f32 {
+    painter.layout_no_wrap(text.to_owned(), body(Size::Tag.font()), brand::SOFT).size().x
+        + 2.0 * Size::Tag.pad()
+}
+
+/// A read-only label: `Size::Tag` tall, fully round, its left edge at `left` and centered on
+/// `mid`. Returns the rect it drew.
+pub(crate) fn paint_tag(
+    painter: &Painter,
+    (left, mid): (f32, f32),
+    text: &str,
+    ink: Color32,
+    fill: TagFill,
+) -> Rect {
+    let galley = painter.layout_no_wrap(text.to_owned(), body(Size::Tag.font()), ink);
+    let size = vec2(galley.size().x + 2.0 * Size::Tag.pad(), Size::Tag.height());
+    let rect = Rect::from_min_size(pos2(left, mid - size.y / 2.0), size);
+    let radius = CornerRadius::same(Size::Tag.radius());
+    match fill {
+        TagFill::Line(line) => {
+            painter.rect_stroke(rect, radius, Stroke::new(1.0, line), StrokeKind::Inside);
+        }
+        TagFill::Tint(tint) => {
+            painter.rect_filled(rect, radius, tint);
+        }
+    }
+    painter.galley(rect.center() - galley.size() / 2.0, galley, ink);
+    rect
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -260,7 +317,7 @@ fn button(ui: &mut Ui, spec: &Spec) -> Response {
     let painter = ui.painter();
     painter.rect(
         rect,
-        CornerRadius::same(BUTTON_RADIUS),
+        CornerRadius::same(size.radius()),
         paint.fill,
         Stroke::new(1.0, paint.line),
         StrokeKind::Inside,
@@ -281,7 +338,7 @@ fn button(ui: &mut Ui, spec: &Spec) -> Response {
         painter.rect_filled(cap, CornerRadius::same(CAP_RADIUS), paint.cap);
         painter.text(cap.center(), Align2::CENTER_CENTER, key, mono(CAP_FONT), paint.ink);
     }
-    kelp_ui::widgets::focus_ring(ui, &response, f32::from(BUTTON_RADIUS));
+    kelp_ui::widgets::focus_ring(ui, &response, f32::from(size.radius()));
     if enabled { response.on_hover_cursor(egui::CursorIcon::PointingHand) } else { response }
 }
 
@@ -321,7 +378,7 @@ pub(crate) fn footer_row(ui: &mut Ui, hint: &str, add: impl FnOnce(&mut Ui)) {
     ui.horizontal(|ui| {
         ui.set_min_height(Size::Regular.height());
         if !hint.is_empty() {
-            ui.label(RichText::new(hint).size(12.0).color(brand::MUTED));
+            ui.label(RichText::new(hint).size(TEXT_TAG).color(brand::MUTED));
         }
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
             ui.spacing_mut().item_spacing.x = FOOTER_GAP;
@@ -395,7 +452,7 @@ pub(crate) fn dialog_frame<R>(
             header.left_center() + vec2(f32::from(DIALOG_PAD), 0.0),
             Align2::LEFT_CENTER,
             title,
-            heading(15.0),
+            heading(TEXT_TITLE),
             brand::TEXT,
         );
         painter.hline(header.x_range(), header.bottom(), Stroke::new(1.0, brand::CARD_LINE));
@@ -446,7 +503,7 @@ mod tests {
         let mut sizes = Vec::new();
         run(|ui| {
             sizes.clear();
-            for size in [Size::Regular, Size::Compact] {
+            for size in [Size::Tag, Size::Compact, Size::Regular] {
                 for label in ["Ok", "A much longer label"] {
                     sizes.push((size, quiet_button(ui, label, true, size).rect.size()));
                 }
@@ -465,9 +522,52 @@ mod tests {
     }
 
     #[test]
-    fn the_two_sizes_are_32_and_26_tall() {
-        assert_eq!(Size::Regular.height(), 32.0);
-        assert_eq!(Size::Compact.height(), 26.0);
+    fn each_size_is_the_height_text_and_corner_of_the_scale() {
+        let table = [
+            (Size::Tag, 20.0, 12.0, 10),
+            (Size::Compact, 28.0, 13.0, 8),
+            (Size::Regular, 32.0, 14.0, 8),
+        ];
+        for (size, height, font, radius) in table {
+            assert_eq!(size.height(), height, "{size:?} height");
+            assert_eq!(size.font(), font, "{size:?} font");
+            assert_eq!(size.radius(), radius, "{size:?} radius");
+        }
+    }
+
+    #[test]
+    fn a_tag_is_drawn_as_tall_as_the_tag_size_and_a_button_as_tall_as_its_own() {
+        let mut tag = Rect::NOTHING;
+        let mut drawn = Vec::new();
+        run(|ui| {
+            drawn.clear();
+            let (rect, _) = ui.allocate_exact_size(vec2(100.0, Size::Tag.height()), Sense::hover());
+            tag = paint_tag(
+                ui.painter(),
+                (rect.left(), rect.center().y),
+                "Claude",
+                brand::TEAL,
+                TagFill::Line(brand::TEAL),
+            );
+            for size in [Size::Tag, Size::Compact, Size::Regular] {
+                drawn.push((size, quiet_button(ui, "Go", true, size).rect.height()));
+            }
+        });
+        assert_eq!(tag.height(), 20.0);
+        for (size, height) in drawn {
+            assert_eq!(height, size.height(), "{size:?}");
+        }
+    }
+
+    #[test]
+    fn a_tag_is_as_wide_as_its_text_and_two_pads() {
+        run(|ui| {
+            let painter = ui.painter();
+            let one = tag_width(painter, "3");
+            let more = tag_width(painter, "Checks running");
+            assert!(more > one);
+            assert!(one >= 2.0 * Size::Tag.pad());
+        });
     }
 
     #[test]

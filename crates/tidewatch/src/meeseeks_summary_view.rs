@@ -25,6 +25,7 @@ use crate::progress_ring::paint_mark;
 use crate::reader_chat_view::{agent_markdown, chat_text};
 use crate::reader_view::ellipsized;
 use crate::screen_kit::{Size, body, button_width, heading, mono, quiet_button};
+use crate::screen_kit::{TEXT_BODY, TEXT_SECONDARY};
 use crate::selectable;
 
 const COLUMN_W: f32 = 760.0;
@@ -136,7 +137,7 @@ fn markdown_in(ui: &mut Ui, text: &str) {
 }
 
 fn kicker(ui: &mut Ui, text: &str, ink: Color32) {
-    let galley = ui.painter().layout_no_wrap(text.to_owned(), heading(12.5), ink);
+    let galley = ui.painter().layout_no_wrap(text.to_owned(), heading(TEXT_SECONDARY), ink);
     let (rect, _) = ui.allocate_exact_size(
         vec2(ui.available_width(), galley.size().y + KICKER_GAP),
         Sense::hover(),
@@ -181,12 +182,12 @@ fn hero(ui: &mut Ui, width: f32, said: &str, read_only: bool) -> Rect {
 
 fn quiet_line(ui: &mut Ui, width: f32, quiet: &Quiet) -> Rect {
     let mut job = LayoutJob::default();
-    job.append(&quiet.text, 0.0, TextFormat::simple(body(13.5), brand::MUTED));
+    job.append(&quiet.text, 0.0, TextFormat::simple(body(TEXT_BODY), brand::MUTED));
     if !quiet.branch.is_empty() {
         job.append(
             &format!("   {}", quiet.branch),
             0.0,
-            TextFormat::simple(mono(12.5), brand::FAINT),
+            TextFormat::simple(mono(TEXT_SECONDARY), brand::FAINT),
         );
     }
     job.wrap = TextWrapping::wrap_at_width(width.max(1.0));
@@ -202,14 +203,14 @@ fn header(ui: &mut Ui, width: f32, summary: &Summary, placed: &mut Placed) -> Op
     let painter = ui.painter().clone();
     let face = Rect::from_min_size(row.min, vec2(FACE, FACE));
     agent_avatar::paint(ui.ctx(), &painter, face, &meeseeks_avatar());
-    let button_w = button_width(ui, "Close", Size::Regular);
+    let button_w = button_width(ui, "Close", Size::Compact);
     let text_left = face.right() + FACE_GAP;
     let room = (row.right() - button_w - FACE_GAP - text_left).max(1.0);
     let (lead, rest) = summary.meta.split_once(" \u{b7} ").unwrap_or((&summary.meta, ""));
     let mut job = LayoutJob::default();
     job.append(lead, 0.0, TextFormat::simple(heading(20.0), brand::TEXT));
     if !rest.is_empty() {
-        job.append(&format!("   {rest}"), 0.0, TextFormat::simple(body(14.5), brand::MUTED));
+        job.append(&format!("   {rest}"), 0.0, TextFormat::simple(body(TEXT_BODY), brand::MUTED));
     }
     job.wrap = TextWrapping::truncate_at_width(room);
     let status = painter.layout_job(job);
@@ -225,7 +226,7 @@ fn header(ui: &mut Ui, width: f32, summary: &Summary, placed: &mut Placed) -> Op
     ui.scope_builder(
         UiBuilder::new().max_rect(button_row).layout(Layout::right_to_left(Align::Center)),
         |ui| {
-            let close = quiet_button(ui, "Close", true, Size::Regular);
+            let close = quiet_button(ui, "Close", true, Size::Compact);
             placed.close = Some(close.rect);
             if close
                 .on_hover_text(format!("Close ({})", crate::commands::Command::CloseTab.keys()))
@@ -327,9 +328,9 @@ fn linked(ui: &mut Ui, width: f32, text: &str, lead: Option<&str>) -> Rect {
     let painter = ui.painter().clone();
     let mut line = Text::new();
     if let Some(lead) = lead.filter(|lead| *lead != text) {
-        line.run(&format!("{lead}  "), &TextFormat::simple(body(14.5), brand::MUTED));
+        line.run(&format!("{lead}  "), &TextFormat::simple(body(TEXT_BODY), brand::MUTED));
     }
-    line.run(text, &TextFormat::simple(body(14.5), brand::TEXT));
+    line.run(text, &TextFormat::simple(body(TEXT_BODY), brand::TEXT));
     let laid = line.wrapped(width, SAID_ROWS).lay_out(&painter);
     let (rect, _) = ui.allocate_exact_size(vec2(width, laid.size().y), Sense::hover());
     laid.paint_selectable(ui, ui.id().with(("summary-text", text)), rect.min, brand::TEXT);
@@ -339,7 +340,7 @@ fn linked(ui: &mut Ui, width: f32, text: &str, lead: Option<&str>) -> Rect {
 fn branch_rows(ui: &mut Ui, width: f32, branch: &BranchLine) -> Rect {
     let painter = ui.painter().clone();
     let mut job = LayoutJob::default();
-    job.append(&branch.name, 0.0, TextFormat::simple(mono(13.5), brand::SOFT));
+    job.append(&branch.name, 0.0, TextFormat::simple(mono(TEXT_BODY), brand::SOFT));
     job.append(&format!("   {}", branch.text), 0.0, TextFormat::simple(body(14.0), brand::MUTED));
     if let Some(files) = &branch.files {
         job.append("\n", 0.0, TextFormat::simple(body(14.0), brand::MUTED));
@@ -367,7 +368,8 @@ fn stages(ui: &mut Ui, width: f32, rows: &[StageRow]) {
     for row in rows {
         let (line, _) = ui.allocate_exact_size(vec2(width, STAGE_ROW_H), Sense::hover());
         let mid = line.center().y;
-        let name = ellipsized(&painter, &row.name, body(13.5), brand::SOFT, STAGE_NAME_W - 12.0);
+        let name =
+            ellipsized(&painter, &row.name, body(TEXT_BODY), brand::SOFT, STAGE_NAME_W - 12.0);
         selectable::galley(ui, pos2(line.left(), mid - name.size().y / 2.0), name, brand::SOFT);
         let count = painter.layout_no_wrap(
             format!("{} of {}", row.done, row.total),

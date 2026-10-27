@@ -10,6 +10,7 @@ use egui::{
 use crate::brand;
 use crate::notice::key_hint;
 use crate::palette::{Hit, Item, Palette, Target, filter};
+use crate::screen_kit::TEXT_TAG;
 use crate::screen_kit::selection_row;
 use crate::settings_ui::text_input;
 
@@ -148,13 +149,17 @@ fn paint_row(ui: &egui::Ui, rect: Rect, item: &Item, hit: &Hit, selected: bool) 
         };
         job.append(&c.to_string(), 0.0, TextFormat::simple(FontId::proportional(14.0), color));
     }
-    job.append(item.kind, 12.0, TextFormat::simple(FontId::proportional(11.0), brand::MUTED));
+    job.append(item.kind, 12.0, TextFormat::simple(FontId::proportional(TEXT_TAG), brand::MUTED));
     if let Some(alias) = hit.alias {
-        let muted = TextFormat::simple(FontId::proportional(11.0), brand::MUTED);
+        let muted = TextFormat::simple(FontId::proportional(TEXT_TAG), brand::MUTED);
         job.append("also called ", 8.0, muted);
         for (i, c) in alias.chars().enumerate() {
             let color = if hit.positions.contains(&i) { brand::TEAL_TEXT } else { brand::MUTED };
-            job.append(&c.to_string(), 0.0, TextFormat::simple(FontId::proportional(11.0), color));
+            job.append(
+                &c.to_string(),
+                0.0,
+                TextFormat::simple(FontId::proportional(TEXT_TAG), color),
+            );
         }
     }
     let side = item.disabled.unwrap_or(&item.keys);
@@ -164,9 +169,9 @@ fn paint_row(ui: &egui::Ui, rect: Rect, item: &Item, hit: &Hit, selected: bool) 
     painter.galley(pos2(rect.left() + 10.0, rect.center().y - galley.size().y / 2.0), galley, ink);
     if !side.is_empty() {
         let font = if item.disabled.is_some() {
-            FontId::proportional(11.5)
+            FontId::proportional(TEXT_TAG)
         } else {
-            FontId::monospace(11.5)
+            FontId::monospace(TEXT_TAG)
         };
         painter.text(
             pos2(rect.right() - 10.0, rect.center().y),

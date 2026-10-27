@@ -26,7 +26,9 @@ use crate::brand;
 use crate::commit_files::{self, Spot};
 use crate::last_turn::LastTurn;
 use crate::progress_view::{self, Side, TabState};
-use crate::screen_kit::{body, mono};
+use crate::screen_kit::TEXT_SECONDARY;
+use crate::screen_kit::mono;
+use crate::screen_kit::{TagFill, paint_tag, tag_width};
 use crate::search_bar;
 use crate::selectable;
 use crate::tab_view::TabView;
@@ -245,14 +247,10 @@ fn show_card_header(
             PillKind::Ahead => (brand::GREEN, brand::GREEN.gamma_multiply(0.12)),
             PillKind::Behind => (brand::ORANGE, brand::ORANGE.gamma_multiply(0.12)),
         };
-        let galley = painter.layout_no_wrap(pill.text, body(12.0), ink);
-        let size = galley.size() + vec2(14.0, 4.0);
-        if x + size.x > right {
+        if x + tag_width(&painter, &pill.text) > right {
             break;
         }
-        let pill_rect = Rect::from_min_size(pos2(x, center_y - size.y / 2.0), size);
-        painter.rect_filled(pill_rect, CornerRadius::same(255), fill);
-        painter.galley(pill_rect.center() - galley.size() / 2.0, galley, ink);
+        let pill_rect = paint_tag(&painter, (x, center_y), &pill.text, ink, TagFill::Tint(fill));
         x = pill_rect.right() + 8.0;
     }
     chose
@@ -346,8 +344,8 @@ fn show_graph(
 fn message(ui: &mut Ui, error: Option<&str>, idle: &str) {
     ui.add_space(40.0);
     ui.vertical_centered(|ui| match error {
-        Some(error) => ui.label(RichText::new(error).size(12.5).color(brand::RED)),
-        None => ui.label(RichText::new(idle).size(12.5).color(brand::FAINT)),
+        Some(error) => ui.label(RichText::new(error).size(TEXT_SECONDARY).color(brand::RED)),
+        None => ui.label(RichText::new(idle).size(TEXT_SECONDARY).color(brand::FAINT)),
     });
 }
 

@@ -18,7 +18,9 @@ use crate::pr_card_model::{
 use crate::pr_watch::{Handling, Watch, paused_note};
 use crate::reader_chat_view;
 use crate::reader_view::ellipsized;
+use crate::screen_kit::TEXT_TITLE;
 use crate::screen_kit::{Size, body, heading, mono, primary_button, quiet_button};
+use crate::screen_kit::{TEXT_BODY, TEXT_SECONDARY, TEXT_TAG};
 
 const MAX_CARD_W: f32 = 760.0;
 const MAX_BUBBLE_W: f32 = 560.0;
@@ -27,7 +29,7 @@ const INDENT: f32 = 26.0;
 const GUESS_H: f32 = 110.0;
 const BARS_GAP: f32 = 8.0;
 const TEXT_PX: f32 = 14.0;
-const CODE_PX: f32 = 12.5;
+const CODE_PX: f32 = TEXT_SECONDARY;
 
 /// What the cards of a tab are drawn from.
 #[derive(Clone, Copy, Debug)]
@@ -187,7 +189,7 @@ fn header(ui: &mut Ui, card: &Model, age: &str) {
         right_galley,
         brand::FAINT,
     );
-    let title = painter.layout_no_wrap(card.title.clone(), heading(15.0), brand::TEXT);
+    let title = painter.layout_no_wrap(card.title.clone(), heading(TEXT_TITLE), brand::TEXT);
     let title_w = title.size().x;
     let x = rect.left() + INDENT;
     painter.galley(pos2(x, rect.center().y - title.size().y / 2.0), title, brand::TEXT);
@@ -374,12 +376,16 @@ pub(crate) fn draw_bubble(ui: &mut Ui, bubble: &Bubble) {
                 ui.set_max_width(MAX_BUBBLE_W.min(ui.available_width()));
                 ui.spacing_mut().item_spacing.y = 2.0;
                 let mut who = LayoutJob::default();
-                who.append(bubble.who, 0.0, TextFormat::simple(body(11.0), brand::MUTED));
-                who.append(&bubble.tag, 8.0, TextFormat::simple(body(11.0), brand::TEAL));
+                who.append(bubble.who, 0.0, TextFormat::simple(body(TEXT_TAG), brand::MUTED));
+                who.append(&bubble.tag, 8.0, TextFormat::simple(body(TEXT_TAG), brand::TEAL));
                 ui.label(who);
                 let mut text = LayoutJob::default();
                 text.wrap.max_width = ui.available_width();
-                text.append(&bubble.headline, 0.0, TextFormat::simple(body(13.5), brand::TEXT));
+                text.append(
+                    &bubble.headline,
+                    0.0,
+                    TextFormat::simple(body(TEXT_BODY), brand::TEXT),
+                );
                 if let Some(more) = &bubble.more {
                     text.append(more, 8.0, TextFormat::simple(body(13.0), brand::FAINT));
                 }
@@ -410,7 +416,7 @@ fn waiting_row(ui: &mut Ui, text: &str, buttons: &[Button; 2]) -> Option<CardAct
     let galley = ellipsized(
         ui.painter(),
         text,
-        body(13.5),
+        body(TEXT_BODY),
         brand::TEXT,
         right.min_rect().left() - 12.0 - left,
     );
@@ -436,13 +442,13 @@ fn paused_row(ui: &mut Ui, text: &str, fix: Option<&str>) {
     paint_icon(painter, boxed.center(), Icon::Bang, brand::MUTED);
     let mut right = rect.right() - 14.0;
     if let Some(fix) = fix {
-        let galley = painter.layout_no_wrap(fix.to_owned(), mono(12.5), brand::SOFT);
+        let galley = painter.layout_no_wrap(fix.to_owned(), mono(TEXT_SECONDARY), brand::SOFT);
         right -= galley.size().x;
         painter.galley(pos2(right, rect.center().y - galley.size().y / 2.0), galley, brand::SOFT);
         right -= 12.0;
     }
     let left = boxed.right() + 10.0;
-    let galley = ellipsized(painter, text, body(13.5), brand::TEXT, right - left);
+    let galley = ellipsized(painter, text, body(TEXT_BODY), brand::TEXT, right - left);
     painter.galley(pos2(left, rect.center().y - galley.size().y / 2.0), galley, brand::TEXT);
 }
 

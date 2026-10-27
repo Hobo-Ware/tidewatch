@@ -8,6 +8,8 @@ use tidewatch_core::prefs::{Panels, QUAKE_HEIGHT_RANGE, WindowPrefs};
 use tidewatch_core::ui_zoom;
 
 use crate::hotkey;
+use crate::screen_kit::Size;
+use crate::screen_kit::TEXT_BODY;
 use crate::segmented;
 use crate::settings_ui::{
     self, Control, FAINT, FIELD_LINE, GROUND, RED, TEAL, TEAL_TEXT, key_cap, key_cap_width,
@@ -17,7 +19,7 @@ use crate::shell::HotkeyStatus;
 use crate::window_settings::Editor;
 
 const RECORDER_WIDTH: f32 = 230.0;
-const RECORDER_HEIGHT: f32 = 38.0;
+const RECORDER_HEIGHT: f32 = Size::Regular.height();
 const MIN_RECORDER: f32 = 112.0;
 const CAP_GAP: f32 = 6.0;
 const HEIGHT_SLIDER_WIDTH: f32 = 240.0;
@@ -146,7 +148,7 @@ fn hotkey_row(ui: &mut Ui, editor: &mut Editor, status: &HotkeyStatus) -> Option
         Control::new(RECORDER_WIDTH, RECORDER_HEIGHT),
         |ui| {
             ui.spacing_mut().item_spacing.y = 3.0;
-            ui.label(RichText::new("Hotkey").size(15.0).color(settings_ui::TEXT));
+            ui.label(RichText::new("Hotkey").size(TEXT_BODY).color(settings_ui::TEXT));
             settings_ui::note(ui, "Click and press the keys you want.", settings_ui::MUTED);
             status_line(ui, problem.as_deref(), status);
         },

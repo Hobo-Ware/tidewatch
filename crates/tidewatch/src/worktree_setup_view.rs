@@ -6,6 +6,7 @@ use egui::{Key, Margin, RichText, Ui, vec2};
 use tidewatch_core::setup_recipe::Recipe;
 
 use crate::screen_kit::Size;
+use crate::screen_kit::TEXT_BODY;
 use crate::settings_ui::{
     self, Control, MUTED, TEXT, Tone, button, caption, divider, footer_note, note, page_header,
     row, row_with, section, switch_row, text_input,
@@ -142,7 +143,7 @@ fn generator_card(ui: &mut Ui, editor: &mut Editor) -> Option<Recipe> {
     section(ui, "Generator", |ui| {
         egui::Frame::new().inner_margin(Margin::symmetric(18, 14)).show(ui, |ui| {
             ui.spacing_mut().item_spacing.y = 6.0;
-            ui.label(RichText::new("Command run in the new worktree").size(15.0).color(TEXT));
+            ui.label(RichText::new("Command run in the new worktree").size(TEXT_BODY).color(TEXT));
             ui.label(
                 RichText::new(
                     "Runs before the agent starts, with its output in the terminal and a Worktree \

@@ -20,6 +20,7 @@ use crate::app::strip::ICON_BOX;
 use crate::brand;
 use crate::mascot_motion;
 use crate::screen_kit::{Size, body, mono, quiet_button, selection_row};
+use crate::screen_kit::{TEXT_BODY, TEXT_SECONDARY, TEXT_TAG, TEXT_TITLE};
 
 pub(crate) const SLOT_W: f32 = ICON_W;
 const SLOT_H: f32 = ICON_BOX;
@@ -422,7 +423,8 @@ fn off_menu(ui: &mut Ui, input: &Input) -> Option<Action> {
     let muted = format!(
         "Tidewatch already keeps the {machine} awake while agents work. That is automatic and separate."
     );
-    let galley = ui.painter().layout(muted, body(12.5), brand::FAINT, ui.available_width());
+    let galley =
+        ui.painter().layout(muted, body(TEXT_SECONDARY), brand::FAINT, ui.available_width());
     let (rect, _) = ui.allocate_exact_size(galley.size(), Sense::hover());
     ui.painter().galley(rect.min, galley, brand::FAINT);
     action
@@ -430,11 +432,11 @@ fn off_menu(ui: &mut Ui, input: &Input) -> Option<Action> {
 
 fn heading(ui: &mut Ui, title: &str, sub: &str) {
     if sub.is_empty() {
-        ui.label(RichText::new(title).font(mono(10.5)).color(brand::FAINT));
+        ui.label(RichText::new(title).font(mono(TEXT_TAG)).color(brand::FAINT));
         return;
     }
     ui.label(RichText::new(title).color(brand::TEXT).size(14.0));
-    ui.label(RichText::new(sub).font(mono(10.5)).color(brand::FAINT));
+    ui.label(RichText::new(sub).font(mono(TEXT_TAG)).color(brand::FAINT));
     ui.add_space(4.0);
 }
 
@@ -457,7 +459,9 @@ fn note_row(ui: &mut Ui, text: &str) {
         ui.spacing_mut().item_spacing.x = 8.0;
         let (icon, _) = ui.allocate_exact_size(vec2(14.0, 16.0), Sense::hover());
         paint_warning(ui.painter(), icon.center() + vec2(0.0, 1.0), 14.0);
-        ui.add(egui::Label::new(RichText::new(text).color(brand::SOFT).size(12.5)).wrap());
+        ui.add(
+            egui::Label::new(RichText::new(text).color(brand::SOFT).size(TEXT_SECONDARY)).wrap(),
+        );
     });
 }
 
@@ -488,7 +492,7 @@ fn omen_ink(omen: Omen) -> Color32 {
 pub(crate) fn toast(ui: &Ui, column: Rect, lines: &[(Omen, String)], fade: f32) {
     let alpha = |color: Color32| color.gamma_multiply(fade);
     let painter = ui.painter();
-    let tag_font = mono(11.0);
+    let tag_font = mono(TEXT_TAG);
     let rows: Vec<_> = lines
         .iter()
         .map(|(omen, text)| {
@@ -496,7 +500,7 @@ pub(crate) fn toast(ui: &Ui, column: Rect, lines: &[(Omen, String)], fade: f32) 
                 painter.layout_no_wrap(omen.tag().to_owned(), tag_font.clone(), omen_ink(*omen));
             let wrap =
                 (column.width() - 2.0 * (TOAST_PAD.x + 16.0) - tag.size().x - 10.0).max(120.0);
-            let line = painter.layout(text.clone(), body(13.5), brand::TEXT, wrap);
+            let line = painter.layout(text.clone(), body(TEXT_BODY), brand::TEXT, wrap);
             (*omen, tag, line)
         })
         .collect();
@@ -562,16 +566,16 @@ pub(crate) fn notice(
                     paint_warning(ui.painter(), glyph.center() + vec2(0.0, 0.5), 18.0);
                     ui.vertical(|ui| {
                         ui.spacing_mut().item_spacing.y = 6.0;
-                        ui.label(RichText::new(notice.title).color(brand::TEXT).size(15.0));
+                        ui.label(RichText::new(notice.title).color(brand::TEXT).size(TEXT_TITLE));
                         ui.add(
                             egui::Label::new(
-                                RichText::new(&notice.body).color(brand::SOFT).size(13.5),
+                                RichText::new(&notice.body).color(brand::SOFT).size(TEXT_BODY),
                             )
                             .wrap(),
                         );
                         ui.add(
                             egui::Label::new(
-                                RichText::new(notice.foot).color(brand::FAINT).size(12.5),
+                                RichText::new(notice.foot).color(brand::FAINT).size(TEXT_SECONDARY),
                             )
                             .wrap(),
                         );

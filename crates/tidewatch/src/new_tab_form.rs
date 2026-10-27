@@ -21,6 +21,7 @@ use crate::new_tab_meeseeks::{self, TestsOffer, Tick};
 use crate::new_tab_remote;
 use crate::new_tab_workflow::{self, StageCard};
 use crate::repo_base::RepoFacts;
+use crate::screen_kit::TEXT_SECONDARY;
 use crate::screen_kit::{
     Size, body, confirm_key, esc_left_a_widget, heading, keyed_button_width, mono,
     primary_button_keyed, remember_focus,
@@ -150,7 +151,7 @@ fn hint_job(parts: &[(&str, bool)]) -> LayoutJob {
     let mut job = LayoutJob::default();
     for (text, key) in parts {
         let (font, color) =
-            if *key { (mono(12.0), brand::SOFT) } else { (body(12.5), brand::FAINT) };
+            if *key { (mono(12.0), brand::SOFT) } else { (body(TEXT_SECONDARY), brand::FAINT) };
         job.append(text, 0.0, TextFormat::simple(font, color));
     }
     job
@@ -676,7 +677,8 @@ fn footer(
     placed.hints = Some(Rect::from_min_size(rect.min, vec2(room, rect.height())));
     let painter = ui.painter();
     if let Some(error) = &state.error {
-        let galley = crate::reader_view::ellipsized(painter, error, body(12.5), brand::RED, room);
+        let galley =
+            crate::reader_view::ellipsized(painter, error, body(TEXT_SECONDARY), brand::RED, room);
         let at = pos2(rect.left(), rect.center().y - galley.size().y / 2.0);
         painter.galley(at, galley, brand::RED);
     } else {

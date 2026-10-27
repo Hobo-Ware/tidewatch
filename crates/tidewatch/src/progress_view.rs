@@ -29,7 +29,9 @@ use crate::progress_ring::{paint_mark, tone_color};
 use crate::progress_stale::fresh;
 use crate::progress_state::TabLedger;
 use crate::reader_view::{ellipsized, paint_item};
+use crate::screen_kit::TEXT_TITLE;
 use crate::screen_kit::{Size, body, heading, mono, primary_button};
+use crate::screen_kit::{TEXT_BODY, TEXT_SECONDARY, TEXT_TAG};
 use crate::selectable;
 
 const WIDE_PAD: f32 = 22.0;
@@ -41,7 +43,7 @@ const MARK_W: f32 = 18.0;
 const BAR_H: f32 = 5.0;
 const BAR_MIN_W: f32 = 52.0;
 const BAR_GAP: f32 = 6.0;
-const TAG_H: f32 = 26.0;
+const TAG_H: f32 = Size::Compact.height();
 const TAG_GAP: f32 = 8.0;
 const LIST_LIMIT: usize = 6;
 const SPIN_EVERY: Duration = Duration::from_millis(40);
@@ -317,10 +319,10 @@ fn meta_line(
     room: f32,
 ) -> std::sync::Arc<egui::Galley> {
     let ink = tone_color(tone);
-    let quiet = TextFormat::simple(body(12.5), brand::MUTED);
+    let quiet = TextFormat::simple(body(TEXT_SECONDARY), brand::MUTED);
     let mut job = LayoutJob::default();
-    job.append("\u{25cf} ", 0.0, TextFormat::simple(body(12.5), ink));
-    job.append(tone.word(), 0.0, TextFormat::simple(body(12.5), ink));
+    job.append("\u{25cf} ", 0.0, TextFormat::simple(body(TEXT_SECONDARY), ink));
+    job.append(tone.word(), 0.0, TextFormat::simple(body(TEXT_SECONDARY), ink));
     if let Some(updated) = model::updated(now_ms, updated_ms, stale) {
         job.append(&format!(" \u{b7} {updated}"), 0.0, quiet);
     }
@@ -478,7 +480,7 @@ fn plain_question_card(ui: &mut Ui, width: f32, asked: &[&Entry]) -> bool {
     }
     .max(40.0);
     let mut question = Text::new();
-    question.run(first.text.trim(), &TextFormat::simple(body(13.5), brand::TEXT));
+    question.run(first.text.trim(), &TextFormat::simple(body(TEXT_BODY), brand::TEXT));
     let galley = question.wrapped(text_w, 2).lay_out(ui.painter());
     let text_h = galley.size().y;
     let inner_h = if stacked {
@@ -492,7 +494,7 @@ fn plain_question_card(ui: &mut Ui, width: f32, asked: &[&Entry]) -> bool {
     let glyph_top = rect.top() + PAD_Y + (text_h.max(GLYPH) - GLYPH) / 2.0;
     let glyph = Rect::from_min_size(pos2(rect.left() + PAD_X, glyph_top), vec2(GLYPH, GLYPH));
     painter.rect_filled(glyph, CornerRadius::same(8), brand::NEEDS.gamma_multiply(0.16));
-    painter.text(glyph.center(), Align2::CENTER_CENTER, "?", heading(15.0), brand::NEEDS);
+    painter.text(glyph.center(), Align2::CENTER_CENTER, "?", heading(TEXT_TITLE), brand::NEEDS);
     let text_x = glyph.right() + SPACE;
     let text_top = rect.top() + PAD_Y + (text_h.max(GLYPH) - text_h) / 2.0;
     galley.paint_selectable(
@@ -627,11 +629,12 @@ fn item_row(ui: &mut Ui, width: f32, row: &ItemRow<'_>, time: f64) {
     let ink = if muted { brand::FAINT } else { brand::TEXT };
     let room = (rect.right() - text_x).max(1.0);
     let why_ink = if row.mark == Mark::Blocked { brand::NEEDS } else { brand::FAINT };
-    let why = row
-        .why
-        .map(|why| Text::line(why, body(12.5), why_ink, (room * 0.42).max(40.0)).lay_out(painter));
+    let why = row.why.map(|why| {
+        Text::line(why, body(TEXT_SECONDARY), why_ink, (room * 0.42).max(40.0)).lay_out(painter)
+    });
     let why_w = why.as_ref().map_or(0.0, |galley| galley.size().x + 12.0);
-    let label = Text::line(row.text, body(13.5), ink, (room - why_w).max(1.0)).lay_out(painter);
+    let label =
+        Text::line(row.text, body(TEXT_BODY), ink, (room - why_w).max(1.0)).lay_out(painter);
     let at = pos2(text_x, rect.center().y - label.size().y / 2.0);
     let tip = match row.why {
         Some(why) => format!("{} - {why}", row.text),
@@ -646,7 +649,7 @@ fn item_row(ui: &mut Ui, width: f32, row: &ItemRow<'_>, time: f64) {
 }
 
 fn link(ui: &mut Ui, text: &str) -> bool {
-    let galley = ui.painter().layout_no_wrap(text.to_owned(), body(12.5), brand::MUTED);
+    let galley = ui.painter().layout_no_wrap(text.to_owned(), body(TEXT_SECONDARY), brand::MUTED);
     let (rect, response) =
         ui.allocate_exact_size(vec2(galley.size().x + 8.0, 22.0), Sense::click());
     let ink = if response.hovered() { brand::TEXT } else { brand::MUTED };
@@ -682,7 +685,8 @@ fn tags(ui: &mut Ui, width: f32, ledger: &Ledger, state: &mut TabState) {
         .iter()
         .zip(&labels)
         .map(|((tag, _), label)| {
-            let text = ui.painter().layout_no_wrap(label.clone(), body(12.5), brand::SOFT);
+            let text =
+                ui.painter().layout_no_wrap(label.clone(), body(TEXT_SECONDARY), brand::SOFT);
             (text.size().x + 22.0 + icon_w(*tag)).min(width)
         })
         .collect();
@@ -704,7 +708,7 @@ fn tags(ui: &mut Ui, width: f32, ledger: &Ledger, state: &mut TabState) {
         };
         painter.rect(
             pill,
-            CornerRadius::same(255),
+            CornerRadius::same(Size::Compact.radius()),
             Color32::TRANSPARENT,
             Stroke::new(1.0, line),
             StrokeKind::Inside,
@@ -722,8 +726,13 @@ fn tags(ui: &mut Ui, width: f32, ledger: &Ledger, state: &mut TabState) {
             }
             Tag::Decisions => {}
         }
-        let text =
-            single_line(painter, label, body(12.5), ink, (pill.right() - 11.0 - left).max(1.0));
+        let text = single_line(
+            painter,
+            label,
+            body(TEXT_SECONDARY),
+            ink,
+            (pill.right() - 11.0 - left).max(1.0),
+        );
         painter.galley(pos2(left, pill.center().y - text.size().y / 2.0), text, ink);
         if response.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
             state.toggle(*tag);
@@ -741,7 +750,7 @@ fn entry_list(ui: &mut Ui, width: f32, tag: Tag, list: &[&Entry]) {
     const PAD: f32 = 10.0;
     const BULLET: f32 = 16.0;
     let painter = ui.painter().clone();
-    let caption = painter.layout_no_wrap(tag.caption().to_owned(), body(11.5), brand::FAINT);
+    let caption = painter.layout_no_wrap(tag.caption().to_owned(), body(TEXT_TAG), brand::FAINT);
     let (cap_rect, _) = ui.allocate_exact_size(vec2(width, caption.size().y + 6.0), Sense::hover());
     selectable::galley(ui, cap_rect.left_top(), caption, brand::FAINT);
     let text_w = (width - 2.0 * PAD - BULLET).max(40.0);
@@ -750,7 +759,7 @@ fn entry_list(ui: &mut Ui, width: f32, tag: Tag, list: &[&Entry]) {
         .take(LIST_LIMIT)
         .map(|entry| {
             let mut text = Text::new();
-            text.run(entry.text.trim(), &TextFormat::simple(body(12.5), brand::SOFT));
+            text.run(entry.text.trim(), &TextFormat::simple(body(TEXT_SECONDARY), brand::SOFT));
             if let Some(why) = entry.why.as_deref().map(str::trim).filter(|why| !why.is_empty()) {
                 text.run(&format!("  {why}"), &TextFormat::simple(body(12.0), brand::FAINT));
             }
@@ -783,7 +792,7 @@ fn entry_list(ui: &mut Ui, width: f32, tag: Tag, list: &[&Entry]) {
             pos2(rect.left() + PAD + BULLET, rect.bottom() - PAD - 8.0),
             Align2::LEFT_CENTER,
             format!("+{more} more"),
-            mono(11.5),
+            mono(TEXT_TAG),
             brand::FAINT,
         );
     }

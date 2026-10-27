@@ -9,15 +9,15 @@ use egui::{
 use tidewatch_core::progress::Choice;
 
 use crate::brand;
-use crate::screen_kit::body;
+use crate::screen_kit::{Size, TEXT_TAG, body};
 
-pub(crate) const CHIP_H: f32 = 34.0;
 pub(crate) const GAP: f32 = 8.0;
-const RADIUS: u8 = 9;
-const PAD_X: f32 = 12.0;
+const RADIUS: u8 = Size::Compact.radius();
+const PAD_X: f32 = Size::Compact.pad();
+const CHIP_H: f32 = Size::Compact.height();
 const NUMBER_GAP: f32 = 7.0;
-const LABEL_FONT: f32 = 14.0;
-const NUMBER_FONT: f32 = 11.5;
+const LABEL_FONT: f32 = Size::Compact.font();
+const NUMBER_FONT: f32 = TEXT_TAG;
 const DASH: f32 = 4.0;
 const DASH_GAP: f32 = 3.0;
 pub(crate) const KEYED: usize = 4;

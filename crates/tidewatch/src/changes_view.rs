@@ -19,6 +19,7 @@ use crate::commit_files::{split_dir, tail_fit, totals};
 use crate::diff_pane::{kind_color, kind_letter};
 use crate::pane_jobs::LineCounts;
 use crate::reader_view::ellipsized;
+use crate::screen_kit::{TEXT_SECONDARY, TEXT_TAG};
 use crate::screen_kit::{body, mono};
 use crate::selectable;
 use crate::tab_view::TabView;
@@ -137,7 +138,7 @@ fn message(ui: &Ui, area: Rect, text: &str) {
         pos2(area.center().x, area.top() + 40.0),
         Align2::CENTER_CENTER,
         text,
-        body(12.5),
+        body(TEXT_SECONDARY),
         brand::FAINT,
     );
 }
@@ -212,7 +213,7 @@ fn header_row(ui: &mut Ui, group: Group, count: usize) {
         pos2(left + width + 6.0, slot.center().y + 1.0),
         Align2::LEFT_CENTER,
         &count.to_string(),
-        mono(11.5),
+        mono(TEXT_TAG),
         brand::FAINT,
     );
 }
@@ -234,7 +235,13 @@ fn file_row(
     }
     let center_y = rect.center().y;
     let (mark, ink) = letter(group, change.kind);
-    painter.text(pos2(rect.left() + ROW_PAD, center_y), Align2::LEFT_CENTER, mark, mono(11.5), ink);
+    painter.text(
+        pos2(rect.left() + ROW_PAD, center_y),
+        Align2::LEFT_CENTER,
+        mark,
+        mono(TEXT_TAG),
+        ink,
+    );
     let mut right = rect.right() - ROW_PAD;
     if let Some((added, removed)) = counts {
         painter.text(

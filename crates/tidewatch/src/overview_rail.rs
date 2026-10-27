@@ -11,6 +11,7 @@ use crate::overview_view::{
     repo_label, section_frame, section_head,
 };
 use crate::reader_view::ellipsized;
+use crate::screen_kit::TEXT_TAG;
 use crate::screen_kit::{Size, button_width, heading, primary_button};
 
 const DAY_H: f32 = 22.0;
@@ -60,7 +61,7 @@ fn coming_up(ui: &mut Ui, width: f32, days: &[Day]) -> Option<usize> {
             pos2(rect.left() + SECTION_PAD, y + DAY_H / 2.0),
             Align2::LEFT_CENTER,
             &day.label,
-            heading(11.0),
+            heading(TEXT_TAG),
             ink,
         );
         y += DAY_H;

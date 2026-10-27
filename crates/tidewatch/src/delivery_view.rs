@@ -14,6 +14,7 @@ use crate::commands::{self, Command};
 use crate::delivery_card::{Delivery, Form, card_text, fix_hint};
 use crate::reader_view::{INSET, field_frame, item_frame, paint_item};
 use crate::screen_kit::{Size, body, dialog_frame, footer_row, mono, primary_button, quiet_button};
+use crate::screen_kit::{TEXT_SECONDARY, TEXT_TAG};
 
 pub(crate) const BAND_H: f32 = 40.0;
 const DIALOG_WIDTH: f32 = 560.0;
@@ -157,8 +158,12 @@ fn editing_body(ui: &mut Ui, form: &mut Form) -> Option<DialogAction> {
                 ui.spacing_mut().item_spacing.y = 3.0;
                 for commit in &form.plan.commits {
                     let mut job = LayoutJob::default();
-                    job.append(&commit.sha, 0.0, TextFormat::simple(mono(11.5), brand::FAINT));
-                    job.append(&commit.subject, 10.0, TextFormat::simple(body(12.5), brand::TEXT));
+                    job.append(&commit.sha, 0.0, TextFormat::simple(mono(TEXT_TAG), brand::FAINT));
+                    job.append(
+                        &commit.subject,
+                        10.0,
+                        TextFormat::simple(body(TEXT_SECONDARY), brand::TEXT),
+                    );
                     ui.add(egui::Label::new(job).truncate());
                 }
             },

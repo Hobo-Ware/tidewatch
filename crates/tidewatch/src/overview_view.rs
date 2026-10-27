@@ -17,7 +17,7 @@ use crate::brand;
 use crate::commands::Command;
 use crate::mascot::{self, Pose};
 use crate::overview::{
-    Board, Overview, PoofedRow, RepoChip, Row, WORKING_CAP, ask_button, ask_tag, capped, card_view,
+    Board, Overview, PoofedRow, RepoChip, Row, WORKING_CAP, ask_button, capped, card_view,
     fmt_elapsed, idle_line, needs_line, repo_ink, waiting_line,
 };
 use crate::overview_rail;
@@ -25,7 +25,11 @@ use crate::progress_model::Ask;
 use crate::progress_ring;
 use crate::progress_view::flow;
 use crate::reader_view::ellipsized;
-use crate::screen_kit::{Size, button_width, heading, primary_button};
+use crate::screen_kit::TEXT_TAG;
+use crate::screen_kit::{
+    Size, TEXT_PAGE, TEXT_SECONDARY, TEXT_TITLE, TagFill, button_width, heading, paint_tag,
+    primary_button, tag_width,
+};
 use crate::status_view::{self, Tone};
 
 const BUTTON_H: f32 = ICON_BOX;
@@ -48,18 +52,18 @@ const RING: f32 = 40.0;
 const FACE_GAP: f32 = 10.0;
 const ASK_ROW_GAP: f32 = 8.0;
 const WHY_H: f32 = 18.0;
+const NAME_MID: f32 = 10.0;
+const LINE_MID: f32 = 31.0;
 const ASK_CARD_MIN_W: f32 = 420.0;
 const BAR_GAP: f32 = 10.0;
 const BAR_H: f32 = 3.0;
-const NEEDS_H: f32 = CARD_PAD * 2.0 + ROW_H + ASK_ROW_GAP + 26.0;
+const NEEDS_H: f32 = CARD_PAD * 2.0 + ROW_H + ASK_ROW_GAP + Size::Compact.height();
 const WORKING_H: f32 = CARD_PAD * 2.0 + ROW_H + BAR_GAP + BAR_H;
 const IDLE_H: f32 = CARD_PAD * 2.0 + ROW_H;
 pub(crate) const SWATCH: f32 = 7.0;
-const PILL_H: f32 = 18.0;
-const CHIP_H: f32 = 28.0;
+const CHIP_H: f32 = Size::Compact.height();
 const CHIP_GAP: f32 = 8.0;
 const CHIP_CHARS: usize = 18;
-const TITLE_SIZE: f32 = 22.0;
 const MASCOT_H: f32 = 120.0;
 const BADGE_H: f32 = 16.0;
 const GRID_ICON: &str = "\u{E464}";
@@ -123,7 +127,7 @@ fn button_tip(keys: &str, needs: &[(String, usize)]) -> String {
 
 fn paint_badge(ui: &egui::Ui, button: Rect, count: usize) {
     let text = if count > 9 { "9+".to_owned() } else { count.to_string() };
-    let font = FontId::monospace(11.0);
+    let font = FontId::monospace(TEXT_TAG);
     let galley = ui.painter().layout_no_wrap(text, font, colors::bg());
     let width = (galley.size().x + 8.0).max(BADGE_H);
     let badge =
@@ -224,10 +228,10 @@ fn chip_width(ui: &Ui, chip: Option<&RepoChip>, active_all: usize) -> f32 {
         Some(chip) => (chip_label(&chip.label), chip.count, SWATCH + 6.0),
         None => ("All".to_owned(), active_all, 0.0),
     };
-    let font = FontId::proportional(13.0);
+    let font = FontId::proportional(TEXT_SECONDARY);
     let text = ui.painter().layout_no_wrap(label, font.clone(), brand::SOFT).size().x;
     let count = ui.painter().layout_no_wrap(count.to_string(), font, brand::FAINT).size().x;
-    24.0 + swatch + text + 6.0 + count
+    2.0 * Size::Compact.pad() + swatch + text + 6.0 + count
 }
 
 fn chip_label(label: &str) -> String {
@@ -237,8 +241,9 @@ fn chip_label(label: &str) -> String {
 fn header(ui: &mut Ui, area: Rect, board: &Board, state: &mut State) -> f32 {
     let (left, right) = (area.left() + SIDE, area.right() - SIDE);
     let painter = ui.painter().clone();
-    let title = painter.layout_no_wrap("Overview".to_owned(), heading(TITLE_SIZE), brand::TEXT);
-    let summary = painter.layout_no_wrap(board.summary(), FontId::proportional(13.0), brand::SOFT);
+    let title = painter.layout_no_wrap("Overview".to_owned(), heading(TEXT_PAGE), brand::TEXT);
+    let summary =
+        painter.layout_no_wrap(board.summary(), FontId::proportional(TEXT_SECONDARY), brand::SOFT);
     let all: usize = board.chips.iter().map(|chip| chip.count).sum();
     let mut chips: Vec<Option<&RepoChip>> = vec![None];
     chips.extend(board.chips.iter().map(Some));
@@ -288,11 +293,11 @@ fn header(ui: &mut Ui, area: Rect, board: &Board, state: &mut State) -> f32 {
         };
         painter.rect_stroke(
             rect,
-            CornerRadius::same(255),
+            CornerRadius::same(Size::Compact.radius()),
             Stroke::new(1.0, line),
             StrokeKind::Inside,
         );
-        let mut x = rect.left() + 12.0;
+        let mut x = rect.left() + Size::Compact.pad();
         let (label, count) = match chip {
             Some(chip) => {
                 let swatch = Rect::from_center_size(
@@ -305,7 +310,7 @@ fn header(ui: &mut Ui, area: Rect, board: &Board, state: &mut State) -> f32 {
             }
             None => ("All".to_owned(), all),
         };
-        let font = FontId::proportional(13.0);
+        let font = FontId::proportional(TEXT_SECONDARY);
         let text = painter.layout_no_wrap(label, font.clone(), ink);
         let count = painter.layout_no_wrap(count.to_string(), font, brand::FAINT);
         painter.galley(pos2(x, mid_of(rect) - text.size().y / 2.0), text.clone(), ink);
@@ -338,7 +343,7 @@ fn empty(ui: &mut Ui) {
                 "Nothing running. Start an agent with {}.",
                 Command::NewTab.keys()
             ))
-            .size(13.0)
+            .size(TEXT_SECONDARY)
             .color(brand::MUTED),
         );
     });
@@ -392,6 +397,7 @@ impl Lane {
             (Self::Needs, Some(ask)) => {
                 AskLayout::new(painter, ask, row.auto_pick.is_some(), card_w).card_h
             }
+            (Self::Needs, None) if row.auto_pick.is_some() => NEEDS_H + WHY_H,
             _ => self.min_h(),
         }
     }
@@ -482,13 +488,13 @@ pub(crate) fn section_head(painter: &Painter, section: Rect, head: &Head<'_>) {
         x += 16.0;
     }
     let title =
-        painter.text(pos2(x, mid), Align2::LEFT_CENTER, head.title, heading(15.0), head.ink);
+        painter.text(pos2(x, mid), Align2::LEFT_CENTER, head.title, heading(TEXT_TITLE), head.ink);
     if !head.caption.is_empty() {
         painter.text(
             pos2(title.right() + 8.0, mid + 1.0),
             Align2::LEFT_CENTER,
             head.caption,
-            FontId::proportional(12.0),
+            FontId::proportional(TEXT_SECONDARY),
             brand::MUTED,
         );
     }
@@ -496,7 +502,7 @@ pub(crate) fn section_head(painter: &Painter, section: Rect, head: &Head<'_>) {
         pos2(section.right() - SECTION_PAD, mid),
         Align2::RIGHT_CENTER,
         head.count,
-        FontId::proportional(13.0),
+        FontId::proportional(TEXT_SECONDARY),
         brand::MUTED,
     );
 }
@@ -588,25 +594,20 @@ fn grid_section(
 
 /// An outline pill whose left edge is at `left`, centered on `mid`. Returns its right edge.
 fn kind_pill(painter: &Painter, left: f32, mid: f32, text: &str, ink: Color32) -> f32 {
-    let galley = painter.layout_no_wrap(text.to_owned(), FontId::proportional(11.0), ink);
-    let pill =
-        Rect::from_min_size(pos2(left, mid - PILL_H / 2.0), vec2(galley.size().x + 14.0, PILL_H));
-    painter.rect_stroke(
-        pill,
-        CornerRadius::same((PILL_H / 2.0) as u8),
-        Stroke::new(1.0, ink.gamma_multiply(0.33)),
-        StrokeKind::Inside,
-    );
-    painter.galley(pill.center() - galley.size() / 2.0, galley, ink);
-    pill.right()
+    paint_tag(painter, (left, mid), text, ink, TagFill::Line(ink.gamma_multiply(0.33))).right()
 }
 
 /// The repo's square and name, its left edge at `left` and centered on `mid`. Returns the right edge.
 pub(crate) fn repo_label(painter: &Painter, left: f32, mid: f32, name: &str, max_w: f32) -> f32 {
     let square = Rect::from_center_size(pos2(left + SWATCH / 2.0, mid), vec2(SWATCH, SWATCH));
     painter.rect_filled(square, CornerRadius::same(2), repo_ink(name));
-    let text =
-        ellipsized(painter, name, FontId::proportional(12.0), brand::SOFT, max_w - SWATCH - 4.0);
+    let text = ellipsized(
+        painter,
+        name,
+        FontId::proportional(TEXT_SECONDARY),
+        brand::SOFT,
+        max_w - SWATCH - 4.0,
+    );
     let right = left + SWATCH + 4.0 + text.size().x;
     painter.galley(pos2(left + SWATCH + 4.0, mid - text.size().y / 2.0), text, brand::SOFT);
     right
@@ -697,14 +698,16 @@ fn card(ui: &mut Ui, rect: Rect, row: &Row, lane: Lane) -> CardOut {
     let full = (inner.right() - text_x).max(1.0);
     let room = (full - clock_w).max(1.0);
     let tag = row.kind.label();
-    let pill_w =
-        painter.layout_no_wrap(tag.clone(), FontId::proportional(11.0), brand::SOFT).size().x
-            + 14.0;
+    let pill_w = tag_width(&painter, &tag);
     let name_ink = if lane == Lane::Idle { brand::SOFT } else { brand::TEXT };
-    let name =
-        ellipsized(&painter, &row.title, heading(14.0), name_ink, (room - pill_w - 6.0).max(20.0));
-    let top = center.y - 16.0;
-    let name_mid = top + 8.0;
+    let name = ellipsized(
+        &painter,
+        &row.title,
+        heading(TEXT_TITLE),
+        name_ink,
+        (room - pill_w - 6.0).max(20.0),
+    );
+    let name_mid = inner.top() + NAME_MID;
     let name_right = text_x + name.size().x;
     painter.galley(pos2(text_x, name_mid - name.size().y / 2.0), name, name_ink);
     if name_right + 6.0 + pill_w <= text_x + room + 1.0 {
@@ -717,7 +720,7 @@ fn card(ui: &mut Ui, rect: Rect, row: &Row, lane: Lane) -> CardOut {
             brand::MUTED,
         );
     }
-    let line_mid = top + 8.0 + 8.0 + 8.0;
+    let line_mid = inner.top() + LINE_MID;
     let ask = ask_of(row).filter(|_| lane == Lane::Needs);
     let (text, ink) = match ask {
         Some(ask) => (ask.text.clone(), brand::NEEDS),
@@ -727,7 +730,7 @@ fn card(ui: &mut Ui, rect: Rect, row: &Row, lane: Lane) -> CardOut {
     let rest = ellipsized(
         &painter,
         &format!("\u{b7} {text}"),
-        FontId::proportional(12.0),
+        FontId::proportional(TEXT_SECONDARY),
         ink,
         (inner.right() - repo_right - 6.0).max(1.0),
     );
@@ -736,7 +739,7 @@ fn card(ui: &mut Ui, rect: Rect, row: &Row, lane: Lane) -> CardOut {
     match lane {
         Lane::Needs => match ask {
             Some(ask) => out.answer = ask_chips(ui, &painter, rect, &resp, (ask, row)),
-            None => out.clicked = ask_row(ui, &painter, inner, row, &view.tag),
+            None => out.clicked = ask_row(ui, &painter, rect, row),
         },
         Lane::Working => {
             let bar = Rect::from_min_size(
@@ -777,8 +780,13 @@ fn ask_chips(
     let why = ask.why.as_deref().map(answer_chips::sentence);
     let lines = why.iter().chain(row.auto_pick.iter());
     for (index, line) in lines.enumerate() {
-        let galley =
-            ellipsized(painter, line, FontId::proportional(12.5), brand::MUTED, layout.room);
+        let galley = ellipsized(
+            painter,
+            line,
+            FontId::proportional(TEXT_SECONDARY),
+            brand::MUTED,
+            layout.room,
+        );
         let at = pos2(text_x, rect.top() + CARD_PAD + ROW_H + 1.0 + WHY_H * index as f32);
         painter.galley(at, galley, brand::MUTED);
     }
@@ -801,26 +809,20 @@ fn second_line(row: &Row, lane: Lane, view: &crate::overview::CardView) -> (Stri
     }
 }
 
-fn ask_row(ui: &mut Ui, painter: &Painter, inner: Rect, row: &Row, tag: &str) -> bool {
+fn ask_row(ui: &mut Ui, painter: &Painter, rect: Rect, row: &Row) -> bool {
+    let text_x = rect.left() + CARD_PAD + RING + FACE_GAP;
+    let mut top = rect.top() + CARD_PAD + ROW_H + ASK_ROW_GAP;
+    if let Some(line) = &row.auto_pick {
+        let room = (rect.right() - CARD_PAD - text_x).max(1.0);
+        let galley =
+            ellipsized(painter, line, FontId::proportional(TEXT_SECONDARY), brand::MUTED, room);
+        painter.galley(pos2(text_x, rect.top() + CARD_PAD + ROW_H + 1.0), galley, brand::MUTED);
+        top += WHY_H;
+    }
     let button = ask_button(row);
     let width = button_width(ui, button, Size::Compact);
-    let rect = Rect::from_min_size(
-        pos2(inner.right() - width, inner.bottom() - Size::Compact.height()),
-        vec2(width, Size::Compact.height()),
-    );
-    let (text, ink) = match &row.auto_pick {
-        Some(line) => (line.clone(), brand::MUTED),
-        None => (ask_tag(row, tag), brand::SOFT),
-    };
-    let galley = ellipsized(
-        painter,
-        &text,
-        FontId::proportional(12.0),
-        ink,
-        (inner.width() - width - 8.0).max(1.0),
-    );
-    painter.galley(pos2(inner.left(), rect.center().y - galley.size().y / 2.0), galley, ink);
-    in_rect(ui, rect, |ui| primary_button(ui, button, true, Size::Compact).clicked())
+    let button_rect = Rect::from_min_size(pos2(text_x, top), vec2(width, Size::Compact.height()));
+    in_rect(ui, button_rect, |ui| primary_button(ui, button, true, Size::Compact).clicked())
 }
 
 #[cfg(test)]
@@ -912,6 +914,14 @@ mod tests {
         }
     }
 
+    fn walk_boxes(shape: &egui::Shape, found: &mut Vec<Rect>) {
+        match shape {
+            egui::Shape::Rect(rect) => found.push(rect.rect),
+            egui::Shape::Vec(shapes) => shapes.iter().for_each(|shape| walk_boxes(shape, found)),
+            _ => {}
+        }
+    }
+
     struct Screen {
         ctx: egui::Context,
         data: Overview,
@@ -934,6 +944,11 @@ mod tests {
         }
 
         fn frame(&mut self, events: Vec<Event>) -> (Out, Vec<(String, Rect)>) {
+            let (out, found, _) = self.frame_drawn(events);
+            (out, found)
+        }
+
+        fn frame_drawn(&mut self, events: Vec<Event>) -> (Out, Vec<(String, Rect)>, Vec<Rect>) {
             let raw = RawInput {
                 screen_rect: Some(Rect::from_min_size(pos2(0.0, 0.0), vec2(self.width, 900.0))),
                 events,
@@ -947,10 +962,18 @@ mod tests {
                 out = show(ui, area, &self.data, &mut self.state, &sections, |_| {});
             });
             let mut found = Vec::new();
+            let mut boxes = Vec::new();
             for clipped in &output.shapes {
                 walk(&clipped.shape, &mut found);
+                walk_boxes(&clipped.shape, &mut boxes);
             }
-            (out, found)
+            (out, found, boxes)
+        }
+
+        fn drawn(&mut self) -> (Vec<(String, Rect)>, Vec<Rect>) {
+            self.frame(vec![]);
+            let (_, found, boxes) = self.frame_drawn(vec![]);
+            (found, boxes)
         }
 
         fn texts(&mut self) -> Vec<String> {
@@ -1313,6 +1336,61 @@ mod tests {
             repeat: false,
             modifiers: egui::Modifiers::NONE,
         }
+    }
+
+    fn box_around(boxes: &[Rect], text: &Rect) -> Rect {
+        boxes
+            .iter()
+            .filter(|rect| rect.contains_rect(*text) && rect.height() < 60.0)
+            .min_by(|a, b| a.area().total_cmp(&b.area()))
+            .copied()
+            .expect("a box around the text")
+    }
+
+    fn rect_of(found: &[(String, Rect)], label: &str) -> Rect {
+        found.iter().find(|(text, _)| text == label).unwrap_or_else(|| panic!("{label}")).1
+    }
+
+    #[test]
+    fn an_answer_button_is_compact_under_the_second_line_and_a_kind_tag_is_20_tall() {
+        let mut screen = Screen::new(overview(vec![row(
+            2,
+            "web-asks",
+            "acme-web",
+            AgentStatus::NeedsYou(Reason::Question),
+        )]));
+        let (found, boxes) = screen.drawn();
+        let button = box_around(&boxes, &rect_of(&found, "Answer"));
+        let tag = box_around(&boxes, &rect_of(&found, "Claude"));
+        let title = rect_of(&found, "web-asks");
+        let second = found
+            .iter()
+            .find(|(text, _)| text.contains("Asked a question"))
+            .map(|(_, rect)| *rect)
+            .expect("the second line");
+        assert_eq!(button.height(), Size::Compact.height());
+        assert_eq!(tag.height(), Size::Tag.height());
+        assert!((button.left() - title.left()).abs() < 1.0, "{button:?} {title:?}");
+        assert!(button.top() >= second.bottom(), "{button:?} {second:?}");
+        let texts: Vec<String> = found.into_iter().map(|(text, _)| text).collect();
+        assert_eq!(texts.iter().filter(|text| *text == "Needs you").count(), 1, "{texts:?}");
+        assert!(!has(&texts, "question"), "{texts:?}");
+    }
+
+    #[test]
+    fn answer_chips_are_compact_and_sit_in_one_row_under_the_title_column() {
+        let mut screen = Screen::new(overview(vec![asking(7, ASKING)]));
+        let (found, boxes) = screen.drawn();
+        let title = rect_of(&found, "asker");
+        let chips: Vec<Rect> = ["Post it", "Skip it", "Draft only"]
+            .iter()
+            .map(|label| box_around(&boxes, &rect_of(&found, label)))
+            .collect();
+        for chip in &chips {
+            assert_eq!(chip.height(), Size::Compact.height(), "{chip:?}");
+        }
+        assert!((chips[0].left() - title.left()).abs() < 1.0, "{:?} {title:?}", chips[0]);
+        assert!(chips.windows(2).all(|pair| pair[0].center().y == pair[1].center().y));
     }
 
     #[test]

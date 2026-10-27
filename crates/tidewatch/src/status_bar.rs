@@ -9,6 +9,8 @@ use tidewatch_core::pr_status::Tone as PrTone;
 use crate::commands::{Command, Platform};
 use crate::new_tab::Kind;
 use crate::pr_strip::tone_ink;
+use crate::screen_kit::Size;
+use crate::screen_kit::TEXT_SECONDARY;
 use crate::screen_kit::{body, mono};
 use crate::status_view::Tone;
 
@@ -16,12 +18,12 @@ pub(crate) const HEIGHT: f32 = 30.0;
 const PAD: f32 = crate::layout::EDGE;
 const GAP: f32 = 18.0;
 const DOT: f32 = 7.0;
-const FONT: f32 = 13.0;
+const FONT: f32 = TEXT_SECONDARY;
 const MOST_HINTS: usize = 4;
-const CHIP_H: f32 = 20.0;
+const CHIP_H: f32 = Size::Tag.height();
 const AWAKE_R: f32 = 5.0;
 const FETCH_FAILED: &str = "Fetch failed";
-const CHIP_PAD: f32 = 9.0;
+const CHIP_PAD: f32 = Size::Tag.pad();
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) struct Counts {
@@ -279,7 +281,7 @@ pub(crate) fn show(ui: &mut Ui, rect: Rect, bar: &Bar) -> bool {
         );
         let response = ui.interact(chip, Id::new("status-bar-review"), Sense::click());
         let fill = brand::TEAL.gamma_multiply(if response.hovered() { 0.2 } else { 0.1 });
-        ui.painter().rect_filled(chip, CornerRadius::same(255), fill);
+        ui.painter().rect_filled(chip, CornerRadius::same(Size::Tag.radius()), fill);
         ui.painter().galley(chip.center() - galley.size() / 2.0, galley, brand::TEAL_TEXT);
         open_review = response
             .on_hover_cursor(egui::CursorIcon::PointingHand)

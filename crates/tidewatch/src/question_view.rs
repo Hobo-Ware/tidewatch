@@ -20,7 +20,9 @@ use crate::reader_keys::Answer;
 use crate::reader_rows::{Asked, QuestionRow, ToolKind};
 use crate::reader_turns;
 use crate::reader_view::{INSET, ellipsized};
+use crate::screen_kit::TEXT_SECONDARY;
 use crate::screen_kit::{Size, body, heading, mono, primary_button, quiet_button};
+use crate::screen_kit::{TEXT_BODY, TEXT_TITLE};
 
 const CARD_RADIUS: u8 = 14;
 const CARD_PAD_X: i8 = 22;
@@ -36,7 +38,7 @@ const OTHER_H: f32 = 40.0;
 const ESTIMATED_H: f32 = 300.0;
 const MIN_LIST_H: f32 = 120.0;
 const CHROME_H: f32 = 200.0;
-pub(crate) const PERMISSION_H: f32 = 112.0;
+pub(crate) const PERMISSION_H: f32 = 80.0 + Size::Compact.height();
 pub(crate) const PERMISSION_COMMAND_H: f32 = 57.0;
 const SECTION_GAP: f32 = 14.0;
 const DOT: f32 = 7.0;
@@ -178,8 +180,12 @@ fn layout_option(painter: &Painter, option: &QuestionOption, text_w: f32) -> Opt
         .recommended()
         .then(|| painter.layout_no_wrap("Recommended".to_owned(), body(12.0), brand::TEAL_TEXT));
     let label_room = text_w - recommended.as_ref().map_or(0.0, |tag| tag.size().x + 6.0);
-    let label =
-        painter.layout(option.shown().to_owned(), body(15.0), brand::TEXT, label_room.max(40.0));
+    let label = painter.layout(
+        option.shown().to_owned(),
+        body(TEXT_BODY),
+        brand::TEXT,
+        label_room.max(40.0),
+    );
     let description = option
         .description
         .as_ref()
@@ -187,7 +193,7 @@ fn layout_option(painter: &Painter, option: &QuestionOption, text_w: f32) -> Opt
     let tradeoff = option
         .tradeoff
         .as_ref()
-        .map(|text| painter.layout(text.clone(), body(12.5), brand::MUTED, text_w));
+        .map(|text| painter.layout(text.clone(), body(TEXT_SECONDARY), brand::MUTED, text_w));
     let height = ROW_PAD_Y * 2.0
         + label.size().y.max(20.0)
         + description.as_ref().map_or(0.0, |text| 3.0 + text.size().y)
@@ -550,14 +556,14 @@ fn footer(ui: &mut Ui, live: &mut Live, profile: &str) -> Effect {
         } else {
             ("Next", live.card.answered())
         };
-        if primary_button(ui, label, ready, Size::Regular).clicked() {
+        if primary_button(ui, label, ready, Size::Compact).clicked() {
             if last {
                 effect = live.card.send();
             } else {
                 live.card.next();
             }
         }
-        if live.card.step() > 0 && quiet_button(ui, "Back", true, Size::Regular).clicked() {
+        if live.card.step() > 0 && quiet_button(ui, "Back", true, Size::Compact).clicked() {
             live.card.back();
         }
         let hint = if live.picks > 0 {
@@ -565,7 +571,7 @@ fn footer(ui: &mut Ui, live: &mut Live, profile: &str) -> Effect {
         } else {
             format!("Skip the questions and let {profile} decide")
         };
-        if quiet_button(ui, &format!("Let {profile} pick"), true, Size::Regular)
+        if quiet_button(ui, &format!("Let {profile} pick"), true, Size::Compact)
             .on_hover_text(hint)
             .clicked()
         {
@@ -732,7 +738,7 @@ fn answer_row(ui: &mut Ui, answer: Option<&str>, note: &str, label: &str) {
     let side = f32::from(ANSWER_ROW_PAD_X) * 2.0 + 2.0;
     let label_w = label_galley.as_ref().map_or(0.0, |galley| galley.size().x + 12.0);
     let (text, ink, font) = match answer {
-        Some(answer) => (answer, brand::TEXT, heading(15.0)),
+        Some(answer) => (answer, brand::TEXT, heading(TEXT_TITLE)),
         None => (note, brand::FAINT, body(14.0)),
     };
     let galley =
@@ -818,7 +824,7 @@ pub(crate) fn summary(
         for (question, answer) in &pairs {
             ui.label(
                 egui::RichText::new(question)
-                    .font(body(15.0))
+                    .font(body(TEXT_BODY))
                     .color(brand::SOFT)
                     .line_height(Some(23.0)),
             );
@@ -846,16 +852,16 @@ fn chip(ui: &mut Ui, label: &str, look: ChipLook) -> Response {
         ChipLook::Plain => (brand::STEP_TEXT, brand::FIELD_LINE),
         ChipLook::Write => (brand::MUTED, brand::FIELD_LINE),
     };
-    let galley = ui.painter().layout_no_wrap(label.to_owned(), body(13.0), ink);
-    let size = vec2(galley.size().x + 28.0, 30.0);
+    let galley = ui.painter().layout_no_wrap(label.to_owned(), body(Size::Compact.font()), ink);
+    let size = vec2(galley.size().x + 2.0 * Size::Compact.pad(), Size::Compact.height());
     let (rect, response) = ui.allocate_exact_size(size, Sense::click());
-    let radius = CornerRadius::same(255);
+    let radius = CornerRadius::same(Size::Compact.radius());
     if response.hovered() {
         ui.painter().rect_filled(rect, radius, line.gamma_multiply(0.12));
     }
     if look == ChipLook::Write {
         ui.painter().extend(Shape::dashed_line(
-            &rounded_path(rect.shrink(0.5), 15.0),
+            &rounded_path(rect.shrink(0.5), f32::from(Size::Compact.radius())),
             Stroke::new(1.0, line),
             5.0,
             4.0,
@@ -969,8 +975,8 @@ pub(crate) fn permission_card(
             ui.spacing_mut().item_spacing.x = 8.0;
             for answer in answers {
                 let response = match answer {
-                    Answer::Allow => primary_button(ui, "Allow once", true, Size::Regular),
-                    Answer::Deny => crate::screen_kit::danger_button(ui, "Deny", Size::Regular),
+                    Answer::Allow => primary_button(ui, "Allow once", true, Size::Compact),
+                    Answer::Deny => crate::screen_kit::danger_button(ui, "Deny", Size::Compact),
                 };
                 if response.clicked() {
                     clicked = Some(PermissionClick::Answer(*answer));
@@ -978,9 +984,9 @@ pub(crate) fn permission_card(
             }
             let label =
                 if answers.is_empty() { "Answer it in the terminal" } else { "Open in terminal" };
-            let width = crate::screen_kit::button_width(ui, label, Size::Regular);
+            let width = crate::screen_kit::button_width(ui, label, Size::Compact);
             ui.add_space((ui.available_width() - width).max(0.0));
-            if quiet_button(ui, label, true, Size::Regular).clicked() {
+            if quiet_button(ui, label, true, Size::Compact).clicked() {
                 clicked = Some(PermissionClick::SwitchToTerminal);
             }
         });

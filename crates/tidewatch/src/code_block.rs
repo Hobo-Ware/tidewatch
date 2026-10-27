@@ -8,15 +8,15 @@ use egui::{
 use egui_extras::syntax_highlighting::{CodeTheme, highlight};
 
 use crate::brand;
-use crate::screen_kit::{body, mono};
+use crate::screen_kit::{Size, body, mono};
 
 const RADIUS: u8 = 8;
 const PAD: i8 = 12;
 const CODE_PX: f32 = 14.0;
-const HEADER_H: f32 = 32.0;
+const HEADER_H: f32 = Size::Compact.height() + 8.0;
 const HEADER_PAD: f32 = 10.0;
-const BUTTON_H: f32 = 22.0;
-const BUTTON_PAD: f32 = 8.0;
+const BUTTON_H: f32 = Size::Compact.height();
+const BUTTON_PAD: f32 = Size::Compact.pad();
 const ICON: f32 = 12.0;
 const ICON_GAP: f32 = 6.0;
 const LABEL_PX: f32 = 12.0;
@@ -121,7 +121,10 @@ fn strip(ui: &mut Ui, id: Id, lang: Option<&str>, text: &str) -> (Rect, Rect) {
 }
 
 fn label_width(ui: &Ui, text: &str) -> f32 {
-    ui.painter().layout_no_wrap(text.to_owned(), body(LABEL_PX), Color32::WHITE).size().x
+    ui.painter()
+        .layout_no_wrap(text.to_owned(), body(Size::Compact.font()), Color32::WHITE)
+        .size()
+        .x
 }
 
 fn button_width(ui: &Ui) -> f32 {
@@ -139,7 +142,13 @@ fn paint_button(painter: &Painter, rect: Rect, copied: bool, response: &Response
     } else {
         (brand::FIELD_LINE, brand::SOFT, Color32::TRANSPARENT)
     };
-    painter.rect(rect, CornerRadius::same(6), fill, Stroke::new(1.0, line), StrokeKind::Inside);
+    painter.rect(
+        rect,
+        CornerRadius::same(Size::Compact.radius()),
+        fill,
+        Stroke::new(1.0, line),
+        StrokeKind::Inside,
+    );
     let icon =
         Rect::from_min_size(rect.left_center() + vec2(BUTTON_PAD, -ICON / 2.0), vec2(ICON, ICON));
     if copied {
@@ -151,7 +160,7 @@ fn paint_button(painter: &Painter, rect: Rect, copied: bool, response: &Response
         rect.left_center() + vec2(BUTTON_PAD + ICON + ICON_GAP, 0.0),
         Align2::LEFT_CENTER,
         if copied { "Copied" } else { "Copy" },
-        body(LABEL_PX),
+        body(Size::Compact.font()),
         ink,
     );
 }
