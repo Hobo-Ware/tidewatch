@@ -30,7 +30,7 @@ use crate::progress_stale::{Live, answered_since_save, is_stale, standing};
 use crate::progress_state::Facts;
 use crate::status_view::state_of;
 use crate::{due_view, flow_glue, reader_glue, reader_view};
-use tidewatch_core::sent::{Reason as Said, because};
+use tidewatch_core::sent::{Cap, Reason as Said, because};
 use tidewatch_core::status::{AgentStatus, Reason};
 
 const DRAW_ASK: &str = tidewatch_core::avatar_ask::ASK;
@@ -228,8 +228,10 @@ impl Tidewatch {
         }
     }
 
-    /// Tells an idle agent whose report went stale, or whose last message holds a question the
-    /// report lacks, once per saved report, through the one send gate.
+    /// Tells an agent whose report went stale, or an idle one whose last message holds a question
+    /// the report lacks, through the one send gate. An idle agent hears each once per saved
+    /// report. A working one hears it mid-turn when its input box is free, again on a backoff, up
+    /// to a cap per saved report.
     pub(super) fn drive_report_nudges(&mut self, ctx: &egui::Context, now: f64) {
         if self.screenshot.is_some() {
             return;
@@ -246,21 +248,46 @@ impl Tidewatch {
             let known = self.progress.ledger(tab.id);
             let facts = nudge::Facts {
                 idle: *agent.run.status() == AgentStatus::Done,
+                busy: *agent.run.status() == AgentStatus::Working,
                 ledger: known.map(|known| &known.ledger),
                 saved_ms: known.and_then(|known| known.updated_ms),
+                turn_started_ms: agent
+                    .run
+                    .turn_started_at()
+                    .map(|at| now_ms - ((now - at) * 1000.0) as i64),
                 block: agent.run.end_block(),
                 now_ms,
             };
             let told = self.report_nudges.told(tab.id);
             if let Some(found) = nudge::due(&facts, &told) {
-                due.push((tab.id, found, facts.saved_ms));
+                let cap = Cap { n: told.quiet_sent(facts.saved_ms) + 1, max: nudge::QUIET_MAX };
+                due.push((tab.id, found, facts.saved_ms, nudge::text(found, &facts), cap));
             }
             wake = wake.into_iter().chain(nudge::wait_ms(&facts, &told)).min();
         }
-        for (tab, found, saved) in due {
-            let send = Send::auto(found.text(), Said::LedgerGuard, found.because());
+        for (tab, found, saved, text, cap) in due {
+            let send = Send::auto(&text, Said::LedgerGuard, found.because());
+            if found == nudge::Nudge::Quiet {
+                let send = send.with_cap(cap).mid_turn();
+                match flow_glue::offer_to_agent(
+                    &mut self.tabs,
+                    &mut self.flow,
+                    tab,
+                    &send,
+                    ctx,
+                    now,
+                ) {
+                    Offer::Go => self.report_nudges.mark(tab, found, saved, now_ms),
+                    Offer::Wait => {
+                        self.report_nudges.retry_later(tab, saved, now_ms);
+                        wake = wake.into_iter().chain(Some(nudge::QUIET_RETRY_MS)).min();
+                    }
+                    Offer::Paused | Offer::Refuse(_) => {}
+                }
+                continue;
+            }
             match flow_glue::send_or_queue(&mut self.tabs, &mut self.flow, tab, send, ctx, now) {
-                Offer::Go | Offer::Wait => self.report_nudges.mark(tab, found, saved),
+                Offer::Go | Offer::Wait => self.report_nudges.mark(tab, found, saved, now_ms),
                 Offer::Paused | Offer::Refuse(_) => {}
             }
         }
