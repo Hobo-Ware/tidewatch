@@ -34,6 +34,9 @@ const CHIP_TOP: f32 = 10.0;
 const CHIP_TEXT_GAP: f32 = 8.0;
 const SEND: &str = "Send";
 const OPTICAL_LIFT: f32 = 0.4;
+const FOCUS_RING: (f32, f32) = (3.0, 0.10);
+const DROP_RING: (f32, f32) = (6.0, 0.45);
+const DROP_FILL: f32 = 0.12;
 
 pub(crate) fn text_font() -> FontId {
     FontId::proportional(BODY_PX)
@@ -344,25 +347,31 @@ pub(crate) fn show(ui: &mut Ui, draft: Draft<'_>, spec: &Spec<'_>) -> Option<Str
             ui.memory_mut(|memory| memory.request_focus(id));
         }
         let has_focus = ui.memory(|memory| memory.has_focus(id));
-        let line = if has_focus { brand::TEAL } else { brand::FIELD_LINE };
+        let dropping = crate::file_drop::hovering(ui.ctx());
+        let line = if has_focus || dropping { brand::TEAL } else { brand::FIELD_LINE };
         let radius = CornerRadius::same(RADIUS);
         ui.painter().set(
             background,
             RectShape::new(
                 boxed,
                 radius,
-                brand::CARD,
+                if dropping {
+                    brand::CARD.lerp_to_gamma(brand::TEAL, DROP_FILL)
+                } else {
+                    brand::CARD
+                },
                 Stroke::new(BORDER, line),
                 StrokeKind::Inside,
             ),
         );
-        if has_focus {
+        if has_focus || dropping {
+            let (width, alpha) = if dropping { DROP_RING } else { FOCUS_RING };
             ui.painter().set(
                 ring,
                 RectShape::stroke(
                     boxed.expand(1.5),
                     CornerRadius::same(RADIUS + 1),
-                    Stroke::new(3.0, brand::TEAL.gamma_multiply(0.10)),
+                    Stroke::new(width, brand::TEAL.gamma_multiply(alpha)),
                     StrokeKind::Middle,
                 ),
             );
@@ -518,14 +527,21 @@ mod tests {
         pictures: Vec<PathBuf>,
         focus: bool,
         ghost: Option<&'static str>,
+        hovered: bool,
     }
 
     impl Rig {
         fn new() -> Self {
             let ctx = Context::default();
             crate::fonts::install(&ctx);
-            let mut rig =
-                Self { ctx, text: String::new(), pictures: Vec::new(), focus: true, ghost: None };
+            let mut rig = Self {
+                ctx,
+                text: String::new(),
+                pictures: Vec::new(),
+                focus: true,
+                ghost: None,
+                hovered: false,
+            };
             rig.frame(vec![]);
             rig.frame(vec![]);
             rig
@@ -536,6 +552,11 @@ mod tests {
                 screen_rect: Some(Rect::from_min_size(pos2(0.0, 0.0), vec2(COLUMN_W, COLUMN_H))),
                 events,
                 focused: true,
+                hovered_files: if self.hovered {
+                    vec![egui::HoveredFile { path: Some("/x/a.png".into()), ..Default::default() }]
+                } else {
+                    Vec::new()
+                },
                 ..RawInput::default()
             };
             let (mut sent, mut input) = (None, Rect::NOTHING);
@@ -602,6 +623,33 @@ mod tests {
             self.frame(vec![button(false)]);
             self.frame(vec![])
         }
+    }
+
+    fn rings(seen: &Seen) -> Vec<f32> {
+        seen.shapes
+            .iter()
+            .filter_map(|shape| match shape {
+                Shape::Rect(rect)
+                    if rect.fill == egui::Color32::TRANSPARENT && rect.stroke.width >= 3.0 =>
+                {
+                    Some(rect.stroke.width)
+                }
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn files_over_the_window_light_the_box_with_a_stronger_ring_than_focus_does() {
+        let mut rig = Rig::new();
+        assert_eq!(rings(&rig.frame(vec![])), [FOCUS_RING.0]);
+        rig.hovered = true;
+        assert_eq!(rings(&rig.frame(vec![])), [DROP_RING.0]);
+        rig.focus = false;
+        rig.ctx.memory_mut(|memory| memory.surrender_focus(Id::new("reply-box")));
+        assert_eq!(rings(&rig.frame(vec![])), [DROP_RING.0], "lit even when the box has no focus");
+        rig.hovered = false;
+        assert_eq!(rings(&rig.frame(vec![])).len(), 0, "dark once the drag leaves");
     }
 
     #[test]

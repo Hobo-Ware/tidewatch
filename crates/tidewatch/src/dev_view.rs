@@ -14,6 +14,8 @@
 //! - `TIDEWATCH_DEV_PARKED_POPOVER=1`: the Parked pill's list is open (with `TIDEWATCH_FAKE_PARKED=1`).
 //! - `TIDEWATCH_DEV_HOVER=<x>,<y>`: move the pointer to that point (in points) on the first frame and
 //!   leave it there, to open a tooltip in a capture (use `TIDEWATCH_SCREENSHOT_WAIT=4`).
+//! - `TIDEWATCH_DEV_HOVER_FILES=1`: report a file dragged over the window on every frame, to see the
+//!   reply box's drop highlight in a capture.
 //! - `TIDEWATCH_DEV_KEYS=<text>` after `TIDEWATCH_DEV_KEYS_AFTER=<seconds>` (default 8): type the text
 //!   into the newest agent tab once, to answer a prompt a check cannot avoid (`\r`, `\n`, `\e` and
 //!   `\\` are escapes; `\e[B\r` is Down then Enter).
@@ -61,6 +63,7 @@ pub(crate) struct DevView {
     pub(crate) copy: Option<DevCopy>,
     pub(crate) side: Option<f32>,
     pub(crate) hover: Option<egui::Pos2>,
+    pub(crate) hover_files: Option<std::path::PathBuf>,
     pub(crate) remote_popover: Popover,
     pub(crate) parked_popover: Popover,
 }
@@ -104,6 +107,14 @@ impl DevView {
         )
         .with_copy(var("TIDEWATCH_DEV_COPY").as_deref())
         .with_hover(var("TIDEWATCH_DEV_HOVER").as_deref())
+        .with_hover_files(var("TIDEWATCH_DEV_HOVER_FILES").as_deref())
+    }
+
+    fn with_hover_files(self, value: Option<&str>) -> Self {
+        let hover_files = value
+            .is_some_and(|v| !v.is_empty() && v != "0")
+            .then(|| std::path::PathBuf::from("/work/shot.png"));
+        Self { hover_files, ..self }
     }
 
     fn with_hover(self, value: Option<&str>) -> Self {
@@ -177,6 +188,7 @@ impl DevView {
             copy: None,
             side: None,
             hover: None,
+            hover_files: None,
             remote_popover: Popover::OnClick,
             parked_popover: Popover::OnClick,
         }
@@ -224,6 +236,16 @@ mod tests {
         ];
         for (value, want) in cases {
             assert_eq!(DevView::default().with_hover(value).hover, want, "{value:?}");
+        }
+    }
+
+    #[test]
+    fn files_hover_the_window_for_any_value_but_empty_or_zero() {
+        for (value, want) in
+            [(Some("1"), true), (Some("0"), false), (Some(""), false), (None, false)]
+        {
+            let got = DevView::default().with_hover_files(value).hover_files;
+            assert_eq!(got.is_some(), want, "{value:?}");
         }
     }
 
