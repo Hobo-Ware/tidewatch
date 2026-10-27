@@ -120,29 +120,12 @@ fn a_taken_name_makes_its_block_taller_by_the_problem_line() {
 }
 
 #[test]
-fn stage_cards_use_as_many_columns_as_fit() {
-    let cases = [
-        (100.0, 1),
-        (247.0, 1),
-        (248.0, 2),
-        (375.0, 2),
-        (376.0, 3),
-        (503.0, 3),
-        (504.0, 4),
-        (900.0, 4),
-    ];
-    for (width, want) in cases {
-        assert_eq!(stage_columns(width), want, "{width}");
-    }
-}
-
-#[test]
 fn what_stands_above_the_message_is_the_blocks_present_and_a_gap_after_each() {
     assert_eq!(Above::default().height(), 0.0);
-    let above = Above { permission: 70.0, remote: 0.0, stages: 0.0, warnings: 0.0, fields: 54.0 };
+    let above = Above { permission: 70.0, remote: 0.0, warnings: 0.0, fields: 54.0 };
     assert_eq!(above.height(), 70.0 + 54.0 + 2.0 * SECTION_GAP);
-    let all = Above { permission: 1.0, remote: 5.0, stages: 2.0, warnings: 3.0, fields: 4.0 };
-    assert_eq!(all.height(), 15.0 + 5.0 * SECTION_GAP);
+    let all = Above { permission: 1.0, remote: 5.0, warnings: 3.0, fields: 4.0 };
+    assert_eq!(all.height(), 13.0 + 4.0 * SECTION_GAP);
 }
 
 fn measure(above: Above, hint: f32) -> impl Fn(f32) -> (Above, f32) {
@@ -151,7 +134,7 @@ fn measure(above: Above, hint: f32) -> impl Fn(f32) -> (Above, f32) {
 
 #[test]
 fn the_message_box_takes_the_rest_of_the_pane_above_the_pinned_footer() {
-    let above = Above { permission: 80.0, remote: 62.0, stages: 0.0, warnings: 0.0, fields: 54.0 };
+    let above = Above { permission: 80.0, remote: 62.0, warnings: 0.0, fields: 54.0 };
     for (name, area) in areas() {
         let pane_rect = columns(form_rect(area)).pane;
         let plan = pane(pane_rect, measure(above, 34.0));
@@ -172,7 +155,7 @@ fn the_message_box_takes_the_rest_of_the_pane_above_the_pinned_footer() {
 
 #[test]
 fn a_pane_too_short_for_the_minimum_box_scrolls_as_a_whole_and_keeps_its_footer() {
-    let above = Above { permission: 80.0, remote: 62.0, stages: 0.0, warnings: 30.0, fields: 54.0 };
+    let above = Above { permission: 80.0, remote: 62.0, warnings: 30.0, fields: 54.0 };
     let pane_rect = columns(form_rect(sized(900.0, 330.0))).pane;
     let plan = pane(pane_rect, measure(above, 34.0));
     assert!(plan.scrolls);

@@ -45,11 +45,6 @@ pub(crate) fn paint(painter: &Painter, rect: Rect, section: Section, color: Colo
             circle(8.0, 5.5, 2.5);
             curve([(3.0, 14.0), (3.0, 10.5), (13.0, 10.5), (13.0, 14.0)]);
         }
-        Section::Workflows => {
-            for x in [3.0, 8.0, 13.0] {
-                circle(x, 8.0, 1.8);
-            }
-        }
         Section::Trust => {
             line(&[(8.0, 1.5), (13.5, 4.0), (13.5, 8.0)]);
             curve([(13.5, 8.0), (13.5, 11.0), (11.0, 13.5), (8.0, 14.5)]);

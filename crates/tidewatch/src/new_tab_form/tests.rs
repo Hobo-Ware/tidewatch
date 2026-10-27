@@ -5,7 +5,6 @@ use std::path::PathBuf;
 use egui::{Event, Modifiers, PointerButton, RawInput, pos2};
 use tidewatch_core::prefs::NewTabPrefs;
 use tidewatch_core::profiles::Profiles;
-use tidewatch_core::workflows::Workflows;
 
 use super::*;
 use crate::new_tab::{Group, MeeseeksRequest};
@@ -42,7 +41,6 @@ impl Harness {
             "gemini".to_owned(),
             "copilot".to_owned(),
         ]));
-        catalog.set_workflows(Workflows::defaults());
         let state =
             NewTab::open(group, "web".into(), PathBuf::from("/work/web"), Vec::new(), None, 3);
         let ctx = egui::Context::default();
@@ -200,13 +198,13 @@ fn enter_is_left_to_a_focused_button() {
 #[test]
 fn keys_are_never_taken_from_a_focused_text_field() {
     let mut harness = Harness::in_the_box(Group::Repo);
-    for letter in [Key::A, Key::W, Key::S, Key::Num2, Key::ArrowLeft, Key::ArrowRight] {
+    for letter in [Key::A, Key::M, Key::S, Key::Num2, Key::ArrowLeft, Key::ArrowRight] {
         assert_eq!(harness.frame(vec![key(letter)]), None);
     }
-    harness.frame(vec![Event::Text("w".into()), key(Key::W)]);
+    harness.frame(vec![Event::Text("m".into()), key(Key::M)]);
     harness.frame(vec![Event::Text("2".into()), key(Key::Num2)]);
     assert_eq!(harness.state.kind(), Kind::Agent);
-    assert_eq!(harness.state.text(), "w2");
+    assert_eq!(harness.state.text(), "m2");
     assert_eq!(harness.state.selected(), 0);
     assert_eq!(harness.state.level(), Level::Edits);
 }
@@ -252,20 +250,12 @@ fn esc_lets_go_of_a_focused_button_before_it_closes_the_draft() {
 }
 
 #[test]
-fn a_w_and_s_pick_the_kind_or_open_a_plain_shell() {
+fn m_a_and_s_pick_the_kind_or_open_a_plain_shell() {
     let mut harness = Harness::unfocused(Group::Repo);
-    assert_eq!(harness.press(Key::W), None);
-    assert_eq!(harness.state.kind(), Kind::Workflow);
-    assert_eq!(harness.state.title(), "New workflow");
+    assert_eq!(harness.press(Key::M), None);
+    assert_eq!(harness.state.kind(), Kind::Meeseeks);
+    assert_eq!(harness.state.title(), "New Meeseeks");
     assert_eq!(harness.press(Key::A), None);
-    assert_eq!(harness.state.kind(), Kind::Agent);
-    assert_eq!(started(harness.press(Key::S)), Request::Shell);
-}
-
-#[test]
-fn in_other_w_does_nothing_and_a_and_s_still_work() {
-    let mut harness = Harness::unfocused(Group::Other);
-    assert_eq!(harness.press(Key::W), None);
     assert_eq!(harness.state.kind(), Kind::Agent);
     assert_eq!(started(harness.press(Key::S)), Request::Shell);
 }
@@ -280,9 +270,6 @@ fn number_keys_pick_the_nth_card_and_take_its_level() {
     assert_eq!(harness.state.selected_id(&harness.catalog).as_deref(), Some("builder"));
     harness.press(Key::Num9);
     assert_eq!(harness.state.selected(), 0, "no ninth card");
-    harness.press(Key::W);
-    harness.press(Key::Num3);
-    assert_eq!(harness.state.selected_id(&harness.catalog).as_deref(), Some("pr"));
 }
 
 #[test]
@@ -293,7 +280,7 @@ fn left_and_right_change_the_level_in_an_agent_form_only() {
     harness.press(Key::ArrowLeft);
     harness.press(Key::ArrowLeft);
     assert_eq!(harness.state.level(), Level::Ask);
-    harness.press(Key::W);
+    harness.press(Key::M);
     harness.press(Key::ArrowRight);
     harness.press(Key::A);
     assert_eq!(harness.state.level(), Level::Ask);
@@ -338,16 +325,16 @@ fn the_start_button_starts_too_and_a_blocked_one_does_nothing() {
 #[test]
 fn cmd_enter_on_a_blocked_form_says_why() {
     let mut harness = Harness::new(Group::Repo);
-    harness.state.choose(Kind::Workflow);
+    harness.state.choose(Kind::Meeseeks);
     assert_eq!(harness.frame(vec![key_with(Key::Enter, Modifiers::COMMAND)]), None);
-    assert_eq!(harness.state.error.as_deref(), Some("Say what the run should deliver."));
+    assert_eq!(harness.state.error.as_deref(), Some("Write one task per line."));
     harness.state.set_text("add saved searches");
-    let Request::Workflow(request) =
+    let Request::Meeseeks(request) =
         started(harness.frame(vec![key_with(Key::Enter, Modifiers::COMMAND)]))
     else {
-        panic!("workflow")
+        panic!("meeseeks")
     };
-    assert_eq!(request.task, "add saved searches");
+    assert_eq!(request.tabs[0].task, "add saved searches");
 }
 
 #[test]
@@ -371,31 +358,19 @@ fn a_taken_name_blocks_cmd_enter() {
 fn nothing_is_read_while_a_dialog_is_over_the_window() {
     let mut harness = Harness::unfocused(Group::Repo);
     harness.keys_free = false;
-    assert_eq!(harness.press(Key::W), None);
+    assert_eq!(harness.press(Key::M), None);
     assert_eq!(harness.state.kind(), Kind::Agent);
     assert!(harness.frame(vec![key_with(Key::Enter, Modifiers::COMMAND)]).is_none());
     assert!(harness.press(Key::Escape).is_none());
 }
 
 #[test]
-fn the_workflow_form_draws_its_stages_and_waits_for_a_task() {
-    let mut harness = Harness::unfocused(Group::Repo);
-    harness.press(Key::W);
-    harness.press(Key::Num2);
-    harness.frame(Vec::new());
-    assert_eq!(harness.state.selected_workflow(&harness.catalog).unwrap().id, "fix");
-    assert_eq!(harness.click_start(), None, "Start run is off while the task is empty");
-    harness.state.set_text("the login form loses focus");
-    assert!(matches!(started(harness.click_start()), Request::Workflow(_)));
-}
-
-#[test]
-fn the_start_label_names_the_profile_or_the_run() {
+fn the_start_label_names_the_profile_or_the_summons() {
     let mut harness = Harness::new(Group::Repo);
     let agent = start_label(&harness.state, &harness.catalog);
     assert_eq!(agent, "Start Builder");
-    harness.state.choose(Kind::Workflow);
-    assert_eq!(start_label(&harness.state, &harness.catalog), "Start run");
+    harness.state.choose(Kind::Meeseeks);
+    assert_eq!(start_label(&harness.state, &harness.catalog), new_tab_meeseeks::summon_label(0));
 }
 
 #[test]
@@ -403,7 +378,7 @@ fn the_form_draws_with_no_profiles_loaded() {
     let mut harness = Harness::new(Group::Repo);
     harness.catalog = Catalog::new(OsString::from("/usr/bin"));
     harness.frame(Vec::new());
-    assert_eq!(harness.press(Key::W), None);
+    assert_eq!(harness.press(Key::M), None);
 }
 
 fn parts(placed: &Placed) -> Vec<(&'static str, Rect)> {
@@ -451,9 +426,9 @@ fn no_part_of_the_form_meets_another_in_a_short_or_a_narrow_window() {
         for group in [Group::Repo, Group::Other] {
             let mut harness = Harness::sized(group, width, height);
             nothing_meets(&harness, &format!("{width}x{height} {group:?}"));
-            harness.press(Key::W);
+            harness.press(Key::M);
             harness.frame(Vec::new());
-            nothing_meets(&harness, &format!("{width}x{height} {group:?} workflow"));
+            nothing_meets(&harness, &format!("{width}x{height} {group:?} meeseeks"));
         }
     }
 }
@@ -514,7 +489,7 @@ fn up_and_down_move_the_pick_and_stop_at_the_ends() {
         harness.press(Key::ArrowDown);
     }
     assert_eq!(harness.state.selected(), harness.state.visible(&harness.catalog).len() - 1);
-    harness.press(Key::W);
+    harness.press(Key::M);
     harness.press(Key::ArrowDown);
     assert_eq!(harness.state.selected(), 1);
 }
@@ -609,9 +584,9 @@ fn a_remote_default_that_a_cli_cannot_honour_is_not_sent_to_it() {
 }
 
 #[test]
-fn a_workflow_form_has_no_remote_row() {
+fn a_meeseeks_form_has_no_remote_row() {
     let mut harness = Harness::unfocused(Group::Repo);
-    harness.press(Key::W);
+    harness.press(Key::M);
     harness.frame(Vec::new());
     assert_eq!(harness.placed().remote, None);
 }
@@ -689,7 +664,7 @@ fn center(rect: Option<Rect>) -> egui::Pos2 {
 }
 
 #[test]
-fn m_picks_the_meeseeks_kind_and_the_control_lists_it_between_agent_and_workflow() {
+fn m_picks_the_meeseeks_kind_and_the_control_lists_it_between_agent_and_shell() {
     let mut harness = Harness::unfocused(Group::Repo);
     assert_eq!(harness.press(Key::M), None);
     assert_eq!(harness.state.kind(), Kind::Meeseeks);
@@ -700,14 +675,11 @@ fn m_picks_the_meeseeks_kind_and_the_control_lists_it_between_agent_and_workflow
 }
 
 #[test]
-fn clicking_the_meeseeks_segment_switches_the_form_and_the_other_segments_switch_back() {
+fn clicking_the_meeseeks_segment_switches_the_form_and_the_agent_segment_switches_back() {
     let mut harness = Harness::unfocused(Group::Repo);
     let at = center(harness.placed().kinds[1]);
     assert_eq!(harness.click(at), None);
     assert_eq!(harness.state.kind(), Kind::Meeseeks);
-    let at = center(harness.placed().kinds[2]);
-    assert_eq!(harness.click(at), None);
-    assert_eq!(harness.state.kind(), Kind::Workflow);
     let at = center(harness.placed().kinds[0]);
     harness.click(at);
     assert_eq!(harness.state.kind(), Kind::Agent);
@@ -914,4 +886,11 @@ fn hovering_the_greyed_yolo_segment_shows_its_reason_as_a_tooltip_and_an_open_on
     assert!(tooltip_shows(&mut Harness::new(Group::Other), Level::Yolo));
     assert!(!tooltip_shows(&mut Harness::new(Group::Other), Level::Auto));
     assert!(!tooltip_shows(&mut Harness::new(Group::Repo), Level::Yolo));
+}
+
+#[test]
+fn an_empty_list_says_why() {
+    assert_eq!(empty_text("zz", true, "profile"), "No profile matches \"zz\".");
+    assert!(empty_text("", true, "agent").starts_with("No agents yet. Add one in Settings ("));
+    assert_eq!(empty_text("", false, "profile"), "The profiles are still loading...");
 }

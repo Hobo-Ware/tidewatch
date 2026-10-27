@@ -39,7 +39,6 @@ use crate::reader_turns::{self, Slot};
 use crate::review::ReviewFacts;
 use crate::review_row_view;
 use crate::review_view::{self, ReviewAction};
-use crate::screen_kit::TEXT_TAG;
 use crate::screen_kit::{Size, body, primary_button, quiet_button};
 use crate::slash::Entry as SlashEntry;
 use crate::stopped_view;
@@ -910,7 +909,6 @@ fn draw_row(
             }
         }
         Kind::User | Kind::Tidewatch(_) | Kind::Assistant | Kind::Tool(_) => {}
-        Kind::Divider => draw_divider(ui, &row.text),
         Kind::Compacted => {
             let time = stamp.and_then(|at| clock_label(at, zone));
             draw_compaction(ui, time.as_deref());
@@ -981,29 +979,6 @@ fn draw_compaction(ui: &mut Ui, time: Option<&str>) {
     }
     painter.galley(pos2(left + 21.0, mid - galley.size().y / 2.0), galley, brand::MUTED);
     ui.add_space(10.0);
-}
-
-fn draw_divider(ui: &mut Ui, text: &str) {
-    ui.add_space(6.0);
-    let (rect, _) = ui.allocate_exact_size(vec2(ui.available_width(), 18.0), Sense::hover());
-    let painter = ui.painter();
-    let galley = painter.layout_no_wrap(divider_label(text), body(TEXT_TAG), brand::MUTED);
-    let half = galley.size().x / 2.0 + 10.0;
-    let line = Stroke::new(1.0, brand::ITEM_LINE);
-    painter.hline(rect.left()..=(rect.center().x - half).max(rect.left()), rect.center().y, line);
-    painter.hline((rect.center().x + half).min(rect.right())..=rect.right(), rect.center().y, line);
-    painter.galley(rect.center() - galley.size() / 2.0, galley, brand::MUTED);
-    ui.add_space(6.0);
-}
-
-/// A stage divider's text as a quiet label: `Stage 2 \u{b7} Review \u{b7} gemini \u{b7} Read only`.
-pub(crate) fn divider_label(text: &str) -> String {
-    let text = text.trim_matches(|c: char| c == '-' || c.is_whitespace());
-    text.replacen(": ", " \u{b7} ", 1)
-        .replacen(" (", " \u{b7} ", 1)
-        .replace(", ", " \u{b7} ")
-        .trim_end_matches(')')
-        .to_owned()
 }
 
 /// A tool row's label split for drawing: the tool, then the folder and leaf of its path.
@@ -1572,19 +1547,6 @@ mod tests {
             split_label("Edit  /private/tmp/w/other/a.rs", root).dir,
             "/private/tmp/w/other/"
         );
-    }
-
-    #[test]
-    fn a_stage_divider_reads_as_a_quiet_label() {
-        assert_eq!(
-            divider_label("--- Stage 1: Work (claude opus, Auto edit) ---"),
-            "Stage 1 \u{b7} Work \u{b7} claude opus \u{b7} Auto edit"
-        );
-        assert_eq!(
-            divider_label("--- Stage 2: Review (gemini, Read only, round 2) ---"),
-            "Stage 2 \u{b7} Review \u{b7} gemini \u{b7} Read only \u{b7} round 2"
-        );
-        assert_eq!(divider_label("Stage 3"), "Stage 3");
     }
 
     #[test]

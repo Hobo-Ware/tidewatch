@@ -57,7 +57,6 @@ struct AgentRef<'a> {
     profile: &'a str,
     level: Level,
     session_id: Option<&'a str>,
-    stages: Option<&'a Path>,
     crashed: bool,
     remote: bool,
     meeseeks: Option<&'a Meeseeks>,
@@ -78,7 +77,7 @@ impl TabRef<'_> {
                 profile: a.profile.to_owned(),
                 level: a.level,
                 session_id: a.session_id.map(str::to_owned),
-                stages: a.stages.map(Path::to_path_buf),
+                stages: None,
                 crashed: a.crashed,
                 remote: a.remote,
                 meeseeks: a.meeseeks.cloned().map(Box::new),
@@ -92,20 +91,13 @@ fn agent_ref<'a>(
     dir: &'a Path,
     branch: Option<&'a str>,
 ) -> Option<TabRef<'a>> {
-    let run = agent.workflow.as_deref();
-    let (profile, level, session_id, remote) = match (&agent.launched, run) {
-        (Some(launched), _) => (
-            launched.profile_id.as_str(),
-            launched.level,
-            launched.session_id.as_deref(),
-            launched.remote,
-        ),
-        (None, Some(run)) => {
-            let profile = run.runner().profile(run.runner().position())?;
-            (profile.name.as_str(), profile.level, None, false)
-        }
-        (None, None) => return None,
-    };
+    let launched = agent.launched.as_ref()?;
+    let (profile, level, session_id, remote) = (
+        launched.profile_id.as_str(),
+        launched.level,
+        launched.session_id.as_deref(),
+        launched.remote,
+    );
     Some(TabRef::Agent(AgentRef {
         dir,
         branch,
@@ -113,7 +105,6 @@ fn agent_ref<'a>(
         profile,
         level,
         session_id,
-        stages: run.and_then(|run| run.stages_file()),
         crashed: agent.run.exited_abnormally(),
         remote,
         meeseeks: agent.meeseeks.as_ref(),
@@ -233,15 +224,10 @@ pub(crate) fn worktree_dirs(window: &SavedWindow) -> Vec<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::collections::BTreeMap;
-    use std::time::Duration;
-    use tidewatch_core::runner::{RunContext, Runner};
-    use tidewatch_core::workflows::Workflows;
     use tidewatch_core::worktree::Worktree;
 
     use crate::agent_run::{AgentRun, TermSnapshot};
     use crate::pane::Launched;
-    use crate::workflow_run::TabRun;
 
     const DIR: &str = "/work/web";
 
@@ -275,21 +261,6 @@ mod tests {
 
     fn pane(body: Body<u32>, worktree: Option<Worktree>, agent: Option<AgentTab>) -> Pane<u32> {
         Pane { body, worktree, agent }
-    }
-
-    fn workflow_run() -> TabRun {
-        let ship = Workflows::defaults().workflow.remove("ship").unwrap();
-        let context = RunContext {
-            task: "t".into(),
-            base: "main".into(),
-            branch: "agent/otter".into(),
-            test_command: None,
-        };
-        TabRun::new(
-            Runner::new(&ship, &BTreeMap::new(), context).unwrap(),
-            Some(PathBuf::from("/home/.tidewatch/.state/web-abc123/otter/stages.json")),
-            Duration::from_secs(60),
-        )
     }
 
     fn tabs() -> Tabs<Pane<u32>> {
@@ -461,23 +432,6 @@ mod tests {
         assert_eq!(saved.dir, PathBuf::from(DIR));
         assert_eq!(worktree_dirs(&saved), Vec::<PathBuf>::new());
         assert_eq!(tabs.items()[1].pane.close_policy(), crate::pane::ClosePolicy::Now);
-    }
-
-    #[test]
-    fn a_workflow_tab_saves_its_stages_file_and_the_profile_of_the_stage_it_is_at() {
-        let mut tab =
-            AgentTab::new("Ship a feature".into(), AgentRun::setting_up("claude".into(), 0.0));
-        tab.workflow = Some(Box::new(workflow_run()));
-        let mut tabs = tabs();
-        tabs.push("otter".into(), pane(Body::Shell(1), Some(worktree("otter")), Some(tab)));
-        let saved = saved_window(&view(false), &tabs);
-        let SavedTab::Agent(agent) = &saved.tabs[1] else { panic!("an agent tab") };
-        assert_eq!(
-            agent.stages.as_deref(),
-            Some(Path::new("/home/.tidewatch/.state/web-abc123/otter/stages.json"))
-        );
-        assert_eq!(agent.session_id, None);
-        assert_ne!(agent.profile, "");
     }
 
     fn tab_with_exit(code: Option<i32>) -> AgentTab {

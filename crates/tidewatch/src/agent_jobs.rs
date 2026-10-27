@@ -7,24 +7,19 @@ use std::ffi::OsString;
 use tidewatch_core::agents::{find_on_path, probe_version_in};
 use tidewatch_core::paths::TidewatchPaths;
 use tidewatch_core::profiles::Profiles;
-use tidewatch_core::workflows::Workflows;
 
 use crate::catalog::Availability;
 use crate::jobs::Jobs;
 
 pub(crate) enum Done {
-    Loaded { profiles: Profiles, workflows: Workflows },
-    Reloaded { profiles: Profiles, workflows: Workflows },
+    Loaded { profiles: Profiles },
+    Reloaded { profiles: Profiles },
     Probed { agent: String, availability: Availability },
     Saved { result: Result<(), String>, profiles: Profiles },
-    WorkflowsSaved { result: Result<(), String>, workflows: Workflows },
 }
 
 pub(crate) fn load(jobs: &Jobs<Done>, ctx: &egui::Context, paths: TidewatchPaths, path: OsString) {
-    jobs.spawn(ctx, move || Done::Loaded {
-        profiles: Profiles::load_or_seed(&paths, Some(&path)),
-        workflows: Workflows::load_or_seed(&paths, Some(&path)),
-    });
+    jobs.spawn(ctx, move || Done::Loaded { profiles: Profiles::load_or_seed(&paths, Some(&path)) });
 }
 
 pub(crate) fn reload(
@@ -35,7 +30,6 @@ pub(crate) fn reload(
 ) {
     jobs.spawn(ctx, move || Done::Reloaded {
         profiles: Profiles::load_or_seed(&paths, Some(&path)),
-        workflows: Workflows::load_or_seed(&paths, Some(&path)),
     });
 }
 
@@ -64,18 +58,6 @@ pub(crate) fn save(
     });
 }
 
-pub(crate) fn save_workflows(
-    jobs: &Jobs<Done>,
-    ctx: &egui::Context,
-    paths: TidewatchPaths,
-    workflows: Workflows,
-) {
-    jobs.spawn(ctx, move || {
-        let result = workflows.save(&paths.workflows_file()).map_err(|e| e.to_string());
-        Done::WorkflowsSaved { result, workflows }
-    });
-}
-
 fn availability_of(bin: &str, path: &OsString) -> Availability {
     match find_on_path(bin, Some(path)) {
         None => Availability::Missing,
@@ -88,7 +70,6 @@ mod tests {
     use super::*;
     use crate::test_exec::write_executable_from_a_child;
     use std::time::{Duration, Instant};
-    use tidewatch_core::workflows::BUILT_IN_IDS;
 
     fn next(jobs: &Jobs<Done>) -> Done {
         let deadline = Instant::now() + Duration::from_secs(20);
@@ -116,15 +97,11 @@ mod tests {
         let paths = TidewatchPaths::new(home.path());
         let jobs = Jobs::new();
         load(&jobs, &egui::Context::default(), paths.clone(), bin.path().into());
-        let Done::Loaded { profiles, workflows } = next(&jobs) else { panic!("expected Loaded") };
+        let Done::Loaded { profiles } = next(&jobs) else { panic!("expected Loaded") };
         let ids: Vec<&str> = profiles.profile.keys().map(String::as_str).collect();
         assert_eq!(ids, ["builder", "reviewer"]);
         assert!(paths.profiles_file().is_file());
-        let names: Vec<&str> = workflows.workflow.keys().map(String::as_str).collect();
-        let mut built_in = BUILT_IN_IDS.to_vec();
-        built_in.sort_unstable();
-        assert_eq!(names, built_in);
-        assert!(paths.workflows_file().is_file());
+        assert!(!paths.config_dir().join("workflows.toml").exists());
     }
 
     #[test]
@@ -155,21 +132,5 @@ mod tests {
         assert_eq!(result, Ok(()));
         assert_eq!(back, profiles);
         assert_eq!(Profiles::load(&paths.profiles_file()), profiles);
-    }
-
-    #[test]
-    fn saving_workflows_writes_workflows_toml_and_hands_them_back() {
-        let home = tempfile::tempdir().unwrap();
-        let paths = TidewatchPaths::new(home.path());
-        let mut workflows = Workflows::defaults();
-        workflows.workflow.remove("fix");
-        let jobs = Jobs::new();
-        save_workflows(&jobs, &egui::Context::default(), paths.clone(), workflows.clone());
-        let Done::WorkflowsSaved { result, workflows: back } = next(&jobs) else {
-            panic!("expected WorkflowsSaved")
-        };
-        assert_eq!(result, Ok(()));
-        assert_eq!(back, workflows);
-        assert_eq!(Workflows::load(&paths.workflows_file()), workflows);
     }
 }

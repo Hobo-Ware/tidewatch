@@ -254,7 +254,6 @@ impl Tidewatch {
             Command::Shortcuts => self.toggle_shortcuts_settings(),
             Command::OpenRepo => self.run_repo_command(RepoCommand::Open, ctx),
             Command::Palette => self.toggle_palette(),
-            Command::BuildWorkflow => self.run_build_workflow(ctx),
             Command::MoveSessions => self.run_move_sessions(ctx),
             Command::Amphetamine => self.run_amphetamine(ctx),
             Command::Confirm => {}

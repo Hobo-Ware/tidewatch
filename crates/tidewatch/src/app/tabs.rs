@@ -16,7 +16,6 @@ use crate::pane::{
 use crate::pty::{spawn_agent, spawn_shell};
 use crate::repo::Workspace;
 use crate::tabs::Action;
-use crate::workflow_glue::Start;
 use crate::worktree_jobs::{self, Done, OpenSpec, Target};
 
 fn random_seed() -> u64 {
@@ -76,7 +75,7 @@ impl Tidewatch {
                 self.remember_meeseeks(request.ticks, agent);
                 self.show_toast("Caaan do!", ctx);
             }
-            Request::Shell | Request::Workflow(_) => {}
+            Request::Shell => {}
         }
         self.open_tab_in(ctx, request, Some(tab));
     }
@@ -132,10 +131,6 @@ impl Tidewatch {
             Request::Agent(agent) => Some(agent),
             Request::Meeseeks(request) => {
                 self.summon(ctx, *request, into);
-                return;
-            }
-            Request::Workflow(request) => {
-                self.open_workflow(ctx, Start::New(request), None, into);
                 return;
             }
         };
@@ -209,7 +204,6 @@ impl Tidewatch {
         self.flow.forget(id);
         self.pr.forget(id);
         self.comments.forget(id);
-        self.runs.forget(id);
         self.meeseeks.forget(id);
         self.done_check.forget(id);
     }

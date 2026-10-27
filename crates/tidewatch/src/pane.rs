@@ -16,7 +16,6 @@ use crate::new_tab::NewTab;
 use crate::reader::Reader;
 use crate::remote_session::RemoteSession;
 use crate::tabs::Tabs;
-use crate::workflow_run::TabRun;
 
 pub(crate) const CREATING_TITLE: &str = "new worktree";
 pub(crate) const STARTING_TITLE: &str = "starting";
@@ -36,7 +35,7 @@ pub(crate) enum Body<T> {
 /// How an agent was started, which is what a restart needs to start it again.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct Launched {
-    /// The `profiles.toml` key, or the profile's name for a workflow stage.
+    /// The `profiles.toml` key.
     pub(crate) profile_id: String,
     pub(crate) level: Level,
     /// The id given to the agent's `--session-id`, when its CLI takes one.
@@ -70,8 +69,6 @@ pub(crate) struct AgentTab {
     pub(crate) reader: Reader,
     /// Set once the agent has started.
     pub(crate) launched: Option<Launched>,
-    /// The workflow this tab runs, when it was opened from one.
-    pub(crate) workflow: Option<Box<TabRun>>,
     pub(crate) first_prompt: FirstPrompt,
     /// Why this tab's resume command waits typed at the prompt; shown until the user types.
     pub(crate) resume_note: Option<&'static str>,
@@ -96,7 +93,6 @@ impl AgentTab {
             run,
             reader,
             launched: None,
-            workflow: None,
             first_prompt: FirstPrompt::NotNeeded,
             resume_note: None,
             resume_line: None,
@@ -294,7 +290,6 @@ pub(crate) fn finish_open<T>(
                         run,
                         reader,
                         launched: Some(launched),
-                        workflow: None,
                         first_prompt: if started.awaiting_prompt {
                             FirstPrompt::Awaiting
                         } else {
@@ -329,37 +324,6 @@ pub(crate) fn finish_open<T>(
             Vec::new()
         }
     }
-}
-
-/// A workflow stage's agent starts in a tab that already has a worktree, in place of the previous
-/// stage's: the old shell is dropped (which ends its agent), the tab gets a fresh status, and its
-/// Reader keeps what was read and marks the new stage. Does nothing for a tab that is closing or has
-/// no agent. Returns the notes the preparation left.
-pub(crate) fn relaunch_stage<T>(
-    tabs: &mut Tabs<Pane<T>>,
-    id: u64,
-    started: Started,
-    dir: &Path,
-    divider: String,
-    now: f64,
-    spawn: impl FnOnce(&Path, &Prepared) -> T,
-) -> Vec<String> {
-    let Some(tab) = tabs.get_mut(id) else { return Vec::new() };
-    if !matches!(tab.pane.body, Body::Shell(_) | Body::Creating) {
-        return Vec::new();
-    }
-    let Some(agent) = tab.pane.agent.as_mut() else { return Vec::new() };
-    tab.pane.body = Body::Shell(spawn(dir, &started.prepared));
-    agent.launched = Some(started.launched(dir));
-    agent.remote = started.prepared.remote.clone().map(RemoteSession::new);
-    agent.profile_name = started.profile_name;
-    agent.run = AgentRun::setting_up(started.agent_id.clone(), now);
-    agent.run.started(started.notes_file, now);
-    agent.reader.relaunch(&started.agent_id, started.session_id, divider);
-    if let Some(run) = agent.workflow.as_mut() {
-        run.launched();
-    }
-    started.prepared.notes
 }
 
 #[cfg(test)]
@@ -683,90 +647,6 @@ mod tests {
         let run = &mut tabs.get_mut(id).unwrap().pane.agent.as_mut().unwrap().run;
         assert_eq!(run.refresh(5.5).unwrap().to, AgentStatus::Working);
         assert_eq!(run.elapsed(15.0), 10.0);
-    }
-
-    fn workflow_tab(tabs: &mut Tabs<Pane<u32>>, body: Body<u32>) -> u64 {
-        use std::collections::BTreeMap;
-        use std::time::Duration;
-        use tidewatch_core::runner::{RunContext, Runner};
-        use tidewatch_core::workflows::Workflows;
-        let ship = Workflows::defaults().workflow.remove("ship").unwrap();
-        let ctx = RunContext {
-            task: "t".into(),
-            base: "main".into(),
-            branch: "agent/brave-otter".into(),
-            test_command: None,
-        };
-        let runner = Runner::new(&ship, &BTreeMap::new(), ctx).unwrap();
-        let mut run = TabRun::new(runner, None, Duration::from_secs(60));
-        run.start();
-        let mut pane = Pane::creating_agent("Ship a feature".into(), "claude".into(), 0.0);
-        pane.agent.as_mut().unwrap().workflow = Some(Box::new(run));
-        pane.body = body;
-        tabs.push("brave-otter".into(), pane)
-    }
-
-    #[test]
-    fn the_next_stage_replaces_the_shell_resets_the_status_and_marks_the_reader() {
-        let mut tabs: Tabs<Pane<u32>> = Tabs::new(Pane::shell(0));
-        let id = workflow_tab(&mut tabs, Body::Shell(1));
-        let mut next = *started(&["note"]);
-        next.profile_name = "Ship a feature - Review".into();
-        next.agent_id = "gemini".into();
-        let mut spawned = None;
-        let notes = relaunch_stage(
-            &mut tabs,
-            id,
-            next,
-            &worktree().path,
-            "--- Stage 2: Review (gemini, Read only) ---".into(),
-            7.0,
-            |dir, _| {
-                spawned = Some(dir.to_path_buf());
-                2
-            },
-        );
-        assert_eq!(notes, ["note"]);
-        assert_eq!(spawned, Some(worktree().path));
-        let tab = tabs.get_mut(id).unwrap();
-        assert!(matches!(tab.pane.body, Body::Shell(2)));
-        let agent = tab.pane.agent.as_mut().unwrap();
-        assert_eq!(agent.profile_name, "Ship a feature - Review");
-        assert_eq!(agent.run.agent_id, "gemini");
-        assert_eq!(agent.run.refresh(7.5).unwrap().to, AgentStatus::Working);
-        assert_eq!(agent.run.elapsed(9.0), 2.0);
-        let texts: Vec<_> = agent.reader.rows.iter().map(|row| row.text.clone()).collect();
-        assert_eq!(texts, ["--- Stage 2: Review (gemini, Read only) ---"]);
-        assert!(!agent.workflow.as_ref().unwrap().launching());
-    }
-
-    #[test]
-    fn the_first_stage_takes_a_tab_that_is_still_being_made() {
-        let mut tabs: Tabs<Pane<u32>> = Tabs::new(Pane::shell(0));
-        let id = workflow_tab(&mut tabs, Body::Creating);
-        relaunch_stage(&mut tabs, id, *started(&[]), &worktree().path, "---".into(), 1.0, |_, _| 5);
-        assert!(matches!(tabs.get_mut(id).unwrap().pane.body, Body::Shell(5)));
-    }
-
-    #[test]
-    fn a_tab_that_is_closing_or_has_no_agent_is_left_alone() {
-        let mut tabs: Tabs<Pane<u32>> = Tabs::new(Pane::shell(0));
-        let removing = workflow_tab(&mut tabs, Body::Removing);
-        let failed = workflow_tab(&mut tabs, Body::Failed("x".into()));
-        let plain = tabs.push("shell".into(), Pane::shell(3));
-        for id in [removing, failed, plain, 99] {
-            let notes = relaunch_stage(
-                &mut tabs,
-                id,
-                *started(&["n"]),
-                &worktree().path,
-                "---".into(),
-                1.0,
-                |_, _| unreachable!(),
-            );
-            assert_eq!(notes, Vec::<String>::new(), "tab {id}");
-        }
-        assert!(matches!(tabs.get_mut(plain).unwrap().pane.body, Body::Shell(3)));
     }
 
     #[test]

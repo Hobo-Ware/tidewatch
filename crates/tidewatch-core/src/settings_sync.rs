@@ -11,7 +11,7 @@ use crate::fsutil::write_atomic;
 use crate::paths::TidewatchPaths;
 use crate::tools::{GhError, Tools, run_gh};
 
-pub const SYNCED: &[&str] = &["settings.toml", "profiles.toml", "workflows.toml"];
+pub const SYNCED: &[&str] = &["settings.toml", "profiles.toml"];
 
 pub const POLL_S: f64 = 2.0;
 pub const QUIET_S: f64 = 5.0;
@@ -244,17 +244,17 @@ mod tests {
     }
 
     #[test]
-    fn exactly_three_files_travel_and_they_are_the_ones_the_app_reads() {
+    fn exactly_two_files_travel_and_they_are_the_ones_the_app_reads() {
         let paths = TidewatchPaths::new(Path::new("/h"));
-        let names = [paths.prefs_file(), paths.profiles_file(), paths.workflows_file()]
+        let names = [paths.prefs_file(), paths.profiles_file()]
             .map(|file| file.file_name().unwrap().to_string_lossy().into_owned());
         assert_eq!(names, SYNCED);
     }
 
     #[test]
-    fn the_ignore_list_keeps_everything_but_those_three_files_home() {
+    fn the_ignore_list_keeps_everything_but_those_two_files_home() {
         let spec = spec(&TidewatchPaths::new(Path::new("/h")), &Tools::default());
-        assert_eq!(spec.files.gitignore(), "*\n!settings.toml\n!profiles.toml\n!workflows.toml\n");
+        assert_eq!(spec.files.gitignore(), "*\n!settings.toml\n!profiles.toml\n");
         assert_eq!(spec.dir, Path::new("/h/.config/tidewatch"));
         let paths = TidewatchPaths::new(Path::new("/h"));
         assert!(!paths.trust_file().ends_with("settings.toml"));
@@ -374,7 +374,7 @@ mod tests {
         std::fs::write(paths.trust_file(), "x").unwrap();
         std::fs::write(paths.sync_file(), "enabled = true").unwrap();
         assert_eq!(fingerprint(paths.config_dir()), before);
-        std::fs::write(paths.workflows_file(), "[x]").unwrap();
+        std::fs::write(paths.profiles_file(), "[x]").unwrap();
         assert_ne!(fingerprint(paths.config_dir()), before);
     }
 
@@ -560,7 +560,6 @@ mod tests {
         let mut profiles = crate::profiles::Profiles::seeded(&["claude".to_owned()]);
         profiles.profile.remove("reviewer");
         profiles.save(&other.paths.profiles_file()).unwrap();
-        crate::workflows::Workflows::defaults().save(&other.paths.workflows_file()).unwrap();
         other.sync(&remote).unwrap();
         assert!(crate::prefs::Prefs::load(&mac.paths).restore_session);
         assert_eq!(mac.sync(&remote), Ok(Outcome::Synced));
@@ -570,10 +569,6 @@ mod tests {
         assert!((prefs.window.height_pct - 0.7).abs() < 1e-6);
         let loaded = crate::profiles::Profiles::load_or_seed(&mac.paths, None);
         assert_eq!(loaded, profiles);
-        assert_eq!(
-            crate::workflows::Workflows::load_or_seed(&mac.paths, None),
-            crate::workflows::Workflows::defaults()
-        );
     }
 
     fn git_env() -> Vec<(OsString, OsString)> {
@@ -644,23 +639,23 @@ mod tests {
     }
 
     #[test]
-    fn only_settings_profiles_and_workflows_reach_the_repo() {
+    fn only_settings_and_profiles_reach_the_repo() {
         let scratch = tempfile::tempdir().unwrap();
         let remote = bare_remote(&scratch);
         let mac = Machine::new();
         put(mac.paths.prefs_file(), "restore_session = true\n");
         put(mac.paths.profiles_file(), "[profile.x]\n");
-        put(mac.paths.workflows_file(), "[workflow.y]\n");
+        put(mac.paths.config_dir().join("workflows.toml"), "[workflow.y]\n");
         put(mac.paths.trust_file(), "answered = true\n");
         put(mac.paths.sync_file(), "enabled = true\n");
         put(mac.paths.house_style_file(), "# style\n");
         put(mac.paths.checklist_file(), "- [ ] one\n");
         put(mac.paths.worktree_setup_file(), "[x]\n");
-        put(mac.paths.workflows_offered_file(), "build\n");
+        put(mac.paths.config_dir().join("workflows.offered"), "build\n");
         std::fs::create_dir_all(mac.paths.state_dir()).unwrap();
         put(mac.paths.state_dir().join("secret"), "token\n");
         assert_eq!(mac.sync(&remote), Ok(Outcome::Synced));
-        assert_eq!(files_in(&remote), ["profiles.toml", "settings.toml", "workflows.toml"]);
+        assert_eq!(files_in(&remote), ["profiles.toml", "settings.toml"]);
     }
 
     #[test]

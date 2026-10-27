@@ -143,7 +143,7 @@ impl Harness {
     }
 
     fn register_generation(&self, tab_id: u64, tab: &str, generation: u64) -> HookListener {
-        self.register_as(tab_id, tab, generation, TabRole::Workflow)
+        self.register_as(tab_id, tab, generation, TabRole::Agent)
     }
 
     fn register_as(&self, tab_id: u64, tab: &str, generation: u64, role: TabRole) -> HookListener {
@@ -279,8 +279,16 @@ fn a_curl_style_hook_post_with_expect_continue_works() {
     assert_eq!(event.kind, HookKind::TurnDone);
 }
 
+fn finding_args(text: &str) -> serde_json::Value {
+    json!({"file": "a.rs", "line": 1, "blocking": false, "text": text})
+}
+
+fn finding_event(text: &str) -> TabEvent {
+    TabEvent::Finding { file: "a.rs".into(), line: 1, blocking: false, text: text.into() }
+}
+
 #[test]
-fn mcp_over_http_runs_the_handshake_and_both_event_tools() {
+fn mcp_over_http_runs_the_handshake_and_the_event_tools() {
     let h = Harness::start();
     let hook = h.register(3, "a");
     let token = Some(hook.token.as_str());
@@ -304,11 +312,8 @@ fn mcp_over_http_runs_the_handshake_and_both_event_tools() {
     assert_eq!((note.status, note.body.as_str()), (202, ""));
 
     let list = client.request("POST", "/mcp", token, &rpc(2, "tools/list", &json!({})));
-    assert_eq!(list.json()["result"]["tools"].as_array().unwrap().len(), 10);
+    assert_eq!(list.json()["result"]["tools"].as_array().unwrap().len(), 8);
 
-    let done =
-        client.request("POST", "/mcp", token, &call(3, "stage_done", &json!({"summary": "hello"})));
-    assert_eq!(done.json()["result"]["isError"], false);
     let finding = client.request(
         "POST",
         "/mcp",
@@ -321,14 +326,6 @@ fn mcp_over_http_runs_the_handshake_and_both_event_tools() {
     );
     assert_eq!(finding.status, 200);
 
-    assert_eq!(
-        h.next_event(),
-        TabMessage {
-            tab_id: 3,
-            generation: 0,
-            event: TabEvent::StageDone { summary: "hello".into() }
-        }
-    );
     assert_eq!(
         h.next_event(),
         TabMessage {
@@ -364,52 +361,6 @@ fn mcp_over_http_runs_the_handshake_and_both_event_tools() {
     assert_eq!(bad.json()["error"]["code"], -32700);
     let unknown = client.request("POST", "/mcp", token, &call(5, "nope", &json!({})));
     assert_eq!(unknown.json()["error"]["code"], -32602);
-    h.no_more_events();
-}
-
-#[test]
-fn a_proposed_workflow_reaches_the_app_as_one_event_and_a_bad_one_comes_back_as_text() {
-    use tidewatch_core::workflows::{Action, Gate};
-    let h = Harness::start();
-    let hook = h.register(8, "tab-w");
-    let token = Some(hook.token.as_str());
-    let mut client = h.client();
-    let good = json!({
-        "name": "Change with a check",
-        "description": "Do it, then prove it.",
-        "stages": [
-            { "action": "work", "prompt": "{task}" },
-            { "action": "review", "prompt": "Review {base}..HEAD.", "on_fail": 1, "max_loops": 3 },
-        ],
-    });
-    let reply = client.request("POST", "/mcp", token, &call(1, "propose_workflow", &good));
-    assert_eq!(reply.status, 200);
-    assert_eq!(reply.json()["result"]["isError"], false);
-    assert!(
-        reply.json()["result"]["content"][0]["text"]
-            .as_str()
-            .unwrap()
-            .starts_with("Opened in Tidewatch")
-    );
-    let message = h.next_event();
-    assert_eq!((message.tab_id, message.generation), (8, 0));
-    let TabEvent::Proposal { workflow } = message.event else { panic!("not a proposal") };
-    assert_eq!(workflow.name, "Change with a check");
-    let shape: Vec<_> =
-        workflow.stages.iter().map(|s| (s.action, s.gate, s.on_fail, s.max_loops)).collect();
-    assert_eq!(
-        shape,
-        [(Action::Work, Gate::Tests, None, 2), (Action::Review, Gate::NoBlocking, Some(0), 3)]
-    );
-    assert!(workflow.stages.iter().all(|s| s.run.agent.as_deref() == Some("claude")));
-
-    let bad =
-        json!({ "name": "x", "stages": [{ "action": "work", "prompt": "{nope}", "on_fail": 2 }] });
-    let reply = client.request("POST", "/mcp", token, &call(2, "propose_workflow", &bad));
-    assert_eq!(reply.json()["result"]["isError"], true);
-    let text = reply.json()["result"]["content"][0]["text"].as_str().unwrap().to_owned();
-    assert!(text.contains("on_fail must name an earlier stage, not stage 2"), "{text}");
-    assert!(text.contains("unknown placeholder {nope}"), "{text}");
     h.no_more_events();
 }
 
@@ -536,30 +487,24 @@ fn unregistering_a_tab_revokes_its_token_and_registering_again_rotates_it() {
 #[test]
 fn messages_carry_the_generation_their_token_registered_with() {
     let h = Harness::start();
-    let stage_one = h.register_generation(5, "a", 1);
-    let done = |token: &str, summary: &str| {
+    let generation_one = h.register_generation(5, "a", 1);
+    let done = |token: &str, text: &str| {
         h.client().request(
             "POST",
             "/mcp",
             Some(token),
-            &call(1, "stage_done", &json!({ "summary": summary })),
+            &call(1, "report_finding", &finding_args(text)),
         )
     };
-    assert_eq!(done(&stage_one.token, "first").status, 200);
-    let stage_two = h.register_generation(5, "a", 2);
-    assert_eq!(done(&stage_one.token, "late").status, 401);
-    assert_eq!(done(&stage_two.token, "second").status, 200);
+    assert_eq!(done(&generation_one.token, "first").status, 200);
+    let generation_two = h.register_generation(5, "a", 2);
+    assert_eq!(done(&generation_one.token, "late").status, 401);
+    assert_eq!(done(&generation_two.token, "second").status, 200);
     let seen: Vec<(u64, TabEvent)> = std::iter::repeat_with(|| h.next_event())
         .take(2)
         .map(|m| (m.generation, m.event))
         .collect();
-    assert_eq!(
-        seen,
-        [
-            (1, TabEvent::StageDone { summary: "first".into() }),
-            (2, TabEvent::StageDone { summary: "second".into() }),
-        ]
-    );
+    assert_eq!(seen, [(1, finding_event("first")), (2, finding_event("second")),]);
     h.no_more_events();
 }
 
@@ -626,7 +571,7 @@ fn chunked_request_bodies_are_decoded() {
     let h = Harness::start();
     let hook = h.register(1, "a");
     let mut client = h.client();
-    let body = call(1, "stage_done", &json!({"summary": "chunked hello"}));
+    let body = call(1, "report_finding", &finding_args("chunked hello"));
     let (first, second) = body.split_at(body.len() / 2);
     let text = format!(
         "POST /mcp HTTP/1.1\r\nAuthorization: Bearer {}\r\nTransfer-Encoding: chunked\r\n\r\n{:x};ext=1\r\n{first}\r\n{:X}\r\n{second}\r\n0\r\nTrailer: x\r\n\r\n",
@@ -636,7 +581,7 @@ fn chunked_request_bodies_are_decoded() {
     );
     client.send_raw(text.as_bytes());
     assert_eq!(client.read_reply().unwrap().json()["result"]["isError"], false);
-    assert_eq!(h.next_event().event, TabEvent::StageDone { summary: "chunked hello".into() });
+    assert_eq!(h.next_event().event, finding_event("chunked hello"));
     let bad = format!(
         "POST /mcp HTTP/1.1\r\nAuthorization: Bearer {}\r\nTransfer-Encoding: chunked\r\n\r\nzz\r\n",
         hook.token
@@ -713,12 +658,12 @@ fn many_tabs_talking_at_once_keep_their_events_apart() {
             scope.spawn(move || {
                 let mut client = Client::connect(addr);
                 for round in 0..10 {
-                    let summary = format!("tab {tab_id} round {round}");
+                    let text = format!("tab {tab_id} round {round}");
                     let reply = client.request(
                         "POST",
                         "/mcp",
                         Some(&hook.token),
-                        &call(round, "stage_done", &json!({"summary": summary})),
+                        &call(round, "report_finding", &finding_args(&text)),
                     );
                     assert_eq!(reply.status, 200);
                 }
@@ -728,8 +673,8 @@ fn many_tabs_talking_at_once_keep_their_events_apart() {
     let mut per_tab = std::collections::BTreeMap::<u64, Vec<String>>::new();
     for _ in 0..80 {
         let message = h.next_event();
-        let TabEvent::StageDone { summary } = message.event else { panic!("unexpected event") };
-        per_tab.entry(message.tab_id).or_default().push(summary);
+        let TabEvent::Finding { text, .. } = message.event else { panic!("unexpected event") };
+        per_tab.entry(message.tab_id).or_default().push(text);
     }
     assert_eq!(per_tab.len(), 8);
     for (tab_id, summaries) in per_tab {
@@ -900,27 +845,24 @@ fn each_roles_token_lists_its_own_tools_and_a_hidden_call_says_where_it_works() 
         names
     };
     let plain = h.register_as(1, "plain", 0, TabRole::Agent).token;
-    let stage = h.register_as(2, "stage", 0, TabRole::Workflow).token;
     let meeseeks = h.register_as(3, "mee", 0, TabRole::Meeseeks).token;
     let has = |names: &[String], tool: &str| names.iter().any(|name| name == tool);
-    let (plain_tools, stage_tools, meeseeks_tools) =
-        (tools(&plain), tools(&stage), tools(&meeseeks));
-    assert!(!has(&plain_tools, "stage_done") && !has(&plain_tools, "meeseeks_done"));
+    let (plain_tools, meeseeks_tools) = (tools(&plain), tools(&meeseeks));
+    assert!(!has(&plain_tools, "meeseeks_done"));
     assert!(has(&plain_tools, "report_finding") && has(&plain_tools, "update_progress"));
-    assert!(has(&stage_tools, "stage_done") && !has(&stage_tools, "meeseeks_done"));
     assert!(has(&meeseeks_tools, "meeseeks_done") && !has(&meeseeks_tools, "report_finding"));
     assert!(has(&meeseeks_tools, "set_name"));
-    assert!(!has(&plain_tools, "set_name") && !has(&stage_tools, "set_name"));
+    assert!(!has(&plain_tools, "set_name"));
 
     let refused = client.request(
         "POST",
         "/mcp",
         Some(&plain),
-        &call(2, "stage_done", &json!({"summary": "done"})),
+        &call(2, "meeseeks_done", &json!({"summary": "done"})),
     );
     assert_eq!(refused.status, 200);
     assert_eq!(refused.json()["result"]["isError"], true);
-    assert!(refused.body.contains("only the agent of a workflow stage"), "{}", refused.body);
+    assert!(refused.body.contains("only a Meeseeks can call it"), "{}", refused.body);
 }
 
 #[test]

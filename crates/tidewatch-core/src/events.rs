@@ -7,7 +7,6 @@ use crate::link_board::Link;
 use crate::progress::Ledger;
 use crate::question::{AskReply, Question};
 use crate::status::HookEvent;
-use crate::workflows::Workflow;
 
 /// Asks the UI for a redraw from a background thread. The app passes `ctx.request_repaint`.
 pub type Repaint = Box<dyn Fn() + Send + Sync>;
@@ -16,10 +15,6 @@ pub type Repaint = Box<dyn Fn() + Send + Sync>;
 pub enum TabEvent {
     /// A hook payload that carries a status (see `status::parse_hook`).
     Hook(HookEvent),
-    /// The agent called `stage_done`.
-    StageDone {
-        summary: String,
-    },
     /// The agent called `report_finding`. The app turns it into a note in the diff.
     Finding {
         file: String,
@@ -31,11 +26,6 @@ pub enum TabEvent {
     NoteReply {
         note_id: u64,
         text: String,
-    },
-    /// The agent called `propose_workflow` with a workflow that passed the editor's rules. The app
-    /// opens it as an unsaved draft in Settings, Workflows.
-    Proposal {
-        workflow: Workflow,
     },
     /// The agent called `update_progress`; the ledger is already saved in the tab's `progress.md`.
     Progress {

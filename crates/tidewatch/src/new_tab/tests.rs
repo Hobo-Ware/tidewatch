@@ -3,7 +3,6 @@ use std::ffi::OsString;
 
 use tidewatch_core::agents::{AgentOverride, ArgList, LevelOverrides};
 use tidewatch_core::profiles::Profiles;
-use tidewatch_core::workflows::{BUILT_IN_IDS, Workflows};
 
 use tidewatch_core::prefs::{NewTabPrefs, StartFrom};
 
@@ -20,12 +19,6 @@ fn catalog() -> Catalog {
     catalog_with(Profiles::seeded(&["claude".to_owned(), "copilot".to_owned()]))
 }
 
-fn workflow_catalog() -> Catalog {
-    let mut catalog = catalog();
-    catalog.set_workflows(Workflows::defaults());
-    catalog
-}
-
 fn open(group: Group, last: Option<&str>) -> NewTab {
     NewTab::open(group, "web".into(), PathBuf::from("/work/web"), Vec::new(), last, 7)
 }
@@ -33,12 +26,6 @@ fn open(group: Group, last: Option<&str>) -> NewTab {
 fn in_agent_form(group: Group, catalog: &Catalog, last: Option<&str>) -> NewTab {
     let mut state = open(group, last);
     state.settle(catalog);
-    state
-}
-
-fn in_workflow_form(catalog: &Catalog) -> NewTab {
-    let mut state = in_agent_form(Group::Repo, catalog, None);
-    assert_eq!(state.choose(Kind::Workflow), None);
     state
 }
 
@@ -67,22 +54,17 @@ fn the_form_opens_on_an_agent_and_a_shell_is_a_request_at_once() {
 
 #[test]
 fn each_kind_labels_its_tab() {
-    let titles = [Kind::Agent, Kind::Workflow, Kind::Shell].map(Kind::title);
-    assert_eq!(titles, ["New agent", "New workflow", "New shell"]);
-    let catalog = workflow_catalog();
-    assert_eq!(in_workflow_form(&catalog).title(), "New workflow");
+    let titles = [Kind::Agent, Kind::Meeseeks, Kind::Shell].map(Kind::title);
+    assert_eq!(titles, ["New agent", "New Meeseeks", "New shell"]);
 }
 
 #[test]
-fn a_workflow_is_offered_in_a_repo_only() {
-    let catalog = workflow_catalog();
-    assert!(open(Group::Repo, None).offers(Kind::Workflow));
+fn a_meeseeks_is_offered_in_a_repo_only() {
+    assert!(open(Group::Repo, None).offers(Kind::Meeseeks));
     let mut other = open(Group::Other, None);
-    assert!(!other.offers(Kind::Workflow));
+    assert!(!other.offers(Kind::Meeseeks));
     assert!(other.offers(Kind::Agent) && other.offers(Kind::Shell));
-    assert_eq!(other.choose(Kind::Workflow), None);
-    assert_eq!(other.kind(), Kind::Agent);
-    other.jump("workflow:ship", &catalog);
+    assert_eq!(other.choose(Kind::Meeseeks), None);
     assert_eq!(other.kind(), Kind::Agent);
     assert!(!other.makes_a_worktree());
 }
@@ -261,63 +243,16 @@ fn every_level_has_a_hint() {
 }
 
 #[test]
-fn the_workflow_form_lists_workflows_in_order_and_needs_a_task() {
-    let catalog = workflow_catalog();
-    let mut state = in_workflow_form(&catalog);
-    assert_eq!(state.visible(&catalog), BUILT_IN_IDS);
-    assert_eq!(state.selected_workflow(&catalog).unwrap().name, "Ship a feature");
-    assert!(state.selected_entry(&catalog).is_none(), "no profile ladder");
-    assert!(!state.set_level(Level::Auto, &catalog), "a workflow has no level to pick");
-    assert_eq!(
-        state.start_request(&catalog, None),
-        Err("Say what the run should deliver.".to_owned())
-    );
-    state.set_text("  add saved searches ");
-    let Ok(Request::Workflow(request)) = state.start_request(&catalog, None) else {
-        panic!("a workflow request")
-    };
-    assert_eq!(request.task, "add saved searches");
-    assert_eq!(request.workflow.id, "ship");
-    assert_eq!(request.placement.name.as_deref(), Some("add-saved-searches"));
-    assert!(state.request(&catalog, None).is_ok());
-}
-
-#[test]
-fn each_kind_keeps_its_own_text_and_pick() {
-    let catalog = workflow_catalog();
+fn each_kind_keeps_its_own_pick() {
+    let catalog = catalog();
     let mut state = in_agent_form(Group::Repo, &catalog, None);
-    state.set_text("the message");
     state.select(1, &catalog);
-    state.choose(Kind::Workflow);
-    assert_eq!(state.text(), "");
-    state.set_text("the task");
+    state.choose(Kind::Meeseeks);
     state.select(2, &catalog);
     state.choose(Kind::Agent);
-    assert_eq!(
-        (state.text(), state.selected_id(&catalog).as_deref()),
-        ("the message", Some("reviewer"))
-    );
-    state.choose(Kind::Workflow);
-    assert_eq!((state.text(), state.selected_id(&catalog).as_deref()), ("the task", Some("pr")));
-}
-
-#[test]
-fn a_workflow_that_vanished_since_the_form_opened_says_so() {
-    let mut catalog = workflow_catalog();
-    let mut state = in_workflow_form(&catalog);
-    state.set_text("x");
-    let mut workflows = Workflows::defaults();
-    workflows.workflow.remove("ship");
-    catalog.set_workflows(workflows);
-    assert_eq!(state.selected_id(&catalog).as_deref(), Some("fix"));
-    assert!(state.start_request(&catalog, None).is_ok());
-    let mut none = Workflows::defaults();
-    none.workflow.clear();
-    catalog.set_workflows(none);
-    assert_eq!(
-        state.start_request(&catalog, None),
-        Err("No workflow to start. Add one in Settings.".to_owned())
-    );
+    assert_eq!(state.selected_id(&catalog).as_deref(), Some("reviewer"));
+    state.choose(Kind::Meeseeks);
+    assert_eq!(state.selected(), 2);
 }
 
 #[test]
@@ -339,17 +274,14 @@ fn before_the_profiles_load_start_says_so() {
 }
 
 #[test]
-fn a_jump_picks_a_profile_or_a_workflow_by_id() {
-    let catalog = workflow_catalog();
+fn a_jump_picks_a_profile_by_id() {
+    let catalog = catalog();
     let mut jumped = open(Group::Repo, None);
     jumped.settle(&catalog);
     jumped.jump("reviewer", &catalog);
     assert_eq!(jumped.kind(), Kind::Agent);
     assert_eq!(jumped.selected_id(&catalog).as_deref(), Some("reviewer"));
-    let mut flow = open(Group::Repo, None);
-    flow.jump("workflow:fix", &catalog);
-    assert_eq!((flow.kind(), flow.selected_id(&catalog).as_deref()), (Kind::Workflow, Some("fix")));
-    assert!(!flow.focus_message);
+    assert!(!jumped.focus_message);
 }
 
 #[test]
@@ -562,17 +494,6 @@ fn warnings_cover_a_missing_cli_an_unverified_one_copilot_and_a_shared_folder() 
 fn the_same_folder_warning_names_every_agent_tab() {
     let two = same_folder_warning(&["a".into(), "b".into()]);
     assert!(two.starts_with("The a, b tabs already have an agent in this folder."), "{two}");
-}
-
-#[test]
-fn a_workflow_warns_about_each_agent_it_needs_that_is_missing() {
-    let mut catalog = workflow_catalog();
-    catalog.set_availability("gemini", Availability::Missing);
-    let state = in_workflow_form(&catalog);
-    assert_eq!(
-        state.warnings(&catalog),
-        ["gemini was not found on PATH. A stage that uses it will fail to start."]
-    );
 }
 
 fn all_clis() -> Catalog {

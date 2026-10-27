@@ -124,7 +124,7 @@ impl Group {
 /// What the view does with a row.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Slot {
-    /// Drawn on its own: the user's messages, notices, questions, reviews and dividers.
+    /// Drawn on its own: the user's messages, notices, questions and reviews.
     Plain,
     /// Part of a turn drawn at its anchor.
     Hidden,
@@ -140,20 +140,20 @@ pub(crate) struct Layout {
     pub(crate) awaiting: bool,
 }
 
-/// Groups `rows` into turns. A turn is every agent row between two user messages (or a stage
-/// divider); a notice or a question inside it stays a row of its own.
+/// Groups `rows` into turns. A turn is every agent row between two user messages; a notice or a
+/// question inside it stays a row of its own.
 pub(crate) fn layout(rows: &Rows) -> Layout {
     let mut out = Layout { slots: Vec::with_capacity(rows.len()), ..Layout::default() };
     let mut open: Option<usize> = None;
     let mut last_boundary = false;
     for (index, (row, at)) in rows.stamped().enumerate() {
         match &row.kind {
-            Kind::User | Kind::Tidewatch(_) | Kind::Review(_) | Kind::Divider => {
+            Kind::User | Kind::Tidewatch(_) | Kind::Review(_) => {
                 if let Some(group) = open.take() {
                     out.groups[group].closed = true;
                 }
                 out.slots.push(Slot::Plain);
-                last_boundary = !matches!(row.kind, Kind::Divider);
+                last_boundary = true;
             }
             Kind::Assistant | Kind::Tool(_) => {
                 last_boundary = false;
@@ -620,16 +620,6 @@ mod tests {
     }
 
     #[test]
-    fn a_stage_divider_starts_a_new_turn() {
-        let mut rows = rows_of(vec![text(Role::Assistant, "built", 1)]);
-        rows.divider("--- Stage 2 ---".into());
-        rows.push(text(Role::Assistant, "reviewed", 2));
-        let layout = layout(&rows);
-        assert_eq!(layout.groups.len(), 2);
-        assert!(!layout.awaiting);
-    }
-
-    #[test]
     fn the_agent_has_not_answered_while_the_newest_row_is_the_users() {
         assert!(layout(&rows_of(vec![text(Role::User, "go", 1)])).awaiting);
         assert!(
@@ -690,7 +680,7 @@ mod tests {
             ("WebSearch", ToolKind::Search),
             ("Task", ToolKind::Agent),
             ("TodoWrite", ToolKind::Other),
-            ("mcp__tidewatch__stage_done", ToolKind::Other),
+            ("mcp__tidewatch__report_finding", ToolKind::Other),
         ];
         for (name, want) in cases {
             assert_eq!(ToolKind::of(name), want, "{name}");

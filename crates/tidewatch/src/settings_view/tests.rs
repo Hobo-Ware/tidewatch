@@ -3,7 +3,6 @@
 use egui::{Event, PointerButton, Pos2, RawInput, Vec2};
 use tidewatch_core::prefs::{ResumeAgents, WindowPrefs};
 use tidewatch_core::profiles::Profiles;
-use tidewatch_core::workflows::Workflows;
 
 use super::*;
 use crate::catalog::Availability;
@@ -15,13 +14,12 @@ use crate::window_view;
 fn settings() -> Settings {
     let profiles = Profiles::seeded(&["claude".to_owned()]);
     let agents = vec![("claude".to_owned(), "Claude Code".to_owned())];
-    Settings::new(&profiles, &Workflows::defaults(), agents, &WindowPrefs::default())
+    Settings::new(&profiles, agents, &WindowPrefs::default())
 }
 
 fn files() -> Files {
     Files {
         profiles: "profiles.toml".into(),
-        workflows: "workflows.toml".into(),
         trust: "trust.toml".into(),
         general: "settings.toml".into(),
         house_style: "house-style.md".into(),
@@ -193,14 +191,14 @@ fn every_page_renders_headless_and_asks_for_nothing_until_clicked() {
         for _ in 0..3 {
             assert!(harness.frame(vec![]).is_none(), "{section:?}");
         }
-        assert!(!harness.settings.profiles.dirty && !harness.settings.workflows.dirty);
+        assert!(!harness.settings.profiles.dirty);
     }
 }
 
 #[test]
 fn a_click_on_a_sidebar_item_opens_its_page_in_sidebar_order() {
     let sections: Vec<Section> = settings().sections().iter().map(|(s, _, _)| *s).collect();
-    assert_eq!(sections.len(), 7);
+    assert_eq!(sections.len(), 6);
     let mut harness = Harness::new(Section::General);
     harness.frame(vec![]);
     for (index, want) in sections.iter().enumerate() {

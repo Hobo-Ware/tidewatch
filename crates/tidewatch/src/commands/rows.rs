@@ -60,7 +60,7 @@ pub(crate) fn markdown() -> String {
          macOS uses Cmd. Every command except the dialog keys and the bare keys of the file view is also in the \
          command palette. Esc, Up, Down, [ and ] only work while a file's diff is open in place of \
          the terminal, and never while a note is being typed; in the terminal they go to the \
-         shell. In the form of a new tab, A, M, W and S pick Agent, Meeseeks, Workflow or Shell, 1 to 9 pick a \
+         shell. In the form of a new tab, A, M and S pick Agent, Meeseeks or Shell, 1 to 9 pick a \
          card, Left and Right change the permission level and Esc closes the tab, all while no \
          text field has the keyboard; Enter or / then moves into the message box, and Esc leaves \
          a text field; Cmd+Enter (Ctrl+Enter on Linux) starts it. Enter, Esc and the arrow keys inside dialogs and the palette are fixed.\n",

@@ -68,10 +68,7 @@ fn problem_line(ui: &mut Ui, name: &str, check: &NameCheck) -> bool {
 pub(crate) fn name_field(ui: &mut Ui, state: &NewTab, facts: Option<&RepoFacts>) -> NameEdit {
     let top = ui.cursor().top();
     section_label(ui, "Worktree name");
-    let follows = state.name_follows_text().then(|| match state.kind() {
-        Kind::Workflow => "follows the task",
-        Kind::Agent | Kind::Meeseeks | Kind::Shell => "follows the message",
-    });
+    let follows = state.name_follows_text().then_some("follows the message");
     if let Some(note) = follows {
         let label_w = text_width(ui, "WORKTREE NAME", 11.5);
         let room = ui.max_rect().width() - label_w;

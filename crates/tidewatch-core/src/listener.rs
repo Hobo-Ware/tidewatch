@@ -881,6 +881,13 @@ mod tests {
     }
 
     #[test]
+    fn a_credential_saved_for_a_workflow_stage_reads_as_a_plain_agent() {
+        let old = r#"{"token":"t","generation":1,"agent":"claude","role":"Workflow","notes_file":"/n.json"}"#;
+        let credential: Credential = serde_json::from_str(old).unwrap();
+        assert_eq!(credential.role, TabRole::Agent);
+    }
+
+    #[test]
     fn the_first_prompt_of_a_tab_with_no_avatar_is_answered_with_the_ask_and_only_the_first() {
         let f = fixture();
         let token = f.register(1, "a");

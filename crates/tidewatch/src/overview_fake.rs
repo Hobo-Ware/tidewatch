@@ -111,7 +111,6 @@ fn row(id: u64, spec: &Spec) -> Row {
         title: spec.title.to_owned(),
         place: spec.place.to_owned(),
         profile: spec.title.to_owned(),
-        workflow: None,
         agent_id: match &spec.kind {
             AgentKind::Cli(id) => id.clone(),
             _ => "claude".to_owned(),

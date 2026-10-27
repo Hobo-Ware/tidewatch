@@ -38,10 +38,7 @@ pub(crate) fn show(ctx: &egui::Context, palette: &mut Palette, items: &[Item]) -
     if down || up {
         palette.step(down, hits.len());
     }
-    let runnable = |row: usize| items[hits[row].item].disabled.is_none();
-    let mut picked = (enter && !hits.is_empty())
-        .then(|| palette.selected(hits.len()))
-        .filter(|row| runnable(*row));
+    let mut picked = (enter && !hits.is_empty()).then(|| palette.selected(hits.len()));
     let mut moved = down || up;
 
     let modal = egui::Modal::new(Id::new("command_palette"))
@@ -82,7 +79,7 @@ pub(crate) fn show(ctx: &egui::Context, palette: &mut Palette, items: &[Item]) -
                 nothing_matches(ui);
             } else {
                 let clicked = list(ui, palette, items, &hits, &mut moved);
-                picked = picked.or(clicked.filter(|row| runnable(*row)));
+                picked = picked.or(clicked);
             }
             key_hint(ui, "Up and Down move  -  Enter runs  -  Esc closes");
         });
@@ -126,9 +123,6 @@ fn list(
                 ui.scroll_to_rect(rect, None);
             }
             let item = &items[hit.item];
-            if let Some(reason) = item.disabled {
-                response.on_hover_text(reason);
-            }
             paint_row(ui, rect, item, hit, row == selected);
         }
     });
@@ -138,15 +132,11 @@ fn list(
 fn paint_row(ui: &egui::Ui, rect: Rect, item: &Item, hit: &Hit, selected: bool) {
     let painter = ui.painter_at(rect);
     selection_row(&painter, rect, selected, false);
-    let ink = if item.disabled.is_some() { brand::MUTED } else { brand::TEXT };
+    let ink = brand::TEXT;
     let mut job = LayoutJob::default();
     let label_marks: &[usize] = if hit.alias.is_some() { &[] } else { &hit.positions };
     for (i, c) in item.label.chars().enumerate() {
-        let color = if label_marks.contains(&i) && item.disabled.is_none() {
-            brand::TEAL_TEXT
-        } else {
-            ink
-        };
+        let color = if label_marks.contains(&i) { brand::TEAL_TEXT } else { ink };
         job.append(&c.to_string(), 0.0, TextFormat::simple(FontId::proportional(14.0), color));
     }
     job.append(item.kind, 12.0, TextFormat::simple(FontId::proportional(TEXT_TAG), brand::MUTED));
@@ -162,22 +152,16 @@ fn paint_row(ui: &egui::Ui, rect: Rect, item: &Item, hit: &Hit, selected: bool) 
             );
         }
     }
-    let side = item.disabled.unwrap_or(&item.keys);
-    let keys_width = side.chars().count() as f32 * 7.0 + 24.0;
+    let keys_width = item.keys.chars().count() as f32 * 7.0 + 24.0;
     job.wrap = TextWrapping::truncate_at_width((rect.width() - 20.0 - keys_width).max(40.0));
     let galley = painter.layout_job(job);
     painter.galley(pos2(rect.left() + 10.0, rect.center().y - galley.size().y / 2.0), galley, ink);
-    if !side.is_empty() {
-        let font = if item.disabled.is_some() {
-            FontId::proportional(TEXT_TAG)
-        } else {
-            FontId::monospace(TEXT_TAG)
-        };
+    if !item.keys.is_empty() {
         painter.text(
             pos2(rect.right() - 10.0, rect.center().y),
             Align2::RIGHT_CENTER,
-            side,
-            font,
+            &item.keys,
+            FontId::monospace(TEXT_TAG),
             brand::MUTED,
         );
     }
@@ -208,10 +192,6 @@ mod tests {
 
     impl Harness {
         fn new(query: &str) -> Self {
-            Self::with(query, None)
-        }
-
-        fn with(query: &str, build_workflow_blocked: Option<&'static str>) -> Self {
             let sources = Sources {
                 tabs: vec![
                     crate::palette::TabRow::new("main", false),
@@ -221,8 +201,6 @@ mod tests {
                 repos: vec!["web".into()],
                 repo: 0,
                 profiles: vec![("builder".into(), "Builder".into())],
-                workflows: vec![("ship".into(), "Ship a feature".into())],
-                build_workflow_blocked,
             };
             let mut harness = Self {
                 ctx: egui::Context::default(),
@@ -269,7 +247,7 @@ mod tests {
         up.frame(vec![key(Key::ArrowUp)]);
         assert_eq!(
             up.frame(vec![key(Key::Enter)]),
-            Some(Outcome::Run(Target::Workflow("ship".into())))
+            Some(Outcome::Run(Target::Profile("builder".into())))
         );
     }
 
@@ -283,24 +261,11 @@ mod tests {
     fn typing_narrows_the_list_and_resets_the_selection() {
         let mut harness = Harness::new("");
         harness.frame(vec![key(Key::ArrowDown)]);
-        harness.frame(vec![Event::Text("ship".into())]);
-        assert_eq!(harness.palette.query, "ship");
+        harness.frame(vec![Event::Text("builder".into())]);
+        assert_eq!(harness.palette.query, "builder");
         assert_eq!(
             harness.frame(vec![key(Key::Enter)]),
-            Some(Outcome::Run(Target::Workflow("ship".into())))
-        );
-    }
-
-    #[test]
-    fn enter_on_a_disabled_row_runs_nothing_and_a_ready_one_runs() {
-        let blocked = Some("agent is working");
-        let mut harness = Harness::with("build workflow", blocked);
-        assert_eq!(harness.frame(vec![key(Key::Enter)]), None);
-        assert_eq!(harness.frame(Vec::new()), None, "the palette stays open");
-        let mut ready = Harness::with("build workflow", None);
-        assert_eq!(
-            ready.frame(vec![key(Key::Enter)]),
-            Some(Outcome::Run(Target::Command(Command::BuildWorkflow)))
+            Some(Outcome::Run(Target::Profile("builder".into())))
         );
     }
 

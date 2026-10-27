@@ -13,13 +13,11 @@ use crate::notify;
 use crate::pane::{Body, Pane};
 use crate::pane_jobs;
 use crate::tabs::Tabs;
-use crate::workflow_glue;
 
 impl Tidewatch {
     pub(super) fn apply_agent_done(&mut self, done: agent_jobs::Done, ctx: &egui::Context) {
         match done {
-            agent_jobs::Done::Loaded { profiles, workflows } => {
-                self.catalog.set_workflows(workflows);
+            agent_jobs::Done::Loaded { profiles } => {
                 let probes = self.catalog.set_profiles(profiles);
                 self.probe_agents(probes, ctx);
                 self.refresh_trust(ctx);
@@ -28,13 +26,12 @@ impl Tidewatch {
                 }
                 self.run_dev_agent(ctx);
             }
-            agent_jobs::Done::Reloaded { profiles, workflows } => {
-                self.catalog.set_workflows(workflows.clone());
+            agent_jobs::Done::Reloaded { profiles } => {
                 let probes = self.catalog.set_profiles(profiles.clone());
                 self.probe_agents(probes, ctx);
                 let agents = self.catalog.agent_names();
                 if let Some(settings) = &mut self.settings {
-                    settings.pulled(&profiles, &workflows, agents);
+                    settings.pulled(&profiles, agents);
                 }
             }
             agent_jobs::Done::Probed { agent, availability } => {
@@ -52,20 +49,6 @@ impl Tidewatch {
                 Err(message) => {
                     if let Some(settings) = &mut self.settings {
                         settings.profiles.save_failed(format!("Could not save: {message}"));
-                    }
-                }
-            },
-            agent_jobs::Done::WorkflowsSaved { result, workflows } => match result {
-                Ok(()) => {
-                    self.catalog.set_workflows(workflows);
-                    if let Some(settings) = &mut self.settings {
-                        settings.workflows.saved();
-                    }
-                    self.show_toast("Workflows saved", ctx);
-                }
-                Err(message) => {
-                    if let Some(settings) = &mut self.settings {
-                        settings.workflows.save_failed(format!("Could not save: {message}"));
                     }
                 }
             },
@@ -113,7 +96,6 @@ impl Tidewatch {
                     ctx.request_repaint();
                 }
             }
-            Follow::Proposal { tab, workflow } => self.proposal_arrived(tab, &workflow, ctx),
             Follow::Progress { tab, ledger } => self.progress_arrived(tab, *ledger, ctx),
             Follow::Links { tab, links } => {
                 self.link_live.arrived(tab, &links);
@@ -138,7 +120,6 @@ impl Tidewatch {
     /// Takes what agents reported, feeds terminal signals into every agent tab's status and
     /// notifies for changes while the window is away.
     pub(super) fn drive_agents(&mut self, ctx: &egui::Context, now: f64) {
-        let mut asked = Vec::new();
         for message in self.hooks.drain() {
             if self.status_log {
                 eprintln!(
@@ -149,12 +130,9 @@ impl Tidewatch {
                     wall_ms()
                 );
             }
-            let Some(execs) = workflow_glue::feed(&mut self.tabs, &message) else { continue };
-            let tab = message.tab_id;
             if let Some(follow) = agent_frame::route(&mut self.tabs, message, now) {
                 self.follow(follow, ctx);
             }
-            asked.push((tab, execs));
         }
         let (focused, minimized) = ctx.input(|i| (i.viewport().focused, i.viewport().minimized));
         let away = notify::window_is_away(focused, minimized);
@@ -170,9 +148,6 @@ impl Tidewatch {
                 );
             }
         }
-        asked.extend(workflow_glue::failures(&mut self.tabs, &polled.changes));
-        self.drive_build_workflow(ctx, now);
-        self.drive_workflows(ctx, now, asked);
         self.send_dev_keys(now);
         self.send_dev_paste(ctx, now);
         self.send_dev_copy(ctx, now);

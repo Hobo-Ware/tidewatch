@@ -26,8 +26,6 @@ impl Tidewatch {
     fn input_in_tab(&self) -> Option<Input> {
         if self.active_is_draft() {
             Some(Input::Form)
-        } else if self.awaiting_workflow_task() {
-            Some(Input::Task)
         } else if self.awaiting_first_prompt() {
             Some(Input::Prompt)
         } else {

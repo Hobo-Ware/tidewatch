@@ -26,7 +26,6 @@ impl Tidewatch {
             .filter_map(|tab| {
                 let agent = tab.pane.agent.as_ref()?;
                 let ordinary = agent.meeseeks.is_none()
-                    && agent.workflow.is_none()
                     && tab.pane.worktree.is_some()
                     && matches!(tab.pane.body, Body::Shell(_));
                 let ledger_done = self
@@ -96,9 +95,7 @@ impl Tidewatch {
 
     pub(super) fn done_check_look(&self, tab: u64) -> Option<Look> {
         let agent = self.tabs.items().iter().find(|t| t.id == tab)?.pane.agent.as_ref()?;
-        (agent.meeseeks.is_none() && agent.workflow.is_none())
-            .then(|| self.done_check.look(tab))
-            .flatten()
+        agent.meeseeks.is_none().then(|| self.done_check.look(tab)).flatten()
     }
 
     pub(super) fn done_check_can_ask(&self, tab: u64) -> Result<(), &'static str> {

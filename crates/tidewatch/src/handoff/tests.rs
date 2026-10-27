@@ -9,8 +9,6 @@ use stdusk_core::repaint::Repaint;
 use stdusk_core::shell::ShellProfile;
 use stdusk_core::terminal::SpawnOpts;
 use tidewatch_core::agents::Level;
-use tidewatch_core::runner::RunContext;
-use tidewatch_core::workflows::Workflows;
 
 use super::*;
 use crate::park::Why;
@@ -211,22 +209,8 @@ fn the_group_on_show_is_the_active_one() {
     assert_eq!(handover.active_group, 1);
 }
 
-fn workflow_run(file: &Path) -> TabRun {
-    let ship = Workflows::defaults().workflow.remove("ship").unwrap();
-    let context = RunContext {
-        task: "add a retry".into(),
-        base: "main".into(),
-        branch: "agent/otter".into(),
-        test_command: None,
-    };
-    let runner = Runner::new(&ship, &BTreeMap::new(), context).unwrap();
-    TabRun::new(runner, Some(file.to_path_buf()), Duration::from_secs(90))
-        .with_blurb("Ship it".into())
-        .with_generation(3)
-}
-
 #[test]
-fn a_window_with_a_tab_in_transition_or_a_stage_starting_cannot_hand_over() {
+fn a_window_with_a_tab_in_transition_cannot_hand_over() {
     let mut w = window();
     assert_eq!(blocker(&w.tabs), None);
 
@@ -238,17 +222,6 @@ fn a_window_with_a_tab_in_transition_or_a_stage_starting_cannot_hand_over() {
     w.tabs.get_mut(removing).unwrap().pane.begin_remove();
     assert_eq!(blocker(&w.tabs), Some(Blocker::TabInTransition));
     w.tabs.remove_id(removing);
-
-    let dir = tempfile::tempdir().unwrap();
-    let mut run = workflow_run(&dir.path().join("stages.json"));
-    assert!(!run.busy());
-    let execs = run.start();
-    assert!(matches!(execs.as_slice(), [crate::workflow_run::Exec::Launch(_)]));
-    assert!(run.busy(), "a launch is on its way");
-    let mut pane = agent_pane(301, "flow", "s");
-    pane.agent.as_mut().unwrap().workflow = Some(Box::new(run));
-    w.tabs.push_in(0, "flow".into(), pane);
-    assert_eq!(blocker(&w.tabs), Some(Blocker::WorkflowBusy));
 }
 
 #[test]
@@ -506,7 +479,6 @@ fn an_agent_tab_comes_back_running_with_its_reader_session_and_credential_under_
     assert_eq!(agent.run.notes_file, Some(PathBuf::from("/notes/otter.json")));
     assert_eq!(agent.launched, Some(launched("sess-1")));
     assert_eq!(agent.first_prompt, FirstPrompt::Sent);
-    assert!(agent.workflow.is_none());
     assert_eq!(tab.pane.worktree, Some(worktree("otter")));
     assert_eq!(rebuilt.credentials, [(tab.id, credential("tok-a"))]);
 }
@@ -585,64 +557,44 @@ fn an_agent_without_remote_control_hands_over_without_a_session_name() {
 }
 
 #[test]
-fn a_workflow_tab_comes_back_with_its_saved_run_and_stage_generation() {
-    let dir = tempfile::tempdir().unwrap();
-    let stages = dir.path().join("stages.json");
-    let mut run = workflow_run(&stages);
-    run.persist();
+fn a_handover_from_a_window_with_a_workflow_tab_brings_the_agent_back_alone_and_says_so() {
     let mut w = window();
-    let mut pane = agent_pane(301, "flow", "s2");
-    pane.agent.as_mut().unwrap().workflow = Some(Box::new(run));
-    w.tabs.push_in(0, "flow".into(), pane);
+    w.tabs.push_in(0, "flow".into(), agent_pane(301, "flow", "s2"));
     let (handover, _) = handover_of(&w);
-    let entry = handover.groups[0].tabs.last().unwrap().agent.as_ref().unwrap();
-    assert_eq!(
-        entry.workflow,
-        Some(WorkflowEntry {
-            stages: stages.clone(),
-            test_timeout_secs: 90,
-            generation: 3,
-            blurb: "Ship it".into(),
-        })
+    let mut wire = serde_json::to_value(&handover).unwrap();
+    let flow_agent = wire["groups"][0]["tab"]
+        .as_array_mut()
+        .unwrap()
+        .iter_mut()
+        .find(|tab| tab["title"] == "flow")
+        .unwrap()["agent"]
+        .as_object_mut()
+        .unwrap();
+    flow_agent.insert(
+        "workflow".into(),
+        serde_json::json!({
+            "stages": "/home/.tidewatch/.state/web-abc123/flow/stages.json",
+            "test_timeout_secs": 90,
+            "generation": 3,
+            "blurb": "Ship it"
+        }),
     );
+    let old: Handover = serde_json::from_value(wire).unwrap();
 
     let mut adopt = |term: u32, _: &Path| Ok(term);
     let rebuilt = rebuild(
-        &handover,
+        &old,
         vec![100, 101, 102, 301, 200, 201],
         0.0,
         Ptys { adopt: &mut adopt, fresh: &fresh },
     )
     .unwrap();
     let tab = rebuilt.tabs.items().iter().find(|tab| tab.title == "flow").unwrap();
-    let run = tab.pane.agent.as_ref().unwrap().workflow.as_deref().unwrap();
-    assert_eq!((run.generation(), run.blurb()), (3, "Ship it"));
-    assert_eq!(run.test_timeout(), Duration::from_secs(90));
-    assert_eq!(run.stages_file(), Some(stages.as_path()));
-    assert_eq!(rebuilt.notes, Vec::<String>::new());
-}
-
-#[test]
-fn a_workflow_whose_file_is_gone_leaves_the_agent_tab_and_says_so() {
-    let dir = tempfile::tempdir().unwrap();
-    let mut w = window();
-    let mut pane = agent_pane(301, "flow", "s2");
-    pane.agent.as_mut().unwrap().workflow =
-        Some(Box::new(workflow_run(&dir.path().join("stages.json"))));
-    w.tabs.push_in(0, "flow".into(), pane);
-    let (handover, _) = handover_of(&w);
-
-    let mut adopt = |term: u32, _: &Path| Ok(term);
-    let rebuilt = rebuild(
-        &handover,
-        vec![100, 101, 102, 301, 200, 201],
-        0.0,
-        Ptys { adopt: &mut adopt, fresh: &fresh },
-    )
-    .unwrap();
-    let tab = rebuilt.tabs.items().iter().find(|tab| tab.title == "flow").unwrap();
-    assert!(tab.pane.agent.as_ref().unwrap().workflow.is_none());
-    assert_eq!(rebuilt.notes.len(), 1);
+    assert!(matches!(tab.pane.body, Body::Shell(301)));
+    assert!(tab.pane.agent.is_some());
+    assert_eq!(tab.pane.worktree, Some(worktree("flow")));
+    assert_eq!(rebuilt.notes, ["Workflows were retired, so a workflow tab shows its agent alone."]);
+    assert!(!serde_json::to_string(&handover_of(&w).0).unwrap().contains("workflow"));
 }
 
 #[test]
@@ -729,12 +681,7 @@ fn a_layout_that_does_not_line_up_is_refused() {
 #[test]
 fn the_layout_crosses_the_wire_with_its_ptys_in_leaf_order() {
     let mut w = window();
-    let flow_dir = tempfile::tempdir().unwrap();
-    let mut pane = agent_pane(301, "flow", "s2");
-    let mut run = workflow_run(&flow_dir.path().join("stages.json"));
-    run.persist();
-    pane.agent.as_mut().unwrap().workflow = Some(Box::new(run));
-    w.tabs.push_in(0, "flow".into(), pane);
+    w.tabs.push_in(0, "flow".into(), agent_pane(301, "flow", "s2"));
     let (handover, order) = handover_of(&w);
     assert_eq!(order.len(), 6);
 
@@ -830,16 +777,7 @@ fn the_successor_does_not_inherit_the_dev_switches_that_open_or_restart_tabs() {
         .map(|(name, _)| name.to_string_lossy().into_owned())
         .collect();
     removed.sort();
-    assert_eq!(
-        removed,
-        [
-            "TIDEWATCH_DEV_AGENT",
-            "TIDEWATCH_DEV_RESTART",
-            "TIDEWATCH_DEV_RESUME",
-            "TIDEWATCH_DEV_WORKFLOW",
-            "TIDEWATCH_DEV_WORKTREE"
-        ]
-    );
+    assert_eq!(removed, ["TIDEWATCH_DEV_AGENT", "TIDEWATCH_DEV_RESTART", "TIDEWATCH_DEV_WORKTREE"]);
 }
 
 fn quiet_opts(script: &str) -> SpawnOpts {

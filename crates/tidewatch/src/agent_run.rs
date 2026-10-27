@@ -24,10 +24,9 @@ pub(crate) struct Finding {
     pub(crate) text: String,
 }
 
-/// What the agent last said through the Tidewatch MCP tools. The workflow UI reads this later.
+/// What the agent last said through the Tidewatch MCP tools.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(crate) struct Report {
-    pub(crate) stage_done: Option<String>,
     pub(crate) finding: Option<Finding>,
 }
 
@@ -156,8 +155,7 @@ impl AgentRun {
         self.asking = question;
     }
 
-    /// A workflow run decides what this tab shows while it holds the next move (tests running, a
-    /// question for the user, the end of the run). `None` gives the status back to the agent.
+    #[cfg(test)]
     pub(crate) fn hold(&mut self, status: Option<AgentStatus>, detail: Option<String>) {
         if self.held != status {
             self.held = status;
@@ -261,12 +259,10 @@ impl AgentRun {
                 }
                 self.tracker.on_hook(&hook, now);
             }
-            TabEvent::StageDone { summary } => self.report.stage_done = Some(summary),
             TabEvent::Finding { file, line, blocking, text } => {
                 self.report.finding = Some(Finding { file, line, blocking, text });
             }
             TabEvent::NoteReply { .. }
-            | TabEvent::Proposal { .. }
             | TabEvent::Progress { .. }
             | TabEvent::Links { .. }
             | TabEvent::Job { .. }
@@ -615,9 +611,8 @@ mod tests {
     }
 
     #[test]
-    fn mcp_reports_are_kept_for_the_workflow_ui() {
+    fn mcp_findings_are_kept() {
         let mut run = running(0.0);
-        run.on_event(TabEvent::StageDone { summary: "tests added".into() }, 1.0);
         run.on_event(
             TabEvent::Finding {
                 file: "src/a.rs".into(),
@@ -636,7 +631,6 @@ mod tests {
             },
             3.0,
         );
-        assert_eq!(run.report.stage_done.as_deref(), Some("tests added"));
         assert_eq!(
             run.report.finding,
             Some(Finding { file: "src/b.rs".into(), line: 9, blocking: false, text: "y".into() })
@@ -683,32 +677,6 @@ mod tests {
         run.refresh(65.0);
         assert_eq!(run.status(), &AgentStatus::Done);
         assert_eq!(run.detail(), Some("Created hello.txt"));
-    }
-
-    #[test]
-    fn a_held_status_wins_over_the_agents_until_it_is_given_back() {
-        let mut run = running(0.0);
-        run.refresh(1.0);
-        run.on_event(hook(HookKind::TurnStarted, None), 2.0);
-        run.refresh(2.0);
-        assert_eq!(run.status(), &AgentStatus::Working);
-        run.hold(Some(AgentStatus::NeedsYou(Reason::Input)), Some("Review 2/4: asks".into()));
-        let change = run.refresh(3.0).unwrap();
-        assert_eq!(change.to, AgentStatus::NeedsYou(Reason::Input));
-        assert_eq!(run.detail(), Some("Review 2/4: asks"));
-        run.on_event(hook(HookKind::TurnDone, Some("bye")), 4.0);
-        assert_eq!(run.refresh(4.0), None, "the agent finishing changes nothing while held");
-        run.hold(None, None);
-        assert_eq!(run.refresh(5.0).unwrap().to, AgentStatus::Done);
-    }
-
-    #[test]
-    fn holding_the_same_status_again_keeps_the_detail_the_agent_gave_since() {
-        let mut run = running(0.0);
-        run.hold(Some(AgentStatus::Working), Some("Running the tests".into()));
-        run.on_event(hook(HookKind::TurnDone, Some("agent words")), 1.0);
-        run.hold(Some(AgentStatus::Working), Some("Running the tests".into()));
-        assert_eq!(run.detail(), Some("agent words"));
     }
 
     #[test]

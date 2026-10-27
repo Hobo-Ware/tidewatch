@@ -11,15 +11,14 @@ use tidewatch_core::agents::Level;
 
 use crate::brand;
 use crate::catalog::Catalog;
+use crate::commands::Command;
 use crate::new_tab::{Kind, NameCheck, NewTab, RemoteOffer, Request, level_hint, level_refusal};
-use crate::new_tab_cards;
 use crate::new_tab_done;
 use crate::new_tab_fields::{self, NameEdit, section_label, text_box};
 use crate::new_tab_lane;
 use crate::new_tab_layout::{self as layout, Above, LABEL_GAP, LABEL_H, SECTION_GAP};
 use crate::new_tab_meeseeks::{self, TestsOffer, Tick};
 use crate::new_tab_remote;
-use crate::new_tab_workflow::{self, StageCard};
 use crate::repo_base::RepoFacts;
 use crate::screen_kit::TEXT_SECONDARY;
 use crate::screen_kit::{
@@ -54,7 +53,7 @@ pub(crate) struct Placed {
     pub(crate) name: Option<Rect>,
     pub(crate) base: Option<Rect>,
     pub(crate) message: Option<Rect>,
-    pub(crate) kinds: [Option<Rect>; 4],
+    pub(crate) kinds: [Option<Rect>; 3],
     pub(crate) ticks: [Option<Rect>; 3],
     pub(crate) selected_row: Option<Rect>,
     pub(crate) hints: Option<Rect>,
@@ -90,7 +89,7 @@ fn start(state: &mut NewTab, catalog: &Catalog, facts: Option<&RepoFacts>) -> Op
     }
 }
 
-/// The keys of the form. Cmd+Enter starts from anywhere in it; the bare keys (A, M, W, S, 1-9, Up, Down,
+/// The keys of the form. Cmd+Enter starts from anywhere in it; the bare keys (A, M, S, 1-9, Up, Down,
 /// Left, Right, Esc) are only read while no text field has the keyboard. Enter and `/` then hand
 /// the keyboard to the message box. Esc that closes a dropdown or takes the keyboard from a widget does
 /// only that, and an Esc with neither to do closes the draft.
@@ -112,12 +111,7 @@ fn keys(
         state.focus_message = true;
         return None;
     }
-    for (key, kind) in [
-        (Key::A, Kind::Agent),
-        (Key::M, Kind::Meeseeks),
-        (Key::W, Kind::Workflow),
-        (Key::S, Kind::Shell),
-    ] {
+    for (key, kind) in [(Key::A, Kind::Agent), (Key::M, Kind::Meeseeks), (Key::S, Kind::Shell)] {
         if pressed(ctx, key) {
             return state.choose(kind).map(Out::Start);
         }
@@ -162,25 +156,6 @@ type Hint = &'static [(&'static str, bool)];
 /// The key hints of the footer, longest first: the first that fits beside Start is shown.
 fn footer_hints(kind: Kind) -> [Hint; 3] {
     match kind {
-        Kind::Workflow => [
-            &[
-                ("1-9 Up Down", true),
-                (" workflow \u{b7} ", false),
-                ("Enter", true),
-                (" type \u{b7} ", false),
-                ("Esc", true),
-                (" closes the tab", false),
-            ],
-            &[
-                ("1-9", true),
-                (" workflow \u{b7} ", false),
-                ("Enter", true),
-                (" type \u{b7} ", false),
-                ("Esc", true),
-                (" closes", false),
-            ],
-            &[("Enter", true), (" type \u{b7} ", false), ("Esc", true), (" closes", false)],
-        ],
         Kind::Meeseeks => [
             &[
                 ("1-4 Up Down", true),
@@ -226,9 +201,19 @@ fn footer_hints(kind: Kind) -> [Hint; 3] {
     }
 }
 
+/// What a list with no entries says: where to add one, that it is loading, or that nothing matches.
+fn empty_text(filter: &str, loaded: bool, noun: &str) -> String {
+    if !filter.is_empty() {
+        format!("No {noun} matches \"{filter}\".")
+    } else if loaded {
+        format!("No {noun}s yet. Add one in Settings ({}).", Command::Settings.keys())
+    } else {
+        format!("The {noun}s are still loading...")
+    }
+}
+
 fn start_label(state: &NewTab, catalog: &Catalog) -> String {
     match state.kind() {
-        Kind::Workflow => "Start run".to_owned(),
         Kind::Meeseeks => new_tab_meeseeks::summon_label(state.tasks().len()),
         Kind::Agent | Kind::Shell => state
             .selected_entry(catalog)
@@ -242,7 +227,6 @@ fn wrapped(ui: &Ui, text: &str, size: f32, color: Color32, width: f32) -> Arc<Ga
 
 fn message_hint(state: &NewTab) -> &'static str {
     match (state.makes_a_worktree(), state.kind()) {
-        (true, Kind::Workflow) => "The worktree name follows your task until you edit it.",
         (true, _) => {
             "The worktree name follows your message until you edit it. Leave the message empty to start the agent idle."
         }
@@ -275,8 +259,6 @@ enum NoteRoom {
 /// What the pane shows this frame, gathered once so that measuring and drawing agree.
 struct Content<'a> {
     kind: Kind,
-    stages: Vec<StageCard>,
-    stage_name: String,
     warnings: Vec<String>,
     level_note: Option<String>,
     level_room: NoteRoom,
@@ -289,15 +271,8 @@ struct Content<'a> {
 
 impl<'a> Content<'a> {
     fn gather(state: &'a NewTab, catalog: &Catalog, facts: Option<&RepoFacts>) -> Self {
-        let stages = match (state.selected_workflow(catalog), catalog.profiles()) {
-            (Some(workflow), Some(profiles)) => new_tab_workflow::stage_cards(workflow, profiles),
-            _ => Vec::new(),
-        };
-        let stage_name = state.selected_workflow(catalog).map_or(String::new(), |w| w.name.clone());
         Self {
             kind: state.kind(),
-            stages,
-            stage_name,
             warnings: state.warnings(catalog),
             level_note: state.level_note().map(str::to_owned),
             level_room: if any_level_refused(state, catalog) {
@@ -336,11 +311,6 @@ impl<'a> Content<'a> {
         }
         if self.remote.is_some() {
             above.remote = new_tab_remote::ROW_H;
-        }
-        if self.kind == Kind::Workflow && !self.stages.is_empty() {
-            let columns = layout::stage_columns(width);
-            above.stages =
-                LABEL_H + CAPTION_GAP + new_tab_cards::stages_height(columns, self.stages.len());
         }
         above.warnings = self
             .warnings
@@ -387,11 +357,10 @@ pub(crate) fn show(
 fn lane(ui: &mut Ui, rect: Rect, state: &mut NewTab, catalog: &Catalog) -> Option<Rect> {
     let entries = new_tab_lane::entries(state, catalog);
     let noun = match state.kind() {
-        Kind::Workflow => "workflow",
         Kind::Meeseeks => "agent",
         Kind::Agent | Kind::Shell => "profile",
     };
-    let empty = new_tab_cards::empty_text(state.filter(), catalog.is_loaded(), noun);
+    let empty = empty_text(state.filter(), catalog.is_loaded(), noun);
     let scroll = std::mem::take(&mut state.scroll_to_selected);
     let out = new_tab_lane::show(ui, rect, state, &entries, &empty, scroll);
     if let Some(text) = out.filter {
@@ -424,7 +393,6 @@ fn header(ui: &mut Ui, state: &mut NewTab, placed: &mut Placed) -> Option<Out> {
     let choices: Vec<(&str, &str, Kind)> = [
         ("Agent", "A", Kind::Agent),
         ("Meeseeks", "M", Kind::Meeseeks),
-        ("Workflow", "W", Kind::Workflow),
         ("Shell", "S", Kind::Shell),
     ]
     .into_iter()
@@ -458,15 +426,12 @@ fn pane(
     let content = Content::gather(state, catalog, facts);
     let plan =
         layout::pane(rect, |width| (content.above(ui, width), content.hint_height(ui, width)));
-    let stages = content.stages.clone();
-    let stage_name = content.stage_name.clone();
     let warnings = content.warnings.clone();
     let level_note = content.level_note.clone();
     let level_reserved = content.level_room == NoteRoom::OneLine;
     let has_permission = content.has_permission;
     let yolo_line = content.yolo_line;
     let remote = content.remote.clone();
-    let kind = content.kind;
     let mut body_ui = ui.new_child(UiBuilder::new().max_rect(plan.body));
     ScrollArea::vertical().id_salt("new-tab-pane").auto_shrink([false, false]).show(
         &mut body_ui,
@@ -474,12 +439,6 @@ fn pane(
             ui.set_width(plan.content_w);
             ui.spacing_mut().item_spacing = vec2(8.0, 0.0);
             let width = plan.content_w;
-            if kind == Kind::Workflow && !stages.is_empty() {
-                section_label(ui, &format!("Stages of {stage_name}"));
-                ui.add_space(CAPTION_GAP);
-                new_tab_cards::stages(ui, &stages, layout::stage_columns(width));
-                ui.add_space(SECTION_GAP);
-            }
             if has_permission {
                 let (control, note) =
                     permission(ui, state, catalog, level_note.as_deref(), level_reserved);
@@ -544,7 +503,6 @@ fn message(
     ticks: &mut [Option<Rect>; 3],
 ) -> Rect {
     let (title, hint) = match state.kind() {
-        Kind::Workflow => ("Task", "What should this run deliver?"),
         Kind::Meeseeks => (
             "One task, one line each",
             "Bump vite to 6.3 and fix the build\nAdd a test for expired promo codes",

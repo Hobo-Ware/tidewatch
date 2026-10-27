@@ -12,6 +12,7 @@ use tidewatch_core::profiles::Profiles;
 use super::{Tidewatch, WAKE_SLACK_S};
 use crate::catalog::Availability;
 use crate::pty::{spawn_agent, spawn_shell_noted, spawn_typed};
+use crate::restore_glue::Env as RunEnv;
 use crate::restore_glue::Spawn;
 use crate::takeover::{
     CardAction, CardRows, END_WAIT_S, Effect, Env, MoveSpec, Scanned, Takeover, moved_text,
@@ -20,7 +21,6 @@ use crate::takeover::{
 use crate::takeover_group::{Ident, group_roots};
 use crate::takeover_jobs::{self, Done, Landed, MoveJob, ScanSpec};
 use crate::takeover_view::{self, Card, DialogOutcome};
-use crate::workflow_glue::Env as RunEnv;
 
 const STDUSK_HINT: &str = "That session runs in stdusk. Use stdusk's Move tabs to Tidewatch: it moves the live terminal, nothing restarts.";
 
@@ -184,15 +184,13 @@ impl Tidewatch {
             paths,
             catalog: &self.catalog,
             listener: self.hooks.listener(),
-            tools: self.flow.tools(),
             trust: self.trust.grant(),
         };
         let agent = |dir: &Path, prepared: &Prepared| spawn_agent(ctx, dir, prepared);
         let typed = |dir: &Path, prepared: &Prepared| spawn_typed(ctx, dir, prepared);
         let shell = |dir: &Path, note: Option<&str>| spawn_shell_noted(ctx, dir, note);
         let spawn = Spawn { agent: &agent, typed: &typed, shell: &shell };
-        let report =
-            self.restore.apply(plan, group, ctx, &mut self.tabs, &env, &spawn, &mut self.runs, now);
+        let report = self.restore.apply(plan, group, ctx, &mut self.tabs, &env, &spawn, now);
         for text in report.toasts {
             self.show_toast(text, ctx);
         }

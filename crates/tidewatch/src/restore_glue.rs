@@ -3,7 +3,7 @@
 //! plan out into the repo's tab group, in the saved order. A repo opened later in the same window
 //! goes through the same job.
 //! A shell reopens in its folder at once, an agent is prepared on a job (a fresh token for the tab,
-//! the resume command, folder trust) and a workflow run goes back through the workflow host. A
+//! the resume command, folder trust). A
 //! tab that cannot come back as it was reopens as a shell with the reason printed above it, or is
 //! left out, and the plan's message says which. Generic over the pty, so the whole flow runs on
 //! plain data in tests.
@@ -12,15 +12,17 @@
 //! tabs with a window that has only some of them. `settled` says when every repo is done.
 
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
-use tidewatch_core::agents::Level;
+use tidewatch_core::listener::Listener;
 use tidewatch_core::paths::TidewatchPaths;
 use tidewatch_core::prefs::{Prefs, ResumeAgents};
 use tidewatch_core::prepare::Prepared;
-use tidewatch_core::restore::{RealDisk, TabAction, TabPlan, WindowPlan, restore_workflow};
+use tidewatch_core::restore::{RealDisk, TabAction, TabPlan, WindowPlan};
 use tidewatch_core::resume_mode::Resume;
-use tidewatch_core::session::{SavedAgentTab, SavedTab};
-use tidewatch_core::worktree::{BRANCH_PREFIX, Leftover, Worktree};
+use tidewatch_core::session::SavedTab;
+use tidewatch_core::trust_apply::Grant;
+use tidewatch_core::worktree::Leftover;
 
 use crate::catalog::Catalog;
 use crate::jobs::Jobs;
@@ -30,8 +32,16 @@ use crate::park::Park;
 use crate::repo::Workspace;
 use crate::restore_jobs::{self, Done, ReopenSpec, Reopened, Startup, StartupSpec};
 use crate::tabs::Tabs;
-use crate::workflow_glue::{self, Env, Start};
 use crate::worktree_jobs::without_open;
+
+/// What the restore needs from the app each time it is called.
+pub(crate) struct Env<'a> {
+    pub(crate) paths: &'a TidewatchPaths,
+    pub(crate) catalog: &'a Catalog,
+    pub(crate) listener: Option<Arc<Listener>>,
+    /// Set after the user agreed to folder trust (D14).
+    pub(crate) trust: Option<Grant>,
+}
 
 /// How a pty is made: an agent from a prepared launch, a shell with that launch typed at its
 /// prompt, or a plain shell with an optional note printed above it.
@@ -185,7 +195,6 @@ impl Host {
         tabs: &mut Tabs<Pane<T>>,
         env: &Env,
         spawn: &Spawn<T>,
-        runs: &mut workflow_glue::Host,
         now: f64,
     ) -> Report {
         let mut report = Report::default();
@@ -205,7 +214,7 @@ impl Host {
                         without_open(leftovers, tabs),
                     );
                     if let Some(plan) = plan {
-                        let applied = self.apply(&plan, group, ctx, tabs, env, spawn, runs, now);
+                        let applied = self.apply(&plan, group, ctx, tabs, env, spawn, now);
                         report.toasts.extend(applied.toasts);
                         report.notice = join_notices(report.notice.take(), applied.notice);
                         report.focus = report.focus.or(applied.focus);
@@ -237,7 +246,6 @@ impl Host {
         tabs: &mut Tabs<Pane<T>>,
         env: &Env,
         spawn: &Spawn<T>,
-        runs: &mut workflow_glue::Host,
         now: f64,
     ) -> Report {
         let untouched = tabs.in_group(group).count() == 1;
@@ -248,7 +256,7 @@ impl Host {
             .iter()
             .map(|tab| {
                 let opened = Opening { plan, group, tab, ctx, env, now };
-                self.open_one(&opened, tabs, spawn, runs, &mut report.toasts)
+                self.open_one(&opened, tabs, spawn)
             })
             .collect();
         for (tab, id) in plan.tabs.iter().zip(&ids) {
@@ -268,14 +276,7 @@ impl Host {
         report
     }
 
-    fn open_one<T>(
-        &self,
-        opening: &Opening,
-        tabs: &mut Tabs<Pane<T>>,
-        spawn: &Spawn<T>,
-        runs: &mut workflow_glue::Host,
-        toasts: &mut Vec<String>,
-    ) -> u64 {
+    fn open_one<T>(&self, opening: &Opening, tabs: &mut Tabs<Pane<T>>, spawn: &Spawn<T>) -> u64 {
         let Opening { plan, group, tab, ctx, env, now } = *opening;
         match &tab.action {
             _ if matches!(tab.saved, SavedTab::Main) => tabs.main_id(group).unwrap_or_default(),
@@ -326,26 +327,6 @@ impl Host {
                 };
                 let pane = Pane { body: Body::Poofed(record.clone()), worktree: None, agent: None };
                 tabs.push_in(group, record.name.clone(), pane)
-            }
-            TabAction::ResumeWorkflow { stages } => {
-                if let (Some((runner, _)), Some(worktree)) =
-                    (restore_workflow(stages), tab.worktree.clone())
-                {
-                    return runs.open(
-                        ctx,
-                        tabs,
-                        group,
-                        env,
-                        &plan.dir,
-                        Some(worktree),
-                        None,
-                        Start::Resume(Box::new(runner)),
-                        now,
-                    );
-                }
-                let note = "The workflow was not resumed: its saved state is unreadable.";
-                toasts.push(note.to_owned());
-                push_shell(tabs, spawn, (plan, group), tab, Some(note))
             }
         }
     }
@@ -411,43 +392,6 @@ fn reopened<T>(
     }
     if let Some(note) = notes.first() {
         toasts.push(format!("Started without part of the setup: {note}"));
-    }
-}
-
-/// The plan of one saved workflow run, for the `TIDEWATCH_DEV_RESUME` switch: the same path a
-/// restart takes, for a single tab.
-pub(crate) fn dev_resume_plan(paths: &TidewatchPaths, repo: &Path, name: &str) -> WindowPlan {
-    let worktree = Worktree {
-        repo: repo.to_path_buf(),
-        path: paths.worktree_dir(repo, name),
-        branch: format!("{BRANCH_PREFIX}{name}"),
-    };
-    let stages = paths.stages_file(repo, name);
-    let saved = SavedTab::Agent(SavedAgentTab {
-        dir: worktree.path.clone(),
-        branch: Some(worktree.branch.clone()),
-        agent: String::new(),
-        profile: String::new(),
-        level: Level::Plan,
-        session_id: None,
-        stages: Some(stages.clone()),
-        crashed: false,
-        remote: false,
-        meeseeks: None,
-    });
-    WindowPlan {
-        dir: repo.to_path_buf(),
-        other: false,
-        focus_mode: false,
-        active: 0,
-        tabs: vec![TabPlan {
-            saved,
-            dir: worktree.path.clone(),
-            worktree: Some(worktree),
-            action: TabAction::ResumeWorkflow { stages },
-            park: None,
-        }],
-        skipped: Vec::new(),
     }
 }
 

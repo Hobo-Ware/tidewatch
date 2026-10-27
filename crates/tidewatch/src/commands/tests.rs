@@ -70,28 +70,8 @@ fn every_command_has_its_own_chord_on_each_platform() {
         assert_eq!(labels.len(), bound.len(), "{platform:?}");
         let unbound: Vec<_> =
             TABLE.iter().filter(|entry| entry.chord(platform).is_none()).map(|e| e.id).collect();
-        assert_eq!(unbound, ["build-workflow", "move-sessions", "amphetamine"], "{platform:?}");
+        assert_eq!(unbound, ["move-sessions", "amphetamine"], "{platform:?}");
     }
-}
-
-#[test]
-fn build_workflow_is_a_palette_only_command() {
-    let entry = TABLE.iter().find(|entry| entry.command == Command::BuildWorkflow).unwrap();
-    assert_eq!(entry.title, "Build workflow from this session");
-    assert_eq!(entry.group, Group::App);
-    assert_eq!(Command::BuildWorkflow.keys_on(Platform::Mac), "");
-    assert_eq!(Command::BuildWorkflow.keys_on(Platform::Linux), "");
-    assert_eq!(Command::BuildWorkflow.id(), "build-workflow");
-    assert!(Command::BuildWorkflow.in_palette());
-    assert_eq!(command_of("build-workflow"), Some(Command::BuildWorkflow));
-    assert_eq!(press_event(Command::BuildWorkflow), None);
-    for platform in PLATFORMS {
-        let row = rows(platform).into_iter().find(|row| row.title == entry.title).unwrap();
-        assert_eq!(row.keys, "");
-    }
-    assert!(
-        markdown().contains("| Build workflow from this session | palette only | palette only |")
-    );
 }
 
 #[test]
@@ -222,7 +202,6 @@ fn the_palette_lists_what_a_person_would_look_for() {
             "find-commit",
             "settings",
             "shortcuts",
-            "build-workflow",
             "move-sessions",
             "amphetamine"
         ]
