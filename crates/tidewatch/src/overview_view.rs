@@ -851,13 +851,12 @@ mod tests {
     use tidewatch_core::status::{AgentStatus, Reason};
 
     #[test]
-    fn the_ring_clears_the_corners_of_the_avatar_tile() {
-        let corner = (FACE_IN_RING * 0.28).floor();
-        let corner_reach = (FACE_IN_RING / 2.0 - corner) * std::f32::consts::SQRT_2 + corner;
+    fn the_ring_clears_the_round_face() {
         let inner_edge = RING / 2.0 - progress_ring::stroke_of(RING);
         assert!(
-            inner_edge >= corner_reach,
-            "ring starts at {inner_edge}, tile reaches {corner_reach}"
+            inner_edge >= FACE_IN_RING / 2.0,
+            "ring starts at {inner_edge}, face reaches {}",
+            FACE_IN_RING / 2.0
         );
     }
 

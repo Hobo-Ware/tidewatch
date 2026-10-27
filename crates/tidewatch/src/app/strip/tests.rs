@@ -814,7 +814,7 @@ fn a_struggling_tab_has_no_orange_tint_its_outline_says_it() {
 
 fn circles(shape: &Shape, out: &mut usize) {
     match shape {
-        Shape::Circle(_) => *out += 1,
+        Shape::Circle(circle) if circle.radius < AVATAR_SIZE / 4.0 => *out += 1,
         Shape::Vec(shapes) => shapes.iter().for_each(|shape| circles(shape, out)),
         _ => {}
     }
@@ -856,12 +856,15 @@ fn a_poofed_tab_keeps_its_title_under_a_dimmed_face_and_has_no_status_dot() {
         });
         (fills_seen, dots, texts) = (Vec::new(), 0, Vec::new());
         for clipped in &output.shapes {
-            fills(&clipped.shape, &mut fills_seen);
+            circle_fills(&clipped.shape, &mut fills_seen);
             circles(&clipped.shape, &mut dots);
             collect_text(&clipped.shape, &mut texts);
         }
     }
-    assert!(fills_seen.contains(&brand::SIDEBAR.gamma_multiply(POOFED_VEIL)), "the dimmed face");
+    assert!(
+        fills_seen.contains(&brand::SIDEBAR.gamma_multiply(POOFED_VEIL)),
+        "the dimmed round face"
+    );
     assert_eq!(dots, 0, "no status dot");
     assert!(
         texts.iter().any(|(text, _)| text == "promo-test"),

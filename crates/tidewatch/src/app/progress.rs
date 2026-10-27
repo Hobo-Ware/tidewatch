@@ -151,6 +151,7 @@ impl Tidewatch {
             .collect();
         self.avatar_live.fixed_faces(&meeseeks, ctx);
         self.avatar_live.tick(&facts, ctx);
+        self.avatar_redraws.queue_unreadable(&mut self.avatar_live);
         if let Some(listener) = self.hooks.listener() {
             listener.exempt_from_avatar_ask(&self.avatar_live.exempt_from_ask(&facts));
         }

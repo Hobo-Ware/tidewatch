@@ -449,8 +449,11 @@ fn tab_row<T>(
                 agent_avatar::hover(ui, rect, tab.id, avatar);
             }
             if poofed {
-                let veil = CornerRadius::same((rect.width() * 0.28) as u8);
-                painter.rect_filled(rect, veil, brand::SIDEBAR.gamma_multiply(POOFED_VEIL));
+                painter.circle_filled(
+                    rect.center(),
+                    rect.width() / 2.0,
+                    brand::SIDEBAR.gamma_multiply(POOFED_VEIL),
+                );
             }
         }
         let menu = MenuView {

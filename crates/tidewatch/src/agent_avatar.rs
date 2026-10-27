@@ -1,16 +1,19 @@
-//! Draws an agent's avatar: the cleaned SVG rasterized once per picture and pixel size (resvg, the
-//! texture kept in egui's memory), with the reason on hover and Redraw or Use letter on right-click.
-//! A click on the menu is left in egui's memory for `take_choice`.
+//! Draws an agent's face: always a circle. A dark plate with a 1 px ring, and on it the cleaned SVG
+//! rasterized once per picture and pixel size (resvg, inset and cut to the circle, the texture kept
+//! in egui's memory). A letter face is a circle too. The reason shows on hover, Redraw or Use
+//! letter on right-click; a click on the menu is left in egui's memory for `take_choice`.
 
 use std::hash::{DefaultHasher, Hash, Hasher};
 use std::sync::Arc;
 
 use egui::{
-    Align2, Color32, ColorImage, Context, CornerRadius, Id, Rect, Response, Sense, TextureHandle,
+    Align2, Color32, ColorImage, Context, Id, Rect, Response, Sense, Stroke, TextureHandle,
     TextureOptions, Ui,
 };
+use resvg::tiny_skia::{FillRule, Mask, PathBuilder, Transform};
 use stdusk_egui::widgets::{menu_item, style_menu};
 use tidewatch_core::avatar::Avatar;
+use tidewatch_core::avatar_check::{FACE_INSET, rasterize};
 
 use crate::brand;
 use crate::screen_kit::{badge_colors, badge_letter, heading};
@@ -32,12 +35,13 @@ fn key_of(avatar: &Avatar) -> u64 {
 }
 
 fn render(svg: &str, px: u32) -> Option<ColorImage> {
-    let tree = resvg::usvg::Tree::from_str(svg, &resvg::usvg::Options::default()).ok()?;
-    let mut pixmap = resvg::tiny_skia::Pixmap::new(px, px)?;
-    let size = tree.size();
-    let scale = (px as f32 / size.width()).min(px as f32 / size.height());
-    let transform = resvg::tiny_skia::Transform::from_scale(scale, scale);
-    resvg::render(&tree, transform, &mut pixmap.as_mut());
+    let inset = if svg == crate::avatar_glue::MEESEEKS_SVG { 1.0 } else { FACE_INSET };
+    let mut pixmap = rasterize(svg, px, inset)?;
+    let half = px as f32 / 2.0;
+    let circle = PathBuilder::from_circle(half, half, (half - 1.0).max(0.5))?;
+    let mut mask = Mask::new(px, px)?;
+    mask.fill_path(&circle, FillRule::Winding, true, Transform::identity());
+    pixmap.apply_mask(&mask);
     Some(ColorImage::from_rgba_premultiplied([px as usize, px as usize], pixmap.data()))
 }
 
@@ -54,17 +58,31 @@ pub(crate) fn texture(ctx: &Context, avatar: &Avatar, px: u32) -> Option<Texture
     made
 }
 
-/// Paints the avatar in `rect`, rasterized for the screen's pixel density. Returns whether it drew.
+fn plate(painter: &egui::Painter, rect: Rect, fill: Color32) {
+    painter.circle_filled(rect.center(), rect.width().min(rect.height()) / 2.0, fill);
+}
+
+fn ring(painter: &egui::Painter, rect: Rect) {
+    let radius = rect.width().min(rect.height()) / 2.0 - 0.5;
+    painter.circle_stroke(rect.center(), radius, Stroke::new(1.0, brand::FACE_RING));
+}
+
+/// Paints the avatar as a round face in `rect`, rasterized for the screen's pixel density. Returns
+/// whether it drew; a picture that cannot be drawn leaves the empty plate.
 pub(crate) fn paint(ctx: &Context, painter: &egui::Painter, rect: Rect, avatar: &Avatar) -> bool {
     let px = (rect.width() * ctx.pixels_per_point()).round() as u32;
-    let Some(texture) = texture(ctx, avatar, px) else { return false };
-    painter.image(
-        texture.id(),
-        rect,
-        Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
-        egui::Color32::WHITE,
-    );
-    true
+    plate(painter, rect, brand::FACE_PLATE);
+    let art = texture(ctx, avatar, px);
+    if let Some(art) = &art {
+        painter.image(
+            art.id(),
+            rect,
+            Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
+            egui::Color32::WHITE,
+        );
+    }
+    ring(painter, rect);
+    art.is_some()
 }
 
 /// The avatar's reason as a tip over `rect`.
@@ -143,17 +161,10 @@ impl Face {
 }
 
 pub(crate) fn paint_face(ctx: &Context, painter: &egui::Painter, rect: Rect, face: &Face) -> bool {
-    let radius = CornerRadius::same((rect.width() * 0.28) as u8);
     match face {
-        Face::Picture(avatar) => {
-            let drawn = paint(ctx, painter, rect, avatar);
-            if !drawn {
-                painter.rect_filled(rect, radius, brand::ITEM);
-            }
-            drawn
-        }
+        Face::Picture(avatar) => paint(ctx, painter, rect, avatar),
         Face::Letter { letter, tint } => {
-            painter.rect_filled(rect, radius, tint.0);
+            plate(painter, rect, tint.0);
             painter.text(
                 rect.center(),
                 Align2::CENTER_CENTER,
@@ -161,6 +172,7 @@ pub(crate) fn paint_face(ctx: &Context, painter: &egui::Painter, rect: Rect, fac
                 heading(rect.width() * 0.55),
                 tint.1,
             );
+            ring(painter, rect);
             false
         }
     }

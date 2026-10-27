@@ -3,7 +3,12 @@ use std::time::{Duration, Instant};
 
 use super::*;
 
-const SVG: &str = "<svg><circle cx=\"1\" cy=\"1\" r=\"1\"/></svg>";
+const SVG: &str =
+    "<svg viewBox=\"0 0 64 64\"><circle cx=\"32\" cy=\"32\" r=\"20\" fill=\"#2dd4bf\"/></svg>";
+const DARK: &str =
+    "<svg viewBox=\"0 0 64 64\"><circle cx=\"32\" cy=\"32\" r=\"20\" fill=\"#2a2f3a\"/></svg>";
+const SPILLING: &str =
+    "<svg viewBox=\"0 0 64 64\"><rect width=\"64\" height=\"64\" fill=\"#2dd4bf\"/></svg>";
 
 struct Fx {
     dir: tempfile::TempDir,
@@ -117,28 +122,86 @@ fn a_closed_tab_takes_its_avatar_with_it() {
 }
 
 #[test]
-fn the_fake_switch_hands_out_the_six_icons_in_turn_and_writes_nothing() {
+fn the_fake_switch_hands_out_the_icons_in_turn_and_writes_nothing() {
     let fx = Fx::new();
     let mut host = Host::new(true, true);
-    fx.tick(&mut host, &[1, 2, 3, 4, 5, 6, 7]);
-    let reasons: Vec<_> = (1..=7).map(|id| host.get(id).unwrap().reason.clone()).collect();
-    assert_eq!(reasons[0], reasons[6]);
-    let mut unique = reasons[..6].to_vec();
+    fx.tick(&mut host, &[1, 2, 3, 4, 5, 6, 7, 8]);
+    let reasons: Vec<_> = FAKE.iter().map(|(_, reason)| (*reason).to_owned()).collect();
+    for id in [1, 2, 4, 5, 6, 7] {
+        assert_eq!(host.get(id).unwrap().reason, reasons[(id - 1) as usize], "tab {id}");
+    }
+    assert!(host.get(3).is_none(), "the dark sample shows the letter");
+    assert_eq!(host.get(8).unwrap().reason, reasons[0]);
+    let mut unique = reasons.clone();
     unique.sort();
     unique.dedup();
-    assert_eq!(unique.len(), 6);
+    assert_eq!(unique.len(), FAKE.len());
+    assert_eq!(host.take_unreadable(), Vec::<u64>::new());
     host.clear(2, &fx.notes(), &fx.ctx);
     std::thread::sleep(Duration::from_millis(30));
     assert!(!fx.file().exists());
 }
 
 #[test]
-fn every_fake_icon_passes_the_sanitizer_untouched_in_its_shapes() {
-    for (svg, reason) in FAKE {
+fn every_fake_icon_but_the_dark_sample_passes_the_readability_check() {
+    for (index, (svg, reason)) in FAKE.iter().enumerate() {
         let avatar = clean(svg, reason).unwrap_or_else(|e| panic!("{reason}: {e}"));
-        assert!(avatar.svg.contains("<rect width=\"64\" height=\"64\" rx=\"16\""), "{reason}");
         assert_eq!(avatar.svg.matches("script").count(), 0);
+        let readable = avatar_check::check(&avatar.svg);
+        assert_eq!(readable.is_ok(), index != 2, "{reason}: {readable:?}");
     }
+}
+
+fn wait_for_marker(fx: &Fx) {
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while !avatar_asked_file_beside(&fx.notes()).exists() && Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(5));
+    }
+}
+
+#[test]
+fn a_saved_avatar_that_cannot_be_read_shows_the_letter_is_removed_and_is_queued_once() {
+    for (what, svg) in [("dark on the plate", DARK), ("past the circle", SPILLING)] {
+        let fx = Fx::new();
+        avatar_store::save(&fx.file(), &clean(svg, "old").unwrap()).unwrap();
+        let mut host = Host::new(true, false);
+        let deadline = Instant::now() + Duration::from_secs(5);
+        let mut queued = Vec::new();
+        while queued.is_empty() && Instant::now() < deadline {
+            fx.tick(&mut host, &[1]);
+            queued = host.take_unreadable();
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert_eq!(queued, [1], "{what}");
+        assert!(host.get(1).is_none(), "{what}: the letter shows");
+        wait_for_marker(&fx);
+        assert!(!fx.file().exists(), "{what}: the old file is gone");
+        assert!(avatar_asked_file_beside(&fx.notes()).exists(), "{what}: not asked a second time");
+        std::thread::sleep(Duration::from_millis(50));
+        fx.tick(&mut host, &[1]);
+        assert_eq!(host.take_unreadable(), Vec::<u64>::new(), "{what}: queued once");
+    }
+}
+
+#[test]
+fn a_readable_saved_avatar_queues_nothing_and_a_host_that_writes_nothing_keeps_the_file() {
+    let fx = Fx::new();
+    avatar_store::save(&fx.file(), &clean(SVG, "good").unwrap()).unwrap();
+    let mut host = Host::new(true, false);
+    fx.until(&mut host, 1, |host| host.get(1).is_some());
+    assert_eq!(host.take_unreadable(), Vec::<u64>::new());
+
+    let fx = Fx::new();
+    avatar_store::save(&fx.file(), &clean(DARK, "old").unwrap()).unwrap();
+    let mut host = Host::new(false, false);
+    for _ in 0..40 {
+        fx.tick(&mut host, &[1]);
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    assert!(host.get(1).is_none());
+    assert_eq!(host.take_unreadable(), Vec::<u64>::new());
+    assert!(fx.file().exists());
+    assert!(!avatar_asked_file_beside(&fx.notes()).exists());
 }
 
 #[test]
