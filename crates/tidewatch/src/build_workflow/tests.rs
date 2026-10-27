@@ -34,7 +34,7 @@ fn idle() -> Pane<u32> {
 }
 
 fn row(seq: u64, kind: Kind, text: &str) -> Row {
-    Row { seq, kind, text: text.to_owned() }
+    Row { seq, kind, text: text.to_owned(), pictures: Vec::new() }
 }
 
 #[test]

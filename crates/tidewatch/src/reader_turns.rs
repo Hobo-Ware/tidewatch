@@ -408,7 +408,7 @@ mod tests {
     use tidewatch_core::transcript::{Entry, Role, ToolCall, ToolPhase};
 
     fn text(role: Role, body: &str, ts: i64) -> Entry {
-        Entry { role, text: body.into(), tool: None, ts: Some(ts) }
+        Entry { role, text: body.into(), tool: None, ts: Some(ts), images: Vec::new() }
     }
 
     fn call(id: &str, name: &str, summary: &str, ts: i64) -> Entry {
@@ -423,6 +423,7 @@ mod tests {
                 ask: None,
             }),
             ts: Some(ts),
+            images: Vec::new(),
         }
     }
 
@@ -438,6 +439,7 @@ mod tests {
                 ask: None,
             }),
             ts: Some(ts),
+            images: Vec::new(),
         }
     }
 
@@ -639,7 +641,13 @@ mod tests {
 
     #[test]
     fn lines_without_a_time_leave_the_turn_without_one() {
-        let entry = |role, body: &str| Entry { role, text: body.into(), tool: None, ts: None };
+        let entry = |role, body: &str| Entry {
+            role,
+            text: body.into(),
+            tool: None,
+            ts: None,
+            images: Vec::new(),
+        };
         let layout = layout(&rows_of(vec![entry(Role::User, "a"), entry(Role::Assistant, "b")]));
         assert_eq!(layout.groups[0].elapsed_ms(), None);
         assert_eq!(span_label(None, None, &TimeZone::UTC), None);

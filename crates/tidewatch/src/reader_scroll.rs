@@ -126,7 +126,7 @@ pub(crate) fn estimate(row: &Row, width: f32) -> f32 {
         return REVIEW_BASE_H + ids.len() as f32 * REVIEW_NOTE_H;
     }
     if matches!(row.kind, Kind::User) {
-        return estimate_user(&row.text, width);
+        return estimate_user(&row.text, width) + estimate_pictures(row.pictures.len(), width);
     }
     if matches!(row.kind, Kind::Tidewatch(_)) {
         return estimate_tidewatch(&row.text, width, false);
@@ -151,6 +151,17 @@ fn chat_lines<'a>(texts: impl IntoIterator<Item = &'a str>, bubble_w: f32) -> us
 pub(crate) fn estimate_user(text: &str, width: f32) -> f32 {
     let lines = chat_lines([text], width * USER_SHARE).max(1);
     lines as f32 * CHAT_LINE_H + USER_CHROME_H
+}
+
+/// The chips over a user bubble's text: their rows and the gap under them.
+fn estimate_pictures(count: usize, width: f32) -> f32 {
+    let room = width * USER_SHARE - BUBBLE_PAD;
+    let rows = crate::pictures::chip_rows(count, room, crate::pictures::chip_width(room, false));
+    if rows == 0 {
+        0.0
+    } else {
+        crate::pictures::chips_height(rows) + crate::pictures::OVER_TEXT_GAP
+    }
 }
 
 pub(crate) fn estimate_tidewatch(text: &str, width: f32, open: bool) -> f32 {
@@ -201,7 +212,7 @@ mod tests {
     use crate::reader_rows::Tool;
 
     fn row(seq: u64, text: &str) -> Row {
-        Row { seq, kind: Kind::Assistant, text: text.into() }
+        Row { seq, kind: Kind::Assistant, text: text.into(), pictures: Vec::new() }
     }
 
     #[test]
@@ -263,6 +274,7 @@ mod tests {
                 done: false,
             }),
             text: String::new(),
+            pictures: Vec::new(),
         };
         assert_eq!(estimate(&tool, 800.0), TOOL_ROW_H);
         let short = estimate(&row(1, "one"), 800.0);
@@ -272,8 +284,12 @@ mod tests {
 
     #[test]
     fn a_review_row_is_guessed_by_its_notes_not_by_its_message() {
-        let review =
-            |ids: Vec<u64>| Row { seq: 1, kind: Kind::Review(ids), text: "a\nb\nc".into() };
+        let review = |ids: Vec<u64>| Row {
+            seq: 1,
+            kind: Kind::Review(ids),
+            text: "a\nb\nc".into(),
+            pictures: Vec::new(),
+        };
         let two = estimate(&review(vec![1, 2]), 800.0);
         let four = estimate(&review(vec![1, 2, 3, 4]), 800.0);
         assert_eq!(four - two, 2.0 * REVIEW_NOTE_H);
@@ -355,5 +371,14 @@ mod tests {
         heights.record(5, 10.0);
         heights.keep_from(3);
         assert_eq!(heights.measured_count(), 1);
+    }
+
+    #[test]
+    fn a_user_row_with_pictures_is_guessed_taller_by_their_chip_rows() {
+        let picture = tidewatch_core::transcript_image::Picture::new(Some(1), "image/png", "AAAA");
+        let plain = Row { seq: 1, kind: Kind::User, text: "hi".into(), pictures: Vec::new() };
+        let with = Row { pictures: vec![picture.clone(), picture], ..plain.clone() };
+        let grown = estimate(&with, 1200.0) - estimate(&plain, 1200.0);
+        assert_eq!(grown, crate::pictures::CHIP_H + crate::pictures::OVER_TEXT_GAP);
     }
 }

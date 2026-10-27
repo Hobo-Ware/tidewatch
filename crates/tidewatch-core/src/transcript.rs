@@ -13,6 +13,10 @@
 //!   (a code string in `input`) with a list of text parts as `output`; `function_call` items are
 //!   still read, from a hand-written sample (`codex_function_call.jsonl`).
 //!
+//! Pasted pictures (Claude Code 2.1.311 only): a user record's `image` content blocks, kept on the
+//! `User` entry in order (see `transcript_image`). The Gemini, Copilot and Codex fixtures hold no
+//! picture, so those parsers keep none.
+//!
 //! Session titles (Claude Code only; the Gemini, Copilot and Codex fixtures hold no title record):
 //! `{"type":"custom-title","customTitle":...}` is what `/rename` writes (checked on a real 2.1.310
 //! run), `{"type":"ai-title","aiTitle":...}` the title Claude generates itself and `{"type":"summary",
@@ -31,6 +35,7 @@ use serde_json::Value;
 
 use crate::question::{self, Question};
 use crate::rfc3339;
+use crate::transcript_image::{self, Picture};
 use crate::user_markup::{self, Record};
 
 const SUMMARY_MAX_CHARS: usize = 120;
@@ -93,6 +98,8 @@ pub struct Entry {
     pub tool: Option<ToolCall>,
     /// Unix milliseconds.
     pub ts: Option<i64>,
+    /// The pictures the user pasted into a `User` entry, in order (Claude Code only).
+    pub images: Vec<Picture>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -242,6 +249,10 @@ impl Parser {
                 }
                 if let Some(text) = content.as_str() {
                     entries.extend(claude_user_text(Some(text), ts));
+                }
+                let images = transcript_image::of_record(line, content);
+                if let Some(said) = entries.iter_mut().find(|entry| entry.role == Role::User) {
+                    said.images = images;
                 }
                 entries
             }
@@ -467,7 +478,13 @@ fn timestamp(value: &Value) -> Option<i64> {
 
 fn entry(role: Role, text: Option<&str>, ts: Option<i64>) -> Option<Entry> {
     let text = text?.trim();
-    (!text.is_empty()).then(|| Entry { role, text: text.to_owned(), tool: None, ts })
+    (!text.is_empty()).then(|| Entry {
+        role,
+        text: text.to_owned(),
+        tool: None,
+        ts,
+        images: Vec::new(),
+    })
 }
 
 fn tool_call(name: &str, summary: String, id: Option<&str>, ts: Option<i64>) -> Entry {
@@ -482,6 +499,7 @@ fn tool_call(name: &str, summary: String, id: Option<&str>, ts: Option<i64>) -> 
             ask: None,
         }),
         ts,
+        images: Vec::new(),
     }
 }
 
@@ -504,6 +522,7 @@ fn tool_result(
             ask: None,
         }),
         ts,
+        images: Vec::new(),
     }
 }
 
@@ -554,13 +573,17 @@ fn claude_queued_prompt(attachment: &Value, ts: Option<i64>) -> Vec<Entry> {
         return Vec::new();
     }
     let prompt = &attachment["prompt"];
-    match prompt.as_str() {
-        Some(text) => claude_user_text(Some(text), ts).into_iter().collect(),
-        None => blocks(prompt)
-            .filter(|block| block["type"].as_str() == Some("text"))
-            .filter_map(|block| claude_user_text(block["text"].as_str(), ts))
-            .collect(),
+    if let Some(text) = prompt.as_str() {
+        return claude_user_text(Some(text), ts).into_iter().collect();
     }
+    let mut entries: Vec<Entry> = blocks(prompt)
+        .filter(|block| block["type"].as_str() == Some("text"))
+        .filter_map(|block| claude_user_text(block["text"].as_str(), ts))
+        .collect();
+    if let Some(said) = entries.iter_mut().find(|entry| entry.role == Role::User) {
+        said.images = transcript_image::of_record(&Value::Null, prompt);
+    }
+    entries
 }
 
 fn claude_user_text(text: Option<&str>, ts: Option<i64>) -> Option<Entry> {
@@ -781,6 +804,7 @@ mod tests {
     const CODEX_LIVE: &str = include_str!("../tests/fixtures/codex_live.jsonl");
     const CLAUDE_ASK: &str = include_str!("../tests/fixtures/claude_ask_user_question.jsonl");
     const CLAUDE_TITLES: &str = include_str!("../tests/fixtures/claude_titles.jsonl");
+    const CLAUDE_IMAGES: &str = include_str!("../tests/fixtures/claude_images.jsonl");
 
     type ToolShape = (String, String, ToolPhase);
     type Shaped = (Role, String, Option<ToolShape>);
@@ -1467,5 +1491,38 @@ mod tests {
         writeln!(file, "{RENAMED}").unwrap();
         tail.poll();
         assert_eq!(tail.session_title(), Some("Sync retries"));
+    }
+
+    #[test]
+    fn a_claude_user_entry_keeps_its_pictures_in_order_and_nothing_else_has_any() {
+        let entries = parse_all(Source::Claude, CLAUDE_IMAGES);
+        let roles: Vec<Role> = entries.iter().map(|entry| entry.role).collect();
+        assert_eq!(roles, [Role::User, Role::Assistant, Role::User]);
+        let first = &entries[0];
+        assert_eq!(first.text, "[Image #1]Compare [Image #2] with the old one");
+        let numbers: Vec<Option<u32>> = first.images.iter().map(|picture| picture.number).collect();
+        assert_eq!(numbers, [Some(1), Some(2)]);
+        assert_ne!(first.images[0].hash, first.images[1].hash);
+        assert_eq!(&first.images[0].bytes().unwrap()[..4], b"\x89PNG");
+        assert_eq!(entries[1].images, Vec::new());
+        let second = &entries[2];
+        assert_eq!(second.images.len(), 1);
+        assert_eq!(second.images[0].number, Some(5));
+        assert_eq!(second.images[0].hash, first.images[0].hash, "the same picture has one name");
+        for (source, text) in
+            [(Source::Claude, CLAUDE), (Source::Gemini, GEMINI), (Source::Copilot, COPILOT)]
+        {
+            assert!(parse_all(source, text).iter().all(|entry| entry.images.is_empty()));
+        }
+    }
+
+    #[test]
+    fn a_message_queued_with_a_picture_keeps_the_picture() {
+        let line = r#"{"type":"attachment","timestamp":"2026-10-27T10:00:00Z","attachment":{"type":"queued_command","commandMode":"prompt","origin":{"kind":"human"},"prompt":[{"type":"text","text":"also [Image #3]"},{"type":"image","source":{"type":"base64","media_type":"image/jpeg","data":"AAAA"}}]}}"#;
+        let entries = parse_all(Source::Claude, line);
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].images.len(), 1);
+        assert_eq!(entries[0].images[0].number, Some(3));
+        assert_eq!(entries[0].images[0].media_type, "image/jpeg");
     }
 }

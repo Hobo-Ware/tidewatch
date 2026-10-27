@@ -1,11 +1,13 @@
 //! Pictures in a message: the chip a pasted screenshot becomes above the text of the message box and
 //! inside a sent bubble, and the text rules behind it. The message the agent gets is the text with
 //! the pictures' paths on lines of their own after it, so a bubble can tell them apart again.
-//! The thumbnails are decoded once on a thread and kept in egui's memory by path.
+//! A picture a transcript carries inline (`Source::Pasted`) draws the same chip. The thumbnails are
+//! decoded once on a `Jobs` thread and kept in egui's memory, by path or by the picture's hash.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex, PoisonError};
 
 use egui::epaint::text::{LayoutJob, TextWrapping};
 use egui::{
@@ -14,8 +16,10 @@ use egui::{
 };
 use image::imageops::FilterType;
 use tidewatch_core::image_paste::{is_image_file, path_text};
+use tidewatch_core::transcript_image::Picture;
 
 use crate::brand;
+use crate::jobs::Jobs;
 use crate::screen_kit::Size;
 
 pub(crate) const CHIP_H: f32 = 48.0;
@@ -32,6 +36,46 @@ const BUTTON_EDGE: f32 = 8.0;
 const SMALL_PX: u32 = 104;
 const SMALL_PY: u32 = 72;
 const LARGE_PX: u32 = 360;
+const MAX_DECODE_BYTES: usize = 48 << 20;
+pub(crate) const PASTES_DIR: &str = "pastes";
+pub(crate) const OVER_TEXT_GAP: f32 = 8.0;
+
+/// Where a chip's picture comes from.
+#[derive(Clone, Copy, Debug)]
+pub(crate) enum Source<'a> {
+    File(&'a Path),
+    /// A picture a transcript carries inline.
+    Pasted(&'a Picture),
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+enum Key {
+    File(PathBuf),
+    Pasted(u64),
+}
+
+impl Source<'_> {
+    fn key(self) -> Key {
+        match self {
+            Self::File(path) => Key::File(path.to_owned()),
+            Self::Pasted(picture) => Key::Pasted(picture.hash),
+        }
+    }
+
+    fn label(self, n: usize) -> String {
+        match self {
+            Self::File(path) => label(path, n),
+            Self::Pasted(picture) => format!("Image {}", picture.number.map_or(n, |n| n as usize)),
+        }
+    }
+
+    fn gone(self) -> &'static str {
+        match self {
+            Self::File(_) => "File not found",
+            Self::Pasted(_) => "Cannot read",
+        }
+    }
+}
 
 /// What the agent is told a screenshot is called: `Screenshot 2` for a pasted one, else the file name.
 pub(crate) fn label(path: &Path, n: usize) -> String {
@@ -60,6 +104,17 @@ pub(crate) fn meta_text(size: Option<(u32, u32)>, bytes: u64) -> String {
 /// The width of one chip in a block `width` wide: its own width, or the block's when that is narrower.
 pub(crate) fn chip_width(width: f32, removable: bool) -> f32 {
     (if removable { REMOVABLE_W } else { PLAIN_W }).min(width)
+}
+
+/// The width of the block for `count` sent chips in `room`: as many chips as fit in a row, side by
+/// side, and never wider than `room`.
+pub(crate) fn block_width(count: usize, room: f32) -> f32 {
+    if count == 0 {
+        return 0.0;
+    }
+    let fit = (((room + CHIP_GAP) / (PLAIN_W + CHIP_GAP)).floor() as usize).max(1);
+    let per_row = count.min(fit) as f32;
+    (per_row * PLAIN_W + (per_row - 1.0) * CHIP_GAP).min(room)
 }
 
 /// How many rows `count` chips take in a row `width` wide.
@@ -146,8 +201,24 @@ pub(crate) enum Look {
     Missing,
 }
 
-#[derive(Clone, Default)]
-struct Cache(Arc<Mutex<HashMap<PathBuf, Look>>>);
+struct Slots {
+    looks: Mutex<HashMap<Key, Look>>,
+    jobs: Mutex<Jobs<(Key, Look)>>,
+    decodes: AtomicUsize,
+}
+
+#[derive(Clone)]
+struct Cache(Arc<Slots>);
+
+impl Default for Cache {
+    fn default() -> Self {
+        Self(Arc::new(Slots {
+            looks: Mutex::default(),
+            jobs: Mutex::new(Jobs::new()),
+            decodes: AtomicUsize::new(0),
+        }))
+    }
+}
 
 fn cache(ctx: &egui::Context) -> Cache {
     ctx.data_mut(|data| data.get_temp_mut_or_default::<Cache>(Id::new("picture-cache")).clone())
@@ -163,43 +234,91 @@ fn texture(ctx: &egui::Context, name: String, image: &image::DynamicImage) -> Te
     )
 }
 
-fn load(ctx: &egui::Context, path: &Path) -> Look {
-    let Ok(meta) = std::fs::metadata(path) else { return Look::Missing };
-    let decoded = image::open(path).ok();
-    let name = path.display().to_string();
-    let size = decoded.as_ref().map(|image| (image.width(), image.height()));
-    let small = decoded.as_ref().map(|image| {
+fn thumbnails(
+    ctx: &egui::Context,
+    name: &str,
+    bytes: u64,
+    decoded: Option<&image::DynamicImage>,
+) -> Look {
+    let size = decoded.map(|image| (image.width(), image.height()));
+    let small = decoded.map(|image| {
         texture(
             ctx,
             format!("{name}#small"),
             &image.resize_to_fill(SMALL_PX, SMALL_PY, FilterType::Lanczos3),
         )
     });
-    let large = decoded.as_ref().map(|image| {
+    let large = decoded.map(|image| {
         let fitted = image.resize(LARGE_PX, LARGE_PX, FilterType::Triangle);
         let shown = [fitted.width() as f32, fitted.height() as f32];
         (texture(ctx, format!("{name}#large"), &fitted), shown)
     });
-    Look::Ready(Arc::new(Loaded { size, bytes: meta.len(), small, large }))
+    Look::Ready(Arc::new(Loaded { size, bytes, small, large }))
 }
 
-/// The thumbnails of `path`: `Loading` the first time, while a thread decodes it and wakes the window.
-pub(crate) fn look(ctx: &egui::Context, path: &Path) -> Look {
+fn load_file(ctx: &egui::Context, path: &Path) -> Look {
+    let Ok(meta) = std::fs::metadata(path) else { return Look::Missing };
+    thumbnails(ctx, &path.display().to_string(), meta.len(), image::open(path).ok().as_ref())
+}
+
+fn load_pasted(ctx: &egui::Context, picture: &Picture) -> Look {
+    let Some(bytes) = picture.bytes() else { return Look::Missing };
+    let decoded =
+        (bytes.len() <= MAX_DECODE_BYTES).then(|| image::load_from_memory(&bytes).ok()).flatten();
+    thumbnails(ctx, &format!("pasted-{:016x}", picture.hash), bytes.len() as u64, decoded.as_ref())
+}
+
+/// The thumbnails of `source`: `Loading` the first time, while a `Jobs` thread decodes it and wakes
+/// the window. A result is taken into the cache here, on the UI thread, by whoever looks next.
+pub(crate) fn look(ctx: &egui::Context, source: Source<'_>) -> Look {
     let cache = cache(ctx);
+    let key = source.key();
     {
-        let mut slots = cache.0.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-        if let Some(slot) = slots.get(path) {
-            return slot.clone();
+        let mut looks = cache.0.looks.lock().unwrap_or_else(PoisonError::into_inner);
+        let jobs = cache.0.jobs.lock().unwrap_or_else(PoisonError::into_inner);
+        looks.extend(jobs.drain());
+        if let Some(look) = looks.get(&key) {
+            return look.clone();
         }
-        slots.insert(path.to_owned(), Look::Loading);
+        looks.insert(key.clone(), Look::Loading);
     }
-    let (ctx, path) = (ctx.clone(), path.to_owned());
-    std::thread::spawn(move || {
-        let loaded = load(&ctx, &path);
-        cache.0.lock().unwrap_or_else(std::sync::PoisonError::into_inner).insert(path, loaded);
-        ctx.request_repaint();
+    let owned = match source {
+        Source::File(path) => Owned::File(path.to_owned()),
+        Source::Pasted(picture) => Owned::Pasted(picture.clone()),
+    };
+    let work_ctx = ctx.clone();
+    let slots = Arc::clone(&cache.0);
+    cache.0.jobs.lock().unwrap_or_else(PoisonError::into_inner).spawn(ctx, move || {
+        slots.decodes.fetch_add(1, Ordering::SeqCst);
+        let look = match &owned {
+            Owned::File(path) => load_file(&work_ctx, path),
+            Owned::Pasted(picture) => load_pasted(&work_ctx, picture),
+        };
+        (key, look)
     });
     Look::Loading
+}
+
+enum Owned {
+    File(PathBuf),
+    Pasted(Picture),
+}
+
+#[cfg(test)]
+pub(crate) fn decodes(ctx: &egui::Context) -> usize {
+    cache(ctx).0.decodes.load(Ordering::SeqCst)
+}
+
+#[cfg(test)]
+pub(crate) fn wait_ready(ctx: &egui::Context, source: Source<'_>) -> Look {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    loop {
+        let seen = look(ctx, source);
+        if !matches!(seen, Look::Loading) || std::time::Instant::now() > deadline {
+            return seen;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -266,11 +385,16 @@ fn paint_remove(ui: &Ui, rect: Rect, hovered: bool) {
 
 /// Draws one chip in `rect` (`CHIP_H` tall, `REMOVABLE_W` wide with a remove button, `PLAIN_W`
 /// without). A click anywhere but the button is `opened`; the hover shows a bigger preview.
-pub(crate) fn paint(ui: &mut Ui, rect: Rect, picture: (&Path, usize), removable: bool) -> Outcome {
-    let (path, n) = picture;
-    let id = ui.id().with(("picture-chip", path, n));
+pub(crate) fn paint(
+    ui: &mut Ui,
+    rect: Rect,
+    picture: (Source<'_>, usize),
+    removable: bool,
+) -> Outcome {
+    let (source, n) = picture;
+    let id = ui.id().with(("picture-chip", source.key(), n));
     let body = ui.interact(rect, id, Sense::click());
-    let look = look(ui.ctx(), path);
+    let look = look(ui.ctx(), source);
     let loaded = match &look {
         Look::Ready(loaded) => Some(loaded.clone()),
         Look::Loading | Look::Missing => None,
@@ -291,11 +415,11 @@ pub(crate) fn paint(ui: &mut Ui, rect: Rect, picture: (&Path, usize), removable:
     paint_thumb(ui, thumb, loaded.as_ref().and_then(|loaded| loaded.small.as_ref()));
     let nominal = if removable { REMOVABLE_W } else { PLAIN_W };
     let text_w = (TEXT_W - (nominal - rect.width()).max(0.0)).max(0.0);
-    let name = truncated(ui, &label(path, n), FontId::proportional(14.0), brand::TEXT, text_w);
+    let name = truncated(ui, &source.label(n), FontId::proportional(14.0), brand::TEXT, text_w);
     let detail_text = match &look {
         Look::Ready(loaded) => meta_text(loaded.size, loaded.bytes),
         Look::Loading => String::new(),
-        Look::Missing => "File not found".to_owned(),
+        Look::Missing => source.gone().to_owned(),
     };
     let detail = truncated(ui, &detail_text, FontId::proportional(12.0), brand::MUTED, text_w);
     let block = name.size().y + detail.size().y;
@@ -341,21 +465,51 @@ pub(crate) fn open_picture(path: &Path) {
     }
 }
 
-/// Draws the chips of `pictures` in the block at `origin`, `width` wide, and opens a clicked one.
-pub(crate) fn paint_block(
+/// Writes a transcript's picture into `dir` under the name its bytes give it, unless that file is
+/// already there, and returns the path.
+pub(crate) fn write_once(dir: &Path, picture: &Picture) -> std::io::Result<PathBuf> {
+    let path = dir.join(picture.file_name());
+    if path.exists() {
+        return Ok(path);
+    }
+    let bytes = picture
+        .bytes()
+        .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::InvalidData, "not base64"))?;
+    std::fs::create_dir_all(dir)?;
+    std::fs::write(&path, bytes)?;
+    Ok(path)
+}
+
+/// Opens a transcript's picture in the system's viewer: written once to `dir` first, on its own
+/// thread so the frame never waits on the disk.
+fn open_pasted(picture: &Picture, dir: Option<&Path>) {
+    let Some(dir) = dir.map(Path::to_owned) else { return };
+    let picture = picture.clone();
+    std::thread::spawn(move || match write_once(&dir, &picture) {
+        Ok(path) => open_picture(&path),
+        Err(error) => eprintln!("tidewatch: cannot save the picture to open it: {error}"),
+    });
+}
+
+/// Draws the chips of `pictures` in the block at `origin`, `width` wide, and opens a clicked one
+/// (a transcript's picture through the folder `pastes`). Returns the chip whose button was clicked.
+pub(crate) fn paint_block<'a>(
     ui: &mut Ui,
     origin: Pos2,
     width: f32,
-    pictures: &[PathBuf],
-    removable: bool,
+    pictures: impl IntoIterator<Item = Source<'a>>,
+    (removable, pastes): (bool, Option<&Path>),
 ) -> Option<usize> {
     let chip_w = chip_width(width, removable);
     let mut removed = None;
-    for (index, path) in pictures.iter().enumerate() {
+    for (index, source) in pictures.into_iter().enumerate() {
         let rect = chip_rect(origin, index, width, chip_w);
-        let outcome = paint(ui, rect, (path, index + 1), removable);
+        let outcome = paint(ui, rect, (source, index + 1), removable);
         if outcome.opened {
-            open_picture(path);
+            match source {
+                Source::File(path) => open_picture(path),
+                Source::Pasted(picture) => open_pasted(picture, pastes),
+            }
         }
         if outcome.removed {
             removed = Some(index);
@@ -396,6 +550,21 @@ mod tests {
         ];
         for (width, removable, want) in cases {
             assert_eq!(chip_width(width, removable), want, "{width} {removable}");
+        }
+    }
+
+    #[test]
+    fn a_block_of_sent_chips_is_as_many_side_by_side_as_the_room_holds() {
+        let cases = [
+            (0, 500.0, 0.0),
+            (1, 500.0, PLAIN_W),
+            (2, 500.0, 2.0 * PLAIN_W + CHIP_GAP),
+            (3, 500.0, 2.0 * PLAIN_W + CHIP_GAP),
+            (2, 300.0, PLAIN_W),
+            (1, 150.0, 150.0),
+        ];
+        for (count, room, want) in cases {
+            assert_eq!(block_width(count, room), want, "{count} in {room}");
         }
     }
 
@@ -509,6 +678,10 @@ mod tests {
         assert_eq!(pictures, [p("/s/shot-1.png"), p("/s/shot-2.png")]);
     }
 
+    fn ready(ctx: &egui::Context, path: &Path) -> Look {
+        wait_ready(ctx, Source::File(path))
+    }
+
     fn png(dir: &Path, name: &str, size: (u32, u32)) -> PathBuf {
         let path = dir.join(name);
         let image = image::RgbaImage::from_fn(size.0, size.1, |x, y| {
@@ -518,23 +691,12 @@ mod tests {
         path
     }
 
-    fn ready(ctx: &egui::Context, path: &Path) -> Look {
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
-        loop {
-            let seen = look(ctx, path);
-            if !matches!(seen, Look::Loading) || std::time::Instant::now() > deadline {
-                return seen;
-            }
-            std::thread::sleep(std::time::Duration::from_millis(10));
-        }
-    }
-
     #[test]
     fn a_picture_is_decoded_once_and_its_size_and_thumbnails_are_kept() {
         let dir = tempfile::tempdir().unwrap();
         let path = png(dir.path(), "shot-1.png", (800, 513));
         let ctx = egui::Context::default();
-        assert!(matches!(look(&ctx, &path), Look::Loading));
+        assert!(matches!(look(&ctx, Source::File(&path)), Look::Loading));
         let Look::Ready(loaded) = ready(&ctx, &path) else { panic!("the picture loads") };
         assert_eq!(loaded.size, Some((800, 513)));
         assert_eq!(loaded.bytes, std::fs::metadata(&path).unwrap().len());
@@ -542,7 +704,7 @@ mod tests {
         let (_, shown) = loaded.large.as_ref().unwrap();
         assert_eq!(shown[0], LARGE_PX as f32);
         assert!(shown[1] < shown[0]);
-        let Look::Ready(again) = look(&ctx, &path) else { panic!("kept") };
+        let Look::Ready(again) = look(&ctx, Source::File(&path)) else { panic!("kept") };
         assert!(Arc::ptr_eq(&loaded, &again), "the second look is the first decode");
     }
 
@@ -574,7 +736,7 @@ mod tests {
             let _ = self.ctx.run_ui(raw, |ui| {
                 let width = if self.removable { REMOVABLE_W } else { PLAIN_W };
                 let rect = Rect::from_min_size(Pos2::new(20.0, 20.0), vec2(width, CHIP_H));
-                got = (paint(ui, rect, (path, 1), self.removable), rect);
+                got = (paint(ui, rect, (Source::File(path), 1), self.removable), rect);
             });
             got
         }
@@ -617,5 +779,85 @@ mod tests {
         ready(&frame.ctx, &path);
         let end = frame.click(&path, |rect| rect.right_center() - vec2(12.0, 0.0));
         assert_eq!(end, Outcome { opened: true, removed: false });
+    }
+
+    fn pasted(number: Option<u32>, rgb: [u8; 3]) -> Picture {
+        let mut bytes = Vec::new();
+        image::RgbaImage::from_pixel(640, 400, image::Rgba([rgb[0], rgb[1], rgb[2], 255]))
+            .write_to(&mut std::io::Cursor::new(&mut bytes), image::ImageFormat::Png)
+            .unwrap();
+        let text = base64::Engine::encode(&base64::engine::general_purpose::STANDARD, bytes);
+        Picture::new(number, "image/png", &text)
+    }
+
+    #[test]
+    fn each_transcript_picture_is_decoded_once_however_often_it_is_drawn_or_repeated() {
+        let ctx = egui::Context::default();
+        let (red, blue) = (pasted(Some(1), [200, 40, 40]), pasted(Some(2), [40, 40, 200]));
+        let again = Picture::new(Some(9), "image/png", &red.base64);
+        for _ in 0..5 {
+            for picture in [&red, &blue, &again] {
+                wait_ready(&ctx, Source::Pasted(picture));
+            }
+        }
+        assert_eq!(decodes(&ctx), 2);
+        let Look::Ready(first) = look(&ctx, Source::Pasted(&red)) else { panic!("ready") };
+        let Look::Ready(second) = look(&ctx, Source::Pasted(&again)) else { panic!("ready") };
+        assert!(Arc::ptr_eq(&first, &second), "the same bytes share one texture set");
+        assert_eq!(first.size, Some((640, 400)));
+        assert!(first.small.is_some() && first.large.is_some());
+    }
+
+    #[test]
+    fn a_picture_that_is_not_base64_is_missing_and_one_that_is_not_an_image_has_no_thumbnail() {
+        let ctx = egui::Context::default();
+        let broken = Picture::new(None, "image/png", "not base64!");
+        assert!(matches!(wait_ready(&ctx, Source::Pasted(&broken)), Look::Missing));
+        let text = Picture::new(None, "image/png", "aGVsbG8=");
+        let Look::Ready(loaded) = wait_ready(&ctx, Source::Pasted(&text)) else { panic!("ready") };
+        assert_eq!((loaded.size, loaded.bytes, loaded.small.is_none()), (None, 5, true));
+    }
+
+    #[test]
+    fn a_transcript_picture_is_written_to_the_folder_once_and_opened_from_that_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let pastes = dir.path().join("pastes");
+        let picture = pasted(Some(1), [10, 20, 30]);
+        let path = write_once(&pastes, &picture).unwrap();
+        assert_eq!(path, pastes.join(picture.file_name()));
+        assert_eq!(std::fs::read(&path).unwrap(), picture.bytes().unwrap());
+        std::fs::write(&path, b"kept").unwrap();
+        assert_eq!(write_once(&pastes, &picture).unwrap(), path);
+        assert_eq!(std::fs::read(&path).unwrap(), b"kept", "the second open writes nothing");
+        assert!(write_once(&pastes, &Picture::new(None, "image/png", "!!")).is_err());
+    }
+
+    #[test]
+    fn a_pasted_chip_reads_image_and_its_number_with_its_size() {
+        let picture = pasted(Some(4), [10, 20, 30]);
+        let frame = Frame { ctx: egui::Context::default(), removable: false };
+        crate::fonts::install(&frame.ctx);
+        wait_ready(&frame.ctx, Source::Pasted(&picture));
+        let mut texts = Vec::new();
+        let raw = egui::RawInput {
+            screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(600.0, 200.0))),
+            ..egui::RawInput::default()
+        };
+        for _ in 0..2 {
+            let out = frame.ctx.run_ui(raw.clone(), |ui| {
+                let rect = Rect::from_min_size(Pos2::new(20.0, 20.0), vec2(PLAIN_W, CHIP_H));
+                paint(ui, rect, (Source::Pasted(&picture), 1), false);
+            });
+            texts = out
+                .shapes
+                .iter()
+                .filter_map(|clipped| match &clipped.shape {
+                    egui::Shape::Text(text) => Some(text.galley.text().to_owned()),
+                    _ => None,
+                })
+                .collect();
+        }
+        assert!(texts.iter().any(|text| text == "Image 4"), "{texts:?}");
+        assert!(texts.iter().any(|text| text.starts_with("640 \u{d7} 400")), "{texts:?}");
     }
 }

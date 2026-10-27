@@ -17,8 +17,6 @@ use stdusk_egui::terminal_view::paste_into;
 
 use super::terminal::paste_rules;
 
-const PASTES_DIR: &str = "pastes";
-
 fn composer_focused(ctx: &egui::Context) -> bool {
     crate::reader_view::reply_has_focus(ctx) || crate::agent_ready::composer_has_focus(ctx)
 }
@@ -109,7 +107,7 @@ impl Tidewatch {
             return;
         };
         let state = self.paths.as_ref().map(tidewatch_core::paths::TidewatchPaths::state_dir);
-        let Some(dir) = tab_dir.or(state).map(|dir| dir.join(PASTES_DIR)) else {
+        let Some(dir) = tab_dir.or(state).map(|dir| dir.join(crate::pictures::PASTES_DIR)) else {
             self.show_toast("No place to save the picture", ctx);
             return;
         };

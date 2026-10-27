@@ -25,7 +25,7 @@ use crate::code_block::{self, Look};
 use crate::job_model::clock_label;
 use crate::link_text::{Laid, Text};
 use crate::links;
-use crate::pictures;
+use crate::pictures::{self, Source};
 use crate::progress_ring::paint_spinner;
 use crate::reader_markdown::{self, Piece};
 use crate::reader_rows::{Kind, Row, ToolKind};
@@ -74,6 +74,7 @@ const LIVE_FILL: Color32 = Color32::from_rgb(0x12, 0x20, 0x1f);
 /// What a drawn turn needs besides its rows.
 pub(crate) struct Scene<'a> {
     pub(crate) root: Option<&'a Path>,
+    pub(crate) pastes: Option<&'a Path>,
     pub(crate) profile: &'a str,
     pub(crate) face: Option<&'a Face>,
     pub(crate) zone: &'a TimeZone,
@@ -174,15 +175,21 @@ fn stamped(who: &str, at_ms: Option<i64>, zone: &TimeZone) -> String {
 
 /// A user message: a bubble at the right, `You · 16:02` over it. The text inside is markdown,
 /// left-aligned, in a bubble as wide as its text up to the user share of the column.
-pub(crate) fn user(ui: &mut Ui, row: &Row, at_ms: Option<i64>, zone: &TimeZone, width: f32) {
-    user_bubble(ui, row, Meta::Stamp(at_ms, zone), width);
+pub(crate) fn user(
+    ui: &mut Ui,
+    row: &Row,
+    at_ms: Option<i64>,
+    zone: &TimeZone,
+    (width, pastes): (f32, Option<&Path>),
+) {
+    user_bubble(ui, row, Meta::Stamp(at_ms, zone), width, pastes);
 }
 
 /// A message the user sent while the agent was busy: the same bubble, dimmed, with a small spinner
 /// and `Queued` over it, until the transcript has the message.
 pub(crate) fn queued(ui: &mut Ui, text: &str, key: u64, time: f64, width: f32) {
-    let row = Row { seq: key, kind: Kind::User, text: text.to_owned() };
-    user_bubble(ui, &row, Meta::Queued(time), width);
+    let row = Row { seq: key, kind: Kind::User, text: text.to_owned(), pictures: Vec::new() };
+    user_bubble(ui, &row, Meta::Queued(time), width, None);
 }
 
 #[derive(Clone, Copy)]
@@ -208,11 +215,19 @@ fn queued_meta(ui: &mut Ui, time: f64) {
     );
 }
 
-fn user_bubble(ui: &mut Ui, row: &Row, meta_line: Meta<'_>, width: f32) {
+fn user_bubble(ui: &mut Ui, row: &Row, meta_line: Meta<'_>, width: f32, pastes: Option<&Path>) {
     ui.add_space(OUTER);
     let max_w = user_width(width);
-    let (said, pictures) = pictures::split_trailing(&row.text);
-    let markdown = user_markup::chat_markdown(&said);
+    let (said, files) = pictures::split_trailing(&row.text);
+    let shown: Vec<u32> = row.pictures.iter().filter_map(|picture| picture.number).collect();
+    let markdown = user_markup::chat_markdown(&said, &shown);
+    let has_text = !markdown.trim().is_empty();
+    let pictures: Vec<Source<'_>> = row
+        .pictures
+        .iter()
+        .map(Source::Pasted)
+        .chain(files.iter().map(|path| Source::File(path)))
+        .collect();
     ui.with_layout(Layout::right_to_left(Align::Min), |ui| {
         ui.allocate_ui_with_layout(vec2(max_w, 0.0), Layout::top_down(Align::Max), |ui| {
             ui.spacing_mut().item_spacing.y = 4.0;
@@ -258,13 +273,14 @@ fn user_bubble(ui: &mut Ui, row: &Row, meta_line: Meta<'_>, width: f32) {
                     let text_w =
                         user_text_width(natural, user_markup::has_indented_block(&said), room)
                             .max(code.min(room));
-                    let chips_w =
-                        if pictures.is_empty() { 0.0 } else { pictures::PLAIN_W.min(room) };
-                    let shown_w =
-                        if said.trim().is_empty() { chips_w } else { text_w.max(chips_w) };
+                    let chips_w = pictures::block_width(pictures.len(), room);
+                    let shown_w = if has_text { text_w.max(chips_w) } else { chips_w };
                     ui.set_width(shown_w.min(room));
                     ui.with_layout(Layout::top_down(Align::Min), |ui| {
-                        if !said.trim().is_empty() {
+                        ui.push_id(("pictures", row.seq), |ui| {
+                            sent_pictures(ui, &pictures, has_text, pastes);
+                        });
+                        if has_text {
                             chat_text(ui, |ui| {
                                 ui.visuals_mut().code_bg_color = USER_CODE_FILL;
                                 ui.push_id(row.seq, |ui| {
@@ -272,7 +288,6 @@ fn user_bubble(ui: &mut Ui, row: &Row, meta_line: Meta<'_>, width: f32) {
                                 });
                             });
                         }
-                        sent_pictures(ui, &pictures, !said.trim().is_empty());
                     });
                 });
         });
@@ -280,18 +295,18 @@ fn user_bubble(ui: &mut Ui, row: &Row, meta_line: Meta<'_>, width: f32) {
     ui.add_space(OUTER);
 }
 
-fn sent_pictures(ui: &mut Ui, pictures: &[std::path::PathBuf], after_text: bool) {
+fn sent_pictures(ui: &mut Ui, pictures: &[Source<'_>], over_text: bool, pastes: Option<&Path>) {
     if pictures.is_empty() {
         return;
-    }
-    if after_text {
-        ui.add_space(8.0);
     }
     let width = ui.available_width();
     let rows = pictures::chip_rows(pictures.len(), width, pictures::chip_width(width, false));
     let (rect, _) =
         ui.allocate_exact_size(vec2(width, pictures::chips_height(rows)), Sense::hover());
-    pictures::paint_block(ui, rect.min, width, pictures, false);
+    pictures::paint_block(ui, rect.min, width, pictures.iter().copied(), (false, pastes));
+    if over_text {
+        ui.add_space(pictures::OVER_TEXT_GAP);
+    }
 }
 
 fn answers_block(ui: &mut Ui, pairs: &[(String, String)], room: f32, seq: u64) {
@@ -992,7 +1007,7 @@ mod tests {
 
     fn painted_text(text: &str) -> Vec<String> {
         let ctx = crate::fonts::test_context();
-        let row = Row { seq: 1, kind: Kind::User, text: text.to_owned() };
+        let row = Row { seq: 1, kind: Kind::User, text: text.to_owned(), pictures: Vec::new() };
         let zone = TimeZone::UTC;
         let mut texts = Vec::new();
         for _ in 0..2 {
@@ -1001,7 +1016,7 @@ mod tests {
                 ..RawInput::default()
             };
             let out = ctx.run_ui(raw, |ui| {
-                user(ui, &row, None, &zone, 800.0);
+                user(ui, &row, None, &zone, (800.0, None));
             });
             texts = out
                 .shapes
@@ -1114,9 +1129,16 @@ mod tests {
         assert!(!texts.iter().any(|text| text.contains("/nope/")), "{texts:?}");
     }
 
+    #[test]
+    fn a_marker_with_no_picture_keeps_its_chip_and_a_space_before_the_text() {
+        let texts = painted_text("[Image #2]Also this should be costs");
+        assert!(texts.iter().any(|text| text.contains("Image 2 Also this")), "{texts:?}");
+        assert!(!texts.iter().any(|text| text.contains("Image 2Also")), "{texts:?}");
+    }
+
     fn bubble_and_chips(text: &str, pane: f32) -> (Rect, Vec<Rect>, Vec<Rect>, Vec<String>) {
         let ctx = crate::fonts::test_context();
-        let row = Row { seq: 1, kind: Kind::User, text: text.to_owned() };
+        let row = Row { seq: 1, kind: Kind::User, text: text.to_owned(), pictures: Vec::new() };
         let zone = TimeZone::UTC;
         let mut shapes = Vec::new();
         for _ in 0..2 {
@@ -1126,7 +1148,7 @@ mod tests {
             };
             let out = ctx.run_ui(raw, |ui| {
                 ui.set_max_width(pane);
-                user(ui, &row, None, &zone, pane);
+                user(ui, &row, None, &zone, (pane, None));
             });
             shapes = out.shapes.into_iter().map(|clipped| clipped.shape).collect();
         }
@@ -1186,18 +1208,18 @@ mod tests {
                 pad + 1.0,
                 "{text:?} at {pane}: right padding"
             );
-            let bottom = chips.iter().map(Rect::bottom).reduce(f32::max).expect("chips");
+            let top = chips.iter().map(Rect::top).reduce(f32::min).expect("chips");
             assert_eq!(
-                (bubble.bottom() - bottom).round(),
-                f32::from(USER_PAD.bottom) + 1.0,
-                "{text:?} at {pane}: bottom padding"
+                (top - bubble.top()).round(),
+                f32::from(USER_PAD.top) + 1.0,
+                "{text:?} at {pane}: top padding"
             );
             if !text.starts_with("look") {
-                let top = chips.iter().map(Rect::top).reduce(f32::min).expect("chips");
+                let bottom = chips.iter().map(Rect::bottom).reduce(f32::max).expect("chips");
                 assert_eq!(
-                    (top - bubble.top()).round(),
-                    f32::from(USER_PAD.top) + 1.0,
-                    "{text:?} at {pane}: top padding"
+                    (bubble.bottom() - bottom).round(),
+                    f32::from(USER_PAD.bottom) + 1.0,
+                    "{text:?} at {pane}: bottom padding"
                 );
             }
         }

@@ -65,6 +65,7 @@ pub(crate) struct ViewState {
     pr_heights: PrHeights,
     pub(crate) reply: String,
     pub(crate) pictures: Vec<PathBuf>,
+    pub(crate) pastes: Option<PathBuf>,
     pub(crate) ghost: Ghost,
     review: review_view::CardState,
     focus_reply: bool,
@@ -99,6 +100,7 @@ impl Default for ViewState {
             pr_heights: PrHeights::default(),
             reply: String::new(),
             pictures: Vec::new(),
+            pastes: None,
             ghost: Ghost::default(),
             review: review_view::CardState::default(),
             focus_reply: true,
@@ -618,9 +620,19 @@ fn transcript(
     let follow = state.scroll.following();
     let scroll_down = follow && std::mem::take(&mut state.stick_pending);
     state.refresh_turns(rows);
-    let ViewState { heights, pr_heights, expanded, tidewatch_open, turns, zone, .. } = state;
+    let ViewState { heights, pr_heights, expanded, tidewatch_open, turns, zone, pastes, .. } =
+        state;
     let (_, _, layout) = turns.as_ref()?;
-    let scene = Scene { root, profile, face, zone, now_ms: now_ms(), running, waiting };
+    let scene = Scene {
+        root,
+        pastes: pastes.as_deref(),
+        profile,
+        face,
+        zone,
+        now_ms: now_ms(),
+        running,
+        waiting,
+    };
     let mut body_ui = ui.new_child(UiBuilder::new().max_rect(view));
     if let Some(id) = state.scroll_id.filter(|_| shift > 0.0)
         && let Some(mut saved) = egui::scroll_area::State::load(ui.ctx(), id)
@@ -719,7 +731,7 @@ fn transcript(
                                         row,
                                         stamps[index],
                                         scene.zone,
-                                        width,
+                                        (width, scene.pastes),
                                     ),
                                     _ => {
                                         let asked = draw_row(
@@ -1631,7 +1643,13 @@ mod tests {
         let mut rows = Rows::default();
         for n in 0..60 {
             let text = format!("# Title {n}\n\n- a\n- b\n\n```rust\nfn x() {{}}\n```\n\nwords");
-            rows.push(Entry { role: Role::Assistant, text, tool: None, ts: None });
+            rows.push(Entry {
+                role: Role::Assistant,
+                text,
+                tool: None,
+                ts: None,
+                images: Vec::new(),
+            });
         }
         let delays = repaint_delays(&rows, 24);
         let busy = delays.iter().rev().take(8).filter(|d| d.is_zero()).count();
@@ -1643,14 +1661,21 @@ mod tests {
         use tidewatch_core::transcript::{Entry, Role};
         let mut rows = Rows::default();
         rows.push_all(vec![
-            Entry { role: Role::User, text: "hi".into(), tool: None, ts: None },
+            Entry { role: Role::User, text: "hi".into(), tool: None, ts: None, images: Vec::new() },
             Entry {
                 role: Role::Assistant,
                 text: "# Title\n\n- a\n- b\n\n```rust\nfn x() {}\n```".into(),
                 tool: None,
                 ts: None,
+                images: Vec::new(),
             },
-            Entry { role: Role::System, text: "boom".into(), tool: None, ts: None },
+            Entry {
+                role: Role::System,
+                text: "boom".into(),
+                tool: None,
+                ts: None,
+                images: Vec::new(),
+            },
         ]);
         let ctx = crate::fonts::test_context();
         let mut state = ViewState::default();
@@ -1713,7 +1738,13 @@ mod tests {
         notes.add("a.rs", None, anchor, Comment { author: "v".into(), time: 1, body: "n".into() });
         let draft = crate::review::Draft::of(&notes, "claude", "v");
         let mut populated = Rows::default();
-        populated.push(Entry { role: Role::User, text: "hi".into(), tool: None, ts: None });
+        populated.push(Entry {
+            role: Role::User,
+            text: "hi".into(),
+            tool: None,
+            ts: None,
+            images: Vec::new(),
+        });
         let cases = [
             (&populated, None),
             (&Rows::default(), Some(Ready { profile: "Builder", agent_id: "claude" })),
@@ -1792,7 +1823,13 @@ mod tests {
             steps: vec![(Mark::Todo, "Merge the switch".into())],
         };
         let mut rows = Rows::default();
-        rows.push(Entry { role: Role::User, text: "hi".into(), tool: None, ts: None });
+        rows.push(Entry {
+            role: Role::User,
+            text: "hi".into(),
+            tool: None,
+            ts: None,
+            images: Vec::new(),
+        });
         let ctx = crate::fonts::test_context();
         let mut state = ViewState::default();
         let mut run = |events: Vec<egui::Event>| {
@@ -1847,7 +1884,13 @@ mod tests {
         }
 
         let mut rows = Rows::default();
-        rows.push(Entry { role: Role::User, text: "old question".into(), tool: None, ts: None });
+        rows.push(Entry {
+            role: Role::User,
+            text: "old question".into(),
+            tool: None,
+            ts: None,
+            images: Vec::new(),
+        });
         let ctx = crate::fonts::test_context();
         let mut state = ViewState::default();
         let mut hint = |blocked: Option<Blocked>| {
@@ -1890,7 +1933,13 @@ mod tests {
         }
 
         let mut rows = Rows::default();
-        rows.push(Entry { role: Role::User, text: "old question".into(), tool: None, ts: None });
+        rows.push(Entry {
+            role: Role::User,
+            text: "old question".into(),
+            tool: None,
+            ts: None,
+            images: Vec::new(),
+        });
         let ctx = crate::fonts::test_context();
         let mut state = ViewState::default();
         let mut run = |stopped: bool, events: Vec<egui::Event>| {
@@ -1956,7 +2005,13 @@ mod tests {
         notes.mark_sent(&[id], 5);
         let pasted = tidewatch_core::note_paste::format_review(&[&notes.threads[0]], "Start here");
         let mut rows = Rows::default();
-        rows.push(Entry { role: Role::User, text: pasted, tool: None, ts: None });
+        rows.push(Entry {
+            role: Role::User,
+            text: pasted,
+            tool: None,
+            ts: None,
+            images: Vec::new(),
+        });
         let draft = crate::review::Draft::default();
         let ctx = egui::Context::default();
         crate::fonts::install(&ctx);
@@ -2061,6 +2116,7 @@ mod tests {
                 }])),
             }),
             ts: None,
+            images: Vec::new(),
         }
     }
 
@@ -2099,6 +2155,7 @@ mod tests {
             text: "Tests pass. Should I also update the README?".into(),
             tool: None,
             ts: None,
+            images: Vec::new(),
         });
         let mut state = ViewState::default();
         draw(&rows, &mut state, facts(None, Turn::Finished));
@@ -2186,6 +2243,7 @@ mod tests {
                 ask: None,
             }),
             ts: Some(1_700_000_000_000),
+            images: Vec::new(),
         };
         let mut rows = Rows::default();
         rows.push(Entry {
@@ -2193,6 +2251,7 @@ mod tests {
             text: "tidy up".into(),
             tool: None,
             ts: Some(1_700_000_000_000),
+            images: Vec::new(),
         });
         for (id, name, summary, error) in [
             ("a", "Bash", "git status", false),
@@ -2207,6 +2266,7 @@ mod tests {
             text: "All tidy.".into(),
             tool: None,
             ts: Some(1_700_000_060_000),
+            images: Vec::new(),
         });
         rows
     }
@@ -2245,7 +2305,13 @@ mod tests {
     fn notes_turn(notes: &[&str], answer: &str, running: bool) -> Rows {
         use tidewatch_core::transcript::{Entry, Role, ToolCall, ToolPhase};
         let at = Some(1_700_000_000_000);
-        let say = |role, text: &str| Entry { role, text: text.into(), tool: None, ts: at };
+        let say = |role, text: &str| Entry {
+            role,
+            text: text.into(),
+            tool: None,
+            ts: at,
+            images: Vec::new(),
+        };
         let call = |id: &str, phase| Entry {
             role: Role::Tool,
             text: String::new(),
@@ -2257,6 +2323,7 @@ mod tests {
                 ask: None,
             }),
             ts: at,
+            images: Vec::new(),
         };
         let mut rows = Rows::default();
         rows.push(say(Role::User, "tidy up"));
@@ -2359,6 +2426,7 @@ mod tests {
             text: "run it".into(),
             tool: None,
             ts: Some(1_700_000_000_000),
+            images: Vec::new(),
         });
         rows.push(Entry {
             role: Role::Tool,
@@ -2371,6 +2439,7 @@ mod tests {
                 ask: None,
             }),
             ts: Some(1_700_000_000_000),
+            images: Vec::new(),
         });
         let mut frames = Frames::new();
         frames.run(&rows, Turn::Running, vec![]);
@@ -2409,6 +2478,7 @@ mod tests {
                 ask: None,
             }),
             ts: None,
+            images: Vec::new(),
         });
         assert_eq!(
             permission_tool(&rows, None),
@@ -2424,9 +2494,21 @@ mod tests {
         let mut rows = Rows::default();
         for n in 0..turns {
             let ask = format!("question {n}");
-            rows.push(Entry { role: Role::User, text: ask, tool: None, ts: None });
+            rows.push(Entry {
+                role: Role::User,
+                text: ask,
+                tool: None,
+                ts: None,
+                images: Vec::new(),
+            });
             let text = format!("answer {n}: {}", "word ".repeat(words + n % 7 * 30));
-            rows.push(Entry { role: Role::Assistant, text, tool: None, ts: None });
+            rows.push(Entry {
+                role: Role::Assistant,
+                text,
+                tool: None,
+                ts: None,
+                images: Vec::new(),
+            });
         }
         rows
     }
@@ -2577,13 +2659,14 @@ mod tests {
         for n in 1..=14 {
             let role = if n % 2 == 0 { Role::Assistant } else { Role::User };
             let text = format!("message {n}: {}", "words ".repeat(30));
-            rows.push(Entry { role, text, tool: None, ts: None });
+            rows.push(Entry { role, text, tool: None, ts: None, images: Vec::new() });
         }
         rows.push(Entry {
             role: Role::Assistant,
             text: "the newest message".into(),
             tool: None,
             ts: None,
+            images: Vec::new(),
         });
         rows
     }
@@ -2886,7 +2969,13 @@ mod tests {
         let prompt = "@codex commented on PR #7. Answer it.\n\n> <!-- codex-review-state:v1 -->\n> | a | b |\n> |---|---|\n> <details>";
         let mut rows = Rows::default();
         rows.tidewatch_said(vec![auto_fix_record(prompt, 0)]);
-        rows.push(Entry { role: Role::User, text: prompt.into(), tool: None, ts: Some(5_000) });
+        rows.push(Entry {
+            role: Role::User,
+            text: prompt.into(),
+            tool: None,
+            ts: Some(5_000),
+            images: Vec::new(),
+        });
         let found = drawn_texts(&rows, 900.0);
         assert!(found.iter().any(|text| text == "Tidewatch"), "{found:?}");
         assert!(found.iter().any(|text| text == "auto"), "{found:?}");
@@ -2907,7 +2996,13 @@ mod tests {
         let long = "Fix the failing check. ".repeat(40);
         let mut rows = Rows::default();
         rows.tidewatch_said(vec![auto_fix_record(&long, 0)]);
-        rows.push(Entry { role: Role::User, text: long.clone(), tool: None, ts: Some(5_000) });
+        rows.push(Entry {
+            role: Role::User,
+            text: long.clone(),
+            tool: None,
+            ts: Some(5_000),
+            images: Vec::new(),
+        });
         let found = drawn_texts(&rows, 900.0);
         assert!(found.iter().any(|text| text == "Show all"), "{found:?}");
     }
@@ -2917,7 +3012,13 @@ mod tests {
         use tidewatch_core::transcript::{Entry, Role};
         let now = now_ms();
         let mut rows = Rows::default();
-        rows.push(Entry { role: Role::User, text: "start".into(), tool: None, ts: Some(now) });
+        rows.push(Entry {
+            role: Role::User,
+            text: "start".into(),
+            tool: None,
+            ts: Some(now),
+            images: Vec::new(),
+        });
         rows.queue_user("then also this", now);
         let found = drawn_texts(&rows, 900.0);
         assert!(found.iter().any(|text| text == "Queued"), "{found:?}");
@@ -2927,6 +3028,7 @@ mod tests {
             text: "then also this".into(),
             tool: None,
             ts: Some(now + 1),
+            images: Vec::new(),
         });
         let found = drawn_texts(&rows, 900.0);
         assert!(found.iter().all(|text| text != "Queued"), "{found:?}");
@@ -3037,5 +3139,89 @@ mod tests {
                 assert!(!rect.intersects(covered), "{text:?} {rect:?} is under the pill {pill:?}");
             }
         }
+    }
+
+    const PICTURES: &str = include_str!("../../tidewatch-core/tests/fixtures/claude_images.jsonl");
+
+    #[test]
+    fn a_sent_message_draws_its_pictures_as_chips_above_its_text_and_drops_their_markers() {
+        use crate::pictures::{self, Source};
+        use tidewatch_core::transcript::{Source as Cli, parse_all};
+        let ctx = crate::fonts::test_context();
+        let mut rows = Rows::default();
+        rows.push_all(parse_all(Cli::Claude, PICTURES));
+        let mut state = ViewState::default();
+        for row in rows.stamped().map(|(row, _)| row) {
+            for picture in &row.pictures {
+                pictures::wait_ready(&ctx, Source::Pasted(picture));
+            }
+        }
+        let mut shapes = Vec::new();
+        for _ in 0..3 {
+            let raw = RawInput {
+                screen_rect: Some(Rect::from_min_size(pos2(0.0, 0.0), vec2(900.0, 700.0))),
+                focused: true,
+                ..RawInput::default()
+            };
+            let out = ctx.run_ui(raw, |ui| {
+                let rect = ui.max_rect();
+                show(ui, rect, &rows, &mut state, facts(None, Turn::Finished));
+            });
+            shapes.clear();
+            for clipped in &out.shapes {
+                flat(&clipped.shape, &mut shapes);
+            }
+        }
+        let mut chips: Vec<Rect> = shapes
+            .iter()
+            .filter_map(|shape| match shape {
+                egui::Shape::Rect(rect)
+                    if rect.fill == brand::ITEM && rect.rect.height() == 48.0 =>
+                {
+                    Some(rect.rect)
+                }
+                _ => None,
+            })
+            .collect();
+        chips.sort_by(|a, b| a.top().total_cmp(&b.top()).then(a.left().total_cmp(&b.left())));
+        assert_eq!(chips.len(), 3, "{chips:?}");
+        let texts: Vec<(Rect, String)> = shapes
+            .iter()
+            .filter_map(|shape| match shape {
+                egui::Shape::Text(text) => Some((
+                    text.galley.rect.translate(text.pos.to_vec2()),
+                    text.galley.text().to_owned(),
+                )),
+                _ => None,
+            })
+            .collect();
+        let label = |at: &str| texts.iter().find(|(_, text)| text == at).map(|(rect, _)| *rect);
+        for chip in &chips {
+            assert!(
+                chips.iter().all(|other| other == chip || !other.intersects(*chip)),
+                "{chips:?}"
+            );
+        }
+        for name in ["Image 1", "Image 2", "Image 5"] {
+            assert!(label(name).is_some(), "{name} chip missing in {texts:?}");
+        }
+        let (first_text, _) = texts
+            .iter()
+            .find(|(_, text)| text == "Compare with the old one")
+            .expect("the text without markers");
+        assert!(first_text.top() >= chips[1].bottom(), "text {first_text:?} under chips {chips:?}");
+        assert!(chips[0].bottom() <= first_text.top() && chips[0].right() <= chips[1].left());
+        assert!(chips.iter().all(|chip| !chip.intersects(*first_text)), "{chips:?} {first_text:?}");
+        let (second_text, _) =
+            texts.iter().find(|(_, text)| text == "What is?").expect("the second text");
+        assert!(second_text.top() >= chips[2].bottom());
+        assert!(
+            !texts.iter().any(|(_, text)| text.contains("[Image") || text.contains("Image 2 ")),
+            "{texts:?}"
+        );
+        assert!(
+            !texts.iter().any(|(_, text)| text.contains("use of widget ID")),
+            "one picture in two messages clashes ids: {texts:?}"
+        );
     }
 }

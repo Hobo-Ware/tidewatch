@@ -2,6 +2,7 @@
 
 use stdusk_egui::ui::ellipsize;
 use tidewatch_core::branch_name;
+use tidewatch_core::user_markup::without_image_markers;
 
 use crate::pane::AgentTab;
 
@@ -88,9 +89,10 @@ pub(crate) fn task_line(task: &str) -> Option<String> {
     (!line.is_empty()).then(|| ellipsize(&line, MAX_TASK_CHARS).0)
 }
 
-/// The first line of `text` as a short title: markdown marks and extra spaces gone. `None` when
+/// The first line of `text` as a short title: picture markers, markdown marks and extra spaces gone. `None` when
 /// nothing readable is left.
 pub(crate) fn tidy(text: &str) -> Option<String> {
+    let text = without_image_markers(text);
     let line = text.lines().map(str::trim).find(|line| line.chars().any(char::is_alphanumeric))?;
     let line = line.replace("**", "");
     let line =
@@ -275,5 +277,32 @@ mod tests {
         for (agent, raw, want) in cases {
             assert_eq!(terminal_title(agent, raw).as_deref(), want, "{agent} {raw:?}");
         }
+    }
+
+    #[test]
+    fn a_first_message_loses_its_picture_markers_and_one_of_only_pictures_falls_through() {
+        let cases = [
+            (
+                "[Image #2]Also this should just be costs, it makes no sense",
+                (Source::FirstMessage, "Also this should just be costs, it makes no sense"),
+            ),
+            ("[Image #1] [Image #2] compare these", (Source::FirstMessage, "compare these")),
+            ("see [Image #3] now", (Source::FirstMessage, "see now")),
+            ("[Image #1]\n\nfix the header", (Source::FirstMessage, "fix the header")),
+            ("[Image #1]", (Source::Name, NAME)),
+            ("[Image #1][Image #2]", (Source::Name, NAME)),
+        ];
+        for (first, (source, text)) in cases {
+            let sources = Sources { first_message: Some(first), ..Sources::default() };
+            assert_eq!(picked(sources), (source, text.to_owned()), "{first:?}");
+        }
+        let with_goal = Sources {
+            goal: Some("Ledger goal"),
+            first_message: Some("[Image #1]"),
+            ..Sources::default()
+        };
+        assert_eq!(picked(with_goal), (Source::Goal, "Ledger goal".to_owned()));
+        let after = Sources { first_message: Some("[Image #1]"), ..Sources::default() };
+        assert_eq!(picked(after).0, Source::Name);
     }
 }

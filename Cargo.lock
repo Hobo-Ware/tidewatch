@@ -5563,6 +5563,7 @@ version = "0.1.36"
 dependencies = [
  "anyhow",
  "arboard",
+ "base64 0.22.1",
  "block2 0.6.2",
  "eframe",
  "egui",
@@ -5599,6 +5600,7 @@ name = "tidewatch-core"
 version = "0.1.36"
 dependencies = [
  "anyhow",
+ "base64 0.22.1",
  "gix",
  "httparse",
  "kelp-core",
