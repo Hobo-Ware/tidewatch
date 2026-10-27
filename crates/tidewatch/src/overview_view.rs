@@ -57,9 +57,6 @@ const LINE_MID: f32 = 31.0;
 const ASK_CARD_MIN_W: f32 = 420.0;
 const BAR_GAP: f32 = 10.0;
 const BAR_H: f32 = 3.0;
-const NEEDS_H: f32 = CARD_PAD * 2.0 + ROW_H + ASK_ROW_GAP + Size::Compact.height();
-const WORKING_H: f32 = CARD_PAD * 2.0 + ROW_H + BAR_GAP + BAR_H;
-const IDLE_H: f32 = CARD_PAD * 2.0 + ROW_H;
 pub(crate) const SWATCH: f32 = 7.0;
 const CHIP_H: f32 = Size::Compact.height();
 const CHIP_GAP: f32 = 8.0;
@@ -349,6 +346,12 @@ fn empty(ui: &mut Ui) {
     });
 }
 
+struct Plan {
+    text: f32,
+    action: f32,
+    ask: Option<AskLayout>,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Lane {
     Needs,
@@ -384,22 +387,38 @@ impl Lane {
         }
     }
 
-    fn min_h(self) -> f32 {
+    fn action_gap(self) -> f32 {
         match self {
-            Self::Needs => NEEDS_H,
-            Self::Working => WORKING_H,
-            Self::Waiting | Self::Idle => IDLE_H,
+            Self::Needs => ASK_ROW_GAP,
+            Self::Working => BAR_GAP,
+            Self::Waiting | Self::Idle => 0.0,
         }
     }
 
-    fn card_h(self, painter: &Painter, row: &Row, card_w: f32) -> f32 {
+    fn plan(self, painter: &Painter, row: &Row, card_w: f32) -> Plan {
+        let counting = f32::from(u8::from(row.auto_pick.is_some()));
         match (self, ask_of(row)) {
             (Self::Needs, Some(ask)) => {
-                AskLayout::new(painter, ask, row.auto_pick.is_some(), card_w).card_h
+                let ask = AskLayout::new(painter, ask, card_w);
+                let lines = f32::from(u8::from(ask.has_why)) + counting;
+                let (text, action) = (ROW_H + WHY_H * lines, ask.row.height());
+                Plan { text, action, ask: Some(ask) }
             }
-            (Self::Needs, None) if row.auto_pick.is_some() => NEEDS_H + WHY_H,
-            _ => self.min_h(),
+            (Self::Needs, None) => {
+                Plan { text: ROW_H + WHY_H * counting, action: Size::Compact.height(), ask: None }
+            }
+            (Self::Working, _) => Plan { text: ROW_H, action: BAR_H, ask: None },
+            (Self::Waiting | Self::Idle, _) => Plan { text: ROW_H, action: 0.0, ask: None },
         }
+    }
+
+    /// The one height every card of a line takes: the tallest text above and the tallest action
+    /// area below. Each card's own action area ends at the bottom padding.
+    fn line_height(self, plans: &[Plan]) -> f32 {
+        let fold = |part: fn(&Plan) -> f32| plans.iter().map(part).fold(0.0, f32::max);
+        let (text, action) = (fold(|plan| plan.text), fold(|plan| plan.action));
+        let gap = if action > 0.0 { self.action_gap() } else { 0.0 };
+        CARD_PAD * 2.0 + text + gap + action
     }
 
     fn columns(self, width: f32, answering: bool) -> usize {
@@ -542,14 +561,9 @@ fn grid_section(
     let columns = lane.columns(inner_w, answering);
     let card_w = (inner_w - CARD_GAP * (columns - 1) as f32) / columns as f32;
     let painter = ui.painter().clone();
-    let line_heights: Vec<f32> = rows
-        .chunks(columns)
-        .map(|line| {
-            line.iter().map(|row| lane.card_h(&painter, row, card_w)).fold(lane.min_h(), f32::max)
-        })
-        .collect();
-    let grid_h =
-        line_heights.iter().sum::<f32>() + line_heights.len().saturating_sub(1) as f32 * CARD_GAP;
+    let plans: Vec<Plan> = rows.iter().map(|row| lane.plan(&painter, row, card_w)).collect();
+    let lines: Vec<f32> = plans.chunks(columns).map(|line| lane.line_height(line)).collect();
+    let grid_h = lines.iter().sum::<f32>() + lines.len().saturating_sub(1) as f32 * CARD_GAP;
     let more_h = if more.is_some() { CARD_GAP + Size::Compact.height() } else { 0.0 };
     let height = SECTION_PAD * 2.0 + SECTION_HEAD_H + HEAD_GAP + grid_h + more_h;
     let (rect, _) = ui.allocate_exact_size(vec2(width, height), Sense::hover());
@@ -571,12 +585,14 @@ fn grid_section(
     let mut out = GridOut::default();
     let mut line_top = top;
     for (line, cards) in rows.chunks(columns).enumerate() {
+        let height = lines[line];
         for (column, row) in cards.iter().enumerate() {
             let at =
                 pos2(rect.left() + SECTION_PAD + column as f32 * (card_w + CARD_GAP), line_top);
-            let own_h = lane.card_h(&painter, row, card_w);
-            let card_rect = Rect::from_min_size(at, vec2(card_w, own_h));
-            let drawn = card(ui, card_rect, row, lane);
+            let card_rect = Rect::from_min_size(at, vec2(card_w, height));
+            let plan = &plans[line * columns + column];
+            let drawn =
+                card(ui, card_rect, row, lane, (plan, line_top + height - CARD_PAD - plan.action));
             if drawn.clicked {
                 out.jump = Some(row.tab_id);
             }
@@ -584,7 +600,7 @@ fn grid_section(
                 out.answer = drawn.answer.map(|pick| (row.tab_id, pick));
             }
         }
-        line_top += line_heights[line] + CARD_GAP;
+        line_top += height + CARD_GAP;
     }
     out.toggled = more.is_some_and(|label| {
         ghost(ui, pos2(rect.left() + SECTION_PAD, top + grid_h + CARD_GAP), label)
@@ -623,28 +639,30 @@ fn ask_of(row: &Row) -> Option<&Ask> {
     row.look.as_ref()?.ask.as_ref()
 }
 
-/// Where the why line and the answer chips of a Needs you card sit, below its first two lines.
+/// The answer chips of a Needs you card, laid out to the room beside its face.
 struct AskLayout {
     chips: Vec<answer_chips::Chip>,
     row: answer_chips::Row,
-    chips_top: f32,
     room: f32,
-    card_h: f32,
+    has_why: bool,
 }
 
 impl AskLayout {
-    fn new(painter: &Painter, ask: &Ask, counting: bool, card_w: f32) -> Self {
+    fn new(painter: &Painter, ask: &Ask, card_w: f32) -> Self {
         let room = (card_w - CARD_PAD * 2.0 - RING - FACE_GAP).max(40.0);
         let chips = answer_chips::chips(&ask.options);
         let row = answer_chips::Row::new(painter, &chips, room);
-        let lines = usize::from(ask.why.is_some()) + usize::from(counting);
-        let chips_top = CARD_PAD + ROW_H + WHY_H * lines as f32 + ASK_ROW_GAP;
-        let card_h = chips_top + row.height() + CARD_PAD;
-        Self { chips, row, chips_top, room, card_h }
+        Self { chips, row, room, has_why: ask.why.is_some() }
     }
 }
 
-fn card(ui: &mut Ui, rect: Rect, row: &Row, lane: Lane) -> CardOut {
+fn card(
+    ui: &mut Ui,
+    rect: Rect,
+    row: &Row,
+    lane: Lane,
+    (plan, action_top): (&Plan, f32),
+) -> CardOut {
     let resp = ui.interact(rect, ui.id().with(("overview_card", row.tab_id)), Sense::click());
     let view = card_view(row);
     let painter = ui.painter_at(rect);
@@ -737,9 +755,11 @@ fn card(ui: &mut Ui, rect: Rect, row: &Row, lane: Lane) -> CardOut {
     painter.galley(pos2(repo_right + 6.0, line_mid - rest.size().y / 2.0), rest, ink);
     let mut out = CardOut::default();
     match lane {
-        Lane::Needs => match ask {
-            Some(ask) => out.answer = ask_chips(ui, &painter, rect, &resp, (ask, row)),
-            None => out.clicked = ask_row(ui, &painter, rect, row),
+        Lane::Needs => match (ask, &plan.ask) {
+            (Some(ask), Some(layout)) => {
+                out.answer = ask_chips(ui, &painter, (rect, &resp), (ask, row, layout), action_top);
+            }
+            _ => out.clicked = ask_row(ui, &painter, rect, row, action_top),
         },
         Lane::Working => {
             let bar = Rect::from_min_size(
@@ -771,11 +791,10 @@ fn card(ui: &mut Ui, rect: Rect, row: &Row, lane: Lane) -> CardOut {
 fn ask_chips(
     ui: &mut Ui,
     painter: &Painter,
-    rect: Rect,
-    resp: &egui::Response,
-    (ask, row): (&Ask, &Row),
+    (rect, resp): (Rect, &egui::Response),
+    (ask, row, layout): (&Ask, &Row, &AskLayout),
+    action_top: f32,
 ) -> Option<Pick> {
-    let layout = AskLayout::new(painter, ask, row.auto_pick.is_some(), rect.width());
     let text_x = rect.left() + CARD_PAD + RING + FACE_GAP;
     let why = ask.why.as_deref().map(answer_chips::sentence);
     let lines = why.iter().chain(row.auto_pick.iter());
@@ -790,7 +809,7 @@ fn ask_chips(
         let at = pos2(text_x, rect.top() + CARD_PAD + ROW_H + 1.0 + WHY_H * index as f32);
         painter.galley(at, galley, brand::MUTED);
     }
-    let origin = pos2(text_x, rect.top() + layout.chips_top);
+    let origin = pos2(text_x, action_top);
     let clicked = layout.row.show(ui, resp.id, origin, &layout.chips);
     let card = answer_chips::Card { id: resp.id, rect, terminal_hidden: true };
     let picked = clicked.or_else(|| answer_chips::key_pick(ui, &card, &layout.chips))?;
@@ -809,15 +828,13 @@ fn second_line(row: &Row, lane: Lane, view: &crate::overview::CardView) -> (Stri
     }
 }
 
-fn ask_row(ui: &mut Ui, painter: &Painter, rect: Rect, row: &Row) -> bool {
+fn ask_row(ui: &mut Ui, painter: &Painter, rect: Rect, row: &Row, top: f32) -> bool {
     let text_x = rect.left() + CARD_PAD + RING + FACE_GAP;
-    let mut top = rect.top() + CARD_PAD + ROW_H + ASK_ROW_GAP;
     if let Some(line) = &row.auto_pick {
         let room = (rect.right() - CARD_PAD - text_x).max(1.0);
         let galley =
             ellipsized(painter, line, FontId::proportional(TEXT_SECONDARY), brand::MUTED, room);
         painter.galley(pos2(text_x, rect.top() + CARD_PAD + ROW_H + 1.0), galley, brand::MUTED);
-        top += WHY_H;
     }
     let button = ask_button(row);
     let width = button_width(ui, button, Size::Compact);
@@ -1488,6 +1505,145 @@ mod tests {
                         "{a:?} {a_rect:?} overlaps {b:?} {b_rect:?} at {width}"
                     );
                 }
+            }
+        }
+    }
+
+    const ASKING_LONG: &str = "# Goal\nx\n\n## Status\nstate: waiting\n\n## Needs you\n- Which loss should the recommendation model keep after the long benchmark run? -- Run 14 beat the others on held-out data and the replica agrees -- options: Keep the new loss and rerun the whole benchmark on the replica before the rollout window opens* | Keep the old loss | Blend both losses | Rerun the benchmark\n";
+
+    fn titled(mut row: Row, title: &str) -> Row {
+        row.title = title.into();
+        row
+    }
+
+    fn uneven_row() -> Overview {
+        overview(vec![
+            titled(asking(7, ASKING_LONG), "long-answers"),
+            titled(asking(8, ASKING_PLAIN), "plain-question"),
+            row(9, "button-only", "acme-web", AgentStatus::NeedsYou(Reason::Question)),
+        ])
+    }
+
+    fn card_around(boxes: &[Rect], title: &Rect) -> Rect {
+        boxes
+            .iter()
+            .filter(|rect| rect.contains_rect(*title) && rect.height() > 60.0)
+            .min_by(|a, b| a.area().total_cmp(&b.area()))
+            .copied()
+            .expect("a card around the title")
+    }
+
+    fn last_action_bottom(boxes: &[Rect], card: &Rect) -> f32 {
+        boxes
+            .iter()
+            .filter(|rect| card.contains_rect(**rect) && rect.height() == Size::Compact.height())
+            .map(Rect::bottom)
+            .fold(f32::NEG_INFINITY, f32::max)
+    }
+
+    #[test]
+    fn needs_you_cards_of_very_different_content_share_one_height_and_end_their_actions_on_one_line()
+     {
+        let mut screen = Screen::new(uneven_row());
+        screen.width = 2000.0;
+        let (found, boxes) = screen.drawn();
+        let cards: Vec<Rect> = ["long-answers", "plain-question", "button-only"]
+            .iter()
+            .map(|title| card_around(&boxes, &rect_of(&found, title)))
+            .collect();
+        for card in &cards {
+            assert_eq!(card.top(), cards[0].top(), "one row: {cards:?}");
+            assert_eq!(card.height(), cards[0].height(), "one height: {cards:?}");
+        }
+        let actions: Vec<f32> = cards.iter().map(|card| last_action_bottom(&boxes, card)).collect();
+        for (card, bottom) in cards.iter().zip(&actions) {
+            assert!((bottom - actions[0]).abs() < 0.5, "actions end on one line: {actions:?}");
+            assert!((bottom + CARD_PAD - card.bottom()).abs() < 1.5, "{card:?} {bottom}");
+        }
+    }
+
+    #[test]
+    fn a_lone_button_sits_on_the_last_chip_line_with_the_spare_height_above_it() {
+        let mut screen = Screen::new(uneven_row());
+        screen.width = 2000.0;
+        let (found, boxes) = screen.drawn();
+        let card = card_around(&boxes, &rect_of(&found, "button-only"));
+        let tallest = card_around(&boxes, &rect_of(&found, "long-answers"));
+        let button = box_around(&boxes, &rect_of(&found, "Answer"));
+        let title = rect_of(&found, "button-only");
+        assert!(card.height() > ROW_H + CARD_PAD * 2.0 + Size::Compact.height() + 30.0, "{card:?}");
+        assert_eq!(card.height(), tallest.height());
+        assert!((button.bottom() - last_action_bottom(&boxes, &tallest)).abs() < 0.5);
+        assert!((button.bottom() + CARD_PAD - card.bottom()).abs() < 1.5, "{button:?} {card:?}");
+        assert!((button.left() - title.left()).abs() < 1.0, "{button:?} {title:?}");
+    }
+
+    #[test]
+    fn working_waiting_and_idle_cards_of_a_row_share_one_height() {
+        let waiting = |id: u64, title: &str| {
+            let mut waiting = row(id, title, "acme-web", AgentStatus::Done);
+            waiting.look = Some(crate::progress_model::look_as(
+                &tidewatch_core::progress::Ledger::parse(
+                    "# Goal\nx\n\n## Status\nstate: waiting\nnote: Waiting for a long reply from the partner about the feed\n",
+                ),
+                false,
+                tidewatch_core::progress::State::Waiting,
+            ));
+            waiting
+        };
+        let mut screen = Screen::new(overview(vec![
+            row(1, "working-a", "acme-web", AgentStatus::Working),
+            titled(
+                row(2, "working-b", "acme-web", AgentStatus::Working),
+                "w-with-a-very-long-name-that-is-cut",
+            ),
+            row(3, "idle-a", "acme-web", AgentStatus::Done),
+            row(4, "idle-b", "acme-web", AgentStatus::Done),
+            waiting(5, "waiting-a"),
+            waiting(6, "waiting-b"),
+        ]));
+        screen.width = 2000.0;
+        let (found, boxes) = screen.drawn();
+        for titles in [
+            ["working-a", "w-with-a-very-long-name-that-is-cut"],
+            ["idle-a", "idle-b"],
+            ["waiting-a", "waiting-b"],
+        ] {
+            let cards: Vec<Rect> =
+                titles.iter().map(|title| card_around(&boxes, &rect_of(&found, title))).collect();
+            assert_eq!(cards[0].height(), cards[1].height(), "{titles:?} {cards:?}");
+            assert_eq!(cards[0].top(), cards[1].top(), "{titles:?} {cards:?}");
+        }
+    }
+
+    #[test]
+    fn no_text_overlaps_and_every_action_stays_in_its_card_in_uneven_rows_at_narrow_widths() {
+        let mut screen = Screen::new(uneven_row());
+        for width in [360.0, 520.0, 700.0, 1000.0, 1440.0, 2000.0] {
+            screen.width = width;
+            screen.frame(vec![]);
+            let (_, found, boxes) = screen.frame_drawn(vec![]);
+            for (index, (a, a_rect)) in found.iter().enumerate() {
+                for (b, b_rect) in &found[index + 1..] {
+                    assert!(
+                        !a_rect.shrink(0.5).intersects(b_rect.shrink(0.5)),
+                        "{a:?} {a_rect:?} overlaps {b:?} {b_rect:?} at {width}"
+                    );
+                }
+            }
+            for title in ["long-answers", "plain-question", "button-only"] {
+                let card = card_around(&boxes, &rect_of(&found, title));
+                let inside = boxes
+                    .iter()
+                    .filter(|rect| {
+                        rect.height() == Size::Compact.height()
+                            && rect.center().y > card.top()
+                            && rect.center().y < card.bottom() + Size::Compact.height()
+                            && rect.center().x > card.left()
+                            && rect.center().x < card.right()
+                    })
+                    .all(|rect| card.contains_rect(*rect));
+                assert!(inside, "an action leaves {title} at {width}: {card:?}");
             }
         }
     }

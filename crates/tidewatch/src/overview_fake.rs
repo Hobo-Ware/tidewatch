@@ -270,7 +270,7 @@ pub(crate) fn build(working: usize) -> Fake {
     needs_rows[0].look = Some(ask_look(
         "Which loss should the recommendation model keep?",
         "Run 14 beat the others on held-out data",
-        "Keep the new loss* | Keep the old loss | Blend both | Rerun the benchmark",
+        "Keep the new loss and rerun the whole benchmark on the replica before the rollout* | Keep the old loss | Blend both losses | Rerun the benchmark",
     ));
     needs_rows[2].look = Some(ask_look("Keep the old URLs as redirects?", "", ""));
     needs_rows[2].auto_pick = Some("Picks the recommended answer in 3:40".to_owned());

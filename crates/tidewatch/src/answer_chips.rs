@@ -152,6 +152,12 @@ struct Laid {
     width: f32,
 }
 
+impl Laid {
+    fn tip(&self) -> Option<&str> {
+        self.label.elided.then_some(self.full.as_str())
+    }
+}
+
 /// The chips laid out in rows of `width`: where each goes and how tall they are together.
 pub(crate) struct Row {
     laid: Vec<Laid>,
@@ -229,8 +235,8 @@ impl Row {
             let hovered = response.hovered();
             paint_chip(ui.painter(), rect, laid, chip.tone, hovered);
             let response = response.on_hover_cursor(CursorIcon::PointingHand);
-            if laid.label.text() != laid.full {
-                response.clone().on_hover_text(&laid.full);
+            if let Some(tip) = laid.tip() {
+                response.clone().on_hover_text(tip);
             }
             if response.clicked() {
                 clicked = Some(index);
@@ -309,6 +315,25 @@ mod tests {
                 ("Something else", Tone::Other, None),
             ]
         );
+    }
+
+    #[test]
+    fn a_long_answer_stays_on_one_line_cut_with_an_ellipsis_and_its_whole_text_is_the_tooltip() {
+        let long = "Keep the new loss and rerun the whole benchmark on the replica before the rollout window opens";
+        let made = chips(&[choice(long, true), choice("Wait", false)]);
+        let ctx = crate::fonts::test_context();
+        let width = 200.0;
+        let _ = ctx.run_ui(egui::RawInput::default(), |ui| {
+            let row = Row::new(ui.painter(), &made, width);
+            let [cut, short, other] = &row.laid[..] else { panic!("three chips") };
+            let shown = cut.label.rows[0].text();
+            assert_eq!(cut.label.rows.len(), 1, "{shown:?}");
+            assert!(shown.ends_with('\u{2026}'), "{shown:?}");
+            assert!(cut.width <= width, "{} wide in {width}", cut.width);
+            assert_eq!(cut.tip(), Some(long));
+            assert_eq!(short.tip(), None);
+            assert_eq!(other.tip(), None);
+        });
     }
 
     #[test]
