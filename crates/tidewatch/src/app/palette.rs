@@ -43,6 +43,7 @@ impl Tidewatch {
             repos: self.workspaces.iter().map(Workspace::chip_label).collect(),
             repo: group,
             profiles,
+            can_change: self.can_change(),
         }
     }
 
@@ -67,6 +68,7 @@ impl Tidewatch {
                 }
             }
             Target::Repo(group) => self.dispatch(Action::ShowGroup(group), ctx),
+            Target::ChangeTab => self.open_change_active(ctx),
             Target::OpenRepo => self.run_repo_command(RepoCommand::Open, ctx),
             Target::CloseRepo => self.run_repo_command(RepoCommand::Close, ctx),
             Target::Profile(id) => self.open_new_tab_dialog(ctx, Some(&id)),

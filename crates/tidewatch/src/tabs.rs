@@ -44,6 +44,8 @@ pub(crate) enum Action {
     Park(usize),
     ParkActive,
     ToggleKeep(usize),
+    /// Opens the Change this tab popover for a tab.
+    Change(usize),
 }
 
 pub(crate) struct Tabs<T> {
@@ -227,6 +229,7 @@ impl<T> Tabs<T> {
             Action::ParkActive => {
                 self.park_index(self.active, Why::Manual, 0);
             }
+            Action::Change(_) => {}
             Action::ToggleKeep(i) => {
                 if let Some(tab) = self.items.get_mut(i).filter(|tab| !tab.pinned) {
                     tab.keep = !tab.keep;

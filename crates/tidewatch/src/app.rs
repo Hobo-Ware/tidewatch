@@ -30,6 +30,7 @@ mod remote;
 mod reopen;
 mod repos;
 mod restart;
+mod retarget;
 mod review;
 mod services;
 mod settings;
@@ -171,6 +172,7 @@ pub(crate) struct Tidewatch {
     stdusk_jobs: Jobs<stdusk::Done>,
     takeover: Takeover,
     takeover_jobs: Jobs<takeover_jobs::Done>,
+    retarget: crate::retarget_glue::Host,
     closed: closed_state::State,
     closed_jobs: Jobs<closed_jobs::Done>,
     dev_takeover: Option<DevTakeover>,
@@ -407,6 +409,7 @@ impl Tidewatch {
             takeover: Takeover::with_recent_open(DevTakeover::recent_open_from_env())
                 .with_line_open(DevTakeover::line_open_from_env()),
             takeover_jobs: Jobs::new(),
+            retarget: crate::retarget_glue::Host::from_env(),
             closed: closed_state::State::new(closed_state::fake_requested()),
             closed_jobs: Jobs::new(),
             dev_takeover: DevTakeover::from_env(),

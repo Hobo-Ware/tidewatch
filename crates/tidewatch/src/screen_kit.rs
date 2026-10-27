@@ -460,6 +460,17 @@ pub(crate) fn dialog_frame<R>(
     width: f32,
     content: impl FnOnce(&mut Ui) -> R,
 ) -> ModalResponse<R> {
+    dialog_frame_in(ctx, (id, Modal::default_area(id)), title, width, content)
+}
+
+/// [`dialog_frame`] in an area of the caller's: a popover that sits under the tab strip.
+pub(crate) fn dialog_frame_in<R>(
+    ctx: &Context,
+    (id, area): (Id, egui::Area),
+    title: &str,
+    width: f32,
+    content: impl FnOnce(&mut Ui) -> R,
+) -> ModalResponse<R> {
     let frame = egui::Frame::new()
         .fill(brand::CARD)
         .stroke(Stroke::new(1.0, brand::FIELD_LINE))
@@ -471,7 +482,7 @@ pub(crate) fn dialog_frame<R>(
             color: Color32::from_black_alpha(100),
         })
         .inner_margin(Margin::ZERO);
-    Modal::new(id).frame(frame).show(ctx, |ui| {
+    Modal::new(id).area(area).frame(frame).show(ctx, |ui| {
         ui.set_width(width);
         ui.spacing_mut().item_spacing.y = 0.0;
         let (header, _) = ui.allocate_exact_size(vec2(width, DIALOG_HEADER_H), Sense::hover());

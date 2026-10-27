@@ -103,26 +103,40 @@ pub(crate) fn names_for(lines: &[String], seed: u64, taken: impl Fn(&str) -> boo
 }
 
 fn is_builder(key: &str, profile: &Profile) -> bool {
+    is_role("builder", key, &profile.name)
+}
+
+/// Whether the key or the name of a profile is `role`, or ends in it (`Codex Builder`, `x-builder`).
+pub(crate) fn is_role(role: &str, key: &str, name: &str) -> bool {
     let named = |text: &str| {
         let text = text.trim().to_lowercase();
-        text == "builder" || text.ends_with(" builder") || text.ends_with("-builder")
+        text == role || text.ends_with(&format!(" {role}")) || text.ends_with(&format!("-{role}"))
     };
-    named(key) || named(&profile.name)
+    named(key) || named(name)
+}
+
+/// The profile of `agent_id` named or keyed Builder, else the first of that CLI, as `profiles.toml`
+/// has it. `None` when the CLI has no profile.
+pub(crate) fn builder_entry(
+    agent_id: &str,
+    entries: &[(&str, &Profile, &Agent)],
+) -> Option<(String, Profile)> {
+    let ours: Vec<(&str, &Profile)> = entries
+        .iter()
+        .filter(|(_, _, agent)| agent.id == agent_id)
+        .map(|(key, profile, _)| (*key, *profile))
+        .collect();
+    let (key, profile) =
+        ours.iter().find(|(key, profile)| is_builder(key, profile)).or_else(|| ours.first())?;
+    Some(((*key).to_owned(), (*profile).clone()))
 }
 
 pub(crate) fn profile_for(
     agent_id: &str,
     entries: &[(&str, &Profile, &Agent)],
 ) -> (String, Profile) {
-    let ours: Vec<(&str, &Profile)> = entries
-        .iter()
-        .filter(|(_, _, agent)| agent.id == agent_id)
-        .map(|(key, profile, _)| (*key, *profile))
-        .collect();
-    let picked =
-        ours.iter().find(|(key, profile)| is_builder(key, profile)).or_else(|| ours.first());
-    match picked {
-        Some((key, profile)) => ((*key).to_owned(), Profile { level: LEVEL, ..(*profile).clone() }),
+    match builder_entry(agent_id, entries) {
+        Some((key, profile)) => (key, Profile { level: LEVEL, ..profile }),
         None => (Profile::DEFAULTS_ID.to_owned(), Profile::defaults_for(agent_id, LEVEL)),
     }
 }

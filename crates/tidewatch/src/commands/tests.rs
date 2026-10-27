@@ -22,7 +22,8 @@ fn bound_to_a_chord(action: Action) -> bool {
         | Action::ShowGroup(_)
         | Action::Move(..)
         | Action::Park(_)
-        | Action::ToggleKeep(_) => false,
+        | Action::ToggleKeep(_)
+        | Action::Change(_) => false,
     }
 }
 

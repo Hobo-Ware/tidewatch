@@ -13,11 +13,12 @@ use tidewatch_core::mcp::TabRole;
 use tidewatch_core::meeseeks::Meeseeks;
 use tidewatch_core::paths::TidewatchPaths;
 use tidewatch_core::prefs::{Prefs, ResumeAgents};
-use tidewatch_core::prepare::{PrepareInput, prepare_resume, prepare_resume_in_folder};
+use tidewatch_core::prepare::{PrepareInput, prepare, prepare_resume, prepare_resume_in_folder};
 use tidewatch_core::profiles::{Profile, Profiles};
 use tidewatch_core::restore::{self, RealDisk, RestoreEnv, WindowPlan, plan_window};
 use tidewatch_core::resume_mode::Why;
 use tidewatch_core::session::Session;
+use tidewatch_core::session_id;
 use tidewatch_core::trust_apply::Grant;
 use tidewatch_core::worktree::{self, Leftover, Worktree};
 
@@ -136,6 +137,7 @@ pub(crate) struct ReopenSpec {
     /// The profile at the level the tab ran at.
     pub(crate) profile: Profile,
     pub(crate) session_id: String,
+    pub(crate) fresh: bool,
     /// The tab had remote control on when it was saved.
     pub(crate) remote: bool,
     pub(crate) meeseeks: Option<Meeseeks>,
@@ -160,7 +162,7 @@ pub(crate) fn reopen(jobs: &Jobs<Done>, ctx: &egui::Context, spec: ReopenSpec) {
     jobs.spawn(ctx, move || Done::Reopened(Box::new(run_reopen(&spec))));
 }
 
-fn run_reopen(spec: &ReopenSpec) -> Reopened {
+pub(crate) fn run_reopen(spec: &ReopenSpec) -> Reopened {
     let tab_key = spec
         .worktree
         .as_ref()
@@ -177,25 +179,26 @@ fn run_reopen(spec: &ReopenSpec) -> Reopened {
     });
     let outside_git = spec.worktree.is_none() && crate::repo::Repo::discover(&spec.dir).is_none();
     let resume = if outside_git { prepare_resume_in_folder } else { prepare_resume };
-    let prepared = resume(
-        &PrepareInput {
-            paths: &spec.paths,
-            agent: &spec.agent,
-            profile: &spec.profile,
-            repo: &spec.repo,
-            tab: &tab_key,
-            dir: &spec.dir,
-            worktree_tab: spec.worktree.is_some(),
-            task: "",
-            session_id: None,
-            remote: spec.remote,
-            meeseeks: spec.meeseeks.is_some(),
-            path_var: Some(&spec.path_var),
-            listener: hooks,
-            trust: spec.trust.as_ref(),
-        },
-        &spec.session_id,
-    );
+    let new_session =
+        spec.fresh.then(|| spec.agent.session_id_flag.is_some().then(session_id::new));
+    let new_session = new_session.flatten();
+    let input = PrepareInput {
+        paths: &spec.paths,
+        agent: &spec.agent,
+        profile: &spec.profile,
+        repo: &spec.repo,
+        tab: &tab_key,
+        dir: &spec.dir,
+        worktree_tab: spec.worktree.is_some(),
+        task: "",
+        session_id: new_session.clone(),
+        remote: spec.remote,
+        meeseeks: spec.meeseeks.is_some(),
+        path_var: Some(&spec.path_var),
+        listener: hooks,
+        trust: spec.trust.as_ref(),
+    };
+    let prepared = if spec.fresh { prepare(&input) } else { resume(&input, &spec.session_id) };
     let (started, note) = match prepared {
         Ok(prepared) => {
             let started = Started {
@@ -204,9 +207,9 @@ fn run_reopen(spec: &ReopenSpec) -> Reopened {
                 level: spec.profile.level,
                 agent_id: spec.agent.id.clone(),
                 notes_file: Some(spec.paths.notes_file(&spec.repo, &tab_key)),
-                session_id: Some(spec.session_id.clone()),
-                awaiting_prompt: false,
-                resumed: true,
+                session_id: if spec.fresh { new_session } else { Some(spec.session_id.clone()) },
+                awaiting_prompt: spec.fresh,
+                resumed: !spec.fresh,
                 prepared,
                 meeseeks: spec.meeseeks.clone(),
             };
@@ -216,7 +219,13 @@ fn run_reopen(spec: &ReopenSpec) -> Reopened {
             if let Some(listener) = &spec.listener {
                 listener.unregister_tab(spec.tab);
             }
-            (None, Some(format!("The agent was not resumed: {e}.")))
+            (
+                None,
+                Some(format!(
+                    "The agent was not {}: {e}.",
+                    if spec.fresh { "started" } else { "resumed" }
+                )),
+            )
         }
     };
     Reopened {

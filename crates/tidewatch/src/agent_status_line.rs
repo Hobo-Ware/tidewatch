@@ -9,7 +9,7 @@ use crate::layout::CHROME_H;
 use crate::pane::{AgentTab, FirstPrompt, Pane};
 use crate::reader::Shown;
 use crate::remote_pill::{self, Pill, Popover};
-use crate::screen_kit::body;
+use crate::screen_kit::{Size, body};
 use crate::segmented;
 use crate::status_view::{self, Tone};
 
@@ -17,6 +17,8 @@ pub(crate) const HEIGHT: f32 = CHROME_H;
 const LEFT_PAD: f32 = 10.0;
 const RIGHT_PAD: f32 = 6.0;
 const PILL_GAP: f32 = 10.0;
+const CHIP_PAD: f32 = 10.0;
+const CHEVRON_W: f32 = 12.0;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct Line {
@@ -40,6 +42,8 @@ pub(crate) enum Choice {
 #[derive(Debug, Default, PartialEq, Eq)]
 pub(crate) struct Out {
     pub(crate) choice: Option<Choice>,
+    /// The profile chip was pressed: open Change this tab.
+    pub(crate) change: bool,
     pub(crate) remote: Option<remote_pill::Action>,
 }
 
@@ -145,8 +149,44 @@ pub(crate) fn show(ui: &mut Ui, rect: Rect, line: &Line, popover: Popover) -> Ou
         *x += width + 10.0;
     };
     text(&mut x, line.label, 14.0, brand::TEXT);
-    text(&mut x, &line.who, 13.0, brand::MUTED);
-    Out { choice: switch.clicked.map(|index| choices[index]), remote }
+    let change = who_chip(ui, &painter, pos2(x, y), &line.who, text_right - 8.0);
+    Out { choice: switch.clicked.map(|index| choices[index]), change, remote }
+}
+
+/// Who runs the tab as a chip with a chevron: pressing it opens Change this tab. Returns whether
+/// it was pressed.
+fn who_chip(ui: &Ui, painter: &egui::Painter, at: egui::Pos2, text: &str, right: f32) -> bool {
+    if text.is_empty() {
+        return false;
+    }
+    let galley = painter.layout_no_wrap(text.to_owned(), body(Size::Compact.font()), brand::SOFT);
+    let width = (galley.size().x + 2.0 * CHIP_PAD + CHEVRON_W).min((right - at.x).max(0.0));
+    let rect = Rect::from_min_size(
+        pos2(at.x, at.y - Size::Compact.height() / 2.0),
+        egui::vec2(width, Size::Compact.height()),
+    );
+    let response = ui
+        .interact(rect, ui.id().with("who-chip"), egui::Sense::click())
+        .on_hover_cursor(egui::CursorIcon::PointingHand)
+        .on_hover_text("Change this tab");
+    let line = if response.hovered() { brand::FAINT } else { brand::FIELD_LINE };
+    painter.rect_stroke(
+        rect,
+        egui::CornerRadius::same(Size::Compact.radius()),
+        egui::Stroke::new(1.0, line),
+        egui::StrokeKind::Inside,
+    );
+    let ink = if response.hovered() { brand::TEXT } else { brand::SOFT };
+    let text_at = pos2(rect.left() + CHIP_PAD, rect.center().y - galley.size().y / 2.0);
+    painter.galley(text_at, galley, ink);
+    let chevron = pos2(rect.right() - CHIP_PAD - CHEVRON_W / 2.0 + 2.0, rect.center().y);
+    let half = 3.5;
+    let stroke = egui::Stroke::new(1.5, ink);
+    painter
+        .line_segment([chevron + egui::vec2(-half, -1.5), chevron + egui::vec2(0.0, 2.0)], stroke);
+    painter
+        .line_segment([chevron + egui::vec2(0.0, 2.0), chevron + egui::vec2(half, -1.5)], stroke);
+    response.clicked()
 }
 
 #[cfg(test)]

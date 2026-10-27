@@ -372,6 +372,9 @@ impl Tidewatch {
         if let Some(action) = out.remote {
             self.apply_remote_action(action, ui.ctx());
         }
+        if out.change {
+            self.open_change_active(ui.ctx());
+        }
     }
 
     pub(super) fn waiting_end_block(&self) -> Option<EndBlock> {

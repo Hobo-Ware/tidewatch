@@ -864,6 +864,40 @@ fn a_right_click_on_a_tab_offers_park_and_never_park_and_the_pinned_tab_offers_n
     assert!(main.texts.iter().all(|(text, _)| text != "Park"), "{:?}", main.texts);
 }
 
+fn open_menu(strip: &mut Strip, at: egui::Pos2) {
+    strip.pointer(at);
+    for pressed in [true, false] {
+        strip.frame(vec![Event::PointerButton {
+            pos: at,
+            button: PointerButton::Secondary,
+            pressed,
+            modifiers: egui::Modifiers::default(),
+        }]);
+    }
+    strip.frame(Vec::new());
+}
+
+#[test]
+fn a_right_click_on_a_shell_tab_offers_change_this_tab_and_pressing_it_asks_for_that_tab() {
+    let mut strip = Strip::new();
+    let at = strip.center(1);
+    open_menu(&mut strip, at);
+    let entry = strip
+        .texts
+        .iter()
+        .find(|(text, _)| text == "Change this tab...")
+        .map(|(_, rect)| rect.center())
+        .expect("the entry is in the menu");
+    strip.seen.clear();
+    strip.click(entry);
+    assert_eq!(strip.seen, [Action::Change(1)]);
+
+    let mut main = Strip::new();
+    let at = main.center(0);
+    open_menu(&mut main, at);
+    assert!(main.texts.iter().all(|(text, _)| text != "Change this tab..."), "{:?}", main.texts);
+}
+
 #[test]
 fn the_pill_list_names_each_tab_and_says_why_it_left() {
     let mut strip = parked_strip();
