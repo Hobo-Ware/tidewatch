@@ -206,6 +206,48 @@ fn a_worktree_with_no_record_is_listed_but_never_removed() {
     assert_eq!(f.host.leftovers.len(), 1);
 }
 
+fn forget_every_record(f: &Fixture) {
+    let _ = std::fs::remove_file(f.paths.state_dir().join("worktrees.toml"));
+}
+
+#[test]
+fn a_worktree_of_ours_the_registry_lost_is_cleaned_up_when_proven_safe() {
+    let mut f = Fixture::new();
+    let lost = f.worktree();
+    forget_every_record(&f);
+    f.scan();
+    f.host.open(&f.ctx);
+    f.settle();
+    assert_eq!(f.host.dialog.as_ref().unwrap().clean_up_blocker(), None);
+    f.answer(&Answer::CleanUp);
+    f.settle();
+    assert!(!lost.path.exists());
+    assert!(!branch_exists(&f, &lost));
+    assert_eq!(f.host.leftovers.len(), 0);
+}
+
+#[test]
+fn a_worktree_of_ours_the_registry_lost_keeps_its_work_until_its_own_discard() {
+    let mut f = Fixture::new();
+    let lost = f.worktree();
+    commit(&lost, "work.txt");
+    forget_every_record(&f);
+    f.scan();
+    f.host.open(&f.ctx);
+    f.settle();
+    let dialog = f.host.dialog.as_ref().unwrap();
+    assert!(Cleanup::is_discardable(&dialog.rows[0]));
+    assert!(dialog.clean_up_blocker().is_some());
+    f.answer(&Answer::CleanUp);
+    f.settle();
+    assert!(lost.path.exists(), "Clean up never discards");
+
+    f.answer(&Answer::Discard(lost.path.clone(), BranchChoice::Delete));
+    f.settle();
+    assert!(!lost.path.exists());
+    assert_eq!(tidewatch_core::removal_log::load(&f.paths).len(), 1);
+}
+
 #[test]
 fn the_chip_shows_only_when_something_is_left_over_and_a_click_opens_the_dialog() {
     use egui::{Event, PointerButton, Rect, pos2, vec2};

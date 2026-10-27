@@ -133,7 +133,22 @@ impl Cleanup {
     pub(crate) fn clean_count(&self) -> usize {
         self.clean_removals().len()
     }
+
+    /// Why Clean up cannot be pressed now, for its tooltip. `None` when it has worktrees to remove.
+    pub(crate) fn clean_up_blocker(&self) -> Option<&'static str> {
+        if self.busy() {
+            Some("Still looking at the worktrees.")
+        } else if self.clean_count() > 0 {
+            None
+        } else if self.rows.iter().all(|row| row.state == RowState::Unrecorded) {
+            Some("None of these were made by this Tidewatch. Remove them with git.")
+        } else {
+            Some(NOTHING_SAFE)
+        }
+    }
 }
+
+const NOTHING_SAFE: &str = "Nothing here is proven safe to remove. A row that lists what it would lose has its own Discard.";
 
 /// What the row says about the worktree, in the close dialog's words.
 pub(crate) fn status_text(state: &RowState) -> String {
@@ -232,6 +247,39 @@ mod tests {
         assert_eq!(cleanup.discard_removal(Path::new("/nowhere"), BranchChoice::Keep), None);
         assert!(Cleanup::is_discardable(&cleanup.rows[0]));
         assert!(!Cleanup::is_discardable(&cleanup.rows[2]));
+    }
+
+    #[test]
+    fn clean_up_says_why_it_has_nothing_to_do() {
+        let cases: [(&str, Cleanup, Option<&str>); 5] = [
+            ("a proven row", opened(&[("a", true, Some(Safety::Safe))]), None),
+            (
+                "only foreign rows",
+                opened(&[("a", false, None), ("b", false, None)]),
+                Some("None of these were made by this Tidewatch. Remove them with git."),
+            ),
+            (
+                "only rows with something to lose",
+                opened(&[("a", true, Some(unsafe_with(Risk::Uncommitted { files: 1 })))]),
+                Some(NOTHING_SAFE),
+            ),
+            (
+                "foreign next to one with something to lose",
+                opened(&[
+                    ("a", false, None),
+                    ("b", true, Some(unsafe_with(Risk::Unpushed { commits: 1 }))),
+                ]),
+                Some(NOTHING_SAFE),
+            ),
+            (
+                "a row still being looked at next to a proven one",
+                opened(&[("a", true, Some(Safety::Safe)), ("b", true, None)]),
+                Some("Still looking at the worktrees."),
+            ),
+        ];
+        for (what, cleanup, want) in cases {
+            assert_eq!(cleanup.clean_up_blocker(), want, "{what}");
+        }
     }
 
     #[test]
