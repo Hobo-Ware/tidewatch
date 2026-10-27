@@ -1139,7 +1139,6 @@ pub(crate) fn reply_box(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::bullets;
     use egui::{Event, Key, Modifiers, RawInput, TextEdit};
 
     const INPUT_H: f32 = composer::BOX_H + 2.0 * composer::GAP_Y;
@@ -1261,19 +1260,9 @@ mod tests {
                 egui::Shape::Rect(r) if r.fill == brand::CARD => Some(r.rect),
                 _ => None,
             }),
-            text: text_rect(&bullets_drawn(text)),
+            text: text_rect(text),
             send: text_rect(SEND),
         }
-    }
-
-    fn bullets_drawn(text: &str) -> String {
-        text.lines()
-            .map(|line| match bullets::marker_of(line) {
-                Some(_) => format!("\u{2022}{}", &line[1..]),
-                None => line.to_owned(),
-            })
-            .collect::<Vec<_>>()
-            .join("\n")
     }
 
     #[test]

@@ -83,7 +83,7 @@ fn row_height(ui: &Ui) -> f32 {
 fn measure(ui: &Ui, text: &str, pictures: usize, box_w: f32, cap: f32) -> Measure {
     let send_w = button_width(ui, SEND, Size::Regular);
     let wrap = box_w - PAD_X - send_edge() - send_w - SEND_GAP;
-    let typed = bullets::layout(ui, text, &text_font(), (brand::TEXT, brand::MUTED), wrap, &None);
+    let typed = bullets::layout(ui, text, &text_font(), brand::TEXT, (wrap, &None));
     let rows = pictures::chip_rows(pictures, box_w - 2.0 * PAD_X, pictures::REMOVABLE_W);
     let fit = fit(row_height(ui), typed.size().y, rows, cap);
     Measure { fit, send_w }
@@ -121,6 +121,25 @@ fn byte_of(text: &str, at: usize) -> usize {
 
 fn consume(ui: &Ui, key: Key) -> bool {
     ui.input_mut(|input| input.consume_key(Modifiers::NONE, key))
+}
+
+fn list_tab(ui: &Ui, id: Id, text: &mut String, enabled: bool) {
+    let focused = enabled && ui.memory(|memory| memory.has_focus(id));
+    let Some(cursor) =
+        collapsed_cursor(ui, id).filter(|at| focused && bullets::on_list_line(text, *at))
+    else {
+        return;
+    };
+    let way = if ui.input_mut(|input| input.consume_key(Modifiers::SHIFT, Key::Tab)) {
+        bullets::Shift::Out
+    } else if consume(ui, Key::Tab) {
+        bullets::Shift::In
+    } else {
+        return;
+    };
+    if let Some(at) = bullets::shift(text, cursor, way) {
+        bullets::place_cursor(ui, id, at);
+    }
 }
 
 fn usage_id() -> Id {
@@ -202,8 +221,8 @@ fn backspace_removes_a_picture(ui: &Ui, id: Id, text: &str, pictures: &mut Vec<P
 }
 
 /// Draws the box in the room `ui` has and works it. Enter sends a non-empty text or any pictures and
-/// clears both, Shift+Enter starts a new line, and on a bullet line Enter starts the next bullet
-/// instead. Asks for focus once, the first time it is drawn, and again after a send. Off while
+/// clears both, Cmd+Enter sends from anywhere in the box, Shift+Enter starts a new line, and on a
+/// list line Enter starts the next item instead while Tab and Shift+Tab move the item a level. Asks for focus once, the first time it is drawn, and again after a send. Off while
 /// `spec.enabled` is false.
 pub(crate) fn show(ui: &mut Ui, draft: Draft<'_>, spec: &Spec<'_>) -> Option<String> {
     let Draft { text, pictures, focus } = draft;
@@ -243,9 +262,13 @@ pub(crate) fn show(ui: &mut Ui, draft: Draft<'_>, spec: &Spec<'_>) -> Option<Str
         bullets::place_cursor(ui, id, text.chars().count());
     }
     let ghost = ghost.filter(|_| text.is_empty());
+    list_tab(ui, id, text, enabled);
     let listing = enabled && (ui.memory(|memory| memory.has_focus(id)) || !ui.input(|i| i.focused));
     let slash_rows = if listing { slash.rows(text, commands) } else { Vec::new() };
     slash.open = !slash_rows.is_empty();
+    let command_enter = enabled
+        && ui.memory(|memory| memory.has_focus(id))
+        && ui.input_mut(|input| input.consume_key(Modifiers::COMMAND, Key::Enter));
     let mut enter = enabled
         && ui.memory(|memory| memory.has_focus(id))
         && ui.input(|input| input.events.iter().any(crate::agent_ready::plain_enter));
@@ -256,6 +279,7 @@ pub(crate) fn show(ui: &mut Ui, draft: Draft<'_>, spec: &Spec<'_>) -> Option<Str
             enter = false;
         }
     }
+    let enter = enter || command_enter;
     ui.add_enabled_ui(enabled, |ui| {
         let measured = measure(ui, text, pictures.len(), room.width(), room.height());
         let Fit { box_h, pad_y, chips_h, .. } = measured.fit;
@@ -294,14 +318,7 @@ pub(crate) fn show(ui: &mut Ui, draft: Draft<'_>, spec: &Spec<'_>) -> Option<Str
         let lift = if chips_h == 0.0 { OPTICAL_LIFT } else { 0.0 };
         let top_pad = if chips_h == 0.0 { pad_y - lift } else { 0.0 };
         let mut layouter = |ui: &Ui, buf: &dyn egui::TextBuffer, wrap: f32| {
-            bullets::layout(
-                ui,
-                buf.as_str(),
-                &text_font(),
-                (brand::TEXT, brand::MUTED),
-                wrap,
-                &tint,
-            )
+            bullets::layout(ui, buf.as_str(), &text_font(), brand::TEXT, (wrap, &tint))
         };
         let placeholder = if ghost.is_some() { brand::MUTED } else { brand::FAINT };
         ui.visuals_mut().weak_text_color = Some(placeholder);
@@ -332,6 +349,7 @@ pub(crate) fn show(ui: &mut Ui, draft: Draft<'_>, spec: &Spec<'_>) -> Option<Str
                         .layouter(&mut layouter)
                         .return_key(KeyboardShortcut::new(Modifiers::SHIFT, Key::Enter))
                         .show(ui);
+                    bullets::paint_markers(ui, &edit.galley, edit.galley_pos, &text_font());
                     ui.add_space(pad_y + lift);
                     if resized && let Some(range) = edit.cursor_range {
                         let at = edit.galley_pos.to_vec2() - vec2(edit.galley.rect.left(), 0.0);
@@ -381,7 +399,12 @@ pub(crate) fn show(ui: &mut Ui, draft: Draft<'_>, spec: &Spec<'_>) -> Option<Str
                 ),
             );
         }
-        if ghost.is_some() && has_focus {
+        let on_list = output
+            .as_ref()
+            .and_then(|edit| edit.cursor_range)
+            .filter(|range| range.primary == range.secondary)
+            .is_some_and(|range| bullets::on_list_line(text, range.primary.index.0));
+        if (ghost.is_some() || on_list) && has_focus {
             let filter = EventFilter {
                 tab: true,
                 horizontal_arrows: true,
@@ -958,5 +981,211 @@ mod tests {
         let mut rig = emoji_box("see 10:30 or http://x");
         let sent = rig.frame(vec![key(Key::Enter)]).sent;
         assert_eq!(sent.as_deref(), Some("see 10:30 or http://x"));
+    }
+
+    fn chord(pressed: Key, modifiers: Modifiers) -> Event {
+        Event::Key {
+            key: pressed,
+            physical_key: Some(pressed),
+            pressed: true,
+            repeat: false,
+            modifiers,
+        }
+    }
+
+    fn has_focus(rig: &Rig) -> bool {
+        rig.ctx.memory(|memory| memory.has_focus(Id::new("reply-box")))
+    }
+
+    struct Marks {
+        dots: Vec<f32>,
+        rings: Vec<f32>,
+        squares: Vec<f32>,
+        numbers: Vec<(String, f32)>,
+    }
+
+    fn marks(seen: &Seen) -> Marks {
+        let mut found = Marks { dots: vec![], rings: vec![], squares: vec![], numbers: vec![] };
+        for shape in &seen.shapes {
+            match shape {
+                Shape::Circle(circle) if circle.fill == brand::SOFT => {
+                    found.dots.push(circle.center.x);
+                }
+                Shape::Circle(circle) if circle.stroke.color == brand::SOFT => {
+                    found.rings.push(circle.center.x);
+                }
+                Shape::Rect(rect) if rect.fill == brand::SOFT => {
+                    found.squares.push(rect.rect.center().x);
+                }
+                Shape::Text(text)
+                    if text.galley.text().ends_with('.') && text.galley.text().len() < 4 =>
+                {
+                    found
+                        .numbers
+                        .push((text.galley.text().to_owned(), text.pos.x + text.galley.size().x));
+                }
+                _ => {}
+            }
+        }
+        found
+    }
+
+    const LIST: &str = "List:\n- item\n    - sub\n        - deep\nSteps:\n1. first\n    1. nested";
+
+    #[test]
+    fn list_text_starts_at_0_30_and_60_and_the_markers_sit_14_and_8_pt_left_of_it() {
+        let mut rig = Rig::new();
+        rig.text = LIST.to_owned();
+        rig.frame(vec![]);
+        let seen = rig.frame(vec![]);
+        let rows = seen.text_rows(LIST);
+        assert_eq!(rows.len(), 7);
+        let edge = rows[0].min.x;
+        let offsets: Vec<f32> = rows.iter().map(|row| row.min.x - edge).collect();
+        assert_eq!(offsets, [0.0, 30.0, 60.0, 90.0, 0.0, 30.0, 60.0]);
+        let found = marks(&seen);
+        assert_eq!(found.dots, [edge + 30.0 - 14.0]);
+        assert_eq!(found.rings, [edge + 60.0 - 14.0]);
+        assert_eq!(found.squares, [edge + 90.0 - 14.0]);
+        assert_eq!(
+            found.numbers,
+            [("1.".to_owned(), edge + 30.0 - 8.0), ("1.".to_owned(), edge + 60.0 - 8.0)]
+        );
+        assert_eq!(rig.text, LIST, "drawing never edits the text");
+    }
+
+    #[test]
+    fn a_bullet_sits_inside_the_height_of_its_row() {
+        let mut rig = Rig::new();
+        rig.text = "- item".to_owned();
+        rig.frame(vec![]);
+        let seen = rig.frame(vec![]);
+        let row = seen.text_rows("- item")[0];
+        let dot = seen
+            .shapes
+            .iter()
+            .find_map(|shape| match shape {
+                Shape::Circle(circle) if circle.fill == brand::SOFT => Some(circle.center),
+                _ => None,
+            })
+            .expect("a dot");
+        assert!(dot.y > row.top() && dot.y < row.bottom(), "{dot:?} {row:?}");
+        assert!((dot.y - row.center().y).abs() < 4.0, "{dot:?} {row:?}");
+    }
+
+    #[test]
+    fn every_wrapped_row_of_an_item_starts_at_its_text_and_a_plain_line_goes_back_to_the_edge() {
+        let long = "one two three four five six seven eight nine ten eleven twelve thirteen \
+                    fourteen fifteen sixteen seventeen eighteen nineteen twenty";
+        let text = format!("plain\n- {long}\n    - {long}\nplain again");
+        let mut rig = Rig::new();
+        rig.text = text.clone();
+        rig.frame(vec![]);
+        let seen = rig.frame(vec![]);
+        let rows = seen.text_rows(&text);
+        let edge = rows[0].min.x;
+        let offsets: Vec<f32> = rows.iter().map(|row| row.min.x - edge).collect();
+        assert!(offsets.len() >= 7, "both items wrap: {offsets:?}");
+        let (first, rest) = offsets.split_first().unwrap();
+        let (last, middle) = rest.split_last().unwrap();
+        assert_eq!((*first, *last), (0.0, 0.0));
+        let split = middle.iter().position(|x| *x == 60.0).expect("the nested item");
+        assert!(middle[..split].iter().all(|x| *x == 30.0), "{offsets:?}");
+        assert!(middle[split..].iter().all(|x| *x == 60.0), "{offsets:?}");
+        let right = rows.iter().map(|row| row.max.x).fold(0.0, f32::max);
+        assert!(right <= seen.box_rect.right() - 18.0, "a wrapped row stays inside the box");
+        assert_eq!(rig.text, text);
+    }
+
+    #[test]
+    fn a_list_does_not_change_the_box_height_a_plain_box_of_the_same_rows_has() {
+        let mut list = Rig::new();
+        list.text = "- a\n    - b\n1. c".to_owned();
+        let mut plain = Rig::new();
+        plain.text = "a\nb\nc".to_owned();
+        list.frame(vec![]);
+        plain.frame(vec![]);
+        assert_eq!(list.frame(vec![]).box_rect.height(), plain.frame(vec![]).box_rect.height());
+    }
+
+    #[test]
+    fn enter_tab_and_shift_tab_work_a_list_line_by_line() {
+        let mut rig = Rig::new();
+        rig.type_text("- one");
+        assert_eq!(rig.press(Key::Enter).sent, None);
+        assert_eq!(rig.text, "- one\n- ");
+        rig.type_text("two");
+        rig.settle(vec![chord(Key::Tab, Modifiers::NONE)]);
+        assert_eq!(rig.text, "- one\n  - two");
+        assert!(has_focus(&rig), "Tab on a list line keeps the keyboard");
+        rig.settle(vec![chord(Key::Tab, Modifiers::NONE)]);
+        assert_eq!(rig.text, "- one\n  - two", "no deeper than under the item above");
+        assert_eq!(rig.press(Key::Enter).sent, None);
+        assert_eq!(rig.text, "- one\n  - two\n  - ");
+        rig.settle(vec![chord(Key::Tab, Modifiers::SHIFT)]);
+        assert_eq!(rig.text, "- one\n  - two\n- ");
+        assert!(has_focus(&rig));
+        rig.type_text("three");
+        assert_eq!(rig.text, "- one\n  - two\n- three");
+        rig.press(Key::Enter);
+        rig.press(Key::Enter);
+        assert_eq!(rig.text, "- one\n  - two\n- three\n");
+        let sent = rig.frame(vec![key(Key::Enter)]).sent;
+        assert_eq!(sent.as_deref(), Some("- one\n  - two\n- three\n"));
+    }
+
+    #[test]
+    fn enter_on_a_numbered_line_counts_up() {
+        let mut rig = Rig::new();
+        rig.type_text("1. first");
+        rig.press(Key::Enter);
+        rig.type_text("second");
+        rig.press(Key::Enter);
+        assert_eq!(rig.text, "1. first\n2. second\n3. ");
+        rig.press(Key::Enter);
+        assert_eq!(rig.text, "1. first\n2. second\n");
+    }
+
+    #[test]
+    fn tab_off_a_list_line_keeps_the_text_and_moves_the_keyboard_on() {
+        let mut rig = Rig::new();
+        rig.type_text("hello");
+        rig.settle(vec![chord(Key::Tab, Modifiers::NONE)]);
+        assert_eq!(rig.text, "hello");
+        assert!(!has_focus(&rig), "focus moved on");
+    }
+
+    #[test]
+    fn cmd_enter_sends_from_a_list_line_and_from_a_plain_one() {
+        let mut rig = Rig::new();
+        rig.type_text("- one");
+        rig.press(Key::Enter);
+        rig.type_text("two");
+        let sent = rig.frame(vec![chord(Key::Enter, Modifiers::COMMAND)]).sent;
+        assert_eq!(sent.as_deref(), Some("- one\n- two"));
+        assert_eq!(rig.text, "");
+        rig.type_text("plain");
+        let sent = rig.frame(vec![chord(Key::Enter, Modifiers::COMMAND)]).sent;
+        assert_eq!(sent.as_deref(), Some("plain"));
+        assert_eq!(rig.frame(vec![chord(Key::Enter, Modifiers::COMMAND)]).sent, None);
+    }
+
+    #[test]
+    fn enter_on_a_plain_line_sends_and_shift_enter_adds_a_line() {
+        let mut rig = Rig::new();
+        rig.type_text("hello");
+        rig.settle(vec![chord(Key::Enter, Modifiers::SHIFT)]);
+        assert_eq!(rig.text, "hello\n");
+        rig.type_text("world");
+        let sent = rig.frame(vec![key(Key::Enter)]).sent;
+        assert_eq!(sent.as_deref(), Some("hello\nworld"));
+    }
+
+    #[test]
+    fn shift_enter_on_a_list_line_adds_a_plain_line() {
+        let mut rig = Rig::new();
+        rig.type_text("- one");
+        rig.settle(vec![chord(Key::Enter, Modifiers::SHIFT)]);
+        assert_eq!(rig.text, "- one\n");
     }
 }

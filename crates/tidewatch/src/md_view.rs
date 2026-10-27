@@ -6,8 +6,8 @@
 use egui::epaint::text::TextFormat;
 use egui::style::ScrollStyle;
 use egui::{
-    Align, Color32, CornerRadius, Frame, Grid, Layout, Margin, Rect, ScrollArea, Sense, Shape,
-    Stroke, StrokeKind, TextStyle, TextWrapMode, Ui, Vec2, pos2, vec2,
+    Align, Color32, CornerRadius, FontId, Frame, Grid, Layout, Margin, Rect, ScrollArea, Sense,
+    Shape, Stroke, StrokeKind, TextStyle, TextWrapMode, Ui, Vec2, pos2, vec2,
 };
 use pulldown_cmark::Alignment;
 
@@ -18,13 +18,13 @@ use crate::links;
 use crate::md_blocks::{self, Block, Inline, Item, Kind, Note, Run};
 use crate::screen_kit::{body, heading, mono};
 
-const LINE: f32 = 1.6;
+pub(crate) const LINE: f32 = 1.6;
 const BLOCK_GAP: f32 = 10.0;
 const TIGHT_GAP: f32 = 4.0;
 const HEADING_ABOVE: f32 = 16.0;
 const HEADING_BELOW: f32 = 6.0;
-const INDENT: f32 = 30.0;
-const MARKER_EDGE: f32 = 8.0;
+pub(crate) const INDENT: f32 = 30.0;
+pub(crate) const MARKER_EDGE: f32 = 8.0;
 const BULLET_R: f32 = 3.0;
 const BOX: f32 = 15.0;
 const LIFT: f32 = 2.0;
@@ -42,7 +42,7 @@ struct Ctx {
     depth: usize,
 }
 
-enum Marker<'a> {
+pub(crate) enum Marker<'a> {
     Bullet(usize),
     Number(&'a str),
     Task(bool),
@@ -251,10 +251,15 @@ fn entry(ui: &mut Ui, marker: &Marker, gutter: f32, inner: &[Block], ctx: Ctx) {
     });
     let first_line = base_px(ui) * LINE;
     let edge = origin.x + gutter - MARKER_EDGE;
-    paint_marker(ui, marker, pos2(edge, origin.y), first_line);
+    paint_marker(ui, marker, pos2(edge, origin.y), (first_line, body(base_px(ui))));
 }
 
-fn paint_marker(ui: &Ui, marker: &Marker, edge_top: egui::Pos2, line: f32) {
+pub(crate) fn paint_marker(
+    ui: &Ui,
+    marker: &Marker,
+    edge_top: egui::Pos2,
+    (line, number_font): (f32, FontId),
+) {
     let painter = ui.painter();
     let edge_center = edge_top + vec2(0.0, line / 2.0 - LIFT);
     let center = edge_center - vec2(BULLET_R + 3.0, 0.0);
@@ -273,8 +278,7 @@ fn paint_marker(ui: &Ui, marker: &Marker, edge_top: egui::Pos2, line: f32) {
             }
         },
         Marker::Number(label) => {
-            let size = base_px(ui);
-            let mut format = TextFormat::simple(body(size), color);
+            let mut format = TextFormat::simple(number_font, color);
             format.line_height = Some(line);
             let mut job = egui::text::LayoutJob::default();
             job.append(label, 0.0, format);
