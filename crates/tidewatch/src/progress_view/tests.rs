@@ -1,12 +1,13 @@
 //! The panel: pure choices, and headless frames for the clicks and for text that never overlaps.
 
 use egui::{Event, Modifiers, PointerButton, Pos2, RawInput, Rect, Sense, Shape, pos2, vec2};
-use tidewatch_core::done_check::{Kind, Line, Report, Status};
+use tidewatch_core::civil_date::Date;
+use tidewatch_core::done_check::{Kind, Line, Report, Status, Unverified};
 use tidewatch_core::end_block::EndBlock;
 use tidewatch_core::link_board::{Link, LinkBoard, LinkState, TitleFrom};
 use tidewatch_core::progress::Ledger;
 
-use crate::done_check_glue::Look;
+use crate::done_check_glue::{Checked, Look};
 use crate::done_check_view;
 
 use super::*;
@@ -350,19 +351,44 @@ fn turn(check: Option<Look>, can_ask: Result<(), &'static str>) -> LastTurn {
         needs_you: own(&["Should the filters apply to the archived column?"]),
         next: own(&["Add keyboard shortcuts"]),
     };
-    LastTurn::of(Some(&block), check, can_ask).unwrap()
+    LastTurn::of(Some(&block), check, can_ask, today()).unwrap()
 }
 
-fn blocked() -> Look {
+fn today() -> Date {
+    Date::parse("2026-10-27").unwrap()
+}
+
+const STAMP: Checked = Checked { at: 1_793_142_060, same: false };
+
+fn blocked_report() -> Report {
     let line = |kind, status, detail: &str| Line { kind, status, detail: detail.to_owned() };
-    Look::Report(Report {
+    Report {
         head: String::new(),
         lines: vec![
             line(Kind::Pushed, Status::Fail, "2 commits not pushed"),
             line(Kind::Unverified, Status::Unknown, "1 item the agent did not verify"),
         ],
-        unverified: vec!["the Safari layout".to_owned()],
-    })
+        unverified: vec![Unverified::new("the Safari layout")],
+    }
+}
+
+fn blocked() -> Look {
+    Look::Report(blocked_report(), STAMP)
+}
+
+fn waiting_report() -> Report {
+    let line = |kind, status, detail: &str| Line { kind, status, detail: detail.to_owned() };
+    Report {
+        head: String::new(),
+        lines: vec![
+            line(Kind::PullRequest, Status::Pass, "PR #2359 merged"),
+            line(Kind::Unverified, Status::Waiting, "1 item waiting until 2026-10-28"),
+        ],
+        unverified: vec![Unverified::until(
+            "Live list across a day boundary",
+            Date::parse("2026-10-28").unwrap(),
+        )],
+    }
 }
 
 const SMALL: &str = "# Goal\nx\n\n## Status\nphase: 2 Build\nstate: working\n";
@@ -422,7 +448,7 @@ fn a_summary_that_asks_nothing_has_no_needs_you_and_no_answer() {
     let own = |items: &[&str]| items.iter().map(|s| (*s).to_owned()).collect();
     let block =
         EndBlock { done: own(&["Did it"]), needs_you: own(&["nothing"]), next: own(&["Ship"]) };
-    let panel = tall(SMALL, 420.0, LastTurn::of(Some(&block), None, Ok(())).unwrap());
+    let panel = tall(SMALL, 420.0, LastTurn::of(Some(&block), None, Ok(()), today()).unwrap());
     assert!(panel.drawn("Done") && panel.drawn("Next"));
     assert!(!panel.drawn("Needs you") && !panel.drawn("Answer") && !panel.drawn("Checks"));
 }
@@ -458,7 +484,7 @@ fn a_ledger_question_keeps_its_one_set_of_answers_and_the_last_turn_adds_none() 
 fn a_tab_with_no_ledger_still_shows_its_last_turn() {
     let mut panel = Panel::new(SMALL, 420.0);
     panel.ledger = None;
-    panel.last_turn = Some(turn(Some(Look::Checking), Ok(())));
+    panel.last_turn = Some(turn(Some(Look::Checking(None)), Ok(())));
     panel.size = vec2(420.0, 1200.0);
     panel.frame(Vec::new());
     panel.frame(Vec::new());
@@ -486,9 +512,17 @@ fn showing_the_section_clears_the_new_items_and_a_changed_check_makes_them_new_a
 
 #[test]
 fn no_last_turn_text_overlaps_or_leaves_the_card_at_any_width() {
-    for width in [200.0, 240.0, 300.0, 420.0, 640.0] {
+    let looks = [
+        blocked(),
+        Look::Report(waiting_report(), Checked { same: true, ..STAMP }),
+        Look::Checking(Some(blocked_report())),
+    ];
+    for (width, look) in [200.0, 240.0, 300.0, 420.0, 640.0]
+        .into_iter()
+        .flat_map(|w| looks.iter().map(move |look| (w, look.clone())))
+    {
         let long = "Pick a default owner filter: me or everyone, and say whether the archived column follows it or keeps its own filters";
-        let mut last = turn(Some(blocked()), Ok(()));
+        let mut last = turn(Some(look), Ok(()));
         last.needs.push(long.to_owned());
         let panel = tall(SMALL, width, last);
         for (index, (a, a_rect)) in panel.texts.iter().enumerate() {
@@ -1040,6 +1074,62 @@ fn a_links_card_with_a_long_title_and_meta_is_cut_not_overlapped() {
     }
 }
 
+fn stamp_drawn(panel: &Panel) -> bool {
+    panel.texts.iter().any(|(text, _)| text.starts_with("Checked "))
+}
+
+#[test]
+fn a_waiting_check_is_one_blue_line_with_a_stamp_and_no_check_again() {
+    let look = Look::Report(waiting_report(), STAMP);
+    let panel = tall(SMALL, 420.0, turn(Some(look), Ok(())));
+    assert!(panel.drawn("Waiting"), "{:?}", panel.texts);
+    assert!(
+        panel.drawn("Waiting until Wed 28 Oct: Live list across a day boundary"),
+        "{:?}",
+        panel.texts
+    );
+    assert!(!panel.drawn("Check again") && !panel.drawn("Ask agent to fix"));
+    assert!(stamp_drawn(&panel), "{:?}", panel.texts);
+}
+
+#[test]
+fn a_waiting_check_asks_to_be_checked_again_once_its_day_comes() {
+    let look = Look::Report(waiting_report(), STAMP);
+    let due = LastTurn { today: Date::parse("2026-10-28").unwrap(), ..turn(Some(look), Ok(())) };
+    let panel = tall(SMALL, 420.0, due);
+    assert!(panel.drawn("Not verified"), "{:?}", panel.texts);
+    assert!(panel.drawn("Check again"));
+    assert!(!panel.drawn("Waiting until Wed 28 Oct: Live list across a day boundary"));
+}
+
+#[test]
+fn a_check_that_runs_again_keeps_its_card_and_shows_a_button_that_does_nothing() {
+    let look = Look::Checking(Some(blocked_report()));
+    let mut panel = tall(SMALL, 420.0, turn(Some(look), Ok(())));
+    assert!(panel.drawn("Pushed: 2 commits not pushed"), "{:?}", panel.texts);
+    assert!(panel.drawn("Checking\u{2026}"), "{:?}", panel.texts);
+    assert!(!panel.drawn("Check again") && !stamp_drawn(&panel));
+    let at = panel.center_of("Ask agent to fix");
+    assert_eq!(panel.click(at), None);
+    let at = panel.center_of("Checking\u{2026}");
+    assert_eq!(panel.click(at), None);
+}
+
+#[test]
+fn an_answer_says_when_it_was_made_and_when_it_was_the_same() {
+    let again = Checked { same: true, ..STAMP };
+    for (checked, same) in [(STAMP, false), (again, true)] {
+        let look = Look::Report(blocked_report(), checked);
+        let panel = tall(SMALL, 420.0, turn(Some(look), Ok(())));
+        assert!(stamp_drawn(&panel), "{:?}", panel.texts);
+        let said = panel
+            .texts
+            .iter()
+            .any(|(t, _)| t.starts_with("Checked ") && t.ends_with("same result"));
+        assert_eq!(said, same, "{:?}", panel.texts);
+        assert!(panel.drawn("Check again"));
+    }
+}
 fn archived(url: &str, title: &str, ago_min: i64, state: LinkState) -> Link {
     Link { state, ..shared(url, title, None, ago_min) }
 }

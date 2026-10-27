@@ -2,8 +2,8 @@
 //! each turn that ended with a claim, and the card's two buttons (Ask agent to fix goes through the
 //! same paste-and-Enter queue as every other message, only while the agent is idle).
 
-use tidewatch_core::done_check::PrFact;
-use tidewatch_core::progress::{State, real};
+use tidewatch_core::done_check::{PrFact, unverified_of};
+use tidewatch_core::progress::State;
 use tidewatch_core::sent::{Reason, because};
 
 use super::Tidewatch;
@@ -16,6 +16,7 @@ use crate::outbox::{Offer, Origin, Send};
 use crate::overview::Overview;
 use crate::pane::{AgentTab, Body};
 use crate::pr_state::Lookup;
+use crate::progress_glue::today;
 
 impl Tidewatch {
     pub(super) fn drive_done_check(&mut self, ctx: &egui::Context, now: f64) {
@@ -75,14 +76,13 @@ impl Tidewatch {
                 _ => PrFact::Unknown,
             },
         };
-        let unverified = self.progress.ledger(tab).map(|known| {
-            real(&known.ledger.not_verified).map(|entry| entry.text.clone()).collect()
-        });
+        let unverified = self.progress.ledger(tab).map(|known| unverified_of(&known.ledger));
         Some(Request {
             dir: worktree.path.clone(),
             branch: worktree.branch.clone(),
             pr,
             unverified,
+            today: today(),
         })
     }
 
@@ -125,7 +125,7 @@ impl Tidewatch {
     }
 
     fn ask_fix(&mut self, tab: u64, look: &Look, ctx: &egui::Context, now: f64) {
-        let Look::Report(report) = look else { return };
+        let Look::Report(report, _) = look else { return };
         let Some(note) = report.fix_note() else { return };
         if self.done_check.is_fake() {
             self.show_toast("Dev run: would ask the agent to fix", ctx);
@@ -159,8 +159,8 @@ impl Tidewatch {
         let places = overview.places.iter_mut().flat_map(|place| place.rows.iter_mut());
         for row in overview.needs.iter_mut().chain(places) {
             row.done_check = match self.done_check_look(row.tab_id) {
-                Some(Look::Report(report)) => {
-                    let outcome = report.outcome();
+                Some(Look::Report(report, _)) => {
+                    let outcome = report.outcome_on(today());
                     Some((done_check_view::tone_of(outcome), done_check_view::tag_of(outcome)))
                 }
                 _ => None,

@@ -1,9 +1,11 @@
 //! The "Last turn" section of the Progress panel: the Done list, the Needs you items with Answer,
-//! the Next list and the done check as small rows with a status dot and its two buttons. What each
+//! the Next list and the done check as small rows with a status dot, its two buttons and when it
+//! was made. What each
 //! part says is `LastTurn` and `done_check_view::card_of`; this file only draws it.
 
 use egui::epaint::text::TextFormat;
-use egui::{Color32, FontId, Sense, Ui, pos2, vec2};
+use egui::{Color32, FontId, RichText, Sense, Ui, pos2, vec2};
+use jiff::tz::TimeZone;
 use tidewatch_core::pr_status::Tone;
 
 use crate::brand;
@@ -73,7 +75,7 @@ pub(crate) fn show(ui: &mut Ui, width: f32, turn: &LastTurn, offer_answer: bool)
     }
     if let Some(look) = &turn.check {
         caption(ui, "Checks");
-        if let Some(picked) = check(ui, width, look, turn.can_ask, turn.owner_asks) {
+        if let Some(picked) = check(ui, width, look, turn) {
             action = Some(Action::DoneCheck(picked));
         }
     }
@@ -125,31 +127,31 @@ fn items(ui: &mut Ui, width: f32, salt: &str, list: &[String], ink: Color32, bul
     }
 }
 
-fn check(
-    ui: &mut Ui,
-    width: f32,
-    look: &Look,
-    can_ask: Result<(), &'static str>,
-    owner_asks: bool,
-) -> Option<CheckAction> {
+fn checking_note(ui: &mut Ui, width: f32) -> Option<CheckAction> {
     let painter = ui.painter().clone();
-    let Look::Report(report) = look else {
-        let galley = painter.layout_no_wrap(
-            "Checking that the work landed...".to_owned(),
-            body(ROW_FONT),
-            brand::MUTED,
-        );
-        let (rect, _) =
-            ui.allocate_exact_size(vec2(width, galley.size().y + ITEM_GAP), Sense::hover());
-        painter.circle_filled(
-            pos2(rect.left() + 4.0, rect.top() + galley.size().y / 2.0),
-            4.0,
-            brand::MUTED,
-        );
-        selectable::galley(ui, pos2(rect.left() + BULLET_W, rect.top()), galley, brand::MUTED);
-        return None;
+    let galley = painter.layout_no_wrap(
+        "Checking that the work landed...".to_owned(),
+        body(ROW_FONT),
+        brand::MUTED,
+    );
+    let (rect, _) = ui.allocate_exact_size(vec2(width, galley.size().y + ITEM_GAP), Sense::hover());
+    painter.circle_filled(
+        pos2(rect.left() + 4.0, rect.top() + galley.size().y / 2.0),
+        4.0,
+        brand::MUTED,
+    );
+    selectable::galley(ui, pos2(rect.left() + BULLET_W, rect.top()), galley, brand::MUTED);
+    None
+}
+
+fn check(ui: &mut Ui, width: f32, look: &Look, turn: &LastTurn) -> Option<CheckAction> {
+    let painter = ui.painter().clone();
+    let (report, checked, running) = match look {
+        Look::Report(report, checked) => (report, Some(*checked), false),
+        Look::Checking(Some(report)) => (report, None, true),
+        Look::Checking(None) => return checking_note(ui, width),
     };
-    let card = done_check_view::card_of(report);
+    let card = done_check_view::card_of(report, turn.today);
     let ink = tone_ink(card.tone);
     let title = painter.layout_no_wrap(card.title.to_owned(), body(ITEM_FONT), ink);
     let room = (width - BULLET_W - title.size().x - 10.0).max(0.0);
@@ -180,10 +182,13 @@ fn check(
         laid.paint_selectable(ui, ui.id().with(("check-row", index)), at, ink);
     }
     let mut picked = None;
-    let ask_fix = card.ask_fix && owner_asks;
-    if ask_fix || card.check_again {
+    let ask_fix = card.ask_fix && turn.owner_asks;
+    let stamp =
+        checked.map(|made| done_check_view::stamp_text(made.at, made.same, &TimeZone::system()));
+    if ask_fix || card.check_again || running || stamp.is_some() {
         button_row(ui, |ui| {
             if ask_fix {
+                let can_ask = if running { Err("Checking again") } else { turn.can_ask };
                 let sent = primary_button(ui, "Ask agent to fix", can_ask.is_ok(), Size::Compact);
                 let sent = match can_ask {
                     Ok(()) => sent,
@@ -193,8 +198,16 @@ fn check(
                     picked = Some(CheckAction::AskFix);
                 }
             }
-            if card.check_again && quiet_button(ui, "Check again", true, Size::Compact).clicked() {
+            if running {
+                quiet_button(ui, "Checking\u{2026}", false, Size::Compact);
+            } else if card.check_again
+                && quiet_button(ui, "Check again", true, Size::Compact).clicked()
+            {
                 picked = Some(CheckAction::CheckAgain);
+            }
+            if let Some(stamp) = stamp {
+                let note = RichText::new(stamp).font(body(NOTE_FONT)).color(brand::MUTED);
+                ui.add(egui::Label::new(note).wrap_mode(egui::TextWrapMode::Extend));
             }
         });
     }

@@ -300,6 +300,7 @@ pub enum Tone {
     Warn,
     Good,
     Quiet,
+    Waiting,
 }
 
 impl Summary {

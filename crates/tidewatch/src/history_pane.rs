@@ -559,7 +559,8 @@ mod tests {
             needs_you: vec!["Which base?".into()],
             next: Vec::new(),
         };
-        LastTurn::of(Some(&block), None, Ok(())).unwrap()
+        let today = tidewatch_core::civil_date::Date::parse("2026-10-27").unwrap();
+        LastTurn::of(Some(&block), None, Ok(()), today).unwrap()
     }
 
     fn dot_pixels(card: &Card) -> usize {

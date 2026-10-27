@@ -1,13 +1,17 @@
 //! The done check: four checks on an agent that says it is done (committed, pushed, pull request,
 //! ledger), each a line with a status, and one outcome over them. Blocks on git and gh.
 
+use std::collections::BTreeSet;
 use std::path::Path;
 
+use crate::civil_date::Date;
 use crate::delivery::{compare_ref, detect_base};
 use crate::pr_gh::unpushed;
 use crate::pr_status::{
     FIELDS, Outcome as CheckRun, Phase, Snapshot, State, parse_snapshot, phase,
 };
+use crate::progress::{Ledger, Mark, State as LedgerState, real};
+use crate::progress_report::WaitingOn;
 use crate::tools::{GhError, Tools, finish, run_gh};
 
 const REMOTE: &str = "origin";
@@ -41,6 +45,8 @@ pub enum Status {
     Unknown,
     /// The check does not apply here (no pull request): shown as not checked, counts for nothing.
     Skipped,
+    /// Everything left open is due on a later date: nothing can change before then.
+    Waiting,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -61,18 +67,151 @@ pub enum Outcome {
     Done,
     Blocked,
     NotVerified,
+    Waiting,
 }
 
-/// Blocked when any check failed, else Not verified when any could not run, else Done.
+/// Blocked when any check failed, else Not verified when any could not run, else Waiting when
+/// something is due on a later date, else Done.
 #[must_use]
 pub fn decide(lines: &[Line]) -> Outcome {
-    if lines.iter().any(|line| line.status == Status::Fail) {
+    let any = |status| lines.iter().any(|line| line.status == status);
+    if any(Status::Fail) {
         Outcome::Blocked
-    } else if lines.iter().any(|line| line.status == Status::Unknown) {
+    } else if any(Status::Unknown) {
         Outcome::NotVerified
+    } else if any(Status::Waiting) {
+        Outcome::Waiting
     } else {
         Outcome::Done
     }
+}
+
+/// One item the agent's ledger lists under Not verified, with the later date it waits for when the
+/// ledger schedules it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Unverified {
+    pub text: String,
+    pub until: Option<Date>,
+}
+
+impl Unverified {
+    #[must_use]
+    pub fn new(text: impl Into<String>) -> Self {
+        Self { text: text.into(), until: None }
+    }
+
+    #[must_use]
+    pub fn until(text: impl Into<String>, date: Date) -> Self {
+        Self { text: text.into(), until: Some(date) }
+    }
+
+    /// The date this item waits for while `today` is before it.
+    #[must_use]
+    pub fn waiting_for(&self, today: Date) -> Option<Date> {
+        self.until.filter(|date| *date > today)
+    }
+}
+
+const MIN_WORD: usize = 4;
+const NOT_A_TOPIC: [&str; 44] = [
+    "that",
+    "this",
+    "from",
+    "into",
+    "onto",
+    "when",
+    "what",
+    "then",
+    "than",
+    "there",
+    "their",
+    "them",
+    "have",
+    "been",
+    "will",
+    "would",
+    "could",
+    "should",
+    "were",
+    "your",
+    "with",
+    "across",
+    "about",
+    "after",
+    "before",
+    "again",
+    "over",
+    "also",
+    "only",
+    "just",
+    "check",
+    "verify",
+    "verified",
+    "confirm",
+    "test",
+    "tested",
+    "make",
+    "sure",
+    "tomorrow",
+    "today",
+    "yesterday",
+    "tonight",
+    "next",
+    "later",
+];
+const MONTHS: [&str; 9] =
+    ["march", "april", "june", "july", "august", "september", "october", "november", "december"];
+
+fn topic_words(text: &str) -> BTreeSet<String> {
+    text.replace('\u{2019}', "'")
+        .split(|c: char| !c.is_alphanumeric() && c != '\'')
+        .map(|word| word.trim_matches('\'').to_lowercase())
+        .map(|word| word.strip_suffix("'s").map_or(word.clone(), str::to_owned))
+        .map(|word| match word.strip_suffix('s') {
+            Some(root) if !word.ends_with("ss") && root.len() >= MIN_WORD => root.to_owned(),
+            _ => word,
+        })
+        .filter(|word| {
+            word.chars().count() >= MIN_WORD
+                && !NOT_A_TOPIC.contains(&word.as_str())
+                && !MONTHS.contains(&word.as_str())
+                && !word.chars().all(|c| c.is_ascii_digit())
+        })
+        .collect()
+}
+
+fn scheduled_for(item: &str, ledger: &Ledger) -> Option<Date> {
+    let wanted = topic_words(item);
+    ledger
+        .scheduled
+        .iter()
+        .filter(|entry| !matches!(entry.mark, Mark::Done | Mark::Skipped))
+        .filter_map(|entry| {
+            let date = entry.when.date()?;
+            let steps = entry.steps.iter().map(|step| step.text.as_str());
+            let text = std::iter::once(entry.what.as_str()).chain(steps).collect::<Vec<_>>();
+            let shared = topic_words(&text.join(" ")).intersection(&wanted).count();
+            (shared > 0).then_some((shared, date))
+        })
+        .max_by_key(|(shared, date)| (*shared, std::cmp::Reverse(*date)))
+        .map(|(_, date)| date)
+}
+
+/// The ledger's Not verified items. An item waits for the date of the open dated Scheduled item
+/// that shares a topic word with it, else for the date the ledger waits on while its state is
+/// `waiting`.
+#[must_use]
+pub fn unverified_of(ledger: &Ledger) -> Vec<Unverified> {
+    let waiting = match (ledger.status.state, &ledger.waiting_on) {
+        (Some(LedgerState::Waiting), Some(WaitingOn::Date(date))) => Some(*date),
+        _ => None,
+    };
+    real(&ledger.not_verified)
+        .map(|entry| Unverified {
+            text: entry.text.clone(),
+            until: scheduled_for(&entry.text, ledger).or(waiting),
+        })
+        .collect()
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -81,13 +220,34 @@ pub struct Report {
     pub head: String,
     pub lines: Vec<Line>,
     /// The items the agent's ledger lists under Not verified.
-    pub unverified: Vec<String>,
+    pub unverified: Vec<Unverified>,
 }
 
 impl Report {
     #[must_use]
     pub fn outcome(&self) -> Outcome {
         decide(&self.lines)
+    }
+
+    /// The report as it reads on `today`: an item whose date has come is no longer waiting.
+    #[must_use]
+    pub fn on(&self, today: Date) -> Self {
+        let mut report = self.clone();
+        if !self.unverified.is_empty() {
+            let own = |line: &&mut Line| {
+                line.kind == Kind::Unverified
+                    && matches!(line.status, Status::Unknown | Status::Waiting)
+            };
+            for line in report.lines.iter_mut().filter(own) {
+                (line.status, line.detail) = unverified_status(Some(&self.unverified), today);
+            }
+        }
+        report
+    }
+
+    #[must_use]
+    pub fn outcome_on(&self, today: Date) -> Outcome {
+        self.on(today).outcome()
     }
 
     /// The short note that asks the agent to fix what failed. `None` when nothing failed.
@@ -124,7 +284,8 @@ pub struct Input<'a> {
     pub branch: &'a str,
     pub pr: PrFact,
     /// The ledger's Not verified items; `None` when the tab keeps no ledger.
-    pub unverified: Option<Vec<String>>,
+    pub unverified: Option<Vec<Unverified>>,
+    pub today: Date,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -248,14 +409,22 @@ pub fn pull_request_status(snapshot: &Snapshot, local_head: &str) -> (Status, St
 }
 
 #[must_use]
-pub fn unverified_status(items: Option<&[String]>) -> (Status, String) {
+pub fn unverified_status(items: Option<&[Unverified]>, today: Date) -> (Status, String) {
     match items {
         None => (Status::Skipped, "the agent keeps no progress report".to_owned()),
         Some([]) => (Status::Pass, "nothing left unverified".to_owned()),
-        Some(items) => (
-            Status::Unknown,
-            format!("{} the agent did not verify", plural(items.len(), "item", "items")),
-        ),
+        Some(items) => {
+            let open = items.iter().filter(|item| item.waiting_for(today).is_none()).count();
+            if open > 0 {
+                return (
+                    Status::Unknown,
+                    format!("{} the agent did not verify", plural(open, "item", "items")),
+                );
+            }
+            let first = items.iter().filter_map(|item| item.waiting_for(today)).min();
+            let when = first.map_or_else(String::new, |date| format!(" until {date}"));
+            (Status::Waiting, format!("{} waiting{when}", plural(items.len(), "item", "items")))
+        }
     }
 }
 
@@ -352,7 +521,7 @@ pub fn run(input: &Input<'_>) -> Report {
         Line::new(Kind::Committed, committed),
         Line::new(Kind::Pushed, pushed),
         Line::new(Kind::PullRequest, pull_request_line(&pr, &head)),
-        Line::new(Kind::Unverified, unverified_status(input.unverified.as_deref())),
+        Line::new(Kind::Unverified, unverified_status(input.unverified.as_deref(), input.today)),
     ];
     Report { head, lines, unverified }
 }
@@ -532,23 +701,185 @@ mod tests {
         assert_eq!(pull_request_status(&snap, "").0, Status::Pass);
     }
 
+    fn day(text: &str) -> Date {
+        Date::parse(text).unwrap()
+    }
+
     #[test]
     fn the_ledger_line_lists_unverified_items_and_skips_a_tab_without_a_ledger() {
-        let items = vec!["the migration on staging".to_owned()];
-        let two = vec!["a".to_owned(), "b".to_owned()];
-        assert_eq!(unverified_status(None).0, Status::Skipped);
+        let today = day("2026-10-27");
+        let items = vec![Unverified::new("the migration on staging")];
+        let two = vec![Unverified::new("a"), Unverified::new("b")];
+        assert_eq!(unverified_status(None, today).0, Status::Skipped);
         assert_eq!(
-            unverified_status(Some(&[])),
+            unverified_status(Some(&[]), today),
             (Status::Pass, "nothing left unverified".to_owned())
         );
         assert_eq!(
-            unverified_status(Some(&items)),
+            unverified_status(Some(&items), today),
             (Status::Unknown, "1 item the agent did not verify".to_owned())
         );
         assert_eq!(
-            unverified_status(Some(&two)),
+            unverified_status(Some(&two), today),
             (Status::Unknown, "2 items the agent did not verify".to_owned())
         );
+    }
+
+    #[test]
+    fn items_due_on_a_later_date_wait_and_only_the_rest_are_unverified() {
+        let today = day("2026-10-27");
+        let tomorrow = Unverified::until("live list", day("2026-10-28"));
+        let cases = [
+            (vec![tomorrow.clone()], Status::Waiting, "1 item waiting until 2026-10-28"),
+            (
+                vec![tomorrow.clone(), Unverified::until("two", day("2026-11-02"))],
+                Status::Waiting,
+                "2 items waiting until 2026-10-28",
+            ),
+            (
+                vec![tomorrow.clone(), Unverified::new("safari")],
+                Status::Unknown,
+                "1 item the agent did not verify",
+            ),
+            (
+                vec![Unverified::until("due today", today)],
+                Status::Unknown,
+                "1 item the agent did not verify",
+            ),
+            (
+                vec![Unverified::until("overdue", day("2026-10-01")), tomorrow],
+                Status::Unknown,
+                "1 item the agent did not verify",
+            ),
+        ];
+        for (items, status, detail) in cases {
+            assert_eq!(
+                unverified_status(Some(&items), today),
+                (status, detail.to_owned()),
+                "{items:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_outcome_waits_only_when_nothing_else_is_open() {
+        use Status::{Fail, Pass, Unknown, Waiting};
+        let cases: [(&[Status], Outcome); 5] = [
+            (&[Pass, Waiting], Outcome::Waiting),
+            (&[Waiting, Waiting], Outcome::Waiting),
+            (&[Unknown, Waiting], Outcome::NotVerified),
+            (&[Fail, Waiting], Outcome::Blocked),
+            (&[Pass, Pass], Outcome::Done),
+        ];
+        for (statuses, want) in cases {
+            let lines: Vec<Line> = statuses.iter().copied().map(line).collect();
+            assert_eq!(decide(&lines), want, "{statuses:?}");
+        }
+    }
+
+    fn report_of(items: Vec<Unverified>, today: Date) -> Report {
+        Report {
+            head: String::new(),
+            lines: vec![Line {
+                kind: Kind::Unverified,
+                status: unverified_status(Some(&items), today).0,
+                detail: unverified_status(Some(&items), today).1,
+            }],
+            unverified: items,
+        }
+    }
+
+    #[test]
+    fn a_report_stops_waiting_on_the_day_it_is_due() {
+        let report =
+            report_of(vec![Unverified::until("live list", day("2026-10-28"))], day("2026-10-27"));
+        assert_eq!(report.outcome(), Outcome::Waiting);
+        assert_eq!(report.outcome_on(day("2026-10-27")), Outcome::Waiting);
+        assert_eq!(report.outcome_on(day("2026-10-28")), Outcome::NotVerified);
+        assert_eq!(report.outcome_on(day("2026-11-30")), Outcome::NotVerified);
+        let checked_later = report.on(day("2026-10-28"));
+        assert_eq!(checked_later.lines[0].detail, "1 item the agent did not verify");
+    }
+
+    fn ledger(not_verified: &str, scheduled: &str, status: &str) -> Ledger {
+        Ledger::parse(&format!(
+            "# Goal\nx\n\n## Status\n{status}\n\n## Not verified\n{not_verified}\n\n## Scheduled\n{scheduled}\n"
+        ))
+    }
+
+    const OWNERS_SCHEDULE: &str = "- [ ] 2026-10-28 -- Tomorrow (Oct 28), check that a test account's list picked up yesterday's watch -- needs a day to pass";
+
+    #[test]
+    fn the_owners_ledger_waits_for_tomorrow() {
+        let parsed = ledger("- Live list across a day boundary", OWNERS_SCHEDULE, "state: done");
+        assert_eq!(
+            unverified_of(&parsed),
+            [Unverified::until("Live list across a day boundary", day("2026-10-28"))]
+        );
+    }
+
+    #[test]
+    fn an_item_matches_a_scheduled_one_by_a_shared_topic_word_or_a_sub_step() {
+        let cases = [
+            ("- the Safari layout", "- [ ] 2026-10-28 -- run the nightly import", None),
+            ("- Live list", "- [ ] 2026-10-28 -- Check the lists", Some("2026-10-28")),
+            ("- Live list", "- [x] 2026-10-28 -- check the list", None),
+            ("- Live list", "- [-] 2026-10-28 -- check the list", None),
+            ("- Live list", "- [ ] on: the deploy -- check the list", None),
+            ("- Live list", "- [ ] ~2026-11-03 -- check the list", Some("2026-11-03")),
+            ("- Live list", "- [ ] you -- check the list", None),
+            (
+                "- the migration on staging",
+                "- [ ] 2026-10-29 -- recheck\n  - [ ] staging row counts",
+                Some("2026-10-29"),
+            ),
+            ("- Check it again tomorrow", "- [ ] 2026-10-28 -- check it tomorrow", None),
+            (
+                "- the Safari layout and the list",
+                "- [ ] 2026-11-05 -- the list\n- [ ] 2026-11-02 -- the Safari layout, the list",
+                Some("2026-11-02"),
+            ),
+            (
+                "- Live list",
+                "- [ ] 2026-11-05 -- the list\n- [ ] 2026-11-02 -- the list",
+                Some("2026-11-02"),
+            ),
+        ];
+        for (not_verified, scheduled, want) in cases {
+            let items = unverified_of(&ledger(not_verified, scheduled, "state: done"));
+            assert_eq!(items.len(), 1, "{not_verified}");
+            assert_eq!(items[0].until, want.map(day), "{not_verified} vs {scheduled}");
+        }
+    }
+
+    #[test]
+    fn a_waiting_ledger_with_a_date_holds_every_item_unless_a_scheduled_one_is_sooner() {
+        let status = "state: waiting";
+        let none = Ledger::parse(
+            "# Goal\nx\n\n## Status\nstate: waiting\n\n## Not verified\n- a thing\n- another\n",
+        );
+        assert_eq!(unverified_of(&none), [Unverified::new("a thing"), Unverified::new("another")]);
+        let mut waiting = ledger("- a thing\n- another", "- [ ] 2026-10-29 -- another", status);
+        waiting.waiting_on = Some(WaitingOn::Date(day("2026-11-01")));
+        assert_eq!(
+            unverified_of(&waiting),
+            [
+                Unverified::until("a thing", day("2026-11-01")),
+                Unverified::until("another", day("2026-10-29")),
+            ]
+        );
+        let mut done = ledger("- a thing", "", "state: done");
+        done.waiting_on = Some(WaitingOn::Date(day("2026-11-01")));
+        assert_eq!(unverified_of(&done), [Unverified::new("a thing")]);
+        let mut event = ledger("- a thing", "", status);
+        event.waiting_on = Some(WaitingOn::Event("the deploy".to_owned()));
+        assert_eq!(unverified_of(&event), [Unverified::new("a thing")]);
+    }
+
+    #[test]
+    fn placeholder_not_verified_entries_are_left_out() {
+        let items = unverified_of(&ledger("- nothing", "", "state: done"));
+        assert_eq!(items, Vec::<Unverified>::new());
     }
 
     #[test]
