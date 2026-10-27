@@ -413,3 +413,78 @@ fn the_ids_of_the_agent_table_map_to_a_cli_and_a_transcript_source() {
     }
     assert_eq!(Cli::from_id("mine"), None);
 }
+
+const SHELL_PS: &str = "  PID  PPID STARTED                      ARGS
+    1     0 Wed Oct  7 09:29:17 2026     /sbin/launchd
+ 500     1 Wed Oct  7 09:30:00 2026     /Applications/Tidewatch.app/Contents/MacOS/tidewatch
+ 510   500 Fri Oct 16 13:20:00 2026     /bin/zsh -l -i
+ 511   510 Fri Oct 16 13:23:31 2026     claude
+ 512   500 Fri Oct 16 13:21:00 2026     /bin/zsh -l -i
+ 513   512 Fri Oct 16 13:24:00 2026     node /usr/local/bin/codex
+ 520   500 Fri Oct 16 13:25:00 2026     /bin/zsh -c exec claude --resume x
+ 530   510 Fri Oct 16 13:26:00 2026     claude -p fix it
+ 540     1 Fri Oct 16 13:27:00 2026     claude
+";
+
+fn shell_table() -> ProcessTable {
+    ProcessTable::new(parse_ps(SHELL_PS))
+}
+
+fn pids_of(sessions: &[Session]) -> Vec<u32> {
+    sessions.iter().filter_map(|s| s.running().map(|r| r.pid)).collect()
+}
+
+#[test]
+fn inside_a_shell_only_its_own_descendants_count() {
+    let table = shell_table();
+    let entries = [
+        entry(511, ID_A, "Fri Oct 16 13:23:31 2026", "idle"),
+        entry(540, ID_B, "Fri Oct 16 13:27:00 2026", "idle"),
+    ];
+    let got = claude_sessions_in(&entries, &table, Scope::Inside(&[510]), &agents());
+    assert_eq!(pids_of(&got), [511]);
+    let got = claude_sessions_in(&entries, &table, Scope::Inside(&[512]), &agents());
+    assert_eq!(pids_of(&got), Vec::<u32>::new());
+    let got = claude_sessions_in(&entries, &table, Scope::Inside(&[510, 512]), &agents());
+    assert_eq!(pids_of(&got), [511]);
+}
+
+#[test]
+fn inside_scope_takes_tidewatchs_own_tabs_that_elsewhere_leaves_out() {
+    let table = shell_table();
+    let entries = [entry(511, ID_A, "Fri Oct 16 13:23:31 2026", "idle")];
+    assert_eq!(claude_sessions(&entries, &table, 500, &agents()), []);
+    assert_eq!(claude_sessions_in(&entries, &table, Scope::Inside(&[510]), &agents()).len(), 1);
+}
+
+#[test]
+fn a_session_started_in_the_ptys_own_process_belongs_to_that_pty() {
+    let table = shell_table();
+    let entries = [entry(520, ID_A, "Fri Oct 16 13:25:00 2026", "idle")];
+    let got = claude_sessions_in(&entries, &table, Scope::Inside(&[520]), &agents());
+    assert_eq!(pids_of(&got), [520]);
+}
+
+#[test]
+fn a_one_shot_claude_run_inside_a_shell_is_not_a_session() {
+    let table = shell_table();
+    let entries = [entry(530, ID_B, "Fri Oct 16 13:26:00 2026", "busy")];
+    let got = claude_sessions_in(&entries, &table, Scope::Inside(&[510]), &agents());
+    assert_eq!(got, []);
+}
+
+#[test]
+fn a_reused_pid_with_another_start_time_is_not_the_session_inside_a_shell() {
+    let table = shell_table();
+    let entries = [entry(511, ID_A, "Mon Oct 12 18:01:24 2026", "idle")];
+    let got = claude_sessions_in(&entries, &table, Scope::Inside(&[510]), &agents());
+    assert_eq!(got, []);
+}
+
+#[test]
+fn the_other_clis_are_found_inside_a_shell_by_program_name() {
+    let table = shell_table();
+    let got = other_candidates_in(&table, Scope::Inside(&[512]), &agents());
+    assert_eq!(got.iter().map(|c| (c.cli, c.pid)).collect::<Vec<_>>(), [(Cli::Codex, 513)]);
+    assert_eq!(other_candidates_in(&table, Scope::Inside(&[510]), &agents()), []);
+}

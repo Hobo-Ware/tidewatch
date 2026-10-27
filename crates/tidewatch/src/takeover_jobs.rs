@@ -136,6 +136,7 @@ fn run_move(system: &dyn System, env: &ScanEnv, job: &MoveJob) -> Done {
             proc_start: running.proc_start.clone(),
             session_id: session.session_id.clone(),
             allow_quiet: spec.allow_quiet,
+            allow_working: false,
         };
         let ended = end_session(system, env, agents, &request, *wait);
         let why = match ended {

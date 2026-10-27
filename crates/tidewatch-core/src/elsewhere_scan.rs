@@ -12,8 +12,9 @@ use std::time::{Duration, Instant, SystemTime};
 
 use crate::agents::AgentTable;
 use crate::elsewhere::{
-    Activity, Candidate, Cli, Presence, ProcessTable, RegistryEntry, Running, Session,
-    claude_sessions, is_session_id, other_candidates, parse_ps, parse_registry_entry, registry_pid,
+    Activity, Candidate, Cli, Presence, ProcessTable, RegistryEntry, Running, Scope, Session,
+    claude_sessions_in, is_session_id, other_candidates_in, parse_ps, parse_registry_entry,
+    registry_pid,
 };
 use crate::permission_mode::last_claude_level;
 use crate::restore::codex_session_id;
@@ -263,6 +264,42 @@ fn registry_entries(claude_dir: &Path) -> Vec<RegistryEntry> {
 
 #[must_use]
 pub fn scan_running(system: &dyn System, env: &ScanEnv, agents: &AgentTable) -> Option<Scan> {
+    scan_in(system, env, agents, Scope::Elsewhere { own_pid: env.own_pid }).map(|(_, scan)| scan)
+}
+
+/// The sessions running inside the given shells, each with the shell it runs in. A session found
+/// under two shells goes to the nearest one, the one with the later pid.
+#[must_use]
+pub fn scan_in_shells(
+    system: &dyn System,
+    env: &ScanEnv,
+    agents: &AgentTable,
+    shells: &[u32],
+) -> Option<Vec<(u32, Session)>> {
+    let (table, scan) = scan_in(system, env, agents, Scope::Inside(shells))?;
+    let mut found: Vec<(u32, Session)> = scan
+        .sessions
+        .into_iter()
+        .filter_map(|session| {
+            let pid = session.running()?.pid;
+            let shell = shells
+                .iter()
+                .copied()
+                .filter(|shell| pid == *shell || table.descends_from(pid, *shell))
+                .max()?;
+            Some((shell, session))
+        })
+        .collect();
+    found.sort_by_key(|(shell, session)| (*shell, session.running().map(|r| r.pid)));
+    Some(found)
+}
+
+fn scan_in(
+    system: &dyn System,
+    env: &ScanEnv,
+    agents: &AgentTable,
+    scope: Scope,
+) -> Option<(ProcessTable, Scan)> {
     let table = ProcessTable::new(parse_ps(&system.ps()?));
     let entries = registry_entries(&env.claude_dir);
     let held_ids = entries
@@ -270,18 +307,18 @@ pub fn scan_running(system: &dyn System, env: &ScanEnv, agents: &AgentTable) -> 
         .filter(|entry| table.get(entry.pid).is_some_and(|row| row.started == entry.proc_start))
         .map(|entry| entry.session_id.clone())
         .collect();
-    let mut sessions = claude_sessions(&entries, &table, env.own_pid, agents);
+    let mut sessions = claude_sessions_in(&entries, &table, scope, agents);
     for session in &mut sessions {
         let file = session.session_id.as_deref().map(|id| env.claude_file(&session.cwd, id));
         session.flags.level =
             file.and_then(|file| last_claude_level(&file)).or(session.flags.level);
     }
-    for candidate in other_candidates(&table, env.own_pid, agents) {
+    for candidate in other_candidates_in(&table, scope, agents) {
         if let Some(cwd) = system.cwd_of(candidate.pid) {
             sessions.push(session_of(candidate, cwd, env));
         }
     }
-    Some(Scan { sessions, held_ids })
+    Some((table, Scan { sessions, held_ids }))
 }
 
 fn session_of(candidate: Candidate, cwd: PathBuf, env: &ScanEnv) -> Session {
@@ -690,6 +727,8 @@ pub struct EndRequest {
     pub proc_start: String,
     pub session_id: Option<String>,
     pub allow_quiet: bool,
+    /// End it even while it works on a turn.
+    pub allow_working: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -720,7 +759,21 @@ pub fn end_session(
     request: &EndRequest,
     wait: Duration,
 ) -> Ended {
-    let Some(scan) = scan_running(system, env, agents) else {
+    end_session_in(Scope::Elsewhere { own_pid: env.own_pid }, system, env, agents, request, wait)
+}
+
+/// [`end_session`] for a session found in any [`Scope`]: the scan that checks it is still the
+/// same one looks where it was found.
+#[must_use]
+pub fn end_session_in(
+    scope: Scope,
+    system: &dyn System,
+    env: &ScanEnv,
+    agents: &AgentTable,
+    request: &EndRequest,
+    wait: Duration,
+) -> Ended {
+    let Some((_, scan)) = scan_in(system, env, agents, scope) else {
         return Ended::Refused(Refusal::ScanFailed);
     };
     let found = scan.sessions.iter().find_map(|session| {
@@ -733,8 +786,12 @@ pub fn end_session(
     });
     let Some(running) = found else { return Ended::Refused(Refusal::Gone) };
     match (running.host, running.activity) {
-        (crate::elsewhere::Host::Stdusk, _) => return Ended::Refused(Refusal::Stdusk),
-        (_, Activity::Working) => return Ended::Refused(Refusal::Working),
+        (crate::elsewhere::Host::Stdusk, _) if matches!(scope, Scope::Elsewhere { .. }) => {
+            return Ended::Refused(Refusal::Stdusk);
+        }
+        (_, Activity::Working) if !request.allow_working => {
+            return Ended::Refused(Refusal::Working);
+        }
         (_, Activity::Quiet) if !request.allow_quiet => {
             return Ended::Refused(Refusal::NotConfirmed);
         }
