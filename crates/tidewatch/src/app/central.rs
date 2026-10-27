@@ -266,6 +266,17 @@ impl Tidewatch {
             self.show_toast_pill(ui);
             return;
         }
+        if !self.active_is_draft()
+            && let Some(name) = self.service_logs_showing()
+        {
+            let keys_free = !frame.keys.modal_open && !frame.keys.typing_in_a_panel;
+            self.show_service_logs(ui, areas.terminal, &name, keys_free, frame.keys.modal_open);
+            if panels {
+                self.show_panes(ui, &areas, ctx);
+            }
+            self.show_toast_pill(ui);
+            return;
+        }
         if self.active_is_draft() {
             self.show_draft(ui, areas.terminal, ctx, frame);
             if panels {

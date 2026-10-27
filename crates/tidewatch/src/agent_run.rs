@@ -270,7 +270,8 @@ impl AgentRun {
             | TabEvent::Avatar { .. }
             | TabEvent::MeeseeksDone { .. }
             | TabEvent::MeeseeksName { .. }
-            | TabEvent::Ask { .. } => {}
+            | TabEvent::Ask { .. }
+            | TabEvent::Services(_) => {}
         }
     }
 

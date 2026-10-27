@@ -24,6 +24,7 @@ use crate::pane::{Body, Pane};
 use crate::park::Fits;
 use crate::progress_model::{TabRing, tab_ring};
 use crate::remote_pill::Popover;
+use crate::services_view;
 use crate::tabs::{Action, Step, Tabs};
 use crate::window_chrome::{self, Chrome};
 use crate::{layout, overview_view, status_view};
@@ -85,6 +86,8 @@ impl Tidewatch {
             })
             .collect();
 
+        let service_rows = self.services_rows();
+        let mut service_action = None;
         let chrome = self.shell.chrome();
         let drawn = chrome == Chrome::Drawn;
         let buttons_width = self.desktop.controls_width();
@@ -138,7 +141,12 @@ impl Tidewatch {
                     self.leftovers.chip(ui);
                     ui.add_space(8.0);
                     let pill_width = self.updates.pill_width(ui);
-                    let tail = if pill_width > 0.0 { pill_width + STRIP_GAP } else { 0.0 };
+                    let services_width = services_view::pill_width(ui, service_rows.len());
+                    let tail = [pill_width, services_width]
+                        .into_iter()
+                        .filter(|width| *width > 0.0)
+                        .map(|width| width + STRIP_GAP)
+                        .sum::<f32>();
                     let room = ui.available_width()
                         - ICON_BOX * 2.0
                         - 26.0
@@ -184,6 +192,7 @@ impl Tidewatch {
                         ui.next_widget_position().x - plus.rect.right(),
                         now,
                     );
+                    service_action = services_view::pill(ui, &service_rows, &mut self.services_ui);
                     self.updates.pill(ui);
                     if strip_button(
                         ui,
@@ -200,6 +209,9 @@ impl Tidewatch {
                     }
                 });
             });
+        if let Some(action) = service_action {
+            self.apply_service_action(action, ui.ctx());
+        }
     }
 
     fn amphetamine_button(&mut self, ui: &mut egui::Ui, gap: f32, now: f64) {
@@ -276,6 +288,10 @@ impl Tidewatch {
             }
             if menu_item(ui, "Open repo...", "").clicked() {
                 frame.repo_command = Some(RepoCommand::Open);
+                ui.close();
+            }
+            if menu_item(ui, "Add service...", "").clicked() {
+                frame.repo_command = Some(RepoCommand::AddService);
                 ui.close();
             }
             let close = ui.add_enabled_ui(several, |ui| menu_item(ui, "Close repo", "")).inner;

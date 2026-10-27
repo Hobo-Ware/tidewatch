@@ -8,6 +8,7 @@ use std::path::Path;
 use stdusk_core::agent_pane::{AgentSetup, PROMPT_FALLBACK};
 use stdusk_core::config::TerminalConfig;
 use stdusk_core::handoff::{PaneMeta, adopt_pane};
+use stdusk_core::repaint::Repaint;
 use stdusk_core::shell::ShellProfile;
 use stdusk_core::terminal::{PtyTerm, SpawnOpts};
 use stdusk_egui::repaint_handle;
@@ -15,6 +16,9 @@ use tidewatch_core::prepare::{Prepared, note_script};
 
 const INITIAL_COLS: usize = 80;
 const INITIAL_ROWS: usize = 24;
+const SERVICE_COLS: usize = 160;
+const SERVICE_ROWS: usize = 40;
+const SERVICE_SCROLLBACK: usize = 5000;
 
 pub(crate) fn spawn_shell(ctx: &egui::Context, dir: &Path) -> PtyTerm {
     PtyTerm::spawn(INITIAL_COLS, INITIAL_ROWS, repaint_handle(ctx), &spawn_opts(dir, None))
@@ -33,6 +37,19 @@ pub(crate) fn adopt(
         opts.cwd = Some(cwd.clone());
     }
     adopt_pane(repaint_handle(ctx), meta, fd, &opts)
+}
+
+/// The user's shell running a repo service's `command` in `dir`, so the service is the pty's
+/// process and its exit code is the shell's. Wide, so a log line rarely wraps.
+pub(crate) fn spawn_service(repaint: Repaint, dir: &Path, command: &str) -> PtyTerm {
+    let profile = ShellProfile {
+        shell: Some(user_shell(std::env::var("SHELL").ok())),
+        args: vec!["-c".to_owned(), command.to_owned()],
+        cwd: None,
+        env: BTreeMap::new(),
+    };
+    let opts = SpawnOpts { scrollback_lines: SERVICE_SCROLLBACK, ..spawn_opts(dir, Some(profile)) };
+    PtyTerm::spawn(SERVICE_COLS, SERVICE_ROWS, repaint, &opts)
 }
 
 /// A plain shell that prints `note` first, for a restored tab whose agent could not be resumed.

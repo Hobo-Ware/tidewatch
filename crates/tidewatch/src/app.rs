@@ -30,6 +30,7 @@ mod reopen;
 mod repos;
 mod restart;
 mod review;
+mod services;
 mod settings;
 mod stdusk;
 pub(crate) mod strip;
@@ -113,6 +114,8 @@ use crate::repo::Workspace;
 use crate::repo_base::Bases;
 use crate::repo_close::RepoClose;
 use crate::restore_glue::{self};
+use crate::services_glue;
+use crate::services_view;
 use crate::session_glue::Saver;
 use crate::settings::Settings;
 use crate::shell::{self, Shell};
@@ -239,6 +242,8 @@ pub(crate) struct Tidewatch {
     settings_sync: sync_glue::Host,
     shell: Shell<RealOs>,
     desktop: window_chrome::Desktop,
+    services: services_glue::Host,
+    services_ui: services_view::Memory,
 }
 
 impl Tidewatch {
@@ -269,9 +274,13 @@ impl Tidewatch {
         }
         let adopted = incoming.map(|incoming| take_over(&cc.egui_ctx, incoming, &mut shell));
         let hooks_port = adopted.as_ref().and_then(|adopted| adopted.hook_port);
-        let (tabs, credentials, notes, focus) = match adopted {
-            Some(adopted) => (adopted.tabs, adopted.credentials, adopted.notes, adopted.focus),
-            None => (fresh_tabs(&cc.egui_ctx, &workspaces), Vec::new(), Vec::new(), false),
+        let (tabs, credentials, notes, focus, kept_services) = match adopted {
+            Some(adopted) => {
+                (adopted.tabs, adopted.credentials, adopted.notes, adopted.focus, adopted.services)
+            }
+            None => {
+                (fresh_tabs(&cc.egui_ctx, &workspaces), Vec::new(), Vec::new(), false, Vec::new())
+            }
         };
         let recent = welcome.then(|| recent_repos(paths.as_ref()));
         let (hooks, hooks_kept) = match hooks_port {
@@ -359,6 +368,13 @@ impl Tidewatch {
         .with_fake_state(fake_state(std::env::var("TIDEWATCH_FAKE_UPDATE_STATE").ok().as_deref()));
         let settings_sync =
             sync_glue::Host::new(paths.as_ref(), flow.tools(), screenshot.is_none(), &cc.egui_ctx);
+        let mut services = services_glue::Host::new(
+            paths.clone(),
+            services_spawner(&cc.egui_ctx),
+            services_autostart(screenshot.is_some() || shell.env.background),
+            std::env::var(services_glue::FAKE_VAR).is_ok_and(|value| value == "1"),
+        );
+        services.adopt(kept_services);
         let mut app = Self {
             terminal_font,
             terminal_config: terminal::terminal_config(terminal_prefs.copy_on_select),
@@ -462,6 +478,8 @@ impl Tidewatch {
             settings_sync,
             desktop: shell.desktop.clone(),
             shell: shell::start(&cc.egui_ctx, shell),
+            services,
+            services_ui: services_view::Memory::from_env(),
         };
         for (group, workspace) in app.workspaces.iter().enumerate().filter(|_| !welcome) {
             if !restored {
@@ -491,11 +509,25 @@ impl Tidewatch {
 }
 
 struct Adopted {
+    services: Vec<handoff::ResumedService<PtyTerm>>,
     tabs: Tabs<Pane<PtyTerm>>,
     credentials: Vec<(u64, tidewatch_core::listener::Credential)>,
     notes: Vec<String>,
     focus: bool,
     hook_port: Option<u16>,
+}
+
+fn services_spawner(ctx: &egui::Context) -> services_glue::Spawner {
+    let ctx = ctx.clone();
+    Box::new(move |repo, command| {
+        crate::pty::spawn_service(stdusk_egui::repaint_handle(&ctx), repo, command)
+    })
+}
+
+/// A screenshot or background run starts no saved service on its own, so a throwaway run in the
+/// real home never starts what the owner's repos define, unless `TIDEWATCH_DEV_SERVICES_AUTOSTART=1`.
+fn services_autostart(throwaway: bool) -> bool {
+    !throwaway || std::env::var("TIDEWATCH_DEV_SERVICES_AUTOSTART").is_ok_and(|v| v == "1")
 }
 
 fn fresh_tabs(ctx: &egui::Context, workspaces: &[Workspace]) -> Tabs<Pane<PtyTerm>> {
@@ -523,13 +555,20 @@ fn take_over(
             std::process::exit(1);
         }
     };
-    let handoff::Rebuilt { mut tabs, credentials, notes } = rebuilt;
-    if let Err(e) = handoff::confirm(&incoming, &mut tabs) {
+    let handoff::Rebuilt { mut tabs, credentials, notes, mut services } = rebuilt;
+    if let Err(e) = handoff::confirm(&incoming, &mut tabs, &mut services) {
         eprintln!("tidewatch: could not confirm the handover ({e})");
     }
     shell.claim_from_old_window();
     let handover = incoming.session();
-    Adopted { tabs, credentials, notes, focus: handover.focus, hook_port: handover.hook_port }
+    Adopted {
+        tabs,
+        credentials,
+        notes,
+        focus: handover.focus,
+        hook_port: handover.hook_port,
+        services,
+    }
 }
 
 fn wall_ms() -> u128 {
@@ -584,6 +623,7 @@ impl eframe::App for Tidewatch {
             &self.tabs,
         );
         self.amphetamine.shutdown();
+        self.services.shutdown();
         if let Some(paths) = self.paths.as_ref().filter(|_| self.screenshot.is_none()) {
             run_marker::end(paths);
         }

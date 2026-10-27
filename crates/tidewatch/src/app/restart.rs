@@ -54,6 +54,7 @@ impl Tidewatch {
         }
         sent?;
         handoff::release(&mut self.tabs);
+        self.services.release();
         Ok(())
     }
 
@@ -64,12 +65,14 @@ impl Tidewatch {
             welcome: self.welcome.is_some(),
             hook_port: self.hooks.port(),
         };
-        let (handover, order) =
+        let (mut handover, order) =
             handoff::plan(&self.tabs, &facts, &|id| self.hooks.credential_of(id));
+        handover.services = self.services.entries();
         spawn_successor(socket).map_err(|e| format!("the new window cannot start ({e})"))?;
         let stream = accept_within(listener, LAUNCH_TIMEOUT)
             .map_err(|e| format!("the new window did not connect ({e})"))?;
-        let panes = handoff::capture(&self.tabs, &order)?;
+        let mut panes = handoff::capture(&self.tabs, &order)?;
+        panes.extend(self.services.captures()?);
         send_session(&stream, &handover, &panes)
             .map_err(|e| format!("the new window did not take over ({e})"))
     }
