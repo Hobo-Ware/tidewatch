@@ -248,8 +248,9 @@ pub fn taken_names(paths: &TidewatchPaths, repo: &Path) -> HashSet<String> {
 /// other tool prunes or removes it. Picks a name that collides with no branch and no folder.
 /// Nothing half-made is left behind when git fails.
 pub fn add(paths: &TidewatchPaths, repo: &Path) -> Result<Worktree, WorktreeError> {
+    let _one_at_a_time = serial();
     let taken = |name: &str| is_taken(paths, repo, name);
-    add_named(paths, repo, &names::pick(random_seed(), taken), None)
+    create(paths, repo, &names::pick(random_seed(), taken), None)
 }
 
 /// [`add_named`] with `wanted`, or `wanted-2`, `wanted-3`... when a branch or folder took it since
@@ -260,13 +261,21 @@ pub fn add_free(
     wanted: &str,
     base: Option<&str>,
 ) -> Result<Worktree, WorktreeError> {
+    let _one_at_a_time = serial();
     let taken = |name: &str| is_taken(paths, repo, name);
     let name = if taken(wanted) {
         crate::branch_name::next_free(wanted, taken)
     } else {
         wanted.to_owned()
     };
-    add_named(paths, repo, &name, base)
+    create(paths, repo, &name, base)
+}
+
+/// Two `git worktree add` runs at once can fail with "failed to read .git/worktrees/<other>/commondir"
+/// while git scans the other's half-made entry, so this process makes one worktree at a time.
+fn serial() -> std::sync::MutexGuard<'static, ()> {
+    static ADDING: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    ADDING.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
 }
 
 fn is_taken(paths: &TidewatchPaths, repo: &Path, name: &str) -> bool {
@@ -277,6 +286,16 @@ fn is_taken(paths: &TidewatchPaths, repo: &Path, name: &str) -> bool {
 /// [`add`] with the name chosen by the caller; `base` is the branch or commit the new branch starts
 /// from, the current one when `None`.
 pub fn add_named(
+    paths: &TidewatchPaths,
+    repo: &Path,
+    name: &str,
+    base: Option<&str>,
+) -> Result<Worktree, WorktreeError> {
+    let _one_at_a_time = serial();
+    create(paths, repo, name, base)
+}
+
+fn create(
     paths: &TidewatchPaths,
     repo: &Path,
     name: &str,
