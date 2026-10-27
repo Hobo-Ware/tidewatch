@@ -61,6 +61,7 @@ pub mod link_scan;
 pub mod link_store;
 pub mod listener;
 pub mod mcp;
+pub mod me_face;
 pub mod meeseeks;
 pub mod meeseeks_branch;
 pub mod meeseeks_check;

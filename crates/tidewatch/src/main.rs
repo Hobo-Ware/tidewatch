@@ -102,6 +102,8 @@ mod mascot;
 mod mascot_motion;
 mod md_blocks;
 mod md_view;
+mod me_face;
+mod me_glue;
 mod meeseeks_glue;
 mod meeseeks_model;
 mod meeseeks_summary;

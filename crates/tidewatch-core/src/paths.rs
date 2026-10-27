@@ -178,6 +178,21 @@ impl TidewatchPaths {
         self.root.join(".state")
     }
 
+    #[must_use]
+    pub fn me_dir(&self) -> PathBuf {
+        self.state_dir().join("me")
+    }
+
+    #[must_use]
+    pub fn me_avatar_file(&self) -> PathBuf {
+        self.me_dir().join("avatar.jpg")
+    }
+
+    #[must_use]
+    pub fn me_avatar_stamp_file(&self) -> PathBuf {
+        self.me_dir().join("avatar.stamp")
+    }
+
     /// Every worktree Tidewatch removed, one JSON line each, appended before the removal.
     #[must_use]
     pub fn removals_log(&self) -> PathBuf {
@@ -500,6 +515,15 @@ mod tests {
     fn the_last_workspace_sits_in_the_state_dir_next_to_the_session() {
         let paths = paths();
         assert_eq!(paths.last_workspace_file(), paths.state_dir().join("last-workspace.toml"));
+    }
+
+    #[test]
+    fn the_owners_face_is_state_under_a_me_folder() {
+        let paths = paths();
+        assert_eq!(paths.me_dir(), paths.state_dir().join("me"));
+        assert_eq!(paths.me_avatar_file(), paths.state_dir().join("me/avatar.jpg"));
+        assert_eq!(paths.me_avatar_stamp_file(), paths.state_dir().join("me/avatar.stamp"));
+        assert_eq!(paths.me_avatar_file().parent(), paths.me_avatar_stamp_file().parent());
     }
 
     #[test]

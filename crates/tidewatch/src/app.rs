@@ -96,6 +96,7 @@ use crate::last_used::LastUsed;
 use crate::layout;
 use crate::leftover_glue;
 use crate::link_glue;
+use crate::me_glue;
 use crate::meeseeks_glue;
 use crate::new_tab::Request;
 use crate::notify::Notifier;
@@ -192,6 +193,7 @@ pub(crate) struct Tidewatch {
     progress: progress_glue::Host,
     job_live: job_glue::Host,
     link_live: link_glue::Host,
+    me: me_glue::Host,
     avatar_live: avatar_glue::Host,
     avatar_redraws: crate::avatar_redraw::Waiting,
     meeseeks: meeseeks_glue::Host,
@@ -315,6 +317,12 @@ impl Tidewatch {
         let job_live = job_glue::Host::from_env(paths.is_some() && screenshot.is_none());
         let link_live = link_glue::Host::from_env(paths.is_some() && screenshot.is_none());
         let avatar_live = avatar_glue::Host::from_env(paths.is_some() && screenshot.is_none());
+        let me = me_glue::Host::start(
+            &cc.egui_ctx,
+            paths.as_ref(),
+            flow.tools(),
+            screenshot.is_some() || shell.env.background,
+        );
         let meeseeks = meeseeks_glue::Host::from_env(paths.as_ref(), screenshot.is_none());
         let done_check = done_check_glue::Host::from_env(loaded.done_check.enabled);
         let keep_awake = keep_awake_glue::Host::new(
@@ -408,6 +416,7 @@ impl Tidewatch {
             progress,
             job_live,
             link_live,
+            me,
             avatar_live,
             avatar_redraws: crate::avatar_redraw::Waiting::default(),
             meeseeks,

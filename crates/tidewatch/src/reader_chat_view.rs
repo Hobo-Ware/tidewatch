@@ -25,6 +25,7 @@ use crate::code_block::{self, Look};
 use crate::job_model::clock_label;
 use crate::link_text::{Laid, Text};
 use crate::links;
+use crate::me_face;
 use crate::pictures::{self, Source};
 use crate::progress_ring::paint_spinner;
 use crate::reader_markdown::{self, Piece};
@@ -104,9 +105,14 @@ pub(crate) fn jump_pill(ui: &mut Ui, slot: Rect, label: &str) -> Response {
     response.on_hover_cursor(egui::CursorIcon::PointingHand)
 }
 
-/// The width a user bubble may take of a column `width` wide.
+/// The width a user bubble may take of a column `width` wide, beside the owner's face.
 pub(crate) fn user_width(width: f32) -> f32 {
-    (width * USER_SHARE).round()
+    (width * USER_SHARE).round() - AVATAR - AVATAR_GAP
+}
+
+/// Where the owner's face sits: at the right edge, its bottom level with the bubble's.
+fn user_face_rect(right: f32, bubble_bottom: f32) -> Rect {
+    Rect::from_min_size(pos2(right - AVATAR, bubble_bottom - AVATAR), vec2(AVATAR, AVATAR))
 }
 
 /// The width of an agent turn's column (bubble and chips) beside the face.
@@ -173,8 +179,8 @@ fn stamped(who: &str, at_ms: Option<i64>, zone: &TimeZone) -> String {
     }
 }
 
-/// A user message: a bubble at the right, `You · 16:02` over it. The text inside is markdown,
-/// left-aligned, in a bubble as wide as its text up to the user share of the column.
+/// A user message: a bubble at the right with the owner's face beside it, `You · 16:02` over it.
+/// The text inside is markdown, left-aligned, in a bubble as wide as its text up to its share.
 pub(crate) fn user(
     ui: &mut Ui,
     row: &Row,
@@ -228,69 +234,79 @@ fn user_bubble(ui: &mut Ui, row: &Row, meta_line: Meta<'_>, width: f32, pastes: 
         .map(Source::Pasted)
         .chain(files.iter().map(|path| Source::File(path)))
         .collect();
+    let dim = match meta_line {
+        Meta::Stamp(..) => 1.0,
+        Meta::Queued(_) => QUEUED_OPACITY,
+    };
     ui.with_layout(Layout::right_to_left(Align::Min), |ui| {
-        ui.allocate_ui_with_layout(vec2(max_w, 0.0), Layout::top_down(Align::Max), |ui| {
-            ui.spacing_mut().item_spacing.y = 4.0;
-            let dim = match meta_line {
-                Meta::Stamp(at_ms, zone) => {
-                    meta(ui, &stamped("You", at_ms, zone), Align::Max);
-                    1.0
+        let right = ui.max_rect().right();
+        ui.add_space(AVATAR + AVATAR_GAP);
+        let column =
+            ui.allocate_ui_with_layout(vec2(max_w, 0.0), Layout::top_down(Align::Max), |ui| {
+                ui.spacing_mut().item_spacing.y = 4.0;
+                match meta_line {
+                    Meta::Stamp(at_ms, zone) => meta(ui, &stamped("You", at_ms, zone), Align::Max),
+                    Meta::Queued(time) => queued_meta(ui, time),
                 }
-                Meta::Queued(time) => {
-                    queued_meta(ui, time);
-                    QUEUED_OPACITY
-                }
-            };
-            ui.set_opacity(dim);
-            Frame::new()
-                .fill(USER_FILL)
-                .stroke(Stroke::new(1.0, USER_LINE))
-                .corner_radius(USER_RADIUS)
-                .inner_margin(USER_PAD)
-                .show(ui, |ui| {
-                    let room = max_w - f32::from(USER_PAD.left + USER_PAD.right) - 2.0;
-                    if let Some(pairs) = question::parse_answers(&row.text) {
-                        answers_block(ui, &pairs, room, row.seq);
-                        return;
-                    }
-                    let natural = ui
-                        .painter()
-                        .layout(markdown.clone(), FontId::proportional(BODY_PX), brand::TEXT, room)
-                        .size()
-                        .x;
-                    let code = reader_markdown::pieces(&markdown, false)
-                        .iter()
-                        .filter_map(|piece| match piece {
-                            Piece::Code { text, .. } => {
-                                Some(code_block::natural_width(ui.painter(), text))
-                            }
-                            Piece::Image(label) => {
-                                Some(reader_markdown::image_chip_width(ui.painter(), label))
-                            }
-                            _ => None,
-                        })
-                        .fold(0.0, f32::max);
-                    let text_w =
-                        user_text_width(natural, user_markup::has_indented_block(&said), room)
-                            .max(code.min(room));
-                    let chips_w = pictures::block_width(pictures.len(), room);
-                    let shown_w = if has_text { text_w.max(chips_w) } else { chips_w };
-                    ui.set_width(shown_w.min(room));
-                    ui.with_layout(Layout::top_down(Align::Min), |ui| {
-                        ui.push_id(("pictures", row.seq), |ui| {
-                            sent_pictures(ui, &pictures, has_text, pastes);
-                        });
-                        if has_text {
-                            chat_text(ui, |ui| {
-                                ui.visuals_mut().code_bg_color = USER_CODE_FILL;
-                                ui.push_id(row.seq, |ui| {
-                                    reader_markdown::show(ui, &markdown, false, Look::USER);
-                                });
-                            });
+                ui.set_opacity(dim);
+                let bubble = Frame::new()
+                    .fill(USER_FILL)
+                    .stroke(Stroke::new(1.0, USER_LINE))
+                    .corner_radius(USER_RADIUS)
+                    .inner_margin(USER_PAD)
+                    .show(ui, |ui| {
+                        let room = max_w - f32::from(USER_PAD.left + USER_PAD.right) - 2.0;
+                        if let Some(pairs) = question::parse_answers(&row.text) {
+                            answers_block(ui, &pairs, room, row.seq);
+                            return;
                         }
+                        let natural = ui
+                            .painter()
+                            .layout(
+                                markdown.clone(),
+                                FontId::proportional(BODY_PX),
+                                brand::TEXT,
+                                room,
+                            )
+                            .size()
+                            .x;
+                        let code = reader_markdown::pieces(&markdown, false)
+                            .iter()
+                            .filter_map(|piece| match piece {
+                                Piece::Code { text, .. } => {
+                                    Some(code_block::natural_width(ui.painter(), text))
+                                }
+                                Piece::Image(label) => {
+                                    Some(reader_markdown::image_chip_width(ui.painter(), label))
+                                }
+                                _ => None,
+                            })
+                            .fold(0.0, f32::max);
+                        let text_w =
+                            user_text_width(natural, user_markup::has_indented_block(&said), room)
+                                .max(code.min(room));
+                        let chips_w = pictures::block_width(pictures.len(), room);
+                        let shown_w = if has_text { text_w.max(chips_w) } else { chips_w };
+                        ui.set_width(shown_w.min(room));
+                        ui.with_layout(Layout::top_down(Align::Min), |ui| {
+                            ui.push_id(("pictures", row.seq), |ui| {
+                                sent_pictures(ui, &pictures, has_text, pastes);
+                            });
+                            if has_text {
+                                chat_text(ui, |ui| {
+                                    ui.visuals_mut().code_bg_color = USER_CODE_FILL;
+                                    ui.push_id(row.seq, |ui| {
+                                        reader_markdown::show(ui, &markdown, false, Look::USER);
+                                    });
+                                });
+                            }
+                        });
                     });
-                });
-        });
+                bubble.response.rect
+            });
+        let mut painter = ui.painter().clone();
+        painter.set_opacity(dim);
+        me_face::paint(ui.ctx(), &painter, user_face_rect(right, column.inner.bottom()));
     });
     ui.add_space(OUTER);
 }
@@ -1228,7 +1244,7 @@ mod tests {
     #[test]
     fn a_bubble_with_an_image_marker_is_as_wide_as_its_chip_and_ends_where_a_text_bubble_does() {
         let pad = f32::from(USER_PAD.left);
-        for pane in [830.0, 340.0, 300.0] {
+        for pane in [830.0, 400.0, 340.0] {
             let (plain, ..) = bubble_and_chips("hi", pane);
             let cases = [
                 ("[Image #105]", "Image 105"),
@@ -1299,5 +1315,130 @@ mod tests {
                 .any(|rect| rect.stroke.width == 1.0 && rect.stroke.color == brand::CARD_LINE)
         );
         assert!(rects[..card].iter().any(|rect| rect.fill.a() < 255), "the shadow is under it");
+    }
+
+    fn flat(shape: &Shape, into: &mut Vec<Shape>) {
+        match shape {
+            Shape::Vec(shapes) => shapes.iter().for_each(|shape| flat(shape, into)),
+            other => into.push(other.clone()),
+        }
+    }
+
+    struct Drawn {
+        bubble: Rect,
+        face: Rect,
+        face_ring: Color32,
+        meta_right: f32,
+    }
+
+    fn draw_user_row(queued: bool) -> Drawn {
+        let ctx = crate::fonts::test_context();
+        crate::me_face::set(&ctx, crate::me_face::Me::Letter("V".to_owned()));
+        let row = Row {
+            seq: 7,
+            kind: Kind::User,
+            text: "In the chat could you also show my avatar?".to_owned(),
+            pictures: Vec::new(),
+        };
+        let zone = TimeZone::UTC;
+        let mut shapes = Vec::new();
+        for _ in 0..2 {
+            let raw = egui::RawInput {
+                screen_rect: Some(Rect::from_min_size(pos2(0.0, 0.0), vec2(700.0, 300.0))),
+                focused: true,
+                ..egui::RawInput::default()
+            };
+            let out = ctx.run_ui(raw, |ui| {
+                ui.set_width(600.0);
+                if queued {
+                    super::queued(ui, &row.text, 1, 0.0, 600.0);
+                } else {
+                    user(ui, &row, Some(1_700_000_000_000), &zone, (600.0, None));
+                }
+            });
+            shapes.clear();
+            out.shapes.iter().for_each(|clipped| flat(&clipped.shape, &mut shapes));
+        }
+        let bubble = shapes
+            .iter()
+            .find_map(|shape| match shape {
+                Shape::Rect(rect) if rect.corner_radius == USER_RADIUS => Some(rect.rect),
+                _ => None,
+            })
+            .expect("the bubble is drawn");
+        let (face, face_ring) = shapes
+            .iter()
+            .find_map(|shape| match shape {
+                Shape::Circle(circle) if circle.stroke.width == 1.0 && circle.radius < 16.0 => {
+                    Some((
+                        Rect::from_center_size(circle.center, vec2(AVATAR, AVATAR)),
+                        circle.stroke.color,
+                    ))
+                }
+                _ => None,
+            })
+            .expect("the face ring is drawn");
+        let meta_right = shapes
+            .iter()
+            .find_map(|shape| match shape {
+                Shape::Text(text)
+                    if text.galley.text().starts_with("You") || text.galley.text() == "Queued" =>
+                {
+                    Some(text.pos.x + text.galley.rect.right())
+                }
+                _ => None,
+            })
+            .expect("the meta line is drawn");
+        Drawn { bubble, face, face_ring, meta_right }
+    }
+
+    #[test]
+    fn the_owners_face_sits_right_of_the_bubble_level_with_its_pointed_corner() {
+        let drawn = draw_user_row(false);
+        assert!(
+            (drawn.face.bottom() - drawn.bubble.bottom()).abs() <= 0.5,
+            "face {:?} bubble {:?}",
+            drawn.face,
+            drawn.bubble
+        );
+        assert!(
+            (drawn.face.left() - drawn.bubble.right() - AVATAR_GAP).abs() <= 0.5,
+            "face {:?} bubble {:?}",
+            drawn.face,
+            drawn.bubble
+        );
+        assert!((drawn.face.width() - AVATAR).abs() <= 0.5);
+        assert!(drawn.face.top() >= drawn.bubble.top(), "the face never rises over the bubble");
+    }
+
+    #[test]
+    fn the_meta_line_ends_at_the_bubble_edge_not_the_face() {
+        let drawn = draw_user_row(false);
+        assert!(
+            (drawn.meta_right - drawn.bubble.right()).abs() <= 0.5,
+            "meta {} bubble {:?}",
+            drawn.meta_right,
+            drawn.bubble
+        );
+        assert!(drawn.meta_right < drawn.face.left());
+    }
+
+    #[test]
+    fn a_queued_message_gets_the_face_too_dimmed_like_its_bubble() {
+        let drawn = draw_user_row(true);
+        assert!((drawn.face.bottom() - drawn.bubble.bottom()).abs() <= 0.5);
+        assert!((drawn.face.left() - drawn.bubble.right() - AVATAR_GAP).abs() <= 0.5);
+        assert!((drawn.meta_right - drawn.bubble.right()).abs() <= 0.5);
+        let full = draw_user_row(false);
+        assert!(drawn.face_ring.a() < full.face_ring.a(), "{:?}", drawn.face_ring);
+    }
+
+    #[test]
+    fn the_user_bubble_gives_up_the_face_and_its_gap() {
+        assert_eq!(user_width(1000.0), 620.0 - AVATAR - AVATAR_GAP);
+        assert_eq!(
+            user_face_rect(500.0, 100.0),
+            Rect::from_min_size(pos2(500.0 - AVATAR, 100.0 - AVATAR), vec2(AVATAR, AVATAR))
+        );
     }
 }
