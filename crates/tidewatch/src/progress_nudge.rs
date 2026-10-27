@@ -98,7 +98,7 @@ pub(crate) fn due(facts: &Facts<'_>, told: &Told) -> Option<Nudge> {
             .is_some_and(|wait| wait <= 0)
             .then_some(Nudge::Quiet);
     }
-    let ledger = Some(ledger).filter(|_| facts.idle)?;
+    let ledger = facts.idle.then_some(ledger)?;
     let saved = key(facts.saved_ms);
     let unreported = !ledger.has_question() && ledger.status.state != Some(State::NeedsYou);
     if unreported && facts.block.is_some_and(asks_in_chat) && told.question != Some(saved) {
@@ -162,7 +162,7 @@ pub(crate) fn wait_ms(facts: &Facts<'_>, told: &Told) -> Option<i64> {
     if facts.busy {
         return quiet_wait(facts, ledger, told).filter(|wait| *wait > 0);
     }
-    let ledger = Some(ledger).filter(|_| facts.idle)?;
+    let ledger = facts.idle.then_some(ledger)?;
     let wait = stale_in(facts, ledger)?;
     (wait > 0 && told.stale != Some(key(facts.saved_ms))).then_some(wait)
 }
