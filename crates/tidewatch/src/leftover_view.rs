@@ -147,7 +147,11 @@ pub(crate) fn dialog(ctx: &egui::Context, cleanup: &Cleanup) -> Option<Answer> {
             footer_row(ui, "", |ui| {
                 let n = cleanup.clean_count();
                 let label = if n == 0 { "Clean up".to_owned() } else { format!("Clean up ({n})") };
-                if primary_button(ui, &label, n > 0 && !cleanup.busy(), Size::Regular).clicked() {
+                let blocker = cleanup.clean_up_blocker();
+                let clean_up = primary_button(ui, &label, blocker.is_none(), Size::Regular);
+                if let Some(reason) = blocker {
+                    clean_up.on_disabled_hover_text(reason);
+                } else if clean_up.clicked() {
                     answer = Some(Answer::CleanUp);
                 }
                 if quiet_button(ui, "Close", true, Size::Regular).clicked() {

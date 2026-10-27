@@ -314,7 +314,10 @@ pub fn add_named(
         return Err(error);
     }
     if let Err(e) = registry::record(paths, &worktree) {
-        eprintln!("tidewatch: cannot record worktree {}: {e}", worktree.path.display());
+        roll_back(&worktree, branch_existed, path_existed);
+        return Err(WorktreeError::Io(format!(
+            "cannot record the new worktree in the registry: {e}"
+        )));
     }
     Ok(worktree)
 }
@@ -585,10 +588,15 @@ fn parse_list(output: &str) -> Vec<Listed> {
 /// is gone. Returns the worktrees that were repaired.
 #[must_use]
 pub fn repair(paths: &TidewatchPaths, repo: &Path) -> Vec<Worktree> {
-    let mut stored = registry::load(paths);
-    let before = stored.len();
+    let mut repaired = Vec::new();
+    if let Err(e) = registry::update(paths, |stored| repaired = repair_stored(stored, repo)) {
+        eprintln!("tidewatch: cannot update the worktree registry: {e}");
+    }
+    repaired
+}
+
+fn repair_stored(stored: &mut Vec<Worktree>, repo: &Path) -> Vec<Worktree> {
     stored.retain(|w| w.path.exists());
-    let mut changed = stored.len() != before;
     let candidates: Vec<usize> =
         (0..stored.len()).filter(|&i| moved_from(&stored[i].repo, repo)).collect();
     let mut repaired = Vec::new();
@@ -601,12 +609,8 @@ pub fn repair(paths: &TidewatchPaths, repo: &Path) -> Vec<Worktree> {
             if belongs_to(repo, &stored[i].path) {
                 stored[i].repo = repo.to_path_buf();
                 repaired.push(stored[i].clone());
-                changed = true;
             }
         }
-    }
-    if changed && let Err(e) = registry::save(paths, &stored) {
-        eprintln!("tidewatch: cannot update the worktree registry: {e}");
     }
     repaired
 }
@@ -636,16 +640,59 @@ pub fn leftovers(paths: &TidewatchPaths, open: &[PathBuf]) -> Vec<Leftover> {
         .flat_map(|repo_dir| subdirs(&repo_dir).collect::<Vec<_>>())
         .filter(|dir| dir.join(".git").is_file() && !open.contains(dir))
         .map(|path| {
-            let recorded = stored.iter().find(|w| w.path == path);
+            let known = stored
+                .iter()
+                .find(|w| w.path == path)
+                .map(|w| (w.repo.clone(), w.branch.clone()))
+                .or_else(|| claim(paths, &path));
             Leftover {
-                branch: recorded.map(|w| w.branch.clone()),
-                repo: recorded.map(|w| w.repo.clone()),
+                repo: known.as_ref().map(|(repo, _)| repo.clone()),
+                branch: known.map(|(_, branch)| branch),
                 path,
             }
         })
         .collect();
     found.sort_by(|a, b| a.path.cmp(&b.path));
     found
+}
+
+/// Whether Tidewatch made this worktree, from where it sits and what it has checked out: directly
+/// in the repo's folder under the Tidewatch root, on the `agent/<folder name>` branch `add` gives
+/// it. The registry is a convenience for `repair`; this is the ownership rule.
+#[must_use]
+pub fn is_made_by_tidewatch(
+    paths: &TidewatchPaths,
+    repo: &Path,
+    path: &Path,
+    branch: Option<&str>,
+) -> bool {
+    let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
+        return false;
+    };
+    path.parent() == Some(paths.repo_dir(repo).as_path())
+        && branch.and_then(|branch| branch.strip_prefix(BRANCH_PREFIX)) == Some(name)
+}
+
+/// The repository and branch of a worktree the registry does not list but that is Tidewatch's by
+/// [`is_made_by_tidewatch`]. Anything else, or anything git cannot read, is `None`.
+fn claim(paths: &TidewatchPaths, path: &Path) -> Option<(PathBuf, String)> {
+    let branch = checked_out_branch(path)?;
+    let repo = main_checkout(path)?;
+    is_made_by_tidewatch(paths, &repo, path, Some(&branch)).then_some((repo, branch))
+}
+
+fn checked_out_branch(dir: &Path) -> Option<String> {
+    let mut command = git(dir);
+    command.args(["symbolic-ref", "--quiet", "--short", "HEAD"]);
+    run(command).ok().map(|out| out.trim().to_owned()).filter(|branch| !branch.is_empty())
+}
+
+/// The main checkout of the repository a linked worktree belongs to.
+fn main_checkout(dir: &Path) -> Option<PathBuf> {
+    let mut command = git(dir);
+    command.args(["rev-parse", "--path-format=absolute", "--git-common-dir"]);
+    let common = PathBuf::from(run(command).ok()?.trim());
+    (common.file_name()? == ".git").then(|| common.parent().map(Path::to_path_buf))?
 }
 
 fn subdirs(dir: &Path) -> impl Iterator<Item = PathBuf> {
@@ -725,6 +772,43 @@ mod tests {
         registry::record(&paths, &gone).unwrap();
         assert_eq!(repair(&paths, Path::new("/work/web")), []);
         assert_eq!(registry::load(&paths), []);
+    }
+
+    #[test]
+    fn ownership_needs_the_repo_folder_and_the_agent_branch_of_the_same_name() {
+        let home = tempfile::tempdir().unwrap();
+        let paths = TidewatchPaths::new(home.path());
+        let repo = Path::new("/work/web");
+        let ours = paths.worktree_dir(repo, "upbeat-lantern");
+        let cases: [(&str, PathBuf, Option<&str>, bool); 9] = [
+            (
+                "inside the root on its agent branch",
+                ours.clone(),
+                Some("agent/upbeat-lantern"),
+                true,
+            ),
+            (
+                "another repo's folder",
+                paths.worktree_dir(Path::new("/work/api"), "upbeat-lantern"),
+                Some("agent/upbeat-lantern"),
+                false,
+            ),
+            (
+                "outside the root",
+                PathBuf::from("/work/upbeat-lantern"),
+                Some("agent/upbeat-lantern"),
+                false,
+            ),
+            ("below the repo folder", ours.join("nested"), Some("agent/nested"), false),
+            ("another branch", ours.clone(), Some("main"), false),
+            ("a branch with no agent prefix", ours.clone(), Some("upbeat-lantern"), false),
+            ("a name that is not the folder's", ours.clone(), Some("agent/calm-comet"), false),
+            ("a prefix and nothing after it", ours.clone(), Some("agent/"), false),
+            ("no branch, a detached head", ours, None, false),
+        ];
+        for (what, path, branch, want) in cases {
+            assert_eq!(is_made_by_tidewatch(&paths, repo, &path, branch), want, "{what}");
+        }
     }
 
     #[test]

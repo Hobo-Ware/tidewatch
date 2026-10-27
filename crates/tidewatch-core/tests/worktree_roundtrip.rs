@@ -319,6 +319,94 @@ fn a_worktree_git_made_outside_tidewatch_is_a_leftover_without_a_branch() {
     assert_eq!(left[0].worktree(), None, "git cannot remove it without a recorded repository");
 }
 
+fn forget_every_record(f: &Fixture) {
+    let file = f.paths.state_dir().join("worktrees.toml");
+    if file.exists() {
+        fs::remove_file(file).unwrap();
+    }
+}
+
+#[test]
+fn an_unrecorded_worktree_made_the_way_the_app_makes_one_is_still_ours() {
+    let f = fixture();
+    let made = worktree::add_free(&f.paths, &f.repo, "upbeat-lantern", None).unwrap();
+    forget_every_record(&f);
+
+    let left = worktree::leftovers(&f.paths, &[]);
+    assert_eq!(left.len(), 1);
+    assert_eq!(left[0].branch.as_deref(), Some("agent/upbeat-lantern"));
+    assert_eq!(left[0].repo.as_deref(), Some(f.repo.as_path()));
+    assert_eq!(left[0].worktree(), Some(made.clone()));
+
+    let found = left[0].worktree().unwrap();
+    assert_eq!(worktree::inspect(&f.paths, &found, Owner::Nobody), Safety::Safe);
+    worktree::remove(&f.paths, &found, BranchChoice::Delete, RemoveMode::Safe).unwrap();
+    assert!(!made.path.exists());
+    assert_only_main(&f.repo);
+    assert_eq!(branches(&f.repo), ["main"]);
+}
+
+#[test]
+fn an_unrecorded_worktree_with_unsaved_work_is_ours_but_not_safe() {
+    let f = fixture();
+    let made = worktree::add(&f.paths, &f.repo).unwrap();
+    forget_every_record(&f);
+    fs::write(made.path.join("wip.txt"), "wip").unwrap();
+
+    let found = worktree::leftovers(&f.paths, &[]).remove(0).worktree().expect("ours");
+    assert!(matches!(
+        worktree::inspect(&f.paths, &found, Owner::Nobody),
+        Safety::Unsafe(risks) if risks.iter().any(|r| matches!(r, Risk::Uncommitted { files: 1 }))
+    ));
+    let refused =
+        worktree::remove(&f.paths, &found, BranchChoice::Delete, RemoveMode::Safe).unwrap_err();
+    assert!(matches!(refused, WorktreeError::Unsafe(_)));
+    assert!(made.path.join("wip.txt").is_file());
+}
+
+#[test]
+fn an_unrecorded_worktree_on_a_branch_that_does_not_match_its_folder_stays_foreign() {
+    let f = fixture();
+    let odd = f.paths.worktree_dir(&f.repo, "mismatch");
+    fs::create_dir_all(odd.parent().unwrap()).unwrap();
+    git(&f.repo, &["worktree", "add", "-q", "-b", "agent/other", odd.to_str().unwrap()]);
+
+    let left = worktree::leftovers(&f.paths, &[]);
+    assert_eq!(left.len(), 1);
+    assert_eq!(left[0].worktree(), None);
+}
+
+#[test]
+fn a_worktree_whose_record_cannot_be_written_is_not_left_behind() {
+    let f = fixture();
+    fs::create_dir_all(f.paths.state_dir().join("worktrees.toml")).unwrap();
+
+    let err = worktree::add_named(&f.paths, &f.repo, "unrecorded", None).unwrap_err();
+    assert!(matches!(err, WorktreeError::Io(_)), "{err}");
+    assert!(!f.paths.worktree_dir(&f.repo, "unrecorded").exists());
+    assert_only_main(&f.repo);
+    assert_eq!(branches(&f.repo), ["main"]);
+}
+
+#[test]
+fn worktrees_made_at_the_same_moment_are_all_recorded() {
+    let f = fixture();
+    let made: Vec<_> = std::thread::scope(|scope| {
+        let tasks: Vec<_> = (0..6)
+            .map(|i| {
+                let (paths, repo) = (&f.paths, &f.repo);
+                scope.spawn(move || {
+                    worktree::add_free(paths, repo, &format!("burst-{i}"), None).unwrap()
+                })
+            })
+            .collect();
+        tasks.into_iter().map(|task| task.join().unwrap()).collect()
+    });
+
+    let recorded = fs::read_to_string(f.paths.state_dir().join("worktrees.toml")).unwrap();
+    assert_eq!(recorded.matches("[[worktree]]").count(), made.len(), "{recorded}");
+}
+
 #[test]
 fn a_worktree_can_start_from_another_branch() {
     let f = fixture();
