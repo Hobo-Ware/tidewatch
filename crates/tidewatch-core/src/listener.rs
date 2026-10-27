@@ -103,6 +103,8 @@ struct Shared {
     ask_timeout_ms: AtomicU64,
     avatar_ask_lock: Mutex<()>,
     avatar_ask_exempt: Mutex<HashSet<u64>>,
+    service_lines: Mutex<HashMap<u64, String>>,
+    service_told: Mutex<HashMap<u64, String>>,
 }
 
 impl Shared {
@@ -175,6 +177,12 @@ impl Listener {
         exempt.extend(tabs.iter().copied());
     }
 
+    /// What each tab's next prompt tells it about the repo's services, replacing the earlier
+    /// lines. A tab hears a line once, and again only when its text changes.
+    pub fn set_service_lines(&self, lines: HashMap<u64, String>) {
+        replace_service_lines(&self.shared, lines);
+    }
+
     /// The port the listener serves.
     #[must_use]
     pub fn port(&self) -> u16 {
@@ -195,6 +203,8 @@ impl Listener {
             notes_lock: Mutex::new(()),
             avatar_ask_lock: Mutex::new(()),
             avatar_ask_exempt: Mutex::new(HashSet::new()),
+            service_lines: Mutex::new(HashMap::new()),
+            service_told: Mutex::new(HashMap::new()),
             ask_timeout_ms: AtomicU64::new(
                 u64::try_from(ASK_TIMEOUT.as_millis()).unwrap_or(u64::MAX),
             ),
@@ -465,7 +475,27 @@ fn prompt_reply(
         }
         contexts.push(line);
     }
+    if let Some(line) = service_line_due(shared, entry.tab_id) {
+        contexts.push(line);
+    }
     prompt_answer::answer(&contexts.iter().map(String::as_str).collect::<Vec<_>>())
+}
+
+fn replace_service_lines(shared: &Shared, lines: HashMap<u64, String>) {
+    let mut told = shared.service_told.lock().unwrap_or_else(PoisonError::into_inner);
+    told.retain(|tab, _| lines.contains_key(tab));
+    *shared.service_lines.lock().unwrap_or_else(PoisonError::into_inner) = lines;
+}
+
+fn service_line_due(shared: &Shared, tab: u64) -> Option<String> {
+    let line =
+        shared.service_lines.lock().unwrap_or_else(PoisonError::into_inner).get(&tab).cloned()?;
+    let mut told = shared.service_told.lock().unwrap_or_else(PoisonError::into_inner);
+    if told.get(&tab) == Some(&line) {
+        return None;
+    }
+    told.insert(tab, line.clone());
+    Some(line)
 }
 
 fn told_since_last_save(entry: &Entry, text: &str) -> bool {
@@ -799,6 +829,8 @@ mod tests {
             notes_lock: Mutex::new(()),
             avatar_ask_lock: Mutex::new(()),
             avatar_ask_exempt: Mutex::new(HashSet::new()),
+            service_lines: Mutex::new(HashMap::new()),
+            service_told: Mutex::new(HashMap::new()),
             ask_timeout_ms: AtomicU64::new(1000),
         });
         let server = TcpListener::bind(HOOK_BIND).unwrap();
@@ -1068,6 +1100,32 @@ mod tests {
         assert_eq!(closed.body, "{}", "nothing open, nothing said");
         let told = sent::load(&sent_file_beside(&notes_of(&f, &token)));
         assert_eq!(told, [], "a line that rides every prompt leaves no record");
+    }
+
+    #[test]
+    fn the_service_line_rides_a_prompt_once_and_again_only_when_its_text_changes() {
+        let f = fixture();
+        let one = f.register(1, "a");
+        let two = f.register(2, "b");
+        for token in [&one, &two] {
+            avatar_store::mark_asked(&avatar_asked_file_beside(&notes_of(&f, token))).unwrap();
+            save_ledger(&f, token, CALM);
+        }
+        let line = |text: &str| HashMap::from([(1, text.to_owned()), (2, text.to_owned())]);
+        let ask = |token: &str| f.send("POST", "/hook/claude", Some(token), PROMPT);
+        assert_eq!(ask(&one).body, "{}", "nothing set, nothing said");
+        replace_service_lines(&f.shared, line("db is running"));
+        assert_eq!(context_of(&ask(&one)), "db is running");
+        assert_eq!(ask(&one).body, "{}", "already told");
+        assert_eq!(context_of(&ask(&two)), "db is running", "each tab is told on its own");
+        replace_service_lines(&f.shared, line("db is crashed"));
+        assert_eq!(context_of(&ask(&one)), "db is crashed");
+        replace_service_lines(&f.shared, HashMap::new());
+        assert_eq!(ask(&one).body, "{}");
+        replace_service_lines(&f.shared, line("db is crashed"));
+        assert_eq!(context_of(&ask(&one)), "db is crashed", "a list that came back is news");
+        let told = sent::load(&sent_file_beside(&notes_of(&f, &one)));
+        assert_eq!(told, [], "the service line leaves no record");
     }
 
     #[test]

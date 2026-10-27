@@ -6,6 +6,7 @@ use crate::job::Report;
 use crate::link_board::Link;
 use crate::progress::Ledger;
 use crate::question::{AskReply, Question};
+use crate::services_mcp::ServiceCall;
 use crate::status::HookEvent;
 
 /// Asks the UI for a redraw from a background thread. The app passes `ctx.request_repaint`.
@@ -57,6 +58,8 @@ pub enum TabEvent {
         questions: Vec<Question>,
         reply: AskReply,
     },
+    /// The agent called a repo service tool and its call is held until the answer is sent.
+    Services(ServiceCall),
 }
 
 #[derive(Clone, Debug, PartialEq)]

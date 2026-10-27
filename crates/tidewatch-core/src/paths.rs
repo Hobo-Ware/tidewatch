@@ -149,6 +149,13 @@ impl TidewatchPaths {
         self.config_dir.join("worktree-setup.toml")
     }
 
+    /// The per-repo services: long-running processes (a database proxy, a dev server, a tunnel)
+    /// that run next to the agents.
+    #[must_use]
+    pub fn services_file(&self) -> PathBuf {
+        self.config_dir.join("services.toml")
+    }
+
     /// Holds the `git-remote-tidewatch-no-push` helper that agent tabs get on their `PATH`.
     #[must_use]
     pub fn guard_bin_dir(&self) -> PathBuf {
@@ -466,6 +473,12 @@ mod tests {
     fn the_worktree_setup_recipes_are_a_setting_not_a_file_in_any_repo() {
         let paths = paths();
         assert_eq!(paths.worktree_setup_file(), paths.config_dir().join("worktree-setup.toml"));
+    }
+
+    #[test]
+    fn the_repo_services_are_a_setting_not_a_file_in_any_repo() {
+        let paths = paths();
+        assert_eq!(paths.services_file(), paths.config_dir().join("services.toml"));
     }
 
     #[test]
