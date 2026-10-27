@@ -352,7 +352,7 @@ pub(crate) fn show(ui: &mut Ui, draft: Draft<'_>, spec: &Spec<'_>) -> Option<Str
                         .show(ui);
                     bullets::paint_markers(ui, &edit.galley, edit.galley_pos, &text_font());
                     ui.add_space(pad_y + lift);
-                    emoji_paint::paint(ui, edit.galley_pos, &edit.galley);
+                    emoji_paint::paint(ui, id.with("emoji"), edit.galley_pos, &edit.galley);
                     if resized && let Some(range) = edit.cursor_range {
                         let at = edit.galley_pos.to_vec2() - vec2(edit.galley.rect.left(), 0.0);
                         ui.scroll_to_rect(

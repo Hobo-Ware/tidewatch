@@ -34,7 +34,7 @@ winit = "0.30.13"
 arboard = { version = "3.6.1", default-features = false, features = ["image-data"] }
 block2 = "0.6"
 objc2 = "0.6"
-objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "block2", "NSApplication", "NSEvent", "NSGraphicsContext", "NSPasteboard", "NSResponder", "NSRunningApplication", "NSScreen", "NSWindow"] }
+objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "block2", "NSAccessibility", "NSApplication", "NSEvent", "NSGraphicsContext", "NSPasteboard", "NSResponder", "NSRunningApplication", "NSScreen", "NSWindow", "NSWorkspace"] }
 objc2-core-foundation = { version = "0.3", default-features = false, features = ["std", "CFString"] }
 objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSArray", "NSError", "NSGeometry", "NSString"] }
 objc2-io-kit = { version = "0.3", default-features = false, features = ["std", "pwr_mgt"] }

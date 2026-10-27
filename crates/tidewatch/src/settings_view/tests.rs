@@ -54,6 +54,7 @@ fn general(restore: bool, resume: ResumeAgents, login_offered: bool) -> General 
         tabs: tidewatch_core::prefs::TabsPrefs::default(),
         git: tidewatch_core::prefs::GitPrefs::default(),
         done_check: tidewatch_core::prefs::DoneCheckPrefs::default(),
+        chat: tidewatch_core::prefs::ChatPrefs::default(),
         keep_awake: tidewatch_core::prefs::KeepAwakePrefs::default(),
         touch_id: None,
         guards: tidewatch_core::guards::GuardPrefs::default(),

@@ -49,6 +49,8 @@ pub(crate) enum Action {
     Git(tidewatch_core::prefs::GitPrefs),
     /// The Done check switch moved: the new value. Applies at once too.
     DoneCheck(bool),
+    /// The Chat switch for animated emoji moved: the new value. Applies at once too.
+    AnimateEmoji(bool),
     KeepAwake(bool),
     /// Set up or Remove on the Touch ID row of the Keep awake card.
     TouchId(crate::touch_id_view::Click),

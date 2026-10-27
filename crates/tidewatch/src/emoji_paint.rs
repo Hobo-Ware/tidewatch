@@ -13,6 +13,7 @@ use egui::{
     pos2, vec2,
 };
 
+use crate::emoji_motion;
 use crate::emoji_pack;
 use crate::emoji_text::{self, SLOT_EM};
 
@@ -131,29 +132,67 @@ pub(crate) fn slots(ctx: &Context, pos: Pos2, galley: &Galley) -> Vec<Slot> {
     out
 }
 
+const WHOLE: Rect = Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0));
+
+/// Draws the emoji with `key` in `rect`: its animation while one plays (see `emoji_motion`), else
+/// its still picture. `id` names the slot, so what it remembers is its own.
+fn draw(ui: &Ui, id: Id, rect: Rect, key: &str) {
+    let ctx = ui.ctx();
+    let mut playing = None;
+    if emoji_motion::has_clip(key) {
+        let allowed = emoji_motion::allowed(ctx);
+        let hovered = allowed && ui.rect_contains_pointer(rect);
+        let state = emoji_motion::state_of(ctx, id);
+        let fresh = emoji_motion::is_fresh(ctx);
+        let clip = (allowed && state.wants_clip(hovered, fresh))
+            .then(|| emoji_motion::clip(ctx, key))
+            .flatten();
+        let input = emoji_motion::Input {
+            now: ctx.input(|input| input.time),
+            hovered,
+            fresh,
+            allowed,
+            total: clip.as_ref().map_or(0.0, |clip| clip.total()),
+        };
+        let (next, elapsed) = emoji_motion::advance(state, input);
+        if next != state {
+            emoji_motion::store(ctx, id, next);
+        }
+        playing = clip.zip(elapsed);
+    }
+    if let Some((clip, elapsed)) = playing
+        && let Some(frame) = clip.frame_at(elapsed)
+    {
+        ui.painter().image(clip.texture().id(), rect, clip.uv(frame), Color32::WHITE);
+        ctx.request_repaint_after(clip.until_next_frame(elapsed));
+        return;
+    }
+    if let Some(texture) = still(ctx, key) {
+        ui.painter().image(texture.id(), rect, WHOLE, Color32::WHITE);
+    }
+}
+
 /// Paints the pictures of the emoji in `galley`, which is painted with its top left at `pos`.
-pub(crate) fn paint(ui: &Ui, pos: Pos2, galley: &Galley) {
+/// `id` must differ per text on the screen.
+pub(crate) fn paint(ui: &Ui, id: Id, pos: Pos2, galley: &Galley) {
     if galley.job.text.is_ascii() {
         return;
     }
-    let uv = Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0));
     for slot in slots(ui.ctx(), pos, galley) {
-        if !ui.is_rect_visible(slot.rect) {
-            continue;
-        }
-        if let Some(texture) = still(ui.ctx(), &slot.key) {
-            ui.painter().image(texture.id(), slot.rect, uv, Color32::WHITE);
+        if ui.is_rect_visible(slot.rect) {
+            draw(ui, id.with(("emoji", slot.at)), slot.rect, &slot.key);
         }
     }
 }
 
 /// One emoji as a picture in `rect`, for a list that draws no text around it. Returns whether the
 /// emoji has a picture.
-pub(crate) fn paint_in(ui: &Ui, rect: Rect, emoji: &str) -> bool {
+pub(crate) fn paint_in(ui: &Ui, id: Id, rect: Rect, emoji: &str) -> bool {
     let key = emoji_text::key_of(emoji);
-    let Some(texture) = still(ui.ctx(), &key) else { return false };
-    let uv = Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0));
-    ui.painter().image(texture.id(), rect, uv, Color32::WHITE);
+    if !emoji_pack::still().contains(&key) {
+        return false;
+    }
+    draw(ui, id, rect, &key);
     true
 }
 

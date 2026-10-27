@@ -135,6 +135,7 @@ impl Tidewatch {
         self.parking.set_after(prefs.tabs.park_after);
         self.close_enter = prefs.tabs.close_enter;
         self.done_check.set_enabled(prefs.done_check.enabled);
+        self.chat_prefs = prefs.chat;
         self.keep_awake.set_enabled(prefs.keep_awake.enabled);
         self.guards = prefs.guards;
         self.pr.set_default(prefs.github);
@@ -194,6 +195,17 @@ impl Tidewatch {
         if let Some(paths) = self.paths.clone() {
             std::thread::spawn(move || {
                 if let Err(e) = Prefs::update(&paths, |p| p.done_check.enabled = enabled) {
+                    eprintln!("tidewatch: cannot save settings.toml: {e}");
+                }
+            });
+        }
+    }
+
+    fn set_animate_emoji(&mut self, enabled: bool) {
+        self.chat_prefs.animate_emoji = enabled;
+        if let Some(paths) = self.paths.clone() {
+            std::thread::spawn(move || {
+                if let Err(e) = Prefs::update(&paths, |p| p.chat.animate_emoji = enabled) {
                     eprintln!("tidewatch: cannot save settings.toml: {e}");
                 }
             });
@@ -290,6 +302,7 @@ impl Tidewatch {
             guards: self.guards.clone(),
             guards_repo,
             done_check: DoneCheckPrefs { enabled: self.done_check.enabled() },
+            chat: self.chat_prefs,
             keep_awake: KeepAwakePrefs { enabled: self.keep_awake.enabled() },
             touch_id: self.amphetamine.touch_id(),
             default_branch,
@@ -402,6 +415,7 @@ impl Tidewatch {
             Some(settings_view::Action::Tabs(prefs)) => self.set_tabs_prefs(prefs),
             Some(settings_view::Action::Git(prefs)) => self.set_git_prefs(prefs),
             Some(settings_view::Action::DoneCheck(on)) => self.set_done_check(on),
+            Some(settings_view::Action::AnimateEmoji(on)) => self.set_animate_emoji(on),
             Some(settings_view::Action::KeepAwake(on)) => self.set_keep_awake(on),
             Some(settings_view::Action::TouchId(click)) => {
                 self.amphetamine.change_touch_id(click, ctx);
