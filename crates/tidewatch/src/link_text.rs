@@ -93,7 +93,7 @@ impl Text {
                 ink,
                 Stroke::NONE,
             );
-            emoji_paint::paint(ui, pos, &galley);
+            emoji_paint::paint(ui, id, pos, &galley);
         }
         Laid { galley, job, spans }.interact(ui, id, pos);
         response

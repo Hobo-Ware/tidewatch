@@ -50,7 +50,7 @@ fn paint_row(ui: &Ui, rect: Rect, hit: &Hit, selected: bool, hovered: bool) {
         pos2(rect.left() + ROW_PAD + GLYPH_COLUMN / 2.0, rect.center().y),
         vec2(GLYPH_PX, GLYPH_PX),
     );
-    if !emoji_paint::paint_in(ui, glyph, hit.emoji.as_str()) {
+    if !emoji_paint::paint_in(ui, Id::new(("emoji-row", hit.code)), glyph, hit.emoji.as_str()) {
         painter.text(
             glyph.center(),
             Align2::CENTER_CENTER,

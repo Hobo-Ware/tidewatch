@@ -5,7 +5,8 @@
 //! the `[github]` table (what a new tab does when its pull request changes) and the `[new_tab]`
 //! table (what the new-tab form opens with), the `[tabs]` table (when a quiet tab is parked) and
 //! the `[terminal]` table (the terminal's font, and whether a finished selection is copied) and
-//! the `[git]` table (fetching open repos in the background).
+//! the `[git]` table (fetching open repos in the background) and the `[chat]` table (animated
+//! emoji).
 //!
 //! A missing or bad file is the defaults, with a stderr note for a bad one: a settings file must
 //! never stop the app.
@@ -54,6 +55,8 @@ pub struct Prefs {
     pub terminal: TerminalPrefs,
     #[serde(default)]
     pub git: GitPrefs,
+    #[serde(default)]
+    pub chat: ChatPrefs,
 }
 
 pub const FETCH_MINUTES: [u32; 6] = [1, 2, 5, 10, 15, 30];
@@ -106,6 +109,19 @@ pub struct KeepAwakePrefs {
 impl Default for KeepAwakePrefs {
     fn default() -> Self {
         Self { enabled: true }
+    }
+}
+
+/// Whether the emoji of a new chat message play their animation.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ChatPrefs {
+    #[serde(default = "on")]
+    pub animate_emoji: bool,
+}
+
+impl Default for ChatPrefs {
+    fn default() -> Self {
+        Self { animate_emoji: true }
     }
 }
 
@@ -455,6 +471,7 @@ impl Default for Prefs {
             keep_awake: KeepAwakePrefs::default(),
             terminal: TerminalPrefs::default(),
             git: GitPrefs::default(),
+            chat: ChatPrefs::default(),
         }
     }
 }
@@ -1188,6 +1205,20 @@ mod tests {
         Prefs::update(&paths, |p| p.keep_awake.enabled = true).unwrap();
         let text = std::fs::read_to_string(paths.prefs_file()).unwrap();
         assert!(text.contains("[keep_awake]") && text.contains("enabled = true"), "{text}");
+    }
+
+    #[test]
+    fn animated_emoji_are_on_until_switched_off_and_a_file_without_the_key_keeps_them_on() {
+        let (_home, paths) = paths();
+        assert!(Prefs::load(&paths).chat.animate_emoji);
+        write_prefs(&paths, "restore_session = false\n");
+        assert_eq!(Prefs::load(&paths).chat, ChatPrefs::default());
+        write_prefs(&paths, "[chat]\n");
+        assert!(Prefs::load(&paths).chat.animate_emoji);
+        Prefs::update(&paths, |p| p.chat.animate_emoji = false).unwrap();
+        assert!(!Prefs::load(&paths).chat.animate_emoji);
+        let text = std::fs::read_to_string(paths.prefs_file()).unwrap();
+        assert!(text.contains("[chat]") && text.contains("animate_emoji = false"), "{text}");
     }
 
     #[test]

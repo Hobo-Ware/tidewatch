@@ -4,8 +4,8 @@
 use egui::Ui;
 use tidewatch_core::guards::GuardPrefs;
 use tidewatch_core::prefs::{
-    CloseEnter, DoneCheckPrefs, FETCH_MINUTES, GitPrefs, GithubPrefs, KeepAwakePrefs, NewTabPrefs,
-    ParkAfter, ResumeAgents, TabsPrefs,
+    ChatPrefs, CloseEnter, DoneCheckPrefs, FETCH_MINUTES, GitPrefs, GithubPrefs, KeepAwakePrefs,
+    NewTabPrefs, ParkAfter, ResumeAgents, TabsPrefs,
 };
 
 use crate::font_view;
@@ -37,6 +37,7 @@ pub(crate) struct General {
     pub(crate) tabs: TabsPrefs,
     pub(crate) git: GitPrefs,
     pub(crate) done_check: DoneCheckPrefs,
+    pub(crate) chat: ChatPrefs,
     pub(crate) keep_awake: KeepAwakePrefs,
     /// `None` where Amphetamine has no lid mode (Linux): the row is not offered.
     pub(crate) touch_id: Option<TouchId>,
@@ -104,6 +105,7 @@ pub(crate) fn page(
     .map(Action::NewTab);
     let tabs = tabs_card(ui, general.tabs).map(Action::Tabs);
     let done_check = done_check_card(ui, general.done_check.enabled).map(Action::DoneCheck);
+    let chat = chat_card(ui, general.chat.animate_emoji).map(Action::AnimateEmoji);
     let keep_awake = keep_awake_card(ui, general.keep_awake.enabled, general.touch_id).map(
         |change| match change {
             KeepAwakeChange::Switch(on) => Action::KeepAwake(on),
@@ -128,6 +130,7 @@ pub(crate) fn page(
         .or(new_tab)
         .or(tabs)
         .or(done_check)
+        .or(chat)
         .or(checklist)
         .or(keep_awake)
         .or(github)
@@ -138,6 +141,19 @@ pub(crate) fn page(
 
 pub(crate) const EMOJI_CREDIT: &str =
     "Emoji pictures are Google Noto Emoji, used under the Apache 2.0 license.";
+
+fn chat_card(ui: &mut Ui, on: bool) -> Option<bool> {
+    let mut changed = None;
+    section(ui, "Chat", |ui| {
+        changed = switch_row(
+            ui,
+            "Play animated emoji",
+            "A new message plays its emoji once, then they rest. Point at one to play it again. It stays still when macOS asks for reduced motion.",
+            on,
+        );
+    });
+    changed
+}
 
 fn about_card(ui: &mut Ui) {
     section(ui, "About", |ui| {
@@ -481,6 +497,57 @@ mod checklist_tests {
         let (action, found) = frame(&ctx, None, vec![]);
         assert!(action.is_none());
         assert!(found.iter().any(|(text, _)| text == "Reading the list."));
+    }
+}
+
+#[cfg(test)]
+mod chat_tests {
+    use egui::{Event, Modifiers, PointerButton, RawInput, Rect, pos2, vec2};
+
+    use super::*;
+
+    fn frame(ctx: &egui::Context, on: bool, events: Vec<Event>) -> Option<bool> {
+        let mut answer = None;
+        let raw = RawInput {
+            screen_rect: Some(Rect::from_min_size(pos2(0.0, 0.0), vec2(900.0, 300.0))),
+            focused: true,
+            events,
+            ..RawInput::default()
+        };
+        let _ = ctx.run_ui(raw, |ui| answer = chat_card(ui, on));
+        answer
+    }
+
+    fn press(at: egui::Pos2, pressed: bool) -> Event {
+        Event::PointerButton {
+            pos: at,
+            button: PointerButton::Primary,
+            pressed,
+            modifiers: Modifiers::NONE,
+        }
+    }
+
+    fn clicks(on: bool) -> Vec<bool> {
+        let ctx = crate::fonts::test_context();
+        frame(&ctx, on, vec![]);
+        let mut found = Vec::new();
+        for y in (0..160).step_by(6) {
+            for x in (0..900).step_by(6) {
+                let at = pos2(x as f32, y as f32);
+                frame(&ctx, on, vec![Event::PointerMoved(at)]);
+                frame(&ctx, on, vec![press(at, true)]);
+                found.extend(frame(&ctx, on, vec![press(at, false)]));
+            }
+        }
+        found
+    }
+
+    #[test]
+    fn the_chat_card_turns_animated_emoji_off_and_back_on() {
+        let off = clicks(true);
+        assert!(!off.is_empty() && off.iter().all(|value| !value), "{off:?}");
+        let on = clicks(false);
+        assert!(!on.is_empty() && on.iter().all(|value| *value), "{on:?}");
     }
 }
 

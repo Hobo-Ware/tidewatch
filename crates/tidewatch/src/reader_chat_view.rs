@@ -22,6 +22,7 @@ use tidewatch_core::user_markup::{self, TaskResult};
 use crate::agent_avatar::{Face, paint_face};
 use crate::brand;
 use crate::code_block::{self, Look};
+use crate::emoji_motion;
 use crate::emoji_text;
 use crate::job_model::clock_label;
 use crate::link_text::{Laid, Text};
@@ -81,10 +82,17 @@ pub(crate) struct Scene<'a> {
     pub(crate) face: Option<&'a Face>,
     pub(crate) zone: &'a TimeZone,
     pub(crate) now_ms: i64,
+    /// Messages stamped at or after this arrived while the tab was open, so their emoji play.
+    pub(crate) fresh_after_ms: Option<i64>,
     /// The agent is mid-turn, so the newest open turn is the one it is still on.
     pub(crate) running: bool,
     /// A tool call waits for the user's permission.
     pub(crate) waiting: bool,
+}
+
+/// Whether a message stamped `at_ms` came in after the tab started (`after_ms`), not from history.
+pub(crate) fn is_fresh(at_ms: Option<i64>, after_ms: Option<i64>) -> bool {
+    at_ms.zip(after_ms).is_some_and(|(at, after)| at >= after)
 }
 
 /// The "Jump to latest" pill, drawn at the top left of `slot`: an opaque fill, a 1 px line and a
@@ -188,15 +196,16 @@ pub(crate) fn user(
     at_ms: Option<i64>,
     zone: &TimeZone,
     (width, pastes): (f32, Option<&Path>),
+    fresh: bool,
 ) {
-    user_bubble(ui, row, Meta::Stamp(at_ms, zone), width, pastes);
+    user_bubble(ui, row, Meta::Stamp(at_ms, zone), (width, pastes), fresh);
 }
 
 /// A message the user sent while the agent was busy: the same bubble, dimmed, with a small spinner
 /// and `Queued` over it, until the transcript has the message.
 pub(crate) fn queued(ui: &mut Ui, text: &str, key: u64, time: f64, width: f32) {
     let row = Row { seq: key, kind: Kind::User, text: text.to_owned(), pictures: Vec::new() };
-    user_bubble(ui, &row, Meta::Queued(time), width, None);
+    user_bubble(ui, &row, Meta::Queued(time), (width, None), false);
 }
 
 #[derive(Clone, Copy)]
@@ -222,7 +231,13 @@ fn queued_meta(ui: &mut Ui, time: f64) {
     );
 }
 
-fn user_bubble(ui: &mut Ui, row: &Row, meta_line: Meta<'_>, width: f32, pastes: Option<&Path>) {
+fn user_bubble(
+    ui: &mut Ui,
+    row: &Row,
+    meta_line: Meta<'_>,
+    (width, pastes): (f32, Option<&Path>),
+    fresh: bool,
+) {
     ui.add_space(OUTER);
     let max_w = user_width(width);
     let (said, files) = pictures::split_trailing(&row.text);
@@ -298,7 +313,10 @@ fn user_bubble(ui: &mut Ui, row: &Row, meta_line: Meta<'_>, width: f32, pastes: 
                                 chat_text(ui, |ui| {
                                     ui.visuals_mut().code_bg_color = USER_CODE_FILL;
                                     ui.push_id(row.seq, |ui| {
-                                        reader_markdown::show(ui, &markdown, false, Look::USER);
+                                        let ctx = ui.ctx().clone();
+                                        emoji_motion::fresh_scope(&ctx, fresh, || {
+                                            reader_markdown::show(ui, &markdown, false, Look::USER);
+                                        });
                                     });
                                 });
                             }
@@ -534,7 +552,8 @@ pub(crate) fn turn(
                 ui.add_space(CHIP_GAP);
             }
             if has_text {
-                bubble(ui, list, group, column);
+                let fresh = is_fresh(group.ended_ms.or(group.started_ms), scene.fresh_after_ms);
+                bubble(ui, list, group, column, fresh);
             }
             if live {
                 if has_text {
@@ -588,7 +607,7 @@ fn face(ui: &mut Ui, scene: &Scene<'_>) {
     paint_face(ui.ctx(), ui.painter(), rect, face);
 }
 
-fn bubble(ui: &mut Ui, list: &[&Row], group: &Group, column: f32) {
+fn bubble(ui: &mut Ui, list: &[&Row], group: &Group, column: f32, fresh: bool) {
     let Some(index) = group.answer() else { return };
     Frame::new()
         .fill(brand::CARD)
@@ -600,7 +619,8 @@ fn bubble(ui: &mut Ui, list: &[&Row], group: &Group, column: f32) {
             chat_text(ui, |ui| {
                 let row = list[index];
                 ui.push_id(row.seq, |ui| {
-                    agent_markdown(ui, &row.text);
+                    let ctx = ui.ctx().clone();
+                    emoji_motion::fresh_scope(&ctx, fresh, || agent_markdown(ui, &row.text));
                 });
             });
         });
@@ -1034,7 +1054,7 @@ mod tests {
                 ..RawInput::default()
             };
             let out = ctx.run_ui(raw, |ui| {
-                user(ui, &row, None, &zone, (800.0, None));
+                user(ui, &row, None, &zone, (800.0, None), false);
             });
             texts = out
                 .shapes
@@ -1166,7 +1186,7 @@ mod tests {
             };
             let out = ctx.run_ui(raw, |ui| {
                 ui.set_max_width(pane);
-                user(ui, &row, None, &zone, (pane, None));
+                user(ui, &row, None, &zone, (pane, None), false);
             });
             shapes = out.shapes.into_iter().map(|clipped| clipped.shape).collect();
         }
@@ -1355,7 +1375,7 @@ mod tests {
                 if queued {
                     super::queued(ui, &row.text, 1, 0.0, 600.0);
                 } else {
-                    user(ui, &row, Some(1_700_000_000_000), &zone, (600.0, None));
+                    user(ui, &row, Some(1_700_000_000_000), &zone, (600.0, None), false);
                 }
             });
             shapes.clear();
@@ -1442,5 +1462,59 @@ mod tests {
             user_face_rect(500.0, 100.0),
             Rect::from_min_size(pos2(500.0 - AVATAR, 100.0 - AVATAR), vec2(AVATAR, AVATAR))
         );
+    }
+
+    #[test]
+    fn a_message_is_new_only_when_it_is_stamped_after_the_tab_started() {
+        let cases = [
+            (Some(2_000), Some(1_000), true),
+            (Some(1_000), Some(1_000), true),
+            (Some(999), Some(1_000), false),
+            (None, Some(1_000), false),
+            (Some(2_000), None, false),
+        ];
+        for (at, after, want) in cases {
+            assert_eq!(is_fresh(at, after), want, "{at:?} {after:?}");
+        }
+    }
+
+    fn bubble_textures(ctx: &egui::Context, time: f64, fresh: bool) -> Vec<egui::TextureId> {
+        let row = Row {
+            seq: 7,
+            kind: Kind::User,
+            text: "ship \u{1f600} it".to_owned(),
+            pictures: Vec::new(),
+        };
+        let raw = RawInput {
+            screen_rect: Some(Rect::from_min_size(pos2(0.0, 0.0), vec2(900.0, 600.0))),
+            time: Some(time),
+            ..RawInput::default()
+        };
+        let out = ctx.run_ui(raw, |ui| {
+            user(ui, &row, None, &TimeZone::UTC, (800.0, None), fresh);
+        });
+        out.shapes
+            .iter()
+            .filter_map(|clipped| match &clipped.shape {
+                Shape::Mesh(mesh) if mesh.texture_id != egui::TextureId::default() => {
+                    Some(mesh.texture_id)
+                }
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn the_emoji_of_a_new_bubble_play_and_those_of_a_history_bubble_do_not() {
+        let still = |ctx: &egui::Context| crate::emoji_paint::still(ctx, "1f600").unwrap().id();
+        let ctx = crate::fonts::test_context();
+        let _ = ctx.run_ui(RawInput::default(), |_ui| {});
+        let new = bubble_textures(&ctx, 10.0, true);
+        assert_eq!(new.len(), 1);
+        assert_ne!(new[0], still(&ctx), "plays when the message arrives");
+        assert_eq!(bubble_textures(&ctx, 30.0, true), [still(&ctx)], "then rests");
+        let ctx = crate::fonts::test_context();
+        let _ = ctx.run_ui(RawInput::default(), |_ui| {});
+        assert_eq!(bubble_textures(&ctx, 10.0, false), [still(&ctx)], "history stays still");
     }
 }

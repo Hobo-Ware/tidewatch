@@ -181,11 +181,12 @@ impl Reader {
     pub(crate) fn for_agent(agent_id: &str, session_id: Option<String>, cwd: PathBuf) -> Self {
         let source = Source::from_agent_id(agent_id);
         let link = Self::first_link(source);
+        let started_ms = unix_ms_now();
         Self {
             source,
             session_id,
             cwd,
-            started_ms: unix_ms_now(),
+            started_ms,
             file: None,
             chosen: true,
             opened: None,
@@ -198,7 +199,7 @@ impl Reader {
             session_title: None,
             first_message: None,
             rows: Rows::default(),
-            view: ViewState::default(),
+            view: ViewState::started_at(started_ms),
             sent_file: None,
             sent_len: 0,
             sent_looked: f64::NEG_INFINITY,
@@ -214,6 +215,7 @@ impl Reader {
         self.link = Self::first_link(self.source);
         self.session_id = session_id;
         self.started_ms = unix_ms_now();
+        self.view.fresh_after_ms = Some(self.started_ms);
         self.file = None;
         self.answered = false;
         self.session_title = None;
@@ -472,6 +474,16 @@ impl Reader {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn what_arrives_after_the_tab_started_is_new_and_a_relaunch_starts_the_clock_again() {
+        let mut reader = Reader::for_agent("claude", None, PathBuf::from("/tmp"));
+        let first = reader.view.fresh_after_ms.unwrap();
+        assert!(first > 0);
+        reader.started_ms = 0;
+        reader.relaunch("claude", None, "next stage".to_owned());
+        assert!(reader.view.fresh_after_ms.unwrap() >= first);
+    }
 
     #[test]
     fn the_reader_shows_only_when_wanted_and_found() {

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-"""Builds still.pack (Noto colour emoji, 72 px PNG) in crates/tidewatch/assets/emoji. Needs git,
-pngquant, oxipng and Pillow.
+"""Builds still.pack (Noto colour emoji, 72 px PNG) and moving.pack (Noto animated emoji, 40 px
+animated WebP) in crates/tidewatch/assets/emoji. Needs git, pngquant, oxipng and Pillow.
 
     scripts/make-emoji.py [--work DIR]
 
@@ -8,6 +8,8 @@ Downloads go to DIR (default target/emoji-src) and are reused on the next run.
 """
 
 import argparse
+import io
+import json
 import math
 import re
 import struct
@@ -22,10 +24,16 @@ from PIL import Image, ImageChops, ImageStat
 NOTO_TAG = "v2.051"
 NOTO_GIT = "https://github.com/googlefonts/noto-emoji"
 NOTO_CDN = "https://fonts.gstatic.com/s/e/notoemoji/latest"
+ANIMATED_API = "https://googlefonts.github.io/noto-emoji-animation/data/api.json"
 EMOJI_TEST = "https://unicode.org/Public/emoji/latest/emoji-test.txt"
 
 STILL_PX = 72
 STILL_COLOURS = 96
+MOVING_PX = 40
+MOVING_QUALITY = 40
+MOVING_ALPHA_QUALITY = 40
+MOVING_FRAME_STEP = 2
+MOVING_BUDGET = 15_000_000
 MIN_PSNR = 40.0
 FE0F = 0xFE0F
 
@@ -138,6 +146,53 @@ def build_stills(work):
     pack({key: path.read_bytes() for key, path in wanted.items()}, OUT / "still.pack")
 
 
+def shrink_moving(args):
+    src, key = args
+    clip = Image.open(src)
+    frames, millis = [], []
+    for n in range(clip.n_frames):
+        clip.seek(n)
+        millis.append(clip.info.get("duration", 30))
+        frames.append(clip.convert("RGBA").copy())
+    kept, durations, pending = [], [], 0
+    for n, (frame, ms) in enumerate(zip(frames, millis)):
+        pending += ms
+        if n % MOVING_FRAME_STEP == MOVING_FRAME_STEP - 1 or n == len(frames) - 1:
+            kept.append(frame.resize((MOVING_PX, MOVING_PX), Image.LANCZOS))
+            durations.append(pending)
+            pending = 0
+    out = io.BytesIO()
+    kept[0].save(
+        out,
+        "WEBP",
+        save_all=True,
+        append_images=kept[1:],
+        duration=durations,
+        loop=0,
+        quality=MOVING_QUALITY,
+        alpha_quality=MOVING_ALPHA_QUALITY,
+        method=6,
+    )
+    return key, out.getvalue()
+
+
+def build_moving(work):
+    api = json.loads(fetch(ANIMATED_API, work / "api.json").read_text())
+    jobs = []
+    for icon in api["icons"]:
+        code = icon["codepoint"]
+        cps = [int(cp, 16) for cp in code.split("_")]
+        remote = "_".join(f"{cp:04x}" for cp in cps) if len(cps) == 2 and cps[1] == FE0F and cps[0] < 0x100 else code
+        jobs.append((fetch(f"{NOTO_CDN}/{remote}/512.webp", work / "moving512" / f"{code}.webp"), key_of(cps)))
+    with Pool() as pool:
+        shrunk = dict(pool.map(shrink_moving, jobs))
+    total = sum(len(blob) for blob in shrunk.values())
+    print(f"moving: {len(shrunk)} pictures, {total / 1e6:.1f} MB (budget {MOVING_BUDGET / 1e6:.0f} MB)")
+    if total > MOVING_BUDGET:
+        sys.exit("over the budget: raise MOVING_FRAME_STEP or lower MOVING_QUALITY")
+    pack(shrunk, OUT / "moving.pack")
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--work", type=Path, default=ROOT / "target" / "emoji-src")
@@ -145,7 +200,9 @@ def main():
     args.work.mkdir(parents=True, exist_ok=True)
     OUT.mkdir(parents=True, exist_ok=True)
     build_stills(args.work)
-    print(f"still.pack: {(OUT / 'still.pack').stat().st_size / 1e6:.2f} MB")
+    build_moving(args.work)
+    for name in ("still.pack", "moving.pack"):
+        print(f"{name}: {(OUT / name).stat().st_size / 1e6:.2f} MB")
 
 
 if __name__ == "__main__":

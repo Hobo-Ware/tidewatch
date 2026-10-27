@@ -56,6 +56,7 @@ mod done_check_trigger;
 mod done_check_view;
 mod due;
 mod due_view;
+mod emoji_motion;
 mod emoji_pack;
 mod emoji_paint;
 mod emoji_pick;

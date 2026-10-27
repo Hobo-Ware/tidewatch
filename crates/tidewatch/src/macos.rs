@@ -65,6 +65,17 @@ pub(crate) fn app_is_active() -> bool {
     false
 }
 
+/// Whether System Settings, Accessibility, Display asks for less motion.
+#[cfg(target_os = "macos")]
+pub(crate) fn reduce_motion() -> bool {
+    objc2::MainThreadMarker::new().is_some()
+        && objc2_app_kit::NSWorkspace::sharedWorkspace().accessibilityDisplayShouldReduceMotion()
+}
+#[cfg(not(target_os = "macos"))]
+pub(crate) fn reduce_motion() -> bool {
+    false
+}
+
 /// Where the "Open at login" item stands. `login_item_status` is the only source of truth: the
 /// user can also change the item in System Settings, so Tidewatch stores nothing.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

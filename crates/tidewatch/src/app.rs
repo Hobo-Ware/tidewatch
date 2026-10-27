@@ -51,7 +51,7 @@ use stdusk_egui::ui::{BellFlash, apply_theme};
 use tidewatch_core::guards::GuardPrefs;
 use tidewatch_core::notes::NotesWriter;
 use tidewatch_core::paths::TidewatchPaths;
-use tidewatch_core::prefs::{CloseEnter, NewTabPrefs, Prefs, TerminalPrefs};
+use tidewatch_core::prefs::{ChatPrefs, CloseEnter, NewTabPrefs, Prefs, TerminalPrefs};
 use tidewatch_core::restore::RealDisk;
 use tidewatch_core::run_marker;
 use tidewatch_core::tools::Tools;
@@ -84,6 +84,7 @@ use crate::dev_workflow::DevWorkflow;
 use crate::dev_worktree::DevWorktree;
 use crate::done_check_glue;
 use crate::due;
+use crate::emoji_motion;
 use crate::flow::Flow;
 use crate::handoff;
 use crate::image_paste as picture_paste;
@@ -147,6 +148,8 @@ pub(crate) struct Tidewatch {
     workspaces: Vec<Workspace>,
     terminal_font: terminal_font::Host,
     terminal_prefs: TerminalPrefs,
+    chat_prefs: ChatPrefs,
+    reduce_motion: emoji_motion::ReduceMotion,
     terminal_config: TerminalConfig,
     pending_pastes: VecDeque<(u64, String)>,
     bell: BellFlash,
@@ -369,6 +372,8 @@ impl Tidewatch {
             terminal_font,
             terminal_config: terminal::terminal_config(terminal_prefs.copy_on_select),
             terminal_prefs,
+            chat_prefs: loaded.chat,
+            reduce_motion: emoji_motion::ReduceMotion::default(),
             pending_pastes: VecDeque::new(),
             bell: BellFlash::default(),
             tabs,

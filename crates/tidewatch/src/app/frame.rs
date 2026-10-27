@@ -72,6 +72,8 @@ impl Tidewatch {
     }
 
     pub(super) fn drive_background_work(&mut self, ctx: &egui::Context, now: f64) {
+        let reduce = self.reduce_motion.asked(now, crate::macos::reduce_motion);
+        crate::emoji_motion::set_allowed(ctx, self.chat_prefs.animate_emoji && !reduce);
         self.dev_reader.press_toggle(ctx, now);
         if let Some(command) = self.dev_panes.press(ctx, now) {
             self.run_command(command, ctx);

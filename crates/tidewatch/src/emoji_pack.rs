@@ -9,6 +9,7 @@ use std::sync::OnceLock;
 const MAGIC: &[u8] = b"TWEP1";
 
 static STILL: &[u8] = include_bytes!("../assets/emoji/still.pack");
+static MOVING: &[u8] = include_bytes!("../assets/emoji/moving.pack");
 
 pub(crate) struct Pack {
     entries: HashMap<&'static str, &'static [u8]>,
@@ -68,9 +69,19 @@ impl Pack {
     }
 }
 
+fn parsed(bytes: &'static [u8]) -> Pack {
+    Pack::parse(bytes).unwrap_or(Pack { entries: HashMap::new() })
+}
+
 pub(crate) fn still() -> &'static Pack {
     static PACK: OnceLock<Pack> = OnceLock::new();
-    PACK.get_or_init(|| Pack::parse(STILL).unwrap_or(Pack { entries: HashMap::new() }))
+    PACK.get_or_init(|| parsed(STILL))
+}
+
+/// The animated versions, 40 px animated WebP: 881 of the emoji, no flag among them.
+pub(crate) fn moving() -> &'static Pack {
+    static PACK: OnceLock<Pack> = OnceLock::new();
+    PACK.get_or_init(|| parsed(MOVING))
 }
 
 #[cfg(test)]
@@ -132,6 +143,23 @@ mod tests {
             assert!(pack.contains(key), "{key}");
         }
         assert!(pack.len() > 3900, "{}", pack.len());
+    }
+
+    #[test]
+    fn the_animated_pack_holds_881_webp_files_and_none_for_a_flag() {
+        let pack = moving();
+        assert_eq!(pack.len(), 881);
+        for key in ["1f600", "2764", "1f389", "1f44d", "1f680"] {
+            assert!(pack.contains(key), "{key}");
+            let bytes = pack.get(key).unwrap();
+            assert_eq!((&bytes[..4], &bytes[8..12]), (&b"RIFF"[..], &b"WEBP"[..]), "{key}");
+        }
+        assert!(!pack.contains("1f1e7_1f1ea"));
+    }
+
+    #[test]
+    fn the_animated_pack_stays_under_its_15_megabyte_budget() {
+        assert!(MOVING.len() <= 15_000_000, "{}", MOVING.len());
     }
 
     #[test]

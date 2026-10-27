@@ -78,6 +78,7 @@ pub(crate) struct ViewState {
     scroll_id: Option<Id>,
     body_h: f32,
     seen_rows: u64,
+    pub(crate) fresh_after_ms: Option<i64>,
     stick_pending: bool,
     last_pass: Option<u64>,
     #[cfg(test)]
@@ -113,6 +114,7 @@ impl Default for ViewState {
             scroll_id: None,
             body_h: 0.0,
             seen_rows: 0,
+            fresh_after_ms: None,
             stick_pending: true,
             last_pass: None,
             #[cfg(test)]
@@ -130,6 +132,11 @@ impl Default for ViewState {
 }
 
 impl ViewState {
+    /// A view of a tab that started at `started_ms`: what arrives later is new to it.
+    pub(crate) fn started_at(started_ms: i64) -> Self {
+        Self { fresh_after_ms: Some(started_ms), ..Self::default() }
+    }
+
     /// What is left of the wait before Tidewatch answers question row `seq` itself.
     pub(crate) fn set_auto_left(&mut self, left: Option<(u64, f64)>) {
         self.auto_left = left;
@@ -620,8 +627,17 @@ fn transcript(
     let follow = state.scroll.following();
     let scroll_down = follow && std::mem::take(&mut state.stick_pending);
     state.refresh_turns(rows);
-    let ViewState { heights, pr_heights, expanded, tidewatch_open, turns, zone, pastes, .. } =
-        state;
+    let ViewState {
+        heights,
+        pr_heights,
+        expanded,
+        tidewatch_open,
+        turns,
+        zone,
+        pastes,
+        fresh_after_ms,
+        ..
+    } = state;
     let (_, _, layout) = turns.as_ref()?;
     let scene = Scene {
         root,
@@ -630,6 +646,7 @@ fn transcript(
         face,
         zone,
         now_ms: now_ms(),
+        fresh_after_ms: *fresh_after_ms,
         running,
         waiting,
     };
@@ -732,6 +749,10 @@ fn transcript(
                                         stamps[index],
                                         scene.zone,
                                         (width, scene.pastes),
+                                        reader_chat_view::is_fresh(
+                                            stamps[index],
+                                            scene.fresh_after_ms,
+                                        ),
                                     ),
                                     _ => {
                                         let asked = draw_row(
