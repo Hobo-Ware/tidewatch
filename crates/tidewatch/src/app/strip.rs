@@ -1,4 +1,4 @@
-//! The tab strip: overview button, repo chip (a menu of the repos, Open repo and Close repo), the repo's main checkout as an icon, leftovers chip, the agent tabs, new tab button, and at the right end the update chip and the settings button.
+//! The tab strip: overview button, repo chip (a menu of the repos, Open repo and Close repo), the Parked pill when something is parked, the repo's main checkout as an icon, leftovers chip, the agent tabs, new tab button, and at the right end the update chip and the settings button.
 
 use egui::layers::ShapeIdx;
 use egui::{CornerRadius, Frame, Margin, Shape, Stroke, StrokeKind, pos2, vec2};
@@ -23,6 +23,7 @@ use crate::job_model::{TabJob, tab_job};
 use crate::pane::{Body, Pane};
 use crate::park::Fits;
 use crate::progress_model::{TabRing, tab_ring};
+use crate::remote_pill::Popover;
 use crate::tabs::{Action, Step, Tabs};
 use crate::window_chrome::{self, Chrome};
 use crate::{layout, overview_view, status_view};
@@ -122,19 +123,22 @@ impl Tidewatch {
                         frame.toggle_overview = true;
                     }
                     self.repo_chip(ui, frame);
-                    slash(ui);
-                    self.main_icon(ui, frame);
+                    let group = self.tabs.active_group();
+                    let rows = self.parked_rows(group);
+                    let parked_tail =
+                        if rows.is_empty() { 0.0 } else { pill::width(ui, rows.len()) + STRIP_GAP };
+                    let picked = lead(
+                        ui,
+                        (!rows.is_empty()).then_some((rows.as_slice(), self.dev_parked_popover)),
+                        |ui| self.main_icon(ui, frame),
+                    );
+                    if let Some(row) = picked {
+                        frame.actions.push(Action::Select(rows[row].index));
+                    }
                     self.leftovers.chip(ui);
                     ui.add_space(8.0);
                     let pill_width = self.updates.pill_width(ui);
                     let tail = if pill_width > 0.0 { pill_width + STRIP_GAP } else { 0.0 };
-                    let group = self.tabs.active_group();
-                    let rows = self.parked_rows(group);
-                    let parked_tail = if pill::wanted(ui.ctx(), rows.len()) {
-                        pill::width(ui, rows.len()) + STRIP_GAP
-                    } else {
-                        0.0
-                    };
                     let room = ui.available_width()
                         - ICON_BOX * 2.0
                         - 26.0
@@ -142,15 +146,16 @@ impl Tidewatch {
                         - controls
                         - amphetamine_view::SLOT_W
                         - STRIP_GAP;
+                    let open = room + parked_tail;
                     self.parking.set_fits(Fits {
-                        alone: layout::tab_capacity(room, STRIP_GAP),
+                        alone: layout::tab_capacity(open, STRIP_GAP),
                         with_pill: layout::tab_capacity(
-                            room - pill::widest(ui) - STRIP_GAP,
+                            open - pill::widest(ui) - STRIP_GAP,
                             STRIP_GAP,
                         ),
                     });
                     let width = layout::tab_width(
-                        room - parked_tail,
+                        room,
                         self.tabs.shown_in(group).filter(|(_, tab)| !tab.pinned).count(),
                         STRIP_GAP,
                     );
@@ -169,7 +174,6 @@ impl Tidewatch {
                         (ui.available_width()
                             - ICON_BOX
                             - tail
-                            - parked_tail
                             - controls
                             - amphetamine_view::SLOT_W
                             - STRIP_GAP)
@@ -180,12 +184,6 @@ impl Tidewatch {
                         ui.next_widget_position().x - plus.rect.right(),
                         now,
                     );
-                    if pill::wanted(ui.ctx(), rows.len()) {
-                        let out = pill::show(ui, &rows, self.dev_parked_popover);
-                        if let Some(row) = out.picked {
-                            frame.actions.push(Action::Select(rows[row].index));
-                        }
-                    }
                     self.updates.pill(ui);
                     if strip_button(
                         ui,
@@ -655,7 +653,24 @@ fn strip_button(ui: &mut egui::Ui, icon: &str, tip: &str, radius: f32) -> egui::
     )
 }
 
-fn slash(ui: &mut egui::Ui) {
+fn lead(
+    ui: &mut egui::Ui,
+    parked: Option<(&[pill::Row], Popover)>,
+    main: impl FnOnce(&mut egui::Ui),
+) -> Option<usize> {
+    let slash = slash(ui);
+    let picked = if let Some((rows, popover)) = parked {
+        pill::show(ui, rows, popover).picked
+    } else {
+        let gap = ui.spacing().item_spacing.x;
+        pill::drop_place(ui, pos2(slash.right() + gap, slash.center().y));
+        None
+    };
+    main(ui);
+    picked
+}
+
+fn slash(ui: &mut egui::Ui) -> egui::Rect {
     let font = egui::FontId::proportional(SLASH_SIZE);
     let galley = ui.painter().layout_no_wrap("/".to_owned(), font, brand::FIELD_LINE);
     let (rect, _) = ui.allocate_exact_size(
@@ -663,6 +678,7 @@ fn slash(ui: &mut egui::Ui) {
         egui::Sense::hover(),
     );
     ui.painter().galley(rect.center() - galley.size() / 2.0, galley, brand::FIELD_LINE);
+    rect
 }
 
 fn is_fill_of(painter: &egui::Painter, idx: ShapeIdx, tab: egui::Rect) -> bool {

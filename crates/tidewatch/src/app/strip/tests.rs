@@ -29,6 +29,7 @@ struct Strip {
     ctx: egui::Context,
     tabs: Tabs<Pane<u32>>,
     time: f64,
+    width: f32,
     rects: Vec<Rect>,
     seen: Vec<Action>,
     texts: Vec<(String, Rect)>,
@@ -40,6 +41,7 @@ impl Strip {
             ctx: crate::fonts::test_context(),
             tabs: tabs(),
             time: 0.0,
+            width: 800.0,
             rects: Vec::new(),
             seen: Vec::new(),
             texts: Vec::new(),
@@ -63,7 +65,7 @@ impl Strip {
     fn frame(&mut self, events: Vec<Event>) {
         self.time += 0.05;
         let raw = RawInput {
-            screen_rect: Some(Rect::from_min_size(pos2(0.0, 0.0), vec2(800.0, 200.0))),
+            screen_rect: Some(Rect::from_min_size(pos2(0.0, 0.0), vec2(self.width, 200.0))),
             events,
             time: Some(self.time),
             focused: true,
@@ -75,12 +77,20 @@ impl Strip {
         let output = self.ctx.run_ui(raw, |ui| {
             egui::Panel::top("tabbar").exact_size(TAB_H + 6.0).show(ui, |ui| {
                 ui.horizontal(|ui| {
-                    rects.extend(main_icon::draw(
-                        ui,
-                        &self.tabs,
-                        |_| (false, "main tip".to_owned()),
-                        &mut actions,
-                    ));
+                    ui.spacing_mut().item_spacing.x = STRIP_GAP;
+                    let parked = (!rows.is_empty())
+                        .then_some((rows.as_slice(), crate::remote_pill::Popover::OnClick));
+                    let picked = lead(ui, parked, |ui| {
+                        rects.extend(main_icon::draw(
+                            ui,
+                            &self.tabs,
+                            |_| (false, "main tip".to_owned()),
+                            &mut actions,
+                        ));
+                    });
+                    if let Some(row) = picked {
+                        actions.push(Action::Select(rows[row].index));
+                    }
                     rects.extend(tab_row(
                         ui,
                         &self.tabs,
@@ -92,12 +102,6 @@ impl Strip {
                             |_| TabExtras::default(),
                         ),
                     ));
-                    if pill::wanted(ui.ctx(), rows.len()) {
-                        let out = pill::show(ui, &rows, crate::remote_pill::Popover::OnClick);
-                        if let Some(row) = out.picked {
-                            actions.push(Action::Select(rows[row].index));
-                        }
-                    }
                 });
             });
         });
@@ -599,14 +603,125 @@ fn parked_strip() -> Strip {
 }
 
 #[test]
-fn the_strip_draws_the_tabs_that_are_not_parked_and_a_pill_to_their_right_that_counts_the_rest() {
+fn the_strip_draws_the_tabs_that_are_not_parked_and_a_pill_before_them_that_counts_the_rest() {
     let strip = parked_strip();
     assert_eq!(strip.rects.len(), 2);
     let placed = strip.placed();
     let pill = placed.pill.expect("a pill");
-    assert!(pill.left() > strip.rects[1].right());
+    assert!(pill.right() < strip.rects[0].left());
     assert!(strip.texts.iter().any(|(text, _)| text == "Parked 2"), "{:?}", strip.texts);
     assert_eq!(placed.rows, Vec::<Rect>::new(), "the list is closed until it is clicked");
+}
+
+fn slash_right(strip: &Strip) -> f32 {
+    let (_, glyph) = strip.texts.iter().find(|(text, _)| text == "/").expect("the slash");
+    glyph.right() + SLASH_MARGIN
+}
+
+fn assert_pill_sits_between_the_slash_and_the_main_tab(strip: &Strip) {
+    let pill = strip.placed().pill.expect("a pill");
+    let main = strip.rects[0];
+    assert!((pill.left() - (slash_right(strip) + STRIP_GAP)).abs() < 0.5, "{pill:?}");
+    assert!((main.left() - (pill.right() + STRIP_GAP)).abs() < 0.5, "{pill:?} {main:?}");
+    assert!(!pill.intersects(main), "{pill:?} {main:?}");
+    assert!((pill.center().y - main.center().y).abs() < 0.5, "{pill:?} {main:?}");
+    assert!((pill.center().y - strip.rects[1].center().y).abs() < 0.5, "{pill:?}");
+}
+
+#[test]
+fn one_parked_tab_puts_the_pill_after_the_slash_and_before_the_main_tab_a_strip_gap_each_side() {
+    let mut strip = Strip::new();
+    strip.tabs.apply(Action::Select(1), || unreachable!());
+    strip.park(3);
+    strip.frame(Vec::new());
+    strip.frame(Vec::new());
+    assert!(strip.texts.iter().any(|(text, _)| text == "Parked 1"), "{:?}", strip.texts);
+    assert_pill_sits_between_the_slash_and_the_main_tab(&strip);
+    let after_main = strip.rects[1].left();
+    assert!(
+        (after_main - (strip.rects[0].right() + STRIP_GAP)).abs() < 0.5,
+        "tabs keep their order"
+    );
+}
+
+#[test]
+fn nothing_parked_leaves_no_gap_and_the_main_tab_follows_the_slash_as_before() {
+    let strip = Strip::new();
+    assert_eq!(strip.placed().pill, None);
+    let main = strip.rects[0];
+    assert!((main.left() - (slash_right(&strip) + STRIP_GAP)).abs() < 0.5, "{main:?}");
+}
+
+#[test]
+fn the_drop_place_floats_where_the_pill_will_sit_and_a_drag_with_nothing_parked_shifts_no_tab() {
+    let mut strip = Strip::new();
+    strip.tabs.apply(Action::Select(1), || unreachable!());
+    strip.frame(Vec::new());
+    let before = strip.rects.clone();
+    let from = strip.center(3);
+    strip.pointer(from);
+    strip.button(from, true);
+    for step in 1..=4 {
+        strip.pointer(from + vec2(0.0, 1.0) + vec2(step as f32 * 3.0, 0.0));
+    }
+    strip.frame(Vec::new());
+    strip.frame(Vec::new());
+    assert!(strip.texts.iter().any(|(text, _)| text == "Drop to park"), "{:?}", strip.texts);
+    assert_eq!(strip.rects, before, "nothing moved when the place appeared");
+    let place = strip.placed().pill.expect("the drop place");
+    assert!((place.left() - (slash_right(&strip) + STRIP_GAP)).abs() < 0.5, "{place:?}");
+    assert!((place.center().y - before[0].center().y).abs() < 0.5, "{place:?}");
+    assert_eq!(strip.moves(), Vec::<Action>::new());
+}
+
+#[test]
+fn a_pill_that_is_gone_leaves_no_stale_rect_to_catch_a_drop_over_the_tabs() {
+    let mut strip = parked_strip();
+    assert!(strip.placed().pill.is_some());
+    for index in [2, 3] {
+        strip.tabs.apply(Action::Select(index), || unreachable!());
+    }
+    strip.frame(Vec::new());
+    assert_eq!(strip.placed().pill, None);
+}
+
+#[test]
+fn a_narrow_window_keeps_the_pill_visible_and_clear_of_the_main_tab() {
+    for width in [420.0, 300.0, 220.0] {
+        let mut strip = Strip::new();
+        strip.width = width;
+        strip.tabs.apply(Action::Select(1), || unreachable!());
+        strip.park(2);
+        strip.park(3);
+        strip.frame(Vec::new());
+        strip.frame(Vec::new());
+        assert_pill_sits_between_the_slash_and_the_main_tab(&strip);
+        let pill = strip.placed().pill.unwrap();
+        assert!(pill.right() <= width, "{width}: {pill:?}");
+    }
+}
+
+#[test]
+fn the_list_opens_below_the_pill_and_stays_inside_the_window() {
+    for width in [800.0, 460.0, 440.0] {
+        let mut strip = Strip::new();
+        strip.width = width;
+        strip.tabs.apply(Action::Select(1), || unreachable!());
+        strip.park(2);
+        strip.park(3);
+        strip.frame(Vec::new());
+        let at = strip.pill_center();
+        strip.click(at);
+        strip.frame(Vec::new());
+        let placed = strip.placed();
+        let screen = Rect::from_min_size(pos2(0.0, 0.0), vec2(width, 200.0));
+        let pill = placed.pill.unwrap();
+        assert_eq!(placed.rows.len(), 2, "{width}");
+        for row in &placed.rows {
+            assert!(screen.contains_rect(*row), "{width}: {row:?} outside {screen:?}");
+            assert!(row.top() > pill.bottom(), "{width}: {row:?} under {pill:?}");
+        }
+    }
 }
 
 #[test]
