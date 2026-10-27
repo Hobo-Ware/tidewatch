@@ -8,8 +8,9 @@ use resvg::usvg;
 
 /// The plate every face sits on, as sRGB. The app's `brand::FACE_PLATE` is this color.
 pub const PLATE: [u8; 3] = [0x22, 0x29, 0x37];
-/// How much of the plate's width the picture takes.
-pub const FACE_INSET: f32 = 0.6;
+/// How much of the plate's radius the drawn part of a picture reaches, wherever it sits in its
+/// viewBox.
+pub const FACE_FILL: f32 = 0.8;
 pub const MIN_CONTRAST: f64 = 3.0;
 const CHECK_PX: u32 = 48;
 const PAINTED_ALPHA: u8 = 128;
@@ -63,6 +64,49 @@ pub fn rasterize(svg: &str, px: u32, inset: f32) -> Option<Pixmap> {
     let left = (px as f32 - size.width() * scale) / 2.0;
     let top = (px as f32 - size.height() * scale) / 2.0;
     let transform = Transform::from_scale(scale, scale).post_translate(left, top);
+    resvg::render(&tree, transform, &mut pixmap.as_mut());
+    Some(pixmap)
+}
+
+const PROBE_PX: u32 = 96;
+
+/// The picture scaled and moved so what it paints, not its viewBox, is centered and reaches
+/// `fill` of the square's half width at its farthest painted pixel, so nothing is cut by the
+/// circle and small art is not left tiny. `None` when it cannot be drawn or paints nothing.
+#[must_use]
+pub fn rasterize_fitted(svg: &str, px: u32, fill: f32) -> Option<Pixmap> {
+    let tree = usvg::Tree::from_str(svg, &usvg::Options::default()).ok()?;
+    let probe = rasterize(svg, PROBE_PX, 1.0)?;
+    let painted: Vec<(f32, f32)> = probe
+        .pixels()
+        .iter()
+        .enumerate()
+        .filter(|(_, p)| p.alpha() > 0)
+        .map(|(i, _)| ((i as u32 % PROBE_PX) as f32, (i as u32 / PROBE_PX) as f32))
+        .collect();
+    if painted.is_empty() {
+        return None;
+    }
+    let (min_x, max_x, min_y, max_y) =
+        painted.iter().fold((f32::MAX, f32::MIN, f32::MAX, f32::MIN), |(a, b, c, d), &(x, y)| {
+            (a.min(x), b.max(x + 1.0), c.min(y), d.max(y + 1.0))
+        });
+    let (cx, cy) = (f32::midpoint(min_x, max_x), f32::midpoint(min_y, max_y));
+    let reach = painted
+        .iter()
+        .map(|&(x, y)| ((x + 0.5 - cx).abs() + 0.5).hypot((y + 0.5 - cy).abs() + 0.5))
+        .fold(0.0_f32, f32::max);
+    let size = tree.size();
+    let probe_scale = (PROBE_PX as f32 / size.width()).min(PROBE_PX as f32 / size.height());
+    let left = (PROBE_PX as f32 - size.width() * probe_scale) / 2.0;
+    let top = (PROBE_PX as f32 - size.height() * probe_scale) / 2.0;
+    let half = px as f32 / 2.0;
+    let zoom = half * fill / reach;
+    let transform = Transform::from_scale(probe_scale, probe_scale)
+        .post_translate(left - cx, top - cy)
+        .post_scale(zoom, zoom)
+        .post_translate(half, half);
+    let mut pixmap = Pixmap::new(px, px)?;
     resvg::render(&tree, transform, &mut pixmap.as_mut());
     Some(pixmap)
 }
