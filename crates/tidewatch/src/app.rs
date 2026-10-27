@@ -380,7 +380,8 @@ impl Tidewatch {
             workspace_jobs: Jobs::new(),
             group_merge: merge_groups::Host::new(),
             stdusk_jobs: Jobs::new(),
-            takeover: Takeover::with_recent_open(DevTakeover::recent_open_from_env()),
+            takeover: Takeover::with_recent_open(DevTakeover::recent_open_from_env())
+                .with_line_open(DevTakeover::line_open_from_env()),
             takeover_jobs: Jobs::new(),
             dev_takeover: DevTakeover::from_env(),
             picker: Picker::new(),

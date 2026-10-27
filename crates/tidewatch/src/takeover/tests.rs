@@ -878,3 +878,9 @@ fn what_an_open_tab_held_stays_held_after_the_tab_is_gone() {
     assert!(takeover.held().ids.contains(ID_B));
     assert!(takeover.held().transcripts.contains(Path::new("/store/other.jsonl")));
 }
+
+#[test]
+fn a_dev_start_can_open_the_elsewhere_line() {
+    assert!(Takeover::default().with_line_open(true).line_open());
+    assert!(!Takeover::default().with_line_open(false).line_open());
+}
