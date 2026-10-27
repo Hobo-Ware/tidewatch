@@ -3,6 +3,7 @@
 
 use tidewatch_core::background;
 use tidewatch_core::civil_date::Date;
+use tidewatch_core::job::Agent;
 use tidewatch_core::progress::{Ledger, State};
 
 use std::path::{Path, PathBuf};
@@ -17,7 +18,7 @@ use crate::due::{
     Due, Key, ask_blocked, ask_text, due_items, next_to_start, secs_to_midnight, tell_all,
 };
 use crate::job_glue;
-use crate::job_model::lane_line;
+use crate::job_model::{agent_of, lane_line};
 use crate::notify;
 use crate::outbox::{Offer, Origin, Send};
 use crate::overview::Overview;
@@ -28,7 +29,7 @@ use crate::progress_model::{look, look_as};
 use crate::progress_nudge as nudge;
 use crate::progress_stale::{Live, answered_since_save, is_stale, standing};
 use crate::progress_state::Facts;
-use crate::status_view::{Tone, state_of};
+use crate::status_view::state_of;
 use crate::{due_view, flow_glue, reader_glue, reader_view};
 use tidewatch_core::sent::{Cap, Reason as Said, because};
 use tidewatch_core::status::{AgentStatus, Reason};
@@ -131,6 +132,18 @@ impl Tidewatch {
         }
     }
 
+    pub(super) fn job_agent(&self, tab: u64) -> Agent {
+        if let Some(fake) = self.job_live.fake_agent() {
+            return fake;
+        }
+        self.tabs
+            .items()
+            .iter()
+            .find(|candidate| candidate.id == tab)
+            .and_then(|candidate| candidate.pane.agent.as_ref())
+            .map_or(Agent::Working, |agent| agent_of(agent.run.shown_tone()))
+    }
+
     pub(super) fn drive_jobs(&mut self, ctx: &egui::Context) {
         let now_ms = wall_ms() as i64;
         let facts: Vec<job_glue::Facts<'_>> = self
@@ -155,16 +168,9 @@ impl Tidewatch {
         if let Some(listener) = self.hooks.listener() {
             listener.exempt_from_avatar_ask(&self.avatar_live.exempt_from_ask(&facts));
         }
-        let done: Vec<u64> = self
-            .tabs
-            .items()
-            .iter()
-            .filter(|tab| {
-                tab.pane.agent.as_ref().is_some_and(|agent| agent.run.shown_tone() == Tone::Done)
-            })
-            .map(|tab| tab.id)
-            .collect();
-        let mut wake = self.job_live.tick(&facts, &done, ctx, now_ms);
+        let agents: Vec<(u64, Agent)> =
+            self.tabs.items().iter().map(|tab| (tab.id, self.job_agent(tab.id))).collect();
+        let mut wake = self.job_live.tick(&facts, &agents, ctx, now_ms);
         for tab in self.tabs.items() {
             let (Body::Shell(term), Some(_)) = (&tab.pane.body, &tab.pane.agent) else { continue };
             let later = self.job_live.scan(tab.id, term.output_gen(), now_ms, || {
@@ -547,8 +553,10 @@ impl Tidewatch {
                 None => look(&known.ledger, stale),
             });
             row.avatar = self.avatar_live.get(row.tab_id).cloned();
-            row.job_line =
-                self.job_live.board(row.tab_id).and_then(|board| lane_line(board, now_ms));
+            row.job_line = self
+                .job_live
+                .board(row.tab_id)
+                .and_then(|board| lane_line(board, now_ms, self.job_agent(row.tab_id)));
         }
     }
 

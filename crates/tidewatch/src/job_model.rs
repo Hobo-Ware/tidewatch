@@ -3,7 +3,9 @@
 
 use jiff::tz::TimeZone;
 use tidewatch_core::background::Launch;
-use tidewatch_core::job::{Job, JobBoard, JobState};
+use tidewatch_core::job::{Agent, Ended, Job, JobBoard, JobState};
+
+use crate::status_view::Tone;
 
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) enum Card {
@@ -71,6 +73,20 @@ pub(crate) struct TabJob {
     pub(crate) label: String,
     pub(crate) stalled: bool,
     pub(crate) tip: String,
+}
+
+pub(crate) fn agent_of(tone: Tone) -> Agent {
+    match tone {
+        Tone::Working => Agent::Working,
+        Tone::Done => Agent::Done,
+        Tone::Setup
+        | Tone::Needs
+        | Tone::Waiting
+        | Tone::Blocked
+        | Tone::Failed
+        | Tone::Stopped
+        | Tone::Shell => Agent::Idle,
+    }
 }
 
 pub(crate) fn duration_text(secs: u64) -> String {
@@ -240,12 +256,26 @@ fn quiet_line(job: &Job, now_ms: i64) -> QuietLine {
     QuietLine { id: job.id, name: job.name.clone(), elapsed: ms_text(job.elapsed_ms(now_ms)) }
 }
 
-fn finished_line(job: &Job, now_ms: i64) -> FinishedLine {
+fn silent_line(job: &Job, now_ms: i64) -> QuietLine {
+    let quiet = ms_text(now_ms - job.alive_ms());
+    QuietLine {
+        id: job.id,
+        name: format!("{} \u{b7} no report for {quiet}", job.name),
+        elapsed: String::new(),
+    }
+}
+
+fn finished_line(job: &Job, now_ms: i64, zone: &TimeZone) -> FinishedLine {
     let failed = job.state == JobState::Failed;
     let result = if failed {
         "failed".to_owned()
-    } else if job.ended {
+    } else if job.ended == Some(Ended::NoFinalReport) {
         "ended, no final report".to_owned()
+    } else if job.ended == Some(Ended::Silent) {
+        match clock_label(job.alive_ms(), zone) {
+            Some(time) => format!("no report since {time}"),
+            None => "no report".to_owned(),
+        }
     } else if job.done > 0.0 && !job.unit.is_empty() && job.unit != "%" {
         format!("{} {}", count_text(job.done), job.unit)
     } else {
@@ -255,14 +285,15 @@ fn finished_line(job: &Job, now_ms: i64) -> FinishedLine {
         id: job.id,
         name: job.name.clone(),
         failed,
-        ended: job.ended,
+        ended: job.ended.is_some(),
         detail: format!("{result} \u{b7} {}", ms_text(job.elapsed_ms(now_ms))),
     }
 }
 
 /// The cards of a board: running jobs in the order they began, quiet lines for the ones with
-/// nothing to measure, stalled ones, then finished ones with the latest first.
-pub(crate) fn cards(board: &JobBoard, now_ms: i64) -> Vec<Card> {
+/// nothing to measure, stalled ones, then finished ones with the latest first. A stalled job is an
+/// alarm only while the agent works; otherwise it is a muted line.
+pub(crate) fn cards(board: &JobBoard, now_ms: i64, agent: Agent, zone: &TimeZone) -> Vec<Card> {
     let mut running = Vec::new();
     let mut quiet = Vec::new();
     let mut stalled = Vec::new();
@@ -279,6 +310,9 @@ pub(crate) fn cards(board: &JobBoard, now_ms: i64) -> Vec<Card> {
                 Some(fraction) => running.push(Card::Bar(timed_card(job, fraction, now_ms))),
                 None => quiet.push(Card::Quiet(quiet_line(job, now_ms))),
             },
+            (JobState::Stalled, _) if agent != Agent::Working => {
+                quiet.push(Card::Quiet(silent_line(job, now_ms)));
+            }
             (JobState::Stalled, Some(_)) => stalled.push(Card::Stalled(StalledCard {
                 id: job.id,
                 line: stalled_line(job, now_ms),
@@ -293,7 +327,7 @@ pub(crate) fn cards(board: &JobBoard, now_ms: i64) -> Vec<Card> {
         .into_iter()
         .chain(quiet)
         .chain(stalled)
-        .chain(finished.into_iter().map(|job| Card::Finished(finished_line(job, now_ms))))
+        .chain(finished.into_iter().map(|job| Card::Finished(finished_line(job, now_ms, zone))))
         .collect()
 }
 
@@ -311,31 +345,32 @@ pub(crate) fn add_background(cards: &mut Vec<Card>, launches: &[Launch], now_ms:
 }
 
 /// The leading job's bar for the tab. `None` when no job has a total to measure by.
-pub(crate) fn tab_job(board: &JobBoard, now_ms: i64) -> Option<TabJob> {
+pub(crate) fn tab_job(board: &JobBoard, now_ms: i64, agent: Agent) -> Option<TabJob> {
     let job = board.lead()?;
     let percent = job.percent()?;
     let label = percent_text(percent)?;
     let mut parts = vec![format!("{}: {}", job.name, counts_text(job))];
     parts.extend(job.eta_left(now_ms).map(|secs| format!("{} left", duration_text(secs))));
-    if job.state == JobState::Stalled {
+    let stalled = job.state == JobState::Stalled && agent == Agent::Working;
+    if stalled {
         parts.push(format!("stuck for {}", ms_text(job.quiet_ms(now_ms))));
+    } else if job.state == JobState::Stalled {
+        parts.push(format!("no report for {}", ms_text(job.quiet_ms(now_ms))));
     }
     let tip = parts.join(" \u{b7} ");
-    Some(TabJob {
-        fraction: (percent / 100.0) as f32,
-        label,
-        stalled: job.state == JobState::Stalled,
-        tip,
-    })
+    Some(TabJob { fraction: (percent / 100.0) as f32, label, stalled, tip })
 }
 
 /// The status line of an agent row: `21% \u{b7} 1h 52m`.
-pub(crate) fn lane_line(board: &JobBoard, now_ms: i64) -> Option<String> {
+pub(crate) fn lane_line(board: &JobBoard, now_ms: i64, agent: Agent) -> Option<String> {
     let job = board.lead()?;
     let mut parts = Vec::new();
     parts.extend(job.percent().and_then(percent_text));
     match job.state {
-        JobState::Stalled => parts.push(format!("stuck {}", ms_text(job.quiet_ms(now_ms)))),
+        JobState::Stalled if agent == Agent::Working => {
+            parts.push(format!("stuck {}", ms_text(job.quiet_ms(now_ms))));
+        }
+        JobState::Stalled => parts.push(format!("no report {}", ms_text(job.quiet_ms(now_ms)))),
         _ => parts.extend(job.eta_left(now_ms).map(duration_text)),
     }
     if parts.is_empty() {

@@ -2,6 +2,7 @@
 
 use std::collections::HashSet;
 
+use jiff::tz::TimeZone;
 use kelp_core::refs::RefLabel;
 use kelp_ui::graph::GraphAction;
 use kelp_ui::theme as kelp_theme;
@@ -102,6 +103,7 @@ impl Tidewatch {
         ctx: &egui::Context,
     ) {
         let active_id = self.tabs.items()[self.tabs.active()].id;
+        let job_agent = self.job_agent(active_id);
         let stale = self.ledger_stale(active_id, ctx.input(|i| i.time));
         let last_turn = self.last_turn(active_id);
         let side = self.side_layout();
@@ -126,7 +128,7 @@ impl Tidewatch {
         let now_ms = wall_ms() as i64;
         let mut cards = agent
             .and_then(|_| self.job_live.board(active_id))
-            .map(|board| job_model::cards(board, now_ms))
+            .map(|board| job_model::cards(board, now_ms, job_agent, &TimeZone::system()))
             .unwrap_or_default();
         if agent.is_some() {
             let silent = self.job_live.background_silent(active_id, now_ms);

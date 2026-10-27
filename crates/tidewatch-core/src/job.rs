@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 
 pub const STALL_AFTER_MS: i64 = 5 * 60 * 1000;
 pub const QUIET_GONE_AFTER_MS: i64 = 5 * 60 * 1000;
+pub const SILENT_AFTER_MS: i64 = 30 * 60 * 1000;
 pub const FINISHED_KEEP_MS: i64 = 10 * 60 * 1000;
 pub const MIN_SAMPLES_FOR_ETA: usize = 2;
 pub const MAX_JOBS: usize = 24;
@@ -16,11 +17,21 @@ const MAX_ETA_SECS: f64 = 100.0 * 86_400.0;
 const MIN_RATE_SPAN_MS: i64 = 1_000;
 const SEGMENT_MAX_TOTAL: f64 = 12.0;
 
-/// What the tab's agent is doing right now, as far as the board cares.
+/// What the tab's agent is doing right now, as far as the board cares. Only a working agent can be
+/// waiting on a job that went quiet.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Agent {
     Working,
+    Idle,
     Done,
+}
+
+/// Why the board closed a job that never sent a final line.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Ended {
+    NoFinalReport,
+    Silent,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -128,9 +139,8 @@ pub struct Job {
     /// When `done` last moved: the clock the stall rule reads.
     pub changed_ms: i64,
     pub finished_ms: Option<i64>,
-    /// Closed by the board because the agent was done and the job never sent a final line.
     #[serde(default)]
-    pub ended: bool,
+    pub ended: Option<Ended>,
     pub rate_per_min: Option<f64>,
     /// Seconds left as of the last sample, from the rate. Read it through [`Job::eta_left`].
     pub eta_s: Option<u64>,
@@ -153,7 +163,7 @@ impl Job {
             updated_ms: now_ms,
             changed_ms: now_ms,
             finished_ms: None,
-            ended: false,
+            ended: None,
             rate_per_min: None,
             eta_s: None,
             eta_hint: None,
@@ -249,7 +259,10 @@ impl Job {
         (now_ms - self.changed_ms).max(0)
     }
 
-    fn alive_ms(&self) -> i64 {
+    /// When the job last gave a sign of life: `done` moving for a job with a total, any report
+    /// for one without.
+    #[must_use]
+    pub fn alive_ms(&self) -> i64 {
         if self.total.is_some() { self.changed_ms } else { self.updated_ms }
     }
 
@@ -352,23 +365,24 @@ impl JobBoard {
     }
 
     /// Moves each job along as `now_ms` passes, and drops the ones that are gone. A job whose `done`
-    /// reached its `total` is finished. When the agent is done, a job quiet for five minutes is
-    /// closed as ended instead of waiting for a final line that is not coming. Otherwise a running
-    /// job with a total whose `done` has stood still for five minutes is marked stalled. Returns
-    /// whether anything changed.
+    /// reached its `total` is finished. A job that never sent a final line is closed as ended once
+    /// it is quiet: after five minutes when the agent is done, after thirty when the agent is not
+    /// working. Otherwise a running job with a total whose `done` has stood still for five minutes
+    /// is marked stalled. Returns whether anything changed.
     pub fn tick(&mut self, now_ms: i64, agent: Agent) -> bool {
         let mut changed = false;
         for job in &mut self.jobs {
             if job.state.is_finished() {
                 continue;
             }
+            let quiet = now_ms - job.alive_ms();
             if job.reached_total() {
                 finish(job, Some(JobState::Done), now_ms);
                 job.clear_estimates();
-            } else if agent == Agent::Done && now_ms - job.alive_ms() >= STALL_AFTER_MS {
+            } else if let Some(ended) = ended_for(agent, quiet) {
                 finish(job, Some(JobState::Done), now_ms);
                 job.clear_estimates();
-                job.ended = true;
+                job.ended = Some(ended);
             } else if job.state == JobState::Running
                 && job.total.is_some()
                 && job.quiet_ms(now_ms) >= STALL_AFTER_MS
@@ -385,7 +399,7 @@ impl JobBoard {
     }
 
     /// The next moment `tick` changes something if nothing is reported: a running job with a
-    /// total turning stalled, a job closing for a done agent, or a job going away.
+    /// total turning stalled, a quiet job closing, or a job going away.
     #[must_use]
     pub fn next_change_at(&self, agent: Agent) -> Option<i64> {
         let stalls = self
@@ -393,11 +407,14 @@ impl JobBoard {
             .iter()
             .filter(|job| job.state == JobState::Running && job.total.is_some())
             .map(|job| job.changed_ms + STALL_AFTER_MS);
-        let ends = self
-            .jobs
-            .iter()
-            .filter(|job| agent == Agent::Done && !job.state.is_finished())
-            .map(|job| job.alive_ms() + STALL_AFTER_MS);
+        let ends = self.jobs.iter().filter(|job| !job.state.is_finished()).filter_map(|job| {
+            let after = match agent {
+                Agent::Working => return None,
+                Agent::Idle => SILENT_AFTER_MS,
+                Agent::Done => STALL_AFTER_MS,
+            };
+            Some(job.alive_ms() + after)
+        });
         stalls.chain(ends).chain(self.jobs.iter().filter_map(Job::gone_at)).min()
     }
 
@@ -430,7 +447,7 @@ fn apply(job: &mut Job, report: &Report, now_ms: i64) {
         job.started_ms = now_ms;
         job.changed_ms = now_ms;
         job.finished_ms = None;
-        job.ended = false;
+        job.ended = None;
         job.eta_hint = None;
         if report.done.is_none() {
             job.done = 0.0;
@@ -480,9 +497,17 @@ fn apply(job: &mut Job, report: &Report, now_ms: i64) {
     }
 }
 
+fn ended_for(agent: Agent, quiet_ms: i64) -> Option<Ended> {
+    match agent {
+        Agent::Done if quiet_ms >= STALL_AFTER_MS => Some(Ended::NoFinalReport),
+        Agent::Idle if quiet_ms >= SILENT_AFTER_MS => Some(Ended::Silent),
+        Agent::Working | Agent::Done | Agent::Idle => None,
+    }
+}
+
 fn finish(job: &mut Job, state: Option<JobState>, now_ms: i64) {
     job.state = state.unwrap_or(JobState::Done);
-    job.ended = false;
+    job.ended = None;
     job.finished_ms.get_or_insert(now_ms);
 }
 
