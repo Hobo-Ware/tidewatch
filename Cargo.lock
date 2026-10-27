@@ -5604,6 +5604,7 @@ dependencies = [
  "gix",
  "httparse",
  "kelp-core",
+ "resvg",
  "roxmltree",
  "serde",
  "serde_json",

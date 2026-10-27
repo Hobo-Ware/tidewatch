@@ -6,6 +6,7 @@ use std::path::Path;
 use serde_json::{Map, Value, json};
 
 use crate::avatar::{self, MAX_SVG_BYTES};
+use crate::avatar_check;
 use crate::avatar_store;
 use crate::events::TabEvent;
 use crate::paths::avatar_file_beside;
@@ -16,7 +17,7 @@ pub const SET_TOOL: &str = "set_avatar";
 pub fn tool_definition() -> Value {
     json!({
         "name": SET_TOOL,
-        "description": "Once you understand the task, call this once to give the tab an icon: a 64x64 flat SVG about the task, 2 to 3 colors, simple shapes (rect, circle, ellipse, line, polyline, polygon, path). Anything else in the SVG is dropped. Call it again only when asked to redraw.",
+        "description": "Once you understand the task, call this once to give the tab an icon: a round icon, a 64x64 flat SVG about the task, bright colors on a dark background, nothing near the edge. It is shown in a dark circle, so keep the drawing inside the middle circle of the viewBox, draw no background tile and use only colors that are at least 3:1 against #222937. 2 to 3 colors, simple shapes (rect, circle, ellipse, line, polyline, polygon, path). Anything else in the SVG is dropped. An icon that is too dark or runs past the circle is refused with what to fix. Call it again only when asked to redraw.",
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -60,6 +61,10 @@ pub fn set(
         Ok(avatar) => avatar,
         Err(e) => return not_set(&[e.to_string()]),
     };
+    if let Err(unreadable) = avatar_check::check(&avatar.svg) {
+        let problems: Vec<String> = unreadable.iter().map(ToString::to_string).collect();
+        return not_set(&problems);
+    }
     if let Err(e) = avatar_store::save(&avatar_file_beside(notes_file), &avatar) {
         return (format!("The avatar could not be saved ({e}). Call {SET_TOOL} again."), true);
     }
@@ -119,6 +124,46 @@ mod tests {
             assert_eq!(*seen.borrow(), 0);
         }
         assert!(!dir.path().join("avatar.json").exists());
+    }
+
+    #[test]
+    fn an_icon_that_cannot_be_read_is_refused_with_a_fix_and_saved_nowhere() {
+        let dark = "<svg viewBox=\"0 0 24 24\"><path d=\"M7 11V8a5 5 0 0 1 10 0v3h1v10H6V11z\" fill=\"#2a2f3a\"/></svg>";
+        let square =
+            "<svg viewBox=\"0 0 64 64\"><rect width=\"64\" height=\"64\" fill=\"#2dd4bf\"/></svg>";
+        let both = "<svg viewBox=\"0 0 64 64\"><rect width=\"64\" height=\"64\" rx=\"16\" fill=\"#123b38\"/></svg>";
+        let dir = tempfile::tempdir().unwrap();
+        let notes = dir.path().join("notes.json");
+        for (svg, wants) in [
+            (dark, vec!["too dark to read on its plate (#222937)", "at least 3:1"]),
+            (square, vec!["outside the circle", "middle circle of the viewBox"]),
+            (both, vec!["too dark", "outside the circle"]),
+        ] {
+            let seen = RefCell::new(0);
+            let (text, is_error) = set(&args(&json!({"svg": svg, "reason": "x"})), &notes, &|_| {
+                *seen.borrow_mut() += 1;
+            });
+            assert!(is_error, "{svg}");
+            for want in wants {
+                assert!(
+                    text.contains(want) && text.contains("call set_avatar again"),
+                    "{want}: {text}"
+                );
+            }
+            assert_eq!(*seen.borrow(), 0);
+        }
+        assert!(!dir.path().join("avatar.json").exists());
+    }
+
+    #[test]
+    fn the_tool_text_asks_for_a_round_bright_icon_with_nothing_near_the_edge() {
+        let text = tool_definition()["description"].as_str().unwrap().to_owned();
+        for want in
+            ["round icon", "bright colors on a dark background", "nothing near the edge", "3:1"]
+        {
+            assert!(text.contains(want), "{want}");
+        }
+        assert!(text.contains(&crate::avatar_check::hex(crate::avatar_check::PLATE)));
     }
 
     #[test]

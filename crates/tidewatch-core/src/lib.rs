@@ -8,6 +8,7 @@ pub mod amphetamine_system;
 pub mod autonomy;
 pub mod avatar;
 pub mod avatar_ask;
+pub mod avatar_check;
 pub mod avatar_mcp;
 pub mod avatar_store;
 pub mod background;

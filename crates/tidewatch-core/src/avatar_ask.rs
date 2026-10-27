@@ -5,8 +5,8 @@
 use crate::agents::Wiring;
 
 /// The line pasted into an idle agent when the owner clicks Draw avatar.
-pub const ASK: &str = "Call set_avatar once with an icon for this task.";
-pub const CONTEXT: &str = "Also call set_avatar once with an icon for this task.";
+pub const ASK: &str = "Call set_avatar once with an icon for this task: a round icon, bright colors on a dark background, nothing near the edge.";
+pub const CONTEXT: &str = "Also call set_avatar once with an icon for this task: a round icon, bright colors on a dark background, nothing near the edge.";
 
 /// The hook agent whose `UserPromptSubmit` answer reaches the model as context.
 const PROMPT_ANSWERING_AGENT: &str = "claude";
@@ -95,5 +95,16 @@ mod tests {
     fn both_lines_name_the_tool() {
         assert!(ASK.contains(crate::avatar_mcp::SET_TOOL));
         assert!(CONTEXT.contains(crate::avatar_mcp::SET_TOOL));
+    }
+
+    #[test]
+    fn both_lines_ask_for_a_round_bright_icon_with_nothing_near_the_edge() {
+        for line in [ASK, CONTEXT] {
+            for want in
+                ["round icon", "bright colors on a dark background", "nothing near the edge"]
+            {
+                assert!(line.contains(want), "{want} in {line}");
+            }
+        }
     }
 }
