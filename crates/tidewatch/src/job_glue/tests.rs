@@ -1,7 +1,7 @@
 use std::io::Write;
 use std::time::{Duration, Instant};
 
-use tidewatch_core::job::{JobState, Report};
+use tidewatch_core::job::{Agent, Ended, JobState, Report};
 
 use super::*;
 
@@ -32,14 +32,20 @@ impl Fx {
     }
 
     fn tick(&self, host: &mut Host, ids: &[u64], now: i64) -> Option<i64> {
-        self.tick_done(host, ids, &[], now)
+        self.tick_agents(host, ids, &[], now)
     }
 
-    fn tick_done(&self, host: &mut Host, ids: &[u64], done: &[u64], now: i64) -> Option<i64> {
+    fn tick_agents(
+        &self,
+        host: &mut Host,
+        ids: &[u64],
+        agents: &[(u64, Agent)],
+        now: i64,
+    ) -> Option<i64> {
         let notes = self.notes();
         let facts: Vec<Facts<'_>> =
             ids.iter().map(|id| Facts { id: *id, notes_file: &notes }).collect();
-        host.tick(&facts, done, &self.ctx, now)
+        host.tick(&facts, agents, &self.ctx, now)
     }
 
     fn until_loaded(&self, host: &mut Host, id: u64, now: i64) {
@@ -130,28 +136,40 @@ fn five_quiet_minutes_stall_the_job() {
 }
 
 #[test]
-fn only_the_tab_whose_agent_is_done_has_its_quiet_jobs_closed() {
+fn each_tab_closes_its_quiet_jobs_by_what_its_own_agent_is_doing() {
     let fx = Fx::new();
     let mut host = Host::new(true, false);
+    let ids = [1, 2, 3];
     let deadline = Instant::now() + Duration::from_secs(5);
-    while !(host.tabs.len() == 2 && host.tabs.values().all(|tab| tab.loaded))
+    while !(host.tabs.len() == 3 && host.tabs.values().all(|tab| tab.loaded))
         && Instant::now() < deadline
     {
-        fx.tick(&mut host, &[1, 2], NOW);
+        fx.tick(&mut host, &ids, NOW);
         std::thread::sleep(Duration::from_millis(5));
     }
-    for id in [1, 2] {
+    for id in ids {
         host.report(id, reading("deploy api", 5.0, 10.0), NOW);
     }
-    fx.tick_done(&mut host, &[1, 2], &[2], NOW + MIN_MS);
+    let agents = [(2, Agent::Done), (3, Agent::Idle)];
+    fx.tick_agents(&mut host, &ids, &agents, NOW + MIN_MS);
     assert_eq!(host.board(2).unwrap().jobs[0].state, JobState::Running);
-    fx.tick_done(&mut host, &[1, 2], &[2], NOW + 5 * MIN_MS);
-    let ended = |id| {
-        let job = &host.board(id).unwrap().jobs[0];
-        (job.state, job.ended)
+    let seen = |host: &Host| {
+        ids.map(|id| host.board(id).map(|board| (board.jobs[0].state, board.jobs[0].ended)))
     };
-    assert_eq!(ended(1), (JobState::Stalled, false));
-    assert_eq!(ended(2), (JobState::Done, true));
+    fx.tick_agents(&mut host, &ids, &agents, NOW + 5 * MIN_MS);
+    assert_eq!(
+        seen(&host),
+        [
+            Some((JobState::Stalled, None)),
+            Some((JobState::Done, Some(Ended::NoFinalReport))),
+            Some((JobState::Stalled, None)),
+        ]
+    );
+    fx.tick_agents(&mut host, &ids, &agents, NOW + 30 * MIN_MS);
+    assert_eq!(
+        seen(&host),
+        [Some((JobState::Stalled, None)), None, Some((JobState::Done, Some(Ended::Silent))),]
+    );
 }
 
 #[test]

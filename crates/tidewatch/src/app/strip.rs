@@ -313,7 +313,10 @@ impl Tidewatch {
                 .progress
                 .ledger(id)
                 .map(|known| tab_ring(&known.ledger, self.ledger_stale(id, now))),
-            job: self.job_live.board(id).and_then(|board| tab_job(board, now_ms)),
+            job: self
+                .job_live
+                .board(id)
+                .and_then(|board| tab_job(board, now_ms, self.job_agent(id))),
             avatar: self.avatar_live.get(id).cloned(),
             can_draw: can_draw(id),
             mood: mood(id),

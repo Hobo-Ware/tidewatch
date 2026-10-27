@@ -1,6 +1,6 @@
 //! The app's side of long jobs: per-tab boards fed by the progress file, `report_job` and the terminal.
-//! `TIDEWATCH_FAKE_JOBS=1` gives every agent tab six fake jobs and writes nothing; `done` also treats
-//! every agent as done.
+//! `TIDEWATCH_FAKE_JOBS=1` gives every agent tab six fake jobs and writes nothing; `idle` or `done`
+//! also treats every agent as not working or as done.
 
 use std::collections::{HashMap, HashSet};
 use std::hash::{DefaultHasher, Hash, Hasher};
@@ -66,7 +66,7 @@ pub(crate) struct Host {
     jobs: Jobs<Done>,
     writable: bool,
     fake: bool,
-    fake_done: bool,
+    fake_agent: Option<Agent>,
 }
 
 impl Host {
@@ -76,7 +76,7 @@ impl Host {
             jobs: Jobs::new(),
             writable: writable && !fake,
             fake,
-            fake_done: false,
+            fake_agent: None,
         }
     }
 
@@ -84,8 +84,16 @@ impl Host {
         let fake =
             std::env::var_os("TIDEWATCH_FAKE_JOBS").is_some_and(|v| !v.is_empty() && v != "0");
         let mut host = Self::new(writable, fake);
-        host.fake_done = std::env::var_os("TIDEWATCH_FAKE_JOBS").is_some_and(|v| v == "done");
+        host.fake_agent = match std::env::var("TIDEWATCH_FAKE_JOBS").as_deref() {
+            Ok("done") => Some(Agent::Done),
+            Ok("idle") => Some(Agent::Idle),
+            _ => None,
+        };
         host
+    }
+
+    pub(crate) fn fake_agent(&self) -> Option<Agent> {
+        self.fake_agent
     }
 
     pub(crate) fn board(&self, tab: u64) -> Option<&JobBoard> {
@@ -127,7 +135,7 @@ impl Host {
     pub(crate) fn tick(
         &mut self,
         tabs: &[Facts<'_>],
-        done: &[u64],
+        agents: &[(u64, Agent)],
         ctx: &egui::Context,
         now_ms: i64,
     ) -> Option<i64> {
@@ -144,7 +152,7 @@ impl Host {
         }
         let mut wake: Option<i64> = None;
         let mut soonest = |at: i64| wake = Some(wake.map_or(at, |first| first.min(at)));
-        let fake_done = self.fake_done;
+        let fake_agent = self.fake_agent;
         for (id, tab) in &mut self.tabs {
             if !tab.loaded {
                 continue;
@@ -158,7 +166,9 @@ impl Host {
                     tab.dirty |= tab.board.report(&report, now_ms);
                 }
             }
-            let agent = if fake_done || done.contains(id) { Agent::Done } else { Agent::Working };
+            let agent = fake_agent.unwrap_or_else(|| {
+                agents.iter().find(|(tab, _)| tab == id).map_or(Agent::Working, |(_, agent)| *agent)
+            });
             tab.dirty |= tab.board.tick(now_ms, agent);
             if tab.board.has_running() {
                 soonest(now_ms + RUNNING_POLL_MS);
