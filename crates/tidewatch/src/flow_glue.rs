@@ -77,14 +77,22 @@ pub(crate) fn facts<T>(
 const WAKE_SLACK_S: f64 = 0.02;
 
 /// Whether the agent's input box is free, read off Claude Code's screen. Other CLIs, a tab that is
-/// not at its prompt and a hand send are never held by the screen.
-fn screen_of(tab: &crate::tabs::Tab<Pane<PtyTerm>>, status: Option<&AgentStatus>) -> Screen {
+/// not at its prompt (a working one too, unless the send goes mid-turn) and a hand send are never
+/// held by the screen.
+fn screen_of(
+    tab: &crate::tabs::Tab<Pane<PtyTerm>>,
+    status: Option<&AgentStatus>,
+    mid_turn: bool,
+) -> Screen {
     let claude =
         tab.pane.agent.as_ref().and_then(|agent| agent.reader.source()) == Some(Source::Claude);
-    match (&tab.pane.body, status) {
-        (Body::Shell(term), Some(AgentStatus::Done)) if claude => {
-            prompt_ghost::screen_of(&term.grid_snapshot())
-        }
+    let read = match status {
+        Some(AgentStatus::Done) => true,
+        Some(AgentStatus::Working) => mid_turn,
+        _ => false,
+    };
+    match &tab.pane.body {
+        Body::Shell(term) if claude && read => prompt_ghost::screen_of(&term.grid_snapshot()),
         _ => Screen::Free,
     }
 }
@@ -134,7 +142,9 @@ pub(crate) fn offer_to_agent(
     let status = status_of(tabs, tab);
     let held = flow.outbox.held(tab, now) && status == Some(AgentStatus::Done);
     let screen = match tabs.items().iter().find(|candidate| candidate.id == tab) {
-        Some(found) if send.origin == Origin::Auto && !held => screen_of(found, status.as_ref()),
+        Some(found) if send.origin == Origin::Auto && !held => {
+            screen_of(found, status.as_ref(), send.mid_turn)
+        }
         _ => Screen::Free,
     };
     let offer = flow.outbox.offer(tab, send, status.as_ref(), screen, now);
@@ -206,7 +216,7 @@ pub(crate) fn drain_outbox(
             .iter()
             .find(|candidate| candidate.id == tab)
             .filter(|_| !held)
-            .map_or(Screen::Free, |found| screen_of(found, status.as_ref()));
+            .map_or(Screen::Free, |found| screen_of(found, status.as_ref(), false));
         if let Some(send) = flow.outbox.next_ready(tab, status.as_ref(), screen, now)
             && !deliver(tabs, flow, tab, &send, ctx, now)
         {

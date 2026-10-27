@@ -41,6 +41,7 @@ pub(crate) struct Send {
     pub(crate) text: String,
     pub(crate) origin: Origin,
     pub(crate) tell: Option<Tell>,
+    pub(crate) mid_turn: bool,
 }
 
 impl Send {
@@ -49,6 +50,7 @@ impl Send {
             text: text.to_owned(),
             origin: Origin::Auto,
             tell: Some(Tell { reason, because: because.to_owned(), cap: None }),
+            mid_turn: false,
         }
     }
 
@@ -57,7 +59,12 @@ impl Send {
     }
 
     pub(crate) fn untold(text: &str, origin: Origin) -> Self {
-        Self { text: text.to_owned(), origin, tell: None }
+        Self { text: text.to_owned(), origin, tell: None, mid_turn: false }
+    }
+
+    pub(crate) fn mid_turn(mut self) -> Self {
+        self.mid_turn = true;
+        self
     }
 
     pub(crate) fn with_cap(mut self, cap: Cap) -> Self {
@@ -103,11 +110,11 @@ pub(crate) struct Outbox {
     lanes: HashMap<u64, Lane>,
 }
 
-fn decide(status: Option<&AgentStatus>, origin: Origin, held: bool) -> Offer {
+fn decide(status: Option<&AgentStatus>, origin: Origin, held: bool, mid_turn: bool) -> Offer {
     match status {
         Some(AgentStatus::Done) if held => Offer::Wait,
         Some(AgentStatus::Done) => Offer::Go,
-        Some(AgentStatus::Working) if origin == Origin::Hand => Offer::Go,
+        Some(AgentStatus::Working) if origin == Origin::Hand || mid_turn => Offer::Go,
         Some(AgentStatus::NeedsYou(_)) if origin == Origin::Hand => Offer::Refuse(WAITING_ON_YOU),
         Some(AgentStatus::Working | AgentStatus::NeedsYou(_)) => Offer::Wait,
         Some(
@@ -129,15 +136,18 @@ impl Lane {
         &mut self,
         status: Option<&AgentStatus>,
         screen: Screen,
-        origin: Origin,
+        (origin, mid_turn): (Origin, bool),
         now: f64,
     ) -> Offer {
         if status != Some(&AgentStatus::Done) {
             self.hold_until = None;
         }
-        let offer = decide(status, origin, self.held(now));
-        if offer != Offer::Go || status != Some(&AgentStatus::Done) || origin == Origin::Hand {
+        let offer = decide(status, origin, self.held(now), mid_turn);
+        if offer != Offer::Go || origin == Origin::Hand {
             return offer;
+        }
+        if status == Some(&AgentStatus::Working) {
+            return if screen == Screen::Free { Offer::Go } else { Offer::Wait };
         }
         match screen {
             Screen::Free => {
@@ -170,7 +180,7 @@ impl Outbox {
         if send.counted() && lane.auto_sends >= MAX_AUTO_SENDS {
             return Offer::Paused;
         }
-        lane.look(status, screen, send.origin, now)
+        lane.look(status, screen, (send.origin, send.mid_turn), now)
     }
 
     pub(crate) fn cap_for(&self, tab: u64, send: &Send) -> Option<Cap> {
@@ -209,8 +219,8 @@ impl Outbox {
     ) -> Option<Send> {
         let lane = self.lanes.get_mut(&tab)?;
         let front = lane.queue.front()?;
-        let origin = front.origin;
-        match lane.look(status, screen, origin, now) {
+        let kind = (front.origin, front.mid_turn);
+        match lane.look(status, screen, kind, now) {
             Offer::Go => lane.queue.pop_front(),
             Offer::Refuse(_) => {
                 lane.queue.clear();
@@ -287,6 +297,40 @@ mod tests {
             let got = Outbox::default().offer(TAB, &send, status.as_ref(), Screen::Free, 0.0);
             assert_eq!(got, want, "{status:?} {origin:?}");
         }
+    }
+
+    #[test]
+    fn a_mid_turn_send_goes_to_a_working_agent_only_while_its_input_box_is_free() {
+        let send = Send::auto("x", Reason::LedgerGuard, "the report went stale").mid_turn();
+        let cases = [
+            (AgentStatus::Working, Screen::Free, Offer::Go),
+            (AgentStatus::Working, Screen::Typed, Offer::Wait),
+            (AgentStatus::Working, Screen::NoBox, Offer::Wait),
+            (AgentStatus::NeedsYou(Why::Permission), Screen::Free, Offer::Wait),
+            (AgentStatus::Stopped, Screen::Free, Offer::Refuse(NO_AGENT)),
+        ];
+        for (status, screen, want) in cases {
+            let got = Outbox::default().offer(TAB, &send, Some(&status), screen, 0.0);
+            assert_eq!(got, want, "{status:?} {screen:?}");
+        }
+        let plain = Send::auto("x", Reason::LedgerGuard, "the report went stale");
+        let got =
+            Outbox::default().offer(TAB, &plain, Some(&AgentStatus::Working), Screen::Free, 0.0);
+        assert_eq!(got, Offer::Wait, "an automatic send without mid_turn still waits for idle");
+    }
+
+    #[test]
+    fn a_mid_turn_send_with_its_own_cap_is_not_counted_or_paused_by_the_shared_cap() {
+        let mut outbox = Outbox::default();
+        let send = Send::auto("x", Reason::LedgerGuard, "the report went stale")
+            .with_cap(Cap { n: 1, max: 4 })
+            .mid_turn();
+        for turn in 0..2 * MAX_AUTO_SENDS {
+            outbox.sent(TAB, &send, f64::from(turn) * 100.0);
+        }
+        assert!(!outbox.paused(TAB));
+        assert_eq!(offer(&mut outbox, &send, &AgentStatus::Working, 900.0), Offer::Go);
+        assert_eq!(outbox.cap_for(TAB, &send), Some(Cap { n: 1, max: 4 }));
     }
 
     #[test]
