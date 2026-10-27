@@ -18,7 +18,7 @@ use crate::commands::Command;
 use crate::mascot::{self, Pose};
 use crate::overview::{
     Board, Overview, PoofedRow, RepoChip, Row, WORKING_CAP, ask_button, ask_tag, capped, card_view,
-    fmt_elapsed, idle_line, repo_ink, waiting_line,
+    fmt_elapsed, idle_line, needs_line, repo_ink, waiting_line,
 };
 use crate::overview_rail;
 use crate::progress_model::Ask;
@@ -791,14 +791,7 @@ fn ask_chips(
 
 fn second_line(row: &Row, lane: Lane, view: &crate::overview::CardView) -> (String, Color32) {
     match lane {
-        Lane::Needs => {
-            let ask = if view.line.is_empty() {
-                status_view::describe(&row.status)
-            } else {
-                view.line.clone()
-            };
-            (ask, brand::NEEDS)
-        }
+        Lane::Needs => (needs_line(row, &view.line), brand::NEEDS),
         Lane::Working => (view.line.clone(), brand::MUTED),
         Lane::Waiting => (waiting_line(row, &view.line), brand::WAITING),
         Lane::Idle => {

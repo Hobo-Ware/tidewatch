@@ -17,7 +17,7 @@ use crate::coming_up::{Group, Row as Scheduled, Source};
 use crate::pane::{AgentTab, Pane};
 use crate::progress_model::{CardTag, Look, Tone as ProgressTone};
 use crate::progress_ring::tone_color;
-use crate::status_view::{Tone, color, label};
+use crate::status_view::{Tone, color, label, reason_label};
 use crate::tabs::Tabs;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -490,8 +490,8 @@ fn day_text(date: Date) -> String {
     format!("{} {}", date.weekday().short(), date.day())
 }
 
-/// The second line of an idle card: how long it has been idle and what it does next, or when it
-/// wakes when that is days away.
+/// The second line of an idle card: how long it has been idle and what it does next. Waiting is
+/// the word of the Waiting section, so an idle card never says it.
 pub(crate) fn idle_line(row: &Row) -> String {
     let lead = match &row.status {
         AgentStatus::Failed(why) => return format!("Failed \u{b7} {}", first_line(why)),
@@ -500,7 +500,9 @@ pub(crate) fn idle_line(row: &Row) -> String {
     };
     let Some(next) = &row.next else { return format!("{lead} \u{b7} nothing scheduled") };
     match (next.days, next.date) {
-        (Some(days), Some(date)) if days >= 2 => format!("Waiting until {}", day_text(date)),
+        (Some(days), Some(date)) if days >= 2 => {
+            format!("{lead} \u{b7} Next: {}, {}", day_text(date), next.what)
+        }
         (Some(1), _) => format!("{lead} \u{b7} Next: tomorrow, {}", next.what),
         (Some(_), _) => format!("{lead} \u{b7} Next: today, {}", next.what),
         (None, _) => format!("{lead} \u{b7} Next: {}", next.what),
@@ -537,17 +539,50 @@ fn auto_pick_line(agent: &AgentTab, now: f64) -> Option<String> {
     Some(crate::question_auto::line(left, &question.questions))
 }
 
-/// What the card's bottom line says about a question or a permission.
-pub(crate) fn ask_tag(row: &Row, tag: &str) -> String {
+/// The reason of a prompt a card waits on, when the terminal says it asks the owner something.
+fn prompt_reason(row: &Row) -> Option<Reason> {
     match &row.status {
-        AgentStatus::NeedsYou(Reason::Permission) if row.look.is_none() => "permission".to_owned(),
-        AgentStatus::NeedsYou(Reason::Question) if row.look.is_none() => "question".to_owned(),
-        AgentStatus::NeedsYou(Reason::Input) if row.look.is_none() => "your message".to_owned(),
-        AgentStatus::NeedsYou(Reason::Attention) if row.look.is_none() => {
-            "rang the bell".to_owned()
-        }
+        AgentStatus::NeedsYou(reason) if *reason != Reason::Quiet => Some(*reason),
+        _ => None,
+    }
+}
+
+/// What the card's bottom line says about a question or a permission. A prompt names itself
+/// unless the report holds questions of its own, which the tag counts.
+pub(crate) fn ask_tag(row: &Row, tag: &str) -> String {
+    let counted = row.look.as_ref().is_some_and(|look| look.questions > 0);
+    match prompt_reason(row) {
+        Some(Reason::Permission) if !counted => "permission".to_owned(),
+        Some(Reason::Question) if !counted => "question".to_owned(),
+        Some(Reason::Input) if !counted => "your message".to_owned(),
+        Some(Reason::Attention) if !counted => "rang the bell".to_owned(),
         _ => tag.to_owned(),
     }
+}
+
+/// The second line of a card in the Needs you section: what is asked. The report's own line when
+/// it has one and no prompt stands, else the prompt (`Wants permission`), else a plain ask, so a
+/// card never reads as a bare label.
+pub(crate) fn needs_line(row: &Row, line: &str) -> String {
+    let counted = row.look.as_ref().is_some_and(|look| look.questions > 0);
+    let own_line = counted && !line.is_empty();
+    if let Some(reason) = prompt_reason(row)
+        && !own_line
+    {
+        return capitalized(reason_label(reason));
+    }
+    if !line.is_empty() {
+        return line.to_owned();
+    }
+    match row.tone {
+        Tone::Blocked => "Blocked, needs a look".to_owned(),
+        _ => "Needs your answer".to_owned(),
+    }
+}
+
+fn capitalized(text: &str) -> String {
+    let mut chars = text.chars();
+    chars.next().map_or_else(String::new, |first| first.to_uppercase().chain(chars).collect())
 }
 
 /// The button of a card that needs you.
@@ -1121,7 +1156,7 @@ mod tests {
         idle.next = next(Some(1), Some(27), "rerun the check");
         assert_eq!(idle_line(&idle), "Idle 3h \u{b7} Next: tomorrow, rerun the check");
         idle.next = next(Some(5), Some(31), "read back");
-        assert_eq!(idle_line(&idle), "Waiting until Sat 31");
+        assert_eq!(idle_line(&idle), "Idle 3h \u{b7} Next: Sat 31, read back");
         idle.next = next(None, None, "after the deploy");
         assert_eq!(idle_line(&idle), "Idle 3h \u{b7} Next: after the deploy");
         idle.status = AgentStatus::Done;
@@ -1132,6 +1167,159 @@ mod tests {
         assert_eq!(idle_line(&idle), "Failed \u{b7} exited with code 2");
         idle.status = AgentStatus::Stopped;
         assert_eq!(idle_line(&idle), "Stopped \u{b7} nothing scheduled");
+    }
+
+    const WAITS_ON_NOTHING: &str = "# Goal\nRoll out the strict rule\n\n## Status\nphase: 4\nstate: waiting\nnote: 8h after deploy, 0 refusals seen\n\n## Checklist\n### 1. Plan\n- [x] Write it\n### 4. Done\n- [x] Deploy\n\n## Needs you\n- nothing\n\n## Scheduled\n- [ ] 2026-11-01 -- Count the refusals -- confirm the rule held\n";
+
+    fn from_markdown(title: &str, status: AgentStatus, markdown: &str, next: Option<Next>) -> Row {
+        use crate::progress_stale::{Live, standing};
+        let ledger = tidewatch_core::progress::Ledger::parse(markdown);
+        let reported = standing(&ledger, None, Live::default(), (false, false));
+        let mut row = row(1, title, status);
+        row.tone = crate::status_view::shown(&row.status, Some(reported));
+        row.look = Some(crate::progress_model::look_as(&ledger, false, reported));
+        row.next = next;
+        row
+    }
+
+    fn lane_of(row: Row) -> (&'static str, String) {
+        let overview = build(vec![place("web", vec![row])]);
+        let board = overview.board(None);
+        if let Some(row) = board.needs.first() {
+            return ("needs", needs_line(row, &card_view(row).line));
+        }
+        if let Some(row) = board.waiting.first() {
+            return ("waiting", waiting_line(row, &card_view(row).line));
+        }
+        if let Some(row) = board.working.first() {
+            return ("working", card_view(row).line);
+        }
+        let row = &board.idle[0];
+        ("idle", idle_line(row))
+    }
+
+    #[test]
+    fn a_card_sits_where_its_state_says_and_its_line_agrees_with_the_section() {
+        let sun = Date::new(2026, 11, 1).unwrap();
+        let dated = || Some(Next { date: Some(sun), days: Some(5), what: "count".into() });
+        let quiet = || AgentStatus::NeedsYou(Reason::Quiet);
+        let asks = WAITS_ON_NOTHING.replace("- nothing", "- Keep the rule on?");
+        let no_note = WAITS_ON_NOTHING.replace("note: 8h after deploy, 0 refusals seen\n", "");
+        let event = WAITS_ON_NOTHING.replace("2026-11-01", "on: the partner replies");
+        let undated = WAITS_ON_NOTHING.replace("2026-11-01", "you");
+        let done = WAITS_ON_NOTHING.replace("state: waiting", "state: done");
+        let needs = WAITS_ON_NOTHING.replace("state: waiting", "state: needs_you");
+        let needs_no_note = no_note.replace("state: waiting", "state: needs_you");
+        let cases = [
+            (
+                "waiting, names nothing, dated item",
+                quiet(),
+                WAITS_ON_NOTHING,
+                dated(),
+                ("waiting", "Waiting until Sun 1"),
+            ),
+            (
+                "waiting, names nothing, no item",
+                quiet(),
+                &undated,
+                None,
+                ("waiting", "Done \u{b7} 8h after deploy, 0 refusals seen"),
+            ),
+            (
+                "waiting on an event item",
+                quiet(),
+                &event,
+                None,
+                ("waiting", "Waiting on the partner replies"),
+            ),
+            (
+                "waiting while the agent works",
+                AgentStatus::Working,
+                WAITS_ON_NOTHING,
+                dated(),
+                ("waiting", "Waiting until Sun 1"),
+            ),
+            (
+                "waiting with a question",
+                quiet(),
+                &asks,
+                dated(),
+                ("needs", "Done \u{b7} 8h after deploy, 0 refusals seen"),
+            ),
+            (
+                "done with a dated item",
+                quiet(),
+                &done,
+                dated(),
+                ("idle", "Idle 1m \u{b7} Next: Sun 1, count"),
+            ),
+            (
+                "stopped agent, report waits",
+                AgentStatus::Stopped,
+                WAITS_ON_NOTHING,
+                dated(),
+                ("idle", "Stopped \u{b7} Next: Sun 1, count"),
+            ),
+            (
+                "needs_you without a question says its note",
+                quiet(),
+                &needs,
+                None,
+                ("needs", "Done \u{b7} 8h after deploy, 0 refusals seen"),
+            ),
+            (
+                "needs_you without a note still asks",
+                quiet(),
+                &needs_no_note,
+                None,
+                ("needs", "Done"),
+            ),
+            (
+                "a permission prompt beats a done report",
+                AgentStatus::NeedsYou(Reason::Permission),
+                &done,
+                None,
+                ("needs", "Wants permission"),
+            ),
+            (
+                "a bell beats a waiting report",
+                AgentStatus::NeedsYou(Reason::Attention),
+                WAITS_ON_NOTHING,
+                None,
+                ("needs", "Rang the bell"),
+            ),
+        ];
+        for (name, status, markdown, next, (lane, line)) in cases {
+            let got = lane_of(from_markdown("card", status, markdown, next));
+            assert_eq!((got.0, got.1.as_str()), (lane, line), "{name}");
+        }
+    }
+
+    #[test]
+    fn a_card_that_needs_you_never_reads_as_a_bare_label() {
+        let no_note = "# Goal\ng\n\n## Status\nstate: needs_you\n";
+        let cases = [
+            (AgentStatus::NeedsYou(Reason::Quiet), no_note, "Needs your answer"),
+            (AgentStatus::NeedsYou(Reason::Permission), no_note, "Wants permission"),
+            (AgentStatus::NeedsYou(Reason::Question), no_note, "Asked a question"),
+            (AgentStatus::NeedsYou(Reason::Input), no_note, "Waiting for your message"),
+            (
+                AgentStatus::Done,
+                "# Goal\ng\n\n## Status\nstate: blocked\n",
+                "Blocked, needs a look",
+            ),
+        ];
+        for (status, markdown, want) in cases {
+            let row = from_markdown("card", status, markdown, None);
+            assert_eq!(needs_line(&row, &card_view(&row).line), want);
+        }
+        let row = from_markdown(
+            "card",
+            AgentStatus::NeedsYou(Reason::Permission),
+            WAITS_ON_NOTHING,
+            None,
+        );
+        assert_eq!(ask_tag(&row, &card_view(&row).tag), "permission");
     }
 
     #[test]
