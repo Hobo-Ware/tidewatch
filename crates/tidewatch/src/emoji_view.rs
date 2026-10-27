@@ -8,6 +8,7 @@ use egui::{
 };
 
 use crate::brand;
+use crate::emoji_paint;
 use crate::emoji_pick::Hit;
 use crate::screen_kit::{TEXT_BODY, TEXT_TITLE};
 use crate::screen_kit::{heading, selection_row};
@@ -45,13 +46,19 @@ fn name_job(hit: &Hit) -> LayoutJob {
 fn paint_row(ui: &Ui, rect: Rect, hit: &Hit, selected: bool, hovered: bool) {
     let painter = ui.painter_at(rect);
     selection_row(&painter, rect, selected, hovered);
-    painter.text(
+    let glyph = Rect::from_center_size(
         pos2(rect.left() + ROW_PAD + GLYPH_COLUMN / 2.0, rect.center().y),
-        Align2::CENTER_CENTER,
-        hit.emoji.as_str(),
-        FontId::proportional(GLYPH_PX),
-        brand::TEXT,
+        vec2(GLYPH_PX, GLYPH_PX),
     );
+    if !emoji_paint::paint_in(ui, glyph, hit.emoji.as_str()) {
+        painter.text(
+            glyph.center(),
+            Align2::CENTER_CENTER,
+            hit.emoji.as_str(),
+            FontId::proportional(GLYPH_PX),
+            brand::TEXT,
+        );
+    }
     let galley = painter.layout_job(name_job(hit));
     let x = rect.left() + ROW_PAD + GLYPH_COLUMN + COLUMN_GAP;
     painter.galley(pos2(x, rect.center().y - galley.size().y / 2.0), galley, brand::TEXT);

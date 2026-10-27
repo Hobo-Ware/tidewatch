@@ -12,6 +12,7 @@ use egui::epaint::text::{LayoutJob, TextFormat};
 use egui::text::{CCursor, CCursorRange};
 use egui::{Color32, FontId, Galley, Pos2, Ui, pos2};
 
+use crate::emoji_text;
 use crate::md_view::{INDENT, LINE, MARKER_EDGE, Marker, paint_marker};
 
 const TAB_COLUMNS: usize = 4;
@@ -154,7 +155,7 @@ pub(crate) fn layout(
     ink: Color32,
     (wrap, tint): (f32, &Tint),
 ) -> Arc<Galley> {
-    let whole = job((text, 0), font, ink, wrap, tint);
+    let whole = emoji_text::slot_job(ui.ctx(), job((text, 0), font, ink, wrap, tint));
     if !has_items(text) {
         return ui.painter().layout_job(whole);
     }
@@ -166,18 +167,12 @@ pub(crate) fn layout(
             let at = start;
             start += line.len() + 1;
             let Some(item) = item else {
-                return ui.painter().layout_job(job((line, at), font, ink, wrap, tint));
+                return laid_out(ui, job((line, at), font, ink, wrap, tint));
             };
             let edge = text_edge(item.level);
             let prefix = item.prefix();
             let width = (wrap - edge).max(font.size);
-            let body = ui.painter().layout_job(job(
-                (&line[prefix..], at + prefix),
-                font,
-                ink,
-                width,
-                tint,
-            ));
+            let body = laid_out(ui, job((&line[prefix..], at + prefix), font, ink, width, tint));
             indented(ui, &body, (line[..prefix].chars().count(), edge), font)
         })
         .collect();
@@ -187,6 +182,10 @@ pub(crate) fn layout(
 
 /// Draws the marker of every item line of `galley` (the layout of its text, drawn from `origin`):
 /// a dot, a ring or a square by level, or the number as typed.
+fn laid_out(ui: &Ui, job: LayoutJob) -> Arc<Galley> {
+    ui.painter().layout_job(emoji_text::slot_job(ui.ctx(), job))
+}
+
 pub(crate) fn paint_markers(ui: &Ui, galley: &Galley, origin: Pos2, font: &FontId) {
     let text = galley.text();
     if !has_items(text) {

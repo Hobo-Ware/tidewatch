@@ -13,6 +13,8 @@ use egui::{
 };
 
 use crate::brand;
+use crate::emoji_paint;
+use crate::emoji_text;
 use crate::links;
 
 fn link_format(format: &TextFormat) -> TextFormat {
@@ -78,7 +80,9 @@ impl Text {
 
     pub(crate) fn show(self, ui: &mut Ui, id: Id, ink: Color32, wrap: TextWrapMode) -> Response {
         let Self { job, spans } = self;
-        let label = Label::new(job.clone()).selectable(true).wrap_mode(wrap);
+        let label = Label::new(emoji_text::slot_job(ui.ctx(), job.clone()))
+            .selectable(true)
+            .wrap_mode(wrap);
         let (pos, galley, response) = label.layout_in_ui(ui);
         if ui.is_rect_visible(response.rect) {
             LabelSelectionState::label_text_selection(
@@ -89,6 +93,7 @@ impl Text {
                 ink,
                 Stroke::NONE,
             );
+            emoji_paint::paint(ui, pos, &galley);
         }
         Laid { galley, job, spans }.interact(ui, id, pos);
         response

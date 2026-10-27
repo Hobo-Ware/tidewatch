@@ -116,6 +116,7 @@ pub(crate) fn page(
         guards_view::card(ui, &general.guards, general.guards_repo.as_ref()).map(Action::Guards);
     let sync = sync_view::card(ui, sync, &general.sync).map(Action::Sync);
     let updates = updates_view::section(ui, updates).map(Action::Updates);
+    about_card(ui);
     footer_note(ui, file);
     restore
         .map(Action::Restore)
@@ -133,6 +134,15 @@ pub(crate) fn page(
         .or(guards)
         .or(sync)
         .or(updates)
+}
+
+pub(crate) const EMOJI_CREDIT: &str =
+    "Emoji pictures are Google Noto Emoji, used under the Apache 2.0 license.";
+
+fn about_card(ui: &mut Ui) {
+    section(ui, "About", |ui| {
+        settings_ui::row(ui, "Emoji", EMOJI_CREDIT, Control::NONE, |_| {});
+    });
 }
 
 fn git_card(ui: &mut Ui, current: GitPrefs) -> Option<GitPrefs> {
@@ -471,5 +481,42 @@ mod checklist_tests {
         let (action, found) = frame(&ctx, None, vec![]);
         assert!(action.is_none());
         assert!(found.iter().any(|(text, _)| text == "Reading the list."));
+    }
+}
+
+#[cfg(test)]
+mod about_tests {
+    use egui::{RawInput, Rect, pos2, vec2};
+
+    use super::*;
+
+    fn walk(shape: &egui::Shape, texts: &mut Vec<String>) {
+        match shape {
+            egui::Shape::Text(text) => texts.push(text.galley.text().to_owned()),
+            egui::Shape::Vec(shapes) => shapes.iter().for_each(|shape| walk(shape, texts)),
+            _ => {}
+        }
+    }
+
+    #[test]
+    fn the_about_card_credits_google_noto_emoji_and_its_license() {
+        let ctx = crate::fonts::test_context();
+        let raw = RawInput {
+            screen_rect: Some(Rect::from_min_size(pos2(0.0, 0.0), vec2(900.0, 400.0))),
+            ..RawInput::default()
+        };
+        let _ = ctx.run_ui(raw.clone(), about_card);
+        let output = ctx.run_ui(raw, about_card);
+        let mut texts = Vec::new();
+        for clipped in &output.shapes {
+            walk(&clipped.shape, &mut texts);
+        }
+        assert!(texts.iter().any(|text| text == "About"), "{texts:?}");
+        assert!(
+            texts.iter().any(|text| text == EMOJI_CREDIT
+                && text.contains("Google Noto Emoji")
+                && text.contains("Apache 2.0")),
+            "{texts:?}"
+        );
     }
 }
