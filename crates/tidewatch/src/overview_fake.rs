@@ -1,5 +1,5 @@
 //! `TIDEWATCH_FAKE_OVERVIEW=<n>` stand-ins for a capture of the Overview: twelve agents of three made-up
-//! repos (n of them working, 5 by default), a Coming up rail, eight poofed Meeseeks and two sessions
+//! repos (n of them working, 5 by default), a Coming up rail, eight poofed Meeseeks and four sessions
 //! running elsewhere. `TIDEWATCH_FAKE_OVERVIEW_REPO=<name>` starts with that repo chip picked.
 
 use tidewatch_core::civil_date::Date;
@@ -449,22 +449,51 @@ fn poofed() -> Vec<PoofedRow> {
 }
 
 fn takeover() -> Card {
-    let session = |id: &str, name: &str| crate::takeover::Row {
-        key: Key::Stored { cli: Cli::Claude, id: id.to_owned() },
-        cli_id: "claude".to_owned(),
-        name: name.to_owned(),
-        folder: "~/code/acme-web".to_owned(),
-        host: "Terminal".to_owned(),
+    let session =
+        |id: &str, name: &str, folder: &str, status: Status, offer: Offer| crate::takeover::Row {
+            key: Key::Stored { cli: Cli::Claude, id: id.to_owned() },
+            cli_id: "claude".to_owned(),
+            name: name.to_owned(),
+            folder: folder.to_owned(),
+            host: "another terminal".to_owned(),
+            level: "YOLO".to_owned(),
+            yolo: true,
+            status,
+            offer,
+        };
+    let ended = |n: usize| crate::takeover::Row {
         level: "Auto edit".to_owned(),
         yolo: false,
-        status: Status::Idle,
-        offer: Offer::MoveHere,
+        ..session(
+            &format!("e{n}"),
+            "retry-stage-gates",
+            "~/code/acme-web",
+            Status::NotRunning,
+            Offer::ResumeHere,
+        )
     };
     Card {
-        summary: "2 sessions \u{b7} 2 idle".to_owned(),
+        summary: "1 idle \u{b7} 3 working".to_owned(),
         can_move_all: true,
-        rows: vec![session("a", "fix-flaky-spec"), session("b", "api-docs-pass")],
-        ended: Vec::new(),
+        rows: vec![
+            session("a", "upbeat-puffin", "~/code/acme-api", Status::Idle, Offer::MoveHere),
+            session(
+                "b",
+                "bright-otter",
+                "~/code/acme-web-wt",
+                Status::Working,
+                Offer::MoveWhenIdle,
+            ),
+            session(
+                "c",
+                "swift-harbor",
+                "~/code/acme-workers",
+                Status::Working,
+                Offer::MoveWhenIdle,
+            ),
+            session("d", "acme-app", "~/code/acme-app", Status::Working, Offer::MoveWhenIdle),
+        ],
+        ended: (0..5).map(ended).collect(),
         ended_open: false,
     }
 }

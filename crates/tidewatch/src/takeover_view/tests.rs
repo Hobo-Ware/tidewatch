@@ -284,11 +284,183 @@ fn a_click_on_the_line_opens_the_list_below_it_and_a_second_folds_it() {
     assert!(screen.takeover.line_open());
     let open = screen.frame(&ctx, vec![]);
     assert!(has(&open, "Move all idle here"));
-    assert_eq!(open.iter().filter(|(text, _)| text == "Running elsewhere").count(), 2);
+    assert_eq!(open.iter().filter(|(text, _)| text == "Running elsewhere").count(), 1);
     screen.click_on(&ctx, "Hide");
     assert!(!screen.takeover.line_open());
     let folded = screen.frame(&ctx, vec![]);
     assert!(!has(&folded, "Move all idle here"));
+}
+
+const RAIL_W: f32 = 380.0;
+const WIDE_W: f32 = 700.0;
+
+fn long_rows() -> Vec<Row> {
+    let names = [
+        "upbeat-puffin-of-the-evening-shift-with-a-long-name",
+        "avatar-fill-and-the-whole-redraw-pass-for-the-round-face",
+        "swift-harbor-night-crew",
+        "tidewatch",
+    ];
+    let offers = [Offer::MoveHere, Offer::MoveWhenIdle, Offer::Waiting, Offer::MoveLive];
+    let statuses = [Status::Idle, Status::Working, Status::Working, Status::Quiet];
+    names
+        .iter()
+        .enumerate()
+        .map(|(n, name)| {
+            let mut row = row(&n.to_string(), statuses[n], offers[n].clone());
+            row.name = (*name).to_owned();
+            row.folder = format!("~/work/acme-worktrees/some/deep/folder-{n}");
+            row.host = format!("another terminal {n}");
+            row.yolo = n == 0;
+            row.level = ["YOLO", "Auto edit", "Ask", "Read only"][n].to_owned();
+            row
+        })
+        .collect()
+}
+
+const LONG_SUMMARY: &str = "1 idle \u{b7} 3 working \u{b7} 4 sessions in other terminals";
+
+fn long_card() -> Card {
+    let mut data = card_data(true, long_rows());
+    data.summary = LONG_SUMMARY.to_owned();
+    data
+}
+
+struct Drawn {
+    texts: Vec<(String, Rect)>,
+    left: f32,
+    height: f32,
+}
+
+impl Drawn {
+    fn text(&self, text: &str) -> Rect {
+        self.texts.iter().find(|(drawn, _)| drawn == text).expect(text).1
+    }
+
+    fn all(&self, text: &str) -> Vec<Rect> {
+        self.texts.iter().filter(|(drawn, _)| drawn == text).map(|(_, rect)| *rect).collect()
+    }
+
+    fn boxes(&self) -> Vec<(String, Rect)> {
+        let buttons =
+            ["Move here", "Move when idle", "Cancel wait", "Move live", "Move all idle here"];
+        let pills = ["Idle", "Working", "Quiet", "YOLO", "Auto edit", "Ask", "Read only"];
+        self.texts
+            .iter()
+            .map(|(text, rect)| {
+                let pad = if buttons.contains(&text.as_str()) {
+                    vec2(Size::Compact.pad(), (Size::Compact.height() - rect.height()) / 2.0)
+                } else if pills.contains(&text.as_str()) {
+                    vec2(Size::Tag.pad(), (Size::Tag.height() - rect.height()) / 2.0)
+                } else {
+                    vec2(0.0, 0.0)
+                };
+                (text.clone(), rect.expand2(pad))
+            })
+            .collect()
+    }
+}
+
+fn drawn_at(width: f32, data: &Card) -> Drawn {
+    let ctx = ready_context();
+    let mut found = Vec::new();
+    let (mut left, mut height) = (0.0, 0.0);
+    for _ in 0..3 {
+        let output = ctx.run_ui(raw(vec![]), |ui| {
+            left = ui.cursor().left();
+            let before = ui.cursor().top();
+            ui.allocate_ui(vec2(width, 900.0), |ui| card(ui, data, false));
+            height = ui.cursor().top() - before;
+        });
+        found.clear();
+        for clipped in &output.shapes {
+            collect_texts(&clipped.shape, &mut found);
+        }
+    }
+    Drawn { texts: found, left, height }
+}
+
+fn assert_nothing_overlaps(drawn: &Drawn) {
+    let boxes = drawn.boxes();
+    for (a, (text_a, rect_a)) in boxes.iter().enumerate() {
+        for (text_b, rect_b) in &boxes[a + 1..] {
+            assert!(
+                !rect_a.shrink(0.5).intersects(rect_b.shrink(0.5)),
+                "{text_a:?} {rect_a:?} overlaps {text_b:?} {rect_b:?}"
+            );
+        }
+    }
+}
+
+fn near(a: f32, b: f32) -> bool {
+    (a - b).abs() < 1.0
+}
+
+#[test]
+fn in_the_rail_every_session_takes_two_lines_and_nothing_overlaps() {
+    let data = long_card();
+    let drawn = drawn_at(RAIL_W, &data);
+    assert_nothing_overlaps(&drawn);
+    let wanted = HEADER_H + 4.0 * ROW_H_NARROW;
+    assert!(drawn.height >= wanted && drawn.height < wanted + 8.0, "{}", drawn.height);
+    let right = drawn.left + RAIL_W - SIDE;
+    let boxes = drawn.boxes();
+    for (text, rect) in &boxes {
+        assert!(rect.left() >= drawn.left && rect.right() <= right + 1.0, "{text:?} {rect:?}");
+    }
+    let edges = [
+        "Move here",
+        "Move when idle",
+        "Cancel wait",
+        "Move live",
+        "Move all idle here",
+        "Idle",
+        "Working",
+    ];
+    for (text, rect) in boxes.iter().filter(|(text, _)| edges.contains(&text.as_str())) {
+        assert!(near(rect.right(), right), "{text}: {} vs {right}", rect.right());
+    }
+    for row in &data.rows {
+        let name = drawn.all(&row.name);
+        assert_eq!(name.len(), 1, "{}", row.name);
+        let info = drawn.text(&format!("{} \u{b7} {}", row.folder, row.host));
+        let offer = drawn.text(row.offer.label());
+        let level = drawn.text(&row.level);
+        assert!(name[0].bottom() <= info.top(), "{} sits above its folder line", row.name);
+        assert!(near(name[0].center().y, level.center().y));
+        assert!(near(info.center().y, offer.center().y));
+        assert!(offer.center().y > level.center().y + 16.0);
+        assert!(name[0].width() < 300.0, "{} is cut to the room it has", row.name);
+    }
+}
+
+#[test]
+fn in_the_rail_the_header_keeps_the_summary_left_of_the_button() {
+    let drawn = drawn_at(RAIL_W, &long_card());
+    let summary = drawn.text(LONG_SUMMARY);
+    let boxes = drawn.boxes();
+    let button = boxes.iter().find(|(text, _)| text == "Move all idle here").unwrap().1;
+    assert!(summary.right() < button.left(), "{summary:?} {button:?}");
+    assert!(near(summary.center().y, button.center().y));
+    assert!(drawn.texts.iter().all(|(text, _)| text != "Running elsewhere"));
+}
+
+#[test]
+fn in_a_wide_column_every_session_stays_on_one_line() {
+    let data = long_card();
+    let drawn = drawn_at(WIDE_W, &data);
+    assert_nothing_overlaps(&drawn);
+    let wanted = HEADER_H + 4.0 * ROW_H;
+    assert!(drawn.height >= wanted && drawn.height < wanted + 8.0, "{}", drawn.height);
+    for row in &data.rows {
+        let offer = drawn.text(row.offer.label());
+        let level = drawn.text(&row.level);
+        let host = drawn.text(&row.host);
+        assert!(near(offer.center().y, level.center().y), "{}", row.name);
+        assert!(near(offer.center().y, host.center().y), "{}", row.name);
+        assert!(host.right() < offer.left());
+        assert!(drawn.text(&row.folder).top() > drawn.text(&row.name).bottom() - 1.0);
+    }
 }
 
 fn view(yolo_note: Option<&str>) -> DialogView {

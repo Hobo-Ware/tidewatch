@@ -159,6 +159,7 @@ enum Fold {
     #[default]
     Folded,
     Open,
+    Held,
 }
 
 #[derive(Default)]
@@ -185,6 +186,14 @@ impl Takeover {
             recent: if recent_open { RecentList::Open } else { RecentList::Shut },
             ..Self::default()
         }
+    }
+
+    pub(crate) fn with_line_open(mut self, open: bool) -> Self {
+        if open {
+            self.ask_to_reveal();
+            self.line = Fold::Held;
+        }
+        self
     }
 
     pub(crate) fn sessions(&self) -> &[Session] {
@@ -234,7 +243,7 @@ impl Takeover {
     }
 
     pub(crate) fn line_open(&self) -> bool {
-        self.line == Fold::Open
+        self.line != Fold::Folded
     }
 
     pub(crate) fn toggle_line(&mut self) {
@@ -289,7 +298,7 @@ impl Takeover {
         self.roots.extend(scanned.roots);
         self.idents.extend(scanned.idents);
         self.sessions = scanned.sessions;
-        if self.counts().0 == 0 {
+        if self.counts().0 == 0 && self.line != Fold::Held {
             self.line = Fold::Folded;
             self.reveal = false;
         }
