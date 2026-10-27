@@ -7,7 +7,6 @@ use std::path::{Path, PathBuf};
 
 const HASH_HEX_LEN: usize = 6;
 const NOTES_FILE: &str = "notes.json";
-const STAGES_FILE: &str = "stages.json";
 const PR_CARDS_FILE: &str = "pr_cards.json";
 const DUE_ASKED_FILE: &str = "due-asked.json";
 const PROGRESS_FILE: &str = "progress.md";
@@ -106,17 +105,6 @@ impl TidewatchPaths {
     #[must_use]
     pub fn profiles_file(&self) -> PathBuf {
         self.config_dir.join("profiles.toml")
-    }
-
-    #[must_use]
-    pub fn workflows_file(&self) -> PathBuf {
-        self.config_dir.join("workflows.toml")
-    }
-
-    /// The built-in workflow ids already offered to this `workflows.toml`, one per line.
-    #[must_use]
-    pub fn workflows_offered_file(&self) -> PathBuf {
-        self.config_dir.join("workflows.offered")
     }
 
     /// The files whose seeded efforts were already moved to the per-model defaults, one per line.
@@ -327,12 +315,6 @@ impl TidewatchPaths {
         self.tab_state_dir(repo, tab).join("copilot-plugin")
     }
 
-    /// A tab's workflow run: stage states, summaries and findings, enough to resume after a restart.
-    #[must_use]
-    pub fn stages_file(&self, repo: &Path, tab: &str) -> PathBuf {
-        self.tab_state_dir(repo, tab).join(STAGES_FILE)
-    }
-
     #[must_use]
     pub fn worktree_dir(&self, repo: &Path, tab: &str) -> PathBuf {
         self.repo_dir(repo).join(tab)
@@ -420,19 +402,6 @@ mod tests {
         );
         assert_ne!(notes, paths.notes_file(repo, "main"));
         assert_ne!(notes, paths.notes_file(Path::new("/other/web"), "brave-otter"));
-    }
-
-    #[test]
-    fn workflows_sit_next_to_profiles_and_stages_next_to_notes() {
-        let paths = paths();
-        let repo = Path::new("/work/web");
-        assert_eq!(paths.workflows_file(), paths.config_dir().join("workflows.toml"));
-        assert_eq!(
-            paths.stages_file(repo, "brave-otter").parent(),
-            paths.notes_file(repo, "brave-otter").parent()
-        );
-        assert!(paths.stages_file(repo, "brave-otter").ends_with("brave-otter/stages.json"));
-        assert_ne!(paths.stages_file(repo, "main"), paths.stages_file(repo, "brave-otter"));
     }
 
     #[test]

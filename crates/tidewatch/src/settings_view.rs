@@ -22,7 +22,6 @@ use crate::settings_ui::{
 use crate::shortcuts_view;
 use crate::trust_view;
 use crate::updates::Updates;
-use crate::workflow_editor_view;
 use crate::worktree_setup_view;
 
 const SIDEBAR_WIDTH: f32 = 248.0;
@@ -78,7 +77,6 @@ pub(crate) enum Action {
 #[derive(Default)]
 pub(crate) struct Files {
     pub(crate) profiles: String,
-    pub(crate) workflows: String,
     pub(crate) trust: String,
     pub(crate) general: String,
     pub(crate) house_style: String,
@@ -128,9 +126,6 @@ fn page(
     match section {
         Section::Profiles => {
             profiles_view::page(ui, main, &mut settings.profiles, host.probes, &host.files.profiles)
-        }
-        Section::Workflows => {
-            workflow_editor_view::page(ui, main, &mut settings.workflows, &host.files.workflows)
         }
         Section::General => scrolling(ui, main, section, |ui| {
             general_view::page(

@@ -9,14 +9,13 @@
 //!   owned and is never offered as a leftover.
 //! - `resume_agents` and how the agent last ended pick between running the resume command, typing
 //!   it for the user to run, and a plain shell (`resume_mode::decide`). A YOLO tab is always typed,
-//!   never run on its own. Workflow tabs go through the runner instead; a YOLO workflow run is
-//!   not resumed and reopens as a plain shell with a note.
+//!   never run on its own.
 //! - An agent tab resumes at the level its Claude session file says it last ran at, else at its
 //!   saved level (`Disk::running_level`).
 //! - An agent tab resumes only when its agent is installed, its profile still runs that agent, it
 //!   has a session id, the CLI's session file exists, and no earlier tab claimed the same session.
 //!   Anything else reopens as a plain shell in the worktree, with the reason as a note.
-//! - A tab with a workflow run reopens through `Runner::load` and `Runner::resume`.
+//! - A tab saved with a workflow run (a retired feature) reopens as a plain shell with a note.
 //! - A moved repo is repaired first with [`repair_moved`], which gives the window its new folder.
 //!
 //! Resume forms were checked against claude 2.1.296, gemini 0.46.0, copilot 1.0.96 and codex
@@ -33,7 +32,6 @@ use crate::permission_mode::last_claude_level;
 use crate::prefs::ResumeAgents;
 use crate::profiles::{Profile, Profiles};
 use crate::resume_mode::{Ended, Resume, decide};
-use crate::runner::{self, Runner};
 use crate::session::{SavedAgentTab, SavedPark, SavedTab, SavedWindow, Session};
 use crate::tools::Tools;
 use crate::transcript::Source;
@@ -47,7 +45,6 @@ pub enum Reason {
     FolderMissing,
     WorktreeGone,
     WorktreeBroken,
-    Yolo,
     ResumeOff,
     AgentUnknown(String),
     AgentMissing(String),
@@ -57,7 +54,7 @@ pub enum Reason {
     NoSessionId,
     TranscriptMissing,
     Duplicate,
-    WorkflowUnreadable,
+    WorkflowRetired,
 }
 
 impl Reason {
@@ -68,7 +65,6 @@ impl Reason {
             Self::FolderMissing => "folder missing".into(),
             Self::WorktreeGone => "worktree folder gone".into(),
             Self::WorktreeBroken => "git could not read its worktree".into(),
-            Self::Yolo => "YOLO workflow runs are never resumed automatically".into(),
             Self::ResumeOff => "resuming agents is turned off in Settings".into(),
             Self::AgentUnknown(id) => format!("agent `{id}` is not configured"),
             Self::AgentMissing(id) => format!("`{id}` is not installed"),
@@ -80,7 +76,7 @@ impl Reason {
             Self::NoSessionId => "no session id was recorded".into(),
             Self::TranscriptMissing => "its session file is gone".into(),
             Self::Duplicate => "another tab holds the same session".into(),
-            Self::WorkflowUnreadable => "its workflow state is unreadable".into(),
+            Self::WorkflowRetired => "workflows were retired".into(),
         }
     }
 }
@@ -94,8 +90,6 @@ pub trait Disk {
     fn transcript_exists(&self, agent: &str, dir: &Path, session_id: &str) -> bool;
     /// The level the agent was last running at, when its session file records one.
     fn running_level(&self, agent: &str, dir: &Path, session_id: &str) -> Option<Level>;
-    /// The workflow run at `stages` loads and can be resumed.
-    fn workflow_runnable(&self, stages: &Path) -> bool;
 }
 
 /// The real disk. Blocks on directory listings and one `git` call per worktree tab: run it off
@@ -159,10 +153,6 @@ impl Disk for RealDisk {
         locator.session_id = Some(session_id.to_owned());
         last_claude_level(&locator.locate(Source::Claude)?)
     }
-
-    fn workflow_runnable(&self, stages: &Path) -> bool {
-        Runner::load(stages).is_some()
-    }
 }
 
 /// What the planner knows besides the disk.
@@ -186,8 +176,6 @@ pub enum TabAction {
     /// Start the agent with `resume_command`, or type it and leave Enter to the user (`how`).
     /// `profile` carries the level the tab ran at.
     ResumeAgent { agent: String, profile: Box<Profile>, session_id: String, how: Resume },
-    /// `restore_workflow(stages)` gives the runner and the command it was waiting on.
-    ResumeWorkflow { stages: PathBuf },
     /// A poofed Meeseeks: its summary tab comes back, with no process to start.
     Summary,
 }
@@ -212,10 +200,6 @@ impl TabPlan {
             TabAction::ResumeAgent { how: Resume::TypeOnly(why), .. } => {
                 Some(why.note(true).to_owned())
             }
-            TabAction::ShellInstead(Reason::Yolo) => Some(
-                "This tab ran at YOLO, so Tidewatch did not restart its agent. Start it again yourself."
-                    .to_owned(),
-            ),
             TabAction::ShellInstead(Reason::WorktreeBroken) => Some(
                 "Git could not read this worktree, so Tidewatch opened a shell in its folder and left everything in it alone."
                     .to_owned(),
@@ -424,15 +408,8 @@ fn agent_resume(
     disk: &dyn Disk,
     claims: &mut Claims,
 ) -> Result<TabAction, Reason> {
-    if let Some(stages) = &tab.stages {
-        if tab.level == Level::Yolo {
-            return Err(Reason::Yolo);
-        }
-        return if disk.workflow_runnable(stages) {
-            Ok(TabAction::ResumeWorkflow { stages: stages.clone() })
-        } else {
-            Err(Reason::WorkflowUnreadable)
-        };
+    if tab.stages.is_some() {
+        return Err(Reason::WorkflowRetired);
     }
     if env.resume == ResumeAgents::Off {
         return Err(Reason::ResumeOff);
@@ -498,15 +475,6 @@ pub fn repair_moved(paths: &TidewatchPaths, session: &mut Session, opened: &Path
     let repaired = worktree::repair(paths, opened);
     window.dir = opened.to_path_buf();
     repaired
-}
-
-/// The runner a workflow tab was in, and the command it was waiting on (`None` for a run that
-/// never started). The app carries the command out as it would after any event.
-#[must_use]
-pub fn restore_workflow(stages: &Path) -> Option<(Runner, Option<runner::Command>)> {
-    let runner = Runner::load(stages)?;
-    let command = runner.resume();
-    Some((runner, command))
 }
 
 /// The session id Codex put in a rollout file name (`rollout-<timestamp>-<uuid>.jsonl`). Codex takes
@@ -636,7 +604,6 @@ mod tests {
         broken: Vec<String>,
         transcripts: Vec<(String, String)>,
         running: Vec<(String, String, Level)>,
-        workflows: Vec<String>,
     }
 
     impl FakeDisk {
@@ -675,10 +642,6 @@ mod tests {
 
         fn running_level(&self, agent: &str, _dir: &Path, session_id: &str) -> Option<Level> {
             self.running.iter().find(|(a, id, _)| a == agent && id == session_id).map(|r| r.2)
-        }
-
-        fn workflow_runnable(&self, stages: &Path) -> bool {
-            self.workflows.iter().any(|f| Path::new(f) == stages)
         }
     }
 
@@ -1066,56 +1029,50 @@ mod tests {
     }
 
     #[test]
-    fn a_yolo_workflow_tab_is_not_resumed_either() {
-        let mut tab = SavedAgentTab {
-            dir: PathBuf::from(wt("a-claude")),
-            branch: Some("agent/a-claude".into()),
-            agent: "claude".into(),
-            profile: "builder".into(),
-            level: Level::Yolo,
-            session_id: Some(ID_C.into()),
-            stages: Some(PathBuf::from("/state/stages.json")),
-            crashed: false,
-            remote: false,
-            meeseeks: None,
-        };
-        let mut disk = disk_for_all();
-        disk.workflows.push("/state/stages.json".into());
-        let yolo =
-            plan_with(&window(vec![SavedTab::Agent(tab.clone())]), &everything_installed(), &disk);
-        assert_eq!(yolo.tabs[0].action, TabAction::ShellInstead(Reason::Yolo));
-        tab.level = Level::Auto;
-        let auto = plan_with(&window(vec![SavedTab::Agent(tab)]), &everything_installed(), &disk);
-        assert_eq!(
-            auto.tabs[0].action,
-            TabAction::ResumeWorkflow { stages: PathBuf::from("/state/stages.json") }
-        );
+    fn a_tab_saved_with_a_workflow_run_reopens_as_a_shell_whatever_its_level_or_profile() {
+        for (level, profile, id) in [
+            (Level::Yolo, "builder", Some(ID_C)),
+            (Level::Auto, "builder", Some(ID_C)),
+            (Level::Edits, "gone-profile", None),
+        ] {
+            let tab = SavedTab::Agent(SavedAgentTab {
+                dir: PathBuf::from(wt("a-claude")),
+                branch: Some("agent/a-claude".into()),
+                agent: "claude".into(),
+                profile: profile.into(),
+                level,
+                session_id: id.map(str::to_owned),
+                stages: Some(PathBuf::from("/state/stages.json")),
+                crashed: false,
+                remote: false,
+                meeseeks: None,
+            });
+            let plan = plan_with(&window(vec![tab]), &everything_installed(), &disk_for_all());
+            assert_eq!(plan.tabs[0].action, TabAction::ShellInstead(Reason::WorkflowRetired));
+            assert_eq!(
+                plan.tabs[0].note().as_deref(),
+                Some("The agent was not resumed: workflows were retired.")
+            );
+        }
     }
 
     #[test]
-    fn a_workflow_tab_resumes_through_its_run_or_falls_back_when_the_file_is_unreadable() {
+    fn a_workflow_tab_whose_folder_is_gone_is_dropped_not_reopened() {
         let tab = SavedTab::Agent(SavedAgentTab {
-            dir: PathBuf::from(wt("a-claude")),
-            branch: Some("agent/a-claude".into()),
+            dir: PathBuf::from(wt("gone")),
+            branch: Some("agent/gone".into()),
             agent: "claude".into(),
-            profile: "gone-profile".into(),
-            level: Level::Auto,
+            profile: "builder".into(),
+            level: Level::Edits,
             session_id: None,
             stages: Some(PathBuf::from("/state/stages.json")),
             crashed: false,
             remote: false,
             meeseeks: None,
         });
-        let mut disk = disk_for_all();
-        let unreadable = plan_with(&window(vec![tab.clone()]), &everything_installed(), &disk);
-        assert_eq!(unreadable.tabs[0].action, TabAction::ShellInstead(Reason::WorkflowUnreadable));
-        disk.workflows.push("/state/stages.json".into());
-        let readable = plan_with(&window(vec![tab]), &everything_installed(), &disk);
-        assert_eq!(
-            readable.tabs[0].action,
-            TabAction::ResumeWorkflow { stages: PathBuf::from("/state/stages.json") },
-            "the run decides the profile, so a renamed profile does not matter"
-        );
+        let plan = plan_with(&window(vec![tab]), &everything_installed(), &disk_for_all());
+        assert_eq!(plan.tabs.len(), 0);
+        assert_eq!(plan.skipped.len(), 1);
     }
 
     #[test]
@@ -1332,30 +1289,6 @@ mod tests {
         assert_eq!(off.toast(), None, "a choice the user made is no news");
         let auto = plan_with(&window, &installed, &disk);
         assert_eq!(auto.tabs[0].note(), None);
-    }
-
-    #[test]
-    fn a_workflow_tab_is_resumed_by_its_runner_whatever_the_mode() {
-        let tab = SavedAgentTab {
-            dir: PathBuf::from(wt("a-claude")),
-            branch: Some("agent/a-claude".into()),
-            agent: "claude".into(),
-            profile: "builder".into(),
-            level: Level::Edits,
-            session_id: None,
-            stages: Some(PathBuf::from("/state/stages.json")),
-            crashed: true,
-            remote: false,
-            meeseeks: None,
-        };
-        let window = window(vec![SavedTab::Agent(tab)]);
-        let mut disk = disk_for_all();
-        disk.workflows.push("/state/stages.json".into());
-        let plan = plan_as(&window, &everything_installed(), &disk, ResumeAgents::Off, true);
-        assert_eq!(
-            actions(&plan),
-            vec![TabAction::ResumeWorkflow { stages: PathBuf::from("/state/stages.json") }]
-        );
     }
 
     #[test]

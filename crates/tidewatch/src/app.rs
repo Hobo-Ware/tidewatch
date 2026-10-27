@@ -7,7 +7,6 @@ mod agents;
 mod amphetamine;
 mod autofetch;
 mod bar;
-mod build_workflow;
 mod central;
 mod comments;
 mod dev;
@@ -68,7 +67,6 @@ use crate::amphetamine_view;
 use crate::autofetch_glue;
 use crate::avatar_glue;
 use crate::brand;
-use crate::build_workflow::Asked;
 use crate::catalog::Catalog;
 use crate::comment_glue;
 use crate::dev_agent::{DevAgent, DevDraft};
@@ -80,7 +78,6 @@ use crate::dev_screenshot::DevScreenshot;
 use crate::dev_session::DevSession;
 use crate::dev_takeover::DevTakeover;
 use crate::dev_view::{DevCopy, DevKeys, DevPaste, DevScroll, DevView};
-use crate::dev_workflow::DevWorkflow;
 use crate::dev_worktree::DevWorktree;
 use crate::done_check_glue;
 use crate::due;
@@ -131,8 +128,6 @@ use crate::trust_glue::Trust;
 use crate::updates::{Updates, fake_state};
 use crate::welcome::{Recent, recent_repos};
 use crate::window_chrome;
-use crate::workflow_glue::{self};
-use crate::workflow_run::Exec;
 use crate::worktree_jobs::Done;
 
 const FONT_SIZE: f32 = 13.0;
@@ -216,10 +211,6 @@ pub(crate) struct Tidewatch {
     told: due::Told,
     started: due::Told,
     started_loaded: HashSet<u64>,
-    runs: workflow_glue::Host,
-    run_asks: Vec<(u64, Vec<Exec>)>,
-    build_asks: Vec<Asked>,
-    dev_workflow: DevWorkflow,
     dev_flow: DevFlow,
     notifier: Notifier,
     overview: bool,
@@ -443,10 +434,6 @@ impl Tidewatch {
             told: due::Told::default(),
             started: due::Told::default(),
             started_loaded: HashSet::new(),
-            runs: workflow_glue::Host::new(),
-            run_asks: Vec::new(),
-            build_asks: Vec::new(),
-            dev_workflow: DevWorkflow::from_env(),
             dev_flow,
             notifier: Notifier::desktop(),
             overview: dev_view.overview,

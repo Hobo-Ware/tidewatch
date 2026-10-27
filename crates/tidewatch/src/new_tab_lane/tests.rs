@@ -3,7 +3,6 @@ use std::path::PathBuf;
 
 use tidewatch_core::agents::Level;
 use tidewatch_core::profiles::Profiles;
-use tidewatch_core::workflows::Workflows;
 
 use super::*;
 use crate::new_tab::{Group, Kind};
@@ -15,7 +14,6 @@ fn catalog() -> Catalog {
         "codex".to_owned(),
         "gemini".to_owned(),
     ]));
-    catalog.set_workflows(Workflows::defaults());
     catalog.set_availability("claude", Availability::Found(Some("1.0.0".to_owned())));
     catalog.set_availability("codex", Availability::Missing);
     catalog
@@ -55,13 +53,6 @@ fn the_subtitle_is_the_model_and_effort_or_says_the_cli_is_missing() {
 }
 
 #[test]
-fn stages_read_as_one_line() {
-    assert_eq!(stages_line(&["Plan", "Build", "Review"]), "Plan \u{203a} Build \u{203a} Review");
-    assert_eq!(stages_line(&["Plan"]), "Plan");
-    assert_eq!(stages_line(&[]), "");
-}
-
-#[test]
 fn profiles_are_listed_by_cli_with_one_group_label_each_and_keys_that_count_the_rows() {
     let catalog = catalog();
     let state = form();
@@ -89,7 +80,7 @@ fn a_cli_that_is_not_installed_is_dimmed_and_says_so() {
     let rows = rows(&entries);
     let builder = rows.iter().find(|row| row.id == "builder").unwrap();
     assert!(!builder.dim);
-    assert_eq!(builder.badge, Badge::Cli("claude".to_owned()));
+    assert_eq!(builder.cli, "claude");
     let codex = rows.iter().find(|row| row.id == "codex-builder").unwrap();
     assert!(codex.dim);
     assert_eq!(codex.subtitle, "not installed");
@@ -105,22 +96,6 @@ fn the_filter_leaves_only_the_groups_that_still_have_a_row() {
     assert_eq!(entries.iter().filter(|entry| matches!(entry, Entry::Group(_))).count(), 3);
     state.set_filter("zzz", &catalog);
     assert_eq!(super::entries(&state, &catalog), Vec::new());
-}
-
-#[test]
-fn workflows_are_a_flat_list_with_their_stages_as_the_subtitle() {
-    let catalog = catalog();
-    let mut state = form();
-    state.choose(Kind::Workflow);
-    let entries = entries(&state, &catalog);
-    assert!(entries.iter().all(|entry| matches!(entry, Entry::Row(_))));
-    let rows = rows(&entries);
-    assert_eq!(rows[0].id, "ship");
-    assert_eq!(rows[0].title, "Ship a feature");
-    assert_eq!(rows[0].subtitle, "Work \u{203a} Review \u{203a} Refactor \u{203a} Hand off");
-    assert_eq!(rows[0].badge, Badge::Stages(4));
-    let ids: Vec<&str> = rows.iter().map(|row| row.id.as_str()).collect();
-    assert_eq!(ids, state.visible(&catalog));
 }
 
 #[test]
@@ -140,8 +115,7 @@ fn a_meeseeks_lane_lists_each_cli_once_with_its_builder_or_defaults_and_dims_the
     let found: Vec<(usize, &str, &str, &str, bool)> = rows(&entries)
         .iter()
         .map(|row| {
-            let Badge::Cli(cli) = &row.badge else { panic!("{row:?}") };
-            (row.index, row.title.as_str(), row.subtitle.as_str(), cli.as_str(), row.dim)
+            (row.index, row.title.as_str(), row.subtitle.as_str(), row.cli.as_str(), row.dim)
         })
         .collect();
     let want = [

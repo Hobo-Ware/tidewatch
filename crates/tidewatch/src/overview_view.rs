@@ -963,7 +963,6 @@ mod tests {
             title: title.into(),
             place: place.into(),
             profile: "Builder".into(),
-            workflow: None,
             agent_id: "claude".into(),
             branch: format!("agent/{title}"),
             tone: crate::status_view::tone(&status),

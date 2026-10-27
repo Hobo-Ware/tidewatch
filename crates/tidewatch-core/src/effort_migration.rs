@@ -8,7 +8,6 @@ use crate::fsutil::write_atomic;
 use crate::paths::TidewatchPaths;
 
 pub(crate) const PROFILES: &str = "profiles";
-pub(crate) const WORKFLOWS: &str = "workflows";
 
 fn done(marker: &Path) -> Vec<String> {
     std::fs::read_to_string(marker)

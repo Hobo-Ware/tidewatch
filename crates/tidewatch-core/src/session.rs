@@ -89,8 +89,8 @@ pub struct SavedAgentTab {
     /// The id Tidewatch passed with `--session-id`. Codex takes none, so it is filled in later.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub session_id: Option<String>,
-    /// The tab's workflow run (`stages.json`), when one is attached.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    /// Set by a session saved while workflows existed. Read so such a tab reopens as a shell; never written.
+    #[serde(default, skip_serializing)]
     pub stages: Option<PathBuf>,
     /// The agent process ended abnormally while the app kept running (see
     /// `resume_mode::exit_is_abnormal`). The next launch types its resume command and leaves Enter.
@@ -240,7 +240,7 @@ mod tests {
             profile: "builder".into(),
             level: Level::Edits,
             session_id: Some("0c2cbc96-1111-4222-8333-444455556666".into()),
-            stages: Some(PathBuf::from("/root/.state/web-ab12cd/brave-otter/stages.json")),
+            stages: None,
             crashed: false,
             remote: false,
             meeseeks: None,
@@ -421,6 +421,17 @@ mod tests {
         let SavedTab::Agent(tab) = &loaded.windows[0].tabs[0] else { panic!("an agent tab") };
         assert!(!tab.remote);
         assert!(!toml::to_string(&loaded).unwrap().contains("remote"));
+    }
+
+    #[test]
+    fn a_session_saved_with_a_workflow_tab_loads_and_never_writes_the_run_again() {
+        let old = "[[window]]\ndir = \"/a\"\n[[window.tab]]\nkind = \"agent\"\ndir = \"/a/wt\"\n\
+                   branch = \"agent/otter\"\nagent = \"claude\"\nprofile = \"builder\"\n\
+                   level = \"edits\"\nsession_id = \"s1\"\nstages = \"/state/otter/stages.json\"\n";
+        let loaded: Session = toml::from_str(old).unwrap();
+        let SavedTab::Agent(tab) = &loaded.windows[0].tabs[0] else { panic!("an agent tab") };
+        assert_eq!(tab.stages.as_deref(), Some(Path::new("/state/otter/stages.json")));
+        assert!(!toml::to_string(&loaded).unwrap().contains("stages"));
     }
 
     #[test]

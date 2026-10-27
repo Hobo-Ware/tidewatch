@@ -12,7 +12,6 @@ use tidewatch_core::job::Report;
 use tidewatch_core::link_board::Link;
 use tidewatch_core::progress::Ledger;
 use tidewatch_core::status::HookKind;
-use tidewatch_core::workflows::Workflow;
 
 use crate::agent_run::{Change, Finding, TermSnapshot};
 use crate::notify::Notifier;
@@ -52,11 +51,6 @@ pub(crate) enum Follow {
     /// The listener wrote the tab's notes file: read it again.
     ReloadNotes {
         tab: u64,
-    },
-    /// The agent proposed a workflow built from its session; it opens as a draft in Settings.
-    Proposal {
-        tab: u64,
-        workflow: Box<Workflow>,
     },
     /// The agent sent its progress ledger; it is already saved in the tab's state folder.
     Progress {
@@ -109,9 +103,6 @@ pub(crate) fn route<T>(tabs: &mut Tabs<Pane<T>>, message: TabMessage, now: f64) 
             })
         }
         TabEvent::NoteReply { .. } => Some(Follow::ReloadNotes { tab: message.tab_id }),
-        TabEvent::Proposal { workflow } => {
-            Some(Follow::Proposal { tab: message.tab_id, workflow: Box::new(workflow.clone()) })
-        }
         TabEvent::Progress { ledger } => {
             Some(Follow::Progress { tab: message.tab_id, ledger: ledger.clone() })
         }
@@ -142,7 +133,7 @@ pub(crate) fn route<T>(tabs: &mut Tabs<Pane<T>>, message: TabMessage, now: f64) 
             }
             None
         }
-        TabEvent::Hook(_) | TabEvent::StageDone { .. } => None,
+        TabEvent::Hook(_) => None,
     };
     if let TabEvent::Hook(hook) = &message.event {
         agent.reader.hook(hook.transcript_path.clone());
@@ -379,7 +370,7 @@ mod tests {
     }
 
     #[test]
-    fn a_note_reply_asks_for_the_notes_to_be_read_again_and_stage_done_is_only_kept() {
+    fn a_note_reply_asks_for_the_notes_to_be_read_again() {
         let (mut tabs, id) = tabs_with_agent();
         let reply = TabMessage {
             tab_id: id,
@@ -387,28 +378,6 @@ mod tests {
             event: TabEvent::NoteReply { note_id: 1, text: "ok".into() },
         };
         assert_eq!(route(&mut tabs, reply, 1.0), Some(Follow::ReloadNotes { tab: id }));
-        let done = TabMessage {
-            tab_id: id,
-            generation: 0,
-            event: TabEvent::StageDone { summary: "tests added".into() },
-        };
-        assert_eq!(route(&mut tabs, done, 2.0), None);
-        let agent = tabs.get_mut(id).unwrap().pane.agent.take().unwrap();
-        assert_eq!(agent.run.report.stage_done.as_deref(), Some("tests added"));
-    }
-
-    #[test]
-    fn a_proposed_workflow_is_handed_to_the_app_with_the_tab_it_came_from() {
-        let (mut tabs, id) = tabs_with_agent();
-        let text = "name = \"Mine\"\n[[stage]]\naction = \"work\"\nagent = \"claude\"\n";
-        let workflow = tidewatch_core::propose::parse_toml(text).unwrap();
-        let message = TabMessage {
-            tab_id: id,
-            generation: 0,
-            event: TabEvent::Proposal { workflow: workflow.clone() },
-        };
-        let follow = route(&mut tabs, message, 1.0);
-        assert_eq!(follow, Some(Follow::Proposal { tab: id, workflow: Box::new(workflow) }));
     }
 
     #[test]

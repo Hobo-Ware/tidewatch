@@ -49,7 +49,7 @@ pub(crate) fn is_ready(first_prompt: FirstPrompt, tone: Tone) -> bool {
         && matches!(tone, Tone::Working | Tone::Done | Tone::Shell)
 }
 
-/// The line of an agent tab that is not a workflow's (its stepper says more). `None` for the rest.
+/// The line of an agent tab. `None` for the rest.
 /// `remote_app` is where the CLI's remote session is driven from.
 pub(crate) fn line_of<T>(
     pane: &Pane<T>,
@@ -57,7 +57,7 @@ pub(crate) fn line_of<T>(
     reader_available: bool,
     (cli_name, remote_app): (&str, Option<&'static str>),
 ) -> Option<Line> {
-    let agent = pane.agent.as_ref().filter(|agent| agent.workflow.is_none())?;
+    let agent = pane.agent.as_ref()?;
     let ready = is_ready(agent.first_prompt, status_view::tone(agent.run.status()));
     let tone = agent.run.shown_tone();
     let level = agent.launched.as_ref().map(|launched| launched.level.label());

@@ -33,9 +33,6 @@ pub(crate) const FOOTER_H: f32 = Size::Regular.height();
 const FOOTER_GAP: f32 = 12.0;
 const BOTTOM_PAD: f32 = 14.0;
 pub(crate) const SCROLL_GUTTER: f32 = crate::brand::SCROLL_ROOM;
-const STAGE_MIN_W: f32 = 120.0;
-const STAGE_COLUMNS_MAX: usize = 4;
-const STAGE_GAP: f32 = 8.0;
 
 pub(crate) fn form_rect(area: Rect) -> Rect {
     let width = (area.width() - 2.0 * SIDE_PAD).clamp(0.0, COLUMN_MAX_W);
@@ -128,26 +125,20 @@ pub(crate) fn field_rects(area: Rect, problem: bool) -> (Rect, Rect) {
     }
 }
 
-pub(crate) fn stage_columns(width: f32) -> usize {
-    let fit = ((width + STAGE_GAP) / (STAGE_MIN_W + STAGE_GAP)).floor();
-    (fit as usize).clamp(1, STAGE_COLUMNS_MAX)
-}
-
 /// What stands above the message box, each block as tall as it was measured: the permission
-/// control and its text, the Remote control row, the stages of a workflow, warnings and the name and
+/// control and its text, the Remote control row, warnings and the name and
 /// branch fields.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub(crate) struct Above {
     pub(crate) permission: f32,
     pub(crate) remote: f32,
-    pub(crate) stages: f32,
     pub(crate) warnings: f32,
     pub(crate) fields: f32,
 }
 
 impl Above {
     pub(crate) fn height(&self) -> f32 {
-        [self.stages, self.permission, self.remote, self.warnings, self.fields]
+        [self.permission, self.remote, self.warnings, self.fields]
             .into_iter()
             .filter(|height| *height > 0.0)
             .map(|height| height + SECTION_GAP)

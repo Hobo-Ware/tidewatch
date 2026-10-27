@@ -3,12 +3,12 @@
 //!
 //! [`handle_post`] takes the raw request body of an authenticated `/mcp` POST and returns the reply.
 //! It speaks `initialize`, `ping`, `tools/list` and `tools/call` and swallows notifications. The
-//! tools are `stage_done`, `report_finding`, `list_notes`, `reply_to_note`, `propose_workflow`,
-//! `ask_user`, `update_progress`, `get_progress`, `report_job`, `set_avatar`, `meeseeks_done` and
-//! `set_name`. A tab is offered the ones its [`TabRole`] can use (`stage_done` only to a workflow stage,
-//! `meeseeks_done` and `set_name` only to a Meeseeks, `report_finding` to neither a Meeseeks); a call to one it is
-//! not offered is answered with a tool error that says where it works. Calls that matter to the app become [`TabEvent`]s through `emit`; the note tools read
-//! and write the tab's `notes.json` through `notes.rs`. `ask_user` holds its reply until the user
+//! tools are `report_finding`, `list_notes`, `reply_to_note`, `ask_user`, `update_progress`,
+//! `get_progress`, `report_job`, `set_avatar`, `meeseeks_done` and `set_name`. A tab is offered the
+//! ones its [`TabRole`] can use (`meeseeks_done` and `set_name` only to a Meeseeks, `report_finding`
+//! to neither a Meeseeks); a call to one it is not offered is answered with a tool error that says
+//! where it works. Calls that matter to the app become [`TabEvent`]s through `emit`; the note tools
+//! read and write the tab's `notes.json` through `notes.rs`. `ask_user` holds its reply until the user
 //! answers (or [`AskWait::timeout`] runs out, or the client hangs up): the listener serves each
 //! connection on its own thread, so a held call blocks nothing else.
 //!
@@ -35,7 +35,6 @@ use crate::meeseeks_mcp;
 use crate::meeseeks_name;
 use crate::notes::Notes;
 use crate::progress_mcp;
-use crate::propose;
 use crate::question::{self, AskReply, Reply};
 
 /// The protocol revision Tidewatch answers with when the client asks for one it does not know.
@@ -63,11 +62,11 @@ pub struct AskWait<'a> {
 /// What a tab is, which decides the tools `tools/list` offers it.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum TabRole {
-    /// An agent in a tab of its own.
+    /// An agent in a tab of its own. A credential an older version saved for a workflow stage reads
+    /// back as this.
     #[default]
+    #[serde(alias = "Workflow")]
     Agent,
-    /// The agent of a workflow stage: the run waits for its `stage_done` and reads its findings.
-    Workflow,
     /// A Meeseeks: it ends with `meeseeks_done`, and nobody reads findings in a tab that poofs.
     Meeseeks,
 }
@@ -75,7 +74,6 @@ pub enum TabRole {
 impl TabRole {
     fn offers(self, tool: &str) -> bool {
         match tool {
-            "stage_done" => self == Self::Workflow,
             meeseeks_mcp::DONE_TOOL | meeseeks_name::SET_TOOL => self == Self::Meeseeks,
             "report_finding" => self != Self::Meeseeks,
             _ => true,
@@ -84,7 +82,6 @@ impl TabRole {
 
     fn refusal(tool: &str) -> String {
         match tool {
-            "stage_done" => "`stage_done` is not offered in this tab: only the agent of a workflow stage can call it. Finish with your end-of-turn block.".to_owned(),
             meeseeks_mcp::DONE_TOOL => "`meeseeks_done` is not offered in this tab: only a Meeseeks can call it. Finish with your end-of-turn block.".to_owned(),
             meeseeks_name::SET_TOOL => "`set_name` is not offered in this tab: only a Meeseeks can call it. This tab keeps the name it has.".to_owned(),
             _ => format!("`{tool}` is not offered to a Meeseeks: nobody reads a finding in a tab that ends with its task. Put what you found in the summary of `meeseeks_done`."),
@@ -204,7 +201,7 @@ fn initialize_result(params: Option<&Value>) -> Value {
         "protocolVersion": version,
         "capabilities": { "tools": { "listChanged": false } },
         "serverInfo": { "name": MCP_SERVER_NAME, "version": env!("CARGO_PKG_VERSION") },
-        "instructions": "Tidewatch tools for the task in this worktree: report that a stage is done, report review findings, read and answer the notes the user left on your changes, report jobs that run over a minute, and draw the tab's icon.",
+        "instructions": "Tidewatch tools for the task in this worktree: report review findings, read and answer the notes the user left on your changes, report jobs that run over a minute, and draw the tab's icon.",
     })
 }
 
@@ -226,18 +223,6 @@ pub fn tool_definitions_for(role: TabRole) -> Value {
 pub fn tool_definitions() -> Value {
     let [update_progress, get_progress] = progress_mcp::tool_definitions();
     json!([
-        {
-            "name": "stage_done",
-            "description": "Call once when you have finished the task you were given. Summarize what you did and anything the user should check.",
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "summary": { "type": "string", "description": "What you did and what to check." }
-                },
-                "required": ["summary"],
-                "additionalProperties": false,
-            },
-        },
         {
             "name": "report_finding",
             "description": "Report one problem you found in the code under review. It appears as a note on that line in the user's diff.",
@@ -277,7 +262,6 @@ pub fn tool_definitions() -> Value {
                 "additionalProperties": false,
             },
         },
-        propose::tool_definition(),
         question::tool_definition(),
         update_progress,
         get_progress,
@@ -309,10 +293,6 @@ fn call_tool(
     if !ctx.role.offers(name) {
         return Ok(tool_result(&TabRole::refusal(name), true));
     }
-    if name == propose::TOOL_NAME {
-        let (text, is_error) = propose_workflow(args, ctx, emit);
-        return Ok(tool_result(&text, is_error));
-    }
     if name == progress_mcp::UPDATE_TOOL {
         let (text, is_error) = progress_mcp::update(args, ctx.progress_file, emit);
         return Ok(tool_result(&text, is_error));
@@ -342,7 +322,6 @@ fn call_tool(
         return Ok(tool_result(&text, is_error));
     }
     let text = match name {
-        "stage_done" => stage_done(args, emit)?,
         "report_finding" => report_finding(args, emit)?,
         "list_notes" => list_notes(args, ctx),
         "reply_to_note" => reply_to_note(args, ctx, emit)?,
@@ -353,38 +332,6 @@ fn call_tool(
 
 fn tool_result(text: &str, is_error: bool) -> Value {
     json!({ "content": [{ "type": "text", "text": text }], "isError": is_error })
-}
-
-/// A workflow that fails the rules is a tool error with the problems listed, not a protocol error,
-/// so the agent reads what to fix and calls again.
-fn propose_workflow(
-    args: &Map<String, Value>,
-    ctx: &ToolCtx<'_>,
-    emit: &dyn Fn(TabEvent),
-) -> (String, bool) {
-    let checked = propose::parse_args(args).and_then(|mut workflow| {
-        propose::with_agent(&mut workflow, ctx.agent);
-        let found = propose::problems(&workflow);
-        if found.is_empty() { Ok(workflow) } else { Err(found) }
-    });
-    match checked {
-        Ok(workflow) => {
-            emit(TabEvent::Proposal { workflow });
-            (
-                "Opened in Tidewatch for review. The user decides whether to save it; there is nothing more to do."
-                    .to_owned(),
-                false,
-            )
-        }
-        Err(found) => (
-            format!(
-                "The workflow was not opened. Fix these and call {} again:\n- {}",
-                propose::TOOL_NAME,
-                found.join("\n- ")
-            ),
-            true,
-        ),
-    }
 }
 
 /// Shows the questions in the tab and holds the call until they are answered. Questions that fail
@@ -423,12 +370,6 @@ fn ask_user(
         }
     };
     (text, false)
-}
-
-fn stage_done(args: &Map<String, Value>, emit: &dyn Fn(TabEvent)) -> Result<String, RpcError> {
-    let summary = text_arg(args, "summary")?;
-    emit(TabEvent::StageDone { summary });
-    Ok("Recorded. Tidewatch has your summary.".into())
 }
 
 fn report_finding(args: &Map<String, Value>, emit: &dyn Fn(TabEvent)) -> Result<String, RpcError> {
@@ -653,18 +594,16 @@ mod tests {
     }
 
     #[test]
-    fn the_server_has_twelve_tools_with_object_schemas_and_required_fields() {
+    fn the_server_has_ten_tools_with_object_schemas_and_required_fields() {
         let all = tool_definitions();
         let tools = all.as_array().unwrap();
         let names: Vec<&str> = tools.iter().map(|t| t["name"].as_str().unwrap()).collect();
         assert_eq!(
             names,
             [
-                "stage_done",
                 "report_finding",
                 "list_notes",
                 "reply_to_note",
-                "propose_workflow",
                 "ask_user",
                 "update_progress",
                 "get_progress",
@@ -686,11 +625,9 @@ mod tests {
         assert_eq!(
             required,
             [
-                vec!["summary"],
                 vec!["file", "line", "blocking", "text"],
                 vec![],
                 vec!["id", "text"],
-                vec!["name", "stages"],
                 vec!["questions"],
                 vec!["state", "now", "stages"],
                 vec![],
@@ -718,7 +655,6 @@ mod tests {
         let shared = [
             "list_notes",
             "reply_to_note",
-            "propose_workflow",
             "ask_user",
             "update_progress",
             "get_progress",
@@ -737,29 +673,14 @@ mod tests {
             names
         };
         assert_eq!(sorted(TabRole::Agent), with(&["report_finding"]));
-        assert_eq!(sorted(TabRole::Workflow), with(&["stage_done", "report_finding"]));
         assert_eq!(sorted(TabRole::Meeseeks), with(&["meeseeks_done", "set_name"]));
     }
 
     #[test]
     fn a_call_to_a_tool_the_tab_is_not_offered_is_a_tool_error_that_says_where_it_works() {
         let cases = [
-            (
-                TabRole::Agent,
-                "stage_done",
-                json!({"summary": "x"}),
-                "only the agent of a workflow stage",
-            ),
-            (
-                TabRole::Meeseeks,
-                "stage_done",
-                json!({"summary": "x"}),
-                "only the agent of a workflow stage",
-            ),
             (TabRole::Agent, "meeseeks_done", json!({"summary": "x"}), "only a Meeseeks"),
-            (TabRole::Workflow, "meeseeks_done", json!({"summary": "x"}), "only a Meeseeks"),
             (TabRole::Agent, "set_name", json!({"name": "fix-login"}), "only a Meeseeks"),
-            (TabRole::Workflow, "set_name", json!({"name": "fix-login"}), "only a Meeseeks"),
             (
                 TabRole::Meeseeks,
                 "report_finding",
@@ -778,33 +699,6 @@ mod tests {
             );
             assert_eq!(h.events.borrow().len(), 0, "{role:?} {tool}");
         }
-    }
-
-    fn proposal() -> Value {
-        json!({
-            "name": "Change with a check",
-            "description": "Do it, then prove it.",
-            "stages": [
-                { "action": "work", "prompt": "{task}" },
-                { "action": "review", "prompt": "Review {base}..HEAD.", "on_fail": 1 },
-            ],
-        })
-    }
-
-    #[test]
-    fn propose_workflow_opens_a_valid_workflow_for_review_on_the_callers_agent() {
-        let h = Harness::new();
-        let reply = h.call("propose_workflow", &proposal());
-        assert_eq!(reply["result"]["isError"], false);
-        let text = reply["result"]["content"][0]["text"].as_str().unwrap();
-        assert!(text.starts_with("Opened in Tidewatch for review."), "{text}");
-        let events = h.events.borrow();
-        let [TabEvent::Proposal { workflow }] = events.as_slice() else {
-            panic!("expected one proposal, got {events:?}");
-        };
-        assert_eq!(workflow.name, "Change with a check");
-        assert_eq!(workflow.stages[1].on_fail, Some(0));
-        assert!(workflow.stages.iter().all(|s| s.run.agent.as_deref() == Some("claude")));
     }
 
     const LEDGER: &str = "# Goal\nAdd search\n\n## Status\nphase: 2\nstate: working\nnote: wiring\n\n## Checklist\n### 1. Plan\n- [x] a\n### 2. Build\n- [x] b\n- [~] c\n- [ ] d\n\n## Scheduled\n- [ ] you -- Pick a name\n";
@@ -1142,40 +1036,6 @@ mod tests {
         assert_eq!(h.events.borrow().len(), 3);
     }
 
-    #[test]
-    fn propose_workflow_answers_the_problems_as_a_tool_error_and_opens_nothing() {
-        let h = Harness::new();
-        let mut bad = proposal();
-        bad["stages"][1]["on_fail"] = json!(2);
-        bad["stages"][0]["permissions"] = json!("yolo");
-        bad["name"] = json!("");
-        let reply = h.call("propose_workflow", &bad);
-        assert!(reply.get("error").is_none(), "a rule failure is not a protocol error: {reply}");
-        assert_eq!(reply["result"]["isError"], true);
-        let text = reply["result"]["content"][0]["text"].as_str().unwrap();
-        assert!(
-            text.starts_with(
-                "The workflow was not opened. Fix these and call propose_workflow again:\n- "
-            ),
-            "{text}"
-        );
-        assert!(text.contains("name must be a non-empty string"), "{text}");
-        assert!(
-            text.contains("stage 1: permissions must be one of: plan, ask, edits, auto"),
-            "{text}"
-        );
-        assert_eq!(*h.events.borrow(), Vec::<TabEvent>::new());
-        let stage_two =
-            json!({ "name": "n", "stages": [{ "action": "work", "prompt": "p", "on_fail": 1 }] });
-        let reply = h.call("propose_workflow", &stage_two);
-        let text = reply["result"]["content"][0]["text"].as_str().unwrap();
-        assert!(
-            text.contains("stage 1 (Work): on_fail must name an earlier stage, not stage 1"),
-            "{text}"
-        );
-        assert_eq!(*h.events.borrow(), Vec::<TabEvent>::new());
-    }
-
     fn questions_args() -> Value {
         json!({"questions": [
             {"question": "Where should the retry count live?", "header": "Retry",
@@ -1307,15 +1167,6 @@ mod tests {
     }
 
     #[test]
-    fn stage_done_emits_the_summary_and_returns_text_content() {
-        let h = Harness::of(TabRole::Workflow);
-        let reply = h.call("stage_done", &json!({"summary": "  hello  "}));
-        assert_eq!(reply["result"]["isError"], false);
-        assert_eq!(reply["result"]["content"][0]["type"], "text");
-        assert_eq!(h.events.borrow().clone(), [TabEvent::StageDone { summary: "hello".into() }]);
-    }
-
-    #[test]
     fn report_finding_emits_every_field() {
         let h = Harness::new();
         let reply = h.call(
@@ -1336,14 +1187,14 @@ mod tests {
 
     #[test]
     fn bad_arguments_are_invalid_params_and_emit_nothing() {
-        let h = Harness::of(TabRole::Workflow);
+        let h = Harness::of(TabRole::Agent);
         let long = "x".repeat(MAX_TEXT_CHARS + 1);
         let cases: Vec<(&str, Value)> = vec![
-            ("stage_done", json!({})),
-            ("stage_done", json!({"summary": ""})),
-            ("stage_done", json!({"summary": "   "})),
-            ("stage_done", json!({"summary": 5})),
-            ("stage_done", json!({"summary": long})),
+            ("report_finding", json!({})),
+            ("report_finding", json!({"file": "a", "line": 1, "blocking": true, "text": ""})),
+            ("report_finding", json!({"file": "a", "line": 1, "blocking": true, "text": "   "})),
+            ("report_finding", json!({"file": "a", "line": 1, "blocking": true, "text": 5})),
+            ("report_finding", json!({"file": "a", "line": 1, "blocking": true, "text": long})),
             ("report_finding", json!({"file": "a", "line": -1, "blocking": true, "text": "t"})),
             ("report_finding", json!({"file": "a", "line": 1.5, "blocking": true, "text": "t"})),
             (
@@ -1377,8 +1228,8 @@ mod tests {
             json!([]),
             json!({}),
             json!({"name": 4}),
-            json!({"name": "stage_done", "arguments": "x"}),
-            json!({"name": "stage_done", "arguments": [1]}),
+            json!({"name": "list_notes", "arguments": "x"}),
+            json!({"name": "list_notes", "arguments": [1]}),
         ] {
             let reply = h.json(
                 &json!({"jsonrpc": "2.0", "id": 5, "method": "tools/call", "params": params}),

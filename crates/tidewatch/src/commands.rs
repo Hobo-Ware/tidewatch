@@ -83,7 +83,6 @@ pub(crate) enum Command {
     OpenRepo,
     Palette,
     Confirm,
-    BuildWorkflow,
     MoveSessions,
     Amphetamine,
 }
@@ -117,17 +116,13 @@ impl Command {
             | Self::OpenRepo
             | Self::Palette
             | Self::Confirm
-            | Self::BuildWorkflow
             | Self::MoveSessions
             | Self::Amphetamine => None,
         }
     }
 
     fn global(self) -> bool {
-        !matches!(
-            self,
-            Self::Confirm | Self::BuildWorkflow | Self::MoveSessions | Self::Amphetamine
-        )
+        !matches!(self, Self::Confirm | Self::MoveSessions | Self::Amphetamine)
     }
 
     /// A bare key the terminal and the text fields also want: it is only read, and so only taken
@@ -340,7 +335,7 @@ const fn tab(id: &'static str, title: &'static str, index: usize, key: Key) -> E
     entry(id, title, Group::Tabs, Command::SelectTab(index), (cmd(key), alt(key)))
 }
 
-pub(crate) const TABLE: [Entry; 37] = [
+pub(crate) const TABLE: [Entry; 36] = [
     entry("new-tab", "New tab", Group::Tabs, Command::NewTab, (cmd(Key::T), ctrl(Key::T).shift())),
     entry(
         "close-tab",
@@ -513,12 +508,6 @@ pub(crate) const TABLE: [Entry; 37] = [
         Command::Confirm,
         (cmd(Key::Enter), ctrl(Key::Enter)),
     ),
-    unbound(
-        "build-workflow",
-        "Build workflow from this session",
-        Group::App,
-        Command::BuildWorkflow,
-    ),
     unbound("move-sessions", "Move sessions to Tidewatch", Group::App, Command::MoveSessions),
     unbound("amphetamine", "Amphetamine", Group::App, Command::Amphetamine),
 ];
@@ -667,10 +656,7 @@ impl Gate {
             | Command::OpenRepo => !modal,
             Command::FindCommit => !modal && !self.overview && self.card == Card::History,
             Command::Palette => self.dialog == Dialog::None,
-            Command::Confirm
-            | Command::BuildWorkflow
-            | Command::MoveSessions
-            | Command::Amphetamine => false,
+            Command::Confirm | Command::MoveSessions | Command::Amphetamine => false,
         }
     }
 }

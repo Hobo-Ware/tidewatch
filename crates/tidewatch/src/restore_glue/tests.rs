@@ -9,9 +9,9 @@ use tidewatch_core::prefs::ResumeAgents;
 use tidewatch_core::profiles::Profiles;
 use tidewatch_core::resume_mode::Why;
 use tidewatch_core::session::{SavedAgentTab, SavedWindow, Session};
-use tidewatch_core::tools::Tools;
 use tidewatch_core::transcript_locate::claude_project_dir_name;
 use tidewatch_core::worktree;
+use tidewatch_core::worktree::Worktree;
 
 use super::*;
 use crate::agent_run::TermSnapshot;
@@ -44,7 +44,6 @@ struct Fixture {
     paths: TidewatchPaths,
     catalog: Catalog,
     host: Host,
-    runs: workflow_glue::Host,
     tabs: Tabs<Pane<String>>,
     ctx: egui::Context,
     toasts: Vec<String>,
@@ -71,7 +70,6 @@ impl Fixture {
         Self {
             paths: TidewatchPaths::new(&home),
             host,
-            runs: workflow_glue::Host::new(),
             tabs: Tabs::new(Pane::shell("main".to_owned())),
             ctx: egui::Context::default(),
             toasts: Vec::new(),
@@ -108,13 +106,7 @@ impl Fixture {
     }
 
     fn tick(&mut self) {
-        let env = Env {
-            paths: &self.paths,
-            catalog: &self.catalog,
-            listener: None,
-            tools: Tools::with_path(std::env::var_os("PATH").unwrap_or_default()),
-            trust: None,
-        };
+        let env = Env { paths: &self.paths, catalog: &self.catalog, listener: None, trust: None };
         let agent = |dir: &Path, prepared: &Prepared| {
             format!("agent@{}: {}", dir.display(), prepared.launch.shell_line())
         };
@@ -125,7 +117,7 @@ impl Fixture {
             format!("typed@{}: {}", dir.display(), prepared.launch.shell_line())
         };
         let spawn = Spawn { agent: &agent, typed: &typed, shell: &shell };
-        let report = self.host.tick(&self.ctx, &mut self.tabs, &env, &spawn, &mut self.runs, 1.0);
+        let report = self.host.tick(&self.ctx, &mut self.tabs, &env, &spawn, 1.0);
         self.toasts.extend(report.toasts.clone());
         if report.leftovers.is_some() {
             self.report.leftovers = report.leftovers;
@@ -449,111 +441,38 @@ fn a_plan_stays_unsettled_while_an_agent_is_still_being_made() {
 }
 
 #[test]
-fn a_workflow_tab_with_unreadable_state_reopens_as_a_shell_with_a_toast() {
+fn a_session_file_from_the_workflow_days_reopens_its_tab_as_a_shell_in_the_worktree() {
     let mut f = Fixture::new(false);
-    let wt = worktree::add(&f.paths, &f.repo).unwrap();
-    let plan = WindowPlan {
-        dir: f.repo.clone(),
-        other: false,
-        focus_mode: false,
-        active: 0,
-        tabs: vec![TabPlan {
-            saved: SavedTab::Agent(SavedAgentTab {
-                dir: wt.path.clone(),
-                branch: Some(wt.branch.clone()),
-                agent: "claude".into(),
-                profile: "builder".into(),
-                level: Level::Edits,
-                session_id: None,
-                stages: Some(f.home.join("missing-stages.json")),
-                crashed: false,
-                remote: false,
-                meeseeks: None,
-            }),
-            dir: wt.path.clone(),
-            worktree: Some(wt.clone()),
-            action: TabAction::ResumeWorkflow { stages: f.home.join("missing-stages.json") },
-            park: None,
-        }],
-        skipped: Vec::new(),
+    let kept = worktree::add(&f.paths, &f.repo).unwrap();
+    let gone = worktree::add(&f.paths, &f.repo).unwrap();
+    worktree::remove(&f.paths, &gone, worktree::BranchChoice::Delete, worktree::RemoveMode::Safe)
+        .unwrap();
+    let tab = |wt: &Worktree| {
+        format!(
+            "[[window.tab]]\nkind = \"agent\"\ndir = {:?}\nbranch = {:?}\nagent = \"claude\"\n\
+             profile = \"Builder\"\nlevel = \"edits\"\nsession_id = \"{SESSION_A}\"\n\
+             stages = {:?}\n",
+            wt.path,
+            wt.branch,
+            f.paths.worktree_dir(&f.repo, "old").join("stages.json")
+        )
     };
-    let env = Env {
-        paths: &f.paths,
-        catalog: &f.catalog,
-        listener: None,
-        tools: Tools::with_path(OsString::new()),
-        trust: None,
-    };
-    let agent = |_: &Path, _: &Prepared| "agent".to_owned();
-    let typed = |_: &Path, _: &Prepared| "typed".to_owned();
-    let shell = |_: &Path, note: Option<&str>| format!("shell|{}", note.unwrap_or("-"));
-    let spawn = Spawn { agent: &agent, typed: &typed, shell: &shell };
-    let report = f.host.apply(&plan, 0, &f.ctx, &mut f.tabs, &env, &spawn, &mut f.runs, 0.0);
-    assert_eq!(report.toasts.len(), 1);
-    assert!(f.shells()[1].starts_with("shell|The workflow was not resumed"), "{}", f.shells()[1]);
-}
-
-#[test]
-fn a_saved_workflow_run_goes_back_through_the_workflow_host_in_its_place() {
-    use std::collections::BTreeMap;
-    use tidewatch_core::runner::{RunContext, Runner};
-    use tidewatch_core::workflows::Workflows;
-    let mut f = Fixture::new(false);
-    let first = worktree::add(&f.paths, &f.repo).unwrap();
-    let wt = worktree::add(&f.paths, &f.repo).unwrap();
-    let ship = Workflows::defaults().workflow.remove("ship").unwrap();
-    let context = RunContext {
-        task: "t".into(),
-        base: "main".into(),
-        branch: wt.branch.clone(),
-        test_command: None,
-    };
-    let mut runner = Runner::new(&ship, &BTreeMap::new(), context).unwrap();
-    runner.start();
-    let stages = f.paths.stages_file(&f.repo, wt.name());
-    runner.save(&stages).unwrap();
-    let workflow_tab = SavedTab::Agent(SavedAgentTab {
-        dir: wt.path.clone(),
-        branch: Some(wt.branch.clone()),
-        agent: "claude".into(),
-        profile: "Builder".into(),
-        level: Level::Edits,
-        session_id: None,
-        stages: Some(stages),
-        crashed: false,
-        remote: false,
-        meeseeks: None,
-    });
-    f.save(2, false, vec![SavedTab::Main, shell(&first), workflow_tab]);
+    let text = format!(
+        "[[window]]\ndir = {:?}\nactive = 1\n[[window.tab]]\nkind = \"main\"\n{}{}",
+        f.repo,
+        tab(&kept),
+        tab(&gone)
+    );
+    std::fs::create_dir_all(f.paths.session_file().parent().unwrap()).unwrap();
+    std::fs::write(f.paths.session_file(), text).unwrap();
     f.begin();
-    let deadline = Instant::now() + Duration::from_secs(30);
-    while f.host.phase != Phase::Settling {
-        f.tick();
-        assert!(Instant::now() < deadline);
-        std::thread::sleep(Duration::from_millis(2));
-    }
-    assert_eq!(f.tabs.items().len(), 3);
-    assert_eq!(f.tabs.items()[1].title, first.name());
-    assert!(
-        f.tabs.items()[2].pane.agent.as_ref().is_some_and(|a| a.profile_name == "Ship a feature")
-    );
-    assert_eq!(f.tabs.active(), 2);
-    assert!(!f.host.settled(), "the workflow tab is still being opened");
-}
-
-#[test]
-fn the_dev_resume_plan_is_one_workflow_tab_in_the_named_worktree() {
-    let f = Fixture::new(false);
-    let plan = dev_resume_plan(&f.paths, &f.repo, "brave-otter");
-    assert_eq!(plan.tabs.len(), 1);
-    let tab = &plan.tabs[0];
-    assert_eq!(tab.worktree.as_ref().map(|w| w.branch.as_str()), Some("agent/brave-otter"));
-    assert_eq!(tab.dir, f.paths.worktree_dir(&f.repo, "brave-otter"));
-    assert_eq!(
-        tab.action,
-        TabAction::ResumeWorkflow { stages: f.paths.stages_file(&f.repo, "brave-otter") }
-    );
-    assert_eq!(plan.skipped, []);
+    f.until_settled();
+    assert_eq!(f.tabs.items().len(), 2, "the tab whose worktree is gone has no tab");
+    assert!(f.shells()[1].starts_with("shell@"), "a plain shell, no agent: {}", f.shells()[1]);
+    assert!(f.shells()[1].contains("workflows were retired"), "{}", f.shells()[1]);
+    assert!(f.tabs.items()[1].pane.agent.is_none());
+    assert_eq!(f.tabs.items()[1].pane.worktree.as_ref(), Some(&kept));
+    assert!(kept.path.is_dir(), "the worktree is left alone");
 }
 
 #[test]

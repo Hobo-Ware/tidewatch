@@ -11,8 +11,6 @@ use crate::dev_session::LeftoverStep;
 use crate::new_tab::Kind;
 use crate::note_actions;
 use crate::pane::{Body, FirstPrompt};
-use crate::repo::Workspace;
-use crate::restore_glue;
 use crate::settings::Section;
 use crate::{reader_glue, reader_view};
 
@@ -24,7 +22,6 @@ impl Tidewatch {
             self.toggle_settings();
             if let Some(settings) = &mut self.settings {
                 match dev.profile.as_deref() {
-                    Some("workflows") => settings.section = Section::Workflows,
                     Some("trust") => settings.section = Section::Trust,
                     Some("general") => settings.section = Section::General,
                     Some("shortcuts") => settings.section = Section::Shortcuts,
@@ -36,16 +33,8 @@ impl Tidewatch {
             }
             return;
         }
-        if dev.mode == DevMode::Propose {
-            self.dev_propose(ctx, dev.profile.as_deref().unwrap_or_default());
-            return;
-        }
         if dev.mode == DevMode::Palette {
             self.open_palette(dev.profile.as_deref().unwrap_or_default());
-            return;
-        }
-        if dev.mode == DevMode::Resume {
-            self.dev_resume(ctx, dev.profile.as_deref().unwrap_or_default());
             return;
         }
         let mut state = self.draft_state(None);
@@ -56,9 +45,6 @@ impl Tidewatch {
             }
             Some("meeseeks") => {
                 state.choose(Kind::Meeseeks);
-            }
-            Some("workflow") => {
-                state.choose(Kind::Workflow);
             }
             Some(preselect) => state.jump(preselect, &self.catalog),
         }
@@ -72,7 +58,7 @@ impl Tidewatch {
             state.set_text(&dev.message);
         }
         match dev.mode {
-            DevMode::Settings | DevMode::Palette | DevMode::Resume | DevMode::Propose => {}
+            DevMode::Settings | DevMode::Palette => {}
             DevMode::Dialog => {
                 let request = state.start_request(&self.catalog, self.bases.facts(state.repo()));
                 let tab = self.open_draft(ctx, state);
@@ -107,33 +93,21 @@ impl Tidewatch {
         let Some(draft) = self.dev_draft.take() else { return };
         let waiting = self.tabs.items().iter().rev().find_map(|tab| {
             let agent = tab.pane.agent.as_ref()?;
-            match agent.workflow.as_deref() {
-                Some(run) => run.awaiting_task().then_some((tab.id, true)),
-                None => (agent.first_prompt == FirstPrompt::Awaiting
-                    && matches!(tab.pane.body, Body::Shell(_)))
-                .then_some((tab.id, false)),
-            }
+            (agent.first_prompt == FirstPrompt::Awaiting && matches!(tab.pane.body, Body::Shell(_)))
+                .then_some(tab.id)
         });
-        let Some((id, is_run)) = waiting else {
+        let Some(id) = waiting else {
             self.dev_draft = Some(draft);
             return;
         };
         let Some(agent) = self.tabs.get_mut(id).and_then(|tab| tab.pane.agent.as_mut()) else {
             return;
         };
-        if let Some(run) = agent.workflow.as_deref_mut().filter(|_| is_run) {
-            draft.text.clone_into(&mut run.ui.task);
-            if draft.start {
-                let execs = run.start_with(&draft.text);
-                self.run_asks.push((id, execs));
-            }
-        } else {
-            draft.text.clone_into(&mut agent.reader.view.reply);
-            if draft.start {
-                agent.reader.view.reply.clear();
-                let asked = vec![reader_view::Action::Reply(draft.text)];
-                reader_glue::apply(asked, &mut self.tabs, id, &mut self.flow, ctx, now);
-            }
+        draft.text.clone_into(&mut agent.reader.view.reply);
+        if draft.start {
+            agent.reader.view.reply.clear();
+            let asked = vec![reader_view::Action::Reply(draft.text)];
+            reader_glue::apply(asked, &mut self.tabs, id, &mut self.flow, ctx, now);
         }
     }
 
@@ -147,25 +121,6 @@ impl Tidewatch {
         {
             self.dev_session.leftovers_done();
         }
-    }
-
-    /// `TIDEWATCH_DEV_PROPOSE`: the proposal path for the workflow in `file`, from a stand-in tab.
-    fn dev_propose(&mut self, ctx: &egui::Context, file: &str) {
-        let text = match std::fs::read_to_string(file) {
-            Ok(text) => text,
-            Err(e) => return eprintln!("tidewatch: dev propose: cannot read {file}: {e}"),
-        };
-        match crate::build_workflow::workflow_from_toml(&text, "claude") {
-            Ok(workflow) => self.open_proposal("a stand-in agent", &workflow, ctx),
-            Err(problem) => eprintln!("tidewatch: dev propose: {problem}"),
-        }
-    }
-
-    /// `TIDEWATCH_DEV_RESUME`: the restart path, for the one saved run in the named worktree.
-    fn dev_resume(&mut self, ctx: &egui::Context, name: &str) {
-        let (Workspace::Repo(repo), Some(paths)) = (self.workspace(), &self.paths) else { return };
-        let plan = restore_glue::dev_resume_plan(paths, &repo.root, name);
-        self.drive_restore(ctx, ctx.input(|i| i.time), Some(plan));
     }
 
     /// Applies the `TIDEWATCH_DEV_PICK` and `TIDEWATCH_DEV_NOTE` switches once the view can take

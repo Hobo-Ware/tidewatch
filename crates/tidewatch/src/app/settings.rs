@@ -1,4 +1,4 @@
-//! Settings: the page, saving profiles and workflows, window preferences and shell events.
+//! Settings: the page, saving profiles, window preferences and shell events.
 
 use tidewatch_core::house_style;
 use tidewatch_core::prefs::{
@@ -32,11 +32,9 @@ impl Tidewatch {
         if self.settings.take().is_some() {
             return;
         }
-        if let (Some(profiles), Some(workflows)) =
-            (self.catalog.profiles(), self.catalog.workflows())
-        {
+        if let Some(profiles) = self.catalog.profiles() {
             let mut settings =
-                Settings::new(profiles, workflows, self.catalog.agent_names(), self.shell.prefs());
+                Settings::new(profiles, self.catalog.agent_names(), self.shell.prefs());
             let repos = self
                 .workspaces
                 .iter()
@@ -153,13 +151,6 @@ impl Tidewatch {
                     agent_jobs::save(&self.agent_jobs, ctx, paths.clone(), profiles);
                 }
                 Err(message) => settings.profiles.error = Some(message),
-            },
-            Section::Workflows => match settings.workflows.build() {
-                Ok(workflows) => {
-                    settings.workflows.saving = true;
-                    agent_jobs::save_workflows(&self.agent_jobs, ctx, paths.clone(), workflows);
-                }
-                Err(message) => settings.workflows.error = Some(message),
             },
             Section::Trust
             | Section::General
@@ -279,7 +270,6 @@ impl Tidewatch {
             .as_ref()
             .map(|p| Files {
                 profiles: p.profiles_file().display().to_string(),
-                workflows: p.workflows_file().display().to_string(),
                 trust: p.trust_file().display().to_string(),
                 general: p.prefs_file().display().to_string(),
                 house_style: p.house_style_file().display().to_string(),

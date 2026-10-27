@@ -1,4 +1,4 @@
-//! The new-tab form's lane: the filter and a vertical list of profiles (grouped by CLI) or workflows.
+//! The new-tab form's lane: the filter and a vertical list of profiles (grouped by CLI) or agents.
 
 use egui::{
     Align2, CornerRadius, Id, Rect, RichText, ScrollArea, Sense, TextEdit, Ui, UiBuilder, pos2,
@@ -11,7 +11,6 @@ use crate::catalog::{Availability, Catalog};
 use crate::new_tab::{Kind, NewTab};
 use crate::new_tab_layout::{self as layout, Slot};
 use crate::new_tab_meeseeks;
-use crate::new_tab_workflow;
 use crate::reader_view::{ellipsized, field_frame_on};
 use crate::screen_kit::{TEXT_BODY, TEXT_SECONDARY, TEXT_TAG};
 use crate::screen_kit::{body, clickable, heading, mono, paint_cli_badge, selection_row};
@@ -23,18 +22,13 @@ const NOT_INSTALLED: f32 = 0.45;
 const ROW_RADIUS: u8 = 8;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) enum Badge {
-    Cli(String),
-    Stages(usize),
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct Row {
     pub(crate) index: usize,
     pub(crate) id: String,
     pub(crate) title: String,
     pub(crate) subtitle: String,
-    pub(crate) badge: Badge,
+    /// The id of the CLI whose logo the row shows.
+    pub(crate) cli: String,
     pub(crate) dim: bool,
 }
 
@@ -75,32 +69,11 @@ pub(crate) fn meeseeks_subtitle(
     format!("{name} \u{b7} {line}")
 }
 
-/// The stage names of a workflow in one line: `Plan › Build › Review`.
-pub(crate) fn stages_line(chips: &[&str]) -> String {
-    chips.join(" \u{203a} ")
-}
-
 /// The lane's list for the form's kind, in the order the number keys count: groups by CLI with
-/// their profiles, or the workflows with no groups.
+/// their profiles, or the agents with no groups.
 pub(crate) fn entries(state: &NewTab, catalog: &Catalog) -> Vec<Entry> {
     let mut out = Vec::new();
     let mut index = 0;
-    if state.kind() == Kind::Workflow {
-        let Some(all) = catalog.workflows() else { return out };
-        for id in state.visible(catalog) {
-            let Some(workflow) = all.workflow.get(&id) else { continue };
-            out.push(Entry::Row(Row {
-                index,
-                title: workflow.name.clone(),
-                subtitle: stages_line(&new_tab_workflow::chips(workflow)),
-                badge: Badge::Stages(workflow.stages.len()),
-                dim: false,
-                id,
-            }));
-            index += 1;
-        }
-        return out;
-    }
     let profiles = catalog.entries();
     if state.kind() == Kind::Meeseeks {
         let ids = state.visible(catalog);
@@ -112,7 +85,7 @@ pub(crate) fn entries(state: &NewTab, catalog: &Catalog) -> Vec<Entry> {
                 index,
                 title: agent.name.clone(),
                 subtitle: meeseeks_subtitle(&agent.name, &key, &profile, &availability),
-                badge: Badge::Cli(id.clone()),
+                cli: id.clone(),
                 dim: availability == Availability::Missing,
                 id,
             }));
@@ -132,7 +105,7 @@ pub(crate) fn entries(state: &NewTab, catalog: &Catalog) -> Vec<Entry> {
                 index,
                 title: profile.name.clone(),
                 subtitle: subtitle(profile, &availability),
-                badge: Badge::Cli(agent_id.clone()),
+                cli: agent_id.clone(),
                 dim: availability == Availability::Missing,
                 id,
             }));
@@ -161,7 +134,6 @@ pub(crate) struct Out {
 
 fn top_row(ui: &mut Ui, rect: Rect, state: &NewTab) -> Option<String> {
     if let Some(title) = match state.kind() {
-        Kind::Workflow => Some("WORKFLOW"),
         Kind::Meeseeks => Some("AGENT"),
         Kind::Agent | Kind::Shell => None,
     } {
@@ -192,23 +164,6 @@ fn top_row(ui: &mut Ui, rect: Rect, state: &NewTab) -> Option<String> {
     (text != current).then_some(text)
 }
 
-fn paint_badge(ui: &Ui, rect: Rect, badge: &Badge) {
-    match badge {
-        Badge::Cli(id) => paint_cli_badge(ui.painter(), rect, id),
-        Badge::Stages(count) => {
-            let painter = ui.painter();
-            painter.rect_filled(rect, CornerRadius::same(8), brand::ITEM);
-            painter.text(
-                rect.center(),
-                Align2::CENTER_CENTER,
-                count.to_string(),
-                mono(12.0),
-                brand::SOFT,
-            );
-        }
-    }
-}
-
 fn paint_row(ui: &mut Ui, rect: Rect, row: &Row, selected: bool) -> bool {
     let response = clickable(ui, rect, ("lane-row", &row.id));
     selection_row(ui.painter(), rect, selected, response.hovered());
@@ -216,7 +171,7 @@ fn paint_row(ui: &mut Ui, rect: Rect, row: &Row, selected: bool) -> bool {
         pos2(rect.left() + PAD, rect.center().y - BADGE / 2.0),
         vec2(BADGE, BADGE),
     );
-    paint_badge(ui, badge, &row.badge);
+    paint_cli_badge(ui.painter(), badge, &row.cli);
     let painter = ui.painter();
     let text_x = badge.right() + 10.0;
     let room = rect.right() - PAD - 16.0 - text_x;

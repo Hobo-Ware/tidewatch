@@ -6,7 +6,7 @@
 //!   open file `n` (0 is the first) in the file view, once the files have loaded.
 //! - `TIDEWATCH_DEV_PRESS=<command id>@<seconds>,...`: press the chord of those table commands
 //!   (`file-view`, `back-to-terminal`, `next-file`...) through the real key path after that long. A command
-//!   with no chord (`build-workflow`) runs directly.
+//!   with no chord (`move-sessions`) runs directly.
 //! - `TIDEWATCH_DEV_NOTE=<text>`: write a note on the first added line of the first diff shown, once
 //!   per run, through the same notes store the diff widget uses.
 //! - `TIDEWATCH_DEV_NOTE_SPAN=<n>`: make that note cover `n` more lines below the first added line.
@@ -178,7 +178,7 @@ impl DevPanes {
             || self.search_step
     }
 
-    /// Presses the next command that is due. A command with no chord (`build-workflow`) cannot be
+    /// Presses the next command that is due. A command with no chord (`move-sessions`) cannot be
     /// pressed, so it comes back for the app to run.
     pub(crate) fn press(&mut self, ctx: &egui::Context, now: f64) -> Option<Command> {
         let (after, _) = self.presses.first()?;
@@ -288,9 +288,9 @@ mod tests {
     #[test]
     fn a_press_with_no_chord_comes_back_to_be_run_and_one_with_a_chord_is_pushed_as_a_key() {
         let ctx = egui::Context::default();
-        let mut dev = DevPanes::parse(None, None, None, Some("build-workflow@1,file-view@2"), None);
+        let mut dev = DevPanes::parse(None, None, None, Some("move-sessions@1,file-view@2"), None);
         assert_eq!(dev.press(&ctx, 0.5), None, "not due yet");
-        assert_eq!(dev.press(&ctx, 1.0), Some(Command::BuildWorkflow));
+        assert_eq!(dev.press(&ctx, 1.0), Some(Command::MoveSessions));
         assert_eq!(dev.press(&ctx, 2.0), None, "a chord goes in as a key event");
         assert_eq!(dev.presses, []);
     }

@@ -49,10 +49,7 @@ pub(crate) fn facts<T>(
                 return None;
             }
             let agent_id = agent.run.agent_id.clone();
-            let deliverable = match &agent.workflow {
-                Some(run) => run.finished(),
-                None => *agent.run.status() == AgentStatus::Done,
-            };
+            let deliverable = *agent.run.status() == AgentStatus::Done;
             let pending = views.get(&tab.id).map_or(0, |view| view.notes.pending(&agent_id).len());
             let meeseeks = agent.meeseeks.is_some();
             let push = pr.push(tab.id, agent.autonomous(), meeseeks);

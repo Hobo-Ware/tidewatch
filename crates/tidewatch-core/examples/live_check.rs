@@ -26,7 +26,8 @@ use tidewatch_core::paths::TidewatchPaths;
 use tidewatch_core::profiles::Profile;
 
 const LIMIT: Duration = Duration::from_secs(120);
-const DEFAULT_PROMPT: &str = "call the tidewatch stage_done tool with summary hello";
+const DEFAULT_PROMPT: &str =
+    "call the tidewatch report_finding tool with file a.rs, line 1, blocking false and text hello";
 
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -43,7 +44,7 @@ fn main() {
     let hook = listener.register_tab(TabRegistration {
         tab_id: 1,
         agent: agent_id.clone(),
-        role: TabRole::Workflow,
+        role: TabRole::Agent,
         repo: repo.clone(),
         tab: "live".into(),
         generation: 0,
@@ -148,9 +149,9 @@ fn main() {
     );
 
     let hooks = seen.iter().filter(|e| matches!(e, TabEvent::Hook(_))).count();
-    let stage_done =
-        seen.iter().any(|e| matches!(e, TabEvent::StageDone { summary } if summary == "hello"));
-    println!("RESULT hook events: {hooks}, stage_done hello: {stage_done}");
+    let finding =
+        seen.iter().any(|e| matches!(e, TabEvent::Finding { text, .. } if text == "hello"));
+    println!("RESULT hook events: {hooks}, report_finding hello: {finding}");
     let _ = std::io::stdout().flush();
 }
 

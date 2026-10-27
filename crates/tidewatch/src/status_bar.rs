@@ -56,7 +56,6 @@ pub(crate) fn place(branch: &str, base: Option<&str>) -> String {
 /// What the bar says on the left of a new-tab form.
 pub(crate) fn draft_place(kind: Kind) -> String {
     let start = match kind {
-        Kind::Workflow => "Start run",
         Kind::Meeseeks => "Summon",
         Kind::Agent | Kind::Shell => "Start",
     };
@@ -86,7 +85,6 @@ pub(crate) struct Workspace {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Input {
     Prompt,
-    Task,
     /// The new-tab form: nothing starts before Start.
     Form,
 }
@@ -178,13 +176,6 @@ fn workspace_commands(view: Workspace) -> Vec<(Keys, &'static str)> {
                 (Keys::Text("Enter"), "send"),
                 (Keys::Text("Shift+Enter"), "new line"),
                 of(Command::Reader, "terminal"),
-                of(Command::Overview, "overview"),
-            ];
-        }
-        Some(Input::Task) => {
-            return vec![
-                (Keys::CommandEnter, "start"),
-                of(Command::Settings, "settings"),
                 of(Command::Overview, "overview"),
             ];
         }
@@ -331,8 +322,8 @@ mod tests {
         assert_eq!(caps(Platform::Linux), ["Ctrl+Enter", "Esc"]);
         assert_eq!(draft_place(Kind::Agent), "New tab \u{b7} nothing starts until you press Start");
         assert_eq!(
-            draft_place(Kind::Workflow),
-            "New tab \u{b7} nothing starts until you press Start run"
+            draft_place(Kind::Meeseeks),
+            "New tab \u{b7} nothing starts until you press Summon"
         );
     }
 
@@ -415,9 +406,6 @@ mod tests {
         };
         assert_eq!(labels(typing(Input::Prompt)), ["send", "new line", "terminal", "overview"]);
         assert_eq!(keys(typing(Input::Prompt), Platform::Mac)[..2], ["Enter", "Shift+Enter"]);
-        assert_eq!(labels(typing(Input::Task)), ["start", "settings", "overview"]);
-        assert_eq!(keys(typing(Input::Task), Platform::Mac)[0], "Cmd+Enter");
-        assert_eq!(keys(typing(Input::Task), Platform::Linux)[0], "Ctrl+Enter");
     }
 
     #[test]
@@ -446,7 +434,6 @@ mod tests {
         let screens = [
             Screen::Welcome,
             typing(Input::Prompt),
-            typing(Input::Task),
             Screen::Settings,
             Screen::Overview,
             workspace(false, true, false, Some(true)),

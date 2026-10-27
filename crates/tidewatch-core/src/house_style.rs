@@ -43,7 +43,6 @@ Finish with exactly this block:
 
 When the `tidewatch` MCP tools are available:
 
-- If a `stage_done` tool is offered, call it with a short summary when the stage you were given is finished.
 - Call `reply_to_note` to answer a review note (`list_notes` shows them) instead of answering it only in chat.
 
 ## Reporting progress
@@ -93,7 +92,7 @@ You are a Meeseeks with exactly one task: the one you were given. Do it, and not
 - Never end with a decision for the user. If your answer leaves a choice (switch or not, which option), ask it with your question tool, the recommended option first, and act on the answer before you finish.
 - You may push this branch; after folding fixups use `git push --force-with-lease`. Do not push anything else or remove anything yourself.
 - Before `meeseeks_done`, a task that changed files pushes its branch and opens its own draft pull request with `gh pr create --draft`. Write the title (Conventional Commits style, what changed for the user) and the body (what changed and why, how you verified it, what you did not verify; short). No em or en dashes, no Co-Authored-By trailer, no \"generated with\" footer, no private repository names on a public repo. Tidewatch does not open it for you, and the hand-off check fails until it exists. A read-only task opens none.
-- Do not call `stage_done`: `meeseeks_done` ends your task. Your end block's Needs you says `nothing`.
+- `meeseeks_done` ends your task. Your end block's Needs you says `nothing`.
 - If Tidewatch pastes a failed check, fix it, commit, and call `meeseeks_done` again.
 - Do not call `set_avatar`: your face is fixed.
 - Decide and proceed on everything except product design and architecture choices. Never ask for confirmation to commit, push, rerun checks or fix CI. For a design or architecture choice, ask with your question tool and keep working on whatever does not depend on the answer.
@@ -211,7 +210,6 @@ mod tests {
             "**Done**",
             "**Needs you**",
             "**Next**",
-            "stage_done",
             "reply_to_note",
             "ask_user",
             "AskUserQuestion",
@@ -349,7 +347,7 @@ mod tests {
         assert!(!text.contains("You may push any branch"));
         assert!(!text.contains("call `set_avatar` once"));
         assert_eq!(text.matches("git push --force-with-lease").count(), 1);
-        assert!(text.contains("Do not call `stage_done`"));
+        assert!(text.contains("`meeseeks_done` ends your task"));
         for role in [Role::Agent, Role::Autonomous] {
             let other = compose_for("be brief", Some("- [ ] only this\n"), role);
             assert!(

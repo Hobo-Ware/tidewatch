@@ -15,7 +15,6 @@ use std::ffi::OsString;
 use std::os::fd::{BorrowedFd, OwnedFd};
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 use stdusk_core::handoff::{Fallback, Layout, PaneMeta, capture_pane, fallback};
@@ -23,7 +22,6 @@ use stdusk_core::terminal::PtyTerm;
 use tidewatch_core::listener::Credential;
 use tidewatch_core::meeseeks::{Meeseeks, Phase};
 use tidewatch_core::meeseeks_log::Poofed;
-use tidewatch_core::runner::Runner;
 use tidewatch_core::status::{AgentStatus, Reason};
 use tidewatch_core::worktree::Worktree;
 
@@ -35,24 +33,17 @@ use crate::reader::Reader;
 use crate::remote_session::RemoteSession;
 use crate::repo::Workspace;
 use crate::tabs::{Action, Tab, Tabs};
-use crate::workflow_run::TabRun;
 
 pub(crate) type Incoming = stdusk_core::handoff::Incoming<Handover>;
 
 const FORWARDED_ENV: [&str; 2] = ["TIDEWATCH_HOME", "TIDEWATCH_BACKGROUND"];
-const NOT_INHERITED_ENV: [&str; 5] = [
-    "TIDEWATCH_DEV_RESTART",
-    "TIDEWATCH_DEV_AGENT",
-    "TIDEWATCH_DEV_WORKTREE",
-    "TIDEWATCH_DEV_WORKFLOW",
-    "TIDEWATCH_DEV_RESUME",
-];
+const NOT_INHERITED_ENV: [&str; 3] =
+    ["TIDEWATCH_DEV_RESTART", "TIDEWATCH_DEV_AGENT", "TIDEWATCH_DEV_WORKTREE"];
 
 /// Why a window cannot hand its tabs over right now.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Blocker {
     TabInTransition,
-    WorkflowBusy,
     MeeseeksBusy,
 }
 
@@ -60,7 +51,6 @@ impl Blocker {
     pub(crate) fn text(self) -> &'static str {
         match self {
             Self::TabInTransition => "a tab is still being made or removed",
-            Self::WorkflowBusy => "a workflow stage is starting or its tests are running",
             Self::MeeseeksBusy => "a Meeseeks is being checked",
         }
     }
@@ -72,14 +62,6 @@ pub(crate) fn blocker<T>(tabs: &Tabs<Pane<T>>) -> Option<Blocker> {
         let pane = &tab.pane;
         if matches!(pane.body, Body::Creating | Body::Removing) {
             return Some(Blocker::TabInTransition);
-        }
-        let busy = pane
-            .agent
-            .as_ref()
-            .and_then(|agent| agent.workflow.as_deref())
-            .is_some_and(TabRun::busy);
-        if busy {
-            return Some(Blocker::WorkflowBusy);
         }
         let checking = pane
             .agent
@@ -150,8 +132,10 @@ pub(crate) struct AgentEntry {
     /// What the agent reports with. Absent when the old window had no listener.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) credential: Option<Credential>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub(crate) workflow: Option<WorkflowEntry>,
+    /// Sent by a window from before workflows were retired. Read so the tab comes back as its agent
+    /// alone, with a note; never written.
+    #[serde(default, skip_serializing)]
+    pub(crate) workflow: Option<RetiredWorkflow>,
     /// The name of the remote session the running agent has, when remote control is on.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) remote: Option<String>,
@@ -163,14 +147,8 @@ pub(crate) struct AgentEntry {
     pub(crate) at_prompt: bool,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub(crate) struct WorkflowEntry {
-    pub(crate) stages: PathBuf,
-    pub(crate) test_timeout_secs: u64,
-    pub(crate) generation: u64,
-    #[serde(default, skip_serializing_if = "String::is_empty")]
-    pub(crate) blurb: String,
-}
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
+pub(crate) struct RetiredWorkflow {}
 
 impl Handover {
     fn live(&self) -> impl Iterator<Item = &TabEntry> {
@@ -200,14 +178,7 @@ fn agent_entry(tab: &AgentTab, credential: Option<Credential>) -> AgentEntry {
         first_prompt: tab.first_prompt,
         notes_file: tab.run.notes_file.clone(),
         credential,
-        workflow: tab.workflow.as_deref().and_then(|run| {
-            Some(WorkflowEntry {
-                stages: run.stages_file()?.to_path_buf(),
-                test_timeout_secs: run.test_timeout().as_secs(),
-                generation: run.generation(),
-                blurb: run.blurb().to_owned(),
-            })
-        }),
+        workflow: None,
         remote: tab.remote.as_ref().map(|session| session.name.clone()),
         meeseeks: tab.meeseeks.clone(),
         at_prompt: matches!(
@@ -402,27 +373,14 @@ fn agent_tab(entry: &AgentEntry, dir: &Path, now: f64, notes: &mut Vec<String>) 
         }
     }
     let session_id = entry.launched.as_ref().and_then(|launched| launched.session_id.clone());
-    let workflow = entry.workflow.as_ref().and_then(|saved| {
-        let Some(runner) = Runner::load(&saved.stages) else {
-            notes.push(
-                "A workflow run could not be read back, so its tab shows the agent alone."
-                    .to_owned(),
-            );
-            return None;
-        };
-        let run = TabRun::new(
-            runner,
-            Some(saved.stages.clone()),
-            Duration::from_secs(saved.test_timeout_secs),
-        );
-        Some(Box::new(run.with_blurb(saved.blurb.clone()).with_generation(saved.generation)))
-    });
+    if entry.workflow.is_some() {
+        notes.push("Workflows were retired, so a workflow tab shows its agent alone.".to_owned());
+    }
     AgentTab {
         profile_name: entry.profile_name.clone(),
         run,
         reader: Reader::for_agent(&entry.agent_id, session_id, dir.to_path_buf()),
         launched: entry.launched.clone(),
-        workflow,
         first_prompt: entry.first_prompt,
         resume_note: None,
         resume_line: None,

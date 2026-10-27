@@ -207,21 +207,6 @@ impl Reader {
         }
     }
 
-    /// A workflow stage's agent takes over the tab: the old feed stops, the rows stay with a divider
-    /// where the new stage begins, and the feed looks for the new agent's own transcript.
-    pub(crate) fn relaunch(&mut self, agent_id: &str, session_id: Option<String>, divider: String) {
-        self.feed = None;
-        self.source = Source::from_agent_id(agent_id);
-        self.link = Self::first_link(self.source);
-        self.session_id = session_id;
-        self.started_ms = unix_ms_now();
-        self.view.fresh_after_ms = Some(self.started_ms);
-        self.file = None;
-        self.answered = false;
-        self.session_title = None;
-        self.rows.divider(divider);
-    }
-
     pub(crate) fn transcript(&self) -> Option<&Path> {
         self.file.as_deref()
     }
@@ -476,16 +461,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn what_arrives_after_the_tab_started_is_new_and_a_relaunch_starts_the_clock_again() {
-        let mut reader = Reader::for_agent("claude", None, PathBuf::from("/tmp"));
-        let first = reader.view.fresh_after_ms.unwrap();
-        assert!(first > 0);
-        reader.started_ms = 0;
-        reader.relaunch("claude", None, "next stage".to_owned());
-        assert!(reader.view.fresh_after_ms.unwrap() >= first);
-    }
-
-    #[test]
     fn the_reader_shows_only_when_wanted_and_found() {
         assert_eq!(shown(true, Link::Found), Shown::Reader);
         assert_eq!(shown(false, Link::Found), Shown::Terminal(Some(Note::ChosenRaw)));
@@ -637,37 +612,6 @@ mod tests {
         assert!(!reader.drain());
     }
 
-    #[test]
-    fn a_relaunch_keeps_the_rows_marks_the_new_stage_and_looks_for_the_new_transcript() {
-        let mut reader = Reader::for_agent("claude", Some("first".into()), PathBuf::from("/w"));
-        reader.set_link(Link::Found);
-        reader.mark_answered();
-        reader.add(vec![Entry {
-            role: tidewatch_core::transcript::Role::Assistant,
-            text: "built it".into(),
-            tool: None,
-            ts: None,
-            images: Vec::new(),
-        }]);
-        reader.relaunch("gemini", Some("second".into()), "--- Stage 2: Review ---".into());
-        assert_eq!(reader.link(), Link::Idle);
-        assert!(reader.needs_start());
-        assert_eq!(reader.source(), Some(Source::Gemini));
-        assert!(!reader.prompt_answered());
-        let texts: Vec<_> = reader.rows.iter().map(|row| row.text.clone()).collect();
-        assert_eq!(texts, ["built it", "--- Stage 2: Review ---"]);
-    }
-
-    #[test]
-    fn a_relaunch_into_an_agent_without_a_reader_shows_the_terminal() {
-        let mut reader = Reader::for_agent("claude", None, PathBuf::from("/w"));
-        reader.relaunch("aider", None, "--- Stage 3 ---".into());
-        assert_eq!(reader.link(), Link::Unavailable(Unavailable::NoReader));
-        assert!(!reader.needs_start());
-        reader.relaunch("claude", None, "--- Stage 4 ---".into());
-        assert_eq!(reader.link(), Link::Idle);
-    }
-
     fn user(text: &str) -> Entry {
         Entry { role: Role::User, text: text.into(), tool: None, ts: None, images: Vec::new() }
     }
@@ -681,8 +625,7 @@ mod tests {
         reader.add(vec![user("a later message")]);
         assert_eq!(reader.first_message(), Some("Fix the login redirect"));
         reader.session_title = Some("Login redirect".into());
-        reader.relaunch("claude", None, "--- Stage 2 ---".into());
-        assert_eq!(reader.session_title(), None);
+        assert_eq!(reader.session_title(), Some("Login redirect"));
         assert_eq!(reader.first_message(), Some("Fix the login redirect"));
     }
 

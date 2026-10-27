@@ -21,10 +21,9 @@ use crate::reader::Shown;
 use crate::repo::Workspace;
 use crate::tab_view::TabView;
 use crate::tabs::Action;
-use crate::workflow_run::TabRun;
 use crate::{
     agenda, agent_status_line, brand, delivery_view, layout, overview, overview_fake,
-    overview_view, reader_glue, stepper_view, takeover_view, welcome_view, workflow_start_view,
+    overview_view, reader_glue, takeover_view, welcome_view,
 };
 
 const EMPTY_PANELS_H: f32 = 200.0;
@@ -78,10 +77,7 @@ impl Tidewatch {
     }
 
     pub(super) fn panes_showing(&self) -> bool {
-        self.workspace_has_panels()
-            && !self.focus
-            && !self.awaiting_workflow_task()
-            && !self.active_is_poofed()
+        self.workspace_has_panels() && !self.focus && !self.active_is_poofed()
     }
 
     /// Whether the active tab draws a file's diff where its terminal would be.
@@ -250,7 +246,6 @@ impl Tidewatch {
             return;
         }
         let active_id = frame.active_id;
-        let awaiting_task = self.awaiting_workflow_task();
         let panels = self.panes_showing();
         let side = self.side_layout();
         if side && panels {
@@ -276,12 +271,6 @@ impl Tidewatch {
             if panels {
                 self.show_panes(ui, &areas, ctx);
             }
-            self.show_toast_pill(ui);
-            return;
-        }
-        self.show_stepper(ui, &mut areas.terminal, ctx);
-        if awaiting_task {
-            self.show_workflow_start(ui, areas.terminal, ctx);
             self.show_toast_pill(ui);
             return;
         }
@@ -333,35 +322,6 @@ impl Tidewatch {
         pane.agent.as_ref().is_some_and(|agent| agent.first_prompt == FirstPrompt::Awaiting)
     }
 
-    pub(super) fn awaiting_workflow_task(&self) -> bool {
-        let pane = &self.tabs.items()[self.tabs.active()].pane;
-        pane.agent
-            .as_ref()
-            .and_then(|agent| agent.workflow.as_deref())
-            .is_some_and(TabRun::awaiting_task)
-    }
-
-    fn show_workflow_start(&mut self, ui: &mut egui::Ui, area: egui::Rect, ctx: &egui::Context) {
-        let active_id = self.tabs.items()[self.tabs.active()].id;
-        let Some(run) = self
-            .tabs
-            .active_pane_mut()
-            .agent
-            .as_mut()
-            .and_then(|agent| agent.workflow.as_deref_mut())
-        else {
-            return;
-        };
-        let area = area.expand(layout::TERMINAL_PAD);
-        if let Some(task) = workflow_start_view::show(ui, area, run) {
-            let execs = run.start_with(&task);
-            if !execs.is_empty() {
-                self.run_asks.push((active_id, execs));
-                ctx.request_repaint();
-            }
-        }
-    }
-
     fn show_status_line(&mut self, ui: &mut egui::Ui, terminal: &mut egui::Rect) {
         let pane = self.tabs.active_pane_mut();
         let Some(shown) = reader_glue::shown(pane) else { return };
@@ -389,21 +349,6 @@ impl Tidewatch {
         }
         if let Some(action) = out.remote {
             self.apply_remote_action(action, ui.ctx());
-        }
-    }
-
-    fn show_stepper(&mut self, ui: &mut egui::Ui, terminal: &mut egui::Rect, ctx: &egui::Context) {
-        let active_id = self.tabs.items()[self.tabs.active()].id;
-        let header = self
-            .tabs
-            .active_pane_mut()
-            .agent
-            .as_mut()
-            .and_then(|agent| agent.workflow.as_mut())
-            .map(|run| stepper_view::show(ui, terminal, run));
-        if let Some(execs) = header.filter(|execs| !execs.is_empty()) {
-            self.run_asks.push((active_id, execs));
-            ctx.request_repaint();
         }
     }
 
