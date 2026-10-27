@@ -46,6 +46,10 @@ impl System for Fake {
         Some(dir.to_path_buf())
     }
 
+    fn cwd_holders(&self, _dir: &Path) -> Option<Vec<u32>> {
+        Some(Vec::new())
+    }
+
     fn terminate(&self, pid: u32) -> bool {
         self.sent.borrow_mut().push(pid);
         self.gone.set(self.exits.get());
@@ -252,6 +256,9 @@ fn a_scan_that_cannot_read_the_process_list_says_so() {
             None
         }
         fn git_root(&self, _: &Path) -> Option<PathBuf> {
+            None
+        }
+        fn cwd_holders(&self, _: &Path) -> Option<Vec<u32>> {
             None
         }
         fn terminate(&self, _: u32) -> bool {

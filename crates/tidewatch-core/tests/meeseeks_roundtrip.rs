@@ -145,7 +145,7 @@ fn the_poof_refuses_a_dirty_tree_and_leaves_everything_where_it_was() {
     let f = fixture();
     std::fs::write(dir(&f).join("loose.txt"), "x").unwrap();
     let error = poof(&f.paths, &f.worktree).unwrap_err();
-    assert_eq!(error, "1 file with uncommitted changes");
+    assert_eq!(error, "not removed: 1 file with uncommitted changes");
     assert!(dir(&f).join("loose.txt").exists());
     assert!(ok(&f.repos.work, &["worktree", "list"]).contains("rename-helper"));
 }

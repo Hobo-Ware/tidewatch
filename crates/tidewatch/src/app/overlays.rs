@@ -67,8 +67,8 @@ impl Tidewatch {
 
     pub(super) fn show_dialogs(&mut self, ctx: &egui::Context, active_id: u64) {
         let answer = match &self.closing {
-            Some(Closing::Asking { worktree, inspection, .. }) => {
-                close_dialog::show(ctx, worktree, inspection, self.close_enter)
+            Some(Closing::Asking { worktree, safety, .. }) => {
+                close_dialog::show(ctx, worktree, safety, self.close_enter)
             }
             _ => None,
         };

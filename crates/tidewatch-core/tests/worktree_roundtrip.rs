@@ -9,9 +9,8 @@ use std::process::Command;
 
 use tempfile::TempDir;
 use tidewatch_core::paths::TidewatchPaths;
-use tidewatch_core::worktree::{
-    self, BranchChoice, BranchOutcome, Inspection, RemoveMode, WorktreeError,
-};
+use tidewatch_core::worktree::{self, BranchChoice, BranchOutcome, RemoveMode, WorktreeError};
+use tidewatch_core::worktree_safety::{Owner, Risk, Safety};
 
 struct Fixture {
     _dir: TempDir,
@@ -168,7 +167,7 @@ fn removing_with_delete_branch_deletes_it() {
     let wt = worktree::add(&f.paths, &f.repo).unwrap();
     let outcome = worktree::remove(&f.paths, &wt, BranchChoice::Delete, RemoveMode::Safe).unwrap();
 
-    assert_eq!(outcome, BranchOutcome::Deleted);
+    assert!(matches!(outcome, BranchOutcome::Deleted { .. }), "{outcome:?}");
     assert!(!wt.path.exists());
     assert_eq!(branches(&f.repo), ["main"]);
     assert_only_main(&f.repo);
@@ -182,7 +181,7 @@ fn a_dirty_worktree_is_refused_until_the_caller_discards() {
     fs::write(wt.path.join("README.md"), "edited\n").unwrap();
 
     let err = worktree::remove(&f.paths, &wt, BranchChoice::Delete, RemoveMode::Safe).unwrap_err();
-    assert_eq!(err, WorktreeError::Dirty { changed: 2 });
+    assert_eq!(err, WorktreeError::Unsafe(Safety::Unsafe(vec![Risk::Uncommitted { files: 2 }])));
     assert!(wt.path.join("scratch.txt").is_file(), "nothing was touched");
     let still = worktree::list(&f.repo).unwrap();
     assert_eq!(
@@ -193,7 +192,7 @@ fn a_dirty_worktree_is_refused_until_the_caller_discards() {
 
     let outcome =
         worktree::remove(&f.paths, &wt, BranchChoice::Delete, RemoveMode::Discard).unwrap();
-    assert_eq!(outcome, BranchOutcome::Deleted);
+    assert!(matches!(outcome, BranchOutcome::Deleted { .. }), "{outcome:?}");
     assert!(!wt.path.exists());
 }
 
@@ -201,16 +200,23 @@ fn a_dirty_worktree_is_refused_until_the_caller_discards() {
 fn inspect_counts_changed_files_and_commits_found_nowhere_else() {
     let f = fixture();
     let wt = worktree::add(&f.paths, &f.repo).unwrap();
-    assert_eq!(worktree::inspect(&wt), Inspection { changed: 0, unmerged: 0 });
+    assert_eq!(worktree::inspect(&f.paths, &wt, Owner::Nobody), Safety::Safe);
 
     fs::write(wt.path.join("a.txt"), "a").unwrap();
     git(&wt.path, &["add", "a.txt"]);
     git(&wt.path, &["commit", "-q", "-m", "work"]);
     fs::write(wt.path.join("b.txt"), "b").unwrap();
-    assert_eq!(worktree::inspect(&wt), Inspection { changed: 1, unmerged: 1 });
+    assert_eq!(
+        worktree::inspect(&f.paths, &wt, Owner::Nobody),
+        Safety::Unsafe(vec![Risk::Uncommitted { files: 1 }, Risk::Unpushed { commits: 1 }])
+    );
 
     git(&f.repo, &["merge", "-q", &wt.branch]);
-    assert_eq!(worktree::inspect(&wt).unmerged, 0, "merged into main, so it exists elsewhere");
+    assert_eq!(
+        worktree::inspect(&f.paths, &wt, Owner::Nobody),
+        Safety::Unsafe(vec![Risk::Uncommitted { files: 1 }]),
+        "merged into main, so the commit exists elsewhere"
+    );
 }
 
 #[test]
@@ -220,7 +226,7 @@ fn removing_after_the_folder_was_deleted_by_hand_still_cleans_up() {
     fs::remove_dir_all(&wt.path).unwrap();
 
     let outcome = worktree::remove(&f.paths, &wt, BranchChoice::Delete, RemoveMode::Safe).unwrap();
-    assert_eq!(outcome, BranchOutcome::Deleted);
+    assert!(matches!(outcome, BranchOutcome::Deleted { .. }), "{outcome:?}");
     assert_only_main(&f.repo);
     assert_eq!(branches(&f.repo), ["main"]);
 }
@@ -258,7 +264,7 @@ fn a_moved_repo_is_repaired_and_its_worktree_works_again() {
 
     let outcome =
         worktree::remove(&f.paths, &repaired[0], BranchChoice::Delete, RemoveMode::Safe).unwrap();
-    assert_eq!(outcome, BranchOutcome::Deleted);
+    assert!(matches!(outcome, BranchOutcome::Deleted { .. }), "{outcome:?}");
     assert!(!wt.path.exists());
     assert_eq!(worktree::leftovers(&f.paths, &[]), []);
 }

@@ -16,9 +16,8 @@ use tidewatch_core::setup_recipe::{self, Recipe};
 use tidewatch_core::start_base;
 use tidewatch_core::tools::Tools;
 use tidewatch_core::trust_apply::Grant;
-use tidewatch_core::worktree::{
-    self, BranchChoice, BranchOutcome, Inspection, Leftover, RemoveMode, Worktree,
-};
+use tidewatch_core::worktree::{self, BranchOutcome, Leftover, Terms, Worktree};
+use tidewatch_core::worktree_safety::{Owner, Safety, Watch, with_machine};
 
 use crate::jobs::Jobs;
 use crate::new_tab::{AgentRequest, Placement};
@@ -26,7 +25,7 @@ use crate::pane::{OpenFailure, Opened, Pane, Started};
 
 pub(crate) enum Done {
     Opened { tab: u64, result: Result<Opened, OpenFailure> },
-    Inspected { tab: u64, worktree: Worktree, inspection: Inspection },
+    Inspected { tab: u64, worktree: Worktree, safety: Safety },
     Removed { tab: u64, result: Result<BranchOutcome, String> },
 }
 
@@ -161,15 +160,38 @@ pub(crate) fn set_up(paths: &TidewatchPaths, made: &Worktree) -> (Recipe, Vec<St
     (recipe, outcome.notes)
 }
 
-pub(crate) fn inspect(jobs: &Jobs<Done>, ctx: &egui::Context, tab: u64, worktree: Worktree) {
+pub(crate) fn inspect(
+    jobs: &Jobs<Done>,
+    ctx: &egui::Context,
+    paths: TidewatchPaths,
+    tab: u64,
+    worktree: Worktree,
+) {
     jobs.spawn(ctx, move || {
-        let inspection = worktree::inspect(&worktree);
-        Done::Inspected { tab, worktree, inspection }
+        let safety = worktree::inspect(&paths, &worktree, Owner::ThisWindow);
+        Done::Inspected { tab, worktree, safety }
     });
 }
 
+const EXIT_WAIT: std::time::Duration = std::time::Duration::from_secs(3);
+const EXIT_POLL: std::time::Duration = std::time::Duration::from_millis(100);
+
+/// Gives what the dropped shell left running a moment to exit, so the check inside `remove` does
+/// not see a process that is already on its way out.
+fn wait_for_exit(paths: &TidewatchPaths, worktree: &Worktree) {
+    let deadline = std::time::Instant::now() + EXIT_WAIT;
+    let still_running =
+        |watch: &dyn Watch| watch.holders(&worktree.path).is_ok_and(|holders| !holders.is_empty());
+    while std::time::Instant::now() < deadline
+        && with_machine(paths, Owner::ThisWindow, still_running)
+    {
+        std::thread::sleep(EXIT_POLL);
+    }
+}
+
 /// Stops the shell first (on this thread, not the UI's) so nothing is running inside the folder
-/// git is about to delete.
+/// git is about to delete. `remove` checks again before it deletes anything: what the dialog saw
+/// may have changed since.
 pub(crate) fn remove<T: Send + 'static>(
     jobs: &Jobs<Done>,
     ctx: &egui::Context,
@@ -177,13 +199,16 @@ pub(crate) fn remove<T: Send + 'static>(
     tab: u64,
     shell: Option<T>,
     worktree: Worktree,
-    branch: BranchChoice,
-    mode: RemoveMode,
+    terms: Terms,
     trust: Option<Grant>,
 ) {
     jobs.spawn(ctx, move || {
+        let had_shell = shell.is_some();
         drop(shell);
-        let result = worktree::remove(&paths, &worktree, branch, mode).map_err(|e| e.to_string());
+        if had_shell {
+            wait_for_exit(&paths, &worktree);
+        }
+        let result = worktree::remove_with(&paths, &worktree, &terms).map_err(|e| e.to_string());
         if result.is_ok()
             && let Some(grant) = &trust
         {
@@ -215,6 +240,8 @@ mod tests {
     use std::time::{Duration, Instant};
     use tidewatch_core::agents::Level;
     use tidewatch_core::profiles::{Profile, Profiles};
+    use tidewatch_core::worktree::{BranchChoice, RemoveMode};
+    use tidewatch_core::worktree_safety::Risk;
 
     fn leftover(path: &str) -> Leftover {
         Leftover { path: PathBuf::from(path), branch: None, repo: None }
@@ -377,12 +404,11 @@ mod tests {
             6,
             None,
             worktree,
-            BranchChoice::Delete,
-            RemoveMode::Safe,
+            Terms::new(BranchChoice::Delete, RemoveMode::Safe).owner(Owner::ThisWindow),
             Some(grant),
         );
         let Done::Removed { result, .. } = next(&jobs) else { panic!("expected Removed") };
-        assert_eq!(result, Ok(BranchOutcome::Deleted));
+        assert!(matches!(result, Ok(BranchOutcome::Deleted { .. })), "{result:?}");
         assert_eq!(std::fs::read_to_string(&claude_json).unwrap(), "{\n  \"numStartups\": 1\n}\n");
     }
 
@@ -507,9 +533,9 @@ mod tests {
 
         let policy = tabs.get_mut(id).unwrap().pane.close_policy();
         assert_eq!(policy, ClosePolicy::Confirm(worktree.clone()));
-        inspect(&jobs, &ctx, id, worktree.clone());
-        let Done::Inspected { inspection, .. } = next(&jobs) else { panic!("expected Inspected") };
-        assert_eq!(inspection, Inspection::default());
+        inspect(&jobs, &ctx, paths.clone(), id, worktree.clone());
+        let Done::Inspected { safety, .. } = next(&jobs) else { panic!("expected Inspected") };
+        assert_eq!(safety, Safety::Safe);
 
         let (shell, to_remove) = tabs.get_mut(id).unwrap().pane.begin_remove().unwrap();
         remove(
@@ -519,12 +545,11 @@ mod tests {
             id,
             shell,
             to_remove,
-            BranchChoice::Delete,
-            RemoveMode::Safe,
+            Terms::new(BranchChoice::Delete, RemoveMode::Safe).owner(Owner::ThisWindow),
             None,
         );
         let Done::Removed { tab, result } = next(&jobs) else { panic!("expected Removed") };
-        assert_eq!(result, Ok(BranchOutcome::Deleted));
+        assert!(matches!(result, Ok(BranchOutcome::Deleted { .. })), "{result:?}");
         tabs.remove_id(tab);
 
         assert_eq!(tabs.items().len(), 1);
@@ -553,9 +578,9 @@ mod tests {
         };
         std::fs::write(worktree.path.join("wip.txt"), "x").unwrap();
 
-        inspect(&jobs, &ctx, 1, worktree.clone());
-        let Done::Inspected { inspection, .. } = next(&jobs) else { panic!("expected Inspected") };
-        assert_eq!(inspection.changed, 1);
+        inspect(&jobs, &ctx, paths.clone(), 1, worktree.clone());
+        let Done::Inspected { safety, .. } = next(&jobs) else { panic!("expected Inspected") };
+        assert_eq!(safety, Safety::Unsafe(vec![Risk::Uncommitted { files: 1 }]));
 
         remove::<u8>(
             &jobs,
@@ -564,12 +589,11 @@ mod tests {
             1,
             None,
             worktree.clone(),
-            BranchChoice::Keep,
-            RemoveMode::Safe,
+            Terms::new(BranchChoice::Keep, RemoveMode::Safe).owner(Owner::ThisWindow),
             None,
         );
         let Done::Removed { result, .. } = next(&jobs) else { panic!("expected Removed") };
-        assert_eq!(result, Err("1 file with uncommitted changes".to_owned()));
+        assert_eq!(result, Err("not removed: 1 file with uncommitted changes".to_owned()));
         assert!(worktree.path.join("wip.txt").is_file());
 
         remove::<u8>(
@@ -579,8 +603,7 @@ mod tests {
             1,
             None,
             worktree.clone(),
-            BranchChoice::Keep,
-            RemoveMode::Discard,
+            Terms::new(BranchChoice::Keep, RemoveMode::Discard).owner(Owner::ThisWindow),
             None,
         );
         let Done::Removed { result, .. } = next(&jobs) else { panic!("expected Removed") };

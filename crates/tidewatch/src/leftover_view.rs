@@ -1,10 +1,12 @@
 //! Draws the leftover worktrees: the chip in the tab strip and the dialog it opens, with what
-//! each worktree would lose, Clean up for the clean ones and an explicit Discard for the rest.
+//! each worktree would lose, Clean up for the ones proven safe and a Discard on the row of any
+//! other, with the branch kept or deleted as that click says.
 
 use std::path::PathBuf;
 
 use egui::{Align, Color32, Frame, Id, Layout, Margin, RichText, ScrollArea, Stroke};
-use tidewatch_core::worktree::Leftover;
+use tidewatch_core::worktree::{BranchChoice, Leftover};
+use tidewatch_core::worktree_safety::{Risk, Safety};
 
 use crate::brand;
 use crate::leftovers::{Cleanup, Row, RowState, status_text};
@@ -15,13 +17,13 @@ use crate::screen_kit::{
 use crate::settings_ui::pill;
 
 const DIALOG_WIDTH: f32 = 560.0;
-const LIST_HEIGHT: f32 = 280.0;
+const LIST_HEIGHT: f32 = 400.0;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum Answer {
     Close,
     CleanUp,
-    Discard(PathBuf),
+    Discard(PathBuf, BranchChoice),
 }
 
 /// The hover text of the chip: where each leftover is.
@@ -55,8 +57,19 @@ fn pill_of(state: &RowState) -> (&'static str, Color32) {
         RowState::Removing => ("removing", brand::MUTED),
         RowState::Unrecorded => ("unrecorded", brand::ORANGE),
         RowState::Failed(_) => ("failed", brand::RED),
-        RowState::Ready(i) if i.changed > 0 => ("dirty", brand::ORANGE),
-        RowState::Ready(_) => ("clean", brand::GREEN),
+        RowState::Ready(Safety::Safe) => ("clean", brand::GREEN),
+        RowState::Ready(Safety::Unknown(_)) => ("unknown", brand::ORANGE),
+        RowState::Ready(Safety::Unsafe(risks)) => (risk_pill(risks), brand::ORANGE),
+    }
+}
+
+fn risk_pill(risks: &[Risk]) -> &'static str {
+    match risks.first() {
+        Some(Risk::Uncommitted { .. }) => "dirty",
+        Some(Risk::Unpushed { .. }) => "unpushed",
+        Some(Risk::Running { .. }) => "running",
+        Some(Risk::RecentSession { .. }) => "recent",
+        None => "unsafe",
     }
 }
 
@@ -78,18 +91,26 @@ fn row_ui(ui: &mut egui::Ui, row: &Row, answer: &mut Option<Answer>) {
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                     let (text, ink) = pill_of(&row.state);
                     pill(ui, text, ink);
-                    if matches!(&row.state, RowState::Ready(i) if i.changed > 0)
-                        && danger_button(ui, "Discard", Size::Compact).clicked()
-                    {
-                        *answer = Some(Answer::Discard(row.leftover.path.clone()));
-                    }
                 });
             });
-            let loss = matches!(&row.state, RowState::Ready(i) if i.changed > 0)
-                || matches!(row.state, RowState::Failed(_));
+            let discardable = Cleanup::is_discardable(row);
+            let loss = discardable || matches!(row.state, RowState::Failed(_));
             let color = if loss { brand::RED } else { brand::MUTED };
-            if !matches!(&row.state, RowState::Ready(i) if i.changed == 0 && i.unmerged == 0) {
+            if !matches!(&row.state, RowState::Ready(Safety::Safe)) {
                 ui.label(RichText::new(status_text(&row.state)).size(12.0).color(color));
+            }
+            if discardable {
+                ui.horizontal(|ui| {
+                    ui.spacing_mut().item_spacing.x = 8.0;
+                    if danger_button(ui, "Discard, delete branch", Size::Compact).clicked() {
+                        *answer =
+                            Some(Answer::Discard(row.leftover.path.clone(), BranchChoice::Delete));
+                    }
+                    if quiet_button(ui, "Discard, keep branch", true, Size::Compact).clicked() {
+                        *answer =
+                            Some(Answer::Discard(row.leftover.path.clone(), BranchChoice::Keep));
+                    }
+                });
             }
         });
     ui.add_space(6.0);
@@ -106,9 +127,10 @@ pub(crate) fn dialog(ctx: &egui::Context, cleanup: &Cleanup) -> Option<Answer> {
             ui.spacing_mut().item_spacing.y = 6.0;
             ui.label(
                 RichText::new(
-                    "No tab owns these. Clean up removes the clean ones and keeps any branch that \
-                     holds commits found nowhere else. One with uncommitted changes needs its own \
-                     Discard.",
+                    "No tab owns these. Clean up removes only the ones proven safe: nothing \
+                     uncommitted, every commit also on a remote or merged, no process in the \
+                     folder, no agent session in the last day. Any other needs its own Discard, \
+                     and what it would lose is listed on its row.",
                 )
                 .color(brand::MUTED),
             );
@@ -145,7 +167,6 @@ pub(crate) fn dialog(ctx: &egui::Context, cleanup: &Cleanup) -> Option<Answer> {
 mod tests {
     use super::*;
     use egui::{Rect, pos2, vec2};
-    use tidewatch_core::worktree::Inspection;
 
     fn leftover(name: &str) -> Leftover {
         Leftover {
@@ -178,8 +199,11 @@ mod tests {
     #[test]
     fn the_dialog_renders_every_state_and_asks_for_nothing_until_clicked() {
         let (mut cleanup, _) = Cleanup::open(&[leftover("a"), leftover("b"), leftover("c")]);
-        cleanup.inspected(&leftover("a").path, Inspection { changed: 0, unmerged: 0 });
-        cleanup.inspected(&leftover("b").path, Inspection { changed: 2, unmerged: 3 });
+        cleanup.inspected(&leftover("a").path, Safety::Safe);
+        cleanup.inspected(
+            &leftover("b").path,
+            Safety::Unsafe(vec![Risk::Uncommitted { files: 2 }, Risk::Unpushed { commits: 3 }]),
+        );
         cleanup.removed(&leftover("c").path, Err("locked".into()));
         let ctx = crate::fonts::test_context();
         for _ in 0..2 {

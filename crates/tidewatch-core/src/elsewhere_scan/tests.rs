@@ -20,6 +20,7 @@ struct Fake {
     signalled: Cell<bool>,
     start: String,
     can_signal: bool,
+    holders: Option<Vec<u32>>,
 }
 
 impl Fake {
@@ -32,6 +33,7 @@ impl Fake {
             signalled: Cell::new(false),
             start: START.to_owned(),
             can_signal: true,
+            holders: Some(Vec::new()),
         }
     }
 }
@@ -47,6 +49,10 @@ impl System for Fake {
 
     fn git_root(&self, dir: &Path) -> Option<PathBuf> {
         Some(dir.to_path_buf())
+    }
+
+    fn cwd_holders(&self, _dir: &Path) -> Option<Vec<u32>> {
+        self.holders.clone()
     }
 
     fn terminate(&self, pid: u32) -> bool {
@@ -644,4 +650,13 @@ fn a_child_the_test_started_is_ended_by_sigterm_through_the_real_system() {
     let status = reaper.join().unwrap();
     assert!(!status.success());
     assert_eq!(system.alive(pid), None);
+}
+
+#[test]
+fn lsof_output_gives_every_process_whose_cwd_is_in_the_folder_once() {
+    let out = "p100\nn/work/web\np200\nn/work/web/src\np300\nn/work/webby\np400\nn/\np500\nn/private/work/web\n";
+    let forms = [PathBuf::from("/work/web"), PathBuf::from("/private/work/web")];
+    assert_eq!(parse_lsof_holders(out, &forms), [100, 200, 500]);
+    assert_eq!(parse_lsof_holders("", &forms), Vec::<u32>::new());
+    assert_eq!(parse_lsof_holders("n/work/web\n", &forms), Vec::<u32>::new());
 }

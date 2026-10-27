@@ -172,6 +172,12 @@ impl TidewatchPaths {
         self.root.join(".state")
     }
 
+    /// Every worktree Tidewatch removed, one JSON line each, appended before the removal.
+    #[must_use]
+    pub fn removals_log(&self) -> PathBuf {
+        self.state_dir().join("removals.log")
+    }
+
     /// Whose Amphetamine session may have left lid-closed sleep off: written before the admin prompt.
     #[must_use]
     pub fn amphetamine_marker_file(&self) -> PathBuf {

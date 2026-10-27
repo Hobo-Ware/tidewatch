@@ -36,6 +36,8 @@ pub trait System {
     fn ps(&self) -> Option<String>;
     fn cwd_of(&self, pid: u32) -> Option<PathBuf>;
     fn git_root(&self, dir: &Path) -> Option<PathBuf>;
+    /// Every process whose working directory is `dir` or inside it. `None` when it cannot look.
+    fn cwd_holders(&self, dir: &Path) -> Option<Vec<u32>>;
     fn terminate(&self, pid: u32) -> bool;
     fn alive(&self, pid: u32) -> Option<String>;
 }
@@ -93,6 +95,37 @@ impl System for RealSystem {
         (out.status.success() && !root.is_empty()).then(|| PathBuf::from(root))
     }
 
+    #[cfg(target_os = "macos")]
+    fn cwd_holders(&self, dir: &Path) -> Option<Vec<u32>> {
+        let output = self
+            .tools
+            .command("lsof", Path::new("/"))
+            .env("LC_ALL", "C")
+            .args(["-w", "-d", "cwd", "-Fpn"])
+            .stderr(Stdio::null())
+            .output()
+            .ok()?;
+        let text = String::from_utf8_lossy(&output.stdout);
+        (output.status.success() || !text.trim().is_empty())
+            .then(|| parse_lsof_holders(&text, &folder_forms(dir)))
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    fn cwd_holders(&self, dir: &Path) -> Option<Vec<u32>> {
+        let forms = folder_forms(dir);
+        let mut holders = Vec::new();
+        for entry in fs::read_dir("/proc").ok()?.flatten() {
+            let Some(pid) = entry.file_name().to_str().and_then(|name| name.parse::<u32>().ok())
+            else {
+                continue;
+            };
+            if fs::read_link(entry.path().join("cwd")).is_ok_and(|cwd| inside(&forms, &cwd)) {
+                holders.push(pid);
+            }
+        }
+        Some(holders)
+    }
+
     fn terminate(&self, pid: u32) -> bool {
         self.run("kill", &["-TERM", &pid.to_string()]).is_some()
     }
@@ -107,6 +140,37 @@ impl System for RealSystem {
 #[cfg(any(target_os = "macos", test))]
 fn parse_lsof_cwd(output: &str) -> Option<PathBuf> {
     output.lines().find_map(|line| line.strip_prefix('n')).map(PathBuf::from)
+}
+
+fn folder_forms(dir: &Path) -> Vec<PathBuf> {
+    let mut forms = vec![dir.to_path_buf()];
+    if let Ok(real) = fs::canonicalize(dir)
+        && real != dir
+    {
+        forms.push(real);
+    }
+    forms
+}
+
+fn inside(forms: &[PathBuf], cwd: &Path) -> bool {
+    forms.iter().any(|form| cwd.starts_with(form))
+}
+
+#[cfg(any(target_os = "macos", test))]
+fn parse_lsof_holders(output: &str, forms: &[PathBuf]) -> Vec<u32> {
+    let mut holders = Vec::new();
+    let mut pid = None;
+    for line in output.lines() {
+        if let Some(number) = line.strip_prefix('p') {
+            pid = number.parse::<u32>().ok();
+        } else if let (Some(name), Some(pid)) = (line.strip_prefix('n'), pid)
+            && inside(forms, Path::new(name))
+            && !holders.contains(&pid)
+        {
+            holders.push(pid);
+        }
+    }
+    holders
 }
 
 #[derive(Clone, Debug)]
@@ -132,6 +196,15 @@ impl ScanEnv {
             home,
             own_pid: std::process::id(),
         }
+    }
+
+    /// Where an app that keeps its files under `paths` finds the CLIs' session files: the home
+    /// folder above `.tidewatch` and the Claude folder `paths` names.
+    #[must_use]
+    pub fn for_paths(paths: &crate::paths::TidewatchPaths) -> Self {
+        let from_env = Self::from_env();
+        let home = paths.root().parent().map_or(from_env.home, Path::to_path_buf);
+        Self { home, claude_dir: paths.claude_dir().to_path_buf(), ..from_env }
     }
 
     fn codex_sessions(&self) -> PathBuf {
@@ -400,6 +473,26 @@ pub fn recent_sessions(
         }
     }
     found
+}
+
+/// When an agent session of any CLI last wrote for `folder`, whether or not its process is still
+/// there. `None` when none left a file.
+#[must_use]
+pub fn newest_session_write(env: &ScanEnv, folder: &Path) -> Option<SystemTime> {
+    let newest = folder_forms(folder)
+        .iter()
+        .flat_map(|form| {
+            [
+                claude_recent(env, form),
+                codex_recent(env, form),
+                gemini_recent(env, form),
+                copilot_recent(env, form),
+            ]
+            .concat()
+        })
+        .map(|recent| recent.at)
+        .max()?;
+    u64::try_from(newest).ok().map(|ms| SystemTime::UNIX_EPOCH + Duration::from_millis(ms))
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

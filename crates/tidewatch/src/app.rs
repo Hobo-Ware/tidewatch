@@ -56,7 +56,8 @@ use tidewatch_core::restore::RealDisk;
 use tidewatch_core::run_marker;
 use tidewatch_core::tools::Tools;
 use tidewatch_core::update::fake_release;
-use tidewatch_core::worktree::{Inspection, Worktree};
+use tidewatch_core::worktree::Worktree;
+use tidewatch_core::worktree_safety::Safety;
 
 use self::open_link::LinkDone;
 use self::repos::Picker;
@@ -137,7 +138,7 @@ const WAKE_SLACK_S: f64 = 0.02;
 
 enum Closing {
     Inspecting(u64),
-    Asking { tab: u64, worktree: Worktree, inspection: Inspection },
+    Asking { tab: u64, worktree: Worktree, safety: Safety },
 }
 
 pub(crate) struct Tidewatch {
@@ -360,7 +361,7 @@ impl Tidewatch {
             tabs,
             jobs: Jobs::new(),
             closing: None,
-            leftovers: leftover_glue::Host::new(),
+            leftovers: leftover_glue::Host::new(paths.clone()),
             dev: DevWorktree::from_env(),
             dev_agent: DevAgent::from_env(),
             dev_draft: None,
