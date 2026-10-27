@@ -467,6 +467,21 @@ fn an_agent_tab_shows_its_face_in_place_of_the_number_and_the_cli_logo() {
 }
 
 #[test]
+fn the_tab_face_is_24_and_centered_on_the_tab_and_its_title() {
+    assert_eq!((AVATAR_SIZE, TAB_H), (24.0, 36.0));
+    for width in [140.0, 200.0, 260.0] {
+        let (rects, texts) = agent_strip(QUARTZ, width, (false, false, true));
+        let face = face_rect(rects[0]);
+        let title = title_of(&texts).1;
+        assert_eq!(rects[0].height(), TAB_H);
+        assert_eq!(face.center().y, rects[0].center().y, "{width}");
+        assert!((face.center().y - title.center().y).abs() <= 1.0, "{face:?} {title:?}");
+        assert!(face.top() >= rects[0].top() + 5.0 && face.bottom() <= rects[0].bottom() - 5.0);
+        assert!(face.right() < title.left(), "{width}: the face reaches the title");
+    }
+}
+
+#[test]
 fn a_shell_tab_keeps_its_number() {
     let ctx = crate::fonts::test_context();
     let mut texts = Vec::new();

@@ -46,9 +46,9 @@ const CARD_GAP: f32 = 10.0;
 const CARD_PAD: f32 = 12.0;
 const CARD_RADIUS: u8 = 10;
 const ROW_H: f32 = 40.0;
-const FACE: f32 = 36.0;
-const FACE_IN_RING: f32 = 28.0;
-const RING: f32 = 40.0;
+const FACE: f32 = 44.0;
+const FACE_IN_RING: f32 = 38.0;
+const RING: f32 = 48.0;
 const FACE_GAP: f32 = 10.0;
 const ASK_ROW_GAP: f32 = 8.0;
 const WHY_H: f32 = 18.0;
@@ -858,6 +858,85 @@ mod tests {
             "ring starts at {inner_edge}, face reaches {}",
             FACE_IN_RING / 2.0
         );
+    }
+
+    fn walk_discs(shape: &egui::Shape, found: &mut Vec<(egui::Pos2, f32)>) {
+        match shape {
+            egui::Shape::Circle(circle) if circle.fill != Color32::TRANSPARENT => {
+                found.push((circle.center, circle.radius));
+            }
+            egui::Shape::Vec(shapes) => shapes.iter().for_each(|shape| walk_discs(shape, found)),
+            _ => {}
+        }
+    }
+
+    #[test]
+    fn the_faces_are_44_plain_and_38_inside_the_48_ring() {
+        assert_eq!((FACE, FACE_IN_RING, RING), (44.0, 38.0, 48.0));
+        assert_eq!(CARD_PAD * 2.0 + ROW_H, 64.0);
+    }
+
+    #[test]
+    fn a_card_keeps_its_height_and_its_face_is_centered_on_the_title_and_the_line() {
+        let mut screen = Screen::new(overview(vec![
+            row(1, "working-one", "acme-web", AgentStatus::Working),
+            row(2, "idle-one", "acme-web", AgentStatus::Done),
+        ]));
+        screen.width = 2000.0;
+        screen.frame(vec![]);
+        let ctx = screen.ctx.clone();
+        let raw = RawInput {
+            screen_rect: Some(Rect::from_min_size(pos2(0.0, 0.0), vec2(2000.0, 900.0))),
+            focused: true,
+            ..RawInput::default()
+        };
+        let sections = Sections { agenda: &screen.agenda, poofed: &screen.poofed };
+        let output = ctx.run_ui(raw, |ui| {
+            let area = ui.max_rect();
+            show(ui, area, &screen.data, &mut screen.state, &sections, |_| {});
+        });
+        let (mut found, mut boxes, mut discs) = (Vec::new(), Vec::new(), Vec::new());
+        for clipped in &output.shapes {
+            walk(&clipped.shape, &mut found);
+            walk_boxes(&clipped.shape, &mut boxes);
+            walk_discs(&clipped.shape, &mut discs);
+        }
+        for (title, size, below) in
+            [("working-one", FACE_IN_RING, BAR_GAP + BAR_H), ("idle-one", FACE, 0.0)]
+        {
+            let name = rect_of(&found, title);
+            let card = card_around(&boxes, &name);
+            assert_eq!(card.height(), CARD_PAD * 2.0 + ROW_H + below, "{title}");
+            let face = discs
+                .iter()
+                .find(|(center, radius)| {
+                    (*radius - size / 2.0).abs() < 0.01
+                        && card.contains(*center)
+                        && center.x < name.left()
+                })
+                .unwrap_or_else(|| panic!("{title} has no {size} face in {discs:?}"));
+            let line = found
+                .iter()
+                .find(|(text, rect)| {
+                    text.contains("acme-web")
+                        && (rect.top() - name.top()).abs() < 30.0
+                        && card.contains_rect(*rect)
+                })
+                .unwrap_or_else(|| panic!("{title} has no second line"))
+                .1;
+            let block_middle = f32::midpoint(name.top(), line.bottom());
+            assert!(
+                (face.0.y - block_middle).abs() <= 1.0,
+                "{title}: face centre {} against text block centre {block_middle}",
+                face.0.y
+            );
+            assert!(face.0.x + size / 2.0 < name.left(), "{title}: the face reaches the text");
+            assert_eq!(name.left(), card.left() + CARD_PAD + RING + FACE_GAP, "{title}");
+            let room = CARD_PAD + ROW_H / 2.0 - RING / 2.0;
+            assert!(room >= 8.0, "{title}: the ring leaves {room} above it");
+            let row_middle = card.top() + CARD_PAD + ROW_H / 2.0;
+            assert!((face.0.y - row_middle).abs() <= 0.5, "{title}: {} {row_middle}", face.0.y);
+        }
     }
 
     #[test]
