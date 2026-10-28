@@ -116,6 +116,27 @@ impl Reason {
         }
     }
 
+    /// What a reminder of this reason says in the Reader's quiet line; `None` for a reason that
+    /// changes what the agent does and keeps its card.
+    #[must_use]
+    pub fn quiet_words(self) -> Option<&'static str> {
+        match self {
+            Self::LedgerGuard => Some("Tidewatch reminded the agent to update its report"),
+            Self::Avatar => Some("Tidewatch asked for an avatar"),
+            Self::DoneCheck => Some("Tidewatch asked the agent to fix what the done check found"),
+            Self::CommentGuard => Some("Tidewatch told the agent about new branch comments"),
+            Self::Resume => Some("Tidewatch resumed the agent"),
+            Self::StuckJob => Some("Tidewatch asked the agent about a stuck job"),
+            Self::AutoFix
+            | Self::AutoPush
+            | Self::PullRequest
+            | Self::MeeseeksCheck
+            | Self::DueToday
+            | Self::Workflow
+            | Self::BackgroundJob => None,
+        }
+    }
+
     /// Told through a hook, so the transcript holds no user turn for it.
     #[must_use]
     pub fn timed(self) -> bool {
@@ -142,6 +163,9 @@ pub struct Record {
     pub claimed_seq: Option<u64>,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub typed: bool,
+    /// The user pressed the button that sent it.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub hand: bool,
 }
 
 #[derive(Deserialize)]
@@ -163,6 +187,7 @@ impl Record {
             cap,
             claimed_seq: None,
             typed: false,
+            hand: false,
         }
     }
 
@@ -170,6 +195,13 @@ impl Record {
     #[must_use]
     pub fn timed(&self) -> bool {
         self.reason.timed() && !self.typed
+    }
+
+    /// A reminder that changes nothing about the work: the Reader folds it into a quiet line. A
+    /// message the user's own click sent, and every other reason, keeps its card.
+    #[must_use]
+    pub fn quiet(&self) -> bool {
+        !self.hand && self.reason.quiet_words().is_some()
     }
 
     /// `Sent because Auto is on for this PR · 1 of 3 auto-fixes`.
@@ -251,6 +283,42 @@ mod tests {
 
     fn record(reason: Reason, text: &str, at_ms: i64) -> Record {
         Record { at_ms, ..Record::new(reason, "a rule fired", text, None) }
+    }
+
+    #[test]
+    fn only_a_reminder_nobody_clicked_is_quiet() {
+        let cases = [
+            (Reason::LedgerGuard, false, true),
+            (Reason::Avatar, false, true),
+            (Reason::DoneCheck, false, true),
+            (Reason::CommentGuard, false, true),
+            (Reason::Resume, false, true),
+            (Reason::StuckJob, false, true),
+            (Reason::DoneCheck, true, false),
+            (Reason::Avatar, true, false),
+            (Reason::AutoFix, false, false),
+            (Reason::AutoPush, false, false),
+            (Reason::PullRequest, false, false),
+            (Reason::MeeseeksCheck, false, false),
+            (Reason::DueToday, false, false),
+            (Reason::BackgroundJob, false, false),
+        ];
+        for (reason, hand, quiet) in cases {
+            let sent = Record { hand, ..Record::new(reason, "why", "text", None) };
+            assert_eq!(sent.quiet(), quiet, "{reason:?} by hand {hand}");
+        }
+    }
+
+    #[test]
+    fn a_click_flag_survives_the_file_and_an_old_line_reads_as_not_clicked() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("sent.jsonl");
+        append(&file, &Record { hand: true, ..Record::new(Reason::DoneCheck, "b", "t", None) })
+            .unwrap();
+        assert!(load(&file)[0].hand);
+        let old = r#"{"id":1,"at_ms":5,"reason":"avatar","because":"b","text":"t"}"#;
+        std::fs::write(&file, format!("{old}\n")).unwrap();
+        assert!(!load(&file)[0].hand);
     }
 
     #[test]

@@ -108,8 +108,11 @@ pub(crate) fn deliver(
     let Body::Shell(term) = &mut pane.body else { return false };
     term.paste(&send.text);
     if let (Some(tell), Some(agent)) = (&send.tell, pane.agent.as_mut()) {
-        let record =
-            Record { typed: true, ..Record::new(tell.reason, &tell.because, &send.text, cap) };
+        let record = Record {
+            typed: true,
+            hand: send.origin == Origin::Hand,
+            ..Record::new(tell.reason, &tell.because, &send.text, cap)
+        };
         if let Some(notes) = &agent.run.notes_file {
             let _ = sent::append(&sent_file_beside(notes), &record);
         }

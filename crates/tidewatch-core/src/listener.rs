@@ -41,6 +41,7 @@ use crate::paths::{
 };
 use crate::sent::{self, Reason, Record, because};
 use crate::status::parse_hook;
+use crate::user_markup;
 use crate::{progress_store, prompt_answer};
 
 /// Where the listener binds: loopback only, a random free port (PLAN.md, Constants).
@@ -528,27 +529,38 @@ fn prompt_reply(
         contexts.push(avatar_ask::CONTEXT.to_owned());
         tell(entry, Reason::Avatar, because::AVATAR_ASK, avatar_ask::CONTEXT);
     }
+    let typed_by_user = prompt_is_users(payload);
     let ledger_line = match progress_store::load(&progress_file_beside(&entry.notes_file)) {
         Some(ledger) => prompt_answer::ledger_context(&ledger),
         None => Some(prompt_answer::MISSING_LEDGER_CONTEXT.to_owned()),
     };
     if let Some(line) = ledger_line {
-        let one_off = match line.as_str() {
-            prompt_answer::LEDGER_CONTEXT => Some(because::LEDGER_NUDGE),
-            prompt_answer::MISSING_LEDGER_CONTEXT => Some(because::LEDGER_MISSING),
-            _ => None,
-        };
-        if let Some(why) = one_off
-            && !told_since_last_save(entry, &line)
-        {
-            tell(entry, Reason::LedgerGuard, why, &line);
+        let answer = line == prompt_answer::LEDGER_CONTEXT;
+        let missing = line == prompt_answer::MISSING_LEDGER_CONTEXT;
+        let told = told_since_last_save(entry, &line);
+        let one_off = answer || missing;
+        let silent = one_off && (!typed_by_user || (answer && told));
+        if !silent {
+            if one_off && !told {
+                let why = if answer { because::LEDGER_NUDGE } else { because::LEDGER_MISSING };
+                tell(entry, Reason::LedgerGuard, why, &line);
+            }
+            contexts.push(line);
         }
-        contexts.push(line);
     }
     if let Some(line) = service_line_due(shared, entry.tab_id) {
         contexts.push(line);
     }
     prompt_answer::answer(&contexts.iter().map(String::as_str).collect::<Vec<_>>())
+}
+
+/// Whether the prompt is the user's own words. A background task's notice and the other texts
+/// Claude Code files as a user line are not; a payload with no prompt is taken as the user's.
+fn prompt_is_users(payload: &serde_json::Value) -> bool {
+    payload.get("prompt").and_then(serde_json::Value::as_str).is_none_or(|prompt| {
+        !prompt.trim_start().starts_with(background::NOTICE_OPENING)
+            && matches!(user_markup::classify(prompt), user_markup::Record::Text(_))
+    })
 }
 
 fn replace_service_lines(shared: &Shared, lines: HashMap<u64, String>) {
@@ -1142,7 +1154,7 @@ mod tests {
     }
 
     #[test]
-    fn the_ledger_nudge_comes_with_every_prompt_while_the_ledger_waits_and_keeps_the_avatar_ask() {
+    fn the_ledger_nudge_comes_once_per_waiting_ledger_and_keeps_the_avatar_ask() {
         let f = fixture();
         let token = f.register(1, "a");
         save_ledger(&f, &token, QUESTION);
@@ -1151,10 +1163,40 @@ mod tests {
         assert!(context.contains(avatar_ask::CONTEXT), "{context}");
         assert!(context.contains(prompt_answer::LEDGER_CONTEXT), "{context}");
         let second = f.send("POST", "/hook/claude", Some(&token), PROMPT);
-        assert_eq!(context_of(&second), prompt_answer::LEDGER_CONTEXT);
+        assert_eq!(second.body, "{}", "once per question");
         save_ledger(&f, &token, "# Goal\nShip\n\n## Status\nstate: working\n");
         let third = f.send("POST", "/hook/claude", Some(&token), PROMPT);
         assert_eq!(third.body, "{}", "the agent refreshed its ledger, nothing more to say");
+    }
+
+    #[test]
+    fn a_system_prompt_gets_neither_the_answered_line_nor_the_missing_report_ask_and_leaves_no_record()
+     {
+        let notice = r#"{"hook_event_name":"UserPromptSubmit","session_id":"s1","prompt":"<task-notification>\n<tool-use-id>toolu_9</tool-use-id>\n<status>completed</status>\n</task-notification>"}"#;
+        let compacted = r#"{"hook_event_name":"UserPromptSubmit","prompt":"<system-reminder>x</system-reminder>"}"#;
+        let f = fixture();
+        let token = f.register(1, "a");
+        avatar_store::mark_asked(&avatar_asked_file_beside(&notes_of(&f, &token))).unwrap();
+        let file = sent_file_beside(&notes_of(&f, &token));
+        for system in [notice, compacted] {
+            assert_eq!(
+                f.send("POST", "/hook/claude", Some(&token), system).body,
+                "{}",
+                "no report"
+            );
+        }
+        save_ledger(&f, &token, QUESTION);
+        for system in [notice, compacted] {
+            assert_eq!(
+                f.send("POST", "/hook/claude", Some(&token), system).body,
+                "{}",
+                "a question"
+            );
+        }
+        assert_eq!(sent::load(&file), []);
+        let answer = f.send("POST", "/hook/claude", Some(&token), PROMPT);
+        assert_eq!(context_of(&answer), prompt_answer::LEDGER_CONTEXT);
+        assert_eq!(sent::load(&file).len(), 1, "the owner's own message still counts");
     }
 
     #[test]

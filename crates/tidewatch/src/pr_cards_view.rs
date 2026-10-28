@@ -90,7 +90,11 @@ impl Heights {
     }
 
     pub(crate) fn height(&self, id: u64) -> f32 {
-        self.measured.get(&id).copied().unwrap_or(GUESS_H)
+        self.height_or(id, GUESS_H)
+    }
+
+    pub(crate) fn height_or(&self, id: u64, guess: f32) -> f32 {
+        self.measured.get(&id).copied().unwrap_or(guess)
     }
 }
 

@@ -180,6 +180,7 @@ mod question_card;
 mod question_screen;
 mod question_view;
 mod quick_reply;
+mod quiet_notes;
 mod reader;
 mod reader_chat_view;
 mod reader_feed;

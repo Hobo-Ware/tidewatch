@@ -34,6 +34,7 @@ use crate::question_bulk;
 use crate::question_card::{Card, Effect};
 use crate::question_view::{self, ChipClick, Live, PermissionClick};
 use crate::quick_reply::{self, Quick};
+use crate::quiet_notes::{self, Entry};
 use crate::reader_chat_view::{self, Scene};
 use crate::reader_keys::{self, Answer};
 use crate::reader_rows::{Kind, Origin, Row, Rows};
@@ -697,13 +698,46 @@ fn transcript(
             let (list, stamps): (Vec<&Row>, Vec<Option<i64>>) = rows.stamped().unzip();
             let cards = pr.map_or(&[][..], |pr| pr.cards());
             let told = rows.timed();
-            for place in pr_timeline::places(rows, cards) {
-                if let Place::Row(index) = place
-                    && layout.slots[index] == Slot::Hidden
-                {
-                    continue;
+            let shown = pr_timeline::places(rows, cards).into_iter().filter(
+                |place| !matches!(place, Place::Row(index) if layout.slots[*index] == Slot::Hidden),
+            );
+            let quiet_of = |place: Place| match place {
+                Place::Said(n) => Some(told[n]).filter(|record| record.quiet()),
+                Place::Row(index) if matches!(list[index].kind, Kind::Tidewatch(_)) => {
+                    rows.said_for(list[index].seq).filter(|record| record.quiet())
                 }
+                _ => None,
+            };
+            for entry in quiet_notes::fold(shown, quiet_of) {
                 let top = ui.next_widget_position().y;
+                let place = match entry {
+                    Entry::Quiet(run) => {
+                        let id = quiet_notes::key(&run);
+                        let height = pr_heights.height_or(id, tidewatch_view::QUIET_GUESS_H);
+                        if top + height < clip.top() - OVERSCAN || top > clip.bottom() + OVERSCAN {
+                            ui.allocate_space(vec2(width, height));
+                            continue;
+                        }
+                        let drawn = ui.horizontal(|ui| {
+                            ui.add_space(INSET);
+                            ui.vertical(|ui| {
+                                ui.set_width(width);
+                                let shown = tidewatch_view::Quiet {
+                                    run: &run,
+                                    zone: scene.zone,
+                                    open: tidewatch_open.contains(&id),
+                                };
+                                tidewatch_view::quiet(ui, &shown)
+                            })
+                        });
+                        pr_heights.record(id, drawn.response.rect.height());
+                        if drawn.inner.inner {
+                            reader_turns::toggle(tidewatch_open, id);
+                        }
+                        continue;
+                    }
+                    Entry::Place(place) => place,
+                };
                 let (key, height) = match place {
                     Place::Row(index) => match layout.slots[index] {
                         Slot::Group(n) => {
