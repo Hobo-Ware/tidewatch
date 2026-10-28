@@ -6,7 +6,8 @@ use tidewatch_core::civil_date::Date;
 use tidewatch_core::progress::{Ledger, When};
 use tidewatch_core::schedule::{Index, Owner, Presence};
 
-/// Which part of the list a row sits in; the list is sorted by it.
+/// Which part of the list a row sits in; the list is sorted by it, with `Dated` and `About` as one
+/// part (see `band`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) enum Group {
     /// A date or an about-date that is today or past.
@@ -21,6 +22,13 @@ pub(crate) enum Group {
 }
 
 impl Group {
+    fn band(self) -> Self {
+        match self {
+            Self::About => Self::Dated,
+            other => other,
+        }
+    }
+
     fn of(when: &When, today: Date) -> Self {
         match when {
             When::Date(_) | When::About(_) if when.due_on(today) => Self::Due,
@@ -60,9 +68,9 @@ pub(crate) struct Row {
     pub(crate) presence: Presence,
 }
 
-/// Every open scheduled item of `index`: due or overdue first (oldest first), then dated, then
-/// about-dates (soonest first), then the ones with no date in the order `On`, `Parked`, `You`,
-/// each kept in index order.
+/// Every open scheduled item of `index`: due or overdue first (oldest first), then dated and
+/// about-dates together by date (soonest first, an exact date before an about-date of the same
+/// day), then the ones with no date in the order `On`, `Parked`, `You`, each kept in index order.
 pub(crate) fn coming_up(today: Date, index: &Index) -> Vec<Row> {
     let mut rows: Vec<Row> = index
         .tabs
@@ -88,8 +96,13 @@ pub(crate) fn coming_up(today: Date, index: &Index) -> Vec<Row> {
     rows
 }
 
-fn sort_key(row: &Row) -> (Group, Source, Option<i64>) {
-    (row.group, row.source, row.when.date().map(Date::day_number))
+fn sort_key(row: &Row) -> (Group, Source, Option<i64>, bool) {
+    (
+        row.group.band(),
+        row.source,
+        row.when.date().map(Date::day_number),
+        matches!(row.when, When::About(_)),
+    )
 }
 
 /// The Next entries of a ledger that stopped with nothing open in Scheduled, each as a row in the
@@ -156,7 +169,7 @@ mod tests {
     }
 
     #[test]
-    fn due_first_then_dated_then_about_then_on_parked_and_you() {
+    fn due_first_then_dated_and_about_by_date_then_on_parked_and_you() {
         let rows = coming_up(
             today(),
             &index(&[
@@ -178,10 +191,10 @@ mod tests {
                 "overdue a week",
                 "about yesterday",
                 "due today",
-                "dated soon",
-                "dated far",
                 "about soon",
+                "dated soon",
                 "about far",
+                "dated far",
                 "on 1",
                 "on 2",
                 "parked 1",
@@ -197,16 +210,47 @@ mod tests {
                 Group::Due,
                 Group::Due,
                 Group::Due,
-                Group::Dated,
+                Group::About,
                 Group::Dated,
                 Group::About,
-                Group::About,
+                Group::Dated,
                 Group::On,
                 Group::On,
                 Group::Parked,
                 Group::You,
                 Group::You,
                 Group::Other,
+            ]
+        );
+    }
+
+    #[test]
+    fn an_about_date_sorts_by_its_day_after_the_exact_items_of_that_day() {
+        let rows = coming_up(
+            today(),
+            &index(&[
+                (
+                    "a",
+                    Presence::Open,
+                    "- [ ] ~2026-10-28 -- about wed one\n- [ ] 2026-11-15 -- exact nov 15\n- [ ] 2026-10-28 -- exact wed\n- [ ] ~2026-11-10 -- about nov 10\n",
+                ),
+                (
+                    "b",
+                    Presence::Open,
+                    "- [ ] ~2026-10-28 -- about wed two\n- [ ] 2026-10-29 -- exact thu\n- [ ] 2026-11-08 -- exact nov 8\n",
+                ),
+            ]),
+        );
+        assert_eq!(
+            whats(&rows),
+            [
+                "exact wed",
+                "about wed one",
+                "about wed two",
+                "exact thu",
+                "exact nov 8",
+                "about nov 10",
+                "exact nov 15",
             ]
         );
     }

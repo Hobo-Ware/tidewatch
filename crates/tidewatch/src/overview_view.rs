@@ -1207,11 +1207,14 @@ mod tests {
             tab: "t".into(),
             note: None,
             mark: Mark::Plain,
+            about: false,
             tip: String::new(),
         };
         screen.agenda = vec![Day {
             label: "TODAY \u{b7} MON 26".into(),
             today: true,
+            month: None,
+            starts_month: false,
             items: vec![item(0, "web chore", "acme-web"), item(1, "api chore", "acme-api")],
         }];
         let poofed = |index, name: &str, place: &str| PoofedRow {
@@ -1335,6 +1338,8 @@ mod tests {
         screen.agenda = vec![Day {
             label: "NO DATE".into(),
             today: false,
+            month: None,
+            starts_month: false,
             items: vec![Item {
                 row: 3,
                 what: "Install the bot".into(),
@@ -1342,6 +1347,7 @@ mod tests {
                 tab: "heron".into(),
                 note: None,
                 mark: Mark::Decide,
+                about: false,
                 tip: String::new(),
             }],
         }];

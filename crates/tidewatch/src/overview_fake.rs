@@ -352,6 +352,7 @@ fn item(row: usize, what: &str, place: &str, tab: &str, note: Option<&str>, mark
         tab: tab.to_owned(),
         note: note.map(str::to_owned),
         mark,
+        about: false,
         tip: what.to_owned(),
     }
 }
@@ -361,6 +362,8 @@ fn agenda() -> Vec<Day> {
         Day {
             label: "TODAY \u{b7} MON 26".to_owned(),
             today: true,
+            month: None,
+            starts_month: false,
             items: vec![
                 item(
                     0,
@@ -383,6 +386,8 @@ fn agenda() -> Vec<Day> {
         Day {
             label: "TUE 27".to_owned(),
             today: false,
+            month: Some("October".to_owned()),
+            starts_month: true,
             items: vec![item(
                 2,
                 "Compare the new ranking with last week",
@@ -393,20 +398,54 @@ fn agenda() -> Vec<Day> {
             )],
         },
         Day {
-            label: "SAT 31 \u{b7} ABOUT".to_owned(),
+            label: "SAT 31".to_owned(),
             today: false,
-            items: vec![item(
-                3,
-                "Read back the 33 people",
-                "acme-workers",
-                "figure-out-precisely-triggered",
-                None,
-                Mark::Plain,
-            )],
+            month: Some("October".to_owned()),
+            starts_month: false,
+            items: vec![
+                item(
+                    3,
+                    "Ship the token refresh to the workers",
+                    "acme-workers",
+                    "figure-out-precisely-triggered",
+                    None,
+                    Mark::Plain,
+                ),
+                Item {
+                    about: true,
+                    ..item(
+                        6,
+                        "Read back the 33 people",
+                        "acme-workers",
+                        "figure-out-precisely-triggered",
+                        None,
+                        Mark::Plain,
+                    )
+                },
+            ],
+        },
+        Day {
+            label: "TUE 10".to_owned(),
+            today: false,
+            month: Some("November".to_owned()),
+            starts_month: true,
+            items: vec![Item {
+                about: true,
+                ..item(
+                    7,
+                    "Check the retry budget again",
+                    "acme-api",
+                    "pkce-auth-security",
+                    None,
+                    Mark::Plain,
+                )
+            }],
         },
         Day {
             label: "NO DATE".to_owned(),
             today: false,
+            month: None,
+            starts_month: false,
             items: vec![
                 item(4, "Install the bot on the new repo", "acme-web", "heron", None, Mark::Decide),
                 item(
