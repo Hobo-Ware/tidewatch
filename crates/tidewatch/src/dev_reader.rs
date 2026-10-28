@@ -12,6 +12,7 @@
 //!   once, as a click on a chip does; `notes` opens only the folded updates.
 //! - `TIDEWATCH_DEV_READER_SCROLL=<pixels>@<seconds>`: once, that long after startup, scroll the
 //!   transcript up from its bottom by that many pixels, as a wheel does (the jump pill shows).
+//! - `TIDEWATCH_DEV_PICK=<digit>[@<seconds>]`: press that digit once, that long after startup, to pick a ready answer.
 //! - `TIDEWATCH_DEV_QUESTION=<steps>`: drive the live question card, one step every 0.4 s once it
 //!   shows. Steps, comma separated: `pick<N>` (the number key), `next`, `back`, `space`, `down`,
 //!   `all` (Go with your picks), `type:<text>` ("Something else" with that text), `send`, `skip`.
@@ -91,6 +92,14 @@ pub(crate) struct DevReader {
     open_turns: bool,
     notes_only: bool,
     scroll_up: Option<(f32, f64)>,
+    digit: Option<(egui::Key, char, f64)>,
+}
+
+fn digit_of(text: &str) -> Option<(egui::Key, char, f64)> {
+    let (digit, after) = text.split_once('@').unwrap_or((text, "0"));
+    let digit = digit.chars().next().filter(char::is_ascii_digit)?;
+    let key = egui::Key::from_name(&digit.to_string())?;
+    Some((key, digit, after.parse().ok()?))
 }
 
 impl DevReader {
@@ -111,7 +120,8 @@ impl DevReader {
             .map(|paths| paths.split(':').filter(|p| !p.is_empty()).map(PathBuf::from).collect())
             .unwrap_or_default();
         let scroll_up = var("TIDEWATCH_DEV_READER_SCROLL").and_then(|text| scroll_of(&text));
-        Self { pictures, open_turns, notes_only, scroll_up, ..parsed }
+        let digit = var("TIDEWATCH_DEV_PICK").and_then(|text| digit_of(&text));
+        Self { pictures, open_turns, notes_only, scroll_up, digit, ..parsed }
     }
 
     fn parse(
@@ -129,6 +139,7 @@ impl DevReader {
             open_turns: false,
             notes_only: false,
             scroll_up: None,
+            digit: None,
             raw: reader == Some("raw"),
             key_after: key.and_then(|s| s.parse().ok()),
             answer: match answer {
@@ -151,6 +162,7 @@ impl DevReader {
             && self.question.is_empty()
             && !self.open_turns
             && self.scroll_up.is_none()
+            && self.digit.is_none()
     }
 
     pub(crate) fn take_pictures(&mut self) -> Vec<PathBuf> {
@@ -189,6 +201,24 @@ impl DevReader {
         if let Some(event) = commands::press_event(Command::Reader) {
             ctx.input_mut(|i| i.events.push(event));
         }
+    }
+
+    /// Queues the digit key's events for this frame once its time has come.
+    pub(crate) fn press_digit(&mut self, ctx: &Context, now: f64) {
+        let Some((key, digit, _)) = self.digit.filter(|(_, _, after)| now >= *after) else {
+            return;
+        };
+        self.digit = None;
+        ctx.input_mut(|i| {
+            i.events.push(egui::Event::Key {
+                key,
+                physical_key: Some(key),
+                pressed: true,
+                repeat: false,
+                modifiers: egui::Modifiers::NONE,
+            });
+            i.events.push(egui::Event::Text(digit.to_string()));
+        });
     }
 
     /// The next scripted step on the live question card, when there is one and its time has come.

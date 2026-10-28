@@ -19,6 +19,9 @@ use tidewatch_core::transcript::Source;
 
 use crate::agent_avatar::Face;
 use crate::agent_ready::{self, Ready};
+use crate::answer_chips::Pick;
+use crate::ask_model::Ask;
+use crate::ask_view;
 use crate::brand;
 use crate::composer::{self, Draft, Spec};
 use crate::due_view::{self, Facts as DueFacts};
@@ -215,6 +218,8 @@ pub(crate) struct Facts<'a> {
     pub(crate) pr: Option<PrData<'a>>,
     /// An item due today in this tab, offered above the reply box.
     pub(crate) due: Option<DueFacts<'a>>,
+    /// The ledger's question waiting for the owner, drawn right above the reply box.
+    pub(crate) ask: Option<&'a Ask>,
     /// The profile's name, for "<Profile> asks".
     pub(crate) profile: &'a str,
     /// The tab's face, shown beside each of the agent's turns.
@@ -260,6 +265,8 @@ pub(crate) enum Action {
     GoWithPicks,
     /// A click on the Due today card.
     Due(due_view::Action),
+    /// A ready answer picked on the Needs you card.
+    Pick(String),
     Resume,
 }
 
@@ -415,7 +422,7 @@ pub(crate) fn show(
     rect: Rect,
     rows: &Rows,
     state: &mut ViewState,
-    facts: Facts<'_>,
+    facts: &Facts<'_>,
 ) -> Vec<Action> {
     let mut actions = Vec::new();
     ui.painter().rect_filled(rect, 0.0, brand::GROUND);
@@ -434,22 +441,28 @@ pub(crate) fn show(
         composer::height(ui, &state.reply, state.pictures.len(), rect)
     };
     let input = Rect::from_min_max(pos2(rect.left(), rect.bottom() - input_h), rect.max);
-    let dock_h = dock_height(&facts, rows, state.live.as_ref());
-    let review_h = facts
-        .review
-        .as_ref()
-        .map_or(0.0, |review| review_view::height(review.draft, rect.height() - input_h - dock_h));
+    let dock_h = dock_height(facts, rows, state.live.as_ref());
     let strip = Rect::from_min_max(
         pos2(rect.left(), input.top() - dock_h),
         pos2(rect.right(), input.top()),
     );
+    let asked = facts
+        .ask
+        .filter(|_| dock_h == 0.0)
+        .map(|ask| (ask, ask_view::lay_out(ui, rect.width(), ask)));
+    let ask_h = asked.as_ref().map_or(0.0, |(_, laid)| laid.band(rect.height() - input_h));
+    let ask_band =
+        Rect::from_min_max(pos2(rect.left(), strip.top() - ask_h), pos2(rect.right(), strip.top()));
+    let review_h = facts.review.as_ref().map_or(0.0, |review| {
+        review_view::height(review.draft, rect.height() - input_h - dock_h - ask_h)
+    });
     let review_band = Rect::from_min_max(
-        pos2(rect.left(), strip.top() - review_h),
-        pos2(rect.right(), strip.top()),
+        pos2(rect.left(), ask_band.top() - review_h),
+        pos2(rect.right(), ask_band.top()),
     );
-    let due_h = facts
-        .due
-        .map_or(0.0, |due| due_view::height(due.due, rect.height() - input_h - dock_h - review_h));
+    let due_h = facts.due.map_or(0.0, |due| {
+        due_view::height(due.due, rect.height() - input_h - dock_h - ask_h - review_h)
+    });
     let due_band = Rect::from_min_max(
         pos2(rect.left(), review_band.top() - due_h),
         pos2(rect.right(), review_band.top()),
@@ -472,6 +485,15 @@ pub(crate) fn show(
         let asked = review_view::show(ui, review_band, &mut state.review, review);
         actions.extend(asked.into_iter().map(Action::Review));
     }
+    if let Some((ask, laid)) = asked.as_ref().filter(|_| ask_h > 0.0) {
+        let reply = if composing.is_some() { agent_ready::composer_id() } else { reply_id() };
+        let empty = state.reply.trim().is_empty() && state.pictures.is_empty();
+        match ask_view::show(ui, ask_band, laid, ask, (reply, empty)) {
+            Some(Pick::Answer(text)) => actions.push(Action::Pick(text)),
+            Some(Pick::Other) => state.focus_reply = true,
+            None => {}
+        }
+    }
     if let Some(ready) = composing {
         agent_ready::empty_state(ui, body, ready);
         let draft = Draft {
@@ -484,7 +506,7 @@ pub(crate) fn show(
         }
         return actions;
     }
-    let quick = quick_for(rows, state, &facts).to_vec();
+    let quick = quick_for(rows, state, facts).to_vec();
     let chips = transcript(
         ui,
         body,
@@ -1587,7 +1609,7 @@ mod tests {
                     rect,
                     rows,
                     &mut state,
-                    Facts {
+                    &Facts {
                         tab: 1,
                         source: None,
                         prompt: None,
@@ -1596,6 +1618,7 @@ mod tests {
                         review: None,
                         pr: None,
                         due: None,
+                        ask: None,
                         profile: "Builder",
                         face: None,
                         turn: Turn::Finished,
@@ -1668,13 +1691,14 @@ mod tests {
                     review: None,
                     pr: None,
                     due: None,
+                    ask: None,
                     profile: "Builder",
                     face: None,
                     turn: Turn::Running,
                     stopped: false,
                     reply_blocked: None,
                 };
-                let actions = show(ui, rect, &rows, &mut state, facts);
+                let actions = show(ui, rect, &rows, &mut state, &facts);
                 assert_eq!(actions, Vec::<Action>::new());
             });
         }
@@ -1753,6 +1777,7 @@ mod tests {
                         review: Some(review),
                         pr: None,
                         due: None,
+                        ask: None,
                         profile: "Builder",
                         face: None,
                         turn: Turn::Finished,
@@ -1760,7 +1785,7 @@ mod tests {
                         reply_blocked: None,
                     };
                     let rect = ui.max_rect();
-                    actions = show(ui, rect, rows, &mut state, facts);
+                    actions = show(ui, rect, rows, &mut state, &facts);
                 });
                 actions
             };
@@ -1817,7 +1842,7 @@ mod tests {
                 let mut facts = facts(None, Turn::Finished);
                 facts.due =
                     Some(DueFacts { due: &due, more: 0, profile: "Builder", blocked: None });
-                actions = show(ui, rect, &rows, &mut state, facts);
+                actions = show(ui, rect, &rows, &mut state, &facts);
             });
             let mut found = Vec::new();
             output.shapes.iter().for_each(|clipped| texts(&clipped.shape, &mut found));
@@ -1875,7 +1900,7 @@ mod tests {
                 let rect = ui.max_rect();
                 let mut facts = facts(None, Turn::Finished);
                 facts.reply_blocked = blocked;
-                show(ui, rect, &rows, &mut state, facts);
+                show(ui, rect, &rows, &mut state, &facts);
             });
             let mut found = Vec::new();
             output.shapes.iter().for_each(|clipped| texts(&clipped.shape, &mut found));
@@ -1926,7 +1951,7 @@ mod tests {
                 let rect = ui.max_rect();
                 let mut facts = facts(None, Turn::Finished);
                 facts.stopped = stopped;
-                actions = show(ui, rect, &rows, &mut state, facts);
+                actions = show(ui, rect, &rows, &mut state, &facts);
             });
             let mut found = Vec::new();
             output.shapes.iter().for_each(|clipped| texts(&clipped.shape, &mut found));
@@ -2014,6 +2039,7 @@ mod tests {
                     review: Some(review),
                     pr: None,
                     due: None,
+                    ask: None,
                     profile: "Builder",
                     face: None,
                     turn: Turn::Finished,
@@ -2021,7 +2047,7 @@ mod tests {
                     reply_blocked: None,
                 };
                 let rect = ui.max_rect();
-                show(ui, rect, &rows, &mut state, facts);
+                show(ui, rect, &rows, &mut state, &facts);
             });
             shapes = format!("{:?}", out.shapes);
         }
@@ -2041,6 +2067,7 @@ mod tests {
             review: None,
             pr: None,
             due: None,
+            ask: None,
             profile: "Builder",
             face: None,
             turn,
@@ -2049,7 +2076,7 @@ mod tests {
         }
     }
 
-    fn draw(rows: &Rows, state: &mut ViewState, facts: Facts<'_>) -> Vec<Action> {
+    fn draw(rows: &Rows, state: &mut ViewState, facts: &Facts<'_>) -> Vec<Action> {
         let ctx = crate::fonts::test_context();
         let raw = RawInput {
             screen_rect: Some(Rect::from_min_size(pos2(0.0, 0.0), vec2(800.0, 700.0))),
@@ -2098,10 +2125,10 @@ mod tests {
         let mut rows = Rows::default();
         rows.push(question_entry(ToolPhase::Call));
         let mut state = ViewState::default();
-        draw(&rows, &mut state, facts(Some(Prompt::Question), Turn::Running));
+        draw(&rows, &mut state, &facts(Some(Prompt::Question), Turn::Running));
         assert_eq!(state.live.as_ref().map(|live| live.seq), Some(0));
         let mut finished = ViewState::default();
-        draw(&rows, &mut finished, facts(None, Turn::Finished));
+        draw(&rows, &mut finished, &facts(None, Turn::Finished));
         assert!(finished.live.is_none(), "a finished agent has no menu open");
     }
 
@@ -2111,10 +2138,10 @@ mod tests {
         let mut rows = Rows::default();
         rows.push(question_entry(tidewatch_core::transcript::ToolPhase::Call));
         let mut state = ViewState::default();
-        draw(&rows, &mut state, facts(None, Turn::Running));
+        draw(&rows, &mut state, &facts(None, Turn::Running));
         state.focus_reply = false;
         rows.set_asked(0, Asked::Declined);
-        draw(&rows, &mut state, facts(None, Turn::Running));
+        draw(&rows, &mut state, &facts(None, Turn::Running));
         assert!(state.live.is_none());
     }
 
@@ -2130,15 +2157,15 @@ mod tests {
             images: Vec::new(),
         });
         let mut state = ViewState::default();
-        draw(&rows, &mut state, facts(None, Turn::Finished));
+        draw(&rows, &mut state, &facts(None, Turn::Finished));
         let labels: Vec<&str> =
             state.quick.as_ref().unwrap().1.iter().map(|q| q.label.as_str()).collect();
         assert_eq!(labels, ["Yes", "No"]);
         let mut working = ViewState::default();
-        draw(&rows, &mut working, facts(None, Turn::Running));
+        draw(&rows, &mut working, &facts(None, Turn::Running));
         assert!(working.quick.is_none(), "no chips while the agent works");
         state.quick_used = rows.newest_seq();
-        draw(&rows, &mut state, facts(None, Turn::Finished));
+        draw(&rows, &mut state, &facts(None, Turn::Finished));
         assert!(state.quick.is_none(), "a used chip row does not come back");
     }
 
@@ -2178,7 +2205,7 @@ mod tests {
             let state = &mut self.state;
             let output = self.ctx.run_ui(raw, |ui| {
                 let rect = ui.max_rect();
-                show(ui, rect, rows, state, facts(None, turn));
+                show(ui, rect, rows, state, &facts(None, turn));
             });
             self.shapes.clear();
             output.shapes.iter().for_each(|clipped| shape_texts(&clipped.shape, &mut self.shapes));
@@ -2457,7 +2484,7 @@ mod tests {
             Some(("Bash".to_owned(), "cargo test".to_owned()))
         );
         let mut state = ViewState::default();
-        let actions = draw(&rows, &mut state, facts(Some(Prompt::Permission), Turn::Running));
+        let actions = draw(&rows, &mut state, &facts(Some(Prompt::Permission), Turn::Running));
         assert_eq!(actions, Vec::<Action>::new());
     }
 
@@ -2507,7 +2534,7 @@ mod tests {
             let _ = self.ctx.run_ui(raw, |ui| {
                 let rect = ui.max_rect();
                 let facts = Facts { tab, ..facts(None, Turn::Finished) };
-                let _ = show(ui, rect, rows, state, facts);
+                let _ = show(ui, rect, rows, state, &facts);
             });
         }
 
@@ -2665,7 +2692,7 @@ mod tests {
                 .show(ui, |_| {});
             egui::CentralPanel::default().frame(Frame::NONE).show(ui, |ui| {
                 column = ui.max_rect();
-                actions = show(ui, column, rows, state, facts(None, Turn::Finished));
+                actions = show(ui, column, rows, state, &facts(None, Turn::Finished));
             });
         });
         let mut texts = Vec::new();
@@ -2870,7 +2897,7 @@ mod tests {
                 let mut facts = facts(None, Turn::Finished);
                 facts.due =
                     Some(DueFacts { due: &due, more: 0, profile: "Builder", blocked: None });
-                show(ui, rect, &rows, &mut state, facts);
+                show(ui, rect, &rows, &mut state, &facts);
             });
             let mut texts = Vec::new();
             out.shapes.iter().for_each(|c| texts_in(&c.shape, c.clip_rect, &mut texts));
@@ -2914,7 +2941,7 @@ mod tests {
             };
             let output = ctx.run_ui(raw, |ui| {
                 let rect = ui.max_rect();
-                show(ui, rect, rows, &mut state, facts(None, Turn::Running));
+                show(ui, rect, rows, &mut state, &facts(None, Turn::Running));
             });
             found.clear();
             output.shapes.iter().for_each(|clipped| texts(&clipped.shape, &mut found));
@@ -3118,7 +3145,7 @@ mod tests {
             let output = ctx.run_ui(raw, |ui| {
                 let rect = ui.max_rect();
                 let facts = Facts { pr: Some(pr), ..facts(None, Turn::Running) };
-                let _ = show(ui, rect, &rows, &mut state, facts);
+                let _ = show(ui, rect, &rows, &mut state, &facts);
             });
             visible_texts(&output)
         };
@@ -3181,7 +3208,7 @@ mod tests {
             };
             let out = ctx.run_ui(raw, |ui| {
                 let rect = ui.max_rect();
-                show(ui, rect, &rows, &mut state, facts(None, Turn::Finished));
+                show(ui, rect, &rows, &mut state, &facts(None, Turn::Finished));
             });
             shapes.clear();
             for clipped in &out.shapes {

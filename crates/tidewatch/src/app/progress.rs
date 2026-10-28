@@ -13,19 +13,21 @@ use super::WAKE_SLACK_S;
 use super::settings::open_in_editor;
 use super::{Tidewatch, wall_ms};
 use crate::agent_avatar;
+use crate::ask_model::{self, Ask};
 use crate::coming_up::coming_up;
 use crate::due::{
     Due, Key, ask_blocked, ask_text, due_items, next_to_start, secs_to_midnight, tell_all,
 };
 use crate::job_glue;
 use crate::job_model::{agent_of, lane_line};
+use crate::link_model;
 use crate::notify;
 use crate::outbox::{Offer, Origin, Send};
 use crate::overview::Overview;
 use crate::overview_checklist::Source;
 use crate::pane::{AgentTab, Body};
 use crate::progress_glue::today;
-use crate::progress_model::{look, look_as};
+use crate::progress_model::{look, look_as, questions};
 use crate::progress_nudge as nudge;
 use crate::progress_stale::{Live, answered_since_save, is_stale, standing};
 use crate::progress_state::Facts;
@@ -580,11 +582,6 @@ impl Tidewatch {
     }
 
     /// The Answer button: the Reader in front, its reply box asking for the keyboard.
-    pub(super) fn open_reply_box(&mut self) {
-        let active = self.tabs.items()[self.tabs.active()].id;
-        self.open_reply_box_of(active);
-    }
-
     pub(super) fn open_reply_box_of(&mut self, tab: u64) {
         if let Some(agent) = self.tabs.get_mut(tab).and_then(|found| found.pane.agent.as_mut()) {
             agent.reader.set_wants_reader(true);
@@ -598,6 +595,42 @@ impl Tidewatch {
     /// A ready answer chip: the exact text goes to the agent as the reply box would send it, unless
     /// the reply box is shut. The ledger's question clears until the agent saves a new ledger.
     pub(super) fn send_answer(&mut self, tab: u64, text: String, ctx: &egui::Context, now: f64) {
+        if self.send_ready_answer(tab, text, ctx, now) {
+            self.mark_answered(tab);
+        }
+    }
+
+    /// An answer picked on the Reader's Needs you card: the card moves on to the next question.
+    pub(super) fn answer_ask(&mut self, tab: u64, text: String, ctx: &egui::Context, now: f64) {
+        let Some(known) = self.progress.ledger(tab) else {
+            self.send_answer(tab, text, ctx, now);
+            return;
+        };
+        let asked = questions(&known.ledger);
+        let (saved, total) = (known.updated_ms, asked.len());
+        let step =
+            ask_model::shown(total, false, self.ask_given.get(&tab).copied(), saved).unwrap_or(0);
+        let question = asked.get(step).map_or("", |entry| entry.text.as_str());
+        let text = ask_model::reply_text(question, total, &text);
+        if !self.send_ready_answer(tab, text, ctx, now) {
+            return;
+        }
+        match ask_model::after_answer(total, step, saved) {
+            Some(given) => {
+                self.ask_given.insert(tab, given);
+            }
+            None => self.mark_answered(tab),
+        }
+    }
+
+    fn mark_answered(&mut self, tab: u64) {
+        let saved = self.progress.ledger(tab).map(|known| known.updated_ms);
+        if let Some(saved) = saved {
+            self.answered_asks.insert(tab, saved);
+        }
+    }
+
+    fn send_ready_answer(&mut self, tab: u64, text: String, ctx: &egui::Context, now: f64) -> bool {
         let shut = self
             .tabs
             .items()
@@ -607,18 +640,29 @@ impl Tidewatch {
             .and_then(reader_glue::answer_blocked);
         if let Some(reason) = shut {
             self.show_toast(reason, ctx);
-            return;
+            return false;
         }
-        let saved = self.progress.ledger(tab).map(|known| known.updated_ms);
         let sent = vec![reader_view::Action::Reply(text)];
         if let Some(toast) = reader_glue::apply(sent, &mut self.tabs, tab, &mut self.flow, ctx, now)
         {
             self.show_toast(toast, ctx);
         }
-        if let Some(saved) = saved {
-            self.answered_asks.insert(tab, saved);
-        }
         ctx.request_repaint();
+        true
+    }
+
+    /// The question the Reader's card shows for tab `tab`, if any.
+    pub(super) fn ask_of(&self, tab: u64, now: f64, keys: bool) -> Option<Ask> {
+        let known = self.progress.ledger(tab)?;
+        let asked = questions(&known.ledger);
+        let given = self.ask_given.get(&tab).copied();
+        let step =
+            ask_model::shown(asked.len(), self.ledger_stale(tab, now), given, known.updated_ms)?;
+        let entry = (*asked.get(step)?).clone();
+        let read = self.link_live.board(tab).map_or_else(Vec::new, |board| {
+            link_model::read_first(board, &entry.text).into_iter().cloned().collect()
+        });
+        Some(Ask { entry, index: step, total: asked.len(), read, keys })
     }
 
     pub(super) fn progress_arrived(&mut self, tab: u64, ledger: Ledger, ctx: &egui::Context) {

@@ -218,6 +218,7 @@ pub(crate) struct Tidewatch {
     checklist: overview_checklist::Host,
     overview_state: crate::overview_view::State,
     answered_asks: HashMap<u64, Option<i64>>,
+    ask_given: HashMap<u64, crate::ask_model::Answered>,
     slash: slash_glue::Host,
     snoozes: due::Snoozes,
     dev_open_scheduled: Option<String>,
@@ -462,6 +463,7 @@ impl Tidewatch {
             checklist: overview_checklist::Host::new(),
             overview_state: crate::overview_fake::initial_state(),
             answered_asks: HashMap::new(),
+            ask_given: HashMap::new(),
             slash: slash_glue::Host::new(),
             snoozes: due::Snoozes::default(),
             dev_open_scheduled: std::env::var("TIDEWATCH_DEV_OPEN_SCHEDULED")

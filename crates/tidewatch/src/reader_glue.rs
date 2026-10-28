@@ -15,6 +15,7 @@ use tidewatch_core::transcript::Source;
 
 use crate::agent_avatar::Face;
 use crate::agent_ready::Ready;
+use crate::ask_model::Ask;
 use crate::brand;
 use crate::commands::Command;
 use crate::dev_reader::DevReader;
@@ -214,6 +215,7 @@ pub(crate) fn draw(
     now: f64,
     review: Option<ReviewFacts<'_>>,
     (pr, due): (Option<PrData<'_>>, Option<(&Due, usize)>),
+    ask: Option<&Ask>,
     avatar: Option<Arc<Avatar>>,
 ) -> Vec<Action> {
     let Some(agent) = pane.agent.as_mut() else { return Vec::new() };
@@ -247,6 +249,7 @@ pub(crate) fn draw(
         review,
         pr,
         due,
+        ask,
         profile: &agent.profile_name,
         face: Some(&face),
         turn,
@@ -278,7 +281,7 @@ pub(crate) fn draw(
     if let Some(pixels) = dev.take_scroll_up(now) {
         reader.view.scroll_up_by(pixels);
     }
-    let mut actions = reader_view::show(ui, area, &reader.rows, &mut reader.view, facts);
+    let mut actions = reader_view::show(ui, area, &reader.rows, &mut reader.view, &facts);
     actions.extend(dev.drive_card(now, reader.view.live_mut()));
     actions.extend(dev.actions(now, facts.prompt));
     actions
@@ -295,6 +298,19 @@ pub(crate) fn take_pr_clicks(actions: &mut Vec<Action>) -> Vec<CardAction> {
         _ => true,
     });
     clicks
+}
+
+/// Takes the answers picked on the Needs you card out of the Reader's actions.
+pub(crate) fn take_picks(actions: &mut Vec<Action>) -> Vec<String> {
+    let mut picks = Vec::new();
+    actions.retain(|action| match action {
+        Action::Pick(text) => {
+            picks.push(text.clone());
+            false
+        }
+        _ => true,
+    });
+    picks
 }
 
 /// Takes the clicks on the Due today card out of the Reader's actions; the app handles them.
@@ -412,7 +428,7 @@ pub(crate) fn apply(
                 }
             }
             Action::Resume => resume_agent(&mut found.pane, now),
-            Action::Review(_) | Action::Pr(_) | Action::Due(_) => {}
+            Action::Review(_) | Action::Pr(_) | Action::Due(_) | Action::Pick(_) => {}
             Action::Ask(seq, reply) => {
                 if let Some(why) = answer_question(&mut found.pane, seq, reply, now) {
                     toast = Some(why.to_owned());

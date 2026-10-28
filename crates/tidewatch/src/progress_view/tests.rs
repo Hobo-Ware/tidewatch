@@ -210,14 +210,6 @@ fn tags_flow_into_rows_and_a_row_break_never_leaves_the_edge() {
 }
 
 #[test]
-fn something_else_asks_for_the_reply_box_and_nothing_else_does() {
-    let mut panel = Panel::new(LONG, 420.0);
-    assert_eq!(panel.action, None);
-    let at = panel.center_of("Something else");
-    assert_eq!(panel.click(at), Some(Action::Answer));
-}
-
-#[test]
 fn no_question_means_no_card_and_no_button() {
     let text = LONG.replace("## Needs you\n- Decide if accented letters should become ASCII (cafe). Current code keeps them -- it changes the output\n", "## Needs you\n- Nothing needs you.\n");
     let panel = Panel::new(&text, 420.0);
@@ -333,7 +325,6 @@ fn a_link_in_the_goal_a_row_a_note_and_the_question_opens_and_plain_text_does_no
         ("Ship the preview", "http://localhost:5174"),
         ("Check http://localhost:8787/jobs", "http://localhost:8787/jobs"),
         ("Opened https", "https://claude.ai/artifact/abc"),
-        ("Which base should", "https://example.com/notes"),
     ];
     for (text, url) in cases {
         let opened = panel.opened_by_clicking_along(text, 3);
@@ -416,12 +407,12 @@ fn the_last_turn_lists_done_needs_you_and_next_with_the_check_as_rows() {
         "Add keyboard shortcuts",
         "Blocked",
         "Pushed: 2 commits not pushed",
-        "Answer",
         "Ask agent to fix",
         "Check again",
     ] {
         assert!(panel.drawn(text), "{text:?} not drawn in {:?}", panel.texts);
     }
+    assert!(!panel.drawn("Answer"), "the Reader's card is the one place to answer");
     let top = |text: &str| panel.texts.iter().find(|(t, _)| t == text).unwrap().1.top();
     assert!(top("Last turn") < top("Done") && top("Done") < top("Needs you"));
     assert!(top("Needs you") < top("Next") && top("Next") < top("Checks"));
@@ -454,10 +445,8 @@ fn a_summary_that_asks_nothing_has_no_needs_you_and_no_answer() {
 }
 
 #[test]
-fn the_buttons_of_the_last_turn_send_the_same_asks_the_panel_always_did() {
+fn the_check_buttons_of_the_last_turn_send_the_same_asks_the_panel_always_did() {
     let mut panel = tall(SMALL, 420.0, turn(Some(blocked()), Ok(())));
-    let at = panel.center_of("Answer");
-    assert_eq!(panel.click(at), Some(Action::Answer));
     let at = panel.center_of("Check again");
     assert_eq!(panel.click(at), Some(Action::DoneCheck(done_check_view::Action::CheckAgain)));
     let at = panel.center_of("Ask agent to fix");
@@ -472,12 +461,11 @@ fn ask_agent_to_fix_does_nothing_while_the_agent_is_busy() {
 }
 
 #[test]
-fn a_ledger_question_keeps_its_one_set_of_answers_and_the_last_turn_adds_none() {
-    let mut panel = tall(LONG, 420.0, turn(None, Ok(())));
-    assert_eq!(panel.texts.iter().filter(|(text, _)| text == "Something else").count(), 1);
-    assert!(!panel.drawn("Answer"));
-    let at = panel.center_of("Something else");
-    assert_eq!(panel.click(at), Some(Action::Answer));
+fn a_ledger_question_draws_no_card_and_no_answer_button_in_the_panel() {
+    let panel = tall(LONG, 420.0, turn(None, Ok(())));
+    for text in ["NEEDS YOU", "Something else", "Answer", "Not now"] {
+        assert!(!panel.drawn(text), "{text:?} drawn in {:?}", panel.texts);
+    }
 }
 
 #[test]
@@ -538,143 +526,6 @@ fn no_last_turn_text_overlaps_or_leaves_the_card_at_any_width() {
 }
 
 const ASKING: &str = "# Goal\nShip it\n\n## Status\nstate: waiting\n\n## Needs you\n- Post the Slack follow-up -- the owner wanted it out today -- options: Post it | Skip it* | Draft only | Ask Sam | Later\n";
-
-fn key(number: egui::Key) -> Event {
-    Event::Key {
-        key: number,
-        physical_key: Some(number),
-        pressed: true,
-        repeat: false,
-        modifiers: Modifiers::NONE,
-    }
-}
-
-#[test]
-fn a_question_with_options_draws_the_title_the_why_numbered_chips_and_something_else() {
-    let panel = Panel::new(ASKING, 420.0);
-    for text in [
-        "Post the Slack follow-up",
-        "The owner wanted it out today",
-        "NEEDS YOU",
-        "Post it",
-        "Skip it (recommended)",
-        "Draft only",
-        "Ask Sam",
-        "Later",
-        "Something else",
-        "1",
-        "2",
-        "3",
-        "4",
-    ] {
-        assert!(panel.drawn(text), "{text:?} not drawn in {:?}", panel.texts);
-    }
-    assert!(!panel.drawn("5") && !panel.drawn("Answer") && !panel.drawn("Done"));
-}
-
-#[test]
-fn the_chips_sit_under_the_title_text_and_the_first_one_lines_up_with_it() {
-    let panel = Panel::new(ASKING, 420.0);
-    let title = panel.texts.iter().find(|(text, _)| text == "Post the Slack follow-up").unwrap().1;
-    let label = panel.texts.iter().find(|(text, _)| text == "NEEDS YOU").unwrap().1;
-    let why = panel.texts.iter().find(|(text, _)| text.starts_with("The owner")).unwrap().1;
-    let number = panel.texts.iter().find(|(text, _)| text == "1").unwrap().1;
-    assert!(label.bottom() <= title.top() + 0.5 && title.bottom() <= number.top());
-    assert!(why.left() > label.right(), "the why sits right of the label on the same row");
-    assert!((why.center().y - label.center().y).abs() < 2.0);
-    assert_eq!(title.left(), label.left());
-    let chip_left = number.left() - 12.0;
-    assert!(
-        (chip_left - title.left()).abs() < 0.6,
-        "chip at {chip_left}, title at {}",
-        title.left()
-    );
-}
-
-#[test]
-fn clicking_an_option_sends_its_exact_text_and_something_else_asks_for_the_reply_box() {
-    for (label, want) in [
-        ("Post it", Action::Pick("Post it".to_owned())),
-        ("Skip it (recommended)", Action::Pick("Skip it".to_owned())),
-        ("Later", Action::Pick("Later".to_owned())),
-        ("Something else", Action::Answer),
-    ] {
-        let mut panel = Panel::new(ASKING, 420.0);
-        let at = panel.center_of(label);
-        assert_eq!(panel.click(at), Some(want), "{label}");
-    }
-}
-
-#[test]
-fn a_question_with_no_options_offers_done_not_now_and_something_else() {
-    let mut panel = Panel::new(LONG, 420.0);
-    for text in ["Done", "Not now", "Something else", "1", "2"] {
-        assert!(panel.drawn(text), "{text:?} not drawn in {:?}", panel.texts);
-    }
-    let at = panel.center_of("Not now");
-    assert_eq!(panel.click(at), Some(Action::Pick("Not now".to_owned())));
-}
-
-#[test]
-fn two_waiting_questions_keep_the_plain_answer_button() {
-    let text = format!("{ASKING}- Another one -- options: A | B\n");
-    let mut panel = Panel::new(&text, 420.0);
-    assert!(panel.drawn("Answer") && !panel.drawn("Something else"));
-    let at = panel.center_of("Answer");
-    assert_eq!(panel.click(at), Some(Action::Answer));
-}
-
-#[test]
-fn a_digit_picks_while_the_pointer_is_over_the_card_and_nothing_else_holds_the_keys() {
-    let mut panel = Panel::new(ASKING, 420.0);
-    let over = panel.center_of("Post the Slack follow-up");
-    panel.frame(vec![Event::PointerMoved(over)]);
-    assert_eq!(panel.frame(vec![key(egui::Key::Num2)]), Some(Action::Pick("Skip it".to_owned())));
-    assert_eq!(panel.frame(vec![key(egui::Key::Num1)]), Some(Action::Pick("Post it".to_owned())));
-    assert_eq!(panel.frame(vec![key(egui::Key::Num5)]), None, "there is no fifth key");
-}
-
-#[test]
-fn a_digit_does_nothing_off_the_card_or_while_the_terminal_or_a_text_box_holds_the_keys() {
-    let mut off = Panel::new(ASKING, 420.0);
-    off.frame(vec![Event::PointerMoved(pos2(1.0, 890.0))]);
-    assert_eq!(off.frame(vec![key(egui::Key::Num1)]), None, "pointer away");
-
-    let mut terminal = Panel::new(ASKING, 420.0);
-    let over = terminal.center_of("Post the Slack follow-up");
-    terminal.holds_keys = true;
-    terminal.frame(Vec::new());
-    terminal.frame(vec![Event::PointerMoved(over)]);
-    assert_eq!(terminal.frame(vec![key(egui::Key::Num1)]), None, "something else holds the keys");
-}
-
-#[test]
-fn a_clicked_card_takes_the_digits_even_with_the_pointer_away() {
-    let mut panel = Panel::new(ASKING, 420.0);
-    let blank = pos2(385.0, panel.center_of("Post the Slack follow-up").y);
-    panel.click(blank);
-    panel.frame(vec![Event::PointerMoved(pos2(1.0, 890.0))]);
-    assert_eq!(
-        panel.frame(vec![key(egui::Key::Num3)]),
-        Some(Action::Pick("Draft only".to_owned()))
-    );
-}
-
-#[test]
-fn no_answer_chip_text_overlaps_or_leaves_the_card_at_any_width() {
-    for width in [200.0, 240.0, 300.0, 420.0, 640.0] {
-        let panel = Panel::new(ASKING, width);
-        for (index, (a, a_rect)) in panel.texts.iter().enumerate() {
-            assert!(a_rect.right() <= width + 0.5, "{a:?} runs past the card at {width}");
-            for (b, b_rect) in &panel.texts[index + 1..] {
-                assert!(
-                    !a_rect.shrink(0.5).intersects(b_rect.shrink(0.5)),
-                    "{a:?} {a_rect:?} overlaps {b:?} {b_rect:?} at {width}"
-                );
-            }
-        }
-    }
-}
 
 fn recap_report(state: &str) -> Ledger {
     let done = state == "done";
@@ -762,9 +613,6 @@ fn the_needs_you_report_draws_the_board_top_to_bottom() {
     let order = [
         "Link each recap line to its cast, and backfill old rows",
         "\u{25cf} Needs you \u{b7} updated 4 min ago",
-        "NEEDS YOU",
-        "When should step 3 run?",
-        "Pause after step 2 (recommended)",
         "Now",
         "Backfill step 2 is running",
         "Build",
@@ -776,31 +624,18 @@ fn the_needs_you_report_draws_the_board_top_to_bottom() {
     ];
     let tops: Vec<f32> = order.iter().map(|text| at(text)).collect();
     assert!(tops.windows(2).all(|pair| pair[0] <= pair[1] + 0.5), "{order:?} {tops:?}");
-    for text in [
-        "Let it all run now",
-        "Pause right now",
-        "Something else",
-        "waits on your answer",
-        "200, people empty",
-    ] {
+    for text in ["waits on your answer", "200, people empty"] {
         assert!(panel.drawn(text), "{text:?} in {:?}", panel.texts);
     }
+    for text in ["NEEDS YOU", "When should step 3 run?", "Let it all run now", "Something else"] {
+        assert!(!panel.drawn(text), "{text:?} drawn in {:?}", panel.texts);
+    }
     assert!(panel.drawn("4% \u{b7} about 9h 46m left"), "{:?}", panel.texts);
-    assert!(panel.drawn("Step 2 keeps running until you answer"));
     assert!(!panel.drawn("recap-people-backfill"), "the Now line took the job, no second card");
     for stage in ["Build", "Ship", "Backfill", "Verify"] {
         assert!(panel.drawn(stage), "{stage:?} bar");
     }
     assert!(!panel.drawn("Step 3 of 4"));
-}
-
-#[test]
-fn the_board_options_answer_with_their_exact_text() {
-    let mut panel = recap_panel("needs_you", 520.0);
-    let at = panel.center_of("Pause after step 2 (recommended)");
-    assert_eq!(panel.click(at), Some(Action::Pick("Pause after step 2".to_owned())));
-    let at = panel.center_of("Let it all run now");
-    assert_eq!(panel.click(at), Some(Action::Pick("Let it all run now".to_owned())));
 }
 
 #[test]
@@ -914,14 +749,10 @@ fn assert_clean(panel: &Panel, width: f32) {
 }
 
 #[test]
-fn the_links_card_sits_under_the_title_and_above_the_needs_you_card() {
+fn the_links_card_sits_under_the_title_and_the_question_is_not_in_the_panel() {
     let panel = with_links(ASKING, 420.0, five_links());
-    let goal = top_of(&panel, "Ship it");
-    let links = top_of(&panel, "LINKS");
-    let needs = top_of(&panel, "NEEDS YOU");
-    assert!(goal < links && links < needs, "{goal} < {links} < {needs}");
-    let fold = panel.texts.iter().find(|(text, _)| text == "Show all 5").unwrap().1;
-    assert!(needs - fold.bottom() > 40.0, "the card ends well above the question card");
+    assert!(top_of(&panel, "Ship it") < top_of(&panel, "LINKS"));
+    assert!(!panel.drawn("NEEDS YOU"));
     assert!(panel.drawn("5"), "the count tag");
 }
 
@@ -951,7 +782,6 @@ fn the_card_lists_the_newest_three_with_kind_tags_and_meta_then_show_all_expands
     }
     assert!(panel.drawn(&format!("claude.ai \u{b7} for: {QUESTION} \u{b7} 12m ago")));
     assert!(panel.drawn("github.com \u{b7} 40m ago"));
-    let after = top_of(&panel, "NEEDS YOU");
     let at = panel.center_of("Show all 5");
     panel.click(at);
     assert!(panel.state.all_links);
@@ -959,7 +789,6 @@ fn the_card_lists_the_newest_three_with_kind_tags_and_meta_then_show_all_expands
         assert!(panel.drawn(shown), "{shown}");
     }
     assert!(panel.drawn("Issue") && panel.drawn("Web"));
-    assert!(top_of(&panel, "NEEDS YOU") > after + 80.0, "the rows pushed the question down");
     assert!(!panel.drawn("Show all 5") && panel.drawn("Show less"));
     let at = panel.center_of("Show less");
     panel.click(at);
@@ -1024,39 +853,6 @@ fn a_click_on_a_title_opens_the_link_and_the_copy_button_asks_for_the_address_to
         Some(Action::CopyLink("https://claude.ai/artifact/abc".to_owned()))
     );
     assert_eq!(panel.opened.len(), 1, "copying does not open");
-}
-
-#[test]
-fn the_needs_you_card_says_read_first_for_the_link_sent_with_its_question_only() {
-    let mut panel = with_links(ASKING, 520.0, five_links());
-    let label = panel.texts.iter().find(|(text, _)| text == "Read first:").unwrap().1;
-    let title = panel
-        .texts
-        .iter()
-        .filter(|(text, _)| text == "Split options compared")
-        .map(|(_, rect)| *rect)
-        .nth(1)
-        .expect("the title in the question card too");
-    assert!(title.left() > label.right() && (title.center().y - label.center().y).abs() < 2.0);
-    assert!(label.top() > top_of(&panel, "NEEDS YOU"));
-    panel.opened.clear();
-    panel.click(title.center());
-    assert_eq!(panel.opened, ["https://claude.ai/artifact/abc"]);
-
-    let mut other = LinkBoard::default();
-    other.absorb(&shared("https://a.dev/1", "For something else", Some("Another question?"), 5));
-    other.absorb(&shared("https://a.dev/2", "For nobody", None, 4));
-    let panel = with_links(ASKING, 520.0, other);
-    assert!(!panel.drawn("Read first:"));
-}
-
-#[test]
-fn the_read_first_line_never_overlaps_at_any_width() {
-    for width in [200.0, 240.0, 300.0, 420.0, 640.0] {
-        let panel = with_links(ASKING, width, five_links());
-        assert!(panel.drawn("Read first:"), "{width}");
-        assert_clean(&panel, width);
-    }
 }
 
 #[test]
@@ -1167,14 +963,12 @@ fn merged_and_closed_links_sit_in_a_folded_group_at_the_bottom_and_stay_out_of_t
 #[test]
 fn a_click_on_the_group_header_opens_it_and_a_second_click_folds_it_again() {
     let mut panel = with_links(ASKING, 520.0, with_archive());
-    let before = top_of(&panel, "NEEDS YOU");
     let at = panel.center_of("Merged and closed (2)");
     panel.click(at);
     assert!(panel.state.archive_links);
     for shown in ["#9 fix: round totals", "#7 Export fails", "Merged", "Closed"] {
         assert!(panel.drawn(shown), "{shown}");
     }
-    assert!(top_of(&panel, "NEEDS YOU") > before + 80.0, "the rows pushed the question down");
     assert!(top_of(&panel, "Merged and closed (2)") < top_of(&panel, "#9 fix: round totals"));
     assert_clean(&panel, 520.0);
     let at = panel.center_of("Merged and closed (2)");

@@ -96,7 +96,7 @@ pub(crate) fn plain_enter(event: &egui::Event) -> bool {
     )
 }
 
-fn composer_id() -> Id {
+pub(crate) fn composer_id() -> Id {
     Id::new("agent-composer")
 }
 
@@ -340,6 +340,7 @@ mod tests {
                     review: None,
                     pr: None,
                     due: None,
+                    ask: None,
                     profile: "Builder",
                     face: None,
                     turn: Turn::Finished,
@@ -351,7 +352,7 @@ mod tests {
                     column,
                     &crate::reader_rows::Rows::default(),
                     state,
-                    facts,
+                    &facts,
                 );
             });
         });

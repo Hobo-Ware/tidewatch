@@ -586,27 +586,26 @@ mod tests {
         let mut card = Card::new(true);
         assert!(card.at("Progress").is_some() && card.at("History").is_some());
         assert!(card.at("This branch").is_none(), "Progress hides the scope switch");
-        assert!(card.at("Something else").is_some());
+        assert!(card.at("Write it").is_some());
         let history = card.at("History").unwrap();
         card.click(history);
         assert_eq!(card.state.chosen, Some(Side::History));
         assert!(card.at("This branch").is_some(), "History brings its own header back");
-        assert!(card.at("Something else").is_none());
+        assert!(card.at("Write it").is_none());
         let progress = card.at("Progress").unwrap();
         card.click(progress);
         assert_eq!(card.state.chosen, Some(Side::Progress));
-        assert!(card.at("Something else").is_some());
+        assert!(card.at("Write it").is_some());
     }
 
     #[test]
-    fn a_stale_question_is_not_asked_and_the_state_line_says_the_progress_is_old() {
+    fn a_stale_ledger_says_the_progress_is_old_and_the_panel_never_asks() {
         let mut card = Card::new(true);
         card.ledger.updated_ms = Some(-480_000);
         card.frame(Vec::new());
-        assert!(card.at("Something else").is_some());
+        assert!(card.at("Pick one").is_none(), "the question is the Reader's card now");
         card.stale = true;
         card.frame(Vec::new());
-        assert!(card.at("Something else").is_none());
         assert!(card.at("Pick one").is_none());
         let line = card.texts.iter().map(|(drawn, _)| drawn.as_str());
         assert!(
@@ -684,22 +683,6 @@ mod tests {
         card.last_turn = None;
         card.frame(Vec::new());
         assert_eq!(dot_pixels(&card), 0);
-    }
-
-    #[test]
-    fn something_else_in_the_card_reaches_the_caller() {
-        let mut card = Card::new(true);
-        let answer = card.at("Something else").unwrap();
-        let button = |pressed| Event::PointerButton {
-            pos: answer,
-            button: PointerButton::Primary,
-            pressed,
-            modifiers: Modifiers::NONE,
-        };
-        card.frame(vec![Event::PointerMoved(answer)]);
-        card.frame(vec![button(true)]);
-        card.frame(vec![button(false)]);
-        assert_eq!(card.out.progress, Some(progress_view::Action::Answer));
     }
 
     fn picture() -> Arc<Avatar> {
