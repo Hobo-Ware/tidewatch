@@ -102,7 +102,6 @@ pub(crate) struct Sources {
     pub(crate) repos: Vec<String>,
     pub(crate) repo: usize,
     pub(crate) profiles: Vec<(String, String)>,
-    pub(crate) can_change: bool,
 }
 
 fn group_kind(group: Group) -> &'static str {
@@ -165,13 +164,19 @@ pub(crate) fn items(sources: &Sources, platform: Platform) -> Vec<Item> {
         kind: "profile",
         target: Target::Profile(id.clone()),
     });
-    let change = sources.can_change.then(|| Item {
+    let change = Item {
         label: "Change this tab...".to_owned(),
         keys: String::new(),
         kind: "tabs",
         target: Target::ChangeTab,
-    });
-    commands.chain(tabs).chain(repos).chain(repo_menu).chain(change).chain(profiles).collect()
+    };
+    commands
+        .chain(tabs)
+        .chain(repos)
+        .chain(repo_menu)
+        .chain(std::iter::once(change))
+        .chain(profiles)
+        .collect()
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -257,7 +262,6 @@ mod tests {
             repos: vec!["web".into()],
             repo: 0,
             profiles: vec![("builder".into(), "Builder".into())],
-            can_change: true,
         }
     }
 
@@ -318,12 +322,10 @@ mod tests {
     }
 
     #[test]
-    fn change_this_tab_is_listed_only_when_the_tab_can_change() {
-        let listed = |sources: &Sources| {
-            items(sources, Platform::Mac).iter().any(|item| item.target == Target::ChangeTab)
-        };
-        assert!(listed(&sources()));
-        assert!(!listed(&Sources { can_change: false, ..sources() }));
+    fn change_this_tab_is_always_listed() {
+        let listed =
+            items(&sources(), Platform::Mac).iter().any(|item| item.target == Target::ChangeTab);
+        assert!(listed);
     }
 
     #[test]

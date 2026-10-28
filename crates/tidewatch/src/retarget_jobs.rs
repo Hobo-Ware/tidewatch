@@ -1,8 +1,11 @@
 //! The blocking work of changing what a tab runs, on `Jobs` threads: the look inside the shell
-//! tabs for an agent session, and one change (scan again, plan, end the agent with `end_session_in`
-//! when it runs, get the new agent ready). The window swaps the tab's pane when it lands.
+//! tabs for an agent session, and one change (scan again, look at the folder the session runs in,
+//! plan, end the agent with `end_session_in` when it runs, get the new agent ready there). The
+//! window swaps the tab's pane and moves it to the repo's group when it lands.
 
 use std::ffi::OsString;
+use std::path::Path;
+use std::process::Command;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -16,22 +19,33 @@ use tidewatch_core::listener::Listener;
 use tidewatch_core::paths::TidewatchPaths;
 use tidewatch_core::profiles::Profiles;
 use tidewatch_core::trust_apply::Grant;
+use tidewatch_core::worktree;
 
 use crate::jobs::Jobs;
+use crate::repo::Repo;
 use crate::restore_jobs::{ReopenSpec, Reopened, run_reopen};
-use crate::retarget::{Plan, Refusal, Source, Start, Subject, Target, plan};
+use crate::retarget::{
+    AgentPlan, Failure, Folder, Landing, Plan, Source, Start, Subject, Target, is_inside, plan,
+};
 use crate::shell_agents::{Detected, Probe};
 
 pub(crate) enum Done {
     Detected(Vec<(u64, Detected)>),
     DetectFailed,
     Retargeted(Box<Retargeted>),
-    Refused { tab: u64, refusal: Refusal },
+    /// Not yet: the change goes ahead when the turn ends or the tab settles.
+    Held {
+        tab: u64,
+    },
+    Failed {
+        tab: u64,
+        failure: Failure,
+    },
 }
 
 pub(crate) enum Retargeted {
-    Agent(Reopened),
-    Shell { tab: u64, cli: Cli, session_id: String },
+    Agent { opened: Box<Reopened>, landing: Landing, note: Option<String> },
+    Shell { tab: u64, remembered: Option<(Cli, String)> },
 }
 
 pub(crate) fn detect(
@@ -80,26 +94,20 @@ pub(crate) fn retarget(jobs: &Jobs<Done>, ctx: &egui::Context, request: Request)
     jobs.spawn(ctx, move || run_retarget(&RealSystem::new(), &ScanEnv::from_env(), &request));
 }
 
-fn refused(tab: u64, refusal: Refusal) -> Done {
-    Done::Refused { tab, refusal }
+fn stopped(tab: u64, failure: Failure) -> Done {
+    if failure.waits() { Done::Held { tab } } else { Done::Failed { tab, failure } }
 }
 
-fn end_refusal(refusal: EndRefusal) -> Refusal {
-    match refusal {
-        EndRefusal::Gone | EndRefusal::Stdusk | EndRefusal::NotConfirmed => Refusal::Gone,
-        EndRefusal::Working => Refusal::MidTurn,
-        EndRefusal::SignalFailed => Refusal::SignalFailed,
-        EndRefusal::ScanFailed => Refusal::ScanFailed,
-    }
-}
-
+/// `Ok(true)` once the agent is stopped, `Ok(false)` when it was gone before it could be. An agent
+/// that ignores the signal is ended with its terminal, which the window drops when the change lands.
 fn end_it(
     system: &dyn System,
     env: &ScanEnv,
     request: &Request,
     session: &Session,
-) -> Result<(), Refusal> {
-    let running = session.running().ok_or(Refusal::NothingRunning)?;
+    pid: u32,
+) -> Result<bool, Failure> {
+    let Some(running) = session.running() else { return Ok(false) };
     let ending = EndRequest {
         cli: session.cli,
         pid: running.pid,
@@ -109,22 +117,53 @@ fn end_it(
         allow_working: request.interrupt,
     };
     let agents = request.profiles.agent_table();
-    let shells = [request.subject.shell_pid];
-    match end_session_in(Scope::Inside(&shells), system, env, &agents, &ending, request.wait) {
-        Ended::Exited => Ok(()),
-        Ended::StillRunning => Err(Refusal::WillNotEnd { secs: request.wait.as_secs() }),
-        Ended::Refused(refusal) => Err(end_refusal(refusal)),
+    match end_session_in(Scope::Inside(&[pid]), system, env, &agents, &ending, request.wait) {
+        Ended::Exited | Ended::StillRunning | Ended::Refused(EndRefusal::SignalFailed) => Ok(true),
+        Ended::Refused(EndRefusal::Working) => Err(Failure::MidTurn),
+        Ended::Refused(EndRefusal::ScanFailed) => Err(Failure::ScanFailed),
+        Ended::Refused(_) => Ok(false),
     }
 }
 
+fn current_branch(dir: &Path) -> Option<String> {
+    let out = Command::new("git")
+        .arg("-C")
+        .arg(dir)
+        .args(["symbolic-ref", "--quiet", "--short", "HEAD"])
+        .output()
+        .ok()?;
+    let branch = String::from_utf8_lossy(&out.stdout).trim().to_owned();
+    (out.status.success() && !branch.is_empty()).then_some(branch)
+}
+
+fn probe_folder(paths: &TidewatchPaths, dir: &Path) -> Folder {
+    let Some(repo) = Repo::discover_main(dir) else { return Folder::default() };
+    let branch = current_branch(dir);
+    let made_by_tidewatch =
+        worktree::is_made_by_tidewatch(paths, &repo.root, dir, branch.as_deref());
+    Folder { main: Some(repo.root), branch, made_by_tidewatch }
+}
+
 fn run_retarget(system: &dyn System, env: &ScanEnv, request: &Request) -> Done {
+    (0..3)
+        .find_map(|_| attempt(system, env, request))
+        .unwrap_or(Done::Failed { tab: request.subject.tab, failure: Failure::Changed })
+}
+
+/// One go at the change; `None` when the agent was gone before it could be stopped, so the next
+/// go looks again.
+fn attempt(system: &dyn System, env: &ScanEnv, request: &Request) -> Option<Done> {
     let subject = &request.subject;
     let agents = request.profiles.agent_table();
-    let Some(scanned) = scan_in_shells(system, env, &agents, &[subject.shell_pid]) else {
-        return refused(subject.tab, Refusal::ScanFailed);
+    let session = match subject.shell_pid {
+        Some(pid) => {
+            let Some(scanned) = scan_in_shells(system, env, &agents, &[pid]) else {
+                return Some(Done::Failed { tab: subject.tab, failure: Failure::ScanFailed });
+            };
+            scanned.into_iter().find(|(shell, _)| *shell == pid).map(|(_, session)| session)
+        }
+        None => None,
     };
-    let session =
-        scanned.into_iter().find(|(shell, _)| *shell == subject.shell_pid).map(|(_, s)| s);
     let stored = request.remembered.clone().or_else(|| {
         let id = subject.known_session_id.clone()?;
         Some((subject.cli?, id))
@@ -134,52 +173,66 @@ fn run_retarget(system: &dyn System, env: &ScanEnv, request: &Request) -> Done {
         (None, Some((cli, id))) => Source::Stored { cli: *cli, session_id: id },
         (None, None) => Source::Nothing,
     };
-    let planned = plan(
+    let cwd = session.as_ref().map_or_else(|| subject.dir.clone(), |found| found.cwd.clone());
+    let folder = if is_inside(&cwd, &subject.dir) {
+        Folder::default()
+    } else {
+        probe_folder(&request.paths, &cwd)
+    };
+    let planned = match plan(
         &request.target,
         source,
         subject,
+        &folder,
         (&request.profiles, &agents, &request.installed),
         request.interrupt,
-    );
-    let planned = match planned {
+    ) {
         Ok(planned) => planned,
-        Err(refusal) => return refused(subject.tab, refusal),
+        Err(failure) => return Some(stopped(subject.tab, failure)),
     };
-    if let Some(session) = &session
-        && let Err(refusal) = end_it(system, env, request, session)
-    {
-        return refused(subject.tab, refusal);
+    if let (Some(session), Some(pid)) = (&session, subject.shell_pid) {
+        match end_it(system, env, request, session, pid) {
+            Ok(true) => {}
+            Ok(false) => return None,
+            Err(failure) => return Some(stopped(subject.tab, failure)),
+        }
     }
-    match planned {
-        Plan::Shell { cli, session_id } => {
-            Done::Retargeted(Box::new(Retargeted::Shell { tab: subject.tab, cli, session_id }))
+    Some(match planned {
+        Plan::Shell { remembered } => {
+            Done::Retargeted(Box::new(Retargeted::Shell { tab: subject.tab, remembered }))
         }
         Plan::Agent(agent) => {
-            let (session_id, fresh) = match agent.start {
+            let AgentPlan { agent: cli, profile_id, profile, start, landing, note } = *agent;
+            let (session_id, fresh) = match start {
                 Start::Resume(id) => (id, false),
                 Start::Fresh => (String::new(), true),
             };
-            let reopened = run_reopen(&ReopenSpec {
+            let opened = run_reopen(&ReopenSpec {
                 paths: request.paths.clone(),
                 tab: subject.tab,
-                repo: subject.repo.clone(),
-                worktree: subject.worktree.clone(),
-                dir: agent.cwd,
-                agent: agent.agent,
-                profile_id: agent.profile_id,
-                profile: agent.profile,
+                repo: landing.repo.clone(),
+                worktree: landing.worktree.clone(),
+                dir: landing.dir.clone(),
+                agent: cli,
+                profile_id,
+                profile,
                 session_id,
                 fresh,
                 remote: subject.remote,
+                yolo_anywhere: true,
                 meeseeks: None,
                 typed: None,
                 path_var: request.path_var.clone(),
                 listener: request.listener.clone(),
                 trust: request.trust.clone(),
             });
-            Done::Retargeted(Box::new(Retargeted::Agent(reopened)))
+            Done::Retargeted(Box::new(Retargeted::Agent {
+                opened: Box::new(opened),
+                landing,
+                note,
+            }))
         }
-    }
+    })
 }
 
 #[cfg(test)]

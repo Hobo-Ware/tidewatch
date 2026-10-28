@@ -1,30 +1,33 @@
 //! Changing what a tab runs, the window's side: look inside the shell tabs for an agent session
 //! (on a job, a few seconds apart, only while the window shows), build what the popover needs from
-//! the tab, start a change on a job and swap the tab's pane when it lands. The tab keeps its id, its
-//! place, its worktree and its folder.
+//! the tab, start a change on a job and swap the tab's pane when it lands. The tab keeps its id and
+//! its place; when the session runs in another folder the tab follows it, into that repo's group
+//! (added to the window when it is not open).
 
 use std::path::PathBuf;
 use std::time::Duration;
 
 use stdusk_core::terminal::PtyTerm;
-use tidewatch_core::agents::Level;
 use tidewatch_core::elsewhere::Cli;
 use tidewatch_core::prepare::Prepared;
 use tidewatch_core::status::AgentStatus;
 
 use super::Tidewatch;
-use crate::change_tab::{self, Card, Change, Facts, Pick, Running, TabKind};
+use crate::catalog::Availability;
+use crate::change_tab::{self, Card, Change, Facts, Pick, Running};
 use crate::change_tab_view::{self, Outcome};
 use crate::new_tab_meeseeks::builder_entry;
 use crate::pane::{Body, Pane};
 use crate::pty::{spawn_agent, spawn_shell_noted, spawn_typed};
+use crate::repo::Workspace;
 use crate::restore_glue::{Spawn, reopened};
-use crate::retarget::Subject;
+use crate::retarget::{Landing, Subject, Window, is_inside, same_folder};
 use crate::retarget_glue::{DevOpen, Open};
 use crate::retarget_jobs::{self, Done, Request, Retargeted};
 use crate::shell_agents::{EVERY_S, Probe, Remembered};
-use crate::tabs::Tab;
+use crate::tabs::{MAIN_TITLE, Tab};
 use crate::takeover::END_WAIT_S;
+use crate::welcome::shown_path;
 
 const NOT_READY: &str = "Profiles are still loading.";
 
@@ -42,8 +45,21 @@ fn foreground_busy(pane: &Pane<PtyTerm>) -> bool {
     term.foreground_pgid().zip(term.shell_pid()).is_some_and(|(fg, sh)| fg != sh)
 }
 
-pub(crate) fn kind_of(tab: &Tab<Pane<PtyTerm>>) -> TabKind {
-    change_tab::tab_kind(&tab.pane, tab.pinned)
+fn is_agent_tab(pane: &Pane<PtyTerm>) -> bool {
+    matches!(pane.body, Body::Shell(_))
+        && pane
+            .agent
+            .as_ref()
+            .is_some_and(|agent| agent.launched.is_some() && agent.meeseeks.is_none())
+}
+
+fn replaces(body: &Body<PtyTerm>) -> Option<&'static str> {
+    match body {
+        Body::Draft(_) => Some("The form in this tab is discarded."),
+        Body::Failed(_) => Some("The failure is cleared."),
+        Body::Poofed(_) => Some("The summary is replaced."),
+        _ => None,
+    }
 }
 
 impl Tidewatch {
@@ -51,7 +67,7 @@ impl Tidewatch {
         self.tabs
             .items()
             .iter()
-            .filter(|tab| !tab.pinned && is_shell(&tab.pane))
+            .filter(|tab| is_shell(&tab.pane))
             .filter_map(|tab| Some(Probe { tab: tab.id, shell_pid: live_pid(&tab.pane)? }))
             .collect()
     }
@@ -79,7 +95,7 @@ impl Tidewatch {
             ctx.request_repaint_after(Duration::from_secs_f64(after.max(EVERY_S / 4.0)));
         }
         self.retry_waiting(now, ctx);
-        self.drive_dev_change_tab();
+        self.drive_dev_change_tab(now, ctx);
     }
 
     fn first_shell_tab(&self) -> Option<u64> {
@@ -117,10 +133,10 @@ impl Tidewatch {
 
     fn subject_of(&self, id: u64) -> Option<Subject> {
         let tab = self.tabs.items().iter().find(|tab| tab.id == id)?;
-        let shell_pid = live_pid(&tab.pane).or_else(|| {
-            let Body::Shell(term) = &tab.pane.body else { return None };
-            term.shell_pid()
-        })?;
+        let shell_pid = match &tab.pane.body {
+            Body::Shell(term) => live_pid(&tab.pane).or_else(|| term.shell_pid()),
+            _ => None,
+        };
         let agent = tab.pane.agent.as_ref();
         let launched = agent.and_then(|agent| agent.launched.as_ref());
         Some(Subject {
@@ -131,8 +147,19 @@ impl Tidewatch {
             dir: self.tab_dir(tab),
             cli: agent.and_then(|agent| Cli::from_id(&agent.run.agent_id)),
             known_session_id: launched.and_then(|launched| launched.session_id.clone()),
-            foreground_busy: agent.is_none() && foreground_busy(&tab.pane),
             remote: launched.is_some_and(|launched| launched.remote),
+            pinned: tab.pinned,
+            settling: matches!(tab.pane.body, Body::Creating | Body::Removing),
+            window: Window {
+                repos: self.workspaces.iter().map(|w| w.dir().to_path_buf()).collect(),
+                shown: self
+                    .tabs
+                    .items()
+                    .iter()
+                    .filter(|other| other.id != id)
+                    .map(|other| self.tab_dir(other))
+                    .collect(),
+            },
         })
     }
 
@@ -146,11 +173,8 @@ impl Tidewatch {
                 detail: detail_of(profile.model.as_deref(), profile.effective_effort()),
                 agent_id: agent.id.clone(),
                 cli_name: agent.name.clone(),
-                unsupported: Level::ALL
-                    .into_iter()
-                    .filter(|level| agent.level_args(*level).is_none())
-                    .collect(),
-                below_yolo: agent.highest_level_below_yolo(),
+                unsupported: crate::retarget::unsupported_levels(agent),
+                installed: matches!(self.catalog.availability(&agent.id), Availability::Found(_)),
                 level: profile.level,
             })
             .collect()
@@ -158,7 +182,6 @@ impl Tidewatch {
 
     pub(super) fn change_facts(&self, id: u64) -> Option<Facts> {
         let tab = self.tabs.items().iter().find(|tab| tab.id == id)?;
-        change_tab::availability(kind_of(tab)).ok()?;
         let agent = tab.pane.agent.as_ref();
         let name_of = |cli: &str| {
             self.catalog.agent(cli).map_or_else(|| cli.to_owned(), |agent| agent.name.clone())
@@ -193,8 +216,20 @@ impl Tidewatch {
             .map(|agent| agent.run.agent_id.clone())
             .or_else(|| found.map(|found| found.cli.id().to_owned()))
             .or_else(|| stored.as_ref().map(|(cli, _)| cli.clone()));
+        let own_dir = self.tab_dir(tab);
+        let follows = found
+            .map(|found| found.cwd.as_path())
+            .filter(|cwd| !cwd.as_os_str().is_empty() && !is_inside(cwd, &own_dir))
+            .map(|cwd| {
+                shown_path(cwd, self.paths.as_ref().and_then(|paths| paths.root().parent()))
+            });
         Some(Facts {
             tab: id,
+            follows,
+            busy: agent.is_none() && found.is_none() && foreground_busy(&tab.pane),
+            meeseeks: agent.is_some_and(|agent| agent.meeseeks.is_some()),
+            pinned: tab.pinned,
+            replaces: replaces(&tab.pane.body),
             in_worktree: tab.pane.worktree.is_some(),
             running,
             stored,
@@ -223,6 +258,7 @@ impl Tidewatch {
         let Open { tab, mut pick } = open;
         match change_tab_view::show(ctx, &facts, &mut pick) {
             Some(Outcome::Close) => {}
+            Some(Outcome::SetUp) => self.open_profiles_settings(),
             Some(Outcome::Change { interrupt }) => {
                 if let Some(change) = change_tab::change(&facts, &pick, interrupt) {
                     let now = ctx.input(|input| input.time);
@@ -234,11 +270,6 @@ impl Tidewatch {
             }
             None => self.retarget.open = Some(Open { tab, pick }),
         }
-    }
-
-    pub(super) fn can_change(&self) -> bool {
-        let tab = &self.tabs.items()[self.tabs.active()];
-        change_tab::availability(kind_of(tab)).is_ok()
     }
 
     pub(super) fn open_change_active(&mut self, ctx: &egui::Context) {
@@ -288,34 +319,52 @@ impl Tidewatch {
         match done {
             Done::Detected(found) => self.retarget.agents.finish(found),
             Done::DetectFailed => self.retarget.agents.failed(),
-            Done::Refused { tab, refusal } => {
+            Done::Held { tab } => {
                 self.retarget.busy.remove(&tab);
-                let waits = refusal == crate::retarget::Refusal::MidTurn
-                    && self.retarget.waiting.contains_key(&tab);
-                if waits {
-                    if let Some((_, at)) = self.retarget.waiting.get_mut(&tab) {
-                        *at = now + EVERY_S;
-                    }
-                    ctx.request_repaint_after(Duration::from_secs_f64(EVERY_S));
-                } else {
-                    self.retarget.waiting.remove(&tab);
-                    self.show_toast(format!("The tab was not changed: {}.", refusal.text()), ctx);
+                if let Some((_, at)) = self.retarget.waiting.get_mut(&tab) {
+                    *at = now + EVERY_S;
                 }
+                ctx.request_repaint_after(Duration::from_secs_f64(EVERY_S));
+            }
+            Done::Failed { tab, failure } => {
+                self.retarget.busy.remove(&tab);
+                self.retarget.waiting.remove(&tab);
+                self.show_toast(failure.text(), ctx);
             }
             Done::Retargeted(landed) => match *landed {
-                Retargeted::Agent(done) => {
-                    self.retarget.busy.remove(&done.tab);
-                    self.retarget.waiting.remove(&done.tab);
-                    self.retarget.agents.forget(done.tab);
-                    self.swap_to_agent(done, now, ctx);
+                Retargeted::Agent { opened, landing, note } => {
+                    self.retarget.busy.remove(&opened.tab);
+                    self.retarget.waiting.remove(&opened.tab);
+                    self.retarget.agents.forget(opened.tab);
+                    self.follow_to_group(opened.tab, &landing, ctx);
+                    self.swap_to_agent(*opened, now, ctx);
+                    if let Some(note) = note {
+                        self.show_toast(note, ctx);
+                    }
                 }
-                Retargeted::Shell { tab, cli, session_id } => {
+                Retargeted::Shell { tab, remembered } => {
                     self.retarget.busy.remove(&tab);
                     self.retarget.waiting.remove(&tab);
-                    self.swap_to_shell(tab, Remembered { cli, session_id }, ctx);
+                    self.swap_to_shell(
+                        tab,
+                        remembered.map(|(cli, session_id)| Remembered { cli, session_id }),
+                        ctx,
+                    );
                 }
             },
         }
+    }
+
+    fn follow_to_group(&mut self, id: u64, landing: &Landing, ctx: &egui::Context) {
+        let Some(tab) = self.tabs.items().iter().find(|tab| tab.id == id) else { return };
+        if tab.pinned || same_folder(&landing.repo, self.workspaces[tab.group].dir()) {
+            return;
+        }
+        let group = match self.group_of_dir(&landing.repo) {
+            Some(group) => group,
+            None => self.add_workspace(Workspace::open_in_main_repo(&landing.repo), ctx),
+        };
+        self.tabs.move_to_group(id, group);
     }
 
     fn swap_to_agent(
@@ -336,46 +385,75 @@ impl Tidewatch {
         let spawn = Spawn { agent: &agent, typed: &typed, shell: &shell };
         let mut toasts = Vec::new();
         reopened(done, &mut self.tabs, &spawn, now, &mut toasts);
+        if let Some(tab) = self.tabs.get_mut(id).filter(|tab| tab.pinned) {
+            MAIN_TITLE.clone_into(&mut tab.title);
+        }
         for text in toasts {
             self.show_toast(text, ctx);
         }
         ctx.request_repaint();
     }
 
-    fn swap_to_shell(&mut self, id: u64, kept: Remembered, ctx: &egui::Context) {
-        let name = self
-            .catalog
-            .agent(kept.cli.id())
-            .map_or_else(|| kept.cli.id().to_owned(), |a| a.name.clone());
+    fn swap_to_shell(&mut self, id: u64, kept: Option<Remembered>, ctx: &egui::Context) {
         let Some(index) = self.tabs.index_of(id) else { return };
         let dir = self.tab_dir(&self.tabs.items()[index]);
-        let note = format!("{name} stopped. Change this tab to resume the conversation.");
+        let name = kept.as_ref().map(|kept| {
+            self.catalog
+                .agent(kept.cli.id())
+                .map_or_else(|| kept.cli.id().to_owned(), |agent| agent.name.clone())
+        });
+        let note = name
+            .as_ref()
+            .map(|name| format!("{name} stopped. Change this tab to resume the conversation."));
         let tab = &mut self.tabs.items_mut()[index];
-        if tab.pane.agent.take().is_some() {
-            let fresh = Body::Shell(spawn_shell_noted(ctx, &dir, Some(&note)));
-            if let Body::Shell(old) = std::mem::replace(&mut tab.pane.body, fresh) {
-                std::thread::spawn(move || drop(old));
-            }
-            "shell".clone_into(&mut tab.title);
-            if let Some(listener) = self.hooks.listener() {
-                listener.unregister_tab(id);
-            }
-            self.views.remove(&id);
+        let fresh = Body::Shell(spawn_shell_noted(ctx, &dir, note.as_deref()));
+        if let Body::Shell(old) = std::mem::replace(&mut tab.pane.body, fresh) {
+            std::thread::spawn(move || drop(old));
         }
-        self.retarget.agents.remember(id, kept);
-        self.show_toast(
-            format!("{name} stopped. Change this tab to resume the conversation."),
-            ctx,
-        );
+        let was_agent = tab.pane.agent.take().is_some();
+        if was_agent && !tab.pinned {
+            "shell".clone_into(&mut tab.title);
+        }
+        if was_agent && let Some(listener) = self.hooks.listener() {
+            listener.unregister_tab(id);
+        }
+        self.views.remove(&id);
+        match (kept, note) {
+            (Some(kept), Some(note)) => {
+                self.retarget.agents.remember(id, kept);
+                self.show_toast(note, ctx);
+            }
+            _ => self.retarget.agents.forget(id),
+        }
     }
 
-    fn drive_dev_change_tab(&mut self) {
+    fn elsewhere_tab(&self) -> Option<u64> {
+        self.tabs.items().iter().find_map(|tab| {
+            let found = self.retarget.agents.found(tab.id)?;
+            let apart =
+                !found.cwd.as_os_str().is_empty() && !is_inside(&found.cwd, &self.tab_dir(tab));
+            (is_shell(&tab.pane) && apart).then_some(tab.id)
+        })
+    }
+
+    fn drive_dev_change_tab(&mut self, now: f64, ctx: &egui::Context) {
         let Some(dev) = self.retarget.dev_open else { return };
-        let found = self.tabs.items().iter().find(|tab| match dev {
-            DevOpen::Agent => !tab.pinned && kind_of(tab) == TabKind::Agent,
-            DevOpen::Shell => !tab.pinned && kind_of(tab) == TabKind::Shell,
-        });
-        let Some(id) = found.map(|tab| tab.id) else { return };
+        let found = match dev {
+            DevOpen::Elsewhere | DevOpen::ElsewhereChange => self.elsewhere_tab(),
+            DevOpen::Agent => self
+                .tabs
+                .items()
+                .iter()
+                .find(|tab| !tab.pinned && is_agent_tab(&tab.pane))
+                .map(|tab| tab.id),
+            DevOpen::Shell => self
+                .tabs
+                .items()
+                .iter()
+                .find(|tab| !tab.pinned && is_shell(&tab.pane))
+                .map(|tab| tab.id),
+        };
+        let Some(id) = found else { return };
         if self.change_facts(id).is_none() || !self.catalog.is_loaded() {
             return;
         }
@@ -389,8 +467,14 @@ impl Tidewatch {
         self.tabs.select_id(id);
         let entries = self.catalog.entries();
         let builder = |cli: &str| builder_entry(cli, &entries).map(|(key, _)| key);
-        if let Some(facts) = self.change_facts(id) {
-            self.retarget.open = Some(Open { tab: id, pick: Pick::start(&facts, &builder) });
+        let Some(facts) = self.change_facts(id) else { return };
+        let pick = Pick::start(&facts, &builder);
+        if dev == DevOpen::ElsewhereChange {
+            if let Some(change) = change_tab::change(&facts, &pick, false) {
+                self.start_retarget(change, now, ctx);
+            }
+        } else {
+            self.retarget.open = Some(Open { tab: id, pick });
         }
     }
 }

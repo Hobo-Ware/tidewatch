@@ -310,6 +310,7 @@ impl Host {
                         session_id: session_id.clone(),
                         fresh: false,
                         remote: saved.remote,
+                        yolo_anywhere: false,
                         meeseeks: saved.meeseeks.as_deref().cloned(),
                         typed: match how {
                             Resume::Run => None,

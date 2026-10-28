@@ -18,6 +18,10 @@ pub(crate) struct Open {
 pub(crate) enum DevOpen {
     Agent,
     Shell,
+    /// A shell tab whose found session runs in another folder: open the popover.
+    Elsewhere,
+    /// The same, then press Change.
+    ElsewhereChange,
 }
 
 impl DevOpen {
@@ -25,6 +29,8 @@ impl DevOpen {
         match text {
             Some("agent") => Some(Self::Agent),
             Some("shell") => Some(Self::Shell),
+            Some("elsewhere") => Some(Self::Elsewhere),
+            Some("elsewhere:change") => Some(Self::ElsewhereChange),
             _ => None,
         }
     }

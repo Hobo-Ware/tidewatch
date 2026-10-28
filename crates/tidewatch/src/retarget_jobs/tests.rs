@@ -10,6 +10,7 @@ use tidewatch_core::worktree;
 use super::*;
 use crate::pane::{Body, Pane};
 use crate::restore_glue::{Spawn, reopened};
+use crate::retarget::Window;
 use crate::tabs::Tabs;
 
 const ID: &str = "7d198e16-6157-439f-a389-34a4951f5dd8";
@@ -22,6 +23,8 @@ struct Fake {
     sent: RefCell<Vec<u32>>,
     exits: Cell<bool>,
     gone: Cell<bool>,
+    looks: Cell<u32>,
+    vanishes_after: Cell<Option<u32>>,
 }
 
 impl Fake {
@@ -31,12 +34,24 @@ impl Fake {
             sent: RefCell::new(Vec::new()),
             exits: Cell::new(true),
             gone: Cell::new(false),
+            looks: Cell::new(0),
+            vanishes_after: Cell::new(None),
         }
     }
 }
 
 impl System for Fake {
     fn ps(&self) -> Option<String> {
+        self.looks.set(self.looks.get() + 1);
+        if self.vanishes_after.get().is_some_and(|after| self.looks.get() > after) {
+            return Some(
+                self.ps
+                    .lines()
+                    .filter(|line| !line.contains(" claude"))
+                    .collect::<Vec<_>>()
+                    .join("\n"),
+            );
+        }
         Some(self.ps.clone())
     }
 
@@ -80,6 +95,7 @@ struct World {
     repo: PathBuf,
     paths: TidewatchPaths,
     worktree: tidewatch_core::worktree::Worktree,
+    other: tidewatch_core::worktree::Worktree,
     path_var: OsString,
 }
 
@@ -108,21 +124,31 @@ fn world() -> World {
     let claude = bin.join("claude");
     std::fs::write(&claude, "#!/bin/sh\nexit 0\n").unwrap();
     std::fs::set_permissions(&claude, std::fs::Permissions::from_mode(0o755)).unwrap();
-    let transcripts =
-        home.join(".claude").join("projects").join(claude_project_dir_name(&worktree.path));
+    let other = worktree::add(&paths, &repo).unwrap();
+    for folder in [&worktree.path, &other.path] {
+        transcript(&home, folder);
+    }
+    World { _dir: dir, home, repo, paths, worktree, other, path_var: bin.into_os_string() }
+}
+
+fn transcript(home: &Path, folder: &Path) {
+    let transcripts = home.join(".claude").join("projects").join(claude_project_dir_name(folder));
     std::fs::create_dir_all(&transcripts).unwrap();
     std::fs::write(
         transcripts.join(format!("{ID}.jsonl")),
         "{\"type\":\"user\",\"permissionMode\":\"auto\",\"message\":{\"role\":\"user\",\"content\":\"hi\"}}\n",
     )
     .unwrap();
-    World { _dir: dir, home, repo, paths, worktree, path_var: bin.into_os_string() }
 }
 
 fn registry(w: &World, pid: u32, start: &str, status: &str) {
+    registry_in(w, &w.worktree.path, pid, start, status);
+}
+
+fn registry_in(w: &World, cwd: &Path, pid: u32, start: &str, status: &str) {
     let text = format!(
         r#"{{"pid":{pid},"sessionId":"{ID}","cwd":"{}","startedAt":1792157013549,"procStart":"{start}","kind":"interactive","name":"n","status":"{status}"}}"#,
-        w.worktree.path.display()
+        cwd.display()
     );
     let path = w.home.join(format!(".claude/sessions/{pid}.json"));
     std::fs::create_dir_all(path.parent().unwrap()).unwrap();
@@ -147,14 +173,16 @@ fn request(w: &World, target: Target, interrupt: bool) -> Request {
     Request {
         subject: Subject {
             tab: 7,
-            shell_pid: SHELL,
+            shell_pid: Some(SHELL),
             repo: w.repo.clone(),
             worktree: Some(w.worktree.clone()),
             dir: w.worktree.path.clone(),
             cli: None,
             known_session_id: None,
-            foreground_busy: false,
             remote: false,
+            pinned: false,
+            settling: false,
+            window: Window { repos: vec![w.repo.clone()], shown: Vec::new() },
         },
         target,
         remembered: None,
@@ -215,26 +243,40 @@ fn a_one_shot_run_in_a_shell_is_not_detected() {
     assert_eq!(found, []);
 }
 
-fn spawned(done: Done, w: &World) -> (Tabs<Pane<u8>>, u64, Vec<String>) {
+struct Landed {
+    tabs: Tabs<Pane<u8>>,
+    id: u64,
+    lines: Vec<String>,
+    dirs: Vec<PathBuf>,
+    landing: Landing,
+}
+
+fn landed(done: Done, w: &World) -> Landed {
     let Done::Retargeted(landed) = done else { panic!("expected a change to land") };
-    let Retargeted::Agent(reopened_done) = *landed else { panic!("expected an agent") };
+    let Retargeted::Agent { opened, landing, .. } = *landed else { panic!("expected an agent") };
     let mut tabs: Tabs<Pane<u8>> = Tabs::new(Pane::shell(0));
     let id = tabs.push_in(
         0,
         "calm-comet".to_owned(),
         Pane { body: Body::Creating, worktree: Some(w.worktree.clone()), agent: None },
     );
-    let reopened_done = Reopened { tab: id, ..reopened_done };
+    let opened = Reopened { tab: id, ..*opened };
     let lines = RefCell::new(Vec::new());
-    let agent = |_: &Path, p: &tidewatch_core::prepare::Prepared| {
+    let dirs = RefCell::new(Vec::new());
+    let agent = |dir: &Path, p: &tidewatch_core::prepare::Prepared| {
         lines.borrow_mut().push(p.launch.shell_line());
+        dirs.borrow_mut().push(dir.to_path_buf());
         1u8
     };
     let typed = |_: &Path, _: &tidewatch_core::prepare::Prepared| 2u8;
     let shell = |_: &Path, _: Option<&str>| 3u8;
     let spawn = Spawn { agent: &agent, typed: &typed, shell: &shell };
-    reopened(reopened_done, &mut tabs, &spawn, 1.0, &mut Vec::new());
-    let lines = lines.into_inner();
+    reopened(opened, &mut tabs, &spawn, 1.0, &mut Vec::new());
+    Landed { tabs, id, lines: lines.into_inner(), dirs: dirs.into_inner(), landing }
+}
+
+fn spawned(done: Done, w: &World) -> (Tabs<Pane<u8>>, u64, Vec<String>) {
+    let Landed { tabs, id, lines, .. } = landed(done, w);
     (tabs, id, lines)
 }
 
@@ -276,7 +318,7 @@ fn a_session_mid_turn_is_left_running_until_it_is_told_to_cut_in() {
     registry(&w, AGENT, START, "busy");
     let system = Fake::new(&ps());
     let done = run_retarget(&system, &env(&w), &request(&w, builder(None), false));
-    assert!(matches!(done, Done::Refused { tab: 7, refusal: Refusal::MidTurn }));
+    assert!(matches!(done, Done::Held { tab: 7 }));
     assert_eq!(*system.sent.borrow(), Vec::<u32>::new());
     let done = run_retarget(&system, &env(&w), &request(&w, builder(None), true));
     assert!(matches!(done, Done::Retargeted(_)));
@@ -284,29 +326,144 @@ fn a_session_mid_turn_is_left_running_until_it_is_told_to_cut_in() {
 }
 
 #[test]
-fn a_process_that_will_not_end_leaves_the_tab_as_it_was() {
+fn a_process_that_will_not_end_is_ended_with_its_terminal_and_the_change_goes_ahead() {
     let w = world();
     registry(&w, AGENT, START, "idle");
     let system = Fake::new(&ps());
     system.exits.set(false);
     let done = run_retarget(&system, &env(&w), &request(&w, builder(None), false));
-    assert!(matches!(done, Done::Refused { refusal: Refusal::WillNotEnd { .. }, .. }));
-    assert_eq!(*system.sent.borrow(), [AGENT], "signalled once, never harder");
+    assert!(matches!(done, Done::Retargeted(_)));
+    assert_eq!(
+        *system.sent.borrow(),
+        [AGENT],
+        "signalled once; dropping the terminal does the rest"
+    );
 }
 
 #[test]
-fn a_session_whose_id_cannot_be_read_is_never_replaced_by_a_new_one() {
+fn an_agent_that_stopped_by_itself_meanwhile_is_not_an_error() {
     let w = world();
     registry(&w, AGENT, START, "idle");
-    let path = w.home.join(format!(".claude/sessions/{AGENT}.json"));
-    let text = std::fs::read_to_string(&path).unwrap().replace(ID, "x");
-    std::fs::write(&path, text).unwrap();
+    let system = Fake::new(&ps());
+    system.vanishes_after.set(Some(1));
+    let done = run_retarget(&system, &env(&w), &request(&w, builder(None), false));
+    assert_eq!(*system.sent.borrow(), Vec::<u32>::new(), "nothing is signalled that is gone");
+    let (_, _, lines) = spawned(done, &w);
+    assert!(!lines[0].contains("--resume"), "{}", lines[0]);
+}
+
+#[test]
+fn a_tab_with_no_terminal_changes_into_a_new_agent_in_its_folder() {
+    let w = world();
     let system = Fake::new(&ps());
     let mut asked = request(&w, builder(None), false);
-    asked.subject.foreground_busy = true;
+    asked.subject.shell_pid = None;
     let done = run_retarget(&system, &env(&w), &asked);
-    assert!(matches!(done, Done::Refused { refusal: Refusal::ShellBusy, .. }));
-    assert_eq!(*system.sent.borrow(), Vec::<u32>::new());
+    let (_, _, lines) = spawned(done, &w);
+    assert!(!lines[0].contains("--resume"), "{}", lines[0]);
+}
+
+#[test]
+fn yolo_runs_exactly_as_picked_in_a_tab_with_no_worktree() {
+    let w = world();
+    let plain = w.home.join("notes");
+    std::fs::create_dir_all(&plain).unwrap();
+    transcript(&w.home, &plain);
+    registry_in(&w, &plain, AGENT, START, "idle");
+    let mut asked = request(&w, builder(Some(Level::Yolo)), false);
+    asked.subject.worktree = None;
+    asked.subject.dir = w.repo.clone();
+    let done = run_retarget(&Fake::new(&ps()), &env(&w), &asked);
+    let result = landed(done, &w);
+    let tab = result.tabs.items().iter().find(|tab| tab.id == result.id).unwrap();
+    let launched = tab.pane.agent.as_ref().unwrap().launched.as_ref().unwrap();
+    assert_eq!(launched.level, Level::Yolo);
+    assert!(result.lines[0].contains("--dangerously-skip-permissions"), "{}", result.lines[0]);
+    assert!(result.lines[0].starts_with(&format!("claude --resume {ID} ")), "{}", result.lines[0]);
+}
+
+#[test]
+fn a_tab_still_being_set_up_waits() {
+    let w = world();
+    let mut asked = request(&w, builder(None), false);
+    asked.subject.settling = true;
+    let done = run_retarget(&Fake::new(&ps()), &env(&w), &asked);
+    assert!(matches!(done, Done::Held { tab: 7 }));
+}
+
+#[test]
+fn a_shell_tab_in_one_worktree_follows_a_session_that_runs_in_another() {
+    let w = world();
+    registry_in(&w, &w.other.path, AGENT, START, "idle");
+    let system = Fake::new(&ps());
+    let done = run_retarget(&system, &env(&w), &request(&w, builder(None), false));
+    assert_eq!(*system.sent.borrow(), [AGENT], "only the agent is signalled, never the shell");
+    let result = landed(done, &w);
+    let tab = result.tabs.items().iter().find(|tab| tab.id == result.id).unwrap();
+    assert_eq!(
+        tab.pane.worktree.as_ref(),
+        Some(&w.other),
+        "the tab owns the folder of the session"
+    );
+    assert_eq!(tab.title, w.other.name());
+    assert_eq!(result.landing.repo, w.repo);
+    assert_eq!(
+        result.dirs,
+        std::slice::from_ref(&w.other.path),
+        "the agent starts in the session's folder"
+    );
+    assert!(result.lines[0].starts_with(&format!("claude --resume {ID} ")), "{}", result.lines[0]);
+    let launched = tab.pane.agent.as_ref().unwrap().launched.as_ref().unwrap();
+    assert_eq!(launched.session_id.as_deref(), Some(ID));
+    assert_eq!(launched.dir.as_deref(), Some(w.other.path.as_path()));
+    assert!(w.worktree.path.join(".git").exists(), "the old folder is left on disk");
+    let listed = worktree::list(&w.repo).unwrap();
+    assert!(listed.iter().any(|entry| entry.path == w.worktree.path), "git still lists it");
+    assert!(listed.iter().any(|entry| entry.path == w.other.path));
+}
+
+#[test]
+fn a_folder_another_tab_shows_is_followed_without_owning_it() {
+    let w = world();
+    registry_in(&w, &w.other.path, AGENT, START, "idle");
+    let mut asked = request(&w, builder(None), false);
+    asked.subject.window.shown = vec![w.other.path.clone()];
+    let done = run_retarget(&Fake::new(&ps()), &env(&w), &asked);
+    let result = landed(done, &w);
+    let tab = result.tabs.items().iter().find(|tab| tab.id == result.id).unwrap();
+    assert_eq!(
+        tab.pane.worktree, None,
+        "closing this tab never removes a folder another tab shows"
+    );
+    assert_eq!(result.dirs, std::slice::from_ref(&w.other.path));
+    assert!(result.lines[0].starts_with(&format!("claude --resume {ID} ")));
+}
+
+#[test]
+fn a_session_in_a_repo_that_is_not_open_adds_that_repo_and_one_in_a_plain_folder_stays_put() {
+    let w = world();
+    let elsewhere = w.home.join("code").join("lib");
+    std::fs::create_dir_all(&elsewhere).unwrap();
+    git(&elsewhere, &["init", "-q", "-b", "main"]);
+    git(&elsewhere, &["commit", "-q", "--allow-empty", "-m", "init"]);
+    let elsewhere = elsewhere.canonicalize().unwrap();
+    transcript(&w.home, &elsewhere);
+    registry_in(&w, &elsewhere, AGENT, START, "idle");
+    let done = run_retarget(&Fake::new(&ps()), &env(&w), &request(&w, builder(None), false));
+    let result = landed(done, &w);
+    assert_eq!(result.landing.repo, elsewhere);
+    assert_eq!(result.landing.worktree, None);
+    assert_eq!(result.dirs, std::slice::from_ref(&elsewhere));
+
+    let plain = w.home.join("notes");
+    std::fs::create_dir_all(&plain).unwrap();
+    transcript(&w.home, &plain);
+    registry_in(&w, &plain, AGENT, START, "idle");
+    let done = run_retarget(&Fake::new(&ps()), &env(&w), &request(&w, builder(None), false));
+    let result = landed(done, &w);
+    assert_eq!(result.landing.repo, w.repo, "a folder outside git stays in the tab's own group");
+    assert_eq!(result.dirs, [plain]);
+    assert!(result.lines[0].starts_with(&format!("claude --resume {ID} ")));
 }
 
 #[test]
@@ -316,8 +473,8 @@ fn a_shell_target_ends_the_agent_and_hands_back_the_session_id() {
     let system = Fake::new(&ps());
     let done = run_retarget(&system, &env(&w), &request(&w, Target::Shell, false));
     let Done::Retargeted(landed) = done else { panic!("expected the agent to end") };
-    let Retargeted::Shell { tab, cli, session_id } = *landed else { panic!("expected a shell") };
-    assert_eq!((tab, cli, session_id.as_str()), (7, Cli::Claude, ID));
+    let Retargeted::Shell { tab, remembered } = *landed else { panic!("expected a shell") };
+    assert_eq!((tab, remembered), (7, Some((Cli::Claude, ID.to_owned()))));
     assert_eq!(*system.sent.borrow(), [AGENT]);
 }
 

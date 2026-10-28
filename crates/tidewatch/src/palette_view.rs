@@ -201,7 +201,6 @@ mod tests {
                 repos: vec!["web".into()],
                 repo: 0,
                 profiles: vec![("builder".into(), "Builder".into())],
-                can_change: true,
             };
             let mut harness = Self {
                 ctx: egui::Context::default(),
