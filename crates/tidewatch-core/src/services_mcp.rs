@@ -90,7 +90,7 @@ pub fn tool_definitions() -> Vec<Value> {
     vec![
         json!({
             "name": LIST_TOOL,
-            "description": "List the repo's services (long-running processes Tidewatch keeps running next to you, such as a database proxy or a dev server) with their command, port, state, uptime and last exit code.",
+            "description": "List the repo's services (long-running processes Tidewatch keeps running next to you, such as a database proxy or a dev server) with their command, the port each one printed that it listens on, state, uptime and last exit code.",
             "inputSchema": { "type": "object", "properties": {}, "additionalProperties": false },
         }),
         json!({
@@ -101,7 +101,6 @@ pub fn tool_definitions() -> Vec<Value> {
                 "properties": {
                     "name": { "type": "string", "description": "A short unique name, at most 40 characters, such as `db` or `api`." },
                     "command": { "type": "string", "description": "The shell command to run in the repo's main checkout." },
-                    "port": { "type": "integer", "minimum": 1, "maximum": 65535, "description": "The port it listens on, if any." },
                     "autostart": { "type": "boolean", "description": "Start it whenever the repo opens in Tidewatch. Defaults to true." },
                 },
                 "required": ["name", "command"],
@@ -210,8 +209,6 @@ pub fn parse(tool: &str, args: &Map<String, Value>) -> Result<Call, Vec<String>>
             unknown_keys(args, &["name", "command", "port", "autostart"], &mut problems);
             let name = name_arg(args, &mut problems);
             let command = text_arg(args, "command", &mut problems);
-            let port = number_arg(args, "port", 1..=65_535, &mut problems)
-                .and_then(|port| u16::try_from(port).ok());
             let autostart = match args.get("autostart") {
                 None | Some(Value::Null) => true,
                 Some(Value::Bool(on)) => *on,
@@ -220,7 +217,7 @@ pub fn parse(tool: &str, args: &Map<String, Value>) -> Result<Call, Vec<String>>
                     true
                 }
             };
-            Call::Add(Service::new(&name, &command, port, autostart))
+            Call::Add(Service::new(&name, &command, autostart))
         }
         RESTART_TOOL | STOP_TOOL => {
             unknown_keys(args, &["name"], &mut problems);
@@ -283,6 +280,7 @@ impl Listed {
     #[must_use]
     pub fn new(
         service: &Service,
+        port: Option<u16>,
         word: Word,
         uptime_secs: Option<f64>,
         last_exit: Option<i32>,
@@ -290,7 +288,7 @@ impl Listed {
         Self {
             name: service.name.clone(),
             command: service.command.clone(),
-            port: service.port,
+            port,
             state: word.text(),
             uptime_secs: uptime_secs.map(|secs| secs as u64),
             last_exit,
@@ -315,8 +313,7 @@ pub fn house_block(services: &[Service]) -> Option<String> {
     }
     let mut lines = String::new();
     for service in services {
-        let port = service.port.map_or_else(String::new, |port| format!(", port {port}"));
-        let _ = writeln!(lines, "- `{}`: `{}`{port}", service.name, service.command);
+        let _ = writeln!(lines, "- `{}`: `{}`", service.name, service.command);
     }
     Some(format!(
         "## Repo services\n\nTidewatch keeps these long-running services of this repo running next to you. Use them; do not start a second copy in your own shell.\n\n{lines}\nTools: `{LIST_TOOL}` (state, uptime, last exit), `{LOG_TOOL}` (the last lines a service printed: read it before guessing why one fails), `{RESTART_TOOL}`, `{STOP_TOOL}` and `{ADD_TOOL}` (save and start a long-running process the work needs).\n"
@@ -381,12 +378,12 @@ mod tests {
             (
                 ADD_TOOL,
                 json!({"name": " db ", "command": "pscale connect shop main", "port": 3309}),
-                Call::Add(Service::new("db", "pscale connect shop main", Some(3309), true)),
+                Call::Add(Service::new("db", "pscale connect shop main", true)),
             ),
             (
                 ADD_TOOL,
                 json!({"name": "api", "command": "npm run dev", "autostart": false}),
-                Call::Add(Service::new("api", "npm run dev", None, false)),
+                Call::Add(Service::new("api", "npm run dev", false)),
             ),
             (RESTART_TOOL, json!({"name": "db"}), Call::Restart("db".into())),
             (STOP_TOOL, json!({"name": "db"}), Call::Stop("db".into())),
@@ -403,13 +400,23 @@ mod tests {
     }
 
     #[test]
+    fn a_port_an_older_agent_sends_is_accepted_and_ignored() {
+        let add = |port: Value| {
+            parse(ADD_TOOL, &args(&json!({"name": "a", "command": "b", "port": port})))
+        };
+        for port in [json!(3309), json!(0), json!(70000), json!("80")] {
+            assert_eq!(add(port.clone()), Ok(Call::Add(Service::new("a", "b", true))), "{port}");
+        }
+        let tools = tool_definitions();
+        let add_tool = tools.iter().find(|tool| tool["name"] == ADD_TOOL).unwrap();
+        assert!(add_tool["inputSchema"]["properties"]["port"].is_null());
+    }
+
+    #[test]
     fn every_problem_with_the_arguments_is_listed_at_once() {
         let cases = [
             (LIST_TOOL, json!({"x": 1}), 1),
             (ADD_TOOL, json!({}), 2),
-            (ADD_TOOL, json!({"name": "a", "command": "b", "port": 0}), 1),
-            (ADD_TOOL, json!({"name": "a", "command": "b", "port": 70000}), 1),
-            (ADD_TOOL, json!({"name": "a", "command": "b", "port": "80"}), 1),
             (ADD_TOOL, json!({"name": "a", "command": "b", "autostart": "yes"}), 1),
             (ADD_TOOL, json!({"name": 5, "command": ["x"], "extra": 1}), 3),
             (RESTART_TOOL, json!({}), 1),
@@ -473,8 +480,8 @@ mod tests {
 
     #[test]
     fn the_listing_is_json_with_every_field_or_a_line_when_empty() {
-        let db = Service::new("db", "pscale connect shop main --port 3309", Some(3309), true);
-        let listed = [Listed::new(&db, Word::Running, Some(8040.7), Some(1))];
+        let db = Service::new("db", "pscale connect shop main --port 3309", true);
+        let listed = [Listed::new(&db, Some(3309), Word::Running, Some(8040.7), Some(1))];
         let value: Value = serde_json::from_str(&list_text(&listed)).unwrap();
         let first = &value["services"][0];
         assert_eq!(first["name"], "db");
@@ -490,11 +497,11 @@ mod tests {
     fn the_house_block_names_each_service_and_the_tools_and_is_absent_without_services() {
         assert_eq!(house_block(&[]), None);
         let block = house_block(&[
-            Service::new("db", "pscale connect shop main --port 3309", Some(3309), true),
-            Service::new("api", "npm run dev", None, true),
+            Service::new("db", "pscale connect shop main --port 3309", true),
+            Service::new("api", "npm run dev", true),
         ])
         .unwrap();
-        assert!(block.contains("- `db`: `pscale connect shop main --port 3309`, port 3309"));
+        assert!(block.contains("- `db`: `pscale connect shop main --port 3309`\n"));
         assert!(block.contains("- `api`: `npm run dev`\n"));
         for tool in TOOLS {
             assert!(block.contains(tool), "{tool}");

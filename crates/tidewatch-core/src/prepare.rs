@@ -822,15 +822,11 @@ mod tests {
         let fx = Fixture::new();
         fx.run("claude", &profile("claude", Level::Edits), true, "", None).unwrap();
         assert!(!agent_style(&fx).contains("## Repo services"));
-        let db =
-            services::Service::new("db", "pscale connect shop main --port 3309", Some(3309), true);
+        let db = services::Service::new("db", "pscale connect shop main --port 3309", true);
         services::Store::update(&fx.paths, |store| store.add(Path::new("/work/web"), &db)).unwrap();
         fx.run("claude", &profile("claude", Level::Edits), true, "", None).unwrap();
         let text = agent_style(&fx);
-        assert!(
-            text.contains("- `db`: `pscale connect shop main --port 3309`, port 3309"),
-            "{text}"
-        );
+        assert!(text.contains("- `db`: `pscale connect shop main --port 3309`\n"), "{text}");
         assert!(text.contains("`service_log`") && text.contains("`restart_service`"));
         assert!(text.find("## Progress report") < text.find("## Repo services"));
     }

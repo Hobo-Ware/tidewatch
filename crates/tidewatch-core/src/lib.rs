@@ -106,6 +106,7 @@ pub mod run_marker;
 pub mod schedule;
 pub mod sent;
 pub mod service_log;
+pub mod service_port;
 pub mod service_supervisor;
 pub mod services;
 pub mod services_mcp;

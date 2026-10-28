@@ -7,7 +7,6 @@ use std::path::Path;
 use std::time::Duration;
 
 use egui::{Align, Layout, Rect, Sense, UiBuilder, pos2, vec2};
-use tidewatch_core::service_supervisor::Word;
 use tidewatch_core::services_mcp::{self, Call, ServiceCall};
 
 use super::terminal::{TerminalGrid, show_shell};
@@ -179,15 +178,15 @@ impl Tidewatch {
                 ui.label(egui::RichText::new(&row.line).size(TEXT_SECONDARY).color(brand::MUTED));
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                     ui.spacing_mut().item_spacing.x = 8.0;
-                    let running =
-                        matches!(row.word, Word::Running | Word::Starting | Word::Restarting);
-                    let (text, wanted) =
-                        if running { ("Stop", Command::Stop) } else { ("Start", Command::Start) };
-                    if quiet_button(ui, text, true, Size::Compact).clicked() {
-                        command = Some(wanted);
-                    }
-                    if quiet_button(ui, "Restart", true, Size::Compact).clicked() {
-                        command = Some(Command::Restart);
+                    if services_view::is_running(row.word) {
+                        if quiet_button(ui, "Stop", true, Size::Compact).clicked() {
+                            command = Some(Command::Stop);
+                        }
+                        if quiet_button(ui, "Restart", true, Size::Compact).clicked() {
+                            command = Some(Command::Restart);
+                        }
+                    } else if quiet_button(ui, "Start", true, Size::Compact).clicked() {
+                        command = Some(Command::Start);
                     }
                 });
             },
