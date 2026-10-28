@@ -9,7 +9,10 @@ use std::process::Command;
 
 use tempfile::TempDir;
 use tidewatch_core::paths::TidewatchPaths;
-use tidewatch_core::worktree::{self, BranchChoice, BranchOutcome, RemoveMode, WorktreeError};
+use tidewatch_core::removal_log;
+use tidewatch_core::worktree::{
+    self, BranchChoice, BranchOutcome, RemoveMode, Terms, Why, WorktreeError,
+};
 use tidewatch_core::worktree_safety::{Owner, Risk, Safety};
 
 struct Fixture {
@@ -306,7 +309,7 @@ fn leftovers_are_worktree_folders_without_an_open_tab() {
 }
 
 #[test]
-fn a_worktree_git_made_outside_tidewatch_is_a_leftover_without_a_branch() {
+fn a_worktree_git_made_outside_tidewatch_is_a_leftover_git_can_still_remove() {
     let f = fixture();
     let by_hand = f.paths.worktree_dir(&f.repo, "by-hand");
     fs::create_dir_all(by_hand.parent().unwrap()).unwrap();
@@ -315,8 +318,10 @@ fn a_worktree_git_made_outside_tidewatch_is_a_leftover_without_a_branch() {
     let left = worktree::leftovers(&f.paths, &[]);
     assert_eq!(left.len(), 1);
     assert_eq!(left[0].path, by_hand);
-    assert_eq!(left[0].branch, None);
-    assert_eq!(left[0].worktree(), None, "git cannot remove it without a recorded repository");
+    assert!(!left[0].recorded);
+    assert_eq!(left[0].branch.as_deref(), Some("hand"));
+    assert_eq!(left[0].repo.as_deref(), Some(f.repo.as_path()));
+    assert!(left[0].worktree().is_some());
 }
 
 fn forget_every_record(f: &Fixture) {
@@ -365,7 +370,7 @@ fn an_unrecorded_worktree_with_unsaved_work_is_ours_but_not_safe() {
 }
 
 #[test]
-fn an_unrecorded_worktree_on_a_branch_that_does_not_match_its_folder_stays_foreign() {
+fn an_unrecorded_worktree_on_a_branch_that_does_not_match_its_folder_is_listed_as_unrecorded() {
     let f = fixture();
     let odd = f.paths.worktree_dir(&f.repo, "mismatch");
     fs::create_dir_all(odd.parent().unwrap()).unwrap();
@@ -373,7 +378,210 @@ fn an_unrecorded_worktree_on_a_branch_that_does_not_match_its_folder_stays_forei
 
     let left = worktree::leftovers(&f.paths, &[]);
     assert_eq!(left.len(), 1);
+    assert!(!left[0].recorded);
+    assert_eq!(left[0].repo.as_deref(), Some(f.repo.as_path()));
+    assert_eq!(left[0].branch.as_deref(), Some("agent/other"));
+    assert!(left[0].worktree().is_some());
+}
+
+#[test]
+fn a_discarded_unrecorded_worktree_with_two_unpushed_commits_keeps_its_branch_at_the_same_commit() {
+    let f = fixture();
+    let odd = f.paths.worktree_dir(&f.repo, "by-hand");
+    fs::create_dir_all(odd.parent().unwrap()).unwrap();
+    git(&f.repo, &["worktree", "add", "-q", "-b", "hand", odd.to_str().unwrap()]);
+    for name in ["one.txt", "two.txt"] {
+        fs::write(odd.join(name), name).unwrap();
+        git(&odd, &["add", name]);
+        git(&odd, &["commit", "-q", "-m", name]);
+    }
+    let tip = git(&f.repo, &["rev-parse", "hand"]);
+
+    let found = worktree::leftovers(&f.paths, &[]).remove(0).worktree().expect("removable");
+    let terms =
+        Terms::new(BranchChoice::Delete, RemoveMode::Discard).why(Why::Leftover).spare_unique(true);
+    let outcome = worktree::remove_with(&f.paths, &found, &terms).unwrap();
+
+    assert_eq!(outcome, BranchOutcome::KeptCommits { commits: 2 });
+    assert!(!odd.exists());
+    assert_eq!(git(&f.repo, &["rev-parse", "hand"]), tip);
+    assert_only_main(&f.repo);
+    let logged = removal_log::load(&f.paths);
+    assert_eq!(logged.len(), 1);
+    assert_eq!((logged[0].branch.as_str(), logged[0].mode.as_str()), ("hand", "discard"));
+    assert_eq!(logged[0].sha.as_deref(), Some(tip.trim()));
+    assert!(logged[0].branch_kept);
+    assert_eq!(logged[0].why, "leftover worktree");
+}
+
+#[test]
+fn a_clean_unrecorded_worktree_loses_its_folder_and_its_branch() {
+    let f = fixture();
+    let odd = f.paths.worktree_dir(&f.repo, "by-hand");
+    fs::create_dir_all(odd.parent().unwrap()).unwrap();
+    git(&f.repo, &["worktree", "add", "-q", "-b", "hand", odd.to_str().unwrap()]);
+    fs::write(odd.join("wip.txt"), "wip").unwrap();
+
+    let found = worktree::leftovers(&f.paths, &[]).remove(0).worktree().expect("removable");
+    let terms =
+        Terms::new(BranchChoice::Delete, RemoveMode::Discard).why(Why::Leftover).spare_unique(true);
+    let outcome = worktree::remove_with(&f.paths, &found, &terms).unwrap();
+
+    assert!(matches!(outcome, BranchOutcome::Deleted { restore: Some(_) }), "{outcome:?}");
+    assert!(!odd.exists());
+    assert_only_main(&f.repo);
+    assert_eq!(branches(&f.repo), ["main"]);
+    assert_eq!(removal_log::load(&f.paths).len(), 1);
+}
+
+#[test]
+fn a_folder_that_is_a_repositorys_own_checkout_is_never_a_leftover() {
+    let f = fixture();
+    let own = f.paths.worktree_dir(&f.repo, "separate");
+    let git_dir = f.home.join("separate.git");
+    fs::create_dir_all(&own).unwrap();
+    git(&own, &["init", "-q", "-b", "main", &format!("--separate-git-dir={}", git_dir.display())]);
+    assert!(own.join(".git").is_file());
+
+    assert_eq!(worktree::leftovers(&f.paths, &[]), []);
+}
+
+#[test]
+fn a_folder_whose_repository_git_cannot_find_is_listed_without_a_worktree_to_remove() {
+    let f = fixture();
+    let dead = f.paths.worktree_dir(&f.repo, "dead");
+    fs::create_dir_all(&dead).unwrap();
+    fs::write(dead.join(".git"), "gitdir: /nowhere/at/all\n").unwrap();
+
+    let left = worktree::leftovers(&f.paths, &[]);
+    assert_eq!(left.len(), 1);
+    assert!(!left[0].recorded);
     assert_eq!(left[0].worktree(), None);
+}
+
+fn dead_folder(f: &Fixture) -> PathBuf {
+    let dead = f.paths.worktree_dir(&f.repo, "dead");
+    fs::create_dir_all(&dead).unwrap();
+    fs::write(dead.join(".git"), "gitdir: /nowhere/at/all\n").unwrap();
+    fs::write(dead.join("notes.txt"), "mine").unwrap();
+    dead
+}
+
+#[test]
+fn a_folder_git_cannot_read_is_logged_and_then_handed_to_the_trash_never_deleted() {
+    let f = fixture();
+    let dead = dead_folder(&f);
+    let trash = f.home.join("trash");
+    fs::create_dir_all(&trash).unwrap();
+
+    worktree::discard_unreadable(&f.paths, &dead, None, |path| {
+        assert_eq!(removal_log::load(&f.paths).len(), 1, "logged before it moves");
+        fs::rename(path, trash.join("dead")).map_err(|e| e.to_string())
+    })
+    .unwrap();
+
+    assert!(!dead.exists());
+    assert_eq!(fs::read_to_string(trash.join("dead").join("notes.txt")).unwrap(), "mine");
+    let logged = removal_log::load(&f.paths);
+    assert_eq!(logged.len(), 1);
+    assert_eq!((logged[0].path.as_path(), logged[0].mode.as_str()), (dead.as_path(), "discard"));
+    assert_eq!(logged[0].why, "leftover worktree");
+    assert!(logged[0].lost[0].contains("moved to the Trash"));
+}
+
+#[test]
+fn a_recorded_worktree_whose_gitdir_points_nowhere_is_logged_trashed_and_pruned() {
+    let f = fixture();
+    let made = worktree::add(&f.paths, &f.repo).unwrap();
+    let tip = git(&f.repo, &["rev-parse", &made.branch]);
+    fs::write(made.path.join(".git"), "gitdir: /nowhere/at/all\n").unwrap();
+    fs::write(made.path.join("notes.txt"), "mine").unwrap();
+    assert!(worktree::is_unreadable(&made.path));
+    assert!(matches!(worktree::inspect(&f.paths, &made, Owner::Nobody), Safety::Unknown(_)));
+    let trash = f.home.join("trash");
+    fs::create_dir_all(&trash).unwrap();
+
+    worktree::discard_unreadable(&f.paths, &made.path, Some(&made), |path| {
+        assert_eq!(removal_log::load(&f.paths).len(), 1, "logged before it moves");
+        fs::rename(path, trash.join("moved")).map_err(|e| e.to_string())
+    })
+    .unwrap();
+
+    assert!(!made.path.exists());
+    assert_eq!(fs::read_to_string(trash.join("moved").join("notes.txt")).unwrap(), "mine");
+    assert_only_main(&f.repo);
+    assert_eq!(git(&f.repo, &["rev-parse", &made.branch]), tip, "the branch stays");
+    let logged = removal_log::load(&f.paths);
+    assert_eq!(logged.len(), 1);
+    assert_eq!(
+        (logged[0].branch.as_str(), logged[0].mode.as_str()),
+        (made.branch.as_str(), "discard")
+    );
+    assert_eq!(logged[0].sha.as_deref(), Some(tip.trim()));
+    assert!(logged[0].branch_kept);
+    assert_eq!(worktree::leftovers(&f.paths, &[]), []);
+}
+
+#[test]
+fn a_recorded_unreadable_worktree_whose_repository_is_gone_is_still_trashed() {
+    let f = fixture();
+    let made = worktree::add(&f.paths, &f.repo).unwrap();
+    fs::write(made.path.join(".git"), "gitdir: /nowhere/at/all\n").unwrap();
+    fs::remove_dir_all(&f.repo).unwrap();
+    let trash = f.home.join("trash");
+    fs::create_dir_all(&trash).unwrap();
+
+    worktree::discard_unreadable(&f.paths, &made.path, Some(&made), |path| {
+        fs::rename(path, trash.join("moved")).map_err(|e| e.to_string())
+    })
+    .unwrap();
+
+    assert!(!made.path.exists());
+    assert_eq!(removal_log::load(&f.paths).len(), 1);
+}
+
+#[test]
+fn a_trash_that_fails_leaves_the_folder_in_place() {
+    let f = fixture();
+    let dead = dead_folder(&f);
+
+    let err =
+        worktree::discard_unreadable(&f.paths, &dead, None, |_| Err("no trash here".to_owned()))
+            .unwrap_err();
+
+    assert_eq!(err, WorktreeError::Io("no trash here".to_owned()));
+    assert!(dead.join("notes.txt").is_file());
+}
+
+#[test]
+fn a_folder_git_can_read_is_never_trashed_this_way() {
+    let f = fixture();
+    let made = worktree::add(&f.paths, &f.repo).unwrap();
+
+    let err = worktree::discard_unreadable(&f.paths, &made.path, Some(&made), |_| {
+        panic!("must not trash")
+    })
+    .unwrap_err();
+
+    assert!(matches!(err, WorktreeError::Git(_)), "{err}");
+    assert!(made.path.exists());
+    assert_eq!(removal_log::load(&f.paths), []);
+}
+
+#[test]
+fn an_unrecorded_worktree_of_a_bare_repository_is_removable() {
+    let f = fixture();
+    let bare = f.home.join("work").join("bare.git");
+    git(&f.home, &["clone", "-q", "--bare", f.repo.to_str().unwrap(), bare.to_str().unwrap()]);
+    let odd = f.paths.worktree_dir(&bare, "by-hand");
+    fs::create_dir_all(odd.parent().unwrap()).unwrap();
+    git(&bare, &["worktree", "add", "-q", "-b", "hand", odd.to_str().unwrap(), "main"]);
+
+    let left = worktree::leftovers(&f.paths, &[]);
+    assert_eq!(left.len(), 1);
+    assert_eq!(left[0].repo.as_deref(), Some(bare.as_path()));
+    let found = left[0].worktree().expect("removable");
+    assert_eq!(worktree::inspect(&f.paths, &found, Owner::Nobody), Safety::Safe);
 }
 
 #[test]

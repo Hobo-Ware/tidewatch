@@ -115,12 +115,22 @@ pub struct Terms {
     pub delivered: Option<String>,
     /// The agent tab being closed: once the removal succeeds it is noted in `closed-tabs.jsonl`.
     pub closed: Option<closed_tabs::Tab>,
+    /// With [`BranchChoice::Delete`]: keep the branch when it holds commits found nowhere else.
+    pub spare_unique: bool,
 }
 
 impl Terms {
     #[must_use]
     pub fn new(branch: BranchChoice, mode: RemoveMode) -> Self {
-        Self { branch, mode, why: Why::Other, owner: Owner::Nobody, delivered: None, closed: None }
+        Self {
+            branch,
+            mode,
+            why: Why::Other,
+            owner: Owner::Nobody,
+            delivered: None,
+            closed: None,
+            spare_unique: false,
+        }
     }
 
     #[must_use]
@@ -139,6 +149,11 @@ impl Terms {
     }
 
     #[must_use]
+    pub fn spare_unique(self, spare_unique: bool) -> Self {
+        Self { spare_unique, ..self }
+    }
+
+    #[must_use]
     pub fn delivered(self, delivered: Option<String>) -> Self {
         Self { delivered, ..self }
     }
@@ -153,6 +168,10 @@ pub enum BranchOutcome {
     },
     /// The worktree is gone but git would not delete the branch.
     DeleteFailed(String),
+    /// The branch stays because it holds commits that exist nowhere else.
+    KeptCommits {
+        commits: usize,
+    },
 }
 
 /// One entry of `git worktree list`.
@@ -168,20 +187,23 @@ pub struct Listed {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Leftover {
     pub path: PathBuf,
+    /// The branch it has checked out. `None` for a detached HEAD, or when git cannot read it.
     pub branch: Option<String>,
-    /// The repository it was made from, when the registry still has it.
+    /// The repository it belongs to. `None` only when git cannot read the folder.
     pub repo: Option<PathBuf>,
+    /// Whether the registry, or the `agent/<folder name>` rule, says Tidewatch made it.
+    pub recorded: bool,
 }
 
 impl Leftover {
-    /// The worktree to hand to [`inspect`] or [`remove`]. `None` when the registry has no record
-    /// of it, because git needs the repository to remove anything.
+    /// The worktree to hand to [`inspect`] or [`remove`]. `None` when git cannot name the
+    /// repository, because git needs it to remove anything. A detached HEAD has an empty branch.
     #[must_use]
     pub fn worktree(&self) -> Option<Worktree> {
         Some(Worktree {
             repo: self.repo.clone()?,
             path: self.path.clone(),
-            branch: self.branch.clone()?,
+            branch: self.branch.clone().unwrap_or_default(),
         })
     }
 }
@@ -433,21 +455,31 @@ fn object_exists(repo: &Path, id: &str) -> bool {
     succeeds(command)
 }
 
-/// Commits that live on the branch, or on the worktree's own HEAD, and nowhere else.
-fn unmerged_commits(worktree: &Worktree, delivered: Option<&str>) -> Result<usize, String> {
-    let delivered = delivered.filter(|id| object_exists(&worktree.repo, id));
+fn delivered_in(worktree: &Worktree, delivered: Option<&str>) -> Option<String> {
+    delivered.filter(|id| object_exists(&worktree.repo, id)).map(str::to_owned)
+}
+
+fn branch_only_commits(worktree: &Worktree, delivered: Option<&str>) -> Result<usize, String> {
+    if worktree.branch.is_empty() {
+        return Ok(0);
+    }
     let mut on_branch = git(&worktree.repo);
     on_branch
         .args(["rev-list", "--count", &worktree.branch, "--not"])
         .arg(format!("--exclude={}", worktree.branch))
         .args(["--branches", "--remotes", "--tags"])
-        .args(delivered);
-    let mut total = count_of(on_branch, "the commits on its branch")?;
+        .args(delivered_in(worktree, delivered));
+    count_of(on_branch, "the commits on its branch")
+}
+
+/// Commits that live on the branch, or on the worktree's own HEAD, and nowhere else.
+fn unmerged_commits(worktree: &Worktree, delivered: Option<&str>) -> Result<usize, String> {
+    let mut total = branch_only_commits(worktree, delivered)?;
     if worktree.path.exists() && confirm_worktree(worktree).is_ok() {
         let mut on_head = git(&worktree.path);
         on_head
             .args(["rev-list", "--count", "HEAD", "--not", "--branches", "--remotes", "--tags"])
-            .args(delivered);
+            .args(delivered_in(worktree, delivered));
         total += count_of(on_head, "the commits on its HEAD")?;
     }
     Ok(total)
@@ -459,11 +491,31 @@ fn rev_of(dir: &Path, rev: &str) -> Option<String> {
     run(command).ok().map(|out| out.trim().to_owned()).filter(|id| !id.is_empty())
 }
 
-fn allowed(safety: &Safety, branch: BranchChoice) -> bool {
+fn allowed(safety: &Safety, worktree: &Worktree, branch: BranchChoice) -> bool {
+    if worktree.branch.is_empty() {
+        return safety.is_safe();
+    }
     match branch {
         BranchChoice::Keep => safety.folder_is_safe(),
         BranchChoice::Delete => safety.is_safe(),
     }
+}
+
+/// What the branch choice comes to once the branch has been looked at: a detached HEAD has no
+/// branch to delete, and a branch with commits found nowhere else is kept. The count is carried
+/// when the branch is kept for that reason.
+fn settle_branch(worktree: &Worktree, terms: &Terms) -> (BranchChoice, Option<usize>) {
+    if worktree.branch.is_empty() {
+        return (BranchChoice::Keep, None);
+    }
+    if terms.branch == BranchChoice::Delete && terms.spare_unique {
+        return match branch_only_commits(worktree, terms.delivered.as_deref()) {
+            Ok(0) => (BranchChoice::Delete, None),
+            Ok(commits) => (BranchChoice::Keep, Some(commits)),
+            Err(_) => (BranchChoice::Keep, None),
+        };
+    }
+    (terms.branch, None)
 }
 
 /// [`remove_with`] on the strictest terms: nobody owns the worktree.
@@ -496,9 +548,11 @@ pub fn remove_watched(
     watch: &dyn Watch,
 ) -> Result<BranchOutcome, WorktreeError> {
     let safety = inspect_watched(worktree, terms.delivered.as_deref(), watch);
-    if terms.mode == RemoveMode::Safe && !allowed(&safety, terms.branch) {
+    if terms.mode == RemoveMode::Safe && !allowed(&safety, worktree, terms.branch) {
         return Err(WorktreeError::Unsafe(safety));
     }
+    let (branch, only_here) = settle_branch(worktree, terms);
+    let terms = &Terms { branch, ..terms.clone() };
     let entry = removal_entry(worktree, terms, &safety);
     removal_log::append(paths, &entry)
         .map_err(|e| WorktreeError::Io(format!("cannot write the removal log: {e}")))?;
@@ -514,7 +568,10 @@ pub fn remove_watched(
         return Err(error);
     }
     let outcome = match terms.branch {
-        BranchChoice::Keep => BranchOutcome::Kept,
+        BranchChoice::Keep => match only_here {
+            Some(commits) => BranchOutcome::KeptCommits { commits },
+            None => BranchOutcome::Kept,
+        },
         BranchChoice::Delete => {
             let force = terms.mode == RemoveMode::Discard || terms.delivered.is_some();
             delete_branch(worktree, force, entry.restore_command())
@@ -534,6 +591,63 @@ pub fn remove_watched(
         let _ = std::fs::remove_dir(parent);
     }
     Ok(outcome)
+}
+
+/// Whether `path` is a folder git cannot read: a `.git` link that points nowhere, a repository
+/// that is gone. Nothing in it can be inspected, so only [`discard_unreadable`] can remove it.
+#[must_use]
+pub fn is_unreadable(path: &Path) -> bool {
+    path.is_dir() && git_dirs(path).is_none()
+}
+
+/// Logged, then trashed, never deleted; refused once git can read the folder, since [`inspect`]
+/// would then list the loss.
+pub fn discard_unreadable(
+    paths: &TidewatchPaths,
+    path: &Path,
+    known: Option<&Worktree>,
+    trash: impl FnOnce(&Path) -> Result<(), String>,
+) -> Result<(), WorktreeError> {
+    if !path.is_dir() {
+        return Err(WorktreeError::Io(format!("{} is not a folder", path.display())));
+    }
+    if git_dirs(path).is_some() {
+        return Err(WorktreeError::Git("git can read this folder now".to_owned()));
+    }
+    let lost = vec![
+        "a folder git could not read, so what it held is unknown; moved to the Trash".to_owned(),
+    ];
+    let entry = match known {
+        Some(worktree) => {
+            let terms = Terms::new(BranchChoice::Keep, RemoveMode::Discard).why(Why::Leftover);
+            removal_log::Entry { lost, ..removal_entry(worktree, &terms, &Safety::Safe) }
+        }
+        None => removal_log::Entry {
+            at: removal_log::Entry::now(),
+            why: Why::Leftover.text().to_owned(),
+            path: path.to_path_buf(),
+            repo: PathBuf::new(),
+            branch: String::new(),
+            sha: None,
+            head: None,
+            mode: "discard".to_owned(),
+            branch_kept: true,
+            lost,
+        },
+    };
+    removal_log::append(paths, &entry)
+        .map_err(|e| WorktreeError::Io(format!("cannot write the removal log: {e}")))?;
+    trash(path).map_err(WorktreeError::Io)?;
+    if let Some(worktree) = known.filter(|worktree| worktree.repo.is_dir()) {
+        unlock(worktree);
+        let mut prune = git(&worktree.repo);
+        prune.args(["worktree", "prune"]);
+        let _ = prune.output();
+    }
+    if let Err(e) = registry::forget(paths, path) {
+        eprintln!("tidewatch: cannot update the worktree registry: {e}");
+    }
+    Ok(())
 }
 
 /// Notes a tab closed while its worktree and branch stay, for the Recently closed list.
@@ -674,7 +788,8 @@ fn belongs_to(repo: &Path, worktree: &Path) -> bool {
 }
 
 /// Worktree folders under the Tidewatch root that are not in `open`: made by an earlier run and
-/// never closed, or left by "keep worktree". Sorted by path.
+/// never closed, or left by "keep worktree", or made some other way. A folder that is the main
+/// checkout of a repository is never listed. Sorted by path.
 #[must_use]
 pub fn leftovers(paths: &TidewatchPaths, open: &[PathBuf]) -> Vec<Leftover> {
     let stored = registry::load(paths);
@@ -682,21 +797,43 @@ pub fn leftovers(paths: &TidewatchPaths, open: &[PathBuf]) -> Vec<Leftover> {
         .filter(|dir| !is_hidden(dir))
         .flat_map(|repo_dir| subdirs(&repo_dir).collect::<Vec<_>>())
         .filter(|dir| dir.join(".git").is_file() && !open.contains(dir))
+        .filter(|dir| !is_main_checkout(dir))
         .map(|path| {
             let known = stored
                 .iter()
                 .find(|w| w.path == path)
                 .map(|w| (w.repo.clone(), w.branch.clone()))
                 .or_else(|| claim(paths, &path));
-            Leftover {
-                repo: known.as_ref().map(|(repo, _)| repo.clone()),
-                branch: known.map(|(_, branch)| branch),
-                path,
+            match known {
+                Some((repo, branch)) => {
+                    Leftover { path, repo: Some(repo), branch: Some(branch), recorded: true }
+                }
+                None => Leftover {
+                    repo: main_checkout(&path),
+                    branch: checked_out_branch(&path),
+                    path,
+                    recorded: false,
+                },
             }
         })
         .collect();
     found.sort_by(|a, b| a.path.cmp(&b.path));
     found
+}
+
+fn git_dirs(dir: &Path) -> Option<(PathBuf, PathBuf)> {
+    let mut command = git(dir);
+    command.args(["rev-parse", "--path-format=absolute", "--git-dir", "--git-common-dir"]);
+    let out = run(command).ok()?;
+    let mut lines = out.lines();
+    let own = PathBuf::from(lines.next()?).canonicalize().ok()?;
+    let common = PathBuf::from(lines.next()?).canonicalize().ok()?;
+    Some((own, common))
+}
+
+/// Whether git says the folder is a repository's own checkout rather than a linked worktree.
+fn is_main_checkout(dir: &Path) -> bool {
+    matches!(git_dirs(dir), Some((own, common)) if own == common)
 }
 
 /// Whether Tidewatch made this worktree, from where it sits and what it has checked out: directly
@@ -730,12 +867,16 @@ fn checked_out_branch(dir: &Path) -> Option<String> {
     run(command).ok().map(|out| out.trim().to_owned()).filter(|branch| !branch.is_empty())
 }
 
-/// The main checkout of the repository a linked worktree belongs to.
+/// The repository a linked worktree belongs to: its main checkout, or the bare repository.
 fn main_checkout(dir: &Path) -> Option<PathBuf> {
     let mut command = git(dir);
     command.args(["rev-parse", "--path-format=absolute", "--git-common-dir"]);
     let common = PathBuf::from(run(command).ok()?.trim());
-    (common.file_name()? == ".git").then(|| common.parent().map(Path::to_path_buf))?
+    if common.file_name()? == ".git" {
+        common.parent().map(Path::to_path_buf)
+    } else {
+        Some(common)
+    }
 }
 
 fn subdirs(dir: &Path) -> impl Iterator<Item = PathBuf> {
