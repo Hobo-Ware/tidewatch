@@ -2,6 +2,7 @@
 
 use crate::avatar::Avatar;
 use crate::background::Signal;
+use crate::github_hook::Hit;
 use crate::job::Report;
 use crate::link_board::Link;
 use crate::progress::Ledger;
@@ -68,4 +69,17 @@ pub struct TabMessage {
     /// The generation the sender registered with (see `TabRegistration::generation`).
     pub generation: u64,
     pub event: TabEvent,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum RepoEvent {
+    Ping { hook_id: u64 },
+    News(Hit),
+}
+
+/// A delivery for one repo, named `owner/name` as `register_repo` was given it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RepoMessage {
+    pub repo: String,
+    pub event: RepoEvent,
 }

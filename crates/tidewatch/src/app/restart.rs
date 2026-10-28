@@ -55,6 +55,7 @@ impl Tidewatch {
         sent?;
         handoff::release(&mut self.tabs);
         self.services.release();
+        self.github_events.shutdown(self.hooks.listener().as_deref());
         Ok(())
     }
 

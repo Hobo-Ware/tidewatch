@@ -2,6 +2,7 @@
 //! reports to.
 //!
 //! - `POST /hook/<agent>` takes a hook payload and emits [`TabEvent::Hook`] when it carries a status.
+//! - `POST /github/<repo token>` takes a repo's GitHub webhook deliveries ([`crate::github_hooks`]): no bearer, the path token and the signature are the check.
 //! - `POST /mcp` is the Tidewatch MCP server ([`crate::mcp`]); `GET` and the other methods get 405.
 //! - Every request needs `Authorization: Bearer <token>`. Tokens are per tab: [`Listener::register_tab`]
 //!   makes one, [`Listener::unregister_tab`] revokes it. Anything else is 401, including unknown paths.
@@ -30,7 +31,8 @@ use sha2::{Digest, Sha256};
 use crate::avatar_ask::{self, Face};
 use crate::avatar_store;
 use crate::background;
-use crate::events::{Repaint, TabEvent, TabMessage};
+use crate::events::{Repaint, RepoMessage, TabEvent, TabMessage};
+use crate::github_hooks::{self, Answer, GithubHooks, RepoHook};
 use crate::launch::HookListener;
 use crate::mcp::{AskWait, McpReply, TabRole, ToolCtx, handle_post};
 use crate::paths::{
@@ -105,6 +107,7 @@ struct Shared {
     avatar_ask_exempt: Mutex<HashSet<u64>>,
     service_lines: Mutex<HashMap<u64, String>>,
     service_told: Mutex<HashMap<u64, String>>,
+    github: GithubHooks,
 }
 
 impl Shared {
@@ -125,6 +128,7 @@ impl Shared {
 /// The running server. Dropping it stops accepting connections.
 pub struct Listener {
     shared: Arc<Shared>,
+    github: Mutex<Receiver<RepoMessage>>,
     paths: TidewatchPaths,
     addr: SocketAddr,
     stop: Arc<AtomicBool>,
@@ -196,8 +200,10 @@ impl Listener {
     ) -> io::Result<(Self, Receiver<TabMessage>)> {
         let addr = listener.local_addr()?;
         let (events, receiver) = channel();
+        let (github, github_inbox) = GithubHooks::new();
         let shared = Arc::new(Shared {
             tabs: Mutex::new(HashMap::new()),
+            github,
             events,
             repaint,
             notes_lock: Mutex::new(()),
@@ -216,7 +222,17 @@ impl Listener {
                 .name("tidewatch-listener".into())
                 .spawn(move || accept_loop(&listener, &shared, &stop))?
         };
-        Ok((Self { shared, paths, addr, stop, accept: Some(accept) }, receiver))
+        Ok((
+            Self {
+                shared,
+                github: Mutex::new(github_inbox),
+                paths,
+                addr,
+                stop,
+                accept: Some(accept),
+            },
+            receiver,
+        ))
     }
 
     /// For example `http://127.0.0.1:51234`, no trailing slash.
@@ -268,6 +284,26 @@ impl Listener {
         let mut tabs = self.shared.tabs.lock().unwrap_or_else(PoisonError::into_inner);
         tabs.retain(|_, existing| existing.tab_id != tab_id);
         tabs.insert(credential.token.clone(), entry);
+    }
+
+    /// Makes the address and secret `gh webhook forward` is started with for `repo`, replacing the
+    /// repo's earlier ones.
+    #[must_use]
+    pub fn register_repo(&self, repo: &str) -> RepoHook {
+        let (token, secret) = (new_token(), new_token());
+        let url = format!("{}{}{token}", self.base_url(), github_hooks::PATH_PREFIX);
+        self.shared.github.register(repo, token, secret.clone());
+        RepoHook { url, secret }
+    }
+
+    pub fn unregister_repo(&self, repo: &str) {
+        self.shared.github.unregister(repo);
+    }
+
+    /// The GitHub deliveries that arrived since the last call, oldest first.
+    #[must_use]
+    pub fn drain_github(&self) -> Vec<RepoMessage> {
+        self.github.lock().unwrap_or_else(PoisonError::into_inner).try_iter().collect()
     }
 
     /// Revokes every token of the tab. Later requests with them get 401.
@@ -338,13 +374,18 @@ fn accept_loop(listener: &TcpListener, shared: &Arc<Shared>, stop: &AtomicBool) 
     }
 }
 
+fn authorised(shared: &Shared, head: &Head) -> bool {
+    head.bearer.as_deref().is_some_and(|token| shared.entry(token).is_some())
+        || github_token(&head.path).is_some_and(|token| shared.github.known(token))
+}
+
 fn serve(shared: &Shared, stream: TcpStream) {
     let _ = stream.set_read_timeout(Some(IDLE_TIMEOUT));
     let _ = stream.set_write_timeout(Some(WRITE_TIMEOUT));
     let _ = stream.set_nodelay(true);
     let mut conn = Conn { stream, buf: Vec::new() };
     loop {
-        match read_request(&mut conn, &|token| shared.entry(token).is_some()) {
+        match read_request(&mut conn, &|head| authorised(shared, head)) {
             Ok(request) => {
                 let response = route(shared, &request, &conn.stream);
                 if write_response(&mut conn.stream, &response, request.keep_alive).is_err()
@@ -367,6 +408,8 @@ struct Request {
     method: String,
     path: String,
     bearer: Option<String>,
+    github_event: Option<String>,
+    signature: Option<String>,
     body: Vec<u8>,
     keep_alive: bool,
 }
@@ -403,7 +446,34 @@ impl Response {
     }
 }
 
+fn github_token(path: &str) -> Option<&str> {
+    path.split('?').next()?.strip_prefix(github_hooks::PATH_PREFIX).filter(|t| !t.contains('/'))
+}
+
+fn github_route(shared: &Shared, token: &str, request: &Request) -> Response {
+    if request.method != "POST" {
+        return Response::method_not_allowed();
+    }
+    let answer = shared.github.deliver(
+        token,
+        request.github_event.as_deref(),
+        request.signature.as_deref(),
+        &request.body,
+    );
+    match answer {
+        Answer::Taken => {
+            (shared.repaint)();
+            Response::json(200, "{}".into())
+        }
+        Answer::BadSignature => Response::error(401, "bad signature"),
+        Answer::BadRequest(message) => Response::error(400, message),
+    }
+}
+
 fn route(shared: &Shared, request: &Request, stream: &TcpStream) -> Response {
+    if let Some(token) = github_token(&request.path) {
+        return github_route(shared, token, request);
+    }
     let Some(entry) = request.bearer.as_deref().and_then(|token| shared.entry(token)) else {
         return Response::unauthorized();
     };
@@ -637,6 +707,8 @@ struct Head {
     chunked: bool,
     expect_continue: bool,
     bearer: Option<String>,
+    github_event: Option<String>,
+    signature: Option<String>,
     keep_alive: bool,
 }
 
@@ -661,6 +733,8 @@ fn parse_head(buf: &[u8]) -> Result<Option<(Head, usize)>, Fail> {
         chunked: false,
         expect_continue: false,
         bearer: None,
+        github_event: None,
+        signature: None,
         keep_alive: parsed.version == Some(1),
     };
     for header in parsed.headers.iter() {
@@ -682,6 +756,8 @@ fn parse_head(buf: &[u8]) -> Result<Option<(Head, usize)>, Fail> {
             }
             "expect" => head.expect_continue = value.eq_ignore_ascii_case("100-continue"),
             "authorization" => head.bearer = bearer_token(value).map(str::to_owned),
+            "x-github-event" => head.github_event = Some(value.to_owned()),
+            "x-hub-signature-256" => head.signature = Some(value.to_owned()),
             "connection" => {
                 for token in value.split(',').map(str::trim) {
                     if token.eq_ignore_ascii_case("close") {
@@ -706,7 +782,7 @@ fn bearer_token(value: &str) -> Option<&str> {
     scheme.eq_ignore_ascii_case("bearer").then_some(token.trim()).filter(|t| !t.is_empty())
 }
 
-fn read_request(conn: &mut Conn, known_token: &dyn Fn(&str) -> bool) -> Result<Request, Fail> {
+fn read_request(conn: &mut Conn, authorised: &dyn Fn(&Head) -> bool) -> Result<Request, Fail> {
     let (head, head_len) = loop {
         if let Some(parsed) = parse_head(&conn.buf)? {
             break parsed;
@@ -717,7 +793,7 @@ fn read_request(conn: &mut Conn, known_token: &dyn Fn(&str) -> bool) -> Result<R
         conn.fill()?;
     };
     conn.buf.drain(..head_len);
-    if !head.bearer.as_deref().is_some_and(known_token) {
+    if !authorised(&head) {
         return Err(Fail::Reply(Response::unauthorized()));
     }
     if head.expect_continue && conn.buf.is_empty() {
@@ -736,6 +812,8 @@ fn read_request(conn: &mut Conn, known_token: &dyn Fn(&str) -> bool) -> Result<R
         method: head.method,
         path: head.path,
         bearer: head.bearer,
+        github_event: head.github_event,
+        signature: head.signature,
         body,
         keep_alive: head.keep_alive,
     })
@@ -831,6 +909,7 @@ mod tests {
             avatar_ask_exempt: Mutex::new(HashSet::new()),
             service_lines: Mutex::new(HashMap::new()),
             service_told: Mutex::new(HashMap::new()),
+            github: GithubHooks::new().0,
             ask_timeout_ms: AtomicU64::new(1000),
         });
         let server = TcpListener::bind(HOOK_BIND).unwrap();
@@ -865,6 +944,8 @@ mod tests {
                 method: method.into(),
                 path: path.into(),
                 bearer: token.map(str::to_owned),
+                github_event: None,
+                signature: None,
                 body: body.as_bytes().to_vec(),
                 keep_alive: true,
             };

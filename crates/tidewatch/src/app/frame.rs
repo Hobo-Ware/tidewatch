@@ -84,6 +84,7 @@ impl Tidewatch {
         self.drive_services(ctx);
         self.drive_agents(ctx, now);
         self.drive_flow(ctx, now);
+        self.drive_github_events(ctx, now);
         self.drive_pr(ctx, now);
         self.drive_comments(ctx, now);
         self.drive_progress(ctx);

@@ -4,6 +4,7 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
 
+use tidewatch_core::github_hook::Hit;
 use tidewatch_core::paths::TidewatchPaths;
 use tidewatch_core::pr_cards::Cards;
 use tidewatch_core::pr_status::Body;
@@ -153,6 +154,13 @@ impl Host {
             if watch.title != fact.title {
                 fact.title.clone_into(&mut watch.title);
             }
+            if watch.repo != fact.repo {
+                fact.repo.clone_into(&mut watch.repo);
+            }
+            if watch.branch != fact.branch {
+                fact.branch.clone_into(&mut watch.branch);
+            }
+            watch.set_live(fact.live, now);
             watch.autonomous = fact.autonomous;
             watch.see_busy(fact.busy, now);
             if watch.take_load() {
@@ -231,6 +239,14 @@ impl Host {
             applied.extend(self.finish(fact.id, outs));
         }
         (applied, wake)
+    }
+
+    /// GitHub's news: every tab of those repos whose pull request or branch it names looks at
+    /// GitHub soon.
+    pub(crate) fn news(&mut self, repos: &[PathBuf], hit: &Hit, now: f64) {
+        for watch in self.tabs.values_mut().filter(|watch| watch.named_by(repos, hit)) {
+            watch.look_for_news(now);
+        }
     }
 
     pub(crate) fn drain(&mut self, now: f64, now_ms: i64) -> Vec<Applied> {

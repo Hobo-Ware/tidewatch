@@ -194,6 +194,13 @@ impl TidewatchPaths {
         self.state_dir().join("removals.log")
     }
 
+    /// The id of the webhook each repo's last forwarder made, `{"owner/name": id}`: only a hook
+    /// recorded here is ever deleted as stale.
+    #[must_use]
+    pub fn github_hooks_file(&self) -> PathBuf {
+        self.state_dir().join("github-hooks.json")
+    }
+
     /// The agent tabs Tidewatch closed, one JSON line each, the newest 100 kept.
     #[must_use]
     pub fn closed_tabs_log(&self) -> PathBuf {
