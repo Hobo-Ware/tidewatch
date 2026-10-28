@@ -962,7 +962,7 @@ fn turn_guess(
     (running, width): (bool, f32),
 ) -> f32 {
     let text_of = |index: &usize| list[*index].text.as_str();
-    let answer: Vec<&str> = group.answer().iter().map(text_of).collect();
+    let answer: Vec<&str> = group.answers().iter().map(text_of).collect();
     let notes: Vec<&str> = group.notes().iter().map(text_of).collect();
     let live = running && !group.closed;
     reader_scroll::estimate_turn(

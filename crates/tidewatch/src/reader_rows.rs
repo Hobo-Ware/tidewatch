@@ -4,6 +4,8 @@
 
 use std::collections::{HashMap, HashSet, VecDeque};
 
+use tidewatch_core::launch::MCP_SERVER_NAME;
+use tidewatch_core::mcp::REPORT_TOOLS;
 use tidewatch_core::note_paste;
 use tidewatch_core::question::{AskReply, Question};
 use tidewatch_core::transcript::{AskPart, Entry, Role, ToolPhase};
@@ -113,6 +115,16 @@ pub(crate) struct Tool {
     pub(crate) error: bool,
     /// The result has arrived.
     pub(crate) done: bool,
+}
+
+impl Tool {
+    /// A call to one of Tidewatch's own report tools, however the CLI spells the server and tool
+    /// together: `tidewatch:update_progress`, `mcp_tidewatch_update_progress`.
+    pub(crate) fn reports(&self) -> bool {
+        let name = self.label.split_once("  ").map_or(self.label.as_str(), |(name, _)| name);
+        let name = name.to_ascii_lowercase();
+        name.contains(MCP_SERVER_NAME) && REPORT_TOOLS.iter().any(|tool| name.ends_with(tool))
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -660,6 +672,37 @@ mod tests {
     fn the_tool_line_is_name_then_summary() {
         assert_eq!(tool_label("Bash", "git status"), "Bash  git status");
         assert_eq!(tool_label("Read", ""), "Read");
+    }
+
+    #[test]
+    fn a_report_call_is_one_of_tidewatchs_own_report_tools_in_any_cli_spelling() {
+        let tool = |label: &str| Tool {
+            kind: ToolKind::Other,
+            label: label.to_owned(),
+            output: String::new(),
+            error: false,
+            done: true,
+        };
+        let cases = [
+            ("tidewatch:update_progress  saved", true),
+            ("tidewatch:update_progress", true),
+            ("tidewatch:get_progress", true),
+            ("tidewatch:report_job", true),
+            ("tidewatch:set_avatar", true),
+            ("tidewatch:report_finding", true),
+            ("tidewatch:reply_to_note", true),
+            ("mcp_tidewatch_update_progress", true),
+            ("tidewatch-update_progress", true),
+            ("tidewatch:ask_user", false),
+            ("tidewatch:list_notes", false),
+            ("tidewatch:meeseeks_done", false),
+            ("other:update_progress", false),
+            ("Bash  tidewatch update_progress", false),
+            ("Bash", false),
+        ];
+        for (label, reports) in cases {
+            assert_eq!(tool(label).reports(), reports, "{label}");
+        }
     }
 
     #[test]

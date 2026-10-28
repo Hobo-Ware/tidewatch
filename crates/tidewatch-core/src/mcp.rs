@@ -61,6 +61,17 @@ pub struct AskWait<'a> {
     pub alive: &'a dyn Fn() -> bool,
 }
 
+/// The Tidewatch tools that only report or look something up: they change nothing in the work, so
+/// the Reader does not count them as a break in what the agent says.
+pub const REPORT_TOOLS: [&str; 6] = [
+    progress_mcp::UPDATE_TOOL,
+    progress_mcp::GET_TOOL,
+    job_mcp::REPORT_TOOL,
+    avatar_mcp::SET_TOOL,
+    "report_finding",
+    "reply_to_note",
+];
+
 /// What a tab is, which decides the tools `tools/list` offers it.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum TabRole {

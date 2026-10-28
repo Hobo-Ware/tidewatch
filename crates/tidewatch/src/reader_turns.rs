@@ -53,6 +53,8 @@ pub(crate) struct Group {
     /// The `seq` of that row; the key of the turn's height and of its open list.
     pub(crate) key: u64,
     pub(crate) texts: Vec<usize>,
+    /// Where the answer starts in `texts`: the text after the last call that did real work.
+    answer_from: usize,
     pub(crate) calls: Vec<usize>,
     /// The call the agent is on, or was on last: the newest one without a result, else the newest.
     pub(crate) current: Option<usize>,
@@ -69,14 +71,15 @@ impl Group {
         Some((self.ended_ms? - self.started_ms?).max(0))
     }
 
-    /// The text the bubble shows: the last one the agent wrote, finished turn or not.
-    pub(crate) fn answer(&self) -> Option<usize> {
-        self.texts.last().copied()
+    /// The texts the bubble shows, in order: everything the agent wrote after its last call that
+    /// did real work. Calls that only report to Tidewatch do not split it.
+    pub(crate) fn answers(&self) -> &[usize] {
+        &self.texts[self.answer_from..]
     }
 
     /// The texts before the answer, in order: the progress notes the agent wrote between calls.
     pub(crate) fn notes(&self) -> &[usize] {
-        self.texts.split_last().map_or(&[], |(_, notes)| notes)
+        &self.texts[..self.answer_from]
     }
 
     /// `12 updates`, `1 update`; `None` when the turn has no note to fold.
@@ -146,6 +149,7 @@ pub(crate) fn layout(rows: &Rows) -> Layout {
     let mut out = Layout { slots: Vec::with_capacity(rows.len()), ..Layout::default() };
     let mut open: Option<usize> = None;
     let mut last_boundary = false;
+    let mut worked = false;
     for (index, (row, at)) in rows.stamped().enumerate() {
         match &row.kind {
             Kind::User | Kind::Tidewatch(_) | Kind::Review(_) => {
@@ -162,6 +166,7 @@ pub(crate) fn layout(rows: &Rows) -> Layout {
                         anchor: index,
                         key: row.seq,
                         texts: Vec::new(),
+                        answer_from: 0,
                         calls: Vec::new(),
                         current: None,
                         chips: Vec::new(),
@@ -169,6 +174,7 @@ pub(crate) fn layout(rows: &Rows) -> Layout {
                         ended_ms: at,
                         closed: false,
                     });
+                    worked = false;
                     out.groups.len() - 1
                 });
                 let group = &mut out.groups[at_group];
@@ -178,9 +184,14 @@ pub(crate) fn layout(rows: &Rows) -> Layout {
                     Slot::Hidden
                 });
                 group.ended_ms = at.or(group.ended_ms);
-                match &row.kind {
-                    Kind::Tool(tool) => add_call(group, index, tool),
-                    _ => group.texts.push(index),
+                if let Kind::Tool(tool) = &row.kind {
+                    worked |= !tool.reports();
+                    add_call(group, index, tool);
+                } else {
+                    if std::mem::take(&mut worked) {
+                        group.answer_from = group.texts.len();
+                    }
+                    group.texts.push(index);
                 }
             }
             Kind::Notice
@@ -760,7 +771,8 @@ mod tests {
             assert_eq!(group.closed, !running, "{notes} notes");
             assert_eq!(group.texts.len(), notes + 1, "{notes} notes");
             let list: Vec<&Row> = rows.iter().collect();
-            assert_eq!(list[group.answer().unwrap()].text, "# Answer", "{notes} notes");
+            assert_eq!(group.answers().len(), 1, "{notes} notes");
+            assert_eq!(list[group.answers()[0]].text, "# Answer", "{notes} notes");
             assert_eq!(group.notes_label().as_deref(), label, "{notes} notes");
             assert_eq!(Some(group.notes().len()).filter(|n| *n > 0), folded, "{notes} notes");
             let order: Vec<&str> = group.notes().iter().map(|i| list[*i].text.as_str()).collect();
@@ -772,12 +784,140 @@ mod tests {
     #[test]
     fn a_turn_with_one_text_has_nothing_to_fold_and_one_with_none_has_no_answer() {
         let (_, group) = texts_turn(0, false);
-        assert_eq!((group.answer(), group.notes().len(), group.notes_label()), (Some(1), 0, None));
+        assert_eq!(
+            (group.answers(), group.notes().len(), group.notes_label()),
+            (&[1][..], 0, None)
+        );
         let mut entries = vec![text(Role::User, "go", 1)];
         finished_call(&mut entries, "a", "Bash", false, 2);
         let layout = layout(&rows_of(entries));
         let group = &layout.groups[0];
-        assert_eq!((group.answer(), group.notes().len(), group.notes_label()), (None, 0, None));
+        assert_eq!((group.answers(), group.notes().len(), group.notes_label()), (&[][..], 0, None));
+    }
+
+    fn said(steps: &[(&str, &str)], finished: bool) -> (Vec<String>, Vec<String>) {
+        let mut entries = vec![text(Role::User, "go", 1)];
+        for (n, (kind, what)) in steps.iter().enumerate() {
+            let at = 2 + n as i64;
+            match *kind {
+                "text" => entries.push(text(Role::Assistant, what, at)),
+                _ => finished_call(&mut entries, &format!("c{n}"), what, false, at),
+            }
+        }
+        if finished {
+            entries.push(text(Role::User, "thanks", 99));
+        }
+        let rows = rows_of(entries);
+        let group = layout(&rows).groups[0].clone();
+        let list: Vec<&Row> = rows.iter().collect();
+        let words = |indices: &[usize]| indices.iter().map(|i| list[*i].text.clone()).collect();
+        (words(group.answers()), words(group.notes()))
+    }
+
+    const REPORT: &str = "mcp__tidewatch__update_progress";
+
+    #[test]
+    fn only_a_real_work_call_turns_the_text_before_it_into_a_folded_note() {
+        type Case<'a> = (&'a str, Vec<(&'a str, &'a str)>, Vec<&'a str>, Vec<&'a str>);
+        let cases: [Case<'_>; 9] = [
+            (
+                "answer, report, done block",
+                vec![("text", "answer"), ("call", REPORT), ("text", "Done block")],
+                vec!["answer", "Done block"],
+                vec![],
+            ),
+            (
+                "answer, bash, done block",
+                vec![("text", "answer"), ("call", "Bash"), ("text", "Done block")],
+                vec!["Done block"],
+                vec!["answer"],
+            ),
+            (
+                "answer, report only",
+                vec![("text", "answer"), ("call", REPORT)],
+                vec!["answer"],
+                vec![],
+            ),
+            (
+                "note, bash, answer, report, done block",
+                vec![
+                    ("text", "note"),
+                    ("call", "Bash"),
+                    ("text", "answer"),
+                    ("call", REPORT),
+                    ("text", "Done block"),
+                ],
+                vec!["answer", "Done block"],
+                vec!["note"],
+            ),
+            (
+                "answer, report, bash, done block",
+                vec![
+                    ("text", "answer"),
+                    ("call", REPORT),
+                    ("call", "Bash"),
+                    ("text", "Done block"),
+                ],
+                vec!["Done block"],
+                vec!["answer"],
+            ),
+            (
+                "answer, two reports, done block",
+                vec![
+                    ("text", "answer"),
+                    ("call", REPORT),
+                    ("call", "mcp__tidewatch__get_progress"),
+                    ("text", "Done block"),
+                ],
+                vec!["answer", "Done block"],
+                vec![],
+            ),
+            (
+                "answer, other mcp server, done block",
+                vec![
+                    ("text", "answer"),
+                    ("call", "mcp__other__update_progress"),
+                    ("text", "Done block"),
+                ],
+                vec!["Done block"],
+                vec!["answer"],
+            ),
+            (
+                "answer, ask_user, done block",
+                vec![
+                    ("text", "answer"),
+                    ("call", "mcp__tidewatch__ask_user"),
+                    ("text", "Done block"),
+                ],
+                vec!["Done block"],
+                vec!["answer"],
+            ),
+            (
+                "report first, then one answer",
+                vec![("call", REPORT), ("text", "answer")],
+                vec!["answer"],
+                vec![],
+            ),
+        ];
+        for (what, steps, answers, notes) in cases {
+            for finished in [false, true] {
+                let (got_answers, got_notes) = said(&steps, finished);
+                assert_eq!(got_answers, answers, "{what}, finished {finished}");
+                assert_eq!(got_notes, notes, "{what}, finished {finished}");
+            }
+        }
+    }
+
+    #[test]
+    fn a_report_call_counts_in_the_chips_though_it_does_not_split_the_answer() {
+        let mut entries = vec![text(Role::User, "go", 1), text(Role::Assistant, "answer", 2)];
+        finished_call(&mut entries, "a", REPORT, false, 3);
+        entries.push(text(Role::Assistant, "Done block", 4));
+        let layout = layout(&rows_of(entries));
+        let group = &layout.groups[0];
+        assert_eq!(chips(group), [(ToolKind::Other, 1, 0)]);
+        assert_eq!(group.steps_label(), "1 step");
+        assert_eq!(group.notes_label(), None);
     }
 
     #[test]
