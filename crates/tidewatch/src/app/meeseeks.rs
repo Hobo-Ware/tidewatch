@@ -241,7 +241,7 @@ impl Tidewatch {
                 self.meeseeks.leaving(tab);
                 self.meeseeks_event(tab, Event::PoofRefused(why), ctx);
             }
-            Done::Loaded(_) | Done::Branch { .. } | Done::Logged => {}
+            Done::Loaded(_) | Done::Branch { .. } | Done::Testing { .. } | Done::Logged => {}
         }
     }
 

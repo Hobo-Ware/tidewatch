@@ -9,7 +9,7 @@ use crate::history;
 use crate::meeseeks_log::pr_label_of;
 use crate::paths::TidewatchPaths;
 use crate::pr_ask;
-use crate::test_command;
+use crate::test_command::{self, Gate};
 use crate::tools::{Tools, finish, run_gh};
 use crate::worktree::{self, BranchChoice, RemoveMode, Terms, Why, Worktree};
 use crate::worktree_safety::Owner;
@@ -75,10 +75,12 @@ pub fn change(tools: &Tools, dir: &Path, branch: &str) -> Result<Checked, String
 }
 
 pub fn tests(repo: &Path, dir: &Path) -> Result<Checked, String> {
-    let Some(command) = test_command::test_command(repo) else {
-        return Ok(said("No test command for this repo"));
+    let command = match test_command::resolve(dir, repo) {
+        Gate::Run(detected) => detected.command,
+        Gate::Skip(why) => return Ok(said(why)),
+        Gate::None => return Ok(said("No test command for this repo")),
     };
-    let run = test_command::run_in_timeout(dir, &command, test_command::timeout(repo));
+    let run = test_command::run_in_timeout(dir, &command, test_command::timeout_in(dir, repo));
     if run.exit_code == 0 {
         return Ok(said(format!("{command} passed")));
     }

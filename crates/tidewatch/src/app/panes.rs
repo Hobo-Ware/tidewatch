@@ -173,12 +173,7 @@ impl Tidewatch {
         let active_tab = &self.tabs.items()[self.tabs.active()];
         let meeseeks_card = agent.and_then(|agent| {
             let meeseeks = agent.meeseeks.as_ref()?;
-            let tests = active_tab
-                .pane
-                .worktree
-                .as_ref()
-                .and_then(|worktree| self.bases.facts(&worktree.repo))
-                .and_then(|facts| facts.test_command.as_deref());
+            let tests = self.meeseeks.test_command(active_id);
             Some(meeseeks_model::card(meeseeks, &active_tab.title, now_ms, tests))
         });
         let progress = agent.and_then(|_| {
