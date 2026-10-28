@@ -12,7 +12,7 @@ fn card(id: &str, name: &str) -> Card {
         agent_id: "claude".to_owned(),
         cli_name: "Claude".to_owned(),
         unsupported: Vec::new(),
-        below_yolo: Some(Level::Auto),
+        installed: true,
         level: Level::Edits,
     }
 }
@@ -26,6 +26,11 @@ fn facts(working: bool) -> Facts {
         current: Some(("builder".into(), Level::Edits)),
         seen_level: None,
         cards: vec![card("builder", "Builder"), card("reviewer", "Reviewer")],
+        follows: None,
+        busy: false,
+        meeseeks: false,
+        pinned: false,
+        replaces: None,
     }
 }
 
@@ -90,8 +95,12 @@ fn escape_closes_without_changing_anything() {
 }
 
 #[test]
-fn enter_does_nothing_while_change_is_blocked() {
+fn enter_on_what_is_already_so_changes_again_and_a_missing_cli_asks_to_be_set_up() {
     let same = Pick { kind: Kind::Agent, profile: "builder".into(), level: Level::Edits };
     let mut harness = Harness::new(facts(false), same);
-    assert_eq!(harness.frame(vec![key(Key::Enter)]), None);
+    assert_eq!(harness.frame(vec![key(Key::Enter)]), Some(Outcome::Change { interrupt: false }));
+    let mut missing = facts(false);
+    missing.cards[1].installed = false;
+    let mut harness = Harness::new(missing, reviewer_pick());
+    assert_eq!(harness.frame(vec![key(Key::Enter)]), Some(Outcome::SetUp));
 }

@@ -1,13 +1,12 @@
 //! The "Change this tab" popover, the pure half: what the app knows of the tab (`Facts`), what the
-//! picker has chosen (`Pick`), which choices are refused and why, the one sentence that says what
-//! will happen, and the `Target` a press of Change hands to `retarget`. `change_tab_view` draws it.
+//! picker has chosen (`Pick`), what is missing before a change can start (`Fix`), the one sentence
+//! that says what will happen, and the `Target` a press of Change hands to `retarget`. Every tab
+//! can change and every choice can be picked; `change_tab_view` draws it.
 
 use tidewatch_core::agents::Level;
-use tidewatch_core::restore::resumed_level_below;
 
 use crate::new_tab_meeseeks::is_role;
-use crate::pane::{Body, Pane};
-use crate::retarget::Target;
+use crate::retarget::{Target, fit_level};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Kind {
@@ -37,7 +36,7 @@ pub(crate) struct Card {
     pub(crate) cli_name: String,
     /// Levels the CLI has no flags for.
     pub(crate) unsupported: Vec<Level>,
-    pub(crate) below_yolo: Option<Level>,
+    pub(crate) installed: bool,
     pub(crate) level: Level,
 }
 
@@ -53,6 +52,7 @@ pub(crate) enum Running {
     },
 }
 
+#[allow(clippy::struct_excessive_bools)] // independent facts of one tab, not a mode
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct Facts {
     pub(crate) tab: u64,
@@ -65,6 +65,15 @@ pub(crate) struct Facts {
     /// The level a found session last ran at.
     pub(crate) seen_level: Option<Level>,
     pub(crate) cards: Vec<Card>,
+    /// The folder the found session runs in when it is not the tab's own: the tab moves there.
+    pub(crate) follows: Option<String>,
+    /// A command other than the shell has the terminal: it stops with the shell.
+    pub(crate) busy: bool,
+    pub(crate) meeseeks: bool,
+    /// The pinned main tab.
+    pub(crate) pinned: bool,
+    /// What the tab shows now that a change replaces: a form, a failure, a summary.
+    pub(crate) replaces: Option<&'static str>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -123,28 +132,11 @@ fn card_of<'a>(facts: &'a Facts, id: &str) -> Option<&'a Card> {
     facts.cards.iter().find(|card| card.id == id)
 }
 
-/// Why a profile card cannot be picked, or `None`.
-pub(crate) fn card_refusal(facts: &Facts, card: &Card) -> Option<String> {
-    let cli = session_cli(facts)?;
-    (cli != card.agent_id)
-        .then(|| format!("This conversation runs in another CLI than {}.", card.cli_name))
-}
-
-/// Why `level` cannot be picked with `card`, or `None`.
-pub(crate) fn level_refusal(facts: &Facts, card: &Card, level: Level) -> Option<String> {
-    if card.unsupported.contains(&level) {
-        return Some(format!("{} has no flags for {}.", card.cli_name, level.label()));
-    }
-    (level == Level::Yolo && !facts.in_worktree)
-        .then(|| "YOLO only runs in a worktree tab.".to_owned())
-}
-
 fn level_for(facts: &Facts, card: &Card) -> Level {
     let seen = facts.seen_level.or_else(|| {
         facts.current.as_ref().filter(|(id, _)| *id == card.id).map(|(_, level)| *level)
     });
-    let level = resumed_level_below(card.level, card.below_yolo, facts.in_worktree, seen);
-    if level_refusal(facts, card, level).is_some() { card.level } else { level }
+    fit_level(seen.unwrap_or(card.level), &card.unsupported)
 }
 
 impl Pick {
@@ -155,8 +147,9 @@ impl Pick {
         let by_cli = session_cli(facts).and_then(builder).and_then(|id| card_of(facts, &id));
         let card = own
             .or(by_cli)
-            .or_else(|| facts.cards.iter().find(|card| card_refusal(facts, card).is_none()));
-        let Some(card) = card.or_else(|| facts.cards.first()) else {
+            .or_else(|| facts.cards.iter().find(|card| card.installed))
+            .or_else(|| facts.cards.first());
+        let Some(card) = card else {
             return Self { kind: Kind::Agent, profile: String::new(), level: Level::Edits };
         };
         let kind = match (&facts.running, &facts.current) {
@@ -167,33 +160,18 @@ impl Pick {
     }
 
     pub(crate) fn pick_profile(&mut self, facts: &Facts, id: &str) {
-        let Some(card) = card_of(facts, id).filter(|card| card_refusal(facts, card).is_none())
-        else {
-            return;
-        };
-        self.profile.clone_from(&card.id);
-        if level_refusal(facts, card, self.level).is_some() {
-            self.level = level_for(facts, card);
+        if card_of(facts, id).is_some() {
+            id.clone_into(&mut self.profile);
         }
     }
 
-    pub(crate) fn pick_level(&mut self, facts: &Facts, level: Level) {
-        let allowed = card_of(facts, &self.profile)
-            .is_none_or(|card| level_refusal(facts, card, level).is_none());
-        if allowed {
-            self.level = level;
-        }
+    pub(crate) fn pick_level(&mut self, level: Level) {
+        self.level = level;
     }
 
-    pub(crate) fn pick_kind(&mut self, facts: &Facts, kind: Kind) {
-        if kind_refusal(facts, kind).is_none() {
-            self.kind = kind;
-        }
+    pub(crate) fn pick_kind(&mut self, kind: Kind) {
+        self.kind = kind;
     }
-}
-
-pub(crate) fn kind_refusal(facts: &Facts, kind: Kind) -> Option<&'static str> {
-    (kind == Kind::Shell && facts.running == Running::No).then_some("No agent runs in this tab.")
 }
 
 pub(crate) fn is_working(facts: &Facts) -> bool {
@@ -204,69 +182,133 @@ fn who(card: &Card, level: Level) -> String {
     format!("{} \u{b7} {}", card.name, level.label())
 }
 
-/// Why Change cannot be pressed, or `None`.
-pub(crate) fn blocked(facts: &Facts, pick: &Pick) -> Option<String> {
-    match pick.kind {
-        Kind::Shell => {
-            (facts.running == Running::No).then(|| "This tab is already a shell.".to_owned())
+/// What has to be set up before Change can start, shown in the popover as a button that opens it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum Fix {
+    Install(String),
+    AddProfile,
+}
+
+impl Fix {
+    pub(crate) fn button(&self) -> String {
+        match self {
+            Self::Install(cli) => format!("Set up {cli}"),
+            Self::AddProfile => "Add a profile".to_owned(),
         }
-        Kind::Agent => {
-            let card = card_of(facts, &pick.profile)?;
-            if let Some(reason) = card_refusal(facts, card) {
-                return Some(reason);
+    }
+
+    pub(crate) fn sentence(&self) -> String {
+        match self {
+            Self::Install(cli) => {
+                format!("{cli} is not installed here. Set it up and this tab switches over.")
             }
-            if let Some(reason) = level_refusal(facts, card, pick.level) {
-                return Some(reason);
-            }
-            let same = matches!(facts.running, Running::Agent { .. })
-                && facts.current.as_ref() == Some(&(card.id.clone(), pick.level));
-            same.then(|| format!("Already running as {}.", who(card, pick.level)))
+            Self::AddProfile => "There is no profile to switch to. Add one in Settings.".to_owned(),
         }
     }
 }
 
+pub(crate) fn fix(facts: &Facts, pick: &Pick) -> Option<Fix> {
+    if pick.kind != Kind::Agent {
+        return None;
+    }
+    match card_of(facts, &pick.profile) {
+        None => Some(Fix::AddProfile),
+        Some(card) if !card.installed => Some(Fix::Install(card.cli_name.clone())),
+        Some(_) => None,
+    }
+}
+
+fn notes(facts: &Facts, pick: &Pick, card: Option<&Card>) -> String {
+    let mut notes = Vec::new();
+    match &facts.follows {
+        Some(folder) => {
+            notes.push(format!("The tab moves to {folder}, where the conversation runs."));
+        }
+        None if facts.in_worktree => {
+            notes.push("Worktree, branch and history stay as they are.".to_owned());
+        }
+        None => notes.push("The folder and history stay as they are.".to_owned()),
+    }
+    if let Some(card) = card.filter(|_| pick.kind == Kind::Agent) {
+        let fitted = fit_level(pick.level, &card.unsupported);
+        if fitted != pick.level {
+            notes.push(format!(
+                "{} has no flags for {}, so it runs as {}.",
+                card.cli_name,
+                pick.level.label(),
+                fitted.label()
+            ));
+        }
+    }
+    if facts.busy {
+        notes.push("The command running in this shell stops.".to_owned());
+    }
+    if facts.meeseeks {
+        notes.push("It stops being a Meeseeks and no longer ends by itself.".to_owned());
+    }
+    if facts.pinned {
+        notes.push("The main tab stays pinned.".to_owned());
+    }
+    notes.extend(facts.replaces.map(str::to_owned));
+    notes.join(" ")
+}
+
 /// The sentence that says what Change will do.
 pub(crate) fn sentence(facts: &Facts, pick: &Pick) -> String {
-    let keeps = if facts.in_worktree {
-        "Worktree, branch and history stay as they are."
-    } else {
-        "The folder and history stay as they are."
-    };
     let running = match &facts.running {
         Running::Agent { cli_name, working, .. } => Some((cli_name.as_str(), *working)),
         Running::No => None,
     };
     match (pick.kind, running) {
         (Kind::Shell, Some((cli, _))) => format!(
-            "{cli} stops and this tab keeps its shell. The conversation is remembered, so you can switch back from here."
+            "{cli} stops and this tab keeps its shell. The conversation is remembered, so you can switch back from here. {}",
+            notes(facts, pick, None)
         ),
-        (Kind::Shell, None) => "This tab is already a shell.".to_owned(),
+        (Kind::Shell, None) => {
+            format!("The shell restarts in the same folder. {}", notes(facts, pick, None))
+        }
         (Kind::Agent, running) => {
+            if let Some(fix) = fix(facts, pick) {
+                return fix.sentence();
+            }
             let Some(card) = card_of(facts, &pick.profile) else {
-                return "No profile to switch to.".to_owned();
+                return Fix::AddProfile.sentence();
             };
             let who = who(card, pick.level);
-            match (running, &facts.stored) {
-                (Some((cli, true)), _) => format!(
-                    "{cli} finishes this turn, then the same conversation resumes as {who}. {keeps}"
+            let other_cli = session_cli(facts).is_some_and(|cli| cli != card.agent_id);
+            let head = match (running, &facts.stored) {
+                (Some((cli, working)), _) if other_cli => format!(
+                    "{cli} {} {} cannot continue its conversation, so it starts a new one as {who}. The old one stays on disk.",
+                    if working { "finishes this turn, then stops." } else { "stops." },
+                    card.cli_name
                 ),
-                (Some((cli, false)), _) => {
-                    format!("{cli} stops, then the same conversation resumes as {who}. {keeps}")
+                (Some((cli, true)), _) => {
+                    format!(
+                        "{cli} finishes this turn, then the same conversation resumes as {who}."
+                    )
                 }
+                (Some((cli, false)), _) => {
+                    format!("{cli} stops, then the same conversation resumes as {who}.")
+                }
+                (None, Some((stored, cli))) if *stored != card.agent_id => format!(
+                    "{} cannot continue the conversation {cli} ended in this tab, so it starts a new one as {who}. The old one stays on disk.",
+                    card.cli_name
+                ),
                 (None, Some((_, cli))) => {
-                    format!("The conversation {cli} ended in this tab resumes as {who}. {keeps}")
+                    format!("The conversation {cli} ended in this tab resumes as {who}.")
                 }
                 (None, None) => {
-                    format!("A new {} session starts in this tab as {who}. {keeps}", card.cli_name)
+                    format!("A new {} session starts in this tab as {who}.", card.cli_name)
                 }
-            }
+            };
+            format!("{head} {}", notes(facts, pick, Some(card)))
         }
     }
 }
 
 /// The button that cuts a turn short, offered only while the agent works and Change can go ahead.
 pub(crate) fn offers_stop_now(facts: &Facts, pick: &Pick) -> bool {
-    is_working(facts) && blocked(facts, pick).is_none()
+    is_working(facts) && fix(facts, pick).is_none()
 }
 
 pub(crate) fn target_of(pick: &Pick) -> Target {
@@ -286,41 +328,11 @@ pub(crate) struct Change {
 }
 
 pub(crate) fn change(facts: &Facts, pick: &Pick, interrupt: bool) -> Option<Change> {
-    blocked(facts, pick).is_none().then(|| Change {
+    fix(facts, pick).is_none().then(|| Change {
         tab: facts.tab,
         target: target_of(pick),
         interrupt,
     })
-}
-
-/// Whether a tab can be changed at all, and if not why: the one rule the menu, the chip and the
-/// palette share.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum TabKind {
-    Main,
-    Shell,
-    Agent,
-    Meeseeks,
-    Other,
-}
-
-pub(crate) fn tab_kind<T>(pane: &Pane<T>, pinned: bool) -> TabKind {
-    match (&pane.body, &pane.agent) {
-        _ if pinned => TabKind::Main,
-        (Body::Shell(_), None) => TabKind::Shell,
-        (Body::Shell(_), Some(agent)) if agent.meeseeks.is_some() => TabKind::Meeseeks,
-        (Body::Shell(_), Some(agent)) if agent.launched.is_some() => TabKind::Agent,
-        _ => TabKind::Other,
-    }
-}
-
-pub(crate) fn availability(kind: TabKind) -> Result<(), &'static str> {
-    match kind {
-        TabKind::Shell | TabKind::Agent => Ok(()),
-        TabKind::Main => Err("The main tab cannot change."),
-        TabKind::Meeseeks => Err("A Meeseeks tab cannot change."),
-        TabKind::Other => Err("This tab is not ready to change."),
-    }
 }
 
 #[cfg(test)]

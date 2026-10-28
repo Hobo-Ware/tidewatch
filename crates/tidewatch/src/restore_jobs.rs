@@ -13,7 +13,9 @@ use tidewatch_core::mcp::TabRole;
 use tidewatch_core::meeseeks::Meeseeks;
 use tidewatch_core::paths::TidewatchPaths;
 use tidewatch_core::prefs::{Prefs, ResumeAgents};
-use tidewatch_core::prepare::{PrepareInput, prepare, prepare_resume, prepare_resume_in_folder};
+use tidewatch_core::prepare::{
+    PrepareInput, prepare, prepare_in_folder, prepare_resume, prepare_resume_in_folder,
+};
 use tidewatch_core::profiles::{Profile, Profiles};
 use tidewatch_core::restore::{self, RealDisk, RestoreEnv, WindowPlan, plan_window};
 use tidewatch_core::resume_mode::Why;
@@ -140,6 +142,8 @@ pub(crate) struct ReopenSpec {
     pub(crate) fresh: bool,
     /// The tab had remote control on when it was saved.
     pub(crate) remote: bool,
+    /// The owner picked the level in a tab change: YOLO keeps its flags outside a worktree too.
+    pub(crate) yolo_anywhere: bool,
     pub(crate) meeseeks: Option<Meeseeks>,
     /// Set when the resume command is typed and waits for Enter instead of running.
     pub(crate) typed: Option<Why>,
@@ -178,7 +182,9 @@ pub(crate) fn run_reopen(spec: &ReopenSpec) -> Reopened {
         })
     });
     let outside_git = spec.worktree.is_none() && crate::repo::Repo::discover(&spec.dir).is_none();
-    let resume = if outside_git { prepare_resume_in_folder } else { prepare_resume };
+    let in_folder = outside_git || spec.yolo_anywhere;
+    let resume = if in_folder { prepare_resume_in_folder } else { prepare_resume };
+    let fresh = if in_folder { prepare_in_folder } else { prepare };
     let new_session =
         spec.fresh.then(|| spec.agent.session_id_flag.is_some().then(session_id::new));
     let new_session = new_session.flatten();
@@ -198,7 +204,7 @@ pub(crate) fn run_reopen(spec: &ReopenSpec) -> Reopened {
         listener: hooks,
         trust: spec.trust.as_ref(),
     };
-    let prepared = if spec.fresh { prepare(&input) } else { resume(&input, &spec.session_id) };
+    let prepared = if spec.fresh { fresh(&input) } else { resume(&input, &spec.session_id) };
     let (started, note) = match prepared {
         Ok(prepared) => {
             let started = Started {

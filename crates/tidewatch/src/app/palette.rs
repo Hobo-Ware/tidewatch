@@ -43,7 +43,6 @@ impl Tidewatch {
             repos: self.workspaces.iter().map(Workspace::chip_label).collect(),
             repo: group,
             profiles,
-            can_change: self.can_change(),
         }
     }
 

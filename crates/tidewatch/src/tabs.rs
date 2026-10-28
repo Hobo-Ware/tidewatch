@@ -188,6 +188,20 @@ impl<T> Tabs<T> {
         self.items.iter_mut().find(|t| t.id == id)
     }
 
+    /// Moves a tab into another group; the pinned main tab never moves. A group left showing a tab
+    /// that moved falls back to its main tab.
+    pub(crate) fn move_to_group(&mut self, id: u64, group: usize) {
+        let Some(index) = self.index_of(id) else { return };
+        let old = self.items[index].group;
+        if old == group || group >= self.recent.len() || self.items[index].pinned {
+            return;
+        }
+        self.items[index].group = group;
+        if self.recent[old] == id {
+            self.recent[old] = self.main_id(old).unwrap_or_default();
+        }
+    }
+
     pub(crate) fn remove_id(&mut self, id: u64) {
         if let Some(i) = self.index_of(id) {
             self.close(i);
@@ -342,6 +356,20 @@ mod tests {
 
     fn panes(tabs: &Tabs<u32>) -> Vec<u32> {
         tabs.items().iter().map(|t| t.pane).collect()
+    }
+
+    #[test]
+    fn a_tab_moves_to_another_group_and_the_pinned_main_tab_does_not() {
+        let mut tabs = tabs_with(1);
+        let other = tabs.add_group(9);
+        let moved = tabs.items()[1].id;
+        tabs.move_to_group(moved, other);
+        assert_eq!(tabs.group_of(moved), Some(other));
+        assert_eq!(tabs.in_group(0).count(), 1);
+        tabs.move_to_group(0, other);
+        assert_eq!(tabs.group_of(0), Some(0));
+        tabs.move_to_group(moved, 7);
+        assert_eq!(tabs.group_of(moved), Some(other), "a group that does not exist is ignored");
     }
 
     #[test]

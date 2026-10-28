@@ -1,8 +1,4 @@
-use tidewatch_core::meeseeks::{Criteria, Meeseeks};
-
 use super::*;
-use crate::agent_run::AgentRun;
-use crate::pane::{AgentTab, Launched};
 
 fn card(id: &str, name: &str, agent: &str, level: Level) -> Card {
     Card {
@@ -12,7 +8,7 @@ fn card(id: &str, name: &str, agent: &str, level: Level) -> Card {
         agent_id: agent.to_owned(),
         cli_name: if agent == "claude" { "Claude" } else { "Codex" }.to_owned(),
         unsupported: Vec::new(),
-        below_yolo: Some(Level::Auto),
+        installed: true,
         level,
     }
 }
@@ -30,6 +26,11 @@ fn facts(running: Running) -> Facts {
             card("reviewer", "Reviewer", "claude", Level::Plan),
             card("cdx", "Codex builder", "codex", Level::Edits),
         ],
+        follows: None,
+        busy: false,
+        meeseeks: false,
+        pinned: false,
+        replaces: None,
     }
 }
 
@@ -58,9 +59,9 @@ fn a_shell_with_a_found_session_opens_on_builder_at_the_level_it_runs_at() {
 }
 
 #[test]
-fn a_session_at_yolo_outside_a_worktree_opens_one_level_below() {
+fn a_session_at_yolo_opens_at_yolo_in_a_worktree_and_outside_one() {
     let f = Facts { seen_level: Some(Level::Yolo), in_worktree: false, ..facts(claude(false)) };
-    assert_eq!(Pick::start(&f, &builder_of), pick(Kind::Agent, "builder", Level::Auto));
+    assert_eq!(Pick::start(&f, &builder_of), pick(Kind::Agent, "builder", Level::Yolo));
     let inside = Facts { seen_level: Some(Level::Yolo), ..facts(claude(false)) };
     assert_eq!(Pick::start(&inside, &builder_of).level, Level::Yolo);
 }
@@ -75,46 +76,39 @@ fn a_plain_shell_opens_as_a_shell_and_one_that_ended_a_session_opens_on_agent() 
 }
 
 #[test]
-fn profiles_of_another_cli_are_refused_for_a_conversation_and_open_for_a_new_session() {
-    let f = facts(claude(false));
-    let other = &f.cards[2];
-    assert!(card_refusal(&f, other).unwrap().contains("another CLI"));
-    assert_eq!(card_refusal(&f, &f.cards[0]), None);
+fn every_profile_and_every_level_can_be_picked() {
+    let f = Facts { in_worktree: false, ..facts(claude(false)) };
     let mut p = pick(Kind::Agent, "builder", Level::Edits);
     p.pick_profile(&f, "cdx");
-    assert_eq!(p.profile, "builder", "a refused card is not picked");
-    let fresh = facts(Running::No);
-    assert_eq!(card_refusal(&fresh, &fresh.cards[2]), None);
+    assert_eq!(p.profile, "cdx", "another CLI is allowed: it starts a new conversation");
+    p.pick_level(Level::Yolo);
+    assert_eq!(p.level, Level::Yolo, "YOLO outside a worktree is picked as it is");
+    p.pick_kind(Kind::Shell);
+    assert_eq!(p.kind, Kind::Shell);
+    p.pick_profile(&f, "nope");
+    assert_eq!(p.profile, "cdx");
 }
 
 #[test]
-fn yolo_says_why_it_is_refused_outside_a_worktree() {
-    let f = Facts { in_worktree: false, ..facts(claude(false)) };
-    let reason = level_refusal(&f, &f.cards[0], Level::Yolo).unwrap();
-    assert_eq!(reason, "YOLO only runs in a worktree tab.");
-    assert_eq!(level_refusal(&f, &f.cards[0], Level::Auto), None);
-    let mut p = pick(Kind::Agent, "builder", Level::Edits);
-    p.pick_level(&f, Level::Yolo);
-    assert_eq!(p.level, Level::Edits);
-    let inside = facts(claude(false));
-    p.pick_level(&inside, Level::Yolo);
-    assert_eq!(p.level, Level::Yolo);
-}
-
-#[test]
-fn a_level_the_cli_has_no_flags_for_is_refused() {
-    let mut f = facts(claude(false));
-    f.cards[0].unsupported = vec![Level::Plan];
-    assert!(level_refusal(&f, &f.cards[0], Level::Plan).unwrap().contains("no flags"));
-}
-
-#[test]
-fn picking_a_profile_that_cannot_run_the_current_level_moves_to_one_it_can() {
+fn yolo_is_never_fitted_but_a_level_the_cli_has_no_flags_for_is_and_the_sentence_says_so() {
     let mut f = Facts { in_worktree: false, ..facts(Running::No) };
-    f.cards[1].unsupported = vec![Level::Ask];
-    let mut p = pick(Kind::Agent, "builder", Level::Ask);
-    p.pick_profile(&f, "reviewer");
-    assert_eq!((p.profile.as_str(), p.level), ("reviewer", Level::Plan));
+    let yolo = pick(Kind::Agent, "builder", Level::Yolo);
+    assert!(!sentence(&f, &yolo).contains("runs as"), "{}", sentence(&f, &yolo));
+    f.cards[0].unsupported = vec![Level::Plan];
+    let plan = pick(Kind::Agent, "builder", Level::Plan);
+    assert!(
+        sentence(&f, &plan).contains("Claude has no flags for Read only, so it runs as Ask."),
+        "{}",
+        sentence(&f, &plan)
+    );
+}
+
+#[test]
+fn the_start_level_falls_back_only_when_the_profile_has_no_flags_for_it() {
+    let mut g = Facts { in_worktree: false, ..facts(Running::No) };
+    g.cards[0].level = Level::Plan;
+    g.cards[0].unsupported = vec![Level::Plan];
+    assert_eq!(Pick::start(&g, &builder_of).level, Level::Ask);
 }
 
 #[test]
@@ -156,22 +150,84 @@ fn the_sentence_says_what_will_happen_in_each_case() {
 }
 
 #[test]
-fn change_is_blocked_for_what_is_already_so_and_for_a_shell_with_nothing_to_stop() {
+fn a_missing_cli_or_profile_is_a_fix_not_a_refusal() {
+    let mut f = facts(Running::No);
+    f.cards[2].installed = false;
+    let p = pick(Kind::Agent, "cdx", Level::Edits);
+    let missing = fix(&f, &p).unwrap();
+    assert_eq!(missing, Fix::Install("Codex".into()));
+    assert_eq!(missing.button(), "Set up Codex");
+    assert_eq!(
+        sentence(&f, &p),
+        "Codex is not installed here. Set it up and this tab switches over."
+    );
+    assert_eq!(change(&f, &p, false), None, "nothing starts until it is set up");
+    assert_eq!(fix(&f, &pick(Kind::Agent, "builder", Level::Edits)), None);
+    assert_eq!(fix(&f, &pick(Kind::Shell, "cdx", Level::Edits)), None);
+    let none = Facts { cards: Vec::new(), ..facts(Running::No) };
+    let nothing = pick(Kind::Agent, "", Level::Edits);
+    assert_eq!(fix(&none, &nothing), Some(Fix::AddProfile));
+    assert_eq!(Pick::start(&none, &builder_of).profile, "");
+}
+
+#[test]
+fn the_start_pick_prefers_a_profile_whose_cli_is_installed() {
+    let mut f = facts(Running::No);
+    f.cards[0].installed = false;
+    f.cards[1].installed = false;
+    assert_eq!(Pick::start(&f, &|_| None).profile, "cdx");
+}
+
+#[test]
+fn a_change_that_is_already_so_runs_again_and_a_plain_shell_restarts() {
     let f = Facts { current: Some(("builder".into(), Level::Edits)), ..facts(claude(false)) };
-    assert_eq!(
-        blocked(&f, &pick(Kind::Agent, "builder", Level::Edits)).as_deref(),
-        Some("Already running as Builder \u{b7} Auto edit.")
-    );
-    assert_eq!(blocked(&f, &pick(Kind::Agent, "builder", Level::Auto)), None);
-    assert_eq!(blocked(&f, &pick(Kind::Agent, "reviewer", Level::Edits)), None);
-    assert_eq!(blocked(&f, &pick(Kind::Shell, "builder", Level::Edits)), None);
+    let same = pick(Kind::Agent, "builder", Level::Edits);
+    assert!(change(&f, &same, false).is_some());
     let plain = facts(Running::No);
-    assert_eq!(
-        blocked(&plain, &pick(Kind::Shell, "builder", Level::Edits)).as_deref(),
-        Some("This tab is already a shell.")
+    let shell = pick(Kind::Shell, "builder", Level::Edits);
+    assert!(change(&plain, &shell, false).is_some());
+    assert!(sentence(&plain, &shell).starts_with("The shell restarts in the same folder."));
+}
+
+#[test]
+fn another_cli_starts_a_new_conversation_and_says_so() {
+    let p = pick(Kind::Agent, "cdx", Level::Edits);
+    let working = sentence(&facts(claude(true)), &p);
+    assert!(
+        working.starts_with("Claude finishes this turn, then stops. Codex cannot continue its conversation, so it starts a new one as Codex builder \u{b7} Auto edit. The old one stays on disk."),
+        "{working}"
     );
-    assert_eq!(kind_refusal(&plain, Kind::Shell), Some("No agent runs in this tab."));
-    assert_eq!(kind_refusal(&f, Kind::Shell), None);
+    let idle = sentence(&facts(claude(false)), &p);
+    assert!(idle.starts_with("Claude stops. Codex cannot continue its conversation"), "{idle}");
+    let stored = Facts { stored: Some(("claude".into(), "Claude".into())), ..facts(Running::No) };
+    assert!(
+        sentence(&stored, &p)
+            .starts_with("Codex cannot continue the conversation Claude ended in this tab")
+    );
+}
+
+#[test]
+fn the_sentence_names_where_the_tab_goes_and_what_else_changes() {
+    let p = pick(Kind::Agent, "builder", Level::Edits);
+    let f = Facts {
+        follows: Some("~/.tidewatch/web/upbeat-lantern".into()),
+        busy: true,
+        meeseeks: true,
+        pinned: true,
+        replaces: Some("The form in this tab is discarded."),
+        ..facts(claude(false))
+    };
+    let text = sentence(&f, &p);
+    for part in [
+        "The tab moves to ~/.tidewatch/web/upbeat-lantern, where the conversation runs.",
+        "The command running in this shell stops.",
+        "It stops being a Meeseeks and no longer ends by itself.",
+        "The main tab stays pinned.",
+        "The form in this tab is discarded.",
+    ] {
+        assert!(text.contains(part), "{part} in {text}");
+    }
+    assert!(!text.contains("stay as they are"), "{text}");
 }
 
 #[test]
@@ -179,8 +235,9 @@ fn stop_now_is_offered_only_while_the_agent_works_and_change_can_go_ahead() {
     let p = pick(Kind::Agent, "reviewer", Level::Plan);
     assert!(offers_stop_now(&facts(claude(true)), &p));
     assert!(!offers_stop_now(&facts(claude(false)), &p));
-    let same = Facts { current: Some(("reviewer".into(), Level::Plan)), ..facts(claude(true)) };
-    assert!(!offers_stop_now(&same, &p));
+    let mut missing = facts(claude(true));
+    missing.cards[1].installed = false;
+    assert!(!offers_stop_now(&missing, &p), "a missing CLI is set up first");
 }
 
 #[test]
@@ -195,48 +252,7 @@ fn change_hands_the_picked_target_and_whether_to_interrupt() {
     assert_eq!(change(&f, &p, true), Some(Change { tab: 4, target: want, interrupt: true }));
     let shell = pick(Kind::Shell, "reviewer", Level::Plan);
     assert_eq!(change(&f, &shell, false).map(|c| c.target), Some(Target::Shell));
-    assert_eq!(change(&facts(Running::No), &shell, false), None);
-}
-
-fn agent_pane(special: Option<&str>) -> Pane<u32> {
-    let mut agent = AgentTab::new("Builder".into(), AgentRun::setting_up("claude".into(), 0.0));
-    agent.launched = Some(Launched {
-        profile_id: "builder".into(),
-        level: Level::Edits,
-        session_id: None,
-        remote: false,
-        dir: None,
-    });
-    match special {
-        Some("meeseeks") => {
-            agent.meeseeks = Some(Meeseeks::summon(
-                "task",
-                Criteria { tests: true, committed: true, pr: false },
-                0,
-            ));
-        }
-        Some("starting") => agent.launched = None,
-        _ => {}
-    }
-    Pane { body: Body::Shell(0), worktree: None, agent: Some(agent) }
-}
-
-#[test]
-fn which_tabs_can_change_and_why_the_others_cannot() {
-    let creating: Pane<u32> = Pane { body: Body::Creating, worktree: None, agent: None };
-    let cases = [
-        (tab_kind(&Pane::shell(0u32), false), TabKind::Shell, true),
-        (tab_kind(&Pane::shell(0u32), true), TabKind::Main, false),
-        (tab_kind(&agent_pane(None), false), TabKind::Agent, true),
-        (tab_kind(&agent_pane(Some("meeseeks")), false), TabKind::Meeseeks, false),
-        (tab_kind(&agent_pane(Some("starting")), false), TabKind::Other, false),
-        (tab_kind(&creating, false), TabKind::Other, false),
-    ];
-    for (got, want, ok) in cases {
-        assert_eq!(got, want);
-        assert_eq!(availability(got).is_ok(), ok, "{want:?}");
-        assert_eq!(availability(got).err().map(str::is_empty), (!ok).then_some(false));
-    }
+    assert!(change(&facts(Running::No), &shell, false).is_some());
 }
 
 fn named(id: &str, name: &str, agent: &str) -> Card {

@@ -1,13 +1,13 @@
 //! Changing what a tab runs, the pure half: the target (an agent under a profile and level, or a
-//! plain shell), what blocks it as plain data (`Refusal`), and `plan`, which turns the session
-//! found in the tab plus the target into what the job starts. Nothing here touches the machine.
+//! plain shell), what can still stop it (`Failure`), where the converted tab lands (`landing`: it
+//! follows the folder the session runs in) and `plan`, which turns the session found in the tab
+//! plus the target into what the job starts. Nothing here touches the machine.
 
 use std::path::{Path, PathBuf};
 
-use tidewatch_core::agents::{Agent, AgentTable, Level};
+use tidewatch_core::agents::{Agent, AgentTable, Level, ResumeForm};
 use tidewatch_core::elsewhere::{Activity, Cli, Session, is_session_id};
 use tidewatch_core::profiles::{Profile, Profiles};
-use tidewatch_core::restore::resumed_level;
 use tidewatch_core::worktree::Worktree;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -19,49 +19,49 @@ pub(crate) enum Target {
     Shell,
 }
 
+/// What can still stop a change: a wait that ends by itself, or a real error with what to do.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) enum Refusal {
-    NothingRunning,
-    ShellBusy,
+pub(crate) enum Failure {
+    /// The agent is working; the change goes ahead when its turn ends.
     MidTurn,
-    NoSessionId,
-    YoloNeedsWorktree,
-    OtherFolder { session: PathBuf },
-    NoProfile(String),
-    OtherCli { session: Cli, profile: String, agent: String },
-    AgentMissing(String),
-    NotResumable(String),
-    Gone,
-    WillNotEnd { secs: u64 },
-    SignalFailed,
+    /// The tab is still being set up or removed; the change goes ahead when it settles.
+    Settling,
     ScanFailed,
+    Changed,
+    AgentMissing(String),
 }
 
-impl Refusal {
+impl Failure {
+    pub(crate) fn waits(&self) -> bool {
+        matches!(self, Self::MidTurn | Self::Settling)
+    }
+
     pub(crate) fn text(&self) -> String {
         match self {
-            Self::NothingRunning => "no agent is running in this tab".to_owned(),
-            Self::ShellBusy => "a command is running in this shell; let it finish first".to_owned(),
-            Self::MidTurn => "the agent is working; try again when it is idle".to_owned(),
-            Self::NoSessionId => "the session id could not be read".to_owned(),
-            Self::YoloNeedsWorktree => "YOLO only runs in a worktree tab".to_owned(),
-            Self::OtherFolder { session } => {
-                format!("the session runs in {}, not in the folder of this tab", session.display())
+            Self::MidTurn => "The agent is working; the tab changes when its turn ends.".to_owned(),
+            Self::Settling => "The tab is still being set up; it changes when that is done.".to_owned(),
+            Self::ScanFailed => {
+                "The process list could not be read, so nothing was changed. Press Change again."
+                    .to_owned()
             }
-            Self::NoProfile(id) => format!("there is no profile {id}"),
-            Self::OtherCli { session, profile, agent } => {
-                format!("this is a {} session and {profile} runs {agent}", session.id())
+            Self::Changed => {
+                "The agent changed while it was being stopped, so nothing else was touched. Press Change again."
+                    .to_owned()
             }
-            Self::AgentMissing(agent) => format!("{agent} is not installed"),
-            Self::NotResumable(agent) => format!("{agent} cannot resume a session"),
-            Self::Gone => "it is not running as it was; nothing was ended".to_owned(),
-            Self::WillNotEnd { secs } => {
-                format!("it did not exit within {secs} s and was left running")
-            }
-            Self::SignalFailed => "the signal could not be sent; it was left running".to_owned(),
-            Self::ScanFailed => "the process list could not be read; nothing was ended".to_owned(),
+            Self::AgentMissing(agent) => format!(
+                "{agent} is not installed. Install it (Settings, Profiles shows how), then change the tab again."
+            ),
         }
     }
+}
+
+/// What the window holds, to place a tab that follows its session into another folder.
+#[derive(Clone, Debug, Default)]
+pub(crate) struct Window {
+    /// The repo roots of the tab groups.
+    pub(crate) repos: Vec<PathBuf>,
+    /// The folders the other tabs show.
+    pub(crate) shown: Vec<PathBuf>,
 }
 
 /// What the app knows of the tab it changes.
@@ -69,7 +69,8 @@ impl Refusal {
 pub(crate) struct Subject {
     pub(crate) tab: u64,
     /// The pid of the tab's pty process: the shell, or the agent when the pty runs it directly.
-    pub(crate) shell_pid: u32,
+    /// `None` when the tab has no terminal (a form, a failure, a summary).
+    pub(crate) shell_pid: Option<u32>,
     /// The repo root, or the folder of the Other group.
     pub(crate) repo: PathBuf,
     pub(crate) worktree: Option<Worktree>,
@@ -79,9 +80,31 @@ pub(crate) struct Subject {
     pub(crate) cli: Option<Cli>,
     /// The id the tab's agent was launched with, for a CLI whose scan cannot name it.
     pub(crate) known_session_id: Option<String>,
-    /// A command other than the shell has the terminal.
-    pub(crate) foreground_busy: bool,
     pub(crate) remote: bool,
+    /// The pinned main tab: it stays in its group.
+    pub(crate) pinned: bool,
+    /// The tab is being set up or removed: nothing can swap its pane yet.
+    pub(crate) settling: bool,
+    pub(crate) window: Window,
+}
+
+/// What git says of a folder.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(crate) struct Folder {
+    /// The main checkout of the repo the folder belongs to; `None` outside git.
+    pub(crate) main: Option<PathBuf>,
+    pub(crate) branch: Option<String>,
+    /// A worktree Tidewatch made for that repo.
+    pub(crate) made_by_tidewatch: bool,
+}
+
+/// Where the converted tab runs: the folder, its worktree (when Tidewatch made it and no other tab
+/// shows it), and the repo whose group holds the tab.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct Landing {
+    pub(crate) dir: PathBuf,
+    pub(crate) worktree: Option<Worktree>,
+    pub(crate) repo: PathBuf,
 }
 
 /// What the tab has to resume from.
@@ -109,13 +132,15 @@ pub(crate) struct AgentPlan {
     pub(crate) profile_id: String,
     pub(crate) profile: Profile,
     pub(crate) start: Start,
-    pub(crate) cwd: PathBuf,
+    pub(crate) landing: Landing,
+    /// Why a new session starts where the conversation could not continue.
+    pub(crate) note: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum Plan {
     Agent(Box<AgentPlan>),
-    Shell { cli: Cli, session_id: String },
+    Shell { remembered: Option<(Cli, String)> },
 }
 
 pub(crate) fn same_folder(a: &Path, b: &Path) -> bool {
@@ -123,23 +148,80 @@ pub(crate) fn same_folder(a: &Path, b: &Path) -> bool {
     a == b || real(a) == real(b)
 }
 
-/// What to start for `target`, or why not. `interrupt` lets a turn in progress be cut short.
+pub(crate) fn is_inside(dir: &Path, parent: &Path) -> bool {
+    let real = |path: &Path| std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+    dir.starts_with(parent) || real(dir).starts_with(real(parent))
+}
+
+/// The tab follows its session: where the session runs is where the tab lands, in the group of
+/// the repo that folder belongs to. Only a worktree Tidewatch made and no other tab shows is
+/// owned by the tab; any other folder is left alone when the tab closes.
+pub(crate) fn landing(cwd: &Path, subject: &Subject, folder: &Folder) -> Landing {
+    let stay = Landing {
+        dir: cwd.to_path_buf(),
+        worktree: subject.worktree.clone(),
+        repo: subject.repo.clone(),
+    };
+    if is_inside(cwd, &subject.dir) {
+        return stay;
+    }
+    let loose = Landing { worktree: None, ..stay };
+    let Some(main) = folder.main.as_ref().filter(|_| !subject.pinned) else { return loose };
+    let repo =
+        subject.window.repos.iter().find(|open| same_folder(open, main)).unwrap_or(main).clone();
+    let shown = subject.window.shown.iter().any(|dir| same_folder(dir, cwd));
+    let worktree = (folder.made_by_tidewatch && !shown)
+        .then(|| {
+            folder.branch.clone().map(|branch| Worktree {
+                repo: repo.clone(),
+                path: cwd.to_path_buf(),
+                branch,
+            })
+        })
+        .flatten();
+    Landing { dir: cwd.to_path_buf(), worktree, repo }
+}
+
+/// The level that runs: the one asked for, or, when the CLI has no flags for it, the nearest it
+/// has, preferring a lower level to a higher one.
+pub(crate) fn fit_level(level: Level, unsupported: &[Level]) -> Level {
+    let open = |candidate: &Level| !unsupported.contains(candidate);
+    if open(&level) {
+        return level;
+    }
+    Level::ALL
+        .into_iter()
+        .rev()
+        .filter(open)
+        .find(|candidate| *candidate < level)
+        .or_else(|| Level::ALL.into_iter().filter(open).find(|candidate| *candidate > level))
+        .unwrap_or(level)
+}
+
+pub(crate) fn unsupported_levels(agent: &Agent) -> Vec<Level> {
+    Level::ALL.into_iter().filter(|level| agent.level_args(*level).is_none()).collect()
+}
+
+/// What to start for `target`, or what to wait for. `interrupt` lets a turn in progress be cut
+/// short. A session in another CLI, one that cannot resume or one with no readable id starts a new
+/// session in the same folder, and says why in `note`.
 pub(crate) fn plan(
     target: &Target,
     source: Source,
     subject: &Subject,
+    folder: &Folder,
     (profiles, agents, installed): (&Profiles, &AgentTable, &[String]),
     interrupt: bool,
-) -> Result<Plan, Refusal> {
-    let known = subject.known_session_id.clone().filter(|id| is_session_id(id));
-    if subject.foreground_busy && !matches!(source, Source::Running(_)) {
-        return Err(Refusal::ShellBusy);
+) -> Result<Plan, Failure> {
+    if subject.settling {
+        return Err(Failure::Settling);
     }
+    let known = subject.known_session_id.clone().filter(|id| is_session_id(id));
     let (cli, session_id, seen, cwd) = match source {
         Source::Running(session) => {
-            let running = session.running().ok_or(Refusal::NothingRunning)?;
-            if running.activity == Activity::Working && !interrupt {
-                return Err(Refusal::MidTurn);
+            let working = session.running().is_some_and(|r| r.activity == Activity::Working);
+            if working && !interrupt {
+                return Err(Failure::MidTurn);
             }
             let id = session.session_id.clone().filter(|id| is_session_id(id)).or(known);
             (Some(session.cli), id, session.flags.level, session.cwd.clone())
@@ -150,53 +232,66 @@ pub(crate) fn plan(
         Source::Nothing => (None, None, None, subject.dir.clone()),
     };
     let Target::Agent { profile: profile_id, level } = target else {
-        return match (cli, session_id) {
-            (Some(cli), Some(session_id)) if matches!(source, Source::Running(_)) => {
-                Ok(Plan::Shell { cli, session_id })
-            }
-            (_, None) if matches!(source, Source::Running(_)) => Err(Refusal::NoSessionId),
-            _ => Err(Refusal::NothingRunning),
-        };
+        return Ok(Plan::Shell { remembered: cli.zip(session_id) });
     };
-    if matches!(source, Source::Running(_)) && session_id.is_none() {
-        return Err(Refusal::NoSessionId);
-    }
-    if !same_folder(&cwd, &subject.dir) {
-        return Err(Refusal::OtherFolder { session: cwd });
-    }
-    let base = if profile_id == Profile::DEFAULTS_ID {
-        Profile::defaults_for(cli.map_or("claude", Cli::id), Level::Edits)
-    } else {
-        profiles
-            .profile
-            .get(profile_id)
-            .cloned()
-            .ok_or_else(|| Refusal::NoProfile(profile_id.clone()))?
+    let (profile_id, base) = match profiles.profile.get(profile_id) {
+        Some(profile) if profile_id != Profile::DEFAULTS_ID => {
+            (profile_id.clone(), profile.clone())
+        }
+        _ => (
+            Profile::DEFAULTS_ID.to_owned(),
+            Profile::defaults_for(cli.map_or("claude", Cli::id), Level::Edits),
+        ),
     };
-    if let Some(cli) = cli.filter(|cli| cli.id() != base.agent) {
-        return Err(Refusal::OtherCli { session: cli, profile: base.name, agent: base.agent });
-    }
     let agent = agents
         .get(&base.agent)
         .filter(|agent| installed.contains(&agent.id))
-        .ok_or_else(|| Refusal::AgentMissing(base.agent.clone()))?;
-    if session_id.is_some() && agent.resume.is_none() {
-        return Err(Refusal::NotResumable(agent.id.clone()));
-    }
-    let in_worktree = subject.worktree.is_some();
-    let level = match (level, session_id.is_some()) {
-        (Some(Level::Yolo), _) if !in_worktree => return Err(Refusal::YoloNeedsWorktree),
+        .ok_or_else(|| Failure::AgentMissing(base.agent.clone()))?;
+    let landing = landing(&cwd, subject, folder);
+    let (resume, note) = resumable(cli, session_id, agent, matches!(source, Source::Running(_)));
+    let wanted = match (level, resume.is_some()) {
         (Some(level), _) => *level,
-        (None, true) => resumed_level(base.level, agent, in_worktree, seen),
-        (None, false) => resumed_level(base.level, agent, in_worktree, Some(base.level)),
+        (None, true) => seen.unwrap_or(base.level),
+        (None, false) => base.level,
     };
+    let level = fit_level(wanted, &unsupported_levels(agent));
     Ok(Plan::Agent(Box::new(AgentPlan {
         agent: agent.clone(),
-        profile_id: profile_id.clone(),
+        profile_id,
         profile: Profile { level, ..base },
-        start: session_id.map_or(Start::Fresh, Start::Resume),
-        cwd,
+        start: resume.map_or(Start::Fresh, Start::Resume),
+        landing,
+        note,
     })))
+}
+
+fn resumable(
+    cli: Option<Cli>,
+    session_id: Option<String>,
+    agent: &Agent,
+    running: bool,
+) -> (Option<String>, Option<String>) {
+    match (cli, session_id) {
+        (Some(_), None) if matches!(agent.resume, Some(ResumeForm::FlagLatest(_))) => {
+            (Some("latest".to_owned()), None)
+        }
+        (Some(cli), _) if cli.id() != agent.id => (
+            None,
+            Some(format!(
+                "{} cannot continue a {} conversation, so a new session started. The old one stays on disk.",
+                agent.name,
+                cli.id()
+            )),
+        ),
+        (Some(_), None) if running => (
+            None,
+            Some(
+                "The conversation's id could not be read, so a new session started in its folder. The old one stays on disk."
+                    .to_owned(),
+            ),
+        ),
+        (_, id) => (id, None),
+    }
 }
 
 #[cfg(test)]

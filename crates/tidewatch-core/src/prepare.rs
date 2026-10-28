@@ -130,6 +130,11 @@ pub fn prepare(input: &PrepareInput) -> Result<Prepared, PrepareError> {
     prepare_with(input, None, false)
 }
 
+/// [`prepare`] for a tab the owner changed on purpose: a YOLO profile keeps its flags in any folder.
+pub fn prepare_in_folder(input: &PrepareInput) -> Result<Prepared, PrepareError> {
+    prepare_with(input, None, true)
+}
+
 /// [`prepare`] for a restored tab: the same files, environment and wiring, but the agent reopens
 /// `session_id` (see `restore::resume_command`) and no task is added. `input.session_id` and
 /// `input.task` are ignored. A Gemini tab's generated settings are rewritten, because they name

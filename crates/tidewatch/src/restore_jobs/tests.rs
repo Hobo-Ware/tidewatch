@@ -318,6 +318,7 @@ fn reopen_spec(f: &Fixture, level: Level, listener: Option<Arc<Listener>>) -> Re
         session_id: SESSION_ID.into(),
         fresh: false,
         remote: false,
+        yolo_anywhere: false,
         meeseeks: None,
         typed: None,
         path_var: OsString::from("/usr/bin:/bin"),

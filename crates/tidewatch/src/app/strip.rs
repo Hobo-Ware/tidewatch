@@ -381,7 +381,6 @@ struct Slot {
 }
 
 struct MenuView {
-    change: bool,
     parking: ParkMenu,
     active: bool,
     face: AvatarMenu,
@@ -475,10 +474,6 @@ fn tab_row<T>(
             }
         }
         let menu = MenuView {
-            change: crate::change_tab::availability(crate::change_tab::tab_kind(
-                &tab.pane, tab.pinned,
-            ))
-            .is_ok(),
             parking: if draft {
                 ParkMenu::Hidden
             } else {
@@ -578,19 +573,14 @@ fn tab_menu(
     actions: &mut Vec<Action>,
 ) {
     let offered = matches!(menu.parking, ParkMenu::Offered { .. });
-    if !offered && menu.face == AvatarMenu::None && !menu.change {
-        return;
-    }
     resp.context_menu(|ui| {
         style_menu(ui);
-        if menu.change {
-            if menu_item(ui, "Change this tab...", "").clicked() {
-                actions.push(Action::Change(index));
-                ui.close();
-            }
-            if offered || menu.face != AvatarMenu::None {
-                ui.separator();
-            }
+        if menu_item(ui, "Change this tab...", "").clicked() {
+            actions.push(Action::Change(index));
+            ui.close();
+        }
+        if offered || menu.face != AvatarMenu::None {
+            ui.separator();
         }
         if let ParkMenu::Offered { parkable, keep } = menu.parking {
             let keys = if menu.active { Command::ParkTab.keys() } else { String::new() };

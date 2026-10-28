@@ -1,15 +1,12 @@
 //! Draws the "Change this tab" popover under the tab strip: Kind, a grid of profile cards, Level,
 //! the sentence that says what will happen, and the footer. Enter changes, Esc closes. Every
-//! choice comes from `change_tab`, which also says which are refused and why.
+//! choice comes from `change_tab`; a missing CLI turns Change into the button that sets it up.
 
 use egui::{Align2, Id, Key, Modifiers, Rect, Sense, Stroke, StrokeKind, Ui, UiKind, pos2, vec2};
 use tidewatch_core::agents::Level;
 
 use crate::brand;
-use crate::change_tab::{
-    Card, Facts, Kind, Pick, blocked, card_refusal, kind_refusal, level_refusal, offers_stop_now,
-    sentence,
-};
+use crate::change_tab::{Card, Facts, Kind, Pick, fix, offers_stop_now, sentence};
 use crate::screen_kit::{
     Size, TEXT_SECONDARY, TEXT_TAG, body, dialog_frame_in, footer_row, heading,
     primary_button_keyed, quiet_button,
@@ -26,7 +23,11 @@ const SECTION_GAP: f32 = 14.0;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Outcome {
     Close,
-    Change { interrupt: bool },
+    Change {
+        interrupt: bool,
+    },
+    /// The CLI or profile the pick needs is missing: open Settings, Profiles.
+    SetUp,
 }
 
 fn label(ui: &mut Ui, text: &str) {
@@ -37,22 +38,22 @@ fn label(ui: &mut Ui, text: &str) {
     ui.add_space(LABEL_GAP);
 }
 
-fn kind_row(ui: &mut Ui, facts: &Facts, pick: &mut Pick) {
+fn kind_row(ui: &mut Ui, pick: &mut Pick) {
     label(ui, "Kind");
     let labels = Kind::ALL.map(Kind::label);
-    let refusals = Kind::ALL.map(|kind| kind_refusal(facts, kind).map(str::to_owned));
+    let refusals = Kind::ALL.map(|_| None);
     let active = Kind::ALL.iter().position(|kind| *kind == pick.kind).unwrap_or(0);
     let clicked =
         segmented::inline_or_chips(ui, Id::new("change_tab_kind"), &labels, &[], &refusals, active);
     if let Some(index) = clicked {
-        pick.pick_kind(facts, Kind::ALL[index]);
+        pick.pick_kind(Kind::ALL[index]);
     }
 }
 
-fn card(ui: &mut Ui, rect: Rect, card: &Card, selected: bool, refusal: Option<&str>) -> bool {
+fn card(ui: &mut Ui, rect: Rect, card: &Card, selected: bool) -> bool {
     let response = ui.interact(rect, Id::new(("change_tab_card", &card.id)), Sense::click());
     let painter = ui.painter();
-    let line = match (selected, response.hovered() && refusal.is_none()) {
+    let line = match (selected, response.hovered()) {
         (true, _) => brand::TEAL,
         (false, true) => brand::FAINT,
         (false, false) => brand::FIELD_LINE,
@@ -64,10 +65,9 @@ fn card(ui: &mut Ui, rect: Rect, card: &Card, selected: bool, refusal: Option<&s
         Stroke::new(if selected { 1.5 } else { 1.0 }, line),
         StrokeKind::Inside,
     );
-    let (name, detail) = match refusal {
-        Some(_) => (brand::FAINT, brand::FAINT),
-        None => (brand::TEXT, brand::MUTED),
-    };
+    let (name, detail) =
+        if card.installed { (brand::TEXT, brand::MUTED) } else { (brand::FAINT, brand::FAINT) };
+    let detail_text = if card.installed { card.detail.as_str() } else { "Not installed" };
     let inset = rect.left() + Size::Compact.pad();
     let clip = painter.with_clip_rect(rect.shrink2(vec2(Size::Compact.pad() / 2.0, 0.0)));
     clip.text(
@@ -80,17 +80,11 @@ fn card(ui: &mut Ui, rect: Rect, card: &Card, selected: bool, refusal: Option<&s
     clip.text(
         pos2(inset, rect.top() + 33.0),
         Align2::LEFT_CENTER,
-        &card.detail,
+        detail_text,
         body(TEXT_TAG),
         detail,
     );
-    let response = match refusal {
-        Some(reason) => {
-            response.on_hover_text(reason).on_hover_cursor(egui::CursorIcon::NotAllowed)
-        }
-        None => response.on_hover_cursor(egui::CursorIcon::PointingHand),
-    };
-    response.clicked()
+    response.on_hover_cursor(egui::CursorIcon::PointingHand).clicked()
 }
 
 fn profile_grid(ui: &mut Ui, facts: &Facts, pick: &mut Pick) {
@@ -109,10 +103,7 @@ fn profile_grid(ui: &mut Ui, facts: &Facts, pick: &mut Pick) {
             area.top() + row as f32 * (CARD_H + GAP),
         );
         let rect = Rect::from_min_size(at, vec2(card_w, CARD_H));
-        let refusal = card_refusal(facts, profile);
-        if card(ui, rect, profile, profile.id == pick.profile, refusal.as_deref())
-            && refusal.is_none()
-        {
+        if card(ui, rect, profile, profile.id == pick.profile) {
             picked = Some(profile.id.clone());
         }
     }
@@ -121,17 +112,11 @@ fn profile_grid(ui: &mut Ui, facts: &Facts, pick: &mut Pick) {
     }
 }
 
-fn level_row(ui: &mut Ui, facts: &Facts, pick: &mut Pick) {
+fn level_row(ui: &mut Ui, pick: &mut Pick) {
     label(ui, "Level");
     let labels = Level::ALL.map(Level::label);
     let tones = Level::ALL.map(|level| (level == Level::Yolo).then_some(brand::RED));
-    let refusals = Level::ALL.map(|level| {
-        facts
-            .cards
-            .iter()
-            .find(|card| card.id == pick.profile)
-            .and_then(|card| level_refusal(facts, card, level))
-    });
+    let refusals = Level::ALL.map(|_| None);
     let active = Level::ALL.iter().position(|level| *level == pick.level).unwrap_or(0);
     let clicked = segmented::inline_or_chips(
         ui,
@@ -142,7 +127,7 @@ fn level_row(ui: &mut Ui, facts: &Facts, pick: &mut Pick) {
         active,
     );
     if let Some(index) = clicked {
-        pick.pick_level(facts, Level::ALL[index]);
+        pick.pick_level(Level::ALL[index]);
     }
 }
 
@@ -172,22 +157,27 @@ pub(crate) fn show(ctx: &egui::Context, facts: &Facts, pick: &mut Pick) -> Optio
     let mut outcome = None;
     let modal = dialog_frame_in(ctx, (id, area), "Change this tab", WIDTH, |ui| {
         ui.spacing_mut().item_spacing.y = 0.0;
-        kind_row(ui, facts, pick);
+        kind_row(ui, pick);
         if pick.kind == Kind::Agent {
             ui.add_space(SECTION_GAP);
             profile_grid(ui, facts, pick);
             ui.add_space(SECTION_GAP);
-            level_row(ui, facts, pick);
+            level_row(ui, pick);
         }
         ui.add_space(SECTION_GAP);
-        let reason = blocked(facts, pick);
-        what_happens(ui, &reason.clone().unwrap_or_else(|| sentence(facts, pick)));
+        let missing = fix(facts, pick);
+        what_happens(ui, &sentence(facts, pick));
         ui.add_space(SECTION_GAP);
         footer_row(ui, "Esc cancels", |ui| {
-            if primary_button_keyed(ui, "Change", "\u{21b5}", reason.is_none(), Size::Regular)
-                .clicked()
-            {
-                outcome = Some(Outcome::Change { interrupt: false });
+            let label = missing
+                .as_ref()
+                .map_or_else(|| "Change".to_owned(), crate::change_tab::Fix::button);
+            if primary_button_keyed(ui, &label, "\u{21b5}", true, Size::Regular).clicked() {
+                outcome = Some(if missing.is_some() {
+                    Outcome::SetUp
+                } else {
+                    Outcome::Change { interrupt: false }
+                });
             }
             if offers_stop_now(facts, pick)
                 && quiet_button(ui, "Stop turn and switch now", true, Size::Regular).clicked()
@@ -197,8 +187,12 @@ pub(crate) fn show(ctx: &egui::Context, facts: &Facts, pick: &mut Pick) -> Optio
         });
     });
     let enter = ctx.input_mut(|input| input.consume_key(Modifiers::NONE, Key::Enter));
-    if outcome.is_none() && enter && blocked(facts, pick).is_none() {
-        outcome = Some(Outcome::Change { interrupt: false });
+    if outcome.is_none() && enter {
+        outcome = Some(if fix(facts, pick).is_some() {
+            Outcome::SetUp
+        } else {
+            Outcome::Change { interrupt: false }
+        });
     }
     if outcome.is_none() && modal.should_close() {
         outcome = Some(Outcome::Close);

@@ -60,6 +60,15 @@ impl Tidewatch {
         }
     }
 
+    pub(super) fn open_profiles_settings(&mut self) {
+        if self.settings.is_none() {
+            self.toggle_settings();
+        }
+        if let Some(settings) = &mut self.settings {
+            settings.section = Section::Profiles;
+        }
+    }
+
     pub(super) fn toggle_shortcuts_settings(&mut self) {
         if self.settings.as_ref().is_some_and(|settings| settings.section == Section::Shortcuts) {
             self.settings = None;
