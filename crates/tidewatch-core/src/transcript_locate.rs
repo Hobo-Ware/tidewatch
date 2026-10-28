@@ -1,5 +1,6 @@
 //! Where each CLI keeps the session file of a tab (PLAN.md, D12), found from what Tidewatch knows:
-//! the worktree folder and the session id it passed with `--session-id`.
+//! the worktree folder and the session id it passed with `--session-id`. A Claude session copied
+//! into another project folder exists twice: the copy written last is the live one.
 //!
 //! Checked against claude 2.1.296, gemini 0.46.0, copilot 1.0.91 and codex 0.162.1 on 2026-10-13.
 //! Tidewatch cannot pass Codex a session id, so its rollout is found by folder and start time (a
@@ -11,6 +12,7 @@
 use std::fs;
 use std::io::{BufRead as _, BufReader};
 use std::path::{Path, PathBuf};
+use std::time::SystemTime;
 
 use serde_json::Value;
 
@@ -81,6 +83,11 @@ impl Locator {
     }
 
     fn claude(&self) -> Option<PathBuf> {
+        newest_file(self.claude_candidates()?)
+    }
+
+    /// Every folder's copy of the session, the working directory's first (it wins a tie).
+    fn claude_candidates(&self) -> Option<impl Iterator<Item = PathBuf>> {
         let id = self.session()?;
         let projects = self.home.join(".claude").join("projects");
         let file = format!("{id}.jsonl");
@@ -88,13 +95,17 @@ impl Locator {
             .cwd_forms()
             .into_iter()
             .map(|cwd| projects.join(claude_project_dir_name(&cwd)).join(&file))
-            .find(|path| path.is_file());
-        direct.or_else(|| {
-            sorted_children(&projects)
-                .into_iter()
-                .map(|dir| dir.join(&file))
-                .find(|path| path.is_file())
-        })
+            .collect::<Vec<_>>();
+        let others = sorted_children(&projects).into_iter().map(move |dir| dir.join(&file));
+        Some(direct.into_iter().chain(others))
+    }
+
+    /// A copy of the Claude session written more recently than `current` (a listing and a stat each).
+    #[must_use]
+    pub fn newer_claude(&self, current: &Path) -> Option<PathBuf> {
+        let best = newest_file(self.claude_candidates()?)?;
+        (best != current && modified(&best)? > modified(current).unwrap_or(SystemTime::UNIX_EPOCH))
+            .then_some(best)
     }
 
     fn gemini(&self) -> Option<PathBuf> {
@@ -173,6 +184,22 @@ pub fn claude_project_dir_name(cwd: &Path) -> String {
 
 fn safe_id(id: &str) -> bool {
     id.len() >= 8 && id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-')
+}
+
+fn modified(path: &Path) -> Option<SystemTime> {
+    let meta = fs::metadata(path).ok()?;
+    meta.is_file().then(|| meta.modified().ok()).flatten()
+}
+
+fn newest_file(paths: impl Iterator<Item = PathBuf>) -> Option<PathBuf> {
+    let mut best: Option<(SystemTime, PathBuf)> = None;
+    for path in paths {
+        let Some(at) = modified(&path) else { continue };
+        if best.as_ref().is_none_or(|(newest, _)| at > *newest) {
+            best = Some((at, path));
+        }
+    }
+    best.map(|(_, path)| path)
 }
 
 fn sorted_children(dir: &Path) -> Vec<PathBuf> {
@@ -282,6 +309,92 @@ mod tests {
         let mut locator = Locator::new(home.path(), "/very/long/path");
         locator.session_id = Some(SID.into());
         assert_eq!(locator.locate(Source::Claude), Some(file));
+    }
+
+    fn set_age(path: &Path, secs_ago: u64) {
+        let at = SystemTime::now() - std::time::Duration::from_secs(secs_ago);
+        fs::OpenOptions::new().write(true).open(path).unwrap().set_modified(at).unwrap();
+    }
+
+    fn claude_copy(home: &Path, folder: &str, secs_ago: u64) -> PathBuf {
+        let file = home.join(".claude/projects").join(folder).join(format!("{SID}.jsonl"));
+        touch(&file, "");
+        set_age(&file, secs_ago);
+        file
+    }
+
+    type Case<'a> = (&'a str, &'a [(&'a str, u64)], Option<&'a str>);
+
+    fn claude_locator(home: &Path) -> Locator {
+        let mut locator = Locator::new(home, "/Users/me/Git/tw");
+        locator.session_id = Some(SID.into());
+        locator
+    }
+
+    #[test]
+    fn claude_copies_of_one_session_resolve_to_the_newest() {
+        let own = "-Users-me-Git-tw";
+        let cases: [Case; 6] = [
+            ("none", &[], None),
+            (
+                "only the other folder",
+                &[("-Users-me-Git-tw-old", 50)],
+                Some("-Users-me-Git-tw-old"),
+            ),
+            ("only the own folder", &[(own, 50)], Some(own)),
+            (
+                "a newer copy elsewhere wins",
+                &[(own, 500), ("-Users-me-Git-tw-new", 5)],
+                Some("-Users-me-Git-tw-new"),
+            ),
+            ("the own folder when newest", &[(own, 5), ("-Users-me-Git-tw-old", 500)], Some(own)),
+            ("three copies", &[("a", 900), ("b", 30), (own, 400)], Some("b")),
+        ];
+        for (name, copies, want) in cases {
+            let home = tempfile::tempdir().unwrap();
+            for (folder, age) in copies {
+                claude_copy(home.path(), folder, *age);
+            }
+            let want = want.map(|folder| {
+                home.path().join(".claude/projects").join(folder).join(format!("{SID}.jsonl"))
+            });
+            assert_eq!(claude_locator(home.path()).locate(Source::Claude), want, "{name}");
+        }
+    }
+
+    #[test]
+    fn the_own_folder_wins_a_tie() {
+        let home = tempfile::tempdir().unwrap();
+        let own = claude_copy(home.path(), "-Users-me-Git-tw", 100);
+        let other = claude_copy(home.path(), "-Users-me-Git-aaa", 100);
+        let at = fs::metadata(&own).unwrap().modified().unwrap();
+        fs::OpenOptions::new().write(true).open(&other).unwrap().set_modified(at).unwrap();
+        assert_eq!(claude_locator(home.path()).locate(Source::Claude), Some(own));
+    }
+
+    #[test]
+    fn the_pick_moves_when_the_other_copy_gets_newer() {
+        let home = tempfile::tempdir().unwrap();
+        let own = claude_copy(home.path(), "-Users-me-Git-tw", 100);
+        let other = claude_copy(home.path(), "-Users-me-Git-tw-live", 500);
+        let locator = claude_locator(home.path());
+        assert_eq!(locator.locate(Source::Claude), Some(own.clone()));
+        assert_eq!(locator.newer_claude(&own), None);
+        set_age(&other, 1);
+        assert_eq!(locator.locate(Source::Claude), Some(other.clone()));
+        assert_eq!(locator.newer_claude(&own), Some(other.clone()));
+        assert_eq!(locator.newer_claude(&other), None);
+    }
+
+    #[test]
+    fn newer_claude_needs_a_session_id_and_ignores_a_vanished_current_file() {
+        let home = tempfile::tempdir().unwrap();
+        let copy = claude_copy(home.path(), "-Users-me-Git-tw", 100);
+        let mut locator = claude_locator(home.path());
+        let gone = home.path().join("gone.jsonl");
+        assert_eq!(locator.newer_claude(&gone), Some(copy));
+        locator.session_id = None;
+        assert_eq!(locator.newer_claude(&gone), None);
     }
 
     #[test]

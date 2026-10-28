@@ -17,6 +17,7 @@ const LOCATE_FAST_WINDOW: Duration = Duration::from_secs(30);
 const MISSING_AFTER: Duration = Duration::from_secs(20);
 const TAIL_FIRST: Duration = Duration::from_millis(400);
 const TAIL_MAX: Duration = Duration::from_secs(15);
+const NEWER_COPY_LOOK: Duration = Duration::from_secs(5);
 
 /// How long to wait before the next look for the file: a fast retry right after launch (the file
 /// appears late), a slow one after.
@@ -63,9 +64,18 @@ impl Feed {
         locator: Locator,
         wake: impl Fn() + Send + 'static,
     ) -> Self {
+        Self::start_looking(source, locator, NEWER_COPY_LOOK, wake)
+    }
+
+    fn start_looking(
+        source: Source,
+        locator: Locator,
+        copy_look: Duration,
+        wake: impl Fn() + Send + 'static,
+    ) -> Self {
         let (commands, command_rx) = mpsc::channel();
         let (message_tx, messages) = mpsc::channel();
-        thread::spawn(move || run(source, locator, &command_rx, &message_tx, &wake));
+        thread::spawn(move || run(source, locator, copy_look, &command_rx, &message_tx, &wake));
         Self { commands, messages }
     }
 
@@ -92,6 +102,7 @@ impl Drop for Feed {
 fn run(
     source: Source,
     mut locator: Locator,
+    copy_look: Duration,
     commands: &Receiver<Command>,
     messages: &Sender<Message>,
     wake: &impl Fn(),
@@ -102,6 +113,7 @@ fn run(
     let mut said_missing = false;
     let mut sent_title: Option<String> = None;
     let mut delay = Duration::ZERO;
+    let mut copy_looked = Instant::now();
     let send = |message: Message| {
         let sent = messages.send(message).is_ok();
         wake();
@@ -140,6 +152,18 @@ fn run(
             tail = Some(Tail::new(source, path));
             empty_reads = 0;
         }
+        if source == Source::Claude && copy_looked.elapsed() >= copy_look {
+            copy_looked = Instant::now();
+            let newer = tail.as_ref().and_then(|tail| locator.newer_claude(tail.path()));
+            if let Some(path) = newer
+                && tail.as_mut().is_some_and(|tail| tail.follow(&path))
+            {
+                empty_reads = 0;
+                if !send(Message::Found(path)) {
+                    return;
+                }
+            }
+        }
         let entries = tail.as_mut().map(Tail::poll).unwrap_or_default();
         let title = tail
             .as_ref()
@@ -161,6 +185,9 @@ fn run(
             }
         }
         delay = tail_delay(empty_reads);
+        if source == Source::Claude {
+            delay = delay.min(copy_look.saturating_sub(copy_looked.elapsed()));
+        }
     }
 }
 
@@ -309,5 +336,86 @@ mod tests {
         feed.poke();
         let seen = wait_for(&feed, |m| matches!(m, Message::Title(_)));
         assert_eq!(titles(&seen), ["Send people back after login"]);
+    }
+
+    fn user_line(text: &str) -> String {
+        format!("{{\"type\":\"user\",\"message\":{{\"content\":\"{text}\"}}}}\n")
+    }
+
+    fn entries_of(message: &Message) -> Vec<Entry> {
+        match message {
+            Message::Entries(entries) => entries.clone(),
+            _ => Vec::new(),
+        }
+    }
+
+    fn texts(seen: &[Message]) -> Vec<String> {
+        seen.iter()
+            .filter_map(|m| match m {
+                Message::Entries(entries) => Some(entries.iter().map(|e| e.text.clone())),
+                _ => None,
+            })
+            .flatten()
+            .collect()
+    }
+
+    fn copy_into(dir: &std::path::Path, name: &str, text: &str, secs_ago: u64) -> PathBuf {
+        fs::create_dir_all(dir).unwrap();
+        let file = dir.join(name);
+        fs::write(&file, text).unwrap();
+        let at = std::time::SystemTime::now() - Duration::from_secs(secs_ago);
+        fs::OpenOptions::new().write(true).open(&file).unwrap().set_modified(at).unwrap();
+        file
+    }
+
+    #[test]
+    fn a_newer_copy_of_the_session_takes_over_and_clears_the_queued_message() {
+        let home = tempfile::tempdir().unwrap();
+        let cwd = home.path().join("work");
+        let projects = home.path().join(".claude").join("projects");
+        let own = projects.join(tidewatch_core::transcript_locate::claude_project_dir_name(&cwd));
+        let id = "44444444-aaaa-bbbb-cccc-000000000004";
+        let name = format!("{id}.jsonl");
+        let stale = user_line("start") + &claude_line("working");
+        copy_into(&own, &name, &stale, 600);
+        let mut locator = Locator::new(home.path(), &cwd);
+        locator.session_id = Some(id.into());
+        let feed = Feed::start_looking(Source::Claude, locator, Duration::from_millis(100), || {});
+        let mut rows = crate::reader_rows::Rows::default();
+        rows.queue_user("fix it", 0);
+        let seen = wait_for(&feed, |m| matches!(m, Message::Entries(_)));
+        rows.push_all(seen.iter().flat_map(entries_of).collect());
+        assert_eq!(
+            (texts(&seen), rows.queued_len(0)),
+            (["start", "working"].map(Into::into).to_vec(), 1)
+        );
+
+        let live = stale + &user_line("fix it") + &claude_line("on it");
+        let live_file = copy_into(&projects.join("-live-copy"), &name, &live, 1);
+        let seen = wait_for(&feed, |m| matches!(m, Message::Entries(_)));
+        assert!(seen.iter().any(|m| matches!(m, Message::Found(path) if *path == live_file)));
+        assert_eq!(texts(&seen), ["fix it", "on it"]);
+        rows.push_all(seen.iter().flat_map(entries_of).collect());
+        assert_eq!(rows.queued_len(0), 0);
+    }
+
+    #[test]
+    fn a_quiet_session_with_no_newer_copy_stays_on_its_file() {
+        let home = tempfile::tempdir().unwrap();
+        let cwd = home.path().join("work");
+        let own = home
+            .path()
+            .join(".claude")
+            .join("projects")
+            .join(tidewatch_core::transcript_locate::claude_project_dir_name(&cwd));
+        let id = "55555555-aaaa-bbbb-cccc-000000000005";
+        copy_into(&own, &format!("{id}.jsonl"), &claude_line("one"), 10);
+        let mut locator = Locator::new(home.path(), &cwd);
+        locator.session_id = Some(id.into());
+        let feed = Feed::start_looking(Source::Claude, locator, Duration::from_millis(50), || {});
+        wait_for(&feed, |m| matches!(m, Message::Entries(_)));
+        thread::sleep(Duration::from_millis(500));
+        let seen = feed.drain();
+        assert!(seen.iter().all(|m| !matches!(m, Message::Found(_) | Message::Entries(_))));
     }
 }
