@@ -99,7 +99,14 @@ impl Lab {
 }
 
 fn host() -> Host {
-    Host { tabs: HashMap::new(), jobs: Jobs::new(), fake: false, popover: false, wall_ms }
+    Host {
+        tabs: HashMap::new(),
+        jobs: Jobs::new(),
+        fake: false,
+        popover: false,
+        home: None,
+        wall_ms,
+    }
 }
 
 fn host_on_a_simulated_clock() -> (Host, u64) {
@@ -254,7 +261,7 @@ fn a_sweep_that_finishes_while_the_agent_works_again_pastes_nothing() {
 }
 
 #[test]
-fn the_fake_switch_gives_a_tab_three_flags_and_writes_nothing() {
+fn the_fake_switch_gives_a_tab_four_flags_and_writes_nothing() {
     let lab = Lab::new();
     let ctx = egui::Context::default();
     let mut host = Host { fake: true, ..host() };
@@ -265,7 +272,13 @@ fn the_fake_switch_gives_a_tab_three_flags_and_writes_nothing() {
         &ctx,
         0.0,
     );
-    assert_eq!(host.view(1).unwrap().records.len(), 3);
+    let view = host.view(1).unwrap();
+    assert_eq!(view.records.len(), 4);
+    let deep = crate::comment_model::lines(view.records, 1, view.roots);
+    assert_eq!(
+        deep[0].place,
+        "projects/client/src/lib/sections/summary/components/recap/SeasonRecapDrawerHost.svelte:58"
+    );
     host.set_off(1, true);
     assert!(host.view(1).unwrap().off);
     assert!(!lab.tab_files().is_off());

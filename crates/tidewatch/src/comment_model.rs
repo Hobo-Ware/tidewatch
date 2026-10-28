@@ -1,5 +1,8 @@
-//! What the comment guard says on an agent tab, as plain data: the chip text, the lines it lists,
-//! the note pasted to a CLI with no hook of its own, and when a turn has just ended (pure).
+//! What the comment guard says on an agent tab, as plain data: the chip text, the lines it lists
+//! with each file shown relative to the tab's folders, the note pasted to a CLI with no hook of its
+//! own, and when a turn has just ended (pure).
+
+use std::path::{Path, PathBuf};
 
 use tidewatch_core::comment_flags::Record;
 use tidewatch_core::comment_sweep::FileFlags;
@@ -24,22 +27,72 @@ pub(crate) struct Line {
     pub(crate) text: String,
 }
 
+/// The folders a flagged file is shown relative to: the tab's worktree, then its repo root, then
+/// the home folder as `~`.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(crate) struct PathRoots {
+    bases: Vec<PathBuf>,
+    home: Option<PathBuf>,
+}
+
+impl PathRoots {
+    pub(crate) fn new(tree: &Path, repo: &Path, home: Option<&Path>) -> Self {
+        let mut bases = vec![tree.to_path_buf()];
+        if repo != tree {
+            bases.push(repo.to_path_buf());
+        }
+        Self { bases, home: home.map(Path::to_path_buf) }
+    }
+}
+
+/// `file` relative to the first root that holds it, `~/...` under the home folder, else as given.
+/// A path that is already relative stays as it is.
+pub(crate) fn display_path(file: &str, roots: &PathRoots) -> String {
+    let path = Path::new(file);
+    if !path.is_absolute() {
+        return file.to_owned();
+    }
+    for base in &roots.bases {
+        if let Some(rest) = relative_under(path, base) {
+            return rest;
+        }
+    }
+    match roots.home.as_deref().and_then(|home| relative_under(path, home)) {
+        Some(rest) => format!("~/{rest}"),
+        None => file.to_owned(),
+    }
+}
+
+fn relative_under(path: &Path, base: &Path) -> Option<String> {
+    let rest = path.strip_prefix(base).ok()?;
+    let text = rest.to_string_lossy();
+    (!text.is_empty()).then(|| text.into_owned())
+}
+
 /// The newest `limit` records as lines, newest first. A flag on the whole file has no line number.
-pub(crate) fn lines(records: &[Record], limit: usize) -> Vec<Line> {
+pub(crate) fn lines(records: &[Record], limit: usize, roots: &PathRoots) -> Vec<Line> {
     records
         .iter()
         .rev()
         .take(limit)
-        .map(|record| Line {
-            place: if record.line == 0 {
-                record.file.clone()
-            } else {
-                format!("{}:{}", record.file, record.line)
-            },
-            kind: record.kind.clone(),
-            text: record.text.clone(),
+        .map(|record| {
+            let file = display_path(&record.file, roots);
+            Line {
+                place: if record.line == 0 { file } else { format!("{file}:{}", record.line) },
+                kind: record.kind.clone(),
+                text: record.text.clone(),
+            }
         })
         .collect()
+}
+
+/// A rule's tag as the words the strip shows: `dead-code` reads `commented-out code`.
+pub(crate) fn kind_label(kind: &str) -> String {
+    if kind == Kind::DeadCode.tag() {
+        "commented-out code".to_owned()
+    } else {
+        kind.replace('-', " ")
+    }
 }
 
 /// The short note pasted to an agent that has no hook for it, after its turn.

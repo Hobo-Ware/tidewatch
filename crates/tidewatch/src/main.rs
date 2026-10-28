@@ -114,6 +114,7 @@ mod meeseeks_summary_view;
 mod meeseeks_view;
 mod merge_cleanup;
 mod merge_groups;
+mod middle_cut;
 mod new_tab;
 mod new_tab_done;
 mod new_tab_fields;

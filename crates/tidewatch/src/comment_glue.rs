@@ -3,11 +3,12 @@
 //! the branch sweep at the end of a turn and the note pasted to the idle agent. The same path pastes
 //! the ledger guard's line to such an agent when a turn that used tools ended with no ledger saved.
 //!
-//! `TIDEWATCH_FAKE_COMMENTS=1` gives every agent tab three stand-in flags and writes nothing;
+//! `TIDEWATCH_FAKE_COMMENTS=1` gives every agent tab four stand-in flags, one on a deep path in the
+//! tab's own folder, and writes nothing;
 //! `TIDEWATCH_DEV_COMMENT_POPOVER=1` keeps the chip's list open.
 
 use std::collections::HashMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use tidewatch_core::comment_flags::{Origin, Record, TabFiles};
 use tidewatch_core::comment_sweep::{self, FileFlags};
@@ -18,7 +19,7 @@ use tidewatch_core::paths::TidewatchPaths;
 use tidewatch_core::sent::{Reason, because};
 use tidewatch_core::status::AgentStatus;
 
-use crate::comment_model::{Turn, needs_idle_sweep, paste_note};
+use crate::comment_model::{PathRoots, Turn, needs_idle_sweep, paste_note};
 use crate::jobs::Jobs;
 
 const LOOK_EVERY_S: f64 = 1.0;
@@ -51,6 +52,7 @@ struct Swept {
 
 struct TabState {
     files: TabFiles,
+    roots: PathRoots,
     records: Vec<Record>,
     flags_len: u64,
     off: bool,
@@ -65,16 +67,19 @@ pub(crate) struct Host {
     jobs: Jobs<Swept>,
     fake: bool,
     popover: bool,
+    home: Option<PathBuf>,
     wall_ms: fn() -> u64,
 }
 
 /// What the strip draws.
 pub(crate) struct View<'a> {
     pub(crate) records: &'a [Record],
+    pub(crate) roots: &'a PathRoots,
     pub(crate) off: bool,
 }
 
-fn fake_records() -> Vec<Record> {
+fn fake_records(dir: &Path) -> Vec<Record> {
+    let deep = dir.join("projects/client/src/lib/sections/summary/components/recap");
     let at = |n: u64, file: &str, line: usize, kind: &str, text: &str| Record {
         at_ms: n,
         origin: Origin::Edit,
@@ -87,6 +92,13 @@ fn fake_records() -> Vec<Record> {
         at(1, "src/retry.rs", 14, "narration", "loop over the attempts"),
         at(2, "src/retry.rs", 31, "dead-code", "let delay = backoff(attempt);"),
         at(3, "web/queue.ts", 8, "alibi", "hack for now, needs a proper fix"),
+        at(
+            4,
+            &deep.join("SeasonRecapDrawerHost.svelte").to_string_lossy(),
+            58,
+            "narration",
+            "open the recap drawer for the season the viewer picked, then move the focus to its first control once it has mounted and the open transition has ended",
+        ),
     ]
 }
 
@@ -96,7 +108,8 @@ impl Host {
             std::env::var_os("TIDEWATCH_FAKE_COMMENTS").is_some_and(|v| !v.is_empty() && v != "0");
         let popover =
             std::env::var("TIDEWATCH_DEV_COMMENT_POPOVER").is_ok_and(|v| !v.is_empty() && v != "0");
-        Self { tabs: HashMap::new(), jobs: Jobs::new(), fake, popover, wall_ms }
+        let home = std::env::var_os("HOME").map(PathBuf::from);
+        Self { tabs: HashMap::new(), jobs: Jobs::new(), fake, popover, home, wall_ms }
     }
 
     pub(crate) fn open_popover(&self) -> bool {
@@ -105,8 +118,11 @@ impl Host {
 
     pub(crate) fn view(&self, tab: u64) -> Option<View<'_>> {
         let state = self.tabs.get(&tab)?;
-        (!state.records.is_empty() || state.off)
-            .then_some(View { records: &state.records, off: state.off })
+        (!state.records.is_empty() || state.off).then_some(View {
+            records: &state.records,
+            roots: &state.roots,
+            off: state.off,
+        })
     }
 
     pub(crate) fn forget(&mut self, tab: u64) {
@@ -144,7 +160,8 @@ impl Host {
             let fresh = !self.tabs.contains_key(&fact.id);
             let state = self.tabs.entry(fact.id).or_insert_with(|| TabState {
                 files: TabFiles::new(&paths.tab_state_dir(fact.repo, fact.name)),
-                records: if self.fake { fake_records() } else { Vec::new() },
+                roots: PathRoots::new(fact.dir, fact.repo, self.home.as_deref()),
+                records: if self.fake { fake_records(fact.dir) } else { Vec::new() },
                 flags_len: 0,
                 off: false,
                 turn: Turn::default(),
