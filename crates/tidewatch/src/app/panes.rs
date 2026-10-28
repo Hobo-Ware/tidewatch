@@ -120,13 +120,9 @@ impl Tidewatch {
     ) {
         use progress_view::Action;
         match action {
-            Some(Action::Answer) => self.open_reply_box(),
             Some(Action::CopyLink(url)) => {
                 ctx.copy_text(url);
                 self.show_toast("Link copied", ctx);
-            }
-            Some(Action::Pick(text)) => {
-                self.send_answer(active_id, text, ctx, ctx.input(|i| i.time));
             }
             Some(Action::DoneCheck(action)) => {
                 self.apply_done_check(active_id, action, ctx, ctx.input(|i| i.time));

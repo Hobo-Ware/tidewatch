@@ -1,10 +1,10 @@
-//! Ready answers on a Needs you card: the chip model, its layout and the digit keys 1 to 4.
+//! Ready answers on a Needs you card: the chip model, its layout and the digit keys 1 to 9.
 
 use std::sync::Arc;
 
 use egui::{
-    Color32, CornerRadius, CursorIcon, Galley, Id, Key, Modifiers, Painter, Pos2, Rect, Sense,
-    Shape, Stroke, StrokeKind, Ui, pos2, vec2,
+    Color32, CornerRadius, CursorIcon, Event, Galley, Id, Key, Modifiers, Painter, Pos2, Rect,
+    Sense, Shape, Stroke, StrokeKind, Ui, pos2, vec2,
 };
 use tidewatch_core::progress::Choice;
 
@@ -20,10 +20,20 @@ const LABEL_FONT: f32 = Size::Compact.font();
 const NUMBER_FONT: f32 = TEXT_TAG;
 const DASH: f32 = 4.0;
 const DASH_GAP: f32 = 3.0;
-pub(crate) const KEYED: usize = 4;
+pub(crate) const KEYED: usize = 9;
 const FALLBACK: [&str; 2] = ["Done", "Not now"];
 pub(crate) const OTHER: &str = "Something else";
-const NUMBER_KEYS: [Key; KEYED] = [Key::Num1, Key::Num2, Key::Num3, Key::Num4];
+const NUMBER_KEYS: [Key; KEYED] = [
+    Key::Num1,
+    Key::Num2,
+    Key::Num3,
+    Key::Num4,
+    Key::Num5,
+    Key::Num6,
+    Key::Num7,
+    Key::Num8,
+    Key::Num9,
+];
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Tone {
@@ -142,6 +152,38 @@ pub(crate) fn key_pick(ui: &Ui, card: &Card, chips: &[Chip]) -> Option<usize> {
     NUMBER_KEYS.iter().enumerate().find_map(|(index, key)| {
         let pressed = ui.input_mut(|i| i.consume_key(Modifiers::NONE, *key));
         pressed.then(|| chip_for_number(chips, index + 1)).flatten()
+    })
+}
+
+/// Whether the digit keys belong to a card above the reply box: it is empty and nothing else has the keyboard.
+pub(crate) fn reply_keys_free(reply_empty: bool, holder: Option<bool>) -> bool {
+    reply_empty && holder != Some(false)
+}
+
+/// The chip a digit key picks above the reply box, consuming the key and its text.
+pub(crate) fn key_pick_over_reply(
+    ui: &Ui,
+    reply: Id,
+    reply_empty: bool,
+    chips: &[Chip],
+) -> Option<usize> {
+    let ctx = ui.ctx();
+    let holder = ctx
+        .memory(egui::Memory::focused)
+        .filter(|id| !stdusk_egui::focus::is_grid(ctx, *id))
+        .map(|id| id == reply);
+    let busy = egui::Popup::is_any_open(ctx) || ui.input(|i| i.modifiers.any());
+    if busy || !reply_keys_free(reply_empty, holder) {
+        return None;
+    }
+    NUMBER_KEYS.iter().enumerate().find_map(|(index, key)| {
+        let pressed = ui.input_mut(|i| i.consume_key(Modifiers::NONE, *key));
+        let chip = pressed.then(|| chip_for_number(chips, index + 1)).flatten()?;
+        let digit = (index + 1).to_string();
+        ui.input_mut(|i| {
+            i.events.retain(|event| !matches!(event, Event::Text(text) if *text == digit));
+        });
+        Some(chip)
     })
 }
 
@@ -365,13 +407,26 @@ mod tests {
     }
 
     #[test]
-    fn only_the_first_four_options_take_a_number() {
-        let options: Vec<Choice> = (1..=6).map(|n| choice(&format!("o{n}"), false)).collect();
+    fn only_the_first_nine_options_take_a_number() {
+        let options: Vec<Choice> = (1..=11).map(|n| choice(&format!("o{n}"), false)).collect();
         let numbers: Vec<Option<usize>> = chips(&options).iter().map(|chip| chip.number).collect();
         assert_eq!(
             numbers,
-            [Some(1), Some(2), Some(3), Some(4), None, None, None],
-            "six options and Something else"
+            [
+                Some(1),
+                Some(2),
+                Some(3),
+                Some(4),
+                Some(5),
+                Some(6),
+                Some(7),
+                Some(8),
+                Some(9),
+                None,
+                None,
+                None
+            ],
+            "eleven options and Something else"
         );
     }
 
@@ -404,6 +459,21 @@ mod tests {
         ];
         for (name, holder, hovered, want) in cases {
             assert_eq!(keys_free(holder, hovered), want, "{name}");
+        }
+    }
+
+    #[test]
+    fn the_digits_go_to_a_card_above_the_reply_box_only_while_the_box_is_empty_and_nothing_else_holds_the_keys()
+     {
+        let cases = [
+            ("empty box with focus", true, Some(true), true),
+            ("empty box, nothing focused", true, None, true),
+            ("box has text", false, Some(true), false),
+            ("box has text, nothing focused", false, None, false),
+            ("empty box, another field holds the keys", true, Some(false), false),
+        ];
+        for (name, empty, holder, want) in cases {
+            assert_eq!(reply_keys_free(empty, holder), want, "{name}");
         }
     }
 }

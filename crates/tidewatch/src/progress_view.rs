@@ -13,27 +13,24 @@ use egui::{
 use tidewatch_core::link_board::LinkBoard;
 use tidewatch_core::progress::{Entry, Ledger, Mark, State};
 
-use crate::answer_chips;
 use crate::brand;
 use crate::job_model::Card;
 use crate::job_view;
 use crate::last_turn::LastTurn;
 use crate::last_turn_view;
-use crate::link_model;
 use crate::link_text::Text;
 use crate::link_view;
 use crate::meeseeks_model::Card as MeeseeksCard;
 use crate::meeseeks_view;
 use crate::progress_model::{
     self as model, Bar, BarKind, ItemRow, Now, StageRows, StageShape, TAGS, Tag, Tone, entries,
-    questions, stage_rows, stages_shown,
+    stage_rows, stages_shown,
 };
 use crate::progress_ring::{paint_mark, tone_color};
 use crate::progress_stale::fresh;
 use crate::progress_state::TabLedger;
 use crate::reader_view::{ellipsized, paint_item};
-use crate::screen_kit::TEXT_TITLE;
-use crate::screen_kit::{Size, body, heading, mono, primary_button};
+use crate::screen_kit::{Size, body, heading, mono};
 use crate::screen_kit::{TEXT_BODY, TEXT_SECONDARY, TEXT_TAG};
 use crate::selectable;
 
@@ -164,8 +161,6 @@ impl Memory {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum Action {
-    Answer,
-    Pick(String),
     Ask { job: u64, message: String },
     TakeOver,
     GiveUp,
@@ -247,7 +242,7 @@ fn content(ui: &mut Ui, input: &Input<'_>, state: &mut TabState) -> Option<Actio
             if !input.jobs.is_empty() {
                 ui.add_space(GAP);
             }
-            let picked = last_turn_view::show(ui, width, turn, true);
+            let picked = last_turn_view::show(ui, width, turn);
             action = action.or(picked);
         }
         return action;
@@ -259,13 +254,6 @@ fn content(ui: &mut Ui, input: &Input<'_>, state: &mut TabState) -> Option<Actio
     if let Some(board) = links {
         ui.add_space(GAP);
         action = link_card(ui, width, board, input, state).or(action);
-    }
-    let asked = questions(ledger);
-    if !asked.is_empty() {
-        ui.add_space(GAP);
-        if let Some(picked) = question_card(ui, width, &asked, links) {
-            action = Some(picked);
-        }
     }
     let now = model::now_line(ledger, tone, input.jobs);
     if let Some(now) = &now {
@@ -288,7 +276,7 @@ fn content(ui: &mut Ui, input: &Input<'_>, state: &mut TabState) -> Option<Actio
     phase_bars(ui, width, ledger, tone, shape);
     if let Some(turn) = &input.last_turn {
         ui.add_space(GAP);
-        let picked = last_turn_view::show(ui, width, turn, asked.is_empty());
+        let picked = last_turn_view::show(ui, width, turn);
         action = picked.or(action);
     }
     let stages = stage_rows(ledger, shape.kind);
@@ -444,154 +432,6 @@ fn paint_bar(ui: &mut Ui, column: Rect, bar: &Bar, tone: Tone, index: usize) {
         format!("{}: {}/{}", bar.label, bar.done, bar.total)
     };
     ui.interact(area, ui.id().with(("progress-bar", index)), Sense::hover()).on_hover_text(tip);
-}
-
-fn question_card(
-    ui: &mut Ui,
-    width: f32,
-    asked: &[&Entry],
-    links: Option<&LinkBoard>,
-) -> Option<Action> {
-    match asked {
-        [only] => answer_card(ui, width, only, links),
-        _ => plain_question_card(ui, width, asked).then_some(Action::Answer),
-    }
-}
-
-fn answer_card(
-    ui: &mut Ui,
-    width: f32,
-    entry: &Entry,
-    links: Option<&LinkBoard>,
-) -> Option<Action> {
-    const PAD: f32 = 16.0;
-    const NARROW_PAD_IN: f32 = 12.0;
-    const LABEL_GAP: f32 = 8.0;
-    const BLOCK_GAP: f32 = 12.0;
-    let pad = if width < NARROW_BELOW { NARROW_PAD_IN } else { PAD };
-    let inner_w = (width - pad * 2.0).max(40.0);
-    let painter = ui.painter().clone();
-    let label = painter.layout_no_wrap("NEEDS YOU".to_owned(), body(12.0), brand::NEEDS);
-    let why = entry.why.as_deref().map(str::trim).filter(|why| !why.is_empty()).map(|why| {
-        ellipsized(
-            &painter,
-            &answer_chips::sentence(why),
-            body(13.0),
-            brand::MUTED,
-            (inner_w - label.size().x - LABEL_GAP).max(40.0),
-        )
-    });
-    let mut question = Text::new();
-    question.run(entry.text.trim(), &TextFormat::simple(body(16.0), brand::TEXT));
-    let title = question.wrapped(inner_w, 3).lay_out(&painter);
-    let chips = answer_chips::chips_marked(&entry.options);
-    let row = answer_chips::Row::new(&painter, &chips, inner_w);
-    let read = links.map_or_else(Vec::new, |board| link_model::read_first(board, &entry.text));
-    let read_h =
-        if read.is_empty() { 0.0 } else { link_view::read_first_height(read.len()) + BLOCK_GAP };
-    let height =
-        pad * 2.0 + label.size().y + BLOCK_GAP + title.size().y + BLOCK_GAP + read_h + row.height();
-    let (rect, response) = ui.allocate_exact_size(vec2(width, height), Sense::click());
-    let pressed_in = ui.input(|i| i.pointer.any_pressed())
-        && ui.input(|i| i.pointer.interact_pos()).is_some_and(|at| rect.contains(at));
-    if pressed_in {
-        response.request_focus();
-    }
-    painter.rect(
-        rect,
-        CornerRadius::same(10),
-        Color32::TRANSPARENT,
-        Stroke::new(1.0, brand::NEEDS),
-        StrokeKind::Inside,
-    );
-    let left = rect.left() + pad;
-    let top = rect.top() + pad;
-    let label_h = label.size().y;
-    let label_w = label.size().x;
-    painter.galley(pos2(left, top), label, brand::NEEDS);
-    if let Some(why) = why {
-        let at = pos2(left + label_w + LABEL_GAP, top + (label_h - why.size().y) / 2.0);
-        painter.galley(at, why, brand::MUTED);
-    }
-    let title_top = top + label_h + BLOCK_GAP;
-    let title_h = title.size().y;
-    title.paint_selectable(
-        ui,
-        ui.id().with("progress-question-text"),
-        pos2(left, title_top),
-        brand::TEXT,
-    );
-    let read_top = title_top + title_h + BLOCK_GAP;
-    link_view::paint_read_first(ui, pos2(left, read_top), inner_w, &read);
-    let chips_at = pos2(left, read_top + read_h);
-    let clicked = row.show(ui, response.id, chips_at, &chips);
-    let card = answer_chips::Card { id: response.id, rect, terminal_hidden: false };
-    let picked = clicked.or_else(|| answer_chips::key_pick(ui, &card, &chips))?;
-    Some(match answer_chips::pick_of(&chips, picked)? {
-        answer_chips::Pick::Answer(text) => Action::Pick(text),
-        answer_chips::Pick::Other => Action::Answer,
-    })
-}
-
-fn plain_question_card(ui: &mut Ui, width: f32, asked: &[&Entry]) -> bool {
-    const PAD_X: f32 = 14.0;
-    const PAD_Y: f32 = 12.0;
-    const GLYPH: f32 = 28.0;
-    const SPACE: f32 = 12.0;
-    let first = asked[0];
-    let button_w = crate::screen_kit::button_width(ui, "Answer", Size::Compact);
-    let stacked = width < 300.0;
-    let text_w = if stacked {
-        width - 2.0 * PAD_X - GLYPH - SPACE
-    } else {
-        width - 2.0 * PAD_X - GLYPH - SPACE * 2.0 - button_w
-    }
-    .max(40.0);
-    let mut question = Text::new();
-    question.run(first.text.trim(), &TextFormat::simple(body(TEXT_BODY), brand::TEXT));
-    let galley = question.wrapped(text_w, 2).lay_out(ui.painter());
-    let text_h = galley.size().y;
-    let inner_h = if stacked {
-        text_h.max(GLYPH) + SPACE + Size::Compact.height()
-    } else {
-        text_h.max(GLYPH).max(Size::Compact.height())
-    };
-    let (rect, _) = ui.allocate_exact_size(vec2(width, inner_h + 2.0 * PAD_Y), Sense::hover());
-    let painter = ui.painter();
-    painter.rect_filled(rect, CornerRadius::same(10), brand::NEEDS.gamma_multiply(0.08));
-    let glyph_top = rect.top() + PAD_Y + (text_h.max(GLYPH) - GLYPH) / 2.0;
-    let glyph = Rect::from_min_size(pos2(rect.left() + PAD_X, glyph_top), vec2(GLYPH, GLYPH));
-    painter.rect_filled(glyph, CornerRadius::same(8), brand::NEEDS.gamma_multiply(0.16));
-    painter.text(glyph.center(), Align2::CENTER_CENTER, "?", heading(TEXT_TITLE), brand::NEEDS);
-    let text_x = glyph.right() + SPACE;
-    let text_top = rect.top() + PAD_Y + (text_h.max(GLYPH) - text_h) / 2.0;
-    galley.paint_selectable(
-        ui,
-        ui.id().with("progress-question-text"),
-        pos2(text_x, text_top),
-        brand::TEXT,
-    );
-    let button_rect = if stacked {
-        let top = rect.top() + PAD_Y + text_h.max(GLYPH) + SPACE;
-        Rect::from_min_size(pos2(text_x, top), vec2(button_w, Size::Compact.height()))
-    } else {
-        Rect::from_center_size(
-            pos2(rect.right() - PAD_X - button_w / 2.0, rect.center().y),
-            vec2(button_w, Size::Compact.height()),
-        )
-    };
-    let hover = ui.interact(
-        Rect::from_min_max(rect.min, pos2(rect.right(), button_rect.top().max(rect.top() + 1.0))),
-        ui.id().with("progress-question"),
-        Sense::hover(),
-    );
-    let tip = asked.iter().map(|entry| entry.text.trim()).collect::<Vec<_>>().join("\n");
-    hover.on_hover_text(tip);
-    let mut clicked = false;
-    ui.scope_builder(UiBuilder::new().max_rect(button_rect), |ui| {
-        clicked = primary_button(ui, "Answer", true, Size::Compact).clicked();
-    });
-    clicked
 }
 
 fn now_block(ui: &mut Ui, width: f32, now: &Now) {

@@ -42,7 +42,7 @@ pub(crate) fn spans(text: &str) -> Vec<(String, bool)> {
         .collect()
 }
 
-pub(crate) fn show(ui: &mut Ui, width: f32, turn: &LastTurn, offer_answer: bool) -> Option<Action> {
+pub(crate) fn show(ui: &mut Ui, width: f32, turn: &LastTurn) -> Option<Action> {
     let mut action = None;
     label(ui, "Last turn", heading(13.0), brand::MUTED);
     ui.add_space(6.0);
@@ -61,13 +61,6 @@ pub(crate) fn show(ui: &mut Ui, width: f32, turn: &LastTurn, offer_answer: bool)
     if !turn.needs.is_empty() {
         caption(ui, "Needs you");
         items(ui, width, "needs", &turn.needs, brand::TEXT, brand::NEEDS);
-        if offer_answer {
-            button_row(ui, |ui| {
-                if quiet_button(ui, "Answer", true, Size::Compact).clicked() {
-                    action = Some(Action::Answer);
-                }
-            });
-        }
     }
     if !turn.next.is_empty() {
         caption(ui, "Next");

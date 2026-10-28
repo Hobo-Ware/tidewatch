@@ -76,6 +76,7 @@ impl Tidewatch {
         let reduce = self.reduce_motion.asked(now, crate::macos::reduce_motion);
         crate::emoji_motion::set_allowed(ctx, self.chat_prefs.animate_emoji && !reduce);
         self.dev_reader.press_toggle(ctx, now);
+        self.dev_reader.press_digit(ctx, now);
         if let Some(command) = self.dev_panes.press(ctx, now) {
             self.run_command(command, ctx);
         }

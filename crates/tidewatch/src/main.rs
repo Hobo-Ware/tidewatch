@@ -17,6 +17,8 @@ mod amphetamine_pill;
 mod amphetamine_view;
 mod answer_chips;
 mod app;
+mod ask_model;
+mod ask_view;
 mod attachments;
 mod autofetch_glue;
 mod avatar_glue;
