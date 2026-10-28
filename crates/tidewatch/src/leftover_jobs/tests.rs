@@ -56,7 +56,7 @@ fn next(jobs: &Jobs<Done>) -> Done {
 }
 
 fn removal(worktree: &Worktree, branch: BranchChoice, mode: RemoveMode) -> Removal {
-    Removal { worktree: worktree.clone(), branch, mode }
+    Removal { worktree: worktree.clone(), branch, mode, spare_unique: false }
 }
 
 #[test]

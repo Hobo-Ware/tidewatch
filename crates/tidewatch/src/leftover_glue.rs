@@ -2,6 +2,8 @@
 //! each one and removes them, and the jobs behind it. `app.rs` only draws the chip and passes the
 //! dialog its frame.
 
+use std::path::Path;
+
 use tidewatch_core::paths::TidewatchPaths;
 use tidewatch_core::trust_apply::Grant;
 use tidewatch_core::worktree::{BranchOutcome, Leftover};
@@ -21,6 +23,15 @@ pub(crate) fn merge(known: &mut Vec<Leftover>, found: Vec<Leftover>) {
     known.sort_by(|a, b| a.path.cmp(&b.path));
 }
 
+fn kept_note(commits: usize, branch: Option<String>) -> String {
+    let noun = if commits == 1 { "commit" } else { "commits" };
+    let note = format!("branch kept: {commits} {noun} only here");
+    match branch {
+        Some(branch) => format!("{note} ({branch})"),
+        None => note,
+    }
+}
+
 pub(crate) struct Host {
     paths: Option<TidewatchPaths>,
     leftovers: Vec<Leftover>,
@@ -28,6 +39,7 @@ pub(crate) struct Host {
     dialog: Option<Cleanup>,
     removed: usize,
     restores: Vec<String>,
+    kept: Vec<String>,
 }
 
 impl Host {
@@ -39,6 +51,7 @@ impl Host {
             dialog: None,
             removed: 0,
             restores: Vec::new(),
+            kept: Vec::new(),
         }
     }
 
@@ -80,6 +93,7 @@ impl Host {
         }
         self.removed = 0;
         self.restores.clear();
+        self.kept.clear();
         self.dialog = Some(cleanup);
     }
 
@@ -93,10 +107,33 @@ impl Host {
                         dialog.inspected(&path, safety);
                     }
                 }
+                Done::Unreadable { path } => {
+                    if let Some(dialog) = &mut self.dialog {
+                        dialog.unreadable(&path);
+                    }
+                }
+                Done::Trashed { path, result } => {
+                    finished_removal = true;
+                    let gone = match &mut self.dialog {
+                        Some(dialog) => dialog.removed(&path, result.map(|()| BranchOutcome::Kept)),
+                        None => result.is_ok(),
+                    };
+                    if gone {
+                        self.leftovers.retain(|l| l.path != path);
+                        self.removed += 1;
+                        self.kept.push("the unreadable folder is in the Trash".to_owned());
+                    }
+                }
                 Done::Removed { path, result } => {
                     finished_removal = true;
-                    if let Ok(BranchOutcome::Deleted { restore: Some(command) }) = &result {
-                        self.restores.push(command.clone());
+                    match &result {
+                        Ok(BranchOutcome::Deleted { restore: Some(command) }) => {
+                            self.restores.push(command.clone());
+                        }
+                        Ok(BranchOutcome::KeptCommits { commits }) => {
+                            self.kept.push(kept_note(*commits, self.branch_of(&path)));
+                        }
+                        _ => {}
                     }
                     let gone = match &mut self.dialog {
                         Some(dialog) => dialog.removed(&path, result),
@@ -113,14 +150,22 @@ impl Host {
         (finished_removal && settled && self.removed > 0).then(|| {
             let n = std::mem::take(&mut self.removed);
             let removed = format!("Removed {n} leftover worktree{}", if n == 1 { "" } else { "s" });
-            match std::mem::take(&mut self.restores).as_slice() {
+            let removed = match std::mem::take(&mut self.restores).as_slice() {
                 [] => removed,
                 [command] => format!("{removed}. To bring the branch back: {command}"),
                 _ => format!(
                     "{removed}. To bring a branch back, take its name and commit from .state/removals.log: git branch <name> <sha>"
                 ),
+            };
+            match std::mem::take(&mut self.kept).as_slice() {
+                [] => removed,
+                notes => format!("{removed}. {}", notes.join(". ")),
             }
         })
+    }
+
+    fn branch_of(&self, path: &Path) -> Option<String> {
+        self.leftovers.iter().find(|l| l.path == path)?.branch.clone()
     }
 
     /// Draws the dialog while it is open and starts what it was asked to do.
@@ -167,6 +212,15 @@ impl Host {
             Answer::CleanUp => dialog.clean_removals(),
             Answer::Discard(path, branch) => {
                 dialog.discard_removal(path, *branch).into_iter().collect()
+            }
+            Answer::Trash(path) => {
+                let (Some((target, known)), Some(paths)) = (dialog.trash_target(path), paths)
+                else {
+                    return;
+                };
+                dialog.removing(&target);
+                leftover_jobs::trash(&self.jobs, ctx, paths.clone(), target, known);
+                return;
             }
         };
         let Some(paths) = paths else { return };
