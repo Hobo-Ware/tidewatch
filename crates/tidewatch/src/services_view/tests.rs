@@ -8,7 +8,6 @@ fn row(name: &str, word: Word, line: &str) -> Row {
         command: format!(
             "run {name} --with a-very-long-command-line-that-has-to-be-cut-by-an-ellipsis --port 3309"
         ),
-        port: Some(3309),
         autostart: true,
         word,
         line: line.to_owned(),
@@ -78,6 +77,24 @@ impl Screen {
         self.frame(vec![]);
     }
 
+    fn names(&self) -> Vec<&'static str> {
+        self.placed().buttons.iter().map(|(name, _)| *name).collect()
+    }
+
+    fn buttons_named(&self, name: &str) -> Vec<Rect> {
+        self.placed()
+            .buttons
+            .iter()
+            .filter(|(label, _)| *label == name)
+            .map(|(_, rect)| *rect)
+            .collect()
+    }
+
+    fn press(&mut self, key: Key) {
+        self.frame(self::key(key));
+        self.frame(vec![]);
+    }
+
     fn button(&self, name: &str) -> Rect {
         self.placed()
             .buttons
@@ -101,7 +118,7 @@ fn the_pill_draws_at_its_width_and_the_list_draws_the_selected_cards_buttons() {
     assert_eq!(pill.height(), PILL_H);
     assert!(pill.width() > 120.0 && pill.width() < 220.0, "{pill:?}");
     let names: Vec<&str> = placed.buttons.iter().map(|(name, _)| *name).collect();
-    assert_eq!(names, ["Logs", "Restart", "Stop"]);
+    assert_eq!(names, ["...", "Logs", "Restart", "Stop", "...", "..."]);
     for (name, rect) in &placed.buttons {
         assert_eq!(rect.height(), Size::Compact.height(), "{name}");
     }
@@ -129,19 +146,36 @@ fn logs_and_stop_emit_their_actions_and_a_stopped_service_offers_start() {
     screen.click(stop);
     assert_eq!(screen.action, Some(Action::Run(Command::Stop, "db".to_owned())));
     let mut stopped = rows();
-    stopped[0] = row("db", Word::Stopped, "stopped, exit 1");
+    stopped[0] = row("db", Word::Stopped, "stopped");
     let mut screen = Screen::new(open_list(), stopped);
     screen.settle();
+    assert_eq!(screen.names(), ["...", "Logs", "Start", "...", "..."], "one action, one button");
     let start = screen.button("Start").center();
     screen.click(start);
     assert_eq!(screen.action, Some(Action::Run(Command::Start, "db".to_owned())));
 }
 
 #[test]
+fn a_service_that_gave_up_offers_logs_and_start_and_a_restarting_one_logs_restart_and_stop() {
+    for (word, want) in [
+        (Word::Crashed, vec!["...", "Logs", "Start", "...", "..."]),
+        (Word::Stopped, vec!["...", "Logs", "Start", "...", "..."]),
+        (Word::Restarting, vec!["...", "Logs", "Restart", "Stop", "...", "..."]),
+        (Word::Starting, vec!["...", "Logs", "Restart", "Stop", "...", "..."]),
+    ] {
+        let mut shown = rows();
+        shown[0] = row("db", word, "x");
+        let mut screen = Screen::new(open_list(), shown);
+        screen.settle();
+        assert_eq!(screen.names(), want, "{word:?}");
+    }
+}
+
+#[test]
 fn a_click_on_a_card_selects_it_and_a_second_click_folds_it() {
     let mut screen = Screen::new(Memory { popover: Popover::Open, ..Memory::default() }, rows());
     screen.settle();
-    assert_eq!(screen.placed().buttons, []);
+    assert_eq!(screen.names(), ["...", "...", "..."]);
     let list_top = screen.placed().pill.unwrap().bottom() + 6.0 + f32::from(LIST_MARGIN);
     let first_card = pos2(screen.placed().pill.unwrap().right() - 200.0, list_top + 30.0);
     screen.click(first_card);
@@ -193,30 +227,18 @@ fn the_dots_are_green_teal_orange_and_grey() {
     }
 }
 
-fn form(name: &str, command: &str, port: &str) -> Form {
-    Form {
-        name: name.into(),
-        command: command.into(),
-        port: port.into(),
-        autostart: true,
-        ..Form::default()
-    }
+fn form(name: &str, command: &str) -> Form {
+    Form { name: name.into(), command: command.into(), autostart: true, ..Form::default() }
 }
 
 #[test]
 fn the_form_becomes_a_service_or_lists_every_problem() {
     let existing = rows();
-    let cases: [(Form, Result<Service, usize>); 7] = [
-        (
-            form(" web ", " npm run dev ", " 3000 "),
-            Ok(Service::new("web", "npm run dev", Some(3000), true)),
-        ),
-        (form("web", "npm run dev", ""), Ok(Service::new("web", "npm run dev", None, true))),
-        (form("", "", ""), Err(2)),
-        (form("DB", "x", ""), Err(1)),
-        (form("web", "x", "abc"), Err(1)),
-        (form("web", "x", "70000"), Err(1)),
-        (form("web", "x", "0"), Err(1)),
+    let cases: [(Form, Result<Service, usize>); 4] = [
+        (form(" web ", " npm run dev "), Ok(Service::new("web", "npm run dev", true))),
+        (form("", ""), Err(2)),
+        (form("DB", "x"), Err(1)),
+        (form("web", ""), Err(1)),
     ];
     for (given, want) in cases {
         let got = form_service(&given, &existing).map_err(|found| found.len());
@@ -227,7 +249,7 @@ fn the_form_becomes_a_service_or_lists_every_problem() {
 #[test]
 fn editing_may_keep_a_services_own_name() {
     let existing = rows();
-    let mut keep = form("db", "x", "");
+    let mut keep = form("db", "x");
     keep.editing = Some("db".to_owned());
     assert!(form_service(&keep, &existing).is_ok());
     keep.name = "api".to_owned();
@@ -239,7 +261,7 @@ fn the_card_menu_opens_the_edit_and_the_remove_dialogs_with_the_services_own_val
     let existing = rows();
     let edit = Form::edit(&existing[0]);
     assert_eq!(edit.editing.as_deref(), Some("db"));
-    assert_eq!((edit.name.as_str(), edit.port.as_str()), ("db", "3309"));
+    assert_eq!(edit.name, "db");
     assert!(edit.autostart);
     let mut memory = Memory::default();
     assert!(!memory.dialog_open());
@@ -306,7 +328,7 @@ fn enter_in_the_add_dialog_saves_a_good_form_and_keeps_a_bad_one_open_with_its_p
     let saved = dialog_frame_of(&ctx, &mut memory, &[], key(Key::Enter));
     assert_eq!(
         saved,
-        Some(Action::Save { editing: None, service: Service::new("db", "sleep 1", None, true) })
+        Some(Action::Save { editing: None, service: Service::new("db", "sleep 1", true) })
     );
     assert!(!memory.dialog_open());
 }
@@ -341,4 +363,119 @@ fn the_logs_view_belongs_to_the_tab_it_was_opened_from() {
     memory.logs = Some(Logs { name: "db".into(), tab: None });
     assert_eq!(memory.logs_over(3), Some("db"), "a dev switch adopts the tab in front");
     assert_eq!(memory.logs_over(4), None);
+}
+
+fn opened_by_click() -> Screen {
+    let memory = Memory { selected: Some("db".to_owned()), ..Memory::default() };
+    let mut screen = Screen::new(memory, rows());
+    screen.settle();
+    assert_eq!(screen.names(), Vec::<&str>::new());
+    let pill = screen.placed().pill.unwrap().center();
+    screen.click(pill);
+    screen.settle();
+    assert!(screen.names().contains(&"Logs"), "the pill opened the list");
+    screen
+}
+
+fn outside() -> Pos2 {
+    pos2(20.0, 500.0)
+}
+
+#[test]
+fn the_more_button_opens_its_menu_over_the_list_and_the_list_stays_open() {
+    let mut screen = opened_by_click();
+    let more = screen.button("...").center();
+    screen.click(more);
+    assert_eq!(screen.memory.menu.as_deref(), Some("db"));
+    let names = screen.names();
+    assert!(names.contains(&"Edit") && names.contains(&"Remove"), "{names:?}");
+    assert!(names.contains(&"Logs"), "the list is still open: {names:?}");
+    assert_eq!(screen.memory.selected.as_deref(), Some("db"));
+    assert_eq!(screen.memory.dialog, None);
+}
+
+#[test]
+fn edit_opens_the_form_for_that_service_and_the_list_stays_open() {
+    let mut screen = opened_by_click();
+    let more = screen.button("...").center();
+    screen.click(more);
+    let edit = screen.button("Edit").center();
+    screen.click(edit);
+    assert_eq!(screen.memory.dialog, Some(Dialog::Form(Form::edit(&rows()[0]))));
+    assert_eq!(screen.memory.menu, None);
+    let names = screen.names();
+    assert!(names.contains(&"Logs") && !names.contains(&"Edit"), "{names:?}");
+}
+
+#[test]
+fn remove_asks_first_and_the_list_stays_open() {
+    let mut screen = opened_by_click();
+    let more = screen.button("...").center();
+    screen.click(more);
+    let remove = screen.button("Remove").center();
+    screen.click(remove);
+    assert_eq!(screen.memory.dialog, Some(Dialog::Remove("db".to_owned())));
+    assert_eq!(screen.action, None, "nothing is removed before the dialog is confirmed");
+    assert!(screen.names().contains(&"Logs"));
+}
+
+#[test]
+fn a_click_outside_the_list_and_its_menu_closes_both() {
+    let mut screen = opened_by_click();
+    let more = screen.button("...").center();
+    screen.click(more);
+    assert!(screen.names().contains(&"Edit"));
+    screen.click(outside());
+    screen.settle();
+    assert_eq!(screen.names(), Vec::<&str>::new());
+    assert_eq!(screen.memory.menu, None);
+}
+
+#[test]
+fn a_click_outside_a_list_with_no_menu_still_closes_it() {
+    let mut screen = opened_by_click();
+    assert!(screen.names().contains(&"Logs"));
+    screen.click(outside());
+    screen.settle();
+    assert_eq!(screen.names(), Vec::<&str>::new());
+}
+
+#[test]
+fn a_click_inside_the_list_off_the_menu_closes_only_the_menu() {
+    let mut screen = opened_by_click();
+    let more = screen.button("...").center();
+    screen.click(more);
+    let second_card = screen.buttons_named("...")[1].left_center() - vec2(120.0, 0.0);
+    screen.click(second_card);
+    assert_eq!(screen.memory.menu, None);
+    assert_eq!(screen.memory.selected.as_deref(), Some("api"));
+    assert!(screen.names().contains(&"...") && !screen.names().contains(&"Edit"));
+}
+
+#[test]
+fn the_more_button_toggles_its_menu_and_another_cards_button_moves_it() {
+    let mut screen = opened_by_click();
+    let first = screen.button("...").center();
+    screen.click(first);
+    assert_eq!(screen.memory.menu.as_deref(), Some("db"));
+    let second = screen.buttons_named("...")[1].center();
+    screen.click(second);
+    assert_eq!(screen.memory.menu.as_deref(), Some("api"));
+    let again = screen.buttons_named("...")[1].center();
+    screen.click(again);
+    assert_eq!(screen.memory.menu, None);
+    assert!(screen.names().contains(&"Logs"), "the list stays open");
+}
+
+#[test]
+fn escape_closes_the_menu_first_and_the_list_next() {
+    let mut screen = opened_by_click();
+    let more = screen.button("...").center();
+    screen.click(more);
+    screen.press(Key::Escape);
+    assert_eq!(screen.memory.menu, None);
+    assert!(screen.names().contains(&"Logs"), "{:?}", screen.names());
+    screen.press(Key::Escape);
+    screen.settle();
+    assert_eq!(screen.names(), Vec::<&str>::new());
 }

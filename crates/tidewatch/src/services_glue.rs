@@ -11,6 +11,7 @@ use stdusk_core::handoff::{PaneMeta, capture_pane};
 use stdusk_core::terminal::PtyTerm;
 use tidewatch_core::paths::TidewatchPaths;
 use tidewatch_core::service_log::Log;
+use tidewatch_core::service_port;
 use tidewatch_core::service_supervisor::{Carry, Effect, Event, Phase, Supervisor, Word};
 use tidewatch_core::services::{Service, Store, same_name};
 use tidewatch_core::services_mcp::{Fact, Listed};
@@ -20,6 +21,9 @@ use crate::handoff::{ResumedService, ServiceEntry};
 pub(crate) type Spawner = Box<dyn Fn(&Path, &str) -> PtyTerm>;
 
 pub(crate) const FAKE_VAR: &str = "TIDEWATCH_FAKE_SERVICES";
+const PORT_SCAN_NEW_SECS: f64 = 0.3;
+const PORT_SCAN_KNOWN_SECS: f64 = 2.0;
+const PORT_SCAN_LINES: usize = 300;
 const FAKE_UP_MAIN: f64 = 8040.0;
 const FAKE_UP_API: f64 = 720.0;
 
@@ -35,7 +39,6 @@ pub(crate) enum Command {
 pub(crate) struct Row {
     pub(crate) name: String,
     pub(crate) command: String,
-    pub(crate) port: Option<u16>,
     pub(crate) autostart: bool,
     pub(crate) word: Word,
     pub(crate) line: String,
@@ -47,11 +50,25 @@ struct Run {
     term: Option<PtyTerm>,
     exit_seen: bool,
     fake_log: Option<Vec<String>>,
+    port: Option<u16>,
+    scanned_at: f64,
 }
 
 impl Run {
     fn new(service: Service) -> Self {
-        Self { service, sup: Supervisor::new(), term: None, exit_seen: false, fake_log: None }
+        Self {
+            service,
+            sup: Supervisor::new(),
+            term: None,
+            exit_seen: false,
+            fake_log: None,
+            port: None,
+            scanned_at: f64::NEG_INFINITY,
+        }
+    }
+
+    fn port(&self) -> Option<u16> {
+        self.sup.wants_process().then(|| self.port.or(self.service.port)).flatten()
     }
 
     fn step(&mut self, event: Event, repo: &Path, now: f64, spawn: &Spawner) {
@@ -65,6 +82,8 @@ impl Run {
                 }
                 Effect::Spawn => {
                     self.exit_seen = false;
+                    self.port = None;
+                    self.scanned_at = f64::NEG_INFINITY;
                     self.term = Some(spawn(repo, &self.service.command));
                     pending.extend(self.sup.step(Event::Spawned { at: now }));
                 }
@@ -74,7 +93,7 @@ impl Run {
     }
 
     fn drive(&mut self, repo: &Path, now: f64, spawn: &Spawner) -> bool {
-        let before = (self.sup.state(), self.sup.last_exit());
+        let before = (self.sup.state(), self.sup.last_exit(), self.port);
         if !self.exit_seen
             && let Some(exit) = self.term.as_ref().and_then(PtyTerm::exited)
         {
@@ -84,17 +103,29 @@ impl Run {
         if self.sup.next_wake().is_some_and(|at| now >= at) {
             self.step(Event::Tick { at: now }, repo, now, spawn);
         }
-        before != (self.sup.state(), self.sup.last_exit())
+        self.scan_port(now);
+        before != (self.sup.state(), self.sup.last_exit(), self.port)
+    }
+
+    fn scan_port(&mut self, now: f64) {
+        let every = if self.port.is_some() { PORT_SCAN_KNOWN_SECS } else { PORT_SCAN_NEW_SECS };
+        if !self.live() || now - self.scanned_at < every {
+            return;
+        }
+        self.scanned_at = now;
+        let tail = Log::from_lines(self.lines()).tail(PORT_SCAN_LINES);
+        if let Some(found) = service_port::newest(&tail) {
+            self.port = Some(found);
+        }
     }
 
     fn row(&self, now: f64) -> Row {
         Row {
             name: self.service.name.clone(),
             command: self.service.command.clone(),
-            port: self.service.port,
             autostart: self.service.autostart,
             word: self.sup.word(),
-            line: self.sup.line(now, self.service.port),
+            line: self.sup.line(now, self.port()),
         }
     }
 
@@ -264,7 +295,7 @@ impl Host {
             .iter()
             .map(|run| Fact {
                 name: run.service.name.clone(),
-                port: run.service.port,
+                port: run.port(),
                 word: run.sup.word(),
             })
             .collect()
@@ -275,7 +306,13 @@ impl Host {
         self.runs(repo)
             .iter()
             .map(|run| {
-                Listed::new(&run.service, run.sup.word(), run.sup.uptime(now), run.sup.last_exit())
+                Listed::new(
+                    &run.service,
+                    run.port(),
+                    run.sup.word(),
+                    run.sup.uptime(now),
+                    run.sup.last_exit(),
+                )
             })
             .collect()
     }
@@ -349,8 +386,7 @@ impl Host {
     /// Saves a new service and starts it, even when its autostart is off.
     pub(crate) fn add(&mut self, repo: &Path, service: &Service) -> Result<(), Vec<String>> {
         self.saved(|store| store.add(repo, service))?;
-        let service =
-            Service::new(&service.name, &service.command, service.port, service.autostart);
+        let service = Service::new(&service.name, &service.command, service.autostart);
         let now = self.now();
         let mut run = Run::new(service);
         run.step(Event::Start, repo, now, &self.spawn);
@@ -367,8 +403,7 @@ impl Host {
         service: &Service,
     ) -> Result<(), Vec<String>> {
         self.saved(|store| store.replace(repo, old, service))?;
-        let service =
-            Service::new(&service.name, &service.command, service.port, service.autostart);
+        let service = Service::new(&service.name, &service.command, service.autostart);
         let now = self.now();
         let spawn = &self.spawn;
         if let Some(run) = self
@@ -484,18 +519,18 @@ impl Host {
 }
 
 fn fake_runs(now: f64) -> Vec<Run> {
-    let run = |name: &str, command: &str, port: Option<u16>, phase: Phase, log: &[&str]| {
-        let mut run = Run::new(Service::new(name, command, port, true));
+    let run = |name: &str, command: &str, phase: Phase, log: &[&str]| {
+        let mut run = Run::new(Service::new(name, command, true));
         let carry = Carry { phase, streak: 0, exits_ago: Vec::new(), last_exit: None };
         run.sup = Supervisor::from_carry(&carry, now);
         run.fake_log = Some(log.iter().map(|line| (*line).to_owned()).collect());
+        run.port = service_port::newest(&Log::from_lines(log).tail(PORT_SCAN_LINES));
         run
     };
     vec![
         run(
             "db",
             "pscale connect shop main --port 3309",
-            Some(3309),
             Phase::Running { up: FAKE_UP_MAIN },
             &[
                 "\u{1b}[2mSecure connection to shop/main established\u{1b}[0m",
@@ -508,7 +543,6 @@ fn fake_runs(now: f64) -> Vec<Run> {
         run(
             "api",
             "npm run dev --workspace api",
-            Some(3000),
             Phase::Running { up: FAKE_UP_API },
             &[
                 "> api@0.4.0 dev",
@@ -522,7 +556,6 @@ fn fake_runs(now: f64) -> Vec<Run> {
             let mut tunnel = run(
                 "tunnel",
                 "cloudflared tunnel run shop-dev",
-                None,
                 Phase::Crashed { exit: 1, ago: 95.0 },
                 &[
                     "INF Starting tunnel tunnelID=6f2a",

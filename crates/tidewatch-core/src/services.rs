@@ -18,7 +18,8 @@ pub const MAX_COMMAND_CHARS: usize = 2000;
 pub struct Service {
     pub name: String,
     pub command: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    /// Read from a services.toml an older version wrote, never written back.
+    #[serde(default, skip_serializing)]
     pub port: Option<u16>,
     #[serde(default = "yes")]
     pub autostart: bool,
@@ -30,8 +31,13 @@ fn yes() -> bool {
 
 impl Service {
     #[must_use]
-    pub fn new(name: &str, command: &str, port: Option<u16>, autostart: bool) -> Self {
-        Self { name: name.trim().to_owned(), command: command.trim().to_owned(), port, autostart }
+    pub fn new(name: &str, command: &str, autostart: bool) -> Self {
+        Self {
+            name: name.trim().to_owned(),
+            command: command.trim().to_owned(),
+            port: None,
+            autostart,
+        }
     }
 }
 
@@ -61,9 +67,6 @@ pub fn problems(service: &Service, others: &[Service], renaming: Option<&str>) -
         found.push("command must say what to run, for example `npm run dev`".to_owned());
     } else if command.chars().count() > MAX_COMMAND_CHARS {
         found.push(format!("command must be at most {MAX_COMMAND_CHARS} characters"));
-    }
-    if service.port == Some(0) {
-        found.push("port must be between 1 and 65535, or left out".to_owned());
     }
     found
 }
@@ -119,8 +122,7 @@ impl Store {
     }
 
     pub fn add(&mut self, repo: &Path, service: &Service) -> Result<(), Vec<String>> {
-        let service =
-            Service::new(&service.name, &service.command, service.port, service.autostart);
+        let service = Service::new(&service.name, &service.command, service.autostart);
         let entry = self.repo.entry(key_of(repo)).or_default();
         let found = problems(&service, &entry.service, None);
         if !found.is_empty() {
@@ -138,8 +140,7 @@ impl Store {
         old: &str,
         service: &Service,
     ) -> Result<(), Vec<String>> {
-        let service =
-            Service::new(&service.name, &service.command, service.port, service.autostart);
+        let service = Service::new(&service.name, &service.command, service.autostart);
         let entry = self.repo.entry(key_of(repo)).or_default();
         let Some(at) = entry.service.iter().position(|have| same_name(&have.name, old)) else {
             return Err(vec![format!("there is no service called `{old}` in this repo")]);
@@ -190,14 +191,14 @@ mod tests {
         (home, paths)
     }
 
-    type Case<'a> = (&'a str, &'a str, Option<u16>, &'a [Service], usize);
+    type Case<'a> = (&'a str, &'a str, &'a [Service], usize);
 
     fn db() -> Service {
-        Service::new("db", "pscale connect shop main --port 3309", Some(3309), true)
+        Service::new("db", "pscale connect shop main --port 3309", true)
     }
 
     fn api() -> Service {
-        Service::new("api", "npm run dev", None, false)
+        Service::new("api", "npm run dev", false)
     }
 
     #[test]
@@ -213,27 +214,38 @@ mod tests {
             "[[repo.\"/work/shop\".service]]\nname = \"db\"\ncommand = \"sleep 1\"\n",
         )
         .unwrap();
-        assert_eq!(bare.services(repo), [Service::new("db", "sleep 1", None, true)]);
+        assert_eq!(bare.services(repo), [Service::new("db", "sleep 1", true)]);
+    }
+
+    #[test]
+    fn a_port_in_an_older_file_is_read_and_never_written_again() {
+        let repo = Path::new("/work/shop");
+        let mut store: Store = toml::from_str(
+            "[[repo.\"/work/shop\".service]]\nname = \"db\"\ncommand = \"sleep 1\"\nport = 3309\n",
+        )
+        .unwrap();
+        assert_eq!(store.services(repo)[0].port, Some(3309));
+        store.add(repo, &api()).unwrap();
+        let text = toml::to_string_pretty(&store).unwrap();
+        assert!(!text.contains("port"), "{text}");
     }
 
     #[test]
     fn name_rules_table() {
         let long = "n".repeat(MAX_NAME_CHARS + 1);
         let exact = "n".repeat(MAX_NAME_CHARS);
-        let cases: [Case; 9] = [
-            ("fine", "sleep 1", None, &[], 0),
-            ("", "sleep 1", None, &[], 1),
-            ("   ", "sleep 1", None, &[], 1),
-            (&long, "sleep 1", None, &[], 1),
-            (&exact, "sleep 1", None, &[], 0),
-            ("fine", "   ", None, &[], 1),
-            ("fine", "sleep 1", Some(0), &[], 1),
-            ("DB", "sleep 1", None, &[db()], 1),
-            ("two\nlines", "sleep 1", None, &[], 1),
+        let cases: [Case; 8] = [
+            ("fine", "sleep 1", &[], 0),
+            ("", "sleep 1", &[], 1),
+            ("   ", "sleep 1", &[], 1),
+            (&long, "sleep 1", &[], 1),
+            (&exact, "sleep 1", &[], 0),
+            ("fine", "   ", &[], 1),
+            ("DB", "sleep 1", &[db()], 1),
+            ("two\nlines", "sleep 1", &[], 1),
         ];
-        for (name, command, port, others, want) in cases {
-            let service =
-                Service { name: name.into(), command: command.into(), port, autostart: true };
+        for (name, command, others, want) in cases {
+            let service = Service::new(name, command, true);
             let found = problems(&service, others, None);
             assert_eq!(found.len(), want, "{name:?} {command:?}: {found:?}");
         }
@@ -241,9 +253,8 @@ mod tests {
 
     #[test]
     fn every_problem_is_listed_so_one_call_fixes_them_all() {
-        let service =
-            Service { name: String::new(), command: String::new(), port: Some(0), autostart: true };
-        assert_eq!(problems(&service, &[], None).len(), 3);
+        let service = Service::new("", "", true);
+        assert_eq!(problems(&service, &[], None).len(), 2);
     }
 
     #[test]
@@ -252,13 +263,13 @@ mod tests {
         let mut store = Store::default();
         store.add(repo, &db()).unwrap();
         store.add(repo, &api()).unwrap();
-        let clash = Service::new("Db", "x", None, true);
+        let clash = Service::new("Db", "x", true);
         assert!(store.add(repo, &clash).is_err());
         assert!(store.add(Path::new("/work/other"), &clash).is_ok());
-        let recased = Service::new("DB", "pscale connect shop main", None, true);
+        let recased = Service::new("DB", "pscale connect shop main", true);
         store.replace(repo, "db", &recased).unwrap();
         assert_eq!(store.services(repo)[0], recased);
-        let onto_other = Service::new("API", "x", None, true);
+        let onto_other = Service::new("API", "x", true);
         assert!(store.replace(repo, "db", &onto_other).is_err());
         assert!(store.replace(repo, "nope", &onto_other).is_err());
         assert_eq!(store.services(repo).len(), 2);

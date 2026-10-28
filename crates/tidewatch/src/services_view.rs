@@ -1,12 +1,14 @@
 //! The services pill at the right end of the tab strip (one 8 px dot per service, then
 //! `N services`, a 1 px outline and no fill), the 440 px list it opens (a card per service; the
-//! selected one shows Logs, Restart and Stop or Start, and a menu with Edit and Remove), and the
-//! dialogs: Add or Edit service, and the one confirm before Remove.
+//! selected one shows Logs, Restart and Stop while it runs and Logs and Start while it does not;
+//! a menu with Edit and Remove opens in its own area and leaves the list open), and the dialogs:
+//! Add or Edit service, and the one confirm before Remove.
 
+use egui::containers::menu::menu_style;
 use egui::text::{LayoutJob, TextFormat, TextWrapping};
 use egui::{
-    Align, Align2, Color32, CornerRadius, Id, Key, Layout, Margin, Rect, RectAlign, Sense, Stroke,
-    StrokeKind, Ui, UiBuilder, pos2, vec2,
+    Align, Align2, Color32, CornerRadius, Id, Key, Layout, Margin, Modifiers, PopupCloseBehavior,
+    PopupKind, Rect, RectAlign, Sense, Stroke, StrokeKind, Ui, UiBuilder, pos2, vec2,
 };
 use stdusk_egui::widgets::{menu_item, style_menu};
 use tidewatch_core::service_supervisor::Word;
@@ -36,6 +38,8 @@ const CARD_PAD: f32 = 12.0;
 const BUTTONS_H: f32 = Size::Compact.height() + 10.0;
 const CARD_GAP: f32 = 2.0;
 const DIALOG_W: f32 = 480.0;
+const MENU_GAP: f32 = 4.0;
+const MENU_W: f32 = 210.0;
 
 /// Where the pill and the selected card's buttons were drawn, left in egui's memory for the
 /// headless tests.
@@ -68,7 +72,6 @@ pub(crate) struct Form {
     pub(crate) editing: Option<String>,
     pub(crate) name: String,
     pub(crate) command: String,
-    pub(crate) port: String,
     pub(crate) autostart: bool,
     pub(crate) focus: bool,
     pub(crate) tried: bool,
@@ -84,7 +87,6 @@ impl Form {
             editing: Some(row.name.clone()),
             name: row.name.clone(),
             command: row.command.clone(),
-            port: row.port.map(|port| port.to_string()).unwrap_or_default(),
             autostart: row.autostart,
             focus: true,
             tried: false,
@@ -101,6 +103,8 @@ pub(crate) enum Dialog {
 #[derive(Debug, Default)]
 pub(crate) struct Memory {
     selected: Option<String>,
+    menu: Option<String>,
+    menu_rect: Option<Rect>,
     dialog: Option<Dialog>,
     logs: Option<Logs>,
     popover: Popover,
@@ -128,6 +132,8 @@ impl Memory {
             .map(|name| Logs { name, tab: None });
         Self {
             selected: std::env::var("TIDEWATCH_DEV_SERVICES_SELECT").ok().filter(|n| !n.is_empty()),
+            menu: std::env::var("TIDEWATCH_DEV_SERVICES_MENU").ok().filter(|n| !n.is_empty()),
+            menu_rect: None,
             dialog,
             logs,
             popover: if open { Popover::Open } else { Popover::OnClick },
@@ -183,6 +189,10 @@ pub(crate) fn outline(rows: &[Row]) -> Color32 {
     } else {
         brand::FIELD_LINE
     }
+}
+
+pub(crate) fn is_running(word: Word) -> bool {
+    matches!(word, Word::Running | Word::Starting | Word::Restarting)
 }
 
 fn line_ink(word: Word) -> Color32 {
@@ -262,11 +272,17 @@ fn list(response: &egui::Response, rows: &[Row], memory: &mut Memory) -> Option<
             color: Color32::from_black_alpha(110),
         })
         .inner_margin(Margin::same(LIST_MARGIN));
-    egui::Popup::menu(response)
+    let menu_before = memory.menu.clone();
+    let close_behavior = if menu_before.is_some() {
+        PopupCloseBehavior::IgnoreClicks
+    } else {
+        PopupCloseBehavior::CloseOnClickOutside
+    };
+    let shown = egui::Popup::menu(response)
         .align(RectAlign::BOTTOM_END)
         .gap(6.0)
         .frame(frame)
-        .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
+        .close_behavior(close_behavior)
         .show(|ui| {
             ui.set_width(LIST_W - f32::from(LIST_MARGIN) * 2.0);
             ui.spacing_mut().item_spacing.y = CARD_GAP;
@@ -282,6 +298,22 @@ fn list(response: &egui::Response, rows: &[Row], memory: &mut Memory) -> Option<
                 ui.close();
             }
         });
+    let Some(shown) = shown else {
+        memory.menu = None;
+        memory.menu_rect = None;
+        return action;
+    };
+    if menu_before.is_some() && memory.menu == menu_before {
+        let click = response.ctx.input(|i| i.pointer.any_click().then(|| i.pointer.interact_pos()));
+        if let Some(pos) = click.flatten()
+            && !memory.menu_rect.is_some_and(|rect| rect.contains(pos))
+        {
+            memory.menu = None;
+            if shown.response.clicked_elsewhere() {
+                egui::Popup::close_all(&response.ctx);
+            }
+        }
+    }
     if let Some(Action::Logs(_)) = &action {
         egui::Popup::close_all(&response.ctx);
     }
@@ -307,19 +339,7 @@ fn card(ui: &mut Ui, row: &Row, memory: &mut Memory) -> Option<Action> {
     );
     {
         let mut over = ui.new_child(UiBuilder::new().max_rect(more_rect));
-        let ui = &mut over;
-        let more = quiet_button(ui, "...", true, Size::Compact).on_hover_text("Edit or remove");
-        egui::Popup::menu(&more).show(|ui| {
-            style_menu(ui);
-            if menu_item(ui, "Edit", "").clicked() {
-                memory.dialog = Some(Dialog::Form(Form::edit(row)));
-                egui::Popup::close_all(ui.ctx());
-            }
-            if menu_item(ui, "Remove", "").clicked() {
-                memory.dialog = Some(Dialog::Remove(row.name.clone()));
-                egui::Popup::close_all(ui.ctx());
-            }
-        });
+        more_menu(&mut over, row, memory);
     }
     if selected {
         let strip = Rect::from_min_size(
@@ -338,23 +358,69 @@ fn card(ui: &mut Ui, row: &Row, memory: &mut Memory) -> Option<Action> {
                 if logs.clicked() {
                     action = Some(Action::Logs(row.name.clone()));
                 }
-                let restart = quiet_button(ui, "Restart", true, Size::Compact);
-                note_button(ui.ctx(), "Restart", restart.rect);
-                if restart.clicked() {
-                    action = Some(Action::Run(Command::Restart, row.name.clone()));
-                }
-                let running = matches!(row.word, Word::Running | Word::Starting | Word::Restarting);
-                let (text, command) =
-                    if running { ("Stop", Command::Stop) } else { ("Start", Command::Start) };
-                let toggle = quiet_button(ui, text, true, Size::Compact);
-                note_button(ui.ctx(), text, toggle.rect);
-                if toggle.clicked() {
-                    action = Some(Action::Run(command, row.name.clone()));
+                if is_running(row.word) {
+                    let restart = quiet_button(ui, "Restart", true, Size::Compact);
+                    note_button(ui.ctx(), "Restart", restart.rect);
+                    if restart.clicked() {
+                        action = Some(Action::Run(Command::Restart, row.name.clone()));
+                    }
+                    let stop = quiet_button(ui, "Stop", true, Size::Compact);
+                    note_button(ui.ctx(), "Stop", stop.rect);
+                    if stop.clicked() {
+                        action = Some(Action::Run(Command::Stop, row.name.clone()));
+                    }
+                } else {
+                    let start = quiet_button(ui, "Start", true, Size::Compact);
+                    note_button(ui.ctx(), "Start", start.rect);
+                    if start.clicked() {
+                        action = Some(Action::Run(Command::Start, row.name.clone()));
+                    }
                 }
             }
         }
     }
     action
+}
+
+fn more_menu(ui: &mut Ui, row: &Row, memory: &mut Memory) {
+    let more = quiet_button(ui, "...", true, Size::Compact).on_hover_text("Edit or remove");
+    note_button(ui.ctx(), "...", more.rect);
+    let open = memory.menu.as_deref() == Some(row.name.as_str());
+    if more.clicked() {
+        memory.menu = if open { None } else { Some(row.name.clone()) };
+    }
+    if memory.menu.as_deref() != Some(row.name.as_str()) {
+        return;
+    }
+    if ui.input_mut(|i| i.consume_key(Modifiers::NONE, Key::Escape)) {
+        memory.menu = None;
+        return;
+    }
+    let shown = egui::Popup::from_response(&more)
+        .kind(PopupKind::Menu)
+        .layout(Layout::top_down_justified(Align::Min))
+        .style(menu_style)
+        .align(RectAlign::BOTTOM_END)
+        .gap(MENU_GAP)
+        .close_behavior(PopupCloseBehavior::IgnoreClicks)
+        .open(true)
+        .show(|ui| {
+            ui.set_max_width(MENU_W);
+            style_menu(ui);
+            let edit = menu_item(ui, "Edit", "");
+            note_button(ui.ctx(), "Edit", edit.rect);
+            if edit.clicked() {
+                memory.dialog = Some(Dialog::Form(Form::edit(row)));
+                memory.menu = None;
+            }
+            let remove = menu_item(ui, "Remove", "");
+            note_button(ui.ctx(), "Remove", remove.rect);
+            if remove.clicked() {
+                memory.dialog = Some(Dialog::Remove(row.name.clone()));
+                memory.menu = None;
+            }
+        });
+    memory.menu_rect = shown.map(|shown| shown.response.rect);
 }
 
 fn paint_card_text(ui: &Ui, rect: Rect, row: &Row) {
@@ -397,25 +463,12 @@ fn cut_to(text: &str, width: f32) -> LayoutJob {
     job
 }
 
-/// A form's service, or each problem found: the field rules, plus a port that is a number.
+/// A form's service, or each problem found.
 pub(crate) fn form_service(form: &Form, existing: &[Row]) -> Result<Service, Vec<String>> {
-    let port_text = form.port.trim();
-    let mut found = Vec::new();
-    let port = if port_text.is_empty() {
-        None
-    } else {
-        let parsed = port_text.parse::<u16>().ok();
-        if parsed.is_none() {
-            found.push("port must be a number from 1 to 65535, or left empty".to_owned());
-        }
-        parsed
-    };
-    let service = Service::new(&form.name, &form.command, port, form.autostart);
-    let others: Vec<Service> = existing
-        .iter()
-        .map(|row| Service::new(&row.name, &row.command, row.port, row.autostart))
-        .collect();
-    found.extend(problems(&service, &others, form.editing.as_deref()));
+    let service = Service::new(&form.name, &form.command, form.autostart);
+    let others: Vec<Service> =
+        existing.iter().map(|row| Service::new(&row.name, &row.command, row.autostart)).collect();
+    let found = problems(&service, &others, form.editing.as_deref());
     if found.is_empty() { Ok(service) } else { Err(found) }
 }
 
@@ -451,9 +504,6 @@ fn form_dialog(
         let command = text_input(ui, &mut form.command, "pscale connect shop main --port 3309");
         submit |= command.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter));
         ui.add_space(4.0);
-        section_label(ui, "Port (optional)");
-        let port = text_input(ui, &mut form.port, "3309");
-        submit |= port.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter));
         ui.add_space(6.0);
         switch_line(ui, "Start with the repo", &mut form.autostart);
         if let (true, Err(found)) = (form.tried, &verdict) {

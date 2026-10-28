@@ -141,17 +141,19 @@ impl Supervisor {
             }
             (Event::Stop, State::Starting | State::Running { .. }) => {
                 self.state = State::Stopped;
+                self.last_exit = None;
                 vec![Effect::Kill]
             }
             (Event::Stop, State::Backoff { .. } | State::Crashed { .. }) => {
                 self.state = State::Stopped;
+                self.last_exit = None;
                 Vec::new()
             }
             (Event::Spawned { at }, State::Starting) => {
                 self.state = State::Running { since: at };
                 Vec::new()
             }
-            (Event::Exited { code, .. }, State::Stopped | State::Crashed { .. }) => {
+            (Event::Exited { code, .. }, State::Crashed { .. }) => {
                 self.last_exit = Some(code);
                 Vec::new()
             }
@@ -188,7 +190,7 @@ impl Supervisor {
     }
 
     /// The owner-facing line under the name: `up 2h 14m · :3309`, `restarting in 4s`,
-    /// `crashed, exit 1`, `stopped, exit 1`.
+    /// `gave up after 5 crashes, Start to try again`, `stopped`.
     #[must_use]
     pub fn line(&self, now: f64, port: Option<u16>) -> String {
         match self.state {
@@ -200,10 +202,10 @@ impl Supervisor {
             State::Backoff { until, .. } => {
                 format!("restarting in {}", duration_text((until - now).max(0.0).ceil()))
             }
-            State::Crashed { exit, .. } => format!("crashed, exit {exit}"),
-            State::Stopped => self
-                .last_exit
-                .map_or_else(|| "stopped".to_owned(), |code| format!("stopped, exit {code}")),
+            State::Crashed { .. } => {
+                format!("gave up after {GIVE_UP_EXITS} crashes, Start to try again")
+            }
+            State::Stopped => "stopped".to_owned(),
         }
     }
 
@@ -379,9 +381,10 @@ mod tests {
         let mut sup = running(0.0);
         assert_eq!(sup.step(Event::Stop), [Effect::Kill]);
         assert_eq!(sup.state(), State::Stopped);
-        assert_eq!(sup.step(Event::Exited { code: 143, at: 1.0 }), []);
+        assert_eq!(sup.step(Event::Exited { code: 1, at: 1.0 }), []);
         assert_eq!(sup.state(), State::Stopped);
-        assert_eq!(sup.line(5.0, None), "stopped, exit 143");
+        assert_eq!(sup.line(5.0, None), "stopped");
+        assert_eq!(sup.last_exit(), None, "the kill's own exit is not a crash");
         assert_eq!(sup.step(Event::Tick { at: 99.0 }), []);
         assert_eq!(sup.step(Event::Stop), []);
     }
@@ -465,7 +468,7 @@ mod tests {
         assert_eq!(sup.line(197.0, None), "restarting in 4s");
         assert_eq!(sup.line(200.2, None), "restarting in 1s");
         let crashed = Supervisor { state: State::Crashed { exit: 2, at: 1.0 }, ..sup };
-        assert_eq!(crashed.line(5.0, None), "crashed, exit 2");
+        assert_eq!(crashed.line(5.0, None), "gave up after 5 crashes, Start to try again");
     }
 
     #[test]
