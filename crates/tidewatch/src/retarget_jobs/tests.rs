@@ -4,6 +4,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use tidewatch_core::agents::Level;
+use tidewatch_core::prefs::StartFrom;
 use tidewatch_core::transcript_locate::claude_project_dir_name;
 use tidewatch_core::worktree;
 
@@ -194,6 +195,9 @@ fn request(w: &World, target: Target, interrupt: bool) -> Request {
         listener: None,
         trust: None,
         wait: Duration::from_millis(300),
+        start_from: StartFrom::DefaultBranch,
+        name: None,
+        spare_tab: None,
     }
 }
 
@@ -439,21 +443,143 @@ fn a_folder_another_tab_shows_is_followed_without_owning_it() {
     assert!(result.lines[0].starts_with(&format!("claude --resume {ID} ")));
 }
 
+fn repo_in(parent: &Path, name: &str) -> PathBuf {
+    let dir = parent.join(name);
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    git(&dir, &["init", "-q", "-b", "main"]);
+    std::fs::write(dir.join("src/lib.rs"), "fn main() {}\n").unwrap();
+    git(&dir, &["add", "."]);
+    git(&dir, &["commit", "-q", "-m", "init"]);
+    dir.canonicalize().unwrap()
+}
+
+fn edit_of(file: &Path) -> String {
+    format!(
+        r#"{{"type":"assistant","message":{{"role":"assistant","content":[{{"type":"tool_use","id":"t","name":"Edit","input":{{"file_path":"{}"}}}}]}}}}"#,
+        file.display()
+    )
+}
+
+const MODE_LINE: &str =
+    r#"{"type":"user","permissionMode":"auto","message":{"role":"user","content":"hi"}}"#;
+
+fn session_in(w: &World, folder: &Path, lines: &[String]) -> PathBuf {
+    let project = w.home.join(".claude/projects").join(claude_project_dir_name(folder));
+    std::fs::create_dir_all(project.join(ID).join("subagents")).unwrap();
+    let mut text = lines.join("\n");
+    text.push('\n');
+    std::fs::write(project.join(format!("{ID}.jsonl")), text).unwrap();
+    std::fs::write(project.join(ID).join("subagents").join("agent-1.jsonl"), "{}\n").unwrap();
+    project
+}
+
+fn project_of(w: &World, folder: &Path) -> PathBuf {
+    w.home.join(".claude/projects").join(claude_project_dir_name(folder))
+}
+
+fn in_workspace(w: &World, ws: &Path) -> Request {
+    let mut asked = request(w, builder(None), false);
+    asked.subject.worktree = None;
+    asked.subject.repo = ws.to_path_buf();
+    asked.subject.dir = ws.to_path_buf();
+    asked.subject.window.repos = vec![ws.to_path_buf()];
+    asked
+}
+
 #[test]
-fn a_session_in_a_repo_that_is_not_open_adds_that_repo_and_one_in_a_plain_folder_stays_put() {
+fn a_shell_tab_in_a_workspace_folder_becomes_an_agent_on_a_new_branch_of_the_repo_its_session_edited()
+ {
     let w = world();
-    let elsewhere = w.home.join("code").join("lib");
-    std::fs::create_dir_all(&elsewhere).unwrap();
-    git(&elsewhere, &["init", "-q", "-b", "main"]);
-    git(&elsewhere, &["commit", "-q", "--allow-empty", "-m", "init"]);
-    let elsewhere = elsewhere.canonicalize().unwrap();
+    let ws = w.home.join("ws");
+    let repo_a = repo_in(&ws, "repo-a");
+    let repo_b = repo_in(&ws, "repo-b");
+    let ws = ws.canonicalize().unwrap();
+    let old_project = session_in(
+        &w,
+        &ws,
+        &[
+            MODE_LINE.to_owned(),
+            edit_of(&repo_b.join("src/lib.rs")),
+            edit_of(&repo_b.join("src/new.rs")),
+        ],
+    );
+    std::fs::write(repo_b.join("src/lib.rs"), "fn main() { dirty }\n").unwrap();
+    registry_in(&w, &ws, AGENT, START, "idle");
+    let system = Fake::new(&ps());
+    let done = run_retarget(&system, &env(&w), &in_workspace(&w, &ws));
+    assert_eq!(*system.sent.borrow(), [AGENT], "only the agent is signalled, never the shell");
+
+    let result = landed(done, &w);
+    let made = result.landing.worktree.clone().expect("the tab owns a new worktree");
+    assert_eq!(result.landing.repo, repo_b, "the repo the session edited, not the workspace");
+    assert!(made.branch.starts_with("agent/"), "{}", made.branch);
+    assert_eq!(made.repo, repo_b);
+    assert!(made.path.starts_with(w.paths.root()), "{}", made.path.display());
+    assert!(made.path.join("src/lib.rs").is_file());
+    assert_eq!(std::fs::read_to_string(made.path.join("src/lib.rs")).unwrap(), "fn main() {}\n");
+    assert_eq!(result.dirs, std::slice::from_ref(&made.path), "the agent starts in the worktree");
+    assert!(result.lines[0].starts_with(&format!("claude --resume {ID} ")), "{}", result.lines[0]);
+
+    let new_project = project_of(&w, &made.path);
+    for relative in [format!("{ID}.jsonl"), format!("{ID}/subagents/agent-1.jsonl")] {
+        let (from, to) = (old_project.join(&relative), new_project.join(&relative));
+        assert_eq!(std::fs::read(&from).unwrap(), std::fs::read(&to).unwrap(), "{relative}");
+    }
+    assert!(old_project.join(format!("{ID}.jsonl")).is_file(), "the original is still there");
+
+    let tab = result.tabs.items().iter().find(|tab| tab.id == result.id).unwrap();
+    assert_eq!(tab.pane.worktree.as_ref(), Some(&made));
+    assert_eq!(
+        tab.pane.agent.as_ref().unwrap().launched.as_ref().unwrap().dir.as_deref(),
+        Some(made.path.as_path())
+    );
+    let listed = worktree::list(&repo_b).unwrap();
+    assert!(listed.iter().any(|entry| entry.path == made.path), "git lists the new worktree");
+    assert_eq!(worktree::list(&repo_a).unwrap().len(), 1, "the other repo is untouched");
+    assert_eq!(
+        std::fs::read_to_string(repo_b.join("src/lib.rs")).unwrap(),
+        "fn main() { dirty }\n",
+        "uncommitted changes stay where they were"
+    );
+}
+
+#[test]
+fn the_pinned_main_tab_keeps_its_shell_and_the_agent_opens_in_the_spare_tab() {
+    let w = world();
+    let ws = w.home.join("ws");
+    let repo_b = repo_in(&ws, "repo-b");
+    let ws = ws.canonicalize().unwrap();
+    session_in(&w, &ws, &[MODE_LINE.to_owned(), edit_of(&repo_b.join("src/lib.rs"))]);
+    registry_in(&w, &ws, AGENT, START, "idle");
+    let mut asked = in_workspace(&w, &ws);
+    asked.subject.pinned = true;
+    asked.spare_tab = Some(99);
+    let Done::Retargeted(landed) = run_retarget(&Fake::new(&ps()), &env(&w), &asked) else {
+        panic!("expected a change to land")
+    };
+    let Retargeted::Agent { opened, landing, from, .. } = *landed else {
+        panic!("expected an agent")
+    };
+    assert_eq!((opened.tab, from), (99, 7));
+    assert_eq!(landing.repo, repo_b);
+    assert!(landing.worktree.is_some());
+}
+
+#[test]
+fn a_session_in_a_repo_that_is_not_open_gets_a_new_worktree_there_and_one_with_no_repo_stays_put() {
+    let w = world();
+    let elsewhere = repo_in(&w.home.join("code"), "lib");
     transcript(&w.home, &elsewhere);
     registry_in(&w, &elsewhere, AGENT, START, "idle");
     let done = run_retarget(&Fake::new(&ps()), &env(&w), &request(&w, builder(None), false));
     let result = landed(done, &w);
-    assert_eq!(result.landing.repo, elsewhere);
-    assert_eq!(result.landing.worktree, None);
-    assert_eq!(result.dirs, std::slice::from_ref(&elsewhere));
+    let made = result.landing.worktree.clone().expect("a new worktree of the repo");
+    assert_eq!(
+        (result.landing.repo.as_path(), made.repo.as_path()),
+        (elsewhere.as_path(), elsewhere.as_path())
+    );
+    assert_eq!(result.dirs, std::slice::from_ref(&made.path));
+    assert!(result.lines[0].starts_with(&format!("claude --resume {ID} ")));
 
     let plain = w.home.join("notes");
     std::fs::create_dir_all(&plain).unwrap();
@@ -464,6 +590,45 @@ fn a_session_in_a_repo_that_is_not_open_adds_that_repo_and_one_in_a_plain_folder
     assert_eq!(result.landing.repo, w.repo, "a folder outside git stays in the tab's own group");
     assert_eq!(result.dirs, [plain]);
     assert!(result.lines[0].starts_with(&format!("claude --resume {ID} ")));
+}
+
+#[test]
+fn a_repo_that_cannot_get_a_worktree_leaves_the_tab_in_its_folder_with_a_note() {
+    let w = world();
+    let ws = w.home.join("ws");
+    let bare = ws.join("no-commits");
+    std::fs::create_dir_all(&bare).unwrap();
+    git(&bare, &["init", "-q", "-b", "main"]);
+    let bare = bare.canonicalize().unwrap();
+    let ws = ws.canonicalize().unwrap();
+    session_in(&w, &ws, &[MODE_LINE.to_owned(), edit_of(&bare.join("a.rs"))]);
+    registry_in(&w, &ws, AGENT, START, "idle");
+    let Done::Retargeted(landed) =
+        run_retarget(&Fake::new(&ps()), &env(&w), &in_workspace(&w, &ws))
+    else {
+        panic!("expected a change to land")
+    };
+    let Retargeted::Agent { landing, note, .. } = *landed else { panic!("expected an agent") };
+    assert_eq!((landing.dir.as_path(), landing.worktree), (ws.as_path(), None));
+    assert!(note.unwrap().contains("could not be made"));
+}
+
+#[test]
+fn a_conversation_that_cannot_be_copied_starts_a_new_session_in_the_new_worktree() {
+    let w = world();
+    let ws = w.home.join("ws");
+    let repo_b = repo_in(&ws, "repo-b");
+    let ws = ws.canonicalize().unwrap();
+    session_in(&w, &ws, &[MODE_LINE.to_owned(), edit_of(&repo_b.join("src/lib.rs"))]);
+    registry_in(&w, &ws, AGENT, START, "idle");
+    let asked = in_workspace(&w, &ws);
+    std::fs::remove_dir_all(w.home.join(".claude/projects")).unwrap();
+    let Done::Retargeted(landed) = run_retarget(&Fake::new(&ps()), &env(&w), &asked) else {
+        panic!("expected a change to land")
+    };
+    let Retargeted::Agent { landing, note, .. } = *landed else { panic!("expected an agent") };
+    assert!(landing.worktree.is_some());
+    assert!(note.unwrap().contains("so a new session started"));
 }
 
 #[test]

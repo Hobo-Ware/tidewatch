@@ -6,7 +6,7 @@ use std::collections::{HashMap, HashSet};
 
 use crate::change_tab::{Change, Pick};
 use crate::jobs::Jobs;
-use crate::retarget_jobs::Done;
+use crate::retarget_jobs::{Done, Looked};
 use crate::shell_agents::{Fake, ShellAgents};
 
 pub(crate) struct Open {
@@ -22,6 +22,11 @@ pub(crate) enum DevOpen {
     Elsewhere,
     /// The same, then press Change.
     ElsewhereChange,
+    /// The first shell tab, the pinned main tab when it is the only one, with the stand-in session
+    /// (`TIDEWATCH_FAKE_SHELL_AGENT`): open the popover.
+    Home,
+    /// The same, with the stand-in session as one the tab ended, then press Change.
+    HomeChange,
 }
 
 impl DevOpen {
@@ -31,6 +36,8 @@ impl DevOpen {
             Some("shell") => Some(Self::Shell),
             Some("elsewhere") => Some(Self::Elsewhere),
             Some("elsewhere:change") => Some(Self::ElsewhereChange),
+            Some("home") => Some(Self::Home),
+            Some("home:change") => Some(Self::HomeChange),
             _ => None,
         }
     }
@@ -44,6 +51,9 @@ pub(crate) struct Host {
     /// A change that waits for the agent's turn to end, with when to try again.
     pub(crate) waiting: HashMap<u64, (Change, f64)>,
     pub(crate) dev_open: Option<DevOpen>,
+    /// Where a change would put each tab, looked up while its popover is open.
+    pub(crate) looks: HashMap<u64, Looked>,
+    pub(crate) looking: HashSet<u64>,
 }
 
 impl Host {
@@ -54,6 +64,8 @@ impl Host {
             open: None,
             busy: HashSet::new(),
             waiting: HashMap::new(),
+            looks: HashMap::new(),
+            looking: HashSet::new(),
             dev_open: DevOpen::parse(std::env::var("TIDEWATCH_DEV_CHANGE_TAB").ok().as_deref()),
         }
     }

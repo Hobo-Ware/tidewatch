@@ -154,6 +154,16 @@ impl<T> Tabs<T> {
         id
     }
 
+    /// An id for a tab that is made later with `push_reserved`; no other tab takes it.
+    pub(crate) fn reserve_id(&mut self) -> u64 {
+        self.take_id()
+    }
+
+    /// Appends a tab to a group under an id from `reserve_id`, without selecting it.
+    pub(crate) fn push_reserved(&mut self, group: usize, id: u64, title: String, pane: T) {
+        self.items.push(Tab { id, group, title, pinned: false, pane, park: None, keep: false });
+    }
+
     /// Appends a tab to the visible group, selects it and returns its id.
     pub(crate) fn push(&mut self, title: String, pane: T) -> u64 {
         let id = self.push_in(self.active_group(), title, pane);

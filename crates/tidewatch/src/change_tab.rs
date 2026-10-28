@@ -52,6 +52,18 @@ pub(crate) enum Running {
     },
 }
 
+/// Where the tab goes when an agent starts in it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum Goes {
+    /// It stays in its own folder.
+    Stays,
+    /// It follows the session into a folder that stays as it is, shown as a path.
+    Follows(String),
+    /// It gets a worktree on a new `agent/<name>` branch of `repo` (a name to show). The uncommitted
+    /// files of the old checkout stay where they are: how many and in which folder.
+    NewBranch { repo: String, branch: Option<String>, left: Option<(usize, String)> },
+}
+
 #[allow(clippy::struct_excessive_bools)] // independent facts of one tab, not a mode
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct Facts {
@@ -65,8 +77,7 @@ pub(crate) struct Facts {
     /// The level a found session last ran at.
     pub(crate) seen_level: Option<Level>,
     pub(crate) cards: Vec<Card>,
-    /// The folder the found session runs in when it is not the tab's own: the tab moves there.
-    pub(crate) follows: Option<String>,
+    pub(crate) goes: Goes,
     /// A command other than the shell has the terminal: it stops with the shell.
     pub(crate) busy: bool,
     pub(crate) meeseeks: bool,
@@ -218,16 +229,36 @@ pub(crate) fn fix(facts: &Facts, pick: &Pick) -> Option<Fix> {
     }
 }
 
+fn new_branch<'a>(facts: &'a Facts, pick: &Pick) -> Option<(&'a str, String)> {
+    let Goes::NewBranch { repo, branch, .. } = &facts.goes else { return None };
+    if pick.kind != Kind::Agent {
+        return None;
+    }
+    let branch =
+        branch.as_ref().map_or_else(|| "agent/".to_owned(), |name| format!("agent/{name}"));
+    Some((repo, branch))
+}
+
 fn notes(facts: &Facts, pick: &Pick, card: Option<&Card>) -> String {
     let mut notes = Vec::new();
-    match &facts.follows {
-        Some(folder) => {
+    let fresh = new_branch(facts, pick).is_some();
+    match &facts.goes {
+        Goes::NewBranch { left: Some((count, folder)), .. } if fresh => {
+            let files = if *count == 1 {
+                "1 uncommitted file stays"
+            } else {
+                &format!("{count} uncommitted files stay")
+            };
+            notes.push(format!("{files} in {folder}."));
+        }
+        Goes::NewBranch { .. } if fresh => {}
+        Goes::Follows(folder) => {
             notes.push(format!("The tab moves to {folder}, where the conversation runs."));
         }
-        None if facts.in_worktree => {
+        _ if facts.in_worktree => {
             notes.push("Worktree, branch and history stay as they are.".to_owned());
         }
-        None => notes.push("The folder and history stay as they are.".to_owned()),
+        _ => notes.push("The folder and history stay as they are.".to_owned()),
     }
     if let Some(card) = card.filter(|_| pick.kind == Kind::Agent) {
         let fitted = fit_level(pick.level, &card.unsupported);
@@ -246,7 +277,9 @@ fn notes(facts: &Facts, pick: &Pick, card: Option<&Card>) -> String {
     if facts.meeseeks {
         notes.push("It stops being a Meeseeks and no longer ends by itself.".to_owned());
     }
-    if facts.pinned {
+    if facts.pinned && fresh {
+        notes.push("The agent opens in a new tab and the main tab keeps its shell.".to_owned());
+    } else if facts.pinned {
         notes.push("The main tab stays pinned.".to_owned());
     }
     notes.extend(facts.replaces.map(str::to_owned));
@@ -274,7 +307,12 @@ pub(crate) fn sentence(facts: &Facts, pick: &Pick) -> String {
             let Some(card) = card_of(facts, &pick.profile) else {
                 return Fix::AddProfile.sentence();
             };
-            let who = who(card, pick.level);
+            let who = match new_branch(facts, pick) {
+                Some((repo, branch)) => {
+                    format!("{} on a new branch {branch} in {repo}", who(card, pick.level))
+                }
+                None => who(card, pick.level),
+            };
             let other_cli = session_cli(facts).is_some_and(|cli| cli != card.agent_id);
             let head = match (running, &facts.stored) {
                 (Some((cli, working)), _) if other_cli => format!(
@@ -301,7 +339,7 @@ pub(crate) fn sentence(facts: &Facts, pick: &Pick) -> String {
                     format!("A new {} session starts in this tab as {who}.", card.cli_name)
                 }
             };
-            format!("{head} {}", notes(facts, pick, Some(card)))
+            format!("{head} {}", notes(facts, pick, Some(card))).trim_end().to_owned()
         }
     }
 }

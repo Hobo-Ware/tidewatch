@@ -170,7 +170,7 @@ fn what_used_to_be_refused_now_goes_ahead() {
     let other_folder =
         agent_plan(run(&builder(None), Source::Running(&elsewhere), &subject(true), &w, false));
     assert_eq!(other_folder.start, Start::Resume(ID.to_owned()));
-    assert_eq!(other_folder.landing.dir, PathBuf::from("/work/other"));
+    assert_eq!(stays(&other_folder).dir, PathBuf::from("/work/other"));
 
     let unknown = Target::Agent { profile: "nope".into(), level: None };
     let fallback = agent_plan(run(&unknown, Source::Running(&idle), &subject(true), &w, false));
@@ -267,7 +267,7 @@ fn a_session_the_tab_ended_earlier_resumes_without_ending_anything() {
     let source = Source::Stored { cli: Cli::Claude, session_id: ID };
     let plan = agent_plan(run(&builder(None), source, &subject(true), &w, false));
     assert_eq!(plan.start, Start::Resume(ID.to_owned()));
-    assert_eq!(plan.landing.dir, PathBuf::from("/work/web"));
+    assert_eq!(stays(&plan).dir, PathBuf::from("/work/web"));
 }
 
 #[test]
@@ -296,6 +296,18 @@ fn folder(main: &str, branch: Option<&str>, made: bool) -> Folder {
         main: Some(PathBuf::from(main)),
         branch: branch.map(str::to_owned),
         made_by_tidewatch: made,
+        worked_in: None,
+    }
+}
+
+fn plain_with(worked_in: Option<&str>) -> Folder {
+    Folder { worked_in: worked_in.map(PathBuf::from), ..Folder::default() }
+}
+
+fn stays(plan: &AgentPlan) -> &Landing {
+    match &plan.home {
+        Home::Stay(landing) => landing,
+        other @ Home::Fresh { .. } => panic!("expected the tab to stay in a folder, got {other:?}"),
     }
 }
 
@@ -427,8 +439,8 @@ fn a_session_in_another_folder_resumes_there_with_the_folders_worktree() {
     );
     let plan = agent_plan(planned);
     assert_eq!(plan.start, Start::Resume(ID.to_owned()));
-    assert_eq!(plan.landing.dir, PathBuf::from("/tw/web/upbeat-lantern"));
-    assert_eq!(plan.landing.worktree.as_ref().map(Worktree::name), Some("upbeat-lantern"));
+    assert_eq!(stays(&plan).dir, PathBuf::from("/tw/web/upbeat-lantern"));
+    assert_eq!(stays(&plan).worktree.as_ref().map(Worktree::name), Some("upbeat-lantern"));
     assert_eq!(plan.profile.level, Level::Auto);
     let yolo = session(Cli::Claude, Some(Level::Yolo), Activity::Idle, Some(ID));
     let yolo = Session { cwd: found.cwd.clone(), ..yolo };
@@ -461,4 +473,113 @@ fn every_failure_has_a_plain_sentence_and_none_shows_a_home_folder() {
         assert!(!text.is_empty() && text.ends_with('.'), "{failure:?}: {text}");
         assert!(!text.contains("/Users/") && !text.contains("/home/"), "{text}");
     }
+}
+
+fn fresh(repo: &str, from: &str) -> Home {
+    Home::Fresh { repo: PathBuf::from(repo), from: PathBuf::from(from) }
+}
+
+#[test]
+fn an_agent_always_gets_its_own_worktree_unless_the_session_already_runs_in_one() {
+    let tab = subject(true);
+    let shell = subject(false);
+    let in_plain_group = Subject {
+        repo: "/home/me/ws".into(),
+        dir: "/home/me/ws".into(),
+        window: Window { repos: vec!["/work/api".into()], shown: Vec::new() },
+        ..subject(false)
+    };
+    let cases: Vec<(&str, &str, Folder, Subject, Option<Home>)> = vec![
+        ("the tab's own worktree", "/work/web", Folder::default(), tab.clone(), None),
+        (
+            "a subfolder of the tab's own worktree",
+            "/work/web/packages/ui",
+            folder("/work/web", Some("agent/calm-comet"), false),
+            tab.clone(),
+            None,
+        ),
+        (
+            "another Tidewatch worktree",
+            "/tw/web/upbeat-lantern",
+            folder("/work/web", Some("agent/upbeat-lantern"), true),
+            shell.clone(),
+            None,
+        ),
+        (
+            "the main checkout of an open repo",
+            "/work/web",
+            folder("/work/web", Some("main"), false),
+            shell.clone(),
+            Some(fresh("/work/web", "/work/web")),
+        ),
+        (
+            "the main checkout of a repo that is not open",
+            "/code/lib",
+            folder("/code/lib", Some("main"), false),
+            shell.clone(),
+            Some(fresh("/code/lib", "/code/lib")),
+        ),
+        (
+            "a worktree that is not Tidewatch's",
+            "/code/web-fix",
+            folder("/work/web", Some("fix/login"), false),
+            shell.clone(),
+            Some(fresh("/work/web", "/code/web-fix")),
+        ),
+        (
+            "a plain folder whose session worked in an open repo",
+            "/home/me/ws",
+            plain_with(Some("/work/api")),
+            in_plain_group.clone(),
+            Some(fresh("/work/api", "/home/me/ws")),
+        ),
+        (
+            "a plain folder whose session worked in a repo that is not open",
+            "/home/me/ws",
+            plain_with(Some("/home/me/ws/repo-b")),
+            in_plain_group.clone(),
+            Some(fresh("/home/me/ws/repo-b", "/home/me/ws")),
+        ),
+        ("a folder with no repo at all", "/home/me/notes", plain_with(None), shell.clone(), None),
+    ];
+    for (what, cwd, folder, subject, want) in cases {
+        let got = home(Path::new(cwd), &subject, &folder);
+        match want {
+            Some(want) => assert_eq!(got, want, "{what}"),
+            None => assert!(matches!(got, Home::Stay(_)), "{what}: {got:?}"),
+        }
+    }
+}
+
+#[test]
+fn a_session_moved_to_a_fresh_worktree_resumes_by_id_except_where_resume_means_the_latest() {
+    let w = world();
+    let mut found = session(Cli::Claude, Some(Level::Auto), Activity::Idle, Some(ID));
+    found.cwd = PathBuf::from("/home/me/ws");
+    let there = plain_with(Some("/work/api"));
+    let in_ws = Subject { dir: "/home/me/ws".into(), ..subject(false) };
+    let planned = plan_for(&w, &found, &in_ws, &there);
+    assert_eq!(planned.home, fresh("/work/api", "/home/me/ws"));
+    assert_eq!(planned.start, Start::Resume(ID.to_owned()));
+
+    let profiles = Profiles::seeded(&["gemini".to_owned()]);
+    let agents = profiles.agent_table();
+    let installed = vec!["gemini".to_owned()];
+    let key = profiles
+        .profile
+        .iter()
+        .find(|(_, profile)| profile.agent == "gemini")
+        .map(|(key, _)| key.clone())
+        .unwrap();
+    let found = Session { cli: Cli::Gemini, ..found };
+    let planned = agent_plan(plan(
+        &Target::Agent { profile: key, level: None },
+        Source::Running(&found),
+        &in_ws,
+        &there,
+        (&profiles, &agents, &installed),
+        false,
+    ));
+    assert_eq!(planned.start, Start::Fresh);
+    assert!(planned.note.as_deref().unwrap().contains("newest conversation of the folder"));
 }

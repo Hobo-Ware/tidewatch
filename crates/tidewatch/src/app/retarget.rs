@@ -14,18 +14,18 @@ use tidewatch_core::status::AgentStatus;
 
 use super::Tidewatch;
 use crate::catalog::Availability;
-use crate::change_tab::{self, Card, Change, Facts, Pick, Running};
+use crate::change_tab::{self, Card, Change, Facts, Goes, Pick, Running};
 use crate::change_tab_view::{self, Outcome};
 use crate::new_tab_meeseeks::builder_entry;
 use crate::pane::{Body, Pane};
 use crate::pty::{spawn_agent, spawn_shell_noted, spawn_typed};
 use crate::repo::Workspace;
 use crate::restore_glue::{Spawn, reopened};
-use crate::retarget::{Landing, Subject, Window, is_inside, same_folder};
+use crate::retarget::{Home, Landing, Subject, Window, home, is_inside, same_folder};
 use crate::retarget_glue::{DevOpen, Open};
-use crate::retarget_jobs::{self, Done, Request, Retargeted};
-use crate::shell_agents::{EVERY_S, Probe, Remembered};
-use crate::tabs::{MAIN_TITLE, Tab};
+use crate::retarget_jobs::{self, Done, LookKey, LookSpec, Request, Retargeted};
+use crate::shell_agents::{EVERY_S, FAKE_SESSION, Probe, Remembered};
+use crate::tabs::{Action, MAIN_TITLE, Tab};
 use crate::takeover::END_WAIT_S;
 use crate::welcome::shown_path;
 
@@ -94,12 +94,14 @@ impl Tidewatch {
         {
             ctx.request_repaint_after(Duration::from_secs_f64(after.max(EVERY_S / 4.0)));
         }
+        self.drive_look(ctx);
         self.retry_waiting(now, ctx);
         self.drive_dev_change_tab(now, ctx);
     }
 
     fn first_shell_tab(&self) -> Option<u64> {
-        self.tabs.items().iter().find(|tab| !tab.pinned && is_shell(&tab.pane)).map(|tab| tab.id)
+        let shells = || self.tabs.items().iter().filter(|tab| is_shell(&tab.pane));
+        shells().find(|tab| !tab.pinned).or_else(|| shells().next()).map(|tab| tab.id)
     }
 
     fn retry_waiting(&mut self, now: f64, ctx: &egui::Context) {
@@ -180,6 +182,78 @@ impl Tidewatch {
             .collect()
     }
 
+    fn shown(&self, dir: &std::path::Path) -> String {
+        shown_path(dir, self.paths.as_ref().and_then(|paths| paths.root().parent()))
+    }
+
+    fn look_key(&self, id: u64) -> Option<LookKey> {
+        let tab = self.tabs.items().iter().find(|tab| tab.id == id)?;
+        let own = self.tab_dir(tab);
+        if let Some(found) = self.retarget.agents.found(id) {
+            let cwd = Some(found.cwd.clone()).filter(|cwd| !cwd.as_os_str().is_empty());
+            let session = found.session_id.clone().map(|session| (found.cli, session));
+            return Some(LookKey { cwd: cwd.unwrap_or(own), session });
+        }
+        let launched = tab.pane.agent.as_ref().and_then(|agent| agent.launched.as_ref());
+        let session = self
+            .retarget
+            .agents
+            .remembered(id)
+            .map(|kept| (kept.cli, kept.session_id.clone()))
+            .or_else(|| {
+                let id = launched?.session_id.clone()?;
+                Some((Cli::from_id(&tab.pane.agent.as_ref()?.run.agent_id)?, id))
+            });
+        Some(LookKey { cwd: own, session })
+    }
+
+    fn goes_of(&self, id: u64, found_cwd: Option<&std::path::Path>) -> Goes {
+        let Some(tab) = self.tabs.items().iter().find(|tab| tab.id == id) else {
+            return Goes::Stays;
+        };
+        let own = self.tab_dir(tab);
+        let apart = found_cwd
+            .filter(|cwd| !cwd.as_os_str().is_empty() && !is_inside(cwd, &own))
+            .map(|cwd| Goes::Follows(self.shown(cwd)));
+        let looked = self
+            .retarget
+            .looks
+            .get(&id)
+            .filter(|looked| self.look_key(id).as_ref() == Some(&looked.key));
+        let (Some(looked), Some(subject)) = (looked, self.subject_of(id)) else {
+            return apart.unwrap_or(Goes::Stays);
+        };
+        match home(&looked.key.cwd, &subject, &looked.folder) {
+            Home::Fresh { repo, .. } => Goes::NewBranch {
+                repo: repo.file_name().map_or_else(
+                    || repo.display().to_string(),
+                    |name| name.to_string_lossy().into_owned(),
+                ),
+                branch: looked.name.clone(),
+                left: looked.dirty.as_ref().map(|(count, dir)| (*count, self.shown(dir))),
+            },
+            Home::Stay(_) => apart.unwrap_or(Goes::Stays),
+        }
+    }
+
+    fn drive_look(&mut self, ctx: &egui::Context) {
+        let Some(id) = self.retarget.open.as_ref().map(|open| open.tab) else { return };
+        let (Some(paths), Some(key), Some(subject)) =
+            (self.paths.clone(), self.look_key(id), self.subject_of(id))
+        else {
+            return;
+        };
+        let stale = self.retarget.looks.get(&id).is_none_or(|looked| looked.key != key);
+        if stale && self.retarget.looking.insert(id) {
+            let claude_dir = paths.claude_dir().to_path_buf();
+            retarget_jobs::look(
+                &self.retarget.jobs,
+                ctx,
+                LookSpec { subject, key, paths, claude_dir },
+            );
+        }
+    }
+
     pub(super) fn change_facts(&self, id: u64) -> Option<Facts> {
         let tab = self.tabs.items().iter().find(|tab| tab.id == id)?;
         let agent = tab.pane.agent.as_ref();
@@ -216,16 +290,10 @@ impl Tidewatch {
             .map(|agent| agent.run.agent_id.clone())
             .or_else(|| found.map(|found| found.cli.id().to_owned()))
             .or_else(|| stored.as_ref().map(|(cli, _)| cli.clone()));
-        let own_dir = self.tab_dir(tab);
-        let follows = found
-            .map(|found| found.cwd.as_path())
-            .filter(|cwd| !cwd.as_os_str().is_empty() && !is_inside(cwd, &own_dir))
-            .map(|cwd| {
-                shown_path(cwd, self.paths.as_ref().and_then(|paths| paths.root().parent()))
-            });
+        let goes = self.goes_of(id, found.map(|found| found.cwd.as_path()));
         Some(Facts {
             tab: id,
-            follows,
+            goes,
             busy: agent.is_none() && found.is_none() && foreground_busy(&tab.pane),
             meeseeks: agent.is_some_and(|agent| agent.meeseeks.is_some()),
             pinned: tab.pinned,
@@ -244,6 +312,7 @@ impl Tidewatch {
             self.show_toast(NOT_READY, ctx);
             return;
         }
+        self.retarget.looks.remove(&id);
         let Some(facts) = self.change_facts(id) else { return };
         let entries = self.catalog.entries();
         let builder = |cli: &str| builder_entry(cli, &entries).map(|(key, _)| key);
@@ -292,6 +361,13 @@ impl Tidewatch {
         if !self.retarget.busy.insert(change.tab) {
             return;
         }
+        let name = self
+            .retarget
+            .looks
+            .get(&change.tab)
+            .filter(|looked| self.look_key(change.tab).as_ref() == Some(&looked.key))
+            .and_then(|looked| looked.name.clone());
+        let spare_tab = subject.pinned.then(|| self.tabs.reserve_id());
         self.retarget.waiting.insert(change.tab, (change.clone(), now + EVERY_S));
         let installed = profiles.agent_table().found_on_path(Some(&self.catalog.path));
         let remembered = self
@@ -311,6 +387,9 @@ impl Tidewatch {
             listener: self.hooks.listener(),
             trust: self.trust.grant(),
             wait: Duration::from_secs(END_WAIT_S),
+            start_from: self.new_tab_prefs.start_from(),
+            name,
+            spare_tab,
         };
         retarget_jobs::retarget(&self.retarget.jobs, ctx, request);
     }
@@ -319,6 +398,10 @@ impl Tidewatch {
         match done {
             Done::Detected(found) => self.retarget.agents.finish(found),
             Done::DetectFailed => self.retarget.agents.failed(),
+            Done::Looked(looked) => {
+                self.retarget.looking.remove(&looked.tab);
+                self.retarget.looks.insert(looked.tab, *looked);
+            }
             Done::Held { tab } => {
                 self.retarget.busy.remove(&tab);
                 if let Some((_, at)) = self.retarget.waiting.get_mut(&tab) {
@@ -332,12 +415,26 @@ impl Tidewatch {
                 self.show_toast(failure.text(), ctx);
             }
             Done::Retargeted(landed) => match *landed {
-                Retargeted::Agent { opened, landing, note } => {
-                    self.retarget.busy.remove(&opened.tab);
-                    self.retarget.waiting.remove(&opened.tab);
-                    self.retarget.agents.forget(opened.tab);
-                    self.follow_to_group(opened.tab, &landing, ctx);
+                Retargeted::Agent { mut opened, landing, note, from } => {
+                    self.retarget.busy.remove(&from);
+                    self.retarget.waiting.remove(&from);
+                    self.retarget.agents.forget(from);
+                    self.retarget.looks.remove(&from);
+                    let base_note =
+                        opened.result.as_mut().ok().and_then(|made| made.base_note.take());
+                    let id = opened.tab;
+                    if id == from {
+                        self.follow_to_group(from, &landing, ctx);
+                    } else {
+                        self.open_beside(id, &landing, ctx);
+                    }
                     self.swap_to_agent(*opened, now, ctx);
+                    if let Some(note) = base_note
+                        && let Some(agent) =
+                            self.tabs.get_mut(id).and_then(|tab| tab.pane.agent.as_mut())
+                    {
+                        agent.base_note = Some(note);
+                    }
                     if let Some(note) = note {
                         self.show_toast(note, ctx);
                     }
@@ -365,6 +462,16 @@ impl Tidewatch {
             None => self.add_workspace(Workspace::open_in_main_repo(&landing.repo), ctx),
         };
         self.tabs.move_to_group(id, group);
+    }
+
+    fn open_beside(&mut self, id: u64, landing: &Landing, ctx: &egui::Context) {
+        let group = match self.group_of_dir(&landing.repo) {
+            Some(group) => group,
+            None => self.add_workspace(Workspace::open_in_main_repo(&landing.repo), ctx),
+        };
+        self.tabs.push_reserved(group, id, String::new(), Pane::creating());
+        self.dispatch(Action::ShowGroup(group), ctx);
+        self.tabs.select_id(id);
     }
 
     fn swap_to_agent(
@@ -446,6 +553,7 @@ impl Tidewatch {
                 .iter()
                 .find(|tab| !tab.pinned && is_agent_tab(&tab.pane))
                 .map(|tab| tab.id),
+            DevOpen::Home | DevOpen::HomeChange => self.first_shell_tab(),
             DevOpen::Shell => self
                 .tabs
                 .items()
@@ -463,18 +571,24 @@ impl Tidewatch {
         {
             return;
         }
-        self.retarget.dev_open = None;
-        self.tabs.select_id(id);
         let entries = self.catalog.entries();
         let builder = |cli: &str| builder_entry(cli, &entries).map(|(key, _)| key);
+        if dev == DevOpen::HomeChange {
+            let kept = Remembered { cli: Cli::Claude, session_id: FAKE_SESSION.to_owned() };
+            self.retarget.agents.remember(id, kept);
+        }
         let Some(facts) = self.change_facts(id) else { return };
         let pick = Pick::start(&facts, &builder);
-        if dev == DevOpen::ElsewhereChange {
-            if let Some(change) = change_tab::change(&facts, &pick, false) {
-                self.start_retarget(change, now, ctx);
-            }
-        } else {
-            self.retarget.open = Some(Open { tab: id, pick });
+        let wants_change = matches!(dev, DevOpen::ElsewhereChange | DevOpen::HomeChange);
+        let change = change_tab::change(&facts, &pick, false);
+        if wants_change && change.is_none() {
+            return;
+        }
+        self.retarget.dev_open = None;
+        self.tabs.select_id(id);
+        match change.filter(|_| wants_change) {
+            Some(change) => self.start_retarget(change, now, ctx),
+            None => self.retarget.open = Some(Open { tab: id, pick }),
         }
     }
 }
