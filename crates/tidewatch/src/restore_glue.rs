@@ -293,7 +293,10 @@ impl Host {
                     return push_shell(tabs, spawn, (plan, group), tab, None);
                 };
                 let title = tab.worktree.as_ref().map_or(STARTING_TITLE, |w| w.name()).to_owned();
-                let pane = Pane::creating_agent(profile.name.clone(), agent.id.clone(), now);
+                let mut pane = Pane::creating_agent(profile.name.clone(), agent.id.clone(), now);
+                if let Some(creating) = &mut pane.agent {
+                    creating.folder_pick.clone_from(&saved.folder_repo);
+                }
                 let id = tabs.push_in(group, title, pane);
                 restore_jobs::reopen(
                     &self.jobs,

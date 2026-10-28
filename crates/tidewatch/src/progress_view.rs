@@ -96,6 +96,18 @@ pub(crate) fn side_shown(chosen: Option<Side>, has_ledger: bool, first: Side) ->
     }
 }
 
+/// The switch of a folder tab with no repo: History has nothing to show there.
+pub(crate) const fn folder_sides(has_progress: bool) -> &'static [Side] {
+    if has_progress { &[Side::Progress, Side::Changes] } else { &[Side::Changes] }
+}
+
+pub(crate) fn folder_side_shown(chosen: Option<Side>, has_ledger: bool, first: Side) -> Side {
+    match side_shown(chosen, has_ledger, first) {
+        Side::History => Side::Changes,
+        side => side,
+    }
+}
+
 /// What the panel remembers of one tab while the app runs.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) struct TabState {

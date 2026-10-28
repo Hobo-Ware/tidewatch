@@ -73,6 +73,8 @@ mod fix_dialog;
 mod flow;
 mod flow_glue;
 mod flow_jobs;
+mod folder_panel;
+mod folder_view;
 mod font_view;
 mod fonts;
 mod from_stdusk;

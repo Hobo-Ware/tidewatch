@@ -12,6 +12,8 @@ use super::{Tidewatch, wall_ms};
 use crate::checkout::{self, Plan};
 use crate::diff_pane::{PaneAction, PaneOut};
 use crate::file_view::{self, TerminalChip};
+use crate::folder_panel::{self, Shown};
+use crate::folder_view;
 use crate::last_turn::LastTurn;
 use crate::outbox::Send;
 use crate::repo::Workspace;
@@ -22,9 +24,10 @@ use crate::{
 
 impl Tidewatch {
     /// Keeps one view per tab that has panes: only the visible tab's view is loaded and watched.
-    pub(super) fn drive_views(&mut self) {
+    pub(super) fn drive_views(&mut self, ctx: &egui::Context) {
         let open: HashSet<u64> = self.tabs.items().iter().map(|t| t.id).collect();
         self.views.retain(|id, _| open.contains(id));
+        self.folders.keep(&open);
         if self.focus || self.overview {
             for view in self.views.values_mut().filter(|view| view.is_active()) {
                 view.stop();
@@ -39,7 +42,14 @@ impl Tidewatch {
             }
         }
         let workspace = &self.workspaces[active.group];
-        let Some(spec) = ViewSpec::of(workspace, self.paths.as_ref(), active) else { return };
+        let spec = ViewSpec::of(workspace, self.paths.as_ref(), active)
+            .or_else(|| self.folders.spec(ctx, workspace, active));
+        let Some(spec) = spec else {
+            if folder_panel::folder_of(workspace, active).is_some() {
+                self.views.remove(&active_id);
+            }
+            return;
+        };
         let dev_scope = self.dev_panes.scope;
         let side = self.side_layout();
         let view = spec.view_in(&mut self.views, dev_scope);
@@ -84,7 +94,12 @@ impl Tidewatch {
     }
 
     pub(super) fn workspace_has_panels(&self) -> bool {
-        matches!(self.workspace(), Workspace::Repo(_))
+        matches!(self.workspace(), Workspace::Repo(_)) || self.active_is_folder_tab()
+    }
+
+    fn active_is_folder_tab(&self) -> bool {
+        let active = &self.tabs.items()[self.tabs.active()];
+        folder_panel::folder_of(&self.workspaces[active.group], active).is_some()
     }
 
     fn last_turn(&self, tab: u64) -> Option<LastTurn> {
@@ -95,6 +110,35 @@ impl Tidewatch {
             crate::progress_glue::today(),
         )
         .map(|turn| LastTurn { owner_asks: !self.is_autonomous(tab), ..turn })
+    }
+
+    fn apply_progress_action(
+        &mut self,
+        active_id: u64,
+        action: Option<progress_view::Action>,
+        ctx: &egui::Context,
+    ) {
+        use progress_view::Action;
+        match action {
+            Some(Action::Answer) => self.open_reply_box(),
+            Some(Action::CopyLink(url)) => {
+                ctx.copy_text(url);
+                self.show_toast("Link copied", ctx);
+            }
+            Some(Action::Pick(text)) => {
+                self.send_answer(active_id, text, ctx, ctx.input(|i| i.time));
+            }
+            Some(Action::DoneCheck(action)) => {
+                self.apply_done_check(active_id, action, ctx, ctx.input(|i| i.time));
+            }
+            Some(Action::TakeOver) => self.take_over_meeseeks(active_id, ctx),
+            Some(Action::GiveUp) => self.give_up_meeseeks(active_id, ctx),
+            Some(Action::Ask { message, .. }) => {
+                let send = Send::by_hand(&message, Reason::StuckJob, because::STUCK_JOB);
+                self.ask_agent(active_id, &send, ctx, ctx.input(|i| i.time));
+            }
+            None => {}
+        }
     }
 
     pub(super) fn show_panes(
@@ -108,23 +152,14 @@ impl Tidewatch {
         let stale = self.ledger_stale(active_id, ctx.input(|i| i.time));
         let last_turn = self.last_turn(active_id);
         let side = self.side_layout();
-        let Some(view) = self.views.get_mut(&active_id) else {
-            if side {
-                history_pane::paint_card(ui, areas.history);
-            } else {
-                for rect in [areas.history, areas.diff] {
-                    ui.painter().rect_filled(rect, 0.0, kelp_theme::bg());
-                }
-            }
-            return;
-        };
+        let view = self.views.get_mut(&active_id);
         let agent = self.tabs.items()[self.tabs.active()].pane.agent.as_ref();
         let status = agent.map(|agent| agent.run.status().clone());
         let chip = TerminalChip { profile: agent.map(|a| a.profile_name.clone()), status };
         let extras = chip
             .status
             .as_ref()
-            .and_then(|status| self.flow.extras(active_id, &view.notes, status));
+            .and_then(|status| self.flow.extras(active_id, &view.as_ref()?.notes, status));
         let agent_id = agent.map_or("", |agent| agent.run.agent_id.as_str());
         let now_ms = wall_ms() as i64;
         let mut cards = agent
@@ -179,36 +214,41 @@ impl Tidewatch {
         let face = agent
             .and_then(|_| self.avatar_live.get(active_id))
             .map(|avatar| history_pane::Face { tab: active_id, avatar });
+        let hand = agent.and_then(|agent| agent.folder_pick.as_deref());
+        let edits = agent.map_or(&[][..], |agent| agent.reader.edited_files());
+        let in_folder = self.folders.shown(active_id, hand, edits);
+        let folder = match &in_folder {
+            Some(Shown::Repo { root, repos }) if !repos.is_empty() => {
+                Some(folder_view::Head { repos, picked: root, open: self.folders.dev_picker_open })
+            }
+            _ => None,
+        };
         let panel = history_pane::Panel {
             agent: agent_id,
             progress,
             state: self.progress_ui.tab(active_id),
             face,
+            folder,
+        };
+        let Some(view) = view else {
+            let Some(Shown::Folder(scan)) = &in_folder else {
+                paint_empty_panes(ui, areas, side);
+                return;
+            };
+            let out = history_pane::show_folder(ui, areas.history, scan, now_ms, panel);
+            if !side {
+                ui.painter().rect_filled(areas.diff, 0.0, kelp_theme::bg());
+            }
+            self.apply_progress_action(active_id, out.progress, ctx);
+            return;
         };
         let shown = history_pane::show(ui, areas.history, view, &mut self.avatars, side, panel);
         let graph_action = shown.graph;
-        let answer = shown.progress == Some(progress_view::Action::Answer);
-        let picked = match &shown.progress {
-            Some(progress_view::Action::Pick(text)) => Some(text.clone()),
-            _ => None,
-        };
-        let done_check = match shown.progress {
-            Some(progress_view::Action::DoneCheck(action)) => Some(action),
-            _ => None,
-        };
-        let copied = match &shown.progress {
-            Some(progress_view::Action::CopyLink(url)) => Some(url.clone()),
-            _ => None,
-        };
-        let meeseeks_choice = match shown.progress {
-            Some(progress_view::Action::TakeOver) => Some(true),
-            Some(progress_view::Action::GiveUp) => Some(false),
-            _ => None,
-        };
-        let ask = match shown.progress.clone() {
-            Some(progress_view::Action::Ask { message, .. }) => Some(message),
-            _ => None,
-        };
+        if let Some(root) = shown.repo
+            && let Some(agent) = self.tabs.active_pane_mut().agent.as_mut()
+        {
+            agent.folder_pick = Some(root);
+        }
         let now_unix = flow_glue::unix_now();
         let pane = match (side, view.file_open()) {
             (false, _) => diff_pane::show(ui, areas.diff, view, extras.as_ref(), now_unix),
@@ -241,28 +281,7 @@ impl Tidewatch {
         if open_review {
             self.open_review();
         }
-        if answer {
-            self.open_reply_box();
-        }
-        if let Some(url) = copied {
-            ctx.copy_text(url);
-            self.show_toast("Link copied", ctx);
-        }
-        if let Some(text) = picked {
-            self.send_answer(active_id, text, ctx, ctx.input(|i| i.time));
-        }
-        if let Some(action) = done_check {
-            self.apply_done_check(active_id, action, ctx, ctx.input(|i| i.time));
-        }
-        match meeseeks_choice {
-            Some(true) => self.take_over_meeseeks(active_id, ctx),
-            Some(false) => self.give_up_meeseeks(active_id, ctx),
-            None => {}
-        }
-        if let Some(message) = ask {
-            let send = Send::by_hand(&message, Reason::StuckJob, because::STUCK_JOB);
-            self.ask_agent(active_id, &send, ctx, ctx.input(|i| i.time));
-        }
+        self.apply_progress_action(active_id, shown.progress, ctx);
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map_or(0, |d| d.as_secs() as i64);
@@ -275,6 +294,16 @@ impl Tidewatch {
         }
         if let Some(label) = clicked_ref {
             self.double_clicked_ref(&label, ctx);
+        }
+    }
+}
+
+fn paint_empty_panes(ui: &egui::Ui, areas: &layout::Layout, side: bool) {
+    if side {
+        history_pane::paint_card(ui, areas.history);
+    } else {
+        for rect in [areas.history, areas.diff] {
+            ui.painter().rect_filled(rect, 0.0, kelp_theme::bg());
         }
     }
 }

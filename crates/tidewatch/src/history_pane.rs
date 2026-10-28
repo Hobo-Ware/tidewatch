@@ -3,6 +3,7 @@
 //! commit search over Kelp's commit graph. Side by side it is a raised card.
 
 use std::collections::HashMap;
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use std::f32::consts::FRAC_PI_2;
@@ -19,11 +20,13 @@ use kelp_ui::graph::{
 };
 use stdusk_egui::widgets::{menu_item, style_menu};
 use tidewatch_core::avatar::Avatar;
+use tidewatch_core::folder_repos::Scan;
 use tidewatch_core::history::BaseCompare;
 
 use crate::agent_avatar;
 use crate::brand;
 use crate::commit_files::{self, Spot};
+use crate::folder_view;
 use crate::last_turn::LastTurn;
 use crate::progress_view::{self, Side, TabState};
 use crate::screen_kit::TEXT_SECONDARY;
@@ -58,12 +61,14 @@ pub(crate) struct Panel<'a> {
     pub(crate) progress: Option<progress_view::Input<'a>>,
     pub(crate) state: &'a mut TabState,
     pub(crate) face: Option<Face<'a>>,
+    pub(crate) folder: Option<folder_view::Head<'a>>,
 }
 
 #[derive(Default)]
 pub(crate) struct Out {
     pub(crate) graph: Option<GraphAction>,
     pub(crate) progress: Option<progress_view::Action>,
+    pub(crate) repo: Option<PathBuf>,
 }
 
 /// The pane is a card in both layouts. `side` is the layout where a click on a commit opens its
@@ -78,7 +83,7 @@ pub(crate) fn show(
     side: bool,
     panel: Panel<'_>,
 ) -> Out {
-    let Panel { agent, progress, state, face } = panel;
+    let Panel { agent, progress, state, face, folder } = panel;
     paint_card(ui, rect);
     let header = Rect::from_min_max(rect.min, pos2(rect.right(), rect.top() + layout::CHROME_H));
     let first = progress.as_ref().map_or(Side::Progress, |input| input.first);
@@ -87,21 +92,29 @@ pub(crate) fn show(
     let attention =
         progress.as_ref().and_then(|input| input.last_turn.as_ref()).and_then(LastTurn::attention);
     let dot = shown != Side::Progress && state.unseen(attention);
-    if let Some(chose) =
-        show_card_header(ui, header, view, (shown, progress.is_some(), dot), face.as_ref())
-    {
+    let loaded = view.loaded.as_ref();
+    let info = Header {
+        title: branch_title(loaded.and_then(|l| l.branch.as_deref())),
+        badge: view.changes().len(),
+        base: loaded.and_then(|l| l.base.as_ref()),
+        picker: folder.as_ref(),
+        sides: progress_view::sides(progress.is_some()),
+    };
+    let chosen = show_card_header(ui, header, &info, (shown, dot), face.as_ref());
+    if let Some(chose) = chosen.side {
         state.chosen = Some(chose);
     }
+    let repo = chosen.repo;
     let below = Rect::from_min_max(pos2(rect.left(), header.bottom()), rect.max);
     match (shown, progress.as_ref()) {
         (Side::Progress, Some(input)) => {
             let panel = Rect::from_min_max(pos2(rect.left(), header.bottom() + 1.0), rect.max);
             let progress = progress_view::show(ui, panel, input, state);
-            return Out { graph: None, progress };
+            return Out { graph: None, progress, repo };
         }
         (Side::Changes, _) => {
             changes_view::show(ui, below, view, side);
-            return Out::default();
+            return Out { repo, ..Out::default() };
         }
         _ => {}
     }
@@ -118,7 +131,46 @@ pub(crate) fn show(
             commit_files::show(ui, view, spot, &waiting);
         }
     });
-    Out { graph: action, progress: None }
+    Out { graph: action, progress: None, repo }
+}
+
+/// The panel of a folder tab that holds no git repo: the same card and header, with the folder's
+/// name for a title and the folder view for Changes.
+pub(crate) fn show_folder(
+    ui: &mut Ui,
+    rect: Rect,
+    scan: &Scan,
+    now_ms: i64,
+    panel: Panel<'_>,
+) -> Out {
+    let Panel { progress, state, face, .. } = panel;
+    paint_card(ui, rect);
+    let header = Rect::from_min_max(rect.min, pos2(rect.right(), rect.top() + layout::CHROME_H));
+    let first = progress.as_ref().map_or(Side::Progress, |input| input.first);
+    let shown = progress_view::folder_side_shown(state.chosen, progress.is_some(), first);
+    state.shown = Some(shown);
+    let attention =
+        progress.as_ref().and_then(|input| input.last_turn.as_ref()).and_then(LastTurn::attention);
+    let dot = shown != Side::Progress && state.unseen(attention);
+    let title = folder_view::folder_name(&scan.folder);
+    let info = Header {
+        title: &title,
+        badge: scan.recent.len(),
+        base: None,
+        picker: None,
+        sides: progress_view::folder_sides(progress.is_some()),
+    };
+    if let Some(chose) = show_card_header(ui, header, &info, (shown, dot), face.as_ref()).side {
+        state.chosen = Some(chose);
+    }
+    if let (Side::Progress, Some(input)) = (shown, progress.as_ref()) {
+        let panel = Rect::from_min_max(pos2(rect.left(), header.bottom() + 1.0), rect.max);
+        let progress = progress_view::show(ui, panel, input, state);
+        return Out { progress, ..Out::default() };
+    }
+    let below = Rect::from_min_max(pos2(rect.left(), header.bottom()), rect.max);
+    folder_view::show(ui, below, scan, now_ms);
+    Out::default()
 }
 
 /// The raised surface of the side layout.
@@ -195,25 +247,38 @@ fn branch_title(branch: Option<&str>) -> &str {
     branch.unwrap_or("detached HEAD")
 }
 
+struct Header<'a> {
+    title: &'a str,
+    badge: usize,
+    base: Option<&'a BaseCompare>,
+    picker: Option<&'a folder_view::Head<'a>>,
+    sides: &'static [Side],
+}
+
+struct Chosen {
+    side: Option<Side>,
+    repo: Option<PathBuf>,
+}
+
 fn show_card_header(
     ui: &mut Ui,
     rect: Rect,
-    view: &TabView,
-    (shown, has_progress, dot): (Side, bool, bool),
+    info: &Header<'_>,
+    (shown, dot): (Side, bool),
     face: Option<&Face<'_>>,
-) -> Option<Side> {
+) -> Chosen {
     let painter = ui.painter().clone();
     painter.hline(rect.x_range(), rect.bottom(), Stroke::new(1.0, brand::CARD_LINE));
     let center_y = rect.center().y;
-    let sides = progress_view::sides(has_progress);
+    let sides = info.sides;
     let labels: Vec<&str> = sides.iter().map(|side| side.label()).collect();
     let badges: Vec<Option<usize>> =
-        sides.iter().map(|side| (*side == Side::Changes).then(|| view.changes().len())).collect();
+        sides.iter().map(|side| (*side == Side::Changes).then_some(info.badge)).collect();
     let id = ui.id().with("history-side");
     let active = sides.iter().position(|side| *side == shown).unwrap_or_default();
     let control =
         segmented::show_badged(ui, id, rect.right() - 10.0, center_y, (&labels, &badges), active);
-    let chose = control.clicked.and_then(|index| sides.get(index).copied());
+    let side = control.clicked.and_then(|index| sides.get(index).copied());
     if dot && let Some(segment) = sides.iter().position(|side| *side == Side::Progress) {
         let at = control.segments[segment].right_top() + vec2(-6.0, 6.0);
         painter.circle_filled(at, DOT_R, brand::NEEDS);
@@ -229,9 +294,13 @@ fn show_card_header(
         let click = ui.interact(place, ui.id().with(("history-face", face.tab)), Sense::click());
         agent_avatar::menu(&click, face.tab);
     }
-    let loaded = view.loaded.as_ref();
-    let title = branch_title(loaded.and_then(|l| l.branch.as_deref()));
-    let mut job = LayoutJob::simple_singleline(title.to_owned(), mono(14.0), brand::TEXT);
+    let mut repo = None;
+    if let Some(head) = info.picker {
+        let (next, chosen) = folder_view::picker(ui, (x, right), center_y, head);
+        x = next;
+        repo = chosen;
+    }
+    let mut job = LayoutJob::simple_singleline(info.title.to_owned(), mono(14.0), brand::TEXT);
     job.wrap.max_width = (right - x).max(0.0);
     job.wrap.max_rows = 1;
     job.wrap.break_anywhere = true;
@@ -239,10 +308,10 @@ fn show_card_header(
     let width = galley.size().x;
     selectable::galley(ui, pos2(x, center_y - galley.size().y / 2.0), galley, brand::TEXT);
     if shown == Side::Progress {
-        return chose;
+        return Chosen { side, repo };
     }
     x += width + PILL_GAP;
-    for pill in pills(loaded.and_then(|l| l.base.as_ref())) {
+    for pill in pills(info.base) {
         let (ink, fill) = match pill.kind {
             PillKind::Ahead => (brand::GREEN, brand::GREEN.gamma_multiply(0.12)),
             PillKind::Behind => (brand::ORANGE, brand::ORANGE.gamma_multiply(0.12)),
@@ -253,7 +322,7 @@ fn show_card_header(
         let pill_rect = paint_tag(&painter, (x, center_y), &pill.text, ink, TagFill::Tint(fill));
         x = pill_rect.right() + 8.0;
     }
-    chose
+    Chosen { side, repo }
 }
 
 fn side_style() -> GraphStyle {
@@ -483,7 +552,7 @@ mod tests {
                 });
                 let rect = Rect::from_min_size(pos2(0.0, 0.0), vec2(420.0, 600.0));
                 let face = face.as_ref().map(|avatar| Face { tab: 1, avatar });
-                let panel = Panel { agent: "", progress, state: &mut *state, face };
+                let panel = Panel { agent: "", progress, state: &mut *state, face, folder: None };
                 out = show(ui, rect, view, avatars, true, panel);
             });
             self.out = out;

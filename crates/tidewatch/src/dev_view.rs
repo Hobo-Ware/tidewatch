@@ -12,6 +12,7 @@
 //!   look at a view in a shorter or wider window.
 //! - `TIDEWATCH_DEV_REMOTE_POPOVER=1`: the Remote pill's popover is open on an agent tab that has one.
 //! - `TIDEWATCH_DEV_PARKED_POPOVER=1`: the Parked pill's list is open (with `TIDEWATCH_FAKE_PARKED=1`).
+//! - `TIDEWATCH_DEV_FOLDER_PICKER=1`: the repo list of a folder tab's panel is open (`folder_view`).
 //! - `TIDEWATCH_DEV_HOVER=<x>,<y>`: move the pointer to that point (in points) on the first frame and
 //!   leave it there, to open a tooltip in a capture (use `TIDEWATCH_SCREENSHOT_WAIT=4`).
 //! - `TIDEWATCH_DEV_HOVER_FILES=1`: report a file dragged over the window on every frame, to see the

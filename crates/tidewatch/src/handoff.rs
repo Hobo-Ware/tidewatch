@@ -159,6 +159,8 @@ pub(crate) struct AgentEntry {
     /// its next turn.
     #[serde(default)]
     pub(crate) at_prompt: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) folder_pick: Option<PathBuf>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
@@ -199,6 +201,7 @@ fn agent_entry(tab: &AgentTab, credential: Option<Credential>) -> AgentEntry {
             tab.run.status(),
             AgentStatus::Done | AgentStatus::NeedsYou(Reason::Input | Reason::Attention)
         ),
+        folder_pick: tab.folder_pick.clone(),
     }
 }
 
@@ -433,6 +436,7 @@ fn agent_tab(entry: &AgentEntry, dir: &Path, now: f64, notes: &mut Vec<String>) 
         base_note: None,
         remote: entry.remote.clone().map(RemoteSession::new),
         meeseeks: entry.meeseeks.clone(),
+        folder_pick: entry.folder_pick.clone(),
     }
 }
 

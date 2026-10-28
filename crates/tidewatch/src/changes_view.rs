@@ -284,7 +284,13 @@ fn folder_count(files: usize) -> String {
     }
 }
 
-fn paint_name(ui: &Ui, painter: &egui::Painter, path: &str, (left, right): (f32, f32), y: f32) {
+pub(crate) fn paint_name(
+    ui: &Ui,
+    painter: &egui::Painter,
+    path: &str,
+    (left, right): (f32, f32),
+    y: f32,
+) {
     let (dir, name) = split_dir(path.trim_end_matches('/'));
     let name = if is_folder(path) { Cow::Owned(format!("{name}/")) } else { Cow::Borrowed(name) };
     let font: FontId = body(13.0);

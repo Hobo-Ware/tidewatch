@@ -651,6 +651,7 @@ pub(crate) fn window_plan(
         crashed: false,
         remote: false,
         meeseeks: None,
+        folder_repo: None,
     });
     let action = TabAction::ResumeAgent {
         agent: agent.id.clone(),

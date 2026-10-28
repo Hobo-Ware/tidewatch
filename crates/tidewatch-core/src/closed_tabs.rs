@@ -102,6 +102,7 @@ impl Closed {
             crashed: false,
             remote: false,
             meeseeks: None,
+            folder_repo: None,
         });
         SavedWindow {
             dir: self.repo.clone(),
