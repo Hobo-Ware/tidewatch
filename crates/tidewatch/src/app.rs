@@ -8,6 +8,7 @@ mod amphetamine;
 mod autofetch;
 mod bar;
 mod central;
+mod closed;
 mod comments;
 mod dev;
 mod done_check;
@@ -132,6 +133,7 @@ use crate::updates::{Updates, fake_state};
 use crate::welcome::{Recent, recent_repos};
 use crate::window_chrome;
 use crate::worktree_jobs::Done;
+use crate::{closed_jobs, closed_state};
 
 const FONT_SIZE: f32 = 13.0;
 const ANIMATION_FRAME_MS: u64 = 40;
@@ -169,6 +171,8 @@ pub(crate) struct Tidewatch {
     stdusk_jobs: Jobs<stdusk::Done>,
     takeover: Takeover,
     takeover_jobs: Jobs<takeover_jobs::Done>,
+    closed: closed_state::State,
+    closed_jobs: Jobs<closed_jobs::Done>,
     dev_takeover: Option<DevTakeover>,
     picker: Picker,
     open_link: Option<OpenLink>,
@@ -403,6 +407,8 @@ impl Tidewatch {
             takeover: Takeover::with_recent_open(DevTakeover::recent_open_from_env())
                 .with_line_open(DevTakeover::line_open_from_env()),
             takeover_jobs: Jobs::new(),
+            closed: closed_state::State::new(closed_state::fake_requested()),
+            closed_jobs: Jobs::new(),
             dev_takeover: DevTakeover::from_env(),
             picker: Picker::new(),
             open_link: None,

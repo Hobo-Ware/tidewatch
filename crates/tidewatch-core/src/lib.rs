@@ -17,6 +17,7 @@ pub mod changes;
 pub mod checklist;
 pub mod civil_date;
 pub mod claude_memory;
+pub mod closed_tabs;
 pub mod comment_flags;
 pub mod comment_sweep;
 pub mod comments;

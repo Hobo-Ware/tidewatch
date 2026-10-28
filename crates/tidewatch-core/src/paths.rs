@@ -194,6 +194,12 @@ impl TidewatchPaths {
         self.state_dir().join("removals.log")
     }
 
+    /// The agent tabs Tidewatch closed, one JSON line each, the newest 100 kept.
+    #[must_use]
+    pub fn closed_tabs_log(&self) -> PathBuf {
+        self.state_dir().join("closed-tabs.jsonl")
+    }
+
     /// Whose Amphetamine session may have left lid-closed sleep off: written before the admin prompt.
     #[must_use]
     pub fn amphetamine_marker_file(&self) -> PathBuf {

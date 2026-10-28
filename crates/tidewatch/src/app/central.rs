@@ -22,7 +22,7 @@ use crate::repo::Workspace;
 use crate::tab_view::TabView;
 use crate::tabs::Action;
 use crate::{
-    agenda, agent_status_line, brand, delivery_view, layout, overview, overview_fake,
+    agenda, agent_status_line, brand, closed_view, delivery_view, layout, overview, overview_fake,
     overview_view, reader_glue, takeover_view, welcome_view,
 };
 
@@ -45,7 +45,7 @@ impl Tidewatch {
         overview
     }
 
-    fn place_label(&self, repo: &std::path::Path) -> String {
+    pub(super) fn place_label(&self, repo: &std::path::Path) -> String {
         self.workspaces.iter().find(|workspace| workspace.dir() == repo).map_or_else(
             || repo.file_name().map_or_else(String::new, |n| n.to_string_lossy().into_owned()),
             Workspace::chip_label,
@@ -182,9 +182,11 @@ impl Tidewatch {
             Some(fake) => Some(fake.takeover.clone()),
             None => self.takeover_card(),
         };
+        let closed = self.closed_card();
         let reveal = card.is_some() && self.takeover.take_reveal();
         let line_open = self.takeover.line_open();
         let mut clicked = None;
+        let mut closed_clicked = None;
         let days = match &fake {
             Some(fake) => fake.agenda.clone(),
             None => agenda::days(&rows, today(), |repo| self.place_label(repo)),
@@ -199,6 +201,12 @@ impl Tidewatch {
         let out = overview_view::show(ui, area, &data, &mut state, &sections, |ui| {
             if let Some(card) = &card {
                 clicked = takeover_view::line(ui, card, line_open, reveal);
+            }
+            if let Some(closed) = &closed {
+                if card.is_some() {
+                    ui.add_space(8.0);
+                }
+                closed_clicked = closed_view::section(ui, closed);
             }
         });
         self.overview_state = state;
@@ -224,6 +232,9 @@ impl Tidewatch {
         }
         if let Some(action) = clicked {
             self.takeover_click(action, ctx);
+        }
+        if let Some(action) = closed_clicked {
+            self.closed_click(action, ctx);
         }
         if let Some(tab) = jump
             && let Some(index) = self.tabs.index_of(tab)

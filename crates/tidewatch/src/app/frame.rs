@@ -107,6 +107,7 @@ impl Tidewatch {
         self.drive_dev_form_start(ctx);
         self.drive_restore(ctx, now, None);
         self.drive_takeover(ctx, now);
+        self.drive_closed(ctx);
         self.drive_repo_close(ctx);
         self.drive_dev_leftovers(ctx);
         self.drive_dev_link(ctx);

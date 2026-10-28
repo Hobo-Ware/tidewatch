@@ -12,6 +12,7 @@ use std::process::Command;
 
 use serde::{Deserialize, Serialize};
 
+use crate::closed_tabs::{self, Closed};
 use crate::names;
 use crate::paths::TidewatchPaths;
 use crate::registry;
@@ -112,12 +113,19 @@ pub struct Terms {
     /// A commit, such as a merged pull request's head, that holds what the branch had: commits it
     /// reaches are delivered even when no branch or remote has them.
     pub delivered: Option<String>,
+    /// The agent tab being closed: once the removal succeeds it is noted in `closed-tabs.jsonl`.
+    pub closed: Option<closed_tabs::Tab>,
 }
 
 impl Terms {
     #[must_use]
     pub fn new(branch: BranchChoice, mode: RemoveMode) -> Self {
-        Self { branch, mode, why: Why::Other, owner: Owner::Nobody, delivered: None }
+        Self { branch, mode, why: Why::Other, owner: Owner::Nobody, delivered: None, closed: None }
+    }
+
+    #[must_use]
+    pub fn closed(self, closed: Option<closed_tabs::Tab>) -> Self {
+        Self { closed, ..self }
     }
 
     #[must_use]
@@ -515,12 +523,28 @@ pub fn remove_watched(
     if let Err(e) = registry::forget(paths, &worktree.path) {
         eprintln!("tidewatch: cannot update the worktree registry: {e}");
     }
+    if let Some(tab) = &terms.closed
+        && let Err(e) = closed_tabs::append(paths, &Closed::removed(tab, &entry))
+    {
+        eprintln!("tidewatch: cannot note the closed tab: {e}");
+    }
     if let Some(parent) = worktree.path.parent()
         && parent != paths.root()
     {
         let _ = std::fs::remove_dir(parent);
     }
     Ok(outcome)
+}
+
+/// Notes a tab closed while its worktree and branch stay, for the Recently closed list.
+pub fn note_kept(
+    paths: &TidewatchPaths,
+    worktree: &Worktree,
+    tab: &closed_tabs::Tab,
+) -> std::io::Result<()> {
+    let sha = rev_of(&worktree.repo, &format!("refs/heads/{}", worktree.branch));
+    let head = worktree.path.exists().then(|| rev_of(&worktree.path, "HEAD")).flatten();
+    closed_tabs::append(paths, &Closed::kept(tab, worktree, sha, head))
 }
 
 fn removal_entry(worktree: &Worktree, terms: &Terms, safety: &Safety) -> removal_log::Entry {
@@ -726,6 +750,9 @@ fn subdirs(dir: &Path) -> impl Iterator<Item = PathBuf> {
 fn is_hidden(path: &Path) -> bool {
     path.file_name().is_some_and(|n| n.to_string_lossy().starts_with('.'))
 }
+
+mod revive;
+pub use revive::{ReviveError, Revived, revive};
 
 #[cfg(test)]
 mod tests {
