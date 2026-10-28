@@ -4,8 +4,8 @@
 use crate::progress::{Ledger, Mark, State, real};
 use crate::progress_mcp::UPDATE_TOOL;
 
-/// Asks the agent to refresh its ledger after the owner replied to a question or a wait.
-pub const LEDGER_CONTEXT: &str = "The user answered; call update_progress so your report shows the new state before you continue.";
+/// Asks the agent to refresh its ledger before its final reply once the owner has answered a question or a wait.
+pub const LEDGER_CONTEXT: &str = "The user answered; call update_progress so your report shows the new state before your final reply.";
 
 /// Asks a tab that never saved a ledger to write one, which also reaches a tab whose settings file
 /// predates the Stop guard.
@@ -107,6 +107,12 @@ mod tests {
     #[test]
     fn the_ledger_line_names_the_tool() {
         assert!(LEDGER_CONTEXT.contains(crate::progress_mcp::UPDATE_TOOL));
+    }
+
+    #[test]
+    fn the_ledger_line_asks_for_the_report_before_the_final_reply_not_before_continuing() {
+        assert!(LEDGER_CONTEXT.contains("before your final reply"));
+        assert!(!LEDGER_CONTEXT.contains("before you continue"));
     }
 
     fn ledger(status: &str, checklist: &str, not_verified: &str) -> Ledger {

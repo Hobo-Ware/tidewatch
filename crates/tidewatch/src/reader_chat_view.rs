@@ -64,6 +64,7 @@ const USER_CODE_FILL: Color32 = Color32::from_black_alpha(90);
 const LIST_SLACK: f32 = 32.0;
 const TEXT_SLACK: f32 = 8.0;
 const NOTE_GAP: f32 = 6.0;
+const JOIN_GAP: f32 = 10.0;
 const ANSWER_QUESTION_PX: f32 = 14.0;
 const ANSWER_HEAD_PX: f32 = 12.0;
 const ANSWER_PX: f32 = crate::screen_kit::TEXT_TITLE;
@@ -611,7 +612,9 @@ fn face(ui: &mut Ui, scene: &Scene<'_>) {
 }
 
 fn bubble(ui: &mut Ui, list: &[&Row], group: &Group, column: f32, fresh: bool) {
-    let Some(index) = group.answer() else { return };
+    if group.answers().is_empty() {
+        return;
+    }
     Frame::new()
         .fill(brand::CARD)
         .stroke(Stroke::new(1.0, brand::CARD_LINE))
@@ -620,11 +623,16 @@ fn bubble(ui: &mut Ui, list: &[&Row], group: &Group, column: f32, fresh: bool) {
         .show(ui, |ui| {
             ui.set_width(column - f32::from(BUBBLE_PAD.left + BUBBLE_PAD.right) - 2.0);
             chat_text(ui, |ui| {
-                let row = list[index];
-                ui.push_id(row.seq, |ui| {
-                    let ctx = ui.ctx().clone();
-                    emoji_motion::fresh_scope(&ctx, fresh, || agent_markdown(ui, &row.text));
-                });
+                for (n, index) in group.answers().iter().enumerate() {
+                    if n > 0 {
+                        ui.add_space(JOIN_GAP);
+                    }
+                    let row = list[*index];
+                    ui.push_id(row.seq, |ui| {
+                        let ctx = ui.ctx().clone();
+                        emoji_motion::fresh_scope(&ctx, fresh, || agent_markdown(ui, &row.text));
+                    });
+                }
             });
         });
 }

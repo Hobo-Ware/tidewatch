@@ -12,6 +12,7 @@ Tidewatch shows the user a live view of your task and maps what you report onto 
 
 - This report is required. A notes file of your own, a plan in the chat or a memory entry never replaces it: only `update_progress` shows it to the user and lists your later work in Coming up. {turn_end}
 - Report first, before any other work: the goal, your stages and the state you start in. Report again at every milestone: a decision, a finished step, a check, a blocker, a question, a wait, a change of stage. Each call replaces the last, so always send all of it.
+- Update the report before your final reply, then write the reply as one message after your last tool call. Never put the answer before tool calls.
 - After a context reset, or when you resume a session, call `get_progress` first and carry on from what it returns. Never start the report over.
 - If a rule below is broken, nothing is saved and the tool lists each fix. Fix them all and call again.
 
@@ -249,6 +250,16 @@ mod tests {
         assert!(text.contains("This report is required."));
         assert!(text.contains("A notes file of your own"));
         assert!(text.contains("call `get_progress` first"));
+    }
+
+    #[test]
+    fn the_reply_comes_after_the_last_report_and_the_last_tool_call() {
+        for end in [TurnEnd::SentBack, TurnEnd::Reminded] {
+            let text = section(None, end);
+            assert!(text.contains("Update the report before your final reply"));
+            assert!(text.contains("one message after your last tool call"));
+            assert!(text.contains("Never put the answer before tool calls."));
+        }
     }
 
     #[test]

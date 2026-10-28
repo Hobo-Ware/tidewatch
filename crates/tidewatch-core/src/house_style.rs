@@ -64,6 +64,8 @@ const RECOVERY_LINE: &str = "- If `update_progress` is not available, look for `
 
 const AVATAR_LINE: &str = "- Once you understand the task, call `set_avatar` once with a 64x64 flat round icon about the task (2-3 bright colors, simple shapes, nothing near the edge, and no ring, frame or background because Tidewatch draws the dark plate) and a one-line reason.\n";
 
+const REPLY_LINE: &str = "- Write your reply to the user as one message at the end of the turn, after your last tool call. Never put the answer before tool calls: text before a tool call shows as a folded update.\n";
+
 const PUSH_LINE: &str = "- You may push any branch except the repo's default branch, force included; after folding fixups use `git push --force-with-lease`. The default branch and tags are refused. When Tidewatch asks you to open a pull request, push the branch and run `gh pr create --draft` yourself, writing the title (Conventional Commits style, what changed for the user) and the body (what changed and why, how you verified it, what you did not verify; short) in the house style.\n";
 
 /// Tool guidance Tidewatch always puts after the house style, so an older or edited `house-style.md`
@@ -72,9 +74,9 @@ const PUSH_LINE: &str = "- You may push any branch except the repo's default bra
 #[must_use]
 pub fn tool_guidance(role: Role) -> String {
     let lines: &[&str] = match role {
-        Role::Meeseeks => &[JOBS_LINE, CHOICES_LINE, RECOVERY_LINE],
+        Role::Meeseeks => &[JOBS_LINE, CHOICES_LINE, RECOVERY_LINE, REPLY_LINE],
         Role::Agent | Role::Autonomous => {
-            &[JOBS_LINE, CHOICES_LINE, RECOVERY_LINE, AVATAR_LINE, PUSH_LINE]
+            &[JOBS_LINE, CHOICES_LINE, RECOVERY_LINE, REPLY_LINE, AVATAR_LINE, PUSH_LINE]
         }
     };
     format!("{TOOL_GUIDANCE_HEADING}{}", lines.concat())
@@ -301,6 +303,16 @@ mod tests {
             assert!(text.starts_with(mine.trim_end()));
             assert!(guidance >= mine.trim_end().len());
             assert!(guidance < text.find("## Progress report").unwrap());
+        }
+    }
+
+    #[test]
+    fn every_role_is_told_to_write_its_reply_once_after_the_last_tool_call() {
+        for role in [Role::Agent, Role::Autonomous, Role::Meeseeks] {
+            let text = tool_guidance(role);
+            assert_eq!(text.matches("one message at the end of the turn").count(), 1, "{role:?}");
+            assert!(text.contains("after your last tool call"), "{role:?}");
+            assert!(text.contains("Never put the answer before tool calls"), "{role:?}");
         }
     }
 
