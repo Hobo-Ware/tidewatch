@@ -3,8 +3,8 @@
 //!
 //! Formats (versions checked 2026-10-13, real samples under `tests/fixtures/`):
 //! - Claude Code 2.1.296: `~/.claude/projects/<cwd>/<session>.jsonl`. One content block per line;
-//!   `user`, `assistant` lines make entries, everything else (attachments, queue operations, hook
-//!   summaries, sidechains, meta messages) is skipped.
+//!   `user`, `assistant` lines make entries, everything else (attachments, queue operations, request
+//!   blobs, hook summaries, sidechains, meta messages) is skipped.
 //! - Gemini CLI 0.46.0: `~/.gemini/tmp/<slug>/chats/session-*-<id8>.jsonl`. A message id can repeat
 //!   with more fields (tool calls attached later); text and each tool call are emitted once.
 //! - Copilot CLI 1.0.91: `~/.copilot/session-state/<id>/events.jsonl`, one event per line.
@@ -1524,5 +1524,100 @@ mod tests {
         assert_eq!(entries[0].images.len(), 1);
         assert_eq!(entries[0].images[0].number, Some(3));
         assert_eq!(entries[0].images[0].media_type, "image/jpeg");
+    }
+
+    fn blob_line(bytes: usize) -> String {
+        format!(
+            r#"{{"type":"api-request-blob","sessionId":"s","hash":"h","message":{{"role":"user","content":[{{"type":"tool_result","tool_use_id":"t1","content":"ok"}},{{"type":"text","text":"sent with the request"}},{{"type":"image","source":{{"type":"base64","media_type":"image/jpeg","data":"{}"}}}}]}}}}"#,
+            "A".repeat(bytes)
+        )
+    }
+
+    fn queued_with_pictures(bytes: usize) -> String {
+        let image = format!(
+            r#"{{"type":"image","source":{{"type":"base64","media_type":"image/jpeg","data":"{}"}}}}"#,
+            "A".repeat(bytes)
+        );
+        format!(
+            r#"{{"type":"attachment","timestamp":"2026-10-28T10:00:00Z","attachment":{{"type":"queued_command","commandMode":"prompt","origin":{{"kind":"human"}},"prompt":[{{"type":"text","text":"[Image #3] [Image #4] [Image #5]Why these picks?"}},{image},{image},{image}]}}}}"#
+        )
+    }
+
+    fn assistant_line(text: &str) -> String {
+        format!(
+            "{{\"type\":\"assistant\",\"message\":{{\"content\":[{{\"type\":\"text\",\"text\":\"{text}\"}}]}}}}\n"
+        )
+    }
+
+    #[test]
+    fn a_queued_prompt_with_pictures_is_one_user_entry_that_keeps_them() {
+        let entries = parse_all(Source::Claude, &queued_with_pictures(8));
+        assert_eq!(texts(&entries), ["[Image #3] [Image #4] [Image #5]Why these picks?"]);
+        assert_eq!(entries[0].role, Role::User);
+        let numbers: Vec<Option<u32>> = entries[0].images.iter().map(|p| p.number).collect();
+        assert_eq!(numbers, [Some(3), Some(4), Some(5)]);
+    }
+
+    #[test]
+    fn records_that_are_not_messages_add_nothing() {
+        let blob = blob_line(64);
+        let cases = [
+            blob.as_str(),
+            r#"{"type":"api-request","sessionId":"s","id":"r1","params":{"model":"m"}}"#,
+            r#"{"type":"some-record-from-the-future","message":{"role":"user","content":"hi"}}"#,
+            r#"{"message":{"role":"user","content":"no type at all"}}"#,
+            r#"{"type":"user"}"#,
+            r#"{"type":"attachment"}"#,
+        ];
+        for line in cases {
+            assert_eq!(Parser::new(Source::Claude).feed_line(line), [], "line {line}");
+        }
+    }
+
+    #[test]
+    fn a_request_blob_between_a_queued_prompt_and_the_reply_does_not_hide_the_reply() {
+        let text = [
+            user_line("start"),
+            format!("{}\n", blob_line(32)),
+            format!("{}\n", queued_with_pictures(32)),
+            format!("{}\n", blob_line(32)),
+            assistant_line("here is the answer"),
+        ]
+        .concat();
+        let entries = parse_all(Source::Claude, &text);
+        let roles: Vec<(Role, &str)> = entries.iter().map(|e| (e.role, e.text.as_str())).collect();
+        assert_eq!(
+            roles,
+            [
+                (Role::User, "start"),
+                (Role::User, "[Image #3] [Image #4] [Image #5]Why these picks?"),
+                (Role::Assistant, "here is the answer"),
+            ]
+        );
+    }
+
+    #[test]
+    fn ten_megabyte_lines_are_read_whole_and_skipped_or_kept_and_the_tail_goes_on() {
+        let big = 10 << 20;
+        let lines = [
+            user_line("start"),
+            format!("{}\n", blob_line(big)),
+            format!("{}\n", queued_with_pictures(big / 3)),
+            assistant_line("after the big lines"),
+        ]
+        .concat();
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("s.jsonl");
+        let want =
+            ["start", "[Image #3] [Image #4] [Image #5]Why these picks?", "after the big lines"];
+        write_file(&file, &lines);
+        assert_eq!(texts(&Tail::new(Source::Claude, &file).poll()), want);
+        let cut = lines.find("sent with the request").unwrap() + big / 2;
+        write_file(&file, &lines[..cut]);
+        let mut tail = Tail::new(Source::Claude, &file);
+        assert_eq!(texts(&tail.poll()), ["start"]);
+        append(&file, &lines.as_bytes()[cut..]);
+        assert_eq!(texts(&tail.poll()), want[1..]);
+        assert_eq!(tail.poll(), []);
     }
 }
