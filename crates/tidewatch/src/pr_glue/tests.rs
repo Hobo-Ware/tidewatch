@@ -71,6 +71,8 @@ impl Merged {
             dir: &self.worktree.path,
             repo: &self.worktree.repo,
             name: "brave-otter",
+            branch: &self.worktree.branch,
+            live: false,
             pr: None,
             autonomous: false,
             busy: self.busy,

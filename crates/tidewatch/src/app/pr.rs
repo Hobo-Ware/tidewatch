@@ -31,6 +31,7 @@ fn now_ms() -> i64 {
 impl Tidewatch {
     pub(super) fn drive_pr(&mut self, ctx: &egui::Context, now: f64) {
         let Some(paths) = &self.paths else { return };
+        let live = self.github_events.live_repos();
         let facts: Vec<Facts<'_>> = self
             .tabs
             .items()
@@ -53,6 +54,8 @@ impl Tidewatch {
                     dir: &worktree.path,
                     repo: &worktree.repo,
                     name: worktree.name(),
+                    branch: &worktree.branch,
+                    live: live.contains(&worktree.repo),
                     pr,
                     autonomous: agent.autonomous(),
                     busy: Busy::of(
@@ -251,6 +254,7 @@ impl Tidewatch {
             summary,
             policy: self.pr.policy(active_id),
             dev_open_popover: self.pr.open_popover(),
+            updates: self.updates_line_for(active_id),
         };
         let band = layout::band_above(terminal, pr_strip::HEIGHT);
         let now = ctx.input(|i| i.time);
@@ -259,6 +263,12 @@ impl Tidewatch {
             Some(pr_strip::Action::Policy(policy)) => self.pr.set_policy(active_id, policy, now),
             None => {}
         }
+    }
+
+    fn updates_line_for(&self, tab: u64) -> String {
+        let live = self.pr.watch(tab).is_some_and(Watch::live);
+        let why = self.pr.watch(tab).and_then(|watch| self.github_events.why_polled(&watch.repo));
+        pr_strip::updates_line(live, why)
     }
 
     pub(super) fn set_github_default(&mut self, prefs: GithubPrefs) {

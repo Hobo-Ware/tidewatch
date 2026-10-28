@@ -1055,3 +1055,106 @@ fn the_commits_after_the_merge_are_counted_once_per_idle_moment_for_a_tab_on_its
     open.observe(&AgentStatus::Done);
     assert_eq!(open.take_recount(), None);
 }
+
+fn hit(numbers: &[u64], branches: &[&str]) -> Hit {
+    Hit {
+        event: "check_run".into(),
+        numbers: numbers.to_vec(),
+        branches: branches.iter().map(|b| (*b).to_owned()).collect(),
+    }
+}
+
+fn on_repo(mut watch: Watch, branch: &str) -> Watch {
+    watch.repo = PathBuf::from("/work/web");
+    watch.branch = branch.to_owned();
+    watch
+}
+
+#[test]
+fn while_github_is_live_looks_come_every_2_minutes_while_checks_run_and_every_10_otherwise() {
+    let default = GithubPrefs::default();
+    let mut watch = ready(Some(42));
+    watch.set_live(true, 0.0);
+    for (pending, gap) in [(true, LIVE_FAST_SECS), (false, LIVE_SLOW_SECS)] {
+        watch.look_started();
+        watch.polled(Ok(polled(vec![], pending, false)), default, "tab", 100.0, 0);
+        assert_eq!(watch.next_look(default), Some(100.0 + gap));
+    }
+}
+
+#[test]
+fn falling_back_to_polling_brings_the_next_look_in_to_the_ordinary_gap() {
+    let default = GithubPrefs::default();
+    let mut watch = ready(Some(42));
+    watch.set_live(true, 0.0);
+    watch.look_started();
+    watch.polled(Ok(polled(vec![], false, false)), default, "tab", 100.0, 0);
+    assert_eq!(watch.next_look(default), Some(100.0 + LIVE_SLOW_SECS));
+    watch.set_live(false, 130.0);
+    assert_eq!(watch.next_look(default), Some(130.0 + SLOW_SECS));
+    watch.set_live(false, 140.0);
+    assert_eq!(watch.next_look(default), Some(130.0 + SLOW_SECS), "nothing changes while polling");
+    watch.look_started();
+    watch.polled(Ok(polled(vec![], false, false)), default, "tab", 200.0, 0);
+    assert_eq!(watch.next_look(default), Some(200.0 + SLOW_SECS));
+}
+
+#[test]
+fn news_names_a_tab_by_its_pull_request_number_or_its_branch_within_the_repo() {
+    let repos = [PathBuf::from("/work/web")];
+    let elsewhere = [PathBuf::from("/work/api")];
+    let watch = on_repo(ready(Some(42)), "agent/calm");
+    let cases = [
+        (hit(&[42], &[]), &repos[..], true),
+        (hit(&[7, 42], &["other"]), &repos[..], true),
+        (hit(&[], &["agent/calm"]), &repos[..], true),
+        (hit(&[7], &["other"]), &repos[..], false),
+        (hit(&[], &[]), &repos[..], false),
+        (hit(&[42], &["agent/calm"]), &elsewhere[..], false),
+    ];
+    for (news, in_repos, want) in cases {
+        assert_eq!(watch.named_by(in_repos, &news), want, "{news:?} {in_repos:?}");
+    }
+    let nameless = on_repo(ready(Some(42)), "");
+    assert!(!nameless.named_by(&repos, &hit(&[], &[""])));
+}
+
+#[test]
+fn news_makes_the_next_look_a_moment_away_and_a_burst_asks_for_one() {
+    let default = GithubPrefs::default();
+    let mut watch = ready(Some(42));
+    watch.set_live(true, 0.0);
+    watch.look_started();
+    watch.polled(Ok(polled(vec![], false, false)), default, "tab", 100.0, 0);
+    assert_eq!(watch.should_look(default, 150.0), None);
+    watch.look_for_news(150.0);
+    watch.look_for_news(150.5);
+    assert_eq!(watch.next_look(default), Some(152.0));
+    assert!(watch.should_look(default, 152.0).is_some());
+}
+
+#[test]
+fn news_during_a_look_is_followed_by_one_more_look_and_not_forgotten() {
+    let default = GithubPrefs::default();
+    let mut watch = ready(Some(42));
+    watch.set_live(true, 0.0);
+    watch.look_started();
+    watch.look_for_news(10.0);
+    watch.look_for_news(10.2);
+    assert_eq!(watch.should_look(default, 11.0), None, "a look is already being read");
+    watch.polled(Ok(polled(vec![], false, false)), default, "tab", 12.0, 0);
+    assert_eq!(watch.next_look(default), Some(14.0));
+    watch.look_started();
+    watch.polled(Ok(polled(vec![], false, false)), default, "tab", 15.0, 0);
+    assert_eq!(watch.next_look(default), Some(15.0 + LIVE_SLOW_SECS), "only one extra look");
+}
+
+#[test]
+fn news_for_a_merged_or_switched_off_pull_request_starts_no_look() {
+    let default = GithubPrefs::default();
+    let mut watch = ready(Some(42));
+    watch.set_policy(GithubPrefs { mode: PrMode::Off, ..default }, 0.0);
+    watch.look_for_news(5.0);
+    assert_eq!(watch.should_look(default, 99.0), None);
+    assert_eq!(watch.next_look(default), None);
+}

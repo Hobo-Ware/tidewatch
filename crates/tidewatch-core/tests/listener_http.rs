@@ -916,3 +916,61 @@ fn links_sent_with_a_report_are_saved_in_the_tab_folder_and_reach_the_app() {
     );
     assert_eq!(link_store::load(&file).unwrap().len(), 3);
 }
+
+fn github_request(
+    client: &mut Client,
+    method: &str,
+    path: &str,
+    event: &str,
+    signature: Option<&str>,
+    body: &str,
+) -> Reply {
+    let signature = signature.map(|s| format!("X-Hub-Signature-256: {s}\r\n")).unwrap_or_default();
+    let text = format!(
+        "{method} {path} HTTP/1.1\r\nHost: 127.0.0.1\r\nX-GitHub-Event: {event}\r\n{signature}Content-Length: {}\r\n\r\n{body}",
+        body.len()
+    );
+    client.send_raw(text.as_bytes());
+    client.read_reply().expect("the server answered")
+}
+
+#[test]
+fn github_deliveries_need_the_repo_token_in_the_path_and_a_good_signature() {
+    use tidewatch_core::events::RepoEvent;
+    use tidewatch_core::github_hook::signature_header;
+
+    let h = Harness::start();
+    let hook = h.listener.register_repo("acme/web");
+    let path = hook.url.strip_prefix(&h.listener.base_url()).unwrap().to_owned();
+    let body = r#"{"pull_request": {"number": 3, "head": {"ref": "agent/calm"}}}"#;
+    let good = signature_header(&hook.secret, body.as_bytes());
+    let mut client = h.client();
+
+    let unknown = github_request(&mut client, "POST", "/github/nope", "push", Some(&good), body);
+    assert_eq!(unknown.status, 401);
+    let mut client = h.client();
+    let bearer = client.request("POST", &path, Some("x"), body);
+    assert_eq!(bearer.status, 401, "a bearer token never opens the path route when unsigned");
+
+    let mut client = h.client();
+    let get = github_request(&mut client, "GET", &path, "push", Some(&good), "");
+    assert_eq!(get.status, 405);
+    let bad = github_request(&mut client, "POST", &path, "pull_request", Some("sha256=00"), body);
+    assert_eq!(bad.status, 401);
+    let none = github_request(&mut client, "POST", &path, "pull_request", None, body);
+    assert_eq!(none.status, 401);
+    assert_eq!(h.listener.drain_github().len(), 0);
+
+    let ok = github_request(&mut client, "POST", &path, "pull_request", Some(&good), body);
+    assert_eq!(ok.status, 200);
+    let got = h.listener.drain_github();
+    assert_eq!(got.len(), 1);
+    assert_eq!(got[0].repo, "acme/web");
+    assert!(matches!(&got[0].event, RepoEvent::News(hit) if hit.numbers == [3]));
+    assert!(h.events.try_recv().is_err(), "no tab hears a repo delivery");
+
+    h.listener.unregister_repo("acme/web");
+    let mut client = h.client();
+    let revoked = github_request(&mut client, "POST", &path, "pull_request", Some(&good), body);
+    assert_eq!(revoked.status, 401);
+}

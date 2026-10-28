@@ -5,12 +5,14 @@ use egui::{
     Align2, Color32, CornerRadius, Id, Key, Modifiers, Rect, Response, Sense, Stroke, StrokeKind,
     Ui, pos2, vec2,
 };
+use tidewatch_core::github_forwarder::Why;
 use tidewatch_core::pr_status::{Decision, State, Summary, SummaryChecks, Tone};
 use tidewatch_core::prefs::{AutoJob, GithubPrefs, PrMode};
 
 use crate::brand;
 use crate::pr_card_model::Icon;
 use crate::pr_cards_view::paint_icon;
+use crate::pr_watch::SLOW_SECS;
 use crate::reader_view::{INSET, ellipsized};
 use crate::screen_kit::{
     Size, TEXT_BODY, TEXT_SECONDARY, TEXT_TAG, TagFill, body, mono, paint_tag, tag_width,
@@ -28,6 +30,21 @@ pub(crate) struct Strip<'a> {
     pub(crate) summary: &'a Summary,
     pub(crate) policy: GithubPrefs,
     pub(crate) dev_open_popover: bool,
+    /// What the number's tooltip says about how the card hears from GitHub (see `updates_line`).
+    pub(crate) updates: String,
+}
+
+/// `Live from GitHub` while the repository's forwarder delivers, else how often Tidewatch looks and,
+/// when the forwarder fell back, why.
+pub(crate) fn updates_line(live: bool, why: Option<Why>) -> String {
+    if live {
+        return "Live from GitHub".to_owned();
+    }
+    let every = format!("Checking every {} min", (SLOW_SECS / 60.0).round());
+    match why {
+        Some(why) => format!("{every} ({})", why.text()),
+        None => every,
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -163,7 +180,10 @@ pub(crate) fn show(ui: &mut Ui, band: Rect, strip: &Strip<'_>) -> Option<Action>
     let number =
         painter.layout_no_wrap(format!("#{}", summary.number), mono(TEXT_SECONDARY), brand::TEXT);
     let number_w = number.size().x;
+    let number_rect = Rect::from_min_size(pos2(card.left() + 38.0, y - 11.0), vec2(number_w, 22.0));
     painter.galley(pos2(card.left() + 38.0, y - number.size().y / 2.0), number, brand::TEXT);
+    ui.interact(number_rect, ui.id().with("pr-strip-updates"), Sense::hover())
+        .on_hover_text(&strip.updates);
     let mut action = None;
 
     let mut right = card.right() - 14.0;

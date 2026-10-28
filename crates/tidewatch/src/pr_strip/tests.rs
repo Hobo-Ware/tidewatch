@@ -123,8 +123,12 @@ fn click_at(pos: Pos2) -> Vec<Vec<Event>> {
 #[test]
 fn a_click_on_open_on_github_asks_for_the_page_and_nothing_else_does() {
     let summary = summary();
-    let strip =
-        Strip { summary: &summary, policy: GithubPrefs::default(), dev_open_popover: false };
+    let strip = Strip {
+        summary: &summary,
+        policy: GithubPrefs::default(),
+        dev_open_popover: false,
+        updates: updates_line(false, None),
+    };
     let (quiet, band) = frames(vec![vec![]], &strip);
     assert_eq!(quiet, [None, None]);
     let link = pos2(band.right() - INSET - 14.0 - 10.0, band.center().y);
@@ -141,7 +145,12 @@ fn the_strip_draws_for_a_merged_closed_and_long_titled_pull_request() {
     s.title = "x".repeat(400);
     for state in [State::Open, State::Merged, State::Closed] {
         s.state = state;
-        let strip = Strip { summary: &s, policy: GithubPrefs::default(), dev_open_popover: true };
+        let strip = Strip {
+            summary: &s,
+            policy: GithubPrefs::default(),
+            dev_open_popover: true,
+            updates: updates_line(true, None),
+        };
         let (seen, _) = frames(vec![vec![], vec![]], &strip);
         assert!(seen.iter().all(Option::is_none), "{state:?}");
     }
@@ -164,4 +173,25 @@ fn the_popover_says_auto_and_lists_the_four_jobs_with_push_last_and_explained() 
     );
     assert_eq!(JOBS.iter().filter(|job| job.caption.is_some()).count(), 1);
     assert_eq!(JOBS[3].which, AutoJob::Push);
+}
+
+#[test]
+fn the_number_tooltip_says_live_or_how_often_tidewatch_looks_and_why_not_live() {
+    let cases = [
+        (true, None, "Live from GitHub"),
+        (false, None, "Checking every 2 min"),
+        (
+            false,
+            Some(Why::NoAdmin),
+            "Checking every 2 min (it needs admin rights on the repository)",
+        ),
+        (
+            false,
+            Some(Why::HookTaken),
+            "Checking every 2 min (another forwarder holds the repository's webhook)",
+        ),
+    ];
+    for (live, why, want) in cases {
+        assert_eq!(updates_line(live, why), want);
+    }
 }

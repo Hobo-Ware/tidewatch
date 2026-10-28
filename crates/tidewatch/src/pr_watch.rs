@@ -5,6 +5,7 @@
 
 use std::path::{Path, PathBuf};
 
+use tidewatch_core::github_hook::Hit;
 use tidewatch_core::pr_cards::{Cards, send_cap};
 use tidewatch_core::pr_gh::Polled;
 use tidewatch_core::pr_prompt::{self, Message, short_step};
@@ -22,6 +23,9 @@ use crate::status_view::Tone;
 pub(crate) const FAST_SECS: f64 = 20.0;
 /// How soon to look again otherwise.
 pub(crate) const SLOW_SECS: f64 = 120.0;
+pub(crate) const LIVE_FAST_SECS: f64 = 120.0;
+pub(crate) const LIVE_SLOW_SECS: f64 = 600.0;
+const NEWS_LOOK_SECS: f64 = 2.0;
 /// How soon to look after the user re-ran the checks.
 const RERUN_LOOK_SECS: f64 = 5.0;
 /// How soon to look at a merged worktree again while its agent still works in it.
@@ -117,6 +121,9 @@ pub(crate) struct Facts<'a> {
     pub(crate) autonomous: bool,
     /// Whether the agent still needs the worktree.
     pub(crate) busy: Busy,
+    /// Whether GitHub tells Tidewatch about the repository now.
+    pub(crate) live: bool,
+    pub(crate) branch: &'a str,
 }
 
 /// Who answers the pull request's news on a tab, for the cards' buttons and notes.
@@ -148,6 +155,20 @@ pub(crate) struct Look {
     pub(crate) prev: Option<Seen>,
 }
 
+/// How the watch hears about its pull request.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Updates {
+    Polling,
+    Live,
+}
+
+/// Whether news arrived while a look was being read.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum News {
+    None,
+    Waiting,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Stage {
     Unloaded,
@@ -162,9 +183,14 @@ pub(crate) struct Watch {
     /// The worktree `gh` and `git` run in, and the tab's name, as the last frame saw them.
     pub(crate) dir: PathBuf,
     pub(crate) title: String,
+    /// The repository and the branch of the tab, as the last frame saw them: what GitHub's news names.
+    pub(crate) repo: PathBuf,
+    pub(crate) branch: String,
     stage: Stage,
     due: f64,
     in_flight: bool,
+    updates: Updates,
+    news: News,
     ended: bool,
     pub(crate) pause: Option<Pause>,
     pub(crate) pending: Vec<Pending>,
@@ -186,9 +212,13 @@ impl Watch {
             file,
             dir: PathBuf::new(),
             title: String::new(),
+            repo: PathBuf::new(),
+            branch: String::new(),
             stage: Stage::Unloaded,
             due: 0.0,
             in_flight: false,
+            updates: Updates::Polling,
+            news: News::None,
             ended: false,
             pause: None,
             pending: Vec::new(),
@@ -353,6 +383,43 @@ impl Watch {
         self.in_flight = true;
     }
 
+    fn fast_secs(&self) -> f64 {
+        if self.live() { LIVE_FAST_SECS } else { FAST_SECS }
+    }
+
+    fn slow_secs(&self) -> f64 {
+        if self.live() { LIVE_SLOW_SECS } else { SLOW_SECS }
+    }
+
+    /// Whether GitHub tells Tidewatch about this repository now, so routine looks can be rarer.
+    /// Falling back to polling pulls the next look in to the ordinary gap.
+    pub(crate) fn set_live(&mut self, live: bool, now: f64) {
+        if self.live() && !live {
+            self.due = self.due.min(now + SLOW_SECS);
+        }
+        self.updates = if live { Updates::Live } else { Updates::Polling };
+    }
+
+    pub(crate) fn live(&self) -> bool {
+        self.updates == Updates::Live
+    }
+
+    /// News from GitHub names this tab's pull request or branch.
+    pub(crate) fn named_by(&self, repos: &[PathBuf], hit: &Hit) -> bool {
+        repos.contains(&self.repo)
+            && (self.cards.number.is_some_and(|number| hit.numbers.contains(&number))
+                || (!self.branch.is_empty() && hit.branches.contains(&self.branch)))
+    }
+
+    /// Look in a moment: a look already under way is followed by one more.
+    pub(crate) fn look_for_news(&mut self, now: f64) {
+        if self.in_flight {
+            self.news = News::Waiting;
+        } else {
+            self.due = self.due.min(now + NEWS_LOOK_SECS);
+        }
+    }
+
     /// Look again in a few seconds, such as after the checks were re-run.
     pub(crate) fn look_soon(&mut self, now: f64) {
         self.due = self.due.min(now + RERUN_LOOK_SECS);
@@ -376,16 +443,24 @@ impl Watch {
         now_ms: i64,
     ) -> Vec<Out> {
         self.in_flight = false;
+        let queued = std::mem::replace(&mut self.news, News::None) == News::Waiting;
         let polled = match result {
             Ok(polled) => polled,
             Err(error) => {
                 self.pause = Some(Pause::of(error));
-                self.due = now + SLOW_SECS;
+                self.due = now + if queued { NEWS_LOOK_SECS } else { SLOW_SECS };
                 return Vec::new();
             }
         };
         self.pause = None;
-        self.due = now + if polled.checks_pending { FAST_SECS } else { SLOW_SECS };
+        self.due = now
+            + if queued {
+                NEWS_LOOK_SECS
+            } else if polled.checks_pending {
+                self.fast_secs()
+            } else {
+                self.slow_secs()
+            };
         if self.merged_for_good(&polled) {
             return Vec::new();
         }

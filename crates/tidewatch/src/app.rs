@@ -15,6 +15,7 @@ mod done_check;
 mod draft;
 mod flow;
 mod frame;
+mod github_events;
 mod image_paste;
 mod keep_awake;
 mod meeseeks;
@@ -198,6 +199,7 @@ pub(crate) struct Tidewatch {
     hooks: Hooks,
     flow: Flow,
     pr: pr_glue::Host,
+    github_events: tidewatch_core::github_events::Host,
     comments: comment_glue::Host,
     progress: progress_glue::Host,
     job_live: job_glue::Host,
@@ -320,6 +322,12 @@ impl Tidewatch {
             flow.tools(),
             paths.as_ref().map(Prefs::load).unwrap_or_default().github,
             pr_glue::Dev::from_env(),
+        );
+        let github_events = github_events_host(
+            flow.tools(),
+            paths.clone(),
+            &cc.egui_ctx,
+            screenshot.is_some() || shell.env.background,
         );
         let progress = progress_glue::Host::new(
             paths.as_ref().filter(|_| screenshot.is_none()),
@@ -491,6 +499,7 @@ impl Tidewatch {
             desktop: shell.desktop.clone(),
             shell: shell::start(&cc.egui_ctx, shell),
             services,
+            github_events,
             services_ui: services_view::Memory::from_env(),
         };
         for (group, workspace) in app.workspaces.iter().enumerate().filter(|_| !welcome) {
@@ -527,6 +536,24 @@ struct Adopted {
     notes: Vec<String>,
     focus: bool,
     hook_port: Option<u16>,
+}
+
+/// A screenshot, background or fake-gh run starts no forwarder, so it never makes a webhook on a
+/// real repo.
+fn github_events_host(
+    tools: Tools,
+    paths: Option<TidewatchPaths>,
+    ctx: &egui::Context,
+    throwaway: bool,
+) -> tidewatch_core::github_events::Host {
+    let fake_gh = std::env::var_os("TIDEWATCH_DEV_GH_DIR").is_some_and(|dir| !dir.is_empty());
+    let wake = ctx.clone();
+    tidewatch_core::github_events::Host::new(
+        tools,
+        paths,
+        std::sync::Arc::new(move || wake.request_repaint()),
+        !throwaway && !fake_gh,
+    )
 }
 
 fn services_spawner(ctx: &egui::Context) -> services_glue::Spawner {
@@ -636,6 +663,7 @@ impl eframe::App for Tidewatch {
         );
         self.amphetamine.shutdown();
         self.services.shutdown();
+        self.github_events.shutdown(self.hooks.listener().as_deref());
         if let Some(paths) = self.paths.as_ref().filter(|_| self.screenshot.is_none()) {
             run_marker::end(paths);
         }
