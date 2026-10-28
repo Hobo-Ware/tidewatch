@@ -279,7 +279,9 @@ impl Tidewatch {
                     self.forget_tab(tab);
                     self.closed.mark_changed();
                     match outcome {
-                        BranchOutcome::Kept | BranchOutcome::Deleted { restore: None } => {}
+                        BranchOutcome::Kept
+                        | BranchOutcome::KeptCommits { .. }
+                        | BranchOutcome::Deleted { restore: None } => {}
                         BranchOutcome::Deleted { restore: Some(command) } => {
                             self.show_toast(
                                 format!("Branch deleted. To bring it back: {command}"),

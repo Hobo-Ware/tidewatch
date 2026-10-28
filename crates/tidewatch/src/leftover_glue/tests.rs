@@ -106,6 +106,13 @@ fn clean_up_removes_only_the_worktrees_proven_safe_and_leaves_the_rest_whole() {
     assert!(branch_exists(&f, &committed));
     assert_eq!(std::fs::read_to_string(dirty.path.join("precious.txt")).unwrap(), "keep");
     assert!(broken.path.exists(), "a worktree git cannot read is never removed");
+    let row = f.host.dialog.as_ref().unwrap().rows.iter().find(|r| r.leftover.path == broken.path);
+    let row = row.expect("its row");
+    assert_eq!(row.state, crate::leftovers::RowState::Unreadable);
+    assert_eq!(
+        f.host.dialog.as_ref().unwrap().trash_target(&broken.path),
+        Some((broken.path.clone(), Some(broken.clone())))
+    );
     assert!(branch_exists(&f, &broken));
     assert_eq!(f.host.leftovers.len(), 3);
     assert_eq!(f.toasts.len(), 1);
@@ -191,19 +198,99 @@ fn discard_does_nothing_for_a_worktree_proven_safe_and_close_ends_the_dialog() {
     assert_eq!(f.host.leftovers.len(), 1);
 }
 
+fn by_hand(f: &Fixture, name: &str, branch: &str) -> Worktree {
+    let path = f.paths.worktree_dir(&f.repo, name);
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    git(&f.repo, &["worktree", "add", "-q", "-b", branch, path.to_str().unwrap()]);
+    Worktree { repo: f.repo.clone(), path, branch: branch.to_owned() }
+}
+
+fn dialog_of(f: &Fixture) -> &Cleanup {
+    f.host.dialog.as_ref().unwrap()
+}
+
 #[test]
-fn a_worktree_with_no_record_is_listed_but_never_removed() {
+fn an_unrecorded_worktree_proven_clean_joins_clean_up_and_loses_folder_and_branch() {
     let mut f = Fixture::new();
-    let by_hand = f.paths.worktree_dir(&f.repo, "by-hand");
-    std::fs::create_dir_all(by_hand.parent().unwrap()).unwrap();
-    git(&f.repo, &["worktree", "add", "-q", "-b", "hand", by_hand.to_str().unwrap()]);
+    let hand = by_hand(&f, "by-hand", "hand");
+    f.scan();
+    assert!(!f.host.leftovers[0].recorded);
+    f.host.open(&f.ctx);
+    f.settle();
+    assert_eq!(dialog_of(&f).clean_count(), 1);
+    f.answer(&Answer::CleanUp);
+    f.settle();
+    assert!(!hand.path.exists());
+    assert!(!branch_exists(&f, &hand));
+    assert_eq!(f.host.leftovers.len(), 0);
+    assert_eq!(tidewatch_core::removal_log::load(&f.paths).len(), 1);
+}
+
+#[test]
+fn an_unrecorded_worktree_with_unpushed_commits_is_discarded_and_its_branch_kept() {
+    let mut f = Fixture::new();
+    let hand = by_hand(&f, "by-hand", "hand");
+    commit(&hand, "one.txt");
+    commit(&hand, "two.txt");
+    let tip = git(&f.repo, &["rev-parse", "hand"]);
     f.scan();
     f.host.open(&f.ctx);
     f.settle();
+    assert!(Cleanup::is_discardable(&dialog_of(&f).rows[0]));
     f.answer(&Answer::CleanUp);
     f.settle();
-    assert!(by_hand.exists());
-    assert_eq!(f.host.leftovers.len(), 1);
+    assert!(hand.path.exists(), "Clean up never discards");
+
+    f.answer(&Answer::Discard(hand.path.clone(), BranchChoice::Delete));
+    f.settle();
+    assert!(!hand.path.exists());
+    assert_eq!(git(&f.repo, &["rev-parse", "hand"]), tip);
+    assert_eq!(f.host.leftovers.len(), 0);
+    let logged = tidewatch_core::removal_log::load(&f.paths);
+    assert_eq!(logged.len(), 1);
+    assert_eq!((logged[0].branch.as_str(), logged[0].mode.as_str()), ("hand", "discard"));
+    assert_eq!(logged[0].sha.as_deref(), Some(tip.trim()));
+    assert!(logged[0].branch_kept);
+    assert_eq!(f.toasts.len(), 1);
+    assert!(f.toasts[0].contains("branch kept: 2 commits only here"), "{:?}", f.toasts);
+}
+
+#[test]
+fn an_unrecorded_discard_of_unsaved_work_deletes_a_branch_that_holds_nothing_unique() {
+    let mut f = Fixture::new();
+    let hand = by_hand(&f, "by-hand", "hand");
+    std::fs::write(hand.path.join("wip.txt"), "wip").unwrap();
+    f.scan();
+    f.host.open(&f.ctx);
+    f.settle();
+    f.answer(&Answer::Discard(hand.path.clone(), BranchChoice::Delete));
+    f.settle();
+    assert!(!hand.path.exists());
+    assert!(!branch_exists(&f, &hand));
+    assert!(f.toasts[0].contains("git branch hand "), "{:?}", f.toasts);
+    assert!(!f.toasts[0].contains("branch kept"), "{:?}", f.toasts);
+}
+
+#[test]
+fn an_unrecorded_worktree_on_a_detached_head_is_discarded_with_its_commits_listed() {
+    let mut f = Fixture::new();
+    let hand = by_hand(&f, "by-hand", "hand");
+    git(&hand.path, &["checkout", "-q", "--detach"]);
+    commit(&hand, "loose.txt");
+    f.scan();
+    f.host.open(&f.ctx);
+    f.settle();
+    let row = &dialog_of(&f).rows[0];
+    assert!(
+        crate::leftovers::row_text(row).unwrap().contains("1 commit found nowhere else"),
+        "{:?}",
+        row.state
+    );
+    f.answer(&Answer::Discard(hand.path.clone(), BranchChoice::Delete));
+    f.settle();
+    assert!(!hand.path.exists());
+    assert!(branch_exists(&f, &hand), "a detached worktree deletes no branch");
+    assert!(tidewatch_core::removal_log::load(&f.paths)[0].head.is_some());
 }
 
 fn forget_every_record(f: &Fixture) {

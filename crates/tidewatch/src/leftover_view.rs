@@ -9,7 +9,7 @@ use tidewatch_core::worktree::{BranchChoice, Leftover};
 use tidewatch_core::worktree_safety::{Risk, Safety};
 
 use crate::brand;
-use crate::leftovers::{Cleanup, Row, RowState, status_text};
+use crate::leftovers::{Cleanup, Row, RowState, row_text};
 use crate::notice::key_hint;
 use crate::screen_kit::{
     Size, danger_button, dialog_frame, footer_row, primary_button, quiet_button,
@@ -18,12 +18,15 @@ use crate::settings_ui::pill;
 
 const DIALOG_WIDTH: f32 = 560.0;
 const LIST_HEIGHT: f32 = 400.0;
+const UNREADABLE_DISCARD: &str = "Moves the folder to the Trash, where you can take it back. Nothing is deleted, and its branch stays.";
+const UNRECORDED_DISCARD: &str = "Removes the folder. The branch goes with it only when every commit on it also exists elsewhere; otherwise it stays.";
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum Answer {
     Close,
     CleanUp,
     Discard(PathBuf, BranchChoice),
+    Trash(PathBuf),
 }
 
 /// The hover text of the chip: where each leftover is.
@@ -55,7 +58,7 @@ fn pill_of(state: &RowState) -> (&'static str, Color32) {
     match state {
         RowState::Inspecting => ("looking", brand::MUTED),
         RowState::Removing => ("removing", brand::MUTED),
-        RowState::Unrecorded => ("unrecorded", brand::ORANGE),
+        RowState::Unreadable => ("unreadable", brand::ORANGE),
         RowState::Failed(_) => ("failed", brand::RED),
         RowState::Ready(Safety::Safe) => ("clean", brand::GREEN),
         RowState::Ready(Safety::Unknown(_)) => ("unknown", brand::ORANGE),
@@ -91,24 +94,40 @@ fn row_ui(ui: &mut egui::Ui, row: &Row, answer: &mut Option<Answer>) {
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                     let (text, ink) = pill_of(&row.state);
                     pill(ui, text, ink);
+                    if !row.leftover.recorded && row.state != RowState::Unreadable {
+                        pill(ui, "unrecorded", brand::ORANGE);
+                    }
                 });
             });
             let discardable = Cleanup::is_discardable(row);
             let loss = discardable || matches!(row.state, RowState::Failed(_));
             let color = if loss { brand::RED } else { brand::MUTED };
-            if !matches!(&row.state, RowState::Ready(Safety::Safe)) {
-                ui.label(RichText::new(status_text(&row.state)).size(12.0).color(color));
+            if let Some(text) = row_text(row) {
+                ui.label(RichText::new(text).size(12.0).color(color));
             }
             if discardable {
                 ui.horizontal(|ui| {
                     ui.spacing_mut().item_spacing.x = 8.0;
-                    if danger_button(ui, "Discard, delete branch", Size::Compact).clicked() {
-                        *answer =
-                            Some(Answer::Discard(row.leftover.path.clone(), BranchChoice::Delete));
-                    }
-                    if quiet_button(ui, "Discard, keep branch", true, Size::Compact).clicked() {
-                        *answer =
-                            Some(Answer::Discard(row.leftover.path.clone(), BranchChoice::Keep));
+                    let path = row.leftover.path.clone();
+                    if row.state == RowState::Unreadable {
+                        if danger_button(ui, "Discard", Size::Compact)
+                            .on_hover_text(UNREADABLE_DISCARD)
+                            .clicked()
+                        {
+                            *answer = Some(Answer::Trash(path));
+                        }
+                    } else if row.leftover.recorded {
+                        if danger_button(ui, "Discard, delete branch", Size::Compact).clicked() {
+                            *answer = Some(Answer::Discard(path.clone(), BranchChoice::Delete));
+                        }
+                        if quiet_button(ui, "Discard, keep branch", true, Size::Compact).clicked() {
+                            *answer = Some(Answer::Discard(path, BranchChoice::Keep));
+                        }
+                    } else if danger_button(ui, "Discard", Size::Compact)
+                        .on_hover_text(UNRECORDED_DISCARD)
+                        .clicked()
+                    {
+                        *answer = Some(Answer::Discard(path, BranchChoice::Delete));
                     }
                 });
             }
@@ -130,7 +149,8 @@ pub(crate) fn dialog(ctx: &egui::Context, cleanup: &Cleanup) -> Option<Answer> {
                     "No tab owns these. Clean up removes only the ones proven safe: nothing \
                      uncommitted, every commit also on a remote or merged, no process in the \
                      folder, no agent session in the last day. Any other needs its own Discard, \
-                     and what it would lose is listed on its row.",
+                     and what it would lose is listed on its row. An unrecorded tag only says \
+                     this Tidewatch did not make the worktree.",
                 )
                 .color(brand::MUTED),
             );
@@ -177,12 +197,18 @@ mod tests {
             path: PathBuf::from(format!("/home/.tidewatch/web-abc123/{name}")),
             branch: Some(format!("agent/{name}")),
             repo: Some(PathBuf::from("/work/web")),
+            recorded: true,
         }
     }
 
     #[test]
     fn the_tip_lists_each_worktree_with_its_branch_when_known() {
-        let bare = Leftover { path: PathBuf::from("/x/by-hand"), branch: None, repo: None };
+        let bare = Leftover {
+            path: PathBuf::from("/x/by-hand"),
+            branch: None,
+            repo: None,
+            recorded: false,
+        };
         let text = tip(&[leftover("calm-comet"), bare]);
         let lines: Vec<&str> = text.lines().collect();
         assert_eq!(lines.len(), 3);

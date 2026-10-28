@@ -242,6 +242,7 @@ mod tidewatch_view;
 mod toast;
 mod touch_id;
 mod touch_id_view;
+mod trash;
 mod tray;
 mod trust_glue;
 mod trust_view;

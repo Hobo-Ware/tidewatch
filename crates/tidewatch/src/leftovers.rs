@@ -3,7 +3,7 @@
 //! worktrees proven safe to lose nothing; every other row shows why, and only its own Discard,
 //! chosen by the user for that row, removes it.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use tidewatch_core::worktree::{BranchChoice, BranchOutcome, Leftover, RemoveMode, Worktree};
 use tidewatch_core::worktree_safety::Safety;
@@ -12,8 +12,8 @@ use tidewatch_core::worktree_safety::Safety;
 pub(crate) enum RowState {
     Inspecting,
     Ready(Safety),
-    /// The registry has no record of its repository or branch, so git cannot remove it from here.
-    Unrecorded,
+    /// Git cannot read the folder, so nothing in it is known. Its Discard moves it to the Trash.
+    Unreadable,
     Removing,
     Failed(String),
 }
@@ -30,6 +30,7 @@ pub(crate) struct Removal {
     pub(crate) worktree: Worktree,
     pub(crate) branch: BranchChoice,
     pub(crate) mode: RemoveMode,
+    pub(crate) spare_unique: bool,
 }
 
 #[derive(Debug, Default, PartialEq, Eq)]
@@ -49,7 +50,7 @@ impl Cleanup {
                         to_inspect.push(worktree);
                         RowState::Inspecting
                     }
-                    None => RowState::Unrecorded,
+                    None => RowState::Unreadable,
                 };
                 Row { leftover: leftover.clone(), state }
             })
@@ -77,6 +78,7 @@ impl Cleanup {
                     worktree: row.leftover.worktree()?,
                     branch: BranchChoice::Delete,
                     mode: RemoveMode::Safe,
+                    spare_unique: false,
                 })
             })
             .collect()
@@ -87,12 +89,14 @@ impl Cleanup {
     pub(crate) fn discard_removal(&self, path: &Path, branch: BranchChoice) -> Option<Removal> {
         let row = self.rows.iter().find(|row| row.leftover.path == path)?;
         let RowState::Ready(safety) = &row.state else { return None };
+        let spare_unique = !row.leftover.recorded;
         (!safety.is_safe())
             .then(|| {
                 Some(Removal {
                     worktree: row.leftover.worktree()?,
                     branch,
                     mode: RemoveMode::Discard,
+                    spare_unique,
                 })
             })
             .flatten()
@@ -100,7 +104,30 @@ impl Cleanup {
 
     /// Whether the row has something to show the user and a Discard to offer.
     pub(crate) fn is_discardable(row: &Row) -> bool {
-        matches!(&row.state, RowState::Ready(safety) if !safety.is_safe())
+        match &row.state {
+            RowState::Ready(safety) => !safety.is_safe(),
+            RowState::Unreadable => true,
+            _ => false,
+        }
+    }
+
+    /// The folder to move to the Trash for the Discard of a row git cannot read, and the worktree
+    /// the registry names for it, when it does.
+    pub(crate) fn trash_target(&self, path: &Path) -> Option<(PathBuf, Option<Worktree>)> {
+        let row = self.rows.iter().find(|row| row.leftover.path == path)?;
+        (row.state == RowState::Unreadable).then(|| {
+            (row.leftover.path.clone(), row.leftover.worktree().filter(|_| row.leftover.recorded))
+        })
+    }
+
+    /// A folder the check could not read turned out to be one git cannot read at all.
+    pub(crate) fn unreadable(&mut self, path: &Path) {
+        if let Some(row) = self
+            .row_mut(path)
+            .filter(|row| matches!(row.state, RowState::Inspecting | RowState::Ready(_)))
+        {
+            row.state = RowState::Unreadable;
+        }
     }
 
     pub(crate) fn removing(&mut self, path: &Path) {
@@ -140,8 +167,6 @@ impl Cleanup {
             Some("Still looking at the worktrees.")
         } else if self.clean_count() > 0 {
             None
-        } else if self.rows.iter().all(|row| row.state == RowState::Unrecorded) {
-            Some("None of these were made by this Tidewatch. Remove them with git.")
         } else {
             Some(NOTHING_SAFE)
         }
@@ -154,11 +179,23 @@ const NOTHING_SAFE: &str = "Nothing here is proven safe to remove. A row that li
 pub(crate) fn status_text(state: &RowState) -> String {
     match state {
         RowState::Inspecting => "looking...".to_owned(),
-        RowState::Unrecorded => "not made by this Tidewatch, remove it with git".to_owned(),
+        RowState::Unreadable => {
+            "git can't read this folder; Discard moves it to the Trash".to_owned()
+        }
         RowState::Removing => "removing...".to_owned(),
         RowState::Failed(message) => format!("could not remove: {message}"),
         RowState::Ready(Safety::Safe) => "clean, nothing would be lost".to_owned(),
         RowState::Ready(safety) => safety.reasons().join(", "),
+    }
+}
+
+/// The line under a row, or `None` when the row has nothing to say. A worktree this Tidewatch did
+/// not make says "nothing to lose" when clean, so its row is never silent about the loss.
+pub(crate) fn row_text(row: &Row) -> Option<String> {
+    match (&row.state, row.leftover.recorded) {
+        (RowState::Ready(Safety::Safe), true) => None,
+        (RowState::Ready(Safety::Safe), false) => Some("nothing to lose".to_owned()),
+        (state, _) => Some(status_text(state)),
     }
 }
 
@@ -171,8 +208,18 @@ mod tests {
     fn leftover(name: &str, recorded: bool) -> Leftover {
         Leftover {
             path: PathBuf::from(format!("/home/.tidewatch/web-abc123/{name}")),
-            branch: recorded.then(|| format!("agent/{name}")),
-            repo: recorded.then(|| PathBuf::from("/work/web")),
+            branch: Some(format!("agent/{name}")),
+            repo: Some(PathBuf::from("/work/web")),
+            recorded,
+        }
+    }
+
+    fn unreadable(name: &str) -> Leftover {
+        Leftover {
+            path: PathBuf::from(format!("/home/.tidewatch/web-abc123/{name}")),
+            branch: None,
+            repo: None,
+            recorded: false,
         }
     }
 
@@ -191,14 +238,24 @@ mod tests {
         cleanup
     }
 
+    fn opened_unreadable(names: &[&str]) -> Cleanup {
+        let leftovers: Vec<Leftover> = names.iter().map(|n| unreadable(n)).collect();
+        Cleanup::open(&leftovers).0
+    }
+
     #[test]
-    fn opening_asks_to_inspect_only_what_git_can_remove() {
-        let (cleanup, to_inspect) =
-            Cleanup::open(&[leftover("calm-comet", true), leftover("by-hand", false)]);
-        assert_eq!(to_inspect.len(), 1);
+    fn opening_asks_to_inspect_everything_git_can_remove_recorded_or_not() {
+        let (cleanup, to_inspect) = Cleanup::open(&[
+            leftover("calm-comet", true),
+            leftover("by-hand", false),
+            unreadable("broken"),
+        ]);
+        assert_eq!(to_inspect.len(), 2);
         assert_eq!(to_inspect[0].branch, "agent/calm-comet");
+        assert_eq!(to_inspect[1].branch, "agent/by-hand");
         assert_eq!(cleanup.rows[0].state, RowState::Inspecting);
-        assert_eq!(cleanup.rows[1].state, RowState::Unrecorded);
+        assert_eq!(cleanup.rows[1].state, RowState::Inspecting);
+        assert_eq!(cleanup.rows[2].state, RowState::Unreadable);
         assert!(cleanup.busy());
     }
 
@@ -217,15 +274,16 @@ mod tests {
             ("git-error", true, Some(Safety::Unknown("git status failed".into()))),
             ("still-looking", true, None),
             ("by-hand", false, None),
+            ("by-hand-proven", false, Some(Safety::Safe)),
+            ("by-hand-dirty", false, Some(unsafe_with(Risk::Uncommitted { files: 1 }))),
         ]);
         let removals = cleanup.clean_removals();
-        assert_eq!(removals.len(), 1);
-        assert_eq!(removals[0].worktree.branch, "agent/proven");
-        assert_eq!(
-            (removals[0].mode, removals[0].branch),
-            (RemoveMode::Safe, BranchChoice::Delete)
+        let branches: Vec<&str> = removals.iter().map(|r| r.worktree.branch.as_str()).collect();
+        assert_eq!(branches, ["agent/proven", "agent/by-hand-proven"]);
+        assert!(
+            removals.iter().all(|r| (r.mode, r.branch) == (RemoveMode::Safe, BranchChoice::Delete))
         );
-        assert_eq!(cleanup.clean_count(), 1);
+        assert_eq!(cleanup.clean_count(), 2);
     }
 
     #[test]
@@ -250,23 +308,116 @@ mod tests {
     }
 
     #[test]
+    fn an_unrecorded_row_gets_a_discard_that_spares_a_branch_with_commits_found_nowhere_else() {
+        let cleanup = opened(&[
+            ("dirty", false, Some(unsafe_with(Risk::Uncommitted { files: 2 }))),
+            ("unpushed", false, Some(unsafe_with(Risk::Unpushed { commits: 2 }))),
+            ("unknown", false, Some(Safety::Unknown("no git".into()))),
+            ("ours", true, Some(unsafe_with(Risk::Uncommitted { files: 2 }))),
+        ]);
+        for row in &cleanup.rows {
+            assert!(Cleanup::is_discardable(row), "{}", row.leftover.path.display());
+            for asked in [BranchChoice::Keep, BranchChoice::Delete] {
+                let removal =
+                    cleanup.discard_removal(&row.leftover.path, asked).expect("a discard");
+                assert_eq!((removal.mode, removal.branch), (RemoveMode::Discard, asked));
+                assert_eq!(removal.spare_unique, !row.leftover.recorded);
+            }
+        }
+    }
+
+    #[test]
+    fn a_folder_git_cannot_read_has_a_discard_that_moves_it_to_the_trash() {
+        let cleanup = opened_unreadable(&["broken"]);
+        let path = cleanup.rows[0].leftover.path.clone();
+        assert!(Cleanup::is_discardable(&cleanup.rows[0]));
+        assert_eq!(cleanup.trash_target(&path), Some((path.clone(), None)));
+        assert_eq!(cleanup.discard_removal(&path, BranchChoice::Keep), None);
+        assert_eq!(cleanup.trash_target(Path::new("/nowhere")), None);
+        assert_eq!(cleanup.clean_up_blocker(), Some(NOTHING_SAFE));
+        let ready = opened(&[("x", false, Some(Safety::Safe))]);
+        assert_eq!(ready.trash_target(&ready.rows[0].leftover.path), None);
+    }
+
+    #[test]
+    fn a_recorded_row_git_turns_out_not_to_read_becomes_unreadable_and_keeps_its_worktree() {
+        let mut cleanup = opened(&[
+            ("dead", true, Some(Safety::Unknown("git status failed".into()))),
+            ("dirty", true, Some(unsafe_with(Risk::Uncommitted { files: 1 }))),
+        ]);
+        let (dead, dirty) =
+            (cleanup.rows[0].leftover.path.clone(), cleanup.rows[1].leftover.path.clone());
+        assert_eq!(cleanup.trash_target(&dead), None);
+        cleanup.unreadable(&dead);
+        assert_eq!(cleanup.rows[0].state, RowState::Unreadable);
+        let (path, known) = cleanup.trash_target(&dead).expect("a trash target");
+        assert_eq!((path, known.map(|w| w.branch)), (dead.clone(), Some("agent/dead".to_owned())));
+        assert_eq!(cleanup.discard_removal(&dead, BranchChoice::Delete), None);
+        cleanup.removing(&dirty);
+        cleanup.unreadable(&dirty);
+        assert_eq!(cleanup.rows[1].state, RowState::Removing, "a row that moved on is left alone");
+    }
+
+    #[test]
+    fn the_row_text_lists_what_an_unrecorded_worktree_would_lose() {
+        let cases: [(&str, bool, Safety, Option<&str>); 6] = [
+            ("recorded and clean says nothing", true, Safety::Safe, None),
+            ("unrecorded and clean", false, Safety::Safe, Some("nothing to lose")),
+            (
+                "unrecorded and dirty",
+                false,
+                unsafe_with(Risk::Uncommitted { files: 4 }),
+                Some("4 files with uncommitted changes"),
+            ),
+            (
+                "unrecorded with unpushed commits",
+                false,
+                unsafe_with(Risk::Unpushed { commits: 2 }),
+                Some("2 commits found nowhere else (on no remote branch, not merged)"),
+            ),
+            (
+                "unrecorded and in use",
+                false,
+                Safety::Unsafe(vec![
+                    Risk::Running { pid: 7, command: "claude".into() },
+                    Risk::RecentSession { minutes: 20 },
+                ]),
+                Some("claude (pid 7) is running in it, an agent session wrote in it 20 min ago"),
+            ),
+            (
+                "unrecorded and unreadable status",
+                false,
+                Safety::Unknown("git status failed".into()),
+                Some("could not check it: git status failed"),
+            ),
+        ];
+        for (what, recorded, safety, want) in cases {
+            let cleanup = opened(&[("x", recorded, Some(safety))]);
+            assert_eq!(row_text(&cleanup.rows[0]).as_deref(), want, "{what}");
+        }
+        let looking = opened(&[("x", false, None)]);
+        assert_eq!(row_text(&looking.rows[0]).as_deref(), Some("looking..."));
+        let broken = opened_unreadable(&["x"]);
+        assert_eq!(
+            row_text(&broken.rows[0]).as_deref(),
+            Some("git can't read this folder; Discard moves it to the Trash")
+        );
+    }
+
+    #[test]
     fn clean_up_says_why_it_has_nothing_to_do() {
         let cases: [(&str, Cleanup, Option<&str>); 5] = [
             ("a proven row", opened(&[("a", true, Some(Safety::Safe))]), None),
-            (
-                "only foreign rows",
-                opened(&[("a", false, None), ("b", false, None)]),
-                Some("None of these were made by this Tidewatch. Remove them with git."),
-            ),
+            ("only unreadable rows", opened_unreadable(&["a", "b"]), Some(NOTHING_SAFE)),
             (
                 "only rows with something to lose",
                 opened(&[("a", true, Some(unsafe_with(Risk::Uncommitted { files: 1 })))]),
                 Some(NOTHING_SAFE),
             ),
             (
-                "foreign next to one with something to lose",
+                "an unrecorded one next to one with something to lose",
                 opened(&[
-                    ("a", false, None),
+                    ("a", false, Some(unsafe_with(Risk::Uncommitted { files: 1 }))),
                     ("b", true, Some(unsafe_with(Risk::Unpushed { commits: 1 }))),
                 ]),
                 Some(NOTHING_SAFE),
