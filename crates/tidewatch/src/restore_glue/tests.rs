@@ -171,6 +171,7 @@ fn agent(worktree: &Worktree, session: &str, level: Level) -> SavedTab {
         crashed: false,
         remote: false,
         meeseeks: None,
+        folder_repo: None,
     })
 }
 

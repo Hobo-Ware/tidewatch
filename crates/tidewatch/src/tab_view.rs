@@ -6,7 +6,7 @@
 //! overtaken. Nothing here blocks: git and disk work all runs through `pane_jobs`.
 
 use std::collections::{HashMap, HashSet};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::mpsc::{Receiver, Sender, channel};
 use std::time::Instant;
 
@@ -96,6 +96,13 @@ impl ViewSpec {
         };
         let notes_file = paths.filter(|_| !draft).map(|paths| paths.notes_file(&repo_root, &name));
         Some(Self { id: tab.id, dir, name, is_main, notes_file })
+    }
+
+    /// A folder tab's view of one repo: the agent owns it, so it is no main tab, and its notes stay
+    /// with the repo's own tabs.
+    pub(crate) fn of_repo(id: u64, root: &Path) -> Self {
+        let name = root.file_name().map_or_else(String::new, |n| n.to_string_lossy().into_owned());
+        Self { id, dir: root.to_path_buf(), name, is_main: false, notes_file: None }
     }
 
     pub(crate) fn into_view(self) -> TabView {

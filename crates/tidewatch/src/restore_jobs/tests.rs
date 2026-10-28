@@ -75,6 +75,7 @@ fn agent_tab(worktree: &Worktree, level: Level) -> SavedTab {
         crashed: false,
         remote: false,
         meeseeks: None,
+        folder_repo: None,
     })
 }
 

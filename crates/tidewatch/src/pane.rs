@@ -83,6 +83,7 @@ pub(crate) struct AgentTab {
     /// The agent process runs with remote control on, whatever the saved setting says now.
     pub(crate) remote: Option<RemoteSession>,
     pub(crate) meeseeks: Option<Meeseeks>,
+    pub(crate) folder_pick: Option<PathBuf>,
 }
 
 impl AgentTab {
@@ -100,6 +101,7 @@ impl AgentTab {
             base_note: None,
             remote: None,
             meeseeks: None,
+            folder_pick: None,
         }
     }
 
@@ -266,6 +268,7 @@ pub(crate) fn finish_open<T>(
             title.clone_into(&mut tab.title);
             let shell = spawn(&opened.dir, opened.started.as_ref().map(|s| &s.prepared));
             let previous = tab.pane.agent.take();
+            let folder_pick = previous.as_ref().and_then(|agent| agent.folder_pick.clone());
             tab.pane = Pane {
                 body: Body::Shell(shell),
                 worktree: opened.worktree,
@@ -301,6 +304,7 @@ pub(crate) fn finish_open<T>(
                         base_note: None,
                         remote,
                         meeseeks: started.meeseeks,
+                        folder_pick,
                     }
                 }),
             };
@@ -459,6 +463,23 @@ mod tests {
         assert_eq!(tab.title, "Builder");
         assert_eq!(tab.pane.worktree, None);
         assert_eq!(tab.pane.close_policy(), ClosePolicy::Now);
+    }
+
+    #[test]
+    fn a_folder_tab_keeps_the_repo_the_owner_picked_when_it_finishes_opening() {
+        let mut tabs = Tabs::new(Pane::shell(0));
+        let mut creating = Pane::creating_agent("Builder".into(), "claude".into(), 0.0);
+        creating.agent.as_mut().unwrap().folder_pick = Some(PathBuf::from("/ws/api"));
+        let id = tabs.push(CREATING_TITLE.into(), creating);
+        let in_folder = Opened {
+            worktree: None,
+            dir: PathBuf::from("/ws"),
+            started: Some(started(&[])),
+            base_note: None,
+        };
+        finish_open(&mut tabs, id, Ok(in_folder), 0.0, |_, _| 7);
+        let agent = tabs.get_mut(id).unwrap().pane.agent.take().unwrap();
+        assert_eq!(agent.folder_pick, Some(PathBuf::from("/ws/api")));
     }
 
     #[test]

@@ -38,6 +38,7 @@ impl Tidewatch {
         for done in self.pane_jobs.drain() {
             self.apply_pane_done(done, ctx);
         }
+        self.folders.drain();
         for done in self.agent_jobs.drain() {
             self.apply_agent_done(done, ctx);
         }
@@ -112,7 +113,7 @@ impl Tidewatch {
         self.drive_repo_close(ctx);
         self.drive_dev_leftovers(ctx);
         self.drive_dev_link(ctx);
-        self.drive_views();
+        self.drive_views(ctx);
     }
 
     pub(super) fn read_shortcuts(&mut self, ctx: &egui::Context) -> FrameIntent {

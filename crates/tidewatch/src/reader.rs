@@ -6,6 +6,7 @@ use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+use tidewatch_core::folder_repos;
 use tidewatch_core::link_board::Link as Shared;
 use tidewatch_core::link_scan;
 use tidewatch_core::question::{AskReply, Question};
@@ -168,6 +169,7 @@ pub(crate) struct Reader {
     sent_len: u64,
     sent_looked: f64,
     found_links: Vec<Shared>,
+    edits: Vec<PathBuf>,
 }
 
 impl Reader {
@@ -204,6 +206,7 @@ impl Reader {
             sent_len: 0,
             sent_looked: f64::NEG_INFINITY,
             found_links: Vec::new(),
+            edits: Vec::new(),
         }
     }
 
@@ -438,11 +441,16 @@ impl Reader {
                 .map(|entry| entry.text.clone());
         }
         self.found_links.extend(link_scan::found(&entries, unix_ms_now()));
+        folder_repos::remember_edits(&mut self.edits, folder_repos::edited_paths(&entries));
         self.rows.push_all(entries);
         self.save_claims();
         if let Some(first) = self.rows.iter().next() {
             self.view.heights.keep_from(first.seq);
         }
+    }
+
+    pub(crate) fn edited_files(&self) -> &[PathBuf] {
+        &self.edits
     }
 
     /// The artifact and GitHub links the agent wrote in the entries read since the last call.
@@ -647,5 +655,27 @@ mod tests {
         assert_eq!(links.len(), 1);
         assert_eq!(links[0].url, "https://claude.ai/artifact/abc");
         assert_eq!(reader.take_links().len(), 0, "taken once");
+    }
+
+    #[test]
+    fn the_files_the_agent_edited_are_kept_oldest_to_newest() {
+        use tidewatch_core::transcript::{ToolCall, ToolPhase};
+        let mut reader = Reader::for_agent("claude", None, PathBuf::from("/w"));
+        let call = |name: &str, file: &str| Entry {
+            role: Role::Tool,
+            text: String::new(),
+            tool: Some(ToolCall {
+                name: name.into(),
+                summary: file.into(),
+                id: None,
+                phase: ToolPhase::Call,
+                ask: None,
+            }),
+            ts: None,
+            images: Vec::new(),
+        };
+        reader.add(vec![call("Edit", "/w/a/x.rs"), call("Read", "/w/b/y.rs")]);
+        reader.add(vec![call("Write", "/w/b/z.rs"), call("Edit", "/w/a/x.rs")]);
+        assert_eq!(reader.edited_files(), [PathBuf::from("/w/b/z.rs"), PathBuf::from("/w/a/x.rs")]);
     }
 }
