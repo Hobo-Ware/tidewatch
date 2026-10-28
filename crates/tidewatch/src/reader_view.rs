@@ -3007,6 +3007,50 @@ mod tests {
         assert_eq!(found.iter().filter(|text| *text == "then also this").count(), 1, "{found:?}");
     }
     #[test]
+    fn a_queued_message_with_pictures_shows_once_with_the_reply_after_it() {
+        use tidewatch_core::transcript::{Entry, Role};
+        use tidewatch_core::transcript_image::Picture;
+        let now = now_ms();
+        let mut rows = Rows::default();
+        rows.push(Entry {
+            role: Role::User,
+            text: "start".into(),
+            tool: None,
+            ts: Some(now),
+            images: Vec::new(),
+        });
+        rows.queue_user("why these picks?\n/tmp/a.png\n/tmp/b.png", now);
+        assert!(drawn_texts(&rows, 900.0).iter().any(|text| text == "Queued"));
+        rows.push(Entry {
+            role: Role::User,
+            text: "[Image #3] [Image #4]why these picks?".into(),
+            tool: None,
+            ts: Some(now + 1),
+            images: vec![
+                Picture::new(Some(3), "image/png", "AAAA"),
+                Picture::new(Some(4), "image/png", "BBBB"),
+            ],
+        });
+        rows.push(Entry {
+            role: Role::Assistant,
+            text: "Because of your history".into(),
+            tool: None,
+            ts: Some(now + 2),
+            images: Vec::new(),
+        });
+        let found = drawn_texts(&rows, 900.0);
+        assert!(found.iter().all(|text| text != "Queued"), "{found:?}");
+        assert_eq!(rows.queued_len(now + 3), 0);
+        let said = |wanted: &str| found.iter().position(|text| text.contains(wanted));
+        assert_eq!(
+            found.iter().filter(|text| text.contains("why these picks?")).count(),
+            1,
+            "{found:?}"
+        );
+        assert!(said("why these picks?") < said("Because of your history"), "{found:?}");
+    }
+
+    #[test]
     fn the_jump_pill_gets_a_strip_of_its_own_and_never_covers_a_row() {
         let body = Rect::from_min_size(pos2(0.0, 0.0), vec2(800.0, 400.0));
         assert_eq!(jump_split(body, true), (body, None));

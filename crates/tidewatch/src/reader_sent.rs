@@ -32,6 +32,17 @@ pub(crate) fn same_text(sent: &str, seen: &str) -> bool {
     squash(sent) == squash(seen)
 }
 
+/// Whether `seen` is `sent` after the agent turned its picture paths into `[Image #N]` markers:
+/// the closing path lines of `sent` and the markers of `seen` are set aside, and what is left matches.
+fn same_pictured(sent: &str, seen: &str) -> bool {
+    let unmarked = tidewatch_core::user_markup::without_image_markers(seen);
+    unmarked != seen && same_text(&crate::pictures::split_trailing(sent).0, &unmarked)
+}
+
+fn same_queued(sent: &str, seen: &str) -> bool {
+    same_text(sent, seen) || same_pictured(sent, seen)
+}
+
 /// Like `same_text`, and also true when the agent kept only the start of a long paste or wrote a
 /// `[Pasted text #1 +40 lines]` note for it.
 pub(crate) fn same_paste(sent: &str, seen: &str) -> bool {
@@ -127,7 +138,7 @@ impl Sent {
             let found = lines.iter().find(|(seq, seen, at)| {
                 !taken.contains(seq)
                     && at.is_none_or(|at| at >= queued.at_ms - SLACK_MS)
-                    && same_text(&queued.text, seen)
+                    && same_queued(&queued.text, seen)
             });
             match found {
                 Some((seq, _, _)) => {
@@ -359,5 +370,39 @@ mod tests {
         sent.queue("lost", 0);
         assert_eq!(sent.waiting_len(60_000), 1);
         assert_eq!(sent.waiting_len(QUEUED_EXPIRES_MS), 0);
+    }
+
+    #[test]
+    fn a_queued_message_with_pictures_matches_the_line_that_has_markers_for_them() {
+        let cases = [
+            ("why these picks?\n/tmp/a.png\n/tmp/b.png", "[Image #3] [Image #4]why these picks?"),
+            ("see this\n/tmp/a.png", "see [Image #1] this"),
+            ("/tmp/a.png\n/tmp/b.png", "[Image #1] [Image #2]"),
+            ("see\n'/My Pics/a b.png'", "[Image #7]see"),
+            ("plain words", "plain words"),
+            ("pasted in the terminal", "[Image #2]pasted in the terminal"),
+        ];
+        for (typed, seen) in cases {
+            let mut sent = Sent::default();
+            sent.queue(typed, 1_000);
+            sent.settle(&lines(&[(seen, Some(5_000))]));
+            assert_eq!(sent.waiting_len(6_000), 0, "{typed:?} vs {seen:?}");
+        }
+    }
+
+    #[test]
+    fn a_queued_message_does_not_match_another_one_that_only_has_markers() {
+        let cases = [
+            ("why these picks?\n/tmp/a.png", "[Image #3]something else"),
+            ("why these picks?\n/tmp/a.png", "why these picks?"),
+            ("/tmp/a.png", "[Image #1] and words"),
+            ("look at /tmp/a.png please", "[Image #1]look at please"),
+        ];
+        for (typed, seen) in cases {
+            let mut sent = Sent::default();
+            sent.queue(typed, 1_000);
+            sent.settle(&lines(&[(seen, Some(5_000))]));
+            assert_eq!(sent.waiting_len(6_000), 1, "{typed:?} vs {seen:?}");
+        }
     }
 }
