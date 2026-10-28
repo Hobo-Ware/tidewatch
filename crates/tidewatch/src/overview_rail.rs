@@ -12,14 +12,20 @@ use crate::overview_view::{
 };
 use crate::reader_view::ellipsized;
 use crate::screen_kit::TEXT_TAG;
-use crate::screen_kit::{Size, button_width, heading, primary_button};
+use crate::screen_kit::{
+    Size, TagFill, body, button_width, heading, paint_tag, primary_button, tag_width,
+};
 
 const DAY_H: f32 = 22.0;
 const DAY_GAP: f32 = 6.0;
+const MONTH_H: f32 = 18.0;
+const MONTH_GAP: f32 = 10.0;
 const ITEM_H: f32 = 44.0;
 const POOFED_ROW_H: f32 = 28.0;
 const DOT: f32 = 6.0;
 const TEXT_X: f32 = 16.0;
+const TAG_GAP: f32 = 6.0;
+const ABOUT: &str = "about";
 
 pub(crate) fn show(
     ui: &mut Ui,
@@ -41,8 +47,11 @@ pub(crate) fn show(
 }
 
 fn coming_up(ui: &mut Ui, width: f32, days: &[Day]) -> Option<usize> {
-    let body_h: f32 =
-        days.iter().map(|day| DAY_H + day.items.len() as f32 * ITEM_H + DAY_GAP).sum();
+    let body_h: f32 = days
+        .iter()
+        .enumerate()
+        .map(|(at, day)| month_h(at, day) + DAY_H + day.items.len() as f32 * ITEM_H + DAY_GAP)
+        .sum();
     let height = SECTION_PAD * 2.0 + SECTION_HEAD_H + HEAD_GAP + body_h - DAY_GAP;
     let (rect, _) = ui.allocate_exact_size(vec2(width, height), Sense::hover());
     let painter = ui.painter_at(rect);
@@ -55,7 +64,14 @@ fn coming_up(ui: &mut Ui, width: f32, days: &[Day]) -> Option<usize> {
     );
     let mut y = rect.top() + SECTION_PAD + SECTION_HEAD_H + HEAD_GAP;
     let mut clicked = None;
-    for day in days {
+    for (at, day) in days.iter().enumerate() {
+        if let (true, Some(month)) = (day.starts_month, &day.month) {
+            if at > 0 {
+                y += MONTH_GAP;
+            }
+            month_header(&painter, rect, y, month);
+            y += MONTH_H;
+        }
         let ink = if day.today { brand::TEAL_TEXT } else { brand::MUTED };
         painter.text(
             pos2(rect.left() + SECTION_PAD, y + DAY_H / 2.0),
@@ -80,6 +96,22 @@ fn coming_up(ui: &mut Ui, width: f32, days: &[Day]) -> Option<usize> {
     clicked
 }
 
+fn month_h(at: usize, day: &Day) -> f32 {
+    if day.starts_month { MONTH_H + if at > 0 { MONTH_GAP } else { 0.0 } } else { 0.0 }
+}
+
+fn month_header(painter: &Painter, rect: Rect, y: f32, month: &str) {
+    let left = rect.left() + SECTION_PAD;
+    let mid = y + MONTH_H / 2.0;
+    let name =
+        painter.text(pos2(left, mid), Align2::LEFT_CENTER, month, body(TEXT_TAG), brand::MUTED);
+    painter.hline(
+        (name.right() + 8.0)..=(rect.right() - SECTION_PAD),
+        mid,
+        egui::Stroke::new(1.0, brand::ITEM_LINE),
+    );
+}
+
 fn item_row(ui: &mut Ui, painter: &Painter, rect: Rect, item: &Item) -> bool {
     let resp = ui.interact(rect, ui.id().with(("agenda-row", item.row)), Sense::click());
     if resp.hovered() {
@@ -101,8 +133,20 @@ fn item_row(ui: &mut Ui, painter: &Painter, rect: Rect, item: &Item) -> bool {
         room -= w + 8.0;
     }
     let ink = if parked { brand::MUTED } else { brand::TEXT };
-    let title = ellipsized(painter, &item.what, FontId::proportional(13.0), ink, room);
+    let tag = item.about.then(|| tag_width(painter, ABOUT));
+    let title_room = tag.map_or(room, |tag| room - tag - TAG_GAP);
+    let title = ellipsized(painter, &item.what, FontId::proportional(13.0), ink, title_room);
+    let title_w = title.size().x;
     painter.galley(pos2(text_x, rect.top() + 6.0), title, ink);
+    if tag.is_some() {
+        paint_tag(
+            painter,
+            (text_x + title_w + TAG_GAP, rect.top() + 14.0),
+            ABOUT,
+            brand::MUTED,
+            TagFill::Line(brand::ITEM_LINE),
+        );
+    }
     let mid = rect.top() + 29.0;
     let right = repo_label(painter, text_x, mid, &item.place, room * 0.4);
     let mut tail = format!("\u{b7} {}", item.tab);
