@@ -101,6 +101,9 @@ pub struct SavedAgentTab {
     pub remote: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub meeseeks: Option<Box<Meeseeks>>,
+    /// The repo the owner picked in the panel of a tab that runs in a folder holding several.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub folder_repo: Option<PathBuf>,
 }
 
 impl SavedTab {
@@ -244,6 +247,7 @@ mod tests {
             crashed: false,
             remote: false,
             meeseeks: None,
+            folder_repo: None,
         })
     }
 
@@ -374,6 +378,7 @@ mod tests {
                     crashed: false,
                     remote: false,
                     meeseeks: None,
+                    folder_repo: None,
                 }),
             ],
             parked: Vec::new(),
@@ -421,6 +426,28 @@ mod tests {
         let SavedTab::Agent(tab) = &loaded.windows[0].tabs[0] else { panic!("an agent tab") };
         assert!(!tab.remote);
         assert!(!toml::to_string(&loaded).unwrap().contains("remote"));
+    }
+
+    #[test]
+    fn the_repo_picked_in_a_folder_tab_is_remembered_and_an_old_file_loads_without_one() {
+        let home = tempfile::tempdir().unwrap();
+        let paths = TidewatchPaths::new(home.path());
+        let mut picked = window();
+        if let SavedTab::Agent(tab) = &mut picked.tabs[2] {
+            tab.folder_repo = Some(PathBuf::from("/ws/api"));
+        }
+        let session = Session { windows: vec![picked] };
+        session.save(&paths).unwrap();
+        let text = std::fs::read_to_string(paths.session_file()).unwrap();
+        assert_eq!(text.matches("folder_repo = \"/ws/api\"").count(), 1, "{text}");
+        assert_eq!(Session::load(&paths), session);
+
+        let old = "[[window]]\ndir = \"/a\"\n[[window.tab]]\nkind = \"agent\"\ndir = \"/a\"\n\
+                   agent = \"claude\"\nprofile = \"builder\"\nlevel = \"edits\"\n";
+        let loaded: Session = toml::from_str(old).unwrap();
+        let SavedTab::Agent(tab) = &loaded.windows[0].tabs[0] else { panic!("an agent tab") };
+        assert_eq!(tab.folder_repo, None);
+        assert!(!toml::to_string(&loaded).unwrap().contains("folder_repo"));
     }
 
     #[test]

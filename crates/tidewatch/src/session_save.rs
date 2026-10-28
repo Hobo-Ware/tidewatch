@@ -60,6 +60,7 @@ struct AgentRef<'a> {
     crashed: bool,
     remote: bool,
     meeseeks: Option<&'a Meeseeks>,
+    folder_repo: Option<&'a Path>,
 }
 
 impl TabRef<'_> {
@@ -81,6 +82,7 @@ impl TabRef<'_> {
                 crashed: a.crashed,
                 remote: a.remote,
                 meeseeks: a.meeseeks.cloned().map(Box::new),
+                folder_repo: a.folder_repo.map(Path::to_path_buf),
             }),
         }
     }
@@ -108,6 +110,7 @@ fn agent_ref<'a>(
         crashed: agent.run.exited_abnormally(),
         remote,
         meeseeks: agent.meeseeks.as_ref(),
+        folder_repo: agent.folder_pick.as_deref(),
     }))
 }
 
@@ -328,8 +331,27 @@ mod tests {
                     crashed: false,
                     remote: false,
                     meeseeks: None,
+                    folder_repo: None,
                 }),
             ]
+        );
+    }
+
+    #[test]
+    fn the_repo_picked_in_a_folder_tab_is_saved_and_moves_the_signature() {
+        let mut picked = agent(None);
+        picked.launched.as_mut().unwrap().dir = Some(PathBuf::from("/ws"));
+        let mut tabs = tabs();
+        tabs.push("builder".into(), pane(Body::Shell(1), None, Some(picked)));
+        let before = signature(&view(false), &tabs);
+        tabs.get_mut(1).unwrap().pane.agent.as_mut().unwrap().folder_pick =
+            Some(PathBuf::from("/ws/api"));
+        assert_ne!(signature(&view(false), &tabs), before);
+        let saved = saved_window(&view(false), &tabs);
+        let SavedTab::Agent(tab) = &saved.tabs[1] else { panic!("an agent tab") };
+        assert_eq!(
+            (tab.dir.as_path(), tab.folder_repo.as_deref()),
+            (Path::new("/ws"), Some(Path::new("/ws/api")))
         );
     }
 

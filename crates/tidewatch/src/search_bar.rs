@@ -61,29 +61,23 @@ pub(crate) fn show(ui: &mut Ui, rect: Rect, view: &mut TabView) {
 }
 
 fn chip_rect(ui: &Ui, field: Rect) -> Rect {
-    let widest = SCOPES
-        .iter()
-        .map(|label| {
-            ui.painter().layout_no_wrap((*label).to_owned(), body(CHIP_FONT), brand::MUTED)
-        })
-        .map(|galley| galley.size().x)
-        .fold(0.0, f32::max);
-    let width = CHIP_PAD + widest + CHEVRON_GAP + CHEVRON_W + CHIP_PAD;
+    let width = SCOPES.iter().map(|label| chip_width(ui, label)).fold(0.0, f32::max);
     Rect::from_center_size(
         pos2(field.right() - CHIP_INSET - width / 2.0, field.center().y),
         vec2(width, CHIP_H),
     )
 }
 
-fn show_scope(ui: &mut Ui, chip: Rect, view: &mut TabView) {
-    let response = ui
-        .interact(chip, ui.id().with("history-scope"), Sense::click())
-        .on_hover_cursor(egui::CursorIcon::PointingHand);
-    let open = egui::Popup::is_id_open(ui.ctx(), egui::Popup::default_response_id(&response));
-    let lit = response.hovered() || open;
+pub(crate) const CHIP_HEIGHT: f32 = CHIP_H;
+
+pub(crate) fn chip_width(ui: &Ui, label: &str) -> f32 {
+    let galley = ui.painter().layout_no_wrap(label.to_owned(), body(CHIP_FONT), brand::MUTED);
+    CHIP_PAD + galley.size().x + CHEVRON_GAP + CHEVRON_W + CHIP_PAD
+}
+
+pub(crate) fn paint_chip(ui: &Ui, chip: Rect, label: &str, lit: bool) {
     let (ink, line) =
         if lit { (brand::TEXT, brand::FIELD_LINE) } else { (brand::MUTED, brand::SEGMENT_LINE) };
-    let active = usize::from(view.scope == Scope::Whole);
     let painter = ui.painter();
     painter.rect_stroke(
         chip,
@@ -94,7 +88,7 @@ fn show_scope(ui: &mut Ui, chip: Rect, view: &mut TabView) {
     painter.text(
         pos2(chip.left() + CHIP_PAD, chip.center().y),
         Align2::LEFT_CENTER,
-        SCOPES[active],
+        label,
         body(CHIP_FONT),
         ink,
     );
@@ -104,6 +98,15 @@ fn show_scope(ui: &mut Ui, chip: Rect, view: &mut TabView) {
     let stroke = Stroke::new(1.3, ink);
     painter.line_segment([tip, tip + wing], stroke);
     painter.line_segment([tip, tip + vec2(-wing.x, wing.y)], stroke);
+}
+
+fn show_scope(ui: &mut Ui, chip: Rect, view: &mut TabView) {
+    let response = ui
+        .interact(chip, ui.id().with("history-scope"), Sense::click())
+        .on_hover_cursor(egui::CursorIcon::PointingHand);
+    let open = egui::Popup::is_id_open(ui.ctx(), egui::Popup::default_response_id(&response));
+    let active = usize::from(view.scope == Scope::Whole);
+    paint_chip(ui, chip, SCOPES[active], response.hovered() || open);
     let mut picked = None;
     egui::Popup::menu(&response).show(|ui| {
         ui.set_width(MENU_W);

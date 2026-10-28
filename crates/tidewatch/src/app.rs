@@ -86,6 +86,7 @@ use crate::done_check_glue;
 use crate::due;
 use crate::emoji_motion;
 use crate::flow::Flow;
+use crate::folder_panel::Folders;
 use crate::handoff;
 use crate::image_paste as picture_paste;
 use crate::job_glue;
@@ -167,6 +168,7 @@ pub(crate) struct Tidewatch {
     screenshot: Option<DevScreenshot>,
     views: HashMap<u64, TabView>,
     pane_jobs: Jobs<pane_jobs::Done>,
+    folders: Folders,
     workspace_jobs: Jobs<Workspace>,
     group_merge: merge_groups::Host,
     stdusk_jobs: Jobs<stdusk::Done>,
@@ -403,6 +405,7 @@ impl Tidewatch {
             screenshot,
             views: HashMap::new(),
             pane_jobs: Jobs::new(),
+            folders: Folders::new(),
             workspace_jobs: Jobs::new(),
             group_merge: merge_groups::Host::new(),
             stdusk_jobs: Jobs::new(),

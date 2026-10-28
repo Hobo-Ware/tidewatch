@@ -668,6 +668,7 @@ mod tests {
             crashed: false,
             remote: false,
             meeseeks: None,
+            folder_repo: None,
         })
     }
 
@@ -888,6 +889,7 @@ mod tests {
             crashed: false,
             remote: false,
             meeseeks: None,
+            folder_repo: None,
         })
     }
 
@@ -1051,6 +1053,7 @@ mod tests {
                 crashed: false,
                 remote: false,
                 meeseeks: None,
+                folder_repo: None,
             });
             let plan = plan_with(&window(vec![tab]), &everything_installed(), &disk_for_all());
             assert_eq!(plan.tabs[0].action, TabAction::ShellInstead(Reason::WorkflowRetired));
@@ -1074,6 +1077,7 @@ mod tests {
             crashed: false,
             remote: false,
             meeseeks: None,
+            folder_repo: None,
         });
         let plan = plan_with(&window(vec![tab]), &everything_installed(), &disk_for_all());
         assert_eq!(plan.tabs.len(), 0);
@@ -1160,6 +1164,7 @@ mod tests {
                 crashed: false,
                 remote: false,
                 meeseeks: None,
+                folder_repo: None,
             })
         };
         let other = SavedWindow {
