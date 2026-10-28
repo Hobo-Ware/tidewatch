@@ -5,6 +5,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use tidewatch_core::paths::TidewatchPaths;
+use tidewatch_core::prefs::StartFrom;
 use tidewatch_core::start_base;
 use tidewatch_core::test_command;
 use tidewatch_core::worktree::{local_branches, taken_names};
@@ -62,17 +63,40 @@ pub(crate) struct RepoFacts {
 }
 
 impl RepoFacts {
-    fn look(repo: &Path, paths: Option<&TidewatchPaths>) -> Self {
+    /// Only what picks the start branch of a new worktree.
+    pub(crate) fn start_facts(repo: &Path) -> Self {
         let branches = local_branches(repo);
-        let tests = test_command::plan(repo);
         Self {
             checked_out: checked_out(repo),
             default_branch: pick_default_branch(origin_head(repo).as_deref(), &branches),
             remote_default: start_base::remote_default(repo),
             branches,
+            ..Self::default()
+        }
+    }
+
+    fn look(repo: &Path, paths: Option<&TidewatchPaths>) -> Self {
+        let tests = test_command::plan(repo);
+        Self {
             taken: paths.map(|paths| taken_names(paths, repo)).unwrap_or_default(),
             test_command: tests.as_ref().map(|plan| plan.command.clone()),
             test_why: tests.map(|plan| plan.why),
+            ..Self::start_facts(repo)
+        }
+    }
+
+    /// The branch a new worktree starts from when nobody picked one: the remote's default branch as
+    /// `origin/main` (fetched first by the job), else the local default branch, else the checked-out
+    /// one; with Settings on Current branch, the checked-out one.
+    pub(crate) fn default_base(&self, start_from: StartFrom) -> Option<String> {
+        match start_from {
+            StartFrom::Current => self.checked_out.clone(),
+            StartFrom::DefaultBranch => self
+                .remote_default
+                .as_deref()
+                .map(start_base::remote_ref)
+                .or_else(|| self.default_branch.clone())
+                .or_else(|| self.checked_out.clone()),
         }
     }
 }
@@ -267,5 +291,30 @@ mod tests {
         git(&alone, &commit);
         assert_eq!(origin_head(&alone), None);
         assert_eq!(RepoFacts::look(&alone, None).default_branch.as_deref(), Some("master"));
+    }
+
+    #[test]
+    fn a_new_worktree_starts_from_the_remote_default_then_the_local_default_then_the_checked_out_branch()
+     {
+        let facts = |remote: Option<&str>, local: Option<&str>, current: Option<&str>| RepoFacts {
+            remote_default: remote.map(str::to_owned),
+            default_branch: local.map(str::to_owned),
+            checked_out: current.map(str::to_owned),
+            ..RepoFacts::default()
+        };
+        let cases = [
+            (
+                facts(Some("main"), Some("main"), Some("fix")),
+                StartFrom::DefaultBranch,
+                Some("origin/main"),
+            ),
+            (facts(None, Some("trunk"), Some("fix")), StartFrom::DefaultBranch, Some("trunk")),
+            (facts(None, None, Some("fix")), StartFrom::DefaultBranch, Some("fix")),
+            (facts(Some("main"), Some("main"), Some("fix")), StartFrom::Current, Some("fix")),
+            (facts(None, None, None), StartFrom::DefaultBranch, None),
+        ];
+        for (facts, start_from, want) in cases {
+            assert_eq!(facts.default_base(start_from).as_deref(), want, "{facts:?} {start_from:?}");
+        }
     }
 }

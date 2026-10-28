@@ -26,7 +26,7 @@ fn facts(running: Running) -> Facts {
             card("reviewer", "Reviewer", "claude", Level::Plan),
             card("cdx", "Codex builder", "codex", Level::Edits),
         ],
-        follows: None,
+        goes: Goes::Stays,
         busy: false,
         meeseeks: false,
         pinned: false,
@@ -210,7 +210,7 @@ fn another_cli_starts_a_new_conversation_and_says_so() {
 fn the_sentence_names_where_the_tab_goes_and_what_else_changes() {
     let p = pick(Kind::Agent, "builder", Level::Edits);
     let f = Facts {
-        follows: Some("~/.tidewatch/web/upbeat-lantern".into()),
+        goes: Goes::Follows("~/.tidewatch/web/upbeat-lantern".into()),
         busy: true,
         meeseeks: true,
         pinned: true,
@@ -338,4 +338,69 @@ fn a_reviewer_the_user_made_for_a_cli_comes_before_that_clis_other_profiles() {
         named("builder", "Builder", "claude"),
     ];
     assert_eq!(ids(&ordered_cards(&cards, Some("claude"))), ["builder", "zeta-reviewer", "aaa"]);
+}
+
+fn new_branch(left: Option<(usize, &str)>) -> Goes {
+    Goes::NewBranch {
+        repo: "tidewatch".into(),
+        branch: Some("calm-comet".into()),
+        left: left.map(|(count, folder)| (count, folder.to_owned())),
+    }
+}
+
+#[test]
+fn the_sentence_names_the_new_branch_and_says_what_stays_behind_only_when_something_does() {
+    let p = pick(Kind::Agent, "builder", Level::Yolo);
+    let on = "on a new branch agent/calm-comet in tidewatch.";
+    let tab = |goes| Facts { in_worktree: false, goes, ..facts(claude(false)) };
+    assert_eq!(
+        sentence(&tab(new_branch(None)), &p),
+        format!("Claude stops, then the same conversation resumes as Builder \u{b7} YOLO {on}")
+    );
+    let working = Facts { goes: new_branch(None), ..facts(claude(true)) };
+    assert!(sentence(&working, &p).contains(&format!("YOLO {on}")));
+    assert_eq!(
+        sentence(&tab(new_branch(Some((3, "~/Git/ws/repo-b")))), &p),
+        format!(
+            "Claude stops, then the same conversation resumes as Builder \u{b7} YOLO {on} 3 uncommitted files stay in ~/Git/ws/repo-b."
+        )
+    );
+    assert!(
+        sentence(&tab(new_branch(Some((1, "~/ws")))), &p)
+            .ends_with("1 uncommitted file stays in ~/ws.")
+    );
+    assert!(!sentence(&tab(new_branch(None)), &p).contains("uncommitted"));
+    let stored = Facts {
+        stored: Some(("claude".into(), "Claude".into())),
+        goes: new_branch(None),
+        ..facts(Running::No)
+    };
+    assert!(
+        sentence(&stored, &p)
+            .starts_with("The conversation Claude ended in this tab resumes as Builder")
+    );
+    assert!(sentence(&stored, &p).contains(on));
+    let fresh = Facts { goes: new_branch(None), ..facts(Running::No) };
+    assert!(sentence(&fresh, &p).contains(&format!("YOLO {on}")));
+}
+
+#[test]
+fn the_sentence_says_nothing_of_a_branch_for_a_shell_or_an_unnamed_one_and_the_main_tab_keeps_its_shell()
+ {
+    let shell = pick(Kind::Shell, "builder", Level::Yolo);
+    let f = Facts { goes: new_branch(None), ..facts(claude(false)) };
+    assert!(!sentence(&f, &shell).contains("new branch"));
+    let p = pick(Kind::Agent, "builder", Level::Yolo);
+    let unnamed = Facts {
+        goes: Goes::NewBranch { repo: "tidewatch".into(), branch: None, left: None },
+        pinned: true,
+        ..facts(claude(false))
+    };
+    let text = sentence(&unnamed, &p);
+    assert!(text.contains("on a new branch agent/ in tidewatch."), "{text}");
+    assert!(
+        text.contains("The agent opens in a new tab and the main tab keeps its shell."),
+        "{text}"
+    );
+    assert!(!text.contains("stays pinned"), "{text}");
 }

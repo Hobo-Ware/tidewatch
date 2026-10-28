@@ -7,7 +7,7 @@ use tidewatch_core::agents::{Agent, Level, Remote};
 use tidewatch_core::branch_name::{self, Problem};
 use tidewatch_core::meeseeks::{Criteria, tasks_of};
 use tidewatch_core::names;
-use tidewatch_core::prefs::{NewTabPrefs, StartFrom};
+use tidewatch_core::prefs::NewTabPrefs;
 use tidewatch_core::profiles::Profile;
 use tidewatch_core::start_base;
 
@@ -571,15 +571,7 @@ impl NewTab {
     pub(crate) fn base(&self, facts: Option<&RepoFacts>) -> Option<String> {
         match &self.base {
             Base::Picked(branch) => Some(branch.clone()),
-            Base::Default => facts.and_then(|facts| match self.defaults.start_from() {
-                StartFrom::Current => facts.checked_out.clone(),
-                StartFrom::DefaultBranch => facts
-                    .remote_default
-                    .as_deref()
-                    .map(start_base::remote_ref)
-                    .or_else(|| facts.default_branch.clone())
-                    .or_else(|| facts.checked_out.clone()),
-            }),
+            Base::Default => facts.and_then(|facts| facts.default_base(self.defaults.start_from())),
         }
     }
 
