@@ -41,6 +41,7 @@ use crate::user_markup::{self, Record};
 const SUMMARY_MAX_CHARS: usize = 120;
 const TOOL_RESULT_MAX_CHARS: usize = 4000;
 const HEAD_BYTES: usize = 64;
+const FOLLOW_CHECK_BYTES: u64 = 256;
 const PARTIAL_MAX_BYTES: usize = 16 << 20;
 const CLAUDE_ASK_TOOL: &str = "AskUserQuestion";
 const COMPACTED_TEXT: &str = "Conversation compacted";
@@ -731,6 +732,25 @@ impl Tail {
         self.take_lines(fresh)
     }
 
+    /// Moves to `path`, a copy that goes on from what was read: false, and nothing moved, when it does not.
+    pub fn follow(&mut self, path: impl Into<PathBuf>) -> bool {
+        let path = path.into();
+        let Ok(mut next) = std::fs::File::open(&path) else { return false };
+        let Ok(meta) = next.metadata() else { return false };
+        let from = self.offset.saturating_sub(FOLLOW_CHECK_BYTES);
+        let before = std::fs::File::open(&self.path)
+            .ok()
+            .and_then(|mut old| read_span(&mut old, from, self.offset));
+        let same_start = meta.len() >= self.offset
+            && head_matches(&mut next, &self.head)
+            && before.is_none_or(|span| Some(span) == read_span(&mut next, from, self.offset));
+        if same_start {
+            self.identity = file_identity(&meta);
+            self.path = path;
+        }
+        same_start
+    }
+
     fn restart(&mut self) {
         self.parser = Parser::new(self.parser.source);
         self.offset = 0;
@@ -775,6 +795,13 @@ fn read_prefix(file: &mut std::fs::File, len: usize) -> Vec<u8> {
         return Vec::new();
     }
     buf
+}
+
+fn read_span(file: &mut std::fs::File, from: u64, to: u64) -> Option<Vec<u8>> {
+    let mut buf = vec![0; usize::try_from(to - from).ok()?];
+    file.seek(SeekFrom::Start(from)).ok()?;
+    file.read_exact(&mut buf).ok()?;
+    Some(buf)
 }
 
 fn head_matches(file: &mut std::fs::File, head: &[u8]) -> bool {
@@ -1342,6 +1369,42 @@ mod tests {
         write_file(&other, &(user_line("bbb") + &user_line("ccc") + &user_line("ddd")));
         std::fs::rename(&other, &file).unwrap();
         assert_eq!(texts(&tail.poll()), ["bbb", "ccc", "ddd"]);
+    }
+
+    #[test]
+    fn tail_follows_a_longer_copy_without_reading_the_start_again() {
+        let dir = tempfile::tempdir().unwrap();
+        let stale = dir.path().join("stale.jsonl");
+        let live = dir.path().join("live.jsonl");
+        write_file(&stale, &(user_line("one") + &user_line("two")));
+        let mut tail = Tail::new(Source::Claude, &stale);
+        assert_eq!(texts(&tail.poll()), ["one", "two"]);
+        write_file(&live, &(user_line("one") + &user_line("two") + &user_line("three")));
+        assert!(tail.follow(&live));
+        assert_eq!(tail.path(), live);
+        assert_eq!(texts(&tail.poll()), ["three"]);
+        append(&live, user_line("four").as_bytes());
+        assert_eq!(texts(&tail.poll()), ["four"]);
+    }
+
+    #[test]
+    fn tail_does_not_follow_a_file_that_is_not_a_continuation() {
+        let dir = tempfile::tempdir().unwrap();
+        let stale = dir.path().join("stale.jsonl");
+        write_file(&stale, &(user_line("one") + &user_line("two")));
+        let mut tail = Tail::new(Source::Claude, &stale);
+        assert_eq!(tail.poll().len(), 2);
+        let shorter = dir.path().join("shorter.jsonl");
+        write_file(&shorter, &user_line("one"));
+        let other = dir.path().join("other.jsonl");
+        write_file(&other, &(user_line("uno") + &user_line("dos") + &user_line("tres")));
+        let diverged = dir.path().join("diverged.jsonl");
+        write_file(&diverged, &(user_line("one") + &user_line("TWO") + &user_line("three")));
+        let missing = dir.path().join("missing.jsonl");
+        for file in [shorter, other, diverged, missing] {
+            assert!(!tail.follow(&file), "{file:?}");
+            assert_eq!(tail.path(), stale);
+        }
     }
 
     #[test]
