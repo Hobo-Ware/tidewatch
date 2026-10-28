@@ -1,9 +1,9 @@
 //! The repo's test command, which the Tests, TestFails, TestPasses and SameBehavior gates run.
 //!
-//! `<repo>/.tidewatch.toml` with `test = "..."` wins (an empty string switches the gates off for
-//! that repo); otherwise the first marker file found picks a conventional command. Only the repo
-//! root is looked at, so a monorepo gets its root's toolchain. Every pick carries the file that
-//! decided it ([`Detected::why`]) so the UI can show a wrong guess.
+//! `.tidewatch.toml` with `test = "..."` wins (an empty string switches the gates off for that
+//! repo); otherwise the first marker file found picks a conventional command. Only the root is
+//! looked at, so a monorepo gets its root's toolchain. Every pick carries the file that decided it
+//! ([`Detected::why`]) so the UI can show a wrong guess. A tab reads its own worktree ([`resolve`]).
 //! `test_timeout_secs = N` in the same file changes how long a run may take (default 10 minutes).
 //! `checklist = "<path>"` points at the repo's own checklist template for the progress ledger.
 
@@ -42,6 +42,18 @@ impl Detected {
     pub fn describe(&self) -> String {
         format!("{} ({})", self.command, self.why)
     }
+
+    fn program(&self) -> &str {
+        self.command.split_whitespace().next().unwrap_or_default()
+    }
+}
+
+/// What a tab's tests gate does: run a command, skip with a reason, or has nothing to run.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Gate {
+    Run(Detected),
+    Skip(String),
+    None,
 }
 
 /// What a tooltip says when no command was found.
@@ -88,7 +100,13 @@ fn configured(repo: &Path) -> Configured {
     }
 }
 
-/// The command to run in a worktree of `repo` and why, or `None` when there is none to run.
+/// The folder whose `.tidewatch.toml` applies to `worktree`: its own, else the main checkout's.
+fn config_dir<'a>(worktree: &'a Path, repo: &'a Path) -> &'a Path {
+    if worktree.join(REPO_CONFIG).is_file() { worktree } else { repo }
+}
+
+/// The command to run in `repo` and why, or `None` when there is none to run. Looks only at `repo`
+/// itself: the tests gate uses [`resolve`] with the tab's worktree.
 #[must_use]
 pub fn plan(repo: &Path) -> Option<Detected> {
     match configured(repo) {
@@ -98,10 +116,63 @@ pub fn plan(repo: &Path) -> Option<Detected> {
     }
 }
 
-/// The command to run in a worktree of `repo`, or `None` when there is none to run.
+/// The command to run in `repo`, or `None` when there is none to run.
 #[must_use]
 pub fn test_command(repo: &Path) -> Option<String> {
     plan(repo).map(|plan| plan.command)
+}
+
+/// What the tests gate does in `worktree` (a tab's own checkout of `repo`): the worktree's
+/// `.tidewatch.toml`, else `repo`'s, else the first detected command whose program is on `PATH`.
+#[must_use]
+pub fn resolve(worktree: &Path, repo: &Path) -> Gate {
+    resolve_with(worktree, repo, program_on_path)
+}
+
+fn resolve_with(worktree: &Path, repo: &Path, available: impl Fn(&str) -> bool) -> Gate {
+    match configured(config_dir(worktree, repo)) {
+        Configured::Command(command) => Gate::Run(Detected::new(command, REPO_CONFIG)),
+        Configured::Disabled => Gate::None,
+        Configured::Absent => {
+            let found = candidates(worktree);
+            let mut missing: Vec<&str> = Vec::new();
+            for detected in &found {
+                if available(detected.program()) {
+                    return Gate::Run(detected.clone());
+                }
+                if !missing.contains(&detected.program()) {
+                    missing.push(detected.program());
+                }
+            }
+            if missing.is_empty() {
+                Gate::None
+            } else {
+                Gate::Skip(format!(
+                    "skipped: no runnable test command ({} not installed)",
+                    missing.join(", ")
+                ))
+            }
+        }
+    }
+}
+
+fn program_on_path(program: &str) -> bool {
+    use std::os::unix::fs::PermissionsExt;
+    let runnable = |file: &Path| {
+        file.metadata().is_ok_and(|meta| meta.is_file() && meta.permissions().mode() & 0o111 != 0)
+    };
+    if program.contains('/') {
+        return runnable(Path::new(program));
+    }
+    std::env::var_os("PATH")
+        .is_some_and(|path| std::env::split_paths(&path).any(|dir| runnable(&dir.join(program))))
+}
+
+/// How long a test run in `worktree` may take, read from the same `.tidewatch.toml` as
+/// [`resolve`]: `test_timeout_secs` when it is a positive number, else [`DEFAULT_TIMEOUT`].
+#[must_use]
+pub fn timeout_in(worktree: &Path, repo: &Path) -> Duration {
+    timeout(config_dir(worktree, repo))
 }
 
 /// How long a test run in `repo` may take: `test_timeout_secs` from `.tidewatch.toml` when it is a
@@ -314,15 +385,24 @@ fn deno_detected(config: &DenoConfig) -> Detected {
     }
 }
 
-fn js_detected(dir: &Path) -> Option<Detected> {
-    match (read_package(dir), deno_config(dir)) {
-        (Some(package), Some(deno)) if deno.has_test_task && !package.has_test_script => {
-            Some(deno_detected(&deno))
-        }
-        (Some(package), _) => node_detected(dir, &package),
-        (None, Some(deno)) => Some(deno_detected(&deno)),
-        (None, None) => None,
+fn js_candidates(dir: &Path) -> Vec<Detected> {
+    let package = read_package(dir);
+    let deno = deno_config(dir);
+    let mut found = Vec::new();
+    if let Some(package) = &package {
+        found.extend(node_detected(dir, package));
+    } else if deno.is_some()
+        && let Some((file, js)) = Js::LOCKFILES.iter().find(|(file, _)| has(dir, file))
+    {
+        let command = if *js == Js::Bun { "bun test" } else { js.script_command() };
+        found.push(Detected::new(command, *file));
     }
+    if let Some(deno) = &deno
+        && package.as_ref().is_none_or(|_| deno.has_test_task)
+    {
+        found.push(deno_detected(deno));
+    }
+    found
 }
 
 fn makefile_has_test_target(dir: &Path) -> bool {
@@ -331,9 +411,10 @@ fn makefile_has_test_target(dir: &Path) -> bool {
 }
 
 /// Picks a conventional command from the files in `dir`. Cargo, then JavaScript (the package
-/// manager's lockfile or `packageManager` field picks npm, pnpm, yarn or bun; Deno only without a
-/// `package.json`, or when `deno.json` has the only `test` task), Go, Python, Ruby, Elixir, then a
-/// Makefile `test` target, in that order.
+/// manager's lockfile or `packageManager` field picks npm, pnpm, yarn or bun before Deno is
+/// considered; Deno only without a `package.json`, or when `deno.json` has the `test` task and
+/// the package has no test script), Go, Python, Ruby, Elixir, then a Makefile `test` target, in
+/// that order.
 #[must_use]
 pub fn detect(dir: &Path) -> Option<String> {
     detect_with_reason(dir).map(|detected| detected.command)
@@ -342,30 +423,39 @@ pub fn detect(dir: &Path) -> Option<String> {
 /// [`detect`], with the file that decided it.
 #[must_use]
 pub fn detect_with_reason(dir: &Path) -> Option<Detected> {
-    let (command, why) = if has(dir, "Cargo.toml") {
-        ("cargo test", "Cargo.toml")
-    } else if let Some(js) = js_detected(dir) {
-        return Some(js);
-    } else if has(dir, "go.mod") {
-        ("go test ./...", "go.mod")
-    } else if has(dir, "pytest.ini") {
-        ("pytest", "pytest.ini")
+    candidates(dir).into_iter().next()
+}
+
+/// Every conventional command whose markers are in `dir`, best first.
+#[must_use]
+pub fn candidates(dir: &Path) -> Vec<Detected> {
+    let mut found = Vec::new();
+    if has(dir, "Cargo.toml") {
+        found.push(Detected::new("cargo test", "Cargo.toml"));
+    }
+    found.extend(js_candidates(dir));
+    if has(dir, "go.mod") {
+        found.push(Detected::new("go test ./...", "go.mod"));
+    }
+    if has(dir, "pytest.ini") {
+        found.push(Detected::new("pytest", "pytest.ini"));
     } else if file_contains(dir, "pyproject.toml", "pytest") {
-        ("pytest", "pyproject.toml")
+        found.push(Detected::new("pytest", "pyproject.toml"));
     } else if file_contains(dir, "setup.cfg", "[tool:pytest]") {
-        ("pytest", "setup.cfg")
-    } else if has(dir, "Gemfile") && (has(dir, "spec") || has(dir, ".rspec")) {
-        ("bundle exec rspec", "Gemfile, spec")
+        found.push(Detected::new("pytest", "setup.cfg"));
+    }
+    if has(dir, "Gemfile") && (has(dir, "spec") || has(dir, ".rspec")) {
+        found.push(Detected::new("bundle exec rspec", "Gemfile, spec"));
     } else if has(dir, "Gemfile") && has(dir, "test") {
-        ("bundle exec rake test", "Gemfile, test")
-    } else if has(dir, "mix.exs") {
-        ("mix test", "mix.exs")
-    } else if makefile_has_test_target(dir) {
-        ("make test", "Makefile")
-    } else {
-        return None;
-    };
-    Some(Detected::new(command, why))
+        found.push(Detected::new("bundle exec rake test", "Gemfile, test"));
+    }
+    if has(dir, "mix.exs") {
+        found.push(Detected::new("mix test", "mix.exs"));
+    }
+    if makefile_has_test_target(dir) {
+        found.push(Detected::new("make test", "Makefile"));
+    }
+    found
 }
 
 /// What a finished test command left behind.
@@ -718,6 +808,202 @@ mod tests {
             let got = found.as_ref().map(|d| (d.command.as_str(), d.why.as_str()));
             assert_eq!(got, *expected, "{name}");
         }
+    }
+
+    #[test]
+    fn a_lockfile_decides_the_javascript_runtime_before_deno_json() {
+        const TEST: &str = r#"{"scripts":{"test":"vitest"}}"#;
+        const DENO_TASK: &str = r#"{"tasks":{"test":"deno test -A"}}"#;
+        let cases: &[Case] = &[
+            (
+                "bun.lock with deno.json",
+                &[("package.json", TEST), ("bun.lock", ""), ("deno.json", DENO_TASK)],
+                Some(("bun run test", "bun.lock")),
+            ),
+            (
+                "bun.lockb with deno.jsonc",
+                &[("package.json", TEST), ("bun.lockb", ""), ("deno.jsonc", DENO_TASK)],
+                Some(("bun run test", "bun.lockb")),
+            ),
+            (
+                "pnpm-lock with deno.json",
+                &[("package.json", TEST), ("pnpm-lock.yaml", ""), ("deno.json", DENO_TASK)],
+                Some(("pnpm test", "pnpm-lock.yaml")),
+            ),
+            (
+                "yarn.lock with deno.json",
+                &[("package.json", TEST), ("yarn.lock", ""), ("deno.json", DENO_TASK)],
+                Some(("yarn test", "yarn.lock")),
+            ),
+            (
+                "package-lock with deno.json",
+                &[("package.json", TEST), ("package-lock.json", ""), ("deno.json", DENO_TASK)],
+                Some(("npm test", "package-lock.json")),
+            ),
+            (
+                "bun.lock beside a deno.json and no package.json",
+                &[("bun.lock", ""), ("deno.json", DENO_TASK)],
+                Some(("bun test", "bun.lock")),
+            ),
+            (
+                "pnpm-lock beside a deno.json and no package.json",
+                &[("pnpm-lock.yaml", ""), ("deno.json", "{}")],
+                Some(("pnpm test", "pnpm-lock.yaml")),
+            ),
+            (
+                "bun lock with test files beats a deno test task",
+                &[
+                    ("package.json", "{}"),
+                    ("bun.lock", ""),
+                    ("deno.json", DENO_TASK),
+                    ("a.test.ts", ""),
+                ],
+                Some(("bun test", "bun.lock, test files")),
+            ),
+        ];
+        for (name, files, expected) in cases {
+            let dir = repo_with(files);
+            let found = detect_with_reason(dir.path());
+            let got = found.as_ref().map(|d| (d.command.as_str(), d.why.as_str()));
+            assert_eq!(got, *expected, "{name}");
+        }
+    }
+
+    fn only(programs: &'static [&'static str]) -> impl Fn(&str) -> bool {
+        move |program| programs.contains(&program)
+    }
+
+    fn gate(worktree: Files, repo: Files, installed: &'static [&'static str]) -> Gate {
+        let (worktree, repo) = (repo_with(worktree), repo_with(repo));
+        resolve_with(worktree.path(), repo.path(), only(installed))
+    }
+
+    fn run(command: &str, why: &str) -> Gate {
+        Gate::Run(Detected::new(command, why))
+    }
+
+    #[test]
+    fn a_missing_runtime_for_the_lockfile_falls_back_to_deno() {
+        const FILES: Files = &[("bun.lock", ""), ("deno.json", r#"{"tasks":{"test":"x"}}"#)];
+        assert_eq!(gate(FILES, &[], &["bun", "deno"]), run("bun test", "bun.lock"));
+        assert_eq!(gate(FILES, &[], &["deno"]), run("deno task test", "deno.json test task"));
+    }
+
+    #[test]
+    fn the_worktree_decides_not_the_main_checkout() {
+        const BUN: Files = &[("package.json", r#"{"scripts":{"test":"x"}}"#), ("bun.lock", "")];
+        const DENO: Files = &[("deno.json", r#"{"tasks":{"test":"deno test"}}"#)];
+        let all = &["bun", "deno", "cargo"];
+        assert_eq!(gate(BUN, DENO, all), run("bun run test", "bun.lock"));
+        assert_eq!(
+            gate(DENO, BUN, all),
+            run("deno task test", "deno.json test task"),
+            "the worktree wins in both directions"
+        );
+        assert_eq!(gate(&[], DENO, all), Gate::None, "a main checkout's markers are never read");
+        assert_eq!(gate(&[("Cargo.toml", "")], BUN, all), run("cargo test", "Cargo.toml"));
+    }
+
+    #[test]
+    fn the_worktrees_config_wins_and_the_main_checkouts_is_only_a_fallback() {
+        let cases: &[(&str, Files, Files, Gate)] = &[
+            (
+                "worktree config",
+                &[(".tidewatch.toml", "test = \"just ci\"\n")],
+                &[(".tidewatch.toml", "test = \"make old\"\n")],
+                run("just ci", REPO_CONFIG),
+            ),
+            (
+                "main checkout config when the worktree has none",
+                &[("Cargo.toml", "")],
+                &[(".tidewatch.toml", "test = \"make old\"\n")],
+                run("make old", REPO_CONFIG),
+            ),
+            (
+                "a worktree config that switches tests off",
+                &[(".tidewatch.toml", "test = \"\"\n"), ("Cargo.toml", "")],
+                &[(".tidewatch.toml", "test = \"make old\"\n")],
+                Gate::None,
+            ),
+            (
+                "a worktree config without test detects from the worktree",
+                &[(".tidewatch.toml", "house_style = false\n"), ("Cargo.toml", "")],
+                &[(".tidewatch.toml", "test = \"make old\"\n")],
+                run("cargo test", "Cargo.toml"),
+            ),
+        ];
+        for (name, worktree, repo, want) in cases {
+            assert_eq!(gate(worktree, repo, &["cargo"]), *want, "{name}");
+        }
+    }
+
+    #[test]
+    fn a_command_whose_program_is_missing_falls_through_to_the_next_marker() {
+        const FILES: Files = &[
+            ("package.json", r#"{"scripts":{"test":"x"}}"#),
+            ("pnpm-lock.yaml", ""),
+            ("deno.json", r#"{"tasks":{"test":"deno test"}}"#),
+            ("go.mod", "module x"),
+            ("Makefile", "test:\n\t./t\n"),
+        ];
+        let cases: &[(&str, &'static [&'static str], Gate)] = &[
+            ("pnpm installed", &["pnpm", "deno", "go", "make"], run("pnpm test", "pnpm-lock.yaml")),
+            (
+                "no pnpm falls to deno",
+                &["deno", "go", "make"],
+                run("deno task test", "deno.json test task"),
+            ),
+            ("no pnpm or deno falls to go", &["go", "make"], run("go test ./...", "go.mod")),
+            ("only make", &["make"], run("make test", "Makefile")),
+        ];
+        for (name, installed, want) in cases {
+            assert_eq!(gate(FILES, &[], installed), *want, "{name}");
+        }
+    }
+
+    #[test]
+    fn nothing_runnable_is_a_skip_that_names_the_missing_programs() {
+        let deno: Files = &[("deno.json", r#"{"tasks":{"test":"deno test"}}"#)];
+        assert_eq!(
+            gate(deno, &[], &[]),
+            Gate::Skip("skipped: no runnable test command (deno not installed)".to_owned())
+        );
+        let both: Files = &[("deno.json", "{}"), ("go.mod", "module x")];
+        assert_eq!(
+            gate(both, &[], &["cargo"]),
+            Gate::Skip("skipped: no runnable test command (deno, go not installed)".to_owned())
+        );
+        assert_eq!(gate(&[("README.md", "")], &[], &[]), Gate::None);
+    }
+
+    #[test]
+    fn a_configured_command_is_never_passed_over_for_a_missing_program() {
+        let configured: Files = &[(".tidewatch.toml", "test = \"deno task ci\"\n")];
+        assert_eq!(gate(configured, &[], &[]), run("deno task ci", REPO_CONFIG));
+    }
+
+    #[test]
+    fn the_timeout_comes_from_the_worktrees_config_before_the_main_checkouts() {
+        let worktree = repo_with(&[(".tidewatch.toml", "test_timeout_secs = 30\n")]);
+        let repo = repo_with(&[(".tidewatch.toml", "test_timeout_secs = 90\n")]);
+        let bare = repo_with(&[]);
+        assert_eq!(timeout_in(worktree.path(), repo.path()), Duration::from_secs(30));
+        assert_eq!(timeout_in(bare.path(), repo.path()), Duration::from_secs(90));
+        assert_eq!(timeout_in(bare.path(), bare.path()), DEFAULT_TIMEOUT);
+    }
+
+    #[test]
+    fn programs_are_found_on_path_only_when_executable() {
+        use std::os::unix::fs::PermissionsExt;
+        let bin = repo_with(&[("tool", "#!/bin/sh\n"), ("plain", "data")]);
+        std::fs::set_permissions(bin.path().join("tool"), std::fs::Permissions::from_mode(0o755))
+            .unwrap();
+        let tool = bin.path().join("tool");
+        assert!(program_on_path(tool.to_str().unwrap()));
+        assert!(!program_on_path(bin.path().join("plain").to_str().unwrap()));
+        assert!(!program_on_path(bin.path().join("gone").to_str().unwrap()));
+        assert!(program_on_path("sh"));
+        assert!(!program_on_path("definitely-not-a-program-xyz"));
     }
 
     #[test]

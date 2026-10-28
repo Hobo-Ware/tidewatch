@@ -14,6 +14,7 @@ use tidewatch_core::meeseeks_branch::{self, Branch, Changed, Found};
 use tidewatch_core::meeseeks_check::{self as check, Checked};
 use tidewatch_core::meeseeks_log::{self, Log, Poofed, StageLine};
 use tidewatch_core::paths::TidewatchPaths;
+use tidewatch_core::test_command::{self, Gate};
 use tidewatch_core::tools::Tools;
 use tidewatch_core::trust_apply::Grant;
 use tidewatch_core::worktree::{self, Worktree};
@@ -109,6 +110,7 @@ pub(crate) enum Done<T> {
     Branch { tab: u64, branch: Branch },
     Poofed { tab: u64 },
     Looked { tab: u64, ticket: u64, edited: Result<bool, String> },
+    Testing { tab: u64, command: Option<String> },
     Refused { tab: u64, why: String, shell: Option<T> },
     Loaded(Log),
     Logged,
@@ -169,6 +171,7 @@ pub(crate) struct Host {
     pending: HashMap<u64, VecDeque<String>>,
     leaving: HashMap<u64, Poofed>,
     branches: HashMap<u64, Option<Branch>>,
+    testing: HashMap<u64, String>,
     saying: HashMap<u64, String>,
     looking: HashMap<u64, u64>,
     looked_at: HashMap<u64, f64>,
@@ -195,6 +198,7 @@ impl Host {
             next_ticket: 0,
             leaving: HashMap::new(),
             branches: HashMap::new(),
+            testing: HashMap::new(),
             struggled: HashSet::new(),
             loaded: Vec::new(),
             added: Vec::new(),
@@ -229,6 +233,14 @@ impl Host {
                 Done::Branch { tab, branch } => {
                     self.branches.insert(tab, Some(branch));
                 }
+                Done::Testing { tab, command } => match command {
+                    Some(command) => {
+                        self.testing.insert(tab, command);
+                    }
+                    None => {
+                        self.testing.remove(&tab);
+                    }
+                },
                 Done::Logged => {}
                 other => finished.push(other),
             }
@@ -244,11 +256,25 @@ impl Host {
         spec: CheckSpec,
         pr: bool,
     ) {
+        if step == Step::Tests {
+            let worktree = spec.worktree.clone();
+            self.jobs.spawn(ctx, move || Done::Testing {
+                tab,
+                command: match test_command::resolve(&worktree.path, &worktree.repo) {
+                    Gate::Run(detected) => Some(detected.command),
+                    Gate::Skip(_) | Gate::None => None,
+                },
+            });
+        }
         self.jobs.spawn(ctx, move || Done::Checked {
             tab,
             step,
             result: run_check(step, &spec, pr),
         });
+    }
+
+    pub(crate) fn test_command(&self, tab: u64) -> Option<&str> {
+        self.testing.get(&tab).map(String::as_str)
     }
 
     pub(crate) fn look(&mut self, ctx: &egui::Context, tab: u64, spec: LookSpec, now: f64) {
@@ -317,6 +343,7 @@ impl Host {
         self.pending.remove(&tab);
         self.leaving.remove(&tab);
         self.branches.remove(&tab);
+        self.testing.remove(&tab);
         self.saying.remove(&tab);
         self.looking.remove(&tab);
         self.looked_at.remove(&tab);
