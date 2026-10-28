@@ -5,6 +5,9 @@ use serde_json::Value;
 pub const QUIET_MS: i64 = 90_000;
 pub const PROGRESS_EXAMPLE: &str = "printf '{\"name\":\"import\",\"done\":%s,\"total\":%s,\"unit\":\"rows\",\"phase\":\"load\"}\\n' \"$n\" \"$total\" >> \"$TIDEWATCH_PROGRESS\"";
 
+/// What the prompt of a background task's notice starts with.
+pub const NOTICE_OPENING: &str = "<task-notification>";
+
 const MAX_LAUNCHES: usize = 16;
 const COMMAND_CHARS: usize = 60;
 const ENDED: [&str; 3] = ["completed", "failed", "killed"];
@@ -36,7 +39,7 @@ pub fn from_hook(agent: &str, payload: &Value) -> Option<Signal> {
         }
         "UserPromptSubmit" => {
             let notice = object.get("prompt")?.as_str()?.trim_start();
-            if !notice.starts_with("<task-notification>") {
+            if !notice.starts_with(NOTICE_OPENING) {
                 return None;
             }
             let tool_use_id = tag(notice, "tool-use-id")?.to_owned();

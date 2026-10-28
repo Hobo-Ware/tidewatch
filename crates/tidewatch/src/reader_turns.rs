@@ -909,6 +909,45 @@ mod tests {
     }
 
     #[test]
+    fn a_question_before_the_report_call_shows_with_the_done_block_as_one_answer() {
+        let mut entries = vec![
+            text(Role::User, "write the migration", 1),
+            text(Role::Assistant, "Go for the write?\n\na) now\nb) tonight\nc) never", 2),
+        ];
+        finished_call(&mut entries, "r", REPORT, false, 3);
+        entries.push(text(Role::Assistant, "**Done**\n- asked\n\n**Needs you**\n- a, b or c", 4));
+        entries.push(text(Role::User, "Run", 5));
+        let rows = rows_of(entries);
+        let layout = layout(&rows);
+        let group = &layout.groups[0];
+        let list: Vec<&Row> = rows.iter().collect();
+        let shown: Vec<&str> = group.answers().iter().map(|i| list[*i].text.as_str()).collect();
+        assert!(shown[0].starts_with("Go for the write?") && shown[1].starts_with("**Done**"));
+        assert_eq!((shown.len(), group.notes().len(), group.notes_label()), (2, 0, None));
+    }
+
+    #[test]
+    fn a_task_notification_is_neither_the_owners_message_nor_a_turn_of_its_own() {
+        use tidewatch_core::transcript::{Parser, Source};
+        let notice = r#"{"type":"user","origin":{"kind":"task-notification"},"message":{"role":"user","content":"<task-notification>\n<task-id>b1</task-id>\n<summary>Background command finished</summary>\n</task-notification>"}}"#;
+        let mut entries = vec![
+            text(Role::User, "write the migration", 1),
+            text(Role::Assistant, "Go for the write?", 2),
+        ];
+        finished_call(&mut entries, "r", REPORT, false, 3);
+        entries.push(text(Role::Assistant, "**Done**\n- asked", 4));
+        entries.extend(Parser::new(Source::Claude).feed_line(notice));
+        entries.push(text(Role::Assistant, "Short repeat of the question.", 6));
+        let rows = rows_of(entries);
+        let users = rows.iter().filter(|row| row.kind == Kind::User).count();
+        assert_eq!(users, 1, "only the owner's own message");
+        let layout = layout(&rows);
+        assert_eq!(layout.groups.len(), 1, "the notice starts no turn of the owner's");
+        assert!(!layout.groups[0].closed && !layout.awaiting);
+        assert_eq!(layout.groups[0].answers().len(), 3);
+    }
+
+    #[test]
     fn a_report_call_counts_in_the_chips_though_it_does_not_split_the_answer() {
         let mut entries = vec![text(Role::User, "go", 1), text(Role::Assistant, "answer", 2)];
         finished_call(&mut entries, "a", REPORT, false, 3);
