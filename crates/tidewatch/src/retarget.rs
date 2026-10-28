@@ -1,7 +1,4 @@
-//! Changing what a tab runs, the pure half: the target (an agent under a profile and level, or a
-//! plain shell), what can still stop it (`Failure`), where the converted tab lands (`landing`: it
-//! follows the folder the session runs in) and `plan`, which turns the session found in the tab
-//! plus the target into what the job starts. Nothing here touches the machine.
+//! Changing what a tab runs, the pure half: the target, where the tab lands and the plan.
 
 use std::path::{Path, PathBuf};
 
@@ -96,6 +93,9 @@ pub(crate) struct Folder {
     pub(crate) branch: Option<String>,
     /// A worktree Tidewatch made for that repo.
     pub(crate) made_by_tidewatch: bool,
+    /// For a folder outside git: the repo its session worked in most, else the newest repo one
+    /// level down.
+    pub(crate) worked_in: Option<PathBuf>,
 }
 
 /// Where the converted tab runs: the folder, its worktree (when Tidewatch made it and no other tab
@@ -105,6 +105,14 @@ pub(crate) struct Landing {
     pub(crate) dir: PathBuf,
     pub(crate) worktree: Option<Worktree>,
     pub(crate) repo: PathBuf,
+}
+
+/// Where an agent starts: in a folder that exists (`Stay`), or in a worktree made for it on a fresh
+/// `agent/<name>` branch of `repo` (`Fresh`; `from` is the folder the session ran in).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum Home {
+    Stay(Landing),
+    Fresh { repo: PathBuf, from: PathBuf },
 }
 
 /// What the tab has to resume from.
@@ -132,7 +140,7 @@ pub(crate) struct AgentPlan {
     pub(crate) profile_id: String,
     pub(crate) profile: Profile,
     pub(crate) start: Start,
-    pub(crate) landing: Landing,
+    pub(crate) home: Home,
     /// Why a new session starts where the conversation could not continue.
     pub(crate) note: Option<String>,
 }
@@ -180,6 +188,24 @@ pub(crate) fn landing(cwd: &Path, subject: &Subject, folder: &Folder) -> Landing
         })
         .flatten();
     Landing { dir: cwd.to_path_buf(), worktree, repo }
+}
+
+/// Where the converted tab goes. A session in the tab's own agent worktree, or in a worktree
+/// Tidewatch made, keeps its folder. Any other folder inside a repo, and a plain folder with a repo
+/// the session worked in, gets a fresh agent worktree of that repo. Only a folder with no repo at
+/// all stays a folder tab.
+pub(crate) fn home(cwd: &Path, subject: &Subject, folder: &Folder) -> Home {
+    let stay = landing(cwd, subject, folder);
+    let in_own_worktree = subject.worktree.is_some() && is_inside(cwd, &subject.dir);
+    if in_own_worktree || (folder.made_by_tidewatch && folder.main.is_some()) {
+        return Home::Stay(stay);
+    }
+    let Some(main) = folder.main.as_ref().or(folder.worked_in.as_ref()) else {
+        return Home::Stay(stay);
+    };
+    let repo =
+        subject.window.repos.iter().find(|open| same_folder(open, main)).unwrap_or(main).clone();
+    Home::Fresh { repo, from: cwd.to_path_buf() }
 }
 
 /// The level that runs: the one asked for, or, when the CLI has no flags for it, the nearest it
@@ -247,8 +273,10 @@ pub(crate) fn plan(
         .get(&base.agent)
         .filter(|agent| installed.contains(&agent.id))
         .ok_or_else(|| Failure::AgentMissing(base.agent.clone()))?;
-    let landing = landing(&cwd, subject, folder);
-    let (resume, note) = resumable(cli, session_id, agent, matches!(source, Source::Running(_)));
+    let home = home(&cwd, subject, folder);
+    let moved = matches!(&home, Home::Fresh { .. });
+    let (resume, note) =
+        resumable(cli, session_id, agent, matches!(source, Source::Running(_)), moved);
     let wanted = match (level, resume.is_some()) {
         (Some(level), _) => *level,
         (None, true) => seen.unwrap_or(base.level),
@@ -260,7 +288,7 @@ pub(crate) fn plan(
         profile_id,
         profile: Profile { level, ..base },
         start: resume.map_or(Start::Fresh, Start::Resume),
-        landing,
+        home,
         note,
     })))
 }
@@ -270,8 +298,22 @@ fn resumable(
     session_id: Option<String>,
     agent: &Agent,
     running: bool,
+    moved: bool,
 ) -> (Option<String>, Option<String>) {
     match (cli, session_id) {
+        (Some(cli), _)
+            if moved
+                && cli.id() == agent.id
+                && matches!(agent.resume, Some(ResumeForm::FlagLatest(_))) =>
+        {
+            (
+                None,
+                Some(format!(
+                    "{} resumes only the newest conversation of the folder it ran in, so a new session started in the new worktree. The old one stays on disk.",
+                    agent.name
+                )),
+            )
+        }
         (Some(_), None) if matches!(agent.resume, Some(ResumeForm::FlagLatest(_))) => {
             (Some("latest".to_owned()), None)
         }

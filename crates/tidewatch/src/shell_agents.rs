@@ -9,7 +9,7 @@ use tidewatch_core::agents::Level;
 use tidewatch_core::elsewhere::{Activity, Cli, Session};
 
 pub(crate) const EVERY_S: f64 = 4.0;
-const FAKE_SESSION: &str = "5b0c6bd2-1f4e-4a37-9a5c-0d2f8e7a1c43";
+pub(crate) const FAKE_SESSION: &str = "5b0c6bd2-1f4e-4a37-9a5c-0d2f8e7a1c43";
 
 /// A tab whose shell pid the scan looks under.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -74,7 +74,9 @@ impl Fake {
             session_id: Some(FAKE_SESSION.to_owned()),
             level: Some(Level::Auto),
             working: self == Self::Working,
-            cwd: PathBuf::new(),
+            cwd: std::env::var_os("TIDEWATCH_FAKE_SHELL_AGENT_CWD")
+                .map(PathBuf::from)
+                .unwrap_or_default(),
         })
     }
 }

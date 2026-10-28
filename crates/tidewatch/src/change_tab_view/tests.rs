@@ -2,7 +2,7 @@ use egui::{Event, Modifiers, RawInput, Rect, pos2, vec2};
 use tidewatch_core::agents::Level;
 
 use super::*;
-use crate::change_tab::{Facts, Running};
+use crate::change_tab::{Facts, Goes, Running};
 
 fn card(id: &str, name: &str) -> Card {
     Card {
@@ -26,7 +26,7 @@ fn facts(working: bool) -> Facts {
         current: Some(("builder".into(), Level::Edits)),
         seen_level: None,
         cards: vec![card("builder", "Builder"), card("reviewer", "Reviewer")],
-        follows: None,
+        goes: Goes::Stays,
         busy: false,
         meeseeks: false,
         pinned: false,
