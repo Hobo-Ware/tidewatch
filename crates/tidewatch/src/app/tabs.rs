@@ -213,6 +213,7 @@ impl Tidewatch {
         match answer {
             Answer::Cancel => {}
             Answer::Pick(Choice::KeepWorktree) => {
+                self.note_kept_tab(tab, ctx);
                 self.tabs.remove_id(tab);
                 self.forget_tab(tab);
             }
@@ -224,7 +225,10 @@ impl Tidewatch {
                     return;
                 };
                 let trust = self.trust.grant();
-                let terms = Terms::new(branch, mode).why(Why::ClosedTab).owner(Owner::ThisWindow);
+                let terms = Terms::new(branch, mode)
+                    .why(Why::ClosedTab)
+                    .owner(Owner::ThisWindow)
+                    .closed(self.closed_facts(tab));
                 worktree_jobs::remove(&self.jobs, ctx, paths, tab, shell, worktree, terms, trust);
             }
         }
@@ -273,6 +277,7 @@ impl Tidewatch {
                 Ok(outcome) => {
                     self.tabs.remove_id(tab);
                     self.forget_tab(tab);
+                    self.closed.mark_changed();
                     match outcome {
                         BranchOutcome::Kept | BranchOutcome::Deleted { restore: None } => {}
                         BranchOutcome::Deleted { restore: Some(command) } => {

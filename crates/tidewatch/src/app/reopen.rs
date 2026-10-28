@@ -75,7 +75,7 @@ impl Tidewatch {
         }
     }
 
-    fn open_tab_of_title(&self, group: usize, name: &str) -> Option<u64> {
+    pub(super) fn open_tab_of_title(&self, group: usize, name: &str) -> Option<u64> {
         self.tabs.in_group(group).find(|(_, tab)| tab.title == name).map(|(_, tab)| tab.id)
     }
 
