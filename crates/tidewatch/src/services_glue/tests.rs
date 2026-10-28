@@ -58,7 +58,7 @@ fn fixture_with(services: &[Service], autostart: bool) -> Fixture {
 }
 
 fn service(name: &str, command: &str, autostart: bool) -> Service {
-    Service::new(name, command, None, autostart)
+    Service::new(name, command, autostart)
 }
 
 fn wait_for(what: &str, mut ready: impl FnMut() -> bool) {
@@ -136,6 +136,56 @@ fn a_stop_by_hand_ends_the_process_and_nothing_starts_it_again() {
 }
 
 #[test]
+fn a_hand_stop_reads_stopped_with_no_exit_code_though_the_killed_shell_reports_exit_1() {
+    let mut fx = fixture(&[service("db", "sleep 30", true)]);
+    let repo = fx.repo.path().to_path_buf();
+    assert_eq!(fx.word("db"), Word::Running);
+    fx.host.command(&repo, "db", Command::Stop).unwrap();
+    wait_for("the killed shell's exit", || {
+        fx.host.term_mut(&repo, "db").and_then(|term| term.exited()).is_some()
+    });
+    let code = fx.host.term_mut(&repo, "db").and_then(|term| term.exited()).map(|exit| exit.code);
+    assert_eq!(code, Some(1), "a signal death is reported as exit 1");
+    assert_eq!(fx.word("db"), Word::Stopped);
+    assert_eq!(fx.host.rows(&repo)[0].line, "stopped");
+    assert_eq!(fx.host.listed(&repo)[0].last_exit, None);
+}
+
+#[test]
+fn the_port_comes_from_what_the_service_printed_and_goes_with_the_process() {
+    let command = "echo 'Local address to connect your application: 127.0.0.1:55926 (press ctrl-c to quit)'; \
+                   echo 'client 127.0.0.1:50412 connected'; sleep 30";
+    let mut fx = fixture(&[service("db", command, true)]);
+    let repo = fx.repo.path().to_path_buf();
+    wait_for("the port to be read", || {
+        fx.host.drive();
+        fx.host.rows(&repo)[0].line.ends_with(" \u{b7} :55926")
+    });
+    assert_eq!(fx.host.facts(&repo)[0].port, Some(55926));
+    assert_eq!(fx.host.listed(&repo)[0].port, Some(55926));
+    fx.host.command(&repo, "db", Command::Stop).unwrap();
+    assert_eq!(fx.host.facts(&repo)[0].port, None);
+    fx.host.shutdown();
+}
+
+#[test]
+fn a_port_saved_by_an_older_version_shows_until_the_output_names_one() {
+    let home = tempfile::tempdir().unwrap();
+    let repo = tempfile::tempdir().unwrap();
+    let paths = TidewatchPaths::new(home.path());
+    std::fs::create_dir_all(paths.config_dir()).unwrap();
+    let file = format!(
+        "[[repo.\"{}\".service]]\nname = \"db\"\ncommand = \"sleep 30\"\nport = 3309\n",
+        repo.path().display()
+    );
+    std::fs::write(paths.services_file(), file).unwrap();
+    let mut host = Host::new(Some(paths), spawner(), true, false);
+    host.sync(&[repo.path()]);
+    assert_eq!(host.facts(repo.path())[0].port, Some(3309));
+    host.shutdown();
+}
+
+#[test]
 fn a_service_that_exits_is_started_again_after_one_second_then_two() {
     let mut fx = fixture(&[service("flaky", "echo boom; exit 1", true)]);
     wait_for("the first exit to be noticed", || fx.word("flaky") == Word::Restarting);
@@ -165,7 +215,7 @@ fn a_service_that_gave_up_reads_crashed_needs_no_wake_up_and_a_restart_brings_it
     fx.host.repos.get_mut(repo.as_path()).unwrap()[0].sup =
         Supervisor::from_carry(&gave_up, fx.host.now());
     assert_eq!(fx.word("flaky"), Word::Crashed);
-    assert_eq!(fx.host.rows(&repo)[0].line, "crashed, exit 3");
+    assert_eq!(fx.host.rows(&repo)[0].line, "gave up after 5 crashes, Start to try again");
     assert_eq!(fx.host.drive(), None, "a crashed service needs no wake-up");
     fx.host.command(&repo, "flaky", Command::Restart).unwrap();
     assert_eq!(fx.word("flaky"), Word::Running);
@@ -199,10 +249,9 @@ fn adding_saves_and_starts_even_without_autostart_editing_restarts_on_a_new_comm
     let refused = fx.host.add(&repo, &service("DB", "sleep 31", true)).unwrap_err();
     assert_eq!(refused.len(), 1, "{refused:?}");
     let before = fx.pid("db");
-    fx.host.edit(&repo, "db", &Service::new("db", "sleep 30", Some(3309), false)).unwrap();
+    fx.host.edit(&repo, "db", &Service::new("db", "sleep 30", true)).unwrap();
     assert_eq!(fx.pid("db"), before, "the same command keeps the process");
-    assert_eq!(fx.host.rows(&repo)[0].port, Some(3309));
-    fx.host.edit(&repo, "db", &Service::new("db", "sleep 31", Some(3309), false)).unwrap();
+    fx.host.edit(&repo, "db", &Service::new("db", "sleep 31", true)).unwrap();
     let after = fx.pid("db");
     assert_ne!(after, before);
     wait_for("the old process to end", || !alive(before));
@@ -264,8 +313,9 @@ fn the_fake_services_are_three_stand_ins_that_spawn_and_write_nothing() {
     let rows = host.rows(Path::new("/work/shop"));
     let seen: Vec<(&str, Word)> = rows.iter().map(|row| (row.name.as_str(), row.word)).collect();
     assert_eq!(seen, [("db", Word::Running), ("api", Word::Running), ("tunnel", Word::Crashed)]);
-    assert_eq!(rows[0].line.split(" \u{b7} ").next(), Some("up 2h 14m"));
-    assert_eq!(rows[2].line, "crashed, exit 1");
+    assert_eq!(rows[2].line, "gave up after 5 crashes, Start to try again");
+    assert_eq!(rows[0].line, "up 2h 14m \u{b7} :3309");
+    assert_eq!(rows[1].line, "up 12m \u{b7} :3000");
     assert!(
         host.fake_lines(Path::new("/work/shop"), "tunnel")
             .unwrap()
