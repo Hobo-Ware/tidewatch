@@ -57,6 +57,7 @@ impl Tidewatch {
         let Some(view) = self.comments.view(active_id) else { return };
         let strip = comment_strip::Strip {
             records: view.records,
+            roots: view.roots,
             off: view.off,
             dev_open_popover: self.comments.open_popover(),
         };
