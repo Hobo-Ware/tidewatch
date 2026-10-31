@@ -311,7 +311,7 @@ fn file_row(ui: &mut Ui, change: &FileChange, selected: bool) -> bool {
         mono(TEXT_TAG),
         kind_color(change.kind),
     );
-    let ink = if selected { brand::TEXT } else { brand::SOFT };
+    let ink = if selected { brand::TEAL_TEXT } else { brand::SOFT };
     let left = row.left() + ROW_PAD + LETTER_W;
     paint_path(ui, &painter, &change.path, (left, row.right() - ROW_PAD, row.center().y), ink);
     response.clicked()

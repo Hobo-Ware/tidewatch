@@ -23,8 +23,6 @@ pub(crate) const DIALOG_HEADER_H: f32 = 48.0;
 pub(crate) const LABEL_H: f32 = 16.0;
 const DIALOG_PAD: i8 = 16;
 const ROW_RADIUS: u8 = 8;
-const BAR_W: f32 = 2.0;
-const BAR_INSET: f32 = 7.0;
 
 pub(crate) fn heading(size: f32) -> FontId {
     FontId::new(size, semibold())
@@ -719,19 +717,26 @@ pub(crate) fn paint_pill_card(painter: &Painter, rect: Rect) {
     );
 }
 
-/// Paints a selectable row: a teal tint with a short teal bar on the left when selected, a fainter tint when hovered.
-pub(crate) fn selection_row(painter: &Painter, rect: Rect, selected: bool, hovered: bool) {
-    let radius = CornerRadius::same(ROW_RADIUS);
-    if selected {
-        painter.rect_filled(rect, radius, brand::TEAL_NAV);
-        let bar = Rect::from_min_max(
-            rect.left_top() + vec2(0.0, BAR_INSET),
-            rect.left_bottom() + vec2(BAR_W, -BAR_INSET),
-        );
-        painter.rect_filled(bar, CornerRadius::same(1), brand::TEAL);
-    } else if hovered {
-        painter.rect_filled(rect, radius, brand::TEAL_NAV.gamma_multiply(0.6));
+/// The tint under a selectable row, if any.
+fn selection_fill(selected: bool, hovered: bool) -> Option<Color32> {
+    match (selected, hovered) {
+        (true, _) => Some(brand::SEGMENT_ON),
+        (false, true) => Some(brand::SEGMENT_ON.gamma_multiply(0.6)),
+        (false, false) => None,
     }
+}
+
+/// Paints a selectable row: a tint when selected, a fainter tint when hovered. The row's name takes
+/// `selected_ink`.
+pub(crate) fn selection_row(painter: &Painter, rect: Rect, selected: bool, hovered: bool) {
+    if let Some(fill) = selection_fill(selected, hovered) {
+        painter.rect_filled(rect, CornerRadius::same(ROW_RADIUS), fill);
+    }
+}
+
+/// The ink of the name in a row `selection_row` paints: teal when selected, `normal` otherwise.
+pub(crate) fn selected_ink(selected: bool, normal: Color32) -> Color32 {
+    if selected { brand::TEAL_TEXT } else { normal }
 }
 
 pub(crate) const MENU_ROW_H: f32 = 32.0;
@@ -1413,6 +1418,21 @@ mod tests {
             }
             assert_eq!(caps_width(ui.painter(), ""), 0.0);
         });
+    }
+
+    #[test]
+    fn a_selected_row_is_one_tint_and_a_hovered_one_a_fainter_tint() {
+        assert_eq!(selection_fill(true, false), Some(brand::SEGMENT_ON));
+        assert_eq!(selection_fill(true, true), Some(brand::SEGMENT_ON));
+        assert_eq!(selection_fill(false, true), Some(brand::SEGMENT_ON.gamma_multiply(0.6)));
+        assert_eq!(selection_fill(false, false), None);
+        assert_ne!(selection_fill(false, true), selection_fill(true, false));
+    }
+
+    #[test]
+    fn a_selected_name_is_teal_and_any_other_keeps_its_ink() {
+        assert_eq!(selected_ink(true, brand::TEXT), brand::TEAL_TEXT);
+        assert_eq!(selected_ink(false, brand::TEXT), brand::TEXT);
     }
 
     #[test]

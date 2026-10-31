@@ -22,7 +22,7 @@ use crate::remote_pill::Popover;
 use crate::screen_kit::{
     DialogWidth, Glyph, MENU_ROW_H, Size, TEXT_BODY, TEXT_TAG, body, button_width, danger_button,
     dialog_frame, field_label, footer_row, glyph_button, menu_divider, menu_label_with, menu_row,
-    mono, primary_button, primary_button_keyed, quiet_button, selection_row,
+    mono, primary_button, primary_button_keyed, quiet_button, selected_ink, selection_row,
 };
 use crate::services_glue::{Command, Row};
 use crate::settings_ui::{switch_line, text_input};
@@ -368,7 +368,7 @@ fn card(ui: &mut Ui, row: &Row, memory: &mut Memory, edge: f32) -> Option<Action
     let more_w = Size::Compact.height();
     let first_w = if is_running(row.word) { Size::Compact.height() } else { start_w };
     let reserve = first_w + ACTION_GAP + more_w + ROW_PAD;
-    paint_card_text(ui, rect, row, reserve);
+    paint_card_text(ui, rect, row, reserve, selected);
     if response.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
         memory.selected = if selected { None } else { Some(row.name.clone()) };
     }
@@ -471,14 +471,15 @@ fn more_menu(ui: &mut Ui, row: &Row, memory: &mut Memory, (edge, row_rect): (f32
     memory.menu_rect = shown.map(|shown| shown.response.rect);
 }
 
-fn paint_card_text(ui: &Ui, rect: Rect, row: &Row, reserve: f32) {
+fn paint_card_text(ui: &Ui, rect: Rect, row: &Row, reserve: f32, selected: bool) {
     let painter = ui.painter();
     let mid = rect.center().y;
     let dot_x = rect.left() + ROW_PAD + DOT / 2.0;
     painter.circle_filled(pos2(dot_x, mid), DOT / 2.0, dot_color(row.word));
     let text_left = rect.left() + ROW_PAD + DOT + 10.0;
     let room = (rect.right() - reserve - text_left).max(1.0);
-    let name = painter.layout_no_wrap(row.name.clone(), body(TEXT_BODY), brand::TEXT);
+    let name_ink = selected_ink(selected, brand::TEXT);
+    let name = painter.layout_no_wrap(row.name.clone(), body(TEXT_BODY), name_ink);
     let line_ink = match row.word {
         Word::Crashed => brand::ORANGE,
         _ => brand::FAINT,
@@ -492,7 +493,7 @@ fn paint_card_text(ui: &Ui, rect: Rect, row: &Row, reserve: f32) {
     );
     let top = mid - 19.0;
     let name_w = name.size().x;
-    painter.galley(pos2(text_left, top + 1.0), name, brand::TEXT);
+    painter.galley(pos2(text_left, top + 1.0), name, name_ink);
     painter.galley(pos2(text_left + name_w + 6.0, top + 3.0), line, line_ink);
     let galley = painter.layout_job(cut_to(&row.command, room));
     painter.galley(pos2(text_left, top + 21.0), galley, brand::MUTED);

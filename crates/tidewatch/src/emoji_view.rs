@@ -11,7 +11,7 @@ use crate::brand;
 use crate::emoji_paint;
 use crate::emoji_pick::Hit;
 use crate::screen_kit::{TEXT_BODY, TEXT_TITLE};
-use crate::screen_kit::{heading, selection_row};
+use crate::screen_kit::{heading, selected_ink, selection_row};
 
 pub(crate) const ROW_H: f32 = 38.0;
 pub(crate) const WIDTH: f32 = 320.0;
@@ -32,9 +32,10 @@ pub(crate) fn shown_name(hit: &Hit) -> (String, std::ops::Range<usize>) {
     (format!(":{}:", hit.code), lit)
 }
 
-fn name_job(hit: &Hit) -> LayoutJob {
+fn name_job(hit: &Hit, selected: bool) -> LayoutJob {
     let (name, lit) = shown_name(hit);
-    let plain = TextFormat::simple(FontId::proportional(TEXT_BODY), brand::TEXT);
+    let ink = selected_ink(selected, brand::TEXT);
+    let plain = TextFormat::simple(FontId::proportional(TEXT_BODY), ink);
     let bold = TextFormat::simple(heading(TEXT_TITLE), brand::TEAL_TEXT);
     let mut job = LayoutJob::default();
     job.append(&name[..lit.start], 0.0, plain.clone());
@@ -59,7 +60,7 @@ fn paint_row(ui: &Ui, rect: Rect, hit: &Hit, selected: bool, hovered: bool) {
             brand::TEXT,
         );
     }
-    let galley = painter.layout_job(name_job(hit));
+    let galley = painter.layout_job(name_job(hit, selected));
     let x = rect.left() + ROW_PAD + GLYPH_COLUMN + COLUMN_GAP;
     painter.galley(pos2(x, rect.center().y - galley.size().y / 2.0), galley, brand::TEXT);
     if selected {

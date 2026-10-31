@@ -10,7 +10,7 @@ use egui::{
 
 use crate::brand;
 use crate::bullets;
-use crate::screen_kit::selection_row;
+use crate::screen_kit::{selected_ink, selection_row};
 use crate::slash::{self, Entry, Key as MenuKey, Menu, Pressed};
 
 const ROW_H: f32 = 30.0;
@@ -80,7 +80,7 @@ fn paint_row(ui: &Ui, rect: Rect, entry: &Entry, selected: bool, hovered: bool) 
     let painter = ui.painter_at(rect);
     selection_row(&painter, rect, selected, hovered);
     let mut job = LayoutJob::default();
-    let name = TextFormat::simple(FontId::proportional(14.0), brand::TEXT);
+    let name = TextFormat::simple(FontId::proportional(14.0), selected_ink(selected, brand::TEXT));
     job.append(&format!("/{}", entry.name), 0.0, name);
     let muted = TextFormat::simple(FontId::proportional(12.0), brand::MUTED);
     job.append(&entry.description, 12.0, muted);
