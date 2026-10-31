@@ -309,33 +309,46 @@ fn form(ui: &mut Ui, draft: &mut Draft, agents: &[(String, String)]) -> bool {
     changed
 }
 
+const LEVEL_GAP: f32 = 6.0;
+const LEVEL_MIN_W: f32 = 84.0;
+
+/// How many level cards sit in a row of `width`: all of them while each keeps room for its whole
+/// words, else the fewest that do, spread over the same number of rows as evenly as they go.
+pub(crate) fn level_columns(width: f32) -> usize {
+    let count = Level::ALL.len();
+    let fits = ((width + LEVEL_GAP) / (LEVEL_MIN_W + LEVEL_GAP)).floor().max(1.0) as usize;
+    count.div_ceil(count.div_ceil(fits.min(count)))
+}
+
 fn levels(ui: &mut Ui, draft: &mut Draft, width: f32) -> bool {
-    let gap = 6.0;
-    let count = Level::ALL.len() as f32;
-    let each = ((width - gap * (count - 1.0)) / count).floor();
+    let columns = level_columns(width);
+    let each = ((width - LEVEL_GAP * (columns as f32 - 1.0)) / columns as f32).floor();
     let height = Level::ALL
         .iter()
         .map(|level| option_card_height(ui, each, level_note(*level)))
         .fold(0.0, f32::max);
     let mut changed = false;
-    ui.horizontal(|ui| {
-        ui.spacing_mut().item_spacing.x = gap;
-        for level in Level::ALL {
-            let selected = draft.level == level;
-            let card = option_card(
-                ui,
-                vec2(each, height),
-                level.label(),
-                level_note(level),
-                selected,
-                level == Level::Yolo,
-            );
-            if card.clicked() {
-                draft.level = level;
-                changed = true;
+    ui.spacing_mut().item_spacing.y = LEVEL_GAP;
+    for row in Level::ALL.chunks(columns) {
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = LEVEL_GAP;
+            for level in row.iter().copied() {
+                let selected = draft.level == level;
+                let card = option_card(
+                    ui,
+                    vec2(each, height),
+                    level.label(),
+                    level_note(level),
+                    selected,
+                    level == Level::Yolo,
+                );
+                if card.clicked() {
+                    draft.level = level;
+                    changed = true;
+                }
             }
-        }
-    });
+        });
+    }
     if draft.level == Level::Yolo {
         ui.add_space(2.0);
         note(ui, "YOLO only runs in agent worktree tabs; Other refuses it.", RED);

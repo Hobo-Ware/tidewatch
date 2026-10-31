@@ -455,6 +455,13 @@ fn dup_facts() -> RepoFacts {
 }
 
 #[test]
+fn the_hint_under_the_message_box_is_one_short_sentence_the_placeholder_does_not_repeat() {
+    let harness = Harness::new(Group::Repo);
+    let hint = message_hint(&harness.state);
+    assert_eq!(hint, "The worktree name follows your message until you edit it.");
+}
+
+#[test]
 fn the_form_labels_are_sentence_case_semibold_soft_text() {
     let harness = Harness::new(Group::Repo);
     let labels: Vec<(String, egui::FontId, egui::Color32)> = harness
