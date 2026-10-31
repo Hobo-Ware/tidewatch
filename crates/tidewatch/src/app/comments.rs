@@ -59,6 +59,7 @@ impl Tidewatch {
             records: view.records,
             roots: view.roots,
             off: view.off,
+            yours: view.yours,
             dev_open_popover: self.comments.open_popover(),
         };
         let band = layout::band_above(terminal, comment_strip::HEIGHT);

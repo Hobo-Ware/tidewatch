@@ -1373,6 +1373,7 @@ mod tests {
             settings_file: Some("/state/tab/claude-settings.json".into()),
             memory_dir: None,
             trailers_guard: false,
+            own_comment_guard: None,
             house_style: Some("/cfg/house-style.md".into()),
             copilot_instructions_dir: Some("/cfg/copilot".into()),
             copilot_plugin_dir: Some("/state/tab/copilot-plugin".into()),

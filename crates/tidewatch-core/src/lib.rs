@@ -83,6 +83,7 @@ pub mod merged_branch;
 pub mod names;
 pub mod note_paste;
 pub mod notes;
+pub mod own_hooks;
 pub mod panel_counter;
 pub mod panel_event;
 pub mod panel_limits;

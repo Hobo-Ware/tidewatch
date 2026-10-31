@@ -345,3 +345,22 @@ fn a_saved_ledger_that_still_says_working_is_asked_for_its_final_state() {
         (Reason::LedgerGuard, because::LEDGER_FINAL, tidewatch_core::guard_ledger::MESSAGE)
     );
 }
+
+#[test]
+fn a_tab_whose_comments_the_owners_own_hook_checks_says_so_and_is_never_swept() {
+    let lab = Lab::new();
+    let ctx = egui::Context::default();
+    let mut host = host();
+    let guards = GuardPrefs::default();
+    host.tick(&lab.facts("claude", &AgentStatus::Working), &lab.paths, &guards, &ctx, 0.0);
+    assert!(host.view(1).is_none());
+
+    lab.tab_files().set_yours(Some("comment-guard.py")).unwrap();
+    host.tick(&lab.facts("claude", &AgentStatus::Working), &lab.paths, &guards, &ctx, 1.5);
+    let view = host.view(1).unwrap();
+    assert_eq!((view.yours, view.off, view.records.len()), (Some("comment-guard.py"), false, 0));
+
+    lab.tab_files().set_yours(None).unwrap();
+    host.tick(&lab.facts("claude", &AgentStatus::Working), &lab.paths, &guards, &ctx, 3.0);
+    assert!(host.view(1).is_none());
+}

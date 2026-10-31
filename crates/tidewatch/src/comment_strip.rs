@@ -42,6 +42,8 @@ pub(crate) struct Strip<'a> {
     pub(crate) records: &'a [tidewatch_core::comment_flags::Record],
     pub(crate) roots: &'a PathRoots,
     pub(crate) off: bool,
+    /// The owner's own comment-guard hook, which stands in for Tidewatch's on this tab.
+    pub(crate) yours: Option<&'a str>,
     pub(crate) dev_open_popover: bool,
 }
 
@@ -51,6 +53,10 @@ pub(crate) enum Action {
 }
 
 pub(crate) fn show(ui: &mut Ui, band: Rect, strip: &Strip<'_>) -> Option<Action> {
+    if let Some(name) = strip.yours {
+        yours_line(ui, band, name);
+        return None;
+    }
     let card = Rect::from_center_size(band.center(), vec2(band.width() - 2.0 * INSET, CARD_H));
     let painter = ui.painter().clone();
     painter.rect(
@@ -96,6 +102,37 @@ pub(crate) fn show(ui: &mut Ui, band: Rect, strip: &Strip<'_>) -> Option<Action>
         }
     }
     action
+}
+
+/// The line for a tab whose comments the owner's own hook checks: Tidewatch's guard is not in this
+/// tab's settings, so there is nothing to turn off.
+fn yours_line(ui: &mut Ui, band: Rect, name: &str) {
+    let card = Rect::from_center_size(band.center(), vec2(band.width() - 2.0 * INSET, CARD_H));
+    let painter = ui.painter().clone();
+    painter.rect(
+        card,
+        CornerRadius::same(10),
+        brand::CARD,
+        Stroke::new(1.0, brand::CARD_LINE),
+        StrokeKind::Inside,
+    );
+    let y = card.center().y;
+    painter.circle_filled(pos2(card.left() + 18.0, y), 3.0, brand::MUTED);
+    let left = card.left() + 30.0;
+    let room = (card.right() - 14.0 - left).max(0.0);
+    let galley = clipped(
+        &painter,
+        &comment_model::yours_text(name),
+        body(TEXT_SECONDARY),
+        brand::SOFT,
+        room,
+        1,
+    );
+    let rect = Rect::from_min_size(pos2(left, y - galley.size().y / 2.0), galley.size());
+    painter.galley(rect.min, galley, brand::SOFT);
+    ui.interact(card, ui.id().with("comment-strip-yours"), Sense::hover()).on_hover_text(format!(
+        "{name} is in your Claude settings, so Tidewatch's guard stays out of this tab"
+    ));
 }
 
 fn cut_place(painter: &Painter, place: &str, font: &egui::FontId, room: f32) -> String {

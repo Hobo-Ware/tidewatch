@@ -73,3 +73,15 @@ fn the_sweep_digest_is_remembered_and_cleared() {
     files.set_swept(None).unwrap();
     assert_eq!(files.swept(), None);
 }
+
+#[test]
+fn the_owners_own_guard_is_noted_in_the_tab_folder_and_cleared_again() {
+    let dir = tempfile::tempdir().unwrap();
+    let files = TabFiles::new(&dir.path().join("tab"));
+    assert_eq!(files.yours(), None);
+    files.set_yours(Some("comment-guard.py")).unwrap();
+    assert_eq!(files.yours(), Some("comment-guard.py".to_owned()));
+    files.set_yours(None).unwrap();
+    assert_eq!(files.yours(), None);
+    files.set_yours(None).unwrap();
+}
