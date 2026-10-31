@@ -102,7 +102,8 @@ fn keys(
     if ctx.input_mut(|input| input.consume_key(Modifiers::COMMAND, Key::Enter)) {
         return start(state, catalog, facts);
     }
-    if esc_left_a_widget(ctx, true) || ctx.text_edit_focused() {
+    let keyboard_free = ctx.memory(|memory| memory.focused().is_none());
+    if (keyboard_free && esc_left_a_widget(ctx, true)) || ctx.text_edit_focused() {
         return None;
     }
     let nothing_focused = ctx.memory(|memory| memory.focused().is_none());

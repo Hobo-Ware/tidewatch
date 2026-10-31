@@ -984,3 +984,57 @@ fn a_custom_agent_without_yolo_flags_says_which_agent_and_where_to_add_them() {
     let note = state.level_note().unwrap();
     assert!(note.contains("[agent.aider.permissions]") && note.contains("yolo = "), "{note}");
 }
+
+#[test]
+fn the_files_in_the_box_follow_the_text_in_the_first_message() {
+    let catalog = catalog();
+    let mut state = in_agent_form(Group::Repo, &catalog, None);
+    state.set_text("  look at these  ");
+    state.attach(vec![PathBuf::from("/tmp/a b.png"), PathBuf::from("/tmp/notes.csv")]);
+    assert!(state.focus_message, "the box takes the keyboard");
+    let Ok(Request::Agent(request)) = state.start_request(&catalog, None) else {
+        panic!("agent request")
+    };
+    assert_eq!(
+        request.task, "look at these\n'/tmp/a b.png'\nAttached: /tmp/notes.csv",
+        "the same lines a reply sends"
+    );
+    assert_eq!(state.text(), "  look at these  ", "the text itself is untouched");
+}
+
+#[test]
+fn files_alone_start_the_agent_with_them_and_none_changes_nothing() {
+    let catalog = catalog();
+    let mut state = in_agent_form(Group::Repo, &catalog, None);
+    state.attach(vec![PathBuf::from("/tmp/shot.png")]);
+    let Ok(Request::Agent(request)) = state.start_request(&catalog, None) else {
+        panic!("agent request")
+    };
+    assert_eq!(request.task, "/tmp/shot.png");
+    state.pictures.clear();
+    let Ok(Request::Agent(request)) = state.start_request(&catalog, None) else {
+        panic!("agent request")
+    };
+    assert_eq!(request.task, "");
+}
+
+#[test]
+fn every_meeseeks_task_gets_the_files_and_the_names_still_follow_the_words() {
+    let catalog = catalog();
+    let mut state = in_meeseeks_form(&catalog);
+    state.set_text("Bump vite\nAdd a test");
+    state.attach(vec![PathBuf::from("/tmp/shot.png")]);
+    let request = summoned(&state, &catalog, &with_tests(None));
+    let tasks: Vec<&str> = request.tabs.iter().map(|tab| tab.task.as_str()).collect();
+    assert_eq!(tasks, ["Bump vite\n/tmp/shot.png", "Add a test\n/tmp/shot.png"]);
+    let names: Vec<_> = request.tabs.iter().map(|tab| tab.placement.name.clone()).collect();
+    assert_eq!(names, [Some("bump-vite".to_owned()), Some("add-test".to_owned())]);
+    assert_eq!(state.tasks(), ["Bump vite", "Add a test"], "the count counts lines, not files");
+}
+
+#[test]
+fn a_draft_names_its_staging_folder_by_its_own_seed() {
+    let one = NewTab::open(Group::Repo, "web".into(), PathBuf::from("/w"), Vec::new(), None, 7);
+    let two = NewTab::open(Group::Repo, "web".into(), PathBuf::from("/w"), Vec::new(), None, 8);
+    assert_eq!((one.draft_key(), two.draft_key()), (7, 8));
+}

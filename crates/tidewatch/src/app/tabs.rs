@@ -11,7 +11,7 @@ use crate::close_dialog::{self, Answer, Choice, Closing};
 use crate::dev_worktree::DevWorktree;
 use crate::new_tab::{Group, MeeseeksRequest, NewTab, Request};
 use crate::pane::{
-    CREATING_TITLE, ClosePolicy, Pane, STARTING_TITLE, agent_tabs_in_folder, finish_open,
+    Body, CREATING_TITLE, ClosePolicy, Pane, STARTING_TITLE, agent_tabs_in_folder, finish_open,
 };
 use crate::pty::{spawn_agent, spawn_shell};
 use crate::repo::Workspace;
@@ -20,6 +20,14 @@ use crate::worktree_jobs::{self, Done, OpenSpec, Target};
 
 fn random_seed() -> u64 {
     RandomState::new().build_hasher().finish()
+}
+
+fn remove_staged(dir: &std::path::Path) {
+    match std::fs::remove_dir_all(dir) {
+        Ok(()) => {}
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+        Err(e) => eprintln!("tidewatch: cannot remove {}: {e}", dir.display()),
+    }
 }
 
 impl Tidewatch {
@@ -75,9 +83,19 @@ impl Tidewatch {
                 self.remember_meeseeks(request.ticks, agent);
                 self.show_toast("Caaan do!", ctx);
             }
-            Request::Shell => {}
+            Request::Shell => self.discard_draft_files(tab),
         }
         self.open_tab_in(ctx, request, Some(tab));
+    }
+
+    /// Removes the files a draft's message box staged. A started draft keeps them: its first
+    /// message names their paths.
+    fn discard_draft_files(&mut self, tab: u64) {
+        let Some(paths) = self.paths.as_ref() else { return };
+        let Some(Body::Draft(form)) = self.tabs.get_mut(tab).map(|tab| &mut tab.pane.body) else {
+            return;
+        };
+        remove_staged(&paths.draft_dir(form.draft_key()));
     }
 
     fn remember_meeseeks(
@@ -182,6 +200,7 @@ impl Tidewatch {
         let id = tab.id;
         match tab.pane.close_policy() {
             ClosePolicy::Now => {
+                self.discard_draft_files(id);
                 self.tabs.apply(Action::Close(index), || unreachable!());
                 self.forget_tab(id);
             }
@@ -337,5 +356,32 @@ impl Tidewatch {
             | Action::ParkActive
             | Action::ToggleKeep(_) => self.tabs.apply(action, || unreachable!()),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use tidewatch_core::paths::TidewatchPaths;
+
+    use super::remove_staged;
+    use crate::attachments;
+
+    #[test]
+    fn closing_a_draft_removes_what_its_box_staged_and_nothing_of_another_draft() {
+        let home = tempfile::tempdir().unwrap();
+        let paths = TidewatchPaths::new(home.path());
+        let source = home.path().join("notes.csv");
+        std::fs::write(&source, "a,b").unwrap();
+        let staged = |key: u64| {
+            let dir = paths.draft_dir(key).join(crate::pictures::PASTES_DIR);
+            attachments::stage(std::slice::from_ref(&source), &dir).paths
+        };
+        let (mine, other) = (staged(1), staged(2));
+        assert!(mine[0].is_file() && other[0].is_file());
+        remove_staged(&paths.draft_dir(1));
+        assert!(!mine[0].exists() && !paths.draft_dir(1).exists());
+        assert!(other[0].is_file(), "another draft keeps its files");
+        remove_staged(&paths.draft_dir(1));
+        assert!(source.is_file(), "the original is never touched");
     }
 }

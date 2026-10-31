@@ -18,6 +18,7 @@ struct Harness {
     keys_free: bool,
     area: Rect,
     clock: f64,
+    shapes: Vec<egui::epaint::ClippedShape>,
 }
 
 fn key_with(key: Key, modifiers: Modifiers) -> Event {
@@ -46,8 +47,16 @@ impl Harness {
         let ctx = egui::Context::default();
         crate::fonts::install(&ctx);
         let area = Rect::from_min_size(pos2(0.0, 0.0), vec2(width, height));
-        let mut harness =
-            Self { ctx, state, catalog, facts: None, keys_free: true, area, clock: 0.0 };
+        let mut harness = Self {
+            ctx,
+            state,
+            catalog,
+            facts: None,
+            keys_free: true,
+            area,
+            clock: 0.0,
+            shapes: Vec::new(),
+        };
         harness.frame(Vec::new());
         harness.frame(Vec::new());
         harness
@@ -69,6 +78,10 @@ impl Harness {
     }
 
     fn frame(&mut self, events: Vec<Event>) -> Option<Out> {
+        self.frame_dropping(events, Vec::new())
+    }
+
+    fn frame_dropping(&mut self, events: Vec<Event>, dropped: Vec<PathBuf>) -> Option<Out> {
         self.clock += 0.1;
         let raw = RawInput {
             screen_rect: Some(Rect::from_min_size(
@@ -78,10 +91,14 @@ impl Harness {
             events,
             focused: true,
             time: Some(self.clock),
+            dropped_files: dropped
+                .into_iter()
+                .map(|path| egui::DroppedFile { path: Some(path), ..Default::default() })
+                .collect(),
             ..RawInput::default()
         };
         let mut out = None;
-        let _ = self.ctx.run_ui(raw, |ui| {
+        let full = self.ctx.run_ui(raw, |ui| {
             out = show(
                 ui,
                 self.area,
@@ -91,7 +108,25 @@ impl Harness {
                 self.keys_free,
             );
         });
+        self.shapes = full.shapes;
         out
+    }
+
+    fn drop_files(&mut self, paths: Vec<PathBuf>) {
+        self.frame_dropping(Vec::new(), paths);
+        let dropped = crate::file_drop::dropped(&self.ctx);
+        self.state.attach(dropped);
+        self.frame(Vec::new());
+    }
+
+    fn chips(&self) -> usize {
+        self.shapes
+            .iter()
+            .filter(|clipped| {
+                matches!(&clipped.shape, egui::Shape::Rect(r)
+                    if r.fill == brand::ITEM && r.rect.height() == crate::pictures::CHIP_H)
+            })
+            .count()
     }
 
     fn press(&mut self, k: Key) -> Option<Out> {
@@ -893,4 +928,105 @@ fn an_empty_list_says_why() {
     assert_eq!(empty_text("zz", true, "profile"), "No profile matches \"zz\".");
     assert!(empty_text("", true, "agent").starts_with("No agents yet. Add one in Settings ("));
     assert_eq!(empty_text("", false, "profile"), "The profiles are still loading...");
+}
+
+#[test]
+fn enter_in_the_message_box_is_a_new_line_and_cmd_enter_starts_with_both_lines() {
+    let mut harness = Harness::in_the_box(Group::Repo);
+    harness.type_text("first line");
+    assert_eq!(harness.press(Key::Enter), None);
+    harness.type_text("second line");
+    assert_eq!(harness.state.text(), "first line\nsecond line");
+    assert!(harness.typing(), "the keyboard stays in the box");
+    let out = harness.frame(vec![key_with(Key::Enter, Modifiers::COMMAND)]);
+    let Request::Agent(request) = started(out) else { panic!("agent") };
+    assert_eq!(request.task, "first line\nsecond line");
+    assert_eq!(harness.state.text(), "first line\nsecond line", "Cmd+Enter adds no line");
+}
+
+#[test]
+fn enter_in_a_meeseeks_task_box_makes_the_next_task() {
+    let mut harness = Harness::new(Group::Repo);
+    harness.facts = Some(command_facts());
+    harness.state.choose(Kind::Meeseeks);
+    harness.press(Key::Enter);
+    harness.type_text("Bump vite");
+    harness.press(Key::Enter);
+    harness.type_text("Add a test");
+    assert_eq!(harness.state.tasks(), ["Bump vite", "Add a test"]);
+    assert_eq!(start_label(&harness.state, &harness.catalog), "Summon 2");
+}
+
+#[test]
+fn a_file_dropped_on_the_window_becomes_a_chip_and_goes_after_the_text() {
+    let dir = tempfile::tempdir().unwrap();
+    let notes = dir.path().join("notes.csv");
+    std::fs::write(&notes, "a,b").unwrap();
+    let mut harness = Harness::in_the_box(Group::Repo);
+    harness.type_text("read this");
+    assert_eq!(harness.chips(), 0);
+    harness.drop_files(vec![notes.clone()]);
+    assert_eq!(harness.chips(), 1);
+    assert!(harness.typing(), "the box takes the keyboard back");
+    let out = harness.frame(vec![key_with(Key::Enter, Modifiers::COMMAND)]);
+    let Request::Agent(request) = started(out) else { panic!("agent") };
+    assert_eq!(request.task, format!("read this\nAttached: {}", notes.display()));
+}
+
+#[test]
+fn the_chip_row_can_be_removed_with_backspace_from_the_start_of_the_text() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("a.csv");
+    std::fs::write(&file, "x").unwrap();
+    let mut harness = Harness::in_the_box(Group::Repo);
+    harness.drop_files(vec![file]);
+    assert_eq!(harness.chips(), 1);
+    harness.press(Key::Backspace);
+    harness.frame(Vec::new());
+    assert_eq!(harness.chips(), 0);
+    assert_eq!(harness.state.pictures, Vec::<PathBuf>::new());
+}
+
+#[test]
+fn the_box_keeps_the_edges_of_the_fields_above_it_and_the_height_the_layout_gives() {
+    let harness = Harness::new(Group::Repo);
+    let placed = harness.placed();
+    let (message, name, base) =
+        (placed.message.unwrap(), placed.name.unwrap(), placed.base.unwrap());
+    assert_eq!(message.left(), name.left());
+    assert_eq!(message.right(), base.right());
+    let boxed = harness
+        .shapes
+        .iter()
+        .find_map(|clipped| match &clipped.shape {
+            egui::Shape::Vec(inner) => inner.iter().find_map(|shape| match shape {
+                egui::Shape::Rect(r) if r.fill == brand::CARD && r.corner_radius.nw == 14 => {
+                    Some(r.rect)
+                }
+                _ => None,
+            }),
+            egui::Shape::Rect(r) if r.fill == brand::CARD && r.corner_radius.nw == 14 => {
+                Some(r.rect)
+            }
+            _ => None,
+        })
+        .expect("the composer's card");
+    assert_eq!(
+        (boxed.left(), boxed.right(), boxed.bottom()),
+        (message.left() - 1.0, message.right() + 1.0, message.bottom())
+    );
+    assert!(boxed.height() >= layout::MESSAGE_MIN_H);
+}
+
+#[test]
+fn esc_in_a_box_with_the_command_list_open_closes_the_list_and_not_the_draft() {
+    let mut harness = Harness::in_the_box(Group::Repo);
+    harness.state.commands = std::sync::Arc::new(crate::slash::builtins());
+    harness.type_text("/");
+    harness.frame(Vec::new());
+    assert_eq!(harness.press(Key::Escape), None, "the list takes it");
+    assert!(harness.typing(), "the keyboard is still in the box");
+    harness.frame(Vec::new());
+    assert_eq!(harness.press(Key::Escape), None, "the next one only lets go of the box");
+    assert_eq!(harness.press(Key::Escape), Some(Out::Close));
 }

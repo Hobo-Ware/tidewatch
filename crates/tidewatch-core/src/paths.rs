@@ -180,6 +180,13 @@ impl TidewatchPaths {
         self.root.join(".state")
     }
 
+    /// Where a new-tab draft stages the files its message box takes, before any tab or worktree
+    /// exists: `.state/drafts/<key>`. Removed when the draft closes without Start.
+    #[must_use]
+    pub fn draft_dir(&self, key: u64) -> PathBuf {
+        self.state_dir().join("drafts").join(format!("{key:016x}"))
+    }
+
     #[must_use]
     pub fn me_dir(&self) -> PathBuf {
         self.state_dir().join("me")
@@ -544,6 +551,15 @@ mod tests {
         assert_eq!(paths.me_avatar_file(), paths.state_dir().join("me/avatar.jpg"));
         assert_eq!(paths.me_avatar_stamp_file(), paths.state_dir().join("me/avatar.stamp"));
         assert_eq!(paths.me_avatar_file().parent(), paths.me_avatar_stamp_file().parent());
+    }
+
+    #[test]
+    fn a_draft_stages_its_files_in_a_folder_of_its_own_under_the_state_dir() {
+        let paths = paths();
+        let (one, other) = (paths.draft_dir(1), paths.draft_dir(2));
+        assert_eq!(one, paths.state_dir().join("drafts/0000000000000001"));
+        assert_ne!(one, other);
+        assert_eq!(one.parent(), other.parent());
     }
 
     #[test]

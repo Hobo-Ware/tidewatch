@@ -109,7 +109,14 @@ pub(crate) fn composer(ui: &mut Ui, rect: Rect, draft: Draft<'_>, ready: Ready) 
     let mut child =
         ui.new_child(UiBuilder::new().max_rect(rect.shrink2(vec2(INSET, composer::GAP_Y))));
     let hint = label(ready.profile);
-    let spec = Spec { id: composer_id(), hint: &hint, enabled: true, commands: &[], ghost: None };
+    let spec = Spec {
+        id: composer_id(),
+        hint: &hint,
+        enabled: true,
+        commands: &[],
+        ghost: None,
+        mode: composer::Mode::Reply,
+    };
     composer::show(&mut child, draft, &spec)
 }
 

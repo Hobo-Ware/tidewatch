@@ -1,7 +1,8 @@
-//! The message box of the Reader and of an agent tab's first message: one widget. A single line is a
-//! 48 px box with the text centred, the placeholder where typed text starts and Send centred on the
-//! line; it grows with its text up to 40% of the column, then scrolls inside. Pasted pictures are
-//! chips above the text, `:` and two letters open the emoji list, a slash opens the command list.
+//! The message box of the Reader, of an agent tab's first message and of the new-tab form: one widget.
+//! A single line is a 48 px box with the text centred, the placeholder where typed text starts and Send
+//! centred on the line; it grows with its text up to 40% of the column, then scrolls inside. Pasted
+//! pictures are chips above the text, `:` and two letters open the emoji list, a slash opens the
+//! command list. In the form it is a field of a fixed height with no Send, where Enter is a new line.
 
 use std::path::PathBuf;
 
@@ -72,6 +73,21 @@ pub(crate) fn fit(row_h: f32, text_h: f32, chip_rows: usize, cap: f32) -> Fit {
     Fit { box_h, pad_y, chips_h, scrolls: wanted > box_h + 0.5 }
 }
 
+/// What the box is for. A reply sends on Enter and grows with its text; a field belongs to a form
+/// that sends on its own key, so it has no Send, Enter is a new line and the box is `height` tall
+/// (taller only when its chips need more).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) enum Mode {
+    Reply,
+    Field { height: f32 },
+}
+
+impl Mode {
+    fn sends(self) -> bool {
+        self == Self::Reply
+    }
+}
+
 struct Measure {
     fit: Fit,
     send_w: f32,
@@ -81,19 +97,39 @@ fn row_height(ui: &Ui) -> f32 {
     ui.painter().layout_no_wrap(String::new(), text_font(), brand::TEXT).size().y
 }
 
-fn measure(ui: &Ui, text: &str, pictures: usize, box_w: f32, cap: f32) -> Measure {
-    let send_w = button_width(ui, SEND, Size::Regular);
-    let wrap = box_w - PAD_X - send_edge() - send_w - SEND_GAP;
+fn measure(ui: &Ui, text: &str, pictures: usize, box_w: f32, (cap, mode): (f32, Mode)) -> Measure {
+    let send_w = if mode.sends() { button_width(ui, SEND, Size::Regular) } else { 0.0 };
+    let right = if mode.sends() { send_edge() + send_w + SEND_GAP } else { PAD_X };
+    let wrap = box_w - PAD_X - right;
     let typed = bullets::layout(ui, text, &text_font(), brand::TEXT, (wrap, &None));
     let rows = pictures::chip_rows(pictures, box_w - 2.0 * PAD_X, pictures::REMOVABLE_W);
-    let fit = fit(row_height(ui), typed.size().y, rows, cap);
+    let cap = match mode {
+        Mode::Reply => cap,
+        Mode::Field { height } => height,
+    };
+    let mut fit = fit(row_height(ui), typed.size().y, rows, cap);
+    if let Mode::Field { height } = mode {
+        fit.box_h = fit.box_h.max(height);
+    }
     Measure { fit, send_w }
 }
 
 /// The height a box takes in `column`, with the gap above and below it.
 pub(crate) fn height(ui: &Ui, text: &str, pictures: usize, column: Rect) -> f32 {
     let cap = (column.height() * SHARE).max(BOX_H);
-    measure(ui, text, pictures, column.width() - 2.0 * INSET, cap).fit.box_h + 2.0 * GAP_Y
+    measure(ui, text, pictures, column.width() - 2.0 * INSET, (cap, Mode::Reply)).fit.box_h
+        + 2.0 * GAP_Y
+}
+
+/// The height a field takes in a column `width` wide when it is asked for `height`: that, or more
+/// when its chips and one row of text need it.
+pub(crate) fn field_height(
+    ui: &Ui,
+    text: &str,
+    pictures: usize,
+    (width, height): (f32, f32),
+) -> f32 {
+    measure(ui, text, pictures, width, (height, Mode::Field { height })).fit.box_h
 }
 
 pub(crate) struct Draft<'a> {
@@ -109,6 +145,7 @@ pub(crate) struct Spec<'a> {
     pub(crate) enabled: bool,
     pub(crate) commands: &'a [SlashEntry],
     pub(crate) ghost: Option<&'a str>,
+    pub(crate) mode: Mode,
 }
 
 fn collapsed_cursor(ui: &Ui, id: Id) -> Option<usize> {
@@ -224,10 +261,11 @@ fn backspace_removes_a_picture(ui: &Ui, id: Id, text: &str, pictures: &mut Vec<P
 /// Draws the box in the room `ui` has and works it. Enter sends a non-empty text or any pictures and
 /// clears both, Cmd+Enter sends from anywhere in the box, Shift+Enter starts a new line, and on a
 /// list line Enter starts the next item instead while Tab and Shift+Tab move the item a level. Asks for focus once, the first time it is drawn, and again after a send. Off while
-/// `spec.enabled` is false.
+/// `spec.enabled` is false. A [`Mode::Field`] box has no Send and sends nothing: Enter is a new line and
+/// Cmd+Enter is left to the form.
 pub(crate) fn show(ui: &mut Ui, draft: Draft<'_>, spec: &Spec<'_>) -> Option<String> {
     let Draft { text, pictures, focus } = draft;
-    let Spec { id, hint, enabled, commands, ghost } = *spec;
+    let Spec { id, hint, enabled, commands, ghost, mode } = *spec;
     let room = ui.max_rect();
     let mut sent = None;
     let mut slash = slash_view::load(ui, id);
@@ -268,9 +306,11 @@ pub(crate) fn show(ui: &mut Ui, draft: Draft<'_>, spec: &Spec<'_>) -> Option<Str
     let slash_rows = if listing { slash.rows(text, commands) } else { Vec::new() };
     slash.open = !slash_rows.is_empty();
     let command_enter = enabled
+        && mode.sends()
         && ui.memory(|memory| memory.has_focus(id))
         && ui.input_mut(|input| input.consume_key(Modifiers::COMMAND, Key::Enter));
     let mut enter = enabled
+        && mode.sends()
         && ui.memory(|memory| memory.has_focus(id))
         && ui.input(|input| input.events.iter().any(crate::agent_ready::plain_enter));
     if enter && let Some(cursor) = collapsed_cursor(ui, id) {
@@ -282,7 +322,7 @@ pub(crate) fn show(ui: &mut Ui, draft: Draft<'_>, spec: &Spec<'_>) -> Option<Str
     }
     let enter = enter || command_enter;
     ui.add_enabled_ui(enabled, |ui| {
-        let measured = measure(ui, text, pictures.len(), room.width(), room.height());
+        let measured = measure(ui, text, pictures.len(), room.width(), (room.height(), mode));
         let Fit { box_h, pad_y, chips_h, .. } = measured.fit;
         let boxed = Rect::from_min_size(room.min, vec2(room.width(), box_h));
         let background = ui.painter().add(Shape::Noop);
@@ -309,7 +349,10 @@ pub(crate) fn show(ui: &mut Ui, draft: Draft<'_>, spec: &Spec<'_>) -> Option<Str
         }
         let view = Rect::from_min_max(
             pos2(boxed.left() + PAD_X, boxed.top() + BORDER + chips_h),
-            pos2(send.left() - SEND_GAP, boxed.bottom() - BORDER),
+            pos2(
+                if mode.sends() { send.left() - SEND_GAP } else { boxed.right() - PAD_X },
+                boxed.bottom() - BORDER,
+            ),
         );
         let shown = view.height();
         let height_id = id.with("height");
@@ -348,7 +391,10 @@ pub(crate) fn show(ui: &mut Ui, draft: Draft<'_>, spec: &Spec<'_>) -> Option<Str
                         .font(text_font())
                         .text_color(brand::TEXT)
                         .layouter(&mut layouter)
-                        .return_key(KeyboardShortcut::new(Modifiers::SHIFT, Key::Enter))
+                        .return_key(KeyboardShortcut::new(
+                            if mode.sends() { Modifiers::SHIFT } else { Modifiers::NONE },
+                            Key::Enter,
+                        ))
                         .show(ui);
                     bullets::paint_markers(ui, &edit.galley, edit.galley_pos, &text_font());
                     ui.add_space(pad_y + lift);
@@ -363,11 +409,13 @@ pub(crate) fn show(ui: &mut Ui, draft: Draft<'_>, spec: &Spec<'_>) -> Option<Str
                     output = Some(edit);
                 });
         });
-        let can_send = !text.trim().is_empty() || !pictures.is_empty();
+        let can_send = mode.sends() && (!text.trim().is_empty() || !pictures.is_empty());
         let mut clicked = false;
-        ui.scope_builder(UiBuilder::new().max_rect(send), |ui| {
-            clicked = primary_button(ui, SEND, can_send, Size::Regular).clicked();
-        });
+        if mode.sends() {
+            ui.scope_builder(UiBuilder::new().max_rect(send), |ui| {
+                clicked = primary_button(ui, SEND, can_send, Size::Regular).clicked();
+            });
+        }
         if whole.clicked() || std::mem::take(focus) {
             ui.memory_mut(|memory| memory.request_focus(id));
         }
@@ -558,6 +606,7 @@ mod tests {
         focus: bool,
         ghost: Option<&'static str>,
         hovered: bool,
+        mode: Mode,
     }
 
     impl Rig {
@@ -571,6 +620,7 @@ mod tests {
                 focus: true,
                 ghost: None,
                 hovered: false,
+                mode: Mode::Reply,
             };
             rig.frame(vec![]);
             rig.frame(vec![]);
@@ -607,6 +657,7 @@ mod tests {
                     enabled: true,
                     commands: &[],
                     ghost: self.ghost,
+                    mode: self.mode,
                 };
                 sent = show(&mut child, draft, &spec);
             });
@@ -1189,5 +1240,72 @@ mod tests {
         rig.type_text("- one");
         rig.settle(vec![chord(Key::Enter, Modifiers::SHIFT)]);
         assert_eq!(rig.text, "- one\n");
+    }
+
+    fn field(height: f32) -> Rig {
+        let mut rig = Rig::new();
+        rig.mode = Mode::Field { height };
+        rig.frame(vec![]);
+        rig
+    }
+
+    #[test]
+    fn a_field_is_as_tall_as_it_is_asked_and_has_no_send() {
+        let mut rig = field(160.0);
+        let empty = rig.frame(vec![]);
+        assert_eq!(empty.box_rect.height(), 160.0);
+        assert_eq!(empty.text_rows("Send").len(), 0);
+        let full = rig.type_text(&"line\n".repeat(30));
+        assert_eq!(full.box_rect.height(), 160.0, "long text scrolls inside instead of growing");
+    }
+
+    #[test]
+    fn a_field_grows_past_its_height_only_for_the_chips_it_cannot_hide() {
+        let mut rig = field(100.0);
+        rig.pictures = (0..8).map(|n| PathBuf::from(format!("/nowhere/{n}.png"))).collect();
+        let seen = rig.frame(vec![]);
+        let rows =
+            pictures::chip_rows(8, COLUMN_W - 2.0 * INSET - 2.0 * PAD_X, pictures::REMOVABLE_W);
+        assert!(rows > 1, "the test needs chips on several rows");
+        assert!(seen.box_rect.height() > 100.0 + 40.0, "{}", seen.box_rect.height());
+        let asked = {
+            let mut got = 0.0;
+            let _ = rig.ctx.run_ui(RawInput::default(), |ui| {
+                got = field_height(ui, "", 8, (COLUMN_W - 2.0 * INSET, 100.0));
+            });
+            got
+        };
+        assert_eq!(asked, seen.box_rect.height(), "the form allocates what the box takes");
+    }
+
+    #[test]
+    fn enter_in_a_field_is_a_new_line_that_sends_nothing_and_cmd_enter_adds_none() {
+        let mut rig = field(160.0);
+        rig.type_text("one");
+        let seen = rig.settle(vec![key(Key::Enter)]);
+        assert_eq!((seen.sent, rig.text.as_str()), (None, "one\n"));
+        rig.type_text("two");
+        let seen = rig.settle(vec![chord(Key::Enter, Modifiers::SHIFT)]);
+        assert_eq!((seen.sent, rig.text.as_str()), (None, "one\ntwo\n"));
+        let seen = rig.frame(vec![chord(Key::Enter, Modifiers::COMMAND)]);
+        assert_eq!((seen.sent, rig.text.as_str()), (None, "one\ntwo\n"));
+    }
+
+    #[test]
+    fn a_list_line_in_a_field_still_takes_a_plain_enter_as_one_new_line() {
+        let mut rig = field(160.0);
+        rig.type_text("- one");
+        rig.settle(vec![key(Key::Enter)]);
+        assert_eq!(rig.text, "- one\n");
+    }
+
+    #[test]
+    fn a_field_wraps_at_its_own_right_padding_not_where_send_would_be() {
+        let mut rig = field(160.0);
+        let text = "word ".repeat(60);
+        let seen = rig.type_text(&text);
+        let widest = seen.text_rows(&text).iter().map(egui::Rect::right).fold(0.0, f32::max);
+        assert!(widest > seen.box_rect.right() - 90.0, "{widest} in {:?}", seen.box_rect);
+        assert!(widest <= seen.box_rect.right() - PAD_X, "{widest} in {:?}", seen.box_rect);
     }
 }
