@@ -34,6 +34,7 @@ fn trust_page() -> trust_view::Page<'static> {
         consent: tidewatch_core::consent::Consent::Undecided,
         state: None,
         root: "/home/u/.tidewatch",
+        home: None,
         added: 0,
         busy: false,
     }

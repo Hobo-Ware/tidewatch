@@ -6,7 +6,7 @@
 //! runnable checks. Without it a fresh `TIDEWATCH_HOME` shows the dialog like a real first launch.
 
 use std::ffi::OsString;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use tidewatch_core::agents::find_on_path;
 use tidewatch_core::consent::{Consent, Effect, Event};
@@ -25,6 +25,7 @@ pub(crate) enum Done {
 pub(crate) struct Trust {
     grant: Option<Grant>,
     root: String,
+    home: Option<PathBuf>,
     consent: Consent,
     added: usize,
     installed: Vec<TrustCli>,
@@ -40,7 +41,8 @@ impl Trust {
     pub(crate) fn new(paths: Option<&TidewatchPaths>, cli_home: Option<&Path>) -> Self {
         let grant =
             paths.zip(cli_home).map(|(paths, home)| Grant::new(paths, ConfigFiles::from_env(home)));
-        Self::with_grant(grant, dev_event(std::env::var("TIDEWATCH_DEV_TRUST").ok().as_deref()))
+        let dev = dev_event(std::env::var("TIDEWATCH_DEV_TRUST").ok().as_deref());
+        Self { home: cli_home.map(Path::to_path_buf), ..Self::with_grant(grant, dev) }
     }
 
     fn with_grant(grant: Option<Grant>, dev: Option<Event>) -> Self {
@@ -48,6 +50,7 @@ impl Trust {
         let root = grant.as_ref().map_or_else(|| "~/.tidewatch".to_owned(), Grant::root_entry);
         Self {
             root,
+            home: None,
             consent: record.consent,
             added: record.added.len(),
             grant,
@@ -156,6 +159,7 @@ impl Trust {
             consent: self.consent,
             state: self.state.as_ref(),
             root: &self.root,
+            home: self.home.as_deref(),
             added: self.added,
             busy: self.busy,
         }
