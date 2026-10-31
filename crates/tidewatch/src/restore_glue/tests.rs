@@ -106,6 +106,10 @@ impl Fixture {
     }
 
     fn tick(&mut self) {
+        self.tick_at(1.0);
+    }
+
+    fn tick_at(&mut self, now: f64) {
         let env = Env { paths: &self.paths, catalog: &self.catalog, listener: None, trust: None };
         let agent = |dir: &Path, prepared: &Prepared| {
             format!("agent@{}: {}", dir.display(), prepared.launch.shell_line())
@@ -117,7 +121,7 @@ impl Fixture {
             format!("typed@{}: {}", dir.display(), prepared.launch.shell_line())
         };
         let spawn = Spawn { agent: &agent, typed: &typed, shell: &shell };
-        let report = self.host.tick(&self.ctx, &mut self.tabs, &env, &spawn, 1.0);
+        let report = self.host.tick(&self.ctx, &mut self.tabs, &env, &spawn, now);
         self.toasts.extend(report.toasts.clone());
         if report.leftovers.is_some() {
             self.report.leftovers = report.leftovers;
@@ -439,6 +443,52 @@ fn a_plan_stays_unsettled_while_an_agent_is_still_being_made() {
     }
     f.until_settled();
     assert!(f.shells()[1].starts_with("agent@"));
+}
+
+#[test]
+fn settling_waits_for_a_busy_tab_only_until_the_limit() {
+    let cases = [
+        (false, 0.0, 0.0, Settle::Done),
+        (true, 0.0, 0.0, Settle::Wait { left_secs: 60.0 }),
+        (true, 10.0, 40.0, Settle::Wait { left_secs: 30.0 }),
+        (true, 0.0, 59.9, Settle::Wait { left_secs: 60.0 - 59.9 }),
+        (true, 0.0, 60.0, Settle::Done),
+        (true, 5.0, 500.0, Settle::Done),
+        (false, 5.0, 500.0, Settle::Done),
+    ];
+    for (busy, since, now, want) in cases {
+        assert_eq!(settle(busy, since, now), want, "busy {busy} since {since} now {now}");
+    }
+}
+
+#[test]
+fn a_tab_the_user_is_making_never_holds_the_saver() {
+    let mut f = Fixture::new(false);
+    f.begin();
+    f.tabs.push("new worktree".into(), Pane::creating());
+    f.until_settled();
+    assert_eq!(f.shells().last().map(String::as_str), Some("creating"));
+}
+
+#[test]
+fn a_restored_tab_that_never_finishes_lets_the_saver_go_after_the_limit() {
+    let mut f = Fixture::new(false);
+    f.save(0, false, vec![SavedTab::Main]);
+    f.begin();
+    let stuck = f.tabs.push("stuck".into(), Pane::creating());
+    f.host.watched.push(stuck);
+    let deadline = Instant::now() + Duration::from_secs(30);
+    while f.host.phase == Phase::Planning || f.host.phase == Phase::Waiting {
+        f.tick_at(10.0);
+        assert!(Instant::now() < deadline);
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    assert_eq!(f.host.phase, Phase::Settling);
+    assert!(!f.host.settled());
+    f.tick_at(69.0);
+    assert!(!f.host.settled(), "59 s in");
+    f.tick_at(70.0);
+    assert!(f.host.settled());
 }
 
 #[test]
