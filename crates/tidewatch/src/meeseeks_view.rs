@@ -87,12 +87,11 @@ fn stage_card(ui: &mut Ui, width: f32, card: &Card, placed: &mut Placed) {
     let meta = painter.layout_no_wrap(card.meta.clone(), mono(12.0), brand::MUTED);
     let title =
         ellipsized(&painter, &card.title, heading(14.0), brand::TEXT, inner - meta.size().x - 10.0);
+    let bar_w = (inner - 3.0 * BAR_GAP) / 4.0;
     let labels: Vec<_> = card
         .bars
         .iter()
-        .map(|(name, look)| {
-            painter.layout_no_wrap((*name).to_owned(), body(12.0), label_ink(*look))
-        })
+        .map(|(name, look)| ellipsized(&painter, name, body(12.0), label_ink(*look), bar_w))
         .collect();
     let status = painter.layout_job(status_job(&card.status, inner - 2.0 * BOX_PAD_X));
     let head_h = title.size().y.max(meta.size().y);
@@ -114,7 +113,6 @@ fn stage_card(ui: &mut Ui, width: f32, card: &Card, placed: &mut Placed) {
     );
     y += head_h + GAP;
     if !card.bars.is_empty() {
-        let bar_w = (inner - 3.0 * BAR_GAP) / 4.0;
         for (index, (_, look)) in card.bars.iter().enumerate() {
             let bar = Rect::from_min_size(
                 pos2(left + index as f32 * (bar_w + BAR_GAP), y),
@@ -124,13 +122,9 @@ fn stage_card(ui: &mut Ui, width: f32, card: &Card, placed: &mut Placed) {
             placed.bars[index] = Some(bar);
         }
         y += BAR_H + GAP;
-        let used: f32 = labels.iter().map(|galley| galley.size().x).sum();
-        let space = ((inner - used) / 3.0).max(0.0);
-        let mut x = left;
-        for (galley, (_, look)) in labels.into_iter().zip(&card.bars) {
-            let width = galley.size().x;
+        for (index, (galley, (_, look))) in labels.into_iter().zip(&card.bars).enumerate() {
+            let x = left + index as f32 * (bar_w + BAR_GAP);
             selectable::galley(ui, pos2(x, y), galley, label_ink(*look));
-            x += width + space;
         }
         y += label_h + GAP;
     }

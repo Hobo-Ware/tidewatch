@@ -12,6 +12,7 @@ struct Harness {
     width: f32,
     clock: f64,
     action: Option<Action>,
+    texts: Vec<(String, Pos2)>,
 }
 
 fn card_of(meeseeks: &Meeseeks, now_ms: i64) -> Card {
@@ -36,7 +37,7 @@ impl Harness {
     fn new(card: Card, width: f32) -> Self {
         let ctx = egui::Context::default();
         crate::fonts::install(&ctx);
-        let mut harness = Self { ctx, card, width, clock: 0.0, action: None };
+        let mut harness = Self { ctx, card, width, clock: 0.0, action: None, texts: Vec::new() };
         harness.frame(Vec::new());
         harness.frame(Vec::new());
         harness
@@ -53,11 +54,19 @@ impl Harness {
         };
         let (card, width) = (&self.card, self.width);
         let mut action = None;
-        let _ = self.ctx.run_ui(raw, |ui| {
+        let output = self.ctx.run_ui(raw, |ui| {
             ui.set_width(width);
             action = show(ui, width, card);
         });
         self.action = action;
+        self.texts = output
+            .shapes
+            .iter()
+            .filter_map(|clipped| match &clipped.shape {
+                egui::Shape::Text(text) => Some((text.galley.text().to_owned(), text.pos)),
+                _ => None,
+            })
+            .collect();
     }
 
     fn placed(&self) -> Placed {
@@ -160,4 +169,22 @@ fn a_working_meeseeks_has_no_bars_and_a_shorter_card() {
     let working = Harness::new(card_of(&meeseeks, 5 * MIN), 380.0).placed();
     assert!(working.bars.iter().all(Option::is_none));
     assert!(working.card.unwrap().height() < checking.card.unwrap().height());
+}
+
+#[test]
+fn each_stage_label_sits_left_aligned_under_its_own_bar() {
+    for width in [320.0, 420.0, 600.0] {
+        let harness = Harness::new(card_of(&running(), 12 * MIN), width);
+        let placed = harness.placed();
+        for (index, (name, _)) in harness.card.bars.iter().enumerate() {
+            let bar = placed.bars[index].unwrap();
+            let (_, at) = harness
+                .texts
+                .iter()
+                .find(|(text, _)| text == name)
+                .unwrap_or_else(|| panic!("{name}: {:?}", harness.texts));
+            assert_eq!(at.x, bar.left(), "{name} at {width}");
+            assert!(at.y > bar.bottom(), "{name} at {width}");
+        }
+    }
 }
