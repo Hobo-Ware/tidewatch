@@ -284,6 +284,11 @@ impl Reader {
         self.shown()
     }
 
+    /// `TIDEWATCH_DEV_SEE`: the Reader shows its seeded rows as if a transcript was found.
+    pub(crate) fn dev_found(&mut self) {
+        self.link = Link::Found;
+    }
+
     pub(crate) fn needs_start(&self) -> bool {
         self.link == Link::Idle && self.feed.is_none()
     }

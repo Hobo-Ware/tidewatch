@@ -109,6 +109,7 @@ impl Tidewatch {
         self.drive_due_start(ctx, now);
         self.drive_dev_scheduled(ctx);
         self.drive_dev_draft(ctx, now);
+        self.drive_dev_see();
         self.drive_dev_form_start(ctx);
         self.drive_restore(ctx, now, None);
         self.drive_takeover(ctx, now);

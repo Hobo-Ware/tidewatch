@@ -1070,7 +1070,7 @@ mod tests {
         assert!(note.starts_with("Tidewatch picked \""), "{note}");
         assert!(note.contains(" for you after 5 minutes. The user may change it."), "{note}");
         let line = pane.agent.as_ref().unwrap().run.pick_to_review().map(str::to_owned);
-        assert!(line.is_some_and(|line| line.ends_with("Open the tab to review it")));
+        assert!(line.is_some_and(|line| line.ends_with(" for you")));
     }
 
     #[test]

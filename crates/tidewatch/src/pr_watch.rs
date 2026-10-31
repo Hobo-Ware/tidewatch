@@ -548,17 +548,22 @@ impl Watch {
         {
             return Vec::new();
         }
+        self.queue(message, body.clone(), number);
+        self.flush(default, now, now_ms)
+    }
+
+    fn queue(&mut self, message: Message, body: Body, number: u64) {
         self.pending.retain(|pending| pending.message.ask.tag != message.ask.tag);
         self.next_pending += 1;
         let confirm = self.needs_ok(message.trigger);
-        self.pending.push(Pending {
-            id: self.next_pending,
-            message,
-            body: body.clone(),
-            number,
-            confirm,
-        });
-        self.flush(default, now, now_ms)
+        self.pending.push(Pending { id: self.next_pending, message, body, number, confirm });
+    }
+
+    /// `TIDEWATCH_DEV_SEE=confirm`: a conflict message waiting for the first Send, for a capture.
+    pub(crate) fn dev_pending(&mut self, body: Body, number: u64) {
+        if let Some(message) = pr_prompt::message(&body, number, self.workflow) {
+            self.queue(message, body, number);
+        }
     }
 
     /// Sends the waiting message when the agent is idle and the last send has had its turn (the hook

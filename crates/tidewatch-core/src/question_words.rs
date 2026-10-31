@@ -29,14 +29,10 @@ pub fn picked_for_you(questions: &[Question], given: &[Given], minutes: u64) -> 
 #[must_use]
 pub fn pick_review_line(questions: &[Question], given: &[Given]) -> String {
     match (questions, given) {
-        ([question], [given]) => format!(
-            "Tidewatch picked \"{}\" for you. Open the tab to review it",
-            answer_line(question, given)
-        ),
-        _ => format!(
-            "Tidewatch picked answers to {} questions for you. Open the tab to review them",
-            questions.len()
-        ),
+        ([question], [given]) => {
+            format!("Tidewatch picked \"{}\" for you", answer_line(question, given))
+        }
+        _ => format!("Tidewatch picked answers to {} questions for you", questions.len()),
     }
 }
 
@@ -91,15 +87,12 @@ mod tests {
     fn the_card_line_names_the_pick_or_counts_the_questions() {
         let one = [question("Where?", &["On the stage", "On the run"])];
         let first = [Given { picked: vec![0], other: None }];
-        assert_eq!(
-            pick_review_line(&one, &first),
-            "Tidewatch picked \"On the stage\" for you. Open the tab to review it"
-        );
+        assert_eq!(pick_review_line(&one, &first), "Tidewatch picked \"On the stage\" for you");
         let two = [question("A?", &["a", "b"]), question("B?", &["c", "d"])];
         let both = [Given { picked: vec![0], other: None }, Given { picked: vec![1], other: None }];
         assert_eq!(
             pick_review_line(&two, &both),
-            "Tidewatch picked answers to 2 questions for you. Open the tab to review them"
+            "Tidewatch picked answers to 2 questions for you"
         );
     }
 }

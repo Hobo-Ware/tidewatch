@@ -931,17 +931,14 @@ mod tests {
     #[test]
     fn a_row_carries_what_tidewatch_picked_until_the_owner_opens_the_tab() {
         let mut agent = AgentTab::new("Builder".into(), AgentRun::setting_up("claude".into(), 0.0));
-        agent.run.pick_made("Tidewatch picked \"A\" for you. Open the tab to review it".into());
+        agent.run.pick_made("Tidewatch picked \"A\" for you".into());
         let mut tabs: Tabs<Pane<u32>> = Tabs::new(Pane::shell(0));
         tabs.push(
             "brave-otter".into(),
             Pane { body: Body::Shell(1), worktree: None, agent: Some(agent) },
         );
         let row = collect("web", Path::new("/work/web"), 0, &tabs, 0.0).rows.remove(0);
-        assert_eq!(
-            row.pick_line().map(String::as_str),
-            Some("Tidewatch picked \"A\" for you. Open the tab to review it")
-        );
+        assert_eq!(row.pick_line().map(String::as_str), Some("Tidewatch picked \"A\" for you"));
         assert_eq!(ask_button(&row), "Review");
         tabs.get_mut(1).unwrap().pane.agent.as_mut().unwrap().run.pick_reviewed();
         let opened = collect("web", Path::new("/work/web"), 0, &tabs, 0.0).rows.remove(0);
@@ -956,11 +953,8 @@ mod tests {
             waiting.pick_line().map(String::as_str),
             Some("Picks the recommended answer in 3:40")
         );
-        waiting.picked = Some("Tidewatch picked \"A\" for you. Open the tab to review it".into());
-        assert_eq!(
-            waiting.pick_line().map(String::as_str),
-            Some("Tidewatch picked \"A\" for you. Open the tab to review it")
-        );
+        waiting.picked = Some("Tidewatch picked \"A\" for you".into());
+        assert_eq!(waiting.pick_line().map(String::as_str), Some("Tidewatch picked \"A\" for you"));
     }
 
     #[test]

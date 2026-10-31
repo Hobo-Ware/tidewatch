@@ -425,6 +425,13 @@ impl Host {
         Vec::new()
     }
 
+    /// `TIDEWATCH_DEV_SEE=confirm`: whether the tab's watch took a waiting first message.
+    pub(crate) fn dev_pending(&mut self, tab: u64, body: Body) -> bool {
+        let Some(watch) = self.tabs.get_mut(&tab) else { return false };
+        watch.dev_pending(body, 42);
+        true
+    }
+
     pub(crate) fn set_policy(&mut self, tab: u64, policy: GithubPrefs, now: f64) {
         let Some(watch) = self.tabs.get_mut(&tab) else { return };
         watch.set_policy(policy, now);

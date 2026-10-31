@@ -904,7 +904,7 @@ mod tests {
     fn a_tab_tidewatch_answered_for_stays_in_needs_you_until_its_owner_opens_it() {
         use crate::status_view::Tone;
         let mut run = AgentRun::setting_up("claude".into(), 0.0);
-        run.pick_made("Tidewatch picked \"A\" for you. Open the tab to review it".into());
+        run.pick_made("Tidewatch picked \"A\" for you".into());
         let table = [
             (AgentStatus::Working, None, Tone::Needs),
             (AgentStatus::Done, None, Tone::Needs),

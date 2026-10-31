@@ -5,7 +5,8 @@
 //!
 //! `TIDEWATCH_FAKE_COMMENTS=1` gives every agent tab four stand-in flags, one on a deep path in the
 //! tab's own folder, and writes nothing;
-//! `TIDEWATCH_DEV_COMMENT_POPOVER=1` keeps the chip's list open.
+//! `TIDEWATCH_FAKE_COMMENTS=yours` instead gives every agent tab the owner's own comment-guard hook
+//! and no flags; `TIDEWATCH_DEV_COMMENT_POPOVER=1` keeps the chip's list open.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -67,6 +68,7 @@ pub(crate) struct Host {
     tabs: HashMap<u64, TabState>,
     jobs: Jobs<Swept>,
     fake: bool,
+    fake_yours: bool,
     popover: bool,
     home: Option<PathBuf>,
     wall_ms: fn() -> u64,
@@ -107,12 +109,13 @@ fn fake_records(dir: &Path) -> Vec<Record> {
 
 impl Host {
     pub(crate) fn new() -> Self {
-        let fake =
-            std::env::var_os("TIDEWATCH_FAKE_COMMENTS").is_some_and(|v| !v.is_empty() && v != "0");
+        let fake_var = std::env::var("TIDEWATCH_FAKE_COMMENTS").unwrap_or_default();
+        let fake_yours = fake_var == "yours";
+        let fake = !fake_var.is_empty() && fake_var != "0" && !fake_yours;
         let popover =
             std::env::var("TIDEWATCH_DEV_COMMENT_POPOVER").is_ok_and(|v| !v.is_empty() && v != "0");
         let home = std::env::var_os("HOME").map(PathBuf::from);
-        Self { tabs: HashMap::new(), jobs: Jobs::new(), fake, popover, home, wall_ms }
+        Self { tabs: HashMap::new(), jobs: Jobs::new(), fake, fake_yours, popover, home, wall_ms }
     }
 
     pub(crate) fn open_popover(&self) -> bool {
@@ -168,13 +171,13 @@ impl Host {
                 records: if self.fake { fake_records(fact.dir) } else { Vec::new() },
                 flags_len: 0,
                 off: false,
-                yours: None,
+                yours: self.fake_yours.then(|| "comment-guard.py".to_owned()),
                 turn: Turn::default(),
                 reminders: Reminders::default(),
                 sweeping: false,
                 looked: f64::NEG_INFINITY,
             });
-            if !self.fake && (fresh || now - state.looked >= LOOK_EVERY_S) {
+            if !self.fake && !self.fake_yours && (fresh || now - state.looked >= LOOK_EVERY_S) {
                 state.look(now);
             }
             let turn_ended = state.turn.ended(fact.status);

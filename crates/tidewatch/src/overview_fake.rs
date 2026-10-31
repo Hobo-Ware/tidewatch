@@ -12,7 +12,7 @@ use crate::agenda::{Day, Item, Mark};
 use crate::overview::{self, AgentKind, Next, Overview, PlaceInput, PoofedRow, Row, Stamp};
 use crate::overview_view::State;
 use crate::progress_model::{look, look_as};
-use crate::status_view::shown;
+use crate::status_view::{Tone, shown};
 use crate::takeover::{Offer, Status};
 use crate::takeover_view::Card;
 
@@ -170,6 +170,7 @@ pub(crate) fn build(working: usize) -> Fake {
             "Asks: keep old URLs as redirects?",
             9.0,
         ),
+        spec("calendar-sync-fix", "acme-api", AgentKind::Yolo, Working, "Fixing the sync", 14.0),
     ];
     let names = [
         (
@@ -277,6 +278,9 @@ pub(crate) fn build(working: usize) -> Fake {
     ));
     needs_rows[2].look = Some(ask_look("Keep the old URLs as redirects?", "", ""));
     needs_rows[2].auto_pick = Some("Picks the recommended answer in 3:40".to_owned());
+    needs_rows[3].tone = Tone::Needs;
+    needs_rows[3].picked =
+        Some("Tidewatch picked \"Keep the old URLs as redirects\" for you".to_owned());
     let waits = [
         (
             "recap-backfill",
