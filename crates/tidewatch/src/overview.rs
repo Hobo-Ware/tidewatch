@@ -291,12 +291,12 @@ fn card_view_of(row: &Row) -> CardView {
     }
 }
 
-/// `42s`, `4m 02s`, `1h 03m`.
+/// `42s`, `4m`, `1h 03m`.
 pub(crate) fn fmt_elapsed(secs: f64) -> String {
     let total = secs.max(0.0) as u64;
     match total {
         0..60 => format!("{total}s"),
-        60..3600 => format!("{}m {:02}s", total / 60, total % 60),
+        60..3600 => format!("{}m", total / 60),
         _ => format!("{}h {:02}m", total / 3600, (total % 3600) / 60),
     }
 }
@@ -846,9 +846,10 @@ mod tests {
         let cases = [
             (0.0, "0s"),
             (42.9, "42s"),
-            (60.0, "1m 00s"),
-            (242.0, "4m 02s"),
-            (3599.0, "59m 59s"),
+            (60.0, "1m"),
+            (242.0, "4m"),
+            (720.0, "12m"),
+            (3599.0, "59m"),
             (3780.0, "1h 03m"),
             (-5.0, "0s"),
         ];
