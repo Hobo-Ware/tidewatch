@@ -15,7 +15,7 @@ use tidewatch_core::meeseeks_check::{Work, hand_off, proof};
 use tidewatch_core::meeseeks_target::Target;
 use tidewatch_core::pr_gh::poll;
 use tidewatch_core::tools::{GhError, Tools};
-use tidewatch_core::workflow_profile::Workflow;
+use tidewatch_core::workflow_profile::{Checks, Workflow};
 
 const LIMIT: Duration = Duration::from_millis(300);
 
@@ -111,6 +111,10 @@ fn check(tools: &Tools, dir: &Path) -> tidewatch_core::done_check::Report {
             pr: PrFact::Number(42),
             unverified: Some(Vec::new()),
             today,
+            checks: Checks::OFF,
+            repo: dir,
+            plan: None,
+            verified: None,
         })
     })
 }

@@ -374,6 +374,7 @@ mod tests {
             catch_up: crate::workflow_profile::CatchUp::Merge,
             fixes: crate::workflow_profile::Fixes::NewCommits,
             pull_requests: crate::workflow_profile::PullRequests::Ready,
+            ..Workflow::default()
         };
         for role in ROLES {
             let with = |workflow| {

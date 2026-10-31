@@ -823,6 +823,7 @@ mod tests {
             catch_up: CatchUp::Merge,
             fixes: Fixes::NewCommits,
             pull_requests: PullRequests::Ready,
+            ..Workflow::default()
         };
         for role in [TabRole::Agent, TabRole::Meeseeks] {
             let h = Harness { workflow, ..Harness::of(role) };

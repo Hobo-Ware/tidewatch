@@ -3,7 +3,7 @@
 
 use egui::{Context, Id, Margin, Order, Rect, RichText, Stroke, Ui, pos2};
 use tidewatch_core::workflow_detect::{Detected, Source};
-use tidewatch_core::workflow_profile::{CatchUp, Fixes, PullRequests, Workflow};
+use tidewatch_core::workflow_profile::{CatchUp, Checks, Fixes, PullRequests, Workflow};
 
 use crate::brand;
 use crate::layout;
@@ -15,6 +15,58 @@ const FIXES: [(Fixes, &str); 2] =
     [(Fixes::Fixup, "Into their commit (fixup)"), (Fixes::NewCommits, "New commits")];
 const PULL_REQUESTS: [(PullRequests, &str); 2] =
     [(PullRequests::Draft, "Draft"), (PullRequests::Ready, "Ready")];
+
+/// The checks of Step 7, in the order the card lists them: the switch, its title and what it does.
+pub(crate) const CHECKS: [(Check, &str, &str); 4] = [
+    (
+        Check::Tests,
+        "Tests run by Tidewatch",
+        "When the agent says it is done, Tidewatch runs the repo's test command itself and tells the agent what failed. Auto waits for a pass before it asks to push.",
+    ),
+    (
+        Check::Verified,
+        "Verified means rerunnable",
+        "A verified item that names no command shows as claimed, not checked. Nothing is sent.",
+    ),
+    (
+        Check::Scope,
+        "Scope",
+        "The done card lists files changed outside what the plan named. Nothing is sent.",
+    ),
+    (
+        Check::FixTest,
+        "A fix comes with a test",
+        "A branch that fixes something and adds no test goes back to the agent. Sends a message when it triggers.",
+    ),
+];
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Check {
+    Tests,
+    Verified,
+    Scope,
+    FixTest,
+}
+
+impl Check {
+    pub(crate) fn is_on(self, checks: Checks) -> bool {
+        match self {
+            Self::Tests => checks.tests,
+            Self::Verified => checks.verified,
+            Self::Scope => checks.scope,
+            Self::FixTest => checks.fix_test,
+        }
+    }
+
+    pub(crate) fn with(self, checks: Checks, on: bool) -> Checks {
+        match self {
+            Self::Tests => Checks { tests: on, ..checks },
+            Self::Verified => Checks { verified: on, ..checks },
+            Self::Scope => Checks { scope: on, ..checks },
+            Self::FixTest => Checks { fix_test: on, ..checks },
+        }
+    }
+}
 
 const MAX_WIDTH: f32 = 560.0;
 const BELOW_STRIP: f32 = layout::CHROME_H + 12.0;
@@ -175,6 +227,9 @@ pub(crate) fn settings_card(ui: &mut Ui, view: Option<&View>) -> Option<Workflow
         return None;
     };
     let current = view.workflow;
+    if std::env::var_os("TIDEWATCH_DEV_SCROLL_WORKFLOW").is_some() {
+        ui.scroll_to_cursor(Some(egui::Align::TOP));
+    }
     section(ui, &format!("Workflow \u{b7} {}", view.repo), |ui| {
         let labels = CATCH_UP.map(|(_, label)| label);
         let active = CATCH_UP.iter().position(|(value, _)| *value == current.catch_up);
@@ -227,6 +282,14 @@ pub(crate) fn settings_card(ui: &mut Ui, view: Option<&View>) -> Option<Workflow
         );
         if let Some(index) = picked {
             changed = Some(Workflow { pull_requests: PULL_REQUESTS[index].0, ..current });
+        }
+    });
+    section(ui, "Checks Tidewatch runs itself", |ui| {
+        for (check, title, what) in CHECKS {
+            if let Some(on) = settings_ui::switch_row(ui, title, what, check.is_on(current.checks))
+            {
+                changed = Some(Workflow { checks: check.with(current.checks, on), ..current });
+            }
         }
     });
     changed

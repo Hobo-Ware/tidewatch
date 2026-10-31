@@ -213,17 +213,19 @@ fn cap(text: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::workflow_profile::{CatchUp, Fixes};
+    use crate::workflow_profile::{CatchUp, Checks, Fixes};
 
     const REBASE: Workflow = Workflow {
         catch_up: CatchUp::Rebase,
         fixes: Fixes::Fixup,
         pull_requests: crate::workflow_profile::PullRequests::Draft,
+        checks: Checks::OFF,
     };
     const MERGE: Workflow = Workflow {
         catch_up: CatchUp::Merge,
         fixes: Fixes::NewCommits,
         pull_requests: crate::workflow_profile::PullRequests::Draft,
+        checks: Checks::OFF,
     };
 
     fn job(name: &str, passed: bool, step: Option<&str>, log: &[&str]) -> Job {

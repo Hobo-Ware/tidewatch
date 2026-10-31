@@ -25,6 +25,7 @@ pub mod consent;
 pub mod dead_tools;
 pub mod delivery;
 pub mod done_check;
+pub mod done_proof;
 pub mod due_asked;
 mod effort_migration;
 pub mod elsewhere;
