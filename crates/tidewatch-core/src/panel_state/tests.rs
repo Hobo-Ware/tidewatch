@@ -479,6 +479,7 @@ fn an_event_that_alters_nothing_shown_is_not_a_change() {
         first_seen_ms: 1_300,
         title_from: TitleFrom::Seen,
         state: LinkState::Open,
+        status: crate::link_board::Status::default(),
     };
     assert!(tape.put(Source::Link, Fact::Link(link.clone()), 1_300).changed);
     assert!(!tape.put(Source::Link, Fact::Link(link), 1_400).changed, "the same link again");

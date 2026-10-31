@@ -8,6 +8,7 @@ fn link(url: &str, title: &str, note: Option<&str>, seen: i64, from: TitleFrom) 
         first_seen_ms: seen,
         title_from: from,
         state: LinkState::Unknown,
+        status: Status::default(),
     }
 }
 
@@ -230,4 +231,125 @@ fn only_merged_and_closed_are_archived_and_gh_words_map_to_states() {
     assert_eq!(archived, [false, false, true, true]);
     let kinds: Vec<bool> = Kind::ALL.map(Kind::has_state).into();
     assert_eq!(kinds, [false, true, true, false, false]);
+}
+
+fn pr(url: &str, state: LinkState, status: Status) -> Link {
+    Link { state, status, ..link(url, "PR", None, 1, TitleFrom::Seen) }
+}
+
+#[test]
+fn the_repo_and_number_of_a_github_link_come_from_its_address() {
+    let cases = [
+        ("https://github.com/Hobo-Ware/Tidewatch/pull/42", Some(("hobo-ware/tidewatch", 42))),
+        ("https://github.com/o/r/pull/42/files", Some(("o/r", 42))),
+        ("https://github.com/o/r/issues/7", Some(("o/r", 7))),
+        ("https://github.com/o/r/pulls", None),
+        ("https://github.com/o/r", None),
+        ("https://gitlab.com/o/r/pull/3", None),
+        ("https://claude.ai/artifact/abc", None),
+    ];
+    for (url, want) in cases {
+        let found = link(url, "t", None, 1, TitleFrom::Seen);
+        assert_eq!(found.repo().zip(found.number()), want.map(|(r, n)| (r.to_owned(), n)), "{url}");
+    }
+}
+
+#[test]
+fn failing_checks_requested_changes_and_conflicts_need_action_only_while_the_link_is_open() {
+    let url = "https://github.com/o/r/pull/1";
+    let failing = Status { checks: Some(Checks::Fail), ..Status::default() };
+    let changes = Status { review: Some(Review::ChangesRequested), ..Status::default() };
+    let conflicts = Status { conflicts: true, ..Status::default() };
+    let cases = [
+        (LinkState::Open, failing.clone(), true),
+        (LinkState::Open, changes, true),
+        (LinkState::Open, conflicts, true),
+        (LinkState::Open, Status { checks: Some(Checks::Running), ..Status::default() }, false),
+        (LinkState::Open, Status { review: Some(Review::Approved), ..Status::default() }, false),
+        (LinkState::Open, Status::default(), false),
+        (LinkState::Merged, failing.clone(), false),
+        (LinkState::Closed, failing, false),
+    ];
+    for (state, status, want) in cases {
+        assert_eq!(pr(url, state, status.clone()).needs_action(), want, "{state:?} {status:?}");
+    }
+}
+
+#[test]
+fn a_link_is_watched_while_it_is_an_open_readable_pull_request_or_issue() {
+    let pull = "https://github.com/o/r/pull/1";
+    let gone = Status { access: Access::Gone, ..Status::default() };
+    let denied = Status { access: Access::NoAccess, ..Status::default() };
+    let cases = [
+        (pull, LinkState::Unknown, Status::default(), true),
+        (pull, LinkState::Open, Status::default(), true),
+        (pull, LinkState::Merged, Status::default(), false),
+        (pull, LinkState::Closed, Status::default(), false),
+        (pull, LinkState::Open, gone, false),
+        (pull, LinkState::Unknown, denied, false),
+        ("https://a.dev/x", LinkState::Unknown, Status::default(), false),
+    ];
+    for (url, state, status, want) in cases {
+        assert_eq!(
+            pr(url, state, status.clone()).is_watchable(),
+            want,
+            "{url} {state:?} {status:?}"
+        );
+    }
+}
+
+#[test]
+fn a_status_looked_up_later_replaces_the_old_one_and_an_older_one_never_does() {
+    let url = "https://github.com/o/r/pull/1";
+    let at = |checked: Option<i64>, checks| Status {
+        checked_ms: checked,
+        checks: Some(checks),
+        ..Status::default()
+    };
+    let mut board = LinkBoard::default();
+    assert!(board.absorb(&pr(url, LinkState::Open, at(Some(100), Checks::Running))));
+    assert!(board.absorb(&pr(url, LinkState::Open, at(Some(200), Checks::Fail))));
+    assert!(!board.absorb(&pr(url, LinkState::Open, at(Some(150), Checks::Pass))));
+    assert!(!board.absorb(&pr(url, LinkState::Open, Status::default())));
+    assert_eq!(board.links[0].status.checks, Some(Checks::Fail));
+}
+
+#[test]
+fn the_last_change_is_githubs_update_time_else_the_first_sight() {
+    let url = "https://github.com/o/r/pull/1";
+    let plain = pr(url, LinkState::Open, Status::default());
+    assert_eq!(plain.changed_ms(), 1);
+    let updated = Status { updated_ms: Some(900), ..Status::default() };
+    assert_eq!(pr(url, LinkState::Open, updated).changed_ms(), 900);
+}
+
+#[test]
+fn a_blank_status_is_not_saved_and_a_full_one_round_trips() {
+    let url = "https://github.com/o/r/pull/1";
+    let mut board = LinkBoard::default();
+    board.absorb(&pr(url, LinkState::Open, Status::default()));
+    assert!(!serde_json::to_string(&board).unwrap().contains("status"));
+    let full = Status {
+        draft: true,
+        checks: Some(Checks::Fail),
+        review: Some(Review::ChangesRequested),
+        conflicts: true,
+        reason: Some(Reason::NotPlanned),
+        comments: Some(3),
+        updated_ms: Some(5),
+        checked_ms: Some(6),
+        access: Access::NoAccess,
+    };
+    let mut other = LinkBoard::default();
+    other.absorb(&pr(url, LinkState::Open, full));
+    let text = serde_json::to_string(&other).unwrap();
+    assert_eq!(serde_json::from_str::<LinkBoard>(&text).unwrap(), other);
+}
+
+#[test]
+fn a_deleted_pull_request_is_done_and_needs_no_action_whatever_it_last_showed() {
+    let url = "https://github.com/o/r/pull/1";
+    let status = Status { checks: Some(Checks::Fail), access: Access::Gone, ..Status::default() };
+    let gone = pr(url, LinkState::Open, status);
+    assert_eq!((gone.is_done(), gone.needs_action()), (true, false));
 }

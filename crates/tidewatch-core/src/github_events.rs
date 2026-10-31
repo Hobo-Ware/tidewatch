@@ -31,9 +31,11 @@ const SHUTDOWN_WAIT: Duration = Duration::from_secs(3);
 
 pub type Wake = Arc<dyn Fn() + Send + Sync>;
 
-/// A delivery that names pull requests and branches of the repos in `repos`.
+/// A delivery that names pull requests, issues and branches of the repo `slug` (`owner/name` in
+/// lower case), checked out in `repos`.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct News {
+    pub slug: String,
     pub repos: Vec<PathBuf>,
     pub hit: Hit,
 }
@@ -137,6 +139,17 @@ impl Host {
             .iter()
             .filter(|(_, forward)| forward.machine.live())
             .flat_map(|(key, _)| self.paths_of(key))
+            .collect()
+    }
+
+    /// The repos (`owner/name` in lower case) whose forwarder delivers right now, whether or not a
+    /// folder of the window shows them.
+    #[must_use]
+    pub fn live_slugs(&self) -> HashSet<String> {
+        self.forwards
+            .iter()
+            .filter(|(_, forward)| forward.machine.live())
+            .map(|(key, _)| key.clone())
             .collect()
     }
 
@@ -261,7 +274,9 @@ impl Host {
                 RepoEvent::Ping { hook_id } => {
                     self.step(&key, Event::Ping { hook_id, at: now }, Some(listener), now);
                 }
-                RepoEvent::News(hit) => news.push(News { repos: self.paths_of(&key), hit }),
+                RepoEvent::News(hit) => {
+                    news.push(News { repos: self.paths_of(&key), slug: key, hit });
+                }
             }
         }
         news

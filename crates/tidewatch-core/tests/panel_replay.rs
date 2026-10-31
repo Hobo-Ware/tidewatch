@@ -8,7 +8,7 @@ use std::path::Path;
 use serde_json::Value;
 use tidewatch_core::end_block::EndBlock;
 use tidewatch_core::job;
-use tidewatch_core::link_board::{Link, LinkState, TitleFrom};
+use tidewatch_core::link_board::{Link, LinkState, Status, TitleFrom};
 use tidewatch_core::panel_event::{
     AskKind, ChecksWord, Event, Fact, GitFacts, PrFacts, PrWord, Source, StepBy,
 };
@@ -346,6 +346,7 @@ fn random_fact(rng: &mut Rng, n: u64) -> (Source, Fact) {
                 first_seen_ms: n as i64,
                 title_from: TitleFrom::Seen,
                 state: LinkState::Open,
+                status: Status::default(),
             }),
         ),
         22 => (

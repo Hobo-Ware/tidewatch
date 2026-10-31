@@ -8,14 +8,16 @@ use sha2::Sha256;
 
 /// The event types the forwarder asks GitHub for, comma separated for `--events`.
 pub const EVENTS: &str = "pull_request,pull_request_review,pull_request_review_comment,\
-issue_comment,check_suite,check_run,workflow_run,push";
+issue_comment,issues,check_suite,check_run,workflow_run,push";
 
-/// What an event names: the pull requests and branches whose tabs should look at GitHub now.
+/// What an event names: the pull requests and branches whose tabs should look at GitHub now, and
+/// the plain issues whose links should.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Hit {
     pub event: String,
     pub numbers: Vec<u64>,
     pub branches: Vec<String>,
+    pub issues: Vec<u64>,
 }
 
 #[must_use]
@@ -72,10 +74,10 @@ fn branch(value: &Value) -> Option<String> {
     value.as_str().filter(|name| !name.is_empty()).map(str::to_owned)
 }
 
-/// Who a delivery of `event` is about, or `None` for an event Tidewatch does not react to (and for
-/// a comment on a plain issue).
+/// Who a delivery of `event` is about, or `None` for an event Tidewatch does not react to.
 #[must_use]
 pub fn hit(event: &str, payload: &Value) -> Option<Hit> {
+    let mut issues = Vec::new();
     let (numbers, branches) = match event {
         "pull_request" | "pull_request_review" | "pull_request_review_comment" => {
             let pull = &payload["pull_request"];
@@ -87,9 +89,15 @@ pub fn hit(event: &str, payload: &Value) -> Option<Hit> {
         "issue_comment" => {
             let issue = &payload["issue"];
             if issue["pull_request"].is_null() {
-                return None;
+                issues = number(&issue["number"]).into_iter().collect();
+                (Vec::new(), Vec::new())
+            } else {
+                (number(&issue["number"]).into_iter().collect(), Vec::new())
             }
-            (number(&issue["number"]).into_iter().collect(), Vec::new())
+        }
+        "issues" => {
+            issues = number(&payload["issue"]["number"]).into_iter().collect();
+            (Vec::new(), Vec::new())
         }
         "check_suite" => {
             let suite = &payload["check_suite"];
@@ -115,7 +123,7 @@ pub fn hit(event: &str, payload: &Value) -> Option<Hit> {
         }
         _ => return None,
     };
-    Some(Hit { event: event.to_owned(), numbers, branches })
+    Some(Hit { event: event.to_owned(), numbers, branches, issues })
 }
 
 /// The id of the webhook a `ping` delivery came through.
@@ -202,7 +210,7 @@ mod tests {
                 json!({"issue": {"number": 9, "pull_request": {"url": "u"}}}),
                 Some((vec![9], vec![])),
             ),
-            ("issue_comment", json!({"issue": {"number": 9}}), None),
+            ("issue_comment", json!({"issue": {"number": 9}}), Some((vec![], vec![]))),
             (
                 "check_suite",
                 json!({"check_suite": {"head_branch": "b", "pull_requests": [{"number": 3}, {"number": 4}]}}),
@@ -220,7 +228,7 @@ mod tests {
             ),
             ("push", json!({"ref": "refs/heads/feat/x"}), Some((vec![], vec!["feat/x"]))),
             ("push", json!({"ref": "refs/tags/v1"}), None),
-            ("issues", json!({"issue": {"number": 1}}), None),
+            ("issues", json!({"issue": {"number": 1}}), Some((vec![], vec![]))),
             ("star", json!({}), None),
         ];
         for (event, payload, want) in cases {
@@ -228,6 +236,37 @@ mod tests {
             let want = want.map(|(n, b)| (n, b.into_iter().map(str::to_owned).collect::<Vec<_>>()));
             assert_eq!(got, want, "{event} {payload}");
         }
+    }
+
+    #[test]
+    fn issue_events_and_comments_on_a_plain_issue_name_the_issue_and_no_pull_request() {
+        let cases = [
+            ("issues", json!({"action": "closed", "issue": {"number": 623}}), vec![623]),
+            ("issues", json!({"action": "reopened", "issue": {"number": 4}}), vec![4]),
+            ("issue_comment", json!({"issue": {"number": 9}}), vec![9]),
+            (
+                "issue_comment",
+                json!({"issue": {"number": 9, "pull_request": {"url": "u"}}}),
+                vec![],
+            ),
+            ("issues", json!({"issue": {}}), vec![]),
+        ];
+        for (event, payload, want) in cases {
+            let got = hit(event, &payload).unwrap();
+            assert_eq!(got.issues, want, "{event} {payload}");
+            assert_eq!(got.branches, Vec::<String>::new(), "{event} {payload}");
+        }
+        let pull = hit("issue_comment", &json!({"issue": {"number": 9, "pull_request": {}}}));
+        assert_eq!(
+            pull.unwrap().numbers,
+            [9],
+            "a comment on a pull request names the pull request"
+        );
+    }
+
+    #[test]
+    fn the_forwarder_asks_github_for_issue_events() {
+        assert!(EVENTS.split(',').any(|event| event == "issues"));
     }
 
     #[test]
