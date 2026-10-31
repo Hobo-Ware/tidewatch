@@ -1,7 +1,9 @@
 //! When one repo service runs, as a pure state machine: events in, effects out. A service that
 //! exits is started again after 1 s, 2 s, 4 s ... up to 60 s; five exits within ten minutes make
 //! it give up (`Crashed`), and a run of two minutes forgives the count. A stop by hand never
-//! restarts. The caller owns the clock (seconds on any steady scale) and the process.
+//! restarts. A restart kills the old process and waits for its exit (at most `STOP_WAIT_SECS`)
+//! before the next one spawns, so the new process does not meet a port the old one still holds.
+//! The caller owns the clock (seconds on any steady scale) and the process.
 
 use serde::{Deserialize, Serialize};
 
@@ -9,12 +11,14 @@ pub const BACKOFF_CAP_SECS: f64 = 60.0;
 pub const GIVE_UP_EXITS: usize = 5;
 pub const GIVE_UP_WINDOW_SECS: f64 = 600.0;
 pub const STABLE_RUN_SECS: f64 = 120.0;
+pub const STOP_WAIT_SECS: f64 = 10.0;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum State {
     Stopped,
     Starting,
     Running { since: f64 },
+    Stopping { since: f64 },
     Backoff { attempt: u32, until: f64 },
     Crashed { exit: i32, at: f64 },
 }
@@ -22,7 +26,7 @@ pub enum State {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Event {
     Start,
-    Restart,
+    Restart { at: f64 },
     Stop,
     Spawned { at: f64 },
     Exited { code: i32, at: f64 },
@@ -101,7 +105,7 @@ impl Supervisor {
         match self.state {
             State::Running { .. } => Word::Running,
             State::Starting => Word::Starting,
-            State::Backoff { .. } => Word::Restarting,
+            State::Backoff { .. } | State::Stopping { .. } => Word::Restarting,
             State::Crashed { .. } => Word::Crashed,
             State::Stopped => Word::Stopped,
         }
@@ -110,7 +114,7 @@ impl Supervisor {
     /// Whether a process should exist.
     #[must_use]
     pub fn wants_process(&self) -> bool {
-        matches!(self.state, State::Starting | State::Running { .. })
+        matches!(self.state, State::Starting | State::Running { .. } | State::Stopping { .. })
     }
 
     /// When a `Tick` next does something, if one is pending.
@@ -118,6 +122,7 @@ impl Supervisor {
     pub fn next_wake(&self) -> Option<f64> {
         match self.state {
             State::Backoff { until, .. } => Some(until),
+            State::Stopping { since } => Some(since + STOP_WAIT_SECS),
             _ => None,
         }
     }
@@ -132,14 +137,18 @@ impl Supervisor {
     pub fn step(&mut self, event: Event) -> Vec<Effect> {
         match (event, self.state) {
             (
-                Event::Start | Event::Restart,
+                Event::Start | Event::Restart { .. },
                 State::Stopped | State::Crashed { .. } | State::Backoff { .. },
-            ) => self.begin(),
-            (Event::Restart, State::Starting | State::Running { .. }) => {
-                self.begin();
-                vec![Effect::Kill, Effect::Spawn]
+            )
+            | (Event::Exited { .. }, State::Stopping { .. }) => self.begin(),
+            (Event::Restart { at }, State::Starting | State::Running { .. }) => {
+                self.state = State::Stopping { since: at };
+                vec![Effect::Kill]
             }
-            (Event::Stop, State::Starting | State::Running { .. }) => {
+            (Event::Tick { at }, State::Stopping { since }) if at >= since + STOP_WAIT_SECS => {
+                self.begin()
+            }
+            (Event::Stop, State::Starting | State::Running { .. } | State::Stopping { .. }) => {
                 self.state = State::Stopped;
                 self.last_exit = None;
                 vec![Effect::Kill]
@@ -199,6 +208,7 @@ impl Supervisor {
                 port.map_or(up.clone(), |port| format!("{up} \u{b7} :{port}"))
             }
             State::Starting => "starting".to_owned(),
+            State::Stopping { .. } => "restarting".to_owned(),
             State::Backoff { until, .. } => {
                 format!("restarting in {}", duration_text((until - now).max(0.0).ceil()))
             }
@@ -221,7 +231,7 @@ impl Supervisor {
     pub fn carry(&self, now: f64) -> Carry {
         let phase = match self.state {
             State::Stopped => Phase::Stopped,
-            State::Starting => Phase::Starting,
+            State::Starting | State::Stopping { .. } => Phase::Starting,
             State::Running { since } => Phase::Running { up: (now - since).max(0.0) },
             State::Backoff { attempt, until } => {
                 Phase::Backoff { attempt, wait: (until - now).max(0.0) }
@@ -402,16 +412,45 @@ mod tests {
     }
 
     #[test]
-    fn restart_kills_and_spawns_at_once_and_forgives_the_count() {
+    fn restart_kills_then_spawns_once_the_old_process_exited_and_forgives_the_count() {
         let mut sup = running(0.0);
         sup.step(Event::Exited { code: 1, at: 1.0 });
         sup.step(Event::Tick { at: 2.0 });
         sup.step(Event::Spawned { at: 2.0 });
-        assert_eq!(sup.step(Event::Restart), [Effect::Kill, Effect::Spawn]);
+        assert_eq!(sup.step(Event::Restart { at: 2.5 }), [Effect::Kill]);
+        assert_eq!(sup.state(), State::Stopping { since: 2.5 });
+        assert_eq!(sup.step(Event::Exited { code: 1, at: 2.6 }), [Effect::Spawn]);
         assert_eq!(sup.state(), State::Starting);
+        assert_eq!(sup.last_exit(), Some(1), "the kill's exit is not recorded as a crash");
         sup.step(Event::Spawned { at: 3.0 });
         sup.step(Event::Exited { code: 1, at: 4.0 });
         assert_eq!(sup.state(), State::Backoff { attempt: 1, until: 5.0 });
+    }
+
+    #[test]
+    fn a_restart_waits_for_the_old_exit_for_ten_seconds_and_then_spawns_anyway() {
+        let mut sup = running(0.0);
+        sup.step(Event::Restart { at: 5.0 });
+        assert_eq!(sup.word(), Word::Restarting);
+        assert_eq!(sup.line(6.0, Some(3000)), "restarting");
+        assert_eq!(sup.next_wake(), Some(5.0 + STOP_WAIT_SECS));
+        assert_eq!(sup.step(Event::Tick { at: 14.9 }), []);
+        assert_eq!(sup.state(), State::Stopping { since: 5.0 });
+        assert_eq!(sup.step(Event::Start), []);
+        assert_eq!(sup.step(Event::Restart { at: 14.9 }), []);
+        assert_eq!(sup.step(Event::Tick { at: 15.0 }), [Effect::Spawn]);
+        assert_eq!(sup.state(), State::Starting);
+    }
+
+    #[test]
+    fn stopping_in_the_middle_of_a_restart_stays_stopped_when_the_old_process_exits() {
+        let mut sup = running(0.0);
+        sup.step(Event::Restart { at: 1.0 });
+        assert_eq!(sup.step(Event::Stop), [Effect::Kill]);
+        assert_eq!(sup.state(), State::Stopped);
+        assert_eq!(sup.step(Event::Exited { code: 1, at: 1.2 }), []);
+        assert_eq!(sup.state(), State::Stopped);
+        assert_eq!(sup.next_wake(), None);
     }
 
     #[test]
@@ -423,7 +462,7 @@ mod tests {
         };
         let crashed =
             Supervisor { state: State::Crashed { exit: 1, at: 9.0 }, ..Supervisor::new() };
-        for event in [Event::Start, Event::Restart] {
+        for event in [Event::Start, Event::Restart { at: 0.0 }] {
             for from in [Supervisor::new(), waiting.clone(), crashed.clone()] {
                 let mut sup = from;
                 assert_eq!(sup.step(event), [Effect::Spawn], "{event:?}");

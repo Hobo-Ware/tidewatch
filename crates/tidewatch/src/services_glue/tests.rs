@@ -227,11 +227,23 @@ fn a_restart_replaces_the_process() {
     let mut fx = fixture(&[service("db", "sleep 30", true)]);
     let old = fx.pid("db");
     fx.host.command(fx.repo.path(), "db", Command::Restart).unwrap();
+    let rows = fx.host.rows(fx.repo.path());
+    assert_eq!(rows[0].word, Word::Restarting, "no new process until the old one is gone");
+    assert_eq!(fx.pid("db"), old);
+    wait_for("the new process to run", || fx.word("db") == Word::Running);
     let new = fx.pid("db");
     assert_ne!(old, new);
     wait_for("the old process to end", || !alive(old));
-    assert_eq!(fx.word("db"), Word::Running);
     assert!(alive(new));
+    fx.host.shutdown();
+}
+
+#[test]
+fn a_restart_with_no_process_to_wait_for_spawns_at_once() {
+    let mut fx = fixture(&[service("db", "sleep 30", true)]);
+    fx.host.repos.get_mut(fx.repo.path()).unwrap()[0].term = None;
+    fx.host.command(fx.repo.path(), "db", Command::Restart).unwrap();
+    assert_eq!(fx.word("db"), Word::Running);
     fx.host.shutdown();
 }
 
@@ -252,8 +264,11 @@ fn adding_saves_and_starts_even_without_autostart_editing_restarts_on_a_new_comm
     fx.host.edit(&repo, "db", &Service::new("db", "sleep 30", true)).unwrap();
     assert_eq!(fx.pid("db"), before, "the same command keeps the process");
     fx.host.edit(&repo, "db", &Service::new("db", "sleep 31", true)).unwrap();
+    wait_for("the new command to run", || {
+        fx.host.drive();
+        fx.pid("db") != before
+    });
     let after = fx.pid("db");
-    assert_ne!(after, before);
     wait_for("the old process to end", || !alive(before));
     fx.host.remove(&repo, "db").unwrap();
     assert_eq!(fx.host.rows(&repo).len(), 0);
