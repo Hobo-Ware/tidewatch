@@ -2,12 +2,18 @@
 //! shared with the user, newest first, each row a kind tag, a title that opens the link and a copy
 //! button. The rows are pure (`link_model`); this only draws them.
 
-use egui::{Align2, FontId, OpenUrl, Pos2, Rect, Sense, Stroke, Ui, UiBuilder, pos2, vec2};
+use std::collections::HashSet;
+
+use egui::{
+    Align2, Color32, CornerRadius, FontId, OpenUrl, Pos2, Rect, Sense, Stroke, StrokeKind,
+    TextEdit, Ui, UiBuilder, pos2, vec2,
+};
 use stdusk_egui::ui::icons;
 use tidewatch_core::link_board::{Link, LinkBoard};
 
 use crate::brand;
-use crate::link_model::{self, ink, listed};
+use crate::link_filter::{self, Bucket, Filter, Type};
+use crate::link_model::{self, Tone, ink, listed};
 use crate::reader_view::{ellipsized, paint_item};
 use crate::screen_kit::{
     Size, TEXT_BODY, TEXT_SECONDARY, TEXT_TAG, TagFill, body, heading, icon_button, paint_tag,
@@ -22,11 +28,18 @@ const ROW_H_STACKED: f32 = 68.0;
 const TAG_LINE_H: f32 = Size::Compact.height();
 const MIN_STACK_TEXT_W: f32 = 90.0;
 const FOLD_H: f32 = 36.0;
+const EMPTY_H: f32 = 44.0;
 const PAD_X: f32 = 12.0;
 const GAP: f32 = 10.0;
 const ICON_PX: f32 = 14.0;
-const CHEVRON: f32 = 14.0;
 const MIN_TEXT_W: f32 = 24.0;
+const CHIP_H: f32 = Size::Compact.height();
+const CHIP_GAP: f32 = 6.0;
+const COUNT_GAP: f32 = 6.0;
+const FILTER_PAD: f32 = 8.0;
+const FILTER_FROM: usize = 4;
+const SEARCH_HINT: &str = "Search links";
+const SEARCH_TEXT_H: f32 = 18.0;
 const MIN_TITLE_BESIDE_TAG: f32 = 80.0;
 pub(crate) const READ_FIRST_H: f32 = 22.0;
 pub(crate) const READ_FIRST_MAX: usize = 2;
@@ -39,50 +52,174 @@ fn stacks(painter: &egui::Painter, width: f32, stack: bool) -> bool {
     stack || beside < MIN_STACK_TEXT_W
 }
 
+/// What the card keeps of one tab while the app runs: the chips and the search, and whether the
+/// list is folded out.
+#[derive(Clone, Debug, Default)]
+pub(crate) struct LinkView {
+    pub(crate) filter: Filter,
+    pub(crate) all: bool,
+}
+
+impl LinkView {
+    /// `TIDEWATCH_DEV_LINKS=<type>,<state>,<search>,all` for captures: the type chip (all, prs,
+    /// issues, artifacts, docs), the state chip (open, needs, done, any), the search text and
+    /// whether the list is folded out.
+    pub(crate) fn from_dev(text: Option<&str>) -> Option<Self> {
+        let mut parts = text?.split(',');
+        let kind = match parts.next()? {
+            "prs" => Type::Prs,
+            "issues" => Type::Issues,
+            "artifacts" => Type::Artifacts,
+            "docs" => Type::Docs,
+            _ => Type::All,
+        };
+        let bucket = match parts.next().unwrap_or_default() {
+            "open" => Some(Bucket::Open),
+            "needs" => Some(Bucket::NeedsAction),
+            "done" => Some(Bucket::Done),
+            _ => None,
+        };
+        let search = parts.next().unwrap_or_default().to_owned();
+        let all = parts.next() == Some("all");
+        Some(Self { filter: Filter { kind, bucket, search }, all })
+    }
+}
+
+/// What the card draws.
+pub(crate) struct Links<'a> {
+    pub(crate) board: &'a LinkBoard,
+    /// The repos (`owner/name` in lower case) a forwarder delivers for.
+    pub(crate) live: &'a HashSet<String>,
+    pub(crate) now_ms: i64,
+    pub(crate) age: Option<&'a str>,
+    pub(crate) stack: bool,
+}
+
+impl Links<'_> {
+    fn is_live(&self, link: &Link) -> bool {
+        link.repo().is_some_and(|repo| self.live.contains(&repo))
+    }
+}
+
+/// Where each chip of widths `widths` goes in rows of at most `avail`, as offsets from the top
+/// left, and the height the rows take.
+pub(crate) fn flow(widths: &[f32], avail: f32) -> (Vec<Pos2>, f32) {
+    let (mut x, mut y) = (0.0, 0.0);
+    let mut placed = Vec::with_capacity(widths.len());
+    for width in widths {
+        if x > 0.0 && x + width > avail {
+            x = 0.0;
+            y += CHIP_H + CHIP_GAP;
+        }
+        placed.push(pos2(x, y));
+        x += width + CHIP_GAP;
+    }
+    (placed, if widths.is_empty() { 0.0 } else { y + CHIP_H })
+}
+
+struct Chip {
+    label: &'static str,
+    count: usize,
+    selected: bool,
+}
+
+fn chip_width(painter: &egui::Painter, chip: &Chip) -> f32 {
+    let text = painter.layout_no_wrap(chip.label.to_owned(), body(TEXT_SECONDARY), brand::SOFT);
+    let count = painter.layout_no_wrap(chip.count.to_string(), body(TEXT_SECONDARY), brand::FAINT);
+    2.0 * Size::Compact.pad() + text.size().x + COUNT_GAP + count.size().x
+}
+
+fn chips_of(links: &Links<'_>, filter: &Filter) -> (Vec<Chip>, Vec<Chip>) {
+    let counts = link_filter::counts(links.board, filter);
+    let kinds = Type::ALL
+        .map(|kind| Chip {
+            label: kind.label(),
+            count: counts.of_kind(kind),
+            selected: filter.kind == kind,
+        })
+        .into();
+    let buckets = Bucket::ALL
+        .map(|bucket| Chip {
+            label: bucket.label(),
+            count: counts.of_bucket(bucket),
+            selected: filter.bucket == Some(bucket),
+        })
+        .into();
+    (kinds, buckets)
+}
+
+struct FilterLayout {
+    kinds: (Vec<f32>, Vec<Pos2>, f32),
+    buckets: (Vec<f32>, Vec<Pos2>, f32),
+    height: f32,
+}
+
+fn filter_layout(
+    painter: &egui::Painter,
+    chips: &(Vec<Chip>, Vec<Chip>),
+    avail: f32,
+) -> FilterLayout {
+    let group = |list: &[Chip]| {
+        let widths: Vec<f32> = list.iter().map(|chip| chip_width(painter, chip)).collect();
+        let (at, height) = flow(&widths, avail);
+        (widths, at, height)
+    };
+    let (kinds, buckets) = (group(&chips.0), group(&chips.1));
+    let height = FILTER_PAD + kinds.2 + CHIP_GAP + buckets.2 + CHIP_GAP + CHIP_H + FILTER_PAD;
+    FilterLayout { kinds, buckets, height }
+}
+
 pub(crate) fn show(
     ui: &mut Ui,
     width: f32,
-    stack: bool,
-    board: &LinkBoard,
-    now_ms: i64,
-    (all, archive): (&mut bool, &mut bool),
-    age: Option<&str>,
+    links: &Links<'_>,
+    view: &mut LinkView,
 ) -> Option<String> {
-    let (main, archived) = link_model::split(board);
-    if link_model::fold_label(main.len(), true).is_none() {
-        *all = false;
+    let filtering = links.board.len() >= FILTER_FROM;
+    if !filtering {
+        view.filter = Filter::default();
     }
-    if archived.is_empty() {
-        *archive = false;
-    }
-    let rows = listed(&main, *all);
-    let stacked = stacks(ui.painter(), width, stack);
-    let row_h = if stacked { ROW_H_STACKED } else { ROW_H };
-    let (head_h, age_below) = head_height(ui.painter(), width, main.len(), age);
-    let fold = link_model::fold_label(main.len(), *all);
-    let group = link_model::archive_label(archived.len());
-    let archived_rows = if *archive { archived.as_slice() } else { &[] };
-    let height = head_h
-        + row_h * (rows.len() + archived_rows.len()) as f32
-        + FOLD_H * (usize::from(fold.is_some()) + usize::from(group.is_some())) as f32;
-    let (rect, _) = ui.allocate_exact_size(vec2(width, height), Sense::hover());
+    let kept = link_filter::shown(links.board, &view.filter);
+    let rows = listed(&kept, view.all);
+    let fold = link_model::fold_label(kept.len(), view.all);
     let painter = ui.painter().clone();
+    let chips = chips_of(links, &view.filter);
+    let layout = filtering.then(|| filter_layout(&painter, &chips, width - 2.0 * PAD_X));
+    let stacked = stacks(&painter, width, links.stack);
+    let row_h = if stacked { ROW_H_STACKED } else { ROW_H };
+    let (head_h, age_below) = head_height(&painter, width, links.board.len(), links.age);
+    let height = head_h
+        + layout.as_ref().map_or(0.0, |layout| layout.height)
+        + row_h * rows.len() as f32
+        + if kept.is_empty() { EMPTY_H } else { 0.0 }
+        + if fold.is_some() { FOLD_H } else { 0.0 };
+    let (rect, _) = ui.allocate_exact_size(vec2(width, height), Sense::hover());
     paint_item(&painter, rect, false);
-    head(ui, rect, main.len(), age, age_below);
+    head(ui, rect, links.board.len(), links.age, age_below);
     let tag_col = tag_width(&painter, "Artifact");
-    let mut copied = None;
     let mut top = rect.top() + head_h;
-    let mut place = |ui: &mut Ui, links: &[&Link], first: usize, top: &mut f32| {
-        for (at, link) in links.iter().enumerate() {
-            let row = Rect::from_min_size(pos2(rect.left(), *top), vec2(width, row_h));
-            painter.hline(row.x_range(), row.top(), Stroke::new(1.0, brand::ITEM_LINE));
-            if row_of(ui, row, link, (first + at, tag_col), (now_ms, stacked)) {
-                copied = Some(link.url.clone());
-            }
-            *top += row_h;
+    if let Some(layout) = &layout {
+        let area = Rect::from_min_size(pos2(rect.left(), top), vec2(width, layout.height));
+        painter.hline(area.x_range(), area.top(), Stroke::new(1.0, brand::ITEM_LINE));
+        filter_area(ui, area, (&chips, layout), view);
+        top += layout.height;
+    }
+    let mut copied = None;
+    for (at, link) in rows.iter().enumerate() {
+        let row = Rect::from_min_size(pos2(rect.left(), top), vec2(width, row_h));
+        painter.hline(row.x_range(), row.top(), Stroke::new(1.0, brand::ITEM_LINE));
+        let live = links.is_live(link);
+        if row_of(ui, row, (link, live), (at, tag_col), (links.now_ms, stacked)) {
+            copied = Some(link.url.clone());
         }
-    };
-    place(ui, rows, 0, &mut top);
+        top += row_h;
+    }
+    if kept.is_empty() {
+        let area = Rect::from_min_size(pos2(rect.left(), top), vec2(width, EMPTY_H));
+        painter.hline(area.x_range(), area.top(), Stroke::new(1.0, brand::ITEM_LINE));
+        empty_row(ui, area, view);
+        top += EMPTY_H;
+    }
     if let Some(label) = fold {
         let area = Rect::from_min_size(pos2(rect.left(), top), vec2(width, FOLD_H));
         painter.hline(area.x_range(), area.top(), Stroke::new(1.0, brand::ITEM_LINE));
@@ -95,48 +232,104 @@ pub(crate) fn show(
         let ink = if response.hovered() { brand::TEXT } else { brand::TEAL_TEXT };
         painter.galley(pos2(hit.left(), area.center().y - galley.size().y / 2.0), galley, ink);
         if response.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
-            *all = !*all;
+            view.all = !view.all;
         }
-        top += FOLD_H;
     }
-    if let Some(label) = group {
-        let area = Rect::from_min_size(pos2(rect.left(), top), vec2(width, FOLD_H));
-        painter.hline(area.x_range(), area.top(), Stroke::new(1.0, brand::ITEM_LINE));
-        if archive_header(ui, area, &label, *archive) {
-            *archive = !*archive;
-        }
-        top += FOLD_H;
-    }
-    place(ui, archived_rows, rows.len(), &mut top);
     copied
 }
 
-fn archive_header(ui: &Ui, area: Rect, label: &str, open: bool) -> bool {
+fn empty_row(ui: &mut Ui, area: Rect, view: &mut LinkView) {
     let painter = ui.painter();
-    let response = ui.interact(area, ui.id().with("links-archive"), Sense::click());
-    let ink = if response.hovered() { brand::TEXT } else { brand::SOFT };
+    let line = link_filter::empty_line(&view.filter);
+    let text =
+        painter.layout_no_wrap(format!("{line} \u{b7} "), body(TEXT_SECONDARY), brand::MUTED);
+    let action =
+        painter.layout_no_wrap("Show all".to_owned(), body(TEXT_SECONDARY), brand::TEAL_TEXT);
+    let left = area.left() + PAD_X;
     let mid = area.center().y;
-    let caret = pos2(area.left() + PAD_X + CHEVRON / 2.0, mid);
-    let stroke = Stroke::new(1.5, ink);
-    let half = CHEVRON / 3.0;
-    let points = if open {
-        [
-            caret + vec2(-half, -half / 2.0),
-            caret + vec2(0.0, half / 2.0),
-            caret + vec2(half, -half / 2.0),
-        ]
+    let hit = Rect::from_min_size(
+        pos2(left + text.size().x, mid - EMPTY_H / 2.0),
+        vec2(action.size().x + 8.0, EMPTY_H),
+    );
+    let response = ui.interact(hit, ui.id().with("links-show-all"), Sense::click());
+    let ink = if response.hovered() { brand::TEXT } else { brand::TEAL_TEXT };
+    let painter = ui.painter();
+    painter.galley(pos2(left, mid - text.size().y / 2.0), text.clone(), brand::MUTED);
+    painter.galley(pos2(hit.left(), mid - action.size().y / 2.0), action, ink);
+    if response.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
+        view.filter = Filter::default();
+        ui.ctx().request_repaint();
+    }
+}
+
+fn filter_area(
+    ui: &mut Ui,
+    area: Rect,
+    (chips, layout): (&(Vec<Chip>, Vec<Chip>), &FilterLayout),
+    view: &mut LinkView,
+) {
+    let origin = pos2(area.left() + PAD_X, area.top() + FILTER_PAD);
+    let mut clicked_kind = None;
+    let mut clicked_bucket = None;
+    for (at, chip) in chips.0.iter().enumerate() {
+        let rect = chip_rect(origin, &layout.kinds, at);
+        if paint_chip(ui, rect, chip, ("links-type", at)) {
+            clicked_kind = Some(Type::ALL[at]);
+        }
+    }
+    let buckets_origin = origin + vec2(0.0, layout.kinds.2 + CHIP_GAP);
+    for (at, chip) in chips.1.iter().enumerate() {
+        let rect = chip_rect(buckets_origin, &layout.buckets, at);
+        if paint_chip(ui, rect, chip, ("links-bucket", at)) {
+            clicked_bucket = Some(Bucket::ALL[at]);
+        }
+    }
+    if let Some(kind) = clicked_kind {
+        view.filter.kind = kind;
+    }
+    if let Some(bucket) = clicked_bucket {
+        view.filter.bucket = if view.filter.bucket == Some(bucket) { None } else { Some(bucket) };
+    }
+    if clicked_kind.is_some() || clicked_bucket.is_some() {
+        ui.ctx().request_repaint();
+    }
+    let search_top = buckets_origin.y + layout.buckets.2 + CHIP_GAP;
+    let search =
+        Rect::from_min_size(pos2(origin.x, search_top), vec2(area.width() - 2.0 * PAD_X, CHIP_H));
+    search_field(ui, search, &mut view.filter.search);
+}
+
+fn chip_rect(origin: Pos2, group: &(Vec<f32>, Vec<Pos2>, f32), at: usize) -> Rect {
+    Rect::from_min_size(origin + group.1[at].to_vec2(), vec2(group.0[at], CHIP_H))
+}
+
+fn paint_chip(ui: &mut Ui, rect: Rect, chip: &Chip, id: (&str, usize)) -> bool {
+    let response = ui.interact(rect, ui.id().with(id), Sense::click());
+    let (line, ink) = if chip.selected {
+        (brand::TEAL, brand::TEAL_TEXT)
+    } else if response.hovered() {
+        (brand::FAINT, brand::TEXT)
     } else {
-        [
-            caret + vec2(-half / 2.0, -half),
-            caret + vec2(half / 2.0, 0.0),
-            caret + vec2(-half / 2.0, half),
-        ]
+        (brand::ITEM_LINE, brand::SOFT)
     };
-    painter.line_segment([points[0], points[1]], stroke);
-    painter.line_segment([points[1], points[2]], stroke);
-    let galley = painter.layout_no_wrap(label.to_owned(), body(TEXT_SECONDARY), ink);
-    let left = area.left() + PAD_X + CHEVRON + 6.0;
-    painter.galley(pos2(left, mid - galley.size().y / 2.0), galley, ink);
+    let painter = ui.painter();
+    painter.rect_stroke(
+        rect,
+        CornerRadius::same(Size::Compact.radius()),
+        Stroke::new(1.0, line),
+        StrokeKind::Inside,
+    );
+    let font = body(TEXT_SECONDARY);
+    let text = painter.layout_no_wrap(chip.label.to_owned(), font.clone(), ink);
+    let count = painter.layout_no_wrap(chip.count.to_string(), font, brand::FAINT);
+    let left = rect.left() + Size::Compact.pad();
+    let mid = rect.center().y;
+    painter.galley(pos2(left, mid - text.size().y / 2.0), text.clone(), ink);
+    painter.galley(
+        pos2(left + text.size().x + COUNT_GAP, mid - count.size().y / 2.0),
+        count,
+        brand::FAINT,
+    );
     response.on_hover_cursor(egui::CursorIcon::PointingHand).clicked()
 }
 
@@ -154,6 +347,51 @@ fn head_height(
         PAD_X + ICON_PX + 8.0 + label.size().x + 8.0 + tag_width(painter, &count.to_string());
     let age_w = crate::panel_blocks::age_width(painter, age);
     if used + 12.0 + age_w + PAD_X <= width { (HEAD_H, false) } else { (HEAD_H + 22.0, true) }
+}
+
+fn search_field(ui: &mut Ui, field: Rect, query: &mut String) {
+    let id = ui.id().with("links-search");
+    ui.painter().rect_filled(field, CornerRadius::same(Size::Compact.radius()), brand::SEGMENT);
+    let inner = field.shrink2(vec2(Size::Compact.pad(), 0.0));
+    let line = Rect::from_center_size(inner.center(), vec2(inner.width(), SEARCH_TEXT_H));
+    let mut child = ui.new_child(UiBuilder::new().max_rect(line));
+    child.add(
+        TextEdit::singleline(query)
+            .id(id)
+            .frame(egui::Frame::NONE)
+            .margin(egui::Margin::ZERO)
+            .font(body(TEXT_SECONDARY))
+            .text_color(brand::TEXT)
+            .desired_width(inner.width()),
+    );
+    let focused = ui.memory(|memory| memory.has_focus(id));
+    let line = if focused { brand::TEAL } else { brand::FIELD_LINE };
+    let painter = ui.painter();
+    painter.rect_stroke(
+        field,
+        CornerRadius::same(Size::Compact.radius()),
+        Stroke::new(1.0, line),
+        StrokeKind::Inside,
+    );
+    if query.is_empty() {
+        painter.text(
+            pos2(inner.left(), field.center().y),
+            Align2::LEFT_CENTER,
+            SEARCH_HINT,
+            body(TEXT_SECONDARY),
+            brand::FAINT,
+        );
+    }
+}
+
+fn tone_ink(tone: Tone) -> Color32 {
+    match tone {
+        Tone::Bad => brand::RED,
+        Tone::Warn => brand::ORANGE,
+        Tone::Good => brand::GREEN,
+        Tone::Quiet => brand::MUTED,
+        Tone::Live => brand::TEAL_TEXT,
+    }
 }
 
 fn head(ui: &Ui, rect: Rect, count: usize, age: Option<&str>, age_below: bool) {
@@ -193,7 +431,7 @@ fn head(ui: &Ui, rect: Rect, count: usize, age: Option<&str>, age_below: bool) {
 fn row_of(
     ui: &mut Ui,
     row: Rect,
-    link: &Link,
+    (link, live): (&Link, bool),
     (index, tag_col): (usize, f32),
     (now_ms, stacked): (i64, bool),
 ) -> bool {
@@ -220,29 +458,37 @@ fn row_of(
         ink(kind),
         TagFill::Line(ink(kind)),
     );
-    let mut meta = link_model::meta(link, now_ms);
-    if let Some(word) = link_model::state_tag(link) {
-        let left = text_right - tag_width(&painter, word);
-        if stacked {
-            let tag_end = row.left() + PAD_X + tag_width(&painter, kind.word()) + GAP;
-            let at = button_left - GAP - tag_width(&painter, word);
-            if at >= tag_end {
-                paint_tag(
-                    &painter,
-                    (at, tag_mid),
-                    word,
-                    brand::MUTED,
-                    TagFill::Line(brand::ITEM_LINE),
-                );
-            } else {
-                meta = format!("{word} \u{b7} {meta}");
-            }
-        } else if left - GAP - text_left >= MIN_TITLE_BESIDE_TAG {
-            paint_tag(&painter, (left, mid), word, brand::MUTED, TagFill::Line(brand::ITEM_LINE));
-            text_right = left - GAP;
-        } else {
-            meta = format!("{word} \u{b7} {meta}");
+    let pills = link_model::pills(link, live);
+    let widths: Vec<f32> = pills.iter().map(|pill| tag_width(&painter, pill.text)).collect();
+    let (pill_right, pill_floor, pill_mid) = if stacked {
+        let tag_end = row.left() + PAD_X + tag_width(&painter, kind.word()) + GAP;
+        (button_left - GAP, tag_end, tag_mid)
+    } else {
+        (text_right, text_left + MIN_TITLE_BESIDE_TAG, mid)
+    };
+    let mut fitting = 0;
+    let mut taken = 0.0;
+    for width in &widths {
+        let next = taken + width + GAP;
+        if pill_right - next < pill_floor {
+            break;
         }
+        taken = next;
+        fitting += 1;
+    }
+    let mut left = pill_right - taken + GAP;
+    for (pill, width) in pills.iter().zip(&widths).take(fitting) {
+        let tint = tone_ink(pill.tone);
+        paint_tag(&painter, (left, pill_mid), pill.text, tint, TagFill::Line(tint));
+        left += width + GAP;
+    }
+    if fitting > 0 && !stacked {
+        text_right -= taken;
+    }
+    let mut meta = link_model::meta(link, now_ms, live);
+    if fitting < pills.len() {
+        let hidden: Vec<&str> = pills[fitting..].iter().map(|pill| pill.text).collect();
+        meta = format!("{} \u{b7} {meta}", hidden.join(", "));
     }
     let text_w = (text_right - text_left).max(MIN_TEXT_W);
     let meta = ellipsized(&painter, &meta, body(TEXT_TAG), brand::MUTED, text_w);
@@ -309,3 +555,6 @@ pub(crate) fn paint_read_first(ui: &mut Ui, top_left: Pos2, width: f32, links: &
         }
     }
 }
+
+#[cfg(test)]
+mod tests;

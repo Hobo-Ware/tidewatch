@@ -1,10 +1,14 @@
 //! The panel: pure choices, and headless frames for the clicks and for text that never overlaps.
 
 use egui::{Event, Modifiers, PointerButton, Pos2, RawInput, Rect, Sense, Shape, pos2, vec2};
+use std::collections::HashSet;
 use tidewatch_core::civil_date::Date;
 use tidewatch_core::done_check::{Kind, Line, Report, Status, Unverified};
 use tidewatch_core::end_block::EndBlock;
-use tidewatch_core::link_board::{Link, LinkBoard, LinkState, TitleFrom};
+
+use tidewatch_core::link_board::{
+    Checks, Link, LinkBoard, LinkState, Status as LinkStatus, TitleFrom,
+};
 use tidewatch_core::panel_event::StepBy;
 use tidewatch_core::panel_state::MarkSeen;
 use tidewatch_core::panel_view::Why;
@@ -12,7 +16,7 @@ use tidewatch_core::progress::Ledger;
 
 use crate::done_check_glue::{Checked, Look};
 use crate::done_check_view;
-use crate::meeseeks_model::Card as MeeseeksCard;
+use crate::link_filter::Filter;
 
 use super::*;
 
@@ -37,6 +41,8 @@ struct Panel {
     meeseeks: Option<MeeseeksCard>,
     shown: Option<tidewatch_core::progress::State>,
     links: Option<LinkBoard>,
+    live: HashSet<String>,
+    alerts: Option<u64>,
     blocks: Blocks,
     marks: Vec<MarkSeen>,
     texts: Vec<(String, Rect)>,
@@ -58,6 +64,8 @@ impl Panel {
             meeseeks: None,
             shown: None,
             links: None,
+            live: HashSet::new(),
+            alerts: None,
             blocks: Blocks::default(),
             marks: Vec::new(),
             texts: Vec::new(),
@@ -85,6 +93,7 @@ impl Panel {
         let meeseeks = self.meeseeks.as_ref();
         let shown = self.shown;
         let links = self.links.as_ref();
+        let (live, alerts) = (&self.live, self.alerts);
         let (blocks, marks) = (&self.blocks, &self.marks);
         let output = self.ctx.run_ui(raw, |ui| {
             if holds_keys {
@@ -104,6 +113,8 @@ impl Panel {
                 last_turn: last_turn.clone(),
                 shown,
                 links,
+                link_live: live,
+                link_alerts: alerts,
                 blocks: blocks.clone(),
                 marks,
                 checks: &[],
@@ -557,8 +568,11 @@ fn a_tab_with_no_ledger_still_shows_its_done_check() {
 #[test]
 fn showing_the_panel_clears_what_was_new_and_a_changed_check_or_question_makes_it_new_again() {
     let mut panel = Panel::new(SMALL, 420.0);
-    assert_eq!(panel.state, TabState::default());
-    panel.last_turn = Some(turn(Some(blocked()), Ok(())));
+    assert_eq!(panel.state.seen, None);
+    let first = turn(Some(blocked()), Ok(()));
+    let attention = first.attention();
+    assert!(panel.state.unseen(attention));
+    panel.last_turn = Some(first);
     panel.frame(Vec::new());
     let seen = panel.state.seen;
     assert!(seen.is_some() && !panel.state.unseen(seen));
@@ -855,6 +869,7 @@ fn shared(url: &str, title: &str, note: Option<&str>, ago_min: i64) -> Link {
         first_seen_ms: AT - ago_min * MIN,
         title_from: TitleFrom::Agent,
         state: LinkState::Unknown,
+        status: LinkStatus::default(),
     }
 }
 
@@ -935,10 +950,10 @@ fn the_card_lists_the_newest_three_with_kind_tags_and_meta_then_show_all_expands
         assert!(panel.drawn(tag), "{tag}");
     }
     assert!(panel.drawn(&format!("claude.ai \u{b7} for: {QUESTION} \u{b7} 12m ago")));
-    assert!(panel.drawn("github.com \u{b7} 40m ago"));
+    assert!(panel.drawn("o/r \u{b7} 40m ago"));
     let at = panel.center_of("Show all 5");
     panel.click(at);
-    assert!(panel.state.links.0);
+    assert!(panel.state.links.all);
     for shown in ["#38 Spend page loads slowly", "Notes on bonus pools in other teams"] {
         assert!(panel.drawn(shown), "{shown}");
     }
@@ -946,7 +961,7 @@ fn the_card_lists_the_newest_three_with_kind_tags_and_meta_then_show_all_expands
     assert!(!panel.drawn("Show all 5") && panel.drawn("Show less"));
     let at = panel.center_of("Show less");
     panel.click(at);
-    assert!(!panel.state.links.0 && !panel.drawn("#38 Spend page loads slowly"));
+    assert!(!panel.state.links.all && !panel.drawn("#38 Spend page loads slowly"));
 }
 
 #[test]
@@ -1101,86 +1116,147 @@ fn with_archive() -> LinkBoard {
     board
 }
 
-#[test]
-fn merged_and_closed_links_sit_in_a_folded_group_at_the_bottom_and_stay_out_of_the_count() {
-    let panel = with_links(ASKING, 520.0, with_archive());
-    assert!(panel.drawn("Merged and closed (2)"));
-    for hidden in ["#9 fix: round totals", "#7 Export fails", "Merged", "Closed"] {
-        assert!(!panel.drawn(hidden), "{hidden}");
+fn needing(url: &str, title: &str, ago_min: i64) -> Link {
+    Link {
+        state: LinkState::Open,
+        status: LinkStatus { checks: Some(Checks::Fail), ..LinkStatus::default() },
+        ..shared(url, title, None, ago_min)
     }
-    assert!(panel.drawn("5"), "the header counts the main list only");
-    assert!(!panel.drawn("7"));
-    assert!(panel.drawn("Show all 5"));
-    assert!(top_of(&panel, "Show all 5") < top_of(&panel, "Merged and closed (2)"));
 }
 
 #[test]
-fn a_click_on_the_group_header_opens_it_and_a_second_click_folds_it_again() {
-    let mut panel = with_links(ASKING, 520.0, with_archive());
-    let at = panel.center_of("Merged and closed (2)");
-    panel.click(at);
-    assert!(panel.state.links.1);
-    for shown in ["#9 fix: round totals", "#7 Export fails", "Merged", "Closed"] {
-        assert!(panel.drawn(shown), "{shown}");
+fn four_links_or_more_get_the_type_and_state_chips_with_their_counts_and_a_search_box() {
+    let panel = with_links(ASKING, 640.0, with_archive());
+    for chip in
+        ["All", "PRs", "Issues", "Artifacts", "Docs and web", "Open", "Needs action", "Done"]
+    {
+        assert!(panel.drawn(chip), "{chip}");
     }
-    assert!(top_of(&panel, "Merged and closed (2)") < top_of(&panel, "#9 fix: round totals"));
-    assert_clean(&panel, 520.0);
-    let at = panel.center_of("Merged and closed (2)");
-    panel.click(at);
-    assert!(!panel.state.links.1 && !panel.drawn("#9 fix: round totals"));
+    assert!(panel.drawn("Search links"));
+    assert!(panel.drawn("7"), "everything: five open and two done, the count tag and the All chip");
+    assert!(panel.drawn("2"), "the two PRs and the two done ones both count 2");
 }
 
 #[test]
-fn an_archived_row_opens_and_copies_like_any_other_row() {
-    let mut panel = with_links(ASKING, 520.0, with_archive());
-    let at = panel.center_of("Merged and closed (2)");
-    panel.click(at);
-    let at = panel.center_of("#9 fix: round totals");
-    assert_eq!(panel.click(at), None);
-    assert_eq!(panel.opened, ["https://github.com/o/r/pull/9"]);
-    let copies: Vec<Rect> = panel
-        .texts
-        .iter()
-        .filter(|(text, _)| text == stdusk_egui::ui::icons::COPY)
-        .map(|(_, rect)| *rect)
-        .collect();
-    assert_eq!(copies.len(), 5, "one copy button per drawn row: three main and two archived");
-    let last = copies.iter().max_by(|a, b| a.top().total_cmp(&b.top())).unwrap();
-    assert_eq!(
-        panel.click(last.center()),
-        Some(Action::CopyLink("https://github.com/o/r/issues/7".to_owned()))
-    );
+fn three_links_or_fewer_have_no_chips_and_no_search_box() {
+    let mut board = LinkBoard::default();
+    for n in 0..3 {
+        board.absorb(&shared(&format!("https://a.dev/{n}"), &format!("Link {n}"), None, n));
+    }
+    let panel = with_links(ASKING, 520.0, board);
+    assert!(!panel.drawn("All") && !panel.drawn("Search links") && !panel.drawn("Done"));
 }
 
 #[test]
-fn no_card_text_overlaps_or_leaves_the_card_with_the_group_folded_or_open_at_any_width() {
+fn a_type_chip_keeps_that_kind_and_a_state_chip_toggles() {
+    let mut panel = with_links(ASKING, 640.0, with_archive());
+    let at = panel.center_of("Done");
+    panel.click(at);
+    assert!(panel.drawn("#9 fix: round totals") && panel.drawn("#7 Export fails"));
+    assert!(!panel.drawn("Split options compared"), "the open ones are filtered out");
+    let at = panel.center_of("PRs");
+    panel.click(at);
+    assert!(panel.drawn("#9 fix: round totals") && !panel.drawn("#7 Export fails"));
+    let at = panel.center_of("Done");
+    panel.click(at);
+    assert_eq!(panel.state.links.filter.bucket, None, "a second click on the state chip clears it");
+    let at = panel.center_of("All");
+    panel.click(at);
+    assert_eq!(panel.state.links.filter, Filter::default());
+}
+
+#[test]
+fn a_filter_that_keeps_nothing_says_so_and_show_all_brings_every_link_back() {
+    let mut board = LinkBoard::default();
+    for n in 0..4 {
+        board.absorb(&shared(&format!("https://a.dev/{n}"), &format!("Link {n}"), None, n));
+    }
+    let mut panel = with_links(ASKING, 640.0, board);
+    let at = panel.center_of("PRs");
+    panel.click(at);
+    assert!(panel.drawn("No PRs \u{b7} "), "{:?}", panel.texts);
+    assert!(!panel.drawn("Link 0"));
+    let at = panel.center_of("Show all");
+    panel.click(at);
+    assert!(panel.drawn("Link 0"));
+    assert_eq!(panel.state.links.filter, Filter::default());
+}
+
+#[test]
+fn typing_in_the_search_box_narrows_the_rows_to_the_matching_links() {
+    let mut panel = with_links(ASKING, 640.0, five_links());
+    let at = panel.center_of("Search links");
+    panel.click(at);
+    panel.frame(vec![Event::Text("split".to_owned())]);
+    panel.frame(Vec::new());
+    assert_eq!(panel.state.links.filter.search, "split");
+    assert!(panel.drawn("Split options compared"));
+    assert!(!panel.drawn("Mercury spend export, October") && !panel.drawn("Search links"));
+}
+
+#[test]
+fn the_link_that_needs_action_is_the_first_row_however_old_it_is() {
+    let mut board = five_links();
+    board.absorb(&needing("https://github.com/o/r/pull/5", "#5 old and failing", 2_000));
+    let panel = with_links(ASKING, 640.0, board);
+    assert!(top_of(&panel, "#5 old and failing") < top_of(&panel, "Split options compared"));
+    assert!(panel.drawn("checks failing"));
+}
+
+#[test]
+fn a_row_says_live_for_a_repo_a_forwarder_delivers_for_and_when_it_was_checked_for_the_rest() {
+    let mut board = LinkBoard::default();
+    let looked = LinkStatus { checked_ms: Some(240_000 - 12 * 60_000), ..LinkStatus::default() };
+    for (url, title) in [
+        ("https://github.com/o/live/pull/1", "Live one"),
+        ("https://github.com/o/polled/pull/2", "Polled one"),
+    ] {
+        board.absorb(&Link {
+            state: LinkState::Open,
+            status: looked.clone(),
+            ..shared(url, title, None, 1)
+        });
+    }
+    for n in 0..2 {
+        board.absorb(&shared(&format!("https://a.dev/{n}"), &format!("Link {n}"), None, 5 + n));
+    }
+    let mut panel = Panel::new(ASKING, 640.0);
+    panel.links = Some(board);
+    panel.live = HashSet::from(["o/live".to_owned()]);
+    panel.frame(Vec::new());
+    panel.frame(Vec::new());
+    assert!(panel.drawn("live"));
+    assert!(panel.drawn("o/polled \u{b7} 1m ago \u{b7} checked 12m ago"), "{:?}", panel.texts);
+    assert!(panel.drawn("o/live \u{b7} 1m ago"), "{:?}", panel.texts);
+}
+
+#[test]
+fn the_progress_switch_dot_lasts_until_the_panel_shows_the_links_again() {
+    let mut panel = with_links(ASKING, 420.0, five_links());
+    assert!(panel.state.unseen_links(Some(1)));
+    assert!(!panel.state.unseen_links(None));
+    panel.alerts = Some(1);
+    panel.frame(Vec::new());
+    assert!(!panel.state.unseen_links(Some(1)), "the panel showed it");
+    assert!(panel.state.unseen_links(Some(2)), "a newer alert is new again");
+}
+
+#[test]
+fn no_card_text_overlaps_or_leaves_the_card_with_chips_search_and_rows_at_any_width() {
     for width in [200.0, 240.0, 300.0, 420.0, 640.0] {
-        let mut panel = with_links(ASKING, width, with_archive());
+        let mut board = with_archive();
+        board.absorb(&needing("https://github.com/o/r/pull/5", "#5 failing", 20));
+        let mut panel = with_links(ASKING, width, board);
+        panel.live = HashSet::from(["o/r".to_owned()]);
+        panel.frame(Vec::new());
         assert_clean(&panel, width);
-        let at = panel.center_of("Merged and closed (2)");
+        let at = panel.center_of("Show all 8");
+        panel.click(at);
+        assert_clean(&panel, width);
+        let at = panel.center_of("Done");
         panel.click(at);
         assert_clean(&panel, width);
     }
-}
-
-#[test]
-fn a_board_with_nothing_merged_or_closed_has_no_group() {
-    let panel = with_links(ASKING, 520.0, five_links());
-    assert!(!panel.texts.iter().any(|(text, _)| text.starts_with("Merged and closed")));
-}
-
-#[test]
-fn a_board_of_only_merged_links_still_shows_the_card_with_the_group() {
-    let mut board = LinkBoard::default();
-    board.absorb(&archived(
-        "https://github.com/o/r/pull/9",
-        "#9 fix: round totals",
-        70,
-        LinkState::Merged,
-    ));
-    let panel = with_links(ASKING, 420.0, board);
-    assert!(panel.drawn("LINKS") && panel.drawn("Merged and closed (1)"));
-    assert!(!panel.drawn("#9 fix: round totals"));
 }
 
 fn aged(report: &str) -> Blocks {
@@ -1434,7 +1510,10 @@ fn nothing_overlaps_or_runs_off_a_panel_from_200_to_360_wide_with_every_block_on
         panel.frame(Vec::new());
         panel.frame(Vec::new());
         assert_clean(&panel, width);
-        let at = panel.center_of("Merged and closed (2)");
+        let at = panel.center_of("Show all 7");
+        panel.click(at);
+        assert_clean(&panel, width);
+        let at = panel.center_of("Done");
         panel.click(at);
         assert_clean(&panel, width);
     }

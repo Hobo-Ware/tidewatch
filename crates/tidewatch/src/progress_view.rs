@@ -2,7 +2,7 @@
 //! for, the stage bars and steps, Coming up, the lists, the done check and the links. Which side a
 //! tab shows is kept here.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::time::Duration;
 use tidewatch_core::prefs::RightPanel;
 
@@ -21,7 +21,7 @@ use crate::job_view;
 use crate::last_turn::LastTurn;
 use crate::last_turn_view;
 use crate::link_text::Text;
-use crate::link_view;
+use crate::link_view::{self, LinkView};
 use crate::meeseeks_model::Card as MeeseeksCard;
 use crate::meeseeks_view;
 use crate::panel_blocks::{self, Blocks};
@@ -103,20 +103,21 @@ pub(crate) fn folder_side_shown(chosen: Option<Side>, has_ledger: bool, first: S
 }
 
 /// What the panel remembers of one tab while the app runs.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default)]
 pub(crate) struct TabState {
     pub(crate) chosen: Option<Side>,
     pub(crate) shown: Option<Side>,
     seen: Option<u64>,
+    seen_links: Option<u64>,
     all_entries: [bool; 3],
     verified_open: bool,
     all_rows: bool,
-    links: (bool, bool),
+    pub(crate) links: LinkView,
 }
 
 impl TabState {
     /// Whether the list of `tag` shows all its entries.
-    pub(crate) fn shows_all(self, tag: Tag) -> bool {
+    pub(crate) fn shows_all(&self, tag: Tag) -> bool {
         self.all_entries[tag.index()]
     }
 
@@ -124,7 +125,7 @@ impl TabState {
         self.all_entries[tag.index()] ^= true;
     }
 
-    pub(crate) fn verified_open(self) -> bool {
+    pub(crate) fn verified_open(&self) -> bool {
         self.verified_open
     }
 
@@ -133,11 +134,16 @@ impl TabState {
     }
 
     /// Whether the panel has something new for the owner that it has not shown yet.
-    pub(crate) fn unseen(self, attention: Option<u64>) -> bool {
+    pub(crate) fn unseen(&self, attention: Option<u64>) -> bool {
         attention.is_some() && self.seen != attention
     }
 
-    pub(crate) fn show_all_rows(self) -> bool {
+    /// Whether a link began to need action since the panel last showed the links.
+    pub(crate) fn unseen_links(&self, alerts: Option<u64>) -> bool {
+        alerts.is_some() && self.seen_links != alerts
+    }
+
+    pub(crate) fn show_all_rows(&self) -> bool {
         self.all_rows
     }
 
@@ -199,6 +205,11 @@ pub(crate) struct Input<'a> {
     pub(crate) shown: Option<State>,
     /// What the agent shared and Tidewatch found, kept for the life of the tab.
     pub(crate) links: Option<&'a LinkBoard>,
+    /// The repos (`owner/name` in lower case) a forwarder delivers for, which the link rows call live.
+    pub(crate) link_live: &'a HashSet<String>,
+    /// How many times a link began to need action; the Progress switch shows a dot while the panel
+    /// has not shown the links since.
+    pub(crate) link_alerts: Option<u64>,
     /// The age of each block, and whether the facts contradict the report.
     pub(crate) blocks: Blocks,
     /// The steps Tidewatch ticked itself.
@@ -258,6 +269,7 @@ pub(crate) fn show(
     child.set_clip_rect(rect.intersect(ui.clip_rect()));
     let pad = pad_of(rect.width()) as i8;
     state.seen = input.attention();
+    state.seen_links = input.link_alerts;
     let stack = rect.width() < STACK_BELOW;
     ScrollArea::vertical().auto_shrink([false, false]).show(&mut child, |ui| {
         Frame::new().inner_margin(Margin::symmetric(pad, pad)).show(ui, |ui| {
@@ -414,15 +426,14 @@ fn link_card(
     input: &Input<'_>,
     state: &mut TabState,
 ) -> Option<Action> {
-    let copied = link_view::show(
-        ui,
-        width,
-        stack,
+    let links = link_view::Links {
         board,
-        input.now_ms,
-        (&mut state.links.0, &mut state.links.1),
-        input.blocks.links.as_deref(),
-    );
+        live: input.link_live,
+        now_ms: input.now_ms,
+        age: input.blocks.links.as_deref(),
+        stack,
+    };
+    let copied = link_view::show(ui, width, &links, &mut state.links);
     copied.map(Action::CopyLink)
 }
 

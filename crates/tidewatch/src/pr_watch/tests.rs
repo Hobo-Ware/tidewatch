@@ -1120,6 +1120,7 @@ fn hit(numbers: &[u64], branches: &[&str]) -> Hit {
         event: "check_run".into(),
         numbers: numbers.to_vec(),
         branches: branches.iter().map(|b| (*b).to_owned()).collect(),
+        ..Hit::default()
     }
 }
 

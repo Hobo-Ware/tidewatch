@@ -388,6 +388,7 @@ mod tests {
             first_seen_ms: 0,
             title_from: tidewatch_core::link_board::TitleFrom::default(),
             state: tidewatch_core::link_board::LinkState::default(),
+            status: tidewatch_core::link_board::Status::default(),
         };
         for width in [260.0, 420.0, 700.0] {
             let ask = Ask { read: vec![link.clone()], ..ask_of(ASKING, 0) };
