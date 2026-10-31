@@ -396,21 +396,22 @@ impl Board {
         self.needs.len() + self.working.len() + self.waiting.len() + self.idle.len()
     }
 
-    /// `12 agents \u{b7} 3 need you \u{b7} 5 working \u{b7} 2 waiting \u{b7} 4 idle`; the waiting
-    /// part only while an agent waits.
+    /// `12 agents \u{b7} 3 need you \u{b7} 5 working \u{b7} 2 waiting \u{b7} 4 idle`; a part with a
+    /// zero count is left out.
     pub(crate) fn summary(&self) -> String {
         let total = self.total();
         let agents = if total == 1 { "1 agent".to_owned() } else { format!("{total} agents") };
-        let waiting = match self.waiting.len() {
-            0 => String::new(),
-            count => format!(" \u{b7} {count} waiting"),
-        };
-        format!(
-            "{agents} \u{b7} {} need you \u{b7} {} working{waiting} \u{b7} {} idle",
-            self.needs.len(),
-            self.working.len(),
-            self.idle.len()
-        )
+        let parts = [
+            (self.needs.len(), "need you"),
+            (self.working.len(), "working"),
+            (self.waiting.len(), "waiting"),
+            (self.idle.len(), "idle"),
+        ];
+        let shown = parts
+            .iter()
+            .filter(|(count, _)| *count > 0)
+            .map(|(count, word)| format!("{count} {word}"));
+        std::iter::once(agents).chain(shown).collect::<Vec<_>>().join(" \u{b7} ")
     }
 }
 
@@ -721,12 +722,12 @@ mod tests {
     }
 
     #[test]
-    fn the_summary_names_waiting_only_while_an_agent_waits() {
+    fn the_summary_leaves_out_every_part_that_is_zero() {
         let overview = build(vec![place("web", vec![row(1, "a", AgentStatus::Working)])]);
-        assert_eq!(
-            overview.board(None).summary(),
-            "1 agent \u{b7} 0 need you \u{b7} 1 working \u{b7} 0 idle"
-        );
+        assert_eq!(overview.board(None).summary(), "1 agent \u{b7} 1 working");
+        let asks =
+            build(vec![place("web", vec![row(1, "a", AgentStatus::NeedsYou(Reason::Permission))])]);
+        assert_eq!(asks.board(None).summary(), "1 agent \u{b7} 1 need you");
     }
 
     #[test]

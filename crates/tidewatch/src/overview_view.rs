@@ -1261,7 +1261,7 @@ mod tests {
         let texts = screen.texts();
         assert!(has(&texts, "Idle"), "{texts:?}");
         assert!(!has(&texts, "Needs you"), "{texts:?}");
-        assert!(has(&texts, "2 agents \u{b7} 0 need you \u{b7} 1 working \u{b7} 1 idle"));
+        assert!(has(&texts, "2 agents \u{b7} 1 working \u{b7} 1 idle"));
         assert!(has(&texts, "went-quiet"));
     }
 
@@ -1316,10 +1316,7 @@ mod tests {
         ] {
             assert!(has(&texts, want), "{want:?} not drawn in {texts:?}");
         }
-        assert!(has(
-            &texts,
-            "4 agents \u{b7} 1 need you \u{b7} 1 working \u{b7} 2 waiting \u{b7} 0 idle"
-        ));
+        assert!(has(&texts, "4 agents \u{b7} 1 need you \u{b7} 1 working \u{b7} 2 waiting"));
         let order = |name: &str| texts.iter().position(|text| text == name).unwrap();
         assert!(order("waits-on-date") < order("waits-on-pr"), "the dated wait is soonest");
         assert_eq!(screen.click("is-stuck").jump, Some(3));
@@ -1345,7 +1342,7 @@ mod tests {
         assert_eq!(screen.state.repo, None);
         assert!(has(&texts, "web-working") && has(&texts, "web-asks"), "{texts:?}");
         assert!(!has(&texts, "Nothing running. Start an agent with"), "{texts:?}");
-        assert!(has(&texts, "2 agents \u{b7} 1 need you \u{b7} 1 working \u{b7} 0 idle"));
+        assert!(has(&texts, "2 agents \u{b7} 1 need you \u{b7} 1 working"));
     }
 
     fn poofed(count: usize) -> Vec<PoofedRow> {
@@ -1431,7 +1428,7 @@ mod tests {
         assert!(has(&texts, "api-working") && has(&texts, "api-idle"));
         assert!(!has(&texts, "web-working") && !has(&texts, "web-asks"));
         assert!(!has(&texts, "Needs you"));
-        assert!(has(&texts, "2 agents \u{b7} 0 need you \u{b7} 1 working \u{b7} 1 idle"));
+        assert!(has(&texts, "2 agents \u{b7} 1 working \u{b7} 1 idle"));
         screen.click("All");
         assert_eq!(screen.state.repo, None);
         assert!(has(&screen.texts(), "web-asks"));

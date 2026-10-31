@@ -128,6 +128,8 @@ struct Harness {
     resume: ResumeAgents,
     login_offered: bool,
     esc_closes: bool,
+    skipped: bool,
+    painted: Vec<(String, Rect)>,
 }
 
 impl Harness {
@@ -145,6 +147,8 @@ impl Harness {
             resume: ResumeAgents::Auto,
             login_offered: false,
             esc_closes: true,
+            skipped: false,
+            painted: Vec::new(),
         }
     }
 
@@ -153,8 +157,9 @@ impl Harness {
         let (settings, updates) = (&mut self.settings, &mut self.updates);
         let probes =
             Probes::from([("claude".to_owned(), Availability::Found(Some("2.1.0".into())))]);
-        let (files, trust, general) =
-            (files(), trust_page(), general(self.restore, self.resume, self.login_offered));
+        let mut general = general(self.restore, self.resume, self.login_offered);
+        general.skipped_by_flag = self.skipped;
+        let (files, trust) = (files(), trust_page());
         let host = Host {
             files: &files,
             trust: &trust,
@@ -164,10 +169,11 @@ impl Harness {
             read_login: || LoginItem::Off,
             esc_closes: self.esc_closes,
         };
-        let _ = self.ctx.run_ui(input(events), |ui| {
+        let output = self.ctx.run_ui(input(events), |ui| {
             let area = ui.max_rect();
             answer = show(ui, area, settings, &host, updates);
         });
+        self.painted = crate::screen_kit::painted_texts(&output);
         answer
     }
 
@@ -496,4 +502,19 @@ fn the_profiles_page_title_starts_where_every_other_pages_does() {
         );
         assert!(content_column(main).width() <= CONTENT_MAX);
     }
+}
+
+#[test]
+fn a_run_without_restore_says_so_in_a_note_under_the_startup_card_not_as_a_row() {
+    let mut harness = Harness::new(Section::General);
+    harness.skipped = true;
+    for _ in 0..3 {
+        harness.frame(vec![]);
+    }
+    let at = |text: &str| harness.painted.iter().find(|(t, _)| t == text).map(|(_, rect)| *rect);
+    assert_eq!(at("Skipped on this run"), None);
+    let note = at("This run was started with --no-restore, so nothing was restored.").unwrap();
+    let window = at("Window").unwrap();
+    let resume = at("Restore the last session").unwrap();
+    assert!(note.top() > resume.bottom() && note.bottom() < window.top(), "{note:?}");
 }

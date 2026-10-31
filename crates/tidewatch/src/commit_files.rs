@@ -67,6 +67,11 @@ pub(crate) fn totals(counts: &[Option<LineCounts>], files: usize) -> Option<Line
     })
 }
 
+/// The ink of a removed-lines count: red, or muted for a zero, which removes nothing.
+pub(crate) fn removed_ink(removed: usize) -> egui::Color32 {
+    if removed == 0 { brand::MUTED } else { brand::RED }
+}
+
 /// What follows the short id in the meta line: the author and how many files.
 pub(crate) fn meta_tail(author: Option<&str>, files: usize) -> String {
     let mut parts = Vec::with_capacity(2);
@@ -277,7 +282,7 @@ fn file_row(
             Align2::RIGHT_CENTER,
             format!("-{removed}"),
             mono(12.0),
-            brand::RED,
+            removed_ink(removed),
         );
         right -= DEL_W + COUNT_GAP;
         painter.text(
@@ -388,6 +393,12 @@ mod tests {
         assert!(widths[0] > NOTES_ICON + NOTES_ICON_GAP);
         assert!(widths[1] > widths[0]);
         assert!(widths[2] > widths[1]);
+    }
+
+    #[test]
+    fn a_zero_removed_count_is_muted_and_a_real_one_is_red() {
+        assert_eq!(removed_ink(0), brand::MUTED);
+        assert_eq!(removed_ink(1), brand::RED);
     }
 
     #[test]

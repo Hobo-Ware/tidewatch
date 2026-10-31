@@ -170,14 +170,14 @@ pub(crate) fn paint_out_of_date(ui: &Ui, left: f32, mid: f32, why: Why) -> Rect 
     rect
 }
 
-/// The About card's `Panel on time` row.
+/// The About card's `Panel on time` row: its value, `99.96% this week`, and the late line.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct OnTime {
     pub(crate) line: String,
     pub(crate) late: Option<String>,
 }
 
-const NO_CHANGES: &str = "Panel on time: no changes yet this week";
+const NO_CHANGES: &str = "no changes yet this week";
 
 fn percent_text(hundredths: u64) -> String {
     if hundredths >= 10_000 {
@@ -197,7 +197,7 @@ impl OnTime {
         let late = counter
             .worst(now_ms)
             .map(|(source, failed)| format!("Late: {} {failed}", panel_counter::label(source)));
-        Self { line: format!("Panel on time: {} this week", percent_text(hundredths)), late }
+        Self { line: format!("{} this week", percent_text(hundredths)), late }
     }
 
     /// A stand-in for captures: the given percent, with a late line when it is under 100.
@@ -205,7 +205,7 @@ impl OnTime {
         let hundredths = (percent.clamp(0.0, 100.0) * 100.0 + 1e-6).floor() as u64;
         let late = (hundredths < 10_000)
             .then(|| format!("Late: {} {}", panel_counter::label(Source::Hook), 3));
-        Self { line: format!("Panel on time: {} this week", percent_text(hundredths)), late }
+        Self { line: format!("{} this week", percent_text(hundredths)), late }
     }
 
     pub(crate) fn none() -> Self {

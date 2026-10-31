@@ -246,12 +246,12 @@ fn counter_with(on_time: u32, late: u32, missed: u32) -> (Counter, i64) {
 #[test]
 fn the_about_row_says_the_share_on_time_and_names_the_worst_source_when_something_was_late() {
     let cases = [
-        (counter_with(0, 0, 0), "Panel on time: no changes yet this week", None),
-        (counter_with(40, 0, 0), "Panel on time: 100% this week", None),
-        (counter_with(2_499, 1, 0), "Panel on time: 99.96% this week", Some("Late: hooks 1")),
-        (counter_with(997, 2, 1), "Panel on time: 99.70% this week", Some("Late: hooks 3")),
-        (counter_with(1, 2, 0), "Panel on time: 33.33% this week", Some("Late: hooks 2")),
-        (counter_with(0, 0, 3), "Panel on time: 0.00% this week", Some("Late: hooks 3")),
+        (counter_with(0, 0, 0), "no changes yet this week", None),
+        (counter_with(40, 0, 0), "100% this week", None),
+        (counter_with(2_499, 1, 0), "99.96% this week", Some("Late: hooks 1")),
+        (counter_with(997, 2, 1), "99.70% this week", Some("Late: hooks 3")),
+        (counter_with(1, 2, 0), "33.33% this week", Some("Late: hooks 2")),
+        (counter_with(0, 0, 3), "0.00% this week", Some("Late: hooks 3")),
     ];
     for ((counter, now), line, late) in cases {
         let row = OnTime::of(&counter, now);
@@ -262,7 +262,7 @@ fn the_about_row_says_the_share_on_time_and_names_the_worst_source_when_somethin
 #[test]
 fn the_row_never_rounds_a_late_change_up_to_a_hundred() {
     let (counter, now) = counter_with(99_999, 1, 0);
-    assert_eq!(OnTime::of(&counter, now).line, "Panel on time: 99.99% this week");
+    assert_eq!(OnTime::of(&counter, now).line, "99.99% this week");
 }
 
 #[test]
@@ -275,11 +275,11 @@ fn the_row_reads_no_changes_in_a_week_that_has_none_yet() {
 #[test]
 fn a_stand_in_percent_fills_the_row_for_a_capture() {
     let row = OnTime::fake(99.96);
-    assert_eq!(row.line, "Panel on time: 99.96% this week");
+    assert_eq!(row.line, "99.96% this week");
     assert_eq!(row.late.as_deref(), Some("Late: hooks 3"));
     let perfect = OnTime::fake(100.0);
-    assert_eq!((perfect.line.as_str(), perfect.late), ("Panel on time: 100% this week", None));
-    assert_eq!(OnTime::fake(250.0).line, "Panel on time: 100% this week");
+    assert_eq!((perfect.line.as_str(), perfect.late), ("100% this week", None));
+    assert_eq!(OnTime::fake(250.0).line, "100% this week");
 }
 
 #[test]

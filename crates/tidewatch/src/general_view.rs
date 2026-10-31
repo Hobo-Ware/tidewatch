@@ -85,16 +85,14 @@ pub(crate) fn page(
             let now = ui.ctx().input(|input| input.time);
             open_at_login = login_item::show(ui, login, now, read_login);
         }
-        if general.skipped_by_flag {
-            crate::settings_ui::row(
-                ui,
-                "Skipped on this run",
-                "This run was started with --no-restore, so nothing was restored.",
-                Control::NONE,
-                |_| {},
-            );
-        }
     });
+    if general.skipped_by_flag {
+        ui.add_space(8.0);
+        crate::settings_ui::caption(
+            ui,
+            "This run was started with --no-restore, so nothing was restored.",
+        );
+    }
     let window = window_view::section(ui, window, &general.window).map(Action::Window);
     let git = git_card(ui, general.git).map(Action::Git);
     let terminal = font_view::section(ui, font, &general.terminal).map(|change| match change {
@@ -169,8 +167,11 @@ fn chat_card(ui: &mut Ui, on: bool) -> Option<bool> {
 fn about_card(ui: &mut Ui, on_time: &OnTime) {
     section(ui, "About", |ui| {
         settings_ui::row(ui, "Emoji", EMOJI_CREDIT, Control::NONE, |_| {});
-        let late = on_time.late.as_deref().unwrap_or("");
-        settings_ui::row(ui, &on_time.line, late, Control::NONE, |_| {});
+        let value = match on_time.late.as_deref() {
+            Some(late) => format!("{}. {late}", on_time.line),
+            None => on_time.line.clone(),
+        };
+        settings_ui::row(ui, "Panel on time", &value, Control::NONE, |_| {});
     });
 }
 
@@ -620,17 +621,18 @@ mod about_tests {
     fn the_about_card_says_how_much_of_the_week_the_panel_was_on_time() {
         let late = OnTime::fake(99.96);
         let texts = about_texts(&late);
-        assert!(texts.contains(&"Panel on time: 99.96% this week".to_owned()), "{texts:?}");
-        assert!(texts.contains(&"Late: hooks 3".to_owned()), "{texts:?}");
+        assert!(texts.contains(&"Panel on time".to_owned()), "{texts:?}");
+        assert!(texts.contains(&"99.96% this week. Late: hooks 3".to_owned()), "{texts:?}");
     }
 
     #[test]
     fn the_about_card_has_no_late_line_when_nothing_was_late_and_says_so_with_no_changes() {
         let perfect = about_texts(&OnTime::fake(100.0));
-        assert!(perfect.contains(&"Panel on time: 100% this week".to_owned()), "{perfect:?}");
+        assert!(perfect.contains(&"Panel on time".to_owned()), "{perfect:?}");
+        assert!(perfect.contains(&"100% this week".to_owned()), "{perfect:?}");
         assert!(!perfect.iter().any(|text| text.starts_with("Late:")), "{perfect:?}");
         let none = about_texts(&OnTime::none());
-        assert!(none.contains(&"Panel on time: no changes yet this week".to_owned()), "{none:?}");
+        assert!(none.contains(&"no changes yet this week".to_owned()), "{none:?}");
         assert!(!none.iter().any(|text| text.starts_with("Late:")), "{none:?}");
     }
 }
