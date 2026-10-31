@@ -5,14 +5,14 @@
 use crate::brand;
 use crate::reader_view::item_frame;
 use crate::screen_kit::TEXT_SECONDARY;
-use crate::screen_kit::{Size, body, dialog_frame, footer_row, mono, primary_button, quiet_button};
+use crate::screen_kit::{
+    DialogWidth, Hint, Size, body, dialog_frame, footer_row, mono, primary_button, quiet_button,
+};
 use egui::epaint::text::{LayoutJob, TextFormat};
 use egui::{Id, Key, Margin, Modifiers, RichText};
 use kelp_core::review::{Side, Thread};
 use tidewatch_core::notes::Notes;
 use tidewatch_core::pr::PullRequest;
-
-const DIALOG_WIDTH: f32 = 480.0;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum Kind {
@@ -114,38 +114,40 @@ fn detail_job(plan: &Plan) -> LayoutJob {
 pub(crate) fn show(ctx: &egui::Context, confirm: &PostConfirm) -> Option<Answer> {
     let mut answer = None;
     let asking = confirm.phase == Phase::Asking;
-    let modal = dialog_frame(ctx, Id::new("post_to_pr"), &heading(confirm), DIALOG_WIDTH, |ui| {
-        ui.spacing_mut().item_spacing.y = 8.0;
-        ui.label(detail_job(&confirm.plan));
-        item_frame().inner_margin(Margin::symmetric(12, 10)).show(ui, |ui| {
-            ui.set_width(ui.available_width());
-            ui.label(RichText::new(&confirm.plan.body).size(13.0).color(brand::TEXT));
+    let modal =
+        dialog_frame(ctx, Id::new("post_to_pr"), &heading(confirm), DialogWidth::Narrow, |ui| {
+            ui.spacing_mut().item_spacing.y = 8.0;
+            ui.label(detail_job(&confirm.plan));
+            item_frame().inner_margin(Margin::symmetric(12, 10)).show(ui, |ui| {
+                ui.set_width(ui.available_width());
+                ui.label(RichText::new(&confirm.plan.body).size(13.0).color(brand::TEXT));
+            });
+            match &confirm.phase {
+                Phase::Asking => {}
+                Phase::Posting => {
+                    ui.label(RichText::new("Posting...").color(brand::MUTED));
+                }
+                Phase::Failed(message) => {
+                    ui.label(RichText::new(message).color(brand::RED));
+                }
+            }
+            ui.add_space(4.0);
+            let hint: &[Hint] = match confirm.phase {
+                Phase::Asking => &[("Enter", "posts"), ("Esc", "cancels")],
+                Phase::Posting => &[("Esc", "closes"), ("", "the post carries on")],
+                Phase::Failed(_) => &[],
+            };
+            footer_row(ui, hint, |ui| {
+                if asking && primary_button(ui, "Post to PR", true, Size::Regular).clicked() {
+                    answer = Some(Answer::Post);
+                }
+                let cancel =
+                    if matches!(confirm.phase, Phase::Failed(_)) { "Close" } else { "Cancel" };
+                if quiet_button(ui, cancel, true, Size::Regular).clicked() {
+                    answer = Some(Answer::Cancel);
+                }
+            });
         });
-        match &confirm.phase {
-            Phase::Asking => {}
-            Phase::Posting => {
-                ui.label(RichText::new("Posting...").color(brand::MUTED));
-            }
-            Phase::Failed(message) => {
-                ui.label(RichText::new(message).color(brand::RED));
-            }
-        }
-        ui.add_space(4.0);
-        let hint = match confirm.phase {
-            Phase::Asking => "Enter posts  -  Esc cancels",
-            Phase::Posting => "Esc closes  -  the post carries on",
-            Phase::Failed(_) => "",
-        };
-        footer_row(ui, hint, |ui| {
-            if asking && primary_button(ui, "Post to PR", true, Size::Regular).clicked() {
-                answer = Some(Answer::Post);
-            }
-            let cancel = if matches!(confirm.phase, Phase::Failed(_)) { "Close" } else { "Cancel" };
-            if quiet_button(ui, cancel, true, Size::Regular).clicked() {
-                answer = Some(Answer::Cancel);
-            }
-        });
-    });
     if answer.is_none() && asking && ctx.input_mut(|i| i.consume_key(Modifiers::NONE, Key::Enter)) {
         answer = Some(Answer::Post);
     }

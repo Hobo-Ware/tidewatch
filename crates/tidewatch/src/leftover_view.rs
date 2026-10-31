@@ -12,11 +12,10 @@ use crate::brand;
 use crate::leftovers::{Cleanup, Row, RowState, row_text};
 use crate::review::plural;
 use crate::screen_kit::{
-    Size, danger_button, dialog_frame, footer_row, primary_button, quiet_button,
+    DialogWidth, Size, danger_button, dialog_frame, footer_row, primary_button, quiet_button,
 };
 use crate::settings_ui::pill;
 
-const DIALOG_WIDTH: f32 = 560.0;
 const LIST_HEIGHT: f32 = 400.0;
 const UNREADABLE_DISCARD: &str = "Moves the folder to the Trash, where you can take it back. Nothing is deleted, and its branch stays.";
 const UNRECORDED_DISCARD: &str = "Removes the folder. The branch goes with it only when every commit on it also exists elsewhere; otherwise it stays.";
@@ -145,7 +144,7 @@ pub(crate) fn dialog(ctx: &egui::Context, cleanup: &Cleanup) -> Option<Answer> {
         ctx,
         Id::new("leftover_worktrees"),
         "Leftover worktrees",
-        DIALOG_WIDTH,
+        DialogWidth::Medium,
         |ui| {
             ui.spacing_mut().item_spacing.y = 6.0;
             ui.label(
@@ -168,7 +167,7 @@ pub(crate) fn dialog(ctx: &egui::Context, cleanup: &Cleanup) -> Option<Answer> {
                 }
             });
             ui.add_space(4.0);
-            footer_row(ui, "Esc closes", |ui| {
+            footer_row(ui, &[("Esc", "closes")], |ui| {
                 let n = cleanup.clean_count();
                 let label = if n == 0 { "Clean up".to_owned() } else { format!("Clean up ({n})") };
                 let blocker = cleanup.clean_up_blocker();

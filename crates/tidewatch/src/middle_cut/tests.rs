@@ -97,3 +97,31 @@ fn keeps_name_tells_a_whole_file_name_from_one_cut_in_its_own_middle() {
         assert_eq!(keeps_name(cut, original), want, "{cut}");
     }
 }
+
+#[test]
+fn a_path_that_fits_keeps_its_start() {
+    assert_eq!(start_cut("~/Git/Hoboware/kelp", 19.0, &chars), "~/Git/Hoboware/kelp");
+}
+
+#[test]
+fn a_long_path_loses_its_first_folders_and_keeps_the_last_ones() {
+    let path = "~/Git/Hoboware/some-long-name/kelp";
+    let cases = [
+        (30.0, "…/Hoboware/some-long-name/kelp"),
+        (29.0, "…/some-long-name/kelp"),
+        (21.0, "…/some-long-name/kelp"),
+        (20.0, "…/kelp"),
+        (6.0, "…/kelp"),
+    ];
+    for (room, want) in cases {
+        let got = start_cut(path, room, &chars);
+        assert_eq!(got, want, "room {room}");
+        assert!(chars(&got) <= room, "room {room}: {got}");
+    }
+}
+
+#[test]
+fn a_last_name_wider_than_the_room_is_cut_from_its_start() {
+    assert_eq!(start_cut("~/Git/a-very-long-folder-name", 12.0, &chars), "…folder-name");
+    assert_eq!(start_cut("~/Git/kelp", 0.5, &chars), "…");
+}

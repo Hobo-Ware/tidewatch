@@ -1,5 +1,6 @@
-//! Cuts a path in the middle so its file name and `:line` stay whole, measured with whatever
-//! measure the caller owns (pure: a closure from text to width).
+//! Cuts a path in the middle so its file name and `:line` stay whole, or at the start so its last
+//! folders stay, measured with whatever measure the caller owns (pure: a closure from text to
+//! width).
 
 const ELLIPSIS: &str = "…";
 
@@ -17,6 +18,26 @@ pub(crate) fn middle_cut(text: &str, max_w: f32, measure: &dyn Fn(&str) -> f32) 
         return cut;
     }
     cut_chars(parts.last().copied().unwrap_or(text), max_w, measure)
+}
+
+/// `text` itself when it fits `max_w`, else its last folders after `…/` (`…/Hoboware/kelp`): whole
+/// folders while one fits, else the end of the last name behind an ellipsis.
+pub(crate) fn start_cut(text: &str, max_w: f32, measure: &dyn Fn(&str) -> f32) -> String {
+    if measure(text) <= max_w {
+        return text.to_owned();
+    }
+    let parts: Vec<&str> = text.split('/').collect();
+    for first in 1..parts.len() {
+        let cut = format!("{ELLIPSIS}/{}", parts[first..].join("/"));
+        if measure(&cut) <= max_w {
+            return cut;
+        }
+    }
+    let chars: Vec<char> = text.chars().collect();
+    (0..chars.len())
+        .map(|skip| format!("{ELLIPSIS}{}", chars[skip..].iter().collect::<String>()))
+        .find(|cut| measure(cut) <= max_w)
+        .unwrap_or_else(|| ELLIPSIS.to_owned())
 }
 
 /// Whether `cut` still ends in the whole last segment of `original` (its file name and line).

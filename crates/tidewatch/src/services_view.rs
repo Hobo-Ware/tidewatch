@@ -20,9 +20,9 @@ use tidewatch_core::services::{Service, problems};
 use crate::brand;
 use crate::remote_pill::Popover;
 use crate::screen_kit::{
-    Glyph, MENU_ROW_H, Size, TEXT_BODY, TEXT_TAG, body, button_width, danger_button, dialog_frame,
-    field_label, footer_row, glyph_button, menu_divider, menu_label_with, menu_row, mono,
-    primary_button, primary_button_keyed, quiet_button, selection_row,
+    DialogWidth, Glyph, MENU_ROW_H, Size, TEXT_BODY, TEXT_TAG, body, button_width, danger_button,
+    dialog_frame, field_label, footer_row, glyph_button, menu_divider, menu_label_with, menu_row,
+    mono, primary_button, primary_button_keyed, quiet_button, selection_row,
 };
 use crate::services_glue::{Command, Row};
 use crate::settings_ui::{switch_line, text_input};
@@ -39,7 +39,6 @@ const ROW_H: f32 = 48.0;
 const ROW_PAD: f32 = 10.0;
 const ROW_GAP: f32 = 2.0;
 const ACTION_GAP: f32 = 4.0;
-const DIALOG_W: f32 = 480.0;
 const MENU_GAP: f32 = 4.0;
 const MENU_W: f32 = 210.0;
 
@@ -541,7 +540,7 @@ fn form_dialog(
     let mut submit = false;
     let mut cancel = false;
     let verdict = form_service(&form, existing);
-    let modal = dialog_frame(ctx, Id::new("service-form"), title, DIALOG_W, |ui| {
+    let modal = dialog_frame(ctx, Id::new("service-form"), title, DialogWidth::Narrow, |ui| {
         ui.spacing_mut().item_spacing.y = 8.0;
         field_label(ui, "Name");
         let name = text_input(ui, &mut form.name, "db");
@@ -563,7 +562,7 @@ fn form_dialog(
             }
         }
         ui.add_space(6.0);
-        footer_row(ui, "Save adds the service, Start runs it  -  Esc cancels", |ui| {
+        footer_row(ui, &[("Enter", "saves"), ("Esc", "cancels")], |ui| {
             if primary_button_keyed(ui, "Save", "\u{21b5}", true, Size::Regular).clicked() {
                 submit = true;
             }
@@ -588,26 +587,29 @@ fn form_dialog(
 fn remove_dialog(ctx: &egui::Context, name: String) -> (Option<Dialog>, Option<Action>) {
     let mut confirm = false;
     let mut cancel = false;
-    let modal = dialog_frame(ctx, Id::new("service-remove"), "Remove service", DIALOG_W, |ui| {
-        ui.spacing_mut().item_spacing.y = 8.0;
-        ui.label(
-            egui::RichText::new(format!("Remove {name}?")).font(body(TEXT_BODY)).color(brand::TEXT),
-        );
-        ui.label(
-            egui::RichText::new("Tidewatch stops it and forgets it. Your repo is not touched.")
-                .size(TEXT_TAG)
-                .color(brand::MUTED),
-        );
-        ui.add_space(6.0);
-        footer_row(ui, "", |ui| {
-            if danger_button(ui, "Remove", Size::Regular).clicked() {
-                confirm = true;
-            }
-            if quiet_button(ui, "Cancel", true, Size::Regular).clicked() {
-                cancel = true;
-            }
+    let modal =
+        dialog_frame(ctx, Id::new("service-remove"), "Remove service", DialogWidth::Narrow, |ui| {
+            ui.spacing_mut().item_spacing.y = 8.0;
+            ui.label(
+                egui::RichText::new(format!("Remove {name}?"))
+                    .font(body(TEXT_BODY))
+                    .color(brand::TEXT),
+            );
+            ui.label(
+                egui::RichText::new("Tidewatch stops it and forgets it. Your repo is not touched.")
+                    .size(TEXT_TAG)
+                    .color(brand::MUTED),
+            );
+            ui.add_space(6.0);
+            footer_row(ui, &[], |ui| {
+                if danger_button(ui, "Remove", Size::Regular).clicked() {
+                    confirm = true;
+                }
+                if quiet_button(ui, "Cancel", true, Size::Regular).clicked() {
+                    cancel = true;
+                }
+            });
         });
-    });
     if confirm {
         return (None, Some(Action::Remove(name)));
     }

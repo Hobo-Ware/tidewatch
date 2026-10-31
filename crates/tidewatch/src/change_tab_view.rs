@@ -8,12 +8,11 @@ use tidewatch_core::agents::Level;
 use crate::brand;
 use crate::change_tab::{Card, Facts, Kind, Pick, fix, offers_stop_now, sentence};
 use crate::screen_kit::{
-    Size, TEXT_SECONDARY, TEXT_TAG, body, dialog_frame_in, field_label, footer_row, heading,
-    primary_button_keyed, quiet_button,
+    DialogWidth, Size, TEXT_SECONDARY, TEXT_TAG, body, dialog_frame_in, field_label, footer_row,
+    heading, primary_button_keyed, quiet_button,
 };
 use crate::segmented;
 
-pub(crate) const WIDTH: f32 = 460.0;
 pub(crate) const TOP: f32 = 60.0;
 const CARD_H: f32 = 48.0;
 const GAP: f32 = 8.0;
@@ -152,7 +151,7 @@ pub(crate) fn show(ctx: &egui::Context, facts: &Facts, pick: &mut Pick) -> Optio
         .order(egui::Order::Foreground)
         .interactable(true);
     let mut outcome = None;
-    let modal = dialog_frame_in(ctx, (id, area), "Change this tab", WIDTH, |ui| {
+    let modal = dialog_frame_in(ctx, (id, area), "Change this tab", DialogWidth::Narrow, |ui| {
         ui.spacing_mut().item_spacing.y = 0.0;
         kind_row(ui, pick);
         if pick.kind == Kind::Agent {
@@ -165,7 +164,7 @@ pub(crate) fn show(ctx: &egui::Context, facts: &Facts, pick: &mut Pick) -> Optio
         let missing = fix(facts, pick);
         what_happens(ui, &sentence(facts, pick));
         ui.add_space(SECTION_GAP);
-        footer_row(ui, "Esc cancels", |ui| {
+        footer_row(ui, &[("Esc", "cancels")], |ui| {
             let label = missing
                 .as_ref()
                 .map_or_else(|| "Change".to_owned(), crate::change_tab::Fix::button);

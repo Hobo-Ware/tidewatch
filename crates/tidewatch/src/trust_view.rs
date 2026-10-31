@@ -8,13 +8,14 @@ use tidewatch_core::trust::{CliTrust, Status, TrustCli, TrustState};
 use crate::brand;
 use crate::screen_kit::TEXT_BODY;
 use crate::screen_kit::TEXT_TAG;
-use crate::screen_kit::{Size, dialog_frame, footer_row, primary_button, quiet_button};
+use crate::screen_kit::{
+    DialogWidth, Size, dialog_frame, footer_row, primary_button, quiet_button,
+};
 use crate::settings_ui::{
     self, Control, FAINT, MUTED, SOFT, TEXT, button, button_width, footer_note, note, page_header,
     pill, row_with, section,
 };
 
-const DIALOG_WIDTH: f32 = 560.0;
 const CONTROL_GAP: f32 = 8.0;
 const NEW_WORKTREE: &str = "<each new worktree>";
 
@@ -142,7 +143,7 @@ pub(crate) fn dialog(ctx: &egui::Context, page: &Page) -> Option<Event> {
         ctx,
         Id::new("folder_trust"),
         "Skip the folder trust prompts?",
-        DIALOG_WIDTH,
+        DialogWidth::Medium,
         |ui| {
             ui.spacing_mut().item_spacing.y = 6.0;
             ui.label(
@@ -166,7 +167,7 @@ pub(crate) fn dialog(ctx: &egui::Context, page: &Page) -> Option<Event> {
                 .color(brand::MUTED),
             );
             ui.add_space(6.0);
-            footer_row(ui, "Esc counts as No", |ui| {
+            footer_row(ui, &[("Esc", "counts as No")], |ui| {
                 if primary_button(ui, "Yes, trust the Tidewatch folder", true, Size::Regular)
                     .clicked()
                 {

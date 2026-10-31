@@ -9,15 +9,14 @@ use tidewatch_core::github_clone::Landing;
 
 use crate::brand;
 use crate::open_link::{Cloning, OpenLink, Phase, Verdict, fraction_of};
-use crate::screen_kit::TEXT_SECONDARY;
 use crate::screen_kit::{
-    Size, body, dialog_frame, field_label, footer_row, mono, paint_pill_card, primary_button_keyed,
-    quiet_button,
+    DialogWidth, Size, body, dialog_frame, field_label, fit_path, footer_row, mono,
+    paint_pill_card, path_line, primary_button_keyed, quiet_button,
 };
+use crate::screen_kit::{TEXT_SECONDARY, TEXT_TAG};
 use crate::settings_ui::text_input;
 use crate::welcome::shown_path;
 
-const WIDTH: f32 = 560.0;
 const CARD_H: f32 = 92.0;
 const BAR_H: f32 = 4.0;
 const SECTION_GAP: f32 = 16.0;
@@ -45,7 +44,7 @@ pub(crate) fn show(
 ) -> Option<Outcome> {
     let mut outcome = None;
     let verdict = open.verdict();
-    let modal = dialog_frame(ctx, Id::new("open_link"), "Open a repo", WIDTH, |ui| {
+    let modal = dialog_frame(ctx, Id::new("open_link"), "Open a repo", DialogWidth::Medium, |ui| {
         ui.spacing_mut().item_spacing.y = 8.0;
         let cloning = match &open.phase {
             Phase::Cloning(cloning) => Some(cloning.clone()),
@@ -88,8 +87,7 @@ fn form_body(
             note(ui, &format!("Looking for {} on this machine...", repo.slug()), brand::MUTED);
         }
         Verdict::Ready(repo, Landing::Open(dir)) => {
-            let text = format!("{} is already at {}", repo.slug(), shown_path(dir, home));
-            known_card(ui, &text);
+            known_card(ui, &format!("{} is already at ", repo.slug()), &shown_path(dir, home));
         }
         Verdict::Ready(_, Landing::Clone { .. }) => {}
         Verdict::Ready(_, Landing::Refuse(why)) => note(ui, why, brand::RED),
@@ -101,12 +99,19 @@ fn form_body(
         let parent = text_input(ui, &mut open.parent, "Folder for the new checkout");
         entered |= parent.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter));
         if let Verdict::Ready(_, Landing::Clone { target }) = verdict {
-            note(ui, &format!("Clones to {}", shown_path(target, home)), brand::MUTED);
+            path_line(
+                ui,
+                "Clones to ",
+                &shown_path(target, home),
+                &target.display().to_string(),
+                body(TEXT_TAG),
+                brand::MUTED,
+            );
         }
     }
     ui.add_space(6.0);
     let label = primary_label(verdict);
-    footer_row(ui, "Enter opens  -  Esc cancels  -  a folder you pick opens as it is", |ui| {
+    footer_row(ui, &[("Enter", "opens"), ("Esc", "cancels")], |ui| {
         if primary_button_keyed(
             ui,
             label.unwrap_or("Open"),
@@ -118,7 +123,10 @@ fn form_body(
         {
             outcome = Some(Outcome::Go);
         }
-        if quiet_button(ui, "Browse folders...", true, Size::Regular).clicked() {
+        if quiet_button(ui, "Browse folders...", true, Size::Regular)
+            .on_hover_text("A folder you pick opens as it is")
+            .clicked()
+        {
             outcome = Some(Outcome::Browse);
         }
         if quiet_button(ui, "Cancel", true, Size::Regular).clicked() {
@@ -136,7 +144,7 @@ fn failed_body(ui: &mut Ui, message: &str) -> Option<Outcome> {
     ui.label(RichText::new("The clone did not finish.").font(body(14.0)).color(brand::TEXT));
     ui.label(RichText::new(message).font(mono(TEXT_SECONDARY)).color(brand::RED));
     ui.add_space(6.0);
-    footer_row(ui, "", |ui| {
+    footer_row(ui, &[], |ui| {
         if quiet_button(ui, "Back", true, Size::Regular).clicked() {
             outcome = Some(Outcome::Back);
         }
@@ -164,8 +172,8 @@ fn cloning_body(ui: &mut Ui, cloning: &Cloning, home: Option<&Path>) -> Option<O
     painter.text(
         inner.left_top() + vec2(0.0, 22.0),
         Align2::LEFT_TOP,
-        shown_path(&cloning.target, home),
-        mono(12.0),
+        fit_path(painter, "", &shown_path(&cloning.target, home), &mono(TEXT_TAG), inner.width()),
+        mono(TEXT_TAG),
         brand::FAINT,
     );
     let shown = if line.is_empty() { "Starting git...".to_owned() } else { line };
@@ -198,7 +206,7 @@ fn cloning_body(ui: &mut Ui, cloning: &Cloning, home: Option<&Path>) -> Option<O
     );
     ui.ctx().request_repaint_after(std::time::Duration::from_millis(60));
     ui.add_space(6.0);
-    footer_row(ui, "", |ui| {
+    footer_row(ui, &[], |ui| {
         if quiet_button(ui, "Cancel", true, Size::Regular).clicked() {
             cloning.cancel.store(true, Ordering::SeqCst);
             outcome = Some(Outcome::Close);
@@ -211,14 +219,46 @@ fn note(ui: &mut Ui, text: &str, color: egui::Color32) {
     ui.label(RichText::new(text).size(12.0).color(color));
 }
 
-fn known_card(ui: &mut Ui, text: &str) {
+fn known_card(ui: &mut Ui, prefix: &str, path: &str) {
     let (rect, _) = ui.allocate_exact_size(vec2(ui.available_width(), 40.0), Sense::hover());
     paint_pill_card(ui.painter(), rect);
+    let font = body(TEXT_SECONDARY);
+    let text = fit_path(ui.painter(), prefix, path, &font, rect.width() - 28.0);
     ui.painter().text(
         rect.left_center() + vec2(14.0, 0.0),
         Align2::LEFT_CENTER,
         text,
-        body(13.0),
+        font,
         brand::SOFT,
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::screen_kit::painted_texts;
+    use egui::pos2;
+
+    #[test]
+    fn the_buttons_share_a_row_with_the_hint_instead_of_sitting_over_it() {
+        let ctx = crate::fonts::test_context();
+        let mut open = OpenLink::open(Vec::new(), None, Path::new("/home/u"));
+        let mut out = None;
+        for _ in 0..2 {
+            let raw = egui::RawInput {
+                screen_rect: Some(Rect::from_min_size(pos2(0.0, 0.0), vec2(900.0, 640.0))),
+                focused: true,
+                ..Default::default()
+            };
+            out = Some(ctx.run_ui(raw, |ui| {
+                let _ = show(ui.ctx(), &mut open, Some(Path::new("/home/u")));
+            }));
+        }
+        let texts = painted_texts(&out.unwrap());
+        let at = |name: &str| texts.iter().find(|(text, _)| text == name).map(|(_, rect)| *rect);
+        let (hint, cancel) = (at("cancels").unwrap(), at("Cancel").unwrap());
+        assert!((hint.center().y - cancel.center().y).abs() < 2.0, "{hint:?} vs {cancel:?}");
+        assert!(hint.right() < cancel.left());
+        assert_eq!(texts.iter().filter(|(text, _)| text.contains(" - ")).count(), 0);
+    }
 }

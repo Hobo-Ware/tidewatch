@@ -13,8 +13,8 @@ use crate::brand;
 use crate::reader_view::ellipsized;
 use crate::screen_kit::TEXT_TITLE;
 use crate::screen_kit::{
-    Size, body, button_width, dialog_frame, footer_row, heading, mono, paint_cli_badge,
-    primary_button, quiet_button,
+    DialogWidth, Size, body, button_width, dialog_frame, footer_row, heading, mono,
+    paint_cli_badge, primary_button, quiet_button,
 };
 use crate::screen_kit::{TEXT_BODY, TEXT_SECONDARY, TEXT_TAG};
 use crate::settings_ui::{pill, switch_line};
@@ -30,7 +30,6 @@ const HEADER_GAP: f32 = 12.0;
 const DISCLOSURE_H: f32 = 38.0;
 const SIDE: f32 = 16.0;
 const BADGE: f32 = 26.0;
-const DIALOG_W: f32 = 560.0;
 const LINE_H: f32 = 60.0;
 const LINE_GAP: f32 = 8.0;
 const LINE_TAIL: f32 = 22.0;
@@ -359,32 +358,34 @@ pub(crate) fn dialog(
     worktree: &mut bool,
 ) -> Option<DialogOutcome> {
     let mut outcome = None;
-    let modal = dialog_frame(ctx, Id::new("takeover_confirm"), &view.title, DIALOG_W, |ui| {
-        ui.spacing_mut().item_spacing.y = 10.0;
-        for (number, line) in view.lines.iter().enumerate() {
-            ui.horizontal_top(|ui| {
-                ui.spacing_mut().item_spacing.x = 10.0;
-                ui.label(
-                    RichText::new((number + 1).to_string()).font(mono(13.0)).color(brand::TEAL),
-                );
-                ui.add(
-                    egui::Label::new(RichText::new(line).size(TEXT_BODY).color(brand::SOFT)).wrap(),
-                );
-            });
-        }
-        commands(ui, view);
-        for note in &view.notes {
-            ui.label(RichText::new(note).size(TEXT_SECONDARY).color(brand::ORANGE));
-        }
-        if let Some(note) = &view.yolo_note {
-            ui.label(RichText::new(note).size(TEXT_SECONDARY).color(brand::MUTED));
-        }
-        if view.offer_worktree {
-            switch_line(ui, "Move it into a new worktree first", worktree);
-        }
-        ui.add_space(4.0);
-        outcome = buttons(ui, view);
-    });
+    let modal =
+        dialog_frame(ctx, Id::new("takeover_confirm"), &view.title, DialogWidth::Wide, |ui| {
+            ui.spacing_mut().item_spacing.y = 10.0;
+            for (number, line) in view.lines.iter().enumerate() {
+                ui.horizontal_top(|ui| {
+                    ui.spacing_mut().item_spacing.x = 10.0;
+                    ui.label(
+                        RichText::new((number + 1).to_string()).font(mono(13.0)).color(brand::TEAL),
+                    );
+                    ui.add(
+                        egui::Label::new(RichText::new(line).size(TEXT_BODY).color(brand::SOFT))
+                            .wrap(),
+                    );
+                });
+            }
+            commands(ui, view);
+            for note in &view.notes {
+                ui.label(RichText::new(note).size(TEXT_SECONDARY).color(brand::ORANGE));
+            }
+            if let Some(note) = &view.yolo_note {
+                ui.label(RichText::new(note).size(TEXT_SECONDARY).color(brand::MUTED));
+            }
+            if view.offer_worktree {
+                switch_line(ui, "Move it into a new worktree first", worktree);
+            }
+            ui.add_space(4.0);
+            outcome = buttons(ui, view);
+        });
     if outcome.is_none() && ctx.input_mut(|i| i.consume_key(Modifiers::NONE, Key::Enter)) {
         outcome = Some(DialogOutcome::Accept);
     }
@@ -433,7 +434,7 @@ fn commands(ui: &mut Ui, view: &DialogView) {
 
 fn buttons(ui: &mut Ui, view: &DialogView) -> Option<DialogOutcome> {
     let mut outcome = None;
-    footer_row(ui, "Enter moves  -  Esc cancels", |ui| {
+    footer_row(ui, &[("Enter", "moves"), ("Esc", "cancels")], |ui| {
         if primary_button(ui, &view.confirm, true, Size::Regular).clicked() {
             outcome = Some(DialogOutcome::Accept);
         }

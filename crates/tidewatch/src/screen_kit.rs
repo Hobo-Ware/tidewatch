@@ -6,8 +6,7 @@ use crate::reader_view::ellipsized;
 use crate::selectable;
 use egui::{
     Align, Align2, Color32, Context, CornerRadius, FontId, Id, Layout, Margin, Modal,
-    ModalResponse, Painter, Rect, Response, RichText, Sense, Shadow, Stroke, StrokeKind, Ui, pos2,
-    vec2,
+    ModalResponse, Painter, Rect, Response, Sense, Shadow, Stroke, StrokeKind, Ui, pos2, vec2,
 };
 use kelp_ui::theme::semibold;
 
@@ -419,10 +418,59 @@ pub(crate) fn field_label_width(painter: &Painter, text: &str) -> f32 {
     painter.layout_no_wrap(text.to_owned(), heading(TEXT_SECONDARY), brand::SOFT).size().x
 }
 
-/// A dialog or form footer: `hint` muted at the left, the buttons `add` draws right-aligned (the
-/// rightmost first) with 8 px between them, all on one centered row `Size::Regular` tall. A hint
-/// the buttons leave no room for goes under the row as `notice::key_hint` does.
-pub(crate) fn footer_row(ui: &mut Ui, hint: &str, add: impl FnOnce(&mut Ui)) {
+/// One footer hint: the keys as caps (`"Enter"`, `"Cmd+Enter"`, none for a plain note) and the words
+/// after them.
+pub(crate) type Hint<'a> = (&'a str, &'a str);
+
+const HINT_CAPS_GAP: f32 = 6.0;
+const HINT_DOT_GAP: f32 = 8.0;
+const HINT_DOT: &str = "\u{b7}";
+
+fn hint_dot_width(painter: &Painter) -> f32 {
+    painter.layout_no_wrap(HINT_DOT.to_owned(), body(TEXT_TAG), brand::FAINT).size().x
+}
+
+fn hint_width(painter: &Painter, hint: &[Hint]) -> f32 {
+    let parts: f32 = hint
+        .iter()
+        .map(|(keys, words)| {
+            let words_w =
+                painter.layout_no_wrap((*words).to_owned(), body(TEXT_TAG), brand::MUTED).size().x;
+            if keys.is_empty() {
+                words_w
+            } else {
+                caps_width(painter, keys) + HINT_CAPS_GAP + words_w
+            }
+        })
+        .sum();
+    let dots = hint.len().saturating_sub(1) as f32;
+    parts + dots * (hint_dot_width(painter) + 2.0 * HINT_DOT_GAP)
+}
+
+fn paint_hint(painter: &Painter, left: f32, mid: f32, hint: &[Hint]) {
+    let mut x = left;
+    for (index, (keys, words)) in hint.iter().enumerate() {
+        if index > 0 {
+            x += HINT_DOT_GAP;
+            painter.text(pos2(x, mid), Align2::LEFT_CENTER, HINT_DOT, body(TEXT_TAG), brand::FAINT);
+            x += hint_dot_width(painter) + HINT_DOT_GAP;
+        }
+        if !keys.is_empty() {
+            let width = caps_width(painter, keys);
+            paint_caps(painter, x + width, mid, keys);
+            x += width + HINT_CAPS_GAP;
+        }
+        let rect =
+            painter.text(pos2(x, mid), Align2::LEFT_CENTER, words, body(TEXT_TAG), brand::MUTED);
+        x = rect.right();
+    }
+}
+
+/// A dialog or form footer: `hint` at the left, the buttons `add` draws right-aligned (the
+/// rightmost first) with 8 px between them, all on one centered row `Size::Regular` tall. The
+/// hint is key caps and words with a dot between its parts. One the buttons leave no room for
+/// goes under the row.
+pub(crate) fn footer_row(ui: &mut Ui, hint: &[Hint], add: impl FnOnce(&mut Ui)) {
     let mut below = false;
     ui.horizontal(|ui| {
         ui.set_min_height(Size::Regular.height());
@@ -438,24 +486,18 @@ pub(crate) fn footer_row(ui: &mut Ui, hint: &str, add: impl FnOnce(&mut Ui)) {
         if hint.is_empty() {
             return;
         }
-        let text = RichText::new(hint).size(TEXT_TAG).color(brand::MUTED);
-        let width = ui
-            .painter()
-            .layout_no_wrap(hint.to_owned(), FontId::proportional(TEXT_TAG), brand::MUTED)
-            .size()
-            .x;
+        let width = hint_width(ui.painter(), hint);
         if hint_fits(left, width, buttons.left()) {
-            let at = Rect::from_min_size(
-                pos2(left, centre - Size::Regular.height() / 2.0),
-                vec2(width, Size::Regular.height()),
-            );
-            ui.put(at, egui::Label::new(text).wrap_mode(egui::TextWrapMode::Extend));
+            paint_hint(ui.painter(), left, centre, hint);
         } else {
             below = true;
         }
     });
     if below {
-        crate::notice::key_hint(ui, hint);
+        ui.add_space(8.0);
+        let (rect, _) =
+            ui.allocate_exact_size(vec2(ui.available_width(), CAP_H + 4.0), Sense::hover());
+        paint_hint(ui.painter(), rect.left(), rect.center().y, hint);
     }
 }
 
@@ -500,12 +542,40 @@ pub(crate) fn confirm_key() -> &'static str {
     }
 }
 
+/// The three widths a dialog takes: a short question, a form or a list, a command or a long path.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum DialogWidth {
+    Narrow,
+    Medium,
+    Wide,
+}
+
+impl DialogWidth {
+    pub(crate) const fn px(self) -> f32 {
+        match self {
+            Self::Narrow => 480.0,
+            Self::Medium => 640.0,
+            Self::Wide => 820.0,
+        }
+    }
+}
+
+const WINDOW_MARGIN: f32 = 48.0;
+const MIN_BODY_H: f32 = 96.0;
+const PINNED_FOOTER_H: f32 = Size::Regular.height() + 2.0 * DIALOG_PAD as f32 + 1.0;
+
+/// The tallest a dialog gets: the window less a margin, so its header and footer stay on screen.
+pub(crate) fn dialog_max_height(ctx: &Context) -> f32 {
+    (ctx.content_rect().height() - WINDOW_MARGIN)
+        .max(DIALOG_HEADER_H + PINNED_FOOTER_H + MIN_BODY_H)
+}
+
 /// A modal dialog: a card with a 48 px header (title, divider) over a padded body of `width`.
 pub(crate) fn dialog_frame<R>(
     ctx: &Context,
     id: Id,
     title: &str,
-    width: f32,
+    width: DialogWidth,
     content: impl FnOnce(&mut Ui) -> R,
 ) -> ModalResponse<R> {
     dialog_frame_in(ctx, (id, Modal::default_area(id)), title, width, content)
@@ -514,11 +584,57 @@ pub(crate) fn dialog_frame<R>(
 /// [`dialog_frame`] in an area of the caller's: a popover that sits under the tab strip.
 pub(crate) fn dialog_frame_in<R>(
     ctx: &Context,
-    (id, area): (Id, egui::Area),
+    area: (Id, egui::Area),
     title: &str,
-    width: f32,
+    width: DialogWidth,
     content: impl FnOnce(&mut Ui) -> R,
 ) -> ModalResponse<R> {
+    dialog_shell(ctx, area, title, width, |ui| {
+        egui::Frame::new().inner_margin(Margin::same(DIALOG_PAD)).show(ui, content).inner
+    })
+}
+
+/// A dialog that never outgrows the window: the header and `footer` stay in place and `body`
+/// scrolls between them. `state` is handed to both, so each can say what the user picked.
+pub(crate) fn dialog_pinned<S, R>(
+    ctx: &Context,
+    id: Id,
+    title: &str,
+    width: DialogWidth,
+    state: &mut S,
+    body: impl FnOnce(&mut Ui, &mut S) -> R,
+    footer: impl FnOnce(&mut Ui, &mut S),
+) -> ModalResponse<R> {
+    let body_max = dialog_max_height(ctx) - DIALOG_HEADER_H - PINNED_FOOTER_H;
+    dialog_shell(ctx, (id, Modal::default_area(id)), title, width, |ui| {
+        let inner = egui::ScrollArea::vertical()
+            .max_height(body_max)
+            .auto_shrink([false, true])
+            .show(ui, |ui| {
+                egui::Frame::new()
+                    .inner_margin(Margin::same(DIALOG_PAD))
+                    .show(ui, |ui| {
+                        ui.set_width(ui.available_width());
+                        body(ui, state)
+                    })
+                    .inner
+            })
+            .inner;
+        let line = ui.cursor().top();
+        ui.painter().hline(ui.min_rect().x_range(), line, Stroke::new(1.0, brand::CARD_LINE));
+        egui::Frame::new().inner_margin(Margin::same(DIALOG_PAD)).show(ui, |ui| footer(ui, state));
+        inner
+    })
+}
+
+fn dialog_shell<R>(
+    ctx: &Context,
+    (id, area): (Id, egui::Area),
+    title: &str,
+    width: DialogWidth,
+    content: impl FnOnce(&mut Ui) -> R,
+) -> ModalResponse<R> {
+    let width = width.px();
     let frame = egui::Frame::new()
         .fill(brand::CARD)
         .stroke(Stroke::new(1.0, brand::FIELD_LINE))
@@ -543,8 +659,53 @@ pub(crate) fn dialog_frame_in<R>(
             brand::TEXT,
         );
         painter.hline(header.x_range(), header.bottom(), Stroke::new(1.0, brand::CARD_LINE));
-        egui::Frame::new().inner_margin(Margin::same(DIALOG_PAD)).show(ui, content).inner
+        content(ui)
     })
+}
+
+/// `prefix` then `path` on one line, the path cut at the start with an ellipsis to the room the
+/// line has; the whole of `full` shows as a tooltip when it was cut.
+pub(crate) fn fit_path(
+    painter: &Painter,
+    prefix: &str,
+    path: &str,
+    font: &FontId,
+    max_w: f32,
+) -> String {
+    let measure =
+        |text: &str| painter.layout_no_wrap(text.to_owned(), font.clone(), brand::TEXT).size().x;
+    let room = max_w - measure(prefix);
+    format!("{prefix}{}", crate::middle_cut::start_cut(path, room, &measure))
+}
+
+pub(crate) fn path_line(
+    ui: &mut Ui,
+    prefix: &str,
+    path: &str,
+    full: &str,
+    font: FontId,
+    ink: Color32,
+) -> Response {
+    let width = ui.available_width();
+    let text = fit_path(ui.painter(), prefix, path, &font, width);
+    let galley = ui.painter().layout_no_wrap(text.clone(), font, ink);
+    let (rect, _) = ui.allocate_exact_size(vec2(width, galley.size().y), Sense::hover());
+    let response = selectable::galley(ui, rect.min, galley, ink);
+    if text == format!("{prefix}{path}") { response } else { response.on_hover_text(full) }
+}
+
+/// Every text a frame painted with where it landed, for tests of what a screen says.
+#[cfg(test)]
+pub(crate) fn painted_texts(out: &egui::FullOutput) -> Vec<(String, Rect)> {
+    out.shapes
+        .iter()
+        .filter_map(|clipped| match &clipped.shape {
+            egui::Shape::Text(text) => {
+                Some((text.galley.text().to_owned(), text.visual_bounding_rect()))
+            }
+            _ => None,
+        })
+        .collect()
 }
 
 /// The fill and border of a small floating card: a notice, a pill, a message over a pane.
@@ -1006,7 +1167,7 @@ mod tests {
         run(|ui| {
             rects.clear();
             footer = ui.max_rect();
-            footer_row(ui, "Esc cancels", |ui| {
+            footer_row(ui, &[("Esc", "cancels")], |ui| {
                 rects.push(primary_button(ui, "Go", true, Size::Regular).rect);
                 rects.push(quiet_button(ui, "Cancel", true, Size::Regular).rect);
             });
@@ -1016,7 +1177,7 @@ mod tests {
         assert_eq!(rects[0].right(), footer.right());
     }
 
-    fn footer_rects(width: f32, hint: &str) -> (Rect, Rect, f32) {
+    fn footer_rects(width: f32, hint: &[Hint]) -> (Rect, Vec<(String, Rect)>, f32) {
         let mut buttons = Rect::NOTHING;
         let mut left = 0.0;
         let input = egui::RawInput {
@@ -1030,32 +1191,132 @@ mod tests {
                 buttons = buttons.union(quiet_button(ui, "Cancel", true, Size::Regular).rect);
             });
         });
-        let hint_rect = out
+        let texts = out
             .shapes
             .iter()
-            .find_map(|clipped| match &clipped.shape {
-                egui::Shape::Text(text) if text.galley.text() == hint => {
-                    Some(text.visual_bounding_rect())
+            .filter_map(|clipped| match &clipped.shape {
+                egui::Shape::Text(text) => {
+                    Some((text.galley.text().to_owned(), text.visual_bounding_rect()))
                 }
                 _ => None,
             })
-            .expect("the hint is drawn");
-        (buttons, hint_rect, left)
+            .filter(|(text, _)| !["Go", "Cancel"].contains(&text.as_str()))
+            .collect();
+        (buttons, texts, left)
     }
 
     #[test]
     fn a_footer_hint_sits_left_of_the_buttons_on_their_row() {
-        let (buttons, hint, left) = footer_rects(600.0, "Esc cancels");
-        assert!(hint.right() < buttons.left());
-        assert!((hint.center().y - buttons.center().y).abs() < 1.0);
-        assert!((hint.left() - left).abs() < 3.0, "{} vs {left}", hint.left());
+        let (buttons, hint, left) = footer_rects(600.0, &[("Esc", "cancels")]);
+        let words = &hint.iter().find(|(text, _)| text == "cancels").unwrap().1;
+        let keys = &hint.iter().find(|(text, _)| text == "Esc").unwrap().1;
+        assert!(words.right() < buttons.left());
+        assert!(keys.right() < words.left());
+        assert!((words.center().y - buttons.center().y).abs() < 1.0);
+        assert!((keys.center().y - buttons.center().y).abs() < 2.0);
+        assert!(
+            keys.left() >= left && keys.left() - left < CAP_PAD + 3.0,
+            "{} vs {left}",
+            keys.left()
+        );
     }
 
     #[test]
     fn a_footer_hint_the_buttons_leave_no_room_for_goes_under_the_row() {
-        let long = "Enter deletes the branch  -  Esc cancels  -  nothing happens until you pick";
-        let (buttons, hint, _) = footer_rects(260.0, long);
-        assert!(hint.top() >= buttons.bottom());
+        let long = [
+            ("Enter", "deletes the branch"),
+            ("Esc", "cancels"),
+            ("", "nothing happens until you pick"),
+        ];
+        let (buttons, hint, _) = footer_rects(260.0, &long);
+        assert_ne!(hint.len(), 0);
+        for (text, rect) in hint {
+            assert!(rect.top() >= buttons.bottom(), "{text}: {rect:?}");
+        }
+    }
+
+    #[test]
+    fn hint_parts_are_key_caps_and_words_with_one_dot_between_them() {
+        let (_, hint, _) =
+            footer_rects(600.0, &[("Enter", "opens"), ("Esc", "cancels"), ("", "a note")]);
+        let texts: Vec<&str> = hint.iter().map(|(text, _)| text.as_str()).collect();
+        assert_eq!(texts, ["Enter", "opens", "\u{b7}", "Esc", "cancels", "\u{b7}", "a note"]);
+        let xs: Vec<f32> = hint.iter().map(|(_, rect)| rect.left()).collect();
+        assert!(xs.windows(2).all(|pair| pair[0] < pair[1]), "{xs:?}");
+    }
+
+    #[test]
+    fn a_dialog_takes_one_of_three_widths() {
+        let ctx = crate::fonts::test_context();
+        for width in [DialogWidth::Narrow, DialogWidth::Medium, DialogWidth::Wide] {
+            let input = egui::RawInput {
+                screen_rect: Some(Rect::from_min_size(pos2(0.0, 0.0), vec2(1000.0, 600.0))),
+                ..egui::RawInput::default()
+            };
+            let mut seen = 0.0;
+            let _ = ctx.run_ui(input, |ui| {
+                let modal = dialog_frame(ui.ctx(), Id::new("w"), "Title", width, |_| {});
+                seen = modal.response.rect.width() - 2.0;
+            });
+            assert_eq!(seen, width.px(), "{width:?}");
+        }
+        let all =
+            [DialogWidth::Narrow, DialogWidth::Medium, DialogWidth::Wide].map(DialogWidth::px);
+        assert_eq!(all, [480.0, 640.0, 820.0]);
+    }
+
+    #[test]
+    fn a_pinned_dialog_keeps_its_header_and_footer_in_a_short_window() {
+        let ctx = crate::fonts::test_context();
+        let screen = Rect::from_min_size(pos2(0.0, 0.0), vec2(900.0, 400.0));
+        let input = egui::RawInput { screen_rect: Some(screen), ..egui::RawInput::default() };
+        let mut card = Rect::NOTHING;
+        let mut ok = Rect::NOTHING;
+        let mut state = ();
+        let mut frame = || {
+            ctx.run_ui(input.clone(), |ui| {
+                let modal = dialog_pinned(
+                    ui.ctx(),
+                    Id::new("tall"),
+                    "Title",
+                    DialogWidth::Medium,
+                    &mut state,
+                    |ui, ()| {
+                        for n in 0..60 {
+                            ui.label(format!("row {n}"));
+                        }
+                    },
+                    |ui, ()| {
+                        footer_row(ui, &[("Esc", "closes")], |ui| {
+                            ok = quiet_button(ui, "Ok", true, Size::Regular).rect;
+                        });
+                    },
+                );
+                card = modal.response.rect;
+            })
+        };
+        let _ = frame();
+        let _ = frame();
+        assert!(card.height() <= 400.0 - WINDOW_MARGIN + 1.0, "{card:?}");
+        assert!(screen.contains_rect(card), "{card:?}");
+        assert!(ok.bottom() <= card.bottom() && ok.top() > card.top() + DIALOG_HEADER_H, "{ok:?}");
+    }
+
+    #[test]
+    fn a_long_path_is_cut_at_its_start_to_the_room_and_a_short_one_is_left_alone() {
+        let ctx = crate::fonts::test_context();
+        let font = mono(TEXT_TAG);
+        let long = "~/Git/Hoboware/a-very-long-folder-name/with/many/more/folders/kelp";
+        let _ = ctx.run_ui(egui::RawInput::default(), |ui| {
+            let painter = ui.painter();
+            let width = |text: &str| {
+                painter.layout_no_wrap(text.to_owned(), font.clone(), brand::TEXT).size().x
+            };
+            let cut = fit_path(painter, "Clones to ", long, &font, 220.0);
+            assert!(cut.starts_with("Clones to \u{2026}/") && cut.ends_with("/kelp"), "{cut}");
+            assert!(width(&cut) <= 220.0, "{cut}");
+            assert_eq!(fit_path(painter, "", "~/kelp", &font, 220.0), "~/kelp");
+        });
     }
 
     #[test]
