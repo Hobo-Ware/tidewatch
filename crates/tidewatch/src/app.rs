@@ -205,6 +205,7 @@ pub(crate) struct Tidewatch {
     job_live: job_glue::Host,
     panel: panel_host::Host,
     link_live: link_glue::Host,
+    dev_links: Option<crate::link_view::LinkView>,
     me: me_glue::Host,
     avatar_live: avatar_glue::Host,
     avatar_redraws: crate::avatar_redraw::Waiting,
@@ -464,6 +465,9 @@ impl Tidewatch {
             job_live,
             panel,
             link_live,
+            dev_links: crate::link_view::LinkView::from_dev(
+                std::env::var("TIDEWATCH_DEV_LINKS").ok().as_deref(),
+            ),
             me,
             avatar_live,
             avatar_redraws: crate::avatar_redraw::Waiting::default(),

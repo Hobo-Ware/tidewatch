@@ -89,7 +89,8 @@ pub(crate) fn show(
     let shown = progress_view::side_shown(state.chosen, progress.is_some(), first);
     state.shown = Some(shown);
     let attention = progress.as_ref().and_then(progress_view::Input::attention);
-    let dot = shown != Side::Progress && state.unseen(attention);
+    let alerts = progress.as_ref().and_then(|input| input.link_alerts);
+    let dot = shown != Side::Progress && (state.unseen(attention) || state.unseen_links(alerts));
     let loaded = view.loaded.as_ref();
     let info = Header {
         title: branch_title(loaded.and_then(|l| l.branch.as_deref())),
@@ -148,7 +149,8 @@ pub(crate) fn show_folder(
     let shown = progress_view::folder_side_shown(state.chosen, progress.is_some(), first);
     state.shown = Some(shown);
     let attention = progress.as_ref().and_then(progress_view::Input::attention);
-    let dot = shown != Side::Progress && state.unseen(attention);
+    let alerts = progress.as_ref().and_then(|input| input.link_alerts);
+    let dot = shown != Side::Progress && (state.unseen(attention) || state.unseen_links(alerts));
     let title = folder_view::folder_name(&scan.folder);
     let info = Header {
         title: &title,
@@ -535,6 +537,7 @@ mod tests {
             let (with_ledger, stale) = (self.with_ledger, self.stale);
             let face = self.face.clone();
             let last_turn = self.last_turn.clone();
+            let no_live = std::collections::HashSet::new();
             let mut out = Out::default();
             let output = self.ctx.run_ui(raw, |ui| {
                 let progress = with_ledger.then_some(progress_view::Input {
@@ -549,6 +552,8 @@ mod tests {
                     last_turn: last_turn.clone(),
                     shown: None,
                     links: None,
+                    link_live: &no_live,
+                    link_alerts: None,
                     blocks: Blocks {
                         out_of_date: stale.then_some(Why::OlderThanTurn),
                         report: Some("8m ago".to_owned()),

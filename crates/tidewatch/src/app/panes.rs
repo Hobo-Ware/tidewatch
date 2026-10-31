@@ -215,6 +215,8 @@ impl Tidewatch {
                 last_turn,
                 shown: agent.and_then(|agent| agent.run.reported()),
                 links,
+                link_live: self.link_live.live(),
+                link_alerts: self.link_live.alerts(active_id),
                 blocks,
                 marks: &marks,
                 checks: &checks,
@@ -233,6 +235,9 @@ impl Tidewatch {
             }
             _ => None,
         };
+        if let Some(view) = self.dev_links.take() {
+            self.progress_ui.tab(active_id).links = view;
+        }
         let panel = history_pane::Panel {
             agent: agent_id,
             progress,

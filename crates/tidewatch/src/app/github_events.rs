@@ -21,7 +21,10 @@ impl Tidewatch {
         let driven = self.github_events.drive(&repos, listener.as_deref());
         for news in driven.news {
             self.pr.news(&news.repos, &news.hit, now);
+            self.link_live.news(&news.slug, &news.hit, ctx);
         }
+        let front = self.tabs.items().get(self.tabs.active()).map(|tab| tab.id);
+        self.link_live.set_world(front, &self.github_events.live_slugs());
         if let Some(wait) = driven.wake_in {
             ctx.request_repaint_after(Duration::from_secs_f64(wait + WAKE_SLACK_S));
         }
