@@ -4,11 +4,13 @@
 //! [`handle_post`] takes the raw request body of an authenticated `/mcp` POST and returns the reply.
 //! It speaks `initialize`, `ping`, `tools/list` and `tools/call` and swallows notifications. The
 //! tools are `report_finding`, `list_notes`, `reply_to_note`, `ask_user`, `update_progress`,
-//! `get_progress`, `report_job`, `set_avatar`, `meeseeks_done` and `set_name`, plus the repo service
-//! tools of `services_mcp.rs`. A tab is offered the
-//! ones its [`TabRole`] can use (`meeseeks_done` and `set_name` only to a Meeseeks, `report_finding`
-//! to neither a Meeseeks); a call to one it is not offered is answered with a tool error that says
-//! where it works. Calls that matter to the app become [`TabEvent`]s through `emit`; the note tools
+//! `get_progress`, `get_workflow`, `report_job`, `set_avatar`, `meeseeks_done` and `set_name`, plus
+//! the repo service tools of `services_mcp.rs`. A tab is offered the ones its [`Offer`] allows
+//! (`meeseeks_done` and `set_name` only to a Meeseeks, `report_finding` to neither a Meeseeks,
+//! `ask_user` only to a CLI without a question tool Tidewatch reads); a call to one it is not
+//! offered is answered with a tool error that says where it works. `set_avatar` stays listed, because
+//! a session that listed its tools at start never hears of a new one, but a call is refused until the
+//! owner clicked Draw avatar for the tab. Calls that matter to the app become [`TabEvent`]s through `emit`; the note tools
 //! read and write the tab's `notes.json` through `notes.rs`. `ask_user` holds its reply until the user
 //! answers (or [`AskWait::timeout`] runs out, or the client hangs up): the listener serves each
 //! connection on its own thread, so a held call blocks nothing else.
@@ -28,6 +30,7 @@ use kelp_core::review::Comment;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 
+use crate::agents::asks_by_itself;
 use crate::avatar_mcp;
 use crate::events::TabEvent;
 use crate::job_mcp;
@@ -38,12 +41,17 @@ use crate::notes::Notes;
 use crate::progress_mcp;
 use crate::question::{self, AskReply, Reply};
 use crate::services_mcp;
+use crate::workflow_mcp;
+use crate::workflow_profile::Workflow;
 
 /// The protocol revision Tidewatch answers with when the client asks for one it does not know.
 pub const PROTOCOL_VERSION: &str = "2025-06-18";
 const SUPPORTED_VERSIONS: [&str; 3] = [PROTOCOL_VERSION, "2025-03-26", "2024-11-05"];
 /// Longest text argument accepted, in characters.
 pub const MAX_TEXT_CHARS: usize = 20_000;
+
+const AVATAR_NOT_ASKED: &str =
+    "The owner has not asked for an icon for this tab. Wait until they click Draw avatar.";
 
 const PARSE_ERROR: i64 = -32700;
 const INVALID_REQUEST: i64 = -32600;
@@ -63,9 +71,10 @@ pub struct AskWait<'a> {
 
 /// The Tidewatch tools that only report or look something up: they change nothing in the work, so
 /// the Reader does not count them as a break in what the agent says.
-pub const REPORT_TOOLS: [&str; 6] = [
+pub const REPORT_TOOLS: [&str; 7] = [
     progress_mcp::UPDATE_TOOL,
     progress_mcp::GET_TOOL,
+    workflow_mcp::GET_TOOL,
     job_mcp::REPORT_TOOL,
     avatar_mcp::SET_TOOL,
     "report_finding",
@@ -84,11 +93,19 @@ pub enum TabRole {
     Meeseeks,
 }
 
-impl TabRole {
+/// What decides the tools `tools/list` offers a tab, and which calls are refused.
+#[derive(Clone, Copy, Debug)]
+pub struct Offer<'a> {
+    pub role: TabRole,
+    pub agent: &'a str,
+}
+
+impl Offer<'_> {
     fn offers(self, tool: &str) -> bool {
         match tool {
-            meeseeks_mcp::DONE_TOOL | meeseeks_name::SET_TOOL => self == Self::Meeseeks,
-            "report_finding" => self != Self::Meeseeks,
+            meeseeks_mcp::DONE_TOOL | meeseeks_name::SET_TOOL => self.role == TabRole::Meeseeks,
+            "report_finding" => self.role != TabRole::Meeseeks,
+            question::TOOL_NAME => !asks_by_itself(self.agent),
             _ => true,
         }
     }
@@ -97,6 +114,7 @@ impl TabRole {
         match tool {
             meeseeks_mcp::DONE_TOOL => "`meeseeks_done` is not offered in this tab: only a Meeseeks can call it. Finish with your end-of-turn block.".to_owned(),
             meeseeks_name::SET_TOOL => "`set_name` is not offered in this tab: only a Meeseeks can call it. This tab keeps the name it has.".to_owned(),
+            question::TOOL_NAME => "`ask_user` is not offered to this CLI: it has a question tool of its own. Ask with that.".to_owned(),
             _ => format!("`{tool}` is not offered to a Meeseeks: nobody reads a finding in a tab that ends with its task. Put what you found in the summary of `meeseeks_done`."),
         }
     }
@@ -107,12 +125,22 @@ pub struct ToolCtx<'a> {
     /// The agent id (`claude`, `gemini`, ...). It signs replies in the notes.
     pub agent: &'a str,
     pub role: TabRole,
+    /// Whether the owner clicked Draw avatar for this tab, which is what lets `set_avatar` through.
+    pub avatar: bool,
     pub notes_file: &'a Path,
     /// Serializes read-modify-write of `notes_file` between concurrent calls.
     pub notes_lock: &'a Mutex<()>,
     /// The tab's `progress.md`, where `update_progress` saves the ledger.
     pub progress_file: &'a Path,
     pub ask: AskWait<'a>,
+    /// The repo's workflow profile, read only when an agent asks for it.
+    pub workflow: &'a dyn Fn() -> Workflow,
+}
+
+impl ToolCtx<'_> {
+    fn offer(&self) -> Offer<'_> {
+        Offer { role: self.role, agent: self.agent }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -193,7 +221,7 @@ fn handle_message(message: &Value, ctx: &ToolCtx<'_>, emit: &dyn Fn(TabEvent)) -
     let outcome = match method {
         "initialize" => Ok(initialize_result(params)),
         "ping" => Ok(json!({})),
-        "tools/list" => Ok(json!({ "tools": tool_definitions_for(ctx.role) })),
+        "tools/list" => Ok(json!({ "tools": tool_definitions_for(ctx.offer()) })),
         "tools/call" => call_tool(params, ctx, emit),
         other => Err(RpcError::new(METHOD_NOT_FOUND, format!("method not found: {other}"))),
     };
@@ -214,18 +242,17 @@ fn initialize_result(params: Option<&Value>) -> Value {
         "protocolVersion": version,
         "capabilities": { "tools": { "listChanged": false } },
         "serverInfo": { "name": MCP_SERVER_NAME, "version": env!("CARGO_PKG_VERSION") },
-        "instructions": "Tidewatch tools for the task in this worktree: report review findings, read and answer the notes the user left on your changes, report jobs that run over a minute, and draw the tab's icon.",
+        "instructions": "Tidewatch tools for the task in this worktree: report review findings, read and answer the notes the user left on your changes, report jobs that run over a minute, and read the repo's workflow.",
     })
 }
 
-/// The tools a tab of `role` is offered.
 #[must_use]
-pub fn tool_definitions_for(role: TabRole) -> Value {
+pub fn tool_definitions_for(offer: Offer<'_>) -> Value {
     let offered: Vec<Value> = tool_definitions()
         .as_array()
         .into_iter()
         .flatten()
-        .filter(|tool| tool["name"].as_str().is_some_and(|name| role.offers(name)))
+        .filter(|tool| tool["name"].as_str().is_some_and(|name| offer.offers(name)))
         .cloned()
         .collect();
     Value::Array(offered)
@@ -278,6 +305,7 @@ pub fn tool_definitions() -> Value {
         question::tool_definition(),
         update_progress,
         get_progress,
+        workflow_mcp::tool_definition(),
         job_mcp::tool_definition(),
         avatar_mcp::tool_definition(),
         meeseeks_mcp::tool_definition(),
@@ -307,8 +335,8 @@ fn call_tool(
         Some(Value::Object(args)) => args,
         Some(_) => return Err(RpcError::params("arguments must be an object")),
     };
-    if !ctx.role.offers(name) {
-        return Ok(tool_result(&TabRole::refusal(name), true));
+    if !ctx.offer().offers(name) {
+        return Ok(tool_result(&Offer::refusal(name), true));
     }
     if name == progress_mcp::UPDATE_TOOL {
         let (text, is_error) = progress_mcp::update(args, ctx.progress_file, emit);
@@ -318,7 +346,14 @@ fn call_tool(
         let (text, is_error) = progress_mcp::get(ctx.progress_file);
         return Ok(tool_result(&text, is_error));
     }
+    if name == workflow_mcp::GET_TOOL {
+        let (text, is_error) = workflow_mcp::get((ctx.workflow)());
+        return Ok(tool_result(&text, is_error));
+    }
     if name == avatar_mcp::SET_TOOL {
+        if !ctx.avatar {
+            return Ok(tool_result(AVATAR_NOT_ASKED, true));
+        }
         let (text, is_error) = avatar_mcp::set(args, ctx.notes_file, emit);
         return Ok(tool_result(&text, is_error));
     }
@@ -486,7 +521,6 @@ fn unix_now() -> i64 {
 mod tests {
     use super::*;
     use crate::progress::{self, Ledger};
-    use crate::progress_report::ProgressReport;
     use crate::progress_store;
     use kelp_core::review::{Anchor, Side};
     use std::cell::RefCell;
@@ -500,6 +534,9 @@ mod tests {
         lock: Mutex<()>,
         events: RefCell<Vec<TabEvent>>,
         role: TabRole,
+        agent: &'static str,
+        avatar: bool,
+        workflow: Workflow,
     }
 
     impl Harness {
@@ -513,7 +550,18 @@ mod tests {
                 lock: Mutex::new(()),
                 events: RefCell::new(vec![]),
                 role,
+                agent: "claude",
+                avatar: false,
+                workflow: Workflow::default(),
             }
+        }
+
+        fn drawing(self) -> Self {
+            Self { avatar: true, ..self }
+        }
+
+        fn running(self, agent: &'static str) -> Self {
+            Self { agent, ..self }
         }
 
         fn notes_file(&self) -> std::path::PathBuf {
@@ -528,13 +576,16 @@ mod tests {
             let notes_file = self.notes_file();
             let alive = || true;
             let progress_file = self.progress_file();
+            let workflow = || self.workflow;
             let ctx = ToolCtx {
-                agent: "claude",
+                agent: self.agent,
                 role: self.role,
+                avatar: self.avatar,
                 notes_file: &notes_file,
                 notes_lock: &self.lock,
                 progress_file: &progress_file,
                 ask: test_wait(&alive),
+                workflow: &workflow,
             };
             handle_post(body.as_bytes(), &ctx, &|event| self.events.borrow_mut().push(event))
         }
@@ -618,7 +669,7 @@ mod tests {
     }
 
     #[test]
-    fn the_server_has_fifteen_tools_with_object_schemas_and_required_fields() {
+    fn the_server_has_sixteen_tools_with_object_schemas_and_required_fields() {
         let all = tool_definitions();
         let tools = all.as_array().unwrap();
         let names: Vec<&str> = tools.iter().map(|t| t["name"].as_str().unwrap()).collect();
@@ -631,6 +682,7 @@ mod tests {
                 "ask_user",
                 "update_progress",
                 "get_progress",
+                "get_workflow",
                 "report_job",
                 "set_avatar",
                 "meeseeks_done",
@@ -660,6 +712,7 @@ mod tests {
                 vec!["questions"],
                 vec!["state", "now", "stages"],
                 vec![],
+                vec![],
                 vec!["name"],
                 vec!["svg", "reason"],
                 vec!["summary"],
@@ -677,11 +730,14 @@ mod tests {
         }
     }
 
-    fn offered(role: TabRole) -> Vec<String> {
-        let reply =
-            Harness::of(role).json(&json!({"jsonrpc": "2.0", "id": 2, "method": "tools/list"}));
+    fn offered_by(h: &Harness) -> Vec<String> {
+        let reply = h.json(&json!({"jsonrpc": "2.0", "id": 2, "method": "tools/list"}));
         let tools = reply["result"]["tools"].as_array().unwrap();
         tools.iter().map(|t| t["name"].as_str().unwrap().to_owned()).collect()
+    }
+
+    fn offered(role: TabRole) -> Vec<String> {
+        offered_by(&Harness::of(role))
     }
 
     #[test]
@@ -689,9 +745,9 @@ mod tests {
         let shared = [
             "list_notes",
             "reply_to_note",
-            "ask_user",
             "update_progress",
             "get_progress",
+            "get_workflow",
             "report_job",
             "set_avatar",
             "list_services",
@@ -713,6 +769,73 @@ mod tests {
         };
         assert_eq!(sorted(TabRole::Agent), with(&["report_finding"]));
         assert_eq!(sorted(TabRole::Meeseeks), with(&["meeseeks_done", "set_name"]));
+    }
+
+    #[test]
+    fn ask_user_is_offered_only_to_a_cli_without_a_question_tool_tidewatch_reads() {
+        let cases = [
+            ("claude", false),
+            ("codex", true),
+            ("gemini", true),
+            ("copilot", true),
+            ("aider", true),
+        ];
+        for (agent, want) in cases {
+            let h = Harness::new().running(agent);
+            assert_eq!(offered_by(&h).iter().any(|name| name == "ask_user"), want, "{agent}");
+        }
+        let h = Harness::new().running("claude");
+        let reply = h.call("ask_user", &questions_args());
+        assert_eq!(reply["result"]["isError"], true);
+        assert!(
+            text_of(&reply).contains(
+                "`ask_user` is not offered to this CLI: it has a question tool of its own"
+            ),
+            "{reply}"
+        );
+        assert_eq!(*h.events.borrow(), Vec::<TabEvent>::new());
+    }
+
+    #[test]
+    fn set_avatar_stays_listed_but_a_call_is_refused_until_the_owner_clicked_draw_avatar() {
+        let args = json!({"svg": "<svg viewBox=\"0 0 64 64\"><circle cx=\"32\" cy=\"32\" r=\"20\" fill=\"#2dd4bf\"/></svg>", "reason": "a dot"});
+        for role in [TabRole::Agent, TabRole::Meeseeks] {
+            assert!(offered(role).iter().any(|name| name == "set_avatar"), "{role:?}");
+        }
+        let before = Harness::new();
+        let reply = before.call("set_avatar", &args);
+        assert_eq!(reply["result"]["isError"], true);
+        assert_eq!(
+            text_of(&reply),
+            "The owner has not asked for an icon for this tab. Wait until they click Draw avatar."
+        );
+        assert_eq!(*before.events.borrow(), Vec::<TabEvent>::new());
+
+        let after = Harness::new().drawing();
+        assert_eq!(after.call("set_avatar", &args)["result"]["isError"], false);
+        assert_eq!(after.events.borrow().len(), 1);
+    }
+
+    #[test]
+    fn get_workflow_gives_back_the_repos_profile_to_every_role() {
+        use crate::workflow_profile::{CatchUp, Fixes, PullRequests};
+        let workflow = Workflow {
+            catch_up: CatchUp::Merge,
+            fixes: Fixes::NewCommits,
+            pull_requests: PullRequests::Ready,
+        };
+        for role in [TabRole::Agent, TabRole::Meeseeks] {
+            let h = Harness { workflow, ..Harness::of(role) };
+            let reply = h.call("get_workflow", &json!({}));
+            assert_eq!(reply["result"]["isError"], false, "{role:?}");
+            let profile: Value = serde_json::from_str(text_of(&reply)).unwrap();
+            assert_eq!(
+                (&profile["catch_up"], &profile["fixes"], &profile["pull_requests"]),
+                (&json!("merge"), &json!("new-commits"), &json!("ready")),
+                "{role:?}"
+            );
+            assert_eq!(profile["rules"], json!(workflow.launch_lines()), "{role:?}");
+        }
     }
 
     #[test]
@@ -747,30 +870,20 @@ mod tests {
     }
 
     #[test]
-    fn update_progress_saves_the_ledger_shows_it_and_answers_in_one_line() {
+    fn update_progress_with_the_old_ledger_field_is_a_tool_error_that_names_the_typed_fields() {
         let h = Harness::new();
         let reply = h.call("update_progress", &json!({ "ledger": LEDGER }));
-        assert_eq!(reply["result"]["isError"], false, "{reply}");
-        let lines: Vec<&str> = text_of(&reply).lines().collect();
-        assert_eq!(lines[0], "saved: phase 2 Build, 2/4 done, 1 scheduled");
-        assert_eq!(lines.len(), 2, "{lines:?}");
-        assert!(lines[1].starts_with("Typed fields are preferred"), "{lines:?}");
-        let saved = std::fs::read_to_string(h.progress_file()).unwrap();
-        assert_eq!(saved, Ledger::parse(LEDGER).to_markdown());
-        let mapped = ProgressReport::from_ledger(&Ledger::parse(LEDGER)).to_ledger();
-        assert_eq!(*h.events.borrow(), [TabEvent::Progress { ledger: Box::new(mapped) }]);
-    }
-
-    #[test]
-    fn the_typed_fields_are_preferred_line_comes_once_per_tab() {
-        let h = Harness::new();
-        let first = h.call("update_progress", &json!({ "ledger": LEDGER }));
-        assert!(text_of(&first).contains("Typed fields are preferred"));
-        let second = h.call("update_progress", &json!({ "ledger": LEDGER }));
-        assert!(!text_of(&second).contains("Typed fields are preferred"), "{second}");
-        let other = Harness::new();
-        let reply = other.call("update_progress", &json!({ "ledger": LEDGER }));
-        assert!(text_of(&reply).contains("Typed fields are preferred"), "another tab is told");
+        assert!(reply.get("error").is_none(), "a rule failure is not a protocol error: {reply}");
+        assert_eq!(reply["result"]["isError"], true);
+        let text = text_of(&reply);
+        assert!(
+            text.starts_with(
+                "The report was not saved. Fix these and call update_progress again:\n- the `ledger` field is gone: send the typed fields, state, now and stages"
+            ),
+            "{text}"
+        );
+        assert!(!h.progress_file().exists());
+        assert_eq!(*h.events.borrow(), Vec::<TabEvent>::new());
     }
 
     fn typed() -> Value {
@@ -826,13 +939,14 @@ mod tests {
     }
 
     #[test]
-    fn typed_fields_and_a_markdown_ledger_together_are_refused() {
+    fn typed_fields_and_a_markdown_ledger_together_are_refused_and_save_nothing() {
         let h = Harness::new();
         let mut both = typed();
         both["ledger"] = json!(LEDGER);
         let reply = h.call("update_progress", &both);
         assert_eq!(reply["result"]["isError"], true);
-        assert!(text_of(&reply).contains("send the typed fields or ledger, not both"));
+        assert!(text_of(&reply).contains("the `ledger` field is gone"));
+        assert!(!h.progress_file().exists());
     }
 
     #[test]
@@ -869,10 +983,10 @@ mod tests {
             "verified",
             "not_verified",
             "decisions",
-            "ledger",
         ] {
             assert!(props.contains_key(key), "{key}");
         }
+        assert!(!props.contains_key("ledger"));
         assert_eq!(schema["required"], json!(["state", "now", "stages"]));
         assert_eq!(
             props["state"]["enum"],
@@ -896,44 +1010,8 @@ mod tests {
     }
 
     #[test]
-    fn update_progress_nudges_a_stopped_ledger_that_leaves_later_work_in_next() {
-        let cases = [
-            ("blocked", "- After approval: merge\n", "", true),
-            ("waiting", "- Watch the deploy\n", "", true),
-            ("done", "- Check logs tomorrow\n", "", true),
-            ("working", "- Write the test\n", "", false),
-            ("blocked", "- nothing\n", "", false),
-            (
-                "blocked",
-                "- After approval: merge\n",
-                "## Scheduled\n- [ ] on: approval -- Merge\n",
-                false,
-            ),
-        ];
-        for (state, next, scheduled, nudged) in cases {
-            let h = Harness::new();
-            let ledger = format!(
-                "# Goal\ng\n\n## Status\nstate: {state}\n\n## Checklist\n### 1. Plan\n- [ ] a\n\n## Next\n{next}\n{scheduled}"
-            );
-            let reply = h.call("update_progress", &json!({ "ledger": ledger }));
-            assert_eq!(reply["result"]["isError"], false, "{state} {next}");
-            let text = text_of(&reply);
-            let lines: Vec<&str> = text.lines().collect();
-            let lines: Vec<&str> =
-                lines.into_iter().filter(|line| !line.starts_with("Typed fields")).collect();
-            assert_eq!(lines.len(), if nudged { 2 } else { 1 }, "{state} {next}: {text}");
-            assert!(lines[0].starts_with("saved"), "{text}");
-            if nudged {
-                assert!(lines[1].contains("Move later work from Next to Scheduled"), "{text}");
-            }
-            assert_eq!(h.events.borrow().len(), 1);
-            assert!(h.progress_file().exists());
-        }
-    }
-
-    #[test]
     fn set_avatar_over_rpc_saves_beside_the_notes_and_shows_it_without_the_script() {
-        let h = Harness::new();
+        let h = Harness::new().drawing();
         let svg = "<svg viewBox=\"0 0 64 64\"><circle cx=\"32\" cy=\"32\" r=\"20\" fill=\"#2dd4bf\"/><script>1</script></svg>";
         let reply = h.call("set_avatar", &json!({"svg": svg, "reason": "a teal dot"}));
         assert_eq!(reply["result"]["isError"], false, "{reply}");
@@ -957,10 +1035,12 @@ mod tests {
         let ctx = ToolCtx {
             agent: "claude",
             role: TabRole::Agent,
+            avatar: false,
             notes_file: &notes_file,
             notes_lock: &h.lock,
             progress_file: &progress_file,
             ask: test_wait(&alive),
+            workflow: &Workflow::default,
         };
         let asked = RefCell::new(Vec::new());
         let emit = |event: TabEvent| {
@@ -1035,9 +1115,6 @@ mod tests {
         let reply = h.call("get_progress", &json!({}));
         assert_eq!(reply["result"]["isError"], false);
         assert!(text_of(&reply).starts_with("No report has been saved"), "{reply}");
-        h.call("update_progress", &json!({ "ledger": LEDGER }));
-        let reply = h.call("get_progress", &json!({}));
-        assert_eq!(text_of(&reply), ProgressReport::from_ledger(&Ledger::parse(LEDGER)).to_json());
         h.call("update_progress", &typed());
         let reply = h.call("get_progress", &json!({}));
         let back: Value = serde_json::from_str(text_of(&reply)).unwrap();
@@ -1062,15 +1139,12 @@ mod tests {
     #[test]
     fn update_progress_rejects_only_what_the_agent_can_fix_and_saves_nothing() {
         let h = Harness::new();
-        let big = format!("# Goal\nx\n\n## Notes\n{}", "y".repeat(progress::MAX_LEDGER_BYTES));
+        let big = "y".repeat(progress::MAX_LEDGER_BYTES);
         let cases = [
-            (json!({ "ledger": "## Status\nphase: 1\n" }), "The progress report has no goal"),
-            (json!({ "ledger": "" }), "The progress report has no goal"),
-            (json!({ "ledger": "# Goal\n   \n" }), "The progress report has no goal"),
             (json!({}), "state is required"),
-            (json!({ "ledger": 5 }), "ledger must be a string"),
-            (json!({ "ledger": big }), "over the 32 KB limit"),
-            (json!({ "ledger": "# Goal\nx", "extra": 1 }), "unknown argument \"extra\""),
+            (json!({ "ledger": 5 }), "the `ledger` field is gone"),
+            (json!({ "goal": big }), "over the 32 KB limit"),
+            (json!({ "extra": 1 }), "unknown argument \"extra\""),
         ];
         for (args, want) in cases {
             let reply = h.call("update_progress", &args);
@@ -1090,26 +1164,6 @@ mod tests {
         }
         assert!(!h.progress_file().exists());
         assert_eq!(*h.events.borrow(), Vec::<TabEvent>::new());
-    }
-
-    #[test]
-    fn update_progress_takes_any_ledger_with_a_goal_and_keeps_the_last_save() {
-        let h = Harness::new();
-        let cases = [
-            ("# Goal\nonly a goal", "saved"),
-            ("```markdown\n# Goal\nin a fence\n\n## Next\n- go\n```", "saved"),
-            (
-                "# Goal\nodd\n\n## Weird\n!!! text\n\n## Scheduled\n- [ ] 2026-13-45 -- unreadable when\n",
-                "saved: 1 scheduled",
-            ),
-        ];
-        for (ledger, want) in cases {
-            let reply = h.call("update_progress", &json!({ "ledger": ledger }));
-            assert_eq!(text_of(&reply).lines().next(), Some(want), "{ledger:?}");
-        }
-        let reply = h.call("get_progress", &json!({}));
-        assert!(text_of(&reply).contains("unreadable when"));
-        assert_eq!(h.events.borrow().len(), 3);
     }
 
     fn questions_args() -> Value {
@@ -1132,10 +1186,12 @@ mod tests {
         let ctx = ToolCtx {
             agent: "codex",
             role: TabRole::Agent,
+            avatar: false,
             notes_file: &notes_file,
             notes_lock: &h.lock,
             progress_file: Path::new("/none/progress.md"),
             ask: test_wait(alive),
+            workflow: &Workflow::default,
         };
         let shown = RefCell::new(Vec::new());
         let body = json!({"jsonrpc": "2.0", "id": 1, "method": "tools/call",
@@ -1217,10 +1273,12 @@ mod tests {
         let ctx = ToolCtx {
             agent: "codex",
             role: TabRole::Agent,
+            avatar: false,
             notes_file: &notes_file,
             notes_lock: &h.lock,
             progress_file: Path::new("/none/progress.md"),
             ask: test_wait(&alive),
+            workflow: &Workflow::default,
         };
         let body = json!({"jsonrpc": "2.0", "id": 1, "method": "tools/call",
             "params": {"name": "ask_user", "arguments": questions_args()}});
@@ -1437,10 +1495,12 @@ mod tests {
             &ToolCtx {
                 agent: "a",
                 role: TabRole::Agent,
+                avatar: false,
                 notes_file: Path::new("/none"),
                 notes_lock: &h.lock,
                 progress_file: Path::new("/none/progress.md"),
                 ask: test_wait(&|| true),
+                workflow: &Workflow::default,
             },
             &|_| {},
         );
@@ -1479,10 +1539,12 @@ mod tests {
                     let ctx = ToolCtx {
                         agent: "claude",
                         role: TabRole::Agent,
+                        avatar: false,
                         notes_file,
                         notes_lock: lock,
                         progress_file: Path::new("/none/progress.md"),
                         ask: test_wait(&alive),
+                        workflow: &Workflow::default,
                     };
                     let body = json!({"jsonrpc": "2.0", "id": 1, "method": "tools/call",
                         "params": {"name": "reply_to_note", "arguments": {"id": id, "text": format!("reply {n}")}}});

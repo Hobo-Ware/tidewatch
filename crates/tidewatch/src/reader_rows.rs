@@ -705,6 +705,7 @@ mod tests {
             ("tidewatch:update_progress  saved", true),
             ("tidewatch:update_progress", true),
             ("tidewatch:get_progress", true),
+            ("tidewatch:get_workflow", true),
             ("tidewatch:report_job", true),
             ("tidewatch:set_avatar", true),
             ("tidewatch:report_finding", true),

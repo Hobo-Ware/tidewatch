@@ -1,6 +1,6 @@
 //! The two report tools of the Tidewatch MCP server: `update_progress` checks the typed report an
 //! agent sends, saves it and shows it in the tab, `get_progress` gives the saved report back after
-//! a context reset. The old markdown `ledger` argument is still taken and mapped onto the report.
+//! a context reset. The old markdown `ledger` argument is a tool error that names the typed fields.
 
 use std::path::Path;
 
@@ -10,7 +10,7 @@ use crate::events::TabEvent;
 use crate::link_board::{Link, MAX_LINKS_PER_CALL, MAX_NOTE_CHARS, MAX_TITLE_CHARS};
 use crate::link_store;
 use crate::paths::links_file_beside;
-use crate::progress::{Ledger, MAX_LEDGER_BYTES, Mark, State, When, real};
+use crate::progress::{MAX_LEDGER_BYTES, State};
 use crate::progress_report::{
     Checked, MAX_NOW_CHARS, MAX_OPTIONS, MAX_STAGES, MIN_OPTIONS, MIN_STAGES, ProgressReport,
     StageKind, StageStatus, StepStatus,
@@ -20,109 +20,7 @@ use crate::progress_store;
 pub const UPDATE_TOOL: &str = "update_progress";
 pub const GET_TOOL: &str = "get_progress";
 const LEDGER_KEY: &str = "ledger";
-const TYPED_KEYS: [&str; 14] = [
-    "goal",
-    "title",
-    "state",
-    "now",
-    "kind",
-    "stages",
-    "steps",
-    "needs_you",
-    "links",
-    "waiting_on",
-    "scheduled",
-    "verified",
-    "not_verified",
-    "decisions",
-];
-const PREFER_TYPED: &str = "Typed fields are preferred: next time call update_progress with state, now and stages (and steps, needs_you, waiting_on and scheduled when they apply) instead of the markdown format.";
-const MAX_WARNINGS: usize = 3;
-const MAX_WHEN_FIXES: usize = 5;
-const WARNING_TEXT_CHARS: usize = 60;
-const MOVE_TO_SCHEDULED: &str = "Next holds only what you do in this same turn. Move later work from Next to Scheduled with a `when`, such as `- [ ] on: the pull request merges -- Watch the deploy -- it ships after the merge`, and call update_progress again.";
-
-fn shortened(text: &str) -> String {
-    match text.char_indices().nth(WARNING_TEXT_CHARS) {
-        Some((end, _)) => format!("{}...", &text[..end]),
-        None => text.to_owned(),
-    }
-}
-
-#[must_use]
-pub fn warnings(ledger: &Ledger) -> Vec<String> {
-    let state = match (&ledger.status.unknown_state, ledger.status.state) {
-        (Some(word), _) => Some(format!(
-            "Warning: state `{}` is not one of working, needs_you, waiting, blocked or done.",
-            shortened(word)
-        )),
-        (None, None) => Some(
-            "Warning: Status has no `state:` line. Set it to working, needs_you, waiting, blocked or done."
-                .to_owned(),
-        ),
-        (None, Some(_)) => None,
-    };
-    let empty_checklist = ledger.checklist.iter().all(|phase| phase.items.is_empty()).then(|| {
-        "Warning: the Checklist has no steps. List your steps under the four stages.".to_owned()
-    });
-    let repeated = real(&ledger.needs_you)
-        .find(|ask| {
-            real(&ledger.next).any(|next| next.text.trim().eq_ignore_ascii_case(ask.text.trim()))
-        })
-        .map(|ask| {
-            format!(
-                "Warning: `{}` is in both Needs you and Next. Keep it in Needs you only.",
-                shortened(&ask.text)
-            )
-        });
-    let no_options = real(&ledger.needs_you).any(|ask| ask.options.is_empty()).then(|| {
-        "Warning: a Needs you line has no options. End each with `-- options: A | B* | C`."
-            .to_owned()
-    });
-    [state, empty_checklist, repeated, no_options]
-        .into_iter()
-        .flatten()
-        .take(MAX_WARNINGS)
-        .collect()
-}
-
-/// One line for each open Scheduled item whose `<when>` is a date written after `on:` or cannot be
-/// read, read from the text as written so it holds whatever the parser makes of it.
-#[must_use]
-pub fn when_fixes(ledger: &Ledger) -> Vec<String> {
-    let mut fixes: Vec<String> = ledger
-        .scheduled
-        .iter()
-        .filter(|item| !matches!(item.mark, Mark::Done | Mark::Skipped))
-        .filter_map(|item| {
-            let written = item.when_text.trim();
-            let what = shortened(&item.what);
-            let after_on = written
-                .get(..3)
-                .filter(|head| head.eq_ignore_ascii_case("on:"))
-                .map(|_| written[3..].trim())
-                .filter(|date| When::parse(date).date().is_some());
-            if let Some(date) = after_on {
-                return Some(format!(
-                    "fix next save: \"{}\" is a date, write \"{date}\" -- {what}",
-                    shortened(written)
-                ));
-            }
-            matches!(item.when, When::Unknown(_)).then(|| {
-                format!(
-                    "fix next save: \"{}\" is not a when; use YYYY-MM-DD, ~YYYY-MM-DD, on: <event>, parked: <until what> or you -- {what}",
-                    shortened(written)
-                )
-            })
-        })
-        .collect();
-    if fixes.len() > MAX_WHEN_FIXES {
-        let more = fixes.len() - MAX_WHEN_FIXES;
-        fixes.truncate(MAX_WHEN_FIXES);
-        fixes.push(format!("fix next save: {more} more Scheduled items have a when to fix"));
-    }
-    fixes
-}
+const LEDGER_GONE: &str = "the `ledger` field is gone: send the typed fields, state, now and stages first, then steps, needs_you, waiting_on and scheduled when they apply";
 
 fn words<T: Copy>(all: &[T], word: fn(T) -> &'static str) -> Vec<&'static str> {
     all.iter().copied().map(word).collect()
@@ -208,7 +106,7 @@ fn input_schema() -> Value {
             },
             "needs_you": {
                 "type": "object",
-                "description": "A question only the user can answer. Required when state is needs_you, and only then. A question that sits only in your chat message is never seen here.",
+                "description": "A question only the user can answer, for state needs_you and only then. A question you ask with your question tool is filled in by Tidewatch; use this one for a question that waits on something slower.",
                 "properties": {
                     "question": { "type": "string" },
                     "options": { "type": "array", "minItems": MIN_OPTIONS, "maxItems": MAX_OPTIONS, "items": { "type": "string" }, "description": "Short answers the user can click." },
@@ -255,7 +153,6 @@ fn input_schema() -> Value {
             "verified": note_schema("What you checked, with the command and its result as why."),
             "not_verified": note_schema("What you could not check, with the blocker as why."),
             "decisions": note_schema("Decisions made, with the reason as why."),
-            LEDGER_KEY: { "type": "string", "description": format!("The old format, still accepted: the whole progress report as markdown, at most {} KB. Prefer the typed fields; send one or the other.", MAX_LEDGER_BYTES / 1024) },
         },
         "required": ["state", "now", "stages"],
         "additionalProperties": false,
@@ -268,7 +165,7 @@ pub fn tool_definitions() -> [Value; 2] {
     [
         json!({
             "name": UPDATE_TOOL,
-            "description": "Report the progress of this task. Tidewatch shows it to the user live and maps your state, stages, question and waits onto its screens. Send the whole report first thing and again at every milestone: each call replaces the last. Name 2 to 5 stages that fit this task. Work after a merge, such as a deploy or a backfill, is its own stage. Report done only when the whole task is finished and no step is open. A question for the user goes in needs_you, never only in chat. A job, PR, date or event you wait on goes in waiting_on. If a rule is broken the report is not saved and the reply lists each fix: call again with them.",
+            "description": "Report the task's state to the user. Each call replaces the last. Send it once work starts and before your final reply.",
             "inputSchema": input_schema(),
         }),
         json!({
@@ -307,24 +204,14 @@ fn save_failed(e: &std::io::Error) -> (String, bool) {
 
 /// Saves what an agent sent and tells the tab. A report that breaks a rule is a tool error that
 /// lists each fix and saves nothing. The reply is a one-line summary, then up to three warning lines.
-/// The old markdown `ledger` argument is still taken: it is mapped onto the report and saved the same
-/// way, and its reply also carries the old warnings and a line that the typed fields are preferred.
+/// The old markdown `ledger` argument is one of those rules.
 pub fn update(args: &Map<String, Value>, file: &Path, emit: &dyn Fn(TabEvent)) -> (String, bool) {
-    let typed = TYPED_KEYS.iter().any(|key| args.contains_key(*key));
-    if args.contains_key(LEDGER_KEY) && !typed {
-        return update_markdown(args, file, emit);
-    }
-    update_typed(args, file, emit)
-}
-
-fn update_typed(args: &Map<String, Value>, file: &Path, emit: &dyn Fn(TabEvent)) -> (String, bool) {
     let mut args = args.clone();
-    let both = args.remove(LEDGER_KEY).is_some();
-    let size = Value::Object(args.clone()).to_string().len();
     let mut problems = Vec::new();
-    if both {
-        problems.push(format!("send the typed fields or {LEDGER_KEY}, not both"));
+    if args.remove(LEDGER_KEY).is_some() {
+        problems.push(LEDGER_GONE.to_owned());
     }
+    let size = Value::Object(args.clone()).to_string().len();
     if size > MAX_LEDGER_BYTES {
         problems.push(format!(
             "the report is {size} bytes, over the {} KB limit: shorten the entries and drop what is finished and no longer needed",
@@ -362,59 +249,6 @@ fn update_typed(args: &Map<String, Value>, file: &Path, emit: &dyn Fn(TabEvent))
     (reply, false)
 }
 
-fn update_markdown(
-    args: &Map<String, Value>,
-    file: &Path,
-    emit: &dyn Fn(TabEvent),
-) -> (String, bool) {
-    let mut problems: Vec<String> = args
-        .keys()
-        .filter(|key| key.as_str() != LEDGER_KEY)
-        .map(|key| format!("unknown argument \"{key}\""))
-        .collect();
-    let Some(text) = args.get(LEDGER_KEY).and_then(Value::as_str) else {
-        problems.push(format!(
-            "{LEDGER_KEY} must be a string holding the whole progress report as markdown"
-        ));
-        return not_saved(&problems);
-    };
-    if text.len() > MAX_LEDGER_BYTES {
-        problems.push(format!(
-            "the report is {} bytes, over the {} KB limit: shorten the entries and drop what is finished and no longer needed",
-            text.len(),
-            MAX_LEDGER_BYTES / 1024
-        ));
-    }
-    let ledger = Ledger::parse(text);
-    problems.extend(ledger.problems());
-    if !problems.is_empty() {
-        return not_saved(&problems);
-    }
-    if let Err(e) = progress_store::save(file, &ledger) {
-        return save_failed(&e);
-    }
-    let mut reply = ledger.summary();
-    for warning in warnings(&ledger) {
-        reply.push('\n');
-        reply.push_str(&warning);
-    }
-    for fix in when_fixes(&ledger) {
-        reply.push('\n');
-        reply.push_str(&fix);
-    }
-    if !ledger.stranded_next().is_empty() {
-        reply.push('\n');
-        reply.push_str(MOVE_TO_SCHEDULED);
-    }
-    if !progress_store::markdown_was_told(file) && progress_store::mark_markdown_told(file).is_ok()
-    {
-        reply.push('\n');
-        reply.push_str(PREFER_TYPED);
-    }
-    emit(TabEvent::Progress { ledger: Box::new(ProgressReport::from_ledger(&ledger).to_ledger()) });
-    (reply, false)
-}
-
 /// The saved report as JSON, or a line saying there is none.
 #[must_use]
 pub fn get(file: &Path) -> (String, bool) {
@@ -428,151 +262,6 @@ pub fn get(file: &Path) -> (String, bool) {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    const STEPS: &str = "## Checklist\n### 1. Understand\n- [ ] read\n";
-
-    fn warned(text: &str) -> Vec<String> {
-        warnings(&Ledger::parse(text))
-    }
-
-    #[test]
-    fn a_complete_ledger_has_no_warnings() {
-        let text = format!(
-            "# Goal\ng\n\n## Status\nstate: working\n\n{STEPS}\n## Needs you\n- Pick -- why -- options: A* | B\n"
-        );
-        assert_eq!(warned(&text), Vec::<String>::new());
-        let nothing =
-            format!("# Goal\ng\n\n## Status\nstate: done\n\n{STEPS}\n## Needs you\n- nothing\n");
-        assert_eq!(warned(&nothing), Vec::<String>::new());
-    }
-
-    #[test]
-    fn each_soft_problem_gets_one_short_line() {
-        let cases = [
-            ("no state", format!("# Goal\ng\n\n{STEPS}"), "no `state:` line"),
-            (
-                "no state value",
-                format!("# Goal\ng\n\n## Status\nstate:\n\n{STEPS}"),
-                "no `state:` line",
-            ),
-            (
-                "an unknown state word",
-                format!("# Goal\ng\n\n## Status\nstate: asleep\n\n{STEPS}"),
-                "state `asleep` is not one of working, needs_you, waiting, blocked or done",
-            ),
-            (
-                "an empty checklist",
-                "# Goal\ng\n\n## Status\nstate: working\n".to_owned(),
-                "the Checklist has no steps",
-            ),
-            (
-                "headings only",
-                "# Goal\ng\n\n## Status\nstate: working\n\n## Checklist\n### 1. Build\n".to_owned(),
-                "the Checklist has no steps",
-            ),
-            (
-                "a question that is also a next step",
-                format!(
-                    "# Goal\ng\n\n## Status\nstate: working\n\n{STEPS}\n## Next\n- Pick a fix\n\n## Needs you\n- pick a fix -- options: A* | B\n"
-                ),
-                "`pick a fix` is in both Needs you and Next",
-            ),
-            (
-                "a question with no options",
-                format!(
-                    "# Goal\ng\n\n## Status\nstate: waiting\n\n{STEPS}\n## Needs you\n- Post the Slack follow-up\n"
-                ),
-                "a Needs you line has no options",
-            ),
-        ];
-        for (name, text, want) in cases {
-            let lines = warned(&text);
-            assert_eq!(lines.len(), 1, "{name}: {lines:?}");
-            assert!(
-                lines[0].starts_with("Warning: ") && lines[0].contains(want),
-                "{name}: {lines:?}"
-            );
-            assert!(lines[0].is_ascii() && !lines[0].contains('\n'), "{name}");
-        }
-    }
-
-    #[test]
-    fn at_most_three_warnings_come_back_most_useful_first() {
-        let lines = warned("# Goal\ng\n\n## Next\n- Ship\n\n## Needs you\n- Ship\n");
-        assert_eq!(lines.len(), 3, "{lines:?}");
-        assert!(lines[0].contains("state"), "{lines:?}");
-        assert!(lines[1].contains("Checklist"), "{lines:?}");
-        assert!(lines[2].contains("both Needs you and Next"), "{lines:?}");
-    }
-
-    #[test]
-    fn a_long_unknown_word_or_question_is_cut_in_the_warning() {
-        let long = "x".repeat(200);
-        let lines = warned(&format!("# Goal\ng\n\n## Status\nstate: {long}\n\n{STEPS}"));
-        assert!(lines[0].len() < 150, "{lines:?}");
-        assert!(lines[0].contains("..."));
-    }
-
-    #[test]
-    fn the_save_reply_carries_the_warnings_after_the_summary() {
-        let dir = tempfile::tempdir().unwrap();
-        let file = dir.path().join("progress.md");
-        let args = serde_json::json!({ "ledger": "# Goal\ng\n" });
-        let (reply, is_error) = update(args.as_object().unwrap(), &file, &|_| {});
-        assert!(!is_error);
-        let lines: Vec<&str> = reply.lines().collect();
-        assert_eq!(lines[0], "saved");
-        assert_eq!(lines.len(), 4, "{reply}");
-        assert!(lines[3].starts_with("Typed fields are preferred"), "{reply}");
-        assert!(file.exists(), "a warning never stops the save");
-    }
-
-    fn saved_with(scheduled: &str) -> String {
-        let dir = tempfile::tempdir().unwrap();
-        let file = dir.path().join("progress.md");
-        let ledger =
-            format!("# Goal\ng\n\n## Status\nstate: working\n\n{STEPS}\n## Scheduled\n{scheduled}");
-        let args = serde_json::json!({ "ledger": ledger });
-        let (reply, is_error) = update(args.as_object().unwrap(), &file, &|_| {});
-        assert!(!is_error);
-        assert!(file.exists(), "a bad when never stops the save");
-        reply.lines().filter(|line| *line != PREFER_TYPED).collect::<Vec<_>>().join("\n")
-    }
-
-    #[test]
-    fn the_save_reply_names_a_date_after_on_and_a_when_it_cannot_read() {
-        let reply = saved_with(
-            "- [ ] on: 2026-11-01 -- Drop beta tracking\n- [ ] On: ~2026-11-07 -- Count old apps\n- [ ] someday -- Tidy up\n- [ ] 2026-13-45 -- Fix the date\n",
-        );
-        let lines: Vec<&str> = reply.lines().collect();
-        assert_eq!(lines[0], "saved: phase 1 Understand, 0/1 done, 4 scheduled", "{reply}");
-        assert_eq!(
-            lines[1..],
-            [
-                "fix next save: \"on: 2026-11-01\" is a date, write \"2026-11-01\" -- Drop beta tracking",
-                "fix next save: \"On: ~2026-11-07\" is a date, write \"~2026-11-07\" -- Count old apps",
-                "fix next save: \"someday\" is not a when; use YYYY-MM-DD, ~YYYY-MM-DD, on: <event>, parked: <until what> or you -- Tidy up",
-                "fix next save: \"2026-13-45\" is not a when; use YYYY-MM-DD, ~YYYY-MM-DD, on: <event>, parked: <until what> or you -- Fix the date",
-            ]
-        );
-        assert!(reply.is_ascii());
-    }
-
-    #[test]
-    fn a_clean_scheduled_section_gets_only_the_saved_line() {
-        let reply = saved_with(
-            "- [ ] 2026-11-01 -- a\n- [ ] ~2026-11-07 -- b\n- [ ] on: 2026-11-01 ships -- c\n- [ ] on: the partner replies -- d\n- [ ] parked: until the rewrite -- e\n- [ ] you -- f\n- [x] someday -- g\n",
-        );
-        assert_eq!(reply.lines().count(), 1, "{reply}");
-    }
-
-    #[test]
-    fn many_bad_whens_are_cut_to_five_and_a_count() {
-        let items = "- [ ] soon -- an item\n".repeat(8);
-        let lines: Vec<String> = saved_with(&items).lines().map(str::to_owned).collect();
-        assert_eq!(lines.len(), 1 + MAX_WHEN_FIXES + 1);
-        assert_eq!(lines[6], "fix next save: 3 more Scheduled items have a when to fix");
-    }
 
     fn typed(extra: &serde_json::Value) -> serde_json::Map<String, serde_json::Value> {
         let mut args = serde_json::json!({
@@ -674,5 +363,50 @@ mod tests {
         let ask = &schema["needs_you"]["properties"]["links"];
         assert_eq!(ask["maxItems"], 20);
         assert!(ask["items"]["properties"]["for"].is_null());
+    }
+
+    #[test]
+    fn the_old_ledger_field_is_a_tool_error_that_names_the_typed_fields_and_saves_nothing() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("progress.md");
+        let sent = std::cell::Cell::new(0);
+        let args = serde_json::json!({ "ledger": "# Goal\ng\n" });
+        let (reply, is_error) =
+            update(args.as_object().unwrap(), &file, &|_| sent.set(sent.get() + 1));
+        assert!(is_error);
+        assert!(
+            reply.starts_with(
+                "The report was not saved. Fix these and call update_progress again:\n- "
+            ),
+            "{reply}"
+        );
+        assert!(
+            reply.contains(
+                "the `ledger` field is gone: send the typed fields, state, now and stages"
+            ),
+            "{reply}"
+        );
+        assert_eq!((file.exists(), sent.get()), (false, 0));
+    }
+
+    #[test]
+    fn a_ledger_beside_good_typed_fields_is_still_refused_and_nothing_is_saved() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("progress.md");
+        let args = typed(&serde_json::json!({ "ledger": "# Goal\ng\n" }));
+        let (reply, is_error, _) = run(&args, &file);
+        assert!(is_error, "{reply}");
+        assert_eq!(reply.lines().count(), 2, "{reply}");
+        assert!(!file.exists());
+    }
+
+    #[test]
+    fn the_schema_has_no_ledger_field_and_the_description_is_the_short_one() {
+        let [update, _] = tool_definitions();
+        assert!(update["inputSchema"]["properties"].get("ledger").is_none());
+        assert_eq!(
+            update["description"],
+            "Report the task's state to the user. Each call replaces the last. Send it once work starts and before your final reply."
+        );
     }
 }

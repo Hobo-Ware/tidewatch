@@ -9,16 +9,11 @@ use crate::progress::Ledger;
 use crate::progress_report::ProgressReport;
 
 const REPORT_FILE: &str = "progress.json";
-const MARKDOWN_TOLD_FILE: &str = "progress-markdown-told";
 
 /// The typed report beside the tab's `progress.md`.
 #[must_use]
 pub fn report_file(file: &Path) -> PathBuf {
     file.with_file_name(REPORT_FILE)
-}
-
-fn markdown_told_file(file: &Path) -> PathBuf {
-    file.with_file_name(MARKDOWN_TOLD_FILE)
 }
 
 /// The text of the saved ledger, `None` when there is none.
@@ -60,16 +55,6 @@ pub fn save_report(file: &Path, report: &ProgressReport) -> std::io::Result<()> 
 pub fn save(file: &Path, ledger: &Ledger) -> std::io::Result<()> {
     write_atomic(&report_file(file), &ProgressReport::from_ledger(ledger).to_json())?;
     write_atomic(file, &ledger.to_markdown())
-}
-
-/// Whether the agent was already told to prefer the typed fields.
-#[must_use]
-pub fn markdown_was_told(file: &Path) -> bool {
-    markdown_told_file(file).exists()
-}
-
-pub fn mark_markdown_told(file: &Path) -> std::io::Result<()> {
-    write_atomic(&markdown_told_file(file), "")
 }
 
 #[cfg(test)]
@@ -128,14 +113,5 @@ mod tests {
         assert_eq!(load(&file).unwrap().goal, "new goal");
         assert_eq!(load_report(&file), Some(report));
         assert!(read_text(&file).unwrap().contains("new goal"));
-    }
-
-    #[test]
-    fn the_told_marker_is_per_tab_and_starts_unset() {
-        let dir = tempfile::tempdir().unwrap();
-        let file = dir.path().join("progress.md");
-        assert!(!markdown_was_told(&file));
-        mark_markdown_told(&file).unwrap();
-        assert!(markdown_was_told(&file));
     }
 }

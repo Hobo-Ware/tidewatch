@@ -35,6 +35,7 @@ use crate::launch::HookListener;
 use crate::mcp::{AskWait, McpReply, TabRole, ToolCtx, handle_post};
 use crate::paths::{TidewatchPaths, progress_file_beside};
 use crate::status::parse_hook;
+use crate::workflow_detect;
 use crate::{progress_store, prompt_answer};
 
 /// The hook agent whose `UserPromptSubmit` answer reaches the model as context.
@@ -84,6 +85,12 @@ pub struct Credential {
     #[serde(default)]
     pub role: TabRole,
     pub notes_file: PathBuf,
+    /// Missing in a credential an older version saved: `get_workflow` then reads the defaults.
+    #[serde(default)]
+    pub repo: PathBuf,
+    /// Whether the owner clicked Draw avatar for the tab, which is what offers `set_avatar`.
+    #[serde(default)]
+    pub avatar: bool,
 }
 
 struct Entry {
@@ -92,9 +99,12 @@ struct Entry {
     agent: String,
     role: TabRole,
     notes_file: PathBuf,
+    repo: PathBuf,
+    avatar: AtomicBool,
 }
 
 struct Shared {
+    paths: TidewatchPaths,
     tabs: Mutex<HashMap<String, Arc<Entry>>>,
     events: Sender<TabMessage>,
     repaint: Repaint,
@@ -188,6 +198,7 @@ impl Listener {
         let (events, receiver) = channel();
         let (github, github_inbox) = GithubHooks::new();
         let shared = Arc::new(Shared {
+            paths: paths.clone(),
             tabs: Mutex::new(HashMap::new()),
             github,
             events,
@@ -235,6 +246,8 @@ impl Listener {
             agent: registration.agent,
             role: registration.role,
             notes_file: self.paths.notes_file(&registration.repo, &registration.tab),
+            repo: registration.repo,
+            avatar: AtomicBool::new(false),
         });
         let mut tabs = self.shared.tabs.lock().unwrap_or_else(PoisonError::into_inner);
         tabs.retain(|_, existing| existing.tab_id != entry.tab_id);
@@ -252,7 +265,17 @@ impl Listener {
             agent: entry.agent.clone(),
             role: entry.role,
             notes_file: entry.notes_file.clone(),
+            repo: entry.repo.clone(),
+            avatar: entry.avatar.load(Ordering::SeqCst),
         })
+    }
+
+    /// Offers `set_avatar` to the tab from now on: the owner clicked Draw avatar for it.
+    pub fn allow_avatar(&self, tab_id: u64) {
+        let tabs = self.shared.tabs.lock().unwrap_or_else(PoisonError::into_inner);
+        for entry in tabs.values().filter(|entry| entry.tab_id == tab_id) {
+            entry.avatar.store(true, Ordering::SeqCst);
+        }
     }
 
     /// Honours another process's credential for `tab_id`, so the agent that holds the token keeps
@@ -264,6 +287,8 @@ impl Listener {
             agent: credential.agent.clone(),
             role: credential.role,
             notes_file: credential.notes_file.clone(),
+            repo: credential.repo.clone(),
+            avatar: AtomicBool::new(credential.avatar),
         });
         let mut tabs = self.shared.tabs.lock().unwrap_or_else(PoisonError::into_inner);
         tabs.retain(|_, existing| existing.tab_id != tab_id);
@@ -555,9 +580,11 @@ fn mcp_route(shared: &Shared, entry: &Entry, request: &Request, stream: &TcpStre
     }
     let alive = || client_waits(stream);
     let progress_file = progress_file_beside(&entry.notes_file);
+    let workflow = || workflow_detect::profile_for(&shared.paths, &entry.repo);
     let ctx = ToolCtx {
         agent: &entry.agent,
         role: entry.role,
+        avatar: entry.avatar.load(Ordering::SeqCst),
         notes_file: &entry.notes_file,
         notes_lock: &shared.notes_lock,
         progress_file: &progress_file,
@@ -566,6 +593,7 @@ fn mcp_route(shared: &Shared, entry: &Entry, request: &Request, stream: &TcpStre
             poll: ASK_POLL,
             alive: &alive,
         },
+        workflow: &workflow,
     };
     match handle_post(&request.body, &ctx, &|event| shared.emit(entry, event)) {
         McpReply::Json(body) => Response::json(200, body),
@@ -825,6 +853,7 @@ mod tests {
         let repaints = Arc::new(AtomicUsize::new(0));
         let counter = Arc::clone(&repaints);
         let shared = Arc::new(Shared {
+            paths: TidewatchPaths::new(home.path()),
             tabs: Mutex::new(HashMap::new()),
             events,
             repaint: Box::new(move || {
@@ -858,6 +887,8 @@ mod tests {
                 agent: "claude".into(),
                 role: TabRole::default(),
                 notes_file: self.paths.notes_file(Path::new("/work/web"), tab),
+                repo: PathBuf::from("/work/web"),
+                avatar: AtomicBool::new(false),
             });
             self.shared.tabs.lock().unwrap().insert(token.clone(), entry);
             token
@@ -1282,11 +1313,22 @@ mod tests {
         let post = |token: &String, tool: &str, args: Value| {
             body_json(&f.send("POST", "/mcp", Some(token), &call(tool, &args)))
         };
-        let saved = post(&one, "update_progress", json!({"ledger": "# Goal\nFor a\n"}));
+        let report = |goal: &str| {
+            json!({
+                "goal": goal,
+                "state": "working",
+                "now": "Writing",
+                "stages": [
+                    { "name": "Build", "kind": "build", "status": "active" },
+                    { "name": "Ship", "kind": "ship", "status": "todo" }
+                ],
+            })
+        };
+        let saved = post(&one, "update_progress", report("For a"));
         assert!(saved["result"]["content"][0]["text"].as_str().unwrap().starts_with("saved"));
-        post(&two, "update_progress", json!({"ledger": "# Goal\nFor b\n"}));
+        post(&two, "update_progress", report("For b"));
         let file = f.paths.progress_file(Path::new("/work/web"), "a");
-        assert_eq!(std::fs::read_to_string(file).unwrap(), "# Goal\nFor a\n");
+        assert!(std::fs::read_to_string(file).unwrap().contains("For a"));
         let read = post(&one, "get_progress", json!({}));
         let report: Value =
             serde_json::from_str(read["result"]["content"][0]["text"].as_str().unwrap()).unwrap();

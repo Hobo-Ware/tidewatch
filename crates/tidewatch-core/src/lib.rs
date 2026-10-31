@@ -146,6 +146,7 @@ pub mod ui_zoom;
 pub mod update;
 pub mod user_markup;
 pub mod workflow_detect;
+pub mod workflow_mcp;
 pub mod workflow_profile;
 pub mod worktree;
 pub mod worktree_cleanup;

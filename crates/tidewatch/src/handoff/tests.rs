@@ -39,6 +39,8 @@ fn credential(token: &str) -> Credential {
         agent: "claude".into(),
         role: tidewatch_core::mcp::TabRole::Agent,
         notes_file: PathBuf::from("/home/.tidewatch/.state/web-abc123/otter/notes.json"),
+        repo: PathBuf::from("/work/web"),
+        avatar: false,
     }
 }
 
