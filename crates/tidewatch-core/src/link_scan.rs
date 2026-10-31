@@ -2,7 +2,7 @@
 //! GitHub pull requests and issues (pure). A markdown link gives its text as the title, a bare link
 //! a plain fallback. Only the agent's own messages are read, never the user's.
 
-use crate::link_board::{Link, LinkBoard, LinkState, MAX_TITLE_CHARS, TitleFrom, one_line};
+use crate::link_board::{Link, LinkBoard, LinkState, MAX_TITLE_CHARS, Status, TitleFrom, one_line};
 use crate::transcript::{Entry, Role};
 
 const ARTIFACT_PATHS: [&str; 3] = ["artifact/", "code/artifact/", "public/artifacts/"];
@@ -26,6 +26,7 @@ pub fn found(entries: &[Entry], now_ms: i64) -> Vec<Link> {
                 first_seen_ms: seen,
                 title_from,
                 state: LinkState::Unknown,
+                status: Status::default(),
             });
         }
     }

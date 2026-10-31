@@ -3,6 +3,7 @@
 
 mod common;
 
+use std::collections::HashSet;
 use std::ffi::OsString;
 use std::fmt::Write as _;
 use std::io::{Read, Write};
@@ -162,6 +163,7 @@ fn a_forwarder_goes_live_on_its_signed_ping_then_delivers_signed_events_and_stop
     f.until("the forwarder to start", |f, _| !f.forward_args().is_empty());
     let args = f.forward_args();
     assert!(args.contains("webhook forward --repo=Acme/Web --events=pull_request,"), "{args}");
+    assert!(args.contains(",issues,"), "{args}");
     assert!(args.contains("--url=http://127.0.0.1:"), "{args}");
     let (_, secret) = f.url_and_secret();
     assert!(f.host.live_repos().is_empty());
@@ -178,10 +180,18 @@ fn a_forwarder_goes_live_on_its_signed_ping_then_delivers_signed_events_and_stop
     let news = f.until("the event", |_, news| !news.is_empty());
     assert_eq!(news.len(), 1);
     assert_eq!(news[0].repos, [f.repo.path().to_path_buf()]);
+    assert_eq!(news[0].slug, "acme/web");
     assert_eq!(
         (news[0].hit.numbers.clone(), news[0].hit.branches.clone()),
         (vec![7], vec!["agent/calm".to_owned()])
     );
+    assert_eq!(f.host.live_slugs(), HashSet::from(["acme/web".to_owned()]));
+
+    let issue = r#"{"action": "closed", "issue": {"number": 623}}"#;
+    assert_eq!(f.deliver("issues", issue, &secret), 200);
+    let news = f.until("the issue event", |_, news| news.iter().any(|n| n.hit.event == "issues"));
+    let named = news.iter().find(|n| n.hit.event == "issues").unwrap();
+    assert_eq!((named.slug.as_str(), named.hit.issues.clone()), ("acme/web", vec![623]));
 
     f.host.shutdown(Some(&f.listener));
     assert_eq!(f.log("term.log").trim(), "terminated", "SIGTERM reached the forwarder");

@@ -85,6 +85,78 @@ impl LinkState {
     }
 }
 
+/// How a pull request's checks stand.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Checks {
+    Pass,
+    Fail,
+    Running,
+}
+
+/// A pull request's review decision, when one was made.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Review {
+    Approved,
+    ChangesRequested,
+}
+
+/// Why an issue was closed.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Reason {
+    Completed,
+    NotPlanned,
+}
+
+/// Whether GitHub still answers for the link.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Access {
+    #[default]
+    Readable,
+    NoAccess,
+    Gone,
+}
+
+impl Access {
+    #[must_use]
+    pub fn is_readable(&self) -> bool {
+        *self == Self::Readable
+    }
+}
+
+/// What the last look at a pull request or issue found besides its state, and when it was made.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Status {
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub draft: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub checks: Option<Checks>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub review: Option<Review>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub conflicts: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<Reason>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub comments: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub updated_ms: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub checked_ms: Option<i64>,
+    #[serde(default, skip_serializing_if = "Access::is_readable")]
+    pub access: Access,
+}
+
+impl Status {
+    #[must_use]
+    pub fn is_blank(&self) -> bool {
+        *self == Self::default()
+    }
+}
+
 /// One link the tab keeps.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Link {
@@ -98,6 +170,8 @@ pub struct Link {
     pub title_from: TitleFrom,
     #[serde(default, skip_serializing_if = "LinkState::is_unknown")]
     pub state: LinkState,
+    #[serde(default, skip_serializing_if = "Status::is_blank")]
+    pub status: Status,
 }
 
 /// A link as an agent reports it, checked.
@@ -118,6 +192,7 @@ impl LinkReport {
             first_seen_ms: now_ms,
             title_from: TitleFrom::Agent,
             state: LinkState::Unknown,
+            status: Status::default(),
         }
     }
 }
@@ -158,6 +233,58 @@ impl Link {
     #[must_use]
     pub fn kind(&self) -> Kind {
         kind_of(&self.url)
+    }
+
+    /// The `owner/name` of the repository of a GitHub pull request or issue link, as spelled.
+    #[must_use]
+    pub fn repo_name(&self) -> Option<String> {
+        let (host, path) = split(&self.url)?;
+        if host != "github.com" || !self.kind().has_state() {
+            return None;
+        }
+        let mut parts = path.split('/');
+        Some(format!("{}/{}", parts.next()?, parts.next()?))
+    }
+
+    /// `repo_name` in lower case, which is how GitHub compares repositories.
+    #[must_use]
+    pub fn repo(&self) -> Option<String> {
+        self.repo_name().map(|name| name.to_ascii_lowercase())
+    }
+
+    /// The number of a GitHub pull request or issue link.
+    #[must_use]
+    pub fn number(&self) -> Option<u64> {
+        let (_, path) = split(&self.url)?;
+        self.repo()?;
+        path.split('/').nth(3)?.parse().ok()
+    }
+
+    /// An open pull request whose checks fail, whose changes were requested or that conflicts.
+    #[must_use]
+    pub fn needs_action(&self) -> bool {
+        !self.is_done()
+            && (self.status.checks == Some(Checks::Fail)
+                || self.status.review == Some(Review::ChangesRequested)
+                || self.status.conflicts)
+    }
+
+    /// Merged, closed or deleted, so nothing more will come of it.
+    #[must_use]
+    pub fn is_done(&self) -> bool {
+        self.state.archived() || self.status.access == Access::Gone
+    }
+
+    /// Whether looking the link up again can still tell something new.
+    #[must_use]
+    pub fn is_watchable(&self) -> bool {
+        self.kind().has_state() && !self.is_done() && self.status.access.is_readable()
+    }
+
+    /// When the link last changed: GitHub's own `updatedAt` once known, else when it was first seen.
+    #[must_use]
+    pub fn changed_ms(&self) -> i64 {
+        self.status.updated_ms.unwrap_or(self.first_seen_ms)
     }
 
     /// The host without a leading `www.`.
@@ -238,8 +365,8 @@ impl LinkBoard {
     }
 
     /// Takes one link in. A known URL keeps its first-seen time; a non-empty title from the same or
-    /// a higher source, a non-empty `for` and a known state replace the old ones. Returns whether
-    /// anything changed.
+    /// a higher source, a non-empty `for`, a known state and a status looked up later replace the
+    /// old ones. Returns whether anything changed.
     pub fn absorb(&mut self, incoming: &Link) -> bool {
         let key = incoming.key();
         let Some(known) = self.links.iter_mut().find(|link| link.key() == key) else {
@@ -255,6 +382,9 @@ impl LinkBoard {
         }
         if !incoming.state.is_unknown() {
             known.state = incoming.state;
+        }
+        if incoming.status.checked_ms > known.status.checked_ms {
+            known.status = incoming.status.clone();
         }
         if let Some(note) = incoming.note.as_ref().filter(|note| !note.trim().is_empty()) {
             known.note = Some(note.clone());
