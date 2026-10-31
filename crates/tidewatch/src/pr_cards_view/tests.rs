@@ -216,7 +216,13 @@ fn a_waiting_message_and_a_pause_draw_at_the_end_and_their_buttons_click() {
     let message =
         tidewatch_core::pr_prompt::message(&every_kind().remove(2), 42, Workflow::default())
             .unwrap();
-    watch.pending.push(crate::pr_watch::Pending { id: 3, message });
+    watch.pending.push(crate::pr_watch::Pending {
+        id: 3,
+        message,
+        body: every_kind().remove(2),
+        number: 42,
+        confirm: false,
+    });
     watch.pause = Some(Pause::SignedOut);
     let (_, clicks) = run_frames(&watch, vec![vec![]], None);
     assert_eq!(clicks, []);

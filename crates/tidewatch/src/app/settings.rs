@@ -190,7 +190,7 @@ impl Tidewatch {
         }
     }
 
-    fn set_done_check(&mut self, enabled: bool) {
+    pub(super) fn set_done_check(&mut self, enabled: bool) {
         self.done_check.set_enabled(enabled);
         if let Some(paths) = self.paths.clone() {
             std::thread::spawn(move || {

@@ -2,7 +2,7 @@
 //! follow-up). Pure.
 
 use crate::pr_status::{Body, Job, ReviewComment};
-use crate::prefs::GithubPrefs;
+use crate::prefs::{AutoJob, GithubPrefs};
 use crate::workflow_profile::{Fix, Workflow};
 
 const MAX_CHARS: usize = 6000;
@@ -19,6 +19,27 @@ pub enum Trigger {
     FailedChecks,
     Reviews,
     Conflicts,
+}
+
+impl Trigger {
+    #[must_use]
+    pub fn job(self) -> AutoJob {
+        match self {
+            Self::FailedChecks => AutoJob::FailedChecks,
+            Self::Reviews => AutoJob::Reviews,
+            Self::Conflicts => AutoJob::Conflicts,
+        }
+    }
+
+    /// The kind in a sentence: `conflict`, `failed check`, `review`.
+    #[must_use]
+    pub fn word(self) -> &'static str {
+        match self {
+            Self::FailedChecks => "failed check",
+            Self::Reviews => "review",
+            Self::Conflicts => "conflict",
+        }
+    }
 }
 
 #[must_use]
@@ -60,6 +81,7 @@ pub fn wanted(prefs: &GithubPrefs, body: &Body) -> bool {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Message {
     pub ask: Ask,
+    pub trigger: Trigger,
     pub headline: String,
     pub text: String,
     pub extra_lines: usize,
@@ -67,7 +89,7 @@ pub struct Message {
 
 #[must_use]
 pub fn message(body: &Body, number: u64, workflow: Workflow) -> Option<Message> {
-    let (ask, _) = ask_of(body)?;
+    let (ask, trigger) = ask_of(body)?;
     let (headline, detail, extra_lines) = match body {
         Body::ChecksFailed { jobs, .. } => checks(jobs, number, workflow),
         Body::ChangesRequested { author, body, comments, .. } => {
@@ -99,7 +121,7 @@ pub fn message(body: &Body, number: u64, workflow: Workflow) -> Option<Message> 
     let headline = clean(&headline);
     let detail = clean(&detail);
     let text = if detail.is_empty() { headline.clone() } else { format!("{headline}\n\n{detail}") };
-    Some(Message { ask, headline, text: cap(&text), extra_lines })
+    Some(Message { ask, trigger, headline, text: cap(&text), extra_lines })
 }
 
 fn checks(jobs: &[Job], number: u64, workflow: Workflow) -> (String, String, usize) {

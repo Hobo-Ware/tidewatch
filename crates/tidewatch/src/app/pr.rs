@@ -6,9 +6,10 @@ use std::time::Duration;
 use egui::{Rect, Ui};
 use tidewatch_core::job::JobBoard;
 use tidewatch_core::pr_ask;
+use tidewatch_core::pr_prompt::Trigger;
 use tidewatch_core::pr_status::{Body, Tone as PrTone};
 use tidewatch_core::prefs::{GithubPrefs, Prefs};
-use tidewatch_core::sent::{Cap, Reason, because};
+use tidewatch_core::sent::{Cap, Reason, Switch, because};
 
 use super::{Tidewatch, WAKE_SLACK_S, wall_ms};
 use crate::merge_cleanup::Busy;
@@ -19,10 +20,19 @@ use crate::pane::Body as PaneBody;
 use crate::pr_card_model::{CardAction, is_web_url};
 use crate::pr_glue::Applied;
 use crate::pr_watch::{Facts, Out, STAYS, Watch};
+use crate::tidewatch_view::Click;
 use crate::worktree_jobs;
 use crate::{flow_glue, layout, pr_strip};
 use tidewatch_core::worktree::{BranchChoice, RemoveMode, Terms, Why};
 use tidewatch_core::worktree_safety::Owner;
+
+fn auto_because(trigger: Trigger) -> &'static str {
+    match trigger {
+        Trigger::FailedChecks => because::AUTO_CHECKS,
+        Trigger::Reviews => because::AUTO_REVIEWS,
+        Trigger::Conflicts => because::AUTO_CONFLICTS,
+    }
+}
 
 fn now_ms() -> i64 {
     wall_ms() as i64
@@ -81,14 +91,14 @@ impl Tidewatch {
     }
 
     fn apply_pr(&mut self, applied: Vec<Applied>, ctx: &egui::Context, now: f64) {
-        let mut told: Option<Cap> = None;
+        let mut told: Option<(Cap, Trigger)> = None;
         for Applied { tab, out } in applied {
             match out {
-                Out::Told { n, max } => told = Some(Cap { n, max }),
+                Out::Told { n, max, trigger } => told = Some((Cap { n, max }, trigger)),
                 Out::Paste(text) => {
                     let send = match told.take() {
-                        Some(cap) => {
-                            Send::auto(&text, Reason::AutoFix, because::AUTO_FIX).with_cap(cap)
+                        Some((cap, trigger)) => {
+                            Send::auto(&text, Reason::AutoFix, auto_because(trigger)).with_cap(cap)
                         }
                         None => Send::untold(&text, Origin::Hand),
                     };
@@ -143,9 +153,39 @@ impl Tidewatch {
                 CardAction::PushFix(card) => self.ask_to_push(tab, card, false, ctx, now),
                 CardAction::SendNow(id) => applied.extend(self.pr.send_now(tab, id, now, ms)),
                 CardAction::Cancel(id) => self.pr.cancel(tab, id),
+                CardAction::ChangeWording => self.open_updates_settings(),
             }
         }
         self.apply_pr(applied, ctx, now);
+    }
+
+    /// A button under one of Tidewatch's rows: the workflow its words came from, or the setting that
+    /// stops its kind. A pull request kind is turned off for this tab, as the strip's popover does.
+    pub(super) fn apply_tidewatch_clicks(
+        &mut self,
+        tab: u64,
+        clicks: Vec<Click>,
+        ctx: &egui::Context,
+        now: f64,
+    ) {
+        for click in clicks {
+            match click {
+                Click::ChangeWorkflow => self.open_updates_settings(),
+                Click::TurnOff(Switch::Auto(job)) => {
+                    let policy = self.pr.policy(tab).with(job, false);
+                    self.pr.set_policy(tab, policy, now);
+                    self.show_toast("Turned off for this tab. The PR strip turns it back on", ctx);
+                }
+                Click::TurnOff(Switch::DoneCheck) => {
+                    self.set_done_check(false);
+                    self.show_toast("Done check is off. Settings, General turns it back on", ctx);
+                }
+                Click::TurnOff(Switch::Comments) => {
+                    self.comments.set_off(tab, true);
+                    self.show_toast("Comment guard is off for this tab", ctx);
+                }
+            }
+        }
     }
 
     fn busy_now(&self, tab: u64, now: f64) -> Busy {
@@ -295,5 +335,19 @@ impl Tidewatch {
         let summary = self.pr.watch(active_id)?.summary()?;
         let (tone, word) = summary.headline()?;
         Some((tone, format!("PR #{} {word}", summary.number)))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tidewatch_core::sent::Record;
+
+    #[test]
+    fn every_kind_of_auto_fix_is_told_with_the_switch_of_its_own_job() {
+        for trigger in [Trigger::FailedChecks, Trigger::Reviews, Trigger::Conflicts] {
+            let record = Record::new(Reason::AutoFix, auto_because(trigger), "x", None);
+            assert_eq!(record.switch(), Some(Switch::Auto(trigger.job())), "{trigger:?}");
+        }
     }
 }

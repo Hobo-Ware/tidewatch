@@ -9,12 +9,16 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
 
+use crate::prefs::AutoJob;
+
 const KEPT: usize = 200;
 
-/// The `because` of each sender: a clause that reads after "Sent because". It starts in lower case,
+/// The `because` of each sender: a clause that reads after "Because". It starts in lower case,
 /// except for a feature name listed in `NAMED`.
 pub mod because {
-    pub const AUTO_FIX: &str = "Auto is on for this PR";
+    pub const AUTO_CHECKS: &str = "Auto fixes failed checks on this PR";
+    pub const AUTO_REVIEWS: &str = "Auto answers reviews on this PR";
+    pub const AUTO_CONFLICTS: &str = "Auto fixes conflicts on this PR";
     pub const AUTO_PUSH: &str = "Auto may ask the agent to open the pull request on this tab";
     pub const ASK_PR_CLICK: &str = "you asked the agent to open the pull request";
     pub const ASK_PUSH_OWN: &str =
@@ -36,8 +40,10 @@ pub mod because {
 
     pub const NAMED: [&str; 1] = ["Auto"];
 
-    pub const ALL: [&str; 18] = [
-        AUTO_FIX,
+    pub const ALL: [&str; 20] = [
+        AUTO_CHECKS,
+        AUTO_REVIEWS,
+        AUTO_CONFLICTS,
         AUTO_PUSH,
         ASK_PR_CLICK,
         ASK_PUSH_OWN,
@@ -95,14 +101,6 @@ impl Reason {
         }
     }
 
-    #[must_use]
-    pub fn noun(self) -> &'static str {
-        match self {
-            Self::AutoFix => "auto-fixes",
-            _ => "auto-sends",
-        }
-    }
-
     /// What a reminder of this reason says in the Reader's quiet line; `None` for a reason that
     /// changes what the agent does and keeps its card.
     #[must_use]
@@ -124,12 +122,52 @@ impl Reason {
         }
     }
 
+    /// The message was filled in from the repo's workflow profile, so the profile is what changes it.
+    #[must_use]
+    pub fn uses_workflow(self) -> bool {
+        matches!(self, Self::AutoFix | Self::AutoPush | Self::PullRequest)
+    }
+
     /// Told through a hook, so the transcript holds no user turn for it.
     #[must_use]
     pub fn timed(self) -> bool {
         matches!(self, Self::LedgerGuard | Self::Avatar)
     }
 }
+
+/// The setting that stops a kind of message, shown on the message's own row.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Switch {
+    Auto(AutoJob),
+    DoneCheck,
+    Comments,
+}
+
+impl Switch {
+    /// The button's words.
+    #[must_use]
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Auto(AutoJob::FailedChecks) => "Turn off for failed checks",
+            Self::Auto(AutoJob::Reviews) => "Turn off for reviews",
+            Self::Auto(AutoJob::Conflicts) => "Turn off for conflicts",
+            Self::Auto(AutoJob::Push) => "Turn off pushing",
+            Self::DoneCheck => "Turn off the done check",
+            Self::Comments => "Turn off the comment guard for this tab",
+        }
+    }
+}
+
+/// The reminders older versions sent, as the `because` they were saved with. Their rows leave no
+/// trace: the senders are gone, and so is the line in the Reader.
+const DROPPED: [&str; 6] = [
+    "this tab has not saved a progress report yet",
+    "you answered and the progress report should show it",
+    "this tab has no avatar yet",
+    "the report said working and nothing was reported for an hour",
+    "the agent kept working while its report went stale",
+    "the agent's last message asks something and its report has no needs_you",
+];
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Cap {
@@ -191,15 +229,41 @@ impl Record {
         !self.hand && self.reason.quiet_words().is_some()
     }
 
-    /// `Sent because Auto is on for this PR · 1 of 3 auto-fixes`.
+    /// `Because Auto fixes conflicts on this PR · 1 of 10`.
     #[must_use]
     pub fn footer(&self) -> String {
         match self.cap {
-            Some(Cap { n, max }) => {
-                format!("Sent because {} \u{b7} {n} of {max} {}", self.because, self.reason.noun())
-            }
-            None => format!("Sent because {}", self.because),
+            Some(Cap { n, max }) => format!("Because {} \u{b7} {n} of {max}", self.because),
+            None => format!("Because {}", self.because),
         }
+    }
+
+    /// The setting that stops this kind of message, when there is one. A message the user's own
+    /// click sent has none: the click was the choice.
+    #[must_use]
+    pub fn switch(&self) -> Option<Switch> {
+        if self.hand {
+            return None;
+        }
+        match self.reason {
+            Reason::AutoFix => [
+                (because::AUTO_CHECKS, AutoJob::FailedChecks),
+                (because::AUTO_REVIEWS, AutoJob::Reviews),
+                (because::AUTO_CONFLICTS, AutoJob::Conflicts),
+            ]
+            .into_iter()
+            .find_map(|(clause, job)| (self.because == clause).then_some(Switch::Auto(job))),
+            Reason::AutoPush => Some(Switch::Auto(AutoJob::Push)),
+            Reason::DoneCheck => Some(Switch::DoneCheck),
+            Reason::CommentGuard => Some(Switch::Comments),
+            _ => None,
+        }
+    }
+
+    /// A reminder an older version sent and no sender sends any more.
+    #[must_use]
+    pub fn dropped(&self) -> bool {
+        DROPPED.iter().any(|gone| self.because.contains(gone))
     }
 }
 
@@ -355,20 +419,20 @@ mod tests {
     #[test]
     fn the_footer_says_why_and_counts_a_capped_send() {
         let plain = record(Reason::DueToday, "x", 0);
-        assert_eq!(plain.footer(), "Sent because a rule fired");
+        assert_eq!(plain.footer(), "Because a rule fired");
         let capped = Record {
-            because: "Auto is on for this PR".into(),
-            cap: Some(Cap { n: 1, max: 3 }),
+            because: because::AUTO_CONFLICTS.into(),
+            cap: Some(Cap { n: 1, max: 10 }),
             ..record(Reason::AutoFix, "x", 0)
         };
-        assert_eq!(capped.footer(), "Sent because Auto is on for this PR \u{b7} 1 of 3 auto-fixes");
+        assert_eq!(capped.footer(), "Because Auto fixes conflicts on this PR \u{b7} 1 of 10");
         let sweep =
             Record { cap: Some(Cap { n: 2, max: 3 }), ..record(Reason::CommentGuard, "x", 0) };
-        assert!(sweep.footer().ends_with("2 of 3 auto-sends"));
+        assert!(sweep.footer().ends_with("\u{b7} 2 of 3"));
     }
 
     #[test]
-    fn every_because_reads_as_a_clause_after_sent_because() {
+    fn every_because_reads_as_a_clause_after_because() {
         for text in because::ALL {
             let first = text.chars().next().unwrap();
             let named = because::NAMED.iter().any(|name| text.starts_with(name));
@@ -377,7 +441,7 @@ mod tests {
         }
         assert_eq!(
             Record::new(Reason::LedgerGuard, because::LEDGER_STOP, "x", None).footer(),
-            "Sent because the progress report was not updated this turn"
+            "Because the progress report was not updated this turn"
         );
     }
 
@@ -439,5 +503,81 @@ mod tests {
         assert!(!Reason::AutoFix.timed());
         assert!(!Reason::MeeseeksCheck.timed());
         assert_eq!(Reason::MeeseeksCheck.tag(), "Meeseeks check");
+    }
+
+    #[test]
+    fn each_auto_fix_names_the_switch_that_stops_its_kind() {
+        let table = [
+            (Reason::AutoFix, because::AUTO_CHECKS, Some(Switch::Auto(AutoJob::FailedChecks))),
+            (Reason::AutoFix, because::AUTO_REVIEWS, Some(Switch::Auto(AutoJob::Reviews))),
+            (Reason::AutoFix, because::AUTO_CONFLICTS, Some(Switch::Auto(AutoJob::Conflicts))),
+            (Reason::AutoFix, "Auto is on for this PR", None),
+            (Reason::AutoPush, because::AUTO_PUSH, Some(Switch::Auto(AutoJob::Push))),
+            (Reason::DoneCheck, because::DONE_CHECK_OWN, Some(Switch::DoneCheck)),
+            (Reason::CommentGuard, because::COMMENTS, Some(Switch::Comments)),
+            (Reason::LedgerGuard, because::LEDGER_STOP, None),
+            (Reason::MeeseeksCheck, because::MEESEEKS, None),
+        ];
+        for (reason, why, want) in table {
+            assert_eq!(Record::new(reason, why, "x", None).switch(), want, "{reason:?} {why}");
+        }
+    }
+
+    #[test]
+    fn a_message_the_users_click_sent_has_no_switch() {
+        let clicked = Record {
+            hand: true,
+            ..Record::new(Reason::DoneCheck, because::DONE_CHECK_CLICK, "x", None)
+        };
+        assert_eq!(clicked.switch(), None);
+    }
+
+    #[test]
+    fn the_switch_words_name_what_they_stop() {
+        let table = [
+            (Switch::Auto(AutoJob::FailedChecks), "Turn off for failed checks"),
+            (Switch::Auto(AutoJob::Reviews), "Turn off for reviews"),
+            (Switch::Auto(AutoJob::Conflicts), "Turn off for conflicts"),
+            (Switch::Auto(AutoJob::Push), "Turn off pushing"),
+            (Switch::DoneCheck, "Turn off the done check"),
+            (Switch::Comments, "Turn off the comment guard for this tab"),
+        ];
+        for (switch, label) in table {
+            assert_eq!(switch.label(), label);
+        }
+    }
+
+    #[test]
+    fn the_workflow_words_sit_on_the_pull_request_messages_only() {
+        let table = [
+            (Reason::AutoFix, true),
+            (Reason::AutoPush, true),
+            (Reason::PullRequest, true),
+            (Reason::MeeseeksCheck, false),
+            (Reason::LedgerGuard, false),
+            (Reason::CommentGuard, false),
+            (Reason::DoneCheck, false),
+        ];
+        for (reason, want) in table {
+            assert_eq!(reason.uses_workflow(), want, "{reason:?}");
+        }
+    }
+
+    #[test]
+    fn a_reminder_an_older_version_sent_is_dropped_and_a_live_one_is_not() {
+        let gone = [
+            "this tab has not saved a progress report yet",
+            "you answered and the progress report should show it",
+            "this tab has no avatar yet",
+            "the report said working and nothing was reported for an hour",
+            "the agent kept working while its report went stale",
+            "the agent's last message asks something and its report has no needs_you",
+        ];
+        for why in gone {
+            assert!(Record::new(Reason::LedgerGuard, why, "x", None).dropped(), "{why}");
+        }
+        for why in because::ALL {
+            assert!(!Record::new(Reason::LedgerGuard, why, "x", None).dropped(), "{why}");
+        }
     }
 }

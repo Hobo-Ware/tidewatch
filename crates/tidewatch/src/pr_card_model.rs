@@ -57,6 +57,8 @@ pub(crate) enum CardAction {
     NotNow(u64),
     SendNow(u64),
     Cancel(u64),
+    /// Open the workflow the message was worded from.
+    ChangeWording,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -445,10 +447,13 @@ fn note_of(context: &Context<'_>, body: &Body) -> String {
     if context.handling == Handling::Paused {
         return format!("Auto paused after {} sends", send_cap(true));
     }
-    let queued = pr_prompt::ask_of(body)
-        .is_some_and(|(ask, _)| context.pending.iter().any(|p| p.message.ask.tag == ask.tag));
-    let verb = if queued { "Queued for" } else { "Sent to" };
-    format!("{verb} {}", context.profile)
+    let waiting = pr_prompt::ask_of(body)
+        .and_then(|(ask, _)| context.pending.iter().find(|p| p.message.ask.tag == ask.tag));
+    match waiting {
+        Some(pending) if pending.confirm => "Waiting for you to send it".to_owned(),
+        Some(_) => format!("Queued for {}", context.profile),
+        None => format!("Sent to {}", context.profile),
+    }
 }
 
 fn withheld(context: &Context<'_>, body: &Body) -> bool {
@@ -510,18 +515,26 @@ pub(crate) fn waiting_text(profile: &str, pending: &Pending) -> String {
     format!("Will ask {profile} to {} when it finishes this turn", pending.message.ask.phrase)
 }
 
-pub(crate) fn waiting_buttons(pending: &Pending) -> [Button; 2] {
-    [
-        Button {
-            label: "Send now".to_owned(),
-            primary: false,
-            action: CardAction::SendNow(pending.id),
-        },
-        Button {
-            label: "Cancel".to_owned(),
-            primary: false,
-            action: CardAction::Cancel(pending.id),
-        },
+/// What a first-of-its-kind message says above its exact text.
+pub(crate) fn confirm_lead(profile: &str, pending: &Pending) -> String {
+    format!(
+        "Auto's first {} message in this repo. Check what it says before it goes to {profile}.",
+        pending.message.trigger.word()
+    )
+}
+
+pub(crate) fn waiting_buttons(pending: &Pending) -> Vec<Button> {
+    let button = |label: &str, primary, action| Button { label: label.to_owned(), primary, action };
+    if pending.confirm {
+        return vec![
+            button("Send", true, CardAction::SendNow(pending.id)),
+            button("Change wording", false, CardAction::ChangeWording),
+            button("Cancel", false, CardAction::Cancel(pending.id)),
+        ];
+    }
+    vec![
+        button("Send now", false, CardAction::SendNow(pending.id)),
+        button("Cancel", false, CardAction::Cancel(pending.id)),
     ]
 }
 

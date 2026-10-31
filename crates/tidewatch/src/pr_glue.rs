@@ -4,6 +4,7 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
 
+use tidewatch_core::auto_seen;
 use tidewatch_core::github_hook::Hit;
 use tidewatch_core::paths::TidewatchPaths;
 use tidewatch_core::pr_cards::Cards;
@@ -71,11 +72,23 @@ pub(crate) struct Host {
     tools: Tools,
     saver: Saver,
     dev: Dev,
+    /// The kinds of Auto message each repo showed its owner once, read at the first look.
+    shown: Option<auto_seen::Store>,
+    shown_changed: bool,
 }
 
 impl Host {
     pub(crate) fn new(tools: Tools, default: GithubPrefs, dev: Dev) -> Self {
-        Self { jobs: Jobs::new(), tabs: HashMap::new(), default, tools, saver: Saver::new(), dev }
+        Self {
+            jobs: Jobs::new(),
+            tabs: HashMap::new(),
+            default,
+            tools,
+            saver: Saver::new(),
+            dev,
+            shown: None,
+            shown_changed: false,
+        }
     }
 
     pub(crate) fn default_prefs(&self) -> GithubPrefs {
@@ -146,6 +159,12 @@ impl Host {
         now_ms: i64,
     ) -> (Vec<Applied>, Option<f64>) {
         self.tabs.retain(|id, _| facts.iter().any(|f| f.id == *id));
+        let shown = self.shown.get_or_insert_with(|| auto_seen::Store::load(paths)).clone();
+        if std::mem::take(&mut self.shown_changed)
+            && let Err(e) = shown.save(paths)
+        {
+            eprintln!("tidewatch: cannot save auto-seen.toml: {e}");
+        }
         let mut applied = Vec::new();
         let mut wake: Option<f64> = None;
         for fact in facts {
@@ -169,6 +188,7 @@ impl Host {
             watch.set_live(fact.live, now);
             watch.autonomous = fact.autonomous;
             watch.workflow = fact.workflow;
+            watch.learn_shown(shown.get(fact.repo));
             watch.see_busy(fact.busy, now);
             if watch.take_load() {
                 pr_jobs::load(&self.jobs, ctx, fact.id, watch.file.clone());
@@ -337,6 +357,12 @@ impl Host {
         let Some(watch) = self.tabs.get_mut(&tab) else { return Vec::new() };
         let outs =
             watch.send_now(pending, now, now_ms).unwrap_or_else(|reason| vec![Out::Toast(reason)]);
+        if let Some(store) = &mut self.shown
+            && store.get(&watch.repo) != watch.shown
+        {
+            store.set(&watch.repo, watch.shown);
+            self.shown_changed = true;
+        }
         self.finish(tab, outs)
     }
 
