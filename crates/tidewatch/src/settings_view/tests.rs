@@ -128,7 +128,7 @@ struct Harness {
     resume: ResumeAgents,
     login_offered: bool,
     esc_closes: bool,
-    skipped: bool,
+    tweak: Option<fn(&mut General)>,
     painted: Vec<(String, Rect)>,
 }
 
@@ -147,7 +147,7 @@ impl Harness {
             resume: ResumeAgents::Auto,
             login_offered: false,
             esc_closes: true,
-            skipped: false,
+            tweak: None,
             painted: Vec::new(),
         }
     }
@@ -158,7 +158,9 @@ impl Harness {
         let probes =
             Probes::from([("claude".to_owned(), Availability::Found(Some("2.1.0".into())))]);
         let mut general = general(self.restore, self.resume, self.login_offered);
-        general.skipped_by_flag = self.skipped;
+        if let Some(tweak) = self.tweak {
+            tweak(&mut general);
+        }
         let (files, trust) = (files(), trust_page());
         let host = Host {
             files: &files,
@@ -507,7 +509,7 @@ fn the_profiles_page_title_starts_where_every_other_pages_does() {
 #[test]
 fn a_run_without_restore_says_so_in_a_note_under_the_startup_card_not_as_a_row() {
     let mut harness = Harness::new(Section::General);
-    harness.skipped = true;
+    harness.tweak = Some(|general| general.skipped_by_flag = true);
     for _ in 0..3 {
         harness.frame(vec![]);
     }
