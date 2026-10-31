@@ -16,6 +16,9 @@
 //! - `TIDEWATCH_DEV_QUESTION=<steps>`: drive the live question card, one step every 0.4 s once it
 //!   shows. Steps, comma separated: `pick<N>` (the number key), `next`, `back`, `space`, `down`,
 //!   `all` (Go with your picks), `type:<text>` ("Something else" with that text), `send`, `skip`.
+//! - `TIDEWATCH_DEV_SEE=rows,confirm`: give the first agent tab a short chat with Tidewatch's own rows
+//!   (an Auto fix with its why and switch, a live reminder, an old reminder that must not show) and,
+//!   with `confirm`, a conflict message waiting for the first Send of its kind, for captures.
 //! - `TIDEWATCH_DEV_AUTOPICK_SECS=<seconds>`: how long a question waits in a tab that runs on its own
 //!   before Tidewatch answers it (default five minutes).
 
@@ -93,6 +96,7 @@ pub(crate) struct DevReader {
     notes_only: bool,
     scroll_up: Option<(f32, f64)>,
     digit: Option<(egui::Key, char, f64)>,
+    see: Option<String>,
 }
 
 fn digit_of(text: &str) -> Option<(egui::Key, char, f64)> {
@@ -121,7 +125,8 @@ impl DevReader {
             .unwrap_or_default();
         let scroll_up = var("TIDEWATCH_DEV_READER_SCROLL").and_then(|text| scroll_of(&text));
         let digit = var("TIDEWATCH_DEV_PICK").and_then(|text| digit_of(&text));
-        Self { pictures, open_turns, notes_only, scroll_up, digit, ..parsed }
+        let see = var("TIDEWATCH_DEV_SEE").filter(|what| !what.is_empty());
+        Self { pictures, open_turns, notes_only, scroll_up, digit, see, ..parsed }
     }
 
     fn parse(
@@ -140,6 +145,7 @@ impl DevReader {
             notes_only: false,
             scroll_up: None,
             digit: None,
+            see: None,
             raw: reader == Some("raw"),
             key_after: key.and_then(|s| s.parse().ok()),
             answer: match answer {
@@ -151,6 +157,15 @@ impl DevReader {
                 .filter(|r| !r.is_empty())
                 .map(|r| (r.to_owned(), reply_after.and_then(|s| s.parse().ok()).unwrap_or(0.0))),
         }
+    }
+
+    /// What `TIDEWATCH_DEV_SEE` asks for, until it was done.
+    pub(crate) fn see(&self) -> Option<&str> {
+        self.see.as_deref()
+    }
+
+    pub(crate) fn seen(&mut self) {
+        self.see = None;
     }
 
     #[cfg(test)]

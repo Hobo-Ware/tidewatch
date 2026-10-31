@@ -2002,14 +2002,10 @@ mod tests {
     fn a_card_for_a_question_tidewatch_answered_sits_in_needs_you_with_a_review_button() {
         let mut working = row(3, "busy", "acme-web", AgentStatus::Working);
         working.tone = Tone::Needs;
-        working.picked =
-            Some("Tidewatch picked \"On the stage\" for you. Open the tab to review it".into());
+        working.picked = Some("Tidewatch picked \"On the stage\" for you".into());
         let mut screen = Screen::new(overview(vec![working]));
         let texts = screen.texts();
-        assert!(
-            has(&texts, "Tidewatch picked \"On the stage\" for you. Open the tab to review it"),
-            "{texts:?}"
-        );
+        assert!(has(&texts, "Tidewatch picked \"On the stage\" for you"), "{texts:?}");
         assert!(has(&texts, "Review") && !has(&texts, "Answer"), "{texts:?}");
     }
 

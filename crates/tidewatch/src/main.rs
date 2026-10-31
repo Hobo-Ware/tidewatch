@@ -53,6 +53,7 @@ mod dev_link;
 mod dev_panes;
 mod dev_reader;
 mod dev_screenshot;
+mod dev_see;
 mod dev_session;
 mod dev_takeover;
 mod dev_view;

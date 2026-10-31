@@ -103,6 +103,7 @@ fn host() -> Host {
         tabs: HashMap::new(),
         jobs: Jobs::new(),
         fake: false,
+        fake_yours: false,
         popover: false,
         home: None,
         wall_ms,

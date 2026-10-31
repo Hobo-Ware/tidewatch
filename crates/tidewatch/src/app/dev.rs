@@ -89,6 +89,32 @@ impl Tidewatch {
         }
     }
 
+    /// `TIDEWATCH_DEV_SEE=rows,confirm`: a short chat with Tidewatch's own rows in the first agent
+    /// tab, and a conflict message waiting for its first Send once that tab's watch exists.
+    pub(super) fn drive_dev_see(&mut self) {
+        let Some(what) = self.dev_reader.see().map(str::to_owned) else { return };
+        let Some(id) = self.tabs.items().iter().find_map(|tab| {
+            (tab.pane.agent.is_some() && matches!(tab.pane.body, Body::Shell(_))).then_some(tab.id)
+        }) else {
+            return;
+        };
+        let confirm = what.split(',').any(|part| part.trim() == "confirm");
+        if confirm
+            && !self
+                .pr
+                .dev_pending(id, tidewatch_core::pr_status::Body::Conflict { base: "main".into() })
+        {
+            return;
+        }
+        if what.split(',').any(|part| part.trim() == "rows")
+            && let Some(agent) = self.tabs.get_mut(id).and_then(|tab| tab.pane.agent.as_mut())
+        {
+            crate::dev_see::seed(&mut agent.reader.rows, super::wall_ms() as i64);
+            agent.reader.dev_found();
+        }
+        self.dev_reader.seen();
+    }
+
     pub(super) fn drive_dev_draft(&mut self, ctx: &egui::Context, now: f64) {
         let Some(draft) = self.dev_draft.take() else { return };
         let waiting = self.tabs.items().iter().rev().find_map(|tab| {
