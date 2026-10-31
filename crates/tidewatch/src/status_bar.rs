@@ -320,7 +320,7 @@ pub(crate) fn show(ui: &mut Ui, rect: Rect, bar: &Bar) -> Clicks {
             put(pos2(hints_left, y), Align2::RIGHT_CENTER, &hint.keys, mono(FONT), brand::SOFT);
         hints_left -= GAP;
     }
-    let cancel_w = button_width(ui, "Cancel", Size::Compact);
+    let cancel_w = button_width(ui, "Cancel", Size::Tag);
     let mut cancels = Vec::new();
     if let Some(text) = &bar.switching {
         x += put(pos2(x, y), Align2::LEFT_CENTER, text, body(FONT), brand::TEAL_TEXT) + 10.0;
@@ -340,15 +340,15 @@ pub(crate) fn show(ui: &mut Ui, rect: Rect, bar: &Bar) -> Clicks {
     }
     for (which, at) in cancels {
         let slot = Rect::from_min_size(
-            pos2(at, y - Size::Compact.height() / 2.0),
-            vec2(cancel_w, Size::Compact.height()),
+            pos2(at, y - Size::Tag.height() / 2.0),
+            vec2(cancel_w, Size::Tag.height()),
         );
         let cancel = ui.scope_builder(
             UiBuilder::new()
                 .id_salt(("status-bar-cancel", y.to_bits(), at.to_bits()))
                 .max_rect(slot)
                 .layout(Layout::left_to_right(Align::Center)),
-            |ui| quiet_button(ui, "Cancel", true, Size::Compact),
+            |ui| quiet_button(ui, "Cancel", true, Size::Tag),
         );
         if cancel.inner.clicked() {
             match which {
@@ -675,5 +675,30 @@ mod tests {
         assert_eq!(count(&texts, "Switching fix-ci when its turn ends"), 1, "{texts:?}");
         assert_eq!(count(&texts, "git worktree add is taking long \u{b7} 14 s"), 0, "{texts:?}");
         assert_eq!(count(&texts, "Cancel"), 1, "{texts:?}");
+    }
+
+    #[test]
+    fn a_cancel_in_the_bar_is_a_tag_tall_button_that_fits_inside_it() {
+        let ctx = context();
+        let both = bar_with(Some("fix-ci"), Some(slow_line(14, 0)));
+        let raw = egui::RawInput {
+            screen_rect: Some(Rect::from_min_size(pos2(0.0, 0.0), vec2(1600.0, 120.0))),
+            focused: true,
+            ..egui::RawInput::default()
+        };
+        let out = ctx.run_ui(raw, |ui| {
+            let rect = Rect::from_min_size(pos2(0.0, 0.0), vec2(1600.0, HEIGHT));
+            show(ui, rect, &both);
+        });
+        let mut heights = Vec::new();
+        for clipped in &out.shapes {
+            if let egui::Shape::Rect(rect) = &clipped.shape
+                && rect.rect.width() > 40.0
+            {
+                heights.push(rect.rect.height());
+            }
+        }
+        assert_eq!(heights, vec![Size::Tag.height(); 2]);
+        assert!(Size::Tag.height() < HEIGHT);
     }
 }
