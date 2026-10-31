@@ -17,7 +17,7 @@ use crate::screen_kit::{
 };
 use crate::settings_ui::{
     self, Control, FAINT, MUTED, TEXT, button, button_width, disclosure, divider, footer_note,
-    note, page_header, row_with, section,
+    note, page_header, path_line, row_with, section,
 };
 
 const LINE_H: f32 = 36.0;
@@ -262,7 +262,7 @@ pub(crate) fn settings_page(ui: &mut egui::Ui, page: &Page, file: &str) -> Optio
                     "Answer \"do you trust this folder?\" once for the folders Tidewatch creates.",
                     MUTED,
                 );
-                ui.label(RichText::new(page.root).monospace().size(TEXT_TAG).color(FAINT));
+                path_line(ui, page.root, (TEXT_TAG, FAINT), ui.available_width());
                 if page.added > 0 {
                     note(ui, &format!("{} entries added by Tidewatch", page.added), MUTED);
                 }

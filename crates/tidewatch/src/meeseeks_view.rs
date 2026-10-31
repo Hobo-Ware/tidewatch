@@ -9,7 +9,7 @@ use egui::{
 use crate::brand;
 use crate::meeseeks_model::{Card, Look, STRUGGLE_BODY, Span, Struggling};
 use crate::reader_view::ellipsized;
-use crate::screen_kit::{Size, body, heading, mono, quiet_button};
+use crate::screen_kit::{Size, body, heading, quiet_button};
 use crate::selectable;
 
 const RADIUS: u8 = 12;
@@ -84,7 +84,7 @@ fn frame(ui: &Ui, rect: Rect, fill: Color32, line: Color32) {
 fn stage_card(ui: &mut Ui, width: f32, card: &Card, placed: &mut Placed) {
     let inner = (width - 2.0 * PAD).max(1.0);
     let painter = ui.painter().clone();
-    let meta = painter.layout_no_wrap(card.meta.clone(), mono(12.0), brand::MUTED);
+    let meta = painter.layout_no_wrap(card.meta.clone(), body(12.0), brand::MUTED);
     let title =
         ellipsized(&painter, &card.title, heading(14.0), brand::TEXT, inner - meta.size().x - 10.0);
     let bar_w = (inner - 3.0 * BAR_GAP) / 4.0;

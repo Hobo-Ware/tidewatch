@@ -265,3 +265,60 @@ fn up_to_five_short_options_share_one_segmented_control_and_more_wrap_as_chips()
         assert!(!fits_inline(ui, &wide));
     });
 }
+
+const LONG: &str = "/Users/dev/.config/tidewatch/projects/acme-web/worktrees/house-style.md";
+
+#[test]
+fn a_path_stays_on_one_line_with_its_file_name_and_the_home_folder_as_a_tilde() {
+    let home = std::env::var_os("HOME").map(std::path::PathBuf::from);
+    let under_home = home.as_ref().map(|home| home.join(".config/tidewatch/house-style.md"));
+    if let Some(path) = under_home {
+        assert_eq!(shown_path(&path.display().to_string()), "~/.config/tidewatch/house-style.md");
+    }
+    assert_eq!(shown_path("/etc/tidewatch.toml"), "/etc/tidewatch.toml");
+    let ctx = crate::fonts::test_context();
+    for room in [120.0, 260.0, 600.0] {
+        let mut rows = 0;
+        let mut width = 0.0;
+        for _ in 0..2 {
+            let _ = ctx.run_ui(raw(vec![]), |ui| {
+                let before = ui.min_rect().height();
+                path_line(ui, LONG, (12.0, FAINT), room);
+                rows = ((ui.min_rect().height() - before) / 14.0).round() as usize;
+                width = ui.min_rect().width();
+            });
+        }
+        assert_eq!(rows, 1, "{room}");
+        assert!(width <= room + 0.5, "{room}: {width}");
+    }
+}
+
+#[test]
+fn a_path_with_a_copy_button_leaves_the_button_its_room() {
+    assert_eq!(path_room(500.0, 50.0), 442.0);
+    assert_eq!(path_room(30.0, 50.0), 0.0);
+}
+
+#[test]
+fn the_copy_button_puts_the_whole_path_on_the_clipboard() {
+    let ctx = crate::fonts::test_context();
+    let frame = |ui: &mut Ui| path_with_copy(ui, LONG, (13.0, FAINT));
+    warm(&ctx, frame);
+    warm(&ctx, frame);
+    let mut copied = Vec::new();
+    for events in [
+        vec![Event::PointerMoved(pos2(880.0, 20.0))],
+        vec![press(pos2(880.0, 20.0), true)],
+        vec![press(pos2(880.0, 20.0), false)],
+    ] {
+        let out = ctx.run_ui(raw(events), |ui| {
+            ui.set_width(900.0);
+            frame(ui);
+        });
+        copied.extend(out.platform_output.commands.iter().filter_map(|command| match command {
+            egui::OutputCommand::CopyText(text) => Some(text.clone()),
+            _ => None,
+        }));
+    }
+    assert_eq!(copied, [LONG]);
+}

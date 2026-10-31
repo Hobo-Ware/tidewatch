@@ -78,9 +78,52 @@ pub(crate) fn header_at(
     title
 }
 
+const COPY_GAP: f32 = 8.0;
+
+/// `path` for the screen: the home folder as `~`.
+pub(crate) fn shown_path(path: &str) -> String {
+    let home = std::env::var_os("HOME").map(std::path::PathBuf::from);
+    tidewatch_core::folder_repos::tilde(std::path::Path::new(path), home.as_deref())
+}
+
+/// A path on one line in `room`: `~` for the home folder, cut in the middle with an ellipsis so the
+/// file name stays, the whole path as its tooltip.
+pub(crate) fn path_line(ui: &mut Ui, path: &str, (size, ink): (f32, Color32), room: f32) {
+    let font = FontId::monospace(size);
+    let painter = ui.painter();
+    let width = |text: &str| painter.layout_no_wrap(text.to_owned(), font.clone(), ink).size().x;
+    let text = crate::middle_cut::middle_cut(&shown_path(path), room, &width);
+    let galley = painter.layout_no_wrap(text, font.clone(), ink);
+    let (rect, _) = ui.allocate_exact_size(vec2(room, galley.size().y), Sense::hover());
+    crate::selectable::galley(ui, rect.min, galley, ink).on_hover_text(path);
+}
+
+/// What `path_with_copy` leaves for the path next to its Copy button.
+pub(crate) fn path_room(total: f32, copy_w: f32) -> f32 {
+    (total - copy_w - COPY_GAP).max(0.0)
+}
+
+/// A path that stands alone: `path_line` and a Copy button at the right edge that puts the whole
+/// path on the clipboard.
+pub(crate) fn path_with_copy(ui: &mut Ui, path: &str, (size, ink): (f32, Color32)) {
+    let copy_w = screen_kit::button_width(ui, "Copy", Size::Compact);
+    let (row, _) =
+        ui.allocate_exact_size(vec2(ui.available_width(), Size::Compact.height()), Sense::hover());
+    let room = path_room(row.width(), copy_w);
+    let mut text =
+        ui.new_child(UiBuilder::new().max_rect(row).layout(Layout::left_to_right(Align::Center)));
+    path_line(&mut text, path, (size, ink), room);
+    let mut copy =
+        ui.new_child(UiBuilder::new().max_rect(row).layout(Layout::right_to_left(Align::Center)));
+    if quiet_button(&mut copy, "Copy", true, Size::Compact).on_hover_text("Copy the path").clicked()
+    {
+        ui.ctx().copy_text(path.to_owned());
+    }
+}
+
 pub(crate) fn footer_note(ui: &mut Ui, text: &str) {
     ui.add_space(SECTION_GAP);
-    ui.label(RichText::new(text).monospace().size(13.0).color(FAINT));
+    path_with_copy(ui, text, (TEXT_SECONDARY, FAINT));
 }
 
 pub(crate) fn section<R>(ui: &mut Ui, title: &str, add: impl FnOnce(&mut Ui) -> R) -> R {

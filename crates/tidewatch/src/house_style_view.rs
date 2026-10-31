@@ -6,10 +6,11 @@ use tidewatch_core::dead_tools::DeadLine;
 use crate::screen_kit::Size;
 use crate::screen_kit::TEXT_BODY;
 use crate::settings_ui::{
-    Control, FAINT, MUTED, TEXT, Tone, button, caption, page_header, row_with, section,
+    Control, FAINT, MUTED, TEXT, Tone, button, caption, page_header, path_line, row_with, section,
 };
 use crate::settings_view::Action;
 
+const COPY_GAP: f32 = 8.0;
 const ARMED: &str = "Click again to reset";
 const REMOVE_ARMED: &str = "Click again to remove";
 
@@ -19,16 +20,28 @@ pub(crate) fn page(ui: &mut Ui, file: &str, dead: &[DeadLine]) -> Option<Action>
     section(ui, "Your file", |ui| {
         row_with(
             ui,
-            Control::button(ui, "Open in editor", Size::Compact),
+            Control::new(
+                Control::button(ui, "Open in editor", Size::Compact).width
+                    + Control::button(ui, "Copy", Size::Compact).width
+                    + COPY_GAP,
+                Size::Compact.height(),
+            ),
             |ui| {
                 ui.spacing_mut().item_spacing.y = 3.0;
                 ui.label(RichText::new("house-style.md").size(TEXT_BODY).color(TEXT));
-                ui.label(RichText::new(file).monospace().size(12.0).color(FAINT));
+                path_line(ui, file, (12.0, FAINT), ui.available_width());
             },
             |ui| {
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                     if button(ui, "Open in editor", Tone::Quiet, Size::Compact).clicked() {
                         action = Some(Action::OpenHouseStyle);
+                    }
+                    ui.add_space(COPY_GAP - ui.spacing().item_spacing.x);
+                    if button(ui, "Copy", Tone::Quiet, Size::Compact)
+                        .on_hover_text("Copy the path")
+                        .clicked()
+                    {
+                        ui.ctx().copy_text(file.to_owned());
                     }
                 });
             },

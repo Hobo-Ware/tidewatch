@@ -201,7 +201,8 @@ fn poofed_today(ui: &mut Ui, width: f32, rows: &[PoofedRow], state: &mut State) 
             painter.rect_filled(line, CornerRadius::same(6), brand::ITEM);
         }
         let outcome_ink = if row.outcome == "answered" { brand::MUTED } else { brand::TEAL_TEXT };
-        let took = painter.layout_no_wrap(row.took.clone(), FontId::monospace(12.0), brand::MUTED);
+        let took =
+            painter.layout_no_wrap(row.took.clone(), FontId::proportional(12.0), brand::MUTED);
         let outcome =
             painter.layout_no_wrap(row.outcome.clone(), FontId::proportional(12.0), outcome_ink);
         let right = line.right() - 6.0;
