@@ -21,7 +21,7 @@ use crate::pane::{Body, Pane};
 use crate::pty::{spawn_agent, spawn_shell_noted, spawn_typed};
 use crate::repo::Workspace;
 use crate::restore_glue::{Spawn, reopened};
-use crate::retarget::{Home, Landing, Subject, Window, home, is_inside, same_folder};
+use crate::retarget::{Home, Landing, Subject, Target, Window, home, is_inside, same_folder};
 use crate::retarget_glue::{DevOpen, Open};
 use crate::retarget_jobs::{self, Done, LookKey, LookSpec, Request, Retargeted};
 use crate::shell_agents::{EVERY_S, FAKE_SESSION, Probe, Remembered};
@@ -29,6 +29,7 @@ use crate::tabs::{Action, MAIN_TITLE, Tab};
 use crate::takeover::END_WAIT_S;
 use crate::welcome::shown_path;
 
+const DEV_WAIT_S: f64 = 1.0e6;
 const NOT_READY: &str = "Profiles are still loading.";
 
 fn is_shell(pane: &Pane<PtyTerm>) -> bool {
@@ -99,27 +100,48 @@ impl Tidewatch {
         self.drive_dev_change_tab(now, ctx);
     }
 
+    fn tab_label(&self, id: u64) -> String {
+        self.tabs.items().iter().find(|tab| tab.id == id).map_or_else(String::new, |tab| {
+            crate::tab_title::label(tab.pane.agent.as_ref(), &tab.title)
+        })
+    }
+
+    /// The change the status bar offers to cancel: the active tab's if it waits, else the oldest.
+    pub(super) fn switching_line(&self) -> Option<(u64, String)> {
+        let held = self.retarget.waiting.held(&self.retarget.busy);
+        let active = self.tabs.items().get(self.tabs.active()).map(|tab| tab.id);
+        let tab = active.filter(|id| held.contains(id)).or_else(|| held.first().copied())?;
+        self.tabs.index_of(tab)?;
+        Some((tab, crate::status_bar::switching_text(&self.tab_label(tab))))
+    }
+
+    pub(super) fn cancel_switch(&mut self, tab: u64) {
+        self.retarget.waiting.remove(tab);
+    }
+
     fn first_shell_tab(&self) -> Option<u64> {
         let shells = || self.tabs.items().iter().filter(|tab| is_shell(&tab.pane));
         shells().find(|tab| !tab.pinned).or_else(|| shells().next()).map(|tab| tab.id)
     }
 
     fn retry_waiting(&mut self, now: f64, ctx: &egui::Context) {
-        let due: Vec<Change> = self
-            .retarget
-            .waiting
-            .values()
-            .filter(|(change, at)| *at <= now && !self.retarget.busy.contains(&change.tab))
-            .map(|(change, _)| change.clone())
-            .collect();
-        for change in due {
+        for tab in self.retarget.waiting.take_expired(now, &self.retarget.busy) {
+            if self.tabs.index_of(tab).is_some() {
+                let title = self.tab_label(tab);
+                self.show_toast(
+                    format!("{title} was not switched: its turn had not ended after an hour"),
+                    ctx,
+                );
+            }
+        }
+        for change in self.retarget.waiting.due(now, &self.retarget.busy) {
             if self.tabs.index_of(change.tab).is_none() {
-                self.retarget.waiting.remove(&change.tab);
+                self.retarget.waiting.remove(change.tab);
             } else {
                 self.start_retarget(change, now, ctx);
             }
         }
-        if let Some(next) = self.retarget.waiting.values().map(|(_, at)| *at).reduce(f64::min) {
+        if let Some(next) = self.retarget.waiting.next_retry() {
             ctx.request_repaint_after(Duration::from_secs_f64((next - now).max(0.25)));
         }
     }
@@ -368,7 +390,7 @@ impl Tidewatch {
             .filter(|looked| self.look_key(change.tab).as_ref() == Some(&looked.key))
             .and_then(|looked| looked.name.clone());
         let spare_tab = subject.pinned.then(|| self.tabs.reserve_id());
-        self.retarget.waiting.insert(change.tab, (change.clone(), now + EVERY_S));
+        self.retarget.waiting.hold(change.clone(), now + EVERY_S, now);
         let installed = profiles.agent_table().found_on_path(Some(&self.catalog.path));
         let remembered = self
             .retarget
@@ -404,20 +426,18 @@ impl Tidewatch {
             }
             Done::Held { tab } => {
                 self.retarget.busy.remove(&tab);
-                if let Some((_, at)) = self.retarget.waiting.get_mut(&tab) {
-                    *at = now + EVERY_S;
-                }
+                self.retarget.waiting.retry_at(tab, now + EVERY_S);
                 ctx.request_repaint_after(Duration::from_secs_f64(EVERY_S));
             }
             Done::Failed { tab, failure } => {
                 self.retarget.busy.remove(&tab);
-                self.retarget.waiting.remove(&tab);
+                self.retarget.waiting.remove(tab);
                 self.show_toast(failure.text(), ctx);
             }
             Done::Retargeted(landed) => match *landed {
                 Retargeted::Agent { mut opened, landing, note, from } => {
                     self.retarget.busy.remove(&from);
-                    self.retarget.waiting.remove(&from);
+                    self.retarget.waiting.remove(from);
                     self.retarget.agents.forget(from);
                     self.retarget.looks.remove(&from);
                     let base_note =
@@ -441,7 +461,7 @@ impl Tidewatch {
                 }
                 Retargeted::Shell { tab, remembered } => {
                     self.retarget.busy.remove(&tab);
-                    self.retarget.waiting.remove(&tab);
+                    self.retarget.waiting.remove(tab);
                     self.swap_to_shell(
                         tab,
                         remembered.map(|(cli, session_id)| Remembered { cli, session_id }),
@@ -545,6 +565,16 @@ impl Tidewatch {
 
     fn drive_dev_change_tab(&mut self, now: f64, ctx: &egui::Context) {
         let Some(dev) = self.retarget.dev_open else { return };
+        if dev == DevOpen::Waiting {
+            let Some(tab) = self.tabs.items().iter().find(|tab| !tab.pinned).map(|tab| tab.id)
+            else {
+                return;
+            };
+            self.retarget.dev_open = None;
+            let change = Change { tab, target: Target::Shell, interrupt: false };
+            self.retarget.waiting.hold(change, now + DEV_WAIT_S, now);
+            return;
+        }
         let found = match dev {
             DevOpen::Elsewhere | DevOpen::ElsewhereChange => self.elsewhere_tab(),
             DevOpen::Agent => self
@@ -554,6 +584,7 @@ impl Tidewatch {
                 .find(|tab| !tab.pinned && is_agent_tab(&tab.pane))
                 .map(|tab| tab.id),
             DevOpen::Home | DevOpen::HomeChange => self.first_shell_tab(),
+            DevOpen::Waiting => None,
             DevOpen::Shell => self
                 .tabs
                 .items()
