@@ -97,6 +97,8 @@ pub(crate) struct AgentRun {
     title_seen: Option<String>,
     goal: Option<String>,
     reported: Option<State>,
+    /// What Tidewatch answered for the owner and the owner has not looked at yet.
+    picked: Option<String>,
     detail: Option<String>,
     end_block: Option<EndBlock>,
     failed: Option<String>,
@@ -146,6 +148,7 @@ impl AgentRun {
             title_seen: None,
             goal: None,
             reported: None,
+            picked: None,
             detail: None,
             end_block: None,
             failed: None,
@@ -410,9 +413,29 @@ impl AgentRun {
         self.reported
     }
 
-    /// The one tone every screen shows for this tab.
+    /// The one tone every screen shows for this tab. A tab Tidewatch answered a question for stays
+    /// in Needs you until its owner opens it, so a guess is never filed as the owner's decision.
     pub(crate) fn shown_tone(&self) -> crate::status_view::Tone {
-        crate::status_view::shown(&self.status, self.reported)
+        use crate::status_view::Tone;
+        let tone = crate::status_view::shown(&self.status, self.reported);
+        match tone {
+            Tone::Working | Tone::Done | Tone::Waiting if self.picked.is_some() => Tone::Needs,
+            _ => tone,
+        }
+    }
+
+    /// Tidewatch answered a question for the owner; `line` says what it picked.
+    pub(crate) fn pick_made(&mut self, line: String) {
+        self.picked = Some(line);
+    }
+
+    /// The owner opened the tab.
+    pub(crate) fn pick_reviewed(&mut self) {
+        self.picked = None;
+    }
+
+    pub(crate) fn pick_to_review(&self) -> Option<&str> {
+        self.picked.as_deref()
     }
 
     pub(crate) fn set_goal(&mut self, goal: Option<&str>) {
@@ -874,6 +897,32 @@ mod tests {
         assert_eq!(run.shown_tone(), Tone::Needs);
         run.set_reported(None);
         run.status = AgentStatus::Done;
+        assert_eq!(run.shown_tone(), Tone::Done);
+    }
+
+    #[test]
+    fn a_tab_tidewatch_answered_for_stays_in_needs_you_until_its_owner_opens_it() {
+        use crate::status_view::Tone;
+        let mut run = AgentRun::setting_up("claude".into(), 0.0);
+        run.pick_made("Tidewatch picked \"A\" for you. Open the tab to review it".into());
+        let table = [
+            (AgentStatus::Working, None, Tone::Needs),
+            (AgentStatus::Done, None, Tone::Needs),
+            (AgentStatus::Done, Some(State::Waiting), Tone::Needs),
+            (AgentStatus::SettingUp, None, Tone::Setup),
+            (AgentStatus::Stopped, None, Tone::Stopped),
+            (AgentStatus::Failed("exit 1".into()), None, Tone::Failed),
+        ];
+        for (status, reported, want) in table {
+            run.status = status.clone();
+            run.set_reported(reported);
+            assert_eq!(run.shown_tone(), want, "{status:?} {reported:?}");
+        }
+        run.status = AgentStatus::Done;
+        run.set_reported(None);
+        assert!(run.pick_to_review().is_some());
+        run.pick_reviewed();
+        assert_eq!(run.pick_to_review(), None);
         assert_eq!(run.shown_tone(), Tone::Done);
     }
 

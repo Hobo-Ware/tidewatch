@@ -130,6 +130,7 @@ fn row(id: u64, spec: &Spec) -> Row {
             .flatten(),
         kind: spec.kind.clone(),
         auto_pick: None,
+        picked: None,
         idle_secs: spec.mins * 60.0,
         next: None,
         stamp: Stamp::default(),

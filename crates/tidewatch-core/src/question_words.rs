@@ -25,6 +25,21 @@ pub fn picked_for_you(questions: &[Question], given: &[Given], minutes: u64) -> 
     format!("{lead}\n\n{}", answer_text(questions, given))
 }
 
+/// What a card says about the answers Tidewatch picked while the owner was away.
+#[must_use]
+pub fn pick_review_line(questions: &[Question], given: &[Given]) -> String {
+    match (questions, given) {
+        ([question], [given]) => format!(
+            "Tidewatch picked \"{}\" for you. Open the tab to review it",
+            answer_line(question, given)
+        ),
+        _ => format!(
+            "Tidewatch picked answers to {} questions for you. Open the tab to review them",
+            questions.len()
+        ),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -69,6 +84,22 @@ mod tests {
             picked_for_you(&questions, &given, 1),
             "Tidewatch picked these answers for you after 1 minute. The user may change them.\n\n\
              Q: First?\nA: a\n\nQ: Second?\nA: d"
+        );
+    }
+
+    #[test]
+    fn the_card_line_names_the_pick_or_counts_the_questions() {
+        let one = [question("Where?", &["On the stage", "On the run"])];
+        let first = [Given { picked: vec![0], other: None }];
+        assert_eq!(
+            pick_review_line(&one, &first),
+            "Tidewatch picked \"On the stage\" for you. Open the tab to review it"
+        );
+        let two = [question("A?", &["a", "b"]), question("B?", &["c", "d"])];
+        let both = [Given { picked: vec![0], other: None }, Given { picked: vec![1], other: None }];
+        assert_eq!(
+            pick_review_line(&two, &both),
+            "Tidewatch picked answers to 2 questions for you. Open the tab to review them"
         );
     }
 }

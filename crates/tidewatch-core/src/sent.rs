@@ -20,6 +20,7 @@ pub mod because {
     pub const AUTO_REVIEWS: &str = "Auto answers reviews on this PR";
     pub const AUTO_CONFLICTS: &str = "Auto fixes conflicts on this PR";
     pub const AUTO_PUSH: &str = "Auto may ask the agent to open the pull request on this tab";
+    pub const AUTO_PICK: &str = "nobody answered its question in 5 minutes";
     pub const ASK_PR_CLICK: &str = "you asked the agent to open the pull request";
     pub const ASK_PUSH_OWN: &str =
         "this tab runs on its own and has commits the pull request does not have";
@@ -40,11 +41,12 @@ pub mod because {
 
     pub const NAMED: [&str; 1] = ["Auto"];
 
-    pub const ALL: [&str; 20] = [
+    pub const ALL: [&str; 21] = [
         AUTO_CHECKS,
         AUTO_REVIEWS,
         AUTO_CONFLICTS,
         AUTO_PUSH,
+        AUTO_PICK,
         ASK_PR_CLICK,
         ASK_PUSH_OWN,
         ASK_PUSH_CLICK,
@@ -69,6 +71,7 @@ pub mod because {
 pub enum Reason {
     AutoFix,
     AutoPush,
+    AutoPick,
     PullRequest,
     MeeseeksCheck,
     DueToday,
@@ -87,6 +90,7 @@ impl Reason {
     pub fn tag(self) -> &'static str {
         match self {
             Self::AutoFix | Self::AutoPush => "auto",
+            Self::AutoPick => "auto pick",
             Self::PullRequest => "pull request",
             Self::MeeseeksCheck => "Meeseeks check",
             Self::DueToday => "due today",
@@ -114,6 +118,7 @@ impl Reason {
             Self::StuckJob => Some("Tidewatch asked the agent about a stuck job"),
             Self::AutoFix
             | Self::AutoPush
+            | Self::AutoPick
             | Self::PullRequest
             | Self::MeeseeksCheck
             | Self::DueToday
@@ -349,6 +354,7 @@ mod tests {
             (Reason::Avatar, true, false),
             (Reason::AutoFix, false, false),
             (Reason::AutoPush, false, false),
+            (Reason::AutoPick, false, false),
             (Reason::PullRequest, false, false),
             (Reason::MeeseeksCheck, false, false),
             (Reason::DueToday, false, false),
@@ -467,6 +473,7 @@ mod tests {
         let tags = [
             Reason::AutoFix,
             Reason::AutoPush,
+            Reason::AutoPick,
             Reason::PullRequest,
             Reason::MeeseeksCheck,
             Reason::DueToday,
@@ -552,6 +559,7 @@ mod tests {
         let table = [
             (Reason::AutoFix, true),
             (Reason::AutoPush, true),
+            (Reason::AutoPick, false),
             (Reason::PullRequest, true),
             (Reason::MeeseeksCheck, false),
             (Reason::LedgerGuard, false),
