@@ -51,7 +51,7 @@ pub(crate) fn section(ui: &mut Ui, editor: &mut Editor, view: &View) -> Option<W
             && let Some(on) = switch_row(
                 ui,
                 "Menu-bar item",
-                "Show or hide, the Overview and Settings from the menu bar.",
+                "Show or hide the Overview and Settings from the menu bar.",
                 editor.menu_bar(),
             )
         {

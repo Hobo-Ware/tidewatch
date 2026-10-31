@@ -24,6 +24,7 @@ use crate::pane::{Body, Pane};
 use crate::park::Fits;
 use crate::progress_model::{TabRing, tab_ring};
 use crate::remote_pill::Popover;
+use crate::review::plural;
 use crate::services_view;
 use crate::tabs::{Action, Step, Tabs};
 use crate::window_chrome::{self, Chrome};
@@ -275,7 +276,7 @@ impl Tidewatch {
             if several {
                 for (i, workspace) in self.workspaces.iter().enumerate() {
                     let tabs = self.tabs.in_group(i).filter(|(_, tab)| !tab.pinned).count();
-                    let detail = egui::RichText::new(format!("{tabs} tabs")).color(brand::MUTED);
+                    let detail = egui::RichText::new(tabs_text(tabs)).color(brand::MUTED);
                     let row = egui::Button::selectable(i == group, workspace.chip_label())
                         .shortcut_text(detail)
                         .min_size(egui::vec2(ui.available_width(), 0.0));
@@ -391,6 +392,10 @@ enum AvatarMenu {
     None,
     Picture,
     Letter,
+}
+
+fn tabs_text(count: usize) -> String {
+    plural(count, "tab")
 }
 
 fn avatar_menu(has_picture: bool, can_draw: bool, locked: bool) -> AvatarMenu {

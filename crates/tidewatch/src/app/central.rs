@@ -145,7 +145,7 @@ impl Tidewatch {
         let home = self.paths.as_ref().and_then(|paths| paths.root().parent());
         let recent = self.welcome.as_deref().unwrap_or_default();
         let elsewhere = self.takeover_welcome_line();
-        match welcome_view::show(ui, area, recent, home, &Command::OpenRepo.keys(), elsewhere) {
+        match welcome_view::show(ui, area, recent, home, elsewhere) {
             Some(welcome_view::Action::Open) => frame.repo_command = Some(RepoCommand::Open),
             Some(welcome_view::Action::Recent(dir)) => frame.open_dir = Some(dir),
             Some(welcome_view::Action::MoveSessions) => self.open_batch(ctx),

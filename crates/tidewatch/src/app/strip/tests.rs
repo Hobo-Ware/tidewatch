@@ -1265,3 +1265,11 @@ fn the_avatar_menu_is_a_table_of_picture_tool_and_lock() {
         );
     }
 }
+
+#[test]
+fn the_repo_menu_counts_tabs_in_the_plural() {
+    let cases = [(0, "0 tabs"), (1, "1 tab"), (2, "2 tabs"), (12, "12 tabs")];
+    for (count, want) in cases {
+        assert_eq!(super::tabs_text(count), want);
+    }
+}
