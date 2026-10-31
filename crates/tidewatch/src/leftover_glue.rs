@@ -13,6 +13,14 @@ use crate::leftover_jobs::{self, Done};
 use crate::leftover_view::{self, Answer};
 use crate::leftovers::Cleanup;
 
+fn now_ms() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .ok()
+        .and_then(|since| i64::try_from(since.as_millis()).ok())
+        .unwrap_or(0)
+}
+
 /// `found` joined into `known` by path, sorted by path.
 pub(crate) fn merge(known: &mut Vec<Leftover>, found: Vec<Leftover>) {
     for leftover in found {
@@ -176,7 +184,7 @@ impl Host {
         trust: Option<&Grant>,
     ) {
         let Some(dialog) = &self.dialog else { return };
-        if let Some(answer) = leftover_view::dialog(ctx, dialog) {
+        if let Some(answer) = leftover_view::dialog(ctx, dialog, now_ms()) {
             self.answer(ctx, paths, trust, &answer);
         }
     }

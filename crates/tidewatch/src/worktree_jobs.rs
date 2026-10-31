@@ -244,7 +244,13 @@ mod tests {
     use tidewatch_core::worktree_safety::Risk;
 
     fn leftover(path: &str) -> Leftover {
-        Leftover { path: PathBuf::from(path), branch: None, repo: None, recorded: false }
+        Leftover {
+            path: PathBuf::from(path),
+            branch: None,
+            repo: None,
+            recorded: false,
+            modified_ms: None,
+        }
     }
 
     fn git(dir: &std::path::Path, args: &[&str]) -> String {
