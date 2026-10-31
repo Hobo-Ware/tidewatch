@@ -9,7 +9,9 @@
 //! plain data in tests.
 //!
 //! While the restore is under way the saver stays quiet: a save then would overwrite the saved
-//! tabs with a window that has only some of them. `settled` says when every repo is done.
+//! tabs with a window that has only some of them. `settled` says when every repo is done. It waits
+//! only for the tabs the restore itself opened, and for at most `SETTLE_LIMIT_SECS`: a tab that
+//! never finishes is left out of the save, and the rest is saved.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -51,6 +53,19 @@ pub(crate) struct Spawn<'a, T> {
     pub(crate) shell: &'a dyn Fn(&Path, Option<&str>) -> T,
 }
 
+const SETTLE_LIMIT_SECS: f64 = 60.0;
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum Settle {
+    Done,
+    Wait { left_secs: f64 },
+}
+
+fn settle(busy: bool, since: f64, now: f64) -> Settle {
+    let left_secs = SETTLE_LIMIT_SECS - (now - since);
+    if busy && left_secs > 0.0 { Settle::Wait { left_secs } } else { Settle::Done }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Phase {
     /// The profiles are not loaded yet, so there is nothing to plan with.
@@ -85,6 +100,8 @@ pub(crate) struct Host {
     phase: Phase,
     seeds: Vec<Seed>,
     planning: usize,
+    watched: Vec<u64>,
+    settling_since: Option<f64>,
     skip: bool,
     crash_loop: bool,
     prefs: Prefs,
@@ -100,6 +117,8 @@ impl Host {
             phase: Phase::Waiting,
             seeds: Vec::new(),
             planning: 0,
+            watched: Vec::new(),
+            settling_since: None,
             skip,
             crash_loop,
             prefs: Prefs::default(),
@@ -168,6 +187,7 @@ impl Host {
     pub(crate) fn begin(&mut self, ctx: &egui::Context, paths: &TidewatchPaths, catalog: &Catalog) {
         let Some(profiles) = catalog.profiles().filter(|_| !self.seeds.is_empty()) else { return };
         self.phase = Phase::Planning;
+        self.settling_since = None;
         for seed in self.seeds.drain(..) {
             self.planning += 1;
             restore_jobs::startup(
@@ -214,7 +234,11 @@ impl Host {
                         without_open(leftovers, tabs),
                     );
                     if let Some(plan) = plan {
+                        let before = creating_ids(tabs);
                         let applied = self.apply(&plan, group, ctx, tabs, env, spawn, now);
+                        let opened =
+                            creating_ids(tabs).into_iter().filter(|id| !before.contains(id));
+                        self.watched.extend(opened);
                         report.toasts.extend(applied.toasts);
                         report.notice = join_notices(report.notice.take(), applied.notice);
                         report.focus = report.focus.or(applied.focus);
@@ -227,8 +251,19 @@ impl Host {
             && self.seeds.is_empty()
             && matches!(self.phase, Phase::Planning | Phase::Settling)
         {
-            let busy = tabs.items().iter().any(|t| making(&t.pane));
-            self.phase = if busy { Phase::Settling } else { Phase::Settled };
+            let busy = creating_ids(tabs).iter().any(|id| self.watched.contains(id));
+            let since = *self.settling_since.get_or_insert(now);
+            match settle(busy, since, now) {
+                Settle::Done => {
+                    self.phase = Phase::Settled;
+                    self.settling_since = None;
+                    self.watched.clear();
+                }
+                Settle::Wait { left_secs } => {
+                    self.phase = Phase::Settling;
+                    ctx.request_repaint_after(std::time::Duration::from_secs_f64(left_secs));
+                }
+            }
         }
         report
     }
@@ -352,6 +387,10 @@ fn join_notices(first: Option<String>, second: Option<String>) -> Option<String>
         (Some(first), Some(second)) => Some(format!("{first}\n{second}")),
         (first, second) => first.or(second),
     }
+}
+
+fn creating_ids<T>(tabs: &Tabs<Pane<T>>) -> Vec<u64> {
+    tabs.items().iter().filter(|t| making(&t.pane)).map(|t| t.id).collect()
 }
 
 fn making<T>(pane: &Pane<T>) -> bool {
