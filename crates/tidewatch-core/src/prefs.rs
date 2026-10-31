@@ -52,6 +52,8 @@ pub struct Prefs {
     #[serde(default)]
     pub keep_awake: KeepAwakePrefs,
     #[serde(default)]
+    pub budget: BudgetPrefs,
+    #[serde(default)]
     pub terminal: TerminalPrefs,
     #[serde(default)]
     pub git: GitPrefs,
@@ -109,6 +111,19 @@ pub struct KeepAwakePrefs {
 impl Default for KeepAwakePrefs {
     fn default() -> Self {
         Self { enabled: true }
+    }
+}
+
+/// Whether Tidewatch holds back what it sends on its own while a plan limit is near.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BudgetPrefs {
+    #[serde(default = "on")]
+    pub save_mode: bool,
+}
+
+impl Default for BudgetPrefs {
+    fn default() -> Self {
+        Self { save_mode: true }
     }
 }
 
@@ -469,6 +484,7 @@ impl Default for Prefs {
             guards: GuardPrefs::default(),
             done_check: DoneCheckPrefs::default(),
             keep_awake: KeepAwakePrefs::default(),
+            budget: BudgetPrefs::default(),
             terminal: TerminalPrefs::default(),
             git: GitPrefs::default(),
             chat: ChatPrefs::default(),
@@ -1205,6 +1221,22 @@ mod tests {
         Prefs::update(&paths, |p| p.keep_awake.enabled = true).unwrap();
         let text = std::fs::read_to_string(paths.prefs_file()).unwrap();
         assert!(text.contains("[keep_awake]") && text.contains("enabled = true"), "{text}");
+    }
+
+    #[test]
+    fn save_mode_is_on_until_switched_off_and_the_choice_survives_a_save() {
+        let (_home, paths) = paths();
+        assert!(Prefs::load(&paths).budget.save_mode);
+        write_prefs(&paths, "restore_session = false\n");
+        assert_eq!(Prefs::load(&paths).budget, BudgetPrefs::default());
+        write_prefs(&paths, "[budget]\n");
+        assert!(Prefs::load(&paths).budget.save_mode);
+        Prefs::update(&paths, |p| p.budget.save_mode = false).unwrap();
+        assert!(!Prefs::load(&paths).budget.save_mode);
+        Prefs::update(&paths, |p| p.window.quake = false).unwrap();
+        assert!(!Prefs::load(&paths).budget.save_mode);
+        let text = std::fs::read_to_string(paths.prefs_file()).unwrap();
+        assert!(text.contains("[budget]") && text.contains("save_mode = false"), "{text}");
     }
 
     #[test]

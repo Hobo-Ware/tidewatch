@@ -35,6 +35,7 @@ use serde_json::Value;
 
 use crate::question::{self, Question};
 use crate::rfc3339;
+use crate::token_usage::{Counter, Tally};
 use crate::transcript_image::{self, Picture};
 use crate::transcript_marks::{Marker, TurnMark};
 use crate::user_markup::{self, Record};
@@ -136,6 +137,7 @@ pub struct Parser {
     emitted: HashSet<String>,
     titles: SessionTitles,
     marker: Marker,
+    usage: Counter,
     seen: usize,
 }
 
@@ -179,6 +181,7 @@ impl Parser {
             emitted: HashSet::new(),
             titles: SessionTitles::default(),
             marker: Marker::default(),
+            usage: Counter::default(),
             seen: 0,
         }
     }
@@ -201,6 +204,12 @@ impl Parser {
         self.titles.best()
     }
 
+    /// The tokens the lines fed so far spent.
+    #[must_use]
+    pub fn tokens(&self) -> Tally {
+        self.usage.tally()
+    }
+
     /// The entries one line adds. A line that is not a JSON object, or that holds nothing worth
     /// showing, adds none.
     pub fn feed_line(&mut self, line: &str) -> Vec<Entry> {
@@ -220,6 +229,10 @@ impl Parser {
             Source::Codex => self.codex(&value),
         };
         let ts = timestamp(&value["timestamp"]);
+        for said in entries.iter().filter(|entry| entry.role == Role::User) {
+            self.usage.user(&said.text, said.ts);
+        }
+        self.usage.line(self.source, &value);
         self.marker.line(self.source, &value, &entries, ts, self.seen);
         self.seen += entries.len();
         entries
@@ -754,6 +767,12 @@ impl Tail {
         self.head = read_prefix(&mut file, HEAD_BYTES.min(self.offset as usize));
         self.base = self.parser.entries_seen();
         self.take_lines(fresh)
+    }
+
+    /// The tokens spent by the lines read so far.
+    #[must_use]
+    pub fn tokens(&self) -> Tally {
+        self.parser.tokens()
     }
 
     /// [`poll`](Self::poll) with the turn boundaries of the same lines, each placed by how many of
