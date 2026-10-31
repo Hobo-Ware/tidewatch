@@ -131,7 +131,11 @@ pub(crate) fn show(ctx: &egui::Context, confirm: &PostConfirm) -> Option<Answer>
             }
         }
         ui.add_space(4.0);
-        let hint = if asking { "Enter posts  -  Esc cancels" } else { "" };
+        let hint = match confirm.phase {
+            Phase::Asking => "Enter posts  -  Esc cancels",
+            Phase::Posting => "Esc closes  -  the post carries on",
+            Phase::Failed(_) => "",
+        };
         footer_row(ui, hint, |ui| {
             if asking && primary_button(ui, "Post to PR", true, Size::Regular).clicked() {
                 answer = Some(Answer::Post);
@@ -295,6 +299,20 @@ mod tests {
             let ctx = context();
             frame(&ctx, &data, vec![]);
             assert_eq!(frame(&ctx, &data, vec![key(Key::Enter)]), None);
+        }
+    }
+
+    #[test]
+    fn escape_answers_cancel_in_every_phase_including_posting() {
+        for phase in [Phase::Asking, Phase::Posting, Phase::Failed("HTTP 422".into())] {
+            let data = confirm(phase.clone());
+            let ctx = context();
+            frame(&ctx, &data, vec![]);
+            assert_eq!(
+                frame(&ctx, &data, vec![key(Key::Escape)]),
+                Some(Answer::Cancel),
+                "{phase:?}"
+            );
         }
     }
 }

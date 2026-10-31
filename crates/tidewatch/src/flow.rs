@@ -494,11 +494,10 @@ impl Flow {
         );
     }
 
-    /// Esc, Cancel or Close on the confirm dialog. A post already on its way cannot be recalled.
+    /// Esc, Cancel or Close on the confirm dialog. A post already on its way cannot be recalled:
+    /// its result arrives as a toast.
     pub(crate) fn cancel_post(&mut self) {
-        if self.confirm.as_ref().is_some_and(|c| c.phase != Phase::Posting) {
-            self.confirm = None;
-        }
+        self.confirm = None;
     }
 
     pub(crate) fn extras(
@@ -590,18 +589,32 @@ impl Flow {
                     }
                 }
             }
-            Done::Posted { tab, result } => match result {
-                Ok((posted, notes)) => {
-                    self.confirm = None;
-                    outs.push(Out::Notes { tab, notes });
-                    outs.push(Out::Toast(format!("Posted to the pull request: {}", posted.url)));
-                }
-                Err(error) => {
-                    if let Some(confirm) = &mut self.confirm {
-                        confirm.phase = Phase::Failed(error.to_string());
+            Done::Posted { tab, result } => {
+                let waiting = self
+                    .confirm
+                    .as_ref()
+                    .is_some_and(|c| c.tab == tab && c.phase == Phase::Posting);
+                match result {
+                    Ok((posted, notes)) => {
+                        if waiting {
+                            self.confirm = None;
+                        }
+                        outs.push(Out::Notes { tab, notes });
+                        outs.push(Out::Toast(format!(
+                            "Posted to the pull request: {}",
+                            posted.url
+                        )));
                     }
+                    Err(error) => match &mut self.confirm {
+                        Some(confirm) if waiting => {
+                            confirm.phase = Phase::Failed(error.to_string());
+                        }
+                        _ => outs.push(Out::Toast(format!(
+                            "Could not post to the pull request: {error}"
+                        ))),
+                    },
                 }
-            },
+            }
         }
     }
 
@@ -839,6 +852,103 @@ mod tests {
         let mut off = flow_with(false);
         f.notes_file = Some(PathBuf::from("/s/notes.json"));
         assert!(!decide(&mut off, &f, 0.0).contains(&Want::AutoSend));
+    }
+
+    fn posting(flow: &mut Flow, phase: Phase) {
+        flow.confirm = Some(PostConfirm {
+            tab: 7,
+            pr: PullRequest {
+                number: 12,
+                url: "https://github.com/o/r/pull/12".into(),
+                head_sha: "a".into(),
+            },
+            repo: "o/r".into(),
+            plan: Plan {
+                thread: 1,
+                kind: crate::post_confirm::Kind::Reply { root: 9 },
+                body: "x".into(),
+            },
+            phase,
+        });
+    }
+
+    fn posted_ok() -> Done {
+        let posted =
+            tidewatch_core::pr::Posted { id: 1, url: "https://github.com/o/r/pull/12#c1".into() };
+        Done::Posted { tab: 7, result: Ok((posted, Box::default())) }
+    }
+
+    fn posted_err() -> Done {
+        Done::Posted { tab: 7, result: Err(GhError::Failed("HTTP 502".into())) }
+    }
+
+    fn toasts(outs: &[Out]) -> Vec<&str> {
+        outs.iter()
+            .filter_map(|out| match out {
+                Out::Toast(text) => Some(text.as_str()),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn cancel_closes_the_post_dialog_in_every_phase() {
+        for phase in [Phase::Asking, Phase::Posting, Phase::Failed("x".into())] {
+            let mut flow = Flow::new(Tools::default());
+            posting(&mut flow, phase.clone());
+            flow.cancel_post();
+            assert_eq!(flow.confirm, None, "{phase:?}");
+        }
+    }
+
+    #[test]
+    fn a_post_that_lands_after_cancel_arrives_as_a_toast() {
+        let landed = |done: Done| {
+            let mut flow = Flow::new(Tools::default());
+            posting(&mut flow, Phase::Posting);
+            flow.cancel_post();
+            let mut outs = Vec::new();
+            flow.apply(done, 0.0, &mut outs);
+            outs.iter()
+                .filter_map(|out| match out {
+                    Out::Toast(text) => Some(text.clone()),
+                    _ => None,
+                })
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            landed(posted_ok()),
+            ["Posted to the pull request: https://github.com/o/r/pull/12#c1"]
+        );
+        let failed = landed(posted_err());
+        assert_eq!(failed.len(), 1);
+        assert!(failed[0].contains("HTTP 502"), "{failed:?}");
+    }
+
+    #[test]
+    fn a_late_post_result_leaves_a_newer_dialog_alone() {
+        let mut flow = Flow::new(Tools::default());
+        posting(&mut flow, Phase::Asking);
+        let mut outs = Vec::new();
+        flow.apply(posted_ok(), 0.0, &mut outs);
+        assert_eq!(flow.confirm.as_ref().map(|c| c.phase.clone()), Some(Phase::Asking));
+        flow.apply(posted_err(), 0.0, &mut outs);
+        assert_eq!(flow.confirm.as_ref().map(|c| c.phase.clone()), Some(Phase::Asking));
+    }
+
+    #[test]
+    fn a_post_result_while_the_dialog_waits_closes_it_or_shows_the_failure() {
+        let mut flow = Flow::new(Tools::default());
+        posting(&mut flow, Phase::Posting);
+        flow.apply(posted_ok(), 0.0, &mut Vec::new());
+        assert_eq!(flow.confirm, None);
+        posting(&mut flow, Phase::Posting);
+        let mut outs = Vec::new();
+        flow.apply(posted_err(), 0.0, &mut outs);
+        assert_eq!(toasts(&outs), Vec::<&str>::new());
+        assert!(
+            matches!(flow.confirm.as_ref().map(|c| &c.phase), Some(Phase::Failed(m)) if m.contains("HTTP 502"))
+        );
     }
 
     fn flow_of(status: AgentStatus) -> Flow {
