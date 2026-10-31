@@ -75,11 +75,10 @@ impl Run {
         let mut pending: VecDeque<Effect> = self.sup.step(event).into();
         while let Some(effect) = pending.pop_front() {
             match effect {
-                Effect::Kill => {
-                    if let Some(term) = self.term.as_mut() {
-                        term.kill();
-                    }
-                }
+                Effect::Kill => match self.term.as_mut() {
+                    Some(term) => term.kill(),
+                    None => pending.extend(self.sup.step(Event::Exited { code: 0, at: now })),
+                },
                 Effect::Spawn => {
                     self.exit_seen = false;
                     self.port = None;
@@ -355,7 +354,7 @@ impl Host {
         let event = match command {
             Command::Start => Event::Start,
             Command::Stop => Event::Stop,
-            Command::Restart => Event::Restart,
+            Command::Restart => Event::Restart { at: now },
         };
         run.step(event, &key, now, &self.spawn);
         self.version += 1;
@@ -414,7 +413,7 @@ impl Host {
             let command_changed = run.service.command != service.command;
             run.service = service;
             if command_changed && run.sup.wants_process() {
-                run.step(Event::Restart, repo, now, spawn);
+                run.step(Event::Restart { at: now }, repo, now, spawn);
             }
         }
         self.version += 1;
