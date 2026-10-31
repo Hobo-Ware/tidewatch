@@ -3,9 +3,10 @@
 use egui::{Id, RichText};
 
 use crate::brand;
-use crate::screen_kit::{Size, dialog_frame, footer_row, primary_button, quiet_button};
+use crate::screen_kit::{
+    DialogWidth, Size, dialog_frame, footer_row, primary_button, quiet_button,
+};
 
-const DIALOG_WIDTH: f32 = 460.0;
 pub(crate) const TITLE: &str = "Fix the update";
 pub(crate) const MESSAGE: &str =
     "Tidewatch will quit, repair the Homebrew install and reopen. Your tabs come back.";
@@ -19,7 +20,7 @@ pub(crate) enum Answer {
 
 pub(crate) fn show(ctx: &egui::Context) -> Option<Answer> {
     let mut answer = None;
-    let modal = dialog_frame(ctx, Id::new("fix_update"), TITLE, DIALOG_WIDTH, |ui| {
+    let modal = dialog_frame(ctx, Id::new("fix_update"), TITLE, DialogWidth::Narrow, |ui| {
         answer = body(ui);
     });
     if answer.is_none() && modal.should_close() {
@@ -33,7 +34,7 @@ fn body(ui: &mut egui::Ui) -> Option<Answer> {
     ui.spacing_mut().item_spacing.y = 8.0;
     ui.label(RichText::new(MESSAGE).color(brand::MUTED));
     ui.add_space(6.0);
-    footer_row(ui, "Esc cancels", |ui| {
+    footer_row(ui, &[("Esc", "cancels")], |ui| {
         if primary_button(ui, QUIT_AND_FIX, true, Size::Regular).clicked() {
             answer = Some(Answer::QuitAndFix);
         }

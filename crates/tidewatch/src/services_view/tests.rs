@@ -570,3 +570,24 @@ fn escape_closes_the_menu_first_and_the_list_next() {
     screen.settle();
     assert_eq!(screen.names(), Vec::<&str>::new());
 }
+
+#[test]
+fn the_form_footer_names_only_keys_and_actions_that_exist() {
+    let ctx = crate::fonts::test_context();
+    let raw = || RawInput {
+        screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(900.0, 600.0))),
+        focused: true,
+        ..Default::default()
+    };
+    let mut out = None;
+    for _ in 0..2 {
+        out = Some(ctx.run_ui(raw(), |ui| {
+            let _ = form_dialog(ui.ctx(), Form::add(), &[]);
+        }));
+    }
+    let texts: Vec<String> =
+        crate::screen_kit::painted_texts(&out.unwrap()).into_iter().map(|(text, _)| text).collect();
+    assert!(texts.contains(&"saves".to_owned()), "{texts:?}");
+    assert!(texts.contains(&"cancels".to_owned()), "{texts:?}");
+    assert_eq!(texts.iter().filter(|t| t.contains("Start runs") || t.contains(" - ")).count(), 0);
+}

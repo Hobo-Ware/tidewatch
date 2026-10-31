@@ -10,12 +10,6 @@ const MAX_WIDTH: f32 = 560.0;
 const BOTTOM_GAP: f32 = 64.0;
 const BAR_W: f32 = 2.0;
 
-/// The one muted line of key hints at the bottom of a dialog.
-pub(crate) fn key_hint(ui: &mut egui::Ui, text: &str) {
-    ui.add_space(14.0);
-    ui.label(RichText::new(text).size(12.0).color(brand::MUTED));
-}
-
 /// Draws the notice above the toast line, centered on `column`. True when Dismiss was clicked.
 pub(crate) fn show(ctx: &egui::Context, text: &str, column: Rect) -> bool {
     draw(ctx, text, column).0

@@ -3,16 +3,17 @@
 
 use crate::brand;
 use crate::screen_kit::{
-    Size, danger_button, dialog_frame, footer_row, primary_button, quiet_button,
+    DialogWidth, Hint, Size, danger_button, dialog_frame, footer_row, primary_button, quiet_button,
 };
 use egui::{Event, Id, Key, Modifiers, RichText};
 use tidewatch_core::prefs::CloseEnter;
 use tidewatch_core::worktree::{BranchChoice, RemoveMode, Worktree};
 use tidewatch_core::worktree_safety::{Risk, Safety};
 
-const DIALOG_WIDTH: f32 = 580.0;
 const ARM_AFTER_SECS: f64 = 0.4;
 const CHECKING_LINE: &str = "Checking whether anything would be lost...";
+const CHECKING_HINT: &[Hint] =
+    &[("Esc", "cancels"), ("", "the choices appear when the check is done")];
 
 pub(crate) enum Closing {
     Inspecting { tab: u64, worktree: Worktree },
@@ -173,17 +174,22 @@ pub(crate) fn show_closing(
 
 fn show_checking(ctx: &egui::Context, worktree: &Worktree) -> Option<Answer> {
     let mut answer = None;
-    let modal =
-        dialog_frame(ctx, Id::new("close_worktree"), &heading(worktree), DIALOG_WIDTH, |ui| {
+    let modal = dialog_frame(
+        ctx,
+        Id::new("close_worktree"),
+        &heading(worktree),
+        DialogWidth::Medium,
+        |ui| {
             ui.spacing_mut().item_spacing.y = 8.0;
             ui.label(RichText::new(CHECKING_LINE).color(brand::MUTED));
             ui.add_space(6.0);
-            footer_row(ui, "Esc cancels  -  the choices appear when the check is done", |ui| {
+            footer_row(ui, CHECKING_HINT, |ui| {
                 if quiet_button(ui, "Cancel", true, Size::Regular).clicked() {
                     answer = Some(Answer::Cancel);
                 }
             });
-        });
+        },
+    );
     if answer.is_none() && modal.should_close() {
         answer = Some(Answer::Cancel);
     }
@@ -198,8 +204,12 @@ pub(crate) fn show(
 ) -> Option<Answer> {
     let armed = armed(ctx, worktree);
     let mut answer = None;
-    let modal =
-        dialog_frame(ctx, Id::new("close_worktree"), &heading(worktree), DIALOG_WIDTH, |ui| {
+    let modal = dialog_frame(
+        ctx,
+        Id::new("close_worktree"),
+        &heading(worktree),
+        DialogWidth::Medium,
+        |ui| {
             ui.spacing_mut().item_spacing.y = 8.0;
             ui.label(
                 RichText::new("This removes the worktree folder. The branch can stay or go.")
@@ -210,12 +220,12 @@ pub(crate) fn show(
             }
             ui.add_space(6.0);
             let keyed = enter_choice(safety, enter);
-            let hint = match keyed {
+            let hint: &[Hint] = match keyed {
                 Some(Choice::Remove { branch: BranchChoice::Delete, .. }) => {
-                    "Enter deletes the branch  -  Esc cancels"
+                    &[("Enter", "deletes the branch"), ("Esc", "cancels")]
                 }
-                Some(_) => "Enter keeps the branch  -  Esc cancels",
-                None => "Esc cancels  -  nothing is discarded until you pick it",
+                Some(_) => &[("Enter", "keeps the branch"), ("Esc", "cancels")],
+                None => &[("Esc", "cancels"), ("", "nothing is discarded until you pick it")],
             };
             footer_row(ui, hint, |ui| {
                 for choice in choices(safety).into_iter().rev() {
@@ -235,7 +245,8 @@ pub(crate) fn show(
                     answer = Some(Answer::Cancel);
                 }
             });
-        });
+        },
+    );
     let pressed = fresh_enter(ctx);
     if answer.is_none()
         && armed
