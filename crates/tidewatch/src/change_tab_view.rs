@@ -2,20 +2,21 @@
 //! the sentence that says what will happen, and the footer. Enter changes, Esc closes. Every
 //! choice comes from `change_tab`; a missing CLI turns Change into the button that sets it up.
 
-use egui::{Align2, Id, Key, Modifiers, Rect, Sense, Stroke, StrokeKind, Ui, UiKind, pos2, vec2};
+use egui::{Align2, Id, Key, Modifiers, Rect, Sense, Stroke, StrokeKind, Ui, UiKind, vec2};
 use tidewatch_core::agents::Level;
 
 use crate::brand;
 use crate::change_tab::{Card, Facts, Kind, Pick, fix, offers_stop_now, sentence};
 use crate::screen_kit::{
-    DialogWidth, Size, TEXT_SECONDARY, TEXT_TAG, body, dialog_frame_in, field_label, footer_row,
-    heading, primary_button_keyed, quiet_button,
+    DETAIL_LESS, DialogWidth, FACE_LINE_H, FaceLine, Size, TEXT_SECONDARY, body, dialog_frame_in,
+    field_label, footer_row, paint_face_line, primary_button_keyed, quiet_button, selected_ink,
+    selection_row,
 };
 use crate::segmented;
 
 pub(crate) const TOP: f32 = 60.0;
-const CARD_H: f32 = 48.0;
-const GAP: f32 = 8.0;
+const ROW_GAP: f32 = 2.0;
+const LIST_MAX_H: f32 = 8.0 * (FACE_LINE_H + ROW_GAP);
 const LABEL_GAP: f32 = 6.0;
 const SECTION_GAP: f32 = 14.0;
 
@@ -48,61 +49,42 @@ fn kind_row(ui: &mut Ui, pick: &mut Pick) {
 
 fn card(ui: &mut Ui, rect: Rect, card: &Card, selected: bool) -> bool {
     let response = ui.interact(rect, Id::new(("change_tab_card", &card.id)), Sense::click());
-    let painter = ui.painter();
-    let line = match (selected, response.hovered()) {
-        (true, _) => brand::TEAL,
-        (false, true) => brand::FAINT,
-        (false, false) => brand::FIELD_LINE,
-    };
-    painter.rect(
-        rect,
-        egui::CornerRadius::same(Size::Compact.radius()),
-        egui::Color32::TRANSPARENT,
-        Stroke::new(if selected { 1.5 } else { 1.0 }, line),
-        StrokeKind::Inside,
-    );
+    selection_row(ui.painter(), rect, selected, response.hovered());
     let (name, detail) =
         if card.installed { (brand::TEXT, brand::MUTED) } else { (brand::FAINT, brand::FAINT) };
     let detail_text = if card.installed { card.detail.as_str() } else { "Not installed" };
-    let inset = rect.left() + Size::Compact.pad();
-    let clip = painter.with_clip_rect(rect.shrink2(vec2(Size::Compact.pad() / 2.0, 0.0)));
-    clip.text(
-        pos2(inset, rect.top() + 15.0),
-        Align2::LEFT_CENTER,
-        &card.name,
-        heading(TEXT_SECONDARY),
-        name,
-    );
-    clip.text(
-        pos2(inset, rect.top() + 33.0),
-        Align2::LEFT_CENTER,
-        detail_text,
-        body(TEXT_TAG),
-        detail,
-    );
+    let line = FaceLine {
+        cli: &card.agent_id,
+        name: &card.name,
+        detail: detail_text,
+        key: None,
+        detail_share: DETAIL_LESS,
+        name_ink: selected_ink(selected, name),
+        detail_ink: detail,
+        reserve: 0.0,
+    };
+    paint_face_line(&ui.painter_at(rect), rect, &line);
     response.on_hover_cursor(egui::CursorIcon::PointingHand).clicked()
 }
 
-fn profile_grid(ui: &mut Ui, facts: &Facts, pick: &mut Pick) {
+fn profile_list(ui: &mut Ui, facts: &Facts, pick: &mut Pick) {
     label(ui, "Profile");
     let width = ui.available_width();
-    let columns = 2;
-    let card_w = (width - GAP * (columns as f32 - 1.0)) / columns as f32;
-    let rows = facts.cards.len().div_ceil(columns);
-    let height = rows as f32 * CARD_H + rows.saturating_sub(1) as f32 * GAP;
-    let (area, _) = ui.allocate_exact_size(vec2(width, height), Sense::hover());
     let mut picked = None;
-    for (index, profile) in facts.cards.iter().enumerate() {
-        let (row, column) = (index / columns, index % columns);
-        let at = pos2(
-            area.left() + column as f32 * (card_w + GAP),
-            area.top() + row as f32 * (CARD_H + GAP),
-        );
-        let rect = Rect::from_min_size(at, vec2(card_w, CARD_H));
-        if card(ui, rect, profile, profile.id == pick.profile) {
-            picked = Some(profile.id.clone());
-        }
-    }
+    egui::ScrollArea::vertical()
+        .id_salt("change_tab_profiles")
+        .max_height(LIST_MAX_H)
+        .auto_shrink([false, true])
+        .show(ui, |ui| {
+            ui.spacing_mut().item_spacing.y = ROW_GAP;
+            let width = width - brand::SCROLL_ROOM;
+            for profile in &facts.cards {
+                let (rect, _) = ui.allocate_exact_size(vec2(width, FACE_LINE_H), Sense::hover());
+                if card(ui, rect, profile, profile.id == pick.profile) {
+                    picked = Some(profile.id.clone());
+                }
+            }
+        });
     if let Some(id) = picked {
         pick.pick_profile(facts, &id);
     }
@@ -156,7 +138,7 @@ pub(crate) fn show(ctx: &egui::Context, facts: &Facts, pick: &mut Pick) -> Optio
         kind_row(ui, pick);
         if pick.kind == Kind::Agent {
             ui.add_space(SECTION_GAP);
-            profile_grid(ui, facts, pick);
+            profile_list(ui, facts, pick);
             ui.add_space(SECTION_GAP);
             level_row(ui, pick);
         }

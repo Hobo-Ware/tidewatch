@@ -61,9 +61,10 @@ pub(crate) fn cli_short_name(agent_id: &str) -> String {
     chars.next().map_or_else(String::new, |first| first.to_uppercase().chain(chars).collect())
 }
 
+/// A CLI's round face: its colors and letter on a circle as wide as `rect`.
 pub(crate) fn paint_cli_badge(painter: &Painter, rect: Rect, agent_id: &str) {
     let (fill, ink) = badge_colors(agent_id);
-    painter.rect_filled(rect, CornerRadius::same((rect.width() * 0.28) as u8), fill);
+    painter.circle_filled(rect.center(), rect.width() / 2.0, fill);
     painter.text(
         rect.center(),
         Align2::CENTER_CENTER,
@@ -71,6 +72,78 @@ pub(crate) fn paint_cli_badge(painter: &Painter, rect: Rect, agent_id: &str) {
         heading(rect.width() * 0.48),
         ink,
     );
+}
+
+pub(crate) const FACE: f32 = 20.0;
+pub(crate) const FACE_LINE_H: f32 = 34.0;
+const FACE_GAP: f32 = 10.0;
+/// How much of a one-line row a detail keeps when the name is cut: the lists that name things give
+/// the name more, the ones whose detail says when give the detail more.
+pub(crate) const DETAIL_LESS: f32 = 0.0;
+const MIN_DETAIL: f32 = 48.0;
+pub(crate) const DETAIL_MORE: f32 = 0.65;
+
+/// The widths a one-line row gives its name and its detail out of `total`: both as they are when
+/// they fit, else the detail keeps at least `share` of the room (less when it is shorter) and the name
+/// is cut to the rest. A detail left with under 48 px is dropped and the name takes the whole room.
+pub(crate) fn face_line_room(total: f32, name_w: f32, detail_w: f32, share: f32) -> (f32, f32) {
+    if name_w + FACE_GAP + detail_w <= total {
+        return (name_w, detail_w);
+    }
+    let detail = detail_w.min((total - FACE_GAP - name_w).max(total * share));
+    if detail < MIN_DETAIL.min(detail_w) {
+        return (total, 0.0);
+    }
+    ((total - FACE_GAP - detail).max(0.0), detail)
+}
+
+pub(crate) struct FaceLine<'a> {
+    pub(crate) cli: &'a str,
+    pub(crate) name: &'a str,
+    pub(crate) detail: &'a str,
+    pub(crate) key: Option<&'a str>,
+    pub(crate) detail_share: f32,
+    pub(crate) name_ink: Color32,
+    pub(crate) detail_ink: Color32,
+    /// Room kept free at the right edge, for a button.
+    pub(crate) reserve: f32,
+}
+
+/// One line in a list of profiles or sessions: a round face at the left, the name, the muted detail
+/// right-aligned and, where the list has number keys, the key cap at the far right. Returns the
+/// rects of the name and the detail text.
+pub(crate) fn paint_face_line(painter: &Painter, rect: Rect, line: &FaceLine) -> [Rect; 2] {
+    const PAD: f32 = 10.0;
+    let mid = rect.center().y;
+    let face = Rect::from_center_size(pos2(rect.left() + PAD + FACE / 2.0, mid), vec2(FACE, FACE));
+    paint_cli_badge(painter, face, line.cli);
+    let mut right = rect.right() - PAD - line.reserve;
+    if let Some(key) = line.key {
+        right = paint_caps(painter, right, mid, key) - FACE_GAP;
+    }
+    let left = face.right() + FACE_GAP;
+    let name = painter.layout_no_wrap(line.name.to_owned(), body(TEXT_BODY), line.name_ink);
+    let detail = painter.layout_no_wrap(line.detail.to_owned(), body(TEXT_TAG), line.detail_ink);
+    let (name_room, detail_room) =
+        face_line_room((right - left).max(0.0), name.size().x, detail.size().x, line.detail_share);
+    let cut = |text: &str, font: FontId, ink: Color32, room: f32| {
+        let mut job = egui::text::LayoutJob::simple_singleline(text.to_owned(), font, ink);
+        job.wrap = egui::text::TextWrapping::truncate_at_width(room.max(1.0));
+        painter.layout_job(job)
+    };
+    let name = cut(line.name, body(TEXT_BODY), line.name_ink, name_room);
+    let detail = cut(
+        if detail_room > 0.0 { line.detail } else { "" },
+        body(TEXT_TAG),
+        line.detail_ink,
+        detail_room,
+    );
+    let name_at = pos2(left, mid - name.size().y / 2.0);
+    let detail_at = pos2(right - detail.size().x, mid - detail.size().y / 2.0);
+    let rects = [Rect::from_min_size(name_at, name.size()), Rect::from_min_size(detail_at, detail.size())];
+    painter.galley(name_at, name, line.name_ink);
+    painter.galley(detail_at, detail, line.detail_ink);
+    rects
 }
 
 pub(crate) fn clickable(
@@ -1433,6 +1506,53 @@ mod tests {
     fn a_selected_name_is_teal_and_any_other_keeps_its_ink() {
         assert_eq!(selected_ink(true, brand::TEXT), brand::TEAL_TEXT);
         assert_eq!(selected_ink(false, brand::TEXT), brand::TEXT);
+    }
+
+    #[test]
+    fn a_one_line_row_cuts_the_name_first_and_keeps_two_fifths_of_the_room_for_a_long_detail() {
+        let cases = [
+            (300.0, 100.0, 80.0, DETAIL_LESS, (100.0, 80.0)),
+            (300.0, 400.0, 80.0, DETAIL_LESS, (300.0, 0.0)),
+            (300.0, 400.0, 200.0, DETAIL_LESS, (300.0, 0.0)),
+            (150.0, 100.0, 80.0, DETAIL_LESS, (150.0, 0.0)),
+            (180.0, 100.0, 80.0, DETAIL_LESS, (100.0, 70.0)),
+            (300.0, 400.0, 200.0, DETAIL_MORE, (95.0, 195.0)),
+            (300.0, 40.0, 400.0, DETAIL_LESS, (40.0, 250.0)),
+        ];
+        for (total, name, detail, share, want) in cases {
+            assert_eq!(face_line_room(total, name, detail, share), want, "{total} {name} {detail}");
+        }
+    }
+
+    #[test]
+    fn a_face_line_keeps_the_name_left_and_the_detail_and_key_at_the_right() {
+        let ctx = crate::fonts::test_context();
+        let mut rects = [Rect::NOTHING; 2];
+        let mut row = Rect::NOTHING;
+        for _ in 0..2 {
+            let input = egui::RawInput {
+                screen_rect: Some(Rect::from_min_size(pos2(0.0, 0.0), vec2(600.0, 200.0))),
+                ..egui::RawInput::default()
+            };
+            let _ = ctx.run_ui(input, |ui| {
+                let (rect, _) = ui.allocate_exact_size(vec2(300.0, FACE_LINE_H), Sense::hover());
+                let line = FaceLine {
+                    cli: "claude",
+                    name: "Builder",
+                    detail: "opus \u{b7} medium",
+                    key: Some("1"),
+                    detail_share: DETAIL_LESS,
+                    name_ink: brand::TEXT,
+                    detail_ink: brand::MUTED,
+                    reserve: 0.0,
+                };
+                rects = paint_face_line(ui.painter(), rect, &line);
+                row = rect;
+            });
+        }
+        assert!(rects[1].right() < row.right() - 10.0, "the key cap sits right of the detail");
+        assert!(rects[0].left() > row.left() + 10.0 + FACE);
+        assert!(rects[0].right() < rects[1].left());
     }
 
     #[test]
