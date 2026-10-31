@@ -16,7 +16,6 @@ use tidewatch_core::services::{Service, problems};
 
 use crate::brand;
 use crate::new_tab_fields::section_label;
-use crate::notice::key_hint;
 use crate::remote_pill::Popover;
 use crate::screen_kit::{
     Size, TEXT_BODY, TEXT_TAG, body, button_width, danger_button, dialog_frame, footer_row, mono,
@@ -513,7 +512,7 @@ fn form_dialog(
             }
         }
         ui.add_space(6.0);
-        footer_row(ui, "", |ui| {
+        footer_row(ui, "Save adds the service, Start runs it  -  Esc cancels", |ui| {
             if primary_button_keyed(ui, "Save", "\u{21b5}", true, Size::Regular).clicked() {
                 submit = true;
             }
@@ -521,7 +520,6 @@ fn form_dialog(
                 cancel = true;
             }
         });
-        key_hint(ui, "Save adds the service, Start runs it  -  Esc cancels");
     });
     if cancel || modal.should_close() {
         return (None, None);

@@ -2,7 +2,6 @@
 //! with uncommitted changes. The choices and wording are pure; `show` only draws them.
 
 use crate::brand;
-use crate::notice::key_hint;
 use crate::screen_kit::{
     Size, danger_button, dialog_frame, footer_row, primary_button, quiet_button,
 };
@@ -11,7 +10,7 @@ use tidewatch_core::prefs::CloseEnter;
 use tidewatch_core::worktree::{BranchChoice, RemoveMode, Worktree};
 use tidewatch_core::worktree_safety::{Risk, Safety};
 
-const DIALOG_WIDTH: f32 = 540.0;
+const DIALOG_WIDTH: f32 = 580.0;
 const ARM_AFTER_SECS: f64 = 0.4;
 const CHECKING_LINE: &str = "Checking whether anything would be lost...";
 
@@ -179,12 +178,11 @@ fn show_checking(ctx: &egui::Context, worktree: &Worktree) -> Option<Answer> {
             ui.spacing_mut().item_spacing.y = 8.0;
             ui.label(RichText::new(CHECKING_LINE).color(brand::MUTED));
             ui.add_space(6.0);
-            footer_row(ui, "", |ui| {
+            footer_row(ui, "Esc cancels  -  the choices appear when the check is done", |ui| {
                 if quiet_button(ui, "Cancel", true, Size::Regular).clicked() {
                     answer = Some(Answer::Cancel);
                 }
             });
-            key_hint(ui, "Esc cancels  -  the choices appear when the check is done");
         });
     if answer.is_none() && modal.should_close() {
         answer = Some(Answer::Cancel);
@@ -211,8 +209,15 @@ pub(crate) fn show(
                 ui.label(RichText::new(line).color(brand::RED.gamma_multiply(0.8)));
             }
             ui.add_space(6.0);
-            footer_row(ui, "", |ui| {
-                let keyed = enter_choice(safety, enter);
+            let keyed = enter_choice(safety, enter);
+            let hint = match keyed {
+                Some(Choice::Remove { branch: BranchChoice::Delete, .. }) => {
+                    "Enter deletes the branch  -  Esc cancels"
+                }
+                Some(_) => "Enter keeps the branch  -  Esc cancels",
+                None => "Esc cancels  -  nothing is discarded until you pick it",
+            };
+            footer_row(ui, hint, |ui| {
                 for choice in choices(safety).into_iter().rev() {
                     let text = label(choice);
                     let response = match choice {
@@ -230,16 +235,6 @@ pub(crate) fn show(
                     answer = Some(Answer::Cancel);
                 }
             });
-            key_hint(
-                ui,
-                match enter_choice(safety, enter) {
-                    Some(Choice::Remove { branch: BranchChoice::Delete, .. }) => {
-                        "Enter deletes the branch  -  Esc cancels"
-                    }
-                    Some(_) => "Enter keeps the branch  -  Esc cancels",
-                    None => "Esc cancels  -  nothing is discarded until you pick it",
-                },
-            );
         });
     let pressed = fresh_enter(ctx);
     if answer.is_none()

@@ -6,7 +6,6 @@ use tidewatch_core::consent::{Consent, Event};
 use tidewatch_core::trust::{CliTrust, Status, TrustCli, TrustState};
 
 use crate::brand;
-use crate::notice::key_hint;
 use crate::screen_kit::TEXT_BODY;
 use crate::screen_kit::TEXT_TAG;
 use crate::screen_kit::{Size, dialog_frame, footer_row, primary_button, quiet_button};
@@ -167,7 +166,7 @@ pub(crate) fn dialog(ctx: &egui::Context, page: &Page) -> Option<Event> {
                 .color(brand::MUTED),
             );
             ui.add_space(6.0);
-            footer_row(ui, "", |ui| {
+            footer_row(ui, "Esc counts as No", |ui| {
                 if primary_button(ui, "Yes, trust the Tidewatch folder", true, Size::Regular)
                     .clicked()
                 {
@@ -177,7 +176,6 @@ pub(crate) fn dialog(ctx: &egui::Context, page: &Page) -> Option<Event> {
                     answer = Some(Event::No);
                 }
             });
-            key_hint(ui, "Esc counts as No");
         },
     );
     if answer.is_none() && ctx.input_mut(|i| i.consume_key(Modifiers::NONE, Key::Escape)) {

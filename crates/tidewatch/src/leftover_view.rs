@@ -10,7 +10,6 @@ use tidewatch_core::worktree_safety::{Risk, Safety};
 
 use crate::brand;
 use crate::leftovers::{Cleanup, Row, RowState, row_text};
-use crate::notice::key_hint;
 use crate::screen_kit::{
     Size, danger_button, dialog_frame, footer_row, primary_button, quiet_button,
 };
@@ -164,7 +163,7 @@ pub(crate) fn dialog(ctx: &egui::Context, cleanup: &Cleanup) -> Option<Answer> {
                 }
             });
             ui.add_space(4.0);
-            footer_row(ui, "", |ui| {
+            footer_row(ui, "Esc closes", |ui| {
                 let n = cleanup.clean_count();
                 let label = if n == 0 { "Clean up".to_owned() } else { format!("Clean up ({n})") };
                 let blocker = cleanup.clean_up_blocker();
@@ -178,7 +177,6 @@ pub(crate) fn dialog(ctx: &egui::Context, cleanup: &Cleanup) -> Option<Answer> {
                     answer = Some(Answer::Close);
                 }
             });
-            key_hint(ui, "Esc closes");
         },
     );
     if answer.is_none() && modal.should_close() {
