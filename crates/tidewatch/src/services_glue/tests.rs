@@ -248,17 +248,32 @@ fn a_restart_with_no_process_to_wait_for_spawns_at_once() {
 }
 
 #[test]
+fn a_service_the_owner_adds_is_saved_stopped_until_they_start_it() {
+    let mut fx = fixture(&[]);
+    let repo = fx.repo.path().to_path_buf();
+    fx.host.add(&repo, &service("db", "sleep 30", true), Begin::Stopped).unwrap();
+    assert_eq!(fx.word("db"), Word::Stopped);
+    assert_eq!(
+        tidewatch_core::services::services_for(&fx.paths, &repo),
+        [service("db", "sleep 30", true)]
+    );
+    fx.host.command(&repo, "db", Command::Start).unwrap();
+    assert_eq!(fx.word("db"), Word::Running);
+    fx.host.shutdown();
+}
+
+#[test]
 fn adding_saves_and_starts_even_without_autostart_editing_restarts_on_a_new_command_and_removing_stops_it()
  {
     let mut fx = fixture(&[]);
     let repo = fx.repo.path().to_path_buf();
-    fx.host.add(&repo, &service("db", "sleep 30", false)).unwrap();
+    fx.host.add(&repo, &service("db", "sleep 30", false), Begin::Now).unwrap();
     assert_eq!(fx.word("db"), Word::Running);
     assert_eq!(
         tidewatch_core::services::services_for(&fx.paths, &repo),
         [service("db", "sleep 30", false)]
     );
-    let refused = fx.host.add(&repo, &service("DB", "sleep 31", true)).unwrap_err();
+    let refused = fx.host.add(&repo, &service("DB", "sleep 31", true), Begin::Now).unwrap_err();
     assert_eq!(refused.len(), 1, "{refused:?}");
     let before = fx.pid("db");
     fx.host.edit(&repo, "db", &Service::new("db", "sleep 30", true)).unwrap();
@@ -338,7 +353,7 @@ fn the_fake_services_are_three_stand_ins_that_spawn_and_write_nothing() {
             .any(|l| l.contains("giving up"))
     );
     assert!(host.log_tail(Path::new("/work/shop"), "db", 3).unwrap().len() <= 3);
-    assert!(host.add(Path::new("/work/shop"), &service("x", "y", true)).is_err());
+    assert!(host.add(Path::new("/work/shop"), &service("x", "y", true), Begin::Now).is_err());
     assert!(host.command(Path::new("/work/shop"), "db", Command::Stop).is_err());
     assert_eq!(spawned.get(), 0);
     assert!(!paths.services_file().exists());

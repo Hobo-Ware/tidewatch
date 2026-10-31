@@ -79,7 +79,7 @@ pub(crate) struct Form {
 
 impl Form {
     pub(crate) fn add() -> Self {
-        Self { autostart: true, focus: true, ..Self::default() }
+        Self { focus: true, ..Self::default() }
     }
 
     fn edit(row: &Row) -> Self {
@@ -521,7 +521,7 @@ fn form_dialog(
                 cancel = true;
             }
         });
-        key_hint(ui, "Save adds the service and starts it  -  Esc cancels");
+        key_hint(ui, "Save adds the service, Start runs it  -  Esc cancels");
     });
     if cancel || modal.should_close() {
         return (None, None);

@@ -44,6 +44,12 @@ pub(crate) struct Row {
     pub(crate) line: String,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Begin {
+    Now,
+    Stopped,
+}
+
 struct Run {
     service: Service,
     sup: Supervisor,
@@ -382,13 +388,21 @@ impl Host {
         Store::update(paths, change)
     }
 
-    /// Saves a new service and starts it, even when its autostart is off.
-    pub(crate) fn add(&mut self, repo: &Path, service: &Service) -> Result<(), Vec<String>> {
+    /// Saves a new service. `Begin::Now` also starts it, even when its autostart is off; the
+    /// owner's own Add leaves it stopped until they press Start.
+    pub(crate) fn add(
+        &mut self,
+        repo: &Path,
+        service: &Service,
+        begin: Begin,
+    ) -> Result<(), Vec<String>> {
         self.saved(|store| store.add(repo, service))?;
         let service = Service::new(&service.name, &service.command, service.autostart);
         let now = self.now();
         let mut run = Run::new(service);
-        run.step(Event::Start, repo, now, &self.spawn);
+        if begin == Begin::Now {
+            run.step(Event::Start, repo, now, &self.spawn);
+        }
         self.repos.entry(repo.to_path_buf()).or_default().push(run);
         self.version += 1;
         Ok(())

@@ -268,7 +268,7 @@ fn the_card_menu_opens_the_edit_and_the_remove_dialogs_with_the_services_own_val
     memory.open_add();
     assert!(memory.dialog_open());
     assert_eq!(memory.dialog, Some(Dialog::Form(Form::add())));
-    assert!(Form::add().autostart, "a new service starts with the repo unless turned off");
+    assert!(!Form::add().autostart, "a new service waits for Start unless its switch is turned on");
 }
 
 fn dialog_frame_of(
@@ -328,7 +328,7 @@ fn enter_in_the_add_dialog_saves_a_good_form_and_keeps_a_bad_one_open_with_its_p
     let saved = dialog_frame_of(&ctx, &mut memory, &[], key(Key::Enter));
     assert_eq!(
         saved,
-        Some(Action::Save { editing: None, service: Service::new("db", "sleep 1", true) })
+        Some(Action::Save { editing: None, service: Service::new("db", "sleep 1", false) })
     );
     assert!(!memory.dialog_open());
 }
