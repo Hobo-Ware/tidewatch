@@ -47,6 +47,14 @@ fn the_fix_words_follow_the_profile() {
 }
 
 #[test]
+fn each_fix_follows_the_fixes_setting() {
+    let fixup = Workflow::default();
+    let new = Workflow { fixes: Fixes::NewCommits, ..fixup };
+    assert_eq!(fixup.each_fix(), "fold each fix into its commit");
+    assert_eq!(new.each_fix(), "commit each fix");
+}
+
+#[test]
 fn unpushed_commits_need_the_lease_when_either_way_rewrites() {
     let table = [
         (CatchUp::Rebase, Fixes::Fixup, true),

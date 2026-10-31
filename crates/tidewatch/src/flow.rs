@@ -431,6 +431,7 @@ impl Flow {
                         file,
                         Which::Review(message.unwrap_or_default()),
                         facts.agent_id.clone(),
+                        facts.workflow,
                         unix,
                     );
                 }
@@ -462,7 +463,17 @@ impl Flow {
             return Some(reason.to_owned());
         }
         let file = facts.notes_file.clone()?;
-        flow_jobs::send_notes(&self.jobs, ctx, tab, false, file, which, facts.agent_id, unix);
+        flow_jobs::send_notes(
+            &self.jobs,
+            ctx,
+            tab,
+            false,
+            file,
+            which,
+            facts.agent_id,
+            facts.workflow,
+            unix,
+        );
         None
     }
 

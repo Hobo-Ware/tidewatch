@@ -2035,7 +2035,11 @@ mod tests {
             Comment { author: "v".into(), time: 1, body: "rename it".into() },
         );
         notes.mark_sent(&[id], 5);
-        let pasted = tidewatch_core::note_paste::format_review(&[&notes.threads[0]], "Start here");
+        let pasted = tidewatch_core::note_paste::format_review(
+            &[&notes.threads[0]],
+            "Start here",
+            tidewatch_core::workflow_profile::Workflow::default(),
+        );
         let mut rows = Rows::default();
         rows.push(Entry {
             role: Role::User,
@@ -2088,7 +2092,7 @@ mod tests {
         }
         assert!(shapes.contains("Review"));
         assert!(shapes.contains("rename it"));
-        assert!(!shapes.contains("Tidewatch review notes"));
+        assert!(!shapes.contains("Review from you"));
         assert_eq!(state.heights.measured_count(), 1);
     }
 
