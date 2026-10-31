@@ -174,6 +174,7 @@ pub(crate) fn show(
 ) -> Out {
     ui.painter().rect_filled(area, 0.0, brand::GROUND);
     let board = overview.board(state.repo.as_deref());
+    state.repo = state.repo.take().filter(|repo| board.chips.iter().any(|c| c.label == *repo));
     let head_h = header(ui, area, &board, state);
     let board = overview.board(state.repo.as_deref());
     let agenda = crate::agenda::narrow(sections.agenda, state.repo.as_deref());
@@ -1175,6 +1176,29 @@ mod tests {
         let order = |name: &str| texts.iter().position(|text| text == name).unwrap();
         assert!(order("waits-on-date") < order("waits-on-pr"), "the dated wait is soonest");
         assert_eq!(screen.click("is-stuck").jump, Some(3));
+    }
+
+    #[test]
+    fn a_picked_repo_that_loses_its_last_agent_falls_back_to_all_and_the_chips_agree() {
+        let mut screen = Screen::new(two_repos());
+        screen.click("acme-api");
+        assert_eq!(screen.state.repo.as_deref(), Some("acme-api"));
+        screen.data = crate::overview::build(vec![
+            PlaceInput {
+                label: "acme-web".into(),
+                path: "/work/acme-web".into(),
+                rows: vec![
+                    row(1, "web-working", "acme-web", AgentStatus::Working),
+                    row(2, "web-asks", "acme-web", AgentStatus::NeedsYou(Reason::Question)),
+                ],
+            },
+            PlaceInput { label: "acme-api".into(), path: "/work/acme-api".into(), rows: vec![] },
+        ]);
+        let texts = screen.texts();
+        assert_eq!(screen.state.repo, None);
+        assert!(has(&texts, "web-working") && has(&texts, "web-asks"), "{texts:?}");
+        assert!(!has(&texts, "Nothing running. Start an agent with"), "{texts:?}");
+        assert!(has(&texts, "2 agents \u{b7} 1 need you \u{b7} 1 working \u{b7} 0 idle"));
     }
 
     #[test]

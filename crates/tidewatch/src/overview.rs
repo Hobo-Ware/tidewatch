@@ -406,7 +406,7 @@ impl Board {
 
 impl Overview {
     /// The lists of the screen for `repo` (a place label), or for every repo when `None`. A repo
-    /// the window no longer holds shows everything.
+    /// with no agents left, or that the window no longer holds, shows everything.
     pub(crate) fn board(&self, repo: Option<&str>) -> Board {
         let chips: Vec<RepoChip> = self
             .places
@@ -418,7 +418,7 @@ impl Overview {
             })
             .filter(|chip| chip.count > 0)
             .collect();
-        let repo = repo.filter(|repo| self.places.iter().any(|place| place.label == *repo));
+        let repo = repo.filter(|repo| chips.iter().any(|chip| chip.label == *repo));
         let keep = |row: &&Row| repo.is_none_or(|repo| row.place == repo);
         let needs: Vec<Row> = self.needs.iter().filter(keep).cloned().collect();
         let rest = self.places.iter().flat_map(|place| &place.rows).filter(keep);
@@ -1059,6 +1059,19 @@ mod tests {
             (0, vec!["w1"], vec!["w2", "w3"])
         );
         assert_eq!(two_repos().board(Some("gone")), two_repos().board(None));
+    }
+
+    #[test]
+    fn a_picked_repo_with_no_agents_left_shows_every_repo_like_the_all_chip() {
+        let emptied = build(vec![
+            place("web", vec![row(1, "w1", AgentStatus::Working)]),
+            place("api", Vec::new()),
+        ]);
+        let all = emptied.board(None);
+        assert_eq!(emptied.board(Some("api")), all);
+        assert_eq!(titles(&all.working), ["w1"]);
+        let chips: Vec<_> = all.chips.iter().map(|c| c.label.as_str()).collect();
+        assert_eq!(chips, ["web"]);
     }
 
     #[test]
