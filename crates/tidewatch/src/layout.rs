@@ -15,6 +15,7 @@ pub(crate) const EDGE: f32 = 24.0;
 /// The height of the History card's header and of the status line above an agent tab, so both tops
 /// line up.
 pub(crate) const CHROME_H: f32 = 48.0;
+pub(crate) const MIN_TERMINAL_H: f32 = 260.0;
 
 /// In the side layout `diff` is the whole left column, the place a file's diff takes over from
 /// the terminal, and `history` is the card on the right: a margin from the terminal's padding, the
@@ -59,12 +60,14 @@ pub(crate) fn split_panels(area: Rect, panels_h: f32) -> Layout {
     split_at(area, (area.height() - panels_h - GAP).max(0.0).round())
 }
 
-fn split_at(area: Rect, terminal_h: f32) -> Layout {
+fn split_at(area: Rect, wanted_h: f32) -> Layout {
+    let terminal_h = wanted_h.max(MIN_TERMINAL_H).min(area.height().max(0.0));
     let split_y = area.top() + terminal_h;
-    let bottom = Rect::from_min_max(pos2(area.left(), split_y + GAP), area.max);
+    let bottom =
+        Rect::from_min_max(pos2(area.left(), (split_y + GAP).min(area.bottom())), area.max);
     let cards = Rect::from_min_max(
         pos2(bottom.left() + CARD_MARGIN, bottom.top()),
-        pos2(bottom.right() - CARD_MARGIN, bottom.bottom() - CARD_MARGIN),
+        pos2(bottom.right() - CARD_MARGIN, (bottom.bottom() - CARD_MARGIN).max(bottom.top())),
     );
     let mid = cards.center().x.round();
     Layout {
@@ -77,16 +80,18 @@ fn split_at(area: Rect, terminal_h: f32) -> Layout {
 /// Takes a band of `height` off the bottom of the terminal area, for a card between the terminal and
 /// the panes, and returns it.
 pub(crate) fn band_below(terminal: &mut Rect, height: f32) -> Rect {
-    let band = Rect::from_min_max(pos2(terminal.left(), terminal.bottom() - height), terminal.max);
-    terminal.max.y -= height;
+    let top = (terminal.bottom() - height).max(terminal.top());
+    let band = Rect::from_min_max(pos2(terminal.left(), top), terminal.max);
+    terminal.max.y = top;
     band
 }
 
 /// Takes a band of `height` off the top of the terminal area, for the stepper and its cards, and
 /// returns it.
 pub(crate) fn band_above(terminal: &mut Rect, height: f32) -> Rect {
-    let band = Rect::from_min_max(terminal.min, pos2(terminal.right(), terminal.top() + height));
-    terminal.min.y += height;
+    let bottom = (terminal.top() + height).min(terminal.bottom());
+    let band = Rect::from_min_max(terminal.min, pos2(terminal.right(), bottom));
+    terminal.min.y = bottom;
     band
 }
 
@@ -152,6 +157,25 @@ mod tests {
     }
 
     #[test]
+    fn the_terminal_area_keeps_its_least_height_before_the_panels_shrink() {
+        let heights = [840.0, 600.0, 400.0, 300.0, 100.0, 0.0];
+        for height in heights {
+            let area = Rect::from_min_max(pos2(0.0, 40.0), pos2(1000.0, 40.0 + height));
+            for l in [split(area), split_panels(area, 200.0), split_panels(area, 900.0)] {
+                let outer = l.terminal.expand(TERMINAL_PAD);
+                assert!(outer.height() >= MIN_TERMINAL_H.min(height), "{height}");
+                assert!(outer.bottom() <= area.bottom(), "{height}");
+                assert!(l.history.height() >= 0.0 && l.diff.height() >= 0.0, "{height}");
+                assert!(l.history.top() >= outer.bottom().min(area.bottom()), "{height}");
+            }
+        }
+        let l = split_panels(area(), 900.0);
+        assert_eq!(l.terminal.expand(TERMINAL_PAD).height(), MIN_TERMINAL_H);
+        let short = Rect::from_min_max(pos2(0.0, 40.0), pos2(1000.0, 440.0));
+        assert_eq!(split(short).terminal.expand(TERMINAL_PAD).height(), MIN_TERMINAL_H);
+    }
+
+    #[test]
     fn bottom_cards_share_the_rest_with_a_card_margin_between_them() {
         let l = split(area());
         let outer = l.terminal.expand(TERMINAL_PAD);
@@ -214,6 +238,18 @@ mod tests {
         let second = band_above(&mut terminal, 10.0);
         assert_eq!(second.top(), 90.0);
         assert_eq!(terminal.top(), 100.0);
+    }
+
+    #[test]
+    fn a_band_taller_than_the_terminal_leaves_it_empty_not_upside_down() {
+        let mut above = Rect::from_min_max(pos2(10.0, 50.0), pos2(990.0, 80.0));
+        let band = band_above(&mut above, 48.0);
+        assert_eq!(band.height(), 30.0);
+        assert_eq!((above.height(), above.top()), (0.0, 80.0));
+        let mut below = Rect::from_min_max(pos2(10.0, 50.0), pos2(990.0, 80.0));
+        let band = band_below(&mut below, 48.0);
+        assert_eq!(band.height(), 30.0);
+        assert_eq!((below.height(), below.bottom()), (0.0, 50.0));
     }
 
     #[test]
