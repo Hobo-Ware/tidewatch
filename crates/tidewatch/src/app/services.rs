@@ -15,7 +15,7 @@ use crate::brand;
 use crate::layout;
 use crate::repo::Workspace;
 use crate::screen_kit::{Size, TEXT_SECONDARY, body, mono, quiet_button};
-use crate::services_glue::{Command, Row};
+use crate::services_glue::{Begin, Command, Row};
 use crate::services_view::{self, Action};
 
 const BACK_LABEL: &str = "\u{2039} Terminal";
@@ -91,7 +91,7 @@ impl Tidewatch {
                 self.services.edit(&repo, &old, &service).map_err(|found| found.join("; "))
             }
             Action::Save { editing: None, service } => {
-                self.services.add(&repo, &service).map_err(|found| found.join("; "))
+                self.services.add(&repo, &service, Begin::Stopped).map_err(|found| found.join("; "))
             }
             Action::Remove(name) => {
                 self.services.remove(&repo, &name).map_err(|found| found.join("; "))
@@ -125,7 +125,7 @@ impl Tidewatch {
             Call::List => Ok(services_mcp::list_text(&self.services.listed(repo))),
             Call::Add(service) => {
                 let name = service.name.clone();
-                self.services.add(repo, &service).map_err(|found| {
+                self.services.add(repo, &service, Begin::Now).map_err(|found| {
                     format!(
                         "Nothing was changed. Fix these and call add_service again:\n- {}",
                         found.join("\n- ")
