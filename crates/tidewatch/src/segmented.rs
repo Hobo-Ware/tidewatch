@@ -301,7 +301,7 @@ fn balanced_limit(widths: &[f32], avail: f32) -> f32 {
     let rows = rows_at(widths, avail);
     let (mut low, mut high) = (widths.iter().copied().fold(0.0, f32::max).min(avail), avail);
     while high - low > 0.5 {
-        let mid = (low + high) / 2.0;
+        let mid = f32::midpoint(low, high);
         if rows_at(widths, mid) <= rows {
             high = mid;
         } else {
