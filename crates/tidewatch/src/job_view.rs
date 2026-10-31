@@ -11,7 +11,7 @@ use crate::job_model::{
 };
 use crate::reader_view::ellipsized;
 use crate::screen_kit::TEXT_TITLE;
-use crate::screen_kit::{Size, body, button_width, heading, mono, quiet_button};
+use crate::screen_kit::{Size, body, button_width, heading, quiet_button};
 
 pub(crate) const GAP: f32 = 12.0;
 const PAD_X: f32 = 16.0;
@@ -67,7 +67,7 @@ fn card_frame(painter: &egui::Painter, rect: Rect, fill: Color32, line: Color32)
 }
 
 fn name_row(painter: &egui::Painter, row: Rect, name: &str, right: &str) {
-    let right_galley = painter.layout_no_wrap(right.to_owned(), mono(13.0), brand::MUTED);
+    let right_galley = painter.layout_no_wrap(right.to_owned(), body(13.0), brand::MUTED);
     let room = (row.width() - right_galley.size().x - 10.0).max(1.0);
     let name = ellipsized(painter, name, heading(TEXT_TITLE), brand::TEXT, room);
     painter.galley(pos2(row.left(), row.center().y - name.size().y / 2.0), name, brand::TEXT);
@@ -151,7 +151,7 @@ fn quiet_line(ui: &mut Ui, width: f32, line: &QuietLine) {
     let painter = ui.painter();
     let inner = row_inner(rect);
     painter.circle_filled(pos2(inner.left() + 3.0, rect.center().y), 3.0, brand::FAINT);
-    let elapsed = painter.layout_no_wrap(line.elapsed.clone(), mono(13.0), brand::MUTED);
+    let elapsed = painter.layout_no_wrap(line.elapsed.clone(), body(13.0), brand::MUTED);
     let text_x = inner.left() + MARK_W;
     let room = (inner.right() - elapsed.size().x - 10.0 - text_x).max(1.0);
     if room >= MIN_NAME_W {
@@ -216,7 +216,7 @@ fn finished_line(ui: &mut Ui, width: f32, line: &FinishedLine) {
             Stroke::new(2.0, ink),
         ));
     }
-    let detail = painter.layout_no_wrap(line.detail.clone(), mono(13.0), brand::MUTED);
+    let detail = painter.layout_no_wrap(line.detail.clone(), body(13.0), brand::MUTED);
     let text_x = inner.left() + MARK_W;
     let room = (inner.right() - detail.size().x - 10.0 - text_x).max(1.0);
     if room >= MIN_NAME_W {
