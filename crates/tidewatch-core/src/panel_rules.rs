@@ -6,21 +6,24 @@
 
 use std::borrow::Cow;
 
-use tidewatch_core::progress::{Ledger, State};
+use serde::{Deserialize, Serialize};
 
-use crate::progress_model::waiting_of;
+use crate::civil_date::Date;
+use crate::progress::{Ledger, Mark, State, When};
+use crate::progress_report::WaitingOn;
 
 /// What the hooks say about the agent, as wall-clock times.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub(crate) struct Live {
+pub struct Live {
     /// A hook says the agent asks the owner something right now: a permission or a question.
-    pub(crate) asking: bool,
+    pub asking: bool,
     /// When the last turn started, which is when the owner's reply reached the agent.
-    pub(crate) turn_started_ms: Option<i64>,
-    pub(crate) rested_at_ms: Option<i64>,
+    pub turn_started_ms: Option<i64>,
+    pub rested_at_ms: Option<i64>,
 }
 
-pub(crate) fn is_outdated(ledger: &Ledger, updated_ms: Option<i64>, live: Live) -> bool {
+#[must_use]
+pub fn is_outdated(ledger: &Ledger, updated_ms: Option<i64>, live: Live) -> bool {
     let Some((updated, rested)) = updated_ms.zip(live.rested_at_ms) else { return false };
     if rested <= updated {
         return false;
@@ -36,7 +39,8 @@ pub(crate) fn is_outdated(ledger: &Ledger, updated_ms: Option<i64>, live: Live) 
 /// turn started is the agent's latest word and stands; so does any ledger while a hook says the
 /// agent is asking, and one with no known save time. Only a turn start counts: the status turning
 /// Working again inside the same turn (a permission answered) is not the owner's reply.
-pub(crate) fn is_stale(ledger: &Ledger, updated_ms: Option<i64>, live: Live) -> bool {
+#[must_use]
+pub fn is_stale(ledger: &Ledger, updated_ms: Option<i64>, live: Live) -> bool {
     if !ledger.awaits_owner() || live.asking {
         return false;
     }
@@ -46,16 +50,15 @@ pub(crate) fn is_stale(ledger: &Ledger, updated_ms: Option<i64>, live: Live) -> 
 
 /// Whether the owner answered the ledger's question with a ready answer and the agent has not saved
 /// a ledger since: `answered_at` is the save time the ledger had then.
-pub(crate) fn answered_since_save(
-    answered_at: Option<&Option<i64>>,
-    updated_ms: Option<i64>,
-) -> bool {
+#[must_use]
+pub fn answered_since_save(answered_at: Option<&Option<i64>>, updated_ms: Option<i64>) -> bool {
     answered_at == Some(&updated_ms)
 }
 
 /// The state a report stands for on every screen. A report older than the turn that now runs no
 /// longer holds while the agent works, so the tab reads Working until it reports again.
-pub(crate) fn standing(
+#[must_use]
+pub fn standing(
     ledger: &Ledger,
     updated_ms: Option<i64>,
     live: Live,
@@ -72,7 +75,8 @@ pub(crate) fn standing(
 
 /// The ledger as the screens should read it: unchanged, or with the question and the wait taken
 /// out while `stale`.
-pub(crate) fn fresh(ledger: &Ledger, stale: bool) -> Cow<'_, Ledger> {
+#[must_use]
+pub fn fresh(ledger: &Ledger, stale: bool) -> Cow<'_, Ledger> {
     if !stale {
         return Cow::Borrowed(ledger);
     }
@@ -83,6 +87,112 @@ pub(crate) fn fresh(ledger: &Ledger, stale: bool) -> Cow<'_, Ledger> {
     }
     working.waiting_on = None;
     Cow::Owned(working)
+}
+
+/// `just now`, `4 min ago`, `2 h ago`, `3 d ago`.
+#[must_use]
+pub fn ago(now_ms: i64, then_ms: i64) -> String {
+    let secs = (now_ms - then_ms).max(0) / 1000;
+    match secs {
+        0..45 => "just now".to_owned(),
+        45..3600 => format!("{} min ago", (secs / 60).max(1)),
+        3600..86_400 => format!("{} h ago", secs / 3600),
+        _ => format!("{} d ago", secs / 86_400),
+    }
+}
+
+/// What a card says of the thing the agent waits on, and when it falls due.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Waiting {
+    pub label: String,
+    pub date: Option<Date>,
+}
+
+/// What a waiting ledger waits on: the typed `waiting_on`, or for a ledger written in markdown
+/// the soonest open dated item of its Scheduled list, else its first open `on:` item.
+#[must_use]
+pub fn waiting_of(ledger: &Ledger) -> Option<Waiting> {
+    if let Some(waiting) = &ledger.waiting_on {
+        let date = match waiting {
+            WaitingOn::Date(date) => Some(*date),
+            _ => None,
+        };
+        return Some(Waiting { label: waiting.label(), date });
+    }
+    let open =
+        || ledger.scheduled.iter().filter(|item| !matches!(item.mark, Mark::Done | Mark::Skipped));
+    let dated = open().filter_map(|item| item.when.date()).min();
+    if let Some(date) = dated {
+        return Some(Waiting { label: date.to_string(), date: Some(date) });
+    }
+    open().find_map(|item| match &item.when {
+        When::On(event) => Some(Waiting { label: event.clone(), date: None }),
+        _ => None,
+    })
+}
+
+/// What a saved report says that the panel weighs against the facts, kept in the log so the log
+/// never holds a report body. The decisions are those of the ledger functions above, over a digest.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ReportDigest {
+    pub declared: Option<State>,
+    pub shown: State,
+    pub shown_if_stale: State,
+    pub asks: bool,
+    pub awaits_owner: bool,
+    pub waits: bool,
+}
+
+impl ReportDigest {
+    #[must_use]
+    pub fn of(ledger: &Ledger) -> Self {
+        Self {
+            declared: ledger.status.state,
+            shown: ledger.shown_state(),
+            shown_if_stale: fresh(ledger, true).shown_state(),
+            asks: ledger.has_question(),
+            awaits_owner: ledger.awaits_owner(),
+            waits: waiting_of(ledger).is_some(),
+        }
+    }
+
+    #[must_use]
+    pub fn is_outdated(&self, updated_ms: Option<i64>, live: Live) -> bool {
+        let Some((updated, rested)) = updated_ms.zip(live.rested_at_ms) else { return false };
+        if rested <= updated {
+            return false;
+        }
+        match self.declared {
+            Some(State::Working | State::NeedsYou) => !self.asks,
+            Some(State::Waiting) => !self.asks && !self.waits,
+            Some(State::Blocked | State::Done) | None => false,
+        }
+    }
+
+    #[must_use]
+    pub fn is_stale(&self, updated_ms: Option<i64>, live: Live) -> bool {
+        if !self.awaits_owner || live.asking {
+            return false;
+        }
+        let Some(updated) = updated_ms else { return false };
+        live.turn_started_ms.is_some_and(|started| started > updated)
+    }
+
+    #[must_use]
+    pub fn standing(
+        &self,
+        updated_ms: Option<i64>,
+        live: Live,
+        (stale, working): (bool, bool),
+    ) -> State {
+        if self.is_outdated(updated_ms, live) {
+            return State::Done;
+        }
+        let state = if stale { self.shown_if_stale } else { self.shown };
+        let older =
+            updated_ms.zip(live.turn_started_ms).is_some_and(|(saved, started)| started > saved);
+        if working && older { State::Working } else { state }
+    }
 }
 
 #[cfg(test)]
@@ -164,7 +274,7 @@ mod tests {
     fn typed(state: &str, extra: &str) -> Ledger {
         let mut ledger = Ledger::parse(&format!("# Goal\nx\n\n## Status\nstate: {state}\n"));
         if !extra.is_empty() {
-            ledger.waiting_on = Some(tidewatch_core::progress_report::WaitingOn::Pr(7));
+            ledger.waiting_on = Some(WaitingOn::Pr(7));
         }
         ledger
     }
@@ -199,7 +309,7 @@ mod tests {
     fn with_wait(state: &str, wait: bool) -> Ledger {
         let mut ledger = typed(state, "");
         if wait {
-            ledger.waiting_on = Some(tidewatch_core::progress_report::WaitingOn::Pr(7));
+            ledger.waiting_on = Some(WaitingOn::Pr(7));
         }
         ledger
     }
@@ -259,7 +369,7 @@ mod tests {
     #[test]
     fn a_stale_wait_drops_what_it_waited_on() {
         let mut waiting = asks();
-        waiting.waiting_on = Some(tidewatch_core::progress_report::WaitingOn::Pr(7));
+        waiting.waiting_on = Some(WaitingOn::Pr(7));
         assert_eq!(fresh(&waiting, true).waiting_on, None);
         assert!(fresh(&waiting, false).waiting_on.is_some());
     }
@@ -277,5 +387,94 @@ mod tests {
     fn a_ledger_that_is_not_stale_is_not_copied() {
         let ledger = asks();
         assert!(matches!(fresh(&ledger, false), Cow::Borrowed(_)));
+    }
+
+    #[test]
+    fn ago_steps_from_now_to_days() {
+        let cases = [
+            (0, "just now"),
+            (44_000, "just now"),
+            (45_000, "1 min ago"),
+            (240_000, "4 min ago"),
+            (3_599_000, "59 min ago"),
+            (3_600_000, "1 h ago"),
+            (7_300_000, "2 h ago"),
+            (86_400_000, "1 d ago"),
+            (3 * 86_400_000, "3 d ago"),
+            (-5_000, "just now"),
+        ];
+        for (diff, want) in cases {
+            assert_eq!(ago(1_000_000_000 + diff, 1_000_000_000), want, "{diff}");
+        }
+    }
+
+    #[test]
+    fn the_digest_decides_exactly_as_the_ledger_does() {
+        let states = ["working", "needs_you", "waiting", "blocked", "done"];
+        let needs = ["- Nothing", "- Pick one"];
+        let times = [None, Some(SAVED - 1), Some(SAVED), Some(SAVED + 1)];
+        let mut checked = 0;
+        for state in states {
+            for ask in needs {
+                for wait in [false, true] {
+                    let mut report = ledger(&format!("state: {state}"), ask);
+                    if wait {
+                        report.waiting_on = Some(WaitingOn::Pr(7));
+                    }
+                    let digest = ReportDigest::of(&report);
+                    for updated in [None, Some(SAVED)] {
+                        for turn_at in times {
+                            for rested_at in times {
+                                for asking in [false, true] {
+                                    let live = Live {
+                                        asking,
+                                        turn_started_ms: turn_at,
+                                        rested_at_ms: rested_at,
+                                    };
+                                    let what =
+                                        format!("{state} {ask} wait={wait} {updated:?} {live:?}");
+                                    assert_eq!(
+                                        digest.is_outdated(updated, live),
+                                        is_outdated(&report, updated, live),
+                                        "outdated: {what}"
+                                    );
+                                    assert_eq!(
+                                        digest.is_stale(updated, live),
+                                        is_stale(&report, updated, live),
+                                        "stale: {what}"
+                                    );
+                                    for flags in
+                                        [(false, false), (true, false), (false, true), (true, true)]
+                                    {
+                                        assert_eq!(
+                                            digest.standing(updated, live, flags),
+                                            standing(&report, updated, live, flags),
+                                            "standing {flags:?}: {what}"
+                                        );
+                                        checked += 1;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        assert_eq!(checked, 5 * 2 * 2 * 2 * 4 * 4 * 2 * 4);
+    }
+
+    #[test]
+    fn a_digest_keeps_what_the_panel_weighs() {
+        let mut report = ledger("state: waiting", "- Nothing");
+        let plain = ReportDigest::of(&report);
+        assert_eq!(plain.declared, Some(State::Waiting));
+        assert!(!plain.asks && !plain.waits && !plain.awaits_owner);
+        report.waiting_on = Some(WaitingOn::Pr(7));
+        assert!(ReportDigest::of(&report).waits);
+        let asks = ReportDigest::of(&ledger("state: working", "- Pick one"));
+        assert!(asks.asks && asks.awaits_owner);
+        assert_eq!((asks.shown, asks.shown_if_stale), (State::NeedsYou, State::Working));
+        let text = serde_json::to_string(&asks).unwrap();
+        assert_eq!(serde_json::from_str::<ReportDigest>(&text).unwrap(), asks);
     }
 }

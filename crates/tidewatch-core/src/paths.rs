@@ -17,6 +17,7 @@ const AVATAR_FILE: &str = "avatar.json";
 const AVATAR_ASKED_FILE: &str = "avatar-asked";
 const PROGRESS_FEED_FILE: &str = "progress-feed.jsonl";
 const SENT_FILE: &str = "tidewatch-sent.jsonl";
+const PANEL_LOG_FILE: &str = "panel-log.jsonl";
 
 /// The ledger file that sits next to a tab's `notes.json`.
 #[must_use]
@@ -52,6 +53,12 @@ pub fn progress_feed_file_beside(notes_file: &Path) -> PathBuf {
 #[must_use]
 pub fn sent_file_beside(notes_file: &Path) -> PathBuf {
     notes_file.with_file_name(SENT_FILE)
+}
+
+/// The panel's event log, which sits next to a tab's `notes.json`.
+#[must_use]
+pub fn panel_log_file_beside(notes_file: &Path) -> PathBuf {
+    notes_file.with_file_name(PANEL_LOG_FILE)
 }
 
 fn repo_key(repo: &Path) -> String {
@@ -311,6 +318,12 @@ impl TidewatchPaths {
         self.tab_state_dir(repo, tab).join(PROGRESS_FILE)
     }
 
+    /// The tab's panel event log: every fact the panel shows, numbered, replayed after a restart.
+    #[must_use]
+    pub fn panel_log_file(&self, repo: &Path, tab: &str) -> PathBuf {
+        self.tab_state_dir(repo, tab).join(PANEL_LOG_FILE)
+    }
+
     #[must_use]
     pub fn progress_feed_file(&self, repo: &Path, tab: &str) -> PathBuf {
         self.tab_state_dir(repo, tab).join(PROGRESS_FEED_FILE)
@@ -473,6 +486,18 @@ mod tests {
         assert_ne!(feed, paths.progress_feed_file(repo, "main"));
         assert_eq!(sent_file_beside(&notes).parent(), notes.parent());
         assert!(sent_file_beside(&notes).ends_with("brave-otter/tidewatch-sent.jsonl"));
+    }
+
+    #[test]
+    fn the_panel_log_sits_with_the_notes_of_its_tab() {
+        let paths = paths();
+        let repo = Path::new("/work/web");
+        let notes = paths.notes_file(repo, "brave-otter");
+        let log = paths.panel_log_file(repo, "brave-otter");
+        assert_eq!(panel_log_file_beside(&notes), log);
+        assert_eq!(log.parent(), notes.parent());
+        assert!(log.ends_with("brave-otter/panel-log.jsonl"));
+        assert_ne!(log, paths.panel_log_file(repo, "main"));
     }
 
     #[test]

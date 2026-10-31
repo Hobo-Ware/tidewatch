@@ -168,7 +168,6 @@ mod progress_glue;
 mod progress_model;
 mod progress_nudge;
 mod progress_ring;
-mod progress_stale;
 mod progress_state;
 mod progress_view;
 mod prompt_ghost;

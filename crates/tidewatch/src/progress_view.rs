@@ -11,6 +11,7 @@ use egui::{
     StrokeKind, Ui, UiBuilder, pos2, vec2,
 };
 use tidewatch_core::link_board::LinkBoard;
+use tidewatch_core::panel_rules::fresh;
 use tidewatch_core::progress::{Entry, Ledger, Mark, State};
 
 use crate::brand;
@@ -27,7 +28,6 @@ use crate::progress_model::{
     stage_rows, stages_shown,
 };
 use crate::progress_ring::{paint_mark, tone_color};
-use crate::progress_stale::fresh;
 use crate::progress_state::TabLedger;
 use crate::reader_view::{ellipsized, paint_item};
 use crate::screen_kit::{Size, body, heading, mono};
@@ -170,7 +170,7 @@ pub(crate) enum Action {
 
 pub(crate) struct Input<'a> {
     pub(crate) ledger: Option<&'a TabLedger>,
-    /// The agent works on after the ledger asked the owner something (`progress_stale.rs`).
+    /// The agent works on after the ledger asked the owner something (`panel_rules.rs` in core).
     pub(crate) stale: bool,
     pub(crate) jobs: &'a [Card],
     pub(crate) now_ms: i64,

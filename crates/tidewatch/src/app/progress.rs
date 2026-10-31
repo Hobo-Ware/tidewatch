@@ -29,10 +29,10 @@ use crate::pane::{AgentTab, Body};
 use crate::progress_glue::today;
 use crate::progress_model::{look, look_as, questions};
 use crate::progress_nudge as nudge;
-use crate::progress_stale::{Live, answered_since_save, is_stale, standing};
 use crate::progress_state::Facts;
 use crate::status_view::state_of;
 use crate::{due_view, flow_glue, reader_glue, reader_view};
+use tidewatch_core::panel_rules::{Live, answered_since_save, is_stale, standing};
 use tidewatch_core::sent::{Cap, Reason as Said, because};
 use tidewatch_core::status::{AgentStatus, Reason};
 
