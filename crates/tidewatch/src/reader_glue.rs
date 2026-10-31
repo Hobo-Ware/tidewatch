@@ -147,13 +147,16 @@ fn keep_reply_box(agent: &mut AgentTab, ctx: &Context, now: f64) {
         let (entries, draft) = agent.reader.store.attach(&notes);
         let view = &mut agent.reader.view;
         view.recall = Recall::with_entries(entries);
-        if let Some(draft) = draft.filter(|_| view.reply.is_empty() && view.pictures.is_empty()) {
+        if let Some(draft) = draft.filter(|_| view.reply.is_empty()) {
             view.reply = draft.text;
-            view.pictures = draft.pictures;
+            crate::tokens::append(
+                &mut view.reply,
+                draft.pictures.into_iter().map(crate::tokens::Target::File),
+            );
         }
     }
     let view = &agent.reader.view;
-    if let Some(wake) = agent.reader.store.tick(&view.reply, &view.pictures, now) {
+    if let Some(wake) = agent.reader.store.tick(&view.reply, now) {
         ctx.request_repaint_after(Duration::from_secs_f64(wake + WAKE_SLACK_S));
     }
 }
@@ -374,7 +377,6 @@ pub(crate) fn draw(
     if dev.take_open_turns(reader.rows.len()) {
         reader.view.open_turns(&reader.rows, dev.notes_only());
     }
-    crate::pictures::attach(&mut reader.view.pictures, dev.take_pictures());
     if dev.take_rows() {
         use tidewatch_core::transcript::{Entry, Role};
         let now = unix_ms();
@@ -396,6 +398,28 @@ pub(crate) fn draw(
                 images: Vec::new(),
             });
         }
+    }
+    let ctx = ui.ctx().clone();
+    if let Some(sentence) = dev.take_sentence() {
+        reader.view.set_sentence(&ctx, &sentence);
+    }
+    if dev.holds_box(now) {
+        reader.view.request_reply_focus();
+    }
+    let attached = dev.take_pictures();
+    if !attached.is_empty() {
+        reader.view.insert_files(&ctx, attached);
+    }
+    if dev.take_enter(now) {
+        ctx.input_mut(|input| {
+            input.events.push(egui::Event::Key {
+                key: egui::Key::Enter,
+                physical_key: Some(egui::Key::Enter),
+                pressed: true,
+                repeat: false,
+                modifiers: egui::Modifiers::NONE,
+            });
+        });
     }
     for text in dev.take_held() {
         let _ = reader.view.line.hold(&text, unix_ms());

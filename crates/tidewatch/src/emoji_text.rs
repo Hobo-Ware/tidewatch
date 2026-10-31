@@ -120,6 +120,7 @@ fn slot_format(plain: &TextFormat, line: f32, size: f32) -> TextFormat {
 /// `job` with a transparent slot per emoji: the first code point at `SLOT_EM` times the size, the
 /// rest at a hair's width, all on one explicit line height so rows keep their height.
 pub(crate) fn slot_job(ctx: &Context, job: LayoutJob) -> LayoutJob {
+    let job = crate::token_view::slot_job(ctx, job);
     let found = clusters(&job.text);
     if found.is_empty() {
         return job;

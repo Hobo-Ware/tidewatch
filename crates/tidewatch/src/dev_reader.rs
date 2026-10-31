@@ -8,6 +8,9 @@
 //!   reply from the Reader's box once, when it is enabled.
 //! - `TIDEWATCH_DEV_PICTURES=<path>:<path>`: attach those pictures to the message box once, as a paste of
 //!   screenshots does (the new-tab form's box when a draft is in front).
+//! - `TIDEWATCH_DEV_BOX=<text>`: put that text in the reply box once, with the cursor at the `|` in it,
+//!   and `TIDEWATCH_DEV_ENTER=<seconds>` presses Enter in the box that long after startup, for captures
+//!   of a file put into the sentence (pictures and drops go where that cursor stands).
 //! - `TIDEWATCH_DEV_TURNS=open`: open the list of calls and the folded updates under every agent turn
 //!   once, as a click on a chip does; `notes` opens only the folded updates.
 //! - `TIDEWATCH_DEV_READER_SCROLL=<pixels>@<seconds>`: once, that long after startup, scroll the
@@ -31,6 +34,8 @@
 //!   before Tidewatch answers it (default five minutes).
 
 use std::collections::VecDeque;
+
+const BOX_FOCUS_SECS: f64 = 4.0;
 use std::path::PathBuf;
 
 use egui::Context;
@@ -105,6 +110,9 @@ pub(crate) struct DevReader {
     answer: Option<Answer>,
     reply: Option<(String, f64)>,
     pictures: Vec<PathBuf>,
+    sentence: Option<String>,
+    boxed: bool,
+    enter_at: Option<f64>,
     question: VecDeque<CardStep>,
     question_at: f64,
     open_turns: bool,
@@ -154,6 +162,8 @@ impl DevReader {
         let working = var("TIDEWATCH_DEV_WORKING").is_some_and(|value| value == "1");
         Self {
             pictures,
+            sentence: var("TIDEWATCH_DEV_BOX").filter(|text| !text.is_empty()),
+            enter_at: var("TIDEWATCH_DEV_ENTER").and_then(|secs| secs.parse().ok()),
             open_turns,
             notes_only,
             scroll_up,
@@ -187,6 +197,9 @@ impl DevReader {
         Self {
             question: question.map(card_steps).unwrap_or_default(),
             pictures: Vec::new(),
+            sentence: None,
+            boxed: false,
+            enter_at: None,
             question_at: 0.0,
             open_turns: false,
             notes_only: false,
@@ -228,6 +241,8 @@ impl DevReader {
             && self.answer.is_none()
             && self.reply.is_none()
             && self.pictures.is_empty()
+            && self.sentence.is_none()
+            && self.enter_at.is_none()
             && self.question.is_empty()
             && !self.open_turns
             && self.scroll_up.is_none()
@@ -261,6 +276,25 @@ impl DevReader {
 
     pub(crate) fn take_pictures(&mut self) -> Vec<PathBuf> {
         std::mem::take(&mut self.pictures)
+    }
+
+    pub(crate) fn take_sentence(&mut self) -> Option<String> {
+        let text = self.sentence.take();
+        self.boxed |= text.is_some();
+        text
+    }
+
+    /// Whether the box keeps asking for the keyboard: for the first seconds after a capture's text went in.
+    pub(crate) fn holds_box(&self, now: f64) -> bool {
+        self.boxed && now < BOX_FOCUS_SECS
+    }
+
+    pub(crate) fn take_enter(&mut self, now: f64) -> bool {
+        let due = self.enter_at.is_some_and(|at| now >= at);
+        if due {
+            self.enter_at = None;
+        }
+        due
     }
 
     /// Whether the turns open only their folded updates, not their calls.

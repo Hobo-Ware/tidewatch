@@ -5,6 +5,7 @@ use egui::{
     UiBuilder, pos2, vec2,
 };
 
+use crate::at_files;
 use crate::brand;
 use crate::composer::{self, Draft, Mode, Spec};
 use crate::new_tab::{NameCheck, NewTab};
@@ -163,8 +164,8 @@ fn mono_text(text: &str) -> RichText {
 }
 
 /// The box a first message or a task is typed into, `height` tall: where it went and the text when
-/// it changed. It is the Reader's composer as a field: pictures and files become chips, `:` opens the
-/// emoji list and a slash the commands, and Enter is a new line because Start is the form's.
+/// it changed. It is the Reader's composer as a field: pictures and files become chips in the sentence, `@` opens the
+/// repo's files, `:` opens the emoji list and a slash the commands, and Enter is a new line because Start is the form's.
 pub(crate) fn text_box(
     ui: &mut Ui,
     state: &mut NewTab,
@@ -174,15 +175,11 @@ pub(crate) fn text_box(
     let mut text = state.text().to_owned();
     let width = ui.available_width();
     let origin = ui.cursor().min;
-    let wanted = composer::field_height(
-        ui,
-        &text,
-        state.pictures.len(),
-        (width + 2.0 * OUTLINE, height - OUTLINE),
-    );
+    let wanted = composer::field_height(ui, &text, (width + 2.0 * OUTLINE, height - OUTLINE));
     let drawn =
         Rect::from_min_size(origin - vec2(OUTLINE, 0.0), vec2(width + 2.0 * OUTLINE, wanted));
     let mut child = ui.new_child(UiBuilder::new().max_rect(drawn));
+    let (repo, listed) = (state.repo().to_path_buf(), std::sync::Arc::clone(&state.files));
     let spec = Spec {
         id: text_id(),
         hint,
@@ -192,13 +189,10 @@ pub(crate) fn text_box(
         mode: Mode::Field { height: height - OUTLINE },
         stop: false,
         held: 0,
+        files: (!repo.as_os_str().is_empty())
+            .then_some(at_files::Source { root: &repo, paths: &listed }),
     };
-    let draft = Draft {
-        text: &mut text,
-        pictures: &mut state.pictures,
-        focus: &mut state.focus_message,
-        recall: None,
-    };
+    let draft = Draft { text: &mut text, focus: &mut state.focus_message, recall: None };
     composer::show(&mut child, draft, &spec);
     let rect = Rect::from_min_size(origin, vec2(width, wanted));
     ui.allocate_rect(rect, Sense::hover());

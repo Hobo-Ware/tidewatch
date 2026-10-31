@@ -14,9 +14,9 @@ use tidewatch_core::start_base;
 
 use crate::catalog::{Availability, Catalog};
 use crate::new_tab_meeseeks::{self, TestsOffer, Tick};
-use crate::pictures;
 use crate::repo_base::RepoFacts;
 use crate::slash::Entry as SlashEntry;
+use crate::tokens;
 
 const COPILOT_TRUST_HINT: &str = "Copilot asks to trust a new worktree on its first start. Trust ~/.tidewatch once to skip that.";
 
@@ -212,8 +212,8 @@ pub(crate) struct NewTab {
     settled: bool,
     /// Set by Enter or / to hand the keyboard to the message box on the next draw.
     pub(crate) focus_message: bool,
-    /// The pictures and files attached to the message box, sent after the text as in a reply.
-    pub(crate) pictures: Vec<PathBuf>,
+    /// The repo's files an `@` in the message box offers, listed off the frame by the window.
+    pub(crate) files: Arc<Vec<String>>,
     /// The slash commands the message box offers, filled by the window while the text starts with a slash.
     pub(crate) commands: Arc<Vec<SlashEntry>>,
     pub(crate) scroll_to_selected: bool,
@@ -250,7 +250,7 @@ impl NewTab {
             seed,
             settled: false,
             focus_message: false,
-            pictures: Vec::new(),
+            files: Arc::default(),
             commands: Arc::default(),
             scroll_to_selected: true,
             error: None,
@@ -304,15 +304,16 @@ impl NewTab {
         self.seed
     }
 
-    /// Adds files to the message box and hands it the keyboard, as a paste or a drop does in a reply.
-    pub(crate) fn attach(&mut self, paths: Vec<PathBuf>) {
-        pictures::attach(&mut self.pictures, paths);
+    /// Puts files into the message at its cursor and hands it the keyboard, as a paste or a drop does in a reply.
+    pub(crate) fn insert_files(&mut self, ctx: &egui::Context, paths: Vec<PathBuf>) {
+        let targets: Vec<tokens::Target> = paths.into_iter().map(tokens::Target::File).collect();
+        crate::composer::insert_targets(
+            ctx,
+            crate::new_tab_fields::text_id(),
+            &mut self.message,
+            &targets,
+        );
         self.focus_message = true;
-    }
-
-    /// The message the agent starts with: `text` and then the attached files, the way a reply sends them.
-    fn with_attachments(&self, text: &str) -> String {
-        pictures::message(text, &self.pictures)
     }
 
     pub(crate) fn set_text(&mut self, text: &str) {
@@ -555,7 +556,7 @@ impl NewTab {
         match &self.name {
             Name::Typed(name) => name.clone(),
             Name::Follows => {
-                let slug = branch_name::slug(self.text());
+                let slug = branch_name::slug(&tokens::plain(self.text()));
                 if slug.is_empty() {
                     names::pick(self.seed, |name| is_taken(facts, name))
                 } else {
@@ -567,7 +568,7 @@ impl NewTab {
 
     /// Whether the name is a slug of the text right now, which the field says.
     pub(crate) fn name_follows_text(&self) -> bool {
-        self.name == Name::Follows && !branch_name::slug(self.text()).is_empty()
+        self.name == Name::Follows && !branch_name::slug(&tokens::plain(self.text())).is_empty()
     }
 
     pub(crate) fn type_name(&mut self, name: &str) {
@@ -676,7 +677,8 @@ impl NewTab {
         }
         let (profile_id, profile) = new_tab_meeseeks::profile_for(&agent.id, &catalog.entries());
         let criteria = new_tab_meeseeks::criteria(self.ticks, &TestsOffer::of(facts));
-        let names = new_tab_meeseeks::names_for(&tasks, self.seed, |name| is_taken(facts, name));
+        let words: Vec<String> = tasks.iter().map(|task| tokens::plain(task)).collect();
+        let names = new_tab_meeseeks::names_for(&words, self.seed, |name| is_taken(facts, name));
         let base = self.base(facts);
         let tabs = tasks
             .into_iter()
@@ -685,7 +687,7 @@ impl NewTab {
                 profile_id: profile_id.clone(),
                 profile: profile.clone(),
                 agent: agent.clone(),
-                task: self.with_attachments(&task),
+                task: tokens::sendable(&task),
                 placement: Placement { name: Some(name), base: base.clone() },
                 remote: false,
                 meeseeks: Some(criteria),
@@ -723,7 +725,7 @@ impl NewTab {
             profile_id: id,
             profile: Profile { level: self.level, ..profile.clone() },
             agent: agent.clone(),
-            task: self.with_attachments(self.message.trim()),
+            task: tokens::sendable(self.message.trim()),
             placement: self.placement(facts),
             remote: self.remote_for(agent),
             meeseeks: None,

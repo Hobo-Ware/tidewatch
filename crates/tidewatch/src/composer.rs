@@ -1,30 +1,32 @@
 //! The message box of the Reader, of an agent tab's first message and of the new-tab form: one widget.
 //! A single line is a 48 px box with the text centred, the placeholder where typed text starts and Send
-//! centred on the line; it grows with its text up to 40% of the column, then scrolls inside. Pasted
-//! pictures are chips above the text, `:` and two letters open the emoji list, a slash opens the
-//! command list. In the form it is a field of a fixed height with no Send, where Enter is a new line.
-
-use std::path::PathBuf;
+//! centred on the line; it grows with its text up to 40% of the column, then scrolls inside. A picture or
+//! file is a chip inside the sentence, `@` opens the repo's files, `:` and two letters open the emoji
+//! list, a slash opens the command list. In the form it is a field of a fixed height with no Send,
+//! where Enter is a new line.
 
 use egui::epaint::RectShape;
-use egui::text::CCursor;
+use egui::text::{CCursor, CCursorRange};
 use egui::{
     CornerRadius, EventFilter, FontId, Frame, Id, Key, KeyboardShortcut, Modifiers, Rect, RichText,
     ScrollArea, Sense, Shape, Stroke, StrokeKind, TextEdit, Ui, UiBuilder, pos2, vec2,
 };
 
+use crate::at_files;
+use crate::at_files_view;
 use crate::brand;
 use crate::bullets;
 use crate::emoji_paint;
 use crate::emoji_pick::{self, Hit, MAX_ROWS, Query, Usage};
 use crate::emoji_view;
-use crate::pictures;
 use crate::reader_chat_view::BODY_PX;
 use crate::reader_view::INSET;
 use crate::recall::Recall;
 use crate::screen_kit::{Size, button_width, primary_button, quiet_button};
 use crate::slash::Entry as SlashEntry;
 use crate::slash_view;
+use crate::token_view;
+use crate::tokens::{self, Target};
 
 pub(crate) const BOX_H: f32 = 48.0;
 pub(crate) const GAP_Y: f32 = 8.0;
@@ -33,8 +35,6 @@ const BORDER: f32 = 1.0;
 const RADIUS: u8 = 14;
 const PAD_X: f32 = 18.0;
 const SEND_GAP: f32 = 12.0;
-const CHIP_TOP: f32 = 10.0;
-const CHIP_TEXT_GAP: f32 = 8.0;
 const SEND: &str = "Send";
 const STOP: &str = "Stop";
 const STOP_GAP: f32 = 8.0;
@@ -42,6 +42,7 @@ const OPTICAL_LIFT: f32 = 0.4;
 const FOCUS_RING: (f32, f32) = (3.0, 0.10);
 const DROP_RING: (f32, f32) = (6.0, 0.45);
 const DROP_FILL: f32 = 0.12;
+const CARET_W: f32 = 2.0;
 
 pub(crate) fn text_font() -> FontId {
     FontId::proportional(BODY_PX)
@@ -57,28 +58,20 @@ fn send_edge() -> f32 {
 pub(crate) struct Fit {
     pub(crate) box_h: f32,
     pub(crate) pad_y: f32,
-    pub(crate) chips_h: f32,
     pub(crate) scrolls: bool,
 }
 
-pub(crate) fn fit(row_h: f32, text_h: f32, chip_rows: usize, cap: f32) -> Fit {
+pub(crate) fn fit(row_h: f32, text_h: f32, cap: f32) -> Fit {
     let pad_y = ((BOX_H - 2.0 * BORDER - row_h) / 2.0).max(0.0);
-    let chips_h = if chip_rows == 0 {
-        0.0
-    } else {
-        CHIP_TOP + pictures::chips_height(chip_rows) + CHIP_TEXT_GAP
-    };
-    let top_pad = if chip_rows == 0 { pad_y } else { 0.0 };
-    let around = 2.0 * BORDER + chips_h + top_pad + pad_y;
+    let around = 2.0 * BORDER + 2.0 * pad_y;
     let wanted = around + text_h;
     let least = (around + row_h).max(BOX_H);
     let box_h = wanted.min(cap.max(BOX_H)).max(least);
-    Fit { box_h, pad_y, chips_h, scrolls: wanted > box_h + 0.5 }
+    Fit { box_h, pad_y, scrolls: wanted > box_h + 0.5 }
 }
 
 /// What the box is for. A reply sends on Enter and grows with its text; a field belongs to a form
-/// that sends on its own key, so it has no Send, Enter is a new line and the box is `height` tall
-/// (taller only when its chips need more).
+/// that sends on its own key, so it has no Send, Enter is a new line and the box is `height` tall.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) enum Mode {
     Reply,
@@ -101,25 +94,18 @@ fn row_height(ui: &Ui) -> f32 {
     ui.painter().layout_no_wrap(String::new(), text_font(), brand::TEXT).size().y
 }
 
-fn measure(
-    ui: &Ui,
-    text: &str,
-    pictures: usize,
-    box_w: f32,
-    (cap, mode, stop): (f32, Mode, bool),
-) -> Measure {
+fn measure(ui: &Ui, text: &str, box_w: f32, (cap, mode, stop): (f32, Mode, bool)) -> Measure {
     let send_w = if mode.sends() { button_width(ui, SEND, Size::Regular) } else { 0.0 };
     let stop_w =
         if mode.sends() && stop { button_width(ui, STOP, Size::Regular) + STOP_GAP } else { 0.0 };
     let right = if mode.sends() { send_edge() + send_w + stop_w + SEND_GAP } else { PAD_X };
     let wrap = box_w - PAD_X - right;
     let typed = bullets::layout(ui, text, &text_font(), brand::TEXT, (wrap, &None));
-    let rows = pictures::chip_rows(pictures, box_w - 2.0 * PAD_X, pictures::REMOVABLE_W);
     let cap = match mode {
         Mode::Reply => cap,
         Mode::Field { height } => height,
     };
-    let mut fit = fit(row_height(ui), typed.size().y, rows, cap);
+    let mut fit = fit(row_height(ui), typed.size().y, cap);
     if let Mode::Field { height } = mode {
         fit.box_h = fit.box_h.max(height);
     }
@@ -127,37 +113,24 @@ fn measure(
 }
 
 /// The height a box takes in `column`, with the gap above and below it.
-pub(crate) fn height(ui: &Ui, text: &str, pictures: usize, column: Rect) -> f32 {
-    height_with_stop(ui, text, pictures, column, false)
+pub(crate) fn height(ui: &Ui, text: &str, column: Rect) -> f32 {
+    height_with_stop(ui, text, column, false)
 }
 
 /// [`height`] for a box that also holds a Stop button, which narrows its text.
-pub(crate) fn height_with_stop(
-    ui: &Ui,
-    text: &str,
-    pictures: usize,
-    column: Rect,
-    stop: bool,
-) -> f32 {
+pub(crate) fn height_with_stop(ui: &Ui, text: &str, column: Rect, stop: bool) -> f32 {
     let cap = (column.height() * SHARE).max(BOX_H);
-    measure(ui, text, pictures, column.width() - 2.0 * INSET, (cap, Mode::Reply, stop)).fit.box_h
+    measure(ui, text, column.width() - 2.0 * INSET, (cap, Mode::Reply, stop)).fit.box_h
         + 2.0 * GAP_Y
 }
 
-/// The height a field takes in a column `width` wide when it is asked for `height`: that, or more
-/// when its chips and one row of text need it.
-pub(crate) fn field_height(
-    ui: &Ui,
-    text: &str,
-    pictures: usize,
-    (width, height): (f32, f32),
-) -> f32 {
-    measure(ui, text, pictures, width, (height, Mode::Field { height }, false)).fit.box_h
+/// The height a field takes in a column `width` wide when it is asked for `height`.
+pub(crate) fn field_height(ui: &Ui, text: &str, (width, height): (f32, f32)) -> f32 {
+    measure(ui, text, width, (height, Mode::Field { height }, false)).fit.box_h
 }
 
 pub(crate) struct Draft<'a> {
     pub(crate) text: &'a mut String,
-    pub(crate) pictures: &'a mut Vec<PathBuf>,
     pub(crate) focus: &'a mut bool,
     pub(crate) recall: Option<&'a mut Recall>,
 }
@@ -184,6 +157,8 @@ pub(crate) struct Spec<'a> {
     pub(crate) stop: bool,
     /// How many of the owner's messages Tidewatch holds for this agent.
     pub(crate) held: usize,
+    /// The files an `@` offers; none in a box with no folder behind it.
+    pub(crate) files: Option<at_files::Source<'a>>,
 }
 
 fn collapsed_cursor(ui: &Ui, id: Id) -> Option<usize> {
@@ -240,6 +215,11 @@ fn typing_at(text: &str, cursor: Option<usize>) -> Option<Typing> {
     emoji_pick::query_at(text, byte_of(text, cursor)).map(|query| Typing { query, cursor })
 }
 
+fn at_typing(text: &str, cursor: Option<usize>) -> Option<Typing> {
+    let cursor = cursor?;
+    at_files::query_at(text, byte_of(text, cursor)).map(|query| Typing { query, cursor })
+}
+
 fn picked_into(ui: &Ui, id: Id, text: &mut String, typing: &Typing, hit: &Hit) {
     let cursor = byte_of(text, typing.cursor);
     let after = emoji_pick::insert(text, &typing.query, cursor, hit.emoji);
@@ -287,23 +267,64 @@ fn menu_id(id: Id) -> Id {
     id.with("emoji-state")
 }
 
-fn backspace_removes_a_picture(ui: &Ui, id: Id, text: &str, pictures: &mut Vec<PathBuf>) -> bool {
-    let at_start = collapsed_cursor(ui, id).map_or(text.is_empty(), |at| at == 0);
-    let took = at_start && !pictures.is_empty() && consume(ui, Key::Backspace);
-    if took {
-        pictures.pop();
+fn token_keys(ui: &Ui, id: Id, text: &mut String) {
+    let Some(cursor) = collapsed_cursor(ui, id).filter(|_| tokens::has_tokens(text)) else {
+        return;
+    };
+    let tokens = tokens::find(text);
+    let behind = tokens.iter().any(|token| token.chars.end == cursor);
+    let ahead = tokens.iter().any(|token| token.chars.start == cursor);
+    let moved = if behind && consume(ui, Key::Backspace) {
+        tokens::remove_before(text, cursor)
+    } else if ahead && consume(ui, Key::Delete) {
+        tokens::remove_after(text, cursor)
+    } else {
+        None
+    };
+    if let Some(at) = moved {
+        bullets::place_cursor(ui, id, at);
     }
-    took
 }
 
-/// Draws the box in the room `ui` has and works it. Enter sends a non-empty text or any pictures and
-/// clears both, Cmd+Enter sends from anywhere in the box, Shift+Enter starts a new line, and on a
+fn keep_cursor_out_of_tokens(ui: &Ui, id: Id, text: &str, (range, was): (CCursorRange, usize)) {
+    if !tokens::has_tokens(text) {
+        return;
+    }
+    let primary = range.primary.index.0;
+    let snapped = tokens::snap(text, primary, was);
+    if snapped == primary {
+        return;
+    }
+    let mut state = TextEdit::load_state(ui.ctx(), id).unwrap_or_default();
+    state.cursor.set_char_range(Some(CCursorRange::two(range.secondary, CCursor::new(snapped))));
+    state.store(ui.ctx(), id);
+}
+
+/// Puts `targets` into `text` at the cursor of the box `id` when it has the keyboard (or no window
+/// does), else at the end, one after another, and leaves the cursor behind the last one.
+pub(crate) fn insert_targets(ctx: &egui::Context, id: Id, text: &mut String, targets: &[Target]) {
+    let focused = ctx.memory(|memory| memory.has_focus(id)) || !ctx.input(|input| input.focused);
+    let end = text.chars().count();
+    let stored = TextEdit::load_state(ctx, id)
+        .and_then(|state| state.cursor.char_range())
+        .map(|range| range.primary.index.0);
+    let mut at = stored.filter(|_| focused).map_or(end, |at| at.min(end));
+    for target in targets {
+        at = tokens::insert(text, at, target);
+    }
+    let mut state = TextEdit::load_state(ctx, id).unwrap_or_default();
+    state.cursor.set_char_range(Some(CCursorRange::one(CCursor::new(at))));
+    state.store(ctx, id);
+    ctx.request_repaint();
+}
+
+/// Draws the box in the room `ui` has and works it. Enter sends a non-empty text and clears it, Cmd+Enter sends from anywhere in the box, Shift+Enter starts a new line, and on a
 /// list line Enter starts the next item instead while Tab and Shift+Tab move the item a level. Asks for focus once, the first time it is drawn, and again after a send. Off while
 /// `spec.enabled` is false. A [`Mode::Field`] box has no Send and sends nothing: Enter is a new line and
 /// Cmd+Enter is left to the form.
 pub(crate) fn show(ui: &mut Ui, draft: Draft<'_>, spec: &Spec<'_>) -> Outcome {
-    let Draft { text, pictures, focus, mut recall } = draft;
-    let Spec { id, hint, enabled, commands, ghost, mode, stop, held } = *spec;
+    let Draft { text, focus, mut recall } = draft;
+    let Spec { id, hint, enabled, commands, ghost, mode, stop, held, files } = *spec;
     let room = ui.max_rect();
     let mut outcome = Outcome::default();
     let mut slash = slash_view::load(ui, id);
@@ -314,18 +335,45 @@ pub(crate) fn show(ui: &mut Ui, draft: Draft<'_>, spec: &Spec<'_>) -> Outcome {
     let mut emoji_menu: emoji_pick::Menu =
         ui.data(|data| data.get_temp(menu_id(id))).unwrap_or_default();
     let focused = ui.memory(|memory| memory.has_focus(id));
-    let before = typing_at(text, collapsed_cursor(ui, id)).filter(|_| slash_keys_rows.is_empty());
+    let cursor_was = collapsed_cursor(ui, id);
+    let mut at_menu = at_files_view::load(ui, id);
+    let at_before = files
+        .and_then(|_| at_typing(text, collapsed_cursor(ui, id)))
+        .filter(|_| slash_keys_rows.is_empty());
+    at_menu.follow(at_before.as_ref().map(|typing| &typing.query));
+    let before = typing_at(text, collapsed_cursor(ui, id))
+        .filter(|_| slash_keys_rows.is_empty() && at_before.is_none());
     emoji_menu.follow(before.as_ref().map(|typing| &typing.query));
+    let at_rows_before = at_files_view::hits(
+        ui,
+        id,
+        &at_menu,
+        (at_before.as_ref().map(|typing| &typing.query), files),
+    );
     if enabled && focused {
         let hits = emoji_hits(ui, &emoji_menu, before.as_ref());
         if let Some(typing) = before.as_ref().filter(|_| !hits.is_empty()) {
             emoji_keys(ui, id, text, &mut emoji_menu, (&hits, typing));
         }
-        backspace_removes_a_picture(ui, id, text, pictures);
+        if let (Some(typing), Some(files)) = (at_before.as_ref(), files)
+            && !at_rows_before.is_empty()
+            && let Some(at) = at_files_view::keys(
+                ui,
+                text,
+                &mut at_menu,
+                (&at_rows_before, &typing.query, files.root),
+                typing.cursor,
+            )
+        {
+            bullets::place_cursor(ui, id, at);
+        }
+        token_keys(ui, id, text);
     }
-    let tint: bullets::Tint = before
-        .as_ref()
-        .filter(|_| enabled && focused && !emoji_hits(ui, &emoji_menu, before.as_ref()).is_empty())
+    let at_tint = at_before.as_ref().filter(|_| enabled && focused && !at_rows_before.is_empty());
+    let tint: bullets::Tint = at_tint
+        .or(before.as_ref().filter(|_| {
+            enabled && focused && !emoji_hits(ui, &emoji_menu, before.as_ref()).is_empty()
+        }))
         .map(|typing| {
             let end = byte_of(text, typing.cursor);
             (typing.query.start..end, brand::TEAL_TEXT)
@@ -341,9 +389,11 @@ pub(crate) fn show(ui: &mut Ui, draft: Draft<'_>, spec: &Spec<'_>) -> Outcome {
     let ghost = ghost.filter(|_| text.is_empty());
     list_tab(ui, id, text, enabled);
     let menus_open = !slash_keys_rows.is_empty()
-        || (focused && !emoji_hits(ui, &emoji_menu, before.as_ref()).is_empty());
+        || (focused
+            && (!emoji_hits(ui, &emoji_menu, before.as_ref()).is_empty()
+                || !at_rows_before.is_empty()));
     if enabled && focused && mode.sends() && !menus_open {
-        history_keys(ui, id, (text, pictures), recall.as_deref_mut(), &mut outcome, (stop, held));
+        history_keys(ui, id, text, recall.as_deref_mut(), &mut outcome, (stop, held));
     }
     let listing = enabled && (ui.memory(|memory| memory.has_focus(id)) || !ui.input(|i| i.focused));
     let slash_rows = if listing { slash.rows(text, commands) } else { Vec::new() };
@@ -365,8 +415,8 @@ pub(crate) fn show(ui: &mut Ui, draft: Draft<'_>, spec: &Spec<'_>) -> Outcome {
     }
     let enter = enter || command_enter;
     ui.add_enabled_ui(enabled, |ui| {
-        let measured = measure(ui, text, pictures.len(), room.width(), (room.height(), mode, stop));
-        let Fit { box_h, pad_y, chips_h, .. } = measured.fit;
+        let measured = measure(ui, text, room.width(), (room.height(), mode, stop));
+        let Fit { box_h, pad_y, .. } = measured.fit;
         let boxed = Rect::from_min_size(room.min, vec2(room.width(), box_h));
         let background = ui.painter().add(Shape::Noop);
         let ring = ui.painter().add(Shape::Noop);
@@ -379,23 +429,12 @@ pub(crate) fn show(ui: &mut Ui, draft: Draft<'_>, spec: &Spec<'_>) -> Outcome {
             ),
             vec2(measured.send_w, Size::Regular.height()),
         );
-        let chips_origin = pos2(boxed.left() + PAD_X, boxed.top() + BORDER + CHIP_TOP);
-        let removed = pictures::paint_block(
-            ui,
-            chips_origin,
-            boxed.width() - 2.0 * PAD_X,
-            pictures.iter().map(|path| pictures::Source::File(path)),
-            (true, None),
-        );
-        if let Some(at) = removed {
-            pictures.remove(at);
-        }
         let stop_button = Rect::from_min_size(
             pos2(send.left() - measured.stop_w, send.top()),
             vec2(measured.stop_w - STOP_GAP, Size::Regular.height()),
         );
         let view = Rect::from_min_max(
-            pos2(boxed.left() + PAD_X, boxed.top() + BORDER + chips_h),
+            pos2(boxed.left() + PAD_X, boxed.top() + BORDER),
             pos2(
                 if mode.sends() {
                     send.left() - measured.stop_w - SEND_GAP
@@ -410,8 +449,7 @@ pub(crate) fn show(ui: &mut Ui, draft: Draft<'_>, spec: &Spec<'_>) -> Outcome {
         let before = ui.data(|data| data.get_temp::<f32>(height_id));
         ui.data_mut(|data| data.insert_temp(height_id, shown));
         let resized = before.is_some_and(|before| (before - shown).abs() > 0.5);
-        let lift = if chips_h == 0.0 { OPTICAL_LIFT } else { 0.0 };
-        let top_pad = if chips_h == 0.0 { pad_y - lift } else { 0.0 };
+        let top_pad = pad_y - OPTICAL_LIFT;
         let mut layouter = |ui: &Ui, buf: &dyn egui::TextBuffer, wrap: f32| {
             bullets::layout(ui, buf.as_str(), &text_font(), brand::TEXT, (wrap, &tint))
         };
@@ -448,8 +486,14 @@ pub(crate) fn show(ui: &mut Ui, draft: Draft<'_>, spec: &Spec<'_>) -> Outcome {
                         ))
                         .show(ui);
                     bullets::paint_markers(ui, &edit.galley, edit.galley_pos, &text_font());
-                    ui.add_space(pad_y + lift);
+                    ui.add_space(pad_y + OPTICAL_LIFT);
                     emoji_paint::paint(ui, id.with("emoji"), edit.galley_pos, &edit.galley);
+                    token_view::paint(
+                        ui,
+                        id.with("tokens"),
+                        (edit.galley_pos, &edit.galley),
+                        false,
+                    );
                     if resized && let Some(range) = edit.cursor_range {
                         let at = edit.galley_pos.to_vec2() - vec2(edit.galley.rect.left(), 0.0);
                         ui.scroll_to_rect(
@@ -460,7 +504,7 @@ pub(crate) fn show(ui: &mut Ui, draft: Draft<'_>, spec: &Spec<'_>) -> Outcome {
                     output = Some(edit);
                 });
         });
-        let can_send = mode.sends() && (!text.trim().is_empty() || !pictures.is_empty());
+        let can_send = mode.sends() && !text.trim().is_empty();
         let mut clicked = false;
         if mode.sends() {
             ui.scope_builder(UiBuilder::new().max_rect(send), |ui| {
@@ -516,8 +560,7 @@ pub(crate) fn show(ui: &mut Ui, draft: Draft<'_>, spec: &Spec<'_>) -> Outcome {
             .filter(|range| range.primary == range.secondary)
             .is_some_and(|range| bullets::on_list_line(text, range.primary.index.0));
         let walking = recall.as_deref().is_some_and(Recall::walking);
-        let wants_escape =
-            mode.sends() && (walking || (stop && text.is_empty() && pictures.is_empty()));
+        let wants_escape = mode.sends() && (walking || (stop && text.is_empty()));
         if (ghost.is_some() || on_list || walking || wants_escape) && has_focus {
             let filter = EventFilter {
                 tab: ghost.is_some() || on_list || walking,
@@ -528,6 +571,26 @@ pub(crate) fn show(ui: &mut Ui, draft: Draft<'_>, spec: &Spec<'_>) -> Outcome {
             ui.memory_mut(|memory| memory.set_focus_lock_filter(id, filter));
         }
         if let Some(edit) = output {
+            if dropping
+                && has_focus
+                && let Some(range) = edit.cursor_range
+            {
+                let at = edit.galley.pos_from_cursor(range.primary);
+                let x = edit.galley_pos.x + at.min.x;
+                let top = edit.galley_pos.y + at.min.y;
+                ui.painter().line_segment(
+                    [pos2(x, top), pos2(x, top + at.height())],
+                    Stroke::new(CARET_W, brand::TEAL),
+                );
+            }
+            if let Some(range) = edit.cursor_range {
+                keep_cursor_out_of_tokens(
+                    ui,
+                    id,
+                    text,
+                    (range, cursor_was.unwrap_or(range.primary.index.0)),
+                );
+            }
             let cursor =
                 edit.cursor_range.filter(|r| r.primary == r.secondary).map(|r| r.primary.index.0);
             if edit.response.changed()
@@ -540,8 +603,41 @@ pub(crate) fn show(ui: &mut Ui, draft: Draft<'_>, spec: &Spec<'_>) -> Outcome {
                 bullets::place_cursor(ui, id, text[..moved].chars().count());
                 count_use(ui, closed.emoji);
             }
-            let after =
-                typing_at(text, cursor).filter(|_| slash_rows.is_empty() && enabled && has_focus);
+            let listing_now = slash_rows.is_empty() && enabled && has_focus;
+            let at_after = files.and_then(|_| at_typing(text, cursor)).filter(|_| listing_now);
+            at_menu.follow(at_after.as_ref().map(|typing| &typing.query));
+            let at_rows = at_files_view::hits(
+                ui,
+                id,
+                &at_menu,
+                (at_after.as_ref().map(|typing| &typing.query), files),
+            );
+            if let (Some(typing), Some(files)) = (at_after.as_ref(), files)
+                && !at_rows.is_empty()
+            {
+                emoji_view::hold_keys(ui, id);
+                let mark = edit
+                    .galley
+                    .pos_from_cursor(CCursor::new(text[..typing.query.start].chars().count()));
+                let x = (edit.galley_pos.x + mark.min.x)
+                    .min(boxed.right() - at_files_view::WIDTH)
+                    .max(boxed.left());
+                let picked = at_menu.picked_in(at_rows.len());
+                if let Some(at) =
+                    at_files_view::show(ui, id, pos2(x, boxed.top()), &at_rows, picked)
+                {
+                    let moved = at_files_view::pick(
+                        text,
+                        &typing.query,
+                        typing.cursor,
+                        files.root,
+                        &at_rows[at],
+                    );
+                    bullets::place_cursor(ui, id, moved);
+                    ui.memory_mut(|memory| memory.request_focus(id));
+                }
+            }
+            let after = typing_at(text, cursor).filter(|_| listing_now && at_after.is_none());
             emoji_menu.follow(after.as_ref().map(|typing| &typing.query));
             let hits = emoji_hits(ui, &emoji_menu, after.as_ref());
             if let Some(typing) = after.as_ref().filter(|_| !hits.is_empty()) {
@@ -569,16 +665,16 @@ pub(crate) fn show(ui: &mut Ui, draft: Draft<'_>, spec: &Spec<'_>) -> Outcome {
             }
         }
         if (enter || clicked) && can_send {
-            outcome.sent = Some(crate::pictures::message(text, pictures));
+            outcome.sent = Some(tokens::sendable(text));
             text.clear();
-            pictures.clear();
             if let Some(recall) = recall {
-                recall.sent(text, pictures);
+                recall.sent(text);
             }
             *focus = true;
         }
     });
     slash_view::store(ui, id, slash);
+    at_files_view::store(ui, id, at_menu);
     ui.data_mut(|data| data.insert_temp(menu_id(id), emoji_menu));
     outcome
 }
@@ -598,32 +694,30 @@ fn on_last_row(text: &str, cursor: Option<usize>) -> bool {
 fn history_keys(
     ui: &Ui,
     id: Id,
-    (text, pictures): (&mut String, &mut Vec<PathBuf>),
+    text: &mut String,
     recall: Option<&mut Recall>,
     outcome: &mut Outcome,
     (stop, held): (bool, usize),
 ) {
     let cursor = collapsed_cursor(ui, id);
-    let blank = text.is_empty() && pictures.is_empty();
+    let blank = text.is_empty();
     let walking = recall.as_deref().is_some_and(Recall::walking);
     if blank && held > 0 && !walking && consume(ui, Key::ArrowUp) {
         outcome.edit_held = true;
         return;
     }
     if let Some(recall) = recall {
-        let walked = if recall.claims_up(text, pictures)
-            && on_first_row(text, cursor)
-            && consume(ui, Key::ArrowUp)
-        {
-            recall.up(text, pictures)
-        } else if recall.claims_down(text)
-            && on_last_row(text, cursor)
-            && consume(ui, Key::ArrowDown)
-        {
-            recall.down(text, pictures)
-        } else {
-            walking && consume(ui, Key::Escape) && recall.escape(text, pictures)
-        };
+        let walked =
+            if recall.claims_up(text) && on_first_row(text, cursor) && consume(ui, Key::ArrowUp) {
+                recall.up(text)
+            } else if recall.claims_down(text)
+                && on_last_row(text, cursor)
+                && consume(ui, Key::ArrowDown)
+            {
+                recall.down(text)
+            } else {
+                walking && consume(ui, Key::Escape) && recall.escape(text)
+            };
         if walked {
             bullets::place_cursor(ui, id, text.chars().count());
             return;
@@ -638,6 +732,7 @@ fn history_keys(
 mod tests {
     use egui::epaint::ClippedShape;
     use egui::{Context, Event, RawInput};
+    use std::path::PathBuf;
 
     use super::*;
 
@@ -722,7 +817,7 @@ mod tests {
     struct Rig {
         ctx: Context,
         text: String,
-        pictures: Vec<PathBuf>,
+        files: Option<(std::path::PathBuf, Vec<String>)>,
         focus: bool,
         ghost: Option<&'static str>,
         hovered: bool,
@@ -739,7 +834,7 @@ mod tests {
             let mut rig = Self {
                 ctx,
                 text: String::new(),
-                pictures: Vec::new(),
+                files: None,
                 focus: true,
                 ghost: None,
                 hovered: false,
@@ -768,13 +863,12 @@ mod tests {
             let (mut outcome, mut input) = (Outcome::default(), Rect::NOTHING);
             let out = self.ctx.run_ui(raw, |ui| {
                 let column = Rect::from_min_size(pos2(0.0, 0.0), vec2(COLUMN_W, COLUMN_H));
-                let h = height(ui, &self.text, self.pictures.len(), column);
+                let h = height(ui, &self.text, column);
                 input = Rect::from_min_max(pos2(0.0, COLUMN_H - h), column.max);
                 let room = input.shrink2(vec2(INSET, GAP_Y));
                 let mut child = ui.new_child(UiBuilder::new().max_rect(room));
                 let draft = Draft {
                     text: &mut self.text,
-                    pictures: &mut self.pictures,
                     focus: &mut self.focus,
                     recall: self.recall.as_mut(),
                 };
@@ -787,6 +881,10 @@ mod tests {
                     mode: self.mode,
                     stop: self.stop,
                     held: self.held,
+                    files: self
+                        .files
+                        .as_ref()
+                        .map(|(root, paths)| at_files::Source { root, paths }),
                 };
                 outcome = show(&mut child, draft, &spec);
             });
@@ -827,19 +925,6 @@ mod tests {
         fn press(&mut self, pressed: Key) -> Seen {
             self.settle(vec![key(pressed)])
         }
-
-        fn click(&mut self, at: egui::Pos2) -> Seen {
-            let button = |pressed| Event::PointerButton {
-                pos: at,
-                button: egui::PointerButton::Primary,
-                pressed,
-                modifiers: Modifiers::NONE,
-            };
-            self.frame(vec![Event::PointerMoved(at)]);
-            self.frame(vec![button(true)]);
-            self.frame(vec![button(false)]);
-            self.frame(vec![])
-        }
     }
 
     fn rings(seen: &Seen) -> Vec<f32> {
@@ -873,19 +958,18 @@ mod tests {
     fn a_box_is_48_tall_for_one_row_and_taller_by_whole_rows_up_to_its_cap() {
         let row = 18.0;
         let cases = [
-            (row, row, 0, 280.0, BOX_H),
-            (row, 3.0 * row, 0, 280.0, BOX_H + 2.0 * row),
-            (row, 100.0 * row, 0, 280.0, 280.0),
-            (row, 100.0 * row, 0, 20.0, BOX_H),
-            (row, row, 1, 280.0, 2.0 + 10.0 + 48.0 + 8.0 + row + 14.0),
+            (row, row, 280.0, BOX_H),
+            (row, 3.0 * row, 280.0, BOX_H + 2.0 * row),
+            (row, 100.0 * row, 280.0, 280.0),
+            (row, 100.0 * row, 20.0, BOX_H),
         ];
-        for (row_h, text_h, chips, cap, want) in cases {
-            let got = fit(row_h, text_h, chips, cap);
-            assert_eq!(got.box_h, want, "{row_h} {text_h} {chips} {cap}");
+        for (row_h, text_h, cap, want) in cases {
+            let got = fit(row_h, text_h, cap);
+            assert_eq!(got.box_h, want, "{row_h} {text_h} {cap}");
         }
-        assert_eq!(fit(18.0, 18.0, 0, 280.0).pad_y, 14.0);
-        assert!(fit(18.0, 3600.0, 0, 280.0).scrolls);
-        assert!(!fit(18.0, 36.0, 0, 280.0).scrolls);
+        assert_eq!(fit(18.0, 18.0, 280.0).pad_y, 14.0);
+        assert!(fit(18.0, 3600.0, 280.0).scrolls);
+        assert!(!fit(18.0, 36.0, 280.0).scrolls);
     }
 
     #[test]
@@ -1033,7 +1117,7 @@ mod tests {
         let mut rig = with_history(&["old"]);
         rig.type_text("my draft");
         let mut recall = rig.recall.take().unwrap();
-        recall.load_message("an earlier one", &mut rig.text, &mut rig.pictures);
+        recall.load_message("an earlier one", &mut rig.text);
         rig.recall = Some(recall);
         rig.frame(vec![]);
         assert_eq!(rig.text, "an earlier one");
@@ -1105,76 +1189,242 @@ mod tests {
         assert!(rows.iter().all(|row| row.right() <= stop.left()), "{rows:?} {stop:?}");
     }
 
-    fn rig_with_two_pictures() -> Rig {
-        let mut rig = Rig::new();
-        rig.pictures = vec![
-            PathBuf::from("/nope/shot-1793011211356.png"),
-            PathBuf::from("/nope/shot-1793011218705.png"),
-        ];
+    const SHOT: &str = "/s/shot-1793011211356.png";
+    const REPORT: &str = "/s/q3-report.pdf";
+
+    fn cursor_after(rig: &Rig, words: &str) {
+        let at = rig
+            .text
+            .find(words)
+            .map(|byte| rig.text[..byte + words.len()].chars().count())
+            .unwrap();
+        let mut state = TextEdit::load_state(&rig.ctx, Id::new("reply-box")).unwrap_or_default();
+        state.cursor.set_char_range(Some(CCursorRange::one(CCursor::new(at))));
+        state.store(&rig.ctx, Id::new("reply-box"));
+    }
+
+    fn put(rig: &mut Rig, path: &str) {
+        let target = Target::File(PathBuf::from(path));
+        insert_targets(&rig.ctx.clone(), Id::new("reply-box"), &mut rig.text, &[target]);
         rig.frame(vec![]);
-        rig
-    }
-
-    #[test]
-    fn pictures_are_chips_8_px_above_the_text_and_the_text_stays_clean() {
-        let mut rig = rig_with_two_pictures();
-        let seen = rig.type_text("look at these");
-        let chips = seen.rects(brand::ITEM);
-        assert_eq!(chips.len(), 2);
-        assert_eq!(chips[0].rect.size(), vec2(pictures::REMOVABLE_W, pictures::CHIP_H));
-        let text = seen.text_rows("look at these")[0];
-        assert!((text.top() - chips[0].rect.bottom() - 8.0).abs() < 1.0, "{text:?}");
-        assert_eq!(rig.text, "look at these");
-        let plain = Rig::new().type_text("look at these");
-        assert!(seen.box_rect.height() > plain.box_rect.height() + 40.0);
-    }
-
-    #[test]
-    fn backspace_at_the_start_of_the_text_removes_the_last_chip_and_elsewhere_deletes_a_letter() {
-        let mut rig = rig_with_two_pictures();
-        rig.type_text("ab");
-        rig.press(Key::Backspace);
-        assert_eq!((rig.text.as_str(), rig.pictures.len()), ("a", 2));
-        rig.press(Key::Backspace);
-        assert_eq!((rig.text.as_str(), rig.pictures.len()), ("", 2));
-        rig.press(Key::Backspace);
-        assert_eq!(rig.pictures, [PathBuf::from("/nope/shot-1793011211356.png")]);
-        rig.press(Key::Backspace);
-        assert_eq!(rig.pictures, Vec::<PathBuf>::new());
-        rig.press(Key::Backspace);
-        assert_eq!(rig.text, "");
-    }
-
-    #[test]
-    fn sending_appends_the_paths_after_the_text_and_clears_the_chips() {
-        let mut rig = rig_with_two_pictures();
-        rig.type_text("look at these");
-        let sent = rig.frame(vec![key(Key::Enter)]).sent;
-        assert_eq!(
-            sent.as_deref(),
-            Some("look at these\n/nope/shot-1793011211356.png\n/nope/shot-1793011218705.png")
-        );
-        assert!(rig.pictures.is_empty() && rig.text.is_empty());
-    }
-
-    #[test]
-    fn a_picture_alone_can_be_sent_and_an_empty_box_cannot() {
-        let mut rig = Rig::new();
-        assert_eq!(rig.frame(vec![key(Key::Enter)]).sent, None);
-        rig.pictures = vec![PathBuf::from("/nope/shot-1.png")];
         rig.frame(vec![]);
-        let sent = rig.frame(vec![key(Key::Enter)]).sent;
-        assert_eq!(sent.as_deref(), Some("/nope/shot-1.png"));
+    }
+
+    fn chip_rects(seen: &Seen) -> Vec<Rect> {
+        seen.shapes
+            .iter()
+            .filter_map(|shape| match shape {
+                Shape::Text(t) if tokens::has_tokens(t.galley.text()) => {
+                    Some(token_view::chips(t.pos, &t.galley).into_iter().map(|(_, rect)| rect))
+                }
+                _ => None,
+            })
+            .flatten()
+            .collect()
+    }
+
+    fn word_edges(seen: &Seen, before: &str, after: &str) -> (f32, f32) {
+        seen.shapes
+            .iter()
+            .find_map(|shape| match shape {
+                Shape::Text(t) if tokens::has_tokens(t.galley.text()) => {
+                    let text = t.galley.text();
+                    let end = |words: &str| {
+                        let at = text.find(words).unwrap();
+                        text[..at].chars().count()
+                    };
+                    let left = t
+                        .galley
+                        .pos_from_cursor(CCursor::new(end(before) + before.chars().count()));
+                    let right = t.galley.pos_from_cursor(CCursor::new(end(after)));
+                    Some((t.pos.x + left.min.x, t.pos.x + right.min.x))
+                }
+                _ => None,
+            })
+            .expect("the text with a token was painted")
+    }
+
+    fn mid_sentence(rig: &mut Rig) {
+        rig.type_text("The numbers in  don't match");
+        cursor_after(rig, "The numbers in ");
+        rig.frame(vec![]);
+    }
+
+    fn carets(seen: &Seen) -> usize {
+        seen.shapes
+            .iter()
+            .filter(|shape| {
+                matches!(shape, Shape::LineSegment { stroke, .. }
+                    if stroke.width == CARET_W && stroke.color == brand::TEAL)
+            })
+            .count()
     }
 
     #[test]
-    fn the_remove_button_of_a_chip_takes_that_chip_away() {
-        let mut rig = rig_with_two_pictures();
+    fn while_files_are_dragged_over_the_box_a_solid_caret_shows_where_they_will_go() {
+        let mut rig = Rig::new();
+        mid_sentence(&mut rig);
+        assert_eq!(carets(&rig.frame(vec![])), 0);
+        rig.hovered = true;
+        assert_eq!(carets(&rig.frame(vec![])), 1);
+        rig.hovered = false;
+        assert_eq!(carets(&rig.frame(vec![])), 0);
+    }
+
+    #[test]
+    fn a_file_put_in_while_the_box_has_no_keyboard_goes_at_the_end_not_at_a_stale_cursor() {
+        let mut rig = Rig::new();
+        mid_sentence(&mut rig);
+        let id = Id::new("reply-box");
+        rig.ctx.memory_mut(|memory| memory.surrender_focus(id));
+        rig.focus = false;
+        rig.frame(vec![]);
+        put(&mut rig, REPORT);
+        assert_eq!(tokens::sendable(&rig.text), format!("The numbers in  don't match {REPORT}"));
+    }
+
+    #[test]
+    fn a_picture_pasted_mid_sentence_sits_between_the_words_around_the_cursor() {
+        let mut rig = Rig::new();
+        mid_sentence(&mut rig);
+        put(&mut rig, SHOT);
+        assert_eq!(tokens::sendable(&rig.text), format!("The numbers in {SHOT} don't match"));
         let seen = rig.frame(vec![]);
-        let first = seen.rects(brand::ITEM)[0].rect;
-        let button = egui::pos2(first.right() - 8.0 - 13.0, first.center().y);
-        rig.click(button);
-        assert_eq!(rig.pictures, [PathBuf::from("/nope/shot-1793011218705.png")]);
+        let (left, right) = word_edges(&seen, "The numbers in ", "don't match");
+        let chips = chip_rects(&seen);
+        assert_eq!(chips.len(), 1);
+        assert!(left <= chips[0].left() && chips[0].right() <= right, "{left} {chips:?} {right}");
+        assert_eq!(seen.rects(brand::SUNKEN).len(), 1);
+    }
+
+    #[test]
+    fn a_file_dropped_mid_sentence_sits_between_the_words_and_a_second_one_follows_it() {
+        let mut rig = Rig::new();
+        mid_sentence(&mut rig);
+        let ctx = rig.ctx.clone();
+        let both = [Target::File(REPORT.into()), Target::File(SHOT.into())];
+        insert_targets(&ctx, Id::new("reply-box"), &mut rig.text, &both);
+        let seen = rig.frame(vec![]);
+        assert_eq!(
+            tokens::sendable(&rig.text),
+            format!("The numbers in {REPORT} {SHOT} don't match")
+        );
+        let chips = chip_rects(&seen);
+        let (left, right) = word_edges(&seen, "The numbers in ", "don't match");
+        assert_eq!(chips.len(), 2);
+        assert!(left <= chips[0].left() && chips[0].right() <= chips[1].left());
+        assert!(chips[1].right() <= right);
+    }
+
+    fn with_files(rig: &mut Rig) {
+        rig.files = Some((
+            "/repo".into(),
+            ["src/main.rs", "src/composer.rs", "README.md"].map(String::from).to_vec(),
+        ));
+    }
+
+    #[test]
+    fn an_at_pick_mid_sentence_becomes_a_token_between_the_words_around_it() {
+        let mut rig = Rig::new();
+        with_files(&mut rig);
+        rig.type_text("Check  and run");
+        cursor_after(&rig, "Check ");
+        rig.frame(vec![]);
+        rig.type_text("@comp");
+        assert_eq!(rig.frame(vec![]).text_rows("src/composer.rs").len(), 1);
+        rig.press(Key::Enter);
+        assert_eq!(tokens::sendable(&rig.text), "Check /repo/src/composer.rs and run");
+        let seen = rig.frame(vec![]);
+        let (left, right) = word_edges(&seen, "Check ", "and run");
+        let chips = chip_rects(&seen);
+        assert_eq!(chips.len(), 1);
+        assert!(left <= chips[0].left() && chips[0].right() <= right);
+        assert_eq!(seen.sent, None);
+    }
+
+    #[test]
+    fn the_at_list_shows_the_best_matching_files_and_only_while_a_word_with_an_at_is_typed() {
+        let mut rig = Rig::new();
+        with_files(&mut rig);
+        let seen = rig.type_text("see @main");
+        assert_eq!(seen.text_rows("src/main.rs").len(), 1);
+        assert_eq!(seen.text_rows("src/composer.rs").len(), 0);
+        let seen = rig.type_text(" and then more words");
+        assert_eq!(seen.text_rows("src/main.rs").len(), 0);
+    }
+
+    #[test]
+    fn an_at_in_a_box_with_no_folder_opens_nothing_and_enter_sends() {
+        let mut rig = Rig::new();
+        rig.type_text("mail @team");
+        assert_eq!(rig.frame(vec![key(Key::Enter)]).sent.as_deref(), Some("mail @team"));
+    }
+
+    #[test]
+    fn backspace_after_a_token_takes_it_whole_and_delete_before_it_does_too() {
+        let mut rig = Rig::new();
+        mid_sentence(&mut rig);
+        put(&mut rig, SHOT);
+        rig.press(Key::Backspace);
+        assert_eq!(rig.text, "The numbers in  don't match");
+        put(&mut rig, SHOT);
+        let before =
+            rig.text.find(tokens::OPEN).map(|byte| rig.text[..byte].chars().count()).unwrap();
+        let mut state = TextEdit::load_state(&rig.ctx, Id::new("reply-box")).unwrap_or_default();
+        state.cursor.set_char_range(Some(CCursorRange::one(CCursor::new(before))));
+        state.store(&rig.ctx, Id::new("reply-box"));
+        rig.press(Key::Delete);
+        assert_eq!(rig.text, "The numbers in  don't match");
+    }
+
+    #[test]
+    fn the_cursor_steps_over_a_token_and_never_stops_inside_it() {
+        let mut rig = Rig::new();
+        mid_sentence(&mut rig);
+        put(&mut rig, SHOT);
+        let token = tokens::find(&rig.text).remove(0);
+        for _ in 0..3 {
+            rig.press(Key::ArrowLeft);
+            let at = collapsed_at(&rig);
+            assert!(at <= token.chars.start || at >= token.chars.end, "{at} in {token:?}");
+        }
+        for _ in 0..6 {
+            rig.press(Key::ArrowRight);
+            let at = collapsed_at(&rig);
+            assert!(at <= token.chars.start || at >= token.chars.end, "{at} in {token:?}");
+        }
+    }
+
+    fn collapsed_at(rig: &Rig) -> usize {
+        TextEdit::load_state(&rig.ctx, Id::new("reply-box"))
+            .and_then(|state| state.cursor.char_range())
+            .map(|range| range.primary.index.0)
+            .unwrap()
+    }
+
+    #[test]
+    fn sending_keeps_each_path_where_the_token_stood_and_a_token_alone_can_be_sent() {
+        let mut rig = Rig::new();
+        mid_sentence(&mut rig);
+        put(&mut rig, "/s/My Report.pdf");
+        let sent = rig.frame(vec![key(Key::Enter)]).sent;
+        assert_eq!(sent.as_deref(), Some("The numbers in '/s/My Report.pdf' don't match"));
+        assert_eq!(rig.text, "");
+        put(&mut rig, SHOT);
+        assert_eq!(rig.frame(vec![key(Key::Enter)]).sent.as_deref(), Some(SHOT));
+    }
+
+    #[test]
+    fn a_token_is_one_chip_tall_enough_for_its_row_and_wraps_with_the_words() {
+        let mut rig = Rig::new();
+        rig.type_text(&"word ".repeat(10));
+        let flat = rig.frame(vec![]).box_rect.height();
+        put(&mut rig, "/s/a-very-long-file-name-for-wrapping-checks-in-the-sentence.pdf");
+        let seen = rig.type_text(&" tail".repeat(30));
+        let chips = chip_rects(&seen);
+        assert_eq!(chips.len(), 1);
+        assert_eq!(chips[0].height(), crate::screen_kit::Size::Tag.height());
+        assert!(seen.box_rect.height() > flat);
     }
 
     fn emoji_box(typed_text: &str) -> Rig {
@@ -1523,18 +1773,16 @@ mod tests {
     }
 
     #[test]
-    fn a_field_grows_past_its_height_only_for_the_chips_it_cannot_hide() {
+    fn a_field_is_as_tall_as_it_is_asked_with_a_token_in_its_text() {
         let mut rig = field(100.0);
-        rig.pictures = (0..8).map(|n| PathBuf::from(format!("/nowhere/{n}.png"))).collect();
+        put(&mut rig, SHOT);
         let seen = rig.frame(vec![]);
-        let rows =
-            pictures::chip_rows(8, COLUMN_W - 2.0 * INSET - 2.0 * PAD_X, pictures::REMOVABLE_W);
-        assert!(rows > 1, "the test needs chips on several rows");
-        assert!(seen.box_rect.height() > 100.0 + 40.0, "{}", seen.box_rect.height());
+        assert_eq!(seen.box_rect.height(), 100.0);
         let asked = {
             let mut got = 0.0;
+            let text = rig.text.clone();
             let _ = rig.ctx.run_ui(RawInput::default(), |ui| {
-                got = field_height(ui, "", 8, (COLUMN_W - 2.0 * INSET, 100.0));
+                got = field_height(ui, &text, (COLUMN_W - 2.0 * INSET, 100.0));
             });
             got
         };

@@ -146,12 +146,9 @@ impl Tidewatch {
     fn attach_to_box(&mut self, ctx: &egui::Context, tab: u64, paths: Vec<PathBuf>) {
         let Some(pane) = self.tabs.get_mut(tab).map(|tab| &mut tab.pane) else { return };
         if let Body::Draft(form) = &mut pane.body {
-            form.attach(paths);
-            ctx.request_repaint();
+            form.insert_files(ctx, paths);
         } else if let Some(agent) = pane.agent.as_mut() {
-            crate::pictures::attach(&mut agent.reader.view.pictures, paths);
-            agent.reader.view.request_reply_focus();
-            ctx.request_repaint();
+            agent.reader.view.insert_files(ctx, paths);
         }
     }
 
@@ -243,7 +240,6 @@ mod tests {
     struct Window {
         ctx: Context,
         reply: String,
-        pictures: Vec<PathBuf>,
         focus: bool,
         pastes: tempfile::TempDir,
     }
@@ -268,13 +264,7 @@ mod tests {
         fn new() -> Self {
             let ctx = Context::default();
             crate::fonts::install(&ctx);
-            Self {
-                ctx,
-                reply: String::new(),
-                pictures: Vec::new(),
-                focus: true,
-                pastes: tempfile::tempdir().unwrap(),
-            }
+            Self { ctx, reply: String::new(), focus: true, pastes: tempfile::tempdir().unwrap() }
         }
 
         fn frame(&mut self, hovered: &[&str], drops: &[&str]) -> Vec<f32> {
@@ -303,18 +293,20 @@ mod tests {
                 let paths = crate::file_drop::dropped(ui.ctx());
                 if !paths.is_empty() {
                     let staged = crate::attachments::stage(&paths, self.pastes.path());
-                    crate::pictures::attach(&mut self.pictures, staged.paths);
+                    let targets: Vec<_> =
+                        staged.paths.into_iter().map(crate::tokens::Target::File).collect();
+                    composer::insert_targets(
+                        ui.ctx(),
+                        egui::Id::new("reply-box"),
+                        &mut self.reply,
+                        &targets,
+                    );
                 }
                 let mut child = ui.new_child(
                     UiBuilder::new()
                         .max_rect(Rect::from_min_size(pos2(8.0, 200.0), vec2(580.0, 190.0))),
                 );
-                let draft = Draft {
-                    text: &mut self.reply,
-                    pictures: &mut self.pictures,
-                    focus: &mut self.focus,
-                    recall: None,
-                };
+                let draft = Draft { text: &mut self.reply, focus: &mut self.focus, recall: None };
                 let spec = Spec {
                     id: egui::Id::new("reply-box"),
                     hint: "Reply",
@@ -324,6 +316,7 @@ mod tests {
                     mode: composer::Mode::Reply,
                     stop: false,
                     held: 0,
+                    files: None,
                 };
                 sent = composer::show(&mut child, draft, &spec).sent;
             });
@@ -340,7 +333,12 @@ mod tests {
     fn collect_chips(shape: &egui::Shape, out: &mut Vec<Rect>) {
         match shape {
             egui::Shape::Vec(inner) => inner.iter().for_each(|shape| collect_chips(shape, out)),
-            egui::Shape::Rect(rect) if rect.fill == crate::brand::ITEM => out.push(rect.rect),
+            egui::Shape::Rect(rect)
+                if rect.fill == crate::brand::SUNKEN
+                    && rect.rect.height() == crate::screen_kit::Size::Tag.height() =>
+            {
+                out.push(rect.rect);
+            }
             _ => {}
         }
     }
@@ -364,7 +362,7 @@ mod tests {
     }
 
     #[test]
-    fn dropped_files_all_become_chips_and_the_text_stays_clean() {
+    fn dropped_files_all_become_chips_in_the_order_they_came_with_no_word_between() {
         let mut window = Window::new();
         let from = tempfile::tempdir().unwrap();
         let notes = made_file(from.path(), "notes.txt", b"hello");
@@ -374,72 +372,50 @@ mod tests {
         window.frame(&[], &[]);
         window.frame(&[], &[&note, &spaced_name, "/work/shot.png"]);
         let pastes = window.pastes.path();
-        assert_eq!(window.reply, "");
-        assert_eq!(
-            window.pictures,
-            [pastes.join("notes.txt"), pastes.join("a b.md"), PathBuf::from("/work/shot.png")]
-        );
-        window.frame(&[], &["/work/shot.png"]);
-        assert_eq!(window.pictures.len(), 3, "one chip per path");
+        assert_eq!(crate::tokens::plain(&window.reply).trim(), "");
+        let want =
+            [pastes.join("notes.txt"), pastes.join("a b.md"), PathBuf::from("/work/shot.png")];
+        assert_eq!(crate::tokens::targets(&window.reply), want.map(crate::tokens::Target::File));
     }
 
     #[test]
-    fn a_dropped_csv_is_a_chip_as_tall_as_a_picture_chip_and_goes_to_the_agent_as_a_path() {
+    fn a_dropped_csv_is_a_chip_as_tall_as_a_picture_chip_and_goes_to_the_agent_as_a_path_in_place()
+    {
         let mut window = Window::new();
         let from = tempfile::tempdir().unwrap();
         let csv = made_file(from.path(), "sales q3.csv", b"a,b\n1,2\n");
         let csv_name = csv.to_string_lossy().into_owned();
+        window.reply = "look at  now".into();
         window.frame(&[], &[]);
+        window.frame(&[], &[]);
+        let mut state =
+            egui::TextEdit::load_state(&window.ctx, egui::Id::new("reply-box")).unwrap_or_default();
+        state
+            .cursor
+            .set_char_range(Some(egui::text::CCursorRange::one(egui::text::CCursor::new(8))));
+        state.store(&window.ctx, egui::Id::new("reply-box"));
         window.run(&[], &[&csv_name, "/work/shot.png"], Vec::new());
         let seen = window.run(&[], &[], Vec::new());
-        assert_eq!(window.reply, "", "a drop never lands in the text");
         let copy = window.pastes.path().join("sales q3.csv");
         assert_eq!(std::fs::read(&copy).unwrap(), b"a,b\n1,2\n");
         assert_eq!(seen.chips.len(), 2);
         let (file_chip, picture_chip) = (seen.chips[0], seen.chips[1]);
-        assert_eq!(file_chip.size(), picture_chip.size());
-        assert_eq!(file_chip.height(), crate::pictures::CHIP_H);
+        assert_eq!(file_chip.size().y, picture_chip.size().y);
+        assert_eq!(file_chip.height(), crate::screen_kit::Size::Tag.height());
         assert_eq!(file_chip.top(), picture_chip.top());
-        assert_eq!(picture_chip.left() - file_chip.right(), crate::pictures::CHIP_GAP);
-
-        window.reply = "look at these".into();
-        window.run(&[], &[], Vec::new());
+        assert!(file_chip.right() < picture_chip.left());
         let sent = window.run(&[], &[], vec![key(egui::Key::Enter)]).sent.unwrap();
-        let line = format!(
-            "Attached: {}",
-            tidewatch_core::image_paste::path_text(std::slice::from_ref(&copy))
-        );
-        assert_eq!(sent, format!("look at these\n{line}\n/work/shot.png"));
-        assert!(window.pictures.is_empty() && window.reply.is_empty());
-        let (said, chips) = crate::pictures::split_trailing(&sent);
+        let quoted = tidewatch_core::image_paste::path_text(std::slice::from_ref(&copy));
+        assert_eq!(sent, format!("look at {quoted} /work/shot.png now"));
+        assert_eq!(window.reply, "");
+        let (said, chips) = (crate::tokens::from_sent(&sent, &|_| true), crate::tokens::targets);
         assert_eq!(
-            (said.as_str(), chips),
-            ("look at these", vec![copy, PathBuf::from("/work/shot.png")])
+            chips(&said),
+            [
+                crate::tokens::Target::File(copy),
+                crate::tokens::Target::File("/work/shot.png".into())
+            ]
         );
-    }
-
-    #[test]
-    fn the_x_of_a_dropped_file_chip_takes_it_away() {
-        let mut window = Window::new();
-        let from = tempfile::tempdir().unwrap();
-        let csv = made_file(from.path(), "sales.csv", b"a,b");
-        window.frame(&[], &[]);
-        window.run(&[], &[&csv.to_string_lossy()], Vec::new());
-        let chip = window.run(&[], &[], Vec::new()).chips[0];
-        let at = pos2(chip.right() - 8.0 - 14.0, chip.center().y);
-        let button = |pressed| egui::Event::PointerButton {
-            pos: at,
-            button: egui::PointerButton::Primary,
-            pressed,
-            modifiers: egui::Modifiers::NONE,
-        };
-        window.run(&[], &[], vec![egui::Event::PointerMoved(at)]);
-        window.run(&[], &[], vec![button(true)]);
-        window.run(&[], &[], vec![button(false)]);
-        let after = window.run(&[], &[], Vec::new());
-        assert_eq!(window.pictures, Vec::<PathBuf>::new());
-        assert_eq!(after.chips.len(), 0);
-        assert!(window.pastes.path().join("sales.csv").is_file(), "the copy stays");
     }
 
     #[test]
@@ -450,10 +426,13 @@ mod tests {
         let lit = window.frame(&["/work/shot.png"], &[]);
         assert_eq!(lit.len(), 1, "the drop highlight is drawn");
         assert_eq!(window.reply, "look at");
-        assert_eq!(window.pictures.len(), 0);
+        assert_eq!(crate::tokens::targets(&window.reply), Vec::<crate::tokens::Target>::new());
         let dropped_on = window.frame(&[], &["/work/shot.png"]);
         assert_eq!(dropped_on.len(), 0, "the highlight ends with the drop");
-        assert_eq!(window.pictures, [PathBuf::from("/work/shot.png")]);
+        assert_eq!(
+            crate::tokens::targets(&window.reply),
+            [crate::tokens::Target::File("/work/shot.png".into())]
+        );
     }
 
     #[test]

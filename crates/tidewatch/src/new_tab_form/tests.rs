@@ -115,7 +115,7 @@ impl Harness {
     fn drop_files(&mut self, paths: Vec<PathBuf>) {
         self.frame_dropping(Vec::new(), paths);
         let dropped = crate::file_drop::dropped(&self.ctx);
-        self.state.attach(dropped);
+        self.state.insert_files(&self.ctx, dropped);
         self.frame(Vec::new());
     }
 
@@ -124,7 +124,8 @@ impl Harness {
             .iter()
             .filter(|clipped| {
                 matches!(&clipped.shape, egui::Shape::Rect(r)
-                    if r.fill == brand::ITEM && r.rect.height() == crate::pictures::CHIP_H)
+                    if r.fill == brand::SUNKEN
+                        && r.rect.height() == crate::screen_kit::Size::Tag.height())
             })
             .count()
     }
@@ -989,7 +990,7 @@ fn enter_in_a_meeseeks_task_box_makes_the_next_task() {
 }
 
 #[test]
-fn a_file_dropped_on_the_window_becomes_a_chip_and_goes_after_the_text() {
+fn a_file_dropped_on_the_window_becomes_a_chip_after_the_words_before_the_cursor() {
     let dir = tempfile::tempdir().unwrap();
     let notes = dir.path().join("notes.csv");
     std::fs::write(&notes, "a,b").unwrap();
@@ -1001,11 +1002,11 @@ fn a_file_dropped_on_the_window_becomes_a_chip_and_goes_after_the_text() {
     assert!(harness.typing(), "the box takes the keyboard back");
     let out = harness.frame(vec![key_with(Key::Enter, Modifiers::COMMAND)]);
     let Request::Agent(request) = started(out) else { panic!("agent") };
-    assert_eq!(request.task, format!("read this\nAttached: {}", notes.display()));
+    assert_eq!(request.task, format!("read this {}", notes.display()));
 }
 
 #[test]
-fn the_chip_row_can_be_removed_with_backspace_from_the_start_of_the_text() {
+fn a_dropped_file_goes_with_the_space_after_it_and_a_second_backspace() {
     let dir = tempfile::tempdir().unwrap();
     let file = dir.path().join("a.csv");
     std::fs::write(&file, "x").unwrap();
@@ -1013,9 +1014,11 @@ fn the_chip_row_can_be_removed_with_backspace_from_the_start_of_the_text() {
     harness.drop_files(vec![file]);
     assert_eq!(harness.chips(), 1);
     harness.press(Key::Backspace);
+    assert_eq!(harness.chips(), 1, "the first press takes the space behind the chip");
+    harness.press(Key::Backspace);
     harness.frame(Vec::new());
     assert_eq!(harness.chips(), 0);
-    assert_eq!(harness.state.pictures, Vec::<PathBuf>::new());
+    assert_eq!(harness.state.text(), "");
 }
 
 #[test]

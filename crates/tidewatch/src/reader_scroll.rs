@@ -126,7 +126,16 @@ pub(crate) fn estimate(row: &Row, width: f32) -> f32 {
         return REVIEW_BASE_H + ids.len() as f32 * REVIEW_NOTE_H;
     }
     if matches!(row.kind, Kind::User) {
-        return estimate_user(&row.text, width) + estimate_pictures(row.pictures.len(), width);
+        let loose = row
+            .pictures
+            .iter()
+            .filter(|picture| {
+                picture
+                    .number
+                    .is_none_or(|number| !row.text.contains(&format!("[Image #{number}]")))
+            })
+            .count();
+        return estimate_user(&row.text, width) + estimate_pictures(loose, width);
     }
     if matches!(row.kind, Kind::Tidewatch(_)) {
         return estimate_tidewatch(&row.text, width, false);
@@ -153,7 +162,7 @@ pub(crate) fn estimate_user(text: &str, width: f32) -> f32 {
     lines as f32 * CHAT_LINE_H + USER_CHROME_H
 }
 
-/// The chips over a user bubble's text: their rows and the gap under them.
+/// The chips over a user bubble's text for pictures its sentence has no marker for.
 fn estimate_pictures(count: usize, width: f32) -> f32 {
     let room = width * USER_SHARE - BUBBLE_PAD;
     let rows = crate::pictures::chip_rows(count, room, crate::pictures::chip_width(room, false));

@@ -990,28 +990,29 @@ fn the_files_in_the_box_follow_the_text_in_the_first_message() {
     let catalog = catalog();
     let mut state = in_agent_form(Group::Repo, &catalog, None);
     state.set_text("  look at these  ");
-    state.attach(vec![PathBuf::from("/tmp/a b.png"), PathBuf::from("/tmp/notes.csv")]);
+    let ctx = egui::Context::default();
+    state.insert_files(&ctx, vec![PathBuf::from("/tmp/a b.png"), PathBuf::from("/tmp/notes.csv")]);
     assert!(state.focus_message, "the box takes the keyboard");
     let Ok(Request::Agent(request)) = state.start_request(&catalog, None) else {
         panic!("agent request")
     };
     assert_eq!(
-        request.task, "look at these\n'/tmp/a b.png'\nAttached: /tmp/notes.csv",
-        "the same lines a reply sends"
+        request.task, "look at these  '/tmp/a b.png' /tmp/notes.csv",
+        "the same paths a reply sends, in the order they were put in"
     );
-    assert_eq!(state.text(), "  look at these  ", "the text itself is untouched");
+    assert_eq!(tokens::plain(state.text()), "  look at these    ", "the words are untouched");
 }
 
 #[test]
 fn files_alone_start_the_agent_with_them_and_none_changes_nothing() {
     let catalog = catalog();
     let mut state = in_agent_form(Group::Repo, &catalog, None);
-    state.attach(vec![PathBuf::from("/tmp/shot.png")]);
+    state.insert_files(&egui::Context::default(), vec![PathBuf::from("/tmp/shot.png")]);
     let Ok(Request::Agent(request)) = state.start_request(&catalog, None) else {
         panic!("agent request")
     };
     assert_eq!(request.task, "/tmp/shot.png");
-    state.pictures.clear();
+    state.set_text("");
     let Ok(Request::Agent(request)) = state.start_request(&catalog, None) else {
         panic!("agent request")
     };
@@ -1019,17 +1020,17 @@ fn files_alone_start_the_agent_with_them_and_none_changes_nothing() {
 }
 
 #[test]
-fn every_meeseeks_task_gets_the_files_and_the_names_still_follow_the_words() {
+fn a_meeseeks_task_gets_the_file_put_in_its_line_and_the_names_still_follow_the_words() {
     let catalog = catalog();
     let mut state = in_meeseeks_form(&catalog);
     state.set_text("Bump vite\nAdd a test");
-    state.attach(vec![PathBuf::from("/tmp/shot.png")]);
+    state.insert_files(&egui::Context::default(), vec![PathBuf::from("/tmp/shot.png")]);
     let request = summoned(&state, &catalog, &with_tests(None));
     let tasks: Vec<&str> = request.tabs.iter().map(|tab| tab.task.as_str()).collect();
-    assert_eq!(tasks, ["Bump vite\n/tmp/shot.png", "Add a test\n/tmp/shot.png"]);
+    assert_eq!(tasks, ["Bump vite", "Add a test /tmp/shot.png"]);
     let names: Vec<_> = request.tabs.iter().map(|tab| tab.placement.name.clone()).collect();
     assert_eq!(names, [Some("bump-vite".to_owned()), Some("add-test".to_owned())]);
-    assert_eq!(state.tasks(), ["Bump vite", "Add a test"], "the count counts lines, not files");
+    assert_eq!(state.tasks().len(), 2, "the count counts lines, not files");
 }
 
 #[test]

@@ -217,6 +217,10 @@ impl Tidewatch {
         let pane = self.tabs.active_pane_mut();
         let folder = pane.worktree.as_ref().map_or(dir, |worktree| worktree.path.clone());
         let Some(agent) = pane.agent.as_mut() else { return };
+        if agent.reader.view.reply.contains('@') {
+            agent.reader.view.files = self.files.files(ctx, &folder);
+            agent.reader.view.files_root.clone_from(&folder);
+        }
         if agent.run.agent_id != "claude" || !agent.reader.view.reply.starts_with('/') {
             return;
         }

@@ -36,6 +36,8 @@ use crate::reader_turns::{self, Body, Call, Group, Section};
 use crate::reader_view::{ellipsized, output_preview, split_label};
 use crate::screen_kit::TEXT_TAG;
 use crate::screen_kit::{Size, body, button_width, mono, quiet_button};
+use crate::token_view;
+use crate::tokens;
 
 pub(crate) const BODY_PX: f32 = 16.0;
 const CODE_EM: f32 = 0.88;
@@ -355,15 +357,17 @@ fn user_bubble(
 ) -> Option<BubbleAction> {
     ui.add_space(OUTER);
     let max_w = user_width(width);
-    let (said, files) = pictures::split_trailing(&row.text);
-    let shown: Vec<u32> = row.pictures.iter().filter_map(|picture| picture.number).collect();
-    let markdown = user_markup::chat_markdown(&said, &shown);
+    let said = in_the_sentence(&row.text, &row.pictures);
+    let markdown = user_markup::chat_markdown(&said, &[]);
     let has_text = !markdown.trim().is_empty();
+    let placed = tokens::targets(&said);
     let pictures: Vec<Source<'_>> = row
         .pictures
         .iter()
+        .filter(|picture| {
+            picture.number.is_none_or(|number| !placed.contains(&tokens::Target::Pasted(number)))
+        })
         .map(Source::Pasted)
-        .chain(files.iter().map(|path| Source::File(path)))
         .collect();
     let dim = match meta_line {
         Meta::Stamp(..) => 1.0,
@@ -455,6 +459,14 @@ fn user_bubble(
                                         emoji_motion::fresh_scope(&ctx, fresh, || {
                                             reader_markdown::show(ui, &markdown, false, Look::USER);
                                         });
+                                        if let Some(number) = token_view::take_clicked(&ctx)
+                                            && let Some(picture) = row
+                                                .pictures
+                                                .iter()
+                                                .find(|picture| picture.number == Some(number))
+                                        {
+                                            pictures::open_pasted(picture, pastes);
+                                        }
                                     });
                                 });
                             }
@@ -473,6 +485,19 @@ fn user_bubble(
     });
     ui.add_space(OUTER);
     asked
+}
+
+/// A sent message as the bubble draws it: each path of something on the disk and each `[Image #N]`
+/// of a picture the transcript holds is a token, in the place it was written.
+fn in_the_sentence(text: &str, held: &[tidewatch_core::transcript_image::Picture]) -> String {
+    let mut said = tokens::from_sent_on_disk(text);
+    for number in held.iter().filter_map(|picture| picture.number) {
+        said = said.replace(
+            &format!("[Image #{number}]"),
+            &tokens::encode(&tokens::Target::Pasted(number)),
+        );
+    }
+    said
 }
 
 fn sent_pictures(ui: &mut Ui, pictures: &[Source<'_>], over_text: bool, pastes: Option<&Path>) {
@@ -1308,14 +1333,51 @@ mod tests {
         assert_eq!(ink("plain"), Some(Color32::WHITE));
     }
 
+    fn shots(names: &[&str]) -> (tempfile::TempDir, Vec<String>) {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = names
+            .iter()
+            .map(|name| {
+                let path = dir.path().join(name);
+                std::fs::write(&path, b"").unwrap();
+                path.to_string_lossy().into_owned()
+            })
+            .collect();
+        (dir, paths)
+    }
+
+    fn sentences(texts: &[String]) -> Vec<&String> {
+        texts.iter().filter(|text| tokens::has_tokens(text)).collect()
+    }
+
+    fn sunken_chips(shapes: &[Shape]) -> Vec<Rect> {
+        shapes
+            .iter()
+            .filter_map(|shape| match shape {
+                Shape::Rect(rect)
+                    if rect.fill == brand::SUNKEN && rect.rect.height() == Size::Tag.height() =>
+                {
+                    Some(rect.rect)
+                }
+                _ => None,
+            })
+            .collect()
+    }
+
     #[test]
-    fn a_sent_message_with_pictures_shows_chips_and_never_the_raw_paths() {
-        let message = "look at these\n/nope/shot-1793011211356.png\n/nope/shot-1793011218705.png";
-        let texts = painted_text(message);
-        assert!(texts.iter().any(|text| text == "look at these"), "{texts:?}");
+    fn a_sent_message_with_pictures_shows_chips_in_its_sentence_and_never_the_raw_paths() {
+        let (dir, paths) = shots(&["shot-1793011211356.png", "shot-1793011218705.png"]);
+        let message = format!("look at {} and {} please", paths[0], paths[1]);
+        let texts = painted_text(&message);
+        let sentence = sentences(&texts);
+        assert_eq!(sentence.len(), 1, "{texts:?}");
+        assert!(sentence[0].starts_with("look at "), "{sentence:?}");
+        assert!(sentence[0].contains(" and "), "{sentence:?}");
+        assert!(sentence[0].ends_with(" please"), "{sentence:?}");
         assert!(texts.iter().any(|text| text == "Screenshot 1"), "{texts:?}");
         assert!(texts.iter().any(|text| text == "Screenshot 2"), "{texts:?}");
-        assert!(!texts.iter().any(|text| text.contains("/nope/")), "{texts:?}");
+        let folder = dir.path().to_string_lossy().into_owned();
+        assert!(!texts.iter().any(|text| text.contains(&folder)), "{texts:?}");
     }
 
     #[test]
@@ -1372,46 +1434,50 @@ mod tests {
     }
 
     #[test]
-    fn a_bubble_with_pictures_stays_inside_the_pane_with_even_padding() {
+    fn a_bubble_with_files_in_its_sentence_stays_inside_the_pane_with_even_padding() {
         let pad = f32::from(USER_PAD.left);
+        let (_dir, p) = shots(&["shot-1.png", "shot-2.png"]);
         let cases = [
-            ("/nope/shot-1.png", 600.0),
-            ("/nope/shot-1.png", 340.0),
-            ("/nope/shot-1.png\n/nope/shot-2.png", 600.0),
-            ("/nope/shot-1.png\n/nope/shot-2.png", 340.0),
-            ("look at this\n/nope/shot-1.png", 600.0),
-            ("look at this\n/nope/shot-1.png\n/nope/shot-2.png", 300.0),
+            (p[0].clone(), 600.0),
+            (p[0].clone(), 340.0),
+            (format!("{} {}", p[0], p[1]), 340.0),
+            (format!("look at {} please", p[0]), 600.0),
+            (format!("look at this {} and also {} and more words to wrap", p[0], p[1]), 300.0),
         ];
         for (text, pane) in cases {
-            let (bubble, chips, ..) = bubble_and_chips(text, pane);
+            let (bubble, _, inside, _) = bubble_and_chips(&text, pane);
+            let chips = inside_chips(&text, pane);
             assert!(bubble.right() <= pane, "{text:?} at {pane}: bubble {bubble:?}");
+            assert!(!chips.is_empty(), "{text:?} at {pane}");
             for chip in &chips {
                 assert!(
-                    chip.right() <= bubble.right() - pad,
+                    chip.right() <= bubble.right() - pad && chip.left() >= bubble.left() + pad,
                     "{text:?} at {pane}: chip {chip:?} in bubble {bubble:?}"
                 );
             }
-            let last = chips.iter().map(Rect::right).reduce(f32::max).expect("chips");
-            assert_eq!(
-                (bubble.right() - last).round(),
-                pad + 1.0,
-                "{text:?} at {pane}: right padding"
-            );
-            let top = chips.iter().map(Rect::top).reduce(f32::min).expect("chips");
-            assert_eq!(
-                (top - bubble.top()).round(),
-                f32::from(USER_PAD.top) + 1.0,
-                "{text:?} at {pane}: top padding"
-            );
-            if !text.starts_with("look") {
-                let bottom = chips.iter().map(Rect::bottom).reduce(f32::max).expect("chips");
-                assert_eq!(
-                    (bubble.bottom() - bottom).round(),
-                    f32::from(USER_PAD.bottom) + 1.0,
-                    "{text:?} at {pane}: bottom padding"
-                );
-            }
+            let right = inside.iter().map(Rect::right).fold(0.0, f32::max);
+            assert!(right <= bubble.right() - pad + 0.5, "{text:?} at {pane}: {right} {bubble:?}");
         }
+    }
+
+    fn inside_chips(text: &str, pane: f32) -> Vec<Rect> {
+        let ctx = crate::fonts::test_context();
+        let row = Row { seq: 1, kind: Kind::User, text: text.to_owned(), pictures: Vec::new() };
+        let zone = TimeZone::UTC;
+        let mut found = Vec::new();
+        for _ in 0..2 {
+            let raw = RawInput {
+                screen_rect: Some(Rect::from_min_size(pos2(0.0, 0.0), vec2(pane + 100.0, 600.0))),
+                ..RawInput::default()
+            };
+            let out = ctx.run_ui(raw, |ui| {
+                ui.set_max_width(pane);
+                user(ui, &row, None, &zone, (pane, None), false);
+            });
+            let shapes: Vec<Shape> = out.shapes.into_iter().map(|clipped| clipped.shape).collect();
+            found = sunken_chips(&shapes);
+        }
+        found
     }
 
     #[test]
@@ -1439,8 +1505,9 @@ mod tests {
     }
 
     #[test]
-    fn a_message_of_only_pictures_has_no_empty_text_and_a_path_in_a_sentence_stays_text() {
-        let only = painted_text("/nope/shot-1.png");
+    fn a_message_of_only_a_file_has_no_empty_text_and_a_path_that_is_no_file_stays_text() {
+        let (_dir, p) = shots(&["shot-1.png"]);
+        let only = painted_text(&p[0]);
         assert!(only.iter().any(|text| text == "Screenshot 1"), "{only:?}");
         let inline = painted_text("open /nope/shot-1.png please");
         assert!(inline.iter().any(|text| text.contains("/nope/shot-1.png")), "{inline:?}");
