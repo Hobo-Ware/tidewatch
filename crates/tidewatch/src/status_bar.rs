@@ -13,7 +13,7 @@ use crate::commands::{Command, Platform};
 use crate::new_tab::Kind;
 use crate::pr_strip::tone_ink;
 use crate::screen_kit::TEXT_SECONDARY;
-use crate::screen_kit::{Size, quiet_button};
+use crate::screen_kit::{Size, button_width, quiet_button};
 use crate::screen_kit::{body, mono};
 use crate::status_view::Tone;
 
@@ -28,6 +28,8 @@ const AWAKE_R: f32 = 5.0;
 const FETCH_FAILED: &str = "Fetch failed";
 const CHIP_PAD: f32 = Size::Tag.pad();
 const SWITCHING_TITLE_CHARS: usize = 36;
+
+pub(crate) mod slow;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) struct Counts {
@@ -234,12 +236,21 @@ pub(crate) struct Bar {
     pub(crate) fetch_failed: Option<String>,
     /// A tab change that waits for the agent's turn to end, with a Cancel.
     pub(crate) switching: Option<String>,
+    /// The oldest git or gh call that has run longer than 10 s, with a Cancel.
+    pub(crate) slow: Option<slow::Line>,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) struct Clicks {
     pub(crate) open_review: bool,
     pub(crate) cancel_switch: bool,
+    pub(crate) cancel_slow: Option<u64>,
+}
+
+#[derive(Clone, Copy)]
+enum Cancelling {
+    Switch,
+    Slow(u64),
 }
 
 /// Draws the bar and says what was clicked.
@@ -300,31 +311,51 @@ pub(crate) fn show(ui: &mut Ui, rect: Rect, bar: &Bar) -> Clicks {
             .clicked();
         x += chip.width() + GAP;
     }
-    let mut cancel_at = None;
+    let mut hints_left = rect.right() - PAD;
+    for hint in bar.hints.iter().rev() {
+        hints_left -=
+            put(pos2(hints_left, y), Align2::RIGHT_CENTER, hint.label, body(FONT), brand::MUTED);
+        hints_left -= 6.0;
+        hints_left -=
+            put(pos2(hints_left, y), Align2::RIGHT_CENTER, &hint.keys, mono(FONT), brand::SOFT);
+        hints_left -= GAP;
+    }
+    let cancel_w = button_width(ui, "Cancel", Size::Compact);
+    let mut cancels = Vec::new();
     if let Some(text) = &bar.switching {
         x += put(pos2(x, y), Align2::LEFT_CENTER, text, body(FONT), brand::TEAL_TEXT) + 10.0;
-        cancel_at = Some(x);
+        cancels.push((Cancelling::Switch, x));
+        x += cancel_w + GAP;
+    }
+    if let Some(line) = &bar.slow {
+        let galley = ui.painter().layout_no_wrap(line.text.clone(), body(FONT), brand::ORANGE);
+        if slow::fits(x, galley.size().x, cancel_w, hints_left) {
+            x += put(pos2(x, y), Align2::LEFT_CENTER, &line.text, body(FONT), brand::ORANGE) + 10.0;
+            cancels.push((Cancelling::Slow(line.id), x));
+            x += cancel_w + GAP;
+        }
     }
     if let Some(hint) = bar.note_hint {
         put(pos2(x, y), Align2::LEFT_CENTER, hint, body(FONT), brand::MUTED);
     }
-    let mut right = rect.right() - PAD;
-    for hint in bar.hints.iter().rev() {
-        right -= put(pos2(right, y), Align2::RIGHT_CENTER, hint.label, body(FONT), brand::MUTED);
-        right -= 6.0;
-        right -= put(pos2(right, y), Align2::RIGHT_CENTER, &hint.keys, mono(FONT), brand::SOFT);
-        right -= GAP;
-    }
-    if let Some(x) = cancel_at {
-        let slot = Rect::from_min_max(
-            pos2(x, y - Size::Compact.height() / 2.0),
-            pos2(rect.right() - PAD, y + Size::Compact.height() / 2.0),
+    for (which, at) in cancels {
+        let slot = Rect::from_min_size(
+            pos2(at, y - Size::Compact.height() / 2.0),
+            vec2(cancel_w, Size::Compact.height()),
         );
         let cancel = ui.scope_builder(
-            UiBuilder::new().max_rect(slot).layout(Layout::left_to_right(Align::Center)),
+            UiBuilder::new()
+                .id_salt(("status-bar-cancel", y.to_bits(), at.to_bits()))
+                .max_rect(slot)
+                .layout(Layout::left_to_right(Align::Center)),
             |ui| quiet_button(ui, "Cancel", true, Size::Compact),
         );
-        clicks.cancel_switch = cancel.inner.clicked();
+        if cancel.inner.clicked() {
+            match which {
+                Cancelling::Switch => clicks.cancel_switch = true,
+                Cancelling::Slow(id) => clicks.cancel_slow = Some(id),
+            }
+        }
     }
     clicks
 }
@@ -495,6 +526,15 @@ mod tests {
     }
 
     fn bar(switching: Option<&str>) -> Bar {
+        bar_with(switching, None)
+    }
+
+    fn slow_line(secs: u64, more: usize) -> slow::Line {
+        let text = slow::text("git worktree add", std::time::Duration::from_secs(secs), more);
+        slow::Line { id: 5, text }
+    }
+
+    fn bar_with(switching: Option<&str>, slow: Option<slow::Line>) -> Bar {
         Bar {
             counts: Counts::default(),
             place: None,
@@ -505,19 +545,24 @@ mod tests {
             awake: None,
             fetch_failed: None,
             switching: switching.map(switching_text),
+            slow,
         }
     }
 
     fn frame(ctx: &egui::Context, bar: &Bar, events: Vec<egui::Event>) -> Clicks {
+        frame_in(ctx, bar, events, 900.0)
+    }
+
+    fn frame_in(ctx: &egui::Context, bar: &Bar, events: Vec<egui::Event>, width: f32) -> Clicks {
         let raw = egui::RawInput {
-            screen_rect: Some(Rect::from_min_size(pos2(0.0, 0.0), vec2(900.0, 120.0))),
+            screen_rect: Some(Rect::from_min_size(pos2(0.0, 0.0), vec2(width, 120.0))),
             events,
             focused: true,
             ..egui::RawInput::default()
         };
         let mut clicks = Clicks::default();
         let _ = ctx.run_ui(raw, |ui| {
-            let rect = Rect::from_min_size(pos2(0.0, 0.0), vec2(900.0, HEIGHT));
+            let rect = Rect::from_min_size(pos2(0.0, 0.0), vec2(width, HEIGHT));
             clicks = show(ui, rect, bar);
         });
         clicks
@@ -530,13 +575,17 @@ mod tests {
     }
 
     fn galley_texts(ctx: &egui::Context, bar: &Bar) -> Vec<String> {
+        galley_texts_in(ctx, bar, 900.0)
+    }
+
+    fn galley_texts_in(ctx: &egui::Context, bar: &Bar, width: f32) -> Vec<String> {
         let raw = egui::RawInput {
-            screen_rect: Some(Rect::from_min_size(pos2(0.0, 0.0), vec2(900.0, 120.0))),
+            screen_rect: Some(Rect::from_min_size(pos2(0.0, 0.0), vec2(width, 120.0))),
             focused: true,
             ..egui::RawInput::default()
         };
         let out = ctx.run_ui(raw, |ui| {
-            let rect = Rect::from_min_size(pos2(0.0, 0.0), vec2(900.0, HEIGHT));
+            let rect = Rect::from_min_size(pos2(0.0, 0.0), vec2(width, HEIGHT));
             show(ui, rect, bar);
         });
         out.shapes
@@ -571,6 +620,60 @@ mod tests {
         assert_eq!(frame(&ctx, &waiting, vec![]), Clicks::default());
         let _ = frame(&ctx, &waiting, vec![key(egui::Key::Tab)]);
         let clicks = frame(&ctx, &waiting, vec![key(egui::Key::Enter)]);
-        assert_eq!(clicks, Clicks { open_review: false, cancel_switch: true });
+        assert_eq!(clicks, Clicks { cancel_switch: true, ..Clicks::default() });
+    }
+
+    fn count(texts: &[String], want: &str) -> usize {
+        texts.iter().filter(|text| text.as_str() == want).count()
+    }
+
+    #[test]
+    fn a_slow_call_shows_its_line_with_a_cancel_that_reports_its_id() {
+        let ctx = context();
+        let slow = bar_with(None, Some(slow_line(14, 0)));
+        let texts = galley_texts(&ctx, &slow);
+        let line = "git worktree add is taking long \u{b7} 14 s";
+        assert_eq!(count(&texts, line), 1, "{texts:?}");
+        assert_eq!(count(&texts, "Cancel"), 1, "{texts:?}");
+        let quiet = galley_texts(&ctx, &bar_with(None, None));
+        assert_eq!(count(&quiet, "Cancel"), 0, "{quiet:?}");
+
+        assert_eq!(frame(&ctx, &slow, vec![]), Clicks::default());
+        let _ = frame(&ctx, &slow, vec![key(egui::Key::Tab)]);
+        let clicks = frame(&ctx, &slow, vec![key(egui::Key::Enter)]);
+        assert_eq!(clicks, Clicks { cancel_slow: Some(5), ..Clicks::default() });
+    }
+
+    #[test]
+    fn a_slow_call_with_others_behind_it_says_how_many() {
+        let ctx = context();
+        let texts = galley_texts(&ctx, &bar_with(None, Some(slow_line(61, 2))));
+        let line = "git worktree add is taking long \u{b7} 1 min 1 s \u{b7} and 2 more";
+        assert_eq!(count(&texts, line), 1, "{texts:?}");
+    }
+
+    #[test]
+    fn both_lines_show_with_their_own_cancel_when_the_bar_is_wide() {
+        let ctx = context();
+        let both = bar_with(Some("fix-ci"), Some(slow_line(14, 0)));
+        let texts = galley_texts_in(&ctx, &both, 1600.0);
+        assert_eq!(count(&texts, "Switching fix-ci when its turn ends"), 1, "{texts:?}");
+        assert_eq!(count(&texts, "git worktree add is taking long \u{b7} 14 s"), 1, "{texts:?}");
+        assert_eq!(count(&texts, "Cancel"), 2, "{texts:?}");
+
+        let _ = frame_in(&ctx, &both, vec![key(egui::Key::Tab)], 1600.0);
+        let _ = frame_in(&ctx, &both, vec![key(egui::Key::Tab)], 1600.0);
+        let clicks = frame_in(&ctx, &both, vec![key(egui::Key::Enter)], 1600.0);
+        assert_eq!(clicks, Clicks { cancel_slow: Some(5), ..Clicks::default() });
+    }
+
+    #[test]
+    fn on_a_narrow_bar_the_switch_line_wins_and_the_slow_line_waits() {
+        let ctx = context();
+        let both = bar_with(Some("fix-ci"), Some(slow_line(14, 0)));
+        let texts = galley_texts_in(&ctx, &both, 800.0);
+        assert_eq!(count(&texts, "Switching fix-ci when its turn ends"), 1, "{texts:?}");
+        assert_eq!(count(&texts, "git worktree add is taking long \u{b7} 14 s"), 0, "{texts:?}");
+        assert_eq!(count(&texts, "Cancel"), 1, "{texts:?}");
     }
 }

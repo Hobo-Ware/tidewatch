@@ -35,6 +35,7 @@ mod retarget;
 mod review;
 mod services;
 mod settings;
+mod slow;
 mod stdusk;
 pub(crate) mod strip;
 mod tabs;
@@ -265,6 +266,7 @@ impl Tidewatch {
         incoming: Option<handoff::Incoming>,
         from_stdusk: Option<PathBuf>,
     ) -> Self {
+        slow::start_dev();
         colors::init(brand::theme());
         colors::set_chrome(brand::chrome());
         let prefs = paths.as_ref().map(Prefs::load).unwrap_or_default();
