@@ -24,6 +24,8 @@ const QUIET_H: f32 = 26.0;
 const FINISHED_H: f32 = 26.0;
 const STALLED_PAD_Y: f32 = 8.0;
 const SEGMENT_GAP: f32 = 4.0;
+const MARK_W: f32 = 20.0;
+const MIN_NAME_W: f32 = 16.0;
 
 /// Draws the cards and returns the job and the message of an Ask agent click.
 pub(crate) fn show(ui: &mut Ui, width: f32, cards: &[Card]) -> Option<(u64, String)> {
@@ -46,6 +48,12 @@ pub(crate) fn show(ui: &mut Ui, width: f32, cards: &[Card]) -> Option<(u64, Stri
         }
     }
     action
+}
+
+/// Where a line with no frame of its own keeps its content: the inset the cards and the stalled row
+/// give theirs, so marks and right-hand values line up with them.
+fn row_inner(rect: Rect) -> Rect {
+    rect.shrink2(vec2(PAD_X, 0.0))
 }
 
 fn card_frame(painter: &egui::Painter, rect: Rect, fill: Color32, line: Color32) {
@@ -141,14 +149,17 @@ fn segments_card(ui: &mut Ui, width: f32, card: &SegmentsCard) {
 fn quiet_line(ui: &mut Ui, width: f32, line: &QuietLine) {
     let (rect, _) = ui.allocate_exact_size(vec2(width, QUIET_H), Sense::hover());
     let painter = ui.painter();
-    painter.circle_filled(pos2(rect.left() + 11.0, rect.center().y), 3.0, brand::FAINT);
+    let inner = row_inner(rect);
+    painter.circle_filled(pos2(inner.left() + 3.0, rect.center().y), 3.0, brand::FAINT);
     let elapsed = painter.layout_no_wrap(line.elapsed.clone(), mono(13.0), brand::MUTED);
-    let text_x = rect.left() + 30.0;
-    let room = (rect.right() - elapsed.size().x - 10.0 - text_x).max(1.0);
-    let name = ellipsized(painter, &line.name, body(13.0), brand::MUTED, room);
-    painter.galley(pos2(text_x, rect.center().y - name.size().y / 2.0), name, brand::MUTED);
+    let text_x = inner.left() + MARK_W;
+    let room = (inner.right() - elapsed.size().x - 10.0 - text_x).max(1.0);
+    if room >= MIN_NAME_W {
+        let name = ellipsized(painter, &line.name, body(13.0), brand::MUTED, room);
+        painter.galley(pos2(text_x, rect.center().y - name.size().y / 2.0), name, brand::MUTED);
+    }
     painter.galley(
-        pos2(rect.right() - elapsed.size().x, rect.center().y - elapsed.size().y / 2.0),
+        pos2(inner.right() - elapsed.size().x, rect.center().y - elapsed.size().y / 2.0),
         elapsed,
         brand::MUTED,
     );
@@ -189,7 +200,8 @@ fn finished_line(ui: &mut Ui, width: f32, line: &FinishedLine) {
         (false, true) => brand::FAINT,
         (false, false) => brand::GREEN,
     };
-    let mark = pos2(rect.left() + 11.0, rect.center().y);
+    let inner = row_inner(rect);
+    let mark = pos2(inner.left() + 4.5, rect.center().y);
     if line.ended {
         painter
             .line_segment([mark + vec2(-4.0, 0.0), mark + vec2(4.0, 0.0)], Stroke::new(2.0, ink));
@@ -205,12 +217,14 @@ fn finished_line(ui: &mut Ui, width: f32, line: &FinishedLine) {
         ));
     }
     let detail = painter.layout_no_wrap(line.detail.clone(), mono(13.0), brand::MUTED);
-    let text_x = rect.left() + 30.0;
-    let room = (rect.right() - detail.size().x - 10.0 - text_x).max(1.0);
-    let name = ellipsized(painter, &line.name, body(13.0), brand::MUTED, room);
-    painter.galley(pos2(text_x, rect.center().y - name.size().y / 2.0), name, brand::MUTED);
+    let text_x = inner.left() + MARK_W;
+    let room = (inner.right() - detail.size().x - 10.0 - text_x).max(1.0);
+    if room >= MIN_NAME_W {
+        let name = ellipsized(painter, &line.name, body(13.0), brand::MUTED, room);
+        painter.galley(pos2(text_x, rect.center().y - name.size().y / 2.0), name, brand::MUTED);
+    }
     painter.galley(
-        pos2(rect.right() - detail.size().x, rect.center().y - detail.size().y / 2.0),
+        pos2(inner.right() - detail.size().x, rect.center().y - detail.size().y / 2.0),
         detail,
         brand::MUTED,
     );
