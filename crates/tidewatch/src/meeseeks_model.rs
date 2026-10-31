@@ -4,7 +4,7 @@
 use tidewatch_core::kind::Kind;
 use tidewatch_core::meeseeks::{Meeseeks, Phase, StageMark, Step, elapsed_text};
 
-use crate::progress_model::StageShape;
+use crate::progress_model::{Bar, BarKind, StageShape};
 
 pub(crate) const STRUGGLE_BODY: &str = "It can't finish alone. It won't poof until you decide.";
 
@@ -98,6 +98,33 @@ fn status(meeseeks: &Meeseeks, struggling: bool, tests: Option<&str>) -> Vec<Spa
             vec![strong("Nothing changed."), plain(" No checks to run. Poofing...")]
         }
         Phase::Poofing => vec![strong("Checks passed."), plain(" Poofing...")],
+    }
+}
+
+impl Card {
+    /// The checks as one bar of the panel's stage row: filled by the checks done, with the one
+    /// running counted as half. None until a check has begun, and for a read-only Meeseeks.
+    pub(crate) fn checks_bar(&self) -> Option<Bar> {
+        if self.bars.is_empty() {
+            return None;
+        }
+        let count = |look| self.bars.iter().filter(|(_, bar)| *bar == look).count();
+        let (done, active, skipped) =
+            (count(Look::Done), count(Look::Active), count(Look::Skipped));
+        let total = self.bars.len() - skipped;
+        let fill = if total == 0 {
+            0.0
+        } else {
+            ((done as f32 + 0.5 * active as f32) / total as f32).clamp(0.0, 1.0)
+        };
+        Some(Bar {
+            label: "Checks".to_owned(),
+            fill,
+            kind: if total == 0 { BarKind::Skipped } else { BarKind::Plain },
+            current: active > 0,
+            done,
+            total,
+        })
     }
 }
 

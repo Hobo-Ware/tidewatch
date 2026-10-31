@@ -5,11 +5,11 @@
 use std::ops::Range;
 use std::sync::Arc;
 
-use egui::epaint::text::{LayoutJob, TextFormat, TextWrapping};
+use egui::epaint::text::{LayoutJob, TextFormat};
 use egui::text_selection::LabelSelectionState;
 use egui::{
-    Color32, CursorIcon, FontId, Galley, Id, Label, OpenUrl, Painter, Pos2, Rect, Response, Sense,
-    Stroke, TextWrapMode, Ui, Vec2, pos2,
+    Color32, CursorIcon, Galley, Id, Label, OpenUrl, Painter, Pos2, Rect, Response, Sense, Stroke,
+    TextWrapMode, Ui, Vec2, pos2,
 };
 
 use crate::brand;
@@ -39,19 +39,6 @@ pub(crate) struct Text {
 impl Text {
     pub(crate) fn new() -> Self {
         Self { job: LayoutJob::default(), spans: Vec::new() }
-    }
-
-    /// One run in `font` and `ink`, cut with an ellipsis at `max_w`.
-    pub(crate) fn line(text: &str, font: FontId, ink: Color32, max_w: f32) -> Self {
-        let mut line = Self::new();
-        line.run(text, &TextFormat::simple(font, ink));
-        line.cut(max_w)
-    }
-
-    /// Cuts the line with an ellipsis at `max_w`.
-    pub(crate) fn cut(mut self, max_w: f32) -> Self {
-        self.job.wrap = TextWrapping::truncate_at_width(max_w.max(1.0));
-        self
     }
 
     pub(crate) fn run(&mut self, text: &str, format: &TextFormat) {

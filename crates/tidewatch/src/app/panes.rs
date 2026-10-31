@@ -163,6 +163,7 @@ impl Tidewatch {
             Blocks::of(&view, now_ms, &TimeZone::system(), kept)
         });
         let marks = self.panel.marks(active_id, now_ms);
+        let checks = self.panel.checks(active_id);
         let side = self.side_layout();
         let view = self.views.get_mut(&active_id);
         let agent = self.tabs.items()[self.tabs.active()].pane.agent.as_ref();
@@ -216,6 +217,7 @@ impl Tidewatch {
                 links,
                 blocks,
                 marks: &marks,
+                checks: &checks,
             };
             Some(input)
         });

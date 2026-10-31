@@ -16,6 +16,8 @@ fn the_switch_names_four_views_and_nothing_else() {
         (Some(" outdated "), Some(Fake::Outdated)),
         (Some("quiet"), Some(Fake::Quiet)),
         (Some("since"), Some(Fake::Since)),
+        (Some("answers"), Some(Fake::Answers)),
+        (Some("lastturn"), Some(Fake::LastTurn)),
         (Some("stale"), None),
         (Some(""), None),
         (None, None),
@@ -43,6 +45,10 @@ fn each_view_shows_what_its_name_says() {
 
     let since = blocks_of(Fake::Since);
     assert_eq!(since.since.as_deref(), Some("3 things happened since"));
+    assert_eq!(blocks_of(Fake::Answers).since.as_deref(), Some("3 answers since"));
+    let last = Fake::LastTurn.view(NOW);
+    assert_eq!(last.report, Some(ReportMark::OutOfDate(Why::DoneButTurnRunning)));
+    assert_eq!(last.reported, Some(State::Working));
 }
 
 #[test]
@@ -51,6 +57,7 @@ fn only_the_since_view_has_a_step_ticked_by_tidewatch() {
         assert_eq!(fake.marks(NOW), Vec::<MarkSeen>::new());
     }
     assert!(ticked_by_tidewatch(&Fake::Since.marks(NOW), TICKED_STEP));
+    assert!(ticked_by_tidewatch(&Fake::Answers.marks(NOW), TICKED_STEP));
 }
 
 #[test]

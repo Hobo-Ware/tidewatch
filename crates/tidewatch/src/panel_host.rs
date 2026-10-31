@@ -21,7 +21,7 @@ use tidewatch_core::panel_event::{Event, Fact, PrFacts, Source};
 use tidewatch_core::panel_limits::Delivery;
 use tidewatch_core::panel_log::{CAP_EVENTS, Log};
 use tidewatch_core::panel_rules::ReportDigest;
-use tidewatch_core::panel_state::{Applied, MarkSeen, PanelState};
+use tidewatch_core::panel_state::{AnswerSeen, Applied, CheckSeen, MarkSeen, PanelState};
 use tidewatch_core::panel_store::{self, Writer};
 use tidewatch_core::panel_view::PanelView;
 use tidewatch_core::paths::panel_log_file_beside;
@@ -270,6 +270,22 @@ impl Host {
             .get(&tab)
             .and_then(|panel| panel.ready.as_ref())
             .map_or_else(Vec::new, |ready| ready.state.marks().to_vec())
+    }
+
+    /// The checks Tidewatch ran and saw finish, from the tab's log.
+    pub(crate) fn checks(&self, tab: u64) -> Vec<CheckSeen> {
+        self.tabs
+            .get(&tab)
+            .and_then(|panel| panel.ready.as_ref())
+            .map_or_else(Vec::new, |ready| ready.state.checks().to_vec())
+    }
+
+    /// The questions answered since the tab's report was saved.
+    pub(crate) fn answered(&self, tab: u64) -> Vec<AnswerSeen> {
+        self.tabs
+            .get(&tab)
+            .and_then(|panel| panel.ready.as_ref())
+            .map_or_else(Vec::new, |ready| ready.state.answered().to_vec())
     }
 
     /// The About card's `Panel on time` row.

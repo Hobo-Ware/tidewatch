@@ -29,13 +29,13 @@ use crate::overview_checklist::Source;
 use crate::pane::{AgentTab, Body};
 use crate::panel_blocks::{Blocks, Kept, contradicted};
 use crate::progress_glue::today;
-use crate::progress_model::{look, look_as, questions};
+use crate::progress_model::{ItemRow, ask_of, look, look_as, questions, stage_rows};
 use crate::progress_state::Facts;
 use crate::reader_glue::Opened;
 use crate::status_view::state_of;
+use crate::step_tick;
 use crate::{due_view, flow_glue, reader_glue, reader_view};
-use tidewatch_core::panel_event::AskKind;
-use tidewatch_core::panel_event::{Fact, Source as Logged};
+use tidewatch_core::panel_event::{AskKind, Fact, Source as Logged, StepBy};
 use tidewatch_core::panel_rules::ReportDigest;
 use tidewatch_core::panel_view::PanelView;
 use tidewatch_core::sent::{Reason as Said, because};
@@ -98,6 +98,7 @@ impl Tidewatch {
         let tabs: std::collections::HashSet<u64> =
             self.tabs.items().iter().map(|tab| tab.id).collect();
         self.progress_ui.forget_except(|id| tabs.contains(&id));
+        self.drive_answer_ticks();
         self.drive_reported_states();
     }
 
@@ -446,6 +447,36 @@ impl Tidewatch {
         self.progress.ledger(tab).is_some() && contradicted(self.panel_view_of(tab).as_ref())
     }
 
+    /// Ticks, on every tab, the open step of the report that each question answered since the
+    /// report was saved is about. A step is ticked once; the agent's next report starts over.
+    fn drive_answer_ticks(&mut self) {
+        let now_ms = wall_ms() as i64;
+        let ids: Vec<u64> = self
+            .tabs
+            .items()
+            .iter()
+            .filter(|tab| tab.pane.agent.is_some())
+            .map(|tab| tab.id)
+            .collect();
+        for id in ids {
+            let answers = self.panel.answered(id);
+            if answers.is_empty() {
+                continue;
+            }
+            let Some(known) = self.progress.sent(id) else { continue };
+            let kind = known.ledger.status.kind.unwrap_or_default();
+            let steps = stage_rows(&known.ledger, kind);
+            let rows: Vec<ItemRow<'_>> =
+                steps.iter().flat_map(|stage| stage.rows.clone()).collect();
+            let marks = self.panel.marks(id, now_ms);
+            let texts = step_tick::ticks(&rows, &answers, &marks);
+            for step in texts {
+                let fact = Fact::StepMark { step, by: StepBy::Tidewatch };
+                self.panel.push(id, Logged::Tidewatch, fact, now_ms);
+            }
+        }
+    }
+
     /// Hands each agent tab the state its report stands for after the facts weighed it, so every
     /// screen shows one word. A report the log never heard of (saved by an older version) is put
     /// in the log first.
@@ -524,6 +555,8 @@ impl Tidewatch {
     /// A ready answer chip: the exact text goes to the agent as the reply box would send it, unless
     /// the reply box is shut. The ledger's question clears until the agent saves a new ledger.
     pub(super) fn send_answer(&mut self, tab: u64, text: String, ctx: &egui::Context, now: f64) {
+        let asked =
+            self.progress.ledger(tab).and_then(|known| ask_of(&known.ledger)).map(|ask| ask.text);
         let open = self
             .tabs
             .get_mut(tab)
@@ -531,11 +564,14 @@ impl Tidewatch {
         match open {
             Opened::Refused(reason) => self.show_toast(reason.to_owned(), ctx),
             Opened::Answered => {
+                self.note_answer(tab, asked.as_deref(), &text);
                 self.mark_answered(tab);
                 ctx.request_repaint();
             }
             Opened::NotOpen => {
+                let chip = text.clone();
                 if self.send_ready_answer(tab, text, ctx, now) {
+                    self.note_answer(tab, asked.as_deref(), &chip);
                     self.mark_answered(tab);
                 }
             }
@@ -552,16 +588,26 @@ impl Tidewatch {
         let (saved, total) = (known.updated_ms, asked.len());
         let step =
             ask_model::shown(total, false, self.ask_given.get(&tab).copied(), saved).unwrap_or(0);
-        let question = asked.get(step).map_or("", |entry| entry.text.as_str());
-        let text = ask_model::reply_text(question, total, &text);
+        let question = asked.get(step).map_or("", |entry| entry.text.as_str()).to_owned();
+        let chip = text.clone();
+        let text = ask_model::reply_text(&question, total, &text);
         if !self.send_ready_answer(tab, text, ctx, now) {
             return;
         }
+        self.note_answer(tab, Some(&question), &chip);
         match ask_model::after_answer(total, step, saved) {
             Some(given) => {
                 self.ask_given.insert(tab, given);
             }
             None => self.mark_answered(tab),
+        }
+    }
+
+    fn note_answer(&mut self, tab: u64, question: Option<&str>, answer: &str) {
+        if let Some(question) = question {
+            let fact =
+                Fact::QuestionAnswered { question: question.to_owned(), answer: answer.to_owned() };
+            self.panel.push(tab, Logged::App, fact, wall_ms() as i64);
         }
     }
 

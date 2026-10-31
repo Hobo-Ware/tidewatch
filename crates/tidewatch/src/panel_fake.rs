@@ -1,4 +1,4 @@
-//! Stand-in panel facts for captures: `TIDEWATCH_FAKE_PANEL=fresh|outdated|quiet|since` gives every
+//! Stand-in panel facts for captures: `TIDEWATCH_FAKE_PANEL=fresh|outdated|quiet|since|answers|lastturn` gives every
 //! agent tab one fixed `PanelView` (nothing is read, logged or written), and
 //! `TIDEWATCH_FAKE_ONTIME=<percent>` fills the About card's `Panel on time` row.
 
@@ -22,6 +22,8 @@ pub(crate) enum Fake {
     Outdated,
     Quiet,
     Since,
+    Answers,
+    LastTurn,
 }
 
 impl Fake {
@@ -31,6 +33,8 @@ impl Fake {
             "outdated" => Some(Self::Outdated),
             "quiet" => Some(Self::Quiet),
             "since" => Some(Self::Since),
+            "answers" => Some(Self::Answers),
+            "lastturn" => Some(Self::LastTurn),
             _ => None,
         }
     }
@@ -52,13 +56,15 @@ impl Fake {
         };
         let mark = match self {
             Self::Outdated => ReportMark::OutOfDate(Why::WorkingButTurnEnded),
+            Self::LastTurn => ReportMark::OutOfDate(Why::DoneButTurnRunning),
             _ => ReportMark::Fresh,
         };
         let report_minutes = match self {
             Self::Fresh => 2,
             Self::Outdated => 14,
             Self::Quiet => 8,
-            Self::Since => 6,
+            Self::Since | Self::Answers => 6,
+            Self::LastTurn => 40,
         };
         let quiet = match self {
             Self::Quiet => vec![Quiet { source: Source::Hook, since_ms: now_ms - 11 * MINUTE_MS }],
@@ -78,6 +84,7 @@ impl Fake {
             },
             quiet,
             since: if self == Self::Since { 3 } else { 0 },
+            answers: if self == Self::Answers { 3 } else { 0 },
             turn: Turn {
                 running: working,
                 started_ms: Some(now_ms - 20 * MINUTE_MS),
@@ -96,7 +103,7 @@ impl Fake {
 
     pub(crate) fn marks(self, now_ms: i64) -> Vec<MarkSeen> {
         match self {
-            Self::Since => vec![MarkSeen {
+            Self::Since | Self::Answers => vec![MarkSeen {
                 step: TICKED_STEP.to_owned(),
                 by: StepBy::Tidewatch,
                 at_ms: now_ms - 3 * MINUTE_MS,

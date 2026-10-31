@@ -27,7 +27,6 @@ use crate::agent_avatar;
 use crate::brand;
 use crate::commit_files::{self, Spot};
 use crate::folder_view;
-use crate::last_turn::LastTurn;
 use crate::progress_view::{self, Side, TabState};
 use crate::screen_kit::TEXT_SECONDARY;
 use crate::screen_kit::mono;
@@ -89,8 +88,7 @@ pub(crate) fn show(
     let first = progress.as_ref().map_or(Side::Progress, |input| input.first);
     let shown = progress_view::side_shown(state.chosen, progress.is_some(), first);
     state.shown = Some(shown);
-    let attention =
-        progress.as_ref().and_then(|input| input.last_turn.as_ref()).and_then(LastTurn::attention);
+    let attention = progress.as_ref().and_then(progress_view::Input::attention);
     let dot = shown != Side::Progress && state.unseen(attention);
     let loaded = view.loaded.as_ref();
     let info = Header {
@@ -149,8 +147,7 @@ pub(crate) fn show_folder(
     let first = progress.as_ref().map_or(Side::Progress, |input| input.first);
     let shown = progress_view::folder_side_shown(state.chosen, progress.is_some(), first);
     state.shown = Some(shown);
-    let attention =
-        progress.as_ref().and_then(|input| input.last_turn.as_ref()).and_then(LastTurn::attention);
+    let attention = progress.as_ref().and_then(progress_view::Input::attention);
     let dot = shown != Side::Progress && state.unseen(attention);
     let title = folder_view::folder_name(&scan.folder);
     let info = Header {
@@ -471,6 +468,7 @@ mod tests {
     use egui::{Event, Modifiers, PointerButton, Pos2, RawInput, Shape};
     use tidewatch_core::progress::Ledger;
 
+    use crate::last_turn::LastTurn;
     use crate::panel_blocks::Blocks;
     use crate::progress_state::TabLedger;
     use tidewatch_core::panel_view::Why;
@@ -557,6 +555,7 @@ mod tests {
                         ..Blocks::default()
                     },
                     marks: &[],
+                    checks: &[],
                 });
                 let rect = Rect::from_min_size(pos2(0.0, 0.0), vec2(420.0, 600.0));
                 let face = face.as_ref().map(|avatar| Face { tab: 1, avatar });
@@ -611,10 +610,11 @@ mod tests {
         let mut card = Card::new(true);
         card.ledger.updated_ms = Some(-480_000);
         card.frame(Vec::new());
-        assert!(card.at("Pick one").is_none(), "the question is the Reader's card now");
+        assert!(card.at("Pick one").is_some(), "the panel says it waits on you, once");
+        assert!(card.at("Answer above the reply box").is_some());
         card.stale = true;
         card.frame(Vec::new());
-        assert!(card.at("Pick one").is_none());
+        assert!(card.at("Pick one").is_none(), "an answered report asks nothing");
         let drawn = |text: &str| card.texts.iter().any(|(drawn, _)| drawn.ends_with(text));
         assert!(drawn("Working") && drawn("out of date") && drawn("8m ago"), "{:?}", card.texts);
     }
@@ -668,7 +668,7 @@ mod tests {
         let progress = card.at("Progress").unwrap();
         card.click(progress);
         assert_eq!(card.state.shown, Some(Side::Progress));
-        assert!(card.at("Which base?").is_some());
+        assert!(card.at("Pick one").is_some());
         let history = card.at("History").unwrap();
         card.click(history);
         assert_eq!(card.state.shown, Some(Side::History));
