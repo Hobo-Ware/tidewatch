@@ -1,12 +1,13 @@
 //! The new-tab form's fields: the worktree name, the branch it starts from, and the message box.
 
 use egui::{
-    Align2, Id, Margin, Popup, Pos2, Rect, RichText, ScrollArea, Sense, Stroke, TextEdit, Ui, pos2,
-    vec2,
+    Align2, Id, Margin, Popup, Pos2, Rect, RichText, ScrollArea, Sense, Stroke, TextEdit, Ui,
+    UiBuilder, pos2, vec2,
 };
 
 use crate::brand;
-use crate::new_tab::{Kind, NameCheck, NewTab};
+use crate::composer::{self, Draft, Mode, Spec};
+use crate::new_tab::{NameCheck, NewTab};
 use crate::new_tab_layout::{FIELD_H, LABEL_GAP, LABEL_H, PROBLEM_H};
 use crate::reader_view::{ellipsized, field_frame_on};
 use crate::repo_base::RepoFacts;
@@ -17,6 +18,9 @@ const PREFIX: &str = "agent/";
 const NOTE_GAP: f32 = 12.0;
 const TEXT_ID: &str = "new-tab-text";
 const BRANCHES_MAX_H: f32 = 260.0;
+/// The name and branch fields are egui frames, which paint their 1 px outline outside their slot; the
+/// box reaches that far on the sides and ends that much short at the bottom to line up with them.
+const OUTLINE: f32 = 1.0;
 
 fn text_width(ui: &Ui, text: &str, size: f32) -> f32 {
     ui.painter().layout_no_wrap(text.to_owned(), body(size), brand::MUTED).size().x
@@ -170,7 +174,8 @@ fn mono_text(text: &str) -> RichText {
 }
 
 /// The box a first message or a task is typed into, `height` tall: where it went and the text when
-/// it changed.
+/// it changed. It is the Reader's composer as a field: pictures and files become chips, `:` opens the
+/// emoji list and a slash the commands, and Enter is a new line because Start is the form's.
 pub(crate) fn text_box(
     ui: &mut Ui,
     state: &mut NewTab,
@@ -178,37 +183,29 @@ pub(crate) fn text_box(
     hint: &str,
 ) -> (Rect, Option<String>) {
     let mut text = state.text().to_owned();
-    let state_is_meeseeks = state.kind() == Kind::Meeseeks;
-    let inner = (height - 12.0).max(40.0);
     let width = ui.available_width();
-    let top = ui.cursor().top();
-    let response = field_frame_on(ui, brand::SEGMENT, true, |ui| {
-        ui.set_min_height(inner);
-        ScrollArea::vertical()
-            .id_salt("new-tab-text-scroll")
-            .max_height(inner)
-            .auto_shrink([false, false])
-            .show(ui, |ui| {
-                ui.add(
-                    TextEdit::multiline(&mut text)
-                        .id(text_id())
-                        .frame(egui::Frame::NONE)
-                        .margin(Margin::symmetric(4, 4))
-                        .desired_width(width - 28.0)
-                        .desired_rows(((inner - 8.0) / 18.0).floor().max(2.0) as usize)
-                        .font(if state_is_meeseeks { mono(13.0) } else { body(14.0) })
-                        .text_color(brand::TEXT)
-                        .hint_text(RichText::new(hint).color(brand::FAINT)),
-                )
-            })
-            .inner
-    });
-    if std::mem::take(&mut state.focus_message) {
-        response.request_focus();
-    }
-    let rect = Rect::from_min_max(
-        pos2(ui.min_rect().left(), top),
-        pos2(ui.max_rect().right(), ui.min_rect().bottom()),
+    let origin = ui.cursor().min;
+    let wanted = composer::field_height(
+        ui,
+        &text,
+        state.pictures.len(),
+        (width + 2.0 * OUTLINE, height - OUTLINE),
     );
+    let drawn =
+        Rect::from_min_size(origin - vec2(OUTLINE, 0.0), vec2(width + 2.0 * OUTLINE, wanted));
+    let mut child = ui.new_child(UiBuilder::new().max_rect(drawn));
+    let spec = Spec {
+        id: text_id(),
+        hint,
+        enabled: true,
+        commands: &state.commands,
+        ghost: None,
+        mode: Mode::Field { height: height - OUTLINE },
+    };
+    let draft =
+        Draft { text: &mut text, pictures: &mut state.pictures, focus: &mut state.focus_message };
+    composer::show(&mut child, draft, &spec);
+    let rect = Rect::from_min_size(origin, vec2(width, wanted));
+    ui.allocate_rect(rect, Sense::hover());
     (rect, (text != state.text()).then_some(text))
 }

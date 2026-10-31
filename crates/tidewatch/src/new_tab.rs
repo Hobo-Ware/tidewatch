@@ -2,6 +2,7 @@
 //! in a worktree tab, D11), the worktree name and start branch, and the request Start turns into.
 
 use std::path::PathBuf;
+use std::sync::Arc;
 
 use tidewatch_core::agents::{Agent, Level, Remote};
 use tidewatch_core::branch_name::{self, Problem};
@@ -13,7 +14,9 @@ use tidewatch_core::start_base;
 
 use crate::catalog::{Availability, Catalog};
 use crate::new_tab_meeseeks::{self, TestsOffer, Tick};
+use crate::pictures;
 use crate::repo_base::RepoFacts;
+use crate::slash::Entry as SlashEntry;
 
 const COPILOT_TRUST_HINT: &str = "Copilot asks to trust a new worktree on its first start. Trust ~/.tidewatch once to skip that.";
 
@@ -209,6 +212,10 @@ pub(crate) struct NewTab {
     settled: bool,
     /// Set by Enter or / to hand the keyboard to the message box on the next draw.
     pub(crate) focus_message: bool,
+    /// The pictures and files attached to the message box, sent after the text as in a reply.
+    pub(crate) pictures: Vec<PathBuf>,
+    /// The slash commands the message box offers, filled by the window while the text starts with a slash.
+    pub(crate) commands: Arc<Vec<SlashEntry>>,
     pub(crate) scroll_to_selected: bool,
     pub(crate) error: Option<String>,
     level_note: Option<String>,
@@ -243,6 +250,8 @@ impl NewTab {
             seed,
             settled: false,
             focus_message: false,
+            pictures: Vec::new(),
+            commands: Arc::default(),
             scroll_to_selected: true,
             error: None,
             level_note: None,
@@ -288,6 +297,22 @@ impl NewTab {
     /// The text the worktree name follows: the first message of an agent.
     pub(crate) fn text(&self) -> &str {
         &self.message
+    }
+
+    /// Names this draft's folder for the files its box stages, before any tab or worktree exists.
+    pub(crate) fn draft_key(&self) -> u64 {
+        self.seed
+    }
+
+    /// Adds files to the message box and hands it the keyboard, as a paste or a drop does in a reply.
+    pub(crate) fn attach(&mut self, paths: Vec<PathBuf>) {
+        pictures::attach(&mut self.pictures, paths);
+        self.focus_message = true;
+    }
+
+    /// The message the agent starts with: `text` and then the attached files, the way a reply sends them.
+    fn with_attachments(&self, text: &str) -> String {
+        pictures::message(text, &self.pictures)
     }
 
     pub(crate) fn set_text(&mut self, text: &str) {
@@ -660,7 +685,7 @@ impl NewTab {
                 profile_id: profile_id.clone(),
                 profile: profile.clone(),
                 agent: agent.clone(),
-                task,
+                task: self.with_attachments(&task),
                 placement: Placement { name: Some(name), base: base.clone() },
                 remote: false,
                 meeseeks: Some(criteria),
@@ -698,7 +723,7 @@ impl NewTab {
             profile_id: id,
             profile: Profile { level: self.level, ..profile.clone() },
             agent: agent.clone(),
-            task: self.message.trim().to_owned(),
+            task: self.with_attachments(self.message.trim()),
             placement: self.placement(facts),
             remote: self.remote_for(agent),
             meeseeks: None,

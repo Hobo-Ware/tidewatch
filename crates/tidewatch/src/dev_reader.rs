@@ -7,7 +7,7 @@
 //! - `TIDEWATCH_DEV_REPLY=<text>` after `TIDEWATCH_DEV_REPLY_AFTER=<seconds>` (default 0): send a
 //!   reply from the Reader's box once, when it is enabled.
 //! - `TIDEWATCH_DEV_PICTURES=<path>:<path>`: attach those pictures to the message box once, as a paste of
-//!   screenshots does.
+//!   screenshots does (the new-tab form's box when a draft is in front).
 //! - `TIDEWATCH_DEV_TURNS=open`: open the list of calls and the folded updates under every agent turn
 //!   once, as a click on a chip does; `notes` opens only the folded updates.
 //! - `TIDEWATCH_DEV_READER_SCROLL=<pixels>@<seconds>`: once, that long after startup, scroll the

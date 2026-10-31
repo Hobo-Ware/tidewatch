@@ -1185,7 +1185,8 @@ pub(crate) fn reply_box(
         (true, None) => "Reply to the agent",
         (false, None) => REPLY_BLOCKED,
     };
-    composer::show(ui, draft, &Spec { id: reply_id(), hint, enabled, commands, ghost })
+    let mode = composer::Mode::Reply;
+    composer::show(ui, draft, &Spec { id: reply_id(), hint, enabled, commands, ghost, mode })
 }
 
 #[cfg(test)]

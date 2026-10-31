@@ -4,11 +4,13 @@
 use std::path::PathBuf;
 
 use tidewatch_core::image_paste::{Target, ctrl_v};
+use tidewatch_core::paths::TidewatchPaths;
 
 use super::frame::FrameIntent;
 use super::{Tidewatch, wall_ms};
 use crate::image_paste::{Delivery, Done, dropped};
-use crate::pane::Body;
+use crate::new_tab::{Kind, NewTab};
+use crate::pane::{Body, Pane};
 use crate::reader::Shown;
 use crate::reader_glue;
 use stdusk_core::paste::prepare;
@@ -18,7 +20,30 @@ use stdusk_egui::terminal_view::paste_into;
 use super::terminal::paste_rules;
 
 fn composer_focused(ctx: &egui::Context) -> bool {
-    crate::reader_view::reply_has_focus(ctx) || crate::agent_ready::composer_has_focus(ctx)
+    crate::reader_view::reply_has_focus(ctx)
+        || crate::agent_ready::composer_has_focus(ctx)
+        || ctx.memory(|memory| memory.has_focus(crate::new_tab_fields::text_id()))
+}
+
+/// The draft of a new-tab form that shows a message box, if `pane` is one.
+fn draft_with_box(pane: &Pane<PtyTerm>) -> Option<&NewTab> {
+    match &pane.body {
+        Body::Draft(form) if form.kind() != Kind::Shell => Some(form),
+        _ => None,
+    }
+}
+
+/// Where the files a tab's message box stages go: its state folder, or for a draft the folder of
+/// that draft, which closing the draft without Start removes.
+fn staging_dir(pane: &Pane<PtyTerm>, paths: Option<&TidewatchPaths>) -> Option<PathBuf> {
+    if let (Body::Draft(form), Some(paths)) = (&pane.body, paths) {
+        return Some(paths.draft_dir(form.draft_key()));
+    }
+    pane.agent
+        .as_ref()
+        .and_then(|agent| agent.run.notes_file.as_deref())
+        .and_then(std::path::Path::parent)
+        .map(std::path::Path::to_path_buf)
 }
 
 pub(crate) fn appended(reply: &str, text: &str) -> String {
@@ -47,13 +72,14 @@ impl Tidewatch {
         let pane = self.tabs.active_pane_mut();
         let reader =
             matches!(reader_glue::shown(pane), Some(Shown::Reader)) && pane.agent.is_some();
-        if reader && paths.is_empty() {
+        let form = draft_with_box(pane).is_some();
+        if (reader || form) && paths.is_empty() {
             paths = self.image_paste.take_dev_drop();
         }
         if paths.is_empty() {
             return;
         }
-        if reader {
+        if reader || form {
             self.attach_files(ctx, intent.active_id, paths);
         } else if let Body::Shell(term) = &mut pane.body {
             type_dropped(term, &paths);
@@ -82,14 +108,10 @@ impl Tidewatch {
             return;
         }
         let pane = self.tabs.active_pane_mut();
-        let reader_shown = matches!(reader_glue::shown(pane), Some(Shown::Reader));
+        let reader_shown = matches!(reader_glue::shown(pane), Some(Shown::Reader))
+            || draft_with_box(pane).is_some();
         let agent_id = pane.agent.as_ref().map(|agent| agent.run.agent_id.clone());
-        let tab_dir = pane
-            .agent
-            .as_ref()
-            .and_then(|agent| agent.run.notes_file.as_deref())
-            .and_then(std::path::Path::parent)
-            .map(std::path::Path::to_path_buf);
+        let tab_dir = staging_dir(pane, self.paths.as_ref());
         let is_shell = matches!(pane.body, Body::Shell(_));
         let target = if typing || reader_shown {
             Target::TextField
@@ -112,23 +134,21 @@ impl Tidewatch {
     }
 
     fn attach_files(&mut self, ctx: &egui::Context, tab: u64, paths: Vec<PathBuf>) {
-        let tab_dir = self
-            .tabs
-            .get_mut(tab)
-            .and_then(|tab| tab.pane.agent.as_ref())
-            .and_then(|agent| agent.run.notes_file.as_deref())
-            .and_then(std::path::Path::parent)
-            .map(std::path::Path::to_path_buf);
+        let tab_dir =
+            self.tabs.get_mut(tab).and_then(|tab| staging_dir(&tab.pane, self.paths.as_ref()));
         let copies = paths.iter().any(|path| !tidewatch_core::image_paste::is_image_file(path));
         match self.pastes_dir(tab_dir).filter(|_| copies) {
             Some(dir) => self.image_paste.stage(ctx, tab, dir, paths),
-            None => self.attach_to_reader(ctx, tab, paths),
+            None => self.attach_to_box(ctx, tab, paths),
         }
     }
 
-    fn attach_to_reader(&mut self, ctx: &egui::Context, tab: u64, paths: Vec<PathBuf>) {
-        let agent = self.tabs.get_mut(tab).and_then(|tab| tab.pane.agent.as_mut());
-        if let Some(agent) = agent {
+    fn attach_to_box(&mut self, ctx: &egui::Context, tab: u64, paths: Vec<PathBuf>) {
+        let Some(pane) = self.tabs.get_mut(tab).map(|tab| &mut tab.pane) else { return };
+        if let Body::Draft(form) = &mut pane.body {
+            form.attach(paths);
+            ctx.request_repaint();
+        } else if let Some(agent) = pane.agent.as_mut() {
             crate::pictures::attach(&mut agent.reader.view.pictures, paths);
             agent.reader.view.request_reply_focus();
             ctx.request_repaint();
@@ -161,7 +181,7 @@ impl Tidewatch {
                 if !staged.notes.is_empty() {
                     self.show_toast(staged.notes.join(". "), ctx);
                 }
-                self.attach_to_reader(ctx, tab, staged.paths);
+                self.attach_to_box(ctx, tab, staged.paths);
             }
         }
     }
@@ -300,6 +320,7 @@ mod tests {
                     enabled: true,
                     commands: &[],
                     ghost: None,
+                    mode: composer::Mode::Reply,
                 };
                 sent = composer::show(&mut child, draft, &spec);
             });
