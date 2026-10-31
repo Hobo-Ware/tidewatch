@@ -214,3 +214,20 @@ fn an_idle_agents_quiet_job_is_one_muted_line_with_no_ask_button() {
     assert!(!texts.contains(&"Ask agent"), "{texts:?}");
     assert!(texts.iter().all(|text| !text.contains("stuck")), "{texts:?}");
 }
+
+#[test]
+fn quiet_and_finished_lines_keep_the_cards_inner_edges() {
+    let frame = Frame::new(cards(&fake_board(NOW), NOW, Agent::Working, &TimeZone::UTC), 400.0);
+    let right = |text: &str| {
+        frame
+            .texts
+            .iter()
+            .find(|(shown, _)| shown == text)
+            .unwrap_or_else(|| panic!("{text}: {:?}", frame.texts))
+            .1
+            .right()
+    };
+    let card = right("3 of 5 checks");
+    assert!((right("2,246 passed \u{b7} 4m") - card).abs() < 0.01);
+    assert!((right("2m") - card).abs() < 0.01);
+}
