@@ -84,6 +84,7 @@ impl Tidewatch {
         reader_glue::drain(&mut self.tabs, &mut self.flow, ctx, now);
         self.drive_services(ctx);
         self.drive_workflow(ctx);
+        self.drive_house_style(ctx, now);
         self.drive_agents(ctx, now);
         self.drive_flow(ctx, now);
         self.drive_github_events(ctx, now);

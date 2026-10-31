@@ -255,6 +255,7 @@ pub(crate) struct Tidewatch {
     services: services_glue::Host,
     services_ui: services_view::Memory,
     workflow: workflow_glue::Host,
+    house_style_scan: crate::house_style_scan::Host,
 }
 
 impl Tidewatch {
@@ -514,6 +515,7 @@ impl Tidewatch {
             github_events,
             services_ui: services_view::Memory::from_env(),
             workflow,
+            house_style_scan: crate::house_style_scan::Host::new(),
         };
         for (group, workspace) in app.workspaces.iter().enumerate().filter(|_| !welcome) {
             if !restored {
