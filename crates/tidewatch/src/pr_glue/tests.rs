@@ -215,3 +215,31 @@ fn the_offer_returns_after_the_agent_lets_go_and_the_removal_then_goes_ahead() {
     let applied = click_remove(&mut tab, Busy::default());
     assert_eq!(applied.iter().filter(|a| a.out == Out::Remove).count(), 1, "{applied:?}");
 }
+
+#[test]
+fn a_kind_the_owner_sent_once_is_remembered_by_the_repo_across_a_restart() {
+    use tidewatch_core::auto_seen::Store;
+    use tidewatch_core::pr_prompt::{self, Trigger};
+
+    let mut tab = merged_tab();
+    tab.tick();
+    let conflict = Body::Conflict { base: "main".into() };
+    let message = pr_prompt::message(&conflict, 42, Workflow::default()).unwrap();
+    let watch = tab.host.tabs.get_mut(&1).unwrap();
+    watch.pending.push(crate::pr_watch::Pending {
+        id: 7,
+        message,
+        body: conflict,
+        number: 42,
+        confirm: true,
+    });
+    let applied = tab.host.send_now(1, 7, 1.0, 5);
+    assert!(applied.iter().any(|a| matches!(a.out, Out::Paste(_))), "{applied:?}");
+    tab.tick();
+    let saved = Store::load(&tab.paths).get(&tab.worktree.repo);
+    assert!(saved.has(Trigger::Conflicts) && !saved.has(Trigger::Reviews));
+
+    tab.host = Host::new(Tools::with_path("/nonexistent"), GithubPrefs::default(), Dev::default());
+    tab.tick();
+    assert_eq!(tab.host.tabs.get(&1).unwrap().shown, saved);
+}

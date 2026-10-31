@@ -5,6 +5,7 @@ pub mod amphetamine;
 pub mod amphetamine_helper;
 pub mod amphetamine_lid;
 pub mod amphetamine_system;
+pub mod auto_seen;
 pub mod autonomy;
 pub mod avatar;
 pub mod avatar_ask;

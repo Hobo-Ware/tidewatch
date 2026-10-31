@@ -14,7 +14,20 @@ fn ready(default_number: Option<u64>) -> Watch {
     if let Some(number) = default_number {
         watch.learn(number, "head-1", 0.0);
     }
+    watch.shown = Shown { checks: true, reviews: true, conflicts: true };
     watch
+}
+
+fn first_time(number: u64) -> Watch {
+    let mut watch = ready(Some(number));
+    watch.shown = Shown::default();
+    watch.set_policy(auto(), 0.0);
+    watch.observe(&AgentStatus::Done);
+    watch
+}
+
+fn conflict() -> Body {
+    Body::Conflict { base: "main".into() }
 }
 
 fn summary(checks: SummaryChecks) -> Summary {
@@ -1203,4 +1216,93 @@ fn news_for_a_merged_or_switched_off_pull_request_starts_no_look() {
     watch.look_for_news(5.0);
     assert_eq!(watch.should_look(default, 99.0), None);
     assert_eq!(watch.next_look(default), None);
+}
+
+#[test]
+fn the_first_message_of_a_kind_in_a_repo_waits_for_a_click_on_send() {
+    let mut watch = first_time(42);
+    watch.look_started();
+    let outs = watch.polled(Ok(polled(vec![conflict()], false, false)), auto(), "t", 5.0, 9_000);
+    assert_eq!(pasted(&outs), Vec::<&str>::new());
+    assert_eq!(watch.cards.auto_sends, 0);
+    assert_eq!(watch.pending.len(), 1);
+    assert!(watch.pending[0].confirm);
+    for at in [10.0, 500.0, 90_000.0] {
+        assert_eq!(watch.flush(auto(), at, 9_000), Vec::<Out>::new(), "{at}");
+    }
+}
+
+#[test]
+fn send_on_that_message_goes_now_is_no_automatic_send_and_the_kind_then_goes_on_its_own() {
+    let mut watch = first_time(42);
+    watch.look_started();
+    watch.polled(Ok(polled(vec![conflict()], false, false)), auto(), "t", 5.0, 9_000);
+    let id = watch.pending[0].id;
+    let outs = watch.send_now(id, 6.0, 9_100).unwrap();
+    assert_eq!(pasted(&outs).len(), 1);
+    assert!(outs.iter().all(|out| !matches!(out, Out::Told { .. })), "{outs:?}");
+    assert_eq!(watch.cards.auto_sends, 0);
+    assert_eq!(watch.shown, Shown { conflicts: true, ..Shown::default() });
+    watch.observe(&AgentStatus::Done);
+    watch.look_started();
+    let outs = watch.polled(Ok(polled(vec![conflict()], false, false)), auto(), "t", 400.0, 9_200);
+    assert_eq!(pasted(&outs).len(), 1, "the second conflict goes on its own");
+    assert!(outs.iter().any(|out| matches!(out, Out::Told { .. })));
+}
+
+#[test]
+fn a_kind_read_in_the_repo_does_not_free_the_other_kinds() {
+    let mut watch = first_time(42);
+    watch.learn_shown(Shown { conflicts: true, ..Shown::default() });
+    watch.look_started();
+    let outs = watch.polled(Ok(polled(vec![failed()], false, false)), auto(), "t", 5.0, 9_000);
+    assert_eq!(pasted(&outs), Vec::<&str>::new());
+    assert!(watch.pending[0].confirm);
+}
+
+#[test]
+fn a_tab_that_runs_on_its_own_is_never_held_up_by_the_first_send() {
+    let mut watch = first_time(42);
+    watch.autonomous = true;
+    watch.look_started();
+    let outs = watch.polled(Ok(polled(vec![conflict()], false, false)), auto(), "t", 5.0, 9_000);
+    assert_eq!(pasted(&outs).len(), 1);
+    assert_eq!(watch.pending, []);
+}
+
+#[test]
+fn learning_that_the_kind_was_read_elsewhere_releases_the_waiting_message() {
+    let mut watch = first_time(42);
+    watch.look_started();
+    watch.polled(Ok(polled(vec![conflict()], false, false)), auto(), "t", 5.0, 9_000);
+    watch.learn_shown(Shown { conflicts: true, ..Shown::default() });
+    assert!(!watch.pending[0].confirm);
+    let outs = watch.flush(auto(), 6.0, 9_100);
+    assert_eq!(pasted(&outs).len(), 1);
+}
+
+#[test]
+fn a_waiting_message_is_worded_again_when_the_workflow_changes() {
+    use tidewatch_core::workflow_profile::CatchUp;
+    let mut watch = first_time(42);
+    watch.look_started();
+    watch.polled(Ok(polled(vec![conflict()], false, false)), auto(), "t", 5.0, 9_000);
+    assert!(watch.pending[0].message.text.starts_with("PR #42 conflicts with main. Rebase onto"));
+    watch.workflow = Workflow { catch_up: CatchUp::Merge, ..Workflow::default() };
+    watch.refresh_pending();
+    assert!(watch.pending[0].message.text.contains("Merge origin/main into this branch"));
+    assert!(watch.pending[0].confirm);
+}
+
+#[test]
+fn the_kind_a_message_was_told_for_comes_with_it() {
+    let mut watch = ready(Some(42));
+    watch.set_policy(auto(), 0.0);
+    watch.observe(&AgentStatus::Done);
+    watch.look_started();
+    let outs = watch.polled(Ok(polled(vec![conflict()], false, false)), auto(), "t", 5.0, 9_000);
+    assert!(
+        outs.iter().any(|out| matches!(out, Out::Told { trigger: Trigger::Conflicts, .. })),
+        "{outs:?}"
+    );
 }

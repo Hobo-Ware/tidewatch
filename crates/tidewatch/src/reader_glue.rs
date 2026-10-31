@@ -304,6 +304,21 @@ pub(crate) fn take_pr_clicks(actions: &mut Vec<Action>) -> Vec<CardAction> {
     clicks
 }
 
+/// Takes the clicks on the buttons under Tidewatch's rows out of the Reader's actions.
+pub(crate) fn take_tidewatch_clicks(
+    actions: &mut Vec<Action>,
+) -> Vec<crate::tidewatch_view::Click> {
+    let mut clicks = Vec::new();
+    actions.retain(|action| match action {
+        Action::Tidewatch(click) => {
+            clicks.push(*click);
+            false
+        }
+        _ => true,
+    });
+    clicks
+}
+
 /// Takes the answers picked on the Needs you card out of the Reader's actions.
 pub(crate) fn take_picks(actions: &mut Vec<Action>) -> Vec<String> {
     let mut picks = Vec::new();
@@ -432,7 +447,11 @@ pub(crate) fn apply(
                 }
             }
             Action::Resume => resume_agent(&mut found.pane, now),
-            Action::Review(_) | Action::Pr(_) | Action::Due(_) | Action::Pick(_) => {}
+            Action::Review(_)
+            | Action::Pr(_)
+            | Action::Tidewatch(_)
+            | Action::Due(_)
+            | Action::Pick(_) => {}
             Action::Ask(seq, reply) => {
                 if let Some(why) = answer_question(&mut found.pane, seq, reply, now) {
                     toast = Some(why.to_owned());

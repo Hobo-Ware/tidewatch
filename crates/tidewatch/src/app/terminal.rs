@@ -267,6 +267,7 @@ impl Tidewatch {
                 let clicks = reader_glue::take_pr_clicks(&mut asked);
                 let due_clicks = reader_glue::take_due_clicks(&mut asked);
                 let picks = reader_glue::take_picks(&mut asked);
+                let rows_clicked = reader_glue::take_tidewatch_clicks(&mut asked);
                 let (reviews, asked): (Vec<_>, Vec<_>) =
                     asked.into_iter().partition(|action| matches!(action, Action::Review(_)));
                 let toast =
@@ -283,6 +284,7 @@ impl Tidewatch {
                     .collect();
                 self.apply_review(reviews, active_id, ctx);
                 self.apply_pr_actions(active_id, clicks, ctx, now);
+                self.apply_tidewatch_clicks(active_id, rows_clicked, ctx, now);
                 self.apply_due_clicks(active_id, due_clicks, ctx, now);
                 for text in picks {
                     self.answer_ask(active_id, text, ctx, now);

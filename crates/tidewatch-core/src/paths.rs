@@ -163,6 +163,13 @@ impl TidewatchPaths {
         self.config_dir.join("workflow.toml")
     }
 
+    /// The kinds of Auto message each repo has shown its owner once: `auto-seen.toml`, bookkeeping
+    /// of this machine, so it sits with the state and never travels with the settings.
+    #[must_use]
+    pub fn auto_seen_file(&self) -> PathBuf {
+        self.state_dir().join("auto-seen.toml")
+    }
+
     /// Holds the `git-remote-tidewatch-no-push` helper that agent tabs get on their `PATH`.
     #[must_use]
     pub fn guard_bin_dir(&self) -> PathBuf {
@@ -534,6 +541,12 @@ mod tests {
     fn the_repo_services_are_a_setting_not_a_file_in_any_repo() {
         let paths = paths();
         assert_eq!(paths.services_file(), paths.config_dir().join("services.toml"));
+    }
+
+    #[test]
+    fn the_seen_auto_messages_are_state_of_this_machine() {
+        let paths = paths();
+        assert_eq!(paths.auto_seen_file(), paths.state_dir().join("auto-seen.toml"));
     }
 
     #[test]

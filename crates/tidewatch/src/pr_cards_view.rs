@@ -9,6 +9,7 @@ use egui::{
     epaint::text::TextFormat, pos2, vec2,
 };
 use tidewatch_core::pr_cards::Card;
+use tidewatch_core::pr_prompt::Message;
 use tidewatch_core::pr_status::SummaryChecks;
 
 use crate::brand;
@@ -128,9 +129,15 @@ pub(crate) fn tail(ui: &mut Ui, data: &Data<'_>) -> Option<CardAction> {
     let mut clicked = None;
     for pending in &data.watch.pending {
         ui.add_space(14.0);
-        let text = model::waiting_text(data.profile, pending);
         let buttons = model::waiting_buttons(pending);
-        clicked = clicked.or(waiting_row(ui, &text, &buttons));
+        let click = if pending.confirm {
+            let lead = model::confirm_lead(data.profile, pending);
+            confirm_row(ui, &lead, &pending.message, &buttons)
+        } else {
+            let text = model::waiting_text(data.profile, pending);
+            waiting_row(ui, &text, &buttons)
+        };
+        clicked = clicked.or(click);
     }
     if let Some(pause) = &data.watch.pause {
         ui.add_space(14.0);
@@ -398,7 +405,7 @@ pub(crate) fn draw_bubble(ui: &mut Ui, bubble: &Bubble) {
     });
 }
 
-fn waiting_row(ui: &mut Ui, text: &str, buttons: &[Button; 2]) -> Option<CardAction> {
+fn waiting_row(ui: &mut Ui, text: &str, buttons: &[Button]) -> Option<CardAction> {
     let (rect, _) = ui.allocate_exact_size(vec2(card_width(ui), 40.0), Sense::hover());
     let painter = ui.painter();
     painter.rect_filled(rect, CornerRadius::same(10), brand::CARD);
@@ -425,6 +432,74 @@ fn waiting_row(ui: &mut Ui, text: &str, buttons: &[Button; 2]) -> Option<CardAct
         right.min_rect().left() - 12.0 - left,
     );
     ui.painter().galley(pos2(left, rect.center().y - galley.size().y / 2.0), galley, brand::TEXT);
+    clicked
+}
+
+/// The first Auto message of a kind in a repo: what it is, the exact words that would go to the
+/// agent, and Send, Change wording and Cancel.
+fn confirm_row(
+    ui: &mut Ui,
+    lead: &str,
+    message: &Message,
+    buttons: &[Button],
+) -> Option<CardAction> {
+    let width = card_width(ui);
+    let mut clicked = None;
+    let framed = Frame::new()
+        .fill(brand::CARD)
+        .corner_radius(CornerRadius::same(10))
+        .inner_margin(Margin::symmetric(16, 12))
+        .show(ui, |ui| {
+            ui.set_width(width - 32.0);
+            ui.spacing_mut().item_spacing.y = 10.0;
+            ui.horizontal_top(|ui| {
+                let (dot, _) = ui.allocate_exact_size(vec2(10.0, 20.0), Sense::hover());
+                ui.painter().circle_filled(dot.center(), 4.0, brand::AMBER);
+                ui.add(
+                    egui::Label::new(RichText::new(lead).size(TEXT_BODY).color(brand::TEXT)).wrap(),
+                );
+            });
+            Frame::new()
+                .fill(brand::SUNKEN)
+                .stroke(Stroke::new(1.0, brand::ITEM_LINE))
+                .corner_radius(CornerRadius::same(8))
+                .inner_margin(Margin::symmetric(12, 10))
+                .show(ui, |ui| {
+                    ui.set_width(ui.available_width());
+                    ui.add(
+                        egui::Label::new(
+                            RichText::new(&message.headline)
+                                .size(TEXT_SECONDARY)
+                                .color(brand::STEP_TEXT),
+                        )
+                        .wrap(),
+                    );
+                    if message.extra_lines > 0 {
+                        ui.label(
+                            RichText::new(format!(
+                                "and {} more lines below it",
+                                message.extra_lines
+                            ))
+                            .size(TEXT_TAG)
+                            .color(brand::MUTED),
+                        );
+                    }
+                });
+            ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = 6.0;
+                for button in buttons {
+                    let pressed = if button.primary {
+                        primary_button(ui, &button.label, true, Size::Compact)
+                    } else {
+                        quiet_button(ui, &button.label, true, Size::Compact)
+                    };
+                    if pressed.clicked() {
+                        clicked = Some(button.action.clone());
+                    }
+                }
+            });
+        });
+    dashed_rect(ui.painter(), framed.response.rect, Stroke::new(1.0, brand::FIELD_LINE));
     clicked
 }
 

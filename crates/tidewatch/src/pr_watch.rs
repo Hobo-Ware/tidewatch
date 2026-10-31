@@ -5,10 +5,11 @@
 
 use std::path::{Path, PathBuf};
 
+use tidewatch_core::auto_seen::Shown;
 use tidewatch_core::github_hook::Hit;
 use tidewatch_core::pr_cards::{Cards, send_cap};
 use tidewatch_core::pr_gh::Polled;
-use tidewatch_core::pr_prompt::{self, Message, short_step};
+use tidewatch_core::pr_prompt::{self, Message, Trigger, short_step};
 use tidewatch_core::pr_status::{Body, Seen, State, Summary, Tone as PrTone, Via};
 use tidewatch_core::prefs::{GithubPrefs, PrMode};
 use tidewatch_core::status::AgentStatus;
@@ -79,6 +80,12 @@ impl Pause {
 pub(crate) struct Pending {
     pub(crate) id: u64,
     pub(crate) message: Message,
+    /// What the message was made from, so a changed workflow can word it again.
+    pub(crate) body: Body,
+    pub(crate) number: u64,
+    /// The first message of its kind in this repo: it waits for a click on Send instead of going on
+    /// its own, so the owner reads the wording once.
+    pub(crate) confirm: bool,
 }
 
 /// A desktop notification, before the tab's name goes in front.
@@ -96,6 +103,7 @@ pub(crate) enum Out {
     Told {
         n: u32,
         max: u32,
+        trigger: Trigger,
     },
     Paste(String),
     Toast(String),
@@ -199,6 +207,8 @@ pub(crate) struct Watch {
     pub(crate) pending: Vec<Pending>,
     pub(crate) autonomous: bool,
     pub(crate) workflow: Workflow,
+    /// The kinds of Auto message this repo's owner has already read once.
+    pub(crate) shown: Shown,
     pub(crate) cleanup: Cleanup,
     pub(crate) busy: Busy,
     check_started: f64,
@@ -228,6 +238,7 @@ impl Watch {
             pending: Vec::new(),
             autonomous: false,
             workflow: Workflow::default(),
+            shown: Shown::default(),
             cleanup: Cleanup::default(),
             busy: Busy::default(),
             check_started: 0.0,
@@ -269,6 +280,34 @@ impl Watch {
             None if self.autonomous => GithubPrefs { mode: PrMode::Auto, ..default },
             None => default,
         }
+    }
+
+    /// Whether a message of `kind` waits for the owner's first Send: a tab that runs on its own is
+    /// never held up, and a kind already read in this repo goes on its own.
+    fn needs_ok(&self, kind: Trigger) -> bool {
+        !self.autonomous && !self.shown.has(kind)
+    }
+
+    /// The repo's read kinds changed: a waiting message of a kind now read goes on its own.
+    pub(crate) fn learn_shown(&mut self, shown: Shown) {
+        self.shown = shown;
+        self.refresh_pending();
+    }
+
+    /// The workflow or the autonomy changed: the waiting messages are worded again from what they
+    /// were made from, and the first-of-a-kind mark follows.
+    pub(crate) fn refresh_pending(&mut self) {
+        let workflow = self.workflow;
+        let waiting = std::mem::take(&mut self.pending);
+        self.pending = waiting
+            .into_iter()
+            .map(|pending| {
+                let message = pr_prompt::message(&pending.body, pending.number, workflow)
+                    .unwrap_or(pending.message);
+                let confirm = self.needs_ok(message.trigger);
+                Pending { message, confirm, ..pending }
+            })
+            .collect();
     }
 
     fn cap(&self) -> u32 {
@@ -511,7 +550,14 @@ impl Watch {
         }
         self.pending.retain(|pending| pending.message.ask.tag != message.ask.tag);
         self.next_pending += 1;
-        self.pending.push(Pending { id: self.next_pending, message });
+        let confirm = self.needs_ok(message.trigger);
+        self.pending.push(Pending {
+            id: self.next_pending,
+            message,
+            body: body.clone(),
+            number,
+            confirm,
+        });
         self.flush(default, now, now_ms)
     }
 
@@ -535,7 +581,10 @@ impl Watch {
         if !idle {
             return outs;
         }
-        let pending = self.pending.remove(0);
+        let Some(at) = self.pending.iter().position(|pending| !pending.confirm) else {
+            return outs;
+        };
+        let pending = self.pending.remove(at);
         self.cards.auto_sends += 1;
         outs.extend(self.send(pending.message, Via::Auto, now, now_ms));
         if self.cards.auto_sends >= self.cap() && !self.autonomous {
@@ -573,8 +622,12 @@ impl Watch {
             return Ok(Vec::new());
         };
         let message = self.pending[at].message.clone();
+        let read = self.pending[at].confirm.then_some(message.trigger);
         let outs = self.manual(message, now, now_ms)?;
         self.pending.retain(|pending| pending.id != pending_id);
+        if let Some(kind) = read {
+            self.learn_shown(self.shown.with(kind));
+        }
         Ok(outs)
     }
 
@@ -591,6 +644,7 @@ impl Watch {
     }
 
     fn send(&mut self, message: Message, via: Via, now: f64, now_ms: i64) -> Vec<Out> {
+        let trigger = message.trigger;
         self.cards.add(
             now_ms,
             Body::Sent {
@@ -603,8 +657,11 @@ impl Watch {
         );
         self.cards.fixing = true;
         self.hold_until = Some(now + HOLD_SECS);
-        let told =
-            (via == Via::Auto).then_some(Out::Told { n: self.cards.auto_sends, max: self.cap() });
+        let told = (via == Via::Auto).then_some(Out::Told {
+            n: self.cards.auto_sends,
+            max: self.cap(),
+            trigger,
+        });
         told.into_iter().chain([Out::Paste(message.text), Out::Save]).collect()
     }
 

@@ -9,7 +9,7 @@ use egui::{
 };
 use jiff::tz::TimeZone;
 use tidewatch_core::github_html;
-use tidewatch_core::sent::{Reason, Record};
+use tidewatch_core::sent::{Reason, Record, Switch};
 
 use crate::brand;
 use crate::code_block::Look;
@@ -17,7 +17,7 @@ use crate::job_model::clock_label;
 use crate::quiet_notes;
 use crate::reader_markdown;
 use crate::reader_view::ellipsized;
-use crate::screen_kit::{Size, body, heading, quiet_button};
+use crate::screen_kit::{Size, body, button_width, heading, quiet_button};
 use crate::screen_kit::{TEXT_BODY, TEXT_SECONDARY, TEXT_TAG};
 
 const CARD_SHARE: f32 = 0.7;
@@ -32,6 +32,7 @@ const MARK_W: f32 = 18.0;
 const MARK_H: f32 = 12.0;
 const FOOTER_PX: f32 = 12.0;
 const FOOTER_GAP: f32 = 8.0;
+const ACTION_GAP: f32 = 8.0;
 const OUTER: f32 = 10.0;
 const DASH: f32 = 5.0;
 const GAP: f32 = 4.0;
@@ -73,7 +74,33 @@ pub(crate) struct Shown<'a> {
     pub(crate) open: bool,
 }
 
-pub(crate) fn show(ui: &mut Ui, shown: &Shown<'_>) -> bool {
+/// What a click on a Tidewatch row asked for.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Click {
+    ChangeWorkflow,
+    TurnOff(Switch),
+}
+
+/// What a frame of a row drew: whether its fold was clicked, and the button pressed under it.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct Clicked {
+    pub(crate) toggled: bool,
+    pub(crate) click: Option<Click>,
+}
+
+/// The buttons under a row: the profile its words came from, and the setting that stops its kind.
+pub(crate) fn buttons_of(record: &Record) -> Vec<(&'static str, Click)> {
+    let mut buttons = Vec::new();
+    if record.reason.uses_workflow() {
+        buttons.push(("Change workflow", Click::ChangeWorkflow));
+    }
+    if let Some(switch) = record.switch() {
+        buttons.push((switch.label(), Click::TurnOff(switch)));
+    }
+    buttons
+}
+
+pub(crate) fn show(ui: &mut Ui, shown: &Shown<'_>) -> Clicked {
     let column = ui.available_width();
     ui.add_space(OUTER);
     header(ui, column, shown);
@@ -81,8 +108,35 @@ pub(crate) fn show(ui: &mut Ui, shown: &Shown<'_>) -> bool {
     let toggled = card(ui, column, shown);
     ui.add_space(FOOTER_GAP);
     footer(ui, column, &shown.record.footer());
+    let click = actions(ui, column, shown.record);
     ui.add_space(OUTER);
-    toggled
+    Clicked { toggled, click }
+}
+
+fn actions(ui: &mut Ui, column: f32, record: &Record) -> Option<Click> {
+    let buttons = buttons_of(record);
+    if buttons.is_empty() {
+        return None;
+    }
+    ui.add_space(FOOTER_GAP);
+    let widths: Vec<f32> =
+        buttons.iter().map(|(label, _)| button_width(ui, label, Size::Compact)).collect();
+    let total = widths.iter().sum::<f32>() + ACTION_GAP * (buttons.len() - 1) as f32;
+    let mut pressed = None;
+    ui.allocate_ui_with_layout(
+        vec2(column, Size::Compact.height()),
+        Layout::left_to_right(Align::Center),
+        |ui| {
+            ui.spacing_mut().item_spacing.x = ACTION_GAP;
+            ui.add_space(((column - total) / 2.0).max(0.0));
+            for (label, click) in &buttons {
+                if quiet_button(ui, label, true, Size::Compact).clicked() {
+                    pressed = Some(*click);
+                }
+            }
+        },
+    );
+    pressed
 }
 
 fn header(ui: &mut Ui, column: f32, shown: &Shown<'_>) {
@@ -244,7 +298,7 @@ pub(crate) struct Quiet<'a> {
 
 /// A run of Tidewatch's reminders as one muted line: the mark, what was asked, a count when there
 /// are several, a chevron and the time. A click opens the list under it and the next one folds it.
-pub(crate) fn quiet(ui: &mut Ui, shown: &Quiet<'_>) -> bool {
+pub(crate) fn quiet(ui: &mut Ui, shown: &Quiet<'_>) -> Clicked {
     let (rect, response) =
         ui.allocate_exact_size(vec2(ui.available_width(), QUIET_H), Sense::click());
     let painter = ui.painter_at(rect);
@@ -293,13 +347,12 @@ pub(crate) fn quiet(ui: &mut Ui, shown: &Quiet<'_>) -> bool {
         painter
             .line_segment([centre + vec2(tip / 2.0, 0.0), centre + vec2(-tip / 2.0, 4.0)], stroke);
     }
-    if shown.open {
-        quiet_list(ui, shown);
-    }
-    response.on_hover_cursor(egui::CursorIcon::PointingHand).clicked()
+    let click = if shown.open { quiet_list(ui, shown) } else { None };
+    let toggled = response.on_hover_cursor(egui::CursorIcon::PointingHand).clicked();
+    Clicked { toggled, click }
 }
 
-fn quiet_list(ui: &mut Ui, shown: &Quiet<'_>) {
+fn quiet_list(ui: &mut Ui, shown: &Quiet<'_>) -> Option<Click> {
     let left = ui.max_rect().left() + QUIET_LIST_INDENT;
     let width = (ui.available_width() - QUIET_LIST_INDENT - QUIET_LIST_PAD).max(40.0);
     let mut top = None;
@@ -338,7 +391,16 @@ fn quiet_list(ui: &mut Ui, shown: &Quiet<'_>) {
             Stroke::new(1.0, brand::ITEM_LINE),
         );
     }
+    let click = shown.run.first().and_then(|record| record.switch()).and_then(|switch| {
+        ui.horizontal(|ui| {
+            ui.add_space(QUIET_LIST_INDENT + QUIET_LIST_PAD);
+            quiet_button(ui, switch.label(), true, Size::Compact).clicked()
+        })
+        .inner
+        .then_some(Click::TurnOff(switch))
+    });
     ui.add_space(2.0);
+    click
 }
 
 pub(crate) fn paused_line(ui: &mut Ui, column: f32) {
@@ -475,7 +537,7 @@ mod tests {
             let open = self.open;
             let mut clicked = false;
             let output = self.ctx.run_ui(raw, |ui| {
-                clicked = quiet(ui, &Quiet { run: &refs, zone: &zone, open });
+                clicked = quiet(ui, &Quiet { run: &refs, zone: &zone, open }).toggled;
             });
             self.texts.clear();
             for shape in &output.shapes {
@@ -593,5 +655,161 @@ mod tests {
         for point in &path {
             assert!(rect.expand(0.01).contains(*point), "{point:?}");
         }
+    }
+
+    fn record_of(reason: Reason, because: &str, hand: bool) -> Record {
+        Record { hand, at_ms: 60_000, ..Record::new(reason, because, "Do the thing.", None) }
+    }
+
+    #[test]
+    fn the_buttons_under_a_row_are_its_workflow_and_the_switch_of_its_kind() {
+        use tidewatch_core::prefs::AutoJob;
+        use tidewatch_core::sent::because;
+        let table = [
+            (
+                record_of(Reason::AutoFix, because::AUTO_CONFLICTS, false),
+                vec![
+                    ("Change workflow", Click::ChangeWorkflow),
+                    ("Turn off for conflicts", Click::TurnOff(Switch::Auto(AutoJob::Conflicts))),
+                ],
+            ),
+            (
+                record_of(Reason::AutoPush, because::AUTO_PUSH, false),
+                vec![
+                    ("Change workflow", Click::ChangeWorkflow),
+                    ("Turn off pushing", Click::TurnOff(Switch::Auto(AutoJob::Push))),
+                ],
+            ),
+            (
+                record_of(Reason::PullRequest, because::ASK_PR_CLICK, true),
+                vec![("Change workflow", Click::ChangeWorkflow)],
+            ),
+            (
+                record_of(Reason::CommentGuard, because::COMMENTS, false),
+                vec![("Turn off the comment guard for this tab", Click::TurnOff(Switch::Comments))],
+            ),
+            (record_of(Reason::LedgerGuard, because::LEDGER_STOP, false), Vec::new()),
+            (record_of(Reason::MeeseeksCheck, because::MEESEEKS, false), Vec::new()),
+        ];
+        for (record, want) in table {
+            assert_eq!(buttons_of(&record), want, "{:?}", record.reason);
+        }
+    }
+
+    struct Row {
+        ctx: egui::Context,
+        record: Record,
+        width: f32,
+        texts: Vec<(String, Rect)>,
+        last: Clicked,
+    }
+
+    impl Row {
+        fn new(record: Record, width: f32) -> Self {
+            let mut row = Self {
+                ctx: crate::fonts::test_context(),
+                record,
+                width,
+                texts: Vec::new(),
+                last: Clicked::default(),
+            };
+            row.frame(Vec::new());
+            row.frame(Vec::new());
+            row
+        }
+
+        fn frame(&mut self, events: Vec<egui::Event>) {
+            let raw = egui::RawInput {
+                screen_rect: Some(Rect::from_min_size(pos2(0.0, 0.0), vec2(self.width, 600.0))),
+                events,
+                focused: true,
+                ..egui::RawInput::default()
+            };
+            let zone = TimeZone::UTC;
+            let shown = Shown { record: &self.record, stamp: None, zone: &zone, open: false };
+            let mut last = Clicked::default();
+            let output = self.ctx.run_ui(raw, |ui| last = show(ui, &shown));
+            self.last = last;
+            self.texts.clear();
+            for shape in &output.shapes {
+                collect(&shape.shape, &mut self.texts);
+            }
+        }
+
+        fn rect_of(&self, text: &str) -> Rect {
+            self.texts
+                .iter()
+                .find(|(drawn, _)| drawn.starts_with(text))
+                .unwrap_or_else(|| panic!("{text:?} in {:?}", self.texts))
+                .1
+        }
+
+        fn click_on(&mut self, text: &str) -> Option<Click> {
+            let at = self.rect_of(text).center();
+            let button = |pressed| egui::Event::PointerButton {
+                pos: at,
+                button: egui::PointerButton::Primary,
+                pressed,
+                modifiers: egui::Modifiers::NONE,
+            };
+            let mut found = None;
+            for events in [
+                vec![egui::Event::PointerMoved(at)],
+                vec![button(true)],
+                vec![button(false)],
+                Vec::new(),
+            ] {
+                self.frame(events);
+                found = found.or(self.last.click);
+            }
+            found
+        }
+    }
+
+    #[test]
+    fn a_pull_request_row_says_why_in_its_footer_and_a_click_on_a_button_is_reported() {
+        use tidewatch_core::prefs::AutoJob;
+        use tidewatch_core::sent::{Cap, because};
+        let record = Record {
+            cap: Some(Cap { n: 1, max: 10 }),
+            ..record_of(Reason::AutoFix, because::AUTO_CONFLICTS, false)
+        };
+        let mut row = Row::new(record, 900.0);
+        let footer = row.rect_of("Because Auto fixes conflicts on this PR \u{b7} 1 of 10");
+        let workflow = row.rect_of("Change workflow");
+        let off = row.rect_of("Turn off for conflicts");
+        assert!(footer.bottom() <= workflow.top() && workflow.right() < off.left());
+        assert_eq!(row.click_on("Change workflow"), Some(Click::ChangeWorkflow));
+        assert_eq!(
+            row.click_on("Turn off for conflicts"),
+            Some(Click::TurnOff(Switch::Auto(AutoJob::Conflicts)))
+        );
+    }
+
+    #[test]
+    fn the_buttons_stay_inside_the_column_from_a_narrow_width_up() {
+        use tidewatch_core::sent::because;
+        for width in [360.0, 480.0, 900.0] {
+            let record = record_of(Reason::AutoPush, because::AUTO_PUSH, false);
+            let row = Row::new(record, width);
+            for (text, rect) in &row.texts {
+                assert!(
+                    rect.left() >= 0.0 && rect.right() <= width + 0.5,
+                    "{width}: {text:?} {rect:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn the_opened_list_of_a_reminder_run_offers_the_switch_of_its_kind() {
+        use tidewatch_core::sent::because;
+        let mut line =
+            Line::new(vec![record_of(Reason::CommentGuard, because::COMMENTS, false)], 700.0);
+        line.click_on("Tidewatch told the agent about new branch comments");
+        assert!(line.has("Turn off the comment guard for this tab"), "{:?}", line.texts);
+        let closed =
+            Line::new(vec![record_of(Reason::LedgerGuard, because::LEDGER_STOP, false)], 700.0);
+        assert!(!closed.has("Turn off"));
     }
 }

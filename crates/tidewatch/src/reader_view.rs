@@ -46,7 +46,8 @@ use crate::review_view::{self, ReviewAction};
 use crate::screen_kit::{Size, body, primary_button, quiet_button};
 use crate::slash::Entry as SlashEntry;
 use crate::stopped_view;
-use crate::tidewatch_view;
+use crate::tidewatch_view::{self, Click, Clicked};
+use tidewatch_core::sent::Record;
 
 /// The side inset every inline item of the left column keeps.
 pub(crate) const INSET: f32 = 14.0;
@@ -260,6 +261,8 @@ pub(crate) enum Action {
     Review(ReviewAction),
     /// A click on a pull request card.
     Pr(CardAction),
+    /// A button under a row Tidewatch said: its workflow, or the setting that stops its kind.
+    Tidewatch(Click),
     /// The user answered, or skipped, the questions in row `seq`.
     Ask(u64, Reply),
     /// Answer every waiting question that has a pick with it.
@@ -698,9 +701,16 @@ fn transcript(
             let (list, stamps): (Vec<&Row>, Vec<Option<i64>>) = rows.stamped().unzip();
             let cards = pr.map_or(&[][..], |pr| pr.cards());
             let told = rows.timed();
-            let shown = pr_timeline::places(rows, cards).into_iter().filter(
-                |place| !matches!(place, Place::Row(index) if layout.slots[*index] == Slot::Hidden),
-            );
+            let gone = |place: &Place| match *place {
+                Place::Row(index) => {
+                    layout.slots[index] == Slot::Hidden
+                        || (matches!(list[index].kind, Kind::Tidewatch(_))
+                            && rows.said_for(list[index].seq).is_some_and(Record::dropped))
+                }
+                Place::Said(n) => told[n].dropped(),
+                Place::Card(_) => false,
+            };
+            let shown = pr_timeline::places(rows, cards).into_iter().filter(|place| !gone(place));
             let quiet_of = |place: Place| match place {
                 Place::Said(n) => Some(told[n]).filter(|record| record.quiet()),
                 Place::Row(index) if matches!(list[index].kind, Kind::Tidewatch(_)) => {
@@ -731,9 +741,11 @@ fn transcript(
                             })
                         });
                         pr_heights.record(id, drawn.response.rect.height());
-                        if drawn.inner.inner {
+                        let Clicked { toggled, click } = drawn.inner.inner;
+                        if toggled {
                             reader_turns::toggle(tidewatch_open, id);
                         }
+                        actions.extend(click.map(Action::Tidewatch));
                         continue;
                     }
                     Entry::Place(place) => place,
@@ -793,9 +805,12 @@ fn transcript(
                                                 zone: scene.zone,
                                                 open: tidewatch_open.contains(&record.id),
                                             };
-                                            if tidewatch_view::show(ui, &shown) {
+                                            let Clicked { toggled, click } =
+                                                tidewatch_view::show(ui, &shown);
+                                            if toggled {
                                                 reader_turns::toggle(tidewatch_open, record.id);
                                             }
+                                            actions.extend(click.map(Action::Tidewatch));
                                         }
                                     }
                                     _ if row.kind == Kind::User => reader_chat_view::user(
@@ -868,9 +883,11 @@ fn transcript(
                         if let Some(id) = key {
                             pr_heights.record(id, drawn.response.rect.height());
                         }
-                        if drawn.inner.inner {
+                        let Clicked { toggled, click } = drawn.inner.inner;
+                        if toggled {
                             reader_turns::toggle(tidewatch_open, record.id);
                         }
+                        actions.extend(click.map(Action::Tidewatch));
                     }
                 }
             }
@@ -2994,9 +3011,9 @@ mod tests {
             at_ms,
             ..Record::new(
                 Reason::AutoFix,
-                "Auto is on for this PR",
+                tidewatch_core::sent::because::AUTO_CONFLICTS,
                 text,
-                Some(Cap { n: 1, max: 3 }),
+                Some(Cap { n: 1, max: 10 }),
             )
         }
     }
@@ -3021,11 +3038,60 @@ mod tests {
         assert!(
             found
                 .iter()
-                .any(|text| text == "Sent because Auto is on for this PR \u{b7} 1 of 3 auto-fixes"),
+                .any(|text| text == "Because Auto fixes conflicts on this PR \u{b7} 1 of 10"),
             "{found:?}"
         );
+        assert!(found.iter().any(|text| text == "Change workflow"), "{found:?}");
+        assert!(found.iter().any(|text| text == "Turn off for conflicts"), "{found:?}");
         assert!(found.iter().all(|text| !text.starts_with("You")), "{found:?}");
         assert!(found.iter().all(|text| !text.contains("codex-review-state")), "{found:?}");
+    }
+
+    #[test]
+    fn a_reminder_an_older_version_sent_leaves_no_row_while_a_live_one_stays() {
+        use tidewatch_core::sent::{Reason, Record};
+        use tidewatch_core::transcript::{Entry, Role};
+        let old = Record {
+            typed: true,
+            at_ms: 0,
+            ..Record::new(
+                Reason::LedgerGuard,
+                "you answered and the progress report should show it",
+                "The user answered; call update_progress so your report shows the new state.",
+                None,
+            )
+        };
+        let live = Record {
+            typed: true,
+            at_ms: 1_000,
+            ..Record::new(
+                Reason::LedgerGuard,
+                tidewatch_core::sent::because::LEDGER_STOP,
+                "Before you stop: send your progress report with the final state.",
+                None,
+            )
+        };
+        let mut rows = Rows::default();
+        rows.tidewatch_said(vec![old.clone(), live.clone()]);
+        for (record, at) in [(&old, 5_000), (&live, 6_000)] {
+            rows.push(Entry {
+                role: Role::User,
+                text: record.text.clone(),
+                tool: None,
+                ts: Some(at),
+                images: Vec::new(),
+            });
+        }
+        let found = drawn_texts(&rows, 900.0);
+        let said = |needle: &str| found.iter().any(|text| text.contains(needle));
+        assert!(!said("The user answered"), "{found:?}");
+        assert!(!said("progress report should show it"), "{found:?}");
+        assert!(!said("You"), "no reminder falls back to a You bubble: {found:?}");
+        assert!(
+            found.iter().all(|text| text != "2"),
+            "one live reminder is no run of two: {found:?}"
+        );
+        assert!(said("Tidewatch reminded the agent to update its report"), "{found:?}");
     }
 
     #[test]
@@ -3165,7 +3231,13 @@ mod tests {
             tidewatch_core::workflow_profile::Workflow::default(),
         )
         .unwrap();
-        watch.pending.push(Pending { id: 1, message });
+        watch.pending.push(Pending {
+            id: 1,
+            message,
+            body: comment.clone(),
+            number: 42,
+            confirm: false,
+        });
         let rows = conversation(20, 40);
         let ctx = crate::fonts::test_context();
         let mut state = ViewState::default();
