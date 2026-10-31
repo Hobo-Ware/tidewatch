@@ -305,6 +305,11 @@ impl AgentRun {
         &self.status
     }
 
+    #[cfg(test)]
+    pub(crate) fn set_status(&mut self, status: AgentStatus) {
+        self.status = status;
+    }
+
     /// The agent's last message, the prompt it waits on, or its error: what a notification or the
     /// Overview shows next to the status.
     pub(crate) fn detail(&self) -> Option<&str> {

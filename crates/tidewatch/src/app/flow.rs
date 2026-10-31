@@ -9,6 +9,7 @@ use tidewatch_core::restore::WindowPlan;
 use super::{Tidewatch, WAKE_SLACK_S};
 use crate::flow_glue;
 use crate::pty::{spawn_agent, spawn_shell_noted, spawn_typed};
+use crate::reader_glue;
 use crate::restore_glue::{Env, Spawn};
 
 impl Tidewatch {
@@ -60,7 +61,12 @@ impl Tidewatch {
         for text in toasts {
             self.show_toast(text, ctx);
         }
-        flow_glue::drain_outbox(&mut self.tabs, &mut self.flow, ctx, now);
+        for text in flow_glue::drain_outbox(&mut self.tabs, &mut self.flow, ctx, now) {
+            self.show_toast(text, ctx);
+        }
+        for text in reader_glue::release_lines(&mut self.tabs, &mut self.flow, ctx, now) {
+            self.show_toast(text, ctx);
+        }
         let tabs = &self.tabs;
         for tab in self.flow.due_enters(now, |id| flow_glue::output_of(tabs, id)) {
             flow_glue::press_enter(&mut self.tabs, tab);

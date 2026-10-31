@@ -13,6 +13,14 @@
 //! - `TIDEWATCH_DEV_READER_SCROLL=<pixels>@<seconds>`: once, that long after startup, scroll the
 //!   transcript up from its bottom by that many pixels, as a wheel does (the jump pill shows).
 //! - `TIDEWATCH_DEV_PICK=<digit>[@<seconds>]`: press that digit once, that long after startup, to pick a ready answer.
+//! - `TIDEWATCH_DEV_HELD=<text>|<text>`: put those messages in the tab's line of held messages once,
+//!   and `TIDEWATCH_DEV_WORKING=1` shows the tab as working (a Stop button, and the line is not
+//!   typed out), for captures. `TIDEWATCH_DEV_NOT_SEEN=<text>` and `TIDEWATCH_DEV_QUEUED=<text>`
+//!   show a message the agent never showed and one that was just sent.
+//! - `TIDEWATCH_DEV_HELD_EDIT=1`: open the newest held message for editing once.
+//! - `TIDEWATCH_DEV_BLOCKED=stopped|failed|starting|shell`: show the line above the reply box that
+//!   says why it is shut.
+//! - `TIDEWATCH_DEV_ROWS=1`: put a short stand-in conversation in the Reader once.
 //! - `TIDEWATCH_DEV_QUESTION=<steps>`: drive the live question card, one step every 0.4 s once it
 //!   shows. Steps, comma separated: `pick<N>` (the number key), `next`, `back`, `space`, `down`,
 //!   `all` (Go with your picks), `type:<text>` ("Something else" with that text), `send`, `skip`.
@@ -32,7 +40,7 @@ use crate::commands::{self, Command};
 use crate::question_card::{CardKey, Effect, Row};
 use crate::question_view::Live;
 use crate::reader_keys::Answer;
-use crate::reader_view::{Action, Prompt};
+use crate::reader_view::{Action, Blocked, Prompt};
 
 const QUESTION_STEP_S: f64 = 0.4;
 
@@ -46,6 +54,12 @@ pub(crate) fn autopick_wait() -> f64 {
             .filter(|secs| *secs > 0.0)
             .unwrap_or(crate::question_auto::WAIT_SECS)
     })
+}
+
+/// Whether `TIDEWATCH_DEV_WORKING=1` makes every tab read as working, so a capture can hold a line.
+pub(crate) fn pretend_working() -> bool {
+    static WORKING: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *WORKING.get_or_init(|| std::env::var("TIDEWATCH_DEV_WORKING").is_ok_and(|v| v == "1"))
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -84,6 +98,7 @@ fn card_steps(text: &str) -> VecDeque<CardStep> {
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]
+#[allow(clippy::struct_excessive_bools)] // independent dev switches, not a mode
 pub(crate) struct DevReader {
     pub(crate) raw: bool,
     key_after: Option<f64>,
@@ -97,6 +112,13 @@ pub(crate) struct DevReader {
     scroll_up: Option<(f32, f64)>,
     digit: Option<(egui::Key, char, f64)>,
     see: Option<String>,
+    held: Vec<String>,
+    not_seen: Option<String>,
+    queued: Option<String>,
+    rows: bool,
+    edit_held: bool,
+    pub(crate) blocked: Option<Blocked>,
+    pub(crate) working: bool,
 }
 
 fn digit_of(text: &str) -> Option<(egui::Key, char, f64)> {
@@ -126,7 +148,32 @@ impl DevReader {
         let scroll_up = var("TIDEWATCH_DEV_READER_SCROLL").and_then(|text| scroll_of(&text));
         let digit = var("TIDEWATCH_DEV_PICK").and_then(|text| digit_of(&text));
         let see = var("TIDEWATCH_DEV_SEE").filter(|what| !what.is_empty());
-        Self { pictures, open_turns, notes_only, scroll_up, digit, see, ..parsed }
+        let held = var("TIDEWATCH_DEV_HELD")
+            .map(|texts| texts.split('|').filter(|t| !t.is_empty()).map(str::to_owned).collect())
+            .unwrap_or_default();
+        let working = var("TIDEWATCH_DEV_WORKING").is_some_and(|value| value == "1");
+        Self {
+            pictures,
+            open_turns,
+            notes_only,
+            scroll_up,
+            digit,
+            see,
+            held,
+            not_seen: var("TIDEWATCH_DEV_NOT_SEEN"),
+            queued: var("TIDEWATCH_DEV_QUEUED"),
+            rows: var("TIDEWATCH_DEV_ROWS").is_some_and(|value| value == "1"),
+            blocked: match var("TIDEWATCH_DEV_BLOCKED").as_deref() {
+                Some("stopped") => Some(Blocked::Stopped),
+                Some("failed") => Some(Blocked::Failed),
+                Some("starting") => Some(Blocked::SettingUp),
+                Some("shell") => Some(Blocked::Shell),
+                _ => None,
+            },
+            edit_held: var("TIDEWATCH_DEV_HELD_EDIT").is_some_and(|value| value == "1"),
+            working,
+            ..parsed
+        }
     }
 
     fn parse(
@@ -146,6 +193,13 @@ impl DevReader {
             scroll_up: None,
             digit: None,
             see: None,
+            held: Vec::new(),
+            not_seen: None,
+            queued: None,
+            rows: false,
+            edit_held: false,
+            blocked: None,
+            working: false,
             raw: reader == Some("raw"),
             key_after: key.and_then(|s| s.parse().ok()),
             answer: match answer {
@@ -178,6 +232,31 @@ impl DevReader {
             && !self.open_turns
             && self.scroll_up.is_none()
             && self.digit.is_none()
+            && self.held.is_empty()
+            && self.not_seen.is_none()
+            && self.queued.is_none()
+            && !self.rows
+            && !self.edit_held
+    }
+
+    pub(crate) fn take_edit_held(&mut self) -> bool {
+        std::mem::take(&mut self.edit_held)
+    }
+
+    pub(crate) fn take_rows(&mut self) -> bool {
+        std::mem::take(&mut self.rows)
+    }
+
+    pub(crate) fn take_held(&mut self) -> Vec<String> {
+        std::mem::take(&mut self.held)
+    }
+
+    pub(crate) fn take_not_seen(&mut self) -> Option<String> {
+        self.not_seen.take()
+    }
+
+    pub(crate) fn take_queued(&mut self) -> Option<String> {
+        self.queued.take()
     }
 
     pub(crate) fn take_pictures(&mut self) -> Vec<PathBuf> {

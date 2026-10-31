@@ -23,8 +23,9 @@ use crate::answer_chips::Pick;
 use crate::ask_model::Ask;
 use crate::ask_view;
 use crate::brand;
-use crate::composer::{self, Draft, Spec};
+use crate::composer::{self, Draft, Outcome, Spec};
 use crate::due_view::{self, Facts as DueFacts};
+use crate::held_view;
 use crate::job_model::clock_label;
 use crate::pr_card_model::CardAction;
 use crate::pr_cards_view::{self, Data as PrData, Heights as PrHeights};
@@ -35,17 +36,19 @@ use crate::question_card::{Card, Effect};
 use crate::question_view::{self, ChipClick, Live, PermissionClick};
 use crate::quick_reply::{self, Quick};
 use crate::quiet_notes::{self, Entry};
-use crate::reader_chat_view::{self, Scene};
+use crate::reader_chat_view::{self, BubbleAction, Queue, Scene};
 use crate::reader_keys::{self, Answer};
 use crate::reader_rows::{Kind, Origin, Row, Rows};
 use crate::reader_scroll::{self, Autoscroll, Heights};
 use crate::reader_turns::{self, Slot};
+use crate::recall::Recall;
+use crate::reply_reason;
 use crate::review::ReviewFacts;
 use crate::review_row_view;
 use crate::review_view::{self, ReviewAction};
 use crate::screen_kit::{Size, body, primary_button, quiet_button};
+use crate::send_line::SendLine;
 use crate::slash::Entry as SlashEntry;
-use crate::stopped_view;
 use crate::tidewatch_view::{self, Click, Clicked};
 use tidewatch_core::sent::Record;
 
@@ -63,12 +66,17 @@ const JUMP_STRIP: f32 = JUMP_H + 12.0;
 const SCROLLBAR_GRAB_W: f32 = 16.0;
 const OUTPUT_MAX_LINES: usize = 40;
 
+#[allow(clippy::struct_excessive_bools)] // independent marks of one tab's view, not a mode
 pub(crate) struct ViewState {
     pub(crate) scroll: Autoscroll,
     pub(crate) heights: Heights,
     pr_heights: PrHeights,
     pub(crate) reply: String,
     pub(crate) pictures: Vec<PathBuf>,
+    pub(crate) recall: Recall,
+    pub(crate) line: SendLine,
+    held_edit: Option<(u64, String)>,
+    focus_held_edit: bool,
     pub(crate) pastes: Option<PathBuf>,
     pub(crate) ghost: Ghost,
     review: review_view::CardState,
@@ -105,6 +113,10 @@ impl Default for ViewState {
             pr_heights: PrHeights::default(),
             reply: String::new(),
             pictures: Vec::new(),
+            recall: Recall::default(),
+            line: SendLine::default(),
+            held_edit: None,
+            focus_held_edit: false,
             pastes: None,
             ghost: Ghost::default(),
             review: review_view::CardState::default(),
@@ -185,6 +197,74 @@ impl ViewState {
     pub(crate) fn request_reply_focus(&mut self) {
         self.focus_reply = true;
     }
+
+    /// The held message whose row is open for editing.
+    pub(crate) fn editing_held(&self) -> Option<u64> {
+        self.held_edit.as_ref().map(|(id, _)| *id)
+    }
+
+    /// Follows the newest message again, as after the owner sends one.
+    pub(crate) fn jump_to_latest(&mut self) {
+        self.scroll.jump_to_latest();
+        self.stick_pending = true;
+    }
+
+    /// Gives `text` back to the owner's box, ahead of what is already typed there.
+    pub(crate) fn keep_in_box(&mut self, text: &str) {
+        if self.reply.trim().is_empty() {
+            text.clone_into(&mut self.reply);
+        } else {
+            self.reply = format!("{text}\n\n{}", self.reply);
+        }
+        self.focus_reply = true;
+    }
+
+    pub(crate) fn begin_edit_held(&mut self, id: u64) {
+        if let Some(text) = self.line.text_of(id) {
+            self.held_edit = Some((id, text.to_owned()));
+            self.focus_held_edit = true;
+        }
+    }
+
+    pub(crate) fn apply_held(&mut self, out: held_view::Out, actions: &mut Vec<Action>) {
+        match out {
+            held_view::Out::Edit(id) => self.begin_edit_held(id),
+            held_view::Out::Save(id, text) => {
+                self.line.set_text(id, &text);
+                self.held_edit = None;
+                self.focus_reply = true;
+            }
+            held_view::Out::Cancel => {
+                self.held_edit = None;
+                self.focus_reply = true;
+            }
+            held_view::Out::Delete(id) => {
+                self.line.delete(id);
+            }
+            held_view::Out::Shift(id, way) => {
+                self.line.shift(id, way);
+            }
+            held_view::Out::SendNow(id) => actions.push(Action::SendNow(id)),
+        }
+    }
+
+    fn apply_bubble(
+        &mut self,
+        click: (BubbleAction, String, Option<u64>),
+        actions: &mut Vec<Action>,
+    ) {
+        match click {
+            (BubbleAction::SendAgain, text, forget) => {
+                actions.push(Action::SendAgain { text, forget });
+            }
+            (BubbleAction::Dismiss, _, Some(id)) => actions.push(Action::Forget(id)),
+            (BubbleAction::EditAndSend, text, _) => {
+                self.recall.load_message(&text, &mut self.reply, &mut self.pictures);
+                self.focus_reply = true;
+            }
+            (BubbleAction::Dismiss, _, None) => {}
+        }
+    }
 }
 
 /// Whether the agent is in the middle of a turn, so a menu may be open, or has finished it.
@@ -227,7 +307,8 @@ pub(crate) struct Facts<'a> {
     /// The tab's face, shown beside each of the agent's turns.
     pub(crate) face: Option<&'a Face>,
     pub(crate) turn: Turn,
-    pub(crate) stopped: bool,
+    /// The agent is in the middle of a turn that Stop can end.
+    pub(crate) working: bool,
     /// Why the reply box is shut because the agent is not at its prompt.
     pub(crate) reply_blocked: Option<Blocked>,
 }
@@ -272,6 +353,17 @@ pub(crate) enum Action {
     /// A ready answer picked on the Needs you card.
     Pick(String),
     Resume,
+    /// Stop the agent's turn.
+    Stop,
+    /// Stop the turn and type the held message `id` now.
+    SendNow(u64),
+    /// Send `text` again; `forget` is the queued message it replaces.
+    SendAgain {
+        text: String,
+        forget: Option<u64>,
+    },
+    /// Stop showing the queued message `id`.
+    Forget(u64),
 }
 
 /// The look of an inline item: a card on the window ground.
@@ -442,44 +534,69 @@ pub(crate) fn show(
     let input_h = if composing.is_some() {
         agent_ready::height(ui, &state.reply, state.pictures.len(), rect)
     } else {
-        composer::height(ui, &state.reply, state.pictures.len(), rect)
+        composer::height_with_stop(ui, &state.reply, state.pictures.len(), rect, facts.working)
     };
     let input = Rect::from_min_max(pos2(rect.left(), rect.bottom() - input_h), rect.max);
+    let reason = facts.reply_blocked.filter(|_| composing.is_none());
+    let reason_h = if reason.is_some() { reply_reason::HEIGHT } else { 0.0 };
+    let above = input.top() - reason_h;
     let dock_h = dock_height(facts, rows, state.live.as_ref());
-    let strip = Rect::from_min_max(
-        pos2(rect.left(), input.top() - dock_h),
-        pos2(rect.right(), input.top()),
-    );
+    let strip = Rect::from_min_max(pos2(rect.left(), above - dock_h), pos2(rect.right(), above));
     let asked = facts
         .ask
         .filter(|_| dock_h == 0.0)
         .map(|ask| (ask, ask_view::lay_out(ui, rect.width(), ask)));
-    let ask_h = asked.as_ref().map_or(0.0, |(_, laid)| laid.band(rect.height() - input_h));
+    let ask_h =
+        asked.as_ref().map_or(0.0, |(_, laid)| laid.band(rect.height() - input_h - reason_h));
     let ask_band =
         Rect::from_min_max(pos2(rect.left(), strip.top() - ask_h), pos2(rect.right(), strip.top()));
     let review_h = facts.review.as_ref().map_or(0.0, |review| {
-        review_view::height(review.draft, rect.height() - input_h - dock_h - ask_h)
+        review_view::height(review.draft, rect.height() - input_h - reason_h - dock_h - ask_h)
     });
     let review_band = Rect::from_min_max(
         pos2(rect.left(), ask_band.top() - review_h),
         pos2(rect.right(), ask_band.top()),
     );
     let due_h = facts.due.map_or(0.0, |due| {
-        due_view::height(due.due, rect.height() - input_h - dock_h - ask_h - review_h)
+        due_view::height(due.due, rect.height() - input_h - reason_h - dock_h - ask_h - review_h)
     });
     let due_band = Rect::from_min_max(
         pos2(rect.left(), review_band.top() - due_h),
         pos2(rect.right(), review_band.top()),
     );
-    let stopped_h = if facts.stopped && composing.is_none() { stopped_view::HEIGHT } else { 0.0 };
-    let body = Rect::from_min_max(
-        pos2(rect.left(), rect.top() + stopped_h),
+    if state.held_edit.as_ref().is_some_and(|(id, _)| state.line.text_of(*id).is_none()) {
+        state.held_edit = None;
+    }
+    let free_h = rect.height() - input_h - reason_h - dock_h - ask_h - review_h - due_h;
+    let held_h = held_view::height(ui, rect.width(), (state.line.len(), state.held_edit.is_some()))
+        .min((free_h / 2.0).max(0.0));
+    let held_band = Rect::from_min_max(
+        pos2(rect.left(), due_band.top() - held_h),
         pos2(rect.right(), due_band.top()),
     );
-    if stopped_h > 0.0 {
-        let band = Rect::from_min_size(rect.min, vec2(rect.width(), stopped_h));
-        if stopped_view::show(ui, band) {
+    let body = Rect::from_min_max(rect.min, pos2(rect.right(), held_band.top()));
+    if let Some(blocked) = reason {
+        let band = Rect::from_min_max(pos2(rect.left(), above), pos2(rect.right(), input.top()));
+        if reply_reason::show(ui, band, blocked) {
             actions.push(Action::Resume);
+        }
+    }
+    if held_h > 0.0 {
+        let note = if facts.working {
+            "Held by Tidewatch \u{b7} sent when the agent finishes its turn"
+        } else if reason.is_some() {
+            "Held by Tidewatch \u{b7} sent when the agent is running again"
+        } else {
+            "Held by Tidewatch \u{b7} sent as soon as the agent is free"
+        };
+        let shown = held_view::Shown {
+            items: state.line.items(),
+            editing: state.held_edit.as_mut().map(|(id, buffer)| (*id, buffer)),
+            focus_edit: &mut state.focus_held_edit,
+            note,
+        };
+        for out in held_view::show(ui, held_band, shown) {
+            state.apply_held(out, &mut actions);
         }
     }
     if let Some(due) = facts.due.filter(|_| due_h > 0.0) {
@@ -504,9 +621,11 @@ pub(crate) fn show(
             text: &mut state.reply,
             pictures: &mut state.pictures,
             focus: &mut state.focus_reply,
+            recall: None,
         };
         if let Some(text) = agent_ready::composer(ui, input, draft, ready) {
             actions.push(Action::Reply(text));
+            state.jump_to_latest();
         }
         return actions;
     }
@@ -526,6 +645,7 @@ pub(crate) fn show(
         Some(ChipClick::Send(text)) => {
             state.quick_used = rows.newest_seq();
             actions.push(Action::Reply(text));
+            state.jump_to_latest();
         }
         Some(ChipClick::Reply) => state.focus_reply = true,
         None => {}
@@ -539,7 +659,7 @@ pub(crate) fn show(
         let grab = state.reply.trim().is_empty();
         live.picks = question_bulk::plan(rows).count();
         live.auto_left = state.auto_left.filter(|(seq, _)| *seq == live.seq).map(|(_, left)| left);
-        let dock = Rect::from_min_max(rect.min, pos2(rect.right(), input.top()));
+        let dock = Rect::from_min_max(rect.min, pos2(rect.right(), above));
         match question_view::live_card(ui, dock, live, facts.profile, grab) {
             Effect::Send(given) => actions.push(Action::Ask(live.seq, Reply::Answered(given))),
             Effect::Skip => actions.push(Action::Ask(live.seq, Reply::Skipped)),
@@ -562,15 +682,26 @@ pub(crate) fn show(
         text: &mut state.reply,
         pictures: &mut state.pictures,
         focus: &mut state.focus_reply,
+        recall: Some(&mut state.recall),
     };
-    if let Some(text) = reply_box(
+    let outcome = reply_box(
         &mut input_ui,
         draft,
         (reply_enabled, facts.reply_blocked),
-        &state.commands,
-        state.ghost.text(),
-    ) {
+        (&state.commands, state.ghost.text()),
+        (facts.working, state.line.len()),
+    );
+    if let Some(text) = outcome.sent {
         actions.push(Action::Reply(text));
+        state.jump_to_latest();
+    }
+    if outcome.stop {
+        actions.push(Action::Stop);
+    }
+    if outcome.edit_held
+        && let Some(id) = state.line.newest_id()
+    {
+        state.begin_edit_held(id);
     }
     actions
 }
@@ -640,7 +771,7 @@ fn transcript(
     let width = view.width() - 2.0 * INSET;
     state.heights.for_width(width);
     state.pr_heights.for_width(width);
-    let newest = rows.newest_seq().map_or(0, |seq| seq + 1) + rows.queued_len(now_ms()) as u64;
+    let newest = rows.newest_seq().map_or(0, |seq| seq + 1) + rows.queued_len() as u64;
     if newest != state.seen_rows {
         state.seen_rows = newest;
         state.stick_pending = true;
@@ -675,6 +806,7 @@ fn transcript(
         running,
         waiting,
     };
+    let mut bubbles: Vec<(BubbleAction, String, Option<u64>)> = Vec::new();
     let mut body_ui = ui.new_child(UiBuilder::new().max_rect(view));
     if let Some(id) = state.scroll_id.filter(|_| shift > 0.0)
         && let Some(mut saved) = egui::scroll_area::State::load(ui.ctx(), id)
@@ -813,17 +945,24 @@ fn transcript(
                                             actions.extend(click.map(Action::Tidewatch));
                                         }
                                     }
-                                    _ if row.kind == Kind::User => reader_chat_view::user(
-                                        ui,
-                                        row,
-                                        stamps[index],
-                                        scene.zone,
-                                        (width, scene.pastes),
-                                        reader_chat_view::is_fresh(
+                                    _ if row.kind == Kind::User => {
+                                        let fresh = reader_chat_view::is_fresh(
                                             stamps[index],
                                             scene.fresh_after_ms,
-                                        ),
-                                    ),
+                                        );
+                                        let shown = (width, scene.pastes);
+                                        let click = reader_chat_view::user(
+                                            ui,
+                                            row,
+                                            stamps[index],
+                                            scene.zone,
+                                            shown,
+                                            fresh,
+                                        );
+                                        if let Some(click) = click {
+                                            bubbles.push((click, row.text.clone(), None));
+                                        }
+                                    }
                                     _ => {
                                         let asked = draw_row(
                                             ui,
@@ -892,8 +1031,10 @@ fn transcript(
                 }
             }
             let time = ui.input(|i| i.time);
-            for (n, queued) in rows.queued(now_ms()).enumerate() {
-                ui.horizontal(|ui| {
+            for (n, queued) in rows.queued().enumerate() {
+                let stale = queued.not_seen(now_ms());
+                let queue = if stale { Queue::NotSeen } else { Queue::Waiting(time) };
+                let drawn = ui.horizontal(|ui| {
                     ui.add_space(INSET);
                     ui.vertical(|ui| {
                         ui.set_width(width);
@@ -901,12 +1042,17 @@ fn transcript(
                             ui,
                             &queued.text,
                             u64::MAX - n as u64,
-                            time,
+                            queue,
                             width,
-                        );
-                    });
+                        )
+                    })
                 });
-                ui.ctx().request_repaint_after(QUEUED_FRAME);
+                if let Some(click) = drawn.inner.inner {
+                    bubbles.push((click, queued.text.clone(), Some(queued.id)));
+                }
+                if !stale {
+                    ui.ctx().request_repaint_after(QUEUED_FRAME);
+                }
             }
             if rows.auto_paused() {
                 tidewatch_view::paused_line(ui, width);
@@ -941,6 +1087,9 @@ fn transcript(
                 ui.scroll_to_cursor_animation(Some(Align::BOTTOM), ScrollAnimation::none());
             }
         });
+    for click in bubbles {
+        state.apply_bubble(click, actions);
+    }
     let max_offset = (out.content_size.y - out.inner_rect.height()).max(0.0);
     state.scroll.settle(out.state.offset.y, max_offset);
     state.scroll_id = Some(out.id);
@@ -1194,16 +1343,17 @@ pub(crate) fn reply_box(
     ui: &mut Ui,
     draft: Draft<'_>,
     (enabled, blocked): (bool, Option<Blocked>),
-    commands: &[SlashEntry],
-    ghost: Option<&str>,
-) -> Option<String> {
+    (commands, ghost): (&[SlashEntry], Option<&str>),
+    (working, held): (bool, usize),
+) -> Outcome {
     let hint = match (enabled, blocked) {
         (_, Some(blocked)) => blocked.hint(),
         (true, None) => "Reply to the agent",
         (false, None) => REPLY_BLOCKED,
     };
     let mode = composer::Mode::Reply;
-    composer::show(ui, draft, &Spec { id: reply_id(), hint, enabled, commands, ghost, mode })
+    let spec = Spec { id: reply_id(), hint, enabled, commands, ghost, mode, stop: working, held };
+    composer::show(ui, draft, &spec)
 }
 
 #[cfg(test)]
@@ -1223,8 +1373,8 @@ mod tests {
         commands: &[SlashEntry],
         ghost: Option<&str>,
     ) -> Option<String> {
-        let draft = Draft { text, pictures: &mut Vec::new(), focus };
-        super::reply_box(ui, draft, (enabled, None), commands, ghost)
+        let draft = Draft { text, pictures: &mut Vec::new(), focus, recall: None };
+        super::reply_box(ui, draft, (enabled, None), (commands, ghost), (false, 0)).sent
     }
 
     fn frame(
@@ -1674,7 +1824,7 @@ mod tests {
                         profile: "Builder",
                         face: None,
                         turn: Turn::Finished,
-                        stopped: false,
+                        working: false,
                         reply_blocked: None,
                     },
                 );
@@ -1747,7 +1897,7 @@ mod tests {
                     profile: "Builder",
                     face: None,
                     turn: Turn::Running,
-                    stopped: false,
+                    working: false,
                     reply_blocked: None,
                 };
                 let actions = show(ui, rect, &rows, &mut state, &facts);
@@ -1833,7 +1983,7 @@ mod tests {
                         profile: "Builder",
                         face: None,
                         turn: Turn::Finished,
-                        stopped: false,
+                        working: false,
                         reply_blocked: None,
                     };
                     let rect = ui.max_rect();
@@ -1967,7 +2117,8 @@ mod tests {
     }
 
     #[test]
-    fn a_stopped_agent_gets_a_bar_over_the_old_conversation_and_resume_reaches_the_caller() {
+    fn a_stopped_agent_gets_a_line_above_the_box_also_while_it_holds_text_and_resume_reaches_the_caller()
+     {
         use tidewatch_core::transcript::{Entry, Role};
 
         fn texts(shape: &egui::Shape, out: &mut Vec<(String, Rect)>) {
@@ -1990,7 +2141,7 @@ mod tests {
             images: Vec::new(),
         });
         let ctx = crate::fonts::test_context();
-        let mut state = ViewState::default();
+        let mut state = ViewState { reply: "half a thought".into(), ..ViewState::default() };
         let mut run = |stopped: bool, events: Vec<egui::Event>| {
             let raw = RawInput {
                 screen_rect: Some(Rect::from_min_size(pos2(0.0, 0.0), vec2(800.0, 700.0))),
@@ -2002,7 +2153,7 @@ mod tests {
             let output = ctx.run_ui(raw, |ui| {
                 let rect = ui.max_rect();
                 let mut facts = facts(None, Turn::Finished);
-                facts.stopped = stopped;
+                facts.reply_blocked = stopped.then_some(Blocked::Stopped);
                 actions = show(ui, rect, &rows, &mut state, &facts);
             });
             let mut found = Vec::new();
@@ -2015,7 +2166,11 @@ mod tests {
         run(true, vec![]);
         let (_, found) = run(true, vec![]);
         let at = |text: &str| found.iter().find(|(drawn, _)| drawn == text).unwrap().1;
-        assert!(at("Agent is not running").bottom() < at("old question").top());
+        assert!(at("Agent is not running").top() > at("old question").bottom());
+        assert!(
+            found.iter().any(|(text, _)| text == "half a thought"),
+            "the draft stays in the box next to the reason"
+        );
         let resume = at("Resume").center();
         let button = |pressed| egui::Event::PointerButton {
             pos: resume,
@@ -2099,7 +2254,7 @@ mod tests {
                     profile: "Builder",
                     face: None,
                     turn: Turn::Finished,
-                    stopped: false,
+                    working: false,
                     reply_blocked: None,
                 };
                 let rect = ui.max_rect();
@@ -2127,7 +2282,7 @@ mod tests {
             profile: "Builder",
             face: None,
             turn,
-            stopped: false,
+            working: false,
             reply_blocked: None,
         }
     }
@@ -2240,6 +2395,10 @@ mod tests {
         ctx: egui::Context,
         state: ViewState,
         shapes: Vec<(String, Rect)>,
+        actions: Vec<Action>,
+        working: bool,
+        blocked: Option<Blocked>,
+        width: f32,
     }
 
     impl Frames {
@@ -2248,21 +2407,29 @@ mod tests {
                 ctx: crate::fonts::test_context(),
                 state: ViewState::default(),
                 shapes: Vec::new(),
+                actions: Vec::new(),
+                working: false,
+                blocked: None,
+                width: 1000.0,
             }
         }
 
         fn run(&mut self, rows: &Rows, turn: Turn, events: Vec<Event>) {
             let raw = RawInput {
-                screen_rect: Some(Rect::from_min_size(pos2(0.0, 0.0), vec2(1000.0, 800.0))),
+                screen_rect: Some(Rect::from_min_size(pos2(0.0, 0.0), vec2(self.width, 800.0))),
                 events,
                 focused: true,
                 ..RawInput::default()
             };
             let state = &mut self.state;
+            let (working, blocked) = (self.working, self.blocked);
+            let mut asked = Vec::new();
             let output = self.ctx.run_ui(raw, |ui| {
                 let rect = ui.max_rect();
-                show(ui, rect, rows, state, &facts(None, turn));
+                let facts = Facts { working, reply_blocked: blocked, ..facts(None, turn) };
+                asked = show(ui, rect, rows, state, &facts);
             });
+            self.actions.extend(asked);
             self.shapes.clear();
             output.shapes.iter().for_each(|clipped| shape_texts(&clipped.shape, &mut self.shapes));
         }
@@ -3172,7 +3339,7 @@ mod tests {
         });
         let found = drawn_texts(&rows, 900.0);
         assert!(found.iter().all(|text| text != "Queued"), "{found:?}");
-        assert_eq!(rows.queued_len(now + 3), 0);
+        assert_eq!(rows.queued_len(), 0);
         let said = |wanted: &str| found.iter().position(|text| text.contains(wanted));
         assert_eq!(
             found.iter().filter(|text| text.contains("why these picks?")).count(),
@@ -3382,5 +3549,345 @@ mod tests {
             !texts.iter().any(|(_, text)| text.contains("use of widget ID")),
             "one picture in two messages clashes ids: {texts:?}"
         );
+    }
+
+    fn user_rows(text: &str) -> Rows {
+        use tidewatch_core::transcript::{Entry, Role};
+        let mut rows = Rows::default();
+        rows.push(Entry {
+            role: Role::User,
+            text: text.into(),
+            tool: None,
+            ts: Some(now_ms()),
+            images: Vec::new(),
+        });
+        rows
+    }
+
+    fn key_press(key: egui::Key) -> Event {
+        Event::Key {
+            key,
+            physical_key: Some(key),
+            pressed: true,
+            repeat: false,
+            modifiers: Modifiers::NONE,
+        }
+    }
+
+    fn settle(frames: &mut Frames, rows: &Rows) {
+        for _ in 0..3 {
+            frames.run(rows, Turn::Running, vec![]);
+        }
+    }
+
+    fn click_text(frames: &mut Frames, rows: &Rows, text: &str) {
+        let at = frames.at(text).unwrap_or_else(|| panic!("{text}: {:?}", frames.shapes));
+        let button = |pressed| Event::PointerButton {
+            pos: at,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: Modifiers::NONE,
+        };
+        frames.run(rows, Turn::Running, vec![Event::PointerMoved(at)]);
+        frames.run(rows, Turn::Running, vec![button(true)]);
+        frames.run(rows, Turn::Running, vec![button(false)]);
+        settle(frames, rows);
+    }
+
+    const HELD_NOTE: &str = "Held by Tidewatch \u{b7} sent when the agent finishes its turn";
+
+    #[test]
+    fn held_messages_sit_at_the_bottom_of_the_chat_above_the_box_with_three_buttons() {
+        let rows = turn_rows();
+        let mut frames = Frames::new();
+        frames.working = true;
+        frames.state.line.hold("also check the Android build before you push", 0).unwrap();
+        settle(&mut frames, &rows);
+        for want in [HELD_NOTE, "Edit", "Delete", "Send now"] {
+            assert!(frames.at(want).is_some(), "{want}: {:?}", frames.shapes);
+        }
+        let held = frames.at("also check the Android build before you push").unwrap();
+        let last_row = frames.at("All tidy.").unwrap();
+        let hint = frames.at("Reply to the agent").unwrap();
+        assert!(last_row.y < held.y && held.y < hint.y, "{last_row:?} {held:?} {hint:?}");
+        assert!(frames.at("Up").is_none(), "one message has nowhere to move");
+    }
+
+    #[test]
+    fn nothing_is_drawn_for_an_empty_line() {
+        let mut frames = Frames::new();
+        frames.working = true;
+        settle(&mut frames, &turn_rows());
+        assert!(frames.at(HELD_NOTE).is_none());
+        assert!(frames.at("Send now").is_none());
+    }
+
+    #[test]
+    fn delete_takes_the_message_out_and_send_now_asks_the_caller_for_that_message() {
+        let rows = turn_rows();
+        let mut frames = Frames::new();
+        frames.working = true;
+        let id = frames.state.line.hold("first", 0).unwrap();
+        settle(&mut frames, &rows);
+        click_text(&mut frames, &rows, "Send now");
+        assert_eq!(frames.actions, [Action::SendNow(id)]);
+        click_text(&mut frames, &rows, "Delete");
+        assert_eq!(frames.state.line.len(), 0);
+        assert!(frames.at(HELD_NOTE).is_none(), "the card goes with its last message");
+    }
+
+    #[test]
+    fn edit_opens_the_row_where_it_is_and_save_keeps_the_place_and_cancel_leaves_the_text() {
+        let rows = turn_rows();
+        let mut frames = Frames::new();
+        frames.working = true;
+        let first = frames.state.line.hold("first", 0).unwrap();
+        frames.state.line.hold("second", 0).unwrap();
+        settle(&mut frames, &rows);
+        let edits: Vec<_> = frames.shapes.iter().filter(|(text, _)| text == "Edit").collect();
+        assert_eq!(edits.len(), 2);
+        let top = edits.iter().map(|(_, rect)| rect.center()).min_by(|a, b| a.y.total_cmp(&b.y));
+        let at = top.unwrap();
+        let button = |pressed| Event::PointerButton {
+            pos: at,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: Modifiers::NONE,
+        };
+        frames.run(&rows, Turn::Running, vec![Event::PointerMoved(at)]);
+        frames.run(&rows, Turn::Running, vec![button(true)]);
+        frames.run(&rows, Turn::Running, vec![button(false)]);
+        settle(&mut frames, &rows);
+        assert_eq!(frames.state.editing_held(), Some(first));
+        assert!(frames.at("Save").is_some() && frames.at("Cancel").is_some());
+        frames.state.held_edit = Some((first, "first, reworded".into()));
+        settle(&mut frames, &rows);
+        click_text(&mut frames, &rows, "Save");
+        let texts: Vec<&str> =
+            frames.state.line.items().iter().map(|held| held.text.as_str()).collect();
+        assert_eq!(texts, ["first, reworded", "second"]);
+        assert_eq!(frames.state.editing_held(), None);
+        frames.state.held_edit = Some((first, "never mind".into()));
+        settle(&mut frames, &rows);
+        click_text(&mut frames, &rows, "Cancel");
+        assert_eq!(frames.state.line.text_of(first), Some("first, reworded"));
+        assert_eq!(frames.state.editing_held(), None);
+    }
+
+    #[test]
+    fn enter_in_an_open_edit_saves_it_and_a_blank_text_deletes_the_message() {
+        let rows = turn_rows();
+        let mut frames = Frames::new();
+        frames.working = true;
+        let id = frames.state.line.hold("first", 0).unwrap();
+        frames.state.focus_reply = false;
+        frames.state.begin_edit_held(id);
+        settle(&mut frames, &rows);
+        frames.state.held_edit = Some((id, "saved with enter".into()));
+        frames.run(&rows, Turn::Running, vec![key_press(egui::Key::Enter)]);
+        settle(&mut frames, &rows);
+        assert_eq!(frames.state.line.text_of(id), Some("saved with enter"));
+        frames.state.begin_edit_held(id);
+        settle(&mut frames, &rows);
+        frames.state.held_edit = Some((id, "  ".into()));
+        frames.run(&rows, Turn::Running, vec![key_press(egui::Key::Enter)]);
+        settle(&mut frames, &rows);
+        assert_eq!(frames.state.line.len(), 0);
+    }
+
+    #[test]
+    fn messages_move_up_and_down_and_the_arrows_show_only_where_there_is_a_place_to_go() {
+        let rows = turn_rows();
+        let mut frames = Frames::new();
+        frames.working = true;
+        let ids: Vec<u64> =
+            ["a", "b", "c"].iter().map(|text| frames.state.line.hold(text, 0).unwrap()).collect();
+        let mut actions = Vec::new();
+        frames.state.apply_held(
+            held_view::Out::Shift(ids[2], crate::send_line::Way::Earlier),
+            &mut actions,
+        );
+        let order: Vec<&str> =
+            frames.state.line.items().iter().map(|held| held.text.as_str()).collect();
+        assert_eq!(order, ["a", "c", "b"]);
+        assert_eq!(actions, Vec::new());
+        settle(&mut frames, &rows);
+        assert!(frames.at("Send now").is_some());
+    }
+
+    #[test]
+    fn up_in_the_empty_box_edits_the_newest_held_message_and_otherwise_recalls_history() {
+        let rows = turn_rows();
+        let mut frames = Frames::new();
+        frames.working = true;
+        frames.state.line.hold("older", 0).unwrap();
+        let newest = frames.state.line.hold("newest", 0).unwrap();
+        frames.state.recall = Recall::with_entries(vec!["sent before".into()]);
+        settle(&mut frames, &rows);
+        frames.run(&rows, Turn::Running, vec![key_press(egui::Key::ArrowUp)]);
+        assert_eq!(frames.state.editing_held(), Some(newest));
+        assert_eq!(frames.state.reply, "");
+        let mut plain = Frames::new();
+        plain.state.recall = Recall::with_entries(vec!["sent before".into()]);
+        settle(&mut plain, &rows);
+        plain.run(&rows, Turn::Running, vec![key_press(egui::Key::ArrowUp)]);
+        assert_eq!(plain.state.reply, "sent before");
+    }
+
+    #[test]
+    fn the_stop_button_and_esc_in_an_empty_box_ask_for_a_stop_only_while_the_agent_works() {
+        let rows = turn_rows();
+        let mut idle = Frames::new();
+        settle(&mut idle, &rows);
+        assert!(idle.at("Stop").is_none());
+        let mut working = Frames::new();
+        working.working = true;
+        settle(&mut working, &rows);
+        working.run(&rows, Turn::Running, vec![key_press(egui::Key::Escape)]);
+        assert_eq!(working.actions, [Action::Stop]);
+        working.actions.clear();
+        click_text(&mut working, &rows, "Stop");
+        assert_eq!(working.actions, [Action::Stop]);
+    }
+
+    #[test]
+    fn sending_follows_the_newest_message_again_even_after_scrolling_up() {
+        let rows = turn_rows();
+        let mut frames = Frames::new();
+        settle(&mut frames, &rows);
+        frames.state.scroll.release();
+        assert!(!frames.state.scroll.following());
+        frames.run(&rows, Turn::Finished, vec![Event::Text("hello".into())]);
+        frames.run(&rows, Turn::Finished, vec![key_press(egui::Key::Enter)]);
+        assert_eq!(frames.actions, [Action::Reply("hello".into())]);
+        assert!(frames.state.scroll.following());
+    }
+
+    #[test]
+    fn a_message_the_agent_never_showed_reads_not_seen_and_can_be_sent_again_or_dismissed() {
+        let mut rows = user_rows("start");
+        rows.queue_user("lost one", now_ms() - 3 * 60_000);
+        let mut frames = Frames::new();
+        settle(&mut frames, &rows);
+        for want in ["Not seen by the agent", "Send again", "Dismiss"] {
+            assert!(frames.at(want).is_some(), "{want}: {:?}", frames.shapes);
+        }
+        assert!(frames.at("Queued").is_none());
+        click_text(&mut frames, &rows, "Send again");
+        let id = rows.queued().next().unwrap().id;
+        assert_eq!(
+            frames.actions,
+            [Action::SendAgain { text: "lost one".into(), forget: Some(id) }]
+        );
+        frames.actions.clear();
+        click_text(&mut frames, &rows, "Dismiss");
+        assert_eq!(frames.actions, [Action::Forget(id)]);
+    }
+
+    #[test]
+    fn a_message_that_is_still_fresh_reads_queued_with_no_buttons() {
+        let mut rows = user_rows("start");
+        rows.queue_user("just sent", now_ms());
+        let mut frames = Frames::new();
+        settle(&mut frames, &rows);
+        assert!(frames.at("Queued").is_some());
+        assert!(frames.at("Send again").is_none() && frames.at("Dismiss").is_none());
+    }
+
+    #[test]
+    fn pointing_at_your_own_bubble_offers_send_again_copy_and_edit_and_send() {
+        let rows = user_rows("run the tests again");
+        let mut frames = Frames::new();
+        settle(&mut frames, &rows);
+        assert!(frames.at("Send again").is_none(), "hidden until the pointer is on the bubble");
+        let over = frames.at("run the tests again").unwrap();
+        frames.run(&rows, Turn::Finished, vec![Event::PointerMoved(over)]);
+        settle(&mut frames, &rows);
+        for want in ["Send again", "Copy", "Edit and send"] {
+            assert!(frames.at(want).is_some(), "{want}: {:?}", frames.shapes);
+        }
+        click_text(&mut frames, &rows, "Send again");
+        assert_eq!(
+            frames.actions,
+            [Action::SendAgain { text: "run the tests again".into(), forget: None }]
+        );
+    }
+
+    #[test]
+    fn edit_and_send_puts_the_message_in_the_box_and_keeps_the_draft_for_after() {
+        let rows = user_rows("run the tests again");
+        let mut frames = Frames::new();
+        frames.state.reply = "my draft".into();
+        settle(&mut frames, &rows);
+        let over = frames.at("run the tests again").unwrap();
+        frames.run(&rows, Turn::Finished, vec![Event::PointerMoved(over)]);
+        settle(&mut frames, &rows);
+        click_text(&mut frames, &rows, "Edit and send");
+        assert_eq!(frames.state.reply, "run the tests again");
+        frames.run(&rows, Turn::Finished, vec![key_press(egui::Key::Enter)]);
+        assert_eq!(frames.actions, [Action::Reply("run the tests again".into())]);
+        assert_eq!(frames.state.reply, "my draft");
+    }
+
+    #[test]
+    fn the_reason_line_names_each_blocked_state_and_only_a_stopped_or_failed_agent_offers_resume() {
+        let rows = turn_rows();
+        let cases = [
+            (Blocked::Stopped, "Agent is not running", true),
+            (Blocked::Failed, "The agent failed", true),
+            (Blocked::SettingUp, "The agent is starting up", false),
+            (Blocked::Shell, "No agent is running here", false),
+        ];
+        for (blocked, line, resume) in cases {
+            let mut frames = Frames::new();
+            frames.blocked = Some(blocked);
+            settle(&mut frames, &rows);
+            assert!(frames.at(line).is_some(), "{line}: {:?}", frames.shapes);
+            assert_eq!(frames.at("Resume").is_some(), resume, "{line}");
+        }
+    }
+
+    #[test]
+    fn a_narrow_column_keeps_each_held_row_inside_the_card_with_its_text_clear_of_the_buttons() {
+        let rows = turn_rows();
+        for width in [260.0, 340.0, 600.0] {
+            let mut frames = Frames::new();
+            frames.width = width;
+            frames.working = true;
+            frames.state.line.hold("also check the Android build before you push", 0).unwrap();
+            frames.state.line.hold("then update the changelog", 0).unwrap();
+            settle(&mut frames, &rows);
+            let rect_of =
+                |text: &str| frames.shapes.iter().find(|(drawn, _)| drawn == text).map(|(_, r)| *r);
+            let note = rect_of(HELD_NOTE).expect("the card is drawn");
+            for button in ["Send now", "Delete", "Edit"] {
+                let rect = frames
+                    .shapes
+                    .iter()
+                    .filter(|(drawn, _)| drawn == button)
+                    .map(|(_, rect)| *rect)
+                    .next()
+                    .unwrap_or_else(|| panic!("{button} at {width}: {:?}", frames.shapes));
+                assert!(rect.right() <= width, "{button} at {width}: {rect:?}");
+                assert!(rect.top() > note.bottom(), "{button} under the note at {width}");
+            }
+            let texts: Vec<Rect> = frames
+                .shapes
+                .iter()
+                .filter(|(text, _)| text.starts_with("also check") || text.starts_with("then"))
+                .map(|(_, rect)| *rect)
+                .collect();
+            let buttons: Vec<Rect> = frames
+                .shapes
+                .iter()
+                .filter(|(text, _)| ["Edit", "Delete", "Send now"].contains(&text.as_str()))
+                .map(|(_, rect)| *rect)
+                .collect();
+            for rect in texts {
+                for button in &buttons {
+                    assert!(!rect.intersects(*button), "{rect:?} over {button:?} at {width}");
+                }
+            }
+        }
     }
 }

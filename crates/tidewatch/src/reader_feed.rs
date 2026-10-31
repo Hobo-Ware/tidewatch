@@ -419,7 +419,7 @@ mod tests {
         let seen = wait_for(&feed, |m| matches!(m, Message::Entries(_)));
         rows.push_all(seen.iter().flat_map(entries_of).collect());
         assert_eq!(
-            (texts(&seen), rows.queued_len(0)),
+            (texts(&seen), rows.queued_len()),
             (["start", "working"].map(Into::into).to_vec(), 1)
         );
 
@@ -429,7 +429,7 @@ mod tests {
         assert!(seen.iter().any(|m| matches!(m, Message::Found(path) if *path == live_file)));
         assert_eq!(texts(&seen), ["fix it", "on it"]);
         rows.push_all(seen.iter().flat_map(entries_of).collect());
-        assert_eq!(rows.queued_len(0), 0);
+        assert_eq!(rows.queued_len(), 0);
     }
 
     #[test]

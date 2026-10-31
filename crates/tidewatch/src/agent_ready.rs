@@ -116,8 +116,10 @@ pub(crate) fn composer(ui: &mut Ui, rect: Rect, draft: Draft<'_>, ready: Ready) 
         commands: &[],
         ghost: None,
         mode: composer::Mode::Reply,
+        stop: false,
+        held: 0,
     };
-    composer::show(&mut child, draft, &spec)
+    composer::show(&mut child, draft, &spec).sent
 }
 
 #[cfg(test)]
@@ -145,7 +147,7 @@ mod tests {
         let mut sent = None;
         let _ = ctx.run_ui(raw, |ui| {
             let rect = Rect::from_min_size(pos2(0.0, 200.0), vec2(800.0, 64.0));
-            let draft = Draft { text, pictures: &mut Vec::new(), focus };
+            let draft = Draft { text, pictures: &mut Vec::new(), focus, recall: None };
             sent = composer(ui, rect, draft, ready());
         });
         sent
@@ -227,7 +229,8 @@ mod tests {
         let mut chip_h = 0.0;
         let out = ctx.run_ui(raw, |ui| {
             let rect = Rect::from_min_size(pos2(0.0, 200.0), vec2(800.0, 130.0));
-            let draft = Draft { text: &mut text, pictures: &mut pictures, focus: &mut focus };
+            let draft =
+                Draft { text: &mut text, pictures: &mut pictures, focus: &mut focus, recall: None };
             composer(ui, rect, draft, ready());
             chip_h = crate::pictures::CHIP_H;
         });
@@ -257,7 +260,12 @@ mod tests {
         };
         let _ = ctx.run_ui(raw, |ui| {
             let rect = Rect::from_min_size(pos2(0.0, 200.0), vec2(800.0, 64.0));
-            let draft = Draft { text: &mut text, pictures: &mut Vec::new(), focus: &mut focus };
+            let draft = Draft {
+                text: &mut text,
+                pictures: &mut Vec::new(),
+                focus: &mut focus,
+                recall: None,
+            };
             composer(ui, rect, draft, ready());
         });
         assert_eq!(text, "copied words");
@@ -274,7 +282,12 @@ mod tests {
         };
         let out = ctx.run_ui(raw, |ui| {
             let rect = Rect::from_min_size(pos2(0.0, 200.0), vec2(800.0, 64.0));
-            let draft = Draft { text: &mut text, pictures: &mut Vec::new(), focus: &mut focus };
+            let draft = Draft {
+                text: &mut text,
+                pictures: &mut Vec::new(),
+                focus: &mut focus,
+                recall: None,
+            };
             composer(ui, rect, draft, ready());
         });
         let asked = out.shapes.iter().any(|clipped| {
@@ -351,7 +364,7 @@ mod tests {
                     profile: "Builder",
                     face: None,
                     turn: Turn::Finished,
-                    stopped: false,
+                    working: false,
                     reply_blocked: None,
                 };
                 crate::reader_view::show(

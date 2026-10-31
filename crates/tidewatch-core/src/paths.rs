@@ -17,6 +17,8 @@ const AVATAR_FILE: &str = "avatar.json";
 const PROGRESS_FEED_FILE: &str = "progress-feed.jsonl";
 const SENT_FILE: &str = "tidewatch-sent.jsonl";
 const PANEL_LOG_FILE: &str = "panel-log.jsonl";
+const REPLY_HISTORY_FILE: &str = "reply-history.json";
+const REPLY_DRAFT_FILE: &str = "reply-draft.json";
 
 /// The ledger file that sits next to a tab's `notes.json`.
 #[must_use]
@@ -47,6 +49,18 @@ pub fn progress_feed_file_beside(notes_file: &Path) -> PathBuf {
 #[must_use]
 pub fn sent_file_beside(notes_file: &Path) -> PathBuf {
     notes_file.with_file_name(SENT_FILE)
+}
+
+/// The messages the owner sent a tab, which sit next to its `notes.json`.
+#[must_use]
+pub fn reply_history_file_beside(notes_file: &Path) -> PathBuf {
+    notes_file.with_file_name(REPLY_HISTORY_FILE)
+}
+
+/// The half-written message of a tab's reply box, which sits next to its `notes.json`.
+#[must_use]
+pub fn reply_draft_file_beside(notes_file: &Path) -> PathBuf {
+    notes_file.with_file_name(REPLY_DRAFT_FILE)
 }
 
 /// The panel's event log, which sits next to a tab's `notes.json`.
@@ -504,6 +518,8 @@ mod tests {
         assert!(avatar_file_beside(&notes).ends_with("brave-otter/avatar.json"));
         assert_ne!(feed, paths.progress_feed_file(repo, "main"));
         assert_eq!(sent_file_beside(&notes).parent(), notes.parent());
+        assert!(reply_history_file_beside(&notes).ends_with("brave-otter/reply-history.json"));
+        assert!(reply_draft_file_beside(&notes).ends_with("brave-otter/reply-draft.json"));
         assert!(sent_file_beside(&notes).ends_with("brave-otter/tidewatch-sent.jsonl"));
     }
 

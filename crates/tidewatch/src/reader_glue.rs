@@ -26,7 +26,7 @@ use crate::due_view::{self, Facts as DueFacts};
 use crate::flow::Flow;
 use crate::flow_glue;
 use crate::note_send::ENTER_DELAY_SECS;
-use crate::outbox::Send;
+use crate::outbox::{Offer, Screen, Send};
 use crate::pane::{AgentTab, Body, FirstPrompt, Pane};
 use crate::pr_card_model::CardAction;
 use crate::pr_cards_view::Data as PrData;
@@ -37,8 +37,10 @@ use crate::reader::{Note, Shown, Step};
 use crate::reader_keys;
 use crate::reader_rows::{Asked, Kind, Origin};
 use crate::reader_view::{self, Action, Blocked, Facts, Prompt, Turn};
+use crate::recall::Recall;
 use crate::review::ReviewFacts;
 use crate::screen_kit::{Size, button_width, quiet_button};
+use crate::send_line::is_command;
 use crate::slash;
 use crate::tabs::Tabs;
 
@@ -51,7 +53,13 @@ const WAKE_SLACK_S: f64 = 0.02;
 const KEY_GAP_S: f64 = ENTER_DELAY_SECS;
 /// How long a menu needs to close after Esc before text can follow.
 const MENU_CLOSE_S: f64 = 0.8;
+/// How long the agent gets to end its turn after Esc before a message is typed.
+const INTERRUPT_GAP_S: f64 = 0.8;
 const RESUME_DEBOUNCE_S: f64 = 3.0;
+/// How long a closed menu must stay off the agent's screen before its card is closed.
+const MENU_GONE_AFTER_S: f64 = 2.0;
+const LINE_FULL_TOAST: &str =
+    "Too many messages are waiting for the agent. Yours is back in the box";
 const MENU_GONE: &str =
     "The agent's question is no longer on its screen. Nothing was typed. Check the terminal";
 
@@ -107,7 +115,9 @@ pub(crate) fn drain(tabs: &mut Tabs<Pane<PtyTerm>>, flow: &mut Flow, ctx: &Conte
                 agent.run.note_activity(now);
             }
             close_ended_asks(agent);
+            keep_reply_box(agent, ctx, now);
         }
+        close_gone_menu(&mut tab.pane, now);
         if let Some(text) = pick_for_the_absent(&mut tab.pane, ctx, now) {
             picked.push((id, text));
         }
@@ -125,6 +135,58 @@ pub(crate) fn drain(tabs: &mut Tabs<Pane<PtyTerm>>, flow: &mut Flow, ctx: &Conte
     for (tab, text) in picked {
         let send = Send::auto(&text, Said::AutoPick, because::AUTO_PICK);
         flow_glue::send_or_queue(tabs, flow, tab, send, ctx, now);
+    }
+}
+
+/// Brings back a tab's sent messages and half-written reply the first time its notes folder is
+/// known, and saves the reply box once it stood still.
+fn keep_reply_box(agent: &mut AgentTab, ctx: &Context, now: f64) {
+    if !agent.reader.store.is_attached()
+        && let Some(notes) = agent.run.notes_file.clone()
+    {
+        let (entries, draft) = agent.reader.store.attach(&notes);
+        let view = &mut agent.reader.view;
+        view.recall = Recall::with_entries(entries);
+        if let Some(draft) = draft.filter(|_| view.reply.is_empty() && view.pictures.is_empty()) {
+            view.reply = draft.text;
+            view.pictures = draft.pictures;
+        }
+    }
+    let view = &agent.reader.view;
+    if let Some(wake) = agent.reader.store.tick(&view.reply, &view.pictures, now) {
+        ctx.request_repaint_after(Duration::from_secs_f64(wake + WAKE_SLACK_S));
+    }
+}
+
+/// Closes the card of a Claude question when its menu has been gone from the agent's screen for a
+/// while: it was answered or closed in the terminal, and the card would wait for ever.
+fn close_gone_menu<T: ShowsScreen>(pane: &mut Pane<T>, now: f64) {
+    let (Body::Shell(term), Some(agent)) = (&pane.body, pane.agent.as_mut()) else { return };
+    let waiting = agent.reader.rows.pending_question().and_then(|row| match &row.kind {
+        Kind::Question(q) if matches!(q.origin, Origin::Claude) => {
+            Some((row.seq, menu_look(term, &q.questions)))
+        }
+        _ => None,
+    });
+    let Some((seq, look)) = waiting else {
+        agent.reader.menu_gone = None;
+        return;
+    };
+    if look != Look::Gone {
+        agent.reader.menu_gone = None;
+        return;
+    }
+    let since = match agent.reader.menu_gone {
+        Some((known, since)) if known == seq => since,
+        _ => {
+            agent.reader.menu_gone = Some((seq, now));
+            now
+        }
+    };
+    if now - since >= MENU_GONE_AFTER_S && agent.reader.rows.set_asked(seq, Asked::Closed) {
+        agent.reader.menu_gone = None;
+        agent.reader.mark_answered();
+        refresh_asking(agent);
     }
 }
 
@@ -288,8 +350,8 @@ pub(crate) fn draw(
         profile: &agent.profile_name,
         face: Some(&face),
         turn,
-        stopped: *agent.run.status() == AgentStatus::Stopped,
-        reply_blocked: reply_blocked(agent),
+        working: *agent.run.status() == AgentStatus::Working || dev.working,
+        reply_blocked: dev.blocked.or_else(|| reply_blocked(agent).filter(|_| !dev.working)),
     };
     let reader = &mut agent.reader;
     let reads_screen = reader.source() == Some(Source::Claude)
@@ -313,6 +375,42 @@ pub(crate) fn draw(
         reader.view.open_turns(&reader.rows, dev.notes_only());
     }
     crate::pictures::attach(&mut reader.view.pictures, dev.take_pictures());
+    if dev.take_rows() {
+        use tidewatch_core::transcript::{Entry, Role};
+        let now = unix_ms();
+        for (role, text, ago) in [
+            (Role::User, "Add a greeting to the README and run the tests", 240_000),
+            (
+                Role::Assistant,
+                "Done. The README has a greeting section and all 12 tests pass.",
+                200_000,
+            ),
+            (Role::User, "Nice. Now check the totals in the report", 120_000),
+            (Role::Assistant, "Working on it: the totals add up to 1,204.", 60_000),
+        ] {
+            reader.rows.push(Entry {
+                role,
+                text: text.to_owned(),
+                tool: None,
+                ts: Some(now - ago),
+                images: Vec::new(),
+            });
+        }
+    }
+    for text in dev.take_held() {
+        let _ = reader.view.line.hold(&text, unix_ms());
+    }
+    if dev.take_edit_held()
+        && let Some(id) = reader.view.line.newest_id()
+    {
+        reader.view.begin_edit_held(id);
+    }
+    if let Some(text) = dev.take_not_seen() {
+        reader.rows.queue_user(&text, unix_ms() - 3 * 60_000);
+    }
+    if let Some(text) = dev.take_queued() {
+        reader.rows.queue_user(&text, unix_ms());
+    }
     if let Some(pixels) = dev.take_scroll_up(now) {
         reader.view.scroll_up_by(pixels);
     }
@@ -430,36 +528,37 @@ pub(crate) fn apply(
 ) -> Option<String> {
     let mut toast = None;
     for action in actions {
+        let action = match action {
+            Action::Reply(text) => {
+                toast = reply(tabs, flow, tab, &text, (ctx, now)).or(toast);
+                continue;
+            }
+            Action::SendAgain { text, forget } => {
+                if let (Some(id), Some(agent)) = (forget, agent_of(tabs, tab)) {
+                    agent.reader.rows.forget_queued(id);
+                }
+                toast = reply(tabs, flow, tab, &text, (ctx, now)).or(toast);
+                continue;
+            }
+            Action::Forget(id) => {
+                if let Some(agent) = agent_of(tabs, tab) {
+                    agent.reader.rows.forget_queued(id);
+                }
+                continue;
+            }
+            Action::SendNow(id) => {
+                toast = send_now(tabs, flow, tab, id, ctx, now).or(toast);
+                continue;
+            }
+            Action::Stop => {
+                stop(tabs, tab);
+                continue;
+            }
+            other => other,
+        };
         let Some(found) = tabs.get_mut(tab) else { continue };
         let source = found.pane.agent.as_ref().and_then(|agent| agent.reader.source());
         match action {
-            Action::Reply(text) => {
-                if let Some(blocked) = found.pane.agent.as_ref().and_then(reply_blocked) {
-                    toast = Some(blocked.hint().to_owned());
-                    continue;
-                }
-                if let Some(agent) = found.pane.agent.as_mut()
-                    && agent.first_prompt == FirstPrompt::Awaiting
-                {
-                    agent.first_prompt = FirstPrompt::Sent;
-                }
-                flow.outbox.user_spoke(tab);
-                if let Body::Shell(term) = &mut found.pane.body {
-                    term.paste(&text);
-                    if let Some(agent) = found.pane.agent.as_mut()
-                        && queues_behind_work(agent.run.status(), &text)
-                    {
-                        agent.reader.queue_user(&text);
-                    }
-                    flow.queue_enter(tab, now);
-                    ctx.request_repaint_after(Duration::from_secs_f64(
-                        ENTER_DELAY_SECS + WAKE_SLACK_S,
-                    ));
-                    if let Some(agent) = found.pane.agent.as_mut() {
-                        show_dialog_command(agent, source, &text);
-                    }
-                }
-            }
             Action::Answer(answer) => {
                 match (&mut found.pane.body, reader_keys::bytes(source, answer)) {
                     (Body::Shell(term), Some(keys)) => {
@@ -482,7 +581,12 @@ pub(crate) fn apply(
             | Action::Pr(_)
             | Action::Tidewatch(_)
             | Action::Due(_)
-            | Action::Pick(_) => {}
+            | Action::Pick(_)
+            | Action::Reply(_)
+            | Action::SendAgain { .. }
+            | Action::Forget(_)
+            | Action::SendNow(_)
+            | Action::Stop => {}
             Action::Ask(seq, reply) => {
                 if let Some(why) = answer_question(&mut found.pane, seq, reply, now) {
                     toast = Some(why.to_owned());
@@ -492,6 +596,172 @@ pub(crate) fn apply(
         }
     }
     toast
+}
+
+fn agent_of(tabs: &mut Tabs<Pane<PtyTerm>>, tab: u64) -> Option<&mut AgentTab> {
+    tabs.get_mut(tab)?.pane.agent.as_mut()
+}
+
+fn unix_ms() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |since| i64::try_from(since.as_millis()).unwrap_or(i64::MAX))
+}
+
+/// Types one of the owner's messages into the agent through the one send line, and shows it as
+/// queued until the transcript has it. False when the tab has no terminal to type into.
+fn type_reply(
+    tabs: &mut Tabs<Pane<PtyTerm>>,
+    flow: &mut Flow,
+    tab: u64,
+    text: &str,
+    (ctx, now): (&Context, f64),
+) -> bool {
+    if !flow_glue::deliver(tabs, flow, tab, &Send::reply(text), ctx, now) {
+        return false;
+    }
+    if let Some(agent) = agent_of(tabs, tab) {
+        let source = agent.reader.source();
+        if !is_command(text) {
+            agent.reader.queue_user(text);
+        }
+        show_dialog_command(agent, source, text);
+    }
+    true
+}
+
+/// A message the owner sent. It goes at once when the agent can take it; while the agent works, or
+/// cannot take it, Tidewatch holds it in order, to be edited, deleted or sent now, and types it
+/// when the agent is free. The first message of a tab and a slash command always go at once.
+fn reply(
+    tabs: &mut Tabs<Pane<PtyTerm>>,
+    flow: &mut Flow,
+    tab: u64,
+    text: &str,
+    (ctx, now): (&Context, f64),
+) -> Option<String> {
+    let agent = agent_of(tabs, tab)?;
+    let first = agent.first_prompt == FirstPrompt::Awaiting;
+    if first {
+        agent.first_prompt = FirstPrompt::Sent;
+    }
+    let blocked = reply_blocked(agent);
+    let status = agent.run.status().clone();
+    if agent.reader.view.recall.remember(text) {
+        agent.reader.store.save_history(agent.reader.view.recall.entries());
+    }
+    agent.reader.view.jump_to_latest();
+    flow.outbox.user_spoke(tab);
+    let offer = if first || (is_command(text) && blocked.is_none()) {
+        Offer::Go
+    } else {
+        flow.outbox.offer(tab, &Send::reply(text), Some(&status), Screen::Free, now)
+    };
+    if offer == Offer::Go
+        && (blocked.is_none() || first)
+        && type_reply(tabs, flow, tab, text, (ctx, now))
+    {
+        return None;
+    }
+    let agent = agent_of(tabs, tab)?;
+    ctx.request_repaint_after(Duration::from_secs_f64(0.5));
+    if agent.reader.view.line.hold(text, unix_ms()).is_err() {
+        agent.reader.view.keep_in_box(text);
+        return Some(LINE_FULL_TOAST.to_owned());
+    }
+    blocked.map(|blocked| blocked.hint().to_owned())
+}
+
+/// Types the first held message of each tab when the one send line lets it go.
+pub(crate) fn release_lines(
+    tabs: &mut Tabs<Pane<PtyTerm>>,
+    flow: &mut Flow,
+    ctx: &Context,
+    now: f64,
+) -> Vec<String> {
+    let mut told = Vec::new();
+    let waiting: Vec<u64> = tabs
+        .items()
+        .iter()
+        .filter(|found| found.pane.agent.as_ref().is_some_and(|a| a.reader.view.line.len() > 0))
+        .map(|found| found.id)
+        .collect();
+    for tab in waiting {
+        let Some(agent) = agent_of(tabs, tab) else { continue };
+        let status = agent.run.status().clone();
+        if crate::dev_reader::pretend_working() {
+            continue;
+        }
+        let view = &agent.reader.view;
+        let Some((id, text)) =
+            view.line.ready(view.editing_held()).map(|held| (held.id, held.text.clone()))
+        else {
+            continue;
+        };
+        let send = Send::reply(&text);
+        if flow.outbox.offer(tab, &send, Some(&status), Screen::Free, now) != Offer::Go {
+            continue;
+        }
+        if type_reply(tabs, flow, tab, &text, (ctx, now)) {
+            if let Some(agent) = agent_of(tabs, tab) {
+                agent.reader.view.line.delete(id);
+            }
+        } else {
+            told.push("A held message could not be typed: the tab has no terminal".to_owned());
+        }
+    }
+    if tabs.items().iter().any(|found| {
+        found.pane.agent.as_ref().is_some_and(|agent| agent.reader.view.line.len() > 0)
+    }) {
+        ctx.request_repaint_after(Duration::from_secs_f64(0.5));
+    }
+    told
+}
+
+/// Whether Esc ends something: only a working agent has a turn to end, and Esc anywhere else
+/// would answer a menu or do nothing.
+fn interrupts(status: &AgentStatus) -> bool {
+    *status == AgentStatus::Working
+}
+
+/// Ends the agent's turn, as Esc does in its own screen.
+fn stop(tabs: &mut Tabs<Pane<PtyTerm>>, tab: u64) {
+    let Some(found) = tabs.get_mut(tab) else { return };
+    let working = found.pane.agent.as_ref().is_some_and(|a| interrupts(a.run.status()));
+    if let (true, Body::Shell(term)) = (working, &mut found.pane.body) {
+        term.send(reader_keys::INTERRUPT);
+    }
+}
+
+/// "Send now" on a held message: the turn is stopped and the message follows once the agent has
+/// taken the Esc. An agent that is not working takes it at once.
+fn send_now(
+    tabs: &mut Tabs<Pane<PtyTerm>>,
+    flow: &mut Flow,
+    tab: u64,
+    id: u64,
+    ctx: &Context,
+    now: f64,
+) -> Option<String> {
+    let agent = agent_of(tabs, tab)?;
+    let held = agent.reader.view.line.delete(id)?;
+    if !interrupts(agent.run.status()) {
+        if type_reply(tabs, flow, tab, &held.text, (ctx, now)) {
+            return None;
+        }
+        agent_of(tabs, tab)?.reader.view.keep_in_box(&held.text);
+        return Some("The message could not be typed: the tab has no terminal".to_owned());
+    }
+    if !is_command(&held.text) {
+        agent.reader.queue_user(&held.text);
+    }
+    let steps = vec![
+        (0.0, Step::Keys(reader_keys::INTERRUPT.to_vec())),
+        (INTERRUPT_GAP_S, Step::Paste(held.text)),
+    ];
+    agent.reader.type_steps(steps, now);
+    ctx.request_repaint();
+    None
 }
 
 /// Why a reply typed now would not reach the agent: its pane is not at the agent's prompt, so the
@@ -507,12 +777,6 @@ pub(crate) fn reply_blocked(agent: &AgentTab) -> Option<Blocked> {
         AgentStatus::Shell => Some(Blocked::Shell),
         AgentStatus::Working | AgentStatus::Done | AgentStatus::NeedsYou(_) => None,
     }
-}
-
-/// Whether a reply sent now waits behind the agent's turn: it is working and the text is a message,
-/// not a slash command.
-fn queues_behind_work(status: &AgentStatus, text: &str) -> bool {
-    *status == AgentStatus::Working && !text.trim_start().starts_with('/')
 }
 
 /// Shows the terminal when `text`, just sent to the agent, opens a dialog in Claude Code's screen.
@@ -1061,13 +1325,6 @@ mod tests {
         assert_eq!(typed(&mut pane), Vec::new());
     }
 
-    #[test]
-    fn only_a_message_sent_to_a_working_agent_queues() {
-        assert!(queues_behind_work(&AgentStatus::Working, "do more"));
-        assert!(!queues_behind_work(&AgentStatus::Working, "  /login"));
-        assert!(!queues_behind_work(&AgentStatus::Done, "do more"));
-    }
-
     fn on_its_own(pane: &mut Pane<Fake>, level: tidewatch_core::agents::Level) {
         pane.agent.as_mut().unwrap().launched = Some(crate::pane::Launched {
             profile_id: "builder".into(),
@@ -1336,5 +1593,309 @@ mod tests {
         assert_eq!(flow.due_enters(10.0 + ENTER_DELAY_SECS, busy), Vec::<u64>::new());
         let settled = 10.0 + ENTER_DELAY_SECS + crate::note_send::ENTER_QUIET_SECS + 0.01;
         assert_eq!(flow.due_enters(settled, busy), [id]);
+    }
+
+    fn agent_in(status: AgentStatus) -> (Tabs<Pane<PtyTerm>>, u64, Flow) {
+        let mut tabs = Tabs::new(Pane::creating());
+        let mut run = AgentRun::setting_up("claude".into(), 0.0);
+        run.set_status(status);
+        let agent = AgentTab::new("Builder".into(), run);
+        let pane = Pane { body: Body::Shell(idle_pty()), worktree: None, agent: Some(agent) };
+        let id = tabs.push("agent".into(), pane);
+        (tabs, id, Flow::new(tidewatch_core::tools::Tools::default()))
+    }
+
+    fn set_status(tabs: &mut Tabs<Pane<PtyTerm>>, id: u64, status: AgentStatus) {
+        agent_of(tabs, id).unwrap().run.set_status(status);
+    }
+
+    fn held(tabs: &mut Tabs<Pane<PtyTerm>>, id: u64) -> Vec<String> {
+        let agent = agent_of(tabs, id).unwrap();
+        agent.reader.view.line.items().iter().map(|held| held.text.clone()).collect()
+    }
+
+    fn queued(tabs: &mut Tabs<Pane<PtyTerm>>, id: u64) -> usize {
+        agent_of(tabs, id).unwrap().reader.rows.queued_len()
+    }
+
+    fn say(
+        tabs: &mut Tabs<Pane<PtyTerm>>,
+        flow: &mut Flow,
+        id: u64,
+        text: &str,
+        now: f64,
+    ) -> Option<String> {
+        apply(vec![Action::Reply(text.into())], tabs, id, flow, &Context::default(), now)
+    }
+
+    fn release(tabs: &mut Tabs<Pane<PtyTerm>>, flow: &mut Flow, now: f64) -> Vec<String> {
+        release_lines(tabs, flow, &Context::default(), now)
+    }
+
+    #[test]
+    fn a_reply_to_a_working_agent_is_held_by_tidewatch_and_typed_when_the_turn_ends() {
+        let (mut tabs, id, mut flow) = agent_in(AgentStatus::Working);
+        assert_eq!(say(&mut tabs, &mut flow, id, "also check the Android build", 1.0), None);
+        assert_eq!(held(&mut tabs, id), ["also check the Android build"]);
+        assert_eq!(queued(&mut tabs, id), 0, "the agent has not seen it, so it is not queued");
+        assert_eq!(release(&mut tabs, &mut flow, 2.0), Vec::<String>::new());
+        assert_eq!(held(&mut tabs, id), ["also check the Android build"]);
+        set_status(&mut tabs, id, AgentStatus::Done);
+        release(&mut tabs, &mut flow, 3.0);
+        assert_eq!(held(&mut tabs, id), Vec::<String>::new());
+        assert_eq!(queued(&mut tabs, id), 1);
+        let busy = |_: u64| Some(1);
+        assert_eq!(flow.due_enters(3.0, busy), Vec::<u64>::new());
+        assert_eq!(flow.due_enters(3.0 + ENTER_DELAY_SECS, busy), Vec::<u64>::new());
+        let settled = 3.0 + ENTER_DELAY_SECS + crate::note_send::ENTER_QUIET_SECS + 0.01;
+        assert_eq!(flow.due_enters(settled, busy), [id]);
+    }
+
+    #[test]
+    fn a_reply_to_an_agent_that_is_done_is_typed_at_once() {
+        let (mut tabs, id, mut flow) = agent_in(AgentStatus::Done);
+        assert_eq!(say(&mut tabs, &mut flow, id, "next, the docs", 1.0), None);
+        assert_eq!(held(&mut tabs, id), Vec::<String>::new());
+        assert_eq!(queued(&mut tabs, id), 1);
+    }
+
+    #[test]
+    fn two_replies_in_a_row_never_merge_the_second_waits_for_the_agent_to_leave_done() {
+        let (mut tabs, id, mut flow) = agent_in(AgentStatus::Done);
+        say(&mut tabs, &mut flow, id, "one", 1.0);
+        say(&mut tabs, &mut flow, id, "two", 1.5);
+        assert_eq!(held(&mut tabs, id), ["two"]);
+        assert_eq!(release(&mut tabs, &mut flow, 2.0), Vec::<String>::new());
+        assert_eq!(held(&mut tabs, id), ["two"]);
+        set_status(&mut tabs, id, AgentStatus::Working);
+        release(&mut tabs, &mut flow, 3.0);
+        set_status(&mut tabs, id, AgentStatus::Done);
+        release(&mut tabs, &mut flow, 4.0);
+        assert_eq!(held(&mut tabs, id), Vec::<String>::new());
+        assert_eq!(queued(&mut tabs, id), 2);
+    }
+
+    #[test]
+    fn the_line_keeps_its_order_and_types_one_message_per_idle_moment() {
+        let (mut tabs, id, mut flow) = agent_in(AgentStatus::Working);
+        for text in ["a", "b", "c"] {
+            say(&mut tabs, &mut flow, id, text, 1.0);
+        }
+        set_status(&mut tabs, id, AgentStatus::Done);
+        release(&mut tabs, &mut flow, 2.0);
+        release(&mut tabs, &mut flow, 2.1);
+        assert_eq!(held(&mut tabs, id), ["b", "c"]);
+        assert_eq!(queued(&mut tabs, id), 1);
+    }
+
+    #[test]
+    fn a_slash_command_runs_at_once_even_while_the_agent_works() {
+        let (mut tabs, id, mut flow) = agent_in(AgentStatus::Working);
+        say(&mut tabs, &mut flow, id, "/model opus", 1.0);
+        assert_eq!(held(&mut tabs, id), Vec::<String>::new());
+        assert_eq!(queued(&mut tabs, id), 0, "a command has no transcript line to wait for");
+    }
+
+    #[test]
+    fn the_first_message_of_a_tab_goes_whatever_the_agent_reports() {
+        let (mut tabs, id, mut flow) = agent_in(AgentStatus::SettingUp);
+        agent_of(&mut tabs, id).unwrap().first_prompt = FirstPrompt::Awaiting;
+        assert_eq!(say(&mut tabs, &mut flow, id, "build the thing", 1.0), None);
+        assert_eq!(held(&mut tabs, id), Vec::<String>::new());
+        assert_eq!(agent_of(&mut tabs, id).unwrap().first_prompt, FirstPrompt::Sent);
+    }
+
+    #[test]
+    fn a_reply_to_an_agent_that_is_not_running_is_kept_and_the_toast_says_why() {
+        let (mut tabs, id, mut flow) = agent_in(AgentStatus::Stopped);
+        let toast = say(&mut tabs, &mut flow, id, "are you there", 1.0);
+        assert_eq!(toast.as_deref(), Some("Resume first"));
+        assert_eq!(held(&mut tabs, id), ["are you there"]);
+        release(&mut tabs, &mut flow, 2.0);
+        assert_eq!(held(&mut tabs, id), ["are you there"], "nothing is typed into a shell");
+        set_status(&mut tabs, id, AgentStatus::Done);
+        release(&mut tabs, &mut flow, 3.0);
+        assert_eq!(held(&mut tabs, id), Vec::<String>::new());
+    }
+
+    #[test]
+    fn a_full_line_hands_the_message_back_to_the_box_and_says_so() {
+        let (mut tabs, id, mut flow) = agent_in(AgentStatus::Working);
+        for n in 0..crate::send_line::MAX_HELD {
+            say(&mut tabs, &mut flow, id, &format!("m{n}"), 1.0);
+        }
+        let toast = say(&mut tabs, &mut flow, id, "one too many", 2.0);
+        assert_eq!(toast.as_deref(), Some(LINE_FULL_TOAST));
+        let agent = agent_of(&mut tabs, id).unwrap();
+        assert_eq!(agent.reader.view.line.len(), crate::send_line::MAX_HELD);
+        assert_eq!(agent.reader.view.reply, "one too many");
+    }
+
+    #[test]
+    fn a_message_being_edited_holds_the_line_until_it_is_saved_or_left() {
+        let (mut tabs, id, mut flow) = agent_in(AgentStatus::Working);
+        say(&mut tabs, &mut flow, id, "first", 1.0);
+        say(&mut tabs, &mut flow, id, "second", 1.0);
+        let first = agent_of(&mut tabs, id).unwrap().reader.view.line.items()[0].id;
+        agent_of(&mut tabs, id).unwrap().reader.view.begin_edit_held(first);
+        set_status(&mut tabs, id, AgentStatus::Done);
+        release(&mut tabs, &mut flow, 2.0);
+        assert_eq!(held(&mut tabs, id), ["first", "second"]);
+        agent_of(&mut tabs, id).unwrap().reader.view.line.set_text(first, "first, edited");
+        agent_of(&mut tabs, id)
+            .unwrap()
+            .reader
+            .view
+            .apply_held(crate::held_view::Out::Cancel, &mut Vec::new());
+        release(&mut tabs, &mut flow, 3.0);
+        assert_eq!(held(&mut tabs, id), ["second"]);
+    }
+
+    #[test]
+    fn send_now_stops_a_working_agent_and_types_the_message_after_the_esc() {
+        let (mut tabs, id, mut flow) = agent_in(AgentStatus::Working);
+        say(&mut tabs, &mut flow, id, "drop everything and do this", 1.0);
+        let held_id = agent_of(&mut tabs, id).unwrap().reader.view.line.items()[0].id;
+        let ctx = Context::default();
+        assert_eq!(
+            apply(vec![Action::SendNow(held_id)], &mut tabs, id, &mut flow, &ctx, 10.0),
+            None
+        );
+        assert_eq!(held(&mut tabs, id), Vec::<String>::new());
+        assert_eq!(queued(&mut tabs, id), 1);
+        let agent = agent_of(&mut tabs, id).unwrap();
+        assert_eq!(
+            agent.reader.take_due_step(10.0),
+            Some(Step::Keys(reader_keys::INTERRUPT.to_vec()))
+        );
+        assert_eq!(agent.reader.take_due_step(10.0 + INTERRUPT_GAP_S - 0.1), None);
+        assert_eq!(
+            agent.reader.take_due_step(10.0 + INTERRUPT_GAP_S),
+            Some(Step::Paste("drop everything and do this".into()))
+        );
+    }
+
+    #[test]
+    fn send_now_to_an_agent_that_is_not_working_types_at_once_without_an_esc() {
+        let (mut tabs, id, mut flow) = agent_in(AgentStatus::Working);
+        say(&mut tabs, &mut flow, id, "go", 1.0);
+        set_status(&mut tabs, id, AgentStatus::Done);
+        let held_id = agent_of(&mut tabs, id).unwrap().reader.view.line.items()[0].id;
+        let ctx = Context::default();
+        apply(vec![Action::SendNow(held_id)], &mut tabs, id, &mut flow, &ctx, 10.0);
+        assert_eq!(held(&mut tabs, id), Vec::<String>::new());
+        assert_eq!(queued(&mut tabs, id), 1);
+        assert_eq!(agent_of(&mut tabs, id).unwrap().reader.take_due_step(99.0), None);
+    }
+
+    #[test]
+    fn stop_means_esc_only_for_a_working_agent() {
+        let cases = [
+            (AgentStatus::Working, true),
+            (AgentStatus::Done, false),
+            (AgentStatus::NeedsYou(Reason::Permission), false),
+            (AgentStatus::Stopped, false),
+            (AgentStatus::Shell, false),
+        ];
+        for (status, want) in cases {
+            assert_eq!(interrupts(&status), want, "{status:?}");
+        }
+    }
+
+    #[test]
+    fn send_again_replaces_the_queued_copy_and_goes_through_the_line() {
+        let (mut tabs, id, mut flow) = agent_in(AgentStatus::Working);
+        agent_of(&mut tabs, id).unwrap().reader.rows.queue_user("lost one", 0);
+        let queued_id = agent_of(&mut tabs, id).unwrap().reader.rows.queued().next().unwrap().id;
+        let again = Action::SendAgain { text: "lost one".into(), forget: Some(queued_id) };
+        apply(vec![again], &mut tabs, id, &mut flow, &Context::default(), 5.0);
+        assert_eq!(queued(&mut tabs, id), 0);
+        assert_eq!(held(&mut tabs, id), ["lost one"], "it waits for the turn like any reply");
+    }
+
+    #[test]
+    fn dismiss_forgets_a_queued_message_without_sending_it() {
+        let (mut tabs, id, mut flow) = agent_in(AgentStatus::Done);
+        agent_of(&mut tabs, id).unwrap().reader.rows.queue_user("lost one", 0);
+        let queued_id = agent_of(&mut tabs, id).unwrap().reader.rows.queued().next().unwrap().id;
+        apply(vec![Action::Forget(queued_id)], &mut tabs, id, &mut flow, &Context::default(), 5.0);
+        assert_eq!((queued(&mut tabs, id), held(&mut tabs, id)), (0, Vec::<String>::new()));
+    }
+
+    #[test]
+    fn a_sent_message_is_remembered_for_up_and_survives_a_restart() {
+        let dir = tempfile::tempdir().unwrap();
+        let notes = dir.path().join("tab").join("notes.json");
+        let (mut tabs, id, mut flow) = agent_in(AgentStatus::Done);
+        agent_of(&mut tabs, id).unwrap().run.notes_file = Some(notes.clone());
+        let ctx = Context::default();
+        drain(&mut tabs, &mut flow, &ctx, 1.0);
+        say(&mut tabs, &mut flow, id, "run the tests", 2.0);
+        assert_eq!(
+            agent_of(&mut tabs, id).unwrap().reader.view.recall.entries(),
+            ["run the tests"]
+        );
+        let (mut again, id2, mut flow2) = agent_in(AgentStatus::Done);
+        agent_of(&mut again, id2).unwrap().run.notes_file = Some(notes);
+        drain(&mut again, &mut flow2, &ctx, 1.0);
+        let recall = &agent_of(&mut again, id2).unwrap().reader.view.recall;
+        assert_eq!(recall.entries(), ["run the tests"]);
+    }
+
+    #[test]
+    fn a_half_written_reply_is_saved_once_it_stood_still_and_comes_back_after_a_restart() {
+        let dir = tempfile::tempdir().unwrap();
+        let notes = dir.path().join("tab").join("notes.json");
+        let ctx = Context::default();
+        let (mut tabs, id, mut flow) = agent_in(AgentStatus::Done);
+        agent_of(&mut tabs, id).unwrap().run.notes_file = Some(notes.clone());
+        drain(&mut tabs, &mut flow, &ctx, 1.0);
+        agent_of(&mut tabs, id).unwrap().reader.view.reply = "check the totals in".into();
+        drain(&mut tabs, &mut flow, &ctx, 2.0);
+        drain(&mut tabs, &mut flow, &ctx, 2.0 + crate::reply_store::SETTLE_SECS + 0.01);
+        let (mut again, id2, mut flow2) = agent_in(AgentStatus::Done);
+        agent_of(&mut again, id2).unwrap().run.notes_file = Some(notes);
+        drain(&mut again, &mut flow2, &ctx, 1.0);
+        assert_eq!(agent_of(&mut again, id2).unwrap().reader.view.reply, "check the totals in");
+    }
+
+    fn claude_menu_pane(screen: &[&str]) -> (Pane<Fake>, u64) {
+        let (mut pane, seq) = pane(Origin::Claude);
+        with_screen(&mut pane, screen);
+        (pane, seq)
+    }
+
+    #[test]
+    fn the_card_of_a_claude_menu_closes_after_the_menu_stayed_off_the_screen() {
+        let (mut pane, seq) = claude_menu_pane(&["> ", "Where? is what I asked"]);
+        close_gone_menu(&mut pane, 10.0);
+        assert_eq!(asked_of(&pane, seq), Asked::Pending, "a screen can lag for a moment");
+        close_gone_menu(&mut pane, 10.0 + MENU_GONE_AFTER_S - 0.1);
+        assert_eq!(asked_of(&pane, seq), Asked::Pending);
+        close_gone_menu(&mut pane, 10.0 + MENU_GONE_AFTER_S);
+        assert_eq!(asked_of(&pane, seq), Asked::Closed);
+    }
+
+    #[test]
+    fn the_card_stays_while_the_menu_is_on_screen_or_the_screen_cannot_be_read() {
+        for screen in [vec!["Where?", "\u{276f} 1. Stage", "  2. Run"], vec![]] {
+            let (mut pane, seq) = claude_menu_pane(&screen);
+            close_gone_menu(&mut pane, 10.0);
+            close_gone_menu(&mut pane, 100.0);
+            assert_eq!(asked_of(&pane, seq), Asked::Pending, "{screen:?}");
+        }
+    }
+
+    #[test]
+    fn a_menu_that_comes_back_restarts_the_wait() {
+        let (mut pane, seq) = claude_menu_pane(&["> ", "nothing"]);
+        close_gone_menu(&mut pane, 10.0);
+        with_screen(&mut pane, &["Where?", "\u{276f} 1. Stage", "  2. Run"]);
+        close_gone_menu(&mut pane, 11.0);
+        with_screen(&mut pane, &["> ", "nothing"]);
+        close_gone_menu(&mut pane, 12.5);
+        assert_eq!(asked_of(&pane, seq), Asked::Pending);
+        close_gone_menu(&mut pane, 12.5 + MENU_GONE_AFTER_S);
+        assert_eq!(asked_of(&pane, seq), Asked::Closed);
     }
 }

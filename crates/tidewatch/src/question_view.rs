@@ -799,6 +799,11 @@ pub(crate) fn summary(
             format!("No answer in time, {profile} went on"),
             "",
         ),
+        Asked::Closed => (
+            row.questions.iter().map(|q| (q.text.clone(), None)).collect(),
+            format!("Closed in the terminal, {profile} went on"),
+            "",
+        ),
         Asked::Pending => (
             row.questions.iter().map(|q| (q.text.clone(), None)).collect(),
             "Waiting for your answer".to_owned(),

@@ -313,6 +313,7 @@ mod tests {
                     text: &mut self.reply,
                     pictures: &mut self.pictures,
                     focus: &mut self.focus,
+                    recall: None,
                 };
                 let spec = Spec {
                     id: egui::Id::new("reply-box"),
@@ -321,8 +322,10 @@ mod tests {
                     commands: &[],
                     ghost: None,
                     mode: composer::Mode::Reply,
+                    stop: false,
+                    held: 0,
                 };
-                sent = composer::show(&mut child, draft, &spec);
+                sent = composer::show(&mut child, draft, &spec).sent;
             });
             let mut rings = Vec::new();
             let mut chips = Vec::new();

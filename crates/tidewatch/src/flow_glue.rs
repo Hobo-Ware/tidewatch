@@ -21,7 +21,7 @@ use crate::flow::{Asker, Flow, Gate, Out, TabFacts};
 use crate::flow_jobs::Which;
 use crate::note_send::ENTER_DELAY_SECS;
 use crate::notes_strip::StripAction;
-use crate::outbox::{NO_AGENT, Offer, Origin, Screen, Send};
+use crate::outbox::{LINE_FULL, NO_AGENT, Offer, Origin, Ready as Next, Screen, Send};
 use crate::pane::{Body, Pane};
 use crate::post_confirm::{self, Answer, Plan};
 use crate::pr_glue;
@@ -184,7 +184,9 @@ pub(crate) fn send_or_queue(
 ) -> Offer {
     let offer = offer_to_agent(tabs, flow, tab, &send, ctx, now);
     if offer == Offer::Wait {
-        flow.outbox.enqueue(tab, send);
+        if flow.outbox.enqueue(tab, send).is_err() {
+            return Offer::Refuse(LINE_FULL);
+        }
         ctx.request_repaint_after(Duration::from_secs_f64(0.5));
     }
     offer
@@ -220,12 +222,15 @@ pub(crate) fn ask_agents(
     toasts
 }
 
+/// Types what is due from each tab's line. Returns a line for every message that left a line
+/// without being typed, so none goes without the owner being told.
 pub(crate) fn drain_outbox(
     tabs: &mut Tabs<Pane<PtyTerm>>,
     flow: &mut Flow,
     ctx: &Context,
     now: f64,
-) {
+) -> Vec<String> {
+    let mut told = Vec::new();
     for tab in flow.outbox.waiting_tabs() {
         let status = status_of(tabs, tab);
         let held = flow.outbox.held(tab, now) && status == Some(AgentStatus::Done);
@@ -235,10 +240,17 @@ pub(crate) fn drain_outbox(
             .find(|candidate| candidate.id == tab)
             .filter(|_| !held)
             .map_or(Screen::Free, |found| screen_of(found, status.as_ref(), false));
-        if let Some(send) = flow.outbox.next_ready(tab, status.as_ref(), screen, now)
-            && !deliver(tabs, flow, tab, &send, ctx, now)
-        {
-            flow.outbox.forget(tab);
+        match flow.outbox.next_ready(tab, status.as_ref(), screen, now) {
+            Next::Nothing => {}
+            Next::Send(send) => {
+                if !deliver(tabs, flow, tab, &send, ctx, now) {
+                    flow.outbox.forget(tab);
+                    told.push(
+                        "A queued message could not be typed: the tab has no terminal".into(),
+                    );
+                }
+            }
+            Next::Dropped(dropped) => told.push(dropped.line()),
         }
     }
     for tab in tabs.items_mut() {
@@ -249,6 +261,7 @@ pub(crate) fn drain_outbox(
     if !flow.outbox.waiting_tabs().is_empty() {
         ctx.request_repaint_after(Duration::from_secs_f64(0.5));
     }
+    told
 }
 
 pub(crate) fn output_of(tabs: &Tabs<Pane<PtyTerm>>, tab: u64) -> Option<u64> {
