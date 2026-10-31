@@ -5,7 +5,9 @@
 //! `Done:`), so headings are matched loosely, but all three must appear, in order, or there is no
 //! block.
 
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+use serde::{Deserialize, Serialize};
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct EndBlock {
     pub done: Vec<String>,
     pub needs_you: Vec<String>,

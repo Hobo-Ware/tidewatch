@@ -26,6 +26,7 @@
 
 use std::path::PathBuf;
 
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 /// Output silence after which an agent is assumed to be waiting for you (PLAN.md, Constants).
@@ -44,7 +45,7 @@ const MESSAGE_MAX_CHARS: usize = 400;
 /// A hook's last message is kept nearly whole: the Done / Needs you / Next block sits at its end.
 const TURN_MESSAGE_MAX_CHARS: usize = 20_000;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Reason {
     /// A tool call waits for approval.
     Permission,
@@ -70,7 +71,7 @@ pub enum AgentStatus {
     Shell,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum HookKind {
     SessionStart,
     TurnStarted,
@@ -94,7 +95,7 @@ pub enum HookKind {
 }
 
 /// What one hook payload (or Copilot transcript event) says, in CLI-neutral terms.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct HookEvent {
     pub kind: HookKind,
     pub session_id: Option<String>,
@@ -276,7 +277,7 @@ fn clip_tail(message: &str, max: usize) -> String {
 }
 
 /// OSC 9;4 progress as the status layer needs it. The app maps its terminal's progress onto this.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ProgressSignal {
     #[default]
     Off,
@@ -285,7 +286,7 @@ pub enum ProgressSignal {
     Paused,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub enum TerminalSignal {
     Progress(ProgressSignal),
     TitleChanged,
@@ -293,7 +294,7 @@ pub enum TerminalSignal {
 }
 
 /// Layer 3: what the operating system says about the agent process.
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub struct ProcessFacts {
     pub alive: bool,
     /// `None` while alive, or when a signal killed it.
@@ -326,7 +327,7 @@ impl ProcessFacts {
         [output, self.last_word_at].into_iter().flatten().fold(self.started_at, f64::max)
     }
 
-    fn silent_for(&self, now: f64) -> f64 {
+    pub(crate) fn silent_for(&self, now: f64) -> f64 {
         now - self.last_heard_at()
     }
 
@@ -336,14 +337,14 @@ impl ProcessFacts {
 }
 
 /// Layer 2: the latest terminal signals.
-#[derive(Clone, Copy, Debug, Default, PartialEq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct TerminalState {
     pub progress: ProgressSignal,
     pub title_changed_at: Option<f64>,
     pub bell_at: Option<f64>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 enum HookStatus {
     Working,
     NeedsYou(Reason),
@@ -352,7 +353,7 @@ enum HookStatus {
 }
 
 /// Layer 1: the latest status a hook reported, and when it arrived.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct HookState {
     status: HookStatus,
     at: f64,
@@ -413,7 +414,7 @@ impl HookState {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Lifecycle {
     /// A plain terminal: no agent, no status.
     Shell,
@@ -422,7 +423,7 @@ pub enum Lifecycle {
     Agent,
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct StatusInputs {
     pub lifecycle: Lifecycle,
     pub hook: Option<HookState>,
@@ -569,14 +570,14 @@ fn busy_cap(process: &ProcessFacts) -> f64 {
     process.last_heard_at() + BUSY_QUIET_SECS
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 struct OpenCall {
     call: String,
     key: String,
 }
 
 /// Keeps one tab's [`StatusInputs`] current. Every method takes the time it happened.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct StatusTracker {
     inputs: StatusInputs,
     open_tools: Vec<OpenCall>,
@@ -630,6 +631,22 @@ impl StatusTracker {
         self.agent_started(now);
         self.inputs.hook =
             Some(HookState { status: HookStatus::Done, at: now, pending: Vec::new() });
+    }
+
+    /// Whether the hook state says a turn is on: working, or waiting on a permission or a question.
+    #[must_use]
+    pub fn turn_open(&self) -> bool {
+        matches!(
+            self.inputs.hook.as_ref().map(|hook| &hook.status),
+            Some(HookStatus::Working | HookStatus::NeedsYou(_))
+        )
+    }
+
+    /// Hooks stopped being heard (a restart, a listener gap): what they last said no longer holds,
+    /// so the terminal and process layers decide until a hook speaks again.
+    pub fn hooks_lost(&mut self) {
+        self.inputs.hook = None;
+        self.open_tools.clear();
     }
 
     pub fn on_hook(&mut self, event: &HookEvent, now: f64) {
@@ -1943,5 +1960,54 @@ mod tests {
         let mut exited = StatusTracker::agent(0.0);
         exited.on_exit(Some(0));
         assert_eq!(exited.next_change_at(1.0), None);
+    }
+
+    #[test]
+    fn a_turn_is_open_from_its_start_until_a_hook_ends_it() {
+        let hook = |kind| HookEvent::bare(kind);
+        let mut tracker = StatusTracker::agent(0.0);
+        assert!(!tracker.turn_open());
+        tracker.on_hook(&hook(HookKind::TurnStarted), 1.0);
+        assert!(tracker.turn_open());
+        tracker.on_hook(&hook(HookKind::PermissionNeeded), 2.0);
+        assert!(tracker.turn_open(), "a prompt is inside the turn");
+        tracker.on_hook(&hook(HookKind::TurnDone), 3.0);
+        assert!(!tracker.turn_open());
+        tracker.on_hook(&hook(HookKind::ToolStarted { key: "k".into(), id: None }), 4.0);
+        assert!(tracker.turn_open(), "a call after the stop reopens the turn");
+        tracker.on_hook(&hook(HookKind::TurnFailed("x".into())), 5.0);
+        assert!(!tracker.turn_open());
+    }
+
+    #[test]
+    fn lost_hooks_leave_the_terminal_and_the_process_to_decide() {
+        let mut tracker = StatusTracker::agent(0.0);
+        tracker.on_hook(&HookEvent::bare(HookKind::TurnStarted), 1.0);
+        tracker.on_terminal(TerminalSignal::Progress(ProgressSignal::Working), 1.0);
+        tracker.on_output(1.0);
+        tracker.hooks_lost();
+        assert!(!tracker.turn_open());
+        assert_eq!(tracker.status(2.0), AgentStatus::Working, "the terminal still says busy");
+        tracker.on_terminal(TerminalSignal::Progress(ProgressSignal::Off), 3.0);
+        assert_eq!(tracker.status(3.5), AgentStatus::Working, "printing a moment ago");
+        assert_eq!(tracker.status(20.0), AgentStatus::NeedsYou(Reason::Quiet));
+    }
+
+    #[test]
+    fn a_status_tracker_survives_a_json_round_trip() {
+        let mut tracker = StatusTracker::agent(0.5);
+        tracker.set_hooked(true);
+        tracker.on_hook(&HookEvent::bare(HookKind::TurnStarted), 1.25);
+        tracker.on_hook(
+            &HookEvent::bare(HookKind::ToolStarted {
+                key: "Bash\nls".into(),
+                id: Some("c1".into()),
+            }),
+            1.5,
+        );
+        tracker.on_hook(&HookEvent::bare(HookKind::PermissionNeeded), 1.75);
+        tracker.on_output(2.0);
+        let text = serde_json::to_string(&tracker).unwrap();
+        assert_eq!(serde_json::from_str::<StatusTracker>(&text).unwrap(), tracker);
     }
 }

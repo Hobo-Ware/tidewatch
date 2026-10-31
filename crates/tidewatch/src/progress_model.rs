@@ -1,13 +1,12 @@
 //! What the progress screens say about a ledger, as plain data: ring, bars, rows, tags (pure).
 
-use tidewatch_core::civil_date::Date;
 use tidewatch_core::kind::Kind;
-use tidewatch_core::progress::{Choice, Entry, Ledger, Mark, Phase, PhaseState, State, When, real};
+use tidewatch_core::panel_rules::{Waiting, ago, fresh, waiting_of};
+use tidewatch_core::progress::{Choice, Entry, Ledger, Mark, Phase, PhaseState, State, real};
 use tidewatch_core::progress_report::{StageKind, WaitingOn};
 use tidewatch_core::stages::{self, Group, Stage};
 
 use crate::job_model::{BarCard, Card};
-use crate::progress_stale::fresh;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Tone {
@@ -357,17 +356,6 @@ pub(crate) fn questions(ledger: &Ledger) -> Vec<&Entry> {
     real(&ledger.needs_you).collect()
 }
 
-/// `just now`, `4 min ago`, `2 h ago`, `3 d ago`.
-pub(crate) fn ago(now_ms: i64, then_ms: i64) -> String {
-    let secs = (now_ms - then_ms).max(0) / 1000;
-    match secs {
-        0..45 => "just now".to_owned(),
-        45..3600 => format!("{} min ago", (secs / 60).max(1)),
-        3600..86_400 => format!("{} h ago", secs / 3600),
-        _ => format!("{} d ago", secs / 86_400),
-    }
-}
-
 /// The quiet line under the goal: the state word, then when the ledger changed. A stale ledger
 /// says it is the progress that is old, not the agent.
 pub(crate) fn updated(now_ms: i64, then_ms: Option<i64>, stale: bool) -> Option<String> {
@@ -498,35 +486,6 @@ pub(crate) fn ask_of(ledger: &Ledger) -> Option<Ask> {
     }
 }
 
-/// What a card says of the thing the agent waits on, and when it falls due.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct Waiting {
-    pub(crate) label: String,
-    pub(crate) date: Option<Date>,
-}
-
-/// What a waiting ledger waits on: the typed `waiting_on`, or for a ledger written in markdown
-/// the soonest open dated item of its Scheduled list, else its first open `on:` item.
-pub(crate) fn waiting_of(ledger: &Ledger) -> Option<Waiting> {
-    if let Some(waiting) = &ledger.waiting_on {
-        let date = match waiting {
-            WaitingOn::Date(date) => Some(*date),
-            _ => None,
-        };
-        return Some(Waiting { label: waiting.label(), date });
-    }
-    let open =
-        || ledger.scheduled.iter().filter(|item| !matches!(item.mark, Mark::Done | Mark::Skipped));
-    let dated = open().filter_map(|item| item.when.date()).min();
-    if let Some(date) = dated {
-        return Some(Waiting { label: date.to_string(), date: Some(date) });
-    }
-    open().find_map(|item| match &item.when {
-        When::On(event) => Some(Waiting { label: event.clone(), date: None }),
-        _ => None,
-    })
-}
-
 pub(crate) fn look(ledger: &Ledger, stale: bool) -> Look {
     let state = fresh(ledger, stale).shown_state();
     look_as(ledger, stale, state)
@@ -552,6 +511,7 @@ pub(crate) fn look_as(ledger: &Ledger, stale: bool, state: State) -> Look {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tidewatch_core::civil_date::Date;
 
     fn ledger(text: &str) -> Ledger {
         Ledger::parse(text)
@@ -945,22 +905,7 @@ mod tests {
     }
 
     #[test]
-    fn ago_steps_from_now_to_days() {
-        let cases = [
-            (0, "just now"),
-            (44_000, "just now"),
-            (45_000, "1 min ago"),
-            (240_000, "4 min ago"),
-            (3_599_000, "59 min ago"),
-            (3_600_000, "1 h ago"),
-            (7_300_000, "2 h ago"),
-            (86_400_000, "1 d ago"),
-            (3 * 86_400_000, "3 d ago"),
-            (-5_000, "just now"),
-        ];
-        for (diff, want) in cases {
-            assert_eq!(ago(1_000_000_000 + diff, 1_000_000_000), want, "{diff}");
-        }
+    fn updated_says_how_old_the_progress_is() {
         assert_eq!(updated(5_000, None, false), None);
         assert_eq!(updated(5_000, Some(0), false).as_deref(), Some("updated just now"));
         assert_eq!(updated(480_000, Some(0), true).as_deref(), Some("progress updated 8 min ago"));

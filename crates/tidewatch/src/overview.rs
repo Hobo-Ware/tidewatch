@@ -1124,7 +1124,7 @@ mod tests {
     const WAITS_ON_NOTHING: &str = "# Goal\nRoll out the strict rule\n\n## Status\nphase: 4\nstate: waiting\nnote: 8h after deploy, 0 refusals seen\n\n## Checklist\n### 1. Plan\n- [x] Write it\n### 4. Done\n- [x] Deploy\n\n## Needs you\n- nothing\n\n## Scheduled\n- [ ] 2026-11-01 -- Count the refusals -- confirm the rule held\n";
 
     fn from_markdown(title: &str, status: AgentStatus, markdown: &str, next: Option<Next>) -> Row {
-        use crate::progress_stale::{Live, standing};
+        use tidewatch_core::panel_rules::{Live, standing};
         let ledger = tidewatch_core::progress::Ledger::parse(markdown);
         let reported = standing(&ledger, None, Live::default(), (false, false));
         let mut row = row(1, title, status);

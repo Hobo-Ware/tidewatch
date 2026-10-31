@@ -80,7 +80,7 @@ pub struct Sample {
 }
 
 /// One reading of a job, from any source. A field left `None` keeps what the job has.
-#[derive(Clone, Debug, Default, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct Report {
     pub name: String,
     pub done: Option<f64>,
