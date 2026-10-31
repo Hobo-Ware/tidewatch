@@ -1,10 +1,10 @@
-//! Settings pieces: switch, rows, buttons, pills, disclosure, option cards, save bar.
+//! Settings pieces: switch, rows, buttons, pills, disclosure, save bar.
 
 use std::cell::Cell;
 
 use egui::{Event, Modifiers, PointerButton, Pos2, RawInput, pos2};
 
-use super::editor::{Bar, BarAction, option_card_height, save_bar};
+use super::editor::{Bar, BarAction, save_bar};
 use super::*;
 
 fn raw(events: Vec<Event>) -> RawInput {
@@ -165,33 +165,6 @@ fn a_pick_reports_the_clicked_option_and_a_disclosure_opens_and_closes() {
     assert!(open.get(), "a click opens it");
     click(&ctx, at, frame);
     assert!(!open.get(), "and another closes it");
-}
-
-#[test]
-fn option_cards_grow_with_their_text_and_report_clicks() {
-    let ctx = crate::fonts::test_context();
-    let _ = ctx.run_ui(raw(vec![]), |ui| {
-        let short = option_card_height(ui, 120.0, "edits");
-        let long = option_card_height(ui, 120.0, "no limits, worktree only, anywhere at all");
-        assert!(long > short, "{short} {long}");
-    });
-    let rect = Cell::new(Rect::NOTHING);
-    let clicked = Cell::new(false);
-    let frame = |ui: &mut Ui| {
-        let response = super::editor::option_card(
-            ui,
-            vec2(120.0, 60.0),
-            "Auto",
-            "edits and runs",
-            false,
-            false,
-        );
-        rect.set(response.rect);
-        clicked.set(clicked.get() || response.clicked());
-    };
-    warm(&ctx, frame);
-    click(&ctx, rect.get().center(), frame);
-    assert!(clicked.get());
 }
 
 #[test]
