@@ -119,7 +119,7 @@ fn the_page_renders_every_state_and_asks_for_nothing_until_clicked() {
 fn clicking_a_row_of_the_list_selects_that_profile() {
     let mut harness = Harness::new(editor());
     let last = harness.editor.drafts.len() - 1;
-    let found = harness.scan(40..320, 100..700, |h| h.editor.selected == last);
+    let found = harness.scan(114..394, 100..700, |h| h.editor.selected == last);
     assert!(found, "a row of the list selects its profile");
     assert!(!harness.editor.dirty, "choosing a profile is not an edit");
 }
@@ -128,7 +128,7 @@ fn clicking_a_row_of_the_list_selects_that_profile() {
 fn clicking_a_permission_card_sets_the_level_and_marks_the_page_unsaved() {
     let mut harness = Harness::new(editor());
     let before = harness.editor.drafts[0].level;
-    let found = harness.scan(360..1010, 300..520, |h| h.editor.drafts[0].level != before);
+    let found = harness.scan(434..934, 300..520, |h| h.editor.drafts[0].level != before);
     assert!(found, "one of the five cards changes the level");
     assert!(harness.editor.dirty);
 }
@@ -137,7 +137,7 @@ fn clicking_a_permission_card_sets_the_level_and_marks_the_page_unsaved() {
 fn new_profile_adds_one_and_selects_it() {
     let mut harness = Harness::new(editor());
     let count = harness.editor.drafts.len();
-    let found = harness.scan(900..1020, 40..110, |h| h.editor.drafts.len() > count);
+    let found = harness.scan(820..940, 40..110, |h| h.editor.drafts.len() > count);
     assert!(found, "the button at the top right adds a profile");
     assert_eq!(harness.editor.selected, count);
     assert!(harness.editor.dirty);
@@ -148,7 +148,7 @@ fn the_save_bar_saves_and_reverts_only_once_there_are_edits() {
     let mut harness = Harness::new(editor());
     harness.frame(vec![]);
     let mut saves = None;
-    for x in (860..1010).step_by(6) {
+    for x in (786..936).step_by(6) {
         saves = saves.or(harness.click(pos2(x as f32, 698.0)));
     }
     assert!(saves.is_none(), "no bar, no Save");
@@ -157,7 +157,7 @@ fn the_save_bar_saves_and_reverts_only_once_there_are_edits() {
     harness.editor.touched();
     harness.frame(vec![]);
     let mut saves = None;
-    for x in (952..1010).step_by(6) {
+    for x in (878..936).step_by(6) {
         saves = saves.or(harness.click(pos2(x as f32, 698.0)));
     }
     assert!(matches!(saves, Some(Action::Save)));
@@ -166,7 +166,7 @@ fn the_save_bar_saves_and_reverts_only_once_there_are_edits() {
         "saving is the app's job, the editor stays dirty until it answers"
     );
 
-    for x in (860..940).step_by(6) {
+    for x in (786..866).step_by(6) {
         harness.click(pos2(x as f32, 698.0));
         if !harness.editor.dirty {
             break;

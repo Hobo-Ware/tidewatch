@@ -7,7 +7,8 @@ use egui::{
 
 use super::{
     BAR, CARD, CARD_LINE, HEADER_H, ITEM, ITEM_LINE, MUTED, ORANGE, RED, RED_FILL, RED_LINE, SOFT,
-    TEAL, TEAL_TEXT, TEXT, Tone, badge, button, button_width, font_semibold, heading, lerp_color,
+    TEAL, TEAL_TEXT, TEXT, Tone, badge, button, button_width, font_semibold, header_at, heading,
+    lerp_color,
 };
 use crate::screen_kit::TEXT_BODY;
 use crate::screen_kit::{Size, selection_row};
@@ -266,47 +267,30 @@ pub(crate) fn card_header(
 }
 
 const LIST_WIDTH: f32 = 300.0;
-const PAGE_PAD: f32 = 40.0;
+const PAGE_BOTTOM: f32 = 24.0;
 const COLUMN_GAP: f32 = 20.0;
 
+/// The page's column: the same centered column every Settings page keeps, from the top of `area`.
 pub(crate) fn page_area(area: Rect) -> Rect {
-    Rect::from_min_max(area.min + vec2(PAGE_PAD, 0.0), area.max - vec2(PAGE_PAD, 24.0))
+    let column = crate::settings_view::content_column(area);
+    Rect::from_min_max(column.min, column.max - vec2(0.0, PAGE_BOTTOM))
 }
 
-/// The page title with its button at the right, in a 48 px header over a full-width divider.
-/// Returns where the header ends and whether the button was clicked. The title carries the file
+/// The page title with its button at the right, in a 48 px header over a divider across `area`.
+/// Returns where the header ends and whether the button was clicked. The header carries the file
 /// the page edits as a tooltip.
 pub(crate) fn page_top(
     ui: &mut Ui,
+    area: Rect,
     inner: Rect,
-    title: &str,
-    subtitle: &str,
-    file: &str,
+    (title, subtitle, file): (&str, &str, &str),
     action: &str,
 ) -> (f32, bool) {
     let bar = Rect::from_min_size(inner.min, vec2(inner.width(), HEADER_H));
-    let painter = ui.painter();
-    let title_rect =
-        painter.text(bar.left_center(), Align2::LEFT_CENTER, title, font_semibold(18.0), TEXT);
     let width = button_width(ui, action, Size::Compact);
-    let room = bar.right() - width - 14.0 - (title_rect.right() + 14.0);
-    let subtitle_area = Rect::from_min_size(
-        pos2(title_rect.right() + 14.0, bar.top()),
-        vec2(room.max(0.0), HEADER_H),
-    );
-    ui.painter_at(subtitle_area).text(
-        subtitle_area.left_center() + vec2(0.0, 1.0),
-        Align2::LEFT_CENTER,
-        subtitle,
-        FontId::proportional(13.0),
-        MUTED,
-    );
+    let title_rect =
+        header_at(ui, bar, bar.right() - width - 14.0, area.x_range(), title, subtitle);
     ui.interact(title_rect, ui.id().with("page_top_title"), Sense::hover()).on_hover_text(file);
-    ui.painter().hline(
-        (inner.left() - PAGE_PAD)..=(inner.right() + PAGE_PAD),
-        bar.bottom(),
-        Stroke::new(1.0, CARD_LINE),
-    );
     let at = Rect::from_center_size(
         pos2(bar.right() - width / 2.0, bar.center().y),
         vec2(width, Size::Compact.height()),

@@ -193,6 +193,15 @@ fn content_side(width: f32) -> f32 {
     ((width - CONTENT_MAX) / 2.0).max(CONTENT_MIN_SIDE)
 }
 
+/// The column every Settings page keeps inside `main`: at most `CONTENT_MAX` wide, centered.
+pub(crate) fn content_column(main: Rect) -> Rect {
+    let side = content_side(main.width());
+    Rect::from_min_max(
+        pos2(main.left() + side, main.top()),
+        pos2(main.right() - side, main.bottom()),
+    )
+}
+
 fn sidebar(ui: &mut Ui, rect: Rect, settings: &mut Settings, updates: &Updates) {
     let painter = ui.painter();
     painter.rect_filled(rect, CornerRadius::ZERO, SIDEBAR);

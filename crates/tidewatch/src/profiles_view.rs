@@ -94,10 +94,13 @@ pub(crate) fn page(
     let inner = page_area(area);
     let (bottom, new) = page_top(
         ui,
+        area,
         inner,
-        "Agents and profiles",
-        "A profile is an agent with its model, effort and permission level.",
-        file,
+        (
+            "Agents and profiles",
+            "A profile is an agent with its model, effort and permission level.",
+            file,
+        ),
         "New profile",
     );
     if new {
