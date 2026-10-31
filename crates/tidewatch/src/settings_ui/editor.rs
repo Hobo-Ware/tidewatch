@@ -1,79 +1,18 @@
 //! The pieces of a Settings page that edits a list: list rows, editor card, option cards, save bar.
 
+use egui::RectAlign;
 use egui::{
     Align, Align2, Color32, CornerRadius, CursorIcon, FontId, Layout, Rect, Response, RichText,
-    Sense, Stroke, StrokeKind, Ui, UiBuilder, Vec2, pos2, vec2,
+    Sense, Stroke, StrokeKind, Ui, UiBuilder, pos2, vec2,
 };
+use stdusk_egui::widgets::style_menu;
 
 use super::{
-    BAR, CARD, CARD_LINE, HEADER_H, ITEM, ITEM_LINE, MUTED, ORANGE, RED, RED_FILL, RED_LINE, SOFT,
-    TEAL, TEAL_TEXT, TEXT, Tone, badge, button, button_width, font_semibold, header_at, heading,
-    lerp_color,
+    BAR, CARD, CARD_LINE, HEADER_H, ITEM, ITEM_LINE, MUTED, ORANGE, RED, SOFT, TEAL, TEXT, Tone,
+    badge, button, button_width, font_semibold, header_at, heading,
 };
 use crate::screen_kit::TEXT_BODY;
-use crate::screen_kit::{Size, selection_row};
-
-const CARD_PAD: f32 = 10.0;
-
-pub(crate) fn option_card_height(ui: &Ui, width: f32, detail: &str) -> f32 {
-    let title = ui.painter().layout_no_wrap("Ag".to_owned(), font_semibold(13.0), TEXT);
-    let detail = ui.painter().layout(
-        detail.to_owned(),
-        FontId::proportional(12.0),
-        MUTED,
-        width - 2.0 * CARD_PAD,
-    );
-    2.0 * CARD_PAD + title.size().y + 3.0 + detail.size().y
-}
-
-pub(crate) fn option_card(
-    ui: &mut Ui,
-    size: Vec2,
-    title: &str,
-    detail: &str,
-    selected: bool,
-    danger: bool,
-) -> Response {
-    let (title_color, line, fill) = match (selected, danger) {
-        (true, false) => (TEAL_TEXT, TEAL, ITEM),
-        (true, true) => (RED, RED, RED_FILL),
-        (false, false) => (TEXT, ITEM_LINE, ITEM),
-        (false, true) => (RED, RED_LINE, ITEM),
-    };
-    let title_galley = ui.painter().layout_no_wrap(
-        title.to_owned(),
-        if selected { font_semibold(13.0) } else { FontId::proportional(13.0) },
-        title_color,
-    );
-    let detail_galley = ui.painter().layout(
-        detail.to_owned(),
-        FontId::proportional(12.0),
-        MUTED,
-        size.x - 2.0 * CARD_PAD,
-    );
-    let (rect, response) = ui.allocate_exact_size(size, Sense::click());
-    let fill =
-        if response.hovered() && !selected { lerp_color(fill, Color32::WHITE, 0.04) } else { fill };
-    let painter = ui.painter();
-    if selected && !danger {
-        painter.rect_filled(rect, CornerRadius::same(8), ITEM);
-        selection_row(painter, rect, true, false);
-    } else {
-        painter.rect_filled(rect, CornerRadius::same(8), fill);
-        painter.rect_stroke(
-            rect,
-            CornerRadius::same(8),
-            Stroke::new(1.0, line),
-            StrokeKind::Inside,
-        );
-    }
-    let title_pos = rect.min + vec2(CARD_PAD, CARD_PAD);
-    let detail_pos = title_pos + vec2(0.0, title_galley.size().y + 3.0);
-    painter.galley(title_pos, title_galley, title_color);
-    painter.galley(detail_pos, detail_galley, MUTED);
-    kelp_ui::widgets::focus_ring(ui, &response, 8.0);
-    response.on_hover_cursor(CursorIcon::PointingHand)
-}
+use crate::screen_kit::{Glyph, Size, glyph_button, selection_row};
 
 #[derive(Clone, Copy, Debug, Default)]
 pub(crate) struct Bar<'a> {
@@ -105,20 +44,28 @@ pub(crate) fn save_bar(ui: &mut Ui, bar: &Bar) -> Option<BarAction> {
     ui.painter().rect_filled(rect, corner, BAR);
     ui.painter().hline(rect.x_range(), rect.top(), Stroke::new(1.0, CARD_LINE));
     let mut action = None;
-    let mut inner = ui.new_child(
-        UiBuilder::new()
-            .max_rect(rect.shrink2(vec2(20.0, 0.0)))
-            .layout(Layout::left_to_right(Align::Center)),
+    let inner_rect = rect.shrink2(vec2(20.0, 0.0));
+    let buttons_w = button_width(ui, "Save", Size::Regular)
+        + if bar.can_revert { 10.0 + button_width(ui, "Revert", Size::Regular) } else { 0.0 };
+    let mut text_room = inner_rect;
+    text_room.max.x -= buttons_w + 10.0;
+    let mut message = ui.new_child(
+        UiBuilder::new().max_rect(text_room).layout(Layout::left_to_right(Align::Center)),
     );
-    inner.spacing_mut().item_spacing.x = 10.0;
-    let (dot_rect, _) = inner.allocate_exact_size(vec2(8.0, 8.0), Sense::hover());
+    message.spacing_mut().item_spacing.x = 10.0;
+    let (dot_rect, _) = message.allocate_exact_size(vec2(8.0, 8.0), Sense::hover());
     let (dot, text, color) = match (bar.error, bar.saving) {
         (Some(error), _) => (RED, error, RED),
         (None, true) => (TEAL, "Saving...", SOFT),
         (None, false) => (ORANGE, "Unsaved changes", SOFT),
     };
-    inner.painter().circle_filled(dot_rect.center(), 4.0, dot);
-    inner.label(RichText::new(text).size(13.0).color(color));
+    message.painter().circle_filled(dot_rect.center(), 4.0, dot);
+    message
+        .add(egui::Label::new(RichText::new(text).size(13.0).color(color)).truncate())
+        .on_hover_text(text);
+    let mut inner = ui.new_child(
+        UiBuilder::new().max_rect(inner_rect).layout(Layout::left_to_right(Align::Center)),
+    );
     inner.with_layout(Layout::right_to_left(Align::Center), |ui| {
         ui.spacing_mut().item_spacing.x = 10.0;
         let can_save = bar.dirty && !bar.saving;
@@ -207,6 +154,7 @@ pub(crate) fn list_item(ui: &mut Ui, item: &Item) -> Response {
 }
 
 const CARD_HEADER: f32 = 76.0;
+const MENU_W: f32 = 180.0;
 const CARD_RADIUS: u8 = 12;
 
 pub(crate) struct CardRects {
@@ -236,6 +184,8 @@ pub(crate) fn split_card(ui: &Ui, rect: Rect, bar: bool) -> CardRects {
     CardRects { header, body, bar }
 }
 
+/// The card's header: the face, the name and a line under it on the left, and a `...` button at
+/// the right edge whose menu holds Delete. Returns whether Delete was picked.
 pub(crate) fn card_header(
     ui: &mut Ui,
     header: Rect,
@@ -243,9 +193,9 @@ pub(crate) fn card_header(
     name: &str,
     line: &str,
 ) -> bool {
-    let delete_w = button_width(ui, "Delete", Size::Compact);
+    let more_w = Size::Compact.height();
     let mut room = header.shrink2(vec2(20.0, 18.0));
-    room.max.x -= delete_w + 14.0;
+    room.max.x -= more_w + 14.0;
     let mut left =
         ui.new_child(UiBuilder::new().max_rect(room).layout(Layout::left_to_right(Align::Center)));
     left.spacing_mut().item_spacing.x = 14.0;
@@ -258,13 +208,30 @@ pub(crate) fn card_header(
         ui.add(egui::Label::new(RichText::new(line).size(13.0).color(MUTED)).truncate())
             .on_hover_text(line);
     });
-    let width = delete_w;
     let at = Rect::from_center_size(
-        pos2(header.right() - 20.0 - width / 2.0, header.center().y),
-        vec2(width, Size::Compact.height()),
+        pos2(header.right() - 20.0 - more_w / 2.0, header.center().y),
+        vec2(more_w, more_w),
     );
     let mut right = ui.new_child(UiBuilder::new().max_rect(at));
-    button(&mut right, "Delete", Tone::Danger, Size::Compact).clicked()
+    let more = glyph_button(&mut right, Glyph::More, "More for this profile", Size::Compact);
+    let mut delete = false;
+    let asked = ui.id().with("dev_profile_menu");
+    if ui.data(|data| data.get_temp::<bool>(asked)).is_none() {
+        ui.data_mut(|data| data.insert_temp(asked, true));
+        if std::env::var("TIDEWATCH_DEV_PROFILE_MENU").is_ok_and(|v| v == "1") {
+            egui::Popup::open_id(ui.ctx(), egui::Popup::default_response_id(&more));
+        }
+    }
+    egui::Popup::menu(&more).align(RectAlign::BOTTOM_END).gap(4.0).width(MENU_W).show(|ui| {
+        style_menu(ui);
+        let row = egui::Button::new(RichText::new("Delete").color(RED))
+            .min_size(vec2(ui.available_width(), 0.0));
+        if ui.add(row).clicked() {
+            delete = true;
+            ui.close();
+        }
+    });
+    delete
 }
 
 const LIST_WIDTH: f32 = 300.0;

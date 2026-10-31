@@ -466,7 +466,12 @@ pub(crate) fn disclosure<R>(
 ) -> Option<R> {
     let id = ui.make_persistent_id(("disclosure", id));
     let mut open = ui.data(|data| data.get_temp::<bool>(id)).unwrap_or(false);
-    let galley = ui.painter().layout_no_wrap(label.to_owned(), FontId::proportional(14.0), SOFT);
+    let galley = ui.painter().layout(
+        label.to_owned(),
+        FontId::proportional(14.0),
+        SOFT,
+        (ui.available_width() - 22.0).max(0.0),
+    );
     let (rect, response) =
         ui.allocate_exact_size(vec2(galley.size().x + 22.0, galley.size().y + 8.0), Sense::click());
     if response.clicked() {

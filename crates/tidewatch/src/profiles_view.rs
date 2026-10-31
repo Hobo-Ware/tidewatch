@@ -12,13 +12,14 @@ use tidewatch_core::profiles::default_effort_for;
 use crate::catalog::Availability;
 use crate::profile_editor::{Draft, Editor, Group};
 use crate::screen_kit::{badge_colors, badge_letter, field_label};
+use crate::segmented;
 use crate::settings_ui::editor::{
-    Bar, BarAction, Item, card_header, columns, list_item, option_card, option_card_height,
-    page_area, page_top, save_bar, split_card,
+    Bar, BarAction, Item, card_header, columns, list_item, page_area, page_top, save_bar,
+    split_card,
 };
 use crate::settings_ui::{
-    CARD, FAINT, GREEN, MUTED, ORANGE, RED, SOFT, TEAL_TEXT, disclosure, fade_edges, field, note,
-    pick, switch_line,
+    CARD, FAINT, GREEN, MUTED, ORANGE, RED, SOFT, TEAL_TEXT, caption, disclosure, fade_edges,
+    field, note, switch_line,
 };
 use crate::settings_view::Action;
 
@@ -35,11 +36,11 @@ const EFFORTS: [(&str, &str); 6] = [
 
 pub(crate) fn level_note(level: Level) -> &'static str {
     match level {
-        Level::Plan => "looks, never changes",
-        Level::Ask => "asks before each step",
-        Level::Edits => "edits, asks to run",
-        Level::Auto => "edits and runs",
-        Level::Yolo => "no limits, worktree only",
+        Level::Plan => "Looks, never changes",
+        Level::Ask => "Asks before each step",
+        Level::Edits => "Edits, asks to run",
+        Level::Auto => "Edits and runs",
+        Level::Yolo => "No limits, worktree only",
     }
 }
 
@@ -57,18 +58,28 @@ fn probe_label(availability: Option<&Availability>) -> (String, Color32) {
     }
 }
 
-fn summary(draft: &Draft, agent: &str) -> String {
-    let mut parts = vec![agent.to_owned()];
-    let model = draft.model.trim();
-    if !model.is_empty() {
-        parts.push(model.to_owned());
-    }
-    let effort = draft.effort.trim();
-    if !effort.is_empty() {
-        parts.push(format!("{effort} effort"));
+fn summary(draft: &Draft) -> String {
+    let mut parts = Vec::new();
+    for part in [draft.model.trim(), draft.effort.trim()] {
+        if !part.is_empty() {
+            parts.push(part.to_owned());
+        }
     }
     parts.push(draft.level.label().to_owned());
     parts.join(" \u{b7} ")
+}
+
+fn effort_line(effort: &str, default: Option<&str>) -> String {
+    match (effort.trim(), default) {
+        ("", Some(default)) => format!("The agent's own effort, {default} for this model."),
+        ("", None) => "The agent's own effort.".to_owned(),
+        ("low", _) => "Quick answers with little thinking.".to_owned(),
+        ("medium", _) => "Balanced speed and depth.".to_owned(),
+        ("high", _) => "Thinks longer before it answers.".to_owned(),
+        ("xhigh", _) => "Deep thinking for hard problems.".to_owned(),
+        ("max", _) => "The most thinking the model allows.".to_owned(),
+        _ => "Passed to the agent as written.".to_owned(),
+    }
 }
 
 fn effort_choices(current: &str, default: Option<&str>) -> Vec<(String, String)> {
@@ -191,10 +202,6 @@ fn editor_card(ui: &mut Ui, rect: Rect, editor: &mut Editor, file: &str) -> Opti
         return None;
     };
     let agents = editor.agents().to_vec();
-    let agent_name = agents
-        .iter()
-        .find(|(id, _)| *id == selected.agent)
-        .map_or_else(|| format!("{} (unknown)", selected.agent), |(_, name)| name.clone());
     let error = editor.error.clone();
     let bar = Bar {
         dirty: editor.dirty,
@@ -205,13 +212,8 @@ fn editor_card(ui: &mut Ui, rect: Rect, editor: &mut Editor, file: &str) -> Opti
     };
     let parts = split_card(ui, rect, bar.shows());
     let (letter, colors) = tint(&selected.agent);
-    let delete = card_header(
-        ui,
-        parts.header,
-        Some((&letter, colors)),
-        &selected.name,
-        &summary(&selected, &agent_name),
-    );
+    let delete =
+        card_header(ui, parts.header, Some((&letter, colors)), &selected.name, &summary(&selected));
     let mut changed = false;
     let mut body =
         ui.new_child(UiBuilder::new().max_rect(parts.body).layout(Layout::top_down(Align::Min)));
@@ -245,7 +247,6 @@ fn editor_card(ui: &mut Ui, rect: Rect, editor: &mut Editor, file: &str) -> Opti
 
 fn form(ui: &mut Ui, draft: &mut Draft, agents: &[(String, String)]) -> bool {
     let mut changed = false;
-    let width = ui.available_width();
     ui.spacing_mut().item_spacing.x = 20.0;
     let previous_model = draft.model.clone();
     ui.columns(2, |columns| {
@@ -260,26 +261,30 @@ fn form(ui: &mut Ui, draft: &mut Draft, agents: &[(String, String)]) -> bool {
     field_label(ui, "Agent");
     ui.add_space(2.0);
     let names: Vec<&str> = agents.iter().map(|(_, name)| name.as_str()).collect();
-    let active = agents.iter().position(|(id, _)| *id == draft.agent);
-    if let Some(index) = pick(ui, "agent", &names, active) {
+    let active = agents.iter().position(|(id, _)| *id == draft.agent).unwrap_or(usize::MAX);
+    let id = ui.id().with("profile_agent");
+    if let Some(index) = segmented::inline_or_chips(ui, id, &names, &[], &[], active) {
         draft.agent.clone_from(&agents[index].0);
         changed = true;
     }
     ui.add_space(12.0);
     field_label(ui, "Effort");
     ui.add_space(2.0);
-    let efforts = effort_choices(&draft.effort, default_effort_for(&draft.agent, &draft.model));
+    let default = default_effort_for(&draft.agent, &draft.model);
+    let efforts = effort_choices(&draft.effort, default);
     let labels: Vec<&str> = efforts.iter().map(|(_, label)| label.as_str()).collect();
     let current = draft.effort.trim();
-    let active = efforts.iter().position(|(value, _)| value == current);
-    if let Some(index) = pick(ui, "effort", &labels, active) {
+    let active = efforts.iter().position(|(value, _)| value == current).unwrap_or(usize::MAX);
+    let id = ui.id().with("profile_effort");
+    if let Some(index) = segmented::inline_or_chips(ui, id, &labels, &[], &[], active) {
         draft.effort.clone_from(&efforts[index].0);
         changed = true;
     }
+    caption(ui, &effort_line(&draft.effort, default));
     ui.add_space(12.0);
     field_label(ui, "Permission level");
     ui.add_space(2.0);
-    changed |= levels(ui, draft, width);
+    changed |= levels(ui, draft);
     ui.add_space(12.0);
     disclosure(
         ui,
@@ -309,51 +314,21 @@ fn form(ui: &mut Ui, draft: &mut Draft, agents: &[(String, String)]) -> bool {
     changed
 }
 
-const LEVEL_GAP: f32 = 6.0;
-const LEVEL_MIN_W: f32 = 84.0;
-
-/// How many level cards sit in a row of `width`: all of them while each keeps room for its whole
-/// words, else the fewest that do, spread over the same number of rows as evenly as they go.
-pub(crate) fn level_columns(width: f32) -> usize {
-    let count = Level::ALL.len();
-    let fits = ((width + LEVEL_GAP) / (LEVEL_MIN_W + LEVEL_GAP)).floor().max(1.0) as usize;
-    count.div_ceil(count.div_ceil(fits.min(count)))
-}
-
-fn levels(ui: &mut Ui, draft: &mut Draft, width: f32) -> bool {
-    let columns = level_columns(width);
-    let each = ((width - LEVEL_GAP * (columns as f32 - 1.0)) / columns as f32).floor();
-    let height = Level::ALL
-        .iter()
-        .map(|level| option_card_height(ui, each, level_note(*level)))
-        .fold(0.0, f32::max);
-    let mut changed = false;
-    ui.spacing_mut().item_spacing.y = LEVEL_GAP;
-    for row in Level::ALL.chunks(columns) {
-        ui.horizontal(|ui| {
-            ui.spacing_mut().item_spacing.x = LEVEL_GAP;
-            for level in row.iter().copied() {
-                let selected = draft.level == level;
-                let card = option_card(
-                    ui,
-                    vec2(each, height),
-                    level.label(),
-                    level_note(level),
-                    selected,
-                    level == Level::Yolo,
-                );
-                if card.clicked() {
-                    draft.level = level;
-                    changed = true;
-                }
-            }
-        });
+fn levels(ui: &mut Ui, draft: &mut Draft) -> bool {
+    let labels = Level::ALL.map(Level::label);
+    let tones = Level::ALL.map(|level| (level == Level::Yolo).then_some(RED));
+    let active = Level::ALL.iter().position(|level| *level == draft.level).unwrap_or(usize::MAX);
+    let id = ui.id().with("profile_level");
+    let picked = segmented::inline_or_chips(ui, id, &labels, &tones, &[], active);
+    if let Some(index) = picked {
+        draft.level = Level::ALL[index];
     }
+    caption(ui, level_note(draft.level));
     if draft.level == Level::Yolo {
         ui.add_space(2.0);
         note(ui, "YOLO only runs in agent worktree tabs; Other refuses it.", RED);
     }
-    changed
+    picked.is_some()
 }
 
 #[cfg(test)]
