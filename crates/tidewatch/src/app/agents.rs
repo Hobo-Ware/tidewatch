@@ -177,6 +177,12 @@ impl Tidewatch {
         }
         let (focused, minimized) = ctx.input(|i| (i.viewport().focused, i.viewport().minimized));
         let away = notify::window_is_away(focused, minimized);
+        if !away && !self.overview && self.settings.is_none() && self.welcome.is_none() {
+            let shown = self.tabs.active_pane_mut();
+            if let Some(agent) = shown.agent.as_mut() {
+                agent.run.pick_reviewed();
+            }
+        }
         self.panel.collect(&mut self.tabs, now, now_ms);
         let polled =
             agent_frame::poll(&mut self.tabs, TermSnapshot::of, &mut self.notifier, away, now);

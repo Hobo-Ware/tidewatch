@@ -455,7 +455,7 @@ impl Lane {
     }
 
     fn plan(self, painter: &Painter, row: &Row, card_w: f32) -> Plan {
-        let counting = f32::from(u8::from(row.auto_pick.is_some()));
+        let counting = f32::from(u8::from(row.pick_line().is_some()));
         match (self, ask_of(row)) {
             (Self::Needs, Some(ask)) => {
                 let ask = AskLayout::new(painter, ask, card_w);
@@ -947,7 +947,7 @@ fn ask_chips(
 ) -> Option<Pick> {
     let text_x = rect.left() + CARD_PAD + RING + FACE_GAP;
     let why = ask.why.as_deref().map(answer_chips::sentence);
-    let lines = why.iter().chain(row.auto_pick.iter());
+    let lines = why.iter().chain(row.pick_line());
     for (index, line) in lines.enumerate() {
         let galley = ellipsized(
             painter,
@@ -980,7 +980,7 @@ fn second_line(row: &Row, lane: Lane, view: &crate::overview::CardView) -> (Stri
 
 fn ask_row(ui: &mut Ui, painter: &Painter, rect: Rect, row: &Row, button: Rect) -> bool {
     let text_x = rect.left() + CARD_PAD + RING + FACE_GAP;
-    if let Some(line) = &row.auto_pick {
+    if let Some(line) = row.pick_line() {
         let room = (rect.right() - CARD_PAD - text_x).max(1.0);
         let galley =
             ellipsized(painter, line, FontId::proportional(TEXT_SECONDARY), brand::MUTED, room);
@@ -1124,6 +1124,7 @@ mod tests {
             avatar: None,
             kind: AgentKind::Cli("claude".into()),
             auto_pick: None,
+            picked: None,
             idle_secs: 600.0,
             next: None,
             stamp: crate::overview::Stamp::default(),
@@ -1995,6 +1996,21 @@ mod tests {
         let texts = screen.texts();
         assert!(has(&texts, "Picks the recommended answer in 3:40"), "{texts:?}");
         assert!(has(&texts, "The owner wanted it out today"));
+    }
+
+    #[test]
+    fn a_card_for_a_question_tidewatch_answered_sits_in_needs_you_with_a_review_button() {
+        let mut working = row(3, "busy", "acme-web", AgentStatus::Working);
+        working.tone = Tone::Needs;
+        working.picked =
+            Some("Tidewatch picked \"On the stage\" for you. Open the tab to review it".into());
+        let mut screen = Screen::new(overview(vec![working]));
+        let texts = screen.texts();
+        assert!(
+            has(&texts, "Tidewatch picked \"On the stage\" for you. Open the tab to review it"),
+            "{texts:?}"
+        );
+        assert!(has(&texts, "Review") && !has(&texts, "Answer"), "{texts:?}");
     }
 
     #[test]

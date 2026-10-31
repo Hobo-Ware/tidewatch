@@ -11,6 +11,7 @@ use tidewatch_core::avatar::Avatar;
 use tidewatch_core::paths::sent_file_beside;
 use tidewatch_core::question::{self, Reply};
 use tidewatch_core::question_words;
+use tidewatch_core::sent::{Reason as Said, because};
 use tidewatch_core::status::{AgentStatus, Reason};
 use tidewatch_core::transcript::Source;
 
@@ -23,7 +24,9 @@ use crate::dev_reader::DevReader;
 use crate::due::{Due, ask_blocked};
 use crate::due_view::{self, Facts as DueFacts};
 use crate::flow::Flow;
+use crate::flow_glue;
 use crate::note_send::ENTER_DELAY_SECS;
+use crate::outbox::Send;
 use crate::pane::{AgentTab, Body, FirstPrompt, Pane};
 use crate::pr_card_model::CardAction;
 use crate::pr_cards_view::Data as PrData;
@@ -71,6 +74,7 @@ pub(crate) fn start(tabs: &mut Tabs<Pane<PtyTerm>>, ctx: &Context, dev: &DevRead
 /// Takes what every feed read since the last frame, and types what is due into the tabs that were
 /// answering a question. A pasted message gets its Enter from the flow's Enter queue.
 pub(crate) fn drain(tabs: &mut Tabs<Pane<PtyTerm>>, flow: &mut Flow, ctx: &Context, now: f64) {
+    let mut picked = Vec::new();
     for tab in tabs.items_mut() {
         let id = tab.id;
         if let Pane { body: Body::Shell(term), agent: Some(agent), .. } = &mut tab.pane {
@@ -104,7 +108,9 @@ pub(crate) fn drain(tabs: &mut Tabs<Pane<PtyTerm>>, flow: &mut Flow, ctx: &Conte
             }
             close_ended_asks(agent);
         }
-        pick_for_the_absent(&mut tab.pane, ctx, now);
+        if let Some(text) = pick_for_the_absent(&mut tab.pane, ctx, now) {
+            picked.push((id, text));
+        }
         if let Some(agent) = tab.pane.agent.as_mut() {
             if agent.first_prompt != FirstPrompt::NotNeeded && agent.reader.rows.len() > 0 {
                 agent.first_prompt = FirstPrompt::NotNeeded;
@@ -115,6 +121,10 @@ pub(crate) fn drain(tabs: &mut Tabs<Pane<PtyTerm>>, flow: &mut Flow, ctx: &Conte
                 launched.session_id = agent.reader.codex_session_id();
             }
         }
+    }
+    for (tab, text) in picked {
+        let send = Send::auto(&text, Said::AutoPick, because::AUTO_PICK);
+        flow_glue::send_or_queue(tabs, flow, tab, send, ctx, now);
     }
 }
 
@@ -133,26 +143,35 @@ fn waiting_question<T>(pane: &Pane<T>) -> Option<u64> {
 }
 
 /// In a tab that runs on its own, answers the question the user left alone for the wait with the
-/// agent's recommended option, else the first, and wakes the app for the moment it is due.
-fn pick_for_the_absent<T: ShowsScreen>(pane: &mut Pane<T>, ctx: &Context, now: f64) {
+/// agent's recommended option, else the first, and wakes the app for the moment it is due. The tab
+/// stays in Needs you until its owner opens it. Returns what the agent is to be told about it.
+fn pick_for_the_absent<T: ShowsScreen>(
+    pane: &mut Pane<T>,
+    ctx: &Context,
+    now: f64,
+) -> Option<String> {
     let wait = crate::dev_reader::autopick_wait();
     let waiting = waiting_question(pane);
-    let Some(agent) = pane.agent.as_mut() else { return };
+    let agent = pane.agent.as_mut()?;
     let autonomous = agent.autonomous();
     let poll = agent.reader.auto.poll(waiting.filter(|_| autonomous), now, wait);
     match poll {
-        Poll::Idle => {}
+        Poll::Idle => None,
         Poll::Counting { left } => {
             ctx.request_repaint_after(Duration::from_secs_f64(left.clamp(0.0, 1.0) + WAKE_SLACK_S));
+            None
         }
         Poll::Due(seq) => {
-            let Some(asked) = agent.reader.rows.question_of(seq) else { return };
+            let asked = agent.reader.rows.question_of(seq)?.clone();
             let given = question::auto_picks(&asked.questions);
-            if answer_question(pane, seq, Reply::Answered(given), now).is_none()
-                && let Some(agent) = pane.agent.as_mut()
-            {
-                agent.reader.rows.mark_auto_picked(seq);
+            if answer_question(pane, seq, Reply::Answered(given.clone()), now).is_some() {
+                return None;
             }
+            let agent = pane.agent.as_mut()?;
+            agent.reader.rows.mark_auto_picked(seq);
+            agent.run.pick_made(question_words::pick_review_line(&asked.questions, &given));
+            let minutes = (wait / 60.0).round().max(1.0) as u64;
+            Some(question_words::picked_for_you(&asked.questions, &given, minutes))
         }
     }
 }
@@ -1041,11 +1060,17 @@ mod tests {
         pick_for_the_absent(&mut pane, &ctx, 1_000.0 + crate::question_auto::WAIT_SECS - 1.0);
         assert!(receiver.try_recv().is_err());
         assert!(matches!(asked_of(&pane, seq), Asked::Pending));
-        pick_for_the_absent(&mut pane, &ctx, 1_000.0 + crate::question_auto::WAIT_SECS);
+        assert_eq!(pane.agent.as_ref().unwrap().run.pick_to_review(), None);
+        let note = pick_for_the_absent(&mut pane, &ctx, 1_000.0 + crate::question_auto::WAIT_SECS);
         let picked = Given { picked: vec![1], other: None };
         assert_eq!(receiver.recv().unwrap(), Reply::Answered(vec![picked]));
         assert!(matches!(asked_of(&pane, seq), Asked::Answered(_)));
         assert!(pane.agent.as_ref().unwrap().reader.rows.auto_picked(seq));
+        let note = note.expect("the agent is told what was picked for it");
+        assert!(note.starts_with("Tidewatch picked \""), "{note}");
+        assert!(note.contains(" for you after 5 minutes. The user may change it."), "{note}");
+        let line = pane.agent.as_ref().unwrap().run.pick_to_review().map(str::to_owned);
+        assert!(line.is_some_and(|line| line.ends_with("Open the tab to review it")));
     }
 
     #[test]
@@ -1087,6 +1112,7 @@ mod tests {
         assert!(receiver.try_recv().is_err());
         assert!(matches!(asked_of(&pane, seq), Asked::Pending));
         assert!(!pane.agent.as_ref().unwrap().reader.rows.auto_picked(seq));
+        assert_eq!(pane.agent.as_ref().unwrap().run.pick_to_review(), None);
     }
 
     #[test]
@@ -1102,6 +1128,7 @@ mod tests {
         assert_eq!(receiver.recv().unwrap(), Reply::Answered(vec![mine]));
         assert!(receiver.try_recv().is_err());
         assert!(!pane.agent.as_ref().unwrap().reader.rows.auto_picked(seq));
+        assert_eq!(pane.agent.as_ref().unwrap().run.pick_to_review(), None);
     }
 
     fn with_screen(pane: &mut Pane<Fake>, rows: &[&str]) {
