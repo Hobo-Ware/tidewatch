@@ -10,6 +10,7 @@ use tidewatch_core::civil_date::Date;
 use tidewatch_core::end_block::EndBlock;
 use tidewatch_core::meeseeks::elapsed_text;
 use tidewatch_core::meeseeks_log::Poofed;
+use tidewatch_core::panel_view::Why;
 use tidewatch_core::progress_report::StageKind;
 use tidewatch_core::status::{AgentStatus, Reason};
 
@@ -65,6 +66,13 @@ pub(crate) struct Next {
     pub(crate) what: String,
 }
 
+/// How old what a card shows is, and whether the facts contradict its report.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(crate) struct Stamp {
+    pub(crate) age: Option<String>,
+    pub(crate) out_of_date: Option<Why>,
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct Row {
     pub(crate) tab_id: u64,
@@ -95,6 +103,7 @@ pub(crate) struct Row {
     /// Seconds since the status last changed.
     pub(crate) idle_secs: f64,
     pub(crate) next: Option<Next>,
+    pub(crate) stamp: Stamp,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -217,6 +226,7 @@ pub(crate) fn collect<T>(
                 auto_pick: auto_pick_line(agent, now),
                 idle_secs: agent.run.since_change(now),
                 next: None,
+                stamp: Stamp::default(),
             })
         })
         .collect();
@@ -607,6 +617,7 @@ mod tests {
             kind: AgentKind::Cli("claude".into()),
             auto_pick: None,
             idle_secs: 0.0,
+            stamp: Stamp::default(),
             next: None,
         }
     }

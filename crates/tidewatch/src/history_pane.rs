@@ -471,7 +471,9 @@ mod tests {
     use egui::{Event, Modifiers, PointerButton, Pos2, RawInput, Shape};
     use tidewatch_core::progress::Ledger;
 
+    use crate::panel_blocks::Blocks;
     use crate::progress_state::TabLedger;
+    use tidewatch_core::panel_view::Why;
 
     const LEDGER: &str = "# Goal\nShip it\n\n## Status\nstate: working\n\n## Checklist\n### 1. Build\n- [~] Write it\n\n## Needs you\n- Pick one\n";
 
@@ -549,6 +551,12 @@ mod tests {
                     last_turn: last_turn.clone(),
                     shown: None,
                     links: None,
+                    blocks: Blocks {
+                        out_of_date: stale.then_some(Why::OlderThanTurn),
+                        report: Some("8m ago".to_owned()),
+                        ..Blocks::default()
+                    },
+                    marks: &[],
                 });
                 let rect = Rect::from_min_size(pos2(0.0, 0.0), vec2(420.0, 600.0));
                 let face = face.as_ref().map(|avatar| Face { tab: 1, avatar });
@@ -607,11 +615,8 @@ mod tests {
         card.stale = true;
         card.frame(Vec::new());
         assert!(card.at("Pick one").is_none());
-        let line = card.texts.iter().map(|(drawn, _)| drawn.as_str());
-        assert!(
-            line.into_iter()
-                .any(|text| text.ends_with("Working \u{b7} progress updated 8 min ago"))
-        );
+        let drawn = |text: &str| card.texts.iter().any(|(drawn, _)| drawn.ends_with(text));
+        assert!(drawn("Working") && drawn("out of date") && drawn("8m ago"), "{:?}", card.texts);
     }
 
     #[test]

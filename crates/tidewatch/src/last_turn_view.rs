@@ -4,7 +4,7 @@
 //! part says is `LastTurn` and `done_check_view::card_of`; this file only draws it.
 
 use egui::epaint::text::TextFormat;
-use egui::{Color32, FontId, RichText, Sense, Ui, pos2, vec2};
+use egui::{Color32, FontId, Rect, RichText, Sense, Ui, pos2, vec2};
 use jiff::tz::TimeZone;
 use tidewatch_core::pr_status::Tone;
 
@@ -13,6 +13,7 @@ use crate::done_check_glue::Look;
 use crate::done_check_view::{self, Action as CheckAction};
 use crate::last_turn::LastTurn;
 use crate::link_text::Text;
+use crate::panel_blocks;
 use crate::pr_strip::tone_ink;
 use crate::progress_view::Action;
 use crate::reader_view::ellipsized;
@@ -42,9 +43,12 @@ pub(crate) fn spans(text: &str) -> Vec<(String, bool)> {
         .collect()
 }
 
-pub(crate) fn show(ui: &mut Ui, width: f32, turn: &LastTurn) -> Option<Action> {
+pub(crate) fn show(ui: &mut Ui, width: f32, turn: &LastTurn, age: Option<&str>) -> Option<Action> {
     let mut action = None;
-    label(ui, "Last turn", heading(13.0), brand::MUTED);
+    let head = label(ui, "Last turn", heading(13.0), brand::MUTED);
+    if let Some(age) = age {
+        panel_blocks::paint_age(ui.painter(), head.right(), head.center().y - 2.0, age);
+    }
     ui.add_space(6.0);
     let mut shown = 0;
     let mut caption = |ui: &mut Ui, text: &str| {
@@ -75,11 +79,12 @@ pub(crate) fn show(ui: &mut Ui, width: f32, turn: &LastTurn) -> Option<Action> {
     action
 }
 
-fn label(ui: &mut Ui, text: &str, font: FontId, ink: Color32) {
+fn label(ui: &mut Ui, text: &str, font: FontId, ink: Color32) -> Rect {
     let galley = ui.painter().layout_no_wrap(text.to_owned(), font, ink);
     let (rect, _) =
         ui.allocate_exact_size(vec2(ui.available_width(), galley.size().y + 4.0), Sense::hover());
     selectable::galley(ui, rect.left_top(), galley, ink);
+    rect
 }
 
 fn button_row(ui: &mut Ui, add: impl FnOnce(&mut Ui)) {

@@ -5,6 +5,9 @@ use tidewatch_core::civil_date::Date;
 use tidewatch_core::done_check::{Kind, Line, Report, Status, Unverified};
 use tidewatch_core::end_block::EndBlock;
 use tidewatch_core::link_board::{Link, LinkBoard, LinkState, TitleFrom};
+use tidewatch_core::panel_event::StepBy;
+use tidewatch_core::panel_state::MarkSeen;
+use tidewatch_core::panel_view::Why;
 use tidewatch_core::progress::Ledger;
 
 use crate::done_check_glue::{Checked, Look};
@@ -28,6 +31,8 @@ struct Panel {
     holds_keys: bool,
     shown: Option<tidewatch_core::progress::State>,
     links: Option<LinkBoard>,
+    blocks: Blocks,
+    marks: Vec<MarkSeen>,
     texts: Vec<(String, Rect)>,
     action: Option<Action>,
     opened: Vec<String>,
@@ -45,6 +50,8 @@ impl Panel {
             holds_keys: false,
             shown: None,
             links: None,
+            blocks: Blocks::default(),
+            marks: Vec::new(),
             texts: Vec::new(),
             action: None,
             opened: Vec::new(),
@@ -68,6 +75,7 @@ impl Panel {
         let holds_keys = self.holds_keys;
         let shown = self.shown;
         let links = self.links.as_ref();
+        let (blocks, marks) = (&self.blocks, &self.marks);
         let output = self.ctx.run_ui(raw, |ui| {
             if holds_keys {
                 let at = Rect::from_min_size(pos2(0.0, 880.0), vec2(10.0, 10.0));
@@ -86,6 +94,8 @@ impl Panel {
                 last_turn: last_turn.clone(),
                 shown,
                 links,
+                blocks: blocks.clone(),
+                marks,
             };
             action = show(ui, Rect::from_min_size(pos2(0.0, 0.0), size), &input, state);
         });
@@ -256,14 +266,15 @@ fn a_tag_with_nothing_behind_it_is_not_drawn() {
 }
 
 #[test]
-fn the_header_says_the_goal_never_a_ring_count_and_the_meta_line_says_the_reported_state_and_age() {
+fn the_header_says_the_goal_never_a_ring_count_and_the_meta_line_says_the_reported_state() {
     let panel = Panel::new(LONG, 420.0);
     assert!(!panel.texts.iter().any(|(text, _)| text.starts_with("Step ")), "{:?}", panel.texts);
     assert!(!panel.texts.iter().any(|(text, _)| text == "3/13" || text.starts_with("0/")));
     assert!(
-        panel.drawn("\u{25cf} Needs you \u{b7} updated 4 min ago"),
+        panel.drawn("\u{25cf} Needs you"),
         "a question the agent holds makes it needs you, a blocked step does not make it blocked"
     );
+    assert!(!panel.texts.iter().any(|(text, _)| text.contains("updated")), "{:?}", panel.texts);
 }
 
 #[test]
@@ -612,7 +623,7 @@ fn the_needs_you_report_draws_the_board_top_to_bottom() {
     };
     let order = [
         "Link each recap line to its cast, and backfill old rows",
-        "\u{25cf} Needs you \u{b7} updated 4 min ago",
+        "\u{25cf} Needs you",
         "Now",
         "Backfill step 2 is running",
         "Build",
@@ -642,12 +653,13 @@ fn the_needs_you_report_draws_the_board_top_to_bottom() {
 fn a_working_report_has_no_question_card_and_a_done_one_reads_as_a_summary_with_every_stage() {
     let working = recap_panel("working", 520.0);
     assert!(!working.drawn("NEEDS YOU") && working.drawn("Now"));
-    assert!(working.drawn("\u{25cf} Working \u{b7} updated 4 min ago"));
+    assert!(working.drawn("\u{25cf} Working"));
+    assert!(!working.texts.iter().any(|(text, _)| text.contains("updated")));
     let mut done = recap_panel("done", 520.0);
     done.jobs.clear();
     done.frame(Vec::new());
     assert!(done.drawn("Summary") && !done.drawn("Now"), "{:?}", done.texts);
-    assert!(done.drawn("\u{25cf} Done \u{b7} updated 4 min ago"));
+    assert!(done.drawn("\u{25cf} Done"));
     assert!(done.drawn("BUILD") || done.drawn("BACKFILL"));
     assert!(!done.drawn("Show 1 finished stage"), "all stages are over, so all of them show");
 }
@@ -662,7 +674,7 @@ fn a_wait_with_no_job_shows_what_it_waits_on_at_the_right_of_the_now_line() {
     panel.ledger = Some(TabLedger { ledger, updated_ms: Some(0) });
     panel.frame(Vec::new());
     assert!(panel.drawn("PR #2340"), "{:?}", panel.texts);
-    assert!(panel.drawn("\u{25cf} Waiting \u{b7} updated 4 min ago"));
+    assert!(panel.drawn("\u{25cf} Waiting"));
 }
 
 #[test]
@@ -670,7 +682,7 @@ fn the_state_the_tab_shows_decides_the_word_even_when_the_report_says_otherwise(
     let mut panel = recap_panel("done", 520.0);
     panel.shown = Some(tidewatch_core::progress::State::Working);
     panel.frame(Vec::new());
-    assert!(panel.drawn("\u{25cf} Working \u{b7} updated 4 min ago"), "{:?}", panel.texts);
+    assert!(panel.drawn("\u{25cf} Working"), "{:?}", panel.texts);
 }
 
 #[test]
@@ -1027,4 +1039,147 @@ fn a_board_of_only_merged_links_still_shows_the_card_with_the_group() {
     let panel = with_links(ASKING, 420.0, board);
     assert!(panel.drawn("LINKS") && panel.drawn("Merged and closed (1)"));
     assert!(!panel.drawn("#9 fix: round totals"));
+}
+
+fn aged(report: &str) -> Blocks {
+    Blocks { report: Some(report.to_owned()), ..Blocks::default() }
+}
+
+fn rect_of(panel: &Panel, text: &str) -> Rect {
+    panel
+        .texts
+        .iter()
+        .find(|(drawn, _)| drawn == text)
+        .unwrap_or_else(|| panic!("{text:?} not in {:?}", panel.texts))
+        .1
+}
+
+#[test]
+fn the_report_shows_its_age_at_the_right_edge_of_its_meta_row() {
+    let mut panel = Panel::new(LONG, 420.0);
+    panel.blocks = aged("2m ago");
+    panel.frame(Vec::new());
+    let meta = rect_of(&panel, "\u{25cf} Needs you");
+    let age = rect_of(&panel, "2m ago");
+    assert!((meta.center().y - age.center().y).abs() < 2.0, "{meta:?} {age:?}");
+    assert!(age.left() > meta.right() + 20.0 && age.right() > 420.0 - 30.0, "{age:?}");
+    assert!(
+        !panel.drawn("out of date")
+            && !panel.texts.iter().any(|(t, _)| t.contains("happened since"))
+    );
+}
+
+#[test]
+fn a_report_the_facts_contradict_is_tagged_right_after_its_title_with_the_count_under_it() {
+    let mut panel = Panel::new(LONG, 420.0);
+    panel.blocks = Blocks {
+        out_of_date: Some(Why::WorkingButTurnEnded),
+        since: Some("3 things happened since".to_owned()),
+        ..aged("14m ago")
+    };
+    panel.frame(Vec::new());
+    let title = panel.texts.iter().find(|(text, _)| text.starts_with("Add a slugify")).unwrap().1;
+    let tag = rect_of(&panel, "out of date");
+    let meta = rect_of(&panel, "\u{25cf} Needs you");
+    let since = rect_of(&panel, "3 things happened since");
+    assert!((title.center().y - tag.center().y).abs() < 6.0, "{title:?} {tag:?}");
+    assert!(tag.left() >= title.right(), "{title:?} {tag:?}");
+    assert!(
+        since.top() >= meta.bottom() && since.left() <= meta.left() + 0.5,
+        "{meta:?} {since:?}"
+    );
+    assert!(panel.drawn("14m ago"));
+}
+
+#[test]
+fn the_age_the_tag_and_the_count_never_overlap_or_leave_the_card() {
+    for width in [200.0, 240.0, 300.0, 420.0, 640.0] {
+        let mut panel = Panel::new(LONG, width);
+        panel.blocks = Blocks {
+            out_of_date: Some(Why::NeedsYouNoQuestion),
+            since: Some("12 things happened since".to_owned()),
+            jobs: Some("no word since 14:02".to_owned()),
+            turn: Some("no word since 14:02".to_owned()),
+            ..aged("11h ago")
+        };
+        panel.jobs = vec![backfill_job()];
+        panel.last_turn = Some(turn(None, Ok(())));
+        panel.size = vec2(width, 2600.0);
+        panel.frame(Vec::new());
+        assert_clean(&panel, width);
+    }
+}
+
+#[test]
+fn a_step_tidewatch_ticked_reads_done_with_by_tidewatch_and_one_the_agent_finished_does_not() {
+    let mut panel = Panel::new(LONG, 420.0);
+    let mark = |step: &str| MarkSeen { step: step.to_owned(), by: StepBy::Tidewatch, at_ms: 0 };
+    panel.marks = vec![
+        mark("Pure logic in its own small function with a unit test"),
+        mark("Smallest change that does the job"),
+    ];
+    panel.frame(Vec::new());
+    let ticked = panel.texts.iter().filter(|(text, _)| text.contains("by Tidewatch")).count();
+    assert_eq!(ticked, 1, "{:?}", panel.texts);
+    assert!(panel.drawn("by Tidewatch"));
+    let agent_done = panel.texts.iter().filter(|(text, _)| text == "reused two helpers").count();
+    assert_eq!(agent_done, 1, "its own note stays and gets no label: {:?}", panel.texts);
+}
+
+#[test]
+fn the_jobs_the_links_and_the_last_turn_each_carry_their_own_age() {
+    let mut panel = Panel::new(LONG, 420.0);
+    panel.size = vec2(420.0, 2600.0);
+    panel.jobs = vec![
+        backfill_job(),
+        Card::Quiet(crate::job_model::QuietLine {
+            id: 9,
+            name: "deploy".to_owned(),
+            elapsed: "3m".to_owned(),
+        }),
+    ];
+    panel.links = Some(five_links());
+    panel.last_turn = Some(turn(None, Ok(())));
+    panel.blocks = Blocks {
+        jobs: Some("1m ago".to_owned()),
+        links: Some("5m ago".to_owned()),
+        turn: Some("3m ago".to_owned()),
+        ..aged("2m ago")
+    };
+    panel.frame(Vec::new());
+    panel.frame(Vec::new());
+    for (head, age) in [("JOBS", "1m ago"), ("LINKS", "5m ago"), ("Last turn", "3m ago")] {
+        let head = rect_of(&panel, head);
+        let age = rect_of(&panel, age);
+        assert!((head.center().y - age.center().y).abs() < 4.0, "{head:?} {age:?}");
+        assert!(age.left() > head.right(), "{head:?} {age:?}");
+    }
+}
+
+#[test]
+fn a_block_with_no_age_draws_none() {
+    let mut panel = Panel::new(LONG, 420.0);
+    panel.size = vec2(420.0, 2600.0);
+    panel.jobs = vec![backfill_job()];
+    panel.last_turn = Some(turn(None, Ok(())));
+    panel.frame(Vec::new());
+    assert!(!panel.drawn("JOBS"));
+    assert!(
+        !panel.texts.iter().any(|(text, _)| text.ends_with("ago") || text.starts_with("no word"))
+    );
+}
+
+#[test]
+fn a_quiet_turn_source_takes_the_age_slot_of_the_header_with_no_word_since() {
+    let mut panel = Panel::new(LONG, 420.0);
+    panel.blocks = Blocks { turn: Some("no word since 14:02".to_owned()), ..aged("8m ago") };
+    panel.frame(Vec::new());
+    let meta = rect_of(&panel, "\u{25cf} Needs you");
+    let quiet = rect_of(&panel, "no word since 14:02");
+    assert!((meta.center().y - quiet.center().y).abs() < 2.0, "{meta:?} {quiet:?}");
+    assert!(quiet.right() > 420.0 - 30.0, "{quiet:?}");
+    assert!(!panel.drawn("8m ago") && !panel.drawn("Last turn"), "{:?}", panel.texts);
+    panel.blocks = Blocks { turn: Some("now".to_owned()), ..aged("8m ago") };
+    panel.frame(Vec::new());
+    assert!(panel.drawn("8m ago") && !panel.drawn("no word since 14:02"));
 }

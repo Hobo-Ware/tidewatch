@@ -15,6 +15,7 @@ use crate::login_item;
 use crate::macos::LoginItem;
 use crate::new_tab_prefs_view::{self, ProfileOption};
 use crate::overview_checklist::Checklist;
+use crate::panel_blocks::OnTime;
 use crate::screen_kit::{Size, quiet_button};
 use crate::segmented;
 use crate::settings_ui::{self, Control, footer_note, page_header, section, switch_row};
@@ -54,6 +55,7 @@ pub(crate) struct General {
     pub(crate) checklist: Option<Checklist>,
     /// The workflow profile of the repo on show, when it is one.
     pub(crate) workflow: Option<workflow_view::View>,
+    pub(crate) on_time: OnTime,
 }
 
 pub(crate) fn page(
@@ -126,7 +128,7 @@ pub(crate) fn page(
         guards_view::card(ui, &general.guards, general.guards_repo.as_ref()).map(Action::Guards);
     let sync = sync_view::card(ui, sync, &general.sync).map(Action::Sync);
     let updates = updates_view::section(ui, updates).map(Action::Updates);
-    about_card(ui);
+    about_card(ui, &general.on_time);
     footer_note(ui, file);
     restore
         .map(Action::Restore)
@@ -164,9 +166,11 @@ fn chat_card(ui: &mut Ui, on: bool) -> Option<bool> {
     changed
 }
 
-fn about_card(ui: &mut Ui) {
+fn about_card(ui: &mut Ui, on_time: &OnTime) {
     section(ui, "About", |ui| {
         settings_ui::row(ui, "Emoji", EMOJI_CREDIT, Control::NONE, |_| {});
+        let late = on_time.late.as_deref().unwrap_or("");
+        settings_ui::row(ui, &on_time.line, late, Control::NONE, |_| {});
     });
 }
 
@@ -581,8 +585,9 @@ mod about_tests {
             screen_rect: Some(Rect::from_min_size(pos2(0.0, 0.0), vec2(900.0, 400.0))),
             ..RawInput::default()
         };
-        let _ = ctx.run_ui(raw.clone(), about_card);
-        let output = ctx.run_ui(raw, about_card);
+        let on_time = OnTime::none();
+        let _ = ctx.run_ui(raw.clone(), |ui| about_card(ui, &on_time));
+        let output = ctx.run_ui(raw, |ui| about_card(ui, &on_time));
         let mut texts = Vec::new();
         for clipped in &output.shapes {
             walk(&clipped.shape, &mut texts);
@@ -594,5 +599,38 @@ mod about_tests {
                 && text.contains("Apache 2.0")),
             "{texts:?}"
         );
+    }
+
+    fn about_texts(on_time: &OnTime) -> Vec<String> {
+        let ctx = crate::fonts::test_context();
+        let raw = RawInput {
+            screen_rect: Some(Rect::from_min_size(pos2(0.0, 0.0), vec2(900.0, 400.0))),
+            ..RawInput::default()
+        };
+        let _ = ctx.run_ui(raw.clone(), |ui| about_card(ui, on_time));
+        let output = ctx.run_ui(raw, |ui| about_card(ui, on_time));
+        let mut texts = Vec::new();
+        for clipped in &output.shapes {
+            walk(&clipped.shape, &mut texts);
+        }
+        texts
+    }
+
+    #[test]
+    fn the_about_card_says_how_much_of_the_week_the_panel_was_on_time() {
+        let late = OnTime::fake(99.96);
+        let texts = about_texts(&late);
+        assert!(texts.contains(&"Panel on time: 99.96% this week".to_owned()), "{texts:?}");
+        assert!(texts.contains(&"Late: hooks 3".to_owned()), "{texts:?}");
+    }
+
+    #[test]
+    fn the_about_card_has_no_late_line_when_nothing_was_late_and_says_so_with_no_changes() {
+        let perfect = about_texts(&OnTime::fake(100.0));
+        assert!(perfect.contains(&"Panel on time: 100% this week".to_owned()), "{perfect:?}");
+        assert!(!perfect.iter().any(|text| text.starts_with("Late:")), "{perfect:?}");
+        let none = about_texts(&OnTime::none());
+        assert!(none.contains(&"Panel on time: no changes yet this week".to_owned()), "{none:?}");
+        assert!(!none.iter().any(|text| text.starts_with("Late:")), "{none:?}");
     }
 }

@@ -341,10 +341,6 @@ impl AgentRun {
         at_rest(&self.status, now - self.heard_at())
     }
 
-    pub(crate) fn rested_at(&self) -> Option<f64> {
-        self.finished_at.filter(|_| self.status == AgentStatus::Done)
-    }
-
     /// Seconds since the status last changed.
     pub(crate) fn since_change(&self, now: f64) -> f64 {
         (now - self.changed_at).max(0.0)
@@ -611,22 +607,6 @@ mod tests {
         run.on_event(hook(HookKind::PermissionNeeded, Some("Bash: ls")), 30.0);
         run.refresh(30.0);
         assert_eq!(run.turn_started_at(), Some(20.0));
-    }
-
-    #[test]
-    fn a_turn_that_ended_reports_when_and_a_new_turn_clears_it() {
-        let mut run = running(1.0);
-        run.on_event(hook(HookKind::TurnStarted, None), 2.0);
-        run.refresh(2.0);
-        assert_eq!(run.rested_at(), None);
-        run.on_event(hook(HookKind::TurnDone, Some("done")), 10.0);
-        run.refresh(10.0);
-        assert_eq!(run.rested_at(), Some(10.0));
-        run.refresh(50.0);
-        assert_eq!(run.rested_at(), Some(10.0));
-        run.on_event(hook(HookKind::TurnStarted, None), 60.0);
-        run.refresh(60.0);
-        assert_eq!(run.rested_at(), None);
     }
 
     #[test]

@@ -120,7 +120,7 @@ pub(crate) fn show(ui: &mut Ui, area: Rect, summary: &Summary) -> Option<Action>
                 owner_asks: false,
                 today: crate::progress_glue::today(),
             };
-            last_turn_view::show(ui, width, &turn);
+            last_turn_view::show(ui, width, &turn, None);
         }
         if !summary.stages.is_empty() {
             ui.add_space(SECTION_GAP);

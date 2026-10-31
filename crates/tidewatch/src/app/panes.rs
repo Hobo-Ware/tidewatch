@@ -16,6 +16,7 @@ use crate::folder_panel::{self, Shown};
 use crate::folder_view;
 use crate::last_turn::LastTurn;
 use crate::outbox::Send;
+use crate::panel_blocks::{Blocks, Kept};
 use crate::repo::Workspace;
 use crate::tab_view::ViewSpec;
 use crate::{
@@ -145,8 +146,23 @@ impl Tidewatch {
     ) {
         let active_id = self.tabs.items()[self.tabs.active()].id;
         let job_agent = self.job_agent(active_id);
-        let stale = self.ledger_stale(active_id, ctx.input(|i| i.time));
+        let stale = self.ledger_stale(active_id);
         let last_turn = self.last_turn(active_id);
+        let now_ms = wall_ms() as i64;
+        let kept = Kept {
+            jobs_ms: self
+                .job_live
+                .board(active_id)
+                .and_then(|board| board.jobs.iter().map(|job| job.updated_ms).max()),
+            links_ms: self
+                .link_live
+                .board(active_id)
+                .and_then(|board| board.links.iter().map(|link| link.first_seen_ms).max()),
+        };
+        let blocks = self.panel_view_of(active_id).map_or_else(Blocks::default, |view| {
+            Blocks::of(&view, now_ms, &TimeZone::system(), kept)
+        });
+        let marks = self.panel.marks(active_id, now_ms);
         let side = self.side_layout();
         let view = self.views.get_mut(&active_id);
         let agent = self.tabs.items()[self.tabs.active()].pane.agent.as_ref();
@@ -157,7 +173,6 @@ impl Tidewatch {
             .as_ref()
             .and_then(|status| self.flow.extras(active_id, &view.as_ref()?.notes, status));
         let agent_id = agent.map_or("", |agent| agent.run.agent_id.as_str());
-        let now_ms = wall_ms() as i64;
         let mut cards = agent
             .and_then(|_| self.job_live.board(active_id))
             .map(|board| job_model::cards(board, now_ms, job_agent, &TimeZone::system()))
@@ -199,6 +214,8 @@ impl Tidewatch {
                 last_turn,
                 shown: agent.and_then(|agent| agent.run.reported()),
                 links,
+                blocks,
+                marks: &marks,
             };
             Some(input)
         });

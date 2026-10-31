@@ -184,7 +184,6 @@ impl Tidewatch {
         let asks = [
             self.panel.terminal(&polled.seen, now_ms).map(|at| at - now_ms),
             self.panel.probe(targets, open, ctx, now_ms),
-            self.panel.shadow(&self.tabs, now_ms).map(|at| at - now_ms),
         ];
         if let Some(wait) = asks.into_iter().flatten().min() {
             let wait = u64::try_from(wait.max(0)).unwrap_or(0);

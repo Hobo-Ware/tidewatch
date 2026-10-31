@@ -1,10 +1,13 @@
 //! The app's side of the panel store: one numbered log per agent tab, fed from every place the app
 //! learns something about the tab (hooks, the transcript, the terminal, the process list, reports,
 //! jobs, links, checks), written to `panel-log.jsonl` on a background thread and folded in memory.
-//! Nothing here draws. The old path still decides what the screens show, with one exception: when
-//! the transcript or the process list says a turn began or ended and the hook that should have said
-//! so never came, the tab's status follows (`AgentRun::begin_turn_elsewhere`, `settle_ended_turn`). `TIDEWATCH_DEV_STATUS_LOG=1` prints every append
-//! and each moment the live tone and the store's tone disagree for more than two seconds.
+//! Nothing here draws. The screens read the tab's `PanelView` from here: the state its report stands
+//! for after the facts weighed it, whether the report is out of date, and the age of each block.
+//! When the transcript or the process list says a turn began or ended and the hook that should have
+//! said so never came, the tab's status follows (`AgentRun::begin_turn_elsewhere`,
+//! `settle_ended_turn`). Every change that reaches a view is tallied as on time or late, and a hook
+//! the backups had to replace as missed, in `.state/panel-ontime.json`. `TIDEWATCH_DEV_STATUS_LOG=1`
+//! prints every append.
 
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -13,23 +16,28 @@ use tidewatch_core::agents::reports_by_hooks;
 use tidewatch_core::elsewhere_scan::RealSystem;
 use tidewatch_core::end_block::EndBlock;
 use tidewatch_core::events::{TabEvent, TabMessage};
+use tidewatch_core::panel_counter::{self, Counter, Outcome};
 use tidewatch_core::panel_event::{Event, Fact, PrFacts, Source};
+use tidewatch_core::panel_limits::Delivery;
 use tidewatch_core::panel_log::{CAP_EVENTS, Log};
-use tidewatch_core::panel_state::PanelState;
+use tidewatch_core::panel_rules::ReportDigest;
+use tidewatch_core::panel_state::{Applied, MarkSeen, PanelState};
 use tidewatch_core::panel_store::{self, Writer};
-use tidewatch_core::panel_view::{PanelView, Tone as StoreTone};
+use tidewatch_core::panel_view::PanelView;
 use tidewatch_core::paths::panel_log_file_beside;
+use tidewatch_core::progress::State;
 use tidewatch_core::status::{AgentStatus, HookEvent, HookKind, ProgressSignal, TerminalSignal};
 
 use crate::agent_process::{self, Hosting, Presence, Schedule, Step, Target};
 use crate::agent_run::{Life, TermSnapshot, progress_signal};
 use crate::jobs::Jobs;
 use crate::pane::Pane;
-use crate::status_view::Tone;
+use crate::panel_blocks::OnTime;
+use crate::panel_fake::{self, Fake};
 use crate::tabs::Tabs;
 
 const OUTPUT_EVERY_MS: i64 = 1_000;
-const DISAGREE_MS: i64 = 2_000;
+const TALLY_SAVE_EVERY_MS: i64 = 10_000;
 
 /// The share of hooks `TIDEWATCH_DEV_DROP_HOOKS` throws away at the listener drain, to rehearse
 /// the loss the backups exist for.
@@ -76,63 +84,6 @@ pub(crate) fn ends_after(mark_ms: Option<i64>, hook_opened_ms: Option<i64>) -> b
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum Verdict {
-    Agree,
-    Wait(i64),
-    Tell { for_ms: i64 },
-    Told,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct Shadow {
-    live: Tone,
-    store: Tone,
-    since_ms: i64,
-    told: bool,
-}
-
-impl Shadow {
-    pub(crate) fn observe(
-        slot: &mut Option<Self>,
-        live: Tone,
-        store: Tone,
-        now_ms: i64,
-    ) -> Verdict {
-        if live == store {
-            *slot = None;
-            return Verdict::Agree;
-        }
-        let shadow = match slot {
-            Some(known) if known.live == live && known.store == store => known,
-            _ => slot.insert(Self { live, store, since_ms: now_ms, told: false }),
-        };
-        let for_ms = now_ms - shadow.since_ms;
-        if shadow.told {
-            Verdict::Told
-        } else if for_ms > DISAGREE_MS {
-            shadow.told = true;
-            Verdict::Tell { for_ms }
-        } else {
-            Verdict::Wait(shadow.since_ms + DISAGREE_MS + 1)
-        }
-    }
-}
-
-pub(crate) fn tone_of(store: StoreTone) -> Tone {
-    match store {
-        StoreTone::Setup => Tone::Setup,
-        StoreTone::Working => Tone::Working,
-        StoreTone::Needs => Tone::Needs,
-        StoreTone::Waiting => Tone::Waiting,
-        StoreTone::Blocked => Tone::Blocked,
-        StoreTone::Done => Tone::Done,
-        StoreTone::Failed => Tone::Failed,
-        StoreTone::Stopped => Tone::Stopped,
-        StoreTone::Shell => Tone::Shell,
-    }
-}
-
 fn working(status: &AgentStatus) -> bool {
     matches!(status, AgentStatus::Working | AgentStatus::NeedsYou(_))
 }
@@ -165,17 +116,17 @@ impl Ready {
         Self { log, state, writer }
     }
 
-    fn push(&mut self, source: Source, fact: Fact, at_ms: i64) -> (Event, Pushed) {
+    fn push(&mut self, source: Source, fact: Fact, at_ms: i64) -> (Event, Pushed, Applied) {
         let running_before = self.state.turn().running;
         let event = self.log.append(source, fact, at_ms);
-        self.state.apply(&event);
+        let applied = self.state.apply(&event);
         if let Some(writer) = &self.writer {
             writer.append(event.clone());
         }
         if self.log.len() >= CAP_EVENTS {
             panel_store::compact(&mut self.log);
         }
-        (event, Pushed { running_before, running_after: self.state.turn().running })
+        (event, Pushed { running_before, running_after: self.state.turn().running }, applied)
     }
 }
 
@@ -198,13 +149,34 @@ struct TabPanel {
     presence: Option<Presence>,
     hook_opened_ms: Option<i64>,
     started: bool,
-    shadow: Option<Shadow>,
     pr: Option<PrFacts>,
 }
 
 struct Loaded {
     tab: u64,
     log: Log,
+}
+
+enum Tally {
+    Loaded(Counter),
+    Saved,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+enum Phase {
+    #[default]
+    Unasked,
+    Loading,
+    Ready,
+    Writing,
+}
+
+#[derive(Default)]
+struct Saving {
+    file: Option<PathBuf>,
+    phase: Phase,
+    dirty: bool,
+    last_ms: Option<i64>,
 }
 
 pub(crate) struct Host {
@@ -216,6 +188,18 @@ pub(crate) struct Host {
     writes: bool,
     echo: bool,
     drops: Drops,
+    counter: Counter,
+    tally: Jobs<Tally>,
+    saving: Saving,
+    clock: fn() -> i64,
+    fake: Option<Fake>,
+    fake_ontime: Option<f64>,
+}
+
+fn wall_clock() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |since| i64::try_from(since.as_millis()).unwrap_or(i64::MAX))
 }
 
 impl Host {
@@ -229,11 +213,22 @@ impl Host {
             writes,
             echo,
             drops,
+            counter: Counter::new(),
+            tally: Jobs::new(),
+            saving: Saving::default(),
+            clock: wall_clock,
+            fake: None,
+            fake_ontime: None,
         }
     }
 
-    pub(crate) fn from_env(writes: bool, echo: bool) -> Self {
-        Self::new(writes, echo, Drops::from_env())
+    /// `ontime` is the tally's file; a run that writes nothing passes none.
+    pub(crate) fn from_env(writes: bool, echo: bool, ontime: Option<PathBuf>) -> Self {
+        let mut host = Self::new(writes, echo, Drops::from_env());
+        host.saving.file = ontime.filter(|_| writes);
+        host.fake = Fake::from_env();
+        host.fake_ontime = panel_fake::ontime_from_env();
+        host
     }
 
     pub(crate) fn drops_hook(&mut self) -> bool {
@@ -241,8 +236,48 @@ impl Host {
     }
 
     pub(crate) fn view(&self, tab: u64, now_ms: i64) -> Option<PanelView> {
+        if let Some(fake) = self.fake {
+            return Some(fake.view(now_ms));
+        }
         let ready = self.tabs.get(&tab)?.ready.as_ref()?;
         Some(ready.state.view(now_ms))
+    }
+
+    /// The state the tab's report stands for after the facts weighed it. A report the log never
+    /// heard of, such as one an older version saved, is put in the log first from `unlogged`.
+    pub(crate) fn reported(
+        &mut self,
+        tab: u64,
+        now_ms: i64,
+        unlogged: impl FnOnce() -> Option<(Option<i64>, ReportDigest)>,
+    ) -> Option<State> {
+        let view = self.view(tab, now_ms)?;
+        if view.report.is_some() {
+            return view.reported;
+        }
+        let Some((saved_ms, digest)) = unlogged() else { return view.reported };
+        let fact = Fact::ReportSaved { saved_ms: saved_ms.unwrap_or(now_ms), digest };
+        self.push(tab, Source::Report, fact, now_ms);
+        self.view(tab, now_ms)?.reported
+    }
+
+    /// The steps Tidewatch ticked itself, from the tab's log.
+    pub(crate) fn marks(&self, tab: u64, now_ms: i64) -> Vec<MarkSeen> {
+        if let Some(fake) = self.fake {
+            return fake.marks(now_ms);
+        }
+        self.tabs
+            .get(&tab)
+            .and_then(|panel| panel.ready.as_ref())
+            .map_or_else(Vec::new, |ready| ready.state.marks().to_vec())
+    }
+
+    /// The About card's `Panel on time` row.
+    pub(crate) fn on_time(&self, now_ms: i64) -> OnTime {
+        match self.fake_ontime {
+            Some(percent) => OnTime::fake(percent),
+            None => OnTime::of(&self.counter, now_ms),
+        }
     }
 
     pub(crate) fn sync<T>(&mut self, tabs: &Tabs<Pane<T>>, ctx: &egui::Context) {
@@ -268,7 +303,6 @@ impl Host {
                 presence: None,
                 hook_opened_ms: None,
                 started: false,
-                shadow: None,
                 pr: None,
             };
             if self.writes {
@@ -279,6 +313,47 @@ impl Host {
             self.tabs.insert(id, panel);
         }
         self.drain_loaded();
+        self.drive_tally(ctx);
+    }
+
+    fn drive_tally(&mut self, ctx: &egui::Context) {
+        let Some(file) = self.saving.file.clone() else { return };
+        for done in self.tally.drain() {
+            match done {
+                Tally::Loaded(known) => {
+                    let mut merged = known;
+                    merged.merge(std::mem::take(&mut self.counter));
+                    self.counter = merged;
+                    self.saving.phase = Phase::Ready;
+                    self.saving.dirty = true;
+                }
+                Tally::Saved => self.saving.phase = Phase::Ready,
+            }
+        }
+        match self.saving.phase {
+            Phase::Unasked => {
+                self.saving.phase = Phase::Loading;
+                self.tally.spawn(ctx, move || Tally::Loaded(panel_counter::load(&file)));
+            }
+            Phase::Ready if self.saving.dirty && self.save_is_due() => {
+                self.saving.phase = Phase::Writing;
+                self.saving.dirty = false;
+                self.saving.last_ms = Some((self.clock)());
+                let counter = self.counter.clone();
+                self.tally.spawn(ctx, move || {
+                    if let Err(e) = panel_counter::save(&file, &counter) {
+                        eprintln!("tidewatch: panel tally {}: {e}", file.display());
+                    }
+                    Tally::Saved
+                });
+            }
+            Phase::Loading | Phase::Writing | Phase::Ready => {}
+        }
+    }
+
+    fn save_is_due(&self) -> bool {
+        let now = (self.clock)();
+        self.saving.last_ms.is_none_or(|last| now - last >= TALLY_SAVE_EVERY_MS || now < last)
     }
 
     fn drain_loaded(&mut self) {
@@ -311,7 +386,12 @@ impl Host {
         };
         let opens_by_hook = source == Source::Hook;
         let started = matches!(fact, Fact::Started { .. });
-        let (event, pushed) = ready.push(source, fact, at_ms);
+        let polled = source == Source::Pr;
+        let (event, pushed, applied) = ready.push(source, fact, at_ms);
+        let delivery =
+            Delivery::of(source, &event.fact, polled, at_ms, (self.clock)(), applied.changed);
+        self.counter.record_delivery(source, &delivery);
+        self.saving.dirty |= delivery.changed;
         if echo {
             eprintln!(
                 "tidewatch: panel tab={tab} seq={} src={} fact={} at {at_ms}",
@@ -396,8 +476,11 @@ impl Host {
                 let (Some((started, ts)), Some(pushed)) = (mark, pushed) else { continue };
                 if started && pushed.running_after {
                     ended = false;
-                    if agent.run.begin_turn_elsewhere(now) && self.echo {
-                        eprintln!("tidewatch: panel begin tab={id} at {now_ms}");
+                    if agent.run.begin_turn_elsewhere(now) {
+                        self.missed(Source::Hook);
+                        if self.echo {
+                            eprintln!("tidewatch: panel begin tab={id} at {now_ms}");
+                        }
                     }
                 } else if !started && !pushed.running_after && ends_after(ts, opened) {
                     ended = true;
@@ -405,12 +488,23 @@ impl Host {
             }
             if gone || ended {
                 let block = self.end_block(id, now_ms);
-                if agent.run.settle_ended_turn(block, now) && self.echo {
-                    eprintln!("tidewatch: panel settle tab={id} at {now_ms}");
+                if agent.run.settle_ended_turn(block, now) {
+                    if ended {
+                        self.missed(Source::Hook);
+                    }
+                    if self.echo {
+                        eprintln!("tidewatch: panel settle tab={id} at {now_ms}");
+                    }
                 }
             }
         }
         self.gone.clear();
+    }
+
+    /// A change the named source never delivered and a backup source caught.
+    fn missed(&mut self, source: Source) {
+        self.counter.record((self.clock)(), source, Outcome::Missed);
+        self.saving.dirty = true;
     }
 
     fn end_block(&self, tab: u64, now_ms: i64) -> Option<EndBlock> {
@@ -521,33 +615,6 @@ impl Host {
         if presence == Presence::Gone {
             self.gone.push(tab);
         }
-    }
-
-    pub(crate) fn shadow<T>(&mut self, tabs: &Tabs<Pane<T>>, now_ms: i64) -> Option<i64> {
-        if !self.echo {
-            return None;
-        }
-        let mut again: Option<i64> = None;
-        for tab in tabs.items() {
-            let Some(agent) = tab.pane.agent.as_ref() else { continue };
-            let Some(panel) = self.tabs.get_mut(&tab.id) else { continue };
-            let Some(ready) = &panel.ready else { continue };
-            let live = agent.run.shown_tone();
-            if !panel.started || matches!(live, Tone::Setup | Tone::Shell) {
-                panel.shadow = None;
-                continue;
-            }
-            let store = tone_of(ready.state.view(now_ms).tone);
-            match Shadow::observe(&mut panel.shadow, live, store, now_ms) {
-                Verdict::Wait(at) => again = Some(again.map_or(at, |soonest| soonest.min(at))),
-                Verdict::Tell { for_ms } => eprintln!(
-                    "tidewatch: panel shadow tab={} live={live:?} store={store:?} for {for_ms}ms at {now_ms}",
-                    tab.id
-                ),
-                Verdict::Agree | Verdict::Told => {}
-            }
-        }
-        again
     }
 
     pub(crate) fn targets(

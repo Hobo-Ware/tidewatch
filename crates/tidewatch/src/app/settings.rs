@@ -325,6 +325,7 @@ impl Tidewatch {
             sync: self.settings_sync.view(wall_secs()),
             checklist,
             workflow,
+            on_time: self.panel.on_time(wall_ms() as i64),
         };
         let probes: Probes = self
             .catalog

@@ -21,13 +21,14 @@ use crate::overview::{
     fmt_elapsed, idle_line, needs_line, repo_ink, waiting_line,
 };
 use crate::overview_rail;
+use crate::panel_blocks;
 use crate::progress_model::Ask;
 use crate::progress_ring;
 use crate::progress_view::flow;
 use crate::reader_view::ellipsized;
 use crate::screen_kit::TEXT_TAG;
 use crate::screen_kit::{
-    Size, TEXT_PAGE, TEXT_SECONDARY, TEXT_TITLE, TagFill, button_width, heading, paint_tag,
+    Size, TEXT_PAGE, TEXT_SECONDARY, TEXT_TITLE, TagFill, body, button_width, heading, paint_tag,
     primary_button, tag_width,
 };
 use crate::status_view::{self, Tone};
@@ -55,6 +56,7 @@ const WHY_H: f32 = 18.0;
 const ONE_BUTTON_GAP: f32 = 12.0;
 const STAGE_ROOM: f32 = 70.0;
 const MIN_STAGE_W: f32 = 24.0;
+const AGE_GAP: f32 = 10.0;
 const ONE_BUTTON_MID: f32 = f32::midpoint(NAME_MID, LINE_MID);
 const NAME_MID: f32 = 10.0;
 const LINE_MID: f32 = 31.0;
@@ -782,24 +784,52 @@ fn card(
             brand::FAINT,
         )
     });
-    let clock_w = clock.as_ref().map_or(0.0, |clock| clock.size().x + 8.0);
     let full = (inner.right() - text_x - button_room).max(1.0);
     let tag = row.kind.label();
     let pill_w = if lane == Lane::Working { 0.0 } else { tag_width(&painter, &tag) };
     let name_ink = if lane == Lane::Idle { brand::SOFT } else { brand::TEXT };
+    let flag_w =
+        row.stamp.out_of_date.map_or(0.0, |_| panel_blocks::out_of_date_width(&painter) + 6.0);
     let name = ellipsized(
         &painter,
         &row.title,
         heading(TEXT_TITLE),
         name_ink,
-        (full - if pill_w > 0.0 { pill_w + 6.0 } else { 0.0 }).max(20.0),
+        (full - flag_w - if pill_w > 0.0 { pill_w + 6.0 } else { 0.0 }).max(20.0),
     );
     let name_mid = inner.top() + NAME_MID;
-    let name_right = text_x + name.size().x;
+    let mut used = text_x + name.size().x;
     painter.galley(pos2(text_x, name_mid - name.size().y / 2.0), name, name_ink);
-    if pill_w > 0.0 && name_right + 6.0 + pill_w <= text_x + full + 1.0 {
-        kind_pill(&painter, name_right + 6.0, name_mid, &tag, row.kind.ink());
+    let right_edge = text_x + full;
+    let mut flag_up = false;
+    if let Some(why) = row.stamp.out_of_date
+        && used + flag_w <= right_edge + 1.0
+    {
+        used = panel_blocks::paint_out_of_date(ui, used + 6.0, name_mid, why).right();
+        flag_up = true;
     }
+    let age = row
+        .stamp
+        .age
+        .as_deref()
+        .map(|text| (text, panel_blocks::age_width(&painter, text)))
+        .filter(|(_, width)| right_edge - width >= used + AGE_GAP);
+    let pill_limit = age.map_or(right_edge, |(_, width)| right_edge - width - AGE_GAP);
+    if pill_w > 0.0 && used + 6.0 + pill_w <= pill_limit + 1.0 {
+        kind_pill(&painter, used + 6.0, name_mid, &tag, row.kind.ink());
+    }
+    if let Some((text, _)) = age {
+        panel_blocks::paint_age(&painter, right_edge, name_mid, text);
+    }
+    let lost_flag = row.stamp.out_of_date.filter(|_| !flag_up);
+    let lost_quiet = row
+        .stamp
+        .age
+        .as_deref()
+        .filter(|text| text.starts_with(panel_blocks::QUIET_PREFIX) && age.is_none());
+    let marks_below = lost_flag.is_some() || lost_quiet.is_some();
+    let clock = clock.filter(|_| !marks_below);
+    let clock_w = clock.as_ref().map_or(0.0, |clock| clock.size().x + 8.0);
     let line_mid = inner.top() + LINE_MID;
     let (text, ink) = match ask {
         Some(ask) => (ask.text.clone(), brand::NEEDS),
@@ -821,15 +851,31 @@ fn card(
         line_left += dot.size().x + 6.0;
     }
     let line_room = (inner.right() - line_left - button_room - clock_w).max(1.0);
-    let repo_right = repo_label(
-        &painter,
-        line_left,
-        line_mid,
-        &row.place,
-        (line_room - STAGE_ROOM).max(line_room * 0.5),
-    );
+    let marks_w = lost_flag.map_or(0.0, |_| panel_blocks::out_of_date_width(&painter) + 6.0)
+        + lost_quiet.map_or(0.0, |text| panel_blocks::age_width(&painter, text) + 6.0);
+    let repo_fits = !marks_below || line_room - marks_w >= MIN_STAGE_W + 6.0;
+    let repo_right = if repo_fits {
+        let repo_room = if marks_below {
+            line_room - marks_w - 6.0
+        } else {
+            (line_room - STAGE_ROOM).max(line_room * 0.5)
+        };
+        repo_label(&painter, line_left, line_mid, &row.place, repo_room)
+    } else {
+        line_left - 6.0
+    };
     let rest_room = line_left + line_room - repo_right - 6.0;
-    if rest_room >= MIN_STAGE_W {
+    if marks_below {
+        let mut x = repo_right + 6.0;
+        if let Some(why) = lost_flag {
+            x = panel_blocks::paint_out_of_date(ui, x, line_mid, why).right() + 6.0;
+        }
+        if let Some(text) = lost_quiet {
+            let room = (line_left + line_room - x).max(20.0);
+            let galley = ellipsized(&painter, text, body(TEXT_TAG), brand::MUTED, room);
+            painter.galley(pos2(x, line_mid - galley.size().y / 2.0), galley, brand::MUTED);
+        }
+    } else if rest_room >= MIN_STAGE_W {
         let rest = ellipsized(
             &painter,
             &format!("\u{b7} {text}"),
@@ -881,7 +927,10 @@ fn card(
             || ask.text.clone(),
             |why| format!("{}\n{}", ask.text, answer_chips::sentence(why)),
         ),
-        None => status_view::describe(&row.status),
+        None => match row.stamp.age.as_deref() {
+            Some(age) => format!("{} \u{b7} {age}", status_view::describe(&row.status)),
+            None => status_view::describe(&row.status),
+        },
     };
     let card_clicked =
         resp.on_hover_cursor(egui::CursorIcon::PointingHand).on_hover_text(tip).clicked();
@@ -1077,6 +1126,7 @@ mod tests {
             auto_pick: None,
             idle_secs: 600.0,
             next: None,
+            stamp: crate::overview::Stamp::default(),
         }
     }
 
@@ -1670,6 +1720,147 @@ mod tests {
         let texts: Vec<String> = found.into_iter().map(|(text, _)| text).collect();
         assert_eq!(texts.iter().filter(|text| *text == "Needs you").count(), 1, "{texts:?}");
         assert!(!has(&texts, "question"), "{texts:?}");
+    }
+
+    fn stamped(mut row: Row, age: &str, why: Option<tidewatch_core::panel_view::Why>) -> Row {
+        row.stamp = crate::overview::Stamp { age: Some(age.to_owned()), out_of_date: why };
+        row
+    }
+
+    #[test]
+    fn every_lane_puts_the_age_at_the_right_of_the_title_row_and_the_tag_right_after_the_title() {
+        use tidewatch_core::panel_view::Why;
+        let cases = [
+            ("working", AgentStatus::Working),
+            ("idle", AgentStatus::NeedsYou(Reason::Quiet)),
+            ("asks", AgentStatus::NeedsYou(Reason::Question)),
+        ];
+        for (title, status) in cases {
+            let row =
+                stamped(row(2, title, "acme-web", status), "2m ago", Some(Why::OlderThanTurn));
+            let mut screen = Screen::new(overview(vec![row]));
+            let (found, boxes) = screen.drawn();
+            let name = rect_of(&found, title);
+            let age = rect_of(&found, "2m ago");
+            let tag = found
+                .iter()
+                .find(|(text, _)| text == "out of date")
+                .unwrap_or_else(|| panic!("{title}: {found:?}"))
+                .1;
+            let card = card_around(&boxes, &name);
+            assert!((name.center().y - age.center().y).abs() < 3.0, "{title}: {name:?} {age:?}");
+            assert!((name.center().y - tag.center().y).abs() < 4.0, "{title}: {name:?} {tag:?}");
+            assert!(tag.left() >= name.right(), "{title}: {name:?} {tag:?}");
+            assert!(age.left() >= tag.right(), "{title}: {tag:?} {age:?}");
+            assert!(age.right() <= card.right() - CARD_PAD + 1.0, "{title}: {age:?} {card:?}");
+            if let Some((_, answer)) = found.iter().find(|(text, _)| text == "Answer") {
+                let button = box_around(&boxes, answer);
+                assert!(age.right() <= button.left(), "{title}: {age:?} {button:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn a_card_with_no_age_and_a_fresh_report_draws_neither() {
+        let mut screen =
+            Screen::new(overview(vec![row(2, "plain", "acme-web", AgentStatus::Working)]));
+        let texts = screen.texts();
+        assert!(!has(&texts, "out of date") && !texts.iter().any(|text| text.ends_with("ago")));
+    }
+
+    #[test]
+    fn no_text_overlaps_with_an_age_and_a_tag_at_any_window_width() {
+        use tidewatch_core::panel_view::Why;
+        let rows = vec![
+            stamped(
+                row(
+                    4,
+                    "needs-you-with-a-long-name-here-that-goes-on",
+                    "acme-web",
+                    AgentStatus::NeedsYou(Reason::Permission),
+                ),
+                "no word since 14:02",
+                Some(Why::NeedsYouNoQuestion),
+            ),
+            stamped(
+                row(
+                    9,
+                    "busy-with-an-equally-long-name-for-the-working-lane",
+                    "acme-api",
+                    AgentStatus::Working,
+                ),
+                "11h ago",
+                Some(Why::WorkingButTurnEnded),
+            ),
+            stamped(
+                row(10, "quiet-one", "acme-api", AgentStatus::NeedsYou(Reason::Quiet)),
+                "3d ago",
+                None,
+            ),
+        ];
+        let mut screen = Screen::new(overview(rows));
+        for width in [360.0, 700.0, 1000.0, 1440.0] {
+            screen.width = width;
+            screen.frame(vec![]);
+            let found = screen.frame(vec![]).1;
+            for (index, (a, a_rect)) in found.iter().enumerate() {
+                for (b, b_rect) in &found[index + 1..] {
+                    assert!(
+                        !a_rect.shrink(0.5).intersects(b_rect.shrink(0.5)),
+                        "{a:?} {a_rect:?} overlaps {b:?} {b_rect:?} at {width}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn a_narrow_working_card_keeps_its_quiet_text_and_tag_and_cuts_the_subtitle_and_time() {
+        use tidewatch_core::panel_view::Why;
+        let rows: Vec<Row> = (1..=3)
+            .map(|id| {
+                let mut working = row(
+                    id,
+                    &format!("reproduce-the-flaky-board-{id}"),
+                    "acme-web",
+                    AgentStatus::Working,
+                );
+                working.elapsed = 7.0;
+                working.detail = Some("Build \u{b7} reproducing the failure".into());
+                stamped(working, "no word since 14:02", Some(Why::WorkingButTurnEnded))
+            })
+            .collect();
+        let mut screen = Screen::new(overview(rows));
+        screen.width = 1000.0;
+        let (found, boxes) = screen.drawn();
+        let quiet: Vec<Rect> = found
+            .iter()
+            .filter(|(text, _)| text == "no word since 14:02")
+            .map(|(_, rect)| *rect)
+            .collect();
+        let tags: Vec<Rect> =
+            found.iter().filter(|(text, _)| text == "out of date").map(|(_, rect)| *rect).collect();
+        assert_eq!((quiet.len(), tags.len()), (3, 3), "{found:?}");
+        let title = rect_of(&found, "reproduce-the-flaky-board-1");
+        let card = card_around(&boxes, &title);
+        assert!(card.width() < 330.0, "not the narrow card the test means: {card:?}");
+        for mark in quiet.iter().chain(&tags) {
+            assert!(
+                mark.right() <= card.right() + 0.5 || mark.left() > card.right(),
+                "{mark:?} {card:?}"
+            );
+        }
+        assert!(quiet.iter().any(|mark| card.contains_rect(*mark)), "{quiet:?} {card:?}");
+        assert!(tags.iter().any(|mark| card.contains_rect(*mark)), "{tags:?} {card:?}");
+        for (index, (a, a_rect)) in found.iter().enumerate() {
+            for (b, b_rect) in &found[index + 1..] {
+                assert!(
+                    !a_rect.shrink(0.5).intersects(b_rect.shrink(0.5)),
+                    "{a:?} {a_rect:?} overlaps {b:?} {b_rect:?}"
+                );
+            }
+        }
+        assert!(!found.iter().any(|(text, _)| text == "7s"), "the time is cut first: {found:?}");
     }
 
     #[test]
