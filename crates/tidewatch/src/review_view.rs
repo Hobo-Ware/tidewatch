@@ -86,7 +86,9 @@ fn hint(send: SendState, profile: &str, key: &str) -> Vec<(String, bool)> {
             say(" sends".to_owned()),
         ],
         SendState::Held => {
-            vec![say(format!("Held: it goes the moment {profile} is idle."))]
+            vec![say(format!(
+                "Held: it goes the moment {profile} is idle, or comes back as a draft after an hour."
+            ))]
         }
         SendState::Refused(reason) => vec![say(reason.to_owned())],
     }
@@ -341,7 +343,10 @@ mod tests {
             text(SendState::WhenIdle),
             "Builder is busy: it goes the moment Builder is idle. Cmd+Enter sends"
         );
-        assert_eq!(text(SendState::Held), "Held: it goes the moment Builder is idle.");
+        assert_eq!(
+            text(SendState::Held),
+            "Held: it goes the moment Builder is idle, or comes back as a draft after an hour."
+        );
         assert_eq!(text(SendState::Refused("no agent")), "no agent");
         assert_eq!(key_name(Platform::Linux), "Ctrl+Enter");
         assert_eq!(send_label("Builder"), "Send review to Builder");

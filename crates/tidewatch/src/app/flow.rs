@@ -70,6 +70,9 @@ impl Tidewatch {
         if let Some(at) = self.flow.tick(&facts, ctx, now, unix) {
             ctx.request_repaint_after(Duration::from_secs_f64((at - now).max(0.0) + WAKE_SLACK_S));
         }
+        for text in self.flow.take_notices() {
+            self.show_toast(text, ctx);
+        }
         for text in flow_glue::ask_agents(&mut self.tabs, &mut self.flow, ctx, now) {
             self.show_toast(text, ctx);
         }

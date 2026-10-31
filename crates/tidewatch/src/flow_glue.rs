@@ -67,6 +67,7 @@ pub(crate) fn facts<T>(
                 auto_push: push.auto,
                 merged_head: push.merged_head,
                 gate: if push.shut { Gate::Shut } else { Gate::Open },
+                profile: agent.profile_name.clone(),
             })
         })
         .collect()
@@ -413,6 +414,7 @@ mod tests {
             auto_push: true,
             merged_head: None,
             gate: Gate::Open,
+            profile: "Builder".into(),
         }
     }
 
