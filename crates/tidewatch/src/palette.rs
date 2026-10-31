@@ -59,7 +59,19 @@ pub(crate) fn fuzzy(query: &str, text: &str) -> Option<Match> {
         score += 10;
     }
     score -= (chars.len() as i32 / 8).min(10);
+    if let Some(start) = run_start(&lower, &query, word_start) {
+        positions = (start..start + query.len()).collect();
+    }
     Some(Match { score, positions })
+}
+
+/// Where the query sits whole in the text, a word start first, so the marks never scatter
+/// over the label's opening words while the query is also there in one piece.
+fn run_start(lower: &[char], query: &[char], word_start: impl Fn(usize) -> bool) -> Option<usize> {
+    let fits = |i: usize| lower.get(i..i + query.len()) == Some(query);
+    let mut starts = (0..lower.len()).filter(|&i| fits(i));
+    let first = starts.next()?;
+    Some(std::iter::once(first).chain(starts).find(|&i| word_start(i)).unwrap_or(first))
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -310,6 +322,19 @@ mod tests {
     #[test]
     fn word_starts_beat_mid_word() {
         assert!(score("nt", "New tab") > score("nt", "Unmount"));
+    }
+
+    #[test]
+    fn a_query_found_whole_marks_that_run_not_scattered_letters() {
+        let cases = [
+            ("trakt", "Switch to repo: trakt-web", vec![16, 17, 18, 19, 20]),
+            ("trakt", "Open parked tab: trakt-media-sync", vec![17, 18, 19, 20, 21]),
+            ("web", "Switch to repo: trakt-web", vec![22, 23, 24]),
+            ("rack", "Open parked tab: Soundtrack backfill", vec![23, 24, 25, 26]),
+        ];
+        for (query, text, want) in cases {
+            assert_eq!(fuzzy(query, text).unwrap().positions, want, "{query} in {text}");
+        }
     }
 
     #[test]
