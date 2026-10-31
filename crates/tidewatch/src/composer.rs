@@ -21,7 +21,8 @@ use crate::emoji_view;
 use crate::pictures;
 use crate::reader_chat_view::BODY_PX;
 use crate::reader_view::INSET;
-use crate::screen_kit::{Size, button_width, primary_button};
+use crate::recall::Recall;
+use crate::screen_kit::{Size, button_width, primary_button, quiet_button};
 use crate::slash::Entry as SlashEntry;
 use crate::slash_view;
 
@@ -35,6 +36,8 @@ const SEND_GAP: f32 = 12.0;
 const CHIP_TOP: f32 = 10.0;
 const CHIP_TEXT_GAP: f32 = 8.0;
 const SEND: &str = "Send";
+const STOP: &str = "Stop";
+const STOP_GAP: f32 = 8.0;
 const OPTICAL_LIFT: f32 = 0.4;
 const FOCUS_RING: (f32, f32) = (3.0, 0.10);
 const DROP_RING: (f32, f32) = (6.0, 0.45);
@@ -91,15 +94,24 @@ impl Mode {
 struct Measure {
     fit: Fit,
     send_w: f32,
+    stop_w: f32,
 }
 
 fn row_height(ui: &Ui) -> f32 {
     ui.painter().layout_no_wrap(String::new(), text_font(), brand::TEXT).size().y
 }
 
-fn measure(ui: &Ui, text: &str, pictures: usize, box_w: f32, (cap, mode): (f32, Mode)) -> Measure {
+fn measure(
+    ui: &Ui,
+    text: &str,
+    pictures: usize,
+    box_w: f32,
+    (cap, mode, stop): (f32, Mode, bool),
+) -> Measure {
     let send_w = if mode.sends() { button_width(ui, SEND, Size::Regular) } else { 0.0 };
-    let right = if mode.sends() { send_edge() + send_w + SEND_GAP } else { PAD_X };
+    let stop_w =
+        if mode.sends() && stop { button_width(ui, STOP, Size::Regular) + STOP_GAP } else { 0.0 };
+    let right = if mode.sends() { send_edge() + send_w + stop_w + SEND_GAP } else { PAD_X };
     let wrap = box_w - PAD_X - right;
     let typed = bullets::layout(ui, text, &text_font(), brand::TEXT, (wrap, &None));
     let rows = pictures::chip_rows(pictures, box_w - 2.0 * PAD_X, pictures::REMOVABLE_W);
@@ -111,13 +123,24 @@ fn measure(ui: &Ui, text: &str, pictures: usize, box_w: f32, (cap, mode): (f32, 
     if let Mode::Field { height } = mode {
         fit.box_h = fit.box_h.max(height);
     }
-    Measure { fit, send_w }
+    Measure { fit, send_w, stop_w }
 }
 
 /// The height a box takes in `column`, with the gap above and below it.
 pub(crate) fn height(ui: &Ui, text: &str, pictures: usize, column: Rect) -> f32 {
+    height_with_stop(ui, text, pictures, column, false)
+}
+
+/// [`height`] for a box that also holds a Stop button, which narrows its text.
+pub(crate) fn height_with_stop(
+    ui: &Ui,
+    text: &str,
+    pictures: usize,
+    column: Rect,
+    stop: bool,
+) -> f32 {
     let cap = (column.height() * SHARE).max(BOX_H);
-    measure(ui, text, pictures, column.width() - 2.0 * INSET, (cap, Mode::Reply)).fit.box_h
+    measure(ui, text, pictures, column.width() - 2.0 * INSET, (cap, Mode::Reply, stop)).fit.box_h
         + 2.0 * GAP_Y
 }
 
@@ -129,13 +152,24 @@ pub(crate) fn field_height(
     pictures: usize,
     (width, height): (f32, f32),
 ) -> f32 {
-    measure(ui, text, pictures, width, (height, Mode::Field { height })).fit.box_h
+    measure(ui, text, pictures, width, (height, Mode::Field { height }, false)).fit.box_h
 }
 
 pub(crate) struct Draft<'a> {
     pub(crate) text: &'a mut String,
     pub(crate) pictures: &'a mut Vec<PathBuf>,
     pub(crate) focus: &'a mut bool,
+    pub(crate) recall: Option<&'a mut Recall>,
+}
+
+/// What the box asked for this frame.
+#[derive(Debug, Default, PartialEq, Eq)]
+pub(crate) struct Outcome {
+    pub(crate) sent: Option<String>,
+    /// The Stop button, or Esc in an empty box, while the agent works.
+    pub(crate) stop: bool,
+    /// Up in an empty box while messages are held: the newest one is to be edited.
+    pub(crate) edit_held: bool,
 }
 
 #[derive(Clone, Copy)]
@@ -146,6 +180,10 @@ pub(crate) struct Spec<'a> {
     pub(crate) commands: &'a [SlashEntry],
     pub(crate) ghost: Option<&'a str>,
     pub(crate) mode: Mode,
+    /// A Stop button sits beside Send: the agent is working.
+    pub(crate) stop: bool,
+    /// How many of the owner's messages Tidewatch holds for this agent.
+    pub(crate) held: usize,
 }
 
 fn collapsed_cursor(ui: &Ui, id: Id) -> Option<usize> {
@@ -263,11 +301,11 @@ fn backspace_removes_a_picture(ui: &Ui, id: Id, text: &str, pictures: &mut Vec<P
 /// list line Enter starts the next item instead while Tab and Shift+Tab move the item a level. Asks for focus once, the first time it is drawn, and again after a send. Off while
 /// `spec.enabled` is false. A [`Mode::Field`] box has no Send and sends nothing: Enter is a new line and
 /// Cmd+Enter is left to the form.
-pub(crate) fn show(ui: &mut Ui, draft: Draft<'_>, spec: &Spec<'_>) -> Option<String> {
-    let Draft { text, pictures, focus } = draft;
-    let Spec { id, hint, enabled, commands, ghost, mode } = *spec;
+pub(crate) fn show(ui: &mut Ui, draft: Draft<'_>, spec: &Spec<'_>) -> Outcome {
+    let Draft { text, pictures, focus, mut recall } = draft;
+    let Spec { id, hint, enabled, commands, ghost, mode, stop, held } = *spec;
     let room = ui.max_rect();
-    let mut sent = None;
+    let mut outcome = Outcome::default();
     let mut slash = slash_view::load(ui, id);
     let slash_keys_rows = if enabled { slash.rows(text, commands) } else { Vec::new() };
     if enabled {
@@ -302,6 +340,11 @@ pub(crate) fn show(ui: &mut Ui, draft: Draft<'_>, spec: &Spec<'_>) -> Option<Str
     }
     let ghost = ghost.filter(|_| text.is_empty());
     list_tab(ui, id, text, enabled);
+    let menus_open = !slash_keys_rows.is_empty()
+        || (focused && !emoji_hits(ui, &emoji_menu, before.as_ref()).is_empty());
+    if enabled && focused && mode.sends() && !menus_open {
+        history_keys(ui, id, (text, pictures), recall.as_deref_mut(), &mut outcome, (stop, held));
+    }
     let listing = enabled && (ui.memory(|memory| memory.has_focus(id)) || !ui.input(|i| i.focused));
     let slash_rows = if listing { slash.rows(text, commands) } else { Vec::new() };
     slash.open = !slash_rows.is_empty();
@@ -322,7 +365,7 @@ pub(crate) fn show(ui: &mut Ui, draft: Draft<'_>, spec: &Spec<'_>) -> Option<Str
     }
     let enter = enter || command_enter;
     ui.add_enabled_ui(enabled, |ui| {
-        let measured = measure(ui, text, pictures.len(), room.width(), (room.height(), mode));
+        let measured = measure(ui, text, pictures.len(), room.width(), (room.height(), mode, stop));
         let Fit { box_h, pad_y, chips_h, .. } = measured.fit;
         let boxed = Rect::from_min_size(room.min, vec2(room.width(), box_h));
         let background = ui.painter().add(Shape::Noop);
@@ -347,10 +390,18 @@ pub(crate) fn show(ui: &mut Ui, draft: Draft<'_>, spec: &Spec<'_>) -> Option<Str
         if let Some(at) = removed {
             pictures.remove(at);
         }
+        let stop_button = Rect::from_min_size(
+            pos2(send.left() - measured.stop_w, send.top()),
+            vec2(measured.stop_w - STOP_GAP, Size::Regular.height()),
+        );
         let view = Rect::from_min_max(
             pos2(boxed.left() + PAD_X, boxed.top() + BORDER + chips_h),
             pos2(
-                if mode.sends() { send.left() - SEND_GAP } else { boxed.right() - PAD_X },
+                if mode.sends() {
+                    send.left() - measured.stop_w - SEND_GAP
+                } else {
+                    boxed.right() - PAD_X
+                },
                 boxed.bottom() - BORDER,
             ),
         );
@@ -416,6 +467,16 @@ pub(crate) fn show(ui: &mut Ui, draft: Draft<'_>, spec: &Spec<'_>) -> Option<Str
                 clicked = primary_button(ui, SEND, can_send, Size::Regular).clicked();
             });
         }
+        if mode.sends() && stop {
+            ui.scope_builder(UiBuilder::new().max_rect(stop_button), |ui| {
+                if quiet_button(ui, STOP, true, Size::Regular)
+                    .on_hover_text("Stop the agent's turn (Esc in an empty box)")
+                    .clicked()
+                {
+                    outcome.stop = true;
+                }
+            });
+        }
         if whole.clicked() || std::mem::take(focus) {
             ui.memory_mut(|memory| memory.request_focus(id));
         }
@@ -454,12 +515,15 @@ pub(crate) fn show(ui: &mut Ui, draft: Draft<'_>, spec: &Spec<'_>) -> Option<Str
             .and_then(|edit| edit.cursor_range)
             .filter(|range| range.primary == range.secondary)
             .is_some_and(|range| bullets::on_list_line(text, range.primary.index.0));
-        if (ghost.is_some() || on_list) && has_focus {
+        let walking = recall.as_deref().is_some_and(Recall::walking);
+        let wants_escape =
+            mode.sends() && (walking || (stop && text.is_empty() && pictures.is_empty()));
+        if (ghost.is_some() || on_list || walking || wants_escape) && has_focus {
             let filter = EventFilter {
-                tab: true,
+                tab: ghost.is_some() || on_list || walking,
                 horizontal_arrows: true,
                 vertical_arrows: true,
-                ..EventFilter::default()
+                escape: wants_escape,
             };
             ui.memory_mut(|memory| memory.set_focus_lock_filter(id, filter));
         }
@@ -505,15 +569,69 @@ pub(crate) fn show(ui: &mut Ui, draft: Draft<'_>, spec: &Spec<'_>) -> Option<Str
             }
         }
         if (enter || clicked) && can_send {
-            sent = Some(crate::pictures::message(text, pictures));
+            outcome.sent = Some(crate::pictures::message(text, pictures));
             text.clear();
             pictures.clear();
+            if let Some(recall) = recall {
+                recall.sent(text, pictures);
+            }
             *focus = true;
         }
     });
     slash_view::store(ui, id, slash);
     ui.data_mut(|data| data.insert_temp(menu_id(id), emoji_menu));
-    sent
+    outcome
+}
+
+fn on_first_row(text: &str, cursor: Option<usize>) -> bool {
+    cursor.is_none_or(|at| !text[..byte_of(text, at)].contains('\n'))
+}
+
+fn on_last_row(text: &str, cursor: Option<usize>) -> bool {
+    cursor.is_none_or(|at| !text[byte_of(text, at)..].contains('\n'))
+}
+
+/// Up, Down and Esc of a focused reply box: Up in an empty box edits the newest held message, or
+/// else recalls the messages sent before; Down and Esc walk back; Esc in an empty box stops a
+/// working agent. A key is used up only when one of these takes it, so every other press reaches
+/// the text.
+fn history_keys(
+    ui: &Ui,
+    id: Id,
+    (text, pictures): (&mut String, &mut Vec<PathBuf>),
+    recall: Option<&mut Recall>,
+    outcome: &mut Outcome,
+    (stop, held): (bool, usize),
+) {
+    let cursor = collapsed_cursor(ui, id);
+    let blank = text.is_empty() && pictures.is_empty();
+    let walking = recall.as_deref().is_some_and(Recall::walking);
+    if blank && held > 0 && !walking && consume(ui, Key::ArrowUp) {
+        outcome.edit_held = true;
+        return;
+    }
+    if let Some(recall) = recall {
+        let walked = if recall.claims_up(text, pictures)
+            && on_first_row(text, cursor)
+            && consume(ui, Key::ArrowUp)
+        {
+            recall.up(text, pictures)
+        } else if recall.claims_down(text)
+            && on_last_row(text, cursor)
+            && consume(ui, Key::ArrowDown)
+        {
+            recall.down(text, pictures)
+        } else {
+            walking && consume(ui, Key::Escape) && recall.escape(text, pictures)
+        };
+        if walked {
+            bullets::place_cursor(ui, id, text.chars().count());
+            return;
+        }
+    }
+    if blank && stop && consume(ui, Key::Escape) {
+        outcome.stop = true;
+    }
 }
 
 #[cfg(test)]
@@ -550,6 +668,8 @@ mod tests {
 
     struct Seen {
         sent: Option<String>,
+        stop: bool,
+        edit_held: bool,
         shapes: Vec<Shape>,
         clips: Vec<(Shape, Rect)>,
         box_rect: Rect,
@@ -607,6 +727,9 @@ mod tests {
         ghost: Option<&'static str>,
         hovered: bool,
         mode: Mode,
+        recall: Option<Recall>,
+        stop: bool,
+        held: usize,
     }
 
     impl Rig {
@@ -621,6 +744,9 @@ mod tests {
                 ghost: None,
                 hovered: false,
                 mode: Mode::Reply,
+                recall: None,
+                stop: false,
+                held: 0,
             };
             rig.frame(vec![]);
             rig.frame(vec![]);
@@ -639,7 +765,7 @@ mod tests {
                 },
                 ..RawInput::default()
             };
-            let (mut sent, mut input) = (None, Rect::NOTHING);
+            let (mut outcome, mut input) = (Outcome::default(), Rect::NOTHING);
             let out = self.ctx.run_ui(raw, |ui| {
                 let column = Rect::from_min_size(pos2(0.0, 0.0), vec2(COLUMN_W, COLUMN_H));
                 let h = height(ui, &self.text, self.pictures.len(), column);
@@ -650,6 +776,7 @@ mod tests {
                     text: &mut self.text,
                     pictures: &mut self.pictures,
                     focus: &mut self.focus,
+                    recall: self.recall.as_mut(),
                 };
                 let spec = Spec {
                     id: Id::new("reply-box"),
@@ -658,8 +785,10 @@ mod tests {
                     commands: &[],
                     ghost: self.ghost,
                     mode: self.mode,
+                    stop: self.stop,
+                    held: self.held,
                 };
-                sent = show(&mut child, draft, &spec);
+                outcome = show(&mut child, draft, &spec);
             });
             let mut shapes = Vec::new();
             let mut clips = Vec::new();
@@ -676,7 +805,14 @@ mod tests {
                     _ => None,
                 })
                 .unwrap_or(box_rect);
-            Seen { sent, shapes, clips, box_rect: boxed }
+            Seen {
+                sent: outcome.sent,
+                stop: outcome.stop,
+                edit_held: outcome.edit_held,
+                shapes,
+                clips,
+                box_rect: boxed,
+            }
         }
 
         fn settle(&mut self, events: Vec<Event>) -> Seen {
@@ -840,6 +976,133 @@ mod tests {
         let (row, clip) = seen.last_row_and_clip(&rig.text);
         assert!(clip.contains_rect(row.shrink(0.5)), "cursor row {row:?} outside visible {clip:?}");
         assert!(seen.box_rect.contains_rect(clip), "{clip:?} outside {:?}", seen.box_rect);
+    }
+
+    fn with_history(entries: &[&str]) -> Rig {
+        let mut rig = Rig::new();
+        rig.recall = Some(Recall::with_entries(entries.iter().map(|e| (*e).to_owned()).collect()));
+        rig.frame(vec![]);
+        rig
+    }
+
+    #[test]
+    fn up_in_an_empty_box_walks_back_through_what_was_sent_and_down_walks_forward_to_empty() {
+        let mut rig = with_history(&["first", "second", "third"]);
+        let mut shown = Vec::new();
+        for _ in 0..3 {
+            rig.press(Key::ArrowUp);
+            shown.push(rig.text.clone());
+        }
+        rig.press(Key::ArrowDown);
+        shown.push(rig.text.clone());
+        rig.press(Key::ArrowDown);
+        rig.press(Key::ArrowDown);
+        shown.push(rig.text.clone());
+        assert_eq!(shown, ["third", "second", "first", "second", ""]);
+    }
+
+    #[test]
+    fn esc_during_a_walk_gives_the_box_back_and_keeps_the_keyboard() {
+        let mut rig = with_history(&["first", "second"]);
+        rig.press(Key::ArrowUp);
+        assert_eq!(rig.text, "second");
+        rig.press(Key::Escape);
+        assert_eq!(rig.text, "");
+        assert!(rig.ctx.memory(|memory| memory.has_focus(Id::new("reply-box"))));
+    }
+
+    #[test]
+    fn up_in_a_box_with_text_is_left_to_the_cursor() {
+        let mut rig = with_history(&["first"]);
+        rig.type_text("my draft");
+        rig.press(Key::ArrowUp);
+        assert_eq!(rig.text, "my draft");
+    }
+
+    #[test]
+    fn a_recalled_message_goes_out_on_enter_like_a_typed_one() {
+        let mut rig = with_history(&["run the tests"]);
+        rig.press(Key::ArrowUp);
+        let seen = rig.frame(vec![key(Key::Enter)]);
+        assert_eq!(seen.sent.as_deref(), Some("run the tests"));
+        assert_eq!(rig.text, "");
+    }
+
+    #[test]
+    fn edit_and_send_gives_the_draft_back_once_the_message_is_sent() {
+        let mut rig = with_history(&["old"]);
+        rig.type_text("my draft");
+        let mut recall = rig.recall.take().unwrap();
+        recall.load_message("an earlier one", &mut rig.text, &mut rig.pictures);
+        rig.recall = Some(recall);
+        rig.frame(vec![]);
+        assert_eq!(rig.text, "an earlier one");
+        let seen = rig.frame(vec![key(Key::Enter)]);
+        assert_eq!(seen.sent.as_deref(), Some("an earlier one"));
+        assert_eq!(rig.text, "my draft");
+    }
+
+    #[test]
+    fn up_in_an_empty_box_asks_to_edit_the_newest_held_message_before_it_recalls_history() {
+        let mut rig = with_history(&["first"]);
+        rig.held = 2;
+        let seen = rig.frame(vec![key(Key::ArrowUp)]);
+        assert!(seen.edit_held);
+        assert_eq!(rig.text, "", "history waits while a held message is open for editing");
+        rig.held = 0;
+        let seen = rig.press(Key::ArrowUp);
+        assert!(!seen.edit_held);
+        assert_eq!(rig.text, "first");
+    }
+
+    #[test]
+    fn esc_in_an_empty_box_stops_a_working_agent_and_in_a_box_with_text_it_does_not() {
+        let mut rig = Rig::new();
+        rig.stop = true;
+        rig.frame(vec![]);
+        assert!(rig.frame(vec![key(Key::Escape)]).stop);
+        let mut typed = Rig::new();
+        typed.stop = true;
+        typed.type_text("half");
+        assert!(!typed.frame(vec![key(Key::Escape)]).stop);
+        let mut idle = Rig::new();
+        idle.frame(vec![]);
+        assert!(!idle.frame(vec![key(Key::Escape)]).stop, "nothing to stop");
+    }
+
+    #[test]
+    fn the_stop_button_sits_beside_send_only_while_the_agent_works_and_a_click_stops() {
+        let mut rig = Rig::new();
+        let idle = rig.frame(vec![]);
+        assert_eq!(idle.text_rows("Stop").len(), 0);
+        rig.stop = true;
+        let seen = rig.frame(vec![]);
+        let stop = seen.text_rows("Stop")[0];
+        let send = seen.text_rows("Send")[0];
+        assert!(stop.right() < send.left(), "{stop:?} {send:?}");
+        assert!((stop.center().y - send.center().y).abs() < 0.6);
+        assert!(seen.box_rect.contains_rect(stop));
+        let at = stop.center();
+        let button = |pressed| Event::PointerButton {
+            pos: at,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: Modifiers::NONE,
+        };
+        rig.frame(vec![Event::PointerMoved(at)]);
+        rig.frame(vec![button(true)]);
+        assert!(rig.frame(vec![button(false)]).stop);
+    }
+
+    #[test]
+    fn typed_text_wraps_before_the_stop_button_not_under_it() {
+        let mut rig = Rig::new();
+        rig.stop = true;
+        let text = "word ".repeat(40);
+        let seen = rig.type_text(&text);
+        let stop = seen.text_rows("Stop")[0];
+        let rows = seen.text_rows(&text);
+        assert!(rows.iter().all(|row| row.right() <= stop.left()), "{rows:?} {stop:?}");
     }
 
     fn rig_with_two_pictures() -> Rig {

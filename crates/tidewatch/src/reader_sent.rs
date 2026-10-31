@@ -8,7 +8,7 @@ use tidewatch_core::sent::{Reason, Record};
 
 const SLACK_MS: i64 = 60_000;
 const WINDOW_MS: i64 = 10 * 60_000;
-const QUEUED_EXPIRES_MS: i64 = 15 * 60_000;
+pub(crate) const NOT_SEEN_MS: i64 = 2 * 60_000;
 const KEPT: usize = 200;
 const LOOSE_PREFIX_CHARS: usize = 120;
 const PASTE_NOTE: &str = "[Pasted text #";
@@ -16,8 +16,16 @@ const PASTE_NOTE_MAX_CHARS: usize = 60;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct Queued {
+    pub(crate) id: u64,
     pub(crate) text: String,
     pub(crate) at_ms: i64,
+}
+
+impl Queued {
+    /// Whether the agent still has not shown this message after `NOT_SEEN_MS`.
+    pub(crate) fn not_seen(&self, now_ms: i64) -> bool {
+        now_ms - self.at_ms >= NOT_SEEN_MS
+    }
 }
 
 /// One user line of the transcript: its row, its text and when it was written.
@@ -39,8 +47,11 @@ fn same_pictured(sent: &str, seen: &str) -> bool {
     unmarked != seen && same_text(&crate::pictures::split_trailing(sent).0, &unmarked)
 }
 
-fn same_queued(sent: &str, seen: &str) -> bool {
-    same_text(sent, seen) || same_pictured(sent, seen)
+fn same_queued(queued: &Queued, seen: &str, at: Option<i64>) -> bool {
+    let inside = at.is_none_or(|at| at <= queued.at_ms + WINDOW_MS);
+    same_text(&queued.text, seen)
+        || same_pictured(&queued.text, seen)
+        || (inside && same_paste(&queued.text, seen))
 }
 
 /// Like `same_text`, and also true when the agent kept only the start of a long paste or wrote a
@@ -82,6 +93,7 @@ fn distance(record: &Record, at: Option<i64>) -> i64 {
 pub(crate) struct Sent {
     records: Vec<Record>,
     queued: Vec<Queued>,
+    next_queued: u64,
     claims: HashMap<u64, usize>,
     fresh: Vec<(u64, u64)>,
 }
@@ -99,7 +111,15 @@ impl Sent {
     }
 
     pub(crate) fn queue(&mut self, text: &str, at_ms: i64) {
-        self.queued.push(Queued { text: text.to_owned(), at_ms });
+        self.next_queued += 1;
+        self.queued.push(Queued { id: self.next_queued, text: text.to_owned(), at_ms });
+    }
+
+    /// Stops showing queued message `id`, as when the owner sends it again.
+    pub(crate) fn forget_queued(&mut self, id: u64) -> bool {
+        let before = self.queued.len();
+        self.queued.retain(|queued| queued.id != id);
+        self.queued.len() != before
     }
 
     pub(crate) fn take_fresh(&mut self) -> Vec<(u64, u64)> {
@@ -138,7 +158,7 @@ impl Sent {
             let found = lines.iter().find(|(seq, seen, at)| {
                 !taken.contains(seq)
                     && at.is_none_or(|at| at >= queued.at_ms - SLACK_MS)
-                    && same_queued(&queued.text, seen)
+                    && same_queued(queued, seen, *at)
             });
             match found {
                 Some((seq, _, _)) => {
@@ -173,13 +193,14 @@ impl Sent {
         self.records.iter().filter(|record| record.timed())
     }
 
-    /// The messages the transcript does not have yet, oldest first.
-    pub(crate) fn waiting(&self, now_ms: i64) -> impl Iterator<Item = &Queued> {
-        self.queued.iter().filter(move |queued| now_ms - queued.at_ms < QUEUED_EXPIRES_MS)
+    /// The messages the transcript does not have yet, oldest first. One the agent never showed
+    /// stays, marked by [`Queued::not_seen`], until it is sent again or the transcript has it.
+    pub(crate) fn waiting(&self) -> impl Iterator<Item = &Queued> {
+        self.queued.iter()
     }
 
-    pub(crate) fn waiting_len(&self, now_ms: i64) -> usize {
-        self.waiting(now_ms).count()
+    pub(crate) fn waiting_len(&self) -> usize {
+        self.queued.len()
     }
 }
 
@@ -347,12 +368,12 @@ mod tests {
         sent.queue("do the thing", 1_000);
         sent.queue("and then this", 1_500);
         sent.settle(&lines(&[("something old", Some(10))]));
-        assert_eq!(sent.waiting_len(2_000), 2);
+        assert_eq!(sent.waiting_len(), 2);
         sent.settle(&lines(&[("do the thing", Some(5_000))]));
-        let waiting: Vec<&str> = sent.waiting(6_000).map(|q| q.text.as_str()).collect();
+        let waiting: Vec<&str> = sent.waiting().map(|q| q.text.as_str()).collect();
         assert_eq!(waiting, ["and then this"]);
         sent.settle(&lines(&[("do the thing", Some(5_000)), ("and  then this", Some(6_000))]));
-        assert_eq!(sent.waiting_len(7_000), 0);
+        assert_eq!(sent.waiting_len(), 0);
     }
 
     #[test]
@@ -361,15 +382,47 @@ mod tests {
         sent.queue("again", 1_000);
         sent.queue("again", 2_000);
         sent.settle(&lines(&[("again", Some(3_000))]));
-        assert_eq!(sent.waiting_len(4_000), 1);
+        assert_eq!(sent.waiting_len(), 1);
     }
 
     #[test]
-    fn a_queued_message_nobody_recorded_stops_showing_after_a_while() {
+    fn a_queued_message_nobody_recorded_stays_and_reads_as_not_seen_after_two_minutes() {
         let mut sent = Sent::default();
         sent.queue("lost", 0);
-        assert_eq!(sent.waiting_len(60_000), 1);
-        assert_eq!(sent.waiting_len(QUEUED_EXPIRES_MS), 0);
+        let states: Vec<bool> = [NOT_SEEN_MS - 1, NOT_SEEN_MS, 60 * 60_000]
+            .iter()
+            .map(|now| sent.waiting().all(|queued| queued.not_seen(*now)))
+            .collect();
+        assert_eq!(states, [false, true, true]);
+        assert_eq!(sent.waiting_len(), 1);
+    }
+
+    #[test]
+    fn a_long_queued_paste_matches_the_start_the_agent_kept_or_its_paste_note() {
+        let long = format!("{} {}", "please read this whole log".repeat(8), "end");
+        let kept: String = long.chars().take(150).collect();
+        for seen in [kept.as_str(), "[Pasted text #1 +40 lines]"] {
+            let mut sent = Sent::default();
+            sent.queue(&long, 1_000);
+            sent.settle(&lines(&[(seen, Some(5_000))]));
+            assert_eq!(sent.waiting_len(), 0, "{seen:?}");
+        }
+        let mut sent = Sent::default();
+        sent.queue(&long, 1_000);
+        sent.settle(&lines(&[("[Pasted text #1 +40 lines]", Some(1_000 + WINDOW_MS + 1))]));
+        assert_eq!(sent.waiting_len(), 1, "a placeholder long after does not count");
+    }
+
+    #[test]
+    fn a_queued_message_sent_again_is_forgotten_by_its_id() {
+        let mut sent = Sent::default();
+        sent.queue("a", 0);
+        sent.queue("b", 0);
+        let ids: Vec<u64> = sent.waiting().map(|queued| queued.id).collect();
+        assert!(sent.forget_queued(ids[0]));
+        assert!(!sent.forget_queued(ids[0]));
+        let left: Vec<&str> = sent.waiting().map(|queued| queued.text.as_str()).collect();
+        assert_eq!(left, ["b"]);
     }
 
     #[test]
@@ -386,7 +439,7 @@ mod tests {
             let mut sent = Sent::default();
             sent.queue(typed, 1_000);
             sent.settle(&lines(&[(seen, Some(5_000))]));
-            assert_eq!(sent.waiting_len(6_000), 0, "{typed:?} vs {seen:?}");
+            assert_eq!(sent.waiting_len(), 0, "{typed:?} vs {seen:?}");
         }
     }
 
@@ -402,7 +455,7 @@ mod tests {
             let mut sent = Sent::default();
             sent.queue(typed, 1_000);
             sent.settle(&lines(&[(seen, Some(5_000))]));
-            assert_eq!(sent.waiting_len(6_000), 1, "{typed:?} vs {seen:?}");
+            assert_eq!(sent.waiting_len(), 1, "{typed:?} vs {seen:?}");
         }
     }
 }

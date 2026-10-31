@@ -217,7 +217,7 @@ mod tests {
                     profile: "Builder",
                     face: None,
                     turn: Turn::Finished,
-                    stopped: false,
+                    working: false,
                     reply_blocked: None,
                 };
                 let rect = ui.max_rect();

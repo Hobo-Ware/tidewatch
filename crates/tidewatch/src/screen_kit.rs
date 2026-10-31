@@ -1041,6 +1041,8 @@ pub(crate) enum Glyph {
     More,
     Clock,
     Infinity,
+    Up,
+    Down,
 }
 
 /// Paints `glyph` in a `size` square centered on `center`.
@@ -1074,6 +1076,14 @@ pub(crate) fn paint_glyph(
         Glyph::Clock => {
             painter.circle_stroke(at(8.0, 8.0), 5.5 * unit, stroke);
             painter.add(egui::Shape::line(vec![at(8.0, 5.0), at(8.0, 8.0), at(10.0, 9.5)], stroke));
+        }
+        Glyph::Up => {
+            painter
+                .add(egui::Shape::line(vec![at(4.0, 10.0), at(8.0, 6.0), at(12.0, 10.0)], stroke));
+        }
+        Glyph::Down => {
+            painter
+                .add(egui::Shape::line(vec![at(4.0, 6.0), at(8.0, 10.0), at(12.0, 6.0)], stroke));
         }
         Glyph::Infinity => {
             let curve: Vec<egui::Pos2> = (0..=40)

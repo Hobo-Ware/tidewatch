@@ -58,6 +58,9 @@ pub(crate) enum Asked {
     /// The user skipped the questions, or the agent's tool reported a refusal.
     Declined,
     Ended,
+    /// The menu left the agent's screen without Tidewatch answering it: it was answered or closed
+    /// in the terminal.
+    Closed,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -255,12 +258,19 @@ impl Rows {
         self.sent.told_auto_fix(text)
     }
 
-    pub(crate) fn queued(&self, now_ms: i64) -> impl Iterator<Item = &crate::reader_sent::Queued> {
-        self.sent.waiting(now_ms)
+    pub(crate) fn queued(&self) -> impl Iterator<Item = &crate::reader_sent::Queued> {
+        self.sent.waiting()
     }
 
-    pub(crate) fn queued_len(&self, now_ms: i64) -> usize {
-        self.sent.waiting_len(now_ms)
+    pub(crate) fn queued_len(&self) -> usize {
+        self.sent.waiting_len()
+    }
+
+    /// Stops showing queued message `id`: the owner sent it again or dismissed it.
+    pub(crate) fn forget_queued(&mut self, id: u64) {
+        if self.sent.forget_queued(id) {
+            self.revision += 1;
+        }
     }
 
     fn settle_sent(&mut self) {

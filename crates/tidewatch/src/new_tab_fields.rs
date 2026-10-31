@@ -190,9 +190,15 @@ pub(crate) fn text_box(
         commands: &state.commands,
         ghost: None,
         mode: Mode::Field { height: height - OUTLINE },
+        stop: false,
+        held: 0,
     };
-    let draft =
-        Draft { text: &mut text, pictures: &mut state.pictures, focus: &mut state.focus_message };
+    let draft = Draft {
+        text: &mut text,
+        pictures: &mut state.pictures,
+        focus: &mut state.focus_message,
+        recall: None,
+    };
     composer::show(&mut child, draft, &spec);
     let rect = Rect::from_min_size(origin, vec2(width, wanted));
     ui.allocate_rect(rect, Sense::hover());

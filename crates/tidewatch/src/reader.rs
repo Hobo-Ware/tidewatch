@@ -21,6 +21,7 @@ use crate::question_auto::Countdown;
 use crate::reader_feed::{Feed, Message};
 use crate::reader_rows::Rows;
 use crate::reader_view::ViewState;
+use crate::reply_store::ReplyStore;
 
 const POKE_GAP_S: f64 = 0.3;
 const SENT_LOOK_S: f64 = 1.0;
@@ -166,6 +167,8 @@ pub(crate) struct Reader {
     first_message: Option<String>,
     pub(crate) rows: Rows,
     pub(crate) view: ViewState,
+    pub(crate) store: ReplyStore,
+    pub(crate) menu_gone: Option<(u64, f64)>,
     sent_file: Option<PathBuf>,
     sent_len: u64,
     sent_looked: f64,
@@ -204,6 +207,8 @@ impl Reader {
             first_message: None,
             rows: Rows::default(),
             view: ViewState::started_at(started_ms),
+            store: ReplyStore::default(),
+            menu_gone: None,
             sent_file: None,
             sent_len: 0,
             sent_looked: f64::NEG_INFINITY,

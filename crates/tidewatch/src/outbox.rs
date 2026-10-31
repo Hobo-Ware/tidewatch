@@ -13,7 +13,10 @@ use crate::note_send::HOLD_SECS;
 
 pub(crate) const NO_AGENT: &str = "There is no running agent in this tab";
 pub(crate) const WAITING_ON_YOU: &str = "The agent is waiting on you. Answer it first";
+pub(crate) const HALF_TYPED: &str = "The agent's input box held a half-typed message for too long";
+pub(crate) const LINE_FULL: &str = "Too many messages are already waiting for this agent";
 const NO_BOX_PATIENCE_S: f64 = 30.0;
+const TYPED_PATIENCE_S: f64 = 120.0;
 const QUEUE_MAX: usize = 8;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -42,6 +45,21 @@ pub(crate) struct Send {
     pub(crate) origin: Origin,
     pub(crate) tell: Option<Tell>,
     pub(crate) mid_turn: bool,
+    pub(crate) reply: bool,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct Kind {
+    origin: Origin,
+    mid_turn: bool,
+    reply: bool,
+    command: bool,
+}
+
+impl Kind {
+    fn holds(self) -> bool {
+        self.reply && !self.command
+    }
 }
 
 impl Send {
@@ -51,6 +69,7 @@ impl Send {
             origin: Origin::Auto,
             tell: Some(Tell { reason, because: because.to_owned(), cap: None }),
             mid_turn: false,
+            reply: false,
         }
     }
 
@@ -59,7 +78,22 @@ impl Send {
     }
 
     pub(crate) fn untold(text: &str, origin: Origin) -> Self {
-        Self { text: text.to_owned(), origin, tell: None, mid_turn: false }
+        Self { text: text.to_owned(), origin, tell: None, mid_turn: false, reply: false }
+    }
+
+    /// A message the owner typed: it waits while the agent works and goes when the turn is over,
+    /// except a slash command, which runs at once.
+    pub(crate) fn reply(text: &str) -> Self {
+        Self { reply: true, ..Self::untold(text, Origin::Hand) }
+    }
+
+    fn kind(&self) -> Kind {
+        Kind {
+            origin: self.origin,
+            mid_turn: self.mid_turn,
+            reply: self.reply,
+            command: crate::send_line::is_command(&self.text),
+        }
     }
 
     #[cfg(test)]
@@ -98,12 +132,39 @@ pub(crate) enum Offer {
     Refuse(&'static str),
 }
 
+/// Messages that left a tab's line without being typed, and why.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct Dropped {
+    pub(crate) count: usize,
+    pub(crate) why: &'static str,
+}
+
+impl Dropped {
+    /// The line the owner sees when messages left a tab's line without being typed.
+    pub(crate) fn line(self) -> String {
+        let what = if self.count == 1 {
+            "A queued message was".to_owned()
+        } else {
+            format!("{} queued messages were", self.count)
+        };
+        format!("{what} not sent: {}", self.why)
+    }
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum Ready {
+    Nothing,
+    Send(Send),
+    Dropped(Dropped),
+}
+
 #[derive(Debug, Default)]
 struct Lane {
     hold_until: Option<f64>,
     queue: VecDeque<Send>,
     auto_sends: u32,
     no_box_since: Option<f64>,
+    typed_since: Option<f64>,
 }
 
 #[derive(Debug, Default)]
@@ -111,12 +172,16 @@ pub(crate) struct Outbox {
     lanes: HashMap<u64, Lane>,
 }
 
-fn decide(status: Option<&AgentStatus>, origin: Origin, held: bool, mid_turn: bool) -> Offer {
+fn decide(status: Option<&AgentStatus>, kind: Kind, held: bool) -> Offer {
     match status {
-        Some(AgentStatus::Done) if held => Offer::Wait,
+        Some(AgentStatus::Done) if held && !kind.command => Offer::Wait,
         Some(AgentStatus::Done) => Offer::Go,
-        Some(AgentStatus::Working) if origin == Origin::Hand || mid_turn => Offer::Go,
-        Some(AgentStatus::NeedsYou(_)) if origin == Origin::Hand => Offer::Refuse(WAITING_ON_YOU),
+        Some(AgentStatus::Working) if kind.holds() => Offer::Wait,
+        Some(AgentStatus::Working) if kind.origin == Origin::Hand || kind.mid_turn => Offer::Go,
+        Some(AgentStatus::NeedsYou(_)) if kind.reply => Offer::Go,
+        Some(AgentStatus::NeedsYou(_)) if kind.origin == Origin::Hand => {
+            Offer::Refuse(WAITING_ON_YOU)
+        }
         Some(AgentStatus::Working | AgentStatus::NeedsYou(_)) => Offer::Wait,
         Some(
             AgentStatus::SettingUp
@@ -137,14 +202,14 @@ impl Lane {
         &mut self,
         status: Option<&AgentStatus>,
         screen: Screen,
-        (origin, mid_turn): (Origin, bool),
+        kind: Kind,
         now: f64,
     ) -> Offer {
         if status != Some(&AgentStatus::Done) {
             self.hold_until = None;
         }
-        let offer = decide(status, origin, self.held(now), mid_turn);
-        if offer != Offer::Go || origin == Origin::Hand {
+        let offer = decide(status, kind, self.held(now));
+        if offer != Offer::Go || kind.origin == Origin::Hand {
             return offer;
         }
         if status == Some(&AgentStatus::Working) {
@@ -153,10 +218,20 @@ impl Lane {
         match screen {
             Screen::Free => {
                 self.no_box_since = None;
+                self.typed_since = None;
                 Offer::Go
             }
-            Screen::Typed => Offer::Wait,
+            Screen::Typed => {
+                let since = *self.typed_since.get_or_insert(now);
+                if now - since >= TYPED_PATIENCE_S {
+                    self.typed_since = None;
+                    Offer::Refuse(HALF_TYPED)
+                } else {
+                    Offer::Wait
+                }
+            }
             Screen::NoBox => {
+                self.typed_since = None;
                 let since = *self.no_box_since.get_or_insert(now);
                 if now - since >= NO_BOX_PATIENCE_S { Offer::Go } else { Offer::Wait }
             }
@@ -181,7 +256,7 @@ impl Outbox {
         if send.counted() && lane.auto_sends >= MAX_AUTO_SENDS {
             return Offer::Paused;
         }
-        lane.look(status, screen, (send.origin, send.mid_turn), now)
+        lane.look(status, screen, send.kind(), now)
     }
 
     pub(crate) fn cap_for(&self, tab: u64, send: &Send) -> Option<Cap> {
@@ -196,19 +271,25 @@ impl Outbox {
 
     pub(crate) fn sent(&mut self, tab: u64, send: &Send, now: f64) {
         let counted = send.counted();
+        let command = send.kind().command && send.reply;
         let lane = self.lane(tab);
-        lane.hold_until = Some(now + HOLD_SECS);
+        if !command {
+            lane.hold_until = Some(now + HOLD_SECS);
+        }
         if counted {
             lane.auto_sends += 1;
         }
     }
 
-    pub(crate) fn enqueue(&mut self, tab: u64, send: Send) {
+    /// Adds `send` to the tab's line. A full line gives the send back: the oldest is never
+    /// dropped to make room.
+    pub(crate) fn enqueue(&mut self, tab: u64, send: Send) -> Result<(), Send> {
         let lane = self.lane(tab);
         if lane.queue.len() >= QUEUE_MAX {
-            lane.queue.pop_front();
+            return Err(send);
         }
         lane.queue.push_back(send);
+        Ok(())
     }
 
     pub(crate) fn next_ready(
@@ -217,17 +298,18 @@ impl Outbox {
         status: Option<&AgentStatus>,
         screen: Screen,
         now: f64,
-    ) -> Option<Send> {
-        let lane = self.lanes.get_mut(&tab)?;
-        let front = lane.queue.front()?;
-        let kind = (front.origin, front.mid_turn);
+    ) -> Ready {
+        let Some(lane) = self.lanes.get_mut(&tab) else { return Ready::Nothing };
+        let Some(front) = lane.queue.front() else { return Ready::Nothing };
+        let kind = front.kind();
         match lane.look(status, screen, kind, now) {
-            Offer::Go => lane.queue.pop_front(),
-            Offer::Refuse(_) => {
-                lane.queue.clear();
-                None
+            Offer::Go => lane.queue.pop_front().map_or(Ready::Nothing, Ready::Send),
+            Offer::Refuse(why) => {
+                let count = if why == HALF_TYPED { 1 } else { lane.queue.len() };
+                lane.queue.drain(..count);
+                Ready::Dropped(Dropped { count, why })
             }
-            Offer::Wait | Offer::Paused => None,
+            Offer::Wait | Offer::Paused => Ready::Nothing,
         }
     }
 
@@ -342,11 +424,14 @@ mod tests {
         assert_eq!(offer(&mut outbox, &first, &AgentStatus::Done, 5.0), Offer::Go);
         outbox.sent(TAB, &first, 5.0);
         assert_eq!(offer(&mut outbox, &second, &AgentStatus::Done, 5.0), Offer::Wait);
-        outbox.enqueue(TAB, second.clone());
-        assert_eq!(outbox.next_ready(TAB, Some(&AgentStatus::Done), Screen::Free, 5.0), None);
+        assert_eq!(outbox.enqueue(TAB, second.clone()), Ok(()));
+        assert_eq!(
+            outbox.next_ready(TAB, Some(&AgentStatus::Done), Screen::Free, 5.0),
+            Ready::Nothing
+        );
         assert_eq!(offer(&mut outbox, &second, &AgentStatus::Working, 6.0), Offer::Wait);
         let ready = outbox.next_ready(TAB, Some(&AgentStatus::Done), Screen::Free, 9.0);
-        assert_eq!(ready, Some(second));
+        assert_eq!(ready, Ready::Send(second));
     }
 
     #[test]
@@ -442,15 +527,22 @@ mod tests {
     fn the_queue_goes_out_oldest_first_one_per_idle_moment() {
         let mut outbox = Outbox::default();
         for text in ["a", "b", "c"] {
-            outbox.enqueue(TAB, Send::untold(text, Origin::Auto));
+            assert_eq!(outbox.enqueue(TAB, Send::untold(text, Origin::Auto)), Ok(()));
         }
         assert_eq!(outbox.waiting_tabs(), [TAB]);
         let mut order = Vec::new();
         for turn in 0..3 {
             let now = f64::from(turn) * 100.0;
-            let next = outbox.next_ready(TAB, Some(&AgentStatus::Done), Screen::Free, now).unwrap();
+            let Ready::Send(next) =
+                outbox.next_ready(TAB, Some(&AgentStatus::Done), Screen::Free, now)
+            else {
+                panic!("a message was due");
+            };
             outbox.sent(TAB, &next, now);
-            assert_eq!(outbox.next_ready(TAB, Some(&AgentStatus::Done), Screen::Free, now), None);
+            assert_eq!(
+                outbox.next_ready(TAB, Some(&AgentStatus::Done), Screen::Free, now),
+                Ready::Nothing
+            );
             order.push(next.text);
         }
         assert_eq!(order, ["a", "b", "c"]);
@@ -458,15 +550,108 @@ mod tests {
     }
 
     #[test]
-    fn the_queue_is_bounded_and_dropped_when_the_agent_is_gone() {
+    fn a_full_line_refuses_the_new_send_and_keeps_every_older_one() {
         let mut outbox = Outbox::default();
-        for n in 0..QUEUE_MAX + 3 {
-            outbox.enqueue(TAB, Send::untold(&n.to_string(), Origin::Auto));
+        for n in 0..QUEUE_MAX {
+            assert_eq!(outbox.enqueue(TAB, Send::untold(&n.to_string(), Origin::Auto)), Ok(()));
         }
-        let first = outbox.next_ready(TAB, Some(&AgentStatus::Done), Screen::Free, 0.0).unwrap();
-        assert_eq!(first.text, "3");
-        assert_eq!(outbox.next_ready(TAB, Some(&AgentStatus::Stopped), Screen::Free, 99.0), None);
+        let extra = Send::untold("one too many", Origin::Auto);
+        assert_eq!(outbox.enqueue(TAB, extra.clone()), Err(extra));
+        let done = Some(&AgentStatus::Done);
+        let Ready::Send(first) = outbox.next_ready(TAB, done, Screen::Free, 0.0) else {
+            panic!("the oldest was due");
+        };
+        assert_eq!(first.text, "0");
+    }
+
+    #[test]
+    fn a_line_that_cannot_be_typed_says_how_many_left_it_and_why() {
+        let mut outbox = Outbox::default();
+        for n in 0..3 {
+            assert_eq!(outbox.enqueue(TAB, Send::untold(&n.to_string(), Origin::Auto)), Ok(()));
+        }
+        let gone = outbox.next_ready(TAB, Some(&AgentStatus::Stopped), Screen::Free, 99.0);
+        assert_eq!(gone, Ready::Dropped(Dropped { count: 3, why: NO_AGENT }));
         assert_eq!(outbox.waiting_tabs(), Vec::<u64>::new());
+    }
+
+    #[test]
+    fn the_line_for_a_drop_names_how_many_and_why() {
+        let one = Dropped { count: 1, why: NO_AGENT }.line();
+        assert_eq!(one, "A queued message was not sent: There is no running agent in this tab");
+        let many = Dropped { count: 3, why: HALF_TYPED }.line();
+        assert!(many.starts_with("3 queued messages were not sent: "), "{many}");
+    }
+
+    #[test]
+    fn a_wait_on_a_half_typed_draft_ends_with_a_line_that_says_so_and_only_for_that_send() {
+        let mut outbox = Outbox::default();
+        let auto = Send::auto("x", Reason::DueToday, "an item is due");
+        let done = Some(&AgentStatus::Done);
+        assert_eq!(outbox.offer(TAB, &auto, done, Screen::Typed, 0.0), Offer::Wait);
+        assert_eq!(
+            outbox.offer(TAB, &auto, done, Screen::Typed, TYPED_PATIENCE_S - 1.0),
+            Offer::Wait
+        );
+        assert_eq!(
+            outbox.offer(TAB, &auto, done, Screen::Typed, TYPED_PATIENCE_S),
+            Offer::Refuse(HALF_TYPED)
+        );
+        assert_eq!(outbox.offer(TAB, &auto, done, Screen::Free, TYPED_PATIENCE_S), Offer::Go);
+    }
+
+    #[test]
+    fn a_queued_send_that_waited_too_long_on_a_draft_is_dropped_alone() {
+        let mut outbox = Outbox::default();
+        for text in ["a", "b"] {
+            assert_eq!(outbox.enqueue(TAB, Send::untold(text, Origin::Auto)), Ok(()));
+        }
+        let done = Some(&AgentStatus::Done);
+        assert_eq!(outbox.next_ready(TAB, done, Screen::Typed, 0.0), Ready::Nothing);
+        let late = outbox.next_ready(TAB, done, Screen::Typed, TYPED_PATIENCE_S);
+        assert_eq!(late, Ready::Dropped(Dropped { count: 1, why: HALF_TYPED }));
+        assert_eq!(outbox.waiting_tabs(), [TAB]);
+        let Ready::Send(next) = outbox.next_ready(TAB, done, Screen::Free, TYPED_PATIENCE_S) else {
+            panic!("the second send was still waiting");
+        };
+        assert_eq!(next.text, "b");
+    }
+
+    #[test]
+    fn a_reply_waits_while_the_agent_works_and_goes_when_it_is_done() {
+        let reply = Send::reply("also check the Android build");
+        let cases = [
+            (AgentStatus::Working, Offer::Wait),
+            (AgentStatus::Done, Offer::Go),
+            (AgentStatus::NeedsYou(Why::Quiet), Offer::Go),
+            (AgentStatus::Stopped, Offer::Refuse(NO_AGENT)),
+            (AgentStatus::Shell, Offer::Refuse(NO_AGENT)),
+        ];
+        for (status, want) in cases {
+            let got = Outbox::default().offer(TAB, &reply, Some(&status), Screen::Free, 0.0);
+            assert_eq!(got, want, "{status:?}");
+        }
+    }
+
+    #[test]
+    fn a_reply_never_merges_with_the_one_before_it() {
+        let mut outbox = Outbox::default();
+        let (first, second) = (Send::reply("one"), Send::reply("two"));
+        assert_eq!(offer(&mut outbox, &first, &AgentStatus::Done, 0.0), Offer::Go);
+        outbox.sent(TAB, &first, 0.0);
+        assert_eq!(offer(&mut outbox, &second, &AgentStatus::Done, 1.0), Offer::Wait);
+        assert_eq!(offer(&mut outbox, &second, &AgentStatus::Working, 2.0), Offer::Wait);
+        assert_eq!(offer(&mut outbox, &second, &AgentStatus::Done, 3.0), Offer::Go);
+    }
+
+    #[test]
+    fn a_slash_command_runs_at_once_and_does_not_hold_the_next_reply() {
+        let mut outbox = Outbox::default();
+        let command = Send::reply("/model opus");
+        assert_eq!(offer(&mut outbox, &command, &AgentStatus::Working, 0.0), Offer::Go);
+        outbox.sent(TAB, &command, 0.0);
+        let next = Send::reply("go on");
+        assert_eq!(offer(&mut outbox, &next, &AgentStatus::Done, 1.0), Offer::Go);
     }
 
     #[test]
@@ -504,7 +689,7 @@ mod tests {
     #[test]
     fn a_closed_tab_forgets_its_lane() {
         let mut outbox = Outbox::default();
-        outbox.enqueue(TAB, Send::untold("x", Origin::Auto));
+        assert_eq!(outbox.enqueue(TAB, Send::untold("x", Origin::Auto)), Ok(()));
         outbox.forget(TAB);
         assert_eq!(outbox.waiting_tabs(), Vec::<u64>::new());
     }

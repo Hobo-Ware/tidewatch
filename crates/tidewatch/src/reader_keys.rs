@@ -59,6 +59,9 @@ const SUBMIT: &[u8] = b"1";
 /// Dismisses Claude's question menu without answering.
 pub(crate) const CLAUDE_MENU_ESCAPE: &[u8] = b"\x1b";
 
+/// Esc, which ends the turn of every agent CLI Tidewatch runs.
+pub(crate) const INTERRUPT: &[u8] = b"\x1b";
+
 fn digit(number: usize) -> Option<Vec<u8>> {
     u8::try_from(number).ok().filter(|n| (1..=9).contains(n)).map(|n| vec![b'0' + n])
 }
