@@ -1,21 +1,24 @@
 //! The strip under an agent tab's status line once the comment guard has flagged something (or the
 //! tab turned it off): a chip with the flag count and the newest flagged file, cut in the middle to
-//! its room, whose popover lists each flag (`path:line`, the rule as a tag, the comment in two
-//! lines), never wider than the column, and the tab's own off switch.
+//! its room, whose popover has a header with the tab's own off switch and lists each flag (`path:line`,
+//! the rule as a tag, the comment in one line), never wider than the column.
 
 use std::sync::Arc;
 
 use egui::epaint::text::{LayoutJob, TextWrapping};
 use egui::{
-    Color32, CornerRadius, Frame, Key, Modifiers, Painter, Rect, RectAlign, Response, ScrollArea,
-    Sense, Stroke, StrokeKind, Ui, pos2, vec2,
+    Color32, CornerRadius, Key, Modifiers, Painter, Rect, RectAlign, Response, ScrollArea, Sense,
+    Stroke, StrokeKind, Ui, pos2, vec2,
 };
 
 use crate::brand;
 use crate::comment_model::{self, Line, PathRoots, Tone, chip_text, kind_label, kind_tone};
 use crate::middle_cut::{keeps_name, middle_cut};
 use crate::reader_view::INSET;
-use crate::screen_kit::{Size, TEXT_SECONDARY, TagFill, body, mono, paint_tag, tag_width};
+use crate::screen_kit::{
+    ChipPart, Size, TEXT_BODY, TEXT_SECONDARY, TEXT_TAG, TagFill, body, button_width, heading,
+    mono, paint_status_chip, paint_tag, popover_frame, quiet_button, status_chip_width, tag_width,
+};
 
 pub(crate) const HEIGHT: f32 = 44.0;
 const CARD_H: f32 = 36.0;
@@ -24,9 +27,16 @@ const POPOVER_W: f32 = 460.0;
 const EDGE: f32 = 8.0;
 const GAP: f32 = 10.0;
 const LINES_SHOWN: usize = 12;
-const COMMENT_ROWS: usize = 2;
-const LIST_RESERVE: f32 = 96.0;
+const COMMENT_ROWS: usize = 1;
+const LIST_RESERVE: f32 = 120.0;
 const MIN_LIST_H: f32 = 96.0;
+const HEADER_H: f32 = 40.0;
+const ROW_INSET: f32 = 8.0;
+const ROW_PAD: f32 = 7.0;
+const ROW_GAP: f32 = 0.0;
+const LINE_PAD: f32 = 8.0;
+const SQUARE: f32 = 8.0;
+const SQUARE_GAP: f32 = 10.0;
 
 pub(crate) struct Strip<'a> {
     pub(crate) records: &'a [tidewatch_core::comment_flags::Record],
@@ -72,7 +82,7 @@ pub(crate) fn show(ui: &mut Ui, band: Rect, strip: &Strip<'_>) -> Option<Action>
     if strip.dev_open_popover && !strip.records.is_empty() {
         egui::Popup::open_id(ui.ctx(), egui::Popup::default_response_id(&chip));
     }
-    popover(ui, &chip, strip, card);
+    action = action.or(popover(ui, &chip, strip, card));
 
     if let Some(last) =
         comment_model::lines(strip.records, 1, strip.roots).first().filter(|_| !strip.off)
@@ -119,28 +129,27 @@ fn chip(
     y: f32,
     ink: egui::Color32,
 ) -> Response {
-    let galley = painter.layout_no_wrap(text.to_owned(), body(TEXT_SECONDARY), ink);
-    let width = galley.size().x + 28.0;
+    let parts = [ChipPart { text, ink }];
+    let width = status_chip_width(painter, &parts);
     let rect = Rect::from_min_size(pos2(left, y - CHIP_H / 2.0), vec2(width, CHIP_H));
     let response = ui.interact(rect, ui.id().with("comment-strip-chip"), Sense::click());
-    let fill = ink.gamma_multiply(if response.hovered() { 0.2 } else { 0.12 });
-    painter.rect_filled(rect, CornerRadius::same(Size::Compact.radius()), fill);
-    painter.circle_filled(pos2(rect.left() + 12.0, y), 3.0, ink);
-    painter.galley(pos2(rect.left() + 21.0, y - galley.size().y / 2.0), galley, ink);
+    let line = ink.gamma_multiply(if response.hovered() { 0.6 } else { 0.4 });
+    paint_status_chip(painter, rect, &parts, ink, line);
     response
         .on_hover_cursor(egui::CursorIcon::PointingHand)
         .on_hover_text("The comments the guard sent back to the agent")
 }
 
-fn popover(ui: &Ui, chip: &Response, strip: &Strip<'_>, column: Rect) {
+fn popover(ui: &Ui, chip: &Response, strip: &Strip<'_>, column: Rect) -> Option<Action> {
     let lines = comment_model::lines(strip.records, LINES_SHOWN, strip.roots);
     let screen = ui.ctx().content_rect();
-    let frame = Frame::popup(ui.style());
+    let frame = popover_frame();
     let pad = frame.total_margin().sum();
     let inner_w = popover_width(column.width(), screen.width()) - pad.x;
     let top = chip.rect.bottom();
     let list_h = (screen.bottom() - EDGE - top - pad.y - LIST_RESERVE).max(MIN_LIST_H);
     let total = strip.records.len();
+    let mut action = None;
     egui::Popup::menu(chip)
         .anchor(pos2(column.left(), top))
         .align(RectAlign::BOTTOM_START)
@@ -150,39 +159,72 @@ fn popover(ui: &Ui, chip: &Response, strip: &Strip<'_>, column: Rect) {
         .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
         .show(|ui| {
             ui.set_width(inner_w);
-            ui.spacing_mut().item_spacing.y = 8.0;
-            let heading = if total == 0 {
-                "No flags yet".to_owned()
-            } else {
-                format!("Newest {} of {total}", lines.len())
-            };
-            ui.add(
-                egui::Label::new(egui::RichText::new(heading).size(13.0).color(brand::FAINT))
-                    .wrap(),
-            );
+            ui.spacing_mut().item_spacing.y = 0.0;
+            action = header(ui, total, strip.off);
             ScrollArea::vertical().max_height(list_h).auto_shrink([false, true]).show(ui, |ui| {
-                ui.spacing_mut().item_spacing.y = 12.0;
+                ui.spacing_mut().item_spacing.y = ROW_GAP;
                 for line in &lines {
-                    flag_block(ui, line);
+                    flag_row(ui, line);
                 }
             });
-            ui.add(
-                egui::Label::new(
-                    egui::RichText::new(
-                        "Settings, General, Guards turns the rule off for every tab",
-                    )
-                    .size(12.0)
-                    .color(brand::FAINT),
-                )
-                .wrap(),
-            );
+            if lines.len() < total {
+                muted_line(ui, &format!("Showing the newest {} of {total}", lines.len()));
+            }
+            let (rule, _) = ui.allocate_exact_size(vec2(ui.available_width(), 1.0), Sense::hover());
+            ui.painter().hline(rule.x_range(), rule.center().y, Stroke::new(1.0, brand::CARD_LINE));
+            muted_line(ui, "Settings, General, Guards turns the rule off for every tab");
             if ui.input_mut(|input| input.consume_key(Modifiers::NONE, Key::Escape)) {
                 ui.close();
             }
         });
+    action
 }
 
-fn flag_block(ui: &mut Ui, line: &Line) {
+fn muted_line(ui: &mut Ui, text: &str) {
+    let galley = ui.painter().layout(
+        text.to_owned(),
+        body(TEXT_TAG),
+        brand::FAINT,
+        ui.available_width() - 2.0 * ROW_INSET,
+    );
+    let (rect, _) = ui.allocate_exact_size(
+        vec2(ui.available_width(), galley.size().y + 2.0 * LINE_PAD),
+        Sense::hover(),
+    );
+    ui.painter().galley(rect.min + vec2(ROW_INSET, LINE_PAD), galley, brand::FAINT);
+}
+
+fn header(ui: &mut Ui, total: usize, off: bool) -> Option<Action> {
+    let (rect, _) = ui.allocate_exact_size(vec2(ui.available_width(), HEADER_H), Sense::hover());
+    let label = if off { "Turn on for this tab" } else { "Turn off for this tab" };
+    let button_w = button_width(ui, label, Size::Compact);
+    let room = rect.width() - button_w - GAP - ROW_INSET;
+    let galley = ui.painter().layout_job({
+        let mut job = LayoutJob::simple_singleline(
+            comment_model::popover_heading(total),
+            heading(TEXT_BODY),
+            brand::TEXT,
+        );
+        job.wrap = TextWrapping::truncate_at_width(room.max(1.0));
+        job
+    });
+    ui.painter().galley(
+        pos2(rect.left() + ROW_INSET, rect.center().y - galley.size().y / 2.0),
+        galley,
+        brand::TEXT,
+    );
+    let button = Rect::from_center_size(
+        pos2(rect.right() - button_w / 2.0, rect.center().y),
+        vec2(button_w, Size::Compact.height()),
+    );
+    let clicked = crate::overview_view::in_rect(ui, button, |ui| {
+        quiet_button(ui, label, true, Size::Compact).clicked()
+    });
+    ui.painter().hline(rect.x_range(), rect.bottom(), Stroke::new(1.0, brand::CARD_LINE));
+    clicked.then_some(Action::SetOff(!off))
+}
+
+fn flag_row(ui: &mut Ui, line: &Line) {
     let ink = match kind_tone(&line.kind) {
         Tone::Loud => brand::AMBER,
         Tone::Quiet => brand::SOFT,
@@ -191,27 +233,36 @@ fn flag_block(ui: &mut Ui, line: &Line) {
     let painter = ui.painter().clone();
     let label = kind_label(&line.kind);
     let tag_w = tag_width(&painter, &label);
+    let text_left = ROW_INSET + SQUARE + SQUARE_GAP;
+    let text_w = width - text_left - ROW_INSET;
     let font = mono(TEXT_SECONDARY);
-    let beside = cut_place(&painter, &line.place, &font, width - tag_w - GAP);
+    let beside = cut_place(&painter, &line.place, &font, text_w - tag_w - GAP);
     let tag_below = !keeps_name(&beside, &line.place);
-    let place = if tag_below { cut_place(&painter, &line.place, &font, width) } else { beside };
+    let place = if tag_below { cut_place(&painter, &line.place, &font, text_w) } else { beside };
     let place = painter.layout_no_wrap(place, font, brand::TEXT);
     let comment = (!line.text.is_empty())
-        .then(|| clipped(&painter, &line.text, mono(12.0), brand::MUTED, width, COMMENT_ROWS));
+        .then(|| clipped(&painter, &line.text, mono(12.0), brand::MUTED, text_w, COMMENT_ROWS));
     let tag_h = Size::Tag.height();
     let head_h = if tag_below { 2.0 * tag_h + 4.0 } else { tag_h };
-    let height = head_h + comment.as_ref().map_or(0.0, |galley| 4.0 + galley.size().y);
+    let height =
+        ROW_PAD + head_h + comment.as_ref().map_or(0.0, |galley| 2.0 + galley.size().y) + ROW_PAD;
     let (rect, _) = ui.allocate_exact_size(vec2(width, height), Sense::hover());
-    let mid = rect.top() + tag_h / 2.0;
-    painter.galley(pos2(rect.left(), mid - place.size().y / 2.0), place, brand::TEXT);
+    let mid = rect.top() + ROW_PAD + tag_h / 2.0;
+    let square = Rect::from_center_size(
+        pos2(rect.left() + ROW_INSET + SQUARE / 2.0, mid),
+        vec2(SQUARE, SQUARE),
+    );
+    painter.rect_filled(square, CornerRadius::same(2), ink);
+    let left = rect.left() + text_left;
+    painter.galley(pos2(left, mid - place.size().y / 2.0), place, brand::TEXT);
     let tag_at = if tag_below {
-        (rect.left(), rect.top() + tag_h + 4.0 + tag_h / 2.0)
+        (left, rect.top() + ROW_PAD + tag_h + 4.0 + tag_h / 2.0)
     } else {
-        (rect.right() - tag_w, mid)
+        (rect.right() - ROW_INSET - tag_w, mid)
     };
-    paint_tag(&painter, tag_at, &label, ink, TagFill::Tint(ink.gamma_multiply(0.14)));
+    paint_tag(&painter, tag_at, &label, ink, TagFill::Line(ink.gamma_multiply(0.6)));
     if let Some(galley) = comment {
-        painter.galley(pos2(rect.left(), rect.top() + head_h + 4.0), galley, brand::MUTED);
+        painter.galley(pos2(left, rect.top() + ROW_PAD + head_h + 2.0), galley, brand::MUTED);
     }
 }
 

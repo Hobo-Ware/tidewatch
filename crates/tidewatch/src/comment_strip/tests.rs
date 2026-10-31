@@ -284,3 +284,44 @@ fn the_popover_is_the_column_wide_at_most_and_never_wider_than_the_window() {
         assert_eq!(popover_width(column, frame), want, "{column} {frame}");
     }
 }
+
+#[test]
+fn the_popover_header_counts_the_flags_and_its_button_turns_the_tab_off() {
+    let ctx = Context::default();
+    crate::fonts::install(&ctx);
+    let rows = records(4);
+    let band = Rect::from_min_size(pos2(40.0, 20.0), vec2(900.0, HEIGHT));
+    let screen = Rect::from_min_size(pos2(0.0, 0.0), vec2(1400.0, 720.0));
+    let strip = Strip { records: &rows, roots: &roots(), off: false, dev_open_popover: true };
+    let mut run = |events: Vec<Event>| {
+        let raw =
+            RawInput { screen_rect: Some(screen), events, focused: true, ..RawInput::default() };
+        let mut action = None;
+        let out = ctx.run_ui(raw, |ui| action = show(ui, band, &strip));
+        (action, texts(&out.shapes))
+    };
+    let mut shown = Vec::new();
+    for _ in 0..4 {
+        shown = run(Vec::new()).1;
+    }
+    let card_bottom = band.center().y + CARD_H / 2.0;
+    let in_popover: Vec<&(String, Rect)> =
+        shown.iter().filter(|(_, rect)| rect.center().y > card_bottom).collect();
+    assert!(in_popover.iter().any(|(text, _)| text == "4 flagged comments"), "{in_popover:?}");
+    let (_, button) = in_popover
+        .iter()
+        .find(|(text, _)| text == "Turn off for this tab")
+        .expect("the header button");
+    let pos = button.center();
+    let press = |pressed| Event::PointerButton {
+        pos,
+        button: PointerButton::Primary,
+        pressed,
+        modifiers: egui::Modifiers::NONE,
+    };
+    let mut actions = Vec::new();
+    for events in [vec![Event::PointerMoved(pos)], vec![press(true)], vec![press(false)]] {
+        actions.push(run(events).0);
+    }
+    assert_eq!(actions.into_iter().flatten().collect::<Vec<_>>(), [Action::SetOff(true)]);
+}

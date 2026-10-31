@@ -140,7 +140,8 @@ pub(crate) fn paint_face_line(painter: &Painter, rect: Rect, line: &FaceLine) ->
     );
     let name_at = pos2(left, mid - name.size().y / 2.0);
     let detail_at = pos2(right - detail.size().x, mid - detail.size().y / 2.0);
-    let rects = [Rect::from_min_size(name_at, name.size()), Rect::from_min_size(detail_at, detail.size())];
+    let rects =
+        [Rect::from_min_size(name_at, name.size()), Rect::from_min_size(detail_at, detail.size())];
     painter.galley(name_at, name, line.name_ink);
     painter.galley(detail_at, detail, line.detail_ink);
     rects
@@ -221,6 +222,94 @@ pub(crate) enum TagFill {
 pub(crate) fn tag_width(painter: &Painter, text: &str) -> f32 {
     painter.layout_no_wrap(text.to_owned(), body(Size::Tag.font()), brand::SOFT).size().x
         + 2.0 * Size::Tag.pad()
+}
+
+/// The frame of a popover that lists things: the card fill and line, 12 px corners, a soft shadow.
+pub(crate) fn popover_frame() -> egui::Frame {
+    egui::Frame::new()
+        .fill(brand::CARD)
+        .stroke(Stroke::new(1.0, brand::CARD_LINE))
+        .corner_radius(12)
+        .shadow(Shadow {
+            offset: [0, 8],
+            blur: 24,
+            spread: 0,
+            color: Color32::from_black_alpha(110),
+        })
+        .inner_margin(Margin::same(6))
+}
+
+const CHIP_PAD_LEFT: f32 = 10.0;
+const CHIP_PAD_RIGHT: f32 = 12.0;
+const CHIP_DOT: f32 = 7.0;
+const CHIP_GAP: f32 = 8.0;
+
+/// One run of text in a status chip, in its own ink.
+pub(crate) struct ChipPart<'a> {
+    pub(crate) text: &'a str,
+    pub(crate) ink: Color32,
+}
+
+/// The width of a status chip whose runs of text are `text_widths` wide.
+pub(crate) fn chip_width(text_widths: &[f32]) -> f32 {
+    let runs: f32 = text_widths.iter().sum();
+    let gaps = text_widths.len().saturating_sub(1) as f32 * CHIP_GAP;
+    CHIP_PAD_LEFT + CHIP_DOT + CHIP_GAP + runs + gaps + CHIP_PAD_RIGHT
+}
+
+fn chip_galleys(painter: &Painter, parts: &[ChipPart]) -> Vec<std::sync::Arc<egui::Galley>> {
+    parts
+        .iter()
+        .map(|part| {
+            painter.layout_no_wrap(part.text.to_owned(), body(Size::Compact.font()), part.ink)
+        })
+        .collect()
+}
+
+pub(crate) fn status_chip_width(painter: &Painter, parts: &[ChipPart]) -> f32 {
+    let widths: Vec<f32> =
+        chip_galleys(painter, parts).iter().map(|galley| galley.size().x).collect();
+    chip_width(&widths)
+}
+
+/// A `Size::Compact` outline chip with no fill: a status dot, then each run of text.
+pub(crate) fn paint_status_chip(
+    painter: &Painter,
+    rect: Rect,
+    parts: &[ChipPart],
+    dot: Color32,
+    line: Color32,
+) {
+    painter.rect_stroke(
+        rect,
+        CornerRadius::same(Size::Compact.radius()),
+        Stroke::new(1.0, line),
+        StrokeKind::Inside,
+    );
+    let y = rect.center().y;
+    let mut x = rect.left() + CHIP_PAD_LEFT;
+    painter.circle_filled(pos2(x + CHIP_DOT / 2.0, y), CHIP_DOT / 2.0, dot);
+    x += CHIP_DOT + CHIP_GAP;
+    for (galley, part) in chip_galleys(painter, parts).into_iter().zip(parts) {
+        let width = galley.size().x;
+        painter.galley(pos2(x, y - galley.size().y / 2.0), galley, part.ink);
+        x += width + CHIP_GAP;
+    }
+}
+
+/// `paint_status_chip` as a widget: allocates the chip, hovers into the stronger `hover_line`.
+pub(crate) fn status_chip(
+    ui: &mut Ui,
+    parts: &[ChipPart],
+    dot: Color32,
+    (line, hover_line): (Color32, Color32),
+    sense: Sense,
+) -> Response {
+    let width = status_chip_width(ui.painter(), parts);
+    let (rect, response) = ui.allocate_exact_size(vec2(width, Size::Compact.height()), sense);
+    let line = if response.hovered() && sense.senses_click() { hover_line } else { line };
+    paint_status_chip(ui.painter(), rect, parts, dot, line);
+    response
 }
 
 /// A read-only label: `Size::Tag` tall, fully round, its left edge at `left` and centered on
@@ -1553,6 +1642,44 @@ mod tests {
         assert!(rects[1].right() < row.right() - 10.0, "the key cap sits right of the detail");
         assert!(rects[0].left() > row.left() + 10.0 + FACE);
         assert!(rects[0].right() < rects[1].left());
+    }
+
+    #[test]
+    fn a_status_chip_is_the_dot_and_each_run_with_the_same_gap_and_edges() {
+        let dot = CHIP_PAD_LEFT + CHIP_DOT + CHIP_GAP + CHIP_PAD_RIGHT;
+        assert_eq!(chip_width(&[]), dot);
+        assert_eq!(chip_width(&[50.0]), dot + 50.0);
+        assert_eq!(chip_width(&[50.0, 30.0]) - chip_width(&[50.0]), CHIP_GAP + 30.0);
+    }
+
+    #[test]
+    fn a_status_chip_is_an_outline_with_a_dot_and_fills_nothing() {
+        let ctx = crate::fonts::test_context();
+        let mut kinds = Vec::new();
+        for _ in 0..2 {
+            let input = egui::RawInput {
+                screen_rect: Some(Rect::from_min_size(pos2(0.0, 0.0), vec2(600.0, 200.0))),
+                ..egui::RawInput::default()
+            };
+            let out = ctx.run_ui(input, |ui| {
+                let parts = [ChipPart { text: "Update stuck", ink: brand::SOFT }];
+                let rect = Rect::from_min_size(pos2(10.0, 10.0), vec2(160.0, 28.0));
+                paint_status_chip(ui.painter(), rect, &parts, brand::ORANGE, brand::FIELD_LINE);
+            });
+            kinds = out
+                .shapes
+                .iter()
+                .map(|clipped| match &clipped.shape {
+                    egui::Shape::Rect(rect) => {
+                        format!("rect filled {}", rect.fill != Color32::TRANSPARENT)
+                    }
+                    egui::Shape::Circle(_) => "circle".to_owned(),
+                    egui::Shape::Text(_) => "text".to_owned(),
+                    other => format!("{other:?}"),
+                })
+                .collect();
+        }
+        assert_eq!(kinds, ["rect filled false", "circle", "text"]);
     }
 
     #[test]

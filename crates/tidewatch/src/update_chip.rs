@@ -1,17 +1,10 @@
 //! The update chip: a quiet pill with a dot, the version and one word; orange when an update failed or is stuck.
 
-use egui::{CornerRadius, Response, Sense, Stroke, StrokeKind, Ui, pos2, vec2};
+use egui::{Response, Sense, Ui};
 use kelp_ui::update::Status;
 
 use crate::brand;
-use crate::screen_kit::{Size, body};
-
-pub(crate) const HEIGHT: f32 = Size::Compact.height();
-const PAD_LEFT: f32 = 10.0;
-const PAD_RIGHT: f32 = 12.0;
-const DOT: f32 = 7.0;
-const GAP: f32 = 8.0;
-const FONT: f32 = Size::Compact.font();
+use crate::screen_kit::{ChipPart, status_chip, status_chip_width};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Click {
@@ -34,6 +27,13 @@ impl Tone {
         match self {
             Self::Teal => brand::TEAL,
             Self::Orange => brand::ORANGE,
+        }
+    }
+
+    fn line(self) -> egui::Color32 {
+        match self {
+            Self::Teal => brand::FIELD_LINE,
+            Self::Orange => brand::ORANGE.gamma_multiply(0.4),
         }
     }
 
@@ -82,7 +82,7 @@ pub(crate) fn spec(status: &Status, brew_install: bool) -> Option<Spec> {
                 "A Homebrew upgrade did not finish and left {}.\nFix repairs the install and reopens Tidewatch.",
                 path.display()
             )),
-            ..teal("Update stuck \u{b7}".to_owned(), Some("Fix"), Click::Fix)
+            ..teal("Update stuck".to_owned(), Some("Fix"), Click::Fix)
         },
         Status::Idle | Status::Checking | Status::UpToDate => return None,
     };
@@ -91,51 +91,20 @@ pub(crate) fn spec(status: &Status, brew_install: bool) -> Option<Spec> {
 
 pub(crate) const RESTART_WAITS: &str = "Restart is available once the install finishes.";
 
-fn texts(
-    ui: &Ui,
-    spec: &Spec,
-) -> (std::sync::Arc<egui::Galley>, Option<std::sync::Arc<egui::Galley>>) {
-    let text = ui.painter().layout_no_wrap(spec.text.clone(), body(FONT), brand::SOFT);
-    let word = spec
-        .word
-        .map(|word| ui.painter().layout_no_wrap(word.to_owned(), body(FONT), spec.tone.word()));
-    (text, word)
-}
-
-fn width_of(text: f32, word: Option<f32>) -> f32 {
-    PAD_LEFT + DOT + GAP + text + word.map_or(0.0, |w| GAP + w) + PAD_RIGHT
+fn parts(spec: &Spec) -> Vec<ChipPart<'_>> {
+    let mut parts = vec![ChipPart { text: &spec.text, ink: brand::SOFT }];
+    parts.extend(spec.word.map(|word| ChipPart { text: word, ink: spec.tone.word() }));
+    parts
 }
 
 pub(crate) fn width(ui: &Ui, spec: &Spec) -> f32 {
-    let (text, word) = texts(ui, spec);
-    width_of(text.size().x, word.map(|w| w.size().x))
+    status_chip_width(ui.painter(), &parts(spec))
 }
 
 pub(crate) fn show(ui: &mut Ui, spec: &Spec) -> Response {
-    let (text, word) = texts(ui, spec);
-    let width = width_of(text.size().x, word.as_ref().map(|w| w.size().x));
     let sense = if spec.click == Click::Nothing { Sense::hover() } else { Sense::click() };
-    let (rect, response) = ui.allocate_exact_size(vec2(width, HEIGHT), sense);
-    let hovered = response.hovered() && spec.click != Click::Nothing;
-    let painter = ui.painter();
-    let line = if hovered { spec.tone.dot().gamma_multiply(0.5) } else { brand::FIELD_LINE };
-    painter.rect(
-        rect,
-        CornerRadius::same(Size::Compact.radius()),
-        brand::CARD,
-        Stroke::new(1.0, line),
-        StrokeKind::Inside,
-    );
-    let y = rect.center().y;
-    let mut x = rect.left() + PAD_LEFT;
-    painter.circle_filled(pos2(x + DOT / 2.0, y), DOT / 2.0, spec.tone.dot());
-    x += DOT + GAP;
-    let width = text.size().x;
-    painter.galley(pos2(x, y - text.size().y / 2.0), text, brand::SOFT);
-    x += width + GAP;
-    if let Some(word) = word {
-        painter.galley(pos2(x, y - word.size().y / 2.0), word, spec.tone.word());
-    }
+    let lines = (spec.tone.line(), spec.tone.dot().gamma_multiply(0.5));
+    let response = status_chip(ui, &parts(spec), spec.tone.dot(), lines, sense);
     let response = match &spec.tip {
         Some(tip) => response.on_hover_text(tip),
         None => response,
@@ -201,7 +170,7 @@ mod tests {
     fn a_stuck_update_is_an_orange_chip_with_a_fix_word() {
         let path = std::path::PathBuf::from("/opt/homebrew/Caskroom/tidewatch/0.1.10.upgrading");
         let chip = spec(&Status::Stuck(path), true).unwrap();
-        assert_eq!(chip.text, "Update stuck \u{b7}");
+        assert_eq!(chip.text, "Update stuck");
         assert_eq!((chip.word, chip.click, chip.tone), (Some("Fix"), Click::Fix, Tone::Orange));
         assert!(chip.tip.unwrap().contains("0.1.10.upgrading"));
     }
@@ -211,11 +180,5 @@ mod tests {
         let chip = spec(&Status::Installing(release()), true).unwrap();
         assert_eq!(chip.click, Click::Nothing);
         assert_eq!(chip.tip.as_deref(), Some(RESTART_WAITS));
-    }
-
-    #[test]
-    fn the_word_adds_to_the_width() {
-        assert_eq!(width_of(50.0, None), PAD_LEFT + DOT + GAP + 50.0 + PAD_RIGHT);
-        assert_eq!(width_of(50.0, Some(30.0)) - width_of(50.0, None), GAP + 30.0);
     }
 }
