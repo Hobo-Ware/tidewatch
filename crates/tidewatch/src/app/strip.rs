@@ -126,7 +126,7 @@ impl Tidewatch {
                     if overview_view::button(ui, self.overview, &waiting_by_repo).clicked() {
                         frame.toggle_overview = true;
                     }
-                    self.repo_chip(ui, frame);
+                    self.repo_chip(ui, frame, &waiting_by_repo);
                     let group = self.tabs.active_group();
                     let rows = self.parked_rows(group);
                     let parked_tail =
@@ -257,7 +257,7 @@ impl Tidewatch {
         }
     }
 
-    fn repo_chip(&self, ui: &mut egui::Ui, frame: &mut FrameIntent) {
+    fn repo_chip(&self, ui: &mut egui::Ui, frame: &mut FrameIntent, waiting: &[(String, usize)]) {
         let group = self.tabs.active_group();
         let here = &self.workspaces[group];
         let several = self.workspaces.len() > 1;
@@ -274,36 +274,35 @@ impl Tidewatch {
             );
         }
         let resp = resp.on_hover_text(tip);
-        egui::Popup::menu(&resp).show(|ui| {
-            style_menu(ui);
-            if several {
-                for (i, workspace) in self.workspaces.iter().enumerate() {
-                    let tabs = self.tabs.in_group(i).filter(|(_, tab)| !tab.pinned).count();
-                    let detail = egui::RichText::new(tabs_text(tabs)).color(brand::MUTED);
-                    let row = egui::Button::selectable(i == group, workspace.chip_label())
-                        .shortcut_text(detail)
-                        .min_size(egui::vec2(ui.available_width(), 0.0));
-                    if ui.add(row).on_hover_text(workspace.dir().display().to_string()).clicked() {
-                        frame.actions.push(Action::ShowGroup(i));
-                        ui.close();
-                    }
+        let repos: Vec<repo_chip::Entry> = self
+            .workspaces
+            .iter()
+            .enumerate()
+            .map(|(i, workspace)| {
+                let tabs = self.tabs.in_group(i).filter(|(_, tab)| !tab.pinned).count();
+                repo_chip::Entry {
+                    label: workspace.chip_label(),
+                    dir: workspace.dir().display().to_string(),
+                    tabs,
+                    detail: tabs_text(tabs),
+                    needs: waiting.get(i).is_some_and(|(_, count)| *count > 0),
                 }
-                ui.separator();
-            }
-            if menu_item(ui, "Open repo...", "").clicked() {
-                frame.repo_command = Some(RepoCommand::Open);
-                ui.close();
-            }
-            if menu_item(ui, "Add service...", "").clicked() {
-                frame.repo_command = Some(RepoCommand::AddService);
-                ui.close();
-            }
-            let close = ui.add_enabled_ui(several, |ui| menu_item(ui, "Close repo", "")).inner;
-            if close.clicked() {
-                frame.repo_command = Some(RepoCommand::Close);
-                ui.close();
-            }
-        });
+            })
+            .collect();
+        let menu = repo_chip::Menu {
+            close_note: format!("closes {}", repos[group].detail),
+            repos: &repos,
+            here: group,
+            several,
+            open_keys: Command::OpenRepo.keys(),
+        };
+        match repo_chip::menu(&resp, &menu, repo_chip::dev_open()) {
+            Some(repo_chip::Pick::Show(i)) => frame.actions.push(Action::ShowGroup(i)),
+            Some(repo_chip::Pick::Open) => frame.repo_command = Some(RepoCommand::Open),
+            Some(repo_chip::Pick::AddService) => frame.repo_command = Some(RepoCommand::AddService),
+            Some(repo_chip::Pick::Close) => frame.repo_command = Some(RepoCommand::Close),
+            None => {}
+        }
     }
 
     fn draw_tabs(&self, ui: &mut egui::Ui, width: f32, now: f64, actions: &mut Vec<Action>) {
