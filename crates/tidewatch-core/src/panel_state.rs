@@ -135,6 +135,11 @@ impl PanelState {
     }
 
     #[must_use]
+    pub fn turn(&self) -> Turn {
+        self.turn
+    }
+
+    #[must_use]
     pub fn jobs(&self) -> &JobBoard {
         &self.jobs
     }

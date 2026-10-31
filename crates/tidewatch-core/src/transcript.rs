@@ -36,6 +36,7 @@ use serde_json::Value;
 use crate::question::{self, Question};
 use crate::rfc3339;
 use crate::transcript_image::{self, Picture};
+use crate::transcript_marks::{Marker, TurnMark};
 use crate::user_markup::{self, Record};
 
 const SUMMARY_MAX_CHARS: usize = 120;
@@ -134,6 +135,8 @@ pub struct Parser {
     tools: HashMap<String, (String, String)>,
     emitted: HashSet<String>,
     titles: SessionTitles,
+    marker: Marker,
+    seen: usize,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -175,7 +178,21 @@ impl Parser {
             tools: HashMap::new(),
             emitted: HashSet::new(),
             titles: SessionTitles::default(),
+            marker: Marker::default(),
+            seen: 0,
         }
+    }
+
+    /// The turn boundaries the lines fed since the last call held, each placed by the number of
+    /// entries the parser had emitted before it.
+    pub fn take_marks(&mut self) -> Vec<TurnMark> {
+        self.marker.take()
+    }
+
+    /// How many entries the parser has emitted so far.
+    #[must_use]
+    pub fn entries_seen(&self) -> usize {
+        self.seen
     }
 
     /// The name the CLI gave the session, as of the lines fed so far.
@@ -196,12 +213,16 @@ impl Parser {
         if self.source == Source::Claude {
             self.titles.take(&value);
         }
-        match self.source {
+        let entries = match self.source {
             Source::Claude => self.claude(&value),
             Source::Gemini => self.gemini(&value),
             Source::Copilot => self.copilot(&value),
             Source::Codex => self.codex(&value),
-        }
+        };
+        let ts = timestamp(&value["timestamp"]);
+        self.marker.line(self.source, &value, &entries, ts, self.seen);
+        self.seen += entries.len();
+        entries
     }
 
     fn remember(&mut self, id: &str, name: &str, summary: &str) {
@@ -678,6 +699,7 @@ pub struct Tail {
     partial: Vec<u8>,
     head: Vec<u8>,
     identity: (u64, u64),
+    base: usize,
 }
 
 impl Tail {
@@ -690,6 +712,7 @@ impl Tail {
             partial: Vec::new(),
             head: Vec::new(),
             identity: (0, 0),
+            base: 0,
         }
     }
 
@@ -729,7 +752,25 @@ impl Tail {
         }
         self.offset += fresh.len() as u64;
         self.head = read_prefix(&mut file, HEAD_BYTES.min(self.offset as usize));
+        self.base = self.parser.entries_seen();
         self.take_lines(fresh)
+    }
+
+    /// [`poll`](Self::poll) with the turn boundaries of the same lines, each placed by how many of
+    /// the returned entries come before it.
+    pub fn poll_marked(&mut self) -> (Vec<Entry>, Vec<TurnMark>) {
+        let entries = self.poll();
+        let base = self.base;
+        let marks = self
+            .parser
+            .take_marks()
+            .into_iter()
+            .map(|mark| TurnMark {
+                before: mark.before.saturating_sub(base).min(entries.len()),
+                ..mark
+            })
+            .collect();
+        (entries, marks)
     }
 
     /// Moves to `path`, a copy that goes on from what was read: false, and nothing moved, when it does not.
