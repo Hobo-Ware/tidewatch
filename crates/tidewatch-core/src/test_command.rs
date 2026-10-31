@@ -484,24 +484,27 @@ pub fn run_in(dir: &Path, command: &str) -> TestRun {
 pub fn run_in_timeout(dir: &Path, command: &str, timeout: Duration) -> TestRun {
     let mut shell = Command::new("sh");
     shell.arg("-c").arg(command).current_dir(dir);
-    let (out, stopped) = match limited::run(&mut shell, timeout) {
-        Ok(limited::Ended::Exited(out)) => (out, false),
-        Ok(limited::Ended::Stopped(out)) => (out, true),
+    let (out, ending) = match limited::run_with(
+        &mut shell,
+        timeout,
+        &limited::Options::labeled("the test command"),
+    ) {
+        Ok(limited::Ended::Exited(out)) => (out, None),
+        Ok(limited::Ended::Stopped(out)) => {
+            (out, Some(format!("ran longer than {} and was stopped", limited::describe(timeout))))
+        }
+        Ok(limited::Ended::Cancelled(out)) => (out, Some("was cancelled".to_owned())),
         Err(e) => {
             return TestRun { exit_code: -1, output: format!("could not run `{command}`: {e}") };
         }
     };
     let mut output = String::from_utf8_lossy(&out.stdout).into_owned();
     output.push_str(&String::from_utf8_lossy(&out.stderr));
-    if stopped {
+    if let Some(ending) = ending {
         if !output.is_empty() && !output.ends_with('\n') {
             output.push('\n');
         }
-        let _ = writeln!(
-            output,
-            "[tidewatch: the test command ran longer than {} and was stopped]",
-            limited::describe(timeout)
-        );
+        let _ = writeln!(output, "[tidewatch: the test command {ending}]");
         return TestRun { exit_code: -1, output };
     }
     TestRun { exit_code: out.status.code().unwrap_or(-1), output }
