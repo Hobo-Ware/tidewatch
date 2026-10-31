@@ -1253,6 +1253,45 @@ mod tests {
         assert!(has(&texts, "2 agents \u{b7} 1 need you \u{b7} 1 working \u{b7} 0 idle"));
     }
 
+    fn poofed(count: usize) -> Vec<PoofedRow> {
+        (0..count)
+            .map(|n| PoofedRow {
+                index: n,
+                name: format!("poof-{n}"),
+                outcome: "PR #1".into(),
+                took: "1m".into(),
+                summary: String::new(),
+                place: "acme-web".into(),
+                secs: 60,
+            })
+            .collect()
+    }
+
+    fn rail_right(screen: &mut Screen) -> f32 {
+        let (_, boxes) = screen.drawn();
+        boxes
+            .iter()
+            .filter(|rect| rect.width() > 100.0 && rect.top() > 56.0)
+            .map(egui::Rect::right)
+            .filter(|right| *right < screen.width - 1.0)
+            .fold(0.0, f32::max)
+    }
+
+    #[test]
+    fn the_rail_reaches_the_header_edge_until_the_body_scrolls_and_then_leaves_the_bar_room() {
+        let mut screen = Screen::new(two_repos());
+        brand::tint_visuals(&screen.ctx);
+        screen.poofed = poofed(2);
+        assert_eq!(rail_right(&mut screen), screen.width - SIDE);
+        let rows: Vec<Row> =
+            (0..40).map(|n| row(n, &format!("agent-{n}"), "acme-web", AgentStatus::Done)).collect();
+        let mut busy = Screen::new(overview(rows));
+        brand::tint_visuals(&busy.ctx);
+        busy.poofed = poofed(2);
+        let right = rail_right(&mut busy);
+        assert_eq!(right, busy.width - SIDE - brand::SCROLL_ROOM);
+    }
+
     #[test]
     fn wrapped_chips_show_three_rows_and_scroll_past_them() {
         let cap = 3.0 * CHIP_H + 2.0 * CHIP_GAP;
