@@ -13,9 +13,11 @@ use tidewatch_core::link_board::Link;
 use tidewatch_core::progress::Ledger;
 use tidewatch_core::services_mcp::ServiceCall;
 use tidewatch_core::status::HookKind;
+use tidewatch_core::transcript::Source;
 
-use crate::agent_run::{Change, Finding, TermSnapshot};
+use crate::agent_run::{Change, Finding, Settle, TermSnapshot};
 use crate::notify::Notifier;
+use crate::outbox::Screen;
 use crate::pane::{Body, Pane};
 use crate::remote_session::Step;
 use crate::status_view::{self, Tone};
@@ -191,6 +193,29 @@ pub(crate) fn poll<T>(
     Polled { wake, changes }
 }
 
+pub(crate) fn settle_restarts<T>(
+    tabs: &mut Tabs<Pane<T>>,
+    screen: impl Fn(&T) -> Screen,
+    now: f64,
+) -> Option<f64> {
+    let mut later: Option<f64> = None;
+    for tab in tabs.items_mut() {
+        let Pane { body: Body::Shell(term), agent: Some(agent), .. } = &mut tab.pane else {
+            continue;
+        };
+        let claude = agent.reader.source() == Some(Source::Claude);
+        let read = || if claude { screen(term) } else { Screen::NoBox };
+        match agent.run.settle_restart(read, now) {
+            Settle::Nothing => {}
+            Settle::Settled => {
+                agent.run.refresh(now);
+            }
+            Settle::LookAt(at) => later = Some(later.map_or(at, |soonest| soonest.min(at))),
+        }
+    }
+    later
+}
+
 /// The terminal rows a look for the remote link reads, and how wide the terminal is.
 pub(crate) struct Rows {
     pub(crate) lines: Vec<String>,
@@ -240,7 +265,7 @@ mod tests {
     use super::*;
     use std::sync::{Arc, Mutex};
     use stdusk_core::progress::Progress;
-    use tidewatch_core::status::{HookEvent, HookKind};
+    use tidewatch_core::status::{AgentStatus, HookEvent, HookKind, Reason};
 
     use crate::agent_run::AgentRun;
     use crate::pane::AgentTab;
@@ -290,6 +315,27 @@ mod tests {
         assert_eq!(tones(&tabs), [Tone::Needs]);
         assert_eq!(route(&mut tabs, hook(99, HookKind::TurnDone, None), 4.0), None);
         assert_eq!(route(&mut tabs, hook(0, HookKind::TurnDone, None), 4.0), None);
+    }
+
+    #[test]
+    fn a_restarted_claude_tab_reads_done_once_its_input_box_is_free_and_waits_otherwise() {
+        let quiet = |_: &u32| TermSnapshot::default();
+        let (mut tabs, id) = tabs_with_agent();
+        let (mut notifier, _) = recording_notifier();
+        tabs.get_mut(id).unwrap().pane.agent.as_mut().unwrap().run.await_report();
+        let quiet_at = tidewatch_core::status::STATUS_QUIET_SECS;
+        poll(&mut tabs, quiet, &mut notifier, false, quiet_at);
+        assert_eq!(tones(&tabs), [Tone::Done]);
+        let status = |tabs: &Tabs<Pane<u32>>| {
+            let tab = tabs.items().iter().find(|tab| tab.id == id).unwrap();
+            tab.pane.agent.as_ref().unwrap().run.status().clone()
+        };
+        assert_eq!(status(&tabs), AgentStatus::NeedsYou(Reason::Quiet));
+        let busy = settle_restarts(&mut tabs, |_| Screen::NoBox, quiet_at + 1.0);
+        assert_eq!(busy, Some(quiet_at + 1.0 + crate::agent_run::SETTLE_LOOK_SECS));
+        assert_eq!(status(&tabs), AgentStatus::NeedsYou(Reason::Quiet));
+        assert_eq!(settle_restarts(&mut tabs, |_| Screen::Free, quiet_at + 2.0), None);
+        assert_eq!(status(&tabs), AgentStatus::Done);
     }
 
     #[test]
