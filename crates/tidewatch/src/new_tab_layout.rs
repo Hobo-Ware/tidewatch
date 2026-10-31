@@ -22,7 +22,7 @@ const ROW_GAP: f32 = 2.0;
 const GROUP_GAP: f32 = 8.0;
 
 pub(crate) const SECTION_GAP: f32 = 16.0;
-pub(crate) const LABEL_H: f32 = 14.0;
+pub(crate) const LABEL_H: f32 = crate::screen_kit::LABEL_H;
 pub(crate) const LABEL_GAP: f32 = 6.0;
 pub(crate) const FIELD_H: f32 = Size::Regular.height();
 pub(crate) const PROBLEM_H: f32 = 24.0;

@@ -455,6 +455,30 @@ fn dup_facts() -> RepoFacts {
 }
 
 #[test]
+fn the_form_labels_are_sentence_case_semibold_soft_text() {
+    let harness = Harness::new(Group::Repo);
+    let labels: Vec<(String, egui::FontId, egui::Color32)> = harness
+        .shapes
+        .iter()
+        .filter_map(|clipped| match &clipped.shape {
+            egui::Shape::Text(text) => {
+                let format = &text.galley.job.sections.first()?.format;
+                Some((text.galley.text().to_owned(), format.font_id.clone(), format.color))
+            }
+            _ => None,
+        })
+        .collect();
+    for name in ["Permission", "Worktree name", "Start from", "First message"] {
+        let found = labels.iter().find(|(text, ..)| text == name);
+        assert_eq!(
+            found.map(|(_, font, ink)| (font.clone(), *ink)),
+            Some((crate::screen_kit::heading(crate::screen_kit::TEXT_SECONDARY), brand::SOFT)),
+            "{name}"
+        );
+    }
+}
+
+#[test]
 fn no_part_of_the_form_meets_another_in_a_short_or_a_narrow_window() {
     let sizes = [(980.0, 560.0), (742.0, 642.0), (835.0, 822.0), (638.0, 562.0), (900.0, 800.0)];
     for (width, height) in sizes {

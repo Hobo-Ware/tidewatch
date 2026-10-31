@@ -8,7 +8,7 @@ use tidewatch_core::agents::Level;
 use crate::brand;
 use crate::change_tab::{Card, Facts, Kind, Pick, fix, offers_stop_now, sentence};
 use crate::screen_kit::{
-    Size, TEXT_SECONDARY, TEXT_TAG, body, dialog_frame_in, footer_row, heading,
+    Size, TEXT_SECONDARY, TEXT_TAG, body, dialog_frame_in, field_label, footer_row, heading,
     primary_button_keyed, quiet_button,
 };
 use crate::segmented;
@@ -31,10 +31,7 @@ pub(crate) enum Outcome {
 }
 
 fn label(ui: &mut Ui, text: &str) {
-    let galley = ui.painter().layout_no_wrap(text.to_uppercase(), body(TEXT_TAG), brand::MUTED);
-    let (rect, _) =
-        ui.allocate_exact_size(vec2(ui.available_width(), galley.size().y), Sense::hover());
-    ui.painter().galley(rect.left_top(), galley, brand::MUTED);
+    field_label(ui, text);
     ui.add_space(LABEL_GAP);
 }
 

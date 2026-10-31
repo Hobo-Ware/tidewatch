@@ -8,11 +8,11 @@ use egui::{Align2, CornerRadius, Id, Key, Rect, RichText, Sense, Stroke, StrokeK
 use tidewatch_core::github_clone::Landing;
 
 use crate::brand;
-use crate::new_tab_fields::section_label;
 use crate::open_link::{Cloning, OpenLink, Phase, Verdict, fraction_of};
 use crate::screen_kit::TEXT_SECONDARY;
 use crate::screen_kit::{
-    Size, body, dialog_frame, footer_row, mono, paint_pill_card, primary_button_keyed, quiet_button,
+    Size, body, dialog_frame, field_label, footer_row, mono, paint_pill_card, primary_button_keyed,
+    quiet_button,
 };
 use crate::settings_ui::text_input;
 use crate::welcome::shown_path;
@@ -72,7 +72,7 @@ fn form_body(
     home: Option<&Path>,
 ) -> Option<Outcome> {
     let mut outcome = None;
-    section_label(ui, "GitHub link");
+    field_label(ui, "GitHub link");
     let link = text_input(ui, &mut open.link, "https://github.com/owner/repo");
     if std::mem::take(&mut open.focus) {
         link.request_focus();
@@ -97,7 +97,7 @@ fn form_body(
     let opens_known = matches!(verdict, Verdict::Ready(_, Landing::Open(_)));
     if open.repo().is_some() && !opens_known {
         ui.add_space(SECTION_GAP - 8.0);
-        section_label(ui, "Clone into");
+        field_label(ui, "Clone into");
         let parent = text_input(ui, &mut open.parent, "Folder for the new checkout");
         entered |= parent.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter));
         if let Verdict::Ready(_, Landing::Clone { target }) = verdict {
