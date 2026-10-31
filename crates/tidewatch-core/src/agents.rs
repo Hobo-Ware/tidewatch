@@ -178,6 +178,13 @@ fn levels_from(lines: [&str; 5]) -> [Option<Vec<String>>; 5] {
     lines.map(|line| Some(split_line(line)))
 }
 
+/// Whether the CLI asks with a question tool of its own that Tidewatch reads from its session file.
+/// Codex and Gemini have one too, but nothing here reads a call of it, so they keep `ask_user`.
+#[must_use]
+pub fn asks_by_itself(id: &str) -> bool {
+    id == "claude"
+}
+
 #[must_use]
 pub fn reports_by_hooks(id: &str) -> bool {
     matches!(id, "claude" | "codex" | "gemini" | "copilot")
@@ -842,5 +849,19 @@ mod tests {
         }
         assert!(!reports_by_hooks("aider"));
         assert!(!reports_by_hooks(""));
+    }
+
+    #[test]
+    fn only_claude_asks_with_a_tool_tidewatch_reads() {
+        let cases = [
+            ("claude", true),
+            ("codex", false),
+            ("gemini", false),
+            ("copilot", false),
+            ("aider", false),
+        ];
+        for (id, want) in cases {
+            assert_eq!(asks_by_itself(id), want, "{id}");
+        }
     }
 }

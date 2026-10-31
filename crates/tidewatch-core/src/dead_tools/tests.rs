@@ -65,9 +65,9 @@ fn the_file_is_rewritten_only_when_the_line_still_matches() {
 
 #[test]
 fn no_removed_tool_is_offered_to_any_role() {
-    use crate::mcp::{TabRole, tool_definitions_for};
+    use crate::mcp::{Offer, TabRole, tool_definitions_for};
     for role in [TabRole::Agent, TabRole::Meeseeks] {
-        let offered = tool_definitions_for(role).to_string();
+        let offered = tool_definitions_for(Offer { role, agent: "gemini" }).to_string();
         for tool in REMOVED {
             assert!(!offered.contains(tool.name), "{} is offered to {role:?}", tool.name);
         }

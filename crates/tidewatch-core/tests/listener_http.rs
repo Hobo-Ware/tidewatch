@@ -138,6 +138,10 @@ impl Harness {
         Client::connect(self.addr())
     }
 
+    fn register_asking(&self, tab_id: u64, tab: &str) -> HookListener {
+        self.register_agent(tab_id, tab, 0, (TabRole::Agent, "gemini"))
+    }
+
     fn register(&self, tab_id: u64, tab: &str) -> HookListener {
         self.register_generation(tab_id, tab, 0)
     }
@@ -147,9 +151,19 @@ impl Harness {
     }
 
     fn register_as(&self, tab_id: u64, tab: &str, generation: u64, role: TabRole) -> HookListener {
+        self.register_agent(tab_id, tab, generation, (role, "claude"))
+    }
+
+    fn register_agent(
+        &self,
+        tab_id: u64,
+        tab: &str,
+        generation: u64,
+        (role, agent): (TabRole, &str),
+    ) -> HookListener {
         self.listener.register_tab(TabRegistration {
             tab_id,
-            agent: "claude".into(),
+            agent: agent.into(),
             role,
             repo: PathBuf::from(REPO),
             tab: tab.into(),
@@ -365,29 +379,83 @@ fn mcp_over_http_runs_the_handshake_and_the_event_tools() {
 }
 
 #[test]
-fn a_ledger_is_saved_in_the_tab_folder_reaches_the_app_and_is_read_back_by_a_new_process() {
+fn set_avatar_is_refused_for_a_tab_until_allow_avatar_and_a_new_process_keeps_it() {
+    let h = Harness::start();
+    let hook = h.register(5, "tab-p");
+    let other = h.register(6, "tab-q");
+    let mut client = h.client();
+    let svg =
+        "<svg viewBox=\"0 0 64 64\"><circle cx=\"32\" cy=\"32\" r=\"20\" fill=\"#2dd4bf\"/></svg>";
+    let args = json!({"svg": svg, "reason": "a dot"});
+    let refused = |client: &mut Client, token: &str| -> bool {
+        let reply = client.request("POST", "/mcp", Some(token), &call(2, "set_avatar", &args));
+        reply.json()["result"]["isError"] == true
+    };
+    let list = client.request("POST", "/mcp", Some(&hook.token), &rpc(1, "tools/list", &json!({})));
+    let listed = list.json()["result"]["tools"].as_array().unwrap().clone();
+    assert!(listed.iter().any(|tool| tool["name"] == "set_avatar"), "listed before the click");
+    assert!(refused(&mut client, &hook.token));
+
+    h.listener.allow_avatar(5);
+    assert!(refused(&mut client, &other.token), "another tab is still refused");
+    let credential = h.listener.credential_of(5).unwrap();
+    assert!(credential.avatar);
+    let port = h.listener.port();
+    let paths = h.paths.clone();
+    drop(h.listener);
+    let (listener, _events) =
+        Listener::start_on_port(port, paths, Box::new(|| {}), Duration::from_secs(5)).unwrap();
+    listener.adopt_tab(9, &credential);
+    let mut client = Client::connect(format!("127.0.0.1:{port}").parse().unwrap());
+    assert!(!refused(&mut client, &credential.token));
+}
+
+#[test]
+fn get_workflow_reads_the_repos_profile_over_http() {
+    let h = Harness::start();
+    let hook = h.register(5, "tab-p");
+    let mut client = h.client();
+    let reply =
+        client.request("POST", "/mcp", Some(&hook.token), &call(3, "get_workflow", &json!({})));
+    assert_eq!(reply.status, 200);
+    let profile: Value =
+        serde_json::from_str(reply.json()["result"]["content"][0]["text"].as_str().unwrap())
+            .unwrap();
+    for key in ["catch_up", "fixes", "pull_requests", "rules"] {
+        assert!(profile.get(key).is_some(), "{key} in {profile}");
+    }
+}
+
+#[test]
+fn a_report_is_saved_in_the_tab_folder_reaches_the_app_and_is_read_back_by_a_new_process() {
     let h = Harness::start();
     let hook = h.register(5, "tab-p");
     let token = Some(hook.token.as_str());
     let mut client = h.client();
-    let ledger = "# Goal\nAdd search\n\n## Status\nphase: 1\nstate: working\n\n## Checklist\n### 1. Plan\n- [~] read\n- [ ] decide\n";
-    let reply = client.request(
-        "POST",
-        "/mcp",
-        token,
-        &call(1, "update_progress", &json!({ "ledger": ledger })),
-    );
+    let report = json!({
+        "goal": "Add search",
+        "state": "working",
+        "now": "Reading",
+        "stages": [
+            { "name": "Plan", "kind": "understand", "status": "active" },
+            { "name": "Build", "kind": "build", "status": "todo" }
+        ],
+        "steps": [
+            { "stage": "Plan", "text": "read", "status": "active" },
+            { "stage": "Plan", "text": "decide", "status": "todo" }
+        ],
+    });
+    let reply = client.request("POST", "/mcp", token, &call(1, "update_progress", &report));
     assert_eq!(reply.status, 200);
     let text = reply.json()["result"]["content"][0]["text"].as_str().unwrap().to_owned();
-    assert_eq!(text.lines().next(), Some("saved: phase 1 Plan, 0/2 done"));
-    assert!(text.contains("Typed fields are preferred"), "{text}");
+    assert_eq!(text, "saved: phase 1 Plan, 0/2 done");
     let message = h.next_event();
     assert_eq!((message.tab_id, message.generation), (5, 0));
     let TabEvent::Progress { ledger: sent } = message.event else { panic!("not a ledger") };
     assert_eq!(sent.goal, "Add search");
     assert_eq!(sent.counts().total, 2);
     let file = h.paths.progress_file(Path::new(REPO), "tab-p");
-    assert_eq!(std::fs::read_to_string(&file).unwrap(), ledger);
+    assert!(std::fs::read_to_string(&file).unwrap().contains("Add search"));
 
     let credential = h.listener.credential_of(5).unwrap();
     let port = h.listener.port();
@@ -730,6 +798,8 @@ fn adopting_a_credential_replaces_the_tabs_earlier_token() {
         agent: "claude".into(),
         role: TabRole::Agent,
         notes_file: h.notes_file("a"),
+        repo: PathBuf::new(),
+        avatar: false,
     };
     h.listener.adopt_tab(1, &credential);
     let status = |token: &str| h.client().request("POST", "/hook/claude", Some(token), "{}").status;
@@ -767,7 +837,7 @@ fn ask_in_background(
 fn a_held_ask_user_call_answers_when_the_user_does_and_the_connection_lives_on() {
     use tidewatch_core::question::{Given, Reply as Answer};
     let h = Harness::start();
-    let hook = h.register(11, "tab-ask");
+    let hook = h.register_asking(11, "tab-ask");
     let waiting = ask_in_background(&h, &hook.token, 1);
     let message = h.next_event();
     assert_eq!(message.tab_id, 11);
@@ -795,7 +865,7 @@ fn an_ask_user_call_nobody_answers_ends_at_the_timeout_and_the_card_can_still_se
     use tidewatch_core::question::Reply as Answer;
     let h = Harness::start();
     h.listener.set_ask_timeout(Duration::from_millis(600));
-    let hook = h.register(12, "tab-late");
+    let hook = h.register_asking(12, "tab-late");
     let waiting = ask_in_background(&h, &hook.token, 1);
     let TabEvent::Ask { reply, questions } = h.next_event().event else { panic!("not an ask") };
     let (_, timed_out) = waiting.join().unwrap();
@@ -813,7 +883,7 @@ fn an_ask_user_call_nobody_answers_ends_at_the_timeout_and_the_card_can_still_se
 fn an_ask_user_call_whose_client_hung_up_stops_waiting() {
     use tidewatch_core::question::Reply as Answer;
     let h = Harness::start();
-    let hook = h.register(13, "tab-gone");
+    let hook = h.register_asking(13, "tab-gone");
     let mut client = h.client();
     let body = call(1, "ask_user", &ask_args());
     let request = format!(
