@@ -95,6 +95,8 @@ pub(crate) struct Row {
     pub(crate) look: Option<Look>,
     /// The tab's leading job as `21% \u{b7} 1h 52m`, when it has one.
     pub(crate) job_line: Option<String>,
+    /// The tab's tokens: the short form for the card, the lines for its tooltip.
+    pub(crate) tokens: Option<crate::token_budget::TabTokens>,
     /// The picture the agent drew for the tab, shown at the card's corner.
     pub(crate) avatar: Option<std::sync::Arc<tidewatch_core::avatar::Avatar>>,
     pub(crate) kind: AgentKind,
@@ -223,6 +225,11 @@ pub(crate) fn collect<T>(
                 done_check: None,
                 look: None,
                 job_line: None,
+                tokens: crate::token_budget::tab_tokens(
+                    agent.reader.tokens(),
+                    agent.reader.token_share(),
+                )
+                .or_else(crate::budget_glue::fake_tokens),
                 avatar: None,
                 kind: AgentKind::of(agent),
                 auto_pick: auto_pick_line(agent, now),
@@ -627,6 +634,7 @@ mod tests {
             done_check: None,
             look: None,
             job_line: None,
+            tokens: None,
             avatar: None,
             kind: AgentKind::Cli("claude".into()),
             auto_pick: None,

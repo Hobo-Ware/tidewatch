@@ -261,7 +261,7 @@ impl Tidewatch {
                 Offer::Go | Offer::Wait => {
                     self.job_live.background_nudged(tab, &launch.tool_use_id);
                 }
-                Offer::Paused | Offer::Refuse(_) => {}
+                Offer::Paused | Offer::Saving | Offer::Refuse(_) => {}
             }
         }
     }
@@ -340,7 +340,7 @@ impl Tidewatch {
                 }
                 false
             }
-            Offer::Paused => false,
+            Offer::Paused | Offer::Saving => false,
             Offer::Refuse(reason) => {
                 self.show_toast(reason, ctx);
                 false

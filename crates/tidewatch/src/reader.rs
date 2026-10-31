@@ -12,6 +12,7 @@ use tidewatch_core::link_scan;
 use tidewatch_core::question::{AskReply, Question};
 use tidewatch_core::restore::codex_session_id;
 use tidewatch_core::sent::{self, Record};
+use tidewatch_core::token_usage::{self, Share, Tally};
 use tidewatch_core::transcript::{Entry, Role, Source};
 use tidewatch_core::transcript_facts::Timed;
 use tidewatch_core::transcript_locate::Locator;
@@ -175,6 +176,8 @@ pub(crate) struct Reader {
     found_links: Vec<Shared>,
     edits: Vec<PathBuf>,
     panel_facts: Vec<Timed>,
+    tokens: Tally,
+    token_share: Share,
 }
 
 impl Reader {
@@ -215,6 +218,8 @@ impl Reader {
             found_links: Vec::new(),
             edits: Vec::new(),
             panel_facts: Vec::new(),
+            tokens: Tally::default(),
+            token_share: Share::default(),
         }
     }
 
@@ -361,6 +366,19 @@ impl Reader {
     pub(crate) fn tidewatch_said(&mut self, record: Record) {
         self.rows.tidewatch_said(vec![record]);
         self.save_claims();
+        self.recount_share();
+    }
+
+    pub(crate) fn tokens(&self) -> &Tally {
+        &self.tokens
+    }
+
+    pub(crate) fn token_share(&self) -> Share {
+        self.token_share
+    }
+
+    fn recount_share(&mut self) {
+        self.token_share = token_usage::share_of(self.rows.sent_records(), &self.tokens.turns);
     }
 
     fn refresh_sent(&mut self) {
@@ -372,6 +390,7 @@ impl Reader {
         self.sent_len = len;
         self.rows.tidewatch_said(sent::load(file));
         self.save_claims();
+        self.recount_share();
     }
 
     /// Writes the claims the rows made to the record file. The file counts as read only when
@@ -442,6 +461,10 @@ impl Reader {
                 }
                 Message::Facts(facts) => self.panel_facts.extend(facts),
                 Message::Title(title) => self.session_title = Some(title),
+                Message::Tokens(tokens) => {
+                    self.tokens = tokens;
+                    self.recount_share();
+                }
             }
         }
         changed
@@ -488,6 +511,12 @@ impl Reader {
     }
 
     #[cfg(test)]
+    pub(crate) fn set_tokens(&mut self, tokens: Tally) {
+        self.tokens = tokens;
+        self.recount_share();
+    }
+
+    #[cfg(test)]
     pub(crate) fn set_link(&mut self, link: Link) {
         self.link = link;
     }
@@ -496,6 +525,40 @@ impl Reader {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_turns_tidewatch_started_are_its_share_whichever_arrives_first() {
+        use tidewatch_core::sent::Reason;
+        use tidewatch_core::token_usage::{Turn, Usage, fingerprint};
+        let spent = Usage { output: 700, ..Usage::default() };
+        let tally = Tally {
+            total: spent,
+            calls: 1,
+            turn_count: 1,
+            turns: vec![Turn {
+                started_ms: Some(1_500),
+                fingerprint: fingerprint("Fix it"),
+                usage: spent,
+            }],
+        };
+        let said = || Record {
+            at_ms: 1_000,
+            typed: true,
+            ..Record::new(Reason::DoneCheck, "the done check found something", "Fix  it", None)
+        };
+
+        let mut tokens_first = Reader::for_agent("claude", None, PathBuf::from("/w"));
+        tokens_first.set_tokens(tally.clone());
+        assert_eq!(tokens_first.token_share(), Share::default());
+        tokens_first.tidewatch_said(said());
+        assert_eq!(tokens_first.token_share(), Share { messages: 1, usage: spent });
+
+        let mut said_first = Reader::for_agent("claude", None, PathBuf::from("/w"));
+        said_first.tidewatch_said(said());
+        assert_eq!(said_first.token_share(), Share::default());
+        said_first.set_tokens(tally);
+        assert_eq!(said_first.token_share(), Share { messages: 1, usage: spent });
+    }
 
     #[test]
     fn the_reader_shows_only_when_wanted_and_found() {

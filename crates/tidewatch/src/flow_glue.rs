@@ -210,7 +210,7 @@ pub(crate) fn ask_agents(
         match offer_to_agent(tabs, flow, ask.tab, &send, ctx, now) {
             Offer::Go => flow.asked(ask.tab, now),
             Offer::Wait => ctx.request_repaint_after(Duration::from_secs_f64(0.5)),
-            Offer::Paused => flow.not_asked(ask.tab),
+            Offer::Paused | Offer::Saving => flow.not_asked(ask.tab),
             Offer::Refuse(reason) => {
                 flow.not_asked(ask.tab);
                 if ask.by == Asker::Owner {

@@ -51,6 +51,8 @@ pub(crate) enum Action {
     /// The Chat switch for animated emoji moved: the new value. Applies at once too.
     AnimateEmoji(bool),
     KeepAwake(bool),
+    /// The Save mode switch moved: the new value. Applies at once too.
+    SaveMode(bool),
     /// Set up or Remove on the Touch ID row of the Keep awake card.
     TouchId(crate::touch_id_view::Click),
     /// The GitHub card changed something: all of its choices. Applies at once too.

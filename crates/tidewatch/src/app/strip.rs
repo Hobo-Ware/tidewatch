@@ -63,6 +63,8 @@ pub(crate) struct TabExtras {
     pub(crate) avatar: Option<Arc<Avatar>>,
     pub(crate) can_draw: bool,
     pub(crate) mood: Mood,
+    /// The tab's tokens and what Tidewatch cost, as the lines of its tooltip.
+    pub(crate) tokens: Option<String>,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -341,6 +343,7 @@ impl Tidewatch {
             avatar: self.avatar_live.get(id).cloned(),
             can_draw: can_draw(id),
             mood: mood(id),
+            tokens: self.tokens_of(id).map(|tokens| tokens.tip),
         };
         tab_row(ui, &self.tabs, width, now, actions, (tab_signals, extras));
     }
@@ -439,7 +442,7 @@ fn tab_row<T>(
         let under = painter.add(Shape::Noop);
         let draft = matches!(tab.pane.body, Body::Draft(_));
         let poofed = matches!(tab.pane.body, Body::Poofed(_));
-        let TabExtras { ring, job, avatar, can_draw, mood } =
+        let TabExtras { ring, job, avatar, can_draw, mood, tokens } =
             agent.map(|_| extras(tab.id)).unwrap_or_default();
         let face = agent
             .map(|agent| Face::of(&agent.profile_name, &agent.run.agent_id, avatar))
@@ -501,6 +504,9 @@ fn tab_row<T>(
             let mut tip = tab_tip(&label, &second, position + 1, job.as_ref());
             if let Some(ring) = &ring {
                 tip = format!("{tip}\n{}", ring.tip);
+            }
+            if let Some(tokens) = &tokens {
+                tip = format!("{tip}\n{tokens}");
             }
             resp.on_hover_text(tip)
         } else if let Body::Poofed(record) = &tab.pane.body {

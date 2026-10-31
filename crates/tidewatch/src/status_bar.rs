@@ -16,6 +16,7 @@ use crate::screen_kit::TEXT_SECONDARY;
 use crate::screen_kit::{Size, button_width, quiet_button};
 use crate::screen_kit::{body, mono};
 use crate::status_view::Tone;
+use crate::token_budget::Mark;
 
 pub(crate) const HEIGHT: f32 = 30.0;
 const PAD: f32 = crate::layout::EDGE;
@@ -238,6 +239,8 @@ pub(crate) struct Bar {
     pub(crate) switching: Option<String>,
     /// The oldest git or gh call that has run longer than 10 s, with a Cancel.
     pub(crate) slow: Option<slow::Line>,
+    /// The plan limits, or the active tab's tokens when no limit is known.
+    pub(crate) budget: Option<Mark>,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -319,6 +322,18 @@ pub(crate) fn show(ui: &mut Ui, rect: Rect, bar: &Bar) -> Clicks {
         hints_left -=
             put(pos2(hints_left, y), Align2::RIGHT_CENTER, &hint.keys, mono(FONT), brand::SOFT);
         hints_left -= GAP;
+    }
+    if let Some(mark) = &bar.budget {
+        let ink = if mark.hot { brand::ORANGE } else { brand::MUTED };
+        let galley = ui.painter().layout_no_wrap(mark.text.clone(), body(FONT), ink);
+        if x + galley.size().x + GAP <= hints_left {
+            let area =
+                Rect::from_min_size(pos2(x, y - HEIGHT / 2.0), vec2(galley.size().x, HEIGHT));
+            ui.painter().galley(pos2(x, y - galley.size().y / 2.0), galley, ink);
+            ui.interact(area, Id::new("status-bar-budget"), Sense::hover())
+                .on_hover_text(mark.tip.as_str());
+            x += area.width() + GAP;
+        }
     }
     let cancel_w = button_width(ui, "Cancel", Size::Tag);
     let mut cancels = Vec::new();
@@ -546,6 +561,7 @@ mod tests {
             fetch_failed: None,
             switching: switching.map(switching_text),
             slow,
+            budget: None,
         }
     }
 
@@ -621,6 +637,50 @@ mod tests {
         let _ = frame(&ctx, &waiting, vec![key(egui::Key::Tab)]);
         let clicks = frame(&ctx, &waiting, vec![key(egui::Key::Enter)]);
         assert_eq!(clicks, Clicks { cancel_switch: true, ..Clicks::default() });
+    }
+
+    fn budget_bar(text: &str, hot: bool) -> Bar {
+        Bar { budget: Some(Mark { text: text.into(), tip: "tip".into(), hot }), ..bar(None) }
+    }
+
+    #[test]
+    fn the_budget_mark_shows_on_the_left_in_the_warning_ink_when_hot_and_muted_otherwise() {
+        let ctx = context();
+        let text = "5h 62% \u{b7} resets 16:40  \u{b7}  week 81% \u{b7} resets Mon";
+        for (hot, ink) in [(false, brand::MUTED), (true, brand::ORANGE)] {
+            let out = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(Rect::from_min_size(pos2(0.0, 0.0), vec2(1200.0, 120.0))),
+                    focused: true,
+                    ..egui::RawInput::default()
+                },
+                |ui| {
+                    show(
+                        ui,
+                        Rect::from_min_size(pos2(0.0, 0.0), vec2(1200.0, HEIGHT)),
+                        &budget_bar(text, hot),
+                    );
+                },
+            );
+            let drawn: Vec<_> = out
+                .shapes
+                .iter()
+                .filter_map(|clipped| match &clipped.shape {
+                    egui::Shape::Text(t) if t.galley.text() == text => Some(t.fallback_color),
+                    _ => None,
+                })
+                .collect();
+            assert_eq!(drawn, [ink], "hot {hot}");
+        }
+    }
+
+    #[test]
+    fn a_bar_without_a_budget_mark_draws_none_and_a_narrow_one_leaves_it_out_instead_of_crowding() {
+        let ctx = context();
+        let text = "5h 62% \u{b7} resets 16:40  \u{b7}  week 81% \u{b7} resets Mon";
+        assert_eq!(count(&galley_texts(&ctx, &bar(None)), text), 0);
+        assert_eq!(count(&galley_texts(&ctx, &budget_bar(text, false)), text), 1);
+        assert_eq!(count(&galley_texts_in(&ctx, &budget_bar(text, false), 520.0), text), 0);
     }
 
     fn count(texts: &[String], want: &str) -> usize {

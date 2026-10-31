@@ -213,6 +213,10 @@ impl Rows {
         self.revision += 1;
     }
 
+    pub(crate) fn sent_records(&self) -> &[Record] {
+        self.sent.records()
+    }
+
     pub(crate) fn set_auto_paused(&mut self, paused: bool) {
         self.auto_paused = paused;
     }

@@ -41,6 +41,7 @@ pub(crate) struct General {
     pub(crate) done_check: DoneCheckPrefs,
     pub(crate) chat: ChatPrefs,
     pub(crate) keep_awake: KeepAwakePrefs,
+    pub(crate) budget: BudgetState,
     /// `None` where Amphetamine has no lid mode (Linux): the row is not offered.
     pub(crate) touch_id: Option<TouchId>,
     pub(crate) guards: GuardPrefs,
@@ -115,6 +116,7 @@ pub(crate) fn page(
             KeepAwakeChange::TouchId(click) => Action::TouchId(click),
         },
     );
+    let budget = budget_card(ui, general.budget).map(Action::SaveMode);
     let checklist = checklist_card(ui, general.checklist.as_ref());
     let github = github_view::card(ui, general.github).map(Action::Github);
     let workflow =
@@ -141,6 +143,7 @@ pub(crate) fn page(
         .or(chat)
         .or(checklist)
         .or(keep_awake)
+        .or(budget)
         .or(github)
         .or(workflow)
         .or(guards)
@@ -285,6 +288,36 @@ pub(crate) fn done_check_card(ui: &mut Ui, on: bool) -> Option<bool> {
             "Looks at whether the work is committed, pushed and its pull request is green, and shows Done, Blocked or Not verified on the tab. It never changes anything.",
             on,
         );
+    });
+    changed
+}
+
+/// What the Token budget card shows: the save mode switch, and whether any plan limit reading
+/// exists (without one the card says save mode has nothing to watch).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct BudgetState {
+    pub(crate) save_mode: bool,
+    pub(crate) limits_known: bool,
+}
+
+pub(crate) fn budget_card(ui: &mut Ui, state: BudgetState) -> Option<bool> {
+    let mut changed = None;
+    if std::env::var_os("TIDEWATCH_DEV_SCROLL_BUDGET").is_some() {
+        ui.scroll_to_cursor(Some(egui::Align::TOP));
+    }
+    section(ui, "Token budget", |ui| {
+        changed = switch_row(
+            ui,
+            "Save mode near a plan limit",
+            "When a plan limit passes 80%, Tidewatch holds back what it sends on its own: Auto fixes, reminders and checks, and it starts no new Meeseeks. What you send and the agents already working are not touched. It tells you once when it starts.",
+            state.save_mode,
+        );
+        let caption = if state.limits_known {
+            "The tokens of each tab show on its tooltip and on the Overview."
+        } else {
+            "Claude Code does not give its plan limits to other programs yet, so save mode has nothing to watch. The tokens of each tab show on its tooltip and on the Overview."
+        };
+        settings_ui::card_caption(ui, caption);
     });
     changed
 }

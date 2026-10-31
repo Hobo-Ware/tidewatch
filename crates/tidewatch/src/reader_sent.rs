@@ -170,6 +170,10 @@ impl Sent {
         });
     }
 
+    pub(crate) fn records(&self) -> &[Record] {
+        &self.records
+    }
+
     pub(crate) fn is_empty(&self) -> bool {
         self.records.is_empty() && self.queued.is_empty()
     }

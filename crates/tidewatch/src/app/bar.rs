@@ -82,6 +82,7 @@ impl Tidewatch {
             pr: self.pr_bar_item(active_id).filter(|_| matches!(screen, Screen::Workspace(_))),
             switching: self.switching_line().map(|(_, text)| text),
             slow: slow::line(ctx),
+            budget: self.budget_mark(active_id),
         }
     }
 }

@@ -91,7 +91,7 @@ impl Waiting {
             match offer_to_agent(tabs, flow, tab, &send, ctx, now) {
                 Offer::Go => toasts.push(format!("Asked {name} to redraw its icon")),
                 Offer::Wait => self.tabs.push(tab),
-                Offer::Paused => {}
+                Offer::Paused | Offer::Saving => {}
                 Offer::Refuse(reason) => toasts.push(reason.to_owned()),
             }
         }

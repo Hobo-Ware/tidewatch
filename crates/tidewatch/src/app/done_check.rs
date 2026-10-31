@@ -181,8 +181,8 @@ impl Tidewatch {
         };
         match flow_glue::send_or_queue(&mut self.tabs, &mut self.flow, tab, send, ctx, now) {
             Offer::Refuse(reason) => self.show_toast(reason, ctx),
-            Offer::Paused if origin == Origin::Auto => {}
-            Offer::Paused | Offer::Go | Offer::Wait => self.done_check.asked(tab),
+            Offer::Paused | Offer::Saving if origin == Origin::Auto => {}
+            Offer::Paused | Offer::Saving | Offer::Go | Offer::Wait => self.done_check.asked(tab),
         }
     }
 
