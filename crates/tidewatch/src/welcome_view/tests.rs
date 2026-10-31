@@ -21,7 +21,7 @@ fn frame_with(
     let mut action = None;
     let _ = ctx.run_ui(raw, |ui| {
         let area = ui.max_rect();
-        action = show(ui, area, recent, None, "Cmd+O", elsewhere);
+        action = show(ui, area, recent, None, elsewhere);
     });
     action
 }
@@ -132,4 +132,33 @@ fn the_line_button_is_off_when_no_found_session_is_idle() {
         .step_by(2)
         .any(|dy| frame_with(&ctx, &[], click(pos2(x, line_y + dy as f32)), found).is_some());
     assert!(!any);
+}
+
+#[test]
+fn the_intro_names_no_workflow_and_the_shortcut_is_left_to_the_status_bar() {
+    let ctx = crate::fonts::test_context();
+    let mut texts = Vec::new();
+    for _ in 0..2 {
+        let raw = RawInput {
+            screen_rect: Some(Rect::from_min_size(pos2(0.0, 0.0), vec2(1000.0, 700.0))),
+            focused: true,
+            ..RawInput::default()
+        };
+        let out = ctx.run_ui(raw, |ui| {
+            let area = ui.max_rect();
+            show(ui, area, &repos(), None, None);
+        });
+        texts = out
+            .shapes
+            .iter()
+            .filter_map(|clipped| match &clipped.shape {
+                egui::Shape::Text(text) => Some(text.galley.text().to_owned()),
+                _ => None,
+            })
+            .collect();
+    }
+    let said = texts.join("|");
+    assert!(said.contains("with an agent in it."), "{said}");
+    assert!(!said.contains("workflow"), "{said}");
+    assert!(!said.contains("opens a repo"), "{said}");
 }

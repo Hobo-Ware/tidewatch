@@ -38,7 +38,6 @@ pub(crate) fn show(
     area: Rect,
     recent: &[Recent],
     home: Option<&Path>,
-    shortcut: &str,
     elsewhere: Option<(usize, usize)>,
 ) -> Option<Action> {
     ui.painter().rect_filled(area, 0.0, brand::GROUND);
@@ -62,8 +61,7 @@ pub(crate) fn show(
         brand::TEXT,
     );
     let text = painter.layout(
-        "Every tab is a worktree of the repo you open, with an agent or a workflow in it."
-            .to_owned(),
+        "Every tab is a worktree of the repo you open, with an agent in it.".to_owned(),
         body(TEXT_BODY),
         brand::MUTED,
         width,
@@ -133,13 +131,6 @@ pub(crate) fn show(
         y += 26.0 - 4.0;
     }
     hint(ui, pos2(cx, y));
-    ui.painter().text(
-        pos2(cx, area.bottom() - 24.0),
-        Align2::CENTER_BOTTOM,
-        format!("{shortcut} opens a repo"),
-        body(12.0),
-        brand::MUTED,
-    );
     action
 }
 

@@ -10,6 +10,7 @@ use tidewatch_core::worktree_safety::{Risk, Safety};
 
 use crate::brand;
 use crate::leftovers::{Cleanup, Row, RowState, row_text};
+use crate::review::plural;
 use crate::screen_kit::{
     Size, danger_button, dialog_frame, footer_row, primary_button, quiet_button,
 };
@@ -39,9 +40,13 @@ pub(crate) fn tip(leftovers: &[Leftover]) -> String {
     lines.join("\n")
 }
 
-/// "N leftover" in the tab strip. True when clicked.
+fn chip_text(count: usize) -> String {
+    plural(count, "leftover")
+}
+
+/// "N leftovers" in the tab strip. True when clicked.
 pub(crate) fn chip(ui: &mut egui::Ui, leftovers: &[Leftover]) -> bool {
-    quiet_button(ui, &format!("{} leftover", leftovers.len()), true, Size::Compact)
+    quiet_button(ui, &chip_text(leftovers.len()), true, Size::Compact)
         .on_hover_text(tip(leftovers))
         .clicked()
 }
@@ -188,6 +193,15 @@ pub(crate) fn dialog(ctx: &egui::Context, cleanup: &Cleanup) -> Option<Answer> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_chip_counts_leftovers_in_the_plural() {
+        let cases = [(1, "1 leftover"), (2, "2 leftovers"), (19, "19 leftovers")];
+        for (count, want) in cases {
+            assert_eq!(chip_text(count), want);
+        }
+    }
+
     use egui::{Rect, pos2, vec2};
 
     fn leftover(name: &str) -> Leftover {
