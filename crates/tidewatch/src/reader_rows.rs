@@ -606,7 +606,11 @@ mod tests {
         let a = notes.add("a.rs", None, anchor.clone(), comment.clone());
         let b = notes.add("b.rs", None, anchor, comment);
         let threads: Vec<_> = notes.threads.iter().collect();
-        let pasted = note_paste::format_review(&threads, "Start with b");
+        let pasted = note_paste::format_review(
+            &threads,
+            "Start with b",
+            tidewatch_core::workflow_profile::Workflow::default(),
+        );
         let mut rows = Rows::default();
         rows.push_all(vec![
             text(Role::User, "fix it"),
@@ -617,7 +621,7 @@ mod tests {
         assert_eq!(kinds, [Kind::User, Kind::Review(vec![a, b]), Kind::Assistant]);
         let review = rows.iter().nth(1).unwrap();
         assert_eq!(review.text, "Start with b");
-        assert!(rows.iter().all(|row| !row.text.contains("Tidewatch review notes")));
+        assert!(rows.iter().all(|row| !row.text.contains("Review from you")));
     }
 
     #[test]

@@ -12,6 +12,7 @@ use tidewatch_core::notes::Notes;
 use tidewatch_core::pr::{self, MergeReport, NewNote, Posted, PullRequest};
 use tidewatch_core::pr_lines::PrDiffLines;
 use tidewatch_core::tools::{GhError, Tools};
+use tidewatch_core::workflow_profile::Workflow;
 
 use crate::jobs::Jobs;
 use crate::pane_jobs::NOTES_TURN;
@@ -59,6 +60,7 @@ pub(crate) fn send_notes(
     file: PathBuf,
     which: Which,
     agent: String,
+    workflow: Workflow,
     now: i64,
 ) {
     jobs.spawn(ctx, move || {
@@ -73,7 +75,8 @@ pub(crate) fn send_notes(
         };
         let threads: Vec<_> =
             ids.iter().filter_map(|id| notes.threads.iter().find(|t| t.id == *id)).collect();
-        let text = (!threads.is_empty()).then(|| note_paste::format_review(&threads, message));
+        let text =
+            (!threads.is_empty()).then(|| note_paste::format_review(&threads, message, workflow));
         if text.is_some() {
             notes.mark_sent(&ids, now);
             if let Err(e) = notes.save(&file) {
@@ -288,6 +291,7 @@ mod tests {
             file.clone(),
             Which::Review(String::new()),
             "claude".into(),
+            Workflow::default(),
             500,
         );
         let out = sent(wait(&jobs));
@@ -307,7 +311,17 @@ mod tests {
         let jobs = Jobs::new();
         let ctx = egui::Context::default();
         let review = Which::Review(String::new());
-        send_notes(&jobs, &ctx, 1, true, file.clone(), review, "claude".into(), 500);
+        send_notes(
+            &jobs,
+            &ctx,
+            1,
+            true,
+            file.clone(),
+            review,
+            "claude".into(),
+            Workflow::default(),
+            500,
+        );
         let out = sent(wait(&jobs));
         assert_eq!(out.ids, [a, b]);
         assert_eq!(Notes::load(&file).pending("claude"), Vec::<u64>::new());
@@ -325,13 +339,33 @@ mod tests {
         let jobs = Jobs::new();
         let ctx = egui::Context::default();
         let review = Which::Review("Start with the first".into());
-        send_notes(&jobs, &ctx, 1, false, file.clone(), review, "claude".into(), 1);
+        send_notes(
+            &jobs,
+            &ctx,
+            1,
+            false,
+            file.clone(),
+            review,
+            "claude".into(),
+            Workflow::default(),
+            1,
+        );
         let text = sent(wait(&jobs)).text.unwrap();
         assert!(text.contains("Message with the review: Start with the first"));
-        send_notes(&jobs, &ctx, 1, false, file, Which::One(a), "claude".into(), 2);
+        send_notes(
+            &jobs,
+            &ctx,
+            1,
+            false,
+            file,
+            Which::One(a),
+            "claude".into(),
+            Workflow::default(),
+            2,
+        );
         let one = sent(wait(&jobs)).text.unwrap();
         assert!(!one.contains("Message with the review"));
-        assert!(one.starts_with("Tidewatch review notes (1)."));
+        assert!(one.starts_with("Review from you (1 note)."));
     }
 
     #[test]
@@ -347,6 +381,7 @@ mod tests {
             file.clone(),
             Which::Review(String::new()),
             "claude".into(),
+            Workflow::default(),
             1,
         );
         sent(wait(&jobs));
@@ -358,11 +393,22 @@ mod tests {
             file.clone(),
             Which::Review(String::new()),
             "claude".into(),
+            Workflow::default(),
             2,
         );
         let again = sent(wait(&jobs));
         assert_eq!((again.text, again.count), (None, 0));
-        send_notes(&jobs, &ctx, 1, false, file.clone(), Which::One(a), "claude".into(), 3);
+        send_notes(
+            &jobs,
+            &ctx,
+            1,
+            false,
+            file.clone(),
+            Which::One(a),
+            "claude".into(),
+            Workflow::default(),
+            3,
+        );
         let one = sent(wait(&jobs));
         assert_eq!(one.count, 1);
         assert_eq!(Notes::load(&file).sent(a).map(|s| s.at), Some(3));
@@ -383,6 +429,7 @@ mod tests {
             file.clone(),
             Which::Review(String::new()),
             "claude".into(),
+            Workflow::default(),
             9,
         );
         sent(wait(&jobs));

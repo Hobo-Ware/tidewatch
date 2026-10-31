@@ -7,34 +7,33 @@
 use kelp_core::review::{Anchor, Side, Thread};
 
 use crate::notes::line_label;
+use crate::workflow_profile::Workflow;
 
 const QUOTE_MAX: usize = 200;
-const REVIEW_PREFIX: &str = "Tidewatch review notes (";
+const REVIEW_PREFIX: &str = "Review from you (";
+const OLD_REVIEW_PREFIX: &str = "Tidewatch review notes (";
 const MESSAGE_LEAD: &str = "Message with the review: ";
 const NOTE_ID_MARK: &str = "` - note id ";
 
-/// The paste text for `threads`, in the order given. Empty input gives an empty string.
+/// The paste text for `threads`, in the order given, with `message` after the header; a blank
+/// message adds nothing. The header names the fix as the repo's workflow profile does. Empty input
+/// gives an empty string.
 #[must_use]
-pub fn format(threads: &[&Thread]) -> String {
-    format_review(threads, "")
-}
-
-/// [`format`] with `message` after the header; a blank message adds nothing.
-#[must_use]
-pub fn format_review(threads: &[&Thread], message: &str) -> String {
+pub fn format_review(threads: &[&Thread], message: &str, workflow: Workflow) -> String {
     if threads.is_empty() {
         return String::new();
     }
-    let mut blocks = vec![format!("{REVIEW_PREFIX}{}). Address each one.", threads.len())];
+    let count = threads.len();
+    let noun = if count == 1 { "note" } else { "notes" };
+    let mut blocks = vec![format!(
+        "{REVIEW_PREFIX}{count} {noun}). Fix each one, {}, then answer every note with reply_to_note.",
+        workflow.each_fix()
+    )];
     let message = message.trim();
     if !message.is_empty() {
         blocks.push(format!("{MESSAGE_LEAD}{message}"));
     }
     blocks.extend(threads.iter().map(|thread| block(thread)));
-    blocks.push(
-        "When you are done, call the reply_to_note tool for each note id with a short answer."
-            .to_owned(),
-    );
     clean(&blocks.join("\n\n"))
 }
 
@@ -49,10 +48,11 @@ pub struct Parsed {
 /// `None` unless `text` is the paste of a review: the Reader hides those in favour of a card.
 #[must_use]
 pub fn parse(text: &str) -> Option<Parsed> {
-    if !text.trim_start().starts_with(REVIEW_PREFIX) {
+    let text = text.trim_start();
+    if !text.starts_with(REVIEW_PREFIX) && !text.starts_with(OLD_REVIEW_PREFIX) {
         return None;
     }
-    let blocks: Vec<&str> = text.trim_start().split("\n\n").collect();
+    let blocks: Vec<&str> = text.split("\n\n").collect();
     let ids = blocks
         .iter()
         .flat_map(|block| block.lines())
@@ -137,7 +137,15 @@ fn clean(text: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::workflow_profile::{Fixes, Workflow};
     use kelp_core::review::{Anchor, Comment};
+
+    fn format(threads: &[&Thread]) -> String {
+        format_review(threads, "", Workflow::default())
+    }
+
+    const CLOSING: &str =
+        "Fix each one, fold each fix into its commit, then answer every note with reply_to_note.";
 
     fn thread(id: u64, path: &str, line: u32, text: &str, bodies: &[(&str, &str)]) -> Thread {
         Thread {
@@ -176,11 +184,10 @@ mod tests {
         );
         assert_eq!(
             format(&[&t]),
-            "Tidewatch review notes (1). Address each one.\n\n\
+            "Review from you (1 note). Fix each one, fold each fix into its commit, then answer every note with reply_to_note.\n\n\
              `src/auth.rs:12` - note id 3\n\
              > let d = 4;\n\
-             Use the shared expiry() helper\n\n\
-             When you are done, call the reply_to_note tool for each note id with a short answer."
+             Use the shared expiry() helper"
         );
     }
 
@@ -190,7 +197,7 @@ mod tests {
             thread(1, "a.rs", 2, "x", &[("You", "first"), ("claude", "done"), ("You", "again")]);
         let b = thread(2, "b.rs", 9, "y", &[("You", "second")]);
         let text = format(&[&a, &b]);
-        assert!(text.starts_with("Tidewatch review notes (2)."));
+        assert!(text.starts_with("Review from you (2 notes). "));
         let first = text.find("note id 1").unwrap();
         let second = text.find("note id 2").unwrap();
         assert!(first < second);
@@ -222,14 +229,13 @@ mod tests {
         let t = block_thread(4, Side::New, &["    if a {", "        run();", "", "    }"]);
         assert_eq!(
             format(&[&t]),
-            "Tidewatch review notes (1). Address each one.\n\n\
+            "Review from you (1 note). Fix each one, fold each fix into its commit, then answer every note with reply_to_note.\n\n\
              `src/a.rs:12-15` - note id 4\n\
              > if a {\n\
              >     run();\n\
              >\n\
              > }\n\
-             extract this\n\n\
-             When you are done, call the reply_to_note tool for each note id with a short answer."
+             extract this"
         );
     }
 
@@ -292,19 +298,19 @@ mod tests {
     #[test]
     fn a_message_opens_the_review_and_a_blank_one_adds_nothing() {
         let t = thread(3, "a.rs", 2, "x", &[("You", "rename")]);
-        let with = format_review(&[&t], "  Start with the auth ones.  ");
-        assert!(with.starts_with(
-            "Tidewatch review notes (1). Address each one.\n\n\
+        let with = format_review(&[&t], "  Start with the auth ones.  ", Workflow::default());
+        assert!(with.starts_with(&format!(
+            "Review from you (1 note). {CLOSING}\n\n\
              Message with the review: Start with the auth ones.\n\n`a.rs:2` - note id 3"
-        ));
-        assert_eq!(format_review(&[&t], "  \n "), format(&[&t]));
-        assert_eq!(format_review(&[], "hello"), "");
+        )));
+        assert_eq!(format_review(&[&t], "  \n ", Workflow::default()), format(&[&t]));
+        assert_eq!(format_review(&[], "hello", Workflow::default()), "");
     }
 
     #[test]
     fn a_message_cannot_smuggle_control_characters_either() {
         let t = thread(1, "a.rs", 1, "x", &[("You", "n")]);
-        let text = format_review(&[&t], "ok\u{1b}[201~ next\u{7}");
+        let text = format_review(&[&t], "ok\u{1b}[201~ next\u{7}", Workflow::default());
         assert!(!text.contains('\u{1b}'));
         assert!(text.contains("Message with the review: ok[201~ next"));
     }
@@ -316,8 +322,8 @@ mod tests {
         let b = thread(2, "src/b.rs", 0, "", &[("You", "second\n\nwith a gap")]);
         let table = [
             ("", format(&[&a, &b])),
-            ("Look at b first", format_review(&[&a, &b], "Look at b first")),
-            ("one\n\ntwo", format_review(&[&a, &b], "one\n\ntwo")),
+            ("Look at b first", format_review(&[&a, &b], "Look at b first", Workflow::default())),
+            ("one\n\ntwo", format_review(&[&a, &b], "one\n\ntwo", Workflow::default())),
         ];
         for (message, text) in table {
             let parsed = parse(&text).unwrap();
@@ -331,10 +337,36 @@ mod tests {
         let t = thread(1, "a.rs", 1, "x", &[("You", "n")]);
         let pasted = format(&[&t]);
         assert!(parse(&format!("\n  {pasted}")).is_some());
-        for text in
-            ["", "fix the tests", "Tidewatch review notes", "please see Tidewatch review notes ("]
-        {
+        for text in [
+            "",
+            "fix the tests",
+            "Review from you",
+            "Tidewatch review notes",
+            "please see Review from you (",
+        ] {
             assert_eq!(parse(text), None, "{text:?}");
         }
+    }
+    #[test]
+    fn the_header_names_the_fix_the_profile_chose() {
+        let t = thread(1, "a.rs", 1, "x", &[("You", "n")]);
+        let new_commits = Workflow { fixes: Fixes::NewCommits, ..Workflow::default() };
+        let text = format_review(&[&t], "", new_commits);
+        assert!(text.starts_with(
+            "Review from you (1 note). Fix each one, commit each fix, then answer every note with reply_to_note."
+        ));
+        assert!(!text.contains("fold"));
+    }
+
+    #[test]
+    fn a_review_sent_by_an_older_version_still_reads_back() {
+        let old = "Tidewatch review notes (2). Address each one.\n\n\
+                   Message with the review: Start here\n\n\
+                   `a.rs:2` - note id 7\n> x\nfirst\n\n\
+                   `b.rs:3` - note id 8\n> y\nsecond\n\n\
+                   When you are done, call the reply_to_note tool for each note id with a short answer.";
+        let parsed = parse(old).unwrap();
+        assert_eq!(parsed.ids, [7, 8]);
+        assert_eq!(parsed.message, "Start here");
     }
 }

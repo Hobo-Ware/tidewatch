@@ -10,6 +10,7 @@ use stdusk_core::terminal::PtyTerm;
 use tidewatch_core::avatar::Avatar;
 use tidewatch_core::paths::sent_file_beside;
 use tidewatch_core::question::{self, Reply};
+use tidewatch_core::question_words;
 use tidewatch_core::status::{AgentStatus, Reason};
 use tidewatch_core::transcript::Source;
 
@@ -609,7 +610,7 @@ fn answer_question<T: ShowsScreen>(
             let steps = if held.send(Reply::Skipped) {
                 Vec::new()
             } else {
-                reply_steps(question::SKIP_REPLY.to_owned(), 0.0)
+                reply_steps(question_words::SKIP_REPLY.to_owned(), 0.0)
             };
             (steps, Asked::Declined)
         }
@@ -620,7 +621,7 @@ fn answer_question<T: ShowsScreen>(
         }
         (Origin::Claude, Reply::Skipped) => {
             let mut steps = vec![(0.0, Step::Keys(reader_keys::CLAUDE_MENU_ESCAPE.to_vec()))];
-            steps.extend(reply_steps(question::SKIP_REPLY.to_owned(), MENU_CLOSE_S));
+            steps.extend(reply_steps(question_words::SKIP_REPLY.to_owned(), MENU_CLOSE_S));
             (steps, Asked::Declined)
         }
     };
@@ -849,7 +850,7 @@ mod tests {
         answer_question(&mut pane, seq, Reply::Skipped, 100.0);
         let typed = typed(&mut pane);
         assert_eq!(typed[0], (0.0, Step::Keys(b"\x1b".to_vec())));
-        assert_eq!(typed[1].1, Step::Paste(question::SKIP_REPLY.into()));
+        assert_eq!(typed[1].1, Step::Paste(question_words::SKIP_REPLY.into()));
         assert!(typed[1].0 >= MENU_CLOSE_S - 0.001);
         assert_eq!(typed.len(), 2);
         assert_eq!(asked_of(&pane, seq), Asked::Declined);
@@ -889,7 +890,7 @@ mod tests {
         drop(receiver);
         let (mut dead, seq) = pane(Origin::Tidewatch(AskReply::new(sender)));
         answer_question(&mut dead, seq, Reply::Skipped, 100.0);
-        assert_eq!(steps_only(typed(&mut dead)), [Step::Paste(question::SKIP_REPLY.into())]);
+        assert_eq!(steps_only(typed(&mut dead)), [Step::Paste(question_words::SKIP_REPLY.into())]);
         assert_eq!(asked_of(&dead, seq), Asked::Declined);
     }
 

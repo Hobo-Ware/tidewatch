@@ -113,6 +113,7 @@ pub mod progress_report;
 pub mod progress_store;
 pub mod prompt_answer;
 pub mod question;
+pub mod question_words;
 mod registry;
 pub mod remote;
 pub mod removal_log;

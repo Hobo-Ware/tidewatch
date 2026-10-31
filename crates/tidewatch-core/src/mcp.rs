@@ -40,6 +40,7 @@ use crate::meeseeks_name;
 use crate::notes::Notes;
 use crate::progress_mcp;
 use crate::question::{self, AskReply, Reply};
+use crate::question_words;
 use crate::services_mcp;
 use crate::workflow_mcp;
 use crate::workflow_profile::Workflow;
@@ -418,7 +419,7 @@ fn ask_user(
     let text = loop {
         match receiver.recv_timeout(wait.poll) {
             Ok(Reply::Answered(given)) => break question::answer_text(&questions, &given),
-            Ok(Reply::Skipped) => break question::SKIPPED_TEXT.to_owned(),
+            Ok(Reply::Skipped) => break question_words::SKIPPED.to_owned(),
             Err(RecvTimeoutError::Disconnected) => break question::CLOSED_TEXT.to_owned(),
             Err(RecvTimeoutError::Timeout) => {
                 if started.elapsed() >= wait.timeout || !(wait.alive)() {
@@ -1237,7 +1238,7 @@ mod tests {
             assert!(held.send(Reply::Skipped));
         });
         assert_eq!(reply["result"]["isError"], false);
-        assert_eq!(result_text(&reply), question::SKIPPED_TEXT);
+        assert_eq!(result_text(&reply), question_words::SKIPPED);
     }
 
     #[test]

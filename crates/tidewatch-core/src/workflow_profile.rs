@@ -133,6 +133,15 @@ impl Workflow {
         }
     }
 
+    /// What happens to each fix a review asked for, before any push.
+    #[must_use]
+    pub fn each_fix(self) -> &'static str {
+        match self.fixes {
+            Fixes::Fixup => "fold each fix into its commit",
+            Fixes::NewCommits => "commit each fix",
+        }
+    }
+
     #[must_use]
     pub fn pushes_unpushed_with_lease(self) -> bool {
         self.catch_up_rewrites() || self.fix_rewrites()
