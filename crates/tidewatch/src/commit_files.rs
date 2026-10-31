@@ -6,7 +6,7 @@ use std::f32::consts::FRAC_PI_2;
 
 use egui::{
     Align2, Color32, CornerRadius, FontId, Id, Mesh, Painter, Pos2, Rect, ScrollArea, Sense,
-    Stroke, StrokeKind, TextFormat, Ui, UiBuilder, pos2, vec2,
+    TextFormat, Ui, UiBuilder, pos2, vec2,
 };
 use kelp_core::commit::FileChange;
 use kelp_ui::graph::GraphStyle;
@@ -16,7 +16,7 @@ use crate::brand;
 use crate::diff_pane::{kind_color, kind_letter};
 use crate::pane_jobs::LineCounts;
 use crate::screen_kit::TEXT_TAG;
-use crate::screen_kit::{body, mono, selection_row};
+use crate::screen_kit::{body, mono, selected_ink, selection_row};
 use crate::selectable;
 use crate::tab_view::TabView;
 use crate::waiting_notes::Waiting;
@@ -34,10 +34,7 @@ const ADD_W: f32 = 36.0;
 const DEL_W: f32 = 28.0;
 const COUNT_GAP: f32 = 10.0;
 const FILL_ALPHA: u8 = 0x1a;
-const SHOWN_BAR_W: f32 = 2.0;
-const OPEN_BAR_INSET: f32 = 8.0;
 const ROW_GAP: f32 = 2.0;
-const BORDER_STRENGTH: f32 = 0.35;
 const SHORT_ID: usize = 7;
 const MAX_LANES: u16 = 14;
 const SELECTION_RADIUS: f32 = 7.0;
@@ -142,17 +139,6 @@ pub(crate) fn show(ui: &mut Ui, view: &mut TabView, spot: Spot, waiting: &Waitin
             fill,
         ));
     }
-    painter.rect_stroke(
-        card,
-        RADIUS,
-        Stroke::new(1.0, brand::TEAL.gamma_multiply(BORDER_STRENGTH)),
-        StrokeKind::Inside,
-    );
-    let bar = Rect::from_min_max(
-        pos2(card.left(), gap.top() - row_h + OPEN_BAR_INSET),
-        pos2(card.left() + SHOWN_BAR_W, gap.top() - OPEN_BAR_INSET),
-    );
-    painter.rect_filled(bar, 1, brand::TEAL);
     ui.interact(below, Id::new("commit-files-card"), Sense::click_and_drag());
 
     let text_x = card.left() + inset;
@@ -260,13 +246,12 @@ fn file_row(
         ui.allocate_exact_size(vec2(ui.available_width(), FILE_ROW_H), Sense::click());
     let painter = ui.painter_at(slot);
     let rect = slot.shrink2(vec2(0.0, ROW_GAP / 2.0));
-    if mark == Mark::Shown {
-        selection_row(&painter, rect, true, false);
-    } else {
-        let fill = if response.hovered() { brand::BUTTON } else { brand::ITEM };
-        let line = if mark == Mark::Selected { brand::FIELD_LINE } else { brand::ITEM_LINE };
-        painter.rect(rect, 8, fill, Stroke::new(1.0, line), StrokeKind::Inside);
-    }
+    selection_row(
+        &painter,
+        rect,
+        mark == Mark::Shown,
+        mark == Mark::Selected || response.hovered(),
+    );
     let center_y = rect.center().y;
     painter.text(
         pos2(rect.left() + ROW_PAD, center_y),
@@ -298,7 +283,7 @@ fn file_row(
         right -= paint_notes_badge(&painter, right, center_y, notes) + COUNT_GAP;
     }
     let left = rect.left() + ROW_PAD + LETTER_W;
-    let ink = brand::TEXT;
+    let ink = selected_ink(mark == Mark::Shown, brand::TEXT);
     paint_path(ui, &painter, &change.path, (left, right - COUNT_GAP, center_y), ink);
     response.on_hover_text(&change.path).clicked()
 }

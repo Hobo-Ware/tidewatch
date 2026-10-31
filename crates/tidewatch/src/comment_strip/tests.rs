@@ -293,7 +293,7 @@ fn the_popover_header_counts_the_flags_and_its_button_turns_the_tab_off() {
     let band = Rect::from_min_size(pos2(40.0, 20.0), vec2(900.0, HEIGHT));
     let screen = Rect::from_min_size(pos2(0.0, 0.0), vec2(1400.0, 720.0));
     let strip = Strip { records: &rows, roots: &roots(), off: false, dev_open_popover: true };
-    let mut run = |events: Vec<Event>| {
+    let run = |events: Vec<Event>| {
         let raw =
             RawInput { screen_rect: Some(screen), events, focused: true, ..RawInput::default() };
         let mut action = None;

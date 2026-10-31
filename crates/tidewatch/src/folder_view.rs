@@ -226,7 +226,7 @@ fn file_row(ui: &mut Ui, path: &str, age_secs: i64) {
         &painter,
         path,
         (rect.left() + ROW_PAD, right - AGE_W - 8.0),
-        rect.center().y,
+        (rect.center().y, brand::TEXT),
     );
 }
 
