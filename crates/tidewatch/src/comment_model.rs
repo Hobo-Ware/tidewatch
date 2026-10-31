@@ -11,13 +11,22 @@ use tidewatch_core::status::AgentStatus;
 
 const NOTE_LINES: usize = 8;
 
-/// `Comment guard: 3 flags`, or `Comment guard: off for this tab`.
+/// `Comment guard \u{b7} 3`, or `Comment guard \u{b7} off`.
 pub(crate) fn chip_text(flags: usize, off: bool) -> String {
     if off {
-        return "Comment guard: off for this tab".to_owned();
+        "Comment guard \u{b7} off".to_owned()
+    } else {
+        format!("Comment guard \u{b7} {flags}")
     }
-    let noun = if flags == 1 { "flag" } else { "flags" };
-    format!("Comment guard: {flags} {noun}")
+}
+
+/// The popover's heading: `4 flagged comments`.
+pub(crate) fn popover_heading(total: usize) -> String {
+    match total {
+        0 => "No flagged comments".to_owned(),
+        1 => "1 flagged comment".to_owned(),
+        n => format!("{n} flagged comments"),
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

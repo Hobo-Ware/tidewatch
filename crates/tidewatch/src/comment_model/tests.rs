@@ -16,10 +16,13 @@ fn record(file: &str, line: usize, kind: &str, text: &str) -> Record {
 
 #[test]
 fn the_chip_counts_flags_and_says_when_the_tab_is_off() {
-    assert_eq!(chip_text(3, false), "Comment guard: 3 flags");
-    assert_eq!(chip_text(1, false), "Comment guard: 1 flag");
-    assert_eq!(chip_text(0, false), "Comment guard: 0 flags");
-    assert_eq!(chip_text(5, true), "Comment guard: off for this tab");
+    assert_eq!(chip_text(3, false), "Comment guard \u{b7} 3");
+    assert_eq!(chip_text(1, false), "Comment guard \u{b7} 1");
+    assert_eq!(chip_text(0, false), "Comment guard \u{b7} 0");
+    assert_eq!(chip_text(5, true), "Comment guard \u{b7} off");
+    assert_eq!(popover_heading(0), "No flagged comments");
+    assert_eq!(popover_heading(1), "1 flagged comment");
+    assert_eq!(popover_heading(4), "4 flagged comments");
 }
 
 #[test]

@@ -14,9 +14,9 @@ use crate::leftovers::{Cleanup, Row, RowState, Summary, right_text, shown_branch
 use crate::reader_view::ellipsized;
 use crate::review::plural;
 use crate::screen_kit::{
-    DialogWidth, Size, TEXT_BODY, TEXT_SECONDARY, TEXT_TAG, TagFill, body, danger_button,
+    ChipPart, DialogWidth, Size, TEXT_BODY, TEXT_SECONDARY, TEXT_TAG, TagFill, body, danger_button,
     dialog_pinned, footer_row, heading, mono, paint_pill_card, paint_tag, primary_button,
-    quiet_button,
+    quiet_button, status_chip,
 };
 use crate::settings_ui::disclosure;
 
@@ -55,8 +55,11 @@ fn chip_text(count: usize) -> String {
 
 /// "N leftovers" in the tab strip. True when clicked.
 pub(crate) fn chip(ui: &mut egui::Ui, leftovers: &[Leftover]) -> bool {
-    quiet_button(ui, &chip_text(leftovers.len()), true, Size::Compact)
+    let parts = [ChipPart { text: &chip_text(leftovers.len()), ink: brand::SOFT }];
+    let lines = (brand::FIELD_LINE, brand::MUTED);
+    status_chip(ui, &parts, brand::MUTED, lines, egui::Sense::click())
         .on_hover_text(tip(leftovers))
+        .on_hover_cursor(egui::CursorIcon::PointingHand)
         .clicked()
 }
 
