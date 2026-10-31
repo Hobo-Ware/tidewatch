@@ -159,6 +159,7 @@ impl Tidewatch {
         modal_open: bool,
     ) {
         let Some(repo) = self.repo_on_show().map(Path::to_path_buf) else { return };
+        let area = logs_area(area);
         let row = self.services.rows(&repo).into_iter().find(|row| row.name == name);
         let header = Rect::from_min_size(area.min, vec2(area.width(), layout::CHROME_H));
         let mut command = None;
@@ -214,13 +215,17 @@ impl Tidewatch {
     }
 }
 
+fn logs_area(terminal: Rect) -> Rect {
+    layout::agent_grid(terminal)
+}
+
 fn paint_lines(ui: &egui::Ui, area: Rect, lines: &[String]) {
     let painter = ui.painter_at(area);
     let font = mono(13.0);
     let step = 18.0;
     if lines.is_empty() {
         painter.text(
-            area.left_top() + vec2(layout::TERMINAL_PAD, layout::TERMINAL_PAD),
+            area.left_top() + vec2(0.0, layout::TERMINAL_PAD),
             egui::Align2::LEFT_TOP,
             "No output yet.",
             font,
@@ -230,11 +235,25 @@ fn paint_lines(ui: &egui::Ui, area: Rect, lines: &[String]) {
     }
     for (n, line) in lines.iter().enumerate() {
         painter.text(
-            area.left_top() + vec2(layout::TERMINAL_PAD, layout::TERMINAL_PAD + step * n as f32),
+            area.left_top() + vec2(0.0, layout::TERMINAL_PAD + step * n as f32),
             egui::Align2::LEFT_TOP,
             line,
             font.clone(),
             brand::SOFT,
         );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_logs_view_starts_at_the_agent_tabs_left_edge() {
+        let window = Rect::from_min_max(pos2(0.0, 40.0), pos2(1000.0, 840.0));
+        let terminal = layout::split_side(window, layout::SIDE_FRACTION).terminal;
+        let logs = logs_area(terminal);
+        assert_eq!(logs.left(), layout::EDGE);
+        assert_eq!((logs.top(), logs.max), (terminal.top(), terminal.max));
     }
 }
