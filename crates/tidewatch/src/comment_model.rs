@@ -29,6 +29,11 @@ pub(crate) fn popover_heading(total: usize) -> String {
     }
 }
 
+/// `Comment guard: yours, comment-guard.py. Tidewatch's is off for this tab`.
+pub(crate) fn yours_text(name: &str) -> String {
+    format!("Comment guard: yours, {name}. Tidewatch's is off for this tab")
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct Line {
     pub(crate) place: String,

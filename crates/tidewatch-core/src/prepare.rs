@@ -13,6 +13,7 @@ use std::process::Command;
 use crate::agents::{Agent, Wiring};
 use crate::checklist;
 use crate::claude_memory::memory_dir;
+use crate::comment_flags::TabFiles;
 use crate::fsutil::{write_atomic, write_private_atomic};
 use crate::guard_shim::{GuardCtx, ensure_shims};
 use crate::guards::Rule;
@@ -23,6 +24,7 @@ use crate::launch::{
     ensure_no_push_helper, gemini_system_settings, launch_command, mcp_config_json,
 };
 use crate::limited;
+use crate::own_hooks::own_comment_guard;
 use crate::paths::TidewatchPaths;
 use crate::prefs::Prefs;
 use crate::profiles::Profile;
@@ -239,6 +241,12 @@ fn prepare_with(
         ctx.settings_file =
             soft("Claude settings", write_private_atomic(&file, &json).map(|()| file));
     }
+    if wiring == Wiring::Claude && input.worktree_tab {
+        let files = TabFiles::new(&paths.tab_state_dir(input.repo, input.tab));
+        if let Err(e) = files.set_yours(ctx.own_comment_guard.as_deref()) {
+            eprintln!("tidewatch: cannot note the comment guard of {}: {e}", input.tab);
+        }
+    }
     let mut gemini_note = None;
     if wiring == Wiring::Gemini && input.worktree_tab {
         let (system, defaults) = gemini_system_files(&|key| std::env::var_os(key));
@@ -305,6 +313,9 @@ fn context(
         settings_file: None,
         memory_dir: (input.worktree_tab && input.agent.wiring == Wiring::Claude)
             .then(|| repo_memory_dir(input.paths, input.repo))
+            .flatten(),
+        own_comment_guard: (input.worktree_tab && input.agent.wiring == Wiring::Claude)
+            .then(|| own_comment_guard(input.paths.claude_dir(), input.dir))
             .flatten(),
         trailers_guard: input.worktree_tab
             && input.agent.wiring == Wiring::Claude
@@ -1308,6 +1319,63 @@ mod tests {
         assert_eq!(settings["attribution"]["commit"], "");
         assert_eq!(settings["attribution"]["pr"], "");
         assert!(!fx.paths.claude_dir().exists(), "nothing is written under the Claude folder");
+    }
+
+    fn command_hooks(settings: &serde_json::Value, event: &str) -> Vec<String> {
+        settings["hooks"][event]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|group| group["hooks"][0]["command"].as_str())
+            .map(str::to_owned)
+            .collect()
+    }
+
+    const OWN_HOOK: &str = r#"{"hooks":{"PostToolUse":[{"matcher":"Write|Edit","hooks":[{"type":"command","command":"python3 ~/.claude/hooks/comment-guard.py"}]}]}}"#;
+
+    #[test]
+    fn the_owners_own_comment_guard_keeps_tidewatchs_comment_hooks_out_of_the_tab() {
+        let fx = Fixture::new();
+        std::fs::create_dir_all(fx.paths.claude_dir()).unwrap();
+        std::fs::write(fx.paths.claude_dir().join("settings.json"), OWN_HOOK).unwrap();
+        let claude = profile("claude", Level::Edits);
+        fx.run("claude", &claude, true, "", Some(listener())).unwrap();
+        let settings = saved_claude_settings(&fx);
+        let post = command_hooks(&settings, "PostToolUse");
+        let stop = command_hooks(&settings, "Stop");
+        assert!(post.iter().all(|command| !command.ends_with("--guard comments")), "{post:?}");
+        assert!(stop.iter().all(|command| !command.contains("--guard comments")), "{stop:?}");
+        assert!(stop.iter().any(|command| command.ends_with("--guard ledger --stop")), "{stop:?}");
+        let files = TabFiles::new(&fx.paths.tab_state_dir(Path::new("/work/web"), "brave-otter"));
+        assert_eq!(files.yours(), Some("comment-guard.py".to_owned()));
+    }
+
+    #[test]
+    fn without_one_tidewatchs_comment_hooks_stay_and_the_note_is_cleared() {
+        let fx = Fixture::new();
+        let state = fx.paths.tab_state_dir(Path::new("/work/web"), "brave-otter");
+        let files = TabFiles::new(&state);
+        files.set_yours(Some("comment-guard.py")).unwrap();
+        let claude = profile("claude", Level::Edits);
+        fx.run("claude", &claude, true, "", Some(listener())).unwrap();
+        let settings = saved_claude_settings(&fx);
+        assert!(
+            command_hooks(&settings, "PostToolUse")
+                .iter()
+                .any(|command| command.ends_with("--guard comments"))
+        );
+        assert_eq!(files.yours(), None);
+    }
+
+    #[test]
+    fn the_owners_guard_is_only_looked_for_in_claude_worktree_tabs() {
+        let fx = Fixture::new();
+        std::fs::create_dir_all(fx.paths.claude_dir()).unwrap();
+        std::fs::write(fx.paths.claude_dir().join("settings.json"), OWN_HOOK).unwrap();
+        let claude = profile("claude", Level::Edits);
+        fx.run("claude", &claude, false, "", Some(listener())).unwrap();
+        let files = TabFiles::new(&fx.paths.tab_state_dir(Path::new("/work/web"), "brave-otter"));
+        assert_eq!(files.yours(), None);
     }
 
     #[test]

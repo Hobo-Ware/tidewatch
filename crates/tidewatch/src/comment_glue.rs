@@ -56,6 +56,7 @@ struct TabState {
     records: Vec<Record>,
     flags_len: u64,
     off: bool,
+    yours: Option<String>,
     turn: Turn,
     reminders: Reminders,
     sweeping: bool,
@@ -76,6 +77,8 @@ pub(crate) struct View<'a> {
     pub(crate) records: &'a [Record],
     pub(crate) roots: &'a PathRoots,
     pub(crate) off: bool,
+    /// The owner's own comment-guard hook that checks this tab in Tidewatch's place.
+    pub(crate) yours: Option<&'a str>,
 }
 
 fn fake_records(dir: &Path) -> Vec<Record> {
@@ -118,10 +121,11 @@ impl Host {
 
     pub(crate) fn view(&self, tab: u64) -> Option<View<'_>> {
         let state = self.tabs.get(&tab)?;
-        (!state.records.is_empty() || state.off).then_some(View {
+        (!state.records.is_empty() || state.off || state.yours.is_some()).then_some(View {
             records: &state.records,
             roots: &state.roots,
             off: state.off,
+            yours: state.yours.as_deref(),
         })
     }
 
@@ -164,6 +168,7 @@ impl Host {
                 records: if self.fake { fake_records(fact.dir) } else { Vec::new() },
                 flags_len: 0,
                 off: false,
+                yours: None,
                 turn: Turn::default(),
                 reminders: Reminders::default(),
                 sweeping: false,
@@ -261,6 +266,7 @@ impl TabState {
     fn look(&mut self, now: f64) {
         self.looked = now;
         self.off = self.files.is_off();
+        self.yours = self.files.yours();
         let len = std::fs::metadata(self.files.flags_file()).map_or(0, |meta| meta.len());
         if len != self.flags_len {
             self.flags_len = len;

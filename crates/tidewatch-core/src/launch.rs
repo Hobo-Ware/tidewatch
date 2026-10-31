@@ -125,6 +125,9 @@ pub struct LaunchCtx {
     /// The Trailers guard is on for this tab's repo (Claude): the settings file turns off Claude
     /// Code's own commit and PR attribution and adds the hook that checks `gh` text.
     pub trailers_guard: bool,
+    /// The owner's own comment-guard hook is in the Claude settings (see `own_hooks`): the settings
+    /// file leaves out Tidewatch's comment hooks, so a comment is checked once.
+    pub own_comment_guard: Option<String>,
     pub house_style: Option<PathBuf>,
     /// Directory holding `tidewatch.instructions.md` (Copilot), see `house_style::sync_copilot_instructions`.
     pub copilot_instructions_dir: Option<PathBuf>,
@@ -376,6 +379,7 @@ pub fn claude_settings_json(ctx: &LaunchCtx) -> Option<String> {
         trailer_hook: guard_bin.filter(|_| ctx.trailers_guard),
         no_attribution: ctx.trailers_guard,
         memory_dir: ctx.memory_dir.as_deref().filter(|_| ctx.worktree_tab),
+        own_comment_guard: ctx.own_comment_guard.is_some(),
     };
     claude_settings_with(ctx.hooks.as_ref(), guard_bin, &extras)
 }
@@ -407,6 +411,8 @@ struct Extras<'a> {
     /// Empty `attribution.commit` and `attribution.pr`, and no session link: the Claude Code keys
     /// that hide the Co-Authored-By trailer and the PR footer (`includeCoAuthoredBy` is deprecated).
     no_attribution: bool,
+    /// The owner's own comment guard runs, so Tidewatch's comment hooks stay out.
+    own_comment_guard: bool,
 }
 
 fn claude_settings_with(
@@ -434,11 +440,13 @@ fn claude_settings_with(
         }
     };
     if let Some(bin) = comment_guard {
-        push(
-            "PostToolUse",
-            json!({ "matcher": "Write|Edit|MultiEdit", "hooks": [command(bin, "comments")] }),
-        );
-        push("Stop", json!({ "hooks": [command(bin, "comments --stop")] }));
+        if !extras.own_comment_guard {
+            push(
+                "PostToolUse",
+                json!({ "matcher": "Write|Edit|MultiEdit", "hooks": [command(bin, "comments")] }),
+            );
+            push("Stop", json!({ "hooks": [command(bin, "comments --stop")] }));
+        }
         push("UserPromptSubmit", json!({ "hooks": [command(bin, "ledger")] }));
         push("Stop", json!({ "hooks": [command(bin, "ledger --stop")] }));
     }
@@ -1317,6 +1325,23 @@ mod tests {
         assert_eq!(settings["hooks"]["PostToolUse"].as_array().unwrap().len(), 1);
         assert_eq!(settings["hooks"]["Stop"].as_array().unwrap().len(), 1);
         assert_eq!(settings["hooks"]["UserPromptSubmit"].as_array().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn the_owners_own_comment_guard_leaves_tidewatchs_comment_hooks_out_and_the_ledger_ones_in() {
+        let ctx = LaunchCtx {
+            guards: Some(guard_ctx()),
+            own_comment_guard: Some("comment-guard.py".into()),
+            ..full_ctx()
+        };
+        let settings: Value = serde_json::from_str(&claude_settings_json(&ctx).unwrap()).unwrap();
+        let post = settings["hooks"]["PostToolUse"].as_array().unwrap();
+        assert_eq!(post.len(), 1, "only the status hook");
+        let stop = settings["hooks"]["Stop"].as_array().unwrap();
+        assert_eq!(stop.len(), 2);
+        assert_eq!(stop[1]["hooks"][0]["command"], "/app/tidewatch --guard ledger --stop");
+        let prompt = settings["hooks"]["UserPromptSubmit"].as_array().unwrap();
+        assert_eq!(prompt[1]["hooks"][0]["command"], "/app/tidewatch --guard ledger");
     }
 
     #[test]

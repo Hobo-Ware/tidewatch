@@ -11,6 +11,7 @@ use serde::{Deserialize, Serialize};
 const FLAGS_FILE: &str = "comment-flags.jsonl";
 const SWEPT_FILE: &str = "comment-guard-swept";
 const OFF_FILE: &str = "comment-guard-off";
+const YOURS_FILE: &str = "comment-guard-yours";
 const KEEP_RECORDS: usize = 200;
 const TRIM_AT_BYTES: u64 = 96 * 1024;
 
@@ -65,6 +66,29 @@ impl TabFiles {
                 Err(e) if e.kind() != std::io::ErrorKind::NotFound => Err(e),
                 _ => Ok(()),
             }
+        }
+    }
+
+    /// The name of the owner's own comment-guard hook that stands in for Tidewatch's in this tab.
+    #[must_use]
+    pub fn yours(&self) -> Option<String> {
+        let name = std::fs::read_to_string(self.dir.join(YOURS_FILE)).ok()?;
+        let name = name.trim();
+        (!name.is_empty()).then(|| name.to_owned())
+    }
+
+    /// Records, or clears with `None`, the owner's own hook that stands in for Tidewatch's.
+    pub fn set_yours(&self, name: Option<&str>) -> std::io::Result<()> {
+        let file = self.dir.join(YOURS_FILE);
+        match name {
+            Some(name) => {
+                std::fs::create_dir_all(&self.dir)?;
+                std::fs::write(file, name)
+            }
+            None => match std::fs::remove_file(file) {
+                Err(e) if e.kind() != std::io::ErrorKind::NotFound => Err(e),
+                _ => Ok(()),
+            },
         }
     }
 

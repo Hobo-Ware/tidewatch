@@ -58,7 +58,8 @@ fn click_at(pos: Pos2) -> Vec<Vec<Event>> {
 #[test]
 fn the_off_switch_asks_to_turn_the_tab_off_and_a_click_elsewhere_asks_nothing() {
     let rows = records(3);
-    let strip = Strip { records: &rows, roots: &roots(), off: false, dev_open_popover: false };
+    let strip =
+        Strip { records: &rows, roots: &roots(), off: false, yours: None, dev_open_popover: false };
     let (quiet, band) = frames(vec![vec![]], &strip);
     assert_eq!(quiet, [None, None]);
     let switch = pos2(band.right() - INSET - 14.0 - 20.0, band.center().y);
@@ -72,7 +73,8 @@ fn the_off_switch_asks_to_turn_the_tab_off_and_a_click_elsewhere_asks_nothing() 
 #[test]
 fn a_tab_that_is_off_offers_to_turn_the_guard_back_on() {
     let rows = records(2);
-    let strip = Strip { records: &rows, roots: &roots(), off: true, dev_open_popover: false };
+    let strip =
+        Strip { records: &rows, roots: &roots(), off: true, yours: None, dev_open_popover: false };
     let (_, band) = frames(vec![], &strip);
     let switch = pos2(band.right() - INSET - 14.0 - 20.0, band.center().y);
     let (clicked, _) = frames(click_at(switch), &strip);
@@ -84,7 +86,8 @@ fn the_strip_draws_with_no_flags_one_flag_many_flags_and_the_popover_open() {
     for count in [0, 1, 40] {
         let rows = records(count);
         for off in [false, true] {
-            let strip = Strip { records: &rows, roots: &roots(), off, dev_open_popover: true };
+            let strip =
+                Strip { records: &rows, roots: &roots(), off, yours: None, dev_open_popover: true };
             let (seen, _) = frames(vec![vec![], vec![]], &strip);
             assert!(seen.iter().all(Option::is_none), "{count} {off}");
         }
@@ -155,7 +158,8 @@ fn draw_open(width: f32, rows: &[Record]) -> Drawn {
     crate::fonts::install(&ctx);
     let band = Rect::from_min_size(pos2(40.0, 20.0), vec2(width, HEIGHT));
     let screen = Rect::from_min_size(pos2(0.0, 0.0), vec2(width + 480.0, 720.0));
-    let strip = Strip { records: rows, roots: &roots(), off: false, dev_open_popover: true };
+    let strip =
+        Strip { records: rows, roots: &roots(), off: false, yours: None, dev_open_popover: true };
     let mut popup_id = None;
     let mut shapes = Vec::new();
     for _ in 0..4 {
@@ -292,7 +296,8 @@ fn the_popover_header_counts_the_flags_and_its_button_turns_the_tab_off() {
     let rows = records(4);
     let band = Rect::from_min_size(pos2(40.0, 20.0), vec2(900.0, HEIGHT));
     let screen = Rect::from_min_size(pos2(0.0, 0.0), vec2(1400.0, 720.0));
-    let strip = Strip { records: &rows, roots: &roots(), off: false, dev_open_popover: true };
+    let strip =
+        Strip { records: &rows, roots: &roots(), off: false, yours: None, dev_open_popover: true };
     let run = |events: Vec<Event>| {
         let raw =
             RawInput { screen_rect: Some(screen), events, focused: true, ..RawInput::default() };
@@ -324,4 +329,34 @@ fn the_popover_header_counts_the_flags_and_its_button_turns_the_tab_off() {
         actions.push(run(events).0);
     }
     assert_eq!(actions.into_iter().flatten().collect::<Vec<_>>(), [Action::SetOff(true)]);
+}
+
+#[test]
+fn a_tab_with_the_owners_own_hook_says_so_and_offers_no_switch() {
+    let strip = Strip {
+        records: &[],
+        roots: &roots(),
+        off: false,
+        yours: Some("comment-guard.py"),
+        dev_open_popover: false,
+    };
+    let ctx = Context::default();
+    crate::fonts::install(&ctx);
+    let band = Rect::from_min_size(pos2(0.0, 0.0), vec2(900.0, HEIGHT));
+    let mut found = Vec::new();
+    for _ in 0..2 {
+        let raw = RawInput {
+            screen_rect: Some(Rect::from_min_size(pos2(0.0, 0.0), vec2(900.0, 300.0))),
+            focused: true,
+            ..RawInput::default()
+        };
+        let out = ctx.run_ui(raw, |ui| {
+            show(ui, band, &strip);
+        });
+        found = texts(&out.shapes);
+    }
+    let drawn: Vec<&str> = found.iter().map(|(text, _)| text.as_str()).collect();
+    assert_eq!(drawn, ["Comment guard: yours, comment-guard.py. Tidewatch's is off for this tab"]);
+    let (clicked, band) = frames(click_at(pos2(900.0 - INSET - 30.0, HEIGHT / 2.0)), &strip);
+    assert!(clicked.iter().all(Option::is_none), "{band:?}");
 }
