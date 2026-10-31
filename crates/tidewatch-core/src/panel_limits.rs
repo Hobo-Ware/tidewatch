@@ -47,6 +47,7 @@ pub fn on_time_ms(source: Source, fact: &Fact, polled: bool) -> i64 {
         Fact::AskOpened { .. }
         | Fact::PermissionOpened { .. }
         | Fact::Answered { .. }
+        | Fact::QuestionAnswered { .. }
         | Fact::Check { .. } => AT_ONCE_MS,
         Fact::Pr(_) if polled => PR_POLLED_MS,
         _ => limit(source).on_time_ms,

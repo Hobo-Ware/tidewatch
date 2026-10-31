@@ -22,6 +22,7 @@ const CLOCK_SLACK_MS: i64 = 2_000;
 const REST_AFTER_MS: i64 = (REST_AFTER_SECS as i64) * 1000;
 const MAX_CHECKS: usize = 32;
 const MAX_MARKS: usize = 64;
+const MAX_ANSWERS: usize = 16;
 
 fn secs(ms: i64) -> f64 {
     ms as f64 / 1000.0
@@ -44,6 +45,14 @@ pub struct CheckSeen {
 pub struct MarkSeen {
     pub step: String,
     pub by: StepBy,
+    pub at_ms: i64,
+}
+
+/// A question the owner answered since the report was saved.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AnswerSeen {
+    pub question: String,
+    pub answer: String,
     pub at_ms: i64,
 }
 
@@ -85,6 +94,8 @@ pub struct PanelState {
     pr: Option<PrFacts>,
     checks: Vec<CheckSeen>,
     marks: Vec<MarkSeen>,
+    #[serde(default)]
+    answered: Vec<AnswerSeen>,
     last_by_source: BTreeMap<Source, i64>,
     since: Since,
     revs: Revs,
@@ -117,6 +128,7 @@ impl PanelState {
             pr: None,
             checks: Vec::new(),
             marks: Vec::new(),
+            answered: Vec::new(),
             last_by_source: BTreeMap::new(),
             since: Since::default(),
             revs: Revs::default(),
@@ -176,6 +188,12 @@ impl PanelState {
     #[must_use]
     pub fn marks(&self) -> &[MarkSeen] {
         &self.marks
+    }
+
+    /// The questions answered since the report was saved, oldest first.
+    #[must_use]
+    pub fn answered(&self) -> &[AnswerSeen] {
+        &self.answered
     }
 
     #[must_use]
@@ -268,6 +286,7 @@ impl PanelState {
                 self.report = Some(ReportSeen { saved_ms: *saved_ms, digest: *digest });
                 self.answered_after_save = false;
                 self.since = Since::default();
+                self.answered.clear();
                 self.revs.report += 1;
             }
             Fact::Job(report) => self.fold_job(report, t),
@@ -295,6 +314,9 @@ impl PanelState {
             }
             Fact::Check { name, passed } => self.fold_check(name, *passed, t),
             Fact::Answered { kind } => self.fold_answered(*kind, s),
+            Fact::QuestionAnswered { question, answer } => {
+                self.fold_question_answered(question, answer, t);
+            }
             Fact::StepMark { step, by } => self.fold_mark(step, *by, t),
             Fact::Checkpoint(_) => {}
         }
@@ -398,6 +420,23 @@ impl PanelState {
             AskKind::Question => self.answered_after_save = true,
             AskKind::Permission => self.tracker.on_permission_answered(s),
         }
+    }
+
+    fn fold_question_answered(&mut self, question: &str, answer: &str, t: i64) {
+        self.fold_answered(AskKind::Question, secs(t));
+        let same = |seen: &AnswerSeen| same_question(&seen.question, question);
+        if self.answered.iter().any(same) {
+            return;
+        }
+        self.answered.push(AnswerSeen {
+            question: question.trim().to_owned(),
+            answer: answer.trim().to_owned(),
+            at_ms: t,
+        });
+        if self.answered.len() > MAX_ANSWERS {
+            self.answered.remove(0);
+        }
+        self.revs.marks += 1;
     }
 
     fn fold_job(&mut self, report: &job::Report, t: i64) {
@@ -532,6 +571,7 @@ impl PanelState {
             ages: self.ages(now),
             quiet: self.quiet(now),
             since: self.since.total(),
+            answers: u32::try_from(self.answered.len()).unwrap_or(u32::MAX),
             turn: self.turn,
             asking: self.asking.clone(),
             end_block: self.end_block.clone(),
@@ -619,6 +659,10 @@ fn shape(mut view: PanelView) -> PanelView {
         age.at_ms = 0;
     }
     view
+}
+
+fn same_question(a: &str, b: &str) -> bool {
+    a.trim().eq_ignore_ascii_case(b.trim())
 }
 
 fn bare(kind: HookKind) -> HookEvent {

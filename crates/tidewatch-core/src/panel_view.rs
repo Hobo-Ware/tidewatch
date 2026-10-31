@@ -166,6 +166,8 @@ pub struct PanelView {
     /// Things that happened since the report was saved: tool calls, jobs, commits, pull request
     /// changes, checks.
     pub since: u32,
+    /// Questions the owner answered since the report was saved.
+    pub answers: u32,
     pub turn: Turn,
     pub asking: Option<Asking>,
     pub end_block: Option<EndBlock>,

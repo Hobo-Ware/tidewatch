@@ -104,6 +104,23 @@ fn a_question_tool_is_an_ask_that_opens_with_the_call_and_closes_with_its_result
 }
 
 #[test]
+fn an_answered_question_tool_result_names_each_question_with_its_answer() {
+    let all = facts(Source::Claude, CLAUDE_ASK, 0);
+    let answered: Vec<(&str, &str)> = all
+        .iter()
+        .filter_map(|fact| match fact {
+            Fact::QuestionAnswered { question, answer } => {
+                Some((question.as_str(), answer.as_str()))
+            }
+            _ => None,
+        })
+        .collect();
+    assert!(answered.contains(&("Which mode?", "turbo mode")), "{answered:?}");
+    let closed = all.iter().filter(|fact| matches!(fact, Fact::AskClosed)).count();
+    assert_eq!(closed, 3, "every result closes its ask, answered or not");
+}
+
+#[test]
 fn what_the_cli_wrote_before_the_cut_is_history_and_adds_nothing() {
     let cut = at("2026-10-12T23:03:58Z").unwrap();
     let late = facts(Source::Claude, CLAUDE, cut);
