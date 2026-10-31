@@ -419,6 +419,9 @@ fn ask_user(
     let text = loop {
         match receiver.recv_timeout(wait.poll) {
             Ok(Reply::Answered(given)) => break question::answer_text(&questions, &given),
+            Ok(Reply::PickedForYou { given, minutes }) => {
+                break question_words::picked_for_you(&questions, &given, minutes);
+            }
             Ok(Reply::Skipped) => break question_words::SKIPPED.to_owned(),
             Err(RecvTimeoutError::Disconnected) => break question::CLOSED_TEXT.to_owned(),
             Err(RecvTimeoutError::Timeout) => {
@@ -1230,6 +1233,29 @@ mod tests {
         assert_eq!(questions.len(), 2);
         assert_eq!(questions[0].header.as_deref(), Some("Retry"));
         assert_eq!(questions[1].select, question::Select::Multi);
+    }
+
+    #[test]
+    fn ask_user_tells_the_agent_what_tidewatch_picked_for_a_user_who_stayed_away() {
+        let (reply, shown) = ask_with(&questions_args(), &|| true, |held| {
+            let given = vec![
+                question::Given { picked: vec![0], other: None },
+                question::Given { picked: vec![1], other: None },
+            ];
+            assert!(held.send(Reply::PickedForYou { given, minutes: 5 }));
+        });
+        assert_eq!(reply["result"]["isError"], false);
+        assert!(
+            result_text(&reply).starts_with(
+                "Tidewatch picked these answers for you after 5 minutes. The user may change them."
+            ),
+            "{}",
+            result_text(&reply)
+        );
+        assert!(
+            result_text(&reply).contains("Q: Where should the retry count live?\nA: On the stage")
+        );
+        assert_eq!(shown.len(), 1);
     }
 
     #[test]

@@ -144,7 +144,8 @@ fn waiting_question<T>(pane: &Pane<T>) -> Option<u64> {
 
 /// In a tab that runs on its own, answers the question the user left alone for the wait with the
 /// agent's recommended option, else the first, and wakes the app for the moment it is due. The tab
-/// stays in Needs you until its owner opens it. Returns what the agent is to be told about it.
+/// stays in Needs you until its owner opens it. A held `ask_user` call is told in its result; a
+/// Claude menu has no call to answer, so what the agent is to be told comes back as a message.
 fn pick_for_the_absent<T: ShowsScreen>(
     pane: &mut Pane<T>,
     ctx: &Context,
@@ -164,15 +165,26 @@ fn pick_for_the_absent<T: ShowsScreen>(
         Poll::Due(seq) => {
             let asked = agent.reader.rows.question_of(seq)?.clone();
             let given = question::auto_picks(&asked.questions);
-            if answer_question(pane, seq, Reply::Answered(given.clone()), now).is_some() {
+            let minutes = (wait / 60.0).round().max(1.0) as u64;
+            let held = matches!(asked.origin, Origin::Tidewatch(_));
+            if answer_question(pane, seq, auto_reply(held, &given, minutes), now).is_some() {
                 return None;
             }
             let agent = pane.agent.as_mut()?;
             agent.reader.rows.mark_auto_picked(seq);
             agent.run.pick_made(question_words::pick_review_line(&asked.questions, &given));
-            let minutes = (wait / 60.0).round().max(1.0) as u64;
-            Some(question_words::picked_for_you(&asked.questions, &given, minutes))
+            (!held).then(|| question_words::picked_for_you(&asked.questions, &given, minutes))
         }
+    }
+}
+
+/// The reply Tidewatch gives for a user who stayed away. A held `ask_user` call carries the news in
+/// its own result; a Claude menu takes the keys of the picks alone.
+fn auto_reply(held: bool, given: &[question::Given], minutes: u64) -> Reply {
+    if held {
+        Reply::PickedForYou { given: given.to_vec(), minutes }
+    } else {
+        Reply::Answered(given.to_vec())
     }
 }
 
@@ -644,6 +656,15 @@ fn answer_question<T: ShowsScreen>(
             };
             (steps, Asked::Answered(pairs))
         }
+        (Origin::Tidewatch(held), Reply::PickedForYou { given, minutes }) => {
+            let pairs = question::pairs(&asked.questions, &given);
+            let steps = if held.send(Reply::PickedForYou { given: given.clone(), minutes }) {
+                Vec::new()
+            } else {
+                reply_steps(question_words::picked_for_you(&asked.questions, &given, minutes), 0.0)
+            };
+            (steps, Asked::Answered(pairs))
+        }
         (Origin::Tidewatch(held), Reply::Skipped) => {
             let steps = if held.send(Reply::Skipped) {
                 Vec::new()
@@ -652,7 +673,7 @@ fn answer_question<T: ShowsScreen>(
             };
             (steps, Asked::Declined)
         }
-        (Origin::Claude, Reply::Answered(given)) => {
+        (Origin::Claude, Reply::Answered(given) | Reply::PickedForYou { given, .. }) => {
             let pairs = question::pairs(&asked.questions, &given);
             let steps = claude_menu_steps(&asked.questions, &given);
             (steps, Asked::Sent(pairs))
@@ -905,6 +926,38 @@ mod tests {
     }
 
     #[test]
+    fn a_held_call_hears_it_was_picked_for_the_user_and_a_call_that_ended_gets_it_typed() {
+        let given = vec![Given { picked: vec![0], other: None }, Given::default()];
+        let (sender, receiver) = channel();
+        let (mut held, seq) = pane(Origin::Tidewatch(AskReply::new(sender)));
+        let reply = Reply::PickedForYou { given: given.clone(), minutes: 5 };
+        answer_question(&mut held, seq, reply.clone(), 100.0);
+        assert_eq!(receiver.recv().unwrap(), reply);
+        assert_eq!(typed(&mut held), Vec::new());
+
+        let (sender, receiver) = channel();
+        drop(receiver);
+        let (mut ended, seq) = pane(Origin::Tidewatch(AskReply::new(sender)));
+        answer_question(&mut ended, seq, reply, 100.0);
+        let steps = steps_only(typed(&mut ended));
+        let Step::Paste(text) = &steps[0] else { panic!("{steps:?}") };
+        assert!(text.starts_with("Tidewatch picked "), "{text}");
+        assert!(text.contains(" for you after 5 minutes. The user may change them."), "{text}");
+        assert!(text.contains("Q: Where?\nA: Stage"), "{text}");
+        assert_eq!(steps.len(), 1);
+    }
+
+    #[test]
+    fn only_a_held_call_is_answered_with_the_news_a_menu_takes_the_picks_alone() {
+        let given = vec![Given { picked: vec![1], other: None }];
+        assert_eq!(
+            auto_reply(true, &given, 5),
+            Reply::PickedForYou { given: given.clone(), minutes: 5 }
+        );
+        assert_eq!(auto_reply(false, &given, 5), Reply::Answered(given));
+    }
+
+    #[test]
     fn a_late_answer_to_an_ask_user_call_that_ended_is_typed_as_a_message() {
         let (sender, receiver) = channel();
         drop(receiver);
@@ -1063,12 +1116,13 @@ mod tests {
         assert_eq!(pane.agent.as_ref().unwrap().run.pick_to_review(), None);
         let note = pick_for_the_absent(&mut pane, &ctx, 1_000.0 + crate::question_auto::WAIT_SECS);
         let picked = Given { picked: vec![1], other: None };
-        assert_eq!(receiver.recv().unwrap(), Reply::Answered(vec![picked]));
+        assert_eq!(
+            receiver.recv().unwrap(),
+            Reply::PickedForYou { given: vec![picked], minutes: 5 }
+        );
+        assert_eq!(note, None, "the held call's result tells the agent, no message follows");
         assert!(matches!(asked_of(&pane, seq), Asked::Answered(_)));
         assert!(pane.agent.as_ref().unwrap().reader.rows.auto_picked(seq));
-        let note = note.expect("the agent is told what was picked for it");
-        assert!(note.starts_with("Tidewatch picked \""), "{note}");
-        assert!(note.contains(" for you after 5 minutes. The user may change it."), "{note}");
         let line = pane.agent.as_ref().unwrap().run.pick_to_review().map(str::to_owned);
         assert!(line.is_some_and(|line| line.ends_with(" for you")));
     }
