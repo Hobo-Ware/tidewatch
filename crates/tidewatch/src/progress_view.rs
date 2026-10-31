@@ -12,6 +12,7 @@ use egui::{
 };
 use tidewatch_core::link_board::LinkBoard;
 use tidewatch_core::panel_rules::fresh;
+use tidewatch_core::panel_state::MarkSeen;
 use tidewatch_core::progress::{Entry, Ledger, Mark, State};
 
 use crate::brand;
@@ -23,6 +24,7 @@ use crate::link_text::Text;
 use crate::link_view;
 use crate::meeseeks_model::Card as MeeseeksCard;
 use crate::meeseeks_view;
+use crate::panel_blocks::{self, Blocks};
 use crate::progress_model::{
     self as model, Bar, BarKind, ItemRow, Now, StageRows, StageShape, TAGS, Tag, Tone, entries,
     stage_rows, stages_shown,
@@ -185,6 +187,10 @@ pub(crate) struct Input<'a> {
     pub(crate) shown: Option<State>,
     /// What the agent shared and Tidewatch found, kept for the life of the tab.
     pub(crate) links: Option<&'a LinkBoard>,
+    /// The age of each block, and whether the facts contradict the report.
+    pub(crate) blocks: Blocks,
+    /// The steps Tidewatch ticked itself.
+    pub(crate) marks: &'a [MarkSeen],
 }
 
 fn pad_of(width: f32) -> f32 {
@@ -235,14 +241,13 @@ fn content(ui: &mut Ui, input: &Input<'_>, state: &mut TabState) -> Option<Actio
                 ui.add_space(GAP);
             }
         }
-        let asked = job_view::show(ui, width, input.jobs)
-            .map(|(job, message)| Action::Ask { job, message });
+        let asked = jobs_block(ui, width, input.jobs, input.blocks.jobs.as_deref());
         action = action.or(asked);
         if let Some(turn) = &input.last_turn {
             if !input.jobs.is_empty() {
                 ui.add_space(GAP);
             }
-            let picked = last_turn_view::show(ui, width, turn);
+            let picked = last_turn_view::show(ui, width, turn, input.blocks.turn.as_deref());
             action = action.or(picked);
         }
         return action;
@@ -250,7 +255,7 @@ fn content(ui: &mut Ui, input: &Input<'_>, state: &mut TabState) -> Option<Actio
     let ledger = &*fresh(&known.ledger, input.stale);
     let shape = input.meeseeks.map_or_else(StageShape::default, |card| card.shape);
     let tone = input.shown.map_or_else(|| model::tone(ledger), model::tone_of);
-    header(ui, width, ledger, tone, input.now_ms, (known.updated_ms, input.stale));
+    header(ui, width, ledger, tone, &input.blocks);
     if let Some(board) = links {
         ui.add_space(GAP);
         action = link_card(ui, width, board, input, state).or(action);
@@ -268,15 +273,14 @@ fn content(ui: &mut Ui, input: &Input<'_>, state: &mut TabState) -> Option<Actio
         .collect();
     if !rest.is_empty() {
         ui.add_space(GAP);
-        let picked =
-            job_view::show(ui, width, &rest).map(|(job, message)| Action::Ask { job, message });
+        let picked = jobs_block(ui, width, &rest, input.blocks.jobs.as_deref());
         action = action.or(picked);
     }
     ui.add_space(GAP);
     phase_bars(ui, width, ledger, tone, shape);
     if let Some(turn) = &input.last_turn {
         ui.add_space(GAP);
-        let picked = last_turn_view::show(ui, width, turn);
+        let picked = last_turn_view::show(ui, width, turn, input.blocks.turn.as_deref());
         action = picked.or(action);
     }
     let stages = stage_rows(ledger, shape.kind);
@@ -304,6 +308,7 @@ fn link_card(
         board,
         input.now_ms,
         (&mut state.all_links, &mut state.archive_links),
+        input.blocks.links.as_deref(),
     );
     copied.map(Action::CopyLink)
 }
@@ -318,23 +323,27 @@ fn single_line(
     ellipsized(painter, text, font, ink, w)
 }
 
-fn header(
-    ui: &mut Ui,
-    width: f32,
-    ledger: &Ledger,
-    tone: Tone,
-    now_ms: i64,
-    (updated_ms, stale): (Option<i64>, bool),
-) {
+fn header(ui: &mut Ui, width: f32, ledger: &Ledger, tone: Tone, blocks: &Blocks) {
     let narrow = width < NARROW_BELOW - 2.0 * NARROW_PAD;
     let title_size = if narrow { 15.0 } else { 17.0 };
     let painter = ui.painter().clone();
     let title =
         if ledger.title.trim().is_empty() { ledger.goal.trim() } else { ledger.title.trim() };
-    let title = Text::line(title, heading(title_size), brand::TEXT, width).lay_out(&painter);
-    let meta = meta_line(&painter, tone, (now_ms, updated_ms, stale), width);
-    let block = title.size().y + meta.size().y + 4.0;
+    let flag_w =
+        blocks.out_of_date.map_or(0.0, |_| panel_blocks::out_of_date_width(&painter) + 8.0);
+    let title = Text::line(title, heading(title_size), brand::TEXT, (width - flag_w).max(40.0))
+        .lay_out(&painter);
+    let age_w = blocks.card_age().map_or(0.0, |text| panel_blocks::age_width(&painter, text) + 8.0);
+    let meta = meta_line(&painter, tone, (width - age_w).max(40.0));
+    let since = blocks
+        .since
+        .as_deref()
+        .map(|text| painter.layout_no_wrap(text.to_owned(), body(TEXT_SECONDARY), brand::MUTED));
+    let since_h = since.as_ref().map_or(0.0, |galley| galley.size().y + 4.0);
+    let block = title.size().y + meta.size().y + 4.0 + since_h;
     let (rect, _) = ui.allocate_exact_size(vec2(width, block), Sense::hover());
+    let title_h = title.size().y;
+    let title_w = title.size().x;
     title
         .paint_selectable(
             ui,
@@ -343,7 +352,23 @@ fn header(
             brand::MUTED,
         )
         .on_hover_text(ledger.goal.trim());
-    paint_row(ui, rect.left(), rect.top() + title.size().y + 4.0, meta);
+    if let Some(why) = blocks.out_of_date {
+        panel_blocks::paint_out_of_date(
+            ui,
+            rect.left() + title_w + 8.0,
+            rect.top() + title_h / 2.0,
+            why,
+        );
+    }
+    let meta_top = rect.top() + title_h + 4.0;
+    let meta_mid = meta_top + meta.size().y / 2.0;
+    let meta_h = paint_row(ui, rect.left(), meta_top, meta);
+    if let Some(text) = blocks.card_age() {
+        panel_blocks::paint_age(&painter, rect.right(), meta_mid, text);
+    }
+    if let Some(galley) = since {
+        selectable::galley(ui, pos2(rect.left(), meta_top + meta_h), galley, brand::MUTED);
+    }
 }
 
 fn paint_row(ui: &Ui, x: f32, y: f32, galley: std::sync::Arc<egui::Galley>) -> f32 {
@@ -352,22 +377,26 @@ fn paint_row(ui: &Ui, x: f32, y: f32, galley: std::sync::Arc<egui::Galley>) -> f
     height + 4.0
 }
 
-fn meta_line(
-    painter: &egui::Painter,
-    tone: Tone,
-    (now_ms, updated_ms, stale): (i64, Option<i64>, bool),
-    room: f32,
-) -> std::sync::Arc<egui::Galley> {
+fn meta_line(painter: &egui::Painter, tone: Tone, room: f32) -> std::sync::Arc<egui::Galley> {
     let ink = tone_color(tone);
-    let quiet = TextFormat::simple(body(TEXT_SECONDARY), brand::MUTED);
     let mut job = LayoutJob::default();
     job.append("\u{25cf} ", 0.0, TextFormat::simple(body(TEXT_SECONDARY), ink));
     job.append(tone.word(), 0.0, TextFormat::simple(body(TEXT_SECONDARY), ink));
-    if let Some(updated) = model::updated(now_ms, updated_ms, stale) {
-        job.append(&format!(" \u{b7} {updated}"), 0.0, quiet);
-    }
     job.wrap = TextWrapping::truncate_at_width(room.max(1.0));
     painter.layout_job(job)
+}
+
+/// The job cards under a caption row that carries the block's age, when it has one.
+fn jobs_block(ui: &mut Ui, width: f32, cards: &[Card], age: Option<&str>) -> Option<Action> {
+    if let Some(age) = age.filter(|_| !cards.is_empty()) {
+        let painter = ui.painter().clone();
+        let galley = painter.layout_no_wrap("JOBS".to_owned(), body(12.0), brand::MUTED);
+        let (rect, _) = ui.allocate_exact_size(vec2(width, galley.size().y + 8.0), Sense::hover());
+        let mid = rect.top() + galley.size().y / 2.0;
+        painter.galley(pos2(rect.left(), rect.top()), galley, brand::MUTED);
+        panel_blocks::paint_age(&painter, rect.right(), mid, age);
+    }
+    job_view::show(ui, width, cards).map(|(job, message)| Action::Ask { job, message })
 }
 
 /// How many bars fit in a row of `width`, and so how the phases wrap.
@@ -501,8 +530,12 @@ fn steps_block(
         }
         stage_heading(ui, width, &stage.title);
         for row in &stage.rows {
-            spinning |= row.mark == Mark::Doing;
-            item_row(ui, width, row, input.time);
+            let (mark, by_tidewatch) = panel_blocks::tick(
+                row.mark,
+                panel_blocks::ticked_by_tidewatch(input.marks, row.text),
+            );
+            spinning |= mark == Mark::Doing;
+            item_row(ui, width, (row, mark, by_tidewatch), input.time);
         }
     }
     if spinning && input.animate {
@@ -528,23 +561,29 @@ fn stage_heading(ui: &mut Ui, width: f32, title: &str) {
     selectable::galley(ui, pos2(rect.left(), rect.top()), galley, brand::MUTED);
 }
 
-fn item_row(ui: &mut Ui, width: f32, row: &ItemRow<'_>, time: f64) {
+fn item_row(
+    ui: &mut Ui,
+    width: f32,
+    (row, mark, by_tidewatch): (&ItemRow<'_>, Mark, bool),
+    time: f64,
+) {
     let (rect, response) = ui.allocate_exact_size(vec2(width, ROW_H), Sense::hover());
     let painter = ui.painter();
-    paint_mark(painter, pos2(rect.left() + MARK_W / 2.0, rect.center().y), 14.0, row.mark, time);
+    paint_mark(painter, pos2(rect.left() + MARK_W / 2.0, rect.center().y), 14.0, mark, time);
     let text_x = rect.left() + MARK_W + 12.0;
-    let muted = matches!(row.mark, Mark::Skipped);
+    let muted = matches!(mark, Mark::Skipped);
     let ink = if muted { brand::FAINT } else { brand::TEXT };
     let room = (rect.right() - text_x).max(1.0);
-    let why_ink = if row.mark == Mark::Blocked { brand::NEEDS } else { brand::FAINT };
-    let why = row.why.map(|why| {
+    let why_ink = if mark == Mark::Blocked { brand::NEEDS } else { brand::FAINT };
+    let why_text = panel_blocks::why_with_tick(row.why, by_tidewatch);
+    let why = why_text.as_deref().map(|why| {
         Text::line(why, body(TEXT_SECONDARY), why_ink, (room * 0.42).max(40.0)).lay_out(painter)
     });
     let why_w = why.as_ref().map_or(0.0, |galley| galley.size().x + 12.0);
     let label =
         Text::line(row.text, body(TEXT_BODY), ink, (room - why_w).max(1.0)).lay_out(painter);
     let at = pos2(text_x, rect.center().y - label.size().y / 2.0);
-    let tip = match row.why {
+    let tip = match why_text.as_deref() {
         Some(why) => format!("{} - {why}", row.text),
         None => row.text.to_owned(),
     };

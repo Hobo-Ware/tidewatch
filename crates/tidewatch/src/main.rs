@@ -153,6 +153,8 @@ mod palette;
 mod palette_view;
 mod pane;
 mod pane_jobs;
+mod panel_blocks;
+mod panel_fake;
 mod panel_host;
 mod park;
 mod pictures;

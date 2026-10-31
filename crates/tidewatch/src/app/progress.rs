@@ -4,8 +4,9 @@
 use tidewatch_core::background;
 use tidewatch_core::civil_date::Date;
 use tidewatch_core::job::{Agent, JobBoard};
-use tidewatch_core::progress::{Ledger, State};
+use tidewatch_core::progress::Ledger;
 
+use jiff::tz::TimeZone;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -23,19 +24,22 @@ use crate::job_model::{agent_of, lane_line};
 use crate::link_model;
 use crate::notify;
 use crate::outbox::{Offer, Origin, Send};
-use crate::overview::Overview;
+use crate::overview::{Overview, Stamp};
 use crate::overview_checklist::Source;
 use crate::pane::{AgentTab, Body};
+use crate::panel_blocks::{Blocks, Kept, contradicted};
 use crate::progress_glue::today;
 use crate::progress_model::{look, look_as, questions};
 use crate::progress_nudge as nudge;
 use crate::progress_state::Facts;
 use crate::status_view::state_of;
 use crate::{due_view, flow_glue, reader_glue, reader_view};
+use tidewatch_core::panel_event::AskKind;
 use tidewatch_core::panel_event::{Fact, Source as Logged};
-use tidewatch_core::panel_rules::{Live, ReportDigest, answered_since_save, is_stale, standing};
-use tidewatch_core::sent::{Cap, Reason as Said, because};
-use tidewatch_core::status::{AgentStatus, Reason};
+use tidewatch_core::panel_rules::ReportDigest;
+use tidewatch_core::panel_view::PanelView;
+use tidewatch_core::sent::{Reason as Said, because};
+use tidewatch_core::status::AgentStatus;
 
 const DRAW_ASK: &str = tidewatch_core::avatar_ask::ASK;
 
@@ -83,7 +87,7 @@ impl Tidewatch {
             self.tabs.items().iter().map(|tab| tab.id).collect();
         self.progress_ui.forget_except(|id| tabs.contains(&id));
         self.report_nudges.forget_except(|id| tabs.contains(&id));
-        self.drive_reported_states(ctx.input(|input| input.time));
+        self.drive_reported_states();
     }
 
     pub(super) fn drive_avatar_choice(&mut self, ctx: &egui::Context) {
@@ -257,10 +261,9 @@ impl Tidewatch {
         }
     }
 
-    /// Tells an agent whose report went stale, or an idle one whose last message holds a question
-    /// the report lacks, through the one send gate. An idle agent hears each once per saved
-    /// report. A working one hears it mid-turn when its input box is free, again on a backoff, up
-    /// to a cap per saved report.
+    /// Tells an idle agent whose report still says it works, an hour after it was saved, through the
+    /// one send gate. It hears this once per saved report; a working agent is never asked, the
+    /// report is asked for only at the end of a turn.
     pub(super) fn drive_report_nudges(&mut self, ctx: &egui::Context, now: f64) {
         if self.screenshot.is_some() {
             return;
@@ -277,46 +280,20 @@ impl Tidewatch {
             let known = self.progress.ledger(tab.id);
             let facts = nudge::Facts {
                 idle: *agent.run.status() == AgentStatus::Done,
-                busy: *agent.run.status() == AgentStatus::Working,
                 ledger: known.map(|known| &known.ledger),
                 saved_ms: known.and_then(|known| known.updated_ms),
-                turn_started_ms: agent
-                    .run
-                    .turn_started_at()
-                    .map(|at| now_ms - ((now - at) * 1000.0) as i64),
-                block: agent.run.end_block(),
                 now_ms,
             };
             let told = self.report_nudges.told(tab.id);
             if let Some(found) = nudge::due(&facts, &told) {
-                let cap = Cap { n: told.quiet_sent(facts.saved_ms) + 1, max: nudge::QUIET_MAX };
-                due.push((tab.id, found, facts.saved_ms, nudge::text(found, &facts), cap));
+                due.push((tab.id, found, facts.saved_ms, nudge::text(found)));
             }
             wake = wake.into_iter().chain(nudge::wait_ms(&facts, &told)).min();
         }
-        for (tab, found, saved, text, cap) in due {
-            let send = Send::auto(&text, Said::LedgerGuard, found.because());
-            if found == nudge::Nudge::Quiet {
-                let send = send.with_cap(cap).mid_turn();
-                match flow_glue::offer_to_agent(
-                    &mut self.tabs,
-                    &mut self.flow,
-                    tab,
-                    &send,
-                    ctx,
-                    now,
-                ) {
-                    Offer::Go => self.report_nudges.mark(tab, found, saved, now_ms),
-                    Offer::Wait => {
-                        self.report_nudges.retry_later(tab, saved, now_ms);
-                        wake = wake.into_iter().chain(Some(nudge::QUIET_RETRY_MS)).min();
-                    }
-                    Offer::Paused | Offer::Refuse(_) => {}
-                }
-                continue;
-            }
+        for (tab, found, saved, text) in due {
+            let send = Send::auto(text, Said::LedgerGuard, found.because());
             match flow_glue::send_or_queue(&mut self.tabs, &mut self.flow, tab, send, ctx, now) {
-                Offer::Go | Offer::Wait => self.report_nudges.mark(tab, found, saved, now_ms),
+                Offer::Go | Offer::Wait => self.report_nudges.mark(tab, found, saved),
                 Offer::Paused | Offer::Refuse(_) => {}
             }
         }
@@ -499,70 +476,49 @@ impl Tidewatch {
         ctx.request_repaint_after(Duration::from_secs(secs_to_midnight(secs) + 1));
     }
 
-    fn live_of(agent: &AgentTab, now: f64) -> Live {
+    pub(super) fn panel_view_of(&self, tab: u64) -> Option<PanelView> {
+        self.panel.view(tab, wall_ms() as i64)
+    }
+
+    /// Whether the tab's report no longer holds: the facts contradict it, so the screens drop its
+    /// question and its wait and mark it out of date.
+    pub(super) fn ledger_stale(&self, tab: u64) -> bool {
+        self.progress.ledger(tab).is_some() && contradicted(self.panel_view_of(tab).as_ref())
+    }
+
+    /// Hands each agent tab the state its report stands for after the facts weighed it, so every
+    /// screen shows one word. A report the log never heard of (saved by an older version) is put
+    /// in the log first.
+    fn drive_reported_states(&mut self) {
         let now_ms = wall_ms() as i64;
-        let wall = |at: f64| now_ms - ((now - at) * 1000.0) as i64;
-        Live {
-            asking: matches!(
-                agent.run.status(),
-                AgentStatus::NeedsYou(Reason::Permission | Reason::Question)
-            ),
-            turn_started_ms: agent.run.turn_started_at().map(wall),
-            rested_at_ms: agent.run.rested_at().map(wall),
-        }
-    }
-
-    /// Whether the tab's ledger still asks the owner something the agent has moved on from.
-    pub(super) fn ledger_stale(&self, tab: u64, now: f64) -> bool {
-        let Some(known) = self.progress.ledger(tab) else { return false };
-        if answered_since_save(self.answered_asks.get(&tab), known.updated_ms) {
-            return true;
-        }
-        let Some(agent) = self
+        let ids: Vec<u64> = self
             .tabs
             .items()
             .iter()
-            .find(|candidate| candidate.id == tab)
-            .and_then(|candidate| candidate.pane.agent.as_ref())
-        else {
-            return false;
-        };
-        is_stale(&known.ledger, known.updated_ms, Self::live_of(agent, now))
-    }
-
-    /// Hands each agent tab the state its report stands for, so every screen shows one word.
-    fn drive_reported_states(&mut self, now: f64) {
-        let states: Vec<(u64, Option<State>)> = self
-            .tabs
-            .items()
-            .iter()
-            .filter_map(|tab| {
-                let agent = tab.pane.agent.as_ref()?;
-                let state = self.progress.ledger(tab.id).map(|known| {
-                    let stale = self.ledger_stale(tab.id, now);
-                    let working = *agent.run.status() == AgentStatus::Working;
-                    standing(
-                        &known.ledger,
-                        known.updated_ms,
-                        Self::live_of(agent, now),
-                        (stale, working),
-                    )
-                });
-                Some((tab.id, state))
-            })
+            .filter(|tab| tab.pane.agent.is_some())
+            .map(|tab| tab.id)
             .collect();
-        for (id, state) in states {
+        for id in ids {
+            let ledger = self.progress.ledger(id);
+            let reported = self.panel.reported(id, now_ms, || {
+                ledger.map(|known| (known.updated_ms, ReportDigest::of(&known.ledger)))
+            });
             if let Some(agent) = self.tabs.get_mut(id).and_then(|tab| tab.pane.agent.as_mut()) {
-                agent.run.set_reported(state);
+                agent.run.set_reported(reported);
             }
         }
     }
 
-    pub(super) fn add_looks(&self, overview: &mut Overview, now: f64) {
+    pub(super) fn add_looks(&self, overview: &mut Overview) {
         let now_ms = wall_ms() as i64;
+        let zone = TimeZone::system();
         let places = overview.places.iter_mut().flat_map(|place| place.rows.iter_mut());
         for row in overview.needs.iter_mut().chain(places) {
-            let stale = self.ledger_stale(row.tab_id, now);
+            let stale = self.ledger_stale(row.tab_id);
+            row.stamp = self.panel_view_of(row.tab_id).map_or_else(Stamp::default, |view| {
+                let blocks = Blocks::of(&view, now_ms, &zone, Kept::default());
+                Stamp { age: blocks.card_age().map(str::to_owned), out_of_date: blocks.out_of_date }
+            });
             row.look = self.progress.ledger(row.tab_id).map(|known| match state_of(row.tone) {
                 Some(state) => look_as(&known.ledger, stale, state),
                 None => look(&known.ledger, stale),
@@ -637,10 +593,8 @@ impl Tidewatch {
     }
 
     fn mark_answered(&mut self, tab: u64) {
-        let saved = self.progress.ledger(tab).map(|known| known.updated_ms);
-        if let Some(saved) = saved {
-            self.answered_asks.insert(tab, saved);
-        }
+        let fact = Fact::Answered { kind: AskKind::Question };
+        self.panel.push(tab, Logged::App, fact, wall_ms() as i64);
     }
 
     fn send_ready_answer(&mut self, tab: u64, text: String, ctx: &egui::Context, now: f64) -> bool {
@@ -665,12 +619,11 @@ impl Tidewatch {
     }
 
     /// The question the Reader's card shows for tab `tab`, if any.
-    pub(super) fn ask_of(&self, tab: u64, now: f64, keys: bool) -> Option<Ask> {
+    pub(super) fn ask_of(&self, tab: u64, keys: bool) -> Option<Ask> {
         let known = self.progress.ledger(tab)?;
         let asked = questions(&known.ledger);
         let given = self.ask_given.get(&tab).copied();
-        let step =
-            ask_model::shown(asked.len(), self.ledger_stale(tab, now), given, known.updated_ms)?;
+        let step = ask_model::shown(asked.len(), self.ledger_stale(tab), given, known.updated_ms)?;
         let entry = (*asked.get(step)?).clone();
         let read = self.link_live.board(tab).map_or_else(Vec::new, |board| {
             link_model::read_first(board, &entry.text).into_iter().cloned().collect()

@@ -1,7 +1,7 @@
 //! What the progress screens say about a ledger, as plain data: ring, bars, rows, tags (pure).
 
 use tidewatch_core::kind::Kind;
-use tidewatch_core::panel_rules::{Waiting, ago, fresh, waiting_of};
+use tidewatch_core::panel_rules::{Waiting, fresh, waiting_of};
 use tidewatch_core::progress::{Choice, Entry, Ledger, Mark, Phase, PhaseState, State, real};
 use tidewatch_core::progress_report::{StageKind, WaitingOn};
 use tidewatch_core::stages::{self, Group, Stage};
@@ -354,13 +354,6 @@ pub(crate) fn entries(ledger: &Ledger, tag: Tag) -> Vec<&Entry> {
 /// The questions waiting for the user, placeholders left out.
 pub(crate) fn questions(ledger: &Ledger) -> Vec<&Entry> {
     real(&ledger.needs_you).collect()
-}
-
-/// The quiet line under the goal: the state word, then when the ledger changed. A stale ledger
-/// says it is the progress that is old, not the agent.
-pub(crate) fn updated(now_ms: i64, then_ms: Option<i64>, stale: bool) -> Option<String> {
-    let what = if stale { "progress updated" } else { "updated" };
-    then_ms.map(|then| format!("{what} {}", ago(now_ms, then)))
 }
 
 fn phase_name(ledger: &Ledger) -> String {
@@ -902,13 +895,6 @@ mod tests {
         assert_eq!(questions(&none), Vec::<&Entry>::new());
         let some = ledger("# Goal\nx\n\n## Needs you\n- Pick one -- it blocks the merge\n");
         assert_eq!(questions(&some)[0].text, "Pick one");
-    }
-
-    #[test]
-    fn updated_says_how_old_the_progress_is() {
-        assert_eq!(updated(5_000, None, false), None);
-        assert_eq!(updated(5_000, Some(0), false).as_deref(), Some("updated just now"));
-        assert_eq!(updated(480_000, Some(0), true).as_deref(), Some("progress updated 8 min ago"));
     }
 
     #[test]

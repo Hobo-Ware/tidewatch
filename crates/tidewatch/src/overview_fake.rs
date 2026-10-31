@@ -9,7 +9,7 @@ use tidewatch_core::progress_report::ProgressReport;
 use tidewatch_core::status::{AgentStatus, Reason};
 
 use crate::agenda::{Day, Item, Mark};
-use crate::overview::{self, AgentKind, Next, Overview, PlaceInput, PoofedRow, Row};
+use crate::overview::{self, AgentKind, Next, Overview, PlaceInput, PoofedRow, Row, Stamp};
 use crate::overview_view::State;
 use crate::progress_model::{look, look_as};
 use crate::status_view::shown;
@@ -132,6 +132,7 @@ fn row(id: u64, spec: &Spec) -> Row {
         auto_pick: None,
         idle_secs: spec.mins * 60.0,
         next: None,
+        stamp: Stamp::default(),
     }
 }
 

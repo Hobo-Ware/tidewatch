@@ -216,7 +216,6 @@ pub(crate) struct Tidewatch {
     report_nudges: crate::progress_nudge::Nudges,
     checklist: overview_checklist::Host,
     overview_state: crate::overview_view::State,
-    answered_asks: HashMap<u64, Option<i64>>,
     ask_given: HashMap<u64, crate::ask_model::Answered>,
     slash: slash_glue::Host,
     snoozes: due::Snoozes,
@@ -373,6 +372,7 @@ impl Tidewatch {
         let panel = panel_host::Host::from_env(
             paths.is_some() && screenshot.is_none(),
             dev_view.status_log,
+            paths.as_ref().map(TidewatchPaths::panel_ontime_file),
         );
         let trust = Trust::new(paths.as_ref(), cli_home);
         let dev_session = DevSession::from_env();
@@ -473,7 +473,6 @@ impl Tidewatch {
             report_nudges: crate::progress_nudge::Nudges::default(),
             checklist: overview_checklist::Host::new(),
             overview_state: crate::overview_fake::initial_state(),
-            answered_asks: HashMap::new(),
             ask_given: HashMap::new(),
             slash: slash_glue::Host::new(),
             snoozes: due::Snoozes::default(),

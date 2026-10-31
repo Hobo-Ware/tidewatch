@@ -60,6 +60,7 @@ fn general(restore: bool, resume: ResumeAgents, login_offered: bool) -> General 
         guards: tidewatch_core::guards::GuardPrefs::default(),
         guards_repo: None,
         workflow: None,
+        on_time: crate::panel_blocks::OnTime::none(),
         profiles: Vec::new(),
         default_branch: None,
         sync: crate::sync_view::View {

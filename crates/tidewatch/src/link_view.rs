@@ -34,6 +34,7 @@ pub(crate) fn show(
     board: &LinkBoard,
     now_ms: i64,
     (all, archive): (&mut bool, &mut bool),
+    age: Option<&str>,
 ) -> Option<String> {
     let (main, archived) = link_model::split(board);
     let rows = listed(&main, *all);
@@ -46,7 +47,7 @@ pub(crate) fn show(
     let (rect, _) = ui.allocate_exact_size(vec2(width, height), Sense::hover());
     let painter = ui.painter().clone();
     paint_item(&painter, rect, false);
-    head(ui, rect, main.len());
+    head(ui, rect, main.len(), age);
     let tag_col = tag_width(&painter, "Artifact");
     let mut copied = None;
     let mut top = rect.top() + HEAD_H;
@@ -118,7 +119,7 @@ fn archive_header(ui: &Ui, area: Rect, label: &str, open: bool) -> bool {
     response.on_hover_cursor(egui::CursorIcon::PointingHand).clicked()
 }
 
-fn head(ui: &Ui, rect: Rect, count: usize) {
+fn head(ui: &Ui, rect: Rect, count: usize, age: Option<&str>) {
     let painter = ui.painter();
     let mid = rect.top() + HEAD_H / 2.0;
     painter.text(
@@ -138,6 +139,9 @@ fn head(ui: &Ui, rect: Rect, count: usize) {
         brand::SOFT,
         TagFill::Tint(brand::ITEM_LINE),
     );
+    if let Some(age) = age {
+        crate::panel_blocks::paint_age(painter, rect.right() - PAD_X, mid, age);
+    }
 }
 
 fn row_of(

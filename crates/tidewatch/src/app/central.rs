@@ -41,7 +41,7 @@ impl Tidewatch {
         let mut overview = overview::build(places);
         self.add_pr_pills(&mut overview);
         self.add_done_check_tags(&mut overview);
-        self.add_looks(&mut overview, now);
+        self.add_looks(&mut overview);
         overview
     }
 
@@ -378,10 +378,15 @@ impl Tidewatch {
     }
 
     pub(super) fn waiting_end_block(&self) -> Option<EndBlock> {
-        self.tabs.items()[self.tabs.active()].pane.agent.as_ref().and_then(|agent| {
-            let waiting =
-                matches!(agent.run.status(), AgentStatus::Done | AgentStatus::NeedsYou(_));
-            agent.run.end_block().filter(|_| waiting).cloned()
-        })
+        let tab = &self.tabs.items()[self.tabs.active()];
+        let agent = tab.pane.agent.as_ref()?;
+        let waiting = matches!(agent.run.status(), AgentStatus::Done | AgentStatus::NeedsYou(_));
+        if !waiting {
+            return None;
+        }
+        match self.panel_view_of(tab.id) {
+            Some(view) => view.end_block,
+            None => agent.run.end_block().cloned(),
+        }
     }
 }

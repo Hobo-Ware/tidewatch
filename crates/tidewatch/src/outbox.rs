@@ -62,6 +62,7 @@ impl Send {
         Self { text: text.to_owned(), origin, tell: None, mid_turn: false }
     }
 
+    #[cfg(test)]
     pub(crate) fn mid_turn(mut self) -> Self {
         self.mid_turn = true;
         self

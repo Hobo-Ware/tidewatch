@@ -2,7 +2,11 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use stdusk_core::progress::Progress;
-use tidewatch_core::panel_event::{ChecksWord, PrFacts, PrWord};
+use tidewatch_core::panel_counter::{Counter, Counts, Outcome};
+use tidewatch_core::panel_event::{AskKind, ChecksWord, PrFacts, PrWord};
+use tidewatch_core::panel_rules::ReportDigest;
+use tidewatch_core::panel_view::{ReportMark, Tone as StoreTone, Why};
+use tidewatch_core::progress::{Ledger, State};
 use tidewatch_core::question::{AskReply, Question, Select};
 use tidewatch_core::status::{HookEvent, HookKind};
 use tidewatch_core::transcript_facts::Timed;
@@ -12,6 +16,7 @@ use crate::agent_frame::{self, route};
 use crate::agent_run::AgentRun;
 use crate::notify::Notifier;
 use crate::pane::{AgentTab, Body};
+use crate::status_view::Tone;
 
 const MESSAGE: &str =
     "Added it.\n\n**Done**\n- the helper\n\n**Needs you**\n- nothing\n\n**Next**\n- review";
@@ -377,22 +382,6 @@ fn drops_are_none_all_or_about_the_share_asked_for() {
     assert!((800..1_200).contains(&dropped), "{dropped}");
 }
 
-#[test]
-fn the_shadow_speaks_once_after_two_seconds_of_disagreement_and_not_for_a_blip() {
-    let mut slot = None;
-    assert_eq!(Shadow::observe(&mut slot, Tone::Working, Tone::Working, 0), Verdict::Agree);
-    assert_eq!(Shadow::observe(&mut slot, Tone::Working, Tone::Done, 1_000), Verdict::Wait(3_001));
-    assert_eq!(Shadow::observe(&mut slot, Tone::Working, Tone::Done, 2_500), Verdict::Wait(3_001));
-    assert_eq!(
-        Shadow::observe(&mut slot, Tone::Working, Tone::Done, 3_100),
-        Verdict::Tell { for_ms: 2_100 }
-    );
-    assert_eq!(Shadow::observe(&mut slot, Tone::Working, Tone::Done, 4_000), Verdict::Told);
-    assert_eq!(Shadow::observe(&mut slot, Tone::Done, Tone::Done, 4_100), Verdict::Agree);
-    assert_eq!(Shadow::observe(&mut slot, Tone::Needs, Tone::Done, 5_000), Verdict::Wait(7_001));
-    assert_eq!(Shadow::observe(&mut slot, Tone::Done, Tone::Working, 5_500), Verdict::Wait(7_501));
-}
-
 fn wait_until(host: &mut Host, tabs: &Tabs<Pane<u32>>, done: impl Fn(&Host) -> bool) {
     let ctx = egui::Context::default();
     let deadline = Instant::now() + Duration::from_secs(5);
@@ -571,4 +560,230 @@ fn the_real_feed_and_reader_end_a_turn_whose_stop_hook_never_came_within_three_s
     }
     assert_eq!(tone(&tabs), Tone::Done);
     assert!(began.elapsed() < Duration::from_secs(3), "{:?}", began.elapsed());
+}
+
+fn digest(state: &str, needs: &str) -> ReportDigest {
+    ReportDigest::of(&Ledger::parse(&format!(
+        "# Goal\ng\n\n## Status\nstate: {state}\n\n## Needs you\n{needs}\n"
+    )))
+}
+
+fn ready_host() -> (Host, Tabs<Pane<u32>>, u64) {
+    let dir = tempfile::tempdir().unwrap();
+    let (mut tabs, id) = tabs_with_agent(&dir.path().join("notes.json"));
+    let mut host = memory_host();
+    host.clock = at_zero;
+    host.sync(&tabs, &egui::Context::default());
+    host.collect(&mut tabs, 0.0, 0);
+    (host, tabs, id)
+}
+
+#[test]
+fn a_report_the_log_never_heard_of_is_logged_once_and_then_stands_for_its_state() {
+    let (mut host, _tabs, id) = ready_host();
+    let mut asked = 0;
+    let first = host.reported(id, 1_000, || {
+        asked += 1;
+        Some((Some(500), digest("working", "- nothing")))
+    });
+    assert_eq!(first, Some(State::Working));
+    let again = host.reported(id, 2_000, || {
+        asked += 1;
+        None
+    });
+    assert_eq!(again, Some(State::Working));
+    assert_eq!(asked, 1);
+    assert_eq!(names(&host, id), ["started", "report_saved"]);
+}
+
+#[test]
+fn a_tab_with_no_report_and_a_tab_with_no_panel_stand_for_nothing() {
+    let (mut host, _tabs, id) = ready_host();
+    assert_eq!(host.reported(id, 1_000, || None), None);
+    assert_eq!(host.reported(99, 1_000, || Some((None, digest("working", "- nothing")))), None);
+}
+
+#[test]
+fn working_ten_minutes_after_the_turn_ended_reads_done_and_out_of_date_not_working() {
+    let (mut host, mut tabs, id) = ready_host();
+    hear(&mut host, &mut tabs, id, HookKind::TurnStarted, 1.0);
+    host.push(
+        id,
+        Source::Report,
+        Fact::ReportSaved { saved_ms: 2_000, digest: digest("working", "- nothing") },
+        2_000,
+    );
+    hear(&mut host, &mut tabs, id, HookKind::TurnDone, 3.0);
+    let ten_minutes = 3_000 + 10 * 60_000;
+    let reported = host.reported(id, ten_minutes, || None);
+    assert_eq!(reported, Some(State::Done));
+    let view = host.view(id, ten_minutes).unwrap();
+    assert_eq!(view.report, Some(ReportMark::OutOfDate(Why::WorkingButTurnEnded)));
+    assert_eq!(view.tone, StoreTone::Done);
+}
+
+#[test]
+fn needs_you_with_no_question_open_is_out_of_date_and_never_reads_needs_you() {
+    let (mut host, mut tabs, id) = ready_host();
+    hear(&mut host, &mut tabs, id, HookKind::TurnStarted, 1.0);
+    host.push(
+        id,
+        Source::Report,
+        Fact::ReportSaved { saved_ms: 2_000, digest: digest("needs_you", "- nothing") },
+        2_000,
+    );
+    let reported = host.reported(id, 3_000, || None);
+    assert_ne!(reported, Some(State::NeedsYou));
+    let view = host.view(id, 3_000).unwrap();
+    assert_eq!(view.report, Some(ReportMark::OutOfDate(Why::NeedsYouNoQuestion)));
+}
+
+#[test]
+fn a_question_the_owner_answered_is_out_of_date_until_the_agent_reports_again() {
+    let (mut host, mut tabs, id) = ready_host();
+    hear(&mut host, &mut tabs, id, HookKind::TurnStarted, 1.0);
+    let asks = digest("waiting", "- Pause or go on? -- options: Pause* | Go on");
+    host.push(id, Source::Report, Fact::ReportSaved { saved_ms: 2_000, digest: asks }, 2_000);
+    let open = host.view(id, 2_500).unwrap();
+    assert_eq!(open.report, Some(ReportMark::Fresh));
+    host.push(id, Source::App, Fact::Answered { kind: AskKind::Question }, 3_000);
+    let answered = host.view(id, 3_100).unwrap();
+    assert_eq!(answered.report, Some(ReportMark::OutOfDate(Why::QuestionAnswered)));
+    host.push(
+        id,
+        Source::Report,
+        Fact::ReportSaved { saved_ms: 4_000, digest: digest("working", "- nothing") },
+        4_000,
+    );
+    assert_eq!(host.view(id, 4_100).unwrap().report, Some(ReportMark::Fresh));
+}
+
+fn late_by_a_minute() -> i64 {
+    60_000
+}
+
+fn at_zero() -> i64 {
+    0
+}
+
+fn gained(now: Counts, before: Counts) -> Counts {
+    Counts {
+        on_time: now.on_time - before.on_time,
+        late: now.late - before.late,
+        missed: now.missed - before.missed,
+    }
+}
+
+fn shell_call() -> Fact {
+    Fact::Hook(HookEvent {
+        kind: HookKind::ToolStarted { key: "shell\nls".into(), id: Some("t1".into()) },
+        session_id: None,
+        transcript_path: None,
+        message: None,
+    })
+}
+
+#[test]
+fn a_change_folded_within_its_limit_is_on_time_and_one_folded_late_is_late() {
+    let (mut host, mut tabs, id) = ready_host();
+    let base = host.counter.counts(0);
+    hear(&mut host, &mut tabs, id, HookKind::TurnStarted, 1.0);
+    let started = host.counter.counts(0);
+    assert_eq!(gained(started, base), Counts { on_time: 1, late: 0, missed: 0 });
+    host.clock = late_by_a_minute;
+    host.push(id, Source::Hook, shell_call(), 2_000);
+    assert_eq!(gained(host.counter.counts(0), started), Counts { on_time: 0, late: 1, missed: 0 });
+    assert_eq!(host.counter.worst(0), Some((Source::Hook, 1)));
+}
+
+#[test]
+fn an_event_that_changed_nothing_counts_for_nothing() {
+    let (mut host, _tabs, id) = ready_host();
+    let open = PrFacts { number: 7, state: PrWord::Open, checks: Some(ChecksWord::Running) };
+    let base = host.counter.counts(0);
+    host.push(id, Source::Pr, Fact::Pr(open.clone()), 1_000);
+    let once = host.counter.counts(0);
+    assert_eq!(gained(once, base).total(), 1);
+    host.push(id, Source::Pr, Fact::Pr(open), 1_500);
+    assert_eq!(host.counter.counts(0), once);
+}
+
+#[test]
+fn a_pull_request_is_judged_by_the_polled_limit_not_the_live_one() {
+    let (mut host, _tabs, id) = ready_host();
+    host.clock = late_by_a_minute;
+    let base = host.counter.counts(0);
+    host.push(
+        id,
+        Source::Pr,
+        Fact::Pr(PrFacts { number: 7, state: PrWord::Open, checks: None }),
+        0,
+    );
+    assert_eq!(gained(host.counter.counts(0), base), Counts { on_time: 1, late: 0, missed: 0 });
+}
+
+#[test]
+fn a_turn_end_only_the_transcript_caught_counts_as_a_missed_hook() {
+    let (mut host, mut tabs, id) = ready_host();
+    hear(&mut host, &mut tabs, id, HookKind::TurnStarted, 1.0);
+    let before = host.counter.counts(0);
+    feed(&mut tabs, id, end_of_turn(5_000));
+    host.collect(&mut tabs, 5.0, 5_000);
+    assert_eq!(gained(host.counter.counts(0), before).missed, 1);
+    assert_eq!(host.counter.worst(0), Some((Source::Hook, 1)));
+}
+
+#[test]
+fn a_turn_end_the_hook_delivered_is_not_missed() {
+    let (mut host, mut tabs, id) = ready_host();
+    hear(&mut host, &mut tabs, id, HookKind::TurnStarted, 1.0);
+    hear(&mut host, &mut tabs, id, HookKind::TurnDone, 3.0);
+    feed(&mut tabs, id, end_of_turn(3_000));
+    host.collect(&mut tabs, 5.0, 5_000);
+    assert_eq!(host.counter.counts(0).missed, 0);
+}
+
+#[test]
+fn the_tally_is_read_merged_with_this_runs_counts_and_written_back_off_the_ui_thread() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("state").join("panel-ontime.json");
+    let mut earlier = Counter::new();
+    earlier.record(1_000, Source::Pr, Outcome::Late);
+    panel_counter::save(&file, &earlier).unwrap();
+    let (mut tabs, id) = tabs_with_agent(&dir.path().join("notes.json"));
+    let mut host = memory_host();
+    host.saving.file = Some(file.clone());
+    host.clock = at_zero;
+    let ctx = egui::Context::default();
+    host.sync(&tabs, &ctx);
+    host.collect(&mut tabs, 0.0, 0);
+    hear(&mut host, &mut tabs, id, HookKind::TurnStarted, 1.0);
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        host.sync(&tabs, &ctx);
+        let saved = panel_counter::load(&file).counts(0);
+        if (saved.late >= 1 && saved.on_time >= 1) || Instant::now() > deadline {
+            assert!(saved.late >= 1 && saved.on_time >= 1, "{saved:?}");
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    assert_eq!(host.on_time(0).late.as_deref(), Some("Late: pull requests 1"));
+}
+
+#[test]
+fn a_run_that_writes_nothing_leaves_no_tally_file() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("panel-ontime.json");
+    let mut host = Host::from_env(false, false, Some(file.clone()));
+    let (mut tabs, id) = tabs_with_agent(&dir.path().join("notes.json"));
+    let ctx = egui::Context::default();
+    host.sync(&tabs, &ctx);
+    host.collect(&mut tabs, 0.0, 0);
+    hear(&mut host, &mut tabs, id, HookKind::TurnStarted, 1.0);
+    host.sync(&tabs, &ctx);
+    std::thread::sleep(Duration::from_millis(100));
+    host.sync(&tabs, &ctx);
+    assert!(!file.exists());
+    assert!(host.on_time(1_000).line.starts_with("Panel on time"));
 }

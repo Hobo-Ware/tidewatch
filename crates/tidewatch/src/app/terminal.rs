@@ -247,7 +247,7 @@ impl Tidewatch {
                     profile.as_deref().unwrap_or_default(),
                     wall_ms() as i64,
                 );
-                let ask = self.ask_of(active_id, now, keys_free);
+                let ask = self.ask_of(active_id, keys_free);
                 let due = self.due_of(active_id);
                 let first = due.first().map(|item| (item, due.len() - 1));
                 let avatar = self.avatar_live.get(active_id).cloned();

@@ -333,7 +333,7 @@ impl Tidewatch {
             ring: self
                 .progress
                 .ledger(id)
-                .map(|known| tab_ring(&known.ledger, self.ledger_stale(id, now))),
+                .map(|known| tab_ring(&known.ledger, self.ledger_stale(id))),
             job: self
                 .job_live
                 .board(id)
