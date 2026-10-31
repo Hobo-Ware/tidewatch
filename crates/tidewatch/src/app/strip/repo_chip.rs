@@ -19,7 +19,7 @@ use crate::overview::repo_ink;
 use crate::reader_view::ellipsized;
 use crate::screen_kit::{
     MENU_ROW_H, MENU_ROW_PAD, TEXT_BODY, TEXT_SECONDARY, TEXT_TAG, body, heading, menu_divider,
-    menu_label, menu_row, paint_caps,
+    menu_label, menu_row, paint_caps, selected_ink,
 };
 
 pub(super) const WIDTH: f32 = 130.0;
@@ -228,8 +228,9 @@ fn paint_repo(painter: &Painter, rect: Rect, entry: &Entry, here: bool) -> Optio
     }
     let left = swatch.right() + ROW_GAP;
     let font = if here { heading(TEXT_BODY) } else { body(TEXT_BODY) };
-    let name = ellipsized(painter, &entry.label, font, brand::TEXT, right - ROW_GAP - left);
-    painter.galley(pos2(left, mid - name.size().y / 2.0), name, brand::TEXT);
+    let ink = selected_ink(here, brand::TEXT);
+    let name = ellipsized(painter, &entry.label, font, ink, right - ROW_GAP - left);
+    painter.galley(pos2(left, mid - name.size().y / 2.0), name, ink);
     here.then(|| {
         let ink = Stroke::new(2.0, brand::TEAL);
         let at = |x: f32, y: f32| check.min + vec2(x, y);

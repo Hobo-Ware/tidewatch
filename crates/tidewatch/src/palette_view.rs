@@ -218,7 +218,7 @@ fn paint_row(ui: &Ui, rect: Rect, item: &Item, hit: &Hit, selected: bool) {
         FontId::proportional(ICON),
         icon_ink,
     );
-    let ink = brand::TEXT;
+    let ink = crate::screen_kit::selected_ink(selected, brand::TEXT);
     let mut job = LayoutJob::default();
     let label_marks: &[usize] = if hit.alias.is_some() { &[] } else { &hit.positions };
     for (i, c) in item.label.chars().enumerate() {

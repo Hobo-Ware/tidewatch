@@ -6,7 +6,7 @@ use stdusk_egui::ui::icons;
 use tidewatch_core::prefs::FontChoice;
 
 use crate::screen_kit::TEXT_BODY;
-use crate::screen_kit::{Size, selection_row};
+use crate::screen_kit::{Size, selected_ink, selection_row};
 use crate::settings_ui::{self, Control, FAINT, MUTED, ORANGE, TEXT, Tone, row_with, text_input};
 use crate::terminal_font::{self, Status};
 
@@ -151,7 +151,7 @@ fn font_row(ui: &mut Ui, choice: &FontChoice, selected: bool) -> bool {
         Align2::LEFT_CENTER,
         terminal_font::label(choice),
         FontId::proportional(TEXT_BODY),
-        TEXT,
+        selected_ink(selected, TEXT),
     );
     response.on_hover_cursor(egui::CursorIcon::PointingHand).clicked()
 }

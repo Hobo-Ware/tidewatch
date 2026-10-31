@@ -269,7 +269,7 @@ fn item(
         ui.allocate_exact_size(vec2(ui.available_width(), ITEM_HEIGHT), Sense::click());
     let painter = ui.painter();
     selection_row(painter, rect, selected, response.hovered());
-    let (text, icon) = if selected { (TEXT, TEAL_TEXT) } else { (SOFT, SOFT) };
+    let (text, icon) = if selected { (TEAL_TEXT, TEAL_TEXT) } else { (SOFT, SOFT) };
     let icon_rect = Rect::from_center_size(
         pos2(rect.left() + 12.0 + ITEM_ICON / 2.0, rect.center().y),
         vec2(ITEM_ICON, ITEM_ICON),
