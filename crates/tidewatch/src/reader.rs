@@ -13,6 +13,7 @@ use tidewatch_core::question::{AskReply, Question};
 use tidewatch_core::restore::codex_session_id;
 use tidewatch_core::sent::{self, Record};
 use tidewatch_core::transcript::{Entry, Role, Source};
+use tidewatch_core::transcript_facts::Timed;
 use tidewatch_core::transcript_locate::Locator;
 
 use crate::commands::Command;
@@ -170,6 +171,7 @@ pub(crate) struct Reader {
     sent_looked: f64,
     found_links: Vec<Shared>,
     edits: Vec<PathBuf>,
+    panel_facts: Vec<Timed>,
 }
 
 impl Reader {
@@ -207,6 +209,7 @@ impl Reader {
             sent_looked: f64::NEG_INFINITY,
             found_links: Vec::new(),
             edits: Vec::new(),
+            panel_facts: Vec::new(),
         }
     }
 
@@ -427,6 +430,7 @@ impl Reader {
                     self.add(entries);
                     self.refresh_sent();
                 }
+                Message::Facts(facts) => self.panel_facts.extend(facts),
                 Message::Title(title) => self.session_title = Some(title),
             }
         }
@@ -446,6 +450,21 @@ impl Reader {
         self.save_claims();
         if let Some(first) = self.rows.iter().next() {
             self.view.heights.keep_from(first.seq);
+        }
+    }
+
+    pub(crate) fn take_panel_facts(&mut self) -> Vec<Timed> {
+        std::mem::take(&mut self.panel_facts)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn push_panel_facts(&mut self, facts: Vec<Timed>) {
+        self.panel_facts.extend(facts);
+    }
+
+    pub(crate) fn set_working(&self, working: bool) {
+        if let Some(feed) = &self.feed {
+            feed.set_working(working);
         }
     }
 

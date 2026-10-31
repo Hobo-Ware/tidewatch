@@ -39,11 +39,23 @@ pub(crate) struct Host {
     tools: Tools,
     writable: bool,
     fake: bool,
+    told: Vec<(u64, Link)>,
 }
 
 impl Host {
     pub(crate) fn new(writable: bool, fake: bool, tools: Tools) -> Self {
-        Self { tabs: HashMap::new(), jobs: Jobs::new(), tools, writable: writable && !fake, fake }
+        Self {
+            tabs: HashMap::new(),
+            jobs: Jobs::new(),
+            tools,
+            writable: writable && !fake,
+            fake,
+            told: Vec::new(),
+        }
+    }
+
+    pub(crate) fn take_told(&mut self) -> Vec<(u64, Link)> {
+        std::mem::take(&mut self.told)
     }
 
     pub(crate) fn from_env(writable: bool) -> Self {
@@ -145,22 +157,28 @@ impl Host {
     }
 
     /// The agent's report brought these links; they are saved already.
-    pub(crate) fn arrived(&mut self, tab: u64, links: &[Link]) {
+    pub(crate) fn arrived(&mut self, id: u64, links: &[Link]) {
         if self.fake {
             return;
         }
-        if let Some(tab) = self.tabs.get_mut(&tab) {
-            tab.board.absorb_all(links);
+        if let Some(tab) = self.tabs.get_mut(&id)
+            && tab.board.absorb_all(links)
+        {
+            self.told.extend(links.iter().map(|link| (id, link.clone())));
         }
     }
 
     /// Tidewatch found these links: they are in the board now and saved on a thread.
-    pub(crate) fn found(&mut self, tab: u64, links: Vec<Link>, ctx: &egui::Context) {
+    pub(crate) fn found(&mut self, id: u64, links: Vec<Link>, ctx: &egui::Context) {
         if self.fake || links.is_empty() {
             return;
         }
-        let Some(tab) = self.tabs.get_mut(&tab) else { return };
-        if !tab.board.absorb_all(&links) || !self.writable {
+        let Some(tab) = self.tabs.get_mut(&id) else { return };
+        let changed = tab.board.absorb_all(&links);
+        if changed {
+            self.told.extend(links.iter().map(|link| (id, link.clone())));
+        }
+        if !changed || !self.writable {
             return;
         }
         let file = tab.file.clone();

@@ -5,7 +5,9 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 
 use tidewatch_core::civil_date::Date;
-use tidewatch_core::done_check::{self, Input, Kind, Line, PrFact, Report, Status, Unverified};
+use tidewatch_core::done_check::{
+    self, Input, Kind, Line, Outcome, PrFact, Report, Status, Unverified,
+};
 use tidewatch_core::status::AgentStatus;
 use tidewatch_core::tools::Tools;
 
@@ -179,11 +181,23 @@ pub(crate) struct Host {
     jobs: Jobs<Done>,
     tabs: HashMap<u64, Tab>,
     next_job: u64,
+    finished: Vec<(u64, bool)>,
 }
 
 impl Host {
     pub(crate) fn new(enabled: bool, fake: Fake) -> Self {
-        Self { enabled, fake, jobs: Jobs::new(), tabs: HashMap::new(), next_job: 0 }
+        Self {
+            enabled,
+            fake,
+            jobs: Jobs::new(),
+            tabs: HashMap::new(),
+            next_job: 0,
+            finished: Vec::new(),
+        }
+    }
+
+    pub(crate) fn take_finished(&mut self) -> Vec<(u64, bool)> {
+        std::mem::take(&mut self.finished)
     }
 
     pub(crate) fn from_env(enabled: bool) -> Self {
@@ -215,6 +229,7 @@ impl Host {
                 continue;
             }
             let same = before.as_deref() == Some(&*done.report);
+            self.finished.push((done.tab, done.report.outcome() == Outcome::Done));
             tab.entry =
                 Some(Entry::Report { report: done.report, checked: Checked { at: done.at, same } });
         }
@@ -475,5 +490,19 @@ mod tests {
         assert_eq!(host.look(1), Some(Look::Report(next, Checked { at: 200, same: false })));
         host.tick(&[facts(&AgentStatus::Working, None, true)]);
         assert_eq!(host.look(1), None);
+    }
+
+    #[test]
+    fn a_check_that_ended_is_told_with_whether_it_found_nothing_wrong_and_a_dropped_one_is_not() {
+        let mut host = Host::new(true, Fake::Off);
+        host.tabs.entry(1).or_default().entry = Some(Entry::Checking { job: 1, before: None });
+        answer(&mut host, 1, report_saying("1 item the agent did not verify"), 100);
+        host.tabs.entry(1).or_default().entry = Some(Entry::Checking { job: 2, before: None });
+        let clean = Report { head: "abc".into(), lines: Vec::new(), unverified: Vec::new() };
+        answer(&mut host, 2, clean, 200);
+        host.tabs.entry(1).or_default().entry = Some(Entry::Checking { job: 9, before: None });
+        answer(&mut host, 3, report_saying("late"), 300);
+        assert_eq!(host.take_finished(), [(1, false), (1, true)]);
+        assert_eq!(host.take_finished(), Vec::<(u64, bool)>::new());
     }
 }

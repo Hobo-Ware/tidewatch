@@ -98,6 +98,7 @@ impl Tidewatch {
         self.drive_report_nudges(ctx, now);
         self.drive_meeseeks(ctx, now);
         self.drive_done_check(ctx, now);
+        self.drive_panel();
         self.drive_keep_awake(ctx, now);
         self.drive_autofetch(ctx);
         self.drive_amphetamine(ctx, now);

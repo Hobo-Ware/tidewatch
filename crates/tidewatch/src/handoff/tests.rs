@@ -483,6 +483,13 @@ fn an_agent_tab_comes_back_running_with_its_reader_session_and_credential_under_
     assert_eq!(rebuilt.credentials, [(tab.id, credential("tok-a"))]);
 }
 
+#[test]
+fn an_agent_that_kept_running_over_the_handover_tells_the_log_it_is_no_new_start() {
+    let w = window();
+    let mut run = rebuilt_run(&w, 6.0);
+    assert_eq!(run.take_life()[0], crate::agent_run::Life::KeptRunning);
+}
+
 fn rebuilt_run(w: &Window, at: f64) -> AgentRun {
     let (handover, _) = handover_of(w);
     let mut adopt = |term: u32, _: &Path| Ok(term);

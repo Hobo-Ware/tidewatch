@@ -32,7 +32,8 @@ use crate::progress_nudge as nudge;
 use crate::progress_state::Facts;
 use crate::status_view::state_of;
 use crate::{due_view, flow_glue, reader_glue, reader_view};
-use tidewatch_core::panel_rules::{Live, answered_since_save, is_stale, standing};
+use tidewatch_core::panel_event::{Fact, Source as Logged};
+use tidewatch_core::panel_rules::{Live, ReportDigest, answered_since_save, is_stale, standing};
 use tidewatch_core::sent::{Cap, Reason as Said, because};
 use tidewatch_core::status::{AgentStatus, Reason};
 
@@ -681,7 +682,15 @@ impl Tidewatch {
         if let Some(kind) = ledger.status.kind {
             self.meeseeks_declared(tab, kind, ctx);
         }
-        self.progress.arrived(tab, ledger, wall_ms() as i64);
+        let now_ms = wall_ms() as i64;
+        let digest = ReportDigest::of(&ledger);
+        self.panel.push(
+            tab,
+            Logged::Report,
+            Fact::ReportSaved { saved_ms: now_ms, digest },
+            now_ms,
+        );
+        self.progress.arrived(tab, ledger, now_ms);
         if self.status_log
             && let Some(known) = self.progress.ledger(tab)
         {

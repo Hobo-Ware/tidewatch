@@ -403,3 +403,30 @@ fn a_launch_wakes_the_frame_when_it_turns_quiet() {
     launch(&mut host, "a", NOW);
     assert_eq!(fx.tick(&mut host, &[1], NOW + 1_000), Some(NOW + 90_000));
 }
+
+#[test]
+fn every_reading_from_the_agent_the_file_and_the_terminal_is_told_once_and_a_line_that_starts_nothing_is_not()
+ {
+    let fx = Fx::new();
+    let mut host = Host::new(false, false);
+    fx.until_loaded(&mut host, 1, NOW);
+    host.report(1, reading("orders", 1.0, 10.0), NOW);
+    fx.append("{\"name\":\"orders\",\"done\":2,\"total\":10}\n");
+    fx.tick(&mut host, &[1], NOW + 2_000);
+    let screen = vec!["orders [###-------] 30% 3/10".to_owned(), "[2/5] building".to_owned()];
+    host.scan(1, 1, NOW + 5_000, || screen.clone());
+    let told: Vec<(u64, f64)> = host
+        .take_told()
+        .into_iter()
+        .map(|(tab, report)| (tab, report.done.unwrap_or(0.0)))
+        .collect();
+    assert_eq!(told, [(1, 1.0), (1, 2.0), (1, 3.0)]);
+    assert_eq!(host.take_told().len(), 0);
+}
+
+#[test]
+fn a_reading_for_a_tab_that_is_not_open_is_not_told() {
+    let mut host = Host::new(false, false);
+    host.report(9, reading("orders", 5.0, 10.0), NOW);
+    assert_eq!(host.take_told().len(), 0);
+}

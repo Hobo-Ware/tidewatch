@@ -13,8 +13,8 @@ use tidewatch_core::events::TabEvent;
 use tidewatch_core::progress::State;
 use tidewatch_core::resume_mode::exit_is_abnormal;
 use tidewatch_core::status::{
-    AgentStatus, HookKind, ProgressSignal, REST_AFTER_SECS, Reason, StatusTracker, TerminalSignal,
-    at_rest,
+    AgentStatus, HookEvent, HookKind, ProgressSignal, REST_AFTER_SECS, Reason, StatusTracker,
+    TerminalSignal, at_rest,
 };
 
 use crate::outbox::Screen;
@@ -109,6 +109,14 @@ pub(crate) struct AgentRun {
     last_activity_at: Option<f64>,
     unreported: bool,
     tools_this_turn: bool,
+    life: Vec<Life>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Life {
+    Started,
+    Resumed,
+    KeptRunning,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -149,7 +157,18 @@ impl AgentRun {
             last_activity_at: None,
             unreported: false,
             tools_this_turn: false,
+            life: Vec::new(),
         }
+    }
+
+    pub(crate) fn take_life(&mut self) -> Vec<Life> {
+        std::mem::take(&mut self.life)
+    }
+
+    /// The agent survived a window restart: not a new start, but what hooks last said is lost.
+    pub(crate) fn kept_running(&mut self) {
+        self.life.clear();
+        self.life.push(Life::KeptRunning);
     }
 
     /// The agent runs from a shell prompt this tab hosts: it reads `Stopped` until the user (or the
@@ -176,6 +195,51 @@ impl AgentRun {
         self.asking.is_some()
     }
 
+    pub(crate) fn is_shell_hosted(&self) -> bool {
+        matches!(self.host, Host::Shell { .. })
+    }
+
+    /// The transcript shows a turn began and no hook said so. Returns whether a turn was opened.
+    pub(crate) fn begin_turn_elsewhere(&mut self, now: f64) -> bool {
+        if self.tracker.turn_open() {
+            return false;
+        }
+        self.tracker.on_hook(
+            &HookEvent {
+                kind: HookKind::TurnStarted,
+                session_id: None,
+                transcript_path: None,
+                message: None,
+            },
+            now,
+        );
+        self.end_block = None;
+        self.turn_started_at = Some(now);
+        self.tools_this_turn = false;
+        true
+    }
+
+    /// The transcript or the process list shows the turn is over and no hook said so: settle the
+    /// status as a finished turn would. Returns whether a turn was open.
+    pub(crate) fn settle_ended_turn(&mut self, end_block: Option<EndBlock>, now: f64) -> bool {
+        if !self.tracker.turn_open() {
+            return false;
+        }
+        self.tracker.on_hook(
+            &HookEvent {
+                kind: HookKind::TurnDone,
+                session_id: None,
+                transcript_path: None,
+                message: None,
+            },
+            now,
+        );
+        if end_block.is_some() {
+            self.end_block = end_block;
+        }
+        true
+    }
+
     #[cfg(test)]
     pub(crate) fn hold(&mut self, status: Option<AgentStatus>, detail: Option<String>) {
         if self.held != status {
@@ -191,6 +255,7 @@ impl AgentRun {
         self.notes_file = notes_file;
         self.tracker.agent_started(now);
         self.started_at = now;
+        self.life.push(Life::Started);
     }
 
     /// The agent came over a handover while it was not at its prompt, or the old window could not
@@ -221,6 +286,7 @@ impl AgentRun {
     /// The agent process resumed a saved session: it waits at its prompt, which reads as done.
     pub(crate) fn resumed(&mut self, now: f64) {
         self.tracker.agent_resumed(now);
+        self.life.push(Life::Resumed);
     }
 
     /// The tab never got an agent: it shows this error as its status.
@@ -877,5 +943,80 @@ mod tests {
         assert_eq!(run.refresh(quiet_at).unwrap().to, AgentStatus::NeedsYou(Reason::Quiet));
         assert_eq!(run.since_change(quiet_at + 120.0), 120.0);
         assert_eq!(run.since_change(quiet_at - 100.0), 0.0);
+    }
+
+    #[test]
+    fn a_turn_the_hooks_never_closed_settles_when_told_it_is_over_and_keeps_the_end_block() {
+        let mut run = running(0.0);
+        run.on_event(hook(HookKind::TurnStarted, None), 1.0);
+        run.refresh(2.0);
+        assert_eq!(run.status(), &AgentStatus::Working);
+        let block = end_block::parse(
+            "**Done**\n- the helper\n\n**Needs you**\n- nothing\n\n**Next**\n- review",
+        );
+        assert!(run.settle_ended_turn(block, 3.0));
+        run.refresh(3.0);
+        assert_eq!(run.status(), &AgentStatus::Done);
+        assert_eq!(
+            run.end_block().map(|block| block.done.clone()),
+            Some(vec!["the helper".to_owned()])
+        );
+    }
+
+    #[test]
+    fn settling_a_turn_that_is_not_open_changes_nothing() {
+        let mut run = running(0.0);
+        assert!(!run.settle_ended_turn(None, 1.0));
+        run.on_event(hook(HookKind::TurnStarted, None), 2.0);
+        run.on_event(hook(HookKind::TurnDone, None), 3.0);
+        run.refresh(3.0);
+        assert!(!run.settle_ended_turn(None, 4.0));
+        assert_eq!(run.status(), &AgentStatus::Done);
+    }
+
+    #[test]
+    fn a_permission_prompt_and_a_question_are_open_turns_a_settle_closes() {
+        let mut run = running(0.0);
+        run.on_event(hook(HookKind::TurnStarted, None), 1.0);
+        run.on_event(hook(HookKind::PermissionNeeded, None), 2.0);
+        run.refresh(2.0);
+        assert_eq!(run.status(), &AgentStatus::NeedsYou(Reason::Permission));
+        assert!(run.settle_ended_turn(None, 3.0));
+        run.refresh(3.0);
+        assert_eq!(run.status(), &AgentStatus::Done);
+    }
+
+    #[test]
+    fn the_life_of_the_agent_is_told_once_in_order_and_a_kept_run_replaces_a_start() {
+        let mut run = AgentRun::setting_up("claude".into(), 0.0);
+        assert_eq!(run.take_life(), Vec::<Life>::new());
+        run.started(None, 1.0);
+        run.resumed(1.0);
+        assert_eq!(run.take_life(), [Life::Started, Life::Resumed]);
+        assert_eq!(run.take_life(), Vec::<Life>::new());
+        run.started(None, 2.0);
+        run.kept_running();
+        run.resumed(2.0);
+        assert_eq!(run.take_life(), [Life::KeptRunning, Life::Resumed]);
+    }
+
+    #[test]
+    fn an_agent_typed_at_a_shell_says_so() {
+        let mut run = running(0.0);
+        assert!(!run.is_shell_hosted());
+        run.hosted_by_shell();
+        assert!(run.is_shell_hosted());
+    }
+
+    #[test]
+    fn a_turn_the_transcript_opened_reads_as_working_once_and_is_not_opened_twice() {
+        let mut run = running(0.0);
+        run.refresh(1.0);
+        assert!(run.begin_turn_elsewhere(2.0));
+        run.refresh(2.0);
+        assert_eq!(run.status(), &AgentStatus::Working);
+        assert!(!run.begin_turn_elsewhere(2.5));
+        assert_eq!(run.turn_started_at(), Some(2.0));
+        assert!(!run.used_tools_this_turn());
     }
 }

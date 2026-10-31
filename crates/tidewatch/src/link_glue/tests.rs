@@ -345,3 +345,19 @@ fn the_tabs_own_pull_request_takes_its_state_from_the_watch_and_is_not_looked_up
     host.own_pr(1, &open_again, NOW + 1, &fx.ctx);
     assert_eq!(state(&host, PR_OPEN), LinkState::Open, "the watch's newer answer wins");
 }
+
+#[test]
+fn only_the_links_that_were_new_to_a_board_are_told() {
+    let fx = Fx::new();
+    let mut host = Host::new(false, false, no_gh());
+    fx.tick(&mut host, &[1]);
+    let one = link("https://a.dev/1", "One", TitleFrom::Agent);
+    host.arrived(1, std::slice::from_ref(&one));
+    host.found(1, vec![one.clone()], &fx.ctx);
+    host.found(1, vec![link("https://a.dev/2", "Two", TitleFrom::Seen)], &fx.ctx);
+    host.arrived(7, &[link("https://a.dev/3", "Closed tab", TitleFrom::Agent)]);
+    let told: Vec<(u64, String)> =
+        host.take_told().into_iter().map(|(tab, link)| (tab, link.url)).collect();
+    assert_eq!(told, [(1, "https://a.dev/1".to_owned()), (1, "https://a.dev/2".to_owned())]);
+    assert_eq!(host.take_told().len(), 0);
+}

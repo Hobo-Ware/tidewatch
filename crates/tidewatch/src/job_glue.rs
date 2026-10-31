@@ -67,6 +67,7 @@ pub(crate) struct Host {
     writable: bool,
     fake: bool,
     fake_agent: Option<Agent>,
+    told: Vec<(u64, Report)>,
 }
 
 impl Host {
@@ -77,7 +78,12 @@ impl Host {
             writable: writable && !fake,
             fake,
             fake_agent: None,
+            told: Vec::new(),
         }
+    }
+
+    pub(crate) fn take_told(&mut self) -> Vec<(u64, Report)> {
+        std::mem::take(&mut self.told)
     }
 
     pub(crate) fn from_env(writable: bool) -> Self {
@@ -100,8 +106,9 @@ impl Host {
         self.tabs.get(&tab).map(|tab| &tab.board).filter(|board| !board.is_empty())
     }
 
-    pub(crate) fn report(&mut self, tab: u64, report: Report, now_ms: i64) {
-        let Some(tab) = self.tabs.get_mut(&tab) else { return };
+    pub(crate) fn report(&mut self, id: u64, report: Report, now_ms: i64) {
+        let Some(tab) = self.tabs.get_mut(&id) else { return };
+        self.told.push((id, report.clone()));
         tab.last_report_ms = Some(now_ms);
         if tab.loaded {
             tab.dirty |= tab.board.report(&report, now_ms);
@@ -162,6 +169,7 @@ impl Host {
             {
                 tab.polled_ms = now_ms;
                 for report in tab.feed.poll(&files.feed) {
+                    self.told.push((*id, report.clone()));
                     tab.last_report_ms = Some(now_ms);
                     tab.dirty |= tab.board.report(&report, now_ms);
                 }
@@ -257,8 +265,11 @@ impl Host {
             if !tab.scan.seen.insert(hasher.finish()) {
                 continue;
             }
-            if let Some(report) = job_bar::parse(&line) {
-                tab.dirty |= tab.board.report_known(&report, now_ms);
+            if let Some(report) = job_bar::parse(&line)
+                && tab.board.report_known(&report, now_ms)
+            {
+                self.told.push((id, report));
+                tab.dirty = true;
             }
         }
         if tab.scan.seen.len() > SEEN_LINES_CAP {
