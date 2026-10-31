@@ -41,6 +41,7 @@ pub(crate) struct TabFacts {
     /// The head the branch's pull request merged with: what came after it goes to a new branch.
     pub(crate) merged_head: Option<String>,
     pub(crate) gate: Gate,
+    pub(crate) profile: String,
 }
 
 /// Whether the tab may deliver: shut once its pull request merged (`merged_branch`), so no card
@@ -76,6 +77,7 @@ pub(crate) enum Want {
     AutoSend,
     FindPr(Why),
     LoadPrLines,
+    ReviewExpired,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -150,7 +152,7 @@ impl TabFlow {
 /// calling it again before the answers arrive asks for nothing twice.
 pub(crate) fn decide(flow: &mut TabFlow, facts: &TabFacts, now: f64) -> Vec<Want> {
     let mut wants = Vec::new();
-    flow.auto.observe(&facts.status);
+    flow.auto.observe(&facts.status, now);
     let done = facts.deliverable && facts.gate == Gate::Open;
     let merge_news = flow.was_done && flow.probed_after != facts.merged_head;
     if done && (!flow.was_done || merge_news) && flow.pr.pr().is_none() && !flow.delivery.is_asked()
@@ -187,6 +189,10 @@ pub(crate) fn decide(flow: &mut TabFlow, facts: &TabFacts, now: f64) -> Vec<Want
     if facts.pending == 0 {
         flow.auto.enabled = false;
     }
+    if flow.auto.expire(now) {
+        flow.held_message.clear();
+        wants.push(Want::ReviewExpired);
+    }
     if facts.notes_file.is_some() && flow.auto.should_send(&facts.status, facts.pending, now) {
         flow.auto.begin();
         wants.push(Want::AutoSend);
@@ -201,6 +207,7 @@ pub(crate) struct Flow {
     pub(crate) outbox: Outbox,
     tools: Tools,
     pub(crate) confirm: Option<PostConfirm>,
+    notices: Vec<String>,
 }
 
 /// What the Diff pane draws for the active tab beyond the diff itself.
@@ -223,7 +230,12 @@ impl Flow {
             outbox: Outbox::default(),
             tools,
             confirm: None,
+            notices: Vec::new(),
         }
+    }
+
+    pub(crate) fn take_notices(&mut self) -> Vec<String> {
+        std::mem::take(&mut self.notices)
     }
 
     pub(crate) fn tools(&self) -> Tools {
@@ -353,7 +365,7 @@ impl Flow {
         }
     }
 
-    fn start(&self, facts: &TabFacts, want: Want, ctx: &egui::Context, unix: i64) {
+    fn start(&mut self, facts: &TabFacts, want: Want, ctx: &egui::Context, unix: i64) {
         let tab = facts.id;
         let tools = self.tools.clone();
         let dir = facts.dir.clone();
@@ -378,6 +390,10 @@ impl Flow {
                     .and_then(|t| t.pr.pr().map(|pr| pr.head_sha.clone()))
                     .unwrap_or_default();
                 flow_jobs::load_pr_lines(&self.jobs, ctx, tab, tools, dir, head);
+            }
+            Want::ReviewExpired => {
+                self.notices
+                    .push(format!("Review not sent: {} stayed busy for an hour", facts.profile));
             }
             Want::AutoSend => {
                 if let Some(file) = facts.notes_file.clone() {
@@ -700,6 +716,7 @@ mod tests {
             auto_push: false,
             merged_head: None,
             gate: Gate::Open,
+            profile: "Builder".into(),
         }
     }
 
@@ -707,6 +724,32 @@ mod tests {
         let mut flow = TabFlow::default();
         flow.auto.enabled = auto;
         flow
+    }
+
+    #[test]
+    fn a_review_held_for_a_busy_agent_expires_once_after_an_hour_and_sends_nothing() {
+        let mut flow = flow_with(true);
+        flow.held_message = "please".into();
+        let busy = TabFacts { pending: 2, ..facts(AgentStatus::Working) };
+        let limit = crate::note_send::HOLD_EXPIRES_SECS;
+        assert_eq!(decide(&mut flow, &busy, 10.0), []);
+        assert_eq!(decide(&mut flow, &busy, 10.0 + limit - 1.0), []);
+        assert!(flow.auto.enabled);
+        assert_eq!(decide(&mut flow, &busy, 10.0 + limit), [Want::ReviewExpired]);
+        assert!(!flow.auto.enabled);
+        assert_eq!(flow.held_message, "");
+        assert_eq!(decide(&mut flow, &busy, 11.0 + limit), []);
+        let idle = TabFacts { pending: 2, ..facts(AgentStatus::Done) };
+        assert_eq!(decide(&mut flow, &idle, 12.0 + limit), [Want::Probe]);
+    }
+
+    #[test]
+    fn a_review_held_for_a_busy_agent_goes_out_when_it_turns_done_before_the_hour() {
+        let mut flow = flow_with(true);
+        let busy = TabFacts { pending: 1, ..facts(AgentStatus::Working) };
+        assert_eq!(decide(&mut flow, &busy, 0.0), []);
+        let idle = TabFacts { pending: 1, ..facts(AgentStatus::Done) };
+        assert_eq!(decide(&mut flow, &idle, 600.0), [Want::Probe, Want::AutoSend]);
     }
 
     #[test]

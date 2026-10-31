@@ -6,6 +6,8 @@ use tidewatch_core::status::AgentStatus;
 /// How long after a send the switch stays quiet when the status has not left Done yet: the hook that
 /// says the agent started its turn can arrive a moment after the paste.
 pub(crate) const HOLD_SECS: f64 = 10.0;
+/// How long a review waits for a busy agent before it goes back to a draft.
+pub(crate) const HOLD_EXPIRES_SECS: f64 = 3600.0;
 /// The pause between the paste and the Enter that submits it, so the agent's input box has taken
 /// the paste before Enter arrives.
 pub(crate) const ENTER_DELAY_SECS: f64 = 0.3;
@@ -69,20 +71,36 @@ pub(crate) fn review_gate(status: Option<&AgentStatus>) -> ReviewGate {
 
 /// The per-tab hold on a review the user sent while the agent was busy (`enabled`). It goes out
 /// once the agent is Done, never while it works or waits on you, and never twice for one idle
-/// moment.
+/// moment. It gives up after `HOLD_EXPIRES_SECS` and the review is a draft again.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub(crate) struct AutoDelivery {
     pub(crate) enabled: bool,
     in_flight: bool,
     hold_until: Option<f64>,
+    waiting_since: Option<f64>,
 }
 
 impl AutoDelivery {
-    /// Call every frame with the tab's status: leaving Done ends the hold.
-    pub(crate) fn observe(&mut self, status: &AgentStatus) {
+    pub(crate) fn observe(&mut self, status: &AgentStatus, now: f64) {
         if *status != AgentStatus::Done {
             self.hold_until = None;
         }
+        match (self.enabled, self.waiting_since) {
+            (true, None) => self.waiting_since = Some(now),
+            (false, Some(_)) => self.waiting_since = None,
+            _ => {}
+        }
+    }
+
+    pub(crate) fn expire(&mut self, now: f64) -> bool {
+        let over = self
+            .waiting_since
+            .is_some_and(|since| self.enabled && now - since >= HOLD_EXPIRES_SECS);
+        if over {
+            self.enabled = false;
+            self.waiting_since = None;
+        }
+        over
     }
 
     pub(crate) fn should_send(&self, status: &AgentStatus, pending: usize, now: f64) -> bool {
@@ -112,7 +130,10 @@ impl AutoDelivery {
 
     /// The moment the hold ends, when a frame is needed to look again.
     pub(crate) fn next_check(&self, now: f64) -> Option<f64> {
-        self.hold_until.filter(|until| *until > now && self.enabled)
+        let hold = self.hold_until.filter(|until| *until > now && self.enabled);
+        let expiry =
+            self.waiting_since.filter(|_| self.enabled).map(|since| since + HOLD_EXPIRES_SECS);
+        [hold, expiry].into_iter().flatten().reduce(f64::min)
     }
 }
 
@@ -266,8 +287,8 @@ mod tests {
         switch.finished(true, 1.0);
         assert!(!switch.should_send(&AgentStatus::Done, 1, 2.0));
         assert_eq!(switch.next_check(2.0), Some(1.0 + HOLD_SECS));
-        switch.observe(&AgentStatus::Working);
-        switch.observe(&AgentStatus::Done);
+        switch.observe(&AgentStatus::Working, 2.0);
+        switch.observe(&AgentStatus::Done, 2.0);
         assert!(switch.should_send(&AgentStatus::Done, 1, 3.0));
     }
 
@@ -276,10 +297,48 @@ mod tests {
         let mut switch = auto(true);
         switch.begin();
         switch.finished(true, 0.0);
-        switch.observe(&AgentStatus::Done);
         assert!(!switch.should_send(&AgentStatus::Done, 1, HOLD_SECS - 0.1));
         assert!(switch.should_send(&AgentStatus::Done, 1, HOLD_SECS));
         assert_eq!(switch.next_check(HOLD_SECS), None);
+    }
+
+    #[test]
+    fn a_review_held_for_a_busy_agent_goes_back_to_a_draft_after_an_hour() {
+        let mut switch = auto(true);
+        switch.observe(&AgentStatus::Working, 100.0);
+        assert_eq!(switch.next_check(101.0), Some(100.0 + HOLD_EXPIRES_SECS));
+        let cases = [
+            (100.0 + HOLD_EXPIRES_SECS - 0.1, false, true),
+            (100.0 + HOLD_EXPIRES_SECS, true, false),
+            (100.0 + HOLD_EXPIRES_SECS + 1.0, false, false),
+        ];
+        for (now, expired, still_held) in cases {
+            switch.observe(&AgentStatus::Working, now);
+            assert_eq!(switch.expire(now), expired, "at {now}");
+            assert_eq!(switch.enabled, still_held, "at {now}");
+        }
+        assert_eq!(switch.next_check(5000.0), None);
+    }
+
+    #[test]
+    fn a_review_held_again_after_it_expired_times_from_its_new_hold() {
+        let mut switch = auto(true);
+        switch.observe(&AgentStatus::Working, 0.0);
+        assert!(switch.expire(HOLD_EXPIRES_SECS));
+        switch.enabled = true;
+        switch.observe(&AgentStatus::Working, HOLD_EXPIRES_SECS + 10.0);
+        assert!(!switch.expire(HOLD_EXPIRES_SECS + 20.0));
+        assert!(switch.expire(2.0 * HOLD_EXPIRES_SECS + 10.0));
+    }
+
+    #[test]
+    fn taking_the_review_back_clears_the_wait() {
+        let mut switch = auto(true);
+        switch.observe(&AgentStatus::Working, 0.0);
+        switch.enabled = false;
+        switch.observe(&AgentStatus::Working, 10.0);
+        assert!(!switch.expire(HOLD_EXPIRES_SECS * 2.0));
+        assert_eq!(switch.next_check(10.0), None);
     }
 
     #[test]
