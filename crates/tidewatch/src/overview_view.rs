@@ -52,6 +52,10 @@ const RING: f32 = 48.0;
 const FACE_GAP: f32 = 10.0;
 const ASK_ROW_GAP: f32 = 8.0;
 const WHY_H: f32 = 18.0;
+const ONE_BUTTON_GAP: f32 = 12.0;
+const STAGE_ROOM: f32 = 70.0;
+const MIN_STAGE_W: f32 = 24.0;
+const ONE_BUTTON_MID: f32 = f32::midpoint(NAME_MID, LINE_MID);
 const NAME_MID: f32 = 10.0;
 const LINE_MID: f32 = 31.0;
 const ASK_CARD_MIN_W: f32 = 420.0;
@@ -457,9 +461,7 @@ impl Lane {
                 let (text, action) = (ROW_H + WHY_H * lines, ask.row.height());
                 Plan { text, action, ask: Some(ask) }
             }
-            (Self::Needs, None) => {
-                Plan { text: ROW_H + WHY_H * counting, action: Size::Compact.height(), ask: None }
-            }
+            (Self::Needs, None) => Plan { text: ROW_H + WHY_H * counting, action: 0.0, ask: None },
             (Self::Working, _) => Plan { text: ROW_H, action: BAR_H, ask: None },
             (Self::Waiting | Self::Idle, _) => Plan { text: ROW_H, action: 0.0, ask: None },
         }
@@ -642,10 +644,17 @@ fn grid_section(
         for (column, row) in cards.iter().enumerate() {
             let at =
                 pos2(rect.left() + SECTION_PAD + column as f32 * (card_w + CARD_GAP), line_top);
-            let card_rect = Rect::from_min_size(at, vec2(card_w, height));
             let plan = &plans[line * columns + column];
+            let own = lane == Lane::Needs && plan.ask.is_none();
+            let card_rect = Rect::from_min_size(
+                at,
+                vec2(
+                    card_w,
+                    if own { lane.line_height(std::slice::from_ref(plan)) } else { height },
+                ),
+            );
             let drawn =
-                card(ui, card_rect, row, lane, (plan, line_top + height - CARD_PAD - plan.action));
+                card(ui, card_rect, row, lane, (plan, card_rect.bottom() - CARD_PAD - plan.action));
             if drawn.clicked {
                 out.jump = Some(row.tab_id);
             }
@@ -762,58 +771,97 @@ fn card(
         agent_avatar::menu(&resp, row.tab_id);
     }
     let text_x = inner.left() + RING + FACE_GAP;
+    let ask = ask_of(row).filter(|_| lane == Lane::Needs);
+    let one_button = lane == Lane::Needs && ask.is_none();
+    let button_w = if one_button { button_width(ui, ask_button(row), Size::Compact) } else { 0.0 };
+    let button_room = if one_button { button_w + ONE_BUTTON_GAP } else { 0.0 };
     let clock = (lane == Lane::Working).then(|| {
-        painter.layout_no_wrap(fmt_elapsed(row.elapsed), FontId::monospace(12.0), brand::MUTED)
+        painter.layout_no_wrap(
+            fmt_elapsed(row.elapsed),
+            FontId::monospace(TEXT_SECONDARY),
+            brand::FAINT,
+        )
     });
     let clock_w = clock.as_ref().map_or(0.0, |clock| clock.size().x + 8.0);
-    let full = (inner.right() - text_x).max(1.0);
-    let room = (full - clock_w).max(1.0);
+    let full = (inner.right() - text_x - button_room).max(1.0);
     let tag = row.kind.label();
-    let pill_w = tag_width(&painter, &tag);
+    let pill_w = if lane == Lane::Working { 0.0 } else { tag_width(&painter, &tag) };
     let name_ink = if lane == Lane::Idle { brand::SOFT } else { brand::TEXT };
     let name = ellipsized(
         &painter,
         &row.title,
         heading(TEXT_TITLE),
         name_ink,
-        (room - pill_w - 6.0).max(20.0),
+        (full - if pill_w > 0.0 { pill_w + 6.0 } else { 0.0 }).max(20.0),
     );
     let name_mid = inner.top() + NAME_MID;
     let name_right = text_x + name.size().x;
     painter.galley(pos2(text_x, name_mid - name.size().y / 2.0), name, name_ink);
-    if name_right + 6.0 + pill_w <= text_x + room + 1.0 {
+    if pill_w > 0.0 && name_right + 6.0 + pill_w <= text_x + full + 1.0 {
         kind_pill(&painter, name_right + 6.0, name_mid, &tag, row.kind.ink());
     }
-    if let Some(clock) = clock {
-        painter.galley(
-            pos2(inner.right() - clock.size().x, name_mid - clock.size().y / 2.0),
-            clock,
-            brand::MUTED,
-        );
-    }
     let line_mid = inner.top() + LINE_MID;
-    let ask = ask_of(row).filter(|_| lane == Lane::Needs);
     let (text, ink) = match ask {
         Some(ask) => (ask.text.clone(), brand::NEEDS),
         None => second_line(row, lane, &view),
     };
-    let repo_right = repo_label(&painter, text_x, line_mid, &row.place, (full * 0.45).max(60.0));
-    let rest = ellipsized(
+    let mut line_left = text_x;
+    if lane == Lane::Working {
+        let kind =
+            painter.layout_no_wrap(tag, FontId::proportional(TEXT_SECONDARY), row.kind.ink());
+        let kind_size = kind.size();
+        painter.galley(pos2(line_left, line_mid - kind_size.y / 2.0), kind, row.kind.ink());
+        line_left += kind_size.x + 6.0;
+        let dot = painter.layout_no_wrap(
+            "\u{b7}".to_owned(),
+            FontId::proportional(TEXT_SECONDARY),
+            brand::MUTED,
+        );
+        painter.galley(pos2(line_left, line_mid - dot.size().y / 2.0), dot.clone(), brand::MUTED);
+        line_left += dot.size().x + 6.0;
+    }
+    let line_room = (inner.right() - line_left - button_room - clock_w).max(1.0);
+    let repo_right = repo_label(
         &painter,
-        &format!("\u{b7} {text}"),
-        FontId::proportional(TEXT_SECONDARY),
-        ink,
-        (inner.right() - repo_right - 6.0).max(1.0),
+        line_left,
+        line_mid,
+        &row.place,
+        (line_room - STAGE_ROOM).max(line_room * 0.5),
     );
-    painter.galley(pos2(repo_right + 6.0, line_mid - rest.size().y / 2.0), rest, ink);
+    let rest_room = line_left + line_room - repo_right - 6.0;
+    if rest_room >= MIN_STAGE_W {
+        let rest = ellipsized(
+            &painter,
+            &format!("\u{b7} {text}"),
+            FontId::proportional(TEXT_SECONDARY),
+            ink,
+            rest_room,
+        );
+        painter.galley(pos2(repo_right + 6.0, line_mid - rest.size().y / 2.0), rest, ink);
+    }
+    if let Some(clock) = clock {
+        painter.galley(
+            pos2(inner.right() - clock.size().x, line_mid - clock.size().y / 2.0),
+            clock,
+            brand::FAINT,
+        );
+    }
     let mut out = CardOut::default();
     match lane {
-        Lane::Needs => match (ask, &plan.ask) {
-            (Some(ask), Some(layout)) => {
+        Lane::Needs => {
+            if let (Some(ask), Some(layout)) = (ask, &plan.ask) {
                 out.answer = ask_chips(ui, &painter, (rect, &resp), (ask, row, layout), action_top);
+            } else {
+                let button = Rect::from_min_size(
+                    pos2(
+                        inner.right() - button_w,
+                        inner.top() + ONE_BUTTON_MID - Size::Compact.height() / 2.0,
+                    ),
+                    vec2(button_w, Size::Compact.height()),
+                );
+                out.clicked = ask_row(ui, &painter, rect, row, button);
             }
-            _ => out.clicked = ask_row(ui, &painter, rect, row, action_top),
-        },
+        }
         Lane::Working => {
             let bar = Rect::from_min_size(
                 pos2(inner.left(), inner.bottom() - BAR_H),
@@ -881,7 +929,7 @@ fn second_line(row: &Row, lane: Lane, view: &crate::overview::CardView) -> (Stri
     }
 }
 
-fn ask_row(ui: &mut Ui, painter: &Painter, rect: Rect, row: &Row, top: f32) -> bool {
+fn ask_row(ui: &mut Ui, painter: &Painter, rect: Rect, row: &Row, button: Rect) -> bool {
     let text_x = rect.left() + CARD_PAD + RING + FACE_GAP;
     if let Some(line) = &row.auto_pick {
         let room = (rect.right() - CARD_PAD - text_x).max(1.0);
@@ -889,10 +937,7 @@ fn ask_row(ui: &mut Ui, painter: &Painter, rect: Rect, row: &Row, top: f32) -> b
             ellipsized(painter, line, FontId::proportional(TEXT_SECONDARY), brand::MUTED, room);
         painter.galley(pos2(text_x, rect.top() + CARD_PAD + ROW_H + 1.0), galley, brand::MUTED);
     }
-    let button = ask_button(row);
-    let width = button_width(ui, button, Size::Compact);
-    let button_rect = Rect::from_min_size(pos2(text_x, top), vec2(width, Size::Compact.height()));
-    in_rect(ui, button_rect, |ui| primary_button(ui, button, true, Size::Compact).clicked())
+    in_rect(ui, button, |ui| primary_button(ui, ask_button(row), true, Size::Compact).clicked())
 }
 
 #[cfg(test)]
@@ -1597,7 +1642,7 @@ mod tests {
     }
 
     #[test]
-    fn an_answer_button_is_compact_under_the_second_line_and_a_kind_tag_is_20_tall() {
+    fn a_one_button_card_puts_its_button_on_the_title_row_and_has_no_empty_band() {
         let mut screen = Screen::new(overview(vec![row(
             2,
             "web-asks",
@@ -1608,6 +1653,7 @@ mod tests {
         let button = box_around(&boxes, &rect_of(&found, "Answer"));
         let tag = box_around(&boxes, &rect_of(&found, "Claude"));
         let title = rect_of(&found, "web-asks");
+        let card = card_around(&boxes, &title);
         let second = found
             .iter()
             .find(|(text, _)| text.contains("Asked a question"))
@@ -1615,11 +1661,64 @@ mod tests {
             .expect("the second line");
         assert_eq!(button.height(), Size::Compact.height());
         assert_eq!(tag.height(), Size::Tag.height());
-        assert!((button.left() - title.left()).abs() < 1.0, "{button:?} {title:?}");
-        assert!(button.top() >= second.bottom(), "{button:?} {second:?}");
+        assert!((button.right() + CARD_PAD - card.right()).abs() < 1.5, "{button:?} {card:?}");
+        assert!(button.left() > tag.right(), "{button:?} {tag:?}");
+        let block_middle = f32::midpoint(title.top(), second.bottom());
+        assert!((button.center().y - block_middle).abs() <= 3.0, "{button:?} {title:?} {second:?}");
+        assert_eq!(card.height(), CARD_PAD * 2.0 + ROW_H, "no empty band");
+        assert!(second.right() <= button.left(), "{second:?} {button:?}");
         let texts: Vec<String> = found.into_iter().map(|(text, _)| text).collect();
         assert_eq!(texts.iter().filter(|text| *text == "Needs you").count(), 1, "{texts:?}");
         assert!(!has(&texts, "question"), "{texts:?}");
+    }
+
+    #[test]
+    fn a_working_card_gives_the_title_the_whole_line_and_shares_the_second_with_kind_repo_and_time()
+    {
+        let mut working = row(1, "soundtrack-matcher", "acme-workers", AgentStatus::Working);
+        working.elapsed = 720.0;
+        let mut screen = Screen::new(overview(vec![working]));
+        screen.width = 2000.0;
+        let (found, boxes) = screen.drawn();
+        let title = rect_of(&found, "soundtrack-matcher");
+        let card = card_around(&boxes, &title);
+        let in_card = |label: &str| {
+            found
+                .iter()
+                .find(|(text, rect)| text == label && card.contains_rect(*rect))
+                .map_or_else(|| panic!("{label} in the card {card:?}"), |(_, rect)| *rect)
+        };
+        let (kind, repo, time) = (in_card("Claude"), in_card("acme-workers"), in_card("12m"));
+        assert!(kind.top() >= title.bottom() - 4.0, "{kind:?} is on the second line");
+        assert!((kind.center().y - time.center().y).abs() < 2.0, "{kind:?} {time:?}");
+        assert!((kind.center().y - repo.center().y).abs() < 4.0, "{kind:?} {repo:?}");
+        assert_eq!(kind.left(), title.left());
+        assert!(kind.right() < repo.left() && repo.right() < time.left());
+        assert!((time.right() + CARD_PAD - card.right()).abs() < 1.5, "{time:?} {card:?}");
+        assert!(
+            boxes
+                .iter()
+                .all(|rect| rect.height() != Size::Tag.height() || !rect.contains_rect(kind)),
+            "the kind is plain text on a working card, not a pill"
+        );
+        assert!(found.iter().all(|(text, _)| text != "12m 00s"));
+    }
+
+    #[test]
+    fn a_working_title_is_not_cut_for_a_pill_or_a_clock() {
+        let long = "soundtrack-matcher-for-the-long-running-migration";
+        let mut screen =
+            Screen::new(overview(vec![row(1, long, "acme-workers", AgentStatus::Working)]));
+        screen.width = 2000.0;
+        let (found, boxes) = screen.drawn();
+        let title = rect_of(&found, long);
+        let card = card_around(&boxes, &title);
+        let time = found
+            .iter()
+            .find(|(text, _)| text.ends_with('s') || text.ends_with('m'))
+            .map(|(_, rect)| *rect);
+        assert!(title.right() <= card.right() - CARD_PAD, "{title:?} {card:?} {time:?}");
+        assert!(title.width() > 280.0, "the whole name is laid out: {title:?}");
     }
 
     #[test]
@@ -1770,12 +1869,11 @@ mod tests {
     }
 
     #[test]
-    fn needs_you_cards_of_very_different_content_share_one_height_and_end_their_actions_on_one_line()
-     {
+    fn answer_cards_of_very_different_content_share_one_height_and_end_their_actions_on_one_line() {
         let mut screen = Screen::new(uneven_row());
         screen.width = 2000.0;
         let (found, boxes) = screen.drawn();
-        let cards: Vec<Rect> = ["long-answers", "plain-question", "button-only"]
+        let cards: Vec<Rect> = ["long-answers", "plain-question"]
             .iter()
             .map(|title| card_around(&boxes, &rect_of(&found, title)))
             .collect();
@@ -1791,19 +1889,18 @@ mod tests {
     }
 
     #[test]
-    fn a_lone_button_sits_on_the_last_chip_line_with_the_spare_height_above_it() {
+    fn a_one_button_card_keeps_its_own_height_beside_taller_answer_cards() {
         let mut screen = Screen::new(uneven_row());
         screen.width = 2000.0;
         let (found, boxes) = screen.drawn();
         let card = card_around(&boxes, &rect_of(&found, "button-only"));
         let tallest = card_around(&boxes, &rect_of(&found, "long-answers"));
         let button = box_around(&boxes, &rect_of(&found, "Answer"));
-        let title = rect_of(&found, "button-only");
-        assert!(card.height() > ROW_H + CARD_PAD * 2.0 + Size::Compact.height() + 30.0, "{card:?}");
-        assert_eq!(card.height(), tallest.height());
-        assert!((button.bottom() - last_action_bottom(&boxes, &tallest)).abs() < 0.5);
-        assert!((button.bottom() + CARD_PAD - card.bottom()).abs() < 1.5, "{button:?} {card:?}");
-        assert!((button.left() - title.left()).abs() < 1.0, "{button:?} {title:?}");
+        assert_eq!(card.top(), tallest.top());
+        assert_eq!(card.height(), CARD_PAD * 2.0 + ROW_H);
+        assert!(tallest.height() > card.height() + 30.0, "{card:?} {tallest:?}");
+        assert!(button.top() < card.top() + CARD_PAD + ROW_H / 2.0, "{button:?} {card:?}");
+        assert!(card.contains_rect(button), "{button:?} {card:?}");
     }
 
     #[test]
