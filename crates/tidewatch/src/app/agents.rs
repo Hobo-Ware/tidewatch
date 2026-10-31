@@ -12,6 +12,7 @@ use crate::agent_run::TermSnapshot;
 use crate::notify;
 use crate::pane::{Body, Pane};
 use crate::pane_jobs;
+use crate::prompt_ghost;
 use crate::tabs::Tabs;
 
 impl Tidewatch {
@@ -159,6 +160,10 @@ impl Tidewatch {
         };
         let output = |term: &PtyTerm| term.output_gen();
         if let Some(at) = agent_frame::watch_links(&mut self.tabs, output, rows, now) {
+            ctx.request_repaint_after(Duration::from_secs_f64((at - now).max(0.0) + WAKE_SLACK_S));
+        }
+        let screen = |term: &PtyTerm| prompt_ghost::screen_of(&term.grid_snapshot());
+        if let Some(at) = agent_frame::settle_restarts(&mut self.tabs, screen, now) {
             ctx.request_repaint_after(Duration::from_secs_f64((at - now).max(0.0) + WAKE_SLACK_S));
         }
         schedule(ctx, polled.wake, now, minimized == Some(true));

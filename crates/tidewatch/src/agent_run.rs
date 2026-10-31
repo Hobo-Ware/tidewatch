@@ -17,6 +17,17 @@ use tidewatch_core::status::{
     at_rest,
 };
 
+use crate::outbox::Screen;
+
+pub(crate) const SETTLE_LOOK_SECS: f64 = 2.0;
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) enum Settle {
+    Nothing,
+    Settled,
+    LookAt(f64),
+}
+
 /// A finding the agent reported with `report_finding`.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct Finding {
@@ -192,6 +203,19 @@ impl AgentRun {
     /// and no hook has spoken since.
     pub(crate) fn unreported(&self) -> bool {
         self.unreported
+    }
+
+    pub(crate) fn settle_restart(&mut self, screen: impl FnOnce() -> Screen, now: f64) -> Settle {
+        if !self.unreported || self.status != AgentStatus::NeedsYou(Reason::Quiet) {
+            return Settle::Nothing;
+        }
+        let rests_at = self.heard_at() + REST_AFTER_SECS;
+        if now >= rests_at || screen() == Screen::Free {
+            self.unreported = false;
+            self.tracker.agent_resumed(now);
+            return Settle::Settled;
+        }
+        Settle::LookAt((now + SETTLE_LOOK_SECS).min(rests_at))
     }
 
     /// The agent process resumed a saved session: it waits at its prompt, which reads as done.
@@ -412,7 +436,7 @@ impl AgentRun {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tidewatch_core::status::{HookEvent, Reason};
+    use tidewatch_core::status::{HookEvent, Reason, STATUS_QUIET_SECS};
 
     fn hook(kind: HookKind, message: Option<&str>) -> TabEvent {
         TabEvent::Hook(HookEvent {
@@ -427,6 +451,63 @@ mod tests {
         let mut run = AgentRun::setting_up("claude".into(), 0.0);
         run.started(None, now);
         run
+    }
+
+    fn restarted_and_quiet() -> AgentRun {
+        let mut run = running(0.0);
+        run.await_report();
+        run.refresh(STATUS_QUIET_SECS);
+        assert_eq!(run.status(), &AgentStatus::NeedsYou(Reason::Quiet));
+        run
+    }
+
+    #[test]
+    fn a_restarted_agent_with_an_empty_input_box_settles_to_done_without_a_hook() {
+        let mut run = restarted_and_quiet();
+        let now = STATUS_QUIET_SECS + 1.0;
+        assert_eq!(run.settle_restart(|| Screen::Free, now), Settle::Settled);
+        run.refresh(now);
+        assert_eq!((run.status(), run.unreported()), (&AgentStatus::Done, false));
+        assert_eq!(run.settle_restart(|| Screen::Free, now + 1.0), Settle::Nothing);
+    }
+
+    #[test]
+    fn a_restarted_agent_whose_screen_is_not_a_free_box_is_looked_at_again_until_it_rests() {
+        for screen in [Screen::Typed, Screen::NoBox] {
+            let mut run = restarted_and_quiet();
+            let now = STATUS_QUIET_SECS + 1.0;
+            assert_eq!(
+                run.settle_restart(|| screen, now),
+                Settle::LookAt(now + SETTLE_LOOK_SECS),
+                "{screen:?}"
+            );
+            assert!(run.unreported());
+            let rests_at = run.heard_at() + REST_AFTER_SECS;
+            assert_eq!(
+                run.settle_restart(|| screen, rests_at - 1.0),
+                Settle::LookAt(rests_at),
+                "{screen:?}"
+            );
+            assert_eq!(run.settle_restart(|| screen, rests_at), Settle::Settled, "{screen:?}");
+            run.refresh(rests_at);
+            assert_eq!((run.status(), run.unreported()), (&AgentStatus::Done, false));
+        }
+    }
+
+    #[test]
+    fn the_screen_is_not_read_for_an_agent_that_is_working_reported_or_never_restarted() {
+        let unread = || -> Screen { panic!("the screen must not be read") };
+        let mut working = running(0.0);
+        working.await_report();
+        working.refresh(1.0);
+        assert_eq!(working.settle_restart(unread, 1.0), Settle::Nothing);
+        let mut spoken = restarted_and_quiet();
+        spoken.on_event(hook(HookKind::TurnStarted, None), 20.0);
+        spoken.refresh(20.0);
+        assert_eq!(spoken.settle_restart(unread, 21.0), Settle::Nothing);
+        let mut fresh = running(0.0);
+        fresh.refresh(STATUS_QUIET_SECS);
+        assert_eq!(fresh.settle_restart(unread, STATUS_QUIET_SECS), Settle::Nothing);
     }
 
     #[test]
