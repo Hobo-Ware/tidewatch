@@ -16,6 +16,7 @@ use tidewatch_core::transcript::Source;
 use crate::delivery_card::Delivery;
 use crate::dev_flow::{DevFlow, Fact, Ready, SendMode, Step};
 use crate::diff_pane::PaneAction;
+use crate::done_check_glue::{self, TestsGate};
 use crate::flow::{Asker, Flow, Gate, Out, TabFacts};
 use crate::flow_jobs::Which;
 use crate::note_send::ENTER_DELAY_SECS;
@@ -47,6 +48,7 @@ pub(crate) fn facts<T>(
     tabs: &Tabs<Pane<T>>,
     views: &HashMap<u64, TabView>,
     pr: &pr_glue::Host,
+    done: &done_check_glue::Host,
     active: u64,
     now: f64,
 ) -> Vec<TabFacts> {
@@ -63,6 +65,9 @@ pub(crate) fn facts<T>(
             let pending = views.get(&tab.id).map_or(0, |view| view.notes.pending(&agent_id).len());
             let meeseeks = agent.meeseeks.is_some();
             let push = pr.push(tab.id, agent.autonomous(), meeseeks);
+            let workflow = pr.workflow(tab.id);
+            let tests =
+                if meeseeks { TestsGate::Clear } else { done.tests_gate(tab.id, workflow.checks) };
             Some(TabFacts {
                 id: tab.id,
                 active: tab.id == active,
@@ -77,7 +82,8 @@ pub(crate) fn facts<T>(
                 merged_head: push.merged_head,
                 gate: delivery_gate(push.shut, agent.meeseeks.as_ref()),
                 profile: agent.profile_name.clone(),
-                workflow: pr.workflow(tab.id),
+                workflow,
+                tests,
             })
         })
         .collect()
@@ -446,6 +452,7 @@ mod tests {
             gate: Gate::Open,
             profile: "Builder".into(),
             workflow: Workflow::default(),
+            tests: crate::done_check_glue::TestsGate::Clear,
         }
     }
 

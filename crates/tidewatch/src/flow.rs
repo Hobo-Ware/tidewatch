@@ -15,6 +15,7 @@ use tidewatch_core::tools::Tools;
 use tidewatch_core::workflow_profile::Workflow;
 
 use crate::delivery_card::Delivery;
+use crate::done_check_glue::TestsGate;
 use crate::flow_jobs::{self, Done, Which};
 use crate::jobs::Jobs;
 use crate::note_send::{AutoDelivery, EnterQueue, ReviewGate, gate, gate_reason, review_gate};
@@ -44,6 +45,8 @@ pub(crate) struct TabFacts {
     pub(crate) gate: Gate,
     pub(crate) profile: String,
     pub(crate) workflow: Workflow,
+    /// What the done check's own test run says: Auto asks for the push only once it passed.
+    pub(crate) tests: TestsGate,
 }
 
 /// Whether the tab may deliver: shut once its pull request merged (`merged_branch`), so no card
@@ -296,9 +299,28 @@ impl Flow {
 
     pub(crate) fn ask_on_its_own(&mut self, facts: &TabFacts) {
         let Some(state) = self.tabs.get_mut(&facts.id) else { return };
-        if facts.auto_push && state.push == AutoPush::Idle {
+        if facts.auto_push && facts.tests == TestsGate::Clear && state.push == AutoPush::Idle {
             state.begin_ask(Asker::Auto);
         }
+    }
+
+    /// The tabs Auto would ask to push now if Tidewatch's own test run had come back: they need
+    /// the done check to run.
+    pub(crate) fn waiting_for_tests(&self, facts: &[TabFacts]) -> Vec<u64> {
+        facts
+            .iter()
+            .filter(|fact| fact.auto_push && fact.tests == TestsGate::Pending)
+            .filter(|fact| {
+                self.tabs.get(&fact.id).is_some_and(|state| {
+                    state.push == AutoPush::Idle
+                        && matches!(
+                            state.delivery,
+                            Delivery::Ready { .. } | Delivery::Missing { .. }
+                        )
+                })
+            })
+            .map(|fact| fact.id)
+            .collect()
     }
 
     pub(crate) fn ask_to_open(&mut self, tab: u64) {
@@ -721,6 +743,7 @@ mod tests {
             gate: Gate::Open,
             profile: "Builder".into(),
             workflow: Workflow::default(),
+            tests: TestsGate::Clear,
         }
     }
 
@@ -1307,5 +1330,43 @@ mod tests {
             ("No pull request yet", Some("Ask again"))
         );
         assert_eq!(missing.asking(), [], "forcing a card sends nothing");
+    }
+
+    fn waiting(tests: TestsGate) -> TabFacts {
+        TabFacts { tests, ..push_on() }
+    }
+
+    #[test]
+    fn auto_push_holds_back_until_the_tests_come_back_clear() {
+        for (tests, asked) in
+            [(TestsGate::Pending, 0), (TestsGate::Failed, 0), (TestsGate::Clear, 1)]
+        {
+            let facts = waiting(tests);
+            let mut flow = ready_tab(&facts, 2);
+            flow.ask_on_its_own(&facts);
+            assert_eq!(flow.asking().len(), asked, "{tests:?}");
+        }
+    }
+
+    #[test]
+    fn only_a_ready_tab_whose_push_waits_on_the_tests_needs_a_run() {
+        let pending = waiting(TestsGate::Pending);
+        let flow = ready_tab(&pending, 2);
+        assert_eq!(flow.waiting_for_tests(std::slice::from_ref(&pending)), [7]);
+        let cases = [
+            TabFacts { tests: TestsGate::Clear, ..pending.clone() },
+            TabFacts { tests: TestsGate::Failed, ..pending.clone() },
+            TabFacts { auto_push: false, ..pending.clone() },
+            TabFacts { id: 99, ..pending.clone() },
+        ];
+        for facts in cases {
+            assert_eq!(
+                flow.waiting_for_tests(std::slice::from_ref(&facts)),
+                Vec::<u64>::new(),
+                "{facts:?}"
+            );
+        }
+        let nothing_to_push = Flow::new(Tools::default());
+        assert_eq!(nothing_to_push.waiting_for_tests(&[pending]), Vec::<u64>::new());
     }
 }

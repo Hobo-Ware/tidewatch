@@ -64,6 +64,7 @@ impl Detected {
             catch_up: self.catch_up.value,
             fixes: self.fixes.value,
             pull_requests: self.pull_requests.value,
+            ..Workflow::default()
         }
     }
 }

@@ -3,9 +3,12 @@
 //! same paste-and-Enter queue as every other message, only while the agent is idle).
 
 use tidewatch_core::done_check::{PrFact, unverified_of};
+use tidewatch_core::done_proof::Verified;
 use tidewatch_core::kind::Kind;
-use tidewatch_core::progress::State;
+use tidewatch_core::progress::{Ledger, State, real};
 use tidewatch_core::sent::{Reason, because};
+
+use tidewatch_core::workflow_profile::Workflow;
 
 use super::Tidewatch;
 use crate::done_check_glue::{Facts, Look, Request};
@@ -18,6 +21,21 @@ use crate::overview::Overview;
 use crate::pane::{AgentTab, Body};
 use crate::pr_state::Lookup;
 use crate::progress_glue::today;
+
+fn verified_of(ledger: &Ledger) -> Vec<Verified> {
+    real(&ledger.verified)
+        .map(|entry| Verified { text: entry.text.clone(), why: entry.why.clone() })
+        .collect()
+}
+
+/// The words of the report that name what the agent planned to change: the goal, the title and
+/// every step.
+fn plan_of(ledger: &Ledger) -> Vec<String> {
+    let steps = ledger.checklist.iter().flat_map(|phase| {
+        std::iter::once(phase.title.clone()).chain(phase.items.iter().map(|item| item.text.clone()))
+    });
+    [ledger.goal.clone(), ledger.title.clone()].into_iter().chain(steps).collect()
+}
 
 impl Tidewatch {
     pub(super) fn drive_done_check(&mut self, ctx: &egui::Context, now: f64) {
@@ -60,8 +78,9 @@ impl Tidewatch {
         }
         for tab in on_their_own {
             let blocked = self.done_check_can_ask(tab).err();
+            let workflow = self.tab_workflow(tab);
             if !self.done_check.is_fake()
-                && let Some(note) = self.done_check.auto_fix(tab, blocked)
+                && let Some(note) = self.done_check.auto_fix(tab, blocked, workflow)
             {
                 self.send_fix(tab, &note, Origin::Auto, ctx, now);
             }
@@ -78,17 +97,30 @@ impl Tidewatch {
                 _ => PrFact::Unknown,
             },
         };
-        let unverified = self.progress.ledger(tab).map(|known| unverified_of(&known.ledger));
+        let ledger = self.progress.ledger(tab).map(|known| &known.ledger);
         Some(Request {
             dir: worktree.path.clone(),
+            repo: worktree.repo.clone(),
             branch: worktree.branch.clone(),
             pr,
-            unverified,
+            unverified: ledger.map(unverified_of),
+            verified: ledger.map(verified_of),
+            plan: ledger.map(plan_of),
+            checks: self.workflow.profile(&worktree.repo).checks,
             today: today(),
         })
     }
 
-    fn start_done_check(&mut self, tab: u64, ctx: &egui::Context) {
+    fn tab_workflow(&self, tab: u64) -> Workflow {
+        self.tabs
+            .items()
+            .iter()
+            .find(|t| t.id == tab)
+            .and_then(|t| t.pane.worktree.as_ref())
+            .map_or_else(Workflow::default, |worktree| self.workflow.profile(&worktree.repo))
+    }
+
+    pub(super) fn start_done_check(&mut self, tab: u64, ctx: &egui::Context) {
         if let Some(request) = self.done_check_request(tab) {
             let tools = self.flow.tools();
             self.done_check.start(ctx, &tools, tab, request);
@@ -134,7 +166,7 @@ impl Tidewatch {
 
     fn ask_fix(&mut self, tab: u64, look: &Look, ctx: &egui::Context, now: f64) {
         let Look::Report(report, _) = look else { return };
-        let Some(note) = report.fix_note() else { return };
+        let Some(note) = report.fix_note(self.tab_workflow(tab)) else { return };
         if self.done_check.is_fake() {
             self.show_toast("Dev run: would ask the agent to fix", ctx);
             return;

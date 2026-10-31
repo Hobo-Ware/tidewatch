@@ -371,6 +371,7 @@ fn blocked_report() -> Report {
             line(Kind::Unverified, Status::Unknown, "1 item the agent did not verify"),
         ],
         unverified: vec![Unverified::new("the Safari layout")],
+        ..Report::default()
     }
 }
 
@@ -390,6 +391,7 @@ fn waiting_report() -> Report {
             "Live list across a day boundary",
             Date::parse("2026-10-28").unwrap(),
         )],
+        ..Report::default()
     }
 }
 

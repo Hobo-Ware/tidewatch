@@ -98,6 +98,7 @@ mod tests {
                 detail: detail.to_owned(),
             }],
             unverified: Vec::new(),
+            ..Report::default()
         }
     }
 
@@ -177,6 +178,7 @@ mod tests {
                 detail: "1 item waiting until 2026-10-28".to_owned(),
             }],
             unverified: vec![Unverified::until("live list", day("2026-10-28"))],
+            ..Report::default()
         };
         let look = || Some(Look::Report(waiting.clone(), STAMP));
         let on = |today| LastTurn::of(Some(&quiet), look(), Ok(()), day(today)).unwrap();

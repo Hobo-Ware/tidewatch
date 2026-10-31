@@ -43,6 +43,7 @@ mod tests {
             catch_up: CatchUp::Merge,
             fixes: Fixes::NewCommits,
             pull_requests: PullRequests::Ready,
+            ..Workflow::default()
         };
         let (text, is_error) = get(workflow);
         assert!(!is_error);

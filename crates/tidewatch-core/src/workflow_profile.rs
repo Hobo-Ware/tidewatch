@@ -40,6 +40,38 @@ pub enum Fix {
     It,
 }
 
+/// The checks Tidewatch runs itself on an agent that says it is done, one switch each. The first
+/// three are on by default; the other two cost tokens or send a message, so a repo turns them on.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[allow(clippy::struct_excessive_bools)] // five independent switches, not a mode
+pub struct Checks {
+    #[serde(default = "on")]
+    pub tests: bool,
+    #[serde(default = "on")]
+    pub verified: bool,
+    #[serde(default = "on")]
+    pub scope: bool,
+    #[serde(default)]
+    pub fix_test: bool,
+    #[serde(default)]
+    pub reviewer: bool,
+}
+
+fn on() -> bool {
+    true
+}
+
+impl Checks {
+    pub const OFF: Self =
+        Self { tests: false, verified: false, scope: false, fix_test: false, reviewer: false };
+}
+
+impl Default for Checks {
+    fn default() -> Self {
+        Self { tests: true, verified: true, scope: true, fix_test: false, reviewer: false }
+    }
+}
+
 /// The defaults are what the owner's own rules say most often.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Workflow {
@@ -49,6 +81,8 @@ pub struct Workflow {
     pub fixes: Fixes,
     #[serde(default)]
     pub pull_requests: PullRequests,
+    #[serde(default)]
+    pub checks: Checks,
 }
 
 const LEASE: &str = "push with --force-with-lease";
@@ -77,16 +111,25 @@ impl Workflow {
         if self.catch_up_rewrites() { LEASE } else { "push" }
     }
 
+    /// Where a fix goes, without the push.
+    #[must_use]
+    pub fn fold(self, fix: Fix) -> &'static str {
+        match (self.fixes, fix) {
+            (Fixes::Fixup, Fix::The) => "fold the fix into the commit it belongs to",
+            (Fixes::Fixup, Fix::Each) => "fold each fix into its commit",
+            (Fixes::Fixup, Fix::It) => "fold it into its commit",
+            (Fixes::NewCommits, Fix::The) => "commit the fix",
+            (Fixes::NewCommits, Fix::Each) => "commit each fix",
+            (Fixes::NewCommits, Fix::It) => "commit it",
+        }
+    }
+
     #[must_use]
     pub fn fix_and_push(self, fix: Fix) -> String {
-        let (fixup, commit) = match fix {
-            Fix::The => ("fold the fix into the commit it belongs to", "commit the fix"),
-            Fix::Each => ("fold each fix into its commit", "commit each fix"),
-            Fix::It => ("fold it into its commit", "commit it"),
-        };
+        let fold = self.fold(fix);
         match self.fixes {
-            Fixes::Fixup => format!("{fixup} and {LEASE}"),
-            Fixes::NewCommits => format!("{commit} and push"),
+            Fixes::Fixup => format!("{fold} and {LEASE}"),
+            Fixes::NewCommits => format!("{fold} and push"),
         }
     }
 

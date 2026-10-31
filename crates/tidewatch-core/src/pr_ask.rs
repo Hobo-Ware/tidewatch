@@ -86,17 +86,19 @@ pub fn meeseeks_pr_closed(number: u64) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::workflow_profile::{CatchUp, Fixes, PullRequests};
+    use crate::workflow_profile::{CatchUp, Checks, Fixes, PullRequests};
 
     const DRAFT: Workflow = Workflow {
         catch_up: CatchUp::Rebase,
         fixes: Fixes::Fixup,
         pull_requests: PullRequests::Draft,
+        checks: Checks::OFF,
     };
     const READY: Workflow = Workflow {
         catch_up: CatchUp::Merge,
         fixes: Fixes::NewCommits,
         pull_requests: PullRequests::Ready,
+        checks: Checks::OFF,
     };
 
     fn opening(commits: usize, merged_head: Option<&str>) -> Opening<'_> {

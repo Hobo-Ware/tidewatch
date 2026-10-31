@@ -58,12 +58,18 @@ pub(crate) fn tag_of(outcome: Outcome) -> &'static str {
 
 fn line_row(line: &Line) -> Option<Row> {
     let label = line.kind.label();
+    let said = if line.kind == Kind::Tests {
+        line.detail.clone()
+    } else {
+        format!("{label}: {}", line.detail)
+    };
     match line.status {
-        Status::Pass | Status::Waiting => None,
-        Status::Fail => Some(Row { tone: Tone::Bad, text: format!("{label}: {}", line.detail) }),
-        Status::Unknown => {
-            Some(Row { tone: Tone::Warn, text: format!("{label}: {}", line.detail) })
+        Status::Pass if line.kind == Kind::Tests => {
+            Some(Row { tone: Tone::Good, text: line.detail.clone() })
         }
+        Status::Pass | Status::Waiting => None,
+        Status::Fail => Some(Row { tone: Tone::Bad, text: said }),
+        Status::Unknown | Status::Noted => Some(Row { tone: Tone::Warn, text: said }),
         Status::Skipped => {
             Some(Row { tone: Tone::Quiet, text: format!("{label}: not checked, {}", line.detail) })
         }
@@ -99,6 +105,14 @@ fn unverified_rows(line: &Line, items: &[Unverified], today: Date) -> Vec<Row> {
     rows
 }
 
+fn listed(line: &Line, lines: &[String]) -> Vec<Row> {
+    let mut rows: Vec<Row> = line_row(line).into_iter().collect();
+    let items =
+        lines.iter().map(|text| Row { tone: Tone::Quiet, text: format!("    - {text}") }).collect();
+    rows.extend(capped(items, ""));
+    rows
+}
+
 pub(crate) fn card_of(report: &Report, today: Date) -> Card {
     let report = report.on(today);
     let outcome = report.outcome();
@@ -106,7 +120,7 @@ pub(crate) fn card_of(report: &Report, today: Date) -> Card {
     let passed: Vec<&str> = report
         .lines
         .iter()
-        .filter(|line| line.status == Status::Pass)
+        .filter(|line| line.status == Status::Pass && line.kind != Kind::Tests)
         .map(|line| line.detail.as_str())
         .collect();
     let summary = match (outcome, failed) {
@@ -116,10 +130,11 @@ pub(crate) fn card_of(report: &Report, today: Date) -> Card {
     };
     let mut rows = Vec::new();
     for line in &report.lines {
-        if line.kind == Kind::Unverified {
-            rows.extend(unverified_rows(line, &report.unverified, today));
-        } else {
-            rows.extend(line_row(line));
+        match line.kind {
+            Kind::Unverified => rows.extend(unverified_rows(line, &report.unverified, today)),
+            Kind::Verified => rows.extend(listed(line, &report.found.claimed)),
+            Kind::Scope => rows.extend(listed(line, &report.found.outside)),
+            _ => rows.extend(line_row(line)),
         }
     }
     Card {
@@ -148,6 +163,7 @@ pub(crate) enum Action {
 mod tests {
     use super::*;
     use tidewatch_core::done_check::unverified_of;
+    use tidewatch_core::done_proof::Findings;
     use tidewatch_core::progress::Ledger;
 
     fn day(text: &str) -> Date {
@@ -171,6 +187,7 @@ mod tests {
             head: String::new(),
             lines,
             unverified: unverified.iter().map(|item| Unverified::new(*item)).collect(),
+            ..Report::default()
         }
     }
 
@@ -268,6 +285,7 @@ mod tests {
                 Line { kind: Kind::Unverified, status, detail },
             ],
             unverified: items,
+            ..Report::default()
         }
     }
 
@@ -365,5 +383,79 @@ mod tests {
         assert_eq!(stamp_text(at, true, &zone), "Checked 23:01 \u{b7} same result");
         let plus_two = TimeZone::fixed(jiff::tz::offset(2));
         assert_eq!(stamp_text(at, false, &plus_two), "Checked 01:01");
+    }
+
+    fn proof_report(lines: Vec<Line>, found: Findings) -> Report {
+        Report { head: String::new(), lines, found, ..Report::default() }
+    }
+
+    fn tests_ran() -> Line {
+        line(Kind::Tests, Status::Pass, "Ran cargo test --workspace: passed in 134 s")
+    }
+
+    #[test]
+    fn a_passing_test_run_is_one_green_row_with_the_command_and_the_result_and_not_in_the_summary()
+    {
+        let card = card_of(&proof_report(
+            vec![
+                line(Kind::Committed, Status::Pass, "clean tree, 2 commits ahead of main"),
+                tests_ran(),
+            ],
+            Findings::default(),
+        ));
+        assert_eq!((card.title, card.tone), ("Done", Tone::Good));
+        assert_eq!(card.summary, "clean tree, 2 commits ahead of main");
+        assert_eq!(texts(&card), ["Ran cargo test --workspace: passed in 134 s"]);
+        assert_eq!(card.rows[0].tone, Tone::Good);
+        assert_eq!((card.ask_fix, card.check_again), (false, false));
+    }
+
+    #[test]
+    fn a_failed_test_run_blocks_the_card_and_offers_the_fix() {
+        let card = card_of(&proof_report(
+            vec![line(Kind::Tests, Status::Fail, "Ran cargo test --workspace: 2 failed")],
+            Findings::default(),
+        ));
+        assert_eq!(
+            (card.title, card.tone, card.summary.as_str()),
+            ("Blocked", Tone::Bad, "1 check failed")
+        );
+        assert_eq!(texts(&card), ["Ran cargo test --workspace: 2 failed"]);
+        assert_eq!((card.ask_fix, card.check_again), (true, true));
+    }
+
+    #[test]
+    fn claimed_items_and_files_outside_the_plan_are_listed_in_amber_and_leave_the_card_done() {
+        let found = Findings {
+            claimed: vec!["the Safari layout".to_owned()],
+            outside: ["a.rs", "b.rs", "c.rs", "d.rs", "e.rs"].map(str::to_owned).to_vec(),
+            ..Findings::default()
+        };
+        let card = card_of(&proof_report(
+            vec![
+                line(
+                    Kind::Verified,
+                    Status::Noted,
+                    "1 of 3 verified items name no command, so they are claimed, not checked",
+                ),
+                line(Kind::Scope, Status::Noted, "5 changed files outside what the plan named"),
+            ],
+            found,
+        ));
+        assert_eq!((card.title, card.tone), ("Done", Tone::Good));
+        assert_eq!(
+            texts(&card),
+            [
+                "Verified: 1 of 3 verified items name no command, so they are claimed, not checked",
+                "    - the Safari layout",
+                "Scope: 5 changed files outside what the plan named",
+                "    - a.rs",
+                "    - b.rs",
+                "    - c.rs",
+                "    and 2 more",
+            ]
+        );
+        assert_eq!(card.rows[0].tone, Tone::Warn);
+        assert_eq!((card.ask_fix, card.check_again), (false, false));
     }
 }

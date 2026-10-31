@@ -7,7 +7,7 @@ fn paths() -> (tempfile::TempDir, TidewatchPaths) {
 }
 
 fn profile(catch_up: CatchUp, fixes: Fixes, pull_requests: PullRequests) -> Workflow {
-    Workflow { catch_up, fixes, pull_requests }
+    Workflow { catch_up, fixes, pull_requests, checks: Checks::default() }
 }
 
 #[test]
@@ -151,5 +151,63 @@ fn the_launch_lines_follow_every_setting() {
     ];
     for (workflow, want) in table {
         assert_eq!(workflow.launch_lines(), want, "{workflow:?}");
+    }
+}
+
+#[test]
+fn tests_verified_and_scope_are_on_and_the_other_two_checks_off() {
+    assert_eq!(
+        Workflow::default().checks,
+        Checks { tests: true, verified: true, scope: true, fix_test: false, reviewer: false }
+    );
+}
+
+#[test]
+fn a_profile_saved_before_the_checks_existed_reads_with_the_default_checks() {
+    let (_home, paths) = paths();
+    std::fs::create_dir_all(paths.config_dir()).unwrap();
+    std::fs::write(paths.workflow_file(), "[repo.\"/a\"]\ncatch_up = \"merge\"\n").unwrap();
+    let read = Store::load(&paths).get(Path::new("/a")).unwrap();
+    assert_eq!(read.checks, Checks::default());
+}
+
+#[test]
+fn a_switch_the_file_names_wins_and_the_ones_it_leaves_out_keep_their_default() {
+    let (_home, paths) = paths();
+    std::fs::create_dir_all(paths.config_dir()).unwrap();
+    std::fs::write(paths.workflow_file(), "[repo.\"/a\".checks]\ntests = false\nreviewer = true\n")
+        .unwrap();
+    let read = Store::load(&paths).get(Path::new("/a")).unwrap();
+    assert_eq!(
+        read.checks,
+        Checks { tests: false, verified: true, scope: true, fix_test: false, reviewer: true }
+    );
+}
+
+#[test]
+fn the_checks_are_saved_with_the_profile_and_come_back() {
+    let (_home, paths) = paths();
+    let checks = Checks { tests: false, fix_test: true, ..Checks::default() };
+    let workflow = Workflow { checks, ..Workflow::default() };
+    Store::update(&paths, |store| store.set(Path::new("/work/web"), workflow)).unwrap();
+    let text = std::fs::read_to_string(paths.workflow_file()).unwrap();
+    assert!(text.contains("[repo.\"/work/web\".checks]"), "{text}");
+    assert_eq!(Store::load(&paths).get(Path::new("/work/web")), Some(workflow));
+}
+
+#[test]
+fn where_a_fix_goes_follows_the_profile_without_the_push() {
+    let fixup = Workflow::default();
+    let new = Workflow { fixes: Fixes::NewCommits, ..fixup };
+    let table = [
+        (fixup, Fix::The, "fold the fix into the commit it belongs to"),
+        (fixup, Fix::Each, "fold each fix into its commit"),
+        (fixup, Fix::It, "fold it into its commit"),
+        (new, Fix::The, "commit the fix"),
+        (new, Fix::Each, "commit each fix"),
+        (new, Fix::It, "commit it"),
+    ];
+    for (workflow, fix, want) in table {
+        assert_eq!(workflow.fold(fix), want, "{workflow:?} {fix:?}");
     }
 }

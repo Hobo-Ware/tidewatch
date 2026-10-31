@@ -6,6 +6,7 @@ use std::path::Path;
 
 use crate::civil_date::Date;
 use crate::delivery::{compare_ref, detect_base};
+use crate::done_proof::{self, Findings, TestsRun, Verified};
 use crate::limited;
 use crate::pr_gh::unpushed;
 use crate::pr_status::{
@@ -13,7 +14,9 @@ use crate::pr_status::{
 };
 use crate::progress::{Ledger, Mark, State as LedgerState, real};
 use crate::progress_report::WaitingOn;
+use crate::test_command::{self, Gate};
 use crate::tools::{GhError, Tools, run_gh};
+use crate::workflow_profile::{Checks, Workflow};
 
 const REMOTE: &str = "origin";
 const NAMED_CHECKS: usize = 3;
@@ -23,6 +26,10 @@ pub enum Kind {
     Committed,
     Pushed,
     PullRequest,
+    Tests,
+    FixTest,
+    Verified,
+    Scope,
     Unverified,
 }
 
@@ -33,6 +40,10 @@ impl Kind {
             Self::Committed => "Committed",
             Self::Pushed => "Pushed",
             Self::PullRequest => "Pull request",
+            Self::Tests => "Tests",
+            Self::FixTest => "Fix test",
+            Self::Verified => "Verified",
+            Self::Scope => "Scope",
             Self::Unverified => "Not verified",
         }
     }
@@ -48,6 +59,8 @@ pub enum Status {
     Skipped,
     /// Everything left open is due on a later date: nothing can change before then.
     Waiting,
+    /// Something to look at that changes nothing: it never blocks and nothing is sent for it.
+    Noted,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -215,13 +228,15 @@ pub fn unverified_of(ledger: &Ledger) -> Vec<Unverified> {
         .collect()
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Report {
     /// The commit the checks looked at.
     pub head: String,
     pub lines: Vec<Line>,
     /// The items the agent's ledger lists under Not verified.
     pub unverified: Vec<Unverified>,
+    /// What Tidewatch ran or worked out itself.
+    pub found: Findings,
 }
 
 impl Report {
@@ -251,21 +266,34 @@ impl Report {
         self.on(today).outcome()
     }
 
-    /// The short note that asks the agent to fix what failed. `None` when nothing failed.
+    /// The short note that asks the agent to fix what failed, with the wording of the repo's
+    /// workflow. `None` when nothing failed.
     #[must_use]
-    pub fn fix_note(&self) -> Option<String> {
-        let failed: Vec<String> = self
+    pub fn fix_note(&self, workflow: Workflow) -> Option<String> {
+        let failing =
+            |kind| self.lines.iter().any(|line| line.kind == kind && line.status == Status::Fail);
+        let mut parts: Vec<String> = Vec::new();
+        let tests = self.found.tests.as_ref().filter(|_| failing(Kind::Tests));
+        let others: Vec<String> = self
             .lines
             .iter()
             .filter(|line| line.status == Status::Fail)
+            .filter(|line| !matches!(line.kind, Kind::Tests | Kind::FixTest))
             .map(|line| line.detail.clone())
             .collect();
-        (!failed.is_empty()).then(|| {
-            format!(
+        if !others.is_empty() {
+            parts.push(format!(
                 "The done check found: {}. Please fix that and tell me when it is done.",
-                failed.join("; ")
-            )
-        })
+                others.join("; ")
+            ));
+        }
+        if failing(Kind::FixTest) {
+            parts.push(done_proof::FIX_WITHOUT_TEST.to_owned());
+        }
+        if let Some(run) = tests {
+            parts.push(run.failure_note(workflow));
+        }
+        (!parts.is_empty()).then(|| parts.join("\n\n"))
     }
 }
 
@@ -287,6 +315,15 @@ pub struct Input<'a> {
     /// The ledger's Not verified items; `None` when the tab keeps no ledger.
     pub unverified: Option<Vec<Unverified>>,
     pub today: Date,
+    /// The repo's switches for the checks Tidewatch runs itself.
+    pub checks: Checks,
+    /// The repo's main checkout, where `.tidewatch.toml` is read when the worktree has none.
+    pub repo: &'a Path,
+    /// The goal and the steps of the agent's report, which name the files it planned to change;
+    /// `None` when the tab keeps no ledger.
+    pub plan: Option<Vec<String>>,
+    /// The ledger's Verified items; `None` when the tab keeps no ledger.
+    pub verified: Option<Vec<Verified>>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -496,7 +533,89 @@ fn pull_request_line(look: &Look, local_head: &str) -> (Status, String) {
     }
 }
 
-/// Runs the four checks in `input.dir`.
+fn changed_files(tools: &Tools, dir: &Path) -> Option<(String, Vec<String>)> {
+    let base = detect_base(tools, dir)?;
+    let range = format!("{}...HEAD", compare_ref(tools, dir, &base));
+    let names = git_stdout(tools, dir, &["diff", "--name-only", &range]).ok()?;
+    Some((range, names.lines().map(str::to_owned).filter(|name| !name.is_empty()).collect()))
+}
+
+fn commit_subjects(tools: &Tools, dir: &Path, range: &str) -> Vec<String> {
+    let range = range.replace("...", "..");
+    git_stdout(tools, dir, &["log", "--format=%s", &range])
+        .map(|text| text.lines().map(str::to_owned).collect())
+        .unwrap_or_default()
+}
+
+fn tests_line(input: &Input<'_>) -> (Line, Option<TestsRun>) {
+    let kind = Kind::Tests;
+    match test_command::resolve(input.dir, input.repo) {
+        Gate::Run(detected) => {
+            let started = std::time::Instant::now();
+            let timeout = test_command::timeout_in(input.dir, input.repo);
+            let run = test_command::run_in_timeout(input.dir, &detected.command, timeout);
+            let ran = TestsRun::of(&detected.command, &run, started.elapsed());
+            (Line::new(kind, ran.status()), Some(ran))
+        }
+        Gate::Skip(why) => (Line::new(kind, (Status::Skipped, why)), None),
+        Gate::None => (
+            Line::new(kind, (Status::Skipped, "no test command found for this repo".to_owned())),
+            None,
+        ),
+    }
+}
+
+fn fix_test_line(tools: &Tools, input: &Input<'_>, range: &str, files: &[String]) -> Option<Line> {
+    if !done_proof::is_fix(&commit_subjects(tools, input.dir, range), input.branch) {
+        return None;
+    }
+    let has_test = done_proof::touches_test_file(files)
+        || git_stdout(tools, input.dir, &["diff", "-U0", range])
+            .is_ok_and(|patch| done_proof::adds_test(&patch));
+    let status = if has_test {
+        (Status::Pass, "the fix has a test".to_owned())
+    } else {
+        (Status::Fail, "the branch fixes something but adds no test".to_owned())
+    };
+    Some(Line::new(Kind::FixTest, status))
+}
+
+/// The lines for the switches that are on, and what Tidewatch left behind making them.
+fn proof_lines(input: &Input<'_>) -> (Vec<Line>, Findings) {
+    let (tools, checks) = (input.tools, input.checks);
+    let mut lines = Vec::new();
+    let mut found = Findings::default();
+    if checks.tests {
+        let (line, ran) = tests_line(input);
+        lines.push(line);
+        found.tests = ran;
+    }
+    let changed =
+        (checks.fix_test || checks.scope).then(|| changed_files(tools, input.dir)).flatten();
+    if checks.fix_test
+        && let Some((range, files)) = &changed
+        && let Some(line) = fix_test_line(tools, input, range, files)
+    {
+        lines.push(line);
+    }
+    if checks.verified
+        && let Some(items) = &input.verified
+        && let Some((status, detail, claimed)) =
+            done_proof::verified_status(items, found.tests.as_ref())
+    {
+        lines.push(Line::new(Kind::Verified, (status, detail)));
+        found.claimed = claimed;
+    }
+    if checks.scope {
+        let files = changed.map(|(_, files)| files).unwrap_or_default();
+        let (status, detail, outside) = done_proof::scope_status(&files, input.plan.as_deref());
+        lines.push(Line::new(Kind::Scope, (status, detail)));
+        found.outside = outside;
+    }
+    (lines, found)
+}
+
+/// Runs the four checks in `input.dir`, then the ones the repo's switches turn on.
 #[must_use]
 pub fn run(input: &Input<'_>) -> Report {
     let (tools, dir) = (input.tools, input.dir);
@@ -517,14 +636,20 @@ pub fn run(input: &Input<'_>) -> Report {
         };
         pushed_status(&head, &remote, behind, merged)
     };
+    let (proof, found) =
+        if merged { (Vec::new(), Findings::default()) } else { proof_lines(input) };
     let unverified = input.unverified.clone().unwrap_or_default();
-    let lines = vec![
+    let mut lines = vec![
         Line::new(Kind::Committed, committed),
         Line::new(Kind::Pushed, pushed),
         Line::new(Kind::PullRequest, pull_request_line(&pr, &head)),
-        Line::new(Kind::Unverified, unverified_status(input.unverified.as_deref(), input.today)),
     ];
-    Report { head, lines, unverified }
+    lines.extend(proof);
+    lines.push(Line::new(
+        Kind::Unverified,
+        unverified_status(input.unverified.as_deref(), input.today),
+    ));
+    Report { head, lines, unverified, found }
 }
 
 #[cfg(test)]
@@ -787,6 +912,7 @@ mod tests {
                 detail: unverified_status(Some(&items), today).1,
             }],
             unverified: items,
+            found: Findings::default(),
         }
     }
 
@@ -896,14 +1022,15 @@ mod tests {
                 line(Status::Pass, "fine"),
             ],
             unverified: Vec::new(),
+            found: Findings::default(),
         };
         assert_eq!(
-            report.fix_note().as_deref(),
+            report.fix_note(Workflow::default()).as_deref(),
             Some(
                 "The done check found: 2 commits not pushed; PR #42 checks failing: build. Please fix that and tell me when it is done."
             )
         );
         let clean = Report { lines: vec![line(Status::Unknown, "x")], ..report };
-        assert_eq!(clean.fix_note(), None);
+        assert_eq!(clean.fix_note(Workflow::default()), None);
     }
 }

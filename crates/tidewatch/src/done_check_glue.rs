@@ -8,8 +8,10 @@ use tidewatch_core::civil_date::Date;
 use tidewatch_core::done_check::{
     self, Input, Kind, Line, Outcome, PrFact, Report, Status, Unverified,
 };
+use tidewatch_core::done_proof::{Findings, TestsRun, Verified};
 use tidewatch_core::status::AgentStatus;
 use tidewatch_core::tools::Tools;
+use tidewatch_core::workflow_profile::{Checks, Workflow};
 
 use crate::done_check_trigger::{Claim, Trigger};
 use crate::jobs::Jobs;
@@ -25,6 +27,8 @@ pub(crate) enum Fake {
     Rechecked,
     Rechecking,
     Checking,
+    Proof,
+    TestsFailed,
 }
 
 impl Fake {
@@ -37,6 +41,8 @@ impl Fake {
             Some("rechecked") => Self::Rechecked,
             Some("rechecking") => Self::Rechecking,
             Some("checking") => Self::Checking,
+            Some("proof") => Self::Proof,
+            Some("tests-failed") => Self::TestsFailed,
             _ => Self::Off,
         }
     }
@@ -47,6 +53,7 @@ impl Fake {
             head: "3f9a1c2".to_owned(),
             lines,
             unverified: unverified.iter().map(|item| Unverified::new(*item)).collect(),
+            found: Findings::default(),
         };
         let committed = line(Kind::Committed, Status::Pass, "clean tree, 2 commits ahead of main");
         let pushed = line(Kind::Pushed, Status::Pass, "origin has 3f9a1c2");
@@ -87,6 +94,60 @@ impl Fake {
                 waiting.unverified =
                     vec![Unverified::until("Live list across a day boundary", tomorrow)];
                 waiting
+            }
+            Self::Proof => {
+                let mut proof = report(
+                    vec![
+                        committed,
+                        pushed,
+                        line(Kind::PullRequest, Status::Pass, "PR #212 open, checks passing"),
+                        line(
+                            Kind::Tests,
+                            Status::Pass,
+                            "Ran cargo test --workspace: passed in 134 s",
+                        ),
+                        line(Kind::FixTest, Status::Pass, "the fix has a test"),
+                        line(
+                            Kind::Verified,
+                            Status::Noted,
+                            "2 of 4 verified items name no command, so they are claimed, not checked",
+                        ),
+                        line(
+                            Kind::Scope,
+                            Status::Noted,
+                            "2 changed files outside what the plan named",
+                        ),
+                        line(Kind::Unverified, Status::Pass, "nothing left unverified"),
+                    ],
+                    &[],
+                );
+                proof.found.claimed =
+                    vec!["the Safari layout".to_owned(), "it feels faster".to_owned()];
+                proof.found.outside = vec![
+                    "crates/tidewatch/src/launch.rs".to_owned(),
+                    "crates/tidewatch/src/app/frame.rs".to_owned(),
+                ];
+                proof
+            }
+            Self::TestsFailed => {
+                let mut failed = report(
+                    vec![
+                        committed,
+                        pushed,
+                        line(Kind::PullRequest, Status::Pass, "PR #212 open, checks passing"),
+                        line(Kind::Tests, Status::Fail, "Ran cargo test --workspace: 2 failed"),
+                        line(Kind::Unverified, Status::Pass, "nothing left unverified"),
+                    ],
+                    &[],
+                );
+                failed.found.tests = Some(TestsRun {
+                    command: "cargo test --workspace".to_owned(),
+                    exit_code: 101,
+                    took: std::time::Duration::from_secs(134),
+                    failed: Some(2),
+                    tail: "test done_check::a ... FAILED\ntest done_check::b ... FAILED".to_owned(),
+                });
+                failed
             }
             Self::Unverified | Self::Rechecked | Self::Rechecking => report(
                 vec![
@@ -143,10 +204,22 @@ fn now_secs() -> i64 {
         .map_or(0, |d| i64::try_from(d.as_secs()).unwrap_or(0))
 }
 
+/// Where Tidewatch's own test run stands for a tab whose Auto push waits for it.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) enum TestsGate {
+    /// Nothing to wait for: the switch is off, the repo has no runnable command, or the run passed.
+    #[default]
+    Clear,
+    /// The switch is on and the run has not come back.
+    Pending,
+    Failed,
+}
+
 #[derive(Debug, Default)]
 struct Tab {
     trigger: Trigger,
     entry: Option<Entry>,
+    eligible: bool,
     /// The fix note a tab that runs on its own sent without a click, so the same failure is sent once.
     auto_sent: Option<String>,
 }
@@ -169,9 +242,13 @@ pub(crate) struct Facts<'a> {
 #[derive(Clone, Debug)]
 pub(crate) struct Request {
     pub(crate) dir: PathBuf,
+    pub(crate) repo: PathBuf,
     pub(crate) branch: String,
     pub(crate) pr: PrFact,
     pub(crate) unverified: Option<Vec<Unverified>>,
+    pub(crate) verified: Option<Vec<Verified>>,
+    pub(crate) plan: Option<Vec<String>>,
+    pub(crate) checks: Checks,
     pub(crate) today: Date,
 }
 
@@ -236,6 +313,7 @@ impl Host {
         let mut fire = Vec::new();
         for fact in facts {
             let tab = self.tabs.entry(fact.id).or_default();
+            tab.eligible = fact.eligible;
             if !self.enabled || !fact.eligible {
                 tab.entry = None;
                 continue;
@@ -265,10 +343,39 @@ impl Host {
                 pr: request.pr,
                 unverified: request.unverified,
                 today: request.today,
+                checks: request.checks,
+                repo: &request.repo,
+                plan: request.plan,
+                verified: request.verified,
             };
             let report = Box::new(done_check::run(&input));
             Done { tab, job, report, at: now_secs() }
         });
+    }
+
+    /// Whether Auto may ask this tab's agent to push: its work passes Tidewatch's own test run.
+    pub(crate) fn tests_gate(&self, tab: u64, checks: Checks) -> TestsGate {
+        if !self.enabled || self.is_fake() || !checks.tests {
+            return TestsGate::Clear;
+        }
+        let Some(state) = self.tabs.get(&tab).filter(|state| state.eligible) else {
+            return TestsGate::Clear;
+        };
+        match &state.entry {
+            None | Some(Entry::Checking { .. }) => TestsGate::Pending,
+            Some(Entry::Report { report, .. }) => {
+                let failed = report
+                    .lines
+                    .iter()
+                    .any(|line| line.kind == Kind::Tests && line.status == Status::Fail);
+                if failed { TestsGate::Failed } else { TestsGate::Clear }
+            }
+        }
+    }
+
+    /// Whether the tab has neither a check running nor a report.
+    pub(crate) fn is_idle(&self, tab: u64) -> bool {
+        self.tabs.get(&tab).is_some_and(|state| state.entry.is_none())
     }
 
     pub(crate) fn look(&self, tab: u64) -> Option<Look> {
@@ -283,10 +390,15 @@ impl Host {
 
     /// The fix note a tab that runs on its own sends now: its check found something to fix, the
     /// agent may be asked (`blocked` is `ask_blocked`), and that same failure was not sent before.
-    pub(crate) fn auto_fix(&mut self, tab: u64, blocked: Option<&str>) -> Option<String> {
+    pub(crate) fn auto_fix(
+        &mut self,
+        tab: u64,
+        blocked: Option<&str>,
+        workflow: Workflow,
+    ) -> Option<String> {
         let tab = self.tabs.get_mut(&tab)?;
         let Some(Entry::Report { report, .. }) = &tab.entry else { return None };
-        let Some(note) = report.fix_note() else {
+        let Some(note) = report.fix_note(workflow) else {
             tab.auto_sent = None;
             return None;
         };
@@ -356,6 +468,7 @@ mod tests {
                 head: "abc".into(),
                 lines: vec![line],
                 unverified: Vec::new(),
+                found: Findings::default(),
             }),
             checked: STAMP,
         }
@@ -364,18 +477,24 @@ mod tests {
     #[test]
     fn a_fixable_problem_is_sent_once_when_the_agent_may_be_asked_and_a_new_one_is_sent_again() {
         let mut host = Host::new(true, Fake::Off);
-        assert_eq!(host.auto_fix(1, None), None, "no tab, nothing to send");
+        assert_eq!(host.auto_fix(1, None, Workflow::default()), None, "no tab, nothing to send");
         host.tabs.entry(1).or_default().entry = Some(blocked_report("2 commits not pushed"));
         let busy = Some("The agent is busy. Ask when it is idle");
-        assert_eq!(host.auto_fix(1, busy), None, "busy: wait, and do not spend the one send");
-        let note = host.auto_fix(1, None).unwrap();
+        assert_eq!(
+            host.auto_fix(1, busy, Workflow::default()),
+            None,
+            "busy: wait, and do not spend the one send"
+        );
+        let note = host.auto_fix(1, None, Workflow::default()).unwrap();
         assert_eq!(
             note,
             "The done check found: 2 commits not pushed. Please fix that and tell me when it is done."
         );
-        assert_eq!(host.auto_fix(1, None), None, "the same failure goes once");
+        assert_eq!(host.auto_fix(1, None, Workflow::default()), None, "the same failure goes once");
         host.tabs.get_mut(&1).unwrap().entry = Some(blocked_report("3 commits not pushed"));
-        assert!(host.auto_fix(1, None).unwrap().contains("3 commits not pushed"));
+        assert!(
+            host.auto_fix(1, None, Workflow::default()).unwrap().contains("3 commits not pushed")
+        );
     }
 
     #[test]
@@ -383,28 +502,27 @@ mod tests {
         let mut host = Host::new(true, Fake::Off);
         let tab = host.tabs.entry(1).or_default();
         tab.entry = Some(Entry::Checking { job: 1, before: None });
-        assert_eq!(host.auto_fix(1, None), None);
+        assert_eq!(host.auto_fix(1, None, Workflow::default()), None);
         let passing = Report {
             head: "abc".into(),
             lines: vec![Line { kind: Kind::Pushed, status: Status::Pass, detail: "ok".into() }],
-            unverified: Vec::new(),
+            ..Report::default()
         };
         host.tabs.get_mut(&1).unwrap().entry =
             Some(Entry::Report { report: Box::new(passing), checked: STAMP });
-        assert_eq!(host.auto_fix(1, None), None);
+        assert_eq!(host.auto_fix(1, None, Workflow::default()), None);
         host.tabs.get_mut(&1).unwrap().entry = Some(blocked_report("2 commits not pushed"));
-        assert!(host.auto_fix(1, None).is_some());
+        assert!(host.auto_fix(1, None, Workflow::default()).is_some());
         host.tabs.get_mut(&1).unwrap().entry = Some(Entry::Report {
-            report: Box::new(Report {
-                head: "abc".into(),
-                lines: Vec::new(),
-                unverified: Vec::new(),
-            }),
+            report: Box::new(Report { head: "abc".into(), ..Report::default() }),
             checked: STAMP,
         });
-        assert_eq!(host.auto_fix(1, None), None);
+        assert_eq!(host.auto_fix(1, None, Workflow::default()), None);
         host.tabs.get_mut(&1).unwrap().entry = Some(blocked_report("2 commits not pushed"));
-        assert!(host.auto_fix(1, None).is_some(), "fixed in between, so a return is new");
+        assert!(
+            host.auto_fix(1, None, Workflow::default()).is_some(),
+            "fixed in between, so a return is new"
+        );
     }
 
     #[test]
@@ -419,8 +537,7 @@ mod tests {
     fn a_late_answer_for_an_old_check_is_dropped() {
         let mut host = Host::new(true, Fake::Off);
         host.tabs.entry(1).or_default().entry = Some(Entry::Checking { job: 2, before: None });
-        let report =
-            Box::new(Report { head: String::new(), lines: Vec::new(), unverified: Vec::new() });
+        let report = Box::new(Report::default());
         host.jobs.spawn(&egui::Context::default(), move || Done { tab: 1, job: 1, report, at: 0 });
         std::thread::sleep(std::time::Duration::from_millis(100));
         host.tick(&[]);
@@ -456,7 +573,7 @@ mod tests {
 
     fn report_saying(detail: &str) -> Report {
         let line = Line { kind: Kind::Unverified, status: Status::Unknown, detail: detail.into() };
-        Report { head: "abc".into(), lines: vec![line], unverified: Vec::new() }
+        Report { head: "abc".into(), lines: vec![line], ..Report::default() }
     }
 
     #[test]
@@ -498,11 +615,75 @@ mod tests {
         host.tabs.entry(1).or_default().entry = Some(Entry::Checking { job: 1, before: None });
         answer(&mut host, 1, report_saying("1 item the agent did not verify"), 100);
         host.tabs.entry(1).or_default().entry = Some(Entry::Checking { job: 2, before: None });
-        let clean = Report { head: "abc".into(), lines: Vec::new(), unverified: Vec::new() };
+        let clean = Report { head: "abc".into(), ..Report::default() };
         answer(&mut host, 2, clean, 200);
         host.tabs.entry(1).or_default().entry = Some(Entry::Checking { job: 9, before: None });
         answer(&mut host, 3, report_saying("late"), 300);
         assert_eq!(host.take_finished(), [(1, false), (1, true)]);
         assert_eq!(host.take_finished(), Vec::<(u64, bool)>::new());
+    }
+
+    fn gate_host(tab_state: Option<Entry>, eligible: bool) -> Host {
+        let mut host = Host::new(true, Fake::Off);
+        let tab = host.tabs.entry(1).or_default();
+        tab.eligible = eligible;
+        tab.entry = tab_state;
+        host
+    }
+
+    fn tests_report(status: Status) -> Entry {
+        let line = Line { kind: Kind::Tests, status, detail: "Ran x".into() };
+        Entry::Report {
+            report: Box::new(Report { lines: vec![line], ..Report::default() }),
+            checked: STAMP,
+        }
+    }
+
+    #[test]
+    fn auto_push_waits_for_the_test_run_and_stops_on_a_failed_one() {
+        let on = Checks::default();
+        let off = Checks { tests: false, ..on };
+        let cases = [
+            (None, true, on, TestsGate::Pending),
+            (Some(Entry::Checking { job: 1, before: None }), true, on, TestsGate::Pending),
+            (Some(tests_report(Status::Pass)), true, on, TestsGate::Clear),
+            (Some(tests_report(Status::Skipped)), true, on, TestsGate::Clear),
+            (Some(tests_report(Status::Unknown)), true, on, TestsGate::Clear),
+            (Some(tests_report(Status::Fail)), true, on, TestsGate::Failed),
+            (None, true, off, TestsGate::Clear),
+            (None, false, on, TestsGate::Clear),
+        ];
+        for (entry, eligible, checks, want) in cases {
+            let label = format!("{entry:?} {eligible} {checks:?}");
+            assert_eq!(gate_host(entry, eligible).tests_gate(1, checks), want, "{label}");
+        }
+        assert_eq!(Host::new(true, Fake::Off).tests_gate(9, on), TestsGate::Clear, "unknown tab");
+        assert_eq!(Host::new(false, Fake::Off).tests_gate(1, on), TestsGate::Clear, "check off");
+        assert_eq!(Host::new(true, Fake::Done).tests_gate(1, on), TestsGate::Clear, "dev fake");
+    }
+
+    #[test]
+    fn a_tab_with_no_check_and_no_report_is_idle_and_one_with_either_is_not() {
+        assert!(gate_host(None, true).is_idle(1));
+        assert!(!gate_host(Some(Entry::Checking { job: 1, before: None }), true).is_idle(1));
+        assert!(!gate_host(Some(tests_report(Status::Pass)), true).is_idle(1));
+        assert!(!Host::new(true, Fake::Off).is_idle(1), "no such tab");
+    }
+
+    #[test]
+    fn the_proof_fake_shows_the_ran_tests_and_the_claimed_items_on_a_done_card() {
+        let Some(Look::Report(report, _)) = Host::new(true, Fake::Proof).look(9) else {
+            panic!("no report")
+        };
+        assert_eq!(report.outcome(), Outcome::Done);
+        let Some(Look::Report(failed, _)) = Host::new(true, Fake::TestsFailed).look(9) else {
+            panic!("no report")
+        };
+        assert_eq!(failed.outcome(), Outcome::Blocked);
+        let note = failed.fix_note(Workflow::default()).unwrap();
+        assert!(
+            note.starts_with("Tidewatch ran cargo test --workspace: 2 failed (output below)."),
+            "{note}"
+        );
     }
 }

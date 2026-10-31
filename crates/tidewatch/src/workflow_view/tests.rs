@@ -146,3 +146,68 @@ fn the_settings_card_title_names_the_repo_without_a_colon() {
         .collect();
     assert_eq!(titles, ["Workflow \u{b7} web"]);
 }
+
+fn view() -> View {
+    View {
+        path: "/work/web".into(),
+        repo: "web".into(),
+        workflow: Workflow::default(),
+        detected: Some(stand_in()),
+        confirmed: true,
+    }
+}
+
+fn settings_frame(ctx: &Context, events: Vec<Event>) -> (Option<Workflow>, Rect) {
+    let view = view();
+    let (mut changed, mut shown) = (None, Rect::NOTHING);
+    let _ = ctx.run_ui(input(events), |ui| {
+        changed = settings_card(ui, Some(&view));
+        shown = ui.min_rect();
+    });
+    (changed, shown)
+}
+
+#[test]
+fn each_check_has_one_switch_and_the_table_toggles_only_its_own() {
+    let off = Checks::OFF;
+    let on = Checks { tests: true, verified: true, scope: true, fix_test: true, reviewer: false };
+    for (check, ..) in CHECKS {
+        assert!(!check.is_on(off), "{check:?}");
+        let toggled = check.with(off, true);
+        assert!(check.is_on(toggled), "{check:?}");
+        let others = CHECKS.iter().filter(|(other, ..)| *other != check);
+        assert_eq!(others.filter(|(other, ..)| other.is_on(toggled)).count(), 0, "{check:?}");
+        assert_eq!(check.with(on, false).reviewer, on.reviewer);
+    }
+}
+
+#[test]
+fn clicking_a_switch_in_the_checks_card_hands_back_the_profile_with_that_one_check_flipped() {
+    let ctx = crate::fonts::test_context();
+    settings_frame(&ctx, vec![]);
+    let (_, shown) = settings_frame(&ctx, vec![]);
+    let mut flipped = Vec::new();
+    let mut y = shown.bottom() - 4.0;
+    while y > shown.bottom() - 4.0 * 78.0 {
+        let mut x = shown.right() - 60.0;
+        while x < shown.right() {
+            let at = pos2(x, y);
+            settings_frame(&ctx, vec![Event::PointerMoved(at)]);
+            settings_frame(&ctx, vec![press(at, true)]);
+            if let (Some(workflow), _) = settings_frame(&ctx, vec![press(at, false)]) {
+                flipped.push(workflow.checks);
+            }
+            x += 12.0;
+        }
+        y -= 10.0;
+    }
+    let d = Checks::default();
+    for want in [
+        Checks { tests: !d.tests, ..d },
+        Checks { verified: !d.verified, ..d },
+        Checks { scope: !d.scope, ..d },
+        Checks { fix_test: !d.fix_test, ..d },
+    ] {
+        assert!(flipped.contains(&want), "{want:?} never came back from {flipped:?}");
+    }
+}
