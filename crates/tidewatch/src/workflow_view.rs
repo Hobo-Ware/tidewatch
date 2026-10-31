@@ -175,7 +175,7 @@ pub(crate) fn settings_card(ui: &mut Ui, view: Option<&View>) -> Option<Workflow
         return None;
     };
     let current = view.workflow;
-    section(ui, &format!("Workflow: {}", view.repo), |ui| {
+    section(ui, &format!("Workflow \u{b7} {}", view.repo), |ui| {
         let labels = CATCH_UP.map(|(_, label)| label);
         let active = CATCH_UP.iter().position(|(value, _)| *value == current.catch_up);
         let note = view.evidence(current.catch_up, |d| (d.catch_up.value, &d.catch_up.source));

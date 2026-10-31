@@ -122,3 +122,27 @@ fn evidence_shows_only_for_the_value_that_was_found() {
     let none = View { detected: None, ..view };
     assert_eq!(none.evidence(CatchUp::Rebase, |d| (d.catch_up.value, &d.catch_up.source)), "");
 }
+
+#[test]
+fn the_settings_card_title_names_the_repo_without_a_colon() {
+    let ctx = crate::fonts::test_context();
+    let view = View {
+        path: "/work/web".into(),
+        repo: "web".into(),
+        workflow: Workflow::default(),
+        detected: Some(stand_in()),
+        confirmed: false,
+    };
+    let mut out = None;
+    for _ in 0..2 {
+        out = Some(ctx.run_ui(input(vec![]), |ui| {
+            let _ = settings_card(ui, Some(&view));
+        }));
+    }
+    let titles: Vec<String> = crate::screen_kit::painted_texts(&out.unwrap())
+        .into_iter()
+        .map(|(text, _)| text)
+        .filter(|text| text.starts_with("Workflow"))
+        .collect();
+    assert_eq!(titles, ["Workflow \u{b7} web"]);
+}

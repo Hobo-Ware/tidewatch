@@ -785,5 +785,5 @@ fn a_run_that_writes_nothing_leaves_no_tally_file() {
     std::thread::sleep(Duration::from_millis(100));
     host.sync(&tabs, &ctx);
     assert!(!file.exists());
-    assert!(host.on_time(1_000).line.starts_with("Panel on time"));
+    assert!(host.on_time(1_000).line.ends_with("this week"));
 }

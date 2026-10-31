@@ -15,7 +15,7 @@ use tidewatch_core::changes::Groups;
 use tidewatch_core::history::Source;
 
 use crate::brand;
-use crate::commit_files::{split_dir, tail_fit, totals};
+use crate::commit_files::{removed_ink, split_dir, tail_fit, totals};
 use crate::diff_pane::{kind_color, kind_letter};
 use crate::pane_jobs::LineCounts;
 use crate::reader_view::ellipsized;
@@ -152,7 +152,7 @@ fn paint_footer(ui: &Ui, footer: Rect, text: &str, counts: Option<LineCounts>) {
     if let Some((added, removed)) = counts {
         job.append(" · ", 0.0, plain(brand::MUTED));
         job.append(&format!("+{added}"), 0.0, plain(brand::GREEN));
-        job.append(&format!(" -{removed}"), 0.0, plain(brand::RED));
+        job.append(&format!(" -{removed}"), 0.0, plain(removed_ink(removed)));
     }
     let galley = painter.layout_job(job);
     let at = pos2(footer.left() + SIDE_PAD + ROW_PAD, footer.center().y - galley.size().y / 2.0);
@@ -249,7 +249,7 @@ fn file_row(
             Align2::RIGHT_CENTER,
             format!("-{removed}"),
             mono(12.0),
-            brand::RED,
+            removed_ink(removed),
         );
         painter.text(
             pos2(right - DEL_W - COUNT_GAP, center_y),
@@ -434,6 +434,41 @@ mod tests {
             self.frame(vec![button(false)]);
             self.frame(Vec::new());
         }
+    }
+
+    fn ink_of(output: &egui::FullOutput, text: &str) -> Option<Color32> {
+        output.shapes.iter().find_map(|clipped| match &clipped.shape {
+            Shape::Text(shape) if shape.galley.text() == text => {
+                Some(shape.galley.job.sections.first()?.format.color)
+            }
+            _ => None,
+        })
+    }
+
+    #[test]
+    fn a_file_that_removes_nothing_shows_minus_zero_muted_and_one_that_does_in_red() {
+        let mut view = TabView::new(1, "/work/web".into(), false, None);
+        view.groups = Some(Groups::of(&parse_porcelain("M  a.rs\0M  b.rs\0")));
+        view.shown_source = Some(Source::WorkTree);
+        view.files = ["a.rs", "b.rs"]
+            .map(|path| FileChange { path: path.into(), kind: ChangeKind::Modified })
+            .to_vec();
+        view.counts = vec![Some((3, 0)), Some((1, 2))];
+        let ctx = crate::fonts::test_context();
+        let mut last = None;
+        for _ in 0..2 {
+            let raw = RawInput {
+                screen_rect: Some(Rect::from_min_size(pos2(0.0, 0.0), vec2(420.0, 600.0))),
+                focused: true,
+                ..RawInput::default()
+            };
+            last = Some(ctx.run_ui(raw, |ui| {
+                show(ui, Rect::from_min_size(pos2(0.0, 0.0), vec2(420.0, 600.0)), &mut view, true);
+            }));
+        }
+        let output = last.unwrap();
+        assert_eq!(ink_of(&output, "-0"), Some(brand::MUTED));
+        assert_eq!(ink_of(&output, "-2"), Some(brand::RED));
     }
 
     const FEW: &str = "M  a.rs\0";
