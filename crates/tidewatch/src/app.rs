@@ -220,6 +220,7 @@ pub(crate) struct Tidewatch {
     overview_state: crate::overview_view::State,
     ask_given: HashMap<u64, crate::ask_model::Answered>,
     slash: slash_glue::Host,
+    files: crate::files_glue::Host,
     snoozes: due::Snoozes,
     dev_open_scheduled: Option<String>,
     told: due::Told,
@@ -478,6 +479,7 @@ impl Tidewatch {
             overview_state: crate::overview_fake::initial_state(),
             ask_given: HashMap::new(),
             slash: slash_glue::Host::new(),
+            files: crate::files_glue::Host::new(),
             snoozes: due::Snoozes::default(),
             dev_open_scheduled: std::env::var("TIDEWATCH_DEV_OPEN_SCHEDULED")
                 .ok()

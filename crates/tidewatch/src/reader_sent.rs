@@ -41,10 +41,10 @@ pub(crate) fn same_text(sent: &str, seen: &str) -> bool {
 }
 
 /// Whether `seen` is `sent` after the agent turned its picture paths into `[Image #N]` markers:
-/// the closing path lines of `sent` and the markers of `seen` are set aside, and what is left matches.
+/// the picture paths of `sent` and the markers of `seen` are set aside, and what is left matches.
 fn same_pictured(sent: &str, seen: &str) -> bool {
     let unmarked = tidewatch_core::user_markup::without_image_markers(seen);
-    unmarked != seen && same_text(&crate::pictures::split_trailing(sent).0, &unmarked)
+    unmarked != seen && same_text(&crate::tokens::without_picture_paths(sent), &unmarked)
 }
 
 fn same_queued(queued: &Queued, seen: &str, at: Option<i64>) -> bool {
@@ -438,6 +438,8 @@ mod tests {
             ("see\n'/My Pics/a b.png'", "[Image #7]see"),
             ("plain words", "plain words"),
             ("pasted in the terminal", "[Image #2]pasted in the terminal"),
+            ("look at /tmp/a.png please", "look at [Image #1] please"),
+            ("look at /tmp/a.png please", "[Image #1]look at please"),
         ];
         for (typed, seen) in cases {
             let mut sent = Sent::default();
@@ -453,7 +455,6 @@ mod tests {
             ("why these picks?\n/tmp/a.png", "[Image #3]something else"),
             ("why these picks?\n/tmp/a.png", "why these picks?"),
             ("/tmp/a.png", "[Image #1] and words"),
-            ("look at /tmp/a.png please", "[Image #1]look at please"),
         ];
         for (typed, seen) in cases {
             let mut sent = Sent::default();

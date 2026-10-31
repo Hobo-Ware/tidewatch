@@ -2,6 +2,7 @@
 
 use egui::{Align2, Id, Key, Rect, Ui, UiBuilder, pos2, vec2};
 
+use crate::at_files;
 use crate::brand;
 use crate::composer::{self, Draft, Spec};
 use crate::reader_view::INSET;
@@ -84,8 +85,8 @@ pub(crate) fn empty_state(ui: &Ui, area: Rect, ready: Ready) {
     }
 }
 
-pub(crate) fn height(ui: &Ui, text: &str, pictures: usize, column: Rect) -> f32 {
-    composer::height(ui, text, pictures, column)
+pub(crate) fn height(ui: &Ui, text: &str, column: Rect) -> f32 {
+    composer::height(ui, text, column)
 }
 
 pub(crate) fn plain_enter(event: &egui::Event) -> bool {
@@ -105,7 +106,12 @@ pub(crate) fn composer_has_focus(ctx: &egui::Context) -> bool {
 }
 
 /// The first message box: the Reader's composer, asking what the agent should do.
-pub(crate) fn composer(ui: &mut Ui, rect: Rect, draft: Draft<'_>, ready: Ready) -> Option<String> {
+pub(crate) fn composer(
+    ui: &mut Ui,
+    rect: Rect,
+    draft: Draft<'_>,
+    (ready, files): (Ready, Option<at_files::Source<'_>>),
+) -> Option<String> {
     let mut child =
         ui.new_child(UiBuilder::new().max_rect(rect.shrink2(vec2(INSET, composer::GAP_Y))));
     let hint = label(ready.profile);
@@ -118,6 +124,7 @@ pub(crate) fn composer(ui: &mut Ui, rect: Rect, draft: Draft<'_>, ready: Ready) 
         mode: composer::Mode::Reply,
         stop: false,
         held: 0,
+        files,
     };
     composer::show(&mut child, draft, &spec).sent
 }
@@ -147,8 +154,8 @@ mod tests {
         let mut sent = None;
         let _ = ctx.run_ui(raw, |ui| {
             let rect = Rect::from_min_size(pos2(0.0, 200.0), vec2(800.0, 64.0));
-            let draft = Draft { text, pictures: &mut Vec::new(), focus, recall: None };
-            sent = composer(ui, rect, draft, ready());
+            let draft = Draft { text, focus, recall: None };
+            sent = composer(ui, rect, draft, (ready(), None));
         });
         sent
     }
@@ -205,13 +212,13 @@ mod tests {
     }
 
     #[test]
-    fn an_image_only_cmd_v_becomes_a_chip_and_leaves_the_text_clean() {
+    fn an_image_only_cmd_v_becomes_a_chip_inside_the_sentence_at_the_cursor() {
         use crate::image_paste::testing::screenshot;
         use crate::image_paste::{Delivery, resolve};
         use tidewatch_core::image_paste::Target;
 
         let (ctx, mut text, mut focus) = started();
-        frame(&ctx, vec![Event::Text("see ".into())], &mut text, &mut focus);
+        frame(&ctx, vec![Event::Text("see  please".into())], &mut text, &mut focus);
         let dir = tempfile::tempdir().unwrap();
         let Delivery::Pictures(paths) =
             resolve(&mut screenshot(), Target::TextField, dir.path(), 3)
@@ -219,27 +226,30 @@ mod tests {
             panic!("an image-only clipboard in a text field must give pictures");
         };
         assert!(paths[0].is_file());
-        let mut pictures = Vec::new();
-        crate::pictures::attach(&mut pictures, paths.clone());
+        let mut state = egui::TextEdit::load_state(&ctx, composer_id()).unwrap_or_default();
+        state
+            .cursor
+            .set_char_range(Some(egui::text::CCursorRange::one(egui::text::CCursor::new(4))));
+        state.store(&ctx, composer_id());
+        let targets: Vec<_> = paths.iter().cloned().map(crate::tokens::Target::File).collect();
+        composer::insert_targets(&ctx, composer_id(), &mut text, &targets);
         let raw = RawInput {
             screen_rect: Some(Rect::from_min_size(pos2(0.0, 0.0), vec2(800.0, 400.0))),
             focused: true,
             ..RawInput::default()
         };
-        let mut chip_h = 0.0;
         let out = ctx.run_ui(raw, |ui| {
             let rect = Rect::from_min_size(pos2(0.0, 200.0), vec2(800.0, 130.0));
-            let draft =
-                Draft { text: &mut text, pictures: &mut pictures, focus: &mut focus, recall: None };
-            composer(ui, rect, draft, ready());
-            chip_h = crate::pictures::CHIP_H;
+            let draft = Draft { text: &mut text, focus: &mut focus, recall: None };
+            composer(ui, rect, draft, (ready(), None));
         });
         let chips = out
             .shapes
             .iter()
-            .filter(|clipped| matches!(&clipped.shape, egui::Shape::Rect(r) if r.fill == brand::ITEM && r.rect.height() == chip_h))
+            .filter(|clipped| matches!(&clipped.shape, egui::Shape::Rect(r) if r.fill == brand::SUNKEN && r.rect.height() == crate::screen_kit::Size::Tag.height()))
             .count();
-        assert_eq!((text.as_str(), chips), ("see ", 1));
+        let path = paths[0].display().to_string();
+        assert_eq!((crate::tokens::sendable(&text), chips), (format!("see {path} please"), 1));
     }
 
     #[test]
@@ -260,13 +270,8 @@ mod tests {
         };
         let _ = ctx.run_ui(raw, |ui| {
             let rect = Rect::from_min_size(pos2(0.0, 200.0), vec2(800.0, 64.0));
-            let draft = Draft {
-                text: &mut text,
-                pictures: &mut Vec::new(),
-                focus: &mut focus,
-                recall: None,
-            };
-            composer(ui, rect, draft, ready());
+            let draft = Draft { text: &mut text, focus: &mut focus, recall: None };
+            composer(ui, rect, draft, (ready(), None));
         });
         assert_eq!(text, "copied words");
         assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 0);
@@ -282,13 +287,8 @@ mod tests {
         };
         let out = ctx.run_ui(raw, |ui| {
             let rect = Rect::from_min_size(pos2(0.0, 200.0), vec2(800.0, 64.0));
-            let draft = Draft {
-                text: &mut text,
-                pictures: &mut Vec::new(),
-                focus: &mut focus,
-                recall: None,
-            };
-            composer(ui, rect, draft, ready());
+            let draft = Draft { text: &mut text, focus: &mut focus, recall: None };
+            composer(ui, rect, draft, (ready(), None));
         });
         let asked = out.shapes.iter().any(|clipped| {
             matches!(&clipped.shape, egui::Shape::Text(t) if t.galley.text() == "What should Builder do?")

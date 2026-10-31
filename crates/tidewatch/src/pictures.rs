@@ -1,8 +1,6 @@
-//! Pictures in a message: the chip a pasted screenshot becomes above the text of the message box and
-//! inside a sent bubble, and the text rules behind it. The message the agent gets is the text with
-//! the pictures' paths on lines of their own after it, so a bubble can tell them apart again.
-//! A picture a transcript carries inline (`Source::Pasted`) draws the same chip. The thumbnails are
-//! decoded once on a `Jobs` thread and kept in egui's memory, by path or by the picture's hash.
+//! Pictures and files in a sent bubble that the sentence holds no token for: the chip, its thumbnail
+//! decoded once on a `Jobs` thread and kept in egui's memory by path or by the picture's hash. A
+//! picture a transcript carries inline is `Source::Pasted`.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -15,7 +13,7 @@ use egui::{
     TextureHandle, TextureOptions, Ui, vec2,
 };
 use image::imageops::FilterType;
-use tidewatch_core::image_paste::{is_image_file, path_text};
+use tidewatch_core::image_paste::is_image_file;
 use tidewatch_core::transcript_image::Picture;
 
 use crate::attachments;
@@ -138,75 +136,6 @@ pub(crate) fn chip_rect(origin: Pos2, index: usize, width: f32, chip_w: f32) -> 
     let (row, column) = (index / per_row, index % per_row);
     let at = origin + vec2(column as f32 * (chip_w + CHIP_GAP), row as f32 * (CHIP_H + CHIP_GAP));
     Rect::from_min_size(at, vec2(chip_w, CHIP_H))
-}
-
-const ATTACHED: &str = "Attached: ";
-
-fn is_absolute_path(token: &str) -> bool {
-    Path::new(token).is_absolute()
-}
-
-fn is_picture_path(token: &str) -> bool {
-    is_absolute_path(token) && is_image_file(Path::new(token))
-}
-
-fn attachment_line(line: &str) -> Option<Vec<PathBuf>> {
-    let tokens = shell_words::split(line.trim().strip_prefix(ATTACHED)?).ok()?;
-    (!tokens.is_empty() && tokens.iter().all(|token| is_absolute_path(token)))
-        .then(|| tokens.into_iter().map(PathBuf::from).collect())
-}
-
-fn picture_line(line: &str) -> Option<Vec<PathBuf>> {
-    let tokens = shell_words::split(line.trim()).ok()?;
-    (!tokens.is_empty() && tokens.iter().all(|token| is_picture_path(token)))
-        .then(|| tokens.into_iter().map(PathBuf::from).collect())
-}
-
-fn trailing_line(line: &str) -> Option<Vec<PathBuf>> {
-    attachment_line(line).or_else(|| picture_line(line))
-}
-
-fn path_line(path: &Path) -> String {
-    let quoted = path_text(std::slice::from_ref(&path.to_owned()));
-    if is_image_file(path) { quoted } else { format!("{ATTACHED}{quoted}") }
-}
-
-/// The message to send: `text`, then the paths of `pictures` on lines of their own. A picture's line
-/// is its bare path; any other file or folder is `Attached: <path>`, so a path typed as text never
-/// reads back as a chip.
-pub(crate) fn message(text: &str, pictures: &[PathBuf]) -> String {
-    if pictures.is_empty() {
-        return text.to_owned();
-    }
-    let body = text.trim_end();
-    let paths: Vec<String> = pictures.iter().map(|path| path_line(path)).collect();
-    if body.is_empty() { paths.join("\n") } else { format!("{body}\n{}", paths.join("\n")) }
-}
-
-/// A sent message taken apart again: the text without the closing lines that are only picture
-/// paths or `Attached:` paths, and those chips in order. A path in the middle of a sentence stays text.
-pub(crate) fn split_trailing(text: &str) -> (String, Vec<PathBuf>) {
-    let lines: Vec<&str> = text.trim_end().split('\n').collect();
-    let mut keep = lines.len();
-    let mut found: Vec<Vec<PathBuf>> = Vec::new();
-    while keep > 0 {
-        let Some(paths) = trailing_line(lines[keep - 1]) else { break };
-        found.push(paths);
-        keep -= 1;
-    }
-    if found.is_empty() {
-        return (text.to_owned(), Vec::new());
-    }
-    found.reverse();
-    (lines[..keep].join("\n").trim_end().to_owned(), found.into_iter().flatten().collect())
-}
-
-pub(crate) fn attach(pictures: &mut Vec<PathBuf>, paths: impl IntoIterator<Item = PathBuf>) {
-    for path in paths {
-        if !pictures.contains(&path) {
-            pictures.push(path);
-        }
-    }
 }
 
 pub(crate) struct Loaded {
@@ -534,17 +463,28 @@ pub(crate) fn paint(
     if let Some(path) = file {
         body = body.on_hover_text(path.display().to_string());
     }
-    if let Some(loaded) = loaded
-        && let Some((texture, size)) = &loaded.large
-    {
-        body.on_hover_ui(|ui| {
-            ui.add(egui::Image::new(egui::load::SizedTexture::new(
-                texture.id(),
-                vec2(size[0], size[1]),
-            )));
-        });
+    if let Some(loaded) = loaded {
+        loaded.preview_on(body);
     }
     outcome
+}
+
+impl Loaded {
+    pub(crate) fn thumbnail(&self) -> Option<&TextureHandle> {
+        self.small.as_ref()
+    }
+
+    /// The big picture as the hover of `response`, once it is decoded.
+    pub(crate) fn preview_on(&self, response: egui::Response) {
+        if let Some((texture, size)) = &self.large {
+            response.on_hover_ui(|ui| {
+                ui.add(egui::Image::new(egui::load::SizedTexture::new(
+                    texture.id(),
+                    vec2(size[0], size[1]),
+                )));
+            });
+        }
+    }
 }
 
 /// Opens the picture in the system's viewer.
@@ -570,7 +510,7 @@ pub(crate) fn reveal(path: &Path) {
     }
 }
 
-fn open_chip(path: &Path) {
+pub(crate) fn open_chip(path: &Path) {
     if is_image_file(path) || path.is_dir() {
         open_picture(path);
     } else {
@@ -595,7 +535,7 @@ pub(crate) fn write_once(dir: &Path, picture: &Picture) -> std::io::Result<PathB
 
 /// Opens a transcript's picture in the system's viewer: written once to `dir` first, on its own
 /// thread so the frame never waits on the disk.
-fn open_pasted(picture: &Picture, dir: Option<&Path>) {
+pub(crate) fn open_pasted(picture: &Picture, dir: Option<&Path>) {
     let Some(dir) = dir.map(Path::to_owned) else { return };
     let picture = picture.clone();
     std::thread::spawn(move || match write_once(&dir, &picture) {
@@ -634,10 +574,6 @@ pub(crate) fn paint_block<'a>(
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    fn p(path: &str) -> PathBuf {
-        PathBuf::from(path)
-    }
 
     #[test]
     fn a_pasted_shot_is_a_numbered_screenshot_and_any_other_file_keeps_its_name() {
@@ -730,87 +666,6 @@ mod tests {
         assert_eq!(first.min, origin);
         assert_eq!(second.min, Pos2::new(10.0 + REMOVABLE_W + CHIP_GAP, 20.0));
         assert_eq!(third.min, Pos2::new(10.0, 20.0 + CHIP_H + CHIP_GAP));
-    }
-
-    #[test]
-    fn the_message_puts_each_path_on_its_own_line_after_the_text() {
-        let two = [p("/s/shot-1.png"), p("/s/my shots/shot-2.png")];
-        let cases = [
-            ("look at these", &two[..], "look at these\n/s/shot-1.png\n'/s/my shots/shot-2.png'"),
-            ("look  \n", &two[..1], "look\n/s/shot-1.png"),
-            ("", &two[..1], "/s/shot-1.png"),
-            ("plain\n", &[][..], "plain\n"),
-        ];
-        for (text, pictures, want) in cases {
-            assert_eq!(message(text, pictures), want, "{text:?}");
-        }
-    }
-
-    #[test]
-    fn the_closing_picture_lines_come_back_out_of_a_message() {
-        let cases = [
-            (
-                "look at these\n/s/shot-1.png\n'/s/my shots/shot-2.png'",
-                "look at these",
-                vec!["/s/shot-1.png", "/s/my shots/shot-2.png"],
-            ),
-            ("/s/shot-1.png", "", vec!["/s/shot-1.png"]),
-            ("a\n\nb\n/s/shot-1.png\n\n", "a\n\nb", vec!["/s/shot-1.png"]),
-            ("two on a line\n/a/1.png /a/2.jpg", "two on a line", vec!["/a/1.png", "/a/2.jpg"]),
-            ("see /s/shot-1.png in the middle", "see /s/shot-1.png in the middle", vec![]),
-            ("a relative one\nshots/1.png", "a relative one\nshots/1.png", vec![]),
-            ("not a picture\n/s/notes.txt", "not a picture\n/s/notes.txt", vec![]),
-            (
-                "path then words\n/s/shot-1.png\nthanks",
-                "path then words\n/s/shot-1.png\nthanks",
-                vec![],
-            ),
-            ("unbalanced\n'/s/shot-1.png", "unbalanced\n'/s/shot-1.png", vec![]),
-            ("", "", vec![]),
-        ];
-        for (text, want_text, want_paths) in cases {
-            let (got_text, got_paths) = split_trailing(text);
-            let want: Vec<PathBuf> = want_paths.into_iter().map(p).collect();
-            assert_eq!((got_text.as_str(), got_paths), (want_text, want), "{text:?}");
-        }
-    }
-
-    #[test]
-    fn what_the_composer_sends_is_what_a_bubble_splits_back() {
-        let pictures = [p("/s/shot-1.png"), p("/s/my shots/shot-2.png")];
-        let sent = message("fix the header\n\n- one\n- two", &pictures);
-        let (text, back) = split_trailing(&sent);
-        assert_eq!(text, "fix the header\n\n- one\n- two");
-        assert_eq!(back, pictures);
-    }
-
-    #[test]
-    fn other_files_go_out_as_attached_lines_and_only_those_come_back_as_chips() {
-        let mixed = [p("/s/shot-1.png"), p("/s/pastes/sales q3.csv"), p("/s/exports")];
-        let sent = message("look", &mixed);
-        assert_eq!(
-            sent,
-            "look\n/s/shot-1.png\nAttached: '/s/pastes/sales q3.csv'\nAttached: /s/exports"
-        );
-        assert_eq!(split_trailing(&sent), ("look".to_owned(), mixed.to_vec()));
-        assert_eq!(message("", &mixed[1..2]), "Attached: '/s/pastes/sales q3.csv'");
-        let typed = [
-            "see\n/s/pastes/sales.csv",
-            "see\nAttached: relative/sales.csv",
-            "see\nAttached:",
-            "see\nAttached: '/s/unbalanced",
-            "see /s/a.csv\nAttached: /s/a.csv in a sentence",
-        ];
-        for text in typed {
-            assert_eq!(split_trailing(text), (text.to_owned(), Vec::new()), "{text:?}");
-        }
-    }
-
-    #[test]
-    fn a_picture_is_attached_once() {
-        let mut pictures = vec![p("/s/shot-1.png")];
-        attach(&mut pictures, [p("/s/shot-1.png"), p("/s/shot-2.png")]);
-        assert_eq!(pictures, [p("/s/shot-1.png"), p("/s/shot-2.png")]);
     }
 
     fn ready(ctx: &egui::Context, path: &Path) -> Look {

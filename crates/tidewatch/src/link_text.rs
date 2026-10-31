@@ -81,6 +81,7 @@ impl Text {
                 Stroke::NONE,
             );
             emoji_paint::paint(ui, id, pos, &galley);
+            crate::token_view::paint(ui, id, (pos, &galley), true);
         }
         Laid { galley, job, spans }.interact(ui, id, pos);
         response

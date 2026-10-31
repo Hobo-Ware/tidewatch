@@ -41,18 +41,15 @@ impl ReplyStore {
 
     /// Called every frame with the box as it is. Writes the draft once it stood still, and says when
     /// to look again if a change is waiting.
-    pub(crate) fn tick(&mut self, text: &str, pictures: &[PathBuf], now: f64) -> Option<f64> {
+    pub(crate) fn tick(&mut self, text: &str, now: f64) -> Option<f64> {
         let (_, file) = self.files.as_ref()?;
-        if text == self.saved.text && pictures == self.saved.pictures.as_slice() {
+        if text == self.saved.text {
             self.pending = None;
             return None;
         }
-        let same = self
-            .pending
-            .as_ref()
-            .is_some_and(|(draft, _)| draft.text == text && draft.pictures == pictures);
+        let same = self.pending.as_ref().is_some_and(|(draft, _)| draft.text == text);
         if !same {
-            let draft = Draft { text: text.to_owned(), pictures: pictures.to_vec() };
+            let draft = Draft { text: text.to_owned(), pictures: Vec::new() };
             self.pending = Some((draft, now));
             return Some(SETTLE_SECS);
         }
@@ -81,13 +78,13 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let mut store = ReplyStore::default();
         assert_eq!(store.attach(&notes(dir.path())), (Vec::new(), None));
-        assert_eq!(store.tick("che", &[], 0.0), Some(SETTLE_SECS));
-        assert_eq!(store.tick("check the totals", &[], 0.5), Some(SETTLE_SECS));
+        assert_eq!(store.tick("che", 0.0), Some(SETTLE_SECS));
+        assert_eq!(store.tick("check the totals", 0.5), Some(SETTLE_SECS));
         let file = reply_draft_file_beside(&notes(dir.path()));
         assert!(!file.exists(), "typing is not saved per key");
-        assert!(store.tick("check the totals", &[], 0.5 + SETTLE_SECS - 0.1).is_some());
+        assert!(store.tick("check the totals", 0.5 + SETTLE_SECS - 0.1).is_some());
         assert!(!file.exists());
-        assert_eq!(store.tick("check the totals", &[], 0.5 + SETTLE_SECS), None);
+        assert_eq!(store.tick("check the totals", 0.5 + SETTLE_SECS), None);
         let mut again = ReplyStore::default();
         let (_, draft) = again.attach(&notes(dir.path()));
         assert_eq!(draft.map(|draft| draft.text), Some("check the totals".to_owned()));
@@ -99,13 +96,13 @@ mod tests {
         let mut store = ReplyStore::default();
         store.attach(&notes(dir.path()));
         let file = reply_draft_file_beside(&notes(dir.path()));
-        assert_eq!(store.tick("", &[], 0.0), None);
+        assert_eq!(store.tick("", 0.0), None);
         assert!(!file.exists());
-        store.tick("half a thought", &[], 1.0);
-        store.tick("half a thought", &[], 1.0 + SETTLE_SECS);
+        store.tick("half a thought", 1.0);
+        store.tick("half a thought", 1.0 + SETTLE_SECS);
         assert!(file.exists());
-        store.tick("", &[], 10.0);
-        assert_eq!(store.tick("", &[], 10.0 + SETTLE_SECS), None);
+        store.tick("", 10.0);
+        assert_eq!(store.tick("", 10.0 + SETTLE_SECS), None);
         assert!(!file.exists());
     }
 
@@ -123,6 +120,6 @@ mod tests {
 
     #[test]
     fn a_store_with_no_files_never_asks_to_be_looked_at_again() {
-        assert_eq!(ReplyStore::default().tick("typed", &[], 0.0), None);
+        assert_eq!(ReplyStore::default().tick("typed", 0.0), None);
     }
 }

@@ -22,6 +22,7 @@ use crate::agent_ready::{self, Ready};
 use crate::answer_chips::Pick;
 use crate::ask_model::Ask;
 use crate::ask_view;
+use crate::at_files;
 use crate::brand;
 use crate::composer::{self, Draft, Outcome, Spec};
 use crate::due_view::{self, Facts as DueFacts};
@@ -50,6 +51,7 @@ use crate::screen_kit::{Size, body, primary_button, quiet_button};
 use crate::send_line::SendLine;
 use crate::slash::Entry as SlashEntry;
 use crate::tidewatch_view::{self, Click, Clicked};
+use crate::tokens;
 use tidewatch_core::sent::Record;
 
 /// The side inset every inline item of the left column keeps.
@@ -72,7 +74,9 @@ pub(crate) struct ViewState {
     pub(crate) heights: Heights,
     pr_heights: PrHeights,
     pub(crate) reply: String,
-    pub(crate) pictures: Vec<PathBuf>,
+    pub(crate) files: Arc<Vec<String>>,
+    pub(crate) files_root: PathBuf,
+    composing: bool,
     pub(crate) recall: Recall,
     pub(crate) line: SendLine,
     held_edit: Option<(u64, String)>,
@@ -112,7 +116,9 @@ impl Default for ViewState {
             heights: Heights::default(),
             pr_heights: PrHeights::default(),
             reply: String::new(),
-            pictures: Vec::new(),
+            files: Arc::default(),
+            files_root: PathBuf::new(),
+            composing: false,
             recall: Recall::default(),
             line: SendLine::default(),
             held_edit: None,
@@ -198,6 +204,26 @@ impl ViewState {
         self.focus_reply = true;
     }
 
+    /// Puts `text` in the box with the cursor at its `|`, for a capture.
+    pub(crate) fn set_sentence(&mut self, ctx: &egui::Context, text: &str) {
+        let (before, after) = text.split_once('|').unwrap_or((text, ""));
+        self.reply = format!("{before}{after}");
+        let id = if self.composing { agent_ready::composer_id() } else { reply_id() };
+        let mut state = egui::TextEdit::load_state(ctx, id).unwrap_or_default();
+        let at = egui::text::CCursor::new(before.chars().count());
+        state.cursor.set_char_range(Some(egui::text::CCursorRange::one(at)));
+        state.store(ctx, id);
+        self.focus_reply = true;
+    }
+
+    /// Puts files into the sentence at the box's cursor, or at its end when the box is not the one typed in.
+    pub(crate) fn insert_files(&mut self, ctx: &egui::Context, paths: Vec<PathBuf>) {
+        let id = if self.composing { agent_ready::composer_id() } else { reply_id() };
+        let targets: Vec<tokens::Target> = paths.into_iter().map(tokens::Target::File).collect();
+        composer::insert_targets(ctx, id, &mut self.reply, &targets);
+        self.focus_reply = true;
+    }
+
     /// The held message whose row is open for editing.
     pub(crate) fn editing_held(&self) -> Option<u64> {
         self.held_edit.as_ref().map(|(id, _)| *id)
@@ -259,7 +285,7 @@ impl ViewState {
             }
             (BubbleAction::Dismiss, _, Some(id)) => actions.push(Action::Forget(id)),
             (BubbleAction::EditAndSend, text, _) => {
-                self.recall.load_message(&text, &mut self.reply, &mut self.pictures);
+                self.recall.load_message(&text, &mut self.reply);
                 self.focus_reply = true;
             }
             (BubbleAction::Dismiss, _, None) => {}
@@ -532,9 +558,9 @@ pub(crate) fn show(
     let live_seq = state.live.as_ref().map(|live| live.seq);
     let composing = facts.ready.filter(|_| rows.len() == 0 && facts.prompt.is_none());
     let input_h = if composing.is_some() {
-        agent_ready::height(ui, &state.reply, state.pictures.len(), rect)
+        agent_ready::height(ui, &state.reply, rect)
     } else {
-        composer::height_with_stop(ui, &state.reply, state.pictures.len(), rect, facts.working)
+        composer::height_with_stop(ui, &state.reply, rect, facts.working)
     };
     let input = Rect::from_min_max(pos2(rect.left(), rect.bottom() - input_h), rect.max);
     let reason = facts.reply_blocked.filter(|_| composing.is_none());
@@ -608,22 +634,20 @@ pub(crate) fn show(
     }
     if let Some((ask, laid)) = asked.as_ref().filter(|_| ask_h > 0.0) {
         let reply = if composing.is_some() { agent_ready::composer_id() } else { reply_id() };
-        let empty = state.reply.trim().is_empty() && state.pictures.is_empty();
+        let empty = state.reply.trim().is_empty();
         match ask_view::show(ui, ask_band, laid, ask, (reply, empty)) {
             Some(Pick::Answer(text)) => actions.push(Action::Pick(text)),
             Some(Pick::Other) => state.focus_reply = true,
             None => {}
         }
     }
+    state.composing = composing.is_some();
     if let Some(ready) = composing {
         agent_ready::empty_state(ui, body, ready);
-        let draft = Draft {
-            text: &mut state.reply,
-            pictures: &mut state.pictures,
-            focus: &mut state.focus_reply,
-            recall: None,
-        };
-        if let Some(text) = agent_ready::composer(ui, input, draft, ready) {
+        let draft = Draft { text: &mut state.reply, focus: &mut state.focus_reply, recall: None };
+        let files = (!state.files_root.as_os_str().is_empty())
+            .then_some(at_files::Source { root: &state.files_root, paths: &state.files });
+        if let Some(text) = agent_ready::composer(ui, input, draft, (ready, files)) {
             actions.push(Action::Reply(text));
             state.jump_to_latest();
         }
@@ -680,15 +704,16 @@ pub(crate) fn show(
         ui.new_child(UiBuilder::new().max_rect(input.shrink2(vec2(INSET, composer::GAP_Y))));
     let draft = Draft {
         text: &mut state.reply,
-        pictures: &mut state.pictures,
         focus: &mut state.focus_reply,
         recall: Some(&mut state.recall),
     };
+    let files = (!state.files_root.as_os_str().is_empty())
+        .then_some(at_files::Source { root: &state.files_root, paths: &state.files });
     let outcome = reply_box(
         &mut input_ui,
         draft,
         (reply_enabled, facts.reply_blocked),
-        (&state.commands, state.ghost.text()),
+        (&state.commands, state.ghost.text(), files),
         (facts.working, state.line.len()),
     );
     if let Some(text) = outcome.sent {
@@ -1343,7 +1368,7 @@ pub(crate) fn reply_box(
     ui: &mut Ui,
     draft: Draft<'_>,
     (enabled, blocked): (bool, Option<Blocked>),
-    (commands, ghost): (&[SlashEntry], Option<&str>),
+    (commands, ghost, files): (&[SlashEntry], Option<&str>, Option<at_files::Source<'_>>),
     (working, held): (bool, usize),
 ) -> Outcome {
     let hint = match (enabled, blocked) {
@@ -1352,7 +1377,8 @@ pub(crate) fn reply_box(
         (false, None) => REPLY_BLOCKED,
     };
     let mode = composer::Mode::Reply;
-    let spec = Spec { id: reply_id(), hint, enabled, commands, ghost, mode, stop: working, held };
+    let spec =
+        Spec { id: reply_id(), hint, enabled, commands, ghost, mode, stop: working, held, files };
     composer::show(ui, draft, &spec)
 }
 
@@ -1373,8 +1399,8 @@ mod tests {
         commands: &[SlashEntry],
         ghost: Option<&str>,
     ) -> Option<String> {
-        let draft = Draft { text, pictures: &mut Vec::new(), focus, recall: None };
-        super::reply_box(ui, draft, (enabled, None), (commands, ghost), (false, 0)).sent
+        let draft = Draft { text, focus, recall: None };
+        super::reply_box(ui, draft, (enabled, None), (commands, ghost, None), (false, 0)).sent
     }
 
     fn frame(
@@ -3085,7 +3111,7 @@ mod tests {
         let mut heights = Vec::new();
         let _ = ctx.run_ui(RawInput::default(), |ui| {
             for text in ["", "one", "one\ntwo", "one\ntwo\nthree", &"row\n".repeat(200)] {
-                heights.push(composer::height(ui, text, 0, column));
+                heights.push(composer::height(ui, text, column));
             }
         });
         assert_eq!(heights[0], INPUT_H);
@@ -3470,7 +3496,19 @@ mod tests {
     const PICTURES: &str = include_str!("../../tidewatch-core/tests/fixtures/claude_images.jsonl");
 
     #[test]
-    fn a_sent_message_draws_its_pictures_as_chips_above_its_text_and_drops_their_markers() {
+    fn files_put_into_the_reply_box_land_at_its_cursor_and_the_box_asks_for_the_keyboard() {
+        let ctx = egui::Context::default();
+        let _ = ctx.run_ui(RawInput { focused: false, ..RawInput::default() }, |_| {});
+        let mut state = ViewState::default();
+        state.set_sentence(&ctx, "Check | and run");
+        state.focus_reply = false;
+        state.insert_files(&ctx, vec![PathBuf::from("/s/a b.png"), PathBuf::from("/s/c.pdf")]);
+        assert_eq!(tokens::sendable(&state.reply), "Check '/s/a b.png' /s/c.pdf and run");
+        assert!(state.focus_reply);
+    }
+
+    #[test]
+    fn a_sent_message_draws_its_pictures_as_chips_where_their_markers_stood() {
         use crate::pictures::{self, Source};
         use tidewatch_core::transcript::{Source as Cli, parse_all};
         let ctx = crate::fonts::test_context();
@@ -3502,7 +3540,8 @@ mod tests {
             .iter()
             .filter_map(|shape| match shape {
                 egui::Shape::Rect(rect)
-                    if rect.fill == brand::ITEM && rect.rect.height() == 48.0 =>
+                    if rect.fill == brand::SUNKEN
+                        && rect.rect.height() == crate::screen_kit::Size::Tag.height() =>
                 {
                     Some(rect.rect)
                 }
@@ -3531,20 +3570,21 @@ mod tests {
         for name in ["Image 1", "Image 2", "Image 5"] {
             assert!(label(name).is_some(), "{name} chip missing in {texts:?}");
         }
-        let (first_text, _) = texts
-            .iter()
-            .find(|(_, text)| text == "Compare with the old one")
-            .expect("the text without markers");
-        assert!(first_text.top() >= chips[1].bottom(), "text {first_text:?} under chips {chips:?}");
-        assert!(chips[0].bottom() <= first_text.top() && chips[0].right() <= chips[1].left());
-        assert!(chips.iter().all(|chip| !chip.intersects(*first_text)), "{chips:?} {first_text:?}");
-        let (second_text, _) =
-            texts.iter().find(|(_, text)| text == "What is?").expect("the second text");
-        assert!(second_text.top() >= chips[2].bottom());
-        assert!(
-            !texts.iter().any(|(_, text)| text.contains("[Image") || text.contains("Image 2 ")),
-            "{texts:?}"
-        );
+        let sentences: Vec<&(Rect, String)> =
+            texts.iter().filter(|(_, text)| tokens::has_tokens(text)).collect();
+        assert_eq!(sentences.len(), 2, "two messages hold chips: {texts:?}");
+        for chip in &chips {
+            assert!(
+                sentences.iter().any(|(rect, _)| rect.contains_rect(*chip)),
+                "{chip:?} is not inside its sentence {sentences:?}"
+            );
+        }
+        let with_words =
+            |words: &str| sentences.iter().filter(|(_, text)| text.contains(words)).count();
+        assert_eq!(with_words("Compare"), 1, "{sentences:?}");
+        assert_eq!(with_words(" with the old one"), 1, "{sentences:?}");
+        assert_eq!(with_words("What is"), 1, "{sentences:?}");
+        assert!(!texts.iter().any(|(_, text)| text.contains("[Image")), "{texts:?}");
         assert!(
             !texts.iter().any(|(_, text)| text.contains("use of widget ID")),
             "one picture in two messages clashes ids: {texts:?}"

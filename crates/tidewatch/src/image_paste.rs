@@ -96,6 +96,24 @@ pub(crate) struct Host {
     jobs: Jobs<Done>,
     dev_at: Option<f64>,
     dev_drop: Vec<PathBuf>,
+    dev_png: Option<PathBuf>,
+}
+
+/// `TIDEWATCH_DEV_CLIPBOARD_PNG=<file>`: a clipboard that holds that picture, so a capture can paste
+/// without touching the owner's pasteboard.
+struct PngClipboard(PathBuf);
+
+impl Clipboard for PngClipboard {
+    fn clip(&mut self) -> Clip {
+        Clip::Image
+    }
+    fn picture(&mut self) -> Option<Picture> {
+        let rgba = image::open(&self.0).ok()?.to_rgba8();
+        Some(Picture { width: rgba.width(), height: rgba.height(), rgba: rgba.into_raw() })
+    }
+    fn files(&mut self) -> Vec<PathBuf> {
+        Vec::new()
+    }
 }
 
 fn dev_seconds(value: Option<&str>) -> Option<f64> {
@@ -114,7 +132,8 @@ impl Host {
                 value.split(':').filter(|part| !part.is_empty()).map(PathBuf::from).collect()
             })
             .unwrap_or_default();
-        Self { hook, jobs: Jobs::new(), dev_at, dev_drop }
+        let dev_png = std::env::var("TIDEWATCH_DEV_CLIPBOARD_PNG").ok().map(PathBuf::from);
+        Self { hook, jobs: Jobs::new(), dev_at, dev_drop, dev_png }
     }
 
     pub(crate) fn tick_dev(&mut self, now: f64, ctx: &egui::Context) {
@@ -124,7 +143,7 @@ impl Host {
             return;
         }
         self.dev_at = None;
-        if !post_cmd_v() {
+        if self.dev_png.is_some() || !post_cmd_v() {
             self.request();
         }
         ctx.request_repaint();
@@ -149,8 +168,12 @@ impl Host {
         dir: PathBuf,
         now_ms: u128,
     ) {
+        let dev_png = self.dev_png.clone();
         self.jobs.spawn(ctx, move || {
-            let delivery = resolve(&mut crate::macos::SystemClipboard, target, &dir, now_ms);
+            let delivery = match dev_png {
+                Some(png) => resolve(&mut PngClipboard(png), target, &dir, now_ms),
+                None => resolve(&mut crate::macos::SystemClipboard, target, &dir, now_ms),
+            };
             Done { tab, target, delivery }
         });
     }
