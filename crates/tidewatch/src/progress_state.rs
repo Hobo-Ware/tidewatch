@@ -5,7 +5,7 @@ use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 use tidewatch_core::paths::progress_file_beside;
-use tidewatch_core::progress::Ledger;
+use tidewatch_core::progress::{Entry as Line, Ledger};
 use tidewatch_core::schedule::{Entry, Index, Owner, Presence};
 
 use crate::coming_up::{self, Row};
@@ -62,9 +62,18 @@ pub(crate) struct Wants {
     pub(crate) write: Vec<Entry>,
 }
 
+/// The Needs you lines of the questions a tab's agent asked with a question tool, and when.
+#[derive(Debug)]
+struct Held {
+    lines: Vec<Line>,
+    at_ms: i64,
+}
+
 #[derive(Default)]
 pub(crate) struct State {
     ledgers: HashMap<u64, TabLedger>,
+    held: HashMap<u64, Held>,
+    shown: HashMap<u64, TabLedger>,
     asked: HashSet<u64>,
     owners: HashMap<u64, Owner>,
     fallback_owners: HashMap<u64, Owner>,
@@ -72,8 +81,52 @@ pub(crate) struct State {
 }
 
 impl State {
+    /// The ledger the screens show: the agent's, with its open questions laid over `needs_you`.
     pub(crate) fn ledger(&self, tab: u64) -> Option<&TabLedger> {
+        self.shown.get(&tab).or_else(|| self.ledgers.get(&tab))
+    }
+
+    /// The ledger as the agent sent it, without the questions Tidewatch laid over it.
+    pub(crate) fn sent(&self, tab: u64) -> Option<&TabLedger> {
         self.ledgers.get(&tab)
+    }
+
+    /// The questions the tab's agent has open now, as Needs you lines, empty once none is. They
+    /// stand in `needs_you` ahead of what the agent wrote itself, which keeps whatever else it
+    /// says. Returns whether the ledger the screens show changed.
+    pub(crate) fn open_questions(&mut self, tab: u64, lines: Vec<Line>, now_ms: i64) -> bool {
+        if lines.is_empty() {
+            let had = self.held.remove(&tab).is_some();
+            if had {
+                self.lay(tab);
+            }
+            return had;
+        }
+        if self.held.get(&tab).is_some_and(|held| held.lines == lines) {
+            return false;
+        }
+        self.held.insert(tab, Held { lines, at_ms: now_ms });
+        self.lay(tab);
+        true
+    }
+
+    fn lay(&mut self, tab: u64) {
+        let Some(held) = self.held.get(&tab) else {
+            self.shown.remove(&tab);
+            return;
+        };
+        let under = self.ledgers.get(&tab);
+        let mut ledger = under.map(|known| known.ledger.clone()).unwrap_or_default();
+        let own = std::mem::take(&mut ledger.needs_you);
+        let same = |a: &Line, b: &Line| a.text.trim().eq_ignore_ascii_case(b.text.trim());
+        ledger.needs_you = held
+            .lines
+            .iter()
+            .cloned()
+            .chain(own.into_iter().filter(|line| !held.lines.iter().any(|ours| same(ours, line))))
+            .collect();
+        let updated_ms = under.and_then(|known| known.updated_ms).or(Some(held.at_ms));
+        self.shown.insert(tab, TabLedger { ledger, updated_ms });
     }
 
     pub(crate) fn index(&self) -> &Index {
@@ -134,6 +187,8 @@ impl State {
         for id in gone {
             self.asked.remove(&id);
             self.ledgers.remove(&id);
+            self.held.remove(&id);
+            self.shown.remove(&id);
             self.fallback_owners.remove(&id);
             if let Some(owner) = self.owners.remove(&id) {
                 if folder_exists(&owner.repo, &owner.tab) {
@@ -151,6 +206,7 @@ impl State {
     /// The agent sent a ledger. Returns the tab's index entry to write.
     pub(crate) fn arrived(&mut self, tab: u64, ledger: Ledger, now_ms: i64) -> Option<Entry> {
         self.ledgers.insert(tab, TabLedger { ledger, updated_ms: Some(now_ms) });
+        self.lay(tab);
         self.entry_of(tab)
     }
 
@@ -161,6 +217,7 @@ impl State {
             return None;
         }
         self.ledgers.insert(tab, found?);
+        self.lay(tab);
         self.entry_of(tab)
     }
 
@@ -168,6 +225,7 @@ impl State {
     pub(crate) fn given(&mut self, tab: u64, ledger: Ledger) {
         self.asked.insert(tab);
         self.ledgers.insert(tab, TabLedger { ledger, updated_ms: None });
+        self.lay(tab);
         if let Some(entry) = self.entry_of(tab) {
             self.index.set(entry);
         }
@@ -410,5 +468,140 @@ mod tests {
         assert_eq!(whos(&state), by_worktree);
         state.look(&[], |_, _| true);
         assert_eq!(whos(&state), Vec::new(), "a closed tab keeps nothing");
+    }
+
+    fn question(text: &str) -> Line {
+        Line { text: text.into(), why: None, options: Vec::new() }
+    }
+
+    fn ledger_asking(text: &str) -> Ledger {
+        Ledger::parse(&format!("# Goal\nShip it\n\n## Needs you\n- {text}\n"))
+    }
+
+    #[test]
+    fn a_question_asked_with_a_tool_fills_needs_you_and_answering_it_takes_it_out_again() {
+        let mut state = State::default();
+        state.look(&[facts(1, true, None)], |_, _| true);
+        state.arrived(1, ledger("- [ ] 2026-11-01 -- A\n"), 5);
+        assert!(state.open_questions(1, vec![question("Where?")], 9));
+        let shown = state.ledger(1).unwrap();
+        assert_eq!(shown.ledger.needs_you, [question("Where?")]);
+        assert_eq!(shown.ledger.scheduled.len(), 1, "the rest of the report stays");
+        assert_eq!(shown.updated_ms, Some(5), "the agent's save time stands");
+        assert_eq!(state.sent(1).unwrap().ledger.needs_you, Vec::<Line>::new());
+
+        assert!(!state.open_questions(1, vec![question("Where?")], 12), "same question, no change");
+        assert!(state.open_questions(1, Vec::new(), 13));
+        assert_eq!(state.ledger(1).unwrap().ledger.needs_you, Vec::<Line>::new());
+        assert!(!state.open_questions(1, Vec::new(), 14), "nothing to take out twice");
+    }
+
+    #[test]
+    fn a_tab_with_no_report_gets_a_ledger_of_only_the_question_and_loses_it_when_answered() {
+        let mut state = State::default();
+        state.look(&[facts(1, true, None)], |_, _| true);
+        state.open_questions(1, vec![question("Where?")], 9);
+        let shown = state.ledger(1).unwrap();
+        assert_eq!((shown.ledger.needs_you.len(), shown.updated_ms), (1, Some(9)));
+        assert!(state.sent(1).is_none(), "the agent sent nothing");
+        state.open_questions(1, Vec::new(), 10);
+        assert!(state.ledger(1).is_none());
+    }
+
+    #[test]
+    fn what_the_agent_wrote_in_needs_you_stays_after_the_question_and_a_repeat_is_shown_once() {
+        let mut state = State::default();
+        state.look(&[facts(1, true, None)], |_, _| true);
+        state.arrived(1, ledger_asking("where?"), 5);
+        state.arrived(1, Ledger::parse("# Goal\ng\n\n## Needs you\n- where?\n- when?\n"), 6);
+        state.open_questions(1, vec![question("Where?")], 9);
+        let texts: Vec<&str> = state
+            .ledger(1)
+            .unwrap()
+            .ledger
+            .needs_you
+            .iter()
+            .map(|line| line.text.as_str())
+            .collect();
+        assert_eq!(texts, ["Where?", "when?"]);
+    }
+
+    #[test]
+    fn a_report_that_arrives_while_a_question_is_open_keeps_it_on_top() {
+        let mut state = State::default();
+        state.look(&[facts(1, true, None)], |_, _| true);
+        state.open_questions(1, vec![question("Where?")], 9);
+        state.arrived(1, ledger("- [ ] 2026-11-01 -- A\n"), 10);
+        let shown = state.ledger(1).unwrap();
+        assert_eq!((shown.ledger.needs_you.len(), shown.updated_ms), (1, Some(10)));
+        assert_eq!(shown.ledger.scheduled.len(), 1);
+        let late = state.loaded(1, Some(at(ledger("- [ ] you -- file\n"))));
+        assert_eq!(late, None, "a file read late still never replaces what the agent sent");
+    }
+
+    #[test]
+    fn a_file_read_while_a_question_is_open_shows_the_question_over_the_file() {
+        let mut state = State::default();
+        state.look(&[facts(1, true, None)], |_, _| true);
+        state.open_questions(1, vec![question("Where?")], 9);
+        state.loaded(1, Some(at(ledger("- [ ] you -- from file\n"))));
+        let shown = state.ledger(1).unwrap();
+        assert_eq!((shown.ledger.needs_you.len(), shown.ledger.scheduled.len()), (1, 1));
+        assert_eq!(shown.updated_ms, Some(7));
+    }
+
+    #[test]
+    fn a_tab_that_goes_away_forgets_its_open_question() {
+        let mut state = State::default();
+        state.look(&[facts(1, true, None)], |_, _| true);
+        state.open_questions(1, vec![question("Where?")], 9);
+        state.look(&[], |_, _| true);
+        assert!(state.ledger(1).is_none());
+        state.look(&[facts(1, true, None)], |_, _| true);
+        assert!(state.ledger(1).is_none(), "nothing is laid over the next tab");
+    }
+
+    #[test]
+    fn a_claude_menu_that_opens_fills_the_tabs_needs_you_and_answering_it_clears_it() {
+        use crate::ask_model::open_lines;
+        use crate::reader_rows::{Asked, Rows};
+        use tidewatch_core::question::{Question, QuestionOption, Select};
+        use tidewatch_core::transcript::{AskPart, Entry as Call, Role, ToolCall, ToolPhase};
+        let asked = vec![Question {
+            text: "Where?".into(),
+            header: None,
+            decision: None,
+            select: Select::Single,
+            options: vec![QuestionOption::new("Stage"), QuestionOption::new("Run (Recommended)")],
+        }];
+        let mut rows = Rows::default();
+        rows.push(Call {
+            role: Role::Tool,
+            text: String::new(),
+            tool: Some(ToolCall {
+                name: "AskUserQuestion".into(),
+                summary: String::new(),
+                id: Some("q1".into()),
+                phase: ToolPhase::Call,
+                ask: Some(AskPart::Asked(asked)),
+            }),
+            ts: None,
+            images: Vec::new(),
+        });
+        let mut state = State::default();
+        state.look(&[facts(1, true, None)], |_, _| true);
+
+        state.open_questions(1, open_lines(&rows), 20);
+        let needs = &state.ledger(1).unwrap().ledger.needs_you;
+        assert_eq!(needs.len(), 1);
+        assert_eq!(needs[0].text, "Where?");
+        let options: Vec<(&str, bool)> =
+            needs[0].options.iter().map(|c| (c.text.as_str(), c.recommended)).collect();
+        assert_eq!(options, [("Stage", false), ("Run", true)]);
+        assert!(state.sent(1).is_none(), "the agent sent no report");
+
+        assert!(rows.set_asked(0, Asked::Sent(vec![("Where?".into(), "Run".into())])));
+        state.open_questions(1, open_lines(&rows), 21);
+        assert!(state.ledger(1).is_none());
     }
 }

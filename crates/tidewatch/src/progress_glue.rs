@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 
 use tidewatch_core::civil_date::Date;
 use tidewatch_core::paths::TidewatchPaths;
-use tidewatch_core::progress::Ledger;
+use tidewatch_core::progress::{Entry, Ledger};
 use tidewatch_core::progress_store;
 use tidewatch_core::schedule::{Index, Writer};
 
@@ -77,6 +77,16 @@ impl Host {
     /// A tab's ledger, once it was read or the agent sent one.
     pub(crate) fn ledger(&self, tab: u64) -> Option<&TabLedger> {
         self.state.ledger(tab)
+    }
+
+    /// The ledger as the agent sent it, without the open questions laid over its `needs_you`.
+    pub(crate) fn sent(&self, tab: u64) -> Option<&TabLedger> {
+        self.state.sent(tab)
+    }
+
+    /// The questions the tab's agent has open, as Needs you lines; empty once none is open.
+    pub(crate) fn open_questions(&mut self, tab: u64, lines: Vec<Entry>, now_ms: i64) {
+        self.state.open_questions(tab, lines, now_ms);
     }
 
     /// The scheduled items of every tab, closed ones included.

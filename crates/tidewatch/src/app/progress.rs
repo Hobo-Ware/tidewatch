@@ -31,6 +31,7 @@ use crate::panel_blocks::{Blocks, Kept, contradicted};
 use crate::progress_glue::today;
 use crate::progress_model::{look, look_as, questions};
 use crate::progress_state::Facts;
+use crate::reader_glue::Opened;
 use crate::status_view::state_of;
 use crate::{due_view, flow_glue, reader_glue, reader_view};
 use tidewatch_core::panel_event::AskKind;
@@ -76,6 +77,18 @@ impl Tidewatch {
             })
             .collect();
         self.progress.tick(&facts, ctx);
+        let now_ms = wall_ms() as i64;
+        let open: Vec<(u64, Vec<tidewatch_core::progress::Entry>)> = self
+            .tabs
+            .items()
+            .iter()
+            .filter_map(|tab| {
+                Some((tab.id, ask_model::open_lines(&tab.pane.agent.as_ref()?.reader.rows)))
+            })
+            .collect();
+        for (tab, lines) in open {
+            self.progress.open_questions(tab, lines, now_ms);
+        }
         for tab in self.tabs.items_mut() {
             if let Some(agent) = tab.pane.agent.as_mut() {
                 let goal = self.progress.ledger(tab.id).map(|known| known.ledger.goal.as_str());
@@ -438,7 +451,7 @@ impl Tidewatch {
             .map(|tab| tab.id)
             .collect();
         for id in ids {
-            let ledger = self.progress.ledger(id);
+            let ledger = self.progress.sent(id);
             let reported = self.panel.reported(id, now_ms, || {
                 ledger.map(|known| (known.updated_ms, ReportDigest::of(&known.ledger)))
             });
@@ -503,8 +516,21 @@ impl Tidewatch {
     /// A ready answer chip: the exact text goes to the agent as the reply box would send it, unless
     /// the reply box is shut. The ledger's question clears until the agent saves a new ledger.
     pub(super) fn send_answer(&mut self, tab: u64, text: String, ctx: &egui::Context, now: f64) {
-        if self.send_ready_answer(tab, text, ctx, now) {
-            self.mark_answered(tab);
+        let open = self
+            .tabs
+            .get_mut(tab)
+            .map_or(Opened::NotOpen, |found| reader_glue::answer_open(&mut found.pane, &text, now));
+        match open {
+            Opened::Refused(reason) => self.show_toast(reason.to_owned(), ctx),
+            Opened::Answered => {
+                self.mark_answered(tab);
+                ctx.request_repaint();
+            }
+            Opened::NotOpen => {
+                if self.send_ready_answer(tab, text, ctx, now) {
+                    self.mark_answered(tab);
+                }
+            }
         }
     }
 
