@@ -646,6 +646,24 @@ fn cap_w(painter: &Painter, key: &str) -> f32 {
     (text + 2.0 * CAP_PAD).max(CAP_MIN_W)
 }
 
+/// The width `paint_caps` takes for `keys`.
+pub(crate) fn caps_width(painter: &Painter, keys: &str) -> f32 {
+    let keys = chord_keys(keys);
+    let parts: f32 = keys
+        .iter()
+        .map(|key| {
+            if *key == "to" {
+                painter.layout_no_wrap((*key).to_owned(), body(TEXT_TAG), brand::FAINT).size().x
+                    + CAP_STEP
+                    + 2.0
+            } else {
+                cap_w(painter, key) + CAP_STEP
+            }
+        })
+        .sum();
+    (parts - CAP_STEP).max(0.0)
+}
+
 /// Key caps for `keys` ending at `right`, centered on `mid`, like the Shortcuts page. Returns the
 /// left edge of the first one, or `right` for no keys.
 pub(crate) fn paint_caps(painter: &Painter, right: f32, mid: f32, keys: &str) -> f32 {
@@ -1058,6 +1076,23 @@ mod tests {
         for (keys, want) in cases {
             assert_eq!(chord_keys(keys), want, "{keys:?}");
         }
+    }
+
+    #[test]
+    fn caps_end_at_the_right_edge_and_take_the_width_caps_width_says() {
+        let ctx = crate::fonts::test_context();
+        let input = egui::RawInput {
+            screen_rect: Some(Rect::from_min_size(egui::pos2(0.0, 0.0), vec2(600.0, 200.0))),
+            ..egui::RawInput::default()
+        };
+        let _ = ctx.run_ui(input, |ui| {
+            for keys in ["Cmd+O", "Cmd+Shift+Left", "Cmd+1 to 9", ""] {
+                let width = caps_width(ui.painter(), keys);
+                let left = paint_caps(ui.painter(), 500.0, 20.0, keys);
+                assert!((500.0 - width - left).abs() < 0.01, "{keys:?}: {width} {left}");
+            }
+            assert_eq!(caps_width(ui.painter(), ""), 0.0);
+        });
     }
 
     #[test]
