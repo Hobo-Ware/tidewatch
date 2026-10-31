@@ -224,8 +224,7 @@ fn paint_row(ui: &Ui, rect: Rect, item: &Item, hit: &Hit, selected: bool) {
     for (i, c) in item.label.chars().enumerate() {
         let marked = label_marks.contains(&i);
         let color = if marked { brand::TEAL_TEXT } else { ink };
-        let font = if marked { crate::screen_kit::heading(TEXT_BODY) } else { body(TEXT_BODY) };
-        job.append(&c.to_string(), 0.0, TextFormat::simple(font, color));
+        job.append(&c.to_string(), 0.0, TextFormat::simple(body(TEXT_BODY), color));
     }
     if let Some(alias) = hit.alias {
         let muted = TextFormat::simple(FontId::proportional(TEXT_TAG), brand::MUTED);
