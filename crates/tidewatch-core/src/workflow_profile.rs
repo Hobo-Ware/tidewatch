@@ -103,6 +103,34 @@ impl Workflow {
         }
     }
 
+    /// One sentence per setting for the agent's launch text.
+    #[must_use]
+    pub fn launch_lines(self) -> [&'static str; 4] {
+        [
+            match self.catch_up {
+                CatchUp::Rebase => "Branches catch up by rebasing onto the default branch.",
+                CatchUp::Merge => "Branches catch up by merging the default branch into them.",
+            },
+            match self.fixes {
+                Fixes::Fixup => {
+                    "Fixes fold into the commit they belong to: `git commit --fixup`, then autosquash."
+                }
+                Fixes::NewCommits => "Fixes go in new commits.",
+            },
+            if self.pushes_unpushed_with_lease() {
+                "Push a rewritten branch with `--force-with-lease`."
+            } else {
+                "Push without force."
+            },
+            match self.pull_requests {
+                PullRequests::Draft => "New pull requests open as drafts (`gh pr create --draft`).",
+                PullRequests::Ready => {
+                    "New pull requests open ready for review (`gh pr create`, no `--draft`)."
+                }
+            },
+        ]
+    }
+
     #[must_use]
     pub fn draft_flag(self) -> &'static str {
         match self.pull_requests {

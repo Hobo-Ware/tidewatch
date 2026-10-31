@@ -6,7 +6,7 @@ use std::path::Path;
 use crate::folder_repos::tilde;
 use crate::paths::TidewatchPaths;
 use crate::prefs::Prefs;
-use crate::workflow_profile::{CatchUp, Fixes, PullRequests, Workflow};
+use crate::workflow_profile::{CatchUp, Fixes, PullRequests, Store, Workflow};
 
 const MAX_FILE_BYTES: u64 = 128 * 1024;
 const MAX_RULE_FILES: usize = 40;
@@ -161,6 +161,13 @@ pub fn gather(paths: &TidewatchPaths, repo: &Path) -> Vec<Document> {
 pub fn detect_repo(paths: &TidewatchPaths, repo: &Path) -> Detected {
     let draft_guard = Prefs::load(paths).guards.rules_for(repo).draft_prs;
     detect(&gather(paths, repo), draft_guard)
+}
+
+/// What an agent's launch text says about `repo`: the confirmed profile, else what detection
+/// proposes, as the window does for its messages. Blocks on disk.
+#[must_use]
+pub fn profile_for(paths: &TidewatchPaths, repo: &Path) -> Workflow {
+    Store::load(paths).get(repo).unwrap_or_else(|| detect_repo(paths, repo).workflow())
 }
 
 fn read_capped(file: &Path) -> Option<String> {

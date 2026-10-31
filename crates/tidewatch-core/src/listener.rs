@@ -13,7 +13,7 @@
 //! `tiny_http` out. Events leave through an `mpsc` channel plus a repaint callback, so the UI never
 //! waits on a socket.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::fmt::Write as _;
 use std::fs::File;
 use std::io::{self, Read, Write};
@@ -28,24 +28,20 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
-use crate::avatar_ask::{self, Face};
-use crate::avatar_store;
 use crate::background;
 use crate::events::{Repaint, RepoMessage, TabEvent, TabMessage};
 use crate::github_hooks::{self, Answer, GithubHooks, RepoHook};
 use crate::launch::HookListener;
 use crate::mcp::{AskWait, McpReply, TabRole, ToolCtx, handle_post};
-use crate::paths::{
-    TidewatchPaths, avatar_asked_file_beside, avatar_file_beside, progress_file_beside,
-    sent_file_beside,
-};
-use crate::sent::{self, Reason, Record, because};
+use crate::paths::{TidewatchPaths, progress_file_beside};
 use crate::status::parse_hook;
-use crate::user_markup;
 use crate::{progress_store, prompt_answer};
 
+/// The hook agent whose `UserPromptSubmit` answer reaches the model as context.
+const PROMPT_ANSWERING_AGENT: &str = "claude";
+
 /// Where the listener binds: loopback only, a random free port (PLAN.md, Constants).
-pub const HOOK_BIND: &str = "127.0.0.1:0";
+const HOOK_BIND: &str = "127.0.0.1:0";
 const MAX_HEAD_BYTES: usize = 16 * 1024;
 const MAX_BODY_BYTES: usize = 2 * 1024 * 1024;
 const MAX_LINE_BYTES: usize = 1024;
@@ -104,8 +100,6 @@ struct Shared {
     repaint: Repaint,
     notes_lock: Mutex<()>,
     ask_timeout_ms: AtomicU64,
-    avatar_ask_lock: Mutex<()>,
-    avatar_ask_exempt: Mutex<HashSet<u64>>,
     service_lines: Mutex<HashMap<u64, String>>,
     service_told: Mutex<HashMap<u64, String>>,
     github: GithubHooks,
@@ -173,15 +167,6 @@ impl Listener {
         self.shared.ask_timeout_ms.store(millis, Ordering::SeqCst);
     }
 
-    /// The tabs whose prompts never carry the avatar ask: a Meeseeks wears a fixed face, and a
-    /// host that writes nothing must not leave a marker. Replaces the earlier list.
-    pub fn exempt_from_avatar_ask(&self, tabs: &[u64]) {
-        let mut exempt =
-            self.shared.avatar_ask_exempt.lock().unwrap_or_else(PoisonError::into_inner);
-        exempt.clear();
-        exempt.extend(tabs.iter().copied());
-    }
-
     /// What each tab's next prompt tells it about the repo's services, replacing the earlier
     /// lines. A tab hears a line once, and again only when its text changes.
     pub fn set_service_lines(&self, lines: HashMap<u64, String>) {
@@ -208,8 +193,6 @@ impl Listener {
             events,
             repaint,
             notes_lock: Mutex::new(()),
-            avatar_ask_lock: Mutex::new(()),
-            avatar_ask_exempt: Mutex::new(HashSet::new()),
             service_lines: Mutex::new(HashMap::new()),
             service_told: Mutex::new(HashMap::new()),
             ask_timeout_ms: AtomicU64::new(
@@ -509,10 +492,8 @@ fn hook_route(shared: &Shared, entry: &Entry, agent: &str, request: &Request) ->
     Response::json(200, prompt_reply(shared, entry, agent, &payload).unwrap_or_else(|| "{}".into()))
 }
 
-/// The answer to a prompt: extra context that asks a tab with no avatar, never asked, to draw
-/// one, and one that asks a tab with no ledger to write it or a tab whose ledger holds open items
-/// to refresh it. Both ride the one answer when both apply. The avatar marker is written first, so a tab whose state folder cannot
-/// be written is not asked on every prompt.
+/// The answer to a prompt: extra context that names what the tab's report still holds open, and
+/// the repo's services when they changed since the tab last heard.
 fn prompt_reply(
     shared: &Shared,
     entry: &Entry,
@@ -521,46 +502,19 @@ fn prompt_reply(
 ) -> Option<String> {
     let on_prompt = payload.get("hook_event_name").and_then(serde_json::Value::as_str)
         == Some("UserPromptSubmit");
-    if !on_prompt || !avatar_ask::answers_prompts(agent) {
+    if !on_prompt || agent != PROMPT_ANSWERING_AGENT {
         return None;
     }
     let mut contexts = Vec::new();
-    if avatar_due(shared, entry, on_prompt) {
-        contexts.push(avatar_ask::CONTEXT.to_owned());
-        tell(entry, Reason::Avatar, because::AVATAR_ASK, avatar_ask::CONTEXT);
-    }
-    let typed_by_user = prompt_is_users(payload);
-    let ledger_line = match progress_store::load(&progress_file_beside(&entry.notes_file)) {
-        Some(ledger) => prompt_answer::ledger_context(&ledger),
-        None => Some(prompt_answer::MISSING_LEDGER_CONTEXT.to_owned()),
-    };
-    if let Some(line) = ledger_line {
-        let answer = line == prompt_answer::LEDGER_CONTEXT;
-        let missing = line == prompt_answer::MISSING_LEDGER_CONTEXT;
-        let told = told_since_last_save(entry, &line);
-        let one_off = answer || missing;
-        let silent = one_off && (!typed_by_user || (answer && told));
-        if !silent {
-            if one_off && !told {
-                let why = if answer { because::LEDGER_NUDGE } else { because::LEDGER_MISSING };
-                tell(entry, Reason::LedgerGuard, why, &line);
-            }
-            contexts.push(line);
-        }
+    if let Some(ledger) = progress_store::load(&progress_file_beside(&entry.notes_file))
+        && let Some(line) = prompt_answer::ledger_context(&ledger)
+    {
+        contexts.push(line);
     }
     if let Some(line) = service_line_due(shared, entry.tab_id) {
         contexts.push(line);
     }
     prompt_answer::answer(&contexts.iter().map(String::as_str).collect::<Vec<_>>())
-}
-
-/// Whether the prompt is the user's own words. A background task's notice and the other texts
-/// Claude Code files as a user line are not; a payload with no prompt is taken as the user's.
-fn prompt_is_users(payload: &serde_json::Value) -> bool {
-    payload.get("prompt").and_then(serde_json::Value::as_str).is_none_or(|prompt| {
-        !prompt.trim_start().starts_with(background::NOTICE_OPENING)
-            && matches!(user_markup::classify(prompt), user_markup::Record::Text(_))
-    })
 }
 
 fn replace_service_lines(shared: &Shared, lines: HashMap<u64, String>) {
@@ -578,48 +532,6 @@ fn service_line_due(shared: &Shared, tab: u64) -> Option<String> {
     }
     told.insert(tab, line.clone());
     Some(line)
-}
-
-fn told_since_last_save(entry: &Entry, text: &str) -> bool {
-    let saved = std::fs::metadata(progress_file_beside(&entry.notes_file))
-        .and_then(|meta| meta.modified())
-        .ok()
-        .and_then(|at| at.duration_since(UNIX_EPOCH).ok())
-        .map_or(0, |since| i64::try_from(since.as_millis()).unwrap_or(i64::MAX));
-    sent::load(&sent_file_beside(&entry.notes_file))
-        .iter()
-        .rev()
-        .find(|record| record.reason == Reason::LedgerGuard && record.text == text)
-        .is_some_and(|last| last.at_ms >= saved)
-}
-
-fn tell(entry: &Entry, reason: Reason, because: &str, text: &str) {
-    let record = Record::new(reason, because, text, None);
-    let _ = sent::append(&sent_file_beside(&entry.notes_file), &record);
-}
-
-fn avatar_due(shared: &Shared, entry: &Entry, on_prompt: bool) -> bool {
-    let exempt = shared
-        .avatar_ask_exempt
-        .lock()
-        .unwrap_or_else(PoisonError::into_inner)
-        .contains(&entry.tab_id);
-    let _one_at_a_time = shared.avatar_ask_lock.lock().unwrap_or_else(PoisonError::into_inner);
-    let marker = avatar_asked_file_beside(&entry.notes_file);
-    let face = if exempt {
-        Face::Fixed
-    } else if avatar_store::load(&avatar_file_beside(&entry.notes_file)).is_some() {
-        Face::Picture
-    } else {
-        Face::Letter
-    };
-    let due = avatar_ask::due(&avatar_ask::Facts {
-        answers_prompts: true,
-        face,
-        asked: avatar_store::was_asked(&marker),
-        on_prompt,
-    });
-    due && avatar_store::mark_asked(&marker).is_ok()
 }
 
 /// Whether the client of `stream` still waits for its reply: false once it has closed the
@@ -891,6 +803,8 @@ fn write_response(stream: &mut TcpStream, response: &Response, keep_alive: bool)
 mod tests {
     use super::*;
     use crate::notes::Notes;
+    use crate::paths::sent_file_beside;
+    use crate::sent;
     use serde_json::{Value, json};
     use std::path::{Path, PathBuf};
     use std::sync::atomic::AtomicUsize;
@@ -917,8 +831,6 @@ mod tests {
                 counter.fetch_add(1, Ordering::SeqCst);
             }),
             notes_lock: Mutex::new(()),
-            avatar_ask_lock: Mutex::new(()),
-            avatar_ask_exempt: Mutex::new(HashSet::new()),
             service_lines: Mutex::new(HashMap::new()),
             service_told: Mutex::new(HashMap::new()),
             github: GithubHooks::new().0,
@@ -980,13 +892,6 @@ mod tests {
     const PROMPT: &str =
         r#"{"hook_event_name":"UserPromptSubmit","session_id":"s1","prompt":"hi"}"#;
 
-    fn asks_for_an_avatar(response: &Response) -> bool {
-        response.status == 200
-            && body_json(response)["hookSpecificOutput"]["additionalContext"]
-                .as_str()
-                .is_some_and(|context| context.contains("set_avatar"))
-    }
-
     fn notes_of(f: &Fixture, token: &str) -> PathBuf {
         f.shared.entry(token).unwrap().notes_file.clone()
     }
@@ -1012,76 +917,6 @@ mod tests {
         assert_eq!(credential.role, TabRole::Agent);
     }
 
-    #[test]
-    fn the_first_prompt_of_a_tab_with_no_avatar_is_answered_with_the_ask_and_only_the_first() {
-        let f = fixture();
-        let token = f.register(1, "a");
-        save_ledger(&f, &token, CALM);
-        let marker = avatar_asked_file_beside(&notes_of(&f, &token));
-        let first = f.send("POST", "/hook/claude", Some(&token), PROMPT);
-        assert!(asks_for_an_avatar(&first), "{}", first.body);
-        assert_eq!(body_json(&first)["hookSpecificOutput"]["hookEventName"], "UserPromptSubmit");
-        assert!(marker.exists());
-        let second = f.send("POST", "/hook/claude", Some(&token), PROMPT);
-        assert_eq!(second.body, "{}");
-        assert_eq!(f.events().len(), 2, "the prompt is still a status event both times");
-    }
-
-    #[test]
-    fn a_tab_asked_before_a_tab_with_a_picture_and_a_tab_that_is_exempt_are_not_asked() {
-        let f = fixture();
-        let asked = f.register(1, "asked");
-        avatar_store::mark_asked(&avatar_asked_file_beside(&notes_of(&f, &asked))).unwrap();
-        let drawn = f.register(2, "drawn");
-        let svg = "<svg><circle cx=\"1\" cy=\"1\" r=\"1\"/></svg>";
-        avatar_store::save(
-            &avatar_file_beside(&notes_of(&f, &drawn)),
-            &crate::avatar::clean(svg, "a dot").unwrap(),
-        )
-        .unwrap();
-        let fixed = f.register(3, "fixed");
-        let fixed_marker = avatar_asked_file_beside(&notes_of(&f, &fixed));
-        let listener_exempt = [3];
-        f.shared.avatar_ask_exempt.lock().unwrap().extend(listener_exempt);
-        for (what, token) in [("asked", &asked), ("drawn", &drawn), ("fixed", &fixed)] {
-            save_ledger(&f, token, CALM);
-            let response = f.send("POST", "/hook/claude", Some(token), PROMPT);
-            assert_eq!(response.body, "{}", "{what}");
-        }
-        assert!(!fixed_marker.exists(), "an exempt tab leaves no marker");
-    }
-
-    #[test]
-    fn only_a_claude_prompt_carries_the_ask() {
-        let f = fixture();
-        let token = f.register(1, "a");
-        let marker = avatar_asked_file_beside(&notes_of(&f, &token));
-        let others = [
-            ("/hook/claude", STOP),
-            ("/hook/claude", r#"{"hook_event_name":"SessionStart"}"#),
-            ("/hook/copilot", PROMPT),
-            ("/hook/codex", PROMPT),
-            ("/hook/gemini", r#"{"hook_event_name":"BeforeAgent"}"#),
-        ];
-        for (path, body) in others {
-            let response = f.send("POST", path, Some(&token), body);
-            assert_eq!(response.body, "{}", "{path} {body}");
-        }
-        assert!(!marker.exists());
-    }
-
-    #[test]
-    fn a_tab_whose_marker_cannot_be_written_is_not_asked() {
-        let f = fixture();
-        let token = f.register(1, "a");
-        let marker = avatar_asked_file_beside(&notes_of(&f, &token));
-        let state_dir = marker.parent().unwrap();
-        std::fs::create_dir_all(state_dir.parent().unwrap()).unwrap();
-        std::fs::write(state_dir, "not a folder").unwrap();
-        let response = f.send("POST", "/hook/claude", Some(&token), PROMPT);
-        assert!(!asks_for_an_avatar(&response), "{}", response.body);
-    }
-
     fn context_of(response: &Response) -> String {
         body_json(response)["hookSpecificOutput"]["additionalContext"]
             .as_str()
@@ -1097,115 +932,49 @@ mod tests {
     const QUESTION: &str = "# Goal\nShip\n\n## Status\nstate: waiting\n\n## Needs you\n- Yes or changes on the board?\n";
 
     #[test]
-    fn a_prompt_to_a_tab_whose_ledger_waits_on_the_owner_is_answered_with_the_ledger_nudge() {
-        let cases = [
-            ("a question", QUESTION, true),
-            ("waiting, no question", "# Goal\nShip\n\n## Status\nstate: waiting\n", true),
-            ("blocked", "# Goal\nShip\n\n## Status\nstate: blocked\n", true),
-            ("working", "# Goal\nShip\n\n## Status\nstate: working\n", false),
-            (
-                "done with a hand-off",
-                "# Goal\nShip\n\n## Status\nstate: done\n\n## Needs you\n- Merge it\n",
-                false,
-            ),
-        ];
-        for (what, text, nudged) in cases {
-            let f = fixture();
-            let token = f.register(1, "a");
-            avatar_store::mark_asked(&avatar_asked_file_beside(&notes_of(&f, &token))).unwrap();
-            save_ledger(&f, &token, text);
-            let response = f.send("POST", "/hook/claude", Some(&token), PROMPT);
-            if nudged {
-                assert_eq!(context_of(&response), prompt_answer::LEDGER_CONTEXT, "{what}");
-            } else {
-                assert_eq!(response.body, "{}", "{what}");
-            }
-        }
-    }
-
-    #[test]
-    fn a_prompt_to_a_tab_that_never_saved_a_ledger_asks_for_the_whole_ledger_this_turn() {
+    fn a_prompt_is_never_answered_with_an_ask_to_draw_an_avatar() {
         let f = fixture();
         let token = f.register(1, "a");
-        avatar_store::mark_asked(&avatar_asked_file_beside(&notes_of(&f, &token))).unwrap();
+        save_ledger(&f, &token, CALM);
+        let notes = notes_of(&f, &token);
         for _ in 0..2 {
             let response = f.send("POST", "/hook/claude", Some(&token), PROMPT);
-            assert_eq!(context_of(&response), prompt_answer::MISSING_LEDGER_CONTEXT);
+            assert_eq!(response.body, "{}");
         }
-        save_ledger(&f, &token, CALM);
-        let saved = f.send("POST", "/hook/claude", Some(&token), PROMPT);
-        assert_eq!(saved.body, "{}", "a saved ledger ends the asking");
+        assert_eq!(f.events().len(), 2, "the prompt is still a status event both times");
+        assert!(!notes.with_file_name("avatar-asked").exists(), "no marker is written");
+        assert_eq!(sent::load(&sent_file_beside(&notes)), []);
     }
 
     #[test]
-    fn the_missing_ledger_ask_shares_the_answer_with_the_avatar_ask_and_rides_only_a_claude_prompt()
-    {
-        let f = fixture();
-        let token = f.register(1, "a");
-        let first = f.send("POST", "/hook/claude", Some(&token), PROMPT);
-        let context = context_of(&first);
-        assert!(context.contains(avatar_ask::CONTEXT), "{context}");
-        assert!(context.contains(prompt_answer::MISSING_LEDGER_CONTEXT), "{context}");
-        for (path, body) in
-            [("/hook/claude", STOP), ("/hook/copilot", PROMPT), ("/hook/codex", PROMPT)]
-        {
-            assert_eq!(f.send("POST", path, Some(&token), body).body, "{}", "{path}");
+    fn a_prompt_to_a_tab_that_never_saved_a_report_or_waits_on_the_owner_adds_no_report_line() {
+        let cases = [
+            ("no report yet", None),
+            ("a question", Some(QUESTION)),
+            ("waiting, no question", Some("# Goal\nShip\n\n## Status\nstate: waiting\n")),
+            ("blocked", Some("# Goal\nShip\n\n## Status\nstate: blocked\n")),
+            ("working", Some("# Goal\nShip\n\n## Status\nstate: working\n")),
+        ];
+        for (what, text) in cases {
+            let f = fixture();
+            let token = f.register(1, "a");
+            if let Some(text) = text {
+                save_ledger(&f, &token, text);
+            }
+            for _ in 0..2 {
+                let response = f.send("POST", "/hook/claude", Some(&token), PROMPT);
+                assert_eq!(response.body, "{}", "{what}");
+            }
+            assert_eq!(sent::load(&sent_file_beside(&notes_of(&f, &token))), [], "{what}");
         }
     }
 
     #[test]
-    fn the_ledger_nudge_comes_once_per_waiting_ledger_and_keeps_the_avatar_ask() {
-        let f = fixture();
-        let token = f.register(1, "a");
-        save_ledger(&f, &token, QUESTION);
-        let first = f.send("POST", "/hook/claude", Some(&token), PROMPT);
-        let context = context_of(&first);
-        assert!(context.contains(avatar_ask::CONTEXT), "{context}");
-        assert!(context.contains(prompt_answer::LEDGER_CONTEXT), "{context}");
-        let second = f.send("POST", "/hook/claude", Some(&token), PROMPT);
-        assert_eq!(second.body, "{}", "once per question");
-        save_ledger(&f, &token, "# Goal\nShip\n\n## Status\nstate: working\n");
-        let third = f.send("POST", "/hook/claude", Some(&token), PROMPT);
-        assert_eq!(third.body, "{}", "the agent refreshed its ledger, nothing more to say");
-    }
-
-    #[test]
-    fn a_system_prompt_gets_neither_the_answered_line_nor_the_missing_report_ask_and_leaves_no_record()
-     {
-        let notice = r#"{"hook_event_name":"UserPromptSubmit","session_id":"s1","prompt":"<task-notification>\n<tool-use-id>toolu_9</tool-use-id>\n<status>completed</status>\n</task-notification>"}"#;
-        let compacted = r#"{"hook_event_name":"UserPromptSubmit","prompt":"<system-reminder>x</system-reminder>"}"#;
-        let f = fixture();
-        let token = f.register(1, "a");
-        avatar_store::mark_asked(&avatar_asked_file_beside(&notes_of(&f, &token))).unwrap();
-        let file = sent_file_beside(&notes_of(&f, &token));
-        for system in [notice, compacted] {
-            assert_eq!(
-                f.send("POST", "/hook/claude", Some(&token), system).body,
-                "{}",
-                "no report"
-            );
-        }
-        save_ledger(&f, &token, QUESTION);
-        for system in [notice, compacted] {
-            assert_eq!(
-                f.send("POST", "/hook/claude", Some(&token), system).body,
-                "{}",
-                "a question"
-            );
-        }
-        assert_eq!(sent::load(&file), []);
-        let answer = f.send("POST", "/hook/claude", Some(&token), PROMPT);
-        assert_eq!(context_of(&answer), prompt_answer::LEDGER_CONTEXT);
-        assert_eq!(sent::load(&file).len(), 1, "the owner's own message still counts");
-    }
-
-    #[test]
-    fn a_prompt_to_a_tab_whose_ledger_holds_open_items_is_answered_with_the_open_line() {
+    fn a_prompt_to_a_tab_whose_report_holds_open_items_is_answered_with_the_open_line() {
         let open =
             "# Goal\nShip\n\n## Status\nstate: working\n\n## Not verified\n- Verified live\n";
         let f = fixture();
         let token = f.register(1, "a");
-        avatar_store::mark_asked(&avatar_asked_file_beside(&notes_of(&f, &token))).unwrap();
         save_ledger(&f, &token, open);
         for _ in 0..2 {
             let response = f.send("POST", "/hook/claude", Some(&token), PROMPT);
@@ -1226,12 +995,31 @@ mod tests {
     }
 
     #[test]
+    fn only_a_claude_prompt_carries_a_line() {
+        let open =
+            "# Goal\nShip\n\n## Status\nstate: working\n\n## Not verified\n- Verified live\n";
+        let f = fixture();
+        let token = f.register(1, "a");
+        save_ledger(&f, &token, open);
+        let others = [
+            ("/hook/claude", STOP),
+            ("/hook/claude", r#"{"hook_event_name":"SessionStart"}"#),
+            ("/hook/copilot", PROMPT),
+            ("/hook/codex", PROMPT),
+            ("/hook/gemini", r#"{"hook_event_name":"BeforeAgent"}"#),
+        ];
+        for (path, body) in others {
+            let response = f.send("POST", path, Some(&token), body);
+            assert_eq!(response.body, "{}", "{path} {body}");
+        }
+    }
+
+    #[test]
     fn the_service_line_rides_a_prompt_once_and_again_only_when_its_text_changes() {
         let f = fixture();
         let one = f.register(1, "a");
         let two = f.register(2, "b");
         for token in [&one, &two] {
-            avatar_store::mark_asked(&avatar_asked_file_beside(&notes_of(&f, token))).unwrap();
             save_ledger(&f, token, CALM);
         }
         let line = |text: &str| HashMap::from([(1, text.to_owned()), (2, text.to_owned())]);
@@ -1249,78 +1037,6 @@ mod tests {
         assert_eq!(context_of(&ask(&one)), "db is crashed", "a list that came back is news");
         let told = sent::load(&sent_file_beside(&notes_of(&f, &one)));
         assert_eq!(told, [], "the service line leaves no record");
-    }
-
-    #[test]
-    fn only_the_one_off_prompt_context_leaves_a_record() {
-        let f = fixture();
-        let token = f.register(1, "a");
-        let file = sent_file_beside(&notes_of(&f, &token));
-        save_ledger(&f, &token, QUESTION);
-        for _ in 0..3 {
-            f.send("POST", "/hook/claude", Some(&token), PROMPT);
-        }
-        let told = sent::load(&file);
-        let reasons: Vec<Reason> = told.iter().map(|record| record.reason).collect();
-        assert_eq!(reasons, [Reason::Avatar, Reason::LedgerGuard]);
-        assert_eq!(told[0].text, avatar_ask::CONTEXT);
-        assert_eq!(told[0].because, because::AVATAR_ASK);
-        assert_eq!(told[1].text, prompt_answer::LEDGER_CONTEXT);
-        assert_eq!(told[1].because, because::LEDGER_NUDGE);
-    }
-
-    #[test]
-    fn the_missing_ledger_ask_leaves_one_record_until_a_ledger_is_saved() {
-        let f = fixture();
-        let token = f.register(1, "a");
-        avatar_store::mark_asked(&avatar_asked_file_beside(&notes_of(&f, &token))).unwrap();
-        let file = sent_file_beside(&notes_of(&f, &token));
-        for _ in 0..3 {
-            let response = f.send("POST", "/hook/claude", Some(&token), PROMPT);
-            assert_eq!(context_of(&response), prompt_answer::MISSING_LEDGER_CONTEXT);
-        }
-        let told = sent::load(&file);
-        assert_eq!(told.len(), 1);
-        assert_eq!(told[0].reason, Reason::LedgerGuard);
-        assert_eq!(told[0].text, prompt_answer::MISSING_LEDGER_CONTEXT);
-        assert_eq!(told[0].because, because::LEDGER_MISSING);
-    }
-
-    #[test]
-    fn a_new_stretch_of_waiting_after_a_ledger_save_leaves_one_more_nudge_record() {
-        let f = fixture();
-        let token = f.register(1, "a");
-        avatar_store::mark_asked(&avatar_asked_file_beside(&notes_of(&f, &token))).unwrap();
-        let file = sent_file_beside(&notes_of(&f, &token));
-        save_ledger(&f, &token, QUESTION);
-        f.send("POST", "/hook/claude", Some(&token), PROMPT);
-        f.send("POST", "/hook/claude", Some(&token), PROMPT);
-        assert_eq!(sent::load(&file).len(), 1);
-        std::thread::sleep(Duration::from_millis(30));
-        save_ledger(&f, &token, "# Goal\nShip\n\n## Status\nstate: working\n");
-        f.send("POST", "/hook/claude", Some(&token), PROMPT);
-        assert_eq!(sent::load(&file).len(), 1, "a working ledger is not nudged");
-        std::thread::sleep(Duration::from_millis(30));
-        save_ledger(&f, &token, QUESTION);
-        f.send("POST", "/hook/claude", Some(&token), PROMPT);
-        f.send("POST", "/hook/claude", Some(&token), PROMPT);
-        assert_eq!(sent::load(&file).len(), 2);
-    }
-
-    #[test]
-    fn the_ledger_nudge_rides_only_a_claude_prompt() {
-        let f = fixture();
-        let token = f.register(1, "a");
-        save_ledger(&f, &token, QUESTION);
-        let others = [
-            ("/hook/claude", STOP),
-            ("/hook/copilot", PROMPT),
-            ("/hook/gemini", r#"{"hook_event_name":"BeforeAgent"}"#),
-        ];
-        for (path, body) in others {
-            let response = f.send("POST", path, Some(&token), body);
-            assert_eq!(response.body, "{}", "{path}");
-        }
     }
 
     #[test]

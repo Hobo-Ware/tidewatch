@@ -22,9 +22,6 @@ pub mod because {
     pub const ASK_PUSH_CLICK: &str = "you asked the agent to push its new commits";
     pub const LEDGER_STOP: &str = "the progress report was not updated this turn";
     pub const LEDGER_FINAL: &str = "the progress report still said working at the end of the turn";
-    pub const LEDGER_MISSING: &str = "this tab has not saved a progress report yet";
-    pub const LEDGER_NUDGE: &str = "you answered and the progress report should show it";
-    pub const AVATAR_ASK: &str = "this tab has no avatar yet";
     pub const AVATAR_DRAW: &str = "you asked for an avatar";
     pub const AVATAR_REDRAW: &str = "you asked for a new avatar";
     pub const DUE_CLICK: &str = "you pressed Ask on the Due today card";
@@ -36,14 +33,10 @@ pub mod because {
     pub const MEESEEKS: &str = "a check of this Meeseeks' work did not pass";
     pub const BUILD_WORKFLOW: &str = "you ran Build workflow from this session";
     pub const BACKGROUND_JOB: &str = "a background job has reported no progress";
-    pub const REPORT_STALE: &str = "the report said working and nothing was reported for an hour";
-    pub const REPORT_QUIET: &str = "the agent kept working while its report went stale";
-    pub const REPORT_QUESTION: &str =
-        "the agent's last message asks something and its report has no needs_you";
 
     pub const NAMED: [&str; 1] = ["Auto"];
 
-    pub const ALL: [&str; 24] = [
+    pub const ALL: [&str; 18] = [
         AUTO_FIX,
         AUTO_PUSH,
         ASK_PR_CLICK,
@@ -51,9 +44,6 @@ pub mod because {
         ASK_PUSH_CLICK,
         LEDGER_STOP,
         LEDGER_FINAL,
-        LEDGER_MISSING,
-        LEDGER_NUDGE,
-        AVATAR_ASK,
         AVATAR_DRAW,
         AVATAR_REDRAW,
         DUE_CLICK,
@@ -65,9 +55,6 @@ pub mod because {
         MEESEEKS,
         BUILD_WORKFLOW,
         BACKGROUND_JOB,
-        REPORT_STALE,
-        REPORT_QUIET,
-        REPORT_QUESTION,
     ];
 }
 
@@ -392,6 +379,23 @@ mod tests {
             Record::new(Reason::LedgerGuard, because::LEDGER_STOP, "x", None).footer(),
             "Sent because the progress report was not updated this turn"
         );
+    }
+
+    #[test]
+    fn the_dropped_reminders_leave_no_reason_to_send_them() {
+        let dropped = [
+            "has not saved a progress report yet",
+            "you answered and the progress report should show it",
+            "has no avatar yet",
+            "nothing was reported for an hour",
+            "kept working while its report went stale",
+            "has no needs_you",
+        ];
+        for text in because::ALL {
+            for gone in dropped {
+                assert!(!text.contains(gone), "{text}");
+            }
+        }
     }
 
     #[test]

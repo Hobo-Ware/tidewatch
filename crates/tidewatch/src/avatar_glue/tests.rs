@@ -152,13 +152,6 @@ fn every_fake_icon_but_the_dark_sample_passes_the_readability_check() {
     }
 }
 
-fn wait_for_marker(fx: &Fx) {
-    let deadline = Instant::now() + Duration::from_secs(5);
-    while !avatar_asked_file_beside(&fx.notes()).exists() && Instant::now() < deadline {
-        std::thread::sleep(Duration::from_millis(5));
-    }
-}
-
 #[test]
 fn a_saved_avatar_that_cannot_be_read_shows_the_letter_is_removed_and_is_queued_once() {
     for (what, svg) in [("dark on the plate", DARK), ("past the circle", SPILLING)] {
@@ -174,9 +167,7 @@ fn a_saved_avatar_that_cannot_be_read_shows_the_letter_is_removed_and_is_queued_
         }
         assert_eq!(queued, [1], "{what}");
         assert!(host.get(1).is_none(), "{what}: the letter shows");
-        wait_for_marker(&fx);
         assert!(!fx.file().exists(), "{what}: the old file is gone");
-        assert!(avatar_asked_file_beside(&fx.notes()).exists(), "{what}: not asked a second time");
         std::thread::sleep(Duration::from_millis(50));
         fx.tick(&mut host, &[1]);
         assert_eq!(host.take_unreadable(), Vec::<u64>::new(), "{what}: queued once");
@@ -201,7 +192,6 @@ fn a_readable_saved_avatar_queues_nothing_and_a_host_that_writes_nothing_keeps_t
     assert!(host.get(1).is_none());
     assert_eq!(host.take_unreadable(), Vec::<u64>::new());
     assert!(fx.file().exists());
-    assert!(!avatar_asked_file_beside(&fx.notes()).exists());
 }
 
 #[test]
@@ -249,42 +239,4 @@ fn a_tab_that_takes_over_gets_its_own_avatar_back_and_the_menu_with_it() {
     assert!(!crate::agent_avatar::is_locked(&fx.ctx, 1));
     fx.until(&mut host, 1, |host| host.get(1).is_some());
     assert_eq!(host.get(1).unwrap().reason, "its own");
-}
-
-fn marker(fx: &Fx) -> PathBuf {
-    avatar_asked_file_beside(&fx.notes())
-}
-
-#[test]
-fn draw_avatar_leaves_the_marker_that_keeps_the_next_prompt_from_asking_again() {
-    let fx = Fx::new();
-    let mut host = Host::new(true, false);
-    host.mark_asked(&fx.notes(), &fx.ctx);
-    let deadline = Instant::now() + Duration::from_secs(5);
-    while !marker(&fx).exists() && Instant::now() < deadline {
-        std::thread::sleep(Duration::from_millis(5));
-        host.tick(&[], &fx.ctx);
-    }
-    assert!(marker(&fx).exists());
-}
-
-#[test]
-fn a_host_that_writes_nothing_leaves_no_marker() {
-    let fx = Fx::new();
-    let mut host = Host::new(false, false);
-    host.mark_asked(&fx.notes(), &fx.ctx);
-    std::thread::sleep(Duration::from_millis(100));
-    host.tick(&[], &fx.ctx);
-    assert!(!marker(&fx).exists());
-}
-
-#[test]
-fn a_meeseeks_is_exempt_from_the_ask_and_every_tab_is_in_a_host_that_writes_nothing() {
-    let fx = Fx::new();
-    let notes = fx.notes();
-    let facts = [Facts { id: 1, notes_file: &notes }, Facts { id: 2, notes_file: &notes }];
-    let mut host = Host::new(true, false);
-    host.fixed_faces(&[2], &fx.ctx);
-    assert_eq!(host.exempt_from_ask(&facts), [2]);
-    assert_eq!(Host::new(false, false).exempt_from_ask(&facts), [1, 2]);
 }

@@ -342,10 +342,6 @@ fn a_saved_ledger_that_still_says_working_is_asked_for_its_final_state() {
     assert_eq!(pastes.len(), 1);
     assert_eq!(
         (pastes[0].reason, pastes[0].because, pastes[0].text.as_str()),
-        (
-            Reason::LedgerGuard,
-            because::LEDGER_FINAL,
-            tidewatch_core::guard_ledger::FINAL_STATE_MESSAGE
-        )
+        (Reason::LedgerGuard, because::LEDGER_FINAL, tidewatch_core::guard_ledger::MESSAGE)
     );
 }

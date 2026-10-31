@@ -30,7 +30,6 @@ use crate::pane::{AgentTab, Body};
 use crate::panel_blocks::{Blocks, Kept, contradicted};
 use crate::progress_glue::today;
 use crate::progress_model::{look, look_as, questions};
-use crate::progress_nudge as nudge;
 use crate::progress_state::Facts;
 use crate::status_view::state_of;
 use crate::{due_view, flow_glue, reader_glue, reader_view};
@@ -86,7 +85,6 @@ impl Tidewatch {
         let tabs: std::collections::HashSet<u64> =
             self.tabs.items().iter().map(|tab| tab.id).collect();
         self.progress_ui.forget_except(|id| tabs.contains(&id));
-        self.report_nudges.forget_except(|id| tabs.contains(&id));
         self.drive_reported_states();
     }
 
@@ -111,9 +109,7 @@ impl Tidewatch {
             agent_avatar::Choice::Draw => {
                 let now = ctx.input(|i| i.time);
                 let send = Send::by_hand(DRAW_ASK, Said::Avatar, because::AVATAR_DRAW);
-                if self.ask_agent(tab, &send, ctx, now) {
-                    self.remember_avatar_ask(tab, ctx);
-                }
+                self.ask_agent(tab, &send, ctx, now);
             }
             agent_avatar::Choice::UseLetter => {
                 let notes = self
@@ -126,16 +122,6 @@ impl Tidewatch {
                     self.avatar_live.clear(tab, &notes, ctx);
                 }
             }
-        }
-    }
-
-    fn notes_of(&self, tab: u64) -> Option<std::path::PathBuf> {
-        self.tabs.items().iter().find(|t| t.id == tab)?.pane.agent.as_ref()?.run.notes_file.clone()
-    }
-
-    fn remember_avatar_ask(&mut self, tab: u64, ctx: &egui::Context) {
-        if let Some(notes) = self.notes_of(tab) {
-            self.avatar_live.mark_asked(&notes, ctx);
         }
     }
 
@@ -172,9 +158,6 @@ impl Tidewatch {
         self.avatar_live.fixed_faces(&meeseeks, ctx);
         self.avatar_live.tick(&facts, ctx);
         self.avatar_redraws.queue_unreadable(&mut self.avatar_live);
-        if let Some(listener) = self.hooks.listener() {
-            listener.exempt_from_avatar_ask(&self.avatar_live.exempt_from_ask(&facts));
-        }
         let agents: Vec<(u64, Agent)> =
             self.tabs.items().iter().map(|tab| (tab.id, self.job_agent(tab.id))).collect();
         let running: Vec<u64> = agents
@@ -258,50 +241,6 @@ impl Tidewatch {
                 }
                 Offer::Paused | Offer::Refuse(_) => {}
             }
-        }
-    }
-
-    /// Tells an idle agent whose report still says it works, an hour after it was saved, through the
-    /// one send gate. It hears this once per saved report; a working agent is never asked, the
-    /// report is asked for only at the end of a turn.
-    pub(super) fn drive_report_nudges(&mut self, ctx: &egui::Context, now: f64) {
-        if self.screenshot.is_some() {
-            return;
-        }
-        let now_ms = wall_ms() as i64;
-        let mut due = Vec::new();
-        let mut wake: Option<i64> = None;
-        for tab in self.tabs.items() {
-            let Some(agent) =
-                tab.pane.agent.as_ref().filter(|_| matches!(tab.pane.body, Body::Shell(_)))
-            else {
-                continue;
-            };
-            let known = self.progress.ledger(tab.id);
-            let facts = nudge::Facts {
-                idle: *agent.run.status() == AgentStatus::Done,
-                ledger: known.map(|known| &known.ledger),
-                saved_ms: known.and_then(|known| known.updated_ms),
-                now_ms,
-            };
-            let told = self.report_nudges.told(tab.id);
-            if let Some(found) = nudge::due(&facts, &told) {
-                due.push((tab.id, found, facts.saved_ms, nudge::text(found)));
-            }
-            wake = wake.into_iter().chain(nudge::wait_ms(&facts, &told)).min();
-        }
-        for (tab, found, saved, text) in due {
-            let send = Send::auto(text, Said::LedgerGuard, found.because());
-            match flow_glue::send_or_queue(&mut self.tabs, &mut self.flow, tab, send, ctx, now) {
-                Offer::Go | Offer::Wait => self.report_nudges.mark(tab, found, saved),
-                Offer::Paused | Offer::Refuse(_) => {}
-            }
-        }
-        if let Some(wait) = wake {
-            let wait = u64::try_from(wait).unwrap_or(0);
-            ctx.request_repaint_after(
-                Duration::from_millis(wait) + Duration::from_secs_f64(WAKE_SLACK_S),
-            );
         }
     }
 

@@ -31,7 +31,7 @@ use crate::remote::session_name;
 use crate::restore::{ResumeError, resume_command};
 use crate::trust::TrustCli;
 use crate::trust_apply::{Grant, Outcome};
-use crate::{services, services_mcp};
+use crate::{services, services_mcp, workflow_detect};
 
 const MCP_CONFIG_FILE: &str = "mcp.json";
 const CLAUDE_SETTINGS_FILE: &str = "claude-settings.json";
@@ -352,8 +352,8 @@ fn remote_name(input: &PrepareInput) -> String {
     session_name(repo, input.worktree_tab.then_some(input.tab))
 }
 
-/// The house style this agent reads: the user's file with the ledger format and the repo's
-/// must-do steps appended, in the tab's state folder. The user's file is not changed.
+/// The house style this agent reads: the user's file with the launch text, the repo's workflow and
+/// its must-do steps appended, in the tab's state folder. The user's file is not changed.
 fn write_agent_style(input: &PrepareInput, shared: &Path) -> std::io::Result<PathBuf> {
     let paths = input.paths;
     let _ = checklist::ensure(paths);
@@ -365,6 +365,7 @@ fn write_agent_style(input: &PrepareInput, shared: &Path) -> std::io::Result<Pat
             house_style::Role::meeseeks_for,
         ),
         TurnEnd::of(input.agent.wiring),
+        input.worktree_tab.then(|| workflow_detect::profile_for(paths, input.repo)),
     );
     if let Some(block) = services_mcp::house_block(&services::services_for(paths, input.repo)) {
         text.push('\n');
@@ -682,9 +683,9 @@ mod tests {
         let written = || std::fs::read_to_string(&style).unwrap();
         prepare(&input("Sensei https://github.com/acme/web/pull/7")).unwrap();
         assert!(written().contains("open no new pull request"), "{}", written());
-        assert!(!written().contains("gh pr create --draft"));
+        assert!(!written().contains("opens its own pull request"));
         prepare(&input("Add a retry")).unwrap();
-        assert!(written().contains("opens its own draft pull request"));
+        assert!(written().contains("opens its own pull request"));
         prepare_resume(&input("PR 7 needs a rebase"), SESSION).unwrap();
         assert!(written().contains("open no new pull request"));
     }
@@ -834,13 +835,14 @@ mod tests {
     }
 
     #[test]
-    fn the_agent_is_given_the_house_style_with_the_report_format_and_the_stage_kinds() {
+    fn the_agent_is_given_the_house_style_with_the_launch_text_and_the_repos_workflow() {
         let fx = Fixture::new();
         fx.run("claude", &profile("claude", Level::Edits), true, "", None).unwrap();
         let text = agent_style(&fx);
         assert!(text.starts_with(house_style::DEFAULT_HOUSE_STYLE.trim_end()));
-        assert!(text.contains("## Progress report"));
-        assert!(text.contains("`research`"));
+        assert!(text.contains("## Report"));
+        assert!(text.contains("`get_progress`"));
+        assert!(text.contains("## This repo's workflow"));
         assert!(!text.contains("Must-do steps"));
         assert!(fx.paths.checklist_file().is_file(), "checklist.md is installed on first launch");
     }
@@ -849,11 +851,11 @@ mod tests {
     fn a_yolo_agent_reads_the_autonomous_block_and_an_ask_agent_does_not() {
         let fx = Fixture::new();
         fx.run("claude", &profile("claude", Level::Auto), true, "", None).unwrap();
-        assert!(!agent_style(&fx).contains("You run autonomously"));
+        assert!(!agent_style(&fx).contains("You run without supervision"));
         fx.run("claude", &profile("claude", Level::Yolo), true, "", None).unwrap();
         let text = agent_style(&fx);
-        assert!(text.contains("## You run autonomously"), "{text}");
-        assert!(text.contains("product design and architecture choices"));
+        assert!(text.contains("## You run without supervision"), "{text}");
+        assert!(text.contains("product or architecture choices"));
     }
 
     #[test]
@@ -867,7 +869,7 @@ mod tests {
         let text = agent_style(&fx);
         assert!(text.contains("- `db`: `pscale connect shop main --port 3309`\n"), "{text}");
         assert!(text.contains("`service_log`") && text.contains("`restart_service`"));
-        assert!(text.find("## Progress report") < text.find("## Repo services"));
+        assert!(text.find("## Report") < text.find("## Repo services"));
     }
 
     #[test]
@@ -878,11 +880,10 @@ mod tests {
         std::fs::write(fx.paths.checklist_file(), "### 1. Mine\n- [ ] my item\n").unwrap();
         fx.run("claude", &profile("claude", Level::Edits), true, "", None).unwrap();
         let text = agent_style(&fx);
-        assert!(text.starts_with("my own style\n\n## Tidewatch tool guidance"), "{text}");
+        assert!(text.starts_with("my own style\n\n# Working in Tidewatch"), "{text}");
         assert!(text.contains("`report_job`") && text.contains("`$TIDEWATCH_PROGRESS`"));
-        assert!(text.contains("`set_avatar`"));
-        assert!(text.contains("\n\n## Progress report"), "{text}");
-        assert!(text.ends_with("not stages:\n\n- Mine\n- [ ] my item\n"), "{text}");
+        assert!(text.contains("\n\n## Report"), "{text}");
+        assert!(text.contains("not stages:\n\n- Mine\n- [ ] my item\n"), "{text}");
         assert_eq!(std::fs::read_to_string(fx.paths.house_style_file()).unwrap(), "my own style\n");
         assert_eq!(
             std::fs::read_to_string(fx.paths.checklist_file()).unwrap(),
@@ -918,7 +919,7 @@ mod tests {
         let text =
             std::fs::read_to_string(fx.paths.tab_house_style_file(repo.path(), "brave-otter"))
                 .unwrap();
-        assert!(text.ends_with("not stages:\n\n- Repo way\n- [ ] repo item\n"));
+        assert!(text.contains("not stages:\n\n- Repo way\n- [ ] repo item\n"));
     }
 
     #[test]

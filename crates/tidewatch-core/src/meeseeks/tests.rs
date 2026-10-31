@@ -127,6 +127,18 @@ fn a_failed_check_pastes_the_fix_note_counts_once_and_the_next_done_starts_over(
 }
 
 #[test]
+fn a_fix_note_asks_for_the_fix_and_leaves_how_to_save_it_to_the_repos_workflow() {
+    let tests = fix_note(Step::Tests, "1 failed");
+    let hand_off = fix_note(Step::HandOff, "no pull request");
+    for note in [&tests, &hand_off] {
+        assert!(note.contains("meeseeks_done again"), "{note}");
+        assert!(!note.contains("commit"), "{note}");
+    }
+    assert!(tests.contains("Fix them, then call meeseeks_done again."), "{tests}");
+    assert!(hand_off.contains("fix it, then call meeseeks_done again."), "{hand_off}");
+}
+
+#[test]
 fn an_event_for_another_step_or_phase_changes_nothing() {
     let mut meeseeks = all_on();
     let stale = [

@@ -1,5 +1,5 @@
-//! The ledger guard: asks the agent to call `update_progress` when a turn ends with no ledger saved
-//! in it, or with a ledger saved in it that still says `state: working`.
+//! The ledger guard, the one report check left: at the end of a turn it asks the agent for its report
+//! once, in one calm line, when the turn saved none or the saved one still says `state: working`.
 
 use std::io::{Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
@@ -18,25 +18,13 @@ const ASKED_FILE: &str = "ledger-asked";
 const NOTES_FILE: &str = "notes.json";
 const TAIL_BYTES: u64 = 512 * 1024;
 
-pub const MESSAGE: &str = "REPORT GUARD - the Tidewatch progress report is missing or was not updated this turn. Call `update_progress` now with the whole report: state, now, your stages and steps. A question for the user goes in needs_you, what you wait on in waiting_on, and every later item in scheduled. A notes file of your own does not count.";
-
-pub const FINAL_STATE_MESSAGE: &str = "REPORT GUARD - the turn is ending but your Tidewatch report still says state `working`. Call `update_progress` once more with the final state: `needs_you` (a question for the user, with its options), `waiting` (name the job, PR, date or event in waiting_on), `blocked` or `done` (only when the whole task is finished), and move every later item into scheduled.";
+pub const MESSAGE: &str = "Before you stop: your progress report wasn't updated this turn, or still says working. Send it with the final state.";
 
 /// What the guard asks of the agent at the end of a turn.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Ask {
     Ledger,
     FinalState,
-}
-
-impl Ask {
-    #[must_use]
-    pub fn message(self) -> &'static str {
-        match self {
-            Self::Ledger => MESSAGE,
-            Self::FinalState => FINAL_STATE_MESSAGE,
-        }
-    }
 }
 
 /// What the Stop decision needs to know, read once.
@@ -208,9 +196,9 @@ pub fn run(stop: bool, stdin: &str, env: &GuardEnv) -> i32 {
         Ask::Ledger => because::LEDGER_STOP,
         Ask::FinalState => because::LEDGER_FINAL,
     };
-    let told = Record::new(Reason::LedgerGuard, told_because, ask.message(), None);
+    let told = Record::new(Reason::LedgerGuard, told_because, MESSAGE, None);
     let _ = sent::append(&sent_file_beside(&tab.join(NOTES_FILE)), &told);
-    eprintln!("{}", ask.message());
+    eprintln!("{MESSAGE}");
     2
 }
 
@@ -306,23 +294,6 @@ mod tests {
     }
 
     #[test]
-    fn the_final_state_ask_names_the_tool_and_the_three_states() {
-        assert!(FINAL_STATE_MESSAGE.is_ascii() && !FINAL_STATE_MESSAGE.contains('\n'));
-        for needle in [
-            "update_progress",
-            "state `working`",
-            "needs_you",
-            "waiting_on",
-            "blocked",
-            "done",
-            "scheduled",
-        ] {
-            assert!(FINAL_STATE_MESSAGE.contains(needle), "{needle}");
-        }
-        assert_eq!(Ask::FinalState.message(), FINAL_STATE_MESSAGE);
-    }
-
-    #[test]
     fn the_ledger_file_decides_whether_it_still_says_working() {
         let dir = tempfile::tempdir().unwrap();
         let file = dir.path().join("progress.md");
@@ -390,10 +361,11 @@ mod tests {
     }
 
     #[test]
-    fn the_message_is_one_ascii_line_that_names_the_tool_and_where_each_kind_of_fact_goes() {
+    fn the_message_is_one_calm_ascii_line_that_names_what_to_send() {
         assert!(MESSAGE.is_ascii() && !MESSAGE.contains('\n'));
-        for needle in ["update_progress", "state, now", "needs_you", "waiting_on", "scheduled"] {
-            assert!(MESSAGE.contains(needle), "{needle}");
-        }
+        assert_eq!(MESSAGE.matches("progress report").count(), 1);
+        assert!(MESSAGE.starts_with("Before you stop:"));
+        assert!(MESSAGE.ends_with("Send it with the final state."));
+        assert!(!MESSAGE.contains("GUARD"), "no shouting");
     }
 }
