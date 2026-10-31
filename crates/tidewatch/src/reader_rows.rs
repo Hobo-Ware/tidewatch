@@ -57,6 +57,7 @@ pub(crate) enum Asked {
     Answered(Vec<(String, String)>),
     /// The user skipped the questions, or the agent's tool reported a refusal.
     Declined,
+    Ended,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -319,6 +320,23 @@ impl Rows {
                 _ => false,
             })
             .collect()
+    }
+
+    pub(crate) fn close_ended_asks(&mut self) -> bool {
+        let mut closed = false;
+        for row in &mut self.list {
+            if let Kind::Question(q) = &mut row.kind
+                && q.asked == Asked::Pending
+                && matches!(&q.origin, Origin::Tidewatch(held) if held.has_ended())
+            {
+                q.asked = Asked::Ended;
+                closed = true;
+            }
+        }
+        if closed {
+            self.revision += 1;
+        }
+        closed
     }
 
     /// The oldest of them.
@@ -799,6 +817,22 @@ mod tests {
         assert!(rows.set_asked(0, Asked::Declined));
         assert_eq!(rows.pending_question().map(|row| row.seq), Some(1));
         assert!(!rows.set_asked(99, Asked::Declined));
+    }
+
+    #[test]
+    fn a_question_whose_call_ended_closes_and_the_others_stay_open() {
+        let (ended, _keep_ended) = std::sync::mpsc::channel();
+        let (held, _keep_held) = std::sync::mpsc::channel();
+        let (ended, held) = (AskReply::new(ended), AskReply::new(held));
+        let mut rows = Rows::default();
+        rows.push_ask(one_question(), ended.clone());
+        rows.push_ask(one_question(), held);
+        assert!(!rows.close_ended_asks(), "nothing ended yet");
+        ended.end_mark().mark();
+        assert!(rows.close_ended_asks());
+        assert_eq!(asked_of(&rows, 0), Asked::Ended);
+        assert_eq!(rows.pending_question().map(|row| row.seq), Some(1));
+        assert!(!rows.close_ended_asks(), "closing is done once");
     }
 
     #[test]

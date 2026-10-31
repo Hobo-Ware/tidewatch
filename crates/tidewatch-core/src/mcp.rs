@@ -376,7 +376,9 @@ fn ask_user(
         }
     };
     let (sender, receiver) = channel();
-    emit(TabEvent::Ask { questions: questions.clone(), reply: AskReply::new(sender) });
+    let reply = AskReply::new(sender);
+    let end = reply.end_mark();
+    emit(TabEvent::Ask { questions: questions.clone(), reply });
     let started = Instant::now();
     let text = loop {
         match receiver.recv_timeout(wait.poll) {
@@ -390,6 +392,7 @@ fn ask_user(
             }
         }
     };
+    end.mark();
     (text, false)
 }
 
@@ -1190,15 +1193,20 @@ mod tests {
         assert!(started.elapsed() >= Duration::from_millis(400));
         assert_eq!(reply["result"]["isError"], false);
         assert_eq!(result_text(&reply), question::TIMED_OUT_TEXT);
+        assert!(kept.borrow().as_ref().unwrap().has_ended(), "the card learns the call is over");
         assert!(!kept.borrow().as_ref().unwrap().send(Reply::Skipped));
     }
 
     #[test]
     fn ask_user_stops_waiting_when_the_client_hangs_up() {
+        let kept: RefCell<Option<AskReply>> = RefCell::new(None);
         let started = Instant::now();
-        let (reply, _) = ask_with(&questions_args(), &|| false, |_| {});
+        let (reply, _) = ask_with(&questions_args(), &|| false, |held| {
+            *kept.borrow_mut() = Some(held.clone());
+        });
         assert!(started.elapsed() < Duration::from_millis(300));
         assert_eq!(result_text(&reply), question::TIMED_OUT_TEXT);
+        assert!(kept.borrow().as_ref().unwrap().has_ended());
     }
 
     #[test]

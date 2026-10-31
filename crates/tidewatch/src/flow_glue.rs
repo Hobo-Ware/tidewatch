@@ -39,6 +39,7 @@ pub(crate) fn facts<T>(
     views: &HashMap<u64, TabView>,
     pr: &pr_glue::Host,
     active: u64,
+    now: f64,
 ) -> Vec<TabFacts> {
     tabs.items()
         .iter()
@@ -56,7 +57,7 @@ pub(crate) fn facts<T>(
             Some(TabFacts {
                 id: tab.id,
                 active: tab.id == active,
-                status: agent.run.status().clone(),
+                status: agent.run.at_rest_status(now),
                 deliverable,
                 agent_id,
                 dir: worktree.path.clone(),

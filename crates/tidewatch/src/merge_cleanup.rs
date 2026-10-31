@@ -198,6 +198,17 @@ mod tests {
     }
 
     #[test]
+    fn an_agent_silent_for_ten_minutes_no_longer_holds_the_cleanup() {
+        use tidewatch_core::status::{REST_AFTER_SECS, at_rest};
+        let quiet = AgentStatus::NeedsYou(Reason::Quiet);
+        let silent = |secs| Busy::of(&at_rest(&quiet, secs), None, false);
+        assert!(silent(REST_AFTER_SECS - 1.0).working);
+        assert!(!silent(REST_AFTER_SECS).working);
+        let working = at_rest(&AgentStatus::Working, REST_AFTER_SECS);
+        assert!(!Busy::of(&working, None, false).any());
+    }
+
+    #[test]
     fn the_wait_line_names_every_reason_in_one_plain_sentence() {
         let all = Busy { working: true, open_ledger: true, job: true };
         let two_commits = Cleanup::Checked(Report { local_commits: Some(2), ..Report::default() });

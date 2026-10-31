@@ -3,7 +3,7 @@
 
 use tidewatch_core::background;
 use tidewatch_core::civil_date::Date;
-use tidewatch_core::job::Agent;
+use tidewatch_core::job::{Agent, JobBoard};
 use tidewatch_core::progress::{Ledger, State};
 
 use std::path::{Path, PathBuf};
@@ -172,7 +172,18 @@ impl Tidewatch {
         }
         let agents: Vec<(u64, Agent)> =
             self.tabs.items().iter().map(|tab| (tab.id, self.job_agent(tab.id))).collect();
+        let running: Vec<u64> = agents
+            .iter()
+            .map(|(id, _)| *id)
+            .filter(|id| self.job_live.board(*id).is_some_and(JobBoard::has_running))
+            .collect();
         let mut wake = self.job_live.tick(&facts, &agents, ctx, now_ms);
+        let ended =
+            running.iter().any(|id| !self.job_live.board(*id).is_some_and(JobBoard::has_running));
+        if ended {
+            self.parking.look_again();
+            ctx.request_repaint();
+        }
         for tab in self.tabs.items() {
             let (Body::Shell(term), Some(_)) = (&tab.pane.body, &tab.pane.agent) else { continue };
             let later = self.job_live.scan(tab.id, term.output_gen(), now_ms, || {
@@ -496,6 +507,7 @@ impl Tidewatch {
                 AgentStatus::NeedsYou(Reason::Permission | Reason::Question)
             ),
             turn_started_ms: agent.run.turn_started_at().map(wall),
+            rested_at_ms: agent.run.rested_at().map(wall),
         }
     }
 

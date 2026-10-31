@@ -1,4 +1,4 @@
-use tidewatch_core::job::{Agent, Report};
+use tidewatch_core::job::{Agent, JobBoard, Report, SILENT_AFTER_MS};
 
 use super::*;
 
@@ -125,6 +125,19 @@ fn a_tab_parked_for_its_job_returns_when_the_job_finishes_or_stalls_and_not_whil
     shorter.work = Work::Running;
     let gone = parked(quiet(3, 60), Why::Job);
     assert_eq!(decide_for(&[running, shorter, gone], Some(FOUR_HOURS)), [Change::Unpark(3)]);
+}
+
+#[test]
+fn a_tab_parked_for_a_job_that_ended_silent_returns() {
+    let start = 1_700_000_000_000;
+    let mut board = JobBoard::default();
+    board.report(&Report::named("import"), start);
+    let long_after = start + SILENT_AFTER_MS;
+    assert_eq!(work_of(Some(&board), long_after), Work::Long);
+    board.tick(long_after, Agent::Idle);
+    let mut tab = parked(quiet(1, 60), Why::Job);
+    tab.work = work_of(Some(&board), long_after);
+    assert_eq!(decide_for(&[tab], Some(FOUR_HOURS)), [Change::Unpark(1)]);
 }
 
 #[test]
