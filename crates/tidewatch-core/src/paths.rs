@@ -163,6 +163,12 @@ impl TidewatchPaths {
         self.config_dir.join("services.toml")
     }
 
+    /// The per-repo workflow profile: how branches catch up, where fixes go, how pull requests open.
+    #[must_use]
+    pub fn workflow_file(&self) -> PathBuf {
+        self.config_dir.join("workflow.toml")
+    }
+
     /// Holds the `git-remote-tidewatch-no-push` helper that agent tabs get on their `PATH`.
     #[must_use]
     pub fn guard_bin_dir(&self) -> PathBuf {
@@ -524,6 +530,12 @@ mod tests {
     fn the_repo_services_are_a_setting_not_a_file_in_any_repo() {
         let paths = paths();
         assert_eq!(paths.services_file(), paths.config_dir().join("services.toml"));
+    }
+
+    #[test]
+    fn the_workflow_profiles_are_a_setting_not_a_file_in_any_repo() {
+        let paths = paths();
+        assert_eq!(paths.workflow_file(), paths.config_dir().join("workflow.toml"));
     }
 
     #[test]
