@@ -261,7 +261,10 @@ impl Tidewatch {
         let group = self.tabs.active_group();
         let here = &self.workspaces[group];
         let several = self.workspaces.len() > 1;
-        let resp = repo_chip::show(ui, &here.chip_label());
+        let labels: Vec<String> =
+            self.workspaces.iter().map(crate::repo::Workspace::chip_label).collect();
+        let width = repo_chip::width_for(ui, labels.iter().map(String::as_str));
+        let resp = repo_chip::show(ui, &here.chip_label(), width);
         let mut tip = format!("{}\n{}", here.chip_label(), here.dir().display());
         if several {
             tip = format!(
