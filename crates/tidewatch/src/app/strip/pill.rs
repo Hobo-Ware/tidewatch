@@ -4,13 +4,12 @@ use egui::{
     Align2, Color32, CornerRadius, Id, Margin, Pos2, Rect, RectAlign, Sense, Stroke, StrokeKind,
     Ui, pos2, vec2,
 };
-use stdusk_egui::colors;
 
 use crate::agent_avatar::{self, Face};
 use crate::brand;
 use crate::park::{Line, Tone};
 use crate::remote_pill::Popover;
-use crate::screen_kit::body;
+use crate::screen_kit::{body, menu_label, selection_row};
 
 pub(crate) const PILL_H: f32 = 28.0;
 const FACE: f32 = 20.0;
@@ -22,8 +21,11 @@ const CHEVRON_W: f32 = 12.0;
 const CHEVRON_GAP: f32 = 8.0;
 const LABEL_SIZE: f32 = 13.0;
 const MOST_FACES: usize = 3;
-const POPOVER_W: f32 = 420.0;
-const ROW_H: f32 = 52.0;
+const POPOVER_W: f32 = 400.0;
+const POPOVER_MARGIN: i8 = 6;
+const ROW_H: f32 = 48.0;
+const LINE_DOT: f32 = 6.0;
+const LINE_DOT_GAP: f32 = 6.0;
 const ROW_FACE: f32 = 28.0;
 const ROW_PAD: f32 = 10.0;
 const ROW_GAP: f32 = 12.0;
@@ -98,11 +100,11 @@ pub(crate) struct Output {
     pub(crate) picked: Option<usize>,
 }
 
-fn tone_ink(tone: Tone) -> Color32 {
+fn dot_ink(tone: Tone) -> Color32 {
     match tone {
         Tone::Teal => brand::TEAL,
-        Tone::Blue => brand::BLUE_TEXT,
-        Tone::Muted => brand::MUTED,
+        Tone::Blue => brand::BLUE,
+        Tone::Muted => brand::FAINT,
     }
 }
 
@@ -187,15 +189,16 @@ fn list(response: &egui::Response, rows: &[Row], placed: &mut Placed) -> Option<
             spread: 0,
             color: Color32::from_black_alpha(110),
         })
-        .inner_margin(Margin::same(8));
+        .inner_margin(Margin::same(POPOVER_MARGIN));
     egui::Popup::menu(response)
         .align(RectAlign::BOTTOM_START)
         .gap(6.0)
         .frame(frame)
         .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
         .show(|ui| {
-            ui.set_width(POPOVER_W - 16.0);
+            ui.set_width(POPOVER_W - f32::from(POPOVER_MARGIN) * 2.0);
             ui.spacing_mut().item_spacing.y = 2.0;
+            menu_label(ui, &format!("Parked \u{b7} {}", rows.len()), "Click to bring back");
             for (n, row) in rows.iter().enumerate() {
                 let (rect, resp) =
                     ui.allocate_exact_size(vec2(ui.available_width(), ROW_H), Sense::click());
@@ -212,9 +215,7 @@ fn list(response: &egui::Response, rows: &[Row], placed: &mut Placed) -> Option<
 
 fn paint_row(ui: &Ui, rect: Rect, row: &Row, hovered: bool) {
     let painter = ui.painter();
-    if hovered {
-        painter.rect_filled(rect, CornerRadius::same(8), colors::hover_elevated());
-    }
+    selection_row(painter, rect, false, hovered);
     let face = Rect::from_min_size(
         pos2(rect.left() + ROW_PAD, rect.center().y - ROW_FACE / 2.0),
         vec2(ROW_FACE, ROW_FACE),
@@ -222,11 +223,22 @@ fn paint_row(ui: &Ui, rect: Rect, row: &Row, hovered: bool) {
     agent_avatar::paint_face(ui.ctx(), painter, face, &row.face);
     let left = face.right() + ROW_GAP;
     let room = (rect.right() - ROW_PAD - left).max(1.0);
+    let line_left = left + LINE_DOT + LINE_DOT_GAP;
     let name = painter.layout(row.name.clone(), body(14.0), brand::TEXT, room);
-    let line = painter.layout(row.line.text.clone(), body(12.5), tone_ink(row.line.tone), room);
-    let block = name.size().y + line.size().y;
-    let top = rect.center().y - block / 2.0;
-    let line_top = top + name.size().y;
+    let line = painter.layout(
+        row.line.text.clone(),
+        body(12.0),
+        brand::MUTED,
+        room - LINE_DOT - LINE_DOT_GAP,
+    );
+    let gap = 2.0;
+    let top = rect.center().y - (name.size().y + gap + line.size().y) / 2.0;
+    let line_top = top + name.size().y + gap;
+    painter.circle_filled(
+        pos2(left + LINE_DOT / 2.0, line_top + line.size().y / 2.0),
+        LINE_DOT / 2.0,
+        dot_ink(row.line.tone),
+    );
     painter.galley(pos2(left, top), name, brand::TEXT);
-    painter.galley(pos2(left, line_top), line, brand::MUTED);
+    painter.galley(pos2(line_left, line_top), line, brand::MUTED);
 }

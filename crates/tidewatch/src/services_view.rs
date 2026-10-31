@@ -1,7 +1,9 @@
 //! The services pill at the right end of the tab strip (one 8 px dot per service, then
-//! `N services`, a 1 px outline and no fill), the 440 px list it opens (a card per service; the
-//! selected one shows Logs, Restart and Stop while it runs and Logs and Start while it does not;
-//! a menu with Edit and Remove opens in its own area and leaves the list open), and the dialogs:
+//! `N services`, a 1 px outline and no fill), the 400 px list it opens (a 48 px row per service
+//! under a `SERVICES` label: its actions show at the right end while the pointer is over the row
+//! or the row is selected, Restart and a `...` menu while it runs, Start and the menu while it does
+//! not, and a crashed row has a warm tint and its Start always; the menu holds Logs, Stop, Edit and
+//! Remove, opens beside the list so it hides no row, and leaves the list open), and the dialogs:
 //! Add or Edit service, and the one confirm before Remove.
 
 use egui::containers::menu::menu_style;
@@ -10,6 +12,7 @@ use egui::{
     Align, Align2, Color32, CornerRadius, Id, Key, Layout, Margin, Modifiers, PopupCloseBehavior,
     PopupKind, Rect, RectAlign, Sense, Stroke, StrokeKind, Ui, UiBuilder, pos2, vec2,
 };
+use stdusk_egui::ui::icons;
 use stdusk_egui::widgets::{menu_item, style_menu};
 use tidewatch_core::service_supervisor::Word;
 use tidewatch_core::services::{Service, problems};
@@ -18,7 +21,8 @@ use crate::brand;
 use crate::new_tab_fields::section_label;
 use crate::remote_pill::Popover;
 use crate::screen_kit::{
-    Size, TEXT_BODY, TEXT_TAG, body, button_width, danger_button, dialog_frame, footer_row, mono,
+    Glyph, MENU_ROW_H, Size, TEXT_BODY, TEXT_TAG, body, button_width, danger_button, dialog_frame,
+    footer_row, glyph_button, menu_divider, menu_label_with, menu_row, mono, primary_button,
     primary_button_keyed, quiet_button, selection_row,
 };
 use crate::services_glue::{Command, Row};
@@ -30,12 +34,12 @@ const DOT: f32 = 8.0;
 const DOT_GAP: f32 = 5.0;
 const DOT_TEXT_GAP: f32 = 10.0;
 const MOST_DOTS: usize = 8;
-const LIST_W: f32 = 440.0;
-const LIST_MARGIN: i8 = 8;
-const CARD_H: f32 = 76.0;
-const CARD_PAD: f32 = 12.0;
-const BUTTONS_H: f32 = Size::Compact.height() + 10.0;
-const CARD_GAP: f32 = 2.0;
+const LIST_W: f32 = 400.0;
+const LIST_MARGIN: i8 = 6;
+const ROW_H: f32 = 48.0;
+const ROW_PAD: f32 = 10.0;
+const ROW_GAP: f32 = 2.0;
+const ACTION_GAP: f32 = 4.0;
 const DIALOG_W: f32 = 480.0;
 const MENU_GAP: f32 = 4.0;
 const MENU_W: f32 = 210.0;
@@ -46,10 +50,16 @@ const MENU_W: f32 = 210.0;
 pub(crate) struct Placed {
     pub(crate) pill: Option<Rect>,
     pub(crate) buttons: Vec<(&'static str, Rect)>,
+    pub(crate) rows: Vec<Rect>,
+    pub(crate) list: Option<Rect>,
 }
 
 pub(crate) fn placed_id() -> Id {
     Id::new("services-pill-placed")
+}
+
+fn note_row(ctx: &egui::Context, rect: Rect) {
+    ctx.data_mut(|data| data.get_temp_mut_or_default::<Placed>(placed_id()).rows.push(rect));
 }
 
 fn note_button(ctx: &egui::Context, name: &'static str, rect: Rect) {
@@ -107,6 +117,7 @@ pub(crate) struct Memory {
     dialog: Option<Dialog>,
     logs: Option<Logs>,
     popover: Popover,
+    pending: Option<Action>,
 }
 
 /// The service whose terminal shows in place of the tab's: the tab it was opened from, `None`
@@ -136,6 +147,7 @@ impl Memory {
             dialog,
             logs,
             popover: if open { Popover::Open } else { Popover::OnClick },
+            pending: None,
         }
     }
 
@@ -194,14 +206,6 @@ pub(crate) fn is_running(word: Word) -> bool {
     matches!(word, Word::Running | Word::Starting | Word::Restarting)
 }
 
-fn line_ink(word: Word) -> Color32 {
-    match word {
-        Word::Crashed => brand::ORANGE,
-        Word::Starting | Word::Restarting => brand::TEAL_TEXT,
-        Word::Running | Word::Stopped => brand::MUTED,
-    }
-}
-
 fn label_width(ui: &Ui, text: &str) -> f32 {
     ui.painter().layout_no_wrap(text.to_owned(), body(Size::Compact.font()), brand::SOFT).size().x
 }
@@ -219,7 +223,7 @@ pub(crate) fn pill_width(ui: &Ui, count: usize) -> f32 {
 }
 
 /// The pill and, while it is open, the list. Nothing is drawn for no services.
-pub(crate) fn pill(ui: &mut Ui, rows: &[Row], memory: &mut Memory) -> Option<Action> {
+pub(crate) fn pill(ui: &mut Ui, rows: &[Row], repo: &str, memory: &mut Memory) -> Option<Action> {
     if rows.is_empty() {
         return None;
     }
@@ -227,7 +231,7 @@ pub(crate) fn pill(ui: &mut Ui, rows: &[Row], memory: &mut Memory) -> Option<Act
         ui.allocate_exact_size(vec2(pill_width(ui, rows.len()), PILL_H), Sense::hover());
     let response = ui.interact(rect, ui.id().with("services-pill"), Sense::click());
     ui.ctx().data_mut(|data| {
-        data.insert_temp(placed_id(), Placed { pill: Some(rect), buttons: Vec::new() })
+        data.insert_temp(placed_id(), Placed { pill: Some(rect), ..Placed::default() })
     });
     let open = egui::Popup::is_id_open(ui.ctx(), egui::Popup::default_response_id(&response));
     let line = if response.hovered() || open { outline(rows) } else { dim(outline(rows)) };
@@ -251,14 +255,19 @@ pub(crate) fn pill(ui: &mut Ui, rows: &[Row], memory: &mut Memory) -> Option<Act
     if memory.popover == Popover::Open {
         egui::Popup::open_id(ui.ctx(), egui::Popup::default_response_id(&response));
     }
-    list(&response, rows, memory)
+    list(&response, rows, repo, memory)
 }
 
 fn dim(color: Color32) -> Color32 {
     if color == brand::FIELD_LINE { color } else { color.gamma_multiply(0.7) }
 }
 
-fn list(response: &egui::Response, rows: &[Row], memory: &mut Memory) -> Option<Action> {
+fn list(
+    response: &egui::Response,
+    rows: &[Row],
+    repo: &str,
+    memory: &mut Memory,
+) -> Option<Action> {
     let mut action = None;
     let frame = egui::Frame::new()
         .fill(brand::CARD)
@@ -284,15 +293,17 @@ fn list(response: &egui::Response, rows: &[Row], memory: &mut Memory) -> Option<
         .close_behavior(close_behavior)
         .show(|ui| {
             ui.set_width(LIST_W - f32::from(LIST_MARGIN) * 2.0);
-            ui.spacing_mut().item_spacing.y = CARD_GAP;
+            ui.spacing_mut().item_spacing.y = ROW_GAP;
             ui.ctx().request_repaint_after(std::time::Duration::from_secs(1));
+            let edge = ui.min_rect().left() - f32::from(LIST_MARGIN);
+            menu_label_with(ui, "Services", &format!(" \u{b7} {repo}"), "");
             for row in rows {
-                if let Some(done) = card(ui, row, memory) {
+                if let Some(done) = card(ui, row, memory, edge) {
                     action = Some(done);
                 }
             }
-            ui.add_space(6.0);
-            if quiet_button(ui, "+ Add service", true, Size::Compact).clicked() {
+            menu_divider(ui);
+            if add_row(ui).clicked() {
                 memory.open_add();
                 ui.close();
             }
@@ -302,6 +313,9 @@ fn list(response: &egui::Response, rows: &[Row], memory: &mut Memory) -> Option<
         memory.menu_rect = None;
         return action;
     };
+    response.ctx.data_mut(|data| {
+        data.get_temp_mut_or_default::<Placed>(placed_id()).list = Some(shown.response.rect);
+    });
     if menu_before.is_some() && memory.menu == menu_before {
         let click = response.ctx.input(|i| i.pointer.any_click().then(|| i.pointer.interact_pos()));
         if let Some(pos) = click.flatten()
@@ -319,70 +333,86 @@ fn list(response: &egui::Response, rows: &[Row], memory: &mut Memory) -> Option<
     action
 }
 
-fn card(ui: &mut Ui, row: &Row, memory: &mut Memory) -> Option<Action> {
+fn add_row(ui: &mut Ui) -> egui::Response {
+    let (rect, response) = menu_row(ui, MENU_ROW_H, false, true);
+    note_button(ui.ctx(), "Add service", rect);
+    let mid = rect.center().y;
+    ui.painter().text(
+        pos2(rect.left() + ROW_PAD + DOT, mid),
+        Align2::CENTER_CENTER,
+        icons::PLUS,
+        egui::FontId::proportional(16.0),
+        brand::SOFT,
+    );
+    ui.painter().text(
+        pos2(rect.left() + ROW_PAD + DOT * 2.0 + 10.0, mid),
+        Align2::LEFT_CENTER,
+        "Add service",
+        body(TEXT_BODY),
+        brand::SOFT,
+    );
+    response
+}
+
+fn card(ui: &mut Ui, row: &Row, memory: &mut Memory, edge: f32) -> Option<Action> {
     let selected = memory.selected.as_deref() == Some(row.name.as_str());
-    let height = if selected { CARD_H + BUTTONS_H } else { CARD_H };
     let (rect, response) =
-        ui.allocate_exact_size(vec2(ui.available_width(), height), Sense::click());
-    let body_rect = Rect::from_min_size(rect.min, vec2(rect.width(), CARD_H));
-    selection_row(ui.painter(), rect, selected, response.hovered());
-    paint_card_text(ui, body_rect, row);
+        ui.allocate_exact_size(vec2(ui.available_width(), ROW_H), Sense::click());
+    note_row(ui.ctx(), rect);
+    let menu_open = memory.menu.as_deref() == Some(row.name.as_str());
+    let hot = selected || menu_open || ui.rect_contains_pointer(rect);
+    let crashed = row.word == Word::Crashed;
+    if crashed {
+        ui.painter().rect_filled(rect, CornerRadius::same(8), brand::STRUGGLE_FILL);
+    }
+    selection_row(ui.painter(), rect, selected, hot);
+    let start_w = button_width(ui, "Start", Size::Compact);
+    let more_w = Size::Compact.height();
+    let first_w = if is_running(row.word) { Size::Compact.height() } else { start_w };
+    let reserve = first_w + ACTION_GAP + more_w + ROW_PAD;
+    paint_card_text(ui, rect, row, reserve);
     if response.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
         memory.selected = if selected { None } else { Some(row.name.clone()) };
     }
     let mut action = None;
-    let more_w = button_width(ui, "...", Size::Compact);
+    let top = rect.center().y - Size::Compact.height() / 2.0;
     let more_rect = Rect::from_min_size(
-        pos2(body_rect.right() - CARD_PAD + 4.0 - more_w, body_rect.top() + 8.0),
+        pos2(rect.right() - ROW_PAD - more_w, top),
         vec2(more_w, Size::Compact.height()),
     );
-    {
-        let mut over = ui.new_child(UiBuilder::new().max_rect(more_rect));
-        more_menu(&mut over, row, memory);
-    }
-    if selected {
-        let strip = Rect::from_min_size(
-            pos2(rect.left() + CARD_PAD, body_rect.bottom()),
-            vec2(rect.width() - CARD_PAD * 2.0, BUTTONS_H - 10.0),
-        );
-        {
-            let mut over = ui.new_child(
-                UiBuilder::new().max_rect(strip).layout(Layout::left_to_right(Align::Center)),
-            );
-            let ui = &mut over;
-            ui.spacing_mut().item_spacing.x = 8.0;
-            {
-                let logs = quiet_button(ui, "Logs", true, Size::Compact);
-                note_button(ui.ctx(), "Logs", logs.rect);
-                if logs.clicked() {
-                    action = Some(Action::Logs(row.name.clone()));
-                }
-                if is_running(row.word) {
-                    let restart = quiet_button(ui, "Restart", true, Size::Compact);
-                    note_button(ui.ctx(), "Restart", restart.rect);
-                    if restart.clicked() {
-                        action = Some(Action::Run(Command::Restart, row.name.clone()));
-                    }
-                    let stop = quiet_button(ui, "Stop", true, Size::Compact);
-                    note_button(ui.ctx(), "Stop", stop.rect);
-                    if stop.clicked() {
-                        action = Some(Action::Run(Command::Stop, row.name.clone()));
-                    }
-                } else {
-                    let start = quiet_button(ui, "Start", true, Size::Compact);
-                    note_button(ui.ctx(), "Start", start.rect);
-                    if start.clicked() {
-                        action = Some(Action::Run(Command::Start, row.name.clone()));
-                    }
-                }
+    let first_rect = Rect::from_min_size(
+        pos2(more_rect.left() - ACTION_GAP - first_w, top),
+        vec2(first_w, Size::Compact.height()),
+    );
+    if hot || crashed {
+        let mut over = ui.new_child(UiBuilder::new().max_rect(first_rect));
+        let ui = &mut over;
+        if is_running(row.word) {
+            let restart = glyph_button(ui, Glyph::Restart, "Restart", Size::Compact);
+            note_button(ui.ctx(), "Restart", restart.rect);
+            if restart.clicked() {
+                action = Some(Action::Run(Command::Restart, row.name.clone()));
+            }
+        } else {
+            let start = primary_button(ui, "Start", true, Size::Compact);
+            note_button(ui.ctx(), "Start", start.rect);
+            if start.clicked() {
+                action = Some(Action::Run(Command::Start, row.name.clone()));
             }
         }
+    }
+    if hot {
+        let mut over = ui.new_child(UiBuilder::new().max_rect(more_rect));
+        more_menu(&mut over, row, memory, (edge, rect));
+    }
+    if let Some(done) = memory.pending.take() {
+        action = Some(done);
     }
     action
 }
 
-fn more_menu(ui: &mut Ui, row: &Row, memory: &mut Memory) {
-    let more = quiet_button(ui, "...", true, Size::Compact).on_hover_text("Edit or remove");
+fn more_menu(ui: &mut Ui, row: &Row, memory: &mut Memory, (edge, row_rect): (f32, Rect)) {
+    let more = glyph_button(ui, Glyph::More, "Logs, stop, edit or remove", Size::Compact);
     note_button(ui.ctx(), "...", more.rect);
     let open = memory.menu.as_deref() == Some(row.name.as_str());
     if more.clicked() {
@@ -395,17 +425,38 @@ fn more_menu(ui: &mut Ui, row: &Row, memory: &mut Memory) {
         memory.menu = None;
         return;
     }
-    let shown = egui::Popup::from_response(&more)
+    let beside = ui.interact(
+        Rect::from_min_max(pos2(edge, row_rect.top()), pos2(edge + 1.0, row_rect.bottom())),
+        more.id.with("beside-the-list"),
+        Sense::hover(),
+    );
+    let shown = egui::Popup::from_response(&beside)
         .kind(PopupKind::Menu)
         .layout(Layout::top_down_justified(Align::Min))
         .style(menu_style)
-        .align(RectAlign::BOTTOM_END)
+        .align(RectAlign::LEFT_START)
+        .align_alternatives(&[RectAlign::RIGHT_START, RectAlign::BOTTOM_END])
         .gap(MENU_GAP)
+        .width(MENU_W)
         .close_behavior(PopupCloseBehavior::IgnoreClicks)
         .open(true)
         .show(|ui| {
             ui.set_max_width(MENU_W);
             style_menu(ui);
+            let logs = menu_item(ui, "Logs", "");
+            note_button(ui.ctx(), "Logs", logs.rect);
+            if logs.clicked() {
+                memory.pending = Some(Action::Logs(row.name.clone()));
+                memory.menu = None;
+            }
+            if is_running(row.word) {
+                let stop = menu_item(ui, "Stop", "");
+                note_button(ui.ctx(), "Stop", stop.rect);
+                if stop.clicked() {
+                    memory.pending = Some(Action::Run(Command::Stop, row.name.clone()));
+                    memory.menu = None;
+                }
+            }
             let edit = menu_item(ui, "Edit", "");
             note_button(ui.ctx(), "Edit", edit.rect);
             if edit.clicked() {
@@ -422,36 +473,37 @@ fn more_menu(ui: &mut Ui, row: &Row, memory: &mut Memory) {
     memory.menu_rect = shown.map(|shown| shown.response.rect);
 }
 
-fn paint_card_text(ui: &Ui, rect: Rect, row: &Row) {
+fn paint_card_text(ui: &Ui, rect: Rect, row: &Row, reserve: f32) {
     let painter = ui.painter();
-    let left = rect.left() + CARD_PAD;
-    let dot_x = left + DOT / 2.0;
-    let name_y = rect.top() + 10.0;
-    painter.circle_filled(pos2(dot_x, name_y + 9.0), DOT / 2.0, dot_color(row.word));
-    let text_left = left + DOT + 10.0;
-    let room = (rect.right() - CARD_PAD - text_left).max(1.0);
-    painter.text(
-        pos2(text_left, name_y),
-        Align2::LEFT_TOP,
-        &row.name,
-        body(TEXT_BODY),
-        brand::TEXT,
+    let mid = rect.center().y;
+    let dot_x = rect.left() + ROW_PAD + DOT / 2.0;
+    painter.circle_filled(pos2(dot_x, mid), DOT / 2.0, dot_color(row.word));
+    let text_left = rect.left() + ROW_PAD + DOT + 10.0;
+    let room = (rect.right() - reserve - text_left).max(1.0);
+    let name = painter.layout_no_wrap(row.name.clone(), body(TEXT_BODY), brand::TEXT);
+    let line_ink = match row.word {
+        Word::Crashed => brand::ORANGE,
+        _ => brand::FAINT,
+    };
+    let line = crate::reader_view::ellipsized(
+        painter,
+        &format!("\u{b7} {}", row.line),
+        body(TEXT_TAG),
+        line_ink,
+        (room - name.size().x - 6.0).max(1.0),
     );
-    painter.text(
-        pos2(text_left, name_y + 20.0),
-        Align2::LEFT_TOP,
-        &row.line,
-        body(TEXT_TAG + 0.5),
-        line_ink(row.word),
-    );
+    let top = mid - 19.0;
+    let name_w = name.size().x;
+    painter.galley(pos2(text_left, top + 1.0), name, brand::TEXT);
+    painter.galley(pos2(text_left + name_w + 6.0, top + 3.0), line, line_ink);
     let galley = painter.layout_job(cut_to(&row.command, room));
-    painter.galley(pos2(text_left, name_y + 40.0), galley, brand::FAINT);
+    painter.galley(pos2(text_left, top + 21.0), galley, brand::MUTED);
 }
 
 fn cut_to(text: &str, width: f32) -> LayoutJob {
     let mut job = LayoutJob::single_section(
         text.to_owned(),
-        TextFormat { font_id: mono(TEXT_TAG), color: brand::FAINT, ..TextFormat::default() },
+        TextFormat { font_id: mono(TEXT_TAG), color: brand::MUTED, ..TextFormat::default() },
     );
     job.wrap = TextWrapping {
         max_width: width,
