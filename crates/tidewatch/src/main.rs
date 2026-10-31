@@ -397,6 +397,7 @@ fn main() -> eframe::Result<()> {
         .with_title("Tidewatch")
         .with_app_id(APP_ID)
         .with_inner_size(dev_view::window_size(WINDOW_SIZE))
+        .with_min_inner_size(shell::min_inner_size(plan.quake))
         .with_active(plan.activates)
         .with_decorations(plan.chrome.decorations());
     if cfg!(target_os = "linux")

@@ -17,6 +17,11 @@ use crate::tray::Click;
 use crate::window_chrome::{Chrome, Desktop};
 
 pub(crate) const WINDOW_SIZE: [f32; 2] = [1280.0, 800.0];
+const MIN_WINDOW_SIZE: [f32; 2] = [600.0, 480.0];
+
+pub(crate) fn min_inner_size(quake: bool) -> [f32; 2] {
+    if quake { [0.0, 0.0] } else { MIN_WINDOW_SIZE }
+}
 
 /// What the app should do about a request the shell cannot answer by itself.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -149,6 +154,8 @@ impl<O: Os> Shell<O> {
         let quake = self.plan.quake;
         ctx.send_viewport_cmd(ViewportCommand::Decorations(self.plan.chrome.decorations()));
         ctx.send_viewport_cmd(ViewportCommand::Resizable(!quake));
+        let [min_w, min_h] = min_inner_size(quake);
+        ctx.send_viewport_cmd(ViewportCommand::MinInnerSize(egui::vec2(min_w, min_h)));
         self.quake.restart();
         if quake {
             return;
@@ -711,6 +718,7 @@ mod tests {
         let (_, commands) = rig.quiet_frame();
         assert!(commands.contains(&ViewportCommand::Decorations(true)));
         assert!(commands.contains(&ViewportCommand::Resizable(true)));
+        assert!(commands.contains(&ViewportCommand::MinInnerSize(vec2(600.0, 480.0))));
         assert!(commands.contains(&ViewportCommand::InnerSize(vec2(1280.0, 800.0))));
         assert!(rig.shell.os.calls.contains(&Call::Alpha(1.0)));
         assert!(rig.shell.os.calls.contains(&Call::DockIcon(true)));
@@ -719,7 +727,16 @@ mod tests {
         let (_, commands) = rig.quiet_frame();
         assert!(commands.contains(&ViewportCommand::Decorations(false)));
         assert!(commands.contains(&ViewportCommand::Resizable(false)));
+        assert!(commands.contains(&ViewportCommand::MinInnerSize(vec2(0.0, 0.0))));
         assert!(rig.shell.os.calls.contains(&Call::DockIcon(false)));
+    }
+
+    #[test]
+    fn only_the_normal_window_has_a_least_size_and_it_fits_the_default_and_the_dev_sizes() {
+        assert_eq!(min_inner_size(true), [0.0, 0.0]);
+        let [min_w, min_h] = min_inner_size(false);
+        assert!(min_w <= WINDOW_SIZE[0] && min_h <= WINDOW_SIZE[1]);
+        assert!(min_w <= 600.0 && min_h <= 600.0, "TIDEWATCH_DEV_WINDOW starts at 600x600");
     }
 
     #[test]
