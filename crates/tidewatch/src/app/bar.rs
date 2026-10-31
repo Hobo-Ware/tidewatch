@@ -13,13 +13,18 @@ use crate::{agent_frame, reader_glue, reader_view};
 impl Tidewatch {
     pub(super) fn show_status_bar(&mut self, ui: &mut egui::Ui, active_id: u64) {
         let bar = self.status_bar(ui.ctx(), active_id);
-        let open_review = Panel::bottom("statusbar")
+        let clicks = Panel::bottom("statusbar")
             .exact_size(status_bar::HEIGHT)
             .frame(Frame::new().fill(brand::SIDEBAR))
             .show(ui, |ui| status_bar::show(ui, ui.max_rect(), &bar))
             .inner;
-        if open_review {
+        if clicks.open_review {
             self.open_review();
+        }
+        if clicks.cancel_switch
+            && let Some((tab, _)) = self.switching_line()
+        {
+            self.cancel_switch(tab);
         }
     }
 
@@ -72,6 +77,7 @@ impl Tidewatch {
             awake: self.keep_awake.tip(),
             fetch_failed: self.fetch_failure().filter(|_| matches!(screen, Screen::Workspace(_))),
             pr: self.pr_bar_item(active_id).filter(|_| matches!(screen, Screen::Workspace(_))),
+            switching: self.switching_line().map(|(_, text)| text),
         }
     }
 }

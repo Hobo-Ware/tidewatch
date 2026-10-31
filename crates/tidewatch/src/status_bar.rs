@@ -1,7 +1,10 @@
 //! The status bar along the bottom of the window: how many agents work and need you, where this
 //! agent tab stands, and the keys that matter on the screen. The logic is pure; `show` only draws.
 
-use egui::{Align2, Color32, CornerRadius, FontId, Id, Pos2, Rect, Sense, Stroke, Ui, pos2, vec2};
+use egui::{
+    Align, Align2, Color32, CornerRadius, FontId, Id, Layout, Pos2, Rect, Sense, Stroke, Ui,
+    UiBuilder, pos2, vec2,
+};
 
 use crate::brand;
 use tidewatch_core::pr_status::Tone as PrTone;
@@ -9,8 +12,8 @@ use tidewatch_core::pr_status::Tone as PrTone;
 use crate::commands::{Command, Platform};
 use crate::new_tab::Kind;
 use crate::pr_strip::tone_ink;
-use crate::screen_kit::Size;
 use crate::screen_kit::TEXT_SECONDARY;
+use crate::screen_kit::{Size, quiet_button};
 use crate::screen_kit::{body, mono};
 use crate::status_view::Tone;
 
@@ -24,6 +27,7 @@ const CHIP_H: f32 = Size::Tag.height();
 const AWAKE_R: f32 = 5.0;
 const FETCH_FAILED: &str = "Fetch failed";
 const CHIP_PAD: f32 = Size::Tag.pad();
+const SWITCHING_TITLE_CHARS: usize = 36;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) struct Counts {
@@ -60,6 +64,14 @@ pub(crate) fn draft_place(kind: Kind) -> String {
         Kind::Agent | Kind::Shell => "Start",
     };
     format!("New tab \u{b7} nothing starts until you press {start}")
+}
+
+/// What the bar says while a tab change waits for the agent's turn to end.
+pub(crate) fn switching_text(title: &str) -> String {
+    let mut chars = title.chars();
+    let short: String = chars.by_ref().take(SWITCHING_TITLE_CHARS).collect();
+    let cut = if chars.next().is_some() { "..." } else { "" };
+    format!("Switching {short}{cut} when its turn ends")
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -220,11 +232,19 @@ pub(crate) struct Bar {
     pub(crate) awake: Option<String>,
     /// The tooltip of `Fetch failed`, which shows after a background fetch of the repo on show failed.
     pub(crate) fetch_failed: Option<String>,
+    /// A tab change that waits for the agent's turn to end, with a Cancel.
+    pub(crate) switching: Option<String>,
 }
 
-/// Draws the bar. Returns whether the review chip was clicked.
-pub(crate) fn show(ui: &mut Ui, rect: Rect, bar: &Bar) -> bool {
-    let mut open_review = false;
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct Clicks {
+    pub(crate) open_review: bool,
+    pub(crate) cancel_switch: bool,
+}
+
+/// Draws the bar and says what was clicked.
+pub(crate) fn show(ui: &mut Ui, rect: Rect, bar: &Bar) -> Clicks {
+    let mut clicks = Clicks::default();
     let painter = ui.painter();
     let y = rect.center().y;
     let put = |at: Pos2, anchor: Align2, text: &str, font: FontId, color: Color32| {
@@ -274,11 +294,16 @@ pub(crate) fn show(ui: &mut Ui, rect: Rect, bar: &Bar) -> bool {
         let fill = brand::TEAL.gamma_multiply(if response.hovered() { 0.2 } else { 0.1 });
         ui.painter().rect_filled(chip, CornerRadius::same(Size::Tag.radius()), fill);
         ui.painter().galley(chip.center() - galley.size() / 2.0, galley, brand::TEAL_TEXT);
-        open_review = response
+        clicks.open_review = response
             .on_hover_cursor(egui::CursorIcon::PointingHand)
             .on_hover_text("Open your review above the agent's chat box")
             .clicked();
         x += chip.width() + GAP;
+    }
+    let mut cancel_at = None;
+    if let Some(text) = &bar.switching {
+        x += put(pos2(x, y), Align2::LEFT_CENTER, text, body(FONT), brand::TEAL_TEXT) + 10.0;
+        cancel_at = Some(x);
     }
     if let Some(hint) = bar.note_hint {
         put(pos2(x, y), Align2::LEFT_CENTER, hint, body(FONT), brand::MUTED);
@@ -290,7 +315,18 @@ pub(crate) fn show(ui: &mut Ui, rect: Rect, bar: &Bar) -> bool {
         right -= put(pos2(right, y), Align2::RIGHT_CENTER, &hint.keys, mono(FONT), brand::SOFT);
         right -= GAP;
     }
-    open_review
+    if let Some(x) = cancel_at {
+        let slot = Rect::from_min_max(
+            pos2(x, y - Size::Compact.height() / 2.0),
+            pos2(rect.right() - PAD, y + Size::Compact.height() / 2.0),
+        );
+        let cancel = ui.scope_builder(
+            UiBuilder::new().max_rect(slot).layout(Layout::left_to_right(Align::Center)),
+            |ui| quiet_button(ui, "Cancel", true, Size::Compact),
+        );
+        clicks.cancel_switch = cancel.inner.clicked();
+    }
+    clicks
 }
 
 #[cfg(test)]
@@ -446,5 +482,95 @@ mod tests {
             let count = hints(screen, Platform::CURRENT).len();
             assert!((2..=4).contains(&count), "{screen:?}: {count}");
         }
+    }
+
+    fn key(key: egui::Key) -> egui::Event {
+        egui::Event::Key {
+            key,
+            physical_key: Some(key),
+            pressed: true,
+            repeat: false,
+            modifiers: egui::Modifiers::NONE,
+        }
+    }
+
+    fn bar(switching: Option<&str>) -> Bar {
+        Bar {
+            counts: Counts::default(),
+            place: None,
+            review: None,
+            note_hint: None,
+            hints: hints(Screen::Welcome, Platform::Mac),
+            pr: None,
+            awake: None,
+            fetch_failed: None,
+            switching: switching.map(switching_text),
+        }
+    }
+
+    fn frame(ctx: &egui::Context, bar: &Bar, events: Vec<egui::Event>) -> Clicks {
+        let raw = egui::RawInput {
+            screen_rect: Some(Rect::from_min_size(pos2(0.0, 0.0), vec2(900.0, 120.0))),
+            events,
+            focused: true,
+            ..egui::RawInput::default()
+        };
+        let mut clicks = Clicks::default();
+        let _ = ctx.run_ui(raw, |ui| {
+            let rect = Rect::from_min_size(pos2(0.0, 0.0), vec2(900.0, HEIGHT));
+            clicks = show(ui, rect, bar);
+        });
+        clicks
+    }
+
+    fn context() -> egui::Context {
+        let ctx = egui::Context::default();
+        crate::fonts::install(&ctx);
+        ctx
+    }
+
+    fn galley_texts(ctx: &egui::Context, bar: &Bar) -> Vec<String> {
+        let raw = egui::RawInput {
+            screen_rect: Some(Rect::from_min_size(pos2(0.0, 0.0), vec2(900.0, 120.0))),
+            focused: true,
+            ..egui::RawInput::default()
+        };
+        let out = ctx.run_ui(raw, |ui| {
+            let rect = Rect::from_min_size(pos2(0.0, 0.0), vec2(900.0, HEIGHT));
+            show(ui, rect, bar);
+        });
+        out.shapes
+            .iter()
+            .filter_map(|clipped| match &clipped.shape {
+                egui::Shape::Text(text) => Some(text.galley.text().to_owned()),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn the_switch_line_names_the_tab_and_cuts_a_long_title() {
+        assert_eq!(switching_text("fix-ci"), "Switching fix-ci when its turn ends");
+        let long = "x".repeat(60);
+        assert_eq!(
+            switching_text(&long),
+            format!("Switching {}... when its turn ends", "x".repeat(SWITCHING_TITLE_CHARS))
+        );
+    }
+
+    #[test]
+    fn a_waiting_switch_shows_its_line_with_a_cancel_that_reports_its_click() {
+        let ctx = context();
+        let waiting = bar(Some("fix-ci"));
+        let texts = galley_texts(&ctx, &waiting);
+        assert!(texts.iter().any(|t| t == "Switching fix-ci when its turn ends"), "{texts:?}");
+        assert!(texts.iter().any(|t| t == "Cancel"), "{texts:?}");
+        let quiet = galley_texts(&ctx, &bar(None));
+        assert!(!quiet.iter().any(|t| t == "Cancel"), "{quiet:?}");
+
+        assert_eq!(frame(&ctx, &waiting, vec![]), Clicks::default());
+        let _ = frame(&ctx, &waiting, vec![key(egui::Key::Tab)]);
+        let clicks = frame(&ctx, &waiting, vec![key(egui::Key::Enter)]);
+        assert_eq!(clicks, Clicks { open_review: false, cancel_switch: true });
     }
 }
