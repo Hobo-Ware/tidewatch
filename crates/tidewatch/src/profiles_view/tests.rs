@@ -228,3 +228,55 @@ fn each_known_agent_has_its_own_badge_and_an_unknown_one_a_neutral_letter() {
     assert_ne!(colors, tint("claude").1);
     assert_eq!(tint("").0, "");
 }
+
+fn draw_in(width: f32, add: impl FnMut(&mut Ui)) -> Vec<(String, Rect)> {
+    let ctx = crate::fonts::test_context();
+    let mut add = add;
+    let raw = || RawInput {
+        screen_rect: Some(Rect::from_min_size(pos2(0.0, 0.0), Vec2::new(width, 600.0))),
+        ..RawInput::default()
+    };
+    let _ = ctx.run_ui(raw(), |ui| add(ui));
+    let out = ctx.run_ui(raw(), |ui| add(ui));
+    crate::screen_kit::painted_texts(&out)
+}
+
+#[test]
+fn the_level_cards_split_into_even_rows_before_a_word_breaks() {
+    let cases = [(520.0, 5), (444.0, 5), (443.0, 3), (260.0, 2), (174.0, 2), (173.0, 1), (80.0, 1)];
+    for (width, want) in cases {
+        assert_eq!(level_columns(width), want, "{width}");
+    }
+}
+
+#[test]
+fn no_level_card_breaks_a_word_or_clips_its_title_in_a_narrow_card() {
+    let mut draft = editor().selected_draft().unwrap().clone();
+    for width in [256.0, 200.0, 460.0] {
+        let texts = draw_in(width + 40.0, |ui| {
+            ui.set_width(width);
+            levels(ui, &mut draft, width);
+        });
+        for level in Level::ALL {
+            let note = level_note(level);
+            let whole = texts.iter().filter(|(text, _)| text == note).count();
+            assert_eq!(whole, 1, "{width}: {note}");
+            let title = texts.iter().find(|(text, _)| text == level.label()).unwrap();
+            let card_w = (width - LEVEL_GAP * (level_columns(width) as f32 - 1.0))
+                / level_columns(width) as f32;
+            assert!(title.1.width() < card_w, "{width}: {} {title:?}", level.label());
+        }
+    }
+}
+
+#[test]
+fn the_card_header_keeps_its_subtitle_clear_of_the_delete_button() {
+    let line = "Claude Code \u{b7} opus \u{b7} medium effort \u{b7} Auto edit";
+    let texts = draw_in(320.0, |ui| {
+        let header = Rect::from_min_size(pos2(0.0, 0.0), Vec2::new(315.0, 96.0));
+        crate::settings_ui::editor::card_header(ui, header, None, "Builder", line);
+    });
+    let delete = texts.iter().find(|(text, _)| text == "Delete").unwrap().1;
+    let subtitle = texts.iter().find(|(text, _)| text.starts_with("Claude Code")).unwrap().1;
+    assert!(subtitle.right() < delete.left(), "{subtitle:?} {delete:?}");
+}

@@ -283,12 +283,42 @@ fn inline_gated(
     paint_segments(ui, id, placed, &Look { labels, keys: &[], tones, refused, badges: &[] }, active)
 }
 
+fn rows_at(widths: &[f32], limit: f32) -> usize {
+    let (mut x, mut rows) = (0.0, usize::from(!widths.is_empty()));
+    for width in widths {
+        if x > 0.0 && x + width > limit {
+            x = 0.0;
+            rows += 1;
+        }
+        x += width + CHIP_GAP;
+    }
+    rows
+}
+
+/// The narrowest row limit that still takes `rows_at(avail)` rows, so a last chip is not left
+/// alone on a row of its own while the rows above it run full.
+fn balanced_limit(widths: &[f32], avail: f32) -> f32 {
+    let rows = rows_at(widths, avail);
+    let (mut low, mut high) = (widths.iter().copied().fold(0.0, f32::max).min(avail), avail);
+    while high - low > 0.5 {
+        let mid = (low + high) / 2.0;
+        if rows_at(widths, mid) <= rows {
+            high = mid;
+        } else {
+            low = mid;
+        }
+    }
+    high
+}
+
 /// Where each chip of widths `widths` goes in rows of at most `avail`, and the height the rows take.
+/// Chips that need more than one row spread evenly over them.
 fn flow(widths: &[f32], avail: f32) -> (Vec<Rect>, f32) {
+    let limit = balanced_limit(widths, avail);
     let (mut x, mut y) = (0.0, 0.0);
     let mut placed = Vec::with_capacity(widths.len());
     for width in widths {
-        if x > 0.0 && x + width > avail {
+        if x > 0.0 && x + width > limit {
             x = 0.0;
             y += HEIGHT + GAP_ROWS;
         }
@@ -416,6 +446,18 @@ mod tests {
         assert_eq!(placed[1].left(), 50.0 + CHIP_GAP);
         assert_eq!((placed[2].left(), placed[2].top()), (0.0, HEIGHT + GAP_ROWS));
         assert_eq!(height, 2.0 * HEIGHT + GAP_ROWS);
+    }
+
+    #[test]
+    fn a_last_chip_is_not_left_alone_while_the_rows_above_it_run_full() {
+        let widths = [68.0, 36.0, 66.0, 44.0, 46.0];
+        let (placed, height) = flow(&widths, 247.0);
+        let rows: Vec<usize> =
+            placed.iter().map(|rect| (rect.top() / (HEIGHT + GAP_ROWS)) as usize).collect();
+        assert_eq!(rows, [0, 0, 1, 1, 1]);
+        assert_eq!(height, 2.0 * HEIGHT + GAP_ROWS);
+        let (one_row, _) = flow(&widths, 400.0);
+        assert!(one_row.iter().all(|rect| rect.top() == 0.0));
     }
 
     #[test]

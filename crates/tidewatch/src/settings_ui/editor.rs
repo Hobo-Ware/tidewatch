@@ -243,21 +243,22 @@ pub(crate) fn card_header(
     name: &str,
     line: &str,
 ) -> bool {
-    let mut left = ui.new_child(
-        UiBuilder::new()
-            .max_rect(header.shrink2(vec2(20.0, 18.0)))
-            .layout(Layout::left_to_right(Align::Center)),
-    );
+    let delete_w = button_width(ui, "Delete", Size::Compact);
+    let mut room = header.shrink2(vec2(20.0, 18.0));
+    room.max.x -= delete_w + 14.0;
+    let mut left =
+        ui.new_child(UiBuilder::new().max_rect(room).layout(Layout::left_to_right(Align::Center)));
     left.spacing_mut().item_spacing.x = 14.0;
     if let Some((letter, tint)) = badge_look {
         badge(&mut left, letter, tint, 40.0);
     }
     left.vertical(|ui| {
         ui.spacing_mut().item_spacing.y = 2.0;
-        ui.label(heading(name, 20.0));
-        ui.label(RichText::new(line).size(13.0).color(MUTED));
+        ui.add(egui::Label::new(heading(name, 20.0)).truncate());
+        ui.add(egui::Label::new(RichText::new(line).size(13.0).color(MUTED)).truncate())
+            .on_hover_text(line);
     });
-    let width = button_width(ui, "Delete", Size::Compact);
+    let width = delete_w;
     let at = Rect::from_center_size(
         pos2(header.right() - 20.0 - width / 2.0, header.center().y),
         vec2(width, Size::Compact.height()),

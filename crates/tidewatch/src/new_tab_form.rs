@@ -228,9 +228,7 @@ fn wrapped(ui: &Ui, text: &str, size: f32, color: Color32, width: f32) -> Arc<Ga
 
 fn message_hint(state: &NewTab) -> &'static str {
     match (state.makes_a_worktree(), state.kind()) {
-        (true, _) => {
-            "The worktree name follows your message until you edit it. Leave the message empty to start the agent idle."
-        }
+        (true, _) => "The worktree name follows your message until you edit it.",
         (false, _) => "Leave the message empty to start the agent idle.",
     }
 }
