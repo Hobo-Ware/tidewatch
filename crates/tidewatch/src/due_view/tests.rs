@@ -126,7 +126,7 @@ fn ask_hands_back_the_message_and_snooze_the_item() {
     let ask = card.at("Ask Builder to start");
     let Some(Action::Ask(text)) = card.click(ask) else { panic!("{:?}", card.action) };
     assert!(text.starts_with("Due today: Switch off the old webhook (#42)"), "{text}");
-    assert!(text.contains("Steps:") && text.ends_with("update the progress report."));
+    assert!(text.contains("Steps:") && text.ends_with("Start with the first open step."));
     let snooze = card.at("Snooze");
     assert_eq!(card.click(snooze), Some(Action::Snooze(card.due.what.clone())));
 }

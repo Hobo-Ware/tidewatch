@@ -252,7 +252,7 @@ impl TabState {
         };
         Some(Paste {
             tab: fact.id,
-            text: ask.message().to_owned(),
+            text: tidewatch_core::guard_ledger::MESSAGE.to_owned(),
             reason: Reason::LedgerGuard,
             because,
         })

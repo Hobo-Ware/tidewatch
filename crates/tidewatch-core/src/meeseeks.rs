@@ -432,7 +432,7 @@ pub fn fix_note(step: Step, detail: &str) -> String {
             first_line(detail)
         ),
         Step::Tests => format!(
-            "Tidewatch ran the tests and they failed. Fix them, commit, {again}. The end of the output:\n```\n{}\n```",
+            "Tidewatch ran the tests and they failed. Fix them, {again}. The end of the output:\n```\n{}\n```",
             tail_of(detail)
         ),
         Step::Proof => format!(
@@ -440,7 +440,7 @@ pub fn fix_note(step: Step, detail: &str) -> String {
             first_line(detail)
         ),
         Step::HandOff => format!(
-            "Tidewatch could not open the pull request: {}. If the code is the cause, fix it and commit, {again}. Otherwise say so and wait.",
+            "Tidewatch could not open the pull request: {}. If the code is the cause, fix it, {again}. Otherwise say so and wait.",
             first_line(detail)
         ),
     }

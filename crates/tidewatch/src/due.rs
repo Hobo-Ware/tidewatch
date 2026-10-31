@@ -105,7 +105,7 @@ pub(crate) fn ask_text(due: &Due) -> String {
     let steps =
         if open.is_empty() { String::new() } else { format!(" Steps: {}.", open.join("; ")) };
     format!(
-        "Due today: {}.{steps} Start with the first open step and update the progress report.",
+        "Due today: {}.{steps} Start with the first open step.",
         one_line(due.what.trim().trim_end_matches('.'))
     )
 }

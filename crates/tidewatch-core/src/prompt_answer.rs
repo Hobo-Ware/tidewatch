@@ -1,15 +1,8 @@
 //! The answer to Claude's `UserPromptSubmit` hook: extra context the model reads with the prompt,
 //! so what Tidewatch needs to say never touches the input box (pure).
 
-use crate::progress::{Ledger, Mark, State, real};
+use crate::progress::{Ledger, Mark, real};
 use crate::progress_mcp::UPDATE_TOOL;
-
-/// Asks the agent to refresh its ledger before its final reply once the owner has answered a question or a wait.
-pub const LEDGER_CONTEXT: &str = "The user answered; call update_progress so your report shows the new state before your final reply.";
-
-/// Asks a tab that never saved a ledger to write one, which also reaches a tab whose settings file
-/// predates the Stop guard.
-pub const MISSING_LEDGER_CONTEXT: &str = "Tidewatch has no progress report for this task yet. Call update_progress with the whole report (state, now, your stages and steps) this turn, before other work.";
 
 const NAMED_ITEMS: usize = 3;
 const NAME_CHARS: usize = 60;
@@ -36,14 +29,9 @@ fn short_name(text: &str) -> String {
 }
 
 /// The one line that tells the agent what its ledger still holds open, so a message that settles
-/// one of them reaches `update_progress`. A ledger that waits on the owner, or waits and names
-/// nothing, gets `LEDGER_CONTEXT` instead; `None` when nothing is open.
+/// one of them reaches `update_progress`; `None` when nothing is open.
 #[must_use]
 pub fn ledger_context(ledger: &Ledger) -> Option<String> {
-    let unnamed_wait = ledger.status.state == Some(State::Waiting) && ledger.waiting_on.is_none();
-    if ledger.awaits_owner() || unnamed_wait {
-        return Some(LEDGER_CONTEXT.to_owned());
-    }
     let open = open_items(ledger);
     if open.is_empty() {
         return None;
@@ -77,7 +65,6 @@ pub fn answer(contexts: &[&str]) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::avatar_ask;
 
     fn context_of(answer: &str) -> String {
         let answer: serde_json::Value = serde_json::from_str(answer).unwrap();
@@ -93,26 +80,14 @@ mod tests {
 
     #[test]
     fn one_line_is_the_shape_claude_reads_for_a_prompt() {
-        assert_eq!(context_of(&answer(&[avatar_ask::CONTEXT]).unwrap()), avatar_ask::CONTEXT);
+        let line = "Open in your report: \"x\".";
+        assert_eq!(context_of(&answer(&[line]).unwrap()), line);
     }
 
     #[test]
     fn two_lines_are_joined_and_neither_is_dropped() {
-        let both = context_of(&answer(&[avatar_ask::CONTEXT, LEDGER_CONTEXT]).unwrap());
-        assert!(both.contains(avatar_ask::CONTEXT));
-        assert!(both.contains(LEDGER_CONTEXT));
-        assert_eq!(both.lines().count(), 2);
-    }
-
-    #[test]
-    fn the_ledger_line_names_the_tool() {
-        assert!(LEDGER_CONTEXT.contains(crate::progress_mcp::UPDATE_TOOL));
-    }
-
-    #[test]
-    fn the_ledger_line_asks_for_the_report_before_the_final_reply_not_before_continuing() {
-        assert!(LEDGER_CONTEXT.contains("before your final reply"));
-        assert!(!LEDGER_CONTEXT.contains("before you continue"));
+        let both = context_of(&answer(&["one", "two"]).unwrap());
+        assert_eq!(both, "one\ntwo");
     }
 
     fn ledger(status: &str, checklist: &str, not_verified: &str) -> Ledger {
@@ -178,9 +153,11 @@ mod tests {
                 )),
             ),
             (
-                "a ledger that waits on the owner keeps its own line",
+                "a ledger that waits on the owner names its open items like any other",
                 ledger("waiting", "- [ ] Add tests", "- Verified live"),
-                Some(LEDGER_CONTEXT),
+                Some(
+                    "Open in your report: \"Verified live\"; \"Add tests\". If this message changes any of them, call update_progress.",
+                ),
             ),
         ];
         for (what, ledger, want) in cases {
@@ -194,15 +171,5 @@ mod tests {
         assert_eq!(line.lines().count(), 1);
         assert!(line.is_ascii());
         assert!(line.contains(UPDATE_TOOL));
-    }
-
-    #[test]
-    fn the_missing_ledger_line_names_the_tool_and_asks_for_the_whole_report() {
-        assert!(MISSING_LEDGER_CONTEXT.contains(UPDATE_TOOL));
-        assert!(
-            MISSING_LEDGER_CONTEXT
-                .contains("whole report (state, now, your stages and steps) this turn")
-        );
-        assert!(MISSING_LEDGER_CONTEXT.is_ascii());
     }
 }

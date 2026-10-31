@@ -117,3 +117,39 @@ fn a_missing_field_reads_as_its_default_and_a_broken_file_as_empty() {
     std::fs::write(paths.workflow_file(), "not toml [[[").unwrap();
     assert_eq!(Store::load(&paths), Store::default());
 }
+
+#[test]
+fn the_launch_lines_follow_every_setting() {
+    let table = [
+        (
+            Workflow::default(),
+            [
+                "Branches catch up by rebasing onto the default branch.",
+                "Fixes fold into the commit they belong to: `git commit --fixup`, then autosquash.",
+                "Push a rewritten branch with `--force-with-lease`.",
+                "New pull requests open as drafts (`gh pr create --draft`).",
+            ],
+        ),
+        (
+            profile(CatchUp::Merge, Fixes::NewCommits, PullRequests::Ready),
+            [
+                "Branches catch up by merging the default branch into them.",
+                "Fixes go in new commits.",
+                "Push without force.",
+                "New pull requests open ready for review (`gh pr create`, no `--draft`).",
+            ],
+        ),
+        (
+            profile(CatchUp::Merge, Fixes::Fixup, PullRequests::Draft),
+            [
+                "Branches catch up by merging the default branch into them.",
+                "Fixes fold into the commit they belong to: `git commit --fixup`, then autosquash.",
+                "Push a rewritten branch with `--force-with-lease`.",
+                "New pull requests open as drafts (`gh pr create --draft`).",
+            ],
+        ),
+    ];
+    for (workflow, want) in table {
+        assert_eq!(workflow.launch_lines(), want, "{workflow:?}");
+    }
+}

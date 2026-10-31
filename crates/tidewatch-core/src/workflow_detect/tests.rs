@@ -240,3 +240,16 @@ fn a_repo_with_no_rule_files_and_no_owner_file_proposes_the_defaults() {
     std::fs::create_dir_all(&repo_dir).unwrap();
     assert_eq!(detect_repo(&paths, &repo_dir).workflow(), Workflow::default());
 }
+
+#[test]
+fn the_launch_profile_is_the_confirmed_one_else_what_detection_proposes() {
+    let home = tempfile::tempdir().unwrap();
+    let paths = TidewatchPaths::new(home.path());
+    let repo_dir = home.path().join("web");
+    std::fs::create_dir_all(&repo_dir).unwrap();
+    std::fs::write(repo_dir.join("CLAUDE.md"), "Merge origin/main into your branch.\n").unwrap();
+    assert_eq!(profile_for(&paths, &repo_dir).catch_up, CatchUp::Merge);
+    let confirmed = Workflow { catch_up: CatchUp::Rebase, ..Workflow::default() };
+    Store::update(&paths, |store| store.set(&repo_dir, confirmed)).unwrap();
+    assert_eq!(profile_for(&paths, &repo_dir), confirmed);
+}
