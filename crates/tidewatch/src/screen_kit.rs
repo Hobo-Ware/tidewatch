@@ -555,6 +555,109 @@ pub(crate) fn selection_row(painter: &Painter, rect: Rect, selected: bool, hover
     }
 }
 
+pub(crate) const MENU_ROW_H: f32 = 32.0;
+pub(crate) const MENU_ROW_PAD: f32 = 10.0;
+const MENU_LABEL_H: f32 = 28.0;
+const MENU_LABEL_PAD: f32 = 12.0;
+const CAP_H: f32 = 20.0;
+const CAP_STEP: f32 = 3.0;
+
+/// The small upper-case label over a group of rows in a menu or popover, with an optional muted
+/// note at its right edge. Returns the rect it took.
+pub(crate) fn menu_label(ui: &mut Ui, text: &str, note: &str) -> Rect {
+    let (rect, _) =
+        ui.allocate_exact_size(vec2(ui.available_width(), MENU_LABEL_H), Sense::hover());
+    let painter = ui.painter();
+    painter.text(
+        pos2(rect.left() + MENU_LABEL_PAD, rect.center().y + 2.0),
+        Align2::LEFT_CENTER,
+        text.to_uppercase(),
+        heading(TEXT_TAG),
+        brand::FAINT,
+    );
+    if !note.is_empty() {
+        painter.text(
+            pos2(rect.right() - MENU_LABEL_PAD, rect.center().y + 2.0),
+            Align2::RIGHT_CENTER,
+            note,
+            body(TEXT_TAG),
+            brand::FAINT,
+        );
+    }
+    rect
+}
+
+/// A 1 px line across a menu, between two groups of rows.
+pub(crate) fn menu_divider(ui: &mut Ui) {
+    ui.add_space(3.0);
+    let (rect, _) = ui.allocate_exact_size(vec2(ui.available_width(), 1.0), Sense::hover());
+    ui.painter().hline(
+        rect.left() + 4.0..=rect.right() - 4.0,
+        rect.center().y,
+        Stroke::new(1.0, brand::CARD_LINE),
+    );
+    ui.add_space(3.0);
+}
+
+/// A menu row as wide as the menu and `height` tall: the picked look when `selected`, a fainter
+/// tint under the pointer. A disabled row has no tint and takes no click.
+pub(crate) fn menu_row(
+    ui: &mut Ui,
+    height: f32,
+    selected: bool,
+    enabled: bool,
+) -> (Rect, Response) {
+    let sense = if enabled { Sense::click() } else { Sense::hover() };
+    let (rect, response) = ui.allocate_exact_size(vec2(ui.available_width(), height), sense);
+    selection_row(ui.painter(), rect, selected, enabled && response.hovered());
+    if enabled {
+        (rect, response.on_hover_cursor(egui::CursorIcon::PointingHand))
+    } else {
+        (rect, response)
+    }
+}
+
+/// One cap per key of a chord such as `Cmd+Shift+P`; a range such as `Cmd+1 to 9` keeps its `to`.
+pub(crate) fn chord_keys(keys: &str) -> Vec<&str> {
+    let mut caps = Vec::new();
+    for (index, span) in keys.split(" to ").enumerate() {
+        if index > 0 {
+            caps.push("to");
+        }
+        caps.extend(span.split('+').filter(|key| !key.is_empty()));
+    }
+    caps
+}
+
+fn cap_w(painter: &Painter, key: &str) -> f32 {
+    let text = painter.layout_no_wrap(key.to_owned(), mono(TEXT_TAG), brand::SOFT).size().x;
+    (text + 2.0 * CAP_PAD).max(CAP_MIN_W)
+}
+
+/// Key caps for `keys` ending at `right`, centered on `mid`, like the Shortcuts page. Returns the
+/// left edge of the first one, or `right` for no keys.
+pub(crate) fn paint_caps(painter: &Painter, right: f32, mid: f32, keys: &str) -> f32 {
+    let mut x = right;
+    for key in chord_keys(keys).into_iter().rev() {
+        if key == "to" {
+            let at = pos2(x - CAP_STEP - 2.0, mid);
+            painter.text(at, Align2::RIGHT_CENTER, key, body(TEXT_TAG), brand::FAINT);
+            x = at.x
+                - painter.layout_no_wrap(key.to_owned(), body(TEXT_TAG), brand::FAINT).size().x;
+            continue;
+        }
+        let width = cap_w(painter, key);
+        let cap = Rect::from_min_size(pos2(x - width, mid - CAP_H / 2.0), vec2(width, CAP_H));
+        let radius = CornerRadius::same(CAP_RADIUS);
+        painter.rect_filled(cap, radius, brand::KEY_EDGE);
+        let face = Rect::from_min_max(cap.min, cap.max - vec2(0.0, 1.0));
+        painter.rect_filled(face, radius, brand::BUTTON);
+        painter.text(face.center(), Align2::CENTER_CENTER, key, mono(TEXT_TAG), brand::SOFT);
+        x -= width + CAP_STEP;
+    }
+    if x == right { right } else { x + CAP_STEP }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -852,5 +955,34 @@ mod tests {
         held(&ctx, true, false);
         assert!(!esc_frame(&ctx, false));
         assert!(esc_frame(&ctx, true));
+    }
+
+    #[test]
+    fn a_chord_is_one_cap_per_key_and_a_range_keeps_its_to() {
+        let cases: [(&str, Vec<&str>); 4] = [
+            ("Cmd+Shift+P", vec!["Cmd", "Shift", "P"]),
+            ("Cmd+1 to 9", vec!["Cmd", "1", "to", "9"]),
+            ("Ctrl+,", vec!["Ctrl", ","]),
+            ("", vec![]),
+        ];
+        for (keys, want) in cases {
+            assert_eq!(chord_keys(keys), want, "{keys:?}");
+        }
+    }
+
+    #[test]
+    fn a_menu_row_is_as_wide_as_the_menu_and_a_disabled_one_takes_no_click() {
+        let mut rows = Vec::new();
+        run(|ui| {
+            rows.clear();
+            ui.set_width(300.0);
+            rows.push(menu_row(ui, MENU_ROW_H, false, true));
+            rows.push(menu_row(ui, MENU_ROW_H, true, false));
+        });
+        for (rect, _) in &rows {
+            assert_eq!((rect.width(), rect.height()), (300.0, MENU_ROW_H));
+        }
+        assert!(rows[0].1.sense.senses_click());
+        assert!(!rows[1].1.sense.senses_click());
     }
 }
