@@ -18,12 +18,11 @@ use tidewatch_core::service_supervisor::Word;
 use tidewatch_core::services::{Service, problems};
 
 use crate::brand;
-use crate::new_tab_fields::section_label;
 use crate::remote_pill::Popover;
 use crate::screen_kit::{
     Glyph, MENU_ROW_H, Size, TEXT_BODY, TEXT_TAG, body, button_width, danger_button, dialog_frame,
-    footer_row, glyph_button, menu_divider, menu_label_with, menu_row, mono, primary_button,
-    primary_button_keyed, quiet_button, selection_row,
+    field_label, footer_row, glyph_button, menu_divider, menu_label_with, menu_row, mono,
+    primary_button, primary_button_keyed, quiet_button, selection_row,
 };
 use crate::services_glue::{Command, Row};
 use crate::settings_ui::{switch_line, text_input};
@@ -544,14 +543,14 @@ fn form_dialog(
     let verdict = form_service(&form, existing);
     let modal = dialog_frame(ctx, Id::new("service-form"), title, DIALOG_W, |ui| {
         ui.spacing_mut().item_spacing.y = 8.0;
-        section_label(ui, "Name");
+        field_label(ui, "Name");
         let name = text_input(ui, &mut form.name, "db");
         if std::mem::take(&mut form.focus) {
             name.request_focus();
         }
         submit |= name.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter));
         ui.add_space(4.0);
-        section_label(ui, "Command");
+        field_label(ui, "Command");
         let command = text_input(ui, &mut form.command, "pscale connect shop main --port 3309");
         submit |= command.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter));
         ui.add_space(4.0);

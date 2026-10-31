@@ -14,7 +14,7 @@ use crate::catalog::Catalog;
 use crate::commands::Command;
 use crate::new_tab::{Kind, NameCheck, NewTab, RemoteOffer, Request, level_hint, level_refusal};
 use crate::new_tab_done;
-use crate::new_tab_fields::{self, NameEdit, section_label, text_box};
+use crate::new_tab_fields::{self, NameEdit, text_box};
 use crate::new_tab_lane;
 use crate::new_tab_layout::{self as layout, Above, LABEL_GAP, LABEL_H, SECTION_GAP};
 use crate::new_tab_meeseeks::{self, TestsOffer, Tick};
@@ -22,7 +22,7 @@ use crate::new_tab_remote;
 use crate::repo_base::RepoFacts;
 use crate::screen_kit::TEXT_SECONDARY;
 use crate::screen_kit::{
-    Size, body, confirm_key, esc_left_a_widget, heading, keyed_button_width, mono,
+    Size, body, confirm_key, esc_left_a_widget, field_label, heading, keyed_button_width, mono,
     primary_button_keyed, remember_focus,
 };
 use crate::segmented;
@@ -512,7 +512,7 @@ fn message(
             ("First message", "Optional. Leave it empty to start the agent idle.")
         }
     };
-    section_label(ui, title);
+    field_label(ui, title);
     ui.add_space(LABEL_GAP);
     let (rect, text) = text_box(ui, state, height, hint);
     if let Some(text) = text {
@@ -547,7 +547,7 @@ fn permission(
 ) -> (Option<Rect>, Option<Rect>) {
     let Some((_, agent)) = state.selected_entry(catalog) else { return (None, None) };
     let width = ui.available_width();
-    section_label(ui, "Permission");
+    field_label(ui, "Permission");
     ui.add_space(CAPTION_GAP);
     let labels = Level::ALL.map(Level::label);
     let tones = Level::ALL.map(|level| (level == Level::Yolo).then_some(brand::RED));

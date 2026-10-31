@@ -4,10 +4,9 @@
 use egui::{Align2, CursorIcon, Rect, Sense, Shape, Stroke, StrokeKind, Ui, pos2, vec2};
 
 use crate::brand;
-use crate::new_tab_fields::section_label;
 use crate::new_tab_layout::LABEL_H;
 use crate::new_tab_meeseeks::{Row, Tick};
-use crate::screen_kit::body;
+use crate::screen_kit::{body, field_label};
 
 const CAPTION_GAP: f32 = 8.0;
 const ROW_H: f32 = 22.0;
@@ -42,7 +41,7 @@ fn paint_mark(ui: &Ui, rect: Rect, on: bool, enabled: bool) {
 
 pub(crate) fn show(ui: &mut Ui, rows: &[Row; 3], tests_tip: Option<&str>, pr_label: &str) -> Shown {
     let mut shown = Shown::default();
-    section_label(ui, "Done means");
+    field_label(ui, "Done means");
     ui.add_space(CAPTION_GAP);
     for (index, row) in rows.iter().enumerate() {
         if index > 0 {

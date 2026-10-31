@@ -393,7 +393,7 @@ pub(crate) fn text_area(ui: &mut Ui, value: &mut String, hint: &str, rows: usize
 
 pub(crate) fn field(ui: &mut Ui, label: &str, value: &mut String, hint: &str) -> bool {
     ui.spacing_mut().item_spacing.y = 6.0;
-    caption(ui, label);
+    screen_kit::field_label(ui, label);
     text_input(ui, value, hint).changed()
 }
 

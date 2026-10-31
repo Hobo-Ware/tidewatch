@@ -2,6 +2,8 @@
 
 use crate::brand;
 use crate::commands::Platform;
+use crate::reader_view::ellipsized;
+use crate::selectable;
 use egui::{
     Align, Align2, Color32, Context, CornerRadius, FontId, Id, Layout, Margin, Modal,
     ModalResponse, Painter, Rect, Response, RichText, Sense, Shadow, Stroke, StrokeKind, Ui, pos2,
@@ -19,6 +21,7 @@ const CAP_RADIUS: u8 = 5;
 const FOOTER_GAP: f32 = 8.0;
 const HINT_GAP: f32 = 16.0;
 pub(crate) const DIALOG_HEADER_H: f32 = 48.0;
+pub(crate) const LABEL_H: f32 = 16.0;
 const DIALOG_PAD: i8 = 16;
 const ROW_RADIUS: u8 = 8;
 const BAR_W: f32 = 2.0;
@@ -401,6 +404,21 @@ pub(crate) fn primary_button_keyed(
     button(ui, &Spec { label, key: Some(key), enabled, size, look: Look::Primary })
 }
 
+/// The label over a field, a control row or a switch group in a form, dialog or popover: 13 px
+/// semibold in the soft ink, sentence case, at the left edge of the control under it. Settings
+/// pages keep their own section labels.
+pub(crate) fn field_label(ui: &mut Ui, text: &str) {
+    let (rect, _) = ui.allocate_exact_size(vec2(ui.available_width(), LABEL_H), Sense::hover());
+    let galley = ellipsized(ui.painter(), text, heading(TEXT_SECONDARY), brand::SOFT, rect.width());
+    let at = rect.left_center() - vec2(0.0, galley.size().y / 2.0);
+    selectable::galley(ui, at, galley, brand::SOFT);
+}
+
+/// The width `field_label` gives `text`.
+pub(crate) fn field_label_width(painter: &Painter, text: &str) -> f32 {
+    painter.layout_no_wrap(text.to_owned(), heading(TEXT_SECONDARY), brand::SOFT).size().x
+}
+
 /// A dialog or form footer: `hint` muted at the left, the buttons `add` draws right-aligned (the
 /// rightmost first) with 8 px between them, all on one centered row `Size::Regular` tall. A hint
 /// the buttons leave no room for goes under the row as `notice::key_hint` does.
@@ -776,6 +794,47 @@ mod tests {
             ..egui::RawInput::default()
         };
         let _ = Context::default().run_ui(input, |ui| add(ui));
+    }
+
+    fn painted(out: &egui::FullOutput) -> Vec<(String, FontId, Color32, egui::Pos2)> {
+        out.shapes
+            .iter()
+            .filter_map(|clipped| match &clipped.shape {
+                egui::Shape::Text(text) => {
+                    let format = &text.galley.job.sections.first()?.format;
+                    Some((
+                        text.galley.text().to_owned(),
+                        format.font_id.clone(),
+                        format.color,
+                        text.pos,
+                    ))
+                }
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn a_field_label_is_sentence_case_13_px_semibold_soft_at_the_left_edge() {
+        let ctx = crate::fonts::test_context();
+        let input = egui::RawInput {
+            screen_rect: Some(Rect::from_min_size(egui::pos2(0.0, 0.0), vec2(600.0, 200.0))),
+            ..egui::RawInput::default()
+        };
+        let (mut left, mut height) = (0.0, 0.0);
+        let out = ctx.run_ui(input, |ui| {
+            ui.spacing_mut().item_spacing.y = 0.0;
+            left = ui.max_rect().left();
+            let top = ui.cursor().top();
+            field_label(ui, "Worktree name");
+            height = ui.cursor().top() - top;
+        });
+        let labels = painted(&out);
+        let [(text, font, ink, at)] = &labels[..] else { panic!("one label: {labels:?}") };
+        assert_eq!(text, "Worktree name");
+        assert_eq!((font.clone(), *ink), (heading(TEXT_SECONDARY), brand::SOFT));
+        assert!((at.x - left).abs() < 0.5, "{} vs {left}", at.x);
+        assert_eq!(height, LABEL_H);
     }
 
     #[test]

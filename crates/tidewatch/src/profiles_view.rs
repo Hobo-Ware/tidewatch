@@ -11,14 +11,14 @@ use tidewatch_core::profiles::default_effort_for;
 
 use crate::catalog::Availability;
 use crate::profile_editor::{Draft, Editor, Group};
-use crate::screen_kit::{badge_colors, badge_letter};
+use crate::screen_kit::{badge_colors, badge_letter, field_label};
 use crate::settings_ui::editor::{
     Bar, BarAction, Item, card_header, columns, list_item, option_card, option_card_height,
     page_area, page_top, save_bar, split_card,
 };
 use crate::settings_ui::{
-    CARD, FAINT, GREEN, MUTED, ORANGE, RED, SOFT, TEAL_TEXT, caption, disclosure, fade_edges,
-    field, note, pick, switch_line,
+    CARD, FAINT, GREEN, MUTED, ORANGE, RED, SOFT, TEAL_TEXT, disclosure, fade_edges, field, note,
+    pick, switch_line,
 };
 use crate::settings_view::Action;
 
@@ -257,7 +257,7 @@ fn form(ui: &mut Ui, draft: &mut Draft, agents: &[(String, String)]) -> bool {
     }
     ui.spacing_mut().item_spacing = vec2(6.0, 6.0);
     ui.add_space(12.0);
-    caption(ui, "Agent");
+    field_label(ui, "Agent");
     ui.add_space(2.0);
     let names: Vec<&str> = agents.iter().map(|(_, name)| name.as_str()).collect();
     let active = agents.iter().position(|(id, _)| *id == draft.agent);
@@ -266,7 +266,7 @@ fn form(ui: &mut Ui, draft: &mut Draft, agents: &[(String, String)]) -> bool {
         changed = true;
     }
     ui.add_space(12.0);
-    caption(ui, "Effort");
+    field_label(ui, "Effort");
     ui.add_space(2.0);
     let efforts = effort_choices(&draft.effort, default_effort_for(&draft.agent, &draft.model));
     let labels: Vec<&str> = efforts.iter().map(|(_, label)| label.as_str()).collect();
@@ -277,7 +277,7 @@ fn form(ui: &mut Ui, draft: &mut Draft, agents: &[(String, String)]) -> bool {
         changed = true;
     }
     ui.add_space(12.0);
-    caption(ui, "Permission level");
+    field_label(ui, "Permission level");
     ui.add_space(2.0);
     changed |= levels(ui, draft, width);
     ui.add_space(12.0);

@@ -12,7 +12,7 @@ use crate::new_tab_layout::{FIELD_H, LABEL_GAP, LABEL_H, PROBLEM_H};
 use crate::reader_view::{ellipsized, field_frame_on};
 use crate::repo_base::RepoFacts;
 use crate::screen_kit::TEXT_TAG;
-use crate::screen_kit::{Size, body, mono, quiet_button};
+use crate::screen_kit::{Size, body, field_label, field_label_width, mono, quiet_button};
 
 const PREFIX: &str = "agent/";
 const NOTE_GAP: f32 = 12.0;
@@ -28,17 +28,6 @@ fn text_width(ui: &Ui, text: &str, size: f32) -> f32 {
 
 pub(crate) fn text_id() -> Id {
     Id::new(TEXT_ID)
-}
-
-pub(crate) fn section_label(ui: &mut Ui, text: &str) {
-    let (rect, _) = ui.allocate_exact_size(vec2(ui.available_width(), LABEL_H), Sense::hover());
-    let galley =
-        ellipsized(ui.painter(), &text.to_uppercase(), body(TEXT_TAG), brand::MUTED, rect.width());
-    ui.painter().galley(
-        rect.left_center() - vec2(0.0, galley.size().y / 2.0),
-        galley,
-        brand::MUTED,
-    );
 }
 
 /// What the name field did this frame.
@@ -71,10 +60,10 @@ fn problem_line(ui: &mut Ui, name: &str, check: &NameCheck) -> bool {
 
 pub(crate) fn name_field(ui: &mut Ui, state: &NewTab, facts: Option<&RepoFacts>) -> NameEdit {
     let top = ui.cursor().top();
-    section_label(ui, "Worktree name");
+    field_label(ui, "Worktree name");
     let follows = state.name_follows_text().then_some("follows the message");
     if let Some(note) = follows {
-        let label_w = text_width(ui, "WORKTREE NAME", 11.5);
+        let label_w = field_label_width(ui.painter(), "Worktree name");
         let room = ui.max_rect().width() - label_w;
         if text_width(ui, note, 11.5) + NOTE_GAP <= room {
             let at = pos2(ui.max_rect().right(), top + LABEL_H / 2.0);
@@ -137,7 +126,7 @@ fn paint_chevron(ui: &Ui, center: Pos2) {
 
 /// The dropdown of local branches. Returns the one picked.
 pub(crate) fn base_field(ui: &mut Ui, state: &NewTab, facts: Option<&RepoFacts>) -> Option<String> {
-    section_label(ui, "Start from");
+    field_label(ui, "Start from");
     ui.add_space(LABEL_GAP);
     let current = state.base(facts).unwrap_or_else(|| "HEAD".to_owned());
     let response = field_frame_on(ui, brand::SEGMENT, true, |ui| {
