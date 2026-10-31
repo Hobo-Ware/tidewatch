@@ -6,9 +6,7 @@ use std::borrow::Cow;
 use std::collections::HashMap;
 
 use egui::text::{LayoutJob, TextFormat};
-use egui::{
-    Align2, Color32, CornerRadius, FontId, Rect, ScrollArea, Sense, Ui, UiBuilder, pos2, vec2,
-};
+use egui::{Align2, Color32, FontId, Rect, ScrollArea, Sense, Ui, UiBuilder, pos2, vec2};
 use kelp_core::commit::{ChangeKind, FileChange};
 use kelp_core::status::is_folder;
 use tidewatch_core::changes::Groups;
@@ -20,7 +18,7 @@ use crate::diff_pane::{kind_color, kind_letter};
 use crate::pane_jobs::LineCounts;
 use crate::reader_view::ellipsized;
 use crate::screen_kit::{TEXT_SECONDARY, TEXT_TAG};
-use crate::screen_kit::{body, mono};
+use crate::screen_kit::{TagFill, body, heading, mono, paint_tag, selected_ink, selection_row};
 use crate::selectable;
 use crate::tab_view::TabView;
 
@@ -33,7 +31,7 @@ const ADD_W: f32 = 44.0;
 const DEL_W: f32 = 36.0;
 const COUNT_GAP: f32 = 8.0;
 const DIR_GAP: f32 = 8.0;
-const RADIUS: u8 = 7;
+const NOTE_GAP: f32 = 12.0;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Group {
@@ -121,7 +119,19 @@ pub(crate) fn show(ui: &mut Ui, rect: Rect, view: &mut TabView, side: bool) {
         message(ui, list, "No uncommitted changes");
         None
     } else {
-        list_files(ui, list, view, &groups, side)
+        let picked = list_files(ui, list, view, &groups, side);
+        let rows = rows(&groups).len();
+        if note_fits(rows, list.height()) {
+            selectable::text(
+                ui,
+                pos2(list.left() + SIDE_PAD + ROW_PAD, list.top() + rows as f32 * ROW_H + NOTE_GAP),
+                Align2::LEFT_TOP,
+                NOTE,
+                body(TEXT_SECONDARY),
+                brand::FAINT,
+            );
+        }
+        picked
     };
     view.groups = Some(groups);
     match picked {
@@ -200,22 +210,29 @@ fn header_row(ui: &mut Ui, group: Group, count: usize) {
     let (slot, _) = ui.allocate_exact_size(vec2(ui.available_width(), ROW_H), Sense::hover());
     let painter = ui.painter_at(slot);
     let left = slot.left() + SIDE_PAD + ROW_PAD;
-    let title = painter.layout_no_wrap(group.title().to_owned(), body(12.0), brand::SOFT);
+    let title =
+        painter.layout_no_wrap(group.title().to_owned(), heading(TEXT_SECONDARY), brand::TEXT);
     let width = title.size().x;
-    selectable::galley(
-        ui,
-        pos2(left, slot.center().y - title.size().y / 2.0 + 1.0),
-        title,
-        brand::SOFT,
-    );
-    selectable::text(
-        ui,
-        pos2(left + width + 6.0, slot.center().y + 1.0),
-        Align2::LEFT_CENTER,
+    selectable::galley(ui, pos2(left, slot.center().y - title.size().y / 2.0), title, brand::TEXT);
+    paint_tag(
+        &painter,
+        (left + width + COUNT_GAP, slot.center().y),
         &count.to_string(),
-        mono(TEXT_TAG),
-        brand::FAINT,
+        count_ink(count),
+        TagFill::Line(brand::ITEM_LINE),
     );
+}
+
+/// The ink of a group's count pill: a zero count is muted.
+fn count_ink(count: usize) -> Color32 {
+    if count == 0 { brand::FAINT } else { brand::SOFT }
+}
+
+const NOTE: &str = "Nothing else changed since the last commit.";
+
+/// Whether the list is short enough to leave room for the closing note under its last row.
+fn note_fits(rows: usize, list_h: f32) -> bool {
+    (rows as f32 + 1.0) * ROW_H + NOTE_GAP <= list_h
 }
 
 fn file_row(
@@ -228,11 +245,7 @@ fn file_row(
     let (slot, response) = ui.allocate_exact_size(vec2(ui.available_width(), ROW_H), sense);
     let painter = ui.painter_at(slot);
     let rect = slot.shrink2(vec2(SIDE_PAD, 1.0));
-    if current {
-        painter.rect_filled(rect, CornerRadius::same(RADIUS), brand::SEGMENT_ON);
-    } else if response.hovered() && folder.is_none() {
-        painter.rect_filled(rect, CornerRadius::same(RADIUS), brand::ITEM);
-    }
+    selection_row(&painter, rect, current, response.hovered() && folder.is_none());
     let center_y = rect.center().y;
     let (mark, ink) = letter(group, change.kind);
     painter.text(
@@ -269,7 +282,14 @@ fn file_row(
         );
     }
     right -= DEL_W + COUNT_GAP + ADD_W + COUNT_GAP;
-    paint_name(ui, &painter, &change.path, (rect.left() + ROW_PAD + LETTER_W, right), center_y);
+    let ink = selected_ink(current, brand::TEXT);
+    paint_name(
+        ui,
+        &painter,
+        &change.path,
+        (rect.left() + ROW_PAD + LETTER_W, right),
+        (center_y, ink),
+    );
     let tip = folder.map_or_else(
         || change.path.clone(),
         |files| format!("{} - {} untracked", change.path, folder_count(files)),
@@ -289,15 +309,15 @@ pub(crate) fn paint_name(
     painter: &egui::Painter,
     path: &str,
     (left, right): (f32, f32),
-    y: f32,
+    (y, ink): (f32, Color32),
 ) {
     let (dir, name) = split_dir(path.trim_end_matches('/'));
     let name = if is_folder(path) { Cow::Owned(format!("{name}/")) } else { Cow::Borrowed(name) };
     let font: FontId = body(13.0);
     let room = (right - left).max(0.0);
-    let name_galley = ellipsized(painter, &name, font.clone(), brand::TEXT, room);
+    let name_galley = ellipsized(painter, &name, font.clone(), ink, room);
     let name_w = name_galley.size().x;
-    painter.galley(pos2(left, y - name_galley.size().y / 2.0), name_galley, brand::TEXT);
+    painter.galley(pos2(left, y - name_galley.size().y / 2.0), name_galley, ink);
     let dir_room = room - name_w - DIR_GAP;
     if dir.is_empty() || dir_room < 24.0 {
         return;
@@ -361,6 +381,24 @@ mod tests {
         for (group, kind, want, color) in cases {
             assert_eq!(letter(group, kind), (want, color), "{group:?} {kind:?}");
         }
+    }
+
+    #[test]
+    fn a_zero_count_is_muted_and_a_short_list_leaves_room_for_the_closing_note() {
+        assert_eq!(count_ink(0), brand::FAINT);
+        assert_eq!(count_ink(3), brand::SOFT);
+        assert!(note_fits(2, 400.0));
+        assert!(!note_fits(13, 400.0));
+        assert!(!note_fits(2, 2.0 * ROW_H));
+    }
+
+    #[test]
+    fn a_short_list_ends_with_the_closing_note_and_a_long_one_does_not() {
+        let few = Panel::new(FEW, true);
+        assert!(few.at(NOTE).is_some(), "{:?}", few.texts);
+        let long = (0..30).fold(String::new(), |all, n| all + &format!("M  f{n}.rs\0"));
+        let many = Panel::new(&long, true);
+        assert_eq!(many.at(NOTE), None);
     }
 
     #[test]
@@ -487,7 +525,7 @@ mod tests {
             panel
                 .texts
                 .iter()
-                .find(|(text, _)| text.contains("changed since the last commit"))
+                .find(|(text, _)| text.contains("changed since the last commit") && text != NOTE)
                 .map(|(_, rect)| rect.top())
         };
         assert!(footer(&few).is_some());
