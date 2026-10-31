@@ -11,7 +11,7 @@ use tidewatch_core::civil_date::Date;
 use tidewatch_core::kind::Kind;
 use tidewatch_core::meeseeks::{CheckLine, Criteria, MAX_FAILURES, Meeseeks, Phase, Step, Verdict};
 use tidewatch_core::meeseeks_branch::{self, Branch, Changed, Found};
-use tidewatch_core::meeseeks_check::{self as check, Checked};
+use tidewatch_core::meeseeks_check::{self as check, Checked, Work};
 use tidewatch_core::meeseeks_log::{self, Log, Poofed, StageLine};
 use tidewatch_core::paths::TidewatchPaths;
 use tidewatch_core::test_command::{self, Gate};
@@ -33,6 +33,7 @@ pub(crate) enum Fake {
     ReadOnly,
     Promoted,
     Named,
+    OnPr,
 }
 
 pub(crate) struct FakeNamed {
@@ -68,6 +69,7 @@ impl Fake {
             Some("readonly") => Self::ReadOnly,
             Some("promoted") => Self::Promoted,
             Some("named") => Self::Named,
+            Some("onpr") => Self::OnPr,
             _ => Self::Off,
         }
     }
@@ -93,6 +95,14 @@ impl Fake {
             Self::Promoted => {
                 (9, 7, 0, Phase::Working, "Explain how the cache layer works", Kind::Edit)
             }
+            Self::OnPr => (
+                9,
+                7,
+                0,
+                Phase::Checking(Step::HandOff),
+                "Sensei https://github.com/acme/web/pull/213 and fold the fix into it",
+                Kind::Edit,
+            ),
             Self::Off | Self::Poofed | Self::Named => return None,
         };
         Some(Meeseeks {
@@ -119,6 +129,7 @@ pub(crate) enum Done<T> {
 pub(crate) struct CheckSpec {
     pub(crate) tools: Tools,
     pub(crate) worktree: Worktree,
+    pub(crate) work: Work,
 }
 
 pub(crate) struct LookSpec {
@@ -134,10 +145,10 @@ pub(crate) fn run_look(spec: &LookSpec) -> Result<bool, String> {
 pub(crate) fn run_check(step: Step, spec: &CheckSpec, pr: bool) -> Result<Checked, String> {
     let (tools, wt) = (&spec.tools, &spec.worktree);
     match step {
-        Step::Change => check::change(tools, &wt.path, &wt.branch),
+        Step::Change => check::change(tools, &wt.path, &wt.branch, &spec.work),
         Step::Tests => check::tests(&wt.repo, &wt.path),
         Step::Proof => check::proof(tools, &wt.path),
-        Step::HandOff if pr => check::hand_off(tools, &wt.path, &wt.branch),
+        Step::HandOff if pr => check::hand_off(tools, &wt.path, &wt.branch, &spec.work),
         Step::HandOff => Ok(Checked { detail: String::new(), pr_url: None }),
     }
 }
@@ -416,6 +427,24 @@ impl Host {
     }
 }
 
+fn fake_on_pr() -> bool {
+    std::env::var("TIDEWATCH_FAKE_POOFED_PR").is_ok_and(|value| value == "1")
+}
+
+fn fake_on_pr_poofed(mut record: Poofed) -> Poofed {
+    "Sensei https://github.com/acme/web/pull/213 and fold the fix into it"
+        .clone_into(&mut record.task);
+    for check in &mut record.checks {
+        match check.step {
+            Step::Change => "Work is on PR #213, merged".clone_into(&mut check.detail),
+            Step::HandOff => "PR #213 merged".clone_into(&mut check.detail),
+            Step::Tests | Step::Proof => {}
+        }
+    }
+    record.done = vec!["Folded the review fix into PR #213".to_owned()];
+    record
+}
+
 fn fake_read_only() -> bool {
     std::env::var("TIDEWATCH_FAKE_POOFED_READONLY").is_ok_and(|value| value == "1")
 }
@@ -486,7 +515,13 @@ pub(crate) fn fake_poofed(day: Date, now_ms: i64) -> Vec<Poofed> {
     };
     let first = entry("promo-test", "Add a test for the promo banner", 213, 360);
     vec![
-        if fake_read_only() { fake_read_only_poofed(first) } else { first },
+        if fake_read_only() {
+            fake_read_only_poofed(first)
+        } else if fake_on_pr() {
+            fake_on_pr_poofed(first)
+        } else {
+            first
+        },
         entry("lint-fix", "Fix the lint warnings in the billing module", 211, 180),
     ]
 }

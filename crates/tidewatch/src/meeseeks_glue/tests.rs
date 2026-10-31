@@ -71,6 +71,7 @@ fn the_switch_reads_its_three_values_and_anything_else_is_off() {
         (Some("readonly"), Fake::ReadOnly),
         (Some("promoted"), Fake::Promoted),
         (Some("named"), Fake::Named),
+        (Some("onpr"), Fake::OnPr),
         (Some("yes"), Fake::Off),
         (Some(""), Fake::Off),
         (None, Fake::Off),
@@ -128,7 +129,11 @@ fn a_dirty_tree_refuses_the_poof_before_the_agent_is_touched_and_hands_the_shell
 #[test]
 fn the_checks_dispatch_to_their_step_and_a_hand_off_without_a_pr_is_nothing_to_do() {
     let repo = repo_with_worktree();
-    let spec = CheckSpec { tools: Tools::system(), worktree: repo.worktree.clone() };
+    let spec = CheckSpec {
+        tools: Tools::system(),
+        worktree: repo.worktree.clone(),
+        work: Work::default(),
+    };
     assert_eq!(run_check(Step::Change, &spec, true), Err("no commit ahead of main".to_owned()));
     let said =
         |step, pr| run_check(step, &spec, pr).map(|checked| (checked.detail, checked.pr_url));
@@ -312,15 +317,21 @@ fn hanging(program: &str, dir: &std::path::Path) -> Tools {
 fn a_check_whose_git_or_gh_never_answers_fails_its_step_with_the_limit_named() {
     let repo = repo_with_worktree();
     let tools = tempfile::tempdir().unwrap();
-    let stuck_git =
-        CheckSpec { tools: hanging("git", tools.path()), worktree: repo.worktree.clone() };
+    let stuck_git = CheckSpec {
+        tools: hanging("git", tools.path()),
+        worktree: repo.worktree.clone(),
+        work: Work::default(),
+    };
     assert_eq!(
         run_check(Step::Proof, &stuck_git, true).err(),
         Some("git took longer than 300 ms and was stopped".to_owned())
     );
     let tools = tempfile::tempdir().unwrap();
-    let stuck_gh =
-        CheckSpec { tools: hanging("gh", tools.path()), worktree: repo.worktree.clone() };
+    let stuck_gh = CheckSpec {
+        tools: hanging("gh", tools.path()),
+        worktree: repo.worktree.clone(),
+        work: Work::default(),
+    };
     assert_eq!(
         run_check(Step::HandOff, &stuck_gh, true).err(),
         Some("gh took longer than 300 ms and was stopped".to_owned())

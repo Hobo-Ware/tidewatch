@@ -60,7 +60,10 @@ fn checking(step: Step, meeseeks: &Meeseeks, tests: Option<&str>) -> Span {
         Step::Change => "commit and clean tree",
         Step::Tests => tests.unwrap_or("the tests"),
         Step::Proof => "clean tree after the checks",
-        Step::HandOff if meeseeks.criteria.pr => "pull request",
+        Step::HandOff if meeseeks.criteria.pr => match meeseeks.target().pull_request() {
+            Some(pr) => return strong(&format!("{} update", pr.label())),
+            None => "pull request",
+        },
         Step::HandOff => "hand off",
     })
 }
@@ -104,7 +107,12 @@ pub(crate) fn card(meeseeks: &Meeseeks, name: &str, now_ms: i64, tests: Option<&
     let bars = if meeseeks.phase == Phase::Working || meeseeks.kind == Kind::ReadOnly {
         Vec::new()
     } else {
-        Step::ALL.iter().zip(marks).map(|(step, mark)| (step.label(), look(mark))).collect()
+        let target = meeseeks.target();
+        Step::ALL
+            .iter()
+            .zip(marks)
+            .map(|(step, mark)| (step.label_for(&target), look(mark)))
+            .collect()
     };
     Card {
         title: meeseeks.task.clone(),

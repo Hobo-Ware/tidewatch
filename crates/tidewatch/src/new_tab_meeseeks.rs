@@ -4,6 +4,7 @@
 use tidewatch_core::agents::{Agent, Level};
 use tidewatch_core::branch_name;
 use tidewatch_core::meeseeks::Criteria;
+use tidewatch_core::meeseeks_target::Target;
 use tidewatch_core::names;
 use tidewatch_core::profiles::Profile;
 use tidewatch_core::test_command;
@@ -138,6 +139,21 @@ pub(crate) fn profile_for(
     match builder_entry(agent_id, entries) {
         Some((key, profile)) => (key, Profile { level: LEVEL, ..profile }),
         None => (Profile::DEFAULTS_ID.to_owned(), Profile::defaults_for(agent_id, LEVEL)),
+    }
+}
+
+/// The words of the pull request row: it opens one, or updates the one a task names. Several tasks
+/// that name different pull requests, or only some of them, say so.
+pub(crate) fn pr_label(tasks: &[String]) -> String {
+    let named: Vec<Option<u64>> =
+        tasks.iter().map(|task| Target::of_task(task).pull_request().map(|pr| pr.number)).collect();
+    match named.first().copied().flatten() {
+        None if named.iter().all(Option::is_none) => Tick::Pr.label().to_owned(),
+        Some(number) if named.iter().all(|found| *found == Some(number)) => {
+            format!("Update PR #{number}")
+        }
+        _ if named.iter().all(Option::is_some) => "Update their PRs".to_owned(),
+        _ => "Open or update a PR".to_owned(),
     }
 }
 

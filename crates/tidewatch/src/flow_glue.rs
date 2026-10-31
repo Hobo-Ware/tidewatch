@@ -7,6 +7,8 @@ use std::time::Duration;
 
 use egui::Context;
 use stdusk_core::terminal::PtyTerm;
+use tidewatch_core::meeseeks::Meeseeks;
+use tidewatch_core::meeseeks_target::Target;
 use tidewatch_core::paths::sent_file_beside;
 use tidewatch_core::sent::{self, Reason, Record, because};
 use tidewatch_core::transcript::Source;
@@ -31,6 +33,13 @@ pub(crate) fn unix_now() -> i64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(0, |d| d.as_secs() as i64)
+}
+
+/// A Meeseeks whose task names a pull request updates that one, so the card that asks to open a new
+/// pull request stays away from it, merged or not.
+fn delivery_gate(shut: bool, meeseeks: Option<&Meeseeks>) -> Gate {
+    let updates = meeseeks.is_some_and(|found| found.target() != Target::New);
+    if shut || updates { Gate::Shut } else { Gate::Open }
 }
 
 /// The agent worktree tabs whose shell runs, as the flow sees them.
@@ -66,7 +75,7 @@ pub(crate) fn facts<T>(
                 pending,
                 auto_push: push.auto,
                 merged_head: push.merged_head,
-                gate: if push.shut { Gate::Shut } else { Gate::Open },
+                gate: delivery_gate(push.shut, agent.meeseeks.as_ref()),
                 profile: agent.profile_name.clone(),
             })
         })
@@ -398,6 +407,25 @@ mod tests {
         assert!(toasts[0].starts_with("Could not send the review: There is no running agent"));
         assert!(toasts[0].ends_with("Its notes are back in your draft"));
         assert_eq!(flow.outbox.waiting_tabs(), Vec::<u64>::new());
+    }
+
+    #[test]
+    fn the_delivery_stays_shut_for_a_meeseeks_whose_task_names_a_pull_request_and_open_otherwise() {
+        use tidewatch_core::meeseeks::Criteria;
+        let meeseeks = |task: &str| Meeseeks::summon(task, Criteria::default(), 0);
+        let sensei = meeseeks("Sensei https://github.com/trakt/trakt-workers/pull/2437");
+        let plain = meeseeks("Add a retry to the sync job");
+        let cases = [
+            (false, None, Gate::Open),
+            (true, None, Gate::Shut),
+            (false, Some(&plain), Gate::Open),
+            (true, Some(&plain), Gate::Shut),
+            (false, Some(&sensei), Gate::Shut),
+            (true, Some(&sensei), Gate::Shut),
+        ];
+        for (shut, found, want) in cases {
+            assert_eq!(delivery_gate(shut, found), want, "shut {shut}");
+        }
     }
 
     fn done_facts(tab: u64) -> TabFacts {

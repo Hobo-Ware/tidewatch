@@ -59,7 +59,8 @@ pub struct PrepareInput<'a> {
     pub task: &'a str,
     pub session_id: Option<String>,
     pub remote: bool,
-    pub meeseeks: bool,
+    /// The task of a Meeseeks tab; `None` for any other agent.
+    pub meeseeks: Option<&'a str>,
     pub path_var: Option<&'a OsStr>,
     pub listener: Option<HookListener>,
     /// With consent (D14): the folder-trust entry to add for this worktree before the agent starts.
@@ -159,8 +160,11 @@ fn prepare_with(
     yolo_in_folder: bool,
 ) -> Result<Prepared, PrepareError> {
     let wanted_style = Profile { house_style: true, ..input.profile.clone() };
-    let profile =
-        if input.meeseeks && !input.profile.house_style { &wanted_style } else { input.profile };
+    let profile = if input.meeseeks.is_some() && !input.profile.house_style {
+        &wanted_style
+    } else {
+        input.profile
+    };
     let bare =
         LaunchCtx { worktree_tab: input.worktree_tab, yolo_in_folder, ..LaunchCtx::default() };
     launch_command(input.agent, profile, &bare)?;
@@ -356,7 +360,10 @@ fn write_agent_style(input: &PrepareInput, shared: &Path) -> std::io::Result<Pat
     let mut text = house_style::compose_for_cli(
         &std::fs::read_to_string(shared)?,
         checklist::for_repo(paths, input.repo).as_deref(),
-        house_style::Role::of(input.profile.level, input.meeseeks),
+        input.meeseeks.map_or_else(
+            || house_style::Role::of(input.profile.level, false),
+            house_style::Role::meeseeks_for,
+        ),
         TurnEnd::of(input.agent.wiring),
     );
     if let Some(block) = services_mcp::house_block(&services::services_for(paths, input.repo)) {
@@ -595,7 +602,7 @@ mod tests {
                 task,
                 session_id: None,
                 remote: false,
-                meeseeks: false,
+                meeseeks: None,
                 path_var: Some(OsStr::new("/opt/homebrew/bin:/usr/bin:/bin")),
                 listener,
                 trust: None,
@@ -635,9 +642,9 @@ mod tests {
             listener: None,
             trust: None,
         };
-        prepare(&input(false)).unwrap();
+        prepare(&input(None)).unwrap();
         assert!(!style.exists(), "a plain agent with the house style off gets no file");
-        let prepared = prepare(&input(true)).unwrap();
+        let prepared = prepare(&input(Some("rename it"))).unwrap();
         let text = std::fs::read_to_string(&style).unwrap();
         assert!(text.contains("## You are a Meeseeks") && text.contains("`meeseeks_done`"));
         assert!(
@@ -645,8 +652,41 @@ mod tests {
             "{:?}",
             prepared.launch.args
         );
-        let resumed = prepare_resume(&input(true), SESSION).unwrap();
+        let resumed = prepare_resume(&input(Some("rename it")), SESSION).unwrap();
         assert!(resumed.launch.args.iter().any(|arg| arg.contains("house-style")));
+    }
+
+    #[test]
+    fn a_meeseeks_whose_task_names_a_pull_request_is_told_to_push_to_it_on_a_fresh_start_and_a_resume()
+     {
+        let fx = Fixture::new();
+        let table = AgentTable::builtin();
+        let quiet = profile("claude", Level::Edits);
+        let style = fx.paths.tab_house_style_file(Path::new("/work/web"), "brave-otter");
+        let input = |task| PrepareInput {
+            paths: &fx.paths,
+            agent: table.get("claude").unwrap(),
+            profile: &quiet,
+            repo: Path::new("/work/web"),
+            tab: "brave-otter",
+            dir: &fx.dir,
+            worktree_tab: true,
+            task: "",
+            session_id: None,
+            remote: false,
+            meeseeks: Some(task),
+            path_var: None,
+            listener: None,
+            trust: None,
+        };
+        let written = || std::fs::read_to_string(&style).unwrap();
+        prepare(&input("Sensei https://github.com/acme/web/pull/7")).unwrap();
+        assert!(written().contains("open no new pull request"), "{}", written());
+        assert!(!written().contains("gh pr create --draft"));
+        prepare(&input("Add a retry")).unwrap();
+        assert!(written().contains("opens its own draft pull request"));
+        prepare_resume(&input("PR 7 needs a rebase"), SESSION).unwrap();
+        assert!(written().contains("open no new pull request"));
     }
 
     #[test]
@@ -869,7 +909,7 @@ mod tests {
             task: "",
             session_id: None,
             remote: false,
-            meeseeks: false,
+            meeseeks: None,
             path_var: None,
             listener: None,
             trust: None,
@@ -960,7 +1000,7 @@ mod tests {
                 task: "do it",
                 session_id: None,
                 remote: false,
-                meeseeks: false,
+                meeseeks: None,
                 path_var: None,
                 listener: None,
                 trust: None,
@@ -1198,7 +1238,7 @@ mod tests {
             task: "ignored task",
             session_id: Some("99999999-8888-7777-6666-555555555555".into()),
             remote: false,
-            meeseeks: false,
+            meeseeks: None,
             path_var: Some(OsStr::new("/opt/homebrew/bin:/usr/bin:/bin")),
             listener,
             trust: None,
@@ -1644,7 +1684,7 @@ mod tests {
             task: "",
             session_id: None,
             remote: false,
-            meeseeks: false,
+            meeseeks: None,
             path_var: Some(OsStr::new(&path)),
             listener: None,
             trust: None,
@@ -1677,7 +1717,7 @@ mod tests {
             task: "",
             session_id: None,
             remote: false,
-            meeseeks: false,
+            meeseeks: None,
             path_var: Some(OsStr::new(&path)),
             listener: None,
             trust: None,
@@ -1732,7 +1772,7 @@ mod tests {
             task: "",
             session_id: None,
             remote: false,
-            meeseeks: false,
+            meeseeks: None,
             path_var: Some(OsStr::new(&path)),
             listener: None,
             trust: None,
@@ -1770,7 +1810,7 @@ mod tests {
             task: "",
             session_id: None,
             remote: false,
-            meeseeks: false,
+            meeseeks: None,
             path_var: None,
             listener: None,
             trust: None,
@@ -1799,7 +1839,7 @@ mod tests {
                 task: "",
                 session_id: None,
                 remote: false,
-                meeseeks: false,
+                meeseeks: None,
                 path_var: None,
                 listener: None,
                 trust: None,

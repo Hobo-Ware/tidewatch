@@ -32,6 +32,12 @@ pub fn found(entries: &[Entry], now_ms: i64) -> Vec<Link> {
     board.links
 }
 
+/// The pull request addresses in `text`, in order, each cut to `https://github.com/<owner>/<repo>/pull/<n>`.
+#[must_use]
+pub fn pull_requests(text: &str) -> Vec<String> {
+    scan(text).into_iter().map(|(url, ..)| url).filter(|url| url.contains("/pull/")).collect()
+}
+
 fn scan(text: &str) -> Vec<(String, Option<String>, String)> {
     text.match_indices("http")
         .filter(|(start, _)| !text[..*start].chars().next_back().is_some_and(char::is_alphanumeric))

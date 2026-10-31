@@ -5,6 +5,7 @@ use std::time::Duration;
 
 use tidewatch_core::kind::Kind;
 use tidewatch_core::meeseeks::{Command, Criteria, Event, Meeseeks, Phase};
+use tidewatch_core::meeseeks_check::Work;
 use tidewatch_core::meeseeks_log::{Poofed, StageLine};
 use tidewatch_core::sent::{Reason, because};
 
@@ -290,10 +291,10 @@ impl Tidewatch {
 
     fn start_check(&mut self, tab: u64, step: tidewatch_core::meeseeks::Step, ctx: &egui::Context) {
         let found = self.tabs.get_mut(tab);
-        let Some((worktree, pr)) = found.and_then(|t| {
+        let Some((worktree, pr, work)) = found.and_then(|t| {
             let agent = t.pane.agent.as_ref()?;
             let meeseeks = agent.meeseeks.as_ref()?;
-            Some((t.pane.worktree.clone()?, meeseeks.criteria.pr))
+            Some((t.pane.worktree.clone()?, meeseeks.criteria.pr, Work::of(meeseeks)))
         }) else {
             self.meeseeks_event(
                 tab,
@@ -302,7 +303,7 @@ impl Tidewatch {
             );
             return;
         };
-        let spec = CheckSpec { tools: self.flow.tools(), worktree };
+        let spec = CheckSpec { tools: self.flow.tools(), worktree, work };
         self.meeseeks.check(ctx, tab, step, spec, pr);
     }
 

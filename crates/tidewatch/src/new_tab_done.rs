@@ -40,7 +40,7 @@ fn paint_mark(ui: &Ui, rect: Rect, on: bool, enabled: bool) {
     }
 }
 
-pub(crate) fn show(ui: &mut Ui, rows: &[Row; 3], tests_tip: Option<&str>) -> Shown {
+pub(crate) fn show(ui: &mut Ui, rows: &[Row; 3], tests_tip: Option<&str>, pr_label: &str) -> Shown {
     let mut shown = Shown::default();
     section_label(ui, "Done means");
     ui.add_space(CAPTION_GAP);
@@ -59,10 +59,11 @@ pub(crate) fn show(ui: &mut Ui, rows: &[Row; 3], tests_tip: Option<&str>) -> Sho
         paint_mark(ui, mark, row.on, enabled);
         let painter = ui.painter();
         let ink = if enabled { brand::TEXT } else { brand::MUTED };
+        let text = if row.tick == Tick::Pr { pr_label } else { row.tick.label() };
         let label = painter.text(
             pos2(mark.right() + MARK_GAP, rect.center().y),
             Align2::LEFT_CENTER,
-            row.tick.label(),
+            text,
             body(13.0),
             ink,
         );
