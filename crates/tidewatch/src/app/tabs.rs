@@ -6,8 +6,8 @@ use stdusk_core::terminal::PtyTerm;
 use tidewatch_core::worktree::{BranchOutcome, Terms, Why};
 use tidewatch_core::worktree_safety::Owner;
 
-use super::{Closing, Tidewatch};
-use crate::close_dialog::{self, Answer, Choice};
+use super::Tidewatch;
+use crate::close_dialog::{self, Answer, Choice, Closing};
 use crate::dev_worktree::DevWorktree;
 use crate::new_tab::{Group, MeeseeksRequest, NewTab, Request};
 use crate::pane::{
@@ -190,7 +190,8 @@ impl Tidewatch {
                 if self.closing.is_none()
                     && let Some(paths) = self.paths.clone()
                 {
-                    self.closing = Some(Closing::Inspecting(id));
+                    self.closing =
+                        Some(Closing::Inspecting { tab: id, worktree: worktree.clone() });
                     worktree_jobs::inspect(&self.jobs, ctx, paths, id, worktree);
                 }
             }
@@ -262,11 +263,13 @@ impl Tidewatch {
                 }
             }
             Done::Inspected { tab, worktree, safety } => {
-                if !matches!(self.closing, Some(Closing::Inspecting(id)) if id == tab) {
+                if self.dev.is_some_and(DevWorktree::holds_the_check) {
                     return;
                 }
                 let dev_choice = close_dialog::choices(&safety).get(1).copied();
-                self.closing = Some(Closing::Asking { tab, worktree, safety });
+                if !Closing::land(&mut self.closing, tab, &worktree, safety) {
+                    return;
+                }
                 if self.dev.is_some_and(DevWorktree::answers_the_dialog)
                     && let Some(choice) = dev_choice
                 {

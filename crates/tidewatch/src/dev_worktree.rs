@@ -4,12 +4,15 @@
 //! - `open`: open one worktree tab.
 //! - `ask`: open one, then ask to close it, so the capture shows the close dialog.
 //! - `delete`: open one, close it and answer "Delete branch", so the capture shows it gone.
+//! - `checking`: open one, close it and never take the answer of the worktree check, so the
+//!   capture shows the dialog while it still says it is checking.
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum DevWorktree {
     Open,
     Ask,
     Delete,
+    Checking,
 }
 
 impl DevWorktree {
@@ -22,6 +25,7 @@ impl DevWorktree {
             "open" => Some(Self::Open),
             "ask" => Some(Self::Ask),
             "delete" => Some(Self::Delete),
+            "checking" => Some(Self::Checking),
             _ => None,
         }
     }
@@ -33,6 +37,10 @@ impl DevWorktree {
     pub(crate) fn answers_the_dialog(self) -> bool {
         self == Self::Delete
     }
+
+    pub(crate) fn holds_the_check(self) -> bool {
+        self == Self::Checking
+    }
 }
 
 #[cfg(test)]
@@ -40,10 +48,11 @@ mod tests {
     use super::*;
 
     #[test]
-    fn parses_the_three_modes_and_nothing_else() {
+    fn parses_the_four_modes_and_nothing_else() {
         assert_eq!(DevWorktree::parse("open"), Some(DevWorktree::Open));
         assert_eq!(DevWorktree::parse("ask"), Some(DevWorktree::Ask));
         assert_eq!(DevWorktree::parse("delete"), Some(DevWorktree::Delete));
+        assert_eq!(DevWorktree::parse("checking"), Some(DevWorktree::Checking));
         assert_eq!(DevWorktree::parse(""), None);
         assert_eq!(DevWorktree::parse("OPEN"), None);
     }
@@ -55,5 +64,15 @@ mod tests {
         assert!(DevWorktree::Delete.closes_after_opening());
         assert!(!DevWorktree::Ask.answers_the_dialog());
         assert!(DevWorktree::Delete.answers_the_dialog());
+    }
+
+    #[test]
+    fn only_checking_holds_the_check_and_it_closes_the_tab() {
+        assert!(DevWorktree::Checking.closes_after_opening());
+        assert!(DevWorktree::Checking.holds_the_check());
+        assert!(!DevWorktree::Checking.answers_the_dialog());
+        for mode in [DevWorktree::Open, DevWorktree::Ask, DevWorktree::Delete] {
+            assert!(!mode.holds_the_check(), "{mode:?}");
+        }
     }
 }
