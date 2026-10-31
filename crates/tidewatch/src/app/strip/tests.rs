@@ -33,6 +33,8 @@ struct Strip {
     rects: Vec<Rect>,
     seen: Vec<Action>,
     texts: Vec<(String, Rect)>,
+    dots: Vec<(egui::Pos2, f32, egui::Color32)>,
+    tone: crate::park::Tone,
 }
 
 impl Strip {
@@ -45,6 +47,8 @@ impl Strip {
             rects: Vec::new(),
             seen: Vec::new(),
             texts: Vec::new(),
+            dots: Vec::new(),
+            tone: crate::park::Tone::Muted,
         };
         strip.frame(Vec::new());
         strip
@@ -57,7 +61,7 @@ impl Strip {
                 index,
                 name: tab.title.clone(),
                 face: Face::of("Builder", "claude", None),
-                line: crate::park::Line { text: "Idle 6h".into(), tone: crate::park::Tone::Muted },
+                line: crate::park::Line { text: "Idle 6h".into(), tone: self.tone },
             })
             .collect()
     }
@@ -106,8 +110,10 @@ impl Strip {
             });
         });
         self.texts.clear();
+        self.dots.clear();
         for clipped in &output.shapes {
             collect_text(&clipped.shape, &mut self.texts);
+            collect_dots(&clipped.shape, &mut self.dots);
         }
         self.rects = rects;
         for action in actions {
@@ -607,6 +613,16 @@ fn the_tooltip_names_the_number_the_chord_and_the_job() {
     }
 }
 
+fn collect_dots(shape: &egui::Shape, found: &mut Vec<(egui::Pos2, f32, egui::Color32)>) {
+    match shape {
+        egui::Shape::Circle(circle) if circle.fill != egui::Color32::TRANSPARENT => {
+            found.push((circle.center, circle.radius, circle.fill));
+        }
+        egui::Shape::Vec(shapes) => shapes.iter().for_each(|shape| collect_dots(shape, found)),
+        _ => {}
+    }
+}
+
 fn parked_strip() -> Strip {
     let mut strip = Strip::new();
     strip.tabs.apply(Action::Select(1), || unreachable!());
@@ -744,6 +760,63 @@ fn nothing_parked_and_nothing_dragged_draws_no_pill() {
     let strip = Strip::new();
     assert_eq!(strip.placed().pill, None);
     assert!(strip.texts.iter().all(|(text, _)| !text.starts_with("Parked")));
+}
+
+fn open_parked_list() -> Strip {
+    let mut strip = parked_strip();
+    let at = strip.pill_center();
+    strip.click(at);
+    strip.frame(Vec::new());
+    strip
+}
+
+#[test]
+fn the_parked_list_has_a_section_label_and_48_px_rows_that_never_overlap() {
+    let strip = open_parked_list();
+    let placed = strip.placed();
+    let label = strip
+        .texts
+        .iter()
+        .find(|(text, _)| text == "PARKED \u{b7} 2")
+        .map_or_else(|| panic!("{:?}", strip.texts), |(_, rect)| *rect);
+    assert!(strip.texts.iter().any(|(text, _)| text == "Click to bring back"));
+    assert_eq!(placed.rows.len(), 2);
+    assert!(placed.rows[0].top() >= label.bottom(), "room under the label: {label:?}");
+    for rect in &placed.rows {
+        assert_eq!(rect.height(), 48.0);
+    }
+    assert!(placed.rows[0].bottom() <= placed.rows[1].top());
+}
+
+#[test]
+fn a_parked_row_has_a_dot_in_its_reasons_colour_before_a_muted_line() {
+    use crate::park::Tone;
+    let cases = [(Tone::Teal, brand::TEAL), (Tone::Blue, brand::BLUE), (Tone::Muted, brand::FAINT)];
+    for (tone, want) in cases {
+        let mut strip = parked_strip();
+        strip.tone = tone;
+        let at = strip.pill_center();
+        strip.click(at);
+        for _ in 0..8 {
+            strip.frame(Vec::new());
+        }
+        let rows = strip.placed().rows;
+        let line = strip
+            .texts
+            .iter()
+            .find(|(text, rect)| text == "Idle 6h" && rows[0].contains_rect(*rect))
+            .map(|(_, rect)| *rect)
+            .expect("the first row's reason line");
+        let dot = strip
+            .dots
+            .iter()
+            .find(|(center, radius, fill)| {
+                *radius == 3.0 && *fill == want && rows[0].contains(*center)
+            })
+            .unwrap_or_else(|| panic!("no {want:?} dot in {:?}", strip.dots));
+        assert!(dot.0.x < line.left(), "{dot:?} {line:?}");
+        assert!((dot.0.y - line.center().y).abs() <= 1.5, "{dot:?} {line:?}");
+    }
 }
 
 #[test]

@@ -10,6 +10,7 @@ use tidewatch_core::amphetamine::{Choice, Omen, State};
 use tidewatch_core::amphetamine_system::Route;
 
 use stdusk_egui::colors;
+use stdusk_egui::ui::icons;
 
 use crate::amphetamine_icon;
 use crate::amphetamine_motion::{Look, STANDARD, bezier};
@@ -19,7 +20,10 @@ use crate::amphetamine_pill::{
 use crate::app::strip::ICON_BOX;
 use crate::brand;
 use crate::mascot_motion;
-use crate::screen_kit::{Size, body, mono, quiet_button, selection_row};
+use crate::screen_kit::{
+    Glyph, MENU_ROW_H, MENU_ROW_PAD, Size, body, menu_label, menu_row, mono, paint_glyph,
+    quiet_button,
+};
 use crate::screen_kit::{TEXT_BODY, TEXT_SECONDARY, TEXT_TAG, TEXT_TITLE};
 
 pub(crate) const SLOT_W: f32 = ICON_W;
@@ -31,8 +35,10 @@ const LABEL_PAD_RIGHT: f32 = 4.0;
 const LINE_H: f32 = 2.0;
 const LINE_INSET: f32 = 12.0;
 const LINE_INSET_BARE: f32 = 8.0;
-const MENU_W: f32 = 300.0;
-const ROW_H: f32 = 30.0;
+const MENU_W: f32 = 340.0;
+const MENU_MARGIN: i8 = 6;
+const ROW_GAP: f32 = 10.0;
+const ROW_ICON: f32 = 16.0;
 const STILL_AGE: f64 = 30.5;
 const NOTICE_W: f32 = 450.0;
 const TOAST_BOTTOM: f32 = 34.0;
@@ -326,15 +332,15 @@ pub(crate) fn tip_text(input: &Input) -> (&'static str, String) {
 fn menu_frame() -> egui::Frame {
     egui::Frame::new()
         .fill(brand::CARD)
-        .stroke(Stroke::new(1.0, brand::FIELD_LINE))
-        .corner_radius(10)
+        .stroke(Stroke::new(1.0, brand::CARD_LINE))
+        .corner_radius(12)
         .shadow(egui::epaint::Shadow {
             offset: [0, 8],
-            blur: 22,
+            blur: 24,
             spread: 0,
             color: Color32::from_black_alpha(128),
         })
-        .inner_margin(Margin::same(8))
+        .inner_margin(Margin::same(MENU_MARGIN))
 }
 
 fn menu(response: &Response, input: &Input, force: bool, ctx: &egui::Context) -> Option<Action> {
@@ -353,8 +359,8 @@ fn menu(response: &Response, input: &Input, force: bool, ctx: &egui::Context) ->
         .frame(menu_frame())
         .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
         .show(|ui| {
-            ui.set_width(MENU_W - 16.0);
-            ui.spacing_mut().item_spacing.y = 0.0;
+            ui.set_width(MENU_W - f32::from(MENU_MARGIN) * 2.0);
+            ui.spacing_mut().item_spacing.y = 2.0;
             action = menu_body(ui, input);
             if action.is_some() {
                 ui.close();
@@ -371,16 +377,13 @@ fn menu_body(ui: &mut Ui, input: &Input) -> Option<Action> {
 }
 
 fn on_menu(ui: &mut Ui, input: &Input, until: Option<f64>) -> Option<Action> {
-    let left = until.map_or_else(
-        || "NO TIMER".to_owned(),
-        |until| left_text((until - input.wall).max(0.0)).to_uppercase(),
-    );
-    heading(ui, "Amphetamine is on", &left);
+    let left = until.map_or_else(String::new, |until| left_text((until - input.wall).max(0.0)));
+    menu_label(ui, "Amphetamine is on", &left);
     let mut action = None;
-    if until.is_some() && row(ui, "Add 1 h").clicked() {
+    if until.is_some() && row(ui, Lead::Drawn(Glyph::Clock), "Add 1 hour").clicked() {
         action = Some(Action::AddHour);
     }
-    if row(ui, "Turn off").clicked() {
+    if row(ui, Lead::Font(icons::X), "Turn off").clicked() {
         action = Some(Action::TurnOff);
     }
     action
@@ -404,65 +407,79 @@ fn menu_note(input: &Input) -> &'static str {
     }
 }
 
+fn choice_words(choice: Choice) -> &'static str {
+    match choice {
+        Choice::HalfHour => "30 minutes",
+        Choice::Hour => "1 hour",
+        Choice::FourHours => "4 hours",
+        Choice::Open => "Until I turn it off",
+    }
+}
+
 fn off_menu(ui: &mut Ui, input: &Input) -> Option<Action> {
-    heading(ui, "AMPHETAMINE", "");
-    ui.label(RichText::new("Keep awake for").color(brand::TEXT).size(14.0));
-    ui.add_space(2.0);
+    menu_label(ui, if input.lid { "Keep awake with the lid closed" } else { "Keep awake" }, "");
     let mut action = None;
     for choice in Choice::ALL {
-        if row(ui, choice.label()).clicked() {
+        let lead = if choice == Choice::Open { Glyph::Infinity } else { Glyph::Clock };
+        if row(ui, Lead::Drawn(lead), choice_words(choice)).clicked() {
             action = Some(Action::Pick(choice));
         }
     }
-    ui.add_space(6.0);
-    ui.separator();
-    let note = menu_note(input);
-    note_row(ui, note);
-    ui.add_space(6.0);
+    ui.add_space(4.0);
     let machine = if input.lid { "Mac" } else { "computer" };
-    let muted = format!(
+    let always = format!(
         "Tidewatch already keeps the {machine} awake while agents work. That is automatic and separate."
     );
-    let galley =
-        ui.painter().layout(muted, body(TEXT_SECONDARY), brand::FAINT, ui.available_width());
-    let (rect, _) = ui.allocate_exact_size(galley.size(), Sense::hover());
-    ui.painter().galley(rect.min, galley, brand::FAINT);
+    egui::Frame::new()
+        .fill(brand::SUNKEN)
+        .corner_radius(8)
+        .inner_margin(Margin::symmetric(12, 10))
+        .outer_margin(Margin::symmetric(4, 0))
+        .show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            ui.spacing_mut().item_spacing.y = 6.0;
+            ui.add(
+                egui::Label::new(
+                    RichText::new(menu_note(input)).color(brand::MUTED).size(TEXT_TAG),
+                )
+                .wrap(),
+            );
+            ui.add(
+                egui::Label::new(RichText::new(always).color(brand::FAINT).size(TEXT_TAG)).wrap(),
+            );
+        });
     action
 }
 
-fn heading(ui: &mut Ui, title: &str, sub: &str) {
-    if sub.is_empty() {
-        ui.label(RichText::new(title).font(mono(TEXT_TAG)).color(brand::FAINT));
-        return;
-    }
-    ui.label(RichText::new(title).color(brand::TEXT).size(14.0));
-    ui.label(RichText::new(sub).font(mono(TEXT_TAG)).color(brand::FAINT));
-    ui.add_space(4.0);
+#[derive(Clone, Copy)]
+enum Lead {
+    Drawn(Glyph),
+    Font(&'static str),
 }
 
-fn row(ui: &mut Ui, label: &str) -> Response {
-    let (rect, response) =
-        ui.allocate_exact_size(vec2(ui.available_width(), ROW_H), Sense::click());
-    selection_row(ui.painter(), rect, false, response.hovered());
+fn row(ui: &mut Ui, lead: Lead, label: &str) -> Response {
+    let (rect, response) = menu_row(ui, MENU_ROW_H, false, true);
+    let icon = pos2(rect.left() + MENU_ROW_PAD + ROW_ICON / 2.0, rect.center().y);
+    match lead {
+        Lead::Drawn(glyph) => paint_glyph(ui.painter(), icon, ROW_ICON, glyph, brand::SOFT),
+        Lead::Font(text) => {
+            ui.painter().text(
+                icon,
+                Align2::CENTER_CENTER,
+                text,
+                egui::FontId::proportional(ROW_ICON),
+                brand::SOFT,
+            );
+        }
+    }
     ui.painter().text(
-        rect.left_center() + vec2(10.0, 0.0),
+        pos2(icon.x + ROW_ICON / 2.0 + ROW_GAP, rect.center().y),
         Align2::LEFT_CENTER,
         label,
-        body(14.0),
+        body(TEXT_BODY),
         brand::TEXT,
     );
-    response.on_hover_cursor(egui::CursorIcon::PointingHand)
-}
-
-fn note_row(ui: &mut Ui, text: &str) {
-    ui.horizontal_top(|ui| {
-        ui.spacing_mut().item_spacing.x = 8.0;
-        let (icon, _) = ui.allocate_exact_size(vec2(14.0, 16.0), Sense::hover());
-        paint_warning(ui.painter(), icon.center() + vec2(0.0, 1.0), 14.0);
-        ui.add(
-            egui::Label::new(RichText::new(text).color(brand::SOFT).size(TEXT_SECONDARY)).wrap(),
-        );
-    });
+    response
 }
 
 /// An amber triangle with a bar and a dot, drawn so no font has to have the glyph.

@@ -88,6 +88,7 @@ impl Tidewatch {
             .collect();
 
         let service_rows = self.services_rows();
+        let here_label = self.workspaces[self.tabs.active_group()].chip_label();
         let mut service_action = None;
         let chrome = self.shell.chrome();
         let drawn = chrome == Chrome::Drawn;
@@ -193,7 +194,8 @@ impl Tidewatch {
                         ui.next_widget_position().x - plus.rect.right(),
                         now,
                     );
-                    service_action = services_view::pill(ui, &service_rows, &mut self.services_ui);
+                    service_action =
+                        services_view::pill(ui, &service_rows, &here_label, &mut self.services_ui);
                     self.updates.pill(ui);
                     if strip_button(
                         ui,

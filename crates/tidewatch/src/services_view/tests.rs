@@ -31,7 +31,7 @@ struct Screen {
 
 impl Screen {
     fn new(memory: Memory, rows: Vec<Row>) -> Self {
-        Self { ctx: Context::default(), memory, rows, action: None }
+        Self { ctx: crate::fonts::test_context(), memory, rows, action: None }
     }
 
     fn frame(&mut self, events: Vec<Event>) {
@@ -46,7 +46,7 @@ impl Screen {
             egui::CentralPanel::default().show(ui, |ui| {
                 ui.horizontal(|ui| {
                     ui.add_space(560.0);
-                    if let Some(action) = pill(ui, &self.rows, &mut self.memory) {
+                    if let Some(action) = pill(ui, &self.rows, "acme-workers", &mut self.memory) {
                         self.action = Some(action);
                     }
                 });
@@ -75,6 +75,15 @@ impl Screen {
         self.frame(vec![button(true)]);
         self.frame(vec![button(false)]);
         self.frame(vec![]);
+    }
+
+    fn hover(&mut self, at: Pos2) {
+        self.frame(vec![Event::PointerMoved(at)]);
+        self.frame(vec![]);
+    }
+
+    fn row(&self, index: usize) -> Rect {
+        self.placed().rows[index]
     }
 
     fn names(&self) -> Vec<&'static str> {
@@ -110,7 +119,8 @@ fn open_list() -> Memory {
 }
 
 #[test]
-fn the_pill_draws_at_its_width_and_the_list_draws_the_selected_cards_buttons() {
+fn the_pill_draws_at_its_width_and_the_list_draws_the_selected_rows_actions_and_the_crashed_ones_start()
+ {
     let mut screen = Screen::new(open_list(), rows());
     screen.settle();
     let placed = screen.placed();
@@ -118,10 +128,56 @@ fn the_pill_draws_at_its_width_and_the_list_draws_the_selected_cards_buttons() {
     assert_eq!(pill.height(), PILL_H);
     assert!(pill.width() > 120.0 && pill.width() < 220.0, "{pill:?}");
     let names: Vec<&str> = placed.buttons.iter().map(|(name, _)| *name).collect();
-    assert_eq!(names, ["...", "Logs", "Restart", "Stop", "...", "..."]);
+    assert_eq!(names, ["Restart", "...", "Start", "Add service"]);
     for (name, rect) in &placed.buttons {
-        assert_eq!(rect.height(), Size::Compact.height(), "{name}");
+        if *name != "Add service" {
+            assert_eq!(rect.height(), Size::Compact.height(), "{name}");
+        }
     }
+}
+
+#[test]
+fn rows_are_48_tall_inside_the_list_and_never_overlap() {
+    let mut screen = Screen::new(open_list(), rows());
+    screen.settle();
+    let placed = screen.placed();
+    let list = placed.list.expect("the list was drawn");
+    assert_eq!(placed.rows.len(), 3);
+    for rect in &placed.rows {
+        assert_eq!(rect.height(), 48.0);
+        assert!(list.contains_rect(*rect), "{rect:?} outside {list:?}");
+    }
+    for pair in placed.rows.windows(2) {
+        assert!(pair[0].bottom() <= pair[1].top(), "{pair:?}");
+    }
+}
+
+#[test]
+fn restart_and_the_menu_show_on_the_hovered_row_only() {
+    let mut screen = Screen::new(Memory { popover: Popover::Open, ..Memory::default() }, rows());
+    screen.settle();
+    assert_eq!(screen.names(), ["Start", "Add service"], "nothing hovered, nothing selected");
+    let api = screen.row(1);
+    screen.hover(api.left_center() + vec2(60.0, 0.0));
+    assert_eq!(screen.names(), ["Restart", "...", "Start", "Add service"]);
+    let restart = screen.button("Restart");
+    assert!(api.contains_rect(restart), "{restart:?} is not on the hovered row {api:?}");
+    assert!(restart.right() < screen.button("...").left());
+    let db = screen.row(0);
+    screen.hover(db.left_center() + vec2(60.0, 0.0));
+    assert!(db.contains_rect(screen.button("Restart")));
+    assert_eq!(screen.buttons_named("Restart").len(), 1);
+}
+
+#[test]
+fn a_crashed_row_keeps_its_start_and_shows_the_menu_only_on_hover() {
+    let mut screen = Screen::new(Memory { popover: Popover::Open, ..Memory::default() }, rows());
+    screen.settle();
+    let tunnel = screen.row(2);
+    assert!(tunnel.contains_rect(screen.button("Start")));
+    assert_eq!(screen.buttons_named("...").len(), 0);
+    screen.hover(tunnel.left_center() + vec2(60.0, 0.0));
+    assert_eq!(screen.names(), ["Start", "...", "Add service"]);
 }
 
 #[test]
@@ -134,14 +190,19 @@ fn a_click_on_restart_emits_the_restart_action_for_that_service() {
 }
 
 #[test]
-fn logs_and_stop_emit_their_actions_and_a_stopped_service_offers_start() {
+fn logs_and_stop_live_in_the_menu_and_a_stopped_service_offers_start_on_its_row() {
     let mut screen = Screen::new(open_list(), rows());
     screen.settle();
+    let more = screen.button("...").center();
+    screen.click(more);
+    assert_eq!(screen.names().iter().filter(|name| **name == "Logs").count(), 1);
     let logs = screen.button("Logs").center();
     screen.click(logs);
     assert_eq!(screen.action.take(), Some(Action::Logs("db".to_owned())));
     let mut screen = Screen::new(open_list(), rows());
     screen.settle();
+    let more = screen.button("...").center();
+    screen.click(more);
     let stop = screen.button("Stop").center();
     screen.click(stop);
     assert_eq!(screen.action, Some(Action::Run(Command::Stop, "db".to_owned())));
@@ -149,39 +210,67 @@ fn logs_and_stop_emit_their_actions_and_a_stopped_service_offers_start() {
     stopped[0] = row("db", Word::Stopped, "stopped");
     let mut screen = Screen::new(open_list(), stopped);
     screen.settle();
-    assert_eq!(screen.names(), ["...", "Logs", "Start", "...", "..."], "one action, one button");
-    let start = screen.button("Start").center();
+    assert_eq!(screen.buttons_named("Start").len(), 2, "the stopped row and the crashed one");
+    let start = screen.buttons_named("Start")[0].center();
     screen.click(start);
     assert_eq!(screen.action, Some(Action::Run(Command::Start, "db".to_owned())));
 }
 
 #[test]
-fn a_service_that_gave_up_offers_logs_and_start_and_a_restarting_one_logs_restart_and_stop() {
-    for (word, want) in [
-        (Word::Crashed, vec!["...", "Logs", "Start", "...", "..."]),
-        (Word::Stopped, vec!["...", "Logs", "Start", "...", "..."]),
-        (Word::Restarting, vec!["...", "Logs", "Restart", "Stop", "...", "..."]),
-        (Word::Starting, vec!["...", "Logs", "Restart", "Stop", "...", "..."]),
+fn a_stopped_service_has_no_stop_in_its_menu_and_a_running_one_has_it() {
+    for (word, stop) in [(Word::Stopped, false), (Word::Crashed, false), (Word::Running, true)] {
+        let mut shown = rows();
+        shown[0] = row("db", word, "x");
+        let mut screen = Screen::new(open_list(), shown);
+        screen.settle();
+        let more = screen.button("...").center();
+        screen.click(more);
+        let names = screen.names();
+        assert_eq!(names.contains(&"Stop"), stop, "{word:?} {names:?}");
+        assert!(names.contains(&"Logs") && names.contains(&"Edit") && names.contains(&"Remove"));
+    }
+}
+
+#[test]
+fn a_service_that_gave_up_offers_start_and_a_restarting_one_restart() {
+    for (word, first) in [
+        (Word::Crashed, "Start"),
+        (Word::Stopped, "Start"),
+        (Word::Restarting, "Restart"),
+        (Word::Starting, "Restart"),
     ] {
         let mut shown = rows();
         shown[0] = row("db", word, "x");
         let mut screen = Screen::new(open_list(), shown);
         screen.settle();
-        assert_eq!(screen.names(), want, "{word:?}");
+        assert_eq!(screen.names(), [first, "...", "Start", "Add service"], "{word:?}");
     }
 }
 
 #[test]
-fn a_click_on_a_card_selects_it_and_a_second_click_folds_it() {
+fn a_click_on_a_row_selects_it_and_a_second_click_folds_it() {
     let mut screen = Screen::new(Memory { popover: Popover::Open, ..Memory::default() }, rows());
     screen.settle();
-    assert_eq!(screen.names(), ["...", "...", "..."]);
-    let list_top = screen.placed().pill.unwrap().bottom() + 6.0 + f32::from(LIST_MARGIN);
-    let first_card = pos2(screen.placed().pill.unwrap().right() - 200.0, list_top + 30.0);
-    screen.click(first_card);
+    assert_eq!(screen.names(), ["Start", "Add service"]);
+    let first_row = screen.row(0).left_center() + vec2(60.0, 0.0);
+    screen.click(first_row);
     assert_eq!(screen.memory.selected.as_deref(), Some("db"));
-    screen.click(first_card);
+    screen.click(first_row);
     assert_eq!(screen.memory.selected, None);
+}
+
+#[test]
+fn the_menu_opens_beside_the_list_level_with_its_row_and_hides_no_row() {
+    let mut screen = opened_by_click();
+    let more = screen.button("...").center();
+    screen.click(more);
+    let placed = screen.placed();
+    let (list, menu) = (placed.list.expect("list"), screen.memory.menu_rect.expect("menu"));
+    assert!(menu.right() <= list.left(), "menu {menu:?} overlaps the list {list:?}");
+    assert!((menu.top() - placed.rows[0].top()).abs() < 3.0, "{menu:?} vs {:?}", placed.rows[0]);
+    for row in &placed.rows {
+        assert!(!menu.intersects(*row), "the menu hides {row:?}");
+    }
 }
 
 #[test]
@@ -373,7 +462,7 @@ fn opened_by_click() -> Screen {
     let pill = screen.placed().pill.unwrap().center();
     screen.click(pill);
     screen.settle();
-    assert!(screen.names().contains(&"Logs"), "the pill opened the list");
+    assert!(screen.names().contains(&"Add service"), "the pill opened the list");
     screen
 }
 
@@ -389,7 +478,7 @@ fn the_more_button_opens_its_menu_over_the_list_and_the_list_stays_open() {
     assert_eq!(screen.memory.menu.as_deref(), Some("db"));
     let names = screen.names();
     assert!(names.contains(&"Edit") && names.contains(&"Remove"), "{names:?}");
-    assert!(names.contains(&"Logs"), "the list is still open: {names:?}");
+    assert!(names.contains(&"Add service"), "the list is still open: {names:?}");
     assert_eq!(screen.memory.selected.as_deref(), Some("db"));
     assert_eq!(screen.memory.dialog, None);
 }
@@ -404,7 +493,7 @@ fn edit_opens_the_form_for_that_service_and_the_list_stays_open() {
     assert_eq!(screen.memory.dialog, Some(Dialog::Form(Form::edit(&rows()[0]))));
     assert_eq!(screen.memory.menu, None);
     let names = screen.names();
-    assert!(names.contains(&"Logs") && !names.contains(&"Edit"), "{names:?}");
+    assert!(names.contains(&"Add service") && !names.contains(&"Edit"), "{names:?}");
 }
 
 #[test]
@@ -416,7 +505,7 @@ fn remove_asks_first_and_the_list_stays_open() {
     screen.click(remove);
     assert_eq!(screen.memory.dialog, Some(Dialog::Remove("db".to_owned())));
     assert_eq!(screen.action, None, "nothing is removed before the dialog is confirmed");
-    assert!(screen.names().contains(&"Logs"));
+    assert!(screen.names().contains(&"Add service"));
 }
 
 #[test]
@@ -434,7 +523,7 @@ fn a_click_outside_the_list_and_its_menu_closes_both() {
 #[test]
 fn a_click_outside_a_list_with_no_menu_still_closes_it() {
     let mut screen = opened_by_click();
-    assert!(screen.names().contains(&"Logs"));
+    assert!(screen.names().contains(&"Add service"));
     screen.click(outside());
     screen.settle();
     assert_eq!(screen.names(), Vec::<&str>::new());
@@ -445,7 +534,7 @@ fn a_click_inside_the_list_off_the_menu_closes_only_the_menu() {
     let mut screen = opened_by_click();
     let more = screen.button("...").center();
     screen.click(more);
-    let second_card = screen.buttons_named("...")[1].left_center() - vec2(120.0, 0.0);
+    let second_card = screen.row(1).left_center() + vec2(60.0, 0.0);
     screen.click(second_card);
     assert_eq!(screen.memory.menu, None);
     assert_eq!(screen.memory.selected.as_deref(), Some("api"));
@@ -458,13 +547,15 @@ fn the_more_button_toggles_its_menu_and_another_cards_button_moves_it() {
     let first = screen.button("...").center();
     screen.click(first);
     assert_eq!(screen.memory.menu.as_deref(), Some("db"));
+    let api = screen.row(1);
+    screen.hover(api.left_center() + vec2(60.0, 0.0));
     let second = screen.buttons_named("...")[1].center();
     screen.click(second);
     assert_eq!(screen.memory.menu.as_deref(), Some("api"));
     let again = screen.buttons_named("...")[1].center();
     screen.click(again);
     assert_eq!(screen.memory.menu, None);
-    assert!(screen.names().contains(&"Logs"), "the list stays open");
+    assert!(screen.names().contains(&"Add service"), "the list stays open");
 }
 
 #[test]
@@ -474,7 +565,7 @@ fn escape_closes_the_menu_first_and_the_list_next() {
     screen.click(more);
     screen.press(Key::Escape);
     assert_eq!(screen.memory.menu, None);
-    assert!(screen.names().contains(&"Logs"), "{:?}", screen.names());
+    assert!(screen.names().contains(&"Add service"), "{:?}", screen.names());
     screen.press(Key::Escape);
     screen.settle();
     assert_eq!(screen.names(), Vec::<&str>::new());

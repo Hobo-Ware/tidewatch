@@ -565,14 +565,26 @@ const CAP_STEP: f32 = 3.0;
 /// The small upper-case label over a group of rows in a menu or popover, with an optional muted
 /// note at its right edge. Returns the rect it took.
 pub(crate) fn menu_label(ui: &mut Ui, text: &str, note: &str) -> Rect {
+    menu_label_with(ui, text, "", note)
+}
+
+/// `menu_label` with `plain` after the upper-case `text`, in the same ink and case as given:
+/// `SERVICES · acme-workers`.
+pub(crate) fn menu_label_with(ui: &mut Ui, text: &str, plain: &str, note: &str) -> Rect {
     let (rect, _) =
         ui.allocate_exact_size(vec2(ui.available_width(), MENU_LABEL_H), Sense::hover());
     let painter = ui.painter();
-    painter.text(
-        pos2(rect.left() + MENU_LABEL_PAD, rect.center().y + 2.0),
-        Align2::LEFT_CENTER,
-        text.to_uppercase(),
-        heading(TEXT_TAG),
+    let mut job = egui::text::LayoutJob::default();
+    job.append(
+        &text.to_uppercase(),
+        0.0,
+        egui::text::TextFormat::simple(heading(TEXT_TAG), brand::FAINT),
+    );
+    job.append(plain, 0.0, egui::text::TextFormat::simple(heading(TEXT_TAG), brand::FAINT));
+    let galley = painter.layout_job(job);
+    painter.galley(
+        pos2(rect.left() + MENU_LABEL_PAD, rect.center().y + 2.0 - galley.size().y / 2.0),
+        galley,
         brand::FAINT,
     );
     if !note.is_empty() {
@@ -656,6 +668,84 @@ pub(crate) fn paint_caps(painter: &Painter, right: f32, mid: f32, keys: &str) ->
         x -= width + CAP_STEP;
     }
     if x == right { right } else { x + CAP_STEP }
+}
+
+/// The glyphs menu rows and hover actions draw themselves, so no font has to have them.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Glyph {
+    Restart,
+    More,
+    Clock,
+    Infinity,
+}
+
+/// Paints `glyph` in a `size` square centered on `center`.
+pub(crate) fn paint_glyph(
+    painter: &Painter,
+    center: egui::Pos2,
+    size: f32,
+    glyph: Glyph,
+    ink: Color32,
+) {
+    let unit = size / 16.0;
+    let at = |x: f32, y: f32| center + vec2((x - 8.0) * unit, (y - 8.0) * unit);
+    let stroke = Stroke::new(1.5 * unit.max(0.75), ink);
+    match glyph {
+        Glyph::Restart => {
+            let arc: Vec<egui::Pos2> = (0..=21)
+                .map(|step| {
+                    let angle = (step as f32 * 15.0).to_radians();
+                    at(8.0 + 5.0 * angle.cos(), 8.0 + 5.0 * angle.sin())
+                })
+                .collect();
+            painter.add(egui::Shape::line(arc, stroke));
+            painter
+                .add(egui::Shape::line(vec![at(13.0, 3.0), at(13.0, 5.5), at(10.5, 5.5)], stroke));
+        }
+        Glyph::More => {
+            for x in [3.5, 8.0, 12.5] {
+                painter.circle_filled(at(x, 8.0), 1.3 * unit, ink);
+            }
+        }
+        Glyph::Clock => {
+            painter.circle_stroke(at(8.0, 8.0), 5.5 * unit, stroke);
+            painter.add(egui::Shape::line(vec![at(8.0, 5.0), at(8.0, 8.0), at(10.0, 9.5)], stroke));
+        }
+        Glyph::Infinity => {
+            let curve: Vec<egui::Pos2> = (0..=40)
+                .map(|step| {
+                    let angle = (step as f32 * 9.0).to_radians();
+                    let shrink = 1.0 + angle.sin() * angle.sin();
+                    at(
+                        8.0 + 6.0 * angle.cos() / shrink,
+                        8.0 + 6.0 * angle.sin() * angle.cos() / shrink,
+                    )
+                })
+                .collect();
+            painter.add(egui::Shape::line(curve, stroke));
+        }
+    }
+}
+
+/// `icon_button` with a painted glyph: as tall as `size` and as wide, a line and no fill.
+pub(crate) fn glyph_button(ui: &mut Ui, glyph: Glyph, tip: &str, size: Size) -> Response {
+    let (rect, response) =
+        ui.allocate_exact_size(vec2(size.height(), size.height()), Sense::click());
+    let paint = paint_of(
+        Look::Quiet,
+        State::pick(true, response.is_pointer_button_down_on(), response.hovered()),
+    );
+    let painter = ui.painter();
+    painter.rect(
+        rect,
+        CornerRadius::same(size.radius()),
+        paint.fill,
+        Stroke::new(1.0, paint.line),
+        StrokeKind::Inside,
+    );
+    paint_glyph(painter, rect.center(), 16.0, glyph, paint.ink);
+    kelp_ui::widgets::focus_ring(ui, &response, f32::from(size.radius()));
+    response.on_hover_cursor(egui::CursorIcon::PointingHand).on_hover_text(tip)
 }
 
 #[cfg(test)]
@@ -967,6 +1057,20 @@ mod tests {
         ];
         for (keys, want) in cases {
             assert_eq!(chord_keys(keys), want, "{keys:?}");
+        }
+    }
+
+    #[test]
+    fn a_glyph_button_is_a_square_as_tall_as_its_size() {
+        let mut sizes = Vec::new();
+        run(|ui| {
+            sizes.clear();
+            for size in [Size::Tag, Size::Compact, Size::Regular] {
+                sizes.push((size, glyph_button(ui, Glyph::More, "more", size).rect.size()));
+            }
+        });
+        for (size, rect) in sizes {
+            assert_eq!((rect.x, rect.y), (size.height(), size.height()), "{size:?}");
         }
     }
 
