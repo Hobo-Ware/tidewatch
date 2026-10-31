@@ -4,6 +4,7 @@ use std::fmt;
 use std::path::Path;
 use std::process::Command;
 
+use crate::limited;
 use crate::worktree::Worktree;
 
 /// Ignored folders that are only build or dependency output: losing them costs a rebuild.
@@ -132,12 +133,8 @@ fn matches_main(main: &Path, here: &Path, rel: &str) -> bool {
 }
 
 fn git_out(dir: &Path, args: &[&str]) -> Result<String, String> {
-    let out = Command::new("git")
-        .arg("-C")
-        .arg(dir)
-        .args(args)
-        .output()
-        .map_err(|e| format!("cannot run git: {e}"))?;
+    let out = limited::output(Command::new("git").arg("-C").arg(dir).args(args), limited::DEFAULT)
+        .map_err(|e| limited::failure("git", &e))?;
     if out.status.success() {
         Ok(String::from_utf8_lossy(&out.stdout).into_owned())
     } else {

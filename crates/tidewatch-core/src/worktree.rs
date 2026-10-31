@@ -9,10 +9,12 @@ use std::fmt;
 use std::hash::{BuildHasher, Hasher, RandomState};
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 
 use crate::closed_tabs::{self, Closed};
+use crate::limited;
 use crate::names;
 use crate::paths::TidewatchPaths;
 use crate::registry;
@@ -214,8 +216,23 @@ fn git(dir: &Path) -> Command {
     command
 }
 
+/// `git worktree add` and `remove` write a whole checkout and get [`limited::WORKTREE`]; every
+/// other call gets [`limited::DEFAULT`].
+fn limit_of(command: &Command) -> Duration {
+    let args: Vec<&std::ffi::OsStr> = command.get_args().collect();
+    let heavy = args
+        .windows(2)
+        .any(|pair| pair[0] == "worktree" && (pair[1] == "add" || pair[1] == "remove"));
+    if heavy { limited::WORKTREE } else { limited::DEFAULT }
+}
+
+fn output_of(command: &mut Command) -> std::io::Result<std::process::Output> {
+    limited::output(command, limit_of(command))
+}
+
 fn run(mut command: Command) -> Result<String, WorktreeError> {
-    let out = command.output().map_err(|e| WorktreeError::Io(format!("cannot run git: {e}")))?;
+    let out =
+        output_of(&mut command).map_err(|e| WorktreeError::Io(limited::failure("git", &e)))?;
     if out.status.success() {
         Ok(String::from_utf8_lossy(&out.stdout).into_owned())
     } else {
@@ -229,7 +246,7 @@ fn clean_message(stderr: &str) -> String {
 }
 
 fn succeeds(mut command: Command) -> bool {
-    command.output().is_ok_and(|out| out.status.success())
+    output_of(&mut command).is_ok_and(|out| out.status.success())
 }
 
 fn branch_exists(repo: &Path, branch: &str) -> bool {
@@ -377,27 +394,27 @@ fn roll_back(worktree: &Worktree, branch_existed: bool, path_existed: bool) {
     unlock(worktree);
     let mut remove = git(&worktree.repo);
     remove.args(["worktree", "remove", "--force", "--force"]).arg(&worktree.path);
-    let _ = remove.output();
+    let _ = output_of(&mut remove);
     if !path_existed && worktree.path.exists() {
         let _ = std::fs::remove_dir_all(&worktree.path);
     }
     if !branch_existed {
         let mut delete = git(&worktree.repo);
         delete.args(["branch", "-D", &worktree.branch]);
-        let _ = delete.output();
+        let _ = output_of(&mut delete);
     }
 }
 
 fn unlock(worktree: &Worktree) {
     let mut command = git(&worktree.repo);
     command.args(["worktree", "unlock"]).arg(&worktree.path);
-    let _ = command.output();
+    let _ = output_of(&mut command);
 }
 
 fn relock(worktree: &Worktree) {
     let mut command = git(&worktree.repo);
     command.args(["worktree", "lock", "--reason", LOCK_REASON]).arg(&worktree.path);
-    let _ = command.output();
+    let _ = output_of(&mut command);
 }
 
 /// Whether the worktree can go without losing work. Anything git or the machine cannot answer
@@ -642,7 +659,7 @@ pub fn discard_unreadable(
         unlock(worktree);
         let mut prune = git(&worktree.repo);
         prune.args(["worktree", "prune"]);
-        let _ = prune.output();
+        let _ = output_of(&mut prune);
     }
     if let Err(e) = registry::forget(paths, path) {
         eprintln!("tidewatch: cannot update the worktree registry: {e}");
@@ -761,7 +778,7 @@ fn repair_stored(stored: &mut Vec<Worktree>, repo: &Path) -> Vec<Worktree> {
         let mut command = git(repo);
         command.args(["worktree", "repair"]);
         command.args(candidates.iter().map(|&i| &stored[i].path));
-        let _ = command.output();
+        let _ = output_of(&mut command);
         for i in candidates {
             if belongs_to(repo, &stored[i].path) {
                 stored[i].repo = repo.to_path_buf();
@@ -1015,5 +1032,24 @@ mod tests {
             assert_eq!(moved_from(Path::new(recorded), Path::new(current)), want, "{recorded}");
         }
         assert!(!moved_from(&here, Path::new("/new/tmp")), "an existing old repo did not move");
+    }
+
+    #[test]
+    fn only_worktree_add_and_remove_get_the_long_limit() {
+        let cases: [(&[&str], Duration); 8] = [
+            (&["worktree", "add", "-b", "agent/x", "/w"], limited::WORKTREE),
+            (&["worktree", "remove", "--force", "/w"], limited::WORKTREE),
+            (&["-C", "/repo", "worktree", "add", "/w"], limited::WORKTREE),
+            (&["worktree", "list", "--porcelain"], limited::DEFAULT),
+            (&["worktree", "prune"], limited::DEFAULT),
+            (&["worktree", "unlock", "/w"], limited::DEFAULT),
+            (&["branch", "-D", "add"], limited::DEFAULT),
+            (&["status", "--porcelain"], limited::DEFAULT),
+        ];
+        for (args, want) in cases {
+            let mut command = Command::new("git");
+            command.args(args);
+            assert_eq!(limit_of(&command), want, "{args:?}");
+        }
     }
 }

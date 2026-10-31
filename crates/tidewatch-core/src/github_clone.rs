@@ -12,7 +12,7 @@ use std::sync::mpsc::{RecvTimeoutError, channel};
 use std::time::Duration;
 
 use crate::github_link::GithubRepo;
-use crate::tools::{Tools, finish};
+use crate::tools::Tools;
 
 const FALLBACK_PARENT: &str = "Git";
 const POLL: Duration = Duration::from_millis(100);
@@ -51,7 +51,7 @@ pub fn origin_of(tools: &Tools, dir: &Path) -> Option<GithubRepo> {
     }
     let mut command = tools.git(dir);
     command.args(["remote", "get-url", "origin"]);
-    let done = finish(command).ok().filter(|done| done.success)?;
+    let done = tools.finish(command).ok().filter(|done| done.success)?;
     GithubRepo::parse(done.stdout.trim())
 }
 

@@ -8,6 +8,8 @@ use std::path::Path;
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
+use crate::limited;
+
 pub const REMOTE: &str = "origin";
 pub const FETCH_TIMEOUT: Duration = Duration::from_secs(20);
 const POLL: Duration = Duration::from_millis(50);
@@ -49,7 +51,8 @@ fn git(repo: &Path) -> Command {
 }
 
 fn output_of(mut command: Command) -> Option<String> {
-    let out = command.output().ok().filter(|out| out.status.success())?;
+    let out =
+        limited::output(&mut command, limited::DEFAULT).ok().filter(|out| out.status.success())?;
     Some(String::from_utf8_lossy(&out.stdout).trim().to_owned())
 }
 

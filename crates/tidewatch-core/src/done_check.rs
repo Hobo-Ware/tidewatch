@@ -6,13 +6,14 @@ use std::path::Path;
 
 use crate::civil_date::Date;
 use crate::delivery::{compare_ref, detect_base};
+use crate::limited;
 use crate::pr_gh::unpushed;
 use crate::pr_status::{
     FIELDS, Outcome as CheckRun, Phase, Snapshot, State, parse_snapshot, phase,
 };
 use crate::progress::{Ledger, Mark, State as LedgerState, real};
 use crate::progress_report::WaitingOn;
-use crate::tools::{GhError, Tools, finish, run_gh};
+use crate::tools::{GhError, Tools, run_gh};
 
 const REMOTE: &str = "origin";
 const NAMED_CHECKS: usize = 3;
@@ -431,7 +432,7 @@ pub fn unverified_status(items: Option<&[Unverified]>, today: Date) -> (Status, 
 fn git_stdout(tools: &Tools, dir: &Path, args: &[&str]) -> Result<String, String> {
     let mut command = tools.git(dir);
     command.args(args);
-    let out = finish(command).map_err(|e| format!("cannot run git: {e}"))?;
+    let out = tools.finish(command).map_err(|e| limited::failure("git", &e))?;
     if out.success {
         Ok(out.stdout.trim().to_owned())
     } else {

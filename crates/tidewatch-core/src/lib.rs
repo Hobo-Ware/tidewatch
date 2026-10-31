@@ -61,6 +61,7 @@ pub mod keep_awake;
 pub mod kind;
 pub mod last_workspace;
 pub mod launch;
+pub mod limited;
 pub mod link_board;
 pub mod link_check;
 pub mod link_scan;

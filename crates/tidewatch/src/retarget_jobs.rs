@@ -13,6 +13,7 @@ use tidewatch_core::elsewhere_scan::{
     EndRequest, Ended, RealSystem, Refusal as EndRefusal, ScanEnv, System, end_session_in,
     scan_in_shells,
 };
+use tidewatch_core::limited;
 use tidewatch_core::listener::Listener;
 use tidewatch_core::names;
 use tidewatch_core::paths::TidewatchPaths;
@@ -137,14 +138,16 @@ fn run_look(spec: &LookSpec) -> Looked {
 }
 
 fn uncommitted(dir: &Path) -> Option<usize> {
-    let out = Command::new("git")
-        .arg("-C")
-        .arg(dir)
-        .args(["status", "--porcelain"])
-        .env("GIT_OPTIONAL_LOCKS", "0")
-        .output()
-        .ok()
-        .filter(|out| out.status.success())?;
+    let out = limited::output(
+        Command::new("git")
+            .arg("-C")
+            .arg(dir)
+            .args(["status", "--porcelain"])
+            .env("GIT_OPTIONAL_LOCKS", "0"),
+        limited::DEFAULT,
+    )
+    .ok()
+    .filter(|out| out.status.success())?;
     let count = String::from_utf8_lossy(&out.stdout).lines().count();
     (count > 0).then_some(count)
 }
@@ -213,12 +216,11 @@ fn end_it(
 }
 
 fn current_branch(dir: &Path) -> Option<String> {
-    let out = Command::new("git")
-        .arg("-C")
-        .arg(dir)
-        .args(["symbolic-ref", "--quiet", "--short", "HEAD"])
-        .output()
-        .ok()?;
+    let out = limited::output(
+        Command::new("git").arg("-C").arg(dir).args(["symbolic-ref", "--quiet", "--short", "HEAD"]),
+        limited::DEFAULT,
+    )
+    .ok()?;
     let branch = String::from_utf8_lossy(&out.stdout).trim().to_owned();
     (out.status.success() && !branch.is_empty()).then_some(branch)
 }

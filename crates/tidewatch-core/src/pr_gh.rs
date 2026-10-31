@@ -10,7 +10,7 @@ use crate::pr_status::{
     Body, Event, FIELDS, FIELDS_FIRST, Job, ReviewComment, Seen, Snapshot, State, Summary, diff,
     parse_snapshot, phase, review_comments,
 };
-use crate::tools::{GhError, Tools, finish, run_gh};
+use crate::tools::{GhError, Tools, run_gh};
 
 /// The jobs whose logs are read for one failure card; a matrix of twenty fails as one card.
 const LOGGED_JOBS: usize = 3;
@@ -140,7 +140,7 @@ pub fn unpushed(tools: &Tools, dir: &Path, remote_head: &str) -> Option<(String,
     let git = |args: &[&str]| {
         let mut command = tools.git(dir);
         command.args(args);
-        finish(command).ok().filter(|out| out.success).map(|out| out.stdout.trim().to_owned())
+        tools.finish(command).ok().filter(|out| out.success).map(|out| out.stdout.trim().to_owned())
     };
     let head = git(&["rev-parse", "HEAD"])?;
     let range = format!("{remote_head}..HEAD");

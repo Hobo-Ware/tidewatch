@@ -11,7 +11,8 @@ use std::path::Path;
 use kelp_core::review::Side;
 
 use crate::delivery::{compare_ref, detect_base};
-use crate::tools::{Tools, finish};
+use crate::limited;
+use crate::tools::Tools;
 
 type Range = (u32, u32);
 
@@ -55,7 +56,7 @@ impl PrDiffLines {
             ])
             .arg(format!("{start}...{head}"))
             .arg("--");
-        let out = finish(command).map_err(|e| format!("cannot run git: {e}"))?;
+        let out = tools.finish(command).map_err(|e| limited::failure("git", &e))?;
         if out.success { Ok(Self::parse(&out.stdout)) } else { Err(out.stderr.trim().to_owned()) }
     }
 

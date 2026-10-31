@@ -1,8 +1,8 @@
 //! Running `git` and `gh` for delivery and pull request work.
 //!
-//! Every call blocks until the child exits: call these from a background thread, never the UI
-//! thread. Children run with prompts off and stdin closed, so a missing login fails fast instead of
-//! waiting for a keypress that nobody can type. They also run in Tidewatch's own environment, not an
+//! Every call blocks until the child exits or its time limit ends ([`limited`]): call these from a
+//! background thread, never the UI thread. Children run with prompts off and stdin closed, so a
+//! missing login fails fast instead of waiting for a keypress that nobody can type. They also run in Tidewatch's own environment, not an
 //! agent tab's, so the never-push guard (D7) and the outbound guards do not apply to them.
 //!
 //! `gh` messages were checked against gh 2.98.0, `git` against 2.55.0.
@@ -11,14 +11,16 @@ use std::ffi::OsString;
 use std::fmt;
 use std::path::Path;
 use std::process::{Command, Stdio};
+use std::time::Duration;
 
-use crate::path_env;
+use crate::{limited, path_env};
 
 /// How `git` and `gh` are found. The default looks them up on the `PATH` this process has, with the
 /// usual install directories in front (an app started from Finder has a bare one).
 #[derive(Clone, Debug, Default)]
 pub struct Tools {
     path: Option<OsString>,
+    limit: Option<Duration>,
 }
 
 impl Tools {
@@ -26,13 +28,26 @@ impl Tools {
     pub fn system() -> Self {
         let home = std::env::var_os("HOME").map(std::path::PathBuf::from).unwrap_or_default();
         let current = std::env::var_os("PATH");
-        Self { path: Some(path_env::for_this_platform(current.as_deref(), &home)) }
+        Self { path: Some(path_env::for_this_platform(current.as_deref(), &home)), limit: None }
     }
 
     /// Looks `git` and `gh` up on exactly this `PATH`. Tests put a fake `gh` first on it.
     #[must_use]
     pub fn with_path(path: impl Into<OsString>) -> Self {
-        Self { path: Some(path.into()) }
+        Self { path: Some(path.into()), limit: None }
+    }
+
+    #[must_use]
+    pub fn with_limit(self, limit: Duration) -> Self {
+        Self { limit: Some(limit), ..self }
+    }
+
+    pub(crate) fn limit(&self) -> Duration {
+        self.limit.unwrap_or(limited::DEFAULT)
+    }
+
+    pub(crate) fn finish(&self, command: Command) -> std::io::Result<Finished> {
+        finish_within(command, self.limit())
     }
 
     pub(crate) fn path(&self) -> Option<&OsString> {
@@ -73,6 +88,7 @@ pub enum GhError {
     NotAuthenticated,
     /// No git remote of the folder points at a GitHub host.
     NoGithubRemote,
+    Stopped(String),
     /// Anything else, with gh's own message.
     Failed(String),
 }
@@ -83,7 +99,7 @@ impl fmt::Display for GhError {
             Self::Missing => f.write_str("the GitHub CLI (gh) is not installed"),
             Self::NotAuthenticated => f.write_str("gh is not logged in; run `gh auth login`"),
             Self::NoGithubRemote => f.write_str("this repository has no GitHub remote"),
-            Self::Failed(message) => f.write_str(message),
+            Self::Stopped(message) | Self::Failed(message) => f.write_str(message),
         }
     }
 }
@@ -96,8 +112,8 @@ pub(crate) struct Finished {
     pub(crate) stderr: String,
 }
 
-pub(crate) fn finish(mut command: Command) -> std::io::Result<Finished> {
-    let out = command.output()?;
+fn finish_within(mut command: Command, limit: Duration) -> std::io::Result<Finished> {
+    let out = limited::output(&mut command, limit)?;
     Ok(Finished {
         success: out.status.success(),
         stdout: String::from_utf8_lossy(&out.stdout).into_owned(),
@@ -109,9 +125,14 @@ pub(crate) fn finish(mut command: Command) -> std::io::Result<Finished> {
 pub(crate) fn run_gh(tools: &Tools, dir: &Path, args: &[&str]) -> Result<String, GhError> {
     let mut command = tools.gh(dir);
     command.args(args);
-    let finished = finish(command).map_err(|e| match e.kind() {
-        std::io::ErrorKind::NotFound => GhError::Missing,
-        _ => GhError::Failed(format!("cannot run gh: {e}")),
+    let finished = tools.finish(command).map_err(|e| {
+        if limited::is_stopped(&e) {
+            GhError::Stopped(e.to_string())
+        } else if e.kind() == std::io::ErrorKind::NotFound {
+            GhError::Missing
+        } else {
+            GhError::Failed(limited::failure("gh", &e))
+        }
     })?;
     if finished.success { Ok(finished.stdout) } else { Err(classify_gh(&finished)) }
 }

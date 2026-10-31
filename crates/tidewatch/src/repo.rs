@@ -4,6 +4,8 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+use tidewatch_core::limited;
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct Repo {
     pub(crate) root: PathBuf,
@@ -53,12 +55,11 @@ fn folder_label(dir: &Path) -> String {
 impl Repo {
     pub(crate) fn discover(path: &Path) -> Option<Self> {
         let dir = if path.is_dir() { path } else { path.parent()? };
-        let out = Command::new("git")
-            .arg("-C")
-            .arg(dir)
-            .args(["rev-parse", "--show-toplevel"])
-            .output()
-            .ok()?;
+        let out = limited::output(
+            Command::new("git").arg("-C").arg(dir).args(["rev-parse", "--show-toplevel"]),
+            limited::DEFAULT,
+        )
+        .ok()?;
         if !out.status.success() {
             return None;
         }
@@ -68,12 +69,16 @@ impl Repo {
     /// The repo a folder belongs to, where a linked worktree counts as its main repo.
     pub(crate) fn discover_main(path: &Path) -> Option<Self> {
         let dir = if path.is_dir() { path } else { path.parent()? };
-        let out = Command::new("git")
-            .arg("-C")
-            .arg(dir)
-            .args(["rev-parse", "--path-format=absolute", "--show-toplevel", "--git-common-dir"])
-            .output()
-            .ok()?;
+        let out = limited::output(
+            Command::new("git").arg("-C").arg(dir).args([
+                "rev-parse",
+                "--path-format=absolute",
+                "--show-toplevel",
+                "--git-common-dir",
+            ]),
+            limited::DEFAULT,
+        )
+        .ok()?;
         if !out.status.success() {
             return None;
         }
@@ -82,12 +87,15 @@ impl Repo {
 
     /// The `origin` remote of the repo, as git spells it; none for a repo without one.
     pub(crate) fn origin(&self) -> Option<String> {
-        let out = Command::new("git")
-            .arg("-C")
-            .arg(&self.root)
-            .args(["config", "--get", "remote.origin.url"])
-            .output()
-            .ok()?;
+        let out = limited::output(
+            Command::new("git").arg("-C").arg(&self.root).args([
+                "config",
+                "--get",
+                "remote.origin.url",
+            ]),
+            limited::DEFAULT,
+        )
+        .ok()?;
         let url = String::from_utf8_lossy(&out.stdout).trim().to_owned();
         (out.status.success() && !url.is_empty()).then_some(url)
     }

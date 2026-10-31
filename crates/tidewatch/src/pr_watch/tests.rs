@@ -266,6 +266,22 @@ fn a_failed_look_pauses_the_status_and_the_next_good_one_resumes_it() {
 }
 
 #[test]
+fn a_look_stopped_for_taking_too_long_frees_the_watch_for_the_next_one() {
+    let default = GithubPrefs::default();
+    let mut watch = ready(Some(42));
+    watch.look_started();
+    assert_eq!(watch.should_look(default, 1e9), None, "one look at a time");
+    let stopped = GhError::Stopped("gh took longer than 60 s and was stopped".into());
+    watch.polled(Err(stopped), default, "tab", 50.0, 0);
+    assert_eq!(
+        watch.pause.as_ref().map(Pause::reason),
+        Some("gh failed: gh took longer than 60 s and was stopped".to_owned())
+    );
+    assert_eq!(watch.should_look(default, 50.0 + SLOW_SECS - 0.1), None);
+    assert!(watch.should_look(default, 50.0 + SLOW_SECS).is_some());
+}
+
+#[test]
 fn pauses_say_why_and_how_to_fix_it() {
     let cases = [
         (GhError::NotAuthenticated, "gh is not signed in", Some("gh auth login")),

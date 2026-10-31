@@ -15,6 +15,7 @@ use std::time::{Duration, SystemTime};
 
 use crate::guard_args::{GhAction, GhCall, GitCommit, Part, Source, TextArg, parse_gh, parse_git};
 use crate::guards::{Rule, Rules, find_dash, find_private_name, find_trailer};
+use crate::limited;
 use crate::prefs::Prefs;
 
 pub const CONFIG_ENV: &str = "TIDEWATCH_GUARD_CONFIG";
@@ -269,7 +270,7 @@ impl RealMachine<'_> {
         if let Some(dir) = dir {
             command.current_dir(dir);
         }
-        let output = command.output().ok()?;
+        let output = limited::output(&mut command, limited::DEFAULT).ok()?;
         output.status.success().then(|| String::from_utf8_lossy(&output.stdout).into_owned())
     }
 

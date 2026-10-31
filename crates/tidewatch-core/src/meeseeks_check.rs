@@ -6,18 +6,19 @@ use std::path::Path;
 
 use crate::delivery::{self, Ahead};
 use crate::history;
+use crate::limited;
 use crate::meeseeks_log::pr_label_of;
 use crate::paths::TidewatchPaths;
 use crate::pr_ask;
 use crate::test_command::{self, Gate};
-use crate::tools::{Tools, finish, run_gh};
+use crate::tools::{GhError, Tools, run_gh};
 use crate::worktree::{self, BranchChoice, RemoveMode, Terms, Why, Worktree};
 use crate::worktree_safety::Owner;
 
 fn changed_files(tools: &Tools, dir: &Path) -> Result<usize, String> {
     let mut command = tools.git(dir);
     command.args(["status", "--porcelain"]);
-    let out = finish(command).map_err(|e| format!("cannot run git: {e}"))?;
+    let out = tools.finish(command).map_err(|e| limited::failure("git", &e))?;
     if !out.success {
         return Err(out.stderr.trim().to_owned());
     }
@@ -41,10 +42,19 @@ pub struct Checked {
 
 #[must_use]
 pub fn head(tools: &Tools, dir: &Path) -> Option<String> {
+    head_or_stopped(tools, dir).ok().flatten()
+}
+
+fn head_or_stopped(tools: &Tools, dir: &Path) -> Result<Option<String>, String> {
     let mut command = tools.git(dir);
     command.args(["rev-parse", "HEAD"]);
-    let out = finish(command).ok().filter(|out| out.success)?;
-    Some(out.stdout.trim().to_owned()).filter(|sha| !sha.is_empty())
+    match tools.finish(command) {
+        Ok(out) if out.success => {
+            Ok(Some(out.stdout.trim().to_owned()).filter(|sha| !sha.is_empty()))
+        }
+        Err(e) if limited::is_stopped(&e) => Err(e.to_string()),
+        _ => Ok(None),
+    }
 }
 
 /// Whether the worktree differs from where the task started: files changed, or a commit made.
@@ -93,23 +103,27 @@ pub fn proof(tools: &Tools, dir: &Path) -> Result<Checked, String> {
 
 /// The open pull request whose head is the commit this worktree is on: the agent pushed its work
 /// and opened it.
-fn pull_request_at_head(tools: &Tools, dir: &Path) -> Option<String> {
-    let sha = head(tools, dir)?;
-    let json = run_gh(
+fn pull_request_at_head(tools: &Tools, dir: &Path) -> Result<Option<String>, String> {
+    let Some(sha) = head_or_stopped(tools, dir)? else { return Ok(None) };
+    let json = match run_gh(
         tools,
         dir,
         &["pr", "list", "--state", "open", "--json", "url,headRefOid", "--limit", "100"],
-    )
-    .ok()?;
-    let list: Vec<serde_json::Value> = serde_json::from_str(&json).ok()?;
-    list.iter()
+    ) {
+        Ok(json) => json,
+        Err(GhError::Stopped(why)) => return Err(why),
+        Err(_) => return Ok(None),
+    };
+    let Ok(list) = serde_json::from_str::<Vec<serde_json::Value>>(&json) else { return Ok(None) };
+    Ok(list
+        .iter()
         .find(|pr| pr["headRefOid"].as_str() == Some(sha.as_str()))
         .and_then(|pr| pr["url"].as_str())
-        .map(str::to_owned)
+        .map(str::to_owned))
 }
 
 pub fn hand_off(tools: &Tools, dir: &Path, branch: &str) -> Result<Checked, String> {
-    let Some(url) = pull_request_at_head(tools, dir) else {
+    let Some(url) = pull_request_at_head(tools, dir)? else {
         return Err(pr_ask::meeseeks_fix(branch, delivery::detect_base(tools, dir).as_deref()));
     };
     let detail = pr_label_of(&url)

@@ -22,7 +22,7 @@ use crate::github_hook::{EVENTS, Hit};
 use crate::github_hooks::RepoHook;
 use crate::listener::Listener;
 use crate::paths::TidewatchPaths;
-use crate::tools::{Tools, finish};
+use crate::tools::Tools;
 
 const EXTENSION: &str = "cli/gh-webhook";
 const STDERR_TAIL_BYTES: usize = 4096;
@@ -421,20 +421,20 @@ fn terminate(pgid: u32) {
 fn install_extension(tools: &Tools) -> bool {
     let mut command = tools.gh(&std::env::temp_dir());
     command.args(["extension", "install", EXTENSION]);
-    finish(command).is_ok_and(|done| done.success)
+    tools.finish(command).is_ok_and(|done| done.success)
 }
 
 fn existing_hook_ids(tools: &Tools, slug: &str) -> Option<Vec<u64>> {
     let mut command = tools.gh(&std::env::temp_dir());
     command.args(["api", &format!("repos/{slug}/hooks")]);
-    let done = finish(command).ok().filter(|done| done.success)?;
+    let done = tools.finish(command).ok().filter(|done| done.success)?;
     Some(forwarder_hook_ids(&done.stdout))
 }
 
 fn delete_hook(tools: &Tools, slug: &str, id: u64) -> bool {
     let mut command = tools.gh(&std::env::temp_dir());
     command.args(["api", "-X", "DELETE", &format!("repos/{slug}/hooks/{id}")]);
-    finish(command).is_ok_and(|done| done.success)
+    tools.finish(command).is_ok_and(|done| done.success)
 }
 
 fn clear_stale(tools: &Tools, paths: Option<&TidewatchPaths>, slug: &str) -> Cleared {
