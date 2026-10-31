@@ -167,6 +167,11 @@ pub enum Fact {
     Answered {
         kind: AskKind,
     },
+    /// A question the agent asked with its question tool got `answer`.
+    QuestionAnswered {
+        question: String,
+        answer: String,
+    },
     StepMark {
         step: String,
         by: StepBy,
@@ -201,6 +206,7 @@ impl Fact {
             Self::Pr(_) => "pr",
             Self::Check { .. } => "check",
             Self::Answered { .. } => "answered",
+            Self::QuestionAnswered { .. } => "question_answered",
             Self::StepMark { .. } => "step_mark",
             Self::Checkpoint(_) => "checkpoint",
         }
@@ -222,6 +228,10 @@ impl Fact {
             Self::PermissionOpened { tool } => {
                 Self::PermissionOpened { tool: clip_head(&tool, SUMMARY_BYTES) }
             }
+            Self::QuestionAnswered { question, answer } => Self::QuestionAnswered {
+                question: clip_head(&question, SUMMARY_BYTES),
+                answer: clip_head(&answer, SUMMARY_BYTES),
+            },
             Self::ToolOpened { id, name } => Self::ToolOpened {
                 id: clip_head(&id, SUMMARY_BYTES),
                 name: clip_head(&name, SUMMARY_BYTES),

@@ -526,3 +526,52 @@ fn the_state_survives_a_json_round_trip_exactly() {
     let text = serde_json::to_string(&tape.state).unwrap();
     assert_eq!(serde_json::from_str::<PanelState>(&text).unwrap(), tape.state);
 }
+
+fn answer(tape: &mut Tape, question: &str, at: i64) {
+    let fact = Fact::QuestionAnswered { question: question.into(), answer: "Yes".into() };
+    tape.put(Source::Transcript, fact, at);
+}
+
+#[test]
+fn each_answered_question_counts_once_since_the_report_whichever_source_told_of_it() {
+    let mut tape = Tape::new();
+    tape.started();
+    tape.hook(HookKind::TurnStarted, 1_000);
+    tape.saved(1_100, "working", NO_QUESTION, 1_100);
+    assert_eq!(tape.state.view(1_200).answers, 0);
+    answer(&mut tape, "Step 1: do the five rules hold?", 1_300);
+    answer(&mut tape, "  step 1: Do the five rules hold? ", 1_350);
+    answer(&mut tape, "Step 2: which wording?", 1_400);
+    assert_eq!(tape.state.view(1_500).answers, 2, "the same question twice is one answer");
+    tape.saved(1_600, "working", NO_QUESTION, 1_600);
+    assert_eq!(tape.state.view(1_700).answers, 0, "a new report starts the count again");
+    answer(&mut tape, "Step 1: do the five rules hold?", 1_800);
+    assert_eq!(tape.state.view(1_900).answers, 1, "a question asked again after a report counts");
+}
+
+#[test]
+fn the_answered_questions_are_listed_for_the_steps_they_tick_until_the_next_report() {
+    let mut tape = Tape::new();
+    tape.started();
+    tape.saved(1_100, "working", NO_QUESTION, 1_100);
+    answer(&mut tape, "Which base?", 1_300);
+    let listed: Vec<&str> =
+        tape.state.answered().iter().map(|seen| seen.question.as_str()).collect();
+    assert_eq!(listed, ["Which base?"]);
+    tape.saved(1_600, "working", NO_QUESTION, 1_600);
+    assert_eq!(tape.state.answered().len(), 0);
+}
+
+#[test]
+fn an_answered_question_ends_the_wait_the_report_held_for_it() {
+    let mut tape = Tape::new();
+    tape.started();
+    tape.hook(HookKind::TurnStarted, 1_000);
+    tape.saved(1_100, "needs_you", "- Which base?", 1_100);
+    answer(&mut tape, "Which base?", 1_300);
+    assert_eq!(
+        tape.state.view(1_400).report,
+        Some(ReportMark::OutOfDate(Why::QuestionAnswered)),
+        "the report's question is answered, so the report is out of date"
+    );
+}

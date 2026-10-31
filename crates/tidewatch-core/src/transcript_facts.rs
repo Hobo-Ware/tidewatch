@@ -85,6 +85,15 @@ impl Out {
                         }
                     }
                     ToolPhase::Result { .. } => {
+                        if let Some(AskPart::Answered(pairs)) = &call.ask {
+                            for (question, answer) in pairs {
+                                let fact = Fact::QuestionAnswered {
+                                    question: question.clone(),
+                                    answer: answer.clone(),
+                                };
+                                self.push(fact, ts);
+                            }
+                        }
                         if call.ask.is_some() {
                             self.push(Fact::AskClosed, ts);
                         }
