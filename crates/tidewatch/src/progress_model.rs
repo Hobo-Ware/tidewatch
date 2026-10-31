@@ -507,7 +507,7 @@ pub(crate) struct Waiting {
 
 /// What a waiting ledger waits on: the typed `waiting_on`, or for a ledger written in markdown
 /// the soonest open dated item of its Scheduled list, else its first open `on:` item.
-fn waiting_of(ledger: &Ledger) -> Option<Waiting> {
+pub(crate) fn waiting_of(ledger: &Ledger) -> Option<Waiting> {
     if let Some(waiting) = &ledger.waiting_on {
         let date = match waiting {
             WaitingOn::Date(date) => Some(*date),

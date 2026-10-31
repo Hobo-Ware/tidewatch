@@ -8,6 +8,8 @@ use std::borrow::Cow;
 
 use tidewatch_core::progress::{Ledger, State};
 
+use crate::progress_model::waiting_of;
+
 /// What the hooks say about the agent, as wall-clock times.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) struct Live {
@@ -15,6 +17,19 @@ pub(crate) struct Live {
     pub(crate) asking: bool,
     /// When the last turn started, which is when the owner's reply reached the agent.
     pub(crate) turn_started_ms: Option<i64>,
+    pub(crate) rested_at_ms: Option<i64>,
+}
+
+pub(crate) fn is_outdated(ledger: &Ledger, updated_ms: Option<i64>, live: Live) -> bool {
+    let Some((updated, rested)) = updated_ms.zip(live.rested_at_ms) else { return false };
+    if rested <= updated {
+        return false;
+    }
+    match ledger.status.state {
+        Some(State::Working | State::NeedsYou) => !ledger.has_question(),
+        Some(State::Waiting) => !ledger.has_question() && waiting_of(ledger).is_none(),
+        Some(State::Blocked | State::Done) | None => false,
+    }
 }
 
 /// Whether the ledger's question or wait is older than the agent's work. A ledger saved after the
@@ -46,6 +61,9 @@ pub(crate) fn standing(
     live: Live,
     (stale, working): (bool, bool),
 ) -> State {
+    if is_outdated(ledger, updated_ms, live) {
+        return State::Done;
+    }
     let state = fresh(ledger, stale).shown_state();
     let older =
         updated_ms.zip(live.turn_started_ms).is_some_and(|(saved, started)| started > saved);
@@ -63,6 +81,7 @@ pub(crate) fn fresh(ledger: &Ledger, stale: bool) -> Cow<'_, Ledger> {
     if matches!(working.status.state, Some(State::NeedsYou | State::Waiting | State::Blocked)) {
         working.status.state = Some(State::Working);
     }
+    working.waiting_on = None;
     Cow::Owned(working)
 }
 
@@ -171,6 +190,78 @@ mod tests {
             standing(&asks(), Some(SAVED), turn(SAVED - 1), (false, false)),
             State::NeedsYou
         );
+    }
+
+    fn rested(at: i64) -> Live {
+        Live { rested_at_ms: Some(at), ..Live::default() }
+    }
+
+    fn with_wait(state: &str, wait: bool) -> Ledger {
+        let mut ledger = typed(state, "");
+        if wait {
+            ledger.waiting_on = Some(tidewatch_core::progress_report::WaitingOn::Pr(7));
+        }
+        ledger
+    }
+
+    #[test]
+    fn a_finished_turn_beats_an_older_report_that_still_says_unfinished_work() {
+        let cases = [
+            ("working", with_wait("working", false), SAVED, SAVED + 1, true),
+            (
+                "working, saved after the turn ended",
+                with_wait("working", false),
+                SAVED,
+                SAVED - 1,
+                false,
+            ),
+            (
+                "working, saved the instant it ended",
+                with_wait("working", false),
+                SAVED,
+                SAVED,
+                false,
+            ),
+            ("needs you with no question", typed("needs_you", ""), SAVED, SAVED + 1, true),
+            (
+                "needs you with a question",
+                ledger("state: needs_you", "- Pick one"),
+                SAVED,
+                SAVED + 1,
+                false,
+            ),
+            ("waiting on nothing", with_wait("waiting", false), SAVED, SAVED + 1, true),
+            ("waiting on a pull request", with_wait("waiting", true), SAVED, SAVED + 1, false),
+            ("blocked", typed("blocked", ""), SAVED, SAVED + 1, false),
+            ("done", typed("done", ""), SAVED, SAVED + 1, false),
+        ];
+        for (what, report, saved, ended, want) in cases {
+            assert_eq!(is_outdated(&report, Some(saved), rested(ended)), want, "{what}");
+        }
+    }
+
+    #[test]
+    fn nothing_known_about_the_save_or_the_turn_end_leaves_the_report_alone() {
+        let working = with_wait("working", false);
+        assert!(!is_outdated(&working, None, rested(SAVED + 1)));
+        assert!(!is_outdated(&working, Some(SAVED), Live::default()));
+    }
+
+    #[test]
+    fn an_idle_agent_reads_done_past_a_working_report_until_it_saves_again() {
+        let working = with_wait("working", false);
+        let after_stop = standing(&working, Some(SAVED), rested(SAVED + 1), (false, false));
+        assert_eq!(after_stop, State::Done);
+        let saved_again = standing(&working, Some(SAVED + 2), rested(SAVED + 1), (false, false));
+        assert_eq!(saved_again, State::Working);
+    }
+
+    #[test]
+    fn a_stale_wait_drops_what_it_waited_on() {
+        let mut waiting = asks();
+        waiting.waiting_on = Some(tidewatch_core::progress_report::WaitingOn::Pr(7));
+        assert_eq!(fresh(&waiting, true).waiting_on, None);
+        assert!(fresh(&waiting, false).waiting_on.is_some());
     }
 
     #[test]

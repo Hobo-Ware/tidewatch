@@ -178,6 +178,11 @@ fn levels_from(lines: [&str; 5]) -> [Option<Vec<String>>; 5] {
     lines.map(|line| Some(split_line(line)))
 }
 
+#[must_use]
+pub fn reports_by_hooks(id: &str) -> bool {
+    matches!(id, "claude" | "codex" | "gemini" | "copilot")
+}
+
 fn builtin_agents() -> Vec<Agent> {
     vec![
         Agent {
@@ -828,5 +833,14 @@ mod tests {
         ));
         assert_eq!(table.get("claude").unwrap().bin, "/opt/claude/bin/claude");
         assert!(table.get("claude").unwrap().verified);
+    }
+
+    #[test]
+    fn only_the_four_wired_clis_report_by_hooks() {
+        for id in ["claude", "codex", "gemini", "copilot"] {
+            assert!(reports_by_hooks(id), "{id}");
+        }
+        assert!(!reports_by_hooks("aider"));
+        assert!(!reports_by_hooks(""));
     }
 }

@@ -335,6 +335,15 @@ mod tests {
     }
 
     #[test]
+    fn a_held_review_goes_to_an_agent_that_said_nothing_for_ten_minutes() {
+        use tidewatch_core::status::{REST_AFTER_SECS, at_rest};
+        let switch = auto(true);
+        let quiet = AgentStatus::NeedsYou(Reason::Quiet);
+        assert!(!switch.should_send(&at_rest(&quiet, REST_AFTER_SECS - 1.0), 1, 0.0));
+        assert!(switch.should_send(&at_rest(&quiet, REST_AFTER_SECS), 1, 0.0));
+    }
+
+    #[test]
     fn a_closed_tab_loses_its_pending_enter() {
         let mut queue = EnterQueue::default();
         queue.push(3, 0.0);

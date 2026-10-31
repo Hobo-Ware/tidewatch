@@ -7,12 +7,14 @@ use std::path::PathBuf;
 
 use stdusk_core::progress::Progress;
 use stdusk_core::terminal::{CmdState, PtyTerm};
+use tidewatch_core::agents::reports_by_hooks;
 use tidewatch_core::end_block::{self, EndBlock};
 use tidewatch_core::events::TabEvent;
 use tidewatch_core::progress::State;
 use tidewatch_core::resume_mode::exit_is_abnormal;
 use tidewatch_core::status::{
-    AgentStatus, HookKind, ProgressSignal, Reason, StatusTracker, TerminalSignal,
+    AgentStatus, HookKind, ProgressSignal, REST_AFTER_SECS, Reason, StatusTracker, TerminalSignal,
+    at_rest,
 };
 
 /// A finding the agent reported with `report_finding`.
@@ -93,6 +95,7 @@ pub(crate) struct AgentRun {
     exited_abnormally: bool,
     host: Host,
     turn_started_at: Option<f64>,
+    last_activity_at: Option<f64>,
     unreported: bool,
     tools_this_turn: bool,
 }
@@ -110,11 +113,13 @@ enum Host {
 impl AgentRun {
     /// A tab whose worktree is still being made.
     pub(crate) fn setting_up(agent_id: String, now: f64) -> Self {
+        let mut tracker = StatusTracker::setting_up(now);
+        tracker.set_hooked(reports_by_hooks(&agent_id));
         Self {
             agent_id,
             notes_file: None,
             report: Report::default(),
-            tracker: StatusTracker::setting_up(now),
+            tracker,
             status: AgentStatus::SettingUp,
             started_at: now,
             finished_at: None,
@@ -130,6 +135,7 @@ impl AgentRun {
             exited_abnormally: false,
             host: Host::Pty,
             turn_started_at: None,
+            last_activity_at: None,
             unreported: false,
             tools_this_turn: false,
         }
@@ -153,6 +159,10 @@ impl AgentRun {
             self.detail.clone_from(&question);
         }
         self.asking = question;
+    }
+
+    pub(crate) fn is_asking(&self) -> bool {
+        self.asking.is_some()
     }
 
     #[cfg(test)]
@@ -224,6 +234,27 @@ impl AgentRun {
         (self.finished_at.unwrap_or(now) - self.started_at).max(0.0)
     }
 
+    fn hooked(&self) -> bool {
+        reports_by_hooks(&self.agent_id)
+    }
+
+    pub(crate) fn note_activity(&mut self, now: f64) {
+        self.last_activity_at = Some(now);
+        self.tracker.on_transcript(now);
+    }
+
+    fn heard_at(&self) -> f64 {
+        self.last_activity_at.map_or(self.changed_at, |at| at.max(self.changed_at))
+    }
+
+    pub(crate) fn at_rest_status(&self, now: f64) -> AgentStatus {
+        at_rest(&self.status, now - self.heard_at())
+    }
+
+    pub(crate) fn rested_at(&self) -> Option<f64> {
+        self.finished_at.filter(|_| self.status == AgentStatus::Done)
+    }
+
     /// Seconds since the status last changed.
     pub(crate) fn since_change(&self, now: f64) -> f64 {
         (now - self.changed_at).max(0.0)
@@ -232,6 +263,7 @@ impl AgentRun {
     pub(crate) fn on_event(&mut self, event: TabEvent, now: f64) {
         match event {
             TabEvent::Hook(hook) => {
+                self.note_activity(now);
                 self.host = Host::Pty;
                 self.unreported = false;
                 match (&hook.kind, &hook.message) {
@@ -318,6 +350,9 @@ impl AgentRun {
         }
         if snapshot.activity {
             self.tracker.on_output(now);
+            if !self.hooked() {
+                self.note_activity(now);
+            }
         }
         if let Some(code) = snapshot.exit_code
             && self.tracker.inputs().process.alive
@@ -366,7 +401,11 @@ impl AgentRun {
 
     /// When the status next changes with no new input, in the egui clock.
     pub(crate) fn next_change_at(&self, now: f64) -> Option<f64> {
-        self.tracker.next_change_at(now)
+        let rest =
+            matches!(self.status, AgentStatus::Working | AgentStatus::NeedsYou(Reason::Quiet))
+                .then(|| self.heard_at() + REST_AFTER_SECS)
+                .filter(|at| *at > now);
+        [self.tracker.next_change_at(now), rest].into_iter().flatten().min_by(f64::total_cmp)
     }
 }
 
@@ -425,6 +464,62 @@ mod tests {
         run.on_event(hook(HookKind::PermissionNeeded, Some("Bash: ls")), 30.0);
         run.refresh(30.0);
         assert_eq!(run.turn_started_at(), Some(20.0));
+    }
+
+    #[test]
+    fn a_turn_that_ended_reports_when_and_a_new_turn_clears_it() {
+        let mut run = running(1.0);
+        run.on_event(hook(HookKind::TurnStarted, None), 2.0);
+        run.refresh(2.0);
+        assert_eq!(run.rested_at(), None);
+        run.on_event(hook(HookKind::TurnDone, Some("done")), 10.0);
+        run.refresh(10.0);
+        assert_eq!(run.rested_at(), Some(10.0));
+        run.refresh(50.0);
+        assert_eq!(run.rested_at(), Some(10.0));
+        run.on_event(hook(HookKind::TurnStarted, None), 60.0);
+        run.refresh(60.0);
+        assert_eq!(run.rested_at(), None);
+    }
+
+    #[test]
+    fn a_silent_agent_is_at_rest_after_ten_minutes_and_any_sign_of_life_resets_it() {
+        let mut run = running(0.0);
+        run.on_event(hook(HookKind::TurnStarted, None), 1.0);
+        run.refresh(1.0);
+        run.feed(TermSnapshot { progress: Progress::Indeterminate, ..Default::default() }, 1.0);
+        run.refresh(1.0);
+        assert_eq!(run.at_rest_status(1.0 + REST_AFTER_SECS - 1.0), AgentStatus::Working);
+        assert_eq!(run.at_rest_status(1.0 + REST_AFTER_SECS), AgentStatus::Done);
+        assert_eq!(run.next_change_at(2.0), Some(1.0 + REST_AFTER_SECS));
+        run.note_activity(300.0);
+        assert_eq!(run.at_rest_status(300.0 + REST_AFTER_SECS - 1.0), AgentStatus::Working);
+        assert_eq!(run.at_rest_status(300.0 + REST_AFTER_SECS), AgentStatus::Done);
+        assert_eq!(run.next_change_at(400.0), Some(300.0 + REST_AFTER_SECS));
+    }
+
+    #[test]
+    fn a_spinner_keeps_a_cli_with_no_hooks_busy_but_not_one_that_reports_by_hooks() {
+        for (id, rests) in [("claude", true), ("codex", true), ("aider", false)] {
+            let mut run = AgentRun::setting_up(id.into(), 0.0);
+            run.started(None, 0.0);
+            run.on_event(hook(HookKind::TurnStarted, None), 1.0);
+            run.refresh(1.0);
+            for second in 2..=661 {
+                run.feed(TermSnapshot { activity: true, ..Default::default() }, f64::from(second));
+            }
+            run.refresh(661.0);
+            let status = run.at_rest_status(661.0);
+            assert_eq!(status == AgentStatus::Done, rests, "{id}: {status:?}");
+        }
+    }
+
+    #[test]
+    fn a_prompt_waiting_on_the_owner_never_counts_as_at_rest() {
+        let mut run = running(0.0);
+        run.on_event(hook(HookKind::PermissionNeeded, Some("Bash: ls")), 1.0);
+        run.refresh(1.0);
+        assert_eq!(run.at_rest_status(5000.0), AgentStatus::NeedsYou(Reason::Permission));
     }
 
     #[test]

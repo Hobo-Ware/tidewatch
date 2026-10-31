@@ -2,6 +2,7 @@
 //! same claim, and not for a tab that was already done when Tidewatch started watching it.
 
 use tidewatch_core::end_block::EndBlock;
+use tidewatch_core::kind::Kind;
 use tidewatch_core::status::AgentStatus;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -18,6 +19,10 @@ pub(crate) fn claim(ledger_done: bool, block: Option<&EndBlock>) -> Option<Claim
         .map(|block| block.done.iter().map(|item| item.trim()).filter(|i| !i.is_empty()).collect())
         .unwrap_or_default();
     (ledger_done || !done.is_empty()).then(|| Claim(format!("{ledger_done}\n{}", done.join("\n"))))
+}
+
+pub(crate) fn applies(ordinary: bool, kind: Option<Kind>) -> bool {
+    ordinary && kind != Some(Kind::ReadOnly)
 }
 
 #[derive(Debug, Default)]
@@ -88,6 +93,20 @@ mod tests {
         assert_eq!(one, claim(false, Some(&block(&["a"], &[]))));
         assert_ne!(one, claim(false, Some(&block(&["b"], &[]))));
         assert_ne!(one, claim(true, Some(&block(&["a"], &[]))));
+    }
+
+    #[test]
+    fn a_read_only_report_skips_the_done_check() {
+        let cases = [
+            (true, None, true),
+            (true, Some(Kind::Edit), true),
+            (true, Some(Kind::ReadOnly), false),
+            (false, None, false),
+            (false, Some(Kind::Edit), false),
+        ];
+        for (ordinary, kind, want) in cases {
+            assert_eq!(applies(ordinary, kind), want, "{ordinary} {kind:?}");
+        }
     }
 
     fn some() -> Option<Claim> {

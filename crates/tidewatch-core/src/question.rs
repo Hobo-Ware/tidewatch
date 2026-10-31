@@ -10,6 +10,7 @@
 //! `toolUseResult.answers`. A refusal is an error result ("The user doesn't want to proceed...").
 
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::Sender;
 
 use serde_json::{Map, Value, json};
@@ -230,20 +231,40 @@ pub fn parse_answers(text: &str) -> Option<Vec<(String, String)>> {
         .collect()
 }
 
-/// The reply channel of one held `ask_user` call. Sending fails once the call has ended.
 #[derive(Clone)]
-pub struct AskReply(Arc<Sender<Reply>>);
+pub struct AskReply {
+    sender: Arc<Sender<Reply>>,
+    ended: Arc<AtomicBool>,
+}
 
 impl AskReply {
     #[must_use]
     pub fn new(sender: Sender<Reply>) -> Self {
-        Self(Arc::new(sender))
+        Self { sender: Arc::new(sender), ended: Arc::new(AtomicBool::new(false)) }
     }
 
     /// Whether the held call took the reply.
     #[must_use]
     pub fn send(&self, reply: Reply) -> bool {
-        self.0.send(reply).is_ok()
+        !self.has_ended() && self.sender.send(reply).is_ok()
+    }
+
+    #[must_use]
+    pub fn end_mark(&self) -> AskEnd {
+        AskEnd(Arc::clone(&self.ended))
+    }
+
+    #[must_use]
+    pub fn has_ended(&self) -> bool {
+        self.ended.load(Ordering::Acquire)
+    }
+}
+
+pub struct AskEnd(Arc<AtomicBool>);
+
+impl AskEnd {
+    pub fn mark(&self) {
+        self.0.store(true, Ordering::Release);
     }
 }
 
@@ -255,7 +276,7 @@ impl std::fmt::Debug for AskReply {
 
 impl PartialEq for AskReply {
     fn eq(&self, other: &Self) -> bool {
-        Arc::ptr_eq(&self.0, &other.0)
+        Arc::ptr_eq(&self.sender, &other.sender)
     }
 }
 

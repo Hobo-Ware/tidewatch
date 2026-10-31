@@ -98,7 +98,10 @@ pub(crate) fn drain(tabs: &mut Tabs<Pane<PtyTerm>>, flow: &mut Flow, ctx: &Conte
                 agent.reader.attach_sent(sent_file_beside(notes));
             }
             agent.reader.poll_sent(now);
-            agent.reader.drain();
+            if agent.reader.drain() {
+                agent.run.note_activity(now);
+            }
+            close_ended_asks(agent);
         }
         pick_for_the_absent(&mut tab.pane, ctx, now);
         if let Some(agent) = tab.pane.agent.as_mut() {
@@ -518,6 +521,22 @@ fn claude_menu_steps(
     steps
 }
 
+fn refresh_asking(agent: &mut AgentTab) {
+    let next = agent.reader.rows.pending_question().and_then(|row| match &row.kind {
+        Kind::Question(q) if matches!(q.origin, Origin::Tidewatch(_)) => {
+            q.questions.first().map(|question| question.text.clone())
+        }
+        _ => None,
+    });
+    agent.run.set_asking(next);
+}
+
+fn close_ended_asks(agent: &mut AgentTab) {
+    if agent.run.is_asking() && agent.reader.rows.close_ended_asks() {
+        refresh_asking(agent);
+    }
+}
+
 /// Answers every waiting question that has a pick with it, and says which were answered and which
 /// stay open.
 fn go_with_picks<T: ShowsScreen>(pane: &mut Pane<T>, now: f64) -> Option<String> {
@@ -582,13 +601,7 @@ fn answer_question<T: ShowsScreen>(
     };
     agent.reader.rows.set_asked(seq, state);
     agent.reader.type_steps(steps, now);
-    let next = agent.reader.rows.pending_question().and_then(|row| match &row.kind {
-        Kind::Question(q) if matches!(q.origin, Origin::Tidewatch(_)) => {
-            q.questions.first().map(|question| question.text.clone())
-        }
-        _ => None,
-    });
-    agent.run.set_asking(next);
+    refresh_asking(agent);
     if matches!(asked.origin, Origin::Claude) {
         agent.reader.mark_answered();
     }
@@ -853,6 +866,23 @@ mod tests {
         answer_question(&mut dead, seq, Reply::Skipped, 100.0);
         assert_eq!(steps_only(typed(&mut dead)), [Step::Paste(question::SKIP_REPLY.into())]);
         assert_eq!(asked_of(&dead, seq), Asked::Declined);
+    }
+
+    #[test]
+    fn a_call_that_ended_unanswered_leaves_no_question_and_no_asking() {
+        let (sender, _keep) = channel();
+        let held = AskReply::new(sender);
+        let (mut pane, seq) = pane(Origin::Tidewatch(held.clone()));
+        let agent = pane.agent.as_mut().unwrap();
+        agent.run.set_asking(Some("Which?".into()));
+        close_ended_asks(agent);
+        assert_eq!(asked_of(&pane, seq), Asked::Pending, "the call still waits");
+        let agent = pane.agent.as_mut().unwrap();
+        assert!(agent.run.is_asking());
+        held.end_mark().mark();
+        close_ended_asks(agent);
+        assert!(!agent.run.is_asking());
+        assert_eq!(asked_of(&pane, seq), Asked::Ended);
     }
 
     fn ask(pane: &mut Pane<Fake>, labels: &[&str]) -> std::sync::mpsc::Receiver<Reply> {

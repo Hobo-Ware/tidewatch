@@ -65,6 +65,10 @@ impl Parking {
         self.last_look_ms = 0;
     }
 
+    pub(super) fn look_again(&mut self) {
+        self.last_look_ms = 0;
+    }
+
     pub(super) fn after(&self) -> ParkAfter {
         self.after
     }

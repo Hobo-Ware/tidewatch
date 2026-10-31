@@ -59,7 +59,7 @@ impl Tidewatch {
                     pr,
                     autonomous: agent.autonomous(),
                     busy: Busy::of(
-                        agent.run.status(),
+                        &agent.run.at_rest_status(now),
                         self.progress.ledger(tab.id).map(|known| &known.ledger),
                         self.job_live.board(tab.id).is_some_and(JobBoard::has_running),
                     ),
@@ -147,7 +147,7 @@ impl Tidewatch {
         self.apply_pr(applied, ctx, now);
     }
 
-    fn busy_now(&self, tab: u64) -> Busy {
+    fn busy_now(&self, tab: u64, now: f64) -> Busy {
         let Some(agent) = self
             .tabs
             .items()
@@ -158,7 +158,7 @@ impl Tidewatch {
             return Busy::default();
         };
         Busy::of(
-            agent.run.status(),
+            &agent.run.at_rest_status(now),
             self.progress.ledger(tab).map(|known| &known.ledger),
             self.job_live.board(tab).is_some_and(JobBoard::has_running),
         )
@@ -169,13 +169,13 @@ impl Tidewatch {
         let Some(worktree) = self.tabs.get_mut(tab).and_then(|t| t.pane.worktree.clone()) else {
             return;
         };
-        let busy = self.busy_now(tab);
+        let busy = self.busy_now(tab, now);
         let refused = self.pr.check_before_removal(tab, worktree, busy, &paths, ctx);
         self.apply_pr(refused, ctx, now);
     }
 
     fn remove_merged(&mut self, tab: u64, ctx: &egui::Context) {
-        if self.busy_now(tab).any() {
+        if self.busy_now(tab, ctx.input(|i| i.time)).any() {
             self.show_toast(STAYS, ctx);
             return;
         }

@@ -3,12 +3,13 @@
 //! same paste-and-Enter queue as every other message, only while the agent is idle).
 
 use tidewatch_core::done_check::{PrFact, unverified_of};
+use tidewatch_core::kind::Kind;
 use tidewatch_core::progress::State;
 use tidewatch_core::sent::{Reason, because};
 
 use super::Tidewatch;
 use crate::done_check_glue::{Facts, Look, Request};
-use crate::done_check_trigger::{Claim, claim};
+use crate::done_check_trigger::{Claim, applies, claim};
 use crate::done_check_view::{self, Action};
 use crate::due::ask_blocked;
 use crate::flow_glue;
@@ -29,6 +30,7 @@ impl Tidewatch {
                 let ordinary = agent.meeseeks.is_none()
                     && tab.pane.worktree.is_some()
                     && matches!(tab.pane.body, Body::Shell(_));
+                let ordinary = applies(ordinary, self.reported_kind(tab.id));
                 let ledger_done = self
                     .progress
                     .ledger(tab.id)
@@ -93,9 +95,15 @@ impl Tidewatch {
         }
     }
 
+    fn reported_kind(&self, tab: u64) -> Option<Kind> {
+        self.progress.ledger(tab).and_then(|known| known.ledger.status.kind)
+    }
+
     pub(super) fn done_check_look(&self, tab: u64) -> Option<Look> {
         let agent = self.tabs.items().iter().find(|t| t.id == tab)?.pane.agent.as_ref()?;
-        agent.meeseeks.is_none().then(|| self.done_check.look(tab)).flatten()
+        applies(agent.meeseeks.is_none(), self.reported_kind(tab))
+            .then(|| self.done_check.look(tab))
+            .flatten()
     }
 
     pub(super) fn done_check_can_ask(&self, tab: u64) -> Result<(), &'static str> {

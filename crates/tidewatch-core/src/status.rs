@@ -30,6 +30,9 @@ use serde_json::Value;
 
 /// Output silence after which an agent is assumed to be waiting for you (PLAN.md, Constants).
 pub const STATUS_QUIET_SECS: f64 = 8.0;
+/// A hung CLI never clears its progress bar, so the bar alone cannot hold `Working` forever.
+pub const BUSY_QUIET_SECS: f64 = 1800.0;
+pub const REST_AFTER_SECS: f64 = 600.0;
 /// A prompt hook state is trusted for this long before output can show the agent moved on.
 pub const HOOK_SETTLE_SECS: f64 = 2.0;
 /// Output newer than this counts as "printing right now".
@@ -297,16 +300,34 @@ pub struct ProcessFacts {
     pub exit_code: Option<i32>,
     pub started_at: f64,
     pub last_output_at: Option<f64>,
+    pub last_word_at: Option<f64>,
+    pub hooked: bool,
 }
 
 impl ProcessFacts {
     #[must_use]
     pub fn started(at: f64) -> Self {
-        Self { alive: true, exit_code: None, started_at: at, last_output_at: None }
+        Self {
+            alive: true,
+            exit_code: None,
+            started_at: at,
+            last_output_at: None,
+            last_word_at: None,
+            hooked: false,
+        }
     }
 
     fn quiet_for(&self, now: f64) -> f64 {
         now - self.last_output_at.unwrap_or(self.started_at)
+    }
+
+    fn last_heard_at(&self) -> f64 {
+        let output = self.last_output_at.filter(|_| !self.hooked);
+        [output, self.last_word_at].into_iter().flatten().fold(self.started_at, f64::max)
+    }
+
+    fn silent_for(&self, now: f64) -> f64 {
+        now - self.last_heard_at()
     }
 
     fn printing_since(&self, since: f64, now: f64) -> bool {
@@ -446,7 +467,8 @@ fn from_hook(hook: &HookState, inputs: &StatusInputs, now: f64) -> AgentStatus {
         HookStatus::Working => {
             let busy = inputs.terminal.progress == ProgressSignal::Working;
             let silent_for = now - process.last_output_at.unwrap_or(hook.at).max(hook.at);
-            if !busy && silent_for >= STATUS_QUIET_SECS {
+            let hung = process.silent_for(now) >= BUSY_QUIET_SECS;
+            if (!busy && silent_for >= STATUS_QUIET_SECS) || hung {
                 AgentStatus::NeedsYou(Reason::Quiet)
             } else {
                 AgentStatus::Working
@@ -467,6 +489,9 @@ fn from_hook(hook: &HookState, inputs: &StatusInputs, now: f64) -> AgentStatus {
 fn from_signals(inputs: &StatusInputs, now: f64) -> AgentStatus {
     let (terminal, process) = (&inputs.terminal, &inputs.process);
     match terminal.progress {
+        ProgressSignal::Working if process.silent_for(now) >= BUSY_QUIET_SECS => {
+            return AgentStatus::NeedsYou(Reason::Quiet);
+        }
         ProgressSignal::Working => return AgentStatus::Working,
         ProgressSignal::Error => return AgentStatus::Failed("the agent reported an error".into()),
         ProgressSignal::Paused => return AgentStatus::NeedsYou(Reason::Input),
@@ -488,6 +513,18 @@ fn from_signals(inputs: &StatusInputs, now: f64) -> AgentStatus {
     }
 }
 
+#[must_use]
+pub fn at_rest(status: &AgentStatus, silent_for: f64) -> AgentStatus {
+    match status {
+        AgentStatus::Working | AgentStatus::NeedsYou(Reason::Quiet)
+            if silent_for >= REST_AFTER_SECS =>
+        {
+            AgentStatus::Done
+        }
+        other => other.clone(),
+    }
+}
+
 /// The earliest instant after `now` at which [`resolve`] can answer differently with no new input,
 /// or `None` when the answer only changes on input (or never). The app sleeps until then, so a
 /// quiet agent costs no frames and the decay rules still fire on time.
@@ -500,7 +537,7 @@ pub fn next_change(inputs: &StatusInputs, now: f64) -> Option<f64> {
     let marks: Vec<f64> = match &inputs.hook {
         Some(HookState { status: HookStatus::Working, at, .. }) => {
             if terminal.progress == ProgressSignal::Working {
-                Vec::new()
+                vec![busy_cap(process)]
             } else {
                 vec![process.last_output_at.unwrap_or(*at).max(*at) + STATUS_QUIET_SECS]
             }
@@ -516,6 +553,7 @@ pub fn next_change(inputs: &StatusInputs, now: f64) -> Option<f64> {
             marks
         }
         Some(_) => Vec::new(),
+        None if terminal.progress == ProgressSignal::Working => vec![busy_cap(process)],
         None if terminal.progress != ProgressSignal::Off => Vec::new(),
         None => {
             let mut marks =
@@ -525,6 +563,10 @@ pub fn next_change(inputs: &StatusInputs, now: f64) -> Option<f64> {
         }
     };
     marks.into_iter().filter(|mark| *mark > now).min_by(f64::total_cmp)
+}
+
+fn busy_cap(process: &ProcessFacts) -> f64 {
+    process.last_heard_at() + BUSY_QUIET_SECS
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -574,7 +616,8 @@ impl StatusTracker {
     /// Setup finished: the agent process starts now.
     pub fn agent_started(&mut self, now: f64) {
         self.inputs.lifecycle = Lifecycle::Agent;
-        self.inputs.process = ProcessFacts::started(now);
+        let hooked = self.inputs.process.hooked;
+        self.inputs.process = ProcessFacts { hooked, ..ProcessFacts::started(now) };
         self.inputs.hook = None;
         self.inputs.terminal = TerminalState::default();
         self.open_tools.clear();
@@ -590,6 +633,7 @@ impl StatusTracker {
     }
 
     pub fn on_hook(&mut self, event: &HookEvent, now: f64) {
+        self.inputs.process.last_word_at = Some(now);
         match &event.kind {
             HookKind::ToolStarted { key, id } => return self.tool_started(key, id.as_deref(), now),
             HookKind::ToolFinished { key, id } => {
@@ -674,6 +718,14 @@ impl StatusTracker {
             TerminalSignal::TitleChanged => terminal.title_changed_at = Some(now),
             TerminalSignal::Bell => terminal.bell_at = Some(now),
         }
+    }
+
+    pub fn set_hooked(&mut self, hooked: bool) {
+        self.inputs.process.hooked = hooked;
+    }
+
+    pub fn on_transcript(&mut self, now: f64) {
+        self.inputs.process.last_word_at = Some(now);
     }
 
     pub fn on_output(&mut self, now: f64) {
@@ -1767,7 +1819,7 @@ mod tests {
         let mut busy = StatusTracker::agent(0.0);
         busy.on_hook(&event(HookKind::TurnStarted), 2.0);
         busy.on_terminal(TerminalSignal::Progress(ProgressSignal::Working), 2.0);
-        assert_eq!(quiet_until_next_change(&busy, 4.0), None);
+        assert_eq!(quiet_until_next_change(&busy, 4.0), Some(2.0 + BUSY_QUIET_SECS));
 
         let mut prompt = StatusTracker::agent(0.0);
         prompt.on_hook(&event(HookKind::PermissionNeeded), 10.0);
@@ -1787,7 +1839,101 @@ mod tests {
 
         let mut progress = StatusTracker::agent(0.0);
         progress.on_terminal(TerminalSignal::Progress(ProgressSignal::Working), 1.0);
-        assert_eq!(quiet_until_next_change(&progress, 2.0), None);
+        assert_eq!(quiet_until_next_change(&progress, 2.0), Some(BUSY_QUIET_SECS));
+    }
+
+    #[test]
+    fn a_busy_progress_bar_holds_working_only_until_the_quiet_cap() {
+        let event = |kind| HookEvent::bare(kind);
+
+        let mut hooked = StatusTracker::agent(0.0);
+        hooked.on_hook(&event(HookKind::TurnStarted), 2.0);
+        hooked.on_terminal(TerminalSignal::Progress(ProgressSignal::Working), 2.0);
+        hooked.on_output(10.0);
+        let cap = 10.0 + BUSY_QUIET_SECS;
+        assert_eq!(hooked.status(cap - 1.0), AgentStatus::Working);
+        assert_eq!(quiet_until_next_change(&hooked, 20.0), Some(cap));
+        assert_eq!(hooked.status(cap), AgentStatus::NeedsYou(Reason::Quiet));
+        hooked.on_output(cap + 1.0);
+        assert_eq!(hooked.status(cap + 2.0), AgentStatus::Working);
+
+        let mut bare = StatusTracker::agent(0.0);
+        bare.on_terminal(TerminalSignal::Progress(ProgressSignal::Working), 1.0);
+        assert_eq!(bare.next_change_at(2.0), Some(BUSY_QUIET_SECS));
+        assert_eq!(bare.status(BUSY_QUIET_SECS - 1.0), AgentStatus::Working);
+        assert_eq!(bare.status(BUSY_QUIET_SECS), AgentStatus::NeedsYou(Reason::Quiet));
+    }
+
+    #[test]
+    fn a_hook_counts_as_hearing_from_the_agent_for_the_quiet_cap() {
+        let mut busy = StatusTracker::agent(0.0);
+        busy.on_hook(&HookEvent::bare(HookKind::TurnStarted), 2.0);
+        busy.on_terminal(TerminalSignal::Progress(ProgressSignal::Working), 2.0);
+        let started = HookKind::ToolStarted { key: "Bash\nsleep".into(), id: None };
+        busy.on_hook(&HookEvent::bare(started), 1000.0);
+        assert_eq!(busy.next_change_at(1001.0), Some(1000.0 + BUSY_QUIET_SECS));
+        assert_eq!(busy.status(BUSY_QUIET_SECS + 1.0), AgentStatus::Working);
+        assert_eq!(busy.status(1000.0 + BUSY_QUIET_SECS), AgentStatus::NeedsYou(Reason::Quiet));
+    }
+
+    fn spinning(hooked: bool) -> StatusTracker {
+        let mut tracker = StatusTracker::agent(0.0);
+        tracker.set_hooked(hooked);
+        tracker.on_hook(&HookEvent::bare(HookKind::TurnStarted), 2.0);
+        tracker.on_terminal(TerminalSignal::Progress(ProgressSignal::Working), 2.0);
+        let mut at = 3.0;
+        while at < BUSY_QUIET_SECS + 60.0 {
+            tracker.on_output(at);
+            at += 1.0;
+        }
+        tracker
+    }
+
+    #[test]
+    fn a_spinner_on_a_hooked_cli_still_reaches_the_quiet_cap() {
+        let tracker = spinning(true);
+        let cap = 2.0 + BUSY_QUIET_SECS;
+        assert_eq!(tracker.status(cap - 1.0), AgentStatus::Working);
+        assert_eq!(tracker.status(cap), AgentStatus::NeedsYou(Reason::Quiet));
+        assert_eq!(tracker.next_change_at(10.0), Some(cap));
+    }
+
+    #[test]
+    fn a_transcript_line_keeps_a_hooked_cli_past_the_quiet_cap() {
+        let mut tracker = spinning(true);
+        tracker.on_transcript(1500.0);
+        assert_eq!(tracker.status(2.0 + BUSY_QUIET_SECS), AgentStatus::Working);
+        assert_eq!(tracker.status(1500.0 + BUSY_QUIET_SECS), AgentStatus::NeedsYou(Reason::Quiet));
+    }
+
+    #[test]
+    fn terminal_output_keeps_a_cli_with_no_hooks_working() {
+        let tracker = spinning(false);
+        assert_eq!(tracker.status(BUSY_QUIET_SECS + 2.0), AgentStatus::Working);
+    }
+
+    #[test]
+    fn a_silent_working_or_quiet_agent_counts_as_at_rest_after_ten_minutes() {
+        use AgentStatus::{Done, Failed, NeedsYou, Stopped, Working};
+        let cases = [
+            ("working, just heard", Working, 5.0, Working),
+            ("working, nine minutes", Working, 540.0, Working),
+            ("working, ten minutes", Working, REST_AFTER_SECS, Done),
+            ("quiet, ten minutes", NeedsYou(Reason::Quiet), REST_AFTER_SECS, Done),
+            ("quiet, a minute", NeedsYou(Reason::Quiet), 60.0, NeedsYou(Reason::Quiet)),
+            (
+                "permission prompt, an hour",
+                NeedsYou(Reason::Permission),
+                3600.0,
+                NeedsYou(Reason::Permission),
+            ),
+            ("question, an hour", NeedsYou(Reason::Question), 3600.0, NeedsYou(Reason::Question)),
+            ("failed, an hour", Failed("x".into()), 3600.0, Failed("x".into())),
+            ("stopped, an hour", Stopped, 3600.0, Stopped),
+        ];
+        for (name, status, silent, want) in cases {
+            assert_eq!(at_rest(&status, silent), want, "{name}");
+        }
     }
 
     #[test]
