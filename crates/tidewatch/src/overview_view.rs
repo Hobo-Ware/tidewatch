@@ -61,6 +61,7 @@ pub(crate) const SWATCH: f32 = 7.0;
 const CHIP_H: f32 = Size::Compact.height();
 const CHIP_GAP: f32 = 8.0;
 const CHIP_CHARS: usize = 18;
+const CHIP_ROWS_MAX: usize = 3;
 const MASCOT_H: f32 = 120.0;
 const BADGE_H: f32 = 16.0;
 const GRID_ICON: &str = "\u{E464}";
@@ -257,9 +258,10 @@ fn header(ui: &mut Ui, area: Rect, board: &Board, state: &mut State) -> f32 {
         summary,
         brand::SOFT,
     );
-    let (places, height) = if inline {
+    let wide = right - left;
+    let wrapped = if inline {
         let mut x = right - total;
-        let places: Vec<(f32, f32)> = widths
+        let at = widths
             .iter()
             .map(|width| {
                 let at = (x - left, 0.0);
@@ -267,17 +269,68 @@ fn header(ui: &mut Ui, area: Rect, board: &Board, state: &mut State) -> f32 {
                 at
             })
             .collect();
-        (places, CHIP_H)
+        Wrapped { at, full: CHIP_H, shown: CHIP_H, scrolls: false }
     } else {
-        flow(&widths, right - left, CHIP_H, CHIP_GAP)
+        wrap_chips(&widths, wide)
     };
     let origin = if inline { pos2(left, row_top) } else { pos2(left, row_top + CHIP_H + 10.0) };
     let active: Option<String> =
         state.repo.clone().filter(|repo| board.chips.iter().any(|c| c.label == *repo));
-    for ((chip, width), (x, y)) in chips.iter().zip(&widths).zip(places) {
-        let rect = Rect::from_min_size(origin + vec2(x, y), vec2(*width, CHIP_H));
+    let laid = Laid { chips: &chips, widths: &widths, at: &wrapped.at, all };
+    if wrapped.scrolls {
+        let area = Rect::from_min_size(origin, vec2(wide, wrapped.shown));
+        let mut inner = ui.new_child(UiBuilder::new().max_rect(area));
+        ScrollArea::vertical().id_salt("overview-chips").auto_shrink([false, false]).show(
+            &mut inner,
+            |ui| {
+                let size = vec2(wide - brand::SCROLL_ROOM, wrapped.full);
+                let (rect, _) = ui.allocate_exact_size(size, Sense::hover());
+                paint_chips(ui, rect.min, &laid, active.as_deref(), state);
+            },
+        );
+    } else {
+        paint_chips(ui, origin, &laid, active.as_deref(), state);
+    }
+    let height = wrapped.shown;
+    16.0 + height + if inline { 0.0 } else { 10.0 } + 14.0
+}
+
+struct Wrapped {
+    at: Vec<(f32, f32)>,
+    full: f32,
+    shown: f32,
+    scrolls: bool,
+}
+
+struct Laid<'a> {
+    chips: &'a [Option<&'a RepoChip>],
+    widths: &'a [f32],
+    at: &'a [(f32, f32)],
+    all: usize,
+}
+
+fn wrap_chips(widths: &[f32], width: f32) -> Wrapped {
+    let cap = CHIP_ROWS_MAX as f32 * CHIP_H + (CHIP_ROWS_MAX - 1) as f32 * CHIP_GAP;
+    let (at, full) = flow(widths, width, CHIP_H, CHIP_GAP);
+    if full <= cap {
+        return Wrapped { at, full, shown: full, scrolls: false };
+    }
+    let (at, full) = flow(widths, width - brand::SCROLL_ROOM, CHIP_H, CHIP_GAP);
+    Wrapped { at, full, shown: cap, scrolls: true }
+}
+
+fn paint_chips(
+    ui: &mut Ui,
+    origin: Pos2,
+    laid: &Laid<'_>,
+    active: Option<&str>,
+    state: &mut State,
+) {
+    let painter = ui.painter().clone();
+    for ((chip, width), (x, y)) in laid.chips.iter().zip(laid.widths).zip(laid.at) {
+        let rect = Rect::from_min_size(origin + vec2(*x, *y), vec2(*width, CHIP_H));
         let selected = match chip {
-            Some(chip) => active.as_deref() == Some(chip.label.as_str()),
+            Some(chip) => active == Some(chip.label.as_str()),
             None => active.is_none(),
         };
         let id = ui.id().with(("overview-chip", chip.map(|c| c.label.as_str())));
@@ -306,7 +359,7 @@ fn header(ui: &mut Ui, area: Rect, board: &Board, state: &mut State) -> f32 {
                 x += SWATCH + 6.0;
                 (chip_label(&chip.label), chip.count)
             }
-            None => ("All".to_owned(), all),
+            None => ("All".to_owned(), laid.all),
         };
         let font = FontId::proportional(TEXT_SECONDARY);
         let text = painter.layout_no_wrap(label, font.clone(), ink);
@@ -322,7 +375,6 @@ fn header(ui: &mut Ui, area: Rect, board: &Board, state: &mut State) -> f32 {
             ui.ctx().request_repaint();
         }
     }
-    16.0 + height + if inline { 0.0 } else { 10.0 } + 14.0
 }
 
 fn mid_of(rect: Rect) -> f32 {
@@ -1199,6 +1251,36 @@ mod tests {
         assert!(has(&texts, "web-working") && has(&texts, "web-asks"), "{texts:?}");
         assert!(!has(&texts, "Nothing running. Start an agent with"), "{texts:?}");
         assert!(has(&texts, "2 agents \u{b7} 1 need you \u{b7} 1 working \u{b7} 0 idle"));
+    }
+
+    #[test]
+    fn wrapped_chips_show_three_rows_and_scroll_past_them() {
+        let cap = 3.0 * CHIP_H + 2.0 * CHIP_GAP;
+        let cases = [(3, 500.0, false), (8, 500.0, false), (40, 500.0, true), (200, 900.0, true)];
+        for (count, width, scrolls) in cases {
+            let wrapped = wrap_chips(&vec![110.0; count], width);
+            assert_eq!(wrapped.scrolls, scrolls, "{count} chips in {width}");
+            assert!(wrapped.shown <= cap, "{count} chips in {width}");
+            assert_eq!(wrapped.at.len(), count);
+            if scrolls {
+                let right = wrapped.at.iter().map(|(x, _)| x + 110.0).fold(0.0, f32::max);
+                assert!(right <= width - brand::SCROLL_ROOM, "the bar keeps its room");
+                assert!(wrapped.full > cap);
+            }
+        }
+    }
+
+    #[test]
+    fn many_repos_in_a_narrow_window_leave_the_cards_on_screen() {
+        let rows: Vec<Row> = (0..80)
+            .map(|n| row(n, &format!("agent-{n}"), &format!("repo-{n:02}"), AgentStatus::Working))
+            .collect();
+        let mut screen = Screen::new(overview(rows));
+        screen.width = 600.0;
+        let (found, _) = screen.drawn();
+        let card = found.iter().find(|(text, _)| text == "agent-0").map(|(_, rect)| *rect);
+        let card = card.expect("the first card is drawn");
+        assert!(card.top() < 320.0, "the chips pushed the cards down to {}", card.top());
     }
 
     #[test]
