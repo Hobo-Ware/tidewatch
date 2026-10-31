@@ -22,6 +22,7 @@ use crate::launch::{
     Launch, LaunchCtx, LaunchError, claude_settings_json, copilot_plugin_files,
     ensure_no_push_helper, gemini_system_settings, launch_command, mcp_config_json,
 };
+use crate::limited;
 use crate::paths::TidewatchPaths;
 use crate::prefs::Prefs;
 use crate::profiles::Profile;
@@ -471,22 +472,20 @@ fn remove_generated_gemini_project_settings(dir: &Path) {
 }
 
 fn is_tracked(dir: &Path, file: &str) -> bool {
-    Command::new("git")
-        .arg("-C")
-        .arg(dir)
-        .args(["ls-files", "--error-unmatch", "--", file])
-        .output()
-        .is_ok_and(|out| out.status.success())
+    limited::output(
+        Command::new("git").arg("-C").arg(dir).args(["ls-files", "--error-unmatch", "--", file]),
+        limited::DEFAULT,
+    )
+    .is_ok_and(|out| out.status.success())
 }
 
 /// Adds `lines` to the repo's `info/exclude` unless they are there. For a linked worktree git keeps
 /// that file in the main repo, so the lines apply to every checkout of it.
 pub(crate) fn exclude_from_git(dir: &Path, lines: &[&str]) -> std::io::Result<()> {
-    let out = Command::new("git")
-        .arg("-C")
-        .arg(dir)
-        .args(["rev-parse", "--git-path", "info/exclude"])
-        .output()?;
+    let out = limited::output(
+        Command::new("git").arg("-C").arg(dir).args(["rev-parse", "--git-path", "info/exclude"]),
+        limited::DEFAULT,
+    )?;
     if !out.status.success() {
         return Err(std::io::Error::other(String::from_utf8_lossy(&out.stderr).trim().to_owned()));
     }

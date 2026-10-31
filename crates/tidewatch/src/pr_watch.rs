@@ -47,7 +47,7 @@ impl Pause {
             GhError::NotAuthenticated => Self::SignedOut,
             GhError::Missing => Self::NoGh,
             GhError::NoGithubRemote => Self::NoRemote,
-            GhError::Failed(message) => {
+            GhError::Failed(message) | GhError::Stopped(message) => {
                 Self::Failed(message.lines().next().unwrap_or_default().trim().to_owned())
             }
         }

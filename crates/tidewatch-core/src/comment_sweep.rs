@@ -8,6 +8,7 @@ use std::path::Path;
 use std::process::{Command, Stdio};
 
 use crate::comments::{Flag, Syntax, scan};
+use crate::limited;
 
 const MAX_FILE_BYTES: u64 = 256 * 1024;
 
@@ -99,15 +100,17 @@ pub fn flags_of_diff(diff: &str) -> Vec<FileFlags> {
 }
 
 fn git(dir: &Path, args: &[&str]) -> Option<String> {
-    let out = Command::new("git")
-        .arg("-C")
-        .arg(dir)
-        .args(args)
-        .env("GIT_TERMINAL_PROMPT", "0")
-        .stdin(Stdio::null())
-        .stderr(Stdio::null())
-        .output()
-        .ok()?;
+    let out = limited::output(
+        Command::new("git")
+            .arg("-C")
+            .arg(dir)
+            .args(args)
+            .env("GIT_TERMINAL_PROMPT", "0")
+            .stdin(Stdio::null())
+            .stderr(Stdio::null()),
+        limited::DEFAULT,
+    )
+    .ok()?;
     out.status.success().then(|| String::from_utf8_lossy(&out.stdout).into_owned())
 }
 

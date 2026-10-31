@@ -3,7 +3,8 @@
 use std::fmt;
 use std::path::Path;
 
-use crate::tools::{Finished, Tools, finish};
+use crate::limited;
+use crate::tools::{Finished, Tools};
 
 const REMOTE: &str = "origin";
 const FIELD_SEPARATOR: char = '\u{1f}';
@@ -122,7 +123,7 @@ fn check_branch(branch: &str) -> Result<(), DeliveryError> {
 fn git_output(tools: &Tools, dir: &Path, args: &[&str]) -> Result<Finished, DeliveryError> {
     let mut command = tools.git(dir);
     command.args(args);
-    finish(command).map_err(|e| DeliveryError::Git(format!("cannot run git: {e}")))
+    tools.finish(command).map_err(|e| DeliveryError::Git(limited::failure("git", &e)))
 }
 
 fn git_succeeds(tools: &Tools, dir: &Path, args: &[&str]) -> bool {

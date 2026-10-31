@@ -10,6 +10,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use serde_json::Value;
+use tidewatch_core::limited;
 
 use crate::repo::Repo;
 use crate::retarget_copy::find_session;
@@ -164,13 +165,12 @@ fn read_tail(file: &Path) -> Option<String> {
 }
 
 fn commit_time(repo: &Path) -> Option<u64> {
-    let out = Command::new("git")
-        .arg("-C")
-        .arg(repo)
-        .args(["log", "-1", "--format=%ct"])
-        .output()
-        .ok()
-        .filter(|out| out.status.success())?;
+    let out = limited::output(
+        Command::new("git").arg("-C").arg(repo).args(["log", "-1", "--format=%ct"]),
+        limited::DEFAULT,
+    )
+    .ok()
+    .filter(|out| out.status.success())?;
     String::from_utf8_lossy(&out.stdout).trim().parse().ok()
 }
 

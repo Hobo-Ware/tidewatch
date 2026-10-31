@@ -27,6 +27,7 @@ use std::path::{Path, PathBuf};
 
 use crate::agents::{Agent, AgentTable, Level, ResumeForm};
 use crate::launch::{Launch, LaunchCtx, LaunchError, launch_command};
+use crate::limited;
 use crate::paths::TidewatchPaths;
 use crate::permission_mode::last_claude_level;
 use crate::prefs::ResumeAgents;
@@ -127,11 +128,11 @@ impl Disk for RealDisk {
 
     fn worktree_usable(&self, path: &Path) -> bool {
         path.join(".git").is_file()
-            && Tools::system()
-                .git(path)
-                .args(["rev-parse", "--git-dir"])
-                .output()
-                .is_ok_and(|out| out.status.success())
+            && limited::output(
+                Tools::system().git(path).args(["rev-parse", "--git-dir"]),
+                limited::DEFAULT,
+            )
+            .is_ok_and(|out| out.status.success())
     }
 
     fn transcript_exists(&self, agent: &str, dir: &Path, session_id: &str) -> bool {

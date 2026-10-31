@@ -7,8 +7,9 @@ use std::path::Path;
 use std::time::Duration;
 
 use crate::fsutil;
+use crate::limited;
 use crate::paths::TidewatchPaths;
-use crate::tools::{Tools, finish, run_gh};
+use crate::tools::{Tools, run_gh};
 
 pub const REFRESH_EVERY: Duration = Duration::from_hours(24);
 pub const PICTURE_PX: u32 = 96;
@@ -56,7 +57,7 @@ pub fn looks_like_image(bytes: &[u8]) -> bool {
 pub fn git_name(tools: &Tools, dir: &Path) -> Option<String> {
     let mut command = tools.git(dir);
     command.args(["config", "user.name"]);
-    let finished = finish(command).ok().filter(|finished| finished.success)?;
+    let finished = tools.finish(command).ok().filter(|finished| finished.success)?;
     let name = finished.stdout.trim();
     (!name.is_empty()).then(|| name.to_owned())
 }
@@ -78,7 +79,7 @@ pub fn refresh(tools: &Tools, paths: &TidewatchPaths, now: u64) -> Result<(), St
         .args(["-sfL", "--connect-timeout", CONNECT_SECS, "--max-time", TOTAL_SECS, "-o"])
         .arg(&part)
         .arg(sized_url(&url));
-    let finished = finish(command).map_err(|e| format!("cannot run curl: {e}"))?;
+    let finished = tools.finish(command).map_err(|e| limited::failure("curl", &e))?;
     if !finished.success {
         let _ = std::fs::remove_file(&part);
         return Err("the picture download failed".to_owned());

@@ -208,6 +208,36 @@ mod tests {
     }
 
     #[test]
+    fn a_look_at_a_gh_that_never_answers_comes_back_stopped_within_the_limit() {
+        let dir = tempfile::tempdir().unwrap();
+        crate::test_exec::write_executable_from_a_child(
+            &dir.path().join("gh"),
+            "#!/bin/sh\nexec sleep 30\n",
+        );
+        let path = std::env::join_paths(
+            std::iter::once(dir.path().to_path_buf())
+                .chain(std::env::split_paths(&std::env::var_os("PATH").unwrap_or_default())),
+        )
+        .unwrap();
+        let tools = Tools::with_path(path).with_limit(Duration::from_millis(300));
+        let jobs = Jobs::new();
+        look(
+            &jobs,
+            &egui::Context::default(),
+            1,
+            tools,
+            dir.path().to_path_buf(),
+            Look { number: 1, prev: None },
+            0,
+        );
+        let Done::Looked { result, .. } = wait_for(&jobs) else { panic!("not a look") };
+        assert_eq!(
+            result.err(),
+            Some(GhError::Stopped("gh took longer than 300 ms and was stopped".to_owned()))
+        );
+    }
+
+    #[test]
     fn a_look_without_gh_is_an_answer_not_a_hang() {
         let empty = tempfile::tempdir().unwrap();
         let jobs = Jobs::new();

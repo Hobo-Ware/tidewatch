@@ -295,6 +295,38 @@ fn a_worktree_counts_as_edited_once_a_file_changes_or_a_commit_lands_after_the_s
     assert_eq!(run_look(&spec(&repo, None)), Ok(false), "no start to compare with");
 }
 
+fn hanging(program: &str, dir: &std::path::Path) -> Tools {
+    crate::test_exec::write_executable_from_a_child(
+        &dir.join(program),
+        "#!/bin/sh\nexec sleep 30\n",
+    );
+    let path = std::env::join_paths(
+        std::iter::once(dir.to_path_buf())
+            .chain(std::env::split_paths(&std::env::var_os("PATH").unwrap_or_default())),
+    )
+    .unwrap();
+    Tools::with_path(path).with_limit(Duration::from_millis(300))
+}
+
+#[test]
+fn a_check_whose_git_or_gh_never_answers_fails_its_step_with_the_limit_named() {
+    let repo = repo_with_worktree();
+    let tools = tempfile::tempdir().unwrap();
+    let stuck_git =
+        CheckSpec { tools: hanging("git", tools.path()), worktree: repo.worktree.clone() };
+    assert_eq!(
+        run_check(Step::Proof, &stuck_git, true).err(),
+        Some("git took longer than 300 ms and was stopped".to_owned())
+    );
+    let tools = tempfile::tempdir().unwrap();
+    let stuck_gh =
+        CheckSpec { tools: hanging("gh", tools.path()), worktree: repo.worktree.clone() };
+    assert_eq!(
+        run_check(Step::HandOff, &stuck_gh, true).err(),
+        Some("gh took longer than 300 ms and was stopped".to_owned())
+    );
+}
+
 #[test]
 fn a_look_releases_the_held_answer_only_for_the_latest_ticket() {
     let repo = repo_with_worktree();

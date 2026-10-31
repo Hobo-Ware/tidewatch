@@ -16,6 +16,7 @@ use crate::elsewhere::{
     claude_sessions_in, is_session_id, other_candidates_in, parse_ps, parse_registry_entry,
     registry_pid,
 };
+use crate::limited;
 use crate::permission_mode::last_claude_level;
 use crate::restore::codex_session_id;
 use crate::tools::Tools;
@@ -60,15 +61,16 @@ impl RealSystem {
     }
 
     fn run(&self, program: &str, args: &[&str]) -> Option<String> {
-        let output = self
-            .tools
-            .command(program, Path::new("/"))
-            .env("TZ", "UTC")
-            .env("LC_ALL", "C")
-            .args(args)
-            .stderr(Stdio::null())
-            .output()
-            .ok()?;
+        let output = limited::output(
+            self.tools
+                .command(program, Path::new("/"))
+                .env("TZ", "UTC")
+                .env("LC_ALL", "C")
+                .args(args)
+                .stderr(Stdio::null()),
+            self.tools.limit(),
+        )
+        .ok()?;
         output.status.success().then(|| String::from_utf8_lossy(&output.stdout).into_owned())
     }
 }
@@ -90,7 +92,11 @@ impl System for RealSystem {
     }
 
     fn git_root(&self, dir: &Path) -> Option<PathBuf> {
-        let out = self.tools.git(dir).args(["rev-parse", "--show-toplevel"]).output().ok()?;
+        let out = limited::output(
+            self.tools.git(dir).args(["rev-parse", "--show-toplevel"]),
+            self.tools.limit(),
+        )
+        .ok()?;
         let text = String::from_utf8_lossy(&out.stdout);
         let root = text.trim();
         (out.status.success() && !root.is_empty()).then(|| PathBuf::from(root))
@@ -98,14 +104,15 @@ impl System for RealSystem {
 
     #[cfg(target_os = "macos")]
     fn cwd_holders(&self, dir: &Path) -> Option<Vec<u32>> {
-        let output = self
-            .tools
-            .command("lsof", Path::new("/"))
-            .env("LC_ALL", "C")
-            .args(["-w", "-d", "cwd", "-Fpn"])
-            .stderr(Stdio::null())
-            .output()
-            .ok()?;
+        let output = limited::output(
+            self.tools
+                .command("lsof", Path::new("/"))
+                .env("LC_ALL", "C")
+                .args(["-w", "-d", "cwd", "-Fpn"])
+                .stderr(Stdio::null()),
+            self.tools.limit(),
+        )
+        .ok()?;
         let text = String::from_utf8_lossy(&output.stdout);
         (output.status.success() || !text.trim().is_empty())
             .then(|| parse_lsof_holders(&text, &folder_forms(dir)))

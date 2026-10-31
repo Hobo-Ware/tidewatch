@@ -5,7 +5,8 @@
 use std::path::Path;
 
 use crate::delivery::{compare_ref, detect_base};
-use crate::tools::{Tools, finish};
+use crate::limited;
+use crate::tools::Tools;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Branch {
@@ -54,7 +55,7 @@ pub fn parse_numstat(text: &str) -> Changed {
 fn git(tools: &Tools, repo: &Path, args: &[&str]) -> Result<String, String> {
     let mut command = tools.git(repo);
     command.args(args);
-    let out = finish(command).map_err(|e| format!("cannot run git: {e}"))?;
+    let out = tools.finish(command).map_err(|e| limited::failure("git", &e))?;
     if out.success { Ok(out.stdout) } else { Err(out.stderr.trim().to_owned()) }
 }
 

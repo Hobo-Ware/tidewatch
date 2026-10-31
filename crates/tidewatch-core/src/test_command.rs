@@ -8,21 +8,18 @@
 //! `checklist = "<path>"` points at the repo's own checklist template for the progress ledger.
 
 use std::fmt::Write as _;
-use std::io::Read;
-use std::os::unix::process::CommandExt;
 use std::path::{Component, Path, PathBuf};
-use std::process::{Command, Stdio};
-use std::sync::mpsc;
-use std::time::{Duration, Instant};
+use std::process::Command;
+use std::time::Duration;
 
 use serde::Deserialize;
+
+use crate::limited;
 
 const REPO_CONFIG: &str = ".tidewatch.toml";
 
 /// How long a test run may take before it is stopped.
 pub const DEFAULT_TIMEOUT: Duration = Duration::from_secs(600);
-const POLL: Duration = Duration::from_millis(25);
-const PIPE_GRACE: Duration = Duration::from_secs(2);
 
 /// A test command and what it was picked from.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -480,88 +477,40 @@ pub fn run_in(dir: &Path, command: &str) -> TestRun {
     }
 }
 
-fn drain(mut pipe: impl Read + Send + 'static) -> mpsc::Receiver<String> {
-    let (sender, receiver) = mpsc::channel();
-    std::thread::spawn(move || {
-        let mut bytes = Vec::new();
-        let _ = pipe.read_to_end(&mut bytes);
-        let _ = sender.send(String::from_utf8_lossy(&bytes).into_owned());
-    });
-    receiver
-}
-
-fn kill_group(pid: u32) {
-    let _ = Command::new("kill")
-        .args(["-KILL", "--", &format!("-{pid}")])
-        .stderr(Stdio::null())
-        .status();
-}
-
-fn describe(duration: Duration) -> String {
-    let secs = duration.as_secs();
-    if secs >= 120 && secs.is_multiple_of(60) {
-        format!("{} min", secs / 60)
-    } else {
-        format!("{secs} s")
-    }
-}
-
 /// [`run_in`] that gives up after `timeout`: the command and everything it started are killed, and
 /// the run is a failure (exit code `-1`) whose output ends with a line saying so. Blocking: call it
 /// from a background job.
 #[must_use]
 pub fn run_in_timeout(dir: &Path, command: &str, timeout: Duration) -> TestRun {
-    let spawned = Command::new("sh")
-        .arg("-c")
-        .arg(command)
-        .current_dir(dir)
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .process_group(0)
-        .spawn();
-    let mut child = match spawned {
-        Ok(child) => child,
+    let mut shell = Command::new("sh");
+    shell.arg("-c").arg(command).current_dir(dir);
+    let (out, stopped) = match limited::run(&mut shell, timeout) {
+        Ok(limited::Ended::Exited(out)) => (out, false),
+        Ok(limited::Ended::Stopped(out)) => (out, true),
         Err(e) => {
             return TestRun { exit_code: -1, output: format!("could not run `{command}`: {e}") };
         }
     };
-    let streams = (child.stdout.take().map(drain), child.stderr.take().map(drain));
-    let deadline = Instant::now() + timeout;
-    let mut timed_out = false;
-    let status = loop {
-        match child.try_wait() {
-            Ok(Some(status)) => break Some(status),
-            Ok(None) if Instant::now() >= deadline => {
-                timed_out = true;
-                kill_group(child.id());
-                let _ = child.kill();
-                break child.wait().ok();
-            }
-            Ok(None) => std::thread::sleep(POLL),
-            Err(_) => break None,
-        }
-    };
-    let mut output = String::new();
-    for stream in [streams.0, streams.1].into_iter().flatten() {
-        output.push_str(&stream.recv_timeout(PIPE_GRACE).unwrap_or_default());
-    }
-    if timed_out {
+    let mut output = String::from_utf8_lossy(&out.stdout).into_owned();
+    output.push_str(&String::from_utf8_lossy(&out.stderr));
+    if stopped {
         if !output.is_empty() && !output.ends_with('\n') {
             output.push('\n');
         }
         let _ = writeln!(
             output,
             "[tidewatch: the test command ran longer than {} and was stopped]",
-            describe(timeout)
+            limited::describe(timeout)
         );
         return TestRun { exit_code: -1, output };
     }
-    TestRun { exit_code: status.and_then(|s| s.code()).unwrap_or(-1), output }
+    TestRun { exit_code: out.status.code().unwrap_or(-1), output }
 }
 
 #[cfg(test)]
 mod tests {
+    use std::time::Instant;
+
     use super::*;
 
     type Files<'a> = &'a [(&'a str, &'a str)];
@@ -1104,7 +1053,7 @@ mod tests {
         assert!(started.elapsed() < Duration::from_secs(10), "{:?}", started.elapsed());
         assert_eq!(run.exit_code, -1);
         assert!(run.output.starts_with("before\n"), "{}", run.output);
-        assert!(run.output.contains("longer than 0 s and was stopped"), "{}", run.output);
+        assert!(run.output.contains("longer than 300 ms and was stopped"), "{}", run.output);
         assert!(!run.output.contains("after\n"), "{}", run.output);
     }
 
@@ -1152,12 +1101,5 @@ mod tests {
         let run = run_in_timeout(&dir.path().join("gone"), "true", Duration::from_secs(5));
         assert_eq!(run.exit_code, -1);
         assert!(run.output.contains("could not run"), "{}", run.output);
-    }
-
-    #[test]
-    fn timeouts_are_worded_in_seconds_or_whole_minutes() {
-        assert_eq!(describe(Duration::from_secs(90)), "90 s");
-        assert_eq!(describe(Duration::from_secs(600)), "10 min");
-        assert_eq!(describe(Duration::from_millis(300)), "0 s");
     }
 }

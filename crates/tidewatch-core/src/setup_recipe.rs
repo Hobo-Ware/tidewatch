@@ -9,6 +9,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::fsutil::write_atomic;
 use crate::launch::shell_quote;
+use crate::limited;
 use crate::paths::TidewatchPaths;
 use crate::prepare::exclude_from_git;
 
@@ -220,12 +221,11 @@ fn hide_links(worktree: &Path, linked: &[String]) -> Option<String> {
 }
 
 fn is_ignored(dir: &Path, rel: &str) -> bool {
-    Command::new("git")
-        .arg("-C")
-        .arg(dir)
-        .args(["check-ignore", "-q", "--", rel])
-        .output()
-        .is_ok_and(|out| out.status.success())
+    limited::output(
+        Command::new("git").arg("-C").arg(dir).args(["check-ignore", "-q", "--", rel]),
+        limited::DEFAULT,
+    )
+    .is_ok_and(|out| out.status.success())
 }
 
 /// The environment the recipe adds to an agent's launch in a worktree of `repo`.

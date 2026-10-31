@@ -4,6 +4,7 @@ use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+use tidewatch_core::limited;
 use tidewatch_core::paths::TidewatchPaths;
 use tidewatch_core::prefs::StartFrom;
 use tidewatch_core::start_base;
@@ -14,24 +15,27 @@ use crate::jobs::Jobs;
 
 /// The checked-out branch, or `None` for a detached HEAD or a folder that is not a repo.
 fn checked_out(repo: &Path) -> Option<String> {
-    let out = Command::new("git")
-        .arg("-C")
-        .arg(repo)
-        .args(["symbolic-ref", "--short", "-q", "HEAD"])
-        .output()
-        .ok()?;
+    let out = limited::output(
+        Command::new("git").arg("-C").arg(repo).args(["symbolic-ref", "--short", "-q", "HEAD"]),
+        limited::DEFAULT,
+    )
+    .ok()?;
     let name = String::from_utf8_lossy(&out.stdout).trim().to_owned();
     (out.status.success() && !name.is_empty()).then_some(name)
 }
 
 /// `origin/HEAD` as `origin/main`, or `None` without a remote or when it was never set.
 fn origin_head(repo: &Path) -> Option<String> {
-    let out = Command::new("git")
-        .arg("-C")
-        .arg(repo)
-        .args(["symbolic-ref", "--short", "-q", "refs/remotes/origin/HEAD"])
-        .output()
-        .ok()?;
+    let out = limited::output(
+        Command::new("git").arg("-C").arg(repo).args([
+            "symbolic-ref",
+            "--short",
+            "-q",
+            "refs/remotes/origin/HEAD",
+        ]),
+        limited::DEFAULT,
+    )
+    .ok()?;
     let name = String::from_utf8_lossy(&out.stdout).trim().to_owned();
     (out.status.success() && !name.is_empty()).then_some(name)
 }
