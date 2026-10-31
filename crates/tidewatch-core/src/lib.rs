@@ -22,6 +22,7 @@ pub mod comment_flags;
 pub mod comment_sweep;
 pub mod comments;
 pub mod consent;
+pub mod dead_tools;
 pub mod delivery;
 pub mod done_check;
 pub mod due_asked;

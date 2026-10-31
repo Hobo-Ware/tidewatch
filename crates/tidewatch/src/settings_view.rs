@@ -70,6 +70,11 @@ pub(crate) enum Action {
     },
     OpenHouseStyle,
     ResetHouseStyle,
+    /// Remove line `number` of the house style, which still reads `text`.
+    RemoveHouseStyleLine {
+        number: usize,
+        text: String,
+    },
     /// Edit on the Checklist card: open the list's file.
     EditChecklist,
     /// The Worktree setup page changed a repo's recipe: all of it. Applies at once too.
@@ -93,6 +98,7 @@ pub(crate) struct Host<'a> {
     pub(crate) trust: &'a trust_view::Page<'a>,
     pub(crate) general: &'a General,
     pub(crate) probes: &'a Probes,
+    pub(crate) dead_lines: &'a [tidewatch_core::dead_tools::DeadLine],
     pub(crate) read_login: fn() -> LoginItem,
     /// Esc closes the settings: false while a dialog over them owns the key.
     pub(crate) esc_closes: bool,
@@ -152,9 +158,9 @@ fn page(
             shortcuts_view::page(ui);
             None
         }),
-        Section::HouseStyle => {
-            scrolling(ui, main, section, |ui| house_style_view::page(ui, &host.files.house_style))
-        }
+        Section::HouseStyle => scrolling(ui, main, section, |ui| {
+            house_style_view::page(ui, &host.files.house_style, host.dead_lines)
+        }),
         Section::WorktreeSetup => scrolling(ui, main, section, |ui| {
             worktree_setup_view::page(ui, &mut settings.setup, &host.files.worktree_setup)
         }),

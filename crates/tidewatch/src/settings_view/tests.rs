@@ -158,6 +158,7 @@ impl Harness {
             trust: &trust,
             general: &general,
             probes: &probes,
+            dead_lines: &[],
             read_login: || LoginItem::Off,
             esc_closes: self.esc_closes,
         };

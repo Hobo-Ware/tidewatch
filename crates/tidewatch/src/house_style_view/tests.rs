@@ -23,9 +23,14 @@ fn press(at: Pos2, pressed: bool) -> Event {
 }
 
 fn frame(ctx: &egui::Context, events: Vec<Event>) -> Option<Action> {
+    frame_with(ctx, events, &[])
+}
+
+fn frame_with(ctx: &egui::Context, events: Vec<Event>, dead: &[DeadLine]) -> Option<Action> {
     let mut answer = None;
-    let _ = ctx
-        .run_ui(input(events), |ui| answer = page(ui, "/home/u/.config/tidewatch/house-style.md"));
+    let _ = ctx.run_ui(input(events), |ui| {
+        answer = page(ui, "/home/u/.config/tidewatch/house-style.md", dead);
+    });
     answer
 }
 
@@ -85,4 +90,61 @@ fn reset_needs_a_second_click_and_a_click_elsewhere_disarms_it() {
     tap(&ctx, pos2(600.0, 400.0));
     assert!(!tap(&ctx, at), "a click elsewhere disarmed it, so this click arms it again");
     assert!(tap(&ctx, at));
+}
+
+fn dead() -> Vec<DeadLine> {
+    tidewatch_core::dead_tools::scan("Be brief.\nCall `stage_done` at the end.\n")
+}
+
+fn click_with(ctx: &egui::Context, at: Pos2, dead: &[DeadLine]) -> Option<Action> {
+    frame_with(ctx, vec![Event::PointerMoved(at)], dead);
+    frame_with(ctx, vec![press(at, true)], dead);
+    frame_with(ctx, vec![press(at, false)], dead)
+}
+
+fn is_removal(action: Option<&Action>) -> bool {
+    matches!(action, Some(Action::RemoveHouseStyleLine { .. }))
+}
+
+fn second_click_removes(ctx: &egui::Context, dead: &[DeadLine]) -> Option<Action> {
+    for y in (90..400).step_by(4) {
+        for x in (700..990).step_by(6) {
+            let at = pos2(x as f32, y as f32);
+            let first = click_with(ctx, at, dead);
+            assert!(!is_removal(first.as_ref()), "a first click asked for the removal at {at:?}");
+            let second = click_with(ctx, at, dead);
+            if is_removal(second.as_ref()) {
+                return second;
+            }
+        }
+    }
+    None
+}
+
+#[test]
+fn a_page_with_a_dead_line_renders_and_asks_for_nothing_until_clicked() {
+    let ctx = crate::fonts::test_context();
+    let lines = dead();
+    for _ in 0..3 {
+        assert!(frame_with(&ctx, vec![], &lines).is_none());
+    }
+}
+
+#[test]
+fn a_dead_line_goes_only_on_a_second_click_and_the_action_names_its_number_and_text() {
+    let ctx = crate::fonts::test_context();
+    let lines = dead();
+    frame_with(&ctx, vec![], &lines);
+    let Some(Action::RemoveHouseStyleLine { number, text }) = second_click_removes(&ctx, &lines)
+    else {
+        panic!("no removal asked")
+    };
+    assert_eq!((number, text.as_str()), (2, "Call `stage_done` at the end."));
+}
+
+#[test]
+fn a_clean_file_offers_no_removal() {
+    let ctx = crate::fonts::test_context();
+    frame(&ctx, vec![]);
+    assert!(second_click_removes(&ctx, &[]).is_none());
 }

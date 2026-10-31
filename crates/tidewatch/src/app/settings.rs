@@ -341,6 +341,7 @@ impl Tidewatch {
             trust: &trust,
             general: &general,
             probes: &probes,
+            dead_lines: self.house_style_scan.lines(),
             read_login: crate::macos::login_item_status,
             esc_closes,
         };
@@ -376,6 +377,19 @@ impl Tidewatch {
             Ok(file) => open_in_editor(file),
             Err(e) => self.show_toast(format!("Could not create the house style: {e}"), ctx),
         }
+    }
+
+    pub(super) fn drive_house_style(&mut self, ctx: &egui::Context, now: f64) {
+        let shown =
+            self.settings.as_ref().is_some_and(|settings| settings.section == Section::HouseStyle);
+        if let Some(outcome) = self.house_style_scan.tick(self.paths.as_ref(), shown, now, ctx) {
+            self.show_toast(outcome.toast(), ctx);
+        }
+    }
+
+    fn remove_house_style_line(&mut self, number: usize, text: String, ctx: &egui::Context) {
+        let Some(paths) = &self.paths else { return };
+        self.house_style_scan.remove(paths, number, text, ctx);
     }
 
     fn reset_house_style(&mut self, ctx: &egui::Context) {
@@ -434,6 +448,9 @@ impl Tidewatch {
             }
             Some(settings_view::Action::OpenHouseStyle) => self.open_house_style(ctx),
             Some(settings_view::Action::ResetHouseStyle) => self.reset_house_style(ctx),
+            Some(settings_view::Action::RemoveHouseStyleLine { number, text }) => {
+                self.remove_house_style_line(number, text, ctx);
+            }
             Some(settings_view::Action::EditChecklist) => self.edit_checklist(ctx),
             Some(settings_view::Action::WorktreeSetup { repo, recipe }) => {
                 self.save_worktree_setup(repo, recipe);

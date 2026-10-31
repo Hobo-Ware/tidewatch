@@ -88,6 +88,7 @@ mod guards_view;
 mod handoff;
 mod history_pane;
 mod hotkey;
+mod house_style_scan;
 mod house_style_view;
 mod image_paste;
 mod job_glue;
