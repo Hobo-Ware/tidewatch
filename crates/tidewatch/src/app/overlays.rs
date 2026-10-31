@@ -4,7 +4,7 @@ use std::time::Duration;
 
 use egui::{Color32, Rect, Stroke, StrokeKind, pos2};
 
-use super::{Closing, Tidewatch};
+use super::Tidewatch;
 use crate::amphetamine_view;
 use crate::brand;
 use crate::close_dialog;
@@ -66,12 +66,10 @@ impl Tidewatch {
     }
 
     pub(super) fn show_dialogs(&mut self, ctx: &egui::Context) {
-        let answer = match &self.closing {
-            Some(Closing::Asking { worktree, safety, .. }) => {
-                close_dialog::show(ctx, worktree, safety, self.close_enter)
-            }
-            _ => None,
-        };
+        let answer = self
+            .closing
+            .as_ref()
+            .and_then(|closing| close_dialog::show_closing(ctx, closing, self.close_enter));
         if let Some(answer) = answer {
             self.answer_close(answer, ctx);
         }

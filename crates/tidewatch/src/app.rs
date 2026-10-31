@@ -59,8 +59,6 @@ use tidewatch_core::restore::RealDisk;
 use tidewatch_core::run_marker;
 use tidewatch_core::tools::Tools;
 use tidewatch_core::update::fake_release;
-use tidewatch_core::worktree::Worktree;
-use tidewatch_core::worktree_safety::Safety;
 
 use self::open_link::LinkDone;
 use self::repos::Picker;
@@ -72,6 +70,7 @@ use crate::autofetch_glue;
 use crate::avatar_glue;
 use crate::brand;
 use crate::catalog::Catalog;
+use crate::close_dialog::Closing;
 use crate::comment_glue;
 use crate::dev_agent::{DevAgent, DevDraft};
 use crate::dev_flow::DevFlow;
@@ -141,11 +140,6 @@ use crate::{closed_jobs, closed_state};
 const FONT_SIZE: f32 = 13.0;
 const ANIMATION_FRAME_MS: u64 = 40;
 const WAKE_SLACK_S: f64 = 0.02;
-
-enum Closing {
-    Inspecting(u64),
-    Asking { tab: u64, worktree: Worktree, safety: Safety },
-}
 
 pub(crate) struct Tidewatch {
     workspaces: Vec<Workspace>,

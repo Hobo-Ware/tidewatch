@@ -13,6 +13,34 @@ use tidewatch_core::worktree_safety::{Risk, Safety};
 
 const DIALOG_WIDTH: f32 = 540.0;
 const ARM_AFTER_SECS: f64 = 0.4;
+const CHECKING_LINE: &str = "Checking whether anything would be lost...";
+
+pub(crate) enum Closing {
+    Inspecting { tab: u64, worktree: Worktree },
+    Asking { tab: u64, worktree: Worktree, safety: Safety },
+}
+
+impl Closing {
+    pub(crate) fn land(
+        closing: &mut Option<Self>,
+        tab: u64,
+        checked: &Worktree,
+        safety: Safety,
+    ) -> bool {
+        match closing.take() {
+            Some(Self::Inspecting { tab: waiting, worktree })
+                if waiting == tab && worktree == *checked =>
+            {
+                *closing = Some(Self::Asking { tab, worktree, safety });
+                true
+            }
+            other => {
+                *closing = other;
+                false
+            }
+        }
+    }
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Choice {
@@ -131,6 +159,37 @@ fn fresh_enter(ctx: &egui::Context) -> bool {
         });
         input.consume_key(Modifiers::NONE, Key::Enter) && fresh
     })
+}
+
+pub(crate) fn show_closing(
+    ctx: &egui::Context,
+    closing: &Closing,
+    enter: CloseEnter,
+) -> Option<Answer> {
+    match closing {
+        Closing::Inspecting { worktree, .. } => show_checking(ctx, worktree),
+        Closing::Asking { worktree, safety, .. } => show(ctx, worktree, safety, enter),
+    }
+}
+
+fn show_checking(ctx: &egui::Context, worktree: &Worktree) -> Option<Answer> {
+    let mut answer = None;
+    let modal =
+        dialog_frame(ctx, Id::new("close_worktree"), &heading(worktree), DIALOG_WIDTH, |ui| {
+            ui.spacing_mut().item_spacing.y = 8.0;
+            ui.label(RichText::new(CHECKING_LINE).color(brand::MUTED));
+            ui.add_space(6.0);
+            footer_row(ui, "", |ui| {
+                if quiet_button(ui, "Cancel", true, Size::Regular).clicked() {
+                    answer = Some(Answer::Cancel);
+                }
+            });
+            key_hint(ui, "Esc cancels  -  the choices appear when the check is done");
+        });
+    if answer.is_none() && modal.should_close() {
+        answer = Some(Answer::Cancel);
+    }
+    answer
 }
 
 pub(crate) fn show(
@@ -457,5 +516,107 @@ mod tests {
     #[test]
     fn heading_names_the_branch() {
         assert_eq!(heading(&worktree("brave-otter")), "Close agent/brave-otter?");
+    }
+
+    fn escape() -> Event {
+        Event::Key {
+            key: Key::Escape,
+            physical_key: Some(Key::Escape),
+            pressed: true,
+            repeat: false,
+            modifiers: Modifiers::NONE,
+        }
+    }
+
+    fn inspecting(tab: u64, name: &str) -> Closing {
+        Closing::Inspecting { tab, worktree: worktree(name) }
+    }
+
+    fn frame_closing(
+        ctx: &egui::Context,
+        closing: Option<&Closing>,
+        at: f64,
+        events: Vec<Event>,
+    ) -> Option<Answer> {
+        let raw = egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(
+                egui::pos2(0.0, 0.0),
+                egui::vec2(900.0, 600.0),
+            )),
+            time: Some(at),
+            events,
+            focused: true,
+            ..egui::RawInput::default()
+        };
+        let mut answer = None;
+        let _ = ctx.run_ui(raw, |_| {
+            answer = closing.and_then(|c| show_closing(ctx, c, CloseEnter::DeleteBranch));
+        });
+        answer
+    }
+
+    fn dialog_drawn(ctx: &egui::Context) -> bool {
+        ctx.memory(|memory| {
+            memory
+                .areas()
+                .visible_layer_ids()
+                .into_iter()
+                .any(|id| id.order == egui::Order::Foreground)
+        })
+    }
+
+    #[test]
+    fn the_dialog_is_drawn_while_the_check_runs_and_escape_ends_the_close() {
+        let ctx = context();
+        let mut closing = Some(inspecting(3, "slow"));
+        assert_eq!(frame_closing(&ctx, closing.as_ref(), 0.0, vec![]), None);
+        assert!(dialog_drawn(&ctx), "the checking dialog is on screen in the first frame");
+        assert!(closing.is_some(), "keys are held, and a dialog shows why");
+
+        assert_eq!(
+            frame_closing(&ctx, closing.as_ref(), 1.0, vec![escape()]),
+            Some(Answer::Cancel)
+        );
+        closing = None;
+        let _ = frame_closing(&ctx, closing.as_ref(), 1.1, vec![]);
+        let _ = frame_closing(&ctx, closing.as_ref(), 1.2, vec![]);
+        assert!(!dialog_drawn(&ctx), "nothing is drawn once the close ended");
+        assert!(closing.is_none(), "so no key is held");
+    }
+
+    #[test]
+    fn enter_does_nothing_until_the_check_landed_and_then_waits_for_the_arming_delay() {
+        let ctx = context();
+        let mut closing = Some(inspecting(3, "slow"));
+        let _ = frame_closing(&ctx, closing.as_ref(), 0.0, vec![]);
+        assert_eq!(frame_closing(&ctx, closing.as_ref(), 5.0, tap()), None);
+
+        assert!(Closing::land(&mut closing, 3, &worktree("slow"), Safety::Safe));
+        assert_eq!(frame_closing(&ctx, closing.as_ref(), 5.1, vec![]), None);
+        assert_eq!(
+            frame_closing(&ctx, closing.as_ref(), 5.2, tap()),
+            None,
+            "too soon after the choices"
+        );
+        assert_eq!(
+            frame_closing(&ctx, closing.as_ref(), 6.0, tap()),
+            Some(Answer::Pick(remove(BranchChoice::Delete, RemoveMode::Safe)))
+        );
+    }
+
+    #[test]
+    fn a_check_that_lands_after_cancel_changes_nothing() {
+        let mut closing = Some(inspecting(3, "slow"));
+        drop(closing.take());
+        assert!(!Closing::land(&mut closing, 3, &worktree("slow"), Safety::Safe));
+        assert!(closing.is_none());
+    }
+
+    #[test]
+    fn a_check_for_another_tab_or_worktree_leaves_the_waiting_close_alone() {
+        let mut closing = Some(inspecting(3, "slow"));
+        assert!(!Closing::land(&mut closing, 4, &worktree("slow"), Safety::Safe));
+        assert!(!Closing::land(&mut closing, 3, &worktree("other"), Safety::Safe));
+        assert!(matches!(closing, Some(Closing::Inspecting { tab: 3, .. })));
     }
 }
