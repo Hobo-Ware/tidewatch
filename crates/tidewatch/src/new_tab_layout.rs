@@ -16,7 +16,7 @@ const LANE_MAX_W: f32 = 280.0;
 pub(crate) const FILTER_H: f32 = Size::Compact.height();
 const LANE_LIST_GAP: f32 = 8.0;
 
-pub(crate) const ROW_H: f32 = 46.0;
+pub(crate) const ROW_H: f32 = crate::screen_kit::FACE_LINE_H;
 pub(crate) const GROUP_H: f32 = 24.0;
 const ROW_GAP: f32 = 2.0;
 const GROUP_GAP: f32 = 8.0;

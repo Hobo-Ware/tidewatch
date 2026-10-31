@@ -11,13 +11,11 @@ use crate::catalog::{Availability, Catalog};
 use crate::new_tab::{Kind, NewTab};
 use crate::new_tab_layout::{self as layout, Slot};
 use crate::new_tab_meeseeks;
-use crate::reader_view::{ellipsized, field_frame_on};
-use crate::screen_kit::{TEXT_BODY, TEXT_SECONDARY, TEXT_TAG};
-use crate::screen_kit::{body, clickable, heading, mono, paint_cli_badge, selection_row};
+use crate::reader_view::field_frame_on;
+use crate::screen_kit::{DETAIL_LESS, FaceLine, TEXT_SECONDARY, TEXT_TAG};
+use crate::screen_kit::{body, clickable, paint_face_line, selected_ink, selection_row};
 use crate::settings_ui::fade_edges;
 
-const BADGE: f32 = 28.0;
-const PAD: f32 = 12.0;
 const NOT_INSTALLED: f32 = 0.45;
 const ROW_RADIUS: u8 = 8;
 
@@ -167,35 +165,26 @@ fn top_row(ui: &mut Ui, rect: Rect, state: &NewTab) -> Option<String> {
 fn paint_row(ui: &mut Ui, rect: Rect, row: &Row, selected: bool) -> bool {
     let response = clickable(ui, rect, ("lane-row", &row.id));
     selection_row(ui.painter(), rect, selected, response.hovered());
-    let badge = Rect::from_min_size(
-        pos2(rect.left() + PAD, rect.center().y - BADGE / 2.0),
-        vec2(BADGE, BADGE),
-    );
-    paint_cli_badge(ui.painter(), badge, &row.cli);
-    let painter = ui.painter();
-    let text_x = badge.right() + 10.0;
-    let room = rect.right() - PAD - 16.0 - text_x;
-    let title = ellipsized(painter, &row.title, heading(TEXT_BODY), brand::TEXT, room);
-    painter.galley(pos2(text_x, rect.top() + 6.0), title, brand::TEXT);
-    let sub = ellipsized(painter, &row.subtitle, body(TEXT_TAG), brand::MUTED, room);
-    painter.galley(pos2(text_x, rect.top() + 25.0), sub, brand::MUTED);
-    if row.index < 9 {
-        painter.text(
-            pos2(rect.right() - PAD, rect.center().y),
-            Align2::RIGHT_CENTER,
-            (row.index + 1).to_string(),
-            mono(TEXT_TAG),
-            brand::FAINT,
-        );
-    }
+    let key = (row.index < 9).then(|| (row.index + 1).to_string());
+    let line = FaceLine {
+        cli: &row.cli,
+        name: &row.title,
+        detail: &row.subtitle,
+        key: key.as_deref(),
+        detail_share: DETAIL_LESS,
+        name_ink: selected_ink(selected, brand::TEXT),
+        detail_ink: brand::MUTED,
+        reserve: 0.0,
+    };
+    paint_face_line(ui.painter(), rect, &line);
     if row.dim {
-        painter.rect_filled(
+        ui.painter().rect_filled(
             rect,
             CornerRadius::same(ROW_RADIUS),
             brand::GROUND.gamma_multiply(1.0 - NOT_INSTALLED),
         );
     }
-    response.clicked()
+    response.on_hover_text(&row.subtitle).clicked()
 }
 
 pub(crate) fn show(

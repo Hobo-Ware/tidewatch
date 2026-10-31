@@ -9,18 +9,17 @@ use egui::{
 
 use crate::brand;
 use crate::closed_state::{Card, CardAction, Row};
-use crate::reader_view::ellipsized;
 use crate::screen_kit::{
-    Size, body, button_width, heading, mono, paint_cli_badge, primary_button, quiet_button,
+    DETAIL_MORE, FaceLine, Size, body, button_width, heading, mono, paint_face_line,
+    primary_button, quiet_button,
 };
 use crate::screen_kit::{TEXT_SECONDARY, TEXT_TAG, TEXT_TITLE};
 
 const LINE_H: f32 = 60.0;
 const LINE_GAP: f32 = 8.0;
 const LINE_TAIL: f32 = 22.0;
-const ROW_H: f32 = 46.0;
-const SIDE: f32 = 16.0;
-const BADGE: f32 = 26.0;
+const ROW_H: f32 = 40.0;
+const SIDE: f32 = 10.0;
 const TEXT_GAP: f32 = 12.0;
 
 fn count_text(rows: usize) -> String {
@@ -100,14 +99,6 @@ fn draw_row(ui: &mut Ui, rect: Rect, row: &Row, divider: bool) -> Option<CardAct
             Stroke::new(1.0, brand::CARD_LINE),
         );
     }
-    paint_cli_badge(
-        &painter,
-        Rect::from_center_size(
-            pos2(rect.left() + SIDE + BADGE / 2.0, rect.center().y),
-            vec2(BADGE, BADGE),
-        ),
-        &row.cli_id,
-    );
     let mut cluster = ui.new_child(
         UiBuilder::new()
             .id_salt(("closed_row", &row.session_id))
@@ -117,17 +108,18 @@ fn draw_row(ui: &mut Ui, rect: Rect, row: &Row, divider: bool) -> Option<CardAct
     let label = if row.busy { "Opening..." } else { "Reopen" };
     let response = quiet_button(&mut cluster, label, !row.busy, Size::Compact)
         .on_hover_text("Bring the worktree back and continue the conversation in a new tab");
-    let text_x = rect.left() + SIDE + BADGE + TEXT_GAP;
-    let room = (cluster.min_rect().left() - text_x - TEXT_GAP).max(40.0);
-    let title = ellipsized(&painter, &row.title, body(13.0), brand::TEXT, room);
     let info = format!("{} \u{b7} {}", row.repo, row.closed);
-    let info = ellipsized(&painter, &info, mono(TEXT_TAG), brand::FAINT, room);
-    let title_at = pos2(text_x, rect.center().y - 15.0);
-    let info_at = pos2(text_x, rect.center().y + 3.0);
-    let hover =
-        [Rect::from_min_size(title_at, title.size()), Rect::from_min_size(info_at, info.size())];
-    painter.galley(title_at, title, brand::TEXT);
-    painter.galley(info_at, info, brand::FAINT);
+    let line = FaceLine {
+        cli: &row.cli_id,
+        name: &row.title,
+        detail: &info,
+        key: None,
+        detail_share: DETAIL_MORE,
+        name_ink: brand::TEXT,
+        detail_ink: brand::MUTED,
+        reserve: rect.right() - cluster.min_rect().left() - 10.0 + TEXT_GAP,
+    };
+    let hover = paint_face_line(&painter, rect, &line);
     for (part, area) in hover.into_iter().enumerate() {
         ui.interact(area, Id::new(("closed_name", &row.session_id, part)), Sense::hover())
             .on_hover_ui(|ui| {
