@@ -244,6 +244,12 @@ impl TidewatchPaths {
         self.state_dir().join("amphetamine.serve")
     }
 
+    /// This week's tally of panel changes on time, late and missed, per source.
+    #[must_use]
+    pub fn panel_ontime_file(&self) -> PathBuf {
+        self.state_dir().join("panel-ontime.json")
+    }
+
     /// The scheduled items of every tab's ledger, for the Coming up list across tabs.
     #[must_use]
     pub fn schedule_file(&self) -> PathBuf {
@@ -511,6 +517,11 @@ mod tests {
         assert_eq!(log.parent(), notes.parent());
         assert!(log.ends_with("brave-otter/panel-log.jsonl"));
         assert_ne!(log, paths.panel_log_file(repo, "main"));
+    }
+
+    #[test]
+    fn the_panel_tally_is_one_state_file_for_the_whole_window() {
+        assert_eq!(paths().panel_ontime_file(), paths().state_dir().join("panel-ontime.json"));
     }
 
     #[test]
