@@ -10,6 +10,7 @@ use std::path::{Path, PathBuf};
 use crate::agents::Level;
 use crate::autonomy::autonomous;
 use crate::fsutil::write_atomic;
+use crate::meeseeks_target::Target;
 use crate::paths::TidewatchPaths;
 use crate::progress_prompt::{self, TurnEnd};
 
@@ -74,7 +75,9 @@ const PUSH_LINE: &str = "- You may push any branch except the repo's default bra
 #[must_use]
 pub fn tool_guidance(role: Role) -> String {
     let lines: &[&str] = match role {
-        Role::Meeseeks => &[JOBS_LINE, CHOICES_LINE, RECOVERY_LINE, REPLY_LINE],
+        Role::Meeseeks | Role::MeeseeksOnPr => {
+            &[JOBS_LINE, CHOICES_LINE, RECOVERY_LINE, REPLY_LINE]
+        }
         Role::Agent | Role::Autonomous => {
             &[JOBS_LINE, CHOICES_LINE, RECOVERY_LINE, REPLY_LINE, AVATAR_LINE, PUSH_LINE]
         }
@@ -115,9 +118,38 @@ pub enum Role {
     Agent,
     Autonomous,
     Meeseeks,
+    /// A Meeseeks whose task names a pull request: it updates that one and opens no other.
+    MeeseeksOnPr,
+}
+
+const OPEN_PR_LINE_START: &str =
+    "- Before `meeseeks_done`, a task that changed files pushes its branch";
+const ON_PR_LINE: &str = "- Your task names a pull request, so before `meeseeks_done` push your commits to that pull request's branch (`gh pr view <pr> --json headRefName` names it), the one push besides this branch, and open no new pull request: Tidewatch checks that one.";
+
+fn meeseeks_block(role: Role) -> String {
+    match role {
+        Role::MeeseeksOnPr => {
+            MEESEEKS_GUIDANCE
+                .lines()
+                .map(|line| if line.starts_with(OPEN_PR_LINE_START) { ON_PR_LINE } else { line })
+                .collect::<Vec<_>>()
+                .join("\n")
+                + "\n"
+        }
+        _ => MEESEEKS_GUIDANCE.to_owned(),
+    }
 }
 
 impl Role {
+    /// The role of a Meeseeks with this task.
+    #[must_use]
+    pub fn meeseeks_for(task: &str) -> Self {
+        match Target::of_task(task) {
+            Target::New => Self::Meeseeks,
+            Target::Existing(_) => Self::MeeseeksOnPr,
+        }
+    }
+
     #[must_use]
     pub fn of(level: Level, is_meeseeks: bool) -> Self {
         match (is_meeseeks, autonomous(level, is_meeseeks)) {
@@ -177,7 +209,7 @@ pub fn compose_for_cli(
     let one_task = match role {
         Role::Agent => String::new(),
         Role::Autonomous => format!("{AUTONOMOUS_GUIDANCE}\n"),
-        Role::Meeseeks => format!("{MEESEEKS_GUIDANCE}\n"),
+        Role::Meeseeks | Role::MeeseeksOnPr => format!("{}\n", meeseeks_block(role)),
     };
     format!(
         "{}\n\n{}\n{one_task}{}",
@@ -436,5 +468,33 @@ mod tests {
         assert!(!DEFAULT_HOUSE_STYLE.contains("report_job"));
         assert!(!DEFAULT_HOUSE_STYLE.contains("TIDEWATCH_PROGRESS"));
         assert!(!DEFAULT_HOUSE_STYLE.contains("set_avatar"));
+    }
+
+    #[test]
+    fn a_task_that_names_a_pull_request_swaps_one_line_of_the_meeseeks_block_and_nothing_else() {
+        let new = compose_for("be brief", None, Role::Meeseeks);
+        let on_pr = compose_for("be brief", None, Role::MeeseeksOnPr);
+        assert_ne!(new, on_pr);
+        assert_eq!(on_pr.matches("open no new pull request").count(), 1);
+        assert!(!on_pr.contains("opens its own draft pull request"));
+        assert_eq!(new.lines().count(), on_pr.lines().count());
+        let differing: Vec<&str> =
+            new.lines().zip(on_pr.lines()).filter(|(a, b)| a != b).map(|(_, b)| b).collect();
+        assert_eq!(differing, [ON_PR_LINE]);
+        assert_eq!(on_pr.matches("`meeseeks_done` ends your task").count(), 1);
+    }
+
+    #[test]
+    fn the_role_of_a_meeseeks_follows_the_pull_request_its_task_names() {
+        let cases = [
+            ("Sensei https://github.com/trakt/trakt-workers/pull/2437", Role::MeeseeksOnPr),
+            ("Rebase PR #12", Role::MeeseeksOnPr),
+            ("Add a retry to the sync job", Role::Meeseeks),
+            ("Explain issue #12", Role::Meeseeks),
+            ("", Role::Meeseeks),
+        ];
+        for (task, want) in cases {
+            assert_eq!(Role::meeseeks_for(task), want, "{task:?}");
+        }
     }
 }

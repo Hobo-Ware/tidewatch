@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::branch_name;
 use crate::kind::Kind;
+use crate::meeseeks_target::Target;
 
 pub const MAX_SUMMARY_CHARS: usize = 200;
 pub const MAX_TURNS: u32 = 40;
@@ -73,6 +74,15 @@ impl Step {
             Self::Tests => "Tests",
             Self::Proof => "Proof",
             Self::HandOff => "Hand off",
+        }
+    }
+
+    /// [`Self::label`], with the hand off called by what it does for a task that names a pull request.
+    #[must_use]
+    pub fn label_for(self, target: &Target) -> &'static str {
+        match self {
+            Self::HandOff if *target != Target::New => "Update PR",
+            _ => self.label(),
         }
     }
 
@@ -214,6 +224,12 @@ impl Meeseeks {
         self.name
             .clone()
             .or_else(|| Some(branch_name::slug(&self.task)).filter(|slug| !slug.is_empty()))
+    }
+
+    /// Where its work is meant to land, read from the task.
+    #[must_use]
+    pub fn target(&self) -> Target {
+        Target::of_task(&self.task)
     }
 
     pub fn turn(&mut self) {

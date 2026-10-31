@@ -521,7 +521,9 @@ fn message(
     if state.kind() == Kind::Meeseeks {
         let offer = TestsOffer::of(facts);
         let rows = new_tab_meeseeks::rows(state.ticks(), &offer);
-        let shown = new_tab_done::show(ui, &rows, new_tab_meeseeks::tests_tip(facts).as_deref());
+        let pr_label = new_tab_meeseeks::pr_label(&state.tasks());
+        let tests_tip = new_tab_meeseeks::tests_tip(facts);
+        let shown = new_tab_done::show(ui, &rows, tests_tip.as_deref(), &pr_label);
         *ticks = shown.rects;
         if let Some(tick) = shown.clicked {
             state.toggle_tick(tick, facts);

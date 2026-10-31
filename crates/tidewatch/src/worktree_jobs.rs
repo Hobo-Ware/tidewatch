@@ -112,7 +112,7 @@ fn run_open(spec: &OpenSpec) -> Result<Opened, OpenFailure> {
         task: &request.task,
         session_id: session_id.clone(),
         remote: request.remote,
-        meeseeks: meeseeks.is_some(),
+        meeseeks: meeseeks.as_ref().map(|found| found.task.as_str()),
         path_var: Some(&spec.path_var),
         listener: hooks,
         trust: spec.trust.as_ref(),

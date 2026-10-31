@@ -6,7 +6,7 @@ mod common;
 use std::path::PathBuf;
 
 use common::{FakeGh, commit_file, git_available, ok, remote_branches, reply, repos};
-use tidewatch_core::meeseeks_check::{Checked, change, hand_off, poof, proof, tests};
+use tidewatch_core::meeseeks_check::{Checked, Work, change, hand_off, poof, proof, tests};
 use tidewatch_core::paths::TidewatchPaths;
 use tidewatch_core::tools::Tools;
 use tidewatch_core::worktree::{self, Worktree};
@@ -42,7 +42,8 @@ fn a_branch_with_no_commit_ahead_of_the_base_fails_the_change_check_in_words() {
         return;
     }
     let f = fixture();
-    let error = change(&Tools::system(), &dir(&f), &f.worktree.branch).unwrap_err();
+    let error =
+        change(&Tools::system(), &dir(&f), &f.worktree.branch, &Work::default()).unwrap_err();
     assert_eq!(error, "no commit ahead of main");
 }
 
@@ -53,12 +54,13 @@ fn loose_changes_fail_the_change_check_and_a_commit_clears_it() {
     }
     let f = fixture();
     std::fs::write(dir(&f).join("hello.txt"), "hi\n").unwrap();
-    let error = change(&Tools::system(), &dir(&f), &f.worktree.branch).unwrap_err();
+    let error =
+        change(&Tools::system(), &dir(&f), &f.worktree.branch, &Work::default()).unwrap_err();
     assert_eq!(error, "1 file with uncommitted changes");
     ok(&dir(&f), &["add", "hello.txt"]);
     ok(&dir(&f), &["commit", "-q", "-m", "feat: add hello"]);
     assert_eq!(
-        said(change(&Tools::system(), &dir(&f), &f.worktree.branch)),
+        said(change(&Tools::system(), &dir(&f), &f.worktree.branch, &Work::default())),
         "1 commit ahead of main"
     );
     assert_eq!(said(proof(&Tools::system(), &dir(&f))), "Worktree clean");
@@ -108,7 +110,7 @@ fn the_hand_off_is_the_pr_the_agent_opened_at_its_head_and_tidewatch_creates_not
         reply("pr list", 0, open_prs_listing(sha.trim()), ""),
     ]);
     let tools = Tools::with_path(gh.path());
-    let checked = hand_off(&tools, &dir(&f), &f.worktree.branch).unwrap();
+    let checked = hand_off(&tools, &dir(&f), &f.worktree.branch, &Work::default()).unwrap();
     assert_eq!(checked.pr_url.as_deref(), Some(URL));
     assert_eq!(checked.detail, "Found PR #42");
     assert_eq!(gh.calls_to("pr create").len(), 0);
@@ -126,7 +128,7 @@ fn a_hand_off_with_no_pr_fails_with_the_fix_note_and_pushes_and_creates_nothing(
         reply("pr list", 0, "[]\n", ""),
     ]);
     let tools = Tools::with_path(gh.path());
-    let error = hand_off(&tools, &dir(&f), &f.worktree.branch).unwrap_err();
+    let error = hand_off(&tools, &dir(&f), &f.worktree.branch, &Work::default()).unwrap_err();
     assert!(error.contains("gh pr create --draft --base main"), "{error}");
     assert!(error.contains("yourself") && error.contains("meeseeks_done"), "{error}");
     assert!(error.contains(&f.worktree.branch), "{error}");
@@ -151,7 +153,7 @@ fn a_head_no_open_pr_points_at_fails_the_hand_off_instead_of_opening_one() {
         ),
     ]);
     let tools = Tools::with_path(gh.path());
-    let error = hand_off(&tools, &dir(&f), &f.worktree.branch).unwrap_err();
+    let error = hand_off(&tools, &dir(&f), &f.worktree.branch, &Work::default()).unwrap_err();
     assert!(error.contains("push the latest commits"), "{error}");
     assert_eq!(gh.calls_to("pr create").len(), 0);
 }
@@ -164,7 +166,9 @@ fn a_missing_gh_fails_the_hand_off_with_the_fix_note_and_is_not_a_panic() {
     let f = fixture();
     commit_file(&dir(&f), "hello.txt", "hi\n", "feat: add hello");
     let (_keep, only_git) = common::path_with_only_git();
-    let error = hand_off(&Tools::with_path(only_git), &dir(&f), &f.worktree.branch).unwrap_err();
+    let error =
+        hand_off(&Tools::with_path(only_git), &dir(&f), &f.worktree.branch, &Work::default())
+            .unwrap_err();
     assert!(error.contains("gh pr create --draft"), "{error}");
     assert!(!remote_branches(&f.repos.remote).contains(&f.worktree.branch));
 }
@@ -206,7 +210,8 @@ fn commits_made_on_a_pr_branch_checked_out_in_the_worktree_pass_the_change_check
     ok(&dir(&f), &["switch", "-q", "-c", "fix/existing-pr"]);
     commit_file(&dir(&f), "fix.txt", "fixed\n", "fix: address the review");
     assert_eq!(
-        change(&Tools::system(), &dir(&f), &f.worktree.branch).map(|checked| checked.detail),
+        change(&Tools::system(), &dir(&f), &f.worktree.branch, &Work::default())
+            .map(|checked| checked.detail),
         Ok("1 commit ahead of main".to_owned()),
         "the agent branch has no commit, the branch in use has one"
     );

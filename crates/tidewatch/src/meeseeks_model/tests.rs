@@ -125,3 +125,25 @@ fn a_blocked_meeseeks_shows_the_reason_instead_of_running_checks() {
     assert_eq!(text(&shown), "Blocked. the staging key is missing. Poofing...");
     assert!(shown.bars.iter().all(|(_, look)| *look == Look::Skipped));
 }
+
+#[test]
+fn a_task_that_names_a_pull_request_checks_and_labels_the_update_of_it() {
+    let mut meeseeks = Meeseeks {
+        kind: Kind::Edit,
+        ..Meeseeks::summon(
+            "Sensei https://github.com/trakt/trakt-workers/pull/2437",
+            Criteria::default(),
+            0,
+        )
+    };
+    meeseeks.phase = Phase::Checking(Step::HandOff);
+    let shown = card(&meeseeks, "x", 0, None);
+    assert_eq!(text(&shown), "Says it's done. Tidewatch is checking: PR #2437 update running...");
+    let names: Vec<&str> = shown.bars.iter().map(|(name, _)| *name).collect();
+    assert_eq!(names, ["Change", "Tests", "Proof", "Update PR"]);
+    let plain = card(&running(), "x", 0, None);
+    assert_eq!(plain.bars.len(), 0);
+    meeseeks.task = "Bump vite to 6.3".into();
+    let names: Vec<&str> = card(&meeseeks, "x", 0, None).bars.iter().map(|(n, _)| *n).collect();
+    assert_eq!(names, ["Change", "Tests", "Proof", "Hand off"]);
+}

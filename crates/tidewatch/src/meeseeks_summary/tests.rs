@@ -237,3 +237,16 @@ fn the_prompt_is_kept_whole_and_stages_without_steps_are_left_out() {
     assert_eq!(shown.prompt.as_deref(), Some(record.task.trim()));
     assert_eq!(shown.stages, [StageRow { name: "Understand".into(), done: 5, total: 5 }]);
 }
+
+#[test]
+fn the_hand_off_row_of_a_task_that_named_a_pull_request_reads_update_pr() {
+    let mut record = full();
+    "Sensei https://github.com/acme/web/pull/213".clone_into(&mut record.task);
+    let shown = summary(&record, None, &TimeZone::UTC);
+    let labels: Vec<&str> = shown.checks.iter().map(|check| check.label).collect();
+    assert_eq!(labels, ["Change", "Tests", "Proof", "Update PR"]);
+    let names: Vec<&str> = shown.card.bars.iter().map(|(name, _)| *name).collect();
+    assert_eq!(names, labels);
+    let unnamed = summary(&full(), None, &TimeZone::UTC);
+    assert_eq!(unnamed.checks[3].label, "Hand off");
+}

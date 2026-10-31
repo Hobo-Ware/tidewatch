@@ -58,6 +58,25 @@ pub fn meeseeks_fix(branch: &str, base: Option<&str>) -> String {
     )
 }
 
+/// The fix note of a Meeseeks hand-off whose task names a pull request: commits are missing from
+/// that pull request's branch. It never asks for a new pull request.
+#[must_use]
+pub fn meeseeks_push_to_pr(number: u64, head: &str, missing: usize) -> String {
+    let count = commits_text(missing);
+    let verb = if missing == 1 { "is" } else { "are" };
+    format!(
+        "{count} of this worktree {verb} not on `{head}`, the branch of PR #{number}. Push your commits to `{head}` (`git push origin HEAD:{head}`, with `--force-with-lease` after a rebase), then call `meeseeks_done` again."
+    )
+}
+
+/// The fix note of a Meeseeks hand-off whose pull request was closed without merging.
+#[must_use]
+pub fn meeseeks_pr_closed(number: u64) -> String {
+    format!(
+        "PR #{number} was closed without being merged, so there is nothing to update. Ask the user what to do with your question tool, then call `meeseeks_done` again."
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -119,6 +138,8 @@ mod tests {
             open_pull_request(&opening(2, Some("abc"))),
             push_commits("agent/x", 1),
             meeseeks_fix("agent/x", Some("main")),
+            meeseeks_push_to_pr(7, "fix/x", 2),
+            meeseeks_pr_closed(7),
         ];
         for text in all {
             assert!(!text.contains(['\u{2014}', '\u{2013}']), "{text}");
@@ -139,5 +160,22 @@ mod tests {
             assert!(text.contains(needle), "missing {needle:?}");
         }
         assert!(meeseeks_fix("agent/x", None).contains("`gh pr create --draft`,"));
+    }
+
+    #[test]
+    fn the_notes_for_a_named_pull_request_name_it_and_never_ask_for_a_new_one() {
+        let push = meeseeks_push_to_pr(2437, "claude/elegant-fermi", 1);
+        for needle in [
+            "1 commit of this worktree is not on `claude/elegant-fermi`, the branch of PR #2437",
+            "git push origin HEAD:claude/elegant-fermi",
+            "call `meeseeks_done` again",
+        ] {
+            assert!(push.contains(needle), "missing {needle:?} in {push}");
+        }
+        assert!(meeseeks_push_to_pr(1, "b", 3).starts_with("3 commits of this worktree"));
+        for text in [push, meeseeks_pr_closed(2437)] {
+            assert!(!text.contains("gh pr create") && !text.contains("open a"), "{text}");
+        }
+        assert!(meeseeks_pr_closed(2437).contains("PR #2437 was closed without being merged"));
     }
 }

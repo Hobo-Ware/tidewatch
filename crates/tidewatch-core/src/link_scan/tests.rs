@@ -178,3 +178,14 @@ fn http_is_read_too_and_stored_as_https() {
         one("https://github.com/o/r/issues/7", "Issue #7")
     );
 }
+
+#[test]
+fn pull_requests_in_a_text_are_its_pull_links_in_order_and_nothing_else() {
+    let text = "Sensei https://github.com/o/r/pull/42, then https://github.com/o/r/issues/38 and \
+                [that](https://github.com/p/q/pull/7/files) plus https://claude.ai/artifact/abc";
+    assert_eq!(
+        pull_requests(text),
+        ["https://github.com/o/r/pull/42", "https://github.com/p/q/pull/7"]
+    );
+    assert_eq!(pull_requests("PR 42 and #7"), Vec::<String>::new());
+}

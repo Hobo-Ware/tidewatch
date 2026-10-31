@@ -199,7 +199,7 @@ pub(crate) fn run_reopen(spec: &ReopenSpec) -> Reopened {
         task: "",
         session_id: new_session.clone(),
         remote: spec.remote,
-        meeseeks: spec.meeseeks.is_some(),
+        meeseeks: spec.meeseeks.as_ref().map(|found| found.task.as_str()),
         path_var: Some(&spec.path_var),
         listener: hooks,
         trust: spec.trust.as_ref(),

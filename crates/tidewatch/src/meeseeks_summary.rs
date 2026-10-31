@@ -8,6 +8,7 @@ use tidewatch_core::kind::Kind;
 use tidewatch_core::meeseeks::{CheckLine, Step, Verdict, blocked_reason_of, elapsed_text};
 use tidewatch_core::meeseeks_branch::{Branch, Changed};
 use tidewatch_core::meeseeks_log::Poofed;
+use tidewatch_core::meeseeks_target::Target;
 
 use crate::job_model::clock_label;
 use crate::meeseeks_model::{Card, Look, Span};
@@ -154,10 +155,11 @@ fn branch_line(record: &Poofed, facts: Option<&Branch>) -> Option<BranchLine> {
 
 pub(crate) fn summary(record: &Poofed, facts: Option<&Branch>, zone: &TimeZone) -> Summary {
     let lines = lines_of(record);
+    let target = Target::of_task(&record.task);
     let checks: Vec<CheckRow> = lines
         .iter()
         .map(|line| CheckRow {
-            label: line.step.label(),
+            label: line.step.label_for(&target),
             look: look_of(line.verdict),
             result: result_of(line.verdict),
             detail: line.detail.clone(),

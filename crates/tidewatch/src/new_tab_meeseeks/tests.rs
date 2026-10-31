@@ -160,3 +160,23 @@ fn the_yolo_line_names_the_worktree() {
     assert_eq!(YOLO_LINE, "Meeseeks always run in YOLO, in their own worktree.");
     assert_eq!(LEVEL, Level::Yolo);
 }
+
+#[test]
+fn the_pr_row_updates_the_pull_request_a_task_names_and_opens_one_otherwise() {
+    let link = "Sensei https://github.com/trakt/trakt-workers/pull/2437 and fold the fix in";
+    let cases = [
+        (lines(&[]), "Open a PR"),
+        (lines(&["Bump vite to 6.3"]), "Open a PR"),
+        (lines(&["Bump vite", "Rename the helper"]), "Open a PR"),
+        (lines(&[link]), "Update PR #2437"),
+        (lines(&["rebase PR 2437"]), "Update PR #2437"),
+        (lines(&[link, "also PR #2437 again"]), "Update PR #2437"),
+        (lines(&[link, "rebase PR 12"]), "Update their PRs"),
+        (lines(&[link, "Bump vite"]), "Open or update a PR"),
+        (lines(&["Bump vite", link]), "Open or update a PR"),
+        (lines(&["explain issue #12"]), "Open a PR"),
+    ];
+    for (tasks, want) in cases {
+        assert_eq!(pr_label(&tasks), want, "{tasks:?}");
+    }
+}

@@ -11,7 +11,8 @@ use std::time::{Duration, Instant};
 use common::{commit_file, git_available, ok, repos, write_executable_from_a_child};
 use tidewatch_core::civil_date::Date;
 use tidewatch_core::done_check::{Input, Kind, PrFact, Status, run};
-use tidewatch_core::meeseeks_check::{hand_off, proof};
+use tidewatch_core::meeseeks_check::{Work, hand_off, proof};
+use tidewatch_core::meeseeks_target::Target;
 use tidewatch_core::pr_gh::poll;
 use tidewatch_core::tools::{GhError, Tools};
 
@@ -71,7 +72,23 @@ fn a_gh_that_never_answers_fails_the_hand_off_check_with_the_stop_not_the_push_a
     }
     let r = repos();
     let gh = Hung::new(&["gh"]);
-    let error = quickly(|| hand_off(&gh.tools(), &r.work, "agent/x")).unwrap_err();
+    let error =
+        quickly(|| hand_off(&gh.tools(), &r.work, "agent/x", &Work::default())).unwrap_err();
+    assert_eq!(error, "gh took longer than 300 ms and was stopped");
+}
+
+#[test]
+fn a_gh_that_never_answers_stops_the_look_at_the_named_pull_request_with_the_limit_named() {
+    if !git_available() {
+        return;
+    }
+    let r = repos();
+    let gh = Hung::new(&["gh"]);
+    let work = Work {
+        target: Target::of_task("Sensei https://github.com/acme/web/pull/2437"),
+        ..Work::default()
+    };
+    let error = quickly(|| hand_off(&gh.tools(), &r.work, "agent/x", &work)).unwrap_err();
     assert_eq!(error, "gh took longer than 300 ms and was stopped");
 }
 

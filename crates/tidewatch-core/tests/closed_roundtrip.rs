@@ -149,7 +149,7 @@ fn a_discarded_tab_comes_back_on_its_commit_at_its_path_and_resumes_its_session(
             task: "",
             session_id: None,
             remote: false,
-            meeseeks: false,
+            meeseeks: None,
             path_var: Some(&path_var),
             listener: None,
             trust: None,
