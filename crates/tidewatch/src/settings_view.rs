@@ -63,6 +63,11 @@ pub(crate) enum Action {
     LoginItem(login_item::Click),
     /// The Sync card: the switch, the repo, Sync now or Create private repo.
     Sync(crate::sync_view::Change),
+    /// The Workflow card changed a repo's profile: all of it. Applies at once too.
+    Workflow {
+        repo: std::path::PathBuf,
+        workflow: tidewatch_core::workflow_profile::Workflow,
+    },
     OpenHouseStyle,
     ResetHouseStyle,
     /// Edit on the Checklist card: open the list's file.

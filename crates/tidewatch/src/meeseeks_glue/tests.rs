@@ -5,6 +5,7 @@ use std::time::{Duration, Instant};
 
 use tidewatch_core::civil_date::Date;
 use tidewatch_core::meeseeks::Struggle;
+use tidewatch_core::workflow_profile::Workflow;
 
 use super::*;
 
@@ -133,6 +134,7 @@ fn the_checks_dispatch_to_their_step_and_a_hand_off_without_a_pr_is_nothing_to_d
         tools: Tools::system(),
         worktree: repo.worktree.clone(),
         work: Work::default(),
+        workflow: Workflow::default(),
     };
     assert_eq!(run_check(Step::Change, &spec, true), Err("no commit ahead of main".to_owned()));
     let said =
@@ -321,6 +323,7 @@ fn a_check_whose_git_or_gh_never_answers_fails_its_step_with_the_limit_named() {
         tools: hanging("git", tools.path()),
         worktree: repo.worktree.clone(),
         work: Work::default(),
+        workflow: Workflow::default(),
     };
     assert_eq!(
         run_check(Step::Proof, &stuck_git, true).err(),
@@ -331,6 +334,7 @@ fn a_check_whose_git_or_gh_never_answers_fails_its_step_with_the_limit_named() {
         tools: hanging("gh", tools.path()),
         worktree: repo.worktree.clone(),
         work: Work::default(),
+        workflow: Workflow::default(),
     };
     assert_eq!(
         run_check(Step::HandOff, &stuck_gh, true).err(),

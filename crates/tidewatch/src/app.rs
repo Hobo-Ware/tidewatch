@@ -41,6 +41,7 @@ pub(crate) mod strip;
 mod tabs;
 mod takeover;
 mod terminal;
+mod workflow;
 mod workspaces;
 
 use std::collections::{HashMap, HashSet, VecDeque};
@@ -136,6 +137,7 @@ use crate::trust_glue::Trust;
 use crate::updates::{Updates, fake_state};
 use crate::welcome::{Recent, recent_repos};
 use crate::window_chrome;
+use crate::workflow_glue;
 use crate::worktree_jobs::Done;
 use crate::{closed_jobs, closed_state};
 
@@ -252,6 +254,7 @@ pub(crate) struct Tidewatch {
     desktop: window_chrome::Desktop,
     services: services_glue::Host,
     services_ui: services_view::Memory,
+    workflow: workflow_glue::Host,
 }
 
 impl Tidewatch {
@@ -394,6 +397,10 @@ impl Tidewatch {
             std::env::var(services_glue::FAKE_VAR).is_ok_and(|value| value == "1"),
         );
         services.adopt(kept_services);
+        let workflow = workflow_glue::Host::new(
+            paths.clone(),
+            workflow_glue::Host::mode_from_env(screenshot.is_some() || shell.env.background),
+        );
         let mut app = Self {
             terminal_font,
             terminal_config: terminal::terminal_config(terminal_prefs.copy_on_select),
@@ -506,6 +513,7 @@ impl Tidewatch {
             services,
             github_events,
             services_ui: services_view::Memory::from_env(),
+            workflow,
         };
         for (group, workspace) in app.workspaces.iter().enumerate().filter(|_| !welcome) {
             if !restored {

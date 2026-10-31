@@ -25,6 +25,7 @@ use crate::updates::Updates;
 use crate::updates_view;
 use crate::window_settings;
 use crate::window_view;
+use crate::workflow_view;
 
 pub(crate) struct General {
     pub(crate) restore: bool,
@@ -51,6 +52,8 @@ pub(crate) struct General {
     pub(crate) sync: sync_view::View,
     /// The must-do list of the repo on show, once it is read.
     pub(crate) checklist: Option<Checklist>,
+    /// The workflow profile of the repo on show, when it is one.
+    pub(crate) workflow: Option<workflow_view::View>,
 }
 
 pub(crate) fn page(
@@ -114,6 +117,11 @@ pub(crate) fn page(
     );
     let checklist = checklist_card(ui, general.checklist.as_ref());
     let github = github_view::card(ui, general.github).map(Action::Github);
+    let workflow =
+        workflow_view::settings_card(ui, general.workflow.as_ref()).and_then(|workflow| {
+            let repo = general.workflow.as_ref()?.path.clone();
+            Some(Action::Workflow { repo, workflow })
+        });
     let guards =
         guards_view::card(ui, &general.guards, general.guards_repo.as_ref()).map(Action::Guards);
     let sync = sync_view::card(ui, sync, &general.sync).map(Action::Sync);
@@ -134,6 +142,7 @@ pub(crate) fn page(
         .or(checklist)
         .or(keep_awake)
         .or(github)
+        .or(workflow)
         .or(guards)
         .or(sync)
         .or(updates)

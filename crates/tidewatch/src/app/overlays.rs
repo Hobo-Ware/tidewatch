@@ -66,6 +66,7 @@ impl Tidewatch {
     }
 
     pub(super) fn show_dialogs(&mut self, ctx: &egui::Context) {
+        self.show_workflow_card(ctx, self.message_column(ctx.content_rect()));
         let answer = self
             .closing
             .as_ref()

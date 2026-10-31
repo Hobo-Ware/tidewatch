@@ -3155,7 +3155,12 @@ mod tests {
         let mut watch = Watch::new(std::path::PathBuf::from("/x"));
         watch.take_load();
         watch.loaded(Cards::default(), 0.0);
-        let message = tidewatch_core::pr_prompt::message(&comment, 42).unwrap();
+        let message = tidewatch_core::pr_prompt::message(
+            &comment,
+            42,
+            tidewatch_core::workflow_profile::Workflow::default(),
+        )
+        .unwrap();
         watch.pending.push(Pending { id: 1, message });
         let rows = conversation(20, 40);
         let ctx = crate::fonts::test_context();

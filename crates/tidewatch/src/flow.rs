@@ -12,6 +12,7 @@ use tidewatch_core::pr::MergeReport;
 use tidewatch_core::pr_ask::{self, Opening};
 use tidewatch_core::status::AgentStatus;
 use tidewatch_core::tools::Tools;
+use tidewatch_core::workflow_profile::Workflow;
 
 use crate::delivery_card::Delivery;
 use crate::flow_jobs::{self, Done, Which};
@@ -42,6 +43,7 @@ pub(crate) struct TabFacts {
     pub(crate) merged_head: Option<String>,
     pub(crate) gate: Gate,
     pub(crate) profile: String,
+    pub(crate) workflow: Workflow,
 }
 
 /// Whether the tab may deliver: shut once its pull request merged (`merged_branch`), so no card
@@ -139,12 +141,13 @@ impl TabFlow {
         let (Delivery::Asked { commits, .. }, Some(base)) = (&self.delivery, &self.base) else {
             return None;
         };
-        Some(pr_ask::open_pull_request(&Opening {
+        let opening = Opening {
             branch: &facts.branch,
             base,
             commits: *commits,
             merged_head: facts.merged_head.as_deref(),
-        }))
+        };
+        Some(pr_ask::open_pull_request(&opening, facts.workflow))
     }
 }
 
@@ -717,6 +720,7 @@ mod tests {
             merged_head: None,
             gate: Gate::Open,
             profile: "Builder".into(),
+            workflow: Workflow::default(),
         }
     }
 
@@ -1089,10 +1093,9 @@ mod tests {
         assert_eq!(asks.len(), 1);
         assert_eq!(asks[0].by, Asker::Auto);
         for needle in [
-            "2 commits on `agent/brave-otter`",
-            "gh pr create --draft --base main",
+            "2 commits on `agent/brave-otter` are not in `main`",
+            "open a draft pull request into `main`",
             "Write the title and body yourself",
-            "no em or en dashes",
         ] {
             assert!(asks[0].text.contains(needle), "missing {needle:?} in {}", asks[0].text);
         }
@@ -1119,8 +1122,19 @@ mod tests {
         flow.tabs.get_mut(&7).unwrap().base = Some("develop".into());
         flow.ask_on_its_own(&push_on());
         let text = &flow.asking()[0].text;
-        assert!(text.contains("into `develop`") && text.contains("--base develop"), "{text}");
-        assert!(text.starts_with("You have 1 commit on"), "{text}");
+        assert!(text.contains("into `develop`"), "{text}");
+        assert!(text.starts_with("1 commit on `agent/brave-otter` is not in `develop`"), "{text}");
+    }
+
+    #[test]
+    fn the_ask_opens_the_kind_of_pull_request_the_profile_says() {
+        use tidewatch_core::workflow_profile::PullRequests;
+        let ready = Workflow { pull_requests: PullRequests::Ready, ..Workflow::default() };
+        let facts = TabFacts { workflow: ready, ..push_on() };
+        let mut flow = ready_tab(&facts, 1);
+        flow.ask_on_its_own(&facts);
+        let text = &flow.asking()[0].text;
+        assert!(text.contains("open a pull request (not a draft) into `main`"), "{text}");
     }
 
     #[test]
@@ -1130,7 +1144,7 @@ mod tests {
         flow.ask_on_its_own(&merged);
         let text = &flow.asking()[0].text;
         assert!(text.contains("merged at `e3dba69`"), "{text}");
-        assert!(text.contains("--head agent/brave-otter-2"), "{text}");
+        assert!(text.contains("push it as `agent/brave-otter-2`"), "{text}");
     }
 
     #[test]

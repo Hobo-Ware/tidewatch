@@ -1,6 +1,7 @@
 use super::*;
 use tidewatch_core::pr_status::Seen;
 use tidewatch_core::prefs::GithubPrefs;
+use tidewatch_core::workflow_profile::Workflow;
 
 fn job(name: &str, passed: bool) -> Job {
     Job {
@@ -205,7 +206,7 @@ fn a_conflict_offers_one_button_while_it_lasts() {
     assert_eq!(gone.buttons, [], "nothing says it still conflicts");
     cards.seen = Some(Seen { conflicting: true, ..Seen::default() });
     let Some(Look::Card(now)) = look(0, context(&cards, PrMode::Ask)) else { panic!() };
-    assert_eq!(labels(&now), [("Ask Builder to rebase", true)]);
+    assert_eq!(labels(&now), [("Ask Builder to resolve", true)]);
     assert_eq!(now.title, "Conflicts with main");
 }
 
@@ -492,7 +493,7 @@ fn only_web_addresses_open() {
 
 #[test]
 fn the_waiting_and_paused_rows_use_the_profile_and_the_reason() {
-    let message = tidewatch_core::pr_prompt::message(&failed(), 42).unwrap();
+    let message = tidewatch_core::pr_prompt::message(&failed(), 42, Workflow::default()).unwrap();
     let pending = Pending { id: 5, message };
     assert_eq!(
         waiting_text("Builder", &pending),
@@ -589,7 +590,8 @@ fn an_ordinary_tab_in_auto_fix_shows_the_same_record_look_as_one_on_its_own() {
 
 #[test]
 fn an_ordinary_tab_in_auto_fix_queues_a_message_for_a_busy_agent_and_says_so() {
-    let message = tidewatch_core::pr_prompt::message(&commented(), 42).unwrap();
+    let message =
+        tidewatch_core::pr_prompt::message(&commented(), 42, Workflow::default()).unwrap();
     let waiting = [Pending { id: 1, message }];
     let model = handled(Handling::Answers, vec![commented()], &waiting);
     assert_eq!(model.buttons, []);
@@ -633,7 +635,8 @@ fn a_failed_check_of_a_tab_on_its_own_still_links_the_log_and_the_rerun() {
 
 #[test]
 fn a_message_still_waiting_for_an_idle_agent_reads_queued_and_a_paused_tab_says_so() {
-    let message = tidewatch_core::pr_prompt::message(&commented(), 42).unwrap();
+    let message =
+        tidewatch_core::pr_prompt::message(&commented(), 42, Workflow::default()).unwrap();
     let waiting = [Pending { id: 1, message }];
     assert_eq!(
         handled(Handling::Agent, vec![commented()], &waiting).note.as_deref(),

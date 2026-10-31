@@ -77,6 +77,7 @@ pub(crate) fn facts<T>(
                 merged_head: push.merged_head,
                 gate: delivery_gate(push.shut, agent.meeseeks.as_ref()),
                 profile: agent.profile_name.clone(),
+                workflow: pr.workflow(tab.id),
             })
         })
         .collect()
@@ -386,6 +387,7 @@ pub(crate) fn dev_drive(
 #[cfg(test)]
 mod tests {
     use tidewatch_core::tools::Tools;
+    use tidewatch_core::workflow_profile::Workflow;
 
     use super::*;
 
@@ -443,6 +445,7 @@ mod tests {
             merged_head: None,
             gate: Gate::Open,
             profile: "Builder".into(),
+            workflow: Workflow::default(),
         }
     }
 

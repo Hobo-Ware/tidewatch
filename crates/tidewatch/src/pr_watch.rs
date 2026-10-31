@@ -13,6 +13,7 @@ use tidewatch_core::pr_status::{Body, Seen, State, Summary, Tone as PrTone, Via}
 use tidewatch_core::prefs::{GithubPrefs, PrMode};
 use tidewatch_core::status::AgentStatus;
 use tidewatch_core::tools::GhError;
+use tidewatch_core::workflow_profile::Workflow;
 use tidewatch_core::worktree_cleanup::Report;
 
 use crate::merge_cleanup::{Busy, Cleanup};
@@ -124,6 +125,8 @@ pub(crate) struct Facts<'a> {
     /// Whether GitHub tells Tidewatch about the repository now.
     pub(crate) live: bool,
     pub(crate) branch: &'a str,
+    /// The repo's workflow profile: the method words the messages to the agent use.
+    pub(crate) workflow: Workflow,
 }
 
 /// Who answers the pull request's news on a tab, for the cards' buttons and notes.
@@ -195,6 +198,7 @@ pub(crate) struct Watch {
     pub(crate) pause: Option<Pause>,
     pub(crate) pending: Vec<Pending>,
     pub(crate) autonomous: bool,
+    pub(crate) workflow: Workflow,
     pub(crate) cleanup: Cleanup,
     pub(crate) busy: Busy,
     check_started: f64,
@@ -223,6 +227,7 @@ impl Watch {
             pause: None,
             pending: Vec::new(),
             autonomous: false,
+            workflow: Workflow::default(),
             cleanup: Cleanup::default(),
             busy: Busy::default(),
             check_started: 0.0,
@@ -494,7 +499,9 @@ impl Watch {
         now_ms: i64,
     ) -> Vec<Out> {
         let policy = self.policy(default);
-        let Some(message) = pr_prompt::message(body, number) else { return Vec::new() };
+        let Some(message) = pr_prompt::message(body, number, self.workflow) else {
+            return Vec::new();
+        };
         if policy.mode != PrMode::Auto
             || self.closed()
             || !pr_prompt::wanted(&policy, body)
@@ -550,7 +557,7 @@ impl Watch {
         let message = self
             .cards
             .get(id)
-            .and_then(|card| pr_prompt::message(&card.body, number))
+            .and_then(|card| pr_prompt::message(&card.body, number, self.workflow))
             .ok_or_else(|| "There is nothing to ask the agent about".to_owned())?;
         self.manual(message, now, now_ms)
     }

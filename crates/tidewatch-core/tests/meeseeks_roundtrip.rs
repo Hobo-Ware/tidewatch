@@ -9,6 +9,7 @@ use common::{FakeGh, commit_file, git_available, ok, remote_branches, reply, rep
 use tidewatch_core::meeseeks_check::{Checked, Work, change, hand_off, poof, proof, tests};
 use tidewatch_core::paths::TidewatchPaths;
 use tidewatch_core::tools::Tools;
+use tidewatch_core::workflow_profile::Workflow;
 use tidewatch_core::worktree::{self, Worktree};
 
 const URL: &str = "https://github.com/acme/web/pull/42";
@@ -110,7 +111,9 @@ fn the_hand_off_is_the_pr_the_agent_opened_at_its_head_and_tidewatch_creates_not
         reply("pr list", 0, open_prs_listing(sha.trim()), ""),
     ]);
     let tools = Tools::with_path(gh.path());
-    let checked = hand_off(&tools, &dir(&f), &f.worktree.branch, &Work::default()).unwrap();
+    let checked =
+        hand_off(&tools, &dir(&f), &f.worktree.branch, &Work::default(), Workflow::default())
+            .unwrap();
     assert_eq!(checked.pr_url.as_deref(), Some(URL));
     assert_eq!(checked.detail, "Found PR #42");
     assert_eq!(gh.calls_to("pr create").len(), 0);
@@ -128,7 +131,9 @@ fn a_hand_off_with_no_pr_fails_with_the_fix_note_and_pushes_and_creates_nothing(
         reply("pr list", 0, "[]\n", ""),
     ]);
     let tools = Tools::with_path(gh.path());
-    let error = hand_off(&tools, &dir(&f), &f.worktree.branch, &Work::default()).unwrap_err();
+    let error =
+        hand_off(&tools, &dir(&f), &f.worktree.branch, &Work::default(), Workflow::default())
+            .unwrap_err();
     assert!(error.contains("gh pr create --draft --base main"), "{error}");
     assert!(error.contains("yourself") && error.contains("meeseeks_done"), "{error}");
     assert!(error.contains(&f.worktree.branch), "{error}");
@@ -153,7 +158,9 @@ fn a_head_no_open_pr_points_at_fails_the_hand_off_instead_of_opening_one() {
         ),
     ]);
     let tools = Tools::with_path(gh.path());
-    let error = hand_off(&tools, &dir(&f), &f.worktree.branch, &Work::default()).unwrap_err();
+    let error =
+        hand_off(&tools, &dir(&f), &f.worktree.branch, &Work::default(), Workflow::default())
+            .unwrap_err();
     assert!(error.contains("push the latest commits"), "{error}");
     assert_eq!(gh.calls_to("pr create").len(), 0);
 }
@@ -166,9 +173,14 @@ fn a_missing_gh_fails_the_hand_off_with_the_fix_note_and_is_not_a_panic() {
     let f = fixture();
     commit_file(&dir(&f), "hello.txt", "hi\n", "feat: add hello");
     let (_keep, only_git) = common::path_with_only_git();
-    let error =
-        hand_off(&Tools::with_path(only_git), &dir(&f), &f.worktree.branch, &Work::default())
-            .unwrap_err();
+    let error = hand_off(
+        &Tools::with_path(only_git),
+        &dir(&f),
+        &f.worktree.branch,
+        &Work::default(),
+        Workflow::default(),
+    )
+    .unwrap_err();
     assert!(error.contains("gh pr create --draft"), "{error}");
     assert!(!remote_branches(&f.repos.remote).contains(&f.worktree.branch));
 }

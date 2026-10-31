@@ -330,7 +330,7 @@ fn auto_fix_sends_at_once_when_the_agent_is_idle() {
     let text = pasted(&outs);
     assert_eq!(text.len(), 1);
     assert!(
-        text[0].starts_with("check (ubuntu-latest) failed at clippy on PR #42."),
+        text[0].starts_with("check (ubuntu-latest) failed at \"clippy\" on PR #42 (log below)."),
         "{}",
         text[0]
     );
@@ -753,6 +753,36 @@ fn comments_review_changes_failed_checks_and_conflicts_go_to_an_idle_agent_witho
             panic!("{tag}: no record of the send")
         };
         assert_eq!((*via, sent.as_str()), (Via::Auto, tag));
+    }
+}
+
+#[test]
+fn the_tabs_workflow_profile_decides_the_method_words_of_what_auto_sends() {
+    use tidewatch_core::workflow_profile::{CatchUp, Fixes};
+    let default = GithubPrefs::default();
+    let merge =
+        Workflow { catch_up: CatchUp::Merge, fixes: Fixes::NewCommits, ..Workflow::default() };
+    let table = [
+        (Workflow::default(), "Rebase onto origin/main", "fold the fix"),
+        (merge, "Merge origin/main into this branch", "commit the fix"),
+    ];
+    for (workflow, catch_up, fix) in table {
+        let mut conflict = on_its_own();
+        conflict.workflow = workflow;
+        conflict.observe(&AgentStatus::Done);
+        conflict.look_started();
+        let body = Body::Conflict { base: "main".into() };
+        let outs = conflict.polled(Ok(polled(vec![body], false, false)), default, "t", 5.0, 9_000);
+        assert!(pasted(&outs)[0].contains(catch_up), "{outs:?}");
+        assert!(!pasted(&outs)[0].contains("Do not rebase"), "{outs:?}");
+
+        let mut checks = on_its_own();
+        checks.workflow = workflow;
+        checks.observe(&AgentStatus::Done);
+        checks.look_started();
+        let outs =
+            checks.polled(Ok(polled(vec![failed()], false, false)), default, "t", 5.0, 9_000);
+        assert!(pasted(&outs)[0].contains(fix), "{outs:?}");
     }
 }
 

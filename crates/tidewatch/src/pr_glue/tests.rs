@@ -8,6 +8,7 @@ use tidewatch_core::pr_status::{Body, Seen};
 use tidewatch_core::prefs::GithubPrefs;
 use tidewatch_core::status::AgentStatus;
 use tidewatch_core::tools::Tools;
+use tidewatch_core::workflow_profile::Workflow;
 use tidewatch_core::worktree::{self, Worktree};
 
 use super::*;
@@ -32,6 +33,7 @@ struct Merged {
     host: Host,
     ctx: egui::Context,
     busy: Busy,
+    workflow: Workflow,
 }
 
 fn merged_tab() -> Merged {
@@ -58,6 +60,7 @@ fn merged_tab() -> Merged {
         host,
         ctx: egui::Context::default(),
         busy: Busy::default(),
+        workflow: Workflow::default(),
     }
 }
 
@@ -76,6 +79,7 @@ impl Merged {
             pr: None,
             autonomous: false,
             busy: self.busy,
+            workflow: self.workflow,
         }];
         let _ = self.host.tick(&facts, &self.paths, &self.ctx, 0.0, 0);
     }
@@ -97,6 +101,17 @@ impl Merged {
 
 fn settled(cleanup: &Cleanup) -> bool {
     matches!(cleanup, Cleanup::Checked(_) | Cleanup::Failed(_))
+}
+
+#[test]
+fn the_profile_a_frame_hands_the_tab_is_the_one_its_messages_use() {
+    use tidewatch_core::workflow_profile::CatchUp;
+    let mut tab = merged_tab();
+    assert_eq!(tab.host.workflow(1), Workflow::default(), "no tab yet: the defaults");
+    tab.workflow = Workflow { catch_up: CatchUp::Merge, ..Workflow::default() };
+    tab.tick();
+    assert_eq!(tab.host.workflow(1).catch_up, CatchUp::Merge);
+    assert_eq!(tab.host.watch(1).unwrap().workflow.catch_up, CatchUp::Merge);
 }
 
 #[test]
