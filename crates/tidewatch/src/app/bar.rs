@@ -2,7 +2,7 @@
 
 use egui::{Frame, Panel};
 
-use super::Tidewatch;
+use super::{Tidewatch, slow};
 use crate::brand;
 use crate::commands::Platform;
 use crate::pane::Body;
@@ -25,6 +25,9 @@ impl Tidewatch {
             && let Some((tab, _)) = self.switching_line()
         {
             self.cancel_switch(tab);
+        }
+        if let Some(id) = clicks.cancel_slow {
+            slow::cancel(id);
         }
     }
 
@@ -78,6 +81,7 @@ impl Tidewatch {
             fetch_failed: self.fetch_failure().filter(|_| matches!(screen, Screen::Workspace(_))),
             pr: self.pr_bar_item(active_id).filter(|_| matches!(screen, Screen::Workspace(_))),
             switching: self.switching_line().map(|(_, text)| text),
+            slow: slow::line(ctx),
         }
     }
 }
